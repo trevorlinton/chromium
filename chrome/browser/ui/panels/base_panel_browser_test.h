@@ -10,8 +10,8 @@
 #include "chrome/browser/ui/panels/display_settings_provider.h"
 #include "chrome/browser/ui/panels/panel.h"
 #include "chrome/browser/ui/panels/panel_manager.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest.h"
 #include "ui/gfx/rect.h"
 
@@ -55,7 +55,7 @@ class BasePanelBrowserTest : public InProcessBrowserTest {
   // tests to ensure we still have coverage on the bots.
   bool SkipTestIfCompizWM();
 
-  virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE;
+  virtual void SetUpCommandLine(base::CommandLine* command_line) OVERRIDE;
   virtual void SetUpOnMainThread() OVERRIDE;
 
  protected:
@@ -105,7 +105,7 @@ class BasePanelBrowserTest : public InProcessBrowserTest {
   scoped_refptr<extensions::Extension> CreateExtension(
       const base::FilePath::StringType& path,
       extensions::Manifest::Location location,
-      const DictionaryValue& extra_value);
+      const base::DictionaryValue& extra_value);
 
   void MoveMouseAndWaitForExpansionStateChange(Panel* panel,
                                                const gfx::Point& position);

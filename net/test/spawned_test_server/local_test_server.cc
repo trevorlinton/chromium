@@ -10,6 +10,7 @@
 #include "base/path_service.h"
 #include "base/process/kill.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/test/test_timeouts.h"
 #include "base/values.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
@@ -22,7 +23,7 @@ namespace {
 
 bool AppendArgumentFromJSONValue(const std::string& key,
                                  const base::Value& value_node,
-                                 CommandLine* command_line) {
+                                 base::CommandLine* command_line) {
   std::string argument_name = "--" + key;
   switch (value_node.GetType()) {
     case base::Value::TYPE_NULL:
@@ -35,7 +36,7 @@ bool AppendArgumentFromJSONValue(const std::string& key,
       command_line->AppendArg(argument_name + "=" + base::IntToString(value));
       break;
     }
-    case Value::TYPE_STRING: {
+    case base::Value::TYPE_STRING: {
       std::string value;
       bool result = value_node.GetAsString(&value);
       if (!result || value.empty())
@@ -124,10 +125,20 @@ bool LocalTestServer::Stop() {
   if (!process_handle_)
     return true;
 
+#if defined(OS_WIN)
+  // This kills all the processes in the job object.
+  TerminateJobObject(job_handle_.Get(), 1);
+  // This is done asynchronously so wait a bit for the processes to be killed.
+  WaitForSingleObject(job_handle_.Get(),
+                      TestTimeouts::action_timeout().InMilliseconds());
+  job_handle_.Close();
+#endif
+
   // First check if the process has already terminated.
   bool ret = base::WaitForSingleProcess(process_handle_, base::TimeDelta());
-  if (!ret)
+  if (!ret) {
     ret = base::KillProcess(process_handle_, 1, true);
+  }
 
   if (ret) {
     base::CloseProcessHandle(process_handle_);
@@ -192,7 +203,8 @@ bool LocalTestServer::SetPythonPath() const {
   return true;
 }
 
-bool LocalTestServer::AddCommandLineArguments(CommandLine* command_line) const {
+bool LocalTestServer::AddCommandLineArguments(
+    base::CommandLine* command_line) const {
   base::DictionaryValue arguments_dict;
   if (!GenerateArguments(&arguments_dict))
     return false;
@@ -204,7 +216,7 @@ bool LocalTestServer::AddCommandLineArguments(CommandLine* command_line) const {
     const std::string& key = it.key();
 
     // Add arguments from a list.
-    if (value.IsType(Value::TYPE_LIST)) {
+    if (value.IsType(base::Value::TYPE_LIST)) {
       const base::ListValue* list = NULL;
       if (!value.GetAsList(&list) || !list || list->empty())
         return false;

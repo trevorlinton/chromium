@@ -6,15 +6,18 @@
 """End to end tests for ChromeDriver."""
 
 import base64
+import json
+import math
 import optparse
-import subprocess
 import os
-import sys
 import socket
+import subprocess
+import sys
 import tempfile
 import threading
 import time
 import unittest
+import urllib2
 
 _THIS_DIR = os.path.abspath(os.path.dirname(__file__))
 sys.path.insert(1, os.path.join(_THIS_DIR, os.pardir))
@@ -34,6 +37,7 @@ _TEST_DATA_DIR = os.path.join(chrome_paths.GetTestData(), 'chromedriver')
 if util.IsLinux():
   sys.path.insert(0, os.path.join(chrome_paths.GetSrc(), 'build', 'android'))
   from pylib import android_commands
+  from pylib import constants
   from pylib import forwarder
   from pylib import valgrind_tools
 
@@ -47,12 +51,7 @@ _NEGATIVE_FILTER = [
 ]
 
 _VERSION_SPECIFIC_FILTER = {}
-_VERSION_SPECIFIC_FILTER['HEAD'] = [
-    # These tests rely on the reference chromedriver which is currently broken.
-    # Re-enable once we have uploaded a new reference chromedriver (see
-    # https://code.google.com/p/chromedriver/issues/detail?id=602).
-    'PerfTest.*',
-]
+_VERSION_SPECIFIC_FILTER['HEAD'] = []
 
 _OS_SPECIFIC_FILTER = {}
 _OS_SPECIFIC_FILTER['win'] = [
@@ -77,13 +76,15 @@ _DESKTOP_NEGATIVE_FILTER = [
     # Desktop doesn't support touch (without --touch-events).
     'ChromeDriverTest.testSingleTapElement',
     'ChromeDriverTest.testTouchDownUpElement',
+    'ChromeDriverTest.testTouchFlickElement',
     'ChromeDriverTest.testTouchMovedElement',
+    'ChromeDriverAndroidTest.*',
 ]
 
 
 def _GetDesktopNegativeFilter(version_name):
   filter = _NEGATIVE_FILTER + _DESKTOP_NEGATIVE_FILTER
-  os = util.GetPlatformName();
+  os = util.GetPlatformName()
   if os in _OS_SPECIFIC_FILTER:
     filter += _OS_SPECIFIC_FILTER[os]
   if version_name in _VERSION_SPECIFIC_FILTER:
@@ -91,7 +92,7 @@ def _GetDesktopNegativeFilter(version_name):
   return filter
 
 _ANDROID_NEGATIVE_FILTER = {}
-_ANDROID_NEGATIVE_FILTER['com.google.android.apps.chrome'] = (
+_ANDROID_NEGATIVE_FILTER['chrome'] = (
     _NEGATIVE_FILTER + [
         # TODO(chrisgao): fix hang of tab crash test on android.
         'ChromeDriverTest.testTabCrash',
@@ -116,18 +117,20 @@ _ANDROID_NEGATIVE_FILTER['com.google.android.apps.chrome'] = (
         'ChromeDriverTest.testShouldHandleNewWindowLoadingProperly',
     ]
 )
-_ANDROID_NEGATIVE_FILTER['com.android.chrome'] = (
-    _ANDROID_NEGATIVE_FILTER['com.google.android.apps.chrome'])
-_ANDROID_NEGATIVE_FILTER['com.chrome.beta'] = (
-    _ANDROID_NEGATIVE_FILTER['com.google.android.apps.chrome'])
-_ANDROID_NEGATIVE_FILTER['org.chromium.chrome.testshell'] = (
-    _ANDROID_NEGATIVE_FILTER['com.google.android.apps.chrome'] + [
-        # ChromiumTestShell doesn't support multiple tabs.
+_ANDROID_NEGATIVE_FILTER['chrome_stable'] = (
+    _ANDROID_NEGATIVE_FILTER['chrome'])
+_ANDROID_NEGATIVE_FILTER['chrome_beta'] = (
+    _ANDROID_NEGATIVE_FILTER['chrome'])
+_ANDROID_NEGATIVE_FILTER['chrome_shell'] = (
+    _ANDROID_NEGATIVE_FILTER['chrome'] + [
+        # ChromeShell doesn't support multiple tabs.
         'ChromeDriverTest.testGetWindowHandles',
         'ChromeDriverTest.testSwitchToWindow',
         'ChromeDriverTest.testShouldHandleNewWindowLoadingProperly',
     ]
 )
+_ANDROID_NEGATIVE_FILTER['chromedriver_webview_shell'] = (
+    _ANDROID_NEGATIVE_FILTER['chrome_shell'])
 
 
 class ChromeDriverBaseTest(unittest.TestCase):
@@ -147,9 +150,21 @@ class ChromeDriverBaseTest(unittest.TestCase):
   def CreateDriver(self, server_url=None, **kwargs):
     if server_url is None:
       server_url = _CHROMEDRIVER_SERVER_URL
+
+    android_package = None
+    android_activity = None
+    android_process = None
+    if _ANDROID_PACKAGE_KEY:
+      android_package = constants.PACKAGE_INFO[_ANDROID_PACKAGE_KEY].package
+      if _ANDROID_PACKAGE_KEY == 'chromedriver_webview_shell':
+        android_activity = constants.PACKAGE_INFO[_ANDROID_PACKAGE_KEY].activity
+        android_process = '%s:main' % android_package
+
     driver = chromedriver.ChromeDriver(server_url,
                                        chrome_binary=_CHROME_BINARY,
-                                       android_package=_ANDROID_PACKAGE,
+                                       android_package=android_package,
+                                       android_activity=android_activity,
+                                       android_process=android_process,
                                        **kwargs)
     self._drivers += [driver]
     return driver
@@ -163,8 +178,9 @@ class ChromeDriverTest(ChromeDriverBaseTest):
     ChromeDriverTest._http_server = webserver.WebServer(
         chrome_paths.GetTestData())
     ChromeDriverTest._sync_server = webserver.SyncWebServer()
-    if _ANDROID_PACKAGE:
-      ChromeDriverTest._adb = android_commands.AndroidCommands()
+    if _ANDROID_PACKAGE_KEY:
+      ChromeDriverTest._adb = android_commands.AndroidCommands(
+          android_commands.GetAttachedDevices()[0])
       http_host_port = ChromeDriverTest._http_server._server.server_port
       sync_host_port = ChromeDriverTest._sync_server._server.server_port
       forwarder.Forwarder.Map(
@@ -173,7 +189,7 @@ class ChromeDriverTest(ChromeDriverBaseTest):
 
   @staticmethod
   def GlobalTearDown():
-    if _ANDROID_PACKAGE:
+    if _ANDROID_PACKAGE_KEY:
       forwarder.Forwarder.UnmapAllDevicePorts(ChromeDriverTest._adb)
     ChromeDriverTest._http_server.Shutdown()
 
@@ -407,6 +423,34 @@ class ChromeDriverTest(ChromeDriverBaseTest):
     self._driver.TouchUp(loc['x'], loc['y'])
     self.assertEquals(1, len(self._driver.FindElements('tag name', 'br')))
 
+  def testTouchFlickElement(self):
+    dx = 3
+    dy = 4
+    speed = 5
+    flickTouchEventsPerSecond = 30
+    moveEvents = int(
+        math.sqrt(dx * dx + dy * dy) * flickTouchEventsPerSecond / speed)
+    div = self._driver.ExecuteScript(
+        'document.body.innerHTML = "<div>old</div>";'
+        'var div = document.getElementsByTagName("div")[0];'
+        'div.addEventListener("touchstart", function() {'
+        '  div.innerHTML = "preMove0";'
+        '});'
+        'div.addEventListener("touchmove", function() {'
+        '  res = div.innerHTML.match(/preMove(\d+)/);'
+        '  if (res != null) {'
+        '    div.innerHTML = "preMove" + (parseInt(res[1], 10) + 1);'
+        '  }'
+        '});'
+        'div.addEventListener("touchend", function() {'
+        '  if (div.innerHTML == "preMove' + str(moveEvents) + '") {'
+        '    div.innerHTML = "new<br>";'
+        '  }'
+        '});'
+        'return div;')
+    self._driver.TouchFlick(div, dx, dy, speed)
+    self.assertEquals(1, len(self._driver.FindElements('tag name', 'br')))
+
   def testTouchMovedElement(self):
     div = self._driver.ExecuteScript(
         'document.body.innerHTML = "<div>old</div>";'
@@ -453,7 +497,7 @@ class ChromeDriverTest(ChromeDriverBaseTest):
     self.assertEquals('0123456789+-*/ Hi, there!', value)
 
   def testGetCurrentUrl(self):
-    self.assertTrue('data:,' in self._driver.GetCurrentUrl())
+    self.assertEquals('data:,', self._driver.GetCurrentUrl())
 
   def testGoBackAndGoForward(self):
     self._driver.Load(self.GetHttpUrlForFile('/chromedriver/empty.html'))
@@ -618,6 +662,16 @@ class ChromeDriverTest(ChromeDriverBaseTest):
     self.assertEquals(logs[0]['source'], 'network')
     self.assertEquals(logs[1]['source'], 'javascript')
 
+  def testAutoReporting(self):
+    self.assertFalse(self._driver.IsAutoReporting())
+    self._driver.SetAutoReporting(True)
+    self.assertTrue(self._driver.IsAutoReporting())
+    url = self.GetHttpUrlForFile('/chromedriver/console_log.html')
+    self.assertRaisesRegexp(chromedriver.UnknownError,
+                            '.*(404|Failed to load resource).*',
+                            self._driver.Load,
+                            url)
+
   def testContextMenuEventFired(self):
     self._driver.Load(self.GetHttpUrlForFile('/chromedriver/context_menu.html'))
     self._driver.MouseMoveTo(self._driver.FindElement('tagName', 'div'))
@@ -640,6 +694,40 @@ class ChromeDriverTest(ChromeDriverBaseTest):
 
   def testDoesntHangOnDebugger(self):
     self._driver.ExecuteScript('debugger;')
+
+
+class ChromeDriverAndroidTest(ChromeDriverBaseTest):
+  """End to end tests for Android-specific tests."""
+
+  def testLatestAndroidAppInstalled(self):
+    if ('stable' not in _ANDROID_PACKAGE_KEY and
+        'beta' not in _ANDROID_PACKAGE_KEY):
+      return
+
+    self._driver = self.CreateDriver()
+
+    try:
+      omaha_list = json.loads(
+          urllib2.urlopen('http://omahaproxy.appspot.com/all.json').read())
+      for l in omaha_list:
+        if l['os'] != 'android':
+          continue
+        for v in l['versions']:
+          if (('stable' in v['channel'] and 'stable' in _ANDROID_PACKAGE_KEY) or
+              ('beta' in v['channel'] and 'beta' in _ANDROID_PACKAGE_KEY)):
+            self.assertEquals(v['version'],
+                              self._driver.capabilities['version'])
+            return
+      raise RuntimeError('Malformed omaha JSON')
+    except urllib2.URLError as e:
+      print 'Unable to fetch current version info from omahaproxy (%s)' % e
+
+  def testDeviceManagement(self):
+    self._drivers = [self.CreateDriver() for x in
+                     android_commands.GetAttachedDevices()]
+    self.assertRaises(chromedriver.UnknownError, self.CreateDriver)
+    self._drivers[0].Quit()
+    self._drivers[0] = self.CreateDriver()
 
 
 class ChromeSwitchesCapabilityTest(ChromeDriverBaseTest):
@@ -706,6 +794,29 @@ class ChromeLogPathCapabilityTest(ChromeDriverBaseTest):
     driver.ExecuteScript('console.info("%s")' % self.LOG_MESSAGE)
     driver.Quit()
     self.assertTrue(self.LOG_MESSAGE in open(tmp_log_path.name).read())
+
+
+class ChromeDriverLogTest(unittest.TestCase):
+  """Tests that chromedriver produces the expected log file."""
+
+  UNEXPECTED_CHROMEOPTION_CAP = 'unexpected_chromeoption_capability'
+  LOG_MESSAGE = 'unrecognized chrome option: %s' % UNEXPECTED_CHROMEOPTION_CAP
+
+  def testChromeDriverLog(self):
+    _, tmp_log_path = tempfile.mkstemp(prefix='chromedriver_log_')
+    chromedriver_server = server.Server(
+        _CHROMEDRIVER_BINARY, log_path=tmp_log_path)
+    try:
+      driver = chromedriver.ChromeDriver(
+          chromedriver_server.GetUrl(), chrome_binary=_CHROME_BINARY,
+          experimental_options={ self.UNEXPECTED_CHROMEOPTION_CAP : 1 })
+      driver.Quit()
+    except chromedriver.ChromeDriverException, e:
+      self.assertTrue(self.LOG_MESSAGE in e.message)
+    finally:
+      chromedriver_server.Kill()
+    with open(tmp_log_path, 'r') as f:
+      self.assertTrue(self.LOG_MESSAGE in f.read())
 
 
 class SessionHandlingTest(ChromeDriverBaseTest):
@@ -833,33 +944,43 @@ if __name__ == '__main__':
       help=('Filter for specifying what tests to run, "*" will run all. E.g., '
             '*testStartStop'))
   parser.add_option(
-      '', '--android-package', help='Android package name')
+      '', '--android-package',
+      help=('Android package key. Possible values: ' +
+            str(_ANDROID_NEGATIVE_FILTER.keys())))
   options, args = parser.parse_args()
 
+  options.chromedriver = util.GetAbsolutePathOfUserPath(options.chromedriver)
   if not options.chromedriver or not os.path.exists(options.chromedriver):
     parser.error('chromedriver is required or the given path is invalid.' +
                  'Please run "%s --help" for help' % __file__)
 
-  chromedriver_server = server.Server(os.path.abspath(options.chromedriver),
-                                      options.log_path)
+  global _CHROMEDRIVER_BINARY
+  _CHROMEDRIVER_BINARY = options.chromedriver
+
+  if (options.android_package and
+      options.android_package not in _ANDROID_NEGATIVE_FILTER):
+    parser.error('Invalid --android-package')
+
+  chromedriver_server = server.Server(_CHROMEDRIVER_BINARY, options.log_path)
   global _CHROMEDRIVER_SERVER_URL
   _CHROMEDRIVER_SERVER_URL = chromedriver_server.GetUrl()
 
   global _REFERENCE_CHROMEDRIVER
-  _REFERENCE_CHROMEDRIVER = options.reference_chromedriver
+  _REFERENCE_CHROMEDRIVER = util.GetAbsolutePathOfUserPath(
+      options.reference_chromedriver)
 
   global _CHROME_BINARY
   if options.chrome:
-    _CHROME_BINARY = os.path.abspath(options.chrome)
+    _CHROME_BINARY = util.GetAbsolutePathOfUserPath(options.chrome)
   else:
     _CHROME_BINARY = None
 
-  global _ANDROID_PACKAGE
-  _ANDROID_PACKAGE = options.android_package
+  global _ANDROID_PACKAGE_KEY
+  _ANDROID_PACKAGE_KEY = options.android_package
 
   if options.filter == '*':
-    if _ANDROID_PACKAGE:
-      negative_filter = _ANDROID_NEGATIVE_FILTER[_ANDROID_PACKAGE]
+    if _ANDROID_PACKAGE_KEY:
+      negative_filter = _ANDROID_NEGATIVE_FILTER[_ANDROID_PACKAGE_KEY]
     else:
       negative_filter = _GetDesktopNegativeFilter(options.chrome_version)
     options.filter = '*-' + ':__main__.'.join([''] + negative_filter)

@@ -72,13 +72,10 @@ TEST_F(TabSpecificContentSettingsTest, BlockedContent) {
                                     "A=B",
                                     options,
                                     false);
-  content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_IMAGES,
-                                     std::string());
+  content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_IMAGES);
   content_settings->SetPopupsBlocked(true);
-  content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC,
-                                     std::string());
-  content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA,
-                                     std::string());
+  content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC);
+  content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA);
 
   // Check that only the respective content types are affected.
   EXPECT_TRUE(content_settings->IsContentBlocked(CONTENT_SETTINGS_TYPE_IMAGES));
@@ -373,13 +370,13 @@ TEST_F(TabSpecificContentSettingsTest, SiteDataObserver) {
   content_settings->OnFileSystemAccessed(GURL("http://google.com"),
                                               blocked_by_policy);
   content_settings->OnIndexedDBAccessed(GURL("http://google.com"),
-                                        UTF8ToUTF16("text"),
+                                        base::UTF8ToUTF16("text"),
                                         blocked_by_policy);
   content_settings->OnLocalStorageAccessed(GURL("http://google.com"),
                                            true,
                                            blocked_by_policy);
   content_settings->OnWebDatabaseAccessed(GURL("http://google.com"),
-                                          UTF8ToUTF16("name"),
-                                          UTF8ToUTF16("display_name"),
+                                          base::UTF8ToUTF16("name"),
+                                          base::UTF8ToUTF16("display_name"),
                                           blocked_by_policy);
 }

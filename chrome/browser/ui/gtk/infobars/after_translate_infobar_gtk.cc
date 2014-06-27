@@ -15,24 +15,23 @@
 #include "ui/base/l10n/l10n_util.h"
 
 AfterTranslateInfoBar::AfterTranslateInfoBar(
-    InfoBarService* owner,
-    TranslateInfoBarDelegate* delegate)
-    : TranslateInfoBarBase(owner, delegate),
+    scoped_ptr<TranslateInfoBarDelegate> delegate)
+    : TranslateInfoBarBase(delegate.Pass()),
       weak_factory_(this) {
 }
 
 AfterTranslateInfoBar::~AfterTranslateInfoBar() {
 }
 
-void AfterTranslateInfoBar::InitWidgets() {
-  TranslateInfoBarBase::InitWidgets();
+void AfterTranslateInfoBar::PlatformSpecificSetOwner() {
+  TranslateInfoBarBase::PlatformSpecificSetOwner();
 
   bool swapped_language_combos = false;
   bool autodetermined_source_language =
       GetDelegate()->original_language_index() ==
       TranslateInfoBarDelegate::kNoIndex;
 
-  std::vector<string16> strings;
+  std::vector<base::string16> strings;
   TranslateInfoBarDelegate::GetAfterTranslateStrings(
         &strings, &swapped_language_combos, autodetermined_source_language);
   DCHECK_EQ(autodetermined_source_language ? 2U : 3U, strings.size());
@@ -60,21 +59,24 @@ void AfterTranslateInfoBar::InitWidgets() {
   signals()->Connect(target_lang_combo, "changed",
                      G_CALLBACK(&OnTargetLanguageModifiedThunk), this);
 
-  gtk_box_pack_start(GTK_BOX(new_hbox), CreateLabel(UTF16ToUTF8(strings[0])),
+  gtk_box_pack_start(GTK_BOX(new_hbox),
+                     CreateLabel(base::UTF16ToUTF8(strings[0])),
                      FALSE, FALSE, 0);
   gtk_box_pack_start(
       GTK_BOX(new_hbox),
       (swapped_language_combos || autodetermined_source_language) ?
           target_lang_combo : original_lang_combo,
       FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(new_hbox), CreateLabel(UTF16ToUTF8(strings[1])),
+  gtk_box_pack_start(GTK_BOX(new_hbox),
+                     CreateLabel(base::UTF16ToUTF8(strings[1])),
                      FALSE, FALSE, 0);
   if (!autodetermined_source_language) {
     gtk_box_pack_start(GTK_BOX(new_hbox),
                        swapped_language_combos ?
                            original_lang_combo : target_lang_combo,
                        FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(new_hbox), CreateLabel(UTF16ToUTF8(strings[2])),
+    gtk_box_pack_start(GTK_BOX(new_hbox),
+                       CreateLabel(base::UTF16ToUTF8(strings[2])),
                        FALSE, FALSE, 0);
   }
 

@@ -14,14 +14,13 @@ RenderViewImplParams::RenderViewImplParams(
     int32 main_frame_routing_id,
     int32 surface_id,
     int64 session_storage_namespace_id,
-    const string16& frame_name,
+    const base::string16& frame_name,
     bool is_renderer_created,
     bool swapped_out,
     bool hidden,
     int32 next_page_id,
-    const WebKit::WebScreenInfo& screen_info,
+    const blink::WebScreenInfo& screen_info,
     AccessibilityMode accessibility_mode,
-    bool allow_partial_swap,
     int nw_win_id)
     : opener_id(opener_id),
       renderer_prefs(renderer_prefs),
@@ -37,7 +36,6 @@ RenderViewImplParams::RenderViewImplParams(
       next_page_id(next_page_id),
       screen_info(screen_info),
       accessibility_mode(accessibility_mode),
-      allow_partial_swap(allow_partial_swap),
       nw_win_id(nw_win_id){
 }
 

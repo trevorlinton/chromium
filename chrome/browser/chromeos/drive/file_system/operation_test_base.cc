@@ -6,16 +6,17 @@
 
 #include "base/prefs/testing_pref_service.h"
 #include "base/threading/sequenced_worker_pool.h"
-#include "chrome/browser/chromeos/drive/change_list_processor.h"
+#include "chrome/browser/chromeos/drive/change_list_loader.h"
 #include "chrome/browser/chromeos/drive/fake_free_disk_space_getter.h"
 #include "chrome/browser/chromeos/drive/file_cache.h"
 #include "chrome/browser/chromeos/drive/file_system/operation_observer.h"
 #include "chrome/browser/chromeos/drive/job_scheduler.h"
 #include "chrome/browser/chromeos/drive/resource_metadata.h"
 #include "chrome/browser/chromeos/drive/test_util.h"
+#include "chrome/browser/drive/event_logger.h"
 #include "chrome/browser/drive/fake_drive_service.h"
-#include "chrome/browser/google_apis/test_util.h"
 #include "content/public/browser/browser_thread.h"
+#include "google_apis/drive/test_util.h"
 
 namespace drive {
 namespace file_system {
@@ -31,9 +32,14 @@ void OperationTestBase::LoggingObserver::OnDirectoryChangedByOperation(
   changed_paths_.insert(path);
 }
 
-void OperationTestBase::LoggingObserver::OnCacheFileUploadNeededByOperation(
+void OperationTestBase::LoggingObserver::OnEntryUpdatedByOperation(
     const std::string& local_id) {
-  upload_needed_local_ids_.insert(local_id);
+  updated_local_ids_.insert(local_id);
+}
+
+void OperationTestBase::LoggingObserver::OnDriveSyncError(
+    DriveSyncErrorType type, const std::string& local_id) {
+  drive_sync_errors_.push_back(type);
 }
 
 OperationTestBase::OperationTestBase() {
@@ -57,6 +63,8 @@ void OperationTestBase::SetUp() {
 
   ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
 
+  logger_.reset(new EventLogger);
+
   fake_drive_service_.reset(new FakeDriveService);
   fake_drive_service_->LoadResourceListForWapi(
       "gdata/root_feed.json");
@@ -65,6 +73,7 @@ void OperationTestBase::SetUp() {
 
   scheduler_.reset(new JobScheduler(
       pref_service_.get(),
+      logger_.get(),
       fake_drive_service_.get(),
       blocking_task_runner_.get()));
 
@@ -109,13 +118,17 @@ void OperationTestBase::SetUp() {
   ASSERT_TRUE(success);
 
   // Makes sure the FakeDriveService's content is loaded to the metadata_.
+  about_resource_loader_.reset(new internal::AboutResourceLoader(
+      scheduler_.get()));
+  loader_controller_.reset(new internal::LoaderController);
   change_list_loader_.reset(new internal::ChangeListLoader(
+      logger_.get(),
       blocking_task_runner_.get(),
       metadata_.get(),
       scheduler_.get(),
-      fake_drive_service_.get()));
+      about_resource_loader_.get(),
+      loader_controller_.get()));
   change_list_loader_->LoadIfNeeded(
-      internal::DirectoryFetchInfo(),
       google_apis::test_util::CreateCopyResultCallback(&error));
   test_util::RunBlockingPoolTask();
   ASSERT_EQ(FILE_ERROR_OK, error);
@@ -129,6 +142,20 @@ FileError OperationTestBase::GetLocalResourceEntry(const base::FilePath& path,
       FROM_HERE,
       base::Bind(&internal::ResourceMetadata::GetResourceEntryByPath,
                  base::Unretained(metadata()), path, entry),
+      base::Bind(google_apis::test_util::CreateCopyResultCallback(&error)));
+  test_util::RunBlockingPoolTask();
+  return error;
+}
+
+FileError OperationTestBase::GetLocalResourceEntryById(
+    const std::string& local_id,
+    ResourceEntry* entry) {
+  FileError error = FILE_ERROR_FAILED;
+  base::PostTaskAndReplyWithResult(
+      blocking_task_runner(),
+      FROM_HERE,
+      base::Bind(&internal::ResourceMetadata::GetResourceEntryById,
+                 base::Unretained(metadata()), local_id, entry),
       base::Bind(google_apis::test_util::CreateCopyResultCallback(&error)));
   test_util::RunBlockingPoolTask();
   return error;

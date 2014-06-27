@@ -7,7 +7,8 @@
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "ui/aura/client/screen_position_client.h"
-#include "ui/aura/root_window.h"
+#include "ui/aura/window_event_dispatcher.h"
+#include "ui/aura/window_tree_host.h"
 #include "ui/events/event.h"
 #include "ui/gfx/point.h"
 #include "ui/views/views_delegate.h"
@@ -18,16 +19,26 @@ namespace views {
 
 bool RepostLocatedEvent(gfx::NativeWindow window,
                         const ui::LocatedEvent& event) {
+#if defined(OS_WIN)
+  // On Windows, if the |window| parameter is NULL, then we attempt to repost
+  // the event to the window at the current location, if it is on the current
+  // thread.
+  HWND target_window = NULL;
+  if (!window) {
+    target_window = ::WindowFromPoint(event.location().ToPOINT());
+    if (::GetWindowThreadProcessId(target_window, NULL) !=
+        ::GetCurrentThreadId())
+      return false;
+  } else {
+    if (ViewsDelegate::views_delegate &&
+        !ViewsDelegate::views_delegate->IsWindowInMetro(window))
+      target_window = window->GetHost()->GetAcceleratedWidget();
+  }
+  return RepostLocatedEventWin(target_window, event);
+#else
   if (!window)
     return false;
 
-#if defined(OS_WIN)
-  if (ViewsDelegate::views_delegate &&
-      !ViewsDelegate::views_delegate->IsWindowInMetro(window)) {
-    return RepostLocatedEventWin(
-        window->GetDispatcher()->GetAcceleratedWidget(), event);
-  }
-#endif
   aura::Window* root_window = window->GetRootWindow();
 
   gfx::Point root_loc(event.location());
@@ -39,22 +50,21 @@ bool RepostLocatedEvent(gfx::NativeWindow window,
   spc->ConvertPointFromScreen(root_window, &root_loc);
 
   scoped_ptr<ui::LocatedEvent> relocated;
-  if (event.IsMouseEvent()) {
-    const ui::MouseEvent& orig = static_cast<const ui::MouseEvent&>(event);
-    relocated.reset(new ui::MouseEvent(orig));
-  } else if (event.IsGestureEvent()) {
+  if (!event.IsMouseEvent()) {
     // TODO(rbyers): Gesture event repost is tricky to get right
     // crbug.com/170987.
-    return false;
-  } else {
-    NOTREACHED();
+    DCHECK(event.IsGestureEvent());
     return false;
   }
+
+  const ui::MouseEvent& orig = static_cast<const ui::MouseEvent&>(event);
+  relocated.reset(new ui::MouseEvent(orig));
   relocated->set_location(root_loc);
   relocated->set_root_location(root_loc);
 
-  root_window->GetDispatcher()->RepostEvent(*relocated);
+  root_window->GetHost()->dispatcher()->RepostEvent(*relocated);
   return true;
+#endif
 }
 
 }  // namespace views

@@ -10,8 +10,8 @@
 namespace content {
 
 IndexedDBKeyRange::IndexedDBKeyRange()
-    : lower_(WebKit::WebIDBKeyTypeNull),
-      upper_(WebKit::WebIDBKeyTypeNull),
+    : lower_(blink::WebIDBKeyTypeNull),
+      upper_(blink::WebIDBKeyTypeNull),
       lower_open_(false),
       upper_open_(false) {}
 
@@ -33,7 +33,7 @@ bool IndexedDBKeyRange::IsOnlyKey() const {
   if (lower_open_ || upper_open_)
     return false;
 
-  return lower_.IsEqual(upper_);
+  return lower_.Equals(upper_);
 }
 
 }  // namespace content

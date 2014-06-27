@@ -13,6 +13,7 @@
 #include "url/gurl.h"
 
 namespace base {
+class CommandLine;
 class Environment;
 }
 
@@ -46,7 +47,7 @@ std::string GetIconName();
 // extension with |extension_id| in |profile_path|.
 // This searches the file system for .desktop files in appropriate locations. A
 // shortcut with NoDisplay=true causes hidden to become true, instead of
-// in_applications_menu.
+// creating at APP_MENU_LOCATIONS_SUBDIR_CHROMEAPPS.
 ShellIntegration::ShortcutLocations GetExistingShortcutLocations(
     base::Environment* env,
     const base::FilePath& profile_path,
@@ -89,15 +90,25 @@ std::string GetDesktopFileContents(const base::FilePath& chrome_exe_path,
                                    const std::string& app_name,
                                    const GURL& url,
                                    const std::string& extension_id,
-                                   const base::FilePath& extension_path,
-                                   const string16& title,
+                                   const base::string16& title,
                                    const std::string& icon_name,
                                    const base::FilePath& profile_path,
                                    bool no_display);
 
+// Returns contents for .desktop file that executes command_line. This is a more
+// general form of GetDesktopFileContents. If |no_display| is true, the shortcut
+// will not be visible to the user in menus.
+std::string GetDesktopFileContentsForCommand(
+    const base::CommandLine& command_line,
+    const std::string& app_name,
+    const GURL& url,
+    const base::string16& title,
+    const std::string& icon_name,
+    bool no_display);
+
 // Returns contents for .directory file named |title| with icon |icon_name|. If
 // |icon_name| is empty, will use the Chrome icon.
-std::string GetDirectoryFileContents(const string16& title,
+std::string GetDirectoryFileContents(const base::string16& title,
                                      const std::string& icon_name);
 
 // Create shortcuts on the desktop or in the application menu (as specified by
@@ -107,6 +118,12 @@ std::string GetDirectoryFileContents(const string16& title,
 bool CreateDesktopShortcut(
     const ShellIntegration::ShortcutInfo& shortcut_info,
     const ShellIntegration::ShortcutLocations& creation_locations);
+
+// Create shortcuts in the application menu for the app launcher. Duplicate
+// shortcuts are avoided, so if a requested shortcut already exists it is
+// deleted first. Also creates the icon required by the shortcut.
+bool CreateAppListDesktopShortcut(const std::string& wm_class,
+                                  const std::string& title);
 
 // Delete any desktop shortcuts on desktop or in the application menu that have
 // been added for the extension with |extension_id| in |profile_path|.

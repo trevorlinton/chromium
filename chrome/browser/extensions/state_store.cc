@@ -7,9 +7,9 @@
 #include "base/bind.h"
 #include "base/message_loop/message_loop.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/common/extensions/extension.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
+#include "extensions/common/extension.h"
 
 namespace {
 
@@ -38,6 +38,9 @@ class StateStore::DelayedTaskQueue {
 
   // Marks us ready, and invokes all pending tasks.
   void SetReady();
+
+  // Return whether or not the DelayedTaskQueue is |ready_|.
+  bool ready() const { return ready_; }
 
  private:
   bool ready_;
@@ -123,6 +126,8 @@ void StateStore::RemoveExtensionValue(const std::string& extension_id,
       base::Bind(&ValueStoreFrontend::Remove, base::Unretained(&store_),
                  GetFullKey(extension_id, key)));
 }
+
+bool StateStore::IsInitialized() const { return task_queue_->ready(); }
 
 void StateStore::Observe(int type,
                          const content::NotificationSource& source,

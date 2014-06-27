@@ -11,9 +11,11 @@ import android.content.Intent;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 
-import org.chromium.base.ActivityStatus;
+import org.chromium.base.ApplicationState;
+import org.chromium.base.ApplicationStatus;
 import org.chromium.base.CalledByNative;
 import org.chromium.sync.internal_api.pub.base.ModelType;
+import org.chromium.sync.notifier.InvalidationClientNameProvider;
 import org.chromium.sync.notifier.InvalidationIntentProtocol;
 import org.chromium.sync.notifier.InvalidationPreferences;
 import org.chromium.sync.notifier.InvalidationService;
@@ -25,7 +27,7 @@ import java.util.Set;
  * Controller used to send start, stop, and registration-change commands to the invalidation
  * client library used by Sync.
  */
-public class InvalidationController implements ActivityStatus.StateListener {
+public class InvalidationController implements ApplicationStatus.ApplicationStateListener {
     private static final Object LOCK = new Object();
 
     private static InvalidationController sInstance;
@@ -118,17 +120,29 @@ public class InvalidationController implements ActivityStatus.StateListener {
     @VisibleForTesting
     InvalidationController(Context context) {
         mContext = Preconditions.checkNotNull(context.getApplicationContext());
-        ActivityStatus.registerStateListener(this);
+        ApplicationStatus.registerApplicationStateListener(this);
     }
 
     @Override
-    public void onActivityStateChange(int newState) {
+    public void onApplicationStateChange(int newState) {
         if (SyncStatusHelper.get(mContext).isSyncEnabled()) {
-            if (newState == ActivityStatus.PAUSED) {
-                stop();
-            } else if (newState == ActivityStatus.RESUMED) {
+            if (newState == ApplicationState.HAS_RUNNING_ACTIVITIES) {
                 start();
+            } else if (newState == ApplicationState.HAS_PAUSED_ACTIVITIES) {
+                stop();
             }
         }
+    }
+
+    /**
+     * Fetches the Invalidator client name.
+     *
+     * Note that there is a naming discrepancy here.  In C++, we refer to the invalidation client
+     * identifier that is unique for every invalidation client instance in an account as the client
+     * ID.  In Java, we call it the client name.
+     */
+    @CalledByNative
+    public byte[] getInvalidatorClientId() {
+        return InvalidationClientNameProvider.get().getInvalidatorClientName();
     }
 }

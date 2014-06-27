@@ -8,7 +8,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/common/extensions/extension.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_constants.h"
 
@@ -25,7 +25,7 @@ const char kKeyword[] = "keyword";
 const std::string& OmniboxInfo::GetKeyword(const Extension* extension) {
   OmniboxInfo* info = static_cast<OmniboxInfo*>(
       extension->GetManifestData(manifest_keys::kOmnibox));
-  return info ? info->keyword : EmptyString();
+  return info ? info->keyword : base::EmptyString();
 }
 
 OmniboxHandler::OmniboxHandler() {
@@ -34,14 +34,14 @@ OmniboxHandler::OmniboxHandler() {
 OmniboxHandler::~OmniboxHandler() {
 }
 
-bool OmniboxHandler::Parse(Extension* extension, string16* error) {
+bool OmniboxHandler::Parse(Extension* extension, base::string16* error) {
   scoped_ptr<OmniboxInfo> info(new OmniboxInfo);
   const base::DictionaryValue* dict = NULL;
   if (!extension->manifest()->GetDictionary(manifest_keys::kOmnibox,
                                             &dict) ||
       !dict->GetString(kKeyword, &info->keyword) ||
       info->keyword.empty()) {
-    *error = ASCIIToUTF16(manifest_errors::kInvalidOmniboxKeyword);
+    *error = base::ASCIIToUTF16(manifest_errors::kInvalidOmniboxKeyword);
     return false;
   }
   extension->SetManifestData(manifest_keys::kOmnibox, info.release());

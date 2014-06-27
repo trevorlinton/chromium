@@ -125,7 +125,7 @@ bool TruncateFileName(base::FilePath* path, size_t limit) {
   base::FilePath::StringType truncated;
 #if defined(OS_CHROMEOS) || defined(OS_MACOSX)
   // UTF-8.
-  TruncateUTF8ToByteSize(name, limit, &truncated);
+  base::TruncateUTF8ToByteSize(name, limit, &truncated);
 #elif defined(OS_WIN)
   // UTF-16.
   DCHECK(name.size() > limit);
@@ -183,7 +183,7 @@ void CreateReservation(
       (create_directory ||
        (!default_download_path.empty() &&
         (default_download_path == target_dir)))) {
-    file_util::CreateDirectory(target_dir);
+    base::CreateDirectory(target_dir);
   }
 
   // Check writability of the suggested path. If we can't write to it, default
@@ -198,7 +198,7 @@ void CreateReservation(
   if (is_path_writeable) {
     // Check the limit of file name length if it could be obtained. When the
     // suggested name exceeds the limit, truncate or prompt the user.
-    int max_length = file_util::GetMaximumPathComponentLength(target_dir);
+    int max_length = base::GetMaximumPathComponentLength(target_dir);
     if (max_length != -1) {
       int limit = max_length - kIntermediateNameSuffixLength;
       if (limit <= 0 || !TruncateFileName(&target_path, limit))

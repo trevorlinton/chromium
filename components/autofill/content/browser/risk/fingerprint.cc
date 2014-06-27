@@ -35,7 +35,6 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
-#include "content/public/common/content_client.h"
 #include "content/public/common/geoposition.h"
 #include "content/public/common/webplugininfo.h"
 #include "gpu/config/gpu_info.h"
@@ -44,7 +43,7 @@
 #include "ui/gfx/rect.h"
 #include "ui/gfx/screen.h"
 
-using WebKit::WebScreenInfo;
+using blink::WebScreenInfo;
 
 namespace autofill {
 namespace risk {
@@ -100,14 +99,14 @@ void AddPluginsToFingerprint(const std::vector<content::WebPluginInfo>& plugins,
        it != plugins.end(); ++it) {
     Fingerprint::MachineCharacteristics::Plugin* plugin =
         machine->add_plugin();
-    plugin->set_name(UTF16ToUTF8(it->name));
-    plugin->set_description(UTF16ToUTF8(it->desc));
+    plugin->set_name(base::UTF16ToUTF8(it->name));
+    plugin->set_description(base::UTF16ToUTF8(it->desc));
     for (std::vector<content::WebPluginMimeType>::const_iterator mime_type =
              it->mime_types.begin();
          mime_type != it->mime_types.end(); ++mime_type) {
       plugin->add_mime_type(mime_type->mime_type);
     }
-    plugin->set_version(UTF16ToUTF8(it->version));
+    plugin->set_version(base::UTF16ToUTF8(it->version));
   }
 }
 
@@ -263,6 +262,7 @@ class FingerprintDataLoader : public content::GpuDataManagerObserver {
       const std::string& accept_languages,
       const base::Time& install_time,
       const std::string& app_locale,
+      const std::string& user_agent,
       const base::TimeDelta& timeout,
       const base::Callback<void(scoped_ptr<Fingerprint>)>& callback);
 
@@ -301,6 +301,8 @@ class FingerprintDataLoader : public content::GpuDataManagerObserver {
   const std::string version_;
   const std::string charset_;
   const std::string accept_languages_;
+  const std::string app_locale_;
+  const std::string user_agent_;
   const base::Time install_time_;
 
   // Data that will be loaded asynchronously.
@@ -316,9 +318,6 @@ class FingerprintDataLoader : public content::GpuDataManagerObserver {
   // For invalidating asynchronous callbacks that might arrive after |this|
   // instance is destroyed.
   base::WeakPtrFactory<FingerprintDataLoader> weak_ptr_factory_;
-
-  // The current application locale.
-  std::string app_locale_;
 
   // The callback that will be called once all the data is available.
   base::Callback<void(scoped_ptr<Fingerprint>)> callback_;
@@ -336,6 +335,7 @@ FingerprintDataLoader::FingerprintDataLoader(
     const std::string& accept_languages,
     const base::Time& install_time,
     const std::string& app_locale,
+    const std::string& user_agent,
     const base::TimeDelta& timeout,
     const base::Callback<void(scoped_ptr<Fingerprint>)>& callback)
     : gpu_data_manager_(content::GpuDataManager::GetInstance()),
@@ -347,6 +347,8 @@ FingerprintDataLoader::FingerprintDataLoader(
       version_(version),
       charset_(charset),
       accept_languages_(accept_languages),
+      app_locale_(app_locale),
+      user_agent_(user_agent),
       install_time_(install_time),
       waiting_on_plugins_(true),
       weak_ptr_factory_(this),
@@ -358,7 +360,8 @@ FingerprintDataLoader::FingerprintDataLoader(
                                   weak_ptr_factory_.GetWeakPtr()));
 
   // Load GPU data if needed.
-  if (!gpu_data_manager_->IsCompleteGpuInfoAvailable()) {
+  if (gpu_data_manager_->GpuAccessAllowed(NULL) &&
+      !gpu_data_manager_->IsCompleteGpuInfoAvailable()) {
     gpu_observer_.Add(gpu_data_manager_);
     gpu_data_manager_->RequestCompleteGpuInfoIfNeeded();
   }
@@ -423,7 +426,8 @@ void FingerprintDataLoader::MaybeFillFingerprint() {
   // If all of the data has been loaded, or if the |timeout_timer_| has expired,
   // fill the fingerprint and clean up.
   if (!timeout_timer_.IsRunning() ||
-      (gpu_data_manager_->IsCompleteGpuInfoAvailable() &&
+      ((!gpu_data_manager_->GpuAccessAllowed(NULL) ||
+        gpu_data_manager_->IsCompleteGpuInfoAvailable()) &&
        fonts_ &&
        !waiting_on_plugins_ &&
        (geoposition_.Validate() ||
@@ -445,7 +449,7 @@ void FingerprintDataLoader::FillFingerprint() {
   machine->set_utc_offset_ms(GetTimezoneOffset().InMilliseconds());
   machine->set_browser_language(app_locale_);
   machine->set_charset(charset_);
-  machine->set_user_agent(content::GetUserAgent(GURL()));
+  machine->set_user_agent(user_agent_);
   machine->set_ram(base::SysInfo::AmountOfPhysicalMemory());
   machine->set_browser_build(version_);
   machine->set_browser_feature(
@@ -505,19 +509,21 @@ void GetFingerprintInternal(
     uint64 obfuscated_gaia_id,
     const gfx::Rect& window_bounds,
     const gfx::Rect& content_bounds,
-    const WebKit::WebScreenInfo& screen_info,
+    const blink::WebScreenInfo& screen_info,
     const std::string& version,
     const std::string& charset,
     const std::string& accept_languages,
     const base::Time& install_time,
     const std::string& app_locale,
+    const std::string& user_agent,
     const base::TimeDelta& timeout,
     const base::Callback<void(scoped_ptr<Fingerprint>)>& callback) {
   // Begin loading all of the data that we need to load asynchronously.
   // This class is responsible for freeing its own memory.
   new FingerprintDataLoader(obfuscated_gaia_id, window_bounds, content_bounds,
                             screen_info, version, charset, accept_languages,
-                            install_time, app_locale, timeout, callback);
+                            install_time, app_locale, user_agent, timeout,
+                            callback);
 }
 
 }  // namespace internal
@@ -531,11 +537,12 @@ void GetFingerprint(
     const std::string& accept_languages,
     const base::Time& install_time,
     const std::string& app_locale,
+    const std::string& user_agent,
     const base::Callback<void(scoped_ptr<Fingerprint>)>& callback) {
   gfx::Rect content_bounds;
   web_contents.GetView()->GetContainerBounds(&content_bounds);
 
-  WebKit::WebScreenInfo screen_info;
+  blink::WebScreenInfo screen_info;
   content::RenderWidgetHostView* host_view =
       web_contents.GetRenderWidgetHostView();
   if (host_view)
@@ -543,7 +550,7 @@ void GetFingerprint(
 
   internal::GetFingerprintInternal(
       obfuscated_gaia_id, window_bounds, content_bounds, screen_info, version,
-      charset, accept_languages, install_time, app_locale,
+      charset, accept_languages, install_time, app_locale, user_agent,
       base::TimeDelta::FromSeconds(kTimeoutSeconds), callback);
 }
 

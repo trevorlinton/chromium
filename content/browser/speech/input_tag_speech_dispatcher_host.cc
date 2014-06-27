@@ -7,6 +7,7 @@
 #include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "content/browser/browser_plugin/browser_plugin_guest.h"
+#include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/speech/speech_recognition_manager_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
@@ -25,16 +26,25 @@ InputTagSpeechDispatcherHost::InputTagSpeechDispatcherHost(
     bool is_guest,
     int render_process_id,
     net::URLRequestContextGetter* url_request_context_getter)
-    : is_guest_(is_guest),
+    : BrowserMessageFilter(SpeechRecognitionMsgStart),
+      is_guest_(is_guest),
       render_process_id_(render_process_id),
-      url_request_context_getter_(url_request_context_getter) {
+      url_request_context_getter_(url_request_context_getter),
+      weak_factory_(this) {
   // Do not add any non-trivial initialization here, instead do it lazily when
   // required (e.g. see the method |SpeechRecognitionManager::GetInstance()|) or
   // add an Init() method.
 }
 
 InputTagSpeechDispatcherHost::~InputTagSpeechDispatcherHost() {
-  SpeechRecognitionManager::GetInstance()->AbortAllSessionsForListener(this);
+  SpeechRecognitionManager::GetInstance()->AbortAllSessionsForRenderProcess(
+      render_process_id_);
+}
+
+base::WeakPtr<InputTagSpeechDispatcherHost>
+InputTagSpeechDispatcherHost::AsWeakPtr() {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
+  return weak_factory_.GetWeakPtr();
 }
 
 bool InputTagSpeechDispatcherHost::OnMessageReceived(
@@ -60,10 +70,25 @@ void InputTagSpeechDispatcherHost::OverrideThreadForMessage(
     *thread = BrowserThread::UI;
 }
 
+void InputTagSpeechDispatcherHost::OnChannelClosing() {
+  weak_factory_.InvalidateWeakPtrs();
+}
+
 void InputTagSpeechDispatcherHost::OnStartRecognition(
-    const InputTagSpeechHostMsg_StartRecognition_Params& params) {  
+    const InputTagSpeechHostMsg_StartRecognition_Params& params) {
   InputTagSpeechHostMsg_StartRecognition_Params input_params(params);
   int render_process_id = render_process_id_;
+
+  // Check that the origin specified by the renderer process is one
+  // that it is allowed to access.
+  if (params.origin_url != "null" &&
+      !ChildProcessSecurityPolicyImpl::GetInstance()->CanRequestURL(
+          render_process_id, GURL(params.origin_url))) {
+    LOG(ERROR) << "ITSDH::OnStartRecognition, disallowed origin: "
+               << params.origin_url;
+    return;
+  }
+
   // The chrome layer is mostly oblivious to BrowserPlugin guests and so it
   // cannot correctly place the speech bubble relative to a guest. Thus, we
   // set up the speech recognition context relative to the embedder.
@@ -123,7 +148,7 @@ void InputTagSpeechDispatcherHost::StartRecognitionOnIO(
   config.initial_context = context;
   config.url_request_context_getter = url_request_context_getter_.get();
   config.filter_profanities = filter_profanities;
-  config.event_listener = this;
+  config.event_listener = AsWeakPtr();
 
   int session_id = SpeechRecognitionManager::GetInstance()->CreateSession(
       config);

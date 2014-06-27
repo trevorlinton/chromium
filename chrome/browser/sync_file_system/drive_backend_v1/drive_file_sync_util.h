@@ -5,14 +5,10 @@
 #ifndef CHROME_BROWSER_SYNC_FILE_SYSTEM_DRIVE_BACKEND_V1_DRIVE_FILE_SYNC_UTIL_H_
 #define CHROME_BROWSER_SYNC_FILE_SYSTEM_DRIVE_BACKEND_V1_DRIVE_FILE_SYNC_UTIL_H_
 
-#include "chrome/browser/google_apis/gdata_errorcode.h"
 #include "chrome/browser/sync_file_system/sync_status_code.h"
+#include "google_apis/drive/gdata_errorcode.h"
 
 namespace sync_file_system {
-
-// Translates GDataErrorCode to SyncStatusCode.
-SyncStatusCode GDataErrorCodeToSyncStatusCode(
-    google_apis::GDataErrorCode error);
 
 // Enables or disables Drive API in Sync FileSystem API.
 // TODO(nhiroki): This method should go away when we completely migrate to

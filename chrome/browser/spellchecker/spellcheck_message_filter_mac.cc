@@ -36,24 +36,24 @@ class SpellingRequest {
                   content::BrowserMessageFilter* destination,
                   int render_process_id);
 
-  void RequestCheck(const string16& text,
+  void RequestCheck(const base::string16& text,
                     int route_id,
                     int identifier,
                     int document_tag,
                     const std::vector<SpellCheckMarker>& markers);
  private:
   // Request server-side checking.
-  void RequestRemoteCheck(const string16& text);
+  void RequestRemoteCheck(const base::string16& text);
 
   // Request a check from local spell checker.
-  void RequestLocalCheck(const string16& text, int document_tag);
+  void RequestLocalCheck(const base::string16& text, int document_tag);
 
   // Check if all pending requests are done, send reply to render process if so.
   void OnCheckCompleted();
 
   // Called when server-side checking is complete.
   void OnRemoteCheckCompleted(bool success,
-                              const string16& text,
+                              const base::string16& text,
                               const std::vector<SpellCheckResult>& results);
 
   // Called when local checking is complete.
@@ -90,7 +90,7 @@ SpellingRequest::SpellingRequest(SpellingServiceClient* client,
 }
 
 void SpellingRequest::RequestCheck(
-    const string16& text,
+    const base::string16& text,
     int route_id,
     int identifier,
     int document_tag,
@@ -103,7 +103,8 @@ void SpellingRequest::RequestCheck(
   document_tag_ = document_tag;
   markers_ = markers;
 
-  // Send the remote query out.
+  // Send the remote query out. The barrier owns |this|, ensuring it is deleted
+  // after completion.
   completion_barrier_ =
       BarrierClosure(2,
                      base::Bind(&SpellingRequest::OnCheckCompleted,
@@ -112,7 +113,7 @@ void SpellingRequest::RequestCheck(
   RequestLocalCheck(text, document_tag_);
 }
 
-void SpellingRequest::RequestRemoteCheck(const string16& text) {
+void SpellingRequest::RequestRemoteCheck(const base::string16& text) {
   BrowserContext* context = NULL;
   content::RenderProcessHost* host =
       content::RenderProcessHost::FromID(render_process_id_);
@@ -127,7 +128,7 @@ void SpellingRequest::RequestRemoteCheck(const string16& text) {
                base::Unretained(this)));
 }
 
-void SpellingRequest::RequestLocalCheck(const string16& text,
+void SpellingRequest::RequestLocalCheck(const base::string16& text,
                                         int document_tag) {
   spellcheck_mac::RequestTextCheck(
       document_tag,
@@ -155,11 +156,12 @@ void SpellingRequest::OnCheckCompleted() {
   destination_->Release();
 
   // Object is self-managed - at this point, its life span is over.
+  // No need to delete, since the OnCheckCompleted callback owns |this|.
 }
 
 void SpellingRequest::OnRemoteCheckCompleted(
     bool success,
-    const string16& text,
+    const base::string16& text,
     const std::vector<SpellCheckResult>& results) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
   remote_success_ = success;
@@ -187,7 +189,8 @@ void SpellingRequest::OnLocalCheckCompleted(
 
 
 SpellCheckMessageFilterMac::SpellCheckMessageFilterMac(int render_process_id)
-    : render_process_id_(render_process_id),
+    : BrowserMessageFilter(SpellCheckMsgStart),
+      render_process_id_(render_process_id),
       client_(new SpellingServiceClient) {
 }
 
@@ -245,15 +248,15 @@ void SpellCheckMessageFilterMac::CombineResults(
 
 SpellCheckMessageFilterMac::~SpellCheckMessageFilterMac() {}
 
-void SpellCheckMessageFilterMac::OnCheckSpelling(const string16& word,
+void SpellCheckMessageFilterMac::OnCheckSpelling(const base::string16& word,
                                                  int route_id,
                                                  bool* correct) {
   *correct = spellcheck_mac::CheckSpelling(word, ToDocumentTag(route_id));
 }
 
 void SpellCheckMessageFilterMac::OnFillSuggestionList(
-    const string16& word,
-    std::vector<string16>* suggestions) {
+    const base::string16& word,
+    std::vector<base::string16>* suggestions) {
   spellcheck_mac::FillSuggestionList(word, suggestions);
 }
 
@@ -262,14 +265,14 @@ void SpellCheckMessageFilterMac::OnShowSpellingPanel(bool show) {
 }
 
 void SpellCheckMessageFilterMac::OnUpdateSpellingPanelWithMisspelledWord(
-    const string16& word) {
+    const base::string16& word) {
   spellcheck_mac::UpdateSpellingPanelWithMisspelledWord(word);
 }
 
 void SpellCheckMessageFilterMac::OnRequestTextCheck(
     int route_id,
     int identifier,
-    const string16& text,
+    const base::string16& text,
     std::vector<SpellCheckMarker> markers) {
   DCHECK(!text.empty());
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));

@@ -33,11 +33,10 @@ class BookmarkModel;
   Profile* profile_;  // weak
   const BookmarkNode* parentNode_;  // weak; owned by the model
   GURL url_;  // This and title_ are only used for new urls.
-  string16 title_;
+  base::string16 title_;
   BookmarkEditor::Configuration configuration_;
   NSString* initialName_;
   NSString* displayName_;  // Bound to a text field in the dialog.
-  BOOL okEnabled_;  // Bound to the OK button.
   BOOL creatingNewFolders_;  // True while in createNewFolders.
   // An array of BookmarkFolderInfo where each item describes a folder in the
   // BookmarkNode structure.
@@ -51,7 +50,6 @@ class BookmarkModel;
 
 @property(nonatomic, copy) NSString* initialName;
 @property(nonatomic, copy) NSString* displayName;
-@property(nonatomic, assign) BOOL okEnabled;
 @property(nonatomic, retain, readonly) NSArray* folderTreeArray;
 @property(nonatomic, copy) NSArray* tableSelectionPaths;
 
@@ -62,7 +60,7 @@ class BookmarkModel;
                    profile:(Profile*)profile
                     parent:(const BookmarkNode*)parent
                        url:(const GURL&)url
-                     title:(const string16&)title
+                     title:(const base::string16&)title
              configuration:(BookmarkEditor::Configuration)configuration;
 
 // Run the bookmark editor as a modal sheet.  Does not block.
@@ -113,12 +111,15 @@ class BookmarkModel;
          fromParent:(const BookmarkNode*)parent;
 - (void)modelChangedPreserveSelection:(BOOL)preserve;
 
+// Determines if the ok button should be enabled, can be overridden.
+- (BOOL)okEnabled;
+
 // Accessors
 - (BookmarkModel*)bookmarkModel;
 - (Profile*)profile;
 - (const BookmarkNode*)parentNode;
 - (const GURL&)url;
-- (const string16&)title;
+- (const base::string16&)title;
 
 @end
 

@@ -25,7 +25,7 @@ namespace system {
 namespace {
 
 const int64_t kMicrosPerMs = 1000;
-const int64_t kEpsilonMicros = 15 * kMicrosPerMs;  // 15 ms.
+const int64_t kEpsilonMicros = 30 * kMicrosPerMs;  // 30 ms.
 
 class MockSimpleDispatcher : public SimpleDispatcher {
  public:
@@ -57,9 +57,21 @@ class MockSimpleDispatcher : public SimpleDispatcher {
     StateChangedNoLock();
   }
 
+  virtual Type GetType() const OVERRIDE {
+    return kTypeUnknown;
+  }
+
  private:
   friend class base::RefCountedThreadSafe<MockSimpleDispatcher>;
   virtual ~MockSimpleDispatcher() {}
+
+  virtual scoped_refptr<Dispatcher>
+      CreateEquivalentDispatcherAndCloseImplNoLock() OVERRIDE {
+    scoped_refptr<MockSimpleDispatcher> rv(new MockSimpleDispatcher());
+    rv->satisfied_flags_ = satisfied_flags_;
+    rv->satisfiable_flags_ = satisfiable_flags_;
+    return scoped_refptr<Dispatcher>(rv.get());
+  }
 
   // |SimpleDispatcher| implementation:
   virtual MojoWaitFlags SatisfiedFlagsNoLock() const OVERRIDE {

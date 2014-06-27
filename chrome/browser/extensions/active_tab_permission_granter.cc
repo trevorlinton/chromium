@@ -6,19 +6,19 @@
 
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_id.h"
-#include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/extension_messages.h"
-#include "chrome/common/extensions/permissions/permissions_data.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/extension_messages.h"
 #include "extensions/common/permissions/permission_set.h"
+#include "extensions/common/permissions/permissions_data.h"
 #include "extensions/common/user_script.h"
 
 using content::RenderProcessHost;
@@ -30,7 +30,7 @@ ActiveTabPermissionGranter::ActiveTabPermissionGranter(
     content::WebContents* web_contents, int tab_id, Profile* profile)
     : WebContentsObserver(web_contents), tab_id_(tab_id) {
   registrar_.Add(this,
-                 chrome::NOTIFICATION_EXTENSION_UNLOADED,
+                 chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
                  content::Source<Profile>(profile));
 }
 
@@ -59,7 +59,8 @@ void ActiveTabPermissionGranter::GrantIfRequested(const Extension* extension) {
   if (!new_apis.empty() || !new_hosts.is_empty()) {
     granted_extensions_.Insert(extension);
     scoped_refptr<const PermissionSet> new_permissions =
-        new PermissionSet(new_apis, new_hosts, URLPatternSet());
+        new PermissionSet(new_apis, ManifestPermissionSet(),
+                          new_hosts, URLPatternSet());
     PermissionsData::UpdateTabSpecificPermissions(extension,
                                                   tab_id_,
                                                   new_permissions);
@@ -93,7 +94,7 @@ void ActiveTabPermissionGranter::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  DCHECK_EQ(type, chrome::NOTIFICATION_EXTENSION_UNLOADED);
+  DCHECK_EQ(type, chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED);
   const Extension* extension =
       content::Details<UnloadedExtensionInfo>(details)->extension;
   // Note: don't need to clear the permissions (nor tell the renderer about it)

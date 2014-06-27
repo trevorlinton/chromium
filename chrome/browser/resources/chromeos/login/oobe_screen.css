@@ -97,7 +97,7 @@
 #security-info a,
 #eula a,
 .step-extra-controls a {
-  color: #8c8c8c;
+  color: rgb(49, 106, 197); /* same as 'Learn more' link */
   font-size: 12px;
   text-decoration: none;
 }
@@ -138,10 +138,6 @@ html[dir=rtl] .step-extra-controls {
 #oobe.eula #back-button,
 #oobe.kiosk-enable #kiosk-cancel-button,
 #oobe.kiosk-enable #kiosk-enable-button,
-#oobe.oauth-enrollment #oauth-enroll-cancel-button,
-#oobe.oauth-enrollment #oauth-enroll-done-button,
-#oobe.oauth-enrollment #oauth-enroll-explain-button,
-#oobe.oauth-enrollment #oauth-enroll-try-again-button,
 #oobe.reset #reset-button,
 #oobe.reset #reset-cancel-button,
 #oobe.signin #signin-button,

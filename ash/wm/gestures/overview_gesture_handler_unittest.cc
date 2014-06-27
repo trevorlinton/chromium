@@ -6,11 +6,11 @@
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/overview/window_selector_controller.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/test/event_generator.h"
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/test/test_windows.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_event_dispatcher.h"
 
 namespace ash {
 namespace internal {
@@ -138,6 +138,36 @@ TEST_F(OverviewGestureHandlerTest, SwipeUpDownWithoutReleasing) {
                               0, 10,
                               num_fingers);
   generator.Dispatch(&fling_start);
+}
+
+// Tests a swipe down from the top of the screen to enter and exit overview.
+TEST_F(OverviewGestureHandlerTest, GestureSwipe) {
+  gfx::Rect bounds(0, 0, 400, 400);
+  aura::Window* root_window = Shell::GetPrimaryRootWindow();
+  scoped_ptr<aura::Window> window1(CreateWindow(bounds));
+  scoped_ptr<aura::Window> window2(CreateWindow(bounds));
+  aura::test::EventGenerator generator(root_window, root_window);
+  gfx::Point start_points[3];
+  start_points[0] = start_points[1] = start_points[2] = gfx::Point();
+  generator.GestureMultiFingerScroll(3, start_points, 5, 10, 0, 100);
+  EXPECT_TRUE(IsSelecting());
+
+  generator.GestureMultiFingerScroll(3, start_points, 5, 10, 0, 100);
+  EXPECT_FALSE(IsSelecting());
+}
+
+// Tests that a swipe down from the top of a window doesn't enter overview.
+// http://crbug.com/313859
+TEST_F(OverviewGestureHandlerTest, GestureSwipeTopOfWindow) {
+  gfx::Rect bounds(100, 100, 400, 400);
+  aura::Window* root_window = Shell::GetPrimaryRootWindow();
+  scoped_ptr<aura::Window> window1(CreateWindow(bounds));
+  scoped_ptr<aura::Window> window2(CreateWindow(bounds));
+  aura::test::EventGenerator generator(root_window, window2.get());
+  gfx::Point start_points[3];
+  start_points[0] = start_points[1] = start_points[2] = gfx::Point(105, 105);
+  generator.GestureMultiFingerScroll(3, start_points, 5, 10, 0, 100);
+  EXPECT_FALSE(IsSelecting());
 }
 
 }  // namespace internal

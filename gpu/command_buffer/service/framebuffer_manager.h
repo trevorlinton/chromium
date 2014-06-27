@@ -32,6 +32,7 @@ class GPU_EXPORT Framebuffer : public base::RefCounted<Framebuffer> {
     virtual GLsizei width() const = 0;
     virtual GLsizei height() const = 0;
     virtual GLenum internal_format() const = 0;
+    virtual GLenum texture_type() const = 0;
     virtual GLsizei samples() const = 0;
     virtual GLuint object_name() const = 0;
     virtual bool cleared() const = 0;
@@ -48,6 +49,8 @@ class GPU_EXPORT Framebuffer : public base::RefCounted<Framebuffer> {
         GLenum attachment_type, uint32 max_color_attachments) = 0;
     virtual void AddToSignature(
         TextureManager* texture_manager, std::string* signature) const = 0;
+    virtual void OnWillRenderTo() const = 0;
+    virtual void OnDidRenderTo() const = 0;
 
    protected:
     friend class base::RefCounted<Attachment>;
@@ -103,6 +106,9 @@ class GPU_EXPORT Framebuffer : public base::RefCounted<Framebuffer> {
   bool HasDepthAttachment() const;
   bool HasStencilAttachment() const;
   GLenum GetColorAttachmentFormat() const;
+  // If the color attachment is a texture, returns its type; otherwise,
+  // returns 0.
+  GLenum GetColorAttachmentTextureType() const;
 
   // Verify all the rules in OpenGL ES 2.0.25 4.4.5 are followed.
   // Returns GL_FRAMEBUFFER_COMPLETE if there are no reasons we know we can't
@@ -133,6 +139,8 @@ class GPU_EXPORT Framebuffer : public base::RefCounted<Framebuffer> {
   }
 
   void OnTextureRefDetached(TextureRef* texture);
+  void OnWillRenderTo() const;
+  void OnDidRenderTo() const;
 
  private:
   friend class FramebufferManager;

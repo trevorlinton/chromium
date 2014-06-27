@@ -29,6 +29,7 @@ class Command(object):
   REFRESH = (_Method.POST, '/session/:sessionId/refresh')
   EXECUTE_SCRIPT = (_Method.POST, '/session/:sessionId/execute')
   EXECUTE_ASYNC_SCRIPT = (_Method.POST, '/session/:sessionId/execute_async')
+  LAUNCH_APP = (_Method.POST, '/session/:sessionId/chromium/launch_app')
   GET_CURRENT_URL = (_Method.GET, '/session/:sessionId/url')
   GET_TITLE = (_Method.GET, '/session/:sessionId/title')
   GET_PAGE_SOURCE = (_Method.GET, '/session/:sessionId/source')
@@ -133,6 +134,8 @@ class Command(object):
   TOUCH_FLICK = (_Method.POST, '/session/:sessionId/touch/flick')
   GET_LOG = (_Method.POST, '/session/:sessionId/log')
   GET_AVAILABLE_LOG_TYPES = (_Method.GET, '/session/:sessionId/log/types')
+  IS_AUTO_REPORTING = (_Method.GET, '/session/:sessionId/autoreport')
+  SET_AUTO_REPORTING = (_Method.POST, '/session/:sessionId/autoreport')
   GET_SESSION_LOGS = (_Method.POST, '/logs')
   STATUS = (_Method.GET, '/status')
 

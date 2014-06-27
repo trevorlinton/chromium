@@ -12,11 +12,11 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/extensions/api/plugins/plugins_handler.h"
-#include "chrome/common/extensions/extension.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/plugin_service.h"
 #include "content/public/common/pepper_plugin_info.h"
+#include "extensions/common/extension.h"
 #include "url/gurl.h"
 
 using content::PluginService;
@@ -25,22 +25,26 @@ static const char* kNaClPluginMimeType = "application/x-nacl";
 
 namespace extensions {
 
-PluginManager::PluginManager(Profile* profile) : profile_(profile) {
-  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_LOADED,
-                 content::Source<Profile>(profile));
-  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED,
-                 content::Source<Profile>(profile));
+PluginManager::PluginManager(content::BrowserContext* context)
+    : profile_(Profile::FromBrowserContext(context)) {
+  registrar_.Add(this,
+                 chrome::NOTIFICATION_EXTENSION_LOADED,
+                 content::Source<Profile>(profile_));
+  registrar_.Add(this,
+                 chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
+                 content::Source<Profile>(profile_));
 }
 
 PluginManager::~PluginManager() {
 }
 
-static base::LazyInstance<ProfileKeyedAPIFactory<PluginManager> >
+static base::LazyInstance<BrowserContextKeyedAPIFactory<PluginManager> >
     g_factory = LAZY_INSTANCE_INITIALIZER;
 
 // static
-ProfileKeyedAPIFactory<PluginManager>* PluginManager::GetFactoryInstance() {
-  return &g_factory.Get();
+BrowserContextKeyedAPIFactory<PluginManager>*
+PluginManager::GetFactoryInstance() {
+  return g_factory.Pointer();
 }
 
 void PluginManager::Observe(int type,
@@ -86,7 +90,7 @@ void PluginManager::Observe(int type,
     if (plugins_or_nacl_changed)
       PluginService::GetInstance()->PurgePluginListCache(profile_, false);
 
-  } else if (type == chrome::NOTIFICATION_EXTENSION_UNLOADED) {
+  } else if (type == chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED) {
     const Extension* extension =
         content::Details<UnloadedExtensionInfo>(details)->extension;
 
@@ -167,9 +171,10 @@ void PluginManager::UpdatePluginListWithNaClModules() {
         // manifest file.
         content::WebPluginMimeType mime_type_info;
         mime_type_info.mime_type = iter->mime_type;
-        mime_type_info.additional_param_names.push_back(UTF8ToUTF16("nacl"));
+        mime_type_info.additional_param_names.push_back(
+            base::UTF8ToUTF16("nacl"));
         mime_type_info.additional_param_values.push_back(
-            UTF8ToUTF16(iter->url.spec()));
+            base::UTF8ToUTF16(iter->url.spec()));
         info.mime_types.push_back(mime_type_info);
       }
 

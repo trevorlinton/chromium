@@ -4,11 +4,17 @@
 
 #include "base/process/process_metrics.h"
 
+#include <sys/sysctl.h>
+#include <sys/user.h>
+#include <unistd.h>
+
+#include "base/sys_info.h"
+
 namespace base {
 
 ProcessMetrics::ProcessMetrics(ProcessHandle process)
     : process_(process),
-      last_time_(0),
+      last_cpu_time_(0),
       last_system_time_(0),
       last_cpu_(0) {
   processor_count_ = base::SysInfo::NumberOfProcessors();

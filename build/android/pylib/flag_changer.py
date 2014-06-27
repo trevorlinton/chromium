@@ -2,9 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import constants
 import logging
-import traceback
 
 
 class FlagChanger(object):
@@ -17,8 +15,7 @@ class FlagChanger(object):
     once the tests have completed.
   """
 
-  def __init__(self, adb,
-               cmdline_file=constants.PACKAGE_INFO['chrome'].cmdline_file):
+  def __init__(self, adb, cmdline_file):
     """Initializes the FlagChanger and records the original arguments.
 
     Args:
@@ -114,7 +111,8 @@ class FlagChanger(object):
       assert not self._adb.FileExistsOnDevice(self._cmdline_file), (
           'Failed to remove the command line file at %s' % self._cmdline_file)
 
-  def _TokenizeFlags(self, line):
+  @staticmethod
+  def _TokenizeFlags(line):
     """Changes the string containing the command line into a list of flags.
 
     Follows similar logic to CommandLine.java::tokenizeQuotedArguments:

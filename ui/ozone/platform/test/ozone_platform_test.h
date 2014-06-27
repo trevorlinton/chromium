@@ -6,8 +6,9 @@
 #define UI_OZONE_PLATFORM_TEST_OZONE_PLATFORM_TEST_H_
 
 #include "base/files/file_path.h"
-#include "ui/events/ozone/evdev/event_factory.h"
-#include "ui/gfx/ozone/impl/file_surface_factory_ozone.h"
+#include "ui/base/cursor/ozone/cursor_factory_ozone.h"
+#include "ui/events/ozone/evdev/event_factory_evdev.h"
+#include "ui/gfx/ozone/impl/file_surface_factory.h"
 #include "ui/ozone/ozone_platform.h"
 
 namespace ui {
@@ -22,10 +23,15 @@ class OzonePlatformTest : public OzonePlatform {
 
   virtual gfx::SurfaceFactoryOzone* GetSurfaceFactoryOzone() OVERRIDE;
   virtual ui::EventFactoryOzone* GetEventFactoryOzone() OVERRIDE;
+  virtual ui::InputMethodContextFactoryOzone*
+      GetInputMethodContextFactoryOzone() OVERRIDE;
+  virtual ui::CursorFactoryOzone* GetCursorFactoryOzone() OVERRIDE;
 
  private:
-  gfx::FileSurfaceFactoryOzone surface_factory_ozone_;
+  gfx::FileSurfaceFactory surface_factory_ozone_;
   ui::EventFactoryEvdev event_factory_ozone_;
+  ui::InputMethodContextFactoryOzone input_method_context_factory_ozone_;
+  ui::CursorFactoryOzone cursor_factory_ozone_;
 
   DISALLOW_COPY_AND_ASSIGN(OzonePlatformTest);
 };

@@ -10,10 +10,8 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/extensions/extension_process_manager.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/url_constants.h"
 #include "components/nacl/common/nacl_process_type.h"
 #include "content/public/browser/browser_child_process_host_iterator.h"
@@ -26,7 +24,10 @@
 #include "content/public/browser/render_widget_host_iterator.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/bindings_policy.h"
+#include "extensions/browser/process_manager.h"
+#include "extensions/browser/process_map.h"
 #include "extensions/browser/view_type_utils.h"
+#include "extensions/common/extension.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -152,12 +153,12 @@ std::string MemoryDetails::ToLogString() {
             iter1->process_type, iter1->renderer_type);
     if (!iter1->titles.empty()) {
       log += " [";
-      for (std::vector<string16>::const_iterator iter2 =
+      for (std::vector<base::string16>::const_iterator iter2 =
                iter1->titles.begin();
            iter2 != iter1->titles.end(); ++iter2) {
         if (iter2 != iter1->titles.begin())
           log += "|";
-        log += UTF16ToUTF8(*iter2);
+        log += base::UTF16ToUTF8(*iter2);
       }
       log += "]";
     }
@@ -238,7 +239,7 @@ void MemoryDetails::CollectChildInfoOnUIThread() {
       extensions::ProcessMap* extension_process_map = NULL;
       // No extensions on Android. So extension_service can be NULL.
       if (extension_service)
-          extension_process_map = extension_service->process_map();
+          extension_process_map = extensions::ProcessMap::Get(profile);
 
       // The RenderProcessHost may host multiple WebContentses.  Any
       // of them which contain diagnostics information make the whole
@@ -281,7 +282,7 @@ void MemoryDetails::CollectChildInfoOnUIThread() {
         const Extension* extension =
             extension_service->extensions()->GetByID(url.host());
         if (extension) {
-          string16 title = UTF8ToUTF16(extension->name());
+          base::string16 title = base::UTF8ToUTF16(extension->name());
           process.titles.push_back(title);
           process.renderer_type =
               ProcessMemoryInformation::RENDERER_EXTENSION;
@@ -296,14 +297,14 @@ void MemoryDetails::CollectChildInfoOnUIThread() {
       }
 
       if (type == extensions::VIEW_TYPE_BACKGROUND_CONTENTS) {
-        process.titles.push_back(UTF8ToUTF16(url.spec()));
+        process.titles.push_back(base::UTF8ToUTF16(url.spec()));
         process.renderer_type =
             ProcessMemoryInformation::RENDERER_BACKGROUND_APP;
         continue;
       }
 
       if (type == extensions::VIEW_TYPE_NOTIFICATION) {
-        process.titles.push_back(UTF8ToUTF16(url.spec()));
+        process.titles.push_back(base::UTF8ToUTF16(url.spec()));
         process.renderer_type =
             ProcessMemoryInformation::RENDERER_NOTIFICATION;
         continue;
@@ -314,7 +315,7 @@ void MemoryDetails::CollectChildInfoOnUIThread() {
       if (process.renderer_type == ProcessMemoryInformation::RENDERER_UNKNOWN)
         process.renderer_type = ProcessMemoryInformation::RENDERER_NORMAL;
 
-      string16 title = contents->GetTitle();
+      base::string16 title = contents->GetTitle();
       if (!title.length())
         title = l10n_util::GetStringUTF16(IDS_DEFAULT_TAB_TITLE);
       process.titles.push_back(title);

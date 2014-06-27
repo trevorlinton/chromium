@@ -94,7 +94,7 @@ TEST_F(CtSerializationTest, EncodesV1SCTSignedData) {
   base::Time timestamp = base::Time::UnixEpoch() +
       base::TimeDelta::FromMilliseconds(1348589665525);
   std::string dummy_entry("abc");
-  std::string empty_extensions("");
+  std::string empty_extensions;
   // For now, no known failure cases.
   std::string encoded;
   ASSERT_TRUE(ct::EncodeV1SCTSignedData(
@@ -135,27 +135,23 @@ TEST_F(CtSerializationTest, DecodesSignedCertificateTimestamp) {
   std::string encoded_test_sct(ct::GetTestSignedCertificateTimestamp());
   base::StringPiece encoded_sct(encoded_test_sct);
 
-  ct::SignedCertificateTimestamp sct;
+  scoped_refptr<ct::SignedCertificateTimestamp> sct;
   ASSERT_TRUE(ct::DecodeSignedCertificateTimestamp(&encoded_sct, &sct));
-  EXPECT_EQ(0, sct.version);
-  std::string expected_log_key(
-      "\xdf\x1c\x2e\xc1\x15\x00\x94\x52\x47\xa9\x61\x68\x32\x5d\xdc\x5c\x79\x59"
-      "\xe8\xf7\xc6\xd3\x88\xfc\x00\x2e\x0b\xbd\x3f\x74\xd7\x64",
-      32);
-  EXPECT_EQ(expected_log_key, sct.log_id);
+  EXPECT_EQ(0, sct->version);
+  EXPECT_EQ(ct::GetTestPublicKeyId(), sct->log_id);
   base::Time expected_time = base::Time::UnixEpoch() +
       base::TimeDelta::FromMilliseconds(1365181456089);
-  EXPECT_EQ(expected_time, sct.timestamp);
+  EXPECT_EQ(expected_time, sct->timestamp);
   // Subtracting 4 bytes for signature data (hash & sig algs),
   // actual signature data should be 71 bytes.
-  EXPECT_EQ((size_t) 71, sct.signature.signature_data.size());
-  EXPECT_EQ(std::string(""), sct.extensions);
+  EXPECT_EQ((size_t) 71, sct->signature.signature_data.size());
+  EXPECT_TRUE(sct->extensions.empty());
 }
 
 TEST_F(CtSerializationTest, FailsDecodingInvalidSignedCertificateTimestamp) {
   // Invalid version
   base::StringPiece invalid_version_sct("\x2\x0", 2);
-  ct::SignedCertificateTimestamp sct;
+  scoped_refptr<ct::SignedCertificateTimestamp> sct;
 
   ASSERT_FALSE(
       ct::DecodeSignedCertificateTimestamp(&invalid_version_sct, &sct));
@@ -166,5 +162,5 @@ TEST_F(CtSerializationTest, FailsDecodingInvalidSignedCertificateTimestamp) {
       ct::DecodeSignedCertificateTimestamp(&invalid_length_sct, &sct));
 }
 
-} // namespace net
+}  // namespace net
 

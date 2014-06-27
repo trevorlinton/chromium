@@ -8,6 +8,7 @@
 #include "chrome/browser/bookmarks/bookmark_tag_model_observer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using base::ASCIIToUTF16;
 
 namespace {
 
@@ -101,9 +102,8 @@ class BookmarkTagModelTest
   virtual ~BookmarkTagModelTest() {
   }
 
-  // BookmarkTagModelObserver methods.
-
-  virtual void Loaded(BookmarkTagModel* model) OVERRIDE {
+  // BookmarkTagModelObserver:
+  virtual void BookmarkTagModelLoaded(BookmarkTagModel* model) OVERRIDE {
     // We never load from the db, so that this should never get invoked.
     NOTREACHED();
   }
@@ -193,7 +193,7 @@ class BookmarkTagModelTest
   const BookmarkNode* AddURLWithTags(
       const std::string& name,
       const std::set<BookmarkTag>& tags) {
-    const string16 title(ASCIIToUTF16(name));
+    const base::string16 title(ASCIIToUTF16(name));
     const GURL url("http://" + name + ".com");
 
     return tag_model_->AddURL(title, url, tags);

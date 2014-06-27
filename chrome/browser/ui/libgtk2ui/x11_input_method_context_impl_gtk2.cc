@@ -13,12 +13,13 @@
 #include <X11/X.h>
 #include <X11/Xlib.h>
 
-#include "base/environment.h"
+#include "base/event_types.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/base/ime/composition_text.h"
 #include "ui/base/ime/composition_text_util_pango.h"
 #include "ui/base/ime/text_input_client.h"
+#include "ui/events/event.h"
 
 namespace {
 
@@ -98,30 +99,9 @@ X11InputMethodContextImplGtk2::X11InputMethodContextImplGtk2(
     : delegate_(delegate),
       gtk_context_simple_(NULL),
       gtk_multicontext_(NULL),
-      gtk_context_(NULL) {
+      gtk_context_(NULL),
+      gdk_last_set_client_window_(NULL) {
   CHECK(delegate_);
-
-  {
-    // Force a IBus IM context to run in synchronous mode.
-    //
-    // Background: IBus IM context runs by default in asynchronous mode.  In
-    // this mode, gtk_im_context_filter_keypress() consumes all the key events
-    // and returns true while asynchronously sending the event to an underlying
-    // IME implementation.  When the event has not actually been consumed by
-    // the underlying IME implementation, the context pushes the event back to
-    // the GDK event queue marking the event as already handled by the IBus IM
-    // context.
-    //
-    // The problem here is that those pushed-back GDK events are never handled
-    // when base::MessagePumpX11 is used, which only handles X events.  So, we
-    // make a IBus IM context run in synchronous mode by setting an environment
-    // variable.  This is only the interface to change the mode.
-    //
-    // Another possible solution is to use GDK event loop instead of X event
-    // loop.
-    scoped_ptr<base::Environment> env(base::Environment::Create());
-    env->SetVar("IBUS_ENABLE_SYNC_MODE", "1");
-  }
 
   {
     XModifierKeymap* keymap = XGetModifierMapping(
@@ -167,12 +147,16 @@ X11InputMethodContextImplGtk2::~X11InputMethodContextImplGtk2() {
 // Overriden from ui::LinuxInputMethodContext
 
 bool X11InputMethodContextImplGtk2::DispatchKeyEvent(
-    const base::NativeEvent& native_key_event) {
+    const ui::KeyEvent& key_event) {
+  if (!key_event.HasNativeEvent())
+    return false;
+
   // The caller must call Focus() first.
   if (!gtk_context_)
     return false;
 
   // Translate a XKeyEvent to a GdkEventKey.
+  const base::NativeEvent& native_key_event = key_event.native_event();
   GdkEvent* event = GdkEventFromXKeyEvent(
       native_key_event->xkey,
       IsKeycodeModifierKey(native_key_event->xkey.keycode));
@@ -182,7 +166,10 @@ bool X11InputMethodContextImplGtk2::DispatchKeyEvent(
   }
 
   // Set the client window and cursor location.
-  gtk_im_context_set_client_window(gtk_context_, event->key.window);
+  if (event->key.window != gdk_last_set_client_window_) {
+    gtk_im_context_set_client_window(gtk_context_, event->key.window);
+    gdk_last_set_client_window_ = event->key.window;
+  }
   // Convert the last known caret bounds relative to the screen coordinates
   // to a GdkRectangle relative to the client window.
   gint x = 0;
@@ -212,23 +199,7 @@ void X11InputMethodContextImplGtk2::Reset() {
   gtk_im_context_reset(gtk_multicontext_);
   gtk_im_context_focus_out(gtk_context_simple_);
   gtk_im_context_focus_out(gtk_multicontext_);
-}
-
-base::i18n::TextDirection X11InputMethodContextImplGtk2::GetInputTextDirection()
-    const {
-  switch (gdk_keymap_get_direction(gdk_keymap_get_default())) {
-    case PANGO_DIRECTION_LTR:
-    case PANGO_DIRECTION_TTB_LTR:
-    case PANGO_DIRECTION_WEAK_LTR:
-      return base::i18n::LEFT_TO_RIGHT;
-    case PANGO_DIRECTION_RTL:
-    case PANGO_DIRECTION_TTB_RTL:
-    case PANGO_DIRECTION_WEAK_RTL:
-      return base::i18n::RIGHT_TO_LEFT;
-    case PANGO_DIRECTION_NEUTRAL:
-    default:
-      return base::i18n::UNKNOWN_DIRECTION;
-  }
+  gdk_last_set_client_window_ = NULL;
 }
 
 void X11InputMethodContextImplGtk2::OnTextInputTypeChanged(
@@ -268,7 +239,7 @@ void X11InputMethodContextImplGtk2::OnCommit(GtkIMContext* context,
   if (context != gtk_context_)
     return;
 
-  const base::string16& text_in_utf16 = UTF8ToUTF16(text);
+  const base::string16& text_in_utf16 = base::UTF8ToUTF16(text);
   // If an underlying IME is emitting the "commit" signal to insert a character
   // for a direct input key event, ignores the insertion of the character at
   // this point, because we have to call DispatchKeyEventPostIME() for direct

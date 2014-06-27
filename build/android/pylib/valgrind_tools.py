@@ -20,12 +20,13 @@ Call tool.SetupEnvironment().
 Run the test as usual.
 Call tool.CleanUpEnvironment().
 """
+# pylint: disable=R0201
 
 import os.path
+import subprocess
 import sys
-from glob import glob
 
-from constants import DIR_SOURCE_ROOT
+from pylib.constants import DIR_SOURCE_ROOT
 
 
 def SetChromeTimeoutScale(adb, scale):
@@ -40,6 +41,10 @@ def SetChromeTimeoutScale(adb, scale):
 
 class BaseTool(object):
   """A tool that does nothing."""
+
+  def __init__(self):
+    """Does nothing."""
+    pass
 
   def GetTestWrapper(self):
     """Returns a string that is to be prepended to the test command line."""
@@ -85,16 +90,15 @@ class BaseTool(object):
 class AddressSanitizerTool(BaseTool):
   """AddressSanitizer tool."""
 
-  TMP_DIR = '/data/local/tmp/asan'
-  WRAPPER_NAME = 'asanwrapper.sh'
+  WRAPPER_NAME = '/system/bin/asanwrapper'
+  # Disable memcmp overlap check.There are blobs (gl drivers)
+  # on some android devices that use memcmp on overlapping regions,
+  # nothing we can do about that.
+  EXTRA_OPTIONS = 'strict_memcmp=0,use_sigaltstack=1'
 
   def __init__(self, adb):
+    super(AddressSanitizerTool, self).__init__()
     self._adb = adb
-    self._wrap_properties = ['wrap.com.google.android.apps.ch',
-                             'wrap.org.chromium.native_test',
-                             'wrap.org.chromium.content_shell',
-                             'wrap.org.chromium.chrome.testsh',
-                             'wrap.org.chromium.android_webvi']
     # Configure AndroidCommands to run utils (such as md5sum_bin) under ASan.
     # This is required because ASan is a compiler-based tool, and md5sum
     # includes instrumented code from base.
@@ -102,17 +106,14 @@ class AddressSanitizerTool(BaseTool):
 
   def CopyFiles(self):
     """Copies ASan tools to the device."""
-    files = (['tools/android/asan/asanwrapper.sh'] +
-              glob('third_party/llvm-build/Release+Asserts/lib/clang/*/lib/'
-                   'linux/libclang_rt.asan-arm-android.so'))
-    for f in files:
-      self._adb.PushIfNeeded(os.path.join(DIR_SOURCE_ROOT, f),
-                             os.path.join(AddressSanitizerTool.TMP_DIR,
-                                          os.path.basename(f)))
+    subprocess.call([os.path.join(DIR_SOURCE_ROOT,
+                                  'tools/android/asan/asan_device_setup.sh'),
+                     '--device', self._adb.GetDevice(),
+                     '--extra-options', AddressSanitizerTool.EXTRA_OPTIONS])
+    self._adb.WaitForDevicePm()
 
   def GetTestWrapper(self):
-    return os.path.join(AddressSanitizerTool.TMP_DIR,
-                        AddressSanitizerTool.WRAPPER_NAME)
+    return AddressSanitizerTool.WRAPPER_NAME
 
   def GetUtilWrapper(self):
     """Returns the wrapper for utilities, such as forwarder.
@@ -124,14 +125,9 @@ class AddressSanitizerTool(BaseTool):
 
   def SetupEnvironment(self):
     self._adb.EnableAdbRoot()
-    for prop in self._wrap_properties:
-      self._adb.RunShellCommand('setprop %s "logwrapper %s"' % (
-          prop, self.GetTestWrapper()))
     SetChromeTimeoutScale(self._adb, self.GetTimeoutScale())
 
   def CleanUpEnvironment(self):
-    for prop in self._wrap_properties:
-      self._adb.RunShellCommand('setprop %s ""' % (prop,))
     SetChromeTimeoutScale(self._adb, None)
 
   def GetTimeoutScale(self):
@@ -146,6 +142,7 @@ class ValgrindTool(BaseTool):
   VGLOGS_DIR = '/data/local/tmp/vglogs'
 
   def __init__(self, adb):
+    super(ValgrindTool, self).__init__()
     self._adb = adb
     # exactly 31 chars, SystemProperties::PROP_NAME_MAX
     self._wrap_properties = ['wrap.com.google.android.apps.ch',
@@ -167,6 +164,7 @@ class ValgrindTool(BaseTool):
   def SetupEnvironment(self):
     """Sets up device environment."""
     self._adb.RunShellCommand('chmod 777 /data/local/tmp')
+    self._adb.RunShellCommand('setenforce 0')
     for prop in self._wrap_properties:
       self._adb.RunShellCommand('setprop %s "logwrapper %s"' % (
           prop, self.GetTestWrapper()))
@@ -235,11 +233,11 @@ class TSanTool(ValgrindTool):
 
 
 TOOL_REGISTRY = {
-    'memcheck': lambda x: MemcheckTool(x),
-    'memcheck-renderer': lambda x: MemcheckTool(x),
-    'tsan': lambda x: TSanTool(x),
-    'tsan-renderer': lambda x: TSanTool(x),
-    'asan': lambda x: AddressSanitizerTool(x),
+    'memcheck': MemcheckTool,
+    'memcheck-renderer': MemcheckTool,
+    'tsan': TSanTool,
+    'tsan-renderer': TSanTool,
+    'asan': AddressSanitizerTool,
 }
 
 

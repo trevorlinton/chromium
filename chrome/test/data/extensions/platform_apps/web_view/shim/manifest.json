@@ -10,11 +10,13 @@
     }
   },
   "webview": {
-    "accessible_resources": [
-      "guest.html"
-    ],
-    "privileged_partitions": [
-      "foobar"
+    "partitions": [
+      {
+        "name": "foobar",
+        "accessible_resources": [
+          "guest.html"
+        ]
+      }
     ]
   }
 }

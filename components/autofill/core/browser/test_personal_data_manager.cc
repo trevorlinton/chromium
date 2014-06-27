@@ -15,17 +15,20 @@ TestPersonalDataManager::~TestPersonalDataManager() {}
 
 void TestPersonalDataManager::AddTestingProfile(AutofillProfile* profile) {
   profiles_.push_back(profile);
-  FOR_EACH_OBSERVER(PersonalDataManagerObserver, observers_,
-                    OnPersonalDataChanged());
+  NotifyPersonalDataChanged();
 }
 
 void TestPersonalDataManager::AddTestingCreditCard(CreditCard* credit_card) {
   credit_cards_.push_back(credit_card);
-  FOR_EACH_OBSERVER(PersonalDataManagerObserver, observers_,
-                    OnPersonalDataChanged());
+  NotifyPersonalDataChanged();
 }
 
 const std::vector<AutofillProfile*>& TestPersonalDataManager::GetProfiles()
+    const {
+  return profiles_;
+}
+
+const std::vector<AutofillProfile*>& TestPersonalDataManager::web_profiles()
     const {
   return profiles_;
 }
@@ -45,6 +48,19 @@ std::string TestPersonalDataManager::SaveImportedCreditCard(
     const CreditCard& imported_credit_card) {
   imported_credit_card_ = imported_credit_card;
   return imported_credit_card.guid();
+}
+
+std::string TestPersonalDataManager::CountryCodeForCurrentTimezone()
+    const {
+  return timezone_country_code_;
+}
+
+const std::string& TestPersonalDataManager::GetDefaultCountryCodeForNewAddress()
+    const {
+  if (default_country_code_.empty())
+    return PersonalDataManager::GetDefaultCountryCodeForNewAddress();
+
+  return default_country_code_;
 }
 
 }  // namespace autofill

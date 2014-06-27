@@ -15,7 +15,6 @@
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/search/search.h"
 #include "chrome/browser/sessions/session_restore.h"
 #include "chrome/browser/sessions/session_service.h"
 #include "chrome/browser/sessions/session_service_factory.h"
@@ -43,6 +42,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_contents_view.h"
 #include "content/public/common/bindings_policy.h"
 #include "content/public/common/page_transition_types.h"
 #include "content/public/test/test_navigation_observer.h"
@@ -53,6 +53,10 @@ using sessions::SerializedNavigationEntryTestHelper;
 
 #if defined(OS_MACOSX)
 #include "base/mac/scoped_nsautorelease_pool.h"
+#endif
+
+#if defined(USE_AURA)
+#include "ui/aura/window.h"
 #endif
 
 class SessionRestoreTest : public InProcessBrowserTest {
@@ -73,10 +77,10 @@ class SessionRestoreTest : public InProcessBrowserTest {
 
     SessionStartupPref pref(SessionStartupPref::LAST);
     SessionStartupPref::SetStartupPref(browser()->profile(), pref);
-#if defined(OS_CHROMEOS) || defined(OS_MACOSX)
+#if defined(OS_CHROMEOS)
     const testing::TestInfo* const test_info =
         testing::UnitTest::GetInstance()->current_test_info();
-    if (strcmp(test_info->name(), "NoSessionRestoreNewWindowChromeOS")) {
+    if (strcmp(test_info->name(), "NoSessionRestoreNewWindowChromeOS") != 0) {
       // Undo the effect of kBrowserAliveWithNoWindows in defaults.cc so that we
       // can get these test to work without quitting.
       SessionServiceTestHelper helper(
@@ -188,6 +192,35 @@ class SessionRestoreTest : public InProcessBrowserTest {
   const BrowserList* active_browser_list_;
 };
 
+#if defined(USE_AURA)
+// Verifies that restored tabs have a root window. This is important
+// otherwise the wrong information is communicated to the renderer.
+// (http://crbug.com/342672).
+IN_PROC_BROWSER_TEST_F(SessionRestoreTest, RestoredTabsShouldHaveRootWindow) {
+  // Create tabs.
+  ui_test_utils::NavigateToURLWithDisposition(
+      browser(), GURL(content::kAboutBlankURL), NEW_FOREGROUND_TAB,
+      ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
+  ui_test_utils::NavigateToURLWithDisposition(
+      browser(), GURL(content::kAboutBlankURL), NEW_BACKGROUND_TAB,
+      ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
+
+  // Restart and session restore the tabs.
+  Browser* restored = QuitBrowserAndRestore(browser(), 3);
+  TabStripModel* tab_strip_model = restored->tab_strip_model();
+  const int tabs = tab_strip_model->count();
+  ASSERT_EQ(3, tabs);
+
+  // Check the restored tabs have a root window.
+  for (int i = 0; i < tabs; ++i) {
+    content::WebContents* contents = tab_strip_model->GetWebContentsAt(i);
+    gfx::NativeView window = contents->GetView()->GetNativeView();
+    bool tab_has_root_window = !!window->GetRootWindow();
+    EXPECT_TRUE(tab_has_root_window);
+  }
+}
+#endif  // USE_AURA
+
 #if defined(OS_CHROMEOS)
 // Verify that session restore does not occur when a user opens a browser window
 // when no other browser windows are open on ChromeOS.
@@ -206,7 +239,7 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, NoSessionRestoreNewWindowChromeOS) {
   ui_test_utils::NavigateToURL(browser(), url);
 
   Browser* incognito_browser = CreateIncognitoBrowser();
-  chrome::AddBlankTabAt(incognito_browser, -1, true);
+  chrome::AddTabAt(incognito_browser, GURL(), -1, true);
   incognito_browser->window()->Show();
 
   // Close the normal browser. After this we only have the incognito window
@@ -220,9 +253,8 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, NoSessionRestoreNewWindowChromeOS) {
 
   ASSERT_TRUE(new_browser);
   EXPECT_EQ(1, new_browser->tab_strip_model()->count());
-  EXPECT_TRUE(chrome::IsNTPURL(
-      new_browser->tab_strip_model()->GetWebContentsAt(0)->GetURL(),
-      new_browser->profile()));
+  EXPECT_EQ(GURL(chrome::kChromeUINewTabURL),
+            new_browser->tab_strip_model()->GetWebContentsAt(0)->GetURL());
 }
 
 // Test that maximized applications get restored maximized.
@@ -441,7 +473,7 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, IncognitotoNonIncognito) {
 
   // Create a new incognito window.
   Browser* incognito_browser = CreateIncognitoBrowser();
-  chrome::AddBlankTabAt(incognito_browser, -1, true);
+  chrome::AddTabAt(incognito_browser, GURL(), -1, true);
   incognito_browser->window()->Show();
 
   // Close the normal browser. After this we only have the incognito window
@@ -650,7 +682,7 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTest, Basic) {
 }
 
 IN_PROC_BROWSER_TEST_F(SessionRestoreTest, RestoreWebUI) {
-  const GURL webui_url("chrome://newtab");
+  const GURL webui_url("chrome://omnibox");
   ui_test_utils::NavigateToURL(browser(), webui_url);
   const content::WebContents* old_tab =
       browser()->tab_strip_model()->GetActiveWebContents();

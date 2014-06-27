@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "base/command_line.h"
+#include "base/metrics/field_trial.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
 #include "chrome/browser/search/search.h"
@@ -19,6 +20,7 @@
 #include "chrome/browser/ui/toolbar/toolbar_model.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
+#include "components/variations/entropy_provider.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
@@ -26,6 +28,7 @@
 #include "content/public/common/url_constants.h"
 #include "net/base/escape.h"
 
+using base::ASCIIToUTF16;
 
 // Test data ------------------------------------------------------------------
 
@@ -33,11 +36,16 @@ namespace {
 
 struct TestItem {
   GURL url;
-  string16 expected_text;
-  // The expected text to display when query extraction is inactive.
-  string16 expected_replace_text_inactive;
+  // The expected text to display when both forms of URL replacement are
+  // inactive.
+  base::string16 expected_text_url_replacement_inactive;
   // The expected text to display when query extraction is active.
-  string16 expected_replace_text_active;
+  base::string16 expected_text_query_extraction;
+  // The expected text to display when the origin chip (URL removal) is active.
+  base::string16 expected_text_origin_chip;
+  // The expected text to display when both query extraction and URL removal are
+  // active.
+  base::string16 expected_text_both;
   bool would_perform_search_term_replacement;
   bool should_display_url;
 } test_items[] = {
@@ -45,7 +53,8 @@ struct TestItem {
     GURL("view-source:http://www.google.com"),
     ASCIIToUTF16("view-source:www.google.com"),
     ASCIIToUTF16("view-source:www.google.com"),
-    ASCIIToUTF16("view-source:www.google.com"),
+    base::string16(),
+    base::string16(),
     false,
     true
   },
@@ -53,7 +62,8 @@ struct TestItem {
     GURL("view-source:chrome://newtab/"),
     ASCIIToUTF16("view-source:chrome://newtab"),
     ASCIIToUTF16("view-source:chrome://newtab"),
-    ASCIIToUTF16("view-source:chrome://newtab"),
+    base::string16(),
+    base::string16(),
     false,
     true
   },
@@ -61,23 +71,17 @@ struct TestItem {
     GURL("chrome-extension://monkey/balls.html"),
     ASCIIToUTF16("chrome-extension://monkey/balls.html"),
     ASCIIToUTF16("chrome-extension://monkey/balls.html"),
-    ASCIIToUTF16("chrome-extension://monkey/balls.html"),
+    base::string16(),
+    base::string16(),
     false,
     true
-  },
-  {
-    GURL("chrome://newtab/"),
-    string16(),
-    string16(),
-    string16(),
-    false,
-    false
   },
   {
     GURL(content::kAboutBlankURL),
     ASCIIToUTF16(content::kAboutBlankURL),
     ASCIIToUTF16(content::kAboutBlankURL),
-    ASCIIToUTF16(content::kAboutBlankURL),
+    base::string16(),
+    base::string16(),
     false,
     true
   },
@@ -85,7 +89,8 @@ struct TestItem {
     GURL("http://searchurl/?q=tractor+supply"),
     ASCIIToUTF16("searchurl/?q=tractor+supply"),
     ASCIIToUTF16("searchurl/?q=tractor+supply"),
-    ASCIIToUTF16("searchurl/?q=tractor+supply"),
+    base::string16(),
+    base::string16(),
     false,
     true
   },
@@ -93,7 +98,8 @@ struct TestItem {
     GURL("http://google.com/search?q=tractor+supply&espv=1"),
     ASCIIToUTF16("google.com/search?q=tractor+supply&espv=1"),
     ASCIIToUTF16("google.com/search?q=tractor+supply&espv=1"),
-    ASCIIToUTF16("google.com/search?q=tractor+supply&espv=1"),
+    base::string16(),
+    base::string16(),
     false,
     true
   },
@@ -101,7 +107,8 @@ struct TestItem {
     GURL("https://google.ca/search?q=tractor+supply"),
     ASCIIToUTF16("https://google.ca/search?q=tractor+supply"),
     ASCIIToUTF16("https://google.ca/search?q=tractor+supply"),
-    ASCIIToUTF16("https://google.ca/search?q=tractor+supply"),
+    base::string16(),
+    base::string16(),
     false,
     true
   },
@@ -109,14 +116,16 @@ struct TestItem {
     GURL("https://google.com/search?q=tractor+supply"),
     ASCIIToUTF16("https://google.com/search?q=tractor+supply"),
     ASCIIToUTF16("https://google.com/search?q=tractor+supply"),
-    ASCIIToUTF16("https://google.com/search?q=tractor+supply"),
+    base::string16(),
+    base::string16(),
     false,
     true
   },
   {
     GURL("https://google.com/search?q=tractor+supply&espv=1"),
     ASCIIToUTF16("https://google.com/search?q=tractor+supply&espv=1"),
-    ASCIIToUTF16("https://google.com/search?q=tractor+supply&espv=1"),
+    ASCIIToUTF16("tractor supply"),
+    base::string16(),
     ASCIIToUTF16("tractor supply"),
     true,
     true
@@ -124,7 +133,8 @@ struct TestItem {
   {
     GURL("https://google.com/search?q=tractorsupply.com&espv=1"),
     ASCIIToUTF16("https://google.com/search?q=tractorsupply.com&espv=1"),
-    ASCIIToUTF16("https://google.com/search?q=tractorsupply.com&espv=1"),
+    ASCIIToUTF16("tractorsupply.com"),
+    base::string16(),
     ASCIIToUTF16("tractorsupply.com"),
     true,
     true
@@ -132,7 +142,8 @@ struct TestItem {
   {
     GURL("https://google.com/search?q=ftp://tractorsupply.ie&espv=1"),
     ASCIIToUTF16("https://google.com/search?q=ftp://tractorsupply.ie&espv=1"),
-    ASCIIToUTF16("https://google.com/search?q=ftp://tractorsupply.ie&espv=1"),
+    ASCIIToUTF16("ftp://tractorsupply.ie"),
+    base::string16(),
     ASCIIToUTF16("ftp://tractorsupply.ie"),
     true,
     true
@@ -147,31 +158,37 @@ struct TestItem {
 class ToolbarModelTest : public BrowserWithTestWindowTest {
  public:
   ToolbarModelTest();
+  ToolbarModelTest(Browser::Type browser_type,
+                   chrome::HostDesktopType host_desktop_type,
+                   bool hosted_app);
   virtual ~ToolbarModelTest();
 
   // BrowserWithTestWindowTest:
   virtual void SetUp() OVERRIDE;
 
  protected:
-  void ResetDefaultTemplateURL();
   void NavigateAndCheckText(const GURL& url,
-                            const string16& expected_text,
-                            const string16& expected_replace_text,
+                            const base::string16& expected_text,
                             bool would_perform_search_term_replacement,
                             bool should_display_url);
+  void EnableOriginChipFieldTrial();
 
  private:
-  void ResetTemplateURLForInstant(const GURL& instant_url);
-  void NavigateAndCheckTextImpl(const GURL& url,
-                                bool allow_search_term_replacement,
-                                const string16 expected_text,
-                                bool would_perform_search_term_replacement,
-                                bool should_display);
+  scoped_ptr<base::FieldTrialList> field_trial_list_;
 
   DISALLOW_COPY_AND_ASSIGN(ToolbarModelTest);
 };
 
 ToolbarModelTest::ToolbarModelTest() {
+}
+
+ToolbarModelTest::ToolbarModelTest(
+    Browser::Type browser_type,
+    chrome::HostDesktopType host_desktop_type,
+    bool hosted_app)
+    : BrowserWithTestWindowTest(browser_type,
+                                host_desktop_type,
+                                hosted_app) {
 }
 
 ToolbarModelTest::~ToolbarModelTest() {
@@ -186,60 +203,28 @@ void ToolbarModelTest::SetUp() {
   UIThreadSearchTermsData::SetGoogleBaseURL("http://google.com/");
 }
 
-void ToolbarModelTest::ResetDefaultTemplateURL() {
-  ResetTemplateURLForInstant(GURL("http://does/not/exist"));
+void ToolbarModelTest::EnableOriginChipFieldTrial() {
+  field_trial_list_.reset(new base::FieldTrialList(
+      new metrics::SHA1EntropyProvider("platypus")));
+  base::FieldTrialList::CreateFieldTrial(
+            "EmbeddedSearch", "Group1 espv:2 origin_chip:1");
 }
 
 void ToolbarModelTest::NavigateAndCheckText(
     const GURL& url,
-    const string16& expected_text,
-    const string16& expected_replace_text,
+    const base::string16& expected_text,
     bool would_perform_search_term_replacement,
     bool should_display_url) {
-  NavigateAndCheckTextImpl(url, false, expected_text,
-                           would_perform_search_term_replacement,
-                           should_display_url);
-  NavigateAndCheckTextImpl(url, true, expected_replace_text,
-                           would_perform_search_term_replacement,
-                           should_display_url);
-}
-
-void ToolbarModelTest::ResetTemplateURLForInstant(const GURL& instant_url) {
-  TemplateURLData data;
-  data.short_name = ASCIIToUTF16("Google");
-  data.SetURL("{google:baseURL}search?q={searchTerms}");
-  data.instant_url = instant_url.spec();
-  data.search_terms_replacement_key = "{google:instantExtendedEnabledKey}";
-  TemplateURL* search_template_url = new TemplateURL(profile(), data);
-  TemplateURLService* template_url_service =
-      TemplateURLServiceFactory::GetForProfile(profile());
-  template_url_service->Add(search_template_url);
-  template_url_service->SetDefaultSearchProvider(search_template_url);
-  ASSERT_NE(0, search_template_url->id());
-  template_url_service->Load();
-}
-
-void ToolbarModelTest::NavigateAndCheckTextImpl(
-    const GURL& url,
-    bool allow_search_term_replacement,
-    const string16 expected_text,
-    bool would_perform_search_term_replacement,
-    bool should_display_url) {
-  // The URL being navigated to should be treated as the Instant URL. Else
-  // there will be no search term extraction.
-  ResetTemplateURLForInstant(url);
-
   // Check while loading.
   content::NavigationController* controller =
       &browser()->tab_strip_model()->GetWebContentsAt(0)->GetController();
   controller->LoadURL(url, content::Referrer(), content::PAGE_TRANSITION_LINK,
                       std::string());
   ToolbarModel* toolbar_model = browser()->toolbar_model();
-  EXPECT_EQ(should_display_url, toolbar_model->ShouldDisplayURL());
-  EXPECT_EQ(expected_text,
-            toolbar_model->GetText(allow_search_term_replacement));
+  EXPECT_EQ(expected_text, toolbar_model->GetText());
   EXPECT_EQ(would_perform_search_term_replacement,
             toolbar_model->WouldPerformSearchTermReplacement(false));
+  EXPECT_EQ(should_display_url, toolbar_model->ShouldDisplayURL());
 
   // Check after commit.
   CommitPendingLoad(controller);
@@ -249,11 +234,10 @@ void ToolbarModelTest::NavigateAndCheckTextImpl(
     controller->GetVisibleEntry()->GetSSL().security_style =
         content::SECURITY_STYLE_AUTHENTICATED;
   }
-  EXPECT_EQ(should_display_url, toolbar_model->ShouldDisplayURL());
-  EXPECT_EQ(expected_text,
-            toolbar_model->GetText(allow_search_term_replacement));
+  EXPECT_EQ(expected_text, toolbar_model->GetText());
   EXPECT_EQ(would_perform_search_term_replacement,
             toolbar_model->WouldPerformSearchTermReplacement(false));
+  EXPECT_EQ(should_display_url, toolbar_model->ShouldDisplayURL());
 
   // Now pretend the user started modifying the omnibox.
   toolbar_model->set_input_in_progress(true);
@@ -266,50 +250,100 @@ void ToolbarModelTest::NavigateAndCheckTextImpl(
   toolbar_model->set_input_in_progress(false);
 }
 
+class PopupToolbarModelTest : public ToolbarModelTest {
+ public:
+  PopupToolbarModelTest();
+  virtual ~PopupToolbarModelTest();
+
+  DISALLOW_COPY_AND_ASSIGN(PopupToolbarModelTest);
+};
+
+PopupToolbarModelTest::PopupToolbarModelTest()
+      : ToolbarModelTest(Browser::TYPE_POPUP,
+                         chrome::HOST_DESKTOP_TYPE_NATIVE,
+                         false) {
+}
+
+PopupToolbarModelTest::~PopupToolbarModelTest() {
+}
 
 // Actual tests ---------------------------------------------------------------
 
-// Test that we only replace URLs when query extraction and search term
-// replacement are enabled.
-TEST_F(ToolbarModelTest, ShouldDisplayURL) {
+// Test that we only replace URLs when query extraction and URL replacement
+// are enabled.
+TEST_F(ToolbarModelTest, ShouldDisplayURL_QueryExtraction) {
+  AddTab(browser(), GURL(content::kAboutBlankURL));
+
   // Before we enable instant extended, query extraction is disabled.
   EXPECT_FALSE(chrome::IsQueryExtractionEnabled())
       << "This test expects query extraction to be disabled.";
-  AddTab(browser(), GURL(content::kAboutBlankURL));
   for (size_t i = 0; i < arraysize(test_items); ++i) {
     const TestItem& test_item = test_items[i];
-    NavigateAndCheckText(test_item.url, test_item.expected_text,
-                         test_item.expected_replace_text_inactive, false,
-                         test_item.should_display_url);
+    NavigateAndCheckText(test_item.url,
+                         test_item.expected_text_url_replacement_inactive,
+                         false, test_item.should_display_url);
   }
 
-  // Once we enable it, query extraction and search term replacement are
-  // enabled by default.
-  chrome::EnableInstantExtendedAPIForTesting();
+  chrome::EnableQueryExtractionForTesting();
   EXPECT_TRUE(chrome::IsQueryExtractionEnabled());
-  EXPECT_TRUE(browser()->toolbar_model()->search_term_replacement_enabled());
+  EXPECT_TRUE(browser()->toolbar_model()->url_replacement_enabled());
   for (size_t i = 0; i < arraysize(test_items); ++i) {
     const TestItem& test_item = test_items[i];
-    NavigateAndCheckText(test_item.url, test_item.expected_text,
-                         test_item.expected_replace_text_active,
+    NavigateAndCheckText(test_item.url,
+                         test_item.expected_text_query_extraction,
                          test_item.would_perform_search_term_replacement,
                          test_item.should_display_url);
   }
 
-  // Disabling search term replacement should reset to only showing URLs.
-  browser()->toolbar_model()->set_search_term_replacement_enabled(false);
+  // Disabling URL replacement should reset to only showing URLs.
+  browser()->toolbar_model()->set_url_replacement_enabled(false);
   for (size_t i = 0; i < arraysize(test_items); ++i) {
     const TestItem& test_item = test_items[i];
-    NavigateAndCheckText(test_item.url, test_item.expected_text,
-                         test_item.expected_replace_text_inactive, false,
+    NavigateAndCheckText(test_item.url,
+                         test_item.expected_text_url_replacement_inactive,
+                         false, test_item.should_display_url);
+  }
+}
+
+// Test that we remove or replace URLs appropriately when the origin chip is
+// enabled.
+TEST_F(ToolbarModelTest, ShouldDisplayURL_OriginChip) {
+  EnableOriginChipFieldTrial();
+  AddTab(browser(), GURL(content::kAboutBlankURL));
+
+  // Check each case with the origin chip enabled but query extraction disabled.
+  EXPECT_TRUE(chrome::ShouldDisplayOriginChip());
+  EXPECT_FALSE(chrome::IsQueryExtractionEnabled());
+  for (size_t i = 0; i < arraysize(test_items); ++i) {
+    const TestItem& test_item = test_items[i];
+    NavigateAndCheckText(test_item.url, test_item.expected_text_origin_chip,
+                         false, test_item.should_display_url);
+  }
+
+  // Check with both enabled.
+  chrome::EnableQueryExtractionForTesting();
+  EXPECT_TRUE(chrome::IsQueryExtractionEnabled());
+  EXPECT_TRUE(browser()->toolbar_model()->url_replacement_enabled());
+  for (size_t i = 0; i < arraysize(test_items); ++i) {
+    const TestItem& test_item = test_items[i];
+    NavigateAndCheckText(test_item.url, test_item.expected_text_both,
+                         test_item.would_perform_search_term_replacement,
                          test_item.should_display_url);
+  }
+
+  // Disabling URL replacement should reset to only showing URLs.
+  browser()->toolbar_model()->set_url_replacement_enabled(false);
+  for (size_t i = 0; i < arraysize(test_items); ++i) {
+    const TestItem& test_item = test_items[i];
+    NavigateAndCheckText(test_item.url,
+                         test_item.expected_text_url_replacement_inactive,
+                         false, test_item.should_display_url);
   }
 }
 
 // Verify that search terms are extracted while the page is loading.
 TEST_F(ToolbarModelTest, SearchTermsWhileLoading) {
-  chrome::EnableInstantExtendedAPIForTesting();
-  ResetDefaultTemplateURL();
+  chrome::EnableQueryExtractionForTesting();
   AddTab(browser(), GURL(content::kAboutBlankURL));
 
   // While loading, we should be willing to extract search terms.
@@ -335,7 +369,7 @@ TEST_F(ToolbarModelTest, SearchTermsWhileLoading) {
 // search terms from URLs that start with that base URL even when they're not
 // secure.
 TEST_F(ToolbarModelTest, GoogleBaseURL) {
-  chrome::EnableInstantExtendedAPIForTesting();
+  chrome::EnableQueryExtractionForTesting();
   AddTab(browser(), GURL(content::kAboutBlankURL));
 
   // If the Google base URL wasn't specified on the command line, then if it's
@@ -343,9 +377,7 @@ TEST_F(ToolbarModelTest, GoogleBaseURL) {
   UIThreadSearchTermsData::SetGoogleBaseURL("http://www.foo.com/");
   NavigateAndCheckText(
       GURL("http://www.foo.com/search?q=tractor+supply&espv=1"),
-      ASCIIToUTF16("www.foo.com/search?q=tractor+supply&espv=1"),
-      ASCIIToUTF16("www.foo.com/search?q=tractor+supply&espv=1"), false,
-      true);
+      ASCIIToUTF16("www.foo.com/search?q=tractor+supply&espv=1"), false, true);
 
   // The same URL, when specified on the command line, should allow search term
   // extraction.
@@ -354,6 +386,55 @@ TEST_F(ToolbarModelTest, GoogleBaseURL) {
                                                       "http://www.foo.com/");
   NavigateAndCheckText(
       GURL("http://www.foo.com/search?q=tractor+supply&espv=1"),
-      ASCIIToUTF16("www.foo.com/search?q=tractor+supply&espv=1"),
       ASCIIToUTF16("tractor supply"), true, true);
+}
+
+// Popup windows don't have an origin chip, so test that URL display in a popup
+// ignores whether the origin chip is enabled and only respects the query
+// extraction flag.
+TEST_F(PopupToolbarModelTest, ShouldDisplayURL) {
+  AddTab(browser(), GURL(content::kAboutBlankURL));
+
+  // Check with neither query extraction nor the origin chip enabled.
+  EXPECT_FALSE(chrome::ShouldDisplayOriginChip());
+  EXPECT_FALSE(chrome::IsQueryExtractionEnabled());
+  for (size_t i = 0; i < arraysize(test_items); ++i) {
+    const TestItem& test_item = test_items[i];
+    NavigateAndCheckText(test_item.url,
+                         test_item.expected_text_url_replacement_inactive,
+                         false, test_item.should_display_url);
+  }
+
+  // Check with the origin chip enabled.
+  EnableOriginChipFieldTrial();
+  EXPECT_TRUE(chrome::ShouldDisplayOriginChip());
+  EXPECT_FALSE(chrome::IsQueryExtractionEnabled());
+  for (size_t i = 0; i < arraysize(test_items); ++i) {
+    const TestItem& test_item = test_items[i];
+    NavigateAndCheckText(test_item.url,
+                         test_item.expected_text_url_replacement_inactive,
+                         false, test_item.should_display_url);
+  }
+
+  // With both origin chip and query extraction enabled, only search term
+  // replacement should be performed.
+  chrome::EnableQueryExtractionForTesting();
+  EXPECT_TRUE(chrome::IsQueryExtractionEnabled());
+  EXPECT_TRUE(browser()->toolbar_model()->url_replacement_enabled());
+  for (size_t i = 0; i < arraysize(test_items); ++i) {
+    const TestItem& test_item = test_items[i];
+    NavigateAndCheckText(test_item.url,
+                         test_item.expected_text_query_extraction,
+                         test_item.would_perform_search_term_replacement,
+                         test_item.should_display_url);
+  }
+
+  // Disabling URL replacement should reset to only showing URLs.
+  browser()->toolbar_model()->set_url_replacement_enabled(false);
+  for (size_t i = 0; i < arraysize(test_items); ++i) {
+    const TestItem& test_item = test_items[i];
+    NavigateAndCheckText(test_item.url,
+                         test_item.expected_text_url_replacement_inactive,
+                         false, test_item.should_display_url);
+  }
 }

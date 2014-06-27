@@ -4,7 +4,6 @@
 
 #include "chrome/browser/profiles/gaia_info_update_service.h"
 
-#include "base/command_line.h"
 #include "base/prefs/pref_service.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -12,8 +11,8 @@
 #include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/sync/profile_sync_service.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/profile_management_switches.h"
 #include "content/public/browser/notification_details.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/image/image.h"
@@ -68,10 +67,8 @@ bool GAIAInfoUpdateService::ShouldUseGAIAProfileInfo(Profile* profile) {
     return false;
 
   // To enable this feature for testing pass "--google-profile-info".
-  if (CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kGoogleProfileInfo)) {
+  if (switches::IsGoogleProfileInfo())
     return true;
-  }
 
   // This feature is disable by default.
   return false;
@@ -105,8 +102,8 @@ void GAIAInfoUpdateService::OnProfileDownloadSuccess(
                                  last_updated_.ToInternalValue());
   ScheduleNextUpdate();
 
-  string16 full_name = downloader->GetProfileFullName();
-  string16 given_name = downloader->GetProfileGivenName();
+  base::string16 full_name = downloader->GetProfileFullName();
+  base::string16 given_name = downloader->GetProfileGivenName();
   SkBitmap bitmap = downloader->GetProfilePicture();
   ProfileDownloader::PictureStatus picture_status =
       downloader->GetProfilePictureStatus();
@@ -134,20 +131,12 @@ void GAIAInfoUpdateService::OnProfileDownloadSuccess(
     cache.SetGAIAPictureOfProfileAtIndex(profile_index, NULL);
   }
 
-  // If this profile hasn't switched to using GAIA information for the profile
-  // name and picture then switch it now. Once the profile has switched this
-  // preference guards against clobbering the user's custom settings.
-  if (!cache.GetHasMigratedToGAIAInfoOfProfileAtIndex(profile_index)) {
-    cache.SetHasMigratedToGAIAInfoOfProfileAtIndex(profile_index, true);
-    // Order matters here for shortcut management, like in
-    // ProfileShortcutManagerWin::OnProfileAdded, as the picture update does not
-    // allow us to change the target, so we have to apply any renaming first. We
-    // also need to re-fetch the index, as SetIsUsingGAIANameOfProfileAtIndex
-    // may alter it.
-    cache.SetIsUsingGAIANameOfProfileAtIndex(profile_index, true);
-    profile_index = cache.GetIndexOfProfileWithPath(profile_->GetPath());
-    cache.SetIsUsingGAIAPictureOfProfileAtIndex(profile_index, true);
-  }
+  // Order matters here for shortcut management, like in
+  // ProfileShortcutManagerWin::OnProfileAdded, as the picture update does not
+  // allow us to change the target, so we have to apply any renaming first. We
+  // also need to re-fetch the index, as changing the profile name may alter it.
+  profile_index = cache.GetIndexOfProfileWithPath(profile_->GetPath());
+  cache.SetIsUsingGAIAPictureOfProfileAtIndex(profile_index, true);
 }
 
 void GAIAInfoUpdateService::OnProfileDownloadFailure(
@@ -173,7 +162,7 @@ void GAIAInfoUpdateService::OnUsernameChanged() {
       prefs::kGoogleServicesUsername);
   if (username.empty()) {
     // Unset the old user's GAIA info.
-    cache.SetGAIANameOfProfileAtIndex(profile_index, string16());
+    cache.SetGAIANameOfProfileAtIndex(profile_index, base::string16());
     // The profile index may have changed.
     profile_index = cache.GetIndexOfProfileWithPath(profile_->GetPath());
     if (profile_index == std::string::npos)

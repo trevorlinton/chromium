@@ -5,6 +5,7 @@
 #include "chrome/common/chrome_paths.h"
 
 #include "base/file_util.h"
+#include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/mac/bundle_locations.h"
 #include "base/path_service.h"
@@ -75,9 +76,6 @@ const base::FilePath::CharType kEffectsPluginFileName[] =
 
 #if defined(OS_POSIX) && !defined(OS_MACOSX)
 
-const base::FilePath::CharType kO3DPluginFileName[] =
-    FILE_PATH_LITERAL("pepper/libppo3dautoplugin.so");
-
 const base::FilePath::CharType kO1DPluginFileName[] =
     FILE_PATH_LITERAL("pepper/libppo1d.so");
 
@@ -97,9 +95,8 @@ const base::FilePath::CharType kFilepathSinglePrefExtensions[] =
 #endif  // defined(GOOGLE_CHROME_BUILD)
 #endif  // defined(OS_LINUX)
 
-}  // namespace
-
-namespace chrome {
+static base::LazyInstance<base::FilePath>
+    g_invalid_specified_user_data_dir = LAZY_INSTANCE_INITIALIZER;
 
 // Gets the path for internal plugins.
 bool GetInternalPluginsDirectory(base::FilePath* result) {
@@ -118,6 +115,10 @@ bool GetInternalPluginsDirectory(base::FilePath* result) {
   // The rest of the world expects plugins in the module directory.
   return PathService::Get(base::DIR_MODULE, result);
 }
+
+}  // namespace
+
+namespace chrome {
 
 bool PathProvider(int key, base::FilePath* result) {
   // Some keys are just aliases...
@@ -334,11 +335,6 @@ bool PathProvider(int key, base::FilePath* result) {
       cur = cur.Append(FILE_PATH_LITERAL("pnacl"));
       break;
 #if defined(OS_POSIX) && !defined(OS_MACOSX)
-    case chrome::FILE_O3D_PLUGIN:
-      if (!PathService::Get(base::DIR_MODULE, &cur))
-        return false;
-      cur = cur.Append(kO3DPluginFileName);
-      break;
     case chrome::FILE_O1D_PLUGIN:
       if (!PathService::Get(base::DIR_MODULE, &cur))
         return false;
@@ -467,6 +463,20 @@ bool PathProvider(int key, base::FilePath* result) {
         return false;
       break;
     }
+    case chrome::DIR_USER_LIBRARY: {
+      if (!GetUserLibraryDirectory(&cur))
+        return false;
+      if (!base::PathExists(cur))  // We don't want to create this.
+        return false;
+      break;
+    }
+    case chrome::DIR_USER_APPLICATIONS: {
+      if (!GetUserApplicationsDirectory(&cur))
+        return false;
+      if (!base::PathExists(cur))  // We don't want to create this.
+        return false;
+      break;
+    }
 #endif
 #if defined(OS_CHROMEOS) || (defined(OS_MACOSX) && !defined(OS_IOS))
     case chrome::DIR_USER_EXTERNAL_EXTENSIONS: {
@@ -511,6 +521,34 @@ bool PathProvider(int key, base::FilePath* result) {
 #endif
       break;
 
+#if defined(OS_LINUX) || (defined(OS_MACOSX) && !defined(OS_IOS))
+    case chrome::DIR_NATIVE_MESSAGING:
+#if defined(OS_MACOSX)
+#if defined(GOOGLE_CHROME_BUILD)
+      cur = base::FilePath(FILE_PATH_LITERAL(
+           "/Library/Google/Chrome/NativeMessagingHosts"));
+#else
+      cur = base::FilePath(FILE_PATH_LITERAL(
+          "/Library/Application Support/Chromium/NativeMessagingHosts"));
+#endif
+#else  // defined(OS_MACOSX)
+#if defined(GOOGLE_CHROME_BUILD)
+      cur = base::FilePath(FILE_PATH_LITERAL(
+          "/etc/opt/chrome/native-messaging-hosts"));
+#else
+      cur = base::FilePath(FILE_PATH_LITERAL(
+          "/etc/chromium/native-messaging-hosts"));
+#endif
+#endif  // !defined(OS_MACOSX)
+      break;
+
+    case chrome::DIR_USER_NATIVE_MESSAGING:
+      if (!PathService::Get(chrome::DIR_USER_DATA, &cur))
+        return false;
+      cur = cur.Append(FILE_PATH_LITERAL("NativeMessagingHosts"));
+      break;
+#endif  // defined(OS_LINUX) || (defined(OS_MACOSX) && !defined(OS_IOS))
+
     default:
       return false;
   }
@@ -518,7 +556,7 @@ bool PathProvider(int key, base::FilePath* result) {
   // TODO(bauerb): http://crbug.com/259796
   base::ThreadRestrictions::ScopedAllowIO allow_io;
   if (create_dir && !base::PathExists(cur) &&
-      !file_util::CreateDirectory(cur))
+      !base::CreateDirectory(cur))
     return false;
 
   *result = cur;
@@ -529,6 +567,14 @@ bool PathProvider(int key, base::FilePath* result) {
 // eliminate this object file if there is no direct entry point into it.
 void RegisterPathProvider() {
   PathService::RegisterProvider(PathProvider, PATH_START, PATH_END);
+}
+
+void SetInvalidSpecifiedUserDataDir(const base::FilePath& user_data_dir) {
+  g_invalid_specified_user_data_dir.Get() = user_data_dir;
+}
+
+const base::FilePath& GetInvalidSpecifiedUserDataDir() {
+  return g_invalid_specified_user_data_dir.Get();
 }
 
 }  // namespace chrome

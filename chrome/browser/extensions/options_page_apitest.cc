@@ -4,14 +4,14 @@
 
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/browser_test_utils.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
 
 using extensions::Extension;
 
@@ -44,9 +44,12 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest, DISABLED_OptionsPage) {
   // NOTE: Currently the above script needs to execute in an iframe. The
   // selector for that iframe may break if the layout of the extensions
   // page changes.
-  EXPECT_TRUE(content::ExecuteScriptInFrame(
+  content::RenderFrameHost* frame = content::FrameMatchingPredicate(
       tab_strip->GetActiveWebContents(),
-      "//iframe[starts-with(@src, 'chrome://extension')]",
+      base::Bind(&content::FrameHasSourceUrl,
+                 GURL(chrome::kChromeUIExtensionsFrameURL)));
+  EXPECT_TRUE(content::ExecuteScript(
+      frame,
       kScriptClickOptionButton));
   observer.Wait();
   EXPECT_EQ(2, tab_strip->count());

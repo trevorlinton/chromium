@@ -6,13 +6,13 @@
 #include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
-#include "chrome/test/base/testing_profile.h"
 #include "components/autofill/content/browser/wallet/full_wallet.h"
 #include "components/autofill/content/browser/wallet/instrument.h"
 #include "components/autofill/content/browser/wallet/wallet_client.h"
@@ -28,6 +28,7 @@
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request_status.h"
+#include "net/url_request/url_request_test_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -103,7 +104,6 @@ const char kGetWalletItemsValidResponse[] =
     "    {"
     "      \"descriptive_name\":\"descriptive_name\","
     "      \"type\":\"VISA\","
-    "      \"supported_currency\":\"currency_code\","
     "      \"last_four_digits\":\"4111\","
     "      \"expiration_month\":12,"
     "      \"expiration_year\":3000,"
@@ -293,7 +293,8 @@ const char kErrorTypeMissingInResponse[] =
 
 // The JSON below is used to test against the request payload being sent to
 // Online Wallet. It's indented differently since JSONWriter creates compact
-// JSON from DictionaryValues.
+// JSON from DictionaryValues. NB: The values must be alphabetical to pass
+// the tests.
 
 const char kAcceptLegalDocumentsValidRequest[] =
     "{"
@@ -394,9 +395,11 @@ const char kSaveAddressValidRequest[] =
                 "],"
                 "\"administrative_area_name\":\"save_admin_area_name\","
                 "\"country_name_code\":\"US\","
+                "\"dependent_locality_name\":\"save_dependent_locality_name\","
                 "\"locality_name\":\"save_locality_name\","
                 "\"postal_code_number\":\"save_postal_code_number\","
-                "\"recipient_name\":\"save_recipient_name\""
+                "\"recipient_name\":\"save_recipient_name\","
+                "\"sorting_code\":\"save_sorting_code\""
             "}"
         "},"
         "\"use_minimal_addresses\":false"
@@ -417,9 +420,11 @@ const char kSaveInstrumentValidRequest[] =
                     "],"
                     "\"administrative_area_name\":\"admin_area_name\","
                     "\"country_name_code\":\"US\","
+                    "\"dependent_locality_name\":\"dependent_locality_name\","
                     "\"locality_name\":\"locality_name\","
                     "\"postal_code_number\":\"postal_code_number\","
-                    "\"recipient_name\":\"recipient_name\""
+                    "\"recipient_name\":\"recipient_name\","
+                    "\"sorting_code\":\"sorting_code\""
                 "},"
                 "\"exp_month\":12,"
                 "\"exp_year\":3000,"
@@ -450,9 +455,11 @@ const char kSaveInstrumentAndAddressValidRequest[] =
                     "],"
                     "\"administrative_area_name\":\"admin_area_name\","
                     "\"country_name_code\":\"US\","
+                    "\"dependent_locality_name\":\"dependent_locality_name\","
                     "\"locality_name\":\"locality_name\","
                     "\"postal_code_number\":\"postal_code_number\","
-                    "\"recipient_name\":\"recipient_name\""
+                    "\"recipient_name\":\"recipient_name\","
+                    "\"sorting_code\":\"sorting_code\""
                 "},"
                 "\"exp_month\":12,"
                 "\"exp_year\":3000,"
@@ -477,9 +484,11 @@ const char kSaveInstrumentAndAddressValidRequest[] =
                 "],"
                 "\"administrative_area_name\":\"save_admin_area_name\","
                 "\"country_name_code\":\"US\","
+                "\"dependent_locality_name\":\"save_dependent_locality_name\","
                 "\"locality_name\":\"save_locality_name\","
                 "\"postal_code_number\":\"save_postal_code_number\","
-                "\"recipient_name\":\"save_recipient_name\""
+                "\"recipient_name\":\"save_recipient_name\","
+                "\"sorting_code\":\"save_sorting_code\""
             "}"
         "},"
         "\"use_minimal_addresses\":false"
@@ -492,7 +501,7 @@ const char kUpdateAddressValidRequest[] =
         "\"risk_params\":\"risky business\","
         "\"shipping_address\":"
         "{"
-            "\"id\":\"shipping_address_id\","
+            "\"id\":\"address_id\","
             "\"phone_number\":\"ship_phone_number\","
             "\"postal_address\":"
             "{"
@@ -503,9 +512,11 @@ const char kUpdateAddressValidRequest[] =
                 "],"
                 "\"administrative_area_name\":\"ship_admin_area_name\","
                 "\"country_name_code\":\"US\","
+                "\"dependent_locality_name\":\"ship_dependent_locality_name\","
                 "\"locality_name\":\"ship_locality_name\","
                 "\"postal_code_number\":\"ship_postal_code_number\","
-                "\"recipient_name\":\"ship_recipient_name\""
+                "\"recipient_name\":\"ship_recipient_name\","
+                "\"sorting_code\":\"ship_sorting_code\""
             "}"
         "},"
         "\"use_minimal_addresses\":false"
@@ -526,11 +537,13 @@ const char kUpdateInstrumentAddressValidRequest[] =
             "],"
             "\"administrative_area_name\":\"admin_area_name\","
             "\"country_name_code\":\"US\","
+            "\"dependent_locality_name\":\"dependent_locality_name\","
             "\"locality_name\":\"locality_name\","
             "\"postal_code_number\":\"postal_code_number\","
-            "\"recipient_name\":\"recipient_name\""
+            "\"recipient_name\":\"recipient_name\","
+            "\"sorting_code\":\"sorting_code\""
         "},"
-        "\"upgraded_instrument_id\":\"instrument_id\","
+        "\"upgraded_instrument_id\":\"default_instrument_id\","
         "\"use_minimal_addresses\":false"
     "}";
 
@@ -549,11 +562,13 @@ const char kUpdateInstrumentAddressWithNameChangeValidRequest[] =
             "],"
             "\"administrative_area_name\":\"admin_area_name\","
             "\"country_name_code\":\"US\","
+            "\"dependent_locality_name\":\"dependent_locality_name\","
             "\"locality_name\":\"locality_name\","
             "\"postal_code_number\":\"postal_code_number\","
-            "\"recipient_name\":\"recipient_name\""
+            "\"recipient_name\":\"recipient_name\","
+            "\"sorting_code\":\"sorting_code\""
         "},"
-        "\"upgraded_instrument_id\":\"instrument_id\","
+        "\"upgraded_instrument_id\":\"default_instrument_id\","
         "\"use_minimal_addresses\":false"
     "}";
 
@@ -564,7 +579,7 @@ const char kUpdateInstrumentExpirationDateValidRequest[] =
             "\"credit_card\":"
             "{"
                 "\"exp_month\":12,"
-                "\"exp_year\":3000"
+                "\"exp_year\":3001"
             "},"
             "\"type\":\"CREDIT_CARD\""
         "},"
@@ -688,9 +703,14 @@ class MockWalletClientDelegate : public WalletClientDelegate {
 
 class WalletClientTest : public testing::Test {
  public:
+  WalletClientTest()
+      : request_context_(new net::TestURLRequestContextGetter(
+            base::MessageLoopProxy::current())) {}
+  virtual ~WalletClientTest() {}
+
   virtual void SetUp() OVERRIDE {
     wallet_client_.reset(
-        new WalletClient(browser_context_.GetRequestContext(),
+        new WalletClient(request_context_,
                          &delegate_,
                          GURL(kMerchantUrl)));
   }
@@ -837,19 +857,20 @@ class WalletClientTest : public testing::Test {
  protected:
   content::TestBrowserThreadBundle thread_bundle_;
   scoped_ptr<WalletClient> wallet_client_;
-  TestingProfile browser_context_;
+  scoped_refptr<net::TestURLRequestContextGetter> request_context_;
   MockWalletClientDelegate delegate_;
 
  private:
   std::string GetData(const std::string& upload_data) {
-    scoped_ptr<Value> root(base::JSONReader::Read(upload_data));
+    scoped_ptr<base::Value> root(base::JSONReader::Read(upload_data));
 
     // If this is not a JSON dictionary, return plain text.
-    if (!root || !root->IsType(Value::TYPE_DICTIONARY))
+    if (!root || !root->IsType(base::Value::TYPE_DICTIONARY))
       return upload_data;
 
     // Remove api_key entry (to prevent accidental leak), return JSON as text.
-    DictionaryValue* dict = static_cast<DictionaryValue*>(root.get());
+    base::DictionaryValue* dict =
+        static_cast<base::DictionaryValue*>(root.get());
     dict->Remove("api_key", NULL);
     std::string clean_upload_data;
     base::JSONWriter::Write(dict, &clean_upload_data);
@@ -1194,7 +1215,9 @@ TEST_F(WalletClientTest, SaveAddressSucceeded) {
 
   scoped_ptr<Address> address = GetTestSaveableAddress();
   wallet_client_->SaveToWallet(scoped_ptr<Instrument>(),
-                               address.Pass());
+                               address.Pass(),
+                               NULL,
+                               NULL);
   VerifyAndFinishRequest(net::HTTP_OK,
                          kSaveAddressValidRequest,
                          kSaveAddressValidResponse);
@@ -1224,7 +1247,9 @@ TEST_F(WalletClientTest, SaveAddressWithRequiredActionsSucceeded) {
 
   scoped_ptr<Address> address = GetTestSaveableAddress();
   wallet_client_->SaveToWallet(scoped_ptr<Instrument>(),
-                               address.Pass());
+                               address.Pass(),
+                               NULL,
+                               NULL);
   VerifyAndFinishRequest(net::HTTP_OK,
                          kSaveAddressValidRequest,
                          kSaveAddressWithRequiredActionsValidResponse);
@@ -1240,7 +1265,9 @@ TEST_F(WalletClientTest, SaveAddressFailedInvalidRequiredAction) {
 
   scoped_ptr<Address> address = GetTestSaveableAddress();
   wallet_client_->SaveToWallet(scoped_ptr<Instrument>(),
-                               address.Pass());
+                               address.Pass(),
+                               NULL,
+                               NULL);
   VerifyAndFinishRequest(net::HTTP_OK,
                          kSaveAddressValidRequest,
                          kSaveWithInvalidRequiredActionsResponse);
@@ -1256,7 +1283,9 @@ TEST_F(WalletClientTest, SaveAddressFailedMalformedResponse) {
 
   scoped_ptr<Address> address = GetTestSaveableAddress();
   wallet_client_->SaveToWallet(scoped_ptr<Instrument>(),
-                               address.Pass());
+                               address.Pass(),
+                               NULL,
+                               NULL);
   VerifyAndFinishRequest(net::HTTP_OK,
                          kSaveAddressValidRequest,
                          kSaveInvalidResponse);
@@ -1273,7 +1302,9 @@ TEST_F(WalletClientTest, SaveInstrumentSucceeded) {
 
   scoped_ptr<Instrument> instrument = GetTestInstrument();
   wallet_client_->SaveToWallet(instrument.Pass(),
-                               scoped_ptr<Address>());
+                               scoped_ptr<Address>(),
+                               NULL,
+                               NULL);
 
   VerifyAndFinishFormEncodedRequest(net::HTTP_OK,
                                     kSaveInstrumentValidRequest,
@@ -1305,7 +1336,9 @@ TEST_F(WalletClientTest, SaveInstrumentWithRequiredActionsSucceeded) {
 
   scoped_ptr<Instrument> instrument = GetTestInstrument();
   wallet_client_->SaveToWallet(instrument.Pass(),
-                               scoped_ptr<Address>());
+                               scoped_ptr<Address>(),
+                               NULL,
+                               NULL);
 
   VerifyAndFinishFormEncodedRequest(
       net::HTTP_OK,
@@ -1325,7 +1358,9 @@ TEST_F(WalletClientTest, SaveInstrumentFailedInvalidRequiredActions) {
 
   scoped_ptr<Instrument> instrument = GetTestInstrument();
   wallet_client_->SaveToWallet(instrument.Pass(),
-                               scoped_ptr<Address>());
+                               scoped_ptr<Address>(),
+                               NULL,
+                               NULL);
 
   VerifyAndFinishFormEncodedRequest(net::HTTP_OK,
                                     kSaveInstrumentValidRequest,
@@ -1343,7 +1378,9 @@ TEST_F(WalletClientTest, SaveInstrumentFailedMalformedResponse) {
 
   scoped_ptr<Instrument> instrument = GetTestInstrument();
   wallet_client_->SaveToWallet(instrument.Pass(),
-                               scoped_ptr<Address>());
+                               scoped_ptr<Address>(),
+                               NULL,
+                               NULL);
 
   VerifyAndFinishFormEncodedRequest(net::HTTP_OK,
                                     kSaveInstrumentValidRequest,
@@ -1364,8 +1401,7 @@ TEST_F(WalletClientTest, SaveInstrumentAndAddressSucceeded) {
 
   scoped_ptr<Instrument> instrument = GetTestInstrument();
   scoped_ptr<Address> address = GetTestSaveableAddress();
-  wallet_client_->SaveToWallet(instrument.Pass(),
-                               address.Pass());
+  wallet_client_->SaveToWallet(instrument.Pass(), address.Pass(), NULL, NULL);
 
   VerifyAndFinishFormEncodedRequest(net::HTTP_OK,
                                     kSaveInstrumentAndAddressValidRequest,
@@ -1399,8 +1435,7 @@ TEST_F(WalletClientTest, SaveInstrumentAndAddressWithRequiredActionsSucceeded) {
 
   scoped_ptr<Instrument> instrument = GetTestInstrument();
   scoped_ptr<Address> address = GetTestSaveableAddress();
-  wallet_client_->SaveToWallet(instrument.Pass(),
-                               address.Pass());
+  wallet_client_->SaveToWallet(instrument.Pass(), address.Pass(), NULL, NULL);
 
   VerifyAndFinishFormEncodedRequest(
       net::HTTP_OK,
@@ -1421,8 +1456,7 @@ TEST_F(WalletClientTest, SaveInstrumentAndAddressFailedInvalidRequiredAction) {
 
   scoped_ptr<Instrument> instrument = GetTestInstrument();
   scoped_ptr<Address> address = GetTestSaveableAddress();
-  wallet_client_->SaveToWallet(instrument.Pass(),
-                               address.Pass());
+  wallet_client_->SaveToWallet(instrument.Pass(), address.Pass(), NULL, NULL);
 
   VerifyAndFinishFormEncodedRequest(net::HTTP_OK,
                                     kSaveInstrumentAndAddressValidRequest,
@@ -1439,11 +1473,12 @@ TEST_F(WalletClientTest, UpdateAddressSucceeded) {
   delegate_.ExpectLogWalletApiCallDuration(AutofillMetrics::SAVE_TO_WALLET, 1);
   delegate_.ExpectBaselineMetrics();
 
-  scoped_ptr<Address> address = GetTestShippingAddress();
-  address->set_object_id("shipping_address_id");
-
+  scoped_ptr<Address> reference_address = GetTestNonDefaultShippingAddress();
   wallet_client_->SaveToWallet(scoped_ptr<Instrument>(),
-                               address.Pass());
+                               GetTestShippingAddress(),
+                               NULL,
+                               reference_address.get());
+
   VerifyAndFinishRequest(net::HTTP_OK,
                          kUpdateAddressValidRequest,
                          kUpdateAddressValidResponse);
@@ -1470,11 +1505,12 @@ TEST_F(WalletClientTest, UpdateAddressWithRequiredActionsSucceeded) {
                                            required_actions,
                                            form_errors)).Times(1);
 
-  scoped_ptr<Address> address = GetTestShippingAddress();
-  address->set_object_id("shipping_address_id");
-
+  scoped_ptr<Address> reference_address = GetTestNonDefaultShippingAddress();
   wallet_client_->SaveToWallet(scoped_ptr<Instrument>(),
-                               address.Pass());
+                               GetTestShippingAddress(),
+                               NULL,
+                               reference_address.get());
+
   VerifyAndFinishRequest(net::HTTP_OK,
                          kUpdateAddressValidRequest,
                          kUpdateWithRequiredActionsValidResponse);
@@ -1488,11 +1524,12 @@ TEST_F(WalletClientTest, UpdateAddressFailedInvalidRequiredAction) {
   delegate_.ExpectWalletErrorMetric(AutofillMetrics::WALLET_MALFORMED_RESPONSE);
   delegate_.ExpectLogWalletMalformedResponse(AutofillMetrics::SAVE_TO_WALLET);
 
-  scoped_ptr<Address> address = GetTestShippingAddress();
-  address->set_object_id("shipping_address_id");
-
+  scoped_ptr<Address> reference_address = GetTestNonDefaultShippingAddress();
   wallet_client_->SaveToWallet(scoped_ptr<Instrument>(),
-                               address.Pass());
+                               GetTestShippingAddress(),
+                               NULL,
+                               reference_address.get());
+
   VerifyAndFinishRequest(net::HTTP_OK,
                          kUpdateAddressValidRequest,
                          kSaveWithInvalidRequiredActionsResponse);
@@ -1506,11 +1543,12 @@ TEST_F(WalletClientTest, UpdateAddressMalformedResponse) {
   delegate_.ExpectWalletErrorMetric(AutofillMetrics::WALLET_MALFORMED_RESPONSE);
   delegate_.ExpectLogWalletMalformedResponse(AutofillMetrics::SAVE_TO_WALLET);
 
-  scoped_ptr<Address> address = GetTestShippingAddress();
-  address->set_object_id("shipping_address_id");
-
+  scoped_ptr<Address> reference_address = GetTestNonDefaultShippingAddress();
   wallet_client_->SaveToWallet(scoped_ptr<Instrument>(),
-                               address.Pass());
+                               GetTestShippingAddress(),
+                               NULL,
+                               reference_address.get());
+
   VerifyAndFinishRequest(net::HTTP_OK,
                          kUpdateAddressValidRequest,
                          kUpdateMalformedResponse);
@@ -1526,8 +1564,12 @@ TEST_F(WalletClientTest, UpdateInstrumentAddressSucceeded) {
                                            1);
   delegate_.ExpectBaselineMetrics();
 
+  scoped_ptr<WalletItems::MaskedInstrument> reference_instrument =
+      GetTestMaskedInstrument();
   wallet_client_->SaveToWallet(GetTestAddressUpgradeInstrument(),
-                               scoped_ptr<Address>());
+                               scoped_ptr<Address>(),
+                               reference_instrument.get(),
+                               NULL);
 
   VerifyAndFinishRequest(net::HTTP_OK,
                          kUpdateInstrumentAddressValidRequest,
@@ -1544,8 +1586,19 @@ TEST_F(WalletClientTest, UpdateInstrumentExpirationDateSuceeded) {
                                            1);
   delegate_.ExpectBaselineMetrics();
 
-  wallet_client_->SaveToWallet(GetTestExpirationDateChangeInstrument(),
-                               scoped_ptr<Address>());
+  scoped_ptr<Instrument> instrument = GetTestExpirationDateChangeInstrument();
+  scoped_ptr<WalletItems::MaskedInstrument> reference_instrument =
+      GetTestMaskedInstrumentWithId("instrument_id");
+
+  int new_month = instrument->expiration_month();
+  int new_year = instrument->expiration_year();
+  ASSERT_TRUE(new_month != reference_instrument->expiration_month() ||
+              new_year != reference_instrument->expiration_year());
+
+  wallet_client_->SaveToWallet(instrument.Pass(),
+                               scoped_ptr<Address>(),
+                               reference_instrument.get(),
+                               NULL);
 
   VerifyAndFinishFormEncodedRequest(net::HTTP_OK,
                                     kUpdateInstrumentExpirationDateValidRequest,
@@ -1563,8 +1616,12 @@ TEST_F(WalletClientTest, UpdateInstrumentAddressWithNameChangeSucceeded) {
                                            1);
   delegate_.ExpectBaselineMetrics();
 
+  scoped_ptr<WalletItems::MaskedInstrument> reference_instrument =
+      GetTestMaskedInstrument();
   wallet_client_->SaveToWallet(GetTestAddressNameChangeInstrument(),
-                               scoped_ptr<Address>());
+                               scoped_ptr<Address>(),
+                               reference_instrument.get(),
+                               NULL);
 
   VerifyAndFinishFormEncodedRequest(
       net::HTTP_OK,
@@ -1596,8 +1653,12 @@ TEST_F(WalletClientTest, UpdateInstrumentWithRequiredActionsSucceeded) {
                                 required_actions,
                                 form_errors)).Times(1);
 
+  scoped_ptr<WalletItems::MaskedInstrument> reference_instrument =
+      GetTestMaskedInstrument();
   wallet_client_->SaveToWallet(GetTestAddressUpgradeInstrument(),
-                               scoped_ptr<Address>());
+                               scoped_ptr<Address>(),
+                               reference_instrument.get(),
+                               NULL);
 
   VerifyAndFinishRequest(net::HTTP_OK,
                          kUpdateInstrumentAddressValidRequest,
@@ -1613,8 +1674,12 @@ TEST_F(WalletClientTest, UpdateInstrumentFailedInvalidRequiredAction) {
   delegate_.ExpectWalletErrorMetric(AutofillMetrics::WALLET_MALFORMED_RESPONSE);
   delegate_.ExpectLogWalletMalformedResponse(AutofillMetrics::SAVE_TO_WALLET);
 
+  scoped_ptr<WalletItems::MaskedInstrument> reference_instrument =
+      GetTestMaskedInstrument();
   wallet_client_->SaveToWallet(GetTestAddressUpgradeInstrument(),
-                               scoped_ptr<Address>());
+                               scoped_ptr<Address>(),
+                               reference_instrument.get(),
+                               NULL);
 
   VerifyAndFinishRequest(net::HTTP_OK,
                          kUpdateInstrumentAddressValidRequest,
@@ -1630,8 +1695,12 @@ TEST_F(WalletClientTest, UpdateInstrumentMalformedResponse) {
   delegate_.ExpectWalletErrorMetric(AutofillMetrics::WALLET_MALFORMED_RESPONSE);
   delegate_.ExpectLogWalletMalformedResponse(AutofillMetrics::SAVE_TO_WALLET);
 
+  scoped_ptr<WalletItems::MaskedInstrument> reference_instrument =
+      GetTestMaskedInstrument();
   wallet_client_->SaveToWallet(GetTestAddressUpgradeInstrument(),
-                               scoped_ptr<Address>());
+                               scoped_ptr<Address>(),
+                               reference_instrument.get(),
+                               NULL);
 
   VerifyAndFinishRequest(net::HTTP_OK,
                          kUpdateInstrumentAddressValidRequest,
@@ -1653,25 +1722,11 @@ TEST_F(WalletClientTest, HasRequestInProgress) {
   EXPECT_FALSE(wallet_client_->HasRequestInProgress());
 }
 
-TEST_F(WalletClientTest, PendingRequest) {
-  EXPECT_EQ(0U, wallet_client_->pending_requests_.size());
-
-  // Shouldn't queue the first request.
+TEST_F(WalletClientTest, ErrorResponse) {
+  EXPECT_FALSE(wallet_client_->HasRequestInProgress());
   delegate_.ExpectBaselineMetrics();
   wallet_client_->GetWalletItems();
-  EXPECT_EQ(0U, wallet_client_->pending_requests_.size());
-  testing::Mock::VerifyAndClear(delegate_.metric_logger());
-
-  wallet_client_->GetWalletItems();
-  EXPECT_EQ(1U, wallet_client_->pending_requests_.size());
-
-  delegate_.ExpectLogWalletApiCallDuration(AutofillMetrics::GET_WALLET_ITEMS,
-                                           1);
-  delegate_.ExpectBaselineMetrics();
-  VerifyAndFinishRequest(net::HTTP_OK,
-                         kGetWalletItemsValidRequest,
-                         kGetWalletItemsValidResponse);
-  EXPECT_EQ(0U, wallet_client_->pending_requests_.size());
+  EXPECT_TRUE(wallet_client_->HasRequestInProgress());
   testing::Mock::VerifyAndClear(delegate_.metric_logger());
 
   EXPECT_CALL(delegate_, OnWalletError(
@@ -1681,25 +1736,20 @@ TEST_F(WalletClientTest, PendingRequest) {
   delegate_.ExpectWalletErrorMetric(
       AutofillMetrics::WALLET_SERVICE_UNAVAILABLE);
 
-  // Finish the second request.
   VerifyAndFinishRequest(net::HTTP_INTERNAL_SERVER_ERROR,
                          kGetWalletItemsValidRequest,
                          kErrorResponse);
 }
 
-TEST_F(WalletClientTest, CancelRequests) {
-  ASSERT_EQ(0U, wallet_client_->pending_requests_.size());
+TEST_F(WalletClientTest, CancelRequest) {
+  EXPECT_FALSE(wallet_client_->HasRequestInProgress());
   delegate_.ExpectLogWalletApiCallDuration(AutofillMetrics::GET_WALLET_ITEMS,
                                            0);
   delegate_.ExpectBaselineMetrics();
 
   wallet_client_->GetWalletItems();
-  wallet_client_->GetWalletItems();
-  wallet_client_->GetWalletItems();
-  EXPECT_EQ(2U, wallet_client_->pending_requests_.size());
-
-  wallet_client_->CancelRequests();
-  EXPECT_EQ(0U, wallet_client_->pending_requests_.size());
+  EXPECT_TRUE(wallet_client_->HasRequestInProgress());
+  wallet_client_->CancelRequest();
   EXPECT_FALSE(wallet_client_->HasRequestInProgress());
 }
 

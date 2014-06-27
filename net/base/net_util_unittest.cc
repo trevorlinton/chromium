@@ -10,6 +10,7 @@
 
 #include "base/files/file_path.h"
 #include "base/format_macros.h"
+#include "base/scoped_native_library.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -20,6 +21,17 @@
 #include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
+
+#if defined(OS_WIN)
+#include <iphlpapi.h>
+#include <objbase.h>
+#include "base/win/windows_version.h"
+#elif !defined(OS_ANDROID)
+#include <net/if.h>
+#endif  // OS_WIN
+
+using base::ASCIIToUTF16;
+using base::WideToUTF16;
 
 namespace net {
 
@@ -484,7 +496,7 @@ std::string DumpIPNumber(const IPAddressNumber& v) {
 }
 
 void RunGenerateFileNameTestCase(const GenerateFilenameCase* test_case) {
-  std::string default_filename(WideToUTF8(test_case->default_filename));
+  std::string default_filename(base::WideToUTF8(test_case->default_filename));
   base::FilePath file_path = GenerateFileName(
       GURL(test_case->url), test_case->content_disp_header,
       test_case->referrer_charset, test_case->suggested_filename,
@@ -2251,8 +2263,8 @@ TEST(NetUtilTest, GetDirectoryListingEntry) {
      false,
      10000,
      base::Time(),
-     "<script>addRow(\"\\uD55C\\uAE00.txt\",\"%ED%95%9C%EA%B8%80.txt\""
-         ",0,\"9.8 kB\",\"\");</script>\n"},
+     "<script>addRow(\"\xED\x95\x9C\xEA\xB8\x80.txt\","
+         "\"%ED%95%9C%EA%B8%80.txt\",0,\"9.8 kB\",\"\");</script>\n"},
     // U+D55C0 U+AE00. raw_bytes is the corresponding EUC-KR sequence:
     // a local or remote file in EUC-KR.
     {L"\xD55C\xAE00.txt",
@@ -2260,7 +2272,7 @@ TEST(NetUtilTest, GetDirectoryListingEntry) {
      false,
      10000,
      base::Time(),
-     "<script>addRow(\"\\uD55C\\uAE00.txt\",\"%C7%D1%B1%DB.txt\""
+     "<script>addRow(\"\xED\x95\x9C\xEA\xB8\x80.txt\",\"%C7%D1%B1%DB.txt\""
          ",0,\"9.8 kB\",\"\");</script>\n"},
   };
 
@@ -2535,6 +2547,10 @@ TEST(NetUtilTest, FormatUrl) {
      UnescapeRule::NORMAL,
      L"http://xn--qcka1pmc.jp/\x30B0\x30FC\x30B0\x30EB"
      L"?q=\x30B0\x30FC\x30B0\x30EB", 7},
+
+    {"Unescape normally with BiDi control character",
+     "http://example.com/%E2%80%AEabc?q=%E2%80%8Fxy", "en", default_format_type,
+     UnescapeRule::NORMAL, L"http://example.com/%E2%80%AEabc?q=%E2%80%8Fxy", 7},
 
     {"Unescape normally including unescape spaces",
      "http://www.google.com/search?q=Hello%20World", "en", default_format_type,
@@ -3026,9 +3042,9 @@ TEST(NetUtilTest, SimplifyUrlForRequest) {
       "ftp://user:pass@google.com:80/sup?yo#X#X",
       "ftp://google.com:80/sup?yo",
     },
-    { // Try an nonstandard URL
+    { // Try a nonstandard URL
       "foobar://user:pass@google.com:80/sup?yo#X#X",
-      "foobar://user:pass@google.com:80/sup?yo#X#X",
+      "foobar://user:pass@google.com:80/sup?yo",
     },
   };
   for (size_t i = 0; i < ARRAYSIZE_UNSAFE(tests); ++i) {
@@ -3290,11 +3306,12 @@ TEST(NetUtilTest, IsLocalhost) {
 // Verify GetNetworkList().
 TEST(NetUtilTest, GetNetworkList) {
   NetworkInterfaceList list;
-  ASSERT_TRUE(GetNetworkList(&list));
+  ASSERT_TRUE(GetNetworkList(&list, INCLUDE_HOST_SCOPE_VIRTUAL_INTERFACES));
   for (NetworkInterfaceList::iterator it = list.begin();
        it != list.end(); ++it) {
-    // Verify that the name is not empty.
+    // Verify that the names are not empty.
     EXPECT_FALSE(it->name.empty());
+    EXPECT_FALSE(it->friendly_name.empty());
 
     // Verify that the address is correct.
     EXPECT_TRUE(it->address.size() == kIPv4AddressSize ||
@@ -3310,6 +3327,44 @@ TEST(NetUtilTest, GetNetworkList) {
     EXPECT_FALSE(all_zeroes);
     EXPECT_GT(it->network_prefix, 1u);
     EXPECT_LE(it->network_prefix, it->address.size() * 8);
+
+#if defined(OS_WIN)
+    // On Windows |name| is NET_LUID.
+    base::ScopedNativeLibrary phlpapi_lib(
+        base::FilePath(FILE_PATH_LITERAL("iphlpapi.dll")));
+    ASSERT_TRUE(phlpapi_lib.is_valid());
+    typedef NETIO_STATUS (WINAPI* ConvertInterfaceIndexToLuid)(NET_IFINDEX,
+                                                               PNET_LUID);
+    ConvertInterfaceIndexToLuid interface_to_luid =
+        reinterpret_cast<ConvertInterfaceIndexToLuid>(
+            phlpapi_lib.GetFunctionPointer("ConvertInterfaceIndexToLuid"));
+
+    typedef NETIO_STATUS (WINAPI* ConvertInterfaceLuidToGuid)(NET_LUID*,
+                                                              GUID*);
+    ConvertInterfaceLuidToGuid luid_to_guid =
+        reinterpret_cast<ConvertInterfaceLuidToGuid>(
+            phlpapi_lib.GetFunctionPointer("ConvertInterfaceLuidToGuid"));
+
+    if (interface_to_luid && luid_to_guid) {
+      NET_LUID luid;
+      EXPECT_EQ(interface_to_luid(it->interface_index, &luid), NO_ERROR);
+      GUID guid;
+      EXPECT_EQ(luid_to_guid(&luid, &guid), NO_ERROR);
+      LPOLESTR name;
+      StringFromCLSID(guid, &name);
+      EXPECT_STREQ(base::UTF8ToWide(it->name).c_str(), name);
+      CoTaskMemFree(name);
+      continue;
+    } else {
+      EXPECT_LT(base::win::GetVersion(), base::win::VERSION_VISTA);
+      EXPECT_LT(it->interface_index, 1u << 24u);  // Must fit 0.x.x.x.
+      EXPECT_NE(it->interface_index, 0u);  // 0 means to use default.
+    }
+#elif !defined(OS_ANDROID)
+    char name[IF_NAMESIZE];
+    EXPECT_TRUE(if_indextoname(it->interface_index, name));
+    EXPECT_STREQ(it->name.c_str(), name);
+#endif
   }
 }
 

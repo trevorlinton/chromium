@@ -35,7 +35,7 @@ class SSLInfo;
 class NET_EXPORT TransportSecurityState
     : NON_EXPORTED_BASE(public base::NonThreadSafe) {
  public:
-  class Delegate {
+  class NET_EXPORT Delegate {
    public:
     // This function may not block and may be called with internal locks held.
     // Thus it must not reenter the TransportSecurityState object.
@@ -95,10 +95,16 @@ class NET_EXPORT TransportSecurityState
 
     UpgradeMode upgrade_mode;
 
-    // The absolute time (UTC) when this DomainState was first created.
+    // The absolute time (UTC) when the |upgrade_mode| was observed.
     //
-    // Static entries do not have a created time.
-    base::Time created;
+    // TODO(palmer): Perhaps static entries should have an "observed" time.
+    base::Time sts_observed;
+
+    // The absolute time (UTC) when the |dynamic_spki_hashes| (and other
+    // |dynamic_*| state) were observed.
+    //
+    // TODO(palmer): Perhaps static entries should have an "observed" time.
+    base::Time pkp_observed;
 
     // The absolute time (UTC) when the |upgrade_mode|, if set to
     // UPGRADE_ALWAYS, downgrades to UPGRADE_NEVER.
@@ -241,6 +247,18 @@ class NET_EXPORT TransportSecurityState
   // entry, the exact match determines the return value.
   static bool IsGooglePinnedProperty(const std::string& host,
                                      bool sni_enabled);
+
+  // GetPinsForDebugging finds the preloaded entry for the given host. If none
+  // exists, it returns false. Otherwise it returns true and sets |out_pins|
+  // and |out_bad_pins| to point to arrays of SHA-1 hashes, each 20 bytes long
+  // with a NULL pointer signalling the end of the array, for the required and
+  // excluded pins, respectively.
+  // This is a temporary debugging measure to check for binary alteration /
+  // corruption.
+  static bool GetPinsForDebugging(
+    const std::string& host,
+    const char* const** out_pins,
+    const char* const** out_bad_pins);
 
   // The maximum number of seconds for which we'll cache an HSTS request.
   static const long int kMaxHSTSAgeSecs;

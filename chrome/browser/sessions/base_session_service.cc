@@ -14,6 +14,7 @@
 #include "chrome/browser/sessions/session_backend.h"
 #include "chrome/browser/sessions/session_types.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/url_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/common/referrer.h"
@@ -42,7 +43,7 @@ void WriteStringToPickle(Pickle& pickle, int* bytes_written, int max_bytes,
 // Helper used by ScheduleGetLastSessionCommands. It runs callback on TaskRunner
 // thread if it's not canceled.
 void RunIfNotCanceled(
-    const CancelableTaskTracker::IsCanceledCallback& is_canceled,
+    const base::CancelableTaskTracker::IsCanceledCallback& is_canceled,
     const BaseSessionService::InternalGetCommandsCallback& callback,
     ScopedVector<SessionCommand> commands) {
   if (is_canceled.Run())
@@ -264,15 +265,20 @@ bool BaseSessionService::RestoreSetWindowAppNameCommand(
 }
 
 bool BaseSessionService::ShouldTrackEntry(const GURL& url) {
-  return url.is_valid();
+  // Blacklist chrome://quit and chrome://restart to avoid quit or restart
+  // loops.
+  return url.is_valid() && !(url.SchemeIs(content::kChromeUIScheme) &&
+                             (url.host() == chrome::kChromeUIQuitHost ||
+                              url.host() == chrome::kChromeUIRestartHost));
 }
 
-CancelableTaskTracker::TaskId
-    BaseSessionService::ScheduleGetLastSessionCommands(
+base::CancelableTaskTracker::TaskId
+BaseSessionService::ScheduleGetLastSessionCommands(
     const InternalGetCommandsCallback& callback,
-    CancelableTaskTracker* tracker) {
-  CancelableTaskTracker::IsCanceledCallback is_canceled;
-  CancelableTaskTracker::TaskId id = tracker->NewTrackedTaskId(&is_canceled);
+    base::CancelableTaskTracker* tracker) {
+  base::CancelableTaskTracker::IsCanceledCallback is_canceled;
+  base::CancelableTaskTracker::TaskId id =
+      tracker->NewTrackedTaskId(&is_canceled);
 
   InternalGetCommandsCallback run_if_not_canceled =
       base::Bind(&RunIfNotCanceled, is_canceled, callback);

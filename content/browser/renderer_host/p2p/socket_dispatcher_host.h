@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "content/browser/renderer_host/p2p/socket_host_throttler.h"
-#include "content/common/p2p_sockets.h"
+#include "content/common/p2p_socket_type.h"
 #include "content/public/browser/browser_message_filter.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/ip_endpoint.h"
@@ -19,6 +19,10 @@
 
 namespace net {
 class URLRequestContextGetter;
+}
+
+namespace talk_base {
+struct PacketOptions;
 }
 
 namespace content {
@@ -65,22 +69,23 @@ class P2PSocketDispatcherHost
   void OnCreateSocket(P2PSocketType type,
                       int socket_id,
                       const net::IPEndPoint& local_address,
-                      const net::IPEndPoint& remote_address);
+                      const P2PHostAndIPEndPoint& remote_address);
   void OnAcceptIncomingTcpConnection(int listen_socket_id,
                                      const net::IPEndPoint& remote_address,
                                      int connected_socket_id);
   void OnSend(int socket_id,
               const net::IPEndPoint& socket_address,
               const std::vector<char>& data,
-              net::DiffServCodePoint dscp,
+              const talk_base::PacketOptions& options,
               uint64 packet_id);
+  void OnSetOption(int socket_id, P2PSocketOption option, int value);
   void OnDestroySocket(int socket_id);
 
   void DoGetNetworkList();
   void SendNetworkList(const net::NetworkInterfaceList& list);
 
   void OnAddressResolved(DnsRequest* request,
-                         const net::IPAddressNumber& result);
+                         const net::IPAddressList& addresses);
 
   content::ResourceContext* resource_context_;
   scoped_refptr<net::URLRequestContextGetter> url_context_;

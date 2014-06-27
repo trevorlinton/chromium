@@ -41,7 +41,7 @@
 #include "content/public/common/sandbox_init.h"
 #endif
 
-using WebKit::WebBindings;
+using blink::WebBindings;
 
 namespace content {
 
@@ -323,7 +323,7 @@ void WebPluginProxy::HandleURLRequest(const char* url,
       GURL request_url(url);
       if (!request_url.SchemeIs(kHttpScheme) &&
           !request_url.SchemeIs(kHttpsScheme) &&
-          !request_url.SchemeIs(chrome::kFtpScheme)) {
+          !request_url.SchemeIs(kFtpScheme)) {
         return;
       }
     }

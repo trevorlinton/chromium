@@ -5,11 +5,11 @@
 #include <map>
 
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/extensions/api/management/management_api.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_test_message_listener.h"
-#include "chrome/browser/extensions/test_management_policy.h"
+#include "chrome/browser/extensions/launch_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -17,7 +17,10 @@
 #include "chrome/browser/ui/browser_iterator.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/extensions/extension_constants.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/test_management_policy.h"
 #include "extensions/common/manifest.h"
 
 using extensions::Extension;
@@ -123,6 +126,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTest, NoPermission) {
 
 IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTest, MAYBE_Uninstall) {
   LoadExtensions();
+  // Confirmation dialog will be shown for uninstallations except for self.
+  extensions::ManagementUninstallFunction::SetAutoConfirmForTest(true);
   ASSERT_TRUE(RunExtensionSubtest("management/test", "uninstall.html"));
 }
 
@@ -136,6 +141,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTest, MAYBE_Uninstall) {
 IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTest,
                        MAYBE_ManagementPolicyAllowed) {
   LoadExtensions();
+  extensions::ManagementUninstallFunction::SetAutoConfirmForTest(true);
   ExtensionService* service = extensions::ExtensionSystem::Get(
       browser()->profile())->extension_service();
   EXPECT_TRUE(service->GetExtensionById(extension_ids_["enabled_extension"],
@@ -218,8 +224,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTest, DISABLED_LaunchPanelApp) {
 
   // Set a pref indicating that the user wants to launch in a regular tab.
   // This should be ignored, because panel apps always load in a popup.
-  service->extension_prefs()->SetLaunchType(
-      app_id, extensions::ExtensionPrefs::LAUNCH_REGULAR);
+  extensions::SetLaunchType(service, app_id, extensions::LAUNCH_TYPE_REGULAR);
 
   // Load the extension again.
   std::string app_id_new;
@@ -278,8 +283,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTest, MAYBE_LaunchTabApp) {
   ASSERT_FALSE(service->GetExtensionById(app_id, true));
 
   // Set a pref indicating that the user wants to launch in a window.
-  service->extension_prefs()->SetLaunchType(
-      app_id, extensions::ExtensionPrefs::LAUNCH_WINDOW);
+  extensions::SetLaunchType(service, app_id, extensions::LAUNCH_TYPE_WINDOW);
 
   std::string app_id_new;
   LoadAndWaitForLaunch("management/launch_app_tab", &app_id_new);

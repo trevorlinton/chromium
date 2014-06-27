@@ -8,7 +8,7 @@
 #include <string>
 
 #include "base/metrics/histogram.h"
-#include "chrome/browser/extensions/extension_function.h"
+#include "extensions/browser/extension_function.h"
 
 namespace extensions {
 
@@ -64,7 +64,6 @@ class MetricsPrivateRecordUserActionFunction : public SyncExtensionFunction {
 class MetricsHistogramHelperFunction : public SyncExtensionFunction {
  protected:
   virtual ~MetricsHistogramHelperFunction() {}
-  bool GetNameAndSample(std::string* name, int* sample);
   virtual bool RecordValue(const std::string& name,
                            base::HistogramType type,
                            int min, int max, size_t buckets,
@@ -79,6 +78,19 @@ class MetricsPrivateRecordValueFunction
 
  protected:
   virtual ~MetricsPrivateRecordValueFunction() {}
+
+  // ExtensionFunction:
+  virtual bool RunImpl() OVERRIDE;
+};
+
+class MetricsPrivateRecordSparseValueFunction
+    : public MetricsHistogramHelperFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("metricsPrivate.recordSparseValue",
+                             METRICSPRIVATE_RECORDSPARSEVALUE)
+
+ protected:
+  virtual ~MetricsPrivateRecordSparseValueFunction() {}
 
   // ExtensionFunction:
   virtual bool RunImpl() OVERRIDE;

@@ -5,211 +5,279 @@
  */
 
 /**
- * Returns the unique transition key identified by the innerText,
- * alignment and keyset it is in.
- * @param {string} alignment The alignment of the key. One of {left,right}.
- * @param {string} initialKeyset The keyset the key is in.
- * @param {string} text The inner text of the key we want.
- * @return {Object} The unique key which satisfies these properties.
+ * Special keys for toggling keyset transitions.
+ * @enum {string}
  */
-function getTransitionKey(alignment, initialKeyset, text) {
-  var keyset = keyboard.querySelector('#qwerty-' + initialKeyset);
-  assertTrue(!!keyset, "Keyset " + initialKeyset + " not found.");
-  var candidates = keyset.querySelectorAll('[align="' +
-      alignment +'"]').array();
-  assertTrue(candidates.length > 0, "No " +
-      alignment + " aligned keys found.");
-  var results = candidates.filter(function(key) {
-        return key.innerText == text;
-      });
-  assertEquals(1, results.length, 'Unexpected number of ' +
-      text + ' keys with alignment: ' + alignment);
-  return results[0];
-}
+var Key = {
+  MORE_SYMBOLS: '~[<',
+  SHIFT: 'shift',
+  SYMBOL: '?123',
+  TEXT: 'ABC'
+};
 
-// helper functions for getting different keys.
-function getSymbolKey(alignment, initialKeyset) {
-  return getTransitionKey(alignment, initialKeyset, '#123');
-}
-
-function getAbcKey(alignment, initialKeyset) {
-  return getTransitionKey(alignment, initialKeyset, 'abc');
-}
-
-function getMoreKey(alignment) {
-  return getTransitionKey(alignment, 'symbol', 'more');
-}
-
-function getShiftKey(alignment, keyset) {
-  return getTransitionKey(alignment, keyset, 'shift');
+/**
+ * Input types.
+ * @enum {string}
+ */
+var InputType = {
+  TEXT: 'text',
+  NUMBER: 'number'
 }
 
 /**
- * Tests all the basic transitions between keysets using keys
- * of a particular alignment.
- * @param {string} alignment The alignment of the keys to test
+ * Tester for keyset transitions.
+ * @param {string=} opt_layout Optional layout. Used to generate the full
+ *     keyset ID from its shorthand name. If not specified, then the full
+ *     keyset ID is required for the test.
+ * @constructor
  */
-function checkBasicTransitions(alignment) {
-  var mockEvent = {pointerId:1, isPrimary:true};
-  assertEquals('lower', keyboard.keyset,
-      "Unexpected initial keyset.");
+function KeysetTransitionTester(opt_layout) {
+  this.layout = opt_layout;
+  this.subtasks = [];
+};
 
-  // Test the path abc -> symbol -> more -> symbol -> abc.
-  var symbol = getSymbolKey(alignment, 'lower');
-  symbol.down(mockEvent);
-  symbol.up(mockEvent);
-  assertEquals('symbol', keyboard.keyset,
-      "Did not transition from lower to symbol keyset. ");
+KeysetTransitionTester.prototype = {
+  /**
+   * Extends the subtask scheduler.
+   */
+  __proto__: SubtaskScheduler.prototype,
 
-  var more = getMoreKey(alignment);
-  more.down(mockEvent);
-  more.up(mockEvent);
-  assertEquals('more', keyboard.keyset,
-      "Did not transition from symbol to more keyset.");
+  /**
+   * Adds a task for mocking a key event.
+   * @param {string} aligment Indicates if the left or right version of the
+   *     keyset transition key should be used.
+   * @param {string} key Text label on the key.
+   * @param {string} eventType Name of the event.
+   * @param {string} keysetId Name of the expected keyset at the start of the
+   *     task.
+   */
+  keyEvent: function(alignment, key, eventType, keysetId) {
+    var self = this;
+    var fn = function() {
+      Debug('Generating key event: alignment = ' + alignment + ', key = ' + key
+          + ', event type = ' + eventType);
+      self.verifyKeyset(keysetId, 'Unexpected keyset.');
+      var keyset = $('keyboard').activeKeyset;
+      assertTrue(!!keyset, 'Missing active keyset');
+      var search  = '[align="' + alignment + '"]';
+      var candidates = keyset.querySelectorAll(search).array();
+      for (var i = 0; i < candidates.length; i++) {
+        if (candidates[i].innerText == key ||
+            candidates[i].classList.contains(key)) {
+          candidates[i][eventType]({pointerId: 1,  isPrimary:true});
+          return;
+        }
+      }
+      throw new Error('Unable to find \'' + key + '\' key in ' + keysetId);
+    };
+    this.addWaitCondition(fn, keysetId);
+    this.addSubtask(fn);
+  },
 
-  symbol = getSymbolKey(alignment, 'more');
-  symbol.down(mockEvent);
-  symbol.up(mockEvent);
-  assertEquals('symbol', keyboard.keyset,
-      "Did not transition from  more to symbol. ");
+  /**
+   * Adds a task for mocking a key typed event.
+   * @param {string} key Text label on the key.
+   * @param {number} keyCode The legacy key code for the character.
+   * @param {number} modifiers Indicates which if any of the shift, control and
+   *     alt keys are being virtually pressed.
+   * @param {string} keysetId Name of the expected keyset at the start of the
+   *     task.
+   */
+  typeKey: function(key, keyCode, modifiers, keysetId) {
+    var self = this;
+    var fn = function () {
+      Debug('Generating key typed event for key = ' + key + " and keycode = "
+          + keyCode);
+      self.verifyKeyset(keysetId, 'Unexpected keyset.');
+      mockTypeCharacter(key, keyCode, modifiers)
+    };
+    this.addWaitCondition(fn, keysetId);
+    this.addSubtask(fn);
+  },
 
-  var abc = getAbcKey(alignment, 'symbol');
-  abc.down(mockEvent);
-  abc.up(mockEvent);
-  assertEquals('lower', keyboard.keyset,
-      "Did not transition from symbol to lower keyset. ");
-
-  // Test the path abc -> symbol -> more -> abc.
-  symbol = getSymbolKey(alignment, 'lower');
-  symbol.down(mockEvent);
-  symbol.up(mockEvent);
-  assertEquals('symbol', keyboard.keyset,
-      "Did not transition from lower to symbol keyset in second path. ");
-
-  more = getMoreKey(alignment);
-  more.down(mockEvent);
-  more.up(mockEvent);
-  assertEquals('more', keyboard.keyset,
-      "Did not transition from symbol to more keyset in second path.");
-  abc = getAbcKey(alignment, 'more');
-  abc.down(mockEvent);
-  abc.up(mockEvent);
-  assertEquals('lower', keyboard.keyset,
-      "Did not transition from more to lower keyset. ");
-}
-
-/**
- * Tests that capitalization persists among keyset transitions
- * when using keys of a particular alignment.
- * @param {string} alignment The alignment of the key to transition with.
- */
-function checkPersistantCapitalization(alignment) {
-  var mockEvent = {pointerId:1, isPrimary:true};
-  assertEquals('lower', keyboard.keyset,
-      "Unexpected initial keyset.");
-
-  var lowerShift = getShiftKey(alignment, 'lower');
-  lowerShift.down(mockEvent);
-  // Long press to capslock.
-  mockTimer.tick(1000);
-  assertEquals('upper', keyboard.keyset,
-      "Did not transition to locked keyset on long press");
-
-  var symbol = getSymbolKey(alignment, 'upper');
-  symbol.down(mockEvent);
-  symbol.up(mockEvent);
-  assertEquals('symbol', keyboard.keyset,
-      "Did not transition from upper to symbol keyset. ");
-  var more = getMoreKey(alignment);
-  more.down(mockEvent);
-  more.up(mockEvent);
-  assertEquals('more', keyboard.keyset,
-      "Did not transition from symbol to more keyset.");
-  var abc = getAbcKey(alignment, 'more');
-  abc.down(mockEvent);
-  abc.up(mockEvent);
-  assertEquals('upper', keyboard.keyset,
-      "Did not persist capitalization on keyset transition. ");
-
-  // Reset to lower
-  var upperShift = getShiftKey(alignment, 'upper');
-  upperShift.up(mockEvent);
-  lowerShift.down(mockEvent);
-  assertEquals('lower', keyboard.keyset,
-      "Unexpected final keyset.");
-}
+  /**
+   * Updates the input type.
+   * @param {string} inputType The new input type.
+   * @param {string} keysetId Expected keyset at the start of the task.
+   */
+  transition: function(inputType, keysetId) {
+    var self = this;
+    var fn = function() {
+      self.verifyKeyset(keysetId, 'Unexpected keyset');
+      Debug('changing input type to ' + inputType);
+      $('keyboard').inputTypeValue = inputType;
+    };
+    this.addWaitCondition(fn, keysetId);
+    this.addSubtask(fn);
+  }
+};
 
 /**
  * Tests that capitalizion persists on keyset transitions.
  * The test is run asynchronously since the keyboard loads keysets dynamically.
- * @param {function} testDoneCallback The function to be called on completion.
+ * @param {Function} testDoneCallback The function to be called on completion.
  */
 function testPersistantCapitalizationAsync(testDoneCallback) {
-  var runTest = function() {
-  var alignments = ['left', 'right'];
-    for (var i in alignments) {
-      checkPersistantCapitalization(alignments[i]);
-    }
+  var tester = new KeysetTransitionTester(Layout.DEFAULT);
+
+  /**
+   * Checks persistant capitalization using the shift key with the given
+   * alignment.
+   * @param {string} alignment The alignment of the shift key.
+   */
+  var checkPersistantCapitalization = function(alignment) {
+    // Shift-lock
+    tester.keyEvent(alignment, Key.SHIFT, EventType.KEY_DOWN, Keyset.LOWER);
+    tester.wait(1000, Keyset.UPPER);
+    tester.keyEvent(alignment, Key.SHIFT, EventType.KEY_UP, Keyset.UPPER);
+
+     // text -> symbol -> more -> text
+    tester.keyEvent(Alignment.CENTER, Key.SYMBOL, EventType.KEY_DOWN,
+        Keyset.UPPER);
+    tester.keyEvent(Alignment.CENTER, Key.TEXT, EventType.KEY_UP,
+        Keyset.SYMBOL);
+    tester.keyEvent(Alignment.CENTER, Key.MORE_SYMBOLS, EventType.KEY_DOWN,
+        Keyset.SYMBOL);
+    tester.keyEvent(Alignment.CENTER, Key.SYMBOL, EventType.KEY_UP,
+        Keyset.MORE_SYMBOLS);
+    tester.keyEvent(Alignment.CENTER, Key.TEXT, EventType.KEY_DOWN,
+        Keyset.MORE_SYMBOLS);
+    // Symbol key only has center alignment.
+    tester.keyEvent(Alignment.CENTER, Key.SYMBOL, EventType.KEY_UP,
+        Keyset.UPPER);
+
+    // switch back to lower case
+    tester.keyEvent(alignment, Key.SHIFT, EventType.KEY_DOWN,
+        Keyset.UPPER);
+    tester.keyEvent(alignment, Key.SHIFT, EventType.KEY_UP, Keyset.LOWER);
   };
-  onKeyboardReady('testPersistantCapitalizationAsync',
-      runTest, testDoneCallback);
+  // Run the test using the left shift key.
+  checkPersistantCapitalization(Alignment.LEFT);
+  // Run the test using the right shift key.
+  checkPersistantCapitalization(Alignment.RIGHT);
+
+  tester.scheduleTest('testInputTypeResponsivenessAsync', testDoneCallback);
 }
 
 /**
  * Tests that changing the input type changes the layout. The test is run
  * asynchronously since the keyboard loads keysets dynamically.
- * @param {function} testDoneCallback The function to be called on completion.
+ * @param {Function} testDoneCallback The function to be called on completion.
  */
 function testInputTypeResponsivenessAsync(testDoneCallback) {
-  var testName = "testInputTypeResponsivenessAsync";
-  var transition = function (expectedKeyset, nextInputType, error) {
-    return function() {
-      assertEquals(expectedKeyset, keyboard.activeKeysetId, error);
-      keyboard.inputTypeValue = nextInputType;
-    }
-  }
+  var tester = new KeysetTransitionTester();
 
-  var setupWork = function() {
-    // Check initial state.
-    assertEquals('qwerty-lower', keyboard.activeKeysetId,
-        "Unexpected initial active keyset");
-    // Check that capitalization is not persistant
-    var lowerShift = getShiftKey('left', 'lower');
-    var upperShift = getShiftKey('left', 'upper');
-    var mockEvent = {isPrimary: true, pointerId: 1};
-    lowerShift.down(mockEvent);
-    mockTimer.tick(1000);
-    upperShift.up(mockEvent);
-    assertEquals('qwerty-upper', keyboard.activeKeysetId,
-        "Unexpected transition on long press.");
-    keyboard.inputTypeValue = 'text';
-  }
+  tester.init = function() {
+    $('keyboard').inputTypeValue = 'text';
+  };
 
-  var subtasks = [];
-  subtasks.push(transition('qwerty-lower', 'number',
-      "Did not reset keyboard on focus change"));
-  subtasks.push(transition('numeric-symbol', 'text',
-      "Did not switch to numeric keypad."));
-  // Clean up
-  subtasks.push(function() {
-   assertEquals('qwerty-lower', keyboard.activeKeysetId,
-        "Unexpected final active keyset");
-  });
-  onKeyboardReady(testName, setupWork, testDoneCallback, subtasks);
+  // Shift-lock
+  tester.keyEvent(Alignment.LEFT, Key.SHIFT, EventType.KEY_DOWN,
+      Keyset.DEFAULT_LOWER);
+  tester.wait(1000, Keyset.DEFAULT_UPPER);
+  tester.keyEvent(Alignment.LEFT, Key.SHIFT, EventType.KEY_UP,
+      Keyset.DEFAULT_UPPER);
+
+  // Force keyset tranistions via input type changes. Should reset to lowercase
+  // once back to the text keyset.
+  tester.transition(InputType.NUMBER, Keyset.DEFAULT_UPPER);
+  tester.transition(InputType.TEXT, Keyset.KEYPAD);
+  tester.verifyReset(Keyset.DEFAULT_LOWER);
+
+  tester.scheduleTest('testInputTypeResponsivenessAsync', testDoneCallback);
 }
 
- /**
+/**
  * Tests that keyset transitions work as expected.
  * The test is run asynchronously since the keyboard loads keysets dynamically.
- * @param {function} testDoneCallback The function to be called on completion.
+ * @param {Function} testDoneCallback The function to be called on completion.
  */
 function testKeysetTransitionsAsync(testDoneCallback) {
-  var runTest = function() {
-    var alignments = ['left', 'right'];
-    for (var i in alignments) {
-      checkBasicTransitions(alignments[i]);
-    }
+
+  var tester = new KeysetTransitionTester('qwerty');
+
+  /**
+   * Checks the transitions using the shift key with the given alignment.
+   * @param {string} alignment The alignment of the shift key.
+   */
+  var checkBasicTransitions = function(alignment) {
+    // Test the path abc -> symbol -> more -> symbol -> abc.
+    tester.keyEvent(Alignment.CENTER, Key.SYMBOL, EventType.KEY_DOWN,
+        Keyset.LOWER);
+    tester.keyEvent(Alignment.CENTER, Key.TEXT, EventType.KEY_UP,
+        Keyset.SYMBOL);
+    tester.keyEvent(Alignment.CENTER, Key.MORE_SYMBOLS, EventType.KEY_DOWN,
+        Keyset.SYMBOL);
+    tester.keyEvent(Alignment.CENTER, Key.SYMBOL, EventType.KEY_UP,
+        Keyset.MORE_SYMBOLS);
+    tester.keyEvent(Alignment.CENTER, Key.SYMBOL, EventType.KEY_DOWN,
+        Keyset.MORE_SYMBOLS);
+    tester.keyEvent(Alignment.CENTER, Key.MORE_SYMBOLS, EventType.KEY_UP,
+        Keyset.SYMBOL);
+    tester.keyEvent(Alignment.CENTER, Key.TEXT, EventType.KEY_DOWN,
+        Keyset.SYMBOL);
+    tester.keyEvent(Alignment.CENTER, Key.SYMBOL, EventType.KEY_UP,
+        Keyset.LOWER);
+
+    // Test the path abc -> symbol -> more -> abc.
+    tester.keyEvent(Alignment.CENTER, Key.SYMBOL, EventType.KEY_DOWN,
+        Keyset.LOWER);
+    // Mock keyUp on the abc since it occupies the space where the
+    // symbol key used to be.
+    tester.keyEvent(Alignment.CENTER, Key.TEXT, EventType.KEY_UP,
+        Keyset.SYMBOL);
+    tester.keyEvent(Alignment.CENTER, Key.MORE_SYMBOLS, EventType.KEY_DOWN,
+        Keyset.SYMBOL);
+    tester.keyEvent(Alignment.CENTER, Key.SYMBOL, EventType.KEY_UP,
+        Keyset.MORE_SYMBOLS);
+    tester.keyEvent(Alignment.CENTER, Key.TEXT, EventType.KEY_DOWN,
+        Keyset.MORE_SYMBOLS);
+    tester.keyEvent(Alignment.CENTER, Key.SYMBOL, EventType.KEY_UP,
+        Keyset.LOWER);
+
+    // Test the path abc ->  highlighted ABC -> symbol -> abc.
+    tester.keyEvent(alignment, Key.SHIFT, EventType.KEY_DOWN, Keyset.LOWER);
+    tester.keyEvent(alignment, Key.SHIFT, EventType.KEY_UP, Keyset.UPPER);
+    tester.keyEvent(Alignment.CENTER, Key.SYMBOL, EventType.KEY_DOWN,
+        Keyset.UPPER);
+    tester.keyEvent(Alignment.CENTER, Key.TEXT, EventType.KEY_UP,
+        Keyset.SYMBOL);
+    tester.keyEvent(Alignment.CENTER, Key.TEXT, EventType.KEY_DOWN,
+        Keyset.SYMBOL);
+    tester.keyEvent(Alignment.CENTER, Key.SYMBOL, EventType.KEY_UP,
+        Keyset.LOWER);
   };
-  onKeyboardReady('testKeysetTransitionsAsync',
-     runTest, testDoneCallback);
+  // Tests the transitions using the left shift key.
+  checkBasicTransitions(Alignment.LEFT);
+  // Tests the transitions using the right shift key.
+  checkBasicTransitions(Alignment.RIGHT);
+
+  tester.scheduleTest('testKeysetTransitionsAsync', testDoneCallback);
+}
+
+/**
+ * Tests that we transition to uppercase on punctuation followed by a space.
+ * The test is run asynchronously since the keyboard loads keysets dynamically.
+ * @param {Function} testDoneCallback The function to be called on completion.
+ */
+function testUpperOnSpaceAfterPunctuation(testDoneCallback) {
+  var tester = new KeysetTransitionTester('qwerty');
+  tester.typeKey('a', 0x41, Modifier.NONE, Keyset.LOWER);
+  tester.typeKey('.', 0xBE, Modifier.NONE, Keyset.LOWER);
+  tester.typeKey(' ', 0x20, Modifier.NONE, Keyset.LOWER);
+  tester.typeKey('A', 0x41, Modifier.SHIFT, Keyset.UPPER);
+  tester.typeKey('a', 0x41, Modifier.NONE, Keyset.LOWER);
+  // Test that we do not enter upper if there is a character between the . and
+  // the space.
+  tester.typeKey('.', 0xBE, Modifier.NONE, Keyset.LOWER);
+  tester.typeKey('a', 0x41, Modifier.NONE, Keyset.LOWER);
+  tester.typeKey(' ', 0x20, Modifier.NONE, Keyset.LOWER);
+  tester.typeKey('a', 0x41, Modifier.NONE, Keyset.LOWER);
+  // Test the newline also causes a transition to upper.
+  tester.typeKey('a', 0x41, Modifier.NONE, Keyset.LOWER);
+  tester.typeKey('.', 0xBE, Modifier.NONE, Keyset.LOWER);
+  tester.typeKey('\n', 0x0D, Modifier.NONE, Keyset.LOWER);
+  tester.typeKey('A', 0x41, Modifier.SHIFT, Keyset.UPPER);
+  tester.typeKey('a', 0x41, Modifier.NONE, Keyset.LOWER);
+  tester.scheduleTest('testUpperOnSpaceAfterPunctuation', testDoneCallback);
 }

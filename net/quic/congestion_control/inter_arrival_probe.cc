@@ -4,17 +4,21 @@
 
 #include "net/quic/congestion_control/inter_arrival_probe.h"
 
+#include <algorithm>
+
 #include "base/basictypes.h"
 #include "base/logging.h"
 
+using std::max;
+
+namespace net {
+
 namespace {
 const int kProbeSizePackets = 10;
-const net::QuicByteCount kMinPacketSize = 500;
+const QuicByteCount kMinPacketSize = 500;
 const int64 kDefaultBytesPerSecond = 40000;
 const float kUncertainScaleFactor = 0.5;  // TODO(pwestin): revisit this factor.
 }
-
-namespace net {
 
 InterArrivalProbe::InterArrivalProbe(QuicByteCount max_segment_size)
     : max_segment_size_(max_segment_size),
@@ -24,10 +28,6 @@ InterArrivalProbe::InterArrivalProbe(QuicByteCount max_segment_size)
 }
 
 InterArrivalProbe::~InterArrivalProbe() {
-}
-
-void InterArrivalProbe::set_max_segment_size(QuicByteCount max_segment_size) {
-  max_segment_size_ = max_segment_size;
 }
 
 bool InterArrivalProbe::GetEstimate(QuicBandwidth* available_channel_estimate) {
@@ -48,6 +48,12 @@ void InterArrivalProbe::OnAcknowledgedPacket(QuicByteCount bytes) {
   if (!estimate_available_) {
     DCHECK_LE(bytes, unacked_data_);
     unacked_data_ -= bytes;
+  }
+}
+
+void InterArrivalProbe::OnRetransmissionTimeout() {
+  if (!estimate_available_) {
+    unacked_data_ = 0;
   }
 }
 
@@ -108,13 +114,13 @@ void InterArrivalProbe::OnIncomingFeedback(
       break;
     case kAvailableChannelEstimateSenderLimited:
       available_channel_estimate_ =
-          std::max(available_channel_estimate,
-                   QuicBandwidth::FromBytesPerSecond(kDefaultBytesPerSecond));
+          max(available_channel_estimate,
+              QuicBandwidth::FromBytesPerSecond(kDefaultBytesPerSecond));
       break;
   }
   estimate_available_ = true;
   available_channel_estimator_.reset(NULL);
-  DLOG(INFO) << "Probe estimate:"
+  DVLOG(1) << "Probe estimate:"
              << available_channel_estimate_.ToKBitsPerSecond()
              << " Kbits/s";
 }

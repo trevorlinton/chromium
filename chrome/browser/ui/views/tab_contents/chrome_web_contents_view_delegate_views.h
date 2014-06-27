@@ -12,6 +12,10 @@
 
 class RenderViewContextMenuViews;
 
+namespace aura {
+class Window;
+}
+
 namespace content {
 class WebContents;
 class WebDragDestDelegate;
@@ -38,10 +42,12 @@ class ChromeWebContentsViewDelegateViews
   virtual bool Focus() OVERRIDE;
   virtual void TakeFocus(bool reverse) OVERRIDE;
   virtual void ShowContextMenu(
+      content::RenderFrameHost* render_frame_host,
       const content::ContextMenuParams& params) OVERRIDE;
   virtual void SizeChanged(const gfx::Size& size) OVERRIDE;
 
  private:
+  aura::Window* GetActiveNativeView();
   views::Widget* GetTopLevelWidget();
   views::FocusManager* GetFocusManager();
   void SetInitialFocus();

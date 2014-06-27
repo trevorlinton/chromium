@@ -5,19 +5,22 @@
 #include "chrome/browser/android/chrome_web_contents_delegate_android.h"
 
 #include "base/android/jni_android.h"
+#include "base/android/jni_string.h"
 #include "base/command_line.h"
-#include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/file_select_helper.h"
 #include "chrome/browser/media/media_capture_devices_dispatcher.h"
 #include "chrome/browser/media/protected_media_identifier_permission_context.h"
 #include "chrome/browser/media/protected_media_identifier_permission_context_factory.h"
+#include "chrome/browser/prerender/prerender_manager.h"
+#include "chrome/browser/prerender/prerender_manager_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_modal_dialogs/javascript_dialog_manager.h"
 #include "chrome/browser/ui/blocked_content/popup_blocker_tab_helper.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/find_bar/find_notification_details.h"
 #include "chrome/browser/ui/find_bar/find_tab_helper.h"
+#include "chrome/browser/ui/tab_helpers.h"
 #include "chrome/common/chrome_switches.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
@@ -82,6 +85,14 @@ ChromeWebContentsDelegateAndroid::~ChromeWebContentsDelegateAndroid() {
 // Register native methods.
 bool RegisterChromeWebContentsDelegateAndroid(JNIEnv* env) {
   return RegisterNativesImpl(env);
+}
+
+void ChromeWebContentsDelegateAndroid::LoadingStateChanged(
+    WebContents* source, bool to_different_document) {
+  bool has_stopped = source == NULL || !source->IsLoading();
+  WebContentsDelegateAndroid::LoadingStateChanged(
+      source, to_different_document);
+  LoadProgressChanged(source, has_stopped ? 1 : 0);
 }
 
 void ChromeWebContentsDelegateAndroid::RunFileChooser(
@@ -264,8 +275,20 @@ WebContents* ChromeWebContentsDelegateAndroid::OpenURLFromTab(
       !CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kDisablePopupBlocking)) {
     if (popup_blocker_helper->MaybeBlockPopup(nav_params,
-                                              WebKit::WebWindowFeatures())) {
+                                              blink::WebWindowFeatures())) {
       return NULL;
+    }
+  }
+
+  if (disposition == CURRENT_TAB) {
+    // Only prerender for a current-tab navigation to avoid session storage
+    // namespace issues.
+    nav_params.target_contents = source;
+    prerender::PrerenderManager* prerender_manager =
+        prerender::PrerenderManagerFactory::GetForProfile(profile);
+    if (prerender_manager &&
+        prerender_manager->MaybeUsePrerenderedPage(params.url, &nav_params)) {
+      return nav_params.target_contents;
     }
   }
 
@@ -284,7 +307,7 @@ void ChromeWebContentsDelegateAndroid::AddNewContents(
   // Can't create a new contents for the current tab - invalid case.
   DCHECK_NE(disposition, CURRENT_TAB);
 
-  TabAndroid::InitTabHelpers(new_contents);
+  TabHelpers::AttachTabHelpers(new_contents);
 
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
@@ -293,8 +316,8 @@ void ChromeWebContentsDelegateAndroid::AddNewContents(
     handled = Java_ChromeWebContentsDelegateAndroid_addNewContents(
         env,
         obj.obj(),
-        reinterpret_cast<jint>(source),
-        reinterpret_cast<jint>(new_contents),
+        reinterpret_cast<intptr_t>(source),
+        reinterpret_cast<intptr_t>(new_contents),
         static_cast<jint>(disposition),
         NULL,
         user_gesture);
@@ -304,19 +327,19 @@ void ChromeWebContentsDelegateAndroid::AddNewContents(
     delete new_contents;
 }
 
-void
-ChromeWebContentsDelegateAndroid::RequestProtectedMediaIdentifierPermission(
-    const WebContents* web_contents,
-    const GURL& frame_url,
-    const base::Callback<void(bool)>& callback) {
-  Profile* profile =
-      Profile::FromBrowserContext(web_contents->GetBrowserContext());
-  ProtectedMediaIdentifierPermissionContextFactory::GetForProfile(profile)->
-      RequestProtectedMediaIdentifierPermission(
-            web_contents->GetRenderProcessHost()->GetID(),
-            web_contents->GetRenderViewHost()->GetRoutingID(),
-            frame_url,
-            callback);
+void ChromeWebContentsDelegateAndroid::WebContentsCreated(
+    content::WebContents* source_contents, int opener_render_frame_id,
+    const base::string16& frame_name, const GURL& target_url,
+    content::WebContents* new_contents) {
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
+  if (obj.is_null())
+    return;
+  Java_ChromeWebContentsDelegateAndroid_webContentsCreated(env, obj.obj(),
+      reinterpret_cast<intptr_t>(source_contents), opener_render_frame_id,
+      base::android::ConvertUTF16ToJavaString(env, frame_name).Release(),
+      base::android::ConvertUTF8ToJavaString(env, target_url.spec()).Release(),
+      reinterpret_cast<intptr_t>(new_contents));
 }
 
 }  // namespace android

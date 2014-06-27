@@ -18,6 +18,7 @@
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/infobars/confirm_infobar_delegate.h"
+#include "chrome/browser/infobars/infobar.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -27,9 +28,9 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/autofill/content/browser/autofill_driver_impl.h"
-#include "components/autofill/core/browser/autofill_common_test.h"
+#include "components/autofill/content/browser/content_autofill_driver.h"
 #include "components/autofill/core/browser/autofill_profile.h"
+#include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/credit_card.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/browser/personal_data_manager_observer.h"
@@ -47,6 +48,9 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/keycodes/keyboard_codes.h"
+
+using base::ASCIIToUTF16;
+using base::WideToUTF16;
 
 namespace autofill {
 
@@ -100,7 +104,7 @@ class WindowedPersonalDataManagerObserver
     infobar_service_ = InfoBarService::FromWebContents(
         browser_->tab_strip_model()->GetActiveWebContents());
     ConfirmInfoBarDelegate* infobar_delegate =
-        infobar_service_->infobar_at(0)->AsConfirmInfoBarDelegate();
+        infobar_service_->infobar_at(0)->delegate()->AsConfirmInfoBarDelegate();
     ASSERT_TRUE(infobar_delegate);
     infobar_delegate->Accept();
   }
@@ -119,15 +123,15 @@ class AutofillTest : public InProcessBrowserTest {
 
   virtual void SetUpOnMainThread() OVERRIDE {
     // Don't want Keychain coming up on Mac.
-    test::DisableSystemServices(browser()->profile());
+    test::DisableSystemServices(browser()->profile()->GetPrefs());
   }
 
   virtual void CleanUpOnMainThread() OVERRIDE {
     // Make sure to close any showing popups prior to tearing down the UI.
     content::WebContents* web_contents =
         browser()->tab_strip_model()->GetActiveWebContents();
-    AutofillManager* autofill_manager =
-        AutofillDriverImpl::FromWebContents(web_contents)->autofill_manager();
+    AutofillManager* autofill_manager = ContentAutofillDriver::FromWebContents(
+                                            web_contents)->autofill_manager();
     autofill_manager->delegate()->HideAutofillPopup();
   }
 
@@ -171,10 +175,17 @@ class AutofillTest : public InProcessBrowserTest {
       js += "document.getElementById('" + i->first + "').value = '" +
             i->second + "';";
     }
-    js += "document.getElementById('testform').submit();";
+    js += "document.onclick = function() {"
+          "  document.getElementById('testform').submit();"
+          "};";
 
     WindowedPersonalDataManagerObserver observer(browser());
     ASSERT_TRUE(content::ExecuteScript(render_view_host(), js));
+    // Simulate a mouse click to submit the form because form submissions not
+    // triggered by user gestures are ignored.
+    content::SimulateMouseClick(
+        browser()->tab_strip_model()->GetActiveWebContents(), 0,
+        blink::WebMouseEvent::ButtonLeft);
     observer.Wait();
   }
 
@@ -499,10 +510,10 @@ IN_PROC_BROWSER_TEST_F(AutofillTest,
   SubmitCreditCard("Jane Doe", "4417-1234-5678-9113", "10", "2013");
 
   ASSERT_EQ(2u, personal_data_manager()->GetCreditCards().size());
-  string16 cc1 = personal_data_manager()->GetCreditCards()[0]->GetRawInfo(
+  base::string16 cc1 = personal_data_manager()->GetCreditCards()[0]->GetRawInfo(
       CREDIT_CARD_NUMBER);
   ASSERT_TRUE(autofill::IsValidCreditCardNumber(cc1));
-  string16 cc2 = personal_data_manager()->GetCreditCards()[1]->GetRawInfo(
+  base::string16 cc2 = personal_data_manager()->GetCreditCards()[1]->GetRawInfo(
       CREDIT_CARD_NUMBER);
   ASSERT_TRUE(autofill::IsValidCreditCardNumber(cc2));
 }
@@ -640,7 +651,7 @@ IN_PROC_BROWSER_TEST_F(AutofillTest, AppendCountryCodeForAggregatedPhones) {
   FillFormAndSubmit("autofill_test_form.html", data);
 
   ASSERT_EQ(1u, personal_data_manager()->GetProfiles().size());
-  string16 phone = personal_data_manager()->GetProfiles()[0]->GetRawInfo(
+  base::string16 phone = personal_data_manager()->GetProfiles()[0]->GetRawInfo(
       PHONE_HOME_WHOLE_NUMBER);
   ASSERT_TRUE(StartsWith(phone, ASCIIToUTF16("+49"), true));
 }

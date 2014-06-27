@@ -49,7 +49,7 @@ base::Time::Exploded test_date_exploded = { 2013, 4, 0, 16, 0, 0, 0, 0 };
 
 bool WriteJPEGHeader(const base::FilePath& path) {
   const char kJpegHeader[] = "\xFF\xD8\xFF";  // Per HTML5 specification.
-  return file_util::WriteFile(path, kJpegHeader, arraysize(kJpegHeader)) != -1;
+  return base::WriteFile(path, kJpegHeader, arraysize(kJpegHeader)) != -1;
 }
 
 class TestFolder {
@@ -84,7 +84,7 @@ class TestFolder {
     for (unsigned int i = 0; i < non_image_files_; ++i) {
       base::FilePath path = folder_dir_.path().AppendASCII(
           base::StringPrintf("hello%05d.txt", i));
-      if (file_util::WriteFile(path, NULL, 0) == -1)
+      if (base::WriteFile(path, NULL, 0) == -1)
         return false;
     }
 
@@ -133,11 +133,11 @@ class TestFolder {
 void ReadDirectoryTestHelperCallback(
     base::RunLoop* run_loop,
     FileSystemOperation::FileEntryList* contents,
-    bool* completed, base::PlatformFileError error,
+    bool* completed, base::File::Error error,
     const FileSystemOperation::FileEntryList& file_list,
     bool has_more) {
   DCHECK(!*completed);
-  *completed = !has_more && error == base::PLATFORM_FILE_OK;
+  *completed = !has_more && error == base::File::FILE_OK;
   *contents = file_list;
   run_loop->Quit();
 }
@@ -166,10 +166,10 @@ void SynchronouslyRunOnMediaTaskRunner(const base::Closure& closure) {
 
 void CreateSnapshotFileTestHelperCallback(
     base::RunLoop* run_loop,
-    base::PlatformFileError* error,
+    base::File::Error* error,
     base::FilePath* platform_path_result,
-    base::PlatformFileError result,
-    const base::PlatformFileInfo& file_info,
+    base::File::Error result,
+    const base::File::Info& file_info,
     const base::FilePath& platform_path,
     const scoped_refptr<webkit_blob::ShareableFileReference>& file_ref) {
   DCHECK(run_loop);
@@ -250,8 +250,9 @@ class PicasaFileUtilTest : public testing::Test {
         storage_policy.get(),
         NULL,
         additional_providers.Pass(),
+        std::vector<fileapi::URLRequestAutoMountHandler>(),
         profile_dir_.path(),
-        fileapi::CreateAllowFileAccessOptions());
+        content::CreateAllowFileAccessOptions());
   }
 
   virtual void TearDown() OVERRIDE {
@@ -577,7 +578,7 @@ TEST_F(PicasaFileUtilTest, AlbumContents) {
 
   // Create a snapshot file to verify the file path.
   base::RunLoop loop;
-  base::PlatformFileError error;
+  base::File::Error error;
   base::FilePath platform_path_result;
   fileapi::FileSystemOperationRunner::SnapshotFileCallback snapshot_callback =
       base::Bind(&CreateSnapshotFileTestHelperCallback,
@@ -589,7 +590,7 @@ TEST_F(PicasaFileUtilTest, AlbumContents) {
                 "/albumname 2013-04-16/mapped_name.jpg"),
       snapshot_callback);
   loop.Run();
-  EXPECT_EQ(base::PLATFORM_FILE_OK, error);
+  EXPECT_EQ(base::File::FILE_OK, error);
   EXPECT_EQ(image_path, platform_path_result);
 }
 

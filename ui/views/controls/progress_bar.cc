@@ -11,7 +11,7 @@
 #include "third_party/skia/include/core/SkPaint.h"
 #include "third_party/skia/include/core/SkXfermode.h"
 #include "third_party/skia/include/effects/SkGradientShader.h"
-#include "ui/base/accessibility/accessible_view_state.h"
+#include "ui/accessibility/ax_view_state.h"
 #include "ui/gfx/canvas.h"
 
 namespace {
@@ -167,19 +167,20 @@ void ProgressBar::SetValue(double value) {
   }
 }
 
-void ProgressBar::SetTooltipText(const string16& tooltip_text) {
+void ProgressBar::SetTooltipText(const base::string16& tooltip_text) {
   tooltip_text_ = tooltip_text;
 }
 
-bool ProgressBar::GetTooltipText(const gfx::Point& p, string16* tooltip) const {
+bool ProgressBar::GetTooltipText(const gfx::Point& p,
+                                 base::string16* tooltip) const {
   DCHECK(tooltip);
   *tooltip = tooltip_text_;
   return !tooltip_text_.empty();
 }
 
-void ProgressBar::GetAccessibleState(ui::AccessibleViewState* state) {
-  state->role = ui::AccessibilityTypes::ROLE_PROGRESSBAR;
-  state->state = ui::AccessibilityTypes::STATE_READONLY;
+void ProgressBar::GetAccessibleState(ui::AXViewState* state) {
+  state->role = ui::AX_ROLE_PROGRESS_INDICATOR;
+  state->AddStateFlag(ui::AX_STATE_READ_ONLY);
 }
 
 gfx::Size ProgressBar::GetPreferredSize() {

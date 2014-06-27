@@ -11,15 +11,13 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/signin/fake_auth_status_provider.h"
 #include "chrome/browser/signin/fake_signin_manager.h"
-#include "chrome/browser/signin/signin_global_error.h"
+#include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_manager.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/sync/profile_sync_service.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/sync/profile_sync_service_mock.h"
-#include "chrome/browser/sync/sync_global_error.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/cocoa/cocoa_profile_test.h"
@@ -29,6 +27,9 @@
 #include "chrome/browser/ui/host_desktop.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/signin/core/browser/fake_auth_status_provider.h"
+#include "components/signin/core/browser/profile_oauth2_token_service.h"
+#include "components/signin/core/browser/signin_error_controller.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/test_utils.h"
 #include "grit/chromium_strings.h"
@@ -70,10 +71,6 @@ using ::testing::Return;
   return [findBarCocoaController_ view];
 }
 
-- (NSSplitView*)devToolsView {
-  return static_cast<NSSplitView*>([devToolsController_ view]);
-}
-
 - (BOOL)bookmarkBarVisible {
   return [bookmarkBarController_ isVisible];
 }
@@ -103,7 +100,7 @@ TEST_F(BrowserWindowControllerTest, TestSaveWindowPosition) {
   ASSERT_TRUE(prefs != NULL);
 
   // Check to make sure there is no existing pref for window placement.
-  const DictionaryValue* browser_window_placement =
+  const base::DictionaryValue* browser_window_placement =
       prefs->GetDictionary(prefs::kBrowserWindowPlacement);
   ASSERT_TRUE(browser_window_placement);
   EXPECT_TRUE(browser_window_placement->empty());
@@ -166,14 +163,14 @@ TEST_F(BrowserWindowControllerTest, TestSetBounds) {
   BrowserWindow* browser_window = [controller browserWindow];
   EXPECT_EQ(browser_window, browser->window());
   gfx::Rect bounds = browser_window->GetBounds();
-  EXPECT_EQ(320, bounds.width());
-  EXPECT_EQ(240, bounds.height());
+  EXPECT_EQ(400, bounds.width());
+  EXPECT_EQ(272, bounds.height());
 
   // Try to set the bounds smaller than the minimum.
   browser_window->SetBounds(gfx::Rect(0, 0, 50, 50));
   bounds = browser_window->GetBounds();
-  EXPECT_EQ(320, bounds.width());
-  EXPECT_EQ(240, bounds.height());
+  EXPECT_EQ(400, bounds.width());
+  EXPECT_EQ(272, bounds.height());
 
   [controller close];
 }
@@ -633,24 +630,6 @@ TEST_F(BrowserWindowControllerTest, TestFindBarOnTop) {
   EXPECT_GT(findBar_index, bookmark_index);
 }
 
-// Tests that status bubble's base frame does move when devTools are docked.
-TEST_F(BrowserWindowControllerTest, TestStatusBubblePositioning) {
-  ASSERT_EQ(1U, [[[controller_ devToolsView] subviews] count]);
-
-  NSPoint bubbleOrigin = [controller_ statusBubbleBaseFrame].origin;
-
-  // Add a fake subview to devToolsView to emulate docked devTools.
-  base::scoped_nsobject<NSView> view(
-      [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 10, 10)]);
-  [[controller_ devToolsView] addSubview:view];
-  [[controller_ devToolsView] adjustSubviews];
-
-  NSPoint bubbleOriginWithDevTools = [controller_ statusBubbleBaseFrame].origin;
-
-  // Make sure that status bubble frame is moved.
-  EXPECT_FALSE(NSEqualPoints(bubbleOrigin, bubbleOriginWithDevTools));
-}
-
 TEST_F(BrowserWindowControllerTest, TestSigninMenuItemNoErrors) {
   base::scoped_nsobject<NSMenuItem> syncMenuItem(
       [[NSMenuItem alloc] initWithTitle:@""
@@ -682,7 +661,7 @@ TEST_F(BrowserWindowControllerTest, TestSigninMenuItemNoErrors) {
   std::string username = "foo@example.com";
   NSString* alreadySignedIn =
     l10n_util::GetNSStringFWithFixup(IDS_SYNC_MENU_SYNCED_LABEL,
-                                     UTF8ToUTF16(username));
+                                     base::UTF8ToUTF16(username));
   SigninManager* signin = SigninManagerFactory::GetForProfile(profile());
   signin->SetAuthenticatedUsername(username);
   ProfileSyncService* sync =
@@ -710,7 +689,9 @@ TEST_F(BrowserWindowControllerTest, TestSigninMenuItemAuthError) {
       ProfileSyncServiceFactory::GetForProfile(profile());
   sync->SetSyncSetupCompleted();
   // Force an auth error.
-  FakeAuthStatusProvider provider(SigninGlobalError::GetForProfile(profile()));
+  FakeAuthStatusProvider provider(
+      ProfileOAuth2TokenServiceFactory::GetForProfile(profile())->
+          signin_error_controller());
   GoogleServiceAuthError error(
       GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS);
   provider.SetAuthError("user@gmail.com", error);

@@ -12,19 +12,14 @@
 
 using content::BrowserThread;
 
-namespace {
-
-static base::LazyInstance<extensions::GlobalShortcutListenerWin> instance =
-    LAZY_INSTANCE_INITIALIZER;
-
-}  // namespace
-
 namespace extensions {
 
 // static
 GlobalShortcutListener* GlobalShortcutListener::GetInstance() {
   CHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  return instance.Pointer();
+  static GlobalShortcutListenerWin* instance =
+      new GlobalShortcutListenerWin();
+  return instance;
 }
 
 GlobalShortcutListenerWin::GlobalShortcutListenerWin()
@@ -66,12 +61,13 @@ void GlobalShortcutListenerWin::OnWndProc(HWND hwnd,
   ui::Accelerator accelerator(
       ui::KeyboardCodeForWindowsKeyCode(key_code), modifiers);
 
-  instance.Get().NotifyKeyPressed(accelerator);
+  NotifyKeyPressed(accelerator);
 }
 
-void GlobalShortcutListenerWin::RegisterAccelerator(
-    const ui::Accelerator& accelerator,
-    GlobalShortcutListener::Observer* observer) {
+bool GlobalShortcutListenerWin::RegisterAcceleratorImpl(
+    const ui::Accelerator& accelerator) {
+  DCHECK(hotkey_ids_.find(accelerator) == hotkey_ids_.end());
+
   int modifiers = 0;
   modifiers |= accelerator.IsShiftDown() ? MOD_SHIFT : 0;
   modifiers |= accelerator.IsCtrlDown() ? MOD_CONTROL : 0;
@@ -85,23 +81,17 @@ void GlobalShortcutListenerWin::RegisterAccelerator(
 
   if (!success) {
     // Most likely error: 1409 (Hotkey already registered).
-    LOG(ERROR) << "RegisterHotKey failed, error: " << GetLastError();
-    return;
+    return false;
   }
 
   hotkey_ids_[accelerator] = hotkey_id++;
-  GlobalShortcutListener::RegisterAccelerator(accelerator, observer);
+  return true;
 }
 
-void GlobalShortcutListenerWin::UnregisterAccelerator(
-    const ui::Accelerator& accelerator,
-    GlobalShortcutListener::Observer* observer) {
-  // We may get asked to unregister something that we couldn't register (for
-  // example if the shortcut was already taken by another app), so we
-  // need to handle that gracefully.
+void GlobalShortcutListenerWin::UnregisterAcceleratorImpl(
+    const ui::Accelerator& accelerator) {
   HotkeyIdMap::iterator it = hotkey_ids_.find(accelerator);
-  if (it == hotkey_ids_.end())
-    return;
+  DCHECK(it != hotkey_ids_.end());
 
   bool success = !!UnregisterHotKey(
       gfx::SingletonHwnd::GetInstance()->hwnd(), it->second);
@@ -110,7 +100,6 @@ void GlobalShortcutListenerWin::UnregisterAccelerator(
   DCHECK(success);
 
   hotkey_ids_.erase(it);
-  GlobalShortcutListener::UnregisterAccelerator(accelerator, observer);
 }
 
 }  // namespace extensions

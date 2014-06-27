@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/logging.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "net/base/net_log.h"
@@ -88,16 +89,16 @@ HttpStreamRequest* HttpStreamFactoryImpl::RequestWebSocketHandshakeStream(
     const SSLConfig& server_ssl_config,
     const SSLConfig& proxy_ssl_config,
     HttpStreamRequest::Delegate* delegate,
-    WebSocketHandshakeStreamBase::Factory* factory,
+    WebSocketHandshakeStreamBase::CreateHelper* create_helper,
     const BoundNetLog& net_log) {
   DCHECK(for_websockets_);
-  DCHECK(factory);
+  DCHECK(create_helper);
   return RequestStreamInternal(request_info,
                                priority,
                                server_ssl_config,
                                proxy_ssl_config,
                                delegate,
-                               factory,
+                               create_helper,
                                net_log);
 }
 
@@ -107,12 +108,13 @@ HttpStreamRequest* HttpStreamFactoryImpl::RequestStreamInternal(
     const SSLConfig& server_ssl_config,
     const SSLConfig& proxy_ssl_config,
     HttpStreamRequest::Delegate* delegate,
-    WebSocketHandshakeStreamBase::Factory* websocket_handshake_stream_factory,
+    WebSocketHandshakeStreamBase::CreateHelper*
+        websocket_handshake_stream_create_helper,
     const BoundNetLog& net_log) {
   Request* request = new Request(request_info.url,
                                  this,
                                  delegate,
-                                 websocket_handshake_stream_factory,
+                                 websocket_handshake_stream_create_helper,
                                  net_log);
 
   GURL alternate_url;
@@ -187,7 +189,7 @@ const HostMappingRules* HttpStreamFactoryImpl::GetHostMappingRules() const {
 
 PortAlternateProtocolPair HttpStreamFactoryImpl::GetAlternateProtocolRequestFor(
     const GURL& original_url,
-    GURL* alternate_url) const {
+    GURL* alternate_url) {
   if (!use_alternate_protocols())
     return kNoAlternateProtocol;
 
@@ -197,7 +199,7 @@ PortAlternateProtocolPair HttpStreamFactoryImpl::GetAlternateProtocolRequestFor(
   HostPortPair origin = HostPortPair(original_url.HostNoBrackets(),
                                      original_url.EffectiveIntPort());
 
-  const HttpServerProperties& http_server_properties =
+  HttpServerProperties& http_server_properties =
       *session_->http_server_properties();
   if (!http_server_properties.HasAlternateProtocol(origin))
     return kNoAlternateProtocol;
@@ -289,15 +291,9 @@ void HttpStreamFactoryImpl::OnNewSpdySessionReady(
                       using_spdy,
                       net_log);
     if (for_websockets_) {
-      WebSocketHandshakeStreamBase::Factory* factory =
-          request->websocket_handshake_stream_factory();
-      DCHECK(factory);
-      bool use_relative_url = direct || request->url().SchemeIs("wss");
-      request->OnWebSocketHandshakeStreamReady(
-          NULL,
-          used_ssl_config,
-          used_proxy_info,
-          factory->CreateSpdyStream(spdy_session, use_relative_url));
+      // TODO(ricea): Restore this code path when WebSocket over SPDY
+      // implementation is ready.
+      NOTREACHED();
     } else {
       bool use_relative_url = direct || request->url().SchemeIs("https");
       request->OnStreamReady(

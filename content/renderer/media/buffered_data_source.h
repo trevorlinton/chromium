@@ -39,7 +39,7 @@ class CONTENT_EXPORT BufferedDataSource : public media::DataSource {
   // |downloading_cb| will be called whenever the downloading/paused state of
   // the source changes.
   BufferedDataSource(const scoped_refptr<base::MessageLoopProxy>& render_loop,
-                     WebKit::WebFrame* frame,
+                     blink::WebFrame* frame,
                      media::MediaLog* media_log,
                      const DownloadingCB& downloading_cb);
   virtual ~BufferedDataSource();
@@ -139,9 +139,6 @@ class CONTENT_EXPORT BufferedDataSource : public media::DataSource {
   // change in playback rate.
   void UpdateDeferStrategy(bool paused);
 
-  base::WeakPtrFactory<BufferedDataSource> weak_factory_;
-  base::WeakPtr<BufferedDataSource> weak_this_;
-
   // URL of the resource requested.
   GURL url_;
   // crossorigin attribute on the corresponding HTML media element, if any.
@@ -161,7 +158,7 @@ class CONTENT_EXPORT BufferedDataSource : public media::DataSource {
   bool streaming_;
 
   // A webframe for loading.
-  WebKit::WebFrame* frame_;
+  blink::WebFrame* frame_;
 
   // A resource loader for the media resource.
   scoped_ptr<BufferedResourceLoader> loader_;
@@ -216,6 +213,9 @@ class CONTENT_EXPORT BufferedDataSource : public media::DataSource {
   scoped_refptr<media::MediaLog> media_log_;
 
   DownloadingCB downloading_cb_;
+
+  // NOTE: Weak pointers must be invalidated before all other member variables.
+  base::WeakPtrFactory<BufferedDataSource> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(BufferedDataSource);
 };

@@ -13,7 +13,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/managed_mode/managed_user_theme.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/themes/browser_theme_pack.h"
@@ -24,6 +23,11 @@
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/user_metrics.h"
+#include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registry.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/extension_set.h"
 #include "grit/theme_resources.h"
 #include "grit/ui_resources.h"
 #include "ui/base/layout.h"
@@ -34,8 +38,8 @@
 #include "ui/base/win/shell.h"
 #endif
 
+using base::UserMetricsAction;
 using content::BrowserThread;
-using content::UserMetricsAction;
 using extensions::Extension;
 using extensions::UnloadedExtensionInfo;
 using ui::ResourceBundle;
@@ -59,10 +63,6 @@ const char* kDefaultThemeGalleryID = "hkacjpbfdknhflllbcmjibkdeoafencn";
 // reason to do it at startup.
 // ExtensionService::GarbageCollectExtensions() does something similar.
 const int kRemoveUnusedThemesStartupDelay = 30;
-
-SkColor TintForUnderline(SkColor input) {
-  return SkColorSetA(input, SkColorGetA(input) / 3);
-}
 
 SkColor IncreaseLightness(SkColor color, double percent) {
   color_utils::HSL result;
@@ -119,6 +119,10 @@ gfx::Image ThemeService::GetImageNamed(int id) const {
   return image;
 }
 
+bool ThemeService::UsingNativeTheme() const {
+  return UsingDefaultTheme();
+}
+
 gfx::ImageSkia* ThemeService::GetImageSkiaNamed(int id) const {
   gfx::Image image = GetImageNamed(id);
   if (image.IsEmpty())
@@ -159,6 +163,20 @@ SkColor ThemeService::GetColor(int id) const {
           GetColor(Properties::COLOR_MANAGED_USER_LABEL_BACKGROUND),
           SK_ColorBLACK,
           230);
+    case Properties::COLOR_STATUS_BAR_TEXT: {
+      // A long time ago, we blended the toolbar and the tab text together to
+      // get the status bar text because, at the time, our text rendering in
+      // views couldn't do alpha blending. Even though this is no longer the
+      // case, this blending decision is built into the majority of themes that
+      // exist, and we must keep doing it.
+      SkColor toolbar_color = GetColor(Properties::COLOR_TOOLBAR);
+      SkColor text_color = GetColor(Properties::COLOR_TAB_TEXT);
+      return SkColorSetARGB(
+          SkColorGetA(text_color),
+          (SkColorGetR(text_color) + SkColorGetR(toolbar_color)) / 2,
+          (SkColorGetG(text_color) + SkColorGetR(toolbar_color)) / 2,
+          (SkColorGetB(text_color) + SkColorGetR(toolbar_color)) / 2);
+    }
   }
 
   return Properties::GetDefaultColor(id);
@@ -256,7 +274,7 @@ void ThemeService::Observe(int type,
         SetTheme(extension);
       break;
     }
-    case chrome::NOTIFICATION_EXTENSION_UNLOADED:
+    case chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED:
     {
       Details<const UnloadedExtensionInfo> unloaded_details(details);
       if (unloaded_details->reason != UnloadedExtensionInfo::REASON_UPDATE &&
@@ -319,15 +337,18 @@ void ThemeService::RemoveUnusedThemes(bool ignore_infobars) {
   if (!ignore_infobars && number_of_infobars_ != 0)
     return;
 
-  ExtensionService* service = profile_->GetExtensionService();
+  ExtensionService* service =
+      extensions::ExtensionSystem::Get(profile_)->extension_service();
   if (!service)
     return;
+
   std::string current_theme = GetThemeID();
   std::vector<std::string> remove_list;
-  scoped_ptr<const ExtensionSet> extensions(
-      service->GenerateInstalledExtensionsSet());
-  extensions::ExtensionPrefs* prefs = service->extension_prefs();
-  for (ExtensionSet::const_iterator it = extensions->begin();
+  scoped_ptr<const extensions::ExtensionSet> extensions(
+      extensions::ExtensionRegistry::Get(profile_)
+          ->GenerateInstalledExtensionsSet());
+  extensions::ExtensionPrefs* prefs = extensions::ExtensionPrefs::Get(profile_);
+  for (extensions::ExtensionSet::const_iterator it = extensions->begin();
        it != extensions->end(); ++it) {
     const extensions::Extension* extension = *it;
     if (extension->is_theme() &&
@@ -371,10 +392,6 @@ bool ThemeService::UsingDefaultTheme() const {
       id == kDefaultThemeGalleryID;
 }
 
-bool ThemeService::UsingNativeTheme() const {
-  return UsingDefaultTheme();
-}
-
 std::string ThemeService::GetThemeID() const {
   return profile_->GetPrefs()->GetString(prefs::kCurrentThemeID);
 }
@@ -404,7 +421,7 @@ void ThemeService::ClearAllThemeData() {
   // There should be no more infobars. This may not be the case because of
   // http://crbug.com/62154
   // RemoveUnusedThemes is called on a task because ClearAllThemeData() may
-  // be called as a result of NOTIFICATION_EXTENSION_UNLOADED.
+  // be called as a result of NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED.
   base::MessageLoop::current()->PostTask(FROM_HERE,
       base::Bind(&ThemeService::RemoveUnusedThemes,
                  weak_ptr_factory_.GetWeakPtr(),
@@ -493,7 +510,7 @@ void ThemeService::OnExtensionServiceReady() {
                  chrome::NOTIFICATION_EXTENSION_ENABLED,
                  content::Source<Profile>(profile_));
   registrar_.Add(this,
-                 chrome::NOTIFICATION_EXTENSION_UNLOADED,
+                 chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
                  content::Source<Profile>(profile_));
 
   base::MessageLoop::current()->PostDelayedTask(FROM_HERE,

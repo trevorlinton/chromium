@@ -5,9 +5,9 @@
 #include "content/browser/renderer_host/media/device_request_message_filter.h"
 
 #include "content/browser/browser_main_loop.h"
+#include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/common/media/media_stream_messages.h"
-#include "content/public/browser/media_device_id.h"
 #include "content/public/browser/resource_context.h"
 
 // Clears the MediaStreamDevice.name from all devices in |device_list|.
@@ -23,15 +23,20 @@ namespace content {
 
 DeviceRequestMessageFilter::DeviceRequestMessageFilter(
     ResourceContext* resource_context,
-    MediaStreamManager* media_stream_manager)
-    : resource_context_(resource_context),
-      media_stream_manager_(media_stream_manager) {
+    MediaStreamManager* media_stream_manager,
+    int render_process_id)
+    : BrowserMessageFilter(MediaStreamMsgStart),
+      resource_context_(resource_context),
+      media_stream_manager_(media_stream_manager),
+      render_process_id_(render_process_id) {
   DCHECK(resource_context);
   DCHECK(media_stream_manager);
 }
 
 DeviceRequestMessageFilter::~DeviceRequestMessageFilter() {
-  DCHECK(requests_.empty());
+  // CHECK rather than DCHECK to make sure this never happens in the
+  // wild. We want to be sure due to http://crbug.com/341211
+  CHECK(requests_.empty());
 }
 
 struct DeviceRequestMessageFilter::DeviceRequest {
@@ -56,25 +61,9 @@ struct DeviceRequestMessageFilter::DeviceRequest {
   StreamDeviceInfoArray video_devices;
 };
 
-void DeviceRequestMessageFilter::StreamGenerated(
-    const std::string& label,
-    const StreamDeviceInfoArray& audio_devices,
-    const StreamDeviceInfoArray& video_devices) {
-  NOTIMPLEMENTED();
-}
-
-void DeviceRequestMessageFilter::StreamGenerationFailed(
-    const std::string& label) {
-  NOTIMPLEMENTED();
-}
-
-void DeviceRequestMessageFilter::StopGeneratedStream(
-    int render_view_id,
-    const std::string& label) {
-  NOTIMPLEMENTED();
-}
-
 void DeviceRequestMessageFilter::DevicesEnumerated(
+    int render_view_id,
+    int page_request_id,
     const std::string& label,
     const StreamDeviceInfoArray& new_devices) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
@@ -96,12 +85,12 @@ void DeviceRequestMessageFilter::DevicesEnumerated(
   if (label == request_it->audio_devices_label) {
     request_it->has_audio_returned = true;
     DCHECK(audio_devices->empty());
-    HmacDeviceIds(request_it->origin, new_devices, audio_devices);
+    *audio_devices = new_devices;
   } else {
     DCHECK(label == request_it->video_devices_label);
     request_it->has_video_returned = true;
     DCHECK(video_devices->empty());
-    HmacDeviceIds(request_it->origin, new_devices, video_devices);
+    *video_devices = new_devices;
   }
 
   if (!request_it->has_audio_returned || !request_it->has_video_returned) {
@@ -127,12 +116,6 @@ void DeviceRequestMessageFilter::DevicesEnumerated(
   requests_.erase(request_it);
 }
 
-void DeviceRequestMessageFilter::DeviceOpened(
-    const std::string& label,
-    const StreamDeviceInfo& video_device) {
-  NOTIMPLEMENTED();
-}
-
 bool DeviceRequestMessageFilter::OnMessageReceived(const IPC::Message& message,
                                                    bool* message_was_ok) {
   bool handled = true;
@@ -145,38 +128,32 @@ bool DeviceRequestMessageFilter::OnMessageReceived(const IPC::Message& message,
 
 void DeviceRequestMessageFilter::OnChannelClosing() {
   // Since the IPC channel is gone, cancel outstanding device requests.
-  media_stream_manager_->CancelAllRequests(peer_pid());
-
-  requests_.clear();
-}
-
-void DeviceRequestMessageFilter::HmacDeviceIds(
-    const GURL& origin,
-    const StreamDeviceInfoArray& raw_devices,
-    StreamDeviceInfoArray* devices_with_guids) {
-  DCHECK(devices_with_guids);
-
-  // Replace raw ids with hmac'd ids before returning to renderer process.
-  for (StreamDeviceInfoArray::const_iterator device_itr = raw_devices.begin();
-       device_itr != raw_devices.end();
-       ++device_itr) {
-    StreamDeviceInfo current_device_info = *device_itr;
-    current_device_info.device.id =
-        content::GetHMACForMediaDeviceID(origin, device_itr->device.id);
-    devices_with_guids->push_back(current_device_info);
+  for (DeviceRequestList::iterator request_it = requests_.begin();
+       request_it != requests_.end(); ++request_it) {
+    media_stream_manager_->CancelRequest(request_it->audio_devices_label);
+    media_stream_manager_->CancelRequest(request_it->video_devices_label);
   }
+  requests_.clear();
 }
 
 void DeviceRequestMessageFilter::OnGetSources(int request_id,
                                               const GURL& security_origin) {
+  if (!ChildProcessSecurityPolicyImpl::GetInstance()->CanRequestURL(
+          render_process_id_, security_origin)) {
+    LOG(ERROR) << "Disallowed URL in DRMF::OnGetSources: " << security_origin;
+    return;
+  }
+
   // Make request to get audio devices.
   const std::string& audio_label = media_stream_manager_->EnumerateDevices(
-      this, -1, -1, -1, MEDIA_DEVICE_AUDIO_CAPTURE, security_origin);
+      this, -1, -1, resource_context_->GetMediaDeviceIDSalt(), -1,
+      MEDIA_DEVICE_AUDIO_CAPTURE, security_origin);
   DCHECK(!audio_label.empty());
 
   // Make request for video devices.
   const std::string& video_label = media_stream_manager_->EnumerateDevices(
-      this, -1, -1, -1, MEDIA_DEVICE_VIDEO_CAPTURE, security_origin);
+      this, -1, -1, resource_context_->GetMediaDeviceIDSalt(), -1,
+      MEDIA_DEVICE_VIDEO_CAPTURE, security_origin);
   DCHECK(!video_label.empty());
 
   requests_.push_back(DeviceRequest(

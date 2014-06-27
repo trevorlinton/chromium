@@ -36,6 +36,7 @@ FORWARD_DECLARE_TEST(WalletInstrumentWrapperTest,
 
 namespace wallet {
 
+class GaiaAccount;
 class WalletItemsTest;
 
 enum AmexPermission {
@@ -103,9 +104,6 @@ class WalletItems {
 
     const base::string16& descriptive_name() const { return descriptive_name_; }
     const Type& type() const { return type_; }
-    const std::vector<base::string16>& supported_currencies() const {
-      return supported_currencies_;
-    }
     const base::string16& last_four_digits() const { return last_four_digits_; }
     int expiration_month() const { return expiration_month_; }
     int expiration_year() const { return expiration_year_; }
@@ -116,8 +114,10 @@ class WalletItems {
    private:
     friend class WalletItemsTest;
     friend scoped_ptr<MaskedInstrument> GetTestMaskedInstrumentWithDetails(
-        const std::string&, scoped_ptr<Address> address,
-        Type type, Status status);
+        const std::string& id,
+        scoped_ptr<Address> address,
+        Type type,
+        Status status);
     FRIEND_TEST_ALL_PREFIXES(::autofill::WalletInstrumentWrapperTest,
                              GetInfoCreditCardExpMonth);
     FRIEND_TEST_ALL_PREFIXES(::autofill::WalletInstrumentWrapperTest,
@@ -127,7 +127,6 @@ class WalletItems {
 
     MaskedInstrument(const base::string16& descriptive_name,
                      const Type& type,
-                     const std::vector<base::string16>& supported_currencies,
                      const base::string16& last_four_digits,
                      int expiration_month,
                      int expiration_year,
@@ -141,9 +140,6 @@ class WalletItems {
 
     // The payment network of the instrument. For example, Visa.
     Type type_;
-
-    // |supported_currencies_| are ISO 4217 currency codes, e.g. USD.
-    std::vector<base::string16> supported_currencies_;
 
     // The last four digits of the primary account number of the instrument.
     base::string16 last_four_digits_;
@@ -219,16 +215,17 @@ class WalletItems {
   bool operator==(const WalletItems& other) const;
   bool operator!=(const WalletItems& other) const;
 
+  void AddAccount(scoped_ptr<GaiaAccount> account);
   void AddInstrument(scoped_ptr<MaskedInstrument> instrument) {
-    DCHECK(instrument.get());
+    DCHECK(instrument);
     instruments_.push_back(instrument.release());
   }
   void AddAddress(scoped_ptr<Address> address) {
-    DCHECK(address.get());
+    DCHECK(address);
     addresses_.push_back(address.release());
   }
   void AddLegalDocument(scoped_ptr<LegalDocument> legal_document) {
-    DCHECK(legal_document.get());
+    DCHECK(legal_document);
     legal_documents_.push_back(legal_document.release());
   }
 
@@ -244,6 +241,9 @@ class WalletItems {
   bool SupportsCard(const base::string16& card_number,
                     base::string16* message) const;
 
+  const std::vector<GaiaAccount*>& gaia_accounts() const {
+    return gaia_accounts_.get();
+  }
   const std::vector<RequiredAction>& required_actions() const {
     return required_actions_;
   }
@@ -258,16 +258,21 @@ class WalletItems {
   }
   const std::vector<Address*>& addresses() const { return addresses_.get(); }
   const std::string& default_address_id() const { return default_address_id_; }
-  const std::string& obfuscated_gaia_id() const { return obfuscated_gaia_id_; }
+  // Returns the GAIA id of the active account, or an empty string if no account
+  // is active.
+  std::string ObfuscatedGaiaId() const;
+  size_t active_account_index() const { return active_account_index_; }
   const std::vector<LegalDocument*>& legal_documents() const {
     return legal_documents_.get();
   }
 
  private:
   friend class WalletItemsTest;
-  friend scoped_ptr<WalletItems> GetTestWalletItems(
-      const std::vector<RequiredAction>&,
-      const std::string&, const std::string&, AmexPermission);
+  friend scoped_ptr<WalletItems> GetTestWalletItemsWithDetails(
+      const std::vector<RequiredAction>& required_actions,
+      const std::string& default_instrument_id,
+      const std::string& default_address_id,
+      AmexPermission amex_permission);
   friend scoped_ptr<WalletItems> GetTestWalletItemsWithDefaultIds(
       RequiredAction action);
   FRIEND_TEST_ALL_PREFIXES(WalletItemsTest, CreateWalletItems);
@@ -278,7 +283,6 @@ class WalletItems {
               const std::string& google_transaction_id,
               const std::string& default_instrument_id,
               const std::string& default_address_id,
-              const std::string& obfuscated_gaia_id,
               AmexPermission amex_permission);
 
   // Actions that must be completed by the user before a FullWallet can be
@@ -294,8 +298,12 @@ class WalletItems {
   // The id of the user's default address.
   std::string default_address_id_;
 
-  // The externalized Gaia id of the user.
-  std::string obfuscated_gaia_id_;
+  // The index into |gaia_accounts_| of the account for which this object
+  // holds data.
+  size_t active_account_index_;
+
+  // The complete set of logged in GAIA accounts.
+  ScopedVector<GaiaAccount> gaia_accounts_;
 
   // The user's backing instruments.
   ScopedVector<MaskedInstrument> instruments_;

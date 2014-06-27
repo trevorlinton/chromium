@@ -22,20 +22,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/time.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <string>
 
+#include "common/fps.h"
 #include "sdk_util/macros.h"
 #include "sdk_util/thread_pool.h"
+
+// Chromium presubmit prevents checking in changes with calls to printf to
+// prevent spammy output. We'll work around that for this example.
+#define logf printf
 
 using namespace sdk_util;  // For sdk_util::ThreadPool
 
 // Global properties used to setup Earth demo.
 namespace {
-const float kHugeZ = 1.0e38f;
 const float kPI = M_PI;
 const float kTwoPI = kPI * 2.0f;
 const float kOneOverPI = 1.0f / kPI;
@@ -48,20 +51,6 @@ const float kZoomMax = 50.0f;
 const float kWheelSpeed = 2.0f;
 const float kLightMin = 0.0f;
 const float kLightMax = 2.0f;
-const int kFrameTimeBufferSize = 512;
-
-// Timer helper for benchmarking.  Returns seconds elapsed since program start,
-// as a double.
-timeval start_tv;
-int start_tv_retv = gettimeofday(&start_tv, NULL);
-
-inline double getseconds() {
-  const double usec_to_sec = 0.000001;
-  timeval tv;
-  if ((0 == start_tv_retv) && (0 == gettimeofday(&tv, NULL)))
-    return (tv.tv_sec - start_tv.tv_sec) + tv.tv_usec * usec_to_sec;
-  return 0.0;
-}
 
 // RGBA helper functions.
 inline float ExtractR(uint32_t c) {
@@ -149,8 +138,6 @@ inline const float AsFloat(const int i) {
 }
 
 const long int kOneAsInteger = AsInteger(1.0f);
-const float kScaleUp = float(0x00800000);
-const float kScaleDown = 1.0f / kScaleUp;
 
 inline float inline_quick_sqrt(float x) {
   int i;
@@ -302,6 +289,7 @@ class Planet : public pp::Instance {
   bool benchmarking_;
   double benchmark_start_time_;
   double benchmark_end_time_;
+  FpsState fps_state_;
 };
 
 
@@ -397,6 +385,7 @@ Planet::Planet(PP_Instance instance) : pp::Instance(instance),
   night_tex_ = NULL;
   name_for_tex_ = "";
   last_mouse_pos_ = PP_MakePoint(0, 0);
+  FpsInit(&fps_state_);
 
   Reset();
 
@@ -698,7 +687,7 @@ void Planet::DidChangeView(const pp::View& view) {
 void Planet::StartBenchmark() {
   // For more consistent benchmark numbers, reset to default state.
   Reset();
-  printf("Benchmark started...\n");
+  logf("Benchmark started...\n");
   benchmark_frame_counter_ = kFramesToBenchmark;
   benchmarking_ = true;
   benchmark_start_time_ = getseconds();
@@ -706,7 +695,7 @@ void Planet::StartBenchmark() {
 
 void Planet::EndBenchmark() {
   benchmark_end_time_ = getseconds();
-  printf("Benchmark ended... time: %2.5f\n",
+  logf("Benchmark ended... time: %2.5f\n",
       benchmark_end_time_ - benchmark_start_time_);
   benchmarking_ = false;
   benchmark_frame_counter_ = 0;
@@ -820,7 +809,7 @@ void Planet::HandleMessage(const pp::Var& var) {
       }
     }
   } else {
-    printf("Handle message unknown type: %s\n", var.DebugString().c_str());
+    logf("Handle message unknown type: %s\n", var.DebugString().c_str());
   }
 }
 
@@ -854,14 +843,18 @@ void Planet::Update() {
     EndBenchmark();
 
   FlushPixelBuffer();
+
+  double fps;
+  if (FpsStep(&fps_state_, &fps))
+    PostUpdateMessage("fps", fps);
 }
 
 void Planet::CreateContext(const pp::Size& size) {
   graphics_2d_context_ = new pp::Graphics2D(this, size, false);
   if (graphics_2d_context_->is_null())
-    printf("Failed to create a 2D resource!\n");
+    logf("Failed to create a 2D resource!\n");
   if (!BindGraphics(*graphics_2d_context_))
-    printf("Couldn't bind the device context\n");
+    logf("Couldn't bind the device context\n");
   image_data_ = new pp::ImageData(this,
                                   PP_IMAGEDATAFORMAT_BGRA_PREMUL,
                                   size,

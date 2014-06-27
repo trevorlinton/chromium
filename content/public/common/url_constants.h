@@ -9,8 +9,7 @@
 
 // Contains constants for known URLs and portions thereof.
 
-// TODO(jam): rename this to content.
-namespace chrome {
+namespace content {
 
 // Canonical schemes you can use as input to GURL.SchemeIs().
 // TODO(jam): some of these don't below in the content layer, but are accessed
@@ -18,16 +17,11 @@ namespace chrome {
 CONTENT_EXPORT extern const char kAboutScheme[];
 CONTENT_EXPORT extern const char kBlobScheme[];
 CONTENT_EXPORT extern const char kChromeDevToolsScheme[];
-CONTENT_EXPORT extern const char kChromeInternalScheme[];
 CONTENT_EXPORT extern const char kChromeUIScheme[];  // Used for WebUIs.
 CONTENT_EXPORT extern const char kDataScheme[];
 CONTENT_EXPORT extern const char kFileScheme[];
 CONTENT_EXPORT extern const char kFileSystemScheme[];
 CONTENT_EXPORT extern const char kFtpScheme[];
-}  // namespace chrome
-
-namespace content {
-
 CONTENT_EXPORT extern const char kGuestScheme[];
 CONTENT_EXPORT extern const char kHttpScheme[];
 CONTENT_EXPORT extern const char kHttpsScheme[];
@@ -51,6 +45,7 @@ CONTENT_EXPORT extern const char kChromeUIIndexedDBInternalsHost[];
 CONTENT_EXPORT extern const char kChromeUIMediaInternalsHost[];
 CONTENT_EXPORT extern const char kChromeUINetworkViewCacheHost[];
 CONTENT_EXPORT extern const char kChromeUIResourcesHost[];
+CONTENT_EXPORT extern const char kChromeUIServiceWorkerInternalsHost[];
 CONTENT_EXPORT extern const char kChromeUITcmallocHost[];
 CONTENT_EXPORT extern const char kChromeUITracingHost[];
 CONTENT_EXPORT extern const char kChromeUIWebRTCInternalsHost[];
@@ -76,7 +71,7 @@ CONTENT_EXPORT extern const char kChromeUINetworkViewCacheURL[];
 CONTENT_EXPORT extern const char kChromeUIShorthangURL[];
 
 // Special URL used to swap out a view being rendered by another process.
-extern const char kSwappedOutURL[];
+CONTENT_EXPORT extern const char kSwappedOutURL[];
 
 }  // namespace content
 

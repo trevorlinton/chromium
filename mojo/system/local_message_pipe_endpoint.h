@@ -5,42 +5,44 @@
 #ifndef MOJO_SYSTEM_LOCAL_MESSAGE_PIPE_ENDPOINT_H_
 #define MOJO_SYSTEM_LOCAL_MESSAGE_PIPE_ENDPOINT_H_
 
-#include <deque>
-
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "mojo/public/system/core.h"
+#include "base/macros.h"
+#include "mojo/public/c/system/core.h"
+#include "mojo/system/message_in_transit_queue.h"
 #include "mojo/system/message_pipe_endpoint.h"
+#include "mojo/system/system_impl_export.h"
 #include "mojo/system/waiter_list.h"
 
 namespace mojo {
 namespace system {
 
-class MessageInTransit;
-
-class LocalMessagePipeEndpoint : public MessagePipeEndpoint {
+class MOJO_SYSTEM_IMPL_EXPORT LocalMessagePipeEndpoint
+    : public MessagePipeEndpoint {
  public:
   LocalMessagePipeEndpoint();
   virtual ~LocalMessagePipeEndpoint();
 
   // |MessagePipeEndpoint| implementation:
+  virtual Type GetType() const OVERRIDE;
+  virtual void Close() OVERRIDE;
   virtual void OnPeerClose() OVERRIDE;
-  virtual MojoResult EnqueueMessage(
-      const void* bytes, uint32_t num_bytes,
-      const MojoHandle* handles, uint32_t num_handles,
-      MojoWriteMessageFlags flags) OVERRIDE;
+  virtual void EnqueueMessage(scoped_ptr<MessageInTransit> message) OVERRIDE;
 
   // There's a dispatcher for |LocalMessagePipeEndpoint|s, so we have to
   // implement/override these:
   virtual void CancelAllWaiters() OVERRIDE;
-  virtual void Close() OVERRIDE;
-  virtual MojoResult ReadMessage(void* bytes, uint32_t* num_bytes,
-                                 MojoHandle* handles, uint32_t* num_handles,
-                                 MojoReadMessageFlags flags) OVERRIDE;
+  virtual MojoResult ReadMessage(
+      void* bytes, uint32_t* num_bytes,
+      std::vector<scoped_refptr<Dispatcher> >* dispatchers,
+      uint32_t* num_dispatchers,
+      MojoReadMessageFlags flags) OVERRIDE;
   virtual MojoResult AddWaiter(Waiter* waiter,
                                MojoWaitFlags flags,
                                MojoResult wake_result) OVERRIDE;
   virtual void RemoveWaiter(Waiter* waiter) OVERRIDE;
+
+  // This is only to be used by |ProxyMessagePipeEndpoint|:
+  MessageInTransitQueue* message_queue() { return &message_queue_; }
 
  private:
   MojoWaitFlags SatisfiedFlags();
@@ -49,7 +51,8 @@ class LocalMessagePipeEndpoint : public MessagePipeEndpoint {
   bool is_open_;
   bool is_peer_open_;
 
-  std::deque<MessageInTransit*> message_queue_;
+  // Queue of incoming messages.
+  MessageInTransitQueue message_queue_;
   WaiterList waiter_list_;
 
   DISALLOW_COPY_AND_ASSIGN(LocalMessagePipeEndpoint);

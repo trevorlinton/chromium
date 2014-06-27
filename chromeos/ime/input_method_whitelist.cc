@@ -44,11 +44,13 @@ InputMethodWhitelist::GetSupportedInputMethods() const {
     input_methods->push_back(InputMethodDescriptor(
         kInputMethods[i].input_method_id,
         "",
+        kInputMethods[i].indicator,
         layouts,
         languages,
         kInputMethods[i].is_login_keyboard,
-        GURL()));  // options page url, not available for non-extension input
-                   // method.
+        GURL(), // options page url.
+        GURL() // input view page url.
+        ));
   }
   return input_methods.Pass();
 }

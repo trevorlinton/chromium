@@ -20,6 +20,7 @@ namespace gfx {
 
 namespace {
 
+#if defined(OS_WIN)
 // If necessary, wraps |text| with RTL/LTR directionality characters based on
 // |flags| and |text| content.
 // Returns true if the text will be rendered right-to-left.
@@ -52,6 +53,7 @@ bool AdjustStringDirection(int flags, base::string16* text) {
   // locales it will be handled by the if statement above).
   return false;
 }
+#endif  // defined(OS_WIN)
 
 // Checks each pixel immediately adjacent to the given pixel in the bitmap. If
 // any of them are not the halo color, returns true. This defines the halo of
@@ -228,7 +230,7 @@ void Canvas::DrawStringRectWithShadows(const base::string16& text,
   Rect clip_rect(text_bounds);
   clip_rect.Inset(ShadowValue::GetMargin(shadows));
 
-  canvas_->save(SkCanvas::kClip_SaveFlag);
+  canvas_->save();
   ClipRect(clip_rect);
 
   Rect rect(text_bounds);
@@ -422,7 +424,7 @@ void Canvas::DrawFadeTruncatingStringRectWithFlags(
   rect.set_height(line_height);
   render_text->SetDisplayRect(rect);
 
-  canvas_->save(SkCanvas::kClip_SaveFlag);
+  canvas_->save();
   ClipRect(display_rect);
   render_text->Draw(this);
   canvas_->restore();

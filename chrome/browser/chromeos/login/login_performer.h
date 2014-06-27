@@ -8,15 +8,22 @@
 #include <string>
 
 #include "base/basictypes.h"
+#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/login/authenticator.h"
+#include "chrome/browser/chromeos/login/extended_authenticator.h"
 #include "chrome/browser/chromeos/login/login_status_consumer.h"
 #include "chrome/browser/chromeos/login/online_attempt_host.h"
 #include "chrome/browser/chromeos/login/user.h"
+#include "chrome/browser/chromeos/policy/wildcard_login_checker.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "google_apis/gaia/google_service_auth_error.h"
+
+namespace policy {
+class WildcardLoginChecker;
+}
 
 namespace chromeos {
 
@@ -77,7 +84,8 @@ class LoginPerformer : public LoginStatusConsumer,
   void LoginAsPublicAccount(const std::string& username);
 
   // Performs a login into the kiosk mode account with |app_user_id|.
-  void LoginAsKioskAccount(const std::string& app_user_id);
+  void LoginAsKioskAccount(const std::string& app_user_id,
+                           bool use_guest_mount);
 
   // Migrates cryptohome using |old_password| specified.
   void RecoverEncryptedData(const std::string& old_password);
@@ -117,8 +125,15 @@ class LoginPerformer : public LoginStatusConsumer,
   // Starts authentication.
   void StartAuthentication();
 
+  // Completion callback for the online wildcard login check for enterprise
+  // devices. Continues the login process or signals whitelist check failure
+  // depending on the value of |result|.
+  void OnlineWildcardLoginCheckCompleted(
+      policy::WildcardLoginChecker::Result result);
+
   // Used for logging in.
   scoped_refptr<Authenticator> authenticator_;
+  scoped_refptr<ExtendedAuthenticator> extended_authenticator_;
 
   // Used to make auxiliary online check.
   OnlineAttemptHost online_attempt_host_;
@@ -140,6 +155,9 @@ class LoginPerformer : public LoginStatusConsumer,
 
   // Authorization mode type.
   AuthorizationMode auth_mode_;
+
+  // Used to verify logins that matched wildcard on the login whitelist.
+  scoped_ptr<policy::WildcardLoginChecker> wildcard_login_checker_;
 
   base::WeakPtrFactory<LoginPerformer> weak_factory_;
 

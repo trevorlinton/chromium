@@ -7,41 +7,12 @@
 #include <stdlib.h>
 
 #include "base/command_line.h"
-#include "ui/gfx/ozone/impl/file_surface_factory_ozone.h"
-#include "ui/gfx/ozone/impl/software_surface_factory_ozone.h"
+#include "ui/gfx/vsync_provider.h"
 
 namespace gfx {
 
 // static
 SurfaceFactoryOzone* SurfaceFactoryOzone::impl_ = NULL;
-
-class SurfaceFactoryOzoneStub : public SurfaceFactoryOzone {
- public:
-  SurfaceFactoryOzoneStub() {}
-  virtual ~SurfaceFactoryOzoneStub() {}
-
-  virtual HardwareState InitializeHardware() OVERRIDE { return INITIALIZED; }
-  virtual void ShutdownHardware() OVERRIDE {}
-  virtual gfx::AcceleratedWidget GetAcceleratedWidget() OVERRIDE { return 0; }
-  virtual gfx::AcceleratedWidget RealizeAcceleratedWidget(
-      gfx::AcceleratedWidget w) OVERRIDE {
-    return 0;
-  }
-  virtual bool LoadEGLGLES2Bindings(
-      AddGLLibraryCallback add_gl_library,
-      SetGLGetProcAddressProcCallback set_gl_get_proc_address) OVERRIDE {
-    return true;
-  }
-  virtual bool AttemptToResizeAcceleratedWidget(
-      gfx::AcceleratedWidget w,
-      const gfx::Rect& bounds) OVERRIDE {
-    return false;
-  }
-  virtual gfx::VSyncProvider* GetVSyncProvider(
-      gfx::AcceleratedWidget w) OVERRIDE {
-    return NULL;
-  }
-};
 
 SurfaceFactoryOzone::SurfaceFactoryOzone() {
 }
@@ -56,17 +27,6 @@ SurfaceFactoryOzone* SurfaceFactoryOzone::GetInstance() {
 
 void SurfaceFactoryOzone::SetInstance(SurfaceFactoryOzone* impl) {
   impl_ = impl;
-}
-
-const char* SurfaceFactoryOzone::DefaultDisplaySpec() {
-  char* envvar = getenv("ASH_DISPLAY_SPEC");
-  if (envvar)
-    return envvar;
-  return  "720x1280*2";
-}
-
-gfx::Screen* SurfaceFactoryOzone::CreateDesktopScreen() {
-  return NULL;
 }
 
 intptr_t SurfaceFactoryOzone::GetNativeDisplay() {
@@ -86,9 +46,25 @@ const int32* SurfaceFactoryOzone::GetEGLSurfaceProperties(
   return desired_attributes;
 }
 
-// static
-SurfaceFactoryOzone* SurfaceFactoryOzone::CreateTestHelper() {
-  return new SurfaceFactoryOzoneStub;
+
+gfx::OverlayCandidatesOzone* SurfaceFactoryOzone::GetOverlayCandidates(
+    gfx::AcceleratedWidget w) {
+  return NULL;
+}
+
+void SurfaceFactoryOzone::ScheduleOverlayPlane(gfx::AcceleratedWidget w,
+                                               int plane_z_order,
+                                               OverlayTransform plane_transform,
+                                               gfx::NativeBufferOzone buffer,
+                                               const gfx::Rect& display_bounds,
+                                               gfx::RectF crop_rect) {
+  NOTREACHED();
+}
+
+gfx::NativeBufferOzone SurfaceFactoryOzone::CreateNativeBuffer(
+    gfx::Size size,
+    BufferFormat format) {
+  return 0;
 }
 
 }  // namespace gfx

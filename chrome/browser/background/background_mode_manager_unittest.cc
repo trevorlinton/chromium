@@ -7,6 +7,7 @@
 #include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/background/background_mode_manager.h"
+#include "chrome/browser/browser_shutdown.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
@@ -58,6 +59,15 @@ class BackgroundModeManagerTest : public testing::Test {
     return profile_manager.Pass();
   }
 
+  // From views::MenuModelAdapter::IsCommandEnabled with modification.
+  bool IsCommandEnabled(ui::MenuModel* model, int id) const {
+    int index = 0;
+    if (ui::MenuModel::GetModelAndIndexForCommandId(id, &model, &index))
+      return model->IsEnabledAt(index);
+
+    return false;
+  }
+
  private:
   DISALLOW_COPY_AND_ASSIGN(BackgroundModeManagerTest);
 };
@@ -105,6 +115,17 @@ class TestBackgroundModeManager : public BackgroundModeManager {
   // Flags to track whether we are launching on startup/have a status tray.
   bool have_status_tray_;
   bool launch_on_startup_;
+};
+
+class TestStatusIcon : public StatusIcon {
+  virtual void SetImage(const gfx::ImageSkia& image) OVERRIDE {}
+  virtual void SetPressedImage(const gfx::ImageSkia& image) OVERRIDE {}
+  virtual void SetToolTip(const base::string16& tool_tip) OVERRIDE {}
+  virtual void DisplayBalloon(const gfx::ImageSkia& icon,
+                              const base::string16& title,
+                              const base::string16& contents) OVERRIDE {}
+  virtual void UpdatePlatformContextMenu(
+      StatusIconMenuModel* menu) OVERRIDE {}
 };
 
 static void AssertBackgroundModeActive(
@@ -341,23 +362,54 @@ TEST_F(BackgroundModeManagerTest, ProfileInfoCacheObserver) {
       profile1->GetPath(),
       manager.GetBackgroundModeData(profile1)->name());
 
-  EXPECT_EQ(UTF8ToUTF16("p1"),
+  EXPECT_EQ(base::UTF8ToUTF16("p1"),
             manager.GetBackgroundModeData(profile1)->name());
 
+  EXPECT_TRUE(chrome::WillKeepAlive());
   TestingProfile* profile2 = profile_manager->CreateTestingProfile("p2");
   manager.RegisterProfile(profile2);
   EXPECT_EQ(2, manager.NumberOfBackgroundModeData());
 
   manager.OnProfileAdded(profile2->GetPath());
-  EXPECT_EQ(UTF8ToUTF16("p2"),
+  EXPECT_EQ(base::UTF8ToUTF16("p2"),
             manager.GetBackgroundModeData(profile2)->name());
 
   manager.OnProfileWillBeRemoved(profile2->GetPath());
+  // Should still be in background mode after deleting profile.
+  EXPECT_TRUE(chrome::WillKeepAlive());
   EXPECT_EQ(1, manager.NumberOfBackgroundModeData());
 
   // Check that the background mode data we think is in the map actually is.
-  EXPECT_EQ(UTF8ToUTF16("p1"),
+  EXPECT_EQ(base::UTF8ToUTF16("p1"),
             manager.GetBackgroundModeData(profile1)->name());
+}
+
+TEST_F(BackgroundModeManagerTest, DeleteBackgroundProfile) {
+  // Tests whether deleting the only profile when it is a BG profile works
+  // or not (http://crbug.com/346214).
+  scoped_ptr<TestingProfileManager> profile_manager =
+      CreateTestingProfileManager();
+  TestingProfile* profile = profile_manager->CreateTestingProfile("p1");
+  TestBackgroundModeManager manager(
+      command_line_.get(), profile_manager->profile_info_cache(), true);
+  manager.RegisterProfile(profile);
+  EXPECT_FALSE(chrome::WillKeepAlive());
+
+  // Install app, should show status tray icon.
+  manager.OnBackgroundAppInstalled(NULL);
+  manager.SetBackgroundAppCount(1);
+  manager.SetBackgroundAppCountForProfile(1);
+  manager.OnApplicationListChanged(profile);
+
+  manager.OnProfileNameChanged(
+      profile->GetPath(),
+      manager.GetBackgroundModeData(profile)->name());
+
+  EXPECT_TRUE(chrome::WillKeepAlive());
+  manager.SetBackgroundAppCount(0);
+  manager.SetBackgroundAppCountForProfile(0);
+  manager.OnProfileWillBeRemoved(profile->GetPath());
+  EXPECT_FALSE(chrome::WillKeepAlive());
 }
 
 TEST_F(BackgroundModeManagerTest, DisableBackgroundModeUnderTestFlag) {
@@ -399,7 +451,7 @@ TEST_F(BackgroundModeManagerTest, BackgroundMenuGeneration) {
   // tearing down our thread bundle before we've had chance to clean
   // everything up. Keeping Chrome alive prevents this.
   // We aren't interested in if the keep alive works correctly in this test.
-  chrome::StartKeepAlive();
+  chrome::IncrementKeepAliveCount();
   TestingProfile* profile = profile_manager->CreateTestingProfile("p");
 
 #if defined(OS_CHROMEOS)
@@ -409,9 +461,9 @@ TEST_F(BackgroundModeManagerTest, BackgroundMenuGeneration) {
   chromeos::ScopedTestUserManager test_user_manager;
 
   // On ChromeOS shutdown, HandleAppExitingForPlatform will call
-  // chrome::EndKeepAlive because it assumes the aura shell
-  // called chrome::StartKeepAlive. Simulate the call here.
-  chrome::StartKeepAlive();
+  // chrome::DecrementKeepAliveCount because it assumes the aura shell
+  // called chrome::IncrementKeepAliveCount. Simulate the call here.
+  chrome::IncrementKeepAliveCount();
 #endif
 
   scoped_refptr<extensions::Extension> component_extension(
@@ -476,19 +528,19 @@ TEST_F(BackgroundModeManagerTest, BackgroundMenuGeneration) {
   bmd->BuildProfileMenu(submenu.get(), menu.get());
   EXPECT_TRUE(
       submenu->GetLabelAt(0) ==
-          UTF8ToUTF16("Component Extension"));
+          base::UTF8ToUTF16("Component Extension"));
   EXPECT_FALSE(submenu->IsCommandIdEnabled(submenu->GetCommandIdAt(0)));
   EXPECT_TRUE(
       submenu->GetLabelAt(1) ==
-          UTF8ToUTF16("Component Extension with Options"));
+          base::UTF8ToUTF16("Component Extension with Options"));
   EXPECT_TRUE(submenu->IsCommandIdEnabled(submenu->GetCommandIdAt(1)));
   EXPECT_TRUE(
       submenu->GetLabelAt(2) ==
-          UTF8ToUTF16("Regular Extension"));
+          base::UTF8ToUTF16("Regular Extension"));
   EXPECT_TRUE(submenu->IsCommandIdEnabled(submenu->GetCommandIdAt(2)));
   EXPECT_TRUE(
       submenu->GetLabelAt(3) ==
-          UTF8ToUTF16("Regular Extension with Options"));
+          base::UTF8ToUTF16("Regular Extension with Options"));
   EXPECT_TRUE(submenu->IsCommandIdEnabled(submenu->GetCommandIdAt(3)));
 
   // We have to destroy the profile now because we created it with real thread
@@ -498,7 +550,8 @@ TEST_F(BackgroundModeManagerTest, BackgroundMenuGeneration) {
 
   // We're getting ready to shutdown the message loop. Clear everything out!
   base::MessageLoop::current()->RunUntilIdle();
-  chrome::EndKeepAlive(); // Matching the above chrome::StartKeepAlive().
+  chrome::DecrementKeepAliveCount();  // Matching the above
+                                      // chrome::IncrementKeepAliveCount().
 
   // TestBackgroundModeManager has dependencies on the infrastructure.
   // It should get cleared first.
@@ -511,7 +564,236 @@ TEST_F(BackgroundModeManagerTest, BackgroundMenuGeneration) {
   // before tearing down the Message Center.
   profile_manager.reset();
 
-  // Message Center shutdown must occur after the EndKeepAlive because
-  // EndKeepAlive will end up referencing the message center during cleanup.
+  // Message Center shutdown must occur after the DecrementKeepAliveCount
+  // because DecrementKeepAliveCount will end up referencing the message
+  // center during cleanup.
   message_center::MessageCenter::Shutdown();
+
+  // Clear the shutdown flag to isolate the remaining effect of this test.
+  browser_shutdown::SetTryingToQuit(false);
+}
+
+TEST_F(BackgroundModeManagerTest, BackgroundMenuGenerationMultipleProfile) {
+  // Aura clears notifications from the message center at shutdown.
+  message_center::MessageCenter::Initialize();
+
+  // Required for extension service.
+  content::TestBrowserThreadBundle thread_bundle;
+
+  scoped_ptr<TestingProfileManager> profile_manager =
+      CreateTestingProfileManager();
+
+  // BackgroundModeManager actually affects Chrome start/stop state,
+  // tearing down our thread bundle before we've had chance to clean
+  // everything up. Keeping Chrome alive prevents this.
+  // We aren't interested in if the keep alive works correctly in this test.
+  chrome::IncrementKeepAliveCount();
+  TestingProfile* profile1 = profile_manager->CreateTestingProfile("p1");
+  TestingProfile* profile2 = profile_manager->CreateTestingProfile("p2");
+
+#if defined(OS_CHROMEOS)
+  // ChromeOS needs extensionsra services to run in the following order.
+  chromeos::ScopedTestDeviceSettingsService test_device_settings_service;
+  chromeos::ScopedTestCrosSettings test_cros_settings;
+  chromeos::ScopedTestUserManager test_user_manager;
+
+  // On ChromeOS shutdown, HandleAppExitingForPlatform will call
+  // chrome::DecrementKeepAliveCount because it assumes the aura shell
+  // called chrome::IncrementKeepAliveCount. Simulate the call here.
+  chrome::IncrementKeepAliveCount();
+#endif
+
+  scoped_refptr<extensions::Extension> component_extension(
+    CreateExtension(
+        extensions::Manifest::COMPONENT,
+        "{\"name\": \"Component Extension\","
+        "\"version\": \"1.0\","
+        "\"manifest_version\": 2,"
+        "\"permissions\": [\"background\"]}",
+        "ID-1"));
+
+  scoped_refptr<extensions::Extension> component_extension_with_options(
+    CreateExtension(
+        extensions::Manifest::COMPONENT,
+        "{\"name\": \"Component Extension with Options\","
+        "\"version\": \"1.0\","
+        "\"manifest_version\": 2,"
+        "\"permissions\": [\"background\"],"
+        "\"options_page\": \"test.html\"}",
+        "ID-2"));
+
+  scoped_refptr<extensions::Extension> regular_extension(
+    CreateExtension(
+        extensions::Manifest::COMMAND_LINE,
+        "{\"name\": \"Regular Extension\", "
+        "\"version\": \"1.0\","
+        "\"manifest_version\": 2,"
+        "\"permissions\": [\"background\"]}",
+        "ID-3"));
+
+  scoped_refptr<extensions::Extension> regular_extension_with_options(
+    CreateExtension(
+        extensions::Manifest::COMMAND_LINE,
+        "{\"name\": \"Regular Extension with Options\","
+        "\"version\": \"1.0\","
+        "\"manifest_version\": 2,"
+        "\"permissions\": [\"background\"],"
+        "\"options_page\": \"test.html\"}",
+        "ID-4"));
+
+  static_cast<extensions::TestExtensionSystem*>(
+      extensions::ExtensionSystem::Get(profile1))->CreateExtensionService(
+          CommandLine::ForCurrentProcess(),
+          base::FilePath(),
+          false);
+  ExtensionService* service1 = profile1->GetExtensionService();
+  service1->Init();
+
+  service1->AddComponentExtension(component_extension);
+  service1->AddComponentExtension(component_extension_with_options);
+  service1->AddExtension(regular_extension);
+  service1->AddExtension(regular_extension_with_options);
+
+  static_cast<extensions::TestExtensionSystem*>(
+      extensions::ExtensionSystem::Get(profile2))->CreateExtensionService(
+          CommandLine::ForCurrentProcess(),
+          base::FilePath(),
+          false);
+  ExtensionService* service2 = profile2->GetExtensionService();
+  service2->Init();
+
+  service2->AddComponentExtension(component_extension);
+  service2->AddExtension(regular_extension);
+  service2->AddExtension(regular_extension_with_options);
+
+  scoped_ptr<TestBackgroundModeManager> manager(new TestBackgroundModeManager(
+      command_line_.get(), profile_manager->profile_info_cache(), true));
+  manager->RegisterProfile(profile1);
+  manager->RegisterProfile(profile2);
+
+  manager->status_icon_ = new TestStatusIcon();
+  manager->UpdateStatusTrayIconContextMenu();
+  StatusIconMenuModel* context_menu = manager->context_menu_;
+  EXPECT_TRUE(context_menu != NULL);
+
+  // Background Profile Enable Checks
+  EXPECT_TRUE(context_menu->GetLabelAt(3) == base::UTF8ToUTF16("p1"));
+  EXPECT_TRUE(
+      context_menu->IsCommandIdEnabled(context_menu->GetCommandIdAt(3)));
+  EXPECT_TRUE(context_menu->GetCommandIdAt(3) == 4);
+
+  EXPECT_TRUE(context_menu->GetLabelAt(4) == base::UTF8ToUTF16("p2"));
+  EXPECT_TRUE(
+      context_menu->IsCommandIdEnabled(context_menu->GetCommandIdAt(4)));
+  EXPECT_TRUE(context_menu->GetCommandIdAt(4) == 8);
+
+  // Profile 1 Submenu Checks
+  StatusIconMenuModel* profile1_submenu =
+      static_cast<StatusIconMenuModel*>(context_menu->GetSubmenuModelAt(3));
+  EXPECT_TRUE(
+      profile1_submenu->GetLabelAt(0) ==
+          base::UTF8ToUTF16("Component Extension"));
+  EXPECT_FALSE(
+      profile1_submenu->IsCommandIdEnabled(
+          profile1_submenu->GetCommandIdAt(0)));
+  EXPECT_TRUE(profile1_submenu->GetCommandIdAt(0) == 0);
+  EXPECT_TRUE(
+      profile1_submenu->GetLabelAt(1) ==
+          base::UTF8ToUTF16("Component Extension with Options"));
+  EXPECT_TRUE(
+      profile1_submenu->IsCommandIdEnabled(
+          profile1_submenu->GetCommandIdAt(1)));
+  EXPECT_TRUE(profile1_submenu->GetCommandIdAt(1) == 1);
+  EXPECT_TRUE(
+      profile1_submenu->GetLabelAt(2) ==
+          base::UTF8ToUTF16("Regular Extension"));
+  EXPECT_TRUE(
+      profile1_submenu->IsCommandIdEnabled(
+          profile1_submenu->GetCommandIdAt(2)));
+  EXPECT_TRUE(profile1_submenu->GetCommandIdAt(2) == 2);
+  EXPECT_TRUE(
+      profile1_submenu->GetLabelAt(3) ==
+          base::UTF8ToUTF16("Regular Extension with Options"));
+  EXPECT_TRUE(
+      profile1_submenu->IsCommandIdEnabled(
+          profile1_submenu->GetCommandIdAt(3)));
+  EXPECT_TRUE(profile1_submenu->GetCommandIdAt(3) == 3);
+
+  // Profile 2 Submenu Checks
+  StatusIconMenuModel* profile2_submenu =
+      static_cast<StatusIconMenuModel*>(context_menu->GetSubmenuModelAt(4));
+  EXPECT_TRUE(
+      profile2_submenu->GetLabelAt(0) ==
+          base::UTF8ToUTF16("Component Extension"));
+  EXPECT_FALSE(
+      profile2_submenu->IsCommandIdEnabled(
+          profile2_submenu->GetCommandIdAt(0)));
+  EXPECT_TRUE(profile2_submenu->GetCommandIdAt(0) == 5);
+  EXPECT_TRUE(
+      profile2_submenu->GetLabelAt(1) ==
+          base::UTF8ToUTF16("Regular Extension"));
+  EXPECT_TRUE(
+      profile2_submenu->IsCommandIdEnabled(
+          profile2_submenu->GetCommandIdAt(1)));
+  EXPECT_TRUE(profile2_submenu->GetCommandIdAt(1) == 6);
+  EXPECT_TRUE(
+      profile2_submenu->GetLabelAt(2) ==
+          base::UTF8ToUTF16("Regular Extension with Options"));
+  EXPECT_TRUE(
+      profile2_submenu->IsCommandIdEnabled(
+          profile2_submenu->GetCommandIdAt(2)));
+  EXPECT_TRUE(profile2_submenu->GetCommandIdAt(2) == 7);
+
+  // Model Adapter Checks for crbug.com/315164
+  // P1: Profile 1 Menu Item
+  // P2: Profile 2 Menu Item
+  // CE: Component Extension Menu Item
+  // CEO: Component Extenison with Options Menu Item
+  // RE: Regular Extension Menu Item
+  // REO: Regular Extension with Options Menu Item
+  EXPECT_FALSE(IsCommandEnabled(context_menu, 0)); // P1 - CE
+  EXPECT_TRUE(IsCommandEnabled(context_menu, 1));  // P1 - CEO
+  EXPECT_TRUE(IsCommandEnabled(context_menu, 2));  // P1 - RE
+  EXPECT_TRUE(IsCommandEnabled(context_menu, 3));  // P1 - REO
+  EXPECT_TRUE(IsCommandEnabled(context_menu, 4));  // P1
+  EXPECT_FALSE(IsCommandEnabled(context_menu, 5)); // P2 - CE
+  EXPECT_TRUE(IsCommandEnabled(context_menu, 6));  // P2 - RE
+  EXPECT_TRUE(IsCommandEnabled(context_menu, 7));  // P2 - REO
+  EXPECT_TRUE(IsCommandEnabled(context_menu, 8));  // P2
+
+  // Clean up the status icon. If this is not done before profile deletes,
+  // the context menu updates will DCHECK with the now deleted profiles.
+  StatusIcon* status_icon = manager->status_icon_;
+  manager->status_icon_ = NULL;
+  delete status_icon;
+
+  // We have to destroy the profiles now because we created them with real
+  // thread state. This causes a lot of machinery to spin up that stops working
+  // when we tear down our thread state at the end of the test.
+  profile_manager->DeleteTestingProfile("p2");
+  profile_manager->DeleteTestingProfile("p1");
+
+  // We're getting ready to shutdown the message loop. Clear everything out!
+  base::MessageLoop::current()->RunUntilIdle();
+  chrome::DecrementKeepAliveCount();  // Matching the above
+                                      // chrome::IncrementKeepAliveCount().
+
+  // TestBackgroundModeManager has dependencies on the infrastructure.
+  // It should get cleared first.
+  manager.reset();
+
+  // The Profile Manager references the Browser Process.
+  // The Browser Process references the Notification UI Manager.
+  // The Notification UI Manager references the Message Center.
+  // As a result, we have to clear the browser process state here
+  // before tearing down the Message Center.
+  profile_manager.reset();
+
+  // Message Center shutdown must occur after the DecrementKeepAliveCount
+  // because DecrementKeepAliveCount will end up referencing the message
+  // center during cleanup.
+  message_center::MessageCenter::Shutdown();
+
+  // Clear the shutdown flag to isolate the remaining effect of this test.
+  browser_shutdown::SetTryingToQuit(false);
 }

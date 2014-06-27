@@ -14,11 +14,14 @@
 #include "base/compiler_specific.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop_proxy.h"
 #include "media/video/capture/video_capture_device.h"
 #include "media/video/capture/video_capture_types.h"
 
 @protocol PlatformVideoCapturingMac;
+
+namespace base {
+class SingleThreadTaskRunner;
+}
 
 namespace media {
 
@@ -30,9 +33,9 @@ class VideoCaptureDeviceMac : public VideoCaptureDevice {
   virtual ~VideoCaptureDeviceMac();
 
   // VideoCaptureDevice implementation.
-  virtual void AllocateAndStart(
-      const VideoCaptureCapability& capture_format,
-      scoped_ptr<VideoCaptureDevice::Client> client) OVERRIDE;
+  virtual void AllocateAndStart(const VideoCaptureParams& params,
+                                scoped_ptr<VideoCaptureDevice::Client> client)
+      OVERRIDE;
   virtual void StopAndDeAllocate() OVERRIDE;
 
   bool Init();
@@ -40,7 +43,7 @@ class VideoCaptureDeviceMac : public VideoCaptureDevice {
   // Called to deliver captured video frames.
   void ReceiveFrame(const uint8* video_frame,
                     int video_frame_length,
-                    const VideoCaptureCapability& frame_info,
+                    const VideoCaptureFormat& frame_format,
                     int aspect_numerator,
                     int aspect_denominator);
 
@@ -61,20 +64,24 @@ class VideoCaptureDeviceMac : public VideoCaptureDevice {
   Name device_name_;
   scoped_ptr<VideoCaptureDevice::Client> client_;
 
-  VideoCaptureCapability current_settings_;
-  bool sent_frame_info_;
+  VideoCaptureFormat capture_format_;
+  // These variables control the two-step configure-start process for QTKit HD:
+  // the device is first started with no configuration and the captured frames
+  // are inspected to check if the camera really supports HD. AVFoundation does
+  // not need this process so |final_resolution_selected_| is false then.
+  bool final_resolution_selected_;
   bool tried_to_square_pixels_;
 
   // Only read and write state_ from inside this loop.
-  const scoped_refptr<base::MessageLoopProxy> loop_proxy_;
+  const scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   InternalState state_;
 
-  // Used with Bind and PostTask to ensure that methods aren't called
-  // after the VideoCaptureDeviceMac is destroyed.
-  base::WeakPtrFactory<VideoCaptureDeviceMac> weak_factory_;
-  base::WeakPtr<VideoCaptureDeviceMac> weak_this_;
-
   id<PlatformVideoCapturingMac> capture_device_;
+
+  // Used with Bind and PostTask to ensure that methods aren't called after the
+  // VideoCaptureDeviceMac is destroyed.
+  // NOTE: Weak pointers must be invalidated before all other member variables.
+  base::WeakPtrFactory<VideoCaptureDeviceMac> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(VideoCaptureDeviceMac);
 };

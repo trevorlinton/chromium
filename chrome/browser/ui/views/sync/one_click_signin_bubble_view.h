@@ -17,10 +17,6 @@
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/link_listener.h"
 
-namespace base {
-class MessageLoop;
-}
-
 namespace views {
 class GridLayout;
 class ImageButton;
@@ -39,8 +35,8 @@ class OneClickSigninBubbleView : public views::BubbleDelegateView,
   // will be placed visually beneath |anchor_view|.  |start_sync| is called
   // to start sync.
   static void ShowBubble(BrowserWindow::OneClickSigninBubbleType type,
-                         const string16& email,
-                         const string16& error_message,
+                         const base::string16& email,
+                         const base::string16& error_message,
                          scoped_ptr<OneClickSigninBubbleDelegate> delegate,
                          views::View* anchor_view,
                          const BrowserWindow::StartSyncCallback& start_sync);
@@ -56,8 +52,8 @@ class OneClickSigninBubbleView : public views::BubbleDelegateView,
  protected:
   // Creates a OneClickSigninBubbleView.
   OneClickSigninBubbleView(
-      const string16& error_message,
-      const string16& email,
+      const base::string16& error_message,
+      const base::string16& email,
       scoped_ptr<OneClickSigninBubbleDelegate> delegate,
       views::View* anchor_view,
       const BrowserWindow::StartSyncCallback& start_sync_callback,
@@ -77,7 +73,6 @@ class OneClickSigninBubbleView : public views::BubbleDelegateView,
   FRIEND_TEST_ALL_PREFIXES(OneClickSigninBubbleViewTest, DialogLearnMoreLink);
 
   // Overridden from views::BubbleDelegateView:
-  virtual void AnimationEnded(const gfx::Animation* animation) OVERRIDE;
   virtual void Init() OVERRIDE;
 
   // Overridden from views::LinkListener:
@@ -115,10 +110,10 @@ class OneClickSigninBubbleView : public views::BubbleDelegateView,
   scoped_ptr<OneClickSigninBubbleDelegate> delegate_;
 
   // Alternate error message to be displayed.
-  const string16 error_message_;
+  const base::string16 error_message_;
 
   // The user's email address to be used for sync.
-  const string16 email_;
+  const base::string16 email_;
 
   // This callback is nulled once its called, so that it is called only once.
   // It will be called when the bubble is closed if it has not been called
@@ -141,9 +136,6 @@ class OneClickSigninBubbleView : public views::BubbleDelegateView,
   views::ImageButton* close_button_;
 
   bool clicked_learn_more_;
-
-  // A message loop used only with unit tests.
-  base::MessageLoop* message_loop_for_testing_;
 
   // The bubble, if we're showing one.
   static OneClickSigninBubbleView* bubble_view_;

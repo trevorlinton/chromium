@@ -9,9 +9,9 @@ import sys
 
 from telemetry.core import browser
 from telemetry.core import possible_browser
-from telemetry.core import platform
 from telemetry.core import util
 from telemetry.core.backends.webdriver import webdriver_ie_backend
+from telemetry.core.platform import factory
 from telemetry.page import cloud_storage
 
 # Try to import the selenium python lib which may be not available.
@@ -22,11 +22,11 @@ try:
 except ImportError:
   webdriver = None
 
-ALL_BROWSER_TYPES = ''
+ALL_BROWSER_TYPES = []
 if webdriver:
-  ALL_BROWSER_TYPES = ','.join([
+  ALL_BROWSER_TYPES = [
       'internet-explorer',
-      'internet-explorer-x64'])
+      'internet-explorer-x64']
 else:
   logging.warning('Webdriver backend is unsupported without selenium pylib. '
                   'For installation of selenium pylib, please refer to '
@@ -37,16 +37,22 @@ class PossibleWebDriverBrowser(possible_browser.PossibleBrowser):
   """A browser that can be controlled through webdriver API."""
 
   def __init__(self, browser_type, finder_options):
-    super(PossibleWebDriverBrowser, self).__init__(browser_type, finder_options)
+    target_os = sys.platform.lower()
+    super(PossibleWebDriverBrowser, self).__init__(browser_type, target_os,
+        finder_options)
+    assert browser_type in ALL_BROWSER_TYPES, \
+        'Please add %s to ALL_BROWSER_TYPES' % browser_type
+
+  @property
+  def _platform_backend(self):
+    return factory.GetPlatformBackendForCurrentOS()
 
   def CreateWebDriverBackend(self, platform_backend):
     raise NotImplementedError()
 
   def Create(self):
-    platform_backend = platform.CreatePlatformBackendForCurrentOS()
-    backend = self.CreateWebDriverBackend(platform_backend)
-    b = browser.Browser(backend, platform_backend)
-    return b
+    backend = self.CreateWebDriverBackend(self._platform_backend)
+    return browser.Browser(backend, self._platform_backend)
 
   def SupportsOptions(self, finder_options):
     if len(finder_options.extensions_to_load) != 0:
@@ -71,7 +77,7 @@ class PossibleDesktopIE(PossibleWebDriverBrowser):
     def DriverCreator():
       ie_driver_exe = os.path.join(util.GetTelemetryDir(), 'bin',
                                    'IEDriverServer_%s.exe' % self._architecture)
-      cloud_storage.GetIfChanged(cloud_storage.PUBLIC_BUCKET, ie_driver_exe)
+      cloud_storage.GetIfChanged(ie_driver_exe, cloud_storage.PUBLIC_BUCKET)
       return webdriver.Ie(executable_path=ie_driver_exe)
     return webdriver_ie_backend.WebDriverIEBackend(
         platform_backend, DriverCreator, self.finder_options.browser_options)

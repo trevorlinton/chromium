@@ -10,7 +10,7 @@
 
 #include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
-#include "chrome/browser/extensions/scoped_gaia_auth_extension.h"
+#include "chrome/browser/extensions/signin/scoped_gaia_auth_extension.h"
 #include "chrome/browser/ui/chrome_web_modal_dialog_manager_delegate.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
 #include "content/public/browser/notification_observer.h"
@@ -136,15 +136,18 @@ class WebUILoginView : public views::View,
       content::WebContents* web_contents,
       const content::MediaStreamRequest& request,
       const content::MediaResponseCallback& callback) OVERRIDE;
+  virtual bool PreHandleGestureEvent(
+      content::WebContents* source,
+      const blink::WebGestureEvent& event) OVERRIDE;
 
   // Overridden from content::WebContentsObserver.
   virtual void DidFailProvisionalLoad(
       int64 frame_id,
-      const string16& frame_unique_name,
+      const base::string16& frame_unique_name,
       bool is_main_frame,
       const GURL& validated_url,
       int error_code,
-      const string16& error_description,
+      const base::string16& error_description,
       content::RenderViewHost* render_view_host) OVERRIDE;
 
   // Performs series of actions when login prompt is considered

@@ -97,8 +97,7 @@ int MessagePumpWin::GetCurrentDelay() const {
 // MessagePumpForUI public:
 
 MessagePumpForUI::MessagePumpForUI()
-    : atom_(0),
-      message_filter_(new MessageFilter) {
+    : atom_(0) {
   InitMessageWnd();
 }
 
@@ -170,30 +169,6 @@ void MessagePumpForUI::ScheduleDelayedWork(const TimeTicks& delayed_work_time) {
   // TODO(jar): If we don't see this error, use a CHECK() here instead.
   UMA_HISTOGRAM_ENUMERATION("Chrome.MessageLoopProblem", SET_TIMER_ERROR,
                             MESSAGE_LOOP_PROBLEM_MAX);
-}
-
-void MessagePumpForUI::PumpOutPendingPaintMessages() {
-  // If we are being called outside of the context of Run, then don't try to do
-  // any work.
-  if (!state_)
-    return;
-
-  // Create a mini-message-pump to force immediate processing of only Windows
-  // WM_PAINT messages.  Don't provide an infinite loop, but do enough peeking
-  // to get the job done.  Actual common max is 4 peeks, but we'll be a little
-  // safe here.
-  const int kMaxPeekCount = 20;
-  int peek_count;
-  for (peek_count = 0; peek_count < kMaxPeekCount; ++peek_count) {
-    MSG msg;
-    if (!PeekMessage(&msg, NULL, 0, 0, PM_REMOVE | PM_QS_PAINT))
-      break;
-    ProcessMessageHelper(msg);
-    if (state_->should_quit)  // Handle WM_QUIT.
-      break;
-  }
-  // Histogram what was really being used, to help to adjust kMaxPeekCount.
-  DHISTOGRAM_COUNTS("Loop.PumpOutPendingPaintMessages Peeks", peek_count);
 }
 
 //-----------------------------------------------------------------------------
@@ -370,7 +345,7 @@ bool MessagePumpForUI::ProcessNextWindowsMessage() {
     sent_messages_in_queue = true;
 
   MSG msg;
-  if (message_filter_->DoPeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+  if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE) != FALSE)
     return ProcessMessageHelper(msg);
 
   return sent_messages_in_queue;
@@ -396,14 +371,14 @@ bool MessagePumpForUI::ProcessMessageHelper(const MSG& msg) {
 
   WillProcessMessage(msg);
 
-  if (!message_filter_->ProcessMessage(msg)) {
-    if (state_->dispatcher) {
-      if (!state_->dispatcher->Dispatch(msg))
-        state_->should_quit = true;
-    } else {
-      TranslateMessage(&msg);
-      DispatchMessage(&msg);
-    }
+  uint32_t action = MessagePumpDispatcher::POST_DISPATCH_PERFORM_DEFAULT;
+  if (state_->dispatcher)
+    action = state_->dispatcher->Dispatch(msg);
+  if (action & MessagePumpDispatcher::POST_DISPATCH_QUIT_LOOP)
+    state_->should_quit = true;
+  if (action & MessagePumpDispatcher::POST_DISPATCH_PERFORM_DEFAULT) {
+    TranslateMessage(&msg);
+    DispatchMessage(&msg);
   }
 
   DidProcessMessage(msg);
@@ -430,8 +405,7 @@ bool MessagePumpForUI::ProcessPumpReplacementMessage() {
     have_message = PeekMessage(&msg, NULL, WM_PAINT, WM_PAINT, PM_REMOVE) ||
                    PeekMessage(&msg, NULL, WM_TIMER, WM_TIMER, PM_REMOVE);
   } else {
-    have_message = !!message_filter_->DoPeekMessage(&msg, NULL, 0, 0,
-                                                    PM_REMOVE);
+    have_message = PeekMessage(&msg, NULL, 0, 0, PM_REMOVE) != FALSE;
   }
 
   DCHECK(!have_message || kMsgHaveWork != msg.message ||
@@ -451,11 +425,6 @@ bool MessagePumpForUI::ProcessPumpReplacementMessage() {
   // kMsgHaveWork events get (percentage wise) rarer and rarer.
   ScheduleWork();
   return ProcessMessageHelper(msg);
-}
-
-void MessagePumpForUI::SetMessageFilter(
-    scoped_ptr<MessageFilter> message_filter) {
-  message_filter_ = message_filter.Pass();
 }
 
 //-----------------------------------------------------------------------------

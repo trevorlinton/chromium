@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,50 +6,55 @@ package org.chromium.base;
 
 import android.os.Handler;
 import android.os.Message;
-import android.os.SystemClock;
-
-import java.util.concurrent.atomic.AtomicBoolean;
 
 class SystemMessageHandler extends Handler {
 
-    private static final int TIMER_MESSAGE = 1;
-    private static final int DELAYED_TIMER_MESSAGE = 2;
+    private static final int SCHEDULED_WORK = 1;
+    private static final int DELAYED_SCHEDULED_WORK = 2;
 
     // Native class pointer set by the constructor of the SharedClient native class.
-    private int mMessagePumpDelegateNative = 0;
+    private long mMessagePumpDelegateNative = 0;
+    private long mDelayedScheduledTimeTicks = 0;
 
-    private SystemMessageHandler(int messagePumpDelegateNative) {
+    private SystemMessageHandler(long messagePumpDelegateNative) {
         mMessagePumpDelegateNative = messagePumpDelegateNative;
     }
 
     @Override
     public void handleMessage(Message msg) {
-        nativeDoRunLoopOnce(mMessagePumpDelegateNative);
+        if (msg.what == DELAYED_SCHEDULED_WORK) {
+            mDelayedScheduledTimeTicks = 0;
+        }
+        nativeDoRunLoopOnce(mMessagePumpDelegateNative, mDelayedScheduledTimeTicks);
     }
 
     @SuppressWarnings("unused")
     @CalledByNative
-    private void setTimer() {
-        sendEmptyMessage(TIMER_MESSAGE);
+    private void scheduleWork() {
+        sendEmptyMessage(SCHEDULED_WORK);
     }
 
     @SuppressWarnings("unused")
     @CalledByNative
-    private void setDelayedTimer(long millis) {
-        removeMessages(DELAYED_TIMER_MESSAGE);
-        sendEmptyMessageDelayed(DELAYED_TIMER_MESSAGE, millis);
+    private void scheduleDelayedWork(long delayedTimeTicks, long millis) {
+        if (mDelayedScheduledTimeTicks != 0) {
+            removeMessages(DELAYED_SCHEDULED_WORK);
+        }
+        mDelayedScheduledTimeTicks = delayedTimeTicks;
+        sendEmptyMessageDelayed(DELAYED_SCHEDULED_WORK, millis);
     }
 
     @SuppressWarnings("unused")
     @CalledByNative
-    private void removeTimer() {
-        removeMessages(TIMER_MESSAGE);
+    private void removeScheduledWork() {
+        removeMessages(SCHEDULED_WORK);
     }
 
     @CalledByNative
-    private static SystemMessageHandler create(int messagePumpDelegateNative) {
+    private static SystemMessageHandler create(long messagePumpDelegateNative) {
         return new SystemMessageHandler(messagePumpDelegateNative);
     }
 
-    private native void nativeDoRunLoopOnce(int messagePumpDelegateNative);
+    private native void nativeDoRunLoopOnce(
+            long messagePumpDelegateNative, long delayedScheduledTimeTicks);
 }

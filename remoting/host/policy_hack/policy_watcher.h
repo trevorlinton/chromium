@@ -69,9 +69,13 @@ class PolicyWatcher {
   // The names of the policies for token authentication URLs.
   static const char kHostTokenUrlPolicyName[];
   static const char kHostTokenValidationUrlPolicyName[];
+  static const char kHostTokenValidationCertIssuerPolicyName[];
 
   // The name of the policy for disabling PIN-less authentication.
   static const char kHostAllowClientPairing[];
+
+  // The name of the policy for disabling gnubbyd forwarding.
+  static const char kHostAllowGnubbyAuthPolicyName[];
 
   // The name of the policy for overriding policies, for use in testing.
   static const char kHostDebugOverridePoliciesName[];

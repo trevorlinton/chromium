@@ -19,7 +19,7 @@
 #include "ui/base/l10n/l10n_util.h"
 
 #if defined(OS_WIN)
-#include "components/webdata/encryptor/ie7_password_win.h"
+#include "components/os_crypt/ie7_password_win.h"
 #endif
 
 #include <iterator>
@@ -90,8 +90,8 @@ class FirefoxURLParameterFilter : public TemplateURLParser::ParameterFilter {
 
 // Creates a TemplateURL with the |keyword| and |url|. |title| may be empty.
 // This function transfers ownership of the created TemplateURL to the caller.
-TemplateURL* CreateTemplateURL(const string16& title,
-                               const string16& keyword,
+TemplateURL* CreateTemplateURL(const base::string16& title,
+                               const base::string16& keyword,
                                const GURL& url) {
   // Skip if the url is invalid.
   if (!url.is_valid())
@@ -105,7 +105,8 @@ TemplateURL* CreateTemplateURL(const string16& title,
   // We set short name by using the title if it exists.
   // Otherwise, we use the shortcut.
   data.short_name = title.empty() ? keyword : title;
-  data.SetURL(TemplateURLRef::DisplayURLToURLRef(UTF8ToUTF16(url.spec())));
+  data.SetURL(
+      TemplateURLRef::DisplayURLToURLRef(base::UTF8ToUTF16(url.spec())));
   return new TemplateURL(NULL, data);
 }
 
@@ -165,7 +166,7 @@ InProcessImporterBridge::InProcessImporterBridge(
 
 void InProcessImporterBridge::AddBookmarks(
     const std::vector<ImportedBookmarkEntry>& bookmarks,
-    const string16& first_folder_name) {
+    const base::string16& first_folder_name) {
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
       base::Bind(&ProfileWriter::AddBookmarks, writer_, bookmarks,
@@ -277,7 +278,7 @@ void InProcessImporterBridge::NotifyEnded() {
       base::Bind(&ExternalProcessImporterHost::NotifyImportEnded, host_));
 }
 
-string16 InProcessImporterBridge::GetLocalizedString(int message_id) {
+base::string16 InProcessImporterBridge::GetLocalizedString(int message_id) {
   return l10n_util::GetStringUTF16(message_id);
 }
 

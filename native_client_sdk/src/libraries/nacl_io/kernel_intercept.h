@@ -1,6 +1,6 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+/* Copyright (c) 2012 The Chromium Authors. All rights reserved.
+ * Use of this source code is governed by a BSD-style license that can be
+ * found in the LICENSE file. */
 
 #ifndef LIBRARIES_NACL_IO_KERNEL_INTERCEPT_H_
 #define LIBRARIES_NACL_IO_KERNEL_INTERCEPT_H_
@@ -21,20 +21,54 @@
 
 EXTERN_C_BEGIN
 
-// The kernel intercept module provides a C->C++ thunk between the libc
-// kernel calls and the KernelProxy singleton.
+#ifdef __cplusplus
+namespace nacl_io {
+class KernelProxy;
+}
+#endif
 
-// ki_init must be called with an uninitialized KernelProxy object.  Calling
-// with NULL will instantiate a default kernel proxy object.  ki_init must
-// be called before any other ki_XXX function can be used.
-void ki_init(void* kernel_proxy);
-void ki_init_ppapi(void* kernel_proxy,
-                   PP_Instance instance,
-                   PPB_GetInterface get_browser_interface);
+struct fuse_operations;
+
+/*
+ * The kernel intercept module provides a C->C++ thunk between the libc
+ * kernel calls and the KernelProxy singleton.
+ */
+
+/*
+ * ki_init must be called with an uninitialized KernelProxy object.  Calling
+ * with NULL will instantiate a default kernel proxy object.  ki_init must
+ * be called before any other ki_XXX function can be used.
+ */
+int ki_init(void* kernel_proxy);
+
+/*
+ * Saves the current internal state.  This is used by test code which can
+ * use this to save the current state before calling ki_init().  The
+ * pushed state is restored in the next call to ki_uninit().
+ */
+int ki_push_state_for_testing();
+
+int ki_init_ppapi(void* kernel_proxy,
+                  PP_Instance instance,
+                  PPB_GetInterface get_browser_interface);
+
+
+/*
+ * ki_init_interface() is a variant of ki_init() that can be called with
+ * a PepperInterface object.  The ownership of this object then passes
+ * to nacl_io and it will be deleted on ki_uninit().
+ */
+int ki_init_interface(void* kernel_proxy, void* pepper_interface);
+
+#ifdef __cplusplus
+nacl_io::KernelProxy* ki_get_proxy();
+#endif
+
 int ki_is_initialized();
 void ki_uninit();
 
 int ki_chdir(const char* path);
+void ki_exit(int status);
 char* ki_getcwd(char* buf, size_t size);
 char* ki_getwd(char* buf);
 int ki_dup(int oldfd);
@@ -91,7 +125,8 @@ int ki_tcsetattr(int fd, int optional_actions,
                  const struct termios *termios_p);
 int ki_kill(pid_t pid, int sig);
 int ki_killpg(pid_t pid, int sig);
-int ki_sigaction(int, const struct sigaction*, struct sigaction*);
+int ki_sigaction(int signum, const struct sigaction* action,
+                 struct sigaction* oaction);
 int ki_sigpause(int sigmask);
 int ki_sigpending(sigset_t* set);
 int ki_sigsuspend(const sigset_t* set);
@@ -99,10 +134,14 @@ sighandler_t ki_signal(int signum, sighandler_t handler);
 sighandler_t ki_sigset(int signum, sighandler_t handler);
 
 #ifdef PROVIDES_SOCKET_API
-// Socket Functions
+/* Socket Functions */
 int ki_accept(int fd, struct sockaddr* addr, socklen_t* len);
 int ki_bind(int fd, const struct sockaddr* addr, socklen_t len);
 int ki_connect(int fd, const struct sockaddr* addr, socklen_t len);
+void ki_freeaddrinfo(struct addrinfo *res);
+int ki_getaddrinfo(const char *node, const char *service,
+                   const struct addrinfo *hints,
+                   struct addrinfo **res);
 struct hostent* ki_gethostbyname(const char* name);
 int ki_getpeername(int fd, struct sockaddr* addr, socklen_t* len);
 int ki_getsockname(int fd, struct sockaddr* addr, socklen_t* len);
@@ -121,8 +160,8 @@ int ki_setsockopt(int fd, int lvl, int optname, const void* optval,
 int ki_shutdown(int fd, int how);
 int ki_socket(int domain, int type, int protocol);
 int ki_socketpair(int domain, int type, int protocl, int* sv);
-#endif  // PROVIDES_SOCKET_API
+#endif  /* PROVIDES_SOCKET_API */
 
 EXTERN_C_END
 
-#endif  // LIBRARIES_NACL_IO_KERNEL_INTERCEPT_H_
+#endif  /* LIBRARIES_NACL_IO_KERNEL_INTERCEPT_H_ */

@@ -97,7 +97,7 @@ size_t CompositorSoftwareOutputDevice::FindFreeBuffer(size_t hint) {
   return buffers_.size() - 1;
 }
 
-void CompositorSoftwareOutputDevice::Resize(gfx::Size viewport_size) {
+void CompositorSoftwareOutputDevice::Resize(const gfx::Size& viewport_size) {
   DCHECK(CalledOnValidThread());
 
   if (viewport_size_ == viewport_size)
@@ -131,7 +131,8 @@ void CompositorSoftwareOutputDevice::DiscardBackbuffer() {
 void CompositorSoftwareOutputDevice::EnsureBackbuffer() {
 }
 
-SkCanvas* CompositorSoftwareOutputDevice::BeginPaint(gfx::Rect damage_rect) {
+SkCanvas* CompositorSoftwareOutputDevice::BeginPaint(
+    const gfx::Rect& damage_rect) {
   DCHECK(CalledOnValidThread());
 
   Buffer* previous = NULL;
@@ -143,12 +144,11 @@ SkCanvas* CompositorSoftwareOutputDevice::BeginPaint(gfx::Rect damage_rect) {
   current->SetFree(false);
 
   // Set up a canvas for the current front buffer.
-  bitmap_.setConfig(SkBitmap::kARGB_8888_Config,
-                    viewport_size_.width(),
-                    viewport_size_.height());
-  bitmap_.setPixels(current->memory());
-  device_ = skia::AdoptRef(new SkBitmapDevice(bitmap_));
-  canvas_ = skia::AdoptRef(new SkCanvas(device_.get()));
+  SkImageInfo info = SkImageInfo::MakeN32Premul(viewport_size_.width(),
+                                                viewport_size_.height());
+  SkBitmap bitmap;
+  bitmap.installPixels(info, current->memory(), info.minRowBytes());
+  canvas_ = skia::AdoptRef(new SkCanvas(bitmap));
 
   if (!previous) {
     DCHECK(damage_rect == gfx::Rect(viewport_size_));

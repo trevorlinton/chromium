@@ -24,7 +24,7 @@ scoped_ptr<ContentLayerPainter> ContentLayerPainter::Create(
 }
 
 void ContentLayerPainter::Paint(SkCanvas* canvas,
-                                gfx::Rect content_rect,
+                                const gfx::Rect& content_rect,
                                 gfx::RectF* opaque) {
   base::TimeTicks paint_start = base::TimeTicks::HighResNow();
   client_->PaintContents(canvas, content_rect, opaque);
@@ -88,7 +88,7 @@ void ContentLayer::SetTexturePriorities(
 }
 
 bool ContentLayer::Update(ResourceUpdateQueue* queue,
-                          const OcclusionTracker* occlusion) {
+                          const OcclusionTracker<Layer>* occlusion) {
   {
     base::AutoReset<bool> ignore_set_needs_commit(&ignore_set_needs_commit_,
                                                   true);
@@ -126,6 +126,8 @@ void ContentLayer::CreateUpdaterIfNeeded() {
         id());
   }
   updater_->SetOpaque(contents_opaque());
+  if (client_)
+    updater_->SetFillsBoundsCompletely(client_->FillsBoundsCompletely());
 
   SetTextureFormat(
       layer_tree_host()->GetRendererCapabilities().best_texture_format);

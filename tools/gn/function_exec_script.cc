@@ -85,8 +85,7 @@ bool ExecProcess(const CommandLine& cmdline,
 
   base::FilePath::StringType cmdline_str(cmdline.GetCommandLineString());
 
-  base::win::ScopedProcessInformation proc_info;
-  STARTUPINFO start_info = { 0 };
+  STARTUPINFO start_info = {};
 
   start_info.cb = sizeof(STARTUPINFO);
   start_info.hStdOutput = out_write;
@@ -98,15 +97,17 @@ bool ExecProcess(const CommandLine& cmdline,
   start_info.dwFlags |= STARTF_USESTDHANDLES;
 
   // Create the child process.
+  PROCESS_INFORMATION temp_process_info = {};
   if (!CreateProcess(NULL,
                      &cmdline_str[0],
                      NULL, NULL,
                      TRUE,  // Handles are inherited.
                      0, NULL,
                      startup_dir.value().c_str(),
-                     &start_info, proc_info.Receive())) {
+                     &start_info, &temp_process_info)) {
     return false;
   }
+  base::win::ScopedProcessInformation proc_info(temp_process_info);
 
   // Close our writing end of pipes now. Otherwise later read would not be able
   // to detect end of child's output.
@@ -192,7 +193,7 @@ bool ExecProcess(const CommandLine& cmdline,
         if (!ShuffleFileDescriptors(&fd_shuffle1))
           _exit(127);
 
-        file_util::SetCurrentDirectory(startup_dir);
+        base::SetCurrentDirectory(startup_dir);
 
         // TODO(brettw) the base version GetAppOutput does a
         // CloseSuperfluousFds call here. Do we need this?
@@ -235,8 +236,10 @@ const char kExecScript[] = "exec_script";
 const char kExecScript_Help[] =
     "exec_script: Synchronously run a script and return the output.\n"
     "\n"
-    "  exec_script(filename, arguments, input_conversion,\n"
-    "              [file_dependencies])\n"
+    "  exec_script(filename,\n"
+    "              arguments = [],\n"
+    "              input_conversion = \"\",\n"
+    "              file_dependencies = [])\n"
     "\n"
     "  Runs the given script, returning the stdout of the script. The build\n"
     "  generation will fail if the script does not exist or returns a nonzero\n"
@@ -244,8 +247,8 @@ const char kExecScript_Help[] =
     "\n"
     "  The current directory when executing the script will be the root\n"
     "  build directory. If you are passing file names, you will want to use\n"
-    "  the to_build_dir() function to make file names relative to this\n"
-    "  path (see \"gn help to_build_dir\").\n"
+    "  the rebase_path() function to make file names relative to this\n"
+    "  path (see \"gn help rebase_path\").\n"
     "\n"
     "Arguments:\n"
     "\n"
@@ -255,10 +258,14 @@ const char kExecScript_Help[] =
     "\n"
     "  arguments:\n"
     "      A list of strings to be passed to the script as arguments.\n"
+    "      May be unspecified or the empty list which means no arguments.\n"
     "\n"
     "  input_conversion:\n"
     "      Controls how the file is read and parsed.\n"
     "      See \"gn help input_conversion\".\n"
+    "\n"
+    "      If unspecified, defaults to the empty string which causes the\n"
+    "      script result to be discarded. exec script will return None.\n"
     "\n"
     "  dependencies:\n"
     "      (Optional) A list of files that this script reads or otherwise\n"
@@ -271,16 +278,21 @@ const char kExecScript_Help[] =
     "\n"
     "Example:\n"
     "\n"
-    "  all_lines = exec_script(\"myscript.py\", [some_input], \"list lines\",\n"
-    "                          [ to_build_dir(\"data_file.txt\") ])\n";
+    "  all_lines = exec_script(\n"
+    "      \"myscript.py\", [some_input], \"list lines\",\n"
+    "      [ rebase_path(\"data_file.txt\", root_build_dir) ])\n"
+    "\n"
+    "  # This example just calls the script with no arguments and discards\n"
+    "  # the result.\n"
+    "  exec_script(\"//foo/bar/myscript.py\")\n";
 
 Value RunExecScript(Scope* scope,
                     const FunctionCallNode* function,
                     const std::vector<Value>& args,
                     Err* err) {
-  if (args.size() != 3 && args.size() != 4) {
-    *err = Err(function->function(), "Wrong number of args to write_file",
-               "I expected three or four arguments.");
+  if (args.size() < 1 || args.size() > 4) {
+    *err = Err(function->function(), "Wrong number of arguments to exec_script",
+               "I expected between one and four arguments.");
     return Value();
   }
 
@@ -325,13 +337,16 @@ Value RunExecScript(Scope* scope,
   CommandLine cmdline(python_path);
   cmdline.AppendArgPath(script_path);
 
-  const Value& script_args = args[1];
-  if (!script_args.VerifyTypeIs(Value::LIST, err))
-    return Value();
-  for (size_t i = 0; i < script_args.list_value().size(); i++) {
-    if (!script_args.list_value()[i].VerifyTypeIs(Value::STRING, err))
+  if (args.size() >= 2) {
+    // Optional command-line arguments to the script.
+    const Value& script_args = args[1];
+    if (!script_args.VerifyTypeIs(Value::LIST, err))
       return Value();
-    cmdline.AppendArg(script_args.list_value()[i].string_value());
+    for (size_t i = 0; i < script_args.list_value().size(); i++) {
+      if (!script_args.list_value()[i].VerifyTypeIs(Value::STRING, err))
+        return Value();
+      cmdline.AppendArg(script_args.list_value()[i].string_value());
+    }
   }
 
   // Log command line for debugging help.
@@ -339,7 +354,8 @@ Value RunExecScript(Scope* scope,
   base::TimeTicks begin_exec;
   if (g_scheduler->verbose_logging()) {
 #if defined(OS_WIN)
-    g_scheduler->Log("Pythoning", UTF16ToUTF8(cmdline.GetCommandLineString()));
+    g_scheduler->Log("Pythoning",
+                     base::UTF16ToUTF8(cmdline.GetCommandLineString()));
 #else
     g_scheduler->Log("Pythoning", cmdline.GetCommandLineString());
 #endif
@@ -355,7 +371,7 @@ Value RunExecScript(Scope* scope,
   //
   // If this shows up on benchmarks, we can cache whether we've done this
   // or not and skip creating the directory.
-  file_util::CreateDirectory(startup_dir);
+  base::CreateDirectory(startup_dir);
 
   // Execute the process.
   // TODO(brettw) set the environment block.
@@ -391,7 +407,9 @@ Value RunExecScript(Scope* scope,
     return Value();
   }
 
-  return ConvertInputToValue(output, function, args[2], err);
+  // Default to None value for the input conversion if unspecified.
+  return ConvertInputToValue(output, function,
+                             args.size() >= 3 ? args[2] : Value(), err);
 }
 
 }  // namespace functions

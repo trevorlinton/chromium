@@ -9,32 +9,30 @@
 #include "ash/wm/ash_native_cursor_manager.h"
 #include "ash/wm/image_cursors.h"
 #include "ui/gfx/display.h"
-#include "ui/views/corewm/cursor_manager.h"
+#include "ui/wm/core/cursor_manager.h"
 
 namespace ash {
 namespace test {
 
 CursorManagerTestApi::CursorManagerTestApi(
-    views::corewm::CursorManager* cursor_manager)
+    wm::CursorManager* cursor_manager)
     : cursor_manager_(cursor_manager) {
 }
 
 CursorManagerTestApi::~CursorManagerTestApi() {
 }
 
+// TODO(tdanderson): CursorManagerTestApi may no longer be needed.
 float CursorManagerTestApi::GetCurrentScale() const {
-  return static_cast<views::corewm::NativeCursorManagerDelegate*>(
-      cursor_manager_)->GetCurrentScale();
+  return cursor_manager_->GetScale();
 }
 
 ui::CursorSetType CursorManagerTestApi::GetCurrentCursorSet() const {
-  return static_cast<views::corewm::NativeCursorManagerDelegate*>(
-      cursor_manager_)->GetCurrentCursorSet();
+  return cursor_manager_->GetCursorSet();
 }
 
 gfx::NativeCursor CursorManagerTestApi::GetCurrentCursor() const {
-  return static_cast<views::corewm::NativeCursorManagerDelegate*>(
-      cursor_manager_)->GetCurrentCursor();
+  return cursor_manager_->GetCursor();
 }
 
 gfx::Display CursorManagerTestApi::GetDisplay() const {

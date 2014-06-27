@@ -4,7 +4,9 @@
 
 #include "chrome/tools/profile_reset/jtl_compiler.h"
 
+#include <limits>
 #include <map>
+#include <numeric>
 
 #include "base/logging.h"
 #include "chrome/browser/profile_resetter/jtl_foundation.h"
@@ -21,6 +23,12 @@ class ByteCodeWriter {
   ~ByteCodeWriter() {}
 
   void WriteUint8(uint8 value) { output_->push_back(static_cast<char>(value)); }
+  void WriteUint32(uint32 value) {
+    for (int i = 0; i < 4; ++i) {
+      output_->push_back(static_cast<char>(value & 0xFFu));
+      value >>= 8;
+    }
+  }
   void WriteOpCode(uint8 op_code) { WriteUint8(op_code); }
   void WriteHash(const std::string& hash) {
     CHECK(jtl::Hasher::IsHash(hash));
@@ -57,6 +65,9 @@ class InstructionSet {
                     jtl::STORE_NODE_BOOL, Arguments(String)));
     Add(Instruction("store_node_hash",
                     jtl::STORE_NODE_HASH, Arguments(String)));
+    Add(Instruction("store_node_registerable_domain_hash",
+                    jtl::STORE_NODE_REGISTERABLE_DOMAIN_HASH,
+                    Arguments(String)));
     Add(Instruction("compare_bool", jtl::COMPARE_NODE_BOOL, Arguments(Bool)));
     Add(Instruction("compare_hashed",
                     jtl::COMPARE_NODE_HASH, Arguments(String)));
@@ -74,12 +85,15 @@ class InstructionSet {
     Add(Instruction("compare_to_stored_hash",
                     jtl::COMPARE_NODE_TO_STORED_HASH,
                     Arguments(String)));
+    Add(Instruction("compare_substring_hashed",
+                    jtl::COMPARE_NODE_SUBSTRING,
+                    Arguments(StringPattern)));
     Add(Instruction("break", jtl::STOP_EXECUTING_SENTENCE, Arguments()));
   }
 
   JtlCompiler::CompileError::ErrorCode TranscodeInstruction(
       const std::string& name,
-      const ListValue& arguments,
+      const base::ListValue& arguments,
       bool ends_sentence,
       const jtl::Hasher& hasher,
       ByteCodeWriter* target) const {
@@ -103,6 +117,20 @@ class InstructionSet {
           if (!arguments.GetString(i, &value))
             return JtlCompiler::CompileError::INVALID_ARGUMENT_TYPE;
           target->WriteHash(hasher.GetHash(value));
+          break;
+        }
+        case StringPattern: {
+          std::string value;
+          if (!arguments.GetString(i, &value))
+            return JtlCompiler::CompileError::INVALID_ARGUMENT_TYPE;
+          if (value.empty() ||
+              value.size() > std::numeric_limits<uint32>::max())
+            return JtlCompiler::CompileError::INVALID_ARGUMENT_VALUE;
+          target->WriteHash(hasher.GetHash(value));
+          target->WriteUint32(static_cast<uint32>(value.size()));
+          uint32 pattern_sum = std::accumulate(
+              value.begin(), value.end(), static_cast<uint32>(0u));
+          target->WriteUint32(pattern_sum);
           break;
         }
         case HashString: {
@@ -129,6 +157,7 @@ class InstructionSet {
     None,
     Bool,
     String,
+    StringPattern,
     HashString
   };
 
@@ -196,7 +225,7 @@ bool JtlCompiler::Compile(const std::string& source_code,
   JtlParser parser(compacted_source_code, newline_indices);
   while (!parser.HasFinished()) {
     std::string operation_name;
-    ListValue arguments;
+    base::ListValue arguments;
     bool ends_sentence = false;
     if (!parser.ParseNextOperation(
              &operation_name, &arguments, &ends_sentence)) {

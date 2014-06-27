@@ -7,6 +7,8 @@
 #include "base/basictypes.h"
 #include "base/command_line.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/ui/views/avatar_label.h"
+#include "chrome/browser/ui/views/avatar_menu_button.h"
 #include "chrome/browser/ui/views/tab_icon_view.h"
 #include "chrome/browser/ui/views/tabs/tab.h"
 #include "chrome/common/chrome_switches.h"
@@ -35,6 +37,7 @@ class TestLayoutDelegate : public OpaqueBrowserFrameViewLayoutDelegate {
 
   TestLayoutDelegate()
       : show_avatar_(false),
+        show_caption_buttons_(true),
         window_state_(STATE_NORMAL) {
   }
 
@@ -48,9 +51,15 @@ class TestLayoutDelegate : public OpaqueBrowserFrameViewLayoutDelegate {
     show_avatar_ = show_avatar;
   }
 
+  void SetShouldShowCaptionButtons(bool show_caption_buttons) {
+    show_caption_buttons_ = show_caption_buttons;
+  }
+
   void SetWindowState(WindowState state) {
     window_state_ = state;
   }
+
+  // OpaqueBrowserFrameViewLayoutDelegate overrides:
 
   virtual bool ShouldShowWindowIcon() const OVERRIDE {
     return !window_title_.empty();
@@ -76,6 +85,10 @@ class TestLayoutDelegate : public OpaqueBrowserFrameViewLayoutDelegate {
   virtual gfx::Size GetBrowserViewMinimumSize() const OVERRIDE {
     // Taken from a calculation in BrowserViewLayout.
     return gfx::Size(168, 64);
+  }
+
+  virtual bool ShouldShowCaptionButtons() const OVERRIDE {
+    return show_caption_buttons_;
   }
 
   virtual bool ShouldShowAvatar() const OVERRIDE {
@@ -127,6 +140,7 @@ class TestLayoutDelegate : public OpaqueBrowserFrameViewLayoutDelegate {
  private:
   base::string16 window_title_;
   bool show_avatar_;
+  bool show_caption_buttons_;
   WindowState window_state_;
 
   DISALLOW_COPY_AND_ASSIGN(TestLayoutDelegate);
@@ -188,13 +202,12 @@ class OpaqueBrowserFrameViewLayoutTest : public views::ViewsTestBase {
   }
 
   void AddWindowTitleIcons() {
-    tab_icon_view_ = new TabIconView(NULL);
+    tab_icon_view_ = new TabIconView(NULL, NULL);
     tab_icon_view_->set_is_light(true);
     tab_icon_view_->set_id(VIEW_ID_WINDOW_ICON);
     root_view_->AddChildView(tab_icon_view_);
 
-    window_title_ = new views::Label(delegate_->GetWindowTitle(),
-                                     default_font_);
+    window_title_ = new views::Label(delegate_->GetWindowTitle());
     window_title_->SetVisible(delegate_->ShouldShowWindowTitle());
     window_title_->SetEnabledColor(SK_ColorWHITE);
     window_title_->SetBackgroundColor(0x00000000);
@@ -204,14 +217,14 @@ class OpaqueBrowserFrameViewLayoutTest : public views::ViewsTestBase {
   }
 
   void AddAvatarButton() {
-    menu_button_ = new views::MenuButton(NULL, string16(), NULL, false);
+    menu_button_ = new AvatarMenuButton(NULL, false);
     menu_button_->set_id(VIEW_ID_AVATAR_BUTTON);
     delegate_->SetShouldShowAvatar(true);
     root_view_->AddChildView(menu_button_);
   }
 
   void AddAvatarLabel() {
-    avatar_label_ = new views::MenuButton(NULL, string16(), NULL, false);
+    avatar_label_ = new AvatarLabel(NULL);
     avatar_label_->set_id(VIEW_ID_AVATAR_LABEL);
     root_view_->AddChildView(avatar_label_);
 
@@ -220,7 +233,8 @@ class OpaqueBrowserFrameViewLayoutTest : public views::ViewsTestBase {
   }
 
   void AddNewAvatarButton() {
-   new_avatar_button_ = new views::MenuButton(NULL, string16(), NULL, false);
+   new_avatar_button_ =
+       new views::MenuButton(NULL, base::string16(), NULL, false);
    new_avatar_button_->set_id(VIEW_ID_NEW_AVATAR_BUTTON);
    root_view_->AddChildView(new_avatar_button_);
   }
@@ -231,8 +245,6 @@ class OpaqueBrowserFrameViewLayoutTest : public views::ViewsTestBase {
     EXPECT_EQ("0,0 0x0", restore_button_->bounds().ToString());
     EXPECT_EQ("453,1 43x18", close_button_->bounds().ToString());
   }
-
-  gfx::Font default_font_;
 
   Widget* widget_;
   views::View* root_view_;
@@ -248,8 +260,8 @@ class OpaqueBrowserFrameViewLayoutTest : public views::ViewsTestBase {
   TabIconView* tab_icon_view_;
   views::Label* window_title_;
 
-  views::MenuButton* menu_button_;
-  views::MenuButton* avatar_label_;
+  AvatarLabel* avatar_label_;
+  AvatarMenuButton* menu_button_;
   views::MenuButton* new_avatar_button_;
 
   DISALLOW_COPY_AND_ASSIGN(OpaqueBrowserFrameViewLayoutTest);
@@ -281,7 +293,7 @@ TEST_F(OpaqueBrowserFrameViewLayoutTest, BasicWindowMaximized) {
   delegate_->SetWindowState(TestLayoutDelegate::STATE_MAXIMIZED);
   root_view_->Layout();
 
-  // Note how the bonds start at the exact top of the window while maximized
+  // Note how the bounds start at the exact top of the window while maximized
   // while they start 1 pixel below when unmaximized.
   EXPECT_EQ("0,0 0x0", maximize_button_->bounds().ToString());
   EXPECT_EQ("403,0 26x18", minimize_button_->bounds().ToString());
@@ -298,9 +310,103 @@ TEST_F(OpaqueBrowserFrameViewLayoutTest, BasicWindowMaximized) {
   EXPECT_EQ("2,0 17x17", layout_manager_->IconBounds().ToString());
 }
 
+TEST_F(OpaqueBrowserFrameViewLayoutTest, MaximizedWithYOffset) {
+  // Tests the layout of a basic chrome window with the caption buttons slightly
+  // offset from the top of the screen (as they are on Linux).
+  layout_manager_->set_extra_caption_y(2);
+  delegate_->SetWindowState(TestLayoutDelegate::STATE_MAXIMIZED);
+  root_view_->Layout();
+
+  // Note how the bounds start at the exact top of the window, DESPITE the
+  // caption Y offset of 2. This ensures that we obey Fitts' Law (the buttons
+  // are clickable on the top edge of the screen). However, the buttons are 2
+  // pixels taller, so the images appear to be offset by 2 pixels.
+  EXPECT_EQ("0,0 0x0", maximize_button_->bounds().ToString());
+  EXPECT_EQ("403,0 26x20", minimize_button_->bounds().ToString());
+  EXPECT_EQ("429,0 25x20", restore_button_->bounds().ToString());
+  EXPECT_EQ("454,0 46x20", close_button_->bounds().ToString());
+
+  EXPECT_EQ("-5,-3 392x29",
+            layout_manager_->GetBoundsForTabStrip(
+                delegate_->GetTabstripPreferredSize(), kWidth).ToString());
+  EXPECT_EQ("262x61", layout_manager_->GetMinimumSize(kWidth).ToString());
+
+  // In the maximized case, OpaqueBrowserFrameView::NonClientHitTest() uses
+  // this rect, extended to the top left corner of the window.
+  EXPECT_EQ("2,0 17x17", layout_manager_->IconBounds().ToString());
+}
+
+TEST_F(OpaqueBrowserFrameViewLayoutTest, WindowButtonsOnLeft) {
+  // Tests the layout of a chrome window with caption buttons on the left.
+  std::vector<views::FrameButton> leading_buttons;
+  std::vector<views::FrameButton> trailing_buttons;
+  leading_buttons.push_back(views::FRAME_BUTTON_CLOSE);
+  leading_buttons.push_back(views::FRAME_BUTTON_MINIMIZE);
+  leading_buttons.push_back(views::FRAME_BUTTON_MAXIMIZE);
+  layout_manager_->SetButtonOrdering(leading_buttons, trailing_buttons);
+  root_view_->Layout();
+
+  EXPECT_EQ("73,1 25x18", maximize_button_->bounds().ToString());
+  EXPECT_EQ("47,1 26x18", minimize_button_->bounds().ToString());
+  EXPECT_EQ("0,0 0x0", restore_button_->bounds().ToString());
+  EXPECT_EQ("4,1 43x18", close_button_->bounds().ToString());
+
+  EXPECT_EQ("93,13 398x29",
+            layout_manager_->GetBoundsForTabStrip(
+                delegate_->GetTabstripPreferredSize(), kWidth).ToString());
+  EXPECT_EQ("261x73", layout_manager_->GetMinimumSize(kWidth).ToString());
+
+  // If the buttons are on the left, there should be no hidden icon for the user
+  // to double click.
+  EXPECT_EQ("0,0 0x0", layout_manager_->IconBounds().ToString());
+}
+
+TEST_F(OpaqueBrowserFrameViewLayoutTest, WithoutCaptionButtons) {
+  // Tests the layout of a default chrome window with no caption buttons (which
+  // should force the tab strip to be condensed).
+  delegate_->SetShouldShowCaptionButtons(false);
+  root_view_->Layout();
+
+  EXPECT_EQ("0,0 0x0", maximize_button_->bounds().ToString());
+  EXPECT_EQ("0,0 0x0", minimize_button_->bounds().ToString());
+  EXPECT_EQ("0,0 0x0", restore_button_->bounds().ToString());
+  EXPECT_EQ("0,0 0x0", close_button_->bounds().ToString());
+
+  EXPECT_EQ("-5,-3 500x29",
+            layout_manager_->GetBoundsForTabStrip(
+                delegate_->GetTabstripPreferredSize(), kWidth).ToString());
+  EXPECT_EQ("251x61", layout_manager_->GetMinimumSize(kWidth).ToString());
+
+  // A normal window with no window icon still produces icon bounds for
+  // Windows, which has a hidden icon that a user can double click on to close
+  // the window.
+  EXPECT_EQ("2,0 17x17", layout_manager_->IconBounds().ToString());
+}
+
+TEST_F(OpaqueBrowserFrameViewLayoutTest, MaximizedWithoutCaptionButtons) {
+  // Tests the layout of a maximized chrome window with no caption buttons.
+  delegate_->SetWindowState(TestLayoutDelegate::STATE_MAXIMIZED);
+  delegate_->SetShouldShowCaptionButtons(false);
+  root_view_->Layout();
+
+  EXPECT_EQ("0,0 0x0", maximize_button_->bounds().ToString());
+  EXPECT_EQ("0,0 0x0", minimize_button_->bounds().ToString());
+  EXPECT_EQ("0,0 0x0", restore_button_->bounds().ToString());
+  EXPECT_EQ("0,0 0x0", close_button_->bounds().ToString());
+
+  EXPECT_EQ("-5,-3 500x29",
+            layout_manager_->GetBoundsForTabStrip(
+                delegate_->GetTabstripPreferredSize(), kWidth).ToString());
+  EXPECT_EQ("251x61", layout_manager_->GetMinimumSize(kWidth).ToString());
+
+  // In the maximized case, OpaqueBrowserFrameView::NonClientHitTest() uses
+  // this rect, extended to the top left corner of the window.
+  EXPECT_EQ("2,0 17x17", layout_manager_->IconBounds().ToString());
+}
+
 TEST_F(OpaqueBrowserFrameViewLayoutTest, WithWindowTitleAndIcon) {
   // Tests the layout of pop up windows.
-  delegate_->SetWindowTitle(ASCIIToUTF16("Window Title"));
+  delegate_->SetWindowTitle(base::ASCIIToUTF16("Window Title"));
   AddWindowTitleIcons();
   root_view_->Layout();
 
@@ -327,6 +433,88 @@ TEST_F(OpaqueBrowserFrameViewLayoutTest, WindowWithAvatar) {
   EXPECT_EQ("261x73", layout_manager_->GetMinimumSize(kWidth).ToString());
 }
 
+TEST_F(OpaqueBrowserFrameViewLayoutTest, WindowWithAvatarWithButtonsOnLeft) {
+  // Tests the layout of a chrome window with an avatar icon and caption buttons
+  // on the left. The avatar icon should therefore be on the right.
+  // AddAvatarLabel() also adds the avatar button.
+  AddAvatarLabel();
+  std::vector<views::FrameButton> leading_buttons;
+  std::vector<views::FrameButton> trailing_buttons;
+  leading_buttons.push_back(views::FRAME_BUTTON_CLOSE);
+  leading_buttons.push_back(views::FRAME_BUTTON_MINIMIZE);
+  leading_buttons.push_back(views::FRAME_BUTTON_MAXIMIZE);
+  layout_manager_->SetButtonOrdering(leading_buttons, trailing_buttons);
+  root_view_->Layout();
+
+  EXPECT_EQ("73,1 25x18", maximize_button_->bounds().ToString());
+  EXPECT_EQ("47,1 26x18", minimize_button_->bounds().ToString());
+  EXPECT_EQ("0,0 0x0", restore_button_->bounds().ToString());
+  EXPECT_EQ("4,1 43x18", close_button_->bounds().ToString());
+
+  // Check the location of the avatar
+  EXPECT_EQ("454,11 40x29", menu_button_->bounds().ToString());
+
+  // Check the tab strip bounds.
+  gfx::Rect tab_strip_bounds = layout_manager_->GetBoundsForTabStrip(
+      delegate_->GetTabstripPreferredSize(), kWidth);
+  EXPECT_GT(tab_strip_bounds.x(), maximize_button_->bounds().x());
+  EXPECT_GT(maximize_button_->bounds().right(), tab_strip_bounds.x());
+  EXPECT_EQ(13, tab_strip_bounds.y());
+  EXPECT_EQ(29, tab_strip_bounds.height());
+  EXPECT_GT(avatar_label_->bounds().x(), tab_strip_bounds.right());
+  EXPECT_EQ("261x73", layout_manager_->GetMinimumSize(kWidth).ToString());
+
+  // Check the relative location of the avatar label to the avatar. The right
+  // end of the avatar label should be slightly to the right of the right end of
+  // the avatar icon.
+  EXPECT_GT(avatar_label_->bounds().right(), menu_button_->bounds().right());
+  EXPECT_GT(menu_button_->bounds().x(), avatar_label_->bounds().x());
+  EXPECT_GT(menu_button_->bounds().bottom(),
+            avatar_label_->bounds().bottom());
+  EXPECT_GT(avatar_label_->bounds().y(), menu_button_->bounds().y());
+
+  // This means that the menu will pop out facing the left (if it were to face
+  // the right, it would go outside the window frame and be clipped).
+  EXPECT_TRUE(menu_button_->button_on_right());
+
+  // If the buttons are on the left, there should be no hidden icon for the user
+  // to double click.
+  EXPECT_EQ("0,0 0x0", layout_manager_->IconBounds().ToString());
+}
+
+TEST_F(OpaqueBrowserFrameViewLayoutTest,
+       WindowWithAvatarWithoutCaptionButtonsOnLeft) {
+  // Tests the layout of a chrome window with an avatar icon and no caption
+  // buttons. However, the caption buttons *would* be on the left if they
+  // weren't hidden, and therefore, the avatar icon should be on the right.
+  // The lack of caption buttons should force the tab strip to be condensed.
+  AddAvatarButton();
+  std::vector<views::FrameButton> leading_buttons;
+  std::vector<views::FrameButton> trailing_buttons;
+  leading_buttons.push_back(views::FRAME_BUTTON_CLOSE);
+  leading_buttons.push_back(views::FRAME_BUTTON_MINIMIZE);
+  leading_buttons.push_back(views::FRAME_BUTTON_MAXIMIZE);
+  layout_manager_->SetButtonOrdering(leading_buttons, trailing_buttons);
+  delegate_->SetShouldShowCaptionButtons(false);
+  root_view_->Layout();
+
+  EXPECT_EQ("0,0 0x0", maximize_button_->bounds().ToString());
+  EXPECT_EQ("0,0 0x0", minimize_button_->bounds().ToString());
+  EXPECT_EQ("0,0 0x0", restore_button_->bounds().ToString());
+  EXPECT_EQ("0,0 0x0", close_button_->bounds().ToString());
+
+  // Check the location of the avatar
+  EXPECT_EQ("458,0 40x24", menu_button_->bounds().ToString());
+  EXPECT_EQ("-5,-3 458x29",
+            layout_manager_->GetBoundsForTabStrip(
+                delegate_->GetTabstripPreferredSize(), kWidth).ToString());
+  EXPECT_EQ("251x61", layout_manager_->GetMinimumSize(kWidth).ToString());
+
+  // A normal window with no window icon still produces icon bounds for
+  // Windows, which has a hidden icon that a user can double click on to close
+  // the window.
+  EXPECT_EQ("2,0 17x17", layout_manager_->IconBounds().ToString());
+}
 
 TEST_F(OpaqueBrowserFrameViewLayoutTest, WindowWithNewAvatar) {
   CommandLine::ForCurrentProcess()->AppendSwitch(
@@ -349,13 +537,14 @@ TEST_F(OpaqueBrowserFrameViewLayoutTest, WindowWithNewAvatar) {
   EXPECT_EQ("261x73", layout_manager_->GetMinimumSize(kWidth).ToString());
 }
 
-TEST_F(OpaqueBrowserFrameViewLayoutTest, WindowWithAvatarLabelAndButton) {
+TEST_F(OpaqueBrowserFrameViewLayoutTest, WindowWithAvatarLabelAndButtonOnLeft) {
   AddAvatarLabel();
   root_view_->Layout();
 
   ExpectBasicWindowBounds();
 
-  // Check the location of the avatar label relative to the avatar button.
+  // Check the location of the avatar label relative to the avatar button if
+  // both are displayed on the left side.
   // The label height and width depends on the font size and the text displayed.
   // This may possibly change, so we don't test it here.
   EXPECT_EQ(menu_button_->bounds().x() - 2, avatar_label_->bounds().x());

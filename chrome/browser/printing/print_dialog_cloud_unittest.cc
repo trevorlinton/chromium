@@ -15,7 +15,6 @@
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
-#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/printing/cloud_print/cloud_print_url.h"
@@ -81,13 +80,10 @@ class MockCloudPrintFlowHandler
     : public CloudPrintFlowHandler,
       public base::SupportsWeakPtr<MockCloudPrintFlowHandler> {
  public:
-  MockCloudPrintFlowHandler(const string16& title,
-                            const string16& print_ticket,
-                            const std::string& file_type,
-                            bool close_after_signin,
-                            const base::Closure& callback)
-      : CloudPrintFlowHandler(NULL, title, print_ticket, file_type,
-                              close_after_signin, callback) {}
+  MockCloudPrintFlowHandler(const base::string16& title,
+                            const base::string16& print_ticket,
+                            const std::string& file_type)
+      : CloudPrintFlowHandler(NULL, title, print_ticket, file_type) {}
   MOCK_METHOD0(DestructorCalled, void());
   MOCK_METHOD0(RegisterMessages, void());
   MOCK_METHOD3(Observe,
@@ -105,7 +101,7 @@ class MockCloudPrintWebDialogDelegate : public CloudPrintWebDialogDelegate {
   MOCK_CONST_METHOD0(GetDialogModalType,
       ui::ModalType());
   MOCK_CONST_METHOD0(GetDialogTitle,
-      string16());
+      base::string16());
   MOCK_CONST_METHOD0(GetDialogContentURL,
       GURL());
   MOCK_CONST_METHOD1(GetWebUIMessageHandlers,
@@ -137,12 +133,9 @@ class MockCloudPrintDataSenderHelper : public CloudPrintDataSenderHelper {
   // MockTabContents instead of NULL, and to pre-load it with a bunch
   // of expects/results.
   MockCloudPrintDataSenderHelper() : CloudPrintDataSenderHelper(NULL) {}
-  MOCK_METHOD1(CallJavascriptFunction, void(const std::wstring&));
-  MOCK_METHOD2(CallJavascriptFunction, void(const std::wstring&,
-                                            const Value& arg1));
-  MOCK_METHOD3(CallJavascriptFunction, void(const std::wstring&,
-                                            const Value& arg1,
-                                            const Value& arg2));
+  MOCK_METHOD3(CallJavascriptFunction, void(const std::string&,
+                                            const base::Value& arg1,
+                                            const base::Value& arg2));
 };
 
 class CloudPrintURLTest : public testing::Test {
@@ -224,8 +217,8 @@ class CloudPrintDataSenderTest : public testing::Test {
   scoped_refptr<CloudPrintDataSender> CreateSender(
       const base::RefCountedString* data) {
     return new CloudPrintDataSender(mock_helper_.get(),
-                                    ASCIIToUTF16(kMockJobTitle),
-                                    ASCIIToUTF16(kMockPrintTicket),
+                                    base::ASCIIToUTF16(kMockJobTitle),
+                                    base::ASCIIToUTF16(kMockPrintTicket),
                                     std::string("application/pdf"),
                                     data);
   }
@@ -239,7 +232,7 @@ class CloudPrintDataSenderTest : public testing::Test {
 };
 
 TEST_F(CloudPrintDataSenderTest, CanSend) {
-  StringValue mock_job_title(kMockJobTitle);
+  base::StringValue mock_job_title(kMockJobTitle);
   EXPECT_CALL(*mock_helper_,
               CallJavascriptFunction(_, _, StringValueEq(&mock_job_title))).
       WillOnce(Return());
@@ -295,12 +288,12 @@ class CloudPrintWebDialogDelegateTest : public testing::Test {
 
  protected:
   virtual void SetUp() {
-    string16 mock_title;
-    string16 mock_print_ticket;
+    base::string16 mock_title;
+    base::string16 mock_print_ticket;
     std::string mock_file_type;
     MockCloudPrintFlowHandler* handler =
         new MockCloudPrintFlowHandler(mock_print_ticket, mock_title,
-                                      mock_file_type, false, base::Closure());
+                                      mock_file_type);
     mock_flow_handler_ = handler->AsWeakPtr();
     EXPECT_CALL(*mock_flow_handler_.get(), SetDialogDelegate(_));
     EXPECT_CALL(*mock_flow_handler_.get(), SetDialogDelegate(NULL));

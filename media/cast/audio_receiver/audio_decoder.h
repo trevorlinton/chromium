@@ -6,9 +6,12 @@
 #define MEDIA_CAST_AUDIO_RECEIVER_AUDIO_DECODER_H_
 
 #include "base/callback.h"
-#include "base/memory/ref_counted.h"
+#include "base/synchronization/lock.h"
 #include "media/cast/cast_config.h"
-#include "media/cast/rtp_common/rtp_defines.h"
+#include "media/cast/cast_environment.h"
+#include "media/cast/framer/cast_message_builder.h"
+#include "media/cast/framer/frame_id_map.h"
+#include "media/cast/rtp_receiver/rtp_receiver_defines.h"
 
 namespace webrtc {
 class AudioCodingModule;
@@ -17,10 +20,15 @@ class AudioCodingModule;
 namespace media {
 namespace cast {
 
+typedef std::map<uint32, uint32> FrameIdRtpTimestampMap;
+
 // Thread safe class.
-class AudioDecoder : public base::RefCountedThreadSafe<AudioDecoder> {
+class AudioDecoder {
  public:
-  explicit AudioDecoder(const AudioReceiverConfig& audio_config);
+  AudioDecoder(scoped_refptr<CastEnvironment> cast_environment,
+               const AudioReceiverConfig& audio_config,
+               RtpPayloadFeedback* incoming_payload_feedback);
+  virtual ~AudioDecoder();
 
   // Extract a raw audio frame from the decoder.
   // Set the number of desired 10ms blocks and frequency.
@@ -37,14 +45,22 @@ class AudioDecoder : public base::RefCountedThreadSafe<AudioDecoder> {
                                size_t payload_size,
                                const RtpCastHeader& rtp_header);
 
- protected:
-  virtual ~AudioDecoder();
+  bool TimeToSendNextCastMessage(base::TimeTicks* time_to_send);
+  void SendCastMessage();
 
  private:
-  friend class base::RefCountedThreadSafe<AudioDecoder>;
+  scoped_refptr<CastEnvironment> cast_environment_;
 
+  // The webrtc AudioCodingModule is thread safe.
   scoped_ptr<webrtc::AudioCodingModule> audio_decoder_;
+
+  FrameIdMap frame_id_map_;
+  CastMessageBuilder cast_message_builder_;
+
+  base::Lock lock_;
   bool have_received_packets_;
+  FrameIdRtpTimestampMap frame_id_rtp_timestamp_map_;
+  uint32 last_played_out_timestamp_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioDecoder);
 };

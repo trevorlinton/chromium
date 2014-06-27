@@ -9,13 +9,14 @@
 #include "ash/session_state_delegate.h"
 #include "ash/shell.h"
 #include "ash/shell_window_ids.h"
-#include "ash/wm/window_cycle_list.h"
+#include "ash/switchable_windows.h"
+#include "ash/wm/window_state.h"
 #include "ash/wm/window_util.h"
 #include "ash/wm/workspace_controller.h"
-#include "ui/aura/client/activation_client.h"
-#include "ui/aura/root_window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/events/event.h"
 #include "ui/events/event_handler.h"
+#include "ui/wm/public/activation_client.h"
 
 namespace ash {
 
@@ -31,15 +32,17 @@ void AddTrackedWindows(aura::Window* root,
   windows->insert(windows->end(), children.begin(), children.end());
 }
 
-// Returns true if |window| is a container whose windows can be cycled to.
-bool IsSwitchableContainer(aura::Window* window) {
-  if (!window)
-    return false;
-  for (size_t i = 0; i < kSwitchableWindowContainerIdsLength; ++i) {
-    if (window->id() == kSwitchableWindowContainerIds[i])
-      return true;
+// Adds windows being dragged in the docked container to |windows| list.
+void AddDraggedWindows(aura::Window* root,
+                       MruWindowTracker::WindowList* windows) {
+  aura::Window* container = Shell::GetContainer(
+      root, internal::kShellWindowId_DockedContainer);
+  const MruWindowTracker::WindowList& children = container->children();
+  for (MruWindowTracker::WindowList::const_iterator iter = children.begin();
+       iter != children.end(); ++iter) {
+    if (wm::GetWindowState(*iter)->is_dragged())
+      windows->insert(windows->end(), *iter);
   }
-  return false;
 }
 
 // Returns whether |w1| should be considered less recently used than |w2|. This
@@ -57,10 +60,10 @@ MruWindowTracker::WindowList BuildWindowListInternal(
     const std::list<aura::Window*>* mru_windows,
     bool top_most_at_end) {
   MruWindowTracker::WindowList windows;
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
 
   aura::Window* active_root = Shell::GetTargetRootWindow();
-  for (Shell::RootWindowList::const_iterator iter = root_windows.begin();
+  for (aura::Window::Windows::const_iterator iter = root_windows.begin();
        iter != root_windows.end(); ++iter) {
     if (*iter == active_root)
       continue;
@@ -72,6 +75,10 @@ MruWindowTracker::WindowList BuildWindowListInternal(
   // in the active root window becomes the front of the list.
   for (size_t i = 0; i < kSwitchableWindowContainerIdsLength; ++i)
     AddTrackedWindows(active_root, kSwitchableWindowContainerIds[i], &windows);
+
+  // Dragged windows are temporarily parented in docked container. Include them
+  // in the in tracked list.
+  AddDraggedWindows(active_root, &windows);
 
   // Removes unfocusable windows.
   MruWindowTracker::WindowList::iterator last =
@@ -115,15 +122,6 @@ MruWindowTracker::WindowList BuildWindowListInternal(
 }
 
 }  // namespace
-
-const int kSwitchableWindowContainerIds[] = {
-  internal::kShellWindowId_DefaultContainer,
-  internal::kShellWindowId_AlwaysOnTopContainer,
-  internal::kShellWindowId_PanelContainer
-};
-
-const size_t kSwitchableWindowContainerIdsLength =
-    arraysize(kSwitchableWindowContainerIds);
 
 //////////////////////////////////////////////////////////////////////////////
 // MruWindowTracker, public:
@@ -190,7 +188,10 @@ void MruWindowTracker::OnWindowActivated(aura::Window* gained_active,
     SetActiveWindow(gained_active);
 }
 
-void MruWindowTracker::OnWindowDestroying(aura::Window* window) {
+void MruWindowTracker::OnWindowDestroyed(aura::Window* window) {
+  // It's possible for OnWindowActivated() to be called after
+  // OnWindowDestroying(). This means we need to override OnWindowDestroyed()
+  // else we may end up with a deleted window in |mru_windows_|.
   mru_windows_.remove(window);
   window->RemoveObserver(this);
 }

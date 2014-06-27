@@ -10,7 +10,7 @@
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_test_message_listener.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/tab_contents/render_view_context_menu.h"
+#include "chrome/browser/renderer_context_menu/render_view_context_menu.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/panels/native_panel.h"
 #include "chrome/browser/ui/panels/panel.h"
@@ -19,10 +19,10 @@
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/common/extension.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_MACOSX)
@@ -115,9 +115,9 @@ IN_PROC_BROWSER_TEST_F(PanelExtensionBrowserTest,
 // Non-abstract RenderViewContextMenu class for testing context menus in Panels.
 class PanelContextMenu : public RenderViewContextMenu {
  public:
-  PanelContextMenu(content::WebContents* web_contents,
+  PanelContextMenu(content::RenderFrameHost* render_frame_host,
                    const content::ContextMenuParams& params)
-      : RenderViewContextMenu(web_contents, params) {}
+      : RenderViewContextMenu(render_frame_host, params) {}
 
   bool HasCommandWithId(int command_id) {
     return menu_model_.GetIndexOfCommandId(command_id) != -1;
@@ -156,7 +156,7 @@ IN_PROC_BROWSER_TEST_F(PanelExtensionBrowserTest, BasicContextMenu) {
     EXPECT_FALSE(web_contents->GetDelegate()->HandleContextMenu(params));
 
     scoped_ptr<PanelContextMenu> menu(
-        new PanelContextMenu(web_contents, params));
+        new PanelContextMenu(web_contents->GetMainFrame(), params));
     menu->Init();
 
     EXPECT_FALSE(menu->HasCommandWithId(IDC_CONTENT_CONTEXT_INSPECTELEMENT));
@@ -177,7 +177,7 @@ IN_PROC_BROWSER_TEST_F(PanelExtensionBrowserTest, BasicContextMenu) {
     EXPECT_FALSE(web_contents->GetDelegate()->HandleContextMenu(params));
 
     scoped_ptr<PanelContextMenu> menu(
-        new PanelContextMenu(web_contents, params));
+        new PanelContextMenu(web_contents->GetMainFrame(), params));
     menu->Init();
 
     EXPECT_FALSE(menu->HasCommandWithId(IDC_CONTENT_CONTEXT_INSPECTELEMENT));
@@ -193,12 +193,12 @@ IN_PROC_BROWSER_TEST_F(PanelExtensionBrowserTest, BasicContextMenu) {
   {
     content::ContextMenuParams params;
     params.page_url = web_contents->GetURL();
-    params.selection_text = ASCIIToUTF16("Select me");
+    params.selection_text = base::ASCIIToUTF16("Select me");
     // Ensure context menu isn't swallowed by WebContentsDelegate (the panel).
     EXPECT_FALSE(web_contents->GetDelegate()->HandleContextMenu(params));
 
     scoped_ptr<PanelContextMenu> menu(
-        new PanelContextMenu(web_contents, params));
+        new PanelContextMenu(web_contents->GetMainFrame(), params));
     menu->Init();
 
     EXPECT_FALSE(menu->HasCommandWithId(IDC_CONTENT_CONTEXT_INSPECTELEMENT));
@@ -219,7 +219,7 @@ IN_PROC_BROWSER_TEST_F(PanelExtensionBrowserTest, BasicContextMenu) {
     EXPECT_FALSE(web_contents->GetDelegate()->HandleContextMenu(params));
 
     scoped_ptr<PanelContextMenu> menu(
-        new PanelContextMenu(web_contents, params));
+        new PanelContextMenu(web_contents->GetMainFrame(), params));
     menu->Init();
 
     EXPECT_FALSE(menu->HasCommandWithId(IDC_CONTENT_CONTEXT_INSPECTELEMENT));
@@ -257,7 +257,7 @@ IN_PROC_BROWSER_TEST_F(PanelExtensionBrowserTest, CustomContextMenu) {
 
   // Verify menu contents contains the custom item added by their own extension.
   scoped_ptr<PanelContextMenu> menu;
-  menu.reset(new PanelContextMenu(web_contents, params));
+  menu.reset(new PanelContextMenu(web_contents->GetMainFrame(), params));
   menu->Init();
   EXPECT_TRUE(menu->HasCommandWithId(IDC_EXTENSIONS_CONTEXT_CUSTOM_FIRST));
   EXPECT_FALSE(menu->HasCommandWithId(IDC_EXTENSIONS_CONTEXT_CUSTOM_FIRST + 1));

@@ -7,9 +7,9 @@
 
 #include "chrome/browser/chromeos/input_method/input_method_util.h"
 #include "chromeos/ime/fake_input_method_delegate.h"
+#include "chromeos/ime/fake_xkeyboard.h"
 #include "chromeos/ime/input_method_manager.h"
 #include "chromeos/ime/input_method_whitelist.h"
-#include "chromeos/ime/mock_xkeyboard.h"
 
 namespace chromeos {
 namespace input_method {
@@ -34,38 +34,39 @@ class MockInputMethodManager : public InputMethodManager {
   virtual const std::vector<std::string>& GetActiveInputMethodIds() const
       OVERRIDE;
   virtual size_t GetNumActiveInputMethods() const OVERRIDE;
-  virtual void EnableLayouts(const std::string& language_code,
-                             const std::string& initial_layout) OVERRIDE;
-  virtual bool EnableInputMethods(
+  virtual const InputMethodDescriptor* GetInputMethodFromId(
+      const std::string& input_method_id) const OVERRIDE;
+  virtual void EnableLoginLayouts(
+      const std::string& language_code,
+      const std::vector<std::string>& initial_layout) OVERRIDE;
+  virtual bool ReplaceEnabledInputMethods(
       const std::vector<std::string>& new_active_input_method_ids) OVERRIDE;
   virtual bool EnableInputMethod(
       const std::string& new_active_input_method_id) OVERRIDE;
   virtual void ChangeInputMethod(const std::string& input_method_id) OVERRIDE;
-  virtual void ActivateInputMethodProperty(const std::string& key) OVERRIDE;
+  virtual void ActivateInputMethodMenuItem(const std::string& key) OVERRIDE;
   virtual void AddInputMethodExtension(
       const std::string& id,
-      const std::string& name,
-      const std::vector<std::string>& layouts,
-      const std::vector<std::string>& languages,
-      const GURL& options_url,
-      InputMethodEngine* instance) OVERRIDE;
+      InputMethodEngineInterface* instance) OVERRIDE;
   virtual void RemoveInputMethodExtension(const std::string& id) OVERRIDE;
   virtual void GetInputMethodExtensions(
       InputMethodDescriptors* result) OVERRIDE;
   virtual void SetEnabledExtensionImes(std::vector<std::string>* ids) OVERRIDE;
-  virtual void SetInputMethodDefault() OVERRIDE;
+  virtual void SetInputMethodLoginDefault() OVERRIDE;
   virtual bool SwitchToNextInputMethod() OVERRIDE;
   virtual bool SwitchToPreviousInputMethod(
       const ui::Accelerator& accelerator) OVERRIDE;
   virtual bool SwitchInputMethod(const ui::Accelerator& accelerator) OVERRIDE;
   virtual InputMethodDescriptor GetCurrentInputMethod() const OVERRIDE;
-  virtual InputMethodPropertyList
-      GetCurrentInputMethodProperties() const OVERRIDE;
+  virtual bool IsISOLevel5ShiftUsedByCurrentInputMethod() const OVERRIDE;
+  virtual bool IsAltGrUsedByCurrentInputMethod() const OVERRIDE;
   virtual XKeyboard* GetXKeyboard() OVERRIDE;
   virtual InputMethodUtil* GetInputMethodUtil() OVERRIDE;
   virtual ComponentExtensionIMEManager*
       GetComponentExtensionIMEManager() OVERRIDE;
   virtual bool IsLoginKeyboard(const std::string& layout) const OVERRIDE;
+  virtual bool MigrateXkbInputMethods(
+       std::vector<std::string>* input_method_ids) OVERRIDE;
 
   // Sets an input method ID which will be returned by GetCurrentInputMethod().
   void SetCurrentInputMethodId(const std::string& input_method_id) {
@@ -74,7 +75,9 @@ class MockInputMethodManager : public InputMethodManager {
 
   // Set values that will be provided to the InputMethodUtil.
   void set_application_locale(const std::string& value);
-  void set_hardware_keyboard_layout(const std::string& value);
+
+  // Set the value returned by IsISOLevel5ShiftUsedByCurrentInputMethod
+  void set_mod3_used(bool value) { mod3_used_ = value; }
 
   // TODO(yusukes): Add more variables for counting the numbers of the API calls
   int add_observer_count_;
@@ -87,7 +90,8 @@ class MockInputMethodManager : public InputMethodManager {
   InputMethodWhitelist whitelist_;
   FakeInputMethodDelegate delegate_;  // used by util_
   InputMethodUtil util_;
-  MockXKeyboard xkeyboard_;
+  FakeXKeyboard xkeyboard_;
+  bool mod3_used_;
 
   // The active input method ids cache (actually default only)
   std::vector<std::string> active_input_method_ids_;

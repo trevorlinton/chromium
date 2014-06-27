@@ -54,6 +54,14 @@ body {
   width: 100%;
 }
 
+button:focus,
+input[type='button']:focus,
+input[type='submit']:focus,
+select:focus,
+a:focus {
+  outline-color: rgb(77, 144, 254);
+}
+
 /* Drop opacity of selected rows to give a visual feedback on copy/cut
  * operation. */
 .blink {
@@ -100,67 +108,6 @@ body {
   opacity: 0.5;
 }
 
-#butter-bar-container {
-  width: 100%;
-}
-
-#butter-bar {
-  color: #666;
-  display: -webkit-box;
-  padding: 15px;
-}
-
-#butter-bar:not(.visible) {
-  display: none;
-}
-
-#butter-bar .content {
-  -webkit-box-flex: 1.0;
-  -webkit-box-orient: block-axis;
-  -webkit-box-pack: end;
-  display: -webkit-box;
-}
-
-#butter-bar .actions {
-  -webkit-box-align: end;
-  -webkit-box-orient: horizontal;
-  -webkit-box-pack: end;
-  -webkit-margin-start: 6px;
-  display: -webkit-box;
-}
-
-#butter-bar .actions a {
-  color: rgb(17, 85, 204);
-  cursor: pointer;
-  vertical-align: middle;
-}
-
-#butter-bar .actions a.x {
-  background: center center no-repeat;
-  background-image: -webkit-image-set(
-    url('../images/files/ui/close_bar.png') 1x,
-    url('../images/files/ui/2x/close_bar.png') 2x);
-  display: inline-block;
-  height: 35px;  /* #butter-bar .content's min-height. */
-  margin-right: -12px;
-  width: 35px;
-}
-
-#butter-bar .actions a.x:first-child {
-  margin-left: -6px;
-}
-
-#butter-bar .actions a.x {
-  margin-bottom: -14px;
-}
-
-#butter-bar .butter-message.single-line {
-  line-height: 2.0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* Main part of the dialog between header and footer. */
 .dialog-container {
   -webkit-box-align: stretch;
@@ -193,7 +140,8 @@ body {
   -webkit-box-flex: 0;
   -webkit-box-orient: vertical;
   background-color: #f1f1f1;
-  display: -webkit-box;
+  display: flex;
+  flex-direction: column;
   max-width: 50%;
   min-width: 100px;
   overflow: hidden;
@@ -203,10 +151,21 @@ body {
 
 .dialog-navigation-list-header {
   -webkit-app-region: drag;
-  -webkit-box-flex: 0;
-  display: -webkit-box;
+  flex: none;
   height: 48px;  /* Keep in sync with #dialog-header. */
   line-height: 45px;
+}
+
+.dialog-navigation-list-header #profile-badge {
+  display: none;
+}
+
+.dialog-navigation-list-header #profile-badge[src] {
+  display: inline-block;
+  height: 30px;
+  margin: 8px;
+  vertical-align: top;
+  width: 30px;
 }
 
 .dialog-navigation-list-header #app-name {
@@ -215,15 +174,19 @@ body {
   font-size: 130%;
 }
 
+.dialog-navigation-list-header #profile-badge[src] + #app-name {
+  -webkit-margin-start: 0;
+}
+
 .dialog-navigation-list-contents {
-  -webkit-box-flex: 1;
   display: -webkit-box;
+  flex: 1 1 auto;
   position: relative;
 }
 
 .dialog-navigation-list-footer {
-  -webkit-box-flex: 0;
   display: -webkit-flex;
+  flex: none;
   flex-direction: column;
 }
 
@@ -390,11 +353,9 @@ div.splitter {
 }
 
 #navigation-list .root-item > div.root-eject {
-  background-image: -webkit-image-set(
-    url('../images/files/ui/eject.png') 1x,
-    url('../images/files/ui/2x/eject.png') 2x);
-  background-position: center center;
-  background-repeat: no-repeat;
+  background: -webkit-image-set(
+      url('../images/files/ui/eject.png') 1x,
+      url('../images/files/ui/2x/eject.png') 2x) no-repeat center;
   cursor: pointer;
   height: 20px;
   margin-right: 6px;
@@ -405,11 +366,9 @@ div.splitter {
 }
 
 #navigation-list:focus .root-item[selected] > div.root-eject {
-  -webkit-filter: brightness(0) invert();
-  opacity: 1;
-}
-
-#directory-tree .tree-row > div.root-eject:hover {
+  background: -webkit-image-set(
+      url('../images/files/ui/eject_white.png') 1x,
+      url('../images/files/ui/2x/eject_white.png') 2x) no-repeat center;
   opacity: 1;
 }
 
@@ -581,11 +540,6 @@ div.splitter {
   -webkit-box-flex: 1;
   -webkit-margin-end: 20px;
   -webkit-margin-start: 20px;
-}
-
-select.file-type:hover {
-  /* Original value is '5 fill', which hides the dropdown triangle. */
-  border-image-slice: 5;
 }
 
 /* The container for breadcrumb elements. */
@@ -1015,10 +969,11 @@ input.rename {
 }
 
 .preview-panel[visibility=hiding] {
-  /* Using all seems to cause preview panel and checkbox flicking issue. */
   -webkit-transform: translate(0, 5px);
   opacity: 0;
-  transition: opacity 220ms ease;
+  /* Using all seems to cause preview panel and checkbox flicking issue. */
+  transition: opacity 220ms ease,
+              -webkit-transform 220ms ease;
 }
 
 .preview-panel[visibility=hidden] {
@@ -1195,59 +1150,6 @@ input.rename {
 
 .table-row-cell {
   -webkit-box-align: center;
-}
-
-.file-checkbox {
-  -webkit-margin-end: 0;
-  -webkit-margin-start: 0;
-  position: relative;
-  z-index: 2;
-}
-
-#select-all-checkbox {
-  -webkit-margin-end: 13px;
-  -webkit-margin-start: 3px;
-  margin-bottom: 0;
-  margin-top: 0;
-  vertical-align: middle;
-}
-
-#list-container .table-header #select-all-checkbox,
-#list-container li.table-row .file-checkbox {
-  -webkit-appearance: none;
-  background-image: -webkit-image-set(
-    url('../images/files/ui/select_checkbox.png') 1x,
-    url('../images/files/ui/2x/select_checkbox.png') 2x);
-  background-position: center;
-  background-repeat: no-repeat;
-  border-style: none;
-  height: 15px;
-  width: 15px;
-}
-
-#list-container li.table-row .file-checkbox {
-  vertical-align: top;
-}
-
-#list-container .table-header #select-all-checkbox::after,
-#list-container li.table-row .file-checkbox::after {
-  content: none;
-}
-
-#list-container .table-header #select-all-checkbox:checked,
-#list-container li.table-row .file-checkbox:checked {
-  background-image: -webkit-image-set(
-    url('../images/files/ui/select_checkbox_checked.png') 1x,
-    url('../images/files/ui/2x/select_checkbox_checked.png') 2x);
-}
-
-#list-container .table-header #select-all-checkbox:checked,
-#list-container list li.table-row[selected] .file-checkbox {
-  -webkit-filter: brightness(0) opacity(40%);
-}
-
-#list-container list:focus li.table-row[selected] .file-checkbox {
-  -webkit-filter: brightness(0) invert();
 }
 
 #list-container li.table-row,
@@ -1678,10 +1580,6 @@ body[drive='error'] #unmounted-panel > .error,
   -webkit-padding-start: 8px;
 }
 
-button:focus {
-  outline-color: rgb(77, 144, 254);
-}
-
 #new-folder-button {
   margin-right: 30px;
 }
@@ -1735,15 +1633,15 @@ list.autocomplete-suggestions > li > div.detail-text em {
 
 list.autocomplete-suggestions > li > div[search-icon] {
   background: -webkit-image-set(
-    url('../images/files/ui/search_icon_active.png') 1x,
-    url('../images/files/ui/2x/search_icon_active.png') 2x);
-  background-position: center;
-  background-repeat: no-repeat;
+      url('../images/files/ui/search_icon_active.png') 1x,
+      url('../images/files/ui/2x/search_icon_active.png') 2x) center no-repeat;
 }
 
 list.autocomplete-suggestions > li[selected] > div[search-icon],
 list.autocomplete-suggestions > li[lead] > div[search-icon] {
-  -webkit-filter: brightness(0) invert();
+  background: -webkit-image-set(
+      url('../images/files/ui/search_icon_white.png') 1x,
+      url('../images/files/ui/2x/search_icon_white.png') 2x) center no-repeat;
 }
 
 list.autocomplete-suggestions > [selected],
@@ -1798,7 +1696,7 @@ menuitem#thumbnail-view[lead]:not([disabled]) {
   height: 48px;
   left: 64px;
   position: absolute;
-  right: 92px;
+  right: 134px;
   top: 0;
   width: auto;
   z-index: 101;
@@ -1835,7 +1733,6 @@ menuitem#thumbnail-view[lead]:not([disabled]) {
 
 #suggest-app-dialog .spinner-layer {
   background-color: rgba(255, 255, 255, 0.7);
-  top: 45px;  /* Title: 44px, border: 1px */
 }
 
 #suggest-app-dialog .cr-dialog-buttons,
@@ -1926,153 +1823,211 @@ menuitem#thumbnail-view[lead]:not([disabled]) {
   display: none;
 }
 
-#conflict-confirm-dialog .apply-all-line {
-  margin: 8px;
-  text-align: end;
+#multi-profile-share-dialog .mail-label {
+  padding-right: 16px;
 }
 
-#conflict-confirm-dialog input {
+#multi-profile-share-dialog .mail-label::after {
+  content: ':';
+}
+
+#multi-profile-share-dialog .share-line {
+  margin: 8px 16px;
+}
+
+#conflict-confirm-dialog .cr-dialog-buttons {
+  align-items: baseline;
+  display: flex;
+}
+
+#conflict-confirm-dialog input[type=checkbox] {
+  -webkit-margin-start: -2px;
   width: auto;
+}
+
+#conflict-confirm-dialog label {
+  flex: 1 0 auto;
 }
 
 /* Progress center */
 
+@-webkit-keyframes progress-center-toggle {
+  /* Height values of each frame are set by script.
+   * Keep the animation sync with JS. */
+  from {
+  }
+  to {
+  }
+}
+
 #progress-center {
-  background: transparent;
+  background-color: transparent;
   border-top: 1px solid transparent;
-  display: -webkit-flex;
-  flex-direction: column;
-  /* TODO(hirono): Set the height by scripts. */
-  height: 53px;
   overflow: hidden;
   position: relative;
-  transition: height 300ms ease-out,
-              background 300ms linear,
+  transition: background-color 300ms linear,
               border 300ms linear;
-  width: 100%;
 }
 
 #progress-center.opened {
-  /* TODO(hirono): Set the height by scripts. */
-  height: 300px;
+  background-color: #ebebeb;
+  border-top: 1px solid #d8d8d8;
 }
 
-#progress-center-open-view,
-#progress-center-close-view {
-  bottom: 0;
-  left: 0;
-  position: absolute;
-  right: 0;
-  top: 0;
+#progress-center.animated {
+  -webkit-animation: progress-center-toggle 300ms ease-out;
 }
 
 #progress-center-open-view {
-  background: #ebebeb;
-  border-top: 1px solid #d8d8d8;
   opacity: 1;
-  padding-top: 42px;
+  padding-top: 10px;
   transition: opacity 300ms linear;
 }
 
 #progress-center:not(.opened) #progress-center-open-view {
   opacity: 0;
   pointer-events: none;
+  position: absolute;
+}
+
+#progress-center-close-view {
+  opacity: 1;
+  transition: opacity 300ms linear;
+}
+
+#progress-center.opened #progress-center-close-view {
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+#progress-center.animated #progress-center-open-view,
+#progress-center.animated #progress-center-close-view {
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  top: 0;
+  z-index: 1;
 }
 
 #progress-center li {
   -webkit-padding-end: 10px;
-  -webkit-padding-start: 20px;
-  display: block;
-  flex: none;
-  height: 33px;
-  margin-bottom: 20px;
+  display: flex;
+  /* This must not be margin-bottom to calculate parent's height correctly. */
+  padding-bottom: 20px;
 }
 
 #progress-center label {
   color: #777;
   display: block;
-  height: 17px;
-  opacity: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-#progress-center .progress-frame {
-  align-items: center;
-  display: flex;
-  margin-top: 4px;
+#progress-center li.error.single label {
+  white-space: normal;
 }
 
-#progress-center li.error .progress-bar,
-#progress-center li.canceled .progress-bar {
-  visibility: hidden;
+#progress-center .progress-frame {
+  -webkit-padding-end: 10px;
+  -webkit-padding-start: 20px;
+  flex: 1 0 0;
 }
 
 #progress-center .progress-bar {
-  -webkit-margin-end: 24px;
   background: #d8d8d8;
   border-radius: 3px;
-  flex: 1 0 0;
+  display: inline-block;
   height: 6px;
   opacity: 1;
   overflow: hidden;
+  width: 100%;
 }
 
-#progress-center.opened li.closed-item .progress-bar {
-  opacity: 0;
+#progress-center li.error .progress-bar,
+#progress-center li.quiet .progress-bar {
+  display: none;
 }
 
 #progress-center .progress-track {
   background: #787878;
   height: 100%;
+}
+
+#progress-center .progress-track.animated {
   transition: width 300ms linear;
 }
 
+#progress-center .button-frame {
+  align-self: flex-end;
+  flex: none;
+}
+
 #progress-center button {
-  background: orange;
   border: none;
   cursor: pointer;
-  flex: 0 0 auto;
+  display: inline-block;
   height: 12px;
   min-height: 0;
   min-width: 0;
   outline: none;
   padding: 0;
+  vertical-align: middle;
   width: 12px;
-  z-index: 0;
 }
 
-#progress-center button.toggle {
+#progress-center li.error.single .button-frame {
+  display: none;
+}
+
+#progress-center button.close {
+  -webkit-margin-end: 10px;
+  -webkit-margin-start: auto;
   background: -webkit-image-set(
       url(../images/files/ui/process_drawer_button_opened.png) 1x,
       url(../images/files/ui/2x/process_drawer_button_opened.png) 2x)
       no-repeat;
-  bottom: 0;
-  position: relative;
-  transition: bottom 300ms ease-out;
-  z-index: 1;
+  display: block;
+  margin-bottom: 20px;
 }
 
-#progress-center button.toggle:hover {
+#progress-center button.close:hover {
   background: -webkit-image-set(
       url(../images/files/ui/process_drawer_button_opened_hover.png) 1x,
       url(../images/files/ui/2x/process_drawer_button_opened_hover.png) 2x)
       no-repeat;
 }
 
-#progress-center button.toggle:active {
+#progress-center button.close:active {
   background: -webkit-image-set(
       url(../images/files/ui/process_drawer_button_opened_pressed.png) 1x,
       url(../images/files/ui/2x/process_drawer_button_opened_pressed.png) 2x)
       no-repeat;
 }
 
-/*
- * If the progress center only one item,
- * toggle button turned into cancel button the item.
- */
-#progress-center-close-view.single button.toggle,
+#progress-center button.open {
+  background: -webkit-image-set(
+      url(../images/files/ui/process_drawer_button_closed.png) 1x,
+      url(../images/files/ui/2x/process_drawer_button_closed.png) 2x)
+      no-repeat;
+}
+
+#progress-center button.open:hover {
+  background: -webkit-image-set(
+      url(../images/files/ui/process_drawer_button_closed_hover.png) 1x,
+      url(../images/files/ui/2x/process_drawer_button_closed_hover.png) 2x)
+      no-repeat;
+}
+
+#progress-center button.open:active {
+  background: -webkit-image-set(
+      url(../images/files/ui/process_drawer_button_closed_pressed.png) 1x,
+      url(../images/files/ui/2x/process_drawer_button_closed_pressed.png) 2x)
+      no-repeat;
+}
+
 #progress-center button.cancel {
   background: -webkit-image-set(
       url(../images/files/ui/close_bar.png) 1x,
@@ -2080,35 +2035,14 @@ menuitem#thumbnail-view[lead]:not([disabled]) {
       no-repeat;
 }
 
-#progress-center-close-view.single li:not(.cancelable) button.toggle,
+#progress-center-close-view:not(.single) button.cancel {
+  display: none;
+}
+
+#progress-center-close-view.single button.open {
+  display: none;
+}
+
 #progress-center li:not(.cancelable) button.cancel {
   visibility: hidden;
-}
-
-#progress-center.opened button.toggle {
-  background: -webkit-image-set(
-      url(../images/files/ui/process_drawer_button_closed.png) 1x,
-      url(../images/files/ui/2x/process_drawer_button_closed.png) 2x)
-      no-repeat;
-  /*
-   * This offset is for aliginig the position of toggle button in both open and
-   * close view. The value euals to:
-   *     label height 17px + label bottom margin 4px -
-   *     top border width 1px - required margin in the open view 10px.
-   */
-  bottom: 10px;
-}
-
-#progress-center.opened button.toggle:hover {
-  background: -webkit-image-set(
-      url(../images/files/ui/process_drawer_button_closed_hover.png) 1x,
-      url(../images/files/ui/2x/process_drawer_button_closed_hover.png) 2x)
-      no-repeat;
-}
-
-#progress-center.opened button.toggle:active {
-  background: -webkit-image-set(
-      url(../images/files/ui/process_drawer_button_closed_pressed.png) 1x,
-      url(../images/files/ui/2x/process_drawer_button_closed_pressed.png) 2x)
-      no-repeat;
 }

@@ -8,7 +8,7 @@
 #include "chrome/browser/extensions/extension_keybinding_registry.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/extensions/extension.h"
+#include "extensions/common/extension.h"
 #include "ui/views/focus/focus_manager.h"
 
 // static
@@ -29,9 +29,7 @@ ExtensionKeybindingRegistryViews::ExtensionKeybindingRegistryViews(
 }
 
 ExtensionKeybindingRegistryViews::~ExtensionKeybindingRegistryViews() {
-  EventTargets::const_iterator iter;
-  for (iter = event_targets_.begin(); iter != event_targets_.end(); ++iter)
-    focus_manager_->UnregisterAccelerator(iter->first, this);
+  focus_manager_->UnregisterAccelerators(this);
 }
 
 void ExtensionKeybindingRegistryViews::AddExtensionKeybinding(
@@ -56,12 +54,15 @@ void ExtensionKeybindingRegistryViews::AddExtensionKeybinding(
   for (; iter != commands.end(); ++iter) {
     if (!command_name.empty() && (iter->second.command_name() != command_name))
       continue;
+    if (!IsAcceleratorRegistered(iter->second.accelerator())) {
+      focus_manager_->RegisterAccelerator(iter->second.accelerator(),
+                                          ui::AcceleratorManager::kHighPriority,
+                                          this);
+    }
 
-    event_targets_[iter->second.accelerator()] =
-        std::make_pair(extension->id(), iter->second.command_name());
-    focus_manager_->RegisterAccelerator(
-        iter->second.accelerator(),
-        ui::AcceleratorManager::kHighPriority, this);
+    AddEventTarget(iter->second.accelerator(),
+                   extension->id(),
+                   iter->second.command_name());
   }
 }
 
@@ -73,15 +74,7 @@ void ExtensionKeybindingRegistryViews::RemoveExtensionKeybindingImpl(
 
 bool ExtensionKeybindingRegistryViews::AcceleratorPressed(
     const ui::Accelerator& accelerator) {
-  EventTargets::iterator it = event_targets_.find(accelerator);
-  if (it == event_targets_.end()) {
-    NOTREACHED();  // Shouldn't get this event for something not registered.
-    return false;
-  }
-
-  CommandExecuted(it->second.first, it->second.second);
-
-  return true;
+  return ExtensionKeybindingRegistry::NotifyEventTargets(accelerator);
 }
 
 bool ExtensionKeybindingRegistryViews::CanHandleAccelerators() const {

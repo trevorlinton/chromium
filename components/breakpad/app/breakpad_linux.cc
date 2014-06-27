@@ -25,6 +25,7 @@
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/debug/crash_logging.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/files/file_path.h"
 #include "base/linux_util.h"
 #include "base/path_service.h"
@@ -40,7 +41,6 @@
 #include "components/breakpad/app/breakpad_client.h"
 #include "components/breakpad/app/breakpad_linux_impl.h"
 #include "content/public/common/content_descriptors.h"
-#include "content/public/common/content_switches.h"
 
 #if defined(OS_ANDROID)
 #include <android/log.h>
@@ -82,6 +82,7 @@ const char kUploadURL[] = "https://clients2.google.com/cr/report";
 
 bool g_is_crash_reporter_enabled = false;
 uint64_t g_process_start_time = 0;
+pid_t g_pid = 0;
 char* g_crash_log_path = NULL;
 ExceptionHandler* g_breakpad = NULL;
 
@@ -512,7 +513,7 @@ void CrashReporterWriter::AddFileContents(const char* filename_msg,
   AddItem(file_data, file_size);
   Flush();
 }
-#endif
+#endif  // defined(OS_CHROMEOS)
 
 void DumpProcess() {
   if (g_breakpad)
@@ -590,7 +591,7 @@ bool CrashDone(const MinidumpDescriptor& minidump,
   info.upload = upload;
   info.process_start_time = g_process_start_time;
   info.oom_size = base::g_oom_size;
-  info.pid = 0;
+  info.pid = g_pid;
   info.crash_keys = g_crash_keys;
   HandleCrashDump(info);
 #if defined(OS_ANDROID)
@@ -698,12 +699,34 @@ bool CrashDoneInProcessNoUpload(
   info.distro_length = distro_length;
   info.upload = false;
   info.process_start_time = g_process_start_time;
+  info.pid = g_pid;
   info.crash_keys = g_crash_keys;
   HandleCrashDump(info);
-  return FinalizeCrashDoneAndroid();
+  bool finalize_result = FinalizeCrashDoneAndroid();
+  base::android::BuildInfo* android_build_info =
+      base::android::BuildInfo::GetInstance();
+  if (android_build_info->sdk_int() >= 18 &&
+      strcmp(android_build_info->build_type(), "eng") != 0 &&
+      strcmp(android_build_info->build_type(), "userdebug") != 0) {
+    // On JB MR2 and later, the system crash handler displays a dialog. For
+    // renderer crashes, this is a bad user experience and so this is disabled
+    // for user builds of Android.
+    // TODO(cjhopman): There should be some way to recover the crash stack from
+    // non-uploading user clients. See http://crbug.com/273706.
+    __android_log_write(ANDROID_LOG_WARN,
+                        kGoogleBreakpad,
+                        "Tombstones are disabled on JB MR2+ user builds.");
+    __android_log_write(ANDROID_LOG_WARN,
+                        kGoogleBreakpad,
+                        "### ### ### ### ### ### ### ### ### ### ### ### ###");
+    return true;
+  } else {
+    return finalize_result;
+  }
 }
 
-void EnableNonBrowserCrashDumping(int minidump_fd) {
+void EnableNonBrowserCrashDumping(const std::string& process_type,
+                                  int minidump_fd) {
   // This will guarantee that the BuildInfo has been initialized and subsequent
   // calls will not require memory allocation.
   base::android::BuildInfo::GetInstance();
@@ -723,12 +746,10 @@ void EnableNonBrowserCrashDumping(int minidump_fd) {
     return;
   }
   SetProcessStartTime();
+  g_pid = getpid();
 
   g_is_crash_reporter_enabled = true;
   // Save the process type (it is leaked).
-  const CommandLine& parsed_command_line = *CommandLine::ForCurrentProcess();
-  const std::string process_type =
-      parsed_command_line.GetSwitchValueASCII(switches::kProcessType);
   const size_t process_type_len = process_type.size() + 1;
   g_process_type = new char[process_type_len];
   strncpy(g_process_type, process_type.c_str(), process_type_len);
@@ -841,6 +862,26 @@ void SetCrashKeyValue(const base::StringPiece& key,
 
 void ClearCrashKey(const base::StringPiece& key) {
   g_crash_keys->RemoveKey(key.data());
+}
+
+// GetBreakpadClient() cannot call any Set methods until after InitCrashKeys().
+void InitCrashKeys() {
+  g_crash_keys = new CrashKeyStorage;
+  GetBreakpadClient()->RegisterCrashKeys();
+  base::debug::SetCrashKeyReportingFunctions(&SetCrashKeyValue, &ClearCrashKey);
+}
+
+// Miscellaneous initialization functions to call after Breakpad has been
+// enabled.
+void PostEnableBreakpadInitialization() {
+  SetProcessStartTime();
+  g_pid = getpid();
+
+  base::debug::SetDumpWithoutCrashingFunction(&DumpProcess);
+#if defined(ADDRESS_SANITIZER)
+  // Register the callback for AddressSanitizer error reporting.
+  __asan_set_error_report_callback(AsanLinuxBreakpadCallback);
+#endif
 }
 
 }  // namespace
@@ -1438,7 +1479,7 @@ void HandleCrashDump(const BreakpadInfo& info) {
   (void) HANDLE_EINTR(sys_waitpid(child, NULL, 0));
 }
 
-void InitCrashReporter() {
+void InitCrashReporter(const std::string& process_type) {
 #if defined(OS_ANDROID)
   // This will guarantee that the BuildInfo has been initialized and subsequent
   // calls will not require memory allocation.
@@ -1449,8 +1490,6 @@ void InitCrashReporter() {
   if (parsed_command_line.HasSwitch(switches::kDisableBreakpad))
     return;
 
-  const std::string process_type =
-      parsed_command_line.GetSwitchValueASCII(switches::kProcessType);
   if (process_type.empty()) {
     bool enable_breakpad = GetBreakpadClient()->GetCollectStatsConsent() ||
                            GetBreakpadClient()->IsRunningUnattended();
@@ -1465,12 +1504,9 @@ void InitCrashReporter() {
       return;
     }
 
+    InitCrashKeys();
     EnableCrashDumping(GetBreakpadClient()->IsRunningUnattended());
-  } else if (process_type == switches::kRendererProcess ||
-             process_type == switches::kPluginProcess ||
-             process_type == switches::kPpapiPluginProcess ||
-             process_type == switches::kZygoteProcess ||
-             process_type == switches::kGpuProcess) {
+  } else if (GetBreakpadClient()->EnableBreakpadForProcess(process_type)) {
 #if defined(OS_ANDROID)
     NOTREACHED() << "Breakpad initialized with InitCrashReporter() instead of "
       "InitNonBrowserCrashReporter in " << process_type << " process.";
@@ -1483,28 +1519,18 @@ void InitCrashReporter() {
     // simplicity.
     if (!parsed_command_line.HasSwitch(switches::kEnableCrashReporter))
       return;
+    InitCrashKeys();
     SetClientIdFromCommandLine(parsed_command_line);
     EnableNonBrowserCrashDumping();
     VLOG(1) << "Non Browser crash dumping enabled for: " << process_type;
 #endif  // #if defined(OS_ANDROID)
   }
 
-  SetProcessStartTime();
-
-  GetBreakpadClient()->SetDumpWithoutCrashingFunction(&DumpProcess);
-#if defined(ADDRESS_SANITIZER)
-  // Register the callback for AddressSanitizer error reporting.
-  __asan_set_error_report_callback(AsanLinuxBreakpadCallback);
-#endif
-
-  g_crash_keys = new CrashKeyStorage;
-  GetBreakpadClient()->RegisterCrashKeys();
-  base::debug::SetCrashKeyReportingFunctions(
-      &SetCrashKeyValue, &ClearCrashKey);
+  PostEnableBreakpadInitialization();
 }
 
 #if defined(OS_ANDROID)
-void InitNonBrowserCrashReporterForAndroid() {
+void InitNonBrowserCrashReporterForAndroid(const std::string& process_type) {
   const CommandLine* command_line = CommandLine::ForCurrentProcess();
   if (command_line->HasSwitch(switches::kEnableCrashReporter)) {
     // On Android we need to provide a FD to the file where the minidump is
@@ -1515,7 +1541,7 @@ void InitNonBrowserCrashReporterForAndroid() {
     if (minidump_fd == base::kInvalidPlatformFileValue) {
       NOTREACHED() << "Could not find minidump FD, crash reporting disabled.";
     } else {
-      EnableNonBrowserCrashDumping(minidump_fd);
+      EnableNonBrowserCrashDumping(process_type, minidump_fd);
     }
   }
 }

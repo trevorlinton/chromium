@@ -38,6 +38,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
+#include "chrome/browser/ui/webui/chromeos/login/signin_screen_handler.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/audio/cras_audio_handler.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
@@ -77,7 +78,7 @@ void TestingAutomationProvider::PowerChanged(
 #endif
 
 void TestingAutomationProvider::AcceptOOBENetworkScreen(
-    DictionaryValue* args,
+    base::DictionaryValue* args,
     IPC::Message* reply_message) {
   WizardController* wizard_controller = WizardController::default_controller();
   if (!wizard_controller || wizard_controller->current_screen()->GetName() !=
@@ -91,7 +92,7 @@ void TestingAutomationProvider::AcceptOOBENetworkScreen(
   wizard_controller->GetNetworkScreen()->OnContinuePressed();
 }
 
-void TestingAutomationProvider::AcceptOOBEEula(DictionaryValue* args,
+void TestingAutomationProvider::AcceptOOBEEula(base::DictionaryValue* args,
                                                IPC::Message* reply_message) {
   bool accepted;
   bool usage_stats_reporting;
@@ -114,11 +115,11 @@ void TestingAutomationProvider::AcceptOOBEEula(DictionaryValue* args,
   wizard_controller->GetEulaScreen()->OnExit(accepted, usage_stats_reporting);
 }
 
-void TestingAutomationProvider::CancelOOBEUpdate(DictionaryValue* args,
+void TestingAutomationProvider::CancelOOBEUpdate(base::DictionaryValue* args,
                                                  IPC::Message* reply_message) {
   if (chromeos::StartupUtils::IsOobeCompleted()) {
     // Update already finished.
-    scoped_ptr<DictionaryValue> return_value(new DictionaryValue);
+    scoped_ptr<base::DictionaryValue> return_value(new base::DictionaryValue);
     return_value->SetString("next_screen",
                             WizardController::kLoginScreenName);
     AutomationJSONReply(this, reply_message).SendSuccess(return_value.get());
@@ -136,10 +137,10 @@ void TestingAutomationProvider::CancelOOBEUpdate(DictionaryValue* args,
   wizard_controller->GetUpdateScreen()->CancelUpdate();
 }
 
-void TestingAutomationProvider::GetLoginInfo(DictionaryValue* args,
+void TestingAutomationProvider::GetLoginInfo(base::DictionaryValue* args,
                                              IPC::Message* reply_message) {
   AutomationJSONReply reply(this, reply_message);
-  scoped_ptr<DictionaryValue> return_value(new DictionaryValue);
+  scoped_ptr<base::DictionaryValue> return_value(new base::DictionaryValue);
 
   const UserManager* user_manager = UserManager::Get();
   if (!user_manager)
@@ -176,7 +177,7 @@ void TestingAutomationProvider::GetLoginInfo(DictionaryValue* args,
 
 // See the note under LoginAsGuest(). CreateAccount() causes a login as guest.
 void TestingAutomationProvider::ShowCreateAccountUI(
-    DictionaryValue* args, IPC::Message* reply_message) {
+    base::DictionaryValue* args, IPC::Message* reply_message) {
   ExistingUserController* controller =
       ExistingUserController::current_controller();
   // Return immediately, since we're going to die before the login is finished.
@@ -186,7 +187,7 @@ void TestingAutomationProvider::ShowCreateAccountUI(
 
 // Logging in as guest will cause session_manager to restart Chrome with new
 // flags. If you used EnableChromeTesting, you will have to call it again.
-void TestingAutomationProvider::LoginAsGuest(DictionaryValue* args,
+void TestingAutomationProvider::LoginAsGuest(base::DictionaryValue* args,
                                              IPC::Message* reply_message) {
   ExistingUserController* controller =
       ExistingUserController::current_controller();
@@ -195,7 +196,7 @@ void TestingAutomationProvider::LoginAsGuest(DictionaryValue* args,
   controller->LoginAsGuest();
 }
 
-void TestingAutomationProvider::SubmitLoginForm(DictionaryValue* args,
+void TestingAutomationProvider::SubmitLoginForm(base::DictionaryValue* args,
                                                 IPC::Message* reply_message) {
   AutomationJSONReply reply(this, reply_message);
 
@@ -224,7 +225,7 @@ void TestingAutomationProvider::SubmitLoginForm(DictionaryValue* args,
 }
 
 void TestingAutomationProvider::AddLoginEventObserver(
-    DictionaryValue* args, IPC::Message* reply_message) {
+    base::DictionaryValue* args, IPC::Message* reply_message) {
   ExistingUserController* controller =
       ExistingUserController::current_controller();
   AutomationJSONReply reply(this, reply_message);
@@ -241,12 +242,12 @@ void TestingAutomationProvider::AddLoginEventObserver(
       new LoginEventObserver(automation_event_queue_.get(), this));
 
   // Return the observer's id.
-  DictionaryValue return_value;
+  base::DictionaryValue return_value;
   return_value.SetInteger("observer_id", observer_id);
   reply.SendSuccess(&return_value);
 }
 
-void TestingAutomationProvider::SignOut(DictionaryValue* args,
+void TestingAutomationProvider::SignOut(base::DictionaryValue* args,
                                         IPC::Message* reply_message) {
   ash::Shell::GetInstance()->system_tray_delegate()->SignOut();
   // Sign out has the side effect of restarting the session_manager
@@ -256,7 +257,7 @@ void TestingAutomationProvider::SignOut(DictionaryValue* args,
   AutomationJSONReply(this, reply_message).SendSuccess(NULL);
 }
 
-void TestingAutomationProvider::PickUserImage(DictionaryValue* args,
+void TestingAutomationProvider::PickUserImage(base::DictionaryValue* args,
                                               IPC::Message* reply_message) {
   std::string image_type;
   int image_number = -1;
@@ -294,7 +295,7 @@ void TestingAutomationProvider::PickUserImage(DictionaryValue* args,
   }
 }
 
-void TestingAutomationProvider::SkipToLogin(DictionaryValue* args,
+void TestingAutomationProvider::SkipToLogin(base::DictionaryValue* args,
                                             IPC::Message* reply_message) {
   bool skip_post_login_screens;
   // The argument name is a legacy. If set to |true|, this argument causes any
@@ -313,7 +314,7 @@ void TestingAutomationProvider::SkipToLogin(DictionaryValue* args,
     AutomationJSONReply reply(this, reply_message);
     if (ExistingUserController::current_controller()) {
       // Already at login screen.
-      scoped_ptr<DictionaryValue> return_value(new DictionaryValue);
+      scoped_ptr<base::DictionaryValue> return_value(new base::DictionaryValue);
       return_value->SetString("next_screen",
                               WizardController::kLoginScreenName);
       reply.SendSuccess(return_value.get());
@@ -327,14 +328,14 @@ void TestingAutomationProvider::SkipToLogin(DictionaryValue* args,
   WizardControllerObserver* observer =
       new WizardControllerObserver(wizard_controller, this, reply_message);
   observer->set_screen_to_wait_for(WizardController::kLoginScreenName);
-  wizard_controller->SkipToLoginForTesting();
+  wizard_controller->SkipToLoginForTesting(chromeos::LoginScreenContext());
 }
 
-void TestingAutomationProvider::GetOOBEScreenInfo(DictionaryValue* args,
+void TestingAutomationProvider::GetOOBEScreenInfo(base::DictionaryValue* args,
                                                   IPC::Message* reply_message) {
   static const char kScreenNameKey[] = "screen_name";
   AutomationJSONReply reply(this, reply_message);
-  scoped_ptr<DictionaryValue> return_value(new DictionaryValue);
+  scoped_ptr<base::DictionaryValue> return_value(new base::DictionaryValue);
 
   WizardController* wizard_controller = WizardController::default_controller();
   if (wizard_controller) {
@@ -355,13 +356,13 @@ void TestingAutomationProvider::GetOOBEScreenInfo(DictionaryValue* args,
   reply.SendSuccess(return_value.get());
 }
 
-void TestingAutomationProvider::LockScreen(DictionaryValue* args,
+void TestingAutomationProvider::LockScreen(base::DictionaryValue* args,
                                            IPC::Message* reply_message) {
   new ScreenLockUnlockObserver(this, reply_message, true);
   DBusThreadManager::Get()->GetSessionManagerClient()->RequestLockScreen();
 }
 
-void TestingAutomationProvider::UnlockScreen(DictionaryValue* args,
+void TestingAutomationProvider::UnlockScreen(base::DictionaryValue* args,
                                              IPC::Message* reply_message) {
   std::string password;
   if (!args->GetString("password", &password)) {
@@ -386,7 +387,7 @@ void TestingAutomationProvider::UnlockScreen(DictionaryValue* args,
 // killed, so its children, including chrome and the window manager, will
 // also be killed. Anything owned by chronos will probably be killed.
 void TestingAutomationProvider::SignoutInScreenLocker(
-    DictionaryValue* args, IPC::Message* reply_message) {
+    base::DictionaryValue* args, IPC::Message* reply_message) {
   AutomationJSONReply reply(this, reply_message);
   chromeos::ScreenLocker* screen_locker =
       chromeos::ScreenLocker::default_screen_locker();
@@ -402,9 +403,9 @@ void TestingAutomationProvider::SignoutInScreenLocker(
   screen_locker->Signout();
 }
 
-void TestingAutomationProvider::GetBatteryInfo(DictionaryValue* args,
+void TestingAutomationProvider::GetBatteryInfo(base::DictionaryValue* args,
                                                IPC::Message* reply_message) {
-  scoped_ptr<DictionaryValue> return_value(new DictionaryValue);
+  scoped_ptr<base::DictionaryValue> return_value(new base::DictionaryValue);
 
   const bool battery_is_present = power_supply_properties_.battery_state() !=
       power_manager::PowerSupplyProperties_BatteryState_NOT_PRESENT;
@@ -435,7 +436,7 @@ void TestingAutomationProvider::GetBatteryInfo(DictionaryValue* args,
 }
 
 void TestingAutomationProvider::ExecuteJavascriptInOOBEWebUI(
-    DictionaryValue* args, IPC::Message* reply_message) {
+    base::DictionaryValue* args, IPC::Message* reply_message) {
   std::string javascript, frame_xpath;
   if (!args->GetString("javascript", &javascript)) {
     AutomationJSONReply(this, reply_message)
@@ -472,16 +473,16 @@ void TestingAutomationProvider::ExecuteJavascriptInOOBEWebUI(
       webui_host->GetOobeUI()->web_ui()->GetWebContents();
 
   new DomOperationMessageSender(this, reply_message, true);
-  ExecuteJavascriptInRenderViewFrame(ASCIIToUTF16(frame_xpath),
-                                     ASCIIToUTF16(javascript),
+  ExecuteJavascriptInRenderViewFrame(base::ASCIIToUTF16(frame_xpath),
+                                     base::ASCIIToUTF16(javascript),
                                      reply_message,
                                      web_contents->GetRenderViewHost());
 }
 
 void TestingAutomationProvider::EnableSpokenFeedback(
-    DictionaryValue* args, IPC::Message* reply_message) {
+    base::DictionaryValue* args, IPC::Message* reply_message) {
   AutomationJSONReply reply(this, reply_message);
-  scoped_ptr<DictionaryValue> return_value(new DictionaryValue);
+  scoped_ptr<base::DictionaryValue> return_value(new base::DictionaryValue);
   bool enabled;
   if (!args->GetBoolean("enabled", &enabled)) {
     reply.SendError("Invalid or missing args.");
@@ -494,9 +495,9 @@ void TestingAutomationProvider::EnableSpokenFeedback(
 }
 
 void TestingAutomationProvider::IsSpokenFeedbackEnabled(
-    DictionaryValue* args, IPC::Message* reply_message) {
+    base::DictionaryValue* args, IPC::Message* reply_message) {
   AutomationJSONReply reply(this, reply_message);
-  scoped_ptr<DictionaryValue> return_value(new DictionaryValue);
+  scoped_ptr<base::DictionaryValue> return_value(new base::DictionaryValue);
   return_value->SetBoolean(
       "spoken_feedback",
       chromeos::AccessibilityManager::Get()->IsSpokenFeedbackEnabled());
@@ -504,17 +505,17 @@ void TestingAutomationProvider::IsSpokenFeedbackEnabled(
 }
 
 void TestingAutomationProvider::GetTimeInfo(Browser* browser,
-                                            DictionaryValue* args,
+                                            base::DictionaryValue* args,
                                             IPC::Message* reply_message) {
-  scoped_ptr<DictionaryValue> return_value(new DictionaryValue);
+  scoped_ptr<base::DictionaryValue> return_value(new base::DictionaryValue);
   base::Time time(base::Time::Now());
   bool use_24hour_clock = browser && browser->profile()->GetPrefs()->GetBoolean(
       prefs::kUse24HourClock);
   base::HourClockType hour_clock_type =
       use_24hour_clock ? base::k24HourClock : base::k12HourClock;
-  string16 display_time = base::TimeFormatTimeOfDayWithHourClockType(
+  base::string16 display_time = base::TimeFormatTimeOfDayWithHourClockType(
       time, hour_clock_type, base::kDropAmPm);
-  string16 timezone =
+  base::string16 timezone =
       chromeos::system::TimezoneSettings::GetInstance()->GetCurrentTimezoneID();
   return_value->SetString("display_time", display_time);
   return_value->SetString("display_date", base::TimeFormatFriendlyDate(time));
@@ -522,12 +523,12 @@ void TestingAutomationProvider::GetTimeInfo(Browser* browser,
   AutomationJSONReply(this, reply_message).SendSuccess(return_value.get());
 }
 
-void TestingAutomationProvider::GetTimeInfo(DictionaryValue* args,
+void TestingAutomationProvider::GetTimeInfo(base::DictionaryValue* args,
                                             IPC::Message* reply_message) {
   GetTimeInfo(NULL, args, reply_message);
 }
 
-void TestingAutomationProvider::SetTimezone(DictionaryValue* args,
+void TestingAutomationProvider::SetTimezone(base::DictionaryValue* args,
                                             IPC::Message* reply_message) {
   AutomationJSONReply reply(this, reply_message);
   std::string timezone_id;
@@ -541,17 +542,17 @@ void TestingAutomationProvider::SetTimezone(DictionaryValue* args,
 }
 
 void TestingAutomationProvider::UpdateCheck(
-    DictionaryValue* args,
+    base::DictionaryValue* args,
     IPC::Message* reply_message) {
   AutomationJSONReply* reply = new AutomationJSONReply(this, reply_message);
   DBusThreadManager::Get()->GetUpdateEngineClient()
       ->RequestUpdateCheck(base::Bind(UpdateCheckCallback, reply));
 }
 
-void TestingAutomationProvider::GetVolumeInfo(DictionaryValue* args,
+void TestingAutomationProvider::GetVolumeInfo(base::DictionaryValue* args,
                                               IPC::Message* reply_message) {
   AutomationJSONReply reply(this, reply_message);
-  scoped_ptr<DictionaryValue> return_value(new DictionaryValue);
+  scoped_ptr<base::DictionaryValue> return_value(new base::DictionaryValue);
   chromeos::CrasAudioHandler* audio_handler = chromeos::CrasAudioHandler::Get();
   if (!audio_handler) {
     reply.SendError("CrasAudioHandler not initialized.");
@@ -562,7 +563,7 @@ void TestingAutomationProvider::GetVolumeInfo(DictionaryValue* args,
   reply.SendSuccess(return_value.get());
 }
 
-void TestingAutomationProvider::SetVolume(DictionaryValue* args,
+void TestingAutomationProvider::SetVolume(base::DictionaryValue* args,
                                           IPC::Message* reply_message) {
   AutomationJSONReply reply(this, reply_message);
   double volume_percent;
@@ -579,7 +580,7 @@ void TestingAutomationProvider::SetVolume(DictionaryValue* args,
   reply.SendSuccess(NULL);
 }
 
-void TestingAutomationProvider::SetMute(DictionaryValue* args,
+void TestingAutomationProvider::SetMute(base::DictionaryValue* args,
                                         IPC::Message* reply_message) {
   AutomationJSONReply reply(this, reply_message);
   bool mute;
@@ -596,7 +597,7 @@ void TestingAutomationProvider::SetMute(DictionaryValue* args,
   reply.SendSuccess(NULL);
 }
 
-void TestingAutomationProvider::OpenCrosh(DictionaryValue* args,
+void TestingAutomationProvider::OpenCrosh(base::DictionaryValue* args,
                                           IPC::Message* reply_message) {
   new NavigationNotificationObserver(
       NULL, this, reply_message, 1, false, true);

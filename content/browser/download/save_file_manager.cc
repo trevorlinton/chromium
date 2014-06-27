@@ -389,9 +389,8 @@ void SaveFileManager::OnRequireSaveJobFromOtherSource(
 void SaveFileManager::ExecuteCancelSaveRequest(int render_process_id,
                                                int request_id) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
-  ResourceDispatcherHostImpl::Get()->CancelRequest(render_process_id,
-                                                   request_id,
-                                                   false);
+  ResourceDispatcherHostImpl::Get()->CancelRequest(
+      render_process_id, request_id);
 }
 
 // Notifications sent from the UI thread and run on the file thread.
@@ -482,7 +481,7 @@ void SaveFileManager::RenameAllFiles(
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE));
 
   if (!resource_dir.empty() && !base::PathExists(resource_dir))
-    file_util::CreateDirectory(resource_dir);
+    base::CreateDirectory(resource_dir);
 
   for (FinalNameList::const_iterator i = final_names.begin();
       i != final_names.end(); ++i) {

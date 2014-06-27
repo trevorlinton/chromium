@@ -19,17 +19,17 @@
 #include "chrome/browser/character_encoding.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/webui/options/font_settings_utils.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/font_list_async.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_ui.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -70,7 +70,7 @@ FontSettingsHandler::~FontSettingsHandler() {
 }
 
 void FontSettingsHandler::GetLocalizedValues(
-    DictionaryValue* localized_strings) {
+    base::DictionaryValue* localized_strings) {
   DCHECK(localized_strings);
 
   static OptionsStringResource resources[] = {
@@ -107,14 +107,14 @@ void FontSettingsHandler::GetLocalizedValues(
   localized_strings->SetString("advancedFontSettingsInstall",
       l10n_util::GetStringFUTF16(
           IDS_FONT_LANGUAGE_SETTING_ADVANCED_FONT_SETTINGS_INSTALL,
-          UTF8ToUTF16(
+          base::UTF8ToUTF16(
               install_url.Resolve(kAdvancedFontSettingsExtensionId).spec())));
 }
 
 void FontSettingsHandler::InitializeHandler() {
   registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_LOADED,
                  content::NotificationService::AllSources());
-  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED,
+  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
                  content::NotificationService::AllSources());
 }
 
@@ -179,11 +179,11 @@ void FontSettingsHandler::Observe(int type,
                                   const content::NotificationSource& source,
                                   const content::NotificationDetails& details) {
   DCHECK(type == chrome::NOTIFICATION_EXTENSION_LOADED ||
-         type == chrome::NOTIFICATION_EXTENSION_UNLOADED);
+         type == chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED);
   NotifyAdvancedFontSettingsAvailability();
 }
 
-void FontSettingsHandler::HandleFetchFontsData(const ListValue* args) {
+void FontSettingsHandler::HandleFetchFontsData(const base::ListValue* args) {
   content::GetFontListAsync(
       base::Bind(&FontSettingsHandler::FontsListHasLoaded,
                  base::Unretained(this)));
@@ -193,17 +193,17 @@ void FontSettingsHandler::FontsListHasLoaded(
     scoped_ptr<base::ListValue> list) {
   // Selects the directionality for the fonts in the given list.
   for (size_t i = 0; i < list->GetSize(); i++) {
-    ListValue* font;
+    base::ListValue* font;
     bool has_font = list->GetList(i, &font);
     DCHECK(has_font);
-    string16 value;
+    base::string16 value;
     bool has_value = font->GetString(1, &value);
     DCHECK(has_value);
     bool has_rtl_chars = base::i18n::StringContainsStrongRTLChars(value);
     font->Append(new base::StringValue(has_rtl_chars ? "rtl" : "ltr"));
   }
 
-  ListValue encoding_list;
+  base::ListValue encoding_list;
   const std::vector<CharacterEncoding::EncodingInfo>* encodings;
   PrefService* pref_service = Profile::FromWebUI(web_ui())->GetPrefs();
   encodings = CharacterEncoding::GetCurrentDisplayEncodings(
@@ -215,12 +215,12 @@ void FontSettingsHandler::FontsListHasLoaded(
 
   std::vector<CharacterEncoding::EncodingInfo>::const_iterator it;
   for (it = encodings->begin(); it != encodings->end(); ++it) {
-    ListValue* option = new ListValue();
+    base::ListValue* option = new base::ListValue();
     if (it->encoding_id) {
       int cmd_id = it->encoding_id;
       std::string encoding =
       CharacterEncoding::GetCanonicalEncodingNameByCommandId(cmd_id);
-      string16 name = it->encoding_display_name;
+      base::string16 name = it->encoding_display_name;
       bool has_rtl_chars = base::i18n::StringContainsStrongRTLChars(name);
       option->Append(new base::StringValue(encoding));
       option->Append(new base::StringValue(name));
@@ -233,7 +233,7 @@ void FontSettingsHandler::FontsListHasLoaded(
     encoding_list.Append(option);
   }
 
-  ListValue selected_values;
+  base::ListValue selected_values;
   selected_values.Append(new base::StringValue(MaybeGetLocalizedFontName(
       standard_font_.GetValue())));
   selected_values.Append(new base::StringValue(MaybeGetLocalizedFontName(
@@ -304,7 +304,7 @@ void FontSettingsHandler::HandleOpenAdvancedFontSettingsOptions(
   const extensions::Extension* extension = GetAdvancedFontSettingsExtension();
   if (!extension)
     return;
-  ExtensionTabUtil::OpenOptionsPage(extension,
+  extensions::ExtensionTabUtil::OpenOptionsPage(extension,
       chrome::FindBrowserWithWebContents(web_ui()->GetWebContents()));
 }
 

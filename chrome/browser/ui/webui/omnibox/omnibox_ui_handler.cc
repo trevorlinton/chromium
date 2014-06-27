@@ -80,7 +80,7 @@ void OmniboxUIHandler::OnResultChanged(bool default_match_changed) {
   result_to_output.SetBoolean("done", controller_->done());
   result_to_output.SetInteger("time_since_omnibox_started_ms",
       (base::Time::Now() - time_omnibox_started_).InMilliseconds());
-  const string16& host = controller_->input().text().substr(
+  const base::string16& host = controller_->input().text().substr(
       controller_->input().parts().host.begin,
       controller_->input().parts().host.len);
   result_to_output.SetString("host", host);
@@ -138,6 +138,8 @@ void OmniboxUIHandler::AddResultToDictionary(const std::string& prefix,
     output->SetInteger(item_prefix + ".transition", it->transition);
     output->SetBoolean(item_prefix + ".is_history_what_you_typed_match",
                        it->is_history_what_you_typed_match);
+    output->SetBoolean(item_prefix + ".allowed_to_be_default_match",
+                       it->allowed_to_be_default_match);
     output->SetString(item_prefix + ".type",
                       AutocompleteMatchType::ToString(it->type));
     if (it->associated_keyword.get() != NULL) {
@@ -146,6 +148,8 @@ void OmniboxUIHandler::AddResultToDictionary(const std::string& prefix,
     }
     output->SetString(item_prefix + ".keyword", it->keyword);
     output->SetBoolean(item_prefix + ".starred", it->starred);
+    output->SetInteger(item_prefix + ".duplicates",
+                       static_cast<int>(it->duplicate_matches.size()));
     output->SetBoolean(item_prefix + ".from_previous", it->from_previous);
     for (AutocompleteMatch::AdditionalInfo::const_iterator j =
          it->additional_info.begin(); j != it->additional_info.end(); ++j) {
@@ -156,7 +160,7 @@ void OmniboxUIHandler::AddResultToDictionary(const std::string& prefix,
   output->SetInteger(prefix + ".num_items", i);
 }
 
-bool OmniboxUIHandler::LookupIsTypedHost(const string16& host,
+bool OmniboxUIHandler::LookupIsTypedHost(const base::string16& host,
                                          bool* is_typed_host) const {
   HistoryService* const history_service =
       HistoryServiceFactory::GetForProfile(profile_,
@@ -166,13 +170,13 @@ bool OmniboxUIHandler::LookupIsTypedHost(const string16& host,
   history::URLDatabase* url_db = history_service->InMemoryDatabase();
   if (!url_db)
     return false;
-  *is_typed_host = url_db->IsTypedHost(UTF16ToUTF8(host));
+  *is_typed_host = url_db->IsTypedHost(base::UTF16ToUTF8(host));
   return true;
 }
 
 void OmniboxUIHandler::StartOmniboxQuery(const base::ListValue* input) {
-  DCHECK_EQ(4u, input->GetSize());
-  string16 input_string;
+  DCHECK_EQ(5u, input->GetSize());
+  base::string16 input_string;
   bool return_val = input->GetString(0, &input_string);
   DCHECK(return_val);
   int cursor_position;
@@ -184,6 +188,9 @@ void OmniboxUIHandler::StartOmniboxQuery(const base::ListValue* input) {
   bool prefer_keyword;
   return_val = input->GetBoolean(3, &prefer_keyword);
   DCHECK(return_val);
+  int current_page_classification;
+  return_val = input->GetInteger(4, &current_page_classification);
+  DCHECK(return_val);
   // Reset the controller.  If we don't do this, then the
   // AutocompleteController might inappropriately set its |minimal_changes|
   // variable (or something else) and some providers will short-circuit
@@ -194,9 +201,10 @@ void OmniboxUIHandler::StartOmniboxQuery(const base::ListValue* input) {
   controller_->Start(AutocompleteInput(
       input_string,
       cursor_position,
-      string16(),  // user's desired tld (top-level domain)
+      base::string16(),  // user's desired tld (top-level domain)
       GURL(),
-      AutocompleteInput::INVALID_SPEC,
+      static_cast<AutocompleteInput::PageClassification>(
+          current_page_classification),
       prevent_inline_autocomplete,
       prefer_keyword,
       true,  // allow exact keyword matches

@@ -32,6 +32,10 @@ LocallyManagedUserCreationFlow::LocallyManagedUserCreationFlow(
 
 LocallyManagedUserCreationFlow::~LocallyManagedUserCreationFlow() {}
 
+bool LocallyManagedUserCreationFlow::CanLockScreen() {
+  return false;
+}
+
 bool LocallyManagedUserCreationFlow::ShouldShowSettings() {
   return false;
 }
@@ -70,6 +74,9 @@ bool LocallyManagedUserCreationFlow::HandleLoginFailure(
     GetScreen(host())->ShowManagerInconsistentStateErrorScreen();
   return true;
 }
+
+void LocallyManagedUserCreationFlow::HandleLoginSuccess(
+    const UserContext& context) {}
 
 bool LocallyManagedUserCreationFlow::HandlePasswordChangeDetected() {
   GetScreen(host())->ShowManagerInconsistentStateErrorScreen();

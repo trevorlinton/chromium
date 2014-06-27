@@ -30,7 +30,7 @@ def DoJar(options):
 
   record_path = '%s.md5.stamp' % options.jar_path
   md5_check.CallAndRecordIfStale(
-      lambda: build_utils.CheckCallDie(jar_cmd, cwd=jar_cwd),
+      lambda: build_utils.CheckOutput(jar_cmd, cwd=jar_cwd),
       record_path=record_path,
       input_paths=class_files,
       input_strings=jar_cmd)
@@ -38,16 +38,13 @@ def DoJar(options):
   build_utils.Touch(options.jar_path)
 
 
-def main(argv):
+def main():
   parser = optparse.OptionParser()
   parser.add_option('--classes-dir', help='Directory containing .class files.')
   parser.add_option('--jar-path', help='Jar output path.')
   parser.add_option('--excluded-classes',
       help='List of .class file patterns to exclude from the jar.')
   parser.add_option('--stamp', help='Path to touch on success.')
-
-  # TODO(newt): remove this once http://crbug.com/177552 is fixed in ninja.
-  parser.add_option('--ignore', help='Ignored.')
 
   options, _ = parser.parse_args()
 
@@ -58,5 +55,5 @@ def main(argv):
 
 
 if __name__ == '__main__':
-  sys.exit(main(sys.argv))
+  sys.exit(main())
 

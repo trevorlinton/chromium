@@ -22,8 +22,8 @@ std::string OriginToString(const GURL& origin) {
    return scheme_component + origin.host() + port_component;
 }
 
-string16 OriginToString16(const GURL& origin) {
-  return UTF8ToUTF16(OriginToString(origin));
+base::string16 OriginToString16(const GURL& origin) {
+  return base::UTF8ToUTF16(OriginToString(origin));
 }
 
 }  // namespace content_settings_helper

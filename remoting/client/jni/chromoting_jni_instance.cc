@@ -4,21 +4,34 @@
 
 #include "remoting/client/jni/chromoting_jni_instance.h"
 
+#include <android/log.h>
+
 #include "base/bind.h"
 #include "base/logging.h"
 #include "net/socket/client_socket_factory.h"
 #include "remoting/client/audio_player.h"
 #include "remoting/client/jni/android_keymap.h"
 #include "remoting/client/jni/chromoting_jni_runtime.h"
+#include "remoting/client/software_video_renderer.h"
+#include "remoting/jingle_glue/chromium_port_allocator.h"
+#include "remoting/jingle_glue/chromium_socket_factory.h"
+#include "remoting/jingle_glue/network_settings.h"
 #include "remoting/protocol/host_stub.h"
 #include "remoting/protocol/libjingle_transport_factory.h"
+
+namespace remoting {
+
+namespace {
 
 // TODO(solb) Move into location shared with client plugin.
 const char* const kXmppServer = "talk.google.com";
 const int kXmppPort = 5222;
 const bool kXmppUseTls = true;
 
-namespace remoting {
+// Interval at which to log performance statistics, if enabled.
+const int kPerfStatsIntervalMs = 10000;
+
+}
 
 ChromotingJniInstance::ChromotingJniInstance(ChromotingJniRuntime* jni_runtime,
                                              const char* username,
@@ -30,7 +43,8 @@ ChromotingJniInstance::ChromotingJniInstance(ChromotingJniRuntime* jni_runtime,
                                              const char* pairing_secret)
     : jni_runtime_(jni_runtime),
       host_id_(host_id),
-      create_pairing_(false) {
+      create_pairing_(false),
+      stats_logging_enabled_(false) {
   DCHECK(jni_runtime_->ui_task_runner()->BelongsToCurrentThread());
 
   // Intialize XMPP config.
@@ -89,11 +103,15 @@ void ChromotingJniInstance::Cleanup() {
 }
 
 void ChromotingJniInstance::ProvideSecret(const std::string& pin,
-                                          bool create_pairing) {
+                                          bool create_pairing,
+                                          const std::string& device_name) {
   DCHECK(jni_runtime_->ui_task_runner()->BelongsToCurrentThread());
   DCHECK(!pin_callback_.is_null());
 
   create_pairing_ = create_pairing;
+
+  if (create_pairing)
+    SetDeviceName(device_name);
 
   jni_runtime_->network_task_runner()->PostTask(FROM_HERE,
                                                 base::Bind(pin_callback_, pin));
@@ -110,44 +128,84 @@ void ChromotingJniInstance::RedrawDesktop() {
   jni_runtime_->RedrawCanvas();
 }
 
-void ChromotingJniInstance::PerformMouseAction(
+void ChromotingJniInstance::SendMouseEvent(
     int x, int y,
     protocol::MouseEvent_MouseButton button,
     bool button_down) {
   if (!jni_runtime_->network_task_runner()->BelongsToCurrentThread()) {
     jni_runtime_->network_task_runner()->PostTask(
-        FROM_HERE, base::Bind(&ChromotingJniInstance::PerformMouseAction,
+        FROM_HERE, base::Bind(&ChromotingJniInstance::SendMouseEvent,
                               this, x, y, button, button_down));
     return;
   }
 
-  protocol::MouseEvent action;
-  action.set_x(x);
-  action.set_y(y);
-  action.set_button(button);
+  protocol::MouseEvent event;
+  event.set_x(x);
+  event.set_y(y);
+  event.set_button(button);
   if (button != protocol::MouseEvent::BUTTON_UNDEFINED)
-    action.set_button_down(button_down);
+    event.set_button_down(button_down);
 
-  connection_->input_stub()->InjectMouseEvent(action);
+  connection_->input_stub()->InjectMouseEvent(event);
 }
 
-void ChromotingJniInstance::PerformKeyboardAction(int key_code, bool key_down) {
+void ChromotingJniInstance::SendMouseWheelEvent(int delta_x, int delta_y) {
   if (!jni_runtime_->network_task_runner()->BelongsToCurrentThread()) {
     jni_runtime_->network_task_runner()->PostTask(
-        FROM_HERE, base::Bind(&ChromotingJniInstance::PerformKeyboardAction,
+        FROM_HERE,
+        base::Bind(&ChromotingJniInstance::SendMouseWheelEvent, this,
+                   delta_x, delta_y));
+    return;
+  }
+
+  protocol::MouseEvent event;
+  event.set_wheel_delta_x(delta_x);
+  event.set_wheel_delta_y(delta_y);
+  connection_->input_stub()->InjectMouseEvent(event);
+}
+
+void ChromotingJniInstance::SendKeyEvent(int key_code, bool key_down) {
+  if (!jni_runtime_->network_task_runner()->BelongsToCurrentThread()) {
+    jni_runtime_->network_task_runner()->PostTask(
+        FROM_HERE, base::Bind(&ChromotingJniInstance::SendKeyEvent,
                               this, key_code, key_down));
     return;
   }
 
   uint32 usb_code = AndroidKeycodeToUsbKeycode(key_code);
   if (usb_code) {
-    protocol::KeyEvent action;
-    action.set_usb_keycode(usb_code);
-    action.set_pressed(key_down);
-    connection_->input_stub()->InjectKeyEvent(action);
+    protocol::KeyEvent event;
+    event.set_usb_keycode(usb_code);
+    event.set_pressed(key_down);
+    connection_->input_stub()->InjectKeyEvent(event);
   } else {
     LOG(WARNING) << "Ignoring unknown keycode: " << key_code;
   }
+}
+
+void ChromotingJniInstance::SendTextEvent(const std::string& text) {
+  if (!jni_runtime_->network_task_runner()->BelongsToCurrentThread()) {
+    jni_runtime_->network_task_runner()->PostTask(
+        FROM_HERE,
+        base::Bind(&ChromotingJniInstance::SendTextEvent, this, text));
+    return;
+  }
+
+  protocol::TextEvent event;
+  event.set_text(text);
+  connection_->input_stub()->InjectTextEvent(event);
+}
+
+void ChromotingJniInstance::RecordPaintTime(int64 paint_time_ms) {
+  if (!jni_runtime_->network_task_runner()->BelongsToCurrentThread()) {
+    jni_runtime_->network_task_runner()->PostTask(
+        FROM_HERE, base::Bind(&ChromotingJniInstance::RecordPaintTime, this,
+                              paint_time_ms));
+    return;
+  }
+
+  if (stats_logging_enabled_)
+    video_renderer_->GetStats()->video_paint_ms()->Record(paint_time_ms);
 }
 
 void ChromotingJniInstance::OnConnectionState(
@@ -155,10 +213,12 @@ void ChromotingJniInstance::OnConnectionState(
     protocol::ErrorCode error) {
   DCHECK(jni_runtime_->network_task_runner()->BelongsToCurrentThread());
 
+  EnableStatsLogging(state == protocol::ConnectionToHost::CONNECTED);
+
   if (create_pairing_ && state == protocol::ConnectionToHost::CONNECTED) {
-    LOG(INFO) << "Attempting to pair with host";
     protocol::PairingRequest request;
-    request.set_client_name("Android");
+    DCHECK(!device_name_.empty());
+    request.set_client_name(device_name_);
     connection_->host_stub()->RequestPairing(request);
   }
 
@@ -171,7 +231,15 @@ void ChromotingJniInstance::OnConnectionState(
 }
 
 void ChromotingJniInstance::OnConnectionReady(bool ready) {
-  // We ignore this message, since OnConnectoinState tells us the same thing.
+  // We ignore this message, since OnConnectionState tells us the same thing.
+}
+
+void ChromotingJniInstance::OnRouteChanged(
+    const std::string& channel_name,
+    const protocol::TransportRoute& route) {
+  std::string message = "Channel " + channel_name + " using " +
+      protocol::TransportRoute::GetTypeString(route.type) + " connection.";
+  __android_log_print(ANDROID_LOG_INFO, "route", "%s", message.c_str());
 }
 
 void ChromotingJniInstance::SetCapabilities(const std::string& capabilities) {
@@ -180,7 +248,6 @@ void ChromotingJniInstance::SetCapabilities(const std::string& capabilities) {
 
 void ChromotingJniInstance::SetPairingResponse(
     const protocol::PairingResponse& response) {
-  LOG(INFO) << "Successfully established pairing with host";
 
   jni_runtime_->ui_task_runner()->PostTask(
       FROM_HERE,
@@ -228,7 +295,7 @@ void ChromotingJniInstance::SetCursorShape(
 void ChromotingJniInstance::ConnectToHostOnDisplayThread() {
   DCHECK(jni_runtime_->display_task_runner()->BelongsToCurrentThread());
 
-  view_.reset(new JniFrameConsumer(jni_runtime_));
+  view_.reset(new JniFrameConsumer(jni_runtime_, this));
   view_weak_factory_.reset(new base::WeakPtrFactory<JniFrameConsumer>(
       view_.get()));
   frame_consumer_ = new FrameConsumerProxy(jni_runtime_->display_task_runner(),
@@ -249,30 +316,44 @@ void ChromotingJniInstance::ConnectToHostOnNetworkThread() {
 
   connection_.reset(new protocol::ConnectionToHost(true));
 
+  SoftwareVideoRenderer* renderer =
+      new SoftwareVideoRenderer(client_context_->main_task_runner(),
+                                client_context_->decode_task_runner(),
+                                frame_consumer_);
+  view_->set_frame_producer(renderer);
+  video_renderer_.reset(renderer);
+
   client_.reset(new ChromotingClient(
       client_config_, client_context_.get(), connection_.get(),
-      this, frame_consumer_, scoped_ptr<AudioPlayer>()));
+      this, video_renderer_.get(), scoped_ptr<AudioPlayer>()));
 
-  view_->set_frame_producer(client_->GetFrameProducer());
 
   signaling_.reset(new XmppSignalStrategy(
       net::ClientSocketFactory::GetDefaultFactory(),
       jni_runtime_->url_requester(), xmpp_config_));
 
-  network_settings_.reset(new NetworkSettings(
-      NetworkSettings::NAT_TRAVERSAL_ENABLED));
-  scoped_ptr<protocol::TransportFactory> fact(
-      protocol::LibjingleTransportFactory::Create(
-          *network_settings_,
-          jni_runtime_->url_requester()));
+  NetworkSettings network_settings(NetworkSettings::NAT_TRAVERSAL_ENABLED);
 
-  client_->Start(signaling_.get(), fact.Pass());
+  // Use Chrome's network stack to allocate ports for peer-to-peer channels.
+  scoped_ptr<ChromiumPortAllocator> port_allocator(
+      ChromiumPortAllocator::Create(jni_runtime_->url_requester(),
+                                    network_settings));
+
+  scoped_ptr<protocol::TransportFactory> transport_factory(
+      new protocol::LibjingleTransportFactory(
+          signaling_.get(),
+          port_allocator.PassAs<cricket::HttpPortAllocatorBase>(),
+          network_settings));
+
+  client_->Start(signaling_.get(), transport_factory.Pass());
 }
 
 void ChromotingJniInstance::DisconnectFromHostOnNetworkThread() {
   DCHECK(jni_runtime_->network_task_runner()->BelongsToCurrentThread());
 
   host_id_.clear();
+
+  stats_logging_enabled_ = false;
 
   // |client_| must be torn down before |signaling_|.
   connection_.reset();
@@ -292,12 +373,56 @@ void ChromotingJniInstance::FetchSecret(
   if (!client_config_.client_pairing_id.empty()) {
     // We attempted to connect using an existing pairing that was rejected.
     // Unless we forget about the stale credentials, we'll continue trying them.
-    LOG(INFO) << "Deleting rejected pairing credentials";
     jni_runtime_->CommitPairingCredentials(host_id_, "", "");
   }
 
   pin_callback_ = callback;
   jni_runtime_->DisplayAuthenticationPrompt(pairable);
+}
+
+void ChromotingJniInstance::SetDeviceName(const std::string& device_name) {
+  if (!jni_runtime_->network_task_runner()->BelongsToCurrentThread()) {
+    jni_runtime_->network_task_runner()->PostTask(
+        FROM_HERE, base::Bind(&ChromotingJniInstance::SetDeviceName, this,
+                              device_name));
+    return;
+  }
+
+  device_name_ = device_name;
+}
+
+void ChromotingJniInstance::EnableStatsLogging(bool enabled) {
+  DCHECK(jni_runtime_->network_task_runner()->BelongsToCurrentThread());
+
+  if (enabled && !stats_logging_enabled_) {
+    jni_runtime_->network_task_runner()->PostDelayedTask(
+        FROM_HERE, base::Bind(&ChromotingJniInstance::LogPerfStats, this),
+        base::TimeDelta::FromMilliseconds(kPerfStatsIntervalMs));
+  }
+  stats_logging_enabled_ = enabled;
+}
+
+void ChromotingJniInstance::LogPerfStats() {
+  DCHECK(jni_runtime_->network_task_runner()->BelongsToCurrentThread());
+
+  if (!stats_logging_enabled_)
+    return;
+
+  ChromotingStats* stats = video_renderer_->GetStats();
+  __android_log_print(ANDROID_LOG_INFO, "stats",
+                      "Bandwidth:%.0f FrameRate:%.1f Capture:%.1f Encode:%.1f "
+                      "Decode:%.1f Render:%.1f Latency:%.0f",
+                      stats->video_bandwidth()->Rate(),
+                      stats->video_frame_rate()->Rate(),
+                      stats->video_capture_ms()->Average(),
+                      stats->video_encode_ms()->Average(),
+                      stats->video_decode_ms()->Average(),
+                      stats->video_paint_ms()->Average(),
+                      stats->round_trip_ms()->Average());
+
+  jni_runtime_->network_task_runner()->PostDelayedTask(
+      FROM_HERE, base::Bind(&ChromotingJniInstance::LogPerfStats, this),
+      base::TimeDelta::FromMilliseconds(kPerfStatsIntervalMs));
 }
 
 }  // namespace remoting

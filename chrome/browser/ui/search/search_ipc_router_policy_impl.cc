@@ -71,12 +71,29 @@ bool SearchIPCRouterPolicyImpl::ShouldSendSetSuggestionToPrefetch() {
   return !is_incognito_;
 }
 
+bool SearchIPCRouterPolicyImpl::ShouldSendSetOmniboxStartMargin() {
+  return true;
+}
+
+bool SearchIPCRouterPolicyImpl::ShouldSendSetInputInProgress(
+    bool is_active_tab) {
+  return is_active_tab && !is_incognito_;
+}
+
+bool SearchIPCRouterPolicyImpl::ShouldSendOmniboxFocusChanged() {
+  return !is_incognito_;
+}
+
 bool SearchIPCRouterPolicyImpl::ShouldSendMostVisitedItems() {
   return !is_incognito_ && chrome::IsInstantNTP(web_contents_);
 }
 
 bool SearchIPCRouterPolicyImpl::ShouldSendThemeBackgroundInfo() {
   return !is_incognito_ && chrome::IsInstantNTP(web_contents_);
+}
+
+bool SearchIPCRouterPolicyImpl::ShouldSendToggleVoiceSearch() {
+  return true;
 }
 
 bool SearchIPCRouterPolicyImpl::ShouldSubmitQuery() {

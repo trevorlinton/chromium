@@ -37,12 +37,12 @@
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
-#include "grit/devtools_discovery_page_resources.h"
+#include "content/public/common/user_agent.h"
+#include "grit/browser_resources.h"
 #include "jni/DevToolsServer_jni.h"
 #include "net/socket/unix_domain_socket_posix.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "webkit/common/user_agent/user_agent_util.h"
 
 using content::DevToolsAgentHost;
 using content::RenderViewHost;
@@ -83,14 +83,14 @@ class TargetBase : public content::DevToolsTarget {
 
  protected:
   explicit TargetBase(WebContents* web_contents)
-      : title_(UTF16ToUTF8(web_contents->GetTitle())),
+      : title_(base::UTF16ToUTF8(web_contents->GetTitle())),
         url_(web_contents->GetURL()),
         favicon_url_(GetFaviconURL(web_contents)),
-        last_activity_time_(web_contents->GetLastSelectedTime()) {
+        last_activity_time_(web_contents->GetLastActiveTime()) {
   }
 
-  TargetBase(const string16& title, const GURL& url)
-      : title_(UTF16ToUTF8(title)),
+  TargetBase(const base::string16& title, const GURL& url)
+      : title_(base::UTF16ToUTF8(title)),
         url_(url)
   {}
 
@@ -109,7 +109,7 @@ class TabTarget : public TargetBase {
   }
 
   static TabTarget* CreateForUnloadedTab(int tab_id,
-                                         const string16& title,
+                                         const base::string16& title,
                                          const GURL& url) {
     return new TabTarget(tab_id, title, url);
   }
@@ -174,7 +174,7 @@ class TabTarget : public TargetBase {
         tab_id_(tab_id) {
   }
 
-  TabTarget(int tab_id, const string16& title, const GURL& url)
+  TabTarget(int tab_id, const base::string16& title, const GURL& url)
       : TargetBase(title, url),
         tab_id_(tab_id) {
   }
@@ -213,7 +213,7 @@ class NonTabTarget : public TargetBase {
 
   virtual std::string GetType() const OVERRIDE {
     if (TabModelList::begin() == TabModelList::end()) {
-      // If there are no tab models we must be running in ChromiumTestShell.
+      // If there are no tab models we must be running in ChromeShell.
       // Return the 'page' target type for backwards compatibility.
       return kTargetTypePage;
     }
@@ -285,33 +285,28 @@ class DevToolsServerDelegate : public content::DevToolsHttpHandlerDelegate {
     if (top_sites) {
       scoped_refptr<base::RefCountedMemory> data;
       if (top_sites->GetPageThumbnail(url, false, &data))
-        return std::string(reinterpret_cast<const char*>(data->front()),
-                           data->size());
+        return std::string(data->front_as<char>(), data->size());
     }
     return "";
   }
 
   virtual scoped_ptr<content::DevToolsTarget> CreateNewTarget(
       const GURL& url) OVERRIDE {
-    Profile* profile =
-        g_browser_process->profile_manager()->GetDefaultProfile();
-    TabModel* tab_model = TabModelList::GetTabModelWithProfile(profile);
+    if (TabModelList::empty())
+      return scoped_ptr<content::DevToolsTarget>();
+    TabModel* tab_model = TabModelList::get(0);
     if (!tab_model)
       return scoped_ptr<content::DevToolsTarget>();
-    WebContents* web_contents = tab_model->CreateTabForTesting(url);
+    WebContents* web_contents = tab_model->CreateNewTabForDevTools(url);
     if (!web_contents)
       return scoped_ptr<content::DevToolsTarget>();
 
-    for (int i = 0; i < tab_model->GetTabCount(); ++i) {
-      if (web_contents != tab_model->GetWebContentsAt(i))
-        continue;
-      TabAndroid* tab = tab_model->GetTabAt(i);
-      return scoped_ptr<content::DevToolsTarget>(
-          TabTarget::CreateForWebContents(tab->GetAndroidId(), web_contents));
-    }
+    TabAndroid* tab = TabAndroid::FromWebContents(web_contents);
+    if (!tab)
+      return scoped_ptr<content::DevToolsTarget>();
 
-    // Newly created tab not found, return no target.
-    return scoped_ptr<content::DevToolsTarget>();
+    return scoped_ptr<content::DevToolsTarget>(
+        TabTarget::CreateForWebContents(tab->GetAndroidId(), web_contents));
   }
 
   virtual void EnumerateTargets(TargetCallback callback) OVERRIDE {
@@ -419,8 +414,7 @@ void DevToolsServer::Start() {
           socket_name_,
           base::StringPrintf("%s_%d", socket_name_.c_str(), getpid()),
           base::Bind(&content::CanUserConnectToDevTools)),
-      base::StringPrintf(kFrontEndURL,
-                         webkit_glue::GetWebKitRevision().c_str()),
+      base::StringPrintf(kFrontEndURL, content::GetWebKitRevision().c_str()),
       new DevToolsServerDelegate());
 }
 
@@ -441,27 +435,27 @@ bool RegisterDevToolsServer(JNIEnv* env) {
   return RegisterNativesImpl(env);
 }
 
-static jint InitRemoteDebugging(JNIEnv* env,
+static jlong InitRemoteDebugging(JNIEnv* env,
                                 jobject obj,
                                 jstring socket_name_prefix) {
   DevToolsServer* server = new DevToolsServer(
       base::android::ConvertJavaStringToUTF8(env, socket_name_prefix));
-  return reinterpret_cast<jint>(server);
+  return reinterpret_cast<intptr_t>(server);
 }
 
-static void DestroyRemoteDebugging(JNIEnv* env, jobject obj, jint server) {
+static void DestroyRemoteDebugging(JNIEnv* env, jobject obj, jlong server) {
   delete reinterpret_cast<DevToolsServer*>(server);
 }
 
 static jboolean IsRemoteDebuggingEnabled(JNIEnv* env,
                                          jobject obj,
-                                         jint server) {
+                                         jlong server) {
   return reinterpret_cast<DevToolsServer*>(server)->IsStarted();
 }
 
 static void SetRemoteDebuggingEnabled(JNIEnv* env,
                                       jobject obj,
-                                      jint server,
+                                      jlong server,
                                       jboolean enabled) {
   DevToolsServer* devtools_server = reinterpret_cast<DevToolsServer*>(server);
   if (enabled) {

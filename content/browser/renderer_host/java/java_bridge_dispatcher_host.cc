@@ -8,12 +8,12 @@
 #include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "content/browser/renderer_host/java/java_bridge_channel_host.h"
-#include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/child/child_process.h"
 #include "content/child/npapi/npobject_stub.h"
 #include "content/child/npapi/npobject_util.h"  // For CreateNPVariantParam()
 #include "content/common/java_bridge_messages.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "third_party/WebKit/public/web/WebBindings.h"
 
@@ -49,8 +49,8 @@ base::LazyInstance<JavaBridgeThread> g_background_thread =
 }  // namespace
 
 JavaBridgeDispatcherHost::JavaBridgeDispatcherHost(
-    RenderViewHost* render_view_host)
-    : render_view_host_(render_view_host) {
+    RenderFrameHost* render_frame_host)
+    : render_frame_host_(render_frame_host) {
 }
 
 JavaBridgeDispatcherHost::~JavaBridgeDispatcherHost() {
@@ -59,27 +59,27 @@ JavaBridgeDispatcherHost::~JavaBridgeDispatcherHost() {
       base::Bind(&CleanUpStubs, stubs_));
 }
 
-void JavaBridgeDispatcherHost::AddNamedObject(const string16& name,
+void JavaBridgeDispatcherHost::AddNamedObject(const base::string16& name,
                                               NPObject* object) {
   NPVariant_Param variant_param;
   CreateNPVariantParam(object, &variant_param);
 
   Send(new JavaBridgeMsg_AddNamedObject(
-      render_view_host_->GetRoutingID(), name, variant_param));
+      render_frame_host_->GetRoutingID(), name, variant_param));
 }
 
-void JavaBridgeDispatcherHost::RemoveNamedObject(const string16& name) {
+void JavaBridgeDispatcherHost::RemoveNamedObject(const base::string16& name) {
   // On receipt of this message, the JavaBridgeDispatcher will drop its
   // reference to the corresponding proxy object. When the last reference is
   // removed, the proxy object will delete its NPObjectProxy, which will cause
   // the NPObjectStub to be deleted, which will drop its reference to the
   // original NPObject.
   Send(new JavaBridgeMsg_RemoveNamedObject(
-      render_view_host_->GetRoutingID(), name));
+      render_frame_host_->GetRoutingID(), name));
 }
 
-void JavaBridgeDispatcherHost::RenderViewDeleted() {
-  render_view_host_ = NULL;
+void JavaBridgeDispatcherHost::RenderFrameDeleted() {
+  render_frame_host_ = NULL;
 }
 
 void JavaBridgeDispatcherHost::OnGetChannelHandle(IPC::Message* reply_msg) {
@@ -89,8 +89,8 @@ void JavaBridgeDispatcherHost::OnGetChannelHandle(IPC::Message* reply_msg) {
 }
 
 void JavaBridgeDispatcherHost::Send(IPC::Message* msg) {
-  if (render_view_host_) {
-    render_view_host_->Send(msg);
+  if (render_frame_host_) {
+    render_frame_host_->Send(msg);
     return;
   }
 
@@ -128,11 +128,11 @@ void JavaBridgeDispatcherHost::CreateNPVariantParam(NPObject* object,
   int route_id = JavaBridgeChannelHost::ThreadsafeGenerateRouteID();
   param->npobject_routing_id = route_id;
 
-  WebKit::WebBindings::retainObject(object);
+  blink::WebBindings::retainObject(object);
   g_background_thread.Get().message_loop()->PostTask(
       FROM_HERE,
       base::Bind(&JavaBridgeDispatcherHost::CreateObjectStub, this, object,
-                 render_view_host_->GetProcess()->GetID(), route_id));
+                 render_frame_host_->GetProcess()->GetID(), route_id));
 }
 
 void JavaBridgeDispatcherHost::CreateObjectStub(NPObject* object,
@@ -161,7 +161,7 @@ void JavaBridgeDispatcherHost::CreateObjectStub(NPObject* object,
 
   // The NPObjectStub takes a reference to the NPObject. Release the ref added
   // in CreateNPVariantParam().
-  WebKit::WebBindings::releaseObject(object);
+  blink::WebBindings::releaseObject(object);
 }
 
 }  // namespace content

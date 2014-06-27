@@ -55,7 +55,7 @@ class TestSpellingURLFetcher : public net::TestURLFetcher {
     EXPECT_EQ("application/json", upload_content_type);
 
     // Parse the JSON to be sent to the service, and verify its parameters.
-    scoped_ptr<DictionaryValue> value(static_cast<DictionaryValue*>(
+    scoped_ptr<base::DictionaryValue> value(static_cast<base::DictionaryValue*>(
         base::JSONReader::Read(upload_content,
                                base::JSON_ALLOW_TRAILING_COMMAS)));
     ASSERT_TRUE(!!value.get());
@@ -140,7 +140,7 @@ class TestingSpellingServiceClient : public SpellingServiceClient {
 
   void SetExpectedTextCheckResult(bool success, const char* text) {
     success_ = success;
-    corrected_text_.assign(UTF8ToUTF16(text));
+    corrected_text_.assign(base::UTF8ToUTF16(text));
   }
 
   void CallOnURLFetchComplete() {
@@ -150,10 +150,10 @@ class TestingSpellingServiceClient : public SpellingServiceClient {
   }
 
   void VerifyResponse(bool success,
-                      const string16& request_text,
+                      const base::string16& request_text,
                       const std::vector<SpellCheckResult>& results) {
     EXPECT_EQ(success_, success);
-    string16 text(UTF8ToUTF16(request_text_));
+    base::string16 text(base::UTF8ToUTF16(request_text_));
     EXPECT_EQ(text, request_text);
     for (std::vector<SpellCheckResult>::const_iterator it = results.begin();
          it != results.end(); ++it) {
@@ -183,7 +183,7 @@ class TestingSpellingServiceClient : public SpellingServiceClient {
   int response_status_;
   std::string response_data_;
   bool success_;
-  string16 corrected_text_;
+  base::string16 corrected_text_;
   TestSpellingURLFetcher* fetcher_;  // weak
 };
 
@@ -194,7 +194,7 @@ class SpellingServiceClientTest : public testing::Test {
  public:
   void OnTextCheckComplete(int tag,
                            bool success,
-                           const string16& text,
+                           const base::string16& text,
                            const std::vector<SpellCheckResult>& results) {
     client_.VerifyResponse(success, text, results);
   }
@@ -314,7 +314,7 @@ TEST_F(SpellingServiceClientTest, RequestTextCheck) {
     client_.RequestTextCheck(
         &profile_,
         kTests[i].request_type,
-        ASCIIToUTF16(kTests[i].request_text),
+        base::ASCIIToUTF16(kTests[i].request_text),
         base::Bind(&SpellingServiceClientTest::OnTextCheckComplete,
                    base::Unretained(this), 0));
     client_.CallOnURLFetchComplete();

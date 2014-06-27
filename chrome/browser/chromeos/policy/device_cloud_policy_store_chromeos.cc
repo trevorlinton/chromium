@@ -8,8 +8,8 @@
 #include "base/sequenced_task_runner.h"
 #include "chrome/browser/chromeos/policy/device_policy_decoder_chromeos.h"
 #include "chrome/browser/chromeos/policy/enterprise_install_attributes.h"
-#include "chrome/browser/policy/proto/chromeos/chrome_device_policy.pb.h"
-#include "chrome/browser/policy/proto/cloud/device_management_backend.pb.h"
+#include "chrome/browser/chromeos/policy/proto/chrome_device_policy.pb.h"
+#include "policy/proto/device_management_backend.pb.h"
 
 namespace em = enterprise_management;
 
@@ -46,7 +46,10 @@ void DeviceCloudPolicyStoreChromeOS::Store(
   }
 
   scoped_ptr<DeviceCloudPolicyValidator> validator(CreateValidator(policy));
-  validator->ValidateSignature(*owner_key->public_key(), true);
+  validator->ValidateSignature(owner_key->public_key_as_string(),
+                               GetPolicyVerificationKey(),
+                               install_attributes_->GetDomain(),
+                               true);
   validator->ValidateAgainstCurrentPolicy(
       device_settings_service_->policy_data(),
       CloudPolicyValidatorBase::TIMESTAMP_REQUIRED,
@@ -74,7 +77,8 @@ void DeviceCloudPolicyStoreChromeOS::InstallInitialPolicy(
   }
 
   scoped_ptr<DeviceCloudPolicyValidator> validator(CreateValidator(policy));
-  validator->ValidateInitialKey();
+  validator->ValidateInitialKey(GetPolicyVerificationKey(),
+                                install_attributes_->GetDomain());
   validator.release()->StartValidation(
       base::Bind(&DeviceCloudPolicyStoreChromeOS::OnPolicyToStoreValidated,
                  weak_factory_.GetWeakPtr()));

@@ -8,11 +8,92 @@
 #include "base/strings/utf_string_conversions.h"
 #include "grit/ui_strings.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/models/simple_menu_model.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/message_center_tray_delegate.h"
 #include "ui/message_center/message_center_types.h"
+#include "ui/message_center/notification_blocker.h"
 
 namespace message_center {
+
+namespace {
+
+// Menu constants
+const int kTogglePermissionCommand = 0;
+const int kShowSettingsCommand = 1;
+
+// The model of the context menu for a notification card.
+class NotificationMenuModel : public ui::SimpleMenuModel,
+                              public ui::SimpleMenuModel::Delegate {
+ public:
+  NotificationMenuModel(MessageCenterTray* tray,
+                        const NotifierId& notifier_id,
+                        const base::string16& display_source);
+  virtual ~NotificationMenuModel();
+
+  // Overridden from ui::SimpleMenuModel::Delegate:
+  virtual bool IsCommandIdChecked(int command_id) const OVERRIDE;
+  virtual bool IsCommandIdEnabled(int command_id) const OVERRIDE;
+  virtual bool GetAcceleratorForCommandId(
+      int command_id,
+      ui::Accelerator* accelerator) OVERRIDE;
+  virtual void ExecuteCommand(int command_id, int event_flags) OVERRIDE;
+
+ private:
+  MessageCenterTray* tray_;
+  NotifierId notifier_id_;
+  DISALLOW_COPY_AND_ASSIGN(NotificationMenuModel);
+};
+
+NotificationMenuModel::NotificationMenuModel(
+    MessageCenterTray* tray,
+    const NotifierId& notifier_id,
+    const base::string16& display_source)
+    : ui::SimpleMenuModel(this),
+      tray_(tray),
+      notifier_id_(notifier_id) {
+  // Add 'disable notifications' menu item.
+  if (!display_source.empty()) {
+    AddItem(kTogglePermissionCommand,
+            l10n_util::GetStringFUTF16(IDS_MESSAGE_CENTER_NOTIFIER_DISABLE,
+                                       display_source));
+  }
+  // Add settings menu item.
+  AddItem(kShowSettingsCommand,
+          l10n_util::GetStringUTF16(IDS_MESSAGE_CENTER_SETTINGS));
+}
+
+NotificationMenuModel::~NotificationMenuModel() {
+}
+
+bool NotificationMenuModel::IsCommandIdChecked(int command_id) const {
+  return false;
+}
+
+bool NotificationMenuModel::IsCommandIdEnabled(int command_id) const {
+  return tray_->delegate()->IsContextMenuEnabled();
+}
+
+bool NotificationMenuModel::GetAcceleratorForCommandId(
+    int command_id,
+    ui::Accelerator* accelerator) {
+  return false;
+}
+
+void NotificationMenuModel::ExecuteCommand(int command_id, int event_flags) {
+  switch (command_id) {
+    case kTogglePermissionCommand:
+      tray_->message_center()->DisableNotificationsByNotifier(notifier_id_);
+      break;
+    case kShowSettingsCommand:
+      tray_->ShowNotifierSettingsBubble();
+      break;
+    default:
+      NOTREACHED();
+  }
+}
+
+}  // namespace
 
 MessageCenterTray::MessageCenterTray(
     MessageCenterTrayDelegate* delegate,
@@ -52,6 +133,7 @@ void MessageCenterTray::MarkMessageCenterHidden() {
   if (!message_center_visible_)
     return;
   message_center_visible_ = false;
+  message_center_->SetVisibility(message_center::VISIBILITY_TRANSIENT);
 
   // Some notifications (like system ones) should appear as popups again
   // after the message center is closed.
@@ -59,8 +141,6 @@ void MessageCenterTray::MarkMessageCenterHidden() {
     ShowPopupBubble();
     return;
   }
-
-  message_center_->SetVisibility(message_center::VISIBILITY_TRANSIENT);
 
   NotifyMessageCenterTrayChanged();
 }
@@ -116,6 +196,13 @@ void MessageCenterTray::ShowNotifierSettingsBubble() {
   NotifyMessageCenterTrayChanged();
 }
 
+scoped_ptr<ui::MenuModel> MessageCenterTray::CreateNotificationMenuModel(
+    const NotifierId& notifier_id,
+    const base::string16& display_source) {
+  return scoped_ptr<ui::MenuModel>(new NotificationMenuModel(
+      this, notifier_id, display_source));
+}
+
 void MessageCenterTray::OnNotificationAdded(
     const std::string& notification_id) {
   OnMessageCenterChanged();
@@ -152,6 +239,10 @@ void MessageCenterTray::OnNotificationDisplayed(
 
 void MessageCenterTray::OnQuietModeChanged(bool in_quiet_mode) {
   NotifyMessageCenterTrayChanged();
+}
+
+void MessageCenterTray::OnBlockingStateChanged(NotificationBlocker* blocker) {
+  OnMessageCenterChanged();
 }
 
 void MessageCenterTray::OnMessageCenterChanged() {

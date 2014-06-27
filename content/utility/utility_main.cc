@@ -3,11 +3,12 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
+#include "base/debug/leak_annotations.h"
 #include "base/message_loop/message_loop.h"
 #include "base/threading/platform_thread.h"
 #include "base/timer/hi_res_timer_manager.h"
 #include "content/child/child_process.h"
-#include "content/common/sandbox_linux.h"
+#include "content/common/sandbox_linux/sandbox_linux.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/main_function_params.h"
 #include "content/public/common/sandbox_init.h"
@@ -83,6 +84,12 @@ int UtilityMain(const MainFunctionParams& parameters) {
 #endif
 
   base::MessageLoop::current()->Run();
+
+#if defined(LEAK_SANITIZER)
+  // Invoke LeakSanitizer before shutting down the utility thread, to avoid
+  // reporting shutdown-only leaks.
+  __lsan_do_leak_check();
+#endif
 
   return 0;
 }

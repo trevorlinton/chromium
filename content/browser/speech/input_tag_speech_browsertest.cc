@@ -16,11 +16,11 @@
 #include "content/public/common/speech_recognition_error.h"
 #include "content/public/common/speech_recognition_result.h"
 #include "content/public/common/url_constants.h"
+#include "content/public/test/content_browser_test.h"
+#include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/fake_speech_recognition_manager.h"
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
-#include "content/test/content_browser_test.h"
-#include "content/test/content_browser_test_utils.h"
 #include "third_party/WebKit/public/web/WebInputEvent.h"
 
 namespace content {
@@ -40,9 +40,9 @@ class InputTagSpeechBrowserTest : public ContentBrowserTest {
     GURL test_url = GetTestUrl("speech", filename);
     NavigateToURL(shell(), test_url);
 
-    WebKit::WebMouseEvent mouse_event;
-    mouse_event.type = WebKit::WebInputEvent::MouseDown;
-    mouse_event.button = WebKit::WebMouseEvent::ButtonLeft;
+    blink::WebMouseEvent mouse_event;
+    mouse_event.type = blink::WebInputEvent::MouseDown;
+    mouse_event.button = blink::WebMouseEvent::ButtonLeft;
     mouse_event.x = 0;
     mouse_event.y = 0;
     mouse_event.clickCount = 1;
@@ -52,7 +52,7 @@ class InputTagSpeechBrowserTest : public ContentBrowserTest {
         NOTIFICATION_LOAD_STOP,
         Source<NavigationController>(&web_contents->GetController()));
     web_contents->GetRenderViewHost()->ForwardMouseEvent(mouse_event);
-    mouse_event.type = WebKit::WebInputEvent::MouseUp;
+    mouse_event.type = blink::WebInputEvent::MouseUp;
     web_contents->GetRenderViewHost()->ForwardMouseEvent(mouse_event);
     fake_speech_recognition_manager_.WaitForRecognitionStarted();
 
@@ -105,12 +105,15 @@ SpeechRecognitionManager*
 // another test here to check that when speech recognition is in progress and
 // a renderer crashes, we get a call to
 // SpeechRecognitionManager::CancelAllRequestsWithDelegate.
-IN_PROC_BROWSER_TEST_F(InputTagSpeechBrowserTest, TestBasicRecognition) {
+// crbug/360448
+IN_PROC_BROWSER_TEST_F(InputTagSpeechBrowserTest,
+    DISABLED_TestBasicRecognition) {
   RunSpeechRecognitionTest("basic_recognition.html");
   EXPECT_TRUE(fake_speech_recognition_manager_.grammar().empty());
 }
 
-IN_PROC_BROWSER_TEST_F(InputTagSpeechBrowserTest, GrammarAttribute) {
+// crbug/360448
+IN_PROC_BROWSER_TEST_F(InputTagSpeechBrowserTest, DISABLED_GrammarAttribute) {
   RunSpeechRecognitionTest("grammar_attribute.html");
   EXPECT_EQ("http://example.com/grammar.xml",
             fake_speech_recognition_manager_.grammar());

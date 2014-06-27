@@ -2,15 +2,12 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file. */
 
-#create-new-user-link {
-  position: absolute;
-}
-
 #managed-user-import {
   width: 612px;
 }
 
-#managed-user-import-text {
+#managed-user-import-text,
+#managed-user-select-avatar-text {
   padding-bottom: 10px;
   padding-left: 17px;
   white-space: pre-wrap;
@@ -19,6 +16,22 @@
 
 #managed-user-list {
   height: 240px;
+  margin-bottom: 10px;
+}
+
+#managed-user-list .profile-name {
+  -webkit-box-flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#managed-user-list > * {
+  height: 40px;
+}
+
+#managed-user-list:focus {
+  border-color: rgb(77, 144, 254);
 }
 
 #select-avatar-grid {
@@ -54,6 +67,6 @@
 }
 
 .already-on-this-device {
-  padding-left: 4px;
-  padding-right: 4px;
+  padding-left: 20px;
+  padding-right: 6px;
 }

@@ -6,9 +6,9 @@
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/manifest_tests/extension_manifest_test.h"
 #include "chrome/common/extensions/manifest_url_handler.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -153,16 +153,16 @@ TEST_F(InitValueManifestTest, InitFromValueValidNameInRTL) {
   scoped_refptr<Extension> extension(LoadAndExpectSuccess(
       "init_valid_name_no_rtl.json"));
 
-  string16 localized_name(ASCIIToUTF16("Dictionary (by Google)"));
+  base::string16 localized_name(base::ASCIIToUTF16("Dictionary (by Google)"));
   base::i18n::AdjustStringForLocaleDirection(&localized_name);
-  EXPECT_EQ(localized_name, UTF8ToUTF16(extension->name()));
+  EXPECT_EQ(localized_name, base::UTF8ToUTF16(extension->name()));
 
   // Strong RTL characters in name.
   extension = LoadAndExpectSuccess("init_valid_name_strong_rtl.json");
 
-  localized_name = WideToUTF16(L"Dictionary (\x05D1\x05D2" L" Google)");
+  localized_name = base::WideToUTF16(L"Dictionary (\x05D1\x05D2" L" Google)");
   base::i18n::AdjustStringForLocaleDirection(&localized_name);
-  EXPECT_EQ(localized_name, UTF8ToUTF16(extension->name()));
+  EXPECT_EQ(localized_name, base::UTF8ToUTF16(extension->name()));
 
   // Reset locale.
 #if defined(TOOLKIT_GTK)

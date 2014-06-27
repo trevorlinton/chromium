@@ -14,12 +14,11 @@
 #include "chrome/browser/ui/host_desktop.h"
 #include "chrome/test/base/test_browser_window.h"
 #include "chrome/test/base/testing_profile.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/test/render_view_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/env.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/test/test_windows.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/gfx/screen.h"
 
 namespace ash {
@@ -31,7 +30,7 @@ namespace {
 // it.
 class TestBrowserWindowAura : public TestBrowserWindow {
  public:
-  explicit TestBrowserWindowAura(aura::Window *native_window);
+  explicit TestBrowserWindowAura(aura::Window* native_window);
   virtual ~TestBrowserWindowAura();
 
   virtual gfx::NativeWindow GetNativeWindow() OVERRIDE {
@@ -50,7 +49,7 @@ TestBrowserWindowAura::TestBrowserWindowAura(aura::Window *native_window)
 
 TestBrowserWindowAura::~TestBrowserWindowAura() {}
 
-} // namespace
+}  // namespace
 
 // A test class for preparing window positioner tests - it creates a testing
 // base by adding a window and a popup which can be independently

@@ -7,8 +7,9 @@
 #include <complex>
 
 #include "chrome/browser/ui/views/message_center/message_center_frame_view.h"
+#include "chrome/browser/ui/views/message_center/web_notification_tray.h"
 #include "content/public/browser/user_metrics.h"
-#include "ui/base/accessibility/accessible_view_state.h"
+#include "ui/accessibility/ax_view_state.h"
 #include "ui/gfx/screen.h"
 #include "ui/message_center/message_center_style.h"
 #include "ui/message_center/message_center_util.h"
@@ -20,6 +21,10 @@
 
 #if defined(OS_WIN)
 #include "ui/views/win/hwnd_util.h"
+#endif
+
+#if defined(USE_ASH)
+#include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 #endif
 
 namespace message_center {
@@ -48,10 +53,8 @@ MessageCenterWidgetDelegate::MessageCenterWidgetDelegate(
 
   AddAccelerator(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
 
-  if (get_use_acceleration_when_possible()) {
-    SetPaintToLayer(true);
-    SetFillsBoundsOpaquely(true);
-  }
+  SetPaintToLayer(true);
+  SetFillsBoundsOpaquely(true);
 
   InitWidget();
 }
@@ -135,15 +138,15 @@ void MessageCenterWidgetDelegate::InitWidget() {
   params.delegate = this;
   params.keep_on_top = true;
   params.top_level = true;
-  widget->Init(params);
-
-#if defined(OS_WIN)
-  // Remove the Message Center from taskbar and alt-tab rotation.
-  HWND hwnd = views::HWNDForWidget(widget);
-  LONG_PTR ex_styles = ::GetWindowLongPtr(hwnd, GWL_EXSTYLE);
-  ex_styles |= WS_EX_TOOLWINDOW;
-  ::SetWindowLongPtr(hwnd, GWL_EXSTYLE, ex_styles);
+#if defined(USE_ASH)
+  // This class is not used in Ash; there is another container for the message
+  // center that's used there.  So, we must be in a Views + Ash environment.  We
+  // want the notification center to be available on both desktops.  Setting the
+  // |native_widget| variable here ensures that the widget is hosted on the
+  // native desktop.
+  params.native_widget = new views::DesktopNativeWidgetAura(widget);
 #endif
+  widget->Init(params);
 
   widget->AddObserver(this);
   widget->StackAtTop();

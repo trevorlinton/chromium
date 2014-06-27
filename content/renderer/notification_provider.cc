@@ -6,7 +6,7 @@
 
 #include "base/strings/string_util.h"
 #include "content/common/desktop_notification_messages.h"
-#include "content/common/view_messages.h"
+#include "content/common/frame_messages.h"
 #include "content/renderer/render_view_impl.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
@@ -15,14 +15,14 @@
 #include "third_party/WebKit/public/web/WebUserGestureIndicator.h"
 #include "third_party/WebKit/public/web/WebView.h"
 
-using WebKit::WebDocument;
-using WebKit::WebNotification;
-using WebKit::WebNotificationPresenter;
-using WebKit::WebNotificationPermissionCallback;
-using WebKit::WebSecurityOrigin;
-using WebKit::WebString;
-using WebKit::WebURL;
-using WebKit::WebUserGestureIndicator;
+using blink::WebDocument;
+using blink::WebNotification;
+using blink::WebNotificationPresenter;
+using blink::WebNotificationPermissionCallback;
+using blink::WebSecurityOrigin;
+using blink::WebString;
+using blink::WebURL;
+using blink::WebUserGestureIndicator;
 
 namespace content {
 
@@ -32,15 +32,21 @@ NotificationProvider::NotificationProvider(RenderViewImpl* render_view)
 }
 
 NotificationProvider::~NotificationProvider() {
-  manager_.DetachAll();
 }
 
 bool NotificationProvider::show(const WebNotification& notification) {
+  WebDocument document = render_view()->GetWebView()->mainFrame()->document();
   int notification_id = manager_.RegisterNotification(notification);
-  if (notification.isHTML())
-    return ShowHTML(notification, notification_id);
-  else
-    return ShowText(notification, notification_id);
+
+  ShowDesktopNotificationHostMsgParams params;
+  params.origin = GURL(document.securityOrigin().toString());
+  params.icon_url = notification.iconURL();
+  params.title = notification.title();
+  params.body = notification.body();
+  params.direction = notification.direction();
+  params.notification_id = notification_id;
+  params.replace_id = notification.replaceId();
+  return Send(new DesktopNotificationHostMsg_Show(routing_id(), params));
 }
 
 void NotificationProvider::cancel(const WebNotification& notification) {
@@ -95,39 +101,10 @@ bool NotificationProvider::OnMessageReceived(const IPC::Message& message) {
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
 
-  if (message.type() == ViewMsg_Navigate::ID)
+  if (message.type() == FrameMsg_Navigate::ID)
     OnNavigate();  // Don't want to swallow the message.
 
   return handled;
-}
-
-bool NotificationProvider::ShowHTML(const WebNotification& notification,
-                                    int id) {
-  DCHECK(notification.isHTML());
-  ShowDesktopNotificationHostMsgParams params;
-  WebDocument document = render_view()->GetWebView()->mainFrame()->document();
-  params.origin = GURL(document.securityOrigin().toString());
-  params.is_html = true;
-  params.contents_url = notification.url();
-  params.notification_id = id;
-  params.replace_id = notification.replaceId();
-  return Send(new DesktopNotificationHostMsg_Show(routing_id(), params));
-}
-
-bool NotificationProvider::ShowText(const WebNotification& notification,
-                                    int id) {
-  DCHECK(!notification.isHTML());
-  ShowDesktopNotificationHostMsgParams params;
-  params.is_html = false;
-  WebDocument document = render_view()->GetWebView()->mainFrame()->document();
-  params.origin = GURL(document.securityOrigin().toString());
-  params.icon_url = notification.iconURL();
-  params.title = notification.title();
-  params.body = notification.body();
-  params.direction = notification.direction();
-  params.notification_id = id;
-  params.replace_id = notification.replaceId();
-  return Send(new DesktopNotificationHostMsg_Show(routing_id(), params));
 }
 
 void NotificationProvider::OnDisplay(int id) {

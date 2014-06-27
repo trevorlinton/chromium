@@ -20,25 +20,22 @@
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/testing_pref_service_syncable.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/variations/entropy_provider.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 
+InstantUnitTestBase::InstantUnitTestBase() {
+  field_trial_list_.reset(new base::FieldTrialList(
+      new metrics::SHA1EntropyProvider("42")));
+}
+
+InstantUnitTestBase::~InstantUnitTestBase() {
+}
+
 void InstantUnitTestBase::SetUp() {
-  chrome::EnableInstantExtendedAPIForTesting();
-  BrowserWithTestWindowTest::SetUp();
-
-  TemplateURLServiceFactory::GetInstance()->SetTestingFactoryAndUse(
-      profile(), &TemplateURLServiceFactory::BuildInstanceFor);
-  template_url_service_ = TemplateURLServiceFactory::GetForProfile(profile());
-  ui_test_utils::WaitForTemplateURLServiceToLoad(template_url_service_);
-
-  UIThreadSearchTermsData::SetGoogleBaseURL("https://www.google.com/");
-  TestingPrefServiceSyncable* pref_service = profile()->GetTestingPrefService();
-  pref_service->SetUserPref(prefs::kLastPromptedGoogleURL,
-                            new base::StringValue("https://www.google.com/"));
-  SetDefaultSearchProvider("{google:baseURL}");
-  instant_service_ = InstantServiceFactory::GetForProfile(profile());
+  chrome::EnableQueryExtractionForTesting();
+  SetUpHelper();
 }
 
 void InstantUnitTestBase::TearDown() {
@@ -46,12 +43,19 @@ void InstantUnitTestBase::TearDown() {
   BrowserWithTestWindowTest::TearDown();
 }
 
+#if !defined(OS_IOS) && !defined(OS_ANDROID)
+void InstantUnitTestBase::SetUpWithoutQueryExtraction() {
+  SetUpHelper();
+}
+#endif
+
 void InstantUnitTestBase::SetDefaultSearchProvider(
     const std::string& base_url) {
   TemplateURLData data;
   data.SetURL(base_url + "url?bar={searchTerms}");
-  data.instant_url = base_url + "instant?"
-                     "{google:omniboxStartMarginParameter}foo=foo#foo=foo&strk";
+  data.instant_url = base_url +
+      "instant?{google:omniboxStartMarginParameter}{google:forceInstantResults}"
+      "foo=foo#foo=foo&strk";
   data.new_tab_url = base_url + "newtab";
   data.alternate_urls.push_back(base_url + "alt#quux={searchTerms}");
   data.search_terms_replacement_key = "strk";
@@ -78,9 +82,23 @@ void InstantUnitTestBase::NotifyGoogleBaseURLUpdate(
       content::Details<GoogleURLTracker::UpdatedDetails>(&details));
 }
 
-
 bool InstantUnitTestBase::IsInstantServiceObserver(
     InstantServiceObserver* observer) {
   return instant_service_->observers_.HasObserver(observer);
 }
 
+void InstantUnitTestBase::SetUpHelper() {
+  BrowserWithTestWindowTest::SetUp();
+
+  TemplateURLServiceFactory::GetInstance()->SetTestingFactoryAndUse(
+      profile(), &TemplateURLServiceFactory::BuildInstanceFor);
+  template_url_service_ = TemplateURLServiceFactory::GetForProfile(profile());
+  ui_test_utils::WaitForTemplateURLServiceToLoad(template_url_service_);
+
+  UIThreadSearchTermsData::SetGoogleBaseURL("https://www.google.com/");
+  TestingPrefServiceSyncable* pref_service = profile()->GetTestingPrefService();
+  pref_service->SetUserPref(prefs::kLastPromptedGoogleURL,
+                            new base::StringValue("https://www.google.com/"));
+  SetDefaultSearchProvider("{google:baseURL}");
+  instant_service_ = InstantServiceFactory::GetForProfile(profile());
+}

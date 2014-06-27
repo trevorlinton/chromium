@@ -10,6 +10,7 @@
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "sync/notifier/invalidation_handler.h"
+#include "sync/notifier/object_id_invalidation_map.h"
 
 namespace syncer {
 
@@ -26,6 +27,7 @@ class FakeInvalidationHandler : public InvalidationHandler {
   virtual void OnInvalidatorStateChange(InvalidatorState state) OVERRIDE;
   virtual void OnIncomingInvalidation(
       const ObjectIdInvalidationMap& invalidation_map) OVERRIDE;
+  virtual std::string GetOwnerName() const OVERRIDE;
 
  private:
   InvalidatorState state_;

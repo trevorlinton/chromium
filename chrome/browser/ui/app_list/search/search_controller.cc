@@ -22,11 +22,13 @@
 #include "chrome/browser/ui/app_list/search/people/people_provider.h"
 #include "chrome/browser/ui/app_list/search/search_provider.h"
 #include "chrome/browser/ui/app_list/search/webstore/webstore_provider.h"
+#include "chrome/browser/ui/app_list/start_page_service.h"
 #include "chrome/common/chrome_switches.h"
 #include "content/public/browser/user_metrics.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
 #include "ui/app_list/search_box_model.h"
+#include "ui/app_list/speech_ui_model.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
@@ -40,23 +42,39 @@ namespace app_list {
 SearchController::SearchController(Profile* profile,
                                    SearchBoxModel* search_box,
                                    AppListModel::SearchResults* results,
+                                   SpeechUIModel* speech_ui,
                                    AppListControllerDelegate* list_controller)
   : profile_(profile),
     search_box_(search_box),
+    speech_ui_(speech_ui),
     list_controller_(list_controller),
     dispatching_query_(false),
     mixer_(new Mixer(results)),
     history_(HistoryFactory::GetForBrowserContext(profile)) {
+  speech_ui_->AddObserver(this);
   Init();
 }
 
-SearchController::~SearchController() {}
+SearchController::~SearchController() {
+  speech_ui_->RemoveObserver(this);
+}
 
 void SearchController::Init() {
-  search_box_->SetHintText(
-      l10n_util::GetStringUTF16(IDS_SEARCH_BOX_HINT));
-  search_box_->SetIcon(*ui::ResourceBundle::GetSharedInstance().
-      GetImageSkiaNamed(IDR_OMNIBOX_SEARCH));
+  ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
+  search_box_->SetIcon(*bundle.GetImageSkiaNamed(IDR_OMNIBOX_SEARCH));
+  StartPageService* service = StartPageService::Get(profile_);
+  if (service && service->GetSpeechRecognitionContents()) {
+    search_box_->SetSpeechRecognitionButton(
+        scoped_ptr<SearchBoxModel::SpeechButtonProperty>(
+            new SearchBoxModel::SpeechButtonProperty(
+                *bundle.GetImageSkiaNamed(IDR_OMNIBOX_MIC_SEARCH),
+                l10n_util::GetStringUTF16(
+                    IDS_APP_LIST_HOTWORD_LISTENING),
+                *bundle.GetImageSkiaNamed(IDR_APP_LIST_MIC_HOTWORD_OFF),
+                l10n_util::GetStringUTF16(
+                    IDS_APP_LIST_START_SPEECH_RECOGNITION))));
+  }
+  OnSpeechRecognitionStateChanged(speech_ui_->state());
 
   mixer_->Init();
 
@@ -66,8 +84,8 @@ void SearchController::Init() {
       new OmniboxProvider(profile_)).Pass());
   AddProvider(Mixer::WEBSTORE_GROUP, scoped_ptr<SearchProvider>(
       new WebstoreProvider(profile_, list_controller_)).Pass());
-  if (CommandLine::ForCurrentProcess()->HasSwitch(
-            switches::kEnablePeopleSearch)) {
+  if (!CommandLine::ForCurrentProcess()->HasSwitch(
+            switches::kDisablePeopleSearch)) {
     AddProvider(Mixer::PEOPLE_GROUP, scoped_ptr<SearchProvider>(
         new PeopleProvider(profile_)).Pass());
   }
@@ -76,8 +94,8 @@ void SearchController::Init() {
 void SearchController::Start() {
   Stop();
 
-  string16 query;
-  TrimWhitespace(search_box_->text(), TRIM_ALL, &query);
+  base::string16 query;
+  base::TrimWhitespace(search_box_->text(), base::TRIM_ALL, &query);
 
   dispatching_query_ = true;
   for (Providers::iterator it = providers_.begin();
@@ -109,7 +127,7 @@ void SearchController::Stop() {
 
 void SearchController::OpenResult(SearchResult* result, int event_flags) {
   // Count AppList.Search here because it is composed of search + action.
-  content::RecordAction(content::UserMetricsAction("AppList_Search"));
+  content::RecordAction(base::UserMetricsAction("AppList_Search"));
 
   ChromeSearchResult* chrome_result =
       static_cast<app_list::ChromeSearchResult*>(result);
@@ -119,7 +137,7 @@ void SearchController::OpenResult(SearchResult* result, int event_flags) {
   chrome_result->Open(event_flags);
 
   if (history_ && history_->IsReady()) {
-    history_->AddLaunchEvent(UTF16ToUTF8(search_box_->text()),
+    history_->AddLaunchEvent(base::UTF16ToUTF8(search_box_->text()),
                              chrome_result->id());
   }
 }
@@ -147,11 +165,18 @@ void SearchController::OnResultsChanged() {
 
   KnownResults known_results;
   if (history_ && history_->IsReady()) {
-    history_->GetKnownResults(UTF16ToUTF8(search_box_->text()))
+    history_->GetKnownResults(base::UTF16ToUTF8(search_box_->text()))
         ->swap(known_results);
   }
 
   mixer_->MixAndPublish(known_results);
+}
+
+void SearchController::OnSpeechRecognitionStateChanged(
+    SpeechRecognitionState new_state) {
+  search_box_->SetHintText(l10n_util::GetStringUTF16(
+      (new_state == SPEECH_RECOGNITION_HOTWORD_LISTENING) ?
+      IDS_SEARCH_BOX_HOTWORD_HINT : IDS_SEARCH_BOX_HINT));
 }
 
 }  // namespace app_list

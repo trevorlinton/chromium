@@ -7,9 +7,15 @@
 
 #include <string>
 
-#include "chrome/browser/google_apis/auth_service_interface.h"
-#include "chrome/browser/google_apis/base_requests.h"
-#include "chrome/browser/google_apis/drive_common_callbacks.h"
+#include "base/time/time.h"
+#include "google_apis/drive/auth_service_interface.h"
+#include "google_apis/drive/base_requests.h"
+#include "google_apis/drive/drive_api_requests.h"
+#include "google_apis/drive/drive_common_callbacks.h"
+
+namespace base {
+class Time;
+}
 
 namespace drive {
 
@@ -37,6 +43,61 @@ class DriveServiceObserver {
 // URLFetcher that runs on UI thread.
 class DriveServiceInterface {
  public:
+  // Optional parameters for AddNewDirectory().
+  struct AddNewDirectoryOptions {
+    AddNewDirectoryOptions();
+    ~AddNewDirectoryOptions();
+
+    // modified_date of the directory.
+    // Pass the null Time if you are not interested in setting this property.
+    base::Time modified_date;
+
+    // last_viewed_by_me_date of the directory.
+    // Pass the null Time if you are not interested in setting this property.
+    base::Time last_viewed_by_me_date;
+  };
+
+  // Optional parameters for InitiateUploadNewFile().
+  struct InitiateUploadNewFileOptions {
+    InitiateUploadNewFileOptions();
+    ~InitiateUploadNewFileOptions();
+
+    // modified_date of the file.
+    // Pass the null Time if you are not interested in setting this property.
+    base::Time modified_date;
+
+    // last_viewed_by_me_date of the file.
+    // Pass the null Time if you are not interested in setting this property.
+    base::Time last_viewed_by_me_date;
+  };
+
+  // Optional parameters for InitiateUploadExistingFile().
+  struct InitiateUploadExistingFileOptions {
+    InitiateUploadExistingFileOptions();
+    ~InitiateUploadExistingFileOptions();
+
+    // Expected ETag of the file. UPLOAD_ERROR_CONFLICT error is generated when
+    // matching fails.
+    // Pass the empty string to disable this behavior.
+    std::string etag;
+
+    // New parent of the file.
+    // Pass the empty string to keep the property unchanged.
+    std::string parent_resource_id;
+
+    // New title of the file.
+    // Pass the empty string to keep the property unchanged.
+    std::string title;
+
+    // New modified_date of the file.
+    // Pass the null Time if you are not interested in setting this property.
+    base::Time modified_date;
+
+    // New last_viewed_by_me_date of the file.
+    // Pass the null Time if you are not interested in setting this property.
+    base::Time last_viewed_by_me_date;
+  };
+
   virtual ~DriveServiceInterface() {}
 
   // Common service:
@@ -84,7 +145,7 @@ class DriveServiceInterface {
   // completion.
   // If the list is too long, it may be paged. In such a case, a URL to fetch
   // remaining results will be included in the returned result. See also
-  // ContinueGetResourceList.
+  // GetRemainingFileList.
   //
   // |callback| must not be null.
   virtual google_apis::CancelCallback GetAllResourceList(
@@ -94,7 +155,7 @@ class DriveServiceInterface {
   // |callback| will be called upon completion.
   // If the list is too long, it may be paged. In such a case, a URL to fetch
   // remaining results will be included in the returned result. See also
-  // ContinueGetResourceList.
+  // GetRemainingFileList.
   //
   // |directory_resource_id| must not be empty.
   // |callback| must not be null.
@@ -106,7 +167,7 @@ class DriveServiceInterface {
   // resources. |callback| will be called upon completion.
   // If the list is too long, it may be paged. In such a case, a URL to fetch
   // remaining results will be included in the returned result. See also
-  // ContinueGetResourceList.
+  // GetRemainingFileList.
   //
   // |search_query| must not be empty.
   // |callback| must not be null.
@@ -120,7 +181,7 @@ class DriveServiceInterface {
   // the resources directly under the directory with |directory_resource_id|.
   // If the list is too long, it may be paged. In such a case, a URL to fetch
   // remaining results will be included in the returned result. See also
-  // ContinueGetResourceList.
+  // GetRemainingFileList.
   //
   // |title| must not be empty, and |callback| must not be null.
   virtual google_apis::CancelCallback SearchByTitle(
@@ -132,7 +193,7 @@ class DriveServiceInterface {
   // called upon completion.
   // If the list is too long, it may be paged. In such a case, a URL to fetch
   // remaining results will be included in the returned result. See also
-  // ContinueGetResourceList.
+  // GetRemainingChangeList.
   //
   // |callback| must not be null.
   virtual google_apis::CancelCallback GetChangeList(
@@ -188,7 +249,7 @@ class DriveServiceInterface {
   virtual google_apis::CancelCallback GetAppList(
       const google_apis::AppListCallback& callback) = 0;
 
-  // Deletes a resource identified by its |resource_id|.
+  // Permanently deletes a resource identified by its |resource_id|.
   // If |etag| is not empty and did not match, the deletion fails with
   // HTTP_PRECONDITION error.
   // Upon completion, invokes |callback| with results on the calling thread.
@@ -196,6 +257,13 @@ class DriveServiceInterface {
   virtual google_apis::CancelCallback DeleteResource(
       const std::string& resource_id,
       const std::string& etag,
+      const google_apis::EntryActionCallback& callback) = 0;
+
+  // Trashes a resource identified by its |resource_id|.
+  // Upon completion, invokes |callback| with results on the calling thread.
+  // |callback| must not be null.
+  virtual google_apis::CancelCallback TrashResource(
+      const std::string& resource_id,
       const google_apis::EntryActionCallback& callback) = 0;
 
   // Makes a copy of a resource with |resource_id|.
@@ -214,32 +282,20 @@ class DriveServiceInterface {
       const base::Time& last_modified,
       const google_apis::GetResourceEntryCallback& callback) = 0;
 
-  // Makes a copy of a hosted document identified by its |resource_id|.
-  // The copy is named as the UTF-8 encoded |new_title| and is not added to any
-  // collection. Use AddResourceToDirectory() to add the copy to a collection
-  // when needed. Upon completion, invokes |callback| with results on the
-  // calling thread.
-  // |callback| must not be null.
-  // TODO(hidehiko): After the migration to Drive API v2, remove this method,
-  // because we can use CopyResource instead.
-  virtual google_apis::CancelCallback CopyHostedDocument(
-      const std::string& resource_id,
-      const std::string& new_title,
-      const google_apis::GetResourceEntryCallback& callback) = 0;
-
-  // Moves a resource with |resource_id| to the directory of
+  // Updates a resource with |resource_id| to the directory of
   // |parent_resource_id| with renaming to |new_title|.
-  // If |last_modified| is not null, the modified date of the resource on the
-  // server will be set to the date.
+  // If |last_modified| or |last_accessed| is not null, the modified/accessed
+  // date of the resource on the server will be set to the date.
   // This request is supported only on DriveAPIService, because GData WAPI
   // doesn't support the function unfortunately.
   // Upon completion, invokes |callback| with results on the calling thread.
   // |callback| must not be null.
-  virtual google_apis::CancelCallback MoveResource(
+  virtual google_apis::CancelCallback UpdateResource(
       const std::string& resource_id,
       const std::string& parent_resource_id,
       const std::string& new_title,
       const base::Time& last_modified,
+      const base::Time& last_viewed_by_me,
       const google_apis::GetResourceEntryCallback& callback) = 0;
 
   // Renames a document or collection identified by its |resource_id|
@@ -250,17 +306,6 @@ class DriveServiceInterface {
       const std::string& resource_id,
       const std::string& new_title,
       const google_apis::EntryActionCallback& callback) = 0;
-
-  // Touches the resource with |resource_id|.
-  // Its modifiedDate and lastViewedByMeDate fields on the server will be
-  // updated to |modified_date| and |last_viewed_by_me_date| respectively.
-  // Upon completion, invokes |callback| with the updated resource data.
-  // |modified_date|, |last_viewed_by_me_date| and |callback| must not be null.
-  virtual google_apis::CancelCallback TouchResource(
-      const std::string& resource_id,
-      const base::Time& modified_date,
-      const base::Time& last_viewed_by_me_date,
-      const google_apis::GetResourceEntryCallback& callback) = 0;
 
   // Adds a resource (document, file, or collection) identified by its
   // |resource_id| to a collection represented by the |parent_resource_id|.
@@ -291,6 +336,7 @@ class DriveServiceInterface {
   virtual google_apis::CancelCallback AddNewDirectory(
       const std::string& parent_resource_id,
       const std::string& directory_title,
+      const AddNewDirectoryOptions& options,
       const google_apis::GetResourceEntryCallback& callback) = 0;
 
   // Downloads a file with |resourced_id|. The downloaded file will
@@ -320,6 +366,7 @@ class DriveServiceInterface {
       int64 content_length,
       const std::string& parent_resource_id,
       const std::string& title,
+      const InitiateUploadNewFileOptions& options,
       const google_apis::InitiateUploadCallback& callback) = 0;
 
   // Initiates uploading of an existing document/file.
@@ -330,7 +377,7 @@ class DriveServiceInterface {
       const std::string& content_type,
       int64 content_length,
       const std::string& resource_id,
-      const std::string& etag,
+      const InitiateUploadExistingFileOptions& options,
       const google_apis::InitiateUploadCallback& callback) = 0;
 
   // Resumes uploading of a document/file on the calling thread.
@@ -362,11 +409,16 @@ class DriveServiceInterface {
       const std::string& app_id,
       const google_apis::AuthorizeAppCallback& callback) = 0;
 
+  // Uninstalls a Drive app with the id |app_id|. |callback| must not be null.
+  virtual google_apis::CancelCallback UninstallApp(
+      const std::string& app_id,
+      const google_apis::EntryActionCallback& callback) = 0;
+
   // This is introduced as a temporary short term solution of the performance
   // regression issue on Drive API v2.
   //
-  // This fetches the resource list in a directory by usinig GData WAPI
-  // regardless of base protocol. In other words, even if we enabels Drive API
+  // This fetches the resource list in a directory by using GData WAPI
+  // regardless of base protocol. In other words, even if we enables Drive API
   // v2, this method uses GData WAPI to fetch the resource list.
   //
   // |directory_resource_id| must not be empty.
@@ -382,6 +434,15 @@ class DriveServiceInterface {
   virtual google_apis::CancelCallback GetRemainingResourceList(
       const GURL& next_link,
       const google_apis::GetResourceListCallback& callback) = 0;
+
+  // Authorizes the account |email| to access |resource_id| as a |role|.
+  //
+  // |callback| must not be null.
+  virtual google_apis::CancelCallback AddPermission(
+      const std::string& resource_id,
+      const std::string& email,
+      google_apis::drive::PermissionRole role,
+      const google_apis::EntryActionCallback& callback) = 0;
 };
 
 }  // namespace drive

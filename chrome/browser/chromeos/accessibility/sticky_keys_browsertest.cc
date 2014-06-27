@@ -14,7 +14,7 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
-#include "ui/aura/root_window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/native_widget_types.h"
 
@@ -106,9 +106,7 @@ IN_PROC_BROWSER_TEST_F(StickyKeysBrowserTest, OpenNewTabs) {
   EXPECT_EQ(tab_count, tab_strip_model->count());
 }
 
-// TODO(tengs): Enable this test once sticky keys has been fixed to
-// support mouse events (crbug.com/308659).
-IN_PROC_BROWSER_TEST_F(StickyKeysBrowserTest, DISABLED_CtrlClickHomeButton) {
+IN_PROC_BROWSER_TEST_F(StickyKeysBrowserTest, CtrlClickHomeButton) {
   // Show home page button.
   browser()->profile()->GetPrefs()->SetBoolean(prefs::kShowHomeButton, true);
   TabStripModel* tab_strip_model = browser()->tab_strip_model();
@@ -127,8 +125,8 @@ IN_PROC_BROWSER_TEST_F(StickyKeysBrowserTest, DISABLED_CtrlClickHomeButton) {
   SendKeyPress(ui::VKEY_CONTROL);
   SendKeyPress(ui::VKEY_CONTROL);
   for (; tab_count < 5; ++tab_count) {
-    ui_test_utils::ClickOnView(browser(), VIEW_ID_HOME_BUTTON);
     EXPECT_EQ(tab_count, tab_strip_model->count());
+    ui_test_utils::ClickOnView(browser(), VIEW_ID_HOME_BUTTON);
   }
   SendKeyPress(ui::VKEY_CONTROL);
   ui_test_utils::ClickOnView(browser(), VIEW_ID_HOME_BUTTON);

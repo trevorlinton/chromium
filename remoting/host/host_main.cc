@@ -12,6 +12,7 @@
 #include "base/at_exit.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/i18n/icu_util.h"
 #include "base/logging.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringize_macros.h"
@@ -36,11 +37,13 @@
 namespace remoting {
 
 // Known entry points.
+int HostProcessMain();
+#if defined(OS_WIN)
 int DaemonProcessMain();
 int DesktopProcessMain();
 int ElevatedControllerMain();
-int HostProcessMain();
 int RdpDesktopSessionMain();
+#endif  // defined(OS_WIN)
 
 const char kElevateSwitchName[] = "elevate";
 const char kProcessTypeSwitchName[] = "type";
@@ -49,10 +52,7 @@ const char kProcessTypeController[] = "controller";
 const char kProcessTypeDaemon[] = "daemon";
 const char kProcessTypeDesktop[] = "desktop";
 const char kProcessTypeHost[] = "host";
-const char kProcessTypeNativeMessagingHost[] = "native_messaging_host";
 const char kProcessTypeRdpDesktopSession[] = "rdp_desktop_session";
-
-const char kExtensionOriginPrefix[] = "chrome-extension://";
 
 namespace {
 
@@ -126,29 +126,6 @@ int RunElevated() {
   return kSuccessExitCode;
 }
 
-#else  // !defined(OS_WIN)
-
-// Fake entry points that exist only on Windows.
-int DaemonProcessMain() {
-  NOTREACHED();
-  return kInitializationFailed;
-}
-
-int DesktopProcessMain() {
-  NOTREACHED();
-  return kInitializationFailed;
-}
-
-int ElevatedControllerMain() {
-  NOTREACHED();
-  return kInitializationFailed;
-}
-
-int RdpDesktopSessionMain() {
-  NOTREACHED();
-  return kInitializationFailed;
-}
-
 #endif  // !defined(OS_WIN)
 
 // Select the entry point corresponding to the process type.
@@ -166,8 +143,6 @@ MainRoutineFn SelectMainRoutine(const std::string& process_type) {
     main_routine = &ElevatedControllerMain;
   } else if (process_type == kProcessTypeRdpDesktopSession) {
     main_routine = &RdpDesktopSessionMain;
-  } else if (process_type == kProcessTypeNativeMessagingHost) {
-    main_routine = &NativeMessagingHostMain;
 #endif  // defined(OS_WIN)
   }
 
@@ -231,21 +206,6 @@ int HostMain(int argc, char** argv) {
   std::string process_type = kProcessTypeHost;
   if (command_line->HasSwitch(kProcessTypeSwitchName)) {
     process_type = command_line->GetSwitchValueASCII(kProcessTypeSwitchName);
-  } else {
-    // Assume that it is the native messaging host starting if "--type" is
-    // missing and the first argument looks like an origin that represents
-    // an extension.
-    CommandLine::StringVector args = command_line->GetArgs();
-    if (!args.empty()) {
-#if defined(OS_WIN)
-      std::string origin = UTF16ToUTF8(args[0]);
-#else
-      std::string origin = args[0];
-#endif
-      if (StartsWithASCII(origin, kExtensionOriginPrefix, true)) {
-        process_type = kProcessTypeNativeMessagingHost;
-      }
-    }
   }
 
   MainRoutineFn main_routine = SelectMainRoutine(process_type);
@@ -255,6 +215,9 @@ int HostMain(int argc, char** argv) {
     Usage(command_line->GetProgram());
     return kUsageExitCode;
   }
+
+  // Required to find the ICU data file, used by some file_util routines.
+  base::i18n::InitializeICU();
 
   remoting::LoadResources("");
 

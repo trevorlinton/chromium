@@ -231,13 +231,19 @@ Visit.prototype.getResultDOM = function(propertyBag) {
     dropDown.value = 'Open action menu';
     dropDown.title = loadTimeData.getString('actionMenuDescription');
     dropDown.setAttribute('menu', '#action-menu');
+    dropDown.setAttribute('aria-haspopup', 'true');
     cr.ui.decorate(dropDown, MenuButton);
 
     dropDown.addEventListener('mousedown', setActiveVisit);
     dropDown.addEventListener('focus', setActiveVisit);
 
-    // Prevent clicks on the drop down from affecting the checkbox.
-    dropDown.addEventListener('click', function(e) { e.preventDefault(); });
+    // Prevent clicks on the drop down from affecting the checkbox.  We need to
+    // call blur() explicitly because preventDefault() cancels any focus
+    // handling.
+    dropDown.addEventListener('click', function(e) {
+      e.preventDefault();
+      document.activeElement.blur();
+    });
     entryBox.appendChild(dropDown);
   }
 
@@ -1066,6 +1072,7 @@ HistoryView.prototype.getGroupedVisitsDOM_ = function(
   siteResults.appendChild(siteDomainWrapper);
   var resultsList = siteResults.appendChild(
       createElementWithClassName('ol', 'site-results'));
+  resultsList.classList.add('grouped');
 
   // Collapse until it gets toggled.
   resultsList.style.height = 0;
@@ -1136,8 +1143,10 @@ HistoryView.prototype.groupVisitsByDomain_ = function(visits, results) {
   };
   domains.sort(sortByVisits);
 
-  for (var i = 0, domain; domain = domains[i]; i++)
+  for (var i = 0; i < domains.length; ++i) {
+    var domain = domains[i];
     this.getGroupedVisitsDOM_(results, domain, visitsByDomain[domain]);
+  }
 };
 
 /**
@@ -1314,6 +1323,9 @@ HistoryView.prototype.displayResults_ = function(doneLoading) {
     // Add all the days and their visits to the page.
     this.resultDiv_.appendChild(resultsFragment);
   }
+  // After the results have been added to the DOM, determine the size of the
+  // time column.
+  this.setTimeColumnWidth_(this.resultDiv_);
 };
 
 /**
@@ -1345,6 +1357,36 @@ HistoryView.prototype.updateClearBrowsingDataButton_ = function() {
   // button whenever the search field has focus.
   $('clear-browsing-data').hidden =
       (document.activeElement === $('search-field'));
+};
+
+/**
+ * Dynamically sets the min-width of the time column for history entries.
+ * This ensures that all entry times will have the same width, without
+ * imposing a fixed width that may not be appropriate for some locales.
+ * @private
+ */
+HistoryView.prototype.setTimeColumnWidth_ = function() {
+  // Find the maximum width of all the time elements on the page.
+  var times = this.resultDiv_.querySelectorAll('.entry .time');
+  var widths = Array.prototype.map.call(times, function(el) {
+    el.style.minWidth = '-webkit-min-content';
+    var width = el.clientWidth;
+    el.style.minWidth = '';
+
+    // Add an extra pixel to prevent rounding errors from causing the text to
+    // be ellipsized at certain zoom levels (see crbug.com/329779).
+    return width + 1;
+  });
+  var maxWidth = widths.length ? Math.max.apply(null, widths) : 0;
+
+  // Add a dynamic stylesheet to the page (or replace the existing one), to
+  // ensure that all entry times have the same width.
+  var styleEl = $('timeColumnStyle');
+  if (!styleEl) {
+    styleEl = document.head.appendChild(document.createElement('style'));
+    styleEl.id = 'timeColumnStyle';
+  }
+  styleEl.textContent = '.entry .time { min-width: ' + maxWidth + 'px; }';
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1817,9 +1859,13 @@ function entryBoxClick(event) {
   event.preventDefault();
 }
 
-// This is pulled out so we can wait for it in tests.
-function removeNodeWithoutTransition(node) {
-  node.parentNode.removeChild(node);
+/**
+ * Called when an individual history entry has been removed from the page.
+ * This will only be called when all the elements affected by the deletion
+ * have been removed from the DOM and the animations have completed.
+ */
+function onEntryRemoved() {
+  historyView.updateSelectionEditButtons();
 }
 
 /**
@@ -1832,8 +1878,13 @@ function removeNode(node, onRemove) {
   node.classList.add('fade-out'); // Trigger CSS fade out animation.
 
   // Delete the node when the animation is complete.
-  node.addEventListener('webkitTransitionEnd', function() {
-    removeNodeWithoutTransition(node);
+  node.addEventListener('webkitTransitionEnd', function(e) {
+    node.parentNode.removeChild(node);
+
+    // In case there is nested deletion happening, prevent this event from
+    // being handled by listeners on ancestor nodes.
+    e.stopPropagation();
+
     if (onRemove)
       onRemove();
   });
@@ -1847,23 +1898,43 @@ function removeNode(node, onRemove) {
 function removeEntryFromView(entry) {
   var nextEntry = entry.nextSibling;
   var previousEntry = entry.previousSibling;
+  var dayResults = findAncestorByClass(entry, 'day-results');
 
-  removeNode(entry, function() {
-    historyView.updateSelectionEditButtons();
-  });
+  var toRemove = [entry];
 
   // if there is no previous entry, and the next entry is a gap, remove it
   if (!previousEntry && nextEntry && nextEntry.className == 'gap')
-    removeNode(nextEntry);
+    toRemove.push(nextEntry);
 
   // if there is no next entry, and the previous entry is a gap, remove it
   if (!nextEntry && previousEntry && previousEntry.className == 'gap')
-    removeNode(previousEntry);
+    toRemove.push(previousEntry);
 
   // if both the next and previous entries are gaps, remove one
   if (nextEntry && nextEntry.className == 'gap' &&
       previousEntry && previousEntry.className == 'gap') {
-    removeNode(nextEntry);
+    toRemove.push(nextEntry);
+  }
+
+  // If removing the last entry on a day, remove the entire day.
+  if (dayResults && dayResults.querySelectorAll('.entry').length == 1) {
+    toRemove.push(dayResults.previousSibling);  // Remove the 'h3'.
+    toRemove.push(dayResults);
+  }
+
+  // Callback to be called when each node has finished animating. It detects
+  // when all the animations have completed, and then calls |onEntryRemoved|.
+  function onRemove() {
+    for (var i = 0; i < toRemove.length; ++i) {
+      if (toRemove[i].parentNode)
+        return;
+    }
+    onEntryRemoved();
+  }
+
+  // Kick off the removal process.
+  for (var i = 0; i < toRemove.length; ++i) {
+    removeNode(toRemove[i], onRemove);
   }
 }
 

@@ -37,7 +37,6 @@
         'test_support_ipc',
         '../base/base.gyp:base',
         '../base/base.gyp:base_i18n',
-        '../base/base.gyp:run_all_unittests',
         '../base/base.gyp:test_support_base',
         '../testing/gtest.gyp:gtest',
       ],
@@ -47,6 +46,7 @@
       'sources': [
         'file_descriptor_set_posix_unittest.cc',
         'ipc_channel_posix_unittest.cc',
+        'ipc_channel_proxy_unittest.cc',
         'ipc_channel_unittest.cc',
         'ipc_fuzzing_tests.cc',
         'ipc_message_unittest.cc',
@@ -57,6 +57,7 @@
         'ipc_sync_message_unittest.h',
         'ipc_test_base.cc',
         'ipc_test_base.h',
+        'run_all_unittests.cc',
         'sync_socket_unittest.cc',
         'unix_domain_socket_util_unittest.cc',
       ],
@@ -78,7 +79,8 @@
         }],
         ['os_posix == 1 and OS != "mac" and OS != "android"', {
           'conditions': [
-            ['linux_use_tcmalloc==1', {
+            # TODO(dmikurube): Kill linux_use_tcmalloc. http://crbug.com/345554
+            ['(use_allocator!="none" and use_allocator!="see_use_tcmalloc") or (use_allocator=="see_use_tcmalloc" and linux_use_tcmalloc==1)', {
               'dependencies': [
                 '../base/allocator/allocator.gyp:allocator',
               ],
@@ -121,7 +123,8 @@
         }],
         ['os_posix == 1 and OS != "mac" and OS != "android"', {
           'conditions': [
-            ['linux_use_tcmalloc==1', {
+            # TODO(dmikurube): Kill linux_use_tcmalloc. http://crbug.com/345554
+            ['(use_allocator!="none" and use_allocator!="see_use_tcmalloc") or (use_allocator=="see_use_tcmalloc" and linux_use_tcmalloc==1)', {
               'dependencies': [
                 '../base/allocator/allocator.gyp:allocator',
               ],
@@ -156,7 +159,7 @@
             'ipc_target': 1,
           },
           'dependencies': [
-            '../base/base.gyp:base_nacl_win64',
+            '../base/base.gyp:base_win64',
             # TODO(viettrungluu): Needed for base/lazy_instance.h, which is
             # suspect.
             '../base/third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations_win64',
@@ -190,6 +193,18 @@
           'variables': {
             'test_suite_name': 'ipc_tests',
             'input_shlib_path': '<(SHARED_LIB_DIR)/<(SHARED_LIB_PREFIX)ipc_tests<(SHARED_LIB_SUFFIX)',
+          },
+          'includes': [ '../build/apk_test.gypi' ],
+        },
+        {
+          'target_name': 'ipc_perftests_apk',
+          'type': 'none',
+          'dependencies': [
+            'ipc_perftests',
+          ],
+          'variables': {
+            'test_suite_name': 'ipc_perftests',
+            'input_shlib_path': '<(SHARED_LIB_DIR)/<(SHARED_LIB_PREFIX)ipc_perftests<(SHARED_LIB_SUFFIX)',
           },
           'includes': [ '../build/apk_test.gypi' ],
         }],

@@ -25,19 +25,26 @@
 namespace {
 
 // Caller owns the returned service.
-BrowserContextKeyedService* CreateTemplateURLService(
-    content::BrowserContext* profile) {
+KeyedService* CreateTemplateURLService(content::BrowserContext* profile) {
   return new TemplateURLService(static_cast<Profile*>(profile));
 }
 
-BrowserContextKeyedService* CreateAutocompleteClassifier(
-    content::BrowserContext* profile) {
+KeyedService* CreateAutocompleteClassifier(content::BrowserContext* profile) {
   return new AutocompleteClassifier(static_cast<Profile*>(profile));
 }
 
 }  // namespace
 
 TestWithBrowserView::TestWithBrowserView() {
+}
+
+TestWithBrowserView::TestWithBrowserView(
+    Browser::Type browser_type,
+    chrome::HostDesktopType host_desktop_type,
+    bool hosted_app)
+    : BrowserWithTestWindowTest(browser_type,
+                                host_desktop_type,
+                                hosted_app) {
 }
 
 TestWithBrowserView::~TestWithBrowserView() {

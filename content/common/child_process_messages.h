@@ -11,11 +11,13 @@
 #include "base/memory/shared_memory.h"
 #include "base/tracked_objects.h"
 #include "base/values.h"
+#include "cc/resources/shared_bitmap_manager.h"
 #include "content/common/content_export.h"
 #include "ipc/ipc_message_macros.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 
-IPC_ENUM_TRAITS(tracked_objects::ThreadData::Status)
+IPC_ENUM_TRAITS_MAX_VALUE(tracked_objects::ThreadData::Status,
+                          tracked_objects::ThreadData::STATUS_LAST)
 
 IPC_STRUCT_TRAITS_BEGIN(tracked_objects::LocationSnapshot)
   IPC_STRUCT_TRAITS_MEMBER(file_name)
@@ -55,11 +57,15 @@ IPC_STRUCT_TRAITS_BEGIN(tracked_objects::ProcessDataSnapshot)
   IPC_STRUCT_TRAITS_MEMBER(process_id)
 IPC_STRUCT_TRAITS_END()
 
-IPC_ENUM_TRAITS(gfx::GpuMemoryBufferType)
+IPC_ENUM_TRAITS_MAX_VALUE(gfx::GpuMemoryBufferType,
+                          gfx::GPU_MEMORY_BUFFER_TYPE_LAST)
 
 IPC_STRUCT_TRAITS_BEGIN(gfx::GpuMemoryBufferHandle)
   IPC_STRUCT_TRAITS_MEMBER(type)
   IPC_STRUCT_TRAITS_MEMBER(handle)
+#if defined(OS_MACOSX)
+  IPC_STRUCT_TRAITS_MEMBER(io_surface_id)
+#endif
 IPC_STRUCT_TRAITS_END()
 
 #undef IPC_MESSAGE_EXPORT
@@ -141,6 +147,23 @@ IPC_SYNC_MESSAGE_CONTROL1_1(ChildProcessHostMsg_SyncAllocateSharedMemory,
                             uint32 /* buffer size */,
                             base::SharedMemoryHandle)
 
+// Asks the browser to create a block of shared memory for the child process to
+// fill in and pass back to the browser.
+IPC_SYNC_MESSAGE_CONTROL2_1(ChildProcessHostMsg_SyncAllocateSharedBitmap,
+                            uint32 /* buffer size */,
+                            cc::SharedBitmapId,
+                            base::SharedMemoryHandle)
+
+// Informs the browser that the child allocated a shared bitmap.
+IPC_MESSAGE_CONTROL3(ChildProcessHostMsg_AllocatedSharedBitmap,
+                     uint32 /* buffer size */,
+                     base::SharedMemoryHandle,
+                     cc::SharedBitmapId)
+
+// Informs the browser that the child deleted a shared bitmap.
+IPC_MESSAGE_CONTROL1(ChildProcessHostMsg_DeletedSharedBitmap,
+                     cc::SharedBitmapId)
+
 #if defined(USE_TCMALLOC)
 // Reply to ChildProcessMsg_GetTcmallocStats.
 IPC_MESSAGE_CONTROL1(ChildProcessHostMsg_TcmallocStats,
@@ -148,6 +171,8 @@ IPC_MESSAGE_CONTROL1(ChildProcessHostMsg_TcmallocStats,
 #endif
 
 // Asks the browser to create a gpu memory buffer.
-IPC_SYNC_MESSAGE_CONTROL1_1(ChildProcessHostMsg_SyncAllocateGpuMemoryBuffer,
-                            uint32 /* buffer size */,
+IPC_SYNC_MESSAGE_CONTROL3_1(ChildProcessHostMsg_SyncAllocateGpuMemoryBuffer,
+                            uint32 /* width */,
+                            uint32 /* height */,
+                            uint32 /* internalformat */,
                             gfx::GpuMemoryBufferHandle)

@@ -57,7 +57,7 @@ void DataURLToFaviconUsage(
     const GURL& favicon_data,
     std::vector<ImportedFaviconUsage>* favicons) {
   if (!link_url.is_valid() || !favicon_data.is_valid() ||
-      !favicon_data.SchemeIs(chrome::kDataScheme))
+      !favicon_data.SchemeIs(content::kDataScheme))
     return;
 
   // Parse the data URL.
@@ -110,7 +110,7 @@ void ImportBookmarksFile(
            (cancellation_callback.is_null() || !cancellation_callback.Run());
        ++i) {
     std::string line;
-    TrimString(lines[i], " ", &line);
+    base::TrimString(lines[i], " ", &line);
 
     // Remove "<HR>" if |line| starts with it. "<HR>" is the bookmark entries
     // separator in Firefox that Chrome does not support. Note that there can be
@@ -119,7 +119,7 @@ void ImportBookmarksFile(
     static const char kHrTag[] = "<HR>";
     while (StartsWithASCII(line, kHrTag, false)) {
       line.erase(0, arraysize(kHrTag) - 1);
-      TrimString(line, " ", &line);
+      base::TrimString(line, " ", &line);
     }
 
     // Get the encoding of the bookmark file.

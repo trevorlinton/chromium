@@ -12,12 +12,10 @@
         'compile_suid_client': 0,
         'compile_credentials': 0,
       }],
-      ['((OS=="linux" or OS=="android") and '
-             '(target_arch=="ia32" or target_arch=="x64" or '
-              'target_arch=="arm"))', {
-        'compile_seccomp_bpf': 1,
+      ['OS=="linux" and (target_arch=="ia32" or target_arch=="x64")', {
+        'compile_seccomp_bpf_demo': 1,
       }, {
-        'compile_seccomp_bpf': 0,
+        'compile_seccomp_bpf_demo': 0,
       }],
     ],
   },
@@ -35,8 +33,8 @@
   'targets': [
     # We have two principal targets: sandbox and sandbox_linux_unittests
     # All other targets are listed as dependencies.
-    # FIXME(jln): for historial reasons, sandbox_linux is the setuid sandbox
-    # and is its own target.
+    # There is one notable exception: for historical reasons, chrome_sandbox is
+    # the setuid sandbox and is its own target.
     {
       'target_name': 'sandbox',
       'type': 'none',
@@ -50,9 +48,10 @@
           ],
         }],
         # Compile seccomp BPF when we support it.
-        [ 'compile_seccomp_bpf==1', {
+        [ 'use_seccomp_bpf==1', {
           'dependencies': [
             'seccomp_bpf',
+            'seccomp_bpf_helpers',
           ],
         }],
       ],
@@ -78,11 +77,6 @@
           'dependencies': [
             '../testing/android/native_test.gyp:native_test_native_code',
           ],
-          'ldflags!': [
-              # Remove warnings about text relocations, to prevent build
-              # failure.
-              '-Wl,--warn-shared-textrel'
-          ],
         }],
       ],
     },
@@ -100,10 +94,9 @@
         'seccomp-bpf/errorcode.h',
         'seccomp-bpf/instruction.h',
         'seccomp-bpf/linux_seccomp.h',
-        'seccomp-bpf/port.h',
         'seccomp-bpf/sandbox_bpf.cc',
         'seccomp-bpf/sandbox_bpf.h',
-        'seccomp-bpf/sandbox_bpf_policy_forward.h',
+        'seccomp-bpf/sandbox_bpf_policy.h',
         'seccomp-bpf/syscall.cc',
         'seccomp-bpf/syscall.h',
         'seccomp-bpf/syscall_iterator.cc',
@@ -119,6 +112,45 @@
       ],
       'include_dirs': [
         '../..',
+      ],
+    },
+    {
+      'target_name': 'seccomp_bpf_helpers',
+      'type': 'static_library',
+      'sources': [
+        'seccomp-bpf-helpers/baseline_policy.cc',
+        'seccomp-bpf-helpers/baseline_policy.h',
+        'seccomp-bpf-helpers/sigsys_handlers.cc',
+        'seccomp-bpf-helpers/sigsys_handlers.h',
+        'seccomp-bpf-helpers/syscall_parameters_restrictions.cc',
+        'seccomp-bpf-helpers/syscall_parameters_restrictions.h',
+        'seccomp-bpf-helpers/syscall_sets.cc',
+        'seccomp-bpf-helpers/syscall_sets.h',
+      ],
+      'dependencies': [
+      ],
+      'include_dirs': [
+        '../..',
+      ],
+    },
+    {
+      # A demonstration program for the seccomp-bpf sandbox.
+      'target_name': 'seccomp_bpf_demo',
+      'conditions': [
+        ['compile_seccomp_bpf_demo==1', {
+          'type': 'executable',
+          'sources': [
+            'seccomp-bpf/demo.cc',
+          ],
+          'dependencies': [
+            'seccomp_bpf',
+          ],
+        }, {
+          'type': 'none',
+        }],
+      ],
+      'include_dirs': [
+        '../../',
       ],
     },
     {
@@ -147,6 +179,14 @@
       'sources': [
         'services/broker_process.cc',
         'services/broker_process.h',
+        'services/init_process_reaper.cc',
+        'services/init_process_reaper.h',
+        'services/scoped_process.cc',
+        'services/scoped_process.h',
+        'services/thread_helpers.cc',
+        'services/thread_helpers.h',
+        'services/yama.h',
+        'services/yama.cc',
       ],
       'dependencies': [
         '../base/base.gyp:base',
@@ -209,6 +249,7 @@
       ],
       'dependencies': [
         '../base/base.gyp:base',
+        'sandbox_services',
       ],
       'include_dirs': [
         '..',
@@ -216,6 +257,21 @@
     },
   ],
   'conditions': [
+    [ 'OS=="android"', {
+      'targets': [
+        {
+        'target_name': 'sandbox_linux_unittests_stripped',
+        'type': 'none',
+        'dependencies': [ 'sandbox_linux_unittests' ],
+        'actions': [{
+          'action_name': 'strip sandbox_linux_unittests',
+          'inputs': [ '<(PRODUCT_DIR)/sandbox_linux_unittests' ],
+          'outputs': [ '<(PRODUCT_DIR)/sandbox_linux_unittests_stripped' ],
+          'action': [ '<(android_strip)', '<@(_inputs)', '-o', '<@(_outputs)' ],
+          }],
+        }
+      ],
+    }],
     # Strategy copied from base_unittests_apk in base/base.gyp.
     [ 'OS=="android" and gtest_target_type == "shared_library"', {
       'targets': [

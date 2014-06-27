@@ -15,11 +15,20 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/host_desktop.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/ui_test_utils.h"
+
+#if defined(OS_CHROMEOS)
+#include "base/path_service.h"
+#include "chrome/common/chrome_constants.h"
+#include "chrome/common/chrome_paths.h"
+#include "chromeos/chromeos_switches.h"
+#include "testing/gtest/include/gtest/gtest.h"
+#endif
 
 namespace {
 
@@ -134,7 +143,8 @@ IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest, DISABLED_DeleteAllProfiles) {
   base::FilePath new_path = profile_manager->GenerateNextProfileDirectoryPath();
   profile_manager->CreateProfileAsync(new_path,
                                       base::Bind(&OnUnblockOnProfileCreation),
-                                      string16(), string16(), std::string());
+                                      base::string16(), base::string16(),
+                                      std::string());
 
   // Spin to allow profile creation to take place, loop is terminated
   // by OnUnblockOnProfileCreation when the profile is created.
@@ -167,6 +177,46 @@ IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest, DISABLED_DeleteAllProfiles) {
 }
 #endif  // OS_MACOSX
 
+#if defined(OS_CHROMEOS)
+
+class ProfileManagerCrOSBrowserTest : public ProfileManagerBrowserTest,
+                                      public testing::WithParamInterface<bool> {
+ protected:
+  virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE {
+    if (GetParam()) {
+      command_line->AppendSwitch(::switches::kMultiProfiles);
+      // Use a user hash other than the default chrome::kTestUserProfileDir
+      // so that the prefix case is tested.
+      command_line->AppendSwitchASCII(chromeos::switches::kLoginProfile,
+                                      "test-user-hash");
+    }
+  }
+};
+
+IN_PROC_BROWSER_TEST_P(ProfileManagerCrOSBrowserTest, GetLastUsedProfile) {
+  // Make sure that last used profile is correct.
+  Profile* last_used_profile = ProfileManager::GetLastUsedProfile();
+  EXPECT_TRUE(last_used_profile != NULL);
+
+  base::FilePath profile_path;
+  PathService::Get(chrome::DIR_USER_DATA, &profile_path);
+
+  const CommandLine& command_line = *CommandLine::ForCurrentProcess();
+  if (command_line.HasSwitch(switches::kMultiProfiles)) {
+    profile_path = profile_path.AppendASCII(
+        std::string(chrome::kProfileDirPrefix) + "test-user-hash");
+  } else {
+    profile_path = profile_path.AppendASCII(chrome::kTestUserProfileDir);
+  }
+  EXPECT_EQ(profile_path.value(), last_used_profile->GetPath().value());
+}
+
+INSTANTIATE_TEST_CASE_P(ProfileManagerCrOSBrowserTestInstantiation,
+                        ProfileManagerCrOSBrowserTest,
+                        testing::Bool());
+
+#endif  // OS_CHROMEOS
+
 // Times out (http://crbug.com/159002)
 IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest,
                        DISABLED_CreateProfileWithCallback) {
@@ -178,8 +228,8 @@ IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest,
   // Create a profile, make sure callback is invoked before any callbacks are
   // invoked (so they can do things like sign in the profile, etc).
   ProfileManager::CreateMultiProfileAsync(
-      string16(), // name
-      string16(), // icon url
+      base::string16(), // name
+      base::string16(), // icon url
       base::Bind(ProfileCreationComplete),
       std::string());
   // Wait for profile to finish loading.
@@ -219,7 +269,8 @@ IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest,
       profile_manager->GenerateNextProfileDirectoryPath();
   profile_manager->CreateProfileAsync(path_profile2,
                                       base::Bind(&OnUnblockOnProfileCreation),
-                                      string16(), string16(), std::string());
+                                      base::string16(), base::string16(),
+                                      std::string());
 
   // Spin to allow profile creation to take place, loop is terminated
   // by OnUnblockOnProfileCreation when the profile is created.
@@ -232,21 +283,24 @@ IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest,
 
   // Open a browser window for the first profile.
   profiles::SwitchToProfile(path_profile1, desktop_type, false,
-                            kOnProfileSwitchDoNothing);
+                            kOnProfileSwitchDoNothing,
+                            ProfileMetrics::SWITCH_PROFILE_ICON);
   EXPECT_EQ(chrome::GetTotalBrowserCount(), 1U);
   EXPECT_EQ(1U, browser_list->size());
   EXPECT_EQ(path_profile1, browser_list->get(0)->profile()->GetPath());
 
   // Open a browser window for the second profile.
   profiles::SwitchToProfile(path_profile2, desktop_type, false,
-                            kOnProfileSwitchDoNothing);
+                            kOnProfileSwitchDoNothing,
+                            ProfileMetrics::SWITCH_PROFILE_ICON);
   EXPECT_EQ(chrome::GetTotalBrowserCount(), 2U);
   EXPECT_EQ(2U, browser_list->size());
   EXPECT_EQ(path_profile2, browser_list->get(1)->profile()->GetPath());
 
   // Switch to the first profile without opening a new window.
   profiles::SwitchToProfile(path_profile1, desktop_type, false,
-                            kOnProfileSwitchDoNothing);
+                            kOnProfileSwitchDoNothing,
+                            ProfileMetrics::SWITCH_PROFILE_ICON);
   EXPECT_EQ(chrome::GetTotalBrowserCount(), 2U);
   EXPECT_EQ(2U, browser_list->size());
 
@@ -254,6 +308,8 @@ IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest,
   EXPECT_EQ(path_profile2, browser_list->get(1)->profile()->GetPath());
 }
 
+// This test used to be flakily timing out on Windows: http://crbug.com/314905.
+// If this happens again please make it a MAYBE_ test and reopen that bug.
 IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest, EphemeralProfile) {
 #if defined(OS_WIN) && defined(USE_ASH)
   // Disable this test in Metro+Ash for now (http://crbug.com/262796).
@@ -278,7 +334,7 @@ IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest, EphemeralProfile) {
   profile_manager->CreateProfileAsync(
       path_profile2,
       base::Bind(&EphemeralProfileCreationComplete),
-      string16(), string16(), std::string());
+      base::string16(), base::string16(), std::string());
 
   // Spin to allow profile creation to take place.
   content::RunMessageLoop();
@@ -290,14 +346,16 @@ IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest, EphemeralProfile) {
 
   // Open a browser window for the second profile.
   profiles::SwitchToProfile(path_profile2, desktop_type, false,
-                            kOnProfileSwitchDoNothing);
+                            kOnProfileSwitchDoNothing,
+                            ProfileMetrics::SWITCH_PROFILE_ICON);
   EXPECT_EQ(2U, chrome::GetTotalBrowserCount());
   EXPECT_EQ(2U, browser_list->size());
   EXPECT_EQ(path_profile2, browser_list->get(1)->profile()->GetPath());
 
   // Create a second window for the ephemeral profile.
   profiles::SwitchToProfile(path_profile2, desktop_type, true,
-                            kOnProfileSwitchDoNothing);
+                            kOnProfileSwitchDoNothing,
+                            ProfileMetrics::SWITCH_PROFILE_ICON);
   EXPECT_EQ(3U, chrome::GetTotalBrowserCount());
   EXPECT_EQ(3U, browser_list->size());
 
@@ -314,13 +372,6 @@ IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest, EphemeralProfile) {
   // The second should though.
   browser_list->get(1)->window()->Close();
   content::RunAllPendingInMessageLoop();
-  content::RunAllPendingInMessageLoop();
   EXPECT_EQ(1U, browser_list->size());
-  ASSERT_EQ(1U, cache.GetNumberOfProfiles());
-
-  // Closing the last window should not reduce the number of profiles.
-  browser_list->get(0)->window()->Close();
-  content::RunAllPendingInMessageLoop();
-  EXPECT_EQ(0U, browser_list->size());
   ASSERT_EQ(1U, cache.GetNumberOfProfiles());
 }

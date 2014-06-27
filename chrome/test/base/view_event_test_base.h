@@ -34,6 +34,10 @@ namespace gfx {
 class Size;
 }
 
+namespace wm {
+class WMState;
+}
+
 // Base class for Views based tests that dispatch events.
 //
 // As views based event test involves waiting for events to be processed,
@@ -79,6 +83,8 @@ class ViewEventTestBase : public views::WidgetDelegate,
   // Invoke when done either because of failure or success. Quits the message
   // loop.
   void Done();
+
+  static void SetUpTestCase();
 
   // Creates a window.
   virtual void SetUp() OVERRIDE;
@@ -150,6 +156,7 @@ class ViewEventTestBase : public views::WidgetDelegate,
 
 #if defined(USE_AURA)
   scoped_ptr<aura::test::AuraTestHelper> aura_test_helper_;
+  scoped_ptr<wm::WMState> wm_state_;
 #endif
 
   ChromeViewsDelegate views_delegate_;

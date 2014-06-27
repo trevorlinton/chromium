@@ -50,7 +50,7 @@ class IOSurfaceImageTransportSurface
   virtual bool IsOffscreen() OVERRIDE;
   virtual bool SwapBuffers() OVERRIDE;
   virtual bool PostSubBuffer(int x, int y, int width, int height) OVERRIDE;
-  virtual std::string GetExtensions() OVERRIDE;
+  virtual bool SupportsPostSubBuffer() OVERRIDE;
   virtual gfx::Size GetSize() OVERRIDE;
   virtual bool OnMakeCurrent(gfx::GLContext* context) OVERRIDE;
   virtual unsigned int GetBackingFrameBufferObject() OVERRIDE;
@@ -63,7 +63,9 @@ class IOSurfaceImageTransportSurface
       const AcceleratedSurfaceMsg_BufferPresented_Params& params) OVERRIDE;
   virtual void OnResizeViewACK() OVERRIDE;
   virtual void OnResize(gfx::Size size, float scale_factor) OVERRIDE;
-  virtual void SetLatencyInfo(const ui::LatencyInfo&) OVERRIDE;
+  virtual void SetLatencyInfo(
+      const std::vector<ui::LatencyInfo>&) OVERRIDE;
+  virtual void WakeUpGpu() OVERRIDE;
 
   // GpuCommandBufferStub::DestructionObserver implementation.
   virtual void OnWillDestroyStub() OVERRIDE;
@@ -81,6 +83,7 @@ class IOSurfaceImageTransportSurface
 
   uint32 fbo_id_;
   GLuint texture_id_;
+  GLuint depth_stencil_renderbuffer_id_;
 
   base::ScopedCFTypeRef<CFTypeRef> io_surface_;
 
@@ -103,7 +106,7 @@ class IOSurfaceImageTransportSurface
   // Whether we unscheduled command buffer because of pending SwapBuffers.
   bool did_unschedule_;
 
-  ui::LatencyInfo latency_info_;
+  std::vector<ui::LatencyInfo> latency_info_;
 
   scoped_ptr<ImageTransportHelper> helper_;
 
@@ -134,6 +137,7 @@ IOSurfaceImageTransportSurface::IOSurfaceImageTransportSurface(
       frontbuffer_suggested_allocation_(true),
       fbo_id_(0),
       texture_id_(0),
+      depth_stencil_renderbuffer_id_(0),
       io_surface_handle_(0),
       context_(NULL),
       scale_factor_(1.f),
@@ -246,7 +250,7 @@ bool IOSurfaceImageTransportSurface::SwapBuffers() {
   params.surface_handle = io_surface_handle_;
   params.size = GetSize();
   params.scale_factor = scale_factor_;
-  params.latency_info = latency_info_;
+  params.latency_info.swap(latency_info_);
   helper_->SendAcceleratedSurfaceBuffersSwapped(params);
 
   DCHECK(!is_swap_buffers_pending_);
@@ -269,7 +273,7 @@ bool IOSurfaceImageTransportSurface::PostSubBuffer(
   params.height = height;
   params.surface_size = GetSize();
   params.surface_scale_factor = scale_factor_;
-  params.latency_info = latency_info_;
+  params.latency_info.swap(latency_info_);
   helper_->SendAcceleratedSurfacePostSubBuffer(params);
 
   DCHECK(!is_swap_buffers_pending_);
@@ -277,12 +281,8 @@ bool IOSurfaceImageTransportSurface::PostSubBuffer(
   return true;
 }
 
-std::string IOSurfaceImageTransportSurface::GetExtensions() {
-  std::string extensions = gfx::GLSurface::GetExtensions();
-  extensions += extensions.empty() ? "" : " ";
-  extensions += "GL_CHROMIUM_front_buffer_cached ";
-  extensions += "GL_CHROMIUM_post_sub_buffer";
-  return extensions;
+bool IOSurfaceImageTransportSurface::SupportsPostSubBuffer() {
+  return true;
 }
 
 gfx::Size IOSurfaceImageTransportSurface::GetSize() {
@@ -321,8 +321,13 @@ void IOSurfaceImageTransportSurface::OnResize(gfx::Size size,
 }
 
 void IOSurfaceImageTransportSurface::SetLatencyInfo(
-    const ui::LatencyInfo& latency_info) {
-  latency_info_ = latency_info;
+    const std::vector<ui::LatencyInfo>& latency_info) {
+  for (size_t i = 0; i < latency_info.size(); i++)
+    latency_info_.push_back(latency_info[i]);
+}
+
+void IOSurfaceImageTransportSurface::WakeUpGpu() {
+  NOTIMPLEMENTED();
 }
 
 void IOSurfaceImageTransportSurface::OnWillDestroyStub() {
@@ -333,7 +338,7 @@ void IOSurfaceImageTransportSurface::OnWillDestroyStub() {
 void IOSurfaceImageTransportSurface::UnrefIOSurface() {
   // If we have resources to destroy, then make sure that we have a current
   // context which we can use to delete the resources.
-  if (context_ || fbo_id_ || texture_id_) {
+  if (context_ || fbo_id_ || texture_id_ || depth_stencil_renderbuffer_id_) {
     DCHECK(gfx::GLContext::GetCurrent() == context_);
     DCHECK(context_->IsCurrent(this));
     DCHECK(CGLGetCurrentContext());
@@ -347,6 +352,11 @@ void IOSurfaceImageTransportSurface::UnrefIOSurface() {
   if (texture_id_) {
     glDeleteTextures(1, &texture_id_);
     texture_id_ = 0;
+  }
+
+  if (depth_stencil_renderbuffer_id_) {
+    glDeleteRenderbuffersEXT(1, &depth_stencil_renderbuffer_id_);
+    depth_stencil_renderbuffer_id_ = 0;
   }
 
   io_surface_.reset();
@@ -397,6 +407,37 @@ void IOSurfaceImageTransportSurface::CreateIOSurface() {
                             texture_id_,
                             0);
 
+
+  // Search through the provided attributes; if the caller has
+  // requested a stencil buffer, try to get one.
+
+  int32 stencil_bits =
+      helper_->stub()->GetRequestedAttribute(EGL_STENCIL_SIZE);
+  if (stencil_bits > 0) {
+    // Create and bind the stencil buffer
+    bool has_packed_depth_stencil =
+         GLSurface::ExtensionsContain(
+             reinterpret_cast<const char *>(glGetString(GL_EXTENSIONS)),
+                                            "GL_EXT_packed_depth_stencil");
+
+    if (has_packed_depth_stencil) {
+      glGenRenderbuffersEXT(1, &depth_stencil_renderbuffer_id_);
+      glBindRenderbufferEXT(GL_RENDERBUFFER_EXT,
+                            depth_stencil_renderbuffer_id_);
+      glRenderbufferStorageEXT(GL_RENDERBUFFER_EXT, GL_DEPTH24_STENCIL8_EXT,
+                              rounded_size_.width(), rounded_size_.height());
+      glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT,
+                                  GL_STENCIL_ATTACHMENT_EXT,
+                                  GL_RENDERBUFFER_EXT,
+                                  depth_stencil_renderbuffer_id_);
+    }
+
+    // If we asked for stencil but the extension isn't present,
+    // it's OK to silently fail; subsequent code will/must check
+    // for the presence of a stencil buffer before attempting to
+    // do stencil-based operations.
+  }
+
   // Allocate a new IOSurface, which is the GPU resource that can be
   // shared across processes.
   base::ScopedCFTypeRef<CFMutableDictionaryRef> properties;
@@ -434,12 +475,18 @@ void IOSurfaceImageTransportSurface::CreateIOSurface() {
           io_surface_.get(),
           plane);
   if (cglerror != kCGLNoError) {
-    DLOG(ERROR) << "CGLTexImageIOSurface2D: " << cglerror;
     UnrefIOSurface();
     return;
   }
 
   glFlush();
+
+  GLenum status = glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT);
+  if (status != GL_FRAMEBUFFER_COMPLETE_EXT) {
+    DLOG(ERROR) << "Framebuffer was incomplete: " << status;
+    UnrefIOSurface();
+    return;
+  }
 
   glBindTexture(target, previous_texture_id);
   // The FBO remains bound for this GL context.

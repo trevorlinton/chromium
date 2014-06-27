@@ -11,13 +11,11 @@ import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 
-import org.chromium.content.browser.ContentVideoViewClient;
-
 /**
  * Uses an existing Activity to handle displaying video in full screen.
  */
 public class ActivityContentVideoViewClient implements ContentVideoViewClient {
-    private Activity mActivity;
+    private final Activity mActivity;
     private View mView;
 
     public ActivityContentVideoViewClient(Activity activity)  {
@@ -25,7 +23,7 @@ public class ActivityContentVideoViewClient implements ContentVideoViewClient {
     }
 
     @Override
-    public void onShowCustomView(View view) {
+    public boolean onShowCustomView(View view) {
         mActivity.getWindow().setFlags(
                 WindowManager.LayoutParams.FLAG_FULLSCREEN,
                 WindowManager.LayoutParams.FLAG_FULLSCREEN);
@@ -36,6 +34,7 @@ public class ActivityContentVideoViewClient implements ContentVideoViewClient {
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         Gravity.CENTER));
         mView = view;
+        return true;
     }
 
     @Override
@@ -48,11 +47,6 @@ public class ActivityContentVideoViewClient implements ContentVideoViewClient {
 
     @Override
     public View getVideoLoadingProgressView() {
-        return null;
-    }
-
-    @Override
-    public ContentVideoViewControls createControls() {
         return null;
     }
 }

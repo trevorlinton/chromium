@@ -13,6 +13,7 @@
 #include <string>
 
 #include "native_client/src/shared/imc/nacl_imc_c.h"
+#include "ppapi/c/pp_completion_callback.h"
 #include "ppapi/c/pp_instance.h"
 #include "ppapi/c/private/ppb_instance_private.h"
 
@@ -21,12 +22,14 @@ typedef PP_ExternalPluginResult (*LaunchNaClProcessFunc)(
     const char* alleged_url,
     PP_Bool uses_irt,
     PP_Bool uses_ppapi,
+    PP_Bool uses_nonsfi_mode,
     PP_Bool enable_ppapi_dev,
     PP_Bool enable_dyncode_syscalls,
     PP_Bool enable_exception_handling,
     PP_Bool enable_crash_throttling,
     NaClHandle* result_socket,
-    struct PP_Var* error_message);
+    struct PP_Var* error_message,
+    PP_CompletionCallback callback);
 
 
 extern LaunchNaClProcessFunc launch_nacl_process;

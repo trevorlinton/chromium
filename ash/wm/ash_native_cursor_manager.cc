@@ -4,109 +4,139 @@
 
 #include "ash/wm/ash_native_cursor_manager.h"
 
+#include "ash/display/cursor_window_controller.h"
 #include "ash/display/display_controller.h"
-#include "ash/display/mirror_window_controller.h"
 #include "ash/shell.h"
 #include "ash/wm/image_cursors.h"
 #include "base/logging.h"
 #include "ui/aura/env.h"
-#include "ui/aura/root_window.h"
+#include "ui/aura/window_event_dispatcher.h"
+#include "ui/aura/window_tree_host.h"
 #include "ui/base/cursor/cursor.h"
 
 namespace ash {
 namespace  {
 
 void SetCursorOnAllRootWindows(gfx::NativeCursor cursor) {
-  Shell::RootWindowList root_windows =
+  aura::Window::Windows root_windows =
       Shell::GetInstance()->GetAllRootWindows();
-  for (Shell::RootWindowList::iterator iter = root_windows.begin();
+  for (aura::Window::Windows::iterator iter = root_windows.begin();
        iter != root_windows.end(); ++iter)
-    (*iter)->SetCursor(cursor);
+    (*iter)->GetHost()->SetCursor(cursor);
 #if defined(OS_CHROMEOS)
   Shell::GetInstance()->display_controller()->
-      mirror_window_controller()->SetMirroredCursor(cursor);
+      cursor_window_controller()->SetCursor(cursor);
 #endif
 }
 
 void NotifyCursorVisibilityChange(bool visible) {
-  Shell::RootWindowList root_windows =
+  aura::Window::Windows root_windows =
       Shell::GetInstance()->GetAllRootWindows();
-  for (Shell::RootWindowList::iterator iter = root_windows.begin();
+  for (aura::Window::Windows::iterator iter = root_windows.begin();
        iter != root_windows.end(); ++iter)
-    (*iter)->OnCursorVisibilityChanged(visible);
+    (*iter)->GetHost()->OnCursorVisibilityChanged(visible);
 #if defined(OS_CHROMEOS)
-  Shell::GetInstance()->display_controller()->mirror_window_controller()->
-      SetMirroredCursorVisibility(visible);
+  Shell::GetInstance()->display_controller()->cursor_window_controller()->
+      SetVisibility(visible);
 #endif
 }
 
 void NotifyMouseEventsEnableStateChange(bool enabled) {
-  Shell::RootWindowList root_windows =
+  aura::Window::Windows root_windows =
       Shell::GetInstance()->GetAllRootWindows();
-  for (Shell::RootWindowList::iterator iter = root_windows.begin();
+  for (aura::Window::Windows::iterator iter = root_windows.begin();
        iter != root_windows.end(); ++iter)
-    (*iter)->OnMouseEventsEnableStateChanged(enabled);
+    (*iter)->GetHost()->dispatcher()->OnMouseEventsEnableStateChanged(enabled);
   // Mirror window never process events.
 }
 
 }  // namespace
 
 AshNativeCursorManager::AshNativeCursorManager()
-    : image_cursors_(new ImageCursors) {
+    : native_cursor_enabled_(true),
+      image_cursors_(new ImageCursors) {
 }
 
 AshNativeCursorManager::~AshNativeCursorManager() {
 }
 
+
+void AshNativeCursorManager::SetNativeCursorEnabled(bool enabled) {
+  native_cursor_enabled_ = enabled;
+
+  ::wm::CursorManager* cursor_manager =
+      Shell::GetInstance()->cursor_manager();
+  SetCursor(cursor_manager->GetCursor(), cursor_manager);
+}
+
 void AshNativeCursorManager::SetDisplay(
     const gfx::Display& display,
-    views::corewm::NativeCursorManagerDelegate* delegate) {
+    ::wm::NativeCursorManagerDelegate* delegate) {
   if (image_cursors_->SetDisplay(display))
-    SetCursor(delegate->GetCurrentCursor(), delegate);
+    SetCursor(delegate->GetCursor(), delegate);
+#if defined(OS_CHROMEOS)
+  Shell::GetInstance()->display_controller()->cursor_window_controller()->
+      SetDisplay(display);
+#endif
 }
 
 void AshNativeCursorManager::SetCursor(
     gfx::NativeCursor cursor,
-    views::corewm::NativeCursorManagerDelegate* delegate) {
+    ::wm::NativeCursorManagerDelegate* delegate) {
   gfx::NativeCursor new_cursor = cursor;
-  image_cursors_->SetPlatformCursor(&new_cursor);
+  if (native_cursor_enabled_) {
+    image_cursors_->SetPlatformCursor(&new_cursor);
+  } else {
+    gfx::NativeCursor invisible_cursor(ui::kCursorNone);
+    image_cursors_->SetPlatformCursor(&invisible_cursor);
+    if (new_cursor == ui::kCursorCustom) {
+      new_cursor = invisible_cursor;
+    } else {
+      new_cursor.SetPlatformCursor(invisible_cursor.platform());
+    }
+  }
   new_cursor.set_device_scale_factor(
       image_cursors_->GetDisplay().device_scale_factor());
 
   delegate->CommitCursor(new_cursor);
 
-  if (delegate->GetCurrentVisibility())
+  if (delegate->IsCursorVisible())
     SetCursorOnAllRootWindows(new_cursor);
 }
 
 void AshNativeCursorManager::SetCursorSet(
     ui::CursorSetType cursor_set,
-    views::corewm::NativeCursorManagerDelegate* delegate) {
+    ::wm::NativeCursorManagerDelegate* delegate) {
   image_cursors_->SetCursorSet(cursor_set);
   delegate->CommitCursorSet(cursor_set);
 
   // Sets the cursor to reflect the scale change immediately.
-  if (delegate->GetCurrentVisibility())
-    SetCursor(delegate->GetCurrentCursor(), delegate);
+  if (delegate->IsCursorVisible())
+    SetCursor(delegate->GetCursor(), delegate);
+
+#if defined(OS_CHROMEOS)
+  Shell::GetInstance()->display_controller()->cursor_window_controller()->
+      SetCursorSet(cursor_set);
+#endif
 }
 
 void AshNativeCursorManager::SetScale(
     float scale,
-    views::corewm::NativeCursorManagerDelegate* delegate) {
+    ::wm::NativeCursorManagerDelegate* delegate) {
   image_cursors_->SetScale(scale);
   delegate->CommitScale(scale);
 
   // Sets the cursor to reflect the scale change immediately.
-  SetCursor(delegate->GetCurrentCursor(), delegate);
+  SetCursor(delegate->GetCursor(), delegate);
 }
 
 void AshNativeCursorManager::SetVisibility(
     bool visible,
-    views::corewm::NativeCursorManagerDelegate* delegate) {
+    ::wm::NativeCursorManagerDelegate* delegate) {
   delegate->CommitVisibility(visible);
 
   if (visible) {
-    SetCursor(delegate->GetCurrentCursor(), delegate);
+    SetCursor(delegate->GetCursor(), delegate);
   } else {
     gfx::NativeCursor invisible_cursor(ui::kCursorNone);
     image_cursors_->SetPlatformCursor(&invisible_cursor);
@@ -118,7 +148,7 @@ void AshNativeCursorManager::SetVisibility(
 
 void AshNativeCursorManager::SetMouseEventsEnabled(
     bool enabled,
-    views::corewm::NativeCursorManagerDelegate* delegate) {
+    ::wm::NativeCursorManagerDelegate* delegate) {
   delegate->CommitMouseEventsEnabled(enabled);
 
   if (enabled) {
@@ -128,7 +158,7 @@ void AshNativeCursorManager::SetMouseEventsEnabled(
     disabled_cursor_location_ = aura::Env::GetInstance()->last_mouse_location();
   }
 
-  SetVisibility(delegate->GetCurrentVisibility(), delegate);
+  SetVisibility(delegate->IsCursorVisible(), delegate);
   NotifyMouseEventsEnableStateChange(enabled);
 }
 

@@ -78,9 +78,7 @@
 //<include src="commandbutton.js"/>
 //<include src="ui/file_manager_dialog_base.js"/>
 //
-//<include src="action_choice/action_choice_util.js"/>
 //<include src="app_installer.js"/>
-//<include src="butter_bar.js"/>
 //<include src="cws_container_client.js"/>
 //<include src="directory_contents.js"/>
 //<include src="directory_model.js"/>
@@ -88,7 +86,6 @@
 //<include src="drag_selector.js"/>
 //<include src="drive_banners.js" />
 //<include src="error_dialog.js"/>
-//<include src="file_operation_manager_wrapper.js"/>
 //<include src="file_grid.js"/>
 //<include src="file_manager.js"/>
 //<include src="file_selection.js"/>
@@ -99,6 +96,7 @@
 //<include src="file_watcher.js"/>
 //<include src="folder_shortcuts_data_model.js"/>
 //<include src="navigation_list_model.js"/>
+//<include src="progress_center_item_group.js"/>
 //<include src="scrollbar.js"/>
 //<include src="share_client.js"/>
 //<include src="share_dialog.js"/>
@@ -108,11 +106,11 @@
 //<include src="ui/breadcrumbs_controller.js"/>
 //<include src="ui/conflict_dialog.js"/>
 //<include src="ui/file_manager_ui.js"/>
+//<include src="ui/multi_profile_share_dialog.js"/>
 //<include src="ui/navigation_list.js"/>
 //<include src="ui/preview_panel.js"/>
 //<include src="ui/progress_center_panel.js"/>
 //<include src="ui/search_box.js"/>
-//<include src="url_constants.js"/>
 //<include src="volume_manager_wrapper.js"/>
 //<include src="media/media_util.js"/>
 //<include src="metadata/metadata_cache.js"/>
@@ -128,7 +126,6 @@ window.fileManager = fileManager;
 
 // Exports
 window.util = util;
-window.FileOperationManagerWrapper = FileOperationManagerWrapper;
 
 window.unload = unload;
 

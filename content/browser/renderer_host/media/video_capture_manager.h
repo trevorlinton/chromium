@@ -41,7 +41,8 @@ class CONTENT_EXPORT VideoCaptureManager : public MediaStreamProvider {
 
   // Implements MediaStreamProvider.
   virtual void Register(MediaStreamProviderListener* listener,
-                        base::MessageLoopProxy* device_thread_loop) OVERRIDE;
+                        const scoped_refptr<base::SingleThreadTaskRunner>&
+                            device_task_runner) OVERRIDE;
 
   virtual void Unregister() OVERRIDE;
 
@@ -58,7 +59,7 @@ class CONTENT_EXPORT VideoCaptureManager : public MediaStreamProvider {
 
   // Called by VideoCaptureHost to locate a capture device for |capture_params|,
   // adding the Host as a client of the device's controller if successful. The
-  // value of |capture_params.session_id| controls which device is selected;
+  // value of |session_id| controls which device is selected;
   // this value should be a session id previously returned by Open().
   //
   // If the device is not already started (i.e., no other client is currently
@@ -68,7 +69,8 @@ class CONTENT_EXPORT VideoCaptureManager : public MediaStreamProvider {
   // On success, the controller is returned via calling |done_cb|, indicating
   // that the client was successfully added. A NULL controller is passed to
   // the callback on failure.
-  void StartCaptureForClient(const media::VideoCaptureParams& capture_params,
+  void StartCaptureForClient(media::VideoCaptureSessionId session_id,
+                             const media::VideoCaptureParams& capture_params,
                              base::ProcessHandle client_render_process,
                              VideoCaptureControllerID client_id,
                              VideoCaptureControllerEventHandler* client_handler,
@@ -82,9 +84,41 @@ class CONTENT_EXPORT VideoCaptureManager : public MediaStreamProvider {
                             VideoCaptureControllerID client_id,
                             VideoCaptureControllerEventHandler* client_handler);
 
+  // Retrieves all capture supported formats for a particular device. Returns
+  // false if the |capture_session_id| is not found. The supported formats are
+  // cached during device(s) enumeration, and depending on the underlying
+  // implementation, could be an empty list.
+  bool GetDeviceSupportedFormats(
+      media::VideoCaptureSessionId capture_session_id,
+      media::VideoCaptureFormats* supported_formats);
+
+  // Retrieves the format(s) currently in use.  Returns false if the
+  // |capture_session_id| is not found. Returns true and |formats_in_use|
+  // otherwise. |formats_in_use| is empty if the device is not in use.
+  bool GetDeviceFormatsInUse(media::VideoCaptureSessionId capture_session_id,
+                             media::VideoCaptureFormats* formats_in_use);
+
+  // Sets the platform-dependent window ID for the desktop capture notification
+  // UI for the given session.
+  void SetDesktopCaptureWindowId(media::VideoCaptureSessionId session_id,
+                                 gfx::NativeViewId window_id);
+
  private:
   virtual ~VideoCaptureManager();
   struct DeviceEntry;
+
+  // This data structure is a convenient wrap of a devices' name and associated
+  // video capture supported formats.
+  struct DeviceInfo {
+    DeviceInfo();
+    DeviceInfo(const media::VideoCaptureDevice::Name& name,
+               const media::VideoCaptureFormats& supported_formats);
+    ~DeviceInfo();
+
+    media::VideoCaptureDevice::Name name;
+    media::VideoCaptureFormats supported_formats;
+  };
+  typedef std::vector<DeviceInfo> DeviceInfos;
 
   // Check to see if |entry| has no clients left on its controller. If so,
   // remove it from the list of devices, and delete it asynchronously. |entry|
@@ -92,10 +126,13 @@ class CONTENT_EXPORT VideoCaptureManager : public MediaStreamProvider {
   void DestroyDeviceEntryIfNoClients(DeviceEntry* entry);
 
   // Helpers to report an event to our Listener.
-  void OnOpened(MediaStreamType type, int capture_session_id);
-  void OnClosed(MediaStreamType type, int capture_session_id);
-  void OnDevicesEnumerated(MediaStreamType stream_type,
-                           const media::VideoCaptureDevice::Names& names);
+  void OnOpened(MediaStreamType type,
+                media::VideoCaptureSessionId capture_session_id);
+  void OnClosed(MediaStreamType type,
+                media::VideoCaptureSessionId capture_session_id);
+  void OnDevicesInfoEnumerated(
+      MediaStreamType stream_type,
+      const DeviceInfos& new_devices_info_cache);
 
   // Find a DeviceEntry by its device ID and type, if it is already opened.
   DeviceEntry* GetDeviceEntryForMediaStreamDevice(
@@ -103,7 +140,8 @@ class CONTENT_EXPORT VideoCaptureManager : public MediaStreamProvider {
 
   // Find a DeviceEntry entry for the indicated session, creating a fresh one
   // if necessary. Returns NULL if the session id is invalid.
-  DeviceEntry* GetOrCreateDeviceEntry(int capture_session_id);
+  DeviceEntry* GetOrCreateDeviceEntry(
+      media::VideoCaptureSessionId capture_session_id);
 
   // Find the DeviceEntry that owns a particular controller pointer.
   DeviceEntry* GetDeviceEntryForController(
@@ -111,34 +149,49 @@ class CONTENT_EXPORT VideoCaptureManager : public MediaStreamProvider {
 
   bool IsOnDeviceThread() const;
 
-  // Queries and returns the available device IDs.
-  media::VideoCaptureDevice::Names GetAvailableDevicesOnDeviceThread(
-      MediaStreamType stream_type);
+  // Queries the Names of the devices in the system; the formats supported by
+  // the new devices are also queried, and consolidated with the copy of the
+  // local device info cache passed. The consolidated list of devices and
+  // supported formats is returned.
+  DeviceInfos GetAvailableDevicesInfoOnDeviceThread(
+      MediaStreamType stream_type,
+      const DeviceInfos& old_device_info_cache);
 
   // Create and Start a new VideoCaptureDevice, storing the result in
   // |entry->video_capture_device|. Ownership of |client| passes to
   // the device.
   void DoStartDeviceOnDeviceThread(
+      media::VideoCaptureSessionId session_id,
       DeviceEntry* entry,
-      const media::VideoCaptureCapability& capture_params,
+      const media::VideoCaptureParams& params,
       scoped_ptr<media::VideoCaptureDevice::Client> client);
 
   // Stop and destroy the VideoCaptureDevice held in
   // |entry->video_capture_device|.
   void DoStopDeviceOnDeviceThread(DeviceEntry* entry);
 
+  DeviceInfo* FindDeviceInfoById(const std::string& id,
+                                 DeviceInfos& device_vector);
+
+  void SetDesktopCaptureWindowIdOnDeviceThread(DeviceEntry* entry,
+                                               gfx::NativeViewId window_id);
+
+  void SaveDesktopCaptureWindowIdOnDeviceThread(
+      media::VideoCaptureSessionId session_id,
+      gfx::NativeViewId window_id);
+
   // The message loop of media stream device thread, where VCD's live.
-  scoped_refptr<base::MessageLoopProxy> device_loop_;
+  scoped_refptr<base::SingleThreadTaskRunner> device_task_runner_;
 
   // Only accessed on Browser::IO thread.
   MediaStreamProviderListener* listener_;
-  int new_capture_session_id_;
+  media::VideoCaptureSessionId new_capture_session_id_;
 
   // An entry is kept in this map for every session that has been created via
   // the Open() entry point. The keys are session_id's. This map is used to
   // determine which device to use when StartCaptureForClient() occurs. Used
   // only on the IO thread.
-  std::map<int, MediaStreamDevice> sessions_;
+  std::map<media::VideoCaptureSessionId, MediaStreamDevice> sessions_;
 
   // An entry, kept in a map, that owns a VideoCaptureDevice and its associated
   // VideoCaptureController. VideoCaptureManager owns all VideoCaptureDevices
@@ -167,15 +220,28 @@ class CONTENT_EXPORT VideoCaptureManager : public MediaStreamProvider {
   typedef std::set<DeviceEntry*> DeviceEntries;
   DeviceEntries devices_;
 
-  // Set to true if using fake video capture devices for testing, false by
-  // default. This is only used for the MEDIA_DEVICE_VIDEO_CAPTURE device type.
-  bool use_fake_device_;
+  // Local cache of the enumerated video capture devices' names and capture
+  // supported formats. A snapshot of the current devices and their capabilities
+  // is composed in GetAvailableDevicesInfoOnDeviceThread() --coming
+  // from EnumerateDevices()--, and this snapshot is used to update this list in
+  // OnDevicesInfoEnumerated(). GetDeviceSupportedFormats() will
+  // use this list if the device is not started, otherwise it will retrieve the
+  // active device capture format from the VideoCaptureController associated.
+  DeviceInfos devices_info_cache_;
 
-  // We cache the enumerated video capture devices in
-  // GetAvailableDevicesOnDeviceThread() and then later look up the requested ID
-  // when a device is created in DoStartDeviceOnDeviceThread(). Used only on the
-  // device thread.
-  media::VideoCaptureDevice::Names video_capture_devices_;
+  // For unit testing and for performance/quality tests, a test device can be
+  // used instead of a real one. The device can be a simple fake device (a
+  // rolling pacman), or a file that is played in a loop continuously. This only
+  // applies to the MEDIA_DEVICE_VIDEO_CAPTURE device type.
+  enum {
+    DISABLED,
+    TEST_PATTERN,
+    Y4M_FILE
+  } artificial_device_source_for_testing_;
+
+  // Accessed on the device thread only.
+  std::map<media::VideoCaptureSessionId, gfx::NativeViewId>
+      notification_window_ids_;
 
   DISALLOW_COPY_AND_ASSIGN(VideoCaptureManager);
 };

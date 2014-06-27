@@ -54,11 +54,12 @@ void CloseHandlesAndTerminateProcess(PROCESS_INFORMATION* process_information) {
 // Connects to the executor server corresponding to |session_id|.
 bool ConnectToExecutionServer(uint32 session_id,
                               base::win::ScopedHandle* pipe_out) {
-  string16 pipe_name;
+  base::string16 pipe_name;
 
   // Use winsta!WinStationQueryInformationW() to determine the process creation
   // pipe name for the session.
-  base::FilePath winsta_path(base::GetNativeLibraryName(UTF8ToUTF16("winsta")));
+  base::FilePath winsta_path(
+      base::GetNativeLibraryName(base::UTF8ToUTF16("winsta")));
   base::ScopedNativeLibrary winsta(winsta_path);
   if (winsta.is_valid()) {
     PWINSTATIONQUERYINFORMATIONW win_station_query_information =
@@ -80,7 +81,7 @@ bool ConnectToExecutionServer(uint32 session_id,
 
   // Use the default pipe name if we couldn't query its name.
   if (pipe_name.empty()) {
-    pipe_name = UTF8ToUTF16(
+    pipe_name = base::UTF8ToUTF16(
         base::StringPrintf(kCreateProcessDefaultPipeNameFormat, session_id));
   }
 
@@ -122,26 +123,26 @@ bool ConnectToExecutionServer(uint32 session_id,
 // Copies the process token making it a primary impersonation token.
 // The returned handle will have |desired_access| rights.
 bool CopyProcessToken(DWORD desired_access, ScopedHandle* token_out) {
-  ScopedHandle process_token;
+  HANDLE temp_handle;
   if (!OpenProcessToken(GetCurrentProcess(),
                         TOKEN_DUPLICATE | desired_access,
-                        process_token.Receive())) {
+                        &temp_handle)) {
     LOG_GETLASTERROR(ERROR) << "Failed to open process token";
     return false;
   }
+  ScopedHandle process_token(temp_handle);
 
-  ScopedHandle copied_token;
   if (!DuplicateTokenEx(process_token,
                         desired_access,
                         NULL,
                         SecurityImpersonation,
                         TokenPrimary,
-                        copied_token.Receive())) {
+                        &temp_handle)) {
     LOG_GETLASTERROR(ERROR) << "Failed to duplicate the process token";
     return false;
   }
 
-  *token_out = copied_token.Pass();
+  token_out->Set(temp_handle);
   return true;
 }
 
@@ -290,7 +291,7 @@ bool SendCreateProcessRequest(
     const base::FilePath::StringType& application_name,
     const CommandLine::StringType& command_line,
     DWORD creation_flags,
-    const char16* desktop_name) {
+    const base::char16* desktop_name) {
   // |CreateProcessRequest| structure passes the same parameters to
   // the execution server as CreateProcessAsUser() function does. Strings are
   // stored as wide strings immediately after the structure. String pointers are
@@ -313,7 +314,7 @@ bool SendCreateProcessRequest(
     PROCESS_INFORMATION process_information;
   };
 
-  string16 desktop;
+  base::string16 desktop;
   if (desktop_name)
     desktop = desktop_name;
 
@@ -373,7 +374,7 @@ bool CreateRemoteSessionProcess(
     const base::FilePath::StringType& application_name,
     const CommandLine::StringType& command_line,
     DWORD creation_flags,
-    const char16* desktop_name,
+    const base::char16* desktop_name,
     PROCESS_INFORMATION* process_information_out)
 {
   DCHECK_LT(base::win::GetVersion(), base::win::VERSION_VISTA);
@@ -456,7 +457,7 @@ bool LaunchProcessWithToken(const base::FilePath& binary,
                             SECURITY_ATTRIBUTES* thread_attributes,
                             bool inherit_handles,
                             DWORD creation_flags,
-                            const char16* desktop_name,
+                            const base::char16* desktop_name,
                             ScopedHandle* process_out,
                             ScopedHandle* thread_out) {
   base::FilePath::StringType application_name = binary.value();
@@ -465,9 +466,9 @@ bool LaunchProcessWithToken(const base::FilePath& binary,
   memset(&startup_info, 0, sizeof(startup_info));
   startup_info.cb = sizeof(startup_info);
   if (desktop_name)
-    startup_info.lpDesktop = const_cast<char16*>(desktop_name);
+    startup_info.lpDesktop = const_cast<base::char16*>(desktop_name);
 
-  base::win::ScopedProcessInformation process_info;
+  PROCESS_INFORMATION temp_process_info = {};
   BOOL result = CreateProcessAsUser(user_token,
                                     application_name.c_str(),
                                     const_cast<LPWSTR>(command_line.c_str()),
@@ -478,7 +479,7 @@ bool LaunchProcessWithToken(const base::FilePath& binary,
                                     NULL,
                                     NULL,
                                     &startup_info,
-                                    process_info.Receive());
+                                    &temp_process_info);
 
   // CreateProcessAsUser will fail on XP and W2K3 with ERROR_PIPE_NOT_CONNECTED
   // if the user hasn't logged to the target session yet. In such a case
@@ -502,7 +503,7 @@ bool LaunchProcessWithToken(const base::FilePath& binary,
                                           command_line,
                                           creation_flags,
                                           desktop_name,
-                                          process_info.Receive());
+                                          &temp_process_info);
     } else {
       // Restore the error status returned by CreateProcessAsUser().
       result = FALSE;
@@ -515,6 +516,8 @@ bool LaunchProcessWithToken(const base::FilePath& binary,
         "Failed to launch a process with a user token";
     return false;
   }
+
+  base::win::ScopedProcessInformation process_info(temp_process_info);
 
   CHECK(process_info.IsValid());
   process_out->Set(process_info.TakeProcessHandle());

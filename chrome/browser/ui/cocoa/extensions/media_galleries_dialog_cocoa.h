@@ -17,6 +17,10 @@
 class MediaGalleriesDialogBrowserTest;
 class MediaGalleriesDialogTest;
 
+namespace ui {
+class MenuModel;
+}
+
 // This class displays an alert that can be used to grant permission for
 // extensions to access a gallery (media folders).
 class MediaGalleriesDialogCocoa : public ConstrainedWindowMacDelegate,
@@ -42,6 +46,8 @@ class MediaGalleriesDialogCocoa : public ConstrainedWindowMacDelegate,
   // ConstrainedWindowMacDelegate implementation.
   virtual void OnConstrainedWindowClosed(
       ConstrainedWindowMac* window) OVERRIDE;
+
+  ui::MenuModel* GetContextMenu(MediaGalleryPrefId prefid);
 
  private:
   FRIEND_TEST_ALL_PREFIXES(MediaGalleriesDialogBrowserTest, Close);
@@ -82,7 +88,7 @@ class MediaGalleriesDialogCocoa : public ConstrainedWindowMacDelegate,
   base::scoped_nsobject<NSView> checkbox_container_;
 
   // Container view for the main dialog contents.
-  base::scoped_nsobject<NSBox> accessory_;
+  base::scoped_nsobject<NSBox> main_container_;
 
   // An Objective-C class to route callbacks from Cocoa code.
   base::scoped_nsobject<MediaGalleriesCocoaController> cocoa_controller_;

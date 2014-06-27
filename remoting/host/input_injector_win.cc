@@ -11,20 +11,45 @@
 #include "base/location.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
+#include "base/strings/string16.h"
+#include "base/strings/utf_string_conversions.h"
 #include "remoting/base/util.h"
 #include "remoting/host/clipboard.h"
 #include "remoting/proto/event.pb.h"
-// SkSize.h assumes that stdint.h-style types are already defined.
-#include "third_party/skia/include/core/SkTypes.h"
-#include "third_party/skia/include/core/SkSize.h"
-#include "ui/base/keycodes/keycode_converter.h"
+#include "ui/events/keycodes/dom4/keycode_converter.h"
 
 namespace remoting {
 
 namespace {
 
+// Helper used to call SendInput() API.
+void SendKeyboardInput(uint32_t flags, uint16_t scancode) {
+  // Populate a Windows INPUT structure for the event.
+  INPUT input;
+  memset(&input, 0, sizeof(input));
+  input.type = INPUT_KEYBOARD;
+  input.ki.time = 0;
+  input.ki.dwFlags = flags;
+  input.ki.wScan = scancode;
+
+  if ((flags & KEYEVENTF_UNICODE) == 0) {
+    // Windows scancodes are only 8-bit, so store the low-order byte into the
+    // event and set the extended flag if any high-order bits are set. The only
+    // high-order values we should see are 0xE0 or 0xE1. The extended bit
+    // usually distinguishes keys with the same meaning, e.g. left & right
+    // shift.
+    input.ki.wScan &= 0xFF;
+    if ((scancode & 0xFF00) != 0x0000)
+      input.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+  }
+
+  if (SendInput(1, &input, sizeof(INPUT)) == 0)
+    LOG_GETLASTERROR(ERROR) << "Failed to inject a key event";
+}
+
 using protocol::ClipboardEvent;
 using protocol::KeyEvent;
+using protocol::TextEvent;
 using protocol::MouseEvent;
 
 // A class to generate events on Windows.
@@ -39,6 +64,7 @@ class InputInjectorWin : public InputInjector {
 
   // InputStub interface.
   virtual void InjectKeyEvent(const KeyEvent& event) OVERRIDE;
+  virtual void InjectTextEvent(const TextEvent& event) OVERRIDE;
   virtual void InjectMouseEvent(const MouseEvent& event) OVERRIDE;
 
   // InputInjector interface.
@@ -57,6 +83,7 @@ class InputInjectorWin : public InputInjector {
 
     // Mirrors the InputStub interface.
     void InjectKeyEvent(const KeyEvent& event);
+    void InjectTextEvent(const TextEvent& event);
     void InjectMouseEvent(const MouseEvent& event);
 
     // Mirrors the InputInjector interface.
@@ -69,6 +96,7 @@ class InputInjectorWin : public InputInjector {
     virtual ~Core();
 
     void HandleKey(const KeyEvent& event);
+    void HandleText(const TextEvent& event);
     void HandleMouse(const MouseEvent& event);
 
     scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
@@ -99,6 +127,10 @@ void InputInjectorWin::InjectClipboardEvent(const ClipboardEvent& event) {
 
 void InputInjectorWin::InjectKeyEvent(const KeyEvent& event) {
   core_->InjectKeyEvent(event);
+}
+
+void InputInjectorWin::InjectTextEvent(const TextEvent& event) {
+  core_->InjectTextEvent(event);
 }
 
 void InputInjectorWin::InjectMouseEvent(const MouseEvent& event) {
@@ -139,6 +171,16 @@ void InputInjectorWin::Core::InjectKeyEvent(const KeyEvent& event) {
   HandleKey(event);
 }
 
+void InputInjectorWin::Core::InjectTextEvent(const TextEvent& event) {
+  if (!main_task_runner_->BelongsToCurrentThread()) {
+    main_task_runner_->PostTask(
+        FROM_HERE, base::Bind(&Core::InjectTextEvent, this, event));
+    return;
+  }
+
+  HandleText(event);
+}
+
 void InputInjectorWin::Core::InjectMouseEvent(const MouseEvent& event) {
   if (!main_task_runner_->BelongsToCurrentThread()) {
     main_task_runner_->PostTask(
@@ -170,13 +212,11 @@ void InputInjectorWin::Core::Stop() {
   clipboard_->Stop();
 }
 
-InputInjectorWin::Core::~Core() {
-}
+InputInjectorWin::Core::~Core() {}
 
 void InputInjectorWin::Core::HandleKey(const KeyEvent& event) {
   // HostEventDispatcher should filter events missing the pressed field.
-  if (!event.has_pressed() || !event.has_usb_keycode())
-    return;
+  DCHECK(event.has_pressed() && event.has_usb_keycode());
 
   // Reset the system idle suspend timeout.
   SetThreadExecutionState(ES_SYSTEM_REQUIRED);
@@ -190,25 +230,20 @@ void InputInjectorWin::Core::HandleKey(const KeyEvent& event) {
   if (scancode == key_converter->InvalidNativeKeycode())
     return;
 
-  // Populate the a Windows INPUT structure for the event.
-  INPUT input;
-  memset(&input, 0, sizeof(input));
-  input.type = INPUT_KEYBOARD;
-  input.ki.time = 0;
-  input.ki.dwFlags = KEYEVENTF_SCANCODE;
-  if (!event.pressed())
-    input.ki.dwFlags |= KEYEVENTF_KEYUP;
+  uint32_t flags = KEYEVENTF_SCANCODE | (event.pressed() ? 0 : KEYEVENTF_KEYUP);
+  SendKeyboardInput(flags, scancode);
+}
 
-  // Windows scancodes are only 8-bit, so store the low-order byte into the
-  // event and set the extended flag if any high-order bits are set. The only
-  // high-order values we should see are 0xE0 or 0xE1. The extended bit usually
-  // distinguishes keys with the same meaning, e.g. left & right shift.
-  input.ki.wScan = scancode & 0xFF;
-  if ((scancode & 0xFF00) != 0x0000)
-    input.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+void InputInjectorWin::Core::HandleText(const TextEvent& event) {
+  // HostEventDispatcher should filter events missing the pressed field.
+  DCHECK(event.has_text());
 
-  if (SendInput(1, &input, sizeof(INPUT)) == 0)
-    LOG_GETLASTERROR(ERROR) << "Failed to inject a key event";
+  base::string16 text = base::UTF8ToUTF16(event.text());
+  for (base::string16::const_iterator it = text.begin();
+       it != text.end(); ++it)  {
+    SendKeyboardInput(KEYEVENTF_UNICODE, *it);
+    SendKeyboardInput(KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, *it);
+  }
 }
 
 void InputInjectorWin::Core::HandleMouse(const MouseEvent& event) {
@@ -224,13 +259,13 @@ void InputInjectorWin::Core::HandleMouse(const MouseEvent& event) {
     input.mi.dy = event.delta_y();
     input.mi.dwFlags |= MOUSEEVENTF_MOVE | MOUSEEVENTF_VIRTUALDESK;
   } else if (event.has_x() && event.has_y()) {
-    SkISize screen_size(SkISize::Make(GetSystemMetrics(SM_CXVIRTUALSCREEN),
-                                      GetSystemMetrics(SM_CYVIRTUALSCREEN)));
-    if ((screen_size.width() > 1) && (screen_size.height() > 1)) {
-      int x = std::max(0, std::min(screen_size.width(), event.x()));
-      int y = std::max(0, std::min(screen_size.height(), event.y()));
-      input.mi.dx = static_cast<int>((x * 65535) / (screen_size.width() - 1));
-      input.mi.dy = static_cast<int>((y * 65535) / (screen_size.height() - 1));
+    int width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    int height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    if (width > 1 && height > 1) {
+      int x = std::max(0, std::min(width, event.x()));
+      int y = std::max(0, std::min(height, event.y()));
+      input.mi.dx = static_cast<int>((x * 65535) / (width - 1));
+      input.mi.dy = static_cast<int>((y * 65535) / (height - 1));
       input.mi.dwFlags |=
           MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
     }

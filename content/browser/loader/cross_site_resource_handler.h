@@ -5,7 +5,9 @@
 #ifndef CONTENT_BROWSER_LOADER_CROSS_SITE_RESOURCE_HANDLER_H_
 #define CONTENT_BROWSER_LOADER_CROSS_SITE_RESOURCE_HANDLER_H_
 
+#include "base/memory/ref_counted.h"
 #include "content/browser/loader/layered_resource_handler.h"
+#include "content/common/content_export.h"
 #include "net/url_request/url_request_status.h"
 
 namespace net {
@@ -36,13 +38,19 @@ class CrossSiteResourceHandler : public LayeredResourceHandler {
   virtual bool OnReadCompleted(int request_id,
                                int bytes_read,
                                bool* defer) OVERRIDE;
-  virtual bool OnResponseCompleted(int request_id,
+  virtual void OnResponseCompleted(int request_id,
                                    const net::URLRequestStatus& status,
-                                   const std::string& security_info) OVERRIDE;
+                                   const std::string& security_info,
+                                   bool* defer) OVERRIDE;
 
   // We can now send the response to the new renderer, which will cause
   // WebContentsImpl to swap in the new renderer and destroy the old one.
   void ResumeResponse();
+
+  // When set to true, requests are leaked when they can't be passed to a
+  // RenderViewHost, for unit tests.
+  CONTENT_EXPORT static void SetLeakRequestsForTesting(
+      bool leak_requests_for_testing);
 
  private:
   // Prepare to render the cross-site response in a new RenderViewHost, by
@@ -53,13 +61,17 @@ class CrossSiteResourceHandler : public LayeredResourceHandler {
 
   void ResumeIfDeferred();
 
+  // Called when about to defer a request.  Sets |did_defer_| and logs the
+  // defferral
+  void OnDidDefer();
+
   bool has_started_response_;
   bool in_cross_site_transition_;
   bool completed_during_transition_;
   bool did_defer_;
   net::URLRequestStatus completed_status_;
   std::string completed_security_info_;
-  ResourceResponse* response_;
+  scoped_refptr<ResourceResponse> response_;
 
   DISALLOW_COPY_AND_ASSIGN(CrossSiteResourceHandler);
 };

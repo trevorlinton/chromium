@@ -8,7 +8,9 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/autofill/autofill_dialog_types.h"
 #include "testing/gtest_mac.h"
-#import "ui/base/test/ui_cocoa_test_helper.h"
+#import "ui/gfx/test/ui_cocoa_test_helper.h"
+
+using base::ASCIIToUTF16;
 
 namespace {
 
@@ -46,12 +48,12 @@ TEST_F(AutofillNotificationControllerTest, Subviews) {
   EXPECT_TRUE([[[view subviews] objectAtIndex:1] isKindOfClass:
       [NSButton class]]);
   EXPECT_TRUE([[[view subviews] objectAtIndex:2] isKindOfClass:
-      [NSImageView class]]);
+      [NSButton class]]);
   EXPECT_NSEQ([controller_ textview],
               [[view subviews] objectAtIndex:0]);
   EXPECT_NSEQ([controller_ checkbox],
               [[view subviews] objectAtIndex:1]);
-  EXPECT_NSEQ([controller_ tooltipIcon],
+  EXPECT_NSEQ([controller_ tooltipView],
               [[view subviews] objectAtIndex:2]);
 
   // Just to exercise the code path.
@@ -66,7 +68,7 @@ TEST_F(AutofillNotificationControllerTest, TextLabelOnly) {
 
   EXPECT_FALSE([[controller_ textview] isHidden]);
   EXPECT_TRUE([[controller_ checkbox] isHidden]);
-  EXPECT_TRUE([[controller_ tooltipIcon] isHidden]);
+  EXPECT_TRUE([[controller_ tooltipView] isHidden]);
 }
 
 TEST_F(AutofillNotificationControllerTest, CheckboxOnly) {
@@ -78,7 +80,7 @@ TEST_F(AutofillNotificationControllerTest, CheckboxOnly) {
 
   EXPECT_TRUE([[controller_ textview] isHidden]);
   EXPECT_FALSE([[controller_ checkbox] isHidden]);
-  EXPECT_TRUE([[controller_ tooltipIcon] isHidden]);
+  EXPECT_TRUE([[controller_ tooltipView] isHidden]);
 }
 
 TEST_F(AutofillNotificationControllerTest, TextLabelAndTooltip) {
@@ -90,9 +92,7 @@ TEST_F(AutofillNotificationControllerTest, TextLabelAndTooltip) {
 
   EXPECT_FALSE([[controller_ textview] isHidden]);
   EXPECT_TRUE([[controller_ checkbox] isHidden]);
-  EXPECT_FALSE([[controller_ tooltipIcon] isHidden]);
-  EXPECT_NSEQ(@"My very informative tooltip.",
-              [[controller_ tooltipIcon] toolTip]);
+  EXPECT_FALSE([[controller_ tooltipView] isHidden]);
 }
 
 TEST_F(AutofillNotificationControllerTest, CheckboxAndTooltip) {
@@ -105,7 +105,5 @@ TEST_F(AutofillNotificationControllerTest, CheckboxAndTooltip) {
 
   EXPECT_TRUE([[controller_ textview] isHidden]);
   EXPECT_FALSE([[controller_ checkbox] isHidden]);
-  EXPECT_FALSE([[controller_ tooltipIcon] isHidden]);
-  EXPECT_NSEQ(@"My very informative tooltip.",
-              [[controller_ tooltipIcon] toolTip]);
+  EXPECT_FALSE([[controller_ tooltipView] isHidden]);
 }

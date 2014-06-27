@@ -63,7 +63,8 @@ class LayerTreeJsonParserSanityCheck : public testing::Test {
 
 TEST_F(LayerTreeJsonParserSanityCheck, Basic) {
   FakeImplProxy proxy;
-  FakeLayerTreeHostImpl host_impl(&proxy);
+  TestSharedBitmapManager shared_bitmap_manager;
+  FakeLayerTreeHostImpl host_impl(&proxy, &shared_bitmap_manager);
   LayerTreeImpl* tree = host_impl.active_tree();
 
   scoped_ptr<LayerImpl> root_impl(LayerImpl::Create(tree, 1));
@@ -90,7 +91,8 @@ TEST_F(LayerTreeJsonParserSanityCheck, Basic) {
 
 TEST_F(LayerTreeJsonParserSanityCheck, EventHandlerRegions) {
   FakeImplProxy proxy;
-  FakeLayerTreeHostImpl host_impl(&proxy);
+  TestSharedBitmapManager shared_bitmap_manager;
+  FakeLayerTreeHostImpl host_impl(&proxy, &shared_bitmap_manager);
   LayerTreeImpl* tree = host_impl.active_tree();
 
   scoped_ptr<LayerImpl> root_impl(LayerImpl::Create(tree, 1));
@@ -99,7 +101,7 @@ TEST_F(LayerTreeJsonParserSanityCheck, EventHandlerRegions) {
   root_impl->SetBounds(gfx::Size(100, 100));
   touch_layer->SetBounds(gfx::Size(50, 50));
 
-  cc::Region touch_region;
+  Region touch_region;
   touch_region.Union(gfx::Rect(10, 10, 20, 30));
   touch_region.Union(gfx::Rect(40, 10, 20, 20));
   touch_layer->SetTouchEventHandlerRegion(touch_region);

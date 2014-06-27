@@ -36,9 +36,10 @@ const char* const kSetCookieHeaders[] = {
 };
 
 net::SocketStreamJob* WebSocketJobFactory(
-    const GURL& url, net::SocketStream::Delegate* delegate) {
+    const GURL& url, net::SocketStream::Delegate* delegate,
+    net::URLRequestContext* context, net::CookieStore* cookie_store) {
   net::WebSocketJob* job = new net::WebSocketJob(delegate);
-  job->InitSocketStream(new net::SocketStream(url, job));
+  job->InitSocketStream(new net::SocketStream(url, job, context, cookie_store));
   return job;
 }
 
@@ -303,9 +304,10 @@ void WebSocketJob::OnSentSpdyHeaders() {
   DCHECK_NE(INITIALIZED, state_);
   if (state_ != CONNECTING)
     return;
-  if (delegate_)
-    delegate_->OnSentData(socket_.get(), handshake_request_->original_length());
+  size_t original_length = handshake_request_->original_length();
   handshake_request_.reset();
+  if (delegate_)
+    delegate_->OnSentData(socket_.get(), original_length);
 }
 
 void WebSocketJob::OnSpdyResponseHeadersUpdated(
@@ -370,11 +372,11 @@ void WebSocketJob::AddCookieHeaderAndSend() {
   if (socket_.get() && delegate_ && state_ == CONNECTING) {
     handshake_request_->RemoveHeaders(kCookieHeaders,
                                       arraysize(kCookieHeaders));
-    if (allow && socket_->context()->cookie_store()) {
+    if (allow && socket_->cookie_store()) {
       // Add cookies, including HttpOnly cookies.
       CookieOptions cookie_options;
       cookie_options.set_include_httponly();
-      socket_->context()->cookie_store()->GetCookiesWithOptionsAsync(
+      socket_->cookie_store()->GetCookiesWithOptionsAsync(
           GetURLForCookies(), cookie_options,
           base::Bind(&WebSocketJob::LoadCookieCallback,
                      weak_ptr_factory_.GetWeakPtr()));
@@ -422,11 +424,12 @@ void WebSocketJob::OnSentHandshakeRequest(
   if (handshake_request_sent_ >= handshake_request_->raw_length()) {
     // handshake request has been sent.
     // notify original size of handshake request to delegate.
-    if (delegate_)
-      delegate_->OnSentData(
-          socket,
-          handshake_request_->original_length());
+    // Reset the handshake_request_ first in case this object is deleted by the
+    // delegate.
+    size_t original_length = handshake_request_->original_length();
     handshake_request_.reset();
+    if (delegate_)
+      delegate_->OnSentData(socket, original_length);
   }
 }
 
@@ -505,7 +508,7 @@ void WebSocketJob::SaveNextCookie() {
   callback_pending_ = false;
   save_next_cookie_running_ = true;
 
-  if (socket_->context()->cookie_store()) {
+  if (socket_->cookie_store()) {
     GURL url_for_cookies = GetURLForCookies();
 
     CookieOptions options;
@@ -526,7 +529,7 @@ void WebSocketJob::SaveNextCookie() {
         continue;
 
       callback_pending_ = true;
-      socket_->context()->cookie_store()->SetCookieWithOptionsAsync(
+      socket_->cookie_store()->SetCookieWithOptionsAsync(
           url_for_cookies, cookie, options,
           base::Bind(&WebSocketJob::OnCookieSaved,
                      weak_ptr_factory_.GetWeakPtr()));

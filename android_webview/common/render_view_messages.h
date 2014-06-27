@@ -67,7 +67,7 @@ IPC_MESSAGE_ROUTED0(AwViewMsg_ResetScrollAndScaleState)
 IPC_MESSAGE_ROUTED1(AwViewMsg_SetInitialPageScale,
                     double /* page_scale_factor */)
 
-// Makes the WebKit::WebView use the given size for layout regardless of what
+// Makes the blink::WebView use the given size for layout regardless of what
 // the size of the RenderWidget or viewport settings are.
 IPC_MESSAGE_ROUTED1(AwViewMsg_SetFixedLayoutSize,
                     gfx::Size /* size */)
@@ -99,3 +99,19 @@ IPC_MESSAGE_ROUTED1(AwViewHostMsg_PageScaleFactorChanged,
 // Sent whenever the contents size (as seen by RenderView) is changed.
 IPC_MESSAGE_ROUTED1(AwViewHostMsg_OnContentsSizeChanged,
                     gfx::Size /* contents_size */)
+
+// Sent immediately before a top level navigation is initiated within Blink.
+// There are some exlusions, the most important ones are it is not sent
+// when creating a popup window, and not sent for application initiated
+// navigations. See AwContentRendererClient::HandleNavigation for all
+// cornercases. This is sent before updating the NavigationController state
+// or creating a URLRequest for the main frame resource.
+IPC_SYNC_MESSAGE_CONTROL2_1(AwViewHostMsg_ShouldOverrideUrlLoading,
+                            int /* render_frame_id id */,
+                            base::string16 /* in - url */,
+                            bool /* out - result */)
+
+// Sent when a subframe is created.
+IPC_MESSAGE_CONTROL2(AwViewHostMsg_SubFrameCreated,
+                     int /* parent_render_frame_id */,
+                     int /* child_render_frame_id */)

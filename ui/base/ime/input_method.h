@@ -9,11 +9,8 @@
 
 #include "base/basictypes.h"
 #include "base/event_types.h"
-#include "base/i18n/rtl.h"
 #include "ui/base/ime/text_input_mode.h"
 #include "ui/base/ime/text_input_type.h"
-#include "ui/base/ui_export.h"
-#include "ui/events/keycodes/keyboard_codes.h"
 
 namespace ui {
 
@@ -45,11 +42,11 @@ class TextInputClient;
 // - Keeps track of the focused TextInputClient to see which client can call
 //   APIs, OnTextInputTypeChanged, OnCaretBoundsChanged, and CancelComposition,
 //   that change the state of the input method.
-// In Aura environment, aura::RootWindowHost creates an instance of
+// In Aura environment, aura::WindowTreeHost creates an instance of
 // ui::InputMethod and owns it.
 class InputMethod {
  public:
-  // TODO(yukawa): Move these typedef into ime_constants.h or somewhere.
+
 #if defined(OS_WIN)
   typedef LRESULT NativeEventResult;
 #else
@@ -99,12 +96,7 @@ class InputMethod {
   // ui::InputMethodDelegate::DispatchKeyEventPostIME(), once it's processed by
   // the input method. It should only be called by a message dispatcher.
   // Returns true if the event was processed.
-  virtual bool DispatchKeyEvent(const base::NativeEvent& native_key_event) = 0;
-
-  // TODO(yusukes): Add DispatchFabricatedKeyEvent to support virtual keyboards.
-  // TODO(yusukes): both win and ibus override to do nothing. Is this needed?
-  // Returns true if the event was processed.
-  virtual bool DispatchFabricatedKeyEvent(const ui::KeyEvent& event) = 0;
+  virtual bool DispatchKeyEvent(const ui::KeyEvent& event) = 0;
 
   // Called by the focused client whenever its text input type is changed.
   // Before calling this method, the focused client must confirm or clear
@@ -132,10 +124,6 @@ class InputMethod {
   // Returns the locale of current keyboard layout or input method, as a BCP-47
   // tag, or an empty string if the input method cannot provide it.
   virtual std::string GetInputLocale() = 0;
-
-  // Returns the text direction of current keyboard layout or input method, or
-  // base::i18n::UNKNOWN_DIRECTION if the input method cannot provide it.
-  virtual base::i18n::TextDirection GetInputTextDirection() = 0;
 
   // Checks if the input method is active, i.e. if it's ready for processing
   // keyboard event and generate composition or text result.
@@ -165,6 +153,9 @@ class InputMethod {
   // etc.) is open.  Returns false if no popup window is open or the detection
   // of IME popups is not supported.
   virtual bool IsCandidatePopupOpen() const = 0;
+
+  // Displays an on screen keyboard if enabled.
+  virtual void ShowImeIfNeeded() = 0;
 
   // Management of the observer list.
   virtual void AddObserver(InputMethodObserver* observer) = 0;

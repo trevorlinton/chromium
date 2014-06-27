@@ -8,14 +8,16 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "chrome/browser/extensions/extension_prefs.h"
-#include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system_factory.h"
 #include "chrome/browser/extensions/install_tracker.h"
 #include "chrome/browser/extensions/install_tracker_factory.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/recommended_apps_observer.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/pref_names.h"
+#include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registry.h"
+#include "extensions/browser/pref_names.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/extension_set.h"
 
 namespace app_list {
 
@@ -40,11 +42,9 @@ bool AppLaunchedMoreRecent(const AppSortInfo& app1, const AppSortInfo& app2) {
 RecommendedApps::RecommendedApps(Profile* profile) : profile_(profile) {
   extensions::InstallTrackerFactory::GetForProfile(profile_)->AddObserver(this);
 
-  ExtensionService* service =
-      extensions::ExtensionSystem::Get(profile_)->extension_service();
-  extensions::ExtensionPrefs* prefs = service->extension_prefs();
+  extensions::ExtensionPrefs* prefs = extensions::ExtensionPrefs::Get(profile_);
   pref_change_registrar_.Init(prefs->pref_service());
-  pref_change_registrar_.Add(prefs::kExtensionsPref,
+  pref_change_registrar_.Add(extensions::pref_names::kExtensions,
                              base::Bind(&RecommendedApps::Update,
                                         base::Unretained(this)));
 
@@ -65,14 +65,14 @@ void RecommendedApps::RemoveObserver(RecommendedAppsObserver* observer) {
 }
 
 void RecommendedApps::Update() {
-  ExtensionService* service =
-      extensions::ExtensionSystem::Get(profile_)->extension_service();
-  extensions::ExtensionPrefs* prefs = service->extension_prefs();
+  extensions::ExtensionPrefs* prefs = extensions::ExtensionPrefs::Get(profile_);
 
   std::vector<AppSortInfo> sorted_apps;
-  const ExtensionSet* extensions = service->extensions();
-  for (ExtensionSet::const_iterator app = extensions->begin();
-       app != extensions->end(); ++app) {
+  const extensions::ExtensionSet& extensions =
+      extensions::ExtensionRegistry::Get(profile_)->enabled_extensions();
+  for (extensions::ExtensionSet::const_iterator app = extensions.begin();
+       app != extensions.end();
+       ++app) {
     if (!(*app)->ShouldDisplayInAppLauncher())
       continue;
 
@@ -98,17 +98,6 @@ void RecommendedApps::Update() {
   }
 }
 
-void RecommendedApps::OnBeginExtensionInstall(const std::string& extension_id,
-                                     const std::string& extension_name,
-                                     const gfx::ImageSkia& installing_icon,
-                                     bool is_app,
-                                     bool is_platform_app) {}
-
-void RecommendedApps::OnDownloadProgress(const std::string& extension_id,
-                                int percent_downloaded) {}
-
-void RecommendedApps::OnInstallFailure(const std::string& extension_id) {}
-
 void RecommendedApps::OnExtensionInstalled(
     const extensions::Extension* extension) {
   Update();
@@ -128,12 +117,5 @@ void RecommendedApps::OnExtensionUninstalled(
     const extensions::Extension* extension) {
   Update();
 }
-
-void RecommendedApps::OnAppsReordered() {}
-
-void RecommendedApps::OnAppInstalledToAppList(
-    const std::string& extension_id) {}
-
-void RecommendedApps::OnShutdown() {}
 
 }  // namespace app_list

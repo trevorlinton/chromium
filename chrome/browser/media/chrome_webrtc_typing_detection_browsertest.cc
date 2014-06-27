@@ -47,7 +47,7 @@ static base::FilePath GetTestDataDir() {
 // Test that the typing detection feature works.
 // You must have the src-internal solution in your .gclient to put the required
 // pyauto_private directory into chrome/test/data/.
-class WebrtcTypingDetectionBrowserTest : public WebRtcTestBase {
+class WebRtcTypingDetectionBrowserTest : public WebRtcTestBase {
  public:
   // TODO(phoglund): clean up duplication from audio quality browser test when
   // this test is complete and is proven to work.
@@ -82,13 +82,6 @@ class WebrtcTypingDetectionBrowserTest : public WebRtcTestBase {
         "mixLocalStreamWithPreviouslyLoadedAudioFile()", tab_contents));
   }
 
-  // Ensures we didn't get any errors asynchronously (e.g. while no javascript
-  // call from this test was outstanding).
-  void AssertNoAsynchronousErrors(content::WebContents* tab_contents) {
-    EXPECT_EQ("ok-no-errors",
-              ExecuteJavascript("getAnyTestFailures()", tab_contents));
-  }
-
   void EstablishCall(content::WebContents* from_tab,
                      content::WebContents* to_tab) {
     EXPECT_EQ("ok-negotiating",
@@ -101,20 +94,11 @@ class WebrtcTypingDetectionBrowserTest : public WebRtcTestBase {
                                  "active", to_tab));
   }
 
-  void HangUp(content::WebContents* from_tab) {
-    EXPECT_EQ("ok-call-hung-up", ExecuteJavascript("hangUp()", from_tab));
-  }
-
-  void WaitUntilHangupVerified(content::WebContents* tab_contents) {
-    EXPECT_TRUE(PollingWaitUntil("getPeerConnectionReadyState()",
-                                 "no-peer-connection", tab_contents));
-  }
-
   PeerConnectionServerRunner peerconnection_server_;
 };
 
 // TODO(phoglund): enable when fully implemented.
-IN_PROC_BROWSER_TEST_F(WebrtcTypingDetectionBrowserTest,
+IN_PROC_BROWSER_TEST_F(WebRtcTypingDetectionBrowserTest,
                        DISABLED_MANUAL_TestTypingDetection) {
   // TODO(phoglund): make this use embedded_test_server when that test server
   // can handle files > ~400Kb.
@@ -126,7 +110,7 @@ IN_PROC_BROWSER_TEST_F(WebrtcTypingDetectionBrowserTest,
   content::WebContents* left_tab =
       browser()->tab_strip_model()->GetActiveWebContents();
 
-  chrome::AddBlankTabAt(browser(), -1, true);
+  chrome::AddTabAt(browser(), GURL(), -1, true);
   content::WebContents* right_tab =
       browser()->tab_strip_model()->GetActiveWebContents();
   ui_test_utils::NavigateToURL(
@@ -157,15 +141,9 @@ IN_PROC_BROWSER_TEST_F(WebrtcTypingDetectionBrowserTest,
   // state.
   SleepInJavascript(left_tab, 10000);
 
-  AssertNoAsynchronousErrors(left_tab);
-  AssertNoAsynchronousErrors(right_tab);
-
   HangUp(left_tab);
   WaitUntilHangupVerified(left_tab);
   WaitUntilHangupVerified(right_tab);
-
-  AssertNoAsynchronousErrors(left_tab);
-  AssertNoAsynchronousErrors(right_tab);
 
   ASSERT_TRUE(peerconnection_server_.Stop());
 }

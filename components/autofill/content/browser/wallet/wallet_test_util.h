@@ -15,8 +15,12 @@ namespace wallet {
 
 class Address;
 class FullWallet;
+class GaiaAccount;
 class Instrument;
 
+scoped_ptr<GaiaAccount> GetTestGaiaAccount();
+std::vector<base::string16> StreetAddress(const std::string& line1,
+                                          const std::string& line2);
 scoped_ptr<Address> GetTestAddress();
 scoped_ptr<Address> GetTestMinimalAddress();
 scoped_ptr<FullWallet> GetTestFullWallet();
@@ -50,6 +54,8 @@ scoped_ptr<Address> GetTestNonDefaultShippingAddress();
 scoped_ptr<WalletItems> GetTestWalletItemsWithRequiredAction(
     RequiredAction action);
 scoped_ptr<WalletItems> GetTestWalletItems(AmexPermission amex_permission);
+scoped_ptr<WalletItems> GetTestWalletItemsWithUsers(
+    const std::vector<std::string>& users, size_t user_index);
 scoped_ptr<WalletItems> GetTestWalletItemsWithDefaultIds(
     const std::string& default_instrument_id,
     const std::string& default_address_id,

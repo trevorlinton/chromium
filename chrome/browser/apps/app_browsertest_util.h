@@ -5,17 +5,19 @@
 #ifndef CHROME_BROWSER_APPS_APP_BROWSERTEST_UTIL_H_
 #define CHROME_BROWSER_APPS_APP_BROWSERTEST_UTIL_H_
 
-
-#include "apps/shell_window.h"
+#include "apps/app_window.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "content/public/common/page_transition_types.h"
+
+namespace base {
+class CommandLine;
+}
 
 namespace content {
 class WebContents;
 }
 
 class Browser;
-class CommandLine;
 
 namespace extensions {
 class Extension;
@@ -24,10 +26,10 @@ class PlatformAppBrowserTest : public ExtensionApiTest {
  public:
   PlatformAppBrowserTest();
 
-  virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE;
+  virtual void SetUpCommandLine(base::CommandLine* command_line) OVERRIDE;
 
-  // Gets the first shell window that is found for a given browser.
-  static apps::ShellWindow* GetFirstShellWindowForBrowser(Browser* browser);
+  // Gets the first app window that is found for a given browser.
+  static apps::AppWindow* GetFirstAppWindowForBrowser(Browser* browser);
 
  protected:
   // Runs the app named |name| out of the platform_apps subdirectory. Waits
@@ -41,14 +43,20 @@ class PlatformAppBrowserTest : public ExtensionApiTest {
   // subdirectory. Waits until it is launched.
   const Extension* InstallAndLaunchPlatformApp(const char* name);
 
-  // Gets the WebContents associated with the first shell window that is found
+  // Launch the given platform app.
+  void LaunchPlatformApp(const Extension* extension);
+
+  // Gets the WebContents associated with the first app window that is found
   // (most tests only deal with one platform app window, so this is good
   // enough).
-  content::WebContents* GetFirstShellWindowWebContents();
+  content::WebContents* GetFirstAppWindowWebContents();
 
-  // Gets the first shell window that is found (most tests only deal with one
+  // Gets the first app window that is found (most tests only deal with one
   // platform app window, so this is good enough).
-  apps::ShellWindow* GetFirstShellWindow();
+  apps::AppWindow* GetFirstAppWindow();
+
+  // Gets the first app window for an app.
+  apps::AppWindow* GetFirstAppWindowForApp(const std::string& app_id);
 
   // Runs chrome.windows.getAll for the given extension and returns the number
   // of windows that the function returns.
@@ -59,8 +67,11 @@ class PlatformAppBrowserTest : public ExtensionApiTest {
   bool RunGetWindowFunctionForExtension(int window_id,
                                         const Extension* extension);
 
-  // Returns the number of shell windows.
-  size_t GetShellWindowCount();
+  // Returns the number of app windows.
+  size_t GetAppWindowCount();
+
+  // Returns the number of app windows for a specific app.
+  size_t GetAppWindowCountForApp(const std::string& app_id);
 
   // The command line already has an argument on it - about:blank, which
   // is set by InProcessBrowserTest::PrepareTestCommandLine. For platform app
@@ -70,29 +81,36 @@ class PlatformAppBrowserTest : public ExtensionApiTest {
   // Sets up the command line for running platform apps.
   void SetCommandLineArg(const std::string& test_file);
 
-  // Creates an empty shell window for |extension|.
-  apps::ShellWindow* CreateShellWindow(const Extension* extension);
+  // Creates an empty app window for |extension|.
+  apps::AppWindow* CreateAppWindow(const Extension* extension);
 
-  apps::ShellWindow* CreateShellWindowFromParams(
+  apps::AppWindow* CreateAppWindowFromParams(
       const Extension* extension,
-      const apps::ShellWindow::CreateParams& params);
+      const apps::AppWindow::CreateParams& params);
 
   // Closes |window| and waits until it's gone.
-  void CloseShellWindow(apps::ShellWindow* window);
+  void CloseAppWindow(apps::AppWindow* window);
 
   // Call AdjustBoundsToBeVisibleOnScreen of |window|.
-  void CallAdjustBoundsToBeVisibleOnScreenForShellWindow(
-      apps::ShellWindow* window,
+  void CallAdjustBoundsToBeVisibleOnScreenForAppWindow(
+      apps::AppWindow* window,
       const gfx::Rect& cached_bounds,
       const gfx::Rect& cached_screen_bounds,
       const gfx::Rect& current_screen_bounds,
       const gfx::Size& minimum_size,
       gfx::Rect* bounds);
+
+  // Load a simple test app and create a window. The window must be closed by
+  // the caller in order to terminate the test - use CloseAppWindow().
+  // |window_create_options| are the options that will be passed to
+  // chrome.app.window.create() in the test app.
+  apps::AppWindow* CreateTestAppWindow(
+      const std::string& window_create_options);
 };
 
 class ExperimentalPlatformAppBrowserTest : public PlatformAppBrowserTest {
  public:
-  virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE;
+  virtual void SetUpCommandLine(base::CommandLine* command_line) OVERRIDE;
 };
 
 }  // namespace extensions

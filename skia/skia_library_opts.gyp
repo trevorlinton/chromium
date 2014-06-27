@@ -32,17 +32,20 @@
       ],
       'include_dirs': [
         '../third_party/skia/include/core',
+        '../third_party/skia/include/effects',
         '../third_party/skia/src/core',
         '../third_party/skia/src/opts',
       ],
       'conditions': [
         [ 'os_posix == 1 and OS != "mac" and OS != "android" and \
-           target_arch != "arm" and target_arch != "mipsel"', {
+           target_arch != "arm" and target_arch != "arm64" and \
+           target_arch != "mipsel"', {
           'cflags': [
             '-msse2',
           ],
         }],
-        [ 'target_arch != "arm" and target_arch != "mipsel"', {
+        [ 'target_arch != "arm" and target_arch != "mipsel" and \
+           target_arch != "arm64"', {
           'sources': [
             '../third_party/skia/src/opts/SkBitmapProcState_opts_SSE2.cpp',
             '../third_party/skia/src/opts/SkBlitRect_opts_SSE2.cpp',
@@ -51,11 +54,13 @@
             '../third_party/skia/src/opts/SkXfermode_opts_none.cpp',
             '../third_party/skia/src/opts/SkBitmapFilter_opts_SSE2.cpp',
             '../third_party/skia/src/opts/SkMorphology_opts_SSE2.cpp',
+            '../third_party/skia/src/opts/SkBlurImage_opts_SSE2.cpp',
           ],
           'dependencies': [
             'skia_opts_ssse3',
           ],
         }],
+        # TODO(rmcilroy): Add neon support for arm64 - http://crbug.com/354405
         [ 'target_arch == "arm"', {
           'conditions': [
             [ 'arm_version >= 7 and arm_neon == 1', {
@@ -109,6 +114,7 @@
             '../third_party/skia/src/opts/SkUtils_opts_none.cpp',
             '../third_party/skia/src/opts/SkXfermode_opts_none.cpp',
             '../third_party/skia/src/opts/SkMorphology_opts_none.cpp',
+            '../third_party/skia/src/opts/SkBlurImage_opts_none.cpp',
           ],
         }],
         [ 'target_arch == "arm" and arm_version >= 6', {
@@ -116,9 +122,10 @@
             '../third_party/skia/src/opts/SkBlitMask_opts_arm.cpp',
             '../third_party/skia/src/opts/SkBlitRow_opts_arm.cpp',
             '../third_party/skia/src/opts/SkBlitRow_opts_arm.h',
-            '../third_party/skia/src/opts/opts_check_arm.cpp',
+            '../third_party/skia/src/opts/SkBlurImage_opts_arm.cpp',
+            '../third_party/skia/src/opts/SkMorphology_opts_arm.cpp',
+            '../third_party/skia/src/opts/SkUtils_opts_arm.cpp',
             '../third_party/skia/src/opts/SkXfermode_opts_none.cpp',
-            '../third_party/skia/src/opts/SkMorphology_opts_none.cpp',
           ],
         }],
         [ 'target_arch == "mipsel"',{
@@ -132,6 +139,19 @@
             '../third_party/skia/src/opts/SkUtils_opts_none.cpp',
             '../third_party/skia/src/opts/SkXfermode_opts_none.cpp',
             '../third_party/skia/src/opts/SkMorphology_opts_none.cpp',
+            '../third_party/skia/src/opts/SkBlurImage_opts_none.cpp',
+          ],
+        }],
+        [ 'target_arch == "arm64"',{
+          # TODO(rmcilroy): Update this once http://crrev.com/143423004/ lands.
+          'sources': [
+            '../third_party/skia/src/opts/SkBitmapProcState_opts_none.cpp',
+            '../third_party/skia/src/opts/SkBlitMask_opts_none.cpp',
+            '../third_party/skia/src/opts/SkBlitRow_opts_none.cpp',
+            '../third_party/skia/src/opts/SkUtils_opts_none.cpp',
+            '../third_party/skia/src/opts/SkXfermode_opts_none.cpp',
+            '../third_party/skia/src/opts/SkMorphology_opts_none.cpp',
+            '../third_party/skia/src/opts/SkBlurImage_opts_none.cpp',
           ],
         }],
       ],
@@ -148,6 +168,7 @@
       ],
       'include_dirs': [
         '../third_party/skia/include/core',
+        '../third_party/skia/include/effects',
         '../third_party/skia/src/core',
       ],
       'conditions': [
@@ -171,7 +192,8 @@
             ],
           },
         }],
-        [ 'target_arch != "arm" and target_arch != "mipsel"', {
+        [ 'target_arch != "arm" and target_arch != "arm64" and \
+           target_arch != "mipsel"', {
           'sources': [
             '../third_party/skia/src/opts/SkBitmapProcState_opts_SSSE3.cpp',
           ],
@@ -186,6 +208,7 @@
       ],
       'include_dirs': [
         '../third_party/skia/include/core',
+        '../third_party/skia/include/effects',
         '../third_party/skia/src/core',
       ],
       'sources': [
@@ -195,6 +218,7 @@
         '../third_party/skia/src/opts/SkUtils_opts_none.cpp',
         '../third_party/skia/src/opts/SkXfermode_opts_none.cpp',
         '../third_party/skia/src/opts/SkMorphology_opts_none.cpp',
+        '../third_party/skia/src/opts/SkBlurImage_opts_none.cpp',
       ],
     },
   ],
@@ -213,6 +237,7 @@
           ],
           'include_dirs': [
             '../third_party/skia/include/core',
+            '../third_party/skia/include/effects',
             '../third_party/skia/src/core',
             '../third_party/skia/src/opts',
           ],
@@ -237,8 +262,11 @@
             '../third_party/skia/src/opts/SkBitmapProcState_matrixProcs_neon.cpp',
             '../third_party/skia/src/opts/SkBitmapProcState_matrix_clamp_neon.h',
             '../third_party/skia/src/opts/SkBitmapProcState_matrix_repeat_neon.h',
+            '../third_party/skia/src/opts/SkBlitMask_opts_arm_neon.cpp',
             '../third_party/skia/src/opts/SkBlitRow_opts_arm_neon.cpp',
             '../third_party/skia/src/opts/SkXfermode_opts_arm_neon.cpp',
+            '../third_party/skia/src/opts/SkBlurImage_opts_neon.cpp',
+            '../third_party/skia/src/opts/SkMorphology_opts_neon.cpp',
           ],
           'conditions': [
             ['arm_neon == 1', {

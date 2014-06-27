@@ -8,12 +8,12 @@
 #include "base/strings/string_piece.h"
 #include "base/values.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/mock_dbus_thread_manager.h"
+#include "chromeos/dbus/fake_dbus_thread_manager.h"
 #include "chromeos/dbus/mock_shill_manager_client.h"
 #include "chromeos/dbus/mock_shill_profile_client.h"
 #include "chromeos/dbus/mock_shill_service_client.h"
-#include "chromeos/dbus/shill_stub_helper.h"
 #include "chromeos/network/network_configuration_handler.h"
+#include "chromeos/network/network_profile_handler.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
 #include "chromeos/network/network_state_handler_observer.h"
@@ -23,6 +23,7 @@
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 using ::testing::_;
+using ::testing::AnyNumber;
 using ::testing::Invoke;
 using ::testing::Pointee;
 using ::testing::Return;
@@ -98,16 +99,27 @@ class NetworkConfigurationHandlerTest : public testing::Test {
   virtual ~NetworkConfigurationHandlerTest() {}
 
   virtual void SetUp() OVERRIDE {
-    MockDBusThreadManager* mock_dbus_thread_manager = new MockDBusThreadManager;
-    EXPECT_CALL(*mock_dbus_thread_manager, GetSystemBus())
-    .WillRepeatedly(Return(reinterpret_cast<dbus::Bus*>(NULL)));
-    DBusThreadManager::InitializeForTesting(mock_dbus_thread_manager);
-    mock_manager_client_ =
-        mock_dbus_thread_manager->mock_shill_manager_client();
-    mock_profile_client_ =
-        mock_dbus_thread_manager->mock_shill_profile_client();
-    mock_service_client_ =
-        mock_dbus_thread_manager->mock_shill_service_client();
+    FakeDBusThreadManager* dbus_thread_manager = new FakeDBusThreadManager;
+    mock_manager_client_ = new MockShillManagerClient();
+    mock_profile_client_ = new MockShillProfileClient();
+    mock_service_client_ = new MockShillServiceClient();
+    dbus_thread_manager->SetShillManagerClient(
+        scoped_ptr<ShillManagerClient>(mock_manager_client_).Pass());
+    dbus_thread_manager->SetShillProfileClient(
+        scoped_ptr<ShillProfileClient>(mock_profile_client_).Pass());
+    dbus_thread_manager->SetShillServiceClient(
+        scoped_ptr<ShillServiceClient>(mock_service_client_).Pass());
+
+    EXPECT_CALL(*mock_service_client_, GetProperties(_, _))
+        .Times(AnyNumber());
+    EXPECT_CALL(*mock_manager_client_, GetProperties(_))
+        .Times(AnyNumber());
+    EXPECT_CALL(*mock_manager_client_, AddPropertyChangedObserver(_))
+        .Times(AnyNumber());
+    EXPECT_CALL(*mock_manager_client_, RemovePropertyChangedObserver(_))
+        .Times(AnyNumber());
+
+    DBusThreadManager::InitializeForTesting(dbus_thread_manager);
 
     network_state_handler_.reset(NetworkStateHandler::InitializeForTest());
     network_configuration_handler_.reset(new NetworkConfigurationHandler());
@@ -213,10 +225,11 @@ TEST_F(NetworkConfigurationHandlerTest, GetProperties) {
   EXPECT_CALL(*mock_service_client_,
               SetProperty(dbus::ObjectPath(service_path), key,
                           IsEqualTo(networkNameValue.get()), _, _)).Times(1);
-  DBusThreadManager::Get()->GetShillServiceClient()->SetProperty(
-      dbus::ObjectPath(service_path), key, *networkNameValue,
-      base::Bind(&base::DoNothing),
-      base::Bind(&DBusErrorCallback));
+  mock_service_client_->SetProperty(dbus::ObjectPath(service_path),
+                                    key,
+                                    *networkNameValue,
+                                    base::Bind(&base::DoNothing),
+                                    base::Bind(&DBusErrorCallback));
   message_loop_.RunUntilIdle();
 
   ShillServiceClient::DictionaryValueCallback get_properties_callback;
@@ -333,9 +346,12 @@ TEST_F(NetworkConfigurationHandlerTest, ClearPropertiesError) {
 TEST_F(NetworkConfigurationHandlerTest, CreateConfiguration) {
   std::string networkName = "MyNetwork";
   std::string key = "SSID";
+  std::string type = "wifi";
   std::string profile = "profile path";
   base::DictionaryValue value;
   shill_property_util::SetSSID(networkName, &value);
+  value.SetWithoutPathExpansion(shill::kTypeProperty,
+                                base::Value::CreateStringValue(type));
   value.SetWithoutPathExpansion(shill::kProfileProperty,
                                 base::Value::CreateStringValue(profile));
 
@@ -346,7 +362,7 @@ TEST_F(NetworkConfigurationHandlerTest, CreateConfiguration) {
   network_configuration_handler_->CreateConfiguration(
       value,
       base::Bind(&StringResultCallback, std::string("/service/2")),
-      base::Bind(&ErrorCallback, false, std::string("")));
+      base::Bind(&ErrorCallback, false, std::string()));
   message_loop_.RunUntilIdle();
 }
 
@@ -484,7 +500,7 @@ class NetworkConfigurationHandlerStubTest : public testing::Test {
   base::MessageLoopForUI message_loop_;
   std::string success_callback_name_;
   std::string get_properties_path_;
-  scoped_ptr<DictionaryValue> get_properties_;
+  scoped_ptr<base::DictionaryValue> get_properties_;
   std::string create_service_path_;
 };
 
@@ -587,7 +603,7 @@ TEST_F(NetworkConfigurationHandlerStubTest, StubCreateConfiguration) {
   properties.SetStringWithoutPathExpansion(
       shill::kStateProperty, shill::kStateIdle);
   properties.SetStringWithoutPathExpansion(
-      shill::kProfileProperty, shill_stub_helper::kSharedProfilePath);
+      shill::kProfileProperty, NetworkProfileHandler::GetSharedProfilePath());
 
   network_configuration_handler_->CreateConfiguration(
       properties,
@@ -607,7 +623,7 @@ TEST_F(NetworkConfigurationHandlerStubTest, StubCreateConfiguration) {
   std::string actual_profile;
   EXPECT_TRUE(GetServiceStringProperty(
       create_service_path_, shill::kProfileProperty, &actual_profile));
-  EXPECT_EQ(shill_stub_helper::kSharedProfilePath, actual_profile);
+  EXPECT_EQ(NetworkProfileHandler::GetSharedProfilePath(), actual_profile);
 }
 
 }  // namespace chromeos

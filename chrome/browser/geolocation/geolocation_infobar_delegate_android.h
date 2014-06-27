@@ -13,21 +13,23 @@ class GoogleLocationSettingsHelper;
 class GeolocationInfoBarDelegateAndroid : public GeolocationInfoBarDelegate {
  public:
   GeolocationInfoBarDelegateAndroid(
-      InfoBarService* infobar_service,
       PermissionQueueController* controller,
       const PermissionRequestID& id,
       const GURL& requesting_frame_url,
       int contents_unique_id,
-      const std::string& display_languages);
+      const std::string& display_languages,
+      const std::string& accept_button_label);
 
  private:
   virtual ~GeolocationInfoBarDelegateAndroid();
 
   // ConfirmInfoBarDelegate:
-  virtual string16 GetButtonLabel(InfoBarButton button) const OVERRIDE;
+  virtual base::string16 GetButtonLabel(InfoBarButton button) const OVERRIDE;
   virtual bool Accept() OVERRIDE;
 
   scoped_ptr<GoogleLocationSettingsHelper> google_location_settings_helper_;
+
+  std::string accept_button_label_;
 
   DISALLOW_COPY_AND_ASSIGN(GeolocationInfoBarDelegateAndroid);
 };

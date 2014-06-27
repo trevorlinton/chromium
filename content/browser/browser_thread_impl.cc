@@ -167,7 +167,7 @@ MSVC_POP_WARNING()
 MSVC_ENABLE_OPTIMIZE();
 
 void BrowserThreadImpl::Run(base::MessageLoop* message_loop) {
-  BrowserThread::ID thread_id;
+  BrowserThread::ID thread_id = ID_COUNT;
   if (!GetCurrentThreadIdentifier(&thread_id))
     return Thread::Run(message_loop);
 
@@ -248,7 +248,7 @@ bool BrowserThreadImpl::PostTaskHelper(
   // Note: since the array is so small, ok to loop instead of creating a map,
   // which would require a lock because std::map isn't thread safe, defeating
   // the whole purpose of this optimization.
-  BrowserThread::ID current_thread;
+  BrowserThread::ID current_thread = ID_COUNT;
   bool target_thread_outlives_current =
       GetCurrentThreadIdentifier(&current_thread) &&
       current_thread >= identifier;
@@ -316,6 +316,7 @@ bool BrowserThread::PostBlockingPoolTask(
   return g_globals.Get().blocking_pool->PostWorkerTask(from_here, task);
 }
 
+// static
 bool BrowserThread::PostBlockingPoolTaskAndReply(
     const tracked_objects::Location& from_here,
     const base::Closure& task,
@@ -362,6 +363,33 @@ bool BrowserThread::CurrentlyOn(ID identifier) {
   return globals.threads[identifier] &&
          globals.threads[identifier]->message_loop() ==
              base::MessageLoop::current();
+}
+
+static const char* GetThreadName(BrowserThread::ID thread) {
+  if (BrowserThread::UI < thread && thread < BrowserThread::ID_COUNT)
+    return g_browser_thread_names[thread];
+  if (thread == BrowserThread::UI)
+    return "Chrome_UIThread";
+  return "Unknown Thread";
+}
+
+// static
+std::string BrowserThread::GetDCheckCurrentlyOnErrorMessage(ID expected) {
+  const std::string& message_loop_name =
+      base::MessageLoop::current()->thread_name();
+  ID actual_browser_thread;
+  const char* actual_name = "Unknown Thread";
+  if (!message_loop_name.empty()) {
+    actual_name = message_loop_name.c_str();
+  } else if (GetCurrentThreadIdentifier(&actual_browser_thread)) {
+    actual_name = GetThreadName(actual_browser_thread);
+  }
+  std::string result = "Must be called on ";
+  result += GetThreadName(expected);
+  result += "; actually called on ";
+  result += actual_name;
+  result += ".";
+  return result;
 }
 
 // static

@@ -10,11 +10,15 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/pickle.h"
+#include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/skia/include/core/SkColor.h"
+#include "third_party/skia/include/core/SkScalar.h"
+#include "third_party/skia/include/core/SkUnPreMultiply.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/gfx/size.h"
@@ -28,11 +32,25 @@
 #include "base/android/jni_string.h"
 #endif
 
+using base::ASCIIToUTF16;
+using base::UTF8ToUTF16;
+using base::UTF16ToUTF8;
+
 namespace ui {
 
 class ClipboardTest : public PlatformTest {
+ public:
+  static void WriteObjectsToClipboard(ui::Clipboard* clipboard,
+                                      const Clipboard::ObjectMap& objects) {
+    clipboard->WriteObjects(ui::CLIPBOARD_TYPE_COPY_PASTE, objects);
+  }
+
  protected:
   Clipboard& clipboard() { return clipboard_; }
+
+  void WriteObjectsToClipboard(const Clipboard::ObjectMap& objects) {
+    WriteObjectsToClipboard(&clipboard(), objects);
+  }
 
  private:
   base::MessageLoopForUI message_loop_;
@@ -41,9 +59,9 @@ class ClipboardTest : public PlatformTest {
 
 namespace {
 
-bool MarkupMatches(const string16& expected_markup,
-                   const string16& actual_markup) {
-  return actual_markup.find(expected_markup) != string16::npos;
+bool MarkupMatches(const base::string16& expected_markup,
+                   const base::string16& actual_markup) {
+  return actual_markup.find(expected_markup) != base::string16::npos;
 }
 
 }  // namespace
@@ -64,7 +82,7 @@ TEST_F(ClipboardTest, ClearTest) {
 }
 
 TEST_F(ClipboardTest, TextTest) {
-  string16 text(ASCIIToUTF16("This is a string16!#$")), text_result;
+  base::string16 text(ASCIIToUTF16("This is a base::string16!#$")), text_result;
   std::string ascii_text;
 
   {
@@ -85,12 +103,14 @@ TEST_F(ClipboardTest, TextTest) {
 }
 
 TEST_F(ClipboardTest, HTMLTest) {
-  string16 markup(ASCIIToUTF16("<string>Hi!</string>")), markup_result;
+  base::string16 markup(ASCIIToUTF16("<string>Hi!</string>")), markup_result;
+  base::string16 plain(ASCIIToUTF16("Hi!")), plain_result;
   std::string url("http://www.example.com/"), url_result;
 
   {
     ScopedClipboardWriter clipboard_writer(&clipboard(),
                                            CLIPBOARD_TYPE_COPY_PASTE);
+    clipboard_writer.WriteText(plain);
     clipboard_writer.WriteHTML(markup, url);
   }
 
@@ -128,8 +148,8 @@ TEST_F(ClipboardTest, RTFTest) {
 
 #if defined(TOOLKIT_GTK)
 TEST_F(ClipboardTest, MultipleBufferTest) {
-  string16 text(ASCIIToUTF16("Standard")), text_result;
-  string16 markup(ASCIIToUTF16("<string>Selection</string>")), markup_result;
+  base::string16 text(ASCIIToUTF16("Standard")), text_result;
+  base::string16 markup(ASCIIToUTF16("<string>Selection</string>"));
   std::string url("http://www.example.com/"), url_result;
 
   {
@@ -159,6 +179,7 @@ TEST_F(ClipboardTest, MultipleBufferTest) {
   EXPECT_EQ(text, text_result);
 
   uint32 ignored;
+  base::string16 markup_result;
   clipboard().ReadHTML(CLIPBOARD_TYPE_SELECTION,
                        &markup_result,
                        &url_result,
@@ -169,13 +190,15 @@ TEST_F(ClipboardTest, MultipleBufferTest) {
 #endif
 
 TEST_F(ClipboardTest, TrickyHTMLTest) {
-  string16 markup(ASCIIToUTF16("<em>Bye!<!--EndFragment --></em>")),
+  base::string16 markup(ASCIIToUTF16("<em>Bye!<!--EndFragment --></em>")),
       markup_result;
   std::string url, url_result;
+  base::string16 plain(ASCIIToUTF16("Bye!")), plain_result;
 
   {
     ScopedClipboardWriter clipboard_writer(&clipboard(),
                                            CLIPBOARD_TYPE_COPY_PASTE);
+    clipboard_writer.WriteText(plain);
     clipboard_writer.WriteHTML(markup, url);
   }
 
@@ -194,7 +217,7 @@ TEST_F(ClipboardTest, TrickyHTMLTest) {
 
 #if defined(OS_WIN)
 TEST_F(ClipboardTest, UniodeHTMLTest) {
-  string16 markup(UTF8ToUTF16("<div>A \xc3\xb8 \xe6\xb0\xb4</div>")),
+  base::string16 markup(UTF8ToUTF16("<div>A \xc3\xb8 \xe6\xb0\xb4</div>")),
       markup_result;
   std::string url, url_result;
 
@@ -230,19 +253,19 @@ TEST_F(ClipboardTest, EmptyHTMLTest) {
 
   EXPECT_TRUE(clipboard().IsFormatAvailable(Clipboard::GetHtmlFormatType(),
                                             CLIPBOARD_TYPE_COPY_PASTE));
-  string16 markup_result;
+  base::string16 markup_result;
   std::string url_result;
   uint32 ignored;
   clipboard().ReadHTML(CLIPBOARD_TYPE_COPY_PASTE, &markup_result, &url_result,
                        &ignored, &ignored);
-  EXPECT_PRED2(MarkupMatches, string16(), markup_result);
+  EXPECT_PRED2(MarkupMatches, base::string16(), markup_result);
 }
 #endif
 
 // TODO(estade): Port the following test (decide what target we use for urls)
 #if !defined(OS_POSIX) || defined(OS_MACOSX)
 TEST_F(ClipboardTest, BookmarkTest) {
-  string16 title(ASCIIToUTF16("The Example Company")), title_result;
+  base::string16 title(ASCIIToUTF16("The Example Company")), title_result;
   std::string url("http://www.example.com/"), url_result;
 
   {
@@ -260,8 +283,8 @@ TEST_F(ClipboardTest, BookmarkTest) {
 #endif  // defined(OS_WIN)
 
 TEST_F(ClipboardTest, MultiFormatTest) {
-  string16 text(ASCIIToUTF16("Hi!")), text_result;
-  string16 markup(ASCIIToUTF16("<strong>Hi!</string>")), markup_result;
+  base::string16 text(ASCIIToUTF16("Hi!")), text_result;
+  base::string16 markup(ASCIIToUTF16("<strong>Hi!</string>")), markup_result;
   std::string url("http://www.example.com/"), url_result;
   std::string ascii_text;
 
@@ -294,7 +317,7 @@ TEST_F(ClipboardTest, MultiFormatTest) {
 }
 
 TEST_F(ClipboardTest, URLTest) {
-  string16 url(ASCIIToUTF16("http://www.google.com/"));
+  base::string16 url(ASCIIToUTF16("http://www.google.com/"));
 
   {
     ScopedClipboardWriter clipboard_writer(&clipboard(),
@@ -306,7 +329,7 @@ TEST_F(ClipboardTest, URLTest) {
       Clipboard::GetPlainTextWFormatType(), CLIPBOARD_TYPE_COPY_PASTE));
   EXPECT_TRUE(clipboard().IsFormatAvailable(Clipboard::GetPlainTextFormatType(),
                                             CLIPBOARD_TYPE_COPY_PASTE));
-  string16 text_result;
+  base::string16 text_result;
   clipboard().ReadText(CLIPBOARD_TYPE_COPY_PASTE, &text_result);
 
   EXPECT_EQ(text_result, url);
@@ -322,19 +345,26 @@ TEST_F(ClipboardTest, URLTest) {
 #endif
 }
 
-TEST_F(ClipboardTest, SharedBitmapTest) {
-  unsigned int fake_bitmap[] = {
-    0x46155189, 0xF6A55C8D, 0x79845674, 0xFA57BD89,
-    0x78FD46AE, 0x87C64F5A, 0x36EDC5AF, 0x4378F568,
-    0x91E9F63A, 0xC31EA14F, 0x69AB32DF, 0x643A3FD1,
-  };
-  gfx::Size fake_bitmap_size(3, 4);
-  uint32 bytes = sizeof(fake_bitmap);
-
+// TODO(dcheng): The tests for copying to the clipboard also test IPC
+// interaction... consider moving them to a different layer so we can
+// consolidate the validation logic.
+// Note that |bitmap_data| is not premultiplied!
+static void TestBitmapWrite(Clipboard* clipboard,
+                            const uint32* bitmap_data,
+                            size_t bitmap_data_size,
+                            const gfx::Size& size) {
   // Create shared memory region.
   base::SharedMemory shared_buf;
-  ASSERT_TRUE(shared_buf.CreateAndMapAnonymous(bytes));
-  memcpy(shared_buf.memory(), fake_bitmap, bytes);
+  ASSERT_TRUE(shared_buf.CreateAndMapAnonymous(bitmap_data_size));
+  memcpy(shared_buf.memory(), bitmap_data, bitmap_data_size);
+  // CBF_SMBITMAP expects premultiplied bitmap data so do that now.
+  uint32* pixel_buffer = static_cast<uint32*>(shared_buf.memory());
+  for (int j = 0; j < size.height(); ++j) {
+    for (int i = 0; i < size.width(); ++i) {
+      uint32& pixel = pixel_buffer[i + j * size.width()];
+      pixel = SkPreMultiplyColor(pixel);
+    }
+  }
   base::SharedMemoryHandle handle_to_share;
   base::ProcessHandle current_process = base::kNullProcessHandle;
 #if defined(OS_WIN)
@@ -346,8 +376,8 @@ TEST_F(ClipboardTest, SharedBitmapTest) {
   // Setup data for clipboard().
   Clipboard::ObjectMapParam placeholder_param;
   Clipboard::ObjectMapParam size_param;
-  const char* size_data = reinterpret_cast<const char*>(&fake_bitmap_size);
-  for (size_t i = 0; i < sizeof(fake_bitmap_size); ++i)
+  const char* size_data = reinterpret_cast<const char*>(&size);
+  for (size_t i = 0; i < sizeof(size); ++i)
     size_param.push_back(size_data[i]);
 
   Clipboard::ObjectMapParams params;
@@ -359,46 +389,48 @@ TEST_F(ClipboardTest, SharedBitmapTest) {
   ASSERT_TRUE(Clipboard::ReplaceSharedMemHandle(
       &objects, handle_to_share, current_process));
 
-  clipboard().WriteObjects(CLIPBOARD_TYPE_COPY_PASTE,
-                           objects);
+  ClipboardTest::WriteObjectsToClipboard(clipboard, objects);
 
-  EXPECT_TRUE(clipboard().IsFormatAvailable(Clipboard::GetBitmapFormatType(),
-                                            CLIPBOARD_TYPE_COPY_PASTE));
+  EXPECT_TRUE(clipboard->IsFormatAvailable(Clipboard::GetBitmapFormatType(),
+                                           CLIPBOARD_TYPE_COPY_PASTE));
+  const SkBitmap& image = clipboard->ReadImage(CLIPBOARD_TYPE_COPY_PASTE);
+  EXPECT_EQ(size, gfx::Size(image.width(), image.height()));
+  SkAutoLockPixels image_lock(image);
+  for (int j = 0; j < image.height(); ++j) {
+    const uint32* row_address = image.getAddr32(0, j);
+    for (int i = 0; i < image.width(); ++i) {
+      int offset = i + j * image.width();
+      uint32 pixel = SkPreMultiplyColor(bitmap_data[offset]);
+#if defined(TOOLKIT_GTK)
+      // Non-Aura GTK doesn't support alpha transparency. Instead, the alpha
+      // channel is always set to 0xFF - see http://crbug.com/154573.
+      // However, since we premultiplied above, we must also premultiply here
+      // before unpremultiplying and setting alpha to 0xFF; otherwise, the
+      // results will not match GTK's.
+      EXPECT_EQ(
+          SkUnPreMultiply::PMColorToColor(pixel) | 0xFF000000, row_address[i])
+          << "i = " << i << ", j = " << j;
+#else
+      EXPECT_EQ(pixel, row_address[i])
+          << "i = " << i << ", j = " << j;
+#endif  // defined(TOOLKIT_GTK)
+    }
+  }
 }
 
-// The following test somehow fails on GTK and linux_aura. The image when read
-// back from the clipboard has the alpha channel set to 0xFF for some
-// reason. The other channels stay intact. So I am turning this on only for
-// aura.
-#if (defined(USE_AURA) && !(defined(OS_WIN) || !defined(OS_CHROMEOS))) || \
-    defined(OS_ANDROID)
-TEST_F(ClipboardTest, MultipleBitmapReadWriteTest) {
-  // Test first bitmap
-  unsigned int fake_bitmap_1[] = {
+TEST_F(ClipboardTest, SharedBitmapTest) {
+  const uint32 fake_bitmap_1[] = {
     0x46155189, 0xF6A55C8D, 0x79845674, 0xFA57BD89,
     0x78FD46AE, 0x87C64F5A, 0x36EDC5AF, 0x4378F568,
     0x91E9F63A, 0xC31EA14F, 0x69AB32DF, 0x643A3FD1,
   };
-  gfx::Size fake_bitmap_1_size(3, 4);
   {
-    ScopedClipboardWriter clipboard_writer(&clipboard(),
-                                           CLIPBOARD_TYPE_COPY_PASTE);
-    clipboard_writer.WriteBitmapFromPixels(fake_bitmap_1, fake_bitmap_1_size);
-  }
-  EXPECT_TRUE(clipboard().IsFormatAvailable(Clipboard::GetBitmapFormatType(),
-                                            CLIPBOARD_TYPE_COPY_PASTE));
-  SkBitmap image_1 = clipboard().ReadImage(CLIPBOARD_TYPE_COPY_PASTE);
-  EXPECT_EQ(fake_bitmap_1_size, gfx::Size(image_1.width(), image_1.height()));
-  unsigned int* pixels_1 = reinterpret_cast<unsigned int*>(image_1.getPixels());
-  for (int i = 0; i < fake_bitmap_1_size.width(); ++i) {
-    for (int j = 0; j < fake_bitmap_1_size.height(); ++j) {
-      int id = i * fake_bitmap_1_size.height() + j;
-      EXPECT_EQ(fake_bitmap_1[id], pixels_1[id]);
-    }
+    SCOPED_TRACE("first bitmap");
+    TestBitmapWrite(
+        &clipboard(), fake_bitmap_1, sizeof(fake_bitmap_1), gfx::Size(4, 3));
   }
 
-  // Test second bitmap
-  unsigned int fake_bitmap_2[] = {
+  const uint32 fake_bitmap_2[] = {
     0x46155189, 0xF6A55C8D,
     0x79845674, 0xFA57BD89,
     0x78FD46AE, 0x87C64F5A,
@@ -407,25 +439,117 @@ TEST_F(ClipboardTest, MultipleBitmapReadWriteTest) {
     0x69AB32DF, 0x643A3FD1,
     0xA6DF041D, 0x83046278,
   };
-  gfx::Size fake_bitmap_2_size(7, 2);
   {
-    ScopedClipboardWriter clipboard_writer(&clipboard(),
-                                           CLIPBOARD_TYPE_COPY_PASTE);
-    clipboard_writer.WriteBitmapFromPixels(fake_bitmap_2, fake_bitmap_2_size);
-  }
-  EXPECT_TRUE(clipboard().IsFormatAvailable(Clipboard::GetBitmapFormatType(),
-                                            CLIPBOARD_TYPE_COPY_PASTE));
-  SkBitmap image_2 = clipboard().ReadImage(CLIPBOARD_TYPE_COPY_PASTE);
-  EXPECT_EQ(fake_bitmap_2_size, gfx::Size(image_2.width(), image_2.height()));
-  unsigned int* pixels_2 = reinterpret_cast<unsigned int*>(image_2.getPixels());
-  for (int i = 0; i < fake_bitmap_2_size.width(); ++i) {
-    for (int j = 0; j < fake_bitmap_2_size.height(); ++j) {
-      int id = i * fake_bitmap_2_size.height() + j;
-      EXPECT_EQ(fake_bitmap_2[id], pixels_2[id]);
-    }
+    SCOPED_TRACE("second bitmap");
+    TestBitmapWrite(
+        &clipboard(), fake_bitmap_2, sizeof(fake_bitmap_2), gfx::Size(2, 7));
   }
 }
-#endif
+
+namespace {
+// A size class that just happens to have the same layout as gfx::Size!
+struct UnsafeSize {
+  int width;
+  int height;
+};
+COMPILE_ASSERT(sizeof(UnsafeSize) == sizeof(gfx::Size),
+               UnsafeSize_must_be_same_size_as_gfx_Size);
+}  // namespace
+
+TEST_F(ClipboardTest, SharedBitmapWithTwoNegativeSizes) {
+  Clipboard::ObjectMapParam placeholder_param;
+  void* crash_me = reinterpret_cast<void*>(57);
+  placeholder_param.resize(sizeof(crash_me));
+  memcpy(&placeholder_param.front(), &crash_me, sizeof(crash_me));
+
+  Clipboard::ObjectMapParam size_param;
+  UnsafeSize size = {-100, -100};
+  size_param.resize(sizeof(size));
+  memcpy(&size_param.front(), &size, sizeof(size));
+
+  Clipboard::ObjectMapParams params;
+  params.push_back(placeholder_param);
+  params.push_back(size_param);
+
+  Clipboard::ObjectMap objects;
+  objects[Clipboard::CBF_SMBITMAP] = params;
+
+  WriteObjectsToClipboard(objects);
+  EXPECT_FALSE(clipboard().IsFormatAvailable(Clipboard::GetBitmapFormatType(),
+                                             CLIPBOARD_TYPE_COPY_PASTE));
+}
+
+TEST_F(ClipboardTest, SharedBitmapWithOneNegativeSize) {
+  Clipboard::ObjectMapParam placeholder_param;
+  void* crash_me = reinterpret_cast<void*>(57);
+  placeholder_param.resize(sizeof(crash_me));
+  memcpy(&placeholder_param.front(), &crash_me, sizeof(crash_me));
+
+  Clipboard::ObjectMapParam size_param;
+  UnsafeSize size = {-100, 100};
+  size_param.resize(sizeof(size));
+  memcpy(&size_param.front(), &size, sizeof(size));
+
+  Clipboard::ObjectMapParams params;
+  params.push_back(placeholder_param);
+  params.push_back(size_param);
+
+  Clipboard::ObjectMap objects;
+  objects[Clipboard::CBF_SMBITMAP] = params;
+
+  WriteObjectsToClipboard(objects);
+  EXPECT_FALSE(clipboard().IsFormatAvailable(Clipboard::GetBitmapFormatType(),
+                                             CLIPBOARD_TYPE_COPY_PASTE));
+}
+
+TEST_F(ClipboardTest, BitmapWithSuperSize) {
+  Clipboard::ObjectMapParam placeholder_param;
+  void* crash_me = reinterpret_cast<void*>(57);
+  placeholder_param.resize(sizeof(crash_me));
+  memcpy(&placeholder_param.front(), &crash_me, sizeof(crash_me));
+
+  Clipboard::ObjectMapParam size_param;
+  // Width just big enough that bytes per row won't fit in a 32-bit
+  // representation.
+  gfx::Size size(0x20000000, 1);
+  size_param.resize(sizeof(size));
+  memcpy(&size_param.front(), &size, sizeof(size));
+
+  Clipboard::ObjectMapParams params;
+  params.push_back(placeholder_param);
+  params.push_back(size_param);
+
+  Clipboard::ObjectMap objects;
+  objects[Clipboard::CBF_SMBITMAP] = params;
+
+  WriteObjectsToClipboard(objects);
+  EXPECT_FALSE(clipboard().IsFormatAvailable(Clipboard::GetBitmapFormatType(),
+                                             CLIPBOARD_TYPE_COPY_PASTE));
+}
+
+TEST_F(ClipboardTest, BitmapWithSuperSize2) {
+  Clipboard::ObjectMapParam placeholder_param;
+  void* crash_me = reinterpret_cast<void*>(57);
+  placeholder_param.resize(sizeof(crash_me));
+  memcpy(&placeholder_param.front(), &crash_me, sizeof(crash_me));
+
+  Clipboard::ObjectMapParam size_param;
+  // Width and height large enough that SkBitmap::getSize() will be truncated.
+  gfx::Size size(0x0fffffff, 0x0fffffff);
+  size_param.resize(sizeof(size));
+  memcpy(&size_param.front(), &size, sizeof(size));
+
+  Clipboard::ObjectMapParams params;
+  params.push_back(placeholder_param);
+  params.push_back(size_param);
+
+  Clipboard::ObjectMap objects;
+  objects[Clipboard::CBF_SMBITMAP] = params;
+
+  WriteObjectsToClipboard(objects);
+  EXPECT_FALSE(clipboard().IsFormatAvailable(Clipboard::GetBitmapFormatType(),
+                                             CLIPBOARD_TYPE_COPY_PASTE));
+}
 
 TEST_F(ClipboardTest, DataTest) {
   const ui::Clipboard::FormatType kFormat =
@@ -520,7 +644,7 @@ TEST_F(ClipboardTest, HyperlinkTest) {
       "The &lt;Example&gt; Company&#39;s &quot;home page&quot;</a>");
 
   std::string url_result;
-  string16 html_result;
+  base::string16 html_result;
   {
     ScopedClipboardWriter clipboard_writer(&clipboard(),
                                            CLIPBOARD_TYPE_COPY_PASTE);
@@ -546,23 +670,6 @@ TEST_F(ClipboardTest, WebSmartPasteTest) {
 
   EXPECT_TRUE(clipboard().IsFormatAvailable(
       Clipboard::GetWebKitSmartPasteFormatType(), CLIPBOARD_TYPE_COPY_PASTE));
-}
-
-TEST_F(ClipboardTest, BitmapTest) {
-  unsigned int fake_bitmap[] = {
-    0x46155189, 0xF6A55C8D, 0x79845674, 0xFA57BD89,
-    0x78FD46AE, 0x87C64F5A, 0x36EDC5AF, 0x4378F568,
-    0x91E9F63A, 0xC31EA14F, 0x69AB32DF, 0x643A3FD1,
-  };
-
-  {
-    ScopedClipboardWriter clipboard_writer(&clipboard(),
-                                           CLIPBOARD_TYPE_COPY_PASTE);
-    clipboard_writer.WriteBitmapFromPixels(fake_bitmap, gfx::Size(3, 4));
-  }
-
-  EXPECT_TRUE(clipboard().IsFormatAvailable(Clipboard::GetBitmapFormatType(),
-                                            CLIPBOARD_TYPE_COPY_PASTE));
 }
 
 void HtmlTestHelper(const std::string& cf_html,
@@ -624,23 +731,47 @@ TEST_F(ClipboardTest, WriteEverything) {
   // Passes if we don't crash.
 }
 
+// TODO(dcheng): Fix this test for Android. It's rather involved, since the
+// clipboard change listener is posted to the Java message loop, and spinning
+// that loop from C++ to trigger the callback in the test requires a non-trivial
+// amount of additional work.
+#if !defined(OS_ANDROID)
+// Simple test that the sequence number appears to change when the clipboard is
+// written to.
+// TODO(dcheng): Add a version to test CLIPBOARD_TYPE_SELECTION.
+TEST_F(ClipboardTest, GetSequenceNumber) {
+  const uint64 first_sequence_number =
+      clipboard().GetSequenceNumber(CLIPBOARD_TYPE_COPY_PASTE);
+
+  {
+    ScopedClipboardWriter writer(&clipboard(), CLIPBOARD_TYPE_COPY_PASTE);
+    writer.WriteText(UTF8ToUTF16("World"));
+  }
+
+  // On some platforms, the sequence number is updated by a UI callback so pump
+  // the message loop to make sure we get the notification.
+  base::RunLoop().RunUntilIdle();
+
+  const uint64 second_sequence_number =
+      clipboard().GetSequenceNumber(CLIPBOARD_TYPE_COPY_PASTE);
+
+  EXPECT_NE(first_sequence_number, second_sequence_number);
+}
+#endif
+
 #if defined(OS_ANDROID)
 
 // Test that if another application writes some text to the pasteboard the
 // clipboard properly invalidates other types.
 TEST_F(ClipboardTest, InternalClipboardInvalidation) {
-  const unsigned int kFakeBitmap[] = {
-    0x46155189, 0xF6A55C8D, 0x79845674, 0xFA57BD89,
-    0x78FD46AE, 0x87C64F5A, 0x36EDC5AF, 0x4378F568,
-    0x91E9F63A, 0xC31EA14F, 0x69AB32DF, 0x643A3FD1,
-  };
-
-  // Write a bitmap in our clipboard().
+  // Write a Webkit smart paste tag to our clipboard.
   {
     ScopedClipboardWriter clipboard_writer(&clipboard(),
                                            CLIPBOARD_TYPE_COPY_PASTE);
-    clipboard_writer.WriteBitmapFromPixels(kFakeBitmap, gfx::Size(3, 4));
+    clipboard_writer.WriteWebSmartPaste();
   }
+  EXPECT_TRUE(clipboard().IsFormatAvailable(
+      Clipboard::GetWebKitSmartPasteFormatType(), CLIPBOARD_TYPE_COPY_PASTE));
 
   //
   // Simulate that another application copied something in the Clipboard
@@ -683,9 +814,9 @@ TEST_F(ClipboardTest, InternalClipboardInvalidation) {
                       set_text,
                       new_value_string.obj());
 
-  // The bitmap that should have been available should be gone.
-  EXPECT_FALSE(clipboard().IsFormatAvailable(Clipboard::GetBitmapFormatType(),
-                                             CLIPBOARD_TYPE_COPY_PASTE));
+  // The WebKit smart paste tag should now be gone.
+  EXPECT_FALSE(clipboard().IsFormatAvailable(
+      Clipboard::GetWebKitSmartPasteFormatType(), CLIPBOARD_TYPE_COPY_PASTE));
 
   // Make sure some text is available
   EXPECT_TRUE(clipboard().IsFormatAvailable(

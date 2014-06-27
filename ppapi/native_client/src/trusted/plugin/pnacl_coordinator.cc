@@ -37,18 +37,23 @@ namespace plugin {
 // that are part of Chrome.
 class PnaclManifest : public Manifest {
  public:
-  PnaclManifest() : manifest_base_url_(PnaclUrls::GetBaseUrl()) { }
+  PnaclManifest(const nacl::string& sandbox_arch)
+      : manifest_base_url_(PnaclUrls::GetBaseUrl()),
+        sandbox_arch_(sandbox_arch) { }
+
   virtual ~PnaclManifest() { }
 
   virtual bool GetProgramURL(nacl::string* full_url,
                              PnaclOptions* pnacl_options,
+                             bool* uses_nonsfi_mode,
                              ErrorInfo* error_info) const {
     // Does not contain program urls.
     UNREFERENCED_PARAMETER(full_url);
     UNREFERENCED_PARAMETER(pnacl_options);
+    UNREFERENCED_PARAMETER(uses_nonsfi_mode);
     UNREFERENCED_PARAMETER(error_info);
     PLUGIN_PRINTF(("PnaclManifest does not contain a program\n"));
-    error_info->SetReport(ERROR_MANIFEST_GET_NEXE_URL,
+    error_info->SetReport(PP_NACL_ERROR_MANIFEST_GET_NEXE_URL,
                           "pnacl manifest does not contain a program.");
     return false;
   }
@@ -80,14 +85,14 @@ class PnaclManifest : public Manifest {
     const nacl::string kFilesPrefix = "files/";
     size_t files_prefix_pos = key.find(kFilesPrefix);
     if (files_prefix_pos == nacl::string::npos) {
-      error_info->SetReport(ERROR_MANIFEST_RESOLVE_URL,
+      error_info->SetReport(PP_NACL_ERROR_MANIFEST_RESOLVE_URL,
                             "key did not start with files/");
       return false;
     }
     // Resolve the full URL to the file. Provide it with a platform-specific
     // prefix.
     nacl::string key_basename = key.substr(kFilesPrefix.length());
-    return ResolveURL(PnaclUrls::PrependPlatformPrefix(key_basename),
+    return ResolveURL(sandbox_arch_ + "/" + key_basename,
                       full_url, error_info);
   }
 
@@ -95,6 +100,7 @@ class PnaclManifest : public Manifest {
   NACL_DISALLOW_COPY_AND_ASSIGN(PnaclManifest);
 
   nacl::string manifest_base_url_;
+  nacl::string sandbox_arch_;
 };
 
 //////////////////////////////////////////////////////////////////////
@@ -121,85 +127,56 @@ const int32_t kKBPSMin = 1;
 const int32_t kKBPSMax = 30*1000;          // max of 30 MB / sec.
 const uint32_t kKBPSBuckets = 100;
 
-const PPB_UMA_Private* uma_interface = NULL;
-
-const PPB_UMA_Private* GetUMAInterface() {
-  if (uma_interface != NULL) {
-    return uma_interface;
-  }
-  pp::Module *module = pp::Module::Get();
-  DCHECK(module);
-  uma_interface = static_cast<const PPB_UMA_Private*>(
-      module->GetBrowserInterface(PPB_UMA_PRIVATE_INTERFACE));
-  return uma_interface;
-}
-
-void HistogramTime(const std::string& name, int64_t ms) {
+void HistogramTime(pp::UMAPrivate& uma,
+                   const nacl::string& name, int64_t ms) {
   if (ms < 0) return;
-
-  const PPB_UMA_Private* ptr = GetUMAInterface();
-  if (ptr == NULL) return;
-
-  ptr->HistogramCustomTimes(pp::Var(name).pp_var(),
-                            ms,
-                            kTimeLargeMin, kTimeLargeMax,
-                            kTimeLargeBuckets);
+  uma.HistogramCustomTimes(name,
+                           ms,
+                           kTimeLargeMin, kTimeLargeMax,
+                           kTimeLargeBuckets);
 }
 
-void HistogramSizeKB(const std::string& name, int32_t kb) {
+void HistogramSizeKB(pp::UMAPrivate& uma,
+                     const nacl::string& name, int32_t kb) {
   if (kb < 0) return;
-
-  const PPB_UMA_Private* ptr = GetUMAInterface();
-  if (ptr == NULL) return;
-
-  ptr->HistogramCustomCounts(pp::Var(name).pp_var(),
-                             kb,
-                             kSizeKBMin, kSizeKBMax,
-                             kSizeKBBuckets);
+  uma.HistogramCustomCounts(name,
+                            kb,
+                            kSizeKBMin, kSizeKBMax,
+                            kSizeKBBuckets);
 }
 
-void HistogramRatio(const std::string& name, int64_t a, int64_t b) {
+void HistogramRatio(pp::UMAPrivate& uma,
+                    const nacl::string& name, int64_t a, int64_t b) {
   if (a < 0 || b <= 0) return;
-
-  const PPB_UMA_Private* ptr = GetUMAInterface();
-  if (ptr == NULL) return;
-
-  ptr->HistogramCustomCounts(pp::Var(name).pp_var(),
-                             100 * a / b,
-                             kRatioMin, kRatioMax,
-                             kRatioBuckets);
+  uma.HistogramCustomCounts(name,
+                            100 * a / b,
+                            kRatioMin, kRatioMax,
+                            kRatioBuckets);
 }
 
-void HistogramKBPerSec(const std::string& name, double kb, double s) {
+void HistogramKBPerSec(pp::UMAPrivate& uma,
+                       const nacl::string& name, double kb, double s) {
   if (kb < 0.0 || s <= 0.0) return;
-
-  const PPB_UMA_Private* ptr = GetUMAInterface();
-  if (ptr == NULL) return;
-
-  ptr->HistogramCustomCounts(pp::Var(name).pp_var(),
-                             static_cast<int64_t>(kb / s),
-                             kKBPSMin, kKBPSMax,
-                             kKBPSBuckets);
+  uma.HistogramCustomCounts(name,
+                            static_cast<int64_t>(kb / s),
+                            kKBPSMin, kKBPSMax,
+                            kKBPSBuckets);
 }
 
-void HistogramEnumerateTranslationCache(bool hit) {
-  const PPB_UMA_Private* ptr = GetUMAInterface();
-  if (ptr == NULL) return;
-  ptr->HistogramEnumeration(pp::Var("NaCl.Perf.PNaClCache.IsHit").pp_var(),
-                            hit, 2);
+void HistogramEnumerateTranslationCache(pp::UMAPrivate& uma, bool hit) {
+  uma.HistogramEnumeration("NaCl.Perf.PNaClCache.IsHit",
+                           hit, 2);
 }
 
 // Opt level is expected to be 0 to 3.  Treating 4 as unknown.
 const int8_t kOptUnknown = 4;
 
-void HistogramOptLevel(int8_t opt_level) {
-  const PPB_UMA_Private* ptr = GetUMAInterface();
-  if (ptr == NULL) return;
+void HistogramOptLevel(pp::UMAPrivate& uma, int8_t opt_level) {
   if (opt_level < 0 || opt_level > 3) {
     opt_level = kOptUnknown;
   }
-  ptr->HistogramEnumeration(pp::Var("NaCl.Options.PNaCl.OptLevel").pp_var(),
-                            opt_level, kOptUnknown+1);
+  uma.HistogramEnumeration("NaCl.Options.PNaCl.OptLevel",
+                           opt_level, kOptUnknown+1);
 }
 
 }  // namespace
@@ -226,12 +203,11 @@ PnaclCoordinator* PnaclCoordinator::BitcodeToNative(
                            pnacl_options,
                            translate_notify_callback);
   coordinator->pnacl_init_time_ = NaClGetTimeOfDayMicroseconds();
-  coordinator->off_the_record_ =
-      plugin->nacl_interface()->IsOffTheRecord();
-  PLUGIN_PRINTF(("PnaclCoordinator::BitcodeToNative (manifest=%p, "
-                 "off_the_record=%d)\n",
-                 reinterpret_cast<const void*>(coordinator->manifest_.get()),
-                 coordinator->off_the_record_));
+  PLUGIN_PRINTF(("PnaclCoordinator::BitcodeToNative (manifest=%p, ",
+                 reinterpret_cast<const void*>(coordinator->manifest_.get())));
+
+  int cpus = plugin->nacl_interface()->GetNumberOfProcessors();
+  coordinator->split_module_count_ = std::min(4, std::max(1, cpus));
 
   // First start a network request for the pexe, to tickle the component
   // updater's On-Demand resource throttler, and to get Last-Modified/ETag
@@ -250,12 +226,13 @@ PnaclCoordinator::PnaclCoordinator(
     plugin_(plugin),
     translate_notify_callback_(translate_notify_callback),
     translation_finished_reported_(false),
-    manifest_(new PnaclManifest()),
+    manifest_(new PnaclManifest(plugin->nacl_interface()->GetSandboxArch())),
     pexe_url_(pexe_url),
     pnacl_options_(pnacl_options),
+    split_module_count_(1),
+    num_object_files_opened_(0),
     is_cache_hit_(PP_FALSE),
     error_already_reported_(false),
-    off_the_record_(false),
     pnacl_init_time_(0),
     pexe_size_(0),
     pexe_bytes_compiled_(0),
@@ -282,6 +259,15 @@ PnaclCoordinator::~PnaclCoordinator() {
         plugin_->pp_instance(),
         PP_FALSE);
   }
+  // Force deleting the translate_thread now. It must be deleted
+  // before any scoped_* fields hanging off of PnaclCoordinator
+  // since the thread may be accessing those fields.
+  // It will also be accessing obj_files_.
+  translate_thread_.reset(NULL);
+  // TODO(jvoung): use base/memory/scoped_vector.h to hold obj_files_.
+  for (int i = 0; i < num_object_files_opened_; i++) {
+    delete obj_files_[i];
+  }
 }
 
 nacl::DescWrapper* PnaclCoordinator::ReleaseTranslatedFD() {
@@ -289,13 +275,13 @@ nacl::DescWrapper* PnaclCoordinator::ReleaseTranslatedFD() {
   return temp_nexe_file_->release_read_wrapper();
 }
 
-void PnaclCoordinator::ReportNonPpapiError(enum PluginErrorCode err_code,
+void PnaclCoordinator::ReportNonPpapiError(PP_NaClError err_code,
                                            const nacl::string& message) {
   error_info_.SetReport(err_code, message);
   ExitWithError();
 }
 
-void PnaclCoordinator::ReportPpapiError(enum PluginErrorCode err_code,
+void PnaclCoordinator::ReportPpapiError(PP_NaClError err_code,
                                         int32_t pp_error,
                                         const nacl::string& message) {
   nacl::stringstream ss;
@@ -344,7 +330,7 @@ void PnaclCoordinator::TranslateFinished(int32_t pp_error) {
   // that were delayed (see the delay inserted in BitcodeGotCompiled).
   if (ExpectedProgressKnown()) {
     pexe_bytes_compiled_ = expected_pexe_size_;
-    plugin_->EnqueueProgressEvent(plugin::Plugin::kProgressEventProgress,
+    plugin_->EnqueueProgressEvent(PP_NACL_EVENT_PROGRESS,
                                   pexe_url_,
                                   plugin::Plugin::LENGTH_IS_COMPUTABLE,
                                   pexe_bytes_compiled_,
@@ -352,20 +338,12 @@ void PnaclCoordinator::TranslateFinished(int32_t pp_error) {
   }
 
   // If there are no errors, report stats from this thread (the main thread).
-  HistogramOptLevel(pnacl_options_.opt_level());
-  const plugin::PnaclTimeStats& time_stats = translate_thread_->GetTimeStats();
-  HistogramTime("NaCl.Perf.PNaClLoadTime.LoadCompiler",
-                time_stats.pnacl_llc_load_time / NACL_MICROS_PER_MILLI);
-  HistogramTime("NaCl.Perf.PNaClLoadTime.CompileTime",
-                time_stats.pnacl_compile_time / NACL_MICROS_PER_MILLI);
-  HistogramKBPerSec("NaCl.Perf.PNaClLoadTime.CompileKBPerSec",
+  HistogramOptLevel(plugin_->uma_interface(), pnacl_options_.opt_level());
+  HistogramKBPerSec(plugin_->uma_interface(),
+                    "NaCl.Perf.PNaClLoadTime.CompileKBPerSec",
                     pexe_size_ / 1024.0,
-                    time_stats.pnacl_compile_time / 1000000.0);
-  HistogramTime("NaCl.Perf.PNaClLoadTime.LoadLinker",
-                time_stats.pnacl_ld_load_time / NACL_MICROS_PER_MILLI);
-  HistogramTime("NaCl.Perf.PNaClLoadTime.LinkTime",
-                time_stats.pnacl_link_time / NACL_MICROS_PER_MILLI);
-  HistogramSizeKB("NaCl.Perf.Size.Pexe",
+                    translate_thread_->GetCompileTime() / 1000000.0);
+  HistogramSizeKB(plugin_->uma_interface(), "NaCl.Perf.Size.Pexe",
                   static_cast<int64_t>(pexe_size_ / 1024));
 
   struct nacl_abi_stat stbuf;
@@ -376,15 +354,19 @@ void PnaclCoordinator::TranslateFinished(int32_t pp_error) {
     PLUGIN_PRINTF(("PnaclCoordinator::TranslateFinished can't stat nexe.\n"));
   } else {
     size_t nexe_size = stbuf.nacl_abi_st_size;
-    HistogramSizeKB("NaCl.Perf.Size.PNaClTranslatedNexe",
+    HistogramSizeKB(plugin_->uma_interface(),
+                    "NaCl.Perf.Size.PNaClTranslatedNexe",
                     static_cast<int64_t>(nexe_size / 1024));
-    HistogramRatio("NaCl.Perf.Size.PexeNexeSizePct", pexe_size_, nexe_size);
+    HistogramRatio(plugin_->uma_interface(),
+                   "NaCl.Perf.Size.PexeNexeSizePct", pexe_size_, nexe_size);
   }
 
   int64_t total_time = NaClGetTimeOfDayMicroseconds() - pnacl_init_time_;
-  HistogramTime("NaCl.Perf.PNaClLoadTime.TotalUncachedTime",
+  HistogramTime(plugin_->uma_interface(),
+                "NaCl.Perf.PNaClLoadTime.TotalUncachedTime",
                 total_time / NACL_MICROS_PER_MILLI);
-  HistogramKBPerSec("NaCl.Perf.PNaClLoadTime.TotalUncachedKBPerSec",
+  HistogramKBPerSec(plugin_->uma_interface(),
+                    "NaCl.Perf.PNaClLoadTime.TotalUncachedKBPerSec",
                     pexe_size_ / 1024.0,
                     total_time / 1000000.0);
 
@@ -406,18 +388,18 @@ void PnaclCoordinator::NexeReadDidOpen(int32_t pp_error) {
                  NACL_PRId32 ")\n", pp_error));
   if (pp_error != PP_OK) {
     if (pp_error == PP_ERROR_FILENOTFOUND) {
-      ReportPpapiError(ERROR_PNACL_CACHE_FETCH_NOTFOUND,
+      ReportPpapiError(PP_NACL_ERROR_PNACL_CACHE_FETCH_NOTFOUND,
                        pp_error,
                        "Failed to open translated nexe (not found).");
       return;
     }
     if (pp_error == PP_ERROR_NOACCESS) {
-      ReportPpapiError(ERROR_PNACL_CACHE_FETCH_NOACCESS,
+      ReportPpapiError(PP_NACL_ERROR_PNACL_CACHE_FETCH_NOACCESS,
                        pp_error,
                        "Failed to open translated nexe (no access).");
       return;
     }
-    ReportPpapiError(ERROR_PNACL_CACHE_FETCH_OTHER,
+    ReportPpapiError(PP_NACL_ERROR_PNACL_CACHE_FETCH_OTHER,
                      pp_error,
                      "Failed to open translated nexe.");
     return;
@@ -442,7 +424,7 @@ void PnaclCoordinator::OpenBitcodeStream() {
   translate_thread_.reset(new PnaclTranslateThread());
   if (translate_thread_ == NULL) {
     ReportNonPpapiError(
-        ERROR_PNACL_THREAD_CREATE,
+        PP_NACL_ERROR_PNACL_THREAD_CREATE,
         "PnaclCoordinator: could not allocate translation thread.");
     return;
   }
@@ -451,7 +433,7 @@ void PnaclCoordinator::OpenBitcodeStream() {
       callback_factory_.NewCallback(&PnaclCoordinator::BitcodeStreamDidOpen);
   if (!streaming_downloader_->OpenStream(pexe_url_, cb, this)) {
     ReportNonPpapiError(
-        ERROR_PNACL_PEXE_FETCH_OTHER,
+        PP_NACL_ERROR_PNACL_PEXE_FETCH_OTHER,
         nacl::string("PnaclCoordinator: failed to open stream ") + pexe_url_);
     return;
   }
@@ -512,7 +494,7 @@ void PnaclCoordinator::ResourcesDidLoad(int32_t pp_error) {
   int32_t nexe_fd_err =
       plugin_->nacl_interface()->GetNexeFd(
           plugin_->pp_instance(),
-          streaming_downloader_->url().c_str(),
+          streaming_downloader_->full_url().c_str(),
           // TODO(dschuff): Get this value from the pnacl json file after it
           // rolls in from NaCl.
           1,
@@ -520,11 +502,13 @@ void PnaclCoordinator::ResourcesDidLoad(int32_t pp_error) {
           parser.GetHeader("last-modified").c_str(),
           parser.GetHeader("etag").c_str(),
           PP_FromBool(parser.CacheControlNoStore()),
+          plugin_->nacl_interface()->GetSandboxArch(),
+          "", // No extra compile flags yet.
           &is_cache_hit_,
           temp_nexe_file_->existing_handle(),
           cb.pp_completion_callback());
   if (nexe_fd_err < PP_OK_COMPLETIONPENDING) {
-    ReportPpapiError(ERROR_PNACL_CREATE_TEMP, nexe_fd_err,
+    ReportPpapiError(PP_NACL_ERROR_PNACL_CREATE_TEMP, nexe_fd_err,
                      nacl::string("Call to GetNexeFd failed"));
   }
 }
@@ -535,19 +519,19 @@ void PnaclCoordinator::NexeFdDidOpen(int32_t pp_error) {
                  is_cache_hit_ == PP_TRUE,
                  *temp_nexe_file_->existing_handle()));
   if (pp_error < PP_OK) {
-    ReportPpapiError(ERROR_PNACL_CREATE_TEMP, pp_error,
+    ReportPpapiError(PP_NACL_ERROR_PNACL_CREATE_TEMP, pp_error,
                      nacl::string("GetNexeFd failed"));
     return;
   }
 
   if (*temp_nexe_file_->existing_handle() == PP_kInvalidFileHandle) {
     ReportNonPpapiError(
-        ERROR_PNACL_CREATE_TEMP,
+        PP_NACL_ERROR_PNACL_CREATE_TEMP,
         nacl::string(
             "PnaclCoordinator: Got bad temp file handle from GetNexeFd"));
     return;
   }
-  HistogramEnumerateTranslationCache(is_cache_hit_);
+  HistogramEnumerateTranslationCache(plugin_->uma_interface(), is_cache_hit_);
 
   if (is_cache_hit_ == PP_TRUE) {
     // Cache hit -- no need to stream the rest of the file.
@@ -559,10 +543,14 @@ void PnaclCoordinator::NexeFdDidOpen(int32_t pp_error) {
   } else {
     // Open an object file first so the translator can start writing to it
     // during streaming translation.
-    obj_file_.reset(new TempFile(plugin_));
-    pp::CompletionCallback obj_cb =
-        callback_factory_.NewCallback(&PnaclCoordinator::ObjectFileDidOpen);
-    obj_file_->Open(obj_cb, true);
+    for (int i = 0; i < split_module_count_; i++) {
+      obj_files_.push_back(new TempFile(plugin_));
+
+      pp::CompletionCallback obj_cb =
+          callback_factory_.NewCallback(&PnaclCoordinator::ObjectFileDidOpen);
+      obj_files_[i]->Open(obj_cb, true);
+    }
+    invalid_desc_wrapper_.reset(plugin_->wrapper_factory()->MakeInvalid());
 
     // Meanwhile, a miss means we know we need to stream the bitcode, so stream
     // the rest of it now. (Calling FinishStreaming means that the downloader
@@ -583,21 +571,22 @@ void PnaclCoordinator::BitcodeStreamDidFinish(int32_t pp_error) {
     // objects or writing to the files.
     translate_finish_error_ = pp_error;
     if (pp_error == PP_ERROR_ABORTED) {
-      error_info_.SetReport(ERROR_PNACL_PEXE_FETCH_ABORTED,
+      error_info_.SetReport(PP_NACL_ERROR_PNACL_PEXE_FETCH_ABORTED,
                             "PnaclCoordinator: pexe load failed (aborted).");
     }
     if (pp_error == PP_ERROR_NOACCESS) {
-      error_info_.SetReport(ERROR_PNACL_PEXE_FETCH_NOACCESS,
+      error_info_.SetReport(PP_NACL_ERROR_PNACL_PEXE_FETCH_NOACCESS,
                             "PnaclCoordinator: pexe load failed (no access).");
     } else {
       nacl::stringstream ss;
       ss << "PnaclCoordinator: pexe load failed (pp_error=" << pp_error << ").";
-      error_info_.SetReport(ERROR_PNACL_PEXE_FETCH_OTHER, ss.str());
+      error_info_.SetReport(PP_NACL_ERROR_PNACL_PEXE_FETCH_OTHER, ss.str());
     }
     translate_thread_->AbortSubprocesses();
   } else {
     // Compare download completion pct (100% now), to compile completion pct.
-    HistogramRatio("NaCl.Perf.PNaClLoadTime.PctCompiledWhenFullyDownloaded",
+    HistogramRatio(plugin_->uma_interface(),
+                   "NaCl.Perf.PNaClLoadTime.PctCompiledWhenFullyDownloaded",
                    pexe_bytes_compiled_, pexe_size_);
   }
 }
@@ -622,6 +611,7 @@ StreamCallback PnaclCoordinator::GetCallback() {
 
 void PnaclCoordinator::BitcodeGotCompiled(int32_t pp_error,
                                           int64_t bytes_compiled) {
+  DCHECK(pp_error == PP_OK);
   pexe_bytes_compiled_ += bytes_compiled;
   // If we don't know the expected total yet, ask.
   if (!ExpectedProgressKnown()) {
@@ -634,14 +624,14 @@ void PnaclCoordinator::BitcodeGotCompiled(int32_t pp_error,
   // that bytes were sent to the compiler.
   if (ExpectedProgressKnown()) {
     if (!ShouldDelayProgressEvent()) {
-      plugin_->EnqueueProgressEvent(plugin::Plugin::kProgressEventProgress,
+      plugin_->EnqueueProgressEvent(PP_NACL_EVENT_PROGRESS,
                                     pexe_url_,
                                     plugin::Plugin::LENGTH_IS_COMPUTABLE,
                                     pexe_bytes_compiled_,
                                     expected_pexe_size_);
     }
   } else {
-    plugin_->EnqueueProgressEvent(plugin::Plugin::kProgressEventProgress,
+    plugin_->EnqueueProgressEvent(PP_NACL_EVENT_PROGRESS,
                                   pexe_url_,
                                   plugin::Plugin::LENGTH_IS_NOT_COMPUTABLE,
                                   pexe_bytes_compiled_,
@@ -655,6 +645,21 @@ pp::CompletionCallback PnaclCoordinator::GetCompileProgressCallback(
                                        bytes_compiled);
 }
 
+void PnaclCoordinator::DoUMATimeMeasure(int32_t pp_error,
+                                        const nacl::string& event_name,
+                                        int64_t microsecs) {
+  DCHECK(pp_error == PP_OK);
+  HistogramTime(
+      plugin_->uma_interface(), event_name, microsecs / NACL_MICROS_PER_MILLI);
+}
+
+pp::CompletionCallback PnaclCoordinator::GetUMATimeCallback(
+    const nacl::string& event_name, int64_t microsecs) {
+  return callback_factory_.NewCallback(&PnaclCoordinator::DoUMATimeMeasure,
+                                       event_name,
+                                       microsecs);
+}
+
 void PnaclCoordinator::GetCurrentProgress(int64_t* bytes_loaded,
                                           int64_t* bytes_total) {
   *bytes_loaded = pexe_bytes_compiled_;
@@ -665,16 +670,19 @@ void PnaclCoordinator::ObjectFileDidOpen(int32_t pp_error) {
   PLUGIN_PRINTF(("PnaclCoordinator::ObjectFileDidOpen (pp_error=%"
                  NACL_PRId32 ")\n", pp_error));
   if (pp_error != PP_OK) {
-    ReportPpapiError(ERROR_PNACL_CREATE_TEMP,
+    ReportPpapiError(PP_NACL_ERROR_PNACL_CREATE_TEMP,
                      pp_error,
                      "Failed to open scratch object file.");
     return;
   }
-  // Open the nexe file for connecting ld and sel_ldr.
-  // Start translation when done with this last step of setup!
-  pp::CompletionCallback cb =
-      callback_factory_.NewCallback(&PnaclCoordinator::RunTranslate);
-  temp_nexe_file_->Open(cb, true);
+  num_object_files_opened_++;
+  if (num_object_files_opened_ == split_module_count_) {
+    // Open the nexe file for connecting ld and sel_ldr.
+    // Start translation when done with this last step of setup!
+    pp::CompletionCallback cb =
+        callback_factory_.NewCallback(&PnaclCoordinator::RunTranslate);
+    temp_nexe_file_->Open(cb, true);
+  }
 }
 
 void PnaclCoordinator::RunTranslate(int32_t pp_error) {
@@ -688,8 +696,9 @@ void PnaclCoordinator::RunTranslate(int32_t pp_error) {
   CHECK(translate_thread_ != NULL);
   translate_thread_->RunTranslate(report_translate_finished,
                                   manifest_.get(),
-                                  obj_file_.get(),
+                                  &obj_files_,
                                   temp_nexe_file_.get(),
+                                  invalid_desc_wrapper_.get(),
                                   &error_info_,
                                   resources_.get(),
                                   &pnacl_options_,

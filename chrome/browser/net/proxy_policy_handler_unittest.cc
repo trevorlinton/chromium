@@ -7,11 +7,12 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/values.h"
 #include "chrome/browser/net/proxy_policy_handler.h"
-#include "chrome/browser/policy/configuration_policy_pref_store.h"
-#include "chrome/browser/policy/configuration_policy_pref_store_unittest.h"
 #include "chrome/browser/prefs/proxy_config_dictionary.h"
 #include "chrome/browser/prefs/proxy_prefs.h"
 #include "chrome/common/pref_names.h"
+#include "components/policy/core/browser/configuration_policy_pref_store.h"
+#include "components/policy/core/browser/configuration_policy_pref_store_test.h"
+#include "components/policy/core/common/policy_service_impl.h"
 #include "policy/policy_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -22,8 +23,16 @@ class ProxyPolicyHandlerTest
     : public ConfigurationPolicyPrefStoreTest {
  public:
   virtual void SetUp() OVERRIDE {
+    ConfigurationPolicyPrefStoreTest::SetUp();
     handler_list_.AddHandler(
         make_scoped_ptr<ConfigurationPolicyHandler>(new ProxyPolicyHandler));
+    // Reset the PolicyServiceImpl to one that has the policy fixup
+    // preprocessor. The previous store must be nulled out first so that it
+    // removes itself from the service's observer list.
+    store_ = NULL;
+    policy_service_.reset(new PolicyServiceImpl(providers_));
+    store_ = new ConfigurationPolicyPrefStore(
+        policy_service_.get(), &handler_list_, POLICY_LEVEL_MANDATORY);
   }
 
  protected:
@@ -65,11 +74,16 @@ class ProxyPolicyHandlerTest
 
 TEST_F(ProxyPolicyHandlerTest, ManualOptions) {
   PolicyMap policy;
-  policy.Set(key::kProxyBypassList, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-             base::Value::CreateStringValue("http://chromium.org/override"),
+  policy.Set(key::kProxyBypassList,
+             POLICY_LEVEL_MANDATORY,
+             POLICY_SCOPE_USER,
+             new base::StringValue("http://chromium.org/override"),
              NULL);
-  policy.Set(key::kProxyServer, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-             base::Value::CreateStringValue("chromium.org"), NULL);
+  policy.Set(key::kProxyServer,
+             POLICY_LEVEL_MANDATORY,
+             POLICY_SCOPE_USER,
+             new base::StringValue("chromium.org"),
+             NULL);
   policy.Set(
       key::kProxyServerMode, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
       base::Value::CreateIntegerValue(
@@ -90,11 +104,16 @@ TEST_F(ProxyPolicyHandlerTest, ManualOptionsReversedApplyOrder) {
       base::Value::CreateIntegerValue(
           ProxyPolicyHandler::PROXY_MANUALLY_CONFIGURED_PROXY_SERVER_MODE),
       NULL);
-  policy.Set(key::kProxyBypassList, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-             base::Value::CreateStringValue("http://chromium.org/override"),
+  policy.Set(key::kProxyBypassList,
+             POLICY_LEVEL_MANDATORY,
+             POLICY_SCOPE_USER,
+             new base::StringValue("http://chromium.org/override"),
              NULL);
-  policy.Set(key::kProxyServer, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-             base::Value::CreateStringValue("chromium.org"), NULL);
+  policy.Set(key::kProxyServer,
+             POLICY_LEVEL_MANDATORY,
+             POLICY_SCOPE_USER,
+             new base::StringValue("chromium.org"),
+             NULL);
   UpdateProviderPolicy(policy);
 
   VerifyProxyPrefs("chromium.org",
@@ -129,8 +148,10 @@ TEST_F(ProxyPolicyHandlerTest, NoProxyServerMode) {
 
 TEST_F(ProxyPolicyHandlerTest, NoProxyModeName) {
   PolicyMap policy;
-  policy.Set(key::kProxyMode, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-             base::Value::CreateStringValue(ProxyPrefs::kDirectProxyModeName),
+  policy.Set(key::kProxyMode,
+             POLICY_LEVEL_MANDATORY,
+             POLICY_SCOPE_USER,
+             new base::StringValue(ProxyPrefs::kDirectProxyModeName),
              NULL);
   UpdateProviderPolicy(policy);
   VerifyProxyPrefs(
@@ -153,9 +174,10 @@ TEST_F(ProxyPolicyHandlerTest, AutoDetectProxyServerMode) {
 
 TEST_F(ProxyPolicyHandlerTest, AutoDetectProxyModeName) {
   PolicyMap policy;
-  policy.Set(key::kProxyMode, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-             base::Value::CreateStringValue(
-                 ProxyPrefs::kAutoDetectProxyModeName),
+  policy.Set(key::kProxyMode,
+             POLICY_LEVEL_MANDATORY,
+             POLICY_SCOPE_USER,
+             new base::StringValue(ProxyPrefs::kAutoDetectProxyModeName),
              NULL);
   UpdateProviderPolicy(policy);
   VerifyProxyPrefs(std::string(),
@@ -166,12 +188,15 @@ TEST_F(ProxyPolicyHandlerTest, AutoDetectProxyModeName) {
 
 TEST_F(ProxyPolicyHandlerTest, PacScriptProxyMode) {
   PolicyMap policy;
-  policy.Set(key::kProxyPacUrl, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-             base::Value::CreateStringValue("http://short.org/proxy.pac"),
+  policy.Set(key::kProxyPacUrl,
+             POLICY_LEVEL_MANDATORY,
+             POLICY_SCOPE_USER,
+             new base::StringValue("http://short.org/proxy.pac"),
              NULL);
-  policy.Set(key::kProxyMode, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-             base::Value::CreateStringValue(
-                 ProxyPrefs::kPacScriptProxyModeName),
+  policy.Set(key::kProxyMode,
+             POLICY_LEVEL_MANDATORY,
+             POLICY_SCOPE_USER,
+             new base::StringValue(ProxyPrefs::kPacScriptProxyModeName),
              NULL);
   UpdateProviderPolicy(policy);
   VerifyProxyPrefs(std::string(),
@@ -182,9 +207,10 @@ TEST_F(ProxyPolicyHandlerTest, PacScriptProxyMode) {
 
 TEST_F(ProxyPolicyHandlerTest, PacScriptProxyModeInvalid) {
   PolicyMap policy;
-  policy.Set(key::kProxyMode, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-             base::Value::CreateStringValue(
-                 ProxyPrefs::kPacScriptProxyModeName),
+  policy.Set(key::kProxyMode,
+             POLICY_LEVEL_MANDATORY,
+             POLICY_SCOPE_USER,
+             new base::StringValue(ProxyPrefs::kPacScriptProxyModeName),
              NULL);
   UpdateProviderPolicy(policy);
   const base::Value* value = NULL;
@@ -198,16 +224,17 @@ TEST_F(ProxyPolicyHandlerTest, PacScriptProxyModeBug78016) {
   policy.Set(key::kProxyServer,
              POLICY_LEVEL_MANDATORY,
              POLICY_SCOPE_USER,
-             base::Value::CreateStringValue(std::string()),
+             new base::StringValue(std::string()),
              NULL);
   policy.Set(key::kProxyPacUrl,
              POLICY_LEVEL_MANDATORY,
              POLICY_SCOPE_USER,
-             base::Value::CreateStringValue("http://short.org/proxy.pac"),
+             new base::StringValue("http://short.org/proxy.pac"),
              NULL);
-  policy.Set(key::kProxyMode, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-             base::Value::CreateStringValue(
-                 ProxyPrefs::kPacScriptProxyModeName),
+  policy.Set(key::kProxyMode,
+             POLICY_LEVEL_MANDATORY,
+             POLICY_SCOPE_USER,
+             new base::StringValue(ProxyPrefs::kPacScriptProxyModeName),
              NULL);
   UpdateProviderPolicy(policy);
   VerifyProxyPrefs(std::string(),
@@ -229,8 +256,10 @@ TEST_F(ProxyPolicyHandlerTest, UseSystemProxyServerMode) {
 
 TEST_F(ProxyPolicyHandlerTest, UseSystemProxyMode) {
   PolicyMap policy;
-  policy.Set(key::kProxyMode, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-             base::Value::CreateStringValue(ProxyPrefs::kSystemProxyModeName),
+  policy.Set(key::kProxyMode,
+             POLICY_LEVEL_MANDATORY,
+             POLICY_SCOPE_USER,
+             new base::StringValue(ProxyPrefs::kSystemProxyModeName),
              NULL);
   UpdateProviderPolicy(policy);
   VerifyProxyPrefs(
@@ -244,9 +273,10 @@ TEST_F(ProxyPolicyHandlerTest,
              base::Value::CreateIntegerValue(
                  ProxyPolicyHandler::PROXY_SERVER_MODE),
              NULL);
-  policy.Set(key::kProxyMode, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-             base::Value::CreateStringValue(
-                 ProxyPrefs::kAutoDetectProxyModeName),
+  policy.Set(key::kProxyMode,
+             POLICY_LEVEL_MANDATORY,
+             POLICY_SCOPE_USER,
+             new base::StringValue(ProxyPrefs::kAutoDetectProxyModeName),
              NULL);
   UpdateProviderPolicy(policy);
   VerifyProxyPrefs(std::string(),
@@ -258,14 +288,21 @@ TEST_F(ProxyPolicyHandlerTest,
 TEST_F(ProxyPolicyHandlerTest, ProxyInvalid) {
   // No mode expects all three parameters being set.
   PolicyMap policy;
-  policy.Set(key::kProxyPacUrl, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-             base::Value::CreateStringValue("http://short.org/proxy.pac"),
+  policy.Set(key::kProxyPacUrl,
+             POLICY_LEVEL_MANDATORY,
+             POLICY_SCOPE_USER,
+             new base::StringValue("http://short.org/proxy.pac"),
              NULL);
-  policy.Set(key::kProxyBypassList, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-             base::Value::CreateStringValue("http://chromium.org/override"),
+  policy.Set(key::kProxyBypassList,
+             POLICY_LEVEL_MANDATORY,
+             POLICY_SCOPE_USER,
+             new base::StringValue("http://chromium.org/override"),
              NULL);
-  policy.Set(key::kProxyServer, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-             base::Value::CreateStringValue("chromium.org"), NULL);
+  policy.Set(key::kProxyServer,
+             POLICY_LEVEL_MANDATORY,
+             POLICY_SCOPE_USER,
+             new base::StringValue("chromium.org"),
+             NULL);
   for (int i = 0; i < ProxyPolicyHandler::MODE_COUNT; ++i) {
     policy.Set(key::kProxyServerMode, POLICY_LEVEL_MANDATORY,
                POLICY_SCOPE_USER, base::Value::CreateIntegerValue(i), NULL);

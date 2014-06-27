@@ -28,16 +28,18 @@ class ManagedModeResourceThrottle : public content::ResourceThrottle {
 
   virtual void WillRedirectRequest(const GURL& new_url, bool* defer) OVERRIDE;
 
+  virtual const char* GetNameForLogging() const OVERRIDE;
+
  private:
   void ShowInterstitialIfNeeded(bool is_redirect,
                                 const GURL& url,
                                 bool* defer);
   void OnInterstitialResult(bool continue_request);
 
-  base::WeakPtrFactory<ManagedModeResourceThrottle> weak_ptr_factory_;
   const net::URLRequest* request_;
   bool is_main_frame_;
   const ManagedModeURLFilter* url_filter_;
+  base::WeakPtrFactory<ManagedModeResourceThrottle> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ManagedModeResourceThrottle);
 };

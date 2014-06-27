@@ -8,11 +8,12 @@
 #include "base/logging.h"
 #include "base/threading/thread_restrictions.h"
 #include "ui/gl/gl_bindings.h"
+#include "ui/gl/gl_context_stub_with_extensions.h"
 #include "ui/gl/gl_egl_api_implementation.h"
 #include "ui/gl/gl_gl_api_implementation.h"
 #include "ui/gl/gl_glx_api_implementation.h"
 #include "ui/gl/gl_implementation.h"
-#include "ui/gl/gl_implementation_linux.h"
+#include "ui/gl/gl_implementation_osmesa.h"
 #include "ui/gl/gl_osmesa_api_implementation.h"
 #include "ui/gl/gl_switches.h"
 
@@ -30,6 +31,15 @@ void GL_BINDING_CALL MarshalDepthRangeToDepthRangef(GLclampd z_near,
   glDepthRangef(static_cast<GLclampf>(z_near), static_cast<GLclampf>(z_far));
 }
 
+#if defined(OS_OPENBSD)
+const char kGLLibraryName[] = "libGL.so";
+#else
+const char kGLLibraryName[] = "libGL.so.1";
+#endif
+
+const char kGLESv2LibraryName[] = "libGLESv2.so.2";
+const char kEGLLibraryName[] = "libEGL.so.1";
+
 }  // namespace
 
 void GetAllowedGLImplementations(std::vector<GLImplementation>* impls) {
@@ -38,12 +48,11 @@ void GetAllowedGLImplementations(std::vector<GLImplementation>* impls) {
   impls->push_back(kGLImplementationOSMesaGL);
 }
 
-bool InitializeGLBindings(GLImplementation implementation) {
+bool InitializeStaticGLBindings(GLImplementation implementation) {
   // Prevent reinitialization with a different implementation. Once the gpu
   // unit tests have initialized with kGLImplementationMock, we don't want to
   // later switch to another GL implementation.
-  if (GetGLImplementation() != kGLImplementationNone)
-    return true;
+  DCHECK_EQ(kGLImplementationNone, GetGLImplementation());
 
   // Allow the main thread or another to initialize these bindings
   // after instituting restrictions on I/O. Going forward they will
@@ -53,7 +62,7 @@ bool InitializeGLBindings(GLImplementation implementation) {
 
   switch (implementation) {
     case kGLImplementationOSMesaGL:
-      return InitializeGLBindingsOSMesaGL();
+      return InitializeStaticGLBindingsOSMesaGL();
     case kGLImplementationDesktopGL: {
       base::NativeLibrary library = NULL;
       const CommandLine* command_line = CommandLine::ForCurrentProcess();
@@ -63,15 +72,13 @@ bool InitializeGLBindings(GLImplementation implementation) {
             switches::kTestGLLib).c_str());
 
       if (!library) {
-#if defined(OS_OPENBSD)
-        library = LoadLibrary("libGL.so");
-#else
-        library = LoadLibrary("libGL.so.1");
-#endif
+        library = LoadLibrary(kGLLibraryName);
       }
 
-      if (!library)
+      if (!library) {
+        LOG(ERROR) << "Failed to load " << kGLLibraryName << ".";
         return false;
+      }
 
       GLGetProcAddressProc get_proc_address =
           reinterpret_cast<GLGetProcAddressProc>(
@@ -87,16 +94,19 @@ bool InitializeGLBindings(GLImplementation implementation) {
       AddGLNativeLibrary(library);
       SetGLImplementation(kGLImplementationDesktopGL);
 
-      InitializeGLBindingsGL();
-      InitializeGLBindingsGLX();
+      InitializeStaticGLBindingsGL();
+      InitializeStaticGLBindingsGLX();
       break;
     }
     case kGLImplementationEGLGLES2: {
-      base::NativeLibrary gles_library = LoadLibrary("libGLESv2.so.2");
-      if (!gles_library)
+      base::NativeLibrary gles_library = LoadLibrary(kGLESv2LibraryName);
+      if (!gles_library) {
+        LOG(ERROR) << "Failed to load " << kGLESv2LibraryName << ".";
         return false;
-      base::NativeLibrary egl_library = LoadLibrary("libEGL.so.1");
+      }
+      base::NativeLibrary egl_library = LoadLibrary(kEGLLibraryName);
       if (!egl_library) {
+        LOG(ERROR) << "Failed to load " << kEGLLibraryName << ".";
         base::UnloadNativeLibrary(gles_library);
         return false;
       }
@@ -117,8 +127,8 @@ bool InitializeGLBindings(GLImplementation implementation) {
       AddGLNativeLibrary(gles_library);
       SetGLImplementation(kGLImplementationEGLGLES2);
 
-      InitializeGLBindingsGL();
-      InitializeGLBindingsEGL();
+      InitializeStaticGLBindingsGL();
+      InitializeStaticGLBindingsEGL();
 
       // These two functions take single precision float rather than double
       // precision float parameters in GLES.
@@ -127,9 +137,8 @@ bool InitializeGLBindings(GLImplementation implementation) {
       break;
     }
     case kGLImplementationMockGL: {
-      SetGLGetProcAddressProc(GetMockGLProcAddress);
       SetGLImplementation(kGLImplementationMockGL);
-      InitializeGLBindingsGL();
+      InitializeStaticGLBindingsGL();
       break;
     }
     default:
@@ -140,23 +149,29 @@ bool InitializeGLBindings(GLImplementation implementation) {
   return true;
 }
 
-bool InitializeGLExtensionBindings(GLImplementation implementation,
+bool InitializeDynamicGLBindings(GLImplementation implementation,
     GLContext* context) {
   switch (implementation) {
     case kGLImplementationOSMesaGL:
-      InitializeGLExtensionBindingsGL(context);
-      InitializeGLExtensionBindingsOSMESA(context);
+      InitializeDynamicGLBindingsGL(context);
+      InitializeDynamicGLBindingsOSMESA(context);
       break;
     case kGLImplementationDesktopGL:
-      InitializeGLExtensionBindingsGL(context);
-      InitializeGLExtensionBindingsGLX(context);
+      InitializeDynamicGLBindingsGL(context);
+      InitializeDynamicGLBindingsGLX(context);
       break;
     case kGLImplementationEGLGLES2:
-      InitializeGLExtensionBindingsGL(context);
-      InitializeGLExtensionBindingsEGL(context);
+      InitializeDynamicGLBindingsGL(context);
+      InitializeDynamicGLBindingsEGL(context);
       break;
     case kGLImplementationMockGL:
-      InitializeGLExtensionBindingsGL(context);
+      if (!context) {
+        scoped_refptr<GLContextStubWithExtensions> mock_context(
+            new GLContextStubWithExtensions());
+        mock_context->SetGLVersionString("3.0");
+        InitializeDynamicGLBindingsGL(mock_context.get());
+      } else
+        InitializeDynamicGLBindingsGL(context);
       break;
     default:
       return false;

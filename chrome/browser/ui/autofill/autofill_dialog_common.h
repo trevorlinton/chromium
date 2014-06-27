@@ -20,21 +20,35 @@ class Address;
 namespace autofill {
 namespace common {
 
-// Returns true if |input| should be shown when |field_type| has been requested.
-bool InputTypeMatchesFieldType(const DetailInput& input,
-                               const AutofillType& field_type);
+// The types of addresses this class supports building.
+enum AddressType {
+  ADDRESS_TYPE_BILLING,
+  ADDRESS_TYPE_SHIPPING,
+};
 
-// Returns true if |input| in the given |section| should be used for a
+// Returns true if |type| should be shown when |field_type| has been requested.
+// This filters the types that we fill into the page to match the ones the
+// dialog actually cares about, preventing rAc from giving away data that an
+// AutofillProfile or other data source might know about the user which isn't
+// represented in the dialog.
+bool ServerTypeEncompassesFieldType(ServerFieldType type,
+                                    const AutofillType& field_type);
+
+// Returns true if |type| in the given |section| should be used for a
 // site-requested |field|.
-bool DetailInputMatchesField(DialogSection section,
-                             const DetailInput& input,
-                             const AutofillField& field);
+bool ServerTypeMatchesField(DialogSection section,
+                            ServerFieldType type,
+                            const AutofillField& field);
 
 // Returns true if the |type| belongs to the CREDIT_CARD field type group.
 bool IsCreditCardType(ServerFieldType type);
 
 // Constructs |inputs| from template data for a given |dialog_section|.
-void BuildInputsForSection(DialogSection dialog_section, DetailInputs* inputs);
+// |country_country| specifies the country code that the inputs should be built
+// for.
+void BuildInputsForSection(DialogSection dialog_section,
+                           const std::string& country_code,
+                           DetailInputs* inputs);
 
 // Returns the AutofillMetrics::DIALOG_UI_*_ITEM_ADDED metric corresponding
 // to the |section|.
@@ -46,9 +60,8 @@ AutofillMetrics::DialogUiEvent DialogSectionToUiItemAddedEvent(
 AutofillMetrics::DialogUiEvent DialogSectionToUiSelectionChangedEvent(
     DialogSection section);
 
-// We hardcode some values. In particular, we don't yet allow the user to change
-// the country: http://crbug.com/247518
-string16 GetHardcodedValueForType(ServerFieldType type);
+// Gets just the |type| attributes from each DetailInput.
+std::vector<ServerFieldType> TypesFromInputs(const DetailInputs& inputs);
 
 }  // namespace common
 }  // namespace autofill

@@ -47,8 +47,6 @@ class LocaleChangeGuard : public content::NotificationObserver,
   void OnLogin();
 
  private:
-  class Delegate;
-
   void RevertLocaleChangeCallback(const base::ListValue* list);
   void Check();
 
@@ -68,9 +66,9 @@ class LocaleChangeGuard : public content::NotificationObserver,
   // We want to show locale change notification in previous language however
   // we cannot directly load strings for non-current locale.  So we cache
   // messages before locale change.
-  string16 title_text_;
-  string16 message_text_;
-  string16 revert_link_text_;
+  base::string16 title_text_;
+  base::string16 message_text_;
+  base::string16 revert_link_text_;
 };
 
 }  // namespace chromeos

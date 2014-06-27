@@ -12,10 +12,9 @@
 #include "base/memory/scoped_ptr.h"
 #include "content/public/renderer/render_view_observer.h"
 #include "third_party/WebKit/public/web/WebInputElement.h"
-#include "third_party/WebKit/public/web/WebPasswordGeneratorClient.h"
 #include "url/gurl.h"
 
-namespace WebKit {
+namespace blink {
 class WebCString;
 class WebDocument;
 }
@@ -28,27 +27,31 @@ struct PasswordForm;
 // This class is responsible for controlling communication for password
 // generation between the browser (which shows the popup and generates
 // passwords) and WebKit (shows the generation icon in the password field).
-class PasswordGenerationAgent : public content::RenderViewObserver,
-                                public WebKit::WebPasswordGeneratorClient {
+class PasswordGenerationAgent : public content::RenderViewObserver {
  public:
   explicit PasswordGenerationAgent(content::RenderView* render_view);
   virtual ~PasswordGenerationAgent();
 
+  // Returns true if the field being changed is one where a generated password
+  // is being offered. Updates the state of the popup if necessary.
+  bool TextDidChangeInTextField(const blink::WebInputElement& element);
+
  protected:
   // Returns true if this document is one that we should consider analyzing.
   // Virtual so that it can be overriden during testing.
-  virtual bool ShouldAnalyzeDocument(const WebKit::WebDocument& document) const;
+  virtual bool ShouldAnalyzeDocument(const blink::WebDocument& document) const;
 
   // RenderViewObserver:
   virtual bool OnMessageReceived(const IPC::Message& message) OVERRIDE;
 
+  // Use to force enable during testing.
+  void set_enabled(bool enabled) { enabled_ = enabled; }
+
  private:
   // RenderViewObserver:
-  virtual void DidFinishDocumentLoad(WebKit::WebFrame* frame) OVERRIDE;
-  virtual void DidFinishLoad(WebKit::WebFrame* frame) OVERRIDE;
-
-  // WebPasswordGeneratorClient:
-  virtual void openPasswordGenerator(WebKit::WebInputElement& element) OVERRIDE;
+  virtual void DidFinishDocumentLoad(blink::WebFrame* frame) OVERRIDE;
+  virtual void DidFinishLoad(blink::WebFrame* frame) OVERRIDE;
+  virtual void FocusedNodeChanged(const blink::WebNode& node) OVERRIDE;
 
   // Message handlers.
   void OnFormNotBlacklisted(const PasswordForm& form);
@@ -56,8 +59,19 @@ class PasswordGenerationAgent : public content::RenderViewObserver,
   void OnAccountCreationFormsDetected(
       const std::vector<autofill::FormData>& forms);
 
-  // Helper function to decide whether we should show password generation icon.
-  void MaybeShowIcon();
+  // Helper function to decide if |passwords_| contains password fields for
+  // an account creation form. Sets |generation_element_| to the field that
+  // we want to trigger the generation UI on.
+  void DetermineGenerationElement();
+
+  // Show password generation UI anchored at |generation_element_|.
+  void ShowGenerationPopup();
+
+  // Show UI for editing a generated password at |generation_element_|.
+  void ShowEditingPopup();
+
+  // Hides a password generation popup if one exists.
+  void HidePopup();
 
   content::RenderView* render_view_;
 
@@ -74,7 +88,22 @@ class PasswordGenerationAgent : public content::RenderViewObserver,
   // not be sent if the feature is disabled.
   std::vector<autofill::FormData> generation_enabled_forms_;
 
-  std::vector<WebKit::WebInputElement> passwords_;
+  // Password elements that may be part of an account creation form.
+  std::vector<blink::WebInputElement> password_elements_;
+
+  // Element where we want to trigger password generation UI.
+  blink::WebInputElement generation_element_;
+
+  // If the password field at |generation_element_| contains a generated
+  // password.
+  bool password_is_generated_;
+
+  // True if a password was generated and the user edited it. Used for UMA
+  // stats.
+  bool password_edited_;
+
+  // If this feature is enabled. Controlled by Finch.
+  bool enabled_;
 
   DISALLOW_COPY_AND_ASSIGN(PasswordGenerationAgent);
 };

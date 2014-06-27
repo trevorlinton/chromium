@@ -8,11 +8,11 @@
 
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/password_manager/password_manager.h"
 #include "chrome/browser/tab_contents/tab_util.h"
 #include "chrome/browser/ui/gtk/constrained_window_gtk.h"
 #include "chrome/browser/ui/gtk/gtk_util.h"
-#include "chrome/browser/ui/login/login_model.h"
+#include "components/password_manager/core/browser/login_model.h"
+#include "components/password_manager/core/browser/password_manager.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
@@ -48,17 +48,18 @@ class LoginHandlerGtk : public LoginHandler {
   }
 
   // LoginModelObserver implementation.
-  virtual void OnAutofillDataAvailable(const string16& username,
-                                       const string16& password) OVERRIDE {
+  virtual void OnAutofillDataAvailable(
+      const base::string16& username,
+      const base::string16& password) OVERRIDE {
     DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 
     // NOTE: Would be nice to use gtk_entry_get_text_length, but it is fairly
     // new and not always in our GTK version.
     if (strlen(gtk_entry_get_text(GTK_ENTRY(username_entry_))) == 0) {
       gtk_entry_set_text(GTK_ENTRY(username_entry_),
-                         UTF16ToUTF8(username).c_str());
+                         base::UTF16ToUTF8(username).c_str());
       gtk_entry_set_text(GTK_ENTRY(password_entry_),
-                         UTF16ToUTF8(password).c_str());
+                         base::UTF16ToUTF8(password).c_str());
       gtk_editable_select_region(GTK_EDITABLE(username_entry_), 0, -1);
     }
   }
@@ -67,14 +68,14 @@ class LoginHandlerGtk : public LoginHandler {
   // LoginHandler:
   virtual void BuildViewForPasswordManager(
       PasswordManager* manager,
-      const string16& explanation) OVERRIDE {
+      const base::string16& explanation) OVERRIDE {
     DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 
     root_.reset(gtk_vbox_new(FALSE, ui::kContentAreaBorder));
     g_object_ref_sink(root_.get());
     g_signal_connect(root_.get(), "destroy", G_CALLBACK(OnDestroyThunk), this);
 
-    GtkWidget* label = gtk_label_new(UTF16ToUTF8(explanation).c_str());
+    GtkWidget* label = gtk_label_new(base::UTF16ToUTF8(explanation).c_str());
     gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
     gtk_box_pack_start(GTK_BOX(root_.get()), label, FALSE, FALSE, 0);
 
@@ -164,8 +165,8 @@ class LoginHandlerGtk : public LoginHandler {
 
 void LoginHandlerGtk::OnOKClicked(GtkWidget* sender) {
   SetAuth(
-      UTF8ToUTF16(gtk_entry_get_text(GTK_ENTRY(username_entry_))),
-      UTF8ToUTF16(gtk_entry_get_text(GTK_ENTRY(password_entry_))));
+      base::UTF8ToUTF16(gtk_entry_get_text(GTK_ENTRY(username_entry_))),
+      base::UTF8ToUTF16(gtk_entry_get_text(GTK_ENTRY(password_entry_))));
 }
 
 void LoginHandlerGtk::OnCancelClicked(GtkWidget* sender) {

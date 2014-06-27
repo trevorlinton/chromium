@@ -19,6 +19,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "grit/browser_resources.h"
 #include "grit/generated_resources.h"
+#include "ui/base/device_form_factor.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/webui/jstemplate_builder.h"
@@ -80,7 +81,7 @@ void NTPResourceCache::CreateNewTabHTML() {
   // (in GetLocalizedValues) and should have more legible names.
   // Show the profile name in the title and most visited labels if the current
   // profile is not the default.
-  DictionaryValue localized_strings;
+  base::DictionaryValue localized_strings;
   localized_strings.SetBoolean("hasattribution", false);
   localized_strings.SetString("title",
       l10n_util::GetStringUTF16(IDS_NEW_TAB_TITLE));
@@ -132,23 +133,11 @@ void NTPResourceCache::CreateNewTabHTML() {
                                  GetRawDataResource(IDR_NEW_TAB_ANDROID_HTML));
   localized_strings.SetString(
       "device",
-      CommandLine::ForCurrentProcess()->HasSwitch(switches::kTabletUI) ?
+      ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET ?
           "tablet" : "phone");
 
-  bool bookmark_shortcuts_allowed = false;
-  if (CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kDisableAddToHomescreen)) {
-    bookmark_shortcuts_allowed = true;
-  } else if (CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kEnableAddToHomescreen)) {
-    bookmark_shortcuts_allowed = false;
-  }
-  localized_strings.SetString(
-      "shortcut_item_enabled",
-      bookmark_shortcuts_allowed ? "true" : "false");
-
   const char* new_tab_link = kLearnMoreIncognitoUrl;
-  string16 learnMoreLink = ASCIIToUTF16(
+  base::string16 learnMoreLink = base::ASCIIToUTF16(
       google_util::AppendGoogleLocaleParam(GURL(new_tab_link)).spec());
   localized_strings.SetString("content",
       l10n_util::GetStringFUTF16(

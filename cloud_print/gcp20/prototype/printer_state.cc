@@ -8,7 +8,7 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
-#include "base/safe_numerics.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/values.h"
 
 namespace {
@@ -22,6 +22,7 @@ const char kAccessToken[] = "access_token";
 const char kAccessTokenUpdate[] = "access_token_update";
 
 const char kLocalSettings[] = "local_settings";
+const char kCdd[] = "cdd";
 const char kLocalSettingsLocalDiscovery[] = "local_discovery";
 const char kLocalSettingsAccessTokenEnabled[] = "access_token_enabled";
 const char kLocalSettingsLocalPrintingEnabled[] =
@@ -66,12 +67,15 @@ bool SaveToFile(const base::FilePath& path, const PrinterState& state) {
     json.SetBoolean(kRegistered, false);
   }
 
+  if (state.cdd.get())
+    json.Set(kCdd, state.cdd->DeepCopy());
+
   std::string json_str;
   base::JSONWriter::WriteWithOptions(&json,
                                      base::JSONWriter::OPTIONS_PRETTY_PRINT,
                                      &json_str);
-  int size = base::checked_numeric_cast<int>(json_str.size());
-  return (file_util::WriteFile(path, json_str.data(), size) == size);
+  int size = base::checked_cast<int>(json_str.size());
+  return (base::WriteFile(path, json_str.data(), size) == size);
 }
 
 bool LoadFromFile(const base::FilePath& path, PrinterState* state) {
@@ -151,6 +155,10 @@ bool LoadFromFile(const base::FilePath& path, PrinterState* state) {
     }
   }
 
+  base::DictionaryValue* cdd_dict = NULL;
+  if (!json->GetDictionary(kCdd, &cdd_dict))
+    LOG(WARNING) << "Cannot read |cdd|. Reset to default.";
+
   *state = PrinterState();
   state->registration_state = PrinterState::REGISTERED;
   state->user = user;
@@ -160,6 +168,8 @@ bool LoadFromFile(const base::FilePath& path, PrinterState* state) {
   state->access_token = access_token;
   state->access_token_update = base::Time::FromTimeT(access_token_update);
   state->local_settings = local_settings;
+  if (cdd_dict)
+    state->cdd.reset(cdd_dict->DeepCopy());
   return true;
 }
 

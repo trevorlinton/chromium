@@ -8,11 +8,11 @@
 #include "base/json/json_writer.h"
 #include "base/values.h"
 #include "chrome/common/extensions/api/permissions.h"
-#include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/permissions/usb_device_permission.h"
 #include "extensions/common/error_utils.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/permissions/permissions_info.h"
+#include "extensions/common/permissions/usb_device_permission.h"
 #include "extensions/common/url_pattern_set.h"
 
 using extensions::APIPermission;
@@ -56,6 +56,9 @@ scoped_ptr<Permissions> PackPermissionSet(const PermissionSet* set) {
     }
   }
 
+  // TODO(rpaquay): We currently don't expose manifest permissions
+  // to apps/extensions via the permissions API.
+
   permissions->origins.reset(new std::vector<std::string>());
   URLPatternSet hosts = set->explicit_hosts();
   for (URLPatternSet::const_iterator i = hosts.begin(); i != hosts.end(); ++i)
@@ -68,6 +71,7 @@ scoped_refptr<PermissionSet> UnpackPermissionSet(
     const Permissions& permissions,
     bool allow_file_access,
     std::string* error) {
+  DCHECK(error);
   APIPermissionSet apis;
   std::vector<std::string>* permissions_list = permissions.permissions.get();
   if (permissions_list) {
@@ -104,7 +108,7 @@ scoped_refptr<PermissionSet> UnpackPermissionSet(
         }
 
         CHECK(permission);
-        if (!permission->FromValue(permission_json.get())) {
+        if (!permission->FromValue(permission_json.get(), NULL)) {
           *error = ErrorUtils::FormatErrorMessage(kInvalidParameter, *it);
           return NULL;
         }
@@ -120,6 +124,10 @@ scoped_refptr<PermissionSet> UnpackPermissionSet(
       }
     }
   }
+
+  // TODO(rpaquay): We currently don't expose manifest permissions
+  // to apps/extensions via the permissions API.
+  ManifestPermissionSet manifest_permissions;
 
   URLPatternSet origins;
   if (permissions.origins.get()) {
@@ -142,7 +150,7 @@ scoped_refptr<PermissionSet> UnpackPermissionSet(
   }
 
   return scoped_refptr<PermissionSet>(
-      new PermissionSet(apis, origins, URLPatternSet()));
+      new PermissionSet(apis, manifest_permissions, origins, URLPatternSet()));
 }
 
 }  // namespace permissions_api_helpers

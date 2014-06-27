@@ -10,12 +10,12 @@
 
 #include <list>
 
+#include "base/basictypes.h"
 #include "base/containers/hash_tables.h"
 #include "base/memory/scoped_ptr.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/linked_hash_map.h"
 #include "net/quic/quic_blocked_writer_interface.h"
-#include "net/quic/quic_packet_writer.h"
 #include "net/quic/quic_protocol.h"
 #include "net/tools/epoll_server/epoll_server.h"
 #include "net/tools/quic/quic_server_session.h"
@@ -37,10 +37,13 @@ namespace net {
 
 class EpollServer;
 class QuicConfig;
+class QuicConnectionHelper;
 class QuicCryptoServerConfig;
 class QuicSession;
 
 namespace tools {
+
+class QuicPacketWriterWrapper;
 
 namespace test {
 class QuicDispatcherPeer;
@@ -49,7 +52,7 @@ class QuicDispatcherPeer;
 class DeleteSessionsAlarm;
 class QuicEpollConnectionHelper;
 
-class QuicDispatcher : public QuicPacketWriter, public QuicSessionOwner {
+class QuicDispatcher : public QuicServerSessionVisitor {
  public:
   // Ideally we'd have a linked_hash_set: the  boolean is unused.
   typedef linked_hash_map<QuicBlockedWriterInterface*, bool> WriteBlockedList;
@@ -60,83 +63,114 @@ class QuicDispatcher : public QuicPacketWriter, public QuicSessionOwner {
   QuicDispatcher(const QuicConfig& config,
                  const QuicCryptoServerConfig& crypto_config,
                  const QuicVersionVector& supported_versions,
-                 int fd,
                  EpollServer* epoll_server);
+
   virtual ~QuicDispatcher();
 
-  // QuicPacketWriter
-  virtual WriteResult WritePacket(
-      const char* buffer, size_t buf_len,
-      const IPAddressNumber& self_address,
-      const IPEndPoint& peer_address,
-      QuicBlockedWriterInterface* writer) OVERRIDE;
-  virtual bool IsWriteBlockedDataBuffered() const OVERRIDE;
+  void Initialize(int fd);
 
+  // Process the incoming packet by creating a new session, passing it to
+  // an existing session, or passing it to the TimeWaitListManager.
   virtual void ProcessPacket(const IPEndPoint& server_address,
                              const IPEndPoint& client_address,
-                             QuicGuid guid,
                              const QuicEncryptedPacket& packet);
 
-  // Called when the underyling connection becomes writable to allow
-  // queued writes to happen.
-  //
-  // Returns true if more writes are possible, false otherwise.
-  virtual bool OnCanWrite();
+  // Called when the socket becomes writable to allow queued writes to happen.
+  virtual void OnCanWrite();
+
+  // Returns true if there's anything in the blocked writer list.
+  virtual bool HasPendingWrites() const;
 
   // Sends ConnectionClose frames to all connected clients.
   void Shutdown();
 
+  // QuicServerSessionVisitor interface implementation:
   // Ensure that the closed connection is cleaned up asynchronously.
-  virtual void OnConnectionClosed(QuicGuid guid, QuicErrorCode error) OVERRIDE;
+  virtual void OnConnectionClosed(QuicConnectionId connection_id,
+                                  QuicErrorCode error) OVERRIDE;
 
-  // Sets the fd and creates a default packet writer with that fd.
-  void set_fd(int fd);
+  // Queues the blocked writer for later resumption.
+  virtual void OnWriteBlocked(QuicBlockedWriterInterface* writer) OVERRIDE;
 
-  typedef base::hash_map<QuicGuid, QuicSession*> SessionMap;
-
-  virtual QuicSession* CreateQuicSession(
-      QuicGuid guid,
-      const IPEndPoint& client_address);
+  typedef base::hash_map<QuicConnectionId, QuicSession*> SessionMap;
 
   // Deletes all sessions on the closed session list and clears the list.
   void DeleteSessions();
 
   const SessionMap& session_map() const { return session_map_; }
 
-  // Uses the specified |writer| instead of QuicSocketUtils and takes ownership
-  // of writer.
-  void UseWriter(QuicPacketWriter* writer);
-
   WriteBlockedList* write_blocked_list() { return &write_blocked_list_; }
 
  protected:
-  const QuicConfig& config_;
-  const QuicCryptoServerConfig& crypto_config_;
+  // Instantiates a new low-level packet writer. Caller takes ownership of the
+  // returned object.
+  QuicPacketWriter* CreateWriter(int fd);
+
+  // Instantiates a new top-level writer wrapper. Takes ownership of |writer|.
+  // Caller takes ownership of the returned object.
+  virtual QuicPacketWriterWrapper* CreateWriterWrapper(
+      QuicPacketWriter* writer);
+
+  virtual QuicSession* CreateQuicSession(QuicConnectionId connection_id,
+                                         const IPEndPoint& server_address,
+                                         const IPEndPoint& client_address);
+
+  QuicConnection* CreateQuicConnection(QuicConnectionId connection_id,
+                                       const IPEndPoint& server_address,
+                                       const IPEndPoint& client_address);
+
+  // Replaces the packet writer with |writer|. Takes ownership of |writer|.
+  void set_writer(QuicPacketWriter* writer);
 
   QuicTimeWaitListManager* time_wait_list_manager() {
     return time_wait_list_manager_.get();
   }
 
-  QuicEpollConnectionHelper* helper() { return helper_.get(); }
   EpollServer* epoll_server() { return epoll_server_; }
 
   const QuicVersionVector& supported_versions() const {
     return supported_versions_;
   }
 
+  // Called by |framer_visitor_| when the public header has been parsed.
+  virtual bool OnUnauthenticatedPublicHeader(
+      const QuicPacketPublicHeader& header);
+
+  const IPEndPoint& current_server_address() {
+    return current_server_address_;
+  }
+  const QuicEncryptedPacket& current_packet() {
+    return *current_packet_;
+  }
+
+  const QuicConfig& config() const { return config_; }
+
+  const QuicCryptoServerConfig& crypto_config() const { return crypto_config_; }
+
  private:
+  class QuicFramerVisitor;
   friend class net::tools::test::QuicDispatcherPeer;
 
+  // Called by |framer_visitor_| when the private header has been parsed
+  // of a data packet that is destined for the time wait manager.
+  void OnUnauthenticatedHeader(const QuicPacketHeader& header);
+
   // Removes the session from the session map and write blocked list, and
-  // adds the GUID to the time-wait list.
+  // adds the ConnectionId to the time-wait list.
   void CleanUpSession(SessionMap::iterator it);
+
+  bool HandlePacketForTimeWait(const QuicPacketPublicHeader& header);
+
+  const QuicConfig& config_;
+
+  const QuicCryptoServerConfig& crypto_config_;
 
   // The list of connections waiting to write.
   WriteBlockedList write_blocked_list_;
 
   SessionMap session_map_;
 
-  // Entity that manages guids in time wait state.
+  // Entity that manages connection_ids in time wait state.
   scoped_ptr<QuicTimeWaitListManager> time_wait_list_manager_;
 
   // An alarm which deletes closed sessions.
@@ -147,24 +181,27 @@ class QuicDispatcher : public QuicPacketWriter, public QuicSessionOwner {
 
   EpollServer* epoll_server_;  // Owned by the server.
 
-  // The connection for client-server communication
-  int fd_;
-
-  // True if the session is write blocked due to the socket returning EAGAIN.
-  // False if we have gotten a call to OnCanWrite after the last failed write.
-  bool write_blocked_;
-
   // The helper used for all connections.
   scoped_ptr<QuicEpollConnectionHelper> helper_;
 
-  // The writer to write to the socket with.
-  scoped_ptr<QuicPacketWriter> writer_;
+  // The writer to write to the socket with. We require a writer wrapper to
+  // allow replacing writer implementation without disturbing running
+  // connections.
+  scoped_ptr<QuicPacketWriterWrapper> writer_;
 
   // This vector contains QUIC versions which we currently support.
   // This should be ordered such that the highest supported version is the first
   // element, with subsequent elements in descending order (versions can be
   // skipped as necessary).
   const QuicVersionVector supported_versions_;
+
+  // Information about the packet currently being handled.
+  IPEndPoint current_client_address_;
+  IPEndPoint current_server_address_;
+  const QuicEncryptedPacket* current_packet_;
+
+  QuicFramer framer_;
+  scoped_ptr<QuicFramerVisitor> framer_visitor_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicDispatcher);
 };

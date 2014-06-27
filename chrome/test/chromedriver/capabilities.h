@@ -18,10 +18,10 @@
 #include "chrome/test/chromedriver/net/net_util.h"
 
 namespace base {
+class CommandLine;
 class DictionaryValue;
 }
 
-class CommandLine;
 class Status;
 
 class Switches {
@@ -32,7 +32,7 @@ class Switches {
 
   void SetSwitch(const std::string& name);
   void SetSwitch(const std::string& name, const std::string& value);
-  void SetSwitch(const std::string& name, const string16& value);
+  void SetSwitch(const std::string& name, const base::string16& value);
   void SetSwitch(const std::string& name, const base::FilePath& value);
 
   // In case of same key, |switches| will override.
@@ -49,7 +49,7 @@ class Switches {
 
   size_t GetSize() const;
 
-  void AppendToCommandLine(CommandLine* command) const;
+  void AppendToCommandLine(base::CommandLine* command) const;
   std::string ToString() const;
 
  private:
@@ -78,6 +78,8 @@ struct Capabilities {
   std::string android_package;
 
   std::string android_process;
+
+  bool android_use_running_app;
 
   base::FilePath binary;
 

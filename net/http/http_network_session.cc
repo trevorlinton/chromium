@@ -42,6 +42,7 @@ net::ClientSocketPoolManager* CreateSocketPoolManager(
       params.cert_verifier,
       params.server_bound_cert_service,
       params.transport_security_state,
+      params.cert_transparency_verifier,
       params.ssl_session_cache_shard,
       params.proxy_service,
       params.ssl_config_service,
@@ -58,6 +59,7 @@ HttpNetworkSession::Params::Params()
       cert_verifier(NULL),
       server_bound_cert_service(NULL),
       transport_security_state(NULL),
+      cert_transparency_verifier(NULL),
       proxy_service(NULL),
       ssl_config_service(NULL),
       http_auth_handler_factory(NULL),
@@ -70,7 +72,6 @@ HttpNetworkSession::Params::Params()
       testing_fixed_http_port(0),
       testing_fixed_https_port(0),
       force_spdy_single_domain(false),
-      enable_spdy_ip_pooling(true),
       enable_spdy_compression(true),
       enable_spdy_ping_based_connection_checking(true),
       spdy_default_protocol(kProtoUnknown),
@@ -80,10 +81,15 @@ HttpNetworkSession::Params::Params()
       time_func(&base::TimeTicks::Now),
       enable_quic(false),
       enable_quic_https(false),
+      enable_quic_port_selection(true),
+      enable_quic_pacing(false),
+      enable_quic_persist_server_info(false),
       quic_clock(NULL),
       quic_random(NULL),
+      quic_max_packet_length(kDefaultMaxPacketSize),
       enable_user_alternate_protocol_ports(false),
       quic_crypto_client_stream_factory(NULL) {
+  quic_supported_versions.push_back(QUIC_VERSION_15);
 }
 
 HttpNetworkSession::Params::~Params() {}
@@ -107,16 +113,20 @@ HttpNetworkSession::HttpNetworkSession(const Params& params)
                                params.client_socket_factory :
                                net::ClientSocketFactory::GetDefaultFactory(),
                            params.http_server_properties,
+                           params.cert_verifier,
                            params.quic_crypto_client_stream_factory,
                            params.quic_random ? params.quic_random :
                                QuicRandom::GetInstance(),
                            params.quic_clock ? params. quic_clock :
-                               new QuicClock()),
+                               new QuicClock(),
+                           params.quic_max_packet_length,
+                           params.quic_supported_versions,
+                           params.enable_quic_port_selection,
+                           params.enable_quic_pacing),
       spdy_session_pool_(params.host_resolver,
                          params.ssl_config_service,
                          params.http_server_properties,
                          params.force_spdy_single_domain,
-                         params.enable_spdy_ip_pooling,
                          params.enable_spdy_compression,
                          params.enable_spdy_ping_based_connection_checking,
                          params.spdy_default_protocol,
@@ -126,7 +136,7 @@ HttpNetworkSession::HttpNetworkSession(const Params& params)
                          params.time_func,
                          params.trusted_spdy_proxy),
       http_stream_factory_(new HttpStreamFactoryImpl(this, false)),
-      websocket_handshake_stream_factory_(
+      http_stream_factory_for_websocket_(
           new HttpStreamFactoryImpl(this, true)),
       params_(params) {
   DCHECK(proxy_service_);
@@ -194,6 +204,12 @@ base::Value* HttpNetworkSession::QuicInfoToValue() const {
   dict->Set("sessions", quic_stream_factory_.QuicStreamFactoryInfoToValue());
   dict->SetBoolean("quic_enabled", params_.enable_quic);
   dict->SetBoolean("quic_enabled_https", params_.enable_quic_https);
+  dict->SetBoolean("enable_quic_port_selection",
+                   params_.enable_quic_port_selection);
+  dict->SetBoolean("enable_quic_pacing",
+                   params_.enable_quic_pacing);
+  dict->SetBoolean("enable_quic_persist_server_info",
+                   params_.enable_quic_persist_server_info);
   dict->SetString("origin_to_force_quic_on",
                   params_.origin_to_force_quic_on.ToString());
   return dict;

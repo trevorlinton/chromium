@@ -9,7 +9,7 @@
 #include "chrome/browser/ui/global_error/global_error_service.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/ui/views/toolbar_view.h"
+#include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image.h"
 #include "ui/views/controls/button/label_button.h"
@@ -51,7 +51,7 @@ GlobalErrorBubbleViewBase* GlobalErrorBubbleViewBase::ShowStandardBubbleView(
                                 browser,
                                 error);
   views::BubbleDelegateView::CreateBubble(bubble_view);
-  bubble_view->StartFade(true);
+  bubble_view->GetWidget()->Show();
   return bubble_view;
 }
 
@@ -75,13 +75,13 @@ GlobalErrorBubbleView::GlobalErrorBubbleView(
   scoped_ptr<views::ImageView> image_view(new views::ImageView());
   image_view->SetImage(image.ToImageSkia());
 
-  string16 title_string(error_->GetBubbleViewTitle());
+  base::string16 title_string(error_->GetBubbleViewTitle());
   scoped_ptr<views::Label> title_label(new views::Label(title_string));
   title_label->SetMultiLine(true);
   title_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  title_label->SetFont(rb.GetFont(ui::ResourceBundle::MediumFont));
+  title_label->SetFontList(rb.GetFontList(ui::ResourceBundle::MediumFont));
 
-  std::vector<string16> message_strings(error_->GetBubbleViewMessages());
+  std::vector<base::string16> message_strings(error_->GetBubbleViewMessages());
   std::vector<views::Label*> message_labels;
   for (size_t i = 0; i < message_strings.size(); ++i) {
     views::Label* message_label = new views::Label(message_strings[i]);
@@ -91,18 +91,18 @@ GlobalErrorBubbleView::GlobalErrorBubbleView(
     message_labels.push_back(message_label);
   }
 
-  string16 accept_string(error_->GetBubbleViewAcceptButtonLabel());
+  base::string16 accept_string(error_->GetBubbleViewAcceptButtonLabel());
   scoped_ptr<views::LabelButton> accept_button(
       new views::LabelButton(this, accept_string));
-  accept_button->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
+  accept_button->SetStyle(views::Button::STYLE_BUTTON);
   accept_button->SetIsDefault(true);
   accept_button->set_tag(TAG_ACCEPT_BUTTON);
 
-  string16 cancel_string(error_->GetBubbleViewCancelButtonLabel());
+  base::string16 cancel_string(error_->GetBubbleViewCancelButtonLabel());
   scoped_ptr<views::LabelButton> cancel_button;
   if (!cancel_string.empty()) {
     cancel_button.reset(new views::LabelButton(this, cancel_string));
-    cancel_button->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
+    cancel_button->SetStyle(views::Button::STYLE_BUTTON);
     cancel_button->set_tag(TAG_CANCEL_BUTTON);
   }
 

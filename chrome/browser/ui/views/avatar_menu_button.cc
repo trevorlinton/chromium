@@ -11,12 +11,12 @@
 #include "chrome/browser/profiles/avatar_menu.h"
 #include "chrome/browser/profiles/profile_info_util.h"
 #include "chrome/browser/profiles/profile_metrics.h"
-#include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/views/avatar_menu_bubble_view.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/profile_chooser_view.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/profile_management_switches.h"
 #include "content/public/browser/notification_service.h"
 #include "ui/gfx/canvas.h"
 #include "ui/views/widget/widget.h"
@@ -25,8 +25,11 @@ static inline int Round(double x) {
   return static_cast<int>(x + 0.5);
 }
 
+// static
+const char AvatarMenuButton::kViewClassName[] = "AvatarMenuButton";
+
 AvatarMenuButton::AvatarMenuButton(Browser* browser, bool disabled)
-    : MenuButton(NULL, string16(), this, false),
+    : MenuButton(NULL, base::string16(), this, false),
       browser_(browser),
       disabled_(disabled),
       is_rectangle_(false),
@@ -36,6 +39,10 @@ AvatarMenuButton::AvatarMenuButton(Browser* browser, bool disabled)
 }
 
 AvatarMenuButton::~AvatarMenuButton() {
+}
+
+const char* AvatarMenuButton::GetClassName() const {
+  return kViewClassName;
 }
 
 void AvatarMenuButton::OnPaint(gfx::Canvas* canvas) {
@@ -96,14 +103,17 @@ void AvatarMenuButton::ShowAvatarBubble() {
   gfx::Point origin;
   views::View::ConvertPointToScreen(this, &origin);
   gfx::Rect bounds(origin, size());
-  if (profiles::IsNewProfileManagementEnabled()) {
+  views::BubbleBorder::Arrow arrow = button_on_right_ ?
+      views::BubbleBorder::TOP_RIGHT : views::BubbleBorder::TOP_LEFT;
+  if (switches::IsNewProfileManagement()) {
     ProfileChooserView::ShowBubble(
-        this, views::BubbleBorder::TOP_LEFT,
-        views::BubbleBorder::ALIGN_ARROW_TO_MID_ANCHOR, bounds, browser_);
+        ProfileChooserView::BUBBLE_VIEW_MODE_PROFILE_CHOOSER,
+        this, arrow, views::BubbleBorder::ALIGN_ARROW_TO_MID_ANCHOR, bounds,
+        browser_);
   } else {
     AvatarMenuBubbleView::ShowBubble(
-        this, views::BubbleBorder::TOP_LEFT,
-        views::BubbleBorder::ALIGN_ARROW_TO_MID_ANCHOR, bounds, browser_);
+        this, arrow, views::BubbleBorder::ALIGN_ARROW_TO_MID_ANCHOR, bounds,
+        browser_);
   }
 
   ProfileMetrics::LogProfileOpenMethod(ProfileMetrics::ICON_AVATAR_BUBBLE);

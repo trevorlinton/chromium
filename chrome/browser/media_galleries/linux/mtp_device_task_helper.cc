@@ -4,16 +4,22 @@
 
 #include "chrome/browser/media_galleries/linux/mtp_device_task_helper.h"
 
+#include <algorithm>
+
 #include "base/logging.h"
+#include "base/numerics/safe_conversions.h"
 #include "chrome/browser/media_galleries/linux/mtp_device_object_enumerator.h"
 #include "chrome/browser/media_galleries/linux/mtp_read_file_worker.h"
 #include "chrome/browser/media_galleries/linux/snapshot_file_details.h"
-#include "chrome/browser/storage_monitor/storage_monitor.h"
+#include "components/storage_monitor/storage_monitor.h"
 #include "content/public/browser/browser_thread.h"
 #include "device/media_transfer_protocol/media_transfer_protocol_manager.h"
+#include "net/base/io_buffer.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 #include "webkit/browser/fileapi/async_file_util.h"
 #include "webkit/common/fileapi/file_system_util.h"
+
+using storage_monitor::StorageMonitor;
 
 namespace {
 
@@ -25,6 +31,19 @@ void DoNothing(bool error) {
 
 device::MediaTransferProtocolManager* GetMediaTransferProtocolManager() {
   return StorageMonitor::GetInstance()->media_transfer_protocol_manager();
+}
+
+base::File::Info FileInfoFromMTPFileEntry(const MtpFileEntry& file_entry) {
+  base::File::Info file_entry_info;
+  file_entry_info.size = file_entry.file_size();
+  file_entry_info.is_directory =
+      file_entry.file_type() == MtpFileEntry::FILE_TYPE_FOLDER;
+  file_entry_info.is_symbolic_link = false;
+  file_entry_info.last_modified =
+      base::Time::FromTimeT(file_entry.modification_time());
+  file_entry_info.last_accessed = file_entry_info.last_modified;
+  file_entry_info.creation_time = base::Time();
+  return file_entry_info;
 }
 
 }  // namespace
@@ -61,7 +80,7 @@ void MTPDeviceTaskHelper::GetFileInfoByPath(
     const ErrorCallback& error_callback) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
   if (device_handle_.empty())
-    return HandleDeviceError(error_callback, base::PLATFORM_FILE_ERROR_FAILED);
+    return HandleDeviceError(error_callback, base::File::FILE_ERROR_FAILED);
 
   GetMediaTransferProtocolManager()->GetFileInfoByPath(
       device_handle_, file_path,
@@ -77,7 +96,7 @@ void MTPDeviceTaskHelper::ReadDirectoryByPath(
     const ErrorCallback& error_callback) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
   if (device_handle_.empty())
-    return HandleDeviceError(error_callback, base::PLATFORM_FILE_ERROR_FAILED);
+    return HandleDeviceError(error_callback, base::File::FILE_ERROR_FAILED);
 
   GetMediaTransferProtocolManager()->ReadDirectoryByPath(
       device_handle_, dir_path,
@@ -89,17 +108,31 @@ void MTPDeviceTaskHelper::ReadDirectoryByPath(
 
 void MTPDeviceTaskHelper::WriteDataIntoSnapshotFile(
     const SnapshotRequestInfo& request_info,
-    const base::PlatformFileInfo& snapshot_file_info) {
+    const base::File::Info& snapshot_file_info) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
   if (device_handle_.empty()) {
     return HandleDeviceError(request_info.error_callback,
-                             base::PLATFORM_FILE_ERROR_FAILED);
+                             base::File::FILE_ERROR_FAILED);
   }
 
   if (!read_file_worker_)
     read_file_worker_.reset(new MTPReadFileWorker(device_handle_));
   read_file_worker_->WriteDataIntoSnapshotFile(request_info,
                                                snapshot_file_info);
+}
+
+void MTPDeviceTaskHelper::ReadBytes(
+    const MTPDeviceAsyncDelegate::ReadBytesRequest& request) {
+  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
+  if (device_handle_.empty()) {
+    return HandleDeviceError(request.error_callback,
+                             base::File::FILE_ERROR_FAILED);
+  }
+
+  GetMediaTransferProtocolManager()->GetFileInfoByPath(
+      device_handle_, request.device_file_relative_path,
+      base::Bind(&MTPDeviceTaskHelper::OnGetFileInfoToReadBytes,
+                 weak_ptr_factory_.GetWeakPtr(), request));
 }
 
 void MTPDeviceTaskHelper::CloseStorage() const {
@@ -129,22 +162,13 @@ void MTPDeviceTaskHelper::OnGetFileInfo(
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
   if (error) {
     return HandleDeviceError(error_callback,
-                             base::PLATFORM_FILE_ERROR_NOT_FOUND);
+                             base::File::FILE_ERROR_NOT_FOUND);
   }
 
-  base::PlatformFileInfo file_entry_info;
-  file_entry_info.size = file_entry.file_size();
-  file_entry_info.is_directory =
-      file_entry.file_type() == MtpFileEntry::FILE_TYPE_FOLDER;
-  file_entry_info.is_symbolic_link = false;
-  file_entry_info.last_modified =
-      base::Time::FromTimeT(file_entry.modification_time());
-  file_entry_info.last_accessed = file_entry_info.last_modified;
-  file_entry_info.creation_time = base::Time();
-  content::BrowserThread::PostTask(content::BrowserThread::IO,
-                                   FROM_HERE,
-                                   base::Bind(success_callback,
-                                              file_entry_info));
+  content::BrowserThread::PostTask(
+      content::BrowserThread::IO,
+      FROM_HERE,
+      base::Bind(success_callback, FileInfoFromMTPFileEntry(file_entry)));
 }
 
 void MTPDeviceTaskHelper::OnDidReadDirectoryByPath(
@@ -154,7 +178,7 @@ void MTPDeviceTaskHelper::OnDidReadDirectoryByPath(
     bool error) const {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
   if (error)
-    return HandleDeviceError(error_callback, base::PLATFORM_FILE_ERROR_FAILED);
+    return HandleDeviceError(error_callback, base::File::FILE_ERROR_FAILED);
 
   fileapi::AsyncFileUtil::EntryList entries;
   base::FilePath current;
@@ -172,9 +196,65 @@ void MTPDeviceTaskHelper::OnDidReadDirectoryByPath(
                                    base::Bind(success_callback, entries));
 }
 
+void MTPDeviceTaskHelper::OnGetFileInfoToReadBytes(
+    const MTPDeviceAsyncDelegate::ReadBytesRequest& request,
+    const MtpFileEntry& file_entry,
+    bool error) {
+  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
+  DCHECK(request.buf);
+  DCHECK(request.buf_len >= 0);
+  DCHECK_GE(request.offset, 0);
+  if (error) {
+    return HandleDeviceError(request.error_callback,
+                             base::File::FILE_ERROR_FAILED);
+  }
+
+  base::File::Info file_info = FileInfoFromMTPFileEntry(file_entry);
+  if (file_info.is_directory) {
+    return HandleDeviceError(request.error_callback,
+                             base::File::FILE_ERROR_NOT_A_FILE);
+  } else if (file_info.size < 0 || file_info.size > kuint32max ||
+             request.offset >= file_info.size) {
+    return HandleDeviceError(request.error_callback,
+                             base::File::FILE_ERROR_FAILED);
+  }
+
+  uint32 bytes_to_read = std::min(
+      base::checked_cast<uint32>(request.buf_len),
+      base::saturated_cast<uint32>(file_info.size - request.offset));
+
+  GetMediaTransferProtocolManager()->ReadFileChunkByPath(
+      device_handle_,
+      request.device_file_relative_path,
+      base::checked_cast<uint32>(request.offset),
+      bytes_to_read,
+      base::Bind(&MTPDeviceTaskHelper::OnDidReadBytes,
+                 weak_ptr_factory_.GetWeakPtr(), request, file_info));
+}
+
+void MTPDeviceTaskHelper::OnDidReadBytes(
+    const MTPDeviceAsyncDelegate::ReadBytesRequest& request,
+    const base::File::Info& file_info,
+    const std::string& data,
+    bool error) const {
+  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
+  if (error) {
+    return HandleDeviceError(request.error_callback,
+                             base::File::FILE_ERROR_FAILED);
+  }
+
+  CHECK_LE(base::checked_cast<int>(data.length()), request.buf_len);
+  std::copy(data.begin(), data.end(), request.buf->data());
+
+  content::BrowserThread::PostTask(content::BrowserThread::IO,
+                                   FROM_HERE,
+                                   base::Bind(request.success_callback,
+                                              file_info, data.length()));
+}
+
 void MTPDeviceTaskHelper::HandleDeviceError(
     const ErrorCallback& error_callback,
-    base::PlatformFileError error) const {
+    base::File::Error error) const {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
   content::BrowserThread::PostTask(content::BrowserThread::IO,
                                    FROM_HERE,

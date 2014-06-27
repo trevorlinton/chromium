@@ -16,11 +16,9 @@ SpellcheckLanguage::SpellcheckLanguage()
 SpellcheckLanguage::~SpellcheckLanguage() {
 }
 
-void SpellcheckLanguage::Init(
-    base::PlatformFile file,
-    const std::string& language) {
+void SpellcheckLanguage::Init(base::File file, const std::string& language) {
   DCHECK(platform_spelling_engine_.get());
-  platform_spelling_engine_->Init(file);
+  platform_spelling_engine_->Init(file.Pass());
 
   character_attributes_.SetDefaultLanguage(language);
   text_iterator_.Reset();
@@ -33,12 +31,12 @@ bool SpellcheckLanguage::InitializeIfNeeded() {
 }
 
 bool SpellcheckLanguage::SpellCheckWord(
-    const char16* in_word,
+    const base::char16* in_word,
     int in_word_len,
     int tag,
     int* misspelling_start,
     int* misspelling_len,
-    std::vector<string16>* optional_suggestions) {
+    std::vector<base::string16>* optional_suggestions) {
   DCHECK(in_word_len >= 0);
   DCHECK(misspelling_start && misspelling_len) << "Out vars must be given.";
 
@@ -57,7 +55,7 @@ bool SpellcheckLanguage::SpellCheckWord(
   if (in_word_len == 0)
     return true;  // No input means always spelled correctly.
 
-  string16 word;
+  base::string16 word;
   int word_start;
   int word_length;
   if (!text_iterator_.IsInitialized() &&
@@ -98,7 +96,7 @@ bool SpellcheckLanguage::SpellCheckWord(
 // This function is a fall-back when the SpellcheckWordIterator class
 // returns a concatenated word which is not in the selected dictionary
 // (e.g. "in'n'out") but each word is valid.
-bool SpellcheckLanguage::IsValidContraction(const string16& contraction,
+bool SpellcheckLanguage::IsValidContraction(const base::string16& contraction,
                                             int tag) {
   if (!contraction_iterator_.IsInitialized() &&
       !contraction_iterator_.Initialize(&character_attributes_, false)) {
@@ -109,7 +107,7 @@ bool SpellcheckLanguage::IsValidContraction(const string16& contraction,
 
   contraction_iterator_.SetText(contraction.c_str(), contraction.length());
 
-  string16 word;
+  base::string16 word;
   int word_start;
   int word_length;
 

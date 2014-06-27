@@ -7,6 +7,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
+#include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chromeos/settings/cros_settings_names.h"
 #include "content/public/browser/web_ui_data_source.h"
@@ -14,7 +15,8 @@
 namespace chromeos {
 
 void AddAccountUITweaksLocalizedValues(
-    base::DictionaryValue* localized_strings) {
+    base::DictionaryValue* localized_strings,
+    Profile* profile) {
   DCHECK(localized_strings);
 
   std::string owner_email;
@@ -24,6 +26,8 @@ void AddAccountUITweaksLocalizedValues(
       UserManager::Get()->GetUserDisplayEmail(owner_email);
   localized_strings->SetString("ownerUserId", display_email);
 
+  // TODO(pastarmovj): Replace this call with a multi-profile aware one.
+  // see http://crbug.com/362430
   localized_strings->SetBoolean("currentUserIsOwner",
       UserManager::Get()->IsCurrentUserOwner());
 
@@ -35,10 +39,11 @@ void AddAccountUITweaksLocalizedValues(
 }
 
 void AddAccountUITweaksLocalizedValues(
-    content::WebUIDataSource* source) {
+    content::WebUIDataSource* source,
+    Profile* profile) {
   DCHECK(source);
-  DictionaryValue dict;
-  AddAccountUITweaksLocalizedValues(&dict);
+  base::DictionaryValue dict;
+  AddAccountUITweaksLocalizedValues(&dict, profile);
   source->AddLocalizedStrings(dict);
 }
 

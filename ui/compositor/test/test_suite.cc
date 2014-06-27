@@ -9,11 +9,7 @@
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/compositor_switches.h"
 #include "ui/gfx/gfx_paths.h"
-#include "ui/gl/gl_implementation.h"
-
-#if defined(USE_X11)
-#include <X11/Xlib.h>
-#endif
+#include "ui/gl/gl_surface.h"
 
 #if defined(OS_WIN)
 #include "ui/gfx/win/dpi.h"
@@ -28,11 +24,8 @@ CompositorTestSuite::CompositorTestSuite(int argc, char** argv)
 CompositorTestSuite::~CompositorTestSuite() {}
 
 void CompositorTestSuite::Initialize() {
-#if defined(USE_X11)
-  XInitThreads();
-#endif
-  CHECK(gfx::InitializeGLBindings(gfx::kGLImplementationOSMesaGL));
   base::TestSuite::Initialize();
+  gfx::GLSurface::InitializeOneOffForTests();
 
   gfx::RegisterPathProvider();
 
@@ -40,7 +33,7 @@ void CompositorTestSuite::Initialize() {
   gfx::InitDeviceScaleFactor(1.0f);
 #endif
 
-  message_loop_.reset(new base::MessageLoop(base::MessageLoop::TYPE_UI));
+  message_loop_.reset(new base::MessageLoopForUI);
 }
 
 void CompositorTestSuite::Shutdown() {

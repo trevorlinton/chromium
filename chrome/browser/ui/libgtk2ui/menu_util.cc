@@ -101,7 +101,7 @@ void BuildSubmenuFromModel(ui::MenuModel* model,
   for (int i = 0; i < model->GetItemCount(); ++i) {
     gfx::Image icon;
     std::string label = ui::ConvertAcceleratorsFromWindowsStyle(
-        UTF16ToUTF8(model->GetLabelAt(i)));
+        base::UTF16ToUTF8(model->GetLabelAt(i)));
 
     bool connect_to_activate = true;
 
@@ -229,16 +229,16 @@ void SetMenuItemInfo(GtkWidget* widget, void* block_activation_ptr) {
       // Update the menu item label if it is dynamic.
       if (model->IsItemDynamicAt(id)) {
         std::string label = ui::ConvertAcceleratorsFromWindowsStyle(
-            UTF16ToUTF8(model->GetLabelAt(id)));
+            base::UTF16ToUTF8(model->GetLabelAt(id)));
 
         gtk_menu_item_set_label(GTK_MENU_ITEM(widget), label.c_str());
         if (GTK_IS_IMAGE_MENU_ITEM(widget)) {
           gfx::Image icon;
           if (model->GetIconAt(id, &icon)) {
-            gtk_image_menu_item_set_image(
-                GTK_IMAGE_MENU_ITEM(widget),
-                gtk_image_new_from_pixbuf(
-                    GdkPixbufFromSkBitmap(*icon.ToSkBitmap())));
+            GdkPixbuf* pixbuf = GdkPixbufFromSkBitmap(*icon.ToSkBitmap());
+            gtk_image_menu_item_set_image(GTK_IMAGE_MENU_ITEM(widget),
+                gtk_image_new_from_pixbuf(pixbuf));
+            g_object_unref(pixbuf);
           } else {
             gtk_image_menu_item_set_image(GTK_IMAGE_MENU_ITEM(widget), NULL);
           }

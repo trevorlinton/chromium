@@ -28,7 +28,8 @@ class OpenSLESOutputStream : public AudioOutputStream {
   static const int kMaxNumOfBuffersInQueue = 2;
 
   OpenSLESOutputStream(AudioManagerAndroid* manager,
-                       const AudioParameters& params);
+                       const AudioParameters& params,
+                       SLint32 stream_type);
 
   virtual ~OpenSLESOutputStream();
 
@@ -39,6 +40,10 @@ class OpenSLESOutputStream : public AudioOutputStream {
   virtual void Stop() OVERRIDE;
   virtual void SetVolume(double volume) OVERRIDE;
   virtual void GetVolume(double* volume) OVERRIDE;
+
+  // Set the value of |muted_|. It does not affect |volume_| which can be
+  // got by calling GetVolume(). See comments for |muted_| below.
+  void SetMute(bool muted);
 
  private:
   bool CreatePlayer();
@@ -73,6 +78,10 @@ class OpenSLESOutputStream : public AudioOutputStream {
 
   AudioManagerAndroid* audio_manager_;
 
+  // Audio playback stream type.
+  // See SLES/OpenSLES_Android.h for details.
+  SLint32 stream_type_;
+
   AudioSourceCallback* callback_;
 
   // Shared engine interfaces for the app.
@@ -95,6 +104,12 @@ class OpenSLESOutputStream : public AudioOutputStream {
   size_t buffer_size_bytes_;
 
   bool started_;
+
+  // Volume control coming from hardware. It overrides |volume_| when it's
+  // true. Otherwise, use |volume_| for scaling.
+  // This is needed because platform voice volume never goes to zero in
+  // COMMUNICATION mode on Android.
+  bool muted_;
 
   // Volume level from 0 to 1.
   float volume_;

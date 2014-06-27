@@ -12,16 +12,17 @@
 #include "chrome/browser/extensions/api/management/management_api_constants.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
-#include "chrome/browser/extensions/extension_host.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_test_message_listener.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_switches.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/common/url_constants.h"
+#include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/browser/extension_host.h"
+#include "extensions/browser/extension_system.h"
 
 namespace keys = extension_management_api_constants;
 namespace util = extension_function_test_utils;
@@ -31,18 +32,12 @@ namespace extensions {
 class ExtensionManagementApiBrowserTest : public ExtensionBrowserTest {
  protected:
   bool CrashEnabledExtension(const std::string& extension_id) {
-    content::WindowedNotificationObserver extension_crash_observer(
-        chrome::NOTIFICATION_EXTENSION_PROCESS_TERMINATED,
-        content::NotificationService::AllSources());
     ExtensionHost* background_host =
         ExtensionSystem::Get(browser()->profile())->
             process_manager()->GetBackgroundHostForExtension(extension_id);
     if (!background_host)
       return false;
-    background_host->host_contents()->GetController().LoadURL(
-        GURL(content::kChromeUICrashURL), content::Referrer(),
-        content::PAGE_TRANSITION_LINK, std::string());
-    extension_crash_observer.Wait();
+    content::CrashTab(background_host->host_contents());
     return true;
   }
 };
@@ -116,9 +111,13 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiBrowserTest,
 
   const std::string id = extension->id();
 
+  scoped_refptr<Extension> empty_extension(
+      extension_function_test_utils::CreateEmptyExtension());
   // Uninstall, then cancel via the confirm dialog.
   scoped_refptr<ManagementUninstallFunction> uninstall_function(
       new ManagementUninstallFunction());
+  uninstall_function->set_extension(empty_extension);
+  uninstall_function->set_user_gesture(true);
   ManagementUninstallFunction::SetAutoConfirmForTest(false);
 
   EXPECT_TRUE(MatchPattern(
@@ -134,8 +133,9 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiBrowserTest,
 
   // Uninstall, then accept via the confirm dialog.
   uninstall_function = new ManagementUninstallFunction();
+  uninstall_function->set_extension(empty_extension);
   ManagementUninstallFunction::SetAutoConfirmForTest(true);
-
+  uninstall_function->set_user_gesture(true);
   util::RunFunctionAndReturnSingleResult(
       uninstall_function.get(),
       base::StringPrintf("[\"%s\", {\"showConfirmDialog\": true}]", id.c_str()),
@@ -206,8 +206,8 @@ class ExtensionManagementApiEscalationTest :
     EXPECT_FALSE(UpdateExtension(kId, path_v2, -1));
     EXPECT_TRUE(service->GetExtensionById(kId, false) == NULL);
     EXPECT_TRUE(service->GetExtensionById(kId, true) != NULL);
-    EXPECT_TRUE(
-        service->extension_prefs()->DidExtensionEscalatePermissions(kId));
+    EXPECT_TRUE(ExtensionPrefs::Get(browser()->profile())
+                    ->DidExtensionEscalatePermissions(kId));
   }
 
   void SetEnabled(bool enabled, bool user_gesture,
@@ -265,10 +265,17 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiEscalationTest,
       switches::kAppsGalleryInstallAutoConfirmForTests, "cancel");
   SetEnabled(true, true, keys::kUserDidNotReEnableError);
 
-  // This should succeed when user accepts dialog.
+  // This should succeed when user accepts dialog.  We must wait for the process
+  // to connect *and* for the channel to finish initializing before trying to
+  // crash it.  (NOTIFICATION_RENDERER_PROCESS_CREATED does not wait for the
+  // latter and can cause KillProcess to fail on Windows.)
+  content::WindowedNotificationObserver observer(
+      chrome::NOTIFICATION_EXTENSION_HOST_CREATED,
+      content::NotificationService::AllSources());
   CommandLine::ForCurrentProcess()->AppendSwitchASCII(
       switches::kAppsGalleryInstallAutoConfirmForTests, "accept");
   SetEnabled(true, true, std::string());
+  observer.Wait();
 
   // Crash the extension. Mock a reload by disabling and then enabling. The
   // extension should be reloaded and enabled.

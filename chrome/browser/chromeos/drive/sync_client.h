@@ -5,14 +5,16 @@
 #ifndef CHROME_BROWSER_CHROMEOS_DRIVE_SYNC_CLIENT_H_
 #define CHROME_BROWSER_CHROMEOS_DRIVE_SYNC_CLIENT_H_
 
-#include <set>
+#include <map>
 #include <string>
 #include <vector>
 
+#include "base/callback.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/drive/file_errors.h"
+#include "chrome/browser/chromeos/drive/resource_metadata.h"
 
 namespace base {
 class SequencedTaskRunner;
@@ -23,16 +25,19 @@ namespace drive {
 class FileCacheEntry;
 class JobScheduler;
 class ResourceEntry;
+struct ClientContext;
 
 namespace file_system {
 class DownloadOperation;
 class OperationObserver;
-class UpdateOperation;
 }
 
 namespace internal {
 
+class ChangeListLoader;
+class EntryUpdatePerformer;
 class FileCache;
+class LoaderController;
 class ResourceMetadata;
 
 // The SyncClient is used to synchronize pinned files on Drive and the
@@ -43,32 +48,23 @@ class ResourceMetadata;
 // the states left in the cache.
 class SyncClient {
  public:
-  // Types of sync tasks.
-  enum SyncType {
-    FETCH,  // Fetch a file from the Drive server.
-    UPLOAD,  // Upload a file to the Drive server.
-    UPLOAD_NO_CONTENT_CHECK,  // Upload a file without checking if the file is
-                              // really modified. This type is used for upload
-                              // retry tasks that should have already run the
-                              // check at least once.
-  };
-
   SyncClient(base::SequencedTaskRunner* blocking_task_runner,
              file_system::OperationObserver* observer,
              JobScheduler* scheduler,
              ResourceMetadata* metadata,
              FileCache* cache,
+             LoaderController* loader_controller,
              const base::FilePath& temporary_file_directory);
   virtual ~SyncClient();
 
-  // Adds a fetch task to the queue.
+  // Adds a fetch task.
   void AddFetchTask(const std::string& local_id);
 
-  // Removes a fetch task from the queue.
+  // Removes a fetch task.
   void RemoveFetchTask(const std::string& local_id);
 
-  // Adds an upload task to the queue.
-  void AddUploadTask(const std::string& local_id);
+  // Adds a update task.
+  void AddUpdateTask(const ClientContext& context, const std::string& local_id);
 
   // Starts processing the backlog (i.e. pinned-but-not-filed files and
   // dirty-but-not-uploaded files). Kicks off retrieval of the local
@@ -77,7 +73,7 @@ class SyncClient {
 
   // Starts checking the existing pinned files to see if these are
   // up-to-date. If stale files are detected, the local IDs of these files
-  // are added to the queue and the sync loop is started.
+  // are added and the sync loop is started.
   void StartCheckingExistingPinnedFiles();
 
   // Sets a delay for testing.
@@ -89,54 +85,84 @@ class SyncClient {
   void StartSyncLoop();
 
  private:
-  // Adds the given task to the queue. If the same task is queued, remove the
-  // existing one, and adds a new one to the end of the queue.
-  void AddTaskToQueue(SyncType type,
-                      const std::string& local_id,
-                      const base::TimeDelta& delay);
+  // Types of sync tasks.
+  enum SyncType {
+    FETCH,  // Fetch a file from the Drive server.
+    UPDATE,  // Updates an entry's metadata or content on the Drive server.
+  };
 
-  // Called when a task is ready to be added to the queue.
-  void StartTask(SyncType type, const std::string& local_id);
+  // States of sync tasks.
+  enum SyncState {
+    PENDING,
+    RUNNING,
+  };
+
+  struct SyncTask {
+    SyncTask();
+    ~SyncTask();
+    SyncState state;
+    base::Callback<base::Closure()> task;
+    bool should_run_again;
+    base::Closure cancel_closure;
+  };
+
+  typedef std::map<std::pair<SyncType, std::string>, SyncTask> SyncTasks;
+
+  // Adds a FETCH task.
+  void AddFetchTaskInternal(const std::string& local_id,
+                            const base::TimeDelta& delay);
+
+  // Adds a UPDATE task.
+  void AddUpdateTaskInternal(const ClientContext& context,
+                             const std::string& local_id,
+                             const base::TimeDelta& delay);
+
+  // Adds the given task. If the same task is found, does nothing.
+  void AddTask(const SyncTasks::key_type& key,
+               const SyncTask& task,
+               const base::TimeDelta& delay);
+
+  // Called when a task is ready to start.
+  void StartTask(const SyncTasks::key_type& key);
 
   // Called when the local IDs of files in the backlog are obtained.
   void OnGetLocalIdsOfBacklog(const std::vector<std::string>* to_fetch,
-                              const std::vector<std::string>* to_upload);
+                              const std::vector<std::string>* to_update);
 
   // Adds fetch tasks.
   void AddFetchTasks(const std::vector<std::string>* local_ids);
 
+  // Erases the task and returns true if task is completed.
+  bool OnTaskComplete(SyncType type, const std::string& local_id);
+
   // Called when the file for |local_id| is fetched.
-  // Calls DoSyncLoop() to go back to the sync loop.
   void OnFetchFileComplete(const std::string& local_id,
                            FileError error,
                            const base::FilePath& local_path,
                            scoped_ptr<ResourceEntry> entry);
 
-  // Called when the file for |local_id| is uploaded.
-  // Calls DoSyncLoop() to go back to the sync loop.
-  void OnUploadFileComplete(const std::string& local_id, FileError error);
+  // Called when the entry is updated.
+  void OnUpdateComplete(const std::string& local_id, FileError error);
+
+  // Adds update tasks for |entries|.
+  void AddChildUpdateTasks(const ResourceEntryVector* entries,
+                           FileError error);
 
   scoped_refptr<base::SequencedTaskRunner> blocking_task_runner_;
+  file_system::OperationObserver* operation_observer_;
   ResourceMetadata* metadata_;
   FileCache* cache_;
 
   // Used to fetch pinned files.
   scoped_ptr<file_system::DownloadOperation> download_operation_;
 
-  // Used to upload committed files.
-  scoped_ptr<file_system::UpdateOperation> update_operation_;
+  // Used to update entry metadata.
+  scoped_ptr<EntryUpdatePerformer> entry_update_performer_;
 
-  // List of the local ids of resources which have a fetch task created.
-  std::set<std::string> fetch_list_;
+  // Sync tasks to be processed.
+  SyncTasks tasks_;
 
-  // List of the local ids of resources which have a upload task created.
-  std::set<std::string> upload_list_;
-
-  // Fetch tasks which have been created, but not started yet.  If they are
-  // removed before starting, they will be cancelled.
-  std::set<std::string> pending_fetch_list_;
-
-  // The delay is used for delaying processing tasks in AddTaskToQueue().
+  // The delay is used for delaying processing tasks in AddTask().
   base::TimeDelta delay_;
 
   // The delay is used for delaying retry of tasks on server errors.

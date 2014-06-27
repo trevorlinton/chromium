@@ -16,8 +16,8 @@
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "build/build_config.h"
+#include "ui/accessibility/ax_enums.h"
 #include "ui/base/accelerators/accelerator.h"
-#include "ui/base/accessibility/accessibility_types.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/dragdrop/drop_target_event.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
@@ -26,12 +26,11 @@
 #include "ui/compositor/layer_owner.h"
 #include "ui/events/event.h"
 #include "ui/events/event_target.h"
+#include "ui/gfx/insets.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/vector2d.h"
-#include "ui/views/background.h"
-#include "ui/views/border.h"
-#include "ui/views/focus_border.h"
+#include "ui/views/views_export.h"
 
 #if defined(OS_WIN)
 #include "base/win/scoped_comptr.h"
@@ -47,7 +46,7 @@ class Transform;
 }
 
 namespace ui {
-struct AccessibleViewState;
+struct AXViewState;
 class Compositor;
 class Layer;
 class NativeTheme;
@@ -62,7 +61,6 @@ class Background;
 class Border;
 class ContextMenuController;
 class DragController;
-class FocusBorder;
 class FocusManager;
 class FocusTraversable;
 class InputMethod;
@@ -325,13 +323,6 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Compositor.
   void SetPaintToLayer(bool paint_to_layer);
 
-  // Recreates a layer for the view and returns the old layer. After this call,
-  // the View no longer has a pointer to the old layer (so it won't be able to
-  // update the old layer or destroy it). The caller must free the returned
-  // layer.
-  // Returns NULL and does not recreate layer if view does not own its layer.
-  ui::Layer* RecreateLayer() WARN_UNUSED_RESULT;
-
   // RTL positioning -----------------------------------------------------------
 
   // Methods for accessing the bounds and position of the view, relative to its
@@ -410,6 +401,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // Returns the first ancestor, starting at this, whose class name is |name|.
   // Returns null if no ancestor has the class name |name|.
+  const View* GetAncestorWithClassName(const std::string& name) const;
   View* GetAncestorWithClassName(const std::string& name);
 
   // Recursively descends the view tree starting at this view, and returns
@@ -456,7 +448,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   //
   // |source| and |target| must be in the same widget, but doesn't need to be in
   // the same view hierarchy.
-  // |source| can be NULL in which case it means the screen coordinate system.
+  // Neither |source| nor |target| can be NULL.
   static void ConvertPointToTarget(const View* source,
                                    const View* target,
                                    gfx::Point* point);
@@ -466,7 +458,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   //
   // |source| and |target| must be in the same widget, but doesn't need to be in
   // the same view hierarchy.
-  // |source| can be NULL in which case it means the screen coordinate system.
+  // Neither |source| nor |target| can be NULL.
   static void ConvertRectToTarget(const View* source,
                                   const View* target,
                                   gfx::RectF* rect);
@@ -510,22 +502,17 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   virtual void Paint(gfx::Canvas* canvas);
 
   // The background object is owned by this object and may be NULL.
-  void set_background(Background* b) { background_.reset(b); }
+  void set_background(Background* b);
   const Background* background() const { return background_.get(); }
   Background* background() { return background_.get(); }
 
   // The border object is owned by this object and may be NULL.
-  void set_border(Border* b) { border_.reset(b); }
+  void SetBorder(scoped_ptr<Border> b);
   const Border* border() const { return border_.get(); }
   Border* border() { return border_.get(); }
 
-  // The focus_border object is owned by this object and may be NULL.
-  void set_focus_border(FocusBorder* b) { focus_border_.reset(b); }
-  const FocusBorder* focus_border() const { return focus_border_.get(); }
-  FocusBorder* focus_border() { return focus_border_.get(); }
-
   // Get the theme provider from the parent widget.
-  virtual ui::ThemeProvider* GetThemeProvider() const;
+  ui::ThemeProvider* GetThemeProvider() const;
 
   // Returns the NativeTheme to use for this View. This calls through to
   // GetNativeTheme() on the Widget this View is in. If this View is not in a
@@ -564,19 +551,22 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
     flip_canvas_on_paint_for_rtl_ui_ = enable;
   }
 
-  // Accelerated painting ------------------------------------------------------
-
-  // Enable/Disable accelerated compositing.
-  static void set_use_acceleration_when_possible(bool use);
-  static bool get_use_acceleration_when_possible();
-
   // Input ---------------------------------------------------------------------
-  // The points (and mouse locations) in the following functions are in the
-  // view's coordinates, except for a RootView.
+  // The points, rects, mouse locations, and touch locations in the following
+  // functions are in the view's coordinates, except for a RootView.
 
-  // Returns the deepest visible descendant that contains the specified point
-  // and supports event handling.
-  virtual View* GetEventHandlerForPoint(const gfx::Point& point);
+  // Convenience functions which calls into GetEventHandler() with
+  // a 1x1 rect centered at |point|.
+  View* GetEventHandlerForPoint(const gfx::Point& point);
+
+  // If point-based targeting should be used, return the deepest visible
+  // descendant that contains the center point of |rect|.
+  // If rect-based targeting (i.e., fuzzing) should be used, return the
+  // closest visible descendant having at least kRectTargetOverlap of
+  // its area covered by |rect|. If no such descendant exists, return the
+  // deepest visible descendant that contains the center point of |rect|.
+  // See http://goo.gl/3Jp2BD for more information about rect-based targeting.
+  virtual View* GetEventHandlerForRect(const gfx::Rect& rect);
 
   // Returns the deepest visible descendant that contains the specified point
   // and supports tooltips. If the view does not contain the point, returns
@@ -714,6 +704,8 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Overridden from ui::EventTarget:
   virtual bool CanAcceptEvent(const ui::Event& event) OVERRIDE;
   virtual ui::EventTarget* GetParentTarget() OVERRIDE;
+  virtual scoped_ptr<ui::EventTargetIterator> GetChildIterator() const OVERRIDE;
+  virtual ui::EventTargeter* GetEventTargeter() OVERRIDE;
 
   // Overridden from ui::EventHandler:
   virtual void OnKeyEvent(ui::KeyEvent* event) OVERRIDE;
@@ -767,10 +759,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Sets whether this view is capable of taking focus.
   // Note that this is false by default so that a view used as a container does
   // not get the focus.
-  void set_focusable(bool focusable) { focusable_ = focusable; }
-
-  // Returns true if this view is capable of taking focus.
-  bool focusable() const { return focusable_ && enabled_ && visible_; }
+  void SetFocusable(bool focusable);
 
   // Returns true if this view is |focusable_|, |enabled_| and drawn.
   virtual bool IsFocusable() const;
@@ -782,9 +771,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Set whether this view can be made focusable if the user requires
   // full keyboard access, even though it's not normally focusable.
   // Note that this is false by default.
-  void set_accessibility_focusable(bool accessibility_focusable) {
-    accessibility_focusable_ = accessibility_focusable;
-  }
+  void SetAccessibilityFocusable(bool accessibility_focusable);
 
   // Convenience method to retrieve the FocusManager associated with the
   // Widget that contains this view.  This can return NULL if this view is not
@@ -831,7 +818,8 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Any time the tooltip text that a View is displaying changes, it must
   // invoke TooltipTextChanged.
   // |p| provides the coordinates of the mouse (relative to this view).
-  virtual bool GetTooltipText(const gfx::Point& p, string16* tooltip) const;
+  virtual bool GetTooltipText(const gfx::Point& p,
+                              base::string16* tooltip) const;
 
   // Returns the location (relative to this View) for the text on the tooltip
   // to display. If false is returned (the default), the tooltip is placed at
@@ -934,7 +922,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Accessibility -------------------------------------------------------------
 
   // Modifies |state| to reflect the current accessible state of this view.
-  virtual void GetAccessibleState(ui::AccessibleViewState* state) { }
+  virtual void GetAccessibleState(ui::AXViewState* state) { }
 
   // Returns an instance of the native accessibility interface for this view.
   virtual gfx::NativeViewAccessible GetNativeViewAccessible();
@@ -945,7 +933,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // cases where the view is a native control that's already sending a
   // native accessibility event and the duplicate event would cause
   // problems.
-  void NotifyAccessibilityEvent(ui::AccessibilityTypes::Event event_type,
+  void NotifyAccessibilityEvent(ui::AXEvent event_type,
                                 bool send_native_event);
 
   // Scrolling -----------------------------------------------------------------
@@ -1034,6 +1022,8 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // changed. The default implementation calls SchedulePaint() on this View.
   virtual void OnEnabledChanged();
 
+  bool needs_layout() const { return needs_layout_; }
+
   // Tree operations -----------------------------------------------------------
 
   // This method is invoked when the tree changes.
@@ -1082,10 +1072,6 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Override to paint a border not specified by SetBorder().
   virtual void OnPaintBorder(gfx::Canvas* canvas);
 
-  // Override to paint a focus border not specified by set_focus_border() around
-  // relevant contents.  The focus border is usually a dotted rectangle.
-  virtual void OnPaintFocusBorder(gfx::Canvas* canvas);
-
   // Accelerated painting ------------------------------------------------------
 
   // Returns the offset from this view to the nearest ancestor with a layer. If
@@ -1103,12 +1089,11 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // recurses through all children. This is used when adding a layer to an
   // existing view to make sure all descendants that have layers are parented to
   // the right layer.
-  virtual void MoveLayerToParent(ui::Layer* parent_layer,
-                                 const gfx::Point& point);
+  void MoveLayerToParent(ui::Layer* parent_layer, const gfx::Point& point);
 
   // Called to update the bounds of any child layers within this View's
   // hierarchy when something happens to the hierarchy.
-  virtual void UpdateChildLayerBounds(const gfx::Vector2d& offset);
+  void UpdateChildLayerBounds(const gfx::Vector2d& offset);
 
   // Overridden from ui::LayerDelegate:
   virtual void OnPaintLayer(gfx::Canvas* canvas) OVERRIDE;
@@ -1143,6 +1128,10 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   virtual DragInfo* GetDragInfo();
 
   // Focus ---------------------------------------------------------------------
+
+  // Returns last value passed to SetFocusable(). Use IsFocusable() to determine
+  // if a view can take focus right now.
+  bool focusable() const { return focusable_; }
 
   // Override to be notified when focus has changed either to or from this View.
   virtual void OnFocus();
@@ -1505,9 +1494,6 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // Border.
   scoped_ptr<Border> border_;
-
-  // Focus border.
-  scoped_ptr<FocusBorder> focus_border_;
 
   // RTL painting --------------------------------------------------------------
 

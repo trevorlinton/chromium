@@ -36,6 +36,7 @@ class OffTheRecordProfileImpl : public Profile {
 
   // Profile implementation.
   virtual std::string GetProfileName() OVERRIDE;
+  virtual ProfileType GetProfileType() const OVERRIDE;
   virtual Profile* GetOffTheRecordProfile() OVERRIDE;
   virtual void DestroyOffTheRecordProfile() OVERRIDE;
   virtual bool HasOffTheRecordProfile() OVERRIDE;
@@ -49,11 +50,13 @@ class OffTheRecordProfileImpl : public Profile {
   virtual net::URLRequestContextGetter*
       GetRequestContextForExtensions() OVERRIDE;
   virtual net::URLRequestContextGetter* CreateRequestContext(
-      content::ProtocolHandlerMap* protocol_handlers) OVERRIDE;
+      content::ProtocolHandlerMap* protocol_handlers,
+      content::ProtocolHandlerScopedVector protocol_interceptors) OVERRIDE;
   virtual net::URLRequestContextGetter* CreateRequestContextForStoragePartition(
       const base::FilePath& partition_path,
       bool in_memory,
-      content::ProtocolHandlerMap* protocol_handlers) OVERRIDE;
+      content::ProtocolHandlerMap* protocol_handlers,
+      content::ProtocolHandlerScopedVector protocol_interceptors) OVERRIDE;
   virtual net::SSLConfigService* GetSSLConfigService() OVERRIDE;
   virtual HostContentSettingsMap* GetHostContentSettingsMap() OVERRIDE;
   virtual bool IsSameProfile(Profile* profile) OVERRIDE;
@@ -71,7 +74,6 @@ class OffTheRecordProfileImpl : public Profile {
                                AppLocaleChangedVia) OVERRIDE;
   virtual void OnLogin() OVERRIDE;
   virtual void InitChromeOSPreferences() OVERRIDE;
-  virtual bool IsLoginProfile() OVERRIDE;
 #endif  // defined(OS_CHROMEOS)
 
   virtual PrefProxyConfigTracker* GetProxyConfigTracker() OVERRIDE;
@@ -98,17 +100,27 @@ class OffTheRecordProfileImpl : public Profile {
       GetMediaRequestContextForStoragePartition(
           const base::FilePath& partition_path,
           bool in_memory) OVERRIDE;
-  virtual void RequestMIDISysExPermission(
+  virtual void RequestMidiSysExPermission(
       int render_process_id,
       int render_view_id,
       int bridge_id,
       const GURL& requesting_frame,
-      const MIDISysExPermissionCallback& callback) OVERRIDE;
-  virtual void CancelMIDISysExPermissionRequest(
+      bool user_gesture,
+      const MidiSysExPermissionCallback& callback) OVERRIDE;
+  virtual void CancelMidiSysExPermissionRequest(
       int render_process_id,
       int render_view_id,
       int bridge_id,
       const GURL& requesting_frame) OVERRIDE;
+  virtual void RequestProtectedMediaIdentifierPermission(
+      int render_process_id,
+      int render_view_id,
+      int bridge_id,
+      int group_id,
+      const GURL& requesting_frame,
+      const ProtectedMediaIdentifierPermissionCallback& callback) OVERRIDE;
+  virtual void CancelProtectedMediaIdentifierPermissionRequests(
+      int group_id) OVERRIDE;
   virtual content::ResourceContext* GetResourceContext() OVERRIDE;
   virtual content::GeolocationPermissionContext*
       GetGeolocationPermissionContext() OVERRIDE;
@@ -116,6 +128,7 @@ class OffTheRecordProfileImpl : public Profile {
 
  private:
   FRIEND_TEST_ALL_PREFIXES(OffTheRecordProfileImplTest, GetHostZoomMap);
+  void InitIoData();
   void InitHostZoomMap();
 
 #if defined(OS_ANDROID) || defined(OS_IOS)
@@ -131,7 +144,7 @@ class OffTheRecordProfileImpl : public Profile {
   // Weak pointer owned by |profile_|.
   PrefServiceSyncable* prefs_;
 
-  OffTheRecordProfileIOData::Handle io_data_;
+  scoped_ptr<OffTheRecordProfileIOData::Handle> io_data_;
 
   // We use a non-persistent content settings map for OTR.
   scoped_refptr<HostContentSettingsMap> host_content_settings_map_;

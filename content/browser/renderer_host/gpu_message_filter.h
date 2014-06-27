@@ -9,6 +9,7 @@
 
 #include "base/memory/linked_ptr.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "content/common/gpu/gpu_process_launch_causes.h"
@@ -38,10 +39,6 @@ class GpuMessageFilter : public BrowserMessageFilter {
   virtual bool OnMessageReceived(const IPC::Message& message,
                                  bool* message_was_ok) OVERRIDE;
 
-  // Signals that the handle for a surface id was updated, and it may be time to
-  // unblock existing CreateViewCommandBuffer requests using that surface.
-  void SurfaceUpdated(int32 surface_id);
-
   // This set of API is used to subscribe to frame presentation events.
   // See RenderWidgetHostViewFrameSubscriber for more details.
   void BeginFrameSubscription(
@@ -65,10 +62,11 @@ class GpuMessageFilter : public BrowserMessageFilter {
       const GPUCreateCommandBufferConfig& init_params,
       IPC::Message* reply);
   // Helper callbacks for the message handlers.
-  void EstablishChannelCallback(IPC::Message* reply,
+  void EstablishChannelCallback(scoped_ptr<IPC::Message> reply,
                                 const IPC::ChannelHandle& channel,
                                 const gpu::GPUInfo& gpu_info);
-  void CreateCommandBufferCallback(IPC::Message* reply, int32 route_id);
+  void CreateCommandBufferCallback(scoped_ptr<IPC::Message> reply,
+                                   int32 route_id);
 
   void BeginAllFrameSubscriptions();
   void EndAllFrameSubscriptions();
@@ -82,7 +80,6 @@ class GpuMessageFilter : public BrowserMessageFilter {
   bool share_contexts_;
 
   scoped_refptr<RenderWidgetHelper> render_widget_helper_;
-  std::vector<linked_ptr<CreateViewCommandBufferRequest> > pending_requests_;
 
   base::WeakPtrFactory<GpuMessageFilter> weak_ptr_factory_;
 

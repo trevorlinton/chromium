@@ -135,11 +135,11 @@ class Image {
                                       std::vector<gfx::PNGCodec::Comment>(),
                                       &compressed));
     ASSERT_TRUE(compressed.size());
-    FILE* f = file_util::OpenFile(filename, "wb");
+    FILE* f = base::OpenFile(filename, "wb");
     ASSERT_TRUE(f);
     ASSERT_EQ(fwrite(&*compressed.begin(), 1, compressed.size(), f),
               compressed.size());
-    file_util::CloseFile(f);
+    base::CloseFile(f);
   }
 
   // Returns the percentage of the image that is different from the other,
@@ -245,7 +245,7 @@ class ImageTest : public testing::Test {
 
     if (action_ == GENERATE) {
       // Make sure the directory exist.
-      file_util::CreateDirectory(test_dir_);
+      base::CreateDirectory(test_dir_);
     }
   }
 
@@ -254,7 +254,7 @@ class ImageTest : public testing::Test {
     // Hack for a quick lowercase. We assume all the test data file names are
     // ASCII.
 #if defined(OS_WIN)
-    std::string tmp = WideToASCII(filename);
+    std::string tmp = base::UTF16ToASCII(filename);
 #else
     std::string tmp(filename);
 #endif

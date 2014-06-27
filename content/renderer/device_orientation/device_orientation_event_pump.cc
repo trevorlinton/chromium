@@ -26,7 +26,7 @@ DeviceOrientationEventPump::~DeviceOrientationEventPump() {
 }
 
 bool DeviceOrientationEventPump::SetListener(
-    WebKit::WebDeviceOrientationListener* listener) {
+    blink::WebDeviceOrientationListener* listener) {
   listener_ = listener;
   return listener_ ? RequestStart() : Stop();
 }
@@ -43,7 +43,7 @@ bool DeviceOrientationEventPump::OnControlMessageReceived(
 
 void DeviceOrientationEventPump::FireEvent() {
   DCHECK(listener_);
-  WebKit::WebDeviceOrientationData data;
+  blink::WebDeviceOrientationData data;
   if (reader_->GetLatestData(&data) && ShouldFireEvent(data)) {
     memcpy(&data_, &data, sizeof(data));
     listener_->didChangeDeviceOrientation(data);
@@ -59,14 +59,21 @@ static bool IsSignificantlyDifferent(bool hasAngle1, double angle1,
 }
 
 bool DeviceOrientationEventPump::ShouldFireEvent(
-    const WebKit::WebDeviceOrientationData& data) const {
-  return data.allAvailableSensorsAreActive &&
-      (IsSignificantlyDifferent(
-          data_.hasAlpha, data_.alpha, data.hasAlpha, data.alpha) ||
-       IsSignificantlyDifferent(
-          data_.hasBeta, data_.beta, data.hasBeta, data.beta) ||
-       IsSignificantlyDifferent(
-          data_.hasGamma, data_.gamma, data.hasGamma, data.gamma));
+    const blink::WebDeviceOrientationData& data) const {
+  if (!data.allAvailableSensorsAreActive)
+    return false;
+
+  if (!data.hasAlpha && !data.hasBeta && !data.hasGamma) {
+    // no data can be provided, this is an all-null event.
+    return true;
+  }
+
+  return IsSignificantlyDifferent(
+             data_.hasAlpha, data_.alpha, data.hasAlpha, data.alpha) ||
+         IsSignificantlyDifferent(
+             data_.hasBeta, data_.beta, data.hasBeta, data.beta) ||
+         IsSignificantlyDifferent(
+             data_.hasGamma, data_.gamma, data.hasGamma, data.gamma);
 }
 
 bool DeviceOrientationEventPump::InitializeReader(

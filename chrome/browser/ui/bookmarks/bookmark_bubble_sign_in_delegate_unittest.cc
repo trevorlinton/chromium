@@ -5,11 +5,15 @@
 #include "chrome/browser/ui/bookmarks/bookmark_bubble_sign_in_delegate.h"
 
 #include "base/basictypes.h"
+#include "base/command_line.h"
 #include "base/memory/scoped_ptr.h"
+#include "chrome/browser/extensions/test_extension_service.h"
+#include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/ui/bookmarks/bookmark_bubble_delegate.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/testing_profile.h"
 #include "ui/events/event_constants.h"
@@ -18,6 +22,8 @@
 class BookmarkBubbleSignInDelegateTest : public BrowserWithTestWindowTest {
  public:
   BookmarkBubbleSignInDelegateTest() {}
+
+  virtual void SetUp() OVERRIDE;
 
  protected:
   class Window : public TestBrowserWindow {
@@ -46,6 +52,19 @@ class BookmarkBubbleSignInDelegateTest : public BrowserWithTestWindowTest {
   DISALLOW_COPY_AND_ASSIGN(BookmarkBubbleSignInDelegateTest);
 };
 
+void BookmarkBubbleSignInDelegateTest::SetUp() {
+  BrowserWithTestWindowTest::SetUp();
+  CommandLine* command_line = CommandLine::ForCurrentProcess();
+  // Force web-based signin, otherwise tests will crash because inline signin
+  // involves IO thread operation.
+  // TODO(guohui): fix the test for inline signin.
+  command_line->AppendSwitch(switches::kEnableWebBasedSignin);
+  // Adds TestExtensionSystem, since signin uses the gaia auth extension.
+  static_cast<extensions::TestExtensionSystem*>(
+      extensions::ExtensionSystem::Get(profile()))->CreateExtensionService(
+          command_line, base::FilePath(), false);
+}
+
 TEST_F(BookmarkBubbleSignInDelegateTest, OnSignInLinkClicked) {
   int starting_tab_count = browser()->tab_strip_model()->count();
 
@@ -63,14 +82,6 @@ TEST_F(BookmarkBubbleSignInDelegateTest, OnSignInLinkClicked) {
 }
 
 TEST_F(BookmarkBubbleSignInDelegateTest, OnSignInLinkClickedIncognito) {
-  // Create an incognito browser.
-  TestingProfile::Builder incognito_profile_builder;
-  incognito_profile_builder.SetIncognito();
-  scoped_ptr<TestingProfile> incognito_profile =
-      incognito_profile_builder.Build();
-  incognito_profile->SetOriginalProfile(profile());
-  profile()->SetOffTheRecordProfile(incognito_profile.PassAs<Profile>());
-
   scoped_ptr<BrowserWindow> incognito_window;
   incognito_window.reset(CreateBrowserWindow());
   Browser::CreateParams params(browser()->profile()->GetOffTheRecordProfile(),

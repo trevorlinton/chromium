@@ -8,8 +8,8 @@
 
 #include "base/bind.h"
 #include "chrome/common/extensions/api/extension_action/action_info.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/renderer/extensions/dispatcher.h"
+#include "extensions/common/extension.h"
 #include "grit/renderer_resources.h"
 #include "v8/include/v8.h"
 
@@ -31,11 +31,15 @@ void PageActionsCustomBindings::GetCurrentPageActions(
       dispatcher_->extensions()->GetByID(extension_id);
   CHECK(extension);
 
-  v8::Local<v8::Array> page_action_vector = v8::Array::New();
+  v8::Isolate* isolate = args.GetIsolate();
+  v8::Local<v8::Array> page_action_vector = v8::Array::New(isolate);
   if (ActionInfo::GetPageActionInfo(extension)) {
     std::string id = ActionInfo::GetPageActionInfo(extension)->id;
-    page_action_vector->Set(v8::Integer::New(0),
-                            v8::String::New(id.c_str(), id.size()));
+    page_action_vector->Set(v8::Integer::New(isolate, 0),
+                            v8::String::NewFromUtf8(isolate,
+                                                    id.c_str(),
+                                                    v8::String::kNormalString,
+                                                    id.size()));
   }
 
   args.GetReturnValue().Set(page_action_vector);

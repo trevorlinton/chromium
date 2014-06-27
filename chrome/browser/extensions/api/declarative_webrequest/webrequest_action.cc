@@ -15,11 +15,13 @@
 #include "chrome/browser/extensions/api/declarative_webrequest/request_stage.h"
 #include "chrome/browser/extensions/api/declarative_webrequest/webrequest_condition.h"
 #include "chrome/browser/extensions/api/declarative_webrequest/webrequest_constants.h"
+#include "chrome/browser/extensions/api/web_request/web_request_api_constants.h"
 #include "chrome/browser/extensions/api/web_request/web_request_api_helpers.h"
 #include "chrome/browser/extensions/api/web_request/web_request_permissions.h"
-#include "chrome/browser/extensions/extension_info_map.h"
-#include "chrome/common/extensions/extension.h"
 #include "content/public/common/url_constants.h"
+#include "extensions/browser/info_map.h"
+#include "extensions/common/error_utils.h"
+#include "extensions/common/extension.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/url_request/url_request.h"
 #include "third_party/re2/re2/re2.h"
@@ -166,6 +168,15 @@ scoped_refptr<const WebRequestAction> CreateSetRequestHeaderAction(
   std::string value;
   INPUT_FORMAT_VALIDATE(dict->GetString(keys::kNameKey, &name));
   INPUT_FORMAT_VALIDATE(dict->GetString(keys::kValueKey, &value));
+  if (!helpers::IsValidHeaderName(name)) {
+    *error = extension_web_request_api_constants::kInvalidHeaderName;
+    return scoped_refptr<const WebRequestAction>(NULL);
+  }
+  if (!helpers::IsValidHeaderValue(value)) {
+    *error = ErrorUtils::FormatErrorMessage(
+        extension_web_request_api_constants::kInvalidHeaderValue, name);
+    return scoped_refptr<const WebRequestAction>(NULL);
+  }
   return scoped_refptr<const WebRequestAction>(
       new WebRequestSetRequestHeaderAction(name, value));
 }
@@ -179,6 +190,10 @@ scoped_refptr<const WebRequestAction> CreateRemoveRequestHeaderAction(
   CHECK(value->GetAsDictionary(&dict));
   std::string name;
   INPUT_FORMAT_VALIDATE(dict->GetString(keys::kNameKey, &name));
+  if (!helpers::IsValidHeaderName(name)) {
+    *error = extension_web_request_api_constants::kInvalidHeaderName;
+    return scoped_refptr<const WebRequestAction>(NULL);
+  }
   return scoped_refptr<const WebRequestAction>(
       new WebRequestRemoveRequestHeaderAction(name));
 }
@@ -194,6 +209,15 @@ scoped_refptr<const WebRequestAction> CreateAddResponseHeaderAction(
   std::string value;
   INPUT_FORMAT_VALIDATE(dict->GetString(keys::kNameKey, &name));
   INPUT_FORMAT_VALIDATE(dict->GetString(keys::kValueKey, &value));
+  if (!helpers::IsValidHeaderName(name)) {
+    *error = extension_web_request_api_constants::kInvalidHeaderName;
+    return scoped_refptr<const WebRequestAction>(NULL);
+  }
+  if (!helpers::IsValidHeaderValue(value)) {
+    *error = ErrorUtils::FormatErrorMessage(
+        extension_web_request_api_constants::kInvalidHeaderValue, name);
+    return scoped_refptr<const WebRequestAction>(NULL);
+  }
   return scoped_refptr<const WebRequestAction>(
       new WebRequestAddResponseHeaderAction(name, value));
 }
@@ -209,6 +233,15 @@ scoped_refptr<const WebRequestAction> CreateRemoveResponseHeaderAction(
   std::string value;
   INPUT_FORMAT_VALIDATE(dict->GetString(keys::kNameKey, &name));
   bool has_value = dict->GetString(keys::kValueKey, &value);
+  if (!helpers::IsValidHeaderName(name)) {
+    *error = extension_web_request_api_constants::kInvalidHeaderName;
+    return scoped_refptr<const WebRequestAction>(NULL);
+  }
+  if (has_value && !helpers::IsValidHeaderValue(value)) {
+    *error = ErrorUtils::FormatErrorMessage(
+        extension_web_request_api_constants::kInvalidHeaderValue, name);
+    return scoped_refptr<const WebRequestAction>(NULL);
+  }
   return scoped_refptr<const WebRequestAction>(
       new WebRequestRemoveResponseHeaderAction(name, value, has_value));
 }
@@ -436,7 +469,7 @@ bool WebRequestAction::Equals(const WebRequestAction* other) const {
   return type() == other->type();
 }
 
-bool WebRequestAction::HasPermission(const ExtensionInfoMap* extension_info_map,
+bool WebRequestAction::HasPermission(const InfoMap* extension_info_map,
                                      const std::string& extension_id,
                                      const net::URLRequest* request,
                                      bool crosses_incognito) const {
@@ -549,7 +582,7 @@ LinkedPtrEventResponseDelta WebRequestCancelAction::CreateDelta(
 //
 
 WebRequestRedirectAction::WebRequestRedirectAction(const GURL& redirect_url)
-    : WebRequestAction(ON_BEFORE_REQUEST,
+    : WebRequestAction(ON_BEFORE_REQUEST | ON_HEADERS_RECEIVED,
                        ACTION_REDIRECT_REQUEST,
                        std::numeric_limits<int>::min(),
                        STRATEGY_DEFAULT),
@@ -586,7 +619,7 @@ LinkedPtrEventResponseDelta WebRequestRedirectAction::CreateDelta(
 
 WebRequestRedirectToTransparentImageAction::
     WebRequestRedirectToTransparentImageAction()
-    : WebRequestAction(ON_BEFORE_REQUEST,
+    : WebRequestAction(ON_BEFORE_REQUEST | ON_HEADERS_RECEIVED,
                        ACTION_REDIRECT_TO_TRANSPARENT_IMAGE,
                        std::numeric_limits<int>::min(),
                        STRATEGY_NONE) {}
@@ -616,7 +649,7 @@ WebRequestRedirectToTransparentImageAction::CreateDelta(
 
 WebRequestRedirectToEmptyDocumentAction::
     WebRequestRedirectToEmptyDocumentAction()
-    : WebRequestAction(ON_BEFORE_REQUEST,
+    : WebRequestAction(ON_BEFORE_REQUEST | ON_HEADERS_RECEIVED,
                        ACTION_REDIRECT_TO_EMPTY_DOCUMENT,
                        std::numeric_limits<int>::min(),
                        STRATEGY_NONE) {}
@@ -647,7 +680,7 @@ WebRequestRedirectToEmptyDocumentAction::CreateDelta(
 WebRequestRedirectByRegExAction::WebRequestRedirectByRegExAction(
     scoped_ptr<RE2> from_pattern,
     const std::string& to_pattern)
-    : WebRequestAction(ON_BEFORE_REQUEST,
+    : WebRequestAction(ON_BEFORE_REQUEST | ON_HEADERS_RECEIVED,
                        ACTION_REDIRECT_BY_REGEX_DOCUMENT,
                        std::numeric_limits<int>::min(),
                        STRATEGY_DEFAULT),

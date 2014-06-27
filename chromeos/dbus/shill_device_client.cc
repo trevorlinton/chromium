@@ -8,7 +8,6 @@
 #include "base/message_loop/message_loop.h"
 #include "base/stl_util.h"
 #include "base/values.h"
-#include "chromeos/dbus/fake_shill_device_client.h"
 #include "chromeos/dbus/shill_property_changed_observer.h"
 #include "dbus/bus.h"
 #include "dbus/message.h"
@@ -192,6 +191,21 @@ class ShillDeviceClientImpl : public ShillDeviceClient {
         &method_call, callback, error_callback);
   }
 
+  virtual void PerformTDLSOperation(
+      const dbus::ObjectPath& device_path,
+      const std::string& operation,
+      const std::string& peer,
+      const StringCallback& callback,
+      const ErrorCallback& error_callback) OVERRIDE {
+    dbus::MethodCall method_call(shill::kFlimflamDeviceInterface,
+                                 shill::kPerformTDLSOperationFunction);
+    dbus::MessageWriter writer(&method_call);
+    writer.AppendString(operation);
+    writer.AppendString(peer);
+    GetHelper(device_path)->CallStringMethodWithErrorCallback(
+        &method_call, callback, error_callback);
+  }
+
   virtual TestInterface* GetTestInterface() OVERRIDE {
     return NULL;
   }
@@ -235,12 +249,8 @@ ShillDeviceClient::ShillDeviceClient() {}
 ShillDeviceClient::~ShillDeviceClient() {}
 
 // static
-ShillDeviceClient* ShillDeviceClient::Create(
-    DBusClientImplementationType type) {
-  if (type == REAL_DBUS_CLIENT_IMPLEMENTATION)
-    return new ShillDeviceClientImpl();
-  DCHECK_EQ(STUB_DBUS_CLIENT_IMPLEMENTATION, type);
-  return new FakeShillDeviceClient();
+ShillDeviceClient* ShillDeviceClient::Create() {
+  return new ShillDeviceClientImpl();
 }
 
 }  // namespace chromeos

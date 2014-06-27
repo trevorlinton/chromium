@@ -163,8 +163,69 @@ function runReadGalleriesTest(expectedGalleryCount, expectSucceed,
   }
 }
 
-// Create a dummy window to prevent the ExtensionProcessManager from suspending
-// the chrome-test app. Needed because the writer.onerror and writer.onwriteend
+function checkMetadata(metadata) {
+  chrome.test.assertTrue(metadata != null);
+  chrome.test.assertTrue(metadata.name.length > 0);
+  chrome.test.assertTrue(metadata.galleryId.length > 0);
+  chrome.test.assertTrue("isAvailable" in metadata);
+  chrome.test.assertTrue("isMediaDevice" in metadata);
+  chrome.test.assertTrue("isRemovable" in metadata);
+  if (metadata.isRemovable && metadata.isAvailable) {
+    chrome.test.assertTrue("deviceId" in metadata);
+    chrome.test.assertTrue(metadata.deviceId.length > 0);
+  }
+}
+
+// Gets the entire listing from directory, then verifies the sorted contents.
+function verifyDirectoryEntry(directoryEntry, verifyFunction) {
+  var allEntries = [];
+  var reader = directoryEntry.createReader();
+
+  function readEntries() {
+    reader.readEntries(readEntriesCallback, chrome.test.fail);
+  }
+
+  function readEntriesCallback(entries) {
+    if (entries.length == 0) {
+      // This is the readEntries() is finished case.
+      verifyFunction(directoryEntry, allEntries.sort());
+      return;
+    }
+
+    allEntries = allEntries.concat(entries);
+    readEntries();
+  }
+
+  readEntries();
+}
+
+function verifyJPEG(parentDirectoryEntry, filename, expectedFileLength,
+                    doneCallback) {
+  function verifyFileEntry(fileEntry) {
+    fileEntry.file(verifyFile, chrome.test.fail)
+  }
+
+  function verifyFile(file) {
+    var reader = new FileReader();
+
+    reader.onload = function(e) {
+      var arraybuffer = e.target.result;
+      chrome.test.assertEq(expectedFileLength, arraybuffer.byteLength);
+      doneCallback();
+    }
+
+    reader.onerror =
+      chrome.test.fail.bind(null, "Unable to read test image: " + filename);
+
+    reader.readAsArrayBuffer(file);
+  }
+
+  parentDirectoryEntry.getFile(filename, {create: false}, verifyFileEntry,
+                               chrome.test.fail);
+}
+
+// Create a dummy window to prevent the ProcessManager from suspending the
+// chrome-test app. Needed because the writer.onerror and writer.onwriteend
 // events do not qualify as pending callbacks, so the app looks dormant.
 function CreateDummyWindowToPreventSleep() {
   chrome.app.runtime.onLaunched.addListener(function() {

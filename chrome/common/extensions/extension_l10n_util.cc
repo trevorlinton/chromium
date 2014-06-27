@@ -50,7 +50,7 @@ base::DictionaryValue* LoadMessageFile(const base::FilePath& locale_path,
     } else {
       *error = extensions::ErrorUtils::FormatErrorMessage(
           errors::kLocalesInvalidLocale,
-          UTF16ToUTF8(file.LossyDisplayName()),
+          base::UTF16ToUTF8(file.LossyDisplayName()),
           *error);
     }
   }
@@ -79,7 +79,7 @@ bool LocalizeManifestListValue(const std::string& key,
                                const extensions::MessageBundle& messages,
                                base::DictionaryValue* manifest,
                                std::string* error) {
-  ListValue* list = NULL;
+  base::ListValue* list = NULL;
   if (!manifest->GetList(key, &list))
     return true;
 
@@ -88,7 +88,7 @@ bool LocalizeManifestListValue(const std::string& key,
     std::string result;
     if (list->GetString(i, &result)) {
       if (messages.ReplaceMessages(&result, error))
-        list->Set(i, new StringValue(result));
+        list->Set(i, new base::StringValue(result));
       else
         ret = false;
     }
@@ -228,7 +228,8 @@ bool LocalizeManifest(const extensions::MessageBundle& messages,
   // Initialize description of commmands.
   base::DictionaryValue* commands_handler = NULL;
   if (manifest->GetDictionary(keys::kCommands, &commands_handler)) {
-    for (DictionaryValue::Iterator iter(*commands_handler); !iter.IsAtEnd();
+    for (base::DictionaryValue::Iterator iter(*commands_handler);
+         !iter.IsAtEnd();
          iter.Advance()) {
       key.assign(base::StringPrintf("commands.%s.description",
                                     iter.key().c_str()));
@@ -239,11 +240,13 @@ bool LocalizeManifest(const extensions::MessageBundle& messages,
 
   // Initialize search_provider fields.
   base::DictionaryValue* search_provider = NULL;
-  if (manifest->GetDictionary(keys::kSearchProvider, &search_provider)) {
-    for (DictionaryValue::Iterator iter(*search_provider); !iter.IsAtEnd();
-        iter.Advance()) {
-      key.assign(base::StringPrintf("%s.%s", keys::kSearchProvider,
-                                    iter.key().c_str()));
+  if (manifest->GetDictionary(keys::kOverrideSearchProvider,
+                              &search_provider)) {
+    for (base::DictionaryValue::Iterator iter(*search_provider);
+         !iter.IsAtEnd();
+         iter.Advance()) {
+      key.assign(base::StringPrintf(
+          "%s.%s", keys::kOverrideSearchProvider, iter.key().c_str()));
       bool success = (key == keys::kSettingsOverrideAlternateUrls) ?
           LocalizeManifestListValue(key, messages, manifest, error) :
           LocalizeManifestValue(key, messages, manifest, error);
@@ -251,6 +254,16 @@ bool LocalizeManifest(const extensions::MessageBundle& messages,
         return false;
     }
   }
+
+  // Initialize chrome_settings_overrides.homepage.
+  if (!LocalizeManifestValue(
+          keys::kOverrideHomepage, messages, manifest, error))
+    return false;
+
+  // Initialize chrome_settings_overrides.startup_pages.
+  if (!LocalizeManifestListValue(
+          keys::kOverrideStartupPage, messages, manifest, error))
+    return false;
 
   // Add current locale key to the manifest, so we can overwrite prefs
   // with new manifest when chrome locale changes.
@@ -418,7 +431,7 @@ bool ValidateExtensionLocales(const base::FilePath& extension_path,
   for (std::set<std::string>::const_iterator locale = valid_locales.begin();
        locale != valid_locales.end(); ++locale) {
     std::string locale_error;
-    scoped_ptr<DictionaryValue> catalog(
+    scoped_ptr<base::DictionaryValue> catalog(
         LoadMessageFile(locale_path, *locale, &locale_error));
 
     if (!locale_error.empty()) {

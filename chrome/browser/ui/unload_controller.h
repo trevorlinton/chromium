@@ -36,6 +36,9 @@ class UnloadController : public content::NotificationObserver,
   // renderer.
   bool CanCloseContents(content::WebContents* contents);
 
+  // Returns true if we need to run unload events for the |contents|.
+  static bool ShouldRunUnloadEventsHelper(content::WebContents* contents);
+
   // Helper function to run beforeunload listeners on a WebContents.
   // Returns true if |contents| beforeunload listeners were invoked.
   static bool RunUnloadEventsHelper(content::WebContents* contents);
@@ -75,6 +78,10 @@ class UnloadController : public content::NotificationObserver,
   //             could be pursued.
   bool TabsNeedBeforeUnloadFired();
 
+  // Clears all the state associated with processing tabs' beforeunload/unload
+  // events since the user cancelled closing the window.
+  void CancelWindowClose();
+
  private:
   typedef std::set<content::WebContents*> UnloadListenerSet;
 
@@ -103,10 +110,6 @@ class UnloadController : public content::NotificationObserver,
 
   // Whether we've completed firing all the tabs' beforeunload/unload events.
   bool HasCompletedUnloadProcessing() const;
-
-  // Clears all the state associated with processing tabs' beforeunload/unload
-  // events since the user cancelled closing the window.
-  void CancelWindowClose();
 
   // Removes |web_contents| from the passed |set|.
   // Returns whether the tab was in the set in the first place.

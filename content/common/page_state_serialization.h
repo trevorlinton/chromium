@@ -10,13 +10,14 @@
 #include "base/strings/nullable_string16.h"
 #include "content/common/content_export.h"
 #include "third_party/WebKit/public/platform/WebHTTPBody.h"
+#include "third_party/WebKit/public/platform/WebReferrerPolicy.h"
 #include "ui/gfx/point.h"
 #include "url/gurl.h"
 
 namespace content {
 
 struct CONTENT_EXPORT ExplodedHttpBodyElement {
-  WebKit::WebHTTPBody::Element::Type type;
+  blink::WebHTTPBody::Element::Type type;
   std::string data;
   base::NullableString16 file_path;
   GURL filesystem_url;
@@ -42,7 +43,6 @@ struct CONTENT_EXPORT ExplodedHttpBody {
 
 struct CONTENT_EXPORT ExplodedFrameState {
   base::NullableString16 url_string;
-  base::NullableString16 original_url_string;
   base::NullableString16 referrer;
   base::NullableString16 target;
   base::NullableString16 state_object;
@@ -50,8 +50,8 @@ struct CONTENT_EXPORT ExplodedFrameState {
   gfx::Point scroll_offset;
   int64 item_sequence_number;
   int64 document_sequence_number;
-  int64 target_frame_id;
   double page_scale_factor;
+  blink::WebReferrerPolicy referrer_policy;
   ExplodedHttpBody http_body;
   std::vector<ExplodedFrameState> children;
 

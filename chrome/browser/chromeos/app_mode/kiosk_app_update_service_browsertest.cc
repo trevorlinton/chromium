@@ -25,12 +25,12 @@
 #include "chrome/browser/extensions/extension_test_message_listener.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/chromeos_paths.h"
 #include "chromeos/dbus/update_engine_client.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/common/extension.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
@@ -52,7 +52,7 @@ class KioskAppUpdateServiceTest : public extensions::PlatformAppBrowserTest {
         base::DoubleToString(uptime.InSecondsF());
     const base::FilePath uptime_file = temp_dir.Append("uptime");
     ASSERT_EQ(static_cast<int>(uptime_seconds.size()),
-              file_util::WriteFile(
+              base::WriteFile(
                   uptime_file, uptime_seconds.c_str(), uptime_seconds.size()));
     uptime_file_override_.reset(
         new base::ScopedPathOverride(chromeos::FILE_UPTIME, uptime_file));
@@ -73,7 +73,7 @@ class KioskAppUpdateServiceTest : public extensions::PlatformAppBrowserTest {
   }
 
   void FireAppUpdateAvailable() {
-    update_service_->OnAppUpdateAvailable(app_->id());
+    update_service_->OnAppUpdateAvailable(app_);
   }
 
   void FireUpdatedNeedReboot() {

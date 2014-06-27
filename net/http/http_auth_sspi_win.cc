@@ -13,6 +13,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_auth.h"
+#include "net/http/http_auth_challenge_tokenizer.h"
 
 namespace net {
 
@@ -226,7 +227,7 @@ void HttpAuthSSPI::ResetSecurityContext() {
 }
 
 HttpAuth::AuthorizationResult HttpAuthSSPI::ParseChallenge(
-    HttpAuth::ChallengeTokenizer* tok) {
+    HttpAuthChallengeTokenizer* tok) {
   // Verify the challenge's auth-scheme.
   if (!LowerCaseEqualsASCII(tok->scheme(), StringToLowerASCII(scheme_).c_str()))
     return HttpAuth::AUTHORIZATION_RESULT_INVALID;
@@ -255,7 +256,7 @@ HttpAuth::AuthorizationResult HttpAuthSSPI::ParseChallenge(
 }
 
 int HttpAuthSSPI::GenerateAuthToken(const AuthCredentials* credentials,
-                                    const std::wstring& spn,
+                                    const std::string& spn,
                                     std::string* auth_token) {
   // Initial challenge.
   if (!SecIsValidHandle(&cred_)) {
@@ -280,13 +281,9 @@ int HttpAuthSSPI::GenerateAuthToken(const AuthCredentials* credentials,
   // Base64 encode data in output buffer and prepend the scheme.
   std::string encode_input(static_cast<char*>(out_buf), out_buf_len);
   std::string encode_output;
-  bool base64_rv = base::Base64Encode(encode_input, &encode_output);
+  base::Base64Encode(encode_input, &encode_output);
   // OK, we are done with |out_buf|
   free(out_buf);
-  if (!base64_rv) {
-    LOG(ERROR) << "Base64 encoding of auth token failed.";
-    return ERR_ENCODING_CONVERSION_FAILED;
-  }
   *auth_token = scheme_ + " " + encode_output;
   return OK;
 }
@@ -312,7 +309,7 @@ int HttpAuthSSPI::OnFirstRound(const AuthCredentials* credentials) {
 }
 
 int HttpAuthSSPI::GetNextSecurityToken(
-    const std::wstring& spn,
+    const std::string& spn,
     const void* in_token,
     int in_token_len,
     void** out_token,
@@ -362,10 +359,11 @@ int HttpAuthSSPI::GetNextSecurityToken(
 
   // This returns a token that is passed to the remote server.
   DWORD context_attribute;
+  std::wstring spn_wide = base::ASCIIToWide(spn);
   SECURITY_STATUS status = library_->InitializeSecurityContext(
       &cred_,  // phCredential
       ctxt_ptr,  // phContext
-      const_cast<wchar_t *>(spn.c_str()),  // pszTargetName
+      const_cast<wchar_t *>(spn_wide.c_str()),  // pszTargetName
       context_flags,  // fContextReq
       0,  // Reserved1 (must be 0)
       SECURITY_NATIVE_DREP,  // TargetDataRep

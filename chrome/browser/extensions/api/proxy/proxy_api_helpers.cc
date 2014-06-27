@@ -35,8 +35,7 @@ bool CreateDataURLFromPACScript(const std::string& pac_script,
                                 std::string* pac_script_url_base64_encoded) {
   // Encode pac_script in base64.
   std::string pac_script_base64_encoded;
-  if (!base::Base64Encode(pac_script, &pac_script_base64_encoded))
-    return false;
+  base::Base64Encode(pac_script, &pac_script_base64_encoded);
 
   // Make it a correct data url.
   *pac_script_url_base64_encoded =
@@ -106,7 +105,7 @@ bool GetPacUrlFromExtensionPref(const base::DictionaryValue* proxy_config,
     return true;
 
   // TODO(battre): Handle UTF-8 URLs (http://crbug.com/72692).
-  string16 pac_url16;
+  base::string16 pac_url16;
   if (pac_dict->HasKey(keys::kProxyConfigPacScriptUrl) &&
       !pac_dict->GetString(keys::kProxyConfigPacScriptUrl, &pac_url16)) {
     LOG(ERROR) << "'pacScript.url' could not be parsed.";
@@ -118,7 +117,7 @@ bool GetPacUrlFromExtensionPref(const base::DictionaryValue* proxy_config,
              "(encode URLs in Punycode format).";
     return false;
   }
-  *out = UTF16ToASCII(pac_url16);
+  *out = base::UTF16ToASCII(pac_url16);
   return true;
 }
 
@@ -131,7 +130,7 @@ bool GetPacDataFromExtensionPref(const base::DictionaryValue* proxy_config,
   if (!pac_dict)
     return true;
 
-  string16 pac_data16;
+  base::string16 pac_data16;
   if (pac_dict->HasKey(keys::kProxyConfigPacScriptData) &&
       !pac_dict->GetString(keys::kProxyConfigPacScriptData, &pac_data16)) {
     LOG(ERROR) << "'pacScript.data' could not be parsed.";
@@ -143,7 +142,7 @@ bool GetPacDataFromExtensionPref(const base::DictionaryValue* proxy_config,
              "(encode URLs in Punycode format).";
     return false;
   }
-  *out = UTF16ToASCII(pac_data16);
+  *out = base::UTF16ToASCII(pac_data16);
   return true;
 }
 
@@ -164,7 +163,7 @@ bool GetProxyServer(const base::DictionaryValue* proxy_server,
     scheme = default_scheme;
 
   // TODO(battre): handle UTF-8 in hostnames (http://crbug.com/72692).
-  string16 host16;
+  base::string16 host16;
   if (!proxy_server->GetString(keys::kProxyConfigRuleHost, &host16)) {
     LOG(ERROR) << "Could not parse a 'rules.*.host' entry.";
     *bad_message = true;
@@ -174,10 +173,10 @@ bool GetProxyServer(const base::DictionaryValue* proxy_server,
     *error = ErrorUtils::FormatErrorMessage(
         "Invalid 'rules.???.host' entry '*'. 'host' field supports only ASCII "
         "URLs (encode URLs in Punycode format).",
-        UTF16ToUTF8(host16));
+        base::UTF16ToUTF8(host16));
     return false;
   }
-  std::string host = UTF16ToASCII(host16);
+  std::string host = base::UTF16ToASCII(host16);
 
   int port;  // optional.
   if (!proxy_server->GetInteger(keys::kProxyConfigRulePort, &port))
@@ -267,7 +266,7 @@ bool JoinUrlList(const base::ListValue* list,
       result.append(joiner);
 
     // TODO(battre): handle UTF-8 (http://crbug.com/72692).
-    string16 entry;
+    base::string16 entry;
     if (!list->GetString(i, &entry)) {
       LOG(ERROR) << "'rules.bypassList' could not be parsed.";
       *bad_message = true;
@@ -278,7 +277,7 @@ bool JoinUrlList(const base::ListValue* list,
                "(encode URLs in Punycode format).";
       return false;
     }
-    result.append(UTF16ToASCII(entry));
+    result.append(base::UTF16ToASCII(entry));
   }
   *out = result;
   return true;
@@ -436,6 +435,9 @@ base::DictionaryValue* CreateProxyServerDict(const net::ProxyServer& proxy) {
       break;
     case net::ProxyServer::SCHEME_HTTPS:
       out->SetString(keys::kProxyConfigRuleScheme, "https");
+      break;
+    case net::ProxyServer::SCHEME_QUIC:
+      out->SetString(keys::kProxyConfigRuleScheme, "quic");
       break;
     case net::ProxyServer::SCHEME_SOCKS4:
       out->SetString(keys::kProxyConfigRuleScheme, "socks4");

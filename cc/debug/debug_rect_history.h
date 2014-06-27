@@ -53,10 +53,11 @@ enum DebugRectType {
   TOUCH_EVENT_HANDLER_RECT_TYPE,
   WHEEL_EVENT_HANDLER_RECT_TYPE,
   NON_FAST_SCROLLABLE_RECT_TYPE,
+  ANIMATION_BOUNDS_RECT_TYPE,
 };
 
 struct DebugRect {
-  DebugRect(DebugRectType new_type, gfx::RectF new_rect)
+  DebugRect(DebugRectType new_type, const gfx::RectF& new_rect)
       : type(new_type), rect(new_rect) {}
 
   DebugRectType type;
@@ -76,6 +77,7 @@ class DebugRectHistory {
   // reset.
   void SaveDebugRectsForCurrentFrame(
       LayerImpl* root_layer,
+      LayerImpl* hud_layer,
       const LayerImplList& render_surface_layer_list,
       const std::vector<gfx::Rect>& occluding_screen_space_rects,
       const std::vector<gfx::Rect>& non_occluding_screen_space_rects,
@@ -87,8 +89,8 @@ class DebugRectHistory {
   DebugRectHistory();
 
   void SavePaintRects(LayerImpl* layer);
-  void SavePropertyChangedRects(
-      const LayerImplList& render_surface_layer_list);
+  void SavePropertyChangedRects(const LayerImplList& render_surface_layer_list,
+                                LayerImpl* hud_layer);
   void SaveSurfaceDamageRects(
       const LayerImplList& render_surface_layer_list);
   void SaveScreenSpaceRects(
@@ -103,6 +105,8 @@ class DebugRectHistory {
   void SaveWheelEventHandlerRectsCallback(LayerImpl* layer);
   void SaveNonFastScrollableRects(LayerImpl* layer);
   void SaveNonFastScrollableRectsCallback(LayerImpl* layer);
+  void SaveLayerAnimationBoundsRects(
+      const LayerImplList& render_surface_layer_list);
 
   std::vector<DebugRect> debug_rects_;
 

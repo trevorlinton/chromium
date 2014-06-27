@@ -32,17 +32,6 @@ def IsSDKBuilder():
   return '-sdk-multi' in os.getenv('BUILDBOT_BUILDERNAME', '')
 
 
-def IsBuildOnlyBot():
-  """Returns True if this script is running on a build-only bot.
-
-  Build only bots are designed to be fast and non-flaky.  Currently
-  this means they don't build chrome, and don't run any browser-based
-  tests.  Currently the only build-only bots are trybots.
-
-  See IsSDKBuilder above for trybot/buildbot names."""
-  return os.getenv('BUILDBOT_BUILDERNAME', '').endswith('build')
-
-
 def IsSDKTrybot():
   """Returns True if this script is running on an SDK trybot.
 
@@ -205,8 +194,7 @@ def Archive(filename, bucket_path, cwd=None, step_link=True):
 
   cmd = [GetGsutil(), 'cp', '-a', 'public-read', filename, full_dst]
   Run(cmd, shell=shell, cwd=cwd)
-  url = 'https://commondatastorage.googleapis.com/'\
-        '%s/%s' % (bucket_path, filename)
+  url = 'https://storage.googleapis.com/%s/%s' % (bucket_path, filename)
   if step_link:
     print '@@@STEP_LINK@download@%s@@@' % url
     sys.stdout.flush()

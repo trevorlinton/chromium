@@ -23,17 +23,12 @@
 #include "chrome/browser/chromeos/login/mock_user_manager.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
+#include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/policy/device_local_account.h"
 #include "chrome/browser/chromeos/policy/device_local_account_policy_service.h"
 #include "chrome/browser/chromeos/policy/device_policy_cros_browser_test.h"
+#include "chrome/browser/chromeos/policy/proto/chrome_device_policy.pb.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/policy/browser_policy_connector.h"
-#include "chrome/browser/policy/cloud/cloud_policy_constants.h"
-#include "chrome/browser/policy/cloud/cloud_policy_core.h"
-#include "chrome/browser/policy/cloud/cloud_policy_store.h"
-#include "chrome/browser/policy/cloud/mock_cloud_policy_store.h"
-#include "chrome/browser/policy/cloud/policy_builder.h"
-#include "chrome/browser/policy/proto/chromeos/chrome_device_policy.pb.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
@@ -41,6 +36,11 @@
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/fake_session_manager_client.h"
 #include "chromeos/settings/cros_settings_names.h"
+#include "components/policy/core/common/cloud/cloud_policy_constants.h"
+#include "components/policy/core/common/cloud/cloud_policy_core.h"
+#include "components/policy/core/common/cloud/cloud_policy_store.h"
+#include "components/policy/core/common/cloud/mock_cloud_policy_store.h"
+#include "components/policy/core/common/cloud/policy_builder.h"
 #include "content/public/test/mock_notification_observer.h"
 #include "content/public/test/test_utils.h"
 #include "google_apis/gaia/mock_url_fetcher_factory.h"
@@ -162,11 +162,14 @@ class ExistingUserControllerTest : public policy::DevicePolicyCrosBrowserTest,
         .WillRepeatedly(Return(false));
     EXPECT_CALL(*mock_user_manager_, Shutdown())
         .Times(1);
+    EXPECT_CALL(*mock_user_manager_, GetProfileByUser(_))
+        .Times(AnyNumber())
+        .WillRepeatedly(Return(testing_profile_.get()));
   }
 
   virtual void SetUpOnMainThread() OVERRIDE {
-    SetUpUserManager();
     testing_profile_.reset(new TestingProfile());
+    SetUpUserManager();
     existing_user_controller_.reset(
         new ExistingUserController(mock_login_display_host_.get()));
     ASSERT_EQ(existing_user_controller(), existing_user_controller_.get());
@@ -304,6 +307,10 @@ IN_PROC_BROWSER_TEST_P(ExistingUserControllerTest,
   EXPECT_CALL(*mock_login_utils_, CreateAuthenticator(_))
       .Times(1)
       .WillOnce(WithArg<0>(CreateAuthenticator(kNewUsername, kPassword)));
+  base::Callback<void(void)> add_user_cb =
+      base::Bind(&MockUserManager::AddUser,
+                 base::Unretained(mock_user_manager_),
+                 kNewUsername);
   EXPECT_CALL(*mock_login_utils_,
               PrepareProfile(UserContext(kNewUsername,
                                          kPassword,
@@ -311,8 +318,11 @@ IN_PROC_BROWSER_TEST_P(ExistingUserControllerTest,
                                          kNewUsername),
                              _, _, _, _))
       .Times(1)
-      .WillOnce(InvokeWithoutArgs(&profile_prepared_cb_,
-                                  &base::Callback<void(void)>::Run));
+      .WillOnce(DoAll(
+          InvokeWithoutArgs(&add_user_cb,
+                            &base::Callback<void(void)>::Run),
+          InvokeWithoutArgs(&profile_prepared_cb_,
+                            &base::Callback<void(void)>::Run)));
   EXPECT_CALL(*mock_login_display_, OnLoginSuccess(kNewUsername))
       .Times(1);
   EXPECT_CALL(*mock_login_display_, OnFadeOut())
@@ -366,9 +376,14 @@ class ExistingUserControllerPublicSessionTest
     }
 
     // Wait for the device local account policy to be installed.
-    policy::CloudPolicyStore* store = TestingBrowserProcess::GetGlobal()->
-        browser_policy_connector()->GetDeviceLocalAccountPolicyService()->
-        GetBrokerForUser(public_session_user_id_)->core()->store();
+    policy::CloudPolicyStore* store =
+        TestingBrowserProcess::GetGlobal()
+            ->platform_part()
+            ->browser_policy_connector_chromeos()
+            ->GetDeviceLocalAccountPolicyService()
+            ->GetBrokerForUser(public_session_user_id_)
+            ->core()
+            ->store();
     if (!store->has_policy()) {
       policy::MockCloudPolicyStoreObserver observer;
 
@@ -661,6 +676,16 @@ IN_PROC_BROWSER_TEST_P(ExistingUserControllerPublicSessionTest,
   // Timer should still be stopped after login completes.
   ASSERT_TRUE(auto_login_timer());
   EXPECT_FALSE(auto_login_timer()->IsRunning());
+}
+
+IN_PROC_BROWSER_TEST_P(ExistingUserControllerPublicSessionTest,
+                       PRE_TestLoadingPublicUsersFromLocalState) {
+  // First run propagates public accounts and stores them in Local State.
+}
+
+IN_PROC_BROWSER_TEST_P(ExistingUserControllerPublicSessionTest,
+                       TestLoadingPublicUsersFromLocalState) {
+  // Second run loads list of public accounts from Local State.
 }
 
 INSTANTIATE_TEST_CASE_P(ExistingUserControllerTestInstantiation,

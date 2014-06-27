@@ -7,10 +7,12 @@
 #include <utility>
 
 #include "content/browser/browser_url_handler_impl.h"
+#include "content/browser/frame_host/cross_process_frame_connector.h"
 #include "content/browser/frame_host/navigation_entry_impl.h"
+#include "content/browser/frame_host/navigator.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
-#include "content/browser/renderer_host/test_render_view_host.h"
 #include "content/browser/site_instance_impl.h"
+#include "content/common/frame_messages.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_source.h"
@@ -18,6 +20,7 @@
 #include "content/public/common/page_state.h"
 #include "content/public/common/page_transition_types.h"
 #include "content/public/test/mock_render_process_host.h"
+#include "content/test/test_render_view_host.h"
 
 namespace content {
 
@@ -43,7 +46,7 @@ TestWebContents::~TestWebContents() {
 }
 
 RenderViewHost* TestWebContents::GetPendingRenderViewHost() const {
-  return render_manager_.pending_render_view_host_;
+  return GetRenderManager()->pending_render_view_host();
 }
 
 TestRenderViewHost* TestWebContents::pending_test_rvh() const {
@@ -67,7 +70,7 @@ void TestWebContents::TestDidNavigateWithReferrer(
     const GURL& url,
     const Referrer& referrer,
     PageTransition transition) {
-  ViewHostMsg_FrameNavigate_Params params;
+  FrameHostMsg_DidCommitProvisionalLoad_Params params;
 
   params.page_id = page_id;
   params.url = url;
@@ -83,7 +86,10 @@ void TestWebContents::TestDidNavigateWithReferrer(
   params.is_post = false;
   params.page_state = PageState::CreateFromURL(url);
 
-  DidNavigate(render_view_host, params);
+  RenderViewHostImpl* rvh = static_cast<RenderViewHostImpl*>(render_view_host);
+  RenderFrameHostImpl* rfh = RenderFrameHostImpl::FromID(
+      rvh->GetProcess()->GetID(), rvh->main_frame_routing_id());
+  frame_tree_.root()->navigator()->DidNavigate(rfh, params);
 }
 
 WebPreferences TestWebContents::TestGetWebkitPrefs() {
@@ -91,10 +97,12 @@ WebPreferences TestWebContents::TestGetWebkitPrefs() {
 }
 
 bool TestWebContents::CreateRenderViewForRenderManager(
-    RenderViewHost* render_view_host, int opener_route_id) {
+    RenderViewHost* render_view_host,
+    int opener_route_id,
+    CrossProcessFrameConnector* frame_connector) {
   // This will go to a TestRenderViewHost.
   static_cast<RenderViewHostImpl*>(
-      render_view_host)->CreateRenderView(string16(),
+      render_view_host)->CreateRenderView(base::string16(),
                                           opener_route_id,
                                           -1);
   return true;
@@ -121,7 +129,7 @@ void TestWebContents::NavigateAndCommit(const GURL& url) {
 }
 
 void TestWebContents::TestSetIsLoading(bool value) {
-  SetIsLoading(GetRenderViewHost(), value, NULL);
+  SetIsLoading(GetRenderViewHost(), value, true, NULL);
 }
 
 void TestWebContents::CommitPendingNavigation() {
@@ -143,12 +151,11 @@ void TestWebContents::CommitPendingNavigation() {
     page_id = GetMaxPageIDForSiteInstance(rvh->GetSiteInstance()) + 1;
   }
 
-  // Simulate the SwapOut_ACK that happens when we swap out the old
-  // RVH, before the navigation commits. This is needed when
-  // cross-site navigation happens (old_rvh != rvh).
+  rvh->SendNavigate(page_id, entry->GetURL());
+  // Simulate the SwapOut_ACK. This is needed when cross-site navigation happens
+  // (old_rvh != rvh).
   if (old_rvh != rvh)
     static_cast<RenderViewHostImpl*>(old_rvh)->OnSwappedOut(false);
-  rvh->SendNavigate(page_id, entry->GetURL());
 }
 
 void TestWebContents::ProceedWithCrossSiteNavigation() {
@@ -156,7 +163,7 @@ void TestWebContents::ProceedWithCrossSiteNavigation() {
     return;
   TestRenderViewHost* rvh = static_cast<TestRenderViewHost*>(
       GetRenderViewHost());
-  rvh->SendShouldCloseACK(true);
+  rvh->SendBeforeUnloadACK(true);
 }
 
 RenderViewHostDelegateView* TestWebContents::GetDelegateView() {
@@ -200,36 +207,35 @@ void TestWebContents::SetHistoryLengthAndPrune(
   EXPECT_EQ(expect_set_history_length_and_prune_min_page_id_, min_page_id);
 }
 
-void TestWebContents::TestDidFinishLoad(int64 frame_id,
-                                        const GURL& url,
-                                        bool is_main_frame) {
-  ViewHostMsg_DidFinishLoad msg(0, frame_id, url, is_main_frame);
-  OnMessageReceived(GetRenderViewHost(), msg);
+void TestWebContents::TestDidFinishLoad(const GURL& url) {
+  FrameHostMsg_DidFinishLoad msg(0, url);
+  frame_tree_.root()->current_frame_host()->OnMessageReceived(msg);
 }
 
 void TestWebContents::TestDidFailLoadWithError(
-    int64 frame_id,
     const GURL& url,
-    bool is_main_frame,
     int error_code,
-    const string16& error_description) {
-  ViewHostMsg_DidFailLoadWithError msg(
-      0, frame_id, url, is_main_frame, error_code, error_description);
-  OnMessageReceived(GetRenderViewHost(), msg);
+    const base::string16& error_description) {
+  FrameHostMsg_DidFailLoadWithError msg(
+      0, url, error_code, error_description);
+  frame_tree_.root()->current_frame_host()->OnMessageReceived(msg);
 }
 
 void TestWebContents::CreateNewWindow(
+    int render_process_id,
     int route_id,
     int main_frame_route_id,
     const ViewHostMsg_CreateWindow_Params& params,
     SessionStorageNamespace* session_storage_namespace) {
 }
 
-void TestWebContents::CreateNewWidget(int route_id,
-                                      WebKit::WebPopupType popup_type) {
+void TestWebContents::CreateNewWidget(int render_process_id,
+                                      int route_id,
+                                      blink::WebPopupType popup_type) {
 }
 
-void TestWebContents::CreateNewFullscreenWidget(int route_id) {
+void TestWebContents::CreateNewFullscreenWidget(int render_process_id,
+                                                int route_id) {
 }
 
 void TestWebContents::ShowCreatedWindow(int route_id,

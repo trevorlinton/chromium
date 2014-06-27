@@ -45,10 +45,10 @@ class AvatarMenu : public content::NotificationObserver {
     bool active;
 
     // The name of this profile.
-    string16 name;
+    base::string16 name;
 
     // A string representing the sync state of the profile.
-    string16 sync_state;
+    base::string16 sync_state;
 
     // Whether or not the current profile is signed in. If true, |sync_state| is
     // expected to be the email of the signed in user.
@@ -94,7 +94,9 @@ class AvatarMenu : public content::NotificationObserver {
   // Opens a Browser with the specified profile in response to the user
   // selecting an item. If |always_create| is true then a new window is created
   // even if a window for that profile already exists.
-  void SwitchToProfile(size_t index, bool always_create);
+  void SwitchToProfile(size_t index,
+                       bool always_create,
+                       ProfileMetrics::ProfileOpen metric);
 
   // Creates a new profile.
   void AddNewProfile(ProfileMetrics::ProfileAdd type);
@@ -127,12 +129,6 @@ class AvatarMenu : public content::NotificationObserver {
   // This menu is also used for the always-present Mac system menubar. If the
   // last active browser changes, the menu will need to reference that browser.
   void ActiveBrowserChanged(Browser* browser);
-
-  // Start the sign-out process for this profile.
-  content::WebContents* BeginSignOut();
-
-  // Use a different URL for logout (for testing only).
-  void SetLogoutURL(const std::string& logout_url);
 
   // Returns true if the add profile link should be shown.
   bool ShouldShowAddNewProfileLink() const;

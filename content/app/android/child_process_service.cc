@@ -8,6 +8,7 @@
 #include <cpu-features.h>
 
 #include "base/android/jni_array.h"
+#include "base/android/library_loader/library_loader_hooks.h"
 #include "base/android/memory_pressure_listener_android.h"
 #include "base/logging.h"
 #include "base/posix/global_descriptors.h"
@@ -126,8 +127,8 @@ void InitChildProcess(JNIEnv* env,
 }
 
 void ExitChildProcess(JNIEnv* env, jclass clazz) {
-  LOG(INFO) << "ChildProcessService: Exiting child process.";
-  LibraryLoaderExitHook();
+  VLOG(0) << "ChildProcessService: Exiting child process.";
+  base::android::LibraryLoaderExitHook();
   _exit(0);
 }
 

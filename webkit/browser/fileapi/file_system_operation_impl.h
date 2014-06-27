@@ -69,7 +69,6 @@ class WEBKIT_STORAGE_BROWSER_EXPORT FileSystemOperationImpl
                          const StatusCallback& callback) OVERRIDE;
   virtual void OpenFile(const FileSystemURL& url,
                         int file_flags,
-                        base::ProcessHandle peer_handle,
                         const OpenFileCallback& callback) OVERRIDE;
   virtual void Cancel(const StatusCallback& cancel_callback) OVERRIDE;
   virtual void CreateSnapshotFile(
@@ -91,7 +90,7 @@ class WEBKIT_STORAGE_BROWSER_EXPORT FileSystemOperationImpl
                              const FileSystemURL& dest_url,
                              CopyOrMoveOption option,
                              const StatusCallback& callback) OVERRIDE;
-  virtual base::PlatformFileError SyncGetPlatformPath(
+  virtual base::File::Error SyncGetPlatformPath(
       const FileSystemURL& url,
       base::FilePath* platform_path) OVERRIDE;
 
@@ -152,32 +151,32 @@ class WEBKIT_STORAGE_BROWSER_EXPORT FileSystemOperationImpl
 
   // Callback for CreateFile for |exclusive|=true cases.
   void DidEnsureFileExistsExclusive(const StatusCallback& callback,
-                                    base::PlatformFileError rv,
+                                    base::File::Error rv,
                                     bool created);
 
   // Callback for CreateFile for |exclusive|=false cases.
   void DidEnsureFileExistsNonExclusive(const StatusCallback& callback,
-                                       base::PlatformFileError rv,
+                                       base::File::Error rv,
                                        bool created);
 
   void DidFinishOperation(const StatusCallback& callback,
-                          base::PlatformFileError rv);
+                          base::File::Error rv);
   void DidDirectoryExists(const StatusCallback& callback,
-                          base::PlatformFileError rv,
-                          const base::PlatformFileInfo& file_info);
+                          base::File::Error rv,
+                          const base::File::Info& file_info);
   void DidFileExists(const StatusCallback& callback,
-                     base::PlatformFileError rv,
-                     const base::PlatformFileInfo& file_info);
+                     base::File::Error rv,
+                     const base::File::Info& file_info);
   void DidDeleteRecursively(const FileSystemURL& url,
                             const StatusCallback& callback,
-                            base::PlatformFileError rv);
+                            base::File::Error rv);
   void DidWrite(const FileSystemURL& url,
                 const WriteCallback& callback,
-                base::PlatformFileError rv,
+                base::File::Error rv,
                 int64 bytes,
                 FileWriterDelegate::WriteProgressStatus write_status);
   void DidOpenFile(const OpenFileCallback& callback,
-                   base::PlatformFileError rv,
+                   base::File::Error rv,
                    base::PassPlatformFile file,
                    const base::Closure& on_close_callback);
 
@@ -194,10 +193,6 @@ class WEBKIT_STORAGE_BROWSER_EXPORT FileSystemOperationImpl
   scoped_ptr<RecursiveOperationDelegate> recursive_operation_delegate_;
 
   StatusCallback cancel_callback_;
-
-  // Used only by OpenFile, in order to clone the file handle back to the
-  // requesting process.
-  base::ProcessHandle peer_handle_;
 
   // A flag to make sure we call operation only once per instance.
   OperationType pending_operation_;

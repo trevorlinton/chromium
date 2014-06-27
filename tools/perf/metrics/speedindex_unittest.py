@@ -9,6 +9,8 @@ import json
 import os
 import unittest
 
+from telemetry.core import bitmap
+from telemetry.core.backends.chrome import inspector_timeline_data
 from telemetry.core.timeline import model
 from metrics import speedindex
 
@@ -16,32 +18,144 @@ from metrics import speedindex
 # The sample events will be used in several tests below.
 _TEST_DIR = os.path.join(os.path.dirname(__file__), 'unittest_data')
 _SAMPLE_DATA = json.load(open(os.path.join(_TEST_DIR, 'sample_timeline.json')))
-_SAMPLE_EVENTS = model.TimelineModel(event_data=_SAMPLE_DATA).GetAllEvents()
+_SAMPLE_TIMELINE_DATA = inspector_timeline_data.InspectorTimelineData(
+    _SAMPLE_DATA)
+_SAMPLE_EVENTS = model.TimelineModel(
+    timeline_data=_SAMPLE_TIMELINE_DATA).GetAllEvents()
+
+
+class FakeTimelineModel(object):
+
+  def __init__(self):
+    self._events = []
+
+  def SetAllEvents(self, events):
+    self._events = events
+
+  def GetAllEvents(self):
+    return self._events
+
+
+class FakeBitmap(object):
+
+  def __init__(self, r, g, b):
+    self._histogram = bitmap.ColorHistogram(r, g, b, bitmap.WHITE)
+
+  # pylint: disable=W0613
+  def ColorHistogram(self, ignore_color=None, tolerance=None):
+    return self._histogram
+
+
+class FakeTab(object):
+
+  def __init__(self, video_capture_result=None):
+    self._timeline_model = FakeTimelineModel()
+    self._javascript_result = None
+    self._video_capture_result = video_capture_result
+
+  @property
+  def timeline_model(self):
+    return self._timeline_model
+
+  @property
+  def video_capture_supported(self):
+    return self._video_capture_result is not None
+
+  def SetEvaluateJavaScriptResult(self, result):
+    self._javascript_result = result
+
+  def EvaluateJavaScript(self, _):
+    return self._javascript_result
+
+  def StartVideoCapture(self, min_bitrate_mbps=1):
+    assert self.video_capture_supported
+    assert min_bitrate_mbps > 0
+
+  def StopVideoCapture(self):
+    assert self.video_capture_supported
+    return self._video_capture_result
+
+  def Highlight(self, _):
+    pass
 
 
 class IncludedPaintEventsTest(unittest.TestCase):
   def testNumberPaintEvents(self):
+    impl = speedindex.PaintRectSpeedIndexImpl()
     # In the sample data, there's one event that occurs before the layout event,
     # and one paint event that's not a leaf paint event.
-    events = speedindex._IncludedPaintEvents(_SAMPLE_EVENTS)
-    self.assertEquals(len(events), 5)
+    events = impl._IncludedPaintEvents(_SAMPLE_EVENTS)
+    self.assertEqual(len(events), 5)
 
 
-class TimeAreaDictTest(unittest.TestCase):
+class SpeedIndexImplTest(unittest.TestCase):
   def testAdjustedAreaDict(self):
-    paint_events = speedindex._IncludedPaintEvents(_SAMPLE_EVENTS)
+    impl = speedindex.PaintRectSpeedIndexImpl()
+    paint_events = impl._IncludedPaintEvents(_SAMPLE_EVENTS)
     viewport = 1000, 1000
-    time_area_dict = speedindex._TimeAreaDict(paint_events, viewport)
-    self.assertEquals(len(time_area_dict), 4)
+    time_area_dict = impl._TimeAreaDict(paint_events, viewport)
+    self.assertEqual(len(time_area_dict), 4)
     # The event that ends at time 100 is a fullscreen; it's discounted by half.
-    self.assertEquals(time_area_dict[100], 500000)
-    self.assertEquals(time_area_dict[300], 100000)
-    self.assertEquals(time_area_dict[400], 200000)
-    self.assertEquals(time_area_dict[800], 200000)
+    self.assertEqual(time_area_dict[100], 500000)
+    self.assertEqual(time_area_dict[300], 100000)
+    self.assertEqual(time_area_dict[400], 200000)
+    self.assertEqual(time_area_dict[800], 200000)
+
+  def testVideoCompleteness(self):
+    frames = [
+        (0.0, FakeBitmap([ 0, 0, 0,10], [ 0, 0, 0,10], [ 0, 0, 0,10])),
+        (0.1, FakeBitmap([10, 0, 0, 0], [10, 0, 0, 0], [10, 0, 0, 0])),
+        (0.2, FakeBitmap([ 0, 0, 2, 8], [ 0, 0, 4, 6], [ 0, 0, 1, 9])),
+        (0.3, FakeBitmap([ 0, 3, 2, 5], [ 2, 1, 0, 7], [ 0, 3, 0, 7])),
+        (0.4, FakeBitmap([ 0, 0, 1, 0], [ 0, 0, 1, 0], [ 0, 0, 1, 0])),
+        (0.5, FakeBitmap([ 0, 4, 6, 0], [ 0, 4, 6, 0], [ 0, 4, 6, 0])),
+    ]
+    max_distance = 42.
+
+    tab = FakeTab(frames)
+    impl = speedindex.VideoSpeedIndexImpl()
+    impl.Start(tab)
+    impl.Stop(tab)
+    time_completeness = impl.GetTimeCompletenessList(tab)
+    self.assertEqual(len(time_completeness), 6)
+    self.assertEqual(time_completeness[0], (0.0, 0))
+    self.assertTimeCompleteness(
+        time_completeness[1], 0.1, 1 - (16 + 16 + 16) / max_distance)
+    self.assertTimeCompleteness(
+        time_completeness[2], 0.2, 1 - (12 + 10 + 13) / max_distance)
+    self.assertTimeCompleteness(
+        time_completeness[3], 0.3, 1 - (6 + 10 + 8) / max_distance)
+    self.assertTimeCompleteness(
+        time_completeness[4], 0.4, 1 - (4 + 4 + 4) / max_distance)
+    self.assertEqual(time_completeness[5], (0.5, 1))
+
+  def testBlankPage(self):
+    frames = [
+        (0.0, FakeBitmap([0, 0, 0, 1], [0, 0, 0, 1], [0, 0, 0, 1])),
+        (0.1, FakeBitmap([0, 0, 0, 1], [0, 0, 0, 1], [0, 0, 0, 1])),
+        (0.2, FakeBitmap([1, 0, 0, 0], [0, 0, 0, 1], [0, 0, 0, 1])),
+        (0.3, FakeBitmap([0, 0, 0, 1], [0, 0, 0, 1], [0, 0, 0, 1])),
+    ]
+    tab = FakeTab(frames)
+    impl = speedindex.VideoSpeedIndexImpl()
+    impl.Start(tab)
+    impl.Stop(tab)
+    time_completeness = impl.GetTimeCompletenessList(tab)
+    self.assertEqual(len(time_completeness), 4)
+    self.assertEqual(time_completeness[0], (0.0, 1.0))
+    self.assertEqual(time_completeness[1], (0.1, 1.0))
+    self.assertEqual(time_completeness[2], (0.2, 0.0))
+    self.assertEqual(time_completeness[3], (0.3, 1.0))
+
+  def assertTimeCompleteness(self, time_completeness, time, completeness):
+    self.assertEqual(time_completeness[0], time)
+    self.assertAlmostEqual(time_completeness[1], completeness)
 
 
 class SpeedIndexTest(unittest.TestCase):
   def testWithSampleData(self):
+    tab = FakeTab()
+    impl = speedindex.PaintRectSpeedIndexImpl()
     viewport = 1000, 1000
     # Add up the parts of the speed index for each time interval.
     # Each part is the time interval multiplied by the proportion of the
@@ -52,7 +166,9 @@ class SpeedIndexTest(unittest.TestCase):
     parts.append(100 * 0.4)
     parts.append(400 * 0.2)
     expected = sum(parts)  # 330.0
-    actual = speedindex._SpeedIndex(_SAMPLE_EVENTS, viewport)
+    tab.timeline_model.SetAllEvents(_SAMPLE_EVENTS)
+    tab.SetEvaluateJavaScriptResult(viewport)
+    actual = impl.CalculateSpeedIndex(tab)
     self.assertEqual(actual, expected)
 
 
@@ -71,11 +187,16 @@ class WPTComparisonTest(unittest.TestCase):
       filename: Filename of a json file which contains a
       expected: The result expected based on the WPT result.
     """
+    tab = FakeTab()
+    impl = speedindex.PaintRectSpeedIndexImpl()
     file_path = os.path.join(_TEST_DIR, filename)
     with open(file_path) as json_file:
       raw_events = json.load(json_file)
-      events = model.TimelineModel(event_data=raw_events).GetAllEvents()
-      actual = speedindex._SpeedIndex(events, viewport)
+      timeline_data = inspector_timeline_data.InspectorTimelineData(raw_events)
+      tab.timeline_model.SetAllEvents(
+          model.TimelineModel(timeline_data=timeline_data).GetAllEvents())
+      tab.SetEvaluateJavaScriptResult(viewport)
+      actual = impl.CalculateSpeedIndex(tab)
       # The result might differ by 1 or more milliseconds due to rounding,
       # so compare to the nearest 10 milliseconds.
       self.assertAlmostEqual(actual, expected, places=-1)
@@ -101,4 +222,3 @@ class WPTComparisonTest(unittest.TestCase):
 
 if __name__ == "__main__":
   unittest.main()
-

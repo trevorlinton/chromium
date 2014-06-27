@@ -5,12 +5,15 @@
 #include "chrome/browser/extensions/api/file_handlers/app_file_handler_util.h"
 
 #include "base/file_util.h"
+#include "base/files/file.h"
 #include "base/files/file_path.h"
-#include "chrome/browser/extensions/extension_prefs.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_security_policy.h"
+#include "content/public/browser/render_process_host.h"
+#include "extensions/browser/extension_prefs.h"
 #include "net/base/mime_util.h"
 #include "webkit/browser/fileapi/isolated_context.h"
+#include "webkit/common/fileapi/file_system_mount_option.h"
 #include "webkit/common/fileapi/file_system_types.h"
 
 #if defined(OS_CHROMEOS)
@@ -20,6 +23,9 @@
 namespace extensions {
 
 namespace app_file_handler_util {
+
+const char kInvalidParameters[] = "Invalid parameters";
+const char kSecurityError[] = "Security error";
 
 namespace {
 
@@ -61,28 +67,19 @@ bool FileHandlerCanHandleFileWithMimeType(
 
 bool DoCheckWritableFile(const base::FilePath& path, bool is_directory) {
   // Don't allow links.
-  if (base::PathExists(path) && file_util::IsLink(path))
+  if (base::PathExists(path) && base::IsLink(path))
     return false;
 
   if (is_directory)
     return base::DirectoryExists(path);
 
   // Create the file if it doesn't already exist.
-  base::PlatformFileError error = base::PLATFORM_FILE_OK;
-  int creation_flags = base::PLATFORM_FILE_CREATE |
-                       base::PLATFORM_FILE_READ |
-                       base::PLATFORM_FILE_WRITE;
-  base::PlatformFile file = base::CreatePlatformFile(path, creation_flags,
-                                                     NULL, &error);
-  // Close the file so we don't keep a lock open.
-  if (file != base::kInvalidPlatformFileValue)
-    base::ClosePlatformFile(file);
-  if (error != base::PLATFORM_FILE_OK &&
-      error != base::PLATFORM_FILE_ERROR_EXISTS) {
-    return false;
-  }
-
-  return true;
+  int creation_flags = base::File::FLAG_CREATE | base::File::FLAG_READ |
+                       base::File::FLAG_WRITE;
+  base::File file(path, creation_flags);
+  if (file.IsValid())
+    return true;
+  return file.error_details() == base::File::FILE_ERROR_EXISTS;
 }
 
 // Checks whether a list of paths are all OK for writing and calls a provided
@@ -119,6 +116,8 @@ class WritableFileChecker
   void CheckRemoteWritableFile(const base::FilePath& remote_path,
                                drive::FileError error,
                                const base::FilePath& local_path);
+  void RemoteCheckDone(const base::FilePath& remote_path,
+                       drive::FileError error);
 #endif
 
   const std::vector<base::FilePath> paths_;
@@ -151,10 +150,18 @@ void WritableFileChecker::Check() {
          it != paths_.end();
          ++it) {
       DCHECK(drive::util::IsUnderDriveMountPoint(*it));
-      drive::util::PrepareWritableFileAndRun(
-          profile_,
-          *it,
-          base::Bind(&WritableFileChecker::CheckRemoteWritableFile, this, *it));
+      if (is_directory_) {
+        drive::util::CheckDirectoryExists(
+            profile_,
+            *it,
+            base::Bind(&WritableFileChecker::RemoteCheckDone, this, *it));
+      } else {
+        drive::util::PrepareWritableFileAndRun(
+            profile_,
+            *it,
+            base::Bind(&WritableFileChecker::CheckRemoteWritableFile, this,
+                       *it));
+      }
     }
     return;
   }
@@ -210,6 +217,12 @@ void WritableFileChecker::CheckRemoteWritableFile(
     const base::FilePath& remote_path,
     drive::FileError error,
     const base::FilePath& /* local_path */) {
+  RemoteCheckDone(remote_path, error);
+}
+
+void WritableFileChecker::RemoteCheckDone(
+    const base::FilePath& remote_path,
+    drive::FileError error) {
   if (error == drive::FILE_ERROR_OK) {
     content::BrowserThread::PostTask(
         content::BrowserThread::UI,
@@ -312,10 +325,12 @@ GrantedFileEntry CreateFileEntry(
       content::ChildProcessSecurityPolicy::GetInstance();
   policy->GrantReadFileSystem(renderer_id, result.filesystem_id);
   if (HasFileSystemWritePermission(extension)) {
-    policy->GrantWriteFileSystem(renderer_id, result.filesystem_id);
-    policy->GrantDeleteFromFileSystem(renderer_id, result.filesystem_id);
-    if (is_directory)
-      policy->GrantCreateFileForFileSystem(renderer_id, result.filesystem_id);
+    if (is_directory) {
+      policy->GrantCreateReadWriteFileSystem(renderer_id, result.filesystem_id);
+    } else {
+      policy->GrantWriteFileSystem(renderer_id, result.filesystem_id);
+      policy->GrantDeleteFromFileSystem(renderer_id, result.filesystem_id);
+    }
   }
 
   result.id = result.filesystem_id + ":" + result.registered_name;
@@ -337,6 +352,58 @@ GrantedFileEntry::GrantedFileEntry() {}
 
 bool HasFileSystemWritePermission(const Extension* extension) {
   return extension->HasAPIPermission(APIPermission::kFileSystemWrite);
+}
+
+bool ValidateFileEntryAndGetPath(
+    const std::string& filesystem_name,
+    const std::string& filesystem_path,
+    const content::RenderViewHost* render_view_host,
+    base::FilePath* file_path,
+    std::string* error) {
+  if (filesystem_path.empty()) {
+    *error = kInvalidParameters;
+    return false;
+  }
+
+  std::string filesystem_id;
+  if (!fileapi::CrackIsolatedFileSystemName(filesystem_name, &filesystem_id)) {
+    *error = kInvalidParameters;
+    return false;
+  }
+
+  // Only return the display path if the process has read access to the
+  // filesystem.
+  content::ChildProcessSecurityPolicy* policy =
+      content::ChildProcessSecurityPolicy::GetInstance();
+  if (!policy->CanReadFileSystem(render_view_host->GetProcess()->GetID(),
+                                 filesystem_id)) {
+    *error = kSecurityError;
+    return false;
+  }
+
+  fileapi::IsolatedContext* context = fileapi::IsolatedContext::GetInstance();
+  base::FilePath relative_path =
+      base::FilePath::FromUTF8Unsafe(filesystem_path);
+  base::FilePath virtual_path = context->CreateVirtualRootPath(filesystem_id)
+      .Append(relative_path);
+  fileapi::FileSystemType type;
+  fileapi::FileSystemMountOption mount_option;
+  if (!context->CrackVirtualPath(
+          virtual_path, &filesystem_id, &type, file_path, &mount_option)) {
+    *error = kInvalidParameters;
+    return false;
+  }
+
+  // The file system API is only intended to operate on file entries that
+  // correspond to a native file, selected by the user so only allow file
+  // systems returned by the file system API or from a drag and drop operation.
+  if (type != fileapi::kFileSystemTypeNativeForPlatformApp &&
+      type != fileapi::kFileSystemTypeDragged) {
+    *error = kInvalidParameters;
+    return false;
+  }
+
+  return true;
 }
 
 }  // namespace app_file_handler_util

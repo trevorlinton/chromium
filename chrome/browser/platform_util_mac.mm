@@ -13,13 +13,14 @@
 #include "base/mac/mac_logging.h"
 #include "base/mac/scoped_aedesc.h"
 #include "base/strings/sys_string_conversions.h"
+//#include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "url/gurl.h"
 
 namespace platform_util {
 
-void ShowItemInFolder(const base::FilePath& full_path) {
+void ShowItemInFolder(Profile* profile, const base::FilePath& full_path) {
   DCHECK([NSThread isMainThread]);
   NSString* path_string = base::SysUTF8ToNSString(full_path.value());
   if (!path_string || ![[NSWorkspace sharedWorkspace] selectFile:path_string
@@ -34,7 +35,7 @@ void ShowItemInFolder(const base::FilePath& full_path) {
 //  2. Silent no-op for unassociated file types: http://crbug.com/50263
 // Instead, an AppleEvent is constructed to tell the Finder to open the
 // document.
-void OpenItem(const base::FilePath& full_path) {
+void OpenItem(Profile* profile, const base::FilePath& full_path) {
   DCHECK([NSThread isMainThread]);
   NSString* path_string = base::SysUTF8ToNSString(full_path.value());
   if (!path_string)
@@ -121,12 +122,16 @@ void OpenItem(const base::FilePath& full_path) {
   }
 }
 
-void OpenExternal(const GURL& url) {
+void OpenExternal(Profile* profile, const GURL& url) {
   DCHECK([NSThread isMainThread]);
   NSString* url_string = base::SysUTF8ToNSString(url.spec());
   NSURL* ns_url = [NSURL URLWithString:url_string];
   if (!ns_url || ![[NSWorkspace sharedWorkspace] openURL:ns_url])
     LOG(WARNING) << "NSWorkspace failed to open URL " << url;
+}
+
+void OpenExternal2(const GURL& url) {
+  OpenExternal(NULL, url);
 }
 
 gfx::NativeWindow GetTopLevel(gfx::NativeView view) {

@@ -112,18 +112,19 @@ NotifyChromeResult AttemptToNotifyRunningChrome(HWND remote_window,
   if (!thread_id || !process_id)
     return NOTIFY_FAILED;
 
+#if !defined(USE_AURA)
   if (base::win::IsMetroProcess()) {
     // Interesting corner case. We are launched as a metro process but we
     // found another chrome running. Since metro enforces single instance then
     // the other chrome must be desktop chrome and this must be a search charm
     // activation. This scenario is unique; other cases should be properly
     // handled by the delegate_execute which will not activate a second chrome.
-    string16 terms;
+    base::string16 terms;
     base::win::MetroLaunchType launch = base::win::GetMetroLaunchParams(&terms);
     if (launch != base::win::METRO_SEARCH) {
       LOG(WARNING) << "In metro mode, but and launch is " << launch;
     } else {
-      std::string query = EscapeQueryParamValue(UTF16ToUTF8(terms), true);
+      std::string query = EscapeQueryParamValue(base::UTF16ToUTF8(terms), true);
       std::string url = base::StringPrintf(kSearchUrl, query.c_str());
       SHELLEXECUTEINFOA sei = { sizeof(sei) };
       sei.fMask = SEE_MASK_FLAG_LOG_USAGE;
@@ -140,10 +141,15 @@ NotifyChromeResult AttemptToNotifyRunningChrome(HWND remote_window,
   if (base::win::GetVersion() >= base::win::VERSION_WIN8 &&
       base::OpenProcessHandleWithAccess(
           process_id, PROCESS_QUERY_INFORMATION,
-          process_handle.Receive()) &&
-      base::win::IsProcessImmersive(process_handle.Get())) {
-    // chrome::ActivateMetroChrome();
+          process_handle.Receive())) {
+    // Receive() causes the process handle to be set in the destructor of the
+    // temporary receiver object, which does not happen until after the if
+    // statement is complete.  So IsProcessImmersive() should only be checked
+    // as part of a separate if statement.
+    if (base::win::IsProcessImmersive(process_handle.Get()))
+      chrome::ActivateMetroChrome();
   }
+#endif
 
   CommandLine command_line(*CommandLine::ForCurrentProcess());
   command_line.AppendSwitchASCII(
@@ -158,7 +164,7 @@ NotifyChromeResult AttemptToNotifyRunningChrome(HWND remote_window,
   // Format is "START\0<<<current directory>>>\0<<<commandline>>>".
   std::wstring to_send(L"START\0", 6);  // want the NULL in the string.
   base::FilePath cur_dir;
-  if (!file_util::GetCurrentDirectory(&cur_dir))
+  if (!base::GetCurrentDirectory(&cur_dir))
     return NOTIFY_FAILED;
   to_send.append(cur_dir.value());
   to_send.append(L"\0", 1);  // Null separator.

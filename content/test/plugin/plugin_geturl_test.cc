@@ -29,8 +29,11 @@
 #define REDIRECT_SRC_URL \
     "http://mock.http/npapi/plugin_read_page_redirect_src.html"
 
-// The notification id for the redirect notification url.
-#define REDIRECT_SRC_URL_NOTIFICATION_ID 4
+// The notification id for the redirect notification url that we will cancel.
+#define REDIRECT_SRC_URL_NOTIFICATION_CANCEL_ID 4
+
+// The notification id for the redirect notification url that we will accept.
+#define REDIRECT_SRC_URL_NOTIFICATION_ALLOW_ID 5
 
 // The identifier for the bogus url stream.
 #define BOGUS_URL_STREAM_ID 3
@@ -48,7 +51,8 @@ PluginGetURLTest::PluginGetURLTest(NPP id, NPNetscapeFuncs *host_functions)
     expect_404_response_(false),
     npn_evaluate_context_(false),
     handle_url_redirects_(false),
-    received_url_redirect_notification_(false),
+    received_url_redirect_cancel_notification_(false),
+    received_url_redirect_allow_notification_(false),
     check_cookies_(false) {
 }
 
@@ -114,7 +118,7 @@ NPError PluginGetURLTest::SetWindow(NPWindow* pNPWindow) {
     } else if (handle_url_redirects_) {
       HostFunctions()->geturlnotify(
           id(), REDIRECT_SRC_URL, NULL,
-          reinterpret_cast<void*>(REDIRECT_SRC_URL_NOTIFICATION_ID));
+          reinterpret_cast<void*>(REDIRECT_SRC_URL_NOTIFICATION_CANCEL_ID));
       return NPERR_NO_ERROR;
     } else if (check_cookies_) {
       HostFunctions()->geturlnotify(
@@ -202,13 +206,13 @@ NPError PluginGetURLTest::NewStream(NPMIMEType type, NPStream* stream,
 #if defined(OS_WIN)
         filename = filename.substr(8);  // remove "file:///"
         // Assume an ASCII path on Windows.
-        base::FilePath path = base::FilePath(ASCIIToWide(filename));
+        base::FilePath path = base::FilePath(base::ASCIIToWide(filename));
 #else
         filename = filename.substr(7);  // remove "file://"
         base::FilePath path = base::FilePath(filename);
 #endif
 
-        test_file_ = file_util::OpenFile(path, "r");
+        test_file_ = base::OpenFile(path, "r");
         if (!test_file_) {
           SetError("Could not open source file");
         }
@@ -217,8 +221,10 @@ NPError PluginGetURLTest::NewStream(NPMIMEType type, NPStream* stream,
     case BOGUS_URL_STREAM_ID:
       SetError("Unexpected NewStream for BOGUS_URL");
       break;
-    case REDIRECT_SRC_URL_NOTIFICATION_ID:
+    case REDIRECT_SRC_URL_NOTIFICATION_CANCEL_ID:
       SetError("Should not redirect to URL when plugin denied it.");
+      break;
+    case REDIRECT_SRC_URL_NOTIFICATION_ALLOW_ID:
       break;
     default:
       SetError("Unexpected NewStream callback");
@@ -294,6 +300,8 @@ int32 PluginGetURLTest::Write(NPStream *stream, int32 offset, int32 len,
     case BOGUS_URL_STREAM_ID:
       SetError("Unexpected write callback for BOGUS_URL");
       break;
+    case REDIRECT_SRC_URL_NOTIFICATION_ALLOW_ID:
+      break;
     default:
       SetError("Unexpected write callback");
       break;
@@ -340,13 +348,15 @@ NPError PluginGetURLTest::DestroyStream(NPStream *stream, NPError reason) {
     case SELF_URL_STREAM_ID:
       // don't care
       break;
+    case REDIRECT_SRC_URL_NOTIFICATION_ALLOW_ID:
+      break;
     case FETCHED_URL_STREAM_ID:
       {
         char read_buffer[STREAM_CHUNK];
         size_t bytes = fread(read_buffer, 1, sizeof(read_buffer), test_file_);
         if (bytes != 0)
           SetError("Data and source mismatch on length");
-        file_util::CloseFile(test_file_);
+        base::CloseFile(test_file_);
       }
       break;
     default:
@@ -414,9 +424,21 @@ void PluginGetURLTest::URLNotify(const char* url, NPReason reason, void* data) {
       }
       tests_in_progress_--;
       break;
-    case REDIRECT_SRC_URL_NOTIFICATION_ID: {
-      if (!received_url_redirect_notification_) {
-        SetError("Failed to receive URLRedirect notification");
+    case REDIRECT_SRC_URL_NOTIFICATION_CANCEL_ID: {
+      if (!received_url_redirect_cancel_notification_) {
+        SetError("Failed to receive URLRedirect notification for cancel");
+      }
+      if (reason != NPRES_NETWORK_ERR)  {
+        SetError("Redirected URL didn't get canceled");
+      }
+      break;
+    }
+    case REDIRECT_SRC_URL_NOTIFICATION_ALLOW_ID: {
+      if (!received_url_redirect_allow_notification_) {
+        SetError("Failed to receive URLRedirect notification for allow");
+      }
+      if (reason != NPRES_DONE) {
+        SetError("Redirected URL didn't complete successfully");
       }
       tests_in_progress_--;
       break;
@@ -433,10 +455,22 @@ void PluginGetURLTest::URLNotify(const char* url, NPReason reason, void* data) {
 void PluginGetURLTest::URLRedirectNotify(const char* url,
                                          int32_t status,
                                          void* notify_data) {
-  if (!base::strcasecmp(url, "http://mock.http/npapi/plugin_read_page.html")) {
-    received_url_redirect_notification_ = true;
-    // Disallow redirect notification.
-    HostFunctions()->urlredirectresponse(id(), notify_data, false);
+  unsigned long stream_id = reinterpret_cast<unsigned long>(notify_data);
+  if (stream_id == REDIRECT_SRC_URL_NOTIFICATION_CANCEL_ID) {
+    if (!base::strcasecmp(url,
+                          "http://mock.http/npapi/plugin_read_page.html")) {
+      received_url_redirect_cancel_notification_ = true;
+      // Disallow redirect notification.
+      HostFunctions()->urlredirectresponse(id(), notify_data, false);
+
+      // Now start a request that we will allow to redirect.
+      HostFunctions()->geturlnotify(
+        id(), REDIRECT_SRC_URL, NULL,
+        reinterpret_cast<void*>(REDIRECT_SRC_URL_NOTIFICATION_ALLOW_ID));
+    }
+  } else if (stream_id == REDIRECT_SRC_URL_NOTIFICATION_ALLOW_ID) {
+    received_url_redirect_allow_notification_ = true;
+    HostFunctions()->urlredirectresponse(id(), notify_data, true);
   }
 }
 

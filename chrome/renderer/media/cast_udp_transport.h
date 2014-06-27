@@ -7,35 +7,26 @@
 
 #include "base/basictypes.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/weak_ptr.h"
 #include "net/base/ip_endpoint.h"
 
 class CastSession;
 
-// This class represents an end point to which communication is done by
-// UDP. The interface does not allow direct access to a UDP socket but
-// represents a transport mechanism.
-//
-// CastUdpTransport creates a CastSession and then shares it with
-// multiple CastSendTransports. This is because CastSession corresponds
-// to only one remote peer.
+// This class represents the transport mechanism used by Cast RTP streams
+// to connect to a remote client. It specifies the destination address
+// and network protocol used to send Cast RTP streams.
 class CastUdpTransport {
  public:
-  CastUdpTransport();
-  ~CastUdpTransport();
+  explicit CastUdpTransport(const scoped_refptr<CastSession>& session);
+  virtual ~CastUdpTransport();
 
-  // Begin the transport by specifying the remote IP address.
-  // The transport will use UDP.
-  void Start(const net::IPEndPoint& remote_address);
-
-  // Terminate the communication with the end point.
-  void Stop();
-
-  scoped_refptr<CastSession> cast_session() const {
-    return cast_session_;
-  }
+  // Specify the remote IP address and port.
+  void SetDestination(const net::IPEndPoint& remote_address);
 
  private:
   const scoped_refptr<CastSession> cast_session_;
+  net::IPEndPoint remote_address_;
+  base::WeakPtrFactory<CastUdpTransport> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(CastUdpTransport);
 };

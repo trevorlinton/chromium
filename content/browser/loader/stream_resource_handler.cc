@@ -15,16 +15,15 @@
 
 namespace content {
 
-StreamResourceHandler::StreamResourceHandler(
-    net::URLRequest* request,
-    StreamRegistry* registry,
-    const GURL& origin)
+StreamResourceHandler::StreamResourceHandler(net::URLRequest* request,
+                                             StreamRegistry* registry,
+                                             const GURL& origin)
     : ResourceHandler(request),
       read_buffer_(NULL) {
   // TODO(tyoshino): Find a way to share this with the blob URL creation in
   // WebKit.
-  GURL url(std::string(chrome::kBlobScheme) + ":" +
-           origin.spec() + base::GenerateGUID());
+  GURL url(std::string(kBlobScheme) + ":" + origin.spec() +
+           base::GenerateGUID());
   stream_ = new Stream(registry, this, url);
 }
 
@@ -54,6 +53,12 @@ bool StreamResourceHandler::OnResponseStarted(int request_id,
 bool StreamResourceHandler::OnWillStart(int request_id,
                                         const GURL& url,
                                         bool* defer) {
+  return true;
+}
+
+bool StreamResourceHandler::OnBeforeNetworkStart(int request_id,
+                                                 const GURL& url,
+                                                 bool* defer) {
   return true;
 }
 
@@ -93,12 +98,12 @@ bool StreamResourceHandler::OnReadCompleted(int request_id,
   return true;
 }
 
-bool StreamResourceHandler::OnResponseCompleted(
+void StreamResourceHandler::OnResponseCompleted(
     int request_id,
     const net::URLRequestStatus& status,
-    const std::string& sec_info) {
+    const std::string& sec_info,
+    bool* defer) {
   stream_->Finalize();
-  return status.status() == net::URLRequestStatus::SUCCESS;
 }
 
 void StreamResourceHandler::OnDataDownloaded(

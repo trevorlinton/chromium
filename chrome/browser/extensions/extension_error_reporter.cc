@@ -35,18 +35,13 @@ ExtensionErrorReporter::ExtensionErrorReporter(bool enable_noisy_errors)
 
 ExtensionErrorReporter::~ExtensionErrorReporter() {}
 
-void ExtensionErrorReporter::ReportError(const string16& message,
-                                         bool be_noisy) {
+void ExtensionErrorReporter::ReportError(const base::string16& message,
+                                         bool be_noisy,
+                                         bool* user_response) {
   // NOTE: There won't be a ui_loop_ in the unit test environment.
-  if (ui_loop_ && base::MessageLoop::current() != ui_loop_) {
-    // base::Unretained is okay since the ExtensionErrorReporter is a singleton
-    // that lives until the end of the process.
-    ui_loop_->PostTask(FROM_HERE,
-        base::Bind(&ExtensionErrorReporter::ReportError,
-                   base::Unretained(this),
-                   message,
-                   be_noisy));
-    return;
+  if (ui_loop_) {
+    CHECK(base::MessageLoop::current() == ui_loop_)
+        << "ReportError can only be called from the UI thread.";
   }
 
   errors_.push_back(message);
@@ -56,12 +51,23 @@ void ExtensionErrorReporter::ReportError(const string16& message,
   LOG(WARNING) << "Extension error: " << message;
 
   if (enable_noisy_errors_ && be_noisy) {
-    chrome::ShowMessageBox(NULL, ASCIIToUTF16("Extension error"), message,
-                           chrome::MESSAGE_BOX_TYPE_WARNING);
+    if (user_response) {
+      *user_response =
+          chrome::MESSAGE_BOX_RESULT_YES ==
+          chrome::ShowMessageBox(NULL,
+                                 base::ASCIIToUTF16("Extension error"),
+                                 message,
+                                 chrome::MESSAGE_BOX_TYPE_QUESTION);
+    } else {
+      chrome::ShowMessageBox(NULL,
+                             base::ASCIIToUTF16("Extension error"),
+                             message,
+                             chrome::MESSAGE_BOX_TYPE_WARNING);
+    }
   }
 }
 
-const std::vector<string16>* ExtensionErrorReporter::GetErrors() {
+const std::vector<base::string16>* ExtensionErrorReporter::GetErrors() {
   return &errors_;
 }
 

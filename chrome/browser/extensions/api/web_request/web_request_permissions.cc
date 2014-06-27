@@ -6,14 +6,14 @@
 
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "chrome/browser/extensions/extension_info_map.h"
 #include "chrome/browser/extensions/extension_renderer_state.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
-#include "chrome/common/extensions/permissions/permissions_data.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/resource_request_info.h"
+#include "extensions/browser/info_map.h"
 #include "extensions/common/constants.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/permissions/permissions_data.h"
 #include "net/url_request/url_request.h"
 #include "url/gurl.h"
 
@@ -51,7 +51,9 @@ bool IsSensitiveURL(const GURL& url) {
     // others.
     sensitive_chrome_url = sensitive_chrome_url ||
         EndsWith(url.host(), ".clients.google.com", true) ||
-        url.host() == "sb-ssl.google.com";
+        url.host() == "sb-ssl.google.com" ||
+        (url.host() ==  "chrome.google.com" &&
+             StartsWithASCII(url.path(), "/webstore", true));
   }
   GURL::Replacements replacements;
   replacements.ClearQuery();
@@ -66,10 +68,10 @@ bool IsSensitiveURL(const GURL& url) {
 // to. Extensions still need specific permissions for a given URL, which is
 // covered by CanExtensionAccessURL.
 bool HasWebRequestScheme(const GURL& url) {
-  return (url.SchemeIs(chrome::kAboutScheme) ||
-          url.SchemeIs(chrome::kFileScheme) ||
-          url.SchemeIs(chrome::kFileSystemScheme) ||
-          url.SchemeIs(chrome::kFtpScheme) ||
+  return (url.SchemeIs(content::kAboutScheme) ||
+          url.SchemeIs(content::kFileScheme) ||
+          url.SchemeIs(content::kFileSystemScheme) ||
+          url.SchemeIs(content::kFtpScheme) ||
           url.SchemeIs(content::kHttpScheme) ||
           url.SchemeIs(content::kHttpsScheme) ||
           url.SchemeIs(extensions::kExtensionScheme));
@@ -79,7 +81,7 @@ bool HasWebRequestScheme(const GURL& url) {
 
 // static
 bool WebRequestPermissions::HideRequest(
-    const ExtensionInfoMap* extension_info_map,
+    const extensions::InfoMap* extension_info_map,
     const net::URLRequest* request) {
   // Hide requests from the Chrome WebStore App or signin process.
   const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
@@ -106,7 +108,7 @@ bool WebRequestPermissions::HideRequest(
 
 // static
 bool WebRequestPermissions::CanExtensionAccessURL(
-    const ExtensionInfoMap* extension_info_map,
+    const extensions::InfoMap* extension_info_map,
     const std::string& extension_id,
     const GURL& url,
     bool crosses_incognito,
@@ -130,7 +132,7 @@ bool WebRequestPermissions::CanExtensionAccessURL(
     case REQUIRE_HOST_PERMISSION:
       // about: URLs are not covered in host permissions, but are allowed
       // anyway.
-      if (!((url.SchemeIs(chrome::kAboutScheme) ||
+      if (!((url.SchemeIs(content::kAboutScheme) ||
              extensions::PermissionsData::HasHostPermission(extension, url) ||
              url.GetOrigin() == extension->url()))) {
         return false;

@@ -24,6 +24,15 @@ typedef std::list<URLRequestTestJob*> URLRequestJobList;
 base::LazyInstance<URLRequestJobList>::Leaky
     g_pending_jobs = LAZY_INSTANCE_INITIALIZER;
 
+class TestJobProtocolHandler : public URLRequestJobFactory::ProtocolHandler {
+ public:
+  // URLRequestJobFactory::ProtocolHandler implementation:
+  virtual URLRequestJob* MaybeCreateJob(
+      URLRequest* request, NetworkDelegate* network_delegate) const OVERRIDE {
+    return new URLRequestTestJob(request, network_delegate);
+  }
+};
+
 }  // namespace
 
 // static getters for known URLs
@@ -36,8 +45,14 @@ GURL URLRequestTestJob::test_url_2() {
 GURL URLRequestTestJob::test_url_3() {
   return GURL("test:url3");
 }
+GURL URLRequestTestJob::test_url_4() {
+  return GURL("test:url4");
+}
 GURL URLRequestTestJob::test_url_error() {
   return GURL("test:error");
+}
+GURL URLRequestTestJob::test_url_redirect_to_url_2() {
+  return GURL("test:redirect_to_2");
 }
 
 // static getters for known URL responses
@@ -49,6 +64,9 @@ std::string URLRequestTestJob::test_data_2() {
 }
 std::string URLRequestTestJob::test_data_3() {
   return std::string("<html><title>Test Three Three Three</title></html>");
+}
+std::string URLRequestTestJob::test_data_4() {
+  return std::string("<html><title>Test Four Four Four Four</title></html>");
 }
 
 // static getter for simple response headers
@@ -69,6 +87,17 @@ std::string URLRequestTestJob::test_redirect_headers() {
   return std::string(kHeaders, arraysize(kHeaders));
 }
 
+// static getter for redirect response headers
+std::string URLRequestTestJob::test_redirect_to_url_2_headers() {
+  std::string headers = "HTTP/1.1 302 MOVED";
+  headers.push_back('\0');
+  headers += "Location: ";
+  headers += test_url_2().spec();
+  headers.push_back('\0');
+  headers.push_back('\0');
+  return headers;
+}
+
 // static getter for error response headers
 std::string URLRequestTestJob::test_error_headers() {
   static const char kHeaders[] =
@@ -78,10 +107,9 @@ std::string URLRequestTestJob::test_error_headers() {
 }
 
 // static
-URLRequestJob* URLRequestTestJob::Factory(URLRequest* request,
-                                          NetworkDelegate* network_delegate,
-                                          const std::string& scheme) {
-  return new URLRequestTestJob(request, network_delegate);
+URLRequestJobFactory::ProtocolHandler*
+URLRequestTestJob::CreateProtocolHandler() {
+  return new TestJobProtocolHandler();
 }
 
 URLRequestTestJob::URLRequestTestJob(URLRequest* request,
@@ -162,6 +190,11 @@ void URLRequestTestJob::StartAsync() {
       response_data_ = test_data_2();
     } else if (request_->url().spec() == test_url_3().spec()) {
       response_data_ = test_data_3();
+    } else if (request_->url().spec() == test_url_4().spec()) {
+      response_data_ = test_data_4();
+    } else if (request_->url().spec() == test_url_redirect_to_url_2().spec()) {
+      response_headers_ =
+          new HttpResponseHeaders(test_redirect_to_url_2_headers());
     } else {
       AdvanceJob();
 

@@ -21,7 +21,10 @@ def IsDeadlineExceededError(error):
   handle them all the same way. For more info see:
   https://developers.google.com/appengine/articles/deadlineexceedederrors
   '''
-  return error.__class__.__name__ == 'DeadlineExceededError'
+  return type(error).__name__ == 'DeadlineExceededError'
+
+def IsDownloadError(error):
+  return type(error).__name__ == 'DownloadError'
 
 # This will attempt to import the actual App Engine modules, and if it fails,
 # they will be replaced with fake modules. This is useful during testing.
@@ -33,7 +36,7 @@ try:
   import google.appengine.ext.blobstore as blobstore
   from google.appengine.ext.blobstore.blobstore import BlobReferenceProperty
   import google.appengine.ext.db as db
-  import google.appengine.ext.webapp as webapp
+  import webapp2
 except ImportError:
   import re
   from StringIO import StringIO
@@ -57,7 +60,7 @@ except ImportError:
     for k, v in FAKE_URL_FETCHER_CONFIGURATION.iteritems():
       if k.match(key):
         return v
-    return None
+    raise ValueError('No configuration found for %s' % key)
 
   class _RPC(object):
     def __init__(self, result=None):
@@ -79,10 +82,11 @@ except ImportError:
     class _Response(object):
       def __init__(self, content):
         self.content = content
-        self.headers = { 'content-type': 'none' }
+        self.headers = {'Content-Type': 'none'}
         self.status_code = 200
 
     def fetch(self, url, **kwargs):
+      url = url.split('?', 1)[0]
       response = self._Response(_GetConfiguration(url).fetch(url))
       if response.content is None:
         response.status_code = 404
@@ -97,6 +101,9 @@ except ImportError:
 
   _BLOBS = {}
   class FakeBlobstore(object):
+    class BlobNotFoundError(Exception):
+      pass
+
     class BlobReader(object):
       def __init__(self, blob_key):
         self._data = _BLOBS[blob_key].getvalue()
@@ -189,9 +196,9 @@ except ImportError:
 
   memcache = InMemoryMemcache()
 
-  class webapp(object):
+  class webapp2(object):
     class RequestHandler(object):
-      """A fake webapp.RequestHandler class for Handler to extend.
+      """A fake webapp2.RequestHandler class for Handler to extend.
       """
       def __init__(self, request, response):
         self.request = request

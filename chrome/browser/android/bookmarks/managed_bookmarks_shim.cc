@@ -9,10 +9,10 @@
 #include "base/prefs/pref_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/bookmarks/bookmark_model.h"
-#include "chrome/browser/policy/configuration_policy_handler_android.h"
+#include "chrome/browser/policy/managed_bookmarks_policy_handler.h"
 #include "chrome/common/pref_names.h"
 #include "google_apis/gaia/gaia_auth_util.h"
-#include "grit/generated_resources.h"
+#include "grit/component_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 
 using policy::ManagedBookmarksPolicyHandler;
@@ -69,7 +69,7 @@ void ManagedBookmarksShim::Reload() {
   std::string username = prefs_->GetString(prefs::kGoogleServicesUsername);
   if (!username.empty())
     domain = gaia::ExtractDomainName(username);
-  string16 root_node_name;
+  base::string16 root_node_name;
   if (domain.empty()) {
     root_node_name =
         l10n_util::GetStringUTF16(IDS_POLICY_MANAGED_BOOKMARKS_DEFAULT_NAME);
@@ -92,7 +92,7 @@ void ManagedBookmarksShim::Reload() {
         continue;
       }
 
-      string16 name;
+      base::string16 name;
       std::string url;
       if (!dict->GetString(ManagedBookmarksPolicyHandler::kName, &name) ||
           !dict->GetString(ManagedBookmarksPolicyHandler::kUrl, &url)) {

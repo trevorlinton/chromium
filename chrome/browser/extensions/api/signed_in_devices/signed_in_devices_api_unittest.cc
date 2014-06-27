@@ -11,15 +11,14 @@
 #include "base/prefs/pref_service.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/api/signed_in_devices/signed_in_devices_api.h"
-#include "chrome/browser/extensions/extension_function_test_utils.h"
+#include "chrome/browser/extensions/extension_api_unittest.h"
 #include "chrome/browser/extensions/test_extension_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/glue/device_info.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/sync/profile_sync_service_mock.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/test/base/browser_with_test_window_test.h"
+#include "extensions/common/extension.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -28,10 +27,9 @@ using testing::Return;
 
 namespace extensions {
 
-namespace utils = extension_function_test_utils;
-
 TEST(SignedInDevicesAPITest, GetSignedInDevices) {
-  ProfileSyncServiceMock pss_mock;
+  TestingProfile profile;
+  ProfileSyncServiceMock pss_mock(&profile);
   base::MessageLoop message_loop_;
   TestExtensionPrefs extension_prefs(
       message_loop_.message_loop_proxy().get());
@@ -107,45 +105,26 @@ TEST(SignedInDevicesAPITest, GetSignedInDevices) {
 class ProfileSyncServiceMockForExtensionTests:
     public ProfileSyncServiceMock {
  public:
-  ProfileSyncServiceMockForExtensionTests() {}
+  explicit ProfileSyncServiceMockForExtensionTests(Profile* p)
+      : ProfileSyncServiceMock(p) {}
   ~ProfileSyncServiceMockForExtensionTests() {}
+
   MOCK_METHOD0(Shutdown, void());
 };
 
-BrowserContextKeyedService* CreateProfileSyncServiceMock(
-    content::BrowserContext* profile) {
-  return new ProfileSyncServiceMockForExtensionTests();
+KeyedService* CreateProfileSyncServiceMock(content::BrowserContext* profile) {
+  return new ProfileSyncServiceMockForExtensionTests(
+      Profile::FromBrowserContext(profile));
 }
 
-class ExtensionSignedInDevicesTest : public BrowserWithTestWindowTest {
+class ExtensionSignedInDevicesTest : public ExtensionApiUnittest {
  public:
   virtual void SetUp() {
-    BrowserWithTestWindowTest::SetUp();
+    ExtensionApiUnittest::SetUp();
 
     ProfileSyncServiceFactory::GetInstance()->SetTestingFactory(
         profile(), CreateProfileSyncServiceMock);
-
-    extension_ = utils::CreateEmptyExtensionWithLocation(Manifest::UNPACKED);
-
   }
-
-  base::Value* RunFunctionWithExtension(
-      UIThreadExtensionFunction* function,
-      const std::string& args) {
-    scoped_refptr<UIThreadExtensionFunction> delete_function(function);
-    function->set_extension(extension_.get());
-    return utils::RunFunctionAndReturnSingleResult(function, args, browser());
-  }
-
-  base::ListValue* RunFunctionAndReturnList(
-      UIThreadExtensionFunction* function,
-      const std::string& args) {
-    base::Value* result = RunFunctionWithExtension(function, args);
-    return result ? utils::ToList(result) : NULL;
-  }
-
- protected:
-  scoped_refptr<Extension> extension_;
 };
 
 DeviceInfo* CreateDeviceInfo(const DeviceInfo& device_info) {

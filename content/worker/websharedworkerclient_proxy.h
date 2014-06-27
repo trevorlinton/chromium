@@ -10,7 +10,7 @@
 #include "ipc/ipc_channel.h"
 #include "third_party/WebKit/public/web/WebSharedWorkerClient.h"
 
-namespace WebKit {
+namespace blink {
 class WebApplicationCacheHost;
 class WebApplicationCacheHostClient;
 class WebFrame;
@@ -21,13 +21,14 @@ namespace content {
 
 class SharedWorkerDevToolsAgent;
 class WebSharedWorkerStub;
+class WorkerWebApplicationCacheHostImpl;
 
 // This class receives IPCs from the renderer and calls the WebCore::Worker
 // implementation (after the data types have been converted by glue code).  It
 // is also called by the worker code and converts these function calls into
 // IPCs that are sent to the renderer, where they're converted back to function
 // calls by WebWorkerProxy.
-class WebSharedWorkerClientProxy : public WebKit::WebSharedWorkerClient {
+class WebSharedWorkerClientProxy : public blink::WebSharedWorkerClient {
  public:
   WebSharedWorkerClientProxy(int route_id, WebSharedWorkerStub* stub);
   virtual ~WebSharedWorkerClientProxy();
@@ -35,25 +36,20 @@ class WebSharedWorkerClientProxy : public WebKit::WebSharedWorkerClient {
   // WebSharedWorkerClient implementation.
   virtual void workerContextClosed();
   virtual void workerContextDestroyed();
+  virtual void workerScriptLoaded();
+  virtual void workerScriptLoadFailed();
+  virtual void selectAppCacheID(long long app_cache_id);
 
-  virtual WebKit::WebNotificationPresenter* notificationPresenter();
+  virtual blink::WebNotificationPresenter* notificationPresenter();
 
-  virtual WebKit::WebApplicationCacheHost* createApplicationCacheHost(
-      WebKit::WebApplicationCacheHostClient* client);
-  virtual WebKit::WebWorkerPermissionClientProxy*
+  virtual blink::WebApplicationCacheHost* createApplicationCacheHost(
+      blink::WebApplicationCacheHostClient* client);
+  virtual blink::WebWorkerPermissionClientProxy*
       createWorkerPermissionClientProxy(
-          const WebKit::WebSecurityOrigin& origin);
+          const blink::WebSecurityOrigin& origin);
 
-  // TODO(kinuko): Deprecate these methods.
-  virtual bool allowDatabase(WebKit::WebFrame* frame,
-                             const WebKit::WebString& name,
-                             const WebKit::WebString& display_name,
-                             unsigned long estimated_size);
-  virtual bool allowFileSystem();
-  virtual bool allowIndexedDB(const WebKit::WebString&);
-
-  virtual void dispatchDevToolsMessage(const WebKit::WebString&);
-  virtual void saveDevToolsAgentState(const WebKit::WebString&);
+  virtual void dispatchDevToolsMessage(const blink::WebString&);
+  virtual void saveDevToolsAgentState(const blink::WebString&);
 
   void EnsureWorkerContextTerminates();
 
@@ -69,6 +65,7 @@ class WebSharedWorkerClientProxy : public WebKit::WebSharedWorkerClient {
   WebSharedWorkerStub* stub_;
   base::WeakPtrFactory<WebSharedWorkerClientProxy> weak_factory_;
   SharedWorkerDevToolsAgent* devtools_agent_;
+  WorkerWebApplicationCacheHostImpl* app_cache_host_;
 
   DISALLOW_COPY_AND_ASSIGN(WebSharedWorkerClientProxy);
 };

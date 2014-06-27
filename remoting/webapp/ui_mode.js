@@ -22,6 +22,9 @@ var remoting = remoting || {};
 remoting.AppMode = {
   HOME: 'home',
     TOKEN_REFRESH_FAILED: 'home.token-refresh-failed',
+    HOST_INSTALL: 'home.host-install',
+      HOST_INSTALL_PROMPT: 'home.host-install.prompt',
+      HOST_INSTALL_PENDING: 'home.host-install.pending',
     HOST: 'home.host',
       HOST_WAITING_FOR_CODE: 'home.host.waiting-for-code',
       HOST_WAITING_FOR_CONNECTION: 'home.host.waiting-for-connection',
@@ -41,8 +44,6 @@ remoting.AppMode = {
     HISTORY: 'home.history',
     CONFIRM_HOST_DELETE: 'home.confirm-host-delete',
     HOST_SETUP: 'home.host-setup',
-      HOST_SETUP_INSTALL: 'home.host-setup.install',
-      HOST_SETUP_INSTALL_PENDING: 'home.host-setup.install-pending',
       HOST_SETUP_ASK_PIN: 'home.host-setup.ask-pin',
       HOST_SETUP_PROCESSING: 'home.host-setup.processing',
       HOST_SETUP_DONE: 'home.host-setup.done',
@@ -122,11 +123,18 @@ remoting.setMode = function(mode) {
   if (mode == remoting.AppMode.IN_SESSION) {
     document.removeEventListener('keydown', remoting.ConnectionStats.onKeydown,
                                  false);
-    document.addEventListener('webkitvisibilitychange',
-                              remoting.onVisibilityChanged, false);
+    if ('hidden' in document) {
+      document.addEventListener('visibilitychange',
+                                remoting.onVisibilityChanged, false);
+    } else {
+      document.addEventListener('webkitvisibilitychange',
+                                remoting.onVisibilityChanged, false);
+    }
   } else {
     document.addEventListener('keydown', remoting.ConnectionStats.onKeydown,
                               false);
+    document.removeEventListener('visibilitychange',
+                                 remoting.onVisibilityChanged, false);
     document.removeEventListener('webkitvisibilitychange',
                                  remoting.onVisibilityChanged, false);
     // TODO(jamiewalch): crbug.com/252796: Remove this once crbug.com/240772

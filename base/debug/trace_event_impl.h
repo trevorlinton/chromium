@@ -122,13 +122,9 @@ class BASE_EXPORT TraceEvent {
 
   void Reset();
 
-  void UpdateDuration(const TimeTicks& now);
+  void UpdateDuration(const TimeTicks& now, const TimeTicks& thread_now);
 
   // Serialize event data to JSON
-  static void AppendEventsAsJSON(const std::vector<TraceEvent>& events,
-                                 size_t start,
-                                 size_t count,
-                                 std::string* out);
   void AppendAsJSON(std::string* out) const;
   void AppendPrettyPrinted(std::ostringstream* out) const;
 
@@ -141,6 +137,7 @@ class BASE_EXPORT TraceEvent {
   char phase() const { return phase_; }
   int thread_id() const { return thread_id_; }
   TimeDelta duration() const { return duration_; }
+  TimeDelta thread_duration() const { return thread_duration_; }
   unsigned long long id() const { return id_; }
   unsigned char flags() const { return flags_; }
 
@@ -165,6 +162,7 @@ class BASE_EXPORT TraceEvent {
   TimeTicks timestamp_;
   TimeTicks thread_timestamp_;
   TimeDelta duration_;
+  TimeDelta thread_duration_;
   // id_ can be used to store phase-specific data.
   unsigned long long id_;
   TraceValue arg_values_[kTraceMaxNumArgs];
@@ -281,6 +279,8 @@ class BASE_EXPORT TraceResultBuffer {
 
 class BASE_EXPORT CategoryFilter {
  public:
+  typedef std::vector<std::string> StringList;
+
   // The default category filter, used when none is provided.
   // Allows all categories through, except if they end in the suffix 'Debug' or
   // 'Test'.
@@ -296,6 +296,16 @@ class BASE_EXPORT CategoryFilter {
   // Example: CategoryFilter("-excluded_category1,-excluded_category2");
   // Example: CategoryFilter("-*,webkit"); would disable everything but webkit.
   // Example: CategoryFilter("-webkit"); would enable everything but webkit.
+  //
+  // Category filters can also be used to configure synthetic delays.
+  //
+  // Example: CategoryFilter("DELAY(gpu.SwapBuffers;16)"); would make swap
+  //          buffers always take at least 16 ms.
+  // Example: CategoryFilter("DELAY(gpu.SwapBuffers;16;oneshot)"); would
+  //          make swap buffers take at least 16 ms the first time it is called.
+  // Example: CategoryFilter("DELAY(gpu.SwapBuffers;16;alternating)"); would
+  //          make swap buffers take at least 16 ms every other time it is
+  //          called.
   explicit CategoryFilter(const std::string& filter_string);
 
   CategoryFilter(const CategoryFilter& cf);
@@ -315,6 +325,9 @@ class BASE_EXPORT CategoryFilter {
   // disabled by this category filter.
   bool IsCategoryGroupEnabled(const char* category_group) const;
 
+  // Return a list of the synthetic delays specified in this category filter.
+  const StringList& GetSyntheticDelayValues() const;
+
   // Merges nested_filter with the current CategoryFilter
   void Merge(const CategoryFilter& nested_filter);
 
@@ -332,12 +345,11 @@ class BASE_EXPORT CategoryFilter {
   static bool IsEmptyOrContainsLeadingOrTrailingWhitespace(
       const std::string& str);
 
-  typedef std::vector<std::string> StringList;
-
   void Initialize(const std::string& filter_string);
   void WriteString(const StringList& values,
                    std::string* out,
                    bool included) const;
+  void WriteString(const StringList& delays, std::string* out) const;
   bool HasIncludedPatterns() const;
 
   bool DoesCategoryGroupContainCategory(const char* category_group,
@@ -346,20 +358,17 @@ class BASE_EXPORT CategoryFilter {
   StringList included_;
   StringList disabled_;
   StringList excluded_;
+  StringList delays_;
 };
 
 class TraceSamplingThread;
 
 class BASE_EXPORT TraceLog {
  public:
-  // Notification is a mask of one or more of the following events.
-  enum Notification {
-    // The trace buffer does not flush dynamically, so when it fills up,
-    // subsequent trace events will be dropped. This callback is generated when
-    // the trace buffer is full. The callback must be thread safe.
-    TRACE_BUFFER_FULL = 1 << 0,
-    // A subscribed trace-event occurred.
-    EVENT_WATCH_NOTIFICATION = 1 << 1
+  enum Mode {
+    DISABLED = 0,
+    RECORDING_MODE,
+    MONITORING_MODE,
   };
 
   // Options determines how the trace buffer stores data.
@@ -374,37 +383,47 @@ class BASE_EXPORT TraceLog {
     // Enable the sampling profiler in the recording mode.
     ENABLE_SAMPLING = 1 << 2,
 
-    // Enable the sampling profiler in the monitoring mode.
-    MONITOR_SAMPLING = 1 << 3,
-
     // Echo to console. Events are discarded.
-    ECHO_TO_CONSOLE = 1 << 4,
+    ECHO_TO_CONSOLE = 1 << 3,
+  };
+
+  // The pointer returned from GetCategoryGroupEnabledInternal() points to a
+  // value with zero or more of the following bits. Used in this class only.
+  // The TRACE_EVENT macros should only use the value as a bool.
+  // These values must be in sync with macro values in TraceEvent.h in Blink.
+  enum CategoryGroupEnabledFlags {
+    // Category group enabled for the recording mode.
+    ENABLED_FOR_RECORDING = 1 << 0,
+    // Category group enabled for the monitoring mode.
+    ENABLED_FOR_MONITORING = 1 << 1,
+    // Category group enabled by SetEventCallbackEnabled().
+    ENABLED_FOR_EVENT_CALLBACK = 1 << 2,
   };
 
   static TraceLog* GetInstance();
-
-  // Convert the given string to trace options. Defaults to RECORD_UNTIL_FULL if
-  // the string does not provide valid options.
-  static Options TraceOptionsFromString(const std::string& str);
 
   // Get set of known category groups. This can change as new code paths are
   // reached. The known category groups are inserted into |category_groups|.
   void GetKnownCategoryGroups(std::vector<std::string>* category_groups);
 
-  // Retrieves the current CategoryFilter.
-  const CategoryFilter& GetCurrentCategoryFilter();
+  // Retrieves a copy (for thread-safety) of the current CategoryFilter.
+  CategoryFilter GetCurrentCategoryFilter();
 
   Options trace_options() const {
     return static_cast<Options>(subtle::NoBarrier_Load(&trace_options_));
   }
 
-  // Enables tracing. See CategoryFilter comments for details
-  // on how to control what categories will be traced.
-  void SetEnabled(const CategoryFilter& category_filter, Options options);
+  // Enables normal tracing (recording trace events in the trace buffer).
+  // See CategoryFilter comments for details on how to control what categories
+  // will be traced. If tracing has already been enabled, |category_filter| will
+  // be merged into the current category filter.
+  void SetEnabled(const CategoryFilter& category_filter,
+                  Mode mode, Options options);
 
-  // Disables tracing for all categories.
+  // Disables normal tracing for all categories.
   void SetDisabled();
-  bool IsEnabled() { return !!enable_count_; }
+
+  bool IsEnabled() { return mode_ != DISABLED; }
 
   // The number of times we have begun recording traces. If tracing is off,
   // returns -1. If tracing is on, then it returns the number of times we have
@@ -425,7 +444,7 @@ class BASE_EXPORT TraceLog {
   class EnabledStateObserver {
    public:
     // Called just after the tracing system becomes enabled, outside of the
-    // |lock_|.  TraceLog::IsEnabled() is true at this point.
+    // |lock_|. TraceLog::IsEnabled() is true at this point.
     virtual void OnTraceLogEnabled() = 0;
 
     // Called just after the tracing system disables, outside of the |lock_|.
@@ -437,24 +456,17 @@ class BASE_EXPORT TraceLog {
   bool HasEnabledStateObserver(EnabledStateObserver* listener) const;
 
   float GetBufferPercentFull() const;
-
-  // Set the thread-safe notification callback. The callback can occur at any
-  // time and from any thread. WARNING: It is possible for the previously set
-  // callback to be called during OR AFTER a call to SetNotificationCallback.
-  // Therefore, the target of the callback must either be a global function,
-  // ref-counted object or a LazyInstance with Leaky traits (or equivalent).
-  typedef base::Callback<void(int)> NotificationCallback;
-  void SetNotificationCallback(const NotificationCallback& cb);
+  bool BufferIsFull() const;
 
   // Not using base::Callback because of its limited by 7 parameters.
   // Also, using primitive type allows directly passing callback from WebCore.
   // WARNING: It is possible for the previously set callback to be called
-  // after a call to SetEventCallback() that replaces or clears the callback.
+  // after a call to SetEventCallbackEnabled() that replaces or a call to
+  // SetEventCallbackDisabled() that disables the callback.
   // This callback may be invoked on any thread.
-  // TODO(wangxianzhu): For now for TRACE_EVENT_PHASE_COMPLETE events, the
-  // client will still receive pairs of TRACE_EVENT_PHASE_BEGIN and
-  // TRACE_EVENT_PHASE_END events. Should send TRACE_EVENT_PHASE_COMPLETE
-  // directly to clients if it is beneficial and feasible.
+  // For TRACE_EVENT_PHASE_COMPLETE events, the client will still receive pairs
+  // of TRACE_EVENT_PHASE_BEGIN and TRACE_EVENT_PHASE_END events to keep the
+  // interface simple.
   typedef void (*EventCallback)(TimeTicks timestamp,
                                 char phase,
                                 const unsigned char* category_group_enabled,
@@ -465,7 +477,11 @@ class BASE_EXPORT TraceLog {
                                 const unsigned char arg_types[],
                                 const unsigned long long arg_values[],
                                 unsigned char flags);
-  void SetEventCallback(EventCallback cb);
+
+  // Enable tracing for EventCallback.
+  void SetEventCallbackEnabled(const CategoryFilter& category_filter,
+                               EventCallback cb);
+  void SetEventCallbackDisabled();
 
   // Flush all collected events to the given output callback. The callback will
   // be called one or more times either synchronously or asynchronously from
@@ -524,14 +540,15 @@ class BASE_EXPORT TraceLog {
                                const void* id,
                                const std::string& extra);
 
-  void UpdateTraceEventDuration(TraceEventHandle handle);
+  void UpdateTraceEventDuration(const unsigned char* category_group_enabled,
+                                const char* name,
+                                TraceEventHandle handle);
 
-  // For every matching event, a notification will be fired. NOTE: the
-  // notification will fire for each matching event that has already occurred
-  // since tracing was started (including before tracing if the process was
-  // started with tracing turned on).
+  // For every matching event, the callback will be called.
+  typedef base::Callback<void()> WatchEventCallback;
   void SetWatchEvent(const std::string& category_name,
-                     const std::string& event_name);
+                     const std::string& event_name,
+                     const WatchEventCallback& callback);
   // Cancel the watch event. If tracing is enabled, this may race with the
   // watch event notification firing.
   void CancelWatchEvent();
@@ -540,7 +557,7 @@ class BASE_EXPORT TraceLog {
 
   // Exposed for unittesting:
 
-  void InstallWaitableEventForSamplingTesting(WaitableEvent* waitable_event);
+  void WaitSamplingEventForTesting();
 
   // Allows deleting our singleton instance.
   static void DeleteForTesting();
@@ -592,36 +609,17 @@ class BASE_EXPORT TraceLog {
   // by the Singleton class.
   friend struct DefaultSingletonTraits<TraceLog>;
 
-  // Enable/disable each category group based on the current enable_count_
-  // and category_filter_. Disable the category group if enabled_count_ is 0, or
-  // if the category group contains a category that matches an included category
-  // pattern, that category group will be enabled.
-  // On Android, ATRACE_ENABLED flag will be applied if atrace is started.
+  // Enable/disable each category group based on the current mode_,
+  // category_filter_, event_callback_ and event_callback_category_filter_.
+  // Enable the category group in the enabled mode if category_filter_ matches
+  // the category group, or event_callback_ is not null and
+  // event_callback_category_filter_ matches the category group.
   void UpdateCategoryGroupEnabledFlags();
   void UpdateCategoryGroupEnabledFlag(int category_index);
 
-  // Helper class for managing notification_thread_count_ and running
-  // notification callbacks. This is very similar to a reader-writer lock, but
-  // shares the lock with TraceLog and manages the notification flags.
-  class NotificationHelper {
-   public:
-    inline explicit NotificationHelper(TraceLog* trace_log);
-    inline ~NotificationHelper();
-
-    // Called only while TraceLog::lock_ is held. This ORs the given
-    // notification with any existing notifications.
-    inline void AddNotificationWhileLocked(int notification);
-
-    // Called only while TraceLog::lock_ is NOT held. If there are any pending
-    // notifications from previous calls to AddNotificationWhileLocked, this
-    // will call the NotificationCallback.
-    inline void SendNotificationIfAny();
-
-   private:
-    TraceLog* trace_log_;
-    NotificationCallback callback_copy_;
-    int notification_;
-  };
+  // Configure synthetic delays based on the values set in the current
+  // category filter.
+  void UpdateSyntheticDelaysFromCategoryFilter();
 
   class ThreadLocalEventBuffer;
   class OptionalAutoLock;
@@ -634,13 +632,14 @@ class BASE_EXPORT TraceLog {
   TraceBuffer* trace_buffer() const { return logged_events_.get(); }
   TraceBuffer* CreateTraceBuffer();
 
-  void OutputEventToConsoleWhileLocked(unsigned char phase,
-                                       const TimeTicks& timestamp,
-                                       TraceEvent* trace_event);
+  std::string EventToConsoleMessage(unsigned char phase,
+                                    const TimeTicks& timestamp,
+                                    TraceEvent* trace_event);
 
-  TraceEvent* AddEventToThreadSharedChunkWhileLocked(
-      NotificationHelper* notifier, TraceEventHandle* handle);
-  void CheckIfBufferIsFullWhileLocked(NotificationHelper* notifier);
+  TraceEvent* AddEventToThreadSharedChunkWhileLocked(TraceEventHandle* handle,
+                                                     bool check_buffer_is_full);
+  void CheckIfBufferIsFullWhileLocked();
+  void SetDisabledWhileLocked();
 
   TraceEvent* GetEventByHandleInternal(TraceEventHandle handle,
                                        OptionalAutoLock* lock);
@@ -659,9 +658,7 @@ class BASE_EXPORT TraceLog {
   bool CheckGeneration(int generation) const {
     return generation == this->generation();
   }
-  int NextGeneration() {
-    return static_cast<int>(subtle::NoBarrier_AtomicIncrement(&generation_, 1));
-  }
+  void UseNextTraceBuffer();
 
   TimeTicks OffsetNow() const {
     return OffsetTimestamp(TimeTicks::NowFromSystemTraceTime());
@@ -670,13 +667,15 @@ class BASE_EXPORT TraceLog {
     return timestamp - time_offset_;
   }
 
-  // This lock protects TraceLog member accesses from arbitrary threads.
-  Lock lock_;
+  // This lock protects TraceLog member accesses (except for members protected
+  // by thread_info_lock_) from arbitrary threads.
+  mutable Lock lock_;
+  // This lock protects accesses to thread_names_, thread_event_start_times_
+  // and thread_colors_.
+  Lock thread_info_lock_;
   int locked_line_;
-  int enable_count_;
+  Mode mode_;
   int num_traces_recorded_;
-  subtle::AtomicWord /* bool */ buffer_is_full_;
-  NotificationCallback notification_callback_;
   scoped_ptr<TraceBuffer> logged_events_;
   subtle::AtomicWord /* EventCallback */ event_callback_;
   bool dispatching_to_observer_list_;
@@ -700,6 +699,7 @@ class BASE_EXPORT TraceLog {
   TimeDelta time_offset_;
 
   // Allow tests to wake up when certain events occur.
+  WatchEventCallback watch_event_callback_;
   subtle::AtomicWord /* const unsigned char* */ watch_category_;
   std::string watch_event_name_;
 
@@ -710,9 +710,11 @@ class BASE_EXPORT TraceLog {
   PlatformThreadHandle sampling_thread_handle_;
 
   CategoryFilter category_filter_;
+  CategoryFilter event_callback_category_filter_;
 
   ThreadLocalPointer<ThreadLocalEventBuffer> thread_local_event_buffer_;
   ThreadLocalBoolean thread_blocks_message_loop_;
+  ThreadLocalBoolean thread_is_in_trace_event_;
 
   // Contains the message loops of threads that have had at least one event
   // added into the local event buffer. Not using MessageLoopProxy because we

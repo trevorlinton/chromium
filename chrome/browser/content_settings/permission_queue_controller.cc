@@ -36,14 +36,15 @@ InfoBarService* GetInfoBarService(const PermissionRequestID& id) {
 }
 
 
-class PermissionQueueController::PendingInfoBarRequest {
+class PermissionQueueController::PendingInfobarRequest {
  public:
-  PendingInfoBarRequest(ContentSettingsType type,
+  PendingInfobarRequest(ContentSettingsType type,
                         const PermissionRequestID& id,
                         const GURL& requesting_frame,
                         const GURL& embedder,
+                        const std::string& accept_button_label,
                         PermissionDecidedCallback callback);
-  ~PendingInfoBarRequest();
+  ~PendingInfobarRequest();
 
   bool IsForPair(const GURL& requesting_frame,
                  const GURL& embedder) const;
@@ -51,7 +52,7 @@ class PermissionQueueController::PendingInfoBarRequest {
   const PermissionRequestID& id() const { return id_; }
   const GURL& requesting_frame() const { return requesting_frame_; }
   bool has_infobar() const { return !!infobar_; }
-  InfoBarDelegate* infobar() { return infobar_; }
+  InfoBar* infobar() { return infobar_; }
 
   void RunCallback(bool allowed);
   void CreateInfoBar(PermissionQueueController* controller,
@@ -62,41 +63,44 @@ class PermissionQueueController::PendingInfoBarRequest {
   PermissionRequestID id_;
   GURL requesting_frame_;
   GURL embedder_;
+  std::string accept_button_label_;
   PermissionDecidedCallback callback_;
-  InfoBarDelegate* infobar_;
+  InfoBar* infobar_;
 
   // Purposefully do not disable copying, as this is stored in STL containers.
 };
 
-PermissionQueueController::PendingInfoBarRequest::PendingInfoBarRequest(
+PermissionQueueController::PendingInfobarRequest::PendingInfobarRequest(
     ContentSettingsType type,
     const PermissionRequestID& id,
     const GURL& requesting_frame,
     const GURL& embedder,
+    const std::string& accept_button_label,
     PermissionDecidedCallback callback)
     : type_(type),
       id_(id),
       requesting_frame_(requesting_frame),
       embedder_(embedder),
+      accept_button_label_(accept_button_label),
       callback_(callback),
       infobar_(NULL) {
 }
 
-PermissionQueueController::PendingInfoBarRequest::~PendingInfoBarRequest() {
+PermissionQueueController::PendingInfobarRequest::~PendingInfobarRequest() {
 }
 
-bool PermissionQueueController::PendingInfoBarRequest::IsForPair(
+bool PermissionQueueController::PendingInfobarRequest::IsForPair(
     const GURL& requesting_frame,
     const GURL& embedder) const {
   return (requesting_frame_ == requesting_frame) && (embedder_ == embedder);
 }
 
-void PermissionQueueController::PendingInfoBarRequest::RunCallback(
+void PermissionQueueController::PendingInfobarRequest::RunCallback(
     bool allowed) {
   callback_.Run(allowed);
 }
 
-void PermissionQueueController::PendingInfoBarRequest::CreateInfoBar(
+void PermissionQueueController::PendingInfobarRequest::CreateInfoBar(
     PermissionQueueController* controller,
     const std::string& display_languages) {
   // TODO(toyoshim): Remove following ContentType dependent code.
@@ -106,10 +110,10 @@ void PermissionQueueController::PendingInfoBarRequest::CreateInfoBar(
     case CONTENT_SETTINGS_TYPE_GEOLOCATION:
       infobar_ = GeolocationInfoBarDelegate::Create(
           GetInfoBarService(id_), controller, id_, requesting_frame_,
-          display_languages);
+          display_languages, accept_button_label_);
       break;
     case CONTENT_SETTINGS_TYPE_MIDI_SYSEX:
-      infobar_ = MIDIPermissionInfoBarDelegate::Create(
+      infobar_ = MidiPermissionInfoBarDelegate::Create(
           GetInfoBarService(id_), controller, id_, requesting_frame_,
           display_languages);
       break;
@@ -145,17 +149,19 @@ void PermissionQueueController::CreateInfoBarRequest(
     const PermissionRequestID& id,
     const GURL& requesting_frame,
     const GURL& embedder,
+    const std::string& accept_button_label,
     PermissionDecidedCallback callback) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
 
   // We shouldn't get duplicate requests.
-  for (PendingInfoBarRequests::const_iterator i(
+  for (PendingInfobarRequests::const_iterator i(
            pending_infobar_requests_.begin());
        i != pending_infobar_requests_.end(); ++i)
     DCHECK(!i->id().Equals(id));
 
-  pending_infobar_requests_.push_back(PendingInfoBarRequest(
-      type_, id, requesting_frame, embedder, callback));
+  pending_infobar_requests_.push_back(PendingInfobarRequest(
+      type_, id, requesting_frame, embedder,
+      accept_button_label, callback));
   if (!AlreadyShowingInfoBarForTab(id))
     ShowQueuedInfoBarForTab(id);
 }
@@ -164,7 +170,7 @@ void PermissionQueueController::CancelInfoBarRequest(
     const PermissionRequestID& id) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
 
-  for (PendingInfoBarRequests::iterator i(pending_infobar_requests_.begin());
+  for (PendingInfobarRequests::iterator i(pending_infobar_requests_.begin());
        i != pending_infobar_requests_.end(); ++i) {
     if (i->id().Equals(id)) {
       if (i->has_infobar())
@@ -173,6 +179,36 @@ void PermissionQueueController::CancelInfoBarRequest(
         pending_infobar_requests_.erase(i);
       return;
     }
+  }
+}
+
+void PermissionQueueController::CancelInfoBarRequests(int group_id) {
+  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
+
+  // If we remove an infobar in the following loop, the next pending infobar
+  // will be shown. Therefore, we erase all the pending infobars first and
+  // remove an infobar later.
+  PendingInfobarRequests infobar_requests_to_cancel;
+  for (PendingInfobarRequests::iterator i = pending_infobar_requests_.begin();
+       i != pending_infobar_requests_.end();) {
+    if (i->id().group_id() == group_id) {
+      if (i->has_infobar()) {
+        // |i| will be erased from |pending_infobar_requests_|
+        // in |PermissionQueueController::Observe| when the infobar is removed.
+        infobar_requests_to_cancel.push_back(*i);
+        ++i;
+      } else {
+        i = pending_infobar_requests_.erase(i);
+      }
+    } else {
+      ++i;
+    }
+  }
+
+  for (PendingInfobarRequests::iterator i = infobar_requests_to_cancel.begin();
+       i != infobar_requests_to_cancel.end();
+       ++i) {
+    GetInfoBarService(i->id())->RemoveInfoBar(i->infobar());
   }
 }
 
@@ -189,17 +225,17 @@ void PermissionQueueController::OnPermissionSet(
 
   // Cancel this request first, then notify listeners.  TODO(pkasting): Why
   // is this order important?
-  PendingInfoBarRequests requests_to_notify;
-  PendingInfoBarRequests infobars_to_remove;
-  for (PendingInfoBarRequests::iterator i = pending_infobar_requests_.begin();
+  PendingInfobarRequests requests_to_notify;
+  PendingInfobarRequests infobars_to_remove;
+  for (PendingInfobarRequests::iterator i = pending_infobar_requests_.begin();
        i != pending_infobar_requests_.end(); ) {
     if (i->IsForPair(requesting_frame, embedder)) {
       requests_to_notify.push_back(*i);
       if (i->id().Equals(id)) {
-        // The infobar that called us is i->infobar(), and it's currently in
-        // either Accept() or Cancel(). This means that RemoveInfoBar() will be
-        // called later on, and that will trigger a notification we're
-        // observing.
+        // The infobar that called us is i->infobar(), and its delegate is
+        // currently in either Accept() or Cancel(). This means that
+        // RemoveInfoBar() will be called later on, and that will trigger a
+        // notification we're observing.
         ++i;
       } else if (i->has_infobar()) {
         // This infobar is for the same frame/embedder pair, but in a different
@@ -216,12 +252,12 @@ void PermissionQueueController::OnPermissionSet(
   }
 
   // Remove all infobars for the same |requesting_frame| and |embedder|.
-  for (PendingInfoBarRequests::iterator i = infobars_to_remove.begin();
+  for (PendingInfobarRequests::iterator i = infobars_to_remove.begin();
        i != infobars_to_remove.end(); ++i)
     GetInfoBarService(i->id())->RemoveInfoBar(i->infobar());
 
   // Send out the permission notifications.
-  for (PendingInfoBarRequests::iterator i = requests_to_notify.begin();
+  for (PendingInfobarRequests::iterator i = requests_to_notify.begin();
        i != requests_to_notify.end(); ++i)
     i->RunCallback(allowed);
 }
@@ -236,13 +272,12 @@ void PermissionQueueController::Observe(
   // InfoBarContainer (if any) may have received this notification before us and
   // caused the infobar to be deleted, so it's not safe to dereference the
   // contents of the infobar. The address of the infobar, however, is OK to
-  // use to find the PendingInfoBarRequest to remove because
+  // use to find the PendingInfobarRequest to remove because
   // pending_infobar_requests_ will not have received any new entries between
   // the NotificationService's call to InfoBarContainer::Observe and this
   // method.
-  InfoBarDelegate* infobar =
-      content::Details<InfoBarRemovedDetails>(details)->first;
-  for (PendingInfoBarRequests::iterator i = pending_infobar_requests_.begin();
+  InfoBar* infobar = content::Details<InfoBar::RemovedDetails>(details)->first;
+  for (PendingInfobarRequests::iterator i = pending_infobar_requests_.begin();
        i != pending_infobar_requests_.end(); ++i) {
     if (i->infobar() == infobar) {
       PermissionRequestID id(i->id());
@@ -255,7 +290,7 @@ void PermissionQueueController::Observe(
 
 bool PermissionQueueController::AlreadyShowingInfoBarForTab(
     const PermissionRequestID& id) const {
-  for (PendingInfoBarRequests::const_iterator i(
+  for (PendingInfobarRequests::const_iterator i(
            pending_infobar_requests_.begin());
        i != pending_infobar_requests_.end(); ++i) {
     if (i->id().IsForSameTabAs(id) && i->has_infobar())
@@ -279,11 +314,11 @@ void PermissionQueueController::ShowQueuedInfoBarForTab(
   // infobars.
   InfoBarService* infobar_service = GetInfoBarService(id);
   if (!infobar_service || in_shutdown_) {
-    ClearPendingInfoBarRequestsForTab(id);
+    ClearPendingInfobarRequestsForTab(id);
     return;
   }
 
-  for (PendingInfoBarRequests::iterator i = pending_infobar_requests_.begin();
+  for (PendingInfobarRequests::iterator i = pending_infobar_requests_.begin();
        i != pending_infobar_requests_.end(); ++i) {
     if (i->id().IsForSameTabAs(id) && !i->has_infobar()) {
       RegisterForInfoBarNotifications(infobar_service);
@@ -296,9 +331,9 @@ void PermissionQueueController::ShowQueuedInfoBarForTab(
   UnregisterForInfoBarNotifications(infobar_service);
 }
 
-void PermissionQueueController::ClearPendingInfoBarRequestsForTab(
+void PermissionQueueController::ClearPendingInfobarRequestsForTab(
     const PermissionRequestID& id) {
-  for (PendingInfoBarRequests::iterator i = pending_infobar_requests_.begin();
+  for (PendingInfobarRequests::iterator i = pending_infobar_requests_.begin();
        i != pending_infobar_requests_.end(); ) {
     if (i->id().IsForSameTabAs(id)) {
       DCHECK(!i->has_infobar());

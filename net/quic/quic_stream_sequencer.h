@@ -8,7 +8,6 @@
 #include <map>
 
 #include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/base/iovec.h"
 #include "net/quic/quic_protocol.h"
 
@@ -58,15 +57,11 @@ class NET_EXPORT_PRIVATE QuicStreamSequencer {
   // bytes read.  Any buffered data no longer in use will be released.
   int Readv(const struct iovec* iov, size_t iov_len);
 
-  // Consumes |num_bytes| data.  Used in conjunction with |GetReadableRegions|
-  // to do zero-copy reads.
-  void MarkConsumed(size_t num_bytes);
-
   // Returns true if the sequncer has bytes available for reading.
   bool HasBytesToRead() const;
 
-  // Returns true if the sequencer has delivered a half close.
-  bool IsHalfClosed() const;
+  // Returns true if the sequencer has delivered the fin.
+  bool IsClosed() const;
 
   // Returns true if the sequencer has received this frame before.
   bool IsDuplicate(const QuicStreamFrame& frame) const;
@@ -75,24 +70,52 @@ class NET_EXPORT_PRIVATE QuicStreamSequencer {
   // be processed.
   void FlushBufferedFrames();
 
+  // Blocks processing of frames until |FlushBufferedFrames| is called.
+  void SetBlockedUntilFlush();
+
+  size_t num_bytes_buffered() const {
+    return num_bytes_buffered_;
+  }
+
  private:
   friend class test::QuicStreamSequencerPeer;
-
-  // TODO(alyssar) use something better than strings.
-  typedef map<QuicStreamOffset, string> FrameMap;
 
   // Wait until we've seen 'offset' bytes, and then terminate the stream.
   void CloseStreamAtOffset(QuicStreamOffset offset);
 
+  // If we've received a FIN and have processed all remaining data, then inform
+  // the stream of FIN, and clear buffers.
   bool MaybeCloseStream();
 
-  ReliableQuicStream* stream_;  // The stream which owns this sequencer.
-  QuicStreamOffset num_bytes_consumed_;  // The last data consumed by the stream
-  FrameMap frames_;  // sequence number -> frame
-  size_t max_frame_memory_;  //  the maximum memory the sequencer can buffer.
+  // Called whenever bytes are consumed by the stream. Updates
+  // num_bytes_consumed_ and num_bytes_buffered_.
+  void RecordBytesConsumed(size_t bytes_consumed);
+
+  // The stream which owns this sequencer.
+  ReliableQuicStream* stream_;
+
+  // The last data consumed by the stream.
+  QuicStreamOffset num_bytes_consumed_;
+
+  // TODO(alyssar) use something better than strings.
+  typedef map<QuicStreamOffset, string> FrameMap;
+
+  // Stores buffered frames (maps from sequence number -> frame data as string).
+  FrameMap frames_;
+
+  // The maximum memory the sequencer can buffer.
+  size_t max_frame_memory_;
+
   // The offset, if any, we got a stream termination for.  When this many bytes
-  // have been processed, the stream will be half closed.
+  // have been processed, the sequencer will be closed.
   QuicStreamOffset close_offset_;
+
+  // If true, the sequencer is blocked from passing data to the stream and will
+  // buffer all new incoming data until FlushBufferedFrames is called.
+  bool blocked_;
+
+  // Tracks how many bytes the sequencer has buffered.
+  size_t num_bytes_buffered_;
 };
 
 }  // namespace net

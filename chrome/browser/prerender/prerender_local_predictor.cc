@@ -27,13 +27,14 @@
 #include "chrome/browser/prerender/prerender_handle.h"
 #include "chrome/browser/prerender/prerender_histograms.h"
 #include "chrome/browser/prerender/prerender_manager.h"
+#include "chrome/browser/prerender/prerender_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/database_manager.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "chrome/browser/ui/tab_contents/tab_contents_iterator.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_controller.h"
-#include "content/public/browser/session_storage_namespace.h"
+#include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
 #include "content/public/common/page_transition_types.h"
@@ -639,17 +640,17 @@ void PrerenderLocalPredictor::DoPrerenderServiceCheck(
       }
     }
   */
-  DictionaryValue json_data;
-  DictionaryValue* req = new DictionaryValue();
+  base::DictionaryValue json_data;
+  base::DictionaryValue* req = new base::DictionaryValue();
   req->SetInteger("version", 1);
   req->SetInteger("behavior_id", GetPrerenderServiceBehaviorID());
   if (ShouldQueryPrerenderServiceForCurrentURL() &&
       info->source_url_.url_lookup_success) {
-    ListValue* browse_history = new ListValue();
-    DictionaryValue* browse_item = new DictionaryValue();
+    base::ListValue* browse_history = new base::ListValue();
+    base::DictionaryValue* browse_item = new base::DictionaryValue();
     browse_item->SetString("url", info->source_url_.url.spec());
     browse_history->Append(browse_item);
-    DictionaryValue* hint_request = new DictionaryValue();
+    base::DictionaryValue* hint_request = new base::DictionaryValue();
     hint_request->Set("browse_history", browse_history);
     req->Set("hint_request", hint_request);
   }
@@ -660,16 +661,17 @@ void PrerenderLocalPredictor::DoPrerenderServiceCheck(
   }
   if (ShouldQueryPrerenderServiceForCandidateURLs() &&
       num_candidate_urls > 0) {
-    ListValue* candidates = new ListValue();
-    DictionaryValue* candidate;
+    base::ListValue* candidates = new base::ListValue();
+    base::DictionaryValue* candidate;
     for (int i = 0; i < static_cast<int>(info->candidate_urls_.size()); i++) {
       if (info->candidate_urls_[i].url_lookup_success) {
-        candidate = new DictionaryValue();
+        candidate = new base::DictionaryValue();
         candidate->SetString("url", info->candidate_urls_[i].url.spec());
         candidates->Append(candidate);
       }
     }
-    DictionaryValue* candidate_check_request = new DictionaryValue();
+    base::DictionaryValue* candidate_check_request =
+        new base::DictionaryValue();
     candidate_check_request->Set("candidates", candidates);
     req->Set("candidate_check_request", candidate_check_request);
   }
@@ -714,7 +716,7 @@ void PrerenderLocalPredictor::MaybeCancelURLFetcher(net::URLFetcher* fetcher) {
 }
 
 bool PrerenderLocalPredictor::ApplyParsedPrerenderServiceResponse(
-    DictionaryValue* dict,
+    base::DictionaryValue* dict,
     CandidatePrerenderInfo* info,
     bool* hinting_timed_out,
     bool* hinting_url_lookup_timed_out,
@@ -755,7 +757,7 @@ bool PrerenderLocalPredictor::ApplyParsedPrerenderServiceResponse(
       }
     }
   */
-  ListValue* list = NULL;
+  base::ListValue* list = NULL;
   int int_value;
   if (!dict->GetInteger("prerender_response.behavior_id", &int_value) ||
       int_value != GetPrerenderServiceBehaviorID()) {
@@ -771,7 +773,7 @@ bool PrerenderLocalPredictor::ApplyParsedPrerenderServiceResponse(
     }
   } else {
     for (size_t i = 0; i < list->GetSize(); i++) {
-      DictionaryValue* d;
+      base::DictionaryValue* d;
       if (!list->GetDictionary(i, &d))
         return false;
       string url_string;
@@ -820,7 +822,7 @@ bool PrerenderLocalPredictor::ApplyParsedPrerenderServiceResponse(
       return false;
     } else {
       for (int i = 0; i < static_cast<int>(list->GetSize()); i++) {
-        DictionaryValue* d;
+        base::DictionaryValue* d;
         if (!list->GetDictionary(i, &d))
           return false;
         string url;
@@ -872,16 +874,16 @@ void PrerenderLocalPredictor::OnURLFetchComplete(
                    base::Time::Now() - info->start_time_);
   string result;
   fetcher->GetResponseAsString(&result);
-  scoped_ptr<Value> root;
+  scoped_ptr<base::Value> root;
   root.reset(base::JSONReader::Read(result));
   bool hinting_timed_out = false;
   bool hinting_url_lookup_timed_out = false;
   bool candidate_url_lookup_timed_out = false;
-  if (!root.get() || !root->IsType(Value::TYPE_DICTIONARY)) {
+  if (!root.get() || !root->IsType(base::Value::TYPE_DICTIONARY)) {
     RecordEvent(EVENT_PRERENDER_SERVICE_PARSE_ERROR_INCORRECT_JSON);
   } else {
     if (ApplyParsedPrerenderServiceResponse(
-            static_cast<DictionaryValue*>(root.get()),
+            static_cast<base::DictionaryValue*>(root.get()),
             info.get(),
             &hinting_timed_out,
             &hinting_url_lookup_timed_out,
@@ -1086,8 +1088,10 @@ void PrerenderLocalPredictor::ContinuePrerenderCheck(
     return;
   }
   scoped_ptr<LocalPredictorURLInfo> url_info;
+#if defined(FULL_SAFE_BROWSING)
   scoped_refptr<SafeBrowsingDatabaseManager> sb_db_manager =
       g_browser_process->safe_browsing_service()->database_manager();
+#endif
   PrerenderProperties* prerender_properties = NULL;
 
   for (int i = 0; i < static_cast<int>(info->candidate_urls_.size()); i++) {
@@ -1158,13 +1162,15 @@ void PrerenderLocalPredictor::ContinuePrerenderCheck(
       url_info.reset(NULL);
       continue;
     }
-    if (!SkipLocalPredictorWhitelist() &&
+#if defined(FULL_SAFE_BROWSING)
+    if (!SkipLocalPredictorWhitelist() && sb_db_manager &&
         sb_db_manager->CheckSideEffectFreeWhitelistUrl(url_info->url)) {
       // If a page is on the side-effect free whitelist, we will just prerender
       // it without any additional checks.
       RecordEvent(EVENT_CONTINUE_PRERENDER_CHECK_ON_SIDE_EFFECT_FREE_WHITELIST);
       break;
     }
+#endif
     if (!SkipLocalPredictorServiceWhitelist() &&
         url_info->service_whitelist && url_info->service_whitelist_lookup_ok) {
       RecordEvent(EVENT_CONTINUE_PRERENDER_CHECK_ON_SERVICE_WHITELIST);
@@ -1268,6 +1274,15 @@ void PrerenderLocalPredictor::OnTabHelperURLSeen(
     const GURL& url, WebContents* web_contents) {
   RecordEvent(EVENT_TAB_HELPER_URL_SEEN);
 
+  bool browser_navigate_initiated = false;
+  const content::NavigationEntry* entry =
+      web_contents->GetController().GetPendingEntry();
+  if (entry) {
+    base::string16 result;
+    browser_navigate_initiated =
+        entry->GetExtraData(kChromeNavigateExtraDataKey, &result);
+  }
+
   // If the namespace matches and the URL matches, we might be able to swap
   // in. However, the actual code initating the swapin is in the renderer
   // and is checking for other criteria (such as POSTs). There may
@@ -1277,6 +1292,8 @@ void PrerenderLocalPredictor::OnTabHelperURLSeen(
 
   PrerenderProperties* best_matched_prerender = NULL;
   bool session_storage_namespace_matches = false;
+  SessionStorageNamespace* tab_session_storage_namespace =
+      web_contents->GetController().GetDefaultSessionStorageNamespace();
   for (int i = 0; i < static_cast<int>(issued_prerenders_.size()); i++) {
     PrerenderProperties* p = issued_prerenders_[i];
     DCHECK(p != NULL);
@@ -1288,17 +1305,68 @@ void PrerenderLocalPredictor::OnTabHelperURLSeen(
     if (!best_matched_prerender || !session_storage_namespace_matches) {
       best_matched_prerender = p;
       session_storage_namespace_matches =
-          p->prerender_handle->Matches(
-              url,
-              web_contents->GetController().
-              GetDefaultSessionStorageNamespace());
+          p->prerender_handle->Matches(url, tab_session_storage_namespace);
     }
   }
   if (best_matched_prerender) {
     RecordEvent(EVENT_TAB_HELPER_URL_SEEN_MATCH);
+    if (entry)
+      RecordEvent(EVENT_TAB_HELPER_URL_SEEN_MATCH_ENTRY);
+    if (browser_navigate_initiated)
+      RecordEvent(EVENT_TAB_HELPER_URL_SEEN_MATCH_BROWSER_NAVIGATE);
     best_matched_prerender->would_have_matched = true;
-    if (session_storage_namespace_matches)
+    if (session_storage_namespace_matches) {
       RecordEvent(EVENT_TAB_HELPER_URL_SEEN_NAMESPACE_MATCH);
+      if (entry)
+        RecordEvent(EVENT_TAB_HELPER_URL_SEEN_NAMESPACE_MATCH_ENTRY);
+      if (browser_navigate_initiated)
+        RecordEvent(EVENT_TAB_HELPER_URL_SEEN_NAMESPACE_MATCH_BROWSER_NAVIGATE);
+    } else {
+      SessionStorageNamespace* prerender_session_storage_namespace =
+          best_matched_prerender->prerender_handle->
+          GetSessionStorageNamespace();
+      if (!prerender_session_storage_namespace) {
+        RecordEvent(EVENT_TAB_HELPER_URL_SEEN_NAMESPACE_MISMATCH_NO_NAMESPACE);
+      } else {
+        RecordEvent(EVENT_TAB_HELPER_URL_SEEN_NAMESPACE_MISMATCH_MERGE_ISSUED);
+        prerender_session_storage_namespace->Merge(
+            false,
+            best_matched_prerender->prerender_handle->GetChildId(),
+            tab_session_storage_namespace,
+            base::Bind(&PrerenderLocalPredictor::ProcessNamespaceMergeResult,
+                       weak_factory_.GetWeakPtr()));
+      }
+    }
+  }
+}
+
+void PrerenderLocalPredictor::ProcessNamespaceMergeResult(
+    content::SessionStorageNamespace::MergeResult result) {
+  RecordEvent(EVENT_NAMESPACE_MISMATCH_MERGE_RESULT_RECEIVED);
+  switch (result) {
+    case content::SessionStorageNamespace::MERGE_RESULT_NAMESPACE_NOT_FOUND:
+      RecordEvent(EVENT_NAMESPACE_MISMATCH_MERGE_RESULT_NAMESPACE_NOT_FOUND);
+      break;
+    case content::SessionStorageNamespace::MERGE_RESULT_NAMESPACE_NOT_ALIAS:
+      RecordEvent(EVENT_NAMESPACE_MISMATCH_MERGE_RESULT_NAMESPACE_NOT_ALIAS);
+      break;
+    case content::SessionStorageNamespace::MERGE_RESULT_NOT_LOGGING:
+      RecordEvent(EVENT_NAMESPACE_MISMATCH_MERGE_RESULT_NOT_LOGGING);
+      break;
+    case content::SessionStorageNamespace::MERGE_RESULT_NO_TRANSACTIONS:
+      RecordEvent(EVENT_NAMESPACE_MISMATCH_MERGE_RESULT_NO_TRANSACTIONS);
+      break;
+    case content::SessionStorageNamespace::MERGE_RESULT_TOO_MANY_TRANSACTIONS:
+      RecordEvent(EVENT_NAMESPACE_MISMATCH_MERGE_RESULT_TOO_MANY_TRANSACTIONS);
+      break;
+    case content::SessionStorageNamespace::MERGE_RESULT_NOT_MERGEABLE:
+      RecordEvent(EVENT_NAMESPACE_MISMATCH_MERGE_RESULT_NOT_MERGEABLE);
+      break;
+    case content::SessionStorageNamespace::MERGE_RESULT_MERGEABLE:
+      RecordEvent(EVENT_NAMESPACE_MISMATCH_MERGE_RESULT_MERGEABLE);
+      break;
+    default:
+      NOTREACHED();
   }
 }
 

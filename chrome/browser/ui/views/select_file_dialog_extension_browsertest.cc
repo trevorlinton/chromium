@@ -9,9 +9,11 @@
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
-#include "base/strings/utf_string_conversions.h"  // ASCIIToUTF16
+#include "base/prefs/pref_service.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/threading/platform_thread.h"
 #include "build/build_config.h"
+#include "chrome/browser/chromeos/file_manager/volume_manager.h"
 #include "chrome/browser/extensions/component_loader.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_test_message_listener.h"
@@ -20,15 +22,14 @@
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/common/chrome_paths.h"
-#include "content/public/browser/browser_context.h"
+#include "chrome/common/pref_names.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
-#include "content/public/browser/storage_partition.h"
 #include "content/public/test/test_utils.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 #include "ui/shell_dialogs/selected_file_info.h"
-#include "webkit/browser/fileapi/external_mount_points.h"
 
 using content::BrowserContext;
 
@@ -96,7 +97,7 @@ class SelectFileDialogExtensionBrowserTest : public ExtensionBrowserTest {
     PathService::Get(base::DIR_TEMP, &tmp_path);
     ASSERT_TRUE(tmp_dir_.CreateUniqueTempDirUnderPath(tmp_path));
     downloads_dir_ = tmp_dir_.path().Append("Downloads");
-    file_util::CreateDirectory(downloads_dir_);
+    base::CreateDirectory(downloads_dir_);
 
     // Must run after our setup because it actually runs the test.
     ExtensionBrowserTest::SetUp();
@@ -115,18 +116,15 @@ class SelectFileDialogExtensionBrowserTest : public ExtensionBrowserTest {
 
   // Creates a file system mount point for a directory.
   void AddMountPoint(const base::FilePath& path) {
-    std::string mount_point_name = path.BaseName().AsUTF8Unsafe();
-    fileapi::ExternalMountPoints* mount_points =
-        BrowserContext::GetMountPoints(browser()->profile());
-    // The Downloads mount point already exists so it must be removed before
-    // adding the test mount point (which will also be mapped as Downloads).
-    mount_points->RevokeFileSystem(mount_point_name);
-    EXPECT_TRUE(mount_points->RegisterFileSystem(
-        mount_point_name, fileapi::kFileSystemTypeNativeLocal, path));
+    EXPECT_TRUE(file_manager::VolumeManager::Get(
+        browser()->profile())->RegisterDownloadsDirectoryForTesting(path));
+    browser()->profile()->GetPrefs()->SetFilePath(
+        prefs::kDownloadDefaultDirectory, downloads_dir_);
   }
 
   void CheckJavascriptErrors() {
-    content::RenderViewHost* host = dialog_->GetRenderViewHost();
+    content::RenderFrameHost* host =
+        dialog_->GetRenderViewHost()->GetMainFrame();
     scoped_ptr<base::Value> value =
         content::ExecuteScriptAndGetValue(host, "window.JSErrorCount");
     int js_error_count = 0;
@@ -150,7 +148,7 @@ class SelectFileDialogExtensionBrowserTest : public ExtensionBrowserTest {
     }
 
     dialog_->SelectFile(dialog_type,
-                        string16() /* title */,
+                        base::string16() /* title */,
                         file_path,
                         NULL /* file_types */,
                          0 /* file_type_index */,
@@ -181,7 +179,7 @@ class SelectFileDialogExtensionBrowserTest : public ExtensionBrowserTest {
     // At the moment we don't really care about dialog type, but we have to put
     // some dialog type.
     second_dialog_->SelectFile(ui::SelectFileDialog::SELECT_OPEN_FILE,
-                               string16() /* title */,
+                               base::string16() /* title */,
                                base::FilePath() /* default_path */,
                                NULL /* file_types */,
                                0 /* file_type_index */,
@@ -198,16 +196,15 @@ class SelectFileDialogExtensionBrowserTest : public ExtensionBrowserTest {
         content::NOTIFICATION_RENDER_WIDGET_HOST_DESTROYED,
         content::NotificationService::AllSources());
     content::RenderViewHost* host = dialog_->GetRenderViewHost();
-    string16 main_frame;
     std::string button_class =
         (button_type == DIALOG_BTN_OK) ? ".button-panel .ok" :
                                          ".button-panel .cancel";
-    string16 script = ASCIIToUTF16(
+    base::string16 script = base::ASCIIToUTF16(
         "console.log(\'Test JavaScript injected.\');"
         "document.querySelector(\'" + button_class + "\').click();");
     // The file selection handler closes the dialog and does not return control
     // to JavaScript, so do not wait for return values.
-    host->ExecuteJavascriptInWebFrame(main_frame, script);
+    host->GetMainFrame()->ExecuteJavaScript(script);
     LOG(INFO) << "Waiting for window close notification.";
     host_destroyed.Wait();
 
@@ -272,9 +269,9 @@ IN_PROC_BROWSER_TEST_F(SelectFileDialogExtensionBrowserTest,
       downloads_dir_.AppendASCII("file_manager_test.html");
 
   // Create an empty file to give us something to select.
-  FILE* fp = file_util::OpenFile(test_file, "w");
+  FILE* fp = base::OpenFile(test_file, "w");
   ASSERT_TRUE(fp != NULL);
-  ASSERT_TRUE(file_util::CloseFile(fp));
+  ASSERT_TRUE(base::CloseFile(fp));
 
   gfx::NativeWindow owning_window = browser()->window()->GetNativeWindow();
 

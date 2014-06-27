@@ -7,6 +7,7 @@
 
 #include <limits>
 #include <list>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -17,9 +18,12 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "cc/animation/animation_events.h"
 #include "cc/base/cc_export.h"
 #include "cc/base/scoped_ptr_vector.h"
+#include "cc/base/swap_promise.h"
+#include "cc/base/swap_promise_monitor.h"
 #include "cc/debug/micro_benchmark.h"
 #include "cc/debug/micro_benchmark_controller.h"
 #include "cc/input/input_handler.h"
@@ -29,30 +33,12 @@
 #include "cc/output/output_surface.h"
 #include "cc/resources/resource_format.h"
 #include "cc/resources/scoped_ui_resource.h"
-#include "cc/resources/ui_resource_bitmap.h"
-#include "cc/resources/ui_resource_client.h"
-#include "cc/scheduler/rate_limiter.h"
 #include "cc/trees/layer_tree_host_client.h"
 #include "cc/trees/layer_tree_host_common.h"
 #include "cc/trees/layer_tree_settings.h"
-#include "cc/trees/occlusion_tracker.h"
 #include "cc/trees/proxy.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "ui/events/latency_info.h"
 #include "ui/gfx/rect.h"
-
-namespace WebKit { class WebGraphicsContext3D; }
-
-#if defined(COMPILER_GCC)
-namespace BASE_HASH_NAMESPACE {
-template <>
-struct hash<WebKit::WebGraphicsContext3D*> {
-  size_t operator()(WebKit::WebGraphicsContext3D* ptr) const {
-    return hash<size_t>()(reinterpret_cast<size_t>(ptr));
-  }
-};
-}  // namespace BASE_HASH_NAMESPACE
-#endif  // COMPILER
 
 namespace cc {
 
@@ -61,81 +47,56 @@ class HeadsUpDisplayLayer;
 class Layer;
 class LayerTreeHostImpl;
 class LayerTreeHostImplClient;
-class PrioritizedResourceManager;
+class LayerTreeHostSingleThreadClient;
 class PrioritizedResource;
+class PrioritizedResourceManager;
 class Region;
 class RenderingStatsInstrumentation;
 class ResourceProvider;
 class ResourceUpdateQueue;
 class SharedBitmapManager;
 class TopControlsManager;
+class UIResourceRequest;
 struct RenderingStats;
 struct ScrollAndScaleSet;
 
 // Provides information on an Impl's rendering capabilities back to the
 // LayerTreeHost.
 struct CC_EXPORT RendererCapabilities {
+  RendererCapabilities(ResourceFormat best_texture_format,
+                       bool allow_partial_texture_updates,
+                       bool using_offscreen_context3d,
+                       int max_texture_size,
+                       bool using_shared_memory_resources);
+
   RendererCapabilities();
   ~RendererCapabilities();
 
+  // Duplicate any modification to this list to RendererCapabilitiesImpl.
   ResourceFormat best_texture_format;
-  bool using_partial_swap;
-  bool using_set_visibility;
-  bool using_egl_image;
   bool allow_partial_texture_updates;
   bool using_offscreen_context3d;
   int max_texture_size;
-  bool avoid_pow2_textures;
-  bool using_map_image;
   bool using_shared_memory_resources;
-  bool using_discard_framebuffer;
 };
 
-class CC_EXPORT UIResourceRequest {
- public:
-  enum UIResourceRequestType {
-    UIResourceCreate,
-    UIResourceDelete,
-    UIResourceInvalidRequest
-  };
-
-  UIResourceRequest(UIResourceRequestType type, UIResourceId id);
-  UIResourceRequest(UIResourceRequestType type,
-                    UIResourceId id,
-                    const UIResourceBitmap& bitmap);
-  UIResourceRequest(const UIResourceRequest& request);
-
-  ~UIResourceRequest();
-
-  UIResourceRequestType GetType() const { return type_; }
-  UIResourceId GetId() const { return id_; }
-  UIResourceBitmap GetBitmap() const {
-    DCHECK(bitmap_);
-    return *bitmap_.get();
-  }
-
-  UIResourceRequest& operator=(const UIResourceRequest& request);
-
- private:
-  UIResourceRequestType type_;
-  UIResourceId id_;
-  scoped_ptr<UIResourceBitmap> bitmap_;
-};
-
-class CC_EXPORT LayerTreeHost : NON_EXPORTED_BASE(public RateLimiterClient) {
+class CC_EXPORT LayerTreeHost {
  public:
   // The SharedBitmapManager will be used on the compositor thread.
-  static scoped_ptr<LayerTreeHost> Create(
+  static scoped_ptr<LayerTreeHost> CreateThreaded(
       LayerTreeHostClient* client,
       SharedBitmapManager* manager,
       const LayerTreeSettings& settings,
       scoped_refptr<base::SingleThreadTaskRunner> impl_task_runner);
+
+  static scoped_ptr<LayerTreeHost> CreateSingleThreaded(
+      LayerTreeHostClient* client,
+      LayerTreeHostSingleThreadClient* single_thread_client,
+      SharedBitmapManager* manager,
+      const LayerTreeSettings& settings);
   virtual ~LayerTreeHost();
 
   void SetLayerTreeHostClientReady();
-
-  // Returns true if any LayerTreeHost is alive.
-  static bool AnyLayerTreeHostInstanceExists();
 
   void set_needs_filter_context() { needs_filter_context_ = true; }
   bool needs_offscreen_context() const {
@@ -143,7 +104,9 @@ class CC_EXPORT LayerTreeHost : NON_EXPORTED_BASE(public RateLimiterClient) {
   }
 
   // LayerTreeHost interface to Proxy.
-  void WillBeginMainFrame() { client_->WillBeginMainFrame(); }
+  void WillBeginMainFrame() {
+    client_->WillBeginMainFrame(source_frame_number_);
+  }
   void DidBeginMainFrame();
   void UpdateClientAnimations(base::TimeTicks monotonic_frame_begin_time);
   void AnimateLayers(base::TimeTicks monotonic_frame_begin_time);
@@ -163,7 +126,8 @@ class CC_EXPORT LayerTreeHost : NON_EXPORTED_BASE(public RateLimiterClient) {
     CreateFailedButTryAgain,
     CreateFailedAndGaveUp,
   };
-  CreateResult OnCreateAndInitializeOutputSurfaceAttempted(bool success);
+  virtual CreateResult OnCreateAndInitializeOutputSurfaceAttempted(
+      bool success);
   void DidCommitAndDrawFrame() { client_->DidCommitAndDrawFrame(); }
   void DidCompleteSwapBuffers() { client_->DidCompleteSwapBuffers(); }
   void DeleteContentsTexturesOnImplThread(ResourceProvider* resource_provider);
@@ -181,13 +145,11 @@ class CC_EXPORT LayerTreeHost : NON_EXPORTED_BASE(public RateLimiterClient) {
 
   void Composite(base::TimeTicks frame_begin_time);
 
-  // Only used when compositing on the main thread.
-  void ScheduleComposite();
-
   // Composites and attempts to read back the result into the provided
   // buffer. If it wasn't possible, e.g. due to context lost, will return
   // false.
-  bool CompositeAndReadback(void* pixels, gfx::Rect rect_in_device_viewport);
+  bool CompositeAndReadback(void* pixels,
+                            const gfx::Rect& rect_in_device_viewport);
 
   void FinishAllRendering();
 
@@ -213,7 +175,7 @@ class CC_EXPORT LayerTreeHost : NON_EXPORTED_BASE(public RateLimiterClient) {
   virtual void SetNeedsCommit();
   virtual void SetNeedsFullTreeSync();
   void SetNeedsRedraw();
-  void SetNeedsRedrawRect(gfx::Rect damage_rect);
+  void SetNeedsRedrawRect(const gfx::Rect& damage_rect);
   bool CommitRequested() const;
   bool BeginMainFrameRequested() const;
 
@@ -221,8 +183,7 @@ class CC_EXPORT LayerTreeHost : NON_EXPORTED_BASE(public RateLimiterClient) {
 
   void SetNextCommitForcesRedraw();
 
-  void SetAnimationEvents(scoped_ptr<AnimationEventsVector> events,
-                          base::Time wall_clock_time);
+  void SetAnimationEvents(scoped_ptr<AnimationEventsVector> events);
 
   void SetRootLayer(scoped_refptr<Layer> root_layer);
   Layer* root_layer() { return root_layer_.get(); }
@@ -232,13 +193,19 @@ class CC_EXPORT LayerTreeHost : NON_EXPORTED_BASE(public RateLimiterClient) {
       scoped_refptr<Layer> page_scale_layer,
       scoped_refptr<Layer> inner_viewport_scroll_layer,
       scoped_refptr<Layer> outer_viewport_scroll_layer);
+  Layer* inner_viewport_scroll_layer() const {
+    return inner_viewport_scroll_layer_.get();
+  }
+  Layer* outer_viewport_scroll_layer() const {
+    return outer_viewport_scroll_layer_.get();
+  }
 
   const LayerTreeSettings& settings() const { return settings_; }
 
   void SetDebugState(const LayerTreeDebugState& debug_state);
   const LayerTreeDebugState& debug_state() const { return debug_state_; }
 
-  void SetViewportSize(gfx::Size device_viewport_size);
+  void SetViewportSize(const gfx::Size& device_viewport_size);
   void SetOverdrawBottomHeight(float overdraw_bottom_height);
 
   gfx::Size device_viewport_size() const { return device_viewport_size_; }
@@ -266,21 +233,19 @@ class CC_EXPORT LayerTreeHost : NON_EXPORTED_BASE(public RateLimiterClient) {
   void SetVisible(bool visible);
   bool visible() const { return visible_; }
 
-  void StartPageScaleAnimation(gfx::Vector2d target_offset,
+  void StartPageScaleAnimation(const gfx::Vector2d& target_offset,
                                bool use_anchor,
                                float scale,
                                base::TimeDelta duration);
 
   void ApplyScrollAndScale(const ScrollAndScaleSet& info);
-
   void SetImplTransform(const gfx::Transform& transform);
-  void SetLatencyInfo(const ui::LatencyInfo& latency_info);
 
-  virtual void StartRateLimiter(WebKit::WebGraphicsContext3D* context3d);
-  virtual void StopRateLimiter(WebKit::WebGraphicsContext3D* context3d);
+  // Virtual for tests.
+  virtual void StartRateLimiter();
+  virtual void StopRateLimiter();
 
-  // RateLimiterClient implementation.
-  virtual void RateLimit() OVERRIDE;
+  void RateLimit();
 
   bool AlwaysUsePartialTextureUpdates();
   size_t MaxPartialTextureUpdates() const;
@@ -322,24 +287,42 @@ class CC_EXPORT LayerTreeHost : NON_EXPORTED_BASE(public RateLimiterClient) {
   virtual gfx::Size GetUIResourceSize(UIResourceId id) const;
 
   bool UsingSharedMemoryResources();
-  int id() const { return tree_id_; }
+  int id() const { return id_; }
 
   bool ScheduleMicroBenchmark(const std::string& benchmark_name,
                               scoped_ptr<base::Value> value,
                               const MicroBenchmark::DoneCallback& callback);
 
+  // When a SwapPromiseMonitor is created on the main thread, it calls
+  // InsertSwapPromiseMonitor() to register itself with LayerTreeHost.
+  // When the monitor is destroyed, it calls RemoveSwapPromiseMonitor()
+  // to unregister itself.
+  void InsertSwapPromiseMonitor(SwapPromiseMonitor* monitor);
+  void RemoveSwapPromiseMonitor(SwapPromiseMonitor* monitor);
+
+  // Call this function when you expect there to be a swap buffer.
+  // See swap_promise.h for how to use SwapPromise.
+  void QueueSwapPromise(scoped_ptr<SwapPromise> swap_promise);
+
+  void BreakSwapPromises(SwapPromise::DidNotSwapReason reason);
+
  protected:
   LayerTreeHost(LayerTreeHostClient* client,
                 SharedBitmapManager* manager,
                 const LayerTreeSettings& settings);
-  bool Initialize(scoped_refptr<base::SingleThreadTaskRunner> impl_task_runner);
-  bool InitializeForTesting(scoped_ptr<Proxy> proxy_for_testing);
+  void InitializeThreaded(
+      scoped_refptr<base::SingleThreadTaskRunner> impl_task_runner);
+  void InitializeSingleThreaded(
+      LayerTreeHostSingleThreadClient* single_thread_client);
+  void InitializeForTesting(scoped_ptr<Proxy> proxy_for_testing);
   void SetOutputSurfaceLostForTesting(bool is_lost) {
     output_surface_lost_ = is_lost;
   }
 
+  MicroBenchmarkController micro_benchmark_controller_;
+
  private:
-  bool InitializeProxy(scoped_ptr<Proxy> proxy);
+  void InitializeProxy(scoped_ptr<Proxy> proxy);
 
   void PaintLayerContents(
       const RenderSurfaceLayerList& render_surface_layer_list,
@@ -357,8 +340,7 @@ class CC_EXPORT LayerTreeHost : NON_EXPORTED_BASE(public RateLimiterClient) {
   void ReduceMemoryUsage();
 
   void PrioritizeTextures(
-      const RenderSurfaceLayerList& render_surface_layer_list,
-      OverdrawMetrics* metrics);
+      const RenderSurfaceLayerList& render_surface_layer_list);
   void SetPrioritiesForSurfaces(size_t surface_memory_bytes);
   void SetPrioritiesForLayers(const RenderSurfaceLayerList& update_list);
   size_t CalculateMemoryForRenderSurfaces(
@@ -381,6 +363,8 @@ class CC_EXPORT LayerTreeHost : NON_EXPORTED_BASE(public RateLimiterClient) {
 
   void CalculateLCDTextMetricsCallback(Layer* layer);
 
+  void NotifySwapPromiseMonitorsOfSetNeedsCommit();
+
   bool animating_;
   bool needs_full_tree_sync_;
   bool needs_filter_context_;
@@ -392,8 +376,6 @@ class CC_EXPORT LayerTreeHost : NON_EXPORTED_BASE(public RateLimiterClient) {
 
   int source_frame_number_;
   scoped_ptr<RenderingStatsInstrumentation> rendering_stats_instrumentation_;
-  MicroBenchmarkController micro_benchmark_controller_;
-
 
   bool output_surface_can_be_initialized_;
   bool output_surface_lost_;
@@ -417,9 +399,7 @@ class CC_EXPORT LayerTreeHost : NON_EXPORTED_BASE(public RateLimiterClient) {
 
   bool visible_;
 
-  typedef base::hash_map<WebKit::WebGraphicsContext3D*,
-                         scoped_refptr<RateLimiter> > RateLimiterMap;
-  RateLimiterMap rate_limiters_;
+  base::OneShotTimer<LayerTreeHost> rate_limit_timer_;
 
   float page_scale_factor_;
   float min_page_scale_factor_;
@@ -449,8 +429,6 @@ class CC_EXPORT LayerTreeHost : NON_EXPORTED_BASE(public RateLimiterClient) {
 
   bool in_paint_layer_contents_;
 
-  ui::LatencyInfo latency_info_;
-
   static const int kTotalFramesToUseForLCDTextMetrics = 50;
   int total_frames_used_for_lcd_text_metrics_;
 
@@ -465,7 +443,7 @@ class CC_EXPORT LayerTreeHost : NON_EXPORTED_BASE(public RateLimiterClient) {
     int64 total_num_cc_layers_will_use_lcd_text;
   };
   LCDTextMetrics lcd_text_metrics_;
-  int tree_id_;
+  int id_;
   bool next_commit_forces_redraw_;
 
   scoped_refptr<Layer> page_scale_layer_;
@@ -473,6 +451,9 @@ class CC_EXPORT LayerTreeHost : NON_EXPORTED_BASE(public RateLimiterClient) {
   scoped_refptr<Layer> outer_viewport_scroll_layer_;
 
   SharedBitmapManager* shared_bitmap_manager_;
+
+  ScopedPtrVector<SwapPromise> swap_promise_list_;
+  std::set<SwapPromiseMonitor*> swap_promise_monitor_;
 
   DISALLOW_COPY_AND_ASSIGN(LayerTreeHost);
 };

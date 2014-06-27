@@ -25,15 +25,16 @@
 #include "chrome/browser/search_engines/template_url_service.h"
 #include "chrome/browser/search_engines/template_url_service_test_util.h"
 #include "chrome/browser/webdata/web_data_service_factory.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/webdata/common/web_database.h"
 #include "content/public/test/test_browser_thread.h"
 #include "extensions/common/constants.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using base::ASCIIToUTF16;
 using base::Time;
 using base::TimeDelta;
 using content::BrowserThread;
@@ -96,18 +97,20 @@ TemplateURL* CreateKeywordWithDate(
     const std::string& alternate_url,
     const std::string& favicon_url,
     bool safe_for_autoreplace,
+    bool show_in_default_list,
     const std::string& encodings,
     Time date_created,
     Time last_modified) {
   TemplateURLData data;
-  data.short_name = UTF8ToUTF16(short_name);
-  data.SetKeyword(UTF8ToUTF16(keyword));
+  data.short_name = base::UTF8ToUTF16(short_name);
+  data.SetKeyword(base::UTF8ToUTF16(keyword));
   data.SetURL(url);
   data.suggestions_url = suggest_url;
   if (!alternate_url.empty())
     data.alternate_urls.push_back(alternate_url);
   data.favicon_url = GURL(favicon_url);
   data.safe_for_autoreplace = safe_for_autoreplace;
+  data.show_in_default_list = show_in_default_list;
   base::SplitString(encodings, ';', &data.input_encodings);
   data.date_created = date_created;
   data.last_modified = last_modified;
@@ -128,7 +131,7 @@ TemplateURL* AddKeywordWithDate(
     Time last_modified) {
   TemplateURL* t_url = CreateKeywordWithDate(
       model, short_name, keyword, url, suggest_url, alternate_url,favicon_url,
-      safe_for_autoreplace, encodings, date_created, last_modified);
+      safe_for_autoreplace, false, encodings, date_created, last_modified);
   model->Add(t_url);
   EXPECT_NE(0, t_url->id());
   return t_url;
@@ -190,7 +193,7 @@ class TemplateURLServiceTest : public testing::Test {
   TemplateURL* CreateReplaceablePreloadedTemplateURL(
       bool safe_for_autoreplace,
       size_t index_offset_from_default,
-      string16* prepopulated_display_url);
+      base::string16* prepopulated_display_url);
 
   // Verifies the behavior of when a preloaded url later gets changed.
   // Since the input is the offset from the default, when one passes in
@@ -306,7 +309,7 @@ TemplateURL* TemplateURLServiceTest::CreatePreloadedTemplateURL(
 TemplateURL* TemplateURLServiceTest::CreateReplaceablePreloadedTemplateURL(
     bool safe_for_autoreplace,
     size_t index_offset_from_default,
-    string16* prepopulated_display_url) {
+    base::string16* prepopulated_display_url) {
   size_t default_search_provider_index = 0;
   ScopedVector<TemplateURL> prepopulated_urls =
       TemplateURLPrepopulateData::GetPrepopulatedEngines(
@@ -323,11 +326,11 @@ TemplateURL* TemplateURLServiceTest::CreateReplaceablePreloadedTemplateURL(
 
 void TemplateURLServiceTest::TestLoadUpdatingPreloadedURL(
     size_t index_offset_from_default) {
-  string16 prepopulated_url;
+  base::string16 prepopulated_url;
   TemplateURL* t_url = CreateReplaceablePreloadedTemplateURL(false,
       index_offset_from_default, &prepopulated_url);
 
-  string16 original_url = t_url->url_ref().DisplayURL();
+  base::string16 original_url = t_url->url_ref().DisplayURL();
   std::string original_guid = t_url->sync_guid();
   EXPECT_NE(prepopulated_url, original_url);
 
@@ -756,8 +759,8 @@ TEST_F(TemplateURLServiceTest, Reset) {
   EXPECT_CALL(mock_time, Now()).WillOnce(Return(base::Time::FromDoubleT(1337)));
 
   // Reset the short name, keyword, url and make sure it takes.
-  const string16 new_short_name(ASCIIToUTF16("a"));
-  const string16 new_keyword(ASCIIToUTF16("b"));
+  const base::string16 new_short_name(ASCIIToUTF16("a"));
+  const base::string16 new_keyword(ASCIIToUTF16("b"));
   const std::string new_url("c");
   model()->ResetTemplateURL(t_url, new_short_name, new_keyword, new_url);
   ASSERT_EQ(new_short_name, t_url->short_name());
@@ -994,19 +997,19 @@ TEST_F(TemplateURLServiceTest, RepairSearchEnginesWithManagedDefault) {
 TEST_F(TemplateURLServiceTest, UpdateKeywordSearchTermsForURL) {
   struct TestData {
     const std::string url;
-    const string16 term;
+    const base::string16 term;
   } data[] = {
-    { "http://foo/", string16() },
-    { "http://foo/foo?q=xx", string16() },
-    { "http://x/bar?q=xx", string16() },
-    { "http://x/foo?y=xx", string16() },
+    { "http://foo/", base::string16() },
+    { "http://foo/foo?q=xx", base::string16() },
+    { "http://x/bar?q=xx", base::string16() },
+    { "http://x/foo?y=xx", base::string16() },
     { "http://x/foo?q=xx", ASCIIToUTF16("xx") },
     { "http://x/foo?a=b&q=xx", ASCIIToUTF16("xx") },
-    { "http://x/foo?q=b&q=xx", string16() },
+    { "http://x/foo?q=b&q=xx", base::string16() },
     { "http://x/foo#query=xx", ASCIIToUTF16("xx") },
     { "http://x/foo?q=b#query=xx", ASCIIToUTF16("xx") },
     { "http://x/foo?q=b#q=xx", ASCIIToUTF16("b") },
-    { "http://x/foo?query=b#q=xx", string16() },
+    { "http://x/foo?query=b#q=xx", base::string16() },
   };
 
   test_util_.ChangeModelToLoadState();
@@ -1041,7 +1044,7 @@ TEST_F(TemplateURLServiceTest, DontUpdateKeywordSearchForNonReplaceable) {
     details.row = history::URLRow(GURL(data[i].url));
     details.transition = content::PageTransitionFromInt(0);
     model()->UpdateKeywordSearchTermsForURL(details);
-    ASSERT_EQ(string16(), test_util_.GetAndClearSearchTerm());
+    ASSERT_EQ(base::string16(), test_util_.GetAndClearSearchTerm());
   }
 }
 
@@ -1588,7 +1591,7 @@ TEST_F(TemplateURLServiceTest, DefaultExtensionEngine) {
   TemplateURL* ext_dse = CreateKeywordWithDate(
       model(), "ext", "ext", "http://www.search.com/s?q={searchTerms}",
       std::string(), std::string(), std::string(),
-      true, "UTF-8", Time(), Time());
+      true, true, "UTF-8", Time(), Time());
   scoped_ptr<AssociatedExtensionInfo> extension_info(
       new AssociatedExtensionInfo);
   extension_info->wants_to_be_default_engine = true;
@@ -1613,7 +1616,7 @@ TEST_F(TemplateURLServiceTest, ExtensionEnginesNotPersist) {
   TemplateURL* ext_dse = CreateKeywordWithDate(
       model(), "ext1", "ext1", "http://www.ext1.com/s?q={searchTerms}",
       std::string(), std::string(), std::string(),
-      true, "UTF-8", Time(), Time());
+      true, false, "UTF-8", Time(), Time());
   scoped_ptr<AssociatedExtensionInfo> extension_info(
       new AssociatedExtensionInfo);
   extension_info->wants_to_be_default_engine = false;
@@ -1624,7 +1627,7 @@ TEST_F(TemplateURLServiceTest, ExtensionEnginesNotPersist) {
   ext_dse = CreateKeywordWithDate(
       model(), "ext2", "ext2", "http://www.ext2.com/s?q={searchTerms}",
       std::string(), std::string(), std::string(),
-      true, "UTF-8", Time(), Time());
+      true, true, "UTF-8", Time(), Time());
   extension_info.reset(new AssociatedExtensionInfo);
   extension_info->wants_to_be_default_engine = true;
   extension_info->extension_id = "ext2";
@@ -1671,7 +1674,7 @@ TEST_F(TemplateURLServiceTest, ExtensionEngineVsPolicy) {
   TemplateURL* ext_dse = CreateKeywordWithDate(
       model(), "ext1", "ext1", "http://www.ext1.com/s?q={searchTerms}",
       std::string(), std::string(), std::string(),
-      true, "UTF-8", Time(), Time());
+      true, true, "UTF-8", Time(), Time());
   scoped_ptr<AssociatedExtensionInfo> extension_info(
       new AssociatedExtensionInfo);
   extension_info->wants_to_be_default_engine = true;

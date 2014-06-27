@@ -140,6 +140,7 @@ class SSLClientSocketPoolTest
         NULL /* cert_verifier */,
         NULL /* server_bound_cert_service */,
         NULL /* transport_security_state */,
+        NULL /* cert_transparency_verifier */,
         std::string() /* ssl_session_cache_shard */,
         &socket_factory_,
         transport_pool ? &transport_socket_pool_ : NULL,
@@ -165,8 +166,8 @@ class SSLClientSocketPoolTest
   }
 
   void AddAuthToCache() {
-    const base::string16 kFoo(ASCIIToUTF16("foo"));
-    const base::string16 kBar(ASCIIToUTF16("bar"));
+    const base::string16 kFoo(base::ASCIIToUTF16("foo"));
+    const base::string16 kBar(base::ASCIIToUTF16("bar"));
     session_->http_auth_cache()->Add(GURL("http://proxy:443/"),
                                      "MyRealm1",
                                      HttpAuth::AUTH_SCHEME_BASIC,

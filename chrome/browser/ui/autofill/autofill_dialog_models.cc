@@ -32,7 +32,7 @@ SuggestionsMenuModel::SuggestionsMenuModel(
 SuggestionsMenuModel::~SuggestionsMenuModel() {}
 
 void SuggestionsMenuModel::AddKeyedItem(
-    const std::string& key, const string16& display_label) {
+    const std::string& key, const base::string16& display_label) {
   Item item = { key, true };
   items_.push_back(item);
   AddCheckItem(items_.size() - 1, display_label);
@@ -40,7 +40,7 @@ void SuggestionsMenuModel::AddKeyedItem(
 
 void SuggestionsMenuModel::AddKeyedItemWithIcon(
     const std::string& key,
-    const string16& display_label,
+    const base::string16& display_label,
     const gfx::Image& icon) {
   AddKeyedItem(key, display_label);
   SetIcon(items_.size() - 1, icon);
@@ -48,16 +48,16 @@ void SuggestionsMenuModel::AddKeyedItemWithIcon(
 
 void SuggestionsMenuModel::AddKeyedItemWithMinorText(
     const std::string& key,
-    const string16& display_label,
-    const string16& display_minor_text) {
+    const base::string16& display_label,
+    const base::string16& display_minor_text) {
   AddKeyedItem(key, display_label);
   SetMinorText(items_.size() - 1, display_minor_text);
 }
 
 void SuggestionsMenuModel::AddKeyedItemWithMinorTextAndIcon(
     const std::string& key,
-    const string16& display_label,
-    const string16& display_minor_text,
+    const base::string16& display_label,
+    const base::string16& display_minor_text,
     const gfx::Image& icon) {
   AddKeyedItemWithIcon(key, display_label, icon);
   SetMinorText(items_.size() - 1, display_minor_text);
@@ -83,7 +83,8 @@ std::string SuggestionsMenuModel::GetItemKeyForCheckedItem() const {
 void SuggestionsMenuModel::SetCheckedItem(const std::string& item_key) {
   for (size_t i = 0; i < items_.size(); ++i) {
     if (items_[i].key == item_key) {
-      checked_item_ = i;
+      if (IsEnabledAt(i))
+        checked_item_ = i;
       break;
     }
   }
@@ -152,11 +153,11 @@ int MonthComboboxModel::GetItemCount() const {
 }
 
 // static
-string16 MonthComboboxModel::FormatMonth(int index) {
-  return ASCIIToUTF16(base::StringPrintf("%.2d", index));
+base::string16 MonthComboboxModel::FormatMonth(int index) {
+  return base::ASCIIToUTF16(base::StringPrintf("%.2d", index));
 }
 
-string16 MonthComboboxModel::GetItemAt(int index) {
+base::string16 MonthComboboxModel::GetItemAt(int index) {
   return index == 0 ?
       l10n_util::GetStringUTF16(IDS_AUTOFILL_DIALOG_PLACEHOLDER_EXPIRY_MONTH) :
       FormatMonth(index);
@@ -178,7 +179,7 @@ int YearComboboxModel::GetItemCount() const {
   return 11;
 }
 
-string16 YearComboboxModel::GetItemAt(int index) {
+base::string16 YearComboboxModel::GetItemAt(int index) {
   if (index == 0) {
     return l10n_util::GetStringUTF16(
         IDS_AUTOFILL_DIALOG_PLACEHOLDER_EXPIRY_YEAR);

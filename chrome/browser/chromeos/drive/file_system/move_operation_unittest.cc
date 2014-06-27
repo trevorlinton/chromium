@@ -4,11 +4,8 @@
 
 #include "chrome/browser/chromeos/drive/file_system/move_operation.h"
 
-#include "chrome/browser/chromeos/drive/file_system/copy_operation.h"
 #include "chrome/browser/chromeos/drive/file_system/operation_test_base.h"
-#include "chrome/browser/drive/drive_api_util.h"
-#include "chrome/browser/drive/fake_drive_service.h"
-#include "chrome/browser/google_apis/test_util.h"
+#include "google_apis/drive/test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace drive {
@@ -20,19 +17,10 @@ class MoveOperationTest : public OperationTestBase {
    OperationTestBase::SetUp();
    operation_.reset(new MoveOperation(blocking_task_runner(),
                                       observer(),
-                                      scheduler(),
                                       metadata()));
-   copy_operation_.reset(new CopyOperation(blocking_task_runner(),
-                                           observer(),
-                                           scheduler(),
-                                           metadata(),
-                                           cache(),
-                                           fake_service(),
-                                           temp_dir()));
   }
 
   scoped_ptr<MoveOperation> operation_;
-  scoped_ptr<CopyOperation> copy_operation_;
 };
 
 TEST_F(MoveOperationTest, MoveFileInSameDirectory) {
@@ -49,17 +37,20 @@ TEST_F(MoveOperationTest, MoveFileInSameDirectory) {
   FileError error = FILE_ERROR_FAILED;
   operation_->Move(src_path,
                    dest_path,
-                   false,
                    google_apis::test_util::CreateCopyResultCallback(&error));
   test_util::RunBlockingPoolTask();
   EXPECT_EQ(FILE_ERROR_OK, error);
 
   EXPECT_EQ(FILE_ERROR_OK, GetLocalResourceEntry(dest_path, &dest_entry));
   EXPECT_EQ(src_entry.local_id(), dest_entry.local_id());
+  EXPECT_EQ(ResourceEntry::DIRTY, dest_entry.metadata_edit_state());
   EXPECT_EQ(FILE_ERROR_NOT_FOUND, GetLocalResourceEntry(src_path, &src_entry));
 
   EXPECT_EQ(1U, observer()->get_changed_paths().size());
   EXPECT_TRUE(observer()->get_changed_paths().count(src_path.DirName()));
+
+  EXPECT_EQ(1U, observer()->updated_local_ids().size());
+  EXPECT_TRUE(observer()->updated_local_ids().count(src_entry.local_id()));
 }
 
 TEST_F(MoveOperationTest, MoveFileFromRootToSubDirectory) {
@@ -75,148 +66,21 @@ TEST_F(MoveOperationTest, MoveFileFromRootToSubDirectory) {
   FileError error = FILE_ERROR_FAILED;
   operation_->Move(src_path,
                    dest_path,
-                   false,
                    google_apis::test_util::CreateCopyResultCallback(&error));
   test_util::RunBlockingPoolTask();
   EXPECT_EQ(FILE_ERROR_OK, error);
 
   EXPECT_EQ(FILE_ERROR_OK, GetLocalResourceEntry(dest_path, &dest_entry));
   EXPECT_EQ(src_entry.local_id(), dest_entry.local_id());
+  EXPECT_EQ(ResourceEntry::DIRTY, dest_entry.metadata_edit_state());
   EXPECT_EQ(FILE_ERROR_NOT_FOUND, GetLocalResourceEntry(src_path, &src_entry));
 
   EXPECT_EQ(2U, observer()->get_changed_paths().size());
   EXPECT_TRUE(observer()->get_changed_paths().count(src_path.DirName()));
   EXPECT_TRUE(observer()->get_changed_paths().count(dest_path.DirName()));
-}
 
-TEST_F(MoveOperationTest, MoveFileFromSubDirectoryToRoot) {
-  base::FilePath src_path(
-      FILE_PATH_LITERAL("drive/root/Directory 1/SubDirectory File 1.txt"));
-  base::FilePath dest_path(FILE_PATH_LITERAL("drive/root/Test.log"));
-
-  ResourceEntry src_entry, dest_entry;
-  ASSERT_EQ(FILE_ERROR_OK, GetLocalResourceEntry(src_path, &src_entry));
-  ASSERT_EQ(FILE_ERROR_NOT_FOUND,
-            GetLocalResourceEntry(dest_path, &dest_entry));
-
-  FileError error = FILE_ERROR_FAILED;
-  operation_->Move(src_path,
-                   dest_path,
-                   false,
-                   google_apis::test_util::CreateCopyResultCallback(&error));
-  test_util::RunBlockingPoolTask();
-  EXPECT_EQ(FILE_ERROR_OK, error);
-
-  EXPECT_EQ(FILE_ERROR_OK, GetLocalResourceEntry(dest_path, &dest_entry));
-  EXPECT_EQ(src_entry.local_id(), dest_entry.local_id());
-  EXPECT_EQ(FILE_ERROR_NOT_FOUND, GetLocalResourceEntry(src_path, &src_entry));
-
-  EXPECT_EQ(2U, observer()->get_changed_paths().size());
-  EXPECT_TRUE(observer()->get_changed_paths().count(src_path.DirName()));
-  EXPECT_TRUE(observer()->get_changed_paths().count(dest_path.DirName()));
-}
-
-TEST_F(MoveOperationTest, MoveFileBetweenSubDirectories) {
-  base::FilePath src_path(
-      FILE_PATH_LITERAL("drive/root/Directory 1/SubDirectory File 1.txt"));
-  base::FilePath dest_path(
-      FILE_PATH_LITERAL("drive/root/Directory 1/Sub Directory Folder/Test"));
-
-  ResourceEntry src_entry, dest_entry;
-  ASSERT_EQ(FILE_ERROR_OK, GetLocalResourceEntry(src_path, &src_entry));
-  ASSERT_EQ(FILE_ERROR_NOT_FOUND,
-            GetLocalResourceEntry(dest_path, &dest_entry));
-
-  FileError error = FILE_ERROR_FAILED;
-  operation_->Move(src_path,
-                   dest_path,
-                   false,
-                   google_apis::test_util::CreateCopyResultCallback(&error));
-  test_util::RunBlockingPoolTask();
-  EXPECT_EQ(FILE_ERROR_OK, error);
-
-  EXPECT_EQ(FILE_ERROR_OK, GetLocalResourceEntry(dest_path, &dest_entry));
-  EXPECT_EQ(src_entry.local_id(), dest_entry.local_id());
-  EXPECT_EQ(FILE_ERROR_NOT_FOUND, GetLocalResourceEntry(src_path, &src_entry));
-
-  EXPECT_EQ(2U, observer()->get_changed_paths().size());
-  EXPECT_TRUE(observer()->get_changed_paths().count(src_path.DirName()));
-  EXPECT_TRUE(observer()->get_changed_paths().count(dest_path.DirName()));
-}
-
-TEST_F(MoveOperationTest, MoveFileBetweenSubDirectoriesNoRename) {
-  base::FilePath src_path(
-      FILE_PATH_LITERAL("drive/root/Directory 1/SubDirectory File 1.txt"));
-  base::FilePath dest_path(FILE_PATH_LITERAL(
-      "drive/root/Directory 1/Sub Directory Folder/SubDirectory File 1.txt"));
-
-  ResourceEntry src_entry, dest_entry;
-  ASSERT_EQ(FILE_ERROR_OK, GetLocalResourceEntry(src_path, &src_entry));
-  ASSERT_EQ(FILE_ERROR_NOT_FOUND,
-            GetLocalResourceEntry(dest_path, &dest_entry));
-
-  FileError error = FILE_ERROR_FAILED;
-  operation_->Move(src_path,
-                   dest_path,
-                   false,
-                   google_apis::test_util::CreateCopyResultCallback(&error));
-  test_util::RunBlockingPoolTask();
-  EXPECT_EQ(FILE_ERROR_OK, error);
-
-  EXPECT_EQ(FILE_ERROR_OK, GetLocalResourceEntry(dest_path, &dest_entry));
-  EXPECT_EQ(src_entry.local_id(), dest_entry.local_id());
-  EXPECT_EQ(FILE_ERROR_NOT_FOUND, GetLocalResourceEntry(src_path, &src_entry));
-
-  EXPECT_EQ(2U, observer()->get_changed_paths().size());
-  EXPECT_TRUE(observer()->get_changed_paths().count(src_path.DirName()));
-  EXPECT_TRUE(observer()->get_changed_paths().count(dest_path.DirName()));
-}
-
-TEST_F(MoveOperationTest, MoveFileBetweenSubDirectoriesRenameWithTitle) {
-  base::FilePath src_path(
-      FILE_PATH_LITERAL("drive/root/Directory 1/SubDirectory File 1.txt"));
-  base::FilePath dest_path(FILE_PATH_LITERAL(
-      "drive/root/Directory 1/Sub Directory Folder/"
-      "SubDirectory File 1 (1).txt"));
-
-  ResourceEntry src_entry, dest_entry;
-  ASSERT_EQ(FILE_ERROR_OK, GetLocalResourceEntry(src_path, &src_entry));
-  ASSERT_EQ(FILE_ERROR_NOT_FOUND,
-            GetLocalResourceEntry(dest_path, &dest_entry));
-
-  FileError error = FILE_ERROR_FAILED;
-  // Copy the src file into the same directory. This will make inconsistency
-  // between title and path of the copied file.
-  copy_operation_->Copy(
-      src_path,
-      src_path,
-      false,
-      google_apis::test_util::CreateCopyResultCallback(&error));
-  test_util::RunBlockingPoolTask();
-  EXPECT_EQ(FILE_ERROR_OK, error);
-  base::FilePath copied_path(
-      FILE_PATH_LITERAL("drive/root/Directory 1/SubDirectory File 1 (1).txt"));
-  ResourceEntry copied_entry;
-  ASSERT_EQ(FILE_ERROR_OK, GetLocalResourceEntry(copied_path, &copied_entry));
-  ASSERT_EQ("SubDirectory File 1.txt", copied_entry.title());
-
-  // Move the copied file.
-  operation_->Move(copied_path,
-                   dest_path,
-                   false,
-                   google_apis::test_util::CreateCopyResultCallback(&error));
-  test_util::RunBlockingPoolTask();
-  EXPECT_EQ(FILE_ERROR_OK, error);
-
-  EXPECT_EQ(FILE_ERROR_OK, GetLocalResourceEntry(dest_path, &dest_entry));
-  EXPECT_EQ("SubDirectory File 1 (1).txt", dest_entry.title());
-  EXPECT_EQ(copied_entry.local_id(), dest_entry.local_id());
-  EXPECT_EQ(FILE_ERROR_NOT_FOUND,
-            GetLocalResourceEntry(copied_path, &copied_entry));
-
-  EXPECT_EQ(2U, observer()->get_changed_paths().size());
-  EXPECT_TRUE(observer()->get_changed_paths().count(copied_path.DirName()));
-  EXPECT_TRUE(observer()->get_changed_paths().count(dest_path.DirName()));
+  EXPECT_EQ(1U, observer()->updated_local_ids().size());
+  EXPECT_TRUE(observer()->updated_local_ids().count(src_entry.local_id()));
 }
 
 TEST_F(MoveOperationTest, MoveNotExistingFile) {
@@ -226,7 +90,6 @@ TEST_F(MoveOperationTest, MoveNotExistingFile) {
   FileError error = FILE_ERROR_OK;
   operation_->Move(src_path,
                    dest_path,
-                   false,
                    google_apis::test_util::CreateCopyResultCallback(&error));
   test_util::RunBlockingPoolTask();
   EXPECT_EQ(FILE_ERROR_NOT_FOUND, error);
@@ -243,7 +106,6 @@ TEST_F(MoveOperationTest, MoveFileToNonExistingDirectory) {
   FileError error = FILE_ERROR_OK;
   operation_->Move(src_path,
                    dest_path,
-                   false,
                    google_apis::test_util::CreateCopyResultCallback(&error));
   test_util::RunBlockingPoolTask();
   EXPECT_EQ(FILE_ERROR_NOT_FOUND, error);
@@ -263,7 +125,6 @@ TEST_F(MoveOperationTest, MoveFileToInvalidPath) {
   FileError error = FILE_ERROR_OK;
   operation_->Move(src_path,
                    dest_path,
-                   false,
                    google_apis::test_util::CreateCopyResultCallback(&error));
   test_util::RunBlockingPoolTask();
   EXPECT_EQ(FILE_ERROR_NOT_A_DIRECTORY, error);
@@ -271,36 +132,6 @@ TEST_F(MoveOperationTest, MoveFileToInvalidPath) {
   ResourceEntry entry;
   EXPECT_EQ(FILE_ERROR_OK, GetLocalResourceEntry(src_path, &entry));
   EXPECT_EQ(FILE_ERROR_NOT_FOUND, GetLocalResourceEntry(dest_path, &entry));
-}
-
-TEST_F(MoveOperationTest, PreserveLastModified) {
-  // Preserve last modified feature is only available on Drive API v2.
-  if (util::IsDriveV2ApiEnabled()) {
-    const base::FilePath src_path(
-        FILE_PATH_LITERAL("drive/root/Directory 1/SubDirectory File 1.txt"));
-    const base::FilePath dest_path(
-        FILE_PATH_LITERAL("drive/root/Directory 1/Test.log"));
-
-    ResourceEntry src_entry, dest_entry;
-    ASSERT_EQ(FILE_ERROR_OK, GetLocalResourceEntry(src_path, &src_entry));
-    ASSERT_EQ(FILE_ERROR_NOT_FOUND,
-              GetLocalResourceEntry(dest_path, &dest_entry));
-
-    FileError error = FILE_ERROR_FAILED;
-    operation_->Move(src_path,
-                     dest_path,
-                     true,  // Preserve last modified.
-                     google_apis::test_util::CreateCopyResultCallback(&error));
-    test_util::RunBlockingPoolTask();
-    EXPECT_EQ(FILE_ERROR_OK, error);
-
-    EXPECT_EQ(FILE_ERROR_OK, GetLocalResourceEntry(dest_path, &dest_entry));
-    EXPECT_EQ(src_entry.local_id(), dest_entry.local_id());
-    EXPECT_EQ(src_entry.file_info().last_modified(),
-              dest_entry.file_info().last_modified());
-    EXPECT_EQ(FILE_ERROR_NOT_FOUND,
-              GetLocalResourceEntry(src_path, &src_entry));
-  }
 }
 
 }  // namespace file_system

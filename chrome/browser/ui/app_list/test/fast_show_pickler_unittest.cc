@@ -6,28 +6,29 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColorPriv.h"
-#include "ui/app_list/app_list_item_model.h"
+#include "ui/app_list/app_list_item.h"
 #include "ui/app_list/app_list_model.h"
+#include "ui/app_list/test/app_list_test_model.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/skia_util.h"
 
-using app_list::AppListItemModel;
+using app_list::AppListItem;
 using app_list::AppListModel;
 
 class AppListModelPicklerUnitTest : public testing::Test {
  protected:
   void CheckIsSame(AppListModel* m1, AppListModel* m2) {
-    ASSERT_EQ(m1->item_list()->item_count(), m2->item_list()->item_count());
-    ASSERT_EQ(m1->signed_in(), m2->signed_in());
-    for (size_t i = 0; i < m1->item_list()->item_count(); i++) {
-      ASSERT_EQ(m1->item_list()->item_at(i)->id(),
-                m2->item_list()->item_at(i)->id());
-      ASSERT_EQ(m1->item_list()->item_at(i)->title(),
-                m2->item_list()->item_at(i)->title());
-      ASSERT_EQ(m1->item_list()->item_at(i)->full_name(),
-                m2->item_list()->item_at(i)->full_name());
-      CompareImages(m1->item_list()->item_at(i)->icon(),
-                    m2->item_list()->item_at(i)->icon());
+    ASSERT_EQ(m1->top_level_item_list()->item_count(),
+              m2->top_level_item_list()->item_count());
+    for (size_t i = 0; i < m1->top_level_item_list()->item_count(); i++) {
+      ASSERT_EQ(m1->top_level_item_list()->item_at(i)->id(),
+                m2->top_level_item_list()->item_at(i)->id());
+      ASSERT_EQ(m1->top_level_item_list()->item_at(i)->name(),
+                m2->top_level_item_list()->item_at(i)->name());
+      ASSERT_EQ(m1->top_level_item_list()->item_at(i)->short_name(),
+                m2->top_level_item_list()->item_at(i)->short_name());
+      CompareImages(m1->top_level_item_list()->item_at(i)->icon(),
+                    m2->top_level_item_list()->item_at(i)->icon());
     }
   }
 
@@ -77,60 +78,41 @@ TEST_F(AppListModelPicklerUnitTest, EmptyModel) {
 
 TEST_F(AppListModelPicklerUnitTest, OneItem) {
   AppListModel model;
-  AppListItemModel* app1 = new AppListItemModel("abc");
-  app1->SetTitleAndFullName("ht", "hello, there");
-  model.item_list()->AddItem(app1);
-
+  model.AddItem(make_scoped_ptr(new AppListItem("abc")).Pass());
   DoConsistencyChecks(&model);
 }
 
 TEST_F(AppListModelPicklerUnitTest, TwoItems) {
   AppListModel model;
-  AppListItemModel* app1 = new AppListItemModel("abc");
-  app1->SetTitleAndFullName("ht", "hello, there");
-  model.item_list()->AddItem(app1);
-
-  AppListItemModel* app2 = new AppListItemModel("abc2");
-  app2->SetTitleAndFullName("ht2", "hello, there 2");
-  model.item_list()->AddItem(app2);
+  AppListItem* app1 =
+      model.AddItem(make_scoped_ptr(new AppListItem("abc")).Pass());
+  model.SetItemNameAndShortName(app1, "hello, there", "ht");
+  AppListItem* app2 =
+      model.AddItem(make_scoped_ptr(new AppListItem("abc2")).Pass());
+  model.SetItemNameAndShortName(app2, "hello, there 2", "ht2");
 
   DoConsistencyChecks(&model);
 }
 
 TEST_F(AppListModelPicklerUnitTest, Images) {
   AppListModel model;
-  AppListItemModel* app1 = new AppListItemModel("abc");
-  app1->SetTitleAndFullName("ht", "hello, there");
+  AppListItem* app1 =
+      model.AddItem(make_scoped_ptr(new AppListItem("abc")).Pass());
+  model.SetItemName(app1, "hello, there");
   app1->SetIcon(MakeImage(), true);
-  model.item_list()->AddItem(app1);
-
-  AppListItemModel* app2 = new AppListItemModel("abc2");
-  app2->SetTitleAndFullName("ht2", "hello, there 2");
-  model.item_list()->AddItem(app2);
+  AppListItem* app2 =
+      model.AddItem(make_scoped_ptr(new AppListItem("abc2")).Pass());
+  model.SetItemName(app2, "hello, there 2");
 
   DoConsistencyChecks(&model);
 }
 
 TEST_F(AppListModelPicklerUnitTest, EmptyImage) {
   AppListModel model;
-  AppListItemModel* app1 = new AppListItemModel("abc");
-  app1->SetTitleAndFullName("ht", "hello, there");
+  AppListItem* app1 =
+      model.AddItem(make_scoped_ptr(new AppListItem("abc")).Pass());
+  model.SetItemName(app1, "hello, there");
   app1->SetIcon(gfx::ImageSkia(), true);
-  model.item_list()->AddItem(app1);
-
-  DoConsistencyChecks(&model);
-}
-
-TEST_F(AppListModelPicklerUnitTest, SignedIn) {
-  AppListModel model;
-  model.SetSignedIn(true);
-
-  DoConsistencyChecks(&model);
-}
-
-TEST_F(AppListModelPicklerUnitTest, SignedOut) {
-  AppListModel model;
-  model.SetSignedIn(false);
 
   DoConsistencyChecks(&model);
 }

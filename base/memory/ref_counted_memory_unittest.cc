@@ -10,12 +10,10 @@ namespace base {
 
 TEST(RefCountedMemoryUnitTest, RefCountedStaticMemory) {
   scoped_refptr<RefCountedMemory> mem = new RefCountedStaticMemory(
-      reinterpret_cast<const uint8*>("static mem00"), 10);
+      "static mem00", 10);
 
   EXPECT_EQ(10U, mem->size());
-  EXPECT_EQ("static mem",
-            std::string(reinterpret_cast<const char*>(mem->front()),
-                        mem->size()));
+  EXPECT_EQ("static mem", std::string(mem->front_as<char>(), mem->size()));
 }
 
 TEST(RefCountedMemoryUnitTest, RefCountedBytes) {
@@ -40,6 +38,16 @@ TEST(RefCountedMemoryUnitTest, RefCountedString) {
   EXPECT_EQ(10U, mem->size());
   EXPECT_EQ('d', mem->front()[0]);
   EXPECT_EQ('e', mem->front()[1]);
+}
+
+TEST(RefCountedMemoryUnitTest, RefCountedMallocedMemory) {
+  void* data = malloc(6);
+  memcpy(data, "hello", 6);
+
+  scoped_refptr<RefCountedMemory> mem = new RefCountedMallocedMemory(data, 6);
+
+  EXPECT_EQ(6U, mem->size());
+  EXPECT_EQ(0, memcmp("hello", mem->front(), 6));
 }
 
 TEST(RefCountedMemoryUnitTest, Equals) {

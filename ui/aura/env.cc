@@ -5,12 +5,13 @@
 #include "ui/aura/env.h"
 
 #include "base/command_line.h"
+#include "base/message_loop/message_pump_dispatcher.h"
 #include "ui/aura/env_observer.h"
 #include "ui/aura/input_state_lookup.h"
-#include "ui/aura/root_window_host.h"
 #include "ui/aura/window.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/compositor_switches.h"
+#include "ui/events/event_target_iterator.h"
 
 #if defined(USE_X11)
 #include "base/message_loop/message_pump_x11.h"
@@ -75,30 +76,10 @@ bool Env::IsMouseButtonDown() const {
       mouse_button_flags_ != 0;
 }
 
-#if !defined(OS_MACOSX) && !defined(OS_ANDROID) && \
-    !defined(USE_GTK_MESSAGE_PUMP)
-base::MessageLoop::Dispatcher* Env::GetDispatcher() {
-#if defined(USE_X11)
-  return base::MessagePumpX11::Current();
-#else
-  return dispatcher_.get();
-#endif
-}
-#endif
-
-void Env::RootWindowActivated(RootWindow* root_window) {
-  FOR_EACH_OBSERVER(EnvObserver, observers_,
-                    OnRootWindowActivated(root_window));
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // Env, private:
 
 void Env::Init() {
-#if !defined(OS_MACOSX) && !defined(OS_ANDROID) && !defined(USE_X11) && \
-    !defined(USE_OZONE)
-  dispatcher_.reset(CreateDispatcher());
-#endif
 #if defined(USE_X11)
   // We can't do this with a root window listener because XI_HierarchyChanged
   // messages don't have a target window.
@@ -112,10 +93,12 @@ void Env::NotifyWindowInitialized(Window* window) {
   FOR_EACH_OBSERVER(EnvObserver, observers_, OnWindowInitialized(window));
 }
 
-void Env::NotifyRootWindowInitialized(RootWindow* root_window) {
-  FOR_EACH_OBSERVER(EnvObserver,
-                    observers_,
-                    OnRootWindowInitialized(root_window));
+void Env::NotifyHostInitialized(WindowTreeHost* host) {
+  FOR_EACH_OBSERVER(EnvObserver, observers_, OnHostInitialized(host));
+}
+
+void Env::NotifyHostActivated(WindowTreeHost* host) {
+  FOR_EACH_OBSERVER(EnvObserver, observers_, OnHostActivated(host));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -126,6 +109,15 @@ bool Env::CanAcceptEvent(const ui::Event& event) {
 }
 
 ui::EventTarget* Env::GetParentTarget() {
+  return NULL;
+}
+
+scoped_ptr<ui::EventTargetIterator> Env::GetChildIterator() const {
+  return scoped_ptr<ui::EventTargetIterator>();
+}
+
+ui::EventTargeter* Env::GetEventTargeter() {
+  NOTREACHED();
   return NULL;
 }
 

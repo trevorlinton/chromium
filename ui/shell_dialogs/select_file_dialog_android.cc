@@ -14,6 +14,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "jni/SelectFileDialog_jni.h"
 #include "ui/base/android/window_android.h"
+#include "ui/shell_dialogs/selected_file_info.h"
 
 namespace ui {
 
@@ -25,13 +26,20 @@ SelectFileDialogImpl* SelectFileDialogImpl::Create(Listener* listener,
 
 void SelectFileDialogImpl::OnFileSelected(JNIEnv* env,
                                           jobject java_object,
-                                          jstring filepath) {
+                                          jstring filepath,
+                                          jstring display_name) {
   if (listener_) {
     std::string path = base::android::ConvertJavaStringToUTF8(env, filepath);
-    listener_->FileSelected(base::FilePath(path), 0, NULL);
+    std::string file_name =
+        base::android::ConvertJavaStringToUTF8(env, display_name);
+    base::FilePath file_path = base::FilePath(path);
+    ui::SelectedFileInfo file_info;
+    file_info.file_path = file_path;
+    file_info.local_path = file_path;
+    if (!file_name.empty())
+      file_info.display_name = file_name;
+    listener_->FileSelectedWithExtraInfo(file_info, 0, NULL);
   }
-
-  is_running_ = false;
 }
 
 void SelectFileDialogImpl::OnFileNotSelected(
@@ -39,12 +47,10 @@ void SelectFileDialogImpl::OnFileNotSelected(
     jobject java_object) {
   if (listener_)
     listener_->FileSelectionCanceled(NULL);
-
-  is_running_ = false;
 }
 
 bool SelectFileDialogImpl::IsRunning(gfx::NativeWindow) const {
-  return is_running_;
+  return listener_;
 }
 
 void SelectFileDialogImpl::ListenerDestroyed() {
@@ -79,7 +85,6 @@ void SelectFileDialogImpl::SelectFileImpl(
                                    accept_types_java.obj(),
                                    accept_types.second,
                                    owning_window->GetJavaObject().obj());
-  is_running_ = true;
 }
 
 bool SelectFileDialogImpl::RegisterSelectFileDialog(JNIEnv* env) {
@@ -91,10 +96,10 @@ SelectFileDialogImpl::~SelectFileDialogImpl() {
 
 SelectFileDialogImpl::SelectFileDialogImpl(Listener* listener,
                                            SelectFilePolicy* policy)
-    : SelectFileDialog(listener, policy), is_running_(false) {
+    : SelectFileDialog(listener, policy) {
   JNIEnv* env = base::android::AttachCurrentThread();
   java_object_.Reset(
-      Java_SelectFileDialog_create(env, reinterpret_cast<jint>(this)));
+      Java_SelectFileDialog_create(env, reinterpret_cast<intptr_t>(this)));
 }
 
 bool SelectFileDialogImpl::HasMultipleFileTypeChoicesImpl() {

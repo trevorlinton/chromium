@@ -14,10 +14,12 @@
 #include "content/public/test/test_browser_thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using base::ASCIIToUTF16;
+
 class ExtensionAppProviderTest : public testing::Test {
  protected:
   struct test_data {
-    const string16 input;
+    const base::string16 input;
     const size_t num_results;
     const GURL output[3];
   };
@@ -75,7 +77,7 @@ void ExtensionAppProviderTest::SetUp() {
 
     // Populate the InMemoryDatabase.
     history::URLRow info(GURL(kExtensionApps[i].launch_url));
-    info.set_title(UTF8ToUTF16(kExtensionApps[i].title));
+    info.set_title(base::UTF8ToUTF16(kExtensionApps[i].title));
     info.set_typed_count(kExtensionApps[i].typed_count);
     url_db->AddURL(info);
   }
@@ -86,8 +88,9 @@ void ExtensionAppProviderTest::RunTest(
     int num_cases) {
   ACMatches matches;
   for (int i = 0; i < num_cases; ++i) {
-    AutocompleteInput input(keyword_cases[i].input, string16::npos, string16(),
-                            GURL(), AutocompleteInput::INVALID_SPEC, true,
+    AutocompleteInput input(keyword_cases[i].input, base::string16::npos,
+                            base::string16(), GURL(),
+                            AutocompleteInput::INVALID_SPEC, true,
                             false, true, AutocompleteInput::ALL_MATCHES);
     app_provider_->Start(input, false);
     EXPECT_TRUE(app_provider_->done());
@@ -136,10 +139,11 @@ TEST_F(ExtensionAppProviderTest, CreateMatchSanitize) {
     { "Test\r\t\nTest", "TestTest" },
   };
 
-  AutocompleteInput input(ASCIIToUTF16("Test"), string16::npos, string16(),
-                          GURL(), AutocompleteInput::INVALID_SPEC, true, true,
+  AutocompleteInput input(ASCIIToUTF16("Test"), base::string16::npos,
+                          base::string16(), GURL(),
+                          AutocompleteInput::INVALID_SPEC, true, true,
                           true, AutocompleteInput::BEST_MATCH);
-  string16 url(ASCIIToUTF16("http://example.com"));
+  base::string16 url(ASCIIToUTF16("http://example.com"));
   for (size_t i = 0; i < ARRAYSIZE_UNSAFE(cases); ++i) {
     ExtensionAppProvider::ExtensionApp extension_app =
         {ASCIIToUTF16(cases[i].name), url, true};
@@ -147,7 +151,7 @@ TEST_F(ExtensionAppProviderTest, CreateMatchSanitize) {
         app_provider_->CreateAutocompleteMatch(input,
                                                extension_app,
                                                0,
-                                               string16::npos);
+                                               base::string16::npos);
     EXPECT_EQ(ASCIIToUTF16(cases[i].match_contents), match.contents);
   }
 }

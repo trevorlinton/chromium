@@ -30,7 +30,6 @@
 #include "chrome/browser/net/about_protocol_handler.h"
 #include "chrome/browser/net/chrome_network_delegate.h"
 #include "chrome/common/extensions/api/web_request.h"
-#include "chrome/common/extensions/extension_messages.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_pref_service_syncable.h"
@@ -38,6 +37,7 @@
 #include "chrome/test/base/testing_profile_manager.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "extensions/common/extension_messages.h"
 #include "extensions/common/features/feature.h"
 #include "net/base/auth.h"
 #include "net/base/capturing_net_log.h"
@@ -63,8 +63,6 @@ using base::StringValue;
 using base::Time;
 using base::TimeDelta;
 using base::Value;
-using chrome::VersionInfo;
-using extensions::Feature;
 using helpers::CalculateOnAuthRequiredDelta;
 using helpers::CalculateOnBeforeRequestDelta;
 using helpers::CalculateOnBeforeSendHeadersDelta;
@@ -119,14 +117,14 @@ bool HasWarning(const ExtensionWarningSet& warnings,
 // Parses the JSON data attached to the |message| and tries to return it.
 // |param| must outlive |out|. Returns NULL on failure.
 void GetPartOfMessageArguments(IPC::Message* message,
-                               const DictionaryValue** out,
+                               const base::DictionaryValue** out,
                                ExtensionMsg_MessageInvoke::Param* param) {
   ASSERT_EQ(ExtensionMsg_MessageInvoke::ID, message->type());
   ASSERT_TRUE(ExtensionMsg_MessageInvoke::Read(message, param));
   ASSERT_GE(param->d.GetSize(), 2u);
-  const Value* value = NULL;
+  const base::Value* value = NULL;
   ASSERT_TRUE(param->d.Get(1, &value));
-  const ListValue* list = NULL;
+  const base::ListValue* list = NULL;
   ASSERT_TRUE(value->GetAsList(&list));
   ASSERT_EQ(1u, list->GetSize());
   ASSERT_TRUE(list->GetDictionary(0, out));
@@ -209,7 +207,7 @@ class ExtensionWebRequestTest : public testing::Test {
   BooleanPrefMember enable_referrers_;
   TestIPCSender ipc_sender_;
   scoped_refptr<EventRouterForwarder> event_router_;
-  scoped_refptr<ExtensionInfoMap> extension_info_map_;
+  scoped_refptr<InfoMap> extension_info_map_;
   scoped_ptr<ChromeNetworkDelegate> network_delegate_;
   scoped_ptr<net::TestURLRequestContext> context_;
 };
@@ -234,8 +232,7 @@ TEST_F(ExtensionWebRequestTest, BlockingEventPrecedenceRedirect) {
 
   net::URLRequestJobFactoryImpl job_factory;
   job_factory.SetProtocolHandler(
-      chrome::kAboutScheme,
-      new chrome_browser_net::AboutProtocolHandler());
+      content::kAboutScheme, new chrome_browser_net::AboutProtocolHandler());
   context_->set_job_factory(&job_factory);
 
   GURL redirect_url("about:redirected");
@@ -483,7 +480,7 @@ namespace {
 // Create the numerical representation of |values|, strings passed as
 // extraInfoSpec by the event handler. Returns true on success, otherwise false.
 bool GenerateInfoSpec(const std::string& values, int* result) {
-  // Create a ListValue of strings.
+  // Create a base::ListValue of strings.
   std::vector<std::string> split_values;
   base::ListValue list_value;
   size_t num_values = Tokenize(values, ",", &split_values);
@@ -581,11 +578,11 @@ TEST_F(ExtensionWebRequestTest, AccessRequestBodyData) {
   // Contents of formData.
   const char kFormData[] =
       "{\"A\":[\"test text\"],\"B\":[\"\"],\"C\":[\"test password\"]}";
-  scoped_ptr<const Value> form_data(base::JSONReader::Read(kFormData));
+  scoped_ptr<const base::Value> form_data(base::JSONReader::Read(kFormData));
   ASSERT_TRUE(form_data.get() != NULL);
-  ASSERT_TRUE(form_data->GetType() == Value::TYPE_DICTIONARY);
+  ASSERT_TRUE(form_data->GetType() == base::Value::TYPE_DICTIONARY);
   // Contents of raw.
-  ListValue raw;
+  base::ListValue raw;
   extensions::subtle::AppendKeyValuePair(
       keys::kRequestBodyRawBytesKey,
       BinaryValue::CreateWithCopiedBuffer(kPlainBlock1, kPlainBlock1Length),
@@ -599,7 +596,7 @@ TEST_F(ExtensionWebRequestTest, AccessRequestBodyData) {
       BinaryValue::CreateWithCopiedBuffer(kPlainBlock2, kPlainBlock2Length),
       &raw);
   // Summary.
-  const Value* const kExpected[] = {
+  const base::Value* const kExpected[] = {
     form_data.get(),
     NULL,
     &raw,
@@ -674,11 +671,11 @@ TEST_F(ExtensionWebRequestTest, AccessRequestBodyData) {
     SCOPED_TRACE(testing::Message("iteration number ") << test);
     EXPECT_NE(i, ipc_sender_.sent_end());
     message = (i++)->get();
-    const DictionaryValue* details;
+    const base::DictionaryValue* details;
     ExtensionMsg_MessageInvoke::Param param;
     GetPartOfMessageArguments(message, &details, &param);
     ASSERT_TRUE(details != NULL);
-    const Value* result = NULL;
+    const base::Value* result = NULL;
     if (kExpected[test]) {
       EXPECT_TRUE(details->Get(*(kPath[test]), &result));
       EXPECT_TRUE(kExpected[test]->Equals(result));
@@ -734,7 +731,7 @@ TEST_F(ExtensionWebRequestTest, NoAccessRequestBodyData) {
     SCOPED_TRACE(testing::Message("iteration number ") << test);
     EXPECT_NE(i, ipc_sender_.sent_end());
     IPC::Message* message = i->get();
-    const DictionaryValue* details = NULL;
+    const base::DictionaryValue* details = NULL;
     ExtensionMsg_MessageInvoke::Param param;
     GetPartOfMessageArguments(message, &details, &param);
     ASSERT_TRUE(details != NULL);
@@ -803,7 +800,7 @@ class ExtensionWebRequestHeaderModificationTest
   BooleanPrefMember enable_referrers_;
   TestIPCSender ipc_sender_;
   scoped_refptr<EventRouterForwarder> event_router_;
-  scoped_refptr<ExtensionInfoMap> extension_info_map_;
+  scoped_refptr<InfoMap> extension_info_map_;
   scoped_ptr<ChromeNetworkDelegate> network_delegate_;
   scoped_ptr<net::MockHostResolver> host_resolver_;
   scoped_ptr<net::TestURLRequestContext> context_;
@@ -921,7 +918,7 @@ TEST_P(ExtensionWebRequestHeaderModificationTest, TestModifications) {
       continue;
     ExtensionMsg_MessageInvoke::Param message_tuple;
     ExtensionMsg_MessageInvoke::Read(message, &message_tuple);
-    ListValue& args = message_tuple.d;
+    base::ListValue& args = message_tuple.d;
 
     std::string event_name;
     if (!args.GetString(0, &event_name) ||
@@ -929,19 +926,19 @@ TEST_P(ExtensionWebRequestHeaderModificationTest, TestModifications) {
       continue;
     }
 
-    ListValue* event_arg = NULL;
+    base::ListValue* event_arg = NULL;
     ASSERT_TRUE(args.GetList(1, &event_arg));
 
-    DictionaryValue* event_arg_dict = NULL;
+    base::DictionaryValue* event_arg_dict = NULL;
     ASSERT_TRUE(event_arg->GetDictionary(0, &event_arg_dict));
 
-    ListValue* request_headers = NULL;
+    base::ListValue* request_headers = NULL;
     ASSERT_TRUE(event_arg_dict->GetList(keys::kRequestHeadersKey,
                                         &request_headers));
 
     net::HttpRequestHeaders observed_headers;
     for (size_t j = 0; j < request_headers->GetSize(); ++j) {
-      DictionaryValue* header = NULL;
+      base::DictionaryValue* header = NULL;
       ASSERT_TRUE(request_headers->GetDictionary(j, &header));
       std::string key;
       std::string value;
@@ -1170,7 +1167,7 @@ TEST(ExtensionWebRequestHelpersTest,
 }
 
 TEST(ExtensionWebRequestHelpersTest, TestStringToCharList) {
-  ListValue list_value;
+  base::ListValue list_value;
   list_value.Append(new base::FundamentalValue('1'));
   list_value.Append(new base::FundamentalValue('2'));
   list_value.Append(new base::FundamentalValue('3'));
@@ -1180,7 +1177,7 @@ TEST(ExtensionWebRequestHelpersTest, TestStringToCharList) {
   unsigned char char_value[] = {'1', '2', '3', 0xFE, 0xD1};
   std::string string_value(reinterpret_cast<char *>(char_value), 5);
 
-  scoped_ptr<ListValue> converted_list(StringToCharList(string_value));
+  scoped_ptr<base::ListValue> converted_list(StringToCharList(string_value));
   EXPECT_TRUE(list_value.Equals(converted_list.get()));
 
   std::string converted_string;
@@ -1277,9 +1274,15 @@ TEST(ExtensionWebRequestHelpersTest, TestCalculateOnHeadersReceivedDelta) {
   new_headers.push_back(ResponseHeader("Key2", "Value1"));  // Modified
   // Key3 is deleted
   new_headers.push_back(ResponseHeader("Key4", "Value4"));  // Added
+  GURL effective_new_url;
 
-  scoped_ptr<EventResponseDelta> delta(CalculateOnHeadersReceivedDelta(
-      "extid", base::Time::Now(), cancel, base_headers.get(), &new_headers));
+  scoped_ptr<EventResponseDelta> delta(
+      CalculateOnHeadersReceivedDelta("extid",
+                                      base::Time::Now(),
+                                      cancel,
+                                      effective_new_url,
+                                      base_headers.get(),
+                                      &new_headers));
   ASSERT_TRUE(delta.get());
   EXPECT_TRUE(delta->cancel);
   EXPECT_EQ(2u, delta->added_response_headers.size());
@@ -1297,8 +1300,8 @@ TEST(ExtensionWebRequestHelpersTest, TestCalculateOnHeadersReceivedDelta) {
 TEST(ExtensionWebRequestHelpersTest, TestCalculateOnAuthRequiredDelta) {
   const bool cancel = true;
 
-  string16 username = ASCIIToUTF16("foo");
-  string16 password = ASCIIToUTF16("bar");
+  base::string16 username = base::ASCIIToUTF16("foo");
+  base::string16 password = base::ASCIIToUTF16("bar");
   scoped_ptr<net::AuthCredentials> credentials(
       new net::AuthCredentials(username, password));
 
@@ -1962,9 +1965,15 @@ TEST(ExtensionWebRequestHelpersTest, TestMergeOnHeadersReceivedResponses) {
       new EventResponseDelta("extid0", base::Time::FromInternalValue(3000)));
   deltas.push_back(d0);
   scoped_refptr<net::HttpResponseHeaders> new_headers0;
-  MergeOnHeadersReceivedResponses(deltas, base_headers.get(), &new_headers0,
-                                  &warning_set, &net_log);
+  GURL allowed_unsafe_redirect_url0;
+  MergeOnHeadersReceivedResponses(deltas,
+                                  base_headers.get(),
+                                  &new_headers0,
+                                  &allowed_unsafe_redirect_url0,
+                                  &warning_set,
+                                  &net_log);
   EXPECT_FALSE(new_headers0.get());
+  EXPECT_TRUE(allowed_unsafe_redirect_url0.is_empty());
   EXPECT_EQ(0u, warning_set.size());
   EXPECT_EQ(0u, capturing_net_log.GetSize());
 
@@ -1978,9 +1987,15 @@ TEST(ExtensionWebRequestHelpersTest, TestMergeOnHeadersReceivedResponses) {
   warning_set.clear();
   capturing_net_log.Clear();
   scoped_refptr<net::HttpResponseHeaders> new_headers1;
-  MergeOnHeadersReceivedResponses(
-      deltas, base_headers.get(), &new_headers1, &warning_set, &net_log);
+  GURL allowed_unsafe_redirect_url1;
+  MergeOnHeadersReceivedResponses(deltas,
+                                  base_headers.get(),
+                                  &new_headers1,
+                                  &allowed_unsafe_redirect_url1,
+                                  &warning_set,
+                                  &net_log);
   ASSERT_TRUE(new_headers1.get());
+  EXPECT_TRUE(allowed_unsafe_redirect_url1.is_empty());
   std::multimap<std::string, std::string> expected1;
   expected1.insert(std::pair<std::string, std::string>("Key2", "Value3"));
   void* iter = NULL;
@@ -2006,9 +2021,15 @@ TEST(ExtensionWebRequestHelpersTest, TestMergeOnHeadersReceivedResponses) {
   warning_set.clear();
   capturing_net_log.Clear();
   scoped_refptr<net::HttpResponseHeaders> new_headers2;
-  MergeOnHeadersReceivedResponses(
-      deltas, base_headers.get(), &new_headers2, &warning_set, &net_log);
+  GURL allowed_unsafe_redirect_url2;
+  MergeOnHeadersReceivedResponses(deltas,
+                                  base_headers.get(),
+                                  &new_headers2,
+                                  &allowed_unsafe_redirect_url2,
+                                  &warning_set,
+                                  &net_log);
   ASSERT_TRUE(new_headers2.get());
+  EXPECT_TRUE(allowed_unsafe_redirect_url2.is_empty());
   iter = NULL;
   std::multimap<std::string, std::string> actual2;
   while (new_headers2->EnumerateHeaderLines(&iter, &name, &value)) {
@@ -2046,9 +2067,15 @@ TEST(ExtensionWebRequestHelpersTest,
   d1->deleted_response_headers.push_back(ResponseHeader("KEY1", "Value2"));
   deltas.push_back(d1);
   scoped_refptr<net::HttpResponseHeaders> new_headers1;
-  MergeOnHeadersReceivedResponses(
-      deltas, base_headers.get(), &new_headers1, &warning_set, &net_log);
+  GURL allowed_unsafe_redirect_url1;
+  MergeOnHeadersReceivedResponses(deltas,
+                                  base_headers.get(),
+                                  &new_headers1,
+                                  &allowed_unsafe_redirect_url1,
+                                  &warning_set,
+                                  &net_log);
   ASSERT_TRUE(new_headers1.get());
+  EXPECT_TRUE(allowed_unsafe_redirect_url1.is_empty());
   std::multimap<std::string, std::string> expected1;
   expected1.insert(std::pair<std::string, std::string>("Key1", "Value1"));
   expected1.insert(std::pair<std::string, std::string>("Key1", "Value3"));
@@ -2065,14 +2092,72 @@ TEST(ExtensionWebRequestHelpersTest,
   EXPECT_EQ(1u, capturing_net_log.GetSize());
 }
 
+// Tests whether onHeadersReceived can initiate a redirect.
+// The URL merge logic is shared with onBeforeRequest, so we only need to test
+// whether the URLs are merged at all.
+TEST(ExtensionWebRequestHelpersTest,
+     TestMergeOnHeadersReceivedResponsesRedirect) {
+  EventResponseDeltas deltas;
+  net::CapturingBoundNetLog capturing_net_log;
+  net::BoundNetLog net_log = capturing_net_log.bound();
+  ExtensionWarningSet warning_set;
+
+  char base_headers_string[] =
+      "HTTP/1.0 200 OK\r\n"
+      "\r\n";
+  scoped_refptr<net::HttpResponseHeaders> base_headers(
+      new net::HttpResponseHeaders(net::HttpUtil::AssembleRawHeaders(
+          base_headers_string, sizeof(base_headers_string))));
+
+  // No redirect
+  linked_ptr<EventResponseDelta> d0(
+      new EventResponseDelta("extid0", base::Time::FromInternalValue(0)));
+  deltas.push_back(d0);
+  scoped_refptr<net::HttpResponseHeaders> new_headers0;
+  GURL allowed_unsafe_redirect_url0;
+  MergeOnHeadersReceivedResponses(deltas,
+                                  base_headers.get(),
+                                  &new_headers0,
+                                  &allowed_unsafe_redirect_url0,
+                                  &warning_set,
+                                  &net_log);
+  EXPECT_FALSE(new_headers0.get());
+  EXPECT_TRUE(allowed_unsafe_redirect_url0.is_empty());
+  EXPECT_EQ(0u, warning_set.size());
+  EXPECT_EQ(0u, capturing_net_log.GetSize());
+
+  // Single redirect.
+  GURL new_url_1("http://foo.com");
+  linked_ptr<EventResponseDelta> d1(
+      new EventResponseDelta("extid1", base::Time::FromInternalValue(1000)));
+  d1->new_url = GURL(new_url_1);
+  deltas.push_back(d1);
+  deltas.sort(&InDecreasingExtensionInstallationTimeOrder);
+  capturing_net_log.Clear();
+  scoped_refptr<net::HttpResponseHeaders> new_headers1;
+  GURL allowed_unsafe_redirect_url1;
+  MergeOnHeadersReceivedResponses(deltas,
+                                  base_headers.get(),
+                                  &new_headers1,
+                                  &allowed_unsafe_redirect_url1,
+                                  &warning_set,
+                                  &net_log);
+
+  EXPECT_TRUE(new_headers1.get());
+  EXPECT_TRUE(new_headers1->HasHeaderValue("Location", new_url_1.spec()));
+  EXPECT_EQ(new_url_1, allowed_unsafe_redirect_url1);
+  EXPECT_TRUE(warning_set.empty());
+  EXPECT_EQ(1u, capturing_net_log.GetSize());
+}
+
 TEST(ExtensionWebRequestHelpersTest, TestMergeOnAuthRequiredResponses) {
   net::CapturingBoundNetLog capturing_net_log;
   net::BoundNetLog net_log = capturing_net_log.bound();
   ExtensionWarningSet warning_set;
   EventResponseDeltas deltas;
-  string16 username = ASCIIToUTF16("foo");
-  string16 password = ASCIIToUTF16("bar");
-  string16 password2 = ASCIIToUTF16("baz");
+  base::string16 username = base::ASCIIToUTF16("foo");
+  base::string16 password = base::ASCIIToUTF16("bar");
+  base::string16 password2 = base::ASCIIToUTF16("baz");
 
   // Check that we can handle if not returning credentials.
   linked_ptr<EventResponseDelta> d0(

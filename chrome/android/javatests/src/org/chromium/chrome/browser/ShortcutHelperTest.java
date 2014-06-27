@@ -5,21 +5,17 @@
 package org.chromium.chrome.browser;
 
 import android.content.Intent;
-import android.os.Parcel;
 import android.test.FlakyTest;
-import android.test.suitebuilder.annotation.MediumTest;
-import android.util.Log;
-import org.chromium.base.test.util.Feature;
+
 import org.chromium.base.test.util.UrlUtils;
-import org.chromium.chrome.testshell.ChromiumTestShellActivity;
-import org.chromium.chrome.testshell.ChromiumTestShellApplication;
-import org.chromium.chrome.testshell.ChromiumTestShellApplicationObserver;
-import org.chromium.chrome.testshell.ChromiumTestShellTestBase;
-import org.chromium.chrome.testshell.TestShellTab;
+import org.chromium.chrome.shell.ChromeShellActivity;
+import org.chromium.chrome.shell.ChromeShellApplication;
+import org.chromium.chrome.shell.ChromeShellApplicationObserver;
+import org.chromium.chrome.shell.ChromeShellTestBase;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 
-public class ShortcutHelperTest extends ChromiumTestShellTestBase {
+public class ShortcutHelperTest extends ChromeShellTestBase {
     private static final String WEBAPP_ACTION_NAME = "WEBAPP_ACTION";
 
     private static final String WEBAPP_TITLE = "Webapp shortcut";
@@ -43,7 +39,7 @@ public class ShortcutHelperTest extends ChromiumTestShellTestBase {
             + "<head><title>" + NORMAL_TITLE + "</title></head>"
             + "<body>Not Webapp capable</body></html>");
 
-    private static class TestObserver implements ChromiumTestShellApplicationObserver {
+    private static class TestObserver implements ChromeShellApplicationObserver {
         Intent firedIntent;
 
         @Override
@@ -62,18 +58,18 @@ public class ShortcutHelperTest extends ChromiumTestShellTestBase {
         }
     }
 
-    private ChromiumTestShellActivity mActivity;
+    private ChromeShellActivity mActivity;
     private TestObserver mTestObserver;
 
     @Override
     public void setUp() throws Exception {
         ShortcutHelper.setFullScreenAction(WEBAPP_ACTION_NAME);
-        mActivity = launchChromiumTestShellWithBlankPage();
+        mActivity = launchChromeShellWithBlankPage();
 
         // Set up the observer.
         mTestObserver = new TestObserver();
-        ChromiumTestShellApplication application =
-                (ChromiumTestShellApplication) mActivity.getApplication();
+        ChromeShellApplication application =
+                (ChromeShellApplication) mActivity.getApplication();
         application.addObserver(mTestObserver);
 
         super.setUp();

@@ -7,7 +7,7 @@
 
 #include <map>
 
-#include "ash/launcher/launcher_types.h"
+#include "ash/shelf/shelf_item_types.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
@@ -24,15 +24,14 @@ namespace shell {
 // TODO(sky): fix this class, its a bit broke with workspace2.
 
 // WindowWatcher is responsible for listening for newly created windows and
-// creating items on the Launcher for them.
+// creating items on the Shelf for them.
 class WindowWatcher : public aura::WindowObserver,
                       public gfx::DisplayObserver {
  public:
   WindowWatcher();
   virtual ~WindowWatcher();
 
-  aura::Window* GetWindowByID(ash::LauncherID id);
-  ash::LauncherID GetIDByWindow(aura::Window* window) const;
+  aura::Window* GetWindowByID(ash::ShelfID id);
 
   // aura::WindowObserver overrides:
   virtual void OnWindowAdded(aura::Window* new_window) OVERRIDE;
@@ -46,7 +45,7 @@ class WindowWatcher : public aura::WindowObserver,
  private:
   class WorkspaceWindowWatcher;
 
-  typedef std::map<ash::LauncherID, aura::Window*> IDToWindow;
+  typedef std::map<ash::ShelfID, aura::Window*> IDToWindow;
 
   // Maps from window to the id we gave it.
   IDToWindow id_to_window_;

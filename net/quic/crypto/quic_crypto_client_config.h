@@ -17,6 +17,13 @@
 
 namespace net {
 
+class ChannelIDSigner;
+class CryptoHandshakeMessage;
+class ProofVerifier;
+class ProofVerifyDetails;
+class QuicRandom;
+class QuicSessionKey;
+
 // QuicCryptoClientConfig contains crypto-related configuration settings for a
 // client. Note that this object isn't thread-safe. It's designed to be used on
 // a single thread at a time.
@@ -34,6 +41,9 @@ class NET_EXPORT_PRIVATE QuicCryptoClientConfig : public QuicCryptoConfig {
     // perform a handshake with the server. |now| is used to judge whether any
     // cached server config has expired.
     bool IsComplete(QuicWallTime now) const;
+
+    // IsEmpty returns true if |server_config_| is empty.
+    bool IsEmpty() const;
 
     // GetServerConfig returns the parsed contents of |server_config|, or NULL
     // if |server_config| is empty. The return value is owned by this object
@@ -86,8 +96,15 @@ class NET_EXPORT_PRIVATE QuicCryptoClientConfig : public QuicCryptoConfig {
     // unchanged.
     void InitializeFrom(const CachedState& other);
 
+    // Initializes this cached state based on the arguments provided.
+    // Returns false if there is a problem parsing the server config.
+    bool Initialize(base::StringPiece server_config,
+                    base::StringPiece source_address_token,
+                    const std::vector<std::string>& certs,
+                    base::StringPiece signature,
+                    QuicWallTime now);
+
    private:
-    std::string server_config_id_;      // An opaque id from the server.
     std::string server_config_;         // A serialized handshake message.
     std::string source_address_token_;  // An opaque proof of IP ownership.
     std::vector<std::string> certs_;    // A list of certificates in leaf-first
@@ -115,30 +132,36 @@ class NET_EXPORT_PRIVATE QuicCryptoClientConfig : public QuicCryptoConfig {
   // Sets the members to reasonable, default values.
   void SetDefaults();
 
-  // LookupOrCreate returns a CachedState for the given hostname. If no such
+  // LookupOrCreate returns a CachedState for the given |server_key|. If no such
   // CachedState currently exists, it will be created and cached.
-  CachedState* LookupOrCreate(const std::string& server_hostname);
+  CachedState* LookupOrCreate(const QuicSessionKey& server_key);
 
   // FillInchoateClientHello sets |out| to be a CHLO message that elicits a
   // source-address token or SCFG from a server. If |cached| is non-NULL, the
   // source-address token will be taken from it. |out_params| is used in order
   // to store the cached certs that were sent as hints to the server in
-  // |out_params->cached_certs|.
-  void FillInchoateClientHello(const std::string& server_hostname,
+  // |out_params->cached_certs|. |preferred_version| is the version of the
+  // QUIC protocol that this client chose to use initially. This allows the
+  // server to detect downgrade attacks.
+  void FillInchoateClientHello(const QuicSessionKey& server_key,
+                               const QuicVersion preferred_version,
                                const CachedState* cached,
                                QuicCryptoNegotiatedParameters* out_params,
                                CryptoHandshakeMessage* out) const;
 
   // FillClientHello sets |out| to be a CHLO message based on the configuration
   // of this object. This object must have cached enough information about
-  // |server_hostname| in order to perform a handshake. This can be checked
+  // the server's hostname in order to perform a handshake. This can be checked
   // with the |IsComplete| member of |CachedState|.
   //
   // |clock| and |rand| are used to generate the nonce and |out_params| is
   // filled with the results of the handshake that the server is expected to
-  // accept.
-  QuicErrorCode FillClientHello(const std::string& server_hostname,
-                                QuicGuid guid,
+  // accept. |preferred_version| is the version of the QUIC protocol that this
+  // client chose to use initially. This allows the server to detect downgrade
+  // attacks.
+  QuicErrorCode FillClientHello(const QuicSessionKey& server_key,
+                                QuicConnectionId connection_id,
+                                const QuicVersion preferred_version,
                                 const CachedState* cached,
                                 QuicWallTime now,
                                 QuicRandom* rand,
@@ -162,9 +185,13 @@ class NET_EXPORT_PRIVATE QuicCryptoClientConfig : public QuicCryptoConfig {
   // cached information about that server, writes the negotiated parameters to
   // |out_params| and returns QUIC_NO_ERROR. If |server_hello| is unacceptable
   // then it puts an error message in |error_details| and returns an error
-  // code.
+  // code. |negotiated_versions| contains the list of version, if any, that were
+  // present in a version negotiation packet previously recevied from the
+  // server. The contents of this list will be compared against the list of
+  // versions provided in the VER tag of the server hello.
   QuicErrorCode ProcessServerHello(const CryptoHandshakeMessage& server_hello,
-                                   QuicGuid guid,
+                                   QuicConnectionId connection_id,
+                                   const QuicVersionVector& negotiated_versions,
                                    CachedState* cached,
                                    QuicCryptoNegotiatedParameters* out_params,
                                    std::string* error_details);
@@ -185,20 +212,56 @@ class NET_EXPORT_PRIVATE QuicCryptoClientConfig : public QuicCryptoConfig {
   void SetChannelIDSigner(ChannelIDSigner* signer);
 
   // Initialize the CachedState from |canonical_crypto_config| for the
-  // |canonical_server_hostname| as the initial CachedState for
-  // |server_hostname|. We will copy config data only if
-  // |canonical_crypto_config| has valid proof.
-  void InitializeFrom(const std::string& server_hostname,
-                      const std::string& canonical_server_hostname,
+  // |canonical_server_key| as the initial CachedState for |server_key|. We will
+  // copy config data only if |canonical_crypto_config| has valid proof.
+  void InitializeFrom(const QuicSessionKey& server_key,
+                      const QuicSessionKey& canonical_server_key,
                       QuicCryptoClientConfig* canonical_crypto_config);
 
+  // Adds |suffix| as a domain suffix for which the server's crypto config
+  // is expected to be shared among servers with the domain suffix. If a server
+  // matches this suffix, then the server config from another server with the
+  // suffix will be used to initialize the cached state for this server.
+  void AddCanonicalSuffix(const std::string& suffix);
+
+  // Prefers AES-GCM (kAESG) over other AEAD algorithms. Call this method if
+  // the CPU has hardware acceleration for AES-GCM. This method can only be
+  // called after SetDefaults().
+  void PreferAesGcm();
+
+  // Disables the use of ECDSA for proof verification.
+  // Call this method on platforms that do not support ECDSA.
+  // TODO(rch): remove this method when we drop support for Windows XP.
+  void DisableEcdsa();
+
  private:
-  // cached_states_ maps from the server hostname to the cached information
-  // about that server.
-  std::map<std::string, CachedState*> cached_states_;
+  typedef std::map<QuicSessionKey, CachedState*> CachedStateMap;
+
+  // If the suffix of the hostname in |server_key| is in |canoncial_suffixes_|,
+  // then populate |cached| with the canonical cached state from
+  // |canonical_server_map_| for that suffix.
+  void PopulateFromCanonicalConfig(const QuicSessionKey& server_key,
+                                   CachedState* cached);
+
+  // cached_states_ maps from the server_key to the cached information about
+  // that server.
+  CachedStateMap cached_states_;
+
+  // Contains a map of servers which could share the same server config. Map
+  // from a canonical host suffix/port/scheme to a representative server with
+  // the canonical suffix, which has a plausible set of initial certificates
+  // (or at least server public key).
+  std::map<QuicSessionKey, QuicSessionKey> canonical_server_map_;
+
+  // Contains list of suffixes (for exmaple ".c.youtube.com",
+  // ".googlevideo.com") of canoncial hostnames.
+  std::vector<std::string> canoncial_suffixes_;
 
   scoped_ptr<ProofVerifier> proof_verifier_;
   scoped_ptr<ChannelIDSigner> channel_id_signer_;
+
+  // True if ECDSA should be disabled.
+  bool disable_ecdsa_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicCryptoClientConfig);
 };

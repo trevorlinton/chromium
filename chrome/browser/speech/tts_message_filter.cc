@@ -15,7 +15,8 @@
 using content::BrowserThread;
 
 TtsMessageFilter::TtsMessageFilter(int render_process_id, Profile* profile)
-    : render_process_id_(render_process_id),
+    : BrowserMessageFilter(TtsMsgStart),
+      render_process_id_(render_process_id),
       profile_(profile) {
   CHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   TtsController::GetInstance()->AddVoicesChangedDelegate(this);
@@ -67,7 +68,7 @@ void TtsMessageFilter::OnInitializeVoiceList() {
     out_voice.voice_uri = voices[i].name;
     out_voice.name = voices[i].name;
     out_voice.lang = voices[i].lang;
-    out_voice.local_service = true;
+    out_voice.local_service = !voices[i].remote;
     out_voice.is_default = (i == 0);
   }
   Send(new TtsMsg_SetVoiceList(out_voices));
@@ -88,7 +89,7 @@ void TtsMessageFilter::OnSpeak(const TtsUtteranceRequest& request) {
   params.volume = request.volume;
   utterance->set_continuous_parameters(params);
 
-  utterance->set_event_delegate(this);
+  utterance->set_event_delegate(this->AsWeakPtr());
 
   TtsController::GetInstance()->SpeakOrEnqueue(utterance.release());
 }

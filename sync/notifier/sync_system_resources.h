@@ -18,16 +18,16 @@
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/threading/non_thread_safe.h"
+#include "base/values.h"
 #include "google/cacheinvalidation/include/system-resources.h"
+#include "jingle/notifier/base/notifier_options.h"
 #include "sync/base/sync_export.h"
-#include "sync/notifier/push_client_channel.h"
+#include "sync/notifier/invalidator_state.h"
 #include "sync/notifier/state_writer.h"
 
-namespace notifier {
-class PushClient;
-}  // namespace notifier
-
 namespace syncer {
+
+class GCMNetworkChannelDelegate;
 
 class SyncLogger : public invalidation::Logger {
  public:
@@ -78,6 +78,88 @@ class SyncInvalidationScheduler : public invalidation::Scheduler {
   base::WeakPtrFactory<SyncInvalidationScheduler> weak_factory_;
 };
 
+// SyncNetworkChannel implements common tasks needed to interact with
+// invalidation library:
+//  - registering message and network status callbacks
+//  - notifying observers about network channel state change
+// Implementation of particular network protocol should implement
+// SendMessage and call NotifyStateChange and DeliverIncomingMessage.
+class SYNC_EXPORT_PRIVATE SyncNetworkChannel
+    : public NON_EXPORTED_BASE(invalidation::NetworkChannel) {
+ public:
+  class Observer {
+   public:
+    // Called when network channel state changes. Possible states are:
+    //  - INVALIDATIONS_ENABLED : connection is established and working
+    //  - TRANSIENT_INVALIDATION_ERROR : no network, connection lost, etc.
+    //  - INVALIDATION_CREDENTIALS_REJECTED : Issues with auth token
+    virtual void OnNetworkChannelStateChanged(
+        InvalidatorState invalidator_state) = 0;
+  };
+
+  SyncNetworkChannel();
+
+  virtual ~SyncNetworkChannel();
+
+  // invalidation::NetworkChannel implementation.
+  // SyncNetworkChannel doesn't implement SendMessage. It is responsibility of
+  // subclass to implement it.
+  virtual void SetMessageReceiver(
+      invalidation::MessageCallback* incoming_receiver) OVERRIDE;
+  virtual void AddNetworkStatusReceiver(
+      invalidation::NetworkStatusCallback* network_status_receiver) OVERRIDE;
+  virtual void SetSystemResources(
+      invalidation::SystemResources* resources) OVERRIDE;
+
+  // Subclass should implement UpdateCredentials to pass new token to channel
+  // library.
+  virtual void UpdateCredentials(const std::string& email,
+      const std::string& token) = 0;
+
+  // Subclass should implement RequestDetailedStatus to provide debugging
+  // information.
+  virtual void RequestDetailedStatus(
+      base::Callback<void(const base::DictionaryValue&)> callback) = 0;
+
+  // Classes interested in network channel state changes should implement
+  // SyncNetworkChannel::Observer and register here.
+  void AddObserver(Observer* observer);
+  void RemoveObserver(Observer* observer);
+
+  // Helper functions that know how to construct network channels from channel
+  // specific parameters.
+  static scoped_ptr<SyncNetworkChannel> CreatePushClientChannel(
+      const notifier::NotifierOptions& notifier_options);
+  static scoped_ptr<SyncNetworkChannel> CreateGCMNetworkChannel(
+      scoped_refptr<net::URLRequestContextGetter> request_context_getter,
+      scoped_ptr<GCMNetworkChannelDelegate> delegate);
+
+  // Get the count of how many valid received messages were received.
+  int GetReceivedMessagesCount() const;
+
+ protected:
+  // Subclass should notify about connection state through NotifyStateChange.
+  void NotifyStateChange(InvalidatorState invalidator_state);
+  // Subclass should call DeliverIncomingMessage for message to reach
+  // invalidations library.
+  bool DeliverIncomingMessage(const std::string& message);
+
+ private:
+  typedef std::vector<invalidation::NetworkStatusCallback*>
+      NetworkStatusReceiverList;
+
+  // Callbacks into invalidation library
+  scoped_ptr<invalidation::MessageCallback> incoming_receiver_;
+  NetworkStatusReceiverList network_status_receivers_;
+
+  // Last channel state for new network status receivers.
+  InvalidatorState invalidator_state_;
+
+  int received_messages_count_;
+
+  ObserverList<Observer> observers_;
+};
+
 class SyncStorage : public invalidation::Storage {
  public:
   SyncStorage(StateWriter* state_writer, invalidation::Scheduler* scheduler);
@@ -121,7 +203,7 @@ class SyncStorage : public invalidation::Storage {
 class SYNC_EXPORT_PRIVATE SyncSystemResources
     : public NON_EXPORTED_BASE(invalidation::SystemResources) {
  public:
-  SyncSystemResources(scoped_ptr<notifier::PushClient> push_client,
+  SyncSystemResources(SyncNetworkChannel* sync_network_channel,
                       StateWriter* state_writer);
 
   virtual ~SyncSystemResources();
@@ -134,7 +216,7 @@ class SYNC_EXPORT_PRIVATE SyncSystemResources
   virtual std::string platform() const OVERRIDE;
   virtual SyncLogger* logger() OVERRIDE;
   virtual SyncStorage* storage() OVERRIDE;
-  virtual PushClientChannel* network() OVERRIDE;
+  virtual SyncNetworkChannel* network() OVERRIDE;
   virtual SyncInvalidationScheduler* internal_scheduler() OVERRIDE;
   virtual SyncInvalidationScheduler* listener_scheduler() OVERRIDE;
 
@@ -145,7 +227,8 @@ class SYNC_EXPORT_PRIVATE SyncSystemResources
   scoped_ptr<SyncInvalidationScheduler> internal_scheduler_;
   scoped_ptr<SyncInvalidationScheduler> listener_scheduler_;
   scoped_ptr<SyncStorage> storage_;
-  PushClientChannel push_client_channel_;
+  // sync_network_channel_ is owned by SyncInvalidationListener.
+  SyncNetworkChannel* sync_network_channel_;
 };
 
 }  // namespace syncer

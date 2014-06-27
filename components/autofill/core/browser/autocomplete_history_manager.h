@@ -12,11 +12,6 @@
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/webdata/common/web_data_service_consumer.h"
 
-namespace content {
-class BrowserContext;
-class WebContents;
-}
-
 namespace autofill {
 
 class AutofillDriver;
@@ -44,6 +39,7 @@ class AutocompleteHistoryManager : public WebDataServiceConsumer {
       int query_id,
       const base::string16& name,
       const base::string16& prefix,
+      const std::string form_control_type,
       const std::vector<base::string16>& autofill_values,
       const std::vector<base::string16>& autofill_labels,
       const std::vector<base::string16>& autofill_icons,
@@ -63,17 +59,13 @@ class AutocompleteHistoryManager : public WebDataServiceConsumer {
   // Sends the given |suggestions| for display in the Autofill popup.
   void SendSuggestions(const std::vector<base::string16>* suggestions);
 
-  // Used by tests to disable sending IPC.
-  void set_send_ipc(bool send_ipc) { send_ipc_ = send_ipc; }
-
  private:
   // Cancels the currently pending WebDataService query, if there is one.
   void CancelPendingQuery();
 
-  content::BrowserContext* browser_context_;
   // Provides driver-level context. Must outlive this object.
   AutofillDriver* driver_;
-  scoped_refptr<AutofillWebDataService> autofill_data_;
+  scoped_refptr<AutofillWebDataService> database_;
 
   // When the manager makes a request from WebDataServiceBase, the database is
   // queried on another thread, we record the query handle until we get called

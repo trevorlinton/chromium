@@ -17,7 +17,6 @@ using base::android::ScopedJavaLocalRef;
 struct SessionWindow;
 
 namespace browser_sync {
-class SessionModelAssociator;
 struct SyncedSession;
 }  // namespace browser_sync
 
@@ -30,15 +29,10 @@ class ForeignSessionHelper : public content::NotificationObserver {
   jboolean GetForeignSessions(JNIEnv* env, jobject obj, jobject result);
   jboolean OpenForeignSessionTab(JNIEnv* env,
                                  jobject obj,
+                                 jobject j_tab,
                                  jstring session_tag,
-                                 jint tab_id);
-  void SetForeignSessionCollapsed(JNIEnv* env,
-                                  jobject obj,
-                                  jstring session_tag,
-                                  jboolean is_collapsed);
-  jboolean GetForeignSessionCollapsed(JNIEnv* env,
-                                      jobject obj,
-                                      jstring session_tag);
+                                 jint tab_id,
+                                 jint disposition);
   void DeleteForeignSession(JNIEnv* env, jobject obj, jstring session_tag);
 
   // NotificationObserver implemenation

@@ -65,13 +65,15 @@ class TestHelper {
   static void SetupContextGroupInitExpectations(
       ::gfx::MockGLInterface* gl,
       const DisallowedFeatures& disallowed_features,
-      const char* extensions);
+      const char* extensions,
+      const char* gl_version);
   static void SetupFeatureInfoInitExpectations(
       ::gfx::MockGLInterface* gl, const char* extensions);
   static void SetupFeatureInfoInitExpectationsWithGLVersion(
       ::gfx::MockGLInterface* gl,
       const char* extensions,
-      const char* version);
+      const char* gl_renderer,
+      const char* gl_version);
   static void SetupTextureManagerInitExpectations(
       ::gfx::MockGLInterface* gl, const char* extensions);
   static void SetupTextureManagerDestructionExpectations(
@@ -96,7 +98,7 @@ class TestHelper {
       BufferManager* manager, Buffer* buffer, GLsizeiptr size, GLenum usage,
       const GLvoid* data, GLenum error);
 
-  static void SetTexParameterWithExpectations(
+  static void SetTexParameteriWithExpectations(
       ::gfx::MockGLInterface* gl, MockErrorState* error_state,
       TextureManager* manager, TextureRef* texture_ref,
       GLenum pname, GLint value, GLenum error);

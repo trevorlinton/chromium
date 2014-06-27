@@ -89,7 +89,7 @@ void SimulatePollSuccess(ModelTypeSet requested_types,
 }
 
 void SimulatePollFailed(ModelTypeSet requested_types,
-                        sessions::SyncSession* session) {
+                             sessions::SyncSession* session) {
   ASSERT_EQ(0U, session->status_controller().num_server_changes_remaining());
   session->mutable_status_controller()->set_last_download_updates_result(
       SERVER_RETURN_TRANSIENT_ERROR);
@@ -127,6 +127,13 @@ void SimulateSessionsCommitDelayUpdateImpl(
     const base::TimeDelta& new_delay) {
   SimulateNormalSuccess(requested_types, nudge_tracker, session);
   session->delegate()->OnReceivedSessionsCommitDelay(new_delay);
+}
+
+void SimulateGuRetryDelayCommandImpl(sessions::SyncSession* session,
+                                     base::TimeDelta delay) {
+  session->mutable_status_controller()->set_last_download_updates_result(
+      SYNCER_OK);
+  session->delegate()->OnReceivedGuRetryDelay(delay);
 }
 
 }  // namespace test_util

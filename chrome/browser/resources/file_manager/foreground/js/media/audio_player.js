@@ -12,11 +12,12 @@
  */
 function AudioPlayer(container) {
   this.container_ = container;
-  this.metadataCache_ = MetadataCache.createFull();
   this.currentTrack_ = -1;
   this.playlistGeneration_ = 0;
+  this.selectedEntry_ = null;
   this.volumeManager_ = new VolumeManagerWrapper(
       VolumeManagerWrapper.DriveEnabledStatus.DRIVE_ENABLED);
+  this.metadataCache_ = MetadataCache.createFull(this.volumeManager_);
 
   this.container_.classList.add('collapsed');
 
@@ -39,7 +40,6 @@ function AudioPlayer(container) {
 
   this.audioControls_ = new FullWindowAudioControls(
       createChild(), this.advance_.bind(this), this.onError_.bind(this));
-
   this.audioControls_.attachMedia(createChild('', 'audio'));
 
   chrome.fileBrowserPrivate.getStrings(function(strings) {
@@ -66,13 +66,9 @@ function AudioPlayer(container) {
 AudioPlayer.load = function() {
   document.ondragstart = function(e) { e.preventDefault() };
 
-  // TODO(mtomasz): Consider providing an exact size icon, instead of relying
-  // on downsampling by ash.
-  chrome.app.window.current().setIcon('images/media/2x/audio_player.png');
-
   AudioPlayer.instance =
       new AudioPlayer(document.querySelector('.audio-player'));
-  reload();
+  AudioPlayer.instance.load(window.appState);
 };
 
 util.addPageLoadHandler(AudioPlayer.load);
@@ -89,11 +85,7 @@ function unload() {
  * Reload the player.
  */
 function reload() {
-  if (window.appState) {
-    util.saveAppState();
-    AudioPlayer.instance.load(window.appState);
-    return;
-  }
+  AudioPlayer.instance.load(window.appState);
 }
 
 /**
@@ -104,47 +96,57 @@ AudioPlayer.prototype.load = function(playlist) {
   this.playlistGeneration_++;
   this.audioControls_.pause();
   this.currentTrack_ = -1;
-  this.urls_ = playlist.items;
 
-  this.invalidTracks_ = {};
-  this.cancelAutoAdvance_();
+  // Save the app state, in case of restart. Make a copy of the object, so the
+  // playlist member is not changed after entries are resolved.
+  window.appState = JSON.parse(JSON.stringify(playlist));
+  util.saveAppState();
 
-  if (this.urls_.length <= 1)
-    this.container_.classList.add('single-track');
-  else
-    this.container_.classList.remove('single-track');
+  // Resolving entries has to be done after the volume manager is initialized.
+  this.volumeManager_.ensureInitialized(function() {
+    util.URLsToEntries(playlist.items, function(entries) {
+      this.entries_ = entries;
+      this.invalidTracks_ = {};
+      this.cancelAutoAdvance_();
 
-  this.syncHeight_();
+      if (this.entries_.length <= 1)
+        this.container_.classList.add('single-track');
+      else
+        this.container_.classList.remove('single-track');
 
-  this.trackList_.textContent = '';
-  this.trackStack_.textContent = '';
+      this.syncHeight_();
 
-  this.trackListItems_ = [];
-  this.trackStackItems_ = [];
+      this.trackList_.textContent = '';
+      this.trackStack_.textContent = '';
 
-  if (this.urls_.length == 0)
-    return;
+      this.trackListItems_ = [];
+      this.trackStackItems_ = [];
 
-  for (var i = 0; i != this.urls_.length; i++) {
-    var url = this.urls_[i];
-    var onClick = this.select_.bind(this, i, false /* no restore */);
-    this.trackListItems_.push(
-        new AudioPlayer.TrackInfo(this.trackList_, url, onClick));
-    this.trackStackItems_.push(
-        new AudioPlayer.TrackInfo(this.trackStack_, url, onClick));
-  }
+      if (this.entries_.length == 0)
+        return;
 
-  this.select_(playlist.position, !!playlist.time);
+      for (var i = 0; i != this.entries_.length; i++) {
+        var entry = this.entries_[i];
+        var onClick = this.select_.bind(this, i, false /* no restore */);
+        this.trackListItems_.push(
+            new AudioPlayer.TrackInfo(this.trackList_, entry, onClick));
+        this.trackStackItems_.push(
+            new AudioPlayer.TrackInfo(this.trackStack_, entry, onClick));
+      }
 
-  // This class will be removed if at least one track has art.
-  this.container_.classList.add('noart');
+      this.select_(playlist.position, !!playlist.time);
 
-  // Load the selected track metadata first, then load the rest.
-  this.loadMetadata_(playlist.position);
-  for (i = 0; i != this.urls_.length; i++) {
-    if (i != playlist.position)
-      this.loadMetadata_(i);
-  }
+      // This class will be removed if at least one track has art.
+      this.container_.classList.add('noart');
+
+      // Load the selected track metadata first, then load the rest.
+      this.loadMetadata_(playlist.position);
+      for (i = 0; i != this.entries_.length; i++) {
+        if (i != playlist.position)
+          this.loadMetadata_(i);
+      }
+    }.bind(this));
+  }.bind(this));
 };
 
 /**
@@ -154,7 +156,7 @@ AudioPlayer.prototype.load = function(playlist) {
  */
 AudioPlayer.prototype.loadMetadata_ = function(track) {
   this.fetchMetadata_(
-      this.urls_[track], this.displayMetadata_.bind(this, track));
+      this.entries_[track], this.displayMetadata_.bind(this, track));
 };
 
 /**
@@ -177,10 +179,13 @@ AudioPlayer.prototype.displayMetadata_ = function(track, metadata, opt_error) {
  * @private
  */
 AudioPlayer.prototype.onExternallyUnmounted_ = function(event) {
-  if (!this.selectedItemFilesystemPath_)
+  if (!this.selectedEntry_)
     return;
-  if (this.selectedItemFilesystemPath_.indexOf(event.mountPath) == 0)
-    close();
+
+  if (this.volumeManager_.getVolumeInfo(this.selectedEntry_) ===
+      event.volumeInfo) {
+    window.close();
+  }
 };
 
 /**
@@ -205,42 +210,31 @@ AudioPlayer.prototype.select_ = function(newTrack, opt_restoreState) {
 
   this.currentTrack_ = newTrack;
 
-  if (window.appState) {
-    window.appState.position = this.currentTrack_;
-    window.appState.time = 0;
-    util.saveAppState();
-  } else {
-    util.platform.setPreference(AudioPlayer.TRACK_KEY, this.currentTrack_);
-  }
+  window.appState.position = this.currentTrack_;
+  window.appState.time = 0;
+  util.saveAppState();
 
   this.scrollToCurrent_(false);
 
   var currentTrack = this.currentTrack_;
-  var url = this.urls_[currentTrack];
-  this.fetchMetadata_(url, function(metadata) {
+  var entry = this.entries_[currentTrack];
+  this.fetchMetadata_(entry, function(metadata) {
     if (this.currentTrack_ != currentTrack)
       return;
-    var src = url;
-    this.audioControls_.load(src, opt_restoreState);
+    this.audioControls_.load(entry, opt_restoreState);
 
     // Resolve real filesystem path of the current audio file.
-    this.selectedItemFilesystemPath_ = null;
-    webkitResolveLocalFileSystemURL(src,
-      function(entry) {
-        if (this.currentTrack_ != currentTrack)
-          return;
-        this.selectedItemFilesystemPath_ = entry.fullPath;
-      }.bind(this));
+    this.selectedEntry_ = entry;
   }.bind(this));
 };
 
 /**
- * @param {string} url Track file url.
+ * @param {Entry} entry Track file entry.
  * @param {function(object)} callback Callback.
  * @private
  */
-AudioPlayer.prototype.fetchMetadata_ = function(url, callback) {
-  this.metadataCache_.get(url, 'thumbnail|media|streaming',
+AudioPlayer.prototype.fetchMetadata_ = function(entry, callback) {
+  this.metadataCache_.get(entry, 'thumbnail|media|streaming',
       function(generation, metadata) {
         // Do nothing if another load happened since the metadata request.
         if (this.playlistGeneration_ == generation)
@@ -317,8 +311,8 @@ AudioPlayer.prototype.advance_ = function(forward, opt_onlyIfValid) {
   this.cancelAutoAdvance_();
 
   var newTrack = this.currentTrack_ + (forward ? 1 : -1);
-  if (newTrack < 0) newTrack = this.urls_.length - 1;
-  if (newTrack == this.urls_.length) newTrack = 0;
+  if (newTrack < 0) newTrack = this.entries_.length - 1;
+  if (newTrack == this.entries_.length) newTrack = 0;
   if (opt_onlyIfValid && this.invalidTracks_[newTrack])
     return;
   this.select_(newTrack);
@@ -334,7 +328,7 @@ AudioPlayer.prototype.onError_ = function() {
   this.invalidTracks_[track] = true;
 
   this.fetchMetadata_(
-      this.urls_[track],
+      this.entries_[track],
       function(metadata) {
         var error = (!navigator.onLine && metadata.streaming) ?
             this.offlineString_ : this.errorString_;
@@ -469,7 +463,7 @@ AudioPlayer.prototype.syncHeight_ = function() {
       targetHeight = this.lastExpandedHeight_;
     } else {
       var expandedListHeight =
-        Math.min(this.urls_.length, AudioPlayer.DEFAULT_EXPANDED_ITEMS) *
+        Math.min(this.entries_.length, AudioPlayer.DEFAULT_EXPANDED_ITEMS) *
                                     AudioPlayer.TRACK_HEIGHT;
       targetHeight = AudioPlayer.CONTROLS_HEIGHT + expandedListHeight;
     }
@@ -485,12 +479,12 @@ AudioPlayer.prototype.syncHeight_ = function() {
  * Create a TrackInfo object encapsulating the information about one track.
  *
  * @param {HTMLElement} container Container element.
- * @param {string} url Track url.
+ * @param {Entry} entry Track entry.
  * @param {function} onClick Click handler.
  * @constructor
  */
-AudioPlayer.TrackInfo = function(container, url, onClick) {
-  this.url_ = url;
+AudioPlayer.TrackInfo = function(container, entry, onClick) {
+  this.entry_ = entry;
 
   var doc = container.ownerDocument;
 
@@ -525,13 +519,13 @@ AudioPlayer.TrackInfo = function(container, url, onClick) {
 AudioPlayer.TrackInfo.prototype.getBox = function() { return this.box_ };
 
 /**
- * @return {string} Default track title (file name extracted from the url).
+ * @return {string} Default track title (file name extracted from the entry).
  */
 AudioPlayer.TrackInfo.prototype.getDefaultTitle = function() {
-  var title = this.url_.split('/').pop();
-  var dotIndex = title.lastIndexOf('.');
-  if (dotIndex >= 0) title = title.substr(0, dotIndex);
-  title = decodeURIComponent(title);
+  // TODO(mtomasz): Reuse ImageUtil.getDisplayNameFromName().
+  var name = this.entry_.name;
+  var dotIndex = name.lastIndexOf('.');
+  var title = dotIndex >= 0 ? name.substr(0, dotIndex) : name;
   return title;
 };
 
@@ -595,11 +589,11 @@ FullWindowAudioControls.prototype = { __proto__: AudioControls.prototype };
 
 /**
  * Enable play state restore from the location hash.
- * @param {string} src Source URL.
+ * @param {FileEntry} entry Source Entry.
  * @param {boolean} restore True if need to restore the play state.
  */
-FullWindowAudioControls.prototype.load = function(src, restore) {
-  this.media_.src = src;
+FullWindowAudioControls.prototype.load = function(entry, restore) {
+  this.media_.src = entry.toURL();
   this.media_.load();
   this.restoreWhenLoaded_ = restore;
 };

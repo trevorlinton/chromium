@@ -13,16 +13,14 @@
 #include "ui/views/controls/button/button.h"
 #include "ui/views/window/dialog_delegate.h"
 
-namespace ui {
-class MenuModel;
-}
-
 namespace views {
 class Checkbox;
 class LabelButton;
 class MenuRunner;
 class Widget;
 }
+
+class MediaGalleryCheckboxView;
 
 // The media galleries configuration view for Views. It will immediately show
 // upon construction.
@@ -39,20 +37,18 @@ class MediaGalleriesDialogViews : public MediaGalleriesDialog,
   virtual void UpdateGalleries() OVERRIDE;
 
   // views::DialogDelegate implementation:
-  virtual string16 GetWindowTitle() const OVERRIDE;
-  virtual bool ShouldShowWindowTitle() const OVERRIDE;
+  virtual base::string16 GetWindowTitle() const OVERRIDE;
   virtual void DeleteDelegate() OVERRIDE;
   virtual views::Widget* GetWidget() OVERRIDE;
   virtual const views::Widget* GetWidget() const OVERRIDE;
   virtual views::View* GetContentsView() OVERRIDE;
-  virtual string16 GetDialogButtonLabel(ui::DialogButton button) const OVERRIDE;
+  virtual base::string16 GetDialogButtonLabel(
+      ui::DialogButton button) const OVERRIDE;
   virtual bool IsDialogButtonEnabled(ui::DialogButton button) const OVERRIDE;
   virtual ui::ModalType GetModalType() const OVERRIDE;
   virtual views::View* CreateExtraView() OVERRIDE;
   virtual bool Cancel() OVERRIDE;
   virtual bool Accept() OVERRIDE;
-  virtual views::NonClientFrameView* CreateNonClientFrameView(
-      views::Widget* widget) OVERRIDE;
 
   // views::ButtonListener implementation:
   virtual void ButtonPressed(views::Button* sender,
@@ -64,8 +60,14 @@ class MediaGalleriesDialogViews : public MediaGalleriesDialog,
                                       ui::MenuSourceType source_type) OVERRIDE;
 
  private:
-  typedef std::map<MediaGalleryPrefId, views::Checkbox*> CheckboxMap;
-  typedef std::map<views::Checkbox*, MediaGalleryPrefInfo> NewCheckboxMap;
+  FRIEND_TEST_ALL_PREFIXES(MediaGalleriesDialogTest, InitializeCheckboxes);
+  FRIEND_TEST_ALL_PREFIXES(MediaGalleriesDialogTest, ToggleCheckboxes);
+  FRIEND_TEST_ALL_PREFIXES(MediaGalleriesDialogTest, UpdateAdds);
+  FRIEND_TEST_ALL_PREFIXES(MediaGalleriesDialogTest, ForgetDeletes);
+
+  typedef std::map<MediaGalleryPrefId, MediaGalleryCheckboxView*> CheckboxMap;
+  typedef std::map<MediaGalleryCheckboxView*, MediaGalleryPrefInfo>
+      NewCheckboxMap;
 
   void InitChildViews();
 
@@ -80,12 +82,16 @@ class MediaGalleriesDialogViews : public MediaGalleriesDialog,
                        ui::MenuSourceType source_type,
                        MediaGalleryPrefId id);
 
+  // Whether |controller_| has a valid WebContents or not.
+  // In unit tests, it may not.
+  bool ControllerHasWebContents() const;
+
   MediaGalleriesDialogController* controller_;
 
   // The containing window (a weak pointer).
   views::Widget* window_;
 
-  // The contents of the dialog. Owned by |window_|'s RootView.
+  // The contents of the dialog. Owned by |window_|'s RootView except for tests.
   views::View* contents_;
 
   // A map from media gallery ID to views::Checkbox view.

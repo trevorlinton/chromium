@@ -29,7 +29,7 @@ OFFICIAL_CHANGELOG_URL = 'http://omahaproxy.appspot.com/'\
                          'changelog?old_version=%s&new_version=%s'
 
 # DEPS file URL.
-DEPS_FILE= 'http://src.chromium.org/viewvc/chrome/trunk/src/DEPS?revision=%d'
+DEPS_FILE = 'http://src.chromium.org/viewvc/chrome/trunk/src/DEPS?revision=%d'
 # Blink Changelogs URL.
 BLINK_CHANGELOG_URL = 'http://build.chromium.org/f/chromium/' \
                       'perf/dashboard/ui/changelog_blink.html?' \
@@ -43,10 +43,8 @@ DONE_MESSAGE_GOOD_MAX = 'You are probably looking for a change made after %s ' \
 ###############################################################################
 
 import json
-import math
 import optparse
 import os
-import pipes
 import re
 import shlex
 import shutil
@@ -64,7 +62,7 @@ class PathContext(object):
   """A PathContext is used to carry the information used to construct URLs and
   paths when dealing with the storage server and archives."""
   def __init__(self, base_url, platform, good_revision, bad_revision,
-               is_official, is_aura):
+               is_official, is_aura, flash_path = None, pdf_path = None):
     super(PathContext, self).__init__()
     # Store off the input parameters.
     self.base_url = base_url
@@ -73,6 +71,8 @@ class PathContext(object):
     self.bad_revision = bad_revision
     self.is_official = is_official
     self.is_aura = is_aura
+    self.flash_path = flash_path
+    self.pdf_path = pdf_path
 
     # The name of the ZIP file in a revision directory on the server.
     self.archive_name = None
@@ -287,16 +287,16 @@ class PathContext(object):
         pass
     return final_list
 
-def UnzipFilenameToDir(filename, dir):
-  """Unzip |filename| to directory |dir|."""
+def UnzipFilenameToDir(filename, directory):
+  """Unzip |filename| to |directory|."""
   cwd = os.getcwd()
   if not os.path.isabs(filename):
     filename = os.path.join(cwd, filename)
   zf = zipfile.ZipFile(filename)
   # Make base.
-  if not os.path.isdir(dir):
-    os.mkdir(dir)
-  os.chdir(dir)
+  if not os.path.isdir(directory):
+    os.mkdir(directory)
+  os.chdir(directory)
   # Extract files.
   for info in zf.infolist():
     name = info.filename
@@ -304,9 +304,9 @@ def UnzipFilenameToDir(filename, dir):
       if not os.path.isdir(name):
         os.makedirs(name)
     else:  # file
-      dir = os.path.dirname(name)
-      if not os.path.isdir(dir):
-        os.makedirs(dir)
+      directory = os.path.dirname(name)
+      if not os.path.isdir(directory):
+        os.makedirs(directory)
       out = open(name, 'wb')
       out.write(zf.read(name))
       out.close()
@@ -363,8 +363,19 @@ def RunRevision(context, revision, zipfile, profile, num_runs, command, args):
   # Run the build as many times as specified.
   testargs = ['--user-data-dir=%s' % profile] + args
   # The sandbox must be run as root on Official Chrome, so bypass it.
-  if context.is_official and context.platform.startswith('linux'):
+  if ((context.is_official or context.flash_path or context.pdf_path) and
+      context.platform.startswith('linux')):
     testargs.append('--no-sandbox')
+  if context.flash_path:
+    testargs.append('--ppapi-flash-path=%s' % context.flash_path)
+    # We have to pass a large enough Flash version, which currently needs not
+    # be correct. Instead of requiring the user of the script to figure out and
+    # pass the correct version we just spoof it.
+    testargs.append('--ppapi-flash-version=99.9.999.999')
+
+  if context.pdf_path:
+    shutil.copy(context.pdf_path, os.path.dirname(context.GetLaunchPath()))
+    testargs.append('--enable-print-preview')
 
   runcommand = []
   for token in shlex.split(command):
@@ -372,15 +383,17 @@ def RunRevision(context, revision, zipfile, profile, num_runs, command, args):
       runcommand.extend(testargs)
     else:
       runcommand.append( \
-          token.replace('%p', context.GetLaunchPath()) \
+          token.replace('%p', os.path.abspath(context.GetLaunchPath())) \
                .replace('%s', ' '.join(testargs)))
 
+  results = []
   for i in range(0, num_runs):
     subproc = subprocess.Popen(runcommand,
                                bufsize=-1,
                                stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE)
     (stdout, stderr) = subproc.communicate()
+    results.append((subproc.returncode, stdout, stderr))
 
   os.chdir(cwd)
   try:
@@ -388,7 +401,10 @@ def RunRevision(context, revision, zipfile, profile, num_runs, command, args):
   except Exception, e:
     pass
 
-  return (subproc.returncode, stdout, stderr)
+  for (returncode, stdout, stderr) in results:
+    if returncode:
+      return (returncode, stdout, stderr)
+  return results[0]
 
 
 def AskIsGoodBuild(rev, official_builds, status, stdout, stderr):
@@ -452,6 +468,9 @@ def Bisect(base_url,
            command="%p %a",
            try_args=(),
            profile=None,
+           flash_path=None,
+           pdf_path=None,
+           interactive=True,
            evaluate=AskIsGoodBuild):
   """Given known good and known bad revisions, run a binary search on all
   archived revisions to determine the last known good revision.
@@ -463,6 +482,8 @@ def Bisect(base_url,
   @param num_runs Number of times to run each build for asking good/bad.
   @param try_args A tuple of arguments to pass to the test application.
   @param profile The name of the user profile to run with.
+  @param interactive If it is false, use command exit code for good or bad
+                     judgment of the argument build.
   @param evaluate A function which returns 'g' if the argument build is good,
                   'b' if it's bad or 'u' if unknown.
 
@@ -485,7 +506,7 @@ def Bisect(base_url,
     profile = 'profile'
 
   context = PathContext(base_url, platform, good_rev, bad_rev,
-                        official_builds, is_aura)
+                        official_builds, is_aura, flash_path, pdf_path)
   cwd = os.getcwd()
 
   print "Downloading list of known revisions..."
@@ -554,13 +575,21 @@ def Bisect(base_url,
                                              command,
                                              try_args)
     except Exception, e:
-      print >>sys.stderr, e
+      print >> sys.stderr, e
 
     # Call the evaluate function to see if the current revision is good or bad.
     # On that basis, kill one of the background downloads and complete the
     # other, as described in the comments above.
     try:
-      answer = evaluate(rev, official_builds, status, stdout, stderr)
+      if not interactive:
+        if status:
+          answer = 'b'
+          print 'Bad revision: %s' % rev
+        else:
+          answer = 'g'
+          print 'Good revision: %s' % rev
+      else:
+        answer = evaluate(rev, official_builds, status, stdout, stderr)
       if answer == 'g' and good_rev < bad_rev or \
           answer == 'b' and bad_rev < good_rev:
         fetch.Stop()
@@ -721,6 +750,17 @@ def main():
                     help = 'A bad revision to start bisection. ' +
                     'May be earlier or later than the good revision. ' +
                     'Default is HEAD.')
+  parser.add_option('-f', '--flash_path', type = 'str',
+                    help = 'Absolute path to a recent Adobe Pepper Flash ' +
+                    'binary to be used in this bisection (e.g. ' +
+                    'on Windows C:\...\pepflashplayer.dll and on Linux ' +
+                    '/opt/google/chrome/PepperFlash/libpepflashplayer.so).')
+  parser.add_option('-d', '--pdf_path', type = 'str',
+                    help = 'Absolute path to a recent PDF pluggin ' +
+                    'binary to be used in this bisection (e.g. ' +
+                    'on Windows C:\...\pdf.dll and on Linux ' +
+                    '/opt/google/chrome/libpdf.so). Option also enables ' +
+                    'print preview.')
   parser.add_option('-g', '--good', type = 'str',
                     help = 'A good revision to start bisection. ' +
                     'May be earlier or later than the bad revision. ' +
@@ -738,9 +778,12 @@ def main():
                     'Use %s to specify all extra arguments as one string. ' +
                     'Defaults to "%p %a". Note that any extra paths ' +
                     'specified should be absolute.',
-                    default = '%p %a');
+                    default = '%p %a')
   parser.add_option('-l', '--blink', action='store_true',
                     help = 'Use Blink bisect instead of Chromium. ')
+  parser.add_option('', '--not-interactive', action='store_true',
+                    help = 'Use command exit code to tell good/bad revision.',
+                    default=False)
   parser.add_option('--aura',
                     dest='aura',
                     action='store_true',
@@ -768,7 +811,7 @@ def main():
 
   # Create the context. Initialize 0 for the revisions as they are set below.
   context = PathContext(base_url, opts.archive, 0, 0,
-                        opts.official_builds, opts.aura)
+                        opts.official_builds, opts.aura, None)
   # Pick a starting point, try to get HEAD for this.
   if opts.bad:
     bad_rev = opts.bad
@@ -782,6 +825,16 @@ def main():
     good_rev = opts.good
   else:
     good_rev = '0.0.0.0' if opts.official_builds else 0
+
+  if opts.flash_path:
+    flash_path = opts.flash_path
+    msg = 'Could not find Flash binary at %s' % flash_path
+    assert os.path.exists(flash_path), msg
+
+  if opts.pdf_path:
+    pdf_path = opts.pdf_path
+    msg = 'Could not find PDF binary at %s' % pdf_path
+    assert os.path.exists(pdf_path), msg
 
   if opts.official_builds:
     good_rev = LooseVersion(good_rev)
@@ -798,7 +851,8 @@ def main():
 
   (min_chromium_rev, max_chromium_rev) = Bisect(
       base_url, opts.archive, opts.official_builds, opts.aura, good_rev,
-      bad_rev, opts.times, opts.command, args, opts.profile)
+      bad_rev, opts.times, opts.command, args, opts.profile, opts.flash_path,
+      opts.pdf_path, not opts.not_interactive)
 
   # Get corresponding blink revisions.
   try:

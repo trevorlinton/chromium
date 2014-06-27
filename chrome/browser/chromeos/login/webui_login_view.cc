@@ -18,10 +18,9 @@
 #include "chrome/browser/chromeos/login/proxy_settings_dialog.h"
 #include "chrome/browser/chromeos/login/webui_login_display.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
-#include "chrome/browser/extensions/extension_web_contents_observer.h"
+#include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
 #include "chrome/browser/media/media_stream_infobar_delegate.h"
-#include "chrome/browser/password_manager/password_manager.h"
-#include "chrome/browser/password_manager/password_manager_delegate_impl.h"
+#include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/renderer_preferences_util.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "chrome/common/render_messages.h"
@@ -29,6 +28,7 @@
 #include "chromeos/dbus/session_manager_client.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
+#include "components/password_manager/core/browser/password_manager.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_view_host.h"
@@ -36,6 +36,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
 #include "content/public/browser/web_ui.h"
+#include "third_party/WebKit/public/web/WebInputEvent.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/size.h"
 #include "ui/views/controls/webview/webview.h"
@@ -60,6 +61,7 @@ const char kAccelFocusNext[] = "focus_next";
 const char kAccelNameDeviceRequisition[] = "device_requisition";
 const char kAccelNameDeviceRequisitionRemora[] = "device_requisition_remora";
 const char kAccelNameAppLaunchBailout[] = "app_launch_bailout";
+const char kAccelNameAppLaunchNetworkConfig[] = "app_launch_network_config";
 
 // A class to change arrow key traversal behavior when it's alive.
 class ScopedArrowKeyTraversal {
@@ -141,6 +143,10 @@ WebUILoginView::WebUILoginView()
                              ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN)] =
       kAccelNameAppLaunchBailout;
 
+  accel_map_[ui::Accelerator(ui::VKEY_N,
+                             ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN)] =
+      kAccelNameAppLaunchNetworkConfig;
+
   for (AccelMap::iterator i(accel_map_.begin()); i != accel_map_.end(); ++i)
     AddAccelerator(i->first);
 }
@@ -166,9 +172,7 @@ void WebUILoginView::Init() {
   WebContents* web_contents = webui_login_->GetWebContents();
 
   // Create the password manager that is needed for the proxy.
-  PasswordManagerDelegateImpl::CreateForWebContents(web_contents);
-  PasswordManager::CreateForWebContentsAndDelegate(
-      web_contents, PasswordManagerDelegateImpl::FromWebContents(web_contents));
+  ChromePasswordManagerClient::CreateForWebContents(web_contents);
 
   // LoginHandlerViews uses a constrained window for the password manager view.
   WebContentsModalDialogManager::CreateForWebContents(web_contents);
@@ -176,7 +180,8 @@ void WebUILoginView::Init() {
       SetDelegate(this);
 
   web_contents->SetDelegate(this);
-  extensions::ExtensionWebContentsObserver::CreateForWebContents(web_contents);
+  extensions::ChromeExtensionWebContentsObserver::CreateForWebContents(
+      web_contents);
   WebContentsObserver::Observe(web_contents);
   renderer_preferences_util::UpdateFromSystemSettings(
       web_contents->GetMutableRendererPrefs(),
@@ -272,7 +277,8 @@ void WebUILoginView::OpenProxySettings() {
     return;
   }
   ProxySettingsDialog* dialog =
-      new ProxySettingsDialog(*network, NULL, GetNativeWindow());
+      new ProxySettingsDialog(ProfileHelper::GetSigninProfile(),
+                              *network, NULL, GetNativeWindow());
   dialog->Show();
 }
 
@@ -366,7 +372,7 @@ void WebUILoginView::HandleKeyboardEvent(content::WebContents* source,
   // Make sure error bubble is cleared on keyboard event. This is needed
   // when the focus is inside an iframe. Only clear on KeyDown to prevent hiding
   // an immediate authentication error (See crbug.com/103643).
-  if (event.type == WebKit::WebInputEvent::KeyDown) {
+  if (event.type == blink::WebInputEvent::KeyDown) {
     content::WebUI* web_ui = GetWebUI();
     if (web_ui)
       web_ui->CallJavascriptFunction("cr.ui.Oobe.clearErrors");
@@ -401,20 +407,29 @@ void WebUILoginView::RequestMediaAccessPermission(
     NOTREACHED() << "Media stream not allowed for WebUI";
 }
 
+bool WebUILoginView::PreHandleGestureEvent(
+    content::WebContents* source,
+    const blink::WebGestureEvent& event) {
+  // Disable pinch zooming.
+  return event.type == blink::WebGestureEvent::GesturePinchBegin ||
+      event.type == blink::WebGestureEvent::GesturePinchUpdate ||
+      event.type == blink::WebGestureEvent::GesturePinchEnd;
+}
+
 void WebUILoginView::DidFailProvisionalLoad(
     int64 frame_id,
-    const string16& frame_unique_name,
+    const base::string16& frame_unique_name,
     bool is_main_frame,
     const GURL& validated_url,
     int error_code,
-    const string16& error_description,
+    const base::string16& error_description,
     content::RenderViewHost* render_view_host) {
-  if (frame_unique_name != UTF8ToUTF16("gaia-frame"))
+  if (frame_unique_name != base::UTF8ToUTF16("gaia-frame"))
     return;
 
-  base::FundamentalValue error_value(-error_code);
   GetWebUI()->CallJavascriptFunction("login.GaiaSigninScreen.onFrameError",
-                                     error_value);
+                                     base::FundamentalValue(-error_code),
+                                     base::StringValue(validated_url.spec()));
 }
 
 void WebUILoginView::OnLoginPromptVisible() {

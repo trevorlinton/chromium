@@ -100,7 +100,7 @@ void DelegatedRendererLayerImpl::CreateChildIdIfNeeded(
 
 void DelegatedRendererLayerImpl::SetFrameData(
     const DelegatedFrameData* frame_data,
-    gfx::RectF damage_in_frame) {
+    const gfx::RectF& damage_in_frame) {
   DCHECK(child_id_) << "CreateChildIdIfNeeded must be called first.";
   DCHECK(frame_data);
   DCHECK(!frame_data->render_pass_list.empty());
@@ -142,18 +142,20 @@ void DelegatedRendererLayerImpl::SetFrameData(
   resource_provider->DeclareUsedResourcesFromChild(child_id_, resources_);
 
   // Display size is already set so we can compute what the damage rect
-  // will be in layer space.
+  // will be in layer space. The damage may exceed the visible portion of
+  // the frame, so intersect the damage to the layer's bounds.
   RenderPass* new_root_pass = render_pass_list.back();
   gfx::Size frame_size = new_root_pass->output_rect.size();
   gfx::RectF damage_in_layer = MathUtil::MapClippedRect(
       DelegatedFrameToLayerSpaceTransform(frame_size), damage_in_frame);
-  set_update_rect(gfx::UnionRects(update_rect(), damage_in_layer));
+  SetUpdateRect(gfx::IntersectRects(
+      gfx::UnionRects(update_rect(), damage_in_layer), gfx::Rect(bounds())));
 
   SetRenderPasses(&render_pass_list);
   have_render_passes_to_push_ = true;
 }
 
-void DelegatedRendererLayerImpl::SetDisplaySize(gfx::Size size) {
+void DelegatedRendererLayerImpl::SetDisplaySize(const gfx::Size& size) {
   if (display_size_ == size)
     return;
   display_size_ = size;
@@ -189,13 +191,13 @@ scoped_ptr<LayerImpl> DelegatedRendererLayerImpl::CreateLayerImpl(
       tree_impl, id()).PassAs<LayerImpl>();
 }
 
-void DelegatedRendererLayerImpl::DidLoseOutputSurface() {
+void DelegatedRendererLayerImpl::ReleaseResources() {
   ClearRenderPasses();
   ClearChildId();
 }
 
 gfx::Transform DelegatedRendererLayerImpl::DelegatedFrameToLayerSpaceTransform(
-    gfx::Size frame_size) const {
+    const gfx::Size& frame_size) const {
   gfx::Size display_size = display_size_.IsEmpty() ? bounds() : display_size_;
 
   gfx::Transform delegated_frame_to_layer_space_transform;
@@ -362,28 +364,31 @@ void DelegatedRendererLayerImpl::AppendRainbowDebugBorder(
 
     if (!top.IsEmpty()) {
       scoped_ptr<SolidColorDrawQuad> top_quad = SolidColorDrawQuad::Create();
-      top_quad->SetNew(shared_quad_state, top, colors[i % kNumColors], false);
-      quad_sink->Append(top_quad.PassAs<DrawQuad>(), append_quads_data);
+      top_quad->SetNew(
+          shared_quad_state, top, top, colors[i % kNumColors], false);
+      quad_sink->Append(top_quad.PassAs<DrawQuad>());
 
       scoped_ptr<SolidColorDrawQuad> bottom_quad = SolidColorDrawQuad::Create();
       bottom_quad->SetNew(shared_quad_state,
                           bottom,
+                          bottom,
                           colors[kNumColors - 1 - (i % kNumColors)],
                           false);
-      quad_sink->Append(bottom_quad.PassAs<DrawQuad>(), append_quads_data);
+      quad_sink->Append(bottom_quad.PassAs<DrawQuad>());
     }
     if (!left.IsEmpty()) {
       scoped_ptr<SolidColorDrawQuad> left_quad = SolidColorDrawQuad::Create();
       left_quad->SetNew(shared_quad_state,
                         left,
+                        left,
                         colors[kNumColors - 1 - (i % kNumColors)],
                         false);
-      quad_sink->Append(left_quad.PassAs<DrawQuad>(), append_quads_data);
+      quad_sink->Append(left_quad.PassAs<DrawQuad>());
 
       scoped_ptr<SolidColorDrawQuad> right_quad = SolidColorDrawQuad::Create();
       right_quad->SetNew(
-          shared_quad_state, right, colors[i % kNumColors], false);
-      quad_sink->Append(right_quad.PassAs<DrawQuad>(), append_quads_data);
+          shared_quad_state, right, right, colors[i % kNumColors], false);
+      quad_sink->Append(right_quad.PassAs<DrawQuad>());
     }
   }
 }
@@ -392,7 +397,7 @@ void DelegatedRendererLayerImpl::AppendRenderPassQuads(
     QuadSink* quad_sink,
     AppendQuadsData* append_quads_data,
     const RenderPass* delegated_render_pass,
-    gfx::Size frame_size) const {
+    const gfx::Size& frame_size) const {
 
   const SharedQuadState* delegated_shared_quad_state = NULL;
   SharedQuadState* output_shared_quad_state = NULL;
@@ -421,13 +426,14 @@ void DelegatedRendererLayerImpl::AppendRenderPassQuads(
           DCHECK(!is_clipped());
           DCHECK(render_surface());
           DCHECK_EQ(0, num_unclipped_descendants());
-          output_shared_quad_state->clip_rect = MathUtil::MapClippedRect(
-              delegated_frame_to_target_transform,
-              output_shared_quad_state->clip_rect);
+          output_shared_quad_state->clip_rect =
+              MathUtil::MapEnclosingClippedRect(
+                  delegated_frame_to_target_transform,
+                  output_shared_quad_state->clip_rect);
         } else {
           gfx::Rect clip_rect = drawable_content_rect();
           if (output_shared_quad_state->is_clipped) {
-            clip_rect.Intersect(MathUtil::MapClippedRect(
+            clip_rect.Intersect(MathUtil::MapEnclosingClippedRect(
                 delegated_frame_to_target_transform,
                 output_shared_quad_state->clip_rect));
           }
@@ -440,9 +446,16 @@ void DelegatedRendererLayerImpl::AppendRenderPassQuads(
     }
     DCHECK(output_shared_quad_state);
 
+    gfx::Rect quad_visible_rect = quad_sink->UnoccludedContentRect(
+        delegated_quad->visible_rect,
+        output_shared_quad_state->content_to_target_transform);
+    if (quad_visible_rect.IsEmpty())
+      continue;
+
     scoped_ptr<DrawQuad> output_quad;
     if (delegated_quad->material != DrawQuad::RENDER_PASS) {
       output_quad = delegated_quad->Copy(output_shared_quad_state);
+      output_quad->visible_rect = quad_visible_rect;
     } else {
       RenderPass::Id delegated_contributing_render_pass_id =
           RenderPassDrawQuad::MaterialCast(delegated_quad)->render_pass_id;
@@ -461,11 +474,12 @@ void DelegatedRendererLayerImpl::AppendRenderPassQuads(
         output_quad = RenderPassDrawQuad::MaterialCast(delegated_quad)->Copy(
             output_shared_quad_state,
             output_contributing_render_pass_id).PassAs<DrawQuad>();
+        output_quad->visible_rect = quad_visible_rect;
       }
     }
 
     if (output_quad)
-      quad_sink->Append(output_quad.Pass(), append_quads_data);
+      quad_sink->Append(output_quad.Pass());
   }
 }
 
@@ -482,6 +496,7 @@ void DelegatedRendererLayerImpl::ClearChildId() {
     provider->DestroyChild(child_id_);
   }
 
+  resources_.clear();
   child_id_ = 0;
 }
 

@@ -38,6 +38,19 @@ class KEYBOARD_EXPORT KeyboardControllerProxy {
   // with the proxy.
   virtual aura::Window* GetKeyboardWindow();
 
+  // Whether the keyboard window is resizing from its web contents.
+  bool resizing_from_contents() const { return resizing_from_contents_; }
+
+  // Whether the keyboard window is created. The keyboard window is tied to a
+  // WebContent so we can just check if the WebContent is created or not.
+  virtual bool HasKeyboardWindow() const;
+
+  // Sets the flag of whether the keyboard window is resizing from
+  // its web contents.
+  void set_resizing_from_contents(bool resizing) {
+    resizing_from_contents_ = resizing;
+  }
+
   // Gets the InputMethod that will provide notifications about changes in the
   // text input context.
   virtual ui::InputMethod* GetInputMethod() = 0;
@@ -57,10 +70,27 @@ class KEYBOARD_EXPORT KeyboardControllerProxy {
   // necesasry animation, or delay the visibility change as it desires.
   virtual void HideKeyboardContainer(aura::Window* container);
 
-  // Updates the type of the focused text input box. The default implementation
-  // calls OnTextInputBoxFocused javascript function through webui to update the
-  // type the of focused input box.
+  // Updates the type of the focused text input box.
   virtual void SetUpdateInputType(ui::TextInputType type);
+
+  // Ensures caret in current work area (not occluded by virtual keyboard
+  // window).
+  virtual void EnsureCaretInWorkArea();
+
+  // Loads system virtual keyboard. Noop if the current virtual keyboard is
+  // system virtual keyboard.
+  virtual void LoadSystemKeyboard();
+
+  // Reloads virtual keyboard URL if the current keyboard's web content URL is
+  // different. The URL can be different if user switch from password field to
+  // any other type input field.
+  // At password field, the system virtual keyboard is forced to load even if
+  // the current IME provides a customized virtual keyboard. This is needed to
+  // prevent IME virtual keyboard logging user's password. Once user switch to
+  // other input fields, the virtual keyboard should switch back to the IME
+  // provided keyboard, or keep using the system virtual keyboard if IME doesn't
+  // provide one.
+  virtual void ReloadKeyboardIfNeeded();
 
  protected:
   // Gets the BrowserContext to use for creating the WebContents hosting the
@@ -74,7 +104,18 @@ class KEYBOARD_EXPORT KeyboardControllerProxy {
   virtual void SetupWebContents(content::WebContents* contents);
 
  private:
+  // Loads the web contents for the given |url|.
+  void LoadContents(const GURL& url);
+
+  // Gets the virtual keyboard URL (either the default URL or IME override URL).
+  const GURL& GetVirtualKeyboardUrl();
+
+  const GURL default_url_;
+
   scoped_ptr<content::WebContents> keyboard_contents_;
+
+  // Whether the current keyboard window is resizing from its web content.
+  bool resizing_from_contents_;
 
   DISALLOW_COPY_AND_ASSIGN(KeyboardControllerProxy);
 };

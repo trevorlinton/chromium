@@ -9,6 +9,7 @@
 
 #include "ash/shell.h"
 #include "ash/system/system_notifier.h"
+#include "base/base64.h"
 #include "base/bind.h"
 #include "base/file_util.h"
 #include "base/i18n/time_formatting.h"
@@ -24,17 +25,20 @@
 #include "chrome/browser/notifications/notification_ui_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/ui/window_snapshot/window_snapshot.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/user_metrics.h"
 #include "grit/ash_strings.h"
 #include "grit/theme_resources.h"
 #include "grit/ui_strings.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_event_dispatcher.h"
+#include "ui/base/clipboard/clipboard.h"
+#include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image.h"
+#include "ui/snapshot/snapshot.h"
 
 #if defined(USE_ASH)
 #include "ash/shell.h"
@@ -42,6 +46,7 @@
 #endif
 
 #if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/drive/file_system_interface.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/file_manager/open_util.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
@@ -59,14 +64,69 @@ const char kNotificationId[] = "screenshot";
 
 const char kNotificationOriginUrl[] = "chrome://screenshot";
 
+const char kImageClipboardFormatPrefix[] = "<img src='data:image/png;base64,";
+const char kImageClipboardFormatSuffix[] = "'>";
+
+void CopyScreenshotToClipboard(scoped_refptr<base::RefCountedString> png_data) {
+  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
+
+  std::string encoded;
+  base::Base64Encode(png_data->data(), &encoded);
+
+  // Only cares about HTML because ChromeOS doesn't need other formats.
+  // TODO(dcheng): Why don't we take advantage of the ability to write bitmaps
+  // to the clipboard here?
+  {
+    ui::ScopedClipboardWriter scw(ui::Clipboard::GetForCurrentThread(),
+                                  ui::CLIPBOARD_TYPE_COPY_PASTE);
+    std::string html(kImageClipboardFormatPrefix);
+    html += encoded;
+    html += kImageClipboardFormatSuffix;
+    scw.WriteHTML(base::UTF8ToUTF16(html), std::string());
+  }
+  content::RecordAction(base::UserMetricsAction("Screenshot_CopyClipboard"));
+}
+
+void ReadFileAndCopyToClipboardLocal(const base::FilePath& screenshot_path) {
+  DCHECK(content::BrowserThread::GetBlockingPool()->RunsTasksOnCurrentThread());
+
+  scoped_refptr<base::RefCountedString> png_data(new base::RefCountedString());
+  if (!base::ReadFileToString(screenshot_path, &(png_data->data()))) {
+    LOG(ERROR) << "Failed to read the screenshot file: "
+               << screenshot_path.value();
+    return;
+  }
+
+  content::BrowserThread::PostTask(
+      content::BrowserThread::UI, FROM_HERE,
+      base::Bind(CopyScreenshotToClipboard, png_data));
+}
+
+#if defined(OS_CHROMEOS)
+void ReadFileAndCopyToClipboardDrive(drive::FileError error,
+                                     const base::FilePath& file_path,
+                                     scoped_ptr<drive::ResourceEntry> entry) {
+  if (error != drive::FILE_ERROR_OK) {
+    LOG(ERROR) << "Failed to read the screenshot path on drive: "
+               << drive::FileErrorToString(error);
+    return;
+  }
+  content::BrowserThread::GetBlockingPool()->PostTask(
+      FROM_HERE,
+      base::Bind(&ReadFileAndCopyToClipboardLocal, file_path));
+}
+#endif
+
 // Delegate for a notification. This class has two roles: to implement callback
 // methods for notification, and to provide an identity of the associated
 // notification.
 class ScreenshotTakerNotificationDelegate : public NotificationDelegate {
  public:
   ScreenshotTakerNotificationDelegate(bool success,
+                                      Profile* profile,
                                       const base::FilePath& screenshot_path)
       : success_(success),
+        profile_(profile),
         screenshot_path_(screenshot_path) {
   }
 
@@ -78,10 +138,29 @@ class ScreenshotTakerNotificationDelegate : public NotificationDelegate {
     if (!success_)
       return;
 #if defined(OS_CHROMEOS)
-    file_manager::util::ShowItemInFolder(screenshot_path_);
+    file_manager::util::ShowItemInFolder(profile_, screenshot_path_);
 #else
     // TODO(sschmitz): perhaps add similar action for Windows.
 #endif
+  }
+  virtual void ButtonClick(int button_index) OVERRIDE {
+    DCHECK(success_ && button_index == 0);
+
+    // To avoid keeping the screenshot image on memory, it will re-read the
+    // screenshot file and copy it to the clipboard.
+#if defined(OS_CHROMEOS)
+  if (drive::util::IsUnderDriveMountPoint(screenshot_path_)) {
+    drive::FileSystemInterface* file_system =
+        drive::util::GetFileSystemByProfile(profile_);
+    file_system->GetFile(
+        drive::util::ExtractDrivePath(screenshot_path_),
+        base::Bind(&ReadFileAndCopyToClipboardDrive));
+    return;
+  }
+#endif
+    content::BrowserThread::GetBlockingPool()->PostTask(
+        FROM_HERE, base::Bind(
+            &ReadFileAndCopyToClipboardLocal, screenshot_path_));
   }
   virtual bool HasClickedListener() OVERRIDE { return success_; }
   virtual std::string id() const OVERRIDE {
@@ -95,6 +174,7 @@ class ScreenshotTakerNotificationDelegate : public NotificationDelegate {
   virtual ~ScreenshotTakerNotificationDelegate() {}
 
   const bool success_;
+  Profile* profile_;
   const base::FilePath screenshot_path_;
 
   DISALLOW_COPY_AND_ASSIGN(ScreenshotTakerNotificationDelegate);
@@ -112,7 +192,7 @@ void SaveScreenshotInternal(const ShowNotificationCallback& callback,
   DCHECK(!local_path.empty());
   ScreenshotTakerObserver::Result result =
       ScreenshotTakerObserver::SCREENSHOT_SUCCESS;
-  if (static_cast<size_t>(file_util::WriteFile(
+  if (static_cast<size_t>(base::WriteFile(
           local_path,
           reinterpret_cast<char*>(&(png_data->data()[0])),
           png_data->size())) != png_data->size()) {
@@ -130,7 +210,7 @@ void SaveScreenshot(const ShowNotificationCallback& callback,
   DCHECK(content::BrowserThread::GetBlockingPool()->RunsTasksOnCurrentThread());
   DCHECK(!screenshot_path.empty());
 
-  if (!file_util::CreateDirectory(screenshot_path.DirName())) {
+  if (!base::CreateDirectory(screenshot_path.DirName())) {
     LOG(ERROR) << "Failed to ensure the existence of "
                << screenshot_path.DirName().value();
     content::BrowserThread::PostTask(
@@ -224,15 +304,9 @@ void PostSaveScreenshotTask(const ShowNotificationCallback& callback,
 }
 #endif
 
-bool GrabWindowSnapshot(aura::Window* window,
-                        const gfx::Rect& snapshot_bounds,
-                        std::vector<unsigned char>* png_data) {
-  return chrome::GrabWindowSnapshotForUser(window, png_data, snapshot_bounds);
-}
-
 bool ShouldUse24HourClock() {
 #if defined(OS_CHROMEOS)
-  Profile* profile = ProfileManager::GetDefaultProfileOrOffTheRecord();
+  Profile* profile = ProfileManager::GetActiveUserProfile();
   if (profile) {
     return profile->GetPrefs()->GetBoolean(prefs::kUse24HourClock);
   }
@@ -278,10 +352,10 @@ bool GetScreenshotDirectory(base::FilePath* directory) {
 
   if (is_logged_in) {
     DownloadPrefs* download_prefs = DownloadPrefs::FromBrowserContext(
-        ash::Shell::GetInstance()->delegate()->GetCurrentBrowserContext());
+        ProfileManager::GetActiveUserProfile());
     *directory = download_prefs->DownloadPath();
   } else  {
-    if (!file_util::GetTempDir(directory)) {
+    if (!base::GetTempDir(directory)) {
       LOG(ERROR) << "Failed to find temporary directory.";
       return false;
     }
@@ -341,37 +415,26 @@ void ScreenshotTaker::HandleTakeScreenshotForAllRootWindows() {
   std::string screenshot_basename = !screenshot_basename_for_test_.empty() ?
       screenshot_basename_for_test_ : GetScreenshotBaseFilename();
 
-  ash::Shell::RootWindowList root_windows = ash::Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = ash::Shell::GetAllRootWindows();
   // Reorder root_windows to take the primary root window's snapshot at first.
   aura::Window* primary_root = ash::Shell::GetPrimaryRootWindow();
   if (*(root_windows.begin()) != primary_root) {
     root_windows.erase(std::find(
         root_windows.begin(), root_windows.end(), primary_root));
-    root_windows.insert(root_windows.begin(), primary_root->GetDispatcher());
+    root_windows.insert(root_windows.begin(), primary_root);
   }
   for (size_t i = 0; i < root_windows.size(); ++i) {
-    aura::RootWindow* root_window = root_windows[i];
-    scoped_refptr<base::RefCountedBytes> png_data(new base::RefCountedBytes);
+    aura::Window* root_window = root_windows[i];
     std::string basename = screenshot_basename;
     gfx::Rect rect = root_window->bounds();
     if (root_windows.size() > 1)
       basename += base::StringPrintf(" - Display %d", static_cast<int>(i + 1));
     base::FilePath screenshot_path =
         screenshot_directory.AppendASCII(basename + ".png");
-    if (GrabWindowSnapshot(root_window, rect, &png_data->data())) {
-      PostSaveScreenshotTask(
-          base::Bind(&ScreenshotTaker::ShowNotification, factory_.GetWeakPtr()),
-          GetProfile(),
-          screenshot_path,
-          png_data);
-    } else {
-      LOG(ERROR) << "Failed to grab the window screenshot for " << i;
-      ShowNotification(
-          ScreenshotTakerObserver::SCREENSHOT_GRABWINDOW_FULL_FAILED,
-          screenshot_path);
-    }
+    GrabFullWindowSnapshotAsync(
+        root_window, rect, GetProfile(), screenshot_path, i);
   }
-  last_screenshot_timestamp_ = base::Time::Now();
+  content::RecordAction(base::UserMetricsAction("Screenshot_TakeFull"));
 }
 
 void ScreenshotTaker::HandleTakePartialScreenshot(
@@ -393,25 +456,12 @@ void ScreenshotTaker::HandleTakePartialScreenshot(
     return;
   }
 
-  scoped_refptr<base::RefCountedBytes> png_data(new base::RefCountedBytes);
-
   std::string screenshot_basename = !screenshot_basename_for_test_.empty() ?
       screenshot_basename_for_test_ : GetScreenshotBaseFilename();
   base::FilePath screenshot_path =
       screenshot_directory.AppendASCII(screenshot_basename + ".png");
-  if (GrabWindowSnapshot(window, rect, &png_data->data())) {
-    last_screenshot_timestamp_ = base::Time::Now();
-    PostSaveScreenshotTask(
-        base::Bind(&ScreenshotTaker::ShowNotification, factory_.GetWeakPtr()),
-        GetProfile(),
-        screenshot_path,
-        png_data);
-  } else {
-    LOG(ERROR) << "Failed to grab the window screenshot";
-    ShowNotification(
-        ScreenshotTakerObserver::SCREENSHOT_GRABWINDOW_PARTIAL_FAILED,
-        screenshot_path);
-  }
+  GrabPartialWindowSnapshotAsync(window, rect, GetProfile(), screenshot_path);
+  content::RecordAction(base::UserMetricsAction("Screenshot_TakePartial"));
 }
 
 bool ScreenshotTaker::CanTakeScreenshot() {
@@ -428,9 +478,15 @@ Notification* ScreenshotTaker::CreateNotification(
   // We cancel a previous screenshot notification, if any, to ensure we get
   // a fresh notification pop-up.
   g_browser_process->notification_ui_manager()->CancelById(notification_id);
-  const string16 replace_id(UTF8ToUTF16(notification_id));
+  const base::string16 replace_id(base::UTF8ToUTF16(notification_id));
   bool success =
       (screenshot_result == ScreenshotTakerObserver::SCREENSHOT_SUCCESS);
+  message_center::RichNotificationData optional_field;
+  if (success) {
+    const base::string16 label = l10n_util::GetStringUTF16(
+        IDS_MESSAGE_CENTER_NOTIFICATION_BUTTON_COPY_SCREENSHOT_TO_CLIPBOARD);
+    optional_field.buttons.push_back(message_center::ButtonInfo(label));
+  }
   return new Notification(
       message_center::NOTIFICATION_TYPE_SIMPLE,
       GURL(kNotificationOriginUrl),
@@ -440,12 +496,15 @@ Notification* ScreenshotTaker::CreateNotification(
           GetScreenshotNotificationText(screenshot_result)),
       ui::ResourceBundle::GetSharedInstance().GetImageNamed(
           IDR_SCREENSHOT_NOTIFICATION_ICON),
-      WebKit::WebTextDirectionDefault,
-      message_center::NotifierId(ash::system_notifier::NOTIFIER_SCREENSHOT),
+      blink::WebTextDirectionDefault,
+      message_center::NotifierId(
+          message_center::NotifierId::SYSTEM_COMPONENT,
+          ash::system_notifier::kNotifierScreenshot),
       l10n_util::GetStringUTF16(IDS_MESSAGE_CENTER_NOTIFIER_SCREENSHOT_NAME),
       replace_id,
-      message_center::RichNotificationData(),
-      new ScreenshotTakerNotificationDelegate(success, screenshot_path));
+      optional_field,
+      new ScreenshotTakerNotificationDelegate(
+          success, GetProfile(), screenshot_path));
 }
 
 void ScreenshotTaker::ShowNotification(
@@ -463,7 +522,8 @@ void ScreenshotTaker::ShowNotification(
   DesktopNotificationService* const service =
       DesktopNotificationServiceFactory::GetForProfile(GetProfile());
   if (service->IsNotifierEnabled(message_center::NotifierId(
-          ash::system_notifier::NOTIFIER_SCREENSHOT))) {
+          message_center::NotifierId::SYSTEM_COMPONENT,
+          ash::system_notifier::kNotifierScreenshot))) {
     scoped_ptr<Notification> notification(
         CreateNotification(screenshot_result, screenshot_path));
     g_browser_process->notification_ui_manager()->Add(*notification,
@@ -486,10 +546,77 @@ bool ScreenshotTaker::HasObserver(ScreenshotTakerObserver* observer) const {
   return observers_.HasObserver(observer);
 }
 
+void ScreenshotTaker::GrabWindowSnapshotAsyncCallback(
+    base::FilePath screenshot_path,
+    bool is_partial,
+    int window_idx,
+    scoped_refptr<base::RefCountedBytes> png_data) {
+  if (!png_data) {
+    if (is_partial) {
+      LOG(ERROR) << "Failed to grab the window screenshot";
+      ShowNotification(
+          ScreenshotTakerObserver::SCREENSHOT_GRABWINDOW_PARTIAL_FAILED,
+          screenshot_path);
+    } else {
+      LOG(ERROR) << "Failed to grab the window screenshot for " << window_idx;
+      ShowNotification(
+          ScreenshotTakerObserver::SCREENSHOT_GRABWINDOW_FULL_FAILED,
+          screenshot_path);
+    }
+    return;
+  }
+
+  PostSaveScreenshotTask(
+      base::Bind(&ScreenshotTaker::ShowNotification, factory_.GetWeakPtr()),
+      GetProfile(),
+      screenshot_path,
+      png_data);
+}
+
+void ScreenshotTaker::GrabPartialWindowSnapshotAsync(
+    aura::Window* window,
+    const gfx::Rect& snapshot_bounds,
+    Profile* profile,
+    base::FilePath screenshot_path) {
+  last_screenshot_timestamp_ = base::Time::Now();
+
+  bool is_partial = true;
+  int window_idx = -1;  // unused
+  ui::GrabWindowSnapshotAsync(
+      window,
+      snapshot_bounds,
+      content::BrowserThread::GetBlockingPool(),
+      base::Bind(&ScreenshotTaker::GrabWindowSnapshotAsyncCallback,
+                 factory_.GetWeakPtr(),
+                 screenshot_path,
+                 is_partial,
+                 window_idx));
+}
+
+void ScreenshotTaker::GrabFullWindowSnapshotAsync(
+    aura::Window* window,
+    const gfx::Rect& snapshot_bounds,
+    Profile* profile,
+    base::FilePath screenshot_path,
+    int window_idx) {
+  last_screenshot_timestamp_ = base::Time::Now();
+
+  bool is_partial = false;
+  ui::GrabWindowSnapshotAsync(
+      window,
+      snapshot_bounds,
+      content::BrowserThread::GetBlockingPool(),
+      base::Bind(&ScreenshotTaker::GrabWindowSnapshotAsyncCallback,
+                 factory_.GetWeakPtr(),
+                 screenshot_path,
+                 is_partial,
+                 window_idx));
+}
+
 Profile* ScreenshotTaker::GetProfile() {
   if (profile_for_test_)
     return profile_for_test_;
-  return ProfileManager::GetDefaultProfileOrOffTheRecord();
+  return ProfileManager::GetActiveUserProfile();
 }
 
 void ScreenshotTaker::SetScreenshotDirectoryForTest(

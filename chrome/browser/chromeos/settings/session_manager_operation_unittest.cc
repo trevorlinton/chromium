@@ -10,15 +10,15 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "chrome/browser/chromeos/policy/proto/chrome_device_policy.pb.h"
 #include "chrome/browser/chromeos/settings/device_settings_test_helper.h"
 #include "chrome/browser/chromeos/settings/mock_owner_key_util.h"
-#include "chrome/browser/policy/cloud/cloud_policy_constants.h"
-#include "chrome/browser/policy/cloud/cloud_policy_validator.h"
-#include "chrome/browser/policy/cloud/policy_builder.h"
-#include "chrome/browser/policy/proto/chromeos/chrome_device_policy.pb.h"
-#include "chrome/browser/policy/proto/cloud/device_management_backend.pb.h"
+#include "components/policy/core/common/cloud/cloud_policy_constants.h"
+#include "components/policy/core/common/cloud/cloud_policy_validator.h"
+#include "components/policy/core/common/cloud/policy_builder.h"
 #include "content/public/test/test_browser_thread.h"
 #include "crypto/rsa_private_key.h"
+#include "policy/proto/device_management_backend.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -254,7 +254,7 @@ TEST_F(SessionManagerOperationTest, SignAndStoreSettings) {
   policy::DeviceCloudPolicyValidator* validator =
       policy::DeviceCloudPolicyValidator::Create(
           policy_response.Pass(), message_loop_.message_loop_proxy());
-  validator->ValidateUsername(policy_.policy_data().username());
+  validator->ValidateUsername(policy_.policy_data().username(), true);
   validator->ValidateTimestamp(
       before,
       after,
@@ -263,7 +263,16 @@ TEST_F(SessionManagerOperationTest, SignAndStoreSettings) {
   validator->ValidatePayload();
   std::vector<uint8> public_key;
   policy_.GetSigningKey()->ExportPublicKey(&public_key);
-  validator->ValidateSignature(public_key, false);
+  // Convert from bytes to string format (which is what ValidateSignature()
+  // takes).
+  std::string public_key_as_string = std::string(
+      reinterpret_cast<const char*>(vector_as_array(&public_key)),
+      public_key.size());
+  validator->ValidateSignature(
+      public_key_as_string,
+      policy::GetPolicyVerificationKey(),
+      policy::PolicyBuilder::kFakeDomain,
+      false);
   validator->StartValidation(
       base::Bind(&SessionManagerOperationTest::CheckSuccessfulValidation,
                  base::Unretained(this)));

@@ -1,17 +1,14 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 package org.chromium.content.browser;
 
 import android.content.Context;
-import android.test.suitebuilder.annotation.MediumTest;
 import android.util.DisplayMetrics;
-import android.view.Display;
 import android.view.WindowManager;
 
 import org.chromium.base.test.util.DisabledTest;
-import org.chromium.base.test.util.Feature;
 import org.chromium.content.browser.test.util.JavaScriptUtils;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer;
 
@@ -63,8 +60,7 @@ public class ViewportTest extends ContentViewTestBase {
 
         // window.devicePixelRatio should match the default display. Only check to 1 decimal place
         // to allow for rounding.
-        assertEquals(String.format("%.1g", metrics.density),
-                String.format("%.1g", evaluateFloatValue("window.devicePixelRatio")));
+        assertEquals(metrics.density, evaluateFloatValue("window.devicePixelRatio"), 0.1);
 
         // Check that the viewport width is vaguely sensible.
         int viewportWidth = evaluateIntegerValue("document.documentElement.clientWidth");

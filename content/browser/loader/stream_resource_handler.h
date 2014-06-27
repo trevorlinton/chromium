@@ -49,6 +49,10 @@ class StreamResourceHandler : public StreamWriteObserver,
                            const GURL& url,
                            bool* defer) OVERRIDE;
 
+  virtual bool OnBeforeNetworkStart(int request_id,
+                                    const GURL& url,
+                                    bool* defer) OVERRIDE;
+
   // Create a new buffer to store received data.
   virtual bool OnWillRead(int request_id,
                           scoped_refptr<net::IOBuffer>* buf,
@@ -60,9 +64,10 @@ class StreamResourceHandler : public StreamWriteObserver,
                                int bytes_read,
                                bool* defer) OVERRIDE;
 
-  virtual bool OnResponseCompleted(int request_id,
+  virtual void OnResponseCompleted(int request_id,
                                    const net::URLRequestStatus& status,
-                                   const std::string& sec_info) OVERRIDE;
+                                   const std::string& sec_info,
+                                   bool* defer) OVERRIDE;
 
   virtual void OnDataDownloaded(int request_id, int bytes_downloaded) OVERRIDE;
 

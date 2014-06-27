@@ -11,8 +11,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/signin/signin_global_error.h"
-#include "chrome/browser/signin/signin_manager_base.h"
+#include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_ui_util.h"
 #include "chrome/browser/sync/profile_sync_service.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
@@ -23,6 +22,9 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "components/signin/core/browser/profile_oauth2_token_service.h"
+#include "components/signin/core/browser/signin_error_controller.h"
+#include "components/signin/core/browser/signin_manager_base.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "grit/browser_resources.h"
 #include "grit/chromium_strings.h"
@@ -35,6 +37,10 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/login/user_manager.h"
+#endif  // defined(OS_CHROMEOS)
+
 typedef GoogleServiceAuthError AuthError;
 
 namespace sync_ui_util {
@@ -44,10 +50,21 @@ namespace {
 // Returns the message that should be displayed when the user is authenticated
 // and can connect to the sync server. If the user hasn't yet authenticated, an
 // empty string is returned.
-string16 GetSyncedStateStatusLabel(ProfileSyncService* service,
-                                   const SigninManagerBase& signin,
-                                   StatusLabelStyle style) {
-  string16 user_name = UTF8ToUTF16(signin.GetAuthenticatedUsername());
+base::string16 GetSyncedStateStatusLabel(ProfileSyncService* service,
+                                         const SigninManagerBase& signin,
+                                         StatusLabelStyle style) {
+  std::string user_display_name = signin.GetAuthenticatedUsername();
+
+#if defined(OS_CHROMEOS)
+  if (chromeos::UserManager::IsInitialized()) {
+    // On CrOS user email is sanitized and then passed to the signin manager.
+    // Original email (containing dots) is stored as "display email".
+    user_display_name = chromeos::UserManager::Get()->
+        GetUserDisplayEmail(user_display_name);
+  }
+#endif  // defined(OS_CHROMEOS)
+
+  base::string16 user_name = base::UTF8ToUTF16(user_display_name);
 
   if (!user_name.empty()) {
     if (!service || service->IsManaged()) {
@@ -63,7 +80,7 @@ string16 GetSyncedStateStatusLabel(ProfileSyncService* service,
 
   if (!service || !service->sync_initialized()) {
     // User is not signed in, or sync is still initializing.
-    return string16();
+    return base::string16();
   }
 
   DCHECK(!user_name.empty());
@@ -78,7 +95,7 @@ string16 GetSyncedStateStatusLabel(ProfileSyncService* service,
       return l10n_util::GetStringFUTF16(
           IDS_SYNC_ACCOUNT_SYNCING_TO_USER_WITH_MANAGE_LINK,
           user_name,
-          ASCIIToUTF16(chrome::kSyncGoogleDashboardURL));
+          base::ASCIIToUTF16(chrome::kSyncGoogleDashboardURL));
     default:
       NOTREACHED();
       return NULL;
@@ -87,7 +104,7 @@ string16 GetSyncedStateStatusLabel(ProfileSyncService* service,
 
 void GetStatusForActionableError(
     const syncer::SyncProtocolError& error,
-    string16* status_label) {
+    base::string16* status_label) {
   DCHECK(status_label);
   switch (error.action) {
     case syncer::STOP_AND_RESTART_SYNC:
@@ -118,8 +135,8 @@ void GetStatusForActionableError(
 MessageType GetStatusInfo(ProfileSyncService* service,
                           const SigninManagerBase& signin,
                           StatusLabelStyle style,
-                          string16* status_label,
-                          string16* link_label) {
+                          base::string16* status_label,
+                          base::string16* link_label) {
   DCHECK_EQ(status_label == NULL, link_label == NULL);
 
   MessageType result_type(SYNCED);
@@ -154,8 +171,8 @@ MessageType GetStatusInfo(ProfileSyncService* service,
     if (service) {
       // Since there is no auth in progress, check for an auth error first.
       AuthError auth_error =
-          SigninGlobalError::GetForProfile(service->profile())->
-              GetLastAuthError();
+          ProfileOAuth2TokenServiceFactory::GetForProfile(service->profile())->
+              signin_error_controller()->auth_error();
       if (auth_error.state() != AuthError::NONE) {
         if (status_label && link_label)
           signin_ui_util::GetStatusLabelsForAuthError(
@@ -217,8 +234,8 @@ MessageType GetStatusInfo(ProfileSyncService* service,
       ProfileSyncService::Status status;
       service->QueryDetailedSyncStatus(&status);
       AuthError auth_error =
-          SigninGlobalError::GetForProfile(
-              service->profile())->GetLastAuthError();
+          ProfileOAuth2TokenServiceFactory::GetForProfile(service->profile())->
+              signin_error_controller()->auth_error();
       if (status_label) {
         status_label->assign(
             l10n_util::GetStringUTF16(IDS_SYNC_NTP_SETUP_IN_PROGRESS));
@@ -252,9 +269,9 @@ MessageType GetStatusInfo(ProfileSyncService* service,
     } else if (!signin.GetAuthenticatedUsername().empty()) {
       // The user is signed in, but sync has been stopped.
       if (status_label) {
-        string16 label = l10n_util::GetStringFUTF16(
-                             IDS_SIGNED_IN_WITH_SYNC_SUPPRESSED,
-                             UTF8ToUTF16(signin.GetAuthenticatedUsername()));
+        base::string16 label = l10n_util::GetStringFUTF16(
+            IDS_SIGNED_IN_WITH_SYNC_SUPPRESSED,
+            base::UTF8ToUTF16(signin.GetAuthenticatedUsername()));
         status_label->assign(label);
         result_type = PRE_SYNCED;
       }
@@ -267,8 +284,8 @@ MessageType GetStatusInfo(ProfileSyncService* service,
 // different information than in the settings panel.
 MessageType GetStatusInfoForNewTabPage(ProfileSyncService* service,
                                        const SigninManagerBase& signin,
-                                       string16* status_label,
-                                       string16* link_label) {
+                                       base::string16* status_label,
+                                       base::string16* link_label) {
   DCHECK(status_label);
   DCHECK(link_label);
 
@@ -289,7 +306,7 @@ MessageType GetStatusInfoForNewTabPage(ProfileSyncService* service,
       // NOT first machine.
       // Show a link and present as an error ("needs attention").
       if (status_label && link_label) {
-        status_label->assign(string16());
+        status_label->assign(base::string16());
         link_label->assign(
             l10n_util::GetStringUTF16(IDS_SYNC_CONFIGURE_ENCRYPTION));
       }
@@ -306,8 +323,8 @@ MessageType GetStatusInfoForNewTabPage(ProfileSyncService* service,
 MessageType GetStatusLabels(ProfileSyncService* service,
                             const SigninManagerBase& signin,
                             StatusLabelStyle style,
-                            string16* status_label,
-                            string16* link_label) {
+                            base::string16* status_label,
+                            base::string16* link_label) {
   DCHECK(status_label);
   DCHECK(link_label);
   return sync_ui_util::GetStatusInfo(
@@ -316,25 +333,25 @@ MessageType GetStatusLabels(ProfileSyncService* service,
 
 MessageType GetStatusLabelsForNewTabPage(ProfileSyncService* service,
                                          const SigninManagerBase& signin,
-                                         string16* status_label,
-                                         string16* link_label) {
+                                         base::string16* status_label,
+                                         base::string16* link_label) {
   DCHECK(status_label);
   DCHECK(link_label);
   return sync_ui_util::GetStatusInfoForNewTabPage(
       service, signin, status_label, link_label);
 }
 
-void GetStatusLabelsForSyncGlobalError(ProfileSyncService* service,
-                                       const SigninManagerBase& signin,
-                                       string16* menu_label,
-                                       string16* bubble_message,
-                                       string16* bubble_accept_label) {
+#if !defined(OS_CHROMEOS)
+void GetStatusLabelsForSyncGlobalError(const ProfileSyncService* service,
+                                       base::string16* menu_label,
+                                       base::string16* bubble_message,
+                                       base::string16* bubble_accept_label) {
   DCHECK(menu_label);
   DCHECK(bubble_message);
   DCHECK(bubble_accept_label);
-  *menu_label = string16();
-  *bubble_message = string16();
-  *bubble_accept_label = string16();
+  *menu_label = base::string16();
+  *bubble_message = base::string16();
+  *bubble_accept_label = base::string16();
 
   // Only display an error if we've completed sync setup.
   if (!service->HasSyncSetupCompleted())
@@ -346,26 +363,26 @@ void GetStatusLabelsForSyncGlobalError(ProfileSyncService* service,
     // This is not the first machine so ask user to enter passphrase.
     *menu_label = l10n_util::GetStringUTF16(
         IDS_SYNC_PASSPHRASE_ERROR_WRENCH_MENU_ITEM);
-    string16 product_name = l10n_util::GetStringUTF16(IDS_PRODUCT_NAME);
-    *bubble_message = l10n_util::GetStringFUTF16(
-        IDS_SYNC_PASSPHRASE_ERROR_BUBBLE_VIEW_MESSAGE, product_name);
+    *bubble_message = l10n_util::GetStringUTF16(
+        IDS_SYNC_PASSPHRASE_ERROR_BUBBLE_VIEW_MESSAGE);
     *bubble_accept_label = l10n_util::GetStringUTF16(
         IDS_SYNC_PASSPHRASE_ERROR_BUBBLE_VIEW_ACCEPT);
     return;
   }
 }
+#endif
 
 MessageType GetStatus(
     ProfileSyncService* service, const SigninManagerBase& signin) {
   return sync_ui_util::GetStatusInfo(service, signin, WITH_HTML, NULL, NULL);
 }
 
-string16 ConstructTime(int64 time_in_int) {
+base::string16 ConstructTime(int64 time_in_int) {
   base::Time time = base::Time::FromInternalValue(time_in_int);
 
   // If time is null the format function returns a time in 1969.
   if (time.is_null())
-    return string16();
+    return base::string16();
   return base::TimeFormatFriendlyDateAndTime(time);
 }
 

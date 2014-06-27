@@ -21,8 +21,7 @@ class AppListServiceDisabled : public AppListService {
   AppListServiceDisabled() {}
 
   // AppListService overrides:
-  virtual void SetAppListNextPaintCallback(
-      const base::Closure& callback) OVERRIDE {}
+  virtual void SetAppListNextPaintCallback(void (*callback)()) OVERRIDE {}
   virtual void HandleFirstRun() OVERRIDE {}
   virtual void Init(Profile* initial_profile) OVERRIDE {}
 
@@ -35,13 +34,14 @@ class AppListServiceDisabled : public AppListService {
   virtual void Show() OVERRIDE {}
   virtual void CreateForProfile(Profile* profile) OVERRIDE {}
   virtual void ShowForProfile(Profile* profile) OVERRIDE {}
+  virtual void AutoShowForProfile(Profile* profile) OVERRIDE {}
   virtual void DismissAppList() OVERRIDE {}
 
   virtual Profile* GetCurrentAppListProfile() OVERRIDE { return NULL; }
   virtual bool IsAppListVisible() const OVERRIDE { return false; }
-  virtual void EnableAppList(Profile* initial_profile) OVERRIDE {}
-
-  virtual AppListControllerDelegate* CreateControllerDelegate() OVERRIDE {
+  virtual void EnableAppList(Profile* initial_profile,
+                             AppListEnableSource enable_source) OVERRIDE {}
+  virtual AppListControllerDelegate* GetControllerDelegate() OVERRIDE {
     return NULL;
   }
 
@@ -66,4 +66,4 @@ void AppListService::InitAll(Profile* initial_profile) {}
 void AppListService::RegisterPrefs(PrefRegistrySimple* registry) {}
 
 // static
-void AppListService::RecordShowTimings(const CommandLine& command_line) {}
+void AppListService::RecordShowTimings(const base::CommandLine& command_line) {}

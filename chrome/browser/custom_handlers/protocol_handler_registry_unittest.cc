@@ -282,7 +282,7 @@ class QueryProtocolHandlerOnChange
 // our type based on the current thread. GO DEPENDENCY INJECTION!
 class TestMessageLoop : public base::MessageLoop {
  public:
-  TestMessageLoop() : base::MessageLoop(base::MessageLoop::TYPE_DEFAULT) {}
+  TestMessageLoop() {}
   virtual ~TestMessageLoop() {}
   virtual bool IsType(base::MessageLoop::Type type) const OVERRIDE {
     switch (type) {
@@ -296,6 +296,7 @@ class TestMessageLoop : public base::MessageLoop {
 #if defined(OS_ANDROID)
       case base::MessageLoop::TYPE_JAVA: // fall-through
 #endif // defined(OS_ANDROID)
+      case base::MessageLoop::TYPE_CUSTOM:
       case base::MessageLoop::TYPE_DEFAULT:
         return !BrowserThread::CurrentlyOn(BrowserThread::UI) &&
                !BrowserThread::CurrentlyOn(BrowserThread::IO);
@@ -325,7 +326,7 @@ class ProtocolHandlerRegistryTest : public testing::Test {
                                         const GURL& url,
                                         const std::string& title) {
     return ProtocolHandler::CreateProtocolHandler(protocol, url,
-        UTF8ToUTF16(title));
+        base::UTF8ToUTF16(title));
   }
 
   ProtocolHandler CreateProtocolHandler(const std::string& protocol,

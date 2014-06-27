@@ -23,8 +23,8 @@
 #include "base/strings/utf_string_conversions.h"
 #include "grit/ash_strings.h"
 #include "grit/ui_strings.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/screen.h"
 #include "ui/message_center/message_center_style.h"
@@ -195,7 +195,7 @@ void WorkAreaObserver::UpdateShelf() {
   if (shelf_)
     return;
 
-  shelf_ = ShelfLayoutManager::ForLauncher(root_window_);
+  shelf_ = ShelfLayoutManager::ForShelf(root_window_);
   if (shelf_)
     shelf_->AddObserver(this);
 }
@@ -311,12 +311,22 @@ WebNotificationTray::WebNotificationTray(
       ui::EF_LEFT_MOUSE_BUTTON | ui::EF_RIGHT_MOUSE_BUTTON);
   tray_container()->AddChildView(button_);
   SetContentsBackground();
-  tray_container()->set_border(NULL);
+  tray_container()->SetBorder(views::Border::NullBorder());
   SetVisible(false);
   message_center_tray_.reset(new message_center::MessageCenterTray(
       this,
       message_center::MessageCenter::Get()));
+  popup_collection_.reset(new message_center::MessagePopupCollection(
+      ash::Shell::GetContainer(
+          status_area_widget->GetNativeView()->GetRootWindow(),
+          internal::kShellWindowId_StatusContainer),
+      message_center(),
+      message_center_tray_.get(),
+      ash::switches::UseAlternateShelfLayout()));
   work_area_observer_.reset(new internal::WorkAreaObserver());
+  work_area_observer_->StartObserving(
+      popup_collection_.get(),
+      status_area_widget->GetNativeView()->GetRootWindow());
   OnMessageCenterTrayChanged();
 }
 
@@ -403,21 +413,13 @@ bool WebNotificationTray::ShowPopups() {
   if (message_center_bubble())
     return false;
 
-  popup_collection_.reset(new message_center::MessagePopupCollection(
-      ash::Shell::GetContainer(
-          GetWidget()->GetNativeView()->GetRootWindow(),
-          internal::kShellWindowId_StatusContainer),
-      message_center(),
-      message_center_tray_.get(),
-      ash::switches::UseAlternateShelfLayout()));
-  work_area_observer_->StartObserving(
-      popup_collection_.get(), GetWidget()->GetNativeView()->GetRootWindow());
+  popup_collection_->DoUpdateIfPossible();
   return true;
 }
 
 void WebNotificationTray::HidePopups() {
-  popup_collection_.reset();
-  work_area_observer_->StopObserving();
+  DCHECK(popup_collection_.get());
+  popup_collection_->MarkAllPopupsShown();
 }
 
 // Private methods.
@@ -428,7 +430,7 @@ bool WebNotificationTray::ShouldShowMessageCenter() {
         status_area_widget()->system_tray()->HasNotificationBubble());
 }
 
-bool WebNotificationTray::ShouldBlockLauncherAutoHide() const {
+bool WebNotificationTray::ShouldBlockShelfAutoHide() const {
   return should_block_shelf_auto_hide_;
 }
 
@@ -446,11 +448,16 @@ void WebNotificationTray::ShowMessageCenterBubble() {
     message_center_tray_->ShowMessageCenterBubble();
 }
 
+void WebNotificationTray::UpdateAfterLoginStatusChange(
+    user::LoginStatus login_status) {
+  OnMessageCenterTrayChanged();
+}
+
 void WebNotificationTray::SetShelfAlignment(ShelfAlignment alignment) {
   if (alignment == shelf_alignment())
     return;
   internal::TrayBackgroundView::SetShelfAlignment(alignment);
-  tray_container()->set_border(NULL);
+  tray_container()->SetBorder(views::Border::NullBorder());
   // Destroy any existing bubble so that it will be rebuilt correctly.
   message_center_tray_->HideMessageCenterBubble();
   message_center_tray_->HidePopupBubble();
@@ -517,6 +524,12 @@ bool WebNotificationTray::ShowNotifierSettings() {
     return true;
   }
   return ShowMessageCenterInternal(true /* show_settings */);
+}
+
+bool WebNotificationTray::IsContextMenuEnabled() const {
+  user::LoginStatus login_status = status_area_widget()->login_status();
+  return login_status != user::LOGGED_IN_NONE
+      && login_status != user::LOGGED_IN_LOCKED;
 }
 
 message_center::MessageCenterTray* WebNotificationTray::GetMessageCenterTray() {

@@ -11,6 +11,10 @@
 #include <deque>
 #include <string>
 
+#include "apps/app_window.h"
+#include "apps/app_window_registry.h"
+#include "ash/session_state_delegate.h"
+#include "ash/shell.h"
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/file_util.h"
@@ -18,29 +22,44 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_value_converter.h"
 #include "base/json/json_writer.h"
+#include "base/prefs/pref_service.h"
 #include "base/strings/string_piece.h"
+#include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/drive/drive_integration_service.h"
 #include "chrome/browser/chromeos/drive/file_system_interface.h"
 #include "chrome/browser/chromeos/drive/test_util.h"
+#include "chrome/browser/chromeos/file_manager/app_id.h"
 #include "chrome/browser/chromeos/file_manager/drive_test_util.h"
+#include "chrome/browser/chromeos/file_manager/path_util.h"
+#include "chrome/browser/chromeos/file_manager/volume_manager.h"
+#include "chrome/browser/chromeos/login/user_manager.h"
+#include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/drive/fake_drive_service.h"
 #include "chrome/browser/extensions/api/test/test_api.h"
 #include "chrome/browser/extensions/component_loader.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_test_message_listener.h"
-#include "chrome/browser/google_apis/gdata_wapi_parser.h"
-#include "chrome/browser/google_apis/test_util.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
+#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/extensions/extension.h"
+#include "chrome/common/pref_names.h"
 #include "chromeos/chromeos_switches.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/common/extension.h"
+#include "google_apis/drive/gdata_wapi_parser.h"
+#include "google_apis/drive/test_util.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "webkit/browser/fileapi/external_mount_points.h"
+
+using drive::DriveIntegrationServiceFactory;
 
 namespace file_manager {
 namespace {
@@ -50,10 +69,7 @@ enum EntryType {
   DIRECTORY,
 };
 
-enum TargetVolume {
-  LOCAL_VOLUME,
-  DRIVE_VOLUME,
-};
+enum TargetVolume { LOCAL_VOLUME, DRIVE_VOLUME, USB_VOLUME, };
 
 enum SharedOption {
   NONE,
@@ -101,6 +117,8 @@ bool MapStringToTargetVolume(const base::StringPiece& value,
     *output = DRIVE_VOLUME;
   else if (value == "local")
     *output = LOCAL_VOLUME;
+  else if (value == "usb")
+    *output = USB_VOLUME;
   else
     return false;
   return true;
@@ -184,33 +202,39 @@ void AddEntriesMessage::RegisterJSONConverter(
       &AddEntriesMessage::entries);
 }
 
+// Test volume.
+class TestVolume {
+ protected:
+  explicit TestVolume(const std::string& name) : name_(name) {}
+  virtual ~TestVolume() {}
+
+  bool CreateRootDirectory(const Profile* profile) {
+    return root_.Set(profile->GetPath().Append(name_));
+  }
+
+  const std::string& name() { return name_; }
+  const base::FilePath root_path() { return root_.path(); }
+
+ private:
+  std::string name_;
+  base::ScopedTempDir root_;
+};
+
 // The local volume class for test.
 // This class provides the operations for a test volume that simulates local
 // drive.
-class LocalTestVolume {
+class LocalTestVolume : public TestVolume {
  public:
+  explicit LocalTestVolume(const std::string& name) : TestVolume(name) {}
+  virtual ~LocalTestVolume() {}
+
   // Adds this volume to the file system as a local volume. Returns true on
   // success.
-  bool Mount(Profile* profile) {
-    const std::string kDownloads = "Downloads";
-
-    if (local_path_.empty()) {
-      if (!tmp_dir_.CreateUniqueTempDir())
-        return false;
-      local_path_ = tmp_dir_.path().Append(kDownloads);
-    }
-    fileapi::ExternalMountPoints* const mount_points =
-        content::BrowserContext::GetMountPoints(profile);
-    mount_points->RevokeFileSystem(kDownloads);
-
-    return mount_points->RegisterFileSystem(
-        kDownloads, fileapi::kFileSystemTypeNativeLocal, local_path_) &&
-        file_util::CreateDirectory(local_path_);
-  }
+  virtual bool Mount(Profile* profile) = 0;
 
   void CreateEntry(const TestEntryInfo& entry) {
     const base::FilePath target_path =
-        local_path_.AppendASCII(entry.target_path);
+        root_path().AppendASCII(entry.target_path);
 
     entries_.insert(std::make_pair(target_path, entry));
     switch (entry.type) {
@@ -224,7 +248,7 @@ class LocalTestVolume {
         break;
       }
       case DIRECTORY:
-        ASSERT_TRUE(file_util::CreateDirectory(target_path)) <<
+        ASSERT_TRUE(base::CreateDirectory(target_path)) <<
             "Failed to create a directory: " << target_path.value();
         break;
     }
@@ -235,13 +259,14 @@ class LocalTestVolume {
   // Updates ModifiedTime of the entry and its parents by referring
   // TestEntryInfo. Returns true on success.
   bool UpdateModifiedTime(const TestEntryInfo& entry) {
-    const base::FilePath path = local_path_.AppendASCII(entry.target_path);
-    if (!file_util::SetLastModifiedTime(path, entry.last_modified_time))
+    const base::FilePath path = root_path().AppendASCII(entry.target_path);
+    if (!base::TouchFile(path, entry.last_modified_time,
+                         entry.last_modified_time))
       return false;
 
     // Update the modified time of parent directories because it may be also
     // affected by the update of child items.
-    if (path.DirName() != local_path_) {
+    if (path.DirName() != root_path()) {
       const std::map<base::FilePath, const TestEntryInfo>::iterator it =
           entries_.find(path.DirName());
       if (it == entries_.end())
@@ -251,31 +276,57 @@ class LocalTestVolume {
     return true;
   }
 
-  base::FilePath local_path_;
-  base::ScopedTempDir tmp_dir_;
   std::map<base::FilePath, const TestEntryInfo> entries_;
+};
+
+class DownloadsTestVolume : public LocalTestVolume {
+ public:
+  DownloadsTestVolume() : LocalTestVolume("Downloads") {}
+  virtual ~DownloadsTestVolume() {}
+
+  virtual bool Mount(Profile* profile) OVERRIDE {
+    return CreateRootDirectory(profile) &&
+           VolumeManager::Get(profile)
+               ->RegisterDownloadsDirectoryForTesting(root_path());
+  }
+};
+
+class FakeUsbTestVolume : public LocalTestVolume {
+ public:
+  FakeUsbTestVolume() : LocalTestVolume("fake-usb") {}
+  virtual ~FakeUsbTestVolume() {}
+
+  virtual bool Mount(Profile* profile) OVERRIDE {
+    if (!CreateRootDirectory(profile))
+      return false;
+    fileapi::ExternalMountPoints* const mount_points =
+        fileapi::ExternalMountPoints::GetSystemInstance();
+
+    // First revoke the existing mount point (if any).
+    mount_points->RevokeFileSystem(name());
+    const bool result =
+        mount_points->RegisterFileSystem(name(),
+                                         fileapi::kFileSystemTypeNativeLocal,
+                                         fileapi::FileSystemMountOption(),
+                                         root_path());
+    if (!result)
+      return false;
+
+    VolumeManager::Get(profile)
+        ->AddVolumeInfoForTesting(root_path(),
+                                  VOLUME_TYPE_REMOVABLE_DISK_PARTITION,
+                                  chromeos::DEVICE_TYPE_USB);
+    return true;
+  }
 };
 
 // The drive volume class for test.
 // This class provides the operations for a test volume that simulates Google
 // drive.
-class DriveTestVolume {
+class DriveTestVolume : public TestVolume {
  public:
-  DriveTestVolume() : fake_drive_service_(NULL),
-                      integration_service_(NULL) {
-  }
-
-  // Sends request to add this volume to the file system as Google drive.
-  // This method must be calld at SetUp method of FileManagerBrowserTestBase.
-  // Returns true on success.
-  bool SetUp() {
-    if (!test_cache_root_.CreateUniqueTempDir())
-      return false;
-    drive::DriveIntegrationServiceFactory::SetFactoryForTest(
-        base::Bind(&DriveTestVolume::CreateDriveIntegrationService,
-                   base::Unretained(this)));
-    return true;
-  }
+  DriveTestVolume() : TestVolume("drive"), integration_service_(NULL) {}
+  virtual ~DriveTestVolume() {}
 
   void CreateEntry(const TestEntryInfo& entry) {
     const base::FilePath path =
@@ -285,7 +336,7 @@ class DriveTestVolume {
     // Obtain the parent entry.
     drive::FileError error = drive::FILE_ERROR_OK;
     scoped_ptr<drive::ResourceEntry> parent_entry(new drive::ResourceEntry);
-    integration_service_->file_system()->GetResourceEntryByPath(
+    integration_service_->file_system()->GetResourceEntry(
         drive::util::GetDriveMyDriveRootPath().Append(path).DirName(),
         google_apis::test_util::CreateCopyResultCallback(
             &error, &parent_entry));
@@ -303,9 +354,8 @@ class DriveTestVolume {
                    entry.last_modified_time);
         break;
       case DIRECTORY:
-        CreateDirectory(parent_entry->resource_id(),
-                        target_name,
-                        entry.last_modified_time);
+        CreateDirectory(
+            parent_entry->resource_id(), target_name, entry.last_modified_time);
         break;
     }
   }
@@ -319,6 +369,7 @@ class DriveTestVolume {
     fake_drive_service_->AddNewDirectory(
         parent_id,
         target_name,
+        drive::DriveServiceInterface::AddNewDirectoryOptions(),
         google_apis::test_util::CreateCopyResultCallback(&error,
                                                          &resource_entry));
     base::MessageLoop::current()->RunUntilIdle();
@@ -395,19 +446,22 @@ class DriveTestVolume {
 
   drive::DriveIntegrationService* CreateDriveIntegrationService(
       Profile* profile) {
+    profile_ = profile;
     fake_drive_service_ = new drive::FakeDriveService;
-    fake_drive_service_->LoadResourceListForWapi(
-        "gdata/empty_feed.json");
+    fake_drive_service_->LoadResourceListForWapi("gdata/empty_feed.json");
     fake_drive_service_->LoadAccountMetadataForWapi(
         "gdata/account_metadata.json");
     fake_drive_service_->LoadAppListForDriveApi("drive/applist.json");
+
+    if (!CreateRootDirectory(profile))
+      return NULL;
     integration_service_ = new drive::DriveIntegrationService(
-        profile, NULL, fake_drive_service_, test_cache_root_.path(), NULL);
+        profile, NULL, fake_drive_service_, std::string(), root_path(), NULL);
     return integration_service_;
   }
 
  private:
-  base::ScopedTempDir test_cache_root_;
+  Profile* profile_;
   drive::FakeDriveService* fake_drive_service_;
   drive::DriveIntegrationService* integration_service_;
 };
@@ -418,7 +472,7 @@ class FileManagerTestListener : public content::NotificationObserver {
   struct Message {
     int type;
     std::string message;
-    extensions::TestSendMessageFunction* function;
+    scoped_refptr<extensions::TestSendMessageFunction> function;
   };
 
   FileManagerTestListener() {
@@ -461,28 +515,9 @@ class FileManagerTestListener : public content::NotificationObserver {
   content::NotificationRegistrar registrar_;
 };
 
-// Parameter of FileManagerBrowserTest.
-// The second value is the case name of JavaScript.
-typedef std::tr1::tuple<GuestMode, const char*> TestParameter;
-
 // The base test class.
-class FileManagerBrowserTest :
-      public ExtensionApiTest,
-      public ::testing::WithParamInterface<TestParameter> {
+class FileManagerBrowserTestBase : public ExtensionApiTest {
  protected:
-  FileManagerBrowserTest() :
-      local_volume_(new LocalTestVolume),
-      drive_volume_(std::tr1::get<0>(GetParam()) != IN_GUEST_MODE ?
-                    new DriveTestVolume() : NULL) {}
-
-  virtual void SetUp() OVERRIDE {
-    // TODO(danakj): The GPU Video Decoder needs real GL bindings.
-    // crbug.com/269087
-    UseRealGLBindings();
-
-    ExtensionApiTest::SetUp();
-  }
-
   virtual void SetUpInProcessBrowserTestFixture() OVERRIDE;
 
   virtual void SetUpOnMainThread() OVERRIDE;
@@ -494,46 +529,66 @@ class FileManagerBrowserTest :
   // test.
   void StartTest();
 
-  const scoped_ptr<LocalTestVolume> local_volume_;
-  const scoped_ptr<DriveTestVolume> drive_volume_;
+  // Overriding point for test configurations.
+  virtual GuestMode GetGuestModeParam() const = 0;
+  virtual const char* GetTestCaseNameParam() const = 0;
+  virtual std::string OnMessage(const std::string& name,
+                                const base::Value* value);
+
+  scoped_ptr<LocalTestVolume> local_volume_;
+  linked_ptr<DriveTestVolume> drive_volume_;
+  std::map<Profile*, linked_ptr<DriveTestVolume> > drive_volumes_;
+  scoped_ptr<LocalTestVolume> usb_volume_;
+
+ private:
+  drive::DriveIntegrationService* CreateDriveIntegrationService(
+      Profile* profile);
+  DriveIntegrationServiceFactory::FactoryCallback
+      create_drive_integration_service_;
+  scoped_ptr<DriveIntegrationServiceFactory::ScopedFactoryForTest>
+      service_factory_for_test_;
 };
 
-void FileManagerBrowserTest::SetUpInProcessBrowserTestFixture() {
+void FileManagerBrowserTestBase::SetUpInProcessBrowserTestFixture() {
   ExtensionApiTest::SetUpInProcessBrowserTestFixture();
   extensions::ComponentLoader::EnableBackgroundExtensionsForTesting();
-  if (drive_volume_)
-    ASSERT_TRUE(drive_volume_->SetUp());
+
+  local_volume_.reset(new DownloadsTestVolume);
+  if (GetGuestModeParam() != IN_GUEST_MODE) {
+    create_drive_integration_service_ =
+        base::Bind(&FileManagerBrowserTestBase::CreateDriveIntegrationService,
+                   base::Unretained(this));
+    service_factory_for_test_.reset(
+        new DriveIntegrationServiceFactory::ScopedFactoryForTest(
+            &create_drive_integration_service_));
+  }
 }
 
-void FileManagerBrowserTest::SetUpOnMainThread() {
+void FileManagerBrowserTestBase::SetUpOnMainThread() {
   ExtensionApiTest::SetUpOnMainThread();
-  ASSERT_TRUE(local_volume_->Mount(browser()->profile()));
+  ASSERT_TRUE(local_volume_->Mount(profile()));
 
-  if (drive_volume_) {
+  if (GetGuestModeParam() != IN_GUEST_MODE) {
     // Install the web server to serve the mocked share dialog.
     ASSERT_TRUE(embedded_test_server()->InitializeAndWaitUntilReady());
     const GURL share_url_base(embedded_test_server()->GetURL(
         "/chromeos/file_manager/share_dialog_mock/index.html"));
+    drive_volume_ = drive_volumes_[profile()];
     drive_volume_->ConfigureShareUrlBase(share_url_base);
-    test_util::WaitUntilDriveMountPointIsAdded(browser()->profile());
+    test_util::WaitUntilDriveMountPointIsAdded(profile());
   }
 }
 
-void FileManagerBrowserTest::SetUpCommandLine(CommandLine* command_line) {
-  if (std::tr1::get<0>(GetParam()) == IN_GUEST_MODE) {
+void FileManagerBrowserTestBase::SetUpCommandLine(CommandLine* command_line) {
+  if (GetGuestModeParam() == IN_GUEST_MODE) {
     command_line->AppendSwitch(chromeos::switches::kGuestSession);
     command_line->AppendSwitchNative(chromeos::switches::kLoginUser, "");
     command_line->AppendSwitch(switches::kIncognito);
   }
-  // TODO(yoshiki): Remove the flag when the feature is launched.
-  if (std::tr1::get<1>(GetParam()) == std::string("suggestAppDialog")) {
-    command_line->AppendSwitch(
-        chromeos::switches::kFileManagerEnableWebstoreIntegration);
-  }
   ExtensionApiTest::SetUpCommandLine(command_line);
 }
 
-IN_PROC_BROWSER_TEST_P(FileManagerBrowserTest, Test) {
+void FileManagerBrowserTestBase::StartTest() {
   // Launch the extension.
   base::FilePath path = test_data_dir_.AppendASCII("file_manager_browsertest");
   const extensions::Extension* extension = LoadExtensionAsComponent(path);
@@ -542,7 +597,6 @@ IN_PROC_BROWSER_TEST_P(FileManagerBrowserTest, Test) {
   // Handle the messages from JavaScript.
   // The while loop is break when the test is passed or failed.
   FileManagerTestListener listener;
-  base::JSONValueConverter<AddEntriesMessage> add_entries_message_converter;
   while (true) {
     FileManagerTestListener::Message entry = listener.GetNextMessage();
     if (entry.type == chrome::NOTIFICATION_EXTENSION_TEST_PASSED) {
@@ -565,52 +619,102 @@ IN_PROC_BROWSER_TEST_P(FileManagerBrowserTest, Test) {
         !message_dictionary->GetString("name", &name))
       continue;
 
-    if (name == "getTestName") {
-      // Pass the test case name.
-      entry.function->Reply(std::tr1::get<1>(GetParam()));
-    } else if (name == "isInGuestMode") {
-      // Obtain whether the test is in guest mode or not.
-      entry.function->Reply(std::tr1::get<0>(GetParam()) ? "true" : "false");
-    } else if (name == "getCwsWidgetContainerMockUrl") {
-      // Obtain whether the test is in guest mode or not.
-      const GURL url = embedded_test_server()->GetURL(
-            "/chromeos/file_manager/cws_container_mock/index.html");
-      std::string origin = url.GetOrigin().spec();
-
-      // Removes trailing a slash.
-      if (*origin.rbegin() == '/')
-        origin.resize(origin.length() - 1);
-
-      const scoped_ptr<base::DictionaryValue> res(new base::DictionaryValue());
-      res->SetString("url", url.spec());
-      res->SetString("origin", origin);
-      std::string jsonString;
-      base::JSONWriter::Write(res.get(), &jsonString);
-      entry.function->Reply(jsonString);
-    } else if (name == "addEntries") {
-      // Add entries to the specified volume.
-      AddEntriesMessage message;
-      if (!add_entries_message_converter.Convert(*value.get(), &message)) {
-        entry.function->Reply("onError");
-        continue;
-      }
-      for (size_t i = 0; i < message.entries.size(); ++i) {
-        switch (message.volume) {
-          case LOCAL_VOLUME:
-            local_volume_->CreateEntry(*message.entries[i]);
-            break;
-          case DRIVE_VOLUME:
-            if (drive_volume_)
-              drive_volume_->CreateEntry(*message.entries[i]);
-            break;
-          default:
-            NOTREACHED();
-            break;
-        }
-      }
-      entry.function->Reply("onEntryAdded");
-    }
+    entry.function->Reply(OnMessage(name, value.get()));
   }
+}
+
+std::string FileManagerBrowserTestBase::OnMessage(const std::string& name,
+                                                  const base::Value* value) {
+  if (name == "getTestName") {
+    // Pass the test case name.
+    return GetTestCaseNameParam();
+  } else if (name == "getRootPaths") {
+    // Pass the root paths.
+    const scoped_ptr<base::DictionaryValue> res(new base::DictionaryValue());
+    res->SetString("downloads",
+        "/" + util::GetDownloadsMountPointName(profile()));
+    res->SetString("drive",
+        "/" + drive::util::GetDriveMountPointPath(profile()
+            ).BaseName().AsUTF8Unsafe() + "/root");
+    std::string jsonString;
+    base::JSONWriter::Write(res.get(), &jsonString);
+    return jsonString;
+  } else if (name == "isInGuestMode") {
+    // Obtain whether the test is in guest mode or not.
+    return GetGuestModeParam() ? "true" : "false";
+  } else if (name == "getCwsWidgetContainerMockUrl") {
+    // Obtain whether the test is in guest mode or not.
+    const GURL url = embedded_test_server()->GetURL(
+          "/chromeos/file_manager/cws_container_mock/index.html");
+    std::string origin = url.GetOrigin().spec();
+
+    // Removes trailing a slash.
+    if (*origin.rbegin() == '/')
+      origin.resize(origin.length() - 1);
+
+    const scoped_ptr<base::DictionaryValue> res(new base::DictionaryValue());
+    res->SetString("url", url.spec());
+    res->SetString("origin", origin);
+    std::string jsonString;
+    base::JSONWriter::Write(res.get(), &jsonString);
+    return jsonString;
+  } else if (name == "addEntries") {
+    // Add entries to the specified volume.
+    base::JSONValueConverter<AddEntriesMessage> add_entries_message_converter;
+    AddEntriesMessage message;
+    if (!add_entries_message_converter.Convert(*value, &message))
+      return "onError";
+    for (size_t i = 0; i < message.entries.size(); ++i) {
+      switch (message.volume) {
+        case LOCAL_VOLUME:
+          local_volume_->CreateEntry(*message.entries[i]);
+          break;
+        case DRIVE_VOLUME:
+          if (drive_volume_.get())
+            drive_volume_->CreateEntry(*message.entries[i]);
+          break;
+        case USB_VOLUME:
+          if (usb_volume_)
+            usb_volume_->CreateEntry(*message.entries[i]);
+          break;
+        default:
+          NOTREACHED();
+          break;
+      }
+    }
+    return "onEntryAdded";
+  } else if (name == "mountFakeUsb") {
+    usb_volume_.reset(new FakeUsbTestVolume());
+    usb_volume_->Mount(profile());
+    return "true";
+  }
+  return "unknownMessage";
+}
+
+drive::DriveIntegrationService*
+FileManagerBrowserTestBase::CreateDriveIntegrationService(Profile* profile) {
+  drive_volumes_[profile].reset(new DriveTestVolume());
+  return drive_volumes_[profile]->CreateDriveIntegrationService(profile);
+}
+
+// Parameter of FileManagerBrowserTest.
+// The second value is the case name of JavaScript.
+typedef std::tr1::tuple<GuestMode, const char*> TestParameter;
+
+// Test fixture class for normal (not multi-profile related) tests.
+class FileManagerBrowserTest :
+      public FileManagerBrowserTestBase,
+      public ::testing::WithParamInterface<TestParameter> {
+  virtual GuestMode GetGuestModeParam() const OVERRIDE {
+    return std::tr1::get<0>(GetParam());
+  }
+  virtual const char* GetTestCaseNameParam() const OVERRIDE {
+    return std::tr1::get<1>(GetParam());
+  }
+};
+
+IN_PROC_BROWSER_TEST_P(FileManagerBrowserTest, Test) {
+  StartTest();
 }
 
 INSTANTIATE_TEST_CASE_P(
@@ -623,16 +727,20 @@ INSTANTIATE_TEST_CASE_P(
 INSTANTIATE_TEST_CASE_P(
     OpenSpecialTypes,
     FileManagerBrowserTest,
-    ::testing::Values(TestParameter(IN_GUEST_MODE, "videoOpenDownloads"),
-                      TestParameter(NOT_IN_GUEST_MODE, "videoOpenDownloads"),
-                      TestParameter(NOT_IN_GUEST_MODE, "videoOpenDrive"),
-                      TestParameter(IN_GUEST_MODE, "audioOpenDownloads"),
+    ::testing::Values(TestParameter(IN_GUEST_MODE, "galleryOpenDownloads"),
+                      TestParameter(NOT_IN_GUEST_MODE, "galleryOpenDownloads"),
+                      TestParameter(NOT_IN_GUEST_MODE, "galleryOpenDrive"),
+                      TestParameter(IN_GUEST_MODE, "zipOpenDownloads"),
+                      TestParameter(NOT_IN_GUEST_MODE, "zipOpenDownloads")));
+// http://crbug.com/348008
+// DISABLED           TestParameter(NOT_IN_GUEST_MODE, "zipOpenDrive")));
+
+INSTANTIATE_TEST_CASE_P(
+    OpenAudioFiles,
+    FileManagerBrowserTest,
+    ::testing::Values(TestParameter(IN_GUEST_MODE, "audioOpenDownloads"),
                       TestParameter(NOT_IN_GUEST_MODE, "audioOpenDownloads"),
-                      TestParameter(NOT_IN_GUEST_MODE, "audioOpenDrive"),
-                      TestParameter(IN_GUEST_MODE, "galleryOpenDownloads"),
-                      TestParameter(NOT_IN_GUEST_MODE,
-                                    "galleryOpenDownloads"),
-                      TestParameter(NOT_IN_GUEST_MODE, "galleryOpenDrive")));
+                      TestParameter(NOT_IN_GUEST_MODE, "audioOpenDrive")));
 
 INSTANTIATE_TEST_CASE_P(
     KeyboardOperations,
@@ -695,7 +803,7 @@ INSTANTIATE_TEST_CASE_P(
                       TestParameter(NOT_IN_GUEST_MODE, "shareDirectory")));
 
 INSTANTIATE_TEST_CASE_P(
-    restoreGeometry,
+    RestoreGeometry,
     FileManagerBrowserTest,
     ::testing::Values(TestParameter(NOT_IN_GUEST_MODE, "restoreGeometry"),
                       TestParameter(IN_GUEST_MODE, "restoreGeometry")));
@@ -713,6 +821,19 @@ INSTANTIATE_TEST_CASE_P(
     ::testing::Values(TestParameter(NOT_IN_GUEST_MODE, "suggestAppDialog")));
 
 INSTANTIATE_TEST_CASE_P(
+    ExecuteDefaultTaskOnDownloads,
+    FileManagerBrowserTest,
+    ::testing::Values(
+        TestParameter(NOT_IN_GUEST_MODE, "executeDefaultTaskOnDownloads"),
+        TestParameter(IN_GUEST_MODE, "executeDefaultTaskOnDownloads")));
+
+INSTANTIATE_TEST_CASE_P(
+    ExecuteDefaultTaskOnDrive,
+    FileManagerBrowserTest,
+    ::testing::Values(
+        TestParameter(NOT_IN_GUEST_MODE, "executeDefaultTaskOnDrive")));
+
+INSTANTIATE_TEST_CASE_P(
     NavigationList,
     FileManagerBrowserTest,
     ::testing::Values(TestParameter(NOT_IN_GUEST_MODE,
@@ -721,8 +842,212 @@ INSTANTIATE_TEST_CASE_P(
 INSTANTIATE_TEST_CASE_P(
     TabIndex,
     FileManagerBrowserTest,
-    ::testing::Values(TestParameter(NOT_IN_GUEST_MODE,
-                                    "searchBoxFocus")));
+    ::testing::Values(TestParameter(NOT_IN_GUEST_MODE, "searchBoxFocus")));
+
+INSTANTIATE_TEST_CASE_P(
+    Thumbnails,
+    FileManagerBrowserTest,
+    ::testing::Values(TestParameter(NOT_IN_GUEST_MODE, "thumbnailsDownloads"),
+                      TestParameter(IN_GUEST_MODE, "thumbnailsDownloads")));
+
+INSTANTIATE_TEST_CASE_P(
+    CopyBetweenWindows,
+    FileManagerBrowserTest,
+    ::testing::Values(
+        TestParameter(NOT_IN_GUEST_MODE, "copyBetweenWindowsLocalToDrive"),
+        TestParameter(NOT_IN_GUEST_MODE, "copyBetweenWindowsLocalToUsb"),
+        TestParameter(NOT_IN_GUEST_MODE, "copyBetweenWindowsUsbToDrive")));
+
+// Structure to describe an account info.
+struct TestAccountInfo {
+  const char* const email;
+  const char* const hash;
+  const char* const display_name;
+};
+
+enum {
+  DUMMY_ACCOUNT_INDEX = 0,
+  PRIMARY_ACCOUNT_INDEX = 1,
+  SECONDARY_ACCOUNT_INDEX_START = 2,
+};
+
+static const TestAccountInfo kTestAccounts[] = {
+  {"__dummy__@invalid.domain", "hashdummy", "Dummy Account"},
+  {"alice@invalid.domain", "hashalice", "Alice"},
+  {"bob@invalid.domain", "hashbob", "Bob"},
+  {"charlie@invalid.domain", "hashcharlie", "Charlie"},
+};
+
+// Test fixture class for testing multi-profile features.
+class MultiProfileFileManagerBrowserTest : public FileManagerBrowserTestBase {
+ protected:
+  // Enables multi-profiles.
+  virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE {
+    FileManagerBrowserTestBase::SetUpCommandLine(command_line);
+    command_line->AppendSwitch(switches::kMultiProfiles);
+    // Logs in to a dummy profile (For making MultiProfileWindowManager happy;
+    // browser test creates a default window and the manager tries to assign a
+    // user for it, and we need a profile connected to a user.)
+    command_line->AppendSwitchASCII(chromeos::switches::kLoginUser,
+                                    kTestAccounts[DUMMY_ACCOUNT_INDEX].email);
+    command_line->AppendSwitchASCII(chromeos::switches::kLoginProfile,
+                                    kTestAccounts[DUMMY_ACCOUNT_INDEX].hash);
+  }
+
+  // Logs in to the primary profile of this test.
+  virtual void SetUpOnMainThread() OVERRIDE {
+    const TestAccountInfo& info = kTestAccounts[PRIMARY_ACCOUNT_INDEX];
+
+    AddUser(info, true);
+    chromeos::UserManager* const user_manager = chromeos::UserManager::Get();
+    if (user_manager->GetActiveUser() != user_manager->FindUser(info.email))
+      chromeos::UserManager::Get()->SwitchActiveUser(info.email);
+    FileManagerBrowserTestBase::SetUpOnMainThread();
+  }
+
+  // Loads all users to the current session and sets up necessary fields.
+  // This is used for preparing all accounts in PRE_ test setup, and for testing
+  // actual login behavior.
+  void AddAllUsers() {
+    for (size_t i = 0; i < arraysize(kTestAccounts); ++i)
+      AddUser(kTestAccounts[i], i >= SECONDARY_ACCOUNT_INDEX_START);
+  }
+
+  // Add as many as users
+  void AddExtraUsersForStressTesting() {
+    ash::Shell* const shell = ash::Shell::GetInstance();
+    const size_t maxLogin =
+        shell->session_state_delegate()->GetMaximumNumberOfLoggedInUsers();
+
+    for (int i = 0; i + arraysize(kTestAccounts) < maxLogin; ++i) {
+      const std::string email = base::StringPrintf("user%d@invalid.domain", i);
+      const std::string hash = base::StringPrintf("hashuser%d", i);
+      const std::string name = base::StringPrintf("Additional User %d", i);
+      const TestAccountInfo info = {email.c_str(), hash.c_str(), name.c_str()};
+      AddUser(info, true);
+    }
+  }
+
+  // Returns primary profile (if it is already created.)
+  virtual Profile* profile() OVERRIDE {
+    Profile* const profile = chromeos::ProfileHelper::GetProfileByUserIdHash(
+        kTestAccounts[PRIMARY_ACCOUNT_INDEX].hash);
+    return profile ? profile : FileManagerBrowserTestBase::profile();
+  }
+
+  // Sets the test case name (used as a function name in test_cases.js to call.)
+  void set_test_case_name(const std::string& name) { test_case_name_ = name; }
+
+  // Adds a new user for testing to the current session.
+  void AddUser(const TestAccountInfo& info, bool log_in) {
+    chromeos::UserManager* const user_manager = chromeos::UserManager::Get();
+    if (log_in)
+      user_manager->UserLoggedIn(info.email, info.hash, false);
+    user_manager->SaveUserDisplayName(info.email,
+                                      base::UTF8ToUTF16(info.display_name));
+    chromeos::ProfileHelper::GetProfileByUserIdHash(info.hash)->GetPrefs()->
+        SetString(prefs::kGoogleServicesUsername, info.email);
+  }
+
+ private:
+  virtual GuestMode GetGuestModeParam() const OVERRIDE {
+    return NOT_IN_GUEST_MODE;
+  }
+
+  virtual const char* GetTestCaseNameParam() const OVERRIDE {
+    return test_case_name_.c_str();
+  }
+
+  virtual std::string OnMessage(const std::string& name,
+                                const base::Value* value) OVERRIDE {
+    if (name == "addAllUsers") {
+      AddAllUsers();
+      return "true";
+    } else if (name == "getWindowOwnerId") {
+      chrome::MultiUserWindowManager* const window_manager =
+          chrome::MultiUserWindowManager::GetInstance();
+      apps::AppWindowRegistry* const app_window_registry =
+          apps::AppWindowRegistry::Get(profile());
+      DCHECK(window_manager);
+      DCHECK(app_window_registry);
+
+      const apps::AppWindowRegistry::AppWindowList& list =
+          app_window_registry->GetAppWindowsForApp(
+              file_manager::kFileManagerAppId);
+      return list.size() == 1u ?
+          window_manager->GetUserPresentingWindow(
+              list.front()->GetNativeWindow()) : "";
+    }
+    return FileManagerBrowserTestBase::OnMessage(name, value);
+  }
+
+  std::string test_case_name_;
+};
+
+IN_PROC_BROWSER_TEST_F(MultiProfileFileManagerBrowserTest, PRE_BasicDownloads) {
+  AddAllUsers();
+}
+
+IN_PROC_BROWSER_TEST_F(MultiProfileFileManagerBrowserTest, BasicDownloads) {
+  AddAllUsers();
+
+  // Sanity check that normal operations work in multi-profile setting as well.
+  set_test_case_name("keyboardCopyDownloads");
+  StartTest();
+}
+
+IN_PROC_BROWSER_TEST_F(MultiProfileFileManagerBrowserTest, PRE_BasicDrive) {
+  AddAllUsers();
+}
+
+IN_PROC_BROWSER_TEST_F(MultiProfileFileManagerBrowserTest, BasicDrive) {
+  AddAllUsers();
+
+  // Sanity check that normal operations work in multi-profile setting as well.
+  set_test_case_name("keyboardCopyDrive");
+  StartTest();
+}
+
+IN_PROC_BROWSER_TEST_F(MultiProfileFileManagerBrowserTest, PRE_Badge) {
+  AddAllUsers();
+}
+
+IN_PROC_BROWSER_TEST_F(MultiProfileFileManagerBrowserTest, Badge) {
+  // Test the profile badge to be correctly shown and hidden.
+  set_test_case_name("multiProfileBadge");
+  StartTest();
+}
+
+IN_PROC_BROWSER_TEST_F(MultiProfileFileManagerBrowserTest,
+                       PRE_VisitDesktopMenu) {
+  AddAllUsers();
+}
+
+IN_PROC_BROWSER_TEST_F(MultiProfileFileManagerBrowserTest, VisitDesktopMenu) {
+  // Test for the menu item for visiting other profile's desktop.
+  set_test_case_name("multiProfileVisitDesktopMenu");
+  StartTest();
+}
+
+// TODO(kinaba): investigate the flakiness.
+IN_PROC_BROWSER_TEST_F(MultiProfileFileManagerBrowserTest,
+                       DISABLED_PRE_MaxUser) {
+  AddAllUsers();
+  AddExtraUsersForStressTesting();
+}
+
+IN_PROC_BROWSER_TEST_F(MultiProfileFileManagerBrowserTest,
+                       DISABLED_MaxUser) {
+  // Run the same test as VisitDesktopMenu with maximum number of users logged
+  // in and checks that nothing goes wrong. Here, the primary user (alice) logs
+  // in first, then the "extra" users follow, and then lastly the other users
+  // (bob and charlie) are added in the test. Thus the existing test verifies
+  // that the feature is effectively working with lastly logged in users.
+  AddExtraUsersForStressTesting();
+
+  set_test_case_name("multiProfileVisitDesktopMenu");
+  StartTest();
+}
 
 }  // namespace
 }  // namespace file_manager

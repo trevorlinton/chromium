@@ -6,12 +6,12 @@
 #define CONTENT_BROWSER_RENDERER_HOST_INPUT_TOUCHSCREEN_TAP_SUPPRESSION_CONTROLLER_H_
 
 #include "base/memory/scoped_ptr.h"
-#include "content/browser/renderer_host/input/gesture_event_filter.h"
+#include "content/browser/renderer_host/input/gesture_event_queue.h"
 #include "content/browser/renderer_host/input/tap_suppression_controller_client.h"
 
 namespace content {
 
-class GestureEventFilter;
+class GestureEventQueue;
 class TapSuppressionController;
 
 // Controls the suppression of touchscreen taps immediately following the
@@ -19,7 +19,7 @@ class TapSuppressionController;
 class TouchscreenTapSuppressionController
     : public TapSuppressionControllerClient {
  public:
-  explicit TouchscreenTapSuppressionController(GestureEventFilter* gef);
+  explicit TouchscreenTapSuppressionController(GestureEventQueue* geq);
   virtual ~TouchscreenTapSuppressionController();
 
   // Should be called on arrival of GestureFlingCancel events.
@@ -30,17 +30,16 @@ class TouchscreenTapSuppressionController
   void GestureFlingCancelAck(bool processed);
 
   // Should be called on arrival of GestureTapDown events. Returns true if the
-  // caller should stop normal handling of the GestureTapDown. In this case, the
-  // caller is responsible for saving the event for later use, if needed.
+  // caller should stop normal handling of the GestureTapDown.
   bool ShouldDeferGestureTapDown(const GestureEventWithLatencyInfo& event);
 
-  // Should be called on arrival of GestureTap events. Returns true if the
-  // caller should stop normal handling of the GestureTap.
-  bool ShouldSuppressGestureTap();
+  // Should be called on arrival of GestureShowPress events. Returns true if the
+  // caller should stop normal handling of the GestureShowPress.
+  bool ShouldDeferGestureShowPress(const GestureEventWithLatencyInfo& event);
 
-  // Should be called on arrival of GestureTapCancel events. Returns true if the
-  // caller should stop normal handling of the GestureTapCancel.
-  bool ShouldSuppressGestureTapCancel();
+  // Should be called on arrival of tap-ending gesture events. Returns true if
+  // the caller should stop normal handling of the GestureTap.
+  bool ShouldSuppressGestureTapEnd();
 
  private:
   // TapSuppressionControllerClient implementation.
@@ -49,8 +48,11 @@ class TouchscreenTapSuppressionController
   virtual void DropStashedTapDown() OVERRIDE;
   virtual void ForwardStashedTapDown() OVERRIDE;
 
-  GestureEventFilter* gesture_event_filter_;
-  GestureEventWithLatencyInfo stashed_tap_down_;
+  GestureEventQueue* gesture_event_queue_;
+
+  typedef scoped_ptr<GestureEventWithLatencyInfo> ScopedGestureEvent;
+  ScopedGestureEvent stashed_tap_down_;
+  ScopedGestureEvent stashed_show_press_;
 
   // The core controller of tap suppression.
   scoped_ptr<TapSuppressionController> controller_;

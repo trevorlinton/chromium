@@ -18,7 +18,6 @@
 #include "chrome/browser/history/select_favicon_frames.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/web_applications/web_app.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
 #include "chrome/common/extensions/manifest_handlers/icons_handler.h"
 #include "chrome/common/pref_names.h"
@@ -27,6 +26,7 @@
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/common/extension.h"
 #include "grit/theme_resources.h"
 #include "skia/ext/image_operations.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -214,15 +214,19 @@ void UpdateShortcutWorker::DidDownloadFavicon(
                             requested_size,
                             &closest_indices,
                             NULL);
-  size_t closest_index = closest_indices[0];
 
-  if (!bitmaps.empty() && !bitmaps[closest_index].isNull()) {
+  SkBitmap bitmap;
+  if (!bitmaps.empty()) {
+    size_t closest_index = closest_indices[0];
+    bitmap = bitmaps[closest_index];
+  }
+
+  if (!bitmap.isNull()) {
     // Update icon with download image and update shortcut.
-    shortcut_info_.favicon.Add(
-        gfx::Image::CreateFrom1xBitmap(bitmaps[closest_index]));
+    shortcut_info_.favicon.Add(gfx::Image::CreateFrom1xBitmap(bitmap));
     extensions::TabHelper* extensions_tab_helper =
         extensions::TabHelper::FromWebContents(web_contents_);
-    extensions_tab_helper->SetAppIcon(bitmaps[closest_index]);
+    extensions_tab_helper->SetAppIcon(bitmap);
     UpdateShortcuts();
   } else {
     // Try the next icon otherwise.
@@ -286,7 +290,7 @@ void UpdateShortcutWorker::UpdateShortcutsOnFileThread() {
   // Ensure web_app_path exists. web_app_path could be missing for a legacy
   // shortcut created by Gears.
   if (!base::PathExists(web_app_path) &&
-      !file_util::CreateDirectory(web_app_path)) {
+      !base::CreateDirectory(web_app_path)) {
     NOTREACHED();
     return;
   }
@@ -299,8 +303,9 @@ void UpdateShortcutWorker::UpdateShortcutsOnFileThread() {
   CheckExistingShortcuts();
   if (!shortcut_files_.empty()) {
     // Generates app id from web app url and profile path.
-    string16 app_id = ShellIntegration::GetAppModelIdForProfile(
-        UTF8ToWide(web_app::GenerateApplicationNameFromURL(shortcut_info_.url)),
+    base::string16 app_id = ShellIntegration::GetAppModelIdForProfile(
+        base::UTF8ToWide(
+            web_app::GenerateApplicationNameFromURL(shortcut_info_.url)),
         profile_path_);
 
     // Sanitize description
@@ -344,10 +349,10 @@ void UpdateShortcutWorker::DeleteMeOnUIThread() {
 
 void OnImageLoaded(ShellIntegration::ShortcutInfo shortcut_info,
                    web_app::ShortcutInfoCallback callback,
-                   const gfx::Image& image) {
+                   const gfx::ImageFamily& image_family) {
   // If the image failed to load (e.g. if the resource being loaded was empty)
   // use the standard application icon.
-  if (image.IsEmpty()) {
+  if (image_family.empty()) {
     gfx::Image default_icon =
         ResourceBundle::GetSharedInstance().GetImageNamed(IDR_APP_DEFAULT_ICON);
     int size = kDesiredSizes[kNumDesiredSizes - 1];
@@ -360,21 +365,7 @@ void OnImageLoaded(ShellIntegration::ShortcutInfo shortcut_info,
     image_skia.MakeThreadSafe();
     shortcut_info.favicon.Add(gfx::Image(image_skia));
   } else {
-    // As described in UpdateShortcutInfoAndIconForApp, image contains all of
-    // the icons, hackily put into a single ImageSkia. Separate them out into
-    // individual ImageSkias and insert them into the icon family.
-    const gfx::ImageSkia& multires_image_skia = image.AsImageSkia();
-    // NOTE: We do not call ImageSkia::EnsureRepsForSupportedScales here.
-    // The image reps here are not really for different scale factors (ImageSkia
-    // is just being used as a handy container for multiple images).
-    std::vector<gfx::ImageSkiaRep> image_reps =
-        multires_image_skia.image_reps();
-    for (std::vector<gfx::ImageSkiaRep>::const_iterator it = image_reps.begin();
-         it != image_reps.end(); ++it) {
-      gfx::ImageSkia image_skia(*it);
-      image_skia.MakeThreadSafe();
-      shortcut_info.favicon.Add(image_skia);
-    }
+    shortcut_info.favicon = image_family;
   }
 
   callback.Run(shortcut_info);
@@ -404,7 +395,7 @@ void GetShortcutInfoForTab(WebContents* web_contents,
   info->url = app_info.app_url.is_empty() ? web_contents->GetURL() :
                                             app_info.app_url;
   info->title = app_info.title.empty() ?
-      (web_contents->GetTitle().empty() ? UTF8ToUTF16(info->url.spec()) :
+      (web_contents->GetTitle().empty() ? base::UTF8ToUTF16(info->url.spec()) :
                                           web_contents->GetTitle()) :
       app_info.title;
   info->description = app_info.description;
@@ -429,8 +420,8 @@ void UpdateShortcutInfoForApp(const extensions::Extension& app,
   shortcut_info->extension_id = app.id();
   shortcut_info->is_platform_app = app.is_platform_app();
   shortcut_info->url = extensions::AppLaunchInfo::GetLaunchWebURL(&app);
-  shortcut_info->title = UTF8ToUTF16(app.name());
-  shortcut_info->description = UTF8ToUTF16(app.description());
+  shortcut_info->title = base::UTF8ToUTF16(app.name());
+  shortcut_info->description = base::UTF8ToUTF16(app.description());
   shortcut_info->extension_path = app.path();
   shortcut_info->profile_path = profile->GetPath();
   shortcut_info->profile_name =
@@ -438,29 +429,22 @@ void UpdateShortcutInfoForApp(const extensions::Extension& app,
 }
 
 void UpdateShortcutInfoAndIconForApp(
-    const extensions::Extension& extension,
+    const extensions::Extension* extension,
     Profile* profile,
     const web_app::ShortcutInfoCallback& callback) {
   ShellIntegration::ShortcutInfo shortcut_info =
-      ShortcutInfoForExtensionAndProfile(&extension, profile);
+      ShortcutInfoForExtensionAndProfile(extension, profile);
 
-  // We want to load each icon into a separate ImageSkia to insert into an
-  // ImageFamily, but LoadImagesAsync currently only builds a single ImageSkia.
-  // Hack around this by loading all images into the ImageSkia as 100%
-  // representations, and later (in OnImageLoaded), pulling them out and
-  // individually inserting them into an ImageFamily.
-  // TODO(mgiuca): Have ImageLoader build the ImageFamily directly
-  // (http://crbug.com/230184).
   std::vector<extensions::ImageLoader::ImageRepresentation> info_list;
   for (size_t i = 0; i < kNumDesiredSizes; ++i) {
     int size = kDesiredSizes[i];
     extensions::ExtensionResource resource =
         extensions::IconsInfo::GetIconResource(
-            &extension, size, ExtensionIconSet::MATCH_EXACTLY);
+            extension, size, ExtensionIconSet::MATCH_EXACTLY);
     if (!resource.empty()) {
       info_list.push_back(extensions::ImageLoader::ImageRepresentation(
           resource,
-          extensions::ImageLoader::ImageRepresentation::RESIZE_WHEN_LARGER,
+          extensions::ImageLoader::ImageRepresentation::ALWAYS_RESIZE,
           gfx::Size(size, size),
           ui::SCALE_FACTOR_100P));
     }
@@ -475,22 +459,24 @@ void UpdateShortcutInfoAndIconForApp(
     // so look for a larger icon first:
     extensions::ExtensionResource resource =
         extensions::IconsInfo::GetIconResource(
-            &extension, size, ExtensionIconSet::MATCH_BIGGER);
+            extension, size, ExtensionIconSet::MATCH_BIGGER);
     if (resource.empty()) {
       resource = extensions::IconsInfo::GetIconResource(
-          &extension, size, ExtensionIconSet::MATCH_SMALLER);
+          extension, size, ExtensionIconSet::MATCH_SMALLER);
     }
     info_list.push_back(extensions::ImageLoader::ImageRepresentation(
         resource,
-        extensions::ImageLoader::ImageRepresentation::RESIZE_WHEN_LARGER,
+        extensions::ImageLoader::ImageRepresentation::ALWAYS_RESIZE,
         gfx::Size(size, size),
         ui::SCALE_FACTOR_100P));
   }
 
-  // |info_list| may still be empty at this point, in which case LoadImage
-  // will call the OnImageLoaded callback with an empty image and exit
-  // immediately.
-  extensions::ImageLoader::Get(profile)->LoadImagesAsync(&extension, info_list,
+  // |info_list| may still be empty at this point, in which case
+  // LoadImageFamilyAsync will call the OnImageLoaded callback with an empty
+  // image and exit immediately.
+  extensions::ImageLoader::Get(profile)->LoadImageFamilyAsync(
+      extension,
+      info_list,
       base::Bind(&OnImageLoaded, shortcut_info, callback));
 }
 

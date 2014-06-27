@@ -18,7 +18,8 @@
 #if defined(OS_CHROMEOS)
 #include "ash/session_state_delegate.h"
 #include "ash/shell.h"
-#include "chrome/browser/ui/ash/multi_user_window_manager.h"
+#include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
+#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "ui/base/l10n/l10n_util.h"
 #endif
@@ -63,6 +64,11 @@ void SystemMenuModelBuilder::BuildSystemMenuForBrowserWindow(
     model->AddSeparator(ui::NORMAL_SEPARATOR);
     model->AddItemWithStringId(IDC_TASK_MANAGER, IDS_TASK_MANAGER);
   }
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+  model->AddSeparator(ui::NORMAL_SEPARATOR);
+  model->AddCheckItemWithStringId(IDC_USE_SYSTEM_TITLE_BAR,
+                                  IDS_SHOW_WINDOW_DECORATIONS_MENU);
+#endif
   AppendTeleportMenu(model);
   // If it's a regular browser window with tabs, we don't add any more items,
   // since it already has menus (Page, Chrome).
@@ -96,6 +102,10 @@ void SystemMenuModelBuilder::BuildSystemMenuForAppOrPopupWindow(
     model->AddSeparator(ui::NORMAL_SEPARATOR);
     model->AddItemWithStringId(IDC_TASK_MANAGER, IDS_TASK_MANAGER);
   }
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+  model->AddSeparator(ui::NORMAL_SEPARATOR);
+  model->AddItemWithStringId(IDC_CLOSE_WINDOW, IDS_CLOSE);
+#endif
 
   AppendTeleportMenu(model);
 }
@@ -104,17 +114,21 @@ void SystemMenuModelBuilder::AddFrameToggleItems(ui::SimpleMenuModel* model) {
   if (CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kDebugEnableFrameToggle)) {
     model->AddSeparator(ui::NORMAL_SEPARATOR);
-    model->AddItem(IDC_DEBUG_FRAME_TOGGLE, ASCIIToUTF16("Toggle Frame Type"));
+    model->AddItem(IDC_DEBUG_FRAME_TOGGLE,
+                   base::ASCIIToUTF16("Toggle Frame Type"));
   }
 }
 
 void SystemMenuModelBuilder::AppendTeleportMenu(ui::SimpleMenuModel* model) {
 #if defined(OS_CHROMEOS)
   DCHECK(browser()->window());
-  chrome::MultiUserWindowManager* manager =
-      chrome::MultiUserWindowManager::GetInstance();
   // If there is no manager, we are not in the proper multi user mode.
-  if (!manager)
+  if (chrome::MultiUserWindowManager::GetMultiProfileMode() !=
+          chrome::MultiUserWindowManager::MULTI_PROFILE_MODE_SEPARATED)
+    return;
+
+  // Don't show the menu for incognito windows.
+  if (browser()->profile()->IsOffTheRecord())
     return;
 
   // To show the menu we need at least two logged in users.
@@ -126,8 +140,10 @@ void SystemMenuModelBuilder::AppendTeleportMenu(ui::SimpleMenuModel* model) {
 
   // If this does not belong to a profile or there is no window, or the window
   // is not owned by anyone, we don't show the menu addition.
+  chrome::MultiUserWindowManager* manager =
+      chrome::MultiUserWindowManager::GetInstance();
   const std::string user_id =
-      manager->GetUserIDFromProfile(browser()->profile());
+      multi_user_util::GetUserIDFromProfile(browser()->profile());
   aura::Window* window = browser()->window()->GetNativeWindow();
   if (user_id.empty() || !window || manager->GetWindowOwner(window).empty())
     return;
@@ -138,8 +154,10 @@ void SystemMenuModelBuilder::AppendTeleportMenu(ui::SimpleMenuModel* model) {
     model->AddItem(
         user_index == 1 ? IDC_VISIT_DESKTOP_OF_LRU_USER_2 :
                           IDC_VISIT_DESKTOP_OF_LRU_USER_3,
-        l10n_util::GetStringFUTF16(IDC_VISIT_DESKTOP_OF_LRU_USER,
-                                   delegate->GetUserDisplayName(user_index)));
+        l10n_util::GetStringFUTF16(
+            IDS_VISIT_DESKTOP_OF_LRU_USER,
+            delegate->GetUserDisplayName(user_index),
+            base::ASCIIToUTF16(delegate->GetUserEmail(user_index))));
   }
 #endif
 }

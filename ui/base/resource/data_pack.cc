@@ -84,9 +84,9 @@ bool DataPack::LoadFromPath(const base::FilePath& path) {
   return LoadImpl();
 }
 
-bool DataPack::LoadFromFile(base::PlatformFile file) {
+bool DataPack::LoadFromFile(base::File file) {
   mmap_.reset(new base::MemoryMappedFile);
-  if (!mmap_->Initialize(file)) {
+  if (!mmap_->Initialize(file.Pass())) {
     DLOG(ERROR) << "Failed to mmap datapack";
     UMA_HISTOGRAM_ENUMERATION("DataPack.Load", INIT_FAILED_FROM_FILE,
                               LOAD_ERRORS_COUNT);
@@ -190,7 +190,8 @@ bool DataPack::GetStringPiece(uint16 resource_id,
   const DataPackEntry* next_entry = target + 1;
   size_t length = next_entry->file_offset - target->file_offset;
 
-  data->set(mmap_->data() + target->file_offset, length);
+  data->set(reinterpret_cast<const char*>(mmap_->data() + target->file_offset),
+            length);
   return true;
 }
 
@@ -200,8 +201,7 @@ base::RefCountedStaticMemory* DataPack::GetStaticMemory(
   if (!GetStringPiece(resource_id, &piece))
     return NULL;
 
-  return new base::RefCountedStaticMemory(
-      reinterpret_cast<const unsigned char*>(piece.data()), piece.length());
+  return new base::RefCountedStaticMemory(piece.data(), piece.length());
 }
 
 ResourceHandle::TextEncodingType DataPack::GetTextEncodingType() const {
@@ -216,13 +216,13 @@ ui::ScaleFactor DataPack::GetScaleFactor() const {
 bool DataPack::WritePack(const base::FilePath& path,
                          const std::map<uint16, base::StringPiece>& resources,
                          TextEncodingType textEncodingType) {
-  FILE* file = file_util::OpenFile(path, "wb");
+  FILE* file = base::OpenFile(path, "wb");
   if (!file)
     return false;
 
   if (fwrite(&kFileFormatVersion, sizeof(kFileFormatVersion), 1, file) != 1) {
     LOG(ERROR) << "Failed to write file version";
-    file_util::CloseFile(file);
+    base::CloseFile(file);
     return false;
   }
 
@@ -231,7 +231,7 @@ bool DataPack::WritePack(const base::FilePath& path,
   uint32 entry_count = resources.size();
   if (fwrite(&entry_count, sizeof(entry_count), 1, file) != 1) {
     LOG(ERROR) << "Failed to write entry count";
-    file_util::CloseFile(file);
+    base::CloseFile(file);
     return false;
   }
 
@@ -239,14 +239,14 @@ bool DataPack::WritePack(const base::FilePath& path,
       textEncodingType != BINARY) {
     LOG(ERROR) << "Invalid text encoding type, got " << textEncodingType
                << ", expected between " << BINARY << " and " << UTF16;
-    file_util::CloseFile(file);
+    base::CloseFile(file);
     return false;
   }
 
   uint8 write_buffer = textEncodingType;
   if (fwrite(&write_buffer, sizeof(uint8), 1, file) != 1) {
     LOG(ERROR) << "Failed to write file text resources encoding";
-    file_util::CloseFile(file);
+    base::CloseFile(file);
     return false;
   }
 
@@ -260,13 +260,13 @@ bool DataPack::WritePack(const base::FilePath& path,
     uint16 resource_id = it->first;
     if (fwrite(&resource_id, sizeof(resource_id), 1, file) != 1) {
       LOG(ERROR) << "Failed to write id for " << resource_id;
-      file_util::CloseFile(file);
+      base::CloseFile(file);
       return false;
     }
 
     if (fwrite(&data_offset, sizeof(data_offset), 1, file) != 1) {
       LOG(ERROR) << "Failed to write offset for " << resource_id;
-      file_util::CloseFile(file);
+      base::CloseFile(file);
       return false;
     }
 
@@ -278,13 +278,13 @@ bool DataPack::WritePack(const base::FilePath& path,
   uint16 resource_id = 0;
   if (fwrite(&resource_id, sizeof(resource_id), 1, file) != 1) {
     LOG(ERROR) << "Failed to write extra resource id.";
-    file_util::CloseFile(file);
+    base::CloseFile(file);
     return false;
   }
 
   if (fwrite(&data_offset, sizeof(data_offset), 1, file) != 1) {
     LOG(ERROR) << "Failed to write extra offset.";
-    file_util::CloseFile(file);
+    base::CloseFile(file);
     return false;
   }
 
@@ -293,12 +293,12 @@ bool DataPack::WritePack(const base::FilePath& path,
        it != resources.end(); ++it) {
     if (fwrite(it->second.data(), it->second.length(), 1, file) != 1) {
       LOG(ERROR) << "Failed to write data for " << it->first;
-      file_util::CloseFile(file);
+      base::CloseFile(file);
       return false;
     }
   }
 
-  file_util::CloseFile(file);
+  base::CloseFile(file);
 
   return true;
 }

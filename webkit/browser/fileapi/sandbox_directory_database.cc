@@ -243,8 +243,8 @@ bool DatabaseCheckHelper::ScanDatabase() {
           return false;
 
         // Ensure the backing file exists as a normal file.
-        base::PlatformFileInfo platform_file_info;
-        if (!file_util::GetFileInfo(
+        base::File::Info platform_file_info;
+        if (!base::GetFileInfo(
                 path_.Append(file_info.data_path), &platform_file_info) ||
             platform_file_info.is_directory ||
             platform_file_info.is_symbolic_link) {
@@ -410,8 +410,10 @@ SandboxDirectoryDatabase::FileInfo::~FileInfo() {
 }
 
 SandboxDirectoryDatabase::SandboxDirectoryDatabase(
-    const base::FilePath& filesystem_data_directory)
-    : filesystem_data_directory_(filesystem_data_directory) {
+    const base::FilePath& filesystem_data_directory,
+    leveldb::Env* env_override)
+    : filesystem_data_directory_(filesystem_data_directory),
+      env_override_(env_override) {
 }
 
 SandboxDirectoryDatabase::~SandboxDirectoryDatabase() {
@@ -518,10 +520,10 @@ bool SandboxDirectoryDatabase::GetFileInfo(FileId file_id, FileInfo* info) {
   return false;
 }
 
-base::PlatformFileError SandboxDirectoryDatabase::AddFileInfo(
+base::File::Error SandboxDirectoryDatabase::AddFileInfo(
     const FileInfo& info, FileId* file_id) {
   if (!Init(REPAIR_ON_CORRUPTION))
-    return base::PLATFORM_FILE_ERROR_FAILED;
+    return base::File::FILE_ERROR_FAILED;
   DCHECK(file_id);
   std::string child_key = GetChildLookupKey(info.parent_id, info.name);
   std::string child_id_string;
@@ -529,36 +531,38 @@ base::PlatformFileError SandboxDirectoryDatabase::AddFileInfo(
       db_->Get(leveldb::ReadOptions(), child_key, &child_id_string);
   if (status.ok()) {
     LOG(ERROR) << "File exists already!";
-    return base::PLATFORM_FILE_ERROR_EXISTS;
+    return base::File::FILE_ERROR_EXISTS;
   }
   if (!status.IsNotFound()) {
     HandleError(FROM_HERE, status);
-    return base::PLATFORM_FILE_ERROR_NOT_FOUND;
+    return base::File::FILE_ERROR_NOT_FOUND;
   }
 
-  if (!VerifyIsDirectory(info.parent_id))
-    return base::PLATFORM_FILE_ERROR_NOT_A_DIRECTORY;
+  if (!IsDirectory(info.parent_id)) {
+    LOG(ERROR) << "New parent directory is a file!";
+    return base::File::FILE_ERROR_NOT_A_DIRECTORY;
+  }
 
   // This would be a fine place to limit the number of files in a directory, if
   // we decide to add that restriction.
 
   FileId temp_id;
   if (!GetLastFileId(&temp_id))
-    return base::PLATFORM_FILE_ERROR_FAILED;
+    return base::File::FILE_ERROR_FAILED;
   ++temp_id;
 
   leveldb::WriteBatch batch;
   if (!AddFileInfoHelper(info, temp_id, &batch))
-    return base::PLATFORM_FILE_ERROR_FAILED;
+    return base::File::FILE_ERROR_FAILED;
 
   batch.Put(LastFileIdKey(), base::Int64ToString(temp_id));
   status = db_->Write(leveldb::WriteOptions(), &batch);
   if (!status.ok()) {
     HandleError(FROM_HERE, status);
-    return base::PLATFORM_FILE_ERROR_FAILED;
+    return base::File::FILE_ERROR_FAILED;
   }
   *file_id = temp_id;
-  return base::PLATFORM_FILE_OK;
+  return base::File::FILE_OK;
 }
 
 bool SandboxDirectoryDatabase::RemoveFileInfo(FileId file_id) {
@@ -586,7 +590,7 @@ bool SandboxDirectoryDatabase::UpdateFileInfo(
   if (!GetFileInfo(file_id, &old_info))
     return false;
   if (old_info.parent_id != new_info.parent_id &&
-      !VerifyIsDirectory(new_info.parent_id))
+      !IsDirectory(new_info.parent_id))
     return false;
   if (old_info.parent_id != new_info.parent_id ||
       old_info.name != new_info.name) {
@@ -697,9 +701,13 @@ bool SandboxDirectoryDatabase::GetNextInteger(int64* next) {
 }
 
 // static
-bool SandboxDirectoryDatabase::DestroyDatabase(const base::FilePath& path) {
+bool SandboxDirectoryDatabase::DestroyDatabase(const base::FilePath& path,
+                                               leveldb::Env* env_override) {
   std::string name  = FilePathToString(path.Append(kDirectoryDatabaseName));
-  leveldb::Status status = leveldb::DestroyDB(name, leveldb::Options());
+  leveldb::Options options;
+  if (env_override)
+    options.env = env_override;
+  leveldb::Status status = leveldb::DestroyDB(name, options);
   if (status.ok())
     return true;
   LOG(WARNING) << "Failed to destroy a database with status " <<
@@ -717,6 +725,8 @@ bool SandboxDirectoryDatabase::Init(RecoveryOption recovery_option) {
   leveldb::Options options;
   options.max_open_files = 0;  // Use minimum.
   options.create_if_missing = true;
+  if (env_override_)
+    options.env = env_override_;
   leveldb::DB* db;
   leveldb::Status status = leveldb::DB::Open(options, path, &db);
   ReportInitStatus(status);
@@ -751,7 +761,7 @@ bool SandboxDirectoryDatabase::Init(RecoveryOption recovery_option) {
       LOG(WARNING) << "Clearing SandboxDirectoryDatabase.";
       if (!base::DeleteFile(filesystem_data_directory_, true))
         return false;
-      if (!file_util::CreateDirectory(filesystem_data_directory_))
+      if (!base::CreateDirectory(filesystem_data_directory_))
         return false;
       return Init(FAIL_ON_CORRUPTION);
   }
@@ -764,6 +774,8 @@ bool SandboxDirectoryDatabase::RepairDatabase(const std::string& db_path) {
   DCHECK(!db_.get());
   leveldb::Options options;
   options.max_open_files = 0;  // Use minimum.
+  if (env_override_)
+    options.env = env_override_;
   if (!leveldb::RepairDB(db_path, options).ok())
     return false;
   if (!Init(FAIL_ON_CORRUPTION))
@@ -772,6 +784,17 @@ bool SandboxDirectoryDatabase::RepairDatabase(const std::string& db_path) {
     return true;
   db_.reset();
   return false;
+}
+
+bool SandboxDirectoryDatabase::IsDirectory(FileId file_id) {
+  FileInfo info;
+  if (!file_id)
+    return true;  // The root is a directory.
+  if (!GetFileInfo(file_id, &info))
+    return false;
+  if (!info.is_directory())
+    return false;
+  return true;
 }
 
 bool SandboxDirectoryDatabase::IsFileSystemConsistent() {
@@ -853,19 +876,6 @@ bool SandboxDirectoryDatabase::GetLastFileId(FileId* file_id) {
   if (!StoreDefaultValues())
     return false;
   *file_id = 0;
-  return true;
-}
-
-bool SandboxDirectoryDatabase::VerifyIsDirectory(FileId file_id) {
-  FileInfo info;
-  if (!file_id)
-    return true;  // The root is a directory.
-  if (!GetFileInfo(file_id, &info))
-    return false;
-  if (!info.is_directory()) {
-    LOG(ERROR) << "New parent directory is a file!";
-    return false;
-  }
   return true;
 }
 

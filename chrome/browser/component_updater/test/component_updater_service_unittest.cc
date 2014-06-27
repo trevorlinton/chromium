@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,15 +7,20 @@
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
+#include "chrome/browser/component_updater/component_updater_utils.h"
 #include "chrome/browser/component_updater/test/test_installer.h"
 #include "chrome/common/chrome_paths.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/test/net/url_request_prepackaged_interceptor.h"
+#include "content/public/browser/resource_controller.h"
+#include "content/public/browser/resource_request_info.h"
+#include "content/public/browser/resource_throttle.h"
 #include "libxml/globals.h"
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/url_request/url_fetcher.h"
+#include "net/url_request/url_request_test_util.h"
 #include "url/gurl.h"
 
 using content::BrowserThread;
@@ -24,14 +29,25 @@ using ::testing::_;
 using ::testing::InSequence;
 using ::testing::Mock;
 
+namespace component_updater {
+
+#define POST_INTERCEPT_SCHEME    "http"
+#define POST_INTERCEPT_HOSTNAME  "localhost2"
+#define POST_INTERCEPT_PATH      "/update2"
+
 MockComponentObserver::MockComponentObserver() {
 }
 
 MockComponentObserver::~MockComponentObserver() {
 }
 
+bool PartialMatch::Match(const std::string& actual) const {
+  return actual.find(expected_) != std::string::npos;
+}
+
 TestConfigurator::TestConfigurator()
-    : times_(1),
+    : initial_time_(0),
+      times_(1),
       recheck_time_(0),
       ondemand_time_(0),
       cus_(NULL),
@@ -42,7 +58,7 @@ TestConfigurator::TestConfigurator()
 TestConfigurator::~TestConfigurator() {
 }
 
-int TestConfigurator::InitialDelay() { return 0; }
+int TestConfigurator::InitialDelay() { return initial_time_; }
 
 int TestConfigurator::NextCheckDelay() {
   // This is called when a new full cycle of checking for updates is going
@@ -73,14 +89,15 @@ int TestConfigurator::OnDemandDelay() {
 }
 
 GURL TestConfigurator::UpdateUrl() {
-  return GURL("http://localhost/upd");
+  return GURL(POST_INTERCEPT_SCHEME "://"
+              POST_INTERCEPT_HOSTNAME POST_INTERCEPT_PATH);
 }
 
 GURL TestConfigurator::PingUrl() {
-  return GURL("http://localhost2/ping");
+  return UpdateUrl();
 }
 
-const char* TestConfigurator::ExtraRequestParams() { return "extra=foo"; }
+std::string TestConfigurator::ExtraRequestParams() { return "extra=\"foo\""; }
 
 size_t TestConfigurator::UrlSizeLimit() { return 256; }
 
@@ -88,7 +105,7 @@ net::URLRequestContextGetter* TestConfigurator::RequestContext() {
   return context_.get();
 }
 
-// Don't use the utility process to decode files.
+// Don't use the utility process to run code out-of-process.
 bool TestConfigurator::InProcess() { return true; }
 
 ComponentPatcher* TestConfigurator::CreateComponentPatcher() {
@@ -97,6 +114,10 @@ ComponentPatcher* TestConfigurator::CreateComponentPatcher() {
 
 bool TestConfigurator::DeltasEnabled() const {
   return true;
+}
+
+bool TestConfigurator::UseBackgroundDownloader() const {
+  return false;
 }
 
 // Set how many update checks are called, the default value is just once.
@@ -118,6 +139,21 @@ void TestConfigurator::SetQuitClosure(const base::Closure& quit_closure) {
   quit_closure_ = quit_closure;
 }
 
+void TestConfigurator::SetInitialDelay(int seconds) {
+  initial_time_ = seconds;
+}
+
+InterceptorFactory::InterceptorFactory()
+    : URLRequestPostInterceptorFactory(POST_INTERCEPT_SCHEME,
+                                       POST_INTERCEPT_HOSTNAME) {}
+
+InterceptorFactory::~InterceptorFactory() {}
+
+URLRequestPostInterceptor* InterceptorFactory::CreateInterceptor() {
+  return URLRequestPostInterceptorFactory::CreateInterceptor(
+    base::FilePath::FromUTF8Unsafe(POST_INTERCEPT_PATH));
+}
+
 ComponentUpdaterTest::ComponentUpdaterTest()
     : test_config_(NULL),
       thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP) {
@@ -137,7 +173,16 @@ ComponentUpdaterTest::~ComponentUpdaterTest() {
   net::URLFetcher::SetEnableInterceptionForTests(false);
 }
 
+void ComponentUpdaterTest::SetUp() {
+  get_interceptor_.reset(new GetInterceptor);
+  interceptor_factory_.reset(new InterceptorFactory);
+  post_interceptor_ = interceptor_factory_->CreateInterceptor();
+  EXPECT_TRUE(post_interceptor_);
+}
+
 void ComponentUpdaterTest::TearDown() {
+  interceptor_factory_.reset();
+  get_interceptor_.reset();
   xmlCleanupGlobals();
 }
 
@@ -178,63 +223,16 @@ void ComponentUpdaterTest::RunThreads() {
   base::RunLoop runloop;
   test_configurator()->SetQuitClosure(runloop.QuitClosure());
   runloop.Run();
+
+  // Since some tests need to drain currently enqueued tasks such as network
+  // intercepts on the IO thread, run the threads until they are
+  // idle. The component updater service won't loop again until the loop count
+  // is set and the service is started.
+  RunThreadsUntilIdle();
 }
 
 void ComponentUpdaterTest::RunThreadsUntilIdle() {
   base::RunLoop().RunUntilIdle();
-}
-
-PingChecker::PingChecker(const std::map<std::string, std::string>& attributes)
-    : num_hits_(0), num_misses_(0), attributes_(attributes) {
-}
-
-PingChecker::~PingChecker() {}
-
-void PingChecker::Trial(net::URLRequest* request) {
-  if (Test(request))
-    ++num_hits_;
-  else
-    ++num_misses_;
-}
-
-bool PingChecker::Test(net::URLRequest* request) {
-  if (request->has_upload()) {
-    const net::UploadDataStream* stream = request->get_upload();
-    const net::UploadBytesElementReader* reader =
-        stream->element_readers()[0]->AsBytesReader();
-    int size = reader->length();
-    scoped_refptr <net::IOBuffer> buffer = new net::IOBuffer(size);
-    std::string data(reader->bytes());
-    pings_.push_back(data);
-    // For now, we assume that there is only one ping per POST.
-    std::string::size_type start = data.find("<o:event");
-    if (start != std::string::npos) {
-      std::string::size_type end = data.find(">", start);
-      if (end != std::string::npos) {
-        std::string ping = data.substr(start, end - start);
-        std::map<std::string, std::string>::const_iterator iter;
-        for (iter = attributes_.begin(); iter != attributes_.end(); ++iter) {
-          // does the ping contain the specified attribute/value?
-          if (ping.find(std::string(" ") + (iter->first) +
-              std::string("=") + (iter->second)) == string::npos) {
-            return false;
-          }
-        }
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-std::string PingChecker::GetPings() const {
-  std::string pings_str = "Pings are:";
-  int i = 0;
-  for (std::vector<std::string>::const_iterator it = pings_.begin();
-      it != pings_.end(); ++it) {
-    pings_str.append(base::StringPrintf("\n  (%d): %s", ++i, it->c_str()));
-  }
-  return pings_str;
 }
 
 ComponentUpdateService::Status OnDemandTester::OnDemand(
@@ -258,11 +256,24 @@ TEST_F(ComponentUpdaterTest, StartStop) {
 
 // Verify that when the server has no updates, we go back to sleep and
 // the COMPONENT_UPDATER_STARTED and COMPONENT_UPDATER_SLEEPING notifications
-// are generated.
+// are generated. No pings are sent.
 TEST_F(ComponentUpdaterTest, CheckCrxSleep) {
-  content::URLLocalHostRequestPrepackagedInterceptor interceptor;
-
   MockComponentObserver observer;
+
+  EXPECT_CALL(observer,
+              OnEvent(ComponentObserver::COMPONENT_UPDATER_STARTED, 0))
+              .Times(1);
+  EXPECT_CALL(observer,
+              OnEvent(ComponentObserver::COMPONENT_UPDATER_SLEEPING, 0))
+              .Times(2);
+  EXPECT_CALL(observer,
+              OnEvent(ComponentObserver::COMPONENT_NOT_UPDATED, 0))
+              .Times(2);
+
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_reply_1.xml")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_reply_1.xml")));
 
   TestInstaller installer;
   CrxComponent com;
@@ -273,62 +284,68 @@ TEST_F(ComponentUpdaterTest, CheckCrxSleep) {
                               Version("1.1"),
                               &installer));
 
-  const GURL expected_update_url(
-      "http://localhost/upd?extra=foo"
-      "&x=id%3Dabagagagagagagagagagagagagagagag%26v%3D1.1%26fp%3D%26uc");
-
-  interceptor.SetResponse(expected_update_url,
-                          test_file("updatecheck_reply_1.xml"));
-
   // We loop twice, but there are no updates so we expect two sleep messages.
   test_configurator()->SetLoopCount(2);
-
-  EXPECT_CALL(observer,
-              OnEvent(ComponentObserver::COMPONENT_UPDATER_STARTED, 0))
-              .Times(1);
   component_updater()->Start();
-
-  EXPECT_CALL(observer,
-              OnEvent(ComponentObserver::COMPONENT_UPDATER_SLEEPING, 0))
-              .Times(2);
-
-  EXPECT_CALL(observer,
-              OnEvent(ComponentObserver::COMPONENT_NOT_UPDATED, 0))
-              .Times(2);
   RunThreads();
-
-  EXPECT_EQ(2, interceptor.GetHitCount());
 
   EXPECT_EQ(0, static_cast<TestInstaller*>(com.installer)->error());
   EXPECT_EQ(0, static_cast<TestInstaller*>(com.installer)->install_count());
+
+  // Expect to see the two update check requests and no other requests,
+  // including pings.
+  EXPECT_EQ(2, post_interceptor_->GetHitCount())
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_EQ(2, post_interceptor_->GetCount())
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[0].find(
+      "<app appid=\"abagagagagagagagagagagagagagagag\" version=\"1.1\">"
+      "<updatecheck /></app>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[1].find(
+      "<app appid=\"abagagagagagagagagagagagagagagag\" version=\"1.1\">"
+      "<updatecheck /></app>"))
+      << post_interceptor_->GetRequestsAsString();
 
   component_updater()->Stop();
 
   // Loop twice again but this case we simulate a server error by returning
-  // an empty file.
-
-  interceptor.SetResponse(expected_update_url,
-                          test_file("updatecheck_reply_empty"));
-
-  test_configurator()->SetLoopCount(2);
-
+  // an empty file. Expect the behavior of the service to be the same as before.
   EXPECT_CALL(observer,
               OnEvent(ComponentObserver::COMPONENT_UPDATER_STARTED, 0))
               .Times(1);
-  component_updater()->Start();
-
   EXPECT_CALL(observer,
               OnEvent(ComponentObserver::COMPONENT_UPDATER_SLEEPING, 0))
               .Times(2);
   EXPECT_CALL(observer,
               OnEvent(ComponentObserver::COMPONENT_NOT_UPDATED, 0))
               .Times(2);
-  RunThreads();
 
-  EXPECT_EQ(4, interceptor.GetHitCount());
+  post_interceptor_->Reset();
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_reply_empty")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_reply_empty")));
+
+  test_configurator()->SetLoopCount(2);
+  component_updater()->Start();
+  RunThreads();
 
   EXPECT_EQ(0, static_cast<TestInstaller*>(com.installer)->error());
   EXPECT_EQ(0, static_cast<TestInstaller*>(com.installer)->install_count());
+
+  EXPECT_EQ(2, post_interceptor_->GetHitCount())
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_EQ(2, post_interceptor_->GetCount())
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[0].find(
+      "<app appid=\"abagagagagagagagagagagagagagagag\" version=\"1.1\">"
+      "<updatecheck /></app>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[1].find(
+      "<app appid=\"abagagagagagagagagagagagagagagag\" version=\"1.1\">"
+      "<updatecheck /></app>"))
+      << post_interceptor_->GetRequestsAsString();
 
   component_updater()->Stop();
 }
@@ -337,21 +354,12 @@ TEST_F(ComponentUpdaterTest, CheckCrxSleep) {
 // the notifications above COMPONENT_UPDATE_FOUND and COMPONENT_UPDATE_READY
 // should have been fired. We do two loops so the second time around there
 // should be nothing left to do.
-// We also check that only 3 non-ping network requests are issued:
-// 1- manifest check
+// We also check that the following network requests are issued:
+// 1- update check
 // 2- download crx
-// 3- second manifest check.
+// 3- ping
+// 4- second update check.
 TEST_F(ComponentUpdaterTest, InstallCrx) {
-  std::map<std::string, std::string> map;
-  map.insert(std::pair<std::string, std::string>("eventtype", "\"3\""));
-  map.insert(std::pair<std::string, std::string>("eventresult", "\"1\""));
-  map.insert(std::pair<std::string, std::string>("previousversion",
-                                                 "\"0.9\""));
-  map.insert(std::pair<std::string, std::string>("nextversion", "\"1.0\""));
-  PingChecker ping_checker(map);
-  URLRequestPostInterceptor post_interceptor(&ping_checker);
-  content::URLLocalHostRequestPrepackagedInterceptor interceptor;
-
   MockComponentObserver observer1;
   {
     InSequence seq;
@@ -397,6 +405,16 @@ TEST_F(ComponentUpdaterTest, InstallCrx) {
                 OnEvent(ComponentObserver::COMPONENT_UPDATER_SLEEPING, 0))
                 .Times(1);
   }
+
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_reply_1.xml")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch("event")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_reply_1.xml")));
+
+  get_interceptor_->SetResponse(
+      GURL(expected_crx_url),
+      test_file("jebgalgnebhfojomionfpkfelancnnkf.crx"));
 
   TestInstaller installer1;
   CrxComponent com1;
@@ -407,25 +425,7 @@ TEST_F(ComponentUpdaterTest, InstallCrx) {
   com2.observer = &observer2;
   RegisterComponent(&com2, kTestComponent_abag, Version("2.2"), &installer2);
 
-  const GURL expected_update_url_1(
-      "http://localhost/upd?extra=foo"
-      "&x=id%3Djebgalgnebhfojomionfpkfelancnnkf%26v%3D0.9%26fp%3D%26uc"
-      "&x=id%3Dabagagagagagagagagagagagagagagag%26v%3D2.2%26fp%3D%26uc");
-
-  const GURL expected_update_url_2(
-      "http://localhost/upd?extra=foo"
-      "&x=id%3Dabagagagagagagagagagagagagagagag%26v%3D2.2%26fp%3D%26uc"
-      "&x=id%3Djebgalgnebhfojomionfpkfelancnnkf%26v%3D1.0%26fp%3D%26uc");
-
-  interceptor.SetResponse(expected_update_url_1,
-                          test_file("updatecheck_reply_1.xml"));
-  interceptor.SetResponse(expected_update_url_2,
-                          test_file("updatecheck_reply_1.xml"));
-  interceptor.SetResponse(GURL(expected_crx_url),
-                          test_file("jebgalgnebhfojomionfpkfelancnnkf.crx"));
-
   test_configurator()->SetLoopCount(2);
-
   component_updater()->Start();
   RunThreads();
 
@@ -434,9 +434,68 @@ TEST_F(ComponentUpdaterTest, InstallCrx) {
   EXPECT_EQ(0, static_cast<TestInstaller*>(com2.installer)->error());
   EXPECT_EQ(0, static_cast<TestInstaller*>(com2.installer)->install_count());
 
-  EXPECT_EQ(3, interceptor.GetHitCount());
-  EXPECT_EQ(1, ping_checker.NumHits()) << ping_checker.GetPings();
-  EXPECT_EQ(0, ping_checker.NumMisses()) << ping_checker.GetPings();
+  // Expect three request in total: two update checks and one ping.
+  EXPECT_EQ(3, post_interceptor_->GetHitCount())
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_EQ(3, post_interceptor_->GetCount())
+      << post_interceptor_->GetRequestsAsString();
+
+  // Expect one component download.
+  EXPECT_EQ(1, get_interceptor_->GetHitCount());
+
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[0].find(
+      "<app appid=\"jebgalgnebhfojomionfpkfelancnnkf\" version=\"0.9\">"
+      "<updatecheck /></app>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[0].find(
+      "<app appid=\"abagagagagagagagagagagagagagagag\" version=\"2.2\">"
+      "<updatecheck /></app>"))
+      << post_interceptor_->GetRequestsAsString();
+
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[1].find(
+      "<app appid=\"jebgalgnebhfojomionfpkfelancnnkf\" "
+      "version=\"0.9\" nextversion=\"1.0\">"
+      "<event eventtype=\"3\" eventresult=\"1\"/>"))
+      << post_interceptor_->GetRequestsAsString();
+
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[2].find(
+      "<app appid=\"jebgalgnebhfojomionfpkfelancnnkf\" version=\"1.0\">"
+      "<updatecheck /></app>"));
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[2].find(
+      "<app appid=\"abagagagagagagagagagagagagagagag\" version=\"2.2\">"
+      "<updatecheck /></app>"))
+      << post_interceptor_->GetRequestsAsString();
+
+  // Test the protocol version is correct and the extra request attributes
+  // are included in the request.
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[0].find(
+      "request protocol=\"3.0\" extra=\"foo\""))
+      << post_interceptor_->GetRequestsAsString();
+
+  // Tokenize the request string to look for specific attributes, which
+  // are important for backward compatibility with the version v2 of the update
+  // protocol. In this case, inspect the <request>, which is the first element
+  // after the xml declaration of the update request body.
+  // Expect to find the |os|, |arch|, |prodchannel|, and |prodversion|
+  // attributes:
+  // <?xml version="1.0" encoding="UTF-8"?>
+  // <request... os=... arch=... prodchannel=... prodversion=...>
+  // ...
+  // </request>
+  const std::string update_request(post_interceptor_->GetRequests()[0]);
+  std::vector<base::StringPiece> elements;
+  Tokenize(update_request, "<>", &elements);
+  EXPECT_NE(string::npos, elements[1].find(" os="));
+  EXPECT_NE(string::npos, elements[1].find(" arch="));
+  EXPECT_NE(string::npos, elements[1].find(" prodchannel="));
+  EXPECT_NE(string::npos, elements[1].find(" prodversion="));
+
+  // Look for additional attributes of the request, such as |version|,
+  // |requestid|, |lang|, and |nacl_arch|.
+  EXPECT_NE(string::npos, elements[1].find(" version="));
+  EXPECT_NE(string::npos, elements[1].find(" requestid="));
+  EXPECT_NE(string::npos, elements[1].find(" lang="));
+  EXPECT_NE(string::npos, elements[1].find(" nacl_arch="));
 
   component_updater()->Stop();
 }
@@ -445,54 +504,43 @@ TEST_F(ComponentUpdaterTest, InstallCrx) {
 // particular there should not be an install because the minimum product
 // version is much higher than of chrome.
 TEST_F(ComponentUpdaterTest, ProdVersionCheck) {
-  std::map<std::string, std::string> map;
-  PingChecker ping_checker(map);
-  URLRequestPostInterceptor post_interceptor(&ping_checker);
-  content::URLLocalHostRequestPrepackagedInterceptor interceptor;
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_reply_2.xml")));
+
+  get_interceptor_->SetResponse(
+      GURL(expected_crx_url),
+      test_file("jebgalgnebhfojomionfpkfelancnnkf.crx"));
 
   TestInstaller installer;
   CrxComponent com;
   RegisterComponent(&com, kTestComponent_jebg, Version("0.9"), &installer);
 
-  const GURL expected_update_url(
-      "http://localhost/upd?extra=foo&x=id%3D"
-      "jebgalgnebhfojomionfpkfelancnnkf%26v%3D0.9%26fp%3D%26uc");
-
-  interceptor.SetResponse(expected_update_url,
-                          test_file("updatecheck_reply_2.xml"));
-  interceptor.SetResponse(GURL(expected_crx_url),
-                          test_file("jebgalgnebhfojomionfpkfelancnnkf.crx"));
-
   test_configurator()->SetLoopCount(1);
   component_updater()->Start();
   RunThreads();
 
-  EXPECT_EQ(0, ping_checker.NumHits()) << ping_checker.GetPings();
-  EXPECT_EQ(0, ping_checker.NumMisses()) << ping_checker.GetPings();
-  EXPECT_EQ(1, interceptor.GetHitCount());
+  // Expect one update check and no ping.
+  EXPECT_EQ(1, post_interceptor_->GetHitCount())
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_EQ(1, post_interceptor_->GetCount())
+      << post_interceptor_->GetRequestsAsString();
+
+  // Expect no download to occur.
+  EXPECT_EQ(0, get_interceptor_->GetHitCount());
+
   EXPECT_EQ(0, static_cast<TestInstaller*>(com.installer)->error());
   EXPECT_EQ(0, static_cast<TestInstaller*>(com.installer)->install_count());
 
   component_updater()->Stop();
 }
 
-// Test that a ping for an update check can cause installs.
+// Test that a update check due to an on demand call can cause installs.
 // Here is the timeline:
 //  - First loop: we return a reply that indicates no update, so
 //    nothing happens.
-//  - We ping.
+//  - We make an on demand call.
 //  - This triggers a second loop, which has a reply that triggers an install.
 TEST_F(ComponentUpdaterTest, OnDemandUpdate) {
-  std::map<std::string, std::string> map;
-  map.insert(std::pair<std::string, std::string>("eventtype", "\"3\""));
-  map.insert(std::pair<std::string, std::string>("eventresult", "\"1\""));
-  map.insert(std::pair<std::string, std::string>("previousversion",
-                                                 "\"0.9\""));
-  map.insert(std::pair<std::string, std::string>("nextversion", "\"1.0\""));
-  PingChecker ping_checker(map);
-  URLRequestPostInterceptor post_interceptor(&ping_checker);
-  content::URLLocalHostRequestPrepackagedInterceptor interceptor;
-
   MockComponentObserver observer1;
   {
     InSequence seq;
@@ -545,6 +593,13 @@ TEST_F(ComponentUpdaterTest, OnDemandUpdate) {
                 .Times(1);
   }
 
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_reply_empty")));
+
+  get_interceptor_->SetResponse(
+      GURL(expected_crx_url),
+      test_file("jebgalgnebhfojomionfpkfelancnnkf.crx"));
+
   TestInstaller installer1;
   CrxComponent com1;
   com1.observer = &observer1;
@@ -554,30 +609,25 @@ TEST_F(ComponentUpdaterTest, OnDemandUpdate) {
   com2.observer = &observer2;
   RegisterComponent(&com2, kTestComponent_jebg, Version("0.9"), &installer2);
 
-  const GURL expected_update_url_1(
-      "http://localhost/upd?extra=foo"
-      "&x=id%3Dabagagagagagagagagagagagagagagag%26v%3D2.2%26fp%3D%26uc"
-      "&x=id%3Djebgalgnebhfojomionfpkfelancnnkf%26v%3D0.9%26fp%3D%26uc");
-
-  const GURL expected_update_url_2(
-      "http://localhost/upd?extra=foo"
-      "&x=id%3Djebgalgnebhfojomionfpkfelancnnkf%26v%3D0.9%26fp%3D%26uc"
-      "%26installsource%3Dondemand"
-      "&x=id%3Dabagagagagagagagagagagagagagagag%26v%3D2.2%26fp%3D%26uc");
-
-  interceptor.SetResponse(expected_update_url_1,
-                          test_file("updatecheck_reply_empty"));
-  interceptor.SetResponse(expected_update_url_2,
-                          test_file("updatecheck_reply_1.xml"));
-  interceptor.SetResponse(GURL(expected_crx_url),
-                          test_file("jebgalgnebhfojomionfpkfelancnnkf.crx"));
   // No update normally.
   test_configurator()->SetLoopCount(1);
   component_updater()->Start();
   RunThreads();
   component_updater()->Stop();
 
+  EXPECT_EQ(1, post_interceptor_->GetHitCount())
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_EQ(1, post_interceptor_->GetCount())
+      << post_interceptor_->GetRequestsAsString();
+
+  EXPECT_EQ(0, get_interceptor_->GetHitCount());
+
   // Update after an on-demand check is issued.
+  post_interceptor_->Reset();
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_reply_1.xml")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch("event")));
+
   EXPECT_EQ(ComponentUpdateService::kOk,
             OnDemandTester::OnDemand(component_updater(),
                                      GetCrxComponentID(com2)));
@@ -590,7 +640,28 @@ TEST_F(ComponentUpdaterTest, OnDemandUpdate) {
   EXPECT_EQ(0, static_cast<TestInstaller*>(com2.installer)->error());
   EXPECT_EQ(1, static_cast<TestInstaller*>(com2.installer)->install_count());
 
-  EXPECT_EQ(3, interceptor.GetHitCount());
+  EXPECT_EQ(2, post_interceptor_->GetHitCount())
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_EQ(2, post_interceptor_->GetCount())
+      << post_interceptor_->GetRequestsAsString();
+
+  EXPECT_EQ(1, get_interceptor_->GetHitCount());
+
+  // Expect the update check to contain an "ondemand" request for the
+  // second component (com2) and a normal request for the other component.
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[0].find(
+      "<app appid=\"abagagagagagagagagagagagagagagag\" "
+      "version=\"2.2\"><updatecheck /></app>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[0].find(
+      "<app appid=\"jebgalgnebhfojomionfpkfelancnnkf\" "
+      "version=\"0.9\" installsource=\"ondemand\"><updatecheck /></app>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[1].find(
+      "<app appid=\"jebgalgnebhfojomionfpkfelancnnkf\" "
+      "version=\"0.9\" nextversion=\"1.0\">"
+      "<event eventtype=\"3\" eventresult=\"1\"/>"))
+      << post_interceptor_->GetRequestsAsString();
 
   // Also check what happens if previous check too soon.
   test_configurator()->SetOnDemandTime(60 * 60);
@@ -630,23 +701,23 @@ TEST_F(ComponentUpdaterTest, OnDemandUpdate) {
                 .Times(1);
   }
 
-  const GURL expected_update_url_3(
-      "http://localhost/upd?extra=foo"
-      "&x=id%3Djebgalgnebhfojomionfpkfelancnnkf%26v%3D1.0%26fp%3D%26uc"
-      "&x=id%3Dabagagagagagagagagagagagagagagag%26v%3D2.2%26fp%3D%26uc");
-
   // No update: error from no server response
-  interceptor.SetResponse(expected_update_url_3,
-                          test_file("updatecheck_reply_empty"));
+  post_interceptor_->Reset();
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_reply_empty")));
+
   test_configurator()->SetLoopCount(1);
   component_updater()->Start();
   EXPECT_EQ(ComponentUpdateService::kOk,
             OnDemandTester::OnDemand(component_updater(),
                                      GetCrxComponentID(com2)));
-
   RunThreads();
-
   component_updater()->Stop();
+
+  EXPECT_EQ(1, post_interceptor_->GetHitCount())
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_EQ(1, post_interceptor_->GetCount())
+      << post_interceptor_->GetRequestsAsString();
 
   // No update: already updated to 1.0 so nothing new
   EXPECT_TRUE(Mock::VerifyAndClearExpectations(&observer1));
@@ -676,18 +747,21 @@ TEST_F(ComponentUpdaterTest, OnDemandUpdate) {
                 .Times(1);
   }
 
-  interceptor.SetResponse(expected_update_url_3,
-                          test_file("updatecheck_reply_1.xml"));
+  post_interceptor_->Reset();
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_reply_1.xml")));
+
   test_configurator()->SetLoopCount(1);
   component_updater()->Start();
   EXPECT_EQ(ComponentUpdateService::kOk,
             OnDemandTester::OnDemand(component_updater(),
                                      GetCrxComponentID(com2)));
-
   RunThreads();
 
-  EXPECT_EQ(1, ping_checker.NumHits()) << ping_checker.GetPings();
-  EXPECT_EQ(0, ping_checker.NumMisses()) << ping_checker.GetPings();
+  EXPECT_EQ(1, post_interceptor_->GetHitCount())
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_EQ(1, post_interceptor_->GetCount())
+      << post_interceptor_->GetRequestsAsString();
 
   component_updater()->Stop();
 }
@@ -695,16 +769,6 @@ TEST_F(ComponentUpdaterTest, OnDemandUpdate) {
 // Verify that a previously registered component can get re-registered
 // with a different version.
 TEST_F(ComponentUpdaterTest, CheckReRegistration) {
-  std::map<std::string, std::string> map;
-  map.insert(std::pair<std::string, std::string>("eventtype", "\"3\""));
-  map.insert(std::pair<std::string, std::string>("eventresult", "\"1\""));
-  map.insert(std::pair<std::string, std::string>("previousversion",
-                                                 "\"0.9\""));
-  map.insert(std::pair<std::string, std::string>("nextversion", "\"1.0\""));
-  PingChecker ping_checker(map);
-  URLRequestPostInterceptor post_interceptor(&ping_checker);
-  content::URLLocalHostRequestPrepackagedInterceptor interceptor;
-
   MockComponentObserver observer1;
   {
     InSequence seq;
@@ -751,6 +815,16 @@ TEST_F(ComponentUpdaterTest, CheckReRegistration) {
                 .Times(1);
   }
 
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_reply_1.xml")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch("event")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_reply_1.xml")));
+
+  get_interceptor_->SetResponse(
+      GURL(expected_crx_url),
+      test_file("jebgalgnebhfojomionfpkfelancnnkf.crx"));
+
   TestInstaller installer1;
   CrxComponent com1;
   com1.observer = &observer1;
@@ -760,28 +834,9 @@ TEST_F(ComponentUpdaterTest, CheckReRegistration) {
   com2.observer = &observer2;
   RegisterComponent(&com2, kTestComponent_abag, Version("2.2"), &installer2);
 
-  // Start with 0.9, and update to 1.0
-  const GURL expected_update_url_1(
-      "http://localhost/upd?extra=foo"
-      "&x=id%3Djebgalgnebhfojomionfpkfelancnnkf%26v%3D0.9%26fp%3D%26uc"
-      "&x=id%3Dabagagagagagagagagagagagagagagag%26v%3D2.2%26fp%3D%26uc");
-
-  const GURL expected_update_url_2(
-      "http://localhost/upd?extra=foo"
-      "&x=id%3Dabagagagagagagagagagagagagagagag%26v%3D2.2%26fp%3D%26uc"
-      "&x=id%3Djebgalgnebhfojomionfpkfelancnnkf%26v%3D1.0%26fp%3D%26uc");
-
-  interceptor.SetResponse(expected_update_url_1,
-                          test_file("updatecheck_reply_1.xml"));
-  interceptor.SetResponse(expected_update_url_2,
-                          test_file("updatecheck_reply_1.xml"));
-  interceptor.SetResponse(GURL(expected_crx_url),
-                          test_file("jebgalgnebhfojomionfpkfelancnnkf.crx"));
-
-  // Loop twice to issue two checks: (1) with original 0.9 version
-  // and (2) with the updated 1.0 version.
+  // Loop twice to issue two checks: (1) with original 0.9 version, update to
+  // 1.0, and do the second check (2) with the updated 1.0 version.
   test_configurator()->SetLoopCount(2);
-
   component_updater()->Start();
   RunThreads();
 
@@ -790,9 +845,23 @@ TEST_F(ComponentUpdaterTest, CheckReRegistration) {
   EXPECT_EQ(0, static_cast<TestInstaller*>(com2.installer)->error());
   EXPECT_EQ(0, static_cast<TestInstaller*>(com2.installer)->install_count());
 
-  EXPECT_EQ(1, ping_checker.NumHits()) << ping_checker.GetPings();
-  EXPECT_EQ(0, ping_checker.NumMisses()) << ping_checker.GetPings();
-  EXPECT_EQ(3, interceptor.GetHitCount());
+  EXPECT_EQ(3, post_interceptor_->GetHitCount())
+        << post_interceptor_->GetRequestsAsString();
+  EXPECT_EQ(1, get_interceptor_->GetHitCount());
+
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[0].find(
+      "<app appid=\"jebgalgnebhfojomionfpkfelancnnkf\" version=\"0.9\">"
+      "<updatecheck /></app>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[1].find(
+      "<app appid=\"jebgalgnebhfojomionfpkfelancnnkf\" "
+      "version=\"0.9\" nextversion=\"1.0\">"
+      "<event eventtype=\"3\" eventresult=\"1\"/>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[2].find(
+      "<app appid=\"jebgalgnebhfojomionfpkfelancnnkf\" version=\"1.0\">"
+      "<updatecheck /></app>"))
+      << post_interceptor_->GetRequestsAsString();
 
   component_updater()->Stop();
 
@@ -825,6 +894,10 @@ TEST_F(ComponentUpdaterTest, CheckReRegistration) {
                 .Times(1);
   }
 
+  post_interceptor_->Reset();
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_reply_1.xml")));
+
   TestInstaller installer3;
   EXPECT_EQ(ComponentUpdateService::kReplaced,
             RegisterComponent(&com1,
@@ -832,28 +905,26 @@ TEST_F(ComponentUpdaterTest, CheckReRegistration) {
                               Version("2.2"),
                               &installer3));
 
-  // Check that we send out 2.2 as our version.
-  // Interceptor's hit count should go up by 1.
-  const GURL expected_update_url_3(
-      "http://localhost/upd?extra=foo"
-      "&x=id%3Djebgalgnebhfojomionfpkfelancnnkf%26v%3D2.2%26fp%3D%26uc"
-      "&x=id%3Dabagagagagagagagagagagagagagagag%26v%3D2.2%26fp%3D%26uc");
-
-  interceptor.SetResponse(expected_update_url_3,
-                          test_file("updatecheck_reply_1.xml"));
-
   // Loop once just to notice the check happening with the re-register version.
   test_configurator()->SetLoopCount(1);
   component_updater()->Start();
   RunThreads();
-
-  EXPECT_EQ(4, interceptor.GetHitCount());
 
   // We created a new installer, so the counts go back to 0.
   EXPECT_EQ(0, static_cast<TestInstaller*>(com1.installer)->error());
   EXPECT_EQ(0, static_cast<TestInstaller*>(com1.installer)->install_count());
   EXPECT_EQ(0, static_cast<TestInstaller*>(com2.installer)->error());
   EXPECT_EQ(0, static_cast<TestInstaller*>(com2.installer)->install_count());
+
+  // One update check and no additional pings are expected.
+  EXPECT_EQ(1, post_interceptor_->GetHitCount())
+        << post_interceptor_->GetRequestsAsString();
+  EXPECT_EQ(1, post_interceptor_->GetCount())
+        << post_interceptor_->GetRequestsAsString();
+
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[0].find(
+      "<app appid=\"jebgalgnebhfojomionfpkfelancnnkf\" version=\"2.2\">"
+      "<updatecheck /></app>"));
 
   component_updater()->Stop();
 }
@@ -870,58 +941,63 @@ TEST_F(ComponentUpdaterTest, CheckReRegistration) {
 // There should be two pings, one for each update. The second will bear a
 // diffresult=1, while the first will not.
 TEST_F(ComponentUpdaterTest, DifferentialUpdate) {
-  std::map<std::string, std::string> map;
-  map.insert(std::pair<std::string, std::string>("eventtype", "\"3\""));
-  map.insert(std::pair<std::string, std::string>("eventresult", "\"1\""));
-  map.insert(std::pair<std::string, std::string>("diffresult", "\"1\""));
-  PingChecker ping_checker(map);
-  URLRequestPostInterceptor post_interceptor(&ping_checker);
-  content::URLLocalHostRequestPrepackagedInterceptor interceptor;
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_diff_reply_1.xml")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch("event")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_diff_reply_2.xml")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch("event")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_diff_reply_3.xml")));
+
+  get_interceptor_->SetResponse(
+      GURL("http://localhost/download/ihfokbkgjpifnbbojhneepfflplebdkc_1.crx"),
+      test_file("ihfokbkgjpifnbbojhneepfflplebdkc_1.crx"));
+  get_interceptor_->SetResponse(
+      GURL("http://localhost/download/"
+           "ihfokbkgjpifnbbojhneepfflplebdkc_1to2.crx"),
+      test_file("ihfokbkgjpifnbbojhneepfflplebdkc_1to2.crx"));
 
   VersionedTestInstaller installer;
   CrxComponent com;
   RegisterComponent(&com, kTestComponent_ihfo, Version("0.0"), &installer);
 
-  const GURL expected_update_url_0(
-      "http://localhost/upd?extra=foo"
-      "&x=id%3Dihfokbkgjpifnbbojhneepfflplebdkc%26v%3D0.0%26fp%3D%26uc");
-  const GURL expected_update_url_1(
-      "http://localhost/upd?extra=foo"
-      "&x=id%3Dihfokbkgjpifnbbojhneepfflplebdkc%26v%3D1.0%26fp%3D1%26uc");
-  const GURL expected_update_url_2(
-      "http://localhost/upd?extra=foo"
-      "&x=id%3Dihfokbkgjpifnbbojhneepfflplebdkc%26v%3D2.0%26fp%3Df22%26uc");
-  const GURL expected_crx_url_1(
-      "http://localhost/download/ihfokbkgjpifnbbojhneepfflplebdkc_1.crx");
-  const GURL expected_crx_url_1_diff_2(
-      "http://localhost/download/ihfokbkgjpifnbbojhneepfflplebdkc_1to2.crx");
-
-  interceptor.SetResponse(expected_update_url_0,
-                          test_file("updatecheck_diff_reply_1.xml"));
-  interceptor.SetResponse(expected_update_url_1,
-                          test_file("updatecheck_diff_reply_2.xml"));
-  interceptor.SetResponse(expected_update_url_2,
-                          test_file("updatecheck_diff_reply_3.xml"));
-  interceptor.SetResponse(expected_crx_url_1,
-                          test_file("ihfokbkgjpifnbbojhneepfflplebdkc_1.crx"));
-  interceptor.SetResponse(
-      expected_crx_url_1_diff_2,
-      test_file("ihfokbkgjpifnbbojhneepfflplebdkc_1to2.crx"));
-
   test_configurator()->SetLoopCount(3);
-
   component_updater()->Start();
   RunThreads();
 
   EXPECT_EQ(0, static_cast<TestInstaller*>(com.installer)->error());
   EXPECT_EQ(2, static_cast<TestInstaller*>(com.installer)->install_count());
 
-  // One ping has the diffresult=1, the other does not.
-  EXPECT_EQ(1, ping_checker.NumHits()) << ping_checker.GetPings();
-  EXPECT_EQ(1, ping_checker.NumMisses()) << ping_checker.GetPings();
+  EXPECT_EQ(5, post_interceptor_->GetHitCount())
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_EQ(5, post_interceptor_->GetCount())
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_EQ(2, get_interceptor_->GetHitCount());
 
-  EXPECT_EQ(5, interceptor.GetHitCount());
-
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[0].find(
+      "<app appid=\"ihfokbkgjpifnbbojhneepfflplebdkc\" version=\"0.0\">"
+      "<updatecheck /></app>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[1].find(
+      "<app appid=\"ihfokbkgjpifnbbojhneepfflplebdkc\" "
+      "version=\"0.0\" nextversion=\"1.0\">"
+      "<event eventtype=\"3\" eventresult=\"1\" nextfp=\"1\"/>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[2].find(
+      "<app appid=\"ihfokbkgjpifnbbojhneepfflplebdkc\" version=\"1.0\">"
+      "<updatecheck /><packages><package fp=\"1\"/></packages></app>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[3].find(
+      "<app appid=\"ihfokbkgjpifnbbojhneepfflplebdkc\" "
+      "version=\"1.0\" nextversion=\"2.0\">"
+      "<event eventtype=\"3\" eventresult=\"1\" diffresult=\"1\" "
+      "previousfp=\"1\" nextfp=\"22\"/>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[4].find(
+      "<app appid=\"ihfokbkgjpifnbbojhneepfflplebdkc\" version=\"2.0\">"
+      "<updatecheck /><packages><package fp=\"22\"/></packages></app>"))
+      << post_interceptor_->GetRequestsAsString();
   component_updater()->Stop();
 }
 
@@ -935,48 +1011,29 @@ TEST_F(ComponentUpdaterTest, DifferentialUpdate) {
 // 3- download full crx
 // 4- update check (loop 2 - no update available)
 // There should be one ping for the first attempted update.
-
 TEST_F(ComponentUpdaterTest, DifferentialUpdateFails) {
-  std::map<std::string, std::string> map;
-  map.insert(std::pair<std::string, std::string>("eventtype", "\"3\""));
-  map.insert(std::pair<std::string, std::string>("eventresult", "\"1\""));
-  map.insert(std::pair<std::string, std::string>("diffresult", "\"0\""));
-  map.insert(std::pair<std::string, std::string>("differrorcode", "\"16\""));
-  PingChecker ping_checker(map);
-  URLRequestPostInterceptor post_interceptor(&ping_checker);
-  content::URLLocalHostRequestPrepackagedInterceptor interceptor;
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_diff_reply_2.xml")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch("event")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_diff_reply_3.xml")));
+
+  get_interceptor_->SetResponse(
+      GURL("http://localhost/download/ihfokbkgjpifnbbojhneepfflplebdkc_1.crx"),
+      test_file("ihfokbkgjpifnbbojhneepfflplebdkc_1.crx"));
+  get_interceptor_->SetResponse(
+      GURL("http://localhost/download/"
+           "ihfokbkgjpifnbbojhneepfflplebdkc_1to2.crx"),
+      test_file("ihfokbkgjpifnbbojhneepfflplebdkc_1to2.crx"));
+  get_interceptor_->SetResponse(
+      GURL("http://localhost/download/ihfokbkgjpifnbbojhneepfflplebdkc_2.crx"),
+      test_file("ihfokbkgjpifnbbojhneepfflplebdkc_2.crx"));
 
   TestInstaller installer;
   CrxComponent com;
   RegisterComponent(&com, kTestComponent_ihfo, Version("1.0"), &installer);
 
-  const GURL expected_update_url_1(
-      "http://localhost/upd?extra=foo"
-      "&x=id%3Dihfokbkgjpifnbbojhneepfflplebdkc%26v%3D1.0%26fp%3D%26uc");
-  const GURL expected_update_url_2(
-      "http://localhost/upd?extra=foo"
-      "&x=id%3Dihfokbkgjpifnbbojhneepfflplebdkc%26v%3D2.0%26fp%3Df22%26uc");
-  const GURL expected_crx_url_1(
-      "http://localhost/download/ihfokbkgjpifnbbojhneepfflplebdkc_1.crx");
-  const GURL expected_crx_url_1_diff_2(
-      "http://localhost/download/ihfokbkgjpifnbbojhneepfflplebdkc_1to2.crx");
-  const GURL expected_crx_url_2(
-      "http://localhost/download/ihfokbkgjpifnbbojhneepfflplebdkc_2.crx");
-
-  interceptor.SetResponse(expected_update_url_1,
-                          test_file("updatecheck_diff_reply_2.xml"));
-  interceptor.SetResponse(expected_update_url_2,
-                          test_file("updatecheck_diff_reply_3.xml"));
-  interceptor.SetResponse(expected_crx_url_1,
-                          test_file("ihfokbkgjpifnbbojhneepfflplebdkc_1.crx"));
-  interceptor.SetResponse(
-      expected_crx_url_1_diff_2,
-      test_file("ihfokbkgjpifnbbojhneepfflplebdkc_1to2.crx"));
-  interceptor.SetResponse(expected_crx_url_2,
-                          test_file("ihfokbkgjpifnbbojhneepfflplebdkc_2.crx"));
-
   test_configurator()->SetLoopCount(2);
-
   component_updater()->Start();
   RunThreads();
 
@@ -984,26 +1041,38 @@ TEST_F(ComponentUpdaterTest, DifferentialUpdateFails) {
   EXPECT_EQ(0, static_cast<TestInstaller*>(com.installer)->error());
   EXPECT_EQ(1, static_cast<TestInstaller*>(com.installer)->install_count());
 
-  EXPECT_EQ(1, ping_checker.NumHits()) << ping_checker.GetPings();
-  EXPECT_EQ(0, ping_checker.NumMisses()) << ping_checker.GetPings();
-  EXPECT_EQ(4, interceptor.GetHitCount());
+  EXPECT_EQ(3, post_interceptor_->GetHitCount())
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_EQ(3, post_interceptor_->GetCount())
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_EQ(2, get_interceptor_->GetHitCount());
+
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[0].find(
+      "<app appid=\"ihfokbkgjpifnbbojhneepfflplebdkc\" version=\"1.0\">"
+      "<updatecheck /></app>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[1].find(
+      "<app appid=\"ihfokbkgjpifnbbojhneepfflplebdkc\" "
+      "version=\"1.0\" nextversion=\"2.0\">"
+      "<event eventtype=\"3\" eventresult=\"1\" diffresult=\"0\" "
+      "differrorcat=\"2\" differrorcode=\"16\" nextfp=\"22\"/>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[2].find(
+      "<app appid=\"ihfokbkgjpifnbbojhneepfflplebdkc\" version=\"2.0\">"
+      "<updatecheck /><packages><package fp=\"22\"/></packages></app>"))
+      << post_interceptor_->GetRequestsAsString();
 
   component_updater()->Stop();
 }
 
+// Test is flakey on Android bots. See crbug.com/331420.
+#if defined(OS_ANDROID)
+#define MAYBE_CheckFailedInstallPing DISABLED_CheckFailedInstallPing
+#else
+#define MAYBE_CheckFailedInstallPing CheckFailedInstallPing
+#endif
 // Verify that a failed installation causes an install failure ping.
-TEST_F(ComponentUpdaterTest, CheckFailedInstallPing) {
-  std::map<std::string, std::string> map;
-  map.insert(std::pair<std::string, std::string>("eventtype", "\"3\""));
-  map.insert(std::pair<std::string, std::string>("eventresult", "\"0\""));
-  map.insert(std::pair<std::string, std::string>("errorcode", "\"9\""));
-  map.insert(std::pair<std::string, std::string>("previousversion",
-                                                 "\"0.9\""));
-  map.insert(std::pair<std::string, std::string>("nextversion", "\"1.0\""));
-  PingChecker ping_checker(map);
-  URLRequestPostInterceptor post_interceptor(&ping_checker);
-  content::URLLocalHostRequestPrepackagedInterceptor interceptor;
-
+  TEST_F(ComponentUpdaterTest, MAYBE_CheckFailedInstallPing) {
   // This test installer reports installation failure.
   class : public TestInstaller {
     virtual bool Install(const base::DictionaryValue& manifest,
@@ -1014,30 +1083,58 @@ TEST_F(ComponentUpdaterTest, CheckFailedInstallPing) {
     }
   } installer;
 
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_reply_1.xml")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch("event")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_reply_1.xml")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch("event")));
+  get_interceptor_->SetResponse(
+      GURL(expected_crx_url),
+      test_file("jebgalgnebhfojomionfpkfelancnnkf.crx"));
+
+  // Start with 0.9, and attempt update to 1.0.
+  // Loop twice to issue two checks: (1) with original 0.9 version
+  // and (2), which should retry with 0.9.
   CrxComponent com;
   RegisterComponent(&com, kTestComponent_jebg, Version("0.9"), &installer);
 
-  // Start with 0.9, and attempt update to 1.0
-  const GURL expected_update_url_1(
-      "http://localhost/upd?extra=foo"
-      "&x=id%3Djebgalgnebhfojomionfpkfelancnnkf%26v%3D0.9%26fp%3D%26uc");
-
-  interceptor.SetResponse(expected_update_url_1,
-                          test_file("updatecheck_reply_1.xml"));
-  interceptor.SetResponse(GURL(expected_crx_url),
-                          test_file("jebgalgnebhfojomionfpkfelancnnkf.crx"));
-
-  // Loop twice to issue two checks: (1) with original 0.9 version
-  // and (2), which should retry with 0.9.
   test_configurator()->SetLoopCount(2);
   component_updater()->Start();
   RunThreads();
 
+  EXPECT_EQ(4, post_interceptor_->GetHitCount())
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_EQ(2, get_interceptor_->GetHitCount());
+
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[0].find(
+      "<app appid=\"jebgalgnebhfojomionfpkfelancnnkf\" version=\"0.9\">"
+      "<updatecheck /></app>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[1].find(
+      "<app appid=\"jebgalgnebhfojomionfpkfelancnnkf\" "
+      "version=\"0.9\" nextversion=\"1.0\">"
+      "<event eventtype=\"3\" eventresult=\"0\" "
+      "errorcat=\"3\" errorcode=\"9\"/>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[2].find(
+      "<app appid=\"jebgalgnebhfojomionfpkfelancnnkf\" version=\"0.9\">"
+      "<updatecheck /></app>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[3].find(
+      "<app appid=\"jebgalgnebhfojomionfpkfelancnnkf\" "
+      "version=\"0.9\" nextversion=\"1.0\">"
+      "<event eventtype=\"3\" eventresult=\"0\" "
+      "errorcat=\"3\" errorcode=\"9\"/>"))
+      << post_interceptor_->GetRequestsAsString();
+
   // Loop once more, but expect no ping because a noupdate response is issued.
   // This is necessary to clear out the fire-and-forget ping from the previous
   // iteration.
-  interceptor.SetResponse(expected_update_url_1,
-                          test_file("updatecheck_reply_noupdate.xml"));
+  post_interceptor_->Reset();
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_reply_noupdate.xml")));
+
   test_configurator()->SetLoopCount(1);
   component_updater()->Start();
   RunThreads();
@@ -1045,9 +1142,15 @@ TEST_F(ComponentUpdaterTest, CheckFailedInstallPing) {
   EXPECT_EQ(0, static_cast<TestInstaller*>(com.installer)->error());
   EXPECT_EQ(2, static_cast<TestInstaller*>(com.installer)->install_count());
 
-  EXPECT_EQ(2, ping_checker.NumHits()) << ping_checker.GetPings();
-  EXPECT_EQ(0, ping_checker.NumMisses()) << ping_checker.GetPings();
-  EXPECT_EQ(5, interceptor.GetHitCount());
+  EXPECT_EQ(1, post_interceptor_->GetHitCount())
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_EQ(1, post_interceptor_->GetCount())
+      << post_interceptor_->GetRequestsAsString();
+
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[0].find(
+      "<app appid=\"jebgalgnebhfojomionfpkfelancnnkf\" version=\"0.9\">"
+      "<updatecheck /></app>"))
+      << post_interceptor_->GetRequestsAsString();
 
   component_updater()->Stop();
 }
@@ -1056,62 +1159,254 @@ TEST_F(ComponentUpdaterTest, CheckFailedInstallPing) {
 // ihfokbkgjpifnbbojhneepfflplebdkc_1to2_bad.crx contains an incorrect
 // patching instruction that should fail.
 TEST_F(ComponentUpdaterTest, DifferentialUpdateFailErrorcode) {
-  std::map<std::string, std::string> map;
-  map.insert(std::pair<std::string, std::string>("eventtype", "\"3\""));
-  map.insert(std::pair<std::string, std::string>("eventresult", "\"1\""));
-  map.insert(std::pair<std::string, std::string>("diffresult", "\"0\""));
-  map.insert(std::pair<std::string, std::string>("differrorcode", "\"14\""));
-  map.insert(std::pair<std::string, std::string>("diffextracode1", "\"305\""));
-  PingChecker ping_checker(map);
-  URLRequestPostInterceptor post_interceptor(&ping_checker);
-  content::URLLocalHostRequestPrepackagedInterceptor interceptor;
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_diff_reply_1.xml")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch("event")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_diff_reply_2.xml")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch("event")));
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_diff_reply_3.xml")));
+
+  get_interceptor_->SetResponse(
+      GURL("http://localhost/download/ihfokbkgjpifnbbojhneepfflplebdkc_1.crx"),
+      test_file("ihfokbkgjpifnbbojhneepfflplebdkc_1.crx"));
+  // This intercept returns a different file than what is specified in the
+  // update check response and requested in the download. The file that is
+  // actually dowloaded contains a patching error, an therefore, an error
+  // is injected at the time of patching.
+  get_interceptor_->SetResponse(
+      GURL("http://localhost/download/"
+           "ihfokbkgjpifnbbojhneepfflplebdkc_1to2.crx"),
+      test_file("ihfokbkgjpifnbbojhneepfflplebdkc_1to2_bad.crx"));
+  get_interceptor_->SetResponse(
+      GURL("http://localhost/download/ihfokbkgjpifnbbojhneepfflplebdkc_2.crx"),
+      test_file("ihfokbkgjpifnbbojhneepfflplebdkc_2.crx"));
 
   VersionedTestInstaller installer;
   CrxComponent com;
   RegisterComponent(&com, kTestComponent_ihfo, Version("0.0"), &installer);
 
-  const GURL expected_update_url_0(
-      "http://localhost/upd?extra=foo"
-      "&x=id%3Dihfokbkgjpifnbbojhneepfflplebdkc%26v%3D0.0%26fp%3D%26uc");
-  const GURL expected_update_url_1(
-      "http://localhost/upd?extra=foo"
-      "&x=id%3Dihfokbkgjpifnbbojhneepfflplebdkc%26v%3D1.0%26fp%3D1%26uc");
-  const GURL expected_update_url_2(
-      "http://localhost/upd?extra=foo"
-      "&x=id%3Dihfokbkgjpifnbbojhneepfflplebdkc%26v%3D2.0%26fp%3Df22%26uc");
-  const GURL expected_crx_url_1(
-      "http://localhost/download/ihfokbkgjpifnbbojhneepfflplebdkc_1.crx");
-  const GURL expected_crx_url_1_diff_2(
-      "http://localhost/download/ihfokbkgjpifnbbojhneepfflplebdkc_1to2.crx");
-  const GURL expected_crx_url_2(
-      "http://localhost/download/ihfokbkgjpifnbbojhneepfflplebdkc_2.crx");
-
-  interceptor.SetResponse(expected_update_url_0,
-                          test_file("updatecheck_diff_reply_1.xml"));
-  interceptor.SetResponse(expected_update_url_1,
-                          test_file("updatecheck_diff_reply_2.xml"));
-  interceptor.SetResponse(expected_update_url_2,
-                          test_file("updatecheck_diff_reply_3.xml"));
-  interceptor.SetResponse(expected_crx_url_1,
-                          test_file("ihfokbkgjpifnbbojhneepfflplebdkc_1.crx"));
-  interceptor.SetResponse(
-      expected_crx_url_1_diff_2,
-      test_file("ihfokbkgjpifnbbojhneepfflplebdkc_1to2_bad.crx"));
-  interceptor.SetResponse(expected_crx_url_2,
-                          test_file("ihfokbkgjpifnbbojhneepfflplebdkc_2.crx"));
-
-  test_configurator()->SetLoopCount(2);
-
+  test_configurator()->SetLoopCount(3);
   component_updater()->Start();
   RunThreads();
   component_updater()->Stop();
-  // There may still be pings in the queue.
-  RunThreadsUntilIdle();
 
   EXPECT_EQ(0, static_cast<TestInstaller*>(com.installer)->error());
   EXPECT_EQ(2, static_cast<TestInstaller*>(com.installer)->install_count());
 
-  EXPECT_EQ(1, ping_checker.NumHits()) << ping_checker.GetPings();
-  EXPECT_EQ(1, ping_checker.NumMisses()) << ping_checker.GetPings();
-  EXPECT_EQ(5, interceptor.GetHitCount());
+  EXPECT_EQ(5, post_interceptor_->GetHitCount())
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_EQ(5, post_interceptor_->GetCount())
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_EQ(3, get_interceptor_->GetHitCount());
+
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[0].find(
+      "<app appid=\"ihfokbkgjpifnbbojhneepfflplebdkc\" version=\"0.0\">"
+      "<updatecheck /></app>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[1].find(
+      "<app appid=\"ihfokbkgjpifnbbojhneepfflplebdkc\" "
+      "version=\"0.0\" nextversion=\"1.0\">"
+      "<event eventtype=\"3\" eventresult=\"1\" nextfp=\"1\"/>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[2].find(
+      "<app appid=\"ihfokbkgjpifnbbojhneepfflplebdkc\" version=\"1.0\">"
+      "<updatecheck /><packages><package fp=\"1\"/></packages></app>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[3].find(
+      "<app appid=\"ihfokbkgjpifnbbojhneepfflplebdkc\" "
+      "version=\"1.0\" nextversion=\"2.0\">"
+      "<event eventtype=\"3\" eventresult=\"1\" "
+      "diffresult=\"0\" differrorcat=\"2\" "
+      "differrorcode=\"14\" diffextracode1=\"305\" "
+      "previousfp=\"1\" nextfp=\"22\"/>"))
+      << post_interceptor_->GetRequestsAsString();
+  EXPECT_NE(string::npos, post_interceptor_->GetRequests()[4].find(
+      "<app appid=\"ihfokbkgjpifnbbojhneepfflplebdkc\" version=\"2.0\">"
+      "<updatecheck /><packages><package fp=\"22\"/></packages></app>"))
+      << post_interceptor_->GetRequestsAsString();
 }
+
+class TestResourceController : public content::ResourceController {
+ public:
+  virtual void SetThrottle(content::ResourceThrottle* throttle) {}
+};
+
+content::ResourceThrottle* RequestTestResourceThrottle(
+    ComponentUpdateService* cus,
+    TestResourceController* controller,
+    const char* crx_id) {
+
+  net::TestURLRequestContext context;
+  net::TestURLRequest url_request(
+      GURL("http://foo.example.com/thing.bin"),
+      net::DEFAULT_PRIORITY,
+      NULL,
+      &context);
+
+  content::ResourceThrottle* rt =
+      cus->GetOnDemandResourceThrottle(&url_request, crx_id);
+  rt->set_controller_for_testing(controller);
+  controller->SetThrottle(rt);
+  return rt;
+}
+
+void RequestAndDeleteResourceThrottle(
+    ComponentUpdateService* cus, const char* crx_id) {
+  // By requesting a throttle and deleting it immediately we ensure that we
+  // hit the case where the component updater tries to use the weak
+  // pointer to a dead Resource throttle.
+  class  NoCallResourceController : public TestResourceController {
+   public:
+    virtual ~NoCallResourceController() {}
+    virtual void Cancel() OVERRIDE { CHECK(false); }
+    virtual void CancelAndIgnore() OVERRIDE { CHECK(false); }
+    virtual void CancelWithError(int error_code) OVERRIDE { CHECK(false); }
+    virtual void Resume() OVERRIDE { CHECK(false); }
+  } controller;
+
+  delete RequestTestResourceThrottle(cus, &controller, crx_id);
+}
+
+TEST_F(ComponentUpdaterTest, ResourceThrottleDeletedNoUpdate) {
+  MockComponentObserver observer;
+  EXPECT_CALL(observer,
+              OnEvent(ComponentObserver::COMPONENT_UPDATER_STARTED, 0))
+              .Times(1);
+  EXPECT_CALL(observer,
+              OnEvent(ComponentObserver::COMPONENT_UPDATER_SLEEPING, 0))
+              .Times(1);
+  EXPECT_CALL(observer,
+              OnEvent(ComponentObserver::COMPONENT_NOT_UPDATED, 0))
+              .Times(1);
+
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_reply_1.xml")));
+
+  TestInstaller installer;
+  CrxComponent com;
+  com.observer = &observer;
+  EXPECT_EQ(ComponentUpdateService::kOk,
+            RegisterComponent(&com,
+                              kTestComponent_abag,
+                              Version("1.1"),
+                              &installer));
+  // The following two calls ensure that we don't do an update check via the
+  // timer, so the only update check should be the on-demand one.
+  test_configurator()->SetInitialDelay(1000000);
+  test_configurator()->SetRecheckTime(1000000);
+  test_configurator()->SetLoopCount(1);
+  component_updater()->Start();
+
+  RunThreadsUntilIdle();
+
+  EXPECT_EQ(0, post_interceptor_->GetHitCount());
+
+  BrowserThread::PostTask(
+      BrowserThread::IO,
+      FROM_HERE,
+      base::Bind(&RequestAndDeleteResourceThrottle,
+                 component_updater(),
+                 "abagagagagagagagagagagagagagagag"));
+
+  RunThreads();
+
+  EXPECT_EQ(1, post_interceptor_->GetHitCount());
+  EXPECT_EQ(0, static_cast<TestInstaller*>(com.installer)->error());
+  EXPECT_EQ(0, static_cast<TestInstaller*>(com.installer)->install_count());
+
+  component_updater()->Stop();
+}
+
+class  CancelResourceController: public TestResourceController {
+  public:
+  CancelResourceController() : throttle_(NULL), resume_called_(0) {}
+  virtual ~CancelResourceController() {
+    // Check that the throttle has been resumed by the time we
+    // exit the test.
+    CHECK(resume_called_ == 1);
+    delete throttle_;
+  }
+  virtual void Cancel() OVERRIDE { CHECK(false); }
+  virtual void CancelAndIgnore() OVERRIDE { CHECK(false); }
+  virtual void CancelWithError(int error_code) OVERRIDE { CHECK(false); }
+  virtual void Resume() OVERRIDE {
+    BrowserThread::PostTask(
+        BrowserThread::IO,
+        FROM_HERE,
+        base::Bind(&CancelResourceController::ResumeCalled,
+                    base::Unretained(this)));
+  }
+  virtual void SetThrottle(content::ResourceThrottle* throttle) OVERRIDE {
+    throttle_ = throttle;
+    bool defer = false;
+    // Initially the throttle is blocked. The CUS needs to run a
+    // task on the UI thread to  decide if it should unblock.
+    throttle_->WillStartRequest(&defer);
+    CHECK(defer);
+  }
+
+  private:
+  void ResumeCalled() { ++resume_called_; }
+
+  content::ResourceThrottle* throttle_;
+  int resume_called_;
+};
+
+TEST_F(ComponentUpdaterTest, ResourceThrottleLiveNoUpdate) {
+  MockComponentObserver observer;
+  EXPECT_CALL(observer,
+              OnEvent(ComponentObserver::COMPONENT_UPDATER_STARTED, 0))
+              .Times(1);
+  EXPECT_CALL(observer,
+              OnEvent(ComponentObserver::COMPONENT_UPDATER_SLEEPING, 0))
+              .Times(1);
+  EXPECT_CALL(observer,
+              OnEvent(ComponentObserver::COMPONENT_NOT_UPDATED, 0))
+              .Times(1);
+
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(new PartialMatch(
+      "updatecheck"), test_file("updatecheck_reply_1.xml")));
+
+  TestInstaller installer;
+  CrxComponent com;
+  com.observer = &observer;
+  EXPECT_EQ(ComponentUpdateService::kOk,
+            RegisterComponent(&com,
+                              kTestComponent_abag,
+                              Version("1.1"),
+                              &installer));
+  // The following two calls ensure that we don't do an update check via the
+  // timer, so the only update check should be the on-demand one.
+  test_configurator()->SetInitialDelay(1000000);
+  test_configurator()->SetRecheckTime(1000000);
+  test_configurator()->SetLoopCount(1);
+  component_updater()->Start();
+
+  RunThreadsUntilIdle();
+
+  EXPECT_EQ(0, post_interceptor_->GetHitCount());
+
+  CancelResourceController controller;
+
+  BrowserThread::PostTask(
+      BrowserThread::IO,
+      FROM_HERE,
+      base::Bind(base::IgnoreResult(&RequestTestResourceThrottle),
+                 component_updater(),
+                 &controller,
+                 "abagagagagagagagagagagagagagagag"));
+
+  RunThreads();
+
+  EXPECT_EQ(1, post_interceptor_->GetHitCount());
+  EXPECT_EQ(0, static_cast<TestInstaller*>(com.installer)->error());
+  EXPECT_EQ(0, static_cast<TestInstaller*>(com.installer)->install_count());
+
+  component_updater()->Stop();
+}
+
+
+}  // namespace component_updater
+

@@ -5,9 +5,6 @@
 // None of these tests is relevant for Chrome OS.
 GEN('#if !defined(OS_CHROMEOS)');
 
-GEN('#include "base/command_line.h"');
-GEN('#include "chrome/common/chrome_switches.h"');
-
 /**
  * TestFixture for ManageProfileOverlay and CreateProfileOverlay WebUI testing.
  * @extends {testing.Test}
@@ -27,12 +24,6 @@ ManageProfileUITest.prototype = {
    * @override
    */
   runAccessibilityChecks: false,
-
-  /** @override */
-  testGenPreamble: function() {
-    GEN('CommandLine::ForCurrentProcess()->' +
-        'AppendSwitch(switches::kEnableManagedUsers);');
-  },
 
   /**
    * Returns a test profile-info object with configurable "managed" status.
@@ -54,17 +45,49 @@ ManageProfileUITest.prototype = {
    * Overrides WebUI methods that provide profile info, making them return a
    * test profile-info object.
    * @param {boolean} managed Whether the test profile should be marked managed.
+   * @param {string} mode The mode of the overlay (either 'manage' or 'create').
    */
-  setProfileManaged_: function(managed) {
+  setProfileManaged_: function(managed, mode) {
     // Override the BrowserOptions method to return the fake info.
     BrowserOptions.getCurrentProfile = function() {
       return this.testProfileInfo_(managed);
     }.bind(this);
     // Set the profile info in the overlay.
-    ManageProfileOverlay.setProfileInfo(this.testProfileInfo_(managed),
-                                        'manage');
+    ManageProfileOverlay.setProfileInfo(this.testProfileInfo_(managed), mode);
   },
 };
+
+// Receiving the new profile defaults in the manage-user overlay shouldn't mess
+// up the focus in a visible higher-level overlay.
+TEST_F('ManageProfileUITest', 'NewProfileDefaultsFocus', function() {
+  var self = this;
+
+  function checkFocus(pageName, expectedFocus, initialFocus) {
+    OptionsPage.showPageByName(pageName);
+    initialFocus.focus();
+    expectEquals(initialFocus, document.activeElement, pageName);
+
+    ManageProfileOverlay.receiveNewProfileDefaults(
+        self.testProfileInfo_(false));
+    expectEquals(expectedFocus, document.activeElement, pageName);
+    OptionsPage.closeOverlay();
+  }
+
+  // Receiving new profile defaults sets focus to the name field if the create
+  // overlay is open, and should not change focus at all otherwise.
+  checkFocus('manageProfile',
+             $('manage-profile-cancel'),
+             $('manage-profile-cancel'));
+  checkFocus('createProfile',
+             $('create-profile-name'),
+             $('create-profile-cancel'));
+  checkFocus('managedUserLearnMore',
+             $('managed-user-learn-more-done'),
+             $('managed-user-learn-more-done'));
+  checkFocus('managedUserLearnMore',
+             document.querySelector('#managed-user-learn-more-text a'),
+             document.querySelector('#managed-user-learn-more-text a'));
+});
 
 // The default options should be reset each time the creation overlay is shown.
 TEST_F('ManageProfileUITest', 'DefaultCreateOptions', function() {
@@ -81,18 +104,6 @@ TEST_F('ManageProfileUITest', 'DefaultCreateOptions', function() {
   OptionsPage.showPageByName('createProfile');
   assertEquals(shortcutsAllowed, createShortcut.checked);
   assertFalse(createManaged.checked);
-});
-
-// Creating managed users should be disallowed when they are not enabled.
-TEST_F('ManageProfileUITest', 'CreateManagedUserAllowed', function() {
-  var container = $('create-profile-managed-container');
-
-  ManageProfileOverlay.getInstance().initializePage();
-  assertFalse(container.hidden);
-
-  loadTimeData.overrideValues({'managedUsersEnabled': false});
-  ManageProfileOverlay.getInstance().initializePage();
-  assertTrue(container.hidden);
 });
 
 // The checkbox label should change depending on whether the user is signed in.
@@ -120,17 +131,131 @@ TEST_F('ManageProfileUITest', 'CreateManagedUserText', function() {
   assertTrue($('create-profile-managed').disabled);
 });
 
-// Managed users should not be able to edit their profile names.
+function ManageProfileUITestAsync() {}
+
+ManageProfileUITestAsync.prototype = {
+  __proto__: ManageProfileUITest.prototype,
+
+  isAsync: true,
+};
+
+// The import link should show up if the user tries to create a profile with the
+// same name as an existing managed user profile.
+TEST_F('ManageProfileUITestAsync', 'CreateExistingManagedUser', function() {
+  // Initialize the list of existing managed users.
+  var managedUsers = [
+    {
+      id: 'managedUser1',
+      name: 'Rosalie',
+      iconURL: 'chrome://path/to/icon/image',
+      onCurrentDevice: false,
+      needAvatar: false
+    },
+    {
+      id: 'managedUser2',
+      name: 'Fritz',
+      iconURL: 'chrome://path/to/icon/image',
+      onCurrentDevice: false,
+      needAvatar: true
+    },
+    {
+      id: 'managedUser3',
+      name: 'Test',
+      iconURL: 'chrome://path/to/icon/image',
+      onCurrentDevice: true,
+      needAvatar: false
+    },
+    {
+      id: 'managedUser4',
+      name: 'SameName',
+      iconURL: 'chrome://path/to/icon/image',
+      onCurrentDevice: false,
+      needAvatar: false
+    }];
+  var promise = Promise.resolve(managedUsers);
+  options.ManagedUserListData.getInstance().promise_ = promise;
+
+  // Initialize the ManageProfileOverlay.
+  ManageProfileOverlay.getInstance().initializePage();
+  var custodianEmail = 'chrome.playpen.test@gmail.com';
+  CreateProfileOverlay.updateSignedInStatus(custodianEmail);
+  assertEquals(custodianEmail,
+               CreateProfileOverlay.getInstance().signedInEmail_);
+  this.setProfileManaged_(false, 'create');
+
+  // Also add the names 'Test' and 'Test2' to |profileNames_| to simulate that
+  // profiles with those names exist on the device.
+  ManageProfileOverlay.getInstance().profileNames_.Test = true;
+  ManageProfileOverlay.getInstance().profileNames_.SameName = true;
+
+  // Initially, the ok button should be enabled and the import link should not
+  // exist.
+  assertFalse($('create-profile-ok').disabled);
+  assertTrue($('supervised-user-import') == null);
+
+  // Now try to create profiles with the names of existing supervised users.
+  $('create-profile-managed').checked = true;
+  var nameField = $('create-profile-name');
+  // A profile which already has an avatar.
+  nameField.value = 'Rosalie';
+  ManageProfileOverlay.getInstance().onNameChanged_('create');
+  // Need to wait until the promise resolves.
+  promise.then(function() {
+    assertTrue($('create-profile-ok').disabled);
+    assertFalse($('supervised-user-import') == null);
+
+    // A profile which doesn't have an avatar yet.
+    nameField.value = 'Fritz';
+    ManageProfileOverlay.getInstance().onNameChanged_('create');
+    return options.ManagedUserListData.getInstance().promise_;
+  }).then(function() {
+    assertTrue($('create-profile-ok').disabled);
+    assertFalse($('supervised-user-import') == null);
+
+    // A profile which already exists on the device.
+    nameField.value = 'Test';
+    ManageProfileOverlay.getInstance().onNameChanged_('create');
+    return options.ManagedUserListData.getInstance().promise_;
+  }).then(function() {
+    assertTrue($('create-profile-ok').disabled);
+    assertTrue($('supervised-user-import') == null);
+
+    // A profile which does not exist on the device, but there is a profile with
+    // the same name already on the device.
+    nameField.value = 'SameName';
+    ManageProfileOverlay.getInstance().onNameChanged_('create');
+    return options.ManagedUserListData.getInstance().promise_;
+  }).then(function() {
+    assertTrue($('create-profile-ok').disabled);
+    assertFalse($('supervised-user-import') == null);
+
+    // A profile which does not exist yet.
+    nameField.value = 'NewProfileName';
+    ManageProfileOverlay.getInstance().onNameChanged_('create');
+    return options.ManagedUserListData.getInstance().promise_;
+  }).then(function() {
+    assertFalse($('create-profile-ok').disabled);
+    assertTrue($('supervised-user-import') == null);
+    testDone();
+  });
+});
+
+// Managed users should not be able to edit their profile names, and the initial
+// focus should be adjusted accordingly.
 TEST_F('ManageProfileUITest', 'EditManagedUserNameAllowed', function() {
   var nameField = $('manage-profile-name');
 
-  this.setProfileManaged_(false);
+  this.setProfileManaged_(false, 'manage');
   ManageProfileOverlay.showManageDialog();
-  assertFalse(nameField.disabled);
+  expectFalse(nameField.disabled);
+  expectEquals(nameField, document.activeElement);
 
-  this.setProfileManaged_(true);
+  OptionsPage.closeOverlay();
+
+  this.setProfileManaged_(true, 'manage');
   ManageProfileOverlay.showManageDialog();
-  assertTrue(nameField.disabled);
+  expectTrue(nameField.disabled);
+  expectEquals($('manage-profile-ok'), document.activeElement);
 });
 
 // Setting profile information should allow the confirmation to be shown.
@@ -165,6 +290,7 @@ TEST_F('ManageProfileUITest', 'ShowCreateConfirmationOnSuccess', function() {
   CreateProfileOverlay.onSuccess(this.testProfileInfo_(true));
   assertEquals('managedUserCreateConfirm',
                OptionsPage.getTopmostVisiblePage().name);
+  expectEquals($('managed-user-created-switch'), document.activeElement);
 });
 
 // An error should be shown if creating a new managed user fails.
@@ -230,17 +356,23 @@ TEST_F('ManageProfileUITest', 'CreateConfirmationText', function () {
               // independent of whether they were escaped in the setter.
               'It\'s "&lt;HTML&gt; injection" &amp; more!');
 
-  // Test elision. MAX_LENGTH = 50, minus 3 for the ellipsis.
-  var name47Characters = '01234567890123456789012345678901234567890123456';
-  var name60Characters = name47Characters + '0123456789012';
-  checkDialog(name60Characters, name47Characters + '...');
+  // Test elision. MAX_LENGTH = 50, minus 1 for the ellipsis.
+  var name49Characters = '0123456789012345678901234567890123456789012345678';
+  var name50Characters = name49Characters + '9';
+  var name51Characters = name50Characters + '0';
+  var name60Characters = name51Characters + '123456789';
+  checkDialog(name49Characters, name49Characters);
+  checkDialog(name50Characters, name50Characters);
+  checkDialog(name51Characters, name49Characters + '\u2026');
+  checkDialog(name60Characters, name49Characters + '\u2026');
 
   // Test both elision and HTML escaping. The allowed string length is the
   // visible length, not the length including the entity names.
-  name47Characters = name47Characters.replace('0', '&').replace('1', '>');
+  name49Characters = name49Characters.replace('0', '&').replace('1', '>');
   name60Characters = name60Characters.replace('0', '&').replace('1', '>');
-  var escaped = name47Characters.replace('&', '&amp;').replace('>', '&gt;');
-  checkDialog(name60Characters, name47Characters + '...', escaped + '...');
+  var escaped = name49Characters.replace('&', '&amp;').replace('>', '&gt;');
+  checkDialog(
+      name60Characters, name49Characters + '\u2026', escaped + '\u2026');
 });
 
 // An additional warning should be shown when deleting a managed user.
@@ -333,7 +465,7 @@ TEST_F('ManageProfileUITest', 'CreateInProgress', function() {
 
 // Managed users shouldn't be able to open the delete or create dialogs.
 TEST_F('ManageProfileUITest', 'ManagedShowDeleteAndCreate', function() {
-  this.setProfileManaged_(false);
+  this.setProfileManaged_(false, 'create');
 
   ManageProfileOverlay.showCreateDialog();
   assertEquals('createProfile', OptionsPage.getTopmostVisiblePage().name);
@@ -345,7 +477,7 @@ TEST_F('ManageProfileUITest', 'ManagedShowDeleteAndCreate', function() {
   OptionsPage.closeOverlay();
   assertEquals('settings', OptionsPage.getTopmostVisiblePage().name);
 
-  this.setProfileManaged_(true);
+  this.setProfileManaged_(true, 'create');
   ManageProfileOverlay.showCreateDialog();
   assertEquals('settings', OptionsPage.getTopmostVisiblePage().name);
   ManageProfileOverlay.showDeleteDialog(this.testProfileInfo_(false));
@@ -372,14 +504,14 @@ TEST_F('ManageProfileUITest', 'ManagedDelete', function() {
     return chromeSendMessages;
   }
 
-  this.setProfileManaged_(false);
+  this.setProfileManaged_(false, 'manage');
   var messages = clickAndListen();
   assertEquals(1, messages.length);
   assertEquals('deleteProfile', messages[0]);
   assertEquals('settings', OptionsPage.getTopmostVisiblePage().name);
 
   ManageProfileOverlay.showDeleteDialog(this.testProfileInfo_(false));
-  this.setProfileManaged_(true);
+  this.setProfileManaged_(true, 'manage');
   messages = clickAndListen();
   assertEquals(0, messages.length);
   assertEquals('settings', OptionsPage.getTopmostVisiblePage().name);

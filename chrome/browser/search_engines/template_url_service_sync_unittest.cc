@@ -22,12 +22,15 @@
 #include "content/public/browser/notification_service.h"
 #include "extensions/common/constants.h"
 #include "net/base/net_util.h"
+#include "sync/api/sync_change_processor_wrapper_for_test.h"
 #include "sync/api/sync_error_factory.h"
 #include "sync/api/sync_error_factory_mock.h"
 #include "sync/protocol/search_engine_specifics.pb.h"
 #include "sync/protocol/sync.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using base::ASCIIToUTF16;
+using base::UTF8ToUTF16;
 using base::Time;
 
 namespace {
@@ -58,9 +61,9 @@ syncer::SyncData CreateCustomSyncData(const TemplateURL& turl,
   sync_pb::EntitySpecifics specifics;
   sync_pb::SearchEngineSpecifics* se_specifics =
       specifics.mutable_search_engine();
-  se_specifics->set_short_name(UTF16ToUTF8(turl.short_name()));
+  se_specifics->set_short_name(base::UTF16ToUTF8(turl.short_name()));
   se_specifics->set_keyword(
-      autogenerate_keyword ? std::string() : UTF16ToUTF8(turl.keyword()));
+      autogenerate_keyword ? std::string() : base::UTF16ToUTF8(turl.keyword()));
   se_specifics->set_favicon_url(turl.favicon_url().spec());
   se_specifics->set_url(url);
   se_specifics->set_safe_for_autoreplace(turl.safe_for_autoreplace());
@@ -143,45 +146,6 @@ syncer::SyncError TestChangeProcessor::ProcessSyncChanges(
 }
 
 
-// SyncChangeProcessorDelegate ------------------------------------------------
-
-class SyncChangeProcessorDelegate : public syncer::SyncChangeProcessor {
- public:
-  explicit SyncChangeProcessorDelegate(syncer::SyncChangeProcessor* recipient);
-  virtual ~SyncChangeProcessorDelegate();
-
-  // syncer::SyncChangeProcessor implementation.
-  virtual syncer::SyncError ProcessSyncChanges(
-      const tracked_objects::Location& from_here,
-      const syncer::SyncChangeList& change_list) OVERRIDE;
-
-  virtual syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const
-      OVERRIDE {
-    return recipient_->GetAllSyncData(type);
-  }
-
- private:
-  // The recipient of all sync changes.
-  syncer::SyncChangeProcessor* recipient_;
-
-  DISALLOW_COPY_AND_ASSIGN(SyncChangeProcessorDelegate);
-};
-
-SyncChangeProcessorDelegate::SyncChangeProcessorDelegate(
-    syncer::SyncChangeProcessor* recipient)
-    : recipient_(recipient) {
-  DCHECK(recipient_);
-}
-
-SyncChangeProcessorDelegate::~SyncChangeProcessorDelegate() {
-}
-
-syncer::SyncError SyncChangeProcessorDelegate::ProcessSyncChanges(
-    const tracked_objects::Location& from_here,
-    const syncer::SyncChangeList& change_list) {
-  return recipient_->ProcessSyncChanges(from_here, change_list);
-}
-
 }  // namespace
 
 
@@ -208,7 +172,7 @@ class TemplateURLServiceSyncTest : public testing::Test {
 
   // Create a TemplateURL with some test values. The caller owns the returned
   // TemplateURL*.
-  TemplateURL* CreateTestTemplateURL(const string16& keyword,
+  TemplateURL* CreateTestTemplateURL(const base::string16& keyword,
                                      const std::string& url,
                                      const std::string& guid = std::string(),
                                      time_t last_mod = 100,
@@ -255,16 +219,15 @@ class TemplateURLServiceSyncTest : public testing::Test {
 
   // Our dummy ChangeProcessor used to inspect changes pushed to Sync.
   scoped_ptr<TestChangeProcessor> sync_processor_;
-  scoped_ptr<SyncChangeProcessorDelegate> sync_processor_delegate_;
+  scoped_ptr<syncer::SyncChangeProcessorWrapperForTest> sync_processor_wrapper_;
 
   DISALLOW_COPY_AND_ASSIGN(TemplateURLServiceSyncTest);
 };
 
 TemplateURLServiceSyncTest::TemplateURLServiceSyncTest()
     : sync_processor_(new TestChangeProcessor),
-      sync_processor_delegate_(new SyncChangeProcessorDelegate(
-          sync_processor_.get())) {
-}
+      sync_processor_wrapper_(new syncer::SyncChangeProcessorWrapperForTest(
+          sync_processor_.get())) {}
 
 void TemplateURLServiceSyncTest::SetUp() {
   test_util_a_.SetUp();
@@ -273,8 +236,8 @@ void TemplateURLServiceSyncTest::SetUp() {
   // just foul them up).
   test_util_a_.ChangeModelToLoadState();
   profile_b_.reset(new TestingProfile);
-  TemplateURLServiceFactory::GetInstance()->RegisterUserPrefsOnBrowserContext(
-      profile_b_.get());
+  TemplateURLServiceFactory::GetInstance()->
+      RegisterUserPrefsOnBrowserContextForTest(profile_b_.get());
   model_b_.reset(new TemplateURLService(profile_b_.get()));
   model_b_->Load();
 }
@@ -285,7 +248,7 @@ void TemplateURLServiceSyncTest::TearDown() {
 
 scoped_ptr<syncer::SyncChangeProcessor>
 TemplateURLServiceSyncTest::PassProcessor() {
-  return sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>();
+  return sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>();
 }
 
 scoped_ptr<syncer::SyncErrorFactory> TemplateURLServiceSyncTest::
@@ -295,7 +258,7 @@ scoped_ptr<syncer::SyncErrorFactory> TemplateURLServiceSyncTest::
 }
 
 TemplateURL* TemplateURLServiceSyncTest::CreateTestTemplateURL(
-    const string16& keyword,
+    const base::string16& keyword,
     const std::string& url,
     const std::string& guid,
     time_t last_mod,
@@ -474,7 +437,7 @@ TEST_F(TemplateURLServiceSyncTest, UniquifyKeyword) {
   // Create a key that conflicts with something in the model.
   scoped_ptr<TemplateURL> turl(CreateTestTemplateURL(ASCIIToUTF16("key1"),
                                                      "http://new.com", "xyz"));
-  string16 new_keyword = model()->UniquifyKeyword(*turl, false);
+  base::string16 new_keyword = model()->UniquifyKeyword(*turl, false);
   EXPECT_EQ(ASCIIToUTF16("new.com"), new_keyword);
   EXPECT_EQ(NULL, model()->GetTemplateURLForKeyword(new_keyword));
   model()->Add(CreateTestTemplateURL(ASCIIToUTF16("new.com"), "http://new.com",
@@ -549,7 +512,7 @@ TEST_F(TemplateURLServiceSyncTest, ResolveSyncKeywordConflict) {
 
   // Create a keyword that conflicts, and make it older.  Sync keyword is
   // uniquified, and a syncer::SyncChange is added.
-  string16 original_turl_keyword = ASCIIToUTF16("key1");
+  base::string16 original_turl_keyword = ASCIIToUTF16("key1");
   TemplateURL* original_turl = CreateTestTemplateURL(original_turl_keyword,
       "http://key1.com", std::string(), 9000);
   model()->Add(original_turl);
@@ -1155,7 +1118,7 @@ TEST_F(TemplateURLServiceSyncTest, AutogeneratedKeywordMigrated) {
   GURL google_url(UIThreadSearchTermsData(profile_a()).GoogleBaseURLValue());
   TemplateURL* key2 = model()->GetTemplateURLForHost(google_url.host());
   ASSERT_FALSE(key2 == NULL);
-  string16 google_keyword(net::StripWWWFromHost(google_url));
+  base::string16 google_keyword(net::StripWWWFromHost(google_url));
   EXPECT_EQ(google_keyword, key2->keyword());
 
   // We should also have gotten some corresponding UPDATEs pushed upstream.
@@ -1173,7 +1136,7 @@ TEST_F(TemplateURLServiceSyncTest, AutogeneratedKeywordMigrated) {
 TEST_F(TemplateURLServiceSyncTest, AutogeneratedKeywordConflicts) {
   // Sync brings in some autogenerated keywords, but the generated keywords we
   // try to create conflict with ones in the model.
-  string16 google_keyword(net::StripWWWFromHost(GURL(
+  base::string16 google_keyword(net::StripWWWFromHost(GURL(
       UIThreadSearchTermsData(profile_a()).GoogleBaseURLValue())));
   const std::string local_google_url =
       "{google:baseURL}1/search?q={searchTerms}";
@@ -1246,7 +1209,7 @@ TEST_F(TemplateURLServiceSyncTest, TwoAutogeneratedKeywordsUsingGoogleBaseURL) {
       PassProcessor(), CreateAndPassSyncErrorFactory());
 
   // We should still have coalesced the updates to one each.
-  string16 google_keyword(net::StripWWWFromHost(GURL(
+  base::string16 google_keyword(net::StripWWWFromHost(GURL(
       UIThreadSearchTermsData(profile_a()).GoogleBaseURLValue())));
   TemplateURL* keyword1 =
       model()->GetTemplateURLForKeyword(google_keyword + ASCIIToUTF16("_"));
@@ -1261,12 +1224,12 @@ TEST_F(TemplateURLServiceSyncTest, TwoAutogeneratedKeywordsUsingGoogleBaseURL) {
   syncer::SyncChange key1_change = processor()->change_for_guid("key1");
   EXPECT_EQ(syncer::SyncChange::ACTION_UPDATE, key1_change.change_type());
   EXPECT_EQ(keyword1->keyword(),
-            UTF8ToUTF16(GetKeyword(key1_change.sync_data())));
+            base::UTF8ToUTF16(GetKeyword(key1_change.sync_data())));
   ASSERT_TRUE(processor()->contains_guid("key2"));
   syncer::SyncChange key2_change = processor()->change_for_guid("key2");
   EXPECT_EQ(syncer::SyncChange::ACTION_UPDATE, key2_change.change_type());
   EXPECT_EQ(keyword2->keyword(),
-            UTF8ToUTF16(GetKeyword(key2_change.sync_data())));
+            base::UTF8ToUTF16(GetKeyword(key2_change.sync_data())));
 }
 
 TEST_F(TemplateURLServiceSyncTest, DuplicateEncodingsRemoved) {
@@ -1319,8 +1282,8 @@ TEST_F(TemplateURLServiceSyncTest, MergeTwoClientsBasic) {
 
   // Merge A and B. All of B's data should transfer over to A, which initially
   // has no data.
-  scoped_ptr<SyncChangeProcessorDelegate> delegate_b(
-      new SyncChangeProcessorDelegate(model_b()));
+  scoped_ptr<syncer::SyncChangeProcessorWrapperForTest> delegate_b(
+      new syncer::SyncChangeProcessorWrapperForTest(model_b()));
   model_a()->MergeDataAndStartSyncing(syncer::SEARCH_ENGINES,
       model_b()->GetAllSyncData(syncer::SEARCH_ENGINES),
       delegate_b.PassAs<syncer::SyncChangeProcessor>(),
@@ -1348,8 +1311,8 @@ TEST_F(TemplateURLServiceSyncTest, MergeTwoClientsDupesAndConflicts) {
                                        "key6", 10));  // Conflict with key1
 
   // Merge A and B.
-  scoped_ptr<SyncChangeProcessorDelegate> delegate_b(
-      new SyncChangeProcessorDelegate(model_b()));
+  scoped_ptr<syncer::SyncChangeProcessorWrapperForTest> delegate_b(
+      new syncer::SyncChangeProcessorWrapperForTest(model_b()));
   model_a()->MergeDataAndStartSyncing(syncer::SEARCH_ENGINES,
       model_b()->GetAllSyncData(syncer::SEARCH_ENGINES),
       delegate_b.PassAs<syncer::SyncChangeProcessor>(),
@@ -1466,8 +1429,8 @@ TEST_F(TemplateURLServiceSyncTest, MergeTwiceWithSameSyncData) {
   // Remerge the data again. This simulates shutting down and syncing again
   // at a different time, but the cloud data has not changed.
   model()->StopSyncing(syncer::SEARCH_ENGINES);
-  sync_processor_delegate_.reset(new SyncChangeProcessorDelegate(
-      sync_processor_.get()));
+  sync_processor_wrapper_.reset(
+      new syncer::SyncChangeProcessorWrapperForTest(sync_processor_.get()));
   error = model()->MergeDataAndStartSyncing(
       syncer::SEARCH_ENGINES,
       initial_data,
@@ -1783,7 +1746,7 @@ TEST_F(TemplateURLServiceSyncTest, SyncMergeDeletesDefault) {
 
 TEST_F(TemplateURLServiceSyncTest, LocalDefaultWinsConflict) {
   // We expect that the local default always wins keyword conflict resolution.
-  const string16 keyword(ASCIIToUTF16("key1"));
+  const base::string16 keyword(ASCIIToUTF16("key1"));
   const std::string url("http://whatever.com/{searchTerms}");
   TemplateURL* default_turl = CreateTestTemplateURL(keyword,
                                                     url,
@@ -1898,7 +1861,7 @@ TEST_F(TemplateURLServiceSyncTest, PreSyncUpdates) {
   // new keyword. Add it to the model.
   TemplateURLData data_copy(prepop_turls[0]->data());
   data_copy.last_modified = Time::FromTimeT(10);
-  string16 original_keyword = data_copy.keyword();
+  base::string16 original_keyword = data_copy.keyword();
   data_copy.SetKeyword(ASCIIToUTF16(kNewKeyword));
   // Set safe_for_autoreplace to false so our keyword survives.
   data_copy.safe_for_autoreplace = false;
@@ -2051,8 +2014,8 @@ TEST_F(TemplateURLServiceSyncTest, MergeInSyncTemplateURL) {
     ASSERT_FALSE(test_cases[i].turl_uniquified == BOTH);
     ASSERT_FALSE(test_cases[i].present_in_model == NEITHER);
 
-    const string16 local_keyword = ASCIIToUTF16("localkeyword");
-    const string16 sync_keyword = test_cases[i].keywords_conflict ?
+    const base::string16 local_keyword = ASCIIToUTF16("localkeyword");
+    const base::string16 sync_keyword = test_cases[i].keywords_conflict ?
         local_keyword : ASCIIToUTF16("synckeyword");
     const std::string local_url = "www.localurl.com";
     const std::string sync_url = "www.syncurl.com";
@@ -2063,8 +2026,8 @@ TEST_F(TemplateURLServiceSyncTest, MergeInSyncTemplateURL) {
     const std::string sync_guid = "sync_guid";
 
     // Initialize expectations.
-    string16 expected_local_keyword = local_keyword;
-    string16 expected_sync_keyword = sync_keyword;
+    base::string16 expected_local_keyword = local_keyword;
+    base::string16 expected_sync_keyword = sync_keyword;
 
     // Create the data and run the actual test.
     TemplateURL* local_turl = CreateTestTemplateURL(

@@ -16,7 +16,7 @@
 #include "chrome/browser/ui/omnibox/location_bar.h"
 #include "chrome/browser/ui/omnibox/omnibox_popup_model.h"
 #include "chrome/browser/ui/omnibox/omnibox_view.h"
-#include "chrome/browser/ui/search/instant_ntp.h"
+#include "chrome/browser/ui/search/instant_search_prerenderer.h"
 #include "chrome/browser/ui/search/search_model.h"
 #include "chrome/browser/ui/search/search_tab_helper.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -27,20 +27,29 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
 
-using content::UserMetricsAction;
+using base::UserMetricsAction;
+
+namespace {
+
+InstantSearchPrerenderer* GetInstantSearchPrerenderer(Profile* profile) {
+  DCHECK(profile);
+  InstantService* instant_service =
+      InstantServiceFactory::GetForProfile(profile);
+  return instant_service ? instant_service->instant_search_prerenderer() : NULL;
+}
+
+}  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
 // BrowserInstantController, public:
 
 BrowserInstantController::BrowserInstantController(Browser* browser)
     : browser_(browser),
-      instant_(this),
-      instant_unload_handler_(browser) {
+      instant_(this) {
   browser_->search_model()->AddObserver(this);
 
   InstantService* instant_service =
       InstantServiceFactory::GetForProfile(profile());
-  instant_service->OnBrowserInstantControllerCreated();
   instant_service->AddObserver(this);
 }
 
@@ -50,62 +59,6 @@ BrowserInstantController::~BrowserInstantController() {
   InstantService* instant_service =
       InstantServiceFactory::GetForProfile(profile());
   instant_service->RemoveObserver(this);
-  instant_service->OnBrowserInstantControllerDestroyed();
-}
-
-bool BrowserInstantController::MaybeSwapInInstantNTPContents(
-    const GURL& url,
-    content::WebContents* source_contents,
-    content::WebContents** target_contents) {
-  if (url != GURL(chrome::kChromeUINewTabURL))
-    return false;
-
-  GURL extension_url(url);
-  if (ExtensionWebUI::HandleChromeURLOverride(&extension_url, profile())) {
-    // If there is an extension overriding the NTP do not use the Instant NTP.
-    return false;
-  }
-
-  InstantService* instant_service =
-      InstantServiceFactory::GetForProfile(profile());
-  scoped_ptr<content::WebContents> instant_ntp =
-      instant_service->ReleaseNTPContents();
-  if (!instant_ntp)
-    return false;
-
-  *target_contents = instant_ntp.get();
-  if (source_contents) {
-    // If the Instant NTP hasn't yet committed an entry, we can't call
-    // CopyStateFromAndPrune.  Instead, load the Local NTP URL directly in the
-    // source contents.
-    // TODO(sreeram): Always using the local URL is wrong in the case of the
-    // first tab in a window where we might want to use the remote URL. Fix.
-    if (!instant_ntp->GetController().CanPruneAllButVisible()) {
-      source_contents->GetController().LoadURL(chrome::GetLocalInstantURL(
-          profile()), content::Referrer(), content::PAGE_TRANSITION_GENERATED,
-          std::string());
-      *target_contents = source_contents;
-    } else {
-      instant_ntp->GetController().CopyStateFromAndPrune(
-          &source_contents->GetController());
-      ReplaceWebContentsAt(
-          browser_->tab_strip_model()->GetIndexOfWebContents(source_contents),
-          instant_ntp.Pass());
-    }
-  } else {
-    // If the Instant NTP hasn't yet committed an entry, we can't call
-    // PruneAllButVisible.  In that case, there shouldn't be any entries to
-    // prune anyway.
-    if (instant_ntp->GetController().CanPruneAllButVisible())
-      instant_ntp->GetController().PruneAllButVisible();
-    else
-      CHECK(!instant_ntp->GetController().GetLastCommittedEntry());
-
-    // If |source_contents| is NULL, then the caller is responsible for
-    // inserting instant_ntp into the tabstrip and will take ownership.
-    ignore_result(instant_ntp.release());
-  }
-  return true;
 }
 
 bool BrowserInstantController::OpenInstant(WindowOpenDisposition disposition,
@@ -120,11 +73,27 @@ bool BrowserInstantController::OpenInstant(WindowOpenDisposition disposition,
   // support for the new disposition.
   DCHECK(disposition == CURRENT_TAB) << disposition;
 
+  const base::string16& search_terms =
+      chrome::ExtractSearchTermsFromURL(profile(), url);
+  if (search_terms.empty())
+    return false;
+
+  InstantSearchPrerenderer* prerenderer =
+      GetInstantSearchPrerenderer(profile());
+  if (prerenderer) {
+    if (prerenderer->CanCommitQuery(GetActiveWebContents(), search_terms)) {
+      // Submit query to render the prefetched results. Browser will swap the
+      // prerendered contents with the active tab contents.
+      prerenderer->Commit(search_terms);
+      return false;
+    } else {
+      prerenderer->Cancel();
+    }
+  }
+
   // If we will not be replacing search terms from this URL, don't send to
   // InstantController.
-  const string16& search_terms =
-      chrome::GetSearchTermsFromURL(browser_->profile(), url);
-  if (search_terms.empty())
+  if (!chrome::IsQueryExtractionAllowedForURL(profile(), url))
     return false;
 
   return instant_.SubmitQuery(search_terms);
@@ -132,16 +101,6 @@ bool BrowserInstantController::OpenInstant(WindowOpenDisposition disposition,
 
 Profile* BrowserInstantController::profile() const {
   return browser_->profile();
-}
-
-void BrowserInstantController::ReplaceWebContentsAt(
-    int index,
-    scoped_ptr<content::WebContents> new_contents) {
-  DCHECK_NE(TabStripModel::kNoTab, index);
-  scoped_ptr<content::WebContents> old_contents(browser_->tab_strip_model()->
-      ReplaceWebContentsAt(index, new_contents.release()));
-  instant_unload_handler_.RunUnloadListenersOrDestroy(old_contents.Pass(),
-                                                      index);
 }
 
 content::WebContents* BrowserInstantController::GetActiveWebContents() const {
@@ -154,14 +113,11 @@ void BrowserInstantController::ActiveTabChanged() {
 
 void BrowserInstantController::TabDeactivated(content::WebContents* contents) {
   instant_.TabDeactivated(contents);
-}
 
-void BrowserInstantController::SetOmniboxBounds(const gfx::Rect& bounds) {
-  instant_.SetOmniboxBounds(bounds);
-}
-
-void BrowserInstantController::ToggleVoiceSearch() {
-  instant_.ToggleVoiceSearch();
+  InstantSearchPrerenderer* prerenderer =
+      GetInstantSearchPrerenderer(profile());
+  if (prerenderer)
+    prerenderer->Cancel();
 }
 
 ////////////////////////////////////////////////////////////////////////////////

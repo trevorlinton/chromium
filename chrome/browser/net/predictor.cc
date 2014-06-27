@@ -11,7 +11,6 @@
 
 #include "base/basictypes.h"
 #include "base/bind.h"
-#include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/containers/mru_cache.h"
 #include "base/metrics/histogram.h"
@@ -27,6 +26,8 @@
 #include "base/values.h"
 #include "chrome/browser/io_thread.h"
 #include "chrome/browser/net/preconnect.h"
+#include "chrome/browser/net/spdyproxy/data_reduction_proxy_settings.h"
+#include "chrome/browser/net/spdyproxy/proxy_advisor.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
@@ -324,6 +325,17 @@ void Predictor::InitNetworkPredictor(PrefService* user_prefs,
   user_prefs->ClearPref(prefs::kDnsPrefetchingStartupList);
   user_prefs->ClearPref(prefs::kDnsPrefetchingHostReferralList);
 
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  // TODO(marq): Once https://codereview.chromium.org/30883003/ lands, also
+  // condition this on DataReductionProxySettings::IsDataReductionProxyAllowed()
+  // Until then, we may create a proxy advisor when the proxy feature itself
+  // isn't available, and the advisor instance will never send advisory
+  // requests, which is slightly wasteful but not harmful.
+  if (DataReductionProxySettings::IsPreconnectHintingAllowed()) {
+    proxy_advisor_.reset(new ProxyAdvisor(user_prefs, getter));
+  }
+#endif
+
   BrowserThread::PostTask(
       BrowserThread::IO,
       FROM_HERE,
@@ -399,7 +411,6 @@ void Predictor::AnticipateOmniboxUrl(const GURL& url, bool preconnectable) {
   }
   last_omnibox_preresolve_ = now;
 
-  // Perform at least DNS pre-resolution.
   BrowserThread::PostTask(
       BrowserThread::IO,
       FROM_HERE,
@@ -431,7 +442,7 @@ UrlList Predictor::GetPredictedUrlListAtStartup(
   // This may catch secondary hostnames, pulled in by the homepages.  It will
   // also catch more of the "primary" home pages, since that was (presumably)
   // rendered first (and will be rendered first this time too).
-  const ListValue* startup_list =
+  const base::ListValue* startup_list =
       user_prefs->GetList(prefs::kDnsPrefetchingStartupList);
 
   if (startup_list) {
@@ -734,11 +745,11 @@ void Predictor::SerializeReferrers(base::ListValue* referral_list) {
   for (Referrers::const_iterator it = referrers_.begin();
        it != referrers_.end(); ++it) {
     // Serialize the list of subresource names.
-    Value* subresource_list(it->second.Serialize());
+    base::Value* subresource_list(it->second.Serialize());
 
     // Create a list for each referer.
-    ListValue* motivator(new ListValue);
-    motivator->Append(new StringValue(it->first.spec()));
+    base::ListValue* motivator(new base::ListValue);
+    motivator->Append(new base::StringValue(it->first.spec()));
     motivator->Append(subresource_list);
 
     referral_list->Append(motivator);
@@ -763,7 +774,7 @@ void Predictor::DeserializeReferrers(const base::ListValue& referral_list) {
         return;
       }
 
-      const Value* subresource_list;
+      const base::Value* subresource_list;
       if (!motivator->Get(1, &subresource_list)) {
         NOTREACHED();
         return;
@@ -980,6 +991,8 @@ void Predictor::PreconnectUrlOnIOThread(
   if (motivation == UrlInfo::MOUSE_OVER_MOTIVATED)
     RecordPreconnectTrigger(url);
 
+  AdviseProxy(url, motivation, true /* is_preconnect */);
+
   PreconnectOnIOThread(url,
                        first_party_for_cookies,
                        motivation,
@@ -1025,6 +1038,26 @@ void Predictor::PredictFrameSubresources(const GURL& url,
         FROM_HERE,
         base::Bind(&Predictor::PrepareFrameSubresources,
                    base::Unretained(this), url, first_party_for_cookies));
+  }
+}
+
+void Predictor::AdviseProxy(const GURL& url,
+                            UrlInfo::ResolutionMotivation motivation,
+                            bool is_preconnect) {
+  if (!proxy_advisor_)
+    return;
+
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI) ||
+         BrowserThread::CurrentlyOn(BrowserThread::IO));
+
+  if (BrowserThread::CurrentlyOn(BrowserThread::IO)) {
+    AdviseProxyOnIOThread(url, motivation, is_preconnect);
+  } else {
+    BrowserThread::PostTask(
+        BrowserThread::IO,
+        FROM_HERE,
+        base::Bind(&Predictor::AdviseProxyOnIOThread,
+                   base::Unretained(this), url, motivation, is_preconnect));
   }
 }
 
@@ -1135,6 +1168,12 @@ UrlInfo* Predictor::AppendToResolutionQueue(
     return NULL;
   }
 
+  AdviseProxy(url, motivation, false /* is_preconnect */);
+  if (proxy_advisor_ && proxy_advisor_->WouldProxyURL(url)) {
+    info->DLogResultsStats("DNS PrefetchForProxiedRequest");
+    return NULL;
+  }
+
   info->SetQueuedState(motivation);
   work_queue_.Push(url, motivation);
   StartSomeQueuedResolutions();
@@ -1241,6 +1280,15 @@ void Predictor::IncrementalTrimReferrers(bool trim_all_now) {
   PostIncrementalTrimTask();
 }
 
+void Predictor::AdviseProxyOnIOThread(const GURL& url,
+                                      UrlInfo::ResolutionMotivation motivation,
+                                      bool is_preconnect) {
+  if (!proxy_advisor_)
+    return;
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
+  proxy_advisor_->Advise(url, motivation, is_preconnect);
+}
+
 // ---------------------- End IO methods. -------------------------------------
 
 //-----------------------------------------------------------------------------
@@ -1316,7 +1364,7 @@ void Predictor::InitialObserver::GetInitialDnsResolutionList(
        it != first_navigations_.end();
        ++it) {
     DCHECK(it->first == Predictor::CanonicalizeUrl(it->first));
-    startup_list->Append(new StringValue(it->first.spec()));
+    startup_list->Append(new base::StringValue(it->first.spec()));
   }
 }
 

@@ -7,6 +7,7 @@ var AlertOverlay = options.AlertOverlay;
 var AutofillEditAddressOverlay = options.AutofillEditAddressOverlay;
 var AutofillEditCreditCardOverlay = options.AutofillEditCreditCardOverlay;
 var AutofillOptions = options.AutofillOptions;
+var AutomaticSettingsResetBanner = options.AutomaticSettingsResetBanner;
 var BrowserOptions = options.BrowserOptions;
 var ClearBrowserDataOverlay = options.ClearBrowserDataOverlay;
 var ConfirmDialog = options.ConfirmDialog;
@@ -17,7 +18,7 @@ var CookiesView = options.CookiesView;
 var CreateProfileOverlay = options.CreateProfileOverlay;
 var EditDictionaryOverlay = cr.IsMac ? null : options.EditDictionaryOverlay;
 var FactoryResetOverlay = options.FactoryResetOverlay;
-<if expr="pp_ifdef('enable_google_now')">
+<if expr="enable_google_now">
 var GeolocationOptions = options.GeolocationOptions;
 </if>
 var FontSettings = options.FontSettings;
@@ -35,6 +36,7 @@ var OptionsPage = options.OptionsPage;
 var PasswordManager = options.PasswordManager;
 var Preferences = options.Preferences;
 var PreferredNetworks = options.PreferredNetworks;
+var ResetProfileSettingsBanner = options.ResetProfileSettingsBanner;
 var ResetProfileSettingsOverlay = options.ResetProfileSettingsOverlay;
 var SearchEngineManager = options.SearchEngineManager;
 var SearchPage = options.SearchPage;
@@ -100,10 +102,19 @@ function load() {
             $('spelling-confirm-ok'),
             $('spelling-confirm-cancel'),
             $('spelling-enabled-control').pref,
-            $('spelling-enabled-control').metric,
-            'spellcheck.confirm_dialog_shown'),
+            $('spelling-enabled-control').metric),
         BrowserOptions.getInstance());
   }
+  OptionsPage.registerOverlay(
+      new ConfirmDialog(
+          'hotwordConfirm',
+          loadTimeData.getString('hotwordConfirmOverlayTabTitle'),
+          'hotword-confirm-overlay',
+          $('hotword-confirm-ok'),
+          $('hotword-confirm-cancel'),
+          $('hotword-search-enable').pref,
+          $('hotword-search-enable').metric),
+      BrowserOptions.getInstance());
   OptionsPage.registerOverlay(ContentSettings.getInstance(),
                               BrowserOptions.getInstance(),
                               [$('privacyContentSettingsButton')]);
@@ -139,12 +150,12 @@ function load() {
                                $('manage-languages')]);
   OptionsPage.registerOverlay(ManageProfileOverlay.getInstance(),
                               BrowserOptions.getInstance());
-  if (loadTimeData.getBoolean('managedUsersEnabled') && !cr.isChromeOS) {
+  if (!cr.isChromeOS) {
     OptionsPage.registerOverlay(ManagedUserCreateConfirmOverlay.getInstance(),
                                 BrowserOptions.getInstance());
-    if (loadTimeData.getBoolean('allowCreateExistingManagedUsers')) {
+    if (!loadTimeData.getBoolean('disableCreateExistingManagedUsers')) {
       OptionsPage.registerOverlay(ManagedUserImportOverlay.getInstance(),
-                                  BrowserOptions.getInstance());
+                                  CreateProfileOverlay.getInstance());
     }
     OptionsPage.registerOverlay(ManagedUserLearnMoreOverlay.getInstance(),
                                 CreateProfileOverlay.getInstance());
@@ -215,6 +226,8 @@ function load() {
   cr.ui.FocusManager.disableMouseFocusOnButtons();
   OptionsFocusManager.getInstance().initialize();
   Preferences.getInstance().initialize();
+  ResetProfileSettingsBanner.getInstance().initialize();
+  AutomaticSettingsResetBanner.getInstance().initialize();
   OptionsPage.initialize();
 
   var path = document.location.pathname;
@@ -234,11 +247,9 @@ function load() {
     };
   }
 
-  if (navigator.plugins['Shockwave Flash'])
-    document.documentElement.setAttribute('hasFlashPlugin', '');
-
   window.setTimeout(function() {
     document.documentElement.classList.remove('loading');
+    chrome.send('onFinishedLoadingOptions');
   });
 }
 

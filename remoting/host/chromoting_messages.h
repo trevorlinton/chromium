@@ -38,6 +38,12 @@ IPC_MESSAGE_CONTROL3(ChromotingDaemonMsg_Crash,
 // Delivers the host configuration (and updates) to the network process.
 IPC_MESSAGE_CONTROL1(ChromotingDaemonNetworkMsg_Configuration, std::string)
 
+// Initializes the pairing registry on Windows. The passed key handles are
+// already duplicated by the sender.
+IPC_MESSAGE_CONTROL2(ChromotingDaemonNetworkMsg_InitializePairingRegistry,
+                     IPC::PlatformFileForTransit /* privileged_key */,
+                     IPC::PlatformFileForTransit /* unprivileged_key */)
+
 // Notifies the network process that the terminal |terminal_id| has been
 // disconnected from the desktop session.
 IPC_MESSAGE_CONTROL1(ChromotingDaemonNetworkMsg_TerminalDisconnected,
@@ -209,6 +215,11 @@ IPC_MESSAGE_CONTROL1(ChromotingNetworkDesktopMsg_InjectClipboardEvent,
 // Carries a keyboard event from the client to the desktop session agent.
 // |serialized_event| is a serialized protocol::KeyEvent.
 IPC_MESSAGE_CONTROL1(ChromotingNetworkDesktopMsg_InjectKeyEvent,
+                     std::string /* serialized_event */ )
+
+// Carries a keyboard event from the client to the desktop session agent.
+// |serialized_event| is a serialized protocol::TextEvent.
+IPC_MESSAGE_CONTROL1(ChromotingNetworkDesktopMsg_InjectTextEvent,
                      std::string /* serialized_event */ )
 
 // Carries a mouse event from the client to the desktop session agent.

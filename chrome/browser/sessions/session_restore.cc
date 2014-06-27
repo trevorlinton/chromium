@@ -17,8 +17,10 @@
 #include "base/memory/scoped_vector.h"
 #include "base/metrics/histogram.h"
 #include "base/platform_file.h"
+#include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/cancelable_task_tracker.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -35,7 +37,6 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/webui/ntp/core_app_launcher_handler.h"
-#include "chrome/common/cancelable_task_tracker.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/dom_storage_context.h"
 #include "content/public/browser/navigation_controller.h"
@@ -545,7 +546,10 @@ class SessionRestoreImpl : public content::NotificationObserver {
       {
         base::MessageLoop::ScopedNestableTaskAllower allow(
             base::MessageLoop::current());
-        base::MessageLoop::current()->Run();
+        base::RunLoop loop;
+        quit_closure_for_sync_restore_ = loop.QuitClosure();
+        loop.Run();
+        quit_closure_for_sync_restore_ = base::Closure();
       }
       Browser* browser = ProcessSessionWindows(&windows_, active_window_id_);
       delete this;
@@ -762,7 +766,8 @@ class SessionRestoreImpl : public content::NotificationObserver {
       // See comment above windows_ as to why we don't process immediately.
       windows_.swap(windows.get());
       active_window_id_ = active_window_id;
-      base::MessageLoop::current()->QuitNow();
+      CHECK(!quit_closure_for_sync_restore_.is_null());
+      quit_closure_for_sync_restore_.Run();
       return;
     }
 
@@ -1144,6 +1149,10 @@ class SessionRestoreImpl : public content::NotificationObserver {
   // Whether or not restore is synchronous.
   const bool synchronous_;
 
+  // The quit-closure to terminate the nested message-loop started for
+  // synchronous session-restore.
+  base::Closure quit_closure_for_sync_restore_;
+
   // See description of CLOBBER_CURRENT_TAB.
   const bool clobber_existing_tab_;
 
@@ -1156,7 +1165,7 @@ class SessionRestoreImpl : public content::NotificationObserver {
   std::vector<GURL> urls_to_open_;
 
   // Used to get the session.
-  CancelableTaskTracker cancelable_task_tracker_;
+  base::CancelableTaskTracker cancelable_task_tracker_;
 
   // Responsible for loading the tabs.
   scoped_refptr<TabLoader> tab_loader_;

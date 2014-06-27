@@ -7,9 +7,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/devtools/devtools_window.h"
-#include "chrome/browser/extensions/extension_host.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/tab_contents/tab_contents_iterator.h"
@@ -18,8 +16,11 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/favicon_status.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/extension_host.h"
+#include "extensions/browser/extension_system.h"
 
 using content::BrowserThread;
 using content::DevToolsAgentHost;
@@ -64,17 +65,26 @@ RenderViewHostTarget::RenderViewHostTarget(RenderViewHost* rvh, bool is_tab) {
   if (!web_contents)
     return;  // Orphan RVH will show up with no title/url/icon in clients.
 
-  title_ = UTF16ToUTF8(web_contents->GetTitle());
+  content::RenderFrameHost* rfh = rvh->GetMainFrame();
+  if (rfh->IsCrossProcessSubframe()) {
+    url_ = rfh->GetLastCommittedURL();
+    type_ = kTargetTypeOther;
+    // TODO(kaznacheev) Try setting the title when the frame navigation
+    // refactoring is done.
+    return;
+  }
+
+  title_ = base::UTF16ToUTF8(web_contents->GetTitle());
   url_ = web_contents->GetURL();
   content::NavigationController& controller = web_contents->GetController();
   content::NavigationEntry* entry = controller.GetActiveEntry();
   if (entry != NULL && entry->GetURL().is_valid())
     favicon_url_ = entry->GetFavicon().url;
-  last_activity_time_ = web_contents->GetLastSelectedTime();
+  last_activity_time_ = web_contents->GetLastActiveTime();
 
   if (is_tab) {
     type_ = kTargetTypePage;
-    tab_id_ = ExtensionTabUtil::GetTabId(web_contents);
+    tab_id_ = extensions::ExtensionTabUtil::GetTabId(web_contents);
   } else {
     Profile* profile =
         Profile::FromBrowserContext(web_contents->GetBrowserContext());
@@ -84,19 +94,17 @@ RenderViewHostTarget::RenderViewHostTarget(RenderViewHost* rvh, bool is_tab) {
           extensions()->GetByID(url_.host());
       if (extension) {
         title_ = extension->name();
-        if (extension->is_hosted_app()
+        extensions::ExtensionHost* extension_host =
+            extensions::ExtensionSystem::Get(profile)->process_manager()->
+                GetBackgroundHostForExtension(extension->id());
+        if (extension_host &&
+            extension_host->host_contents() == web_contents) {
+          type_ = kTargetTypeBackgroundPage;
+          extension_id_ = extension->id();
+        } else if (extension->is_hosted_app()
             || extension->is_legacy_packaged_app()
             || extension->is_platform_app()) {
           type_ = kTargetTypeApp;
-        } else {
-          extensions::ExtensionHost* extension_host =
-              extensions::ExtensionSystem::Get(profile)->process_manager()->
-                  GetBackgroundHostForExtension(extension->id());
-          if (extension_host &&
-              extension_host->host_contents() == web_contents) {
-            type_ = kTargetTypeBackgroundPage;
-            extension_id_ = extension->id();
-          }
         }
         favicon_url_ = extensions::ExtensionIconSource::GetIconURL(
             extension, extension_misc::EXTENSION_ICON_SMALLISH,
@@ -166,7 +174,7 @@ WorkerTarget::WorkerTarget(const WorkerService::WorkerInfo& worker) {
       DevToolsAgentHost::GetForWorker(worker.process_id, worker.route_id);
   id_ = agent_host_->GetId();
   type_ = kTargetTypeWorker;
-  title_ = UTF16ToUTF8(worker.name);
+  title_ = base::UTF16ToUTF8(worker.name);
   description_ =
       base::StringPrintf("Worker pid:%d", base::GetProcId(worker.handle));
   url_ = worker.url;
@@ -264,12 +272,6 @@ void DevToolsTargetImpl::Reload() const {
 scoped_ptr<DevToolsTargetImpl> DevToolsTargetImpl::CreateForRenderViewHost(
     content::RenderViewHost* rvh, bool is_tab) {
   return scoped_ptr<DevToolsTargetImpl>(new RenderViewHostTarget(rvh, is_tab));
-}
-
-// static
-scoped_ptr<DevToolsTargetImpl> DevToolsTargetImpl::CreateForWorker(
-    const WorkerService::WorkerInfo& worker_info) {
-  return scoped_ptr<DevToolsTargetImpl>(new WorkerTarget(worker_info));
 }
 
 // static

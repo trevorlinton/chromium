@@ -7,10 +7,10 @@
 #include "ash/ash_switches.h"
 #include "base/command_line.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/metrics/field_trial.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/login/fake_user_manager.h"
+#include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/prefs/pref_service_syncable.h"
 #include "chrome/browser/profiles/avatar_menu.h"
 #include "chrome/browser/profiles/avatar_menu_observer.h"
@@ -20,9 +20,10 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "components/variations/entropy_provider.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
+
+using base::ASCIIToUTF16;
 
 namespace {
 
@@ -67,12 +68,6 @@ class ProfileListChromeOSTest : public testing::Test {
     CommandLine* cl = CommandLine::ForCurrentProcess();
     cl->AppendSwitch(switches::kMultiProfiles);
 
-    field_trial_list_.reset(new base::FieldTrialList(
-        new metrics::SHA1EntropyProvider("42")));
-    base::FieldTrialList::CreateTrialsFromString(
-        "ChromeOSUseMultiProfiles/Enable/",
-        base::FieldTrialList::ACTIVATE_TRIALS);
-
     // Initialize the UserManager singleton to a fresh FakeUserManager instance.
     user_manager_enabler_.reset(
         new ScopedUserManagerEnabler(new FakeUserManager));
@@ -82,8 +77,8 @@ class ProfileListChromeOSTest : public testing::Test {
     return static_cast<FakeUserManager*>(UserManager::Get());
   }
 
-  void AddProfile(string16 name, bool log_in) {
-    std::string email_string = UTF16ToASCII(name) + "@example.com";
+  void AddProfile(base::string16 name, bool log_in) {
+    std::string email_string = base::UTF16ToASCII(name) + "@example.com";
 
     // Add a user to the fake user manager.
     GetFakeUserManager()->AddUser(email_string);
@@ -98,7 +93,8 @@ class ProfileListChromeOSTest : public testing::Test {
     manager()->CreateTestingProfile(
         chrome::kProfileDirPrefix + email_string + kUserIdHashSuffix,
         scoped_ptr<PrefServiceSyncable>(),
-        ASCIIToUTF16(email_string), 0, std::string());
+        ASCIIToUTF16(email_string), 0, std::string(),
+        TestingProfile::TestingFactories());
   }
 
   AvatarMenu* GetAvatarMenu() {
@@ -116,6 +112,11 @@ class ProfileListChromeOSTest : public testing::Test {
     return avatar_menu_.get();
   }
 
+  void ActiveUserChanged(ProfileHelper* profile_helper,
+                         const std::string& hash) {
+    profile_helper->ActiveUserHashChanged(hash);
+  }
+
   TestingProfileManager* manager() { return &manager_; }
 
   int change_count() const { return mock_observer_->change_count(); }
@@ -126,13 +127,12 @@ class ProfileListChromeOSTest : public testing::Test {
   scoped_ptr<ScopedUserManagerEnabler> user_manager_enabler_;
   scoped_ptr<AvatarMenu> avatar_menu_;
   ChromeShellDelegate chrome_shell_delegate_;
-  scoped_ptr<base::FieldTrialList> field_trial_list_;
 
   DISALLOW_COPY_AND_ASSIGN(ProfileListChromeOSTest);
 };
 
 TEST_F(ProfileListChromeOSTest, InitialCreation) {
-  string16 name1(ASCIIToUTF16("p1"));
+  base::string16 name1(ASCIIToUTF16("p1"));
 
   AddProfile(name1, true);
 
@@ -146,10 +146,10 @@ TEST_F(ProfileListChromeOSTest, InitialCreation) {
 }
 
 TEST_F(ProfileListChromeOSTest, ShowLoggedInUsers) {
-  string16 name1(ASCIIToUTF16("p1"));
-  string16 name2(ASCIIToUTF16("p2"));
-  string16 name3(ASCIIToUTF16("p3"));
-  string16 name4(ASCIIToUTF16("p4"));
+  base::string16 name1(ASCIIToUTF16("p1"));
+  base::string16 name2(ASCIIToUTF16("p2"));
+  base::string16 name3(ASCIIToUTF16("p3"));
+  base::string16 name4(ASCIIToUTF16("p4"));
 
   AddProfile(name1, true);
   AddProfile(name2, false);
@@ -170,8 +170,8 @@ TEST_F(ProfileListChromeOSTest, ShowLoggedInUsers) {
 }
 
 TEST_F(ProfileListChromeOSTest, DontShowManagedUsers) {
-  string16 name1(ASCIIToUTF16("p1"));
-  string16 managed_name(ASCIIToUTF16("p2@example.com"));
+  base::string16 name1(ASCIIToUTF16("p1"));
+  base::string16 managed_name(ASCIIToUTF16("p2@example.com"));
 
   AddProfile(name1, true);
 
@@ -179,9 +179,9 @@ TEST_F(ProfileListChromeOSTest, DontShowManagedUsers) {
   ProfileInfoCache* cache = manager()->profile_info_cache();
   manager()->profile_info_cache()->AddProfileToCache(
       cache->GetUserDataDir().AppendASCII("p2"), managed_name,
-      string16(), 0, "TEST_ID");
+      base::string16(), 0, "TEST_ID");
 
-  GetFakeUserManager()->AddUser(UTF16ToASCII(managed_name));
+  GetFakeUserManager()->AddUser(base::UTF16ToASCII(managed_name));
 
   AvatarMenu* menu = GetAvatarMenu();
   ASSERT_EQ(1U, menu->GetNumberOfItems());
@@ -192,8 +192,8 @@ TEST_F(ProfileListChromeOSTest, DontShowManagedUsers) {
 }
 
 TEST_F(ProfileListChromeOSTest, ShowAddProfileLink) {
-  string16 name1(ASCIIToUTF16("p1.com"));
-  string16 name2(ASCIIToUTF16("p2.com"));
+  base::string16 name1(ASCIIToUTF16("p1.com"));
+  base::string16 name2(ASCIIToUTF16("p2.com"));
 
   AddProfile(name1, true);
   AddProfile(name2, false);
@@ -205,8 +205,8 @@ TEST_F(ProfileListChromeOSTest, ShowAddProfileLink) {
 }
 
 TEST_F(ProfileListChromeOSTest, DontShowAddProfileLink) {
-  string16 name1(ASCIIToUTF16("p1.com"));
-  string16 name2(ASCIIToUTF16("p2.com"));
+  base::string16 name1(ASCIIToUTF16("p1.com"));
+  base::string16 name2(ASCIIToUTF16("p2.com"));
 
   AddProfile(name1, true);
   AddProfile(name2, true);
@@ -218,11 +218,17 @@ TEST_F(ProfileListChromeOSTest, DontShowAddProfileLink) {
 }
 
 TEST_F(ProfileListChromeOSTest, ActiveItem) {
-  string16 name1(ASCIIToUTF16("p1.com"));
-  string16 name2(ASCIIToUTF16("p2.com"));
+  base::string16 name1(ASCIIToUTF16("p1.com"));
+  base::string16 name2(ASCIIToUTF16("p2.com"));
 
   AddProfile(name1, true);
   AddProfile(name2, true);
+
+  // Initialize ProfileHelper, it will be accessed from GetActiveProfileIndex.
+  std::string email_string = base::UTF16ToASCII(name1) + "@example.com";
+  std::string hash = email_string + kUserIdHashSuffix;
+  ActiveUserChanged(
+      g_browser_process->platform_part()->profile_helper(), hash);
 
   AvatarMenu* menu = GetAvatarMenu();
 
@@ -233,9 +239,9 @@ TEST_F(ProfileListChromeOSTest, ActiveItem) {
 }
 
 TEST_F(ProfileListChromeOSTest, ModifyingNameResortsCorrectly) {
-  string16 name1(ASCIIToUTF16("Alpha"));
-  string16 name2(ASCIIToUTF16("Beta"));
-  string16 newname1(ASCIIToUTF16("Gamma"));
+  base::string16 name1(ASCIIToUTF16("Alpha"));
+  base::string16 name2(ASCIIToUTF16("Beta"));
+  base::string16 newname1(ASCIIToUTF16("Gamma"));
 
   AddProfile(name1, true);
   AddProfile(name2, true);
@@ -255,7 +261,7 @@ TEST_F(ProfileListChromeOSTest, ModifyingNameResortsCorrectly) {
   // Change name of the first profile, to trigger resorting of the profiles:
   // now the first menu item should be named "beta", and the second be "gamma".
   GetFakeUserManager()->SaveUserDisplayName(
-      UTF16ToASCII(name1) + "@example.com", newname1);
+      base::UTF16ToASCII(name1) + "@example.com", newname1);
   manager()->profile_info_cache()->SetNameOfProfileAtIndex(0, newname1);
 
   const AvatarMenu::Item& item1next = menu->GetItemAt(0);
@@ -269,8 +275,8 @@ TEST_F(ProfileListChromeOSTest, ModifyingNameResortsCorrectly) {
 }
 
 TEST_F(ProfileListChromeOSTest, ChangeOnNotify) {
-  string16 name1(ASCIIToUTF16("p1.com"));
-  string16 name2(ASCIIToUTF16("p2.com"));
+  base::string16 name1(ASCIIToUTF16("p1.com"));
+  base::string16 name2(ASCIIToUTF16("p2.com"));
 
   AddProfile(name1, true);
   AddProfile(name2, true);
@@ -278,7 +284,7 @@ TEST_F(ProfileListChromeOSTest, ChangeOnNotify) {
   AvatarMenu* menu = GetAvatarMenu();
   EXPECT_EQ(2U, menu->GetNumberOfItems());
 
-  string16 name3(ASCIIToUTF16("p3.com"));
+  base::string16 name3(ASCIIToUTF16("p3.com"));
   AddProfile(name3, true);
 
   // Four changes happened via the call to CreateTestingProfile: adding the
@@ -303,8 +309,8 @@ TEST_F(ProfileListChromeOSTest, ChangeOnNotify) {
 
 TEST_F(ProfileListChromeOSTest, DontShowAvatarMenu) {
   // If in the new M-32 UX mode the icon gets shown, the menu will not.
-  string16 name1(ASCIIToUTF16("p1"));
-  string16 name2(ASCIIToUTF16("p2"));
+  base::string16 name1(ASCIIToUTF16("p1"));
+  base::string16 name2(ASCIIToUTF16("p2"));
 
   AddProfile(name1, true);
 
@@ -314,24 +320,6 @@ TEST_F(ProfileListChromeOSTest, DontShowAvatarMenu) {
   AddProfile(name2, false);
 
   EXPECT_FALSE(AvatarMenu::ShouldShowAvatarMenu());
-}
-
-TEST_F(ProfileListChromeOSTest, ShowAvatarMenuInM31) {
-  // In M-31 mode, the menu will get shown.
-  CommandLine* cl = CommandLine::ForCurrentProcess();
-  cl->AppendSwitch(ash::switches::kAshEnableFullMultiProfileMode);
-
-  string16 name1(ASCIIToUTF16("p1"));
-  string16 name2(ASCIIToUTF16("p2"));
-
-  AddProfile(name1, true);
-
-  // Should only show avatar menu with multiple users.
-  EXPECT_FALSE(AvatarMenu::ShouldShowAvatarMenu());
-
-  AddProfile(name2, false);
-
-  EXPECT_TRUE(AvatarMenu::ShouldShowAvatarMenu());
 }
 
 }  // namespace chromeos

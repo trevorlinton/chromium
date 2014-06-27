@@ -207,7 +207,11 @@ class ASH_EXPORT SystemTrayDelegate {
   virtual void ShowUserLogin() = 0;
 
   // Shows the spring charger replacement dialog if necessary.
-  virtual void ShowSpringChargerReplacementDialog() = 0;
+  // Returns true if the dialog is shown by the call.
+  virtual bool ShowSpringChargerReplacementDialog() = 0;
+
+  // True if the spring charger replacement dialog is visible.
+  virtual bool IsSpringChargerReplacementDialogVisible() = 0;
 
   // True if user has confirmed using safe spring charger.
   virtual bool HasUserConfirmedSafeSpringCharger() = 0;
@@ -315,10 +319,18 @@ class ASH_EXPORT SystemTrayDelegate {
   // Get the system tray menu size in pixels (dependent on the language).
   virtual int GetSystemTrayMenuWidth() = 0;
 
-  // Speaks the given text if spoken feedback is enabled.
-  virtual void MaybeSpeak(const std::string& utterance) const = 0;
-};
+  // The active user has been changed. This will be called when the UI is ready
+  // to be switched to the new user.
+  // Note: This will happen after SessionStateObserver::ActiveUserChanged fires.
+  virtual void ActiveUserWasChanged() = 0;
 
+  // Returns true when |network| is behind captive portal.
+  virtual bool IsNetworkBehindCaptivePortal(
+      const std::string& service_path) const = 0;
+
+  // Returns true when the Search key is configured to be treated as Caps Lock.
+  virtual bool IsSearchKeyMappedToCapsLock() = 0;
+};
 }  // namespace ash
 
 #endif  // ASH_SYSTEM_TRAY_SYSTEM_TRAY_DELEGATE_H_

@@ -5,11 +5,12 @@
 #include "ash/test/shell_test_api.h"
 
 #include "ash/root_window_controller.h"
+#include "ash/shelf/shelf_delegate.h"
 #include "ash/shell.h"
 
 #if defined(OS_CHROMEOS)
 #include "ash/display/output_configurator_animation.h"
-#include "chromeos/display/output_configurator.h"
+#include "ui/display/chromeos/output_configurator.h"
 #endif
 
 namespace ash {
@@ -21,7 +22,7 @@ internal::RootWindowLayoutManager* ShellTestApi::root_window_layout() {
   return shell_->GetPrimaryRootWindowController()->root_window_layout();
 }
 
-views::corewm::InputMethodEventFilter*
+wm::InputMethodEventFilter*
 ShellTestApi::input_method_event_filter() {
   return shell_->input_method_filter_.get();
 }
@@ -44,8 +45,8 @@ AshNativeCursorManager* ShellTestApi::ash_native_cursor_manager() {
   return shell_->native_cursor_manager_;
 }
 
-LauncherModel* ShellTestApi::launcher_model() {
-  return shell_->launcher_model_.get();
+ShelfModel* ShellTestApi::shelf_model() {
+  return shell_->shelf_model_.get();
 }
 
 internal::DragDropController* ShellTestApi::drag_drop_controller() {
@@ -56,6 +57,11 @@ internal::AppListController* ShellTestApi::app_list_controller() {
   return shell_->app_list_controller_.get();
 }
 
+internal::MaximizeModeWindowManager*
+ShellTestApi::maximize_mode_window_manager() {
+  return shell_->maximize_mode_window_manager_.get();
+}
+
 void ShellTestApi::DisableOutputConfiguratorAnimation() {
 #if defined(OS_CHROMEOS)
   if (shell_->output_configurator_animation_) {
@@ -64,6 +70,10 @@ void ShellTestApi::DisableOutputConfiguratorAnimation() {
     shell_->output_configurator_animation_.reset();
   }
 #endif  // defined(OS_CHROMEOS)
+}
+
+void ShellTestApi::SetShelfDelegate(ShelfDelegate* delegate) {
+  shell_->shelf_delegate_.reset(delegate);
 }
 
 }  // namespace test

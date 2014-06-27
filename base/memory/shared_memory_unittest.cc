@@ -20,14 +20,22 @@
 #endif
 
 #if defined(OS_POSIX)
+#include <errno.h>
+#include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 #endif
 
+#if defined(OS_WIN)
+#include "base/win/scoped_handle.h"
+#endif
+
 static const int kNumThreads = 5;
+#if !defined(OS_IOS)  // iOS does not allow multiple processes.
 static const int kNumTasks = 5;
+#endif
 
 namespace base {
 
@@ -53,7 +61,7 @@ class MultipleThreadMain : public PlatformThread::Delegate {
 #endif
     const uint32 kDataSize = 1024;
     SharedMemory memory;
-    bool rv = memory.CreateNamed(s_test_name_, true, kDataSize);
+    bool rv = memory.CreateNamedDeprecated(s_test_name_, true, kDataSize);
     EXPECT_TRUE(rv);
     rv = memory.Map(kDataSize);
     EXPECT_TRUE(rv);
@@ -101,8 +109,8 @@ class MultipleLockThread : public PlatformThread::Delegate {
     SharedMemoryHandle handle = NULL;
     {
       SharedMemory memory1;
-      EXPECT_TRUE(memory1.CreateNamed("SharedMemoryMultipleLockThreadTest",
-                                 true, kDataSize));
+      EXPECT_TRUE(memory1.CreateNamedDeprecated(
+          "SharedMemoryMultipleLockThreadTest", true, kDataSize));
       EXPECT_TRUE(memory1.ShareToProcess(GetCurrentProcess(), &handle));
       // TODO(paulg): Implement this once we have a posix version of
       // SharedMemory::ShareToProcess.
@@ -114,12 +122,12 @@ class MultipleLockThread : public PlatformThread::Delegate {
     volatile int* const ptr = static_cast<int*>(memory2.memory());
 
     for (int idx = 0; idx < 20; idx++) {
-      memory2.Lock();
+      memory2.LockDeprecated();
       int i = (id_ << 16) + idx;
       *ptr = i;
       PlatformThread::Sleep(TimeDelta::FromMilliseconds(1));
       EXPECT_EQ(*ptr, i);
-      memory2.Unlock();
+      memory2.UnlockDeprecated();
     }
 
     memory2.Close();
@@ -135,7 +143,7 @@ class MultipleLockThread : public PlatformThread::Delegate {
 }  // namespace
 
 // Android doesn't support SharedMemory::Open/Delete/
-// CreateNamed(openExisting=true)
+// CreateNamedDeprecated(openExisting=true)
 #if !defined(OS_ANDROID)
 TEST(SharedMemoryTest, OpenClose) {
   const uint32 kDataSize = 1024;
@@ -150,7 +158,7 @@ TEST(SharedMemoryTest, OpenClose) {
   EXPECT_TRUE(rv);
   rv = memory1.Open(test_name, false);
   EXPECT_FALSE(rv);
-  rv = memory1.CreateNamed(test_name, false, kDataSize);
+  rv = memory1.CreateNamedDeprecated(test_name, false, kDataSize);
   EXPECT_TRUE(rv);
   rv = memory1.Map(kDataSize);
   EXPECT_TRUE(rv);
@@ -193,10 +201,10 @@ TEST(SharedMemoryTest, OpenExclusive) {
                    << Time::Now().ToDoubleT();
   std::string test_name = test_name_stream.str();
 
-  // Open two handles to a memory segment and check that open_existing works
-  // as expected.
+  // Open two handles to a memory segment and check that
+  // open_existing_deprecated works as expected.
   SharedMemory memory1;
-  bool rv = memory1.CreateNamed(test_name, false, kDataSize);
+  bool rv = memory1.CreateNamedDeprecated(test_name, false, kDataSize);
   EXPECT_TRUE(rv);
 
   // Memory1 knows it's size because it created it.
@@ -216,11 +224,11 @@ TEST(SharedMemoryTest, OpenExclusive) {
 
   SharedMemory memory2;
   // Should not be able to create if openExisting is false.
-  rv = memory2.CreateNamed(test_name, false, kDataSize2);
+  rv = memory2.CreateNamedDeprecated(test_name, false, kDataSize2);
   EXPECT_FALSE(rv);
 
   // Should be able to create with openExisting true.
-  rv = memory2.CreateNamed(test_name, true, kDataSize2);
+  rv = memory2.CreateNamedDeprecated(test_name, true, kDataSize2);
   EXPECT_TRUE(rv);
 
   // Memory2 shouldn't know the size because we didn't create it.
@@ -361,6 +369,111 @@ TEST(SharedMemoryTest, AnonymousPrivate) {
   }
 }
 
+TEST(SharedMemoryTest, ShareReadOnly) {
+  StringPiece contents = "Hello World";
+
+  SharedMemory writable_shmem;
+  SharedMemoryCreateOptions options;
+  options.size = contents.size();
+  options.share_read_only = true;
+  ASSERT_TRUE(writable_shmem.Create(options));
+  ASSERT_TRUE(writable_shmem.Map(options.size));
+  memcpy(writable_shmem.memory(), contents.data(), contents.size());
+  EXPECT_TRUE(writable_shmem.Unmap());
+
+  SharedMemoryHandle readonly_handle;
+  ASSERT_TRUE(writable_shmem.ShareReadOnlyToProcess(GetCurrentProcessHandle(),
+                                                    &readonly_handle));
+  SharedMemory readonly_shmem(readonly_handle, /*readonly=*/true);
+
+  ASSERT_TRUE(readonly_shmem.Map(contents.size()));
+  EXPECT_EQ(contents,
+            StringPiece(static_cast<const char*>(readonly_shmem.memory()),
+                        contents.size()));
+  EXPECT_TRUE(readonly_shmem.Unmap());
+
+  // Make sure the writable instance is still writable.
+  ASSERT_TRUE(writable_shmem.Map(contents.size()));
+  StringPiece new_contents = "Goodbye";
+  memcpy(writable_shmem.memory(), new_contents.data(), new_contents.size());
+  EXPECT_EQ(new_contents,
+            StringPiece(static_cast<const char*>(writable_shmem.memory()),
+                        new_contents.size()));
+
+  // We'd like to check that if we send the read-only segment to another
+  // process, then that other process can't reopen it read/write.  (Since that
+  // would be a security hole.)  Setting up multiple processes is hard in a
+  // unittest, so this test checks that the *current* process can't reopen the
+  // segment read/write.  I think the test here is stronger than we actually
+  // care about, but there's a remote possibility that sending a file over a
+  // pipe would transform it into read/write.
+  SharedMemoryHandle handle = readonly_shmem.handle();
+
+#if defined(OS_ANDROID)
+  // The "read-only" handle is still writable on Android:
+  // http://crbug.com/320865
+  (void)handle;
+#elif defined(OS_POSIX)
+  EXPECT_EQ(O_RDONLY, fcntl(handle.fd, F_GETFL) & O_ACCMODE)
+      << "The descriptor itself should be read-only.";
+
+  errno = 0;
+  void* writable = mmap(
+      NULL, contents.size(), PROT_READ | PROT_WRITE, MAP_SHARED, handle.fd, 0);
+  int mmap_errno = errno;
+  EXPECT_EQ(MAP_FAILED, writable)
+      << "It shouldn't be possible to re-mmap the descriptor writable.";
+  EXPECT_EQ(EACCES, mmap_errno) << strerror(mmap_errno);
+  if (writable != MAP_FAILED)
+    EXPECT_EQ(0, munmap(writable, readonly_shmem.mapped_size()));
+
+#elif defined(OS_WIN)
+  EXPECT_EQ(NULL, MapViewOfFile(handle, FILE_MAP_WRITE, 0, 0, 0))
+      << "Shouldn't be able to map memory writable.";
+
+  HANDLE temp_handle;
+  BOOL rv = ::DuplicateHandle(GetCurrentProcess(),
+                              handle,
+                              GetCurrentProcess,
+                              &temp_handle,
+                              FILE_MAP_ALL_ACCESS,
+                              false,
+                              0);
+  EXPECT_EQ(FALSE, rv)
+      << "Shouldn't be able to duplicate the handle into a writable one.";
+  if (rv)
+    base::win::ScopedHandle writable_handle(temp_handle);
+#else
+#error Unexpected platform; write a test that tries to make 'handle' writable.
+#endif  // defined(OS_POSIX) || defined(OS_WIN)
+}
+
+TEST(SharedMemoryTest, ShareToSelf) {
+  StringPiece contents = "Hello World";
+
+  SharedMemory shmem;
+  ASSERT_TRUE(shmem.CreateAndMapAnonymous(contents.size()));
+  memcpy(shmem.memory(), contents.data(), contents.size());
+  EXPECT_TRUE(shmem.Unmap());
+
+  SharedMemoryHandle shared_handle;
+  ASSERT_TRUE(shmem.ShareToProcess(GetCurrentProcessHandle(), &shared_handle));
+  SharedMemory shared(shared_handle, /*readonly=*/false);
+
+  ASSERT_TRUE(shared.Map(contents.size()));
+  EXPECT_EQ(
+      contents,
+      StringPiece(static_cast<const char*>(shared.memory()), contents.size()));
+
+  ASSERT_TRUE(shmem.ShareToProcess(GetCurrentProcessHandle(), &shared_handle));
+  SharedMemory readonly(shared_handle, /*readonly=*/true);
+
+  ASSERT_TRUE(readonly.Map(contents.size()));
+  EXPECT_EQ(contents,
+            StringPiece(static_cast<const char*>(readonly.memory()),
+                        contents.size()));
+}
+
 TEST(SharedMemoryTest, MapAt) {
   ASSERT_TRUE(SysInfo::VMAllocationGranularity() >= sizeof(uint32));
   const size_t kCount = SysInfo::VMAllocationGranularity();
@@ -368,7 +481,6 @@ TEST(SharedMemoryTest, MapAt) {
 
   SharedMemory memory;
   ASSERT_TRUE(memory.CreateAndMapAnonymous(kDataSize));
-  ASSERT_TRUE(memory.Map(kDataSize));
   uint32* ptr = static_cast<uint32*>(memory.memory());
   ASSERT_NE(ptr, static_cast<void*>(NULL));
 
@@ -386,6 +498,19 @@ TEST(SharedMemoryTest, MapAt) {
   for (size_t i = offset; i < kCount; ++i) {
     EXPECT_EQ(ptr[i - offset], i);
   }
+}
+
+TEST(SharedMemoryTest, MapTwice) {
+  const uint32 kDataSize = 1024;
+  SharedMemory memory;
+  bool rv = memory.CreateAndMapAnonymous(kDataSize);
+  EXPECT_TRUE(rv);
+
+  void* old_address = memory.memory();
+
+  rv = memory.Map(kDataSize);
+  EXPECT_FALSE(rv);
+  EXPECT_EQ(old_address, memory.memory());
 }
 
 #if defined(OS_POSIX)
@@ -452,7 +577,7 @@ TEST(SharedMemoryTest, FilePermissionsNamed) {
   options.size = kTestSize;
   std::string shared_mem_name = "shared_perm_test-" + IntToString(getpid()) +
       "-" + Uint64ToString(RandUint64());
-  options.name = &shared_mem_name;
+  options.name_deprecated = &shared_mem_name;
   // Set a file mode creation mask that gives all permissions.
   ScopedUmaskSetter permissive_mask(S_IWGRP | S_IWOTH);
 
@@ -504,7 +629,7 @@ class SharedMemoryProcessTest : public MultiProcessTest {
 #endif
     const uint32 kDataSize = 1024;
     SharedMemory memory;
-    bool rv = memory.CreateNamed(s_test_name_, true, kDataSize);
+    bool rv = memory.CreateNamedDeprecated(s_test_name_, true, kDataSize);
     EXPECT_TRUE(rv);
     if (rv != true)
       errors++;
@@ -515,13 +640,13 @@ class SharedMemoryProcessTest : public MultiProcessTest {
     int *ptr = static_cast<int*>(memory.memory());
 
     for (int idx = 0; idx < 20; idx++) {
-      memory.Lock();
+      memory.LockDeprecated();
       int i = (1 << 16) + idx;
       *ptr = i;
       PlatformThread::Sleep(TimeDelta::FromMilliseconds(10));
       if (*ptr != i)
         errors++;
-      memory.Unlock();
+      memory.UnlockDeprecated();
     }
 
     memory.Close();
@@ -539,7 +664,7 @@ TEST_F(SharedMemoryProcessTest, Tasks) {
 
   ProcessHandle handles[kNumTasks];
   for (int index = 0; index < kNumTasks; ++index) {
-    handles[index] = SpawnChild("SharedMemoryTestMain", false);
+    handles[index] = SpawnChild("SharedMemoryTestMain");
     ASSERT_TRUE(handles[index]);
   }
 

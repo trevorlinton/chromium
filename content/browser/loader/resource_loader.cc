@@ -10,6 +10,7 @@
 #include "base/time/time.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/loader/cross_site_resource_handler.h"
+#include "content/browser/loader/detachable_resource_handler.h"
 #include "content/browser/loader/resource_loader_delegate.h"
 #include "content/browser/loader/resource_request_info_impl.h"
 #include "content/browser/ssl/ssl_client_auth_handler.h"
@@ -18,12 +19,11 @@
 #include "content/public/browser/cert_store.h"
 #include "content/public/browser/resource_context.h"
 #include "content/public/browser/resource_dispatcher_host_login_delegate.h"
-#include "content/public/browser/site_instance.h"
+#include "content/public/browser/signed_certificate_timestamp_store.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/process_type.h"
 #include "content/public/common/resource_response.h"
-#include "content/public/common/url_constants.h"
 #include "net/base/io_buffer.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_response_headers.h"
@@ -161,14 +161,10 @@ void ResourceLoader::ReportUploadProgress() {
   }
 }
 
-void ResourceLoader::MarkAsTransferring(const GURL& target_url) {
-  CHECK_EQ(GetRequestInfo()->GetResourceType(), ResourceType::MAIN_FRAME)
-      << "Cannot transfer non-main frame navigations";
+void ResourceLoader::MarkAsTransferring() {
+  CHECK(ResourceType::IsFrame(GetRequestInfo()->GetResourceType()))
+      << "Can only transfer for navigations";
   is_transferring_ = true;
-
-  // When transferring a request to another process, the renderer doesn't get
-  // a chance to update the cookie policy URL. Do it here instead.
-  request()->set_first_party_for_cookies(target_url);
 }
 
 void ResourceLoader::CompleteTransfer() {
@@ -204,7 +200,7 @@ void ResourceLoader::OnReceivedRedirect(net::URLRequest* unused,
 
   ResourceRequestInfoImpl* info = GetRequestInfo();
 
-  if (info->process_type() != PROCESS_TYPE_PLUGIN &&
+  if (info->GetProcessType() != PROCESS_TYPE_PLUGIN &&
       !ChildProcessSecurityPolicyImpl::GetInstance()->
           CanRequestURL(info->GetChildID(), new_url)) {
     VLOG(1) << "Denied unauthorized request for "
@@ -243,11 +239,6 @@ void ResourceLoader::OnAuthRequired(net::URLRequest* unused,
     return;
   }
 
-  if (!delegate_->AcceptAuthRequest(this, auth_info)) {
-    request_->CancelAuth();
-    return;
-  }
-
   // Create a login dialog on the UI thread to get authentication data, or pull
   // from cache and continue on the IO thread.
 
@@ -263,7 +254,7 @@ void ResourceLoader::OnCertificateRequested(
     net::SSLCertRequestInfo* cert_info) {
   DCHECK_EQ(request_.get(), unused);
 
-  if (!delegate_->AcceptSSLClientCertificateRequest(this, cert_info)) {
+  if (request_->load_flags() & net::LOAD_PREFETCH) {
     request_->Cancel();
     return;
   }
@@ -283,8 +274,8 @@ void ResourceLoader::OnSSLCertificateError(net::URLRequest* request,
   ResourceRequestInfoImpl* info = GetRequestInfo();
 
   int render_process_id;
-  int render_view_id;
-  if (!info->GetAssociatedRenderView(&render_process_id, &render_view_id))
+  int render_frame_id;
+  if (!info->GetAssociatedRenderFrame(&render_process_id, &render_frame_id))
     NOTREACHED();
 
   SSLManager::OnSSLCertificateError(
@@ -293,9 +284,23 @@ void ResourceLoader::OnSSLCertificateError(net::URLRequest* request,
       info->GetResourceType(),
       request_->url(),
       render_process_id,
-      render_view_id,
+      render_frame_id,
       ssl_info,
       fatal);
+}
+
+void ResourceLoader::OnBeforeNetworkStart(net::URLRequest* unused,
+                                          bool* defer) {
+  DCHECK_EQ(request_.get(), unused);
+
+  // Give the handler a chance to delay the URLRequest from using the network.
+  if (!handler_->OnBeforeNetworkStart(
+           GetRequestInfo()->GetRequestID(), request_->url(), defer)) {
+    Cancel();
+    return;
+  } else if (*defer) {
+    deferred_stage_ = DEFERRED_NETWORK_START;
+  }
 }
 
 void ResourceLoader::OnResponseStarted(net::URLRequest* unused) {
@@ -400,6 +405,9 @@ void ResourceLoader::Resume() {
     case DEFERRED_START:
       StartRequestInternal();
       break;
+    case DEFERRED_NETWORK_START:
+      request_->ResumeNetworkStart();
+      break;
     case DEFERRED_REDIRECT:
       request_->FollowDeferredRedirect();
       break;
@@ -425,6 +433,11 @@ void ResourceLoader::Cancel() {
 
 void ResourceLoader::StartRequestInternal() {
   DCHECK(!request_->is_pending());
+
+  if (!request_->status().is_success()) {
+    return;
+  }
+
   request_->Start();
 
   delegate_->DidStartRequest(this);
@@ -438,8 +451,15 @@ void ResourceLoader::CancelRequestInternal(int error, bool from_renderer) {
   // WebKit will send us a cancel for downloads since it no longer handles
   // them.  In this case, ignore the cancel since we handle downloads in the
   // browser.
-  if (from_renderer && (info->is_download() || info->is_stream()))
+  if (from_renderer && (info->IsDownload() || info->is_stream()))
     return;
+
+  if (from_renderer && info->detachable_handler()) {
+    // TODO(davidben): Fix Blink handling of prefetches so they are not
+    // cancelled on navigate away and end up in the local cache.
+    info->detachable_handler()->Detach();
+    return;
+  }
 
   // TODO(darin): Perhaps we should really be looking to see if the status is
   // IO_PENDING?
@@ -467,48 +487,43 @@ void ResourceLoader::CancelRequestInternal(int error, bool from_renderer) {
   }
 }
 
+void ResourceLoader::StoreSignedCertificateTimestamps(
+    const net::SignedCertificateTimestampAndStatusList& sct_list,
+    int process_id,
+    SignedCertificateTimestampIDStatusList* sct_ids) {
+  SignedCertificateTimestampStore* sct_store(
+      SignedCertificateTimestampStore::GetInstance());
+
+  for (net::SignedCertificateTimestampAndStatusList::const_iterator iter =
+       sct_list.begin(); iter != sct_list.end(); ++iter) {
+    const int sct_id(sct_store->Store(iter->sct, process_id));
+    sct_ids->push_back(
+        SignedCertificateTimestampIDAndStatus(sct_id, iter->status));
+  }
+}
+
 void ResourceLoader::CompleteResponseStarted() {
   ResourceRequestInfoImpl* info = GetRequestInfo();
 
   scoped_refptr<ResourceResponse> response(new ResourceResponse());
   PopulateResourceResponse(request_.get(), response.get());
 
-  // The --site-per-process flag enables an out-of-process iframes
-  // prototype. It works by changing the MIME type of cross-site subframe
-  // responses to a Chrome specific one. This new type causes the subframe
-  // to be replaced by a <webview> tag with the same URL, which results in
-  // using a renderer in a different process.
-  //
-  // For prototyping purposes, we will use a small hack to ensure same site
-  // iframes are not changed. We can compare the URL for the subframe
-  // request with the referrer. If the two don't match, then it should be a
-  // cross-site iframe.
-  // Also, we don't do the MIME type change for chrome:// URLs, as those
-  // require different privileges and are not allowed in regular renderers.
-  //
-  // The usage of SiteInstance::IsSameWebSite is safe on the IO thread,
-  // if the browser_context parameter is NULL. This does not work for hosted
-  // apps, but should be fine for prototyping.
-  // TODO(nasko): Once the SiteInstance check is fixed, ensure we do the
-  // right thing here. http://crbug.com/160576
-  const CommandLine& command_line = *CommandLine::ForCurrentProcess();
-  if (command_line.HasSwitch(switches::kSitePerProcess) &&
-      GetRequestInfo()->GetResourceType() == ResourceType::SUB_FRAME &&
-      response->head.mime_type == "text/html" &&
-      !request_->url().SchemeIs(chrome::kChromeUIScheme) &&
-      !SiteInstance::IsSameWebSite(NULL, request_->url(),
-                                   GURL(request_->referrer()))) {
-    response->head.mime_type = "application/browser-plugin";
-  }
-
   if (request_->ssl_info().cert.get()) {
     int cert_id = CertStore::GetInstance()->StoreCert(
         request_->ssl_info().cert.get(), info->GetChildID());
+
+    SignedCertificateTimestampIDStatusList signed_certificate_timestamp_ids;
+    StoreSignedCertificateTimestamps(
+        request_->ssl_info().signed_certificate_timestamps,
+        info->GetChildID(),
+        &signed_certificate_timestamp_ids);
+
     response->head.security_info = SerializeSecurityInfo(
         cert_id,
         request_->ssl_info().cert_status,
         request_->ssl_info().security_bits,
-        request_->ssl_info().connection_status);
+        request_->ssl_info().connection_status,
+        signed_certificate_timestamp_ids);
   } else {
     // We should not have any SSL state.
     DCHECK(!request_->ssl_info().cert_status &&
@@ -612,19 +627,26 @@ void ResourceLoader::ResponseCompleted() {
   if (ssl_info.cert.get() != NULL) {
     int cert_id = CertStore::GetInstance()->StoreCert(ssl_info.cert.get(),
                                                       info->GetChildID());
+    SignedCertificateTimestampIDStatusList signed_certificate_timestamp_ids;
+    StoreSignedCertificateTimestamps(ssl_info.signed_certificate_timestamps,
+                                     info->GetChildID(),
+                                     &signed_certificate_timestamp_ids);
+
     security_info = SerializeSecurityInfo(
         cert_id, ssl_info.cert_status, ssl_info.security_bits,
-        ssl_info.connection_status);
+        ssl_info.connection_status, signed_certificate_timestamp_ids);
   }
 
-  if (handler_->OnResponseCompleted(info->GetRequestID(), request_->status(),
-                                    security_info)) {
-    // This will result in our destruction.
-    CallDidFinishLoading();
-  } else {
+  bool defer = false;
+  handler_->OnResponseCompleted(info->GetRequestID(), request_->status(),
+                                security_info, &defer);
+  if (defer) {
     // The handler is not ready to die yet.  We will call DidFinishLoading when
     // we resume.
     deferred_stage_ = DEFERRED_FINISH;
+  } else {
+    // This will result in our destruction.
+    CallDidFinishLoading();
   }
 }
 

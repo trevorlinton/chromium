@@ -15,8 +15,9 @@
       'type': '<(component)',
       'dependencies': [
         '<(DEPTH)/base/base.gyp:base',
-        '<(DEPTH)/ui/gfx/gfx.gyp:gfx',
         '<(DEPTH)/ui/events/events.gyp:events',
+        '<(DEPTH)/ui/gfx/gfx.gyp:gfx',
+        '<(DEPTH)/ui/gfx/gfx.gyp:gfx_geometry',
         '<(DEPTH)/skia/skia.gyp:skia',
         '<@(external_ozone_platform_deps)',
       ],
@@ -37,9 +38,14 @@
         'ozone_switches.h',
         'platform/dri/ozone_platform_dri.cc',
         'platform/dri/ozone_platform_dri.h',
+        'platform/dri/cursor_factory_evdev_dri.cc',
+        'platform/dri/cursor_factory_evdev_dri.h',
         'platform/test/ozone_platform_test.cc',
         'platform/test/ozone_platform_test.h',
         '<@(external_ozone_platform_files)',
+      ],
+      'includes': [
+        'ime/ime.gypi',
       ],
       'actions': [
         {

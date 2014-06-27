@@ -206,12 +206,26 @@ TEST_F(AlternateProtocolServerPropertiesTest, Initialize) {
   HostPortPair test_host_port_pair2("foo2", 80);
   impl_.SetAlternateProtocol(test_host_port_pair2, 443, NPN_SPDY_3);
 
-  AlternateProtocolMap alternate_protocol_map;
+  AlternateProtocolMap alternate_protocol_map(
+      AlternateProtocolMap::NO_AUTO_EVICT);
   PortAlternateProtocolPair port_alternate_protocol_pair;
   port_alternate_protocol_pair.port = 123;
   port_alternate_protocol_pair.protocol = NPN_SPDY_3;
-  alternate_protocol_map[test_host_port_pair2] = port_alternate_protocol_pair;
+  alternate_protocol_map.Put(test_host_port_pair2,
+                             port_alternate_protocol_pair);
+  HostPortPair test_host_port_pair3("foo3", 80);
+  port_alternate_protocol_pair.port = 1234;
+  alternate_protocol_map.Put(test_host_port_pair3,
+                             port_alternate_protocol_pair);
   impl_.InitializeAlternateProtocolServers(&alternate_protocol_map);
+
+  // Verify test_host_port_pair3 is the MRU server.
+  const net::AlternateProtocolMap& map = impl_.alternate_protocol_map();
+  net::AlternateProtocolMap::const_iterator it = map.begin();
+  it = map.begin();
+  EXPECT_TRUE(it->first.Equals(test_host_port_pair3));
+  EXPECT_EQ(1234, it->second.port);
+  EXPECT_EQ(NPN_SPDY_3, it->second.protocol);
 
   ASSERT_TRUE(impl_.HasAlternateProtocol(test_host_port_pair1));
   ASSERT_TRUE(impl_.HasAlternateProtocol(test_host_port_pair2));
@@ -222,6 +236,49 @@ TEST_F(AlternateProtocolServerPropertiesTest, Initialize) {
       impl_.GetAlternateProtocol(test_host_port_pair2);
   EXPECT_EQ(123, port_alternate_protocol_pair.port);
   EXPECT_EQ(NPN_SPDY_3, port_alternate_protocol_pair.protocol);
+}
+
+TEST_F(AlternateProtocolServerPropertiesTest, MRUOfHasAlternateProtocol) {
+  HostPortPair test_host_port_pair1("foo1", 80);
+  impl_.SetAlternateProtocol(test_host_port_pair1, 443, NPN_SPDY_3);
+  HostPortPair test_host_port_pair2("foo2", 80);
+  impl_.SetAlternateProtocol(test_host_port_pair2, 1234, NPN_SPDY_3);
+
+  const net::AlternateProtocolMap& map = impl_.alternate_protocol_map();
+  net::AlternateProtocolMap::const_iterator it = map.begin();
+  EXPECT_TRUE(it->first.Equals(test_host_port_pair2));
+  EXPECT_EQ(1234, it->second.port);
+  EXPECT_EQ(NPN_SPDY_3, it->second.protocol);
+
+  // HasAlternateProtocol should reoder the AlternateProtocol map.
+  ASSERT_TRUE(impl_.HasAlternateProtocol(test_host_port_pair1));
+  it = map.begin();
+  EXPECT_TRUE(it->first.Equals(test_host_port_pair1));
+  EXPECT_EQ(443, it->second.port);
+  EXPECT_EQ(NPN_SPDY_3, it->second.protocol);
+}
+
+TEST_F(AlternateProtocolServerPropertiesTest, MRUOfGetAlternateProtocol) {
+  HostPortPair test_host_port_pair1("foo1", 80);
+  impl_.SetAlternateProtocol(test_host_port_pair1, 443, NPN_SPDY_3);
+  HostPortPair test_host_port_pair2("foo2", 80);
+  impl_.SetAlternateProtocol(test_host_port_pair2, 1234, NPN_SPDY_3);
+
+  const net::AlternateProtocolMap& map = impl_.alternate_protocol_map();
+  net::AlternateProtocolMap::const_iterator it = map.begin();
+  EXPECT_TRUE(it->first.Equals(test_host_port_pair2));
+  EXPECT_EQ(1234, it->second.port);
+  EXPECT_EQ(NPN_SPDY_3, it->second.protocol);
+
+  // GetAlternateProtocol should reoder the AlternateProtocol map.
+  PortAlternateProtocolPair alternate =
+      impl_.GetAlternateProtocol(test_host_port_pair1);
+  EXPECT_EQ(443, alternate.port);
+  EXPECT_EQ(NPN_SPDY_3, alternate.protocol);
+  it = map.begin();
+  EXPECT_TRUE(it->first.Equals(test_host_port_pair1));
+  EXPECT_EQ(443, it->second.port);
+  EXPECT_EQ(NPN_SPDY_3, it->second.protocol);
 }
 
 TEST_F(AlternateProtocolServerPropertiesTest, SetBroken) {
@@ -239,6 +296,17 @@ TEST_F(AlternateProtocolServerPropertiesTest, SetBroken) {
   alternate = impl_.GetAlternateProtocol(test_host_port_pair);
   EXPECT_EQ(ALTERNATE_PROTOCOL_BROKEN, alternate.protocol)
       << "Second attempt should be ignored.";
+}
+
+TEST_F(AlternateProtocolServerPropertiesTest, ClearBroken) {
+  HostPortPair test_host_port_pair("foo", 80);
+  impl_.SetBrokenAlternateProtocol(test_host_port_pair);
+  ASSERT_TRUE(impl_.HasAlternateProtocol(test_host_port_pair));
+  PortAlternateProtocolPair alternate =
+      impl_.GetAlternateProtocol(test_host_port_pair);
+  EXPECT_EQ(ALTERNATE_PROTOCOL_BROKEN, alternate.protocol);
+  impl_.ClearAlternateProtocol(test_host_port_pair);
+  EXPECT_FALSE(impl_.HasAlternateProtocol(test_host_port_pair));
 }
 
 TEST_F(AlternateProtocolServerPropertiesTest, Forced) {
@@ -273,13 +341,35 @@ TEST_F(AlternateProtocolServerPropertiesTest, Forced) {
   EXPECT_FALSE(impl_.HasAlternateProtocol(test_host_port_pair2));
 }
 
+TEST_F(AlternateProtocolServerPropertiesTest, Canonical) {
+  HostPortPair test_host_port_pair("foo.c.youtube.com", 80);
+  EXPECT_FALSE(impl_.HasAlternateProtocol(test_host_port_pair));
+
+  HostPortPair canonical_port_pair("bar.c.youtube.com", 80);
+  EXPECT_FALSE(impl_.HasAlternateProtocol(canonical_port_pair));
+
+  PortAlternateProtocolPair canonical_protocol;
+  canonical_protocol.port = 1234;
+  canonical_protocol.protocol = QUIC;
+
+  impl_.SetAlternateProtocol(canonical_port_pair,
+                             canonical_protocol.port,
+                             canonical_protocol.protocol);
+  // Verify the forced protocol.
+  ASSERT_TRUE(impl_.HasAlternateProtocol(test_host_port_pair));
+  PortAlternateProtocolPair alternate =
+      impl_.GetAlternateProtocol(test_host_port_pair);
+  EXPECT_EQ(canonical_protocol.port, alternate.port);
+  EXPECT_EQ(canonical_protocol.protocol, alternate.protocol);
+}
+
 typedef HttpServerPropertiesImplTest SpdySettingsServerPropertiesTest;
 
 TEST_F(SpdySettingsServerPropertiesTest, Initialize) {
   HostPortPair spdy_server_google("www.google.com", 443);
 
   // Check by initializing empty spdy settings.
-  SpdySettingsMap spdy_settings_map;
+  SpdySettingsMap spdy_settings_map(SpdySettingsMap::NO_AUTO_EVICT);
   impl_.InitializeSpdySettingsServers(&spdy_settings_map);
   EXPECT_TRUE(impl_.GetSpdySettings(spdy_server_google).empty());
 
@@ -290,7 +380,7 @@ TEST_F(SpdySettingsServerPropertiesTest, Initialize) {
   const uint32 value = 31337;
   SettingsFlagsAndValue flags_and_value(flags, value);
   settings_map[id] = flags_and_value;
-  spdy_settings_map[spdy_server_google] = settings_map;
+  spdy_settings_map.Put(spdy_server_google, settings_map);
   impl_.InitializeSpdySettingsServers(&spdy_settings_map);
 
   const SettingsMap& settings_map2 = impl_.GetSpdySettings(spdy_server_google);
@@ -409,6 +499,55 @@ TEST_F(SpdySettingsServerPropertiesTest, Clear) {
   impl_.Clear();
   EXPECT_EQ(0U, impl_.GetSpdySettings(spdy_server_google).size());
   EXPECT_EQ(0U, impl_.GetSpdySettings(spdy_server_docs).size());
+}
+
+TEST_F(SpdySettingsServerPropertiesTest, MRUOfGetSpdySettings) {
+  // Add www.google.com:443 as persisting.
+  HostPortPair spdy_server_google("www.google.com", 443);
+  const SpdySettingsIds id1 = SETTINGS_UPLOAD_BANDWIDTH;
+  const SpdySettingsFlags flags1 = SETTINGS_FLAG_PLEASE_PERSIST;
+  const uint32 value1 = 31337;
+  EXPECT_TRUE(impl_.SetSpdySetting(spdy_server_google, id1, flags1, value1));
+
+  // Add docs.google.com:443 as persisting
+  HostPortPair spdy_server_docs("docs.google.com", 443);
+  const SpdySettingsIds id2 = SETTINGS_ROUND_TRIP_TIME;
+  const SpdySettingsFlags flags2 = SETTINGS_FLAG_PLEASE_PERSIST;
+  const uint32 value2 = 93997;
+  EXPECT_TRUE(impl_.SetSpdySetting(spdy_server_docs, id2, flags2, value2));
+
+  // Verify the first element is docs.google.com:443.
+  const net::SpdySettingsMap& map = impl_.spdy_settings_map();
+  net::SpdySettingsMap::const_iterator it = map.begin();
+  EXPECT_TRUE(it->first.Equals(spdy_server_docs));
+  const SettingsMap& settings_map2_ret = it->second;
+  ASSERT_EQ(1U, settings_map2_ret.size());
+  SettingsMap::const_iterator it2_ret = settings_map2_ret.find(id2);
+  EXPECT_TRUE(it2_ret != settings_map2_ret.end());
+  SettingsFlagsAndValue flags_and_value2_ret = it2_ret->second;
+  EXPECT_EQ(SETTINGS_FLAG_PERSISTED, flags_and_value2_ret.first);
+  EXPECT_EQ(value2, flags_and_value2_ret.second);
+
+  // GetSpdySettings should reoder the SpdySettingsMap.
+  const SettingsMap& settings_map1_ret =
+      impl_.GetSpdySettings(spdy_server_google);
+  ASSERT_EQ(1U, settings_map1_ret.size());
+  SettingsMap::const_iterator it1_ret = settings_map1_ret.find(id1);
+  EXPECT_TRUE(it1_ret != settings_map1_ret.end());
+  SettingsFlagsAndValue flags_and_value1_ret = it1_ret->second;
+  EXPECT_EQ(SETTINGS_FLAG_PERSISTED, flags_and_value1_ret.first);
+  EXPECT_EQ(value1, flags_and_value1_ret.second);
+
+  // Check the first entry is spdy_server_google by accessing it via iterator.
+  it = map.begin();
+  EXPECT_TRUE(it->first.Equals(spdy_server_google));
+  const SettingsMap& settings_map1_it_ret = it->second;
+  ASSERT_EQ(1U, settings_map1_it_ret.size());
+  it1_ret = settings_map1_it_ret.find(id1);
+  EXPECT_TRUE(it1_ret != settings_map1_it_ret.end());
+  flags_and_value1_ret = it1_ret->second;
+  EXPECT_EQ(SETTINGS_FLAG_PERSISTED, flags_and_value1_ret.first);
+  EXPECT_EQ(value1, flags_and_value1_ret.second);
 }
 
 }  // namespace

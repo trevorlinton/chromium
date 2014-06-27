@@ -23,15 +23,21 @@ namespace media {
 // but only VideoCaptureManager would change their value.
 class MEDIA_EXPORT VideoCaptureDeviceAndroid : public VideoCaptureDevice {
  public:
+  // Automatically generated enum to interface with Java world.
+  enum AndroidImageFormat {
+#define DEFINE_ANDROID_IMAGEFORMAT(name, value) name = value,
+#include "media/video/capture/android/imageformat_list.h"
+#undef DEFINE_ANDROID_IMAGEFORMAT
+  };
+
   virtual ~VideoCaptureDeviceAndroid();
 
   static VideoCaptureDevice* Create(const Name& device_name);
   static bool RegisterVideoCaptureDevice(JNIEnv* env);
 
   // VideoCaptureDevice implementation.
-  virtual void AllocateAndStart(
-      const VideoCaptureCapability& capture_format,
-      scoped_ptr<Client> client) OVERRIDE;
+  virtual void AllocateAndStart(const VideoCaptureParams& params,
+                                scoped_ptr<Client> client) OVERRIDE;
   virtual void StopAndDeAllocate() OVERRIDE;
 
   // Implement org.chromium.media.VideoCapture.nativeOnFrameAvailable.
@@ -40,22 +46,13 @@ class MEDIA_EXPORT VideoCaptureDeviceAndroid : public VideoCaptureDevice {
       jobject obj,
       jbyteArray data,
       jint length,
-      jint rotation,
-      jboolean flip_vert,
-      jboolean flip_horiz);
+      jint rotation);
 
  private:
   enum InternalState {
     kIdle,  // The device is opened but not in use.
     kCapturing,  // Video is being captured.
     kError  // Hit error. User needs to recover by destroying the object.
-  };
-
-  // Automatically generated enum to interface with Java world.
-  enum AndroidImageFormat {
-#define DEFINE_ANDROID_IMAGEFORMAT(name, value) name = value,
-#include "media/video/capture/android/imageformat_list.h"
-#undef DEFINE_ANDROID_IMAGEFORMAT
   };
 
   explicit VideoCaptureDeviceAndroid(const Name& device_name);
@@ -73,7 +70,7 @@ class MEDIA_EXPORT VideoCaptureDeviceAndroid : public VideoCaptureDevice {
   scoped_ptr<VideoCaptureDevice::Client> client_;
 
   Name device_name_;
-  VideoCaptureCapability current_settings_;
+  VideoCaptureFormat capture_format_;
 
   // Java VideoCaptureAndroid instance.
   base::android::ScopedJavaGlobalRef<jobject> j_capture_;

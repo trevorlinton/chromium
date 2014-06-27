@@ -6,18 +6,12 @@
 
 #if defined(USE_X11)
 #include <X11/Xlib.h>
-
-// Xlib defines RootWindow
-#ifdef RootWindow
-#undef RootWindow
-#endif
 #endif  // defined(USE_X11)
 
 #include "ash/accelerators/accelerator_controller.h"
 #include "ash/shell.h"
-#include "ash/wm/event_rewriter_event_filter.h"
 #include "ui/aura/env.h"
-#include "ui/aura/root_window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/events/event.h"
 #include "ui/events/event_constants.h"
@@ -67,41 +61,16 @@ bool IsPossibleAcceleratorNotForMenu(const ui::KeyEvent& key_event) {
 }  // namespace
 
 AcceleratorDispatcher::AcceleratorDispatcher(
-    base::MessageLoop::Dispatcher* nested_dispatcher,
-    aura::Window* associated_window)
-    : nested_dispatcher_(nested_dispatcher),
-      associated_window_(associated_window) {
-  DCHECK(nested_dispatcher_);
-  associated_window_->AddObserver(this);
+    base::MessagePumpDispatcher* nested_dispatcher)
+    : nested_dispatcher_(nested_dispatcher) {
 }
 
 AcceleratorDispatcher::~AcceleratorDispatcher() {
-  if (associated_window_)
-    associated_window_->RemoveObserver(this);
 }
 
-void AcceleratorDispatcher::OnWindowDestroying(aura::Window* window) {
-  if (associated_window_ == window)
-    associated_window_ = NULL;
-}
-
-bool AcceleratorDispatcher::Dispatch(const base::NativeEvent& event) {
-  if (!associated_window_)
-    return false;
-  if (!ui::IsNoopEvent(event) && !associated_window_->CanReceiveEvents())
-    return aura::Env::GetInstance()->GetDispatcher()->Dispatch(event);
-
+uint32_t AcceleratorDispatcher::Dispatch(const base::NativeEvent& event) {
   if (IsKeyEvent(event)) {
-    // Modifiers can be changed by the user preference, so we need to rewrite
-    // the event explicitly.
     ui::KeyEvent key_event(event, false);
-    ui::EventHandler* event_rewriter =
-        ash::Shell::GetInstance()->event_rewriter_filter();
-    DCHECK(event_rewriter);
-    event_rewriter->OnKeyEvent(&key_event);
-    if (key_event.stopped_propagation())
-      return true;
-
     if (IsPossibleAcceleratorNotForMenu(key_event)) {
       if (views::MenuController* menu_controller =
           views::MenuController::GetActiveInstance()) {
@@ -111,7 +80,7 @@ bool AcceleratorDispatcher::Dispatch(const base::NativeEvent& event) {
 #else
         NOTIMPLEMENTED() << " Repost NativeEvent here.";
 #endif
-        return false;
+        return POST_DISPATCH_QUIT_LOOP;
       }
     }
 
@@ -127,13 +96,16 @@ bool AcceleratorDispatcher::Dispatch(const base::NativeEvent& event) {
       Shell::GetInstance()->accelerator_controller()->context()->
           UpdateContext(accelerator);
       if (accelerator_controller->Process(accelerator))
-        return true;
+        return POST_DISPATCH_NONE;
     }
 
-    return nested_dispatcher_->Dispatch(key_event.native_event());
+    return nested_dispatcher_
+               ? nested_dispatcher_->Dispatch(key_event.native_event())
+               : POST_DISPATCH_PERFORM_DEFAULT;
   }
 
-  return nested_dispatcher_->Dispatch(event);
+  return nested_dispatcher_ ? nested_dispatcher_->Dispatch(event)
+                            : POST_DISPATCH_PERFORM_DEFAULT;
 }
 
 }  // namespace ash

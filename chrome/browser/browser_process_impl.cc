@@ -53,7 +53,6 @@
 #include "chrome/browser/notifications/notification_ui_manager.h"
 #include "chrome/browser/plugins/chrome_plugin_service_filter.h"
 #include "chrome/browser/plugins/plugin_finder.h"
-#include "chrome/browser/policy/policy_service.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/prefs/chrome_pref_service_factory.h"
 #include "chrome/browser/prerender/prerender_tracker.h"
@@ -65,9 +64,8 @@
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/status_icons/status_tray.h"
-#include "chrome/browser/storage_monitor/storage_monitor.h"
-#include "chrome/browser/thumbnails/render_widget_snapshot_taker.h"
 #include "chrome/browser/ui/bookmarks/bookmark_prompt_controller.h"
+#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/web_resource/promo_resource_service.h"
 #include "chrome/common/chrome_constants.h"
@@ -76,9 +74,13 @@
 #include "chrome/common/extensions/chrome_extensions_client.h"
 #include "chrome/common/extensions/extension_l10n_util.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/profile_management_switches.h"
 #include "chrome/common/switch_utils.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/installer/util/google_update_constants.h"
+#include "components/policy/core/common/policy_service.h"
+#include "components/rappor/rappor_service.h"
+#include "components/translate/core/browser/translate_download_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/notification_details.h"
@@ -92,9 +94,9 @@
 #include "ui/message_center/message_center.h"
 
 #if defined(ENABLE_CONFIGURATION_POLICY)
-#include "chrome/browser/policy/browser_policy_connector.h"
+#include "components/policy/core/browser/browser_policy_connector.h"
 #else
-#include "chrome/browser/policy/policy_service_stub.h"
+#include "components/policy/core/common/policy_service_stub.h"
 #endif  // defined(ENABLE_CONFIGURATION_POLICY)
 
 #if defined(OS_WIN)
@@ -110,6 +112,7 @@
 
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
 #include "chrome/browser/media_galleries/media_file_system_registry.h"
+#include "components/storage_monitor/storage_monitor.h"
 #endif
 
 #if defined(ENABLE_PLUGIN_INSTALLATION)
@@ -126,18 +129,11 @@
 static const int kUpdateCheckIntervalHours = 6;
 #endif
 
-#if defined(OS_WIN)
-// Attest to the fact that the call to the file thread to save preferences has
-// run, and it is safe to terminate.  This avoids the potential of some other
-// task prematurely terminating our waiting message loop by posting a
-// QuitTask().
-static bool g_end_session_file_thread_has_completed = false;
-#endif
-
-#if defined(USE_X11)
-// How long to wait for the File thread to complete during EndSession, on
-// Linux. We have a timeout here because we're unable to run the UI messageloop
-// and there's some deadlock risk. Our only option is to exit anyway.
+#if defined(USE_X11) || defined(OS_WIN)
+// How long to wait for the File thread to complete during EndSession, on Linux
+// and Windows. We have a timeout here because we're unable to run the UI
+// messageloop and there's some deadlock risk. Our only option is to exit
+// anyway.
 static const int kEndSessionTimeoutSeconds = 10;
 #endif
 
@@ -159,9 +155,6 @@ BrowserProcessImpl::BrowserProcessImpl(
       created_safe_browsing_service_(false),
       module_ref_count_(0),
       did_start_(false),
-      checked_for_new_frames_(false),
-      using_new_frames_(false),
-      render_widget_snapshot_taker_(new RenderWidgetSnapshotTaker),
       download_status_updater_(new DownloadStatusUpdater),
       local_state_task_runner_(local_state_task_runner) {
   g_browser_process = this;
@@ -177,7 +170,7 @@ BrowserProcessImpl::BrowserProcessImpl(
   ChildProcessSecurityPolicy::GetInstance()->RegisterWebSafeScheme(
       extensions::kExtensionScheme);
   ChildProcessSecurityPolicy::GetInstance()->RegisterWebSafeScheme(
-      chrome::kExtensionResourceScheme);
+      extensions::kExtensionResourceScheme);
   ChildProcessSecurityPolicy::GetInstance()->RegisterWebSafeScheme(
       chrome::kChromeSearchScheme);
 
@@ -188,8 +181,11 @@ BrowserProcessImpl::BrowserProcessImpl(
   apps::AppsClient::Set(ChromeAppsClient::GetInstance());
   extensions::ExtensionsClient::Set(
       extensions::ChromeExtensionsClient::GetInstance());
-  extensions::ExtensionsBrowserClient::Set(
-      extensions::ChromeExtensionsBrowserClient::GetInstance());
+
+  extensions_browser_client_.reset(
+      new extensions::ChromeExtensionsBrowserClient);
+  extensions::ExtensionsBrowserClient::Set(extensions_browser_client_.get());
+
   extension_event_router_forwarder_ = new extensions::EventRouterForwarder;
   ExtensionRendererState::GetInstance()->Init();
 
@@ -222,13 +218,14 @@ void BrowserProcessImpl::StartTearDown() {
   BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
                           base::Bind(&SdchDictionaryFetcher::Shutdown));
 
-  // We need to destroy the MetricsService, VariationsService,
+  // We need to destroy the MetricsService, RapporService, VariationsService,
   // IntranetRedirectDetector, PromoResourceService, and SafeBrowsing
   // ClientSideDetectionService (owned by the SafeBrowsingService) before the
   // io_thread_ gets destroyed, since their destructors can call the URLFetcher
   // destructor, which does a PostDelayedTask operation on the IO thread. (The
   // IO thread will handle that URLFetcher operation before going away.)
   metrics_service_.reset();
+  rappor_service_.reset();
   variations_service_.reset();
   intranet_redirect_detector_.reset();
 #if defined(FULL_SAFE_BROWSING) || defined(MOBILE_SAFE_BROWSING)
@@ -245,6 +242,10 @@ void BrowserProcessImpl::StartTearDown() {
   {
     TRACE_EVENT0("shutdown",
                  "BrowserProcessImpl::StartTearDown:ProfileManager");
+    // The desktop User Manager needs to be closed before the guest profile
+    // can be destroyed.
+    if (switches::IsNewProfileManagement())
+      chrome::HideUserManager();
     profile_manager_.reset();
   }
 
@@ -257,11 +258,11 @@ void BrowserProcessImpl::StartTearDown() {
 
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
   media_file_system_registry_.reset();
-  // Delete |storage_monitor_| now. Otherwise the FILE thread would be gone
-  // when we try to release it in the dtor and Valgrind would report a
-  // leak on almost every single browser_test.
+  // Remove the global instance of the Storage Monitor now. Otherwise the
+  // FILE thread would be gone when we try to release it in the dtor and
+  // Valgrind would report a leak on almost every single browser_test.
   // TODO(gbillock): Make this unnecessary.
-  storage_monitor_.reset();
+  storage_monitor::StorageMonitor::Destroy();
 #endif
 
   message_center::MessageCenter::Shutdown();
@@ -283,11 +284,25 @@ void BrowserProcessImpl::StartTearDown() {
 #endif
 
   platform_part()->StartTearDown();
+
+#if defined(ENABLE_WEBRTC)
+  // Cancel any uploads to release the system url request context references.
+  if (webrtc_log_uploader_)
+    webrtc_log_uploader_->StartShutdown();
+#endif
+
+  if (local_state())
+    local_state()->CommitPendingWrite();
 }
 
 void BrowserProcessImpl::PostDestroyThreads() {
   // With the file_thread_ flushed, we can release any icon resources.
   icon_manager_.reset();
+
+#if defined(ENABLE_WEBRTC)
+  // Must outlive the file thread.
+  webrtc_log_uploader_.reset();
+#endif
 
   // Reset associated state right after actual thread is stopped,
   // as io_thread_.global_ cleanup happens in CleanUp on the IO
@@ -299,16 +314,7 @@ void BrowserProcessImpl::PostDestroyThreads() {
   io_thread_.reset();
 }
 
-#if defined(OS_WIN)
-// Send a QuitTask to the given MessageLoop when the (file) thread has processed
-// our (other) recent requests (to save preferences).
-// Change the boolean so that the receiving thread will know that we did indeed
-// send the QuitTask that terminated the message loop.
-static void PostQuit(base::MessageLoop* message_loop) {
-  g_end_session_file_thread_has_completed = true;
-  message_loop->PostTask(FROM_HERE, base::MessageLoop::QuitClosure());
-}
-#elif defined(USE_X11)
+#if defined(USE_X11) || defined(OS_WIN)
 static void Signal(base::WaitableEvent* event) {
   event->Signal();
 }
@@ -390,8 +396,18 @@ void BrowserProcessImpl::EndSession() {
   // We must write that the profile and metrics service shutdown cleanly,
   // otherwise on startup we'll think we crashed. So we block until done and
   // then proceed with normal shutdown.
-#if defined(USE_X11)
-  //  Can't run a local loop on linux. Instead create a waitable event.
+#if defined(USE_X11) || defined(OS_WIN)
+  // Create a waitable event to block on file writing being complete.
+  //
+  // On Windows, we previously posted a message to FILE and then ran a nested
+  // message loop, waiting for that message to be processed until quitting.
+  // However, doing so means that other messages will also be processed. In
+  // particular, if the GPU process host notices that the GPU has been killed
+  // during shutdown, it races exiting the nested loop with the process host
+  // blocking the message loop attempting to re-establish a connection to the
+  // GPU process synchronously. Because the system may not be allowing
+  // processes to launch, this can result in a hang. See
+  // http://crbug.com/318527.
   scoped_ptr<base::WaitableEvent> done_writing(
       new base::WaitableEvent(false, false));
   BrowserThread::PostTask(BrowserThread::FILE, FROM_HERE,
@@ -401,20 +417,6 @@ void BrowserProcessImpl::EndSession() {
   if (!done_writing->TimedWait(
       base::TimeDelta::FromSeconds(kEndSessionTimeoutSeconds))) {
     ignore_result(done_writing.release());
-  }
-
-#elif defined(OS_WIN)
-  BrowserThread::PostTask(BrowserThread::FILE, FROM_HERE,
-      base::Bind(PostQuit, base::MessageLoop::current()));
-  int quits_received = 0;
-  do {
-    base::MessageLoop::current()->Run();
-    ++quits_received;
-  } while (!g_end_session_file_thread_has_completed);
-  // If we did get extra quits, then we should re-post them to the message loop.
-  while (--quits_received > 0) {
-    base::MessageLoop::current()->PostTask(FROM_HERE,
-                                           base::MessageLoop::QuitClosure());
   }
 #else
   NOTIMPLEMENTED();
@@ -426,6 +428,13 @@ MetricsService* BrowserProcessImpl::metrics_service() {
   if (!created_metrics_service_)
     CreateMetricsService();
   return metrics_service_.get();
+}
+
+rappor::RapporService* BrowserProcessImpl::rappor_service() {
+  DCHECK(CalledOnValidThread());
+  if (!rappor_service_.get())
+    rappor_service_.reset(new rappor::RapporService());
+  return rappor_service_.get();
 }
 
 IOThread* BrowserProcessImpl::io_thread() {
@@ -496,7 +505,7 @@ policy::BrowserPolicyConnector* BrowserProcessImpl::browser_policy_connector() {
 #if defined(ENABLE_CONFIGURATION_POLICY)
   if (!created_browser_policy_connector_) {
     DCHECK(!browser_policy_connector_);
-    browser_policy_connector_.reset(new policy::BrowserPolicyConnector());
+    browser_policy_connector_ = platform_part_->CreateBrowserPolicyConnector();
     created_browser_policy_connector_ = true;
   }
   return browser_policy_connector_.get();
@@ -536,10 +545,6 @@ GpuModeManager* BrowserProcessImpl::gpu_mode_manager() {
   return gpu_mode_manager_.get();
 }
 
-RenderWidgetSnapshotTaker* BrowserProcessImpl::GetRenderWidgetSnapshotTaker() {
-  return render_widget_snapshot_taker_.get();
-}
-
 AutomationProviderList* BrowserProcessImpl::GetAutomationProviderList() {
   DCHECK(CalledOnValidThread());
 #if defined(ENABLE_AUTOMATION)
@@ -554,16 +559,14 @@ AutomationProviderList* BrowserProcessImpl::GetAutomationProviderList() {
 void BrowserProcessImpl::CreateDevToolsHttpProtocolHandler(
     chrome::HostDesktopType host_desktop_type,
     const std::string& ip,
-    int port,
-    const std::string& frontend_url) {
+    int port) {
   DCHECK(CalledOnValidThread());
 #if !defined(OS_ANDROID)
   // StartupBrowserCreator::LaunchBrowser can be run multiple times when browser
   // is started with several profiles or existing browser process is reused.
   if (!remote_debugging_server_.get()) {
     remote_debugging_server_.reset(
-        new RemoteDebuggingServer(host_desktop_type, ip, port,
-                                  frontend_url));
+        new RemoteDebuggingServer(host_desktop_type, ip, port));
   }
 #endif
 }
@@ -620,6 +623,7 @@ void BrowserProcessImpl::SetApplicationLocale(const std::string& locale) {
   locale_ = locale;
   extension_l10n_util::SetProcessLocale(locale);
   chrome::ChromeContentBrowserClient::SetApplicationLocale(locale);
+  TranslateDownloadManager::GetInstance()->set_application_locale(locale);
 }
 
 DownloadStatusUpdater* BrowserProcessImpl::download_status_updater() {
@@ -631,21 +635,6 @@ BookmarkPromptController* BrowserProcessImpl::bookmark_prompt_controller() {
   return NULL;
 #else
   return bookmark_prompt_controller_.get();
-#endif
-}
-
-StorageMonitor* BrowserProcessImpl::storage_monitor() {
-#if defined(OS_ANDROID) || defined(OS_IOS)
-  return NULL;
-#else
-  return storage_monitor_.get();
-#endif
-}
-
-void BrowserProcessImpl::set_storage_monitor_for_test(
-    scoped_ptr<StorageMonitor> monitor) {
-#if !defined(OS_ANDROID) && !defined(OS_IOS)
-  storage_monitor_ = monitor.Pass();
 #endif
 }
 
@@ -783,12 +772,13 @@ prerender::PrerenderTracker* BrowserProcessImpl::prerender_tracker() {
   return prerender_tracker_.get();
 }
 
-ComponentUpdateService* BrowserProcessImpl::component_updater() {
+component_updater::ComponentUpdateService*
+BrowserProcessImpl::component_updater() {
   if (!component_updater_.get()) {
     if (!BrowserThread::CurrentlyOn(BrowserThread::UI))
       return NULL;
-    ComponentUpdateService::Configurator* configurator =
-        MakeChromeComponentUpdaterConfigurator(
+    component_updater::ComponentUpdateService::Configurator* configurator =
+        component_updater::MakeChromeComponentUpdaterConfigurator(
             CommandLine::ForCurrentProcess(),
             io_thread()->system_url_request_context_getter());
     // Creating the component updater does not do anything, components
@@ -804,9 +794,12 @@ CRLSetFetcher* BrowserProcessImpl::crl_set_fetcher() {
   return crl_set_fetcher_.get();
 }
 
-PnaclComponentInstaller* BrowserProcessImpl::pnacl_component_installer() {
-  if (!pnacl_component_installer_.get())
-    pnacl_component_installer_.reset(new PnaclComponentInstaller());
+component_updater::PnaclComponentInstaller*
+BrowserProcessImpl::pnacl_component_installer() {
+  if (!pnacl_component_installer_.get()) {
+    pnacl_component_installer_.reset(
+        new component_updater::PnaclComponentInstaller());
+  }
   return pnacl_component_installer_.get();
 }
 
@@ -860,12 +853,12 @@ void BrowserProcessImpl::CreateLocalState() {
   // Register local state preferences.
   chrome::RegisterLocalState(pref_registry.get());
 
-  local_state_.reset(
+  local_state_ =
       chrome_prefs::CreateLocalState(local_state_path,
                                      local_state_task_runner_.get(),
                                      policy_service(),
                                      pref_registry,
-                                     false));
+                                     false).Pass();
 
   pref_change_registrar_.Init(local_state_.get());
 
@@ -956,7 +949,7 @@ void BrowserProcessImpl::PreMainMessageLoopRun() {
 #endif
 
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
-  storage_monitor_.reset(StorageMonitor::Create());
+  storage_monitor::StorageMonitor::Create();
 #endif
 
   platform_part_->PreMainMessageLoopRun();

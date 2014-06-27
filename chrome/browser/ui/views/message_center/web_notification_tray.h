@@ -55,6 +55,7 @@ class WebNotificationTray : public message_center::MessageCenterTrayDelegate,
   virtual void HideMessageCenter() OVERRIDE;
   virtual void OnMessageCenterTrayChanged() OVERRIDE;
   virtual bool ShowNotifierSettings() OVERRIDE;
+  virtual bool IsContextMenuEnabled() const OVERRIDE;
 
   // StatusIconObserver implementation.
   virtual void OnStatusIconClicked() OVERRIDE;
@@ -84,10 +85,12 @@ class WebNotificationTray : public message_center::MessageCenterTrayDelegate,
   FRIEND_TEST_ALL_PREFIXES(WebNotificationTrayTest,
                            ManyMessageCenterNotifications);
   FRIEND_TEST_ALL_PREFIXES(WebNotificationTrayTest, ManyPopupNotifications);
+  FRIEND_TEST_ALL_PREFIXES(WebNotificationTrayTest, ManuallyCloseMessageCenter);
 
   PositionInfo GetPositionInfo();
 
-  void CreateStatusIcon(const gfx::ImageSkia& image, const string16& tool_tip);
+  void CreateStatusIcon(const gfx::ImageSkia& image,
+                        const base::string16& tool_tip);
   void DestroyStatusIcon();
   void AddQuietModeMenu(StatusIcon* status_icon);
   MessageCenterWidgetDelegate* GetMessageCenterWidgetDelegateForTest();

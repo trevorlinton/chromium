@@ -6,6 +6,7 @@
 
 #include "base/auto_reset.h"
 #include "base/debug/trace_event.h"
+#include "ui/events/gestures/gesture_recognizer.h"
 #include "ui/gfx/path.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/controls/menu/menu_controller.h"
@@ -16,10 +17,7 @@
 #include "ui/views/round_rect_painter.h"
 #include "ui/views/widget/native_widget_private.h"
 #include "ui/views/widget/widget.h"
-
-#if defined(USE_AURA)
-#include "ui/views/corewm/shadow_types.h"
-#endif
+#include "ui/wm/core/shadow_types.h"
 
 namespace views {
 
@@ -56,10 +54,8 @@ void MenuHost::InitMenuHost(Widget* parent,
   params.bounds = bounds;
   Init(params);
 
-#if defined(USE_AURA)
   if (bubble_border)
-    SetShadowType(GetNativeView(), views::corewm::SHADOW_TYPE_NONE);
-#endif
+    SetShadowType(GetNativeView(), wm::SHADOW_TYPE_NONE);
 
   SetContentsView(contents_view);
   if (bubble_border || rounded_border)
@@ -75,9 +71,13 @@ void MenuHost::ShowMenuHost(bool do_capture) {
   // Doing a capture may make us get capture lost. Ignore it while we're in the
   // process of showing.
   base::AutoReset<bool> reseter(&ignore_capture_lost_, true);
-  Show();
-  if (do_capture)
+  ShowInactive();
+  if (do_capture) {
+    // Cancel existing touches, so we don't miss some touch release/cancel
+    // events due to the menu taking capture.
+    ui::GestureRecognizer::Get()->TransferEventsTo(GetNativeWindow(), NULL);
     native_widget_private()->SetCapture();
+  }
 }
 
 void MenuHost::HideMenuHost() {

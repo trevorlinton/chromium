@@ -9,26 +9,33 @@
 
 namespace message_center {
 
-// TODO(dimich): remove this function and the kEnableRichNotifications flag
-// when a time period in Canary indicates the new notifications are acceptable
-// for default behavior.
+// TODO(dimich): remove this function when balloon notifications are removed
+// completely.
 bool IsRichNotificationEnabled() {
-#if defined(OS_CHROMEOS)
+#if defined(OS_MACOSX) || defined(USE_AURA)
   return true;
-#elif !defined(OS_WIN) && !defined(OS_MACOSX) && !defined(USE_AURA)
+#else
   return false;
 #endif
+}
 
-  if (CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kDisableRichNotifications)) {
-    return false;
-  }
-  if (CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableRichNotifications)) {
-    return true;
-  }
-
-  return true;
+MessageCenterShowState GetMessageCenterShowState() {
+#if defined(OS_MACOSX)
+  std::string tray_behavior =
+      CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+          switches::kNotificationCenterTrayBehavior);
+  if (tray_behavior == "never")
+    return MESSAGE_CENTER_SHOW_NEVER;
+  if (tray_behavior == "always")
+    return MESSAGE_CENTER_SHOW_ALWAYS;
+  if (tray_behavior == "unread")
+    return MESSAGE_CENTER_SHOW_UNREAD;
+  return MESSAGE_CENTER_SHOW_AFTER_FIRST;
+#elif defined(OS_CHROMEOS)
+  return MESSAGE_CENTER_SHOW_UNREAD;
+#else  // defined(OS_WIN) || defined(OS_LINUX)
+  return MESSAGE_CENTER_SHOW_AFTER_FIRST;
+#endif
 }
 
 }  // namespace message_center

@@ -11,8 +11,8 @@
 #include "chrome/browser/bookmarks/bookmark_model_observer.h"
 #include "chrome/browser/sync/glue/bookmark_model_associator.h"
 #include "chrome/browser/sync/glue/change_processor.h"
-#include "chrome/browser/sync/glue/data_type_error_handler.h"
 #include "chrome/browser/sync/glue/sync_backend_host.h"
+#include "components/sync_driver/data_type_error_handler.h"
 
 namespace base {
 class RefCountedMemory;
@@ -24,8 +24,6 @@ class WriteTransaction;
 }  // namespace syncer
 
 namespace browser_sync {
-
-extern const char kBookmarkTransactionVersionKey[];
 
 // This class is responsible for taking changes from the BookmarkModel
 // and applying them to the sync API 'syncable' model, and vice versa.
@@ -40,7 +38,8 @@ class BookmarkChangeProcessor : public BookmarkModelObserver,
 
   // BookmarkModelObserver implementation.
   // BookmarkModel -> sync API model change application.
-  virtual void Loaded(BookmarkModel* model, bool ids_reassigned) OVERRIDE;
+  virtual void BookmarkModelLoaded(BookmarkModel* model,
+                                   bool ids_reassigned) OVERRIDE;
   virtual void BookmarkModelBeingDeleted(BookmarkModel* model) OVERRIDE;
   virtual void BookmarkNodeMoved(BookmarkModel* model,
                                  const BookmarkNode* old_parent,
@@ -57,6 +56,8 @@ class BookmarkChangeProcessor : public BookmarkModelObserver,
   virtual void BookmarkAllNodesRemoved(BookmarkModel* model) OVERRIDE;
   virtual void BookmarkNodeChanged(BookmarkModel* model,
                                    const BookmarkNode* node) OVERRIDE;
+  virtual void BookmarkMetaInfoChanged(BookmarkModel* model,
+                                       const BookmarkNode* node) OVERRIDE;
   virtual void BookmarkNodeFaviconChanged(BookmarkModel* model,
                                           const BookmarkNode* node) OVERRIDE;
   virtual void BookmarkNodeChildrenReordered(BookmarkModel* model,
@@ -140,6 +141,15 @@ class BookmarkChangeProcessor : public BookmarkModelObserver,
     MOVE,
     CREATE,
   };
+
+  // Sets the meta info of the given bookmark node from the given sync node.
+  static void SetBookmarkMetaInfo(const syncer::BaseNode* sync_node,
+                                  const BookmarkNode* bookmark_node,
+                                  BookmarkModel* bookmark_model);
+
+  // Sets the meta info of the given sync node from the given bookmark node.
+  static void SetSyncNodeMetaInfo(const BookmarkNode* node,
+                                  syncer::WriteNode* sync_node);
 
   // Helper function used to fix the position of a sync node so that it matches
   // the position of a corresponding bookmark model node. |parent| and

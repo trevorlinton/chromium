@@ -122,33 +122,20 @@ enum NotificationType {
   // This message is sent when a new InfoBar has been added to an
   // InfoBarService.  The source is a Source<InfoBarService> with a pointer to
   // the InfoBarService the InfoBar was added to.  The details is a
-  // Details<InfoBarDelegate> with a pointer to the delegate that was added.
+  // Details<InfoBar::AddedDetails>.
   NOTIFICATION_TAB_CONTENTS_INFOBAR_ADDED,
 
   // This message is sent when an InfoBar is about to be removed from an
   // InfoBarService.  The source is a Source<InfoBarService> with a pointer to
   // the InfoBarService the InfoBar was removed from.  The details is a
-  // Details<std::pair<InfoBarDelegate*, bool> > with a pointer to the removed
-  // delegate and whether the removal should be animated.
+  // Details<InfoBar::RemovedDetails>.
   NOTIFICATION_TAB_CONTENTS_INFOBAR_REMOVED,
 
   // This message is sent when an InfoBar is replacing another infobar in an
   // InfoBarService.  The source is a Source<InfoBarService> with a pointer to
   // the InfoBarService the InfoBar was removed from.  The details is a
-  // Details<std::pair<InfoBarDelegate*, InfoBarDelegate*> > with pointers to
-  // the old and new delegates, respectively.
+  // Details<InfoBar::ReplacedDetails>.
   NOTIFICATION_TAB_CONTENTS_INFOBAR_REPLACED,
-
-  // This is sent when an externally hosted tab is closed.  No details are
-  // expected.
-  NOTIFICATION_EXTERNAL_TAB_CLOSED,
-
-  // Indicates that the new page tab has finished loading. This is used for
-  // performance testing to see how fast we can load it after startup, and is
-  // only called once for the lifetime of the browser. The source is unused.
-  // Details is an integer: the number of milliseconds elapsed between
-  // starting and finishing all painting.
-  NOTIFICATION_INITIAL_NEW_TAB_UI_LOAD,
 
   // Used to fire notifications about how long various events took to
   // complete.  E.g., this is used to get more fine grained timings from the
@@ -438,6 +425,12 @@ enum NotificationType {
   // string with details about why the load failed.
   NOTIFICATION_EXTENSION_LOAD_ERROR,
 
+  // Sent when an unpacked extension fails to load. The details are a std::pair,
+  // the first object is a boolean signifying the user's retry response value,
+  // and the second object is a const base::FilePath& of the extension that
+  // failed to load. Source is a Profile.
+  NOTIFICATION_EXTENSION_LOAD_RETRY,
+
   // Sent when an extension is enabled. Under most circumstances, listeners
   // will want to use NOTIFICATION_EXTENSION_LOADED. This notification is only
   // fired when the "Enable" button is hit in the extensions tab.  The details
@@ -469,13 +462,15 @@ enum NotificationType {
   // Profile.
   NOTIFICATION_EXTENSION_UNINSTALL_NOT_ALLOWED,
 
+  // DEPRECATED: Use ExtensionRegistry::AddObserver instead.
+  //
   // Sent when an extension is unloaded. This happens when an extension is
   // uninstalled or disabled. The details are an UnloadedExtensionInfo, and
   // the source is a Profile.
   //
   // Note that when this notification is sent, ExtensionService has already
   // removed the extension from its internal state.
-  NOTIFICATION_EXTENSION_UNLOADED,
+  NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
 
   // Sent when an Extension object is removed from ExtensionService. This
   // can happen when an extension is uninstalled, upgraded, or blacklisted,
@@ -554,12 +549,6 @@ enum NotificationType {
   // std::string containing an extension ID and a gfx::NativeWindow for the
   // associated window.
   NOTIFICATION_EXTENSION_COMMAND_PAGE_ACTION_MAC,
-
-  // Sent when an extension command shortcut for a script badge is activated
-  // on Mac. The source is the profile and the details is a std::pair of a
-  // std::string containing an extension ID and a gfx::NativeWindow for the
-  // associated window.
-  NOTIFICATION_EXTENSION_COMMAND_SCRIPT_BADGE_MAC,
 
   // A new extension RenderViewHost has been registered. The details are
   // the RenderViewHost*.
@@ -641,6 +630,10 @@ enum NotificationType {
   // Sent when the current install is outdated. No details are expected.
   NOTIFICATION_OUTDATED_INSTALL,
 
+  // Sent when the current install is outdated and auto-update (AU) is disabled.
+  // No details are expected.
+  NOTIFICATION_OUTDATED_INSTALL_NO_AU,
+
   // Software incompatibility notifications ----------------------------------
 
   // Sent when Chrome has finished compiling the list of loaded modules (and
@@ -714,28 +707,9 @@ enum NotificationType {
   // are a ChromeCookieDetails object.
   NOTIFICATION_COOKIE_CHANGED,
 
-  // Token Service -----------------------------------------------------------
-
-  // When the token service has a new token available for a service, one of
-  // these notifications is issued per new token.
-  // The source is a TokenService on the Profile. The details are a
-  // TokenAvailableDetails object.
-  NOTIFICATION_TOKEN_AVAILABLE,
-
-  // When there aren't any additional tokens left to load, this notification
-  // is sent.
-  // The source is a TokenService on the profile. There are no details.
-  NOTIFICATION_TOKEN_LOADING_FINISHED,
-
-  // If a token request failed, one of these is issued per failed request.
-  // The source is a TokenService on the Profile. The details are a
-  // TokenRequestFailedDetails object.
-  NOTIFICATION_TOKEN_REQUEST_FAILED,
-
-  // Fired when the TokenService has had all of its tokens removed (such as due
-  // to the user signing out). The source is the TokenService. There are no
-  // details.
-  NOTIFICATION_TOKENS_CLEARED,
+  // Signin Manager ----------------------------------------------------------
+  // TODO(blundell): Eliminate SigninManager notifications once
+  // crbug.com/333997 is fixed.
 
   // Sent when a user signs into Google services such as sync.
   // The source is the Profile. The details are a
@@ -891,19 +865,6 @@ enum NotificationType {
   // EnterPuk dialog, either because the user cancelled, or entered a
   // PIN or PUK.
   NOTIFICATION_ENTER_PIN_ENDED,
-
-  // Sent when large cursor is toggled.
-  NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_LARGE_CURSOR,
-
-  // Sent when high contrast mode is toggled.
-  NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE,
-
-  // Sent when screen magnifier is toggled.
-  NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_SCREEN_MAGNIFIER,
-
-  // Sent when spoken feedback is toggled.
-  NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK,
-
 #endif
 
 #if defined(TOOLKIT_VIEWS)
@@ -932,14 +893,6 @@ enum NotificationType {
   // The Source is the Profile the CaptivePortalService belongs to, and the
   // Details are a Details<CaptivePortalService::CheckResults>.
   NOTIFICATION_CAPTIVE_PORTAL_CHECK_RESULT,
-
-  // Password Store ----------------------------------------------------------
-  // This notification is sent whenenever login entries stored in the password
-  // store are changed. The detail of this notification is a list of changes
-  // represented by a vector of PasswordStoreChange. Each change includes a
-  // change type (ADD, UPDATE, or REMOVE) as well as the
-  // |autofill::PasswordForm|s that were affected.
-  NOTIFICATION_LOGINS_CHANGED,
 
   // Sent when the applications in the NTP app launcher have been reordered.
   // The details, if not NoDetails, is the std::string ID of the extension that

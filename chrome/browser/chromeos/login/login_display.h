@@ -8,11 +8,13 @@
 #include <string>
 #include <vector>
 
+#include "base/callback.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/chromeos/login/help_app_launcher.h"
 #include "chrome/browser/chromeos/login/remove_user_delegate.h"
 #include "chrome/browser/chromeos/login/user.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
+#include "ui/gfx/image/image.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/rect.h"
 
@@ -22,6 +24,21 @@ namespace chromeos {
 // An abstract class that defines login UI implementation.
 class LoginDisplay : public RemoveUserDelegate {
  public:
+  // Supported authentication types for login.
+  enum AuthType {
+    // Authenticates using the user's regular password.
+    OFFLINE_PASSWORD,
+
+    // Authenticates by forced online GAIA sign in.
+    ONLINE_SIGN_IN,
+
+    // Authenticates with a 4 digit numeric pin.
+    NUMERIC_PIN,
+
+    // Authenticates by clicking pod when it is focused.
+    USER_CLICK,
+  };
+
   // Sign in error IDs that require detailed error screen and not just
   // a simple error bubble.
   enum SigninError {
@@ -42,7 +59,7 @@ class LoginDisplay : public RemoveUserDelegate {
     virtual void CompleteLogin(const UserContext& user_context) = 0;
 
     // Returns name of the currently connected network.
-    virtual string16 GetConnectedNetworkName() = 0;
+    virtual base::string16 GetConnectedNetworkName() = 0;
 
     // Returns true if sign in is in progress.
     virtual bool IsSigninInProgress() const = 0;
@@ -65,7 +82,8 @@ class LoginDisplay : public RemoveUserDelegate {
     virtual void LoginAsPublicAccount(const std::string& username) = 0;
 
     // Login to kiosk mode for app with |app_id|.
-    virtual void LoginAsKioskApp(const std::string& app_id) = 0;
+    virtual void LoginAsKioskApp(const std::string& app_id,
+                                 bool diagnostic_mode) = 0;
 
     // Notify the delegate when the sign-in UI is finished loading.
     virtual void OnSigninScreenReady() = 0;
@@ -143,6 +161,25 @@ class LoginDisplay : public RemoveUserDelegate {
   // Does nothing if current user is already selected.
   virtual void SelectPod(int index) = 0;
 
+  // Displays a banner on the login screen containing |message|.
+  virtual void ShowBannerMessage(const std::string& message) = 0;
+
+  // Shows a button with an icon inside the user pod of |username|.
+  virtual void ShowUserPodButton(const std::string& username,
+                                 const std::string& iconURL,
+                                 const base::Closure& click_callback) = 0;
+
+  // Hides the user pod button for a user.
+  virtual void HideUserPodButton(const std::string& username) = 0;
+
+  // Set the authentication type to be used on the lock screen.
+  virtual void SetAuthType(const std::string& username,
+                           AuthType auth_type,
+                           const std::string& initial_value) = 0;
+
+  // Returns the authentication type used for |username|.
+  virtual AuthType GetAuthType(const std::string& username) const = 0;
+
   // Displays simple error bubble with |error_msg_id| specified.
   // |login_attempts| shows number of login attempts made by current user.
   // |help_topic_id| is additional help topic that is presented as link.
@@ -164,7 +201,7 @@ class LoginDisplay : public RemoveUserDelegate {
   virtual void ShowSigninUI(const std::string& email) = 0;
 
   gfx::Rect background_bounds() const { return background_bounds_; }
-  void set_background_bounds(const gfx::Rect background_bounds){
+  void set_background_bounds(const gfx::Rect& background_bounds) {
     background_bounds_ = background_bounds;
   }
 

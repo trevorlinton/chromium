@@ -14,4 +14,13 @@ const char kForceSafeSearch[] = "ForceSafeSearch";
 const char kSigninAllowed[] = "SigninAllowed";
 const char kUserName[] = "UserName";
 
+const char kUserPasswordRecord[] = "UserPasswordRecord";
+
+const char kManagedUserPseudoEmail[] = "managed_user@localhost";
+
+const char kChromeAvatarIndex[] = "chrome-avatar-index";
+const char kChromeOSAvatarIndex[] = "chromeos-avatar-index";
+
+const char kChromeOSPasswordData[] = "chromeos-password-data";
+
 }  // namespace managed_users

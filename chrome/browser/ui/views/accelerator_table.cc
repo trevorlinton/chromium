@@ -56,6 +56,13 @@ const AcceleratorMapping kAcceleratorMap[] = {
   { ui::VKEY_S, ui::EF_CONTROL_DOWN, IDC_SAVE_PAGE },
   { ui::VKEY_9, ui::EF_CONTROL_DOWN, IDC_SELECT_LAST_TAB },
   { ui::VKEY_NUMPAD9, ui::EF_CONTROL_DOWN, IDC_SELECT_LAST_TAB },
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+  { ui::VKEY_9, ui::EF_ALT_DOWN, IDC_SELECT_LAST_TAB },
+  { ui::VKEY_NUMPAD9, ui::EF_ALT_DOWN, IDC_SELECT_LAST_TAB },
+  { ui::VKEY_NEXT, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN, IDC_MOVE_TAB_NEXT },
+  { ui::VKEY_PRIOR, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN,
+    IDC_MOVE_TAB_PREVIOUS },
+#endif
   { ui::VKEY_TAB, ui::EF_CONTROL_DOWN, IDC_SELECT_NEXT_TAB },
   { ui::VKEY_NEXT, ui::EF_CONTROL_DOWN, IDC_SELECT_NEXT_TAB },
   { ui::VKEY_TAB, ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN,
@@ -77,6 +84,25 @@ const AcceleratorMapping kAcceleratorMap[] = {
   { ui::VKEY_NUMPAD7, ui::EF_CONTROL_DOWN, IDC_SELECT_TAB_6 },
   { ui::VKEY_8, ui::EF_CONTROL_DOWN, IDC_SELECT_TAB_7 },
   { ui::VKEY_NUMPAD8, ui::EF_CONTROL_DOWN, IDC_SELECT_TAB_7 },
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+  { ui::VKEY_1, ui::EF_ALT_DOWN, IDC_SELECT_TAB_0 },
+  { ui::VKEY_NUMPAD1, ui::EF_ALT_DOWN, IDC_SELECT_TAB_0 },
+  { ui::VKEY_2, ui::EF_ALT_DOWN, IDC_SELECT_TAB_1 },
+  { ui::VKEY_NUMPAD2, ui::EF_ALT_DOWN, IDC_SELECT_TAB_1 },
+  { ui::VKEY_3, ui::EF_ALT_DOWN, IDC_SELECT_TAB_2 },
+  { ui::VKEY_NUMPAD3, ui::EF_ALT_DOWN, IDC_SELECT_TAB_2 },
+  { ui::VKEY_4, ui::EF_ALT_DOWN, IDC_SELECT_TAB_3 },
+  { ui::VKEY_NUMPAD4, ui::EF_ALT_DOWN, IDC_SELECT_TAB_3 },
+  { ui::VKEY_5, ui::EF_ALT_DOWN, IDC_SELECT_TAB_4 },
+  { ui::VKEY_NUMPAD5, ui::EF_ALT_DOWN, IDC_SELECT_TAB_4 },
+  { ui::VKEY_6, ui::EF_ALT_DOWN, IDC_SELECT_TAB_5 },
+  { ui::VKEY_NUMPAD6, ui::EF_ALT_DOWN, IDC_SELECT_TAB_5 },
+  { ui::VKEY_7, ui::EF_ALT_DOWN, IDC_SELECT_TAB_6 },
+  { ui::VKEY_NUMPAD7, ui::EF_ALT_DOWN, IDC_SELECT_TAB_6 },
+  { ui::VKEY_8, ui::EF_ALT_DOWN, IDC_SELECT_TAB_7 },
+  { ui::VKEY_NUMPAD8, ui::EF_ALT_DOWN, IDC_SELECT_TAB_7 },
+  { ui::VKEY_BROWSER_FAVORITES, ui::EF_NONE, IDC_SHOW_BOOKMARK_BAR },
+#endif
   { ui::VKEY_B, ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN,
     IDC_SHOW_BOOKMARK_BAR },
   { ui::VKEY_O, ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN,
@@ -109,19 +135,22 @@ const AcceleratorMapping kAcceleratorMap[] = {
   { ui::VKEY_F11, ui::EF_NONE, IDC_FULLSCREEN },
 
   // Platform-specific key maps.
-#if defined(OS_CHROMEOS)
-  // On Chrome OS, VKEY_BROWSER_SEARCH is handled in Ash.
+#if defined(OS_LINUX)
   { ui::VKEY_BROWSER_BACK, ui::EF_NONE, IDC_BACK },
-  { ui::VKEY_BACK, ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN,
-    IDC_CLEAR_BROWSING_DATA },
   { ui::VKEY_BROWSER_FORWARD, ui::EF_NONE, IDC_FORWARD },
-  { ui::VKEY_OEM_2, ui::EF_CONTROL_DOWN, IDC_HELP_PAGE_VIA_KEYBOARD },
-  { ui::VKEY_OEM_2, ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN,
-    IDC_HELP_PAGE_VIA_KEYBOARD },
   { ui::VKEY_BROWSER_HOME, ui::EF_NONE, IDC_HOME },
   { ui::VKEY_BROWSER_REFRESH, ui::EF_NONE, IDC_RELOAD },
   { ui::VKEY_BROWSER_REFRESH, ui::EF_CONTROL_DOWN, IDC_RELOAD_IGNORING_CACHE },
   { ui::VKEY_BROWSER_REFRESH, ui::EF_SHIFT_DOWN, IDC_RELOAD_IGNORING_CACHE },
+#endif  // defined(OS_LINUX)
+
+#if defined(OS_CHROMEOS)
+  // On Chrome OS, VKEY_BROWSER_SEARCH is handled in Ash.
+  { ui::VKEY_BACK, ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN,
+    IDC_CLEAR_BROWSING_DATA },
+  { ui::VKEY_OEM_2, ui::EF_CONTROL_DOWN, IDC_HELP_PAGE_VIA_KEYBOARD },
+  { ui::VKEY_OEM_2, ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN,
+    IDC_HELP_PAGE_VIA_KEYBOARD },
   { ui::VKEY_BROWSER_FAVORITES, ui::EF_NONE, IDC_SHOW_BOOKMARK_MANAGER },
   { ui::VKEY_BROWSER_STOP, ui::EF_NONE, IDC_STOP },
   // Not implemented inside Ash to allow web pages to capture the key.

@@ -10,7 +10,8 @@ namespace input_method {
 MockInputMethodManager::MockInputMethodManager()
     : add_observer_count_(0),
       remove_observer_count_(0),
-      util_(&delegate_, whitelist_.GetSupportedInputMethods()) {
+      util_(&delegate_, whitelist_.GetSupportedInputMethods()),
+      mod3_used_(false) {
   active_input_method_ids_.push_back("xkb:us::eng");
 }
 
@@ -60,11 +61,24 @@ size_t MockInputMethodManager::GetNumActiveInputMethods() const {
   return 1;
 }
 
-void MockInputMethodManager::EnableLayouts(const std::string& language_code,
-                                           const std::string& initial_layout) {
+const InputMethodDescriptor* MockInputMethodManager::GetInputMethodFromId(
+    const std::string& input_method_id) const {
+  static const InputMethodDescriptor defaultInputMethod =
+      InputMethodUtil::GetFallbackInputMethodDescriptor();
+  for (size_t i = 0; i < active_input_method_ids_.size(); i++) {
+    if (input_method_id == active_input_method_ids_[i]) {
+      return &defaultInputMethod;
+    }
+  }
+  return NULL;
 }
 
-bool MockInputMethodManager::EnableInputMethods(
+void MockInputMethodManager::EnableLoginLayouts(
+    const std::string& language_code,
+    const std::vector<std::string>& initial_layout) {
+}
+
+bool MockInputMethodManager::ReplaceEnabledInputMethods(
     const std::vector<std::string>& new_active_input_method_ids) {
   return true;
 }
@@ -78,17 +92,13 @@ void MockInputMethodManager::ChangeInputMethod(
     const std::string& input_method_id) {
 }
 
-void MockInputMethodManager::ActivateInputMethodProperty(
+void MockInputMethodManager::ActivateInputMethodMenuItem(
     const std::string& key) {
 }
 
 void MockInputMethodManager::AddInputMethodExtension(
     const std::string& id,
-    const std::string& name,
-    const std::vector<std::string>& layouts,
-    const std::vector<std::string>& languages,
-    const GURL& options_url,
-    InputMethodEngine* instance) {
+    InputMethodEngineInterface* instance) {
 }
 
 void MockInputMethodManager::RemoveInputMethodExtension(const std::string& id) {
@@ -102,7 +112,7 @@ void MockInputMethodManager::SetEnabledExtensionImes(
     std::vector<std::string>* ids) {
 }
 
-void MockInputMethodManager::SetInputMethodDefault() {
+void MockInputMethodManager::SetInputMethodLoginDefault() {
 }
 
 bool MockInputMethodManager::SwitchToNextInputMethod() {
@@ -125,17 +135,22 @@ InputMethodDescriptor MockInputMethodManager::GetCurrentInputMethod() const {
   if (!current_input_method_id_.empty()) {
     return InputMethodDescriptor(current_input_method_id_,
                                  descriptor.name(),
+                                 descriptor.indicator(),
                                  descriptor.keyboard_layouts(),
                                  descriptor.language_codes(),
                                  true,
-                                 GURL());  // options page url.
+                                 GURL(),  // options page url.
+                                 GURL());  // input view page url.
   }
   return descriptor;
 }
 
-InputMethodPropertyList
-MockInputMethodManager::GetCurrentInputMethodProperties() const {
-  return InputMethodPropertyList();
+bool MockInputMethodManager::IsISOLevel5ShiftUsedByCurrentInputMethod() const {
+  return mod3_used_;
+}
+
+bool MockInputMethodManager::IsAltGrUsedByCurrentInputMethod() const {
+  return false;
 }
 
 XKeyboard* MockInputMethodManager::GetXKeyboard() {
@@ -155,14 +170,15 @@ void MockInputMethodManager::set_application_locale(const std::string& value) {
   delegate_.set_active_locale(value);
 }
 
-void MockInputMethodManager::set_hardware_keyboard_layout(
-    const std::string& value) {
-  delegate_.set_hardware_keyboard_layout(value);
-}
-
 bool MockInputMethodManager::IsLoginKeyboard(
     const std::string& layout) const {
   return true;
 }
+
+bool MockInputMethodManager::MigrateXkbInputMethods(
+    std::vector<std::string>* input_method_ids) {
+  return false;
+}
+
 }  // namespace input_method
 }  // namespace chromeos

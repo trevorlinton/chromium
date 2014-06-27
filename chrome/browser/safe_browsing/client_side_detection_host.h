@@ -52,16 +52,37 @@ class ClientSideDetectionHost : public content::WebContentsObserver,
   virtual void OnSafeBrowsingHit(
       const SafeBrowsingUIManager::UnsafeResource& resource) OVERRIDE;
 
+  // Called when the SafeBrowsingService finds a match on the SB lists.
+  // Called on the UI thread. Called even if the resource is whitelisted.
+  virtual void OnSafeBrowsingMatch(
+      const SafeBrowsingUIManager::UnsafeResource& resource) OVERRIDE;
+
+  virtual scoped_refptr<SafeBrowsingDatabaseManager> database_manager();
+
+  // Returns whether the current page contains a malware or phishing safe
+  // browsing match.
+  bool DidPageReceiveSafeBrowsingMatch() const;
+
  protected:
+  explicit ClientSideDetectionHost(content::WebContents* tab);
+
   // From content::WebContentsObserver.
   virtual void WebContentsDestroyed(content::WebContents* tab) OVERRIDE;
+
+  // Used for testing.
+  void set_safe_browsing_managers(
+      SafeBrowsingUIManager* ui_manager,
+      SafeBrowsingDatabaseManager* database_manager);
 
  private:
   friend class ClientSideDetectionHostTest;
   class ShouldClassifyUrlRequest;
   friend class ShouldClassifyUrlRequest;
 
-  explicit ClientSideDetectionHost(content::WebContents* tab);
+  // These methods are called when pre-classification checks are done for
+  // the phishing and malware clasifiers.
+  void OnPhishingPreClassificationDone(bool should_classify);
+  void OnMalwarePreClassificationDone(bool should_classify);
 
   // Verdict is an encoded ClientPhishingRequest protocol message.
   void OnPhishingDetectionDone(const std::string& verdict);
@@ -81,11 +102,22 @@ class ClientSideDetectionHost : public content::WebContentsObserver,
   // This method is responsible for deleting the request object.  Called on
   // the UI thread.
   void FeatureExtractionDone(bool success, ClientPhishingRequest* request);
+
+  // Start malware classification once the onload handler was called and
+  // malware pre-classification checks are done and passed.
+  void MaybeStartMalwareFeatureExtraction();
+
   // Function to be called when the browser malware feature extractor is done.
-  void MalwareFeatureExtractionDone(scoped_ptr<ClientMalwareRequest> request);
+  // Called on the UI thread.
+  void MalwareFeatureExtractionDone(
+      bool success, scoped_ptr<ClientMalwareRequest> request);
 
   // Update the entries in browse_info_->ips map.
-  void UpdateIPUrlMap(const std::string& ip, const std::string& url);
+  void UpdateIPUrlMap(const std::string& ip,
+                      const std::string& url,
+                      const std::string& method,
+                      const std::string& referrer,
+                      const ResourceType::Type resource_type);
 
   // From NotificationObserver.  Called when a notification comes in.  This
   // method is called in the UI thread.
@@ -93,24 +125,19 @@ class ClientSideDetectionHost : public content::WebContentsObserver,
                        const content::NotificationSource& source,
                        const content::NotificationDetails& details) OVERRIDE;
 
+  // Inherited from WebContentsObserver.  This is called once the onload handler
+  // is called.
+  virtual void DocumentOnLoadCompletedInMainFrame(int32 page_id) OVERRIDE;
+
   // Returns true if the user has seen a regular SafeBrowsing
   // interstitial for the current page.  This is only true if the user has
   // actually clicked through the warning.  This method is called on the UI
   // thread.
-  bool DidShowSBInterstitial();
+  bool DidShowSBInterstitial() const;
 
   // Used for testing.  This function does not take ownership of the service
   // class.
   void set_client_side_detection_service(ClientSideDetectionService* service);
-
-  // Used for testing.
-  void set_safe_browsing_managers(
-      SafeBrowsingUIManager* ui_manager,
-      SafeBrowsingDatabaseManager* database_manager);
-
-  // Get/Set malware_killswitch_on_ value. These methods called on UI thread.
-  bool MalwareKillSwitchIsOn();
-  void SetMalwareKillSwitch(bool killswitch_on);
 
   // This pointer may be NULL if client-side phishing detection is disabled.
   ClientSideDetectionService* csd_service_;
@@ -140,20 +167,16 @@ class ClientSideDetectionHost : public content::WebContentsObserver,
   // Max number of urls we report for each malware IP.
   static const int kMaxUrlsPerIP;
 
+  bool should_extract_malware_features_;
+  bool should_classify_for_malware_;
+  bool onload_complete_;
+
   base::WeakPtrFactory<ClientSideDetectionHost> weak_factory_;
 
   // Unique page ID of the most recent unsafe site that was loaded in this tab
   // as well as the UnsafeResource.
   int unsafe_unique_page_id_;
   scoped_ptr<SafeBrowsingUIManager::UnsafeResource> unsafe_resource_;
-
-  // Whether the malware IP matching feature killswitch is on.
-  // This should be accessed from UI thread.
-  bool malware_killswitch_on_;
-
-  // Whether the malware bad ip matching and report feature is enabled.
-  // This should be accessed from UI thread.
-  bool malware_report_enabled_;
 
   DISALLOW_COPY_AND_ASSIGN(ClientSideDetectionHost);
 };

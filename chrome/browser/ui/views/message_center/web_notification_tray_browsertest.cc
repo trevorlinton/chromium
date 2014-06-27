@@ -12,6 +12,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/notifications/message_center_notification_manager.h"
 #include "chrome/browser/notifications/notification.h"
 #include "chrome/browser/notifications/notification_delegate.h"
 #include "chrome/browser/notifications/notification_ui_manager.h"
@@ -64,11 +65,12 @@ class WebNotificationTrayTest : public InProcessBrowserTest {
   void AddNotification(const std::string& id, const std::string& replace_id) {
     ::Notification notification(GURL("chrome-extension://abbccedd"),
                                 GURL(),
-                                ASCIIToUTF16("Test Web Notification"),
-                                ASCIIToUTF16("Notification message body."),
-                                WebKit::WebTextDirectionDefault,
-                                string16(),
-                                ASCIIToUTF16(replace_id),
+                                base::ASCIIToUTF16("Test Web Notification"),
+                                base::ASCIIToUTF16(
+                                    "Notification message body."),
+                                blink::WebTextDirectionDefault,
+                                base::string16(),
+                                base::ASCIIToUTF16(replace_id),
                                 new TestNotificationDelegate(id));
 
     g_browser_process->notification_ui_manager()->Add(
@@ -79,11 +81,11 @@ class WebNotificationTrayTest : public InProcessBrowserTest {
                           const std::string& new_id) {
     ::Notification notification(GURL("chrome-extension://abbccedd"),
                                 GURL(""),
-                                ASCIIToUTF16("Updated Web Notification"),
-                                ASCIIToUTF16("Updated message body."),
-                                WebKit::WebTextDirectionDefault,
-                                string16(),
-                                ASCIIToUTF16(replace_id),
+                                base::ASCIIToUTF16("Updated Web Notification"),
+                                base::ASCIIToUTF16("Updated message body."),
+                                blink::WebTextDirectionDefault,
+                                base::string16(),
+                                base::ASCIIToUTF16(replace_id),
                                 new TestNotificationDelegate(new_id));
 
     g_browser_process->notification_ui_manager()->Add(
@@ -101,15 +103,8 @@ class WebNotificationTrayTest : public InProcessBrowserTest {
 }  // namespace
 
 
-#if defined(OS_LINUX) && !defined(OS_CHROMEOS) && defined(USE_AURA)
-// TODO(erg): linux_aura bringup: http://crbug.com/163931
-#define MAYBE_WebNotifications DISABLED_WebNotifications
-#else
-#define MAYBE_WebNotifications WebNotifications
-#endif
-
 // TODO(dewittj): More exhaustive testing.
-IN_PROC_BROWSER_TEST_F(WebNotificationTrayTest, MAYBE_WebNotifications) {
+IN_PROC_BROWSER_TEST_F(WebNotificationTrayTest, WebNotifications) {
   message_center::MessageCenter* message_center =
       message_center::MessageCenter::Get();
 
@@ -207,6 +202,30 @@ IN_PROC_BROWSER_TEST_F(WebNotificationTrayTest, ManyPopupNotifications) {
   NotificationList::PopupNotifications popups =
       message_center->GetPopupNotifications();
   EXPECT_EQ(kMaxVisiblePopupNotifications, popups.size());
+}
+
+IN_PROC_BROWSER_TEST_F(WebNotificationTrayTest,
+                       ManuallyCloseMessageCenter) {
+  NotificationUIManager* manager = g_browser_process->notification_ui_manager();
+  ASSERT_TRUE(manager->DelegatesToMessageCenter());
+  MessageCenterNotificationManager* mc_manager =
+      static_cast<MessageCenterNotificationManager*>(manager);
+
+  WebNotificationTray* tray =
+      static_cast<WebNotificationTray*>(mc_manager->tray_.get());
+  ASSERT_TRUE(NULL != tray);
+
+  message_center::MessageCenter* message_center = tray->message_center();
+
+  bool shown = tray->message_center_tray_->ShowMessageCenterBubble();
+  EXPECT_TRUE(shown);
+  EXPECT_TRUE(message_center->IsMessageCenterVisible());
+
+  mc_manager->EnsureMessageCenterClosed();
+
+  EXPECT_FALSE(message_center->IsMessageCenterVisible());
+  if (NULL != tray->message_center_delegate_)
+    EXPECT_TRUE(tray->message_center_delegate_->GetWidget()->IsClosed());
 }
 
 }  // namespace message_center

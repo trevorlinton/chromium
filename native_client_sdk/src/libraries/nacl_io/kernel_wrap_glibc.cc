@@ -127,10 +127,11 @@ EXTERN_C_BEGIN
   OP(chdir); \
   OP(close); \
   OP(dup); \
-  OP(dup2);  \
+  OP(dup2); \
+  OP(exit); \
   OP(fstat); \
-  OP(getcwd);  \
-  OP(getdents);  \
+  OP(getcwd); \
+  OP(getdents); \
   OP(mkdir); \
   OP(open); \
   OP(poll);\
@@ -146,7 +147,7 @@ EXTERN_C_BEGIN
 
 EXPAND_SYMBOL_LIST_OPERATION(DECLARE_REAL_PTR);
 
-int WRAP(chdir) (const char* pathname) {
+int WRAP(chdir)(const char* pathname) {
   return (ki_chdir(pathname)) ? errno : 0;
 }
 
@@ -163,6 +164,10 @@ int WRAP(dup2)(int fd, int newfd) NOTHROW {
   return (ki_dup2(fd, newfd) < 0) ? errno : 0;
 }
 
+void WRAP(exit)(int status) {
+  ki_exit(status);
+}
+
 int WRAP(fstat)(int fd, struct nacl_abi_stat *nacl_buf) {
   struct stat buf;
   memset(&buf, 0, sizeof(struct stat));
@@ -173,8 +178,10 @@ int WRAP(fstat)(int fd, struct nacl_abi_stat *nacl_buf) {
   return 0;
 }
 
-char* WRAP(getcwd)(char* buf, size_t size) {
-  return ki_getcwd(buf, size);
+int WRAP(getcwd)(char* buf, size_t size) {
+  if (ki_getcwd(buf, size) == NULL)
+    return errno;
+  return 0;
 }
 
 int WRAP(getdents)(int fd, dirent* nacl_buf, size_t nacl_count, size_t *nread) {
@@ -299,6 +306,11 @@ int _real_close(int fd) {
   return REAL(close)(fd);
 }
 
+void _real_exit(int status) {
+  CHECK_REAL(exit);
+  REAL(exit)(status);
+}
+
 int _real_fstat(int fd, struct stat* buf) {
   struct nacl_abi_stat st;
   CHECK_REAL(fstat);
@@ -386,12 +398,6 @@ int _real_rmdir(const char* pathname) {
 int _real_write(int fd, const void *buf, size_t count, size_t *nwrote) {
   CHECK_REAL(write);
   return REAL(write)(fd, buf, count, nwrote);
-}
-
-uint64_t usec_since_epoch() {
-  struct timeval tv;
-  gettimeofday(&tv, NULL);
-  return tv.tv_usec + (tv.tv_sec * 1000000);
 }
 
 static bool s_wrapped = false;

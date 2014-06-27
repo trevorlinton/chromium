@@ -8,7 +8,6 @@
 #include "chrome/browser/extensions/extension_action_manager.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
@@ -17,10 +16,11 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/omnibox/location_bar.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
 
 using content::WebContents;
 
@@ -265,9 +265,7 @@ IN_PROC_BROWSER_TEST_F(PageActionApiTest, TestTriggerPageAction) {
       "window.domAutomationController.send(document.body.style."
       "backgroundColor);";
   std::string result;
-  const std::string frame_xpath;
-  EXPECT_TRUE(content::ExecuteScriptInFrameAndExtractString(
-      tab, frame_xpath, script, &result));
+  EXPECT_TRUE(content::ExecuteScriptAndExtractString(tab, script, &result));
   EXPECT_EQ(result, "red");
 }
 

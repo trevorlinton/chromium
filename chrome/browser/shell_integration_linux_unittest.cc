@@ -9,6 +9,7 @@
 #include <map>
 
 #include "base/base_paths.h"
+#include "base/command_line.h"
 #include "base/environment.h"
 #include "base/file_util.h"
 #include "base/files/file_path.h"
@@ -170,7 +171,9 @@ TEST(ShellIntegrationTest, GetExistingShortcutLocations) {
         ShellIntegrationLinux::GetExistingShortcutLocations(
             &env, kProfilePath, kExtensionId);
     EXPECT_FALSE(result.on_desktop);
-    EXPECT_FALSE(result.in_applications_menu);
+    EXPECT_EQ(ShellIntegration::APP_MENU_LOCATION_NONE,
+              result.applications_menu_location);
+
     EXPECT_FALSE(result.in_quick_launch_bar);
     EXPECT_FALSE(result.hidden);
   }
@@ -182,15 +185,17 @@ TEST(ShellIntegrationTest, GetExistingShortcutLocations) {
     base::FilePath desktop_path = temp_dir.path();
 
     MockEnvironment env;
-    ASSERT_TRUE(file_util::CreateDirectory(desktop_path));
-    ASSERT_FALSE(file_util::WriteFile(
+    ASSERT_TRUE(base::CreateDirectory(desktop_path));
+    ASSERT_FALSE(base::WriteFile(
         desktop_path.AppendASCII(kTemplateFilename),
         "", 0));
     ShellIntegration::ShortcutLocations result =
         ShellIntegrationLinux::GetExistingShortcutLocations(
             &env, kProfilePath, kExtensionId, desktop_path);
     EXPECT_TRUE(result.on_desktop);
-    EXPECT_FALSE(result.in_applications_menu);
+    EXPECT_EQ(ShellIntegration::APP_MENU_LOCATION_NONE,
+              result.applications_menu_location);
+
     EXPECT_FALSE(result.in_quick_launch_bar);
     EXPECT_FALSE(result.hidden);
   }
@@ -203,15 +208,17 @@ TEST(ShellIntegrationTest, GetExistingShortcutLocations) {
 
     MockEnvironment env;
     env.Set("XDG_DATA_HOME", temp_dir.path().value());
-    ASSERT_TRUE(file_util::CreateDirectory(apps_path));
-    ASSERT_FALSE(file_util::WriteFile(
+    ASSERT_TRUE(base::CreateDirectory(apps_path));
+    ASSERT_FALSE(base::WriteFile(
         apps_path.AppendASCII(kTemplateFilename),
         "", 0));
     ShellIntegration::ShortcutLocations result =
         ShellIntegrationLinux::GetExistingShortcutLocations(
             &env, kProfilePath, kExtensionId);
     EXPECT_FALSE(result.on_desktop);
-    EXPECT_TRUE(result.in_applications_menu);
+    EXPECT_EQ(ShellIntegration::APP_MENU_LOCATION_SUBDIR_CHROMEAPPS,
+              result.applications_menu_location);
+
     EXPECT_FALSE(result.in_quick_launch_bar);
     EXPECT_FALSE(result.hidden);
   }
@@ -224,8 +231,8 @@ TEST(ShellIntegrationTest, GetExistingShortcutLocations) {
 
     MockEnvironment env;
     env.Set("XDG_DATA_HOME", temp_dir.path().value());
-    ASSERT_TRUE(file_util::CreateDirectory(apps_path));
-    ASSERT_TRUE(file_util::WriteFile(
+    ASSERT_TRUE(base::CreateDirectory(apps_path));
+    ASSERT_TRUE(base::WriteFile(
         apps_path.AppendASCII(kTemplateFilename),
         kNoDisplayDesktopFile, strlen(kNoDisplayDesktopFile)));
     ShellIntegration::ShortcutLocations result =
@@ -233,7 +240,8 @@ TEST(ShellIntegrationTest, GetExistingShortcutLocations) {
             &env, kProfilePath, kExtensionId);
     // Doesn't count as being in applications menu.
     EXPECT_FALSE(result.on_desktop);
-    EXPECT_FALSE(result.in_applications_menu);
+    EXPECT_EQ(ShellIntegration::APP_MENU_LOCATION_NONE,
+              result.applications_menu_location);
     EXPECT_FALSE(result.in_quick_launch_bar);
     EXPECT_TRUE(result.hidden);
   }
@@ -249,20 +257,21 @@ TEST(ShellIntegrationTest, GetExistingShortcutLocations) {
     base::FilePath apps_path = temp_dir2.path().AppendASCII("applications");
 
     MockEnvironment env;
-    ASSERT_TRUE(file_util::CreateDirectory(desktop_path));
-    ASSERT_FALSE(file_util::WriteFile(
+    ASSERT_TRUE(base::CreateDirectory(desktop_path));
+    ASSERT_FALSE(base::WriteFile(
         desktop_path.AppendASCII(kTemplateFilename),
         "", 0));
     env.Set("XDG_DATA_HOME", temp_dir2.path().value());
-    ASSERT_TRUE(file_util::CreateDirectory(apps_path));
-    ASSERT_FALSE(file_util::WriteFile(
+    ASSERT_TRUE(base::CreateDirectory(apps_path));
+    ASSERT_FALSE(base::WriteFile(
         apps_path.AppendASCII(kTemplateFilename),
         "", 0));
     ShellIntegration::ShortcutLocations result =
         ShellIntegrationLinux::GetExistingShortcutLocations(
             &env, kProfilePath, kExtensionId, desktop_path);
     EXPECT_TRUE(result.on_desktop);
-    EXPECT_TRUE(result.in_applications_menu);
+    EXPECT_EQ(ShellIntegration::APP_MENU_LOCATION_SUBDIR_CHROMEAPPS,
+              result.applications_menu_location);
     EXPECT_FALSE(result.in_quick_launch_bar);
     EXPECT_FALSE(result.hidden);
   }
@@ -285,12 +294,12 @@ TEST(ShellIntegrationTest, GetExistingShortcutContents) {
     MockEnvironment env;
     env.Set("XDG_DATA_HOME", temp_dir.path().value());
     // Create a file in a non-applications directory. This should be ignored.
-    ASSERT_TRUE(file_util::WriteFile(
+    ASSERT_TRUE(base::WriteFile(
         temp_dir.path().AppendASCII(kTemplateFilename),
         kTestData2, strlen(kTestData2)));
-    ASSERT_TRUE(file_util::CreateDirectory(
+    ASSERT_TRUE(base::CreateDirectory(
         temp_dir.path().AppendASCII("applications")));
-    ASSERT_TRUE(file_util::WriteFile(
+    ASSERT_TRUE(base::WriteFile(
         temp_dir.path().AppendASCII("applications")
             .AppendASCII(kTemplateFilename),
         kTestData1, strlen(kTestData1)));
@@ -308,9 +317,9 @@ TEST(ShellIntegrationTest, GetExistingShortcutContents) {
 
     MockEnvironment env;
     env.Set("HOME", temp_dir.path().value());
-    ASSERT_TRUE(file_util::CreateDirectory(
+    ASSERT_TRUE(base::CreateDirectory(
         temp_dir.path().AppendASCII(".local/share/applications")));
-    ASSERT_TRUE(file_util::WriteFile(
+    ASSERT_TRUE(base::WriteFile(
         temp_dir.path().AppendASCII(".local/share/applications")
             .AppendASCII(kTemplateFilename),
         kTestData1, strlen(kTestData1)));
@@ -328,9 +337,9 @@ TEST(ShellIntegrationTest, GetExistingShortcutContents) {
 
     MockEnvironment env;
     env.Set("XDG_DATA_DIRS", temp_dir.path().value());
-    ASSERT_TRUE(file_util::CreateDirectory(
+    ASSERT_TRUE(base::CreateDirectory(
         temp_dir.path().AppendASCII("applications")));
-    ASSERT_TRUE(file_util::WriteFile(
+    ASSERT_TRUE(base::WriteFile(
         temp_dir.path().AppendASCII("applications")
             .AppendASCII(kTemplateFilename),
         kTestData2, strlen(kTestData2)));
@@ -352,13 +361,13 @@ TEST(ShellIntegrationTest, GetExistingShortcutContents) {
     env.Set("XDG_DATA_DIRS", temp_dir1.path().value() + ":" +
                              temp_dir2.path().value());
     // Create a file in a non-applications directory. This should be ignored.
-    ASSERT_TRUE(file_util::WriteFile(
+    ASSERT_TRUE(base::WriteFile(
         temp_dir1.path().AppendASCII(kTemplateFilename),
         kTestData1, strlen(kTestData1)));
     // Only create a findable desktop file in the second path.
-    ASSERT_TRUE(file_util::CreateDirectory(
+    ASSERT_TRUE(base::CreateDirectory(
         temp_dir2.path().AppendASCII("applications")));
-    ASSERT_TRUE(file_util::WriteFile(
+    ASSERT_TRUE(base::WriteFile(
         temp_dir2.path().AppendASCII("applications")
             .AppendASCII(kTemplateFilename),
         kTestData2, strlen(kTestData2)));
@@ -390,14 +399,14 @@ TEST(ShellIntegrationTest, GetExistingProfileShortcutFilenames) {
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   ASSERT_EQ(0,
-            file_util::WriteFile(
+            base::WriteFile(
                 temp_dir.path().AppendASCII(kApp1Filename), "", 0));
   ASSERT_EQ(0,
-            file_util::WriteFile(
+            base::WriteFile(
                 temp_dir.path().AppendASCII(kApp2Filename), "", 0));
   // This file should not be returned in the results.
   ASSERT_EQ(0,
-            file_util::WriteFile(
+            base::WriteFile(
                 temp_dir.path().AppendASCII(kUnrelatedAppFilename), "", 0));
   std::vector<base::FilePath> paths =
       ShellIntegrationLinux::GetExistingProfileShortcutFilenames(
@@ -471,7 +480,11 @@ TEST(ShellIntegrationTest, GetDesktopFileContents) {
       "Type=Application\n"
       "Name=GMail\n"
       "Exec=/opt/google/chrome/google-chrome --app=http://gmail.com/\n"
+#if defined(GOOGLE_CHROME_BUILD)
+      "Icon=google-chrome\n"
+#else
       "Icon=chromium-browser\n"
+#endif
       "StartupWMClass=gmail.com\n"
     },
 
@@ -560,12 +573,34 @@ TEST(ShellIntegrationTest, GetDesktopFileContents) {
             web_app::GenerateApplicationNameFromURL(GURL(test_cases[i].url)),
             GURL(test_cases[i].url),
             std::string(),
-            base::FilePath(),
-            ASCIIToUTF16(test_cases[i].title),
+            base::ASCIIToUTF16(test_cases[i].title),
             test_cases[i].icon_name,
             base::FilePath(),
             test_cases[i].nodisplay));
   }
+}
+
+TEST(ShellIntegrationTest, GetDesktopFileContentsAppList) {
+  const base::FilePath kChromeExePath("/opt/google/chrome/google-chrome");
+  CommandLine command_line(kChromeExePath);
+  command_line.AppendSwitch("--show-app-list");
+  EXPECT_EQ(
+      "#!/usr/bin/env xdg-open\n"
+      "[Desktop Entry]\n"
+      "Version=1.0\n"
+      "Terminal=false\n"
+      "Type=Application\n"
+      "Name=Chrome App Launcher\n"
+      "Exec=/opt/google/chrome/google-chrome --show-app-list\n"
+      "Icon=chrome_app_list\n"
+      "StartupWMClass=chrome-app-list\n",
+      ShellIntegrationLinux::GetDesktopFileContentsForCommand(
+          command_line,
+          "chrome-app-list",
+          GURL(),
+          base::ASCIIToUTF16("Chrome App Launcher"),
+          "chrome_app_list",
+          false));
 }
 
 TEST(ShellIntegrationTest, GetDirectoryFileContents) {
@@ -593,7 +628,11 @@ TEST(ShellIntegrationTest, GetDirectoryFileContents) {
       "Version=1.0\n"
       "Type=Directory\n"
       "Name=Chrome Apps\n"
+#if defined(GOOGLE_CHROME_BUILD)
+      "Icon=google-chrome\n"
+#else
       "Icon=chromium-browser\n"
+#endif
     },
   };
 
@@ -602,7 +641,7 @@ TEST(ShellIntegrationTest, GetDirectoryFileContents) {
     EXPECT_EQ(
         test_cases[i].expected_output,
         ShellIntegrationLinux::GetDirectoryFileContents(
-            ASCIIToUTF16(test_cases[i].title),
+            base::ASCIIToUTF16(test_cases[i].title),
             test_cases[i].icon_name));
   }
 }

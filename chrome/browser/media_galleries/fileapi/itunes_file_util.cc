@@ -27,12 +27,11 @@ namespace itunes {
 
 namespace {
 
-base::PlatformFileError MakeDirectoryFileInfo(
-    base::PlatformFileInfo* file_info) {
-  base::PlatformFileInfo result;
+base::File::Error MakeDirectoryFileInfo(base::File::Info* file_info) {
+  base::File::Info result;
   result.is_directory = true;
   *file_info = result;
-  return base::PLATFORM_FILE_OK;
+  return base::File::FILE_OK;
 }
 
 }  // namespace
@@ -55,30 +54,52 @@ void ITunesFileUtil::GetFileInfoOnTaskRunnerThread(
     scoped_ptr<fileapi::FileSystemOperationContext> context,
     const fileapi::FileSystemURL& url,
     const GetFileInfoCallback& callback) {
-  GetDataProvider()->RefreshData(
-      base::Bind(&ITunesFileUtil::GetFileInfoWithFreshDataProvider,
-                 weak_factory_.GetWeakPtr(), base::Passed(&context), url,
-                 callback));
+  ITunesDataProvider* data_provider = GetDataProvider();
+  // |data_provider| may be NULL if the file system was revoked before this
+  // operation had a chance to run.
+  if (!data_provider) {
+    GetFileInfoWithFreshDataProvider(context.Pass(), url, callback, false);
+  } else {
+    data_provider->RefreshData(
+        base::Bind(&ITunesFileUtil::GetFileInfoWithFreshDataProvider,
+                   weak_factory_.GetWeakPtr(), base::Passed(&context), url,
+                   callback));
+  }
 }
 
 void ITunesFileUtil::ReadDirectoryOnTaskRunnerThread(
     scoped_ptr<fileapi::FileSystemOperationContext> context,
     const fileapi::FileSystemURL& url,
     const ReadDirectoryCallback& callback) {
-  GetDataProvider()->RefreshData(
-      base::Bind(&ITunesFileUtil::ReadDirectoryWithFreshDataProvider,
-                 weak_factory_.GetWeakPtr(), base::Passed(&context), url,
-                 callback));
+  ITunesDataProvider* data_provider = GetDataProvider();
+  // |data_provider| may be NULL if the file system was revoked before this
+  // operation had a chance to run.
+  if (!data_provider) {
+    ReadDirectoryWithFreshDataProvider(context.Pass(), url, callback, false);
+  } else {
+    data_provider->RefreshData(
+        base::Bind(&ITunesFileUtil::ReadDirectoryWithFreshDataProvider,
+                   weak_factory_.GetWeakPtr(), base::Passed(&context), url,
+                   callback));
+  }
 }
 
 void ITunesFileUtil::CreateSnapshotFileOnTaskRunnerThread(
     scoped_ptr<fileapi::FileSystemOperationContext> context,
     const fileapi::FileSystemURL& url,
     const CreateSnapshotFileCallback& callback) {
-  GetDataProvider()->RefreshData(
-      base::Bind(&ITunesFileUtil::CreateSnapshotFileWithFreshDataProvider,
-                 weak_factory_.GetWeakPtr(), base::Passed(&context), url,
-                 callback));
+  ITunesDataProvider* data_provider = GetDataProvider();
+  // |data_provider| may be NULL if the file system was revoked before this
+  // operation had a chance to run.
+  if (!data_provider) {
+    CreateSnapshotFileWithFreshDataProvider(context.Pass(), url, callback,
+                                            false);
+  } else {
+    data_provider->RefreshData(
+        base::Bind(&ITunesFileUtil::CreateSnapshotFileWithFreshDataProvider,
+                   weak_factory_.GetWeakPtr(), base::Passed(&context), url,
+                   callback));
+  }
 }
 
 // Contents of the iTunes media gallery:
@@ -87,10 +108,10 @@ void ITunesFileUtil::CreateSnapshotFileOnTaskRunnerThread(
 //   /iTunes Media/Automatically Add to iTunes        - auto-import directory
 //   /iTunes Media/Music/<Artist>/<Album>/<Track>     - tracks
 //
-base::PlatformFileError ITunesFileUtil::GetFileInfoSync(
+base::File::Error ITunesFileUtil::GetFileInfoSync(
     fileapi::FileSystemOperationContext* context,
     const fileapi::FileSystemURL& url,
-    base::PlatformFileInfo* file_info,
+    base::File::Info* file_info,
     base::FilePath* platform_path) {
   std::vector<std::string> components;
   fileapi::VirtualPath::GetComponentsUTF8Unsafe(url.path(), &components);
@@ -109,11 +130,11 @@ base::PlatformFileError ITunesFileUtil::GetFileInfoSync(
   }
 
   if (components[0] != kITunesMediaDir)
-    return base::PLATFORM_FILE_ERROR_NOT_FOUND;
+    return base::File::FILE_ERROR_NOT_FOUND;
 
   if (components[1] == kITunesAutoAddDir) {
     if (GetDataProvider()->auto_add_path().empty())
-      return base::PLATFORM_FILE_ERROR_NOT_FOUND;
+      return base::File::FILE_ERROR_NOT_FOUND;
     return NativeMediaFileUtil::GetFileInfoSync(context, url, file_info,
                                                 platform_path);
   }
@@ -146,10 +167,10 @@ base::PlatformFileError ITunesFileUtil::GetFileInfoSync(
     }
   }
 
-  return base::PLATFORM_FILE_ERROR_NOT_FOUND;
+  return base::File::FILE_ERROR_NOT_FOUND;
 }
 
-base::PlatformFileError ITunesFileUtil::ReadDirectorySync(
+base::File::Error ITunesFileUtil::ReadDirectorySync(
     fileapi::FileSystemOperationContext* context,
     const fileapi::FileSystemURL& url,
     EntryList* file_list) {
@@ -158,23 +179,23 @@ base::PlatformFileError ITunesFileUtil::ReadDirectorySync(
   fileapi::VirtualPath::GetComponentsUTF8Unsafe(url.path(), &components);
 
   if (components.size() == 0) {
-    base::PlatformFileInfo xml_info;
-    if (!file_util::GetFileInfo(GetDataProvider()->library_path(), &xml_info))
-      return base::PLATFORM_FILE_ERROR_IO;
+    base::File::Info xml_info;
+    if (!base::GetFileInfo(GetDataProvider()->library_path(), &xml_info))
+      return base::File::FILE_ERROR_IO;
     file_list->push_back(DirectoryEntry(kITunesLibraryXML,
                                         DirectoryEntry::FILE,
                                         xml_info.size, xml_info.last_modified));
     file_list->push_back(DirectoryEntry(kITunesMediaDir,
                                         DirectoryEntry::DIRECTORY,
                                         0, base::Time()));
-    return base::PLATFORM_FILE_OK;
+    return base::File::FILE_OK;
   }
 
   if (components.size() == 1 && components[0] == kITunesLibraryXML)
-    return base::PLATFORM_FILE_ERROR_NOT_A_DIRECTORY;
+    return base::File::FILE_ERROR_NOT_A_DIRECTORY;
 
   if (components[0] != kITunesMediaDir || components.size() > 5)
-    return base::PLATFORM_FILE_ERROR_NOT_FOUND;
+    return base::File::FILE_ERROR_NOT_FOUND;
 
   if (components.size() == 1) {
     if (!GetDataProvider()->auto_add_path().empty()) {
@@ -185,7 +206,7 @@ base::PlatformFileError ITunesFileUtil::ReadDirectorySync(
     file_list->push_back(DirectoryEntry(kITunesMusicDir,
                                         DirectoryEntry::DIRECTORY,
                                         0, base::Time()));
-    return base::PLATFORM_FILE_OK;
+    return base::File::FILE_OK;
   }
 
   if (components[1] == kITunesAutoAddDir &&
@@ -194,7 +215,7 @@ base::PlatformFileError ITunesFileUtil::ReadDirectorySync(
   }
 
   if (components[1] != kITunesMusicDir)
-    return base::PLATFORM_FILE_ERROR_NOT_FOUND;
+    return base::File::FILE_ERROR_NOT_FOUND;
 
   if (components.size() == 2) {
     std::set<ITunesDataProvider::ArtistName> artists =
@@ -203,37 +224,37 @@ base::PlatformFileError ITunesFileUtil::ReadDirectorySync(
     for (it = artists.begin(); it != artists.end(); ++it)
       file_list->push_back(DirectoryEntry(*it, DirectoryEntry::DIRECTORY,
                                           0, base::Time()));
-    return base::PLATFORM_FILE_OK;
+    return base::File::FILE_OK;
   }
 
   if (components.size() == 3) {
     std::set<ITunesDataProvider::AlbumName> albums =
         GetDataProvider()->GetAlbumNames(components[2]);
     if (albums.size() == 0)
-      return base::PLATFORM_FILE_ERROR_NOT_FOUND;
+      return base::File::FILE_ERROR_NOT_FOUND;
     std::set<ITunesDataProvider::AlbumName>::const_iterator it;
     for (it = albums.begin(); it != albums.end(); ++it)
       file_list->push_back(DirectoryEntry(*it, DirectoryEntry::DIRECTORY,
                                           0, base::Time()));
-    return base::PLATFORM_FILE_OK;
+    return base::File::FILE_OK;
   }
 
   if (components.size() == 4) {
     ITunesDataProvider::Album album =
         GetDataProvider()->GetAlbum(components[2], components[3]);
     if (album.size() == 0)
-      return base::PLATFORM_FILE_ERROR_NOT_FOUND;
+      return base::File::FILE_ERROR_NOT_FOUND;
     ITunesDataProvider::Album::const_iterator it;
     for (it = album.begin(); it != album.end(); ++it) {
-      base::PlatformFileInfo file_info;
+      base::File::Info file_info;
       if (media_path_filter()->Match(it->second) &&
-          file_util::GetFileInfo(it->second, &file_info)) {
+          base::GetFileInfo(it->second, &file_info)) {
         file_list->push_back(DirectoryEntry(it->first, DirectoryEntry::FILE,
                                             file_info.size,
                                             file_info.last_modified));
       }
     }
-    return base::PLATFORM_FILE_OK;
+    return base::File::FILE_OK;
   }
 
   // At this point, the only choice is one of two errors, but figuring out
@@ -243,14 +264,26 @@ base::PlatformFileError ITunesFileUtil::ReadDirectorySync(
   location = GetDataProvider()->GetTrackLocation(components[1], components[2],
                                                  components[3]);
   if (!location.empty())
-    return base::PLATFORM_FILE_ERROR_NOT_A_DIRECTORY;
-  return base::PLATFORM_FILE_ERROR_NOT_FOUND;
+    return base::File::FILE_ERROR_NOT_A_DIRECTORY;
+  return base::File::FILE_ERROR_NOT_FOUND;
 }
 
-base::PlatformFileError ITunesFileUtil::CreateSnapshotFileSync(
+base::File::Error ITunesFileUtil::DeleteDirectorySync(
+    fileapi::FileSystemOperationContext* context,
+    const fileapi::FileSystemURL& url) {
+  return base::File::FILE_ERROR_SECURITY;
+}
+
+base::File::Error ITunesFileUtil::DeleteFileSync(
+    fileapi::FileSystemOperationContext* context,
+    const fileapi::FileSystemURL& url) {
+  return base::File::FILE_ERROR_SECURITY;
+}
+
+base::File::Error ITunesFileUtil::CreateSnapshotFileSync(
     fileapi::FileSystemOperationContext* context,
     const fileapi::FileSystemURL& url,
-    base::PlatformFileInfo* file_info,
+    base::File::Info* file_info,
     base::FilePath* platform_path,
     scoped_refptr<webkit_blob::ShareableFileReference>* file_ref) {
   DCHECK(!url.path().IsAbsolute());
@@ -269,7 +302,7 @@ base::PlatformFileError ITunesFileUtil::CreateSnapshotFileSync(
   return GetFileInfoSync(context, url, file_info, platform_path);
 }
 
-base::PlatformFileError ITunesFileUtil::GetLocalFilePath(
+base::File::Error ITunesFileUtil::GetLocalFilePath(
     fileapi::FileSystemOperationContext* context,
     const fileapi::FileSystemURL& url,
     base::FilePath* local_file_path) {
@@ -278,35 +311,35 @@ base::PlatformFileError ITunesFileUtil::GetLocalFilePath(
 
   if (components.size() == 1 && components[0] == kITunesLibraryXML) {
     *local_file_path = GetDataProvider()->library_path();
-    return base::PLATFORM_FILE_OK;
+    return base::File::FILE_OK;
   }
 
   if (components.size() >= 2 && components[0] == kITunesMediaDir &&
       components[1] == kITunesAutoAddDir) {
     *local_file_path = GetDataProvider()->auto_add_path();
     if (local_file_path->empty())
-      return base::PLATFORM_FILE_ERROR_NOT_FOUND;
+      return base::File::FILE_ERROR_NOT_FOUND;
 
     for (size_t i = 2; i < components.size(); ++i) {
       *local_file_path = local_file_path->Append(
           base::FilePath::FromUTF8Unsafe(components[i]));
     }
-    return base::PLATFORM_FILE_OK;
+    return base::File::FILE_OK;
   }
 
   // Should only get here for files, i.e. the xml file and tracks.
   if (components[0] != kITunesMediaDir || components[1] != kITunesMusicDir||
       components.size() != 5) {
-    return base::PLATFORM_FILE_ERROR_NOT_FOUND;
+    return base::File::FILE_ERROR_NOT_FOUND;
   }
 
   *local_file_path = GetDataProvider()->GetTrackLocation(components[2],
                                                          components[3],
                                                          components[4]);
   if (!local_file_path->empty())
-    return base::PLATFORM_FILE_OK;
+    return base::File::FILE_OK;
 
-  return base::PLATFORM_FILE_ERROR_NOT_FOUND;
+  return base::File::FILE_ERROR_NOT_FOUND;
 }
 
 void ITunesFileUtil::GetFileInfoWithFreshDataProvider(
@@ -319,8 +352,8 @@ void ITunesFileUtil::GetFileInfoWithFreshDataProvider(
       content::BrowserThread::PostTask(
           content::BrowserThread::IO,
           FROM_HERE,
-          base::Bind(callback, base::PLATFORM_FILE_ERROR_IO,
-                     base::PlatformFileInfo()));
+          base::Bind(callback, base::File::FILE_ERROR_IO,
+                     base::File::Info()));
     }
     return;
   }
@@ -338,8 +371,7 @@ void ITunesFileUtil::ReadDirectoryWithFreshDataProvider(
       content::BrowserThread::PostTask(
           content::BrowserThread::IO,
           FROM_HERE,
-          base::Bind(callback, base::PLATFORM_FILE_ERROR_IO, EntryList(),
-                     false));
+          base::Bind(callback, base::File::FILE_ERROR_IO, EntryList(), false));
     }
     return;
   }
@@ -354,13 +386,13 @@ void ITunesFileUtil::CreateSnapshotFileWithFreshDataProvider(
     bool valid_parse) {
   if (!valid_parse) {
     if (!callback.is_null()) {
-      base::PlatformFileInfo file_info;
+      base::File::Info file_info;
       base::FilePath platform_path;
       scoped_refptr<webkit_blob::ShareableFileReference> file_ref;
       content::BrowserThread::PostTask(
           content::BrowserThread::IO,
           FROM_HERE,
-          base::Bind(callback, base::PLATFORM_FILE_ERROR_IO, file_info,
+          base::Bind(callback, base::File::FILE_ERROR_IO, file_info,
                      platform_path, file_ref));
     }
     return;

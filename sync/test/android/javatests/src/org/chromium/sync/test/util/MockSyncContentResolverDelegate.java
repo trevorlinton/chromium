@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit;
 
 
 /**
- * Mock implementation of the SyncContentResolverWrapper.
+ * Mock implementation of the {@link SyncContentResolverDelegate}.
  *
  * This implementation only supports status change listeners for the type
  * SYNC_OBSERVER_TYPE_SETTINGS.

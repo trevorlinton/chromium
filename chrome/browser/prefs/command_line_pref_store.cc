@@ -57,16 +57,12 @@ const CommandLinePrefStore::BooleanSwitchToPreferenceMapEntry
       { switches::kDisableTLSChannelID, prefs::kEnableOriginBoundCerts, false },
       { switches::kDisableSSLFalseStart, prefs::kDisableSSLRecordSplitting,
           true },
-      { switches::kEnableUnrestrictedSSL3Fallback,
-          prefs::kEnableUnrestrictedSSL3Fallback, true },
-      { switches::kEnableMemoryInfo, prefs::kEnableMemoryInfo, true },
 #if defined(GOOGLE_CHROME_BUILD)
       { switches::kDisablePrintPreview, prefs::kPrintPreviewDisabled, true },
 #else
       { switches::kEnablePrintPreview, prefs::kPrintPreviewDisabled, false },
 #endif
 #if defined(OS_CHROMEOS)
-      { chromeos::switches::kDisableDrive, prefs::kDisableDrive, true },
       { chromeos::switches::kEnableTouchpadThreeFingerClick,
           prefs::kEnableTouchpadThreeFingerClick, true },
 #endif
@@ -78,9 +74,6 @@ const CommandLinePrefStore::IntegerSwitchToPreferenceMapEntry
     CommandLinePrefStore::integer_switch_map_[] = {
       { switches::kDiskCacheSize, prefs::kDiskCacheSize },
       { switches::kMediaCacheSize, prefs::kMediaCacheSize },
-#if defined(OS_CHROMEOS)
-      { chromeos::switches::kDeviceRegistered, prefs::kDeviceRegistered },
-#endif
     };
 
 CommandLinePrefStore::CommandLinePrefStore(const CommandLine* command_line)
@@ -111,7 +104,7 @@ void CommandLinePrefStore::ApplySimpleSwitches() {
   // Look for each switch we know about and set its preference accordingly.
   for (size_t i = 0; i < arraysize(string_switch_map_); ++i) {
     if (command_line_->HasSwitch(string_switch_map_[i].switch_name)) {
-      Value* value = Value::CreateStringValue(command_line_->
+      base::Value* value = base::Value::CreateStringValue(command_line_->
           GetSwitchValueASCII(string_switch_map_[i].switch_name));
       SetValue(string_switch_map_[i].preference_path, value);
     }
@@ -128,14 +121,14 @@ void CommandLinePrefStore::ApplySimpleSwitches() {
                    << " can not be converted to integer, ignoring!";
         continue;
       }
-      Value* value = Value::CreateIntegerValue(int_value);
+      base::Value* value = base::Value::CreateIntegerValue(int_value);
       SetValue(integer_switch_map_[i].preference_path, value);
     }
   }
 
   for (size_t i = 0; i < arraysize(boolean_switch_map_); ++i) {
     if (command_line_->HasSwitch(boolean_switch_map_[i].switch_name)) {
-      Value* value = Value::CreateBooleanValue(
+      base::Value* value = base::Value::CreateBooleanValue(
           boolean_switch_map_[i].set_value);
       SetValue(boolean_switch_map_[i].preference_path, value);
     }
@@ -183,7 +176,7 @@ void CommandLinePrefStore::ApplySSLSwitches() {
 void CommandLinePrefStore::ApplyBackgroundModeSwitches() {
   if (command_line_->HasSwitch(switches::kDisableBackgroundMode) ||
       command_line_->HasSwitch(switches::kDisableExtensions)) {
-    Value* value = Value::CreateBooleanValue(false);
+    base::Value* value = base::Value::CreateBooleanValue(false);
     SetValue(prefs::kBackgroundModeEnabled, value);
   }
 }

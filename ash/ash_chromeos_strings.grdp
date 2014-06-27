@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- ChromeOS-specific strings (included from ash_strings.grd).
-     Everything in this file is wrapped in <if expr="pp_ifdef('chromeos')">. -->
+     Everything in this file is wrapped in <if expr="chromeos">. -->
 <grit-part>
 
   <!-- Status tray charging strings. -->
@@ -12,6 +12,10 @@
   </message>
   <message name="IDS_ASH_STATUS_TRAY_LOW_POWER_CHARGER_MESSAGE_SHORT" desc="The message body of a notification indicating that a low-current USB charger has been connected, short version.">
     Your Chromebook may not charge while it is turned on.
+  </message>
+  
+  <message name="IDS_CHARGER_REPLACEMENT_ACCESSIBILTY_NOTIFICATION" desc="The notification string used in accessibility to tell user to contact Google for replacing the possible bad charger.">
+    You may have a bad charger. If you live in the US, please call 866-628-1371 in order to receive help and a replacement. If you live in the UK, please call 0800-026-0613. If you live in Ireland, please call 1-800-832-664. If you live in Canada, please call 866-628-1372. If you live in Australia, please call 1-800-067-460.
   </message>
   
   <!-- Status Tray Network strings -->
@@ -120,7 +124,31 @@
   <message name="IDS_ASH_STATUS_TRAY_CELLULAR_SCANNING" desc="Message when scanning for cellular networks">
     Searching for cellular networks...
   </message>
-
+  <message name="IDS_ASH_STATUS_TRAY_BLUETOOTH_DISCOVERABLE" desc="Notification shown when a Bluetooth adapter is discoverable.">
+    Your computer is discoverable to nearby Bluetooth devices and will appear as "<ph name="NAME">$1<ex>Chromebook</ex></ph>" with address <ph name="ADDRESS">$2<ex>01:23:45:67:89:0A</ex></ph>
+  </message>
+  <message name="IDS_ASH_STATUS_TRAY_BLUETOOTH_DISPLAY_PINCODE" desc="Bluetooth pairing message typically shown on a request from a 2.0 device that has a keyboard.">
+    Bluetooth device "<ph name="DEVICE_NAME">$1<ex>Nexus S</ex></ph>" would like permission to pair. Please enter this PIN code on that device: <ph name="PINCODE">$2<ex>123456</ex></ph>
+  </message>
+  <message name="IDS_ASH_STATUS_TRAY_BLUETOOTH_DISPLAY_PASSKEY" desc="Bluetooth pairing message typically shown on a request from a device that has a keyboard.">
+    Bluetooth device "<ph name="DEVICE_NAME">$1<ex>Nexus S</ex></ph>" would like permission to pair. Please enter this passkey on that device: <ph name="PASSKEY">$2<ex>123456</ex></ph>
+  </message>
+  <message name="IDS_ASH_STATUS_TRAY_BLUETOOTH_CONFIRM_PASSKEY" desc="Bluetooth pairing message typically shown on a request from a device that has a display.">
+    Bluetooth device "<ph name="DEVICE_NAME">$1<ex>Nexus S</ex></ph>" would like permission to pair. Before accepting, please confirm that this passkey is shown on that device: <ph name="PASSKEY">$2<ex>123456</ex></ph>
+  </message>
+  <message name="IDS_ASH_STATUS_TRAY_BLUETOOTH_AUTHORIZE_PAIRING" desc="Bluetooth pairing message typically shown on a request from a device without input or display.">
+    Bluetooth device "<ph name="DEVICE_NAME">$1<ex>Nexus S</ex></ph>" would like permission to pair.
+  </message>
+  <message name="IDS_ASH_STATUS_TRAY_BLUETOOTH_ACCEPT" desc="Message on button to accept Bluetooth pairing request.">
+    Accept
+  </message>
+  <message name="IDS_ASH_STATUS_TRAY_BLUETOOTH_REJECT" desc="Message on button to reject Bluetooth pairing request.">
+    Reject
+  </message>
+  <message name="IDS_ASH_STATUS_TRAY_BLUETOOTH_PAIRED" desc="Notification shown when a new device is paired with the computer.">
+    Bluetooth device "<ph name="DEVICE_NAME">$1<ex>Nexus S</ex></ph>" has been paired and is now available to all users. You may remove this pairing using Settings.
+  </message>
+ 
   <!-- Other Network UI strings -->
   <message name="IDS_NETWORK_CONNECTION_ERROR_TITLE" desc="Title for network connection error notification">
     Network Connection Error
@@ -133,7 +161,7 @@ Failed to connect to '<ph name="name">$1<ex>GoogleGuest</ex></ph>': <ph name="de
 Server message: <ph name="server_msg">$3<ex>Incorrect password</ex></ph>
   </message>
   <message name="IDS_NETWORK_CONNECTION_ERROR_MESSAGE_NO_NAME" desc="Message for network connection error where the network name is unavailable">
-    Failed to connect to network: <ph name="details">$2<ex>Unrecognized error</ex></ph>
+    Failed to connect to network: <ph name="details">$1<ex>Unrecognized error</ex></ph>
   </message>
   <message name="IDS_NETWORK_OUT_OF_CREDITS_TITLE" desc="Title for network out of data error notification">
     Network Connection Error
@@ -214,8 +242,8 @@ Server message: <ph name="server_msg">$3<ex>Incorrect password</ex></ph>
   <message name="IDS_CHROMEOS_NETWORK_ERROR_CONNECT_FAILED" desc="Network error details in notifications: CONNECT_FAILED">
     Connect failed
   </message>
-  <message name="IDS_CHROMEOS_NETWORK_ERROR_BAD_PASSPHRASE" desc="Network error details in notifications: BAD_PASSPHRASE">
-    Bad passphrase
+  <message name="IDS_CHROMEOS_NETWORK_ERROR_BAD_PASSPHRASE" desc="Network error details in notifications: BAD_PASSPHRASE. Error when a bad wifi password/passphrase is entered.">
+    Bad password
   </message>
   <message name="IDS_CHROMEOS_NETWORK_ERROR_BAD_WEPKEY" desc="Network error details in notifications: BAD_WEPKEY">
     Bad WEP key
@@ -264,6 +292,9 @@ Server message: <ph name="server_msg">$3<ex>Incorrect password</ex></ph>
   </message>
   <message name="IDS_CHROMEOS_NETWORK_ERROR_CONFIGURE_FAILED" desc="Network error details in notifications: Configuration error">
     Failed to configure network
+  </message>
+  <message name="IDS_CHROMEOS_NETWORK_ERROR_CERTIFICATES_NOT_LOADED" desc="Network error details in notifications: Certificates not loaded">
+    Certificates not loaded
   </message>
   <message name="IDS_CHROMEOS_NETWORK_ERROR_UNRECOGNIZED" desc="Network error details in notifications: Unrecognized">
     Unrecognized error

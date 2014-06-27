@@ -147,17 +147,44 @@ void AutocompleteResult::SortAndCull(const AutocompleteInput& input,
   for (ACMatches::iterator i(matches_.begin()); i != matches_.end(); ++i)
     i->ComputeStrippedDestinationURL(profile);
 
-  // Remove duplicates.
+  // Sort matches such that duplicate matches are consecutive.
   std::sort(matches_.begin(), matches_.end(),
             &AutocompleteMatch::DestinationSortFunc);
+
+  // Set duplicate_matches for the first match before erasing duplicate matches.
+  for (ACMatches::iterator i(matches_.begin()); i != matches_.end(); ++i) {
+    for (int j = 1; (i + j != matches_.end()) &&
+         AutocompleteMatch::DestinationsEqual(*i, *(i + j)); ++j) {
+      AutocompleteMatch& dup_match(*(i + j));
+      i->duplicate_matches.insert(i->duplicate_matches.end(),
+                                  dup_match.duplicate_matches.begin(),
+                                  dup_match.duplicate_matches.end());
+      dup_match.duplicate_matches.clear();
+      i->duplicate_matches.push_back(dup_match);
+    }
+  }
+
+  // Erase duplicate matches.
   matches_.erase(std::unique(matches_.begin(), matches_.end(),
                              &AutocompleteMatch::DestinationsEqual),
                  matches_.end());
 
+  // Find the top match before possibly applying demotions.
+  if (!matches_.empty())
+    std::partial_sort(matches_.begin(), matches_.begin() +  1, matches_.end(),
+                      &AutocompleteMatch::MoreRelevant);
+  // Don't demote the top match if applicable.
+  OmniboxFieldTrial::UndemotableTopMatchTypes undemotable_top_types =
+      OmniboxFieldTrial::GetUndemotableTopTypes(
+          input.current_page_classification());
+  const bool preserve_top_match = !matches_.empty() &&
+      (undemotable_top_types.count(matches_.begin()->type) != 0);
+
   // Sort and trim to the most relevant kMaxMatches matches.
   size_t max_num_matches = std::min(kMaxMatches, matches_.size());
   CompareWithDemoteByType comparing_object(input.current_page_classification());
-  std::sort(matches_.begin(), matches_.end(), comparing_object);
+  std::sort(matches_.begin() + (preserve_top_match ? 1 : 0), matches_.end(),
+            comparing_object);
   if (!matches_.empty() && !matches_.begin()->allowed_to_be_default_match &&
       OmniboxFieldTrial::ReorderForLegalDefaultMatch(
           input.current_page_classification())) {
@@ -182,18 +209,27 @@ void AutocompleteResult::SortAndCull(const AutocompleteInput& input,
   default_match_ = matches_.begin();
 
   if (default_match_ != matches_.end()) {
-    const string16 debug_info = ASCIIToUTF16("fill_into_edit=") +
-        default_match_->fill_into_edit + ASCIIToUTF16(", provider=") +
-        ((default_match_->provider != NULL) ?
-         ASCIIToUTF16(default_match_->provider->GetName()) : string16()) +
-        ASCIIToUTF16(", input=") + input.text();
+    const base::string16 debug_info =
+        base::ASCIIToUTF16("fill_into_edit=") +
+        default_match_->fill_into_edit +
+        base::ASCIIToUTF16(", provider=") +
+        ((default_match_->provider != NULL)
+            ? base::ASCIIToUTF16(default_match_->provider->GetName())
+            : base::string16()) +
+        base::ASCIIToUTF16(", input=") +
+        input.text();
     DCHECK(default_match_->allowed_to_be_default_match) << debug_info;
-    // We shouldn't get query matches for URL inputs, or non-query matches
-    // for query inputs.
-    if (AutocompleteMatch::IsSearchType(default_match_->type)) {
-      DCHECK_NE(AutocompleteInput::URL, input.type()) << debug_info;
-    } else {
-      DCHECK_NE(AutocompleteInput::FORCED_QUERY, input.type()) << debug_info;
+    // If the default match is valid (i.e., not a prompt/placeholder), make
+    // sure the type of destination is what the user would expect given the
+    // input.
+    if (default_match_->destination_url.is_valid()) {
+      // We shouldn't get query matches for URL inputs, or non-query matches
+      // for query inputs.
+      if (AutocompleteMatch::IsSearchType(default_match_->type)) {
+        DCHECK_NE(AutocompleteInput::URL, input.type()) << debug_info;
+      } else {
+        DCHECK_NE(AutocompleteInput::FORCED_QUERY, input.type()) << debug_info;
+      }
     }
   }
 
@@ -246,20 +282,21 @@ AutocompleteMatch* AutocompleteResult::match_at(size_t index) {
 }
 
 bool AutocompleteResult::ShouldHideTopMatch() const {
-  // Gate on our field trial flag.
-  if (!chrome::ShouldHideTopVerbatimMatch())
-    return false;
+  return chrome::ShouldHideTopVerbatimMatch() &&
+      TopMatchIsStandaloneVerbatimMatch();
+}
 
-  // If we don't have a verbatim first match, show everything.
+bool AutocompleteResult::TopMatchIsStandaloneVerbatimMatch() const {
   if (empty() || !match_at(0).IsVerbatimType())
     return false;
 
-  // If the verbatim first match is followed by another verbatim match, don't
-  // hide anything, lest we cause user confusion.
-  if ((size() > 1) && match_at(1).IsVerbatimType())
-    return false;
-
-  // Otherwise, it's safe to hide the verbatim first match.
+  // Skip any copied matches, under the assumption that they'll be expired and
+  // disappear.  We don't want this disappearance to cause the visibility of the
+  // top match to change.
+  for (const_iterator i(begin() + 1); i != end(); ++i) {
+    if (!i->from_previous)
+      return !i->IsVerbatimType();
+  }
   return true;
 }
 
@@ -316,6 +353,8 @@ void AutocompleteResult::AddMatch(
   DCHECK_EQ(AutocompleteMatch::SanitizeString(match.contents), match.contents);
   DCHECK_EQ(AutocompleteMatch::SanitizeString(match.description),
             match.description);
+  // GetUndemotableTopTypes() is not used here because it's done in
+  // SortAndCull(), and we depend on SortAndCull() to be called afterwards.
   CompareWithDemoteByType comparing_object(page_classification);
   ACMatches::iterator insertion_point =
       std::upper_bound(begin(), end(), match, comparing_object);

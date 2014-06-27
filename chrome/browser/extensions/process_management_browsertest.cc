@@ -4,10 +4,7 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/extension_apitest.h"
-#include "chrome/browser/extensions/extension_host.h"
-#include "chrome/browser/extensions/extension_process_manager.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
@@ -18,6 +15,9 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/extension_host.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/process_manager.h"
 #include "extensions/common/switches.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -140,7 +140,7 @@ IN_PROC_BROWSER_TEST_F(ProcessManagementTest, MAYBE_ProcessOverflow) {
       browser()->tab_strip_model()->GetWebContentsAt(8)->GetRenderProcessHost();
 
   // Get extension processes.
-  ExtensionProcessManager* process_manager =
+  extensions::ProcessManager* process_manager =
       extensions::ExtensionSystem::Get(browser()->profile())->
           process_manager();
   content::RenderProcessHost* extension1_host =
@@ -232,9 +232,9 @@ IN_PROC_BROWSER_TEST_F(ProcessManagementTest, MAYBE_ExtensionProcessBalancing) {
 
   std::set<int> process_ids;
   Profile* profile = browser()->profile();
-  ExtensionProcessManager* epm = extensions::ExtensionSystem::Get(profile)->
+  extensions::ProcessManager* epm = extensions::ExtensionSystem::Get(profile)->
       process_manager();
-  for (ExtensionProcessManager::const_iterator iter =
+  for (extensions::ProcessManager::const_iterator iter =
            epm->background_hosts().begin();
        iter != epm->background_hosts().end(); ++iter) {
     process_ids.insert((*iter)->render_process_host()->GetID());
@@ -243,9 +243,8 @@ IN_PROC_BROWSER_TEST_F(ProcessManagementTest, MAYBE_ExtensionProcessBalancing) {
   // We've loaded 5 extensions with background pages, 1 extension without
   // background page, and one isolated app. We expect only 2 unique processes
   // hosting those extensions.
-  ExtensionService* service =
-      extensions::ExtensionSystem::Get(profile)->extension_service();
+  extensions::ProcessMap* process_map = extensions::ProcessMap::Get(profile);
 
-  EXPECT_GE((size_t) 6, service->process_map()->size());
+  EXPECT_GE((size_t) 6, process_map->size());
   EXPECT_EQ((size_t) 2, process_ids.size());
 }

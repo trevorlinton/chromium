@@ -11,17 +11,17 @@
 #include "base/prefs/scoped_user_pref_update.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/browser/policy/configuration_policy_pref_store.h"
-#include "chrome/browser/policy/mock_configuration_policy_provider.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/prefs/command_line_pref_store.h"
-#include "chrome/browser/prefs/pref_service_mock_builder.h"
+#include "chrome/browser/prefs/pref_service_mock_factory.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_pref_service_syncable.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/policy/core/browser/configuration_policy_pref_store.h"
+#include "components/policy/core/common/mock_configuration_policy_provider.h"
 #include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/test/web_contents_tester.h"
 #include "ui/base/test/data/resource.h"
@@ -37,9 +37,9 @@ TEST(ChromePrefServiceTest, UpdateCommandLinePrefStore) {
   const PrefService::Preference* pref =
       prefs.FindPreference(prefs::kCloudPrintProxyEnabled);
   ASSERT_TRUE(pref);
-  const Value* value = pref->GetValue();
+  const base::Value* value = pref->GetValue();
   ASSERT_TRUE(value);
-  EXPECT_EQ(Value::TYPE_BOOLEAN, value->GetType());
+  EXPECT_EQ(base::Value::TYPE_BOOLEAN, value->GetType());
   bool actual_bool_value = true;
   EXPECT_TRUE(value->GetAsBoolean(&actual_bool_value));
   EXPECT_FALSE(actual_bool_value);
@@ -54,7 +54,7 @@ TEST(ChromePrefServiceTest, UpdateCommandLinePrefStore) {
   ASSERT_TRUE(pref);
   value = pref->GetValue();
   ASSERT_TRUE(value);
-  EXPECT_EQ(Value::TYPE_BOOLEAN, value->GetType());
+  EXPECT_EQ(base::Value::TYPE_BOOLEAN, value->GetType());
   actual_bool_value = false;
   EXPECT_TRUE(value->GetAsBoolean(&actual_bool_value));
   EXPECT_TRUE(actual_bool_value);
@@ -88,59 +88,6 @@ class ChromePrefServiceUserFilePrefsTest : public testing::Test {
   base::MessageLoop message_loop_;
 };
 
-// Verifies that ListValue and DictionaryValue pref with non emtpy default
-// preserves its empty value.
-TEST_F(ChromePrefServiceUserFilePrefsTest, PreserveEmptyValue) {
-  base::FilePath pref_file = temp_dir_.path().AppendASCII("write.json");
-
-  ASSERT_TRUE(base::CopyFile(
-      data_dir_.AppendASCII("read.need_empty_value.json"),
-      pref_file));
-
-  PrefServiceMockBuilder builder;
-  builder.WithUserFilePrefs(pref_file,
-                            message_loop_.message_loop_proxy().get());
-  scoped_refptr<user_prefs::PrefRegistrySyncable> registry(
-      new user_prefs::PrefRegistrySyncable);
-  scoped_ptr<PrefServiceSyncable> prefs(builder.CreateSyncable(registry.get()));
-
-  // Register testing prefs.
-  registry->RegisterListPref("list",
-                             user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
-  registry->RegisterDictionaryPref(
-      "dict",
-      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
-
-  base::ListValue* non_empty_list = new base::ListValue;
-  non_empty_list->Append(base::Value::CreateStringValue("test"));
-  registry->RegisterListPref("list_needs_empty_value",
-                             non_empty_list,
-                             user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
-
-  base::DictionaryValue* non_empty_dict = new base::DictionaryValue;
-  non_empty_dict->SetString("dummy", "whatever");
-  registry->RegisterDictionaryPref(
-      "dict_needs_empty_value",
-      non_empty_dict,
-      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
-
-  // Set all testing prefs to empty.
-  ClearListValue(prefs.get(), "list");
-  ClearListValue(prefs.get(), "list_needs_empty_value");
-  ClearDictionaryValue(prefs.get(), "dict");
-  ClearDictionaryValue(prefs.get(), "dict_needs_empty_value");
-
-  // Write to file.
-  prefs->CommitPendingWrite();
-  message_loop_.RunUntilIdle();
-
-  // Compare to expected output.
-  base::FilePath golden_output_file =
-      data_dir_.AppendASCII("write.golden.need_empty_value.json");
-  ASSERT_TRUE(base::PathExists(golden_output_file));
-  EXPECT_TRUE(base::TextContentsEqual(golden_output_file, pref_file));
-}
-
 class ChromePrefServiceWebKitPrefs : public ChromeRenderViewHostTestHarness {
  protected:
   virtual void SetUp() {
@@ -154,18 +101,18 @@ class ChromePrefServiceWebKitPrefs : public ChromeRenderViewHostTestHarness {
         profile()->GetTestingPrefService();
 #if defined(TOOLKIT_GTK)
     pref_services->SetUserPref(prefs::kUsesSystemTheme,
-                               Value::CreateBooleanValue(false));
+                               base::Value::CreateBooleanValue(false));
 #endif
     pref_services->SetUserPref(prefs::kDefaultCharset,
-                               Value::CreateStringValue("utf8"));
+                               base::Value::CreateStringValue("utf8"));
     pref_services->SetUserPref(prefs::kWebKitDefaultFontSize,
-                               Value::CreateIntegerValue(20));
+                               base::Value::CreateIntegerValue(20));
     pref_services->SetUserPref(prefs::kWebKitTextAreasAreResizable,
-                               Value::CreateBooleanValue(false));
+                               base::Value::CreateBooleanValue(false));
     pref_services->SetUserPref(prefs::kWebKitUsesUniversalDetector,
-                               Value::CreateBooleanValue(true));
+                               base::Value::CreateBooleanValue(true));
     pref_services->SetUserPref("webkit.webprefs.foo",
-                               Value::CreateStringValue("bar"));
+                               base::Value::CreateStringValue("bar"));
   }
 };
 
@@ -189,7 +136,7 @@ TEST_F(ChromePrefServiceWebKitPrefs, PrefsCopied) {
 #else
   const char kDefaultFont[] = "Times New Roman";
 #endif
-  EXPECT_EQ(ASCIIToUTF16(kDefaultFont),
+  EXPECT_EQ(base::ASCIIToUTF16(kDefaultFont),
             webkit_prefs.standard_font_family_map[prefs::kWebKitCommonScript]);
   EXPECT_TRUE(webkit_prefs.javascript_enabled);
 }

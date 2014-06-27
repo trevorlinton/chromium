@@ -135,10 +135,10 @@ class FirefoxObserver : public ProfileWriter,
     EXPECT_EQ(p.origin, form.origin.spec());
     EXPECT_EQ(p.realm, form.signon_realm);
     EXPECT_EQ(p.action, form.action.spec());
-    EXPECT_EQ(WideToUTF16(p.username_element), form.username_element);
-    EXPECT_EQ(WideToUTF16(p.username), form.username_value);
-    EXPECT_EQ(WideToUTF16(p.password_element), form.password_element);
-    EXPECT_EQ(WideToUTF16(p.password), form.password_value);
+    EXPECT_EQ(base::WideToUTF16(p.username_element), form.username_element);
+    EXPECT_EQ(base::WideToUTF16(p.username), form.username_value);
+    EXPECT_EQ(base::WideToUTF16(p.password_element), form.password_element);
+    EXPECT_EQ(base::WideToUTF16(p.password), form.password_value);
     EXPECT_EQ(p.blacklisted, form.blacklisted_by_user);
     ++password_count_;
   }
@@ -147,18 +147,19 @@ class FirefoxObserver : public ProfileWriter,
                               history::VisitSource visit_source) OVERRIDE {
     ASSERT_EQ(3U, page.size());
     EXPECT_EQ("http://www.google.com/", page[0].url().spec());
-    EXPECT_EQ(ASCIIToUTF16("Google"), page[0].title());
+    EXPECT_EQ(base::ASCIIToUTF16("Google"), page[0].title());
     EXPECT_EQ("http://www.google.com/", page[1].url().spec());
-    EXPECT_EQ(ASCIIToUTF16("Google"), page[1].title());
+    EXPECT_EQ(base::ASCIIToUTF16("Google"), page[1].title());
     EXPECT_EQ("http://www.cs.unc.edu/~jbs/resources/perl/perl-cgi/programs/"
               "form1-POST.html", page[2].url().spec());
-    EXPECT_EQ(ASCIIToUTF16("example form (POST)"), page[2].title());
+    EXPECT_EQ(base::ASCIIToUTF16("example form (POST)"), page[2].title());
     EXPECT_EQ(history::SOURCE_FIREFOX_IMPORTED, visit_source);
     ++history_count_;
   }
 
-  virtual void AddBookmarks(const std::vector<ImportedBookmarkEntry>& bookmarks,
-                            const string16& top_level_folder_name) OVERRIDE {
+  virtual void AddBookmarks(
+      const std::vector<ImportedBookmarkEntry>& bookmarks,
+      const base::string16& top_level_folder_name) OVERRIDE {
     ASSERT_LE(bookmark_count_ + bookmarks.size(), arraysize(kFirefoxBookmarks));
     // Importer should import the FF favorites the same as the list, in the same
     // order.
@@ -176,10 +177,10 @@ class FirefoxObserver : public ProfileWriter,
       // The order might not be deterministic, look in the expected list for
       // that template URL.
       bool found = false;
-      string16 keyword = template_urls[i]->keyword();
+      base::string16 keyword = template_urls[i]->keyword();
       for (size_t j = 0; j < arraysize(kFirefoxKeywords); ++j) {
         if (template_urls[i]->keyword() ==
-                WideToUTF16Hack(kFirefoxKeywords[j].keyword)) {
+                base::WideToUTF16Hack(kFirefoxKeywords[j].keyword)) {
           EXPECT_EQ(kFirefoxKeywords[j].url, template_urls[i]->url());
           found = true;
           break;
@@ -216,10 +217,10 @@ class FirefoxProfileImporterBrowserTest : public InProcessBrowserTest {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     base::FilePath test_path = temp_dir_.path().AppendASCII("ImporterTest");
     base::DeleteFile(test_path, true);
-    file_util::CreateDirectory(test_path);
+    base::CreateDirectory(test_path);
     profile_path_ = test_path.AppendASCII("profile");
     app_path_ = test_path.AppendASCII("app");
-    file_util::CreateDirectory(app_path_);
+    base::CreateDirectory(app_path_);
 
     // This will launch the browser test and thus needs to happen last.
     InProcessBrowserTest::SetUp();
@@ -240,7 +241,7 @@ class FirefoxProfileImporterBrowserTest : public InProcessBrowserTest {
 
     base::FilePath search_engine_path = app_path_;
     search_engine_path = search_engine_path.AppendASCII("searchplugins");
-    file_util::CreateDirectory(search_engine_path);
+    base::CreateDirectory(search_engine_path);
     if (import_search_plugins) {
       ASSERT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &data_path));
       data_path = data_path.AppendASCII("firefox3_searchplugins");

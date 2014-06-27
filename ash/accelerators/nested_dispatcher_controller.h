@@ -6,9 +6,9 @@
 #define ASH_ACCELERATORS_NESTED_DISPATCHER_CONTROLLER_H_
 
 #include "ash/ash_export.h"
+#include "base/callback.h"
 #include "base/message_loop/message_loop.h"
-#include "ui/aura/client/dispatcher_client.h"
-#include "ui/aura/window.h"
+#include "ui/wm/public/dispatcher_client.h"
 
 namespace ash {
 
@@ -22,11 +22,14 @@ class ASH_EXPORT NestedDispatcherController
   NestedDispatcherController();
   virtual ~NestedDispatcherController();
 
-  virtual void RunWithDispatcher(base::MessageLoop::Dispatcher* dispatcher,
-                                 aura::Window* associated_window,
-                                 bool nestable_tasks_allowed) OVERRIDE;
+  // aura::client::DispatcherClient:
+  virtual void RunWithDispatcher(
+      base::MessagePumpDispatcher* dispatcher) OVERRIDE;
+  virtual void QuitNestedMessageLoop() OVERRIDE;
 
  private:
+  base::Closure quit_closure_;
+
   DISALLOW_COPY_AND_ASSIGN(NestedDispatcherController);
 };
 

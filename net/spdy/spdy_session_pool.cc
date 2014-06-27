@@ -32,7 +32,6 @@ SpdySessionPool::SpdySessionPool(
     SSLConfigService* ssl_config_service,
     const base::WeakPtr<HttpServerProperties>& http_server_properties,
     bool force_single_domain,
-    bool enable_ip_pooling,
     bool enable_compression,
     bool enable_ping_based_connection_checking,
     NextProto default_protocol,
@@ -47,7 +46,6 @@ SpdySessionPool::SpdySessionPool(
       verify_domain_authentication_(true),
       enable_sending_initial_data_(true),
       force_single_domain_(force_single_domain),
-      enable_ip_pooling_(enable_ip_pooling),
       enable_compression_(enable_compression),
       enable_ping_based_connection_checking_(
           enable_ping_based_connection_checking),
@@ -79,12 +77,11 @@ SpdySessionPool::~SpdySessionPool() {
   CertDatabase::GetInstance()->RemoveObserver(this);
 }
 
-net::Error SpdySessionPool::CreateAvailableSessionFromSocket(
+base::WeakPtr<SpdySession> SpdySessionPool::CreateAvailableSessionFromSocket(
     const SpdySessionKey& key,
     scoped_ptr<ClientSocketHandle> connection,
     const BoundNetLog& net_log,
     int certificate_error_code,
-    base::WeakPtr<SpdySession>* available_session,
     bool is_secure) {
   DCHECK_GE(default_protocol_, kProtoSPDYMinimumVersion);
   DCHECK_LE(default_protocol_, kProtoSPDYMaximumVersion);
@@ -107,35 +104,29 @@ net::Error SpdySessionPool::CreateAvailableSessionFromSocket(
                       trusted_spdy_proxy_,
                       net_log.net_log()));
 
-  Error error =  new_session->InitializeWithSocket(
+  new_session->InitializeWithSocket(
       connection.Pass(), this, is_secure, certificate_error_code);
-  DCHECK_NE(error, ERR_IO_PENDING);
 
-  if (error != OK) {
-    available_session->reset();
-    return error;
-  }
-
-  *available_session = new_session->GetWeakPtr();
+  base::WeakPtr<SpdySession> available_session = new_session->GetWeakPtr();
   sessions_.insert(new_session.release());
-  MapKeyToAvailableSession(key, *available_session);
+  MapKeyToAvailableSession(key, available_session);
 
   net_log.AddEvent(
       NetLog::TYPE_SPDY_SESSION_POOL_IMPORTED_SESSION_FROM_SOCKET,
-      (*available_session)->net_log().source().ToEventParametersCallback());
+      available_session->net_log().source().ToEventParametersCallback());
 
   // Look up the IP address for this session so that we can match
   // future sessions (potentially to different domains) which can
   // potentially be pooled with this one. Because GetPeerAddress()
   // reports the proxy's address instead of the origin server, check
   // to see if this is a direct connection.
-  if (enable_ip_pooling_  && key.proxy_server().is_direct()) {
+  if (key.proxy_server().is_direct()) {
     IPEndPoint address;
-    if ((*available_session)->GetPeerAddress(&address) == OK)
+    if (available_session->GetPeerAddress(&address) == OK)
       aliases_[address] = key;
   }
 
-  return error;
+  return available_session;
 }
 
 base::WeakPtr<SpdySession> SpdySessionPool::FindAvailableSession(
@@ -150,9 +141,6 @@ base::WeakPtr<SpdySession> SpdySessionPool::FindAvailableSession(
         it->second->net_log().source().ToEventParametersCallback());
     return it->second;
   }
-
-  if (!enable_ip_pooling_)
-    return base::WeakPtr<SpdySession>();
 
   // Look up the key's from the resolver's cache.
   net::HostResolver::RequestInfo resolve_info(key.host_port_pair());
@@ -278,7 +266,24 @@ base::Value* SpdySessionPool::SpdySessionPoolInfoToValue() const {
 }
 
 void SpdySessionPool::OnIPAddressChanged() {
-  CloseCurrentSessions(ERR_NETWORK_CHANGED);
+  WeakSessionList current_sessions = GetCurrentSessions();
+  for (WeakSessionList::const_iterator it = current_sessions.begin();
+       it != current_sessions.end(); ++it) {
+    if (!*it)
+      continue;
+
+    // For OSs that terminate TCP connections upon relevant network changes
+    // there is no need to explicitly close SpdySessions, instead simply mark
+    // the sessions as deprecated so they aren't reused.
+#if defined(OS_ANDROID) || defined(OS_WIN) || defined(OS_IOS)
+    (*it)->MakeUnavailable();
+#else
+    (*it)->CloseSessionOnError(ERR_NETWORK_CHANGED,
+                               "Closing current sessions.");
+    DCHECK(!*it);
+#endif  // defined(OS_ANDROID) || defined(OS_WIN) || defined(OS_IOS)
+    DCHECK(!IsSessionAvailable(*it));
+  }
   http_server_properties_->ClearAllSpdySettings();
 }
 
@@ -287,7 +292,7 @@ void SpdySessionPool::OnSSLConfigChanged() {
 }
 
 void SpdySessionPool::OnCertAdded(const X509Certificate* cert) {
-  CloseCurrentSessions(ERR_NETWORK_CHANGED);
+  CloseCurrentSessions(ERR_CERT_DATABASE_CHANGED);
 }
 
 void SpdySessionPool::OnCACertChanged(const X509Certificate* cert) {
@@ -295,7 +300,7 @@ void SpdySessionPool::OnCACertChanged(const X509Certificate* cert) {
   // reduced. CloseCurrentSessions now because OnCACertChanged does not
   // tell us this.
   // See comments in ClientSocketPoolManager::OnCACertChanged.
-  CloseCurrentSessions(ERR_NETWORK_CHANGED);
+  CloseCurrentSessions(ERR_CERT_DATABASE_CHANGED);
 }
 
 bool SpdySessionPool::IsSessionAvailable(

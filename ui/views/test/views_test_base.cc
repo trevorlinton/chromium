@@ -7,13 +7,12 @@
 #include "base/run_loop.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/ime/input_method_initializer.h"
-
-#if defined(USE_AURA)
 #include "ui/aura/env.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/test/aura_test_helper.h"
-#include "ui/views/corewm/capture_controller.h"
-#endif
+#include "ui/aura/window_event_dispatcher.h"
+#include "ui/compositor/test/context_factories_for_test.h"
+#include "ui/wm/core/capture_controller.h"
+#include "ui/wm/core/wm_state.h"
 
 namespace views {
 
@@ -26,7 +25,7 @@ ViewsTestBase::~ViewsTestBase() {
   CHECK(setup_called_)
       << "You have overridden SetUp but never called super class's SetUp";
   CHECK(teardown_called_)
-      << "You have overrideen TearDown but never called super class's TearDown";
+      << "You have overridden TearDown but never called super class's TearDown";
 }
 
 void ViewsTestBase::SetUp() {
@@ -34,10 +33,13 @@ void ViewsTestBase::SetUp() {
   setup_called_ = true;
   if (!views_delegate_.get())
     views_delegate_.reset(new TestViewsDelegate());
-#if defined(USE_AURA)
+  // The ContextFactory must exist before any Compositors are created.
+  bool enable_pixel_output = false;
+  ui::InitializeContextFactoryForTests(enable_pixel_output);
+
   aura_test_helper_.reset(new aura::test::AuraTestHelper(&message_loop_));
   aura_test_helper_->SetUp();
-#endif  // USE_AURA
+  wm_state_.reset(new ::wm::WMState);
   ui::InitializeInputMethodForTesting();
 }
 
@@ -51,35 +53,34 @@ void ViewsTestBase::TearDown() {
   views_delegate_.reset();
   testing::Test::TearDown();
   ui::ShutdownInputMethodForTesting();
-#if defined(USE_AURA)
   aura_test_helper_->TearDown();
-  CHECK(!corewm::ScopedCaptureClient::IsActive());
-#endif  // USE_AURA
+  ui::TerminateContextFactoryForTests();
+  wm_state_.reset();
+  CHECK(!wm::ScopedCaptureClient::IsActive());
 }
 
 void ViewsTestBase::RunPendingMessages() {
   base::RunLoop run_loop;
-#if defined(USE_AURA)
-  run_loop.set_dispatcher(aura::Env::GetInstance()->GetDispatcher());
-#endif
   run_loop.RunUntilIdle();
 }
 
 Widget::InitParams ViewsTestBase::CreateParams(
     Widget::InitParams::Type type) {
   Widget::InitParams params(type);
-#if defined(USE_AURA)
   params.context = aura_test_helper_->root_window();
-#endif
   return params;
 }
 
+ui::EventProcessor* ViewsTestBase::event_processor() {
+  return aura_test_helper_->event_processor();
+}
+
+aura::WindowTreeHost* ViewsTestBase::host() {
+  return aura_test_helper_->host();
+}
+
 gfx::NativeView ViewsTestBase::GetContext() {
-#if defined(USE_AURA)
   return aura_test_helper_->root_window();
-#else
-  return NULL;
-#endif
 }
 
 }  // namespace views

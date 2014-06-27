@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,21 +10,23 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.net.Proxy;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-
 import org.chromium.base.CalledByNative;
 import org.chromium.base.JNINamespace;
 import org.chromium.base.NativeClassQualifiedName;
 
-// This class partners with native ProxyConfigServiceAndroid to listen for
-// proxy change notifications from Android.
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+
+/**
+ * This class partners with native ProxyConfigServiceAndroid to listen for
+ * proxy change notifications from Android.
+ */
 @JNINamespace("net")
 public class ProxyChangeListener {
     private static final String TAG = "ProxyChangeListener";
     private static boolean sEnabled = true;
 
-    private int mNativePtr;
+    private long mNativePtr;
     private Context mContext;
     private ProxyReceiver mProxyReceiver;
     private Delegate mDelegate;
@@ -36,7 +38,7 @@ public class ProxyChangeListener {
         }
         public final String mHost;
         public final int mPort;
-    };
+    }
 
     public interface Delegate {
         public void proxySettingsChanged();
@@ -55,17 +57,17 @@ public class ProxyChangeListener {
     }
 
     @CalledByNative
-    static public ProxyChangeListener create(Context context) {
+    public static ProxyChangeListener create(Context context) {
         return new ProxyChangeListener(context);
     }
 
     @CalledByNative
-    static public String getProperty(String property) {
+    public static String getProperty(String property) {
         return System.getProperty(property);
     }
 
     @CalledByNative
-    public void start(int nativePtr) {
+    public void start(long nativePtr) {
         assert mNativePtr == 0;
         mNativePtr = nativePtr;
         registerReceiver();
@@ -101,12 +103,12 @@ public class ProxyChangeListener {
                 if (props == null) {
                     return null;
                 }
-                Class cls = Class.forName(CLASS_NAME);
+                Class<?> cls = Class.forName(CLASS_NAME);
                 Method getHostMethod = cls.getDeclaredMethod(GET_HOST_NAME);
                 Method getPortMethod = cls.getDeclaredMethod(GET_PORT_NAME);
 
-                String host = (String)getHostMethod.invoke(props);
-                int port = (Integer)getPortMethod.invoke(props);
+                String host = (String) getHostMethod.invoke(props);
+                int port = (Integer) getPortMethod.invoke(props);
 
                 return new ProxyConfig(host, port);
             } catch (ClassNotFoundException ex) {
@@ -128,10 +130,10 @@ public class ProxyChangeListener {
             return;
         }
         if (mDelegate != null) {
-          mDelegate.proxySettingsChanged();
+            mDelegate.proxySettingsChanged();
         }
         if (mNativePtr == 0) {
-          return;
+            return;
         }
         // Note that this code currently runs on a MESSAGE_LOOP_UI thread, but
         // the C++ code must run the callbacks on the network thread.
@@ -164,9 +166,9 @@ public class ProxyChangeListener {
      * See net/proxy/proxy_config_service_android.cc
      */
     @NativeClassQualifiedName("ProxyConfigServiceAndroid::JNIDelegate")
-    private native void nativeProxySettingsChangedTo(int nativePtr,
+    private native void nativeProxySettingsChangedTo(long nativePtr,
                                                      String host,
                                                      int port);
     @NativeClassQualifiedName("ProxyConfigServiceAndroid::JNIDelegate")
-    private native void nativeProxySettingsChanged(int nativePtr);
+    private native void nativeProxySettingsChanged(long nativePtr);
 }

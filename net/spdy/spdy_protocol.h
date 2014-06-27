@@ -282,10 +282,11 @@ enum SpdyFrameType {
   GOAWAY,
   HEADERS,
   WINDOW_UPDATE,
-  CREDENTIAL,
+  CREDENTIAL,  // No longer valid.  Kept for identifiability/enum order.
   BLOCKED,
   PUSH_PROMISE,
-  LAST_CONTROL_TYPE = PUSH_PROMISE
+  CONTINUATION,
+  LAST_CONTROL_TYPE = CONTINUATION
 };
 
 // Flags on data packets.
@@ -301,9 +302,26 @@ enum SpdyControlFlags {
   CONTROL_FLAG_UNIDIRECTIONAL = 2
 };
 
+enum SpdyPingFlags {
+  PING_FLAG_ACK = 0x1,
+};
+
+enum SpdyHeadersFlags {
+  HEADERS_FLAG_END_HEADERS = 0x4,
+  HEADERS_FLAG_PRIORITY = 0x8
+};
+
+enum SpdyPushPromiseFlags {
+  PUSH_PROMISE_FLAG_END_PUSH_PROMISE = 0x4
+};
+
 // Flags on the SETTINGS control frame.
 enum SpdySettingsControlFlags {
   SETTINGS_FLAG_CLEAR_PREVIOUSLY_PERSISTED_SETTINGS = 0x1
+};
+
+enum Http2SettingsControlFlags {
+  SETTINGS_FLAG_ACK = 0x1,
 };
 
 // Flags for settings within a SETTINGS frame.
@@ -351,19 +369,17 @@ enum SpdyGoAwayStatus {
   GOAWAY_OK = 0,
   GOAWAY_PROTOCOL_ERROR = 1,
   GOAWAY_INTERNAL_ERROR = 2,
-  GOAWAY_NUM_STATUS_CODES = 3
+  GOAWAY_NUM_STATUS_CODES = 3  // Must be last.
 };
 
 // A SPDY priority is a number between 0 and 7 (inclusive).
-// SPDY priority range is version-dependant. For SPDY 2 and below, priority is a
+// SPDY priority range is version-dependent. For SPDY 2 and below, priority is a
 // number between 0 and 3.
 typedef uint8 SpdyPriority;
 
-typedef uint8 SpdyCredentialSlot;
-
 typedef std::map<std::string, std::string> SpdyNameValueBlock;
 
-typedef uint32 SpdyPingId;
+typedef uint64 SpdyPingId;
 
 class SpdyFrame;
 typedef SpdyFrame SpdySerializedFrame;
@@ -373,7 +389,7 @@ class SpdyFrameVisitor;
 // Intermediate representation for SPDY frames.
 // TODO(hkhalil): Rename this class to SpdyFrame when the existing SpdyFrame is
 // gone.
-class SpdyFrameIR {
+class NET_EXPORT_PRIVATE SpdyFrameIR {
  public:
   virtual ~SpdyFrameIR() {}
 
@@ -388,7 +404,7 @@ class SpdyFrameIR {
 
 // Abstract class intended to be inherited by IRs that have a stream associated
 // to them.
-class SpdyFrameWithStreamIdIR : public SpdyFrameIR {
+class NET_EXPORT_PRIVATE SpdyFrameWithStreamIdIR : public SpdyFrameIR {
  public:
   virtual ~SpdyFrameWithStreamIdIR() {}
   SpdyStreamId stream_id() const { return stream_id_; }
@@ -410,7 +426,7 @@ class SpdyFrameWithStreamIdIR : public SpdyFrameIR {
 
 // Abstract class intended to be inherited by IRs that have the option of a FIN
 // flag. Implies SpdyFrameWithStreamIdIR.
-class SpdyFrameWithFinIR : public SpdyFrameWithStreamIdIR {
+class NET_EXPORT_PRIVATE SpdyFrameWithFinIR : public SpdyFrameWithStreamIdIR {
  public:
   virtual ~SpdyFrameWithFinIR() {}
   bool fin() const { return fin_; }
@@ -435,7 +451,10 @@ class NET_EXPORT_PRIVATE SpdyFrameWithNameValueBlockIR
   const SpdyNameValueBlock& name_value_block() const {
     return name_value_block_;
   }
-  SpdyNameValueBlock* GetMutableNameValueBlock() { return &name_value_block_; }
+  void set_name_value_block(const SpdyNameValueBlock& name_value_block) {
+    // Deep copy.
+    name_value_block_ = name_value_block;
+  }
   void SetHeader(const base::StringPiece& name,
                  const base::StringPiece& value) {
     name_value_block_[name.as_string()] = value.as_string();
@@ -493,7 +512,6 @@ class NET_EXPORT_PRIVATE SpdySynStreamIR
       : SpdyFrameWithNameValueBlockIR(stream_id),
         associated_to_stream_id_(0),
         priority_(0),
-        slot_(0),
         unidirectional_(false) {}
   SpdyStreamId associated_to_stream_id() const {
     return associated_to_stream_id_;
@@ -503,8 +521,6 @@ class NET_EXPORT_PRIVATE SpdySynStreamIR
   }
   SpdyPriority priority() const { return priority_; }
   void set_priority(SpdyPriority priority) { priority_ = priority; }
-  SpdyCredentialSlot slot() const { return slot_; }
-  void set_slot(SpdyCredentialSlot slot) { slot_ = slot; }
   bool unidirectional() const { return unidirectional_; }
   void set_unidirectional(bool unidirectional) {
     unidirectional_ = unidirectional;
@@ -515,13 +531,12 @@ class NET_EXPORT_PRIVATE SpdySynStreamIR
  private:
   SpdyStreamId associated_to_stream_id_;
   SpdyPriority priority_;
-  SpdyCredentialSlot slot_;
   bool unidirectional_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdySynStreamIR);
 };
 
-class SpdySynReplyIR : public SpdyFrameWithNameValueBlockIR {
+class NET_EXPORT_PRIVATE SpdySynReplyIR : public SpdyFrameWithNameValueBlockIR {
  public:
   explicit SpdySynReplyIR(SpdyStreamId stream_id)
       : SpdyFrameWithNameValueBlockIR(stream_id) {}
@@ -532,12 +547,13 @@ class SpdySynReplyIR : public SpdyFrameWithNameValueBlockIR {
   DISALLOW_COPY_AND_ASSIGN(SpdySynReplyIR);
 };
 
-class SpdyRstStreamIR : public SpdyFrameWithStreamIdIR {
+class NET_EXPORT_PRIVATE SpdyRstStreamIR : public SpdyFrameWithStreamIdIR {
  public:
-  SpdyRstStreamIR(SpdyStreamId stream_id, SpdyRstStreamStatus status)
-      : SpdyFrameWithStreamIdIR(stream_id) {
-    set_status(status);
-  }
+  SpdyRstStreamIR(SpdyStreamId stream_id, SpdyRstStreamStatus status,
+                  base::StringPiece description);
+
+  virtual ~SpdyRstStreamIR();
+
   SpdyRstStreamStatus status() const {
     return status_;
   }
@@ -547,15 +563,22 @@ class SpdyRstStreamIR : public SpdyFrameWithStreamIdIR {
     status_ = status;
   }
 
+  base::StringPiece description() const { return description_; }
+
+  void set_description(base::StringPiece description) {
+    description_ = description;
+  }
+
   virtual void Visit(SpdyFrameVisitor* visitor) const OVERRIDE;
 
  private:
   SpdyRstStreamStatus status_;
+  base::StringPiece description_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdyRstStreamIR);
 };
 
-class SpdySettingsIR : public SpdyFrameIR {
+class NET_EXPORT_PRIVATE SpdySettingsIR : public SpdyFrameIR {
  public:
   // Associates flags with a value.
   struct Value {
@@ -584,9 +607,14 @@ class SpdySettingsIR : public SpdyFrameIR {
     values_[id].persisted = persisted;
     values_[id].value = value;
   }
+
   bool clear_settings() const { return clear_settings_; }
   void set_clear_settings(bool clear_settings) {
     clear_settings_ = clear_settings;
+  }
+  bool is_ack() const { return is_ack_; }
+  void set_is_ack(bool is_ack) {
+    is_ack_ = is_ack;
   }
 
   virtual void Visit(SpdyFrameVisitor* visitor) const OVERRIDE;
@@ -594,29 +622,34 @@ class SpdySettingsIR : public SpdyFrameIR {
  private:
   ValueMap values_;
   bool clear_settings_;
+  bool is_ack_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdySettingsIR);
 };
 
-class SpdyPingIR : public SpdyFrameIR {
+class NET_EXPORT_PRIVATE SpdyPingIR : public SpdyFrameIR {
  public:
-  explicit SpdyPingIR(SpdyPingId id) : id_(id) {}
+  explicit SpdyPingIR(SpdyPingId id) : id_(id), is_ack_(false) {}
   SpdyPingId id() const { return id_; }
+
+  // ACK logic is valid only for SPDY versions 4 and above.
+  bool is_ack() const { return is_ack_; }
+  void set_is_ack(bool is_ack) { is_ack_ = is_ack; }
 
   virtual void Visit(SpdyFrameVisitor* visitor) const OVERRIDE;
 
  private:
   SpdyPingId id_;
+  bool is_ack_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdyPingIR);
 };
 
-class SpdyGoAwayIR : public SpdyFrameIR {
+class NET_EXPORT_PRIVATE SpdyGoAwayIR : public SpdyFrameIR {
  public:
-  SpdyGoAwayIR(SpdyStreamId last_good_stream_id, SpdyGoAwayStatus status) {
-    set_last_good_stream_id(last_good_stream_id);
-    set_status(status);
-  }
+  SpdyGoAwayIR(SpdyStreamId last_good_stream_id, SpdyGoAwayStatus status,
+               const base::StringPiece& description);
+  virtual ~SpdyGoAwayIR();
   SpdyStreamId last_good_stream_id() const { return last_good_stream_id_; }
   void set_last_good_stream_id(SpdyStreamId last_good_stream_id) {
     DCHECK_LE(0u, last_good_stream_id);
@@ -629,27 +662,44 @@ class SpdyGoAwayIR : public SpdyFrameIR {
     status_ = status;
   }
 
+  const base::StringPiece& description() const;
+
   virtual void Visit(SpdyFrameVisitor* visitor) const OVERRIDE;
 
  private:
   SpdyStreamId last_good_stream_id_;
   SpdyGoAwayStatus status_;
+  const base::StringPiece description_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdyGoAwayIR);
 };
 
-class SpdyHeadersIR : public SpdyFrameWithNameValueBlockIR {
+class NET_EXPORT_PRIVATE SpdyHeadersIR : public SpdyFrameWithNameValueBlockIR {
  public:
   explicit SpdyHeadersIR(SpdyStreamId stream_id)
-      : SpdyFrameWithNameValueBlockIR(stream_id) {}
+    : SpdyFrameWithNameValueBlockIR(stream_id),
+      end_headers_(true),
+      has_priority_(false),
+      priority_(0) {}
 
   virtual void Visit(SpdyFrameVisitor* visitor) const OVERRIDE;
 
+  bool end_headers() const { return end_headers_; }
+  void set_end_headers(bool end_headers) {end_headers_ = end_headers;}
+  bool has_priority() const { return has_priority_; }
+  void set_has_priority(bool has_priority) { has_priority_ = has_priority; }
+  uint32 priority() const { return priority_; }
+  void set_priority(SpdyPriority priority) { priority_ = priority; }
+
  private:
+  bool end_headers_;
+  bool has_priority_;
+  // 31-bit priority.
+  uint32 priority_;
   DISALLOW_COPY_AND_ASSIGN(SpdyHeadersIR);
 };
 
-class SpdyWindowUpdateIR : public SpdyFrameWithStreamIdIR {
+class NET_EXPORT_PRIVATE SpdyWindowUpdateIR : public SpdyFrameWithStreamIdIR {
  public:
   SpdyWindowUpdateIR(SpdyStreamId stream_id, int32 delta)
       : SpdyFrameWithStreamIdIR(stream_id) {
@@ -670,64 +720,58 @@ class SpdyWindowUpdateIR : public SpdyFrameWithStreamIdIR {
   DISALLOW_COPY_AND_ASSIGN(SpdyWindowUpdateIR);
 };
 
-class SpdyCredentialIR : public SpdyFrameIR {
+class NET_EXPORT_PRIVATE SpdyBlockedIR
+    : public NON_EXPORTED_BASE(SpdyFrameWithStreamIdIR) {
  public:
-  typedef std::vector<std::string> CertificateList;
-
-  explicit SpdyCredentialIR(int16 slot);
-  virtual ~SpdyCredentialIR();
-
-  int16 slot() const { return slot_; }
-  void set_slot(int16 slot) {
-    // TODO(hkhalil): Verify valid slot range?
-    slot_ = slot;
-  }
-  base::StringPiece proof() const { return proof_; }
-  void set_proof(const base::StringPiece& proof) {
-    proof.CopyToString(&proof_);
-  }
-  const CertificateList* certificates() const { return &certificates_; }
-  void AddCertificate(const base::StringPiece& certificate) {
-    certificates_.push_back(certificate.as_string());
-  }
+  explicit SpdyBlockedIR(SpdyStreamId stream_id)
+      : SpdyFrameWithStreamIdIR(stream_id) {}
 
   virtual void Visit(SpdyFrameVisitor* visitor) const OVERRIDE;
 
  private:
-  int16 slot_;
-  std::string proof_;
-  CertificateList certificates_;
-
-  DISALLOW_COPY_AND_ASSIGN(SpdyCredentialIR);
+  DISALLOW_COPY_AND_ASSIGN(SpdyBlockedIR);
 };
 
-class NET_EXPORT_PRIVATE SpdyBlockedIR
-    : public NON_EXPORTED_BASE(SpdyFrameWithStreamIdIR) {
-  public:
-   explicit SpdyBlockedIR(SpdyStreamId stream_id)
-       : SpdyFrameWithStreamIdIR(stream_id) {}
-
-  virtual void Visit(SpdyFrameVisitor* visitor) const OVERRIDE;
-
-  private:
-   DISALLOW_COPY_AND_ASSIGN(SpdyBlockedIR);
-};
-
-class SpdyPushPromiseIR : public SpdyFrameWithNameValueBlockIR {
+class NET_EXPORT_PRIVATE SpdyPushPromiseIR
+    : public SpdyFrameWithNameValueBlockIR {
  public:
   SpdyPushPromiseIR(SpdyStreamId stream_id, SpdyStreamId promised_stream_id)
       : SpdyFrameWithNameValueBlockIR(stream_id),
-        promised_stream_id_(promised_stream_id) {}
+        promised_stream_id_(promised_stream_id),
+        end_push_promise_(true) {}
   SpdyStreamId promised_stream_id() const { return promised_stream_id_; }
   void set_promised_stream_id(SpdyStreamId id) { promised_stream_id_ = id; }
+  bool end_push_promise() const { return end_push_promise_; }
+  void set_end_push_promise(bool end_push_promise) {
+    end_push_promise_ = end_push_promise;
+  }
 
   virtual void Visit(SpdyFrameVisitor* visitor) const OVERRIDE;
 
  private:
   SpdyStreamId promised_stream_id_;
+  bool end_push_promise_;
   DISALLOW_COPY_AND_ASSIGN(SpdyPushPromiseIR);
 };
 
+// TODO(jgraettinger): This representation needs review. SpdyContinuationIR
+// needs to frame a portion of a single, arbitrarily-broken encoded buffer.
+class NET_EXPORT_PRIVATE SpdyContinuationIR
+    : public SpdyFrameWithNameValueBlockIR {
+ public:
+  explicit SpdyContinuationIR(SpdyStreamId stream_id)
+      : SpdyFrameWithNameValueBlockIR(stream_id),
+        end_headers_(false) {}
+
+  virtual void Visit(SpdyFrameVisitor* visitor) const OVERRIDE;
+
+  bool end_headers() const { return end_headers_; }
+  void set_end_headers(bool end_headers) {end_headers_ = end_headers;}
+
+ private:
+  bool end_headers_;
+  DISALLOW_COPY_AND_ASSIGN(SpdyContinuationIR);
+};
 
 // -------------------------------------------------------------------------
 // Wrapper classes for various SPDY frames.
@@ -786,9 +830,9 @@ class SpdyFrameVisitor {
   virtual void VisitGoAway(const SpdyGoAwayIR& goaway) = 0;
   virtual void VisitHeaders(const SpdyHeadersIR& headers) = 0;
   virtual void VisitWindowUpdate(const SpdyWindowUpdateIR& window_update) = 0;
-  virtual void VisitCredential(const SpdyCredentialIR& credential) = 0;
   virtual void VisitBlocked(const SpdyBlockedIR& blocked) = 0;
   virtual void VisitPushPromise(const SpdyPushPromiseIR& push_promise) = 0;
+  virtual void VisitContinuation(const SpdyContinuationIR& continuation) = 0;
   virtual void VisitData(const SpdyDataIR& data) = 0;
 
  protected:

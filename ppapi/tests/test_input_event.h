@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "ppapi/c/ppb_input_event.h"
-#include "ppapi/c/dev/ppb_testing_dev.h"
+#include "ppapi/c/private/ppb_testing_private.h"
 #include "ppapi/cpp/input_event.h"
 #include "ppapi/cpp/point.h"
 #include "ppapi/cpp/rect.h"
@@ -34,7 +34,7 @@ class TestInputEvent : public TestCase {
                                   PP_InputEvent_MouseButton buttons);
   pp::InputEvent CreateWheelEvent();
   pp::InputEvent CreateKeyEvent(PP_InputEvent_Type type,
-                                uint32_t key_code);
+                                uint32_t key_code, const std::string& code);
   pp::InputEvent CreateCharEvent(const std::string& text);
   pp::InputEvent CreateTouchEvent(PP_InputEvent_Type type,
                                   const pp::FloatPoint& location);

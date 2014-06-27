@@ -25,22 +25,23 @@
 #include "chrome/browser/extensions/api/proxy/proxy_api.h"
 #include "chrome/browser/extensions/api/web_request/web_request_api.h"
 #include "chrome/browser/extensions/event_router_forwarder.h"
-#include "chrome/browser/extensions/extension_info_map.h"
-#include "chrome/browser/extensions/extension_process_manager.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/google/google_util.h"
-#include "chrome/browser/net/chrome_network_data_saving_metrics.h"
 #include "chrome/browser/net/client_hints.h"
 #include "chrome/browser/net/connect_interceptor.h"
-#include "chrome/browser/net/load_time_stats.h"
+#include "chrome/browser/net/spdyproxy/data_saving_metrics.h"
 #include "chrome/browser/performance_monitor/performance_monitor.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/task_manager/task_manager.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "components/domain_reliability/monitor.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/resource_request_info.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/info_map.h"
+#include "extensions/browser/process_manager.h"
 #include "extensions/common/constants.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
@@ -59,7 +60,12 @@
 #endif
 
 #if defined(ENABLE_CONFIGURATION_POLICY)
-#include "chrome/browser/policy/url_blacklist_manager.h"
+#include "components/policy/core/browser/url_blacklist_manager.h"
+#endif
+
+#if defined(OS_ANDROID)
+#include "components/precache/content/precache_manager.h"
+#include "components/precache/content/precache_manager_factory.h"
 #endif
 
 using content::BrowserThread;
@@ -169,32 +175,32 @@ void ForceGoogleSafeSearchCallbackWrapper(
 
 enum RequestStatus { REQUEST_STARTED, REQUEST_DONE };
 
-// Notifies the ExtensionProcessManager that a request has started or stopped
-// for a particular RenderView.
+// Notifies the extensions::ProcessManager that a request has started or stopped
+// for a particular RenderFrame.
 void NotifyEPMRequestStatus(RequestStatus status,
                             void* profile_id,
                             int process_id,
-                            int render_view_id) {
+                            int render_frame_id) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   Profile* profile = reinterpret_cast<Profile*>(profile_id);
   if (!g_browser_process->profile_manager()->IsValidProfile(profile))
     return;
 
-  ExtensionProcessManager* extension_process_manager =
+  extensions::ProcessManager* process_manager =
       extensions::ExtensionSystem::Get(profile)->process_manager();
   // This may be NULL in unit tests.
-  if (!extension_process_manager)
+  if (!process_manager)
     return;
 
   // Will be NULL if the request was not issued on behalf of a renderer (e.g. a
   // system-level request).
-  RenderViewHost* render_view_host =
-      RenderViewHost::FromID(process_id, render_view_id);
-  if (render_view_host) {
+  content::RenderFrameHost* render_frame_host =
+      content::RenderFrameHost::FromID(process_id, render_frame_id);
+  if (render_frame_host) {
     if (status == REQUEST_STARTED) {
-      extension_process_manager->OnNetworkRequestStarted(render_view_host);
+      process_manager->OnNetworkRequestStarted(render_frame_host);
     } else if (status == REQUEST_DONE) {
-      extension_process_manager->OnNetworkRequestDone(render_view_host);
+      process_manager->OnNetworkRequestDone(render_frame_host);
     } else {
       NOTREACHED();
     }
@@ -207,17 +213,19 @@ void ForwardRequestStatus(
   if (!info)
     return;
 
-  int process_id, render_view_id;
-  if (info->GetAssociatedRenderView(&process_id, &render_view_id)) {
+  int process_id, render_frame_id;
+  if (info->GetAssociatedRenderFrame(&process_id, &render_frame_id)) {
     BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
         base::Bind(&NotifyEPMRequestStatus,
-                   status, profile_id, process_id, render_view_id));
+                   status, profile_id, process_id, render_frame_id));
   }
 }
 
-void UpdateContentLengthPrefs(int received_content_length,
-                              int original_content_length,
-                              bool via_data_reduction_proxy) {
+void UpdateContentLengthPrefs(
+    int received_content_length,
+    int original_content_length,
+    spdyproxy::DataReductionRequestType data_reduction_type,
+    Profile* profile) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK_GE(received_content_length, 0);
   DCHECK_GE(original_content_length, 0);
@@ -230,28 +238,36 @@ void UpdateContentLengthPrefs(int received_content_length,
   if (!prefs)
     return;
 
+  // Ignore off-the-record data.
+  if (!g_browser_process->profile_manager()->IsValidProfile(profile) ||
+      profile->IsOffTheRecord()) {
+    return;
+  }
 #if defined(OS_ANDROID)
+  // If Android ever goes multi profile, the profile should be passed so that
+  // the browser preference will be taken.
   bool with_data_reduction_proxy_enabled =
-      g_browser_process->profile_manager()->GetDefaultProfile()->
-      GetPrefs()->GetBoolean(prefs::kSpdyProxyAuthEnabled);
+      ProfileManager::GetActiveUserProfile()->GetPrefs()->GetBoolean(
+          prefs::kSpdyProxyAuthEnabled);
 #else
   bool with_data_reduction_proxy_enabled = false;
 #endif
 
-  chrome_browser_net::UpdateContentLengthPrefs(
-      received_content_length,
-      original_content_length,
-      with_data_reduction_proxy_enabled,
-      via_data_reduction_proxy, prefs);
+  spdyproxy::UpdateContentLengthPrefs(received_content_length,
+                                      original_content_length,
+                                      with_data_reduction_proxy_enabled,
+                                      data_reduction_type, prefs);
 }
 
-void StoreAccumulatedContentLength(int received_content_length,
-                                   int original_content_length,
-                                   bool data_reduction_proxy_was_used) {
+void StoreAccumulatedContentLength(
+    int received_content_length,
+    int original_content_length,
+    spdyproxy::DataReductionRequestType data_reduction_type,
+    Profile* profile) {
   BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
       base::Bind(&UpdateContentLengthPrefs,
                  received_content_length, original_content_length,
-                 data_reduction_proxy_was_used));
+                 data_reduction_type, profile));
 }
 
 void RecordContentLengthHistograms(
@@ -299,6 +315,28 @@ void RecordContentLengthHistograms(
 #endif  // defined(OS_ANDROID)
 }
 
+#if defined(OS_ANDROID)
+void RecordPrecacheStatsOnUIThread(const GURL& url,
+                                   const base::Time& fetch_time, int64 size,
+                                   bool was_cached, void* profile_id) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+
+  Profile* profile = reinterpret_cast<Profile*>(profile_id);
+  if (!g_browser_process->profile_manager()->IsValidProfile(profile)) {
+    return;
+  }
+
+  precache::PrecacheManager* precache_manager =
+      precache::PrecacheManagerFactory::GetForBrowserContext(profile);
+  if (!precache_manager) {
+    // This could be NULL if the profile is off the record.
+    return;
+  }
+
+  precache_manager->RecordStatsForFetch(url, fetch_time, size, was_cached);
+}
+#endif  // defined(OS_ANDROID)
+
 }  // namespace
 
 ChromeNetworkDelegate::ChromeNetworkDelegate(
@@ -310,7 +348,7 @@ ChromeNetworkDelegate::ChromeNetworkDelegate(
       enable_do_not_track_(NULL),
       force_google_safe_search_(NULL),
       url_blacklist_manager_(NULL),
-      load_time_stats_(NULL),
+      domain_reliability_monitor_(NULL),
       received_content_length_(0),
       original_content_length_(0) {
   DCHECK(event_router);
@@ -320,7 +358,7 @@ ChromeNetworkDelegate::ChromeNetworkDelegate(
 ChromeNetworkDelegate::~ChromeNetworkDelegate() {}
 
 void ChromeNetworkDelegate::set_extension_info_map(
-    ExtensionInfoMap* extension_info_map) {
+    extensions::InfoMap* extension_info_map) {
   extension_info_map_ = extension_info_map;
 }
 
@@ -373,13 +411,13 @@ void ChromeNetworkDelegate::AllowAccessToAllFiles() {
 }
 
 // static
-Value* ChromeNetworkDelegate::HistoricNetworkStatsInfoToValue() {
+base::Value* ChromeNetworkDelegate::HistoricNetworkStatsInfoToValue() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   PrefService* prefs = g_browser_process->local_state();
   int64 total_received = prefs->GetInt64(prefs::kHttpReceivedContentLength);
   int64 total_original = prefs->GetInt64(prefs::kHttpOriginalContentLength);
 
-  DictionaryValue* dict = new DictionaryValue();
+  base::DictionaryValue* dict = new base::DictionaryValue();
   // Use strings to avoid overflow.  base::Value only supports 32-bit integers.
   dict->SetString("historic_received_content_length",
                   base::Int64ToString(total_received));
@@ -388,8 +426,8 @@ Value* ChromeNetworkDelegate::HistoricNetworkStatsInfoToValue() {
   return dict;
 }
 
-Value* ChromeNetworkDelegate::SessionNetworkStatsInfoToValue() const {
-  DictionaryValue* dict = new DictionaryValue();
+base::Value* ChromeNetworkDelegate::SessionNetworkStatsInfoToValue() const {
+  base::DictionaryValue* dict = new base::DictionaryValue();
   // Use strings to avoid overflow.  base::Value only supports 32-bit integers.
   dict->SetString("session_received_content_length",
                   base::Int64ToString(received_content_length_));
@@ -474,14 +512,22 @@ int ChromeNetworkDelegate::OnHeadersReceived(
     net::URLRequest* request,
     const net::CompletionCallback& callback,
     const net::HttpResponseHeaders* original_response_headers,
-    scoped_refptr<net::HttpResponseHeaders>* override_response_headers) {
+    scoped_refptr<net::HttpResponseHeaders>* override_response_headers,
+    GURL* allowed_unsafe_redirect_url) {
   return ExtensionWebRequestEventRouter::GetInstance()->OnHeadersReceived(
-      profile_, extension_info_map_.get(), request, callback,
-      original_response_headers, override_response_headers);
+      profile_,
+      extension_info_map_.get(),
+      request,
+      callback,
+      original_response_headers,
+      override_response_headers,
+      allowed_unsafe_redirect_url);
 }
 
 void ChromeNetworkDelegate::OnBeforeRedirect(net::URLRequest* request,
                                              const GURL& new_location) {
+  if (domain_reliability_monitor_)
+    domain_reliability_monitor_->OnBeforeRedirect(request);
   ExtensionWebRequestEventRouter::GetInstance()->OnBeforeRedirect(
       profile_, extension_info_map_.get(), request, new_location);
 }
@@ -502,7 +548,10 @@ void ChromeNetworkDelegate::OnRawBytesRead(const net::URLRequest& request,
       request, bytes_read);
 
 #if defined(ENABLE_TASK_MANAGER)
-  TaskManager::GetInstance()->model()->NotifyBytesRead(request, bytes_read);
+  // This is not completely accurate, but as a first approximation ignore
+  // requests that are served from the cache. See bug 330931 for more info.
+  if (!request.was_cached())
+    TaskManager::GetInstance()->model()->NotifyBytesRead(request, bytes_read);
 #endif  // defined(ENABLE_TASK_MANAGER)
 }
 
@@ -515,6 +564,18 @@ void ChromeNetworkDelegate::OnCompleted(net::URLRequest* request,
     // or missing, as is the case with chunked encoding.
     int64 received_content_length = request->received_response_content_length();
 
+#if defined(OS_ANDROID)
+    if (precache::PrecacheManager::IsPrecachingEnabled()) {
+      // Record precache metrics when a fetch is completed successfully, if
+      // precaching is enabled.
+      BrowserThread::PostTask(
+          BrowserThread::UI, FROM_HERE,
+          base::Bind(&RecordPrecacheStatsOnUIThread, request->url(),
+                     base::Time::Now(), received_content_length,
+                     request->was_cached(), profile_));
+    }
+#endif  // defined(OS_ANDROID)
+
     // Only record for http or https urls.
     bool is_http = request->url().SchemeIs("http");
     bool is_https = request->url().SchemeIs("https");
@@ -525,21 +586,19 @@ void ChromeNetworkDelegate::OnCompleted(net::URLRequest* request,
       int64 original_content_length =
           request->response_info().headers->GetInt64HeaderValue(
               "x-original-content-length");
-      bool via_data_reduction_proxy =
-          request->response_info().headers->HasHeaderValue(
-              "via", "1.1 Chrome Compression Proxy");
+      spdyproxy::DataReductionRequestType data_reduction_type =
+          spdyproxy::GetDataReductionRequestType(request);
 
-      // Since there was no indication of the original content length, presume
-      // it is no different from the number of bytes read.
-      int64 adjusted_original_content_length = original_content_length;
-      if (adjusted_original_content_length == -1)
-        adjusted_original_content_length = received_content_length;
       base::TimeDelta freshness_lifetime =
           request->response_info().headers->GetFreshnessLifetime(
               request->response_info().response_time);
+      int64 adjusted_original_content_length =
+          spdyproxy::GetAdjustedOriginalContentLength(
+              data_reduction_type, original_content_length,
+              received_content_length);
       AccumulateContentLength(received_content_length,
                               adjusted_original_content_length,
-                              via_data_reduction_proxy);
+                              data_reduction_type);
       RecordContentLengthHistograms(received_content_length,
                                     original_content_length,
                                     freshness_lifetime);
@@ -563,6 +622,8 @@ void ChromeNetworkDelegate::OnCompleted(net::URLRequest* request,
   } else {
     NOTREACHED();
   }
+  if (domain_reliability_monitor_)
+    domain_reliability_monitor_->OnCompleted(request, started);
   ForwardProxyErrors(request, event_router_.get(), profile_);
 
   ForwardRequestStatus(REQUEST_DONE, request, profile_);
@@ -571,12 +632,10 @@ void ChromeNetworkDelegate::OnCompleted(net::URLRequest* request,
 void ChromeNetworkDelegate::OnURLRequestDestroyed(net::URLRequest* request) {
   ExtensionWebRequestEventRouter::GetInstance()->OnURLRequestDestroyed(
       profile_, request);
-  if (load_time_stats_)
-    load_time_stats_->OnURLRequestDestroyed(*request);
 }
 
 void ChromeNetworkDelegate::OnPACScriptError(int line_number,
-                                             const string16& error) {
+                                             const base::string16& error) {
   extensions::ProxyEventRouter::GetInstance()->OnPACScriptError(
       event_router_.get(), profile_, line_number, error);
 }
@@ -603,15 +662,28 @@ bool ChromeNetworkDelegate::OnCanGetCookies(
       request.url(), request.first_party_for_cookies());
 
   int render_process_id = -1;
-  int render_view_id = -1;
-  if (content::ResourceRequestInfo::GetRenderViewForRequest(
-          &request, &render_process_id, &render_view_id)) {
+  int render_frame_id = -1;
+
+  // |is_for_blocking_resource| indicates whether the cookies read were for a
+  // blocking resource (eg script, css). It is only temporarily added for
+  // diagnostic purposes, per bug 353678. Will be removed again once data
+  // collection is finished.
+  bool is_for_blocking_resource = false;
+  const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(&request);
+  if (info && ((!info->IsAsync()) ||
+               info->GetResourceType() == ResourceType::STYLESHEET ||
+               info->GetResourceType() == ResourceType::SCRIPT)) {
+    is_for_blocking_resource = true;
+  }
+
+  if (content::ResourceRequestInfo::GetRenderFrameForRequest(
+          &request, &render_process_id, &render_frame_id)) {
     BrowserThread::PostTask(
         BrowserThread::UI, FROM_HERE,
         base::Bind(&TabSpecificContentSettings::CookiesRead,
-                   render_process_id, render_view_id,
+                   render_process_id, render_frame_id,
                    request.url(), request.first_party_for_cookies(),
-                   cookie_list, !allow));
+                   cookie_list, !allow, is_for_blocking_resource));
   }
 
   return allow;
@@ -628,13 +700,13 @@ bool ChromeNetworkDelegate::OnCanSetCookie(const net::URLRequest& request,
       request.url(), request.first_party_for_cookies());
 
   int render_process_id = -1;
-  int render_view_id = -1;
-  if (content::ResourceRequestInfo::GetRenderViewForRequest(
-          &request, &render_process_id, &render_view_id)) {
+  int render_frame_id = -1;
+  if (content::ResourceRequestInfo::GetRenderFrameForRequest(
+          &request, &render_process_id, &render_frame_id)) {
     BrowserThread::PostTask(
         BrowserThread::UI, FROM_HERE,
         base::Bind(&TabSpecificContentSettings::CookieChanged,
-                   render_process_id, render_view_id,
+                   render_process_id, render_frame_id,
                    request.url(), request.first_party_for_cookies(),
                    cookie_line, *options, !allow));
   }
@@ -750,21 +822,16 @@ int ChromeNetworkDelegate::OnBeforeSocketStreamConnect(
   return net::OK;
 }
 
-void ChromeNetworkDelegate::OnRequestWaitStateChange(
-    const net::URLRequest& request,
-    RequestWaitState state) {
-  if (load_time_stats_)
-    load_time_stats_->OnRequestWaitStateChange(request, state);
-}
-
 void ChromeNetworkDelegate::AccumulateContentLength(
-    int64 received_content_length, int64 original_content_length,
-    bool via_data_reduction_proxy) {
+    int64 received_content_length,
+    int64 original_content_length,
+    spdyproxy::DataReductionRequestType data_reduction_type) {
   DCHECK_GE(received_content_length, 0);
   DCHECK_GE(original_content_length, 0);
   StoreAccumulatedContentLength(received_content_length,
                                 original_content_length,
-                                via_data_reduction_proxy);
+                                data_reduction_type,
+                                reinterpret_cast<Profile*>(profile_));
   received_content_length_ += received_content_length;
   original_content_length_ += original_content_length;
 }

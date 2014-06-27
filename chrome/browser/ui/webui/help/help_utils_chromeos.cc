@@ -47,7 +47,7 @@ bool IsUpdateOverCellularAllowed() {
   return kDefaultUpdateOverCellularAllowed;
 }
 
-string16 GetConnectionTypeAsUTF16(const std::string& type) {
+base::string16 GetConnectionTypeAsUTF16(const std::string& type) {
   if (chromeos::NetworkTypePattern::Ethernet().MatchesType(type))
     return l10n_util::GetStringUTF16(IDS_NETWORK_TYPE_ETHERNET);
   if (type == shill::kTypeWifi)
@@ -61,7 +61,7 @@ string16 GetConnectionTypeAsUTF16(const std::string& type) {
   if (type == shill::kTypeVPN)
     return l10n_util::GetStringUTF16(IDS_NETWORK_TYPE_VPN);
   NOTREACHED();
-  return string16();
+  return base::string16();
 }
 
 }  // namespace help_utils_chromeos

@@ -7,9 +7,12 @@
  */
 
 <include src="recommended_apps.js"/>
+<include src="speech_manager.js"/>
 
 cr.define('appList.startPage', function() {
   'use strict';
+
+  var speechManager = null;
 
   /**
    * Creates a StartPage object.
@@ -51,6 +54,7 @@ cr.define('appList.startPage', function() {
    */
   function initialize() {
     StartPage.decorate($('start-page'));
+    speechManager = new speech.SpeechManager();
     chrome.send('initialize');
   }
 
@@ -62,9 +66,60 @@ cr.define('appList.startPage', function() {
     $('start-page').setRecommendedApps(apps);
   }
 
+  /**
+   * Invoked when the hotword plugin availability is changed.
+   *
+   * @param {boolean} enabled Whether the plugin is enabled or not.
+   */
+  function setHotwordEnabled(enabled) {
+    speechManager.setHotwordEnabled(enabled);
+  }
+
+  /**
+   * Invoked when the hotword recognition should start.
+   */
+  function startHotwordRecognition() {
+    speechManager.startHotwordRecognition();
+  }
+
+  /**
+   * Invoked when the hotword recognition should stop.
+   */
+  function stopHotwordRecognition() {
+    speechManager.stopHotwordRecognition();
+  }
+
+  /**
+   * Invoked when the app-list bubble is shown.
+   */
+  function onAppListShown() {
+    speechManager.onShown();
+  }
+
+  /**
+   * Invoked when the app-list bubble is hidden.
+   */
+  function onAppListHidden() {
+    speechManager.onHidden();
+  }
+
+  /**
+   * Invoked when the user explicitly wants to toggle the speech recognition
+   * state.
+   */
+  function toggleSpeechRecognition() {
+    speechManager.toggleSpeechRecognition();
+  }
+
   return {
     initialize: initialize,
-    setRecommendedApps: setRecommendedApps
+    setRecommendedApps: setRecommendedApps,
+    setHotwordEnabled: setHotwordEnabled,
+    startHotwordRecognition: startHotwordRecognition,
+    stopHotwordRecognition: stopHotwordRecognition,
+    onAppListShown: onAppListShown,
+    onAppListHidden: onAppListHidden,
+    toggleSpeechRecognition: toggleSpeechRecognition
   };
 });
 

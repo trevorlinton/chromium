@@ -10,8 +10,8 @@
 
 namespace {
 
-void SetDialogTitle(GtkWidget* dialog, const string16& title) {
-  gtk_window_set_title(GTK_WINDOW(dialog), UTF16ToUTF8(title).c_str());
+void SetDialogTitle(GtkWidget* dialog, const base::string16& title) {
+  gtk_window_set_title(GTK_WINDOW(dialog), base::UTF16ToUTF8(title).c_str());
 
   // The following code requires the dialog to be realized.
   gtk_widget_realize(dialog);
@@ -44,8 +44,8 @@ void OnDialogResponse(GtkWidget* widget, int response, void* user_data) {
 namespace chrome {
 
 MessageBoxResult ShowMessageBox(gfx::NativeWindow parent,
-                                const string16& title,
-                                const string16& message,
+                                const base::string16& title,
+                                const base::string16& message,
                                 MessageBoxType type) {
   if (type == MESSAGE_BOX_TYPE_OK_CANCEL)
     NOTIMPLEMENTED();
@@ -60,12 +60,13 @@ MessageBoxResult ShowMessageBox(gfx::NativeWindow parent,
         GTK_MESSAGE_INFO : GTK_MESSAGE_WARNING;
   }
 
-  GtkWidget* dialog = gtk_message_dialog_new(parent,
-                                             GTK_DIALOG_MODAL,
-                                             gtk_message_type,
-                                             gtk_buttons_type,
-                                             "%s",
-                                             UTF16ToUTF8(message).c_str());
+  GtkWidget* dialog = gtk_message_dialog_new(
+      parent,
+      GTK_DIALOG_MODAL,
+      gtk_message_type,
+      gtk_buttons_type,
+      "%s",
+      base::UTF16ToUTF8(message).c_str());
   gtk_util::ApplyMessageDialogQuirks(dialog);
   SetDialogTitle(dialog, title);
 

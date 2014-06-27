@@ -14,13 +14,14 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/google/google_url_tracker_map_entry.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service.h"
+#include "components/keyed_service/core/keyed_service.h"
 #include "net/base/network_change_notifier.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "url/gurl.h"
 
 class GoogleURLTrackerNavigationHelper;
+class InfoBar;
 class PrefService;
 class Profile;
 
@@ -43,7 +44,7 @@ class NavigationController;
 // RequestServerCheck().
 class GoogleURLTracker : public net::URLFetcherDelegate,
                          public net::NetworkChangeNotifier::IPAddressObserver,
-                         public BrowserContextKeyedService {
+                         public KeyedService {
  public:
   // The contents of the Details for a NOTIFICATION_GOOGLE_URL_UPDATED.
   typedef std::pair<GURL, GURL> UpdatedDetails;
@@ -135,7 +136,7 @@ class GoogleURLTracker : public net::URLFetcherDelegate,
   // NetworkChangeNotifier::IPAddressObserver:
   virtual void OnIPAddressChanged() OVERRIDE;
 
-  // BrowserContextKeyedService:
+  // KeyedService:
   virtual void Shutdown() OVERRIDE;
 
   // Registers consumer interest in getting an updated URL from the server.
@@ -175,17 +176,14 @@ class GoogleURLTracker : public net::URLFetcherDelegate,
 
   scoped_ptr<GoogleURLTrackerNavigationHelper> nav_helper_;
 
-  // Creates an infobar delegate and adds it to the provided InfoBarService.
-  // Returns the delegate pointer on success or NULL on failure.  The caller
-  // does not own the returned object, the InfoBarService does.
-  base::Callback<GoogleURLTrackerInfoBarDelegate*(
-      InfoBarService*,
-      GoogleURLTracker*,
-      const GURL&)> infobar_creator_;
+  // Creates an infobar and adds it to the provided InfoBarService.  Returns the
+  // infobar on success or NULL on failure.  The caller does not own the
+  // returned object, the InfoBarService does.
+  base::Callback<InfoBar*(InfoBarService*, GoogleURLTracker*, const GURL&)>
+      infobar_creator_;
 
   GURL google_url_;
   GURL fetched_google_url_;
-  base::WeakPtrFactory<GoogleURLTracker> weak_ptr_factory_;
   scoped_ptr<net::URLFetcher> fetcher_;
   int fetcher_id_;
   bool in_startup_sleep_;  // True if we're in the five-second "no fetching"
@@ -203,6 +201,7 @@ class GoogleURLTracker : public net::URLFetcherDelegate,
   bool search_committed_;  // True when we're expecting a notification of a new
                            // pending search navigation.
   EntryMap entry_map_;
+  base::WeakPtrFactory<GoogleURLTracker> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(GoogleURLTracker);
 };

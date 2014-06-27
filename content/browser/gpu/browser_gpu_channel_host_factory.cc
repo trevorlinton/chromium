@@ -11,9 +11,10 @@
 #include "content/browser/gpu/gpu_process_host.h"
 #include "content/browser/gpu/gpu_surface_tracker.h"
 #include "content/common/child_process_host_impl.h"
-#include "content/common/gpu/client/gpu_memory_buffer_impl.h"
+#include "content/common/gpu/client/gpu_memory_buffer_impl_shm.h"
 #include "content/common/gpu/gpu_messages.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/gpu_data_manager.h"
 #include "content/public/common/content_client.h"
 #include "ipc/ipc_forwarding_message_filter.h"
 
@@ -58,6 +59,7 @@ void BrowserGpuChannelHostFactory::EstablishRequest::EstablishOnIO() {
     host = GpuProcessHost::Get(GpuProcessHost::GPU_PROCESS_KIND_SANDBOXED,
                                cause_for_gpu_launch_);
     if (!host) {
+      LOG(ERROR) << "Failed to launch GPU process.";
       FinishOnIO();
       return;
     }
@@ -69,6 +71,7 @@ void BrowserGpuChannelHostFactory::EstablishRequest::EstablishOnIO() {
       // failure in ChannelEstablishedOnIO, but we ended up with the same
       // process ID, meaning the failure was not because of a channel error,
       // but another reason. So fail now.
+      LOG(ERROR) << "Failed to create channel.";
       FinishOnIO();
       return;
     }
@@ -89,6 +92,8 @@ void BrowserGpuChannelHostFactory::EstablishRequest::OnEstablishedOnIO(
   if (channel_handle.name.empty() && reused_gpu_process_) {
     // We failed after re-using the GPU process, but it may have died in the
     // mean time. Retry to have a chance to create a fresh GPU process.
+    DVLOG(1) << "Failed to create channel on existing GPU process. Trying to "
+                "restart GPU process.";
     EstablishOnIO();
   } else {
     channel_handle_ = channel_handle;
@@ -134,6 +139,10 @@ void BrowserGpuChannelHostFactory::EstablishRequest::Cancel() {
   finished_ = true;
 }
 
+bool BrowserGpuChannelHostFactory::CanUseForTesting() {
+  return GpuDataManager::GetInstance()->GpuAccessAllowed(NULL);
+}
+
 void BrowserGpuChannelHostFactory::Initialize(bool establish_gpu_channel) {
   DCHECK(!instance_);
   instance_ = new BrowserGpuChannelHostFactory(establish_gpu_channel);
@@ -176,10 +185,6 @@ base::MessageLoop* BrowserGpuChannelHostFactory::GetMainLoop() {
 scoped_refptr<base::MessageLoopProxy>
 BrowserGpuChannelHostFactory::GetIOLoopProxy() {
   return BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO);
-}
-
-base::WaitableEvent* BrowserGpuChannelHostFactory::GetShutDownEvent() {
-  return shutdown_event_.get();
 }
 
 scoped_ptr<base::SharedMemory>
@@ -354,10 +359,9 @@ void BrowserGpuChannelHostFactory::GpuChannelEstablished() {
 
   GetContentClient()->SetGpuInfo(pending_request_->gpu_info());
   gpu_channel_ = GpuChannelHost::Create(this,
-                                        pending_request_->gpu_host_id(),
-                                        gpu_client_id_,
                                         pending_request_->gpu_info(),
-                                        pending_request_->channel_handle());
+                                        pending_request_->channel_handle(),
+                                        shutdown_event_.get());
   gpu_host_id_ = pending_request_->gpu_host_id();
   pending_request_ = NULL;
 
@@ -381,11 +385,12 @@ scoped_ptr<gfx::GpuMemoryBuffer>
   if (!shm->CreateAnonymous(size))
     return scoped_ptr<gfx::GpuMemoryBuffer>();
 
-  return make_scoped_ptr<gfx::GpuMemoryBuffer>(
-      new GpuMemoryBufferImpl(shm.Pass(),
-                              width,
-                              height,
-                              internalformat));
+  scoped_ptr<GpuMemoryBufferImplShm> buffer(
+      new GpuMemoryBufferImplShm(gfx::Size(width, height), internalformat));
+  if (!buffer->InitializeFromSharedMemory(shm.Pass()))
+    return scoped_ptr<gfx::GpuMemoryBuffer>();
+
+  return buffer.PassAs<gfx::GpuMemoryBuffer>();
 }
 
 // static

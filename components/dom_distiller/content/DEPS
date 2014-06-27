@@ -1,3 +1,8 @@
 include_rules = [
-  "+content/public/browser",
+  "+components/keyed_service",
+  "+content/public",
+  "+content/shell",
+  "+net/base",
+  "+net/test",
+  "+ui/base/l10n",
 ]

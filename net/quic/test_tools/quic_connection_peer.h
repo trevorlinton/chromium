@@ -15,20 +15,20 @@ namespace net {
 struct QuicAckFrame;
 struct QuicPacketHeader;
 class QuicAlarm;
-class QuicCongestionManager;
 class QuicConnection;
 class QuicConnectionHelperInterface;
 class QuicConnectionVisitorInterface;
+class QuicEncryptedPacket;
 class QuicFecGroup;
 class QuicFramer;
 class QuicPacketCreator;
 class QuicPacketWriter;
+class QuicReceivedPacketManager;
+class QuicSentPacketManager;
 class ReceiveAlgorithmInterface;
 class SendAlgorithmInterface;
 
 namespace test {
-
-class QuicTestWriter;
 
 // Peer to make public a number of otherwise private QuicConnection methods.
 class QuicConnectionPeer {
@@ -48,10 +48,11 @@ class QuicConnectionPeer {
 
   static QuicPacketCreator* GetPacketCreator(QuicConnection* connection);
 
-  static QuicCongestionManager* GetCongestionManager(
+  static QuicSentPacketManager* GetSentPacketManager(
       QuicConnection* connection);
 
-  static bool GetReceivedTruncatedAck(QuicConnection* connection);
+  static QuicReceivedPacketManager* GetReceivedPacketManager(
+      QuicConnection* connection);
 
   static QuicTime::Delta GetNetworkTimeout(QuicConnection* connection);
 
@@ -59,9 +60,8 @@ class QuicConnectionPeer {
       QuicConnection* connection,
       QuicPacketSequenceNumber sequence_number);
 
-  static size_t GetRetransmissionCount(
-      QuicConnection* connection,
-      QuicPacketSequenceNumber sequence_number);
+  static bool IsRetransmission(QuicConnection* connection,
+                               QuicPacketSequenceNumber sequence_number);
 
   static QuicPacketEntropyHash GetSentEntropyHash(
       QuicConnection* connection,
@@ -75,10 +75,6 @@ class QuicConnectionPeer {
   static QuicPacketEntropyHash ReceivedEntropyHash(
       QuicConnection* connection,
       QuicPacketSequenceNumber sequence_number);
-
-  static bool IsWriteBlocked(QuicConnection* connection);
-
-  static void SetIsWriteBlocked(QuicConnection* connection, bool write_blocked);
 
   static bool IsServer(QuicConnection* connection);
 
@@ -106,13 +102,17 @@ class QuicConnectionPeer {
   static QuicAlarm* GetTimeoutAlarm(QuicConnection* connection);
 
   static QuicPacketWriter* GetWriter(QuicConnection* connection);
-  static void SetWriter(QuicConnection* connection, QuicTestWriter* writer);
+  static void SetWriter(QuicConnection* connection, QuicPacketWriter* writer);
+  static void CloseConnection(QuicConnection* connection);
+  static QuicEncryptedPacket* GetConnectionClosePacket(
+      QuicConnection* connection);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(QuicConnectionPeer);
 };
 
 }  // namespace test
+
 }  // namespace net
 
-#endif  // NET_QUIC_TEST_TOOLS_QUIC_TEST_PEER_H_
+#endif  // NET_QUIC_TEST_TOOLS_QUIC_CONNECTION_PEER_H_

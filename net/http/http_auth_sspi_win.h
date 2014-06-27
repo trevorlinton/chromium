@@ -22,6 +22,8 @@
 
 namespace net {
 
+class HttpAuthChallengeTokenizer;
+
 // SSPILibrary is introduced so unit tests can mock the calls to Windows' SSPI
 // implementation. The default implementation simply passes the arguments on to
 // the SSPI implementation provided by Secur32.dll.
@@ -134,7 +136,7 @@ class NET_EXPORT_PRIVATE HttpAuthSSPI {
   bool AllowsExplicitCredentials() const;
 
   HttpAuth::AuthorizationResult ParseChallenge(
-      HttpAuth::ChallengeTokenizer* tok);
+      HttpAuthChallengeTokenizer* tok);
 
   // Generates an authentication token for the service specified by the
   // Service Principal Name |spn| and stores the value in |*auth_token|.
@@ -144,7 +146,7 @@ class NET_EXPORT_PRIVATE HttpAuthSSPI {
   // obtained using |*credentials|. If |credentials| is NULL, the credentials
   // for the currently logged in user are used instead.
   int GenerateAuthToken(const AuthCredentials* credentials,
-                        const std::wstring& spn,
+                        const std::string& spn,
                         std::string* auth_token);
 
   // Delegation is allowed on the Kerberos ticket. This allows certain servers
@@ -156,7 +158,7 @@ class NET_EXPORT_PRIVATE HttpAuthSSPI {
   int OnFirstRound(const AuthCredentials* credentials);
 
   int GetNextSecurityToken(
-      const std::wstring& spn,
+      const std::string& spn,
       const void* in_token,
       int in_token_len,
       void** out_token,

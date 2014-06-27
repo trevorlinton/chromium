@@ -14,42 +14,79 @@ import re
 import subprocess
 import sys
 
-def GetVersion(compiler):
+
+def GetVersion(compiler, tool):
+  tool_output = tool_error = None
   try:
     # Note that compiler could be something tricky like "distcc g++".
-    compiler = compiler + " -dumpversion"
+    if tool == "compiler":
+      compiler = compiler + " -dumpversion"
+      # 4.6
+      version_re = re.compile(r"(\d+)\.(\d+)")
+    elif tool == "assembler":
+      compiler = compiler + " -Xassembler --version -x assembler -c /dev/null"
+      # Unmodified: GNU assembler (GNU Binutils) 2.24
+      # Ubuntu: GNU assembler (GNU Binutils for Ubuntu) 2.22
+      # Fedora: GNU assembler version 2.23.2
+      version_re = re.compile(r"^GNU [^ ]+ .* (\d+).(\d+).*?$", re.M)
+    elif tool == "linker":
+      compiler = compiler + " -Xlinker --version"
+      # Using BFD linker
+      # Unmodified: GNU ld (GNU Binutils) 2.24
+      # Ubuntu: GNU ld (GNU Binutils for Ubuntu) 2.22
+      # Fedora: GNU ld version 2.23.2
+      # Using Gold linker
+      # Unmodified: GNU gold (GNU Binutils 2.24) 1.11
+      # Ubuntu: GNU gold (GNU Binutils for Ubuntu 2.22) 1.11
+      # Fedora: GNU gold (version 2.23.2) 1.11
+      version_re = re.compile(r"^GNU [^ ]+ .* (\d+).(\d+).*?$", re.M)
+    else:
+      raise Exception("Unknown tool %s" % tool)
+
     pipe = subprocess.Popen(compiler, shell=True,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    gcc_output, gcc_error = pipe.communicate()
+    tool_output, tool_error = pipe.communicate()
     if pipe.returncode:
       raise subprocess.CalledProcessError(pipe.returncode, compiler)
 
-    result = re.match(r"(\d+)\.(\d+)", gcc_output)
+    result = version_re.match(tool_output)
     return result.group(1) + result.group(2)
   except Exception, e:
-    if gcc_error:
-      sys.stderr.write(gcc_error)
+    if tool_error:
+      sys.stderr.write(tool_error)
     print >> sys.stderr, "compiler_version.py failed to execute:", compiler
     print >> sys.stderr, e
     return ""
 
-def main():
+
+def main(args):
+  # Force the locale to C otherwise the version string could be localized
+  # making regex matching fail.
+  os.environ["LC_ALL"] = "C"
+
+  tool = "compiler"
+  if len(args) == 1:
+    tool = args[0]
+  elif len(args) > 1:
+    print "Unknown arguments!"
+
   # Check if CXX environment variable exists and
   # if it does use that compiler.
   cxx = os.getenv("CXX", None)
   if cxx:
-    cxxversion = GetVersion(cxx)
+    cxxversion = GetVersion(cxx, tool)
     if cxxversion != "":
       print cxxversion
       return 0
   else:
     # Otherwise we check the g++ version.
-    gccversion = GetVersion("g++")
+    gccversion = GetVersion("g++", tool)
     if gccversion != "":
       print gccversion
       return 0
 
   return 1
 
+
 if __name__ == "__main__":
-  sys.exit(main())
+  sys.exit(main(sys.argv[1:]))

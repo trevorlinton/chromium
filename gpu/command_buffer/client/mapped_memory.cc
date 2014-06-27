@@ -8,16 +8,19 @@
 #include <functional>
 
 #include "base/debug/trace_event.h"
+#include "base/logging.h"
 #include "gpu/command_buffer/client/cmd_buffer_helper.h"
 
 namespace gpu {
 
-MemoryChunk::MemoryChunk(
-    int32 shm_id, gpu::Buffer shm, CommandBufferHelper* helper)
+MemoryChunk::MemoryChunk(int32 shm_id,
+                         scoped_refptr<gpu::Buffer> shm,
+                         CommandBufferHelper* helper)
     : shm_id_(shm_id),
       shm_(shm),
-      allocator_(shm.size, helper, shm.ptr) {
-}
+      allocator_(shm->size(), helper, shm->memory()) {}
+
+MemoryChunk::~MemoryChunk() {}
 
 MappedMemoryManager::MappedMemoryManager(CommandBufferHelper* helper,
                                          size_t unused_memory_reclaim_limit)
@@ -38,8 +41,8 @@ MappedMemoryManager::~MappedMemoryManager() {
 
 void* MappedMemoryManager::Alloc(
     unsigned int size, int32* shm_id, unsigned int* shm_offset) {
-  GPU_DCHECK(shm_id);
-  GPU_DCHECK(shm_offset);
+  DCHECK(shm_id);
+  DCHECK(shm_offset);
   if (size <= allocated_memory_) {
     size_t total_bytes_in_use = 0;
     // See if any of the chunks can satisfy this request.
@@ -49,7 +52,7 @@ void* MappedMemoryManager::Alloc(
       total_bytes_in_use += chunk->bytes_in_use();
       if (chunk->GetLargestFreeSizeWithoutWaiting() >= size) {
         void* mem = chunk->Alloc(size);
-        GPU_DCHECK(mem);
+        DCHECK(mem);
         *shm_id = chunk->shm_id();
         *shm_offset = chunk->GetOffset(mem);
         return mem;
@@ -66,7 +69,7 @@ void* MappedMemoryManager::Alloc(
         MemoryChunk* chunk = chunks_[ii];
         if (chunk->GetLargestFreeSizeWithWaiting() >= size) {
           void* mem = chunk->Alloc(size);
-          GPU_DCHECK(mem);
+          DCHECK(mem);
           *shm_id = chunk->shm_id();
           *shm_offset = chunk->GetOffset(mem);
           return mem;
@@ -81,14 +84,15 @@ void* MappedMemoryManager::Alloc(
       ((size + chunk_size_multiple_ - 1) / chunk_size_multiple_) *
       chunk_size_multiple_;
   int32 id = -1;
-  gpu::Buffer shm = cmd_buf->CreateTransferBuffer(chunk_size, &id);
+  scoped_refptr<gpu::Buffer> shm =
+      cmd_buf->CreateTransferBuffer(chunk_size, &id);
   if (id  < 0)
     return NULL;
   MemoryChunk* mc = new MemoryChunk(id, shm, helper_);
   allocated_memory_ += mc->GetSize();
   chunks_.push_back(mc);
   void* mem = mc->Alloc(size);
-  GPU_DCHECK(mem);
+  DCHECK(mem);
   *shm_id = mc->shm_id();
   *shm_offset = mc->GetOffset(mem);
   return mem;
@@ -102,7 +106,7 @@ void MappedMemoryManager::Free(void* pointer) {
       return;
     }
   }
-  GPU_NOTREACHED();
+  NOTREACHED();
 }
 
 void MappedMemoryManager::FreePendingToken(void* pointer, int32 token) {
@@ -113,7 +117,7 @@ void MappedMemoryManager::FreePendingToken(void* pointer, int32 token) {
       return;
     }
   }
-  GPU_NOTREACHED();
+  NOTREACHED();
 }
 
 void MappedMemoryManager::FreeUnused() {

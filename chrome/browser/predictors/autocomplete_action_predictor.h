@@ -14,7 +14,7 @@
 #include "base/strings/string16.h"
 #include "chrome/browser/history/history_types.h"
 #include "chrome/browser/predictors/autocomplete_action_predictor_table.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service.h"
+#include "components/keyed_service/core/keyed_service.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -59,7 +59,7 @@ namespace predictors {
 // PostTaskAndReply without fear of crashes if it is destroyed before the reply
 // triggers. This is necessary during initialization.
 class AutocompleteActionPredictor
-    : public BrowserContextKeyedService,
+    : public KeyedService,
       public content::NotificationObserver,
       public base::SupportsWeakPtr<AutocompleteActionPredictor> {
  public:
@@ -76,7 +76,7 @@ class AutocompleteActionPredictor
   // Registers an AutocompleteResult for a given |user_text|. This will be used
   // when the user navigates from the Omnibox to determine early opportunities
   // to predict their actions.
-  void RegisterTransitionalMatches(const string16& user_text,
+  void RegisterTransitionalMatches(const base::string16& user_text,
                                    const AutocompleteResult& result);
 
   // Clears any transitional matches that have been registered. Called when, for
@@ -89,7 +89,7 @@ class AutocompleteActionPredictor
   // of the matching entry the user typed, and how long it's been since the user
   // visited the matching URL, to calculate a score between 0 and 1. This score
   // is then mapped to an Action.
-  Action RecommendAction(const string16& user_text,
+  Action RecommendAction(const base::string16& user_text,
                          const AutocompleteMatch& match) const;
 
   // Begin prerendering |url| with |session_storage_namespace|. The |size| gives
@@ -113,16 +113,16 @@ class AutocompleteActionPredictor
     TransitionalMatch();
     ~TransitionalMatch();
 
-    string16 user_text;
+    base::string16 user_text;
     std::vector<GURL> urls;
 
-    bool operator==(const string16& other_user_text) const {
+    bool operator==(const base::string16& other_user_text) const {
       return user_text == other_user_text;
     }
   };
 
   struct DBCacheKey {
-    string16 user_text;
+    base::string16 user_text;
     GURL url;
 
     bool operator<(const DBCacheKey& rhs) const {
@@ -201,7 +201,7 @@ class AutocompleteActionPredictor
   // will take a particular match given what they have typed. |is_in_db| is set
   // to differentiate trivial zero results resulting from a match not being
   // found from actual zero results where the calculation returns 0.0.
-  double CalculateConfidence(const string16& user_text,
+  double CalculateConfidence(const base::string16& user_text,
                              const AutocompleteMatch& match,
                              bool* is_in_db) const;
 

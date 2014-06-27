@@ -6,7 +6,7 @@
 #define CHROME_BROWSER_PREDICTORS_PREDICTOR_DATABASE_H_
 
 #include "base/memory/ref_counted.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service.h"
+#include "components/keyed_service/core/keyed_service.h"
 
 class Profile;
 
@@ -19,22 +19,20 @@ namespace predictors {
 class AutocompleteActionPredictorTable;
 class LoggedInPredictorTable;
 class PredictorDatabaseInternal;
-class ResourcePrefetchPredictorTables;
 
-class PredictorDatabase : public BrowserContextKeyedService {
+class PredictorDatabase : public KeyedService {
  public:
   explicit PredictorDatabase(Profile* profile);
   virtual ~PredictorDatabase();
 
   scoped_refptr<AutocompleteActionPredictorTable> autocomplete_table();
-  scoped_refptr<ResourcePrefetchPredictorTables> resource_prefetch_tables();
   scoped_refptr<LoggedInPredictorTable> logged_in_table();
 
   // Used for testing.
   sql::Connection* GetDatabase();
 
  private:
-  // BrowserContextKeyedService
+  // KeyedService
   virtual void Shutdown() OVERRIDE;
 
   scoped_refptr<PredictorDatabaseInternal> db_;

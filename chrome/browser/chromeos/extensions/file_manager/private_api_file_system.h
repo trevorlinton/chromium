@@ -23,6 +23,12 @@ namespace fileapi {
 class FileSystemContext;
 }
 
+namespace file_manager {
+namespace util {
+struct EntryDefinition;
+}  // namespace util
+}  // namespace file_manager
+
 namespace extensions {
 
 // Implements the chrome.fileBrowserPrivate.requestFileSystem method.
@@ -41,18 +47,23 @@ class FileBrowserPrivateRequestFileSystemFunction
  private:
   void RespondSuccessOnUIThread(const std::string& name,
                                 const GURL& root_url);
-  void RespondFailedOnUIThread(base::PlatformFileError error_code);
+  void RespondFailedOnUIThread(base::File::Error error_code);
 
   // Called when something goes wrong. Records the error to |error_| per the
   // error code and reports that the private API function failed.
-  void DidFail(base::PlatformFileError error_code);
+  void DidFail(base::File::Error error_code);
 
   // Sets up file system access permissions to the extension identified by
   // |child_id|.
   bool SetupFileSystemAccessPermissions(
       scoped_refptr<fileapi::FileSystemContext> file_system_context,
       int child_id,
+      Profile* profile,
       scoped_refptr<const extensions::Extension> extension);
+
+  // Called when the entry definition is computed.
+  void OnEntryDefinition(
+      const file_manager::util::EntryDefinition& entry_definition);
 };
 
 // Base class for FileBrowserPrivateAddFileWatchFunction and
@@ -149,16 +160,16 @@ class FileBrowserPrivateValidatePathNameLengthFunction
   virtual bool RunImpl() OVERRIDE;
 };
 
-// Implements the chrome.fileBrowserPrivate.formatDevice method.
-// Formats Device given its mount path.
-class FileBrowserPrivateFormatDeviceFunction
+// Implements the chrome.fileBrowserPrivate.formatVolume method.
+// Formats Volume given its mount path.
+class FileBrowserPrivateFormatVolumeFunction
     : public LoggedAsyncExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("fileBrowserPrivate.formatDevice",
-                             FILEBROWSERPRIVATE_FORMATDEVICE)
+  DECLARE_EXTENSION_FUNCTION("fileBrowserPrivate.formatVolume",
+                             FILEBROWSERPRIVATE_FORMATVOLUME)
 
  protected:
-  virtual ~FileBrowserPrivateFormatDeviceFunction() {}
+  virtual ~FileBrowserPrivateFormatVolumeFunction() {}
 
   // AsyncExtensionFunction overrides.
   virtual bool RunImpl() OVERRIDE;

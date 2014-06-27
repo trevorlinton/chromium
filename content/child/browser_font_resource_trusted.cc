@@ -27,13 +27,13 @@
 using ppapi::StringVar;
 using ppapi::thunk::EnterResourceNoLock;
 using ppapi::thunk::PPB_ImageData_API;
-using WebKit::WebFloatPoint;
-using WebKit::WebFloatRect;
-using WebKit::WebFont;
-using WebKit::WebFontDescription;
-using WebKit::WebRect;
-using WebKit::WebTextRun;
-using WebKit::WebCanvas;
+using blink::WebFloatPoint;
+using blink::WebFloatRect;
+using blink::WebFont;
+using blink::WebFontDescription;
+using blink::WebRect;
+using blink::WebTextRun;
+using blink::WebCanvas;
 
 namespace content {
 
@@ -43,14 +43,14 @@ namespace {
 // undefined reference linker error.
 const char kCommonScript[] = "Zyyy";
 
-string16 GetFontFromMap(
+base::string16 GetFontFromMap(
     const webkit_glue::ScriptFontFamilyMap& map,
     const std::string& script) {
   webkit_glue::ScriptFontFamilyMap::const_iterator it =
       map.find(script);
   if (it != map.end())
     return it->second;
-  return string16();
+  return base::string16();
 }
 
 // Splits a PP_BrowserFont_Trusted_TextRun into a sequence or LTR and RTL
@@ -65,7 +65,7 @@ class TextRunCollection {
     StringVar* text_string = StringVar::FromPPVar(run.text);
     if (!text_string)
       return;  // Leave num_runs_ = 0 so we'll do nothing.
-    text_ = UTF8ToUTF16(text_string->value());
+    text_ = base::UTF8ToUTF16(text_string->value());
 
     if (run.override_direction) {
       // Skip autodetection.
@@ -85,7 +85,7 @@ class TextRunCollection {
       ubidi_close(bidi_);
   }
 
-  const string16& text() const { return text_; }
+  const base::string16& text() const { return text_; }
   int num_runs() const { return num_runs_; }
 
   // Returns a WebTextRun with the info for the run at the given index.
@@ -94,7 +94,7 @@ class TextRunCollection {
     DCHECK(index < num_runs_);
     if (bidi_) {
       bool run_rtl = !!ubidi_getVisualRun(bidi_, index, run_start, run_len);
-      return WebTextRun(string16(&text_[*run_start], *run_len),
+      return WebTextRun(base::string16(&text_[*run_start], *run_len),
                         run_rtl, true);
     }
 
@@ -110,7 +110,7 @@ class TextRunCollection {
   UBiDi* bidi_;
 
   // Text of all the runs.
-  string16 text_;
+  base::string16 text_;
 
   int num_runs_;
 
@@ -127,7 +127,7 @@ bool PPTextRunToWebTextRun(const PP_BrowserFont_Trusted_TextRun& text,
   if (!text_string)
     return false;
 
-  *run = WebTextRun(UTF8ToUTF16(text_string->value()),
+  *run = WebTextRun(base::UTF8ToUTF16(text_string->value()),
                     PP_ToBool(text.rtl),
                     PP_ToBool(text.override_direction));
   return true;
@@ -167,7 +167,7 @@ WebFontDescription PPFontDescToWebFontDesc(
   StringVar* face_name = StringVar::FromPPVar(font.face);  // Possibly null.
 
   WebFontDescription result;
-  string16 resolved_family;
+  base::string16 resolved_family;
   if (!face_name || face_name->value().empty()) {
     // Resolve the generic family.
     switch (font.family) {
@@ -191,7 +191,7 @@ WebFontDescription PPFontDescToWebFontDesc(
     }
   } else {
     // Use the exact font.
-    resolved_family = UTF8ToUTF16(face_name->value());
+    resolved_family = base::UTF8ToUTF16(face_name->value());
   }
   result.family = resolved_family;
 
@@ -273,7 +273,8 @@ PP_Bool BrowserFontResource_Trusted::Describe(
   // While converting the other way in PPFontDescToWebFontDesc we validated
   // that the enums can be casted.
   WebFontDescription web_desc = font_->fontDescription();
-  description->face = StringVar::StringToPPVar(UTF16ToUTF8(web_desc.family));
+  description->face =
+      StringVar::StringToPPVar(base::UTF16ToUTF8(web_desc.family));
   description->family =
       static_cast<PP_BrowserFont_Trusted_Family>(web_desc.genericFamily);
   description->size = static_cast<uint32_t>(web_desc.size);

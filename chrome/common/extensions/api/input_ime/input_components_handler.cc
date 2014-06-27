@@ -9,9 +9,9 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/manifest_url_handler.h"
 #include "extensions/common/error_utils.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_constants.h"
 
@@ -47,11 +47,11 @@ InputComponentsHandler::~InputComponentsHandler() {
 }
 
 bool InputComponentsHandler::Parse(Extension* extension,
-                                   string16* error) {
+                                   base::string16* error) {
   scoped_ptr<InputComponents> info(new InputComponents);
   const base::ListValue* list_value = NULL;
   if (!extension->manifest()->GetList(keys::kInputComponents, &list_value)) {
-    *error = ASCIIToUTF16(errors::kInvalidInputComponents);
+    *error = base::ASCIIToUTF16(errors::kInvalidInputComponents);
     return false;
   }
   for (size_t i = 0; i < list_value->GetSize(); ++i) {
@@ -63,12 +63,14 @@ bool InputComponentsHandler::Parse(Extension* extension,
     std::set<std::string> languages;
     std::set<std::string> layouts;
     std::string shortcut_keycode_str;
+    GURL input_view_url;
+    GURL options_page_url;
     bool shortcut_alt = false;
     bool shortcut_ctrl = false;
     bool shortcut_shift = false;
 
     if (!list_value->GetDictionary(i, &module_value)) {
-      *error = ASCIIToUTF16(errors::kInvalidInputComponents);
+      *error = base::ASCIIToUTF16(errors::kInvalidInputComponents);
       return false;
     }
 
@@ -147,7 +149,7 @@ bool InputComponentsHandler::Parse(Extension* extension,
     }
 
     if (module_value->HasKey(keys::kShortcutKey)) {
-      const DictionaryValue* shortcut_value = NULL;
+      const base::DictionaryValue* shortcut_value = NULL;
       if (!module_value->GetDictionary(keys::kShortcutKey,
           &shortcut_value)) {
         *error = ErrorUtils::FormatErrorMessageUTF16(
@@ -180,6 +182,35 @@ bool InputComponentsHandler::Parse(Extension* extension,
       }
     }
 
+    // Get input_components[i].input_view_url.
+    // Note: 'input_view' is optional in manifest.
+    std::string input_view_str;
+    if (module_value->GetString(keys::kInputView, &input_view_str)) {
+      input_view_url = extension->GetResourceURL(input_view_str);
+      if (!input_view_url.is_valid()) {
+        *error = ErrorUtils::FormatErrorMessageUTF16(
+            errors::kInvalidInputView,
+            base::IntToString(i));
+        return false;
+      }
+    }
+
+    // Get input_components[i].options_page_url.
+    // Note: 'options_page' is optional in manifest.
+    std::string options_page_str;
+    if (module_value->GetString(keys::kImeOptionsPage, &options_page_str)) {
+      options_page_url = extension->GetResourceURL(options_page_str);
+      if (!options_page_url.is_valid()) {
+        *error = ErrorUtils::FormatErrorMessageUTF16(
+            errors::kInvalidOptionsPage,
+            base::IntToString(i));
+        return false;
+      }
+    } else {
+      // Fall back to extension's options page for backward compatibility.
+      options_page_url = extensions::ManifestURL::GetOptionsPage(extension);
+    }
+
     info->input_components.push_back(InputComponentInfo());
     info->input_components.back().name = name_str;
     info->input_components.back().type = type;
@@ -192,8 +223,8 @@ bool InputComponentsHandler::Parse(Extension* extension,
     info->input_components.back().shortcut_alt = shortcut_alt;
     info->input_components.back().shortcut_ctrl = shortcut_ctrl;
     info->input_components.back().shortcut_shift = shortcut_shift;
-    info->input_components.back().options_page_url =
-        extensions::ManifestURL::GetOptionsPage(extension);
+    info->input_components.back().options_page_url = options_page_url;
+    info->input_components.back().input_view_url = input_view_url;
   }
   extension->SetManifestData(keys::kInputComponents, info.release());
   return true;

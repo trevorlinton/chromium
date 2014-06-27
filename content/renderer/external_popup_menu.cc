@@ -14,24 +14,28 @@ namespace content {
 
 ExternalPopupMenu::ExternalPopupMenu(
     RenderViewImpl* render_view,
-    const WebKit::WebPopupMenuInfo& popup_menu_info,
-    WebKit::WebExternalPopupMenuClient* popup_menu_client)
+    const blink::WebPopupMenuInfo& popup_menu_info,
+    blink::WebExternalPopupMenuClient* popup_menu_client)
     : render_view_(render_view),
       popup_menu_info_(popup_menu_info),
       popup_menu_client_(popup_menu_client),
       origin_scale_for_emulation_(0) {
 }
 
-void ExternalPopupMenu::SetOriginScaleForEmulation(float scale) {
+void ExternalPopupMenu::SetOriginScaleAndOffsetForEmulation(
+    float scale, const gfx::Point& offset) {
   origin_scale_for_emulation_ = scale;
+  origin_offset_for_emulation_ = offset;
 }
 
-void ExternalPopupMenu::show(const WebKit::WebRect& bounds) {
-  WebKit::WebRect rect = bounds;
+void ExternalPopupMenu::show(const blink::WebRect& bounds) {
+  blink::WebRect rect = bounds;
   if (origin_scale_for_emulation_) {
     rect.x *= origin_scale_for_emulation_;
     rect.y *= origin_scale_for_emulation_;
   }
+  rect.x += origin_offset_for_emulation_.x();
+  rect.y += origin_offset_for_emulation_.y();
 
   ViewHostMsg_ShowPopup_Params popup_params;
   popup_params.bounds = rect;
@@ -50,8 +54,9 @@ void ExternalPopupMenu::show(const WebKit::WebRect& bounds) {
 }
 
 void ExternalPopupMenu::close()  {
-  popup_menu_client_ = NULL;
-  render_view_ = NULL;
+  render_view_->Send(new ViewHostMsg_HidePopup(render_view_->routing_id()));
+  render_view_->DidHideExternalPopupMenu();
+  // |this| was deleted.
 }
 
 #if defined(OS_MACOSX)

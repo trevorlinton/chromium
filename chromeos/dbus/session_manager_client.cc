@@ -36,6 +36,10 @@ class SessionManagerClientImpl : public SessionManagerClient {
   }
 
   // SessionManagerClient overrides:
+  virtual void SetStubDelegate(StubDelegate* delegate) OVERRIDE {
+    // Do nothing; this isn't a stub implementation.
+  }
+
   virtual void AddObserver(Observer* observer) OVERRIDE {
     observers_.AddObserver(observer);
   }
@@ -46,11 +50,6 @@ class SessionManagerClientImpl : public SessionManagerClient {
 
   virtual bool HasObserver(Observer* observer) OVERRIDE {
     return observers_.HasObserver(observer);
-  }
-
-  virtual void EmitLoginPromptReady() OVERRIDE {
-    SimpleMethodCallToSessionManager(
-        login_manager::kSessionManagerEmitLoginPromptReady);
   }
 
   virtual void EmitLoginPromptVisible() OVERRIDE {
@@ -243,38 +242,21 @@ class SessionManagerClientImpl : public SessionManagerClient {
     blocking_method_caller_.reset(
         new BlockingMethodCaller(bus, session_manager_proxy_));
 
-    // Signals emitted on Chromium's interface.  Many of these ought to be
-    // method calls instead.
+    // Signals emitted on the session manager's interface.
     session_manager_proxy_->ConnectToSignal(
-        chromium::kChromiumInterface,
-        chromium::kOwnerKeySetSignal,
+        login_manager::kSessionManagerInterface,
+        login_manager::kOwnerKeySetSignal,
         base::Bind(&SessionManagerClientImpl::OwnerKeySetReceived,
                    weak_ptr_factory_.GetWeakPtr()),
         base::Bind(&SessionManagerClientImpl::SignalConnected,
                    weak_ptr_factory_.GetWeakPtr()));
     session_manager_proxy_->ConnectToSignal(
-        chromium::kChromiumInterface,
-        chromium::kPropertyChangeCompleteSignal,
+        login_manager::kSessionManagerInterface,
+        login_manager::kPropertyChangeCompleteSignal,
         base::Bind(&SessionManagerClientImpl::PropertyChangeCompleteReceived,
                    weak_ptr_factory_.GetWeakPtr()),
         base::Bind(&SessionManagerClientImpl::SignalConnected,
                    weak_ptr_factory_.GetWeakPtr()));
-    session_manager_proxy_->ConnectToSignal(
-        chromium::kChromiumInterface,
-        chromium::kLockScreenSignal,
-        base::Bind(&SessionManagerClientImpl::ScreenLockReceived,
-                   weak_ptr_factory_.GetWeakPtr()),
-        base::Bind(&SessionManagerClientImpl::SignalConnected,
-                   weak_ptr_factory_.GetWeakPtr()));
-    session_manager_proxy_->ConnectToSignal(
-        chromium::kChromiumInterface,
-        chromium::kLivenessRequestedSignal,
-        base::Bind(&SessionManagerClientImpl::LivenessRequestedReceived,
-                   weak_ptr_factory_.GetWeakPtr()),
-        base::Bind(&SessionManagerClientImpl::SignalConnected,
-                   weak_ptr_factory_.GetWeakPtr()));
-
-    // Signals emitted on the session manager's interface.
     session_manager_proxy_->ConnectToSignal(
         login_manager::kSessionManagerInterface,
         login_manager::kScreenIsLockedSignal,
@@ -415,14 +397,14 @@ class SessionManagerClientImpl : public SessionManagerClient {
       return;
     }
     dbus::MessageReader reader(response);
-    uint8* values = NULL;
+    const uint8* values = NULL;
     size_t length = 0;
     if (!reader.PopArrayOfBytes(&values, &length)) {
       LOG(ERROR) << "Invalid response: " << response->ToString();
       return;
     }
     // static_cast does not work due to signedness.
-    extracted->assign(reinterpret_cast<char*>(values), length);
+    extracted->assign(reinterpret_cast<const char*>(values), length);
   }
 
   // Called when kSessionManagerRetrievePolicy or
@@ -475,15 +457,6 @@ class SessionManagerClientImpl : public SessionManagerClient {
     FOR_EACH_OBSERVER(Observer, observers_, PropertyChangeComplete(success));
   }
 
-  void ScreenLockReceived(dbus::Signal* signal) {
-    FOR_EACH_OBSERVER(Observer, observers_, LockScreen());
-  }
-
-  void LivenessRequestedReceived(dbus::Signal* signal) {
-    SimpleMethodCallToSessionManager(
-        login_manager::kSessionManagerHandleLivenessConfirmed);
-  }
-
   void ScreenIsLockedReceived(dbus::Signal* signal) {
     FOR_EACH_OBSERVER(Observer, observers_, ScreenIsLocked());
   }
@@ -514,7 +487,7 @@ class SessionManagerClientImpl : public SessionManagerClient {
 // which does nothing.
 class SessionManagerClientStubImpl : public SessionManagerClient {
  public:
-  SessionManagerClientStubImpl() {}
+  SessionManagerClientStubImpl() : delegate_(NULL) {}
   virtual ~SessionManagerClientStubImpl() {}
 
   // SessionManagerClient overrides
@@ -531,6 +504,9 @@ class SessionManagerClientStubImpl : public SessionManagerClient {
     }
   }
 
+  virtual void SetStubDelegate(StubDelegate* delegate) OVERRIDE {
+    delegate_ = delegate;
+  }
   virtual void AddObserver(Observer* observer) OVERRIDE {
     observers_.AddObserver(observer);
   }
@@ -540,14 +516,14 @@ class SessionManagerClientStubImpl : public SessionManagerClient {
   virtual bool HasObserver(Observer* observer) OVERRIDE {
     return observers_.HasObserver(observer);
   }
-  virtual void EmitLoginPromptReady() OVERRIDE {}
   virtual void EmitLoginPromptVisible() OVERRIDE {}
   virtual void RestartJob(int pid, const std::string& command_line) OVERRIDE {}
   virtual void StartSession(const std::string& user_email) OVERRIDE {}
   virtual void StopSession() OVERRIDE {}
   virtual void StartDeviceWipe() OVERRIDE {}
   virtual void RequestLockScreen() OVERRIDE {
-    FOR_EACH_OBSERVER(Observer, observers_, LockScreen());
+    if (delegate_)
+      delegate_->LockScreenForStub();
   }
   virtual void NotifyLockScreenShown() OVERRIDE {
     FOR_EACH_OBSERVER(Observer, observers_, ScreenIsLocked());
@@ -628,13 +604,14 @@ class SessionManagerClientStubImpl : public SessionManagerClient {
   static void StoreFileInBackground(const base::FilePath& path,
                                     const std::string& data) {
     const int size = static_cast<int>(data.size());
-    if (!file_util::CreateDirectory(path.DirName()) ||
-        file_util::WriteFile(path, data.data(), size) != size) {
+    if (!base::CreateDirectory(path.DirName()) ||
+        base::WriteFile(path, data.data(), size) != size) {
       LOG(WARNING) << "Failed to write policy key to " << path.value();
     }
   }
 
  private:
+  StubDelegate* delegate_;  // Weak pointer; may be NULL.
   ObserverList<Observer> observers_;
   std::string device_policy_;
   std::map<std::string, std::string> user_policies_;

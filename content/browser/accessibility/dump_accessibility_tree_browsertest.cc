@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "base/command_line.h"
 #include "base/file_util.h"
 #include "base/logging.h"
 #include "base/path_service.h"
@@ -20,15 +21,16 @@
 #include "content/port/browser/render_widget_host_view_port.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_paths.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
+#include "content/public/test/content_browser_test.h"
+#include "content/public/test/content_browser_test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "content/test/accessibility_browser_test_utils.h"
-#include "content/test/content_browser_test.h"
-#include "content/test/content_browser_test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-// TODO(dmazzoni): Disabled accessibility tests on Win64. crbug.com/179717
-#if defined(OS_WIN) && defined(ARCH_CPU_X86_64)
+// TODO(aboxhall): Create expectations on Android for these
+#if defined(OS_ANDROID)
 #define MAYBE(x) DISABLED_##x
 #else
 #define MAYBE(x) x
@@ -86,9 +88,9 @@ class DumpAccessibilityTreeTest : public ContentBrowserTest {
   }
 
   void AddDefaultFilters(std::vector<Filter>* filters) {
-    filters->push_back(Filter(ASCIIToUTF16("FOCUSABLE"), Filter::ALLOW));
-    filters->push_back(Filter(ASCIIToUTF16("READONLY"), Filter::ALLOW));
-    filters->push_back(Filter(ASCIIToUTF16("*=''"), Filter::DENY));
+    filters->push_back(Filter(base::ASCIIToUTF16("FOCUSABLE"), Filter::ALLOW));
+    filters->push_back(Filter(base::ASCIIToUTF16("READONLY"), Filter::ALLOW));
+    filters->push_back(Filter(base::ASCIIToUTF16("*=''"), Filter::DENY));
   }
 
   void ParseFilters(const std::string& test_html,
@@ -107,16 +109,25 @@ class DumpAccessibilityTreeTest : public ContentBrowserTest {
           AccessibilityTreeFormatter::GetDenyString();
       if (StartsWithASCII(line, allow_empty_str, true)) {
         filters->push_back(
-          Filter(UTF8ToUTF16(line.substr(allow_empty_str.size())),
+          Filter(base::UTF8ToUTF16(line.substr(allow_empty_str.size())),
                  Filter::ALLOW_EMPTY));
       } else if (StartsWithASCII(line, allow_str, true)) {
-        filters->push_back(Filter(UTF8ToUTF16(line.substr(allow_str.size())),
+        filters->push_back(Filter(base::UTF8ToUTF16(
+                                      line.substr(allow_str.size())),
                                   Filter::ALLOW));
       } else if (StartsWithASCII(line, deny_str, true)) {
-        filters->push_back(Filter(UTF8ToUTF16(line.substr(deny_str.size())),
+        filters->push_back(Filter(base::UTF8ToUTF16(
+                                      line.substr(deny_str.size())),
                                   Filter::DENY));
       }
     }
+  }
+
+  virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE {
+    ContentBrowserTest::SetUpCommandLine(command_line);
+    // Enable <dialog>, which is used in some tests.
+    CommandLine::ForCurrentProcess()->AppendSwitch(
+        switches::kEnableExperimentalWebPlatformFeatures);
   }
 
   void RunTest(const base::FilePath::CharType* file_path);
@@ -152,7 +163,7 @@ void DumpAccessibilityTreeTest::RunTest(
   // Tolerate Windows-style line endings (\r\n) in the expected file:
   // normalize by deleting all \r from the file (if any) to leave only \n.
   std::string expected_contents;
-  RemoveChars(expected_contents_raw, "\r", &expected_contents);
+  base::RemoveChars(expected_contents_raw, "\r", &expected_contents);
 
   if (!expected_contents.compare(0, strlen(kMarkSkipFile), kMarkSkipFile)) {
     printf("Skipping this test on this platform.\n");
@@ -160,13 +171,13 @@ void DumpAccessibilityTreeTest::RunTest(
   }
 
   // Load the page.
-  string16 html_contents16;
-  html_contents16 = UTF8ToUTF16(html_contents);
+  base::string16 html_contents16;
+  html_contents16 = base::UTF8ToUTF16(html_contents);
   GURL url = GetTestUrl("accessibility",
                         html_file.BaseName().MaybeAsASCII().c_str());
   AccessibilityNotificationWaiter waiter(
       shell(), AccessibilityModeComplete,
-      WebKit::WebAXEventLoadComplete);
+      ui::AX_EVENT_LOAD_COMPLETE);
   NavigateToURL(shell(), url);
   waiter.WaitForNotification();
 
@@ -182,9 +193,9 @@ void DumpAccessibilityTreeTest::RunTest(
   formatter.SetFilters(filters);
 
   // Perform a diff (or write the initial baseline).
-  string16 actual_contents_utf16;
+  base::string16 actual_contents_utf16;
   formatter.FormatAccessibilityTree(&actual_contents_utf16);
-  std::string actual_contents = UTF16ToUTF8(actual_contents_utf16);
+  std::string actual_contents = base::UTF16ToUTF8(actual_contents_utf16);
   std::vector<std::string> actual_lines, expected_lines;
   Tokenize(actual_contents, "\n", &actual_lines);
   Tokenize(expected_contents, "\n", &expected_lines);
@@ -222,7 +233,7 @@ void DumpAccessibilityTreeTest::RunTest(
         base::FilePath(html_file.RemoveExtension().value() +
                        AccessibilityTreeFormatter::GetActualFileSuffix());
 
-    EXPECT_TRUE(file_util::WriteFile(
+    EXPECT_TRUE(base::WriteFile(
         actual_file, actual_contents.c_str(), actual_contents.size()));
 
     ADD_FAILURE() << "No expectation found. Create it by doing:\n"
@@ -243,6 +254,10 @@ IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest, AccessibilityAName) {
   RunTest(FILE_PATH_LITERAL("a-name.html"));
 }
 
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest, AccessibilityANoText) {
+  RunTest(FILE_PATH_LITERAL("a-no-text.html"));
+}
+
 IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest, AccessibilityAOnclick) {
   RunTest(FILE_PATH_LITERAL("a-onclick.html"));
 }
@@ -257,8 +272,16 @@ IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest,
   RunTest(FILE_PATH_LITERAL("aria-autocomplete.html"));
 }
 
-IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest, AccessibilityAriaCombobox) {
+// crbug.com/98976 will cause new elements to be added to the Blink a11y tree
+// Re-baseline after the Blink change goes in
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest,
+                       DISABLED_AccessibilityAriaCombobox) {
   RunTest(FILE_PATH_LITERAL("aria-combobox.html"));
+}
+
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest,
+                       MAYBE(AccessibilityAriaFlowto)) {
+  RunTest(FILE_PATH_LITERAL("aria-flowto.html"));
 }
 
 IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest, AccessibilityAriaInvalid) {
@@ -332,6 +355,10 @@ IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest,
   RunTest(FILE_PATH_LITERAL("checkbox-name-calc.html"));
 }
 
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest, AccessibilityDialog) {
+  RunTest(FILE_PATH_LITERAL("dialog.html"));
+}
+
 IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest, AccessibilityDiv) {
   RunTest(FILE_PATH_LITERAL("div.html"));
 }
@@ -398,16 +425,58 @@ IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest,
   RunTest(FILE_PATH_LITERAL("input-text-name-calc.html"));
 }
 
+// crbug.com/98976 will cause new elements to be added to the Blink a11y tree
+// Re-baseline after the Blink change goes in
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest,
+                       DISABLED_AccessibilityInputTypes) {
+  RunTest(FILE_PATH_LITERAL("input-types.html"));
+}
+
 IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest, AccessibilityLabel) {
   RunTest(FILE_PATH_LITERAL("label.html"));
+}
+
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest, AccessibilityLandmark) {
+  RunTest(FILE_PATH_LITERAL("landmark.html"));
 }
 
 IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest, AccessibilityListMarkers) {
   RunTest(FILE_PATH_LITERAL("list-markers.html"));
 }
 
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest,
+                       AccessibilityModalDialogClosed) {
+  RunTest(FILE_PATH_LITERAL("modal-dialog-closed.html"));
+}
+
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest,
+                       AccessibilityModalDialogOpened) {
+  RunTest(FILE_PATH_LITERAL("modal-dialog-opened.html"));
+}
+
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest,
+                       AccessibilityModalDialogInIframeClosed) {
+  RunTest(FILE_PATH_LITERAL("modal-dialog-in-iframe-closed.html"));
+}
+
+// TODO(dmazzoni): fix this test after Blink change that broke it lands.
+// http://crbug.com/353067
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest,
+                       DISABLED_AccessibilityModalDialogInIframeOpened) {
+  RunTest(FILE_PATH_LITERAL("modal-dialog-in-iframe-opened.html"));
+}
+
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest,
+                       AccessibilityModalDialogStack) {
+  RunTest(FILE_PATH_LITERAL("modal-dialog-stack.html"));
+}
+
 IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest, AccessibilityP) {
   RunTest(FILE_PATH_LITERAL("p.html"));
+}
+
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest, AccessibilityRegion) {
+  RunTest(FILE_PATH_LITERAL("region.html"));
 }
 
 IN_PROC_BROWSER_TEST_F(DumpAccessibilityTreeTest, AccessibilitySelect) {

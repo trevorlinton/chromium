@@ -9,27 +9,26 @@
 
 #include "base/callback.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/memory/weak_ptr.h"
 #include "media/base/video_decoder.h"
 #include "media/base/video_decoder_config.h"
+#include "media/base/video_frame_pool.h"
+#include "media/ffmpeg/ffmpeg_deleters.h"
 
 struct AVCodecContext;
 struct AVFrame;
 
 namespace base {
-class MessageLoopProxy;
+class SingleThreadTaskRunner;
 }
 
 namespace media {
 
 class DecoderBuffer;
-class ScopedPtrAVFreeContext;
-class ScopedPtrAVFreeFrame;
 
 class MEDIA_EXPORT FFmpegVideoDecoder : public VideoDecoder {
  public:
   explicit FFmpegVideoDecoder(
-      const scoped_refptr<base::MessageLoopProxy>& message_loop);
+      const scoped_refptr<base::SingleThreadTaskRunner>& task_runner);
   virtual ~FFmpegVideoDecoder();
 
   // VideoDecoder implementation.
@@ -70,9 +69,7 @@ class MEDIA_EXPORT FFmpegVideoDecoder : public VideoDecoder {
   // Reset decoder and call |reset_cb_|.
   void DoReset();
 
-  scoped_refptr<base::MessageLoopProxy> message_loop_;
-  base::WeakPtrFactory<FFmpegVideoDecoder> weak_factory_;
-  base::WeakPtr<FFmpegVideoDecoder> weak_this_;
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
   DecoderState state_;
 
@@ -80,10 +77,12 @@ class MEDIA_EXPORT FFmpegVideoDecoder : public VideoDecoder {
   base::Closure reset_cb_;
 
   // FFmpeg structures owned by this object.
-  scoped_ptr_malloc<AVCodecContext, ScopedPtrAVFreeContext> codec_context_;
-  scoped_ptr_malloc<AVFrame, ScopedPtrAVFreeFrame> av_frame_;
+  scoped_ptr<AVCodecContext, ScopedPtrAVFreeContext> codec_context_;
+  scoped_ptr<AVFrame, ScopedPtrAVFreeFrame> av_frame_;
 
   VideoDecoderConfig config_;
+
+  VideoFramePool frame_pool_;
 
   DISALLOW_COPY_AND_ASSIGN(FFmpegVideoDecoder);
 };

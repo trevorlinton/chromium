@@ -19,7 +19,9 @@
 #include "base/process/memory.h"
 #include "base/process/process.h"
 #include "base/process/process_metrics.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/synchronization/waitable_event.h"
 #include "base/test/multiprocess_test.h"
 #include "base/test/test_timeouts.h"
 #include "base/third_party/dynamic_annotations/dynamic_annotations.h"
@@ -29,7 +31,6 @@
 #include "testing/multiprocess_func_list.h"
 
 #if defined(OS_LINUX)
-#include <glib.h>
 #include <malloc.h>
 #include <sched.h>
 #endif
@@ -44,6 +45,7 @@
 #endif
 #if defined(OS_WIN)
 #include <windows.h>
+#include "base/win/windows_version.h"
 #endif
 #if defined(OS_MACOSX)
 #include <mach/vm_param.h>
@@ -142,8 +144,9 @@ MULTIPROCESS_TEST_MAIN(SimpleChildProcess) {
   return 0;
 }
 
+// TODO(viettrungluu): This should be in a "MultiProcessTestTest".
 TEST_F(ProcessUtilTest, SpawnChild) {
-  base::ProcessHandle handle = this->SpawnChild("SimpleChildProcess", false);
+  base::ProcessHandle handle = SpawnChild("SimpleChildProcess");
   ASSERT_NE(base::kNullProcessHandle, handle);
   EXPECT_TRUE(base::WaitForSingleProcess(
                   handle, TestTimeouts::action_max_timeout()));
@@ -159,7 +162,7 @@ TEST_F(ProcessUtilTest, KillSlowChild) {
   const std::string signal_file =
       ProcessUtilTest::GetSignalFilePath(kSignalFileSlow);
   remove(signal_file.c_str());
-  base::ProcessHandle handle = this->SpawnChild("SlowChildProcess", false);
+  base::ProcessHandle handle = SpawnChild("SlowChildProcess");
   ASSERT_NE(base::kNullProcessHandle, handle);
   SignalChildren(signal_file.c_str());
   EXPECT_TRUE(base::WaitForSingleProcess(
@@ -173,7 +176,7 @@ TEST_F(ProcessUtilTest, DISABLED_GetTerminationStatusExit) {
   const std::string signal_file =
       ProcessUtilTest::GetSignalFilePath(kSignalFileSlow);
   remove(signal_file.c_str());
-  base::ProcessHandle handle = this->SpawnChild("SlowChildProcess", false);
+  base::ProcessHandle handle = SpawnChild("SlowChildProcess");
   ASSERT_NE(base::kNullProcessHandle, handle);
 
   int exit_code = 42;
@@ -196,7 +199,7 @@ TEST_F(ProcessUtilTest, DISABLED_GetTerminationStatusExit) {
 TEST_F(ProcessUtilTest, GetProcId) {
   base::ProcessId id1 = base::GetProcId(GetCurrentProcess());
   EXPECT_NE(0ul, id1);
-  base::ProcessHandle handle = this->SpawnChild("SimpleChildProcess", false);
+  base::ProcessHandle handle = SpawnChild("SimpleChildProcess");
   ASSERT_NE(base::kNullProcessHandle, handle);
   base::ProcessId id2 = base::GetProcId(handle);
   EXPECT_NE(0ul, id2);
@@ -232,7 +235,8 @@ MULTIPROCESS_TEST_MAIN(CrashingChildProcess) {
 // This test intentionally crashes, so we don't need to run it under
 // AddressSanitizer.
 // TODO(jschuh): crbug.com/175753 Fix this in Win64 bots.
-#if defined(ADDRESS_SANITIZER) || (defined(OS_WIN) && defined(ARCH_CPU_X86_64))
+#if defined(ADDRESS_SANITIZER) || \
+    (defined(OS_WIN) && defined(ARCH_CPU_X86_64)) || defined(SYZYASAN)
 #define MAYBE_GetTerminationStatusCrash DISABLED_GetTerminationStatusCrash
 #else
 #define MAYBE_GetTerminationStatusCrash GetTerminationStatusCrash
@@ -241,8 +245,7 @@ TEST_F(ProcessUtilTest, MAYBE_GetTerminationStatusCrash) {
   const std::string signal_file =
     ProcessUtilTest::GetSignalFilePath(kSignalFileCrash);
   remove(signal_file.c_str());
-  base::ProcessHandle handle = this->SpawnChild("CrashingChildProcess",
-                                                false);
+  base::ProcessHandle handle = SpawnChild("CrashingChildProcess");
   ASSERT_NE(base::kNullProcessHandle, handle);
 
   int exit_code = 42;
@@ -289,8 +292,7 @@ TEST_F(ProcessUtilTest, GetTerminationStatusKill) {
   const std::string signal_file =
     ProcessUtilTest::GetSignalFilePath(kSignalFileKill);
   remove(signal_file.c_str());
-  base::ProcessHandle handle = this->SpawnChild("KilledChildProcess",
-                                                false);
+  base::ProcessHandle handle = SpawnChild("KilledChildProcess");
   ASSERT_NE(base::kNullProcessHandle, handle);
 
   int exit_code = 42;
@@ -320,7 +322,7 @@ TEST_F(ProcessUtilTest, GetTerminationStatusKill) {
 // Note: a platform may not be willing or able to lower the priority of
 // a process. The calls to SetProcessBackground should be noops then.
 TEST_F(ProcessUtilTest, SetProcessBackgrounded) {
-  base::ProcessHandle handle = this->SpawnChild("SimpleChildProcess", false);
+  base::ProcessHandle handle = SpawnChild("SimpleChildProcess");
   base::Process process(handle);
   int old_priority = process.GetPriority();
 #if defined(OS_WIN)
@@ -354,85 +356,8 @@ TEST_F(ProcessUtilTest, SetProcessBackgroundedSelf) {
   EXPECT_EQ(old_priority, new_priority);
 }
 
-#if defined(OS_LINUX) || defined(OS_ANDROID)
-TEST_F(ProcessUtilTest, GetSystemMemoryInfo) {
-  base::SystemMemoryInfoKB info;
-  EXPECT_TRUE(base::GetSystemMemoryInfo(&info));
-
-  // Ensure each field received a value.
-  EXPECT_GT(info.total, 0);
-  EXPECT_GT(info.free, 0);
-  EXPECT_GT(info.buffers, 0);
-  EXPECT_GT(info.cached, 0);
-  EXPECT_GT(info.active_anon, 0);
-  EXPECT_GT(info.inactive_anon, 0);
-  EXPECT_GT(info.active_file, 0);
-  EXPECT_GT(info.inactive_file, 0);
-
-  // All the values should be less than the total amount of memory.
-  EXPECT_LT(info.free, info.total);
-  EXPECT_LT(info.buffers, info.total);
-  EXPECT_LT(info.cached, info.total);
-  EXPECT_LT(info.active_anon, info.total);
-  EXPECT_LT(info.inactive_anon, info.total);
-  EXPECT_LT(info.active_file, info.total);
-  EXPECT_LT(info.inactive_file, info.total);
-
-#if defined(OS_CHROMEOS)
-  // Chrome OS exposes shmem.
-  EXPECT_GT(info.shmem, 0);
-  EXPECT_LT(info.shmem, info.total);
-  // Chrome unit tests are not run on actual Chrome OS hardware, so gem_objects
-  // and gem_size cannot be tested here.
-#endif
-}
-#endif  // defined(OS_LINUX) || defined(OS_ANDROID)
-
-// TODO(estade): if possible, port these 2 tests.
 #if defined(OS_WIN)
-TEST_F(ProcessUtilTest, CalcFreeMemory) {
-  scoped_ptr<base::ProcessMetrics> metrics(
-      base::ProcessMetrics::CreateProcessMetrics(::GetCurrentProcess()));
-  ASSERT_TRUE(NULL != metrics.get());
-
-  bool using_tcmalloc = false;
-
-  // Detect if we are using tcmalloc
-#if !defined(NO_TCMALLOC)
-  const char* chrome_allocator = getenv("CHROME_ALLOCATOR");
-  if (!chrome_allocator || _stricmp(chrome_allocator, "tcmalloc") == 0)
-    using_tcmalloc = true;
-#endif
-
-  // Typical values here is ~1900 for total and ~1000 for largest. Obviously
-  // it depends in what other tests have done to this process.
-  base::FreeMBytes free_mem1 = {0};
-  EXPECT_TRUE(metrics->CalculateFreeMemory(&free_mem1));
-  EXPECT_LT(10u, free_mem1.total);
-  EXPECT_LT(10u, free_mem1.largest);
-  EXPECT_GT(2048u, free_mem1.total);
-  EXPECT_GT(2048u, free_mem1.largest);
-  EXPECT_GE(free_mem1.total, free_mem1.largest);
-  EXPECT_TRUE(NULL != free_mem1.largest_ptr);
-
-  // Allocate 20M and check again. It should have gone down.
-  const int kAllocMB = 20;
-  scoped_ptr<char[]> alloc(new char[kAllocMB * 1024 * 1024]);
-  size_t expected_total = free_mem1.total - kAllocMB;
-  size_t expected_largest = free_mem1.largest;
-
-  base::FreeMBytes free_mem2 = {0};
-  EXPECT_TRUE(metrics->CalculateFreeMemory(&free_mem2));
-  EXPECT_GE(free_mem2.total, free_mem2.largest);
-  // This test is flaky when using tcmalloc, because tcmalloc
-  // allocation strategy sometimes results in less than the
-  // full drop of 20Mb of free memory.
-  if (!using_tcmalloc)
-    EXPECT_GE(expected_total, free_mem2.total);
-  EXPECT_GE(expected_largest, free_mem2.largest);
-  EXPECT_TRUE(NULL != free_mem2.largest_ptr);
-}
-
+// TODO(estade): if possible, port this test.
 TEST_F(ProcessUtilTest, GetAppOutput) {
   // Let's create a decently long message.
   std::string message;
@@ -462,16 +387,64 @@ TEST_F(ProcessUtilTest, GetAppOutput) {
   EXPECT_EQ("", output);
 }
 
+// TODO(estade): if possible, port this test.
 TEST_F(ProcessUtilTest, LaunchAsUser) {
   base::UserTokenHandle token;
   ASSERT_TRUE(OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, &token));
-  std::wstring cmdline =
-      this->MakeCmdLine("SimpleChildProcess", false).GetCommandLineString();
   base::LaunchOptions options;
   options.as_user = token;
-  EXPECT_TRUE(base::LaunchProcess(cmdline, options, NULL));
+  EXPECT_TRUE(base::LaunchProcess(MakeCmdLine("SimpleChildProcess"), options,
+                                  NULL));
 }
 
+static const char kEventToTriggerHandleSwitch[] = "event-to-trigger-handle";
+
+MULTIPROCESS_TEST_MAIN(TriggerEventChildProcess) {
+  std::string handle_value_string =
+      CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+          kEventToTriggerHandleSwitch);
+  CHECK(!handle_value_string.empty());
+
+  uint64 handle_value_uint64;
+  CHECK(base::StringToUint64(handle_value_string, &handle_value_uint64));
+  // Give ownership of the handle to |event|.
+  base::WaitableEvent event(reinterpret_cast<HANDLE>(handle_value_uint64));
+
+  event.Signal();
+
+  return 0;
+}
+
+TEST_F(ProcessUtilTest, InheritSpecifiedHandles) {
+  // Manually create the event, so that it can be inheritable.
+  SECURITY_ATTRIBUTES security_attributes = {};
+  security_attributes.nLength = static_cast<DWORD>(sizeof(security_attributes));
+  security_attributes.lpSecurityDescriptor = NULL;
+  security_attributes.bInheritHandle = true;
+
+  // Takes ownership of the event handle.
+  base::WaitableEvent event(
+      CreateEvent(&security_attributes, true, false, NULL));
+  base::HandlesToInheritVector handles_to_inherit;
+  handles_to_inherit.push_back(event.handle());
+  base::LaunchOptions options;
+  options.handles_to_inherit = &handles_to_inherit;
+
+  CommandLine cmd_line = MakeCmdLine("TriggerEventChildProcess");
+  cmd_line.AppendSwitchASCII(kEventToTriggerHandleSwitch,
+      base::Uint64ToString(reinterpret_cast<uint64>(event.handle())));
+
+  // This functionality actually requires Vista or later. Make sure that it
+  // fails properly on XP.
+  if (base::win::GetVersion() < base::win::VERSION_VISTA) {
+    EXPECT_FALSE(base::LaunchProcess(cmd_line, options, NULL));
+    return;
+  }
+
+  // Launch the process and wait for it to trigger the event.
+  ASSERT_TRUE(base::LaunchProcess(cmd_line, options, NULL));
+  EXPECT_TRUE(event.TimedWait(TestTimeouts::action_max_timeout()));
+}
 #endif  // defined(OS_WIN)
 
 #if defined(OS_POSIX)
@@ -519,7 +492,7 @@ MULTIPROCESS_TEST_MAIN(ProcessUtilsLeakFDChildProcess) {
   int written = HANDLE_EINTR(write(write_pipe, &num_open_files,
                                    sizeof(num_open_files)));
   DCHECK_EQ(static_cast<size_t>(written), sizeof(num_open_files));
-  int ret = HANDLE_EINTR(close(write_pipe));
+  int ret = IGNORE_EINTR(close(write_pipe));
   DPCHECK(ret == 0);
 
   return 0;
@@ -532,10 +505,12 @@ int ProcessUtilTest::CountOpenFDsInChild() {
 
   base::FileHandleMappingVector fd_mapping_vec;
   fd_mapping_vec.push_back(std::pair<int, int>(fds[1], kChildPipe));
-  base::ProcessHandle handle = this->SpawnChild(
-      "ProcessUtilsLeakFDChildProcess", fd_mapping_vec, false);
+  base::LaunchOptions options;
+  options.fds_to_remap = &fd_mapping_vec;
+  base::ProcessHandle handle =
+      SpawnChildWithOptions("ProcessUtilsLeakFDChildProcess", options);
   CHECK(handle);
-  int ret = HANDLE_EINTR(close(fds[1]));
+  int ret = IGNORE_EINTR(close(fds[1]));
   DPCHECK(ret == 0);
 
   // Read number of open files in client process from pipe;
@@ -544,14 +519,14 @@ int ProcessUtilTest::CountOpenFDsInChild() {
       HANDLE_EINTR(read(fds[0], &num_open_files, sizeof(num_open_files)));
   CHECK_EQ(bytes_read, static_cast<ssize_t>(sizeof(num_open_files)));
 
-#if defined(THREAD_SANITIZER) || defined(USE_HEAPCHECKER)
+#if defined(THREAD_SANITIZER)
   // Compiler-based ThreadSanitizer makes this test slow.
   CHECK(base::WaitForSingleProcess(handle, base::TimeDelta::FromSeconds(3)));
 #else
   CHECK(base::WaitForSingleProcess(handle, base::TimeDelta::FromSeconds(1)));
 #endif
   base::CloseProcessHandle(handle);
-  ret = HANDLE_EINTR(close(fds[0]));
+  ret = IGNORE_EINTR(close(fds[0]));
   DPCHECK(ret == 0);
 
   return num_open_files;
@@ -579,11 +554,11 @@ TEST_F(ProcessUtilTest, MAYBE_FDRemapping) {
   ASSERT_EQ(fds_after, fds_before);
 
   int ret;
-  ret = HANDLE_EINTR(close(sockets[0]));
+  ret = IGNORE_EINTR(close(sockets[0]));
   DPCHECK(ret == 0);
-  ret = HANDLE_EINTR(close(sockets[1]));
+  ret = IGNORE_EINTR(close(sockets[1]));
   DPCHECK(ret == 0);
-  ret = HANDLE_EINTR(close(dev_null));
+  ret = IGNORE_EINTR(close(dev_null));
   DPCHECK(ret == 0);
 }
 
@@ -612,13 +587,13 @@ std::string TestLaunchProcess(const base::EnvironmentMap& env_changes,
   CHECK_EQ(0, clone_flags);
 #endif  // OS_LINUX
   EXPECT_TRUE(base::LaunchProcess(args, options, NULL));
-  PCHECK(HANDLE_EINTR(close(fds[1])) == 0);
+  PCHECK(IGNORE_EINTR(close(fds[1])) == 0);
 
   char buf[512];
   const ssize_t n = HANDLE_EINTR(read(fds[0], buf, sizeof(buf)));
   PCHECK(n > 0);
 
-  PCHECK(HANDLE_EINTR(close(fds[0])) == 0);
+  PCHECK(IGNORE_EINTR(close(fds[0])) == 0);
 
   return std::string(buf, n);
 }
@@ -829,50 +804,6 @@ TEST_F(ProcessUtilTest, GetParentProcessId) {
   EXPECT_EQ(ppid, getppid());
 }
 
-#if defined(OS_LINUX) || defined(OS_ANDROID)
-TEST_F(ProcessUtilTest, ParseProcStatCPU) {
-  // /proc/self/stat for a process running "top".
-  const char kTopStat[] = "960 (top) S 16230 960 16230 34818 960 "
-      "4202496 471 0 0 0 "
-      "12 16 0 0 "  // <- These are the goods.
-      "20 0 1 0 121946157 15077376 314 18446744073709551615 4194304 "
-      "4246868 140733983044336 18446744073709551615 140244213071219 "
-      "0 0 0 138047495 0 0 0 17 1 0 0 0 0 0";
-  EXPECT_EQ(12 + 16, base::ParseProcStatCPU(kTopStat));
-
-  // cat /proc/self/stat on a random other machine I have.
-  const char kSelfStat[] = "5364 (cat) R 5354 5364 5354 34819 5364 "
-      "0 142 0 0 0 "
-      "0 0 0 0 "  // <- No CPU, apparently.
-      "16 0 1 0 1676099790 2957312 114 4294967295 134512640 134528148 "
-      "3221224832 3221224344 3086339742 0 0 0 0 0 0 0 17 0 0 0";
-
-  EXPECT_EQ(0, base::ParseProcStatCPU(kSelfStat));
-}
-
-// Disable on Android because base_unittests runs inside a Dalvik VM that
-// starts and stop threads (crbug.com/175563).
-#if !defined(OS_ANDROID)
-TEST_F(ProcessUtilTest, GetNumberOfThreads) {
-  const base::ProcessHandle current = base::GetCurrentProcessHandle();
-  const int initial_threads = base::GetNumberOfThreads(current);
-  ASSERT_GT(initial_threads, 0);
-  const int kNumAdditionalThreads = 10;
-  {
-    scoped_ptr<base::Thread> my_threads[kNumAdditionalThreads];
-    for (int i = 0; i < kNumAdditionalThreads; ++i) {
-      my_threads[i].reset(new base::Thread("GetNumberOfThreadsTest"));
-      my_threads[i]->Start();
-      ASSERT_EQ(base::GetNumberOfThreads(current), initial_threads + 1 + i);
-    }
-  }
-  // The Thread destructor will stop them.
-  ASSERT_EQ(initial_threads, base::GetNumberOfThreads(current));
-}
-#endif  // !defined(OS_ANDROID)
-
-#endif  // defined(OS_LINUX) || defined(OS_ANDROID)
-
 // TODO(port): port those unit tests.
 bool IsProcessDead(base::ProcessHandle child) {
   // waitpid() will actually reap the process which is exactly NOT what we
@@ -883,8 +814,7 @@ bool IsProcessDead(base::ProcessHandle child) {
 }
 
 TEST_F(ProcessUtilTest, DelayedTermination) {
-  base::ProcessHandle child_process =
-      SpawnChild("process_util_test_never_die", false);
+  base::ProcessHandle child_process = SpawnChild("process_util_test_never_die");
   ASSERT_TRUE(child_process);
   base::EnsureProcessTerminated(child_process);
   base::WaitForSingleProcess(child_process, base::TimeDelta::FromSeconds(5));
@@ -903,7 +833,7 @@ MULTIPROCESS_TEST_MAIN(process_util_test_never_die) {
 
 TEST_F(ProcessUtilTest, ImmediateTermination) {
   base::ProcessHandle child_process =
-      SpawnChild("process_util_test_die_immediately", false);
+      SpawnChild("process_util_test_die_immediately");
   ASSERT_TRUE(child_process);
   // Give it time to die.
   sleep(2);

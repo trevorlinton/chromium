@@ -9,7 +9,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
-#include "chrome/browser/policy/proto/chromeos/install_attributes.pb.h"
+#include "chrome/browser/chromeos/policy/proto/install_attributes.pb.h"
 #include "chromeos/cryptohome/cryptohome_util.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/fake_cryptohome_client.h"
@@ -197,12 +197,13 @@ TEST_F(EnterpriseInstallAttributesTest, ConsumerKioskDevice) {
   ASSERT_EQ(EnterpriseInstallAttributes::LOCK_SUCCESS,
             LockDeviceAndWaitForResult(
                 std::string(),
-                DEVICE_MODE_CONSUMER_KIOSK,
+                DEVICE_MODE_CONSUMER_KIOSK_AUTOLAUNCH,
                 std::string()));
 
   ASSERT_FALSE(cryptohome_util::InstallAttributesIsFirstInstall());
-  EXPECT_EQ(DEVICE_MODE_CONSUMER_KIOSK, install_attributes_.GetMode());
-  ASSERT_TRUE(install_attributes_.IsConsumerKioskDevice());
+  EXPECT_EQ(DEVICE_MODE_CONSUMER_KIOSK_AUTOLAUNCH,
+            install_attributes_.GetMode());
+  ASSERT_TRUE(install_attributes_.IsConsumerKioskDeviceWithAutoLaunch());
 }
 
 TEST_F(EnterpriseInstallAttributesTest, DeviceLockedFromOlderVersion) {
@@ -233,7 +234,7 @@ TEST_F(EnterpriseInstallAttributesTest, ReadCacheFile) {
                EnterpriseInstallAttributes::kAttrEnterpriseUser, kTestUser);
   const std::string blob(install_attrs_proto.SerializeAsString());
   ASSERT_EQ(static_cast<int>(blob.size()),
-            file_util::WriteFile(GetTempPath(), blob.c_str(), blob.size()));
+            base::WriteFile(GetTempPath(), blob.c_str(), blob.size()));
   install_attributes_.ReadCacheFile(GetTempPath());
   EXPECT_EQ(DEVICE_MODE_ENTERPRISE, install_attributes_.GetMode());
   EXPECT_EQ(kTestDomain, install_attributes_.GetDomain());
@@ -247,9 +248,10 @@ TEST_F(EnterpriseInstallAttributesTest, ReadCacheFileForConsumerKiosk) {
                EnterpriseInstallAttributes::kAttrConsumerKioskEnabled, "true");
   const std::string blob(install_attrs_proto.SerializeAsString());
   ASSERT_EQ(static_cast<int>(blob.size()),
-            file_util::WriteFile(GetTempPath(), blob.c_str(), blob.size()));
+            base::WriteFile(GetTempPath(), blob.c_str(), blob.size()));
   install_attributes_.ReadCacheFile(GetTempPath());
-  EXPECT_EQ(DEVICE_MODE_CONSUMER_KIOSK, install_attributes_.GetMode());
+  EXPECT_EQ(DEVICE_MODE_CONSUMER_KIOSK_AUTOLAUNCH,
+            install_attributes_.GetMode());
   EXPECT_EQ("", install_attributes_.GetDomain());
   EXPECT_EQ("", install_attributes_.GetRegistrationUser());
   EXPECT_EQ("", install_attributes_.GetDeviceId());

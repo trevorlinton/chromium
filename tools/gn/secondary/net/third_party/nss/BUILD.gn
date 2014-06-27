@@ -11,7 +11,6 @@ config("ssl_config") {
 # TODO(brettw) move this to net/third_party/nss/ssl once GYP backwards-compat
 # is no longer needed.
 component("ssl") {
-  external = true
   # Not named "ssl" so the lib doesn't conflict with OpenSSL's libssl
   output_name = "crssl"
 
@@ -67,8 +66,8 @@ component("ssl") {
     "USE_UTIL_DIRECTLY",
   ]
 
-  configs -= "//build/config/compiler:chromium_code"
-  configs += "//build/config/compiler:no_chromium_code"
+  configs -= [ "//build/config/compiler:chromium_code" ]
+  configs += [ "//build/config/compiler:no_chromium_code" ]
 
   direct_dependent_configs = [ ":ssl_config" ]
 
@@ -86,9 +85,9 @@ component("ssl") {
 
   if (is_linux) {
     include_dirs = [ "bodge" ]
-    configs += "//third_party/nss:nss_linux_config"
+    configs += [ "//third_party/nss:nss_linux_config" ]
   }
   if (is_mac) {
-    sources -= "ssl/bodge/secitem_array.c"
+    sources -= [ "ssl/bodge/secitem_array.c" ]
   }
 }

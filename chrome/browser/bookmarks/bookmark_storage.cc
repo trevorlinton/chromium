@@ -56,7 +56,7 @@ void LoadCallback(const base::FilePath& path,
   bool bookmark_file_exists = base::PathExists(path);
   if (bookmark_file_exists) {
     JSONFileValueSerializer serializer(path);
-    scoped_ptr<Value> root(serializer.Deserialize(NULL, NULL));
+    scoped_ptr<base::Value> root(serializer.Deserialize(NULL, NULL));
 
     if (root.get()) {
       // Building the index can take a while, so we do it on the background
@@ -70,7 +70,9 @@ void LoadCallback(const base::FilePath& path,
       details->set_computed_checksum(codec.computed_checksum());
       details->set_stored_checksum(codec.stored_checksum());
       details->set_ids_reassigned(codec.ids_reassigned());
-      details->set_model_meta_info(codec.model_meta_info());
+      details->set_model_meta_info_map(codec.model_meta_info_map());
+      details->set_model_sync_transaction_version(
+          codec.model_sync_transaction_version());
       UMA_HISTOGRAM_TIMES("Bookmarks.DecodeTime",
                           TimeTicks::Now() - start_time);
 
@@ -102,6 +104,8 @@ BookmarkLoadDetails::BookmarkLoadDetails(
       other_folder_node_(other_folder_node),
       mobile_folder_node_(mobile_folder_node),
       index_(index),
+      model_sync_transaction_version_(
+          BookmarkNode::kInvalidSyncTransactionVersion),
       max_id_(max_id),
       ids_reassigned_(false) {
 }
@@ -153,7 +157,7 @@ void BookmarkStorage::BookmarkModelDeleted() {
 
 bool BookmarkStorage::SerializeData(std::string* output) {
   BookmarkCodec codec;
-  scoped_ptr<Value> value(codec.Encode(model_));
+  scoped_ptr<base::Value> value(codec.Encode(model_));
   JSONStringValueSerializer serializer(output);
   serializer.set_pretty_print(true);
   return serializer.Serialize(*(value.get()));

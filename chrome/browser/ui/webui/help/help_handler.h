@@ -68,7 +68,7 @@ class HelpHandler : public content::WebUIMessageHandler,
 
   // Callback method which forwards status updates to the page.
   void SetUpdateStatus(VersionUpdater::Status status, int progress,
-                       const string16& fail_message);
+                       const base::string16& fail_message);
 
 #if defined(OS_MACOSX)
   // Callback method which forwards promotion state to the page.
@@ -94,7 +94,7 @@ class HelpHandler : public content::WebUIMessageHandler,
   chromeos::VersionLoader loader_;
 
   // Used to request the version.
-  CancelableTaskTracker tracker_;
+  base::CancelableTaskTracker tracker_;
 #endif  // defined(OS_CHROMEOS)
 
   // Used for callbacks.

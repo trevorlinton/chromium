@@ -19,12 +19,16 @@ namespace cc {
 class CC_EXPORT ContentLayerClient {
  public:
   virtual void PaintContents(SkCanvas* canvas,
-                             gfx::Rect clip,
+                             const gfx::Rect& clip,
                              gfx::RectF* opaque) = 0;
 
   // Called by the content layer during the update phase.
   // If the client paints LCD text, it may want to invalidate the layer.
   virtual void DidChangeLayerCanUseLCDText() = 0;
+
+  // If true the layer may skip clearing the background before rasterizing,
+  // because it will cover any uncleared data with content.
+  virtual bool FillsBoundsCompletely() const = 0;
 
  protected:
   virtual ~ContentLayerClient() {}

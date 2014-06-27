@@ -15,14 +15,14 @@
 #include "third_party/WebKit/public/platform/WebURLResponse.h"
 #include "third_party/WebKit/public/web/WebCache.h"
 
-using WebKit::WebCache;
-using WebKit::WebData;
-using WebKit::WebString;
-using WebKit::WebURL;
-using WebKit::WebURLError;
-using WebKit::WebURLLoader;
-using WebKit::WebURLRequest;
-using WebKit::WebURLResponse;
+using blink::WebCache;
+using blink::WebData;
+using blink::WebString;
+using blink::WebURL;
+using blink::WebURLError;
+using blink::WebURLLoader;
+using blink::WebURLRequest;
+using blink::WebURLResponse;
 
 WebURLLoaderMockFactory::WebURLLoaderMockFactory() {}
 
@@ -39,7 +39,7 @@ void WebURLLoaderMockFactory::RegisterURL(const WebURL& url,
     response_info.file_path =
         base::FilePath(static_cast<std::string>(file_path.utf8()));
 #elif defined(OS_WIN)
-    string16 file_path_16 = file_path;
+    base::string16 file_path_16 = file_path;
     response_info.file_path = base::FilePath(std::wstring(
         file_path_16.data(), file_path_16.length()));
 #endif
@@ -60,7 +60,7 @@ void WebURLLoaderMockFactory::RegisterErrorURL(const WebURL& url,
   url_to_error_info_[url] = error;
 }
 
-void WebURLLoaderMockFactory::UnregisterURL(const WebKit::WebURL& url) {
+void WebURLLoaderMockFactory::UnregisterURL(const blink::WebURL& url) {
   URLToResponseMap::iterator iter = url_to_reponse_info_.find(url);
   DCHECK(iter != url_to_reponse_info_.end());
   url_to_reponse_info_.erase(iter);
@@ -107,12 +107,12 @@ void WebURLLoaderMockFactory::ServeAsynchronousRequests() {
   base::RunLoop().RunUntilIdle();
 }
 
-WebKit::WebURLRequest
+blink::WebURLRequest
 WebURLLoaderMockFactory::GetLastHandledAsynchronousRequest() {
   return last_handled_asynchronous_request_;
 }
 
-bool WebURLLoaderMockFactory::IsMockedURL(const WebKit::WebURL& url) {
+bool WebURLLoaderMockFactory::IsMockedURL(const blink::WebURL& url) {
   return url_to_reponse_info_.find(url) != url_to_reponse_info_.end();
 }
 
@@ -176,13 +176,13 @@ bool WebURLLoaderMockFactory::IsPending(WebURLLoaderMock* loader) {
 bool WebURLLoaderMockFactory::ReadFile(const base::FilePath& file_path,
                                        WebData* data) {
   int64 file_size = 0;
-  if (!file_util::GetFileSize(file_path, &file_size))
+  if (!base::GetFileSize(file_path, &file_size))
     return false;
 
   int size = static_cast<int>(file_size);
   scoped_ptr<char[]> buffer(new char[size]);
   data->reset();
-  int read_count = file_util::ReadFile(file_path, buffer.get(), size);
+  int read_count = base::ReadFile(file_path, buffer.get(), size);
   if (read_count == -1)
     return false;
   DCHECK(read_count == size);

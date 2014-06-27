@@ -43,7 +43,7 @@ namespace {
 const int kNotificationCountPrefDefault = -1;
 
 bool GetBooleanPref(const char* pref_name) {
-  Profile* profile = ProfileManager::GetDefaultProfileOrOffTheRecord();
+  Profile* profile = ProfileManager::GetPrimaryUserProfile();
   PrefService* prefs = profile->GetPrefs();
   return prefs->GetBoolean(pref_name);
 }
@@ -54,7 +54,7 @@ int GetIntegerLocalPref(const char* pref_name) {
 }
 
 void SetBooleanPref(const char* pref_name, bool value) {
-  Profile* profile = ProfileManager::GetDefaultProfileOrOffTheRecord();
+  Profile* profile = ProfileManager::GetPrimaryUserProfile();
   PrefService* prefs = profile->GetPrefs();
   prefs->SetBoolean(pref_name, value);
 }
@@ -125,7 +125,7 @@ void NotificationClicked(const std::string& service_path,
     ash::network_connect::ShowNetworkSettings(service_path);
 
   chrome::ScopedTabbedBrowserDisplayer displayer(
-      ProfileManager::GetDefaultProfileOrOffTheRecord(),
+      ProfileManager::GetPrimaryUserProfile(),
       chrome::HOST_DESKTOP_TYPE_ASH);
   chrome::ShowSingletonTab(displayer.browser(), GURL(info_url));
 }
@@ -187,14 +187,14 @@ void DataPromoNotification::ShowOptionalMobileDataPromoNotification() {
   if (carrier)
     deal = GetCarrierDeal(carrier);
 
-  string16 message = l10n_util::GetStringUTF16(IDS_3G_NOTIFICATION_MESSAGE);
+  base::string16 message = l10n_util::GetStringUTF16(IDS_3G_NOTIFICATION_MESSAGE);
   std::string info_url;
   if (deal) {
     carrier_deal_promo_pref = GetCarrierDealPromoShown();
     const std::string locale = g_browser_process->GetApplicationLocale();
     std::string deal_text =
         deal->GetLocalizedString(locale, "notification_text");
-    message = UTF8ToUTF16(deal_text + "\n\n") + message;
+    message = base::UTF8ToUTF16(deal_text + "\n\n") + message;
     info_url = deal->info_url();
     if (info_url.empty() && carrier)
       info_url = carrier->top_up_url();
@@ -217,7 +217,7 @@ void DataPromoNotification::ShowOptionalMobileDataPromoNotification() {
           base::string16() /* title */,
           message,
           icon,
-          ash::system_notifier::NOTIFIER_NETWORK,
+          ash::system_notifier::kNotifierNetwork,
           base::Bind(&NotificationClicked,
                      default_network->path(), info_url)));
 

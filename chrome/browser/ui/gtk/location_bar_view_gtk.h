@@ -89,10 +89,6 @@ class LocationBarViewGtk : public OmniboxEditController,
   // corresponding to |page_action|.
   GtkWidget* GetPageActionWidget(ExtensionAction* page_action);
 
-  // Performs any updates which depend on the image having already been laid out
-  // by the owning LocationBarViewGtk.
-  void UpdatePostLayout();
-
   // Show the bookmark bubble.
   void ShowStarBubble(const GURL& url, bool newly_boomkarked);
 
@@ -103,6 +99,12 @@ class LocationBarViewGtk : public OmniboxEditController,
   // Returns the zoom widget. Used by the zoom bubble for an anchor.
   GtkWidget* zoom_widget() { return zoom_.get(); }
 
+  // Returns the manage passwords widget. Used by the manage passwords bubble
+  // for an anchor.
+  GtkWidget* manage_passwords_icon_widget() {
+    return manage_passwords_icon_.get();
+  }
+
   // Set the starred state of the bookmark star.
   void SetStarred(bool starred);
 
@@ -110,6 +112,7 @@ class LocationBarViewGtk : public OmniboxEditController,
   virtual void Update(const content::WebContents* contents) OVERRIDE;
   virtual void OnChanged() OVERRIDE;
   virtual void OnSetFocus() OVERRIDE;
+  virtual void ShowURL() OVERRIDE;
   virtual InstantController* GetInstant() OVERRIDE;
   virtual content::WebContents* GetWebContents() OVERRIDE;
   virtual ToolbarModel* GetToolbarModel() OVERRIDE;
@@ -124,14 +127,15 @@ class LocationBarViewGtk : public OmniboxEditController,
   virtual void FocusLocation(bool select_all) OVERRIDE;
   virtual void FocusSearch() OVERRIDE;
   virtual void UpdateContentSettingsIcons() OVERRIDE;
+  virtual void UpdateManagePasswordsIconAndBubble() OVERRIDE;
   virtual void UpdatePageActions() OVERRIDE;
   virtual void InvalidatePageActions() OVERRIDE;
   virtual void UpdateOpenPDFInReaderPrompt() OVERRIDE;
   virtual void UpdateGeneratedCreditCardView() OVERRIDE;
   virtual void SaveStateToContents(content::WebContents* contents) OVERRIDE;
   virtual void Revert() OVERRIDE;
-  virtual const OmniboxView* GetLocationEntry() const OVERRIDE;
-  virtual OmniboxView* GetLocationEntry() OVERRIDE;
+  virtual const OmniboxView* GetOmniboxView() const OVERRIDE;
+  virtual OmniboxView* GetOmniboxView() OVERRIDE;
   virtual LocationBarTesting* GetLocationBarForTesting() OVERRIDE;
 
   // LocationBarTesting:
@@ -161,12 +165,7 @@ class LocationBarViewGtk : public OmniboxEditController,
 
     bool IsVisible();
 
-    // Updates the decoration from the shown WebContents.
-    virtual void UpdatePreLayout(content::WebContents* web_contents) = 0;
-
-    // Performs any updates which depend on the image having already been laid
-    // out by the owning LocationBarView.
-    virtual void UpdatePostLayout(content::WebContents* web_contents) = 0;
+    virtual void Update(content::WebContents* web_contents) = 0;
 
     // Overridden from gfx::AnimationDelegate:
     virtual void AnimationProgressed(const gfx::Animation* animation) OVERRIDE;
@@ -213,11 +212,13 @@ class LocationBarViewGtk : public OmniboxEditController,
   };
 
  private:
+  // OmniboxEditController:
+  virtual void HideURL() OVERRIDE;
+
   class PageActionViewGtk :
        public ExtensionActionIconFactory::Observer,
        public content::NotificationObserver,
-       public ExtensionContextMenuModel::PopupDelegate,
-       public ExtensionAction::IconAnimation::Observer {
+       public ExtensionContextMenuModel::PopupDelegate {
    public:
     PageActionViewGtk(LocationBarViewGtk* owner, ExtensionAction* page_action);
     virtual ~PageActionViewGtk();
@@ -272,9 +273,6 @@ class LocationBarViewGtk : public OmniboxEditController,
                                      GdkModifierType modifier,
                                      void* user_data);
 
-    // ExtensionAction::IconAnimationDelegate implementation.
-    virtual void OnIconChanged() OVERRIDE;
-
     // The location bar view that owns us.
     LocationBarViewGtk* owner_;
 
@@ -309,8 +307,6 @@ class LocationBarViewGtk : public OmniboxEditController,
 
     // The keybinding accelerator registered to show the page action popup.
     scoped_ptr<ui::Accelerator> page_action_keybinding_;
-    // The keybinding accelerator registered to show the script badge popup.
-    scoped_ptr<ui::Accelerator> script_badge_keybinding_;
 
     // This is used for post-install visual feedback. The page_action icon
     // is briefly shown even if it hasn't been enabled by its extension.
@@ -319,10 +315,6 @@ class LocationBarViewGtk : public OmniboxEditController,
     // The context menu view and model for this extension action.
     scoped_ptr<MenuGtk> context_menu_;
     scoped_refptr<ExtensionContextMenuModel> context_menu_model_;
-
-    // Fade-in animation for the icon with observer scoped to this.
-    ExtensionAction::IconAnimation::ScopedObserver
-        scoped_icon_animation_observer_;
 
     DISALLOW_COPY_AND_ASSIGN(PageActionViewGtk);
   };
@@ -354,14 +346,12 @@ class LocationBarViewGtk : public OmniboxEditController,
                        GtkAllocation*);
   CHROMEGTK_CALLBACK_1(LocationBarViewGtk, gboolean, OnZoomButtonPress,
                        GdkEventButton*);
-  CHROMEGTK_CALLBACK_1(LocationBarViewGtk, gboolean, OnScriptBubbleButtonPress,
-                       GdkEventButton*);
+  CHROMEGTK_CALLBACK_1(LocationBarViewGtk, gboolean,
+                       OnManagePasswordsIconButtonPress, GdkEventButton*);
   CHROMEGTK_CALLBACK_1(LocationBarViewGtk, void, OnStarButtonSizeAllocate,
                        GtkAllocation*);
   CHROMEGTK_CALLBACK_1(LocationBarViewGtk, gboolean, OnStarButtonPress,
                        GdkEventButton*);
-  CHROMEGTK_CALLBACK_1(LocationBarViewGtk, gboolean,
-                       OnScriptBubbleButtonExpose, GdkEventExpose*);
 
   // Updates the site type area: changes the icon and shows/hides the EV
   // certificate information.
@@ -371,15 +361,18 @@ class LocationBarViewGtk : public OmniboxEditController,
   void UpdateEVCertificateLabelSize();
 
   // Set the keyword text for the Search BLAH: keyword box.
-  void SetKeywordLabel(const string16& keyword);
+  void SetKeywordLabel(const base::string16& keyword);
 
   // Set the keyword text for the "Press tab to search BLAH" hint box.
-  void SetKeywordHintLabel(const string16& keyword);
+  void SetKeywordHintLabel(const base::string16& keyword);
 
   void ShowFirstRunBubbleInternal();
 
   // Shows the zoom bubble.
   void ShowZoomBubble();
+
+  // Shows the manage password bubble.
+  void ShowManagePasswordsBubble();
 
   // Show or hide |tab_to_search_box_| and |tab_to_search_hint_| according to
   // the value of |show_selected_keyword_|, |show_keyword_hint_|, and the
@@ -395,14 +388,17 @@ class LocationBarViewGtk : public OmniboxEditController,
       int tooltip_id,
       gboolean (click_callback)(GtkWidget*, GdkEventButton*, gpointer));
   void CreateZoomButton();
-  void CreateScriptBubbleButton();
+  void CreateManagePasswordsIconButton();
   void CreateStarButton();
 
   // Helpers to update state of the various buttons that show up in the
   // location bar.
   void UpdateZoomIcon();
-  void UpdateScriptBubbleIcon();
+  void UpdateManagePasswordsIcon();
   void UpdateStarIcon();
+
+  // Shows the managepassword bubble in case there is a password to be saved.
+  void ShowManagePasswordsBubbleIfNeeded();
 
   // Returns true if we should only show the URL and none of the extras like
   // the star button or page actions.
@@ -415,9 +411,9 @@ class LocationBarViewGtk : public OmniboxEditController,
   ui::OwnedWidgetGtk zoom_;
   GtkWidget* zoom_image_;
 
-  ui::OwnedWidgetGtk script_bubble_button_;
-  GtkWidget* script_bubble_button_image_;
-  size_t num_running_scripts_;
+  // Manage passwords button.
+  ui::OwnedWidgetGtk manage_passwords_icon_;
+  GtkWidget* manage_passwords_icon_image_;
 
   // Star button.
   ui::OwnedWidgetGtk star_;
@@ -466,10 +462,10 @@ class LocationBarViewGtk : public OmniboxEditController,
   GtkWidget* tab_to_search_hint_icon_;
   GtkWidget* tab_to_search_hint_trailing_label_;
 
-  scoped_ptr<OmniboxViewGtk> location_entry_;
+  scoped_ptr<OmniboxViewGtk> omnibox_view_;
 
-  // Alignment used to wrap |location_entry_|.
-  GtkWidget* location_entry_alignment_;
+  // Alignment used to wrap |omnibox_view_|.
+  GtkWidget* omnibox_view_alignment_;
 
   Browser* browser_;
 
@@ -485,7 +481,7 @@ class LocationBarViewGtk : public OmniboxEditController,
   // Width of the main |hbox_|. Used to properly elide the EV certificate.
   int hbox_width_;
 
-  // Width of the hbox that holds |tab_to_search_box_|, |location_entry_| and
+  // Width of the hbox that holds |tab_to_search_box_|, |omnibox_view_| and
   // |tab_to_search_hint_|.
   int entry_box_width_;
 
@@ -496,14 +492,14 @@ class LocationBarViewGtk : public OmniboxEditController,
   bool show_keyword_hint_;
 
   // The last search keyword that was shown via the |tab_to_search_box_|.
-  string16 last_keyword_;
+  base::string16 last_keyword_;
 
   // Used to change the visibility of the star decoration.
   BooleanPrefMember edit_bookmarks_enabled_;
 
   // Used to remember the URL and title text when drag&drop has begun.
   GURL drag_url_;
-  string16 drag_title_;
+  base::string16 drag_title_;
 
   // Used to schedule a task for the first run bubble.
   base::WeakPtrFactory<LocationBarViewGtk> weak_ptr_factory_;

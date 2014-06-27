@@ -49,7 +49,8 @@ class ASH_EXPORT DefaultSystemTrayDelegate : public SystemTrayDelegate {
   virtual void ShowEnterpriseInfo() OVERRIDE;
   virtual void ShowLocallyManagedUserInfo() OVERRIDE;
   virtual void ShowUserLogin() OVERRIDE;
-  virtual void ShowSpringChargerReplacementDialog() OVERRIDE;
+  virtual bool ShowSpringChargerReplacementDialog() OVERRIDE;
+  virtual bool IsSpringChargerReplacementDialogVisible() OVERRIDE;
   virtual bool HasUserConfirmedSafeSpringCharger() OVERRIDE;
   virtual void ShutDown() OVERRIDE;
   virtual void SignOut() OVERRIDE;
@@ -88,7 +89,10 @@ class ASH_EXPORT DefaultSystemTrayDelegate : public SystemTrayDelegate {
   virtual bool GetSessionLengthLimit(
       base::TimeDelta* session_length_limit) OVERRIDE;
   virtual int GetSystemTrayMenuWidth() OVERRIDE;
-  virtual void MaybeSpeak(const std::string& utterance) const OVERRIDE;
+  virtual void ActiveUserWasChanged() OVERRIDE;
+  virtual bool IsNetworkBehindCaptivePortal(
+      const std::string& service_path) const OVERRIDE;
+  virtual bool IsSearchKeyMappedToCapsLock() OVERRIDE;
 
  private:
   bool bluetooth_enabled_;

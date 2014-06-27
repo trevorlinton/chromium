@@ -12,7 +12,7 @@
 #include "base/strings/string_util.h"
 #include "base/task_runner_util.h"
 #include "base/threading/sequenced_worker_pool.h"
-#include "chrome/browser/storage_monitor/udev_util_linux.h"
+#include "components/storage_monitor/udev_util_linux.h"
 #include "content/public/browser/browser_thread.h"
 
 namespace chromeos {
@@ -73,7 +73,7 @@ bool CameraDetector::CheckPresence() {
   for (base::FilePath path = file_enum.Next(); !path.empty();
        path = file_enum.Next()) {
     std::string v4l_capabilities;
-    if (GetUdevDevicePropertyValueByPath(
+    if (storage_monitor::GetUdevDevicePropertyValueByPath(
             path, kV4LCapabilities, &v4l_capabilities)) {
       std::vector<std::string> caps;
       base::SplitString(v4l_capabilities, kV4LCapabilitiesDelim, &caps);

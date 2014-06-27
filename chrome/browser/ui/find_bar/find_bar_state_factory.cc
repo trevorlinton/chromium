@@ -7,7 +7,7 @@
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/find_bar/find_bar_state.h"
-#include "components/browser_context_keyed_service/browser_context_dependency_manager.h"
+#include "components/keyed_service/content/browser_context_dependency_manager.h"
 
 // static
 FindBarState* FindBarStateFactory::GetForProfile(Profile* profile) {
@@ -16,9 +16,9 @@ FindBarState* FindBarStateFactory::GetForProfile(Profile* profile) {
 }
 
 // static
-string16 FindBarStateFactory::GetLastPrepopulateText(Profile* p) {
+base::string16 FindBarStateFactory::GetLastPrepopulateText(Profile* p) {
   FindBarState* state = GetForProfile(p);
-  string16 text = state->last_prepopulate_text();
+  base::string16 text = state->last_prepopulate_text();
 
   if (text.empty() && p->IsOffTheRecord()) {
     // Fall back to the original profile.
@@ -42,7 +42,7 @@ FindBarStateFactory::FindBarStateFactory()
 
 FindBarStateFactory::~FindBarStateFactory() {}
 
-BrowserContextKeyedService* FindBarStateFactory::BuildServiceInstanceFor(
+KeyedService* FindBarStateFactory::BuildServiceInstanceFor(
     content::BrowserContext* profile) const {
   return new FindBarState;
 }

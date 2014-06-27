@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
+#include "content/public/browser/content_browser_client.h"
+#include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/renderer/content_renderer_client.h"
 #include "content/renderer/render_process_impl.h"
@@ -31,12 +33,24 @@ void CheckRenderThreadInputHandlerManager(RenderThreadImpl* thread) {
 
 // Check that InputHandlerManager outlives compositor thread because it uses
 // raw pointers to post tasks.
+// Disabled under LeakSanitizer due to memory leaks. http://crbug.com/348994
+#if defined(LEAK_SANITIZER)
+#define MAYBE_InputHandlerManagerDestroyedAfterCompositorThread \
+  DISABLED_InputHandlerManagerDestroyedAfterCompositorThread
+#else
+#define MAYBE_InputHandlerManagerDestroyedAfterCompositorThread \
+  InputHandlerManagerDestroyedAfterCompositorThread
+#endif
 TEST_F(RenderThreadImplBrowserTest,
-    InputHandlerManagerDestroyedAfterCompositorThread) {
+    MAYBE_InputHandlerManagerDestroyedAfterCompositorThread) {
   CommandLine::ForCurrentProcess()->AppendSwitch(
       switches::kEnableThreadedCompositing);
 
+  ContentClient content_client;
+  ContentBrowserClient content_browser_client;
   ContentRendererClient content_renderer_client;
+  SetContentClient(&content_client);
+  SetBrowserClientForTesting(&content_browser_client);
   SetRendererClientForTesting(&content_renderer_client);
   base::MessageLoopForIO message_loop_;
 

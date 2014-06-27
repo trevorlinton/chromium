@@ -9,7 +9,7 @@
 #import "chrome/browser/ui/cocoa/autofill/autofill_section_view.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
-#import "ui/base/test/ui_cocoa_test_helper.h"
+#import "ui/gfx/test/ui_cocoa_test_helper.h"
 
 namespace {
 
@@ -50,6 +50,8 @@ TEST_F(AutofillMainContainerTest, SubViews) {
     NSArray* subviews = [view subviews];
     if ([view isKindOfClass:[NSScrollView class]]) {
       hasDetailsContainer = true;
+    } else if (view == [container_ saveInChromeTooltipForTesting]) {
+      hasCheckboxTooltip = true;
     } else if ([subviews count] == 2) {
       EXPECT_TRUE(
           [[subviews objectAtIndex:0] isKindOfClass:[NSButton class]]);
@@ -59,8 +61,6 @@ TEST_F(AutofillMainContainerTest, SubViews) {
     } else if ([view isKindOfClass:[NSImageView class]]) {
       if (view == [container_ buttonStripImageForTesting])
         hasButtonStripImage = true;
-      else if (view == [container_ saveInChromeTooltipForTesting])
-        hasCheckboxTooltip = true;
       else
         EXPECT_TRUE(false);  // Unknown image view; should not be reachable.
     } else if ([view isKindOfClass:[NSTextView class]]) {
@@ -111,9 +111,13 @@ TEST_F(AutofillMainContainerTest, SaveInChromeCheckboxVisibility) {
 
   RebuildView();
   NSButton* checkbox = [container_ saveInChromeCheckboxForTesting];
+  NSImageView* tooltip = [container_ saveInChromeTooltipForTesting];
   ASSERT_TRUE(checkbox);
+  ASSERT_TRUE(tooltip);
 
   EXPECT_TRUE([checkbox isHidden]);
+  EXPECT_TRUE([tooltip isHidden]);
   [container_ modelChanged];
   EXPECT_FALSE([checkbox isHidden]);
+  EXPECT_FALSE([tooltip isHidden]);
 }

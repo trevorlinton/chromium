@@ -13,13 +13,15 @@
 #import "chrome/browser/ui/cocoa/chrome_event_processing_window.h"
 #include "chrome/browser/ui/cocoa/extensions/extension_keybinding_registry_cocoa.h"
 #include "chrome/browser/ui/cocoa/extensions/extension_view_mac.h"
+#import "chrome/browser/ui/cocoa/nsview_additions.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/extensions/extension.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
+#include "extensions/common/extension.h"
 #include "third_party/skia/include/core/SkRegion.h"
+#include "ui/gfx/skia_util.h"
 
 // NOTE: State Before Update.
 //
@@ -38,8 +40,7 @@
 // windowWillUseStandardFrame, as the window would not restore back to the
 // desired size.
 
-
-using apps::ShellWindow;
+using apps::AppWindow;
 
 @interface NSWindow (NSPrivateApis)
 - (void)setBottomCornerRounded:(BOOL)rounded;
@@ -71,11 +72,60 @@ void SetFullScreenCollectionBehavior(NSWindow* window, bool allow_fullscreen) {
   [window setCollectionBehavior:behavior];
 }
 
+void InitCollectionBehavior(NSWindow* window) {
+  // Since always-on-top windows have a higher window level
+  // than NSNormalWindowLevel, they will default to
+  // NSWindowCollectionBehaviorTransient. Set the value
+  // explicitly here to match normal windows.
+  NSWindowCollectionBehavior behavior = [window collectionBehavior];
+  behavior |= NSWindowCollectionBehaviorManaged;
+  [window setCollectionBehavior:behavior];
+}
+
 // Returns the level for windows that are configured to be always on top.
 // This is not a constant because NSFloatingWindowLevel is a macro defined
 // as a function call.
 NSInteger AlwaysOnTopWindowLevel() {
   return NSFloatingWindowLevel;
+}
+
+NSRect GfxToCocoaBounds(gfx::Rect bounds) {
+  typedef apps::AppWindow::BoundsSpecification BoundsSpecification;
+
+  NSRect main_screen_rect = [[[NSScreen screens] objectAtIndex:0] frame];
+
+  // If coordinates are unspecified, center window on primary screen.
+  if (bounds.x() == BoundsSpecification::kUnspecifiedPosition)
+    bounds.set_x(floor((NSWidth(main_screen_rect) - bounds.width()) / 2));
+  if (bounds.y() == BoundsSpecification::kUnspecifiedPosition)
+    bounds.set_y(floor((NSHeight(main_screen_rect) - bounds.height()) / 2));
+
+  // Convert to Mac coordinates.
+  NSRect cocoa_bounds = NSRectFromCGRect(bounds.ToCGRect());
+  cocoa_bounds.origin.y = NSHeight(main_screen_rect) - NSMaxY(cocoa_bounds);
+  return cocoa_bounds;
+}
+
+// Return a vector of non-draggable regions that fill a window of size
+// |width| by |height|, but leave gaps where the window should be draggable.
+std::vector<gfx::Rect> CalculateNonDraggableRegions(
+    const std::vector<extensions::DraggableRegion>& regions,
+    int width,
+    int height) {
+  std::vector<gfx::Rect> result;
+  if (regions.empty()) {
+    result.push_back(gfx::Rect(0, 0, width, height));
+  } else {
+    scoped_ptr<SkRegion> draggable(
+        AppWindow::RawDraggableRegionsToSkRegion(regions));
+    scoped_ptr<SkRegion> non_draggable(new SkRegion);
+    non_draggable->op(0, 0, width, height, SkRegion::kUnion_Op);
+    non_draggable->op(*draggable, SkRegion::kDifference_Op);
+    for (SkRegion::Iterator it(*non_draggable); !it.done(); it.next()) {
+      result.push_back(gfx::SkIRectToRect(it.rect()));
+    }
+  }
+  return result;
 }
 
 }  // namespace
@@ -166,6 +216,8 @@ NSInteger AlwaysOnTopWindowLevel() {
 - (CGFloat)roundedCornerRadius;
 @end
 
+// TODO(jamescook): Should these be AppNSWindow to match apps::AppWindow?
+// http://crbug.com/344082
 @interface ShellNSWindow : ChromeEventProcessingWindow
 @end
 @implementation ShellNSWindow
@@ -223,39 +275,17 @@ NSInteger AlwaysOnTopWindowLevel() {
 
 @end
 
-@interface ControlRegionView : NSView {
- @private
-  NativeAppWindowCocoa* appWindow_;  // Weak; owns self.
-}
-
+@interface ControlRegionView : NSView
 @end
 
 @implementation ControlRegionView
-
-- (id)initWithAppWindow:(NativeAppWindowCocoa*)appWindow {
-  if ((self = [super init]))
-    appWindow_ = appWindow;
-  return self;
-}
 
 - (BOOL)mouseDownCanMoveWindow {
   return NO;
 }
 
 - (NSView*)hitTest:(NSPoint)aPoint {
-  if (appWindow_->use_system_drag() ||
-      !appWindow_->IsWithinDraggableRegion(aPoint)) {
-    return nil;
-  }
-  return self;
-}
-
-- (void)mouseDown:(NSEvent*)event {
-  appWindow_->HandleMouseEvent(event);
-}
-
-- (void)mouseDragged:(NSEvent*)event {
-  appWindow_->HandleMouseEvent(event);
+  return nil;
 }
 
 @end
@@ -265,36 +295,19 @@ NSInteger AlwaysOnTopWindowLevel() {
 @end
 
 NativeAppWindowCocoa::NativeAppWindowCocoa(
-    ShellWindow* shell_window,
-    const ShellWindow::CreateParams& params)
-    : shell_window_(shell_window),
-      has_frame_(params.frame == ShellWindow::FRAME_CHROME),
+    AppWindow* app_window,
+    const AppWindow::CreateParams& params)
+    : app_window_(app_window),
+      has_frame_(params.frame == AppWindow::FRAME_CHROME),
       is_hidden_(false),
       is_hidden_with_app_(false),
       is_maximized_(false),
       is_fullscreen_(false),
-      attention_request_id_(0),
-      use_system_drag_(true) {
+      is_resizable_(params.resizable),
+      shows_resize_controls_(true),
+      shows_fullscreen_controls_(true),
+      attention_request_id_(0) {
   Observe(web_contents());
-
-  // Flip coordinates based on the primary screen.
-  NSRect main_screen_rect = [[[NSScreen screens] objectAtIndex:0] frame];
-  NSRect cocoa_bounds = NSMakeRect(params.bounds.x(),
-      NSHeight(main_screen_rect) - params.bounds.y() - params.bounds.height(),
-      params.bounds.width(), params.bounds.height());
-
-  // If coordinates are < 0, center window on primary screen.
-  if (params.bounds.x() == INT_MIN) {
-    cocoa_bounds.origin.x =
-        floor((NSWidth(main_screen_rect) - NSWidth(cocoa_bounds)) / 2);
-  }
-  if (params.bounds.y() == INT_MIN) {
-    cocoa_bounds.origin.y =
-        floor((NSHeight(main_screen_rect) - NSHeight(cocoa_bounds)) / 2);
-  }
-
-  // Initialize |restored_bounds_| after |cocoa_bounds| have been sanitized.
-  restored_bounds_ = cocoa_bounds;
 
   base::scoped_nsobject<NSWindow> window;
   Class window_class;
@@ -308,18 +321,17 @@ NativeAppWindowCocoa::NativeAppWindowCocoa(
     window_class = [ShellFramelessNSWindow class];
   }
 
-  ShellWindow::SizeConstraints size_constraints =
-      shell_window_->size_constraints();
-  shows_resize_controls_ =
-      params.resizable && !size_constraints.HasFixedSize();
-  shows_fullscreen_controls_ =
-      params.resizable && !size_constraints.HasMaximumSize();
+  // Estimate the initial bounds of the window. Once the frame insets are known,
+  // the window bounds and constraints can be set precisely.
+  NSRect cocoa_bounds = GfxToCocoaBounds(
+      params.GetInitialWindowBounds(gfx::Insets()));
   window.reset([[window_class alloc]
       initWithContentRect:cocoa_bounds
                 styleMask:GetWindowStyleMask()
                   backing:NSBackingStoreBuffered
                     defer:NO]);
   [window setTitle:base::SysUTF8ToNSString(extension()->name())];
+  [[window contentView] cr_setWantsLayer:YES];
 
   if (base::mac::IsOSSnowLeopard() &&
       [window respondsToSelector:@selector(setBottomCornerRounded:)])
@@ -327,12 +339,7 @@ NativeAppWindowCocoa::NativeAppWindowCocoa(
 
   if (params.always_on_top)
     [window setLevel:AlwaysOnTopWindowLevel()];
-
-  // Set the window to participate in Lion Fullscreen mode. Setting this flag
-  // has no effect on Snow Leopard or earlier. UI controls for fullscreen are
-  // only shown for apps that have unbounded size.
-  if (shows_fullscreen_controls_)
-    SetFullScreenCollectionBehavior(window, true);
+  InitCollectionBehavior(window);
 
   window_controller_.reset(
       [[NativeAppWindowController alloc] initWithWindow:window.release()]);
@@ -340,24 +347,25 @@ NativeAppWindowCocoa::NativeAppWindowCocoa(
   NSView* view = web_contents()->GetView()->GetNativeView();
   [view setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
 
-  // By default, the whole frameless window is not draggable.
-  if (!has_frame_) {
-    gfx::Rect window_bounds(
-        0, 0, NSWidth(cocoa_bounds), NSHeight(cocoa_bounds));
-    system_drag_exclude_areas_.push_back(window_bounds);
-  }
-
   InstallView();
 
   [[window_controller_ window] setDelegate:window_controller_];
   [window_controller_ setAppWindow:this];
-  UpdateWindowMinMaxSize();
+
+  // We can now compute the precise window bounds and constraints.
+  gfx::Insets insets = GetFrameInsets();
+  SetBounds(params.GetInitialWindowBounds(insets));
+  SetContentSizeConstraints(params.GetContentMinimumSize(insets),
+                            params.GetContentMaximumSize(insets));
+
+  // Initialize |restored_bounds_|.
+  restored_bounds_ = [this->window() frame];
 
   extension_keybinding_registry_.reset(new ExtensionKeybindingRegistryCocoa(
-      shell_window_->profile(),
+      Profile::FromBrowserContext(app_window_->browser_context()),
       window,
       extensions::ExtensionKeybindingRegistry::PLATFORM_APPS_ONLY,
-      shell_window));
+      NULL));
 }
 
 NSUInteger NativeAppWindowCocoa::GetWindowStyleMask() const {
@@ -402,7 +410,7 @@ void NativeAppWindowCocoa::InstallView() {
     // prevent them from doing so in a frameless app window.
     [[window() standardWindowButton:NSWindowZoomButton] setEnabled:NO];
 
-    InstallDraggableRegionViews();
+    UpdateDraggableRegionViews();
   }
 }
 
@@ -427,7 +435,8 @@ bool NativeAppWindowCocoa::IsFullscreen() const {
   return is_fullscreen_;
 }
 
-void NativeAppWindowCocoa::SetFullscreen(bool fullscreen) {
+void NativeAppWindowCocoa::SetFullscreen(int fullscreen_types) {
+  bool fullscreen = (fullscreen_types != AppWindow::FULLSCREEN_TYPE_NONE);
   if (fullscreen == is_fullscreen_)
     return;
   is_fullscreen_ = fullscreen;
@@ -528,13 +537,13 @@ void NativeAppWindowCocoa::Show() {
     // If there is a shim to gently request attention, return here. Otherwise
     // show the window as usual.
     if (apps::ExtensionAppShimHandler::RequestUserAttentionForWindow(
-            shell_window_)) {
+            app_window_)) {
       return;
     }
   }
 
   [window_controller_ showWindow:nil];
-  [window() makeKeyAndOrderFront:window_controller_];
+  Activate();
 }
 
 void NativeAppWindowCocoa::ShowInactive() {
@@ -597,13 +606,7 @@ void NativeAppWindowCocoa::SetBounds(const gfx::Rect& bounds) {
   if (checked_bounds.height() > max_size.height)
     checked_bounds.set_height(max_size.height);
 
-  NSRect cocoa_bounds = NSMakeRect(checked_bounds.x(), 0,
-                                   checked_bounds.width(),
-                                   checked_bounds.height());
-  // Flip coordinates based on the primary screen.
-  NSScreen* screen = [[NSScreen screens] objectAtIndex:0];
-  cocoa_bounds.origin.y = NSHeight([screen frame]) - checked_bounds.bottom();
-
+  NSRect cocoa_bounds = GfxToCocoaBounds(checked_bounds);
   [window() setFrame:cocoa_bounds display:YES];
   // setFrame: without animate: does not trigger a windowDidEndLiveResize: so
   // call it here.
@@ -615,11 +618,16 @@ void NativeAppWindowCocoa::UpdateWindowIcon() {
 }
 
 void NativeAppWindowCocoa::UpdateWindowTitle() {
-  string16 title = shell_window_->GetTitle();
+  base::string16 title = app_window_->GetTitle();
   [window() setTitle:base::SysUTF16ToNSString(title)];
 }
 
-void NativeAppWindowCocoa::UpdateInputRegion(scoped_ptr<SkRegion> region) {
+void NativeAppWindowCocoa::UpdateBadgeIcon() {
+  // TODO(benwells): implement.
+  NOTIMPLEMENTED();
+}
+
+void NativeAppWindowCocoa::UpdateShape(scoped_ptr<SkRegion> region) {
   NOTIMPLEMENTED();
 }
 
@@ -629,127 +637,12 @@ void NativeAppWindowCocoa::UpdateDraggableRegions(
   if (has_frame_)
     return;
 
-  // To use system drag, the window has to be marked as draggable with
-  // non-draggable areas being excluded via overlapping views.
-  // 1) If no draggable area is provided, the window is not draggable at all.
-  // 2) If only one draggable area is given, as this is the most common
-  //    case, use the system drag. The non-draggable areas that are opposite of
-  //    the draggable area are computed.
-  // 3) Otherwise, use the custom drag. As such, we lose the capability to
-  //    support some features like snapping into other space.
-
-  // Determine how to perform the drag by counting the number of draggable
-  // areas.
-  const extensions::DraggableRegion* draggable_area = NULL;
-  use_system_drag_ = true;
-  for (std::vector<extensions::DraggableRegion>::const_iterator iter =
-           regions.begin();
-       iter != regions.end();
-       ++iter) {
-    if (iter->draggable) {
-      // If more than one draggable area is found, use custom drag.
-      if (draggable_area) {
-        use_system_drag_ = false;
-        break;
-      }
-      draggable_area = &(*iter);
-    }
-  }
-
-  if (use_system_drag_)
-    UpdateDraggableRegionsForSystemDrag(regions, draggable_area);
-  else
-    UpdateDraggableRegionsForCustomDrag(regions);
-
-  InstallDraggableRegionViews();
+  draggable_regions_ = regions;
+  UpdateDraggableRegionViews();
 }
 
 SkRegion* NativeAppWindowCocoa::GetDraggableRegion() {
-  return draggable_region_.get();
-}
-
-void NativeAppWindowCocoa::UpdateDraggableRegionsForSystemDrag(
-    const std::vector<extensions::DraggableRegion>& regions,
-    const extensions::DraggableRegion* draggable_area) {
-  NSView* web_view = web_contents()->GetView()->GetNativeView();
-  NSInteger web_view_width = NSWidth([web_view bounds]);
-  NSInteger web_view_height = NSHeight([web_view bounds]);
-
-  system_drag_exclude_areas_.clear();
-
-  // The whole window is not draggable if no draggable area is given.
-  if (!draggable_area) {
-    gfx::Rect window_bounds(0, 0, web_view_width, web_view_height);
-    system_drag_exclude_areas_.push_back(window_bounds);
-    return;
-  }
-
-  // Otherwise, there is only one draggable area. Compute non-draggable areas
-  // that are the opposite of the given draggable area, combined with the
-  // remaining provided non-draggable areas.
-
-  // Copy all given non-draggable areas.
-  for (std::vector<extensions::DraggableRegion>::const_iterator iter =
-           regions.begin();
-       iter != regions.end();
-       ++iter) {
-    if (!iter->draggable)
-      system_drag_exclude_areas_.push_back(iter->bounds);
-  }
-
-  gfx::Rect draggable_bounds = draggable_area->bounds;
-  gfx::Rect non_draggable_bounds;
-
-  // Add the non-draggable area above the given draggable area.
-  if (draggable_bounds.y() > 0) {
-    non_draggable_bounds.SetRect(0,
-                                 0,
-                                 web_view_width,
-                                 draggable_bounds.y() - 1);
-    system_drag_exclude_areas_.push_back(non_draggable_bounds);
-  }
-
-  // Add the non-draggable area below the given draggable area.
-  if (draggable_bounds.bottom() < web_view_height) {
-    non_draggable_bounds.SetRect(0,
-                                 draggable_bounds.bottom() + 1,
-                                 web_view_width,
-                                 web_view_height - draggable_bounds.bottom());
-    system_drag_exclude_areas_.push_back(non_draggable_bounds);
-  }
-
-  // Add the non-draggable area to the left of the given draggable area.
-  if (draggable_bounds.x() > 0) {
-    non_draggable_bounds.SetRect(0,
-                                 draggable_bounds.y(),
-                                 draggable_bounds.x() - 1,
-                                 draggable_bounds.height());
-    system_drag_exclude_areas_.push_back(non_draggable_bounds);
-  }
-
-  // Add the non-draggable area to the right of the given draggable area.
-  if (draggable_bounds.right() < web_view_width) {
-    non_draggable_bounds.SetRect(draggable_bounds.right() + 1,
-                                 draggable_bounds.y(),
-                                 web_view_width - draggable_bounds.right(),
-                                 draggable_bounds.height());
-    system_drag_exclude_areas_.push_back(non_draggable_bounds);
-  }
-}
-
-void NativeAppWindowCocoa::UpdateDraggableRegionsForCustomDrag(
-    const std::vector<extensions::DraggableRegion>& regions) {
-  // We still need one ControlRegionView to cover the whole window such that
-  // mouse events could be captured.
-  NSView* web_view = web_contents()->GetView()->GetNativeView();
-  gfx::Rect window_bounds(
-      0, 0, NSWidth([web_view bounds]), NSHeight([web_view bounds]));
-  system_drag_exclude_areas_.clear();
-  system_drag_exclude_areas_.push_back(window_bounds);
-
-  // Aggregate the draggable areas and non-draggable areas such that hit test
-  // could be performed easily.
-  draggable_region_.reset(ShellWindow::RawDraggableRegionsToSkRegion(regions));
+  return NULL;
 }
 
 void NativeAppWindowCocoa::HandleKeyboardEvent(
@@ -761,13 +654,15 @@ void NativeAppWindowCocoa::HandleKeyboardEvent(
   [window() redispatchKeyEvent:event.os_event];
 }
 
-void NativeAppWindowCocoa::InstallDraggableRegionViews() {
-  DCHECK(!has_frame_);
+void NativeAppWindowCocoa::UpdateDraggableRegionViews() {
+  if (has_frame_)
+    return;
 
   // All ControlRegionViews should be added as children of the WebContentsView,
   // because WebContentsView will be removed and re-added when entering and
   // leaving fullscreen mode.
   NSView* webView = web_contents()->GetView()->GetNativeView();
+  NSInteger webViewWidth = NSWidth([webView bounds]);
   NSInteger webViewHeight = NSHeight([webView bounds]);
 
   // Remove all ControlRegionViews that are added last time.
@@ -779,19 +674,24 @@ void NativeAppWindowCocoa::InstallDraggableRegionViews() {
     if ([subview isKindOfClass:[ControlRegionView class]])
       [subview removeFromSuperview];
 
-  // Create and add ControlRegionView for each region that needs to be excluded
-  // from the dragging.
+  // Draggable regions is implemented by having the whole web view draggable
+  // (mouseDownCanMoveWindow) and overlaying regions that are not draggable.
+  std::vector<gfx::Rect> system_drag_exclude_areas =
+      CalculateNonDraggableRegions(
+          draggable_regions_, webViewWidth, webViewHeight);
+
+  // Create and add a ControlRegionView for each region that needs to be
+  // excluded from the dragging.
   for (std::vector<gfx::Rect>::const_iterator iter =
-           system_drag_exclude_areas_.begin();
-       iter != system_drag_exclude_areas_.end();
+           system_drag_exclude_areas.begin();
+       iter != system_drag_exclude_areas.end();
        ++iter) {
     base::scoped_nsobject<NSView> controlRegion(
-        [[ControlRegionView alloc] initWithAppWindow:this]);
+        [[ControlRegionView alloc] initWithFrame:NSZeroRect]);
     [controlRegion setFrame:NSMakeRect(iter->x(),
                                        webViewHeight - iter->bottom(),
                                        iter->width(),
                                        iter->height())];
-    [controlRegion setAutoresizingMask:NSViewWidthSizable|NSViewHeightSizable];
     [webView addSubview:controlRegion];
   }
 }
@@ -809,14 +709,23 @@ bool NativeAppWindowCocoa::IsAlwaysOnTop() const {
   return [window() level] == AlwaysOnTopWindowLevel();
 }
 
-void NativeAppWindowCocoa::RenderViewHostChanged(
-    content::RenderViewHost* old_host,
-    content::RenderViewHost* new_host) {
-  web_contents()->GetView()->Focus();
+void NativeAppWindowCocoa::RenderViewCreated(content::RenderViewHost* rvh) {
+  if (IsActive())
+    web_contents()->GetView()->RestoreFocus();
 }
 
 bool NativeAppWindowCocoa::IsFrameless() const {
   return !has_frame_;
+}
+
+bool NativeAppWindowCocoa::HasFrameColor() const {
+  // TODO(benwells): Implement this.
+  return false;
+}
+
+SkColor NativeAppWindowCocoa::FrameColor() const {
+  // TODO(benwells): Implement this.
+  return SkColor();
 }
 
 gfx::Insets NativeAppWindowCocoa::GetFrameInsets() const {
@@ -865,8 +774,8 @@ void NativeAppWindowCocoa::RemoveObserver(
 
 void NativeAppWindowCocoa::WindowWillClose() {
   [window_controller_ setAppWindow:NULL];
-  shell_window_->OnNativeWindowChanged();
-  shell_window_->OnNativeClose();
+  app_window_->OnNativeWindowChanged();
+  app_window_->OnNativeClose();
 }
 
 void NativeAppWindowCocoa::WindowDidBecomeKey() {
@@ -874,7 +783,9 @@ void NativeAppWindowCocoa::WindowDidBecomeKey() {
       web_contents()->GetRenderWidgetHostView();
   if (rwhv)
     rwhv->SetActive(true);
-  shell_window_->OnNativeWindowActivated();
+  app_window_->OnNativeWindowActivated();
+
+  web_contents()->GetView()->RestoreFocus();
 }
 
 void NativeAppWindowCocoa::WindowDidResignKey() {
@@ -884,6 +795,8 @@ void NativeAppWindowCocoa::WindowDidResignKey() {
   // lose key window status.
   if ([NSApp isActive] && ([NSApp keyWindow] == window()))
     return;
+
+  web_contents()->GetView()->StoreFocus();
 
   content::RenderWidgetHostView* rwhv =
       web_contents()->GetRenderWidgetHostView();
@@ -914,20 +827,21 @@ void NativeAppWindowCocoa::WindowDidFinishResize() {
 }
 
 void NativeAppWindowCocoa::WindowDidResize() {
-  shell_window_->OnNativeWindowChanged();
+  app_window_->OnNativeWindowChanged();
+  UpdateDraggableRegionViews();
 }
 
 void NativeAppWindowCocoa::WindowDidMove() {
   UpdateRestoredBounds();
-  shell_window_->OnNativeWindowChanged();
+  app_window_->OnNativeWindowChanged();
 }
 
 void NativeAppWindowCocoa::WindowDidMiniaturize() {
-  shell_window_->OnNativeWindowChanged();
+  app_window_->OnNativeWindowChanged();
 }
 
 void NativeAppWindowCocoa::WindowDidDeminiaturize() {
-  shell_window_->OnNativeWindowChanged();
+  app_window_->OnNativeWindowChanged();
 }
 
 void NativeAppWindowCocoa::WindowWillZoom() {
@@ -943,30 +857,10 @@ bool NativeAppWindowCocoa::HandledByExtensionCommand(NSEvent* event) {
       content::NativeWebKeyboardEvent(event));
 }
 
-void NativeAppWindowCocoa::HandleMouseEvent(NSEvent* event) {
-  if ([event type] == NSLeftMouseDown) {
-    last_mouse_location_ =
-        [window() convertBaseToScreen:[event locationInWindow]];
-  } else if ([event type] == NSLeftMouseDragged) {
-    NSPoint current_mouse_location =
-        [window() convertBaseToScreen:[event locationInWindow]];
-    NSPoint frame_origin = [window() frame].origin;
-    frame_origin.x += current_mouse_location.x - last_mouse_location_.x;
-    frame_origin.y += current_mouse_location.y - last_mouse_location_.y;
-    [window() setFrameOrigin:frame_origin];
-    last_mouse_location_ = current_mouse_location;
-  }
-}
-
-bool NativeAppWindowCocoa::IsWithinDraggableRegion(NSPoint point) const {
-  if (!draggable_region_)
-    return false;
-  NSView* webView = web_contents()->GetView()->GetNativeView();
-  NSInteger webViewHeight = NSHeight([webView bounds]);
-  // |draggable_region_| is stored in local platform-indepdent coordiate system
-  // while |point| is in local Cocoa coordinate system. Do the conversion
-  // to match these two.
-  return draggable_region_->contains(point.x, webViewHeight - point.y);
+void NativeAppWindowCocoa::ShowWithApp() {
+  is_hidden_with_app_ = false;
+  if (!is_hidden_)
+    ShowInactive();
 }
 
 void NativeAppWindowCocoa::HideWithApp() {
@@ -974,20 +868,62 @@ void NativeAppWindowCocoa::HideWithApp() {
   HideWithoutMarkingHidden();
 }
 
-void NativeAppWindowCocoa::ShowWithApp() {
-  is_hidden_with_app_ = false;
-  if (!is_hidden_)
-    ShowInactive();
+void NativeAppWindowCocoa::UpdateShelfMenu() {
+  // TODO(tmdiep): To be implemented for Mac.
+  NOTIMPLEMENTED();
+}
+
+gfx::Size NativeAppWindowCocoa::GetContentMinimumSize() const {
+  return size_constraints_.GetMinimumSize();
+}
+
+gfx::Size NativeAppWindowCocoa::GetContentMaximumSize() const {
+  return size_constraints_.GetMaximumSize();
+}
+
+void NativeAppWindowCocoa::SetContentSizeConstraints(
+    const gfx::Size& min_size, const gfx::Size& max_size) {
+  // Update the size constraints.
+  size_constraints_.set_minimum_size(min_size);
+  size_constraints_.set_maximum_size(max_size);
+
+  gfx::Size minimum_size = size_constraints_.GetMinimumSize();
+  [window() setContentMinSize:NSMakeSize(minimum_size.width(),
+                                         minimum_size.height())];
+
+  gfx::Size maximum_size = size_constraints_.GetMaximumSize();
+  const int kUnboundedSize = apps::SizeConstraints::kUnboundedSize;
+  CGFloat max_width = maximum_size.width() == kUnboundedSize ?
+      CGFLOAT_MAX : maximum_size.width();
+  CGFloat max_height = maximum_size.height() == kUnboundedSize ?
+      CGFLOAT_MAX : maximum_size.height();
+  [window() setContentMaxSize:NSMakeSize(max_width, max_height)];
+
+  // Update the window controls.
+  shows_resize_controls_ =
+      is_resizable_ && !size_constraints_.HasFixedSize();
+  shows_fullscreen_controls_ =
+      is_resizable_ && !size_constraints_.HasMaximumSize() && has_frame_;
+
+  if (!is_fullscreen_) {
+    [window() setStyleMask:GetWindowStyleMask()];
+
+    // Set the window to participate in Lion Fullscreen mode. Setting this flag
+    // has no effect on Snow Leopard or earlier. UI controls for fullscreen are
+    // only shown for apps that have unbounded size.
+    SetFullScreenCollectionBehavior(window(), shows_fullscreen_controls_);
+  }
+
+  if (has_frame_) {
+    [window() setShowsResizeIndicator:shows_resize_controls_];
+    [[window() standardWindowButton:NSWindowZoomButton]
+        setEnabled:shows_fullscreen_controls_];
+  }
 }
 
 void NativeAppWindowCocoa::SetAlwaysOnTop(bool always_on_top) {
   [window() setLevel:(always_on_top ? AlwaysOnTopWindowLevel() :
                                       NSNormalWindowLevel)];
-  shell_window_->OnNativeWindowChanged();
-}
-
-void NativeAppWindowCocoa::HideWithoutMarkingHidden() {
-  [window() orderOut:window_controller_];
 }
 
 NativeAppWindowCocoa::~NativeAppWindowCocoa() {
@@ -1004,15 +940,6 @@ void NativeAppWindowCocoa::UpdateRestoredBounds() {
     restored_bounds_ = [window() frame];
 }
 
-void NativeAppWindowCocoa::UpdateWindowMinMaxSize() {
-  gfx::Size min_size = shell_window_->size_constraints().GetMinimumSize();
-  [window() setContentMinSize:NSMakeSize(min_size.width(), min_size.height())];
-
-  gfx::Size max_size = shell_window_->size_constraints().GetMaximumSize();
-  const int kUnboundedSize = ShellWindow::SizeConstraints::kUnboundedSize;
-  CGFloat max_width = max_size.width() == kUnboundedSize ?
-      CGFLOAT_MAX : max_size.width();
-  CGFloat max_height = max_size.height() == kUnboundedSize ?
-      CGFLOAT_MAX : max_size.height();
-  [window() setContentMaxSize:NSMakeSize(max_width, max_height)];
+void NativeAppWindowCocoa::HideWithoutMarkingHidden() {
+  [window() orderOut:window_controller_];
 }

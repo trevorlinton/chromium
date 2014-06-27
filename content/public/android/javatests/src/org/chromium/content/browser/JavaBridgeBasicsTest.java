@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,15 +6,17 @@ package org.chromium.content.browser;
 
 import android.test.suitebuilder.annotation.SmallTest;
 
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
-import org.chromium.content.browser.JavascriptInterface;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer;
+import org.chromium.content_shell_apk.ContentShellActivity;
 
 import java.lang.annotation.Annotation;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+import java.lang.ref.WeakReference;
 
 /**
  * Part of the test suite for the Java Bridge. Tests a number of features including ...
@@ -85,6 +87,13 @@ public class JavaBridgeBasicsTest extends JavaBridgeTestBase {
         setUpContentView(mTestController, "testController");
     }
 
+    @Override
+    protected ContentShellActivity launchContentShellWithUrl(String url) {
+        // Expose a global function "gc()" into pages.
+        return launchContentShellWithUrlAndCommandLineArgs(
+                url, new String[]{ "--js-flags=--expose-gc" });
+    }
+
     // Note that this requires that we can pass a JavaScript string to Java.
     protected String executeJavaScriptAndGetStringResult(String script) throws Throwable {
         executeJavaScript("testController.setStringValue(" + script + ");");
@@ -105,7 +114,20 @@ public class JavaBridgeBasicsTest extends JavaBridgeTestBase {
             public void run() {
                 getContentView().getContentViewCore().addPossiblyUnsafeJavascriptInterface(object,
                         name, requiredAnnotation);
-                getContentView().reload();
+                getContentView().getContentViewCore().reload(true);
+            }
+        });
+        onPageFinishedHelper.waitForCallback(currentCallCount);
+    }
+
+    protected void synchronousPageReload() throws Throwable {
+        TestCallbackHelperContainer.OnPageFinishedHelper onPageFinishedHelper =
+                mTestCallbackHelperContainer.getOnPageFinishedHelper();
+        int currentCallCount = onPageFinishedHelper.getCallCount();
+        runTestOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                getContentView().getContentViewCore().reload(true);
             }
         });
         onPageFinishedHelper.waitForCallback(currentCallCount);
@@ -140,16 +162,7 @@ public class JavaBridgeBasicsTest extends JavaBridgeTestBase {
             }
         });
         assertEquals("undefined", executeJavaScriptAndGetStringResult("typeof testObject"));
-        TestCallbackHelperContainer.OnPageFinishedHelper onPageFinishedHelper =
-                mTestCallbackHelperContainer.getOnPageFinishedHelper();
-        int currentCallCount = onPageFinishedHelper.getCallCount();
-        runTestOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                getContentView().reload();
-            }
-        });
-        onPageFinishedHelper.waitForCallback(currentCallCount);
+        synchronousPageReload();
         assertEquals("object", executeJavaScriptAndGetStringResult("typeof testObject"));
     }
 
@@ -165,16 +178,7 @@ public class JavaBridgeBasicsTest extends JavaBridgeTestBase {
             }
         });
         assertEquals("object", executeJavaScriptAndGetStringResult("typeof testObject"));
-        TestCallbackHelperContainer.OnPageFinishedHelper onPageFinishedHelper =
-                mTestCallbackHelperContainer.getOnPageFinishedHelper();
-        int currentCallCount = onPageFinishedHelper.getCallCount();
-        runTestOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                getContentView().reload();
-            }
-        });
-        onPageFinishedHelper.waitForCallback(currentCallCount);
+        synchronousPageReload();
         assertEquals("undefined", executeJavaScriptAndGetStringResult("typeof testObject"));
     }
 
@@ -188,7 +192,7 @@ public class JavaBridgeBasicsTest extends JavaBridgeTestBase {
             @Override
             public void run() {
                 getContentView().getContentViewCore().removeJavascriptInterface("foo");
-                getContentView().reload();
+                getContentView().getContentViewCore().reload(true);
             }
         });
         onPageFinishedHelper.waitForCallback(currentCallCount);
@@ -317,17 +321,18 @@ public class JavaBridgeBasicsTest extends JavaBridgeTestBase {
     @Feature({"AndroidWebView", "Android-JavaBridge"})
     public void testObjectPersistsAcrossPageLoads() throws Throwable {
         assertEquals("object", executeJavaScriptAndGetStringResult("typeof testController"));
-        TestCallbackHelperContainer.OnPageFinishedHelper onPageFinishedHelper =
-                mTestCallbackHelperContainer.getOnPageFinishedHelper();
-        int currentCallCount = onPageFinishedHelper.getCallCount();
-        runTestOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                getContentView().reload();
-            }
-        });
-        onPageFinishedHelper.waitForCallback(currentCallCount);
+        synchronousPageReload();
         assertEquals("object", executeJavaScriptAndGetStringResult("typeof testController"));
+    }
+
+    @SmallTest
+    @Feature({"AndroidWebView", "Android-JavaBridge"})
+    public void testClientPropertiesPersistAcrossPageLoads() throws Throwable {
+        assertEquals("object", executeJavaScriptAndGetStringResult("typeof testController"));
+        executeJavaScript("testController.myProperty = 42;");
+        assertEquals("42", executeJavaScriptAndGetStringResult("testController.myProperty"));
+        synchronousPageReload();
+        assertEquals("42", executeJavaScriptAndGetStringResult("testController.myProperty"));
     }
 
     @SmallTest
@@ -348,7 +353,7 @@ public class JavaBridgeBasicsTest extends JavaBridgeTestBase {
                         testObject, "testObject1", null);
                 getContentView().getContentViewCore().addPossiblyUnsafeJavascriptInterface(
                         testObject, "testObject2", null);
-                getContentView().reload();
+                getContentView().getContentViewCore().reload(true);
             }
         });
         onPageFinishedHelper.waitForCallback(currentCallCount);
@@ -395,7 +400,7 @@ public class JavaBridgeBasicsTest extends JavaBridgeTestBase {
                         object, "testObject", null);
                 getContentView().getContentViewCore().addPossiblyUnsafeJavascriptInterface(
                         innerObject, "innerObject", null);
-                getContentView().reload();
+                getContentView().getContentViewCore().reload(true);
             }
         });
         onPageFinishedHelper.waitForCallback(currentCallCount);
@@ -403,6 +408,81 @@ public class JavaBridgeBasicsTest extends JavaBridgeTestBase {
         assertEquals(1, mTestController.waitForIntValue());
         executeJavaScript("innerObject.method()");
         assertEquals(2, mTestController.waitForIntValue());
+    }
+
+    // Verify that Java objects returned from bridge object methods are dereferenced
+    // on the Java side once they have been fully dereferenced on the JS side.
+    // Failing this test would mean that methods returning objects effectively create a memory
+    // leak.
+    @SmallTest
+    @Feature({"AndroidWebView", "Android-JavaBridge"})
+    public void testReturnedObjectIsGarbageCollected() throws Throwable {
+        // Make sure V8 exposes "gc" property on the global object (enabled with --expose-gc flag)
+        assertEquals("function", executeJavaScriptAndGetStringResult("typeof gc"));
+        class InnerObject {
+        }
+        class TestObject {
+            public InnerObject getInnerObject() {
+                InnerObject inner = new InnerObject();
+                weakRefForInner = new WeakReference<InnerObject>(inner);
+                return inner;
+            }
+            // A weak reference is used to check InnerObject instance reachability.
+            WeakReference<InnerObject> weakRefForInner;
+        }
+        TestObject object = new TestObject();
+        injectObjectAndReload(object, "testObject");
+        // Initially, store a reference to the inner object in JS to make sure it's not
+        // garbage-collected prematurely.
+        assertEquals("object", executeJavaScriptAndGetStringResult(
+                        "(function() { " +
+                        "globalInner = testObject.getInnerObject(); return typeof globalInner; " +
+                        "})()"));
+        assertTrue(object.weakRefForInner.get() != null);
+        // Check that returned Java object is being held by the Java bridge, thus it's not
+        // collected.  Note that despite that what JavaDoc says about invoking "gc()", both Dalvik
+        // and ART actually run the collector.
+        Runtime.getRuntime().gc();
+        assertTrue(object.weakRefForInner.get() != null);
+        // Now dereference the inner object in JS and run GC to collect the interface object.
+        assertEquals("true", executeJavaScriptAndGetStringResult(
+                        "(function() { " +
+                        "delete globalInner; gc(); return (typeof globalInner == 'undefined'); " +
+                        "})()"));
+        // Force GC on the Java side again. The bridge had to release the inner object, so it must
+        // be collected this time.
+        Runtime.getRuntime().gc();
+        assertEquals(null, object.weakRefForInner.get());
+    }
+
+    /*
+     * The current Java bridge implementation doesn't reuse JS wrappers when returning
+     * the same object from a method. That looks wrong. For example, in the case of DOM,
+     * wrappers are reused, which allows JS code to attach custom properties to interface
+     * objects and use them regardless of the way the reference has been obtained:
+     * via copying a JS reference or by calling the method one more time (assuming that
+     * the method is supposed to return a reference to the same object each time).
+     * TODO(mnaganov): Fix this in the new implementation.
+     *
+     * @SmallTest
+     * @Feature({"AndroidWebView", "Android-JavaBridge"})
+     */
+    @DisabledTest
+    public void testSameReturnedObjectUsesSameWrapper() throws Throwable {
+        class InnerObject {
+        }
+        final InnerObject innerObject = new InnerObject();
+        final Object injectedTestObject = new Object() {
+            public InnerObject getInnerObject() {
+                return innerObject;
+            }
+        };
+        injectObjectAndReload(injectedTestObject, "injectedTestObject");
+        executeJavaScript("inner1 = injectedTestObject.getInnerObject()");
+        executeJavaScript("inner2 = injectedTestObject.getInnerObject()");
+        assertEquals("object", executeJavaScriptAndGetStringResult("typeof inner1"));
+        assertEquals("object", executeJavaScriptAndGetStringResult("typeof inner2"));
+        assertEquals("true", executeJavaScriptAndGetStringResult("inner1 === inner2"));
     }
 
     @SmallTest
@@ -457,6 +537,7 @@ public class JavaBridgeBasicsTest extends JavaBridgeTestBase {
             public void method() { mTestController.setStringValue("base"); }
         }
         class Derived extends Base {
+            @Override
             public void method() { mTestController.setStringValue("derived"); }
         }
         injectObjectAndReload(new Derived(), "testObject");
@@ -477,8 +558,8 @@ public class JavaBridgeBasicsTest extends JavaBridgeTestBase {
                 "var result = \"\"; " +
                 "for (x in testObject) { result += \" \" + x } " +
                 "testController.setStringValue(result);");
-        // LIVECONNECT_COMPLIANCE: Should be able to enumerate members.
-        assertEquals("", mTestController.waitForStringValue());
+        assertEquals(" equals getClass hashCode method notify notifyAll toString wait",
+                mTestController.waitForStringValue());
     }
 
     @SmallTest
@@ -695,7 +776,7 @@ public class JavaBridgeBasicsTest extends JavaBridgeTestBase {
             public void run() {
                 getContentView().getContentViewCore().addJavascriptInterface(new Test(),
                         "testObject");
-                getContentView().reload();
+                getContentView().getContentViewCore().reload(true);
             }
         });
         onPageFinishedHelper.waitForCallback(currentCallCount);
@@ -708,5 +789,50 @@ public class JavaBridgeBasicsTest extends JavaBridgeTestBase {
         assertRaisesException("testObject.blocked()");
         assertEquals("undefined", executeJavaScriptAndGetStringResult(
                 "typeof testObject.blocked"));
+    }
+
+    @SmallTest
+    @Feature({"AndroidWebView", "Android-JavaBridge"})
+    public void testObjectsInspection() throws Throwable {
+        class Test {
+            @JavascriptInterface
+            public String m1() { return "foo"; }
+
+            @JavascriptInterface
+            public String m2() { return "bar"; }
+
+            @JavascriptInterface
+            public String m2(int x) { return "bar " + x; }
+        }
+
+        final String jsObjectKeysTestTemplate = "Object.keys(%s).toString()";
+        final String jsForInTestTemplate =
+                "(function(){" +
+                "  var s=[]; for(var m in %s) s.push(m); return s.join(\",\")" +
+                "})()";
+        final String inspectableObjectName = "testObj1";
+        final String nonInspectableObjectName = "testObj2";
+
+        // Inspection is enabled by default.
+        injectObjectAndReload(new Test(), inspectableObjectName, JavascriptInterface.class);
+
+        assertEquals("m1,m2", executeJavaScriptAndGetStringResult(
+                        String.format(jsObjectKeysTestTemplate, inspectableObjectName)));
+        assertEquals("m1,m2", executeJavaScriptAndGetStringResult(
+                        String.format(jsForInTestTemplate, inspectableObjectName)));
+
+        runTestOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                getContentView().getContentViewCore().setAllowJavascriptInterfacesInspection(false);
+            }
+        });
+
+        injectObjectAndReload(new Test(), nonInspectableObjectName, JavascriptInterface.class);
+
+        assertEquals("", executeJavaScriptAndGetStringResult(
+                        String.format(jsObjectKeysTestTemplate, nonInspectableObjectName)));
+        assertEquals("", executeJavaScriptAndGetStringResult(
+                        String.format(jsForInTestTemplate, nonInspectableObjectName)));
     }
 }

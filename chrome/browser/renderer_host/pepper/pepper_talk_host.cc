@@ -7,7 +7,7 @@
 #include "base/bind.h"
 #include "content/public/browser/browser_ppapi_host.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/render_view_host.h"
+#include "content/public/browser/render_frame_host.h"
 #include "grit/generated_resources.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/host/dispatch_host_message.h"
@@ -31,19 +31,19 @@ namespace {
 ppapi::host::ReplyMessageContext GetPermissionOnUIThread(
     PP_TalkPermission permission,
     int render_process_id,
-    int render_view_id,
+    int render_frame_id,
     ppapi::host::ReplyMessageContext reply) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
   reply.params.set_result(0);
 
-  content::RenderViewHost* render_view_host =
-      content::RenderViewHost::FromID(render_process_id, render_view_id);
-  if (!render_view_host)
-    return reply;  // RVH destroyed while task was pending.
+  content::RenderFrameHost* render_frame_host =
+      content::RenderFrameHost::FromID(render_process_id, render_frame_id);
+  if (!render_frame_host)
+    return reply;  // RFH destroyed while task was pending.
 
 #if defined(USE_ASH)
-  string16 title;
-  string16 message;
+  base::string16 title;
+  base::string16 message;
 
   switch (permission) {
     case PP_TALKPERMISSION_SCREENCAST:
@@ -81,22 +81,24 @@ ppapi::host::ReplyMessageContext GetPermissionOnUIThread(
   return reply;
 }
 
+#if defined(USE_ASH) && defined(OS_CHROMEOS)
 void OnTerminateRemotingEventOnUIThread(const base::Closure& stop_callback) {
   content::BrowserThread::PostTask(content::BrowserThread::IO, FROM_HERE,
                                    stop_callback);
 }
+#endif  // defined(USE_ASH) && defined(OS_CHROMEOS)
 
 ppapi::host::ReplyMessageContext StartRemotingOnUIThread(
     const base::Closure& stop_callback,
     int render_process_id,
-    int render_view_id,
+    int render_frame_id,
     ppapi::host::ReplyMessageContext reply) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-  content::RenderViewHost* render_view_host =
-      content::RenderViewHost::FromID(render_process_id, render_view_id);
-  if (!render_view_host) {
+  content::RenderFrameHost* render_frame_host =
+      content::RenderFrameHost::FromID(render_process_id, render_frame_id);
+  if (!render_frame_host) {
     reply.params.set_result(PP_ERROR_FAILED);
-    return reply;  // RVH destroyed while task was pending.
+    return reply;  // RFH destroyed while task was pending.
   }
 
 #if defined(USE_ASH) && defined(OS_CHROMEOS)
@@ -173,14 +175,14 @@ int32_t PepperTalkHost::OnRequestPermission(
     return PP_ERROR_BADARGUMENT;
 
   int render_process_id = 0;
-  int render_view_id = 0;
-  browser_ppapi_host_->GetRenderViewIDsForInstance(
-      pp_instance(), &render_process_id, &render_view_id);
+  int render_frame_id = 0;
+  browser_ppapi_host_->GetRenderFrameIDsForInstance(
+      pp_instance(), &render_process_id, &render_frame_id);
 
   content::BrowserThread::PostTaskAndReplyWithResult(
       content::BrowserThread::UI, FROM_HERE,
       base::Bind(&GetPermissionOnUIThread, permission, render_process_id,
-                 render_view_id, context->MakeReplyMessageContext()),
+                 render_frame_id, context->MakeReplyMessageContext()),
       base::Bind(&PepperTalkHost::OnRequestPermissionCompleted,
                  weak_factory_.GetWeakPtr()));
   return PP_OK_COMPLETIONPENDING;
@@ -189,9 +191,9 @@ int32_t PepperTalkHost::OnRequestPermission(
 int32_t PepperTalkHost::OnStartRemoting(
     ppapi::host::HostMessageContext* context) {
   int render_process_id = 0;
-  int render_view_id = 0;
-  browser_ppapi_host_->GetRenderViewIDsForInstance(
-      pp_instance(), &render_process_id, &render_view_id);
+  int render_frame_id = 0;
+  browser_ppapi_host_->GetRenderFrameIDsForInstance(
+      pp_instance(), &render_process_id, &render_frame_id);
 
   base::Closure remoting_stop_callback = base::Bind(
       &PepperTalkHost::OnRemotingStopEvent,
@@ -200,7 +202,7 @@ int32_t PepperTalkHost::OnStartRemoting(
   content::BrowserThread::PostTaskAndReplyWithResult(
       content::BrowserThread::UI, FROM_HERE,
       base::Bind(&StartRemotingOnUIThread, remoting_stop_callback,
-                 render_process_id, render_view_id,
+                 render_process_id, render_frame_id,
                  context->MakeReplyMessageContext()),
       base::Bind(&PepperTalkHost::OnStartRemotingCompleted,
                  weak_factory_.GetWeakPtr()));

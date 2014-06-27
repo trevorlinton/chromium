@@ -32,7 +32,6 @@ class Value;
 // - disallow
 // - union types (but replaced with 'choices')
 // - number.maxDecimal
-// - string.pattern
 //
 // The following properties are not applicable to the interface exposed by
 // this class:
@@ -52,6 +51,8 @@ class Value;
 // - by default an "object" typed schema does not allow additional properties.
 //   if present, "additionalProperties" is to be a schema against which all
 //   additional properties will be validated.
+// - regular expression supports all syntaxes that re2 accepts.
+//   See https://code.google.com/p/re2/wiki/Syntax for details.
 //==============================================================================
 class JSONSchemaValidator {
  public:
@@ -70,6 +71,12 @@ class JSONSchemaValidator {
     std::string message;
   };
 
+  enum Options {
+    // Ignore unknown attributes. If this option is not set then unknown
+    // attributes will make the schema validation fail.
+    OPTIONS_IGNORE_UNKNOWN_ATTRIBUTES = 1 << 0,
+  };
+
   // Error messages.
   static const char kUnknownTypeReference[];
   static const char kInvalidChoice[];
@@ -86,6 +93,7 @@ class JSONSchemaValidator {
   static const char kNumberMaximum[];
   static const char kInvalidType[];
   static const char kInvalidTypeIntegerNumber[];
+  static const char kInvalidRegex[];
 
   // Classifies a Value as one of the JSON schema primitive types.
   static std::string GetJSONSchemaType(const base::Value* value);
@@ -104,8 +112,19 @@ class JSONSchemaValidator {
   // and that DictionaryValue can be used to build a JSONSchemaValidator.
   // Returns the parsed DictionaryValue when |schema| validated, otherwise
   // returns NULL. In that case, |error| contains an error description.
+  // For performance reasons, currently IsValidSchema() won't check the
+  // correctness of regular expressions used in "pattern" and
+  // "patternProperties" and in Validate() invalid regular expression don't
+  // accept any strings.
   static scoped_ptr<base::DictionaryValue> IsValidSchema(
       const std::string& schema,
+      std::string* error);
+
+  // Same as above but with |options|, which is a bitwise-OR combination of the
+  // Options above.
+  static scoped_ptr<base::DictionaryValue> IsValidSchema(
+      const std::string& schema,
+      int options,
       std::string* error);
 
   // Creates a validator for the specified schema.

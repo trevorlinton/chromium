@@ -19,7 +19,6 @@
 
 #include "base/logging.h"
 #include "base/memory/scoped_vector.h"
-#include "base/posix/eintr_wrapper.h"
 #include "net/socket/client_socket_factory.h"
 #include "net/udp/datagram_client_socket.h"
 
@@ -278,8 +277,8 @@ void AddressSorterPosix::Sort(const AddressList& list,
     IPEndPoint dest(info->address, 80 /* port */);
     int rv = socket->Connect(dest);
     if (rv != OK) {
-      LOG(WARNING) << "Could not connect to " << dest.ToStringWithoutPort()
-                   << " reason " << rv;
+      VLOG(1) << "Could not connect to " << dest.ToStringWithoutPort()
+              << " reason " << rv;
       continue;
     }
     // Filter out unusable destinations.
@@ -287,7 +286,7 @@ void AddressSorterPosix::Sort(const AddressList& list,
     rv = socket->GetLocalAddress(&src);
     if (rv != OK) {
       LOG(WARNING) << "Could not get local address for "
-                   << src.ToStringWithoutPort() << " reason " << rv;
+                   << dest.ToStringWithoutPort() << " reason " << rv;
       continue;
     }
 

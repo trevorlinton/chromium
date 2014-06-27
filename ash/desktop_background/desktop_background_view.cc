@@ -18,7 +18,7 @@
 #include "ash/wm/window_animations.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
-#include "ui/aura/root_window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/compositor/layer.h"
 #include "ui/gfx/canvas.h"
@@ -55,15 +55,15 @@ class LayerControlView : public views::View {
         GetWidget()->GetNativeView());
     DisplayManager* display_manager = Shell::GetInstance()->display_manager();
     DisplayInfo info = display_manager->GetDisplayInfo(display.id());
-
+    float ui_scale = info.GetEffectiveUIScale();
     gfx::SizeF pixel_size = display.size();
-    pixel_size.Scale(1.0f / info.ui_scale());
+    pixel_size.Scale(1.0f / ui_scale);
     gfx::Size rounded_size = gfx::ToCeiledSize(pixel_size);
     DCHECK_EQ(1, child_count());
     views::View* child = child_at(0);
     child->SetBounds(0, 0, rounded_size.width(), rounded_size.height());
     gfx::Transform transform;
-    transform.Scale(info.ui_scale(), info.ui_scale());
+    transform.Scale(ui_scale, ui_scale);
     child->SetTransform(transform);
   }
 
@@ -89,13 +89,17 @@ DesktopBackgroundView::~DesktopBackgroundView() {
 void DesktopBackgroundView::OnPaint(gfx::Canvas* canvas) {
   // Scale the image while maintaining the aspect ratio, cropping as
   // necessary to fill the background. Ideally the image should be larger
-  // than the largest display supported, if not we will center it rather than
-  // streching to avoid upsampling artifacts (Note that we could tile too, but
-  // decided not to do this at the moment).
+  // than the largest display supported, if not we will scale and center it if
+  // the layout is WALLPAPER_LAYOUT_CENTER_CROPPED.
   DesktopBackgroundController* controller =
       Shell::GetInstance()->desktop_background_controller();
   gfx::ImageSkia wallpaper = controller->GetWallpaper();
   WallpaperLayout wallpaper_layout = controller->GetWallpaperLayout();
+
+  if (wallpaper.isNull()) {
+    canvas->FillRect(GetLocalBounds(), SK_ColorBLACK);
+    return;
+  }
 
   gfx::NativeView native_view = GetWidget()->GetNativeView();
   gfx::Display display = gfx::Screen::GetScreenFor(native_view)->
@@ -103,7 +107,7 @@ void DesktopBackgroundView::OnPaint(gfx::Canvas* canvas) {
 
   DisplayManager* display_manager = Shell::GetInstance()->display_manager();
   DisplayInfo display_info = display_manager->GetDisplayInfo(display.id());
-  float scaling = display_info.ui_scale();
+  float scaling = display_info.GetEffectiveUIScale();
   if (scaling <= 1.0f)
     scaling = 1.0f;
   // Allow scaling up to the UI scaling.
@@ -112,9 +116,7 @@ void DesktopBackgroundView::OnPaint(gfx::Canvas* canvas) {
   gfx::Rect wallpaper_rect(
       0, 0, wallpaper.width() * scaling, wallpaper.height() * scaling);
 
-  if (wallpaper_layout == WALLPAPER_LAYOUT_CENTER_CROPPED &&
-      wallpaper_rect.width() >= width() &&
-      wallpaper_rect.height() >= height()) {
+  if (wallpaper_layout == WALLPAPER_LAYOUT_CENTER_CROPPED) {
     // The dimension with the smallest ratio must be cropped, the other one
     // is preserved. Both are set in gfx::Size cropped_size.
     double horizontal_ratio = static_cast<double>(width()) /
@@ -150,16 +152,14 @@ void DesktopBackgroundView::OnPaint(gfx::Canvas* canvas) {
     // Fill with black to make sure that the entire area is opaque.
     canvas->FillRect(GetLocalBounds(), SK_ColorBLACK);
     // All other are simply centered, and not scaled (but may be clipped).
-    if (wallpaper.width() && wallpaper.height()) {
-      canvas->DrawImageInt(
-          wallpaper,
-          0, 0, wallpaper.width(), wallpaper.height(),
-          (width() - wallpaper_rect.width()) / 2,
-          (height() - wallpaper_rect.height()) / 2,
-          wallpaper_rect.width(),
-          wallpaper_rect.height(),
-          true);
-    }
+    canvas->DrawImageInt(
+        wallpaper,
+        0, 0, wallpaper.width(), wallpaper.height(),
+        (width() - wallpaper_rect.width()) / 2,
+        (height() - wallpaper_rect.height()) / 2,
+        wallpaper_rect.width(),
+        wallpaper_rect.height(),
+        true);
   }
 }
 
@@ -174,7 +174,7 @@ void DesktopBackgroundView::ShowContextMenuForView(
   Shell::GetInstance()->ShowContextMenu(point, source_type);
 }
 
-views::Widget* CreateDesktopBackground(aura::RootWindow* root_window,
+views::Widget* CreateDesktopBackground(aura::Window* root_window,
                                        int container_id) {
   DesktopBackgroundController* controller =
       Shell::GetInstance()->desktop_background_controller();
@@ -188,10 +188,11 @@ views::Widget* CreateDesktopBackground(aura::RootWindow* root_window,
     params.opacity = views::Widget::InitParams::TRANSLUCENT_WINDOW;
   params.parent = root_window->GetChildById(container_id);
   desktop_widget->Init(params);
+  desktop_widget->GetNativeWindow()->layer()->SetMasksToBounds(true);
   desktop_widget->SetContentsView(
       new LayerControlView(new DesktopBackgroundView()));
   int animation_type = wallpaper_delegate->GetAnimationType();
-  views::corewm::SetWindowVisibilityAnimationType(
+  wm::SetWindowVisibilityAnimationType(
       desktop_widget->GetNativeView(), animation_type);
 
   RootWindowController* root_window_controller =
@@ -205,12 +206,18 @@ views::Widget* CreateDesktopBackground(aura::RootWindow* root_window,
   if (wallpaper_delegate->ShouldShowInitialAnimation() ||
       root_window_controller->animating_wallpaper_controller() ||
       Shell::GetInstance()->session_state_delegate()->NumberOfLoggedInUsers()) {
-    views::corewm::SetWindowVisibilityAnimationTransition(
-        desktop_widget->GetNativeView(), views::corewm::ANIMATE_SHOW);
+    wm::SetWindowVisibilityAnimationTransition(
+        desktop_widget->GetNativeView(), wm::ANIMATE_SHOW);
+    int duration_override = wallpaper_delegate->GetAnimationDurationOverride();
+    if (duration_override) {
+      wm::SetWindowVisibilityAnimationDuration(
+          desktop_widget->GetNativeView(),
+          base::TimeDelta::FromMilliseconds(duration_override));
+    }
   } else {
     // Disable animation if transition to login screen from an empty background.
-    views::corewm::SetWindowVisibilityAnimationTransition(
-        desktop_widget->GetNativeView(), views::corewm::ANIMATE_NONE);
+    wm::SetWindowVisibilityAnimationTransition(
+        desktop_widget->GetNativeView(), wm::ANIMATE_NONE);
   }
 
   desktop_widget->SetBounds(params.parent->bounds());

@@ -6,21 +6,21 @@
 import multiprocessing
 import optparse
 import os
+import posixpath
 import sys
+import urllib2
 
 import buildbot_common
 import build_version
 import generate_make
 import parse_dsc
 
-from build_paths import NACL_DIR, SDK_SRC_DIR, OUT_DIR, SDK_RESOURCE_DIR
+from build_paths import SDK_SRC_DIR, OUT_DIR, SDK_RESOURCE_DIR
 from build_paths import GSTORE
 from generate_index import LandingPage
 
 sys.path.append(os.path.join(SDK_SRC_DIR, 'tools'))
-sys.path.append(os.path.join(NACL_DIR, 'build'))
 import getos
-import http_download
 
 
 MAKE = 'nacl_sdk/make_3.99.90-26-gf80222c/make.exe'
@@ -29,7 +29,15 @@ LIB_DICT = {
   'mac': [],
   'win': ['x86_32']
 }
-VALID_TOOLCHAINS = ['newlib', 'glibc', 'pnacl', 'win', 'linux', 'mac']
+VALID_TOOLCHAINS = [
+  'bionic',
+  'newlib',
+  'glibc',
+  'pnacl',
+  'win',
+  'linux',
+  'mac',
+]
 
 # Global verbosity setting.
 # If set to try (normally via a command line arg) then build_projects will
@@ -65,11 +73,19 @@ def UpdateHelpers(pepperdir, clobber=False):
   buildbot_common.CopyDir(os.path.join(SDK_SRC_DIR, 'tools', '*.mk'),
       tools_dir)
 
+  # Copy tools/lib scripts
+  tools_lib_dir = os.path.join(pepperdir, 'tools', 'lib')
+  buildbot_common.MakeDir(tools_lib_dir)
+  buildbot_common.CopyDir(os.path.join(SDK_SRC_DIR, 'tools', 'lib', '*.py'),
+      tools_lib_dir)
+
   # On Windows add a prebuilt make
   if getos.GetPlatform() == 'win':
     buildbot_common.BuildStep('Add MAKE')
-    http_download.HttpDownload(GSTORE + MAKE,
-                               os.path.join(tools_dir, 'make.exe'))
+    make_url = posixpath.join(GSTORE, MAKE)
+    make_exe = os.path.join(tools_dir, 'make.exe')
+    with open(make_exe, 'wb') as f:
+      f.write(urllib2.urlopen(make_url).read())
 
 
 def ValidateToolchains(toolchains):
@@ -216,9 +232,6 @@ def main(argv):
   parser.add_option('-d', '--dest',
       help='Select which build destinations (project types) are valid.',
       action='append')
-  parser.add_option('-p', '--project',
-      help='Select which projects are valid.',
-      action='append')
   parser.add_option('-v', '--verbose', action='store_true')
 
   # To setup bash completion for this command first install optcomplete
@@ -231,9 +244,6 @@ def main(argv):
     pass
 
   options, args = parser.parse_args(argv[1:])
-  if options.project:
-    parser.error('The -p/--project option is deprecated.\n'
-                 'Just use positional paramaters instead.')
 
   if 'NACL_SDK_ROOT' in os.environ:
     # We don't want the currently configured NACL_SDK_ROOT to have any effect
@@ -249,6 +259,8 @@ def main(argv):
     # e.g. If an example supports newlib and glibc, then the default will be
     # newlib.
     options.toolchain = ['pnacl', 'newlib', 'glibc', 'host']
+    if options.experimental:
+      options.toolchain.append('bionic')
 
   if 'host' in options.toolchain:
     options.toolchain.remove('host')

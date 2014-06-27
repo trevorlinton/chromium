@@ -22,6 +22,13 @@
           '<(PRODUCT_DIR)/android_webview_apk/assets/asset_icon.png',
           '<(PRODUCT_DIR)/android_webview_apk/assets/full_screen_video_test.html',
         ],
+        'conditions': [
+          ['icu_use_data_file_flag==1', {
+            'additional_input_paths': [
+              '<(PRODUCT_DIR)/icudtl.dat',
+            ],
+          }],
+        ],
       },
       'copies': [
         {
@@ -31,6 +38,13 @@
             '<(java_in_dir)/assets/asset_icon.png',
             '<(java_in_dir)/assets/full_screen_video_test.html',
           ],
+	  'conditions': [
+            ['icu_use_data_file_flag==1', {
+              'files': [
+                '<(PRODUCT_DIR)/icudtl.dat',
+              ],
+	    }],
+          ],
         },
       ],
       'includes': [ '../build/java_apk.gypi' ],
@@ -38,7 +52,7 @@
     {
       # android_webview_apk creates a .jar as a side effect. Any java
       # targets that need that .jar in their classpath should depend on this
-      # target. For more details see the chromium_testshell_java target.
+      # target. For more details see the chrome_shell_apk_java target.
       'target_name': 'android_webview_apk_java',
       'type': 'none',
       'dependencies': [
@@ -72,8 +86,9 @@
         '../testing/android/native_test.gyp:native_test_native_code',
         '../testing/gmock.gyp:gmock',
         '../testing/gtest.gyp:gtest',
-        '../ui/ui.gyp:ui_jni_headers',
+        '../ui/base/ui_base.gyp:ui_base_jni_headers',
         'android_webview_common',
+        'android_webview_unittests_jni',
       ],
       'include_dirs': [
         '..',
@@ -86,7 +101,7 @@
         'browser/net/input_stream_reader_unittest.cc',
         'lib/main/webview_tests.cc',
         'native/input_stream_unittest.cc',
-        'native/state_serializer_unittests.cc',
+        'native/state_serializer_unittest.cc',
       ],
     },
     {
@@ -110,6 +125,7 @@
       ],
       'variables': {
         'jni_gen_package': 'android_webview_unittests',
+        'jni_generator_ptr_type': 'long',
       },
       'includes': [ '../build/jni_generator.gypi' ],
     },
@@ -119,7 +135,6 @@
       'dependencies': [
         'android_webview_unittest_java',
         'android_webview_unittests',
-        'android_webview_unittests_jni',
       ],
       'variables': {
         'test_suite_name': 'android_webview_unittests',

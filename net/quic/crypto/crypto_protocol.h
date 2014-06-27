@@ -5,9 +5,7 @@
 #ifndef NET_QUIC_CRYPTO_CRYPTO_PROTOCOL_H_
 #define NET_QUIC_CRYPTO_CRYPTO_PROTOCOL_H_
 
-#include <map>
 #include <string>
-#include <vector>
 
 #include "net/base/net_export.h"
 #include "net/quic/quic_protocol.h"
@@ -26,7 +24,6 @@
 namespace net {
 
 typedef std::string ServerConfigID;
-typedef std::map<QuicTag, std::string> QuicTagValueMap;
 
 const QuicTag kCHLO = TAG('C', 'H', 'L', 'O');  // Client hello
 const QuicTag kSHLO = TAG('S', 'H', 'L', 'O');  // Server hello
@@ -34,18 +31,20 @@ const QuicTag kSCFG = TAG('S', 'C', 'F', 'G');  // Server config
 const QuicTag kREJ  = TAG('R', 'E', 'J', '\0'); // Reject
 const QuicTag kCETV = TAG('C', 'E', 'T', 'V');  // Client encrypted tag-value
                                                 // pairs
+const QuicTag kPRST = TAG('P', 'R', 'S', 'T');  // Public reset
 
 // Key exchange methods
 const QuicTag kP256 = TAG('P', '2', '5', '6');  // ECDH, Curve P-256
 const QuicTag kC255 = TAG('C', '2', '5', '5');  // ECDH, Curve25519
 
 // AEAD algorithms
-const QuicTag kNULL = TAG('N', 'U', 'L', 'L');  // null algorithm
-const QuicTag kNULN = TAG('N', 'U', 'L', 'N');  // new null algorithm
+const QuicTag kNULL = TAG('N', 'U', 'L', 'N');  // null algorithm
 const QuicTag kAESG = TAG('A', 'E', 'S', 'G');  // AES128 + GCM-12
+const QuicTag kCC12 = TAG('C', 'C', '1', '2');  // ChaCha20 + Poly1305
 
 // Congestion control feedback types
 const QuicTag kQBIC = TAG('Q', 'B', 'I', 'C');  // TCP cubic
+const QuicTag kPACE = TAG('P', 'A', 'C', 'E');  // Paced TCP cubic
 const QuicTag kINAR = TAG('I', 'N', 'A', 'R');  // Inter arrival
 
 // Proof types (i.e. certificate types)
@@ -58,7 +57,7 @@ const QuicTag kX59R = TAG('X', '5', '9', 'R');  // X.509 certificate, RSA keys
 const QuicTag kCHID = TAG('C', 'H', 'I', 'D');  // Channel ID.
 
 // Client hello tags
-const QuicTag kVERS = TAG('V', 'E', 'R', 'S');  // Version
+const QuicTag kVER  = TAG('V', 'E', 'R', '\0'); // Version (new)
 const QuicTag kNONC = TAG('N', 'O', 'N', 'C');  // The client's nonce
 const QuicTag kKEXS = TAG('K', 'E', 'X', 'S');  // Key exchange methods
 const QuicTag kAEAD = TAG('A', 'E', 'A', 'D');  // Authenticated
@@ -72,7 +71,6 @@ const QuicTag kMSPC = TAG('M', 'S', 'P', 'C');  // Max streams per connection.
 const QuicTag kIRTT = TAG('I', 'R', 'T', 'T');  // Estimated initial RTT in us.
 const QuicTag kSWND = TAG('S', 'W', 'N', 'D');  // Server's Initial congestion
                                                 // window.
-const QuicTag kSMSS = TAG('S', 'M', 'S', 'S');  // Server's maximum packet size.
 const QuicTag kSNI  = TAG('S', 'N', 'I', '\0'); // Server name
                                                 // indication
 const QuicTag kPUBS = TAG('P', 'U', 'B', 'S');  // Public key values
@@ -83,10 +81,19 @@ const QuicTag kPROF = TAG('P', 'R', 'O', 'F');  // Proof (signature).
 const QuicTag kCCS  = TAG('C', 'C', 'S', 0);    // Common certificate set
 const QuicTag kCCRT = TAG('C', 'C', 'R', 'T');  // Cached certificate
 const QuicTag kEXPY = TAG('E', 'X', 'P', 'Y');  // Expiry
+const QuicTag kIFCW = TAG('I', 'F', 'C', 'W');  // Initial flow control receive
+                                                // window.
+
+// Server hello tags
+const QuicTag kCADR = TAG('C', 'A', 'D', 'R');  // Client IP address and port
 
 // CETV tags
 const QuicTag kCIDK = TAG('C', 'I', 'D', 'K');  // ChannelID key
 const QuicTag kCIDS = TAG('C', 'I', 'D', 'S');  // ChannelID signature
+
+// Public reset tags
+const QuicTag kRNON = TAG('R', 'N', 'O', 'N');  // Public reset nonce proof
+const QuicTag kRSEQ = TAG('R', 'S', 'E', 'Q');  // Rejected sequence number
 
 // Universal tags
 const QuicTag kPAD  = TAG('P', 'A', 'D', '\0'); // Padding
@@ -128,7 +135,11 @@ const char kProofSignatureLabel[] = "QUIC server config signature";
 // will have PAD tags added in order to ensure this minimum is met and client
 // hellos smaller than this will be an error. This minimum size reduces the
 // amplification factor of any mirror DoS attack.
-const size_t kClientHelloMinimumSize = 512;
+//
+// A client may pad an inchoate client hello to a size larger than
+// kClientHelloMinimumSize to make it more likely to receive a complete
+// rejection message.
+const size_t kClientHelloMinimumSize = 1024;
 
 }  // namespace net
 

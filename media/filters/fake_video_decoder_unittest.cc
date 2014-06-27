@@ -21,7 +21,7 @@ static const int kDurationMs = 30;
 class FakeVideoDecoderTest : public testing::Test {
  public:
   FakeVideoDecoderTest()
-      : decoder_(new FakeVideoDecoder(kDecodingDelay)),
+      : decoder_(new FakeVideoDecoder(kDecodingDelay, false)),
         num_input_buffers_(0),
         num_decoded_frames_(0),
         decode_status_(VideoDecoder::kNotEnoughData),
@@ -63,7 +63,7 @@ class FakeVideoDecoderTest : public testing::Test {
     decode_status_ = status;
     frame_decoded_ = frame;
 
-    if (frame && !frame->IsEndOfStream())
+    if (frame && !frame->end_of_stream())
       num_decoded_frames_++;
   }
 
@@ -85,7 +85,7 @@ class FakeVideoDecoderTest : public testing::Test {
         EXPECT_FALSE(is_decode_pending_);
         ASSERT_EQ(VideoDecoder::kOk, decode_status_);
         ASSERT_TRUE(frame_decoded_);
-        EXPECT_FALSE(frame_decoded_->IsEndOfStream());
+        EXPECT_FALSE(frame_decoded_->end_of_stream());
         break;
       case NOT_ENOUGH_DATA:
         EXPECT_FALSE(is_decode_pending_);
@@ -101,7 +101,7 @@ class FakeVideoDecoderTest : public testing::Test {
         EXPECT_FALSE(is_decode_pending_);
         ASSERT_EQ(VideoDecoder::kOk, decode_status_);
         ASSERT_TRUE(frame_decoded_);
-        EXPECT_TRUE(frame_decoded_->IsEndOfStream());
+        EXPECT_TRUE(frame_decoded_->end_of_stream());
         break;
     }
   }
@@ -139,7 +139,7 @@ class FakeVideoDecoderTest : public testing::Test {
   void ReadUntilEOS() {
     do {
       ReadOneFrame();
-    } while (frame_decoded_ && !frame_decoded_->IsEndOfStream());
+    } while (frame_decoded_ && !frame_decoded_->end_of_stream());
   }
 
   void EnterPendingReadState() {
@@ -275,7 +275,7 @@ TEST_F(FakeVideoDecoderTest, Read_DecodingDelay) {
 }
 
 TEST_F(FakeVideoDecoderTest, Read_ZeroDelay) {
-  decoder_.reset(new FakeVideoDecoder(0));
+  decoder_.reset(new FakeVideoDecoder(0, false));
   Initialize();
 
   while (num_input_buffers_ < kTotalBuffers) {
@@ -416,6 +416,18 @@ TEST_F(FakeVideoDecoderTest, Stop_PendingDuringPendingReadAndPendingReset) {
   SatisfyRead();
   SatisfyReset();
   SatisfyStop();
+}
+
+TEST_F(FakeVideoDecoderTest, GetDecodeOutput) {
+  decoder_.reset(new FakeVideoDecoder(kDecodingDelay, true));
+  Initialize();
+
+  while (num_input_buffers_ < kTotalBuffers) {
+    ReadOneFrame();
+    while (decoder_->GetDecodeOutput())
+      ++num_decoded_frames_;
+    EXPECT_EQ(num_input_buffers_, num_decoded_frames_);
+  }
 }
 
 }  // namespace media

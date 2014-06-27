@@ -14,7 +14,7 @@ namespace skia {
 // thread.
 class SK_API LazyPixelRef : public SkPixelRef {
  public:
-  LazyPixelRef();
+  explicit LazyPixelRef(const SkImageInfo& info);
   virtual ~LazyPixelRef();
 
   struct PrepareParams {

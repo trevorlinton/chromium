@@ -14,8 +14,8 @@
 #include "chrome/browser/search_engines/template_url_parser.h"
 #include "chrome/browser/search_engines/template_url_service.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/url_fetcher.h"
 #include "net/base/load_flags.h"
@@ -28,7 +28,7 @@ class TemplateURLFetcher::RequestDelegate : public net::URLFetcherDelegate {
  public:
   // Takes ownership of |callbacks|.
   RequestDelegate(TemplateURLFetcher* fetcher,
-                  const string16& keyword,
+                  const base::string16& keyword,
                   const GURL& osdd_url,
                   const GURL& favicon_url,
                   content::WebContents* web_contents,
@@ -44,7 +44,7 @@ class TemplateURLFetcher::RequestDelegate : public net::URLFetcherDelegate {
   GURL url() const { return osdd_url_; }
 
   // Keyword to use.
-  string16 keyword() const { return keyword_; }
+  base::string16 keyword() const { return keyword_; }
 
   // The type of search provider being fetched.
   ProviderType provider_type() const { return provider_type_; }
@@ -56,7 +56,7 @@ class TemplateURLFetcher::RequestDelegate : public net::URLFetcherDelegate {
   scoped_ptr<net::URLFetcher> url_fetcher_;
   TemplateURLFetcher* fetcher_;
   scoped_ptr<TemplateURL> template_url_;
-  string16 keyword_;
+  base::string16 keyword_;
   const GURL osdd_url_;
   const GURL favicon_url_;
   const ProviderType provider_type_;
@@ -69,7 +69,7 @@ class TemplateURLFetcher::RequestDelegate : public net::URLFetcherDelegate {
 
 TemplateURLFetcher::RequestDelegate::RequestDelegate(
     TemplateURLFetcher* fetcher,
-    const string16& keyword,
+    const base::string16& keyword,
     const GURL& osdd_url,
     const GURL& favicon_url,
     content::WebContents* web_contents,
@@ -98,11 +98,11 @@ TemplateURLFetcher::RequestDelegate::RequestDelegate(
   url_fetcher_->SetRequestContext(fetcher->profile()->GetRequestContext());
   // Can be NULL during tests.
   if (web_contents) {
-    content::AssociateURLFetcherWithRenderView(
+    content::AssociateURLFetcherWithRenderFrame(
         url_fetcher_.get(),
         web_contents->GetURL(),
         web_contents->GetRenderProcessHost()->GetID(),
-        web_contents->GetRenderViewHost()->GetRoutingID());
+        web_contents->GetMainFrame()->GetRoutingID());
   }
 
   url_fetcher_->Start();
@@ -226,7 +226,7 @@ TemplateURLFetcher::~TemplateURLFetcher() {
 }
 
 void TemplateURLFetcher::ScheduleDownload(
-    const string16& keyword,
+    const base::string16& keyword,
     const GURL& osdd_url,
     const GURL& favicon_url,
     content::WebContents* web_contents,

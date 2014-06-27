@@ -10,8 +10,8 @@
 #include "third_party/WebKit/public/platform/WebCString.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 
-using ::WebKit::WebString;
-using ::WebKit::WebMediaSource;
+using ::blink::WebString;
+using ::blink::WebMediaSource;
 
 namespace content {
 
@@ -34,9 +34,9 @@ WebMediaSourceImpl::WebMediaSourceImpl(
 WebMediaSourceImpl::~WebMediaSourceImpl() {}
 
 WebMediaSource::AddStatus WebMediaSourceImpl::addSourceBuffer(
-    const WebKit::WebString& type,
-    const WebKit::WebVector<WebKit::WebString>& codecs,
-    WebKit::WebSourceBuffer** source_buffer) {
+    const blink::WebString& type,
+    const blink::WebVector<blink::WebString>& codecs,
+    blink::WebSourceBuffer** source_buffer) {
   std::string id = base::GenerateGUID();
   std::vector<std::string> new_codecs(codecs.size());
   for (size_t i = 0; i < codecs.size(); ++i)
@@ -73,8 +73,6 @@ void WebMediaSourceImpl::markEndOfStream(
     case WebMediaSource::EndOfStreamStatusDecodeError:
       pipeline_status = media::PIPELINE_ERROR_DECODE;
       break;
-    default:
-      NOTIMPLEMENTED();
   }
 
   demuxer_->MarkEndOfStream(pipeline_status);

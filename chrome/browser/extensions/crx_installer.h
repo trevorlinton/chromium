@@ -17,7 +17,7 @@
 #include "chrome/browser/extensions/extension_installer.h"
 #include "chrome/browser/extensions/sandboxed_unpacker.h"
 #include "chrome/browser/extensions/webstore_installer.h"
-#include "chrome/common/extensions/extension.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest.h"
 #include "sync/api/string_ordinal.h"
 
@@ -219,7 +219,7 @@ class CrxInstaller
   CrxInstallerError AllowInstall(const Extension* extension);
 
   // SandboxedUnpackerClient
-  virtual void OnUnpackFailure(const string16& error_message) OVERRIDE;
+  virtual void OnUnpackFailure(const base::string16& error_message) OVERRIDE;
   virtual void OnUnpackSuccess(const base::FilePath& temp_dir,
                                const base::FilePath& extension_dir,
                                const base::DictionaryValue* original_manifest,
@@ -234,7 +234,7 @@ class CrxInstaller
 
   // Runs on the UI thread. Callback from Blacklist.
   void OnBlacklistChecked(
-      extensions::Blacklist::BlacklistState blacklist_state);
+      extensions::BlacklistState blacklist_state);
 
   // Runs on the UI thread. Confirms the installation to the ExtensionService.
   void ConfirmInstall();
@@ -390,7 +390,7 @@ class CrxInstaller
 
   bool has_requirement_errors_;
 
-  extensions::Blacklist::BlacklistState blacklist_state_;
+  extensions::BlacklistState blacklist_state_;
 
   bool install_wait_for_idle_;
 

@@ -58,9 +58,15 @@ bool VideoCaptureMessageFilter::OnMessageReceived(const IPC::Message& message) {
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP(VideoCaptureMessageFilter, message)
     IPC_MESSAGE_HANDLER(VideoCaptureMsg_BufferReady, OnBufferReceived)
+    IPC_MESSAGE_HANDLER(VideoCaptureMsg_MailboxBufferReady,
+                        OnMailboxBufferReceived)
     IPC_MESSAGE_HANDLER(VideoCaptureMsg_StateChanged, OnDeviceStateChanged)
     IPC_MESSAGE_HANDLER(VideoCaptureMsg_NewBuffer, OnBufferCreated)
     IPC_MESSAGE_HANDLER(VideoCaptureMsg_FreeBuffer, OnBufferDestroyed)
+    IPC_MESSAGE_HANDLER(VideoCaptureMsg_DeviceSupportedFormatsEnumerated,
+                        OnDeviceSupportedFormatsEnumerated)
+    IPC_MESSAGE_HANDLER(VideoCaptureMsg_DeviceFormatsInUseReceived,
+                        OnDeviceFormatsInUseReceived)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
@@ -101,13 +107,13 @@ void VideoCaptureMessageFilter::OnBufferCreated(
     int buffer_id) {
   Delegate* delegate = find_delegate(device_id);
   if (!delegate) {
-    DLOG(WARNING) << "OnBufferCreated: Got video frame buffer for a "
-        "non-existent or removed video capture.";
+    DLOG(WARNING) << "OnBufferCreated: Got video SHM buffer for a "
+                     "non-existent or removed video capture.";
 
     // Send the buffer back to Host in case it's waiting for all buffers
     // to be returned.
     base::SharedMemory::CloseHandle(handle);
-    Send(new VideoCaptureHostMsg_BufferReady(device_id, buffer_id));
+    Send(new VideoCaptureHostMsg_BufferReady(device_id, buffer_id, 0));
     return;
   }
 
@@ -117,20 +123,42 @@ void VideoCaptureMessageFilter::OnBufferCreated(
 void VideoCaptureMessageFilter::OnBufferReceived(
     int device_id,
     int buffer_id,
-    base::Time timestamp,
-    const media::VideoCaptureFormat& format) {
+    const media::VideoCaptureFormat& format,
+    base::TimeTicks timestamp) {
   Delegate* delegate = find_delegate(device_id);
   if (!delegate) {
-    DLOG(WARNING) << "OnBufferReceived: Got video frame buffer for a "
-        "non-existent or removed video capture.";
+    DLOG(WARNING) << "OnBufferReceived: Got video SHM buffer for a "
+                     "non-existent or removed video capture.";
 
     // Send the buffer back to Host in case it's waiting for all buffers
     // to be returned.
-    Send(new VideoCaptureHostMsg_BufferReady(device_id, buffer_id));
+    Send(new VideoCaptureHostMsg_BufferReady(device_id, buffer_id, 0));
     return;
   }
 
-  delegate->OnBufferReceived(buffer_id, timestamp, format);
+  delegate->OnBufferReceived(buffer_id, format, timestamp);
+}
+
+void VideoCaptureMessageFilter::OnMailboxBufferReceived(
+    int device_id,
+    int buffer_id,
+    const gpu::MailboxHolder& mailbox_holder,
+    const media::VideoCaptureFormat& format,
+    base::TimeTicks timestamp) {
+  Delegate* delegate = find_delegate(device_id);
+
+  if (!delegate) {
+    DLOG(WARNING) << "OnMailboxBufferReceived: Got video mailbox buffer for a "
+                     "non-existent or removed video capture.";
+
+    // Send the buffer back to Host in case it's waiting for all buffers
+    // to be returned.
+    Send(new VideoCaptureHostMsg_BufferReady(device_id, buffer_id, 0));
+    return;
+  }
+
+  delegate->OnMailboxBufferReceived(
+      buffer_id, mailbox_holder, format, timestamp);
 }
 
 void VideoCaptureMessageFilter::OnBufferDestroyed(
@@ -156,6 +184,28 @@ void VideoCaptureMessageFilter::OnDeviceStateChanged(
     return;
   }
   delegate->OnStateChanged(state);
+}
+
+void VideoCaptureMessageFilter::OnDeviceSupportedFormatsEnumerated(
+    int device_id,
+    const media::VideoCaptureFormats& supported_formats) {
+  Delegate* delegate = find_delegate(device_id);
+  if (!delegate) {
+    DLOG(WARNING) << "OnDeviceFormatsEnumerated: unknown device";
+    return;
+  }
+  delegate->OnDeviceSupportedFormatsEnumerated(supported_formats);
+}
+
+void VideoCaptureMessageFilter::OnDeviceFormatsInUseReceived(
+    int device_id,
+    const media::VideoCaptureFormats& formats_in_use) {
+  Delegate* delegate = find_delegate(device_id);
+  if (!delegate) {
+    DLOG(WARNING) << "OnDeviceFormatInUse: unknown device";
+    return;
+  }
+  delegate->OnDeviceFormatsInUseReceived(formats_in_use);
 }
 
 }  // namespace content

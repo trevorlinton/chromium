@@ -9,6 +9,8 @@
 #include "base/strings/utf_string_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using base::ASCIIToUTF16;
+
 namespace spellcheck {
 
 namespace {
@@ -181,9 +183,9 @@ TEST_F(FeedbackTest, ClearFeedback) {
 
 // Should be able to find misspellings by misspelled word.
 TEST_F(FeedbackTest, FindMisspellingsByText) {
-  static const string16 kMisspelledText =
+  static const base::string16 kMisspelledText =
       ASCIIToUTF16("Helllo world. Helllo world");
-  static const string16 kSuggestion = ASCIIToUTF16("Hello");
+  static const base::string16 kSuggestion = ASCIIToUTF16("Hello");
   static const int kMisspellingStart = 0;
   static const int kMisspellingLength = 6;
   static const int kSentenceLength = 14;
@@ -199,13 +201,14 @@ TEST_F(FeedbackTest, FindMisspellingsByText) {
           Misspelling(kMisspelledText,
                       kMisspellingStart + j * kSentenceLength,
                       kMisspellingLength,
-                      std::vector<string16>(1, kSuggestion),
+                      std::vector<base::string16>(1, kSuggestion),
                       ++hash));
     }
   }
 
-  static const string16 kOtherMisspelledText = ASCIIToUTF16("Somethign else");
-  static const string16 kOtherSuggestion = ASCIIToUTF16("Something");
+  static const base::string16 kOtherMisspelledText =
+      ASCIIToUTF16("Somethign else");
+  static const base::string16 kOtherSuggestion = ASCIIToUTF16("Something");
   static const int kOtherMisspellingStart = 0;
   static const int kOtherMisspellingLength = 9;
   feedback_.AddMisspelling(
@@ -213,10 +216,10 @@ TEST_F(FeedbackTest, FindMisspellingsByText) {
       Misspelling(kOtherMisspelledText,
                   kOtherMisspellingStart,
                   kOtherMisspellingLength,
-                  std::vector<string16>(1, kOtherSuggestion),
+                  std::vector<base::string16>(1, kOtherSuggestion),
                   hash + 1));
 
-  static const string16 kMisspelledWord = ASCIIToUTF16("Helllo");
+  static const base::string16 kMisspelledWord = ASCIIToUTF16("Helllo");
   const std::set<uint32>& misspellings =
       feedback_.FindMisspellings(kMisspelledWord);
   EXPECT_EQ(static_cast<size_t>(kNumberOfSentences * kNumberOfRenderers),
@@ -236,9 +239,9 @@ TEST_F(FeedbackTest, FindMisspellingsByText) {
 // Should not be able to find misspellings by misspelled word after they have
 // been removed.
 TEST_F(FeedbackTest, CannotFindMisspellingsByTextAfterErased) {
-  static const string16 kMisspelledText = ASCIIToUTF16("Helllo world");
-  static const string16 kMisspelledWord = ASCIIToUTF16("Helllo");
-  static const string16 kSuggestion = ASCIIToUTF16("Hello");
+  static const base::string16 kMisspelledText = ASCIIToUTF16("Helllo world");
+  static const base::string16 kMisspelledWord = ASCIIToUTF16("Helllo");
+  static const base::string16 kSuggestion = ASCIIToUTF16("Hello");
   static const int kMisspellingStart = 0;
   static const int kMisspellingLength = 6;
   feedback_.AddMisspelling(
@@ -246,7 +249,7 @@ TEST_F(FeedbackTest, CannotFindMisspellingsByTextAfterErased) {
       Misspelling(kMisspelledText,
                   kMisspellingStart,
                   kMisspellingLength,
-                  std::vector<string16>(1, kSuggestion),
+                  std::vector<base::string16>(1, kSuggestion),
                   kMisspellingHash));
   feedback_.GetMisspelling(kMisspellingHash)->action.Finalize();
   feedback_.EraseFinalizedMisspellings(kRendererProcessId);

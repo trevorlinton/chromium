@@ -4,11 +4,12 @@
 
 #include "tools/gn/group_target_generator.h"
 
-GroupTargetGenerator::GroupTargetGenerator(Target* target,
-                                           Scope* scope,
-                                           const Token& function_token,
-                                           Err* err)
-    : TargetGenerator(target, scope, function_token, err) {
+GroupTargetGenerator::GroupTargetGenerator(
+    Target* target,
+    Scope* scope,
+    const FunctionCallNode* function_call,
+    Err* err)
+    : TargetGenerator(target, scope, function_call, err) {
 }
 
 GroupTargetGenerator::~GroupTargetGenerator() {
@@ -18,5 +19,4 @@ void GroupTargetGenerator::DoRun() {
   target_->set_output_type(Target::GROUP);
   // Groups only have the default types filled in by the target generator
   // base class.
-  FillExternal();
 }

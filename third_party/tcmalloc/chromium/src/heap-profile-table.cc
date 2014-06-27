@@ -103,7 +103,10 @@ const char HeapProfileTable::kFileExt[] = ".heap";
 //----------------------------------------------------------------------
 
 static const int kHashTableSize = 179999;   // Size for bucket_table_.
+// GCC requires this declaration, but MSVC does not allow it.
+#if !defined(COMPILER_MSVC)
 /*static*/ const int HeapProfileTable::kMaxStackDepth;
+#endif
 
 //----------------------------------------------------------------------
 
@@ -291,7 +294,7 @@ void HeapProfileTable::MarkCurrentAllocations(AllocationMark mark) {
 }
 
 void HeapProfileTable::MarkUnmarkedAllocations(AllocationMark mark) {
-  const MarkArgs args(mark, true);
+  const MarkArgs args(mark, false);
   address_map_->Iterate<const MarkArgs&>(MarkIterator, args);
 }
 

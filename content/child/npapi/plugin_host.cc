@@ -6,6 +6,7 @@
 
 #include "base/command_line.h"
 #include "base/file_util.h"
+#include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/strings/string_piece.h"
@@ -17,7 +18,9 @@
 #include "content/child/npapi/plugin_lib.h"
 #include "content/child/npapi/plugin_stream_url.h"
 #include "content/child/npapi/webplugin_delegate.h"
+#include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/user_agent.h"
 #include "content/public/common/webplugininfo.h"
 #include "net/base/net_util.h"
 #include "third_party/WebKit/public/web/WebBindings.h"
@@ -25,13 +28,12 @@
 #include "third_party/npapi/bindings/npruntime.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_surface.h"
-#include "webkit/common/user_agent/user_agent.h"
 
 #if defined(OS_MACOSX)
 #include "base/mac/mac_util.h"
 #endif
 
-using WebKit::WebBindings;
+using blink::WebBindings;
 
 // Declarations for stub implementations of deprecated functions, which are no
 // longer listed in npapi.h.
@@ -61,10 +63,15 @@ static bool SupportsCoreAnimationPlugins() {
     return false;
   // We also need to be running with desktop GL and not the software
   // OSMesa renderer in order to share accelerated surfaces between
-  // processes.
-  gfx::GLImplementation implementation = gfx::GetGLImplementation();
+  // processes. Because on MacOS we lazy-initialize GLSurface in the
+  // renderer process here, ensure we're not also initializing GL somewhere
+  // else, and that we only do this once.
+  static gfx::GLImplementation implementation = gfx::kGLImplementationNone;
   if (implementation == gfx::kGLImplementationNone) {
     // Not initialized yet.
+    DCHECK_EQ(implementation, gfx::GetGLImplementation())
+        << "GL already initialized by someone else to: "
+        << gfx::GetGLImplementation();
     if (!gfx::GLSurface::InitializeOneOff()) {
       return false;
     }
@@ -257,7 +264,7 @@ bool PluginHost::SetPostData(const char* buf,
         case GETNAME:
           // Got a value.
           value = std::string(start, ptr - start);
-          TrimWhitespace(value, TRIM_ALL, &value);
+          base::TrimWhitespace(value, base::TRIM_ALL, &value);
           // If the name field is empty, we'll skip this header
           // but we won't error out.
           if (!name.empty() && name != "content-length") {
@@ -269,7 +276,7 @@ bool PluginHost::SetPostData(const char* buf,
         case GETVALUE:
           // Got a header.
           name = StringToLowerASCII(std::string(start, ptr - start));
-          TrimWhitespace(name, TRIM_ALL, &name);
+          base::TrimWhitespace(name, base::TRIM_ALL, &name);
           start = ptr + 1;
           break;
         case GETDATA: {
@@ -331,7 +338,7 @@ uint32_t NPN_MemFlush(uint32_t size) {
 // This is for dynamic discovery of new plugins.
 // Should force a re-scan of the plugins directory to load new ones.
 void NPN_ReloadPlugins(NPBool reload_pages) {
-  WebKit::resetPluginCache(reload_pages ? true : false);
+  blink::resetPluginCache(reload_pages ? true : false);
 }
 
 // Requests a range of bytes for a seekable stream.
@@ -469,8 +476,8 @@ static NPError PostURLNotify(NPP id,
       file_path = base::FilePath::FromUTF8Unsafe(file_path_ascii);
     }
 
-    base::PlatformFileInfo post_file_info;
-    if (!file_util::GetFileInfo(file_path, &post_file_info) ||
+    base::File::Info post_file_info;
+    if (!base::GetFileInfo(file_path, &post_file_info) ||
         post_file_info.is_directory)
       return NPERR_FILE_NOT_FOUND;
 
@@ -593,7 +600,13 @@ const char* NPN_UserAgent(NPP id) {
         "Gecko/20061103 Firefox/2.0a1";
 #endif
 
-  return webkit_glue::GetUserAgent(GURL()).c_str();
+  // Provide a consistent user-agent string with memory that lasts
+  // long enough for the caller to read it.
+  static base::LazyInstance<std::string>::Leaky leaky_user_agent =
+    LAZY_INSTANCE_INITIALIZER;
+  if (leaky_user_agent == NULL)
+    leaky_user_agent.Get() = content::GetContentClient()->GetUserAgent();
+  return leaky_user_agent.Get().c_str();
 }
 
 void NPN_Status(NPP id, const char* message) {

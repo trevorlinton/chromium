@@ -12,6 +12,7 @@
 #include "chrome/browser/common/cancelable_request.h"
 #include "chrome/browser/download/download_path_reservation_tracker.h"
 #include "chrome/browser/download/download_target_determiner_delegate.h"
+#include "chrome/browser/download/download_target_info.h"
 #include "content/public/browser/download_danger_type.h"
 #include "content/public/browser/download_item.h"
 #include "content/public/browser/download_manager_delegate.h"
@@ -50,6 +51,9 @@ enum DownloadDangerType;
 class DownloadTargetDeterminer
     : public content::DownloadItem::Observer {
  public:
+  typedef base::Callback<void(scoped_ptr<DownloadTargetInfo>)>
+      CompletionCallback;
+
   // Start the process of determing the target of |download|.
   //
   // |initial_virtual_path| if non-empty, defines the initial virtual path for
@@ -70,7 +74,7 @@ class DownloadTargetDeterminer
                     const base::FilePath& initial_virtual_path,
                     DownloadPrefs* download_prefs,
                     DownloadTargetDeterminerDelegate* delegate,
-                    const content::DownloadTargetCallback& callback);
+                    const CompletionCallback& callback);
 
   // Returns a .crdownload intermediate path for the |suggested_path|.
   static base::FilePath GetCrDownloadPath(const base::FilePath& suggested_path);
@@ -87,6 +91,8 @@ class DownloadTargetDeterminer
     STATE_RESERVE_VIRTUAL_PATH,
     STATE_PROMPT_USER_FOR_DOWNLOAD_PATH,
     STATE_DETERMINE_LOCAL_PATH,
+    STATE_DETERMINE_MIME_TYPE,
+    STATE_DETERMINE_IF_HANDLED_SAFELY_BY_BROWSER,
     STATE_CHECK_DOWNLOAD_URL,
     STATE_CHECK_VISITED_REFERRER_BEFORE,
     STATE_DETERMINE_INTERMEDIATE_PATH,
@@ -119,12 +125,11 @@ class DownloadTargetDeterminer
 
   // Construct a DownloadTargetDeterminer object. Constraints on the arguments
   // are as per Start() above.
-  DownloadTargetDeterminer(
-      content::DownloadItem* download,
-      const base::FilePath& initial_virtual_path,
-      DownloadPrefs* download_prefs,
-      DownloadTargetDeterminerDelegate* delegate,
-      const content::DownloadTargetCallback& callback);
+  DownloadTargetDeterminer(content::DownloadItem* download,
+                           const base::FilePath& initial_virtual_path,
+                           DownloadPrefs* download_prefs,
+                           DownloadTargetDeterminerDelegate* delegate,
+                           const CompletionCallback& callback);
 
   virtual ~DownloadTargetDeterminer();
 
@@ -178,11 +183,34 @@ class DownloadTargetDeterminer
   // virtual path. The translation is done by invoking the DetermineLocalPath()
   // method on the delegate.
   // Next state:
-  // - STATE_CHECK_DOWNLOAD_URL.
+  // - STATE_DETERMINE_MIME_TYPE.
   Result DoDetermineLocalPath();
 
   // Callback invoked when the delegate has determined local path.
   void DetermineLocalPathDone(const base::FilePath& local_path);
+
+  // Determine the MIME type corresponding to the local file path. This is only
+  // done if the local path and the virtual path was the same. I.e. The file is
+  // intended for the local file system. This restriction is there because the
+  // resulting MIME type is only valid for determining whether the browser can
+  // handle the download if it were opened via a file:// URL.
+  // Next state:
+  // - STATE_DETERMINE_IF_HANDLED_SAFELY_BY_BROWSER.
+  Result DoDetermineMimeType();
+
+  // Callback invoked when the MIME type is available. Since determination of
+  // the MIME type can involve disk access, it is done in the blocking pool.
+  void DetermineMimeTypeDone(const std::string& mime_type);
+
+  // Determine if the file type can be handled safely by the browser if it were
+  // to be opened via a file:// URL.
+  // Next state:
+  // - STATE_CHECK_DOWNLOAD_URL.
+  Result DoDetermineIfHandledSafely();
+
+  // Callback invoked when a decision is available about whether the file type
+  // can be handled safely by the browser.
+  void DetermineIfHandledSafelyDone(bool is_handled_safely);
 
   // Checks whether the downloaded URL is malicious. Invokes the
   // DownloadProtectionService via the delegate.
@@ -257,12 +285,14 @@ class DownloadTargetDeterminer
   base::FilePath virtual_path_;
   base::FilePath local_path_;
   base::FilePath intermediate_path_;
+  std::string mime_type_;
+  bool is_filetype_handled_safely_;
 
   content::DownloadItem* download_;
   const bool is_resumption_;
   DownloadPrefs* download_prefs_;
   DownloadTargetDeterminerDelegate* delegate_;
-  content::DownloadTargetCallback completion_callback_;
+  CompletionCallback completion_callback_;
   CancelableRequestConsumer history_consumer_;
 
   base::WeakPtrFactory<DownloadTargetDeterminer> weak_ptr_factory_;

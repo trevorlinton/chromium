@@ -61,10 +61,10 @@ class InvertingObserver : public ImplicitAnimationObserver {
         "Inverse supported only for single element sequences.";
 
       LayerAnimationElement* element = sequence->FirstElement();
-      LayerAnimationElement::AnimatableProperties transform_property;
-      transform_property.insert(LayerAnimationElement::TRANSFORM);
-      DCHECK(transform_property == element->properties())
-        << "Only transform animations are currently invertible.";
+      DCHECK_EQ(static_cast<LayerAnimationElement::AnimatableProperties>(
+                    LayerAnimationElement::TRANSFORM),
+                element->properties())
+          << "Only transform animations are currently invertible.";
 
       scoped_ptr<LayerAnimationElement> to_return(
           LayerAnimationElement::CreateInverseTransformElement(base, element));
@@ -77,11 +77,13 @@ class InvertingObserver : public ImplicitAnimationObserver {
 };
 
 
-// ScoperLayerAnimationSettings ------------------------------------------------
+// ScopedLayerAnimationSettings ------------------------------------------------
 ScopedLayerAnimationSettings::ScopedLayerAnimationSettings(
-    LayerAnimator* animator)
+    scoped_refptr<LayerAnimator> animator)
     : animator_(animator),
-      old_transition_duration_(animator->transition_duration_),
+      old_is_transition_duration_locked_(
+          animator->is_transition_duration_locked_),
+      old_transition_duration_(animator->GetTransitionDuration()),
       old_tween_type_(animator->tween_type()),
       old_preemption_strategy_(animator->preemption_strategy()),
       inverse_observer_(new InvertingObserver()) {
@@ -90,7 +92,9 @@ ScopedLayerAnimationSettings::ScopedLayerAnimationSettings(
 }
 
 ScopedLayerAnimationSettings::~ScopedLayerAnimationSettings() {
-  animator_->transition_duration_ = old_transition_duration_;
+  animator_->is_transition_duration_locked_ =
+      old_is_transition_duration_locked_;
+  animator_->SetTransitionDuration(old_transition_duration_);
   animator_->set_tween_type(old_tween_type_);
   animator_->set_preemption_strategy(old_preemption_strategy_);
 
@@ -113,11 +117,15 @@ void ScopedLayerAnimationSettings::AddObserver(
 
 void ScopedLayerAnimationSettings::SetTransitionDuration(
     base::TimeDelta duration) {
-  animator_->transition_duration_ = duration;
+  animator_->SetTransitionDuration(duration);
+}
+
+void ScopedLayerAnimationSettings::LockTransitionDuration() {
+  animator_->is_transition_duration_locked_ = true;
 }
 
 base::TimeDelta ScopedLayerAnimationSettings::GetTransitionDuration() const {
-  return animator_->transition_duration_;
+  return animator_->GetTransitionDuration();
 }
 
 void ScopedLayerAnimationSettings::SetTweenType(gfx::Tween::Type tween_type) {

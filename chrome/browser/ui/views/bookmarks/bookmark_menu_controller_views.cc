@@ -24,8 +24,8 @@
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/widget/widget.h"
 
+using base::UserMetricsAction;
 using content::PageNavigator;
-using content::UserMetricsAction;
 using views::MenuItemView;
 
 BookmarkMenuController::BookmarkMenuController(Browser* browser,
@@ -85,7 +85,7 @@ void BookmarkMenuController::SetPageNavigator(PageNavigator* navigator) {
   menu_delegate_->SetPageNavigator(navigator);
 }
 
-string16 BookmarkMenuController::GetTooltipText(int id,
+base::string16 BookmarkMenuController::GetTooltipText(int id,
                                                 const gfx::Point& p) const {
   return menu_delegate_->GetTooltipText(id, p);
 }
@@ -169,7 +169,7 @@ views::MenuItemView* BookmarkMenuController::GetSiblingMenu(
   if (!bookmark_bar_ || for_drop_)
     return NULL;
   gfx::Point bookmark_bar_loc(screen_point);
-  views::View::ConvertPointToTarget(NULL, bookmark_bar_, &bookmark_bar_loc);
+  views::View::ConvertPointFromScreen(bookmark_bar_, &bookmark_bar_loc);
   int start_index;
   const BookmarkNode* node = bookmark_bar_->GetNodeForButtonAtModelIndex(
       bookmark_bar_loc, &start_index);

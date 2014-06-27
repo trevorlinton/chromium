@@ -13,6 +13,7 @@
 #include "base/memory/ref_counted.h"
 #include "content/public/browser/browser_message_filter.h"
 #include "url/gurl.h"
+#include "webkit/browser/blob/blob_data_handle.h"
 
 struct IndexedDBDatabaseMetadata;
 struct IndexedDBHostMsg_DatabaseCount_Params;
@@ -41,8 +42,7 @@ struct IndexedDBDatabaseMetadata;
 class IndexedDBDispatcherHost : public BrowserMessageFilter {
  public:
   // Only call the constructor from the UI thread.
-  IndexedDBDispatcherHost(int ipc_process_id,
-                          IndexedDBContextImpl* indexed_db_context);
+  explicit IndexedDBDispatcherHost(IndexedDBContextImpl* indexed_db_context);
 
   static ::IndexedDBDatabaseMetadata ConvertMetadata(
       const content::IndexedDBDatabaseMetadata& metadata);
@@ -81,6 +81,11 @@ class IndexedDBDispatcherHost : public BrowserMessageFilter {
   static uint32 TransactionIdToRendererTransactionId(int64 host_transaction_id);
   static uint32 TransactionIdToProcessId(int64 host_transaction_id);
 
+  void HoldBlobDataHandle(
+      const std::string& uuid,
+      scoped_ptr<webkit_blob::BlobDataHandle>& blob_data_handle);
+  void DropBlobDataHandle(const std::string& uuid);
+
  private:
   // Friends to enable OnDestruct() delegation.
   friend class BrowserThread;
@@ -96,6 +101,8 @@ class IndexedDBDispatcherHost : public BrowserMessageFilter {
 
   void OnIDBFactoryDeleteDatabase(
       const IndexedDBHostMsg_FactoryDeleteDatabase_Params& p);
+
+  void OnAckReceivedBlobs(const std::vector<std::string>& uuids);
 
   void ResetDispatcherHosts();
 
@@ -155,7 +162,6 @@ class IndexedDBDispatcherHost : public BrowserMessageFilter {
 
     void CloseAll();
     bool OnMessageReceived(const IPC::Message& message, bool* msg_is_ok);
-    void Send(IPC::Message* message);
 
     void OnCreateObjectStore(
         const IndexedDBHostMsg_DatabaseCreateObjectStore_Params& params);
@@ -164,9 +170,6 @@ class IndexedDBDispatcherHost : public BrowserMessageFilter {
                              int64 object_store_id);
     void OnCreateTransaction(
         const IndexedDBHostMsg_DatabaseCreateTransaction_Params&);
-    void OnOpen(int32 ipc_database_id,
-                int32 ipc_thread_id,
-                int32 ipc_callbacks_id);
     void OnClose(int32 ipc_database_id);
     void OnDestroyed(int32 ipc_database_id);
 
@@ -210,7 +213,6 @@ class IndexedDBDispatcherHost : public BrowserMessageFilter {
     ~CursorDispatcherHost();
 
     bool OnMessageReceived(const IPC::Message& message, bool* msg_is_ok);
-    void Send(IPC::Message* message);
 
     void OnAdvance(int32 ipc_object_store_id,
                    int32 ipc_thread_id,
@@ -219,7 +221,8 @@ class IndexedDBDispatcherHost : public BrowserMessageFilter {
     void OnContinue(int32 ipc_object_store_id,
                     int32 ipc_thread_id,
                     int32 ipc_callbacks_id,
-                    const IndexedDBKey& key);
+                    const IndexedDBKey& key,
+                    const IndexedDBKey& primary_key);
     void OnPrefetch(int32 ipc_cursor_id,
                     int32 ipc_thread_id,
                     int32 ipc_callbacks_id,
@@ -235,12 +238,12 @@ class IndexedDBDispatcherHost : public BrowserMessageFilter {
 
   scoped_refptr<IndexedDBContextImpl> indexed_db_context_;
 
+  typedef std::map<std::string, webkit_blob::BlobDataHandle*> BlobDataHandleMap;
+  BlobDataHandleMap blob_data_handle_map_;
+
   // Only access on IndexedDB thread.
   scoped_ptr<DatabaseDispatcherHost> database_dispatcher_host_;
   scoped_ptr<CursorDispatcherHost> cursor_dispatcher_host_;
-
-  // Used to dispatch messages to the correct view host.
-  int ipc_process_id_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(IndexedDBDispatcherHost);
 };

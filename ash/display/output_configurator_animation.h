@@ -10,10 +10,11 @@
 #include "ash/ash_export.h"
 #include "base/callback.h"
 #include "base/timer/timer.h"
-#include "chromeos/display/output_configurator.h"
+#include "ui/display/chromeos/output_configurator.h"
 
 namespace aura {
 class RootWindow;
+class Window;
 }  // namespace aura
 
 namespace ui {
@@ -24,10 +25,10 @@ namespace ash {
 namespace internal {
 
 // OutputConfiguratorAnimation provides the visual effects for
-// chromeos::OutputConfigurator, such like fade-out/in during changing
+// ui::OutputConfigurator, such like fade-out/in during changing
 // the display mode.
 class ASH_EXPORT OutputConfiguratorAnimation
-    : public chromeos::OutputConfigurator::Observer {
+    : public ui::OutputConfigurator::Observer {
  public:
   OutputConfiguratorAnimation();
   virtual ~OutputConfiguratorAnimation();
@@ -41,12 +42,11 @@ class ASH_EXPORT OutputConfiguratorAnimation
   void StartFadeInAnimation();
 
  protected:
-  // chromeos::OutputConfigurator::Observer overrides:
+  // ui::OutputConfigurator::Observer overrides:
   virtual void OnDisplayModeChanged(
-      const std::vector<chromeos::OutputConfigurator::OutputSnapshot>& outputs)
+      const ui::OutputConfigurator::DisplayStateList& outputs) OVERRIDE;
+  virtual void OnDisplayModeChangeFailed(ui::OutputState failed_new_state)
       OVERRIDE;
-  virtual void OnDisplayModeChangeFailed(
-      chromeos::OutputState failed_new_state) OVERRIDE;
 
  private:
   // Clears all hiding layers.  Note that in case that this method is called
@@ -54,7 +54,7 @@ class ASH_EXPORT OutputConfiguratorAnimation
   // and *not* call the registered callback.
   void ClearHidingLayers();
 
-  std::map<aura::RootWindow*, ui::Layer*> hiding_layers_;
+  std::map<aura::Window*, ui::Layer*> hiding_layers_;
   scoped_ptr<base::OneShotTimer<OutputConfiguratorAnimation> > timer_;
 
   DISALLOW_COPY_AND_ASSIGN(OutputConfiguratorAnimation);

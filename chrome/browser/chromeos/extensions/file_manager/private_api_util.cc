@@ -4,29 +4,27 @@
 
 #include "chrome/browser/chromeos/extensions/file_manager/private_api_util.h"
 
+#include <string>
+
 #include "base/files/file_path.h"
+#include "base/message_loop/message_loop.h"
 #include "chrome/browser/chromeos/drive/drive.pb.h"
+#include "chrome/browser/chromeos/drive/drive_integration_service.h"
 #include "chrome/browser/chromeos/drive/file_errors.h"
 #include "chrome/browser/chromeos/drive/file_system_interface.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
 #include "chrome/browser/chromeos/file_manager/fileapi_util.h"
+#include "chrome/browser/chromeos/file_manager/path_util.h"
 #include "chrome/browser/chromeos/file_manager/volume_manager.h"
 #include "chrome/browser/chromeos/fileapi/file_system_backend.h"
-#include "chrome/browser/extensions/extension_function_dispatcher.h"
-#include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/file_browser_private.h"
-#include "content/public/browser/browser_context.h"
-#include "content/public/browser/browser_thread.h"
-#include "content/public/browser/render_view_host.h"
-#include "content/public/browser/storage_partition.h"
-#include "content/public/browser/web_contents.h"
+#include "content/public/browser/child_process_security_policy.h"
 #include "ui/shell_dialogs/selected_file_info.h"
 #include "webkit/browser/fileapi/file_system_context.h"
 #include "webkit/browser/fileapi/file_system_url.h"
 
-using content::BrowserThread;
 namespace file_browser_private = extensions::api::file_browser_private;
 
 namespace file_manager {
@@ -80,21 +78,21 @@ void GetSelectedFileInfoInternal(Profile* profile,
               ui::SelectedFileInfo(file_path, base::FilePath()));
           break;
         case NEED_LOCAL_PATH_FOR_OPENING:
-          file_system->GetFileByPath(
+          file_system->GetFile(
               drive::util::ExtractDrivePath(file_path),
               base::Bind(&ContinueGetSelectedFileInfo,
                          profile,
                          base::Passed(&params)));
           return;  // Remaining work is done in ContinueGetSelectedFileInfo.
         case NEED_LOCAL_PATH_FOR_SAVING:
-          file_system->GetFileByPathForSaving(
+          file_system->GetFileForSaving(
               drive::util::ExtractDrivePath(file_path),
               base::Bind(&ContinueGetSelectedFileInfo,
                          profile,
                          base::Passed(&params)));
           return;  // Remaining work is done in ContinueGetSelectedFileInfo.
       }
-   }
+    }
   }
   params->callback.Run(params->selected_files);
 }
@@ -127,16 +125,14 @@ void VolumeInfoToVolumeMetadata(
     const VolumeInfo& volume_info,
     file_browser_private::VolumeMetadata* volume_metadata) {
   DCHECK(volume_metadata);
+  DCHECK(!volume_info.mount_path.empty());
 
-  if (!volume_info.mount_path.empty()) {
-    // Convert mount point path to relative path with the external file system
-    // exposed within File API.
-    base::FilePath relative_mount_path;
-    if (ConvertAbsoluteFilePathToRelativeFileSystemPath(
-            profile, kFileManagerAppId, base::FilePath(volume_info.mount_path),
-            &relative_mount_path))
-      volume_metadata->mount_path = "/" + relative_mount_path.AsUTF8Unsafe();
-  }
+  volume_metadata->volume_id = volume_info.volume_id;
+
+  // TODO(kinaba): fill appropriate information once multi-profile support is
+  // implemented.
+  volume_metadata->profile.display_name = profile->GetProfileName();
+  volume_metadata->profile.is_current_profile = true;
 
   if (!volume_info.source_path.empty()) {
     volume_metadata->source_path.reset(
@@ -146,19 +142,29 @@ void VolumeInfoToVolumeMetadata(
   switch (volume_info.type) {
     case VOLUME_TYPE_GOOGLE_DRIVE:
       volume_metadata->volume_type =
-          file_browser_private::VolumeMetadata::VOLUME_TYPE_DRIVE;
+          file_browser_private::VOLUME_TYPE_DRIVE;
       break;
     case VOLUME_TYPE_DOWNLOADS_DIRECTORY:
       volume_metadata->volume_type =
-          file_browser_private::VolumeMetadata::VOLUME_TYPE_DOWNLOADS;
+          file_browser_private::VOLUME_TYPE_DOWNLOADS;
       break;
     case VOLUME_TYPE_REMOVABLE_DISK_PARTITION:
       volume_metadata->volume_type =
-          file_browser_private::VolumeMetadata::VOLUME_TYPE_REMOVABLE;
+          file_browser_private::VOLUME_TYPE_REMOVABLE;
       break;
     case VOLUME_TYPE_MOUNTED_ARCHIVE_FILE:
+      volume_metadata->volume_type = file_browser_private::VOLUME_TYPE_ARCHIVE;
+      break;
+    case VOLUME_TYPE_CLOUD_DEVICE:
       volume_metadata->volume_type =
-          file_browser_private::VolumeMetadata::VOLUME_TYPE_ARCHIVE;
+          file_browser_private::VOLUME_TYPE_CLOUD_DEVICE;
+      break;
+    case VOLUME_TYPE_PROVIDED:
+      volume_metadata->volume_type = file_browser_private::VOLUME_TYPE_PROVIDED;
+      break;
+    case VOLUME_TYPE_TESTING:
+      volume_metadata->volume_type =
+          file_browser_private::VOLUME_TYPE_TESTING;
       break;
   }
 
@@ -167,29 +173,32 @@ void VolumeInfoToVolumeMetadata(
     switch (volume_info.device_type) {
       case chromeos::DEVICE_TYPE_UNKNOWN:
         volume_metadata->device_type =
-            file_browser_private::VolumeMetadata::DEVICE_TYPE_UNKNOWN;
+            file_browser_private::DEVICE_TYPE_UNKNOWN;
         break;
       case chromeos::DEVICE_TYPE_USB:
-        volume_metadata->device_type =
-            file_browser_private::VolumeMetadata::DEVICE_TYPE_USB;
+        volume_metadata->device_type = file_browser_private::DEVICE_TYPE_USB;
         break;
       case chromeos::DEVICE_TYPE_SD:
-        volume_metadata->device_type =
-            file_browser_private::VolumeMetadata::DEVICE_TYPE_SD;
+        volume_metadata->device_type = file_browser_private::DEVICE_TYPE_SD;
         break;
       case chromeos::DEVICE_TYPE_OPTICAL_DISC:
       case chromeos::DEVICE_TYPE_DVD:
         volume_metadata->device_type =
-            file_browser_private::VolumeMetadata::DEVICE_TYPE_OPTICAL;
+            file_browser_private::DEVICE_TYPE_OPTICAL;
         break;
       case chromeos::DEVICE_TYPE_MOBILE:
-        volume_metadata->device_type =
-            file_browser_private::VolumeMetadata::DEVICE_TYPE_MOBILE;
+        volume_metadata->device_type = file_browser_private::DEVICE_TYPE_MOBILE;
         break;
     }
+    volume_metadata->device_path.reset(
+        new std::string(volume_info.system_path_prefix.AsUTF8Unsafe()));
+    volume_metadata->device_label.reset(
+        new std::string(volume_info.drive_label));
+    volume_metadata->is_parent_device.reset(
+        new bool(volume_info.is_parent));
   } else {
     volume_metadata->device_type =
-        file_browser_private::VolumeMetadata::DEVICE_TYPE_NONE;
+        file_browser_private::DEVICE_TYPE_NONE;
   }
 
   volume_metadata->is_read_only = volume_info.is_read_only;
@@ -197,52 +206,27 @@ void VolumeInfoToVolumeMetadata(
   switch (volume_info.mount_condition) {
     case chromeos::disks::MOUNT_CONDITION_NONE:
       volume_metadata->mount_condition =
-          file_browser_private::VolumeMetadata::MOUNT_CONDITION_NONE;
+          file_browser_private::MOUNT_CONDITION_NONE;
       break;
     case chromeos::disks::MOUNT_CONDITION_UNKNOWN_FILESYSTEM:
       volume_metadata->mount_condition =
-          file_browser_private::VolumeMetadata::MOUNT_CONDITION_UNKNOWN;
+          file_browser_private::MOUNT_CONDITION_UNKNOWN;
       break;
     case chromeos::disks::MOUNT_CONDITION_UNSUPPORTED_FILESYSTEM:
       volume_metadata->mount_condition =
-          file_browser_private::VolumeMetadata::MOUNT_CONDITION_UNSUPPORTED;
+          file_browser_private::MOUNT_CONDITION_UNSUPPORTED;
       break;
   }
 }
 
-content::WebContents* GetWebContents(ExtensionFunctionDispatcher* dispatcher) {
-  if (!dispatcher) {
-    LOG(WARNING) << "No dispatcher";
-    return NULL;
-  }
-  if (!dispatcher->delegate()) {
-    LOG(WARNING) << "No delegate";
-    return NULL;
-  }
-  content::WebContents* web_contents =
-      dispatcher->delegate()->GetAssociatedWebContents();
-  if (!web_contents) {
-    LOG(WARNING) << "No associated tab contents";
-    return NULL;
-  }
-  return web_contents;
-}
-
-int32 GetTabId(ExtensionFunctionDispatcher* dispatcher) {
-  content::WebContents* web_contents = GetWebContents(dispatcher);
-  return web_contents ? ExtensionTabUtil::GetTabId(web_contents) : 0;
-}
-
-base::FilePath GetLocalPathFromURL(
-    content::RenderViewHost* render_view_host,
-    Profile* profile,
-    const GURL& url) {
+base::FilePath GetLocalPathFromURL(content::RenderViewHost* render_view_host,
+                                   Profile* profile,
+                                   const GURL& url) {
   DCHECK(render_view_host);
   DCHECK(profile);
 
   scoped_refptr<fileapi::FileSystemContext> file_system_context =
-      util::GetFileSystemContextForRenderViewHost(
-          profile, render_view_host);
+      util::GetFileSystemContextForRenderViewHost(profile, render_view_host);
 
   const fileapi::FileSystemURL filesystem_url(
       file_system_context->CrackURL(url));
@@ -274,11 +258,28 @@ void GetSelectedFileInfo(content::RenderViewHost* render_view_host,
     }
   }
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::Bind(&GetSelectedFileInfoInternal,
-                 profile,
-                 base::Passed(&params)));
+  base::MessageLoop::current()->PostTask(
+      FROM_HERE,
+      base::Bind(&GetSelectedFileInfoInternal, profile, base::Passed(&params)));
+}
+
+void SetupProfileFileAccessPermissions(int render_view_process_id,
+                                       Profile* profile) {
+  const base::FilePath paths[] = {
+    drive::util::GetDriveMountPointPath(profile),
+    util::GetDownloadsFolderForProfile(profile),
+  };
+  for (size_t i = 0; i < arraysize(paths); ++i) {
+    content::ChildProcessSecurityPolicy::GetInstance(
+        )->GrantCreateReadWriteFile(render_view_process_id, paths[i]);
+  }
+}
+
+drive::EventLogger* GetLogger(Profile* profile) {
+  drive::DriveIntegrationService* service =
+      drive::DriveIntegrationServiceFactory::FindForProfileRegardlessOfStates(
+          profile);
+  return service ? service->event_logger() : NULL;
 }
 
 }  // namespace util

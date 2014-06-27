@@ -21,6 +21,7 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/pepper_plugin_info.h"
 #include "content/public/common/process_type.h"
+#include "content/public/common/sandboxed_process_launcher_delegate.h"
 #include "ipc/ipc_switches.h"
 #include "net/base/network_change_notifier.h"
 #include "ppapi/proxy/ppapi_messages.h"
@@ -28,24 +29,30 @@
 
 #if defined(OS_WIN)
 #include "content/common/sandbox_win.h"
-#include "content/public/common/sandboxed_process_launcher_delegate.h"
 #include "sandbox/win/src/sandbox_policy.h"
 #endif
 
 namespace content {
 
-#if defined(OS_WIN)
 // NOTE: changes to this class need to be reviewed by the security team.
 class PpapiPluginSandboxedProcessLauncherDelegate
     : public content::SandboxedProcessLauncherDelegate {
  public:
-  explicit PpapiPluginSandboxedProcessLauncherDelegate(bool is_broker)
-      : is_broker_(is_broker) {}
+  PpapiPluginSandboxedProcessLauncherDelegate(bool is_broker,
+                                              const PepperPluginInfo& info,
+                                              ChildProcessHost* host)
+      :
+#if defined(OS_POSIX)
+        info_(info),
+        ipc_fd_(host->TakeClientFileDescriptor()),
+#endif  // OS_POSIX
+        is_broker_(is_broker) {}
+
   virtual ~PpapiPluginSandboxedProcessLauncherDelegate() {}
 
-  virtual void ShouldSandbox(bool* in_sandbox) OVERRIDE {
-    if (is_broker_)
-      *in_sandbox = false;
+#if defined(OS_WIN)
+  virtual bool ShouldSandbox() OVERRIDE {
+    return !is_broker_;
   }
 
   virtual void PreSpawnTarget(sandbox::TargetPolicy* policy,
@@ -61,12 +68,27 @@ class PpapiPluginSandboxedProcessLauncherDelegate
     *success = (result == sandbox::SBOX_ALL_OK);
   }
 
+#elif defined(OS_POSIX)
+  virtual bool ShouldUseZygote() OVERRIDE {
+    const CommandLine& browser_command_line = *CommandLine::ForCurrentProcess();
+    CommandLine::StringType plugin_launcher = browser_command_line
+        .GetSwitchValueNative(switches::kPpapiPluginLauncher);
+    return !is_broker_ && plugin_launcher.empty() && info_.is_sandboxed;
+  }
+  virtual int GetIpcFd() OVERRIDE {
+    return ipc_fd_;
+  }
+#endif  // OS_WIN
+
  private:
+#if defined(OS_POSIX)
+  const PepperPluginInfo& info_;
+  int ipc_fd_;
+#endif  // OS_POSIX
   bool is_broker_;
 
   DISALLOW_COPY_AND_ASSIGN(PpapiPluginSandboxedProcessLauncherDelegate);
 };
-#endif  // OS_WIN
 
 class PpapiPluginProcessHost::PluginNetworkObserver
     : public net::NetworkChangeNotifier::IPAddressObserver,
@@ -117,6 +139,7 @@ PpapiPluginProcessHost* PpapiPluginProcessHost::CreatePluginHost(
     const base::FilePath& profile_data_directory) {
   PpapiPluginProcessHost* plugin_host = new PpapiPluginProcessHost(
       info, profile_data_directory);
+  DCHECK(plugin_host);
   if (plugin_host->Init(info))
     return plugin_host;
 
@@ -178,7 +201,7 @@ void PpapiPluginProcessHost::DidDeleteOutOfProcessInstance(
 
 // static
 void PpapiPluginProcessHost::FindByName(
-    const string16& name,
+    const base::string16& name,
     std::vector<PpapiPluginProcessHost*>* hosts) {
   for (PpapiPluginProcessHostIterator iter; !iter.Done(); ++iter) {
     if (iter->process_.get() && iter->process_->GetData().name == name)
@@ -206,10 +229,13 @@ void PpapiPluginProcessHost::OpenChannelToPlugin(Client* client) {
 PpapiPluginProcessHost::PpapiPluginProcessHost(
     const PepperPluginInfo& info,
     const base::FilePath& profile_data_directory)
-    : permissions_(
-          ppapi::PpapiPermissions::GetForCommandLine(info.permissions)),
-      profile_data_directory_(profile_data_directory),
+    : profile_data_directory_(profile_data_directory),
       is_broker_(false) {
+  uint32 base_permissions = info.permissions;
+  if (GetContentClient()->browser()->IsPluginAllowedToUseDevChannelAPIs())
+    base_permissions |= ppapi::PERMISSION_DEV_CHANNEL;
+  permissions_ = ppapi::PpapiPermissions::GetForCommandLine(base_permissions);
+
   process_.reset(new BrowserChildProcessHostImpl(
       PROCESS_TYPE_PPAPI_PLUGIN, this));
 
@@ -249,12 +275,14 @@ bool PpapiPluginProcessHost::Init(const PepperPluginInfo& info) {
   if (info.name.empty()) {
     process_->SetName(plugin_path_.BaseName().LossyDisplayName());
   } else {
-    process_->SetName(UTF8ToUTF16(info.name));
+    process_->SetName(base::UTF8ToUTF16(info.name));
   }
 
   std::string channel_id = process_->GetHost()->CreateChannel();
-  if (channel_id.empty())
+  if (channel_id.empty()) {
+    VLOG(1) << "Could not create pepper host channel.";
     return false;
+  }
 
   const CommandLine& browser_command_line = *CommandLine::ForCurrentProcess();
   CommandLine::StringType plugin_launcher =
@@ -267,8 +295,10 @@ bool PpapiPluginProcessHost::Init(const PepperPluginInfo& info) {
   int flags = ChildProcessHost::CHILD_NORMAL;
 #endif
   base::FilePath exe_path = ChildProcessHost::GetChildPath(flags);
-  if (exe_path.empty())
+  if (exe_path.empty()) {
+    VLOG(1) << "Pepper plugin exe path is empty.";
     return false;
+  }
 
   CommandLine* cmd_line = new CommandLine(exe_path);
   cmd_line->AppendSwitchASCII(switches::kProcessType,
@@ -299,11 +329,15 @@ bool PpapiPluginProcessHost::Init(const PepperPluginInfo& info) {
     // TODO(vtl): Stop passing flash args in the command line, or windows is
     // going to explode.
     std::string field_trial =
-        base::FieldTrialList::FindFullName(kLowLatencyFlashAudioFieldTrialName);
+        base::FieldTrialList::FindFullName(kFlashHwVideoDecodeFieldTrialName);
     std::string existing_args =
         browser_command_line.GetSwitchValueASCII(switches::kPpapiFlashArgs);
-    if (field_trial == kLowLatencyFlashAudioFieldTrialEnabledName)
-      existing_args.append(" enable_low_latency_audio=1");
+    if (field_trial == kFlashHwVideoDecodeFieldTrialEnabledName) {
+      // Arguments passed to Flash are comma delimited.
+      if (!existing_args.empty())
+        existing_args.append(",");
+      existing_args.append("enable_hw_video_decode=1");
+    }
     cmd_line->AppendSwitchASCII(switches::kPpapiFlashArgs, existing_args);
   }
 
@@ -321,17 +355,13 @@ bool PpapiPluginProcessHost::Init(const PepperPluginInfo& info) {
   // plugin launcher means we need to use another process instead of just
   // forking the zygote.
 #if defined(OS_POSIX)
-  bool use_zygote = !is_broker_ && plugin_launcher.empty() && info.is_sandboxed;
   if (!info.is_sandboxed)
     cmd_line->AppendSwitchASCII(switches::kNoSandbox, std::string());
 #endif  // OS_POSIX
   process_->Launch(
-#if defined(OS_WIN)
-      new PpapiPluginSandboxedProcessLauncherDelegate(is_broker_),
-#elif defined(OS_POSIX)
-      use_zygote,
-      base::EnvironmentMap(),
-#endif
+      new PpapiPluginSandboxedProcessLauncherDelegate(is_broker_,
+                                                      info,
+                                                      process_->GetHost()),
       cmd_line);
   return true;
 }
@@ -357,10 +387,12 @@ void PpapiPluginProcessHost::RequestPluginChannel(Client* client) {
 }
 
 void PpapiPluginProcessHost::OnProcessLaunched() {
+  VLOG(2) << "ppapi plugin process launched.";
   host_impl_->set_plugin_process_handle(process_->GetHandle());
 }
 
 void PpapiPluginProcessHost::OnProcessCrashed(int exit_code) {
+  VLOG(1) << "ppapi plugin process crashed.";
   PluginServiceImpl::GetInstance()->RegisterPluginCrash(plugin_path_);
 }
 
@@ -391,8 +423,8 @@ void PpapiPluginProcessHost::OnChannelConnected(int32 peer_pid) {
 // Called when the browser <--> plugin channel has an error. This normally
 // means the plugin has crashed.
 void PpapiPluginProcessHost::OnChannelError() {
-  DVLOG(1) << "PpapiPluginProcessHost" << (is_broker_ ? "[broker]" : "")
-           << "::OnChannelError()";
+  VLOG(1) << "PpapiPluginProcessHost" << (is_broker_ ? "[broker]" : "")
+          << "::OnChannelError()";
   // We don't need to notify the renderers that were communicating with the
   // plugin since they have their own channels which will go into the error
   // state at the same time. Instead, we just need to notify any renderers

@@ -44,11 +44,12 @@ class MediaResourceGetterImpl : public media::MediaResourceGetter {
   virtual void GetCookies(const GURL& url,
                           const GURL& first_party_for_cookies,
                           const GetCookieCB& callback) OVERRIDE;
-  virtual void GetPlatformPathFromFileSystemURL(
+  virtual void GetPlatformPathFromURL(
       const GURL& url,
       const GetPlatformPathCB& callback) OVERRIDE;
   virtual void ExtractMediaMetadata(
       const std::string& url, const std::string& cookies,
+      const std::string& user_agent,
       const ExtractMediaMetadataCB& callback) OVERRIDE;
 
   static bool RegisterMediaResourceGetter(JNIEnv* env);
@@ -68,14 +69,14 @@ class MediaResourceGetterImpl : public media::MediaResourceGetter {
   // FileSystemContext to be used on FILE thread.
   fileapi::FileSystemContext* file_system_context_;
 
-  // Used to post tasks.
-  base::WeakPtrFactory<MediaResourceGetterImpl> weak_this_;
-
   // Render process id, used to check whether the process can access cookies.
   int renderer_id_;
 
   // Routing id for the render view, used to check tab specific cookie policy.
   int routing_id_;
+
+  // NOTE: Weak pointers must be invalidated before all other member variables.
+  base::WeakPtrFactory<MediaResourceGetterImpl> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaResourceGetterImpl);
 };

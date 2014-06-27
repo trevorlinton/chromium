@@ -1,29 +1,23 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 package org.chromium.chrome.browser.input;
 
-import android.test.suitebuilder.annotation.LargeTest;
-
 import org.chromium.base.test.util.DisabledTest;
-import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.UrlUtils;
+import org.chromium.chrome.browser.ContentViewUtil;
+import org.chromium.chrome.shell.ChromeShellTestBase;
 import org.chromium.content.browser.ContentView;
-import org.chromium.content.browser.input.SelectPopupDialog;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.content.browser.test.util.DOMUtils;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer;
 import org.chromium.content.browser.test.util.UiUtils;
-import org.chromium.chrome.browser.ContentViewUtil;
-import org.chromium.chrome.testshell.ChromiumTestShellTestBase;
-import org.chromium.ui.WindowAndroid;
+import org.chromium.ui.base.ActivityWindowAndroid;
+import org.chromium.ui.base.WindowAndroid;
 
-import java.util.concurrent.TimeUnit;
-
-public class SelectPopupOtherContentViewTest extends ChromiumTestShellTestBase {
-    private static final int WAIT_TIMEOUT_SECONDS = 2;
+public class SelectPopupOtherContentViewTest extends ChromeShellTestBase {
     private static final String SELECT_URL = UrlUtils.encodeHtmlDataUri(
             "<html><body>" +
             "Which animal is the strongest:<br/>" +
@@ -38,10 +32,11 @@ public class SelectPopupOtherContentViewTest extends ChromiumTestShellTestBase {
             "</select>" +
             "</body></html>");
 
-    private static class PopupShowingCriteria implements Criteria {
+    private class PopupShowingCriteria implements Criteria {
         @Override
         public boolean isSatisfied() {
-            return SelectPopupDialog.getCurrent() != null;
+            ContentView view = getActivity().getActiveContentView();
+            return view.getContentViewCore().getSelectPopupForTest() != null;
         }
     }
 
@@ -60,7 +55,7 @@ public class SelectPopupOtherContentViewTest extends ChromiumTestShellTestBase {
     public void testPopupNotClosedByOtherContentView()
             throws InterruptedException, Exception, Throwable {
         // Load the test page.
-        launchChromiumTestShellWithUrl(SELECT_URL);
+        launchChromeShellWithUrl(SELECT_URL);
         assertTrue("Page failed to load", waitForActiveShellToBeDoneLoading());
 
         final ContentView view = getActivity().getActiveContentView();
@@ -76,8 +71,8 @@ public class SelectPopupOtherContentViewTest extends ChromiumTestShellTestBase {
         UiUtils.runOnUiThread(getActivity(), new Runnable() {
             @Override
             public void run() {
-                int nativeWebContents = ContentViewUtil.createNativeWebContents(false);
-                WindowAndroid windowAndroid = new WindowAndroid(getActivity());
+                long nativeWebContents = ContentViewUtil.createNativeWebContents(false);
+                WindowAndroid windowAndroid = new ActivityWindowAndroid(getActivity());
                 ContentView contentView = ContentView.newInstance(
                         getActivity(), nativeWebContents, windowAndroid);
                 contentView.destroy();
@@ -89,6 +84,6 @@ public class SelectPopupOtherContentViewTest extends ChromiumTestShellTestBase {
 
         // The popup should still be shown.
         assertNotNull("The select popup got hidden by destroying of unrelated ContentViewCore.",
-                SelectPopupDialog.getCurrent());
+                view.getContentViewCore().getSelectPopupForTest());
     }
 }

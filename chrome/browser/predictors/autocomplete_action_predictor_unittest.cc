@@ -23,6 +23,7 @@
 #include "content/public/test/test_browser_thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using base::ASCIIToUTF16;
 using content::BrowserThread;
 using predictors::AutocompleteActionPredictor;
 
@@ -30,9 +31,9 @@ namespace {
 
 struct TestUrlInfo {
   GURL url;
-  string16 title;
+  base::string16 title;
   int days_from_now;
-  string16 user_text;
+  base::string16 user_text;
   int number_of_hits;
   int number_of_misses;
   AutocompleteActionPredictor::Action expected_action;
@@ -63,7 +64,7 @@ struct TestUrlInfo {
     AutocompleteActionPredictor::ACTION_PRERENDER },
   { GURL("http://www.testsite.com/g.html"),
     ASCIIToUTF16("Test - site - just a test"), 12,
-    string16(), 5, 0,
+    base::string16(), 5, 0,
     AutocompleteActionPredictor::ACTION_NONE },
   { GURL("http://www.testsite.com/h.html"),
     ASCIIToUTF16("Test - site - just a test"), 21,
@@ -82,8 +83,7 @@ namespace predictors {
 class AutocompleteActionPredictorTest : public testing::Test {
  public:
   AutocompleteActionPredictorTest()
-      : loop_(base::MessageLoop::TYPE_DEFAULT),
-        ui_thread_(BrowserThread::UI, &loop_),
+      : ui_thread_(BrowserThread::UI, &loop_),
         db_thread_(BrowserThread::DB, &loop_),
         file_thread_(BrowserThread::FILE, &loop_),
         profile_(new TestingProfile()),

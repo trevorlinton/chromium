@@ -15,6 +15,7 @@
 #include "ui/base/win/hwnd_subclass.h"
 #endif
 
+class AutoKeepAlive;
 class Panel;
 class PanelBoundsAnimation;
 class PanelFrameView;
@@ -129,7 +130,7 @@ class PanelView : public NativePanel,
   virtual bool CanMaximize() const OVERRIDE;
   virtual views::Widget* GetWidget() OVERRIDE;
   virtual const views::Widget* GetWidget() const OVERRIDE;
-  virtual string16 GetWindowTitle() const OVERRIDE;
+  virtual base::string16 GetWindowTitle() const OVERRIDE;
   virtual gfx::ImageSkia GetWindowAppIcon() OVERRIDE;
   virtual gfx::ImageSkia GetWindowIcon() OVERRIDE;
   virtual void WindowClosing() OVERRIDE;
@@ -166,7 +167,6 @@ class PanelView : public NativePanel,
   void UpdateWindowIcon();
   void SetBoundsInternal(const gfx::Rect& bounds, bool animate);
   bool EndDragging(bool cancelled);
-  void OnViewWasResized();
 
   // Sets the bounds of the underlying window to |new_bounds|. Note that this
   // might update the window style to work around the minimum overlapped
@@ -245,6 +245,8 @@ class PanelView : public NativePanel,
   // The last view that had focus in the panel. This is saved so that focus can
   // be restored properly when a drag ends.
   views::View* old_focused_view_;
+
+  scoped_ptr<AutoKeepAlive> keep_alive_;
 
 #if defined(OS_WIN)
   // Used to provide custom taskbar thumbnail for Windows 7 and later.

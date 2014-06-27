@@ -23,18 +23,16 @@
 #include "base/win/win_util.h"
 #include "base/win/windows_version.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/chrome_process_finder_win.h"
-#if 0
 #include "chrome/browser/browser_process_platform_part.h"
+#include "chrome/browser/chrome_process_finder_win.h"
 #include "chrome/browser/metro_utils/metro_chrome_win.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/ui/simple_message_box.h"
-#endif
 #include "chrome/common/chrome_constants.h"
-//#include "chrome/common/chrome_paths.h"
-//#include "chrome/common/chrome_paths_internal.h"
+#include "chrome/common/chrome_paths.h"
+#include "chrome/common/chrome_paths_internal.h"
 #include "chrome/common/chrome_switches.h"
-//#include "chrome/installer/util/wmi.h"
+#include "chrome/installer/util/wmi.h"
 #include "content/public/common/result_codes.h"
 //#include "grit/chromium_strings.h"
 //#include "grit/generated_resources.h"
@@ -180,10 +178,6 @@ bool ProcessLaunchNotification(
   return true;
 }
 
-bool ActivateMetroChrome() {
-  return false;
-}
-
 // Returns true if Chrome needs to be relaunched into Windows 8 immersive mode.
 // Following conditions apply:-
 // 1. Windows 8 or greater.
@@ -196,18 +190,13 @@ bool ActivateMetroChrome() {
 // Move this function to a common place as the Windows 8 delegate_execute
 // handler can possibly use this.
 bool ShouldLaunchInWindows8ImmersiveMode(const base::FilePath& user_data_dir) {
-
-  return false;
-#if 0
-
 #if defined(USE_AURA)
   // Returning false from this function doesn't mean we don't launch immersive
   // mode in Aura. This function is specifically called in case when we need
   // to relaunch desktop launched chrome into immersive mode through 'relaunch'
   // menu. In case of Aura, we will use delegate_execute to do the relaunch.
   return false;
-#endif
-
+#else
   if (base::win::GetVersion() < base::win::VERSION_WIN8)
     return false;
 
@@ -250,12 +239,13 @@ bool ShouldLaunchInWindows8ImmersiveMode(const base::FilePath& user_data_dir) {
 // http://code.google.com/p/chromium/issues/detail?id=43650
 bool ProcessSingleton::EscapeVirtualization(
     const base::FilePath& user_data_dir) {
-#if 0
   if (::GetModuleHandle(L"sftldr_wow64.dll") ||
       ::GetModuleHandle(L"sftldr.dll")) {
+#if 0
     int process_id;
     if (!installer::WMIProcess::Launch(::GetCommandLineW(), &process_id))
       return false;
+#endif
     is_virtualized_ = true;
     // The new window was spawned from WMI, and won't be in the foreground.
     // So, first we sleep while the new chrome.exe instance starts (because
@@ -273,7 +263,6 @@ bool ProcessSingleton::EscapeVirtualization(
     }
     return true;
   }
-#endif
   return false;
 }
 
@@ -321,8 +310,8 @@ ProcessSingleton::NotifyResult ProcessSingleton::NotifyOtherProcess() {
   // The window is hung. Scan for every window to find a visible one.
   bool visible_window = false;
   ::EnumThreadWindows(thread_id,
-                    &BrowserWindowEnumeration,
-                    reinterpret_cast<LPARAM>(&visible_window));
+                      &BrowserWindowEnumeration,
+                      reinterpret_cast<LPARAM>(&visible_window));
 
 #if 0
   // If there is a visible browser window, ask the user before killing it.
@@ -351,10 +340,10 @@ ProcessSingleton::NotifyOtherProcessOrCreate() {
     if (result == PROCESS_NONE)
       result = PROFILE_IN_USE;
   } else {
-    //// we don't use g_browser_process in node-webkit's
-    //// code path
-    // g_browser_process->PlatformSpecificCommandLineProcessing(
-    //     *CommandLine::ForCurrentProcess());
+#if 0
+    g_browser_process->platform_part()->PlatformSpecificCommandLineProcessing(
+        *CommandLine::ForCurrentProcess());
+#endif
   }
   return result;
 }
@@ -409,6 +398,13 @@ bool ProcessSingleton::Create() {
         // Metro mode: activate and rendez-vous with the activated process.
         metro_activation_event.Set(
             ::CreateEvent(NULL, TRUE, FALSE, kMetroActivationEventName));
+#if 0
+        if (!chrome::ActivateMetroChrome()) {
+          // Failed to launch immersive Chrome, default to launching on Desktop.
+          LOG(ERROR) << "Failed to launch immersive chrome";
+          metro_activation_event.Close();
+        }
+#endif
       }
 
       if (metro_activation_event.IsValid()) {

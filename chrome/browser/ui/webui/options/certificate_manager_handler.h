@@ -10,16 +10,12 @@
 #include "base/compiler_specific.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/task/cancelable_task_tracker.h"
 #include "chrome/browser/certificate_manager_model.h"
 #include "chrome/browser/ui/webui/options/options_ui.h"
-#include "chrome/common/cancelable_task_tracker.h"
 #include "net/cert/nss_cert_database.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
-
-#if defined(OS_CHROMEOS)
-#include "chromeos/dbus/cryptohome_client.h"
-#endif
 
 namespace options {
 
@@ -31,7 +27,7 @@ class CertificateManagerHandler
       public CertificateManagerModel::Observer,
       public ui::SelectFileDialog::Listener {
  public:
-  CertificateManagerHandler();
+  explicit CertificateManagerHandler(bool show_certs_in_modal_dialog);
   virtual ~CertificateManagerHandler();
 
   // OptionsPageUIHandler implementation.
@@ -133,6 +129,11 @@ class CertificateManagerHandler
   // Delete certificate and private key (if any).
   void Delete(const base::ListValue* args);
 
+  // Model initialization methods.
+  void OnCertificateManagerModelCreated(
+      scoped_ptr<CertificateManagerModel> model);
+  void CertificateManagerModelReady();
+
   // Populate the trees in all the tabs.
   void Populate(const base::ListValue* args);
 
@@ -156,24 +157,20 @@ class CertificateManagerHandler
       const std::string& title,
       const net::NSSCertDatabase::ImportCertFailureList& not_imported) const;
 
-#if defined(OS_CHROMEOS)
-  // Check whether Tpm token is ready and notifiy JS side.
-  void CheckTpmTokenReady(const base::ListValue* args);
-  void CheckTpmTokenReadyInternal(
-      chromeos::DBusMethodCallStatus call_status,
-      bool is_tpm_token_ready);
-#endif
-
   gfx::NativeWindow GetParentWindow() const;
 
+  // True if certificate viewer should be shown in modal instead of constrianed
+  // dialog.
+  bool show_certs_in_modal_dialog_;
   // The Certificates Manager model
+  bool requested_certificate_manager_model_;
   scoped_ptr<CertificateManagerModel> certificate_manager_model_;
 
   // For multi-step import or export processes, we need to store the path,
   // password, etc the user chose while we wait for them to enter a password,
   // wait for file to be read, etc.
   base::FilePath file_path_;
-  string16 password_;
+  base::string16 password_;
   bool use_hardware_backed_;
   std::string file_data_;
   net::CertificateList selected_cert_list_;
@@ -181,7 +178,7 @@ class CertificateManagerHandler
   scoped_refptr<net::CryptoModule> module_;
 
   // Used in reading and writing certificate files.
-  CancelableTaskTracker tracker_;
+  base::CancelableTaskTracker tracker_;
   scoped_refptr<FileAccessProvider> file_access_provider_;
 
   scoped_ptr<CertIdMap> cert_id_map_;

@@ -8,7 +8,9 @@
 #include <map>
 #include <string>
 #include "base/basictypes.h"
+#include "base/containers/mru_cache.h"
 #include "base/memory/weak_ptr.h"
+#include "base/time/time.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_export.h"
 #include "net/http/http_pipelined_host_capability.h"
@@ -61,8 +63,9 @@ struct NET_EXPORT PortAlternateProtocolPair {
   AlternateProtocol protocol;
 };
 
-typedef std::map<HostPortPair, PortAlternateProtocolPair> AlternateProtocolMap;
-typedef std::map<HostPortPair, SettingsMap> SpdySettingsMap;
+typedef base::MRUCache<
+    HostPortPair, PortAlternateProtocolPair> AlternateProtocolMap;
+typedef base::MRUCache<HostPortPair, SettingsMap> SpdySettingsMap;
 typedef std::map<HostPortPair,
         HttpPipelinedHostCapability> PipelineCapabilityMap;
 
@@ -75,6 +78,11 @@ extern const char kAlternateProtocolHeader[];
 // * Spdy Settings (like CWND ID field)
 class NET_EXPORT HttpServerProperties {
  public:
+  struct NetworkStats {
+    base::TimeDelta rtt;
+    uint64 bandwidth_estimate;
+  };
+
   HttpServerProperties() {}
   virtual ~HttpServerProperties() {}
 
@@ -93,12 +101,12 @@ class NET_EXPORT HttpServerProperties {
                                bool support_spdy) = 0;
 
   // Returns true if |server| has an Alternate-Protocol header.
-  virtual bool HasAlternateProtocol(const HostPortPair& server) const = 0;
+  virtual bool HasAlternateProtocol(const HostPortPair& server) = 0;
 
   // Returns the Alternate-Protocol and port for |server|.
   // HasAlternateProtocol(server) must be true.
   virtual PortAlternateProtocolPair GetAlternateProtocol(
-      const HostPortPair& server) const = 0;
+      const HostPortPair& server) = 0;
 
   // Sets the Alternate-Protocol for |server|.
   virtual void SetAlternateProtocol(const HostPortPair& server,
@@ -108,13 +116,16 @@ class NET_EXPORT HttpServerProperties {
   // Sets the Alternate-Protocol for |server| to be BROKEN.
   virtual void SetBrokenAlternateProtocol(const HostPortPair& server) = 0;
 
+  // Clears the Alternate-Protocol for |server|.
+  virtual void ClearAlternateProtocol(const HostPortPair& server) = 0;
+
   // Returns all Alternate-Protocol mappings.
   virtual const AlternateProtocolMap& alternate_protocol_map() const = 0;
 
   // Gets a reference to the SettingsMap stored for a host.
   // If no settings are stored, returns an empty SettingsMap.
   virtual const SettingsMap& GetSpdySettings(
-      const HostPortPair& host_port_pair) const = 0;
+      const HostPortPair& host_port_pair) = 0;
 
   // Saves an individual SPDY setting for a host. Returns true if SPDY setting
   // is to be persisted.
@@ -131,6 +142,12 @@ class NET_EXPORT HttpServerProperties {
 
   // Returns all persistent SPDY settings.
   virtual const SpdySettingsMap& spdy_settings_map() const = 0;
+
+  virtual void SetServerNetworkStats(const HostPortPair& host_port_pair,
+                                     NetworkStats stats) = 0;
+
+  virtual const NetworkStats* GetServerNetworkStats(
+      const HostPortPair& host_port_pair) const = 0;
 
   virtual HttpPipelinedHostCapability GetPipelineCapability(
       const HostPortPair& origin) = 0;

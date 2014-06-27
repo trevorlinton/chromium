@@ -21,7 +21,7 @@ namespace forwarder2 {
 scoped_ptr<DeviceListener> DeviceListener::Create(
     scoped_ptr<Socket> host_socket,
     int listener_port,
-    const DeleteCallback& delete_callback) {
+    const ErrorCallback& error_callback) {
   scoped_ptr<Socket> listener_socket(new Socket());
   scoped_ptr<DeviceListener> device_listener;
   if (!listener_socket->BindTcp("", listener_port)) {
@@ -35,15 +35,14 @@ scoped_ptr<DeviceListener> DeviceListener::Create(
   listener_port = listener_socket->GetPort();
   SendCommand(command::BIND_SUCCESS, listener_port, host_socket.get());
   device_listener.reset(
-      new DeviceListener(
-          scoped_ptr<PipeNotifier>(new PipeNotifier()), listener_socket.Pass(),
-          host_socket.Pass(), listener_port, delete_callback));
+      new DeviceListener(listener_socket.Pass(), host_socket.Pass(),
+                         listener_port, error_callback));
   return device_listener.Pass();
 }
 
 DeviceListener::~DeviceListener() {
   DCHECK(deletion_task_runner_->RunsTasksOnCurrentThread());
-  exit_notifier_->Notify();
+  deletion_notifier_.Notify();
 }
 
 void DeviceListener::Start() {
@@ -58,23 +57,20 @@ void DeviceListener::SetAdbDataSocket(scoped_ptr<Socket> adb_data_socket) {
                  base::Unretained(this), base::Passed(&adb_data_socket)));
 }
 
-DeviceListener::DeviceListener(scoped_ptr<PipeNotifier> pipe_notifier,
-                               scoped_ptr<Socket> listener_socket,
+DeviceListener::DeviceListener(scoped_ptr<Socket> listener_socket,
                                scoped_ptr<Socket> host_socket,
                                int port,
-                               const DeleteCallback& delete_callback)
-    : exit_notifier_(pipe_notifier.Pass()),
+                               const ErrorCallback& error_callback)
+    : self_deleter_helper_(this, error_callback),
       listener_socket_(listener_socket.Pass()),
       host_socket_(host_socket.Pass()),
       listener_port_(port),
-      delete_callback_(delete_callback),
       deletion_task_runner_(base::MessageLoopProxy::current()),
       thread_("DeviceListener") {
   CHECK(host_socket_.get());
   DCHECK(deletion_task_runner_.get());
-  DCHECK(exit_notifier_.get());
-  host_socket_->AddEventFd(exit_notifier_->receiver_fd());
-  listener_socket_->AddEventFd(exit_notifier_->receiver_fd());
+  host_socket_->AddEventFd(deletion_notifier_.receiver_fd());
+  listener_socket_->AddEventFd(deletion_notifier_.receiver_fd());
 }
 
 void DeviceListener::AcceptNextClientSoon() {
@@ -89,12 +85,12 @@ void DeviceListener::AcceptClientOnInternalThread() {
   if (!listener_socket_->Accept(device_data_socket_.get())) {
     if (listener_socket_->DidReceiveEvent()) {
       LOG(INFO) << "Received exit notification, stopped accepting clients.";
-      SelfDelete();
+      OnInternalThreadError();
       return;
     }
     LOG(WARNING) << "Could not Accept in ListenerSocket.";
     SendCommand(command::ACCEPT_ERROR, listener_port_, host_socket_.get());
-    SelfDelete();
+    OnInternalThreadError();
     return;
   }
   SendCommand(command::ACCEPT_SUCCESS, listener_port_, host_socket_.get());
@@ -106,7 +102,7 @@ void DeviceListener::AcceptClientOnInternalThread() {
     if (host_socket_->has_error()) {
       LOG(ERROR) << "Adb Control connection lost. "
                  << "Listener port: " << listener_port_;
-      SelfDelete();
+      OnInternalThreadError();
       return;
     }
     // It can continue if the host forwarder could not connect to the host
@@ -119,30 +115,16 @@ void DeviceListener::AcceptClientOnInternalThread() {
 
 void DeviceListener::OnAdbDataSocketReceivedOnInternalThread(
     scoped_ptr<Socket> adb_data_socket) {
-  adb_data_socket_.swap(adb_data_socket);
+  DCHECK(adb_data_socket);
   SendCommand(command::ADB_DATA_SOCKET_SUCCESS, listener_port_,
               host_socket_.get());
-  CHECK(adb_data_socket_.get());
-  StartForwarder(device_data_socket_.Pass(), adb_data_socket_.Pass());
+  forwarders_manager_.CreateAndStartNewForwarder(
+      device_data_socket_.Pass(), adb_data_socket.Pass());
   AcceptNextClientSoon();
 }
 
-void DeviceListener::SelfDelete() {
-  if (!deletion_task_runner_->RunsTasksOnCurrentThread()) {
-    deletion_task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&DeviceListener::SelfDeleteOnDeletionTaskRunner,
-                   delete_callback_, listener_port_));
-    return;
-  }
-  SelfDeleteOnDeletionTaskRunner(delete_callback_, listener_port_);
-}
-
-// static
-void DeviceListener::SelfDeleteOnDeletionTaskRunner(
-    const DeleteCallback& delete_callback,
-    int listener_port) {
-  delete_callback.Run(listener_port);
+void DeviceListener::OnInternalThreadError() {
+  self_deleter_helper_.MaybeSelfDeleteSoon();
 }
 
 }  // namespace forwarder

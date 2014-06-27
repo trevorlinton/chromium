@@ -1,4 +1,4 @@
-# Copyright (c) 2012 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 {
@@ -22,6 +22,7 @@
           '../testing/test_env.py',
           '<(PRODUCT_DIR)/net_unittests<(EXECUTABLE_SUFFIX)',
           '--brave-new-test-launcher',
+          '--test-launcher-bot-mode',
         ],
         'isolate_dependency_tracked': [
           '../testing/test_env.py',
@@ -35,17 +36,18 @@
           '<(PRODUCT_DIR)/pyproto/',
           'tools/testserver/',
         ],
+        'read_only': 1,
       },
     }],
-    ['OS=="win"', {
+    ['OS=="linux" and component=="shared_library"', {
       'variables': {
         'isolate_dependency_tracked': [
-          '<(PRODUCT_DIR)/icudt.dll',
-        ],
-        'isolate_dependency_untracked': [
-          '../third_party/python_26/',
+          '<(PRODUCT_DIR)/lib/libopenssl.so',
         ],
       },
     }],
+  ],
+  'includes': [
+    'net.isolate',
   ],
 }

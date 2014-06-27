@@ -6,9 +6,9 @@
 
 #include "base/lazy_instance.h"
 #include "chrome/browser/extensions/api/braille_display_private/braille_controller.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "extensions/browser/extension_system.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/login/screen_locker.h"
@@ -39,10 +39,11 @@ class BrailleDisplayPrivateAPI::DefaultEventDelegate
   Profile* profile_;
 };
 
-BrailleDisplayPrivateAPI::BrailleDisplayPrivateAPI(Profile* profile)
-    : profile_(profile), scoped_observer_(this),
-      event_delegate_(new DefaultEventDelegate(this, profile_)) {
-}
+BrailleDisplayPrivateAPI::BrailleDisplayPrivateAPI(
+    content::BrowserContext* context)
+    : profile_(Profile::FromBrowserContext(context)),
+      scoped_observer_(this),
+      event_delegate_(new DefaultEventDelegate(this, profile_)) {}
 
 BrailleDisplayPrivateAPI::~BrailleDisplayPrivateAPI() {
 }
@@ -50,13 +51,14 @@ BrailleDisplayPrivateAPI::~BrailleDisplayPrivateAPI() {
 void BrailleDisplayPrivateAPI::Shutdown() {
 }
 
-static base::LazyInstance<ProfileKeyedAPIFactory<BrailleDisplayPrivateAPI> >
-g_factory = LAZY_INSTANCE_INITIALIZER;
+static base::LazyInstance<
+    BrowserContextKeyedAPIFactory<BrailleDisplayPrivateAPI> > g_factory =
+    LAZY_INSTANCE_INITIALIZER;
 
 // static
-ProfileKeyedAPIFactory<BrailleDisplayPrivateAPI>*
+BrowserContextKeyedAPIFactory<BrailleDisplayPrivateAPI>*
 BrailleDisplayPrivateAPI::GetFactoryInstance() {
-  return &g_factory.Get();
+  return g_factory.Pointer();
 }
 
 void BrailleDisplayPrivateAPI::OnDisplayStateChanged(
@@ -82,10 +84,14 @@ bool BrailleDisplayPrivateAPI::IsProfileActive() {
   Profile* active_profile;
   chromeos::ScreenLocker* screen_locker =
       chromeos::ScreenLocker::default_screen_locker();
-  if (screen_locker && screen_locker->locked())
+  if (screen_locker && screen_locker->locked()) {
     active_profile = chromeos::ProfileHelper::GetSigninProfile();
-  else
-    active_profile = ProfileManager::GetDefaultProfile();
+  } else {
+    // Since we are creating one instance per profile / user, we should be fine
+    // comparing against the active user. That said - if we ever change that,
+    // this code will need to be changed.
+    active_profile = ProfileManager::GetActiveUserProfile();
+  }
   return profile_->IsSameProfile(active_profile);
 #else  // !defined(OS_CHROMEOS)
   return true;

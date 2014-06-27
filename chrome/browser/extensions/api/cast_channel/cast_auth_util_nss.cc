@@ -44,10 +44,10 @@ static const unsigned char kCAPublicKeyDER[] = {
     0x61, 0x47, 0x9e, 0xab, 0x80, 0xb7, 0xe4, 0x48, 0x80, 0x2a, 0x92, 0xc5,
     0x1b, 0x02, 0x03, 0x01, 0x00, 0x01 };
 
-typedef scoped_ptr_malloc<
+typedef scoped_ptr<
     CERTCertificate,
     crypto::NSSDestroyer<CERTCertificate, CERT_DestroyCertificate> >
-ScopedCERTCertificate;
+        ScopedCERTCertificate;
 
 // Parses out DeviceAuthMessage from CastMessage
 static bool ParseAuthMessage(
@@ -55,24 +55,24 @@ static bool ParseAuthMessage(
     extensions::api::cast_channel::DeviceAuthMessage* auth_message) {
   if (challenge_reply.payload_type() !=
       extensions::api::cast_channel::CastMessage_PayloadType_BINARY) {
-    DVLOG(1) << "Wrong payload type in challenge reply";
+    VLOG(1) << "Wrong payload type in challenge reply";
     return false;
   }
   if (!challenge_reply.has_payload_binary()) {
-    DVLOG(1) << "Payload type is binary but payload_binary field not set";
+    VLOG(1) << "Payload type is binary but payload_binary field not set";
     return false;
   }
   if (!auth_message->ParseFromString(challenge_reply.payload_binary())) {
-    DVLOG(1) << "Cannot parse binary payload into DeviceAuthMessage";
+    VLOG(1) << "Cannot parse binary payload into DeviceAuthMessage";
     return false;
   }
-  DVLOG(1) << "Auth message: " << AuthMessageToString(*auth_message);
+  VLOG(1) << "Auth message: " << AuthMessageToString(*auth_message);
   if (auth_message->has_error()) {
-    DVLOG(1) << "Auth message error: " << auth_message->error().error_type();
+    VLOG(1) << "Auth message error: " << auth_message->error().error_type();
     return false;
   }
   if (!auth_message->has_response()) {
-    DVLOG(1) << "Auth message has no response field";
+    VLOG(1) << "Auth message has no response field";
     return false;
   }
   return true;
@@ -96,7 +96,7 @@ bool VerifyCredentials(const std::string& certificate,
   ScopedCERTCertificate cert(CERT_NewTempCertificate(
       CERT_GetDefaultCertDB(), &der_cert, NULL, PR_FALSE, PR_TRUE));
   if (!cert.get()) {
-     DVLOG(1) << "Failed to parse certificate.";
+     VLOG(1) << "Failed to parse certificate.";
      return false;
   }
 
@@ -110,14 +110,14 @@ bool VerifyCredentials(const std::string& certificate,
   SECStatus verified = CERT_VerifySignedDataWithPublicKey(
       &cert->signatureWrap, ca_public_key.get(), NULL);
   if (verified != SECSuccess) {
-    DVLOG(1)<< "Cert not signed by trusted CA";
+    VLOG(1)<< "Cert not signed by trusted CA";
     return false;
   }
 
   // Verify that the |signature| matches |data|.
   crypto::ScopedSECKEYPublicKey public_key(CERT_ExtractPublicKey(cert.get()));
   if (!public_key.get()) {
-    DVLOG(1) << "Unable to extract public key from certificate.";
+    VLOG(1) << "Unable to extract public key from certificate.";
     return false;
   }
   SECItem signature_item;
@@ -134,7 +134,7 @@ bool VerifyCredentials(const std::string& certificate,
       SEC_OID_SHA1, NULL, NULL);
 
   if (verified != SECSuccess) {
-    DVLOG(1) << "Signed blobs did not match.";
+    VLOG(1) << "Signed blobs did not match.";
     return false;
   }
   return true;
@@ -151,7 +151,7 @@ bool AuthenticateChallengeReply(const CastMessage& challenge_reply,
   if (peer_cert.empty())
     return false;
 
-  DVLOG(1) << "Challenge reply: " << CastMessageToString(challenge_reply);
+  VLOG(1) << "Challenge reply: " << CastMessageToString(challenge_reply);
   DeviceAuthMessage auth_message;
   if (!ParseAuthMessage(challenge_reply, &auth_message))
     return false;

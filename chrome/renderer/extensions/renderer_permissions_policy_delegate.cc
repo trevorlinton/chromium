@@ -10,6 +10,7 @@
 #include "chrome/renderer/extensions/dispatcher.h"
 #include "extensions/common/extensions_client.h"
 #include "extensions/common/manifest_constants.h"
+#include "extensions/common/switches.h"
 
 namespace extensions {
 
@@ -38,7 +39,8 @@ bool RendererPermissionsPolicyDelegate::CanExecuteScriptOnPage(
     return true;
   }
 
-  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kSigninProcess)) {
+  CommandLine* command_line = CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(::switches::kSigninProcess)) {
     if (error)
       *error = errors::kCannotScriptSigninPage;
     return false;

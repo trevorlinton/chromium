@@ -219,15 +219,16 @@ bool PeripheralBatteryObserver::PostNotification(const std::string& address,
       GURL(kNotificationOriginUrl),
       ui::ResourceBundle::GetSharedInstance().GetImageNamed(
           IDR_NOTIFICATION_PERIPHERAL_BATTERY_LOW),
-      UTF8ToUTF16(battery.name),
+      base::UTF8ToUTF16(battery.name),
       string_text,
-      WebKit::WebTextDirectionDefault,
-      string16(),
-      UTF8ToUTF16(address),
+      blink::WebTextDirectionDefault,
+      base::string16(),
+      base::UTF8ToUTF16(address),
       new PeripheralBatteryNotificationDelegate(address));
 
-  notification_manager->Add(notification,
-                            ProfileManager::GetDefaultProfileOrOffTheRecord());
+  notification_manager->Add(
+      notification,
+      ProfileManager::GetPrimaryUserProfile());
 
   return true;
 }

@@ -217,9 +217,10 @@ std::string EncodeBool(bool value) { return value ? VALUE_TRUE : VALUE_FALSE; }
 
 // Constructs a simple evaluation program to test that basic input/output works
 // well. It will emulate a scenario in which the reset criteria are satisfied as
-// prescribed by |emulate_satisfied_criterion_{1|2}|, and will set bits in the
-// combined status mask according to whether or not the memento values received
-// in the input were as expected.
+// prescribed by |emulate_satisfied_criterion_{1|2}|, and the reset is triggered
+// when either of them is true. The bits in the combined status mask will be set
+// according to whether or not the memento values received in the input were as
+// expected.
 //
 // More specifically, the output of the program will be as follows:
 // {
@@ -233,6 +234,8 @@ std::string EncodeBool(bool value) { return value ? VALUE_TRUE : VALUE_FALSE; }
 //      (input["memento_value_in_local_state"] == kTestMementoValue),
 //   "combined_status_mask_bit4":
 //      (input["memento_value_in_file"] == kTestMementoValue),
+//   "should_prompt":
+//      (emulate_satisfied_criterion_1 || emulate_satisfied_criterion_2),
 //   "had_prompted_already": <OR-combination of above three>,
 //   "memento_value_in_prefs": kTestMementoValue,
 //   "memento_value_in_local_state": kTestMementoValue,
@@ -246,6 +249,10 @@ std::string ConstructProgram(bool emulate_satisfied_criterion_1,
   bytecode += OP_END_OF_SENTENCE;
   bytecode += OP_STORE_BOOL(GetHash("satisfied_criteria_mask_bit2"),
                             EncodeBool(emulate_satisfied_criterion_2));
+  bytecode += OP_END_OF_SENTENCE;
+  bytecode += OP_STORE_BOOL(GetHash("should_prompt"),
+                            EncodeBool(emulate_satisfied_criterion_1 ||
+                                       emulate_satisfied_criterion_2));
   bytecode += OP_END_OF_SENTENCE;
   bytecode += OP_STORE_BOOL(GetHash("combined_status_mask_bit1"),
                             EncodeBool(emulate_satisfied_criterion_1 ||
@@ -265,6 +272,60 @@ std::string ConstructProgram(bool emulate_satisfied_criterion_1,
   bytecode += OP_COMPARE_NODE_HASH(GetHash(kTestMementoValue));
   bytecode += OP_STORE_BOOL(GetHash("combined_status_mask_bit4"), VALUE_TRUE);
   bytecode += OP_STORE_BOOL(GetHash("had_prompted_already"), VALUE_TRUE);
+  bytecode += OP_END_OF_SENTENCE;
+  bytecode += OP_STORE_HASH(GetHash("memento_value_in_prefs"),
+                            kTestMementoValue);
+  bytecode += OP_END_OF_SENTENCE;
+  bytecode += OP_STORE_HASH(GetHash("memento_value_in_local_state"),
+                            kTestMementoValue);
+  bytecode += OP_END_OF_SENTENCE;
+  bytecode += OP_STORE_HASH(GetHash("memento_value_in_file"),
+                            kTestMementoValue);
+  bytecode += OP_END_OF_SENTENCE;
+  return bytecode;
+}
+
+// Constructs another evaluation program to specifically test that bits of the
+// "satisfied_criteria_mask" are correctly assigned, and so is "should_prompt";
+// and that reset is triggered iff the latter is true, regardless of the bits
+// in the mask (so as to allow for a non-disjunctive compound criterion).
+//
+// More specifically, the output of the program will be as follows:
+// {
+//   "satisfied_criteria_mask_bitN": emulate_satisfied_odd_criteria,
+//   "satisfied_criteria_mask_bitM": emulate_satisfied_even_criteria,
+//   "combined_status_mask_bit1": emulate_should_prompt,
+//   "should_prompt": emulate_should_prompt,
+//   "memento_value_in_prefs": kTestMementoValue,
+//   "memento_value_in_local_state": kTestMementoValue,
+//   "memento_value_in_file": kTestMementoValue
+// }
+// ... such that N is {1,3,5} and M is {2,4}.
+std::string ConstructProgramToExerciseCriteria(
+    bool emulate_should_prompt,
+    bool emulate_satisfied_odd_criteria,
+    bool emulate_satisfied_even_criteria) {
+  std::string bytecode;
+  bytecode += OP_STORE_BOOL(GetHash("satisfied_criteria_mask_bit1"),
+                            EncodeBool(emulate_satisfied_odd_criteria));
+  bytecode += OP_END_OF_SENTENCE;
+  bytecode += OP_STORE_BOOL(GetHash("satisfied_criteria_mask_bit3"),
+                            EncodeBool(emulate_satisfied_odd_criteria));
+  bytecode += OP_END_OF_SENTENCE;
+  bytecode += OP_STORE_BOOL(GetHash("satisfied_criteria_mask_bit5"),
+                            EncodeBool(emulate_satisfied_odd_criteria));
+  bytecode += OP_END_OF_SENTENCE;
+  bytecode += OP_STORE_BOOL(GetHash("satisfied_criteria_mask_bit2"),
+                            EncodeBool(emulate_satisfied_even_criteria));
+  bytecode += OP_END_OF_SENTENCE;
+  bytecode += OP_STORE_BOOL(GetHash("satisfied_criteria_mask_bit4"),
+                            EncodeBool(emulate_satisfied_even_criteria));
+  bytecode += OP_END_OF_SENTENCE;
+  bytecode += OP_STORE_BOOL(GetHash("should_prompt"),
+                            EncodeBool(emulate_should_prompt));
+  bytecode += OP_END_OF_SENTENCE;
+  bytecode += OP_STORE_BOOL(GetHash("combined_status_mask_bit1"),
+                            EncodeBool(emulate_should_prompt));
   bytecode += OP_END_OF_SENTENCE;
   bytecode += OP_STORE_HASH(GetHash("memento_value_in_prefs"),
                             kTestMementoValue);
@@ -529,6 +590,7 @@ class AutomaticProfileResetterTestBase : public testing::Test {
 
     UnleashResetterAndWait();
 
+    EXPECT_TRUE(resetter().ShouldShowResetBanner());
     testing::Mock::VerifyAndClearExpectations(&resetter());
     testing::Mock::VerifyAndClearExpectations(&mock_delegate());
   }
@@ -613,54 +675,60 @@ TEST_F(AutomaticProfileResetterTestDisabled, NothingIsDoneWhenDisabled) {
   // No calls are expected to the delegate.
 
   UnleashResetterAndWait();
+
+  EXPECT_FALSE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 
   ExpectAllMementoValuesEqualTo(std::string());
 }
 
-TEST_F(AutomaticProfileResetterTestDryRun, ConditionsNotSatisfied) {
-  SetTestingProgram(ConstructProgram(false, false));
+TEST_F(AutomaticProfileResetterTestDryRun, CriteriaNotSatisfied) {
+  SetTestingProgram(ConstructProgramToExerciseCriteria(false, true, true));
   SetTestingHashSeed(kTestHashSeed);
 
   mock_delegate().ExpectCallsToDependenciesSetUpMethods();
   mock_delegate().ExpectCallsToGetterMethods();
-  EXPECT_CALL(resetter(), ReportStatistics(0x00u, 0x00u));
+  EXPECT_CALL(resetter(), ReportStatistics(0x1fu, 0x00u));
 
   UnleashResetterAndWait();
+
+  EXPECT_FALSE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 
   ExpectAllMementoValuesEqualTo(std::string());
 }
 
-TEST_F(AutomaticProfileResetterTestDryRun, OneConditionSatisfied) {
-  SetTestingProgram(ConstructProgram(true, false));
+TEST_F(AutomaticProfileResetterTestDryRun, OddCriteriaSatisfied) {
+  SetTestingProgram(ConstructProgramToExerciseCriteria(true, true, false));
   SetTestingHashSeed(kTestHashSeed);
 
   mock_delegate().ExpectCallsToDependenciesSetUpMethods();
   mock_delegate().ExpectCallsToGetterMethods();
-  EXPECT_CALL(resetter(), ReportStatistics(0x01u, 0x01u));
+  EXPECT_CALL(resetter(), ReportStatistics(0x15u, 0x01u));
   EXPECT_CALL(resetter(), ReportPromptResult(
       AutomaticProfileResetter::PROMPT_NOT_TRIGGERED));
 
   UnleashResetterAndWait();
 
   ExpectAllMementoValuesEqualTo(kTestMementoValue);
+  EXPECT_FALSE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 }
 
-TEST_F(AutomaticProfileResetterTestDryRun, OtherConditionSatisfied) {
-  SetTestingProgram(ConstructProgram(false, true));
+TEST_F(AutomaticProfileResetterTestDryRun, EvenCriteriaSatisfied) {
+  SetTestingProgram(ConstructProgramToExerciseCriteria(true, false, true));
   SetTestingHashSeed(kTestHashSeed);
 
   mock_delegate().ExpectCallsToDependenciesSetUpMethods();
   mock_delegate().ExpectCallsToGetterMethods();
-  EXPECT_CALL(resetter(), ReportStatistics(0x02u, 0x01u));
+  EXPECT_CALL(resetter(), ReportStatistics(0x0au, 0x01u));
   EXPECT_CALL(resetter(), ReportPromptResult(
       AutomaticProfileResetter::PROMPT_NOT_TRIGGERED));
 
   UnleashResetterAndWait();
 
   ExpectAllMementoValuesEqualTo(kTestMementoValue);
+  EXPECT_FALSE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 }
 
@@ -679,6 +747,7 @@ TEST_F(AutomaticProfileResetterTestDryRun, ProgramSetThroughVariationParams) {
   UnleashResetterAndWait();
 
   ExpectAllMementoValuesEqualTo(kTestMementoValue);
+  EXPECT_FALSE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 }
 #endif
@@ -701,6 +770,7 @@ TEST_F(AutomaticProfileResetterTestDryRun,
   UnleashResetterAndWait();
 
   ExpectAllMementoValuesEqualTo(kTestMementoValue);
+  EXPECT_FALSE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 }
 
@@ -715,6 +785,8 @@ TEST_F(AutomaticProfileResetterTestDryRun, AlreadyHadPrefHostedMemento) {
   EXPECT_CALL(resetter(), ReportStatistics(0x03u, 0x03u));
 
   UnleashResetterAndWait();
+
+  EXPECT_FALSE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 
   EXPECT_EQ(kTestMementoValue, memento_in_prefs().ReadValue());
@@ -733,6 +805,8 @@ TEST_F(AutomaticProfileResetterTestDryRun, AlreadyHadLocalStateHostedMemento) {
   EXPECT_CALL(resetter(), ReportStatistics(0x03u, 0x05u));
 
   UnleashResetterAndWait();
+
+  EXPECT_FALSE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 
   EXPECT_EQ(std::string(), memento_in_prefs().ReadValue());
@@ -751,6 +825,8 @@ TEST_F(AutomaticProfileResetterTestDryRun, AlreadyHadFileHostedMemento) {
   EXPECT_CALL(resetter(), ReportStatistics(0x03u, 0x09u));
 
   UnleashResetterAndWait();
+
+  EXPECT_FALSE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 
   EXPECT_EQ(std::string(), memento_in_prefs().ReadValue());
@@ -765,50 +841,56 @@ TEST_F(AutomaticProfileResetterTestDryRun, DoNothingWhenResourcesAreMissing) {
   // No calls are expected to the delegate.
 
   UnleashResetterAndWait();
+
+  EXPECT_FALSE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 
   ExpectAllMementoValuesEqualTo(std::string());
 }
 
-TEST_F(AutomaticProfileResetterTest, ConditionsNotSatisfied) {
-  SetTestingProgram(ConstructProgram(false, false));
+TEST_F(AutomaticProfileResetterTest, CriteriaNotSatisfied) {
+  SetTestingProgram(ConstructProgramToExerciseCriteria(false, true, true));
   SetTestingHashSeed(kTestHashSeed);
 
   mock_delegate().ExpectCallsToDependenciesSetUpMethods();
   mock_delegate().ExpectCallsToGetterMethods();
-  EXPECT_CALL(resetter(), ReportStatistics(0x00u, 0x00u));
+  EXPECT_CALL(resetter(), ReportStatistics(0x1fu, 0x00u));
 
   UnleashResetterAndWait();
+
+  EXPECT_FALSE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 
   ExpectAllMementoValuesEqualTo(std::string());
 }
 
-TEST_F(AutomaticProfileResetterTest, OneConditionSatisfied) {
-  SetTestingProgram(ConstructProgram(true, false));
+TEST_F(AutomaticProfileResetterTest, OddCriteriaSatisfied) {
+  SetTestingProgram(ConstructProgramToExerciseCriteria(true, true, false));
   SetTestingHashSeed(kTestHashSeed);
 
   mock_delegate().ExpectCallsToDependenciesSetUpMethods();
   mock_delegate().ExpectCallsToGetterMethods();
   mock_delegate().ExpectCallToShowPrompt();
-  EXPECT_CALL(resetter(), ReportStatistics(0x01u, 0x01u));
+  EXPECT_CALL(resetter(), ReportStatistics(0x15u, 0x01u));
 
   UnleashResetterAndWait();
 
+  EXPECT_TRUE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 }
 
-TEST_F(AutomaticProfileResetterTest, OtherConditionSatisfied) {
-  SetTestingProgram(ConstructProgram(false, true));
+TEST_F(AutomaticProfileResetterTest, EvenCriteriaSatisfied) {
+  SetTestingProgram(ConstructProgramToExerciseCriteria(true, false, true));
   SetTestingHashSeed(kTestHashSeed);
 
   mock_delegate().ExpectCallsToDependenciesSetUpMethods();
   mock_delegate().ExpectCallsToGetterMethods();
   mock_delegate().ExpectCallToShowPrompt();
-  EXPECT_CALL(resetter(), ReportStatistics(0x02u, 0x01u));
+  EXPECT_CALL(resetter(), ReportStatistics(0x0au, 0x01u));
 
   UnleashResetterAndWait();
 
+  EXPECT_TRUE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 }
 
@@ -829,6 +911,7 @@ TEST_F(AutomaticProfileResetterTest, ProgramSetThroughVariationParams) {
   resetter().NotifyDidShowResetBubble();
 
   ExpectAllMementoValuesEqualTo(kTestMementoValue);
+  EXPECT_TRUE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 }
 #endif
@@ -852,6 +935,7 @@ TEST_F(AutomaticProfileResetterTest, ConditionsSatisfiedAndInvalidMementos) {
   resetter().NotifyDidShowResetBubble();
 
   ExpectAllMementoValuesEqualTo(kTestMementoValue);
+  EXPECT_TRUE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 }
 
@@ -866,6 +950,8 @@ TEST_F(AutomaticProfileResetterTest, PrefHostedMementoPreventsPrompt) {
   EXPECT_CALL(resetter(), ReportStatistics(0x03u, 0x03u));
 
   UnleashResetterAndWait();
+
+  EXPECT_TRUE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 
   EXPECT_EQ(kTestMementoValue, memento_in_prefs().ReadValue());
@@ -884,6 +970,8 @@ TEST_F(AutomaticProfileResetterTest, LocalStateHostedMementoPreventsPrompt) {
   EXPECT_CALL(resetter(), ReportStatistics(0x03u, 0x05u));
 
   UnleashResetterAndWait();
+
+  EXPECT_TRUE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 
   EXPECT_EQ(std::string(), memento_in_prefs().ReadValue());
@@ -902,6 +990,8 @@ TEST_F(AutomaticProfileResetterTest, FileHostedMementoPreventsPrompt) {
   EXPECT_CALL(resetter(), ReportStatistics(0x03u, 0x09u));
 
   UnleashResetterAndWait();
+
+  EXPECT_TRUE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 
   EXPECT_EQ(std::string(), memento_in_prefs().ReadValue());
@@ -916,6 +1006,8 @@ TEST_F(AutomaticProfileResetterTest, DoNothingWhenResourcesAreMissing) {
   // No calls are expected to the delegate.
 
   UnleashResetterAndWait();
+
+  EXPECT_FALSE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 
   ExpectAllMementoValuesEqualTo(std::string());
@@ -944,6 +1036,7 @@ TEST_F(AutomaticProfileResetterTest, PromptNotSupported) {
   UnleashResetterAndWait();
 
   ExpectAllMementoValuesEqualTo(kTestMementoValue);
+  EXPECT_TRUE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 }
 
@@ -975,6 +1068,7 @@ TEST_F(AutomaticProfileResetterTest, PromptActionReset) {
 
   EXPECT_CALL(mock_delegate(), DismissPrompt());
   mock_delegate().EmulateProfileResetCompleted();
+  EXPECT_FALSE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 }
 
@@ -996,6 +1090,7 @@ TEST_F(AutomaticProfileResetterTest, PromptActionResetWithFeedback) {
 
   EXPECT_CALL(mock_delegate(), DismissPrompt());
   mock_delegate().EmulateProfileResetCompleted();
+  EXPECT_FALSE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 }
 
@@ -1012,6 +1107,7 @@ TEST_F(AutomaticProfileResetterTest, PromptActionNoReset) {
   EXPECT_CALL(resetter(), ReportPromptResult(
       AutomaticProfileResetter::PROMPT_ACTION_NO_RESET));
   resetter().SkipProfileReset();
+  EXPECT_FALSE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 }
 
@@ -1031,6 +1127,7 @@ TEST_F(AutomaticProfileResetterTest, PromptFollowedByWebUIReset) {
   EXPECT_CALL(resetter(), ReportPromptResult(
       AutomaticProfileResetter::PROMPT_FOLLOWED_BY_WEBUI_RESET));
   resetter().NotifyDidCloseWebUIResetDialog(true);
+  EXPECT_TRUE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 }
 
@@ -1050,6 +1147,7 @@ TEST_F(AutomaticProfileResetterTest, PromptFollowedByWebUINoReset) {
   EXPECT_CALL(resetter(), ReportPromptResult(
       AutomaticProfileResetter::PROMPT_FOLLOWED_BY_WEBUI_NO_RESET));
   resetter().NotifyDidCloseWebUIResetDialog(false);
+  EXPECT_TRUE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 }
 
@@ -1064,12 +1162,14 @@ TEST_F(AutomaticProfileResetterTest, PromptFollowedByIncidentalWebUIReset) {
 
   // Missing NotifyDidOpenWebUIResetDialog().
   // This can arise if a settings page was already opened at the time the prompt
-  // was triggered, and it used to initiate reset after dismissing the prompt.
+  // was triggered, and this already opened dialog was used to initiate a reset
+  // after having dismissed the prompt.
 
   EXPECT_CALL(mock_delegate(), DismissPrompt());
   EXPECT_CALL(resetter(), ReportPromptResult(
       AutomaticProfileResetter::PROMPT_FOLLOWED_BY_WEBUI_RESET));
   resetter().NotifyDidCloseWebUIResetDialog(true);
+  EXPECT_TRUE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 }
 
@@ -1084,6 +1184,7 @@ TEST_F(AutomaticProfileResetterTest, PromptSuppressedButHadWebUIReset) {
       AutomaticProfileResetter::PROMPT_NOT_SHOWN_BUBBLE_BUT_HAD_WEBUI_RESET));
   resetter().NotifyDidCloseWebUIResetDialog(true);
   ExpectAllMementoValuesEqualTo(kTestMementoValue);
+  EXPECT_TRUE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
 }
 
@@ -1098,7 +1199,38 @@ TEST_F(AutomaticProfileResetterTest, PromptSuppressedButHadWebUINoReset) {
       PROMPT_NOT_SHOWN_BUBBLE_BUT_HAD_WEBUI_NO_RESET));
   resetter().NotifyDidCloseWebUIResetDialog(false);
   ExpectAllMementoValuesEqualTo(kTestMementoValue);
+  EXPECT_TRUE(resetter().ShouldShowResetBanner());
   VerifyExpectationsThenShutdownResetter();
+}
+
+TEST_F(AutomaticProfileResetterTest, BannerDismissed) {
+  OrchestrateThroughEvaluationFlow();
+
+  EXPECT_CALL(resetter(), ReportPromptResult(
+      AutomaticProfileResetter::PROMPT_SHOWN_BUBBLE));
+  resetter().NotifyDidShowResetBubble();
+  ExpectAllMementoValuesEqualTo(kTestMementoValue);
+  testing::Mock::VerifyAndClearExpectations(&resetter());
+
+  resetter().NotifyDidCloseWebUIResetBanner();
+
+  EXPECT_TRUE(resetter().IsResetPromptFlowActive());
+  EXPECT_FALSE(resetter().ShouldShowResetBanner());
+
+  // Note: we use strict mocks, so this also checks the bubble is not closed.
+  VerifyExpectationsThenShutdownResetter();
+}
+
+TEST_F(AutomaticProfileResetterTest, BannerDismissedWhilePromptSuppressed) {
+  OrchestrateThroughEvaluationFlow();
+
+  resetter().NotifyDidCloseWebUIResetBanner();
+
+  EXPECT_TRUE(resetter().IsResetPromptFlowActive());
+  EXPECT_FALSE(resetter().ShouldShowResetBanner());
+  VerifyExpectationsThenShutdownResetter();
+
+  ExpectAllMementoValuesEqualTo(std::string());
 }
 
 // Please see comments above ConstructProgramToCheckPreferences() to understand

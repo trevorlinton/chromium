@@ -30,7 +30,7 @@ class BluetoothPairingDialog : public ui::WebDialogDelegate {
  protected:
   // ui::WebDialogDelegate implementation.
   virtual ui::ModalType GetDialogModalType() const OVERRIDE;
-  virtual string16 GetDialogTitle() const OVERRIDE;
+  virtual base::string16 GetDialogTitle() const OVERRIDE;
   virtual GURL GetDialogContentURL() const OVERRIDE;
   virtual void GetWebUIMessageHandlers(
       std::vector<content::WebUIMessageHandler*>* handlers) const OVERRIDE;
@@ -46,7 +46,7 @@ class BluetoothPairingDialog : public ui::WebDialogDelegate {
 
  private:
   gfx::NativeWindow parent_window_;
-  DictionaryValue device_data_;
+  base::DictionaryValue device_data_;
 
   DISALLOW_COPY_AND_ASSIGN(BluetoothPairingDialog);
 };

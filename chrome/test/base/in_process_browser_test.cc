@@ -17,7 +17,6 @@
 #include "base/threading/non_thread_safe.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/google/google_util.h"
-#include "chrome/browser/io_thread.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/net/net_error_tab_helper.h"
 #include "chrome/browser/profiles/profile.h"
@@ -42,10 +41,10 @@
 #include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/os_crypt/os_crypt.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/test/browser_test_utils.h"
-#include "content/public/test/test_browser_thread.h"
 #include "content/public/test/test_launcher.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -55,7 +54,7 @@
 #include "base/mac/scoped_nsautorelease_pool.h"
 #endif
 
-#if defined(OS_WIN) && defined(USE_AURA)
+#if defined(OS_WIN)
 #include "base/win/scoped_com_initializer.h"
 #include "base/win/windows_version.h"
 #include "ui/base/win/atl_module.h"
@@ -68,17 +67,13 @@
 #endif
 
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
-#include "chrome/browser/storage_monitor/test_storage_monitor.h"
+#include "components/storage_monitor/test_storage_monitor.h"
 #endif
 
 namespace {
 
 // Passed as value of kTestType.
 const char kBrowserTestType[] = "browser";
-
-// Used when running in single-process mode.
-base::LazyInstance<chrome::ChromeContentRendererClient>::Leaky
-    g_chrome_content_renderer_client = LAZY_INSTANCE_INITIALIZER;
 
 // A BrowserListObserver that makes sure that all browsers created are on the
 // |allowed_desktop_|.
@@ -134,24 +129,25 @@ InProcessBrowserTest::InProcessBrowserTest()
   chrome_path = chrome_path.Append(chrome::kBrowserProcessExecutablePath);
   CHECK(PathService::Override(base::FILE_EXE, chrome_path));
 #endif  // defined(OS_MACOSX)
+
   CreateTestServer(base::FilePath(FILE_PATH_LITERAL("chrome/test/data")));
   base::FilePath src_dir;
   CHECK(PathService::Get(base::DIR_SOURCE_ROOT, &src_dir));
-  embedded_test_server()->ServeFilesFromDirectory(
-      src_dir.AppendASCII("chrome/test/data"));
+  base::FilePath test_data_dir = src_dir.AppendASCII("chrome/test/data");
+  embedded_test_server()->ServeFilesFromDirectory(test_data_dir);
+
+  // chrome::DIR_TEST_DATA isn't going to be setup until after we call
+  // ContentMain. However that is after tests' constructors or SetUp methods,
+  // which sometimes need it. So just override it.
+  CHECK(PathService::Override(chrome::DIR_TEST_DATA, test_data_dir));
 }
 
 InProcessBrowserTest::~InProcessBrowserTest() {
 }
 
 void InProcessBrowserTest::SetUp() {
-  // Undo TestingBrowserProcess creation in ChromeTestSuite.
-  // TODO(phajdan.jr): Extract a smaller test suite so we don't need this.
-  DCHECK(g_browser_process);
-  BrowserProcess* old_browser_process = g_browser_process;
-  // g_browser_process must be NULL during its own destruction.
-  g_browser_process = NULL;
-  delete old_browser_process;
+  // Browser tests will create their own g_browser_process later.
+  DCHECK(!g_browser_process);
 
   CommandLine* command_line = CommandLine::ForCurrentProcess();
   // Allow subclasses to change the command line before running any tests.
@@ -168,28 +164,17 @@ void InProcessBrowserTest::SetUp() {
   ASSERT_TRUE(SetUpUserDataDirectory())
       << "Could not set up user data directory.";
 
-  // Single-process mode is not set in BrowserMain, so process it explicitly,
-  // and set up renderer.
-  if (command_line->HasSwitch(switches::kSingleProcess)) {
-    content::SetRendererClientForTesting(
-        &g_chrome_content_renderer_client.Get());
-  }
-
 #if defined(OS_CHROMEOS)
   // Make sure that the log directory exists.
   base::FilePath log_dir = logging::GetSessionLogFile(*command_line).DirName();
-  file_util::CreateDirectory(log_dir);
+  base::CreateDirectory(log_dir);
 #endif  // defined(OS_CHROMEOS)
 
 #if defined(OS_MACOSX)
-  // On Mac, without the following autorelease pool, code which is directly
-  // executed (as opposed to executed inside a message loop) would autorelease
-  // objects into a higher-level pool. This pool is not recycled in-sync with
-  // the message loops' pools and causes problems with code relying on
-  // deallocation via an autorelease pool (such as browser window closure and
-  // browser shutdown). To avoid this, the following pool is recycled after each
-  // time code is directly executed.
-  autorelease_pool_ = new base::mac::ScopedNSAutoreleasePool;
+  // Always use the MockKeychain if OS encription is used (which is when
+  // anything sensitive gets stored, including Cookies).  Without this,
+  // many tests will hang waiting for a user to approve KeyChain access.
+  OSCrypt::UseMockKeychain(true);
 #endif
 
 #if defined(ENABLE_CAPTIVE_PORTAL_DETECTION)
@@ -202,12 +187,16 @@ void InProcessBrowserTest::SetUp() {
 
   google_util::SetMockLinkDoctorBaseURLForTesting();
 
-#if defined(OS_WIN) && defined(USE_AURA)
-  if (base::win::GetVersion() >= base::win::VERSION_WIN8 &&
+#if defined(OS_WIN)
+  base::win::Version version = base::win::GetVersion();
+  // Although Ash officially is only supported for users on Win7+, we still run
+  // ash_unittests on Vista builders, so we still need to initialize COM.
+  if (version >= base::win::VERSION_VISTA &&
       CommandLine::ForCurrentProcess()->HasSwitch(switches::kAshBrowserTests)) {
     com_initializer_.reset(new base::win::ScopedCOMInitializer());
     ui::win::CreateATLModuleIfNeeded();
-    ASSERT_TRUE(win8::MakeTestDefaultBrowserSynchronously());
+    if (version >= base::win::VERSION_WIN8)
+      ASSERT_TRUE(win8::MakeTestDefaultBrowserSynchronously());
   }
 #endif
 
@@ -221,7 +210,7 @@ void InProcessBrowserTest::PrepareTestCommandLine(CommandLine* command_line) {
   // This is a Browser test.
   command_line->AppendSwitchASCII(switches::kTestType, kBrowserTestType);
 
-#if defined(OS_WIN) && defined(USE_AURA)
+#if defined(OS_WIN)
   if (command_line->HasSwitch(switches::kAshBrowserTests)) {
     command_line->AppendSwitchNative(switches::kViewerLaunchViaAppId,
                                      win8::test::kDefaultTestAppUserModelId);
@@ -275,7 +264,7 @@ bool InProcessBrowserTest::CreateUserDataDirectory() {
 
 void InProcessBrowserTest::TearDown() {
   DCHECK(!g_browser_process);
-#if defined(OS_WIN) && defined(USE_AURA)
+#if defined(OS_WIN)
   com_initializer_.reset();
 #endif
   BrowserTestBase::TearDown();
@@ -379,10 +368,6 @@ void InProcessBrowserTest::RunTestOnMainThreadLoop() {
   // Pump startup related events.
   content::RunAllPendingInMessageLoop();
 
-#if defined(OS_MACOSX)
-  autorelease_pool_->Recycle();
-#endif
-
   chrome::HostDesktopType active_desktop = chrome::GetActiveDesktop();
   // Self-adds/removes itself from the BrowserList observers.
   scoped_ptr<SingleDesktopTestObserver> single_desktop_test_observer;
@@ -407,7 +392,18 @@ void InProcessBrowserTest::RunTestOnMainThreadLoop() {
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
   // Do not use the real StorageMonitor for tests, which introduces another
   // source of variability and potential slowness.
-  ASSERT_TRUE(TestStorageMonitor::CreateForBrowserTests());
+  ASSERT_TRUE(storage_monitor::TestStorageMonitor::CreateForBrowserTests());
+#endif
+
+#if defined(OS_MACOSX)
+  // On Mac, without the following autorelease pool, code which is directly
+  // executed (as opposed to executed inside a message loop) would autorelease
+  // objects into a higher-level pool. This pool is not recycled in-sync with
+  // the message loops' pools and causes problems with code relying on
+  // deallocation via an autorelease pool (such as browser window closure and
+  // browser shutdown). To avoid this, the following pool is recycled after each
+  // time code is directly executed.
+  autorelease_pool_ = new base::mac::ScopedNSAutoreleasePool;
 #endif
 
   // Pump any pending events that were created as a result of creating a

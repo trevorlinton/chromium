@@ -3,7 +3,6 @@
 # found in the LICENSE file.
 
 component("ipc") {
-  external = true
   sources = [
     "file_descriptor_set_posix.cc",
     "file_descriptor_set_posix.h",
@@ -80,7 +79,6 @@ component("ipc") {
 }
 
 test("ipc_tests") {
-  external = true
   sources = [
     "file_descriptor_set_posix_unittest.cc",
     "ipc_channel_posix_unittest.cc",
@@ -99,13 +97,14 @@ test("ipc_tests") {
   ]
 
   if (is_win || is_ios) {
-    sources -= "unix_domain_socket_util_unittest.cc"
+    sources -= [ "unix_domain_socket_util_unittest.cc" ]
   }
   #if (is_android && gtest_target_type == "shared_library") {
   #  deps += "/testing/android/native_test.gyp:native_testNative_code"
   #}
   #if (is_posix && !is_mac && !is_android) {
-  #  if (linux_use_tcmalloc) {
+  #  # TODO(dmikurube): Kill linux_use_tcmalloc. http://crbug.com/345554
+  #  if ((use_allocator!="none" && use_allocator!="see_use_tcmalloc") || (use_allocator=="see_use_tcmalloc" && linux_use_tcmalloc)) {
   #    deps += "/base/allocator"
   #  }
   #}
@@ -115,14 +114,13 @@ test("ipc_tests") {
     ":test_support_ipc",
     "//base",
     "//base:base_i18n",
-    "//base:run_all_unittests",
-    "//base:test_support_base",
-    "//testing:gtest",
+    "//base/test:run_all_unittests",
+    "//base/test:test_support_base",
+    "//testing/gtest",
   ]
 }
 
 test("ipc_perftests") {
-  external = true
   sources = [
     "ipc_perftests.cc",
     "ipc_test_base.cc",
@@ -133,8 +131,9 @@ test("ipc_perftests") {
   #  deps += "/testing/android/native_test.gyp:native_testNative_code"
   #}
   #if (is_posix && !is_mac && !is_android) {
-  #  if (linux_use_tcmalloc) {
-  #    deps += "/base/allocator"
+  #  # TODO(dmikurube): Kill linux_use_tcmalloc. http://crbug.com/345554
+  #  if ((use_allocator!="none" && use_allocator!="see_use_tcmalloc") || (use_allocator=="see_use_tcmalloc" && linux_use_tcmalloc)) {
+  #    deps += "//base/allocator"
   #  }
   #}
 
@@ -143,14 +142,13 @@ test("ipc_perftests") {
     ":test_support_ipc",
     "//base",
     "//base:base_i18n",
-    "//base:test_support_base",
-    "//base:test_support_perf",
-    "//testing:gtest",
+    "//base/test:test_support_base",
+    "//base/test:test_support_perf",
+    "//testing/gtest",
   ]
 }
 
 static_library("test_support_ipc") {
-  external = true
   sources = [
     "ipc_multiprocess_test.cc",
     "ipc_multiprocess_test.h",
@@ -160,7 +158,7 @@ static_library("test_support_ipc") {
   deps = [
     ":ipc",
     "//base",
-    "//testing:gtest",
+    "//testing/gtest",
   ]
 }
 

@@ -34,15 +34,17 @@ class EVENTS_EXPORT GestureRecognizerImpl : public GestureRecognizer,
   std::vector<GestureEventHelper*>& helpers() { return helpers_; }
 
   // Overridden from GestureRecognizer
-  virtual GestureConsumer* GetTouchLockedTarget(TouchEvent* event) OVERRIDE;
+  virtual GestureConsumer* GetTouchLockedTarget(
+      const TouchEvent& event) OVERRIDE;
   virtual GestureConsumer* GetTargetForGestureEvent(
-      GestureEvent* event) OVERRIDE;
+      const GestureEvent& event) OVERRIDE;
   virtual GestureConsumer* GetTargetForLocation(
-      const gfx::Point& location) OVERRIDE;
+      const gfx::PointF& location, int source_device_id) OVERRIDE;
   virtual void TransferEventsTo(GestureConsumer* current_consumer,
                                 GestureConsumer* new_consumer) OVERRIDE;
   virtual bool GetLastTouchPointForTarget(GestureConsumer* consumer,
-                                          gfx::Point* point) OVERRIDE;
+                                          gfx::PointF* point) OVERRIDE;
+  virtual void CancelActiveTouches(GestureConsumer* consumer) OVERRIDE;
 
  protected:
   virtual GestureSequence* CreateSequence(GestureSequenceDelegate* delegate);
@@ -51,6 +53,7 @@ class EVENTS_EXPORT GestureRecognizerImpl : public GestureRecognizer,
  private:
   // Sets up the target consumer for gestures based on the touch-event.
   void SetupTargets(const TouchEvent& event, GestureConsumer* consumer);
+  void CancelTouches(std::vector<std::pair<int, GestureConsumer*> >* touches);
 
   // Overridden from GestureRecognizer
   virtual Gestures* ProcessTouchEventForGesture(

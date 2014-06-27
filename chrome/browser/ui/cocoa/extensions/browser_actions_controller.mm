@@ -13,7 +13,6 @@
 #include "chrome/browser/extensions/extension_action.h"
 #include "chrome/browser/extensions/extension_action_manager.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_toolbar_model.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
@@ -32,8 +31,10 @@
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_source.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/pref_names.h"
 #include "grit/theme_resources.h"
-#import "third_party/GTM/AppKit/GTMNSAnimation+Duration.h"
+#import "third_party/google_toolbox_for_mac/src/AppKit/GTMNSAnimation+Duration.h"
 
 using extensions::Extension;
 using extensions::ExtensionList;
@@ -177,8 +178,9 @@ const CGFloat kBrowserActionBubbleYOffset = 3.0;
 
 // A helper class to proxy extension notifications to the view controller's
 // appropriate methods.
-class ExtensionServiceObserverBridge : public content::NotificationObserver,
-                                       public ExtensionToolbarModel::Observer {
+class ExtensionServiceObserverBridge
+    : public content::NotificationObserver,
+      public extensions::ExtensionToolbarModel::Observer {
  public:
   ExtensionServiceObserverBridge(BrowserActionsController* owner,
                                  Browser* browser)
@@ -211,17 +213,7 @@ class ExtensionServiceObserverBridge : public content::NotificationObserver,
         gfx::NativeWindow window = payload->second;
         if (window != browser_->window()->GetNativeWindow())
           break;
-        ExtensionService* service = browser_->profile()->GetExtensionService();
-        if (!service)
-          break;
-        const Extension* extension = service->GetExtensionById(extension_id,
-                                                               false);
-        if (!extension)
-          break;
-        BrowserActionButton* button = [owner_ buttonForExtension:extension];
-        // |button| can be nil when the browser action has its button hidden.
-        if (button)
-          [owner_ browserActionClicked:button];
+        [owner_ activateBrowserAction:extension_id];
         break;
       }
       default:
@@ -229,7 +221,7 @@ class ExtensionServiceObserverBridge : public content::NotificationObserver,
     }
   }
 
-  // ExtensionToolbarModel::Observer implementation.
+  // extensions::ExtensionToolbarModel::Observer implementation.
   virtual void BrowserActionAdded(
       const Extension* extension,
       int index) OVERRIDE {
@@ -282,13 +274,9 @@ class ExtensionServiceObserverBridge : public content::NotificationObserver,
     profile_ = browser->profile();
 
     observer_.reset(new ExtensionServiceObserverBridge(self, browser_));
-    ExtensionService* extensionService =
-        extensions::ExtensionSystem::Get(profile_)->extension_service();
-    // |extensionService| can be NULL in Incognito.
-    if (extensionService) {
-      toolbarModel_ = extensionService->toolbar_model();
+    toolbarModel_ = extensions::ExtensionToolbarModel::Get(profile_);
+    if (toolbarModel_)
       toolbarModel_->AddObserver(observer_.get());
-    }
 
     containerView_ = container;
     [containerView_ setPostsFrameChangedNotifications:YES];
@@ -390,11 +378,12 @@ class ExtensionServiceObserverBridge : public content::NotificationObserver,
 - (CGFloat)savedWidth {
   if (!toolbarModel_)
     return 0;
-  if (!profile_->GetPrefs()->HasPrefPath(prefs::kExtensionToolbarSize)) {
+  if (!profile_->GetPrefs()->HasPrefPath(
+          extensions::pref_names::kToolbarSize)) {
     // Migration code to the new VisibleIconCount pref.
     // TODO(mpcomplete): remove this at some point.
-    double predefinedWidth =
-        profile_->GetPrefs()->GetDouble(prefs::kBrowserActionContainerWidth);
+    double predefinedWidth = profile_->GetPrefs()->GetDouble(
+        extensions::pref_names::kBrowserActionContainerWidth);
     if (predefinedWidth != 0) {
       int iconWidth = kBrowserActionWidth + kBrowserActionButtonPadding;
       int extraWidth = kChevronWidth;
@@ -452,6 +441,21 @@ class ExtensionServiceObserverBridge : public content::NotificationObserver,
 
   NOTREACHED();
   return YES;
+}
+
+- (void)activateBrowserAction:(const std::string&)extension_id {
+  ExtensionService* service = browser_->profile()->GetExtensionService();
+  if (!service)
+    return;
+
+  const Extension* extension = service->GetExtensionById(extension_id, false);
+  if (!extension)
+    return;
+
+  BrowserActionButton* button = [self buttonForExtension:extension];
+  // |button| can be nil when the browser action has its button hidden.
+  if (button)
+    [self browserActionClicked:button];
 }
 
 #pragma mark -
@@ -760,9 +764,9 @@ class ExtensionServiceObserverBridge : public content::NotificationObserver,
   GURL popupUrl;
   switch (toolbarModel_->ExecuteBrowserAction(extension, browser_, &popupUrl,
                                               shouldGrant)) {
-    case ExtensionToolbarModel::ACTION_NONE:
+    case extensions::ExtensionToolbarModel::ACTION_NONE:
       break;
-    case ExtensionToolbarModel::ACTION_SHOW_POPUP: {
+    case extensions::ExtensionToolbarModel::ACTION_SHOW_POPUP: {
       NSPoint arrowPoint = [self popupPointForBrowserAction:extension];
       [ExtensionPopupController showURL:popupUrl
                               inBrowser:browser_
@@ -782,11 +786,8 @@ class ExtensionServiceObserverBridge : public content::NotificationObserver,
 
 - (BOOL)shouldDisplayBrowserAction:(const Extension*)extension {
   // Only display incognito-enabled extensions while in incognito mode.
-  return
-      (!profile_->IsOffTheRecord() ||
-       extension_util::IsIncognitoEnabled(
-          extension->id(),
-          extensions::ExtensionSystem::Get(profile_)->extension_service()));
+  return !profile_->IsOffTheRecord() ||
+      extensions::util::IsIncognitoEnabled(extension->id(), profile_);
 }
 
 - (void)showChevronIfNecessaryInFrame:(NSRect)frame animate:(BOOL)animate {

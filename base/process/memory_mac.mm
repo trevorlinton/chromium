@@ -117,10 +117,23 @@ void CrMallocErrorBreak() {
 
   // Out of memory is certainly not heap corruption, and not necessarily
   // something for which the process should be terminated. Leave that decision
-  // to the OOM killer.  The EBADF case comes up because the malloc library
-  // attempts to log to ASL (syslog) before calling this code, which fails
-  // accessing a Unix-domain socket because of sandboxing.
-  if (errno == ENOMEM || (errno == EBADF && g_unchecked_alloc.Get().Get()))
+  // to the OOM killer.
+  if (errno == ENOMEM)
+    return;
+
+  // The malloc library attempts to log to ASL (syslog) before calling this
+  // code, which fails accessing a Unix-domain socket when sandboxed.  The
+  // failed socket results in writing to a -1 fd, leaving EBADF in errno.  If
+  // UncheckedMalloc() is on the stack, for large allocations (15k and up) only
+  // an OOM failure leads here.  Smaller allocations could also arrive here due
+  // to freelist corruption, but there is no way to distinguish that from OOM at
+  // this point.
+  //
+  // NOTE(shess): I hypothesize that EPERM case in 10.9 is the same root cause
+  // as EBADF.  Unfortunately, 10.9's opensource releases don't include malloc
+  // source code at this time.
+  // <http://crbug.com/312234>
+  if ((errno == EBADF || errno == EPERM) && g_unchecked_alloc.Get().Get())
     return;
 
   // A unit test checks this error message, so it needs to be in release builds.
@@ -489,26 +502,42 @@ id oom_killer_allocWithZone(id self, SEL _cmd, NSZone* zone)
 
 }  // namespace
 
-void* UncheckedMalloc(size_t size) {
+bool UncheckedMalloc(size_t size, void** result) {
   if (g_old_malloc) {
 #if ARCH_CPU_32_BITS
     ScopedClearErrno clear_errno;
     ThreadLocalBooleanAutoReset flag(g_unchecked_alloc.Pointer(), true);
 #endif  // ARCH_CPU_32_BITS
-    return g_old_malloc(malloc_default_zone(), size);
+    *result = g_old_malloc(malloc_default_zone(), size);
+  } else {
+    *result = malloc(size);
   }
-  return malloc(size);
+
+  return *result != NULL;
 }
 
-void* UncheckedCalloc(size_t num_items, size_t size) {
+bool UncheckedCalloc(size_t num_items, size_t size, void** result) {
   if (g_old_calloc) {
 #if ARCH_CPU_32_BITS
     ScopedClearErrno clear_errno;
     ThreadLocalBooleanAutoReset flag(g_unchecked_alloc.Pointer(), true);
 #endif  // ARCH_CPU_32_BITS
-    return g_old_calloc(malloc_default_zone(), num_items, size);
+    *result = g_old_calloc(malloc_default_zone(), num_items, size);
+  } else {
+    *result = calloc(num_items, size);
   }
-  return calloc(num_items, size);
+
+  return *result != NULL;
+}
+
+void* UncheckedMalloc(size_t size) {
+  void* address;
+  return UncheckedMalloc(size, &address) ? address : NULL;
+}
+
+void* UncheckedCalloc(size_t num_items, size_t size) {
+  void* address;
+  return UncheckedCalloc(num_items, size, &address) ? address : NULL;
 }
 
 void EnableTerminationOnOutOfMemory() {

@@ -107,7 +107,7 @@ void ShellBrowserContext::InitWhileIOAllowed() {
 #endif
 
   if (!base::PathExists(path_))
-    file_util::CreateDirectory(path_);
+    base::CreateDirectory(path_);
 }
 
 base::FilePath ShellBrowserContext::GetPath() const {
@@ -122,7 +122,7 @@ DownloadManagerDelegate* ShellBrowserContext::GetDownloadManagerDelegate()  {
   DownloadManager* manager = BrowserContext::GetDownloadManager(this);
 
   if (!download_manager_delegate_.get()) {
-    download_manager_delegate_ = new ShellDownloadManagerDelegate();
+    download_manager_delegate_.reset(new ShellDownloadManagerDelegate());
     download_manager_delegate_->SetDownloadManager(manager);
     CommandLine* cmd_line = CommandLine::ForCurrentProcess();
     if (cmd_line->HasSwitch(switches::kDumpRenderTree)) {
@@ -139,7 +139,8 @@ net::URLRequestContextGetter* ShellBrowserContext::GetRequestContext()  {
 }
 
 net::URLRequestContextGetter* ShellBrowserContext::CreateRequestContext(
-    ProtocolHandlerMap* protocol_handlers) {
+    ProtocolHandlerMap* protocol_handlers,
+    ProtocolHandlerScopedVector protocol_interceptors) {
   DCHECK(!url_request_getter_.get());
   url_request_getter_ = new ShellURLRequestContextGetter(
       ignore_certificate_errors_,
@@ -147,6 +148,7 @@ net::URLRequestContextGetter* ShellBrowserContext::CreateRequestContext(
       BrowserThread::UnsafeGetMessageLoopForThread(BrowserThread::IO),
       BrowserThread::UnsafeGetMessageLoopForThread(BrowserThread::FILE),
       protocol_handlers,
+      protocol_interceptors.Pass(),
       net_log_);
   resource_context_->set_url_request_context_getter(url_request_getter_.get());
   return url_request_getter_.get();
@@ -176,34 +178,50 @@ net::URLRequestContextGetter*
   return GetRequestContext();
 }
 
-void ShellBrowserContext::RequestMIDISysExPermission(
+void ShellBrowserContext::RequestMidiSysExPermission(
       int render_process_id,
       int render_view_id,
       int bridge_id,
       const GURL& requesting_frame,
-      const MIDISysExPermissionCallback& callback) {
+      bool user_gesture,
+      const MidiSysExPermissionCallback& callback) {
   // Always reject requests for LayoutTests for now.
   // TODO(toyoshim): Make it programmable to improve test coverage.
-  if (!CommandLine::ForCurrentProcess()->HasSwitch(switches::kDumpRenderTree)) {
+  if (!CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kDumpRenderTree)) {
     callback.Run(false);
     return;
   }
-  // TODO(toyoshim): Implement. http://crbug.com/257618 .
-  callback.Run(false);
+  callback.Run(true);
 }
 
-void ShellBrowserContext::CancelMIDISysExPermissionRequest(
+void ShellBrowserContext::CancelMidiSysExPermissionRequest(
     int render_process_id,
     int render_view_id,
     int bridge_id,
     const GURL& requesting_frame) {
 }
 
+void ShellBrowserContext::RequestProtectedMediaIdentifierPermission(
+    int render_process_id,
+    int render_view_id,
+    int bridge_id,
+    int group_id,
+    const GURL& requesting_frame,
+    const ProtectedMediaIdentifierPermissionCallback& callback) {
+  callback.Run(true);
+}
+
+void ShellBrowserContext::CancelProtectedMediaIdentifierPermissionRequests(
+    int group_id) {
+}
+
 net::URLRequestContextGetter*
-    ShellBrowserContext::CreateRequestContextForStoragePartition(
-        const base::FilePath& partition_path,
-        bool in_memory,
-        ProtocolHandlerMap* protocol_handlers) {
+ShellBrowserContext::CreateRequestContextForStoragePartition(
+    const base::FilePath& partition_path,
+    bool in_memory,
+    ProtocolHandlerMap* protocol_handlers,
+    ProtocolHandlerScopedVector protocol_interceptors) {
   return NULL;
 }
 

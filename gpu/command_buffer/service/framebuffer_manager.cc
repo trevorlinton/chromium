@@ -60,6 +60,10 @@ class RenderbufferAttachment
     return renderbuffer_->internal_format();
   }
 
+  virtual GLenum texture_type() const OVERRIDE {
+    return 0;
+  }
+
   virtual GLsizei samples() const OVERRIDE {
     return renderbuffer_->samples();
   }
@@ -115,6 +119,9 @@ class RenderbufferAttachment
     renderbuffer_->AddToSignature(signature);
   }
 
+  virtual void OnWillRenderTo() const OVERRIDE {}
+  virtual void OnDidRenderTo() const OVERRIDE {}
+
  protected:
   virtual ~RenderbufferAttachment() { }
 
@@ -157,6 +164,14 @@ class TextureAttachment
     texture_ref_->texture()->GetLevelType(
         target_, level_, &temp_type, &temp_internal_format);
     return temp_internal_format;
+  }
+
+  virtual GLenum texture_type() const OVERRIDE {
+    GLenum temp_type = 0;
+    GLenum temp_internal_format = 0;
+    texture_ref_->texture()->GetLevelType(
+        target_, level_, &temp_type, &temp_internal_format);
+    return temp_type;
   }
 
   virtual GLsizei samples() const OVERRIDE {
@@ -229,6 +244,14 @@ class TextureAttachment
     DCHECK(signature);
     texture_manager->AddToSignature(
         texture_ref_.get(), target_, level_, signature);
+  }
+
+  virtual void OnWillRenderTo() const OVERRIDE {
+    texture_ref_->texture()->OnWillModifyPixels();
+  }
+
+  virtual void OnDidRenderTo() const OVERRIDE {
+    texture_ref_->texture()->OnDidModifyPixels();
   }
 
  protected:
@@ -383,6 +406,15 @@ GLenum Framebuffer::GetColorAttachmentFormat() const {
   }
   const Attachment* attachment = it->second.get();
   return attachment->internal_format();
+}
+
+GLenum Framebuffer::GetColorAttachmentTextureType() const {
+  AttachmentMap::const_iterator it = attachments_.find(GL_COLOR_ATTACHMENT0);
+  if (it == attachments_.end()) {
+    return 0;
+  }
+  const Attachment* attachment = it->second.get();
+  return attachment->texture_type();
 }
 
 GLenum Framebuffer::IsPossiblyComplete() const {
@@ -592,6 +624,20 @@ const Framebuffer::Attachment*
 
 void Framebuffer::OnTextureRefDetached(TextureRef* texture) {
   manager_->OnTextureRefDetached(texture);
+}
+
+void Framebuffer::OnWillRenderTo() const {
+  for (AttachmentMap::const_iterator it = attachments_.begin();
+       it != attachments_.end(); ++it) {
+    it->second->OnWillRenderTo();
+  }
+}
+
+void Framebuffer::OnDidRenderTo() const {
+  for (AttachmentMap::const_iterator it = attachments_.begin();
+       it != attachments_.end(); ++it) {
+    it->second->OnDidRenderTo();
+  }
 }
 
 bool FramebufferManager::GetClientId(

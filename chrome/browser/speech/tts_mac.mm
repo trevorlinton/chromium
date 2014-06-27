@@ -8,9 +8,9 @@
 #include "base/memory/singleton.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/values.h"
-#include "chrome/browser/extensions/extension_function.h"
 #include "chrome/browser/speech/tts_controller.h"
 #include "chrome/browser/speech/tts_platform.h"
+#include "extensions/browser/extension_function.h"
 
 #import <Cocoa/Cocoa.h>
 
@@ -211,7 +211,9 @@ void TtsPlatformImplMac::GetVoices(std::vector<VoiceData>* outVoices) {
   NSMutableArray* orderedVoices =
       [NSMutableArray arrayWithCapacity:[voices count]];
   NSString* defaultVoice = [NSSpeechSynthesizer defaultVoice];
-  [orderedVoices addObject:defaultVoice];
+  if (defaultVoice) {
+    [orderedVoices addObject:defaultVoice];
+  }
   for (NSString* voiceIdentifier in voices) {
     if (![voiceIdentifier isEqualToString:defaultVoice])
       [orderedVoices addObject:voiceIdentifier];

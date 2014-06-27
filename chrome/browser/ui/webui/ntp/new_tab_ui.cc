@@ -76,7 +76,7 @@ const char kLTRHtmlTextDirection[] = "ltr";
 
 static base::LazyInstance<std::set<const WebUIController*> > g_live_new_tabs;
 
-const char* GetHtmlTextDirection(const string16& text) {
+const char* GetHtmlTextDirection(const base::string16& text) {
   if (base::i18n::IsRTL() && base::i18n::StringContainsStrongRTLChars(text))
     return kRTLHtmlTextDirection;
   else
@@ -95,10 +95,6 @@ NewTabUI::NewTabUI(content::WebUI* web_ui)
   g_live_new_tabs.Pointer()->insert(this);
   web_ui->OverrideTitle(l10n_util::GetStringUTF16(IDS_NEW_TAB_TITLE));
 
-  NTPUserDataLogger::CreateForWebContents(web_contents());
-  NTPUserDataLogger::FromWebContents(web_contents())->set_ntp_url(
-      GURL(chrome::kChromeUINewTabURL));
-
   // We count all link clicks as AUTO_BOOKMARK, so that site can be ranked more
   // highly. Note this means we're including clicks on not only most visited
   // thumbnails, but also clicks on recently bookmarked.
@@ -106,11 +102,11 @@ NewTabUI::NewTabUI(content::WebUI* web_ui)
 
   if (!GetProfile()->IsOffTheRecord()) {
     web_ui->AddMessageHandler(new browser_sync::ForeignSessionHandler());
+    web_ui->AddMessageHandler(new MetricsHandler());
     web_ui->AddMessageHandler(new MostVisitedHandler());
     web_ui->AddMessageHandler(new RecentlyClosedTabsHandler());
 #if !defined(OS_ANDROID)
     web_ui->AddMessageHandler(new FaviconWebUIHandler());
-    web_ui->AddMessageHandler(new MetricsHandler());
     web_ui->AddMessageHandler(new NewTabPageHandler());
     web_ui->AddMessageHandler(new CoreAppLauncherHandler());
     if (NewTabUI::IsDiscoveryInNTPEnabled())
@@ -182,11 +178,6 @@ void NewTabUI::PaintTimeout() {
   if ((now - last_paint_) >= base::TimeDelta::FromMilliseconds(kTimeoutMs)) {
     // Painting has quieted down.  Log this as the full time to run.
     base::TimeDelta load_time = last_paint_ - start_;
-    int load_time_ms = static_cast<int>(load_time.InMilliseconds());
-    content::NotificationService::current()->Notify(
-        chrome::NOTIFICATION_INITIAL_NEW_TAB_UI_LOAD,
-        content::Source<Profile>(GetProfile()),
-        content::Details<int>(&load_time_ms));
     UMA_HISTOGRAM_TIMES("NewTabUI load", load_time);
   } else {
     // Not enough quiet time has elapsed.
@@ -225,7 +216,7 @@ void NewTabUI::RenderViewReused(RenderViewHost* render_view_host) {
 }
 
 void NewTabUI::WasHidden() {
-  EmitMouseoverCount();
+  EmitNtpStatistics();
 }
 
 void NewTabUI::Observe(int type,
@@ -241,14 +232,13 @@ void NewTabUI::Observe(int type,
   }
 }
 
-void NewTabUI::EmitMouseoverCount() {
-  NTPUserDataLogger* data = NTPUserDataLogger::FromWebContents(web_contents());
-  if (data->ntp_url() == GURL(chrome::kChromeUINewTabURL))
-    data->EmitMouseoverCount();
+void NewTabUI::EmitNtpStatistics() {
+  NTPUserDataLogger::GetOrCreateFromWebContents(
+      web_contents())->EmitNtpStatistics();
 }
 
 void NewTabUI::OnShowBookmarkBarChanged() {
-  StringValue attached(
+  base::StringValue attached(
       GetProfile()->GetPrefs()->GetBoolean(prefs::kShowBookmarkBar) ?
           "true" : "false");
   web_ui()->CallJavascriptFunction("ntp.setBookmarkBarAttached", attached);
@@ -298,16 +288,16 @@ bool NewTabUI::IsDiscoveryInNTPEnabled() {
 }
 
 // static
-void NewTabUI::SetUrlTitleAndDirection(DictionaryValue* dictionary,
-                                       const string16& title,
+void NewTabUI::SetUrlTitleAndDirection(base::DictionaryValue* dictionary,
+                                       const base::string16& title,
                                        const GURL& gurl) {
   dictionary->SetString("url", gurl.spec());
 
   bool using_url_as_the_title = false;
-  string16 title_to_set(title);
+  base::string16 title_to_set(title);
   if (title_to_set.empty()) {
     using_url_as_the_title = true;
-    title_to_set = UTF8ToUTF16(gurl.spec());
+    title_to_set = base::UTF8ToUTF16(gurl.spec());
   }
 
   // We set the "dir" attribute of the title, so that in RTL locales, a LTR
@@ -332,7 +322,7 @@ void NewTabUI::SetUrlTitleAndDirection(DictionaryValue* dictionary,
 }
 
 // static
-void NewTabUI::SetFullNameAndDirection(const string16& full_name,
+void NewTabUI::SetFullNameAndDirection(const base::string16& full_name,
                                        base::DictionaryValue* dictionary) {
   dictionary->SetString("full_name", full_name);
   dictionary->SetString("full_name_direction", GetHtmlTextDirection(full_name));
@@ -363,7 +353,7 @@ std::string NewTabUI::NewTabHTMLSource::GetSource() const {
 void NewTabUI::NewTabHTMLSource::StartDataRequest(
     const std::string& path,
     int render_process_id,
-    int render_view_id,
+    int render_frame_id,
     const content::URLDataSource::GotDataCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 

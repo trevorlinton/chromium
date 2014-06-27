@@ -10,15 +10,15 @@
 #include "chrome/browser/extensions/crx_installer.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/extensions/feature_switch.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/common/drop_data.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/feature_switch.h"
 #include "grit/generated_resources.h"
 #include "net/base/net_util.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -60,7 +60,8 @@ void InstallExtensionHandler::RegisterMessages() {
                  base::Unretained(this)));
 }
 
-void InstallExtensionHandler::HandleStartDragMessage(const ListValue* args) {
+void InstallExtensionHandler::HandleStartDragMessage(
+    const base::ListValue* args) {
   content::DropData* drop_data =
       web_ui()->GetWebContents()->GetView()->GetDropData();
   if (!drop_data) {
@@ -73,21 +74,25 @@ void InstallExtensionHandler::HandleStartDragMessage(const ListValue* args) {
     return;
   }
 
-  const content::DropData::FileInfo& file_info = drop_data->filenames.front();
+  const ui::FileInfo& file_info = drop_data->filenames.front();
 
-  file_to_install_ = base::FilePath::FromUTF16Unsafe(file_info.path);
+  file_to_install_ = file_info.path;
   // Use the display name if provided, for checking file names
   // (.path is likely a random hash value in that case).
-  file_display_name_ =
-      file_info.display_name.empty() ? file_info.path : file_info.display_name;
+  // TODO(dcheng): It would be nice to make this a FilePath too.
+  file_display_name_ = file_info.display_name.empty()
+                           ? file_info.path.AsUTF16Unsafe()
+                           : file_info.display_name.AsUTF16Unsafe();
 }
 
-void InstallExtensionHandler::HandleStopDragMessage(const ListValue* args) {
+void InstallExtensionHandler::HandleStopDragMessage(
+    const base::ListValue* args) {
   file_to_install_.clear();
   file_display_name_.clear();
 }
 
-void InstallExtensionHandler::HandleInstallMessage(const ListValue* args) {
+void InstallExtensionHandler::HandleInstallMessage(
+    const base::ListValue* args) {
   if (file_to_install_.empty()) {
     LOG(ERROR) << "No file captured to install.";
     return;
@@ -107,12 +112,14 @@ void InstallExtensionHandler::HandleInstallMessage(const ListValue* args) {
 
   const bool kCaseSensitive = false;
 
-  if (EndsWith(file_display_name_, ASCIIToUTF16(".user.js"), kCaseSensitive)) {
+  if (EndsWith(file_display_name_,
+      base::ASCIIToUTF16(".user.js"),
+      kCaseSensitive)) {
     crx_installer->InstallUserScript(
         file_to_install_,
         net::FilePathToFileURL(file_to_install_));
   } else if (EndsWith(file_display_name_,
-                      ASCIIToUTF16(".crx"),
+                      base::ASCIIToUTF16(".crx"),
                       kCaseSensitive)) {
     crx_installer->InstallCrx(file_to_install_);
   } else {
@@ -124,7 +131,7 @@ void InstallExtensionHandler::HandleInstallMessage(const ListValue* args) {
 }
 
 void InstallExtensionHandler::HandleInstallDirectoryMessage(
-    const ListValue* args) {
+    const base::ListValue* args) {
   Profile* profile = Profile::FromBrowserContext(
       web_ui()->GetWebContents()->GetBrowserContext());
   UnpackedInstaller::Create(

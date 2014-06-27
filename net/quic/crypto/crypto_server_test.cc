@@ -2,14 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/basictypes.h"
 #include "base/strings/string_number_conversions.h"
 #include "crypto/secure_hash.h"
 #include "net/quic/crypto/crypto_utils.h"
 #include "net/quic/crypto/quic_crypto_server_config.h"
 #include "net/quic/crypto/quic_random.h"
+#include "net/quic/quic_socket_address_coder.h"
+#include "net/quic/quic_utils.h"
 #include "net/quic/test_tools/crypto_test_utils.h"
+#include "net/quic/test_tools/delayed_verify_strike_register_client.h"
 #include "net/quic/test_tools/mock_clock.h"
 #include "net/quic/test_tools/mock_random.h"
+#include "net/quic/test_tools/quic_test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using base::StringPiece;
@@ -18,20 +23,35 @@ using std::string;
 namespace net {
 namespace test {
 
+class QuicCryptoServerConfigPeer {
+ public:
+  explicit QuicCryptoServerConfigPeer(QuicCryptoServerConfig* server_config)
+      : server_config_(server_config) {}
+
+  base::Lock* GetStrikeRegisterClientLock() {
+    return &server_config_->strike_register_client_lock_;
+  }
+
+ private:
+  QuicCryptoServerConfig* server_config_;
+};
+
 class CryptoServerTest : public ::testing::Test {
  public:
   CryptoServerTest()
       : rand_(QuicRandom::GetInstance()),
-        config_(QuicCryptoServerConfig::TESTING, rand_),
-        addr_(ParseIPLiteralToNumber("192.0.2.33", &ip_) ?
-              ip_ : IPAddressNumber(), 1) {
+        client_address_(Loopback4(), 1234),
+        config_(QuicCryptoServerConfig::TESTING, rand_) {
     config_.SetProofSource(CryptoTestUtils::ProofSourceForTesting());
+    supported_versions_ = QuicSupportedVersions();
+    client_version_ = QuicUtils::TagToString(
+        QuicVersionToQuicTag(supported_versions_.front()));
   }
 
   virtual void SetUp() {
     scoped_ptr<CryptoHandshakeMessage> msg(
         config_.AddDefaultConfig(rand_, &clock_,
-        QuicCryptoServerConfig::ConfigOptions()));
+        config_options_));
 
     StringPiece orbit;
     CHECK(msg->GetStringPiece(kORBT, &orbit));
@@ -51,6 +71,7 @@ class CryptoServerTest : public ::testing::Test {
         "KEXS", "C255",
         "PUBS", pub_hex_.c_str(),
         "NONC", nonce_hex_.c_str(),
+        "VER\0", client_version_.data(),
         "$padding", static_cast<int>(kClientHelloMinimumSize),
         NULL);
     ShouldSucceed(client_hello);
@@ -71,29 +92,110 @@ class CryptoServerTest : public ::testing::Test {
     scid_hex_ = "#" + base::HexEncode(scid.data(), scid.size());
   }
 
-  void ShouldSucceed(const CryptoHandshakeMessage& message) {
-    string error_details;
-    QuicErrorCode error = config_.ProcessClientHello(
-        message, 1 /* GUID */, addr_, &clock_,
-        rand_, &params_, &out_, &error_details);
+  // Helper used to accept the result of ValidateClientHello and pass
+  // it on to ProcessClientHello.
+  class ValidateCallback : public ValidateClientHelloResultCallback {
+   public:
+    ValidateCallback(CryptoServerTest* test,
+                     bool should_succeed,
+                     const char* error_substr,
+                     bool* called)
+        : test_(test),
+          should_succeed_(should_succeed),
+          error_substr_(error_substr),
+          called_(called) {
+      *called_ = false;
+    }
 
-    ASSERT_EQ(error, QUIC_NO_ERROR)
-        << "Message failed with error " << error_details << ": "
-        << message.DebugString();
+    virtual void RunImpl(const CryptoHandshakeMessage& client_hello,
+                         const Result& result) OVERRIDE {
+      {
+        // Ensure that the strike register client lock is not held.
+        QuicCryptoServerConfigPeer peer(&test_->config_);
+        base::Lock* m = peer.GetStrikeRegisterClientLock();
+        // In Chromium, we will dead lock if the lock is held by the current
+        // thread. Chromium doesn't have AssertNotHeld API call.
+        // m->AssertNotHeld();
+        base::AutoLock lock(*m);
+      }
+      ASSERT_FALSE(*called_);
+      test_->ProcessValidationResult(
+          client_hello, result, should_succeed_, error_substr_);
+      *called_ = true;
+    }
+
+   private:
+    CryptoServerTest* test_;
+    bool should_succeed_;
+    const char* error_substr_;
+    bool* called_;
+  };
+
+  void CheckServerHello(const CryptoHandshakeMessage& server_hello) {
+    const QuicTag* versions;
+    size_t num_versions;
+    server_hello.GetTaglist(kVER, &versions, &num_versions);
+    ASSERT_EQ(QuicSupportedVersions().size(), num_versions);
+    for (size_t i = 0; i < num_versions; ++i) {
+      EXPECT_EQ(QuicVersionToQuicTag(QuicSupportedVersions()[i]), versions[i]);
+    }
+
+    StringPiece address;
+    ASSERT_TRUE(server_hello.GetStringPiece(kCADR, &address));
+    QuicSocketAddressCoder decoder;
+    ASSERT_TRUE(decoder.Decode(address.data(), address.size()));
+    EXPECT_EQ(client_address_.address(), decoder.ip());
+    EXPECT_EQ(client_address_.port(), decoder.port());
+  }
+
+  void ShouldSucceed(const CryptoHandshakeMessage& message) {
+    bool called = false;
+    RunValidate(message, new ValidateCallback(this, true, "", &called));
+    EXPECT_TRUE(called);
+  }
+
+  void RunValidate(
+      const CryptoHandshakeMessage& message,
+      ValidateClientHelloResultCallback* cb) {
+    config_.ValidateClientHello(message, client_address_, &clock_, cb);
   }
 
   void ShouldFailMentioning(const char* error_substr,
                             const CryptoHandshakeMessage& message) {
+    bool called = false;
+    ShouldFailMentioning(error_substr, message, &called);
+    EXPECT_TRUE(called);
+  }
+
+  void ShouldFailMentioning(const char* error_substr,
+                            const CryptoHandshakeMessage& message,
+                            bool* called) {
+    config_.ValidateClientHello(
+        message, client_address_, &clock_,
+        new ValidateCallback(this, false, error_substr, called));
+  }
+
+  void ProcessValidationResult(const CryptoHandshakeMessage& message,
+                               const ValidateCallback::Result& result,
+                               bool should_succeed,
+                               const char* error_substr) {
     string error_details;
     QuicErrorCode error = config_.ProcessClientHello(
-        message, 1 /* GUID */, addr_, &clock_,
-        rand_, &params_, &out_, &error_details);
+        result, 1 /* ConnectionId */, client_address_,
+        supported_versions_.front(), supported_versions_, &clock_, rand_,
+        &params_, &out_, &error_details);
 
-    ASSERT_NE(error, QUIC_NO_ERROR)
-        << "Message didn't fail: " << message.DebugString();
+    if (should_succeed) {
+      ASSERT_EQ(error, QUIC_NO_ERROR)
+          << "Message failed with error " << error_details << ": "
+          << message.DebugString();
+    } else {
+      ASSERT_NE(error, QUIC_NO_ERROR)
+          << "Message didn't fail: " << message.DebugString();
 
-    EXPECT_TRUE(error_details.find(error_substr) != string::npos)
-        << error_substr << " not in " << error_details;
+      EXPECT_TRUE(error_details.find(error_substr) != string::npos)
+          << error_substr << " not in " << error_details;
+    }
   }
 
   CryptoHandshakeMessage InchoateClientHello(const char* message_tag, ...) {
@@ -120,11 +222,13 @@ class CryptoServerTest : public ::testing::Test {
  protected:
   QuicRandom* const rand_;
   MockClock clock_;
+  const IPEndPoint client_address_;
+  QuicVersionVector supported_versions_;
+  string client_version_;
   QuicCryptoServerConfig config_;
+  QuicCryptoServerConfig::ConfigOptions config_options_;
   QuicCryptoNegotiatedParameters params_;
   CryptoHandshakeMessage out_;
-  IPAddressNumber ip_;
-  IPEndPoint addr_;
   uint8 orbit_[kOrbitSize];
 
   // These strings contain hex escaped values from the server suitable for
@@ -143,10 +247,14 @@ TEST_F(CryptoServerTest, BadSNI) {
     "ffee::1",
   };
 
+  string client_version = QuicUtils::TagToString(
+      QuicVersionToQuicTag(supported_versions_.front()));
+
   for (size_t i = 0; i < arraysize(kBadSNIs); i++) {
     ShouldFailMentioning("SNI", InchoateClientHello(
         "CHLO",
         "SNI", kBadSNIs[i],
+        "VER\0", client_version.data(),
         NULL));
   }
 }
@@ -165,6 +273,7 @@ TEST_F(CryptoServerTest, DISABLED_DefaultCert) {
       "NONC", nonce_hex_.c_str(),
       "$padding", static_cast<int>(kClientHelloMinimumSize),
       "PDMD", "X509",
+      "VER\0", client_version_.data(),
       NULL));
 
   StringPiece cert, proof;
@@ -177,6 +286,7 @@ TEST_F(CryptoServerTest, DISABLED_DefaultCert) {
 TEST_F(CryptoServerTest, TooSmall) {
   ShouldFailMentioning("too small", CryptoTestUtils::Message(
         "CHLO",
+        "VER\0", client_version_.data(),
         NULL));
 }
 
@@ -193,6 +303,7 @@ TEST_F(CryptoServerTest, BadSourceAddressToken) {
     ShouldSucceed(InchoateClientHello(
         "CHLO",
         "STK", kBadSourceAddressTokens[i],
+        "VER\0", client_version_.data(),
         NULL));
   }
 }
@@ -209,8 +320,25 @@ TEST_F(CryptoServerTest, BadClientNonce) {
     ShouldSucceed(InchoateClientHello(
         "CHLO",
         "NONC", kBadNonces[i],
+        "VER\0", client_version_.data(),
         NULL));
   }
+}
+
+TEST_F(CryptoServerTest, DowngradeAttack) {
+  if (supported_versions_.size() == 1) {
+    // No downgrade attack is possible if the server only supports one version.
+    return;
+  }
+  // Set the client's preferred version to a supported version that
+  // is not the "current" version (supported_versions_.front()).
+  string bad_version = QuicUtils::TagToString(
+      QuicVersionToQuicTag(supported_versions_.back()));
+
+  ShouldFailMentioning("Downgrade", InchoateClientHello(
+      "CHLO",
+      "VER\0", bad_version.data(),
+      NULL));
 }
 
 TEST_F(CryptoServerTest, ReplayProtection) {
@@ -223,6 +351,7 @@ TEST_F(CryptoServerTest, ReplayProtection) {
       "#004b5453", srct_hex_.c_str(),
       "PUBS", pub_hex_.c_str(),
       "NONC", nonce_hex_.c_str(),
+      "VER\0", client_version_.data(),
       "$padding", static_cast<int>(kClientHelloMinimumSize),
       NULL);
   ShouldSucceed(msg);
@@ -235,10 +364,12 @@ TEST_F(CryptoServerTest, ReplayProtection) {
   ShouldSucceed(msg);
   // The message should be accepted now.
   ASSERT_EQ(kSHLO, out_.tag());
+  CheckServerHello(out_);
 
   ShouldSucceed(msg);
   // The message should accepted twice when replay protection is off.
   ASSERT_EQ(kSHLO, out_.tag());
+  CheckServerHello(out_);
 }
 
 TEST(CryptoServerConfigGenerationTest, Determinism) {
@@ -321,7 +452,74 @@ class CryptoServerTestNoConfig : public CryptoServerTest {
 TEST_F(CryptoServerTestNoConfig, DontCrash) {
     ShouldFailMentioning("No config", InchoateClientHello(
         "CHLO",
+        "VER\0", client_version_.data(),
         NULL));
+}
+
+class AsyncStrikeServerVerificationTest : public CryptoServerTest {
+ protected:
+  AsyncStrikeServerVerificationTest() {
+  }
+
+  virtual void SetUp() {
+    const string kOrbit = "12345678";
+    config_options_.orbit = kOrbit;
+    strike_register_client_ = new DelayedVerifyStrikeRegisterClient(
+        10000,  // strike_register_max_entries
+        static_cast<uint32>(clock_.WallNow().ToUNIXSeconds()),
+        60,  // strike_register_window_secs
+        reinterpret_cast<const uint8 *>(kOrbit.data()),
+        StrikeRegister::NO_STARTUP_PERIOD_NEEDED);
+    config_.SetStrikeRegisterClient(strike_register_client_);
+    CryptoServerTest::SetUp();
+    strike_register_client_->StartDelayingVerification();
+  }
+
+  DelayedVerifyStrikeRegisterClient* strike_register_client_;
+};
+
+TEST_F(AsyncStrikeServerVerificationTest, AsyncReplayProtection) {
+  // This tests async validation with a strike register works.
+  CryptoHandshakeMessage msg = CryptoTestUtils::Message(
+      "CHLO",
+      "AEAD", "AESG",
+      "KEXS", "C255",
+      "SCID", scid_hex_.c_str(),
+      "#004b5453", srct_hex_.c_str(),
+      "PUBS", pub_hex_.c_str(),
+      "NONC", nonce_hex_.c_str(),
+      "VER\0", client_version_.data(),
+      "$padding", static_cast<int>(kClientHelloMinimumSize),
+      NULL);
+
+  // Clear the message tag.
+  out_.set_tag(0);
+
+  bool called = false;
+  RunValidate(msg, new ValidateCallback(this, true, "", &called));
+  // The verification request was queued.
+  ASSERT_FALSE(called);
+  EXPECT_EQ(0u, out_.tag());
+  EXPECT_EQ(1, strike_register_client_->PendingVerifications());
+
+  // Continue processing the verification request.
+  strike_register_client_->RunPendingVerifications();
+  ASSERT_TRUE(called);
+  EXPECT_EQ(0, strike_register_client_->PendingVerifications());
+  // The message should be accepted now.
+  EXPECT_EQ(kSHLO, out_.tag());
+
+  // Rejected if replayed.
+  RunValidate(msg, new ValidateCallback(this, true, "", &called));
+  // The verification request was queued.
+  ASSERT_FALSE(called);
+  EXPECT_EQ(1, strike_register_client_->PendingVerifications());
+
+  strike_register_client_->RunPendingVerifications();
+  ASSERT_TRUE(called);
+  EXPECT_EQ(0, strike_register_client_->PendingVerifications());
+  // The message should be rejected now.
+  EXPECT_EQ(kREJ, out_.tag());
 }
 
 }  // namespace test

@@ -22,15 +22,21 @@ class CC_EXPORT LayerTreeSettings {
   bool allow_antialiasing;
   bool throttle_frame_production;
   bool begin_impl_frame_scheduling_enabled;
-  bool deadline_scheduling_enabled;
+  bool main_frame_before_draw_enabled;
+  bool main_frame_before_activation_enabled;
   bool using_synchronous_renderer_compositor;
   bool per_tile_painting_enabled;
   bool partial_swap_enabled;
   bool accelerated_animation_enabled;
-  bool background_color_instead_of_checkerboard;
-  bool show_overdraw_in_tracing;
   bool can_use_lcd_text;
   bool should_clear_root_render_pass;
+  enum RasterizationSite {
+    CpuRasterization,
+    HybridRasterization,
+    GpuRasterization,
+  };
+  RasterizationSite rasterization_site;
+  bool create_low_res_tiling;
 
   enum ScrollbarAnimator {
     NoAnimator,
@@ -53,21 +59,21 @@ class CC_EXPORT LayerTreeSettings {
   float top_controls_hide_threshold;
   double refresh_rate;
   size_t max_partial_texture_updates;
-  size_t num_raster_threads;
   gfx::Size default_tile_size;
   gfx::Size max_untiled_layer_size;
   gfx::Size minimum_occlusion_tracking_size;
   bool use_pinch_zoom_scrollbars;
   bool use_pinch_virtual_viewport;
   size_t max_tiles_for_interest_area;
+  float skewport_target_time_in_seconds;
+  int skewport_extrapolation_limit_in_content_pixels;
   size_t max_unused_resource_memory_percentage;
+  size_t max_memory_for_prepaint_percentage;
   int highp_threshold_min;
-  bool force_direct_layer_drawing;  // With Skia GPU backend.
   bool strict_layer_property_change_checking;
   bool use_map_image;
   bool ignore_root_layer_flings;
   bool use_rgba_4444_textures;
-  bool always_overscroll;
   bool touch_hit_testing;
   size_t texture_id_allocation_chunk_size;
 

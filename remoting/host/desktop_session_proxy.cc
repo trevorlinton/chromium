@@ -230,9 +230,9 @@ bool DesktopSessionProxy::AttachToDesktop(
 #if defined(OS_WIN)
   // On Windows: |desktop_process| is a valid handle, but |desktop_pipe| needs
   // to be duplicated from the desktop process.
-  base::win::ScopedHandle pipe;
+  HANDLE temp_handle;
   if (!DuplicateHandle(desktop_process_, desktop_pipe, GetCurrentProcess(),
-                       pipe.Receive(), 0, FALSE, DUPLICATE_SAME_ACCESS)) {
+                       &temp_handle, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
     LOG_GETLASTERROR(ERROR) << "Failed to duplicate the desktop-to-network"
                                " pipe handle";
 
@@ -240,6 +240,7 @@ bool DesktopSessionProxy::AttachToDesktop(
     base::CloseProcessHandle(desktop_process);
     return false;
   }
+  base::win::ScopedHandle pipe(temp_handle);
 
   IPC::ChannelHandle desktop_channel_handle(pipe);
 
@@ -350,6 +351,19 @@ void DesktopSessionProxy::InjectKeyEvent(const protocol::KeyEvent& event) {
 
   SendToDesktop(
       new ChromotingNetworkDesktopMsg_InjectKeyEvent(serialized_event));
+}
+
+void DesktopSessionProxy::InjectTextEvent(const protocol::TextEvent& event) {
+  DCHECK(caller_task_runner_->BelongsToCurrentThread());
+
+  std::string serialized_event;
+  if (!event.SerializeToString(&serialized_event)) {
+    LOG(ERROR) << "Failed to serialize protocol::TextEvent.";
+    return;
+  }
+
+  SendToDesktop(
+      new ChromotingNetworkDesktopMsg_InjectTextEvent(serialized_event));
 }
 
 void DesktopSessionProxy::InjectMouseEvent(const protocol::MouseEvent& event) {

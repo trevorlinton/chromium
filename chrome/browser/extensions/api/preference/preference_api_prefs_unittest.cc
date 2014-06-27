@@ -8,12 +8,12 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/prefs/mock_pref_change_callback.h"
 #include "base/values.h"
+#include "chrome/browser/extensions/./extension_prefs_unittest.h"
 #include "chrome/browser/extensions/api/preference/preference_api.h"
-#include "chrome/browser/extensions/extension_prefs.h"
-#include "chrome/browser/extensions/extension_prefs_unittest.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/user_prefs/pref_registry_syncable.h"
+#include "extensions/browser/extension_prefs.h"
+#include "extensions/common/extension.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using base::Value;
@@ -107,7 +107,7 @@ void ExtensionControlledPrefsTest::RegisterPreferences(
 void ExtensionControlledPrefsTest::InstallExtensionControlledPref(
     Extension* extension,
     const std::string& key,
-    Value* value) {
+    base::Value* value) {
   EnsureExtensionInstalled(extension);
   test_preference_api_.SetExtensionControlledPref(
       extension->id(), key, kExtensionPrefsScopeRegular, value);
@@ -116,7 +116,7 @@ void ExtensionControlledPrefsTest::InstallExtensionControlledPref(
 void ExtensionControlledPrefsTest::InstallExtensionControlledPrefIncognito(
     Extension* extension,
     const std::string& key,
-    Value* value) {
+    base::Value* value) {
   EnsureExtensionInstalled(extension);
   test_preference_api_.SetExtensionControlledPref(
       extension->id(), key, kExtensionPrefsScopeIncognitoPersistent, value);
@@ -125,7 +125,7 @@ void ExtensionControlledPrefsTest::InstallExtensionControlledPrefIncognito(
 void ExtensionControlledPrefsTest::
 InstallExtensionControlledPrefIncognitoSessionOnly(Extension* extension,
                                                    const std::string& key,
-                                                   Value* value) {
+                                                   base::Value* value) {
   EnsureExtensionInstalled(extension);
   test_preference_api_.SetExtensionControlledPref(
       extension->id(), key, kExtensionPrefsScopeIncognitoSessionOnly, value);
@@ -151,8 +151,10 @@ void ExtensionControlledPrefsTest::EnsureExtensionInstalled(
     if (extension == extensions[i] && !installed_[i]) {
       prefs()->OnExtensionInstalled(extension,
                                     Extension::ENABLED,
-                                    Blacklist::NOT_BLACKLISTED,
-                                    syncer::StringOrdinal());
+                                    false,
+                                    syncer::StringOrdinal(),
+                                    std::string());
+      prefs()->SetIsIncognitoEnabled(extension->id(), true);
       installed_[i] = true;
       break;
     }
@@ -390,10 +392,10 @@ class ControlledPrefsReenableExtension : public ExtensionControlledPrefsTest {
 TEST_F(ControlledPrefsDisableExtension, ControlledPrefsReenableExtension) { }
 
 // Mock class to test whether objects are deleted correctly.
-class MockStringValue : public StringValue {
+class MockStringValue : public base::StringValue {
  public:
   explicit MockStringValue(const std::string& in_value)
-      : StringValue(in_value) {
+      : base::StringValue(in_value) {
   }
   virtual ~MockStringValue() {
     Die();

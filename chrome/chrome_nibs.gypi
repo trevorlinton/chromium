@@ -24,7 +24,6 @@
       'app/nibs/ContentBlockedPlugins.xib',
       'app/nibs/ContentBlockedPopups.xib',
       'app/nibs/ContentBlockedGeolocation.xib',
-      'app/nibs/ContentBlockedSavePassword.xib',
       'app/nibs/ContentBlockedSimple.xib',
       'app/nibs/ContentProtocolHandlers.xib',
       'app/nibs/CookieDetailsView.xib',
@@ -33,8 +32,8 @@
       'app/nibs/EditSearchEngine.xib',
       'app/nibs/ExtensionInstallPrompt.xib',
       'app/nibs/ExtensionInstallPromptBundle.xib',
-      'app/nibs/ExtensionInstallPromptInline.xib',
       'app/nibs/ExtensionInstallPromptNoWarnings.xib',
+      'app/nibs/ExtensionInstallPromptWebstoreData.xib',
       'app/nibs/ExtensionInstalledBubble.xib',
       'app/nibs/FirstRunBubble.xib',
       'app/nibs/FirstRunDialog.xib',
@@ -45,7 +44,6 @@
       'app/nibs/MainMenu.xib',
       'app/nibs/OneClickSigninBubble.xib',
       'app/nibs/OneClickSigninDialog.xib',
-      'app/nibs/SadTab.xib',
       'app/nibs/SaveAccessoryView.xib',
       'app/nibs/SpeechRecognitionBubble.xib',
       'app/nibs/TaskManager.xib',
@@ -63,6 +61,7 @@
       'app/nibs/InfoBar.xib',
       'app/nibs/Notification.xib',
       'app/nibs/Panel.xib',
+      'app/nibs/SadTab.xib',
     ],  # mac_untranslated_xibs
     'mac_all_xibs': [
       '<@(mac_translated_xibs)',

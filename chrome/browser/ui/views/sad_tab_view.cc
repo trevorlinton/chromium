@@ -21,7 +21,9 @@
 #include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/views/background.h"
 #include "ui/views/controls/button/label_button.h"
+#include "ui/views/controls/button/label_button_border.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/link.h"
@@ -106,7 +108,7 @@ SadTabView::SadTabView(WebContents* web_contents, chrome::SadTabKind kind)
       (kind_ == chrome::SAD_TAB_KIND_CRASHED) ?
           IDS_SAD_TAB_TITLE : IDS_KILLED_TAB_TITLE));
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
-  title->SetFont(rb.GetFont(ui::ResourceBundle::MediumFont));
+  title->SetFontList(rb.GetFontList(ui::ResourceBundle::MediumFont));
   layout->StartRowWithPadding(0, column_set_id, 0, kPadding);
   layout->AddView(title);
 
@@ -122,7 +124,11 @@ SadTabView::SadTabView(WebContents* web_contents, chrome::SadTabKind kind)
     reload_button_ = new views::LabelButton(
         this,
         l10n_util::GetStringUTF16(IDS_SAD_TAB_RELOAD_LABEL));
-    reload_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
+    reload_button_->SetStyle(views::Button::STYLE_BUTTON);
+    // Always render the reload button with chrome style borders; never rely on
+    // native styles.
+    reload_button_->SetBorder(scoped_ptr<views::Border>(
+        new views::LabelButtonBorder(reload_button_->style())));
     layout->AddView(reload_button_);
 
     help_link_ = CreateLink(l10n_util::GetStringUTF16(
@@ -131,8 +137,9 @@ SadTabView::SadTabView(WebContents* web_contents, chrome::SadTabKind kind)
 
     if (kind_ == chrome::SAD_TAB_KIND_CRASHED) {
       size_t offset = 0;
-      string16 help_text(l10n_util::GetStringFUTF16(IDS_SAD_TAB_HELP_MESSAGE,
-                                                    string16(), &offset));
+      base::string16 help_text(
+          l10n_util::GetStringFUTF16(IDS_SAD_TAB_HELP_MESSAGE,
+                                     base::string16(), &offset));
       views::Label* help_prefix = CreateLabel(help_text.substr(0, offset));
       views::Label* help_suffix = CreateLabel(help_text.substr(offset));
 
@@ -234,15 +241,6 @@ void SadTabView::Show() {
   // TODO(avi): This is a cheat. Can this be made cleaner?
   sad_tab_params.parent = web_contents_->GetView()->GetNativeView();
 
-#if defined(OS_WIN) && !defined(USE_AURA)
-  // Crash data indicates we can get here when the parent is no longer valid.
-  // Attempting to create a child window with a bogus parent crashes. So, we
-  // don't show a sad tab in this case in hopes the tab is in the process of
-  // shutting down.
-  if (!IsWindow(sad_tab_params.parent))
-    return;
-#endif
-
   set_owned_by_client();
 
   views::Widget* sad_tab = new views::Widget;
@@ -261,14 +259,14 @@ void SadTabView::Close() {
     GetWidget()->Close();
 }
 
-views::Label* SadTabView::CreateLabel(const string16& text) {
+views::Label* SadTabView::CreateLabel(const base::string16& text) {
   views::Label* label = new views::Label(text);
   label->SetBackgroundColor(background()->get_color());
   label->SetEnabledColor(kTextColor);
   return label;
 }
 
-views::Link* SadTabView::CreateLink(const string16& text) {
+views::Link* SadTabView::CreateLink(const base::string16& text) {
   views::Link* link = new views::Link(text);
   link->SetBackgroundColor(background()->get_color());
   link->SetEnabledColor(kTextColor);

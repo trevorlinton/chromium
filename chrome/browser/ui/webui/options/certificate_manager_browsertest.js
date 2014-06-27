@@ -30,7 +30,6 @@ CertificateManagerWebUIBaseTest.prototype = {
 
     this.makeAndRegisterMockHandler(
         [
-          'checkTpmTokenReady',
           'editCaCertificateTrust',
           'exportPersonalCertificate',
           'importPersonalCertificate',
@@ -61,8 +60,6 @@ CertificateManagerWebUIUnpopulatedTest.prototype = {
     // it. This simulates what will be displayed if retrieving the cert list
     // from NSS is slow.
     this.mockHandler.expects(once()).populateCertificateManager();
-    if (this.isChromeOS)
-      this.mockHandler.expects(atLeastOnce()).checkTpmTokenReady();
   },
 };
 
@@ -72,12 +69,48 @@ TEST_F('CertificateManagerWebUIUnpopulatedTest',
        'testUnpopulatedCertificateManager', function() {
   assertEquals(this.browsePreload, document.location.href);
 
+  // All buttons should be disabled to start.
+  expectTrue($('personalCertsTab-view').disabled);
+  expectTrue($('personalCertsTab-backup').disabled);
+  expectTrue($('personalCertsTab-delete').disabled);
+  expectTrue($('personalCertsTab-import').disabled);
+  if (this.isChromeOS)
+    expectTrue($('personalCertsTab-import-and-bind').disabled);
+
+  expectTrue($('serverCertsTab-view').disabled);
+  expectTrue($('serverCertsTab-export').disabled);
+  expectTrue($('serverCertsTab-delete').disabled);
+  expectTrue($('serverCertsTab-import').disabled);
+
+  expectTrue($('caCertsTab-view').disabled);
+  expectTrue($('caCertsTab-edit').disabled);
+  expectTrue($('caCertsTab-export').disabled);
+  expectTrue($('caCertsTab-delete').disabled);
+  expectTrue($('caCertsTab-import').disabled);
+
+  expectTrue($('otherCertsTab-view').disabled);
+  expectTrue($('otherCertsTab-export').disabled);
+  expectTrue($('otherCertsTab-delete').disabled);
+
+  Mock4JS.verifyAllMocks();
+
+  // If user database is not available, import buttons should be disabled.
+  CertificateManager.onModelReady(false /* userDbAvailable*/,
+                                  false /* tpmAvailable */);
+
+  expectTrue($('personalCertsTab-import').disabled);
+  expectTrue($('serverCertsTab-import').disabled);
+  expectTrue($('caCertsTab-import').disabled);
+
+  // Once we get the onModelReady call, the import buttons should be enabled,
+  // others should still be disabled.
+  CertificateManager.onModelReady(true /* userDbAvailable*/,
+                                  false /* tpmAvailable */);
+
   expectTrue($('personalCertsTab-view').disabled);
   expectTrue($('personalCertsTab-backup').disabled);
   expectTrue($('personalCertsTab-delete').disabled);
   expectFalse($('personalCertsTab-import').disabled);
-  if (this.isChromeOS)
-    expectTrue($('personalCertsTab-import-and-bind').disabled);
 
   expectTrue($('serverCertsTab-view').disabled);
   expectTrue($('serverCertsTab-export').disabled);
@@ -93,6 +126,15 @@ TEST_F('CertificateManagerWebUIUnpopulatedTest',
   expectTrue($('otherCertsTab-view').disabled);
   expectTrue($('otherCertsTab-export').disabled);
   expectTrue($('otherCertsTab-delete').disabled);
+
+  // On ChromeOS, the import and bind button should only be enabled if TPM is
+  // present.
+  if (this.isChromeOS) {
+    expectTrue($('personalCertsTab-import-and-bind').disabled);
+    CertificateManager.onModelReady(true /* userDbAvailable*/,
+                                    true /* tpmAvailable */);
+    expectFalse($('personalCertsTab-import-and-bind').disabled);
+  }
 });
 
 /**
@@ -109,8 +151,12 @@ CertificateManagerWebUITest.prototype = {
   preLoad: function() {
     CertificateManagerWebUIBaseTest.prototype.preLoad.call(this);
 
+    var tpmAvailable = this.isChromeOS;
+    var userDbAvailable = true;
     this.mockHandler.expects(once()).populateCertificateManager().will(
         callFunction(function() {
+          CertificateManager.onModelReady(userDbAvailable, tpmAvailable);
+
           [['personalCertsTab-tree',
               [{'id': 'o1',
                 'name': 'org1',
@@ -139,12 +185,6 @@ CertificateManagerWebUITest.prototype = {
                }],
            ]
           ].forEach(CertificateManager.onPopulateTree)}));
-
-    if (this.isChromeOS)
-      this.mockHandler.expects(once()).checkTpmTokenReady().will(callFunction(
-          function() {
-            CertificateManager.onCheckTpmTokenReady(true);
-          }));
   },
 };
 

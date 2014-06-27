@@ -14,6 +14,8 @@
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/options/options_util.h"
 #include "chrome/common/net/url_fixer_upper.h"
@@ -23,6 +25,7 @@
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_ui.h"
+#include "extensions/browser/extension_system.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
 #include "grit/locale_settings.h"
@@ -30,7 +33,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
-using content::UserMetricsAction;
+using base::UserMetricsAction;
 
 namespace options {
 
@@ -75,7 +78,7 @@ void CoreOptionsHandler::InitializePage() {
 }
 
 void CoreOptionsHandler::GetLocalizedValues(
-    DictionaryValue* localized_strings) {
+    base::DictionaryValue* localized_strings) {
   GetStaticLocalizedValues(localized_strings);
 }
 
@@ -91,6 +94,14 @@ void CoreOptionsHandler::GetStaticLocalizedValues(
       l10n_util::GetStringUTF16(IDS_OPTIONS_CONTROLLED_SETTING_POLICY));
   localized_strings->SetString("controlledSettingExtension",
       l10n_util::GetStringUTF16(IDS_OPTIONS_CONTROLLED_SETTING_EXTENSION));
+  localized_strings->SetString("controlledSettingExtensionWithName",
+      l10n_util::GetStringUTF16(
+          IDS_OPTIONS_CONTROLLED_SETTING_EXTENSION_WITH_NAME));
+  localized_strings->SetString("controlledSettingManageExtension",
+      l10n_util::GetStringUTF16(
+          IDS_OPTIONS_CONTROLLED_SETTING_MANAGE_EXTENSION));
+  localized_strings->SetString("controlledSettingDisableExtension",
+      l10n_util::GetStringUTF16(IDS_EXTENSIONS_DISABLE));
   localized_strings->SetString("controlledSettingRecommended",
       l10n_util::GetStringUTF16(IDS_OPTIONS_CONTROLLED_SETTING_RECOMMENDED));
   localized_strings->SetString("controlledSettingHasRecommendation",
@@ -103,6 +114,9 @@ void CoreOptionsHandler::GetStaticLocalizedValues(
       l10n_util::GetStringUTF16(IDS_OPTIONS_CONTROLLED_SETTINGS_POLICY));
   localized_strings->SetString("controlledSettingsExtension",
       l10n_util::GetStringUTF16(IDS_OPTIONS_CONTROLLED_SETTINGS_EXTENSION));
+  localized_strings->SetString("controlledSettingsExtensionWithName",
+      l10n_util::GetStringUTF16(
+          IDS_OPTIONS_CONTROLLED_SETTINGS_EXTENSION_WITH_NAME));
 
   // Search
   RegisterTitle(localized_strings, "searchPage", IDS_OPTIONS_SEARCH_PAGE_TITLE);
@@ -164,6 +178,9 @@ void CoreOptionsHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback("coreOptionsInitialize",
       base::Bind(&CoreOptionsHandler::HandleInitialize,
                  base::Unretained(this)));
+  web_ui()->RegisterMessageCallback("onFinishedLoadingOptions",
+      base::Bind(&CoreOptionsHandler::OnFinishedLoading,
+                 base::Unretained(this)));
   web_ui()->RegisterMessageCallback("fetchPrefs",
       base::Bind(&CoreOptionsHandler::HandleFetchPrefs,
                  base::Unretained(this)));
@@ -194,11 +211,19 @@ void CoreOptionsHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback("coreOptionsUserMetricsAction",
       base::Bind(&CoreOptionsHandler::HandleUserMetricsAction,
                  base::Unretained(this)));
+  web_ui()->RegisterMessageCallback("disableExtension",
+      base::Bind(&CoreOptionsHandler::HandleDisableExtension,
+                 base::Unretained(this)));
 }
 
-void CoreOptionsHandler::HandleInitialize(const ListValue* args) {
+void CoreOptionsHandler::HandleInitialize(const base::ListValue* args) {
   DCHECK(handlers_host_);
   handlers_host_->InitializeHandlers();
+}
+
+void CoreOptionsHandler::OnFinishedLoading(const base::ListValue* args) {
+  DCHECK(handlers_host_);
+  handlers_host_->OnFinishedLoading();
 }
 
 base::Value* CoreOptionsHandler::FetchPref(const std::string& pref_name) {
@@ -304,7 +329,7 @@ void CoreOptionsHandler::DispatchPrefChangeNotification(
   std::pair<PreferenceCallbackMap::const_iterator,
             PreferenceCallbackMap::const_iterator> range =
       pref_callback_map_.equal_range(name);
-  ListValue result_value;
+  base::ListValue result_value;
   result_value.Append(new base::StringValue(name.c_str()));
   result_value.Append(value.release());
   for (PreferenceCallbackMap::const_iterator iter = range.first;
@@ -329,12 +354,12 @@ base::Value* CoreOptionsHandler::CreateValueForPref(
   if (!controlling_pref)
     controlling_pref = pref;
 
-  DictionaryValue* dict = new DictionaryValue;
+  // We don't show a UI here for extension controlled values because we opted to
+  // show a more obvious UI than an extension puzzle piece on the settings page.
+  base::DictionaryValue* dict = new base::DictionaryValue;
   dict->Set("value", pref->GetValue()->DeepCopy());
   if (controlling_pref->IsManaged())
     dict->SetString("controlledBy", "policy");
-  else if (controlling_pref->IsExtensionControlled())
-    dict->SetString("controlledBy", "extension");
   else if (controlling_pref->IsRecommended())
     dict->SetString("controlledBy", "recommended");
 
@@ -372,7 +397,7 @@ PrefService* CoreOptionsHandler::FindServiceForPref(
   return user_prefs;
 }
 
-void CoreOptionsHandler::HandleFetchPrefs(const ListValue* args) {
+void CoreOptionsHandler::HandleFetchPrefs(const base::ListValue* args) {
   // First param is name of callback function, so, there needs to be at least
   // one more element for the actual preference identifier.
   DCHECK_GE(static_cast<int>(args->GetSize()), 2);
@@ -382,12 +407,12 @@ void CoreOptionsHandler::HandleFetchPrefs(const ListValue* args) {
   if (!args->Get(0, &callback) || !callback->IsType(base::Value::TYPE_STRING))
     return;
 
-  string16 callback_function;
+  base::string16 callback_function;
   if (!callback->GetAsString(&callback_function))
     return;
 
   // Get the list of name for prefs to build the response dictionary.
-  DictionaryValue result_value;
+  base::DictionaryValue result_value;
   const base::Value* list_member;
 
   for (size_t i = 1; i < args->GetSize(); i++) {
@@ -403,11 +428,11 @@ void CoreOptionsHandler::HandleFetchPrefs(const ListValue* args) {
 
     result_value.Set(pref_name.c_str(), FetchPref(pref_name));
   }
-  web_ui()->CallJavascriptFunction(UTF16ToASCII(callback_function),
+  web_ui()->CallJavascriptFunction(base::UTF16ToASCII(callback_function),
                                    result_value);
 }
 
-void CoreOptionsHandler::HandleObservePrefs(const ListValue* args) {
+void CoreOptionsHandler::HandleObservePrefs(const base::ListValue* args) {
   // First param is name is JS callback function name, the rest are pref
   // identifiers that we are observing.
   DCHECK_GE(static_cast<int>(args->GetSize()), 2);
@@ -437,31 +462,32 @@ void CoreOptionsHandler::HandleObservePrefs(const ListValue* args) {
   }
 }
 
-void CoreOptionsHandler::HandleSetBooleanPref(const ListValue* args) {
+void CoreOptionsHandler::HandleSetBooleanPref(const base::ListValue* args) {
   HandleSetPref(args, TYPE_BOOLEAN);
 }
 
-void CoreOptionsHandler::HandleSetIntegerPref(const ListValue* args) {
+void CoreOptionsHandler::HandleSetIntegerPref(const base::ListValue* args) {
   HandleSetPref(args, TYPE_INTEGER);
 }
 
-void CoreOptionsHandler::HandleSetDoublePref(const ListValue* args) {
+void CoreOptionsHandler::HandleSetDoublePref(const base::ListValue* args) {
   HandleSetPref(args, TYPE_DOUBLE);
 }
 
-void CoreOptionsHandler::HandleSetStringPref(const ListValue* args) {
+void CoreOptionsHandler::HandleSetStringPref(const base::ListValue* args) {
   HandleSetPref(args, TYPE_STRING);
 }
 
-void CoreOptionsHandler::HandleSetURLPref(const ListValue* args) {
+void CoreOptionsHandler::HandleSetURLPref(const base::ListValue* args) {
   HandleSetPref(args, TYPE_URL);
 }
 
-void CoreOptionsHandler::HandleSetListPref(const ListValue* args) {
+void CoreOptionsHandler::HandleSetListPref(const base::ListValue* args) {
   HandleSetPref(args, TYPE_LIST);
 }
 
-void CoreOptionsHandler::HandleSetPref(const ListValue* args, PrefType type) {
+void CoreOptionsHandler::HandleSetPref(const base::ListValue* args,
+                                       PrefType type) {
   DCHECK_GT(static_cast<int>(args->GetSize()), 1);
 
   std::string pref_name;
@@ -542,7 +568,7 @@ void CoreOptionsHandler::HandleSetPref(const ListValue* args, PrefType type) {
   SetPref(pref_name, value, metric);
 }
 
-void CoreOptionsHandler::HandleClearPref(const ListValue* args) {
+void CoreOptionsHandler::HandleClearPref(const base::ListValue* args) {
   DCHECK_GT(static_cast<int>(args->GetSize()), 0);
 
   std::string pref_name;
@@ -558,10 +584,23 @@ void CoreOptionsHandler::HandleClearPref(const ListValue* args) {
   ClearPref(pref_name, metric);
 }
 
-void CoreOptionsHandler::HandleUserMetricsAction(const ListValue* args) {
-  std::string metric = UTF16ToUTF8(ExtractStringValue(args));
+void CoreOptionsHandler::HandleUserMetricsAction(const base::ListValue* args) {
+  std::string metric = base::UTF16ToUTF8(ExtractStringValue(args));
   if (!metric.empty())
     content::RecordComputedAction(metric);
+}
+
+void CoreOptionsHandler::HandleDisableExtension(const base::ListValue* args) {
+  std::string extension_id;
+  if (args->GetString(0, &extension_id)) {
+    ExtensionService* extension_service = extensions::ExtensionSystem::Get(
+        Profile::FromWebUI(web_ui()))->extension_service();
+    DCHECK(extension_service);
+    extension_service->DisableExtension(
+        extension_id, extensions::Extension::DISABLE_USER_ACTION);
+  } else {
+    NOTREACHED();
+  }
 }
 
 void CoreOptionsHandler::UpdateClearPluginLSOData() {

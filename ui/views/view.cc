@@ -16,12 +16,14 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "third_party/skia/include/core/SkRect.h"
-#include "ui/base/accessibility/accessibility_types.h"
+#include "ui/accessibility/ax_enums.h"
+#include "ui/base/cursor/cursor.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/ui_base_switches_util.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_animator.h"
+#include "ui/events/event_target_iterator.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/interpolated_transform.h"
 #include "ui/gfx/path.h"
@@ -35,8 +37,10 @@
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/accessibility/native_view_accessibility.h"
 #include "ui/views/background.h"
+#include "ui/views/border.h"
 #include "ui/views/context_menu_controller.h"
 #include "ui/views/drag_controller.h"
+#include "ui/views/focus/view_storage.h"
 #include "ui/views/layout/layout_manager.h"
 #include "ui/views/rect_based_targeting_utils.h"
 #include "ui/views/views_delegate.h"
@@ -45,29 +49,22 @@
 #include "ui/views/widget/tooltip_manager.h"
 #include "ui/views/widget/widget.h"
 
-#if defined(USE_AURA)
-#include "ui/base/cursor/cursor.h"
-#endif
-
 #if defined(OS_WIN)
 #include "base/win/scoped_gdi_object.h"
 #endif
 
 namespace {
 
-// Whether to use accelerated compositing when necessary (e.g. when a view has a
-// transformation).
-#if defined(USE_AURA)
-bool use_acceleration_when_possible = true;
-#else
-bool use_acceleration_when_possible = false;
-#endif
-
 #if defined(OS_WIN)
 const bool kContextMenuOnMousePress = false;
 #else
 const bool kContextMenuOnMousePress = true;
 #endif
+
+// The minimum percentage of a view's area that needs to be covered by a rect
+// representing a touch region in order for that view to be considered by the
+// rect-based targeting algorithm.
+static const float kRectTargetOverlap = 0.6f;
 
 // Returns the top view in |view|'s hierarchy.
 const views::View* GetHierarchyRoot(const views::View* view) {
@@ -155,7 +152,6 @@ View::View()
       registered_for_visible_bounds_notification_(false),
       clip_insets_(0, 0, 0, 0),
       needs_layout_(true),
-      focus_border_(FocusBorder::CreateDashedFocusBorder()),
       flip_canvas_on_paint_for_rtl_ui_(false),
       paint_to_layer_(false),
       accelerator_focus_manager_(NULL),
@@ -174,6 +170,8 @@ View::View()
 View::~View() {
   if (parent_)
     parent_->RemoveChildView(this);
+
+  ViewStorage::GetInstance()->ViewRemoved(this);
 
   for (Views::const_iterator i(children_.begin()); i != children_.end(); ++i) {
     (*i)->parent_ = NULL;
@@ -240,13 +238,14 @@ void View::AddChildViewAt(View* view, int index) {
     const ui::NativeTheme* new_theme = widget->GetNativeTheme();
     if (new_theme != old_theme)
       PropagateNativeThemeChanged(new_theme);
+    if (view->visible())
+      view->SchedulePaint();
   }
 
   if (layout_manager_.get())
     layout_manager_->ViewAdded(this, view);
 
-  if (use_acceleration_when_possible)
-    ReorderLayers();
+  ReorderLayers();
 
   // Make sure the visibility of the child layers are correct.
   // If any of the parent View is hidden, then the layers of the subtree
@@ -280,8 +279,7 @@ void View::ReorderChildView(View* view, int index) {
   InitFocusSiblings(view, index);
   children_.insert(children_.begin() + index, view);
 
-  if (use_acceleration_when_possible)
-    ReorderLayers();
+  ReorderLayers();
 }
 
 void View::RemoveChildView(View* view) {
@@ -318,7 +316,6 @@ void View::SetBoundsRect(const gfx::Rect& bounds) {
     if (needs_layout_) {
       needs_layout_ = false;
       Layout();
-      SchedulePaint();
     }
     return;
   }
@@ -511,16 +508,6 @@ void View::SetPaintToLayer(bool paint_to_layer) {
   }
 }
 
-ui::Layer* View::RecreateLayer() {
-  ui::Layer* layer = AcquireLayer();
-  if (!layer)
-    return NULL;
-
-  CreateLayer();
-  layer_->set_scale_content(layer->scale_content());
-  return layer;
-}
-
 // RTL positioning -------------------------------------------------------------
 
 gfx::Rect View::GetMirroredBounds() const {
@@ -601,12 +588,17 @@ const char* View::GetClassName() const {
   return kViewClassName;
 }
 
-View* View::GetAncestorWithClassName(const std::string& name) {
-  for (View* view = this; view; view = view->parent_) {
+const View* View::GetAncestorWithClassName(const std::string& name) const {
+  for (const View* view = this; view; view = view->parent_) {
     if (!strcmp(view->GetClassName(), name.c_str()))
       return view;
   }
   return NULL;
+}
+
+View* View::GetAncestorWithClassName(const std::string& name) {
+  return const_cast<View*>(const_cast<const View*>(this)->
+      GetAncestorWithClassName(name));
 }
 
 const View* View::GetViewByID(int id) const {
@@ -659,52 +651,38 @@ View* View::GetSelectedViewForGroup(int group) {
 void View::ConvertPointToTarget(const View* source,
                                 const View* target,
                                 gfx::Point* point) {
+  DCHECK(source);
+  DCHECK(target);
   if (source == target)
     return;
 
-  // |source| can be NULL.
   const View* root = GetHierarchyRoot(target);
-  if (source) {
-    CHECK_EQ(GetHierarchyRoot(source), root);
+  CHECK_EQ(GetHierarchyRoot(source), root);
 
-    if (source != root)
-      source->ConvertPointForAncestor(root, point);
-  }
+  if (source != root)
+    source->ConvertPointForAncestor(root, point);
 
   if (target != root)
     target->ConvertPointFromAncestor(root, point);
-
-  // API defines NULL |source| as returning the point in screen coordinates.
-  if (!source) {
-    *point -=
-        root->GetWidget()->GetClientAreaBoundsInScreen().OffsetFromOrigin();
-  }
 }
 
 // static
 void View::ConvertRectToTarget(const View* source,
                                const View* target,
                                gfx::RectF* rect) {
+  DCHECK(source);
+  DCHECK(target);
   if (source == target)
     return;
 
-  // |source| can be NULL.
   const View* root = GetHierarchyRoot(target);
-  if (source) {
-    CHECK_EQ(GetHierarchyRoot(source), root);
+  CHECK_EQ(GetHierarchyRoot(source), root);
 
-    if (source != root)
-      source->ConvertRectForAncestor(root, rect);
-  }
+  if (source != root)
+    source->ConvertRectForAncestor(root, rect);
 
   if (target != root)
     target->ConvertRectFromAncestor(root, rect);
-
-  // API defines NULL |source| as returning the point in screen coordinates.
-  if (!source) {
-    rect->set_origin(rect->origin() -
-        root->GetWidget()->GetClientAreaBoundsInScreen().OffsetFromOrigin());
-  }
 }
 
 // static
@@ -798,7 +776,8 @@ void View::Paint(gfx::Canvas* canvas) {
   clip_rect.Inset(clip_insets_);
   if (parent_)
     clip_rect.set_x(parent_->GetMirroredXForRect(clip_rect));
-  if (!canvas->ClipRect(clip_rect))
+  canvas->ClipRect(clip_rect);
+  if (canvas->IsClipEmpty())
     return;
 
   // Non-empty clip, translate the graphics such that 0,0 corresponds to
@@ -808,6 +787,12 @@ void View::Paint(gfx::Canvas* canvas) {
 
   PaintCommon(canvas);
 }
+
+void View::set_background(Background* b) {
+  background_.reset(b);
+}
+
+void View::SetBorder(scoped_ptr<Border> b) { border_ = b.Pass(); }
 
 ui::ThemeProvider* View::GetThemeProvider() const {
   const Widget* widget = GetWidget();
@@ -819,34 +804,81 @@ const ui::NativeTheme* View::GetNativeTheme() const {
   return widget ? widget->GetNativeTheme() : ui::NativeTheme::instance();
 }
 
-// Accelerated Painting --------------------------------------------------------
-
-// static
-void View::set_use_acceleration_when_possible(bool use) {
-  use_acceleration_when_possible = use;
-}
-
-// static
-bool View::get_use_acceleration_when_possible() {
-  return use_acceleration_when_possible;
-}
-
 // Input -----------------------------------------------------------------------
 
 View* View::GetEventHandlerForPoint(const gfx::Point& point) {
-  // Walk the child Views recursively looking for the View that most
-  // tightly encloses the specified point.
+  return GetEventHandlerForRect(gfx::Rect(point, gfx::Size(1, 1)));
+}
+
+View* View::GetEventHandlerForRect(const gfx::Rect& rect) {
+  // |rect_view| represents the current best candidate to return
+  // if rect-based targeting (i.e., fuzzing) is used.
+  // |rect_view_distance| is used to keep track of the distance
+  // between the center point of |rect_view| and the center
+  // point of |rect|.
+  View* rect_view = NULL;
+  int rect_view_distance = INT_MAX;
+
+  // |point_view| represents the view that would have been returned
+  // from this function call if point-based targeting were used.
+  View* point_view = NULL;
+
   for (int i = child_count() - 1; i >= 0; --i) {
     View* child = child_at(i);
+
+    // Ignore any children which are invisible or do not intersect |rect|.
     if (!child->visible())
       continue;
+    gfx::RectF rect_in_child_coords_f(rect);
+    ConvertRectToTarget(this, child, &rect_in_child_coords_f);
+    gfx::Rect rect_in_child_coords = gfx::ToEnclosingRect(
+        rect_in_child_coords_f);
+    if (!child->HitTestRect(rect_in_child_coords))
+      continue;
 
-    gfx::Point point_in_child_coords(point);
-    ConvertPointToTarget(this, child, &point_in_child_coords);
-    if (child->HitTestPoint(point_in_child_coords))
-      return child->GetEventHandlerForPoint(point_in_child_coords);
+    View* cur_view = child->GetEventHandlerForRect(rect_in_child_coords);
+
+    if (views::UsePointBasedTargeting(rect))
+      return cur_view;
+
+    gfx::RectF cur_view_bounds_f(cur_view->GetLocalBounds());
+    ConvertRectToTarget(cur_view, this, &cur_view_bounds_f);
+    gfx::Rect cur_view_bounds = gfx::ToEnclosingRect(
+        cur_view_bounds_f);
+    if (views::PercentCoveredBy(cur_view_bounds, rect) >= kRectTargetOverlap) {
+      // |cur_view| is a suitable candidate for rect-based targeting.
+      // Check to see if it is the closest suitable candidate so far.
+      gfx::Point touch_center(rect.CenterPoint());
+      int cur_dist = views::DistanceSquaredFromCenterToPoint(touch_center,
+                                                             cur_view_bounds);
+      if (!rect_view || cur_dist < rect_view_distance) {
+        rect_view = cur_view;
+        rect_view_distance = cur_dist;
+      }
+    } else if (!rect_view && !point_view) {
+      // Rect-based targeting has not yielded any candidates so far. Check
+      // if point-based targeting would have selected |cur_view|.
+      gfx::Point point_in_child_coords(rect_in_child_coords.CenterPoint());
+      if (child->HitTestPoint(point_in_child_coords))
+        point_view = child->GetEventHandlerForPoint(point_in_child_coords);
+    }
   }
-  return this;
+
+  if (views::UsePointBasedTargeting(rect) || (!rect_view && !point_view))
+    return this;
+
+  // If |this| is a suitable candidate for rect-based targeting, check to
+  // see if it is closer than the current best suitable candidate so far.
+  gfx::Rect local_bounds(GetLocalBounds());
+  if (views::PercentCoveredBy(local_bounds, rect) >= kRectTargetOverlap) {
+    gfx::Point touch_center(rect.CenterPoint());
+    int cur_dist = views::DistanceSquaredFromCenterToPoint(touch_center,
+                                                           local_bounds);
+    if (!rect_view || cur_dist < rect_view_distance)
+      rect_view = this;
+  }
+
+  return rect_view ? rect_view : point_view;
 }
 
 View* View::GetTooltipHandlerForPoint(const gfx::Point& point) {
@@ -871,15 +903,10 @@ View* View::GetTooltipHandlerForPoint(const gfx::Point& point) {
 
 gfx::NativeCursor View::GetCursor(const ui::MouseEvent& event) {
 #if defined(OS_WIN)
-#if defined(USE_AURA)
   static ui::Cursor arrow;
   if (!arrow.platform())
     arrow.SetPlatformCursor(LoadCursor(NULL, IDC_ARROW));
   return arrow;
-#else
-  static HCURSOR arrow = LoadCursor(NULL, IDC_ARROW);
-  return arrow;
-#endif
 #else
   return gfx::kNullCursor;
 #endif
@@ -897,18 +924,11 @@ bool View::HitTestRect(const gfx::Rect& rect) const {
       if (!views::UsePointBasedTargeting(rect))
         source = HIT_TEST_SOURCE_TOUCH;
       GetHitTestMask(source, &mask);
-#if defined(USE_AURA)
-      // TODO: should we use this every where?
       SkRegion clip_region;
       clip_region.setRect(0, 0, width(), height());
       SkRegion mask_region;
       return mask_region.setPath(mask, clip_region) &&
              mask_region.intersects(RectToSkIRect(rect));
-#elif defined(OS_WIN)
-      base::win::ScopedRegion rgn(mask.CreateNativeRegion());
-      const RECT r(rect.ToRECT());
-      return RectInRegion(rgn, &r) != 0;
-#endif
     }
     // No mask, but inside our bounds.
     return true;
@@ -930,7 +950,7 @@ bool View::IsMouseHovered() {
 
   gfx::Point cursor_pos(gfx::Screen::GetScreenFor(
       GetWidget()->GetNativeView())->GetCursorScreenPoint());
-  ConvertPointToTarget(NULL, this, &cursor_pos);
+  ConvertPointFromScreen(this, &cursor_pos);
   return HitTestPoint(cursor_pos);
 }
 
@@ -1048,11 +1068,20 @@ const InputMethod* View::GetInputMethod() const {
 }
 
 bool View::CanAcceptEvent(const ui::Event& event) {
-  return event.dispatch_to_hidden_targets() || IsDrawn();
+  return IsDrawn();
 }
 
 ui::EventTarget* View::GetParentTarget() {
   return parent_;
+}
+
+scoped_ptr<ui::EventTargetIterator> View::GetChildIterator() const {
+  return scoped_ptr<ui::EventTargetIterator>(
+      new ui::EventTargetIteratorImpl<View>(children_));
+}
+
+ui::EventTargeter* View::GetEventTargeter() {
+  return NULL;
 }
 
 // Accelerators ----------------------------------------------------------------
@@ -1133,12 +1162,26 @@ void View::SetNextFocusableView(View* view) {
   next_focusable_view_ = view;
 }
 
+void View::SetFocusable(bool focusable) {
+  if (focusable_ == focusable)
+    return;
+
+  focusable_ = focusable;
+}
+
 bool View::IsFocusable() const {
   return focusable_ && enabled_ && IsDrawn();
 }
 
 bool View::IsAccessibilityFocusable() const {
   return (focusable_ || accessibility_focusable_) && enabled_ && IsDrawn();
+}
+
+void View::SetAccessibilityFocusable(bool accessibility_focusable) {
+  if (accessibility_focusable_ == accessibility_focusable)
+    return;
+
+  accessibility_focusable_ = accessibility_focusable;
 }
 
 FocusManager* View::GetFocusManager() {
@@ -1171,7 +1214,7 @@ FocusTraversable* View::GetPaneFocusTraversable() {
 
 // Tooltips --------------------------------------------------------------------
 
-bool View::GetTooltipText(const gfx::Point& p, string16* tooltip) const {
+bool View::GetTooltipText(const gfx::Point& p, base::string16* tooltip) const {
   return false;
 }
 
@@ -1245,12 +1288,12 @@ gfx::NativeViewAccessible View::GetNativeViewAccessible() {
 }
 
 void View::NotifyAccessibilityEvent(
-    ui::AccessibilityTypes::Event event_type,
+    ui::AXEvent event_type,
     bool send_native_event) {
   if (ViewsDelegate::views_delegate)
     ViewsDelegate::views_delegate->NotifyAccessibilityEvent(this, event_type);
 
-  if (send_native_event) {
+  if (send_native_event && GetWidget()) {
     if (!native_view_accessibility_)
       native_view_accessibility_ = NativeViewAccessibility::Create(this);
     if (native_view_accessibility_)
@@ -1331,7 +1374,6 @@ void View::PaintChildren(gfx::Canvas* canvas) {
 void View::OnPaint(gfx::Canvas* canvas) {
   TRACE_EVENT1("views", "View::OnPaint", "class", GetClassName());
   OnPaintBackground(canvas);
-  OnPaintFocusBorder(canvas);
   OnPaintBorder(canvas);
 }
 
@@ -1350,16 +1392,6 @@ void View::OnPaintBorder(gfx::Canvas* canvas) {
                  "width", canvas->sk_canvas()->getDevice()->width(),
                  "height", canvas->sk_canvas()->getDevice()->height());
     border_->Paint(*this, canvas);
-  }
-}
-
-void View::OnPaintFocusBorder(gfx::Canvas* canvas) {
-  if (focus_border_.get() &&
-      HasFocus() && (focusable() || IsAccessibilityFocusable())) {
-    TRACE_EVENT2("views", "views::OnPaintFocusBorder",
-                 "width", canvas->sk_canvas()->getDevice()->width(),
-                 "height", canvas->sk_canvas()->getDevice()->height());
-    focus_border_->Paint(*this, canvas);
   }
 }
 
@@ -1414,8 +1446,6 @@ void View::MoveLayerToParent(ui::Layer* parent_layer,
 }
 
 void View::UpdateLayerVisibility() {
-  if (!use_acceleration_when_possible)
-    return;
   bool visible = visible_;
   for (const View* v = parent_; visible && v && !v->layer(); v = v->parent_)
     visible = v->visible();
@@ -1492,7 +1522,7 @@ void View::ReorderChildLayers(ui::Layer* parent_layer) {
     // Iterate backwards through the children so that a child with a layer
     // which is further to the back is stacked above one which is further to
     // the front.
-    for (Views::const_reverse_iterator it(children_.rbegin());
+    for (Views::reverse_iterator it(children_.rbegin());
          it != children_.rend(); ++it) {
       (*it)->ReorderChildLayers(parent_layer);
     }
@@ -1527,19 +1557,17 @@ void View::OnFocus() {
   // TODO(beng): Investigate whether it's possible for us to move this to
   //             Focus().
   // Notify assistive technologies of the focus change.
-  NotifyAccessibilityEvent(ui::AccessibilityTypes::EVENT_FOCUS, true);
+  NotifyAccessibilityEvent(ui::AX_EVENT_FOCUS, true);
 }
 
 void View::OnBlur() {
 }
 
 void View::Focus() {
-  SchedulePaint();
   OnFocus();
 }
 
 void View::Blur() {
-  SchedulePaint();
   OnBlur();
 }
 
@@ -1752,6 +1780,7 @@ void View::DoRemoveChildView(View* view,
                              bool delete_removed_view,
                              View* new_parent) {
   DCHECK(view);
+
   const Views::iterator i(std::find(children_.begin(), children_.end(), view));
   scoped_ptr<View> view_to_be_deleted;
   if (i != children_.end()) {
@@ -1765,8 +1794,11 @@ void View::DoRemoveChildView(View* view,
         next_focusable->previous_focusable_view_ = prev_focusable;
     }
 
-    if (GetWidget())
+    if (GetWidget()) {
       UnregisterChildrenForVisibleBoundsNotification(view);
+      if (view->visible())
+        view->SchedulePaint();
+    }
     view->PropagateRemoveNotifications(this, new_parent);
     view->parent_ = NULL;
     view->UpdateLayerVisibility();
@@ -1830,11 +1862,9 @@ void View::ViewHierarchyChangedImpl(
     // Make sure the layers belonging to the subtree rooted at |child| get
     // removed from layers that do not belong in the same subtree.
     OrphanLayers();
-    if (use_acceleration_when_possible) {
-      Widget* widget = GetWidget();
-      if (widget)
-        widget->UpdateRootLayers();
-    }
+    Widget* widget = GetWidget();
+    if (widget)
+      widget->UpdateRootLayers();
   }
 
   ViewHierarchyChanged(details);
@@ -1867,28 +1897,18 @@ void View::BoundsChanged(const gfx::Rect& previous_bounds) {
         SCHEDULE_PAINT_SIZE_CHANGED);
   }
 
-  if (use_acceleration_when_possible) {
-    if (layer()) {
-      if (parent_) {
-        SetLayerBounds(GetLocalBounds() +
-                       gfx::Vector2d(GetMirroredX(), y()) +
-                       parent_->CalculateOffsetToAncestorWithLayer(NULL));
-      } else {
-        SetLayerBounds(bounds_);
-      }
-      // TODO(beng): this seems redundant with the SchedulePaint at the top of
-      //             this function. explore collapsing.
-      if (previous_bounds.size() != bounds_.size() &&
-          !layer()->layer_updated_externally()) {
-        // If our bounds have changed then we need to update the complete
-        // texture.
-        layer()->SchedulePaint(GetLocalBounds());
-      }
+  if (layer()) {
+    if (parent_) {
+      SetLayerBounds(GetLocalBounds() +
+                     gfx::Vector2d(GetMirroredX(), y()) +
+                     parent_->CalculateOffsetToAncestorWithLayer(NULL));
     } else {
-      // If our bounds have changed, then any descendant layer bounds may
-      // have changed. Update them accordingly.
-      UpdateChildLayerBounds(CalculateOffsetToAncestorWithLayer(NULL));
+      SetLayerBounds(bounds_);
     }
+  } else {
+    // If our bounds have changed, then any descendant layer bounds may have
+    // changed. Update them accordingly.
+    UpdateChildLayerBounds(CalculateOffsetToAncestorWithLayer(NULL));
   }
 
   OnBoundsChanged(previous_bounds);
@@ -2033,11 +2053,10 @@ void View::CreateLayer() {
   for (int i = 0, count = child_count(); i < count; ++i)
     child_at(i)->UpdateChildLayerVisibility(true);
 
-  layer_ = new ui::Layer();
-  layer_owner_.reset(layer_);
-  layer_->set_delegate(this);
+  SetLayer(new ui::Layer());
+  layer()->set_delegate(this);
 #if !defined(NDEBUG)
-  layer_->set_name(GetClassName());
+  layer()->set_name(GetClassName());
 #endif
 
   UpdateParentLayers();
@@ -2078,11 +2097,11 @@ void View::OrphanLayers() {
 }
 
 void View::ReparentLayer(const gfx::Vector2d& offset, ui::Layer* parent_layer) {
-  layer_->SetBounds(GetLocalBounds() + offset);
+  layer()->SetBounds(GetLocalBounds() + offset);
   DCHECK_NE(layer(), parent_layer);
   if (parent_layer)
     parent_layer->Add(layer());
-  layer_->SchedulePaint(GetLocalBounds());
+  layer()->SchedulePaint(GetLocalBounds());
   MoveLayerToParent(layer(), gfx::Point());
 }
 
@@ -2095,8 +2114,7 @@ void View::DestroyLayer() {
       new_parent->Add(children[i]);
   }
 
-  layer_ = NULL;
-  layer_owner_.reset();
+  LayerOwner::DestroyLayer();
 
   if (new_parent)
     ReorderLayers();

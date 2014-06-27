@@ -14,13 +14,14 @@
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/api/web_request/web_request_api.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_warning_set.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/renderer_host/web_cache_manager.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/runtime_data.h"
 #include "net/base/net_log.h"
 #include "net/cookies/cookie_util.h"
 #include "net/cookies/parsed_cookie.h"
@@ -213,7 +214,7 @@ net::NetLog::ParametersCallback CreateNetLogExtensionIdCallback(
 
 // Creates NetLog parameters to indicate that an extension modified a request.
 // Caller takes ownership of returned value.
-Value* NetLogModificationCallback(
+base::Value* NetLogModificationCallback(
     const EventResponseDelta* delta,
     net::NetLog::LogLevel log_level) {
   base::DictionaryValue* dict = new base::DictionaryValue();
@@ -323,11 +324,13 @@ EventResponseDelta* CalculateOnHeadersReceivedDelta(
     const std::string& extension_id,
     const base::Time& extension_install_time,
     bool cancel,
+    const GURL& new_url,
     const net::HttpResponseHeaders* old_response_headers,
     ResponseHeaders* new_response_headers) {
   EventResponseDelta* result =
       new EventResponseDelta(extension_id, extension_install_time);
   result->cancel = cancel;
+  result->new_url = new_url;
 
   if (!new_response_headers)
     return result;
@@ -402,14 +405,14 @@ void MergeCancelOfResponses(
   }
 }
 
-// Helper function for MergeOnBeforeRequestResponses() that allows ignoring
+// Helper function for MergeRedirectUrlOfResponses() that allows ignoring
 // all redirects but those to data:// urls and about:blank. This is important
 // to treat these URLs as "cancel urls", i.e. URLs that extensions redirect
 // to if they want to express that they want to cancel a request. This reduces
 // the number of conflicts that we need to flag, as canceling is considered
 // a higher precedence operation that redirects.
 // Returns whether a redirect occurred.
-static bool MergeOnBeforeRequestResponsesHelper(
+static bool MergeRedirectUrlOfResponsesHelper(
     const EventResponseDeltas& deltas,
     GURL* new_url,
     extensions::ExtensionWarningSet* conflicting_extensions,
@@ -424,7 +427,7 @@ static bool MergeOnBeforeRequestResponsesHelper(
     if ((*delta)->new_url.is_empty())
       continue;
     if (consider_only_cancel_scheme_urls &&
-        !(*delta)->new_url.SchemeIs(chrome::kDataScheme) &&
+        !(*delta)->new_url.SchemeIs(content::kDataScheme) &&
         (*delta)->new_url.spec() != "about:blank") {
       continue;
     }
@@ -451,7 +454,7 @@ static bool MergeOnBeforeRequestResponsesHelper(
   return redirected;
 }
 
-void MergeOnBeforeRequestResponses(
+void MergeRedirectUrlOfResponses(
     const EventResponseDeltas& deltas,
     GURL* new_url,
     extensions::ExtensionWarningSet* conflicting_extensions,
@@ -459,7 +462,7 @@ void MergeOnBeforeRequestResponses(
 
   // First handle only redirects to data:// URLs and about:blank. These are a
   // special case as they represent a way of cancelling a request.
-  if (MergeOnBeforeRequestResponsesHelper(
+  if (MergeRedirectUrlOfResponsesHelper(
           deltas, new_url, conflicting_extensions, net_log, true)) {
     // If any extension cancelled a request by redirecting to a data:// URL or
     // about:blank, we don't consider the other redirects.
@@ -467,8 +470,16 @@ void MergeOnBeforeRequestResponses(
   }
 
   // Handle all other redirects.
-  MergeOnBeforeRequestResponsesHelper(
+  MergeRedirectUrlOfResponsesHelper(
       deltas, new_url, conflicting_extensions, net_log, false);
+}
+
+void MergeOnBeforeRequestResponses(
+    const EventResponseDeltas& deltas,
+    GURL* new_url,
+    extensions::ExtensionWarningSet* conflicting_extensions,
+    const net::BoundNetLog* net_log) {
+  MergeRedirectUrlOfResponses(deltas, new_url, conflicting_extensions, net_log);
 }
 
 // Assumes that |header_value| is the cookie header value of a HTTP Request
@@ -1099,6 +1110,7 @@ void MergeOnHeadersReceivedResponses(
     const EventResponseDeltas& deltas,
     const net::HttpResponseHeaders* original_response_headers,
     scoped_refptr<net::HttpResponseHeaders>* override_response_headers,
+    GURL* allowed_unsafe_redirect_url,
     extensions::ExtensionWarningSet* conflicting_extensions,
     const net::BoundNetLog* net_log) {
   EventResponseDeltas::const_iterator delta;
@@ -1180,6 +1192,23 @@ void MergeOnHeadersReceivedResponses(
 
   MergeCookiesInOnHeadersReceivedResponses(deltas, original_response_headers,
       override_response_headers, conflicting_extensions, net_log);
+
+  GURL new_url;
+  MergeRedirectUrlOfResponses(
+      deltas, &new_url, conflicting_extensions, net_log);
+  if (new_url.is_valid()) {
+    // Only create a copy if we really want to modify the response headers.
+    if (override_response_headers->get() == NULL) {
+      *override_response_headers = new net::HttpResponseHeaders(
+          original_response_headers->raw_headers());
+    }
+    (*override_response_headers)->ReplaceStatusLine("HTTP/1.1 302 Found");
+    (*override_response_headers)->RemoveHeader("location");
+    (*override_response_headers)->AddHeader("Location: " + new_url.spec());
+    // Explicitly mark the URL as safe for redirection, to prevent the request
+    // from being blocked because of net::ERR_UNSAFE_REDIRECT.
+    *allowed_unsafe_redirect_url = new_url;
+  }
 }
 
 bool MergeOnAuthRequiredResponses(
@@ -1264,9 +1293,11 @@ void NotifyWebRequestAPIUsed(
   if (!g_browser_process->profile_manager()->IsValidProfile(profile))
     return;
 
-  if (profile->GetExtensionService()->HasUsedWebRequest(extension.get()))
+  extensions::RuntimeData* runtime_data =
+      extensions::ExtensionSystem::Get(profile)->runtime_data();
+  if (runtime_data->HasUsedWebRequest(extension.get()))
     return;
-  profile->GetExtensionService()->SetHasUsedWebRequest(extension.get(), true);
+  runtime_data->SetHasUsedWebRequest(extension.get(), true);
 
   content::BrowserContext* browser_context = profile;
   for (content::RenderProcessHost::iterator it =
@@ -1276,6 +1307,17 @@ void NotifyWebRequestAPIUsed(
     if (host->GetBrowserContext() == browser_context)
       SendExtensionWebRequestStatusToHost(host);
   }
+}
+
+bool IsValidHeaderName(const std::string& name) {
+  // Check whether the header name is RFC 2616-compliant.
+  return net::HttpUtil::IsToken(name);
+}
+
+bool IsValidHeaderValue(const std::string& value) {
+  // Just a sanity check: disallow NUL and CRLF.
+  return value.find('\0') == std::string::npos &&
+      value.find("\r\n") == std::string::npos;
 }
 
 }  // namespace extension_web_request_api_helpers

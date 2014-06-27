@@ -22,13 +22,47 @@
 #include "third_party/WebKit/public/web/WebPluginContainer.h"
 #include "third_party/WebKit/public/web/WebSocket.h"
 
-using WebKit::WebArrayBuffer;
-using WebKit::WebDocument;
-using WebKit::WebString;
-using WebKit::WebSocket;
-using WebKit::WebURL;
+using blink::WebArrayBuffer;
+using blink::WebDocument;
+using blink::WebString;
+using blink::WebSocket;
+using blink::WebURL;
 
 namespace content {
+
+#define COMPILE_ASSERT_MATCHING_ENUM(webkit_name, np_name) \
+    COMPILE_ASSERT(static_cast<int>(WebSocket::webkit_name) \
+                       == static_cast<int>(np_name), \
+                   mismatching_enums)
+
+COMPILE_ASSERT_MATCHING_ENUM(CloseEventCodeNormalClosure,
+                             PP_WEBSOCKETSTATUSCODE_NORMAL_CLOSURE);
+COMPILE_ASSERT_MATCHING_ENUM(CloseEventCodeGoingAway,
+                             PP_WEBSOCKETSTATUSCODE_GOING_AWAY);
+COMPILE_ASSERT_MATCHING_ENUM(CloseEventCodeProtocolError,
+                             PP_WEBSOCKETSTATUSCODE_PROTOCOL_ERROR);
+COMPILE_ASSERT_MATCHING_ENUM(CloseEventCodeUnsupportedData,
+                             PP_WEBSOCKETSTATUSCODE_UNSUPPORTED_DATA);
+COMPILE_ASSERT_MATCHING_ENUM(CloseEventCodeNoStatusRcvd,
+                             PP_WEBSOCKETSTATUSCODE_NO_STATUS_RECEIVED);
+COMPILE_ASSERT_MATCHING_ENUM(CloseEventCodeAbnormalClosure,
+                             PP_WEBSOCKETSTATUSCODE_ABNORMAL_CLOSURE);
+COMPILE_ASSERT_MATCHING_ENUM(CloseEventCodeInvalidFramePayloadData,
+                             PP_WEBSOCKETSTATUSCODE_INVALID_FRAME_PAYLOAD_DATA);
+COMPILE_ASSERT_MATCHING_ENUM(CloseEventCodePolicyViolation,
+                             PP_WEBSOCKETSTATUSCODE_POLICY_VIOLATION);
+COMPILE_ASSERT_MATCHING_ENUM(CloseEventCodeMessageTooBig,
+                             PP_WEBSOCKETSTATUSCODE_MESSAGE_TOO_BIG);
+COMPILE_ASSERT_MATCHING_ENUM(CloseEventCodeMandatoryExt,
+                             PP_WEBSOCKETSTATUSCODE_MANDATORY_EXTENSION);
+COMPILE_ASSERT_MATCHING_ENUM(CloseEventCodeInternalError,
+                             PP_WEBSOCKETSTATUSCODE_INTERNAL_SERVER_ERROR);
+COMPILE_ASSERT_MATCHING_ENUM(CloseEventCodeTLSHandshake,
+                             PP_WEBSOCKETSTATUSCODE_TLS_HANDSHAKE);
+COMPILE_ASSERT_MATCHING_ENUM(CloseEventCodeMinimumUserDefined,
+                             PP_WEBSOCKETSTATUSCODE_USER_REGISTERED_MIN);
+COMPILE_ASSERT_MATCHING_ENUM(CloseEventCodeMaximumUserDefined,
+                             PP_WEBSOCKETSTATUSCODE_USER_PRIVATE_MAX);
 
 PepperWebSocketHost::PepperWebSocketHost(
     RendererPpapiHost* host,
@@ -77,7 +111,7 @@ void PepperWebSocketHost::didConnect() {
                         protocol));
 }
 
-void PepperWebSocketHost::didReceiveMessage(const WebKit::WebString& message) {
+void PepperWebSocketHost::didReceiveMessage(const blink::WebString& message) {
   // Dispose packets after receiving an error.
   if (error_was_received_)
     return;
@@ -90,7 +124,7 @@ void PepperWebSocketHost::didReceiveMessage(const WebKit::WebString& message) {
 }
 
 void PepperWebSocketHost::didReceiveArrayBuffer(
-    const WebKit::WebArrayBuffer& binaryData) {
+    const blink::WebArrayBuffer& binaryData) {
   // Dispose packets after receiving an error.
   if (error_was_received_)
     return;
@@ -135,7 +169,7 @@ void PepperWebSocketHost::didStartClosingHandshake() {
 void PepperWebSocketHost::didClose(unsigned long unhandled_buffered_amount,
                                    ClosingHandshakeCompletionStatus status,
                                    unsigned short code,
-                                   const WebKit::WebString& reason) {
+                                   const blink::WebString& reason) {
   if (connecting_) {
     connecting_ = false;
     connect_reply_.params.set_result(PP_ERROR_FAILED);
@@ -224,8 +258,8 @@ int32_t PepperWebSocketHost::OnHostMsgConnect(
   // Convert protocols to WebString.
   WebString web_protocols = WebString::fromUTF8(protocol_string);
 
-  // Create WebKit::WebSocket object and connect.
-  WebKit::WebPluginContainer* container =
+  // Create blink::WebSocket object and connect.
+  blink::WebPluginContainer* container =
       renderer_ppapi_host_->GetContainerForInstance(pp_instance());
   if (!container)
     return PP_ERROR_BADARGUMENT;
@@ -253,8 +287,18 @@ int32_t PepperWebSocketHost::OnHostMsgClose(
     return PP_ERROR_FAILED;
   close_reply_ = context->MakeReplyMessageContext();
   initiating_close_ = true;
+
+  blink::WebSocket::CloseEventCode event_code =
+    static_cast<blink::WebSocket::CloseEventCode>(code);
+  if (code == PP_WEBSOCKETSTATUSCODE_NOT_SPECIFIED) {
+    // PP_WEBSOCKETSTATUSCODE_NOT_SPECIFIED and CloseEventCodeNotSpecified are
+    // assigned to different values. A conversion is needed if
+    // PP_WEBSOCKETSTATUSCODE_NOT_SPECIFIED is specified.
+    event_code = blink::WebSocket::CloseEventCodeNotSpecified;
+  }
+
   WebString web_reason = WebString::fromUTF8(reason);
-  websocket_->close(code, web_reason);
+  websocket_->close(event_code, web_reason);
   return PP_OK_COMPLETIONPENDING;
 }
 

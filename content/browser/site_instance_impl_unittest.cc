@@ -12,7 +12,6 @@
 #include "content/browser/frame_host/navigation_entry_impl.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
-#include "content/browser/renderer_host/test_render_view_host.h"
 #include "content/browser/site_instance_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/browser/webui/web_ui_controller_factory_registry.h"
@@ -26,6 +25,7 @@
 #include "content/public/test/test_browser_thread.h"
 #include "content/test/test_content_browser_client.h"
 #include "content/test/test_content_client.h"
+#include "content/test/test_render_view_host.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/url_util.h"
 
@@ -93,7 +93,9 @@ class SiteInstanceTest : public testing::Test {
   virtual void SetUp() {
     old_browser_client_ = SetBrowserClientForTesting(&browser_client_);
     url_util::AddStandardScheme(kPrivilegedScheme);
-    url_util::AddStandardScheme(chrome::kChromeUIScheme);
+    url_util::AddStandardScheme(kChromeUIScheme);
+
+    SiteInstanceImpl::set_render_process_host_factory(&rph_factory_);
   }
 
   virtual void TearDown() {
@@ -135,6 +137,7 @@ class SiteInstanceTest : public testing::Test {
 
   SiteInstanceTestBrowserClient browser_client_;
   ContentBrowserClient* old_browser_client_;
+  MockRenderProcessHostFactory rph_factory_;
 };
 
 // Subclass of BrowsingInstance that updates a counter when deleted and
@@ -201,7 +204,8 @@ TEST_F(SiteInstanceTest, SiteInstanceDestructor) {
   EXPECT_EQ(0, site_delete_counter);
 
   NavigationEntryImpl* e1 = new NavigationEntryImpl(
-      instance, 0, url, Referrer(), string16(), PAGE_TRANSITION_LINK, false);
+      instance, 0, url, Referrer(), base::string16(), PAGE_TRANSITION_LINK,
+      false);
 
   // Redundantly setting e1's SiteInstance shouldn't affect the ref count.
   e1->set_site_instance(instance);
@@ -209,7 +213,8 @@ TEST_F(SiteInstanceTest, SiteInstanceDestructor) {
 
   // Add a second reference
   NavigationEntryImpl* e2 = new NavigationEntryImpl(
-      instance, 0, url, Referrer(), string16(), PAGE_TRANSITION_LINK, false);
+      instance, 0, url, Referrer(), base::string16(), PAGE_TRANSITION_LINK,
+      false);
 
   // Now delete both entries and be sure the SiteInstance goes away.
   delete e1;
@@ -261,7 +266,8 @@ TEST_F(SiteInstanceTest, CloneNavigationEntry) {
                                                &browsing_delete_counter);
 
   NavigationEntryImpl* e1 = new NavigationEntryImpl(
-      instance1, 0, url, Referrer(), string16(), PAGE_TRANSITION_LINK, false);
+      instance1, 0, url, Referrer(), base::string16(), PAGE_TRANSITION_LINK,
+      false);
   // Clone the entry
   NavigationEntryImpl* e2 = new NavigationEntryImpl(*e1);
 
@@ -551,8 +557,6 @@ static SiteInstanceImpl* CreateSiteInstance(BrowserContext* browser_context,
 // Test to ensure that pages that require certain privileges are grouped
 // in processes with similar pages.
 TEST_F(SiteInstanceTest, ProcessSharingByType) {
-  MockRenderProcessHostFactory rph_factory;
-  SiteInstanceImpl::set_render_process_host_factory(&rph_factory);
   ChildProcessSecurityPolicyImpl* policy =
       ChildProcessSecurityPolicyImpl::GetInstance();
 
@@ -579,13 +583,12 @@ TEST_F(SiteInstanceTest, ProcessSharingByType) {
 
   // Create some WebUI instances and make sure they share a process.
   scoped_refptr<SiteInstanceImpl> webui1_instance(CreateSiteInstance(
-      browser_context.get(),
-      GURL(chrome::kChromeUIScheme + std::string("://newtab"))));
+      browser_context.get(), GURL(kChromeUIScheme + std::string("://newtab"))));
   policy->GrantWebUIBindings(webui1_instance->GetProcess()->GetID());
 
-  scoped_refptr<SiteInstanceImpl> webui2_instance(CreateSiteInstance(
-      browser_context.get(),
-      GURL(chrome::kChromeUIScheme + std::string("://history"))));
+  scoped_refptr<SiteInstanceImpl> webui2_instance(
+      CreateSiteInstance(browser_context.get(),
+                         GURL(kChromeUIScheme + std::string("://history"))));
 
   scoped_ptr<RenderProcessHost> dom_host(webui1_instance->GetProcess());
   EXPECT_EQ(webui1_instance->GetProcess(), webui2_instance->GetProcess());

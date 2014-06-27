@@ -275,8 +275,7 @@ scoped_ptr<base::DictionaryValue> PrivetHttpServer::ProcessCapabilities(
     *status_code = net::HTTP_NOT_FOUND;
     return scoped_ptr<base::DictionaryValue>();
   }
-
-  return delegate_->GetCapabilities();
+  return make_scoped_ptr(delegate_->GetCapabilities().DeepCopy());
 }
 
 scoped_ptr<base::DictionaryValue> PrivetHttpServer::ProcessCreateJob(
@@ -303,7 +302,7 @@ scoped_ptr<base::DictionaryValue> PrivetHttpServer::ProcessCreateJob(
   *status_code = net::HTTP_OK;
   switch (result) {
     case LocalPrintJob::CREATE_SUCCESS:
-      response.reset(new DictionaryValue);
+      response.reset(new base::DictionaryValue);
       response->SetString("job_id", job_id);
       response->SetInteger("expires_in", expires_in);
       return response.Pass();
@@ -355,7 +354,7 @@ scoped_ptr<base::DictionaryValue> PrivetHttpServer::ProcessSubmitDoc(
 
   // Create response
   *status_code = net::HTTP_OK;
-  scoped_ptr<base::DictionaryValue> response(new DictionaryValue);
+  scoped_ptr<base::DictionaryValue> response(new base::DictionaryValue);
   switch (status) {
     case LocalPrintJob::SAVE_SUCCESS:
       response->SetString("job_id", job_id);
@@ -423,7 +422,7 @@ scoped_ptr<base::DictionaryValue> PrivetHttpServer::ProcessRegister(
       !user.empty();
 
   RegistrationErrorStatus status = REG_ERROR_INVALID_PARAMS;
-  scoped_ptr<base::DictionaryValue> response(new DictionaryValue);
+  scoped_ptr<base::DictionaryValue> response(new base::DictionaryValue);
 
   if (params_present) {
     response->SetString("action", action);

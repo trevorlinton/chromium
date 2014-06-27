@@ -4,19 +4,17 @@
 
 #include "chromeos/dbus/nfc_tag_client.h"
 
-#include <set>
-
 #include "base/bind.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/strings/stringprintf.h"
-#include "chromeos/dbus/fake_nfc_tag_client.h"
 #include "chromeos/dbus/nfc_adapter_client.h"
 #include "dbus/bus.h"
 #include "dbus/message.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 using chromeos::nfc_client_helpers::DBusObjectMap;
+using chromeos::nfc_client_helpers::ObjectProxyTree;
 
 namespace chromeos {
 
@@ -38,7 +36,7 @@ NfcTagClient::Properties::~Properties() {
 // The NfcTagClient implementation used in production.
 class NfcTagClientImpl : public NfcTagClient,
                          public NfcAdapterClient::Observer,
-                         public nfc_client_helpers::DBusObjectMap::Delegate {
+                         public DBusObjectMap::Delegate {
  public:
   explicit NfcTagClientImpl(NfcAdapterClient* adapter_client)
       : bus_(NULL),
@@ -48,6 +46,7 @@ class NfcTagClientImpl : public NfcTagClient,
   }
 
   virtual ~NfcTagClientImpl() {
+    DCHECK(adapter_client_);
     adapter_client_->RemoveObserver(this);
   }
 
@@ -64,19 +63,30 @@ class NfcTagClientImpl : public NfcTagClient,
   }
 
   // NfcTagClient override.
-  virtual Properties* GetProperties(const dbus::ObjectPath& object_path)
-      OVERRIDE {
+  virtual std::vector<dbus::ObjectPath> GetTagsForAdapter(
+      const dbus::ObjectPath& adapter_path) OVERRIDE {
+    DBusObjectMap* object_map =
+        adapters_to_object_maps_.GetObjectMap(adapter_path);
+    if (!object_map)
+      return std::vector<dbus::ObjectPath>();
+    return object_map->GetObjectPaths();
+  }
+
+  // NfcTagClient override.
+  virtual Properties* GetProperties(
+      const dbus::ObjectPath& object_path) OVERRIDE {
     return static_cast<Properties*>(
-        object_map_->GetObjectProperties(object_path));
+        adapters_to_object_maps_.FindObjectProperties(object_path));
   }
 
   // NfcTagClient override.
   virtual void Write(
       const dbus::ObjectPath& object_path,
-      const RecordAttributes& attributes,
+      const base::DictionaryValue& attributes,
       const base::Closure& callback,
       const nfc_client_helpers::ErrorCallback& error_callback) OVERRIDE {
-    dbus::ObjectProxy* object_proxy = object_map_->GetObjectProxy(object_path);
+    dbus::ObjectProxy* object_proxy =
+        adapters_to_object_maps_.FindObjectProxy(object_path);
     if (!object_proxy) {
       std::string error_message =
           base::StringPrintf("NFC tag with object path \"%s\" does not exist.",
@@ -102,11 +112,12 @@ class NfcTagClientImpl : public NfcTagClient,
     dbus::MessageWriter array_writer(NULL);
     dbus::MessageWriter dict_entry_writer(NULL);
     writer.OpenArray("{sv}", &array_writer);
-    for (RecordAttributes::const_iterator iter = attributes.begin();
-         iter != attributes.end(); ++iter) {
+    for (base::DictionaryValue::Iterator iter(attributes);
+         !iter.IsAtEnd(); iter.Advance()) {
       array_writer.OpenDictEntry(&dict_entry_writer);
-      dict_entry_writer.AppendString(iter->first);
-      dict_entry_writer.AppendVariantOfString(iter->second);
+      dict_entry_writer.AppendString(iter.key());
+      nfc_client_helpers::AppendValueDataAsVariant(&dict_entry_writer,
+                                                   iter.value());
       array_writer.CloseContainer(&dict_entry_writer);
     }
     writer.CloseContainer(&array_writer);
@@ -124,13 +135,31 @@ class NfcTagClientImpl : public NfcTagClient,
     VLOG(1) << "Creating NfcTagClientImpl";
     DCHECK(bus);
     bus_ = bus;
-    object_map_.reset(new nfc_client_helpers::DBusObjectMap(
-        nfc_tag::kNfcTagServiceName, this, bus));
     DCHECK(adapter_client_);
     adapter_client_->AddObserver(this);
   }
 
  private:
+  // NfcAdapterClient::Observer override.
+  virtual void AdapterAdded(const dbus::ObjectPath& object_path) OVERRIDE {
+    VLOG(1) << "Adapter added. Creating map for tag proxies belonging to "
+            << "adapter: " << object_path.value();
+    adapters_to_object_maps_.CreateObjectMap(
+        object_path, nfc_tag::kNfcTagServiceName, this, bus_);
+  }
+
+  // NfcAdapterClient::Observer override.
+  virtual void AdapterRemoved(const dbus::ObjectPath& object_path) OVERRIDE {
+    // Neard doesn't send out property changed signals for the tags that
+    // are removed when the adapter they belong to is removed. Clean up the
+    // object proxies for devices that are managed by the removed adapter.
+    // Note: DBusObjectMap guarantees that the Properties structure for the
+    // removed adapter will be valid before this method returns.
+    VLOG(1) << "Adapter removed. Cleaning up tag proxies belonging to "
+            << "adapter: " << object_path.value();
+    adapters_to_object_maps_.RemoveObjectMap(object_path);
+  }
+
   // NfcAdapterClient::Observer override.
   virtual void AdapterPropertyChanged(
       const dbus::ObjectPath& object_path,
@@ -139,38 +168,51 @@ class NfcTagClientImpl : public NfcTagClient,
     DCHECK(adapter_client_);
     NfcAdapterClient::Properties *adapter_properties =
         adapter_client_->GetProperties(object_path);
+    DCHECK(adapter_properties);
+    if (!adapter_properties) {
+      LOG(ERROR) << "No property structure found for adapter: "
+                 << object_path.value();
+      return;
+    }
 
     // Ignore changes to properties other than "Tags".
     if (property_name != adapter_properties->tags.name())
       return;
 
-    VLOG(1) << "NFC tags changed.";
-
     // Update the known tags.
+    VLOG(1) << "NFC tags changed.";
     const std::vector<dbus::ObjectPath>& received_tags =
         adapter_properties->tags.value();
-    object_map_->UpdateObjects(received_tags);
+    DBusObjectMap* object_map =
+        adapters_to_object_maps_.GetObjectMap(object_path);
+    DCHECK(object_map);
+    object_map->UpdateObjects(received_tags);
   }
 
   // nfc_client_helpers::DBusObjectMap::Delegate override.
   virtual NfcPropertySet* CreateProperties(
       dbus::ObjectProxy* object_proxy) OVERRIDE {
-    return new Properties(
+    Properties* properties = new Properties(
         object_proxy,
         base::Bind(&NfcTagClientImpl::OnPropertyChanged,
                    weak_ptr_factory_.GetWeakPtr(),
                    object_proxy->object_path()));
+    properties->SetAllPropertiesReceivedCallback(
+        base::Bind(&NfcTagClientImpl::OnPropertiesReceived,
+                   weak_ptr_factory_.GetWeakPtr(),
+                   object_proxy->object_path()));
+    return properties;
   }
 
   // nfc_client_helpers::DBusObjectMap::Delegate override.
   virtual void ObjectAdded(const dbus::ObjectPath& object_path) OVERRIDE {
     FOR_EACH_OBSERVER(NfcTagClient::Observer, observers_,
-                      TagFound(object_path));
+                      TagAdded(object_path));
   }
 
   virtual void ObjectRemoved(const dbus::ObjectPath& object_path) OVERRIDE {
     FOR_EACH_OBSERVER(NfcTagClient::Observer, observers_,
-                      TagLost(object_path));
+                      TagRemoved(object_path));
   }
 
   // Called by NfcPropertySet when a property value is changed, either by
@@ -183,19 +225,28 @@ class NfcTagClientImpl : public NfcTagClient,
                       TagPropertyChanged(object_path, property_name));
   }
 
+  // Called by NfcPropertySet when all properties have been processed as a
+  // result of a call to GetAll.
+  void OnPropertiesReceived(const dbus::ObjectPath& object_path) {
+    VLOG(1) << "All tag properties received; Path: " << object_path.value();
+    FOR_EACH_OBSERVER(NfcTagClient::Observer, observers_,
+                      TagPropertiesReceived(object_path));
+  }
+
   // We maintain a pointer to the bus to be able to request proxies for
   // new NFC tags that appear.
   dbus::Bus* bus_;
 
-  // Mapping from object paths to object proxies and properties structures that
-  // were already created by us.
-  scoped_ptr<nfc_client_helpers::DBusObjectMap> object_map_;
-
-  // The manager client that we listen to events notifications from.
-  NfcAdapterClient* adapter_client_;
-
   // List of observers interested in event notifications.
   ObserverList<NfcTagClient::Observer> observers_;
+
+  // Mapping from object paths to object proxies and properties structures that
+  // were already created by us. This stucture stores a different DBusObjectMap
+  // for each known NFC adapter object path.
+  ObjectProxyTree adapters_to_object_maps_;
+
+  // The adapter client that we listen to events notifications from.
+  NfcAdapterClient* adapter_client_;
 
   // Weak pointer factory for generating 'this' pointers that might live longer
   // than we do.
@@ -212,12 +263,8 @@ NfcTagClient::NfcTagClient() {
 NfcTagClient::~NfcTagClient() {
 }
 
-NfcTagClient* NfcTagClient::Create(DBusClientImplementationType type,
-                                   NfcAdapterClient* adapter_client) {
-  if (type == REAL_DBUS_CLIENT_IMPLEMENTATION)
-    return new NfcTagClientImpl(adapter_client);
-  DCHECK_EQ(STUB_DBUS_CLIENT_IMPLEMENTATION, type);
-  return new FakeNfcTagClient();
+NfcTagClient* NfcTagClient::Create(NfcAdapterClient* adapter_client) {
+  return new NfcTagClientImpl(adapter_client);
 }
 
 }  // namespace chromeos

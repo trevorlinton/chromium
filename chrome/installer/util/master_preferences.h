@@ -85,7 +85,7 @@ class MasterPreferences {
   // is present in the command line.
   // The options from the preference file and command line are merged, with the
   // ones from the command line taking precedence in case of a conflict.
-  explicit MasterPreferences(const CommandLine& cmd_line);
+  explicit MasterPreferences(const base::CommandLine& cmd_line);
 
   // Parses a specific preferences file and does not merge any command line
   // switches with the distribution dictionary.
@@ -159,6 +159,9 @@ class MasterPreferences {
   // Returns the variations seed entry from the master prefs.
   std::string GetVariationsSeed() const;
 
+  // Returns the variations seed signature entry from the master prefs.
+  std::string GetVariationsSeedSignature() const;
+
   // Returns true iff the master preferences were successfully read from a file.
   bool read_from_file() const {
     return preferences_read_from_file_;
@@ -170,10 +173,6 @@ class MasterPreferences {
 
   bool install_chrome_app_launcher() const {
     return chrome_app_launcher_;
-  }
-
-  bool install_chrome_frame() const {
-    return chrome_frame_;
   }
 
   bool is_multi_install() const {
@@ -192,7 +191,7 @@ class MasterPreferences {
   static const MasterPreferences& ForCurrentProcess();
 
  protected:
-  void InitializeFromCommandLine(const CommandLine& cmd_line);
+  void InitializeFromCommandLine(const base::CommandLine& cmd_line);
 
   // Initializes the instance from a given JSON string, returning true if the
   // string was successfully parsed.
@@ -204,13 +203,16 @@ class MasterPreferences {
   // found in older master_preferences files.
   void EnforceLegacyPreferences();
 
- protected:
+  // Removes the specified string pref from the master preferences and returns
+  // its value. Should be used for master prefs that shouldn't be automatically
+  // copied over to profile preferences.
+  std::string ExtractPrefString(const std::string& name) const;
+
   scoped_ptr<base::DictionaryValue> master_dictionary_;
   base::DictionaryValue* distribution_;
   bool preferences_read_from_file_;
   bool chrome_;
   bool chrome_app_launcher_;
-  bool chrome_frame_;
   bool multi_install_;
 
  private:

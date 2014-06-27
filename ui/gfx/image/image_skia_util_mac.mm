@@ -67,20 +67,15 @@ gfx::ImageSkia ImageSkiaFromResizedNSImage(NSImage* image,
     NSImageRep* ns_image_rep = GetNSImageRepWithPixelSize(image,
         desired_size_for_scale);
 
-    SkBitmap bitmap(gfx::NSImageRepToSkBitmap(ns_image_rep,
-        desired_size_for_scale, false));
+    // TODO(dcheng): Should this function take a color space argument?
+    SkBitmap bitmap(gfx::NSImageRepToSkBitmapWithColorSpace(ns_image_rep,
+        desired_size_for_scale, false, base::mac::GetGenericRGBColorSpace()));
     if (bitmap.isNull())
       continue;
 
     image_skia.AddRepresentation(gfx::ImageSkiaRep(bitmap, scale));
   }
   return image_skia;
-}
-
-gfx::ImageSkia ApplicationIconAtSize(int desired_size) {
-  NSImage* image = [NSImage imageNamed:@"NSApplicationIcon"];
-  return ImageSkiaFromResizedNSImage(image,
-                                     NSMakeSize(desired_size, desired_size));
 }
 
 NSImage* NSImageFromImageSkia(const gfx::ImageSkia& image_skia) {

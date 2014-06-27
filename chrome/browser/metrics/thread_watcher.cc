@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/debug/alias.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/lazy_instance.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -19,7 +20,6 @@
 #include "chrome/browser/metrics/metrics_service.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/chrome_version_info.h"
-#include "chrome/common/dump_without_crashing.h"
 #include "chrome/common/logging_chrome.h"
 
 #if defined(OS_WIN)
@@ -39,15 +39,17 @@ namespace {
 MSVC_DISABLE_OPTIMIZE()
 MSVC_PUSH_DISABLE_WARNING(4748)
 
+#ifndef NDEBUG
 int* NullPointer() {
   return reinterpret_cast<int*>(NULL);
 }
+#endif
 
 void NullPointerCrash(int line_number) {
 #ifndef NDEBUG
   *NullPointer() = line_number;  // Crash.
 #else
-  logging::DumpWithoutCrashing();
+  base::debug::DumpWithoutCrashing();
 #endif
 }
 
@@ -407,6 +409,8 @@ bool ThreadWatcher::IsVeryUnresponsive() {
 // static
 ThreadWatcherList* ThreadWatcherList::g_thread_watcher_list_ = NULL;
 // static
+bool ThreadWatcherList::g_stopped_ = false;
+// static
 const int ThreadWatcherList::kSleepSeconds = 1;
 // static
 const int ThreadWatcherList::kUnresponsiveSeconds = 2;
@@ -414,6 +418,8 @@ const int ThreadWatcherList::kUnresponsiveSeconds = 2;
 const int ThreadWatcherList::kUnresponsiveCount = 9;
 // static
 const int ThreadWatcherList::kLiveThreadsThreshold = 2;
+// static, non-const for tests.
+int ThreadWatcherList::g_initialize_delay_seconds = 120;
 
 ThreadWatcherList::CrashDataThresholds::CrashDataThresholds(
     uint32 live_threads_threshold,
@@ -439,12 +445,16 @@ void ThreadWatcherList::StartWatchingAll(const CommandLine& command_line) {
   ThreadWatcherObserver::SetupNotifications(
       base::TimeDelta::FromSeconds(kSleepSeconds * unresponsive_threshold));
 
+  WatchDogThread::PostTask(
+      FROM_HERE,
+      base::Bind(&ThreadWatcherList::SetStopped, false));
+
   WatchDogThread::PostDelayedTask(
       FROM_HERE,
       base::Bind(&ThreadWatcherList::InitializeAndStartWatching,
                  unresponsive_threshold,
                  crash_on_hang_threads),
-      base::TimeDelta::FromSeconds(120));
+      base::TimeDelta::FromSeconds(g_initialize_delay_seconds));
 }
 
 // static
@@ -631,6 +641,12 @@ void ThreadWatcherList::InitializeAndStartWatching(
     const CrashOnHangThreadMap& crash_on_hang_threads) {
   DCHECK(WatchDogThread::CurrentlyOnWatchDogThread());
 
+  // This method is deferred in relationship to its StopWatchingAll()
+  // counterpart. If a previous initialization has already happened, or if
+  // stop has been called, there's nothing left to do here.
+  if (g_thread_watcher_list_ || g_stopped_)
+    return;
+
   ThreadWatcherList* thread_watcher_list = new ThreadWatcherList();
   CHECK(thread_watcher_list);
 
@@ -696,6 +712,9 @@ void ThreadWatcherList::DeleteAll() {
   }
 
   DCHECK(WatchDogThread::CurrentlyOnWatchDogThread());
+
+  SetStopped(true);
+
   if (!g_thread_watcher_list_)
     return;
 
@@ -719,6 +738,12 @@ ThreadWatcher* ThreadWatcherList::Find(const BrowserThread::ID& thread_id) {
   if (g_thread_watcher_list_->registered_.end() == it)
     return NULL;
   return it->second;
+}
+
+// static
+void ThreadWatcherList::SetStopped(bool stopped) {
+  DCHECK(WatchDogThread::CurrentlyOnWatchDogThread());
+  g_stopped_ = stopped;
 }
 
 // ThreadWatcherObserver methods and members.
@@ -859,7 +884,7 @@ class StartupWatchDogThread : public base::Watchdog {
 #ifndef NDEBUG
     DCHECK(false);
 #else
-    logging::DumpWithoutCrashing();
+    base::debug::DumpWithoutCrashing();
 #endif
   }
 

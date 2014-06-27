@@ -8,7 +8,6 @@
 #include "chrome/browser/extensions/api/extension_action/extension_action_api.h"
 #include "chrome/browser/extensions/extension_action_manager.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/extension_uninstall_dialog.h"
 #include "chrome/browser/profiles/profile.h"
@@ -20,12 +19,14 @@
 #include "chrome/browser/ui/cocoa/extensions/extension_popup_controller.h"
 #import "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
 #include "chrome/browser/ui/cocoa/toolbar/toolbar_controller.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/manifest_url_handler.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util_mac.h"
@@ -99,6 +100,8 @@ class AsyncUninstaller : public ExtensionUninstallDialog::Delegate {
                       action:@selector(onExtensionName:)
                keyEquivalent:@""];
   [item setTarget:self];
+  [item setEnabled:extensions::ManifestURL::GetHomepageURL(
+      extension_).is_valid()];
 
   // Separator.
   [menu addItem:[NSMenuItem separatorItem]];
@@ -165,7 +168,7 @@ class AsyncUninstaller : public ExtensionUninstallDialog::Delegate {
 
 - (void)onOptions:(id)sender {
   DCHECK(!extensions::ManifestURL::GetOptionsPage(extension_).is_empty());
-  ExtensionTabUtil::OpenOptionsPage(extension_, browser_);
+  extensions::ExtensionTabUtil::OpenOptionsPage(extension_, browser_);
 }
 
 - (void)onUninstall:(id)sender {
@@ -174,8 +177,7 @@ class AsyncUninstaller : public ExtensionUninstallDialog::Delegate {
 
 - (void)onHide:(id)sender {
   extensions::ExtensionActionAPI::SetBrowserActionVisibility(
-      extensions::ExtensionSystem::Get(
-          browser_->profile())->extension_service()->extension_prefs(),
+      extensions::ExtensionPrefs::Get(browser_->profile()),
       extension_->id(),
       false);
 }
@@ -209,7 +211,7 @@ class AsyncUninstaller : public ExtensionUninstallDialog::Delegate {
   if (!activeTab)
     return;
 
-  int tabId = ExtensionTabUtil::GetTabId(activeTab);
+  int tabId = extensions::ExtensionTabUtil::GetTabId(activeTab);
 
   GURL url = action_->GetPopupUrl(tabId);
   if (!url.is_valid())

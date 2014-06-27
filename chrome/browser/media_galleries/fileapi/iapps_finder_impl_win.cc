@@ -13,8 +13,8 @@
 #include "base/path_service.h"
 #include "chrome/browser/media_galleries/fileapi/iapps_finder.h"
 #include "chrome/browser/media_galleries/fileapi/safe_itunes_pref_parser_win.h"
-#include "chrome/browser/storage_monitor/storage_info.h"
 #include "chrome/common/chrome_paths.h"
+#include "components/storage_monitor/storage_info.h"
 #include "content/public/browser/browser_thread.h"
 
 namespace iapps {
@@ -90,7 +90,7 @@ void FindITunesLibraryOnFileThread(const iapps::IAppsFinderCallback& callback) {
 // ITunesFinderWin will try a default location as well.
 void FindITunesLibrary(const IAppsFinderCallback& callback) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-  FindIAppsOnFileThread(StorageInfo::ITUNES,
+  FindIAppsOnFileThread(storage_monitor::StorageInfo::ITUNES,
                         base::Bind(FindITunesLibraryOnFileThread), callback);
 }
 

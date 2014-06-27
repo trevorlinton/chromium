@@ -11,14 +11,16 @@
 #include "ash/wm/coordinate_conversion.h"
 #include "ash/wm/system_modal_container_layout_manager.h"
 #include "ash/wm/window_properties.h"
-#include "ui/aura/client/activation_client.h"
+#include "ash/wm/window_state.h"
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/client/focus_client.h"
-#include "ui/aura/root_window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_tracker.h"
 #include "ui/compositor/dip_util.h"
 #include "ui/gfx/display.h"
 #include "ui/gfx/screen.h"
+#include "ui/wm/core/window_util.h"
+#include "ui/wm/public/activation_client.h"
 
 namespace ash {
 namespace {
@@ -37,7 +39,8 @@ void MoveAllTransientChildrenToNewRoot(const gfx::Display& display,
                                        aura::Window* window) {
   aura::Window* dst_root = Shell::GetInstance()->display_controller()->
       GetRootWindowForDisplayId(display.id());
-  aura::Window::Windows transient_children = window->transient_children();
+  aura::Window::Windows transient_children =
+      ::wm::GetTransientChildren(window);
   for (aura::Window::Windows::iterator iter = transient_children.begin();
        iter != transient_children.end(); ++iter) {
     aura::Window* transient_child = *iter;
@@ -63,7 +66,7 @@ void MoveAllTransientChildrenToNewRoot(const gfx::Display& display,
 // function usually returns |window->GetRootWindow()|, but if the mouse pointer
 // is moved outside the |window|'s root while the mouse is captured, it returns
 // the other root window.
-std::pair<aura::RootWindow*, gfx::Point> GetRootWindowRelativeToWindow(
+std::pair<aura::Window*, gfx::Point> GetRootWindowRelativeToWindow(
     aura::Window* window,
     const gfx::Point& location) {
   aura::Window* root_window = window->GetRootWindow();
@@ -89,19 +92,16 @@ std::pair<aura::RootWindow*, gfx::Point> GetRootWindowRelativeToWindow(
     // extended root window's coordinates.
 
     gfx::Point location_in_native(location_in_root);
-    root_window->GetDispatcher()->ConvertPointToNativeScreen(
-        &location_in_native);
+    root_window->GetHost()->ConvertPointToNativeScreen(&location_in_native);
 
-    Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
+    aura::Window::Windows root_windows = Shell::GetAllRootWindows();
     for (size_t i = 0; i < root_windows.size(); ++i) {
-      const gfx::Rect native_bounds(
-          root_windows[i]->GetHostOrigin(),
-          root_windows[i]->GetHostSize());  // in px.
+      aura::WindowTreeHost* host = root_windows[i]->GetHost();
+      const gfx::Rect native_bounds = host->GetBounds();
       if (native_bounds.Contains(location_in_native)) {
         root_window = root_windows[i];
         location_in_root = location_in_native;
-        root_window->GetDispatcher()->ConvertPointFromNativeScreen(
-            &location_in_root);
+        host->ConvertPointFromNativeScreen(&location_in_root);
         break;
       }
     }
@@ -110,7 +110,7 @@ std::pair<aura::RootWindow*, gfx::Point> GetRootWindowRelativeToWindow(
   // TODO(yusukes): Support non-X11 platforms if necessary.
 #endif
 
-  return std::make_pair(root_window->GetDispatcher(), location_in_root);
+  return std::make_pair(root_window, location_in_root);
 }
 
 }  // namespace
@@ -141,8 +141,8 @@ void ScreenPositionController::ConvertHostPointToScreen(
     aura::Window* root_window,
     gfx::Point* point) {
   aura::Window* root = root_window->GetRootWindow();
-  root->GetDispatcher()->ConvertPointFromHost(point);
-  std::pair<aura::RootWindow*, gfx::Point> pair =
+  root->GetHost()->ConvertPointFromHost(point);
+  std::pair<aura::Window*, gfx::Point> pair =
       GetRootWindowRelativeToWindow(root, *point);
   *point = pair.second;
   ConvertPointToScreen(pair.first, point);
@@ -163,7 +163,7 @@ void ScreenPositionController::SetBounds(aura::Window* window,
   // b) if the window or its ancestor has kStayInSameRootWindowkey. It's
   //    intentionally kept in the same root window even if the bounds is
   //    outside of the display.
-  if (!window->transient_parent() &&
+  if (!::wm::GetTransientParent(window) &&
       !ShouldStayInSameRootWindow(window)) {
     aura::Window* dst_root =
         Shell::GetInstance()->display_controller()->GetRootWindowForDisplayId(
@@ -192,6 +192,15 @@ void ScreenPositionController::SetBounds(aura::Window* window,
       if (active && focused != active)
         tracker.Add(active);
 
+      // Set new bounds now so that the container's layout manager
+      // can adjust the bounds if necessary.
+      gfx::Point origin = bounds.origin();
+      const gfx::Point display_origin = display.bounds().origin();
+      origin.Offset(-display_origin.x(), -display_origin.y());
+      gfx::Rect new_bounds = gfx::Rect(origin, bounds.size());
+
+      window->SetBounds(new_bounds);
+
       dst_container->AddChild(window);
 
       MoveAllTransientChildrenToNewRoot(display, window);
@@ -201,13 +210,17 @@ void ScreenPositionController::SetBounds(aura::Window* window,
         aura::client::GetFocusClient(window)->FocusWindow(focused);
         // TODO(beng): replace with GetRootWindow().
         ash::Shell::GetInstance()->set_target_root_window(
-            focused->GetDispatcher());
+            focused->GetRootWindow());
       } else if (tracker.Contains(active)) {
         activation_client->ActivateWindow(active);
       }
+      // TODO(oshima): We should not have to update the bounds again
+      // below in theory, but we currently do need as there is a code
+      // that assumes that the bounds will never be overridden by the
+      // layout mananger. We should have more explicit control how
+      // constraints are applied by the layout manager.
     }
   }
-
   gfx::Point origin(bounds.origin());
   const gfx::Point display_origin = Shell::GetScreen()->GetDisplayNearestWindow(
       window).bounds().origin();

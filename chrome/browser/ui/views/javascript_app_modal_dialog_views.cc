@@ -15,6 +15,10 @@
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/dialog_client_view.h"
 
+#if defined(USE_X11) && !defined(OS_CHROMEOS)
+#include "chrome/browser/ui/views/javascript_app_modal_event_blocker_x11.h"
+#endif
+
 ////////////////////////////////////////////////////////////////////////////////
 // JavaScriptAppModalDialogViews, public:
 
@@ -51,6 +55,19 @@ int JavaScriptAppModalDialogViews::GetAppModalDialogButtons() const {
 }
 
 void JavaScriptAppModalDialogViews::ShowAppModalDialog() {
+#if defined(USE_X11) && !defined(OS_CHROMEOS)
+  // BrowserView::CanActivate() ensures that other browser windows cannot be
+  // activated for long while the dialog is visible. Block events to other
+  // browser windows so that the user cannot interact with other browser windows
+  // in the short time that the other browser windows are active. This hack is
+  // unnecessary on Windows and Chrome OS.
+  // TODO(pkotwicz): Find a better way of doing this and remove this hack.
+  if (!event_blocker_x11_.get()) {
+    event_blocker_x11_.reset(
+        new JavascriptAppModalEventBlockerX11(GetWidget()->GetNativeView()));
+  }
+#endif
+
   GetWidget()->Show();
 }
 
@@ -86,11 +103,14 @@ int JavaScriptAppModalDialogViews::GetDialogButtons() const {
   return ui::DIALOG_BUTTON_OK | ui::DIALOG_BUTTON_CANCEL;
 }
 
-string16 JavaScriptAppModalDialogViews::GetWindowTitle() const {
+base::string16 JavaScriptAppModalDialogViews::GetWindowTitle() const {
   return parent_->title();
 }
 
 void JavaScriptAppModalDialogViews::WindowClosing() {
+#if defined(USE_X11) && !defined(OS_CHROMEOS)
+  event_blocker_x11_.reset();
+#endif
 }
 
 void JavaScriptAppModalDialogViews::DeleteDelegate() {
@@ -120,7 +140,7 @@ const views::Widget* JavaScriptAppModalDialogViews::GetWidget() const {
   return message_box_view_->GetWidget();
 }
 
-string16 JavaScriptAppModalDialogViews::GetDialogButtonLabel(
+base::string16 JavaScriptAppModalDialogViews::GetDialogButtonLabel(
     ui::DialogButton button) const {
   if (parent_->is_before_unload_dialog()) {
     if (button == ui::DIALOG_BUTTON_OK) {

@@ -9,10 +9,8 @@
 #include <map>
 #include <sstream>
 
-#include "ppapi/c/dev/ppb_testing_dev.h"
 #include "ppapi/c/pp_var.h"
 #include "ppapi/c/ppb_file_io.h"
-#include "ppapi/cpp/dev/var_resource_dev.h"
 #include "ppapi/cpp/file_io.h"
 #include "ppapi/cpp/file_ref.h"
 #include "ppapi/cpp/file_system.h"
@@ -85,7 +83,13 @@ bool VarsEqual(const pp::Var& expected,
         return true;
       return false;
     }
-    (*visited_ids)[expected.pp_var().value.as_id] = actual.pp_var().value.as_id;
+    // Round-tripping reference graphs with strings will not necessarily
+    // result in isomorphic graphs. This is because string vars are converted
+    // to string primitives in JS which cannot be referenced.
+    if (!expected.is_string()) {
+      (*visited_ids)[expected.pp_var().value.as_id] =
+          actual.pp_var().value.as_id;
+    }
   }
 
   if (expected.is_number()) {
@@ -128,7 +132,7 @@ bool VarsEqual(const pp::Var& expected,
 
 class ScopedArrayBufferSizeSetter {
  public:
-  ScopedArrayBufferSizeSetter(const PPB_Testing_Dev* interface,
+  ScopedArrayBufferSizeSetter(const PPB_Testing_Private* interface,
                               PP_Instance instance,
                               uint32_t threshold)
      : interface_(interface),
@@ -139,7 +143,7 @@ class ScopedArrayBufferSizeSetter {
     interface_->SetMinimumArrayBufferSizeForShmem(instance_, 0);
   }
  private:
-  const PPB_Testing_Dev* interface_;
+  const PPB_Testing_Private* interface_;
   PP_Instance instance_;
 };
 
@@ -205,6 +209,7 @@ void TestPostMessage::RunTests(const std::string& filter) {
   // that was sent in Init above.
   RUN_TEST(SendInInit, filter);
   RUN_TEST(SendingData, filter);
+  RUN_TEST(SendingString, filter);
   RUN_TEST(SendingArrayBuffer, filter);
   RUN_TEST(SendingArray, filter);
   RUN_TEST(SendingDictionary, filter);
@@ -284,31 +289,6 @@ int TestPostMessage::WaitForMessages() {
   return message_data_.size() - message_size_before;
 }
 
-int TestPostMessage::PostAsyncMessageFromJavaScriptAndWait(
-    const std::string& func) {
-  // After the |func| calls callback, post both the given |message|, as well as
-  // the special message FINISHED_WAITING_MESSAGE. This ensures that
-  // RunMessageLoop correctly waits until the callback is called.
-  std::string js_code;
-  js_code += "var plugin = document.getElementById('plugin');"
-             "var callback = function(message) {"
-             "  plugin.postMessage(message);"
-             "  plugin.postMessage('" FINISHED_WAITING_MESSAGE "');"
-             "};";
-  js_code += "(" + func + ")(callback);";
-  instance_->EvalScript(js_code);
-
-  size_t message_size_before = message_data_.size();
-  // Unlike WaitForMessages, we do not post FINISHED_WAITING_MESSAGE. This is
-  // because the above JavaScript code will post it for us, when the
-  // asynchronous operation completes.
-  testing_interface_->RunMessageLoop(instance_->pp_instance());
-  // Now that the FINISHED_WAITING_MESSAGE has been echoed back to us, we know
-  // that all pending messages have been slurped up. Return the number we
-  // received (which may be zero).
-  return message_data_.size() - message_size_before;
-}
-
 std::string TestPostMessage::CheckMessageProperties(
     const pp::Var& test_data,
     const std::vector<std::string>& properties_to_check) {
@@ -319,8 +299,8 @@ std::string TestPostMessage::CheckMessageProperties(
     ASSERT_TRUE(AddEchoingListener(*iter));
     message_data_.clear();
     instance_->PostMessage(test_data);
-    ASSERT_EQ(message_data_.size(), 0);
-    ASSERT_EQ(WaitForMessages(), 1);
+    ASSERT_EQ(0, message_data_.size());
+    ASSERT_EQ(1, WaitForMessages());
     ASSERT_TRUE(message_data_.back().is_bool());
     if (!message_data_.back().AsBool())
       return std::string("Failed: ") + *iter;
@@ -331,11 +311,11 @@ std::string TestPostMessage::CheckMessageProperties(
 }
 
 std::string TestPostMessage::TestSendInInit() {
-  ASSERT_EQ(WaitForMessages(), 1);
+  ASSERT_EQ(1, WaitForMessages());
   // This test assumes Init already sent a message.
-  ASSERT_EQ(message_data_.size(), 1);
+  ASSERT_EQ(1, message_data_.size());
   ASSERT_TRUE(message_data_.back().is_string());
-  ASSERT_EQ(message_data_.back().AsString(), kTestString);
+  ASSERT_EQ(kTestString, message_data_.back().AsString());
   message_data_.clear();
   PASS();
 }
@@ -346,53 +326,76 @@ std::string TestPostMessage::TestSendingData() {
   // should start with these.
   WaitForMessages();
   ASSERT_TRUE(ClearListeners());
+
   // Set up the JavaScript message event listener to echo the data part of the
   // message event back to us.
   ASSERT_TRUE(AddEchoingListener("message_event.data"));
 
-  // Test sending a message to JavaScript for each supported type.  The JS sends
+  // Test sending a message to JavaScript for each supported type. The JS sends
   // the data back to us, and we check that they match.
   message_data_.clear();
-  instance_->PostMessage(pp::Var(kTestString));
-  // PostMessage is asynchronous, so we should not receive a response yet.
-  ASSERT_EQ(message_data_.size(), 0);
-  ASSERT_EQ(WaitForMessages(), 1);
-  ASSERT_TRUE(message_data_.back().is_string());
-  ASSERT_EQ(message_data_.back().AsString(), kTestString);
-
-  message_data_.clear();
   instance_->PostMessage(pp::Var(kTestBool));
-  ASSERT_EQ(message_data_.size(), 0);
-  ASSERT_EQ(WaitForMessages(), 1);
+  ASSERT_EQ(0, message_data_.size());
+  ASSERT_EQ(1, WaitForMessages());
   ASSERT_TRUE(message_data_.back().is_bool());
   ASSERT_EQ(message_data_.back().AsBool(), kTestBool);
 
   message_data_.clear();
   instance_->PostMessage(pp::Var(kTestInt));
-  ASSERT_EQ(message_data_.size(), 0);
-  ASSERT_EQ(WaitForMessages(), 1);
+  ASSERT_EQ(0, message_data_.size());
+  ASSERT_EQ(1, WaitForMessages());
   ASSERT_TRUE(message_data_.back().is_number());
-  ASSERT_DOUBLE_EQ(message_data_.back().AsDouble(),
-                   static_cast<double>(kTestInt));
+  ASSERT_DOUBLE_EQ(static_cast<double>(kTestInt),
+                   message_data_.back().AsDouble());
 
   message_data_.clear();
   instance_->PostMessage(pp::Var(kTestDouble));
-  ASSERT_EQ(message_data_.size(), 0);
-  ASSERT_EQ(WaitForMessages(), 1);
+  ASSERT_EQ(0, message_data_.size());
+  ASSERT_EQ(1, WaitForMessages());
   ASSERT_TRUE(message_data_.back().is_number());
   ASSERT_DOUBLE_EQ(message_data_.back().AsDouble(), kTestDouble);
 
   message_data_.clear();
   instance_->PostMessage(pp::Var());
-  ASSERT_EQ(message_data_.size(), 0);
-  ASSERT_EQ(WaitForMessages(), 1);
+  ASSERT_EQ(0, message_data_.size());
+  ASSERT_EQ(1, WaitForMessages());
   ASSERT_TRUE(message_data_.back().is_undefined());
 
   message_data_.clear();
   instance_->PostMessage(pp::Var(pp::Var::Null()));
-  ASSERT_EQ(message_data_.size(), 0);
-  ASSERT_EQ(WaitForMessages(), 1);
+  ASSERT_EQ(0, message_data_.size());
+  ASSERT_EQ(1, WaitForMessages());
   ASSERT_TRUE(message_data_.back().is_null());
+
+  message_data_.clear();
+  ASSERT_TRUE(ClearListeners());
+
+  PASS();
+}
+
+std::string TestPostMessage::TestSendingString() {
+  // Clean up after previous tests. This also swallows the message sent by Init
+  // if we didn't run the 'SendInInit' test. All tests other than 'SendInInit'
+  // should start with these.
+  WaitForMessages();
+  ASSERT_TRUE(ClearListeners());
+
+  // Test that a string var is converted to a primitive JS string.
+  message_data_.clear();
+  std::vector<std::string> properties_to_check;
+  properties_to_check.push_back(
+      "typeof message_event.data === 'string'");
+  ASSERT_SUBTEST_SUCCESS(CheckMessageProperties(kTestString,
+                                                properties_to_check));
+
+  ASSERT_TRUE(AddEchoingListener("message_event.data"));
+  message_data_.clear();
+  instance_->PostMessage(pp::Var(kTestString));
+  // PostMessage is asynchronous, so we should not receive a response yet.
+  ASSERT_EQ(0, message_data_.size());
+  ASSERT_EQ(1, WaitForMessages());
+  ASSERT_TRUE(message_data_.back().is_string());
+  ASSERT_EQ(message_data_.back().AsString(), kTestString);
 
   message_data_.clear();
   ASSERT_TRUE(ClearListeners());
@@ -457,8 +460,8 @@ std::string TestPostMessage::TestSendingArrayBuffer() {
     message_data_.clear();
     instance_->PostMessage(test_data);
     // PostMessage is asynchronous, so we should not receive a response yet.
-    ASSERT_EQ(message_data_.size(), 0);
-    ASSERT_EQ(WaitForMessages(), 1);
+    ASSERT_EQ(0, message_data_.size());
+    ASSERT_EQ(1, WaitForMessages());
     ASSERT_TRUE(message_data_.back().is_array_buffer());
     pp::VarArrayBuffer received(message_data_.back());
     message_data_.clear();
@@ -503,6 +506,9 @@ std::string TestPostMessage::TestSendingArray() {
       "message_event.data.constructor.name === 'Array'");
   properties_to_check.push_back(
       std::string("message_event.data.length === ") + length_as_string);
+  // Check that the string is converted to a primitive JS string.
+  properties_to_check.push_back(
+      std::string("typeof message_event.data[1] === 'string'"));
   ASSERT_SUBTEST_SUCCESS(CheckMessageProperties(array, properties_to_check));
 
   // Set up the JavaScript message event listener to echo the data part of the
@@ -511,8 +517,8 @@ std::string TestPostMessage::TestSendingArray() {
   message_data_.clear();
   instance_->PostMessage(array);
   // PostMessage is asynchronous, so we should not receive a response yet.
-  ASSERT_EQ(message_data_.size(), 0);
-  ASSERT_EQ(WaitForMessages(), 1);
+  ASSERT_EQ(0, message_data_.size());
+  ASSERT_EQ(1, WaitForMessages());
   ASSERT_TRUE(message_data_.back().is_array());
   ASSERT_TRUE(VarsEqual(array, message_data_.back()));
 
@@ -546,6 +552,9 @@ std::string TestPostMessage::TestSendingDictionary() {
   properties_to_check.push_back(
       std::string("Object.keys(message_event.data).length === ") +
       length_as_string);
+  // Check that the string is converted to a primitive JS string.
+  properties_to_check.push_back(
+      std::string("typeof message_event.data['bar'] === 'string'"));
   ASSERT_SUBTEST_SUCCESS(CheckMessageProperties(dictionary,
                                                 properties_to_check));
 
@@ -555,8 +564,8 @@ std::string TestPostMessage::TestSendingDictionary() {
   message_data_.clear();
   instance_->PostMessage(dictionary);
   // PostMessage is asynchronous, so we should not receive a response yet.
-  ASSERT_EQ(message_data_.size(), 0);
-  ASSERT_EQ(WaitForMessages(), 1);
+  ASSERT_EQ(0, message_data_.size());
+  ASSERT_EQ(1, WaitForMessages());
   ASSERT_TRUE(message_data_.back().is_dictionary());
   ASSERT_TRUE(VarsEqual(dictionary, message_data_.back()));
 
@@ -574,40 +583,66 @@ std::string TestPostMessage::TestSendingResource() {
   message_data_.clear();
   ASSERT_TRUE(ClearListeners());
 
-  // Test sending a DOMFileSystem from JavaScript to the plugin.
-  // This opens a real (temporary) file using the HTML5 FileSystem API and
-  // writes to it.
+  std::string file_path("/");
+  file_path += kTestFilename;
+  int content_length = strlen(kTestString);
+
+  // Create a file in the HTML5 temporary file system, in the Pepper plugin.
+  TestCompletionCallback callback(instance_->pp_instance(), callback_type());
+  pp::FileSystem file_system(instance_, PP_FILESYSTEMTYPE_LOCALTEMPORARY);
+  callback.WaitForResult(file_system.Open(1024, callback.GetCallback()));
+  CHECK_CALLBACK_BEHAVIOR(callback);
+  ASSERT_EQ(PP_OK, callback.result());
+  pp::FileRef write_file_ref(file_system, file_path.c_str());
+  // Write to the file.
+  pp::FileIO write_file_io(instance_);
+  ASSERT_NE(0, write_file_io.pp_resource());
+  callback.WaitForResult(
+      write_file_io.Open(write_file_ref,
+                         PP_FILEOPENFLAG_WRITE | PP_FILEOPENFLAG_CREATE,
+                         callback.GetCallback()));
+  CHECK_CALLBACK_BEHAVIOR(callback);
+  ASSERT_EQ(PP_OK, callback.result());
+  callback.WaitForResult(write_file_io.Write(
+      0, kTestString, content_length, callback.GetCallback()));
+  CHECK_CALLBACK_BEHAVIOR(callback);
+  ASSERT_EQ(callback.result(), content_length);
+  write_file_io.Close();
+
+  // Pass the file system to JavaScript and have the listener test some
+  // properties of the file system.
+  pp::Var file_system_var(file_system);
+  std::vector<std::string> properties_to_check;
+  properties_to_check.push_back(
+      "message_event.data.constructor.name === 'DOMFileSystem'");
+  properties_to_check.push_back(
+      "message_event.data.root.constructor.name === 'DirectoryEntry'");
+  properties_to_check.push_back(
+      "message_event.data.name.indexOf("
+      "    ':Temporary',"
+      "    message_event.data.name.length - ':Temporary'.length) !== -1");
+  ASSERT_SUBTEST_SUCCESS(CheckMessageProperties(file_system_var,
+                                                properties_to_check));
+
+  // Set up the JavaScript message event listener to echo the data part of the
+  // message event back to us.
   ASSERT_TRUE(AddEchoingListener("message_event.data"));
-  ASSERT_EQ(message_data_.size(), 0);
-  std::string js_code =
-      "function(callback) {"
-      "  window.webkitRequestFileSystem(window.TEMPORARY, 1024,"
-      "                                 function(fileSystem) {"
-      "    fileSystem.root.getFile('";
-  js_code += kTestFilename;
-  js_code += "', {create: true}, function(tempFile) {"
-      "      tempFile.createWriter(function(writer) {"
-      "        writer.onerror = function() { callback(null); };"
-      "        writer.onwriteend = function() { callback(fileSystem); };"
-      "        var blob = new Blob(['";
-  js_code += kTestString;
-  js_code += "'], {'type': 'text/plain'});"
-      "        writer.write(blob);"
-      "      });"
-      "    }, function() { callback(null); });"
-      "  }, function() { callback(null); });"
-      "}";
-  ASSERT_EQ(PostAsyncMessageFromJavaScriptAndWait(js_code), 1);
+  // Send the file system in a message from the Pepper plugin to JavaScript.
+  message_data_.clear();
+  instance_->PostMessage(file_system_var);
+  // PostMessage is asynchronous, so we should not receive a response yet.
+  ASSERT_EQ(0, message_data_.size());
+  ASSERT_EQ(1, WaitForMessages());
+
+  // The JavaScript should have posted the file system back to us. Verify that
+  // it is a file system and read the file contents that we wrote earlier.
   pp::Var var = message_data_.back();
   ASSERT_TRUE(var.is_resource());
-  pp::VarResource_Dev var_resource(var);
-  pp::Resource result = var_resource.AsResource();
+  pp::Resource result = var.AsResource();
   ASSERT_TRUE(pp::FileSystem::IsFileSystem(result));
   {
-    pp::FileSystem file_system(result);
-    std::string file_path("/");
-    file_path += kTestFilename;
-    pp::FileRef file_ref(file_system, file_path.c_str());
+    pp::FileSystem received_file_system(result);
+    pp::FileRef file_ref(received_file_system, file_path.c_str());
     ASSERT_NE(0, file_ref.pp_resource());
 
     // Ensure that the file can be queried.
@@ -616,33 +651,28 @@ std::string TestPostMessage::TestSendingResource() {
     cc.WaitForResult(file_ref.Query(cc.GetCallback()));
     CHECK_CALLBACK_BEHAVIOR(cc);
     ASSERT_EQ(PP_OK, cc.result());
+    ASSERT_EQ(cc.output().size, content_length);
 
     // Read the file and test that its contents match.
     pp::FileIO file_io(instance_);
     ASSERT_NE(0, file_io.pp_resource());
-    TestCompletionCallback callback(instance_->pp_instance(),
-                                    callback_type());
     callback.WaitForResult(
         file_io.Open(file_ref, PP_FILEOPENFLAG_READ, callback.GetCallback()));
     CHECK_CALLBACK_BEHAVIOR(callback);
     ASSERT_EQ(PP_OK, callback.result());
 
-    int length = strlen(kTestString);
-    std::vector<char> buffer_vector(length);
+    std::vector<char> buffer_vector(content_length);
     char* buffer = &buffer_vector[0];  // Note: Not null-terminated!
     callback.WaitForResult(
-        file_io.Read(0, buffer, length, callback.GetCallback()));
+        file_io.Read(0, buffer, content_length, callback.GetCallback()));
     CHECK_CALLBACK_BEHAVIOR(callback);
-    ASSERT_EQ(length, callback.result());
-    ASSERT_EQ(0, memcmp(buffer, kTestString, length));
+    ASSERT_EQ(callback.result(), content_length);
+    ASSERT_EQ(0, memcmp(buffer, kTestString, content_length));
   }
 
   WaitForMessages();
   message_data_.clear();
   ASSERT_TRUE(ClearListeners());
-
-  // TODO(mgiuca): Test roundtrip from plugin to JS and back, when the plugin to
-  // JS support is available.
 
   PASS();
 }
@@ -678,8 +708,8 @@ std::string TestPostMessage::TestSendingComplexVar() {
   ASSERT_TRUE(AddEchoingListener("message_event.data"));
   instance_->PostMessage(dictionary);
   // PostMessage is asynchronous, so we should not receive a response yet.
-  ASSERT_EQ(message_data_.size(), 0);
-  ASSERT_EQ(WaitForMessages(), 1);
+  ASSERT_EQ(0, message_data_.size());
+  ASSERT_EQ(1, WaitForMessages());
   ASSERT_TRUE(message_data_.back().is_dictionary());
   pp::VarDictionary result(message_data_.back());
   ASSERT_TRUE(VarsEqual(dictionary, message_data_.back()));
@@ -697,7 +727,7 @@ std::string TestPostMessage::TestSendingComplexVar() {
   ASSERT_TRUE(AddEchoingListener("message_event.data"));
   instance_->PostMessage(dictionary);
   // PostMessage is asynchronous, so we should not receive a response yet.
-  ASSERT_EQ(message_data_.size(), 0);
+  ASSERT_EQ(0, message_data_.size());
   ASSERT_EQ(WaitForMessages(), 0);
 
   // Break the cycles.
@@ -710,7 +740,7 @@ std::string TestPostMessage::TestSendingComplexVar() {
   // Test sending a cycle from JavaScript to the plugin.
   ASSERT_TRUE(AddEchoingListener("message_event.data"));
   PostMessageFromJavaScript("function() { var x = []; x[0] = x; return x; }");
-  ASSERT_EQ(message_data_.size(), 0);
+  ASSERT_EQ(0, message_data_.size());
   ASSERT_EQ(WaitForMessages(), 0);
 
   WaitForMessages();
@@ -731,8 +761,8 @@ std::string TestPostMessage::TestMessageEvent() {
   ASSERT_TRUE(AddEchoingListener("message_event.constructor.name"));
   message_data_.clear();
   instance_->PostMessage(pp::Var(kTestInt));
-  ASSERT_EQ(message_data_.size(), 0);
-  ASSERT_EQ(WaitForMessages(), 1);
+  ASSERT_EQ(0, message_data_.size());
+  ASSERT_EQ(1, WaitForMessages());
   ASSERT_TRUE(message_data_.back().is_string());
   ASSERT_EQ(message_data_.back().AsString(), "MessageEvent");
   ASSERT_TRUE(ClearListeners());
@@ -748,8 +778,8 @@ std::string TestPostMessage::TestMessageEvent() {
   ASSERT_TRUE(success);
   message_data_.clear();
   instance_->PostMessage(pp::Var(kTestInt));
-  ASSERT_EQ(message_data_.size(), 0);
-  ASSERT_EQ(WaitForMessages(), 1);
+  ASSERT_EQ(0, message_data_.size());
+  ASSERT_EQ(1, WaitForMessages());
   ASSERT_TRUE(message_data_.back().is_bool());
   ASSERT_TRUE(message_data_.back().AsBool());
   ASSERT_TRUE(ClearListeners());
@@ -762,7 +792,7 @@ std::string TestPostMessage::TestMessageEvent() {
   message_data_.clear();
   instance_->PostMessage(pp::Var(kTestInt));
   // Make sure we don't get a response in a re-entrant fashion.
-  ASSERT_EQ(message_data_.size(), 0);
+  ASSERT_EQ(0, message_data_.size());
   // We should get 3 messages.
   ASSERT_EQ(WaitForMessages(), 3);
   // Copy to a vector of doubles and sort; w3c does not specify the order for
@@ -845,7 +875,7 @@ std::string TestPostMessage::TestNonMainThread() {
     PP_JoinThread(threads[i]);
 
   // PostMessage is asynchronous, so we should not receive a response yet.
-  ASSERT_EQ(message_data_.size(), 0);
+  ASSERT_EQ(0, message_data_.size());
 
   // Make sure we got all values that we expected.  Note that because it's legal
   // for the JavaScript engine to treat our integers as floating points, we
@@ -856,7 +886,7 @@ std::string TestPostMessage::TestNonMainThread() {
   std::vector<int32_t> expected_counts(kThreadsToRun + 1,
                                        kMessagesToSendPerThread);
   std::vector<int32_t> received_counts(kThreadsToRun + 1, 0);
-  ASSERT_EQ(WaitForMessages(), expected_num);
+  ASSERT_EQ(expected_num, WaitForMessages());
   for (int32_t i = 0; i < expected_num; ++i) {
     const pp::Var& latest_var(message_data_[i]);
     ASSERT_TRUE(latest_var.is_int() || latest_var.is_double());
@@ -870,7 +900,7 @@ std::string TestPostMessage::TestNonMainThread() {
     ASSERT_TRUE(received_value <= kThreadsToRun);
     ++received_counts[received_value];
   }
-  ASSERT_EQ(received_counts, expected_counts);
+  ASSERT_EQ(expected_counts, received_counts);
 
   message_data_.clear();
   ASSERT_TRUE(ClearListeners());

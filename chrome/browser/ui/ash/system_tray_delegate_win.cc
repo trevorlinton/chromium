@@ -72,20 +72,21 @@ class SystemTrayDelegateWin : public ash::SystemTrayDelegate,
     return std::string();
   }
 
-  virtual const string16 GetEnterpriseMessage() const OVERRIDE {
-    return string16();
+  virtual const base::string16 GetEnterpriseMessage() const OVERRIDE {
+    return base::string16();
   }
 
   virtual const std::string GetLocallyManagedUserManager() const OVERRIDE {
     return std::string();
   }
 
-  virtual const string16 GetLocallyManagedUserManagerName() const OVERRIDE {
-    return string16();
+  virtual const base::string16 GetLocallyManagedUserManagerName() const
+        OVERRIDE {
+    return base::string16();
   }
 
-  virtual const string16 GetLocallyManagedUserMessage() const OVERRIDE {
-    return string16();
+  virtual const base::string16 GetLocallyManagedUserMessage() const OVERRIDE {
+    return base::string16();
   }
 
   virtual bool SystemShouldUpgrade() const OVERRIDE {
@@ -130,7 +131,7 @@ class SystemTrayDelegateWin : public ash::SystemTrayDelegate,
 
   virtual void ShowHelp() OVERRIDE {
     chrome::ShowHelpForProfile(
-        ProfileManager::GetDefaultProfileOrOffTheRecord(),
+        ProfileManager::GetLastUsedProfile(),
         chrome::HOST_DESKTOP_TYPE_ASH,
         chrome::HELP_SOURCE_MENU);
   }
@@ -153,7 +154,12 @@ class SystemTrayDelegateWin : public ash::SystemTrayDelegate,
   virtual void ShowUserLogin() OVERRIDE {
   }
 
-  virtual void ShowSpringChargerReplacementDialog() OVERRIDE {
+  virtual bool ShowSpringChargerReplacementDialog() OVERRIDE {
+    return false;
+  }
+
+  virtual bool IsSpringChargerReplacementDialogVisible() OVERRIDE {
+    return false;
   }
 
   virtual bool HasUserConfirmedSafeSpringCharger() OVERRIDE {
@@ -272,7 +278,16 @@ class SystemTrayDelegateWin : public ash::SystemTrayDelegate,
         IDS_SYSTEM_TRAY_MENU_BUBBLE_WIDTH_PIXELS);
   }
 
-  virtual void MaybeSpeak(const std::string& utterance) const OVERRIDE {
+  virtual void ActiveUserWasChanged() OVERRIDE {
+  }
+
+  virtual bool IsNetworkBehindCaptivePortal(
+      const std::string& service_path) const OVERRIDE {
+    return false;
+  }
+
+  virtual bool IsSearchKeyMappedToCapsLock() OVERRIDE {
+    return false;
   }
 
  private:
@@ -327,4 +342,3 @@ class SystemTrayDelegateWin : public ash::SystemTrayDelegate,
 ash::SystemTrayDelegate* CreateWindowsSystemTrayDelegate() {
   return new SystemTrayDelegateWin();
 }
-

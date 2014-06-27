@@ -17,6 +17,7 @@
 namespace ui {
 class MenuModel;
 }
+
 namespace views {
 class ImageButton;
 class ImageView;
@@ -27,43 +28,51 @@ class LinkListener;
 class MenuButton;
 class MenuButtonListener;
 class MenuRunner;
-}
+}  // namespace views
 
 class InfoBarView : public InfoBar,
                     public views::View,
                     public views::ButtonListener,
                     public views::ExternalFocusTracker {
  public:
-  InfoBarView(InfoBarService* owner, InfoBarDelegate* delegate);
+  explicit InfoBarView(scoped_ptr<InfoBarDelegate> delegate);
 
   const SkPath& fill_path() const { return fill_path_; }
   const SkPath& stroke_path() const { return stroke_path_; }
 
  protected:
+  typedef std::vector<views::Label*> Labels;
+
   static const int kButtonButtonSpacing;
   static const int kEndOfLabelSpacing;
 
   virtual ~InfoBarView();
 
   // Creates a label with the appropriate font and color for an infobar.
-  views::Label* CreateLabel(const string16& text) const;
+  views::Label* CreateLabel(const base::string16& text) const;
 
   // Creates a link with the appropriate font and color for an infobar.
   // NOTE: Subclasses must ignore link clicks if we're unowned.
-  views::Link* CreateLink(const string16& text,
+  views::Link* CreateLink(const base::string16& text,
                           views::LinkListener* listener) const;
 
   // Creates a menu button with an infobar-specific appearance.
   // NOTE: Subclasses must ignore button presses if we're unowned.
   static views::MenuButton* CreateMenuButton(
-      const string16& text,
+      const base::string16& text,
       views::MenuButtonListener* menu_button_listener);
 
   // Creates a button with an infobar-specific appearance.
   // NOTE: Subclasses must ignore button presses if we're unowned.
   static views::LabelButton* CreateLabelButton(views::ButtonListener* listener,
-                                               const string16& text,
+                                               const base::string16& text,
                                                bool needs_elevation);
+
+  // Given |labels| and the total |available_width| to display them in, sets
+  // each label's size so that the longest label shrinks until it reaches the
+  // length of the next-longest label, then both shrink until reaching the
+  // length of the next-longest, and so forth.
+  static void AssignWidths(Labels* labels, int available_width);
 
   // views::View:
   virtual void Layout() OVERRIDE;
@@ -79,12 +88,17 @@ class InfoBarView : public InfoBar,
   // Returns the minimum width the content (that is, everything between the icon
   // and the close button) can be shrunk to.  This is used to prevent the close
   // button from overlapping views that cannot be shrunk any further.
-  virtual int ContentMinimumWidth() const;
+  virtual int ContentMinimumWidth();
 
   // These return x coordinates delimiting the usable area for subclasses to lay
   // out their controls.
   int StartX() const;
   int EndX() const;
+
+  // Given a |view|, returns the centered y position within us, taking into
+  // account animation so the control "slides in" (or out) as we animate open
+  // and closed.
+  int OffsetY(views::View* view) const;
 
   // Convenience getter.
   const InfoBarContainer::Delegate* container_delegate() const;
@@ -98,6 +112,11 @@ class InfoBarView : public InfoBar,
 
  private:
   static const int kHorizontalPadding;
+  static const int kCloseButtonSpacing;
+
+  // Does the actual work for AssignWidths().  Assumes |labels| is sorted by
+  // decreasing preferred width.
+  static void AssignWidthsSorted(Labels* labels, int available_width);
 
   // InfoBar:
   virtual void PlatformSpecificShow(bool animate) OVERRIDE;
@@ -105,7 +124,7 @@ class InfoBarView : public InfoBar,
   virtual void PlatformSpecificOnHeightsRecalculated() OVERRIDE;
 
   // views::View:
-  virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE;
+  virtual void GetAccessibleState(ui::AXViewState* state) OVERRIDE;
   virtual gfx::Size GetPreferredSize() OVERRIDE;
   virtual void PaintChildren(gfx::Canvas* canvas) OVERRIDE;
 

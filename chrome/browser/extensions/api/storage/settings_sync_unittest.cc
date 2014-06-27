@@ -8,18 +8,19 @@
 #include "base/json/json_writer.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
-#include "chrome/browser/extensions/api/storage/leveldb_settings_storage_factory.h"
-#include "chrome/browser/extensions/api/storage/settings_frontend.h"
-#include "chrome/browser/extensions/api/storage/settings_storage_factory.h"
 #include "chrome/browser/extensions/api/storage/settings_sync_util.h"
-#include "chrome/browser/extensions/api/storage/settings_test_util.h"
+#include "chrome/browser/extensions/api/storage/sync_value_store_cache.h"
 #include "chrome/browser/extensions/api/storage/syncable_settings_storage.h"
-#include "chrome/browser/extensions/extension_system.h"
-#include "chrome/browser/extensions/test_extension_service.h"
-#include "chrome/browser/value_store/testing_value_store.h"
 #include "content/public/test/test_browser_thread.h"
+#include "extensions/browser/api/storage/leveldb_settings_storage_factory.h"
+#include "extensions/browser/api/storage/settings_storage_factory.h"
+#include "extensions/browser/api/storage/settings_test_util.h"
+#include "extensions/browser/api/storage/storage_frontend.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/value_store/testing_value_store.h"
 #include "extensions/common/manifest.h"
 #include "sync/api/sync_change_processor.h"
+#include "sync/api/sync_change_processor_wrapper_for_test.h"
 #include "sync/api/sync_error_factory.h"
 #include "sync/api/sync_error_factory_mock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -39,7 +40,7 @@ namespace {
 const ValueStore::WriteOptions DEFAULTS = ValueStore::DEFAULTS;
 
 // Gets the pretty-printed JSON for a value.
-static std::string GetJson(const Value& value) {
+static std::string GetJson(const base::Value& value) {
   std::string json;
   base::JSONWriter::WriteWithOptions(&value,
                                      base::JSONWriter::OPTIONS_PRETTY_PRINT,
@@ -50,8 +51,8 @@ static std::string GetJson(const Value& value) {
 // Returns whether two Values are equal.
 testing::AssertionResult ValuesEq(
     const char* _1, const char* _2,
-    const Value* expected,
-    const Value* actual) {
+    const base::Value* expected,
+    const base::Value* actual) {
   if (expected == actual) {
     return testing::AssertionSuccess();
   }
@@ -74,7 +75,7 @@ testing::AssertionResult ValuesEq(
 // Logs when different.
 testing::AssertionResult SettingsEq(
     const char* _1, const char* _2,
-    const DictionaryValue& expected,
+    const base::DictionaryValue& expected,
     ValueStore::ReadResult actual) {
   if (actual->HasError()) {
     return testing::AssertionFailure() <<
@@ -142,7 +143,8 @@ class MockSyncChangeProcessor : public syncer::SyncChangeProcessor {
       return SettingSyncData(syncer::SyncChange::ACTION_INVALID,
                              std::string(),
                              std::string(),
-                             scoped_ptr<Value>(new DictionaryValue()));
+                             scoped_ptr<base::Value>(
+                                 new base::DictionaryValue()));
     }
     if (matching_changes.size() != 1u) {
       ADD_FAILURE() << matching_changes.size() << " matching changes for " <<
@@ -154,33 +156,6 @@ class MockSyncChangeProcessor : public syncer::SyncChangeProcessor {
  private:
   SettingSyncDataList changes_;
   bool fail_all_requests_;
-};
-
-class SyncChangeProcessorDelegate : public syncer::SyncChangeProcessor {
- public:
-  explicit SyncChangeProcessorDelegate(syncer::SyncChangeProcessor* recipient)
-      : recipient_(recipient) {
-    DCHECK(recipient_);
-  }
-  virtual ~SyncChangeProcessorDelegate() {}
-
-  // syncer::SyncChangeProcessor implementation.
-  virtual syncer::SyncError ProcessSyncChanges(
-      const tracked_objects::Location& from_here,
-      const syncer::SyncChangeList& change_list) OVERRIDE {
-    return recipient_->ProcessSyncChanges(from_here, change_list);
-  }
-
-  virtual syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const
-      OVERRIDE {
-    return recipient_->GetAllSyncData(type);
-  }
-
- private:
-  // The recipient of all sync changes.
-  syncer::SyncChangeProcessor* recipient_;
-
-  DISALLOW_COPY_AND_ASSIGN(SyncChangeProcessorDelegate);
 };
 
 // SettingsStorageFactory which always returns TestingValueStore objects,
@@ -201,6 +176,12 @@ class TestingValueStoreFactory : public SettingsStorageFactory {
     return new_storage;
   }
 
+  // Testing value stores don't actually create a real database. Don't delete
+  // any files.
+  virtual void DeleteDatabaseIfExists(
+      const base::FilePath& base_path,
+      const std::string& extension_id) OVERRIDE {}
+
  private:
   // SettingsStorageFactory is refcounted.
   virtual ~TestingValueStoreFactory() {}
@@ -219,7 +200,7 @@ class ExtensionSettingsSyncTest : public testing::Test {
         file_thread_(BrowserThread::FILE, base::MessageLoop::current()),
         storage_factory_(new util::ScopedSettingsStorageFactory()),
         sync_processor_(new MockSyncChangeProcessor),
-        sync_processor_delegate_(new SyncChangeProcessorDelegate(
+        sync_processor_wrapper_(new syncer::SyncChangeProcessorWrapperForTest(
             sync_processor_.get())) {}
 
   virtual void SetUp() OVERRIDE {
@@ -227,7 +208,7 @@ class ExtensionSettingsSyncTest : public testing::Test {
     profile_.reset(new util::MockProfile(temp_dir_.path()));
     storage_factory_->Reset(new LeveldbSettingsStorageFactory());
     frontend_.reset(
-        SettingsFrontend::Create(storage_factory_.get(), profile_.get()));
+        StorageFrontend::CreateForTesting(storage_factory_, profile_.get()));
   }
 
   virtual void TearDown() OVERRIDE {
@@ -242,17 +223,17 @@ class ExtensionSettingsSyncTest : public testing::Test {
   // its storage area.
   ValueStore* AddExtensionAndGetStorage(
       const std::string& id, Manifest::Type type) {
-    ExtensionServiceInterface* esi =
-        extensions::ExtensionSystem::Get(profile_.get())->extension_service();
-    static_cast<extensions::settings_test_util::MockExtensionService*>(esi)->
-        AddExtensionWithId(id, type);
-    return util::GetStorage(id, frontend_.get());
+    scoped_refptr<const Extension> extension =
+        util::AddExtensionWithId(profile_.get(), id, type);
+    return util::GetStorage(extension, frontend_.get());
   }
 
   // Gets the syncer::SyncableService for the given sync type.
   syncer::SyncableService* GetSyncableService(syncer::ModelType model_type) {
     base::MessageLoop::current()->RunUntilIdle();
-    return frontend_->GetBackendForSync(model_type);
+    SyncValueStoreCache* sync_cache = static_cast<SyncValueStoreCache*>(
+        frontend_->GetValueStoreCache(settings_namespace::SYNC));
+    return sync_cache->GetSyncableService(model_type);
   }
 
   // Gets all the sync data from the SyncableService for a sync type as a map
@@ -277,10 +258,10 @@ class ExtensionSettingsSyncTest : public testing::Test {
 
   base::ScopedTempDir temp_dir_;
   scoped_ptr<util::MockProfile> profile_;
-  scoped_ptr<SettingsFrontend> frontend_;
+  scoped_ptr<StorageFrontend> frontend_;
   scoped_refptr<util::ScopedSettingsStorageFactory> storage_factory_;
   scoped_ptr<MockSyncChangeProcessor> sync_processor_;
-  scoped_ptr<SyncChangeProcessorDelegate> sync_processor_delegate_;
+  scoped_ptr<syncer::SyncChangeProcessorWrapperForTest> sync_processor_wrapper_;
 };
 
 // Get a semblance of coverage for both EXTENSION_SETTINGS and APP_SETTINGS
@@ -299,7 +280,7 @@ TEST_F(ExtensionSettingsSyncTest, NoDataDoesNotInvokeSync) {
   GetSyncableService(model_type)->MergeDataAndStartSyncing(
       model_type,
       syncer::SyncDataList(),
-      sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>(),
+      sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>(),
       scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock()));
 
   AddExtensionAndGetStorage("s2", type);
@@ -315,8 +296,8 @@ TEST_F(ExtensionSettingsSyncTest, InSyncDataDoesNotInvokeSync) {
   syncer::ModelType model_type = syncer::APP_SETTINGS;
   Manifest::Type type = Manifest::TYPE_LEGACY_PACKAGED_APP;
 
-  StringValue value1("fooValue");
-  ListValue value2;
+  base::StringValue value1("fooValue");
+  base::ListValue value2;
   value2.Append(new base::StringValue("barValue"));
 
   ValueStore* storage1 = AddExtensionAndGetStorage("s1", type);
@@ -340,8 +321,9 @@ TEST_F(ExtensionSettingsSyncTest, InSyncDataDoesNotInvokeSync) {
       "s2", "bar", value2, model_type));
 
   GetSyncableService(model_type)->MergeDataAndStartSyncing(
-      model_type, sync_data,
-      sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>(),
+      model_type,
+      sync_data,
+      sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>(),
       scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock()));
 
   // Already in sync, so no changes.
@@ -365,8 +347,8 @@ TEST_F(ExtensionSettingsSyncTest, LocalDataWithNoSyncDataIsPushedToSync) {
   syncer::ModelType model_type = syncer::EXTENSION_SETTINGS;
   Manifest::Type type = Manifest::TYPE_EXTENSION;
 
-  StringValue value1("fooValue");
-  ListValue value2;
+  base::StringValue value1("fooValue");
+  base::ListValue value2;
   value2.Append(new base::StringValue("barValue"));
 
   ValueStore* storage1 = AddExtensionAndGetStorage("s1", type);
@@ -378,7 +360,7 @@ TEST_F(ExtensionSettingsSyncTest, LocalDataWithNoSyncDataIsPushedToSync) {
   GetSyncableService(model_type)->MergeDataAndStartSyncing(
       model_type,
       syncer::SyncDataList(),
-      sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>(),
+      sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>(),
       scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock()));
 
   // All settings should have been pushed to sync.
@@ -397,13 +379,13 @@ TEST_F(ExtensionSettingsSyncTest, AnySyncDataOverwritesLocalData) {
   syncer::ModelType model_type = syncer::APP_SETTINGS;
   Manifest::Type type = Manifest::TYPE_LEGACY_PACKAGED_APP;
 
-  StringValue value1("fooValue");
-  ListValue value2;
+  base::StringValue value1("fooValue");
+  base::ListValue value2;
   value2.Append(new base::StringValue("barValue"));
 
   // Maintain dictionaries mirrored to the expected values of the settings in
   // each storage area.
-  DictionaryValue expected1, expected2;
+  base::DictionaryValue expected1, expected2;
 
   // Pre-populate one of the storage areas.
   ValueStore* storage1 = AddExtensionAndGetStorage("s1", type);
@@ -415,8 +397,9 @@ TEST_F(ExtensionSettingsSyncTest, AnySyncDataOverwritesLocalData) {
   sync_data.push_back(settings_sync_util::CreateData(
       "s2", "bar", value2, model_type));
   GetSyncableService(model_type)->MergeDataAndStartSyncing(
-      model_type, sync_data,
-      sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>(),
+      model_type,
+      sync_data,
+      sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>(),
       scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock()));
   expected1.Set("foo", value1.DeepCopy());
   expected2.Set("bar", value2.DeepCopy());
@@ -437,13 +420,13 @@ TEST_F(ExtensionSettingsSyncTest, ProcessSyncChanges) {
   syncer::ModelType model_type = syncer::EXTENSION_SETTINGS;
   Manifest::Type type = Manifest::TYPE_EXTENSION;
 
-  StringValue value1("fooValue");
-  ListValue value2;
+  base::StringValue value1("fooValue");
+  base::ListValue value2;
   value2.Append(new base::StringValue("barValue"));
 
   // Maintain dictionaries mirrored to the expected values of the settings in
   // each storage area.
-  DictionaryValue expected1, expected2;
+  base::DictionaryValue expected1, expected2;
 
   // Make storage1 initialised from local data, storage2 initialised from sync.
   ValueStore* storage1 = AddExtensionAndGetStorage("s1", type);
@@ -457,8 +440,9 @@ TEST_F(ExtensionSettingsSyncTest, ProcessSyncChanges) {
       "s2", "bar", value2, model_type));
 
   GetSyncableService(model_type)->MergeDataAndStartSyncing(
-      model_type, sync_data,
-      sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>(),
+      model_type,
+      sync_data,
+      sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>(),
       scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock()));
   expected2.Set("bar", value2.DeepCopy());
 
@@ -510,8 +494,8 @@ TEST_F(ExtensionSettingsSyncTest, PushToSync) {
   syncer::ModelType model_type = syncer::APP_SETTINGS;
   Manifest::Type type = Manifest::TYPE_LEGACY_PACKAGED_APP;
 
-  StringValue value1("fooValue");
-  ListValue value2;
+  base::StringValue value1("fooValue");
+  base::ListValue value2;
   value2.Append(new base::StringValue("barValue"));
 
   // Make storage1/2 initialised from local data, storage3/4 initialised from
@@ -531,8 +515,9 @@ TEST_F(ExtensionSettingsSyncTest, PushToSync) {
       "s4", "bar", value2, model_type));
 
   GetSyncableService(model_type)->MergeDataAndStartSyncing(
-      model_type, sync_data,
-      sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>(),
+      model_type,
+      sync_data,
+      sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>(),
       scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock()));
 
   // Add something locally.
@@ -649,8 +634,8 @@ TEST_F(ExtensionSettingsSyncTest, PushToSync) {
 }
 
 TEST_F(ExtensionSettingsSyncTest, ExtensionAndAppSettingsSyncSeparately) {
-  StringValue value1("fooValue");
-  ListValue value2;
+  base::StringValue value1("fooValue");
+  base::ListValue value2;
   value2.Append(new base::StringValue("barValue"));
 
   // storage1 is an extension, storage2 is an app.
@@ -682,7 +667,7 @@ TEST_F(ExtensionSettingsSyncTest, ExtensionAndAppSettingsSyncSeparately) {
   GetSyncableService(syncer::EXTENSION_SETTINGS)->MergeDataAndStartSyncing(
       syncer::EXTENSION_SETTINGS,
       sync_data,
-      sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>(),
+      sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>(),
       scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock()));
   GetSyncableService(syncer::EXTENSION_SETTINGS)->
       StopSyncing(syncer::EXTENSION_SETTINGS);
@@ -692,8 +677,8 @@ TEST_F(ExtensionSettingsSyncTest, ExtensionAndAppSettingsSyncSeparately) {
   sync_data.push_back(settings_sync_util::CreateData(
       "s2", "bar", value2, syncer::APP_SETTINGS));
 
-  scoped_ptr<SyncChangeProcessorDelegate> app_settings_delegate_(
-      new SyncChangeProcessorDelegate(sync_processor_.get()));
+  scoped_ptr<syncer::SyncChangeProcessorWrapperForTest> app_settings_delegate_(
+      new syncer::SyncChangeProcessorWrapperForTest(sync_processor_.get()));
   GetSyncableService(syncer::APP_SETTINGS)->MergeDataAndStartSyncing(
       syncer::APP_SETTINGS,
       sync_data,
@@ -708,8 +693,8 @@ TEST_F(ExtensionSettingsSyncTest, FailingStartSyncingDisablesSync) {
   syncer::ModelType model_type = syncer::EXTENSION_SETTINGS;
   Manifest::Type type = Manifest::TYPE_EXTENSION;
 
-  StringValue fooValue("fooValue");
-  StringValue barValue("barValue");
+  base::StringValue fooValue("fooValue");
+  base::StringValue barValue("barValue");
 
   // There is a bit of a convoluted method to get storage areas that can fail;
   // hand out TestingValueStore object then toggle them failing/succeeding
@@ -731,19 +716,19 @@ TEST_F(ExtensionSettingsSyncTest, FailingStartSyncingDisablesSync) {
     GetSyncableService(model_type)->MergeDataAndStartSyncing(
         model_type,
         sync_data,
-        sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>(),
+        sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>(),
         scoped_ptr<syncer::SyncErrorFactory>(
             new syncer::SyncErrorFactoryMock()));
   }
   testing_factory->GetExisting("bad")->set_error_code(ValueStore::OK);
 
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("foo", fooValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, good->Get());
   }
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     EXPECT_PRED_FORMAT2(SettingsEq, dict, bad->Get());
   }
 
@@ -758,13 +743,13 @@ TEST_F(ExtensionSettingsSyncTest, FailingStartSyncingDisablesSync) {
   EXPECT_EQ(1u, sync_processor_->changes().size());
 
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("foo", fooValue.DeepCopy());
     dict.Set("bar", barValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, good->Get());
   }
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("bar", barValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, bad->Get());
   }
@@ -783,13 +768,13 @@ TEST_F(ExtensionSettingsSyncTest, FailingStartSyncingDisablesSync) {
   }
 
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("foo", barValue.DeepCopy());
     dict.Set("bar", barValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, good->Get());
   }
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("bar", barValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, bad->Get());
   }
@@ -806,13 +791,13 @@ TEST_F(ExtensionSettingsSyncTest, FailingStartSyncingDisablesSync) {
   EXPECT_EQ(1u, sync_processor_->changes().size());
 
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("foo", barValue.DeepCopy());
     dict.Set("bar", fooValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, good->Get());
   }
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("bar", fooValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, bad->Get());
   }
@@ -831,13 +816,13 @@ TEST_F(ExtensionSettingsSyncTest, FailingStartSyncingDisablesSync) {
   testing_factory->GetExisting("bad")->set_error_code(ValueStore::OK);
 
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("foo", fooValue.DeepCopy());
     dict.Set("bar", fooValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, good->Get());
   }
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("bar", fooValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, bad->Get());
   }
@@ -845,12 +830,12 @@ TEST_F(ExtensionSettingsSyncTest, FailingStartSyncingDisablesSync) {
   // Restarting sync should make bad start syncing again.
   sync_processor_->ClearChanges();
   GetSyncableService(model_type)->StopSyncing(model_type);
-  sync_processor_delegate_.reset(new SyncChangeProcessorDelegate(
-      sync_processor_.get()));
+  sync_processor_wrapper_.reset(
+      new syncer::SyncChangeProcessorWrapperForTest(sync_processor_.get()));
   GetSyncableService(model_type)->MergeDataAndStartSyncing(
       model_type,
       syncer::SyncDataList(),
-      sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>(),
+      sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>(),
       scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock()));
 
   // Local settings will have been pushed to sync, since it's empty (in this
@@ -890,13 +875,13 @@ TEST_F(ExtensionSettingsSyncTest, FailingStartSyncingDisablesSync) {
   }
 
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("foo", fooValue.DeepCopy());
     dict.Set("bar", fooValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, good->Get());
   }
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("bar", fooValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, bad->Get());
   }
@@ -908,8 +893,8 @@ TEST_F(ExtensionSettingsSyncTest, FailingProcessChangesDisablesSync) {
   syncer::ModelType model_type = syncer::APP_SETTINGS;
   Manifest::Type type = Manifest::TYPE_LEGACY_PACKAGED_APP;
 
-  StringValue fooValue("fooValue");
-  StringValue barValue("barValue");
+  base::StringValue fooValue("fooValue");
+  base::StringValue barValue("barValue");
 
   TestingValueStoreFactory* testing_factory = new TestingValueStoreFactory();
   storage_factory_->Reset(testing_factory);
@@ -927,7 +912,7 @@ TEST_F(ExtensionSettingsSyncTest, FailingProcessChangesDisablesSync) {
     GetSyncableService(model_type)->MergeDataAndStartSyncing(
         model_type,
         sync_data,
-        sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>(),
+        sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>(),
         scoped_ptr<syncer::SyncErrorFactory>(
             new syncer::SyncErrorFactoryMock()));
   }
@@ -935,12 +920,12 @@ TEST_F(ExtensionSettingsSyncTest, FailingProcessChangesDisablesSync) {
   EXPECT_EQ(0u, sync_processor_->changes().size());
 
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("foo", fooValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, good->Get());
   }
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("foo", fooValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, bad->Get());
   }
@@ -958,13 +943,13 @@ TEST_F(ExtensionSettingsSyncTest, FailingProcessChangesDisablesSync) {
   testing_factory->GetExisting("bad")->set_error_code(ValueStore::OK);
 
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("foo", fooValue.DeepCopy());
     dict.Set("bar", barValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, good->Get());
   }
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("foo", fooValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, bad->Get());
   }
@@ -990,13 +975,13 @@ TEST_F(ExtensionSettingsSyncTest, FailingProcessChangesDisablesSync) {
   }
 
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("foo", fooValue.DeepCopy());
     dict.Set("bar", barValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, good->Get());
   }
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("foo", barValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, bad->Get());
   }
@@ -1006,8 +991,8 @@ TEST_F(ExtensionSettingsSyncTest, FailingGetAllSyncDataDoesntStopSync) {
   syncer::ModelType model_type = syncer::EXTENSION_SETTINGS;
   Manifest::Type type = Manifest::TYPE_EXTENSION;
 
-  StringValue fooValue("fooValue");
-  StringValue barValue("barValue");
+  base::StringValue fooValue("fooValue");
+  base::StringValue barValue("barValue");
 
   TestingValueStoreFactory* testing_factory = new TestingValueStoreFactory();
   storage_factory_->Reset(testing_factory);
@@ -1033,7 +1018,7 @@ TEST_F(ExtensionSettingsSyncTest, FailingGetAllSyncDataDoesntStopSync) {
   GetSyncableService(model_type)->MergeDataAndStartSyncing(
       model_type,
       syncer::SyncDataList(),
-      sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>(),
+      sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>(),
       scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock()));
 
   EXPECT_EQ(
@@ -1061,8 +1046,8 @@ TEST_F(ExtensionSettingsSyncTest, FailureToReadChangesToPushDisablesSync) {
   syncer::ModelType model_type = syncer::APP_SETTINGS;
   Manifest::Type type = Manifest::TYPE_LEGACY_PACKAGED_APP;
 
-  StringValue fooValue("fooValue");
-  StringValue barValue("barValue");
+  base::StringValue fooValue("fooValue");
+  base::StringValue barValue("barValue");
 
   TestingValueStoreFactory* testing_factory = new TestingValueStoreFactory();
   storage_factory_->Reset(testing_factory);
@@ -1079,7 +1064,7 @@ TEST_F(ExtensionSettingsSyncTest, FailureToReadChangesToPushDisablesSync) {
   GetSyncableService(model_type)->MergeDataAndStartSyncing(
       model_type,
       syncer::SyncDataList(),
-      sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>(),
+      sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>(),
       scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock()));
   testing_factory->GetExisting("bad")->set_error_code(ValueStore::OK);
 
@@ -1110,13 +1095,13 @@ TEST_F(ExtensionSettingsSyncTest, FailureToReadChangesToPushDisablesSync) {
   }
 
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("foo", barValue.DeepCopy());
     dict.Set("bar", barValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, good->Get());
   }
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("foo", fooValue.DeepCopy());
     dict.Set("bar", barValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, bad->Get());
@@ -1126,12 +1111,12 @@ TEST_F(ExtensionSettingsSyncTest, FailureToReadChangesToPushDisablesSync) {
   // to be pushed to sync successfully, as should future changes to bad.
   sync_processor_->ClearChanges();
   GetSyncableService(model_type)->StopSyncing(model_type);
-  sync_processor_delegate_.reset(new SyncChangeProcessorDelegate(
-      sync_processor_.get()));
+  sync_processor_wrapper_.reset(
+      new syncer::SyncChangeProcessorWrapperForTest(sync_processor_.get()));
   GetSyncableService(model_type)->MergeDataAndStartSyncing(
       model_type,
       syncer::SyncDataList(),
-      sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>(),
+      sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>(),
       scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock()));
 
   EXPECT_EQ(
@@ -1165,8 +1150,8 @@ TEST_F(ExtensionSettingsSyncTest, FailureToPushLocalStateDisablesSync) {
   syncer::ModelType model_type = syncer::EXTENSION_SETTINGS;
   Manifest::Type type = Manifest::TYPE_EXTENSION;
 
-  StringValue fooValue("fooValue");
-  StringValue barValue("barValue");
+  base::StringValue fooValue("fooValue");
+  base::StringValue barValue("barValue");
 
   TestingValueStoreFactory* testing_factory = new TestingValueStoreFactory();
   storage_factory_->Reset(testing_factory);
@@ -1181,7 +1166,7 @@ TEST_F(ExtensionSettingsSyncTest, FailureToPushLocalStateDisablesSync) {
   GetSyncableService(model_type)->MergeDataAndStartSyncing(
       model_type,
       syncer::SyncDataList(),
-      sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>(),
+      sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>(),
       scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock()));
   sync_processor_->set_fail_all_requests(false);
 
@@ -1206,13 +1191,13 @@ TEST_F(ExtensionSettingsSyncTest, FailureToPushLocalStateDisablesSync) {
   }
 
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("foo", barValue.DeepCopy());
     dict.Set("bar", barValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, good->Get());
   }
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("foo", barValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, bad->Get());
   }
@@ -1220,12 +1205,12 @@ TEST_F(ExtensionSettingsSyncTest, FailureToPushLocalStateDisablesSync) {
   // Restarting sync makes everything work again.
   sync_processor_->ClearChanges();
   GetSyncableService(model_type)->StopSyncing(model_type);
-  sync_processor_delegate_.reset(new SyncChangeProcessorDelegate(
-      sync_processor_.get()));
+  sync_processor_wrapper_.reset(
+      new syncer::SyncChangeProcessorWrapperForTest(sync_processor_.get()));
   GetSyncableService(model_type)->MergeDataAndStartSyncing(
       model_type,
       syncer::SyncDataList(),
-      sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>(),
+      sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>(),
       scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock()));
 
   EXPECT_EQ(
@@ -1256,8 +1241,8 @@ TEST_F(ExtensionSettingsSyncTest, FailureToPushLocalChangeDisablesSync) {
   syncer::ModelType model_type = syncer::EXTENSION_SETTINGS;
   Manifest::Type type = Manifest::TYPE_EXTENSION;
 
-  StringValue fooValue("fooValue");
-  StringValue barValue("barValue");
+  base::StringValue fooValue("fooValue");
+  base::StringValue barValue("barValue");
 
   TestingValueStoreFactory* testing_factory = new TestingValueStoreFactory();
   storage_factory_->Reset(testing_factory);
@@ -1268,7 +1253,7 @@ TEST_F(ExtensionSettingsSyncTest, FailureToPushLocalChangeDisablesSync) {
   GetSyncableService(model_type)->MergeDataAndStartSyncing(
       model_type,
       syncer::SyncDataList(),
-      sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>(),
+      sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>(),
       scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock()));
 
   // bad will fail to send changes.
@@ -1303,13 +1288,13 @@ TEST_F(ExtensionSettingsSyncTest, FailureToPushLocalChangeDisablesSync) {
   }
 
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("foo", barValue.DeepCopy());
     dict.Set("bar", barValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, good->Get());
   }
   {
-    DictionaryValue dict;
+    base::DictionaryValue dict;
     dict.Set("foo", barValue.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, dict, bad->Get());
   }
@@ -1317,12 +1302,12 @@ TEST_F(ExtensionSettingsSyncTest, FailureToPushLocalChangeDisablesSync) {
   // Restarting sync makes everything work again.
   sync_processor_->ClearChanges();
   GetSyncableService(model_type)->StopSyncing(model_type);
-  sync_processor_delegate_.reset(new SyncChangeProcessorDelegate(
-      sync_processor_.get()));
+  sync_processor_wrapper_.reset(
+      new syncer::SyncChangeProcessorWrapperForTest(sync_processor_.get()));
   GetSyncableService(model_type)->MergeDataAndStartSyncing(
       model_type,
       syncer::SyncDataList(),
-      sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>(),
+      sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>(),
       scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock()));
 
   EXPECT_EQ(
@@ -1354,17 +1339,17 @@ TEST_F(ExtensionSettingsSyncTest,
   syncer::ModelType model_type = syncer::APP_SETTINGS;
   Manifest::Type type = Manifest::TYPE_LEGACY_PACKAGED_APP;
 
-  // This value should be larger than the limit in settings_backend.cc.
+  // This value should be larger than the limit in sync_storage_backend.cc.
   std::string string_5k;
   for (size_t i = 0; i < 5000; ++i) {
     string_5k.append("a");
   }
-  StringValue large_value(string_5k);
+  base::StringValue large_value(string_5k);
 
   GetSyncableService(model_type)->MergeDataAndStartSyncing(
       model_type,
       syncer::SyncDataList(),
-      sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>(),
+      sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>(),
       scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock()));
 
   // Large local change rejected and doesn't get sent out.
@@ -1383,7 +1368,7 @@ TEST_F(ExtensionSettingsSyncTest,
     GetSyncableService(model_type)->ProcessSyncChanges(FROM_HERE, change_list);
   }
   {
-    DictionaryValue expected;
+    base::DictionaryValue expected;
     expected.Set("large_value", large_value.DeepCopy());
     EXPECT_PRED_FORMAT2(SettingsEq, expected, storage1->Get());
     EXPECT_PRED_FORMAT2(SettingsEq, expected, storage2->Get());
@@ -1400,14 +1385,14 @@ TEST_F(ExtensionSettingsSyncTest, Dots) {
 
   {
     syncer::SyncDataList sync_data_list;
-    scoped_ptr<Value> string_value(new base::StringValue("value"));
+    scoped_ptr<base::Value> string_value(new base::StringValue("value"));
     sync_data_list.push_back(settings_sync_util::CreateData(
         "ext", "key.with.dot", *string_value, model_type));
 
     GetSyncableService(model_type)->MergeDataAndStartSyncing(
         model_type,
         sync_data_list,
-        sync_processor_delegate_.PassAs<syncer::SyncChangeProcessor>(),
+        sync_processor_wrapper_.PassAs<syncer::SyncChangeProcessor>(),
         scoped_ptr<syncer::SyncErrorFactory>(
             new syncer::SyncErrorFactoryMock()));
   }
@@ -1417,16 +1402,16 @@ TEST_F(ExtensionSettingsSyncTest, Dots) {
     ValueStore::ReadResult data = storage->Get();
     ASSERT_FALSE(data->HasError());
 
-    DictionaryValue expected_data;
+    base::DictionaryValue expected_data;
     expected_data.SetWithoutPathExpansion(
         "key.with.dot",
         new base::StringValue("value"));
-    EXPECT_TRUE(Value::Equals(&expected_data, &data->settings()));
+    EXPECT_TRUE(base::Value::Equals(&expected_data, &data->settings()));
   }
 
   // Test dots in keys going to sync.
   {
-    scoped_ptr<Value> string_value(new base::StringValue("spot"));
+    scoped_ptr<base::Value> string_value(new base::StringValue("spot"));
     storage->Set(DEFAULTS, "key.with.spot", *string_value);
 
     ASSERT_EQ(1u, sync_processor_->changes().size());

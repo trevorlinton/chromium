@@ -16,7 +16,7 @@
 namespace gfx {
 
 GLContextNSView::GLContextNSView(GLShareGroup* group)
-    : GLContext(group) {
+    : GLContextReal(group) {
 }
 
 GLContextNSView::~GLContextNSView() {
@@ -64,7 +64,12 @@ bool GLContextNSView::MakeCurrent(GLSurface* surface) {
     [context_ setView:view];
   [context_ makeCurrentContext];
 
+  SetRealGLApi();
   SetCurrent(surface);
+  if (!InitializeDynamicBindings()) {
+    ReleaseCurrent(surface);
+    return false;
+  }
 
   if (!surface->OnMakeCurrent(this)) {
     LOG(ERROR) << "Unable to make gl context current.";

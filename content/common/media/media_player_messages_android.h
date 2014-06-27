@@ -5,9 +5,6 @@
 // IPC messages for android media player.
 // Multiply-included message file, hence no include guard.
 
-#include <string>
-#include <vector>
-
 #include "base/basictypes.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
@@ -15,7 +12,6 @@
 #include "ipc/ipc_message_macros.h"
 #include "media/base/android/media_player_android.h"
 #include "media/base/android/demuxer_stream_player_params.h"
-#include "media/base/media_keys.h"
 #include "ui/gfx/rect_f.h"
 #include "url/gurl.h"
 
@@ -26,7 +22,6 @@
 IPC_ENUM_TRAITS(media::AudioCodec)
 IPC_ENUM_TRAITS(media::DemuxerStream::Status)
 IPC_ENUM_TRAITS(media::DemuxerStream::Type)
-IPC_ENUM_TRAITS(media::MediaKeys::KeyError)
 IPC_ENUM_TRAITS(media::VideoCodec)
 
 IPC_STRUCT_TRAITS_BEGIN(media::DemuxerConfigs)
@@ -42,9 +37,6 @@ IPC_STRUCT_TRAITS_BEGIN(media::DemuxerConfigs)
   IPC_STRUCT_TRAITS_MEMBER(video_extra_data)
 
   IPC_STRUCT_TRAITS_MEMBER(duration_ms)
-#if defined(GOOGLE_TV)
-  IPC_STRUCT_TRAITS_MEMBER(key_system)
-#endif  // defined(GOOGLE_TV)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(media::DemuxerData)
@@ -187,11 +179,18 @@ IPC_MESSAGE_CONTROL2(MediaPlayerMsg_ReadFromDemuxer,
 IPC_MESSAGE_CONTROL1(MediaPlayerMsg_MediaConfigRequest,
                      int /* demuxer_client_id */)
 
-IPC_MESSAGE_ROUTED1(MediaPlayerMsg_ConnectedToRemoteDevice,
-                    int /* player_id */)
+// Clank has connected to the remote device.
+IPC_MESSAGE_ROUTED2(MediaPlayerMsg_ConnectedToRemoteDevice,
+                    int /* player_id */,
+                    std::string /* remote_playback_message */)
 
+// Clank has disconnected from the remote device.
 IPC_MESSAGE_ROUTED1(MediaPlayerMsg_DisconnectedFromRemoteDevice,
                     int /* player_id */)
+
+// Instructs the video element to enter fullscreen.
+IPC_MESSAGE_ROUTED1(MediaPlayerMsg_RequestFullscreen,
+                    int /*player_id */)
 
 // Messages for controlling the media playback in browser process ----------
 
@@ -235,10 +234,15 @@ IPC_MESSAGE_ROUTED2(MediaPlayerHostMsg_Seek,
 // Start the player for playback.
 IPC_MESSAGE_ROUTED1(MediaPlayerHostMsg_Start, int /* player_id */)
 
-// Start the player for playback.
+// Set the volume.
 IPC_MESSAGE_ROUTED2(MediaPlayerHostMsg_SetVolume,
                     int /* player_id */,
                     double /* volume */)
+
+// Set the poster image.
+IPC_MESSAGE_ROUTED2(MediaPlayerHostMsg_SetPoster,
+                    int /* player_id */,
+                    GURL /* poster url */)
 
 // Requests the player to enter fullscreen.
 IPC_MESSAGE_ROUTED1(MediaPlayerHostMsg_EnterFullscreen, int /* player_id */)
@@ -266,50 +270,12 @@ IPC_MESSAGE_CONTROL2(MediaPlayerHostMsg_DurationChanged,
                      int /* demuxer_client_id */,
                      base::TimeDelta /* duration */)
 
-#if defined(GOOGLE_TV)
+#if defined(VIDEO_HOLE)
 // Notify the player about the external surface, requesting it if necessary.
+// |is_request| true if the player is requesting the external surface.
+// |rect| the boundary rectangle of the video element.
 IPC_MESSAGE_ROUTED3(MediaPlayerHostMsg_NotifyExternalSurface,
                     int /* player_id */,
                     bool /* is_request */,
                     gfx::RectF /* rect */)
-
-#endif
-
-// Messages for encrypted media extensions API ------------------------------
-// TODO(xhwang): Move the following messages to a separate file.
-
-IPC_MESSAGE_ROUTED3(MediaKeysHostMsg_InitializeCDM,
-                    int /* media_keys_id */,
-                    std::vector<uint8> /* uuid */,
-                    GURL /* frame url */)
-
-IPC_MESSAGE_ROUTED3(MediaKeysHostMsg_GenerateKeyRequest,
-                    int /* media_keys_id */,
-                    std::string /* type */,
-                    std::vector<uint8> /* init_data */)
-
-IPC_MESSAGE_ROUTED4(MediaKeysHostMsg_AddKey,
-                    int /* media_keys_id */,
-                    std::vector<uint8> /* key */,
-                    std::vector<uint8> /* init_data */,
-                    std::string /* session_id */)
-
-IPC_MESSAGE_ROUTED2(MediaKeysHostMsg_CancelKeyRequest,
-                    int /* media_keys_id */,
-                    std::string /* session_id */)
-
-IPC_MESSAGE_ROUTED2(MediaKeysMsg_KeyAdded,
-                    int /* media_keys_id */,
-                    std::string /* session_id */)
-
-IPC_MESSAGE_ROUTED4(MediaKeysMsg_KeyError,
-                    int /* media_keys_id */,
-                    std::string /* session_id */,
-                    media::MediaKeys::KeyError /* error_code */,
-                    int /* system_code */)
-
-IPC_MESSAGE_ROUTED4(MediaKeysMsg_KeyMessage,
-                    int /* media_keys_id */,
-                    std::string /* session_id */,
-                    std::vector<uint8> /* message */,
-                    std::string /* destination_url */)
+#endif  // defined(VIDEO_HOLE)

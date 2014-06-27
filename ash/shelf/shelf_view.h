@@ -8,8 +8,8 @@
 #include <utility>
 #include <vector>
 
-#include "ash/launcher/launcher_button_host.h"
-#include "ash/launcher/launcher_model_observer.h"
+#include "ash/shelf/shelf_button_host.h"
+#include "ash/shelf/shelf_model_observer.h"
 #include "ash/wm/gestures/shelf_gesture_handler.h"
 #include "base/observer_list.h"
 #include "ui/app_list/views/app_list_drag_and_drop_host.h"
@@ -32,40 +32,45 @@ namespace test {
 class ShelfViewTestAPI;
 }
 
-class LauncherDelegate;
-struct LauncherItem;
-class LauncherItemDelegateManager;
-class LauncherModel;
+class ShelfDelegate;
 class ShelfIconObserver;
+class ShelfItemDelegateManager;
+class ShelfModel;
+struct ShelfItem;
 
 namespace internal {
 
 class DragImageView;
-class LauncherButton;
 class OverflowBubble;
 class OverflowButton;
+class ShelfButton;
 class ShelfLayoutManager;
 class ShelfTooltipManager;
 
+extern const int SHELF_ALIGNMENT_UMA_ENUM_VALUE_BOTTOM;
+extern const int SHELF_ALIGNMENT_UMA_ENUM_VALUE_LEFT;
+extern const int SHELF_ALIGNMENT_UMA_ENUM_VALUE_RIGHT;
+extern const int SHELF_ALIGNMENT_UMA_ENUM_VALUE_COUNT;
+
 class ASH_EXPORT ShelfView : public views::View,
-                             public LauncherModelObserver,
+                             public ShelfModelObserver,
                              public views::ButtonListener,
-                             public LauncherButtonHost,
+                             public ShelfButtonHost,
                              public views::ContextMenuController,
                              public views::FocusTraversable,
                              public views::BoundsAnimatorObserver,
                              public app_list::ApplicationDragAndDropHost {
  public:
-  ShelfView(LauncherModel* model,
-            LauncherDelegate* delegate,
-            ShelfLayoutManager* shelf_layout_manager);
+  ShelfView(ShelfModel* model,
+            ShelfDelegate* delegate,
+            ShelfLayoutManager* manager);
   virtual ~ShelfView();
 
   ShelfTooltipManager* tooltip_manager() { return tooltip_.get(); }
 
   ShelfLayoutManager* shelf_layout_manager() { return layout_manager_; }
 
-  LauncherModel* model() { return model_; }
+  ShelfModel* model() { return model_; }
 
   void Init();
 
@@ -74,10 +79,10 @@ class ASH_EXPORT ShelfView : public views::View,
 
   // Returns the ideal bounds of the specified item, or an empty rect if id
   // isn't know.
-  gfx::Rect GetIdealBoundsOfItemIcon(LauncherID id);
+  gfx::Rect GetIdealBoundsOfItemIcon(ShelfID id);
 
   // Repositions the icon for the specified item by the midpoint of the window.
-  void UpdatePanelIconPosition(LauncherID id, const gfx::Point& midpoint);
+  void UpdatePanelIconPosition(ShelfID id, const gfx::Point& midpoint);
 
   void AddIconObserver(ShelfIconObserver* observer);
   void RemoveIconObserver(ShelfIconObserver* observer);
@@ -148,9 +153,13 @@ class ASH_EXPORT ShelfView : public views::View,
     NOT_REMOVABLE, // Item is fixed and can never be removed.
   };
 
-  bool is_overflow_mode() const {
-    return first_visible_index_ > 0;
-  }
+  // Returns true when this ShelfView is used for Overflow Bubble.
+  // In this mode, it does not show app list, panel and overflow button.
+  // Note:
+  //   * When Shelf can contain only one item (overflow button) due to very
+  //     small resolution screen, overflow bubble can show app list and panel
+  //     button.
+  bool is_overflow_mode() const { return overflow_mode_; }
 
   bool dragging() const {
     return drag_pointer_ != NONE;
@@ -158,6 +167,9 @@ class ASH_EXPORT ShelfView : public views::View,
 
   // Sets the bounds of each view to its ideal bounds.
   void LayoutToIdealBounds();
+
+  // Update all button's visibility in overflow.
+  void UpdateAllButtonsVisibilityInOverflowMode();
 
   // Calculates the ideal bounds. The bounds of each button corresponding to an
   // item in the model is set in |view_model_|.
@@ -175,7 +187,7 @@ class ASH_EXPORT ShelfView : public views::View,
   void AnimateToIdealBounds();
 
   // Creates the view used to represent |item|.
-  views::View* CreateViewForItem(const LauncherItem& item);
+  views::View* CreateViewForItem(const ShelfItem& item);
 
   // Fades |view| from an opacity of 0 to 1. This is when adding a new item.
   void FadeIn(views::View* view);
@@ -198,7 +210,7 @@ class ASH_EXPORT ShelfView : public views::View,
   RemovableState RemovableByRipOff(int index);
 
   // Returns true if |typea| and |typeb| should be in the same drag range.
-  bool SameDragType(LauncherItemType typea, LauncherItemType typeb) const;
+  bool SameDragType(ShelfItemType typea, ShelfItemType typeb) const;
 
   // Returns the range (in the model) the item at the specified index can be
   // dragged to.
@@ -207,6 +219,15 @@ class ASH_EXPORT ShelfView : public views::View,
   // If there is a drag operation in progress it's canceled. If |modified_index|
   // is valid, the new position of the corresponding item is returned.
   int CancelDrag(int modified_index);
+
+  // Returns rectangle bounds used for drag insertion.
+  // Note:
+  //  * When overflow button is visible, returns bounds from first item
+  //    to overflow button.
+  //  * When overflow button is visible and one or more panel items exists,
+  //    returns bounds from first item to last panel item.
+  //  * In the overflow mode, returns only bubble's bounds.
+  gfx::Rect GetBoundsForDragInsertInScreen();
 
   // Common setup done for all children.
   void ConfigureChildView(views::View* view);
@@ -228,32 +249,36 @@ class ASH_EXPORT ShelfView : public views::View,
   // Updates the visible range of overflow items in |overflow_view|.
   void UpdateOverflowRange(ShelfView* overflow_view);
 
+  // Returns the launcher button size.
+  int GetButtonSize() const;
+
+  // Returns the button spacing.
+  int GetButtonSpacing() const;
+
   // Overridden from views::View:
   virtual gfx::Size GetPreferredSize() OVERRIDE;
   virtual void OnBoundsChanged(const gfx::Rect& previous_bounds) OVERRIDE;
   virtual FocusTraversable* GetPaneFocusTraversable() OVERRIDE;
-  virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE;
+  virtual void GetAccessibleState(ui::AXViewState* state) OVERRIDE;
 
   // Overridden from ui::EventHandler:
   virtual void OnGestureEvent(ui::GestureEvent* event) OVERRIDE;
 
-  // Overridden from LauncherModelObserver:
-  virtual void LauncherItemAdded(int model_index) OVERRIDE;
-  virtual void LauncherItemRemoved(int model_index, LauncherID id) OVERRIDE;
-  virtual void LauncherItemChanged(int model_index,
-                                   const ash::LauncherItem& old_item) OVERRIDE;
-  virtual void LauncherItemMoved(int start_index, int target_index) OVERRIDE;
-  virtual void LauncherStatusChanged() OVERRIDE;
+  // Overridden from ShelfModelObserver:
+  virtual void ShelfItemAdded(int model_index) OVERRIDE;
+  virtual void ShelfItemRemoved(int model_index, ShelfID id) OVERRIDE;
+  virtual void ShelfItemChanged(int model_index,
+                                const ShelfItem& old_item) OVERRIDE;
+  virtual void ShelfItemMoved(int start_index, int target_index) OVERRIDE;
+  virtual void ShelfStatusChanged() OVERRIDE;
 
-  // Overridden from LauncherButtonHost:
-  virtual void PointerPressedOnButton(
-      views::View* view,
-      Pointer pointer,
-      const ui::LocatedEvent& event) OVERRIDE;
-  virtual void PointerDraggedOnButton(
-      views::View* view,
-      Pointer pointer,
-      const ui::LocatedEvent& event) OVERRIDE;
+  // Overridden from ShelfButtonHost:
+  virtual void PointerPressedOnButton(views::View* view,
+                                      Pointer pointer,
+                                      const ui::LocatedEvent& event) OVERRIDE;
+  virtual void PointerDraggedOnButton(views::View* view,
+                                      Pointer pointer,
+                                      const ui::LocatedEvent& event) OVERRIDE;
   virtual void PointerReleasedOnButton(views::View* view,
                                        Pointer pointer,
                                        bool canceled) OVERRIDE;
@@ -271,7 +296,7 @@ class ASH_EXPORT ShelfView : public views::View,
   // choose from. |source| specifies the view which is responsible for showing
   // the menu, and the bubble will point towards it.
   // The |event_flags| are the flags of the event which triggered this menu.
-  bool ShowListMenuForView(const LauncherItem& item,
+  bool ShowListMenuForView(const ShelfItem& item,
                            views::View* source,
                            const ui::Event& event);
 
@@ -300,7 +325,7 @@ class ASH_EXPORT ShelfView : public views::View,
   bool IsUsableEvent(const ui::Event& event);
 
   // Convenience accessor to model_->items().
-  const LauncherItem* LauncherItemForView(const views::View* view) const;
+  const ShelfItem* ShelfItemForView(const views::View* view) const;
 
   // Returns true if a tooltip should be shown for |view|.
   bool ShouldShowTooltipForView(const views::View* view) const;
@@ -310,18 +335,16 @@ class ASH_EXPORT ShelfView : public views::View,
   int CalculateShelfDistance(const gfx::Point& coordinate) const;
 
   // The model; owned by Launcher.
-  LauncherModel* model_;
+  ShelfModel* model_;
 
   // Delegate; owned by Launcher.
-  LauncherDelegate* delegate_;
+  ShelfDelegate* delegate_;
 
   // Used to manage the set of active launcher buttons. There is a view per
   // item in |model_|.
   scoped_ptr<views::ViewModel> view_model_;
 
-  // Index of first visible launcher item. When it it greater than 0,
-  // ShelfView is hosted in an overflow bubble. In this mode, it does not
-  // show app list, panel, and overflow button.
+  // Index of first visible launcher item.
   int first_visible_index_;
 
   // Last index of a launcher button that is visible
@@ -353,7 +376,7 @@ class ASH_EXPORT ShelfView : public views::View,
   int start_drag_index_;
 
   // Used for the context menu of a particular item.
-  LauncherID context_menu_id_;
+  ShelfID context_menu_id_;
 
   scoped_ptr<views::FocusSearch> focus_search_;
 
@@ -385,9 +408,9 @@ class ASH_EXPORT ShelfView : public views::View,
   // and it needs to be deleted/unpinned again if the operation gets cancelled.
   bool drag_and_drop_item_pinned_;
 
-  // The launcher item which is currently used for a drag and a drop operation
+  // The ShelfItem which is currently used for a drag and a drop operation
   // or 0 otherwise.
-  LauncherID drag_and_drop_launcher_id_;
+  ShelfID drag_and_drop_shelf_id_;
 
   // The application ID of the application which we drag and drop.
   std::string drag_and_drop_app_id_;
@@ -411,11 +434,20 @@ class ASH_EXPORT ShelfView : public views::View,
   // The rip off view when a snap back operation is underway.
   views::View* snap_back_from_rip_off_view_;
 
-  // Holds LauncherItemDelegateManager.
-  LauncherItemDelegateManager* item_manager_;
+  // Holds ShelfItemDelegateManager.
+  ShelfItemDelegateManager* item_manager_;
 
   // Holds ShelfLayoutManager.
   ShelfLayoutManager* layout_manager_;
+
+  // True when this ShelfView is used for Overflow Bubble.
+  bool overflow_mode_;
+
+  // Holds a pointer to main ShelfView when a ShelfView is in overflow mode.
+  ShelfView* main_shelf_;
+
+  // True when ripped item from overflow bubble is entered into Shelf.
+  bool dragged_off_from_overflow_to_shelf_;
 
   DISALLOW_COPY_AND_ASSIGN(ShelfView);
 };

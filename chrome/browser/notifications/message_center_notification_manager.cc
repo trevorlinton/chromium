@@ -8,8 +8,6 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/prefs/pref_service.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/extensions/extension_info_map.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/notifications/desktop_notification_service.h"
 #include "chrome/browser/notifications/desktop_notification_service_factory.h"
 #include "chrome/browser/notifications/fullscreen_notification_blocker.h"
@@ -20,11 +18,13 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/host_desktop.h"
-#include "chrome/common/extensions/extension_set.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/url_constants.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/info_map.h"
+#include "extensions/common/extension_set.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/message_center/message_center_style.h"
 #include "ui/message_center/message_center_tray.h"
@@ -33,6 +33,12 @@
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/notifications/login_state_notification_blocker_chromeos.h"
+#include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
+#endif
+
+#if defined(USE_ASH)
+#include "ash/shell.h"
+#include "ash/system/web_notification/web_notification_tray.h"
 #endif
 
 #if defined(OS_WIN)
@@ -101,7 +107,7 @@ void MessageCenterNotificationManager::Add(const Notification& notification,
 
 bool MessageCenterNotificationManager::Update(const Notification& notification,
                                               Profile* profile) {
-  const string16& replace_id = notification.replace_id();
+  const base::string16& replace_id = notification.replace_id();
   if (replace_id.empty())
     return false;
 
@@ -247,6 +253,20 @@ void MessageCenterNotificationManager::OnNotificationUpdated(
     const std::string& notification_id) {
 #if defined(OS_WIN)
   CheckFirstRunTimer();
+#endif
+}
+
+void MessageCenterNotificationManager::EnsureMessageCenterClosed() {
+  if (tray_.get())
+    tray_->GetMessageCenterTray()->HideMessageCenterBubble();
+
+#if defined(USE_ASH)
+  if (ash::Shell::HasInstance()) {
+    ash::WebNotificationTray* tray =
+        ash::Shell::GetInstance()->GetWebNotificationTray();
+    if (tray)
+      tray->GetMessageCenterTray()->HideMessageCenterBubble();
+  }
 #endif
 }
 
@@ -404,6 +424,9 @@ MessageCenterNotificationManager::ProfileNotification::ProfileNotification(
       notification_(notification),
       downloads_(new ImageDownloads(message_center, this)) {
   DCHECK(profile);
+#if defined(OS_CHROMEOS)
+  notification_.set_profile_id(multi_user_util::GetUserIDFromProfile(profile));
+#endif
 }
 
 MessageCenterNotificationManager::ProfileNotification::~ProfileNotification() {
@@ -420,16 +443,16 @@ MessageCenterNotificationManager::ProfileNotification::OnDownloadsCompleted() {
 
 std::string
     MessageCenterNotificationManager::ProfileNotification::GetExtensionId() {
-  ExtensionInfoMap* extension_info_map =
+  extensions::InfoMap* extension_info_map =
       extensions::ExtensionSystem::Get(profile())->info_map();
-  ExtensionSet extensions;
+  extensions::ExtensionSet extensions;
   extension_info_map->GetExtensionsWithAPIPermissionForSecurityOrigin(
       notification().origin_url(), notification().process_id(),
       extensions::APIPermission::kNotification, &extensions);
 
   DesktopNotificationService* desktop_service =
       DesktopNotificationServiceFactory::GetForProfile(profile());
-  for (ExtensionSet::const_iterator iter = extensions.begin();
+  for (extensions::ExtensionSet::const_iterator iter = extensions.begin();
        iter != extensions.end(); ++iter) {
     if (desktop_service->IsNotifierEnabled(message_center::NotifierId(
             message_center::NotifierId::APPLICATION, (*iter)->id()))) {

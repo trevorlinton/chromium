@@ -69,10 +69,10 @@ SkBitmap GetGAIAPictureForNTP(const gfx::Image& image) {
 }
 
 // Puts the |content| into a span with the given CSS class.
-string16 CreateSpanWithClass(const string16& content,
-                             const std::string& css_class) {
-  return ASCIIToUTF16("<span class='" + css_class + "'>") +
-      net::EscapeForHTML(content) + ASCIIToUTF16("</span>");
+base::string16 CreateSpanWithClass(const base::string16& content,
+                                   const std::string& css_class) {
+  return base::ASCIIToUTF16("<span class='" + css_class + "'>") +
+      net::EscapeForHTML(content) + base::ASCIIToUTF16("</span>");
 }
 
 } // namespace
@@ -121,11 +121,11 @@ void NTPLoginHandler::Observe(int type,
   }
 }
 
-void NTPLoginHandler::HandleInitializeSyncLogin(const ListValue* args) {
+void NTPLoginHandler::HandleInitializeSyncLogin(const base::ListValue* args) {
   UpdateLogin();
 }
 
-void NTPLoginHandler::HandleShowSyncLoginUI(const ListValue* args) {
+void NTPLoginHandler::HandleShowSyncLoginUI(const base::ListValue* args) {
   Profile* profile = Profile::FromWebUI(web_ui());
   std::string username = profile->GetPrefs()->GetString(
       prefs::kGoogleServicesUsername);
@@ -180,7 +180,7 @@ void NTPLoginHandler::RecordInHistogram(int type) {
   }
 }
 
-void NTPLoginHandler::HandleLoginMessageSeen(const ListValue* args) {
+void NTPLoginHandler::HandleLoginMessageSeen(const base::ListValue* args) {
   Profile::FromWebUI(web_ui())->GetPrefs()->SetBoolean(
       prefs::kSignInPromoShowNTPBubble, false);
   NewTabUI* ntp_ui = NewTabUI::FromWebUIController(web_ui()->GetController());
@@ -189,7 +189,7 @@ void NTPLoginHandler::HandleLoginMessageSeen(const ListValue* args) {
     ntp_ui->set_showing_sync_bubble(true);
 }
 
-void NTPLoginHandler::HandleShowAdvancedLoginUI(const ListValue* args) {
+void NTPLoginHandler::HandleShowAdvancedLoginUI(const base::ListValue* args) {
   Browser* browser =
       chrome::FindBrowserWithWebContents(web_ui()->GetWebContents());
   if (browser)
@@ -201,7 +201,7 @@ void NTPLoginHandler::UpdateLogin() {
   std::string username = profile->GetPrefs()->GetString(
       prefs::kGoogleServicesUsername);
 
-  string16 header, sub_header;
+  base::string16 header, sub_header;
   std::string icon_url;
   if (!username.empty()) {
     ProfileInfoCache& cache =
@@ -212,7 +212,7 @@ void NTPLoginHandler::UpdateLogin() {
       // case. In the multi-profile case the profile picture is visible in the
       // title bar and the full name can be ambiguous.
       if (cache.GetNumberOfProfiles() == 1) {
-        string16 name = cache.GetGAIANameOfProfileAtIndex(profile_index);
+        base::string16 name = cache.GetGAIANameOfProfileAtIndex(profile_index);
         if (!name.empty())
           header = CreateSpanWithClass(name, "profile-name");
         const gfx::Image* image =
@@ -220,8 +220,10 @@ void NTPLoginHandler::UpdateLogin() {
         if (image)
           icon_url = webui::GetBitmapDataUrl(GetGAIAPictureForNTP(*image));
       }
-      if (header.empty())
-        header = CreateSpanWithClass(UTF8ToUTF16(username), "profile-name");
+      if (header.empty()) {
+        header = CreateSpanWithClass(base::UTF8ToUTF16(username),
+                                     "profile-name");
+      }
     }
   } else {
 #if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
@@ -233,7 +235,7 @@ void NTPLoginHandler::UpdateLogin() {
     SigninManager* signin = SigninManagerFactory::GetForProfile(
         profile->GetOriginalProfile());
     if (!profile->IsManaged() && signin->IsSigninAllowed()) {
-      string16 signed_in_link = l10n_util::GetStringUTF16(
+      base::string16 signed_in_link = l10n_util::GetStringUTF16(
           IDS_SYNC_PROMO_NOT_SIGNED_IN_STATUS_LINK);
       signed_in_link = CreateSpanWithClass(signed_in_link, "link-span");
       header = l10n_util::GetStringFUTF16(
@@ -247,9 +249,9 @@ void NTPLoginHandler::UpdateLogin() {
 #endif
   }
 
-  StringValue header_value(header);
-  StringValue sub_header_value(sub_header);
-  StringValue icon_url_value(icon_url);
+  base::StringValue header_value(header);
+  base::StringValue sub_header_value(sub_header);
+  base::StringValue icon_url_value(icon_url);
   base::FundamentalValue is_user_signed_in(!username.empty());
   web_ui()->CallJavascriptFunction("ntp.updateLogin",
       header_value, sub_header_value, icon_url_value, is_user_signed_in);
@@ -269,11 +271,11 @@ bool NTPLoginHandler::ShouldShow(Profile* profile) {
 
 // static
 void NTPLoginHandler::GetLocalizedValues(Profile* profile,
-                                         DictionaryValue* values) {
+                                         base::DictionaryValue* values) {
   PrefService* prefs = profile->GetPrefs();
   bool hide_sync = !prefs->GetBoolean(prefs::kSignInPromoShowNTPBubble);
 
-  string16 message = hide_sync ? string16() :
+  base::string16 message = hide_sync ? base::string16() :
       l10n_util::GetStringFUTF16(IDS_SYNC_PROMO_NTP_BUBBLE_MESSAGE,
           l10n_util::GetStringUTF16(IDS_SHORT_PRODUCT_NAME));
 
@@ -281,9 +283,9 @@ void NTPLoginHandler::GetLocalizedValues(Profile* profile,
   values->SetString("login_status_url",
       hide_sync ? std::string() : chrome::kSyncLearnMoreURL);
   values->SetString("login_status_advanced",
-      hide_sync ? string16() :
+      hide_sync ? base::string16() :
       l10n_util::GetStringUTF16(IDS_SYNC_PROMO_NTP_BUBBLE_ADVANCED));
   values->SetString("login_status_dismiss",
-      hide_sync ? string16() :
+      hide_sync ? base::string16() :
       l10n_util::GetStringUTF16(IDS_SYNC_PROMO_NTP_BUBBLE_OK));
 }

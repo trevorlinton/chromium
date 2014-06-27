@@ -29,7 +29,7 @@ class CONTENT_EXPORT NavigationEntryImpl
                       int page_id,
                       const GURL& url,
                       const Referrer& referrer,
-                      const string16& title,
+                      const base::string16& title,
                       PageTransition transition_type,
                       bool is_renderer_initiated);
   virtual ~NavigationEntryImpl();
@@ -45,13 +45,13 @@ class CONTENT_EXPORT NavigationEntryImpl
   virtual const Referrer& GetReferrer() const OVERRIDE;
   virtual void SetVirtualURL(const GURL& url) OVERRIDE;
   virtual const GURL& GetVirtualURL() const OVERRIDE;
-  virtual void SetTitle(const string16& title) OVERRIDE;
-  virtual const string16& GetTitle() const OVERRIDE;
+  virtual void SetTitle(const base::string16& title) OVERRIDE;
+  virtual const base::string16& GetTitle() const OVERRIDE;
   virtual void SetPageState(const PageState& state) OVERRIDE;
   virtual const PageState& GetPageState() const OVERRIDE;
   virtual void SetPageID(int page_id) OVERRIDE;
   virtual int32 GetPageID() const OVERRIDE;
-  virtual const string16& GetTitleForDisplay(
+  virtual const base::string16& GetTitleForDisplay(
       const std::string& languages) const OVERRIDE;
   virtual bool IsViewSourceMode() const OVERRIDE;
   virtual void SetTransitionType(PageTransition transition_type) OVERRIDE;
@@ -80,12 +80,13 @@ class CONTENT_EXPORT NavigationEntryImpl
   virtual void SetFrameToNavigate(const std::string& frame_name) OVERRIDE;
   virtual const std::string& GetFrameToNavigate() const OVERRIDE;
   virtual void SetExtraData(const std::string& key,
-                            const string16& data) OVERRIDE;
+                            const base::string16& data) OVERRIDE;
   virtual bool GetExtraData(const std::string& key,
-                            string16* data) const OVERRIDE;
+                            base::string16* data) const OVERRIDE;
   virtual void ClearExtraData(const std::string& key) OVERRIDE;
   virtual void SetHttpStatusCode(int http_status_code) OVERRIDE;
   virtual int GetHttpStatusCode() const OVERRIDE;
+  virtual bool IsRestored() const OVERRIDE;
 
   // Once a navigation entry is committed, we should no longer track several
   // pieces of non-persisted state, as documented on the members below.
@@ -216,15 +217,24 @@ class CONTENT_EXPORT NavigationEntryImpl
     should_clear_history_list_ = should_clear_history_list;
   }
 
+  // Indicates which FrameTreeNode to navigate.  Currently only used if the
+  // --site-per-process flag is passed.
+  int64 frame_tree_node_id() const {
+    return frame_tree_node_id_;
+  }
+  void set_frame_tree_node_id(int64 frame_tree_node_id) {
+    frame_tree_node_id_ = frame_tree_node_id;
+  }
+
+  void set_nw_win_id(int id) { nw_win_id_ = id; }
+  int nw_win_id() const { return nw_win_id_; }
+
   void set_is_dev_reload(bool is_dev_reload) {
     is_dev_reload_ = is_dev_reload;
   }
   bool is_dev_reload() const {
     return is_dev_reload_;
   }
-
-  void set_nw_win_id(int id) { nw_win_id_ = id; }
-  int nw_win_id() const { return nw_win_id_; }
 
  private:
   // WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING
@@ -244,7 +254,7 @@ class CONTENT_EXPORT NavigationEntryImpl
   Referrer referrer_;
   GURL virtual_url_;
   bool update_virtual_url_with_url_;
-  string16 title_;
+  base::string16 title_;
   FaviconStatus favicon_;
   PageState page_state_;
   int32 page_id_;
@@ -291,7 +301,7 @@ class CONTENT_EXPORT NavigationEntryImpl
   // us from having to do URL formatting on the URL every time the title is
   // displayed. When the URL, virtual URL, or title is set, this should be
   // cleared to force a refresh.
-  mutable string16 cached_display_title_;
+  mutable base::string16 cached_display_title_;
 
   // In case a navigation is transferred to a new RVH but the request has
   // been generated in the renderer already, this identifies the old request so
@@ -333,10 +343,17 @@ class CONTENT_EXPORT NavigationEntryImpl
   // persisted, because it is currently only used in tests.
   std::string frame_to_navigate_;
 
+  // If not -1, this indicates which FrameTreeNode to navigate.  This field is
+  // not persisted because it is experimental and only used when the
+  // --site-per-process flag is passed.  It is cleared in |ResetForCommit|
+  // because we only use it while the navigation is pending.
+  // TODO(creis): Move this to FrameNavigationEntry.
+  int64 frame_tree_node_id_;
+
   // Used to store extra data to support browser features. This member is not
   // persisted, unless specific data is taken out/put back in at save/restore
   // time (see TabNavigation for an example of this).
-  std::map<std::string, string16> extra_data_;
+  std::map<std::string, base::string16> extra_data_;
 
   bool is_dev_reload_;
 

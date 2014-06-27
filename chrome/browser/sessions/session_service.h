@@ -11,6 +11,7 @@
 #include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/memory/scoped_vector.h"
+#include "base/task/cancelable_task_tracker.h"
 #include "base/time/time.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/sessions/base_session_service.h"
@@ -18,8 +19,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list_observer.h"
-#include "chrome/common/cancelable_task_tracker.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service.h"
+#include "components/keyed_service/core/keyed_service.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "ui/base/ui_base_types.h"
@@ -55,7 +55,7 @@ class WebContents;
 // SessionService rebuilds the contents of the file from the open state of the
 // browser.
 class SessionService : public BaseSessionService,
-                       public BrowserContextKeyedService,
+                       public KeyedService,
                        public content::NotificationObserver,
                        public chrome::BrowserListObserver {
   friend class SessionServiceTestHelper;
@@ -193,8 +193,9 @@ class SessionService : public BaseSessionService,
   // Fetches the contents of the last session, notifying the callback when
   // done. If the callback is supplied an empty vector of SessionWindows
   // it means the session could not be restored.
-  CancelableTaskTracker::TaskId GetLastSession(const SessionCallback& callback,
-                                               CancelableTaskTracker* tracker);
+  base::CancelableTaskTracker::TaskId GetLastSession(
+      const SessionCallback& callback,
+      base::CancelableTaskTracker* tracker);
 
   // Overridden from BaseSessionService because we want some UMA reporting on
   // session update activities.
@@ -413,19 +414,6 @@ class SessionService : public BaseSessionService,
       Browser::Type type,
       AppType app_type);
 
-  // Returns true if we should record a window close as pending.
-  // |has_open_trackable_browsers_| must be up-to-date before calling this.
-  bool should_record_close_as_pending() const {
-    // When this is called, the browser window being closed is still open, hence
-    // still in the browser list. If there is a browser window other than the
-    // one being closed but no trackable windows, then the others must be App
-    // windows or similar. In this case, we record the close as pending.
-    return !has_open_trackable_browsers_ &&
-        (!browser_defaults::kBrowserAliveWithNoWindows ||
-         force_browser_not_alive_with_no_windows_ ||
-         chrome::GetTotalBrowserCount() > 1);
-  }
-
   // Call when certain session relevant notifications
   // (tab_closed, nav_list_pruned) occur.  In addition, this is
   // currently called when Save() is called to compare how often the
@@ -441,6 +429,9 @@ class SessionService : public BaseSessionService,
   void RecordUpdatedSaveTime(base::TimeDelta delta, bool use_long_period);
   void RecordUpdatedSessionNavigationOrTab(base::TimeDelta delta,
                                            bool use_long_period);
+
+  // Deletes session data if no windows are open for the current profile.
+  void MaybeDeleteSessionOnlyData();
 
   // Convert back/forward between the Browser and SessionService DB window
   // types.

@@ -25,6 +25,8 @@ class DelegatedRendererLayerImpl;
 class QuadSink;
 class RenderPassSink;
 class LayerImpl;
+template <typename LayerType>
+class LayerIterator;
 
 struct AppendQuadsData;
 
@@ -32,8 +34,6 @@ class CC_EXPORT RenderSurfaceImpl {
  public:
   explicit RenderSurfaceImpl(LayerImpl* owning_layer);
   virtual ~RenderSurfaceImpl();
-
-  std::string Name() const;
 
   gfx::PointF ContentRectCenter() const {
     return gfx::RectF(content_rect_).CenterPoint();
@@ -46,11 +46,11 @@ class CC_EXPORT RenderSurfaceImpl {
   void SetDrawOpacity(float opacity) { draw_opacity_ = opacity; }
   float draw_opacity() const { return draw_opacity_; }
 
-  void SetNearestAncestorThatMovesPixels(RenderSurfaceImpl* surface) {
-    nearest_ancestor_that_moves_pixels_ = surface;
+  void SetNearestOcclusionImmuneAncestor(RenderSurfaceImpl* surface) {
+    nearest_occlusion_immune_ancestor_ = surface;
   }
-  const RenderSurfaceImpl* nearest_ancestor_that_moves_pixels() const {
-    return nearest_ancestor_that_moves_pixels_;
+  const RenderSurfaceImpl* nearest_occlusion_immune_ancestor() const {
+    return nearest_occlusion_immune_ancestor_;
   }
 
   void SetDrawOpacityIsAnimating(bool draw_opacity_is_animating) {
@@ -101,7 +101,7 @@ class CC_EXPORT RenderSurfaceImpl {
   void SetIsClipped(bool is_clipped) { is_clipped_ = is_clipped; }
   bool is_clipped() const { return is_clipped_; }
 
-  void SetClipRect(gfx::Rect clip_rect);
+  void SetClipRect(const gfx::Rect& clip_rect);
   gfx::Rect clip_rect() const { return clip_rect_; }
 
   // When false, the RenderSurface does not contribute to another target
@@ -117,7 +117,7 @@ class CC_EXPORT RenderSurfaceImpl {
 
   bool ContentsChanged() const;
 
-  void SetContentRect(gfx::Rect content_rect);
+  void SetContentRect(const gfx::Rect& content_rect);
   gfx::Rect content_rect() const { return content_rect_; }
 
   LayerImplList& layer_list() { return layer_list_; }
@@ -145,19 +145,19 @@ class CC_EXPORT RenderSurfaceImpl {
 
   // Uses this surface's space.
   gfx::Rect content_rect_;
-  bool surface_property_changed_;
+  bool surface_property_changed_ : 1;
+  bool draw_opacity_is_animating_ : 1;
+  bool target_surface_transforms_are_animating_ : 1;
+  bool screen_space_transforms_are_animating_ : 1;
+
+  bool is_clipped_ : 1;
+  bool contributes_to_drawn_surface_ : 1;
 
   float draw_opacity_;
-  bool draw_opacity_is_animating_;
   gfx::Transform draw_transform_;
   gfx::Transform screen_space_transform_;
   gfx::Transform replica_draw_transform_;
   gfx::Transform replica_screen_space_transform_;
-  bool target_surface_transforms_are_animating_;
-  bool screen_space_transforms_are_animating_;
-
-  bool is_clipped_;
-  bool contributes_to_drawn_surface_;
 
   // Uses the space of the surface's target surface.
   gfx::Rect clip_rect_;
@@ -167,9 +167,8 @@ class CC_EXPORT RenderSurfaceImpl {
       contributing_delegated_render_pass_layer_list_;
 
   // The nearest ancestor target surface that will contain the contents of this
-  // surface, and that is going to move pixels within the surface (such as with
-  // a blur). This can point to itself.
-  RenderSurfaceImpl* nearest_ancestor_that_moves_pixels_;
+  // surface, and that ignores outside occlusion. This can point to itself.
+  RenderSurfaceImpl* nearest_occlusion_immune_ancestor_;
 
   scoped_ptr<DamageTracker> damage_tracker_;
 
@@ -177,7 +176,7 @@ class CC_EXPORT RenderSurfaceImpl {
   int target_render_surface_layer_index_history_;
   int current_layer_index_history_;
 
-  friend struct LayerIteratorActions;
+  friend class LayerIterator<LayerImpl>;
 
   DISALLOW_COPY_AND_ASSIGN(RenderSurfaceImpl);
 };

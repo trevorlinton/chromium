@@ -14,6 +14,7 @@
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "content/public/browser/browser_thread.h"
+#include "google_apis/drive/gdata_wapi_parser.h"
 #include "net/base/escape.h"
 
 using content::BrowserThread;
@@ -78,14 +79,64 @@ class ScopedPriorityQueue {
   void push(T* x) { queue_.push(x); }
 
   void pop() {
-    delete queue_.top();
+    // Keep top alive for the pop() call so that debug checks can access
+    // underlying data (e.g. validating heap property of the priority queue
+    // will call the comparator).
+    T* saved_top = queue_.top();
     queue_.pop();
+    delete saved_top;
   }
 
  private:
   std::priority_queue<T*, std::vector<T*>, Compare> queue_;
 
   DISALLOW_COPY_AND_ASSIGN(ScopedPriorityQueue);
+};
+
+// Classifies the given entry as trashed if it's placed under the trash.
+class TrashedEntryClassifier {
+ public:
+  explicit TrashedEntryClassifier(ResourceMetadata* metadata)
+      : metadata_(metadata) {
+    trashed_[""] = false;
+    trashed_[util::kDriveTrashDirLocalId] = true;
+  }
+
+  // |result| is set to true if |entry| is under the trash.
+  FileError IsTrashed(const ResourceEntry& entry, bool* result) {
+    // parent_local_id cannot be used to classify the trash itself.
+    if (entry.local_id() == util::kDriveTrashDirLocalId) {
+      *result = true;
+      return FILE_ERROR_OK;
+    }
+
+    // Look up for parents recursively.
+    std::vector<std::string> undetermined_ids;
+    undetermined_ids.push_back(entry.parent_local_id());
+
+    std::map<std::string, bool>::iterator it =
+        trashed_.find(undetermined_ids.back());
+    for (; it == trashed_.end(); it = trashed_.find(undetermined_ids.back())) {
+      ResourceEntry parent;
+      FileError error =
+          metadata_->GetResourceEntryById(undetermined_ids.back(), &parent);
+      if (error != FILE_ERROR_OK)
+        return error;
+      undetermined_ids.push_back(parent.parent_local_id());
+    }
+
+    // Cache the result to |trashed_|.
+    undetermined_ids.pop_back();  // The last one is already in |trashed_|.
+    for (size_t i = 0; i < undetermined_ids.size(); ++i)
+      trashed_[undetermined_ids[i]] = it->second;
+
+    *result = it->second;
+    return FILE_ERROR_OK;
+  }
+
+ private:
+  ResourceMetadata* metadata_;
+  std::map<std::string, bool> trashed_;  // local ID to is_trashed map.
 };
 
 // Returns true if |entry| is eligible for the search |options| and should be
@@ -111,16 +162,29 @@ bool IsEligibleEntry(const ResourceEntry& entry,
     return entry.shared_with_me();
 
   if (options & SEARCH_METADATA_OFFLINE) {
-    if (entry.file_specific_info().is_hosted_document())
-      return true;
-    FileCacheEntry cache_entry;
-    it->GetCacheEntry(&cache_entry);
-    return cache_entry.is_present();
+    if (entry.file_specific_info().is_hosted_document()) {
+      // Not all hosted documents are cached by Drive offline app.
+      // http://support.google.com/drive/bin/answer.py?hl=en&answer=1628467
+      switch (google_apis::ResourceEntry::GetEntryKindFromExtension(
+          entry.file_specific_info().document_extension())) {
+        case google_apis::ENTRY_KIND_DOCUMENT:
+        case google_apis::ENTRY_KIND_SPREADSHEET:
+        case google_apis::ENTRY_KIND_PRESENTATION:
+        case google_apis::ENTRY_KIND_DRAWING:
+          return true;
+        default:
+          return false;
+      }
+    } else {
+      FileCacheEntry cache_entry;
+      it->GetCacheEntry(&cache_entry);
+      return cache_entry.is_present();
+    }
   }
 
   // Exclude "drive", "drive/root", and "drive/other".
-  if (it->GetID() == util::kDriveGrandRootSpecialResourceId ||
-      entry.parent_local_id() == util::kDriveGrandRootSpecialResourceId) {
+  if (it->GetID() == util::kDriveGrandRootLocalId ||
+      entry.parent_local_id() == util::kDriveGrandRootLocalId) {
     return false;
   }
 
@@ -131,12 +195,13 @@ bool IsEligibleEntry(const ResourceEntry& entry,
 // Adds entry to the result when appropriate.
 // In particular, if |query| is non-null, only adds files with the name matching
 // the query.
-void MaybeAddEntryToResult(
+FileError MaybeAddEntryToResult(
     ResourceMetadata* resource_metadata,
     ResourceMetadata::Iterator* it,
     base::i18n::FixedPatternStringSearchIgnoringCaseAndAccents* query,
     int options,
     size_t at_most_num_matches,
+    TrashedEntryClassifier* trashed_entry_classifier,
     ScopedPriorityQueue<ResultCandidate,
                         ResultCandidateComparator>* result_candidates) {
   DCHECK_GE(at_most_num_matches, result_candidates->size());
@@ -148,7 +213,7 @@ void MaybeAddEntryToResult(
   // or FilePath lookup as much as possible.
   if (result_candidates->size() == at_most_num_matches &&
       !CompareByTimestamp(entry, result_candidates->top()->entry))
-    return;
+    return FILE_ERROR_OK;
 
   // Add |entry| to the result if the entry is eligible for the given
   // |options| and matches the query. The base name of the entry must
@@ -156,12 +221,19 @@ void MaybeAddEntryToResult(
   std::string highlighted;
   if (!IsEligibleEntry(entry, it, options) ||
       (query && !FindAndHighlight(entry.base_name(), query, &highlighted)))
-    return;
+    return FILE_ERROR_OK;
+
+  // Trashed entry should not be returned.
+  bool trashed = false;
+  FileError error = trashed_entry_classifier->IsTrashed(entry, &trashed);
+  if (error != FILE_ERROR_OK || trashed)
+    return error;
 
   // Make space for |entry| when appropriate.
   if (result_candidates->size() == at_most_num_matches)
     result_candidates->pop();
   result_candidates->push(new ResultCandidate(it->GetID(), entry, highlighted));
+  return FILE_ERROR_OK;
 }
 
 // Implements SearchMetadata().
@@ -178,12 +250,17 @@ FileError SearchMetadataOnBlockingPool(ResourceMetadata* resource_metadata,
       base::UTF8ToUTF16(query_text));
 
   // Iterate over entries.
+  TrashedEntryClassifier trashed_entry_classifier(resource_metadata);
   scoped_ptr<ResourceMetadata::Iterator> it = resource_metadata->GetIterator();
   for (; !it->IsAtEnd(); it->Advance()) {
-    MaybeAddEntryToResult(resource_metadata, it.get(),
-                          query_text.empty() ? NULL : &query,
-                          options,
-                          at_most_num_matches, &result_candidates);
+    FileError error = MaybeAddEntryToResult(resource_metadata, it.get(),
+                                            query_text.empty() ? NULL : &query,
+                                            options,
+                                            at_most_num_matches,
+                                            &trashed_entry_classifier,
+                                            &result_candidates);
+    if (error != FILE_ERROR_OK)
+      return error;
   }
 
   // Prepare the result.
@@ -195,8 +272,9 @@ FileError SearchMetadataOnBlockingPool(ResourceMetadata* resource_metadata,
     base::FilePath path = resource_metadata->GetFilePath(candidate.local_id);
     if (path.empty())
       return FILE_ERROR_FAILED;
+    bool is_directory = candidate.entry.file_info().is_directory();
     results->push_back(MetadataSearchResult(
-        path, candidate.entry, candidate.highlighted_base_name));
+        path, is_directory, candidate.highlighted_base_name));
   }
 
   // Reverse the order here because |result_candidates| puts the most
@@ -259,15 +337,15 @@ bool FindAndHighlight(
   DCHECK(highlighted_text);
   highlighted_text->clear();
 
-  string16 text16 = base::UTF8ToUTF16(text);
+  base::string16 text16 = base::UTF8ToUTF16(text);
   size_t match_start = 0;
   size_t match_length = 0;
   if (!query->Search(text16, &match_start, &match_length))
     return false;
 
-  string16 pre = text16.substr(0, match_start);
-  string16 match = text16.substr(match_start, match_length);
-  string16 post = text16.substr(match_start + match_length);
+  base::string16 pre = text16.substr(0, match_start);
+  base::string16 match = text16.substr(match_start, match_length);
+  base::string16 post = text16.substr(match_start + match_length);
   highlighted_text->append(net::EscapeForHTML(base::UTF16ToUTF8(pre)));
   highlighted_text->append("<b>");
   highlighted_text->append(net::EscapeForHTML(base::UTF16ToUTF8(match)));

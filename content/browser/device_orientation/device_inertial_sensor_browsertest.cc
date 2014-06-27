@@ -11,9 +11,9 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/test/content_browser_test.h"
+#include "content/public/test/content_browser_test_utils.h"
 #include "content/shell/browser/shell.h"
-#include "content/test/content_browser_test.h"
-#include "content/test/content_browser_test_utils.h"
 
 namespace content {
 
@@ -126,12 +126,6 @@ class DeviceInertialSensorBrowserTest : public ContentBrowserTest  {
   DeviceInertialSensorBrowserTest()
       : fetcher_(NULL),
         io_loop_finished_event_(false, false) {
-  }
-
-  // From ContentBrowserTest.
-  virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE {
-    EXPECT_TRUE(!command_line->HasSwitch(switches::kDisableDeviceOrientation));
-    EXPECT_TRUE(!command_line->HasSwitch(switches::kDisableDeviceMotion));
   }
 
   virtual void SetUpOnMainThread() OVERRIDE {

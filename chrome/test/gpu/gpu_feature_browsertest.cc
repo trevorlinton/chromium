@@ -49,13 +49,6 @@ class GpuFeatureTest : public InProcessBrowserTest {
  public:
   GpuFeatureTest() : category_patterns_("test_gpu") {}
 
-  virtual void SetUp() OVERRIDE {
-    // We expect to use real GL contexts for these tests.
-    UseRealGLContexts();
-
-    InProcessBrowserTest::SetUp();
-  }
-
   virtual void SetUpInProcessBrowserTestFixture() OVERRIDE {
     base::FilePath test_dir;
     ASSERT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &test_dir));
@@ -169,11 +162,21 @@ class GpuFeatureTest : public InProcessBrowserTest {
   std::string trace_events_json_;
 };
 
-#if defined(OS_WIN) || defined(ADDRESS_SANITIZER) || defined(USE_AURA)
+class GpuFeaturePixelTest : public GpuFeatureTest {
+ protected:
+  virtual void SetUp() OVERRIDE {
+    EnablePixelOutput();
+    GpuFeatureTest::SetUp();
+  }
+};
+
+#if defined(OS_WIN) || defined(ADDRESS_SANITIZER) || defined(USE_AURA) || \
+    defined(OS_MACOSX)
 // This test is flaky on Windows. http://crbug.com/177113
 // Also fails under AddressSanitizer. http://crbug.com/185178
 // It fundamentally doesn't test the right thing on Aura.
 // http://crbug.com/280675
+// This does not work with software compositing on Mac. http://crbug.com/286038
 #define MAYBE_AcceleratedCompositingAllowed DISABLED_AcceleratedCompositingAllowed
 #else
 #define MAYBE_AcceleratedCompositingAllowed AcceleratedCompositingAllowed
@@ -208,11 +211,12 @@ class AcceleratedCompositingBlockedTest : public GpuFeatureTest {
   }
 };
 
-#if defined(USE_AURA)
-// Compositing is always on for Aura.
+#if defined(USE_AURA) || defined(OS_MACOSX)
+// Compositing is always on for Aura and Mac.
 #define MAYBE_AcceleratedCompositingBlocked DISABLED_AcceleratedCompositingBlocked
 #else
-#define MAYBE_AcceleratedCompositingBlocked AcceleratedCompositingBlocked
+// TODO(jam): http://crbug.com/350550
+#define MAYBE_AcceleratedCompositingBlocked DISABLED_AcceleratedCompositingBlocked
 #endif
 
 IN_PROC_BROWSER_TEST_F(AcceleratedCompositingBlockedTest,
@@ -232,8 +236,8 @@ class AcceleratedCompositingTest : public GpuFeatureTest {
   }
 };
 
-#if defined(USE_AURA)
-// Compositing is always on for Aura.
+#if defined(USE_AURA) || defined(OS_MACOSX)
+// Compositing is always on for Aura and Mac.
 #define MAYBE_AcceleratedCompositingDisabled DISABLED_AcceleratedCompositingDisabled
 #else
 #define MAYBE_AcceleratedCompositingDisabled AcceleratedCompositingDisabled
@@ -293,14 +297,15 @@ IN_PROC_BROWSER_TEST_F(WebGLTest, WebGLDisabled) {
   RunEventTest(url, kWebGLCreationEvent, false);
 }
 
-IN_PROC_BROWSER_TEST_F(GpuFeatureTest, MultisamplingAllowed) {
-  EXPECT_FALSE(GpuDataManager::GetInstance()->IsFeatureBlacklisted(
-      gpu::GPU_FEATURE_TYPE_MULTISAMPLING));
-
-  // Multisampling is not supported if running on top of osmesa.
-  if (gfx::GetGLImplementation() != gfx::kGLImplementationOSMesaGL)
+// This test is oblivious to the fact that multisample could be blacklisted on
+// some configurations. Previously disabled on GOOGLE_CHROME_BUILD and
+// on OS_MACOSX: http://crbug.com/314745
+IN_PROC_BROWSER_TEST_F(GpuFeatureTest, DISABLED_MultisamplingAllowed) {
+  if (gpu::GPUTestBotConfig::GpuBlacklistedOnBot())
     return;
-
+  // Multisampling is not supported if running on top of osmesa.
+  if (gfx::GetGLImplementation() == gfx::kGLImplementationOSMesaGL)
+    return;
   // Linux Intel uses mesa driver, where multisampling is not supported.
   // Multisampling is also not supported on virtualized mac os.
   std::vector<std::string> configs;
@@ -311,32 +316,6 @@ IN_PROC_BROWSER_TEST_F(GpuFeatureTest, MultisamplingAllowed) {
 
   const base::FilePath url(FILE_PATH_LITERAL("feature_multisampling.html"));
   RunTest(url, "\"TRUE\"", true);
-}
-
-IN_PROC_BROWSER_TEST_F(GpuFeatureTest, MultisamplingBlocked) {
-  // Multisampling fails on virtualized mac os.
-  if (gpu::GPUTestBotConfig::CurrentConfigMatches("MAC VMWARE"))
-    return;
-
-  const std::string json_blacklist =
-      "{\n"
-      "  \"name\": \"gpu blacklist\",\n"
-      "  \"version\": \"1.0\",\n"
-      "  \"entries\": [\n"
-      "    {\n"
-      "      \"id\": 1,\n"
-      "      \"features\": [\n"
-      "        \"multisampling\"\n"
-      "      ]\n"
-      "    }\n"
-      "  ]\n"
-      "}";
-  SetupBlacklist(json_blacklist);
-  EXPECT_TRUE(GpuDataManager::GetInstance()->IsFeatureBlacklisted(
-      gpu::GPU_FEATURE_TYPE_MULTISAMPLING));
-
-  const base::FilePath url(FILE_PATH_LITERAL("feature_multisampling.html"));
-  RunTest(url, "\"FALSE\"", true);
 }
 
 class WebGLMultisamplingTest : public GpuFeatureTest {
@@ -375,6 +354,9 @@ IN_PROC_BROWSER_TEST_F(GpuFeatureTest, Canvas2DAllowed) {
   if (base::win::GetVersion() < base::win::VERSION_VISTA)
     expected_state = BLACKLISTED;
 #endif
+
+  if (gpu::GPUTestBotConfig::GpuBlacklistedOnBot())
+    expected_state = BLACKLISTED;
 
 #if defined(USE_AURA)
   // Canvas 2D is always disabled in software compositing mode, make sure it is
@@ -428,8 +410,11 @@ IN_PROC_BROWSER_TEST_F(Canvas2DDisabledTest, Canvas2DDisabled) {
   RunEventTest(url, kAcceleratedCanvasCreationEvent, false);
 }
 
-IN_PROC_BROWSER_TEST_F(GpuFeatureTest,
+IN_PROC_BROWSER_TEST_F(GpuFeaturePixelTest,
                        CanOpenPopupAndRenderWithWebGLCanvas) {
+  if (gpu::GPUTestBotConfig::GpuBlacklistedOnBot())
+    return;
+
   const base::FilePath url(FILE_PATH_LITERAL("webgl_popup.html"));
   RunTest(url, "\"SUCCESS\"", false);
 }
@@ -504,6 +489,9 @@ IN_PROC_BROWSER_TEST_F(GpuFeatureTest, IOSurfaceReuse) {
   if (!IOSurfaceSupport::Initialize())
     return;
 
+  if (gpu::GPUTestBotConfig::GpuBlacklistedOnBot())
+    return;
+
   const base::FilePath url(
       FILE_PATH_LITERAL("feature_compositing_static.html"));
   base::FilePath test_path = gpu_test_dir_.Append(url);
@@ -512,6 +500,7 @@ IN_PROC_BROWSER_TEST_F(GpuFeatureTest, IOSurfaceReuse) {
 
   ui_test_utils::NavigateToURL(browser(), net::FilePathToFileURL(test_path));
 
+  LOG(INFO) << "did navigate";
   gfx::Rect bounds = browser()->window()->GetBounds();
   gfx::Rect new_bounds = bounds;
 
@@ -535,10 +524,13 @@ IN_PROC_BROWSER_TEST_F(GpuFeatureTest, IOSurfaceReuse) {
 
   for (int offset_i = 0; offset_i < num_offsets; ++offset_i) {
     new_bounds.set_width(w_start + offsets[offset_i]);
+    LOG(INFO) << "before wait";
     ASSERT_TRUE(ResizeAndWait(new_bounds, "gpu", "gpu", resize_event));
+    LOG(INFO) << "after wait";
 
     TraceEventVector resize_events;
     analyzer_->FindEvents(find_resizes, &resize_events);
+    LOG(INFO) << "num rezize events = " << resize_events.size();
     for (size_t resize_i = 0; resize_i < resize_events.size(); ++resize_i) {
       const trace_analyzer::TraceEvent* resize = resize_events[resize_i];
       // Was a create allowed:
@@ -568,6 +560,7 @@ IN_PROC_BROWSER_TEST_F(GpuFeatureTest, IOSurfaceReuse) {
               old_width, new_width, num_creates, expected_creates);
     }
   }
+  LOG(INFO) << "finished test";
 }
 #endif
 

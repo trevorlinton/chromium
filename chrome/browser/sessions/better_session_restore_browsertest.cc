@@ -52,15 +52,6 @@
 
 namespace {
 
-Browser* FindOneOtherBrowserForProfile(Profile* profile,
-                                       Browser* not_this_browser) {
-  for (chrome::BrowserIterator it; !it.done(); it.Next()) {
-    if (*it != not_this_browser && it->profile() == profile)
-      return *it;
-  }
-  return NULL;
-}
-
 // We need to serve the test files so that PRE_Test and Test can access the same
 // page using the same URL. In addition, perceived security origin of the page
 // needs to stay the same, so e.g., redirecting the URL requests doesn't
@@ -134,10 +125,10 @@ class BetterSessionRestoreTest : public InProcessBrowserTest {
   BetterSessionRestoreTest()
       : fake_server_address_("http://www.test.com/"),
         test_path_("session_restore/"),
-        title_pass_(ASCIIToUTF16("PASS")),
-        title_storing_(ASCIIToUTF16("STORING")),
-        title_error_write_failed_(ASCIIToUTF16("ERROR_WRITE_FAILED")),
-        title_error_empty_(ASCIIToUTF16("ERROR_EMPTY")) {
+        title_pass_(base::ASCIIToUTF16("PASS")),
+        title_storing_(base::ASCIIToUTF16("STORING")),
+        title_error_write_failed_(base::ASCIIToUTF16("ERROR_WRITE_FAILED")),
+        title_error_empty_(base::ASCIIToUTF16("ERROR_EMPTY")) {
     // Set up the URL request filtering.
     std::vector<std::string> test_files;
     test_files.push_back("common.js");
@@ -190,7 +181,7 @@ class BetterSessionRestoreTest : public InProcessBrowserTest {
     title_watcher.AlsoWaitForTitle(title_error_empty_);
     ui_test_utils::NavigateToURL(
         browser, GURL(fake_server_address_ + test_path_ + filename));
-    string16 final_title = title_watcher.WaitAndGetTitle();
+    base::string16 final_title = title_watcher.WaitAndGetTitle();
     EXPECT_EQ(title_storing_, final_title);
   }
 
@@ -210,7 +201,7 @@ class BetterSessionRestoreTest : public InProcessBrowserTest {
     title_watcher.AlsoWaitForTitle(title_error_empty_);
     ui_test_utils::NavigateToURL(
         browser, GURL(fake_server_address_ + test_path_ + filename));
-    string16 final_title = title_watcher.WaitAndGetTitle();
+    base::string16 final_title = title_watcher.WaitAndGetTitle();
     EXPECT_EQ(title_pass_, final_title);
   }
 
@@ -230,7 +221,7 @@ class BetterSessionRestoreTest : public InProcessBrowserTest {
     CheckTitle(browser, title_storing_);
   }
 
-  void CheckTitle(Browser* browser, const string16& expected_title) {
+  void CheckTitle(Browser* browser, const base::string16& expected_title) {
     content::WebContents* web_contents =
         browser->tab_strip_model()->GetWebContentsAt(0);
     content::TitleWatcher title_watcher(web_contents, expected_title);
@@ -240,12 +231,12 @@ class BetterSessionRestoreTest : public InProcessBrowserTest {
     title_watcher.AlsoWaitForTitle(title_error_empty_);
     // It's possible that the title was already the right one before
     // title_watcher was created.
-    string16 first_title = web_contents->GetTitle();
+    base::string16 first_title = web_contents->GetTitle();
     if (first_title != title_pass_ &&
         first_title != title_storing_ &&
         first_title != title_error_write_failed_ &&
         first_title != title_error_empty_) {
-      string16 final_title = title_watcher.WaitAndGetTitle();
+      base::string16 final_title = title_watcher.WaitAndGetTitle();
       EXPECT_EQ(expected_title, final_title);
     } else {
       EXPECT_EQ(expected_title, first_title);
@@ -258,7 +249,7 @@ class BetterSessionRestoreTest : public InProcessBrowserTest {
     content::TitleWatcher title_watcher(web_contents, title_pass_);
     ui_test_utils::NavigateToURL(
         browser(), GURL(fake_server_address_ + test_path_ + filename));
-    string16 final_title = title_watcher.WaitAndGetTitle();
+    base::string16 final_title = title_watcher.WaitAndGetTitle();
     EXPECT_EQ(title_pass_, final_title);
     EXPECT_TRUE(g_last_upload_bytes.Get().find("posted-text") !=
                 std::string::npos);
@@ -325,7 +316,7 @@ class BetterSessionRestoreTest : public InProcessBrowserTest {
     Profile* profile = browser->profile();
 
     // Close the browser.
-    chrome::StartKeepAlive();
+    chrome::IncrementKeepAliveCount();
     CloseBrowserSynchronously(browser, close_all_windows);
 
     SessionServiceTestHelper helper;
@@ -338,7 +329,7 @@ class BetterSessionRestoreTest : public InProcessBrowserTest {
     ui_test_utils::BrowserAddedObserver window_observer;
     chrome::NewEmptyWindow(profile, chrome::HOST_DESKTOP_TYPE_NATIVE);
     Browser* new_browser = window_observer.WaitForSingleNewBrowser();
-    chrome::EndKeepAlive();
+    chrome::DecrementKeepAliveCount();
 
     return new_browser;
   }
@@ -366,10 +357,10 @@ class BetterSessionRestoreTest : public InProcessBrowserTest {
  private:
   const std::string fake_server_address_;
   const std::string test_path_;
-  const string16 title_pass_;
-  const string16 title_storing_;
-  const string16 title_error_write_failed_;
-  const string16 title_error_empty_;
+  const base::string16 title_pass_;
+  const base::string16 title_storing_;
+  const base::string16 title_error_write_failed_;
+  const base::string16 title_error_empty_;
 
   DISALLOW_COPY_AND_ASSIGN(BetterSessionRestoreTest);
 };
@@ -482,6 +473,26 @@ IN_PROC_BROWSER_TEST_F(ContinueWhereILeftOffTest, SessionCookiesBrowserClose) {
   CheckReloadedPageRestored(new_browser);
 }
 
+// Test that leaving a popup open will not prevent session restore.
+IN_PROC_BROWSER_TEST_F(ContinueWhereILeftOffTest,
+                       SessionCookiesBrowserCloseWithPopupOpen) {
+  if (browser_defaults::kRestorePopups)
+    return;
+
+  // Set the startup preference to "continue where I left off" and visit a page
+  // which stores a session cookie.
+  StoreDataWithPage("session_cookies.html");
+  Browser* popup = new Browser(Browser::CreateParams(
+      Browser::TYPE_POPUP,
+      browser()->profile(),
+      chrome::HOST_DESKTOP_TYPE_NATIVE));
+  popup->window()->Show();
+
+  Browser* new_browser = QuitBrowserAndRestore(browser(), false);
+  // The browsing session will be continued; just wait for the page to reload
+  // and check the stored data.
+  CheckReloadedPageRestored(new_browser);
+}
 IN_PROC_BROWSER_TEST_F(ContinueWhereILeftOffTest,
                        CookiesClearedOnBrowserClose) {
   StoreDataWithPage("cookies.html");
@@ -747,6 +758,37 @@ IN_PROC_BROWSER_TEST_F(NoSessionRestoreTest, SessionCookiesBrowserClose) {
   NavigateAndCheckStoredData(new_browser, "session_cookies.html");
   DisableBackgroundMode();
   new_browser = QuitBrowserAndRestore(new_browser, false);
+  if (browser_defaults::kBrowserAliveWithNoWindows)
+    NavigateAndCheckStoredData(new_browser, "session_cookies.html");
+  else
+    StoreDataWithPage(new_browser, "session_cookies.html");
+}
+
+// Tests that session cookies are not cleared when only a popup window is open.
+IN_PROC_BROWSER_TEST_F(NoSessionRestoreTest,
+                       SessionCookiesBrowserCloseWithPopupOpen) {
+  StoreDataWithPage("session_cookies.html");
+  Browser* popup = new Browser(Browser::CreateParams(
+      Browser::TYPE_POPUP,
+      browser()->profile(),
+      chrome::HOST_DESKTOP_TYPE_NATIVE));
+  popup->window()->Show();
+  Browser* new_browser = QuitBrowserAndRestore(browser(), false);
+  NavigateAndCheckStoredData(new_browser, "session_cookies.html");
+}
+
+// Tests that session cookies are cleared if the last window to close is a
+// popup.
+IN_PROC_BROWSER_TEST_F(NoSessionRestoreTest,
+                       SessionCookiesBrowserClosePopupLast) {
+  StoreDataWithPage("session_cookies.html");
+  Browser* popup = new Browser(Browser::CreateParams(
+      Browser::TYPE_POPUP,
+      browser()->profile(),
+      chrome::HOST_DESKTOP_TYPE_NATIVE));
+  popup->window()->Show();
+  CloseBrowserSynchronously(browser(), false);
+  Browser* new_browser = QuitBrowserAndRestore(popup, false);
   if (browser_defaults::kBrowserAliveWithNoWindows)
     NavigateAndCheckStoredData(new_browser, "session_cookies.html");
   else

@@ -48,9 +48,9 @@ class SpeechRecognitionManager {
   // Aborts recognition for an existing session, without providing any result.
   virtual void AbortSession(int session_id) = 0;
 
-  // Aborts all sessions for a given listener, without providing any result.
-  virtual void AbortAllSessionsForListener(
-      SpeechRecognitionEventListener* listener) = 0;
+  // Aborts all sessions for a given render process,
+  // without providing any result.
+  virtual void AbortAllSessionsForRenderProcess(int render_process_id) = 0;
 
   // Aborts all sessions for a given RenderView, without providing any result.
   virtual void AbortAllSessionsForRenderView(int render_process_id,
@@ -80,7 +80,7 @@ class SpeechRecognitionManager {
 
   // Returns a human readable string for the model/make of the active audio
   // input device for this computer.
-  virtual string16 GetAudioInputDeviceModel() = 0;
+  virtual base::string16 GetAudioInputDeviceModel() = 0;
 
   // Invokes the platform provided microphone settings UI in a non-blocking way,
   // via the BrowserThread::FILE thread.

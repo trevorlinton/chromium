@@ -14,7 +14,6 @@
 #include "ui/base/glib/glib_integers.h"
 #include "ui/base/gtk/gtk_signal.h"
 #include "ui/base/gtk/gtk_signal_registrar.h"
-#include "ui/gfx/font.h"
 
 class Profile;
 
@@ -23,6 +22,7 @@ class RenderViewHost;
 }
 
 namespace gfx {
+class FontList;
 class Rect;
 }
 
@@ -69,8 +69,8 @@ class AutofillPopupViewGtk : public AutofillPopupView {
 
   // Set up the pango layout to print the given text and have it's width match
   // the text's (this gives us better control when placing the text box).
-  void SetLayoutText(const string16& text,
-                     const gfx::Font& font,
+  void SetLayoutText(const base::string16& text,
+                     const gfx::FontList& font_list,
                      const GdkColor text_color);
 
   // Draw the separator as the given |separator_rect|.

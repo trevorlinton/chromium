@@ -43,8 +43,10 @@ BluetoothPairingDialog::~BluetoothPairingDialog() {
 }
 
 void BluetoothPairingDialog::Show() {
+  // Bluetooth settings are currently stored on the device, accessible for
+  // everyone who uses the machine. As such we can use the active user profile.
   chrome::ShowWebDialog(parent_window_,
-                        ProfileManager::GetDefaultProfile(),
+                        ProfileManager::GetActiveUserProfile(),
                         this);
 }
 
@@ -55,7 +57,7 @@ ui::ModalType BluetoothPairingDialog::GetDialogModalType() const {
   return ui::MODAL_TYPE_SYSTEM;
 }
 
-string16 BluetoothPairingDialog::GetDialogTitle() const {
+base::string16 BluetoothPairingDialog::GetDialogTitle() const {
   return l10n_util::GetStringUTF16(
       IDS_OPTIONS_SETTINGS_BLUETOOTH_ADD_DEVICE_TITLE);
 }

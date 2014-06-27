@@ -189,6 +189,13 @@ class BASE_EXPORT FilePath {
   // Returns a vector of all of the components of the provided path. It is
   // equivalent to calling DirName().value() on the path's root component,
   // and BaseName().value() on each child component.
+  //
+  // To make sure this is lossless so we can differentiate absolute and
+  // relative paths, the root slash will be included even though no other
+  // slashes will be. The precise behavior is:
+  //
+  // Posix:  "/foo/bar"  ->  [ "/", "foo", "bar" ]
+  // Windows:  "C:\foo\bar"  ->  [ "C:", "\\", "foo", "bar" ]
   void GetComponents(std::vector<FilePath::StringType>* components) const;
 
   // Returns true if this FilePath is a strict parent of the |child|. Absolute
@@ -224,17 +231,32 @@ class BASE_EXPORT FilePath {
   // Returns ".jpg" for path "C:\pics\jojo.jpg", or an empty string if
   // the file has no extension.  If non-empty, Extension() will always start
   // with precisely one ".".  The following code should always work regardless
-  // of the value of path.
+  // of the value of path.  For common double-extensions like .tar.gz and
+  // .user.js, this method returns the combined extension.  For a single
+  // component, use FinalExtension().
   // new_path = path.RemoveExtension().value().append(path.Extension());
   // ASSERT(new_path == path.value());
   // NOTE: this is different from the original file_util implementation which
   // returned the extension without a leading "." ("jpg" instead of ".jpg")
   StringType Extension() const;
 
+  // Returns the path's file extension, as in Extension(), but will
+  // never return a double extension.
+  //
+  // TODO(davidben): Check all our extension-sensitive code to see if
+  // we can rename this to Extension() and the other to something like
+  // LongExtension(), defaulting to short extensions and leaving the
+  // long "extensions" to logic like base::GetUniquePathNumber().
+  StringType FinalExtension() const;
+
   // Returns "C:\pics\jojo" for path "C:\pics\jojo.jpg"
   // NOTE: this is slightly different from the similar file_util implementation
   // which returned simply 'jojo'.
   FilePath RemoveExtension() const WARN_UNUSED_RESULT;
+
+  // Removes the path's file extension, as in RemoveExtension(), but
+  // ignores double extensions.
+  FilePath RemoveFinalExtension() const WARN_UNUSED_RESULT;
 
   // Inserts |suffix| after the file name portion of |path| but before the
   // extension.  Returns "" if BaseName() == "." or "..".
@@ -385,6 +407,15 @@ class BASE_EXPORT FilePath {
   // (cf. above GetHFSDecomposedForm method)
   static int HFSFastUnicodeCompare(const StringType& string1,
                                    const StringType& string2);
+#endif
+
+#if defined(OS_ANDROID)
+  // On android, file selection dialog can return a file with content uri
+  // scheme(starting with content://). Content uri needs to be opened with
+  // ContentResolver to guarantee that the app has appropriate permissions
+  // to access it.
+  // Returns true if the path is a content uri, or false otherwise.
+  bool IsContentUri() const;
 #endif
 
  private:

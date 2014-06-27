@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 #include "content/browser/gpu/compositor_util.h"
-#include "content/test/content_browser_test.h"
+#include "content/public/test/content_browser_test.h"
 
 #if defined(OS_MACOSX)
 #include "base/mac/mac_util.h"
@@ -27,10 +27,15 @@ IN_PROC_BROWSER_TEST_F(CompositorUtilTest, CompositingModeAsExpected) {
 #if defined(USE_AURA)
   expected_mode = DELEGATED;
 #elif defined(OS_ANDROID)
-  expected_mode = THREADED;
+  expected_mode = DELEGATED;
 #elif defined(OS_MACOSX)
-  if (base::mac::IsOSMountainLionOrLater())
-    expected_mode = THREADED;
+  expected_mode = THREADED;
+  // Lion and SnowLeopard have compositing blacklisted when using the Apple
+  // software renderer, so results will vary depending if this test is being
+  // run in a VM versus actual hardware.
+  // http://crbug.com/230931
+  if (base::mac::IsOSLionOrEarlier())
+    return;
 #elif defined(OS_WIN)
   if (base::win::GetVersion() >= base::win::VERSION_VISTA)
     expected_mode = THREADED;

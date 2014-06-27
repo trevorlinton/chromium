@@ -10,6 +10,7 @@
 #include "content/common/content_export.h"
 #include "content/common/media/media_stream_options.h"
 #include "ipc/ipc_message_macros.h"
+#include "ipc/ipc_platform_file.h"
 #include "url/gurl.h"
 
 #undef IPC_MESSAGE_EXPORT
@@ -22,11 +23,21 @@ IPC_ENUM_TRAITS_MAX_VALUE(content::MediaStreamType,
 IPC_ENUM_TRAITS_MAX_VALUE(content::VideoFacingMode,
                           content::NUM_MEDIA_VIDEO_FACING_MODE - 1)
 
+IPC_ENUM_TRAITS_MAX_VALUE(content::MediaStreamRequestResult,
+                          content::NUM_MEDIA_REQUEST_RESULTS - 1)
+
+IPC_STRUCT_TRAITS_BEGIN(content::StreamOptions::Constraint)
+  IPC_STRUCT_TRAITS_MEMBER(name)
+  IPC_STRUCT_TRAITS_MEMBER(value)
+IPC_STRUCT_TRAITS_END()
+
 IPC_STRUCT_TRAITS_BEGIN(content::StreamOptions)
-  IPC_STRUCT_TRAITS_MEMBER(audio_type)
-  IPC_STRUCT_TRAITS_MEMBER(audio_device_id)
-  IPC_STRUCT_TRAITS_MEMBER(video_type)
-  IPC_STRUCT_TRAITS_MEMBER(video_device_id)
+  IPC_STRUCT_TRAITS_MEMBER(audio_requested)
+  IPC_STRUCT_TRAITS_MEMBER(mandatory_audio)
+  IPC_STRUCT_TRAITS_MEMBER(optional_audio)
+  IPC_STRUCT_TRAITS_MEMBER(video_requested)
+  IPC_STRUCT_TRAITS_MEMBER(mandatory_video)
+  IPC_STRUCT_TRAITS_MEMBER(optional_video)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(content::StreamDeviceInfo)
@@ -38,6 +49,7 @@ IPC_STRUCT_TRAITS_BEGIN(content::StreamDeviceInfo)
   IPC_STRUCT_TRAITS_MEMBER(device.input.sample_rate)
   IPC_STRUCT_TRAITS_MEMBER(device.input.channel_layout)
   IPC_STRUCT_TRAITS_MEMBER(device.input.frames_per_buffer)
+  IPC_STRUCT_TRAITS_MEMBER(device.input.effects)
   IPC_STRUCT_TRAITS_MEMBER(device.matched_output.sample_rate)
   IPC_STRUCT_TRAITS_MEMBER(device.matched_output.channel_layout)
   IPC_STRUCT_TRAITS_MEMBER(device.matched_output.frames_per_buffer)
@@ -54,26 +66,23 @@ IPC_MESSAGE_ROUTED4(MediaStreamMsg_StreamGenerated,
                     content::StreamDeviceInfoArray /* video_device_list */)
 
 // The browser has failed to generate a stream.
-IPC_MESSAGE_ROUTED1(MediaStreamMsg_StreamGenerationFailed,
-                    int /* request id */)
+IPC_MESSAGE_ROUTED2(MediaStreamMsg_StreamGenerationFailed,
+                    int /* request id */,
+                    content::MediaStreamRequestResult /* result */)
 
-// The browser requests to stop streaming.
-// Note that this differs from MediaStreamHostMsg_StopGeneratedStream below
-// which is a request from the renderer.
-IPC_MESSAGE_ROUTED1(MediaStreamMsg_StopGeneratedStream,
-                    std::string /* label */)
+// The browser reports that a media device has been stopped. Stopping was
+// triggered from the browser process.
+IPC_MESSAGE_ROUTED2(MediaStreamMsg_DeviceStopped,
+                    std::string /* label */,
+                    content::StreamDeviceInfo /* the device */)
 
-// The browser has enumerated devices successfully.
+// The browser has enumerated devices. If no devices are found
+// |device_list| is empty.
 // Used by Pepper.
 // TODO(vrk,wjia): Move this to pepper code.
-IPC_MESSAGE_ROUTED3(MediaStreamMsg_DevicesEnumerated,
+IPC_MESSAGE_ROUTED2(MediaStreamMsg_DevicesEnumerated,
                     int /* request id */,
-                    std::string /* label */,
                     content::StreamDeviceInfoArray /* device_list */)
-
-// The browser has failed to enumerate devices.
-IPC_MESSAGE_ROUTED1(MediaStreamMsg_DevicesEnumerationFailed,
-                    int /* request id */)
 
 // TODO(wjia): should DeviceOpen* messages be merged with
 // StreamGenerat* ones?
@@ -92,14 +101,24 @@ IPC_MESSAGE_CONTROL2(MediaStreamMsg_GetSourcesACK,
                      int /* request id */,
                      content::StreamDeviceInfoArray /* device_list */)
 
+// The browser hands over a file handle to the renderer to use for AEC dump.
+// TODO(grunell): This should not belong to media stream. Change when
+// refactoring MediaStreamDependencyFactory.
+IPC_MESSAGE_CONTROL1(MediaStreamMsg_EnableAecDump,
+                     IPC::PlatformFileForTransit /* file_handle */)
+
+// Tell the renderer to disable AEC dump.
+IPC_MESSAGE_CONTROL0(MediaStreamMsg_DisableAecDump)
+
 // Messages sent from the renderer to the browser.
 
 // Request a new media stream.
-IPC_MESSAGE_CONTROL4(MediaStreamHostMsg_GenerateStream,
+IPC_MESSAGE_CONTROL5(MediaStreamHostMsg_GenerateStream,
                      int /* render view id */,
                      int /* request id */,
                      content::StreamOptions /* components */,
-                     GURL /* security origin */)
+                     GURL /* security origin */,
+                     bool /* user_gesture */)
 
 // Request to cancel the request for a new media stream.
 IPC_MESSAGE_CONTROL2(MediaStreamHostMsg_CancelGenerateStream,
@@ -129,7 +148,7 @@ IPC_MESSAGE_CONTROL4(MediaStreamHostMsg_EnumerateDevices,
 // Request to stop enumerating devices.
 IPC_MESSAGE_CONTROL2(MediaStreamHostMsg_CancelEnumerateDevices,
                      int /* render view id */,
-                     std::string /* label */)
+                     int /* request id */)
 
 // Request to open the device.
 IPC_MESSAGE_CONTROL5(MediaStreamHostMsg_OpenDevice,

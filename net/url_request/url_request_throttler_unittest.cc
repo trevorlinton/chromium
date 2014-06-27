@@ -5,13 +5,12 @@
 #include "net/url_request/url_request_throttler_manager.h"
 
 #include "base/memory/scoped_ptr.h"
-#include "base/metrics/histogram.h"
 #include "base/metrics/histogram_samples.h"
-#include "base/metrics/statistics_recorder.h"
 #include "base/pickle.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/test/statistics_delta_reader.h"
 #include "base/time/time.h"
 #include "net/base/load_flags.h"
 #include "net/base/request_priority.h"
@@ -29,10 +28,7 @@ namespace net {
 
 namespace {
 
-using base::Histogram;
-using base::HistogramBase;
-using base::HistogramSamples;
-using base::StatisticsRecorder;
+const char kRequestThrottledHistogramName[] = "Throttling.RequestThrottled";
 
 class MockURLRequestThrottlerEntry : public URLRequestThrottlerEntry {
  public:
@@ -177,105 +173,69 @@ class URLRequestThrottlerEntryTest : public testing::Test {
       : request_(GURL(), DEFAULT_PRIORITY, NULL, &context_) {}
 
   virtual void SetUp();
-  virtual void TearDown();
-
-  // After calling this function, histogram snapshots in |samples_| contain
-  // only the delta caused by the test case currently running.
-  void CalculateHistogramDeltas();
 
   TimeTicks now_;
   MockURLRequestThrottlerManager manager_;  // Dummy object, not used.
   scoped_refptr<MockURLRequestThrottlerEntry> entry_;
 
-  std::map<std::string, HistogramSamples*> original_samples_;
-  std::map<std::string, HistogramSamples*> samples_;
-
   TestURLRequestContext context_;
   TestURLRequest request_;
 };
 
-// List of all histograms we care about in these unit tests.
-const char* kHistogramNames[] = {
-  "Throttling.FailureCountAtSuccess",
-  "Throttling.PerceivedDowntime",
-  "Throttling.RequestThrottled",
-  "Throttling.SiteOptedOut",
-};
-
 void URLRequestThrottlerEntryTest::SetUp() {
-  request_.set_load_flags(0);
+  request_.SetLoadFlags(0);
 
   now_ = TimeTicks::Now();
   entry_ = new MockURLRequestThrottlerEntry(&manager_);
   entry_->ResetToBlank(now_);
-
-  for (size_t i = 0; i < arraysize(kHistogramNames); ++i) {
-    // Must retrieve original samples for each histogram for comparison
-    // as other tests may affect them.
-    const char* name = kHistogramNames[i];
-    HistogramBase* histogram = StatisticsRecorder::FindHistogram(name);
-    if (histogram) {
-      original_samples_[name] = histogram->SnapshotSamples().release();
-    } else {
-      original_samples_[name] = NULL;
-    }
-  }
-}
-
-void URLRequestThrottlerEntryTest::TearDown() {
-  STLDeleteValues(&original_samples_);
-  STLDeleteValues(&samples_);
-}
-
-void URLRequestThrottlerEntryTest::CalculateHistogramDeltas() {
-  for (size_t i = 0; i < arraysize(kHistogramNames); ++i) {
-    const char* name = kHistogramNames[i];
-    HistogramSamples* original = original_samples_[name];
-
-    HistogramBase* histogram = StatisticsRecorder::FindHistogram(name);
-    if (histogram) {
-      ASSERT_EQ(HistogramBase::kUmaTargetedHistogramFlag, histogram->flags());
-
-      scoped_ptr<HistogramSamples> samples(histogram->SnapshotSamples());
-      if (original)
-        samples->Subtract(*original);
-      samples_[name] = samples.release();
-    }
-  }
-
-  // Ensure we don't accidentally use the originals in our tests.
-  STLDeleteValues(&original_samples_);
-  original_samples_.clear();
 }
 
 std::ostream& operator<<(std::ostream& out, const base::TimeTicks& time) {
   return out << time.ToInternalValue();
 }
 
+TEST_F(URLRequestThrottlerEntryTest, CanThrottleRequest) {
+  TestNetworkDelegate d;
+  context_.set_network_delegate(&d);
+  entry_->set_exponential_backoff_release_time(
+      entry_->fake_time_now_ + TimeDelta::FromMilliseconds(1));
+
+  d.set_can_throttle_requests(false);
+  EXPECT_FALSE(entry_->ShouldRejectRequest(request_));
+  d.set_can_throttle_requests(true);
+  EXPECT_TRUE(entry_->ShouldRejectRequest(request_));
+}
+
 TEST_F(URLRequestThrottlerEntryTest, InterfaceDuringExponentialBackoff) {
+  base::StatisticsDeltaReader statistics_delta_reader;
   entry_->set_exponential_backoff_release_time(
       entry_->fake_time_now_ + TimeDelta::FromMilliseconds(1));
   EXPECT_TRUE(entry_->ShouldRejectRequest(request_));
 
   // Also end-to-end test the load flags exceptions.
-  request_.set_load_flags(LOAD_MAYBE_USER_GESTURE);
+  request_.SetLoadFlags(LOAD_MAYBE_USER_GESTURE);
   EXPECT_FALSE(entry_->ShouldRejectRequest(request_));
 
-  CalculateHistogramDeltas();
-  ASSERT_EQ(1, samples_["Throttling.RequestThrottled"]->GetCount(0));
-  ASSERT_EQ(1, samples_["Throttling.RequestThrottled"]->GetCount(1));
+  scoped_ptr<base::HistogramSamples> samples(
+      statistics_delta_reader.GetHistogramSamplesSinceCreation(
+          kRequestThrottledHistogramName));
+  ASSERT_EQ(1, samples->GetCount(0));
+  ASSERT_EQ(1, samples->GetCount(1));
 }
 
 TEST_F(URLRequestThrottlerEntryTest, InterfaceNotDuringExponentialBackoff) {
+  base::StatisticsDeltaReader statistics_delta_reader;
   entry_->set_exponential_backoff_release_time(entry_->fake_time_now_);
   EXPECT_FALSE(entry_->ShouldRejectRequest(request_));
   entry_->set_exponential_backoff_release_time(
       entry_->fake_time_now_ - TimeDelta::FromMilliseconds(1));
   EXPECT_FALSE(entry_->ShouldRejectRequest(request_));
 
-  CalculateHistogramDeltas();
-  ASSERT_EQ(2, samples_["Throttling.RequestThrottled"]->GetCount(0));
-  ASSERT_EQ(0, samples_["Throttling.RequestThrottled"]->GetCount(1));
+  scoped_ptr<base::HistogramSamples> samples(
+      statistics_delta_reader.GetHistogramSamplesSinceCreation(
+          kRequestThrottledHistogramName));
+  ASSERT_EQ(2, samples->GetCount(0));
+  ASSERT_EQ(0, samples->GetCount(1));
 }
 
 TEST_F(URLRequestThrottlerEntryTest, InterfaceUpdateFailure) {
@@ -395,7 +355,7 @@ class URLRequestThrottlerManagerTest : public testing::Test {
       : request_(GURL(), DEFAULT_PRIORITY, NULL, &context_) {}
 
   virtual void SetUp() {
-    request_.set_load_flags(0);
+    request_.SetLoadFlags(0);
   }
 
   // context_ must be declared before request_.

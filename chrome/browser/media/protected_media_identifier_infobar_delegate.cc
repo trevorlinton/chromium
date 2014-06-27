@@ -5,6 +5,7 @@
 #include "chrome/browser/media/protected_media_identifier_infobar_delegate.h"
 
 #include "chrome/browser/content_settings/permission_queue_controller.h"
+#include "chrome/browser/infobars/infobar.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
 #include "grit/generated_resources.h"
@@ -17,7 +18,7 @@
 #endif
 
 // static
-InfoBarDelegate* ProtectedMediaIdentifierInfoBarDelegate::Create(
+InfoBar* ProtectedMediaIdentifierInfoBarDelegate::Create(
     InfoBarService* infobar_service,
     PermissionQueueController* controller,
     const PermissionRequestID& id,
@@ -25,34 +26,33 @@ InfoBarDelegate* ProtectedMediaIdentifierInfoBarDelegate::Create(
     const std::string& display_languages) {
   const content::NavigationEntry* committed_entry =
       infobar_service->web_contents()->GetController().GetLastCommittedEntry();
-  return infobar_service->AddInfoBar(
-      scoped_ptr<InfoBarDelegate>(new ProtectedMediaIdentifierInfoBarDelegate(
-          infobar_service,
-          controller,
-          id,
-          requesting_frame,
-          committed_entry ? committed_entry->GetUniqueID() : 0,
-          display_languages)));
+  return infobar_service->AddInfoBar(ConfirmInfoBarDelegate::CreateInfoBar(
+      scoped_ptr<ConfirmInfoBarDelegate>(
+          new ProtectedMediaIdentifierInfoBarDelegate(
+              controller, id, requesting_frame,
+              committed_entry ? committed_entry->GetUniqueID() : 0,
+              display_languages))));
 }
 
 
 ProtectedMediaIdentifierInfoBarDelegate::
     ProtectedMediaIdentifierInfoBarDelegate(
-        InfoBarService* infobar_service,
-        PermissionQueueController* controller,
-        const PermissionRequestID& id,
-        const GURL& requesting_frame,
-        int contents_unique_id,
-        const std::string& display_languages)
-    : ConfirmInfoBarDelegate(infobar_service),
+    PermissionQueueController* controller,
+    const PermissionRequestID& id,
+    const GURL& requesting_frame,
+    int contents_unique_id,
+    const std::string& display_languages)
+    : ConfirmInfoBarDelegate(),
       controller_(controller),
       id_(id),
       requesting_frame_(requesting_frame),
       contents_unique_id_(contents_unique_id),
-      display_languages_(display_languages) {}
+      display_languages_(display_languages) {
+}
 
 ProtectedMediaIdentifierInfoBarDelegate::
-    ~ProtectedMediaIdentifierInfoBarDelegate() {}
+    ~ProtectedMediaIdentifierInfoBarDelegate() {
+}
 
 bool ProtectedMediaIdentifierInfoBarDelegate::Accept() {
   SetPermission(true, true);
@@ -62,11 +62,9 @@ bool ProtectedMediaIdentifierInfoBarDelegate::Accept() {
 void ProtectedMediaIdentifierInfoBarDelegate::SetPermission(
     bool update_content_setting,
     bool allowed) {
-  controller_->OnPermissionSet(id_,
-                               requesting_frame_,
+  controller_->OnPermissionSet(id_, requesting_frame_,
                                web_contents()->GetLastCommittedURL(),
-                               update_content_setting,
-                               allowed);
+                               update_content_setting, allowed);
 }
 
 void ProtectedMediaIdentifierInfoBarDelegate::InfoBarDismissed() {
@@ -74,11 +72,11 @@ void ProtectedMediaIdentifierInfoBarDelegate::InfoBarDismissed() {
 }
 
 int ProtectedMediaIdentifierInfoBarDelegate::GetIconID() const {
-  return IDR_PROTECTED_MEDIA_IDENTIFIER_INFOBAR_ICON;
+  return IDR_INFOBAR_PROTECTED_MEDIA_IDENTIFIER;
 }
 
-InfoBarDelegate::Type ProtectedMediaIdentifierInfoBarDelegate::GetInfoBarType()
-    const {
+InfoBarDelegate::Type
+    ProtectedMediaIdentifierInfoBarDelegate::GetInfoBarType() const {
   return PAGE_ACTION_TYPE;
 }
 
@@ -93,17 +91,17 @@ bool ProtectedMediaIdentifierInfoBarDelegate::ShouldExpireInternal(
               content::PAGE_TRANSITION_RELOAD);
 }
 
-string16 ProtectedMediaIdentifierInfoBarDelegate::GetMessageText() const {
+base::string16 ProtectedMediaIdentifierInfoBarDelegate::GetMessageText() const {
   return l10n_util::GetStringFUTF16(
       IDS_PROTECTED_MEDIA_IDENTIFIER_INFOBAR_QUESTION,
       net::FormatUrl(requesting_frame_.GetOrigin(), display_languages_));
 }
 
-string16 ProtectedMediaIdentifierInfoBarDelegate::GetButtonLabel(
+base::string16 ProtectedMediaIdentifierInfoBarDelegate::GetButtonLabel(
     InfoBarButton button) const {
-  return l10n_util::GetStringUTF16(
-      (button == BUTTON_OK) ? IDS_PROTECTED_MEDIA_IDENTIFIER_ALLOW_BUTTON
-                            : IDS_PROTECTED_MEDIA_IDENTIFIER_DENY_BUTTON);
+  return l10n_util::GetStringUTF16((button == BUTTON_OK) ?
+      IDS_PROTECTED_MEDIA_IDENTIFIER_ALLOW_BUTTON :
+      IDS_PROTECTED_MEDIA_IDENTIFIER_DENY_BUTTON);
 }
 
 bool ProtectedMediaIdentifierInfoBarDelegate::Cancel() {
@@ -111,13 +109,13 @@ bool ProtectedMediaIdentifierInfoBarDelegate::Cancel() {
   return true;
 }
 
-string16 ProtectedMediaIdentifierInfoBarDelegate::GetLinkText() const {
+base::string16 ProtectedMediaIdentifierInfoBarDelegate::GetLinkText() const {
 #if defined(OS_ANDROID)
   return l10n_util::GetStringUTF16(
       IDS_PROTECTED_MEDIA_IDENTIFIER_SETTINGS_LINK);
 #else
   NOTIMPLEMENTED();
-  return string16();
+  return base::string16();
 #endif
 }
 

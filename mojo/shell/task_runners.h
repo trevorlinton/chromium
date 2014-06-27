@@ -5,14 +5,21 @@
 #ifndef MOJO_SHELL_TASK_RUNNERS_H_
 #define MOJO_SHELL_TASK_RUNNERS_H_
 
+#include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop_proxy.h"
 #include "base/threading/thread.h"
 
+namespace base {
+class SequencedWorkerPool;
+}
+
 namespace mojo {
 namespace shell {
 
-// A context object that contains the common task runners for the shell
+// A context object that contains the common task runners for the shell's main
+// process.
 class TaskRunners {
  public:
   explicit TaskRunners(base::SingleThreadTaskRunner* ui_runner);
@@ -30,24 +37,22 @@ class TaskRunners {
     return file_thread_->message_loop_proxy();
   }
 
-#if defined(OS_ANDROID)
-  void set_java_runner(base::SingleThreadTaskRunner* java_runner) {
-    java_runner_ = java_runner;
+  base::MessageLoopProxy* cache_runner() const {
+    return cache_thread_->message_loop_proxy();
   }
 
-  base::SingleThreadTaskRunner* java_runner() const {
-    return java_runner_.get();
+  base::SequencedWorkerPool* blocking_pool() const {
+    return blocking_pool_.get();
   }
-#endif // defined(OS_ANDROID)
 
  private:
+  // TODO(beng): should this be named shell_runner_?
   scoped_refptr<base::SingleThreadTaskRunner> ui_runner_;
+  scoped_ptr<base::Thread> cache_thread_;
   scoped_ptr<base::Thread> io_thread_;
   scoped_ptr<base::Thread> file_thread_;
 
-#if defined(OS_ANDROID)
-  scoped_refptr<base::SingleThreadTaskRunner> java_runner_;
-#endif // defined(OS_ANDROID)
+  scoped_refptr<base::SequencedWorkerPool> blocking_pool_;
 
   DISALLOW_COPY_AND_ASSIGN(TaskRunners);
 };

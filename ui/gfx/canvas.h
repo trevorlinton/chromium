@@ -19,7 +19,6 @@
 namespace gfx {
 
 class Rect;
-class Font;
 class FontList;
 class Point;
 class Size;
@@ -45,7 +44,7 @@ class GFX_EXPORT Canvas {
     TruncateFadeHead,
   };
 
-  // Specifies the alignment for text rendered with the DrawStringInt method.
+  // Specifies the alignment for text rendered with the DrawStringRect method.
   enum {
     TEXT_ALIGN_LEFT = 1 << 0,
     TEXT_ALIGN_CENTER = 1 << 1,
@@ -54,7 +53,7 @@ class GFX_EXPORT Canvas {
     // Specifies the text consists of multiple lines.
     MULTI_LINE = 1 << 3,
 
-    // By default DrawStringInt does not process the prefix ('&') character
+    // By default DrawStringRect does not process the prefix ('&') character
     // specially. That is, the string "&foo" is rendered as "&foo". When
     // rendering text from a resource that uses the prefix character for
     // mnemonics, the prefix should be processed and can be rendered as an
@@ -69,7 +68,7 @@ class GFX_EXPORT Canvas {
     // This only works with MULTI_LINE.
     CHARACTER_BREAK = 1 << 7,
 
-    // Instructs DrawStringInt() to render the text using RTL directionality.
+    // Instructs DrawStringRect() to render the text using RTL directionality.
     // In most cases, passing this flag is not necessary because information
     // about the text directionality is going to be embedded within the string
     // in the form of special Unicode characters. However, we don't insert
@@ -83,7 +82,7 @@ class GFX_EXPORT Canvas {
     // See FORCE_RTL_DIRECTIONALITY for details.
     FORCE_LTR_DIRECTIONALITY = 1 << 9,
 
-    // Instructs DrawStringInt() to not use subpixel rendering.  This is useful
+    // Instructs DrawStringRect() to not use subpixel rendering.  This is useful
     // when rendering text onto a fully- or partially-transparent background
     // that will later be blended with another image.
     NO_SUBPIXEL_RENDERING = 1 << 10,
@@ -130,13 +129,6 @@ class GFX_EXPORT Canvas {
                             int* height,
                             int line_height,
                             int flags);
-  // Obsolete version.  Use the above version which takes FontList.
-  static void SizeStringInt(const base::string16& text,
-                            const Font& font,
-                            int* width,
-                            int* height,
-                            int line_height,
-                            int flags);
 
   // This is same as SizeStringInt except that fractional size is returned.
   // See comment in GetStringWidthF for its usage.
@@ -151,8 +143,6 @@ class GFX_EXPORT Canvas {
   // |text| with |font_list|.
   static int GetStringWidth(const base::string16& text,
                             const FontList& font_list);
-  // Obsolete version.  Use the above version which takes FontList.
-  static int GetStringWidth(const base::string16& text, const Font& font);
 
   // This is same as GetStringWidth except that fractional width is returned.
   // Use this method for the scenario that multiple string widths need to be
@@ -164,7 +154,7 @@ class GFX_EXPORT Canvas {
 
   // Returns the default text alignment to be used when drawing text on a
   // Canvas based on the directionality of the system locale language.
-  // This function is used by Canvas::DrawStringInt when the text alignment
+  // This function is used by Canvas::DrawStringRect when the text alignment
   // is not specified.
   //
   // This function returns either Canvas::TEXT_ALIGN_LEFT or
@@ -186,16 +176,6 @@ class GFX_EXPORT Canvas {
                               SkColor halo_color,
                               const Rect& display_rect,
                               int flags);
-  // Obsolete version.  Use the above version which takes FontList.
-  void DrawStringWithHalo(const base::string16& text,
-                          const Font& font,
-                          SkColor text_color,
-                          SkColor halo_color,
-                          int x,
-                          int y,
-                          int w,
-                          int h,
-                          int flags);
 
   // Extracts an ImageSkiaRep from the contents of this canvas.
   ImageSkiaRep ExtractImageRep() const;
@@ -218,13 +198,14 @@ class GFX_EXPORT Canvas {
   // call Restore() more times than Save*().
   void Restore();
 
-  // Adds |rect| to the current clip. Returns true if the resulting clip is
-  // non-empty.
-  bool ClipRect(const Rect& rect);
+  // Adds |rect| to the current clip.
+  void ClipRect(const Rect& rect);
 
-  // Adds |path| to the current clip. Returns true if the resulting clip is
-  // non-empty.
-  bool ClipPath(const SkPath& path);
+  // Adds |path| to the current clip.
+  void ClipPath(const SkPath& path);
+
+  // Returns true if the current clip is empty.
+  bool IsClipEmpty() const;
 
   // Returns the bounds of the current clip (in local coordinates) in the
   // |bounds| parameter, and returns true if it is non empty.
@@ -356,18 +337,6 @@ class GFX_EXPORT Canvas {
                       const FontList& font_list,
                       SkColor color,
                       const Rect& display_rect);
-  // Obsolete versions.  Use the above versions which take FontList.
-  void DrawStringInt(const base::string16& text,
-                     const Font& font,
-                     SkColor color,
-                     int x,
-                     int y,
-                     int w,
-                     int h);
-  void DrawStringInt(const base::string16& text,
-                     const Font& font,
-                     SkColor color,
-                     const Rect& display_rect);
 
   // Draws text with the specified color, fonts and location. The last argument
   // specifies flags for how the text should be rendered. It can be one of
@@ -377,17 +346,8 @@ class GFX_EXPORT Canvas {
                                SkColor color,
                                const Rect& display_rect,
                                int flags);
-  // Obsolete version.  Use the above version which takes FontList.
-  void DrawStringInt(const base::string16& text,
-                     const Font& font,
-                     SkColor color,
-                     int x,
-                     int y,
-                     int w,
-                     int h,
-                     int flags);
 
-  // Similar to above DrawStringInt method but with text shadows support.
+  // Similar to above DrawStringRect method but with text shadows support.
   // Currently it's only implemented for canvas skia. Specifying a 0 line_height
   // will cause the default height to be used.
   void DrawStringRectWithShadows(const base::string16& text,
@@ -397,17 +357,13 @@ class GFX_EXPORT Canvas {
                                  int line_height,
                                  int flags,
                                  const ShadowValues& shadows);
-  // Obsolete version.  Use the above version which takes FontList.
-  void DrawStringWithShadows(const base::string16& text,
-                             const Font& font,
-                             SkColor color,
-                             const Rect& text_bounds,
-                             int line_height,
-                             int flags,
-                             const ShadowValues& shadows);
 
   // Draws a dotted gray rectangle used for focus purposes.
   void DrawFocusRect(const Rect& rect);
+
+  // Draws a |rect| in the specified region with the specified |color| with a
+  // with of one logical pixel which might be more device pixels.
+  void DrawSolidFocusRect(const Rect& rect, SkColor color);
 
   // Tiles the image in the specified region.
   // Parameters are specified relative to current canvas scale not in pixels.

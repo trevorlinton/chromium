@@ -12,15 +12,17 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/supports_user_data.h"
+#include "base/timer/timer.h"
 #include "base/values.h"
 #include "base/version.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
-#include "chrome/common/extensions/manifest_handlers/shared_module_info.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/download_interrupt_reasons.h"
 #include "content/public/browser/download_item.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
-#include "net/base/net_errors.h"
+#include "content/public/browser/web_contents_observer.h"
+#include "extensions/common/manifest_handlers/shared_module_info.h"
 #include "ui/gfx/image/image_skia.h"
 #include "url/gurl.h"
 
@@ -31,7 +33,7 @@ class FilePath;
 }
 
 namespace content {
-class NavigationController;
+class WebContents;
 }
 
 namespace extensions {
@@ -40,9 +42,10 @@ class Extension;
 class Manifest;
 
 // Downloads and installs extensions from the web store.
-class WebstoreInstaller :public content::NotificationObserver,
-                         public content::DownloadItem::Observer,
-                         public base::RefCountedThreadSafe<
+class WebstoreInstaller : public content::NotificationObserver,
+                          public content::DownloadItem::Observer,
+                          public content::WebContentsObserver,
+                          public base::RefCountedThreadSafe<
   WebstoreInstaller, content::BrowserThread::DeleteOnUIThread> {
  public:
   enum InstallSource {
@@ -151,6 +154,9 @@ class WebstoreInstaller :public content::NotificationObserver,
     // Required minimum version.
     scoped_ptr<Version> minimum_version;
 
+    // Ephemeral apps (experimental) are not permanently installed in Chrome.
+    bool is_ephemeral;
+
    private:
     Approval();
   };
@@ -169,7 +175,7 @@ class WebstoreInstaller :public content::NotificationObserver,
   // Note: the delegate should stay alive until being called back.
   WebstoreInstaller(Profile* profile,
                     Delegate* delegate,
-                    content::NavigationController* controller,
+                    content::WebContents* web_contents,
                     const std::string& id,
                     scoped_ptr<Approval> approval,
                     InstallSource source);
@@ -202,7 +208,8 @@ class WebstoreInstaller :public content::NotificationObserver,
                                     InstallSource source);
 
   // DownloadManager::DownloadUrl callback.
-  void OnDownloadStarted(content::DownloadItem* item, net::Error error);
+  void OnDownloadStarted(content::DownloadItem* item,
+                         content::DownloadInterruptReason interrupt_reason);
 
   // DownloadItem::Observer implementation:
   virtual void OnDownloadUpdated(content::DownloadItem* download) OVERRIDE;
@@ -218,6 +225,9 @@ class WebstoreInstaller :public content::NotificationObserver,
   // Starts downloading the extension to |file_path|.
   void StartDownload(const base::FilePath& file_path);
 
+  // Updates the InstallTracker with the latest download progress.
+  void UpdateDownloadProgress();
+
   // Reports an install |error| to the delegate for the given extension if this
   // managed its installation. This also removes the associated PendingInstall.
   void ReportFailure(const std::string& error, FailureReason reason);
@@ -227,15 +237,21 @@ class WebstoreInstaller :public content::NotificationObserver,
   // PendingInstall.
   void ReportSuccess();
 
+  // Records stats regarding an interrupted webstore download item.
+  void RecordInterrupt(const content::DownloadItem* download) const;
+
   content::NotificationRegistrar registrar_;
   Profile* profile_;
   Delegate* delegate_;
-  content::NavigationController* controller_;
   std::string id_;
   InstallSource install_source_;
   // The DownloadItem is owned by the DownloadManager and is valid from when
   // OnDownloadStarted is called (with no error) until OnDownloadDestroyed().
   content::DownloadItem* download_item_;
+  // Used to periodically update the extension's download status. This will
+  // trigger at least every second, though sometimes more frequently (depending
+  // on number of modules, etc).
+  base::OneShotTimer<WebstoreInstaller> download_progress_timer_;
   scoped_ptr<Approval> approval_;
   GURL download_url_;
 

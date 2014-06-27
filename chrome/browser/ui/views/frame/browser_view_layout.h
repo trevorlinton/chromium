@@ -14,9 +14,8 @@
 
 class BookmarkBarView;
 class Browser;
-class BrowserView;
 class BrowserViewLayoutDelegate;
-class ContentsContainer;
+class ContentsLayoutManager;
 class ImmersiveModeController;
 class InfoBarContainerView;
 class TabContentsContainer;
@@ -28,6 +27,7 @@ class Size;
 }
 
 namespace views {
+class ClientView;
 class SingleSplitView;
 }
 
@@ -48,13 +48,13 @@ class BrowserViewLayout : public views::LayoutManager {
   // |browser_view| may be NULL in tests.
   void Init(BrowserViewLayoutDelegate* delegate,
             Browser* browser,
-            BrowserView* browser_view,
+            views::ClientView* browser_view,
             views::View* top_container,
             TabStrip* tab_strip,
             views::View* toolbar,
             InfoBarContainerView* infobar_container,
-            views::View* contents_split,
-            ContentsContainer* contents_container,
+            views::View* contents_container,
+            ContentsLayoutManager* contents_layout_manager,
             ImmersiveModeController* immersive_mode_controller);
 
   // Sets or updates views that are not available when |this| is initialized.
@@ -94,21 +94,18 @@ class BrowserViewLayout : public views::LayoutManager {
 
   Browser* browser() { return browser_; }
 
-  // Layout the tab strip region, returns the coordinate of the bottom of the
-  // TabStrip, for laying out subsequent controls.
-  int LayoutTabStripRegion(views::View* browser_view);
-
   // Layout the following controls, starting at |top|, returns the coordinate
   // of the bottom of the control, for laying out the next control.
+  int LayoutTabStripRegion(int top);
   int LayoutToolbar(int top);
   int LayoutBookmarkAndInfoBars(int top, int browser_view_y);
   int LayoutBookmarkBar(int top);
   int LayoutInfoBar(int top);
 
-  // Layout the |contents_split_| view between the coordinates |top| and
+  // Layout the |contents_container_| view between the coordinates |top| and
   // |bottom|. See browser_view.h for details of the relationship between
-  // |contents_split_| and other views.
-  void LayoutContentsSplitView(int top, int bottom);
+  // |contents_container_| and other views.
+  void LayoutContentsContainerView(int top, int bottom);
 
   // Updates |top_container_|'s bounds. The new bounds depend on the size of
   // the bookmark bar and the toolbar.
@@ -136,9 +133,8 @@ class BrowserViewLayout : public views::LayoutManager {
   // The browser from the owning BrowserView.
   Browser* browser_;
 
-  // The owning BrowserView. May be NULL in tests.
-  // TODO(jamescook): Remove this, use the views::View passed in to Layout().
-  BrowserView* browser_view_;
+  // The owning browser view.
+  views::ClientView* browser_view_;
 
   // Child views that the layout manager manages.
   // NOTE: If you add a view, try to add it as a views::View, which makes
@@ -148,8 +144,8 @@ class BrowserViewLayout : public views::LayoutManager {
   views::View* toolbar_;
   BookmarkBarView* bookmark_bar_;
   InfoBarContainerView* infobar_container_;
-  views::View* contents_split_;
-  ContentsContainer* contents_container_;
+  views::View* contents_container_;
+  ContentsLayoutManager* contents_layout_manager_;
   views::View* download_shelf_;
 
   ImmersiveModeController* immersive_mode_controller_;
@@ -163,8 +159,8 @@ class BrowserViewLayout : public views::LayoutManager {
   // The host for use in positioning the web contents modal dialog.
   scoped_ptr<WebContentsModalDialogHostViews> dialog_host_;
 
-  // The latest dialog position applied during a layout pass.
-  gfx::Point latest_dialog_position_;
+  // The latest dialog bounds applied during a layout pass.
+  gfx::Rect latest_dialog_bounds_;
 
   // The distance the web contents modal dialog is from the top of the window,
   // in pixels.

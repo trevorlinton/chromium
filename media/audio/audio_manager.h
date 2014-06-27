@@ -11,11 +11,11 @@
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
 #include "media/audio/audio_device_name.h"
+#include "media/audio/audio_logging.h"
 #include "media/audio/audio_parameters.h"
 
 namespace base {
-class MessageLoop;
-class MessageLoopProxy;
+class SingleThreadTaskRunner;
 }
 
 namespace media {
@@ -23,16 +23,19 @@ namespace media {
 class AudioInputStream;
 class AudioOutputStream;
 
-// Manages all audio resources. In particular it owns the AudioOutputStream
-// objects. Provides some convenience functions that avoid the need to provide
-// iterators over the existing streams.
+// Manages all audio resources.  Provides some convenience functions that avoid
+// the need to provide iterators over the existing streams.
 class MEDIA_EXPORT AudioManager {
- public:
-  virtual ~AudioManager();
+  public:
+   virtual ~AudioManager();
 
-  // Use to construct the audio manager.
-  // NOTE: There should only be one instance.
-  static AudioManager* Create();
+  // Construct the audio manager; only one instance is allowed.  The manager
+  // will forward CreateAudioLog() calls to the provided AudioLogFactory; as
+  // such |audio_log_factory| must outlive the AudioManager.
+  static AudioManager* Create(AudioLogFactory* audio_log_factory);
+
+  // Similar to Create() except uses a FakeAudioLogFactory for testing.
+  static AudioManager* CreateForTesting();
 
   // Returns the pointer to the last created instance, or NULL if not yet
   // created. This is a utility method for the code outside of media directory,
@@ -50,7 +53,7 @@ class MEDIA_EXPORT AudioManager {
 
   // Returns a human readable string for the model/make of the active audio
   // input device for this computer.
-  virtual string16 GetAudioInputDeviceModel() = 0;
+  virtual base::string16 GetAudioInputDeviceModel() = 0;
 
   // Opens the platform default audio input settings UI.
   // Note: This could invoke an external application/preferences pane, so
@@ -64,14 +67,14 @@ class MEDIA_EXPORT AudioManager {
   // recording.
   //
   // Not threadsafe; in production this should only be called from the
-  // Audio IO thread (see GetMessageLoop).
+  // Audio IO thread (see GetTaskRunner()).
   virtual void GetAudioInputDeviceNames(AudioDeviceNames* device_names) = 0;
 
   // Appends a list of available output devices to |device_names|,
   // which must initially be empty.
   //
   // Not threadsafe; in production this should only be called from the
-  // Audio IO thread (see GetMessageLoop).
+  // Audio IO thread (see GetTaskRunner()).
   virtual void GetAudioOutputDeviceNames(AudioDeviceNames* device_names) = 0;
 
   // Factory for all the supported stream formats. |params| defines parameters
@@ -85,11 +88,6 @@ class MEDIA_EXPORT AudioManager {
   // To create a stream for the default output device, pass an empty string
   // for |device_id|, otherwise the specified audio device will be opened.
   //
-  // The |input_device_id| is used for low-latency unified streams
-  // (input+output) only and then only if the audio parameters specify a >0
-  // input channel count.  In other cases this id is ignored and should be
-  // empty.
-  //
   // Returns NULL if the combination of the parameters is not supported, or if
   // we have reached some other platform specific limit.
   //
@@ -102,8 +100,7 @@ class MEDIA_EXPORT AudioManager {
   // Do not free the returned AudioOutputStream. It is owned by AudioManager.
   virtual AudioOutputStream* MakeAudioOutputStream(
       const AudioParameters& params,
-      const std::string& device_id,
-      const std::string& input_device_id) = 0;
+      const std::string& device_id) = 0;
 
   // Creates new audio output proxy. A proxy implements
   // AudioOutputStream interface, but unlike regular output stream
@@ -111,8 +108,7 @@ class MEDIA_EXPORT AudioManager {
   // sound is actually playing.
   virtual AudioOutputStream* MakeAudioOutputStreamProxy(
       const AudioParameters& params,
-      const std::string& device_id,
-      const std::string& input_device_id) = 0;
+      const std::string& device_id) = 0;
 
   // Factory to create audio recording streams.
   // |channels| can be 1 or 2.
@@ -129,13 +125,13 @@ class MEDIA_EXPORT AudioManager {
   virtual AudioInputStream* MakeAudioInputStream(
       const AudioParameters& params, const std::string& device_id) = 0;
 
-  // Returns message loop used for audio IO.
-  virtual scoped_refptr<base::MessageLoopProxy> GetMessageLoop() = 0;
+  // Returns the task runner used for audio IO.
+  virtual scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner() = 0;
 
-  // Heavyweight tasks should use GetWorkerLoop() instead of GetMessageLoop().
-  // On most platforms they are the same, but some share the UI loop with the
-  // audio IO loop.
-  virtual scoped_refptr<base::MessageLoopProxy> GetWorkerLoop() = 0;
+  // Heavyweight tasks should use GetWorkerTaskRunner() instead of
+  // GetTaskRunner(). On most platforms they are the same, but some share the
+  // UI loop with the audio IO loop.
+  virtual scoped_refptr<base::SingleThreadTaskRunner> GetWorkerTaskRunner() = 0;
 
   // Allows clients to listen for device state changes; e.g. preferred sample
   // rate or channel layout changes.  The typical response to receiving this
@@ -174,6 +170,11 @@ class MEDIA_EXPORT AudioManager {
   // an empty string.
   virtual std::string GetAssociatedOutputDeviceID(
       const std::string& input_device_id) = 0;
+
+  // Create a new AudioLog object for tracking the behavior for one or more
+  // instances of the given component.  See AudioLogFactory for more details.
+  virtual scoped_ptr<AudioLog> CreateAudioLog(
+      AudioLogFactory::AudioComponent component) = 0;
 
   // Called when a component has detected a OS level audio wedge.  Shuts down
   // all active audio streams and then restarts them transparently.  See

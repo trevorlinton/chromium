@@ -19,9 +19,10 @@ class AppListViewDelegate;
 namespace aura {
 class RootWindow;
 class Window;
-namespace client {
-class UserActionClient;
 }
+
+namespace content {
+class BrowserContext;
 }
 
 namespace ui {
@@ -38,71 +39,17 @@ class KeyboardControllerProxy;
 
 namespace ash {
 
-class CapsLockDelegate;
-class LauncherDelegate;
-class LauncherModel;
-struct LauncherItem;
+class AccessibilityDelegate;
 class MediaDelegate;
 class NewWindowDelegate;
-class RootWindowHostFactory;
-class AccessibilityDelegate;
+class WindowTreeHostFactory;
 class SessionStateDelegate;
+class ShelfDelegate;
+class ShelfItemDelegate;
+class ShelfModel;
 class SystemTrayDelegate;
 class UserWallpaperDelegate;
-
-enum UserMetricsAction {
-  UMA_ACCEL_KEYBOARD_BRIGHTNESS_DOWN_F6,
-  UMA_ACCEL_KEYBOARD_BRIGHTNESS_UP_F7,
-  UMA_ACCEL_LOCK_SCREEN_L,
-  UMA_ACCEL_LOCK_SCREEN_LOCK_BUTTON,
-  UMA_ACCEL_LOCK_SCREEN_POWER_BUTTON,
-  UMA_ACCEL_FULLSCREEN_F4,
-  UMA_ACCEL_MAXIMIZE_RESTORE_F4,
-  UMA_ACCEL_NEWTAB_T,
-  UMA_ACCEL_NEXTWINDOW_F5,
-  UMA_ACCEL_NEXTWINDOW_TAB,
-  UMA_ACCEL_OVERVIEW_F5,
-  UMA_ACCEL_PREVWINDOW_F5,
-  UMA_ACCEL_PREVWINDOW_TAB,
-  UMA_ACCEL_EXIT_FIRST_Q,
-  UMA_ACCEL_EXIT_SECOND_Q,
-  UMA_ACCEL_SEARCH_LWIN,
-  UMA_ACCEL_SHUT_DOWN_POWER_BUTTON,
-  UMA_CLOSE_THROUGH_CONTEXT_MENU,
-  UMA_GESTURE_OVERVIEW,
-  UMA_LAUNCHER_CLICK_ON_APP,
-  UMA_LAUNCHER_CLICK_ON_APPLIST_BUTTON,
-  UMA_MINIMIZE_PER_KEY,
-  UMA_MOUSE_DOWN,
-  UMA_TOGGLE_MAXIMIZE_CAPTION_CLICK,
-  UMA_TOGGLE_MAXIMIZE_CAPTION_GESTURE,
-  UMA_TOUCHPAD_GESTURE_OVERVIEW,
-  UMA_TOUCHSCREEN_TAP_DOWN,
-  UMA_TRAY_HELP,
-  UMA_TRAY_LOCK_SCREEN,
-  UMA_TRAY_SHUT_DOWN,
-  UMA_WINDOW_APP_CLOSE_BUTTON_CLICK,
-  UMA_WINDOW_CLOSE_BUTTON_CLICK,
-  UMA_WINDOW_MAXIMIZE_BUTTON_CLICK_EXIT_FULLSCREEN,
-  UMA_WINDOW_MAXIMIZE_BUTTON_CLICK_MAXIMIZE,
-  UMA_WINDOW_MAXIMIZE_BUTTON_CLICK_MINIMIZE,
-  UMA_WINDOW_MAXIMIZE_BUTTON_CLICK_RESTORE,
-  UMA_WINDOW_MAXIMIZE_BUTTON_MAXIMIZE,
-  UMA_WINDOW_MAXIMIZE_BUTTON_MAXIMIZE_LEFT,
-  UMA_WINDOW_MAXIMIZE_BUTTON_MAXIMIZE_RIGHT,
-  UMA_WINDOW_MAXIMIZE_BUTTON_MINIMIZE,
-  UMA_WINDOW_MAXIMIZE_BUTTON_RESTORE,
-  UMA_WINDOW_MAXIMIZE_BUTTON_SHOW_BUBBLE,
-
-  // Thumbnail sized overview of windows triggered. This is a subset of
-  // UMA_WINDOW_SELECTION triggered by lingering during alt+tab cycles or
-  // pressing the overview key.
-  UMA_WINDOW_OVERVIEW,
-
-  // Window selection started by beginning an alt+tab cycle or pressing the
-  // overview key. This does not count each step through an alt+tab cycle.
-  UMA_WINDOW_SELECTION,
-};
+struct ShelfItem;
 
 // Delegate of the Shell.
 class ASH_EXPORT ShellDelegate {
@@ -129,8 +76,9 @@ class ASH_EXPORT ShellDelegate {
   // can perform tasks necessary before the shell is initialized.
   virtual void PreInit() = 0;
 
-  // Shuts down the environment.
-  virtual void Shutdown() = 0;
+  // Called at the beginninig of Shell destructor so that
+  // delegate can use Shell instance to perform cleanup tasks.
+  virtual void PreShutdown() = 0;
 
   // Invoked when the user uses Ctrl-Shift-Q to close chrome.
   virtual void Exit() = 0;
@@ -139,26 +87,23 @@ class ASH_EXPORT ShellDelegate {
   virtual keyboard::KeyboardControllerProxy*
       CreateKeyboardControllerProxy() = 0;
 
-  // Get the current browser context. This will get us the current profile.
-  virtual content::BrowserContext* GetCurrentBrowserContext() = 0;
+  // Get the active browser context. This will get us the active profile
+  // in chrome.
+  virtual content::BrowserContext* GetActiveBrowserContext() = 0;
 
   // Invoked to create an AppListViewDelegate. Shell takes the ownership of
   // the created delegate.
   virtual app_list::AppListViewDelegate* CreateAppListViewDelegate() = 0;
 
-  // Creates a new LauncherDelegate. Shell takes ownership of the returned
+  // Creates a new ShelfDelegate. Shell takes ownership of the returned
   // value.
-  virtual LauncherDelegate* CreateLauncherDelegate(
-      ash::LauncherModel* model) = 0;
+  virtual ShelfDelegate* CreateShelfDelegate(ShelfModel* model) = 0;
 
   // Creates a system-tray delegate. Shell takes ownership of the delegate.
   virtual SystemTrayDelegate* CreateSystemTrayDelegate() = 0;
 
   // Creates a user wallpaper delegate. Shell takes ownership of the delegate.
   virtual UserWallpaperDelegate* CreateUserWallpaperDelegate() = 0;
-
-  // Creates a caps lock delegate. Shell takes ownership of the delegate.
-  virtual CapsLockDelegate* CreateCapsLockDelegate() = 0;
 
   // Creates a session state delegate. Shell takes ownership of the delegate.
   virtual SessionStateDelegate* CreateSessionStateDelegate() = 0;
@@ -172,18 +117,20 @@ class ASH_EXPORT ShellDelegate {
   // Creates a media delegate. Shell takes ownership of the delegate.
   virtual MediaDelegate* CreateMediaDelegate() = 0;
 
-  // Creates a user action client. Shell takes ownership of the object.
-  virtual aura::client::UserActionClient* CreateUserActionClient() = 0;
-
-  // Records that the user performed an action.
-  virtual void RecordUserMetricsAction(UserMetricsAction action) = 0;
-
   // Creates a menu model of the context for the |root_window|.
-  virtual ui::MenuModel* CreateContextMenu(aura::Window* root_window) = 0;
+  // When a ContextMenu is used for an item created by ShelfWindowWatcher,
+  // passes its ShelfItemDelegate and ShelfItem.
+  virtual ui::MenuModel* CreateContextMenu(
+      aura::Window* root_window,
+      ash::ShelfItemDelegate* item_delegate,
+      ash::ShelfItem* item) = 0;
 
   // Creates a root window host factory. Shell takes ownership of the returned
   // value.
-  virtual RootWindowHostFactory* CreateRootWindowHostFactory() = 0;
+  virtual WindowTreeHostFactory* CreateWindowTreeHostFactory() = 0;
+
+  // Creates a GPU support object. Shell takes ownership of the object.
+  virtual GPUSupport* CreateGPUSupport() = 0;
 
   // Get the product name.
   virtual base::string16 GetProductName() const = 0;

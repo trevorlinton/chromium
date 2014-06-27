@@ -7,7 +7,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "grit/ui_resources.h"
 #include "grit/ui_strings.h"
-#include "ui/base/accessibility/accessible_view_state.h"
+#include "ui/accessibility/ax_view_state.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -22,7 +22,7 @@
 #include "ui/views/widget/root_view.h"
 #include "ui/views/widget/widget.h"
 
-using base::Time;
+using base::TimeTicks;
 using base::TimeDelta;
 
 namespace views {
@@ -43,7 +43,7 @@ const int MenuButton::kMenuMarkerPaddingRight = -1;
 ////////////////////////////////////////////////////////////////////////////////
 
 MenuButton::MenuButton(ButtonListener* listener,
-                       const string16& text,
+                       const base::string16& text,
                        MenuButtonListener* menu_button_listener,
                        bool show_menu_marker)
     : TextButton(listener, text),
@@ -114,7 +114,7 @@ bool MenuButton::Activate() {
     destroyed_flag_ = NULL;
 
     menu_visible_ = false;
-    menu_closed_time_ = Time::Now();
+    menu_closed_time_ = TimeTicks::Now();
 
     // Now that the menu has closed, we need to manually reset state to
     // "normal" since the menu modal loop will have prevented normal
@@ -168,7 +168,7 @@ bool MenuButton::OnMousePressed(const ui::MouseEvent& event) {
     if (event.IsOnlyLeftMouseButton() &&
         HitTestPoint(event.location()) &&
         GetDragOperations(event.location()) == ui::DragDropTypes::DRAG_NONE) {
-      TimeDelta delta = Time::Now() - menu_closed_time_;
+      TimeDelta delta = TimeTicks::Now() - menu_closed_time_;
       if (delta.InMilliseconds() > kMinimumMsBetweenButtonClicks)
         return Activate();
     }
@@ -220,16 +220,12 @@ bool MenuButton::OnKeyPressed(const ui::KeyEvent& event) {
     case ui::VKEY_UP:
     case ui::VKEY_DOWN: {
       // WARNING: we may have been deleted by the time Activate returns.
-      bool ret = Activate();
-#if defined(USE_AURA)
-      // This is to prevent the keyboard event from being dispatched twice.
-      // The Activate function returns false in most cases. In AURA if the
-      // keyboard event is not handled, we pass it to the default handler
-      // which dispatches the event back to us causing the menu to get
-      // displayed again.
-      ret = true;
-#endif
-      return ret;
+      Activate();
+      // This is to prevent the keyboard event from being dispatched twice.  If
+      // the keyboard event is not handled, we pass it to the default handler
+      // which dispatches the event back to us causing the menu to get displayed
+      // again. Return true to prevent this.
+      return true;
     }
     default:
       break;
@@ -244,11 +240,11 @@ bool MenuButton::OnKeyReleased(const ui::KeyEvent& event) {
   return false;
 }
 
-void MenuButton::GetAccessibleState(ui::AccessibleViewState* state) {
+void MenuButton::GetAccessibleState(ui::AXViewState* state) {
   CustomButton::GetAccessibleState(state);
-  state->role = ui::AccessibilityTypes::ROLE_BUTTONMENU;
+  state->role = ui::AX_ROLE_POP_UP_BUTTON;
   state->default_action = l10n_util::GetStringUTF16(IDS_APP_ACCACTION_PRESS);
-  state->state = ui::AccessibilityTypes::STATE_HASPOPUP;
+  state->AddStateFlag(ui::AX_STATE_HASPOPUP);
 }
 
 void MenuButton::PaintMenuMarker(gfx::Canvas* canvas) {

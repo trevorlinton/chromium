@@ -16,13 +16,20 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "ui/aura/env.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/test/event_generator.h"
+#include "ui/aura/test/test_window_delegate.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/compositor/layer_animator.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/size.h"
+
+#if defined(OS_CHROMEOS) && defined(USE_X11)
+#include "ui/display/chromeos/output_configurator.h"
+#include "ui/display/chromeos/test/test_display_snapshot.h"
+#include "ui/display/display_constants.h"
+#endif
 
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
@@ -53,14 +60,6 @@ aura::Window* GetContainer(int container ) {
 bool IsBackgroundHidden() {
   return !GetContainer(internal::kShellWindowId_DesktopBackgroundContainer)->
               IsVisible();
-}
-
-void ShowBackground() {
-  ui::ScopedLayerAnimationSettings settings(
-      GetContainer(internal::kShellWindowId_DesktopBackgroundContainer)->
-          layer()->GetAnimator());
-  settings.SetTransitionDuration(base::TimeDelta());
-  GetContainer(internal::kShellWindowId_DesktopBackgroundContainer)->Show();
 }
 
 void HideBackground() {
@@ -137,6 +136,7 @@ class LockStateControllerTest : public AshTestBase {
   virtual void TearDown() {
     // TODO(antrim) : restore
     // animator_helper_->AdvanceUntilDone();
+    window_.reset();
     AshTestBase::TearDown();
   }
 
@@ -390,12 +390,27 @@ class LockStateControllerTest : public AshTestBase {
     lock_state_controller_->OnLockStateChanged(false);
   }
 
+  void CreateWindowForLockscreen() {
+    window_.reset(new aura::Window(&window_delegate_));
+    window_->SetBounds(gfx::Rect(0, 0, 100, 100));
+    window_->SetType(ui::wm::WINDOW_TYPE_NORMAL);
+    window_->Init(aura::WINDOW_LAYER_TEXTURED);
+    window_->SetName("WINDOW");
+    aura::Window* container = Shell::GetContainer(Shell::GetPrimaryRootWindow(),
+        internal::kShellWindowId_LockScreenContainer);
+    ASSERT_TRUE(container);
+    container->AddChild(window_.get());
+    window_->Show();
+  }
+
   PowerButtonController* controller_;  // not owned
   LockStateController* lock_state_controller_;  // not owned
   TestLockStateControllerDelegate* delegate_;  // not owned
   TestShellDelegate* shell_delegate_;  // not owned
   SessionStateDelegate* session_state_delegate_;  // not owned
 
+  aura::test::TestWindowDelegate window_delegate_;
+  scoped_ptr<aura::Window> window_;
   scoped_ptr<ui::ScopedAnimationDurationScaleMode> animation_duration_mode_;
   scoped_ptr<LockStateController::TestApi> test_api_;
   scoped_ptr<SessionStateAnimator::TestApi> animator_api_;
@@ -888,6 +903,7 @@ TEST_F(LockStateControllerTest, ShutdownWithoutButton) {
 // outside request to shut down (e.g. from the login or lock screen).
 TEST_F(LockStateControllerTest, RequestShutdownFromLoginScreen) {
   Initialize(false, user::LOGGED_IN_NONE);
+  CreateWindowForLockscreen();
 
   lock_state_controller_->RequestShutdown();
 
@@ -907,6 +923,7 @@ TEST_F(LockStateControllerTest, RequestShutdownFromLockScreen) {
   Initialize(false, user::LOGGED_IN_USER);
 
   SystemLocks();
+  CreateWindowForLockscreen();
   Advance(SessionStateAnimator::ANIMATION_SPEED_SHUTDOWN);
   ExpectPastLockAnimationFinished();
 
@@ -968,7 +985,6 @@ TEST_F(LockStateControllerTest, IgnorePowerButtonIfScreenIsOff) {
   // When the screen brightness is at 0%, we shouldn't do anything in response
   // to power button presses.
   controller_->OnScreenBrightnessChanged(0.0);
-
   PressPowerButton();
   EXPECT_FALSE(test_api_->is_animating_lock());
   ReleasePowerButton();
@@ -976,10 +992,55 @@ TEST_F(LockStateControllerTest, IgnorePowerButtonIfScreenIsOff) {
   // After increasing the brightness to 10%, we should start the timer like
   // usual.
   controller_->OnScreenBrightnessChanged(10.0);
-
   PressPowerButton();
   EXPECT_TRUE(test_api_->is_animating_lock());
+  ReleasePowerButton();
 }
+
+#if defined(OS_CHROMEOS) && defined(USE_X11)
+TEST_F(LockStateControllerTest, HonorPowerButtonInDockedMode) {
+  ScopedVector<const ui::DisplayMode> modes;
+  modes.push_back(new ui::DisplayMode(gfx::Size(1, 1), false, 60.0f));
+
+  // Create two outputs, the first internal and the second external.
+  ui::OutputConfigurator::DisplayStateList outputs;
+  ui::OutputConfigurator::DisplayState internal_output;
+  ui::TestDisplaySnapshot internal_display;
+  internal_display.set_type(ui::OUTPUT_TYPE_INTERNAL);
+  internal_display.set_modes(modes.get());
+  internal_output.display = &internal_display;
+  outputs.push_back(internal_output);
+
+  ui::OutputConfigurator::DisplayState external_output;
+  ui::TestDisplaySnapshot external_display;
+  external_display.set_type(ui::OUTPUT_TYPE_HDMI);
+  external_display.set_modes(modes.get());
+  external_output.display = &external_display;
+  outputs.push_back(external_output);
+
+  // When all of the displays are turned off (e.g. due to user inactivity), the
+  // power button should be ignored.
+  controller_->OnScreenBrightnessChanged(0.0);
+  static_cast<ui::TestDisplaySnapshot*>(outputs[0].display)
+      ->set_current_mode(NULL);
+  static_cast<ui::TestDisplaySnapshot*>(outputs[1].display)
+      ->set_current_mode(NULL);
+  controller_->OnDisplayModeChanged(outputs);
+  PressPowerButton();
+  EXPECT_FALSE(test_api_->is_animating_lock());
+  ReleasePowerButton();
+
+  // When the screen brightness is 0% but the external display is still turned
+  // on (indicating either docked mode or the user having manually decreased the
+  // brightness to 0%), the power button should still be handled.
+  static_cast<ui::TestDisplaySnapshot*>(outputs[1].display)
+      ->set_current_mode(modes[0]);
+  controller_->OnDisplayModeChanged(outputs);
+  PressPowerButton();
+  EXPECT_TRUE(test_api_->is_animating_lock());
+  ReleasePowerButton();
+}
+#endif
 
 // Test that hidden background appears and revers correctly on lock/cancel.
 // TODO(antrim): Reenable this: http://crbug.com/167048

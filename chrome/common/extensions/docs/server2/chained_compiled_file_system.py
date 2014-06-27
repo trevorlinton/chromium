@@ -4,7 +4,7 @@
 
 from compiled_file_system import CompiledFileSystem
 from file_system import FileNotFoundError
-from future import Gettable, Future
+from future import Future
 
 
 class ChainedCompiledFileSystem(object):
@@ -40,10 +40,10 @@ class ChainedCompiledFileSystem(object):
     assert len(compiled_fs_chain) > 0
     self._compiled_fs_chain = compiled_fs_chain
 
-  def GetFromFile(self, path, binary=False):
+  def GetFromFile(self, path):
     return self._GetImpl(
         path,
-        lambda compiled_fs: compiled_fs.GetFromFile(path, binary=binary),
+        lambda compiled_fs: compiled_fs.GetFromFile(path),
         lambda compiled_fs: compiled_fs.GetFileVersion(path))
 
   def GetFromFileListing(self, path):
@@ -82,4 +82,4 @@ class ChainedCompiledFileSystem(object):
       # Try an arbitrary operation again to generate a realistic stack trace.
       return read_futures[0][0].Get()
 
-    return Future(delegate=Gettable(resolve))
+    return Future(callback=resolve)

@@ -17,7 +17,7 @@ FakeContentLayerClient::~FakeContentLayerClient() {
 }
 
 void FakeContentLayerClient::PaintContents(SkCanvas* canvas,
-    gfx::Rect paint_rect, gfx::RectF* opaque_rect) {
+    const gfx::Rect& paint_rect, gfx::RectF* opaque_rect) {
   if (paint_all_opaque_)
     *opaque_rect = paint_rect;
 
@@ -38,5 +38,7 @@ void FakeContentLayerClient::PaintContents(SkCanvas* canvas,
     canvas->drawBitmap(it->bitmap, it->point.x(), it->point.y(), &it->paint);
   }
 }
+
+bool FakeContentLayerClient::FillsBoundsCompletely() const { return false; }
 
 }  // namespace cc

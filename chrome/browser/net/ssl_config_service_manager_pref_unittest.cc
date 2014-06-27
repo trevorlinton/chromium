@@ -11,7 +11,7 @@
 #include "base/prefs/testing_pref_store.h"
 #include "base/values.h"
 #include "chrome/browser/content_settings/host_content_settings_map.h"
-#include "chrome/browser/prefs/pref_service_mock_builder.h"
+#include "chrome/browser/prefs/pref_service_mock_factory.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/content_settings.h"
 #include "chrome/common/pref_names.h"
@@ -26,17 +26,6 @@ using base::Value;
 using content::BrowserThread;
 using net::SSLConfig;
 using net::SSLConfigService;
-
-namespace {
-
-void SetCookiePref(TestingProfile* profile, ContentSetting setting) {
-  HostContentSettingsMap* host_content_settings_map =
-      profile->GetHostContentSettingsMap();
-  host_content_settings_map->SetDefaultContentSetting(
-      CONTENT_SETTINGS_TYPE_COOKIES, setting);
-}
-
-}  // namespace
 
 class SSLConfigServiceManagerPrefTest : public testing::Test {
  public:
@@ -64,7 +53,7 @@ TEST_F(SSLConfigServiceManagerPrefTest, ChannelIDWithoutUserPrefs) {
   TestingPrefServiceSimple local_state;
   SSLConfigServiceManager::RegisterPrefs(local_state.registry());
   local_state.SetUserPref(prefs::kEnableOriginBoundCerts,
-                          Value::CreateBooleanValue(false));
+                          base::Value::CreateBooleanValue(false));
 
   scoped_ptr<SSLConfigServiceManager> config_manager(
       SSLConfigServiceManager::CreateDefaultManager(&local_state));
@@ -77,7 +66,7 @@ TEST_F(SSLConfigServiceManagerPrefTest, ChannelIDWithoutUserPrefs) {
   EXPECT_FALSE(config.channel_id_enabled);
 
   local_state.SetUserPref(prefs::kEnableOriginBoundCerts,
-                          Value::CreateBooleanValue(true));
+                          base::Value::CreateBooleanValue(true));
   // Pump the message loop to notify the SSLConfigServiceManagerPref that the
   // preferences changed.
   message_loop_.RunUntilIdle();
@@ -101,9 +90,9 @@ TEST_F(SSLConfigServiceManagerPrefTest, GoodDisabledCipherSuites) {
   config_service->GetSSLConfig(&old_config);
   EXPECT_TRUE(old_config.disabled_cipher_suites.empty());
 
-  ListValue* list_value = new ListValue();
-  list_value->Append(Value::CreateStringValue("0x0004"));
-  list_value->Append(Value::CreateStringValue("0x0005"));
+  base::ListValue* list_value = new base::ListValue();
+  list_value->Append(new base::StringValue("0x0004"));
+  list_value->Append(new base::StringValue("0x0005"));
   local_state.SetUserPref(prefs::kCipherSuiteBlacklist, list_value);
 
   // Pump the message loop to notify the SSLConfigServiceManagerPref that the
@@ -136,11 +125,11 @@ TEST_F(SSLConfigServiceManagerPrefTest, BadDisabledCipherSuites) {
   config_service->GetSSLConfig(&old_config);
   EXPECT_TRUE(old_config.disabled_cipher_suites.empty());
 
-  ListValue* list_value = new ListValue();
-  list_value->Append(Value::CreateStringValue("0x0004"));
-  list_value->Append(Value::CreateStringValue("TLS_NOT_WITH_A_CIPHER_SUITE"));
-  list_value->Append(Value::CreateStringValue("0x0005"));
-  list_value->Append(Value::CreateStringValue("0xBEEFY"));
+  base::ListValue* list_value = new base::ListValue();
+  list_value->Append(new base::StringValue("0x0004"));
+  list_value->Append(new base::StringValue("TLS_NOT_WITH_A_CIPHER_SUITE"));
+  list_value->Append(new base::StringValue("0x0005"));
+  list_value->Append(new base::StringValue("0xBEEFY"));
   local_state.SetUserPref(prefs::kCipherSuiteBlacklist, list_value);
 
   // Pump the message loop to notify the SSLConfigServiceManagerPref that the
@@ -156,20 +145,15 @@ TEST_F(SSLConfigServiceManagerPrefTest, BadDisabledCipherSuites) {
   EXPECT_EQ(0x0005, config.disabled_cipher_suites[1]);
 }
 
-// Test that
-// * without command-line settings for minimum and maximum SSL versions,
-//   SSL 3.0 ~ default_version_max() are enabled;
-// * without --enable-unrestricted-ssl3-fallback,
-//   |unrestricted_ssl3_fallback_enabled| is false.
-// TODO(thaidn): |unrestricted_ssl3_fallback_enabled| is true by default
-// temporarily until we have fixed deployment issues.
+// Test that without command-line settings for minimum and maximum SSL versions,
+// SSL 3.0 ~ kDefaultSSLVersionMax are enabled.
 TEST_F(SSLConfigServiceManagerPrefTest, NoCommandLinePrefs) {
   scoped_refptr<TestingPrefStore> local_state_store(new TestingPrefStore());
 
-  PrefServiceMockBuilder builder;
-  builder.WithUserPrefs(local_state_store.get());
+  PrefServiceMockFactory factory;
+  factory.set_user_prefs(local_state_store);
   scoped_refptr<PrefRegistrySimple> registry = new PrefRegistrySimple;
-  scoped_ptr<PrefService> local_state(builder.Create(registry.get()));
+  scoped_ptr<PrefService> local_state(factory.Create(registry.get()));
 
   SSLConfigServiceManager::RegisterPrefs(registry.get());
 
@@ -182,17 +166,13 @@ TEST_F(SSLConfigServiceManagerPrefTest, NoCommandLinePrefs) {
   SSLConfig ssl_config;
   config_service->GetSSLConfig(&ssl_config);
   // The default value in the absence of command-line options is that
-  // SSL 3.0 ~ default_version_max() are enabled.
+  // SSL 3.0 ~ kDefaultSSLVersionMax are enabled.
   EXPECT_EQ(net::SSL_PROTOCOL_VERSION_SSL3, ssl_config.version_min);
-  EXPECT_EQ(net::SSLConfigService::default_version_max(),
-            ssl_config.version_max);
-  EXPECT_TRUE(ssl_config.unrestricted_ssl3_fallback_enabled);
+  EXPECT_EQ(net::kDefaultSSLVersionMax, ssl_config.version_max);
 
   // The settings should not be added to the local_state.
   EXPECT_FALSE(local_state->HasPrefPath(prefs::kSSLVersionMin));
   EXPECT_FALSE(local_state->HasPrefPath(prefs::kSSLVersionMax));
-  EXPECT_FALSE(local_state->HasPrefPath(
-      prefs::kEnableUnrestrictedSSL3Fallback));
 
   // Explicitly double-check the settings are not in the preference store.
   std::string version_min_str;
@@ -201,10 +181,6 @@ TEST_F(SSLConfigServiceManagerPrefTest, NoCommandLinePrefs) {
                                             &version_min_str));
   EXPECT_FALSE(local_state_store->GetString(prefs::kSSLVersionMax,
                                             &version_max_str));
-  bool unrestricted_ssl3_fallback_enabled;
-  EXPECT_FALSE(local_state_store->GetBoolean(
-      prefs::kEnableUnrestrictedSSL3Fallback,
-      &unrestricted_ssl3_fallback_enabled));
 }
 
 // Test that command-line settings for minimum and maximum SSL versions are
@@ -215,13 +191,12 @@ TEST_F(SSLConfigServiceManagerPrefTest, CommandLinePrefs) {
   CommandLine command_line(CommandLine::NO_PROGRAM);
   command_line.AppendSwitchASCII(switches::kSSLVersionMin, "tls1");
   command_line.AppendSwitchASCII(switches::kSSLVersionMax, "ssl3");
-  command_line.AppendSwitch(switches::kEnableUnrestrictedSSL3Fallback);
 
-  PrefServiceMockBuilder builder;
-  builder.WithUserPrefs(local_state_store.get());
-  builder.WithCommandLine(&command_line);
+  PrefServiceMockFactory factory;
+  factory.set_user_prefs(local_state_store);
+  factory.SetCommandLine(&command_line);
   scoped_refptr<PrefRegistrySimple> registry = new PrefRegistrySimple;
-  scoped_ptr<PrefService> local_state(builder.Create(registry.get()));
+  scoped_ptr<PrefService> local_state(factory.Create(registry.get()));
 
   SSLConfigServiceManager::RegisterPrefs(registry.get());
 
@@ -236,7 +211,6 @@ TEST_F(SSLConfigServiceManagerPrefTest, CommandLinePrefs) {
   // Command-line flags should be respected.
   EXPECT_EQ(net::SSL_PROTOCOL_VERSION_TLS1, ssl_config.version_min);
   EXPECT_EQ(net::SSL_PROTOCOL_VERSION_SSL3, ssl_config.version_max);
-  EXPECT_TRUE(ssl_config.unrestricted_ssl3_fallback_enabled);
 
   // Explicitly double-check the settings are not in the preference store.
   const PrefService::Preference* version_min_pref =
@@ -247,18 +221,10 @@ TEST_F(SSLConfigServiceManagerPrefTest, CommandLinePrefs) {
       local_state->FindPreference(prefs::kSSLVersionMax);
   EXPECT_FALSE(version_max_pref->IsUserModifiable());
 
-  const PrefService::Preference* ssl3_fallback_pref =
-      local_state->FindPreference(prefs::kEnableUnrestrictedSSL3Fallback);
-  EXPECT_FALSE(ssl3_fallback_pref->IsUserModifiable());
-
   std::string version_min_str;
   std::string version_max_str;
   EXPECT_FALSE(local_state_store->GetString(prefs::kSSLVersionMin,
                                             &version_min_str));
   EXPECT_FALSE(local_state_store->GetString(prefs::kSSLVersionMax,
                                             &version_max_str));
-  bool unrestricted_ssl3_fallback_enabled;
-  EXPECT_FALSE(local_state_store->GetBoolean(
-      prefs::kEnableUnrestrictedSSL3Fallback,
-      &unrestricted_ssl3_fallback_enabled));
 }

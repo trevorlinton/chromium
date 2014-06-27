@@ -4,14 +4,21 @@
 
 #include "chrome/common/extensions/chrome_extensions_client.h"
 
+#include "base/command_line.h"
+#include "chrome/common/extensions/api/generated_schemas.h"
 #include "chrome/common/extensions/chrome_manifest_handlers.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/features/base_feature_provider.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/common/url_constants.h"
+#include "extensions/common/api/generated_schemas.h"
+#include "extensions/common/common_manifest_handlers.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/manifest_constants.h"
+#include "extensions/common/manifest_handler.h"
 #include "extensions/common/permissions/api_permission_set.h"
 #include "extensions/common/permissions/permission_message.h"
+#include "extensions/common/switches.h"
 #include "extensions/common/url_pattern.h"
 #include "extensions/common/url_pattern_set.h"
 #include "grit/generated_resources.h"
@@ -35,7 +42,13 @@ ChromeExtensionsClient::~ChromeExtensionsClient() {
 }
 
 void ChromeExtensionsClient::Initialize() {
-  RegisterChromeManifestHandlers();
+  // Registration could already be finalized in unit tests, where the utility
+  // thread runs in-process.
+  if (!ManifestHandler::IsRegistrationFinalized()) {
+    RegisterCommonManifestHandlers();
+    RegisterChromeManifestHandlers();
+    ManifestHandler::FinalizeRegistration();
+  }
 
   // Set up the scripting whitelist.
   // Whitelist ChromeVox, an accessibility extension from Google that needs
@@ -74,7 +87,7 @@ void ChromeExtensionsClient::FilterHostPermissions(
   for (URLPatternSet::const_iterator i = hosts.begin();
        i != hosts.end(); ++i) {
     // Filters out every URL pattern that matches chrome:// scheme.
-    if (i->scheme() == chrome::kChromeUIScheme) {
+    if (i->scheme() == content::kChromeUIScheme) {
       // chrome://favicon is the only URL for chrome:// scheme that we
       // want to support. We want to deprecate the "chrome" scheme.
       // We should not add any additional "host" here.
@@ -121,6 +134,35 @@ URLPatternSet ChromeExtensionsClient::GetPermittedChromeSchemeHosts(
                                 chrome::kChromeUIThumbnailURL));
   }
   return hosts;
+}
+
+bool ChromeExtensionsClient::IsScriptableURL(
+    const GURL& url, std::string* error) const {
+  // The gallery is special-cased as a restricted URL for scripting to prevent
+  // access to special JS bindings we expose to the gallery (and avoid things
+  // like extensions removing the "report abuse" link).
+  // TODO(erikkay): This seems like the wrong test.  Shouldn't we we testing
+  // against the store app extent?
+  GURL store_url(extension_urls::GetWebstoreLaunchURL());
+  if (url.host() == store_url.host()) {
+    if (error)
+      *error = manifest_errors::kCannotScriptGallery;
+    return false;
+  }
+  return true;
+}
+
+bool ChromeExtensionsClient::IsAPISchemaGenerated(
+    const std::string& name) const {
+  return extensions::api::GeneratedSchemas::IsGenerated(name) ||
+         extensions::core_api::GeneratedSchemas::IsGenerated(name);
+}
+
+base::StringPiece ChromeExtensionsClient::GetAPISchema(
+    const std::string& name) const {
+  if (extensions::api::GeneratedSchemas::IsGenerated(name))
+    return extensions::api::GeneratedSchemas::Get(name);
+  return extensions::core_api::GeneratedSchemas::Get(name);
 }
 
 // static

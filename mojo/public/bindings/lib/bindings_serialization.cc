@@ -6,6 +6,8 @@
 
 #include <assert.h>
 
+#include "mojo/public/bindings/lib/bindings_internal.h"
+
 namespace mojo {
 namespace internal {
 
@@ -38,42 +40,32 @@ bool ValidatePointer(const void* ptr, const Message& message) {
   if (reinterpret_cast<ptrdiff_t>(data) % 8 != 0)
     return false;
 
-  const uint8_t* data_start = reinterpret_cast<const uint8_t*>(message.data);
-  const uint8_t* data_end = data_start + message.data->header.num_bytes;
+  const uint8_t* data_start = message.data();
+  const uint8_t* data_end = data_start + message.data_num_bytes();
 
   return data >= data_start && data < data_end;
 }
 
 void EncodeHandle(Handle* handle, std::vector<Handle>* handles) {
-  handles->push_back(*handle);
-  handle->value = static_cast<MojoHandle>(handles->size() - 1);
-}
-
-bool DecodeHandle(Handle* handle, const std::vector<Handle>& handles) {
-  if (handle->value >= handles.size())
-    return false;
-  *handle = handles[handle->value];
-  return true;
-}
-
-// static
-void ArrayHelper<Handle>::EncodePointersAndHandles(
-    const ArrayHeader* header,
-    ElementType* elements,
-    std::vector<Handle>* handles) {
-  for (uint32_t i = 0; i < header->num_elements; ++i)
-    EncodeHandle(&elements[i], handles);
-}
-
-// static
-bool ArrayHelper<Handle>::DecodePointersAndHandles(
-    const ArrayHeader* header,
-    ElementType* elements,
-    const Message& message) {
-  for (uint32_t i = 0; i < header->num_elements; ++i) {
-    if (!DecodeHandle(&elements[i], message.handles))
-      return false;
+  if (handle->is_valid()) {
+    handles->push_back(*handle);
+    handle->set_value(static_cast<MojoHandle>(handles->size() - 1));
+  } else {
+    // Encode -1 to mean the invalid handle.
+    handle->set_value(static_cast<MojoHandle>(-1));
   }
+}
+
+bool DecodeHandle(Handle* handle, std::vector<Handle>* handles) {
+  // Decode -1 to mean the invalid handle.
+  if (handle->value() == static_cast<MojoHandle>(-1)) {
+    *handle = Handle();
+    return true;
+  }
+  if (handle->value() >= handles->size())
+    return false;
+  // Just leave holes in the vector so we don't screw up other indices.
+  *handle = FetchAndReset(&handles->at(handle->value()));
   return true;
 }
 

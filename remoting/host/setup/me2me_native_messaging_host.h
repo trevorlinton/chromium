@@ -9,6 +9,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
+#include "base/timer/timer.h"
 #include "remoting/host/native_messaging/native_messaging_channel.h"
 #include "remoting/host/setup/daemon_controller.h"
 #include "remoting/host/setup/oauth_client.h"
@@ -24,115 +25,141 @@ class GaiaOAuthClient;
 
 namespace remoting {
 
+const char kElevatingSwitchName[] = "elevate";
+const char kInputSwitchName[] = "input";
+const char kOutputSwitchName[] = "output";
+
 namespace protocol {
 class PairingRegistry;
 }  // namespace protocol
 
-// Implementation of the native messaging host process.
-class NativeMessagingHost : public NativeMessagingChannel::Delegate {
+// Implementation of the me2me native messaging host.
+class Me2MeNativeMessagingHost {
  public:
-  typedef NativeMessagingChannel::SendResponseCallback SendResponseCallback;
+  typedef NativeMessagingChannel::SendMessageCallback SendMessageCallback;
 
-  NativeMessagingHost(
+  Me2MeNativeMessagingHost(
+      bool needs_elevation,
+      intptr_t parent_window_handle,
+      scoped_ptr<NativeMessagingChannel> channel,
       scoped_refptr<DaemonController> daemon_controller,
       scoped_refptr<protocol::PairingRegistry> pairing_registry,
       scoped_ptr<OAuthClient> oauth_client);
-  virtual ~NativeMessagingHost();
+  virtual ~Me2MeNativeMessagingHost();
 
-  // NativeMessagingChannel::Delegate interface.
-  virtual void ProcessMessage(scoped_ptr<base::DictionaryValue> message,
-                              const SendResponseCallback& done) OVERRIDE;
+  void Start(const base::Closure& quit_closure);
 
  private:
+  // Callback to process messages from the native messaging client through
+  // |channel_|.
+  void ProcessRequest(scoped_ptr<base::DictionaryValue> message);
+
   // These "Process.." methods handle specific request types. The |response|
   // dictionary is pre-filled by ProcessMessage() with the parts of the
   // response already known ("id" and "type" fields).
-  bool ProcessHello(
-      const base::DictionaryValue& message,
-      scoped_ptr<base::DictionaryValue> response,
-      const SendResponseCallback& done);
-  bool ProcessClearPairedClients(
-      const base::DictionaryValue& message,
-      scoped_ptr<base::DictionaryValue> response,
-      const SendResponseCallback& done);
-  bool ProcessDeletePairedClient(
-      const base::DictionaryValue& message,
-      scoped_ptr<base::DictionaryValue> response,
-      const SendResponseCallback& done);
-  bool ProcessGetHostName(
-      const base::DictionaryValue& message,
-      scoped_ptr<base::DictionaryValue> response,
-      const SendResponseCallback& done);
-  bool ProcessGetPinHash(
-      const base::DictionaryValue& message,
-      scoped_ptr<base::DictionaryValue> response,
-      const SendResponseCallback& done);
-  bool ProcessGenerateKeyPair(
-      const base::DictionaryValue& message,
-      scoped_ptr<base::DictionaryValue> response,
-      const SendResponseCallback& done);
-  bool ProcessUpdateDaemonConfig(
-      const base::DictionaryValue& message,
-      scoped_ptr<base::DictionaryValue> response,
-      const SendResponseCallback& done);
-  bool ProcessGetDaemonConfig(
-      const base::DictionaryValue& message,
-      scoped_ptr<base::DictionaryValue> response,
-      const SendResponseCallback& done);
-  bool ProcessGetPairedClients(
-      const base::DictionaryValue& message,
-      scoped_ptr<base::DictionaryValue> response,
-      const SendResponseCallback& done);
-  bool ProcessGetUsageStatsConsent(
-      const base::DictionaryValue& message,
-      scoped_ptr<base::DictionaryValue> response,
-      const SendResponseCallback& done);
-  bool ProcessStartDaemon(
-      const base::DictionaryValue& message,
-      scoped_ptr<base::DictionaryValue> response,
-      const SendResponseCallback& done);
-  bool ProcessStopDaemon(
-      const base::DictionaryValue& message,
-      scoped_ptr<base::DictionaryValue> response,
-      const SendResponseCallback& done);
-  bool ProcessGetDaemonState(
-      const base::DictionaryValue& message,
-      scoped_ptr<base::DictionaryValue> response,
-      const SendResponseCallback& done);
-  bool ProcessGetHostClientId(
-      const base::DictionaryValue& message,
-      scoped_ptr<base::DictionaryValue> response,
-      const SendResponseCallback& done);
-  bool ProcessGetCredentialsFromAuthCode(
-      const base::DictionaryValue& message,
-      scoped_ptr<base::DictionaryValue> response,
-      const SendResponseCallback& done);
+  void ProcessHello(
+      scoped_ptr<base::DictionaryValue> message,
+      scoped_ptr<base::DictionaryValue> response);
+  void ProcessClearPairedClients(
+      scoped_ptr<base::DictionaryValue> message,
+      scoped_ptr<base::DictionaryValue> response);
+  void ProcessDeletePairedClient(
+      scoped_ptr<base::DictionaryValue> message,
+      scoped_ptr<base::DictionaryValue> response);
+  void ProcessGetHostName(
+      scoped_ptr<base::DictionaryValue> message,
+      scoped_ptr<base::DictionaryValue> response);
+  void ProcessGetPinHash(
+      scoped_ptr<base::DictionaryValue> message,
+      scoped_ptr<base::DictionaryValue> response);
+  void ProcessGenerateKeyPair(
+      scoped_ptr<base::DictionaryValue> message,
+      scoped_ptr<base::DictionaryValue> response);
+  void ProcessUpdateDaemonConfig(
+      scoped_ptr<base::DictionaryValue> message,
+      scoped_ptr<base::DictionaryValue> response);
+  void ProcessGetDaemonConfig(
+      scoped_ptr<base::DictionaryValue> message,
+      scoped_ptr<base::DictionaryValue> response);
+  void ProcessGetPairedClients(
+      scoped_ptr<base::DictionaryValue> message,
+      scoped_ptr<base::DictionaryValue> response);
+  void ProcessGetUsageStatsConsent(
+      scoped_ptr<base::DictionaryValue> message,
+      scoped_ptr<base::DictionaryValue> response);
+  void ProcessStartDaemon(
+      scoped_ptr<base::DictionaryValue> message,
+      scoped_ptr<base::DictionaryValue> response);
+  void ProcessStopDaemon(
+      scoped_ptr<base::DictionaryValue> message,
+      scoped_ptr<base::DictionaryValue> response);
+  void ProcessGetDaemonState(
+      scoped_ptr<base::DictionaryValue> message,
+      scoped_ptr<base::DictionaryValue> response);
+  void ProcessGetHostClientId(
+      scoped_ptr<base::DictionaryValue> message,
+      scoped_ptr<base::DictionaryValue> response);
+  void ProcessGetCredentialsFromAuthCode(
+      scoped_ptr<base::DictionaryValue> message,
+      scoped_ptr<base::DictionaryValue> response);
 
   // These Send... methods get called on the DaemonController's internal thread,
   // or on the calling thread if called by the PairingRegistry.
   // These methods fill in the |response| dictionary from the other parameters,
   // and pass it to SendResponse().
-  void SendConfigResponse(const SendResponseCallback& done,
-                          scoped_ptr<base::DictionaryValue> response,
+  void SendConfigResponse(scoped_ptr<base::DictionaryValue> response,
                           scoped_ptr<base::DictionaryValue> config);
-  void SendPairedClientsResponse(const SendResponseCallback& done,
-                                 scoped_ptr<base::DictionaryValue> response,
+  void SendPairedClientsResponse(scoped_ptr<base::DictionaryValue> response,
                                  scoped_ptr<base::ListValue> pairings);
   void SendUsageStatsConsentResponse(
-      const SendResponseCallback& done,
       scoped_ptr<base::DictionaryValue> response,
       const DaemonController::UsageStatsConsent& consent);
-  void SendAsyncResult(const SendResponseCallback& done,
-                       scoped_ptr<base::DictionaryValue> response,
+  void SendAsyncResult(scoped_ptr<base::DictionaryValue> response,
                        DaemonController::AsyncResult result);
-  void SendBooleanResult(const SendResponseCallback& done,
-                         scoped_ptr<base::DictionaryValue> response,
+  void SendBooleanResult(scoped_ptr<base::DictionaryValue> response,
                          bool result);
-  void SendCredentialsResponse(const SendResponseCallback& done,
-                               scoped_ptr<base::DictionaryValue> response,
+  void SendCredentialsResponse(scoped_ptr<base::DictionaryValue> response,
                                const std::string& user_email,
                                const std::string& refresh_token);
 
+  void OnError();
+
+  void Stop();
+
+  // Returns true if the request was successfully delegated to the elevated
+  // host and false otherwise.
+  bool DelegateToElevatedHost(scoped_ptr<base::DictionaryValue> message);
+
+#if defined(OS_WIN)
+  // Create and connect to an elevated host process if necessary.
+  // |elevated_channel_| will contain the native messaging channel to the
+  // elevated host if the function succeeds.
+  void Me2MeNativeMessagingHost::EnsureElevatedHostCreated();
+
+  // Callback to process messages from the elevated host through
+  // |elevated_channel_|.
+  void ProcessDelegateResponse(scoped_ptr<base::DictionaryValue> message);
+
+  // Disconnect and shut down the elevated host.
+  void DisconnectElevatedHost();
+
+  // Native messaging channel used to communicate with the elevated host.
+  scoped_ptr<NativeMessagingChannel> elevated_channel_;
+
+  // Timer to control the lifetime of the elevated host.
+  base::OneShotTimer<Me2MeNativeMessagingHost> elevated_host_timer_;
+#endif  // defined(OS_WIN)
+
+  bool needs_elevation_;
+
+  // Handle of the parent window.
+  intptr_t parent_window_handle_;
+
+  base::Closure quit_closure_;
+
+  // Native messaging channel used to communicate with the native message
+  // client.
+  scoped_ptr<NativeMessagingChannel> channel_;
   scoped_refptr<DaemonController> daemon_controller_;
 
   // Used to load and update the paired clients for this host.
@@ -143,15 +170,15 @@ class NativeMessagingHost : public NativeMessagingChannel::Delegate {
 
   base::ThreadChecker thread_checker_;
 
-  base::WeakPtr<NativeMessagingHost> weak_ptr_;
-  base::WeakPtrFactory<NativeMessagingHost> weak_factory_;
+  base::WeakPtr<Me2MeNativeMessagingHost> weak_ptr_;
+  base::WeakPtrFactory<Me2MeNativeMessagingHost> weak_factory_;
 
-  DISALLOW_COPY_AND_ASSIGN(NativeMessagingHost);
+  DISALLOW_COPY_AND_ASSIGN(Me2MeNativeMessagingHost);
 };
 
-// Creates a NativeMessagingHost instance, attaches it to stdin/stdout and runs
-// the message loop until NativeMessagingHost signals shutdown.
-int NativeMessagingHostMain();
+// Creates a Me2MeNativeMessagingHost instance, attaches it to stdin/stdout and
+// runs the message loop until Me2MeNativeMessagingHost signals shutdown.
+int Me2MeNativeMessagingHostMain();
 
 }  // namespace remoting
 

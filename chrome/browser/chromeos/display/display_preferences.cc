@@ -20,7 +20,6 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
 #include "chrome/common/pref_names.h"
-#include "chromeos/display/output_configurator.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 #include "ui/gfx/display.h"
 #include "ui/gfx/insets.h"
@@ -63,6 +62,36 @@ void InsetsToValue(const gfx::Insets& insets, base::DictionaryValue* value) {
   value->SetInteger(kInsetsRightKey, insets.right());
 }
 
+std::string ColorProfileToString(ui::ColorCalibrationProfile profile) {
+  switch (profile) {
+    case ui::COLOR_PROFILE_STANDARD:
+      return "standard";
+    case ui::COLOR_PROFILE_DYNAMIC:
+      return "dynamic";
+    case ui::COLOR_PROFILE_MOVIE:
+      return "movie";
+    case ui::COLOR_PROFILE_READING:
+      return "reading";
+    case ui::NUM_COLOR_PROFILES:
+      break;
+  }
+  NOTREACHED();
+  return "";
+}
+
+ui::ColorCalibrationProfile StringToColorProfile(std::string value) {
+  if (value == "standard")
+    return ui::COLOR_PROFILE_STANDARD;
+  else if (value == "dynamic")
+    return ui::COLOR_PROFILE_DYNAMIC;
+  else if (value == "movie")
+    return ui::COLOR_PROFILE_MOVIE;
+  else if (value == "reading")
+    return ui::COLOR_PROFILE_READING;
+  NOTREACHED();
+  return ui::COLOR_PROFILE_STANDARD;
+}
+
 ash::internal::DisplayManager* GetDisplayManager() {
   return ash::Shell::GetInstance()->display_manager();
 }
@@ -77,10 +106,6 @@ bool UserCanSaveDisplayPreference() {
        user_manager->IsLoggedInAsKioskApp());
 }
 
-ash::DisplayController* GetDisplayController() {
-  return ash::Shell::GetInstance()->display_controller();
-}
-
 void LoadDisplayLayouts() {
   PrefService* local_state = g_browser_process->local_state();
   ash::internal::DisplayLayoutStore* layout_store =
@@ -88,7 +113,8 @@ void LoadDisplayLayouts() {
 
   const base::DictionaryValue* layouts = local_state->GetDictionary(
       prefs::kSecondaryDisplays);
-  for (DictionaryValue::Iterator it(*layouts); !it.IsAtEnd(); it.Advance()) {
+  for (base::DictionaryValue::Iterator it(*layouts);
+       !it.IsAtEnd(); it.Advance()) {
     ash::DisplayLayout layout;
     if (!ash::DisplayLayout::ConvertFromValue(it.value(), &layout)) {
       LOG(WARNING) << "Invalid preference value for " << it.key();
@@ -115,7 +141,8 @@ void LoadDisplayProperties() {
   PrefService* local_state = g_browser_process->local_state();
   const base::DictionaryValue* properties = local_state->GetDictionary(
       prefs::kDisplayProperties);
-  for (DictionaryValue::Iterator it(*properties); !it.IsAtEnd(); it.Advance()) {
+  for (base::DictionaryValue::Iterator it(*properties);
+       !it.IsAtEnd(); it.Advance()) {
     const base::DictionaryValue* dict_value = NULL;
     if (!it.value().GetAsDictionary(&dict_value) || dict_value == NULL)
       continue;
@@ -144,11 +171,17 @@ void LoadDisplayProperties() {
     gfx::Insets insets;
     if (ValueToInsets(*dict_value, &insets))
       insets_to_set = &insets;
+
+    ui::ColorCalibrationProfile color_profile = ui::COLOR_PROFILE_STANDARD;
+    std::string color_profile_name;
+    if (dict_value->GetString("color_profile_name", &color_profile_name))
+      color_profile = StringToColorProfile(color_profile_name);
     GetDisplayManager()->RegisterDisplayProperty(id,
                                                  rotation,
                                                  ui_scale,
                                                  insets_to_set,
-                                                 resolution_in_pixels);
+                                                 resolution_in_pixels,
+                                                 color_profile);
   }
 }
 
@@ -198,17 +231,22 @@ void StoreCurrentDisplayProperties() {
     scoped_ptr<base::DictionaryValue> property_value(
         new base::DictionaryValue());
     property_value->SetInteger("rotation", static_cast<int>(info.rotation()));
-    property_value->SetInteger("ui-scale",
-                               static_cast<int>(info.ui_scale() * 1000));
-    gfx::Size resolution;
+    property_value->SetInteger(
+        "ui-scale",
+        static_cast<int>(info.configured_ui_scale() * 1000));
+    ash::internal::DisplayMode mode;
     if (!display.IsInternal() &&
-        display_manager->GetSelectedResolutionForDisplayId(id, &resolution)) {
-      property_value->SetInteger("width", resolution.width());
-      property_value->SetInteger("height", resolution.height());
+        display_manager->GetSelectedModeForDisplayId(id, &mode) &&
+        !mode.native) {
+      property_value->SetInteger("width", mode.size.width());
+      property_value->SetInteger("height", mode.size.height());
     }
-
     if (!info.overscan_insets_in_dip().empty())
       InsetsToValue(info.overscan_insets_in_dip(), property_value.get());
+    if (info.color_profile() != ui::COLOR_PROFILE_STANDARD) {
+      property_value->SetString(
+          "color_profile_name", ColorProfileToString(info.color_profile()));
+    }
     pref_data->Set(base::Int64ToString(id), property_value.release());
   }
 }
@@ -217,9 +255,9 @@ typedef std::map<chromeos::DisplayPowerState, std::string>
     DisplayPowerStateToStringMap;
 
 const DisplayPowerStateToStringMap* GetDisplayPowerStateToStringMap() {
+  // Don't save or retore ALL_OFF state. crbug.com/318456.
   static const DisplayPowerStateToStringMap* map = ash::CreateToStringMap(
       chromeos::DISPLAY_POWER_ALL_ON, "all_on",
-      chromeos::DISPLAY_POWER_ALL_OFF, "all_off",
       chromeos::DISPLAY_POWER_INTERNAL_OFF_EXTERNAL_ON,
       "internal_off_external_on",
       chromeos::DISPLAY_POWER_INTERNAL_ON_EXTERNAL_OFF,
@@ -238,9 +276,10 @@ bool GetDisplayPowerStateFromString(const base::StringPiece& state,
 void StoreDisplayPowerState(DisplayPowerState power_state) {
   const DisplayPowerStateToStringMap* map = GetDisplayPowerStateToStringMap();
   DisplayPowerStateToStringMap::const_iterator iter = map->find(power_state);
-  std::string value = iter != map->end() ? iter->second : std::string();
-  PrefService* local_state = g_browser_process->local_state();
-  local_state->SetString(prefs::kDisplayPowerState, value);
+  if (iter != map->end()) {
+    PrefService* local_state = g_browser_process->local_state();
+    local_state->SetString(prefs::kDisplayPowerState, iter->second);
+  }
 }
 
 void StoreCurrentDisplayPowerState() {

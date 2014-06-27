@@ -51,7 +51,7 @@ RenderViewHost* FindFirstDevToolsHost() {
     RenderViewHost* host = RenderViewHost::From(widget);
     WebContents* contents = WebContents::FromRenderViewHost(host);
     GURL url = contents->GetURL();
-    if (url.SchemeIs(chrome::kChromeDevToolsScheme))
+    if (url.SchemeIs(content::kChromeDevToolsScheme))
       return host;
   }
   return NULL;
@@ -71,13 +71,31 @@ class ChromeRenderProcessHostTest : public InProcessBrowserTest {
     WebContents* wc = browser()->tab_strip_model()->GetActiveWebContents();
     CHECK(wc->GetURL() == page);
 
-    // Ensure that the backgrounding / foregrounding gets a chance to run.
+    WaitForLauncherThread();
+    return wc->GetRenderProcessHost()->GetHandle();
+  }
+
+  // Loads the given url in a new background tab and returns the handle of its
+  // renderer.
+  base::ProcessHandle OpenBackgroundTab(const GURL& page) {
+    ui_test_utils::NavigateToURLWithDisposition(browser(), page,
+        NEW_BACKGROUND_TAB, ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
+
+    TabStripModel* tab_strip = browser()->tab_strip_model();
+    WebContents* wc = tab_strip->GetWebContentsAt(
+        tab_strip->active_index() + 1);
+    CHECK(wc->GetVisibleURL() == page);
+
+    WaitForLauncherThread();
+    return wc->GetRenderProcessHost()->GetHandle();
+  }
+
+  // Ensures that the backgrounding / foregrounding gets a chance to run.
+  void WaitForLauncherThread() {
     content::BrowserThread::PostTaskAndReply(
         content::BrowserThread::PROCESS_LAUNCHER, FROM_HERE,
         base::Bind(&base::DoNothing), base::MessageLoop::QuitClosure());
     base::MessageLoop::current()->Run();
-
-    return wc->GetRenderProcessHost()->GetHandle();
   }
 
   // When we hit the max number of renderers, verify that the way we do process
@@ -93,13 +111,13 @@ class ChromeRenderProcessHostTest : public InProcessBrowserTest {
     content::RenderProcessHost* rph2 = NULL;
     content::RenderProcessHost* rph3 = NULL;
 
-    // Change the first tab to be the new tab page (TYPE_WEBUI).
-    GURL newtab(chrome::kChromeUINewTabURL);
-    ui_test_utils::NavigateToURL(browser(), newtab);
+    // Change the first tab to be the omnibox page (TYPE_WEBUI).
+    GURL omnibox(chrome::kChromeUIOmniboxURL);
+    ui_test_utils::NavigateToURL(browser(), omnibox);
     EXPECT_EQ(tab_count, browser()->tab_strip_model()->count());
     tab1 = browser()->tab_strip_model()->GetWebContentsAt(tab_count - 1);
     rph1 = tab1->GetRenderProcessHost();
-    EXPECT_TRUE(chrome::IsNTPURL(tab1->GetURL(), browser()->profile()));
+    EXPECT_EQ(omnibox, tab1->GetURL());
     EXPECT_EQ(host_count, RenderProcessHostCount());
 
     // Create a new TYPE_TABBED tab.  It should be in its own process.
@@ -132,7 +150,7 @@ class ChromeRenderProcessHostTest : public InProcessBrowserTest {
     EXPECT_EQ(host_count, RenderProcessHostCount());
     EXPECT_EQ(tab2->GetRenderProcessHost(), rph2);
 
-    // Create another TYPE_WEBUI tab.  It should share the process with newtab.
+    // Create another TYPE_WEBUI tab.  It should share the process with omnibox.
     // Note: intentionally create this tab after the TYPE_TABBED tabs to
     // exercise bug 43448 where extension and WebUI tabs could get combined into
     // normal renderers.
@@ -187,8 +205,8 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest, ProcessPerTab) {
   int host_count = 1;
 
   // Change the first tab to be the new tab page (TYPE_WEBUI).
-  GURL newtab(chrome::kChromeUINewTabURL);
-  ui_test_utils::NavigateToURL(browser(), newtab);
+  GURL omnibox(chrome::kChromeUIOmniboxURL);
+  ui_test_utils::NavigateToURL(browser(), omnibox);
   EXPECT_EQ(tab_count, browser()->tab_strip_model()->count());
   EXPECT_EQ(host_count, RenderProcessHostCount());
 
@@ -213,20 +231,20 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest, ProcessPerTab) {
   EXPECT_EQ(tab_count, browser()->tab_strip_model()->count());
   EXPECT_EQ(host_count, RenderProcessHostCount());
 
-  // Create another new tab.  It should share the process with the other WebUI.
-  ui_test_utils::WindowedTabAddedNotificationObserver observer3(
-      content::NotificationService::AllSources());
-  chrome::NewTab(browser());
-  observer3.Wait();
+  // Create another omnibox tab.  It should share the process with the other
+  // WebUI.
+  ui_test_utils::NavigateToURLWithDisposition(
+      browser(), omnibox, NEW_FOREGROUND_TAB,
+      ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
   tab_count++;
   EXPECT_EQ(tab_count, browser()->tab_strip_model()->count());
   EXPECT_EQ(host_count, RenderProcessHostCount());
 
-  // Create another new tab.  It should share the process with the other WebUI.
-  ui_test_utils::WindowedTabAddedNotificationObserver observer4(
-      content::NotificationService::AllSources());
-  chrome::NewTab(browser());
-  observer4.Wait();
+  // Create another omnibox tab.  It should share the process with the other
+  // WebUI.
+  ui_test_utils::NavigateToURLWithDisposition(
+      browser(), omnibox, NEW_FOREGROUND_TAB,
+      ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
   tab_count++;
   EXPECT_EQ(tab_count, browser()->tab_strip_model()->count());
   EXPECT_EQ(host_count, RenderProcessHostCount());
@@ -243,9 +261,9 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest, Backgrounding) {
   CommandLine& parsed_command_line = *CommandLine::ForCurrentProcess();
   parsed_command_line.AppendSwitch(switches::kProcessPerTab);
 
-  // Change the first tab to be the new tab page (TYPE_WEBUI).
-  GURL newtab(chrome::kChromeUINewTabURL);
-  ui_test_utils::NavigateToURL(browser(), newtab);
+  // Change the first tab to be the omnibox page (TYPE_WEBUI).
+  GURL omnibox(chrome::kChromeUIOmniboxURL);
+  ui_test_utils::NavigateToURL(browser(), omnibox);
 
   // Create a new tab. It should be foreground.
   GURL page1("data:text/html,hello world1");
@@ -260,11 +278,22 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest, Backgrounding) {
   EXPECT_TRUE(base::Process(pid1).IsProcessBackgrounded());
   EXPECT_FALSE(base::Process(pid2).IsProcessBackgrounded());
 
-  // Navigate back to first page. It should be foreground again, and the second
-  // tab should be background.
+  // Load another tab in background. The renderer of the new tab should be
+  // backgrounded, while visibility of the other renderers should not change.
+  GURL page3("data:text/html,hello world3");
+  base::ProcessHandle pid3 = OpenBackgroundTab(page3);
+  EXPECT_NE(pid3, pid1);
+  EXPECT_NE(pid3, pid2);
+  EXPECT_TRUE(base::Process(pid1).IsProcessBackgrounded());
+  EXPECT_FALSE(base::Process(pid2).IsProcessBackgrounded());
+  EXPECT_TRUE(base::Process(pid3).IsProcessBackgrounded());
+
+  // Navigate back to the first page. Its renderer should be in foreground
+  // again while the other renderers should be backgrounded.
   EXPECT_EQ(pid1, ShowSingletonTab(page1));
   EXPECT_FALSE(base::Process(pid1).IsProcessBackgrounded());
   EXPECT_TRUE(base::Process(pid2).IsProcessBackgrounded());
+  EXPECT_TRUE(base::Process(pid3).IsProcessBackgrounded());
 }
 #endif
 
@@ -324,8 +353,7 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest,
   DCHECK(devtools);
 
   // DevTools start in a separate process.
-  DevToolsWindow::ToggleDevToolsWindow(
-      devtools, true, DevToolsToggleAction::Inspect());
+  DevToolsWindow::OpenDevToolsWindow(devtools, DevToolsToggleAction::Inspect());
   host_count++;
   EXPECT_EQ(tab_count, browser()->tab_strip_model()->count());
   EXPECT_EQ(host_count, RenderProcessHostCount());
@@ -372,8 +400,7 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest,
   DCHECK(devtools);
 
   // DevTools start in a separate process.
-  DevToolsWindow::ToggleDevToolsWindow(
-      devtools, true, DevToolsToggleAction::Inspect());
+  DevToolsWindow::OpenDevToolsWindow(devtools, DevToolsToggleAction::Inspect());
   host_count++;
   EXPECT_EQ(tab_count, browser()->tab_strip_model()->count());
   EXPECT_EQ(host_count, RenderProcessHostCount());
@@ -419,7 +446,7 @@ class WindowDestroyer : public content::WebContentsObserver {
 // access already freed objects. See http://crbug.com/255524.
 IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest,
                        CloseAllTabsDuringProcessDied) {
-  GURL url(chrome::kChromeUINewTabURL);
+  GURL url(chrome::kChromeUIOmniboxURL);
 
   ui_test_utils::NavigateToURL(browser(), url);
   ui_test_utils::NavigateToURLWithDisposition(

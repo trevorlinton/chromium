@@ -9,15 +9,14 @@
 #include "chrome/browser/download/download_crx_util.h"
 #include "chrome/browser/download/download_item_model.h"
 #include "chrome/browser/download/download_prefs.h"
-#include "chrome/browser/safe_browsing/download_feedback_service.h"
 #include "chrome/browser/safe_browsing/download_protection_service.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/download_item.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/common/content_switches.h"
+#include "extensions/common/extension.h"
 #include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -79,6 +78,7 @@ bool DownloadShelfContextMenu::IsCommandIdEnabled(int command_id) const {
     case SHOW_IN_FOLDER:
       return download_item_->CanShowInFolder();
     case OPEN_WHEN_COMPLETE:
+    case PLATFORM_OPEN:
       return download_item_->CanOpenDownload() &&
           !download_crx_util::IsExtensionDownload(*download_item_);
     case ALWAYS_OPEN_TYPE:
@@ -93,7 +93,6 @@ bool DownloadShelfContextMenu::IsCommandIdEnabled(int command_id) const {
       return !download_item_->IsDone();
     case DISCARD:
     case KEEP:
-    case REPORT:
     case LEARN_MORE_SCANNING:
     case LEARN_MORE_INTERRUPTED:
       return true;
@@ -138,6 +137,9 @@ void DownloadShelfContextMenu::ExecuteCommand(int command_id, int event_flags) {
         prefs->DisableAutoOpenBasedOnExtension(path);
       break;
     }
+    case PLATFORM_OPEN:
+      DownloadItemModel(download_item_).OpenUsingPlatformHandler();
+      break;
     case CANCEL:
       download_item_->Cancel(true /* Cancelled by user */);
       break;
@@ -155,26 +157,6 @@ void DownloadShelfContextMenu::ExecuteCommand(int command_id, int event_flags) {
     case KEEP:
       download_item_->ValidateDangerousDownload();
       break;
-    case REPORT: {
-#if defined(FULL_SAFE_BROWSING)
-      using safe_browsing::DownloadProtectionService;
-      DownloadItemModel download_model(download_item_);
-      if (!download_model.ShouldAllowDownloadFeedback())
-        break;
-      SafeBrowsingService* sb_service =
-          g_browser_process->safe_browsing_service();
-      DownloadProtectionService* protection_service =
-          (sb_service ? sb_service->download_protection_service() : NULL);
-      if (protection_service) {
-        protection_service->feedback_service()->BeginFeedbackForDownload(
-            download_item_);
-      }
-#else
-      // Should only be getting invoked if we are using safe browsing.
-      NOTREACHED();
-#endif
-      break;
-    }
     case LEARN_MORE_SCANNING: {
 #if defined(FULL_SAFE_BROWSING)
       using safe_browsing::DownloadProtectionService;
@@ -211,7 +193,8 @@ bool DownloadShelfContextMenu::IsItemForCommandIdDynamic(int command_id) const {
   return command_id == TOGGLE_PAUSE;
 }
 
-string16 DownloadShelfContextMenu::GetLabelForCommandId(int command_id) const {
+base::string16 DownloadShelfContextMenu::GetLabelForCommandId(
+    int command_id) const {
   switch (static_cast<ContextMenuCommands>(command_id)) {
     case SHOW_IN_FOLDER:
       return l10n_util::GetStringUTF16(IDS_DOWNLOAD_MENU_SHOW);
@@ -221,6 +204,8 @@ string16 DownloadShelfContextMenu::GetLabelForCommandId(int command_id) const {
       return l10n_util::GetStringUTF16(IDS_DOWNLOAD_MENU_OPEN);
     case ALWAYS_OPEN_TYPE:
       return l10n_util::GetStringUTF16(IDS_DOWNLOAD_MENU_ALWAYS_OPEN_TYPE);
+    case PLATFORM_OPEN:
+      return l10n_util::GetStringUTF16(IDS_DOWNLOAD_MENU_PLATFORM_OPEN);
     case CANCEL:
       return l10n_util::GetStringUTF16(IDS_DOWNLOAD_MENU_CANCEL);
     case TOGGLE_PAUSE:
@@ -231,8 +216,6 @@ string16 DownloadShelfContextMenu::GetLabelForCommandId(int command_id) const {
       return l10n_util::GetStringUTF16(IDS_DOWNLOAD_MENU_RESUME_ITEM);
     case DISCARD:
       return l10n_util::GetStringUTF16(IDS_DOWNLOAD_MENU_DISCARD);
-    case REPORT:
-      return l10n_util::GetStringUTF16(IDS_DOWNLOAD_MENU_REPORT);
     case KEEP:
       return l10n_util::GetStringUTF16(IDS_DOWNLOAD_MENU_KEEP);
     case LEARN_MORE_SCANNING:
@@ -242,7 +225,7 @@ string16 DownloadShelfContextMenu::GetLabelForCommandId(int command_id) const {
           IDS_DOWNLOAD_MENU_LEARN_MORE_INTERRUPTED);
   }
   NOTREACHED();
-  return string16();
+  return base::string16();
 }
 
 void DownloadShelfContextMenu::DetachFromDownloadItem() {
@@ -290,6 +273,9 @@ ui::SimpleMenuModel* DownloadShelfContextMenu::GetFinishedMenuModel() {
       OPEN_WHEN_COMPLETE, IDS_DOWNLOAD_MENU_OPEN);
   finished_download_menu_model_->AddCheckItemWithStringId(
       ALWAYS_OPEN_TYPE, IDS_DOWNLOAD_MENU_ALWAYS_OPEN_TYPE);
+  if (DownloadItemModel(download_item_).ShouldPreferOpeningInBrowser())
+    finished_download_menu_model_->AddItemWithStringId(
+        PLATFORM_OPEN, IDS_DOWNLOAD_MENU_PLATFORM_OPEN);
   finished_download_menu_model_->AddSeparator(ui::NORMAL_SEPARATOR);
   finished_download_menu_model_->AddItemWithStringId(
       SHOW_IN_FOLDER, IDS_DOWNLOAD_MENU_SHOW);
@@ -340,8 +326,6 @@ ui::SimpleMenuModel* DownloadShelfContextMenu::GetMaybeMaliciousMenuModel() {
   maybe_malicious_download_menu_model_.reset(new ui::SimpleMenuModel(this));
 
   maybe_malicious_download_menu_model_->AddItemWithStringId(
-      DISCARD, IDS_DOWNLOAD_MENU_DISCARD);
-  maybe_malicious_download_menu_model_->AddItemWithStringId(
       KEEP, IDS_DOWNLOAD_MENU_KEEP);
   maybe_malicious_download_menu_model_->AddSeparator(ui::NORMAL_SEPARATOR);
   maybe_malicious_download_menu_model_->AddItemWithStringId(
@@ -357,10 +341,6 @@ DownloadShelfContextMenu::GetMaliciousMenuModel() {
   malicious_download_menu_model_.reset(new ui::SimpleMenuModel(this));
 
   DownloadItemModel download_model(download_item_);
-  if (download_model.ShouldAllowDownloadFeedback()) {
-    malicious_download_menu_model_->AddItemWithStringId(
-        REPORT, IDS_DOWNLOAD_MENU_REPORT);
-  }
   malicious_download_menu_model_->AddItemWithStringId(
       LEARN_MORE_SCANNING, IDS_DOWNLOAD_MENU_LEARN_MORE_SCANNING);
 

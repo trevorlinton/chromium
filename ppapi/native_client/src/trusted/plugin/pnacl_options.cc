@@ -11,7 +11,11 @@
 
 namespace plugin {
 
-PnaclOptions::PnaclOptions() : translate_(false), opt_level_(2) { }
+PnaclOptions::PnaclOptions()
+    : translate_(false),
+      is_debug_(false),
+      opt_level_(2) {
+}
 
 PnaclOptions::~PnaclOptions() {
 }
@@ -32,9 +36,15 @@ std::vector<char> PnaclOptions::GetOptCommandline() const {
   nacl::stringstream ss;
   ss << "-O" << opt_level_;
   str = ss.str();
-
   std::copy(str.begin(), str.end(), std::back_inserter(result));
   result.push_back('\x00');
+  // Debug info is only available in LLVM format pexes,
+  // not in PNaCl format pexes.
+  if (is_debug_) {
+    str = "-bitcode-format=llvm";
+    std::copy(str.begin(), str.end(), std::back_inserter(result));
+    result.push_back('\x00');
+  }
 
   return result;
 }

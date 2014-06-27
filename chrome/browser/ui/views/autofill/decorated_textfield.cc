@@ -24,38 +24,28 @@ namespace autofill {
 // static
 const char DecoratedTextfield::kViewClassName[] = "autofill/DecoratedTextfield";
 
-const int DecoratedTextfield::kMagicInsetNumber = 6;
-
 DecoratedTextfield::DecoratedTextfield(
     const base::string16& default_value,
     const base::string16& placeholder,
     views::TextfieldController* controller)
-    : border_(new views::FocusableBorder()),
-      invalid_(false),
+    : invalid_(false),
       editable_(true) {
   UpdateBackground();
-
-  set_border(border_);
-  // Removes the border from |native_wrapper_|.
-  RemoveBorder();
+  UpdateBorder();
 
   set_placeholder_text(placeholder);
   SetText(default_value);
-  SetController(controller);
-  SetHorizontalMargins(0, 0);
+  set_controller(controller);
 }
 
 DecoratedTextfield::~DecoratedTextfield() {}
 
 void DecoratedTextfield::SetInvalid(bool invalid) {
-  invalid_ = invalid;
-  if (!editable_)
+  if (invalid_ == invalid)
     return;
 
-  if (invalid)
-    border_->SetColor(kWarningColor);
-  else
-    border_->UseDefaultColor();
+  invalid_ = invalid;
+  UpdateBorder();
   SchedulePaint();
 }
 
@@ -64,14 +54,6 @@ void DecoratedTextfield::SetEditable(bool editable) {
     return;
 
   editable_ = editable;
-  if (editable) {
-    SetInvalid(invalid_);
-    UseDefaultBackgroundColor();
-  } else {
-    border_->SetColor(SK_ColorTRANSPARENT);
-    SetBackgroundColor(SK_ColorTRANSPARENT);
-  }
-
   UpdateBackground();
   SetEnabled(editable);
   IconChanged();
@@ -110,37 +92,25 @@ void DecoratedTextfield::SetTooltipIcon(const base::string16& text) {
 }
 
 base::string16 DecoratedTextfield::GetPlaceholderText() const {
-  if (!editable_)
-    return base::string16();
-
-  return views::Textfield::GetPlaceholderText();
+  return editable_ ? views::Textfield::GetPlaceholderText() : base::string16();
 }
 
 const char* DecoratedTextfield::GetClassName() const {
   return kViewClassName;
 }
 
-views::View* DecoratedTextfield::GetEventHandlerForPoint(
-    const gfx::Point& point) {
-  return native_wrapper_->GetView();
-}
-
-void DecoratedTextfield::OnFocus() {
-  border_->set_has_focus(true);
-  views::Textfield::OnFocus();
-}
-
-void DecoratedTextfield::OnBlur() {
-  border_->set_has_focus(false);
-  views::Textfield::OnBlur();
+views::View* DecoratedTextfield::GetEventHandlerForRect(const gfx::Rect& rect) {
+  views::View* handler = views::Textfield::GetEventHandlerForRect(rect);
+  if (handler->GetClassName() == TooltipIcon::kViewClassName)
+    return handler;
+  return this;
 }
 
 gfx::Size DecoratedTextfield::GetPreferredSize() {
-  int w = views::Textfield::GetPreferredSize().width();
-  views::LabelButton button(NULL, string16());
-  button.SetStyle(views::Button::STYLE_BUTTON);
-  int h = button.GetPreferredSize().height();
-  return gfx::Size(w, h - kMagicInsetNumber);
+  static const int height =
+      views::LabelButton(NULL, base::string16()).GetPreferredSize().height();
+  const gfx::Size size = views::Textfield::GetPreferredSize();
+  return gfx::Size(size.width(), std::max(size.height(), height));
 }
 
 void DecoratedTextfield::Layout() {
@@ -150,34 +120,49 @@ void DecoratedTextfield::Layout() {
     gfx::Rect bounds = GetContentsBounds();
     gfx::Size icon_size = icon_view_->GetPreferredSize();
     int x = base::i18n::IsRTL() ?
-        kTextfieldIconPadding :
-        bounds.right() - icon_size.width() - kTextfieldIconPadding;
+        bounds.x() - icon_size.width() - kTextfieldIconPadding :
+        bounds.right() + kTextfieldIconPadding;
     // Vertically centered.
     int y = bounds.y() + (bounds.height() - icon_size.height()) / 2;
-    icon_view_->SetBounds(x,
-                          y,
-                          icon_size.width(),
-                          icon_size.height());
+    gfx::Rect icon_bounds(x, y, icon_size.width(), icon_size.height());
+    icon_bounds.set_x(GetMirroredXForRect(icon_bounds));
+    icon_view_->SetBoundsRect(icon_bounds);
   }
 }
 
 void DecoratedTextfield::UpdateBackground() {
+  if (editable_)
+    UseDefaultBackgroundColor();
+  else
+    SetBackgroundColor(SK_ColorTRANSPARENT);
   set_background(
       views::Background::CreateSolidBackground(GetBackgroundColor()));
+}
+
+void DecoratedTextfield::UpdateBorder() {
+  scoped_ptr<views::FocusableBorder> border(new views::FocusableBorder());
+  if (invalid_)
+    border->SetColor(kWarningColor);
+  else if (!editable_)
+    border->SetColor(SK_ColorTRANSPARENT);
+
+  // Adjust the border insets to include the icon and its padding.
+  if (icon_view_ && icon_view_->visible()) {
+    int w = icon_view_->GetPreferredSize().width() + 2 * kTextfieldIconPadding;
+    gfx::Insets insets = border->GetInsets();
+    int left = insets.left() + (base::i18n::IsRTL() ? w : 0);
+    int right = insets.right() + (base::i18n::IsRTL() ? 0 : w);
+    border->SetInsets(insets.top(), left, insets.bottom(), right);
+  }
+
+  SetBorder(border.PassAs<views::Border>());
 }
 
 void DecoratedTextfield::IconChanged() {
   // Don't show the icon if nothing else is showing.
   icon_view_->SetVisible(editable_ || !text().empty());
-
-  int icon_space = icon_view_ ?
-      icon_view_->GetPreferredSize().width() + 2 * kTextfieldIconPadding : 0;
-
-  bool is_rtl = base::i18n::IsRTL();
-  SetHorizontalMargins(is_rtl ? icon_space : 0, is_rtl ? 0 : icon_space);
-
+  UpdateBorder();
   Layout();
-  SchedulePaint();
 }
 
 } // namespace autofill

@@ -116,7 +116,7 @@ class SetAsDefaultBrowserHandler
 
  private:
   // Handler for the 'Next' (or 'make Chrome the Metro browser') button.
-  void HandleLaunchSetDefaultBrowserFlow(const ListValue* args);
+  void HandleLaunchSetDefaultBrowserFlow(const base::ListValue* args);
 
   // Close this web ui.
   void ConcludeInteraction(MakeChromeDefaultResult interaction_result);
@@ -182,7 +182,7 @@ bool SetAsDefaultBrowserHandler::IsInteractiveSetDefaultPermitted() {
 }
 
 void SetAsDefaultBrowserHandler::HandleLaunchSetDefaultBrowserFlow(
-    const ListValue* args) {
+    const base::ListValue* args) {
   set_default_returned_ = false;
   set_default_result_ = false;
   default_browser_worker_->StartSetAsDefault();
@@ -224,7 +224,7 @@ class SetAsDefaultBrowserDialogImpl : public ui::WebDialogDelegate,
  protected:
   // Overridden from WebDialogDelegate:
   virtual ui::ModalType GetDialogModalType() const OVERRIDE;
-  virtual string16 GetDialogTitle() const OVERRIDE;
+  virtual base::string16 GetDialogTitle() const OVERRIDE;
   virtual GURL GetDialogContentURL() const OVERRIDE;
   virtual void GetWebUIMessageHandlers(
       std::vector<WebUIMessageHandler*>* handlers) const OVERRIDE;
@@ -293,7 +293,7 @@ ui::ModalType SetAsDefaultBrowserDialogImpl::GetDialogModalType() const {
   return ui::MODAL_TYPE_SYSTEM;
 }
 
-string16 SetAsDefaultBrowserDialogImpl::GetDialogTitle() const {
+base::string16 SetAsDefaultBrowserDialogImpl::GetDialogTitle() const {
   return l10n_util::GetStringUTF16(IDS_METRO_FLOW_TAB_TITLE);
 }
 

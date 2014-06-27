@@ -6,31 +6,31 @@ package org.chromium.content.browser;
 
 import android.content.Context;
 import android.util.Log;
-import android.util.SparseIntArray;
 import android.view.Surface;
 
-import java.util.ArrayList;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import com.google.common.annotations.VisibleForTesting;
 
 import org.chromium.base.CalledByNative;
 import org.chromium.base.JNINamespace;
-import org.chromium.base.SysUtils;
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.library_loader.Linker;
 import org.chromium.content.app.ChildProcessService;
-import org.chromium.content.app.Linker;
-import org.chromium.content.app.LinkerParams;
+import org.chromium.content.app.ChromiumLinkerParams;
 import org.chromium.content.app.PrivilegedProcessService;
 import org.chromium.content.app.SandboxedProcessService;
 import org.chromium.content.common.IChildProcessCallback;
 import org.chromium.content.common.IChildProcessService;
+
+import java.util.ArrayList;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * This class provides the method to start/stop ChildProcess called by native.
  */
 @JNINamespace("content")
 public class ChildProcessLauncher {
-    private static String TAG = "ChildProcessLauncher";
+    private static final String TAG = "ChildProcessLauncher";
 
     private static final int CALLBACK_FOR_UNKNOWN_PROCESS = 0;
     private static final int CALLBACK_FOR_GPU_PROCESS = 1;
@@ -51,7 +51,7 @@ public class ChildProcessLauncher {
 
     private static class ChildConnectionAllocator {
         // Connections to services. Indices of the array correspond to the service numbers.
-        private ChildProcessConnection[] mChildProcessConnections;
+        private final ChildProcessConnection[] mChildProcessConnections;
 
         // The list of free (not bound) service indices. When looking for a free service, the first
         // index in that list should be used. When a service is unbound, its index is added to the
@@ -61,7 +61,7 @@ public class ChildProcessLauncher {
         // the process is reused and bad things happen (mostly static variables are set when we
         // don't expect them to).
         // SHOULD BE ACCESSED WITH mConnectionLock.
-        private ArrayList<Integer> mFreeConnectionIndices;
+        private final ArrayList<Integer> mFreeConnectionIndices;
         private final Object mConnectionLock = new Object();
 
         private Class<? extends ChildProcessService> mChildClass;
@@ -70,7 +70,7 @@ public class ChildProcessLauncher {
         public ChildConnectionAllocator(boolean inSandbox) {
             int numChildServices = inSandbox ?
                     MAX_REGISTERED_SANDBOXED_SERVICES : MAX_REGISTERED_PRIVILEGED_SERVICES;
-            mChildProcessConnections = new ChildProcessConnection[numChildServices];
+            mChildProcessConnections = new ChildProcessConnectionImpl[numChildServices];
             mFreeConnectionIndices = new ArrayList<Integer>(numChildServices);
             for (int i = 0; i < numChildServices; i++) {
                 mFreeConnectionIndices.add(i);
@@ -86,22 +86,22 @@ public class ChildProcessLauncher {
 
         public ChildProcessConnection allocate(
                 Context context, ChildProcessConnection.DeathCallback deathCallback,
-                LinkerParams linkerParams) {
-            synchronized(mConnectionLock) {
+                ChromiumLinkerParams chromiumLinkerParams) {
+            synchronized (mConnectionLock) {
                 if (mFreeConnectionIndices.isEmpty()) {
-                    Log.w(TAG, "Ran out of service." );
+                    Log.w(TAG, "Ran out of service.");
                     return null;
                 }
                 int slot = mFreeConnectionIndices.remove(0);
                 assert mChildProcessConnections[slot] == null;
-                mChildProcessConnections[slot] = new ChildProcessConnection(context, slot,
-                        mInSandbox, deathCallback, mChildClass, linkerParams);
+                mChildProcessConnections[slot] = new ChildProcessConnectionImpl(context, slot,
+                        mInSandbox, deathCallback, mChildClass, chromiumLinkerParams);
                 return mChildProcessConnections[slot];
             }
         }
 
         public void free(ChildProcessConnection connection) {
-            synchronized(mConnectionLock) {
+            synchronized (mConnectionLock) {
                 int slot = connection.getServiceNumber();
                 if (mChildProcessConnections[slot] != connection) {
                     int occupier = mChildProcessConnections[slot] == null ?
@@ -127,7 +127,9 @@ public class ChildProcessLauncher {
 
     private static boolean sConnectionAllocated = false;
 
-    // Sets service class for sandboxed service and privileged service.
+    /**
+     * Sets service class for sandboxed service and privileged service.
+     */
     public static void setChildProcessClass(
             Class<? extends SandboxedProcessService> sandboxedServiceClass,
             Class<? extends PrivilegedProcessService> privilegedServiceClass) {
@@ -143,7 +145,7 @@ public class ChildProcessLauncher {
     }
 
     private static ChildProcessConnection allocateConnection(Context context,
-            boolean inSandbox, LinkerParams linkerParams) {
+            boolean inSandbox, ChromiumLinkerParams chromiumLinkerParams) {
         ChildProcessConnection.DeathCallback deathCallback =
             new ChildProcessConnection.DeathCallback() {
                 @Override
@@ -152,13 +154,14 @@ public class ChildProcessLauncher {
                 }
             };
         sConnectionAllocated = true;
-        return getConnectionAllocator(inSandbox).allocate(context, deathCallback, linkerParams);
+        return getConnectionAllocator(inSandbox).allocate(context, deathCallback,
+                chromiumLinkerParams);
     }
 
     private static boolean sLinkerInitialized = false;
     private static long sLinkerLoadAddress = 0;
 
-    private static LinkerParams getLinkerParamsForNewConnection() {
+    private static ChromiumLinkerParams getLinkerParamsForNewConnection() {
         if (!sLinkerInitialized) {
             if (Linker.isUsed()) {
                 sLinkerLoadAddress = Linker.getBaseLoadAddress();
@@ -174,15 +177,16 @@ public class ChildProcessLauncher {
 
         // Always wait for the shared RELROs in service processes.
         final boolean waitForSharedRelros = true;
-        return new LinkerParams(sLinkerLoadAddress,
+        return new ChromiumLinkerParams(sLinkerLoadAddress,
                                 waitForSharedRelros,
                                 Linker.getTestRunnerClassName());
     }
 
     private static ChildProcessConnection allocateBoundConnection(Context context,
             String[] commandLine, boolean inSandbox) {
-        LinkerParams linkerParams = getLinkerParamsForNewConnection();
-        ChildProcessConnection connection = allocateConnection(context, inSandbox, linkerParams);
+        ChromiumLinkerParams chromiumLinkerParams = getLinkerParamsForNewConnection();
+        ChildProcessConnection connection =
+                allocateConnection(context, inSandbox, chromiumLinkerParams);
         if (connection != null) {
             connection.start(commandLine);
         }
@@ -207,227 +211,21 @@ public class ChildProcessLauncher {
     // A pre-allocated and pre-bound connection ready for connection setup, or null.
     private static ChildProcessConnection sSpareSandboxedConnection = null;
 
-    /**
-     * Manages oom bindings used to bound child services. "Oom binding" is a binding that raises the
-     * process oom priority so that it shouldn't be killed by the OS out-of-memory killer under
-     * normal conditions (it can still be killed under drastic memory pressure).
-     *
-     * This class serves a proxy between external calls that manipulate the bindings and the
-     * connections, allowing to enforce policies such as delayed removal of the bindings.
-     */
-    static class BindingManager {
-        // Delay of 1 second used when removing the initial oom binding of a process.
-        private static final long REMOVE_INITIAL_BINDING_DELAY_MILLIS = 1 * 1000;
-
-        // Delay of 1 second used when removing temporary strong binding of a process (only on
-        // non-low-memory devices).
-        private static final long DETACH_AS_ACTIVE_HIGH_END_DELAY_MILLIS = 1 * 1000;
-
-        // Map from pid to the count of oom bindings bound for the service. Should be accessed with
-        // mCountLock.
-        private final SparseIntArray mOomBindingCount = new SparseIntArray();
-
-        // Pid of the renderer that was most recently oom bound. This is used on low-memory devices
-        // to drop oom bindings of a process when another one acquires them, making sure that only
-        // one renderer process at a time is oom bound. Should be accessed with mCountLock.
-        private int mLastOomPid = -1;
-
-        // Pid of the renderer that we bound with a strong binding for the background period. Equals
-        // -1 when the embedder is in foreground.
-        private int mBoundForBackgroundPeriodPid = -1;
-
-        // Should be acquired before binding or unbinding the connections and modifying state
-        // variables: mOomBindingCount and mLastOomPid.
-        private final Object mCountLock = new Object();
-
-        /**
-         * Registers an oom binding bound for a child process. Should be called with mCountLock.
-         * @param pid handle of the process.
-         */
-        private void incrementOomCount(int pid) {
-            mOomBindingCount.put(pid, mOomBindingCount.get(pid) + 1);
-            mLastOomPid = pid;
-        }
-
-        /**
-         * Registers an oom binding unbound for a child process. Should be called with mCountLock.
-         * @param pid handle of the process.
-         */
-        private void decrementOomCount(int pid) {
-            int count = mOomBindingCount.get(pid, -1);
-            assert count > 0;
-            count--;
-            if (count > 0) {
-                mOomBindingCount.put(pid, count);
-            } else {
-                mOomBindingCount.delete(pid);
-            }
-        }
-
-        /**
-         * Drops all oom bindings for the given renderer.
-         * @param pid handle of the process.
-         */
-        private void dropOomBindings(int pid) {
-            ChildProcessConnection connection = sServiceMap.get(pid);
-            if (connection == null) {
-                LogPidWarning(pid, "Tried to drop oom bindings for a non-existent connection");
-                return;
-            }
-            synchronized (mCountLock) {
-                connection.dropOomBindings();
-                mOomBindingCount.delete(pid);
-            }
-        }
-
-        /**
-         * Registers a freshly started child process. On low-memory devices this will also drop the
-         * oom bindings of the last process that was oom-bound. We can do that, because every time a
-         * connection is created on the low-end, it is used in foreground (no prerendering, no
-         * loading of tabs opened in background).
-         * @param pid handle of the process.
-         */
-        void addNewConnection(int pid) {
-            synchronized (mCountLock) {
-                if (SysUtils.isLowEndDevice() && mLastOomPid >= 0) {
-                    dropOomBindings(mLastOomPid);
-                }
-                // This will reset the previous entry for the pid in the unlikely event of the OS
-                // reusing renderer pids.
-                mOomBindingCount.put(pid, 0);
-                // Every new connection is bound with initial oom binding.
-                incrementOomCount(pid);
-            }
-        }
-
-        /**
-         * Remove the initial binding of the child process. Child processes are bound with initial
-         * binding to protect them from getting killed before they are put to use. This method
-         * allows to remove the binding once it is no longer needed. The binding is removed after a
-         * fixed delay period so that the renderer will not be killed immediately after the call.
-         */
-        void removeInitialBinding(final int pid) {
-            final ChildProcessConnection connection = sServiceMap.get(pid);
-            if (connection == null) {
-                LogPidWarning(pid, "Tried to remove a binding for a non-existent connection");
-                return;
-            }
-            if (!connection.isInitialBindingBound()) return;
-            ThreadUtils.postOnUiThreadDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    synchronized (mCountLock) {
-                        if (connection.isInitialBindingBound()) {
-                            decrementOomCount(pid);
-                            connection.removeInitialBinding();
-                        }
-                    }
-                }
-            }, REMOVE_INITIAL_BINDING_DELAY_MILLIS);
-        }
-
-        /**
-         * Bind a child process as a high priority process so that it has the same priority as the
-         * main process. This can be used for the foreground renderer process to distinguish it from
-         * the background renderer process.
-         * @param pid The process handle of the service connection.
-         */
-        void bindAsHighPriority(final int pid) {
-            ChildProcessConnection connection = sServiceMap.get(pid);
-            if (connection == null) {
-                LogPidWarning(pid, "Tried to bind a non-existent connection");
-                return;
-            }
-            synchronized (mCountLock) {
-                connection.attachAsActive();
-                incrementOomCount(pid);
-            }
-        }
-
-        /**
-         * Unbind a high priority process which was previous bound with bindAsHighPriority.
-         * @param pid The process handle of the service.
-         */
-        void unbindAsHighPriority(final int pid) {
-            final ChildProcessConnection connection = sServiceMap.get(pid);
-            if (connection == null) {
-                LogPidWarning(pid, "Tried to unbind non-existent connection");
-                return;
-            }
-            if (!connection.isStrongBindingBound()) return;
-
-            // This runnable performs the actual unbinding. It will be executed synchronously when
-            // on low-end devices and posted with a delay otherwise.
-            Runnable doUnbind = new Runnable() {
-                @Override
-                public void run() {
-                    synchronized (mCountLock) {
-                        if (connection.isStrongBindingBound()) {
-                            decrementOomCount(pid);
-                            connection.detachAsActive();
-                        }
-                    }
-                }
-            };
-
-            if (SysUtils.isLowEndDevice()) {
-                doUnbind.run();
-            } else {
-                ThreadUtils.postOnUiThreadDelayed(doUnbind, DETACH_AS_ACTIVE_HIGH_END_DELAY_MILLIS);
-            }
-        }
-
-        /**
-         * @return True iff the given service process is protected from the out-of-memory killing,
-         * or it was protected when it died (either crashed or was closed). This can be used to
-         * decide if a disconnection of a renderer was a crash or a probable out-of-memory kill. In
-         * the unlikely event of the OS reusing renderer pid, the call will refer to the most recent
-         * renderer of the given pid. The binding count is being reset in addNewConnection().
-         */
-        boolean isOomProtected(int pid) {
-            synchronized (mCountLock) {
-                return mOomBindingCount.get(pid) > 0;
-            }
-        }
-
-        /**
-         * Called when the embedding application is sent to background. We want to maintain a strong
-         * binding on the most recently used renderer while the embedder is in background, to
-         * indicate the relative importance of the renderer to system oom killer.
-         *
-         * The embedder needs to ensure that:
-         *  - every onBroughtToForeground() is followed by onSentToBackground()
-         *  - pairs of consecutive onBroughtToForeground() / onSentToBackground() calls do not
-         *    overlap
-         */
-        void onSentToBackground() {
-            assert mBoundForBackgroundPeriodPid == -1;
-            // mLastOomPid can be -1 at this point as the embedding application could be used in
-            // foreground without spawning any renderers.
-            if (mLastOomPid >= 0) {
-                bindAsHighPriority(mLastOomPid);
-                mBoundForBackgroundPeriodPid = mLastOomPid;
-            }
-        }
-
-        /**
-         * Called when the embedding application is brought to foreground. This will drop the strong
-         * binding kept on the main renderer during the background period, so the embedder should
-         * make sure that this is called after the regular strong binding is attached for the
-         * foreground session.
-         */
-        void onBroughtToForeground() {
-            if (mBoundForBackgroundPeriodPid >= 0) {
-                unbindAsHighPriority(mBoundForBackgroundPeriodPid);
-                mBoundForBackgroundPeriodPid = -1;
-            }
-        }
-    }
-
-    private static BindingManager sBindingManager = new BindingManager();
+    // Manages oom bindings used to bind chind services.
+    private static BindingManager sBindingManager = BindingManagerImpl.createBindingManager();
 
     static BindingManager getBindingManager() {
         return sBindingManager;
+    }
+
+    @VisibleForTesting
+    public static void setBindingManagerForTesting(BindingManager manager) {
+        sBindingManager = manager;
+    }
+
+    @CalledByNative
+    private static boolean isOomProtected(int pid) {
+        return sBindingManager.isOomProtected(pid);
     }
 
     /**
@@ -497,9 +295,9 @@ public class ChildProcessLauncher {
      *
      * @param context Context used to obtain the application context.
      * @param commandLine The child process command line argv.
-     * @param file_ids The ID that should be used when mapping files in the created process.
-     * @param file_fds The file descriptors that should be mapped in the created process.
-     * @param file_auto_close Whether the file descriptors should be closed once they were passed to
+     * @param fileIds The ID that should be used when mapping files in the created process.
+     * @param fileFds The file descriptors that should be mapped in the created process.
+     * @param fileAutoClose Whether the file descriptors should be closed once they were passed to
      * the created process.
      * @param clientContext Arbitrary parameter used by the client to distinguish this connection.
      */
@@ -510,7 +308,7 @@ public class ChildProcessLauncher {
             int[] fileIds,
             int[] fileFds,
             boolean[] fileAutoClose,
-            final int clientContext) {
+            final long clientContext) {
         assert fileIds.length == fileFds.length && fileFds.length == fileAutoClose.length;
         FileDescriptorInfo[] filesToBeMapped = new FileDescriptorInfo[fileFds.length];
         for (int i = 0; i < fileFds.length; i++) {
@@ -550,17 +348,18 @@ public class ChildProcessLauncher {
 
         ChildProcessConnection.ConnectionCallback connectionCallback =
                 new ChildProcessConnection.ConnectionCallback() {
-            public void onConnected(int pid) {
-                Log.d(TAG, "on connect callback, pid=" + pid + " context=" + clientContext);
-                if (pid != NULL_PROCESS_HANDLE) {
-                    sBindingManager.addNewConnection(pid);
-                    sServiceMap.put(pid, connection);
-                } else {
-                    freeConnection(connection);
-                }
-                nativeOnChildProcessStarted(clientContext, pid);
-            }
-        };
+                    @Override
+                    public void onConnected(int pid) {
+                        Log.d(TAG, "on connect callback, pid=" + pid + " context=" + clientContext);
+                        if (pid != NULL_PROCESS_HANDLE) {
+                            sBindingManager.addNewConnection(pid, connection);
+                            sServiceMap.put(pid, connection);
+                        } else {
+                            freeConnection(connection);
+                        }
+                        nativeOnChildProcessStarted(clientContext, pid);
+                    }
+                };
 
         // TODO(sievers): Revisit this as it doesn't correctly handle the utility process
         // assert callbackType != CALLBACK_FOR_UNKNOWN_PROCESS;
@@ -582,9 +381,10 @@ public class ChildProcessLauncher {
         Log.d(TAG, "stopping child connection: pid=" + pid);
         ChildProcessConnection connection = sServiceMap.remove(pid);
         if (connection == null) {
-            LogPidWarning(pid, "Tried to stop non-existent connection");
+            logPidWarning(pid, "Tried to stop non-existent connection");
             return;
         }
+        sBindingManager.clearConnection(pid);
         connection.stop();
         freeConnection(connection);
     }
@@ -624,16 +424,16 @@ public class ChildProcessLauncher {
                 return nativeGetViewSurface(surfaceId);
             }
         };
-    };
+    }
 
-    private static void LogPidWarning(int pid, String message) {
+     static void logPidWarning(int pid, String message) {
         // This class is effectively a no-op in single process mode, so don't log warnings there.
         if (pid > 0 && !nativeIsSingleProcess()) {
             Log.w(TAG, message + ", pid=" + pid);
         }
     }
 
-    private static native void nativeOnChildProcessStarted(int clientContext, int pid);
+    private static native void nativeOnChildProcessStarted(long clientContext, int pid);
     private static native Surface nativeGetViewSurface(int surfaceId);
     private static native void nativeEstablishSurfacePeer(
             int pid, Surface surface, int primaryID, int secondaryID);

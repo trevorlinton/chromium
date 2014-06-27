@@ -10,11 +10,11 @@
 #include "base/command_line.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/apps/ephemeral_app_launcher.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
+#include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/install_tracker.h"
 #include "chrome/browser/extensions/install_tracker_factory.h"
-#include "chrome/browser/extensions/webstore_ephemeral_installer.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/app_list_controller_delegate.h"
 #include "chrome/browser/ui/app_list/search/common/url_icon_source.h"
@@ -22,7 +22,8 @@
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/extensions/extension.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
@@ -31,8 +32,6 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/image/canvas_image_source.h"
-
-using extensions::WebstoreEphemeralInstaller;
 
 namespace {
 
@@ -80,7 +79,7 @@ WebstoreResult::WebstoreResult(Profile* profile,
   set_id(extensions::Extension::GetBaseURLFromExtensionId(app_id_).spec());
   set_relevance(0.0);  // What is the right value to use?
 
-  set_title(UTF8ToUTF16(localized_name_));
+  set_title(base::UTF8ToUTF16(localized_name_));
   SetDefaultDetails();
 
   UpdateActions();
@@ -128,8 +127,8 @@ void WebstoreResult::UpdateActions() {
   Actions actions;
 
   const bool is_otr = profile_->IsOffTheRecord();
-  const bool is_installed = !!extensions::ExtensionSystem::Get(profile_)->
-      extension_service()->GetInstalledExtension(app_id_);
+  const bool is_installed =
+      extensions::util::IsExtensionInstalledPermanently(app_id_, profile_);
 
   if (!is_otr && !is_installed && !is_installing()) {
     if (CommandLine::ForCurrentProcess()->HasSwitch(
@@ -179,14 +178,14 @@ void WebstoreResult::StartInstall(bool launch_ephemeral_app) {
   SetIsInstalling(true);
 
   if (launch_ephemeral_app) {
-    scoped_refptr<WebstoreEphemeralInstaller> installer =
-        WebstoreEphemeralInstaller::CreateForLauncher(
+    scoped_refptr<EphemeralAppLauncher> installer =
+        EphemeralAppLauncher::CreateForLauncher(
             app_id_,
             profile_,
             controller_->GetAppListWindow(),
             base::Bind(&WebstoreResult::InstallCallback,
                        weak_factory_.GetWeakPtr()));
-    installer->BeginInstall();
+    installer->Start();
     return;
   }
 
@@ -225,13 +224,6 @@ void WebstoreResult::StopObservingInstall() {
   install_tracker_ = NULL;
 }
 
-void WebstoreResult::OnBeginExtensionInstall(
-    const std::string& extension_id,
-    const std::string& extension_name,
-    const gfx::ImageSkia& installing_icon,
-    bool is_app,
-    bool is_platform_app) {}
-
 void WebstoreResult::OnDownloadProgress(const std::string& extension_id,
                                         int percent_downloaded) {
   if (extension_id != app_id_ || percent_downloaded < 0)
@@ -239,8 +231,6 @@ void WebstoreResult::OnDownloadProgress(const std::string& extension_id,
 
   SetPercentDownloaded(percent_downloaded);
 }
-
-void WebstoreResult::OnInstallFailure(const std::string& extension_id) {}
 
 void WebstoreResult::OnExtensionInstalled(
     const extensions::Extension* extension) {
@@ -251,19 +241,6 @@ void WebstoreResult::OnExtensionInstalled(
   UpdateActions();
   NotifyItemInstalled();
 }
-
-void WebstoreResult::OnExtensionLoaded(
-    const extensions::Extension* extension) {}
-
-void WebstoreResult::OnExtensionUnloaded(
-    const extensions::Extension* extension) {}
-
-void WebstoreResult::OnExtensionUninstalled(
-    const extensions::Extension* extension) {}
-
-void WebstoreResult::OnAppsReordered() {}
-
-void WebstoreResult::OnAppInstalledToAppList(const std::string& extension_id) {}
 
 void WebstoreResult::OnShutdown() {
   StopObservingInstall();

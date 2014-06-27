@@ -41,7 +41,6 @@ class MEDIA_EXPORT AudioOutputResampler : public AudioOutputDispatcher {
                        const AudioParameters& input_params,
                        const AudioParameters& output_params,
                        const std::string& output_device_id,
-                       const std::string& input_device_id,
                        const base::TimeDelta& close_delay);
 
   // AudioOutputDispatcher interface.
@@ -59,6 +58,10 @@ class MEDIA_EXPORT AudioOutputResampler : public AudioOutputDispatcher {
  private:
   friend class base::RefCountedThreadSafe<AudioOutputResampler>;
   virtual ~AudioOutputResampler();
+
+  // Converts low latency based output parameters into high latency
+  // appropriate output parameters in error situations.
+  void SetupFallbackParams();
 
   // Used to initialize and reinitialize |dispatcher_|.
   void Initialize();

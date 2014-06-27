@@ -77,6 +77,11 @@ bool IsNonClientMouseEvent(const base::NativeEvent& native_event) {
          native_event.message <= WM_NCXBUTTONDBLCLK);
 }
 
+bool IsMouseEvent(const base::NativeEvent& native_event) {
+  return IsClientMouseEvent(native_event) ||
+         IsNonClientMouseEvent(native_event);
+}
+
 bool IsMouseWheelEvent(const base::NativeEvent& native_event) {
   return native_event.message == WM_MOUSEWHEEL ||
          native_event.message == WM_MOUSEHWHEEL;
@@ -209,26 +214,29 @@ base::TimeDelta EventTimeFromNative(const base::NativeEvent& native_event) {
 }
 
 gfx::Point EventLocationFromNative(const base::NativeEvent& native_event) {
-  // Note: Wheel events are considered client, but their position is in screen
-  //       coordinates.
-  // Client message. The position is contained in the LPARAM.
-  if (IsClientMouseEvent(native_event) && !IsMouseWheelEvent(native_event))
-    return gfx::Point(native_event.lParam);
-  DCHECK(IsNonClientMouseEvent(native_event) ||
-         IsMouseWheelEvent(native_event) || IsScrollEvent(native_event));
   POINT native_point;
-  if (IsScrollEvent(native_event)) {
+  if ((native_event.message == WM_MOUSELEAVE ||
+       native_event.message == WM_NCMOUSELEAVE) ||
+      IsScrollEvent(native_event)) {
+    // These events have no coordinates. For sanity with rest of events grab
+    // coordinates from the OS.
     ::GetCursorPos(&native_point);
+  } else if (IsClientMouseEvent(native_event) &&
+             !IsMouseWheelEvent(native_event)) {
+    // Note: Wheel events are considered client, but their position is in screen
+    //       coordinates.
+    // Client message. The position is contained in the LPARAM.
+    return gfx::Point(native_event.lParam);
   } else {
+    DCHECK(IsNonClientMouseEvent(native_event) ||
+           IsMouseWheelEvent(native_event) || IsScrollEvent(native_event));
     // Non-client message. The position is contained in a POINTS structure in
     // LPARAM, and is in screen coordinates so we have to convert to client.
     native_point.x = GET_X_LPARAM(native_event.lParam);
     native_point.y = GET_Y_LPARAM(native_event.lParam);
   }
   ScreenToClient(native_event.hwnd, &native_point);
-  gfx::Point location(native_point);
-  location = gfx::win::ScreenToDIPPoint(location);
-  return location;
+  return gfx::win::ScreenToDIPPoint(gfx::Point(native_point));
 }
 
 gfx::Point EventSystemLocationFromNative(
@@ -242,9 +250,9 @@ KeyboardCode KeyboardCodeFromNative(const base::NativeEvent& native_event) {
   return KeyboardCodeForWindowsKeyCode(native_event.wParam);
 }
 
-bool IsMouseEvent(const base::NativeEvent& native_event) {
-  return IsClientMouseEvent(native_event) ||
-         IsNonClientMouseEvent(native_event);
+const char* CodeFromNative(const base::NativeEvent& native_event) {
+  const uint16 scan_code = GetScanCodeFromLParam(native_event.lParam);
+  return CodeForWindowsScanCode(scan_code);
 }
 
 int GetChangedMouseButtonFlagsFromNative(
@@ -347,16 +355,6 @@ bool IsTouchpadEvent(const base::NativeEvent& event) {
   return false;
 }
 
-bool IsNoopEvent(const base::NativeEvent& event) {
-  return event.message == WM_USER + 310;
-}
-
-base::NativeEvent CreateNoopEvent() {
-  MSG event = { NULL };
-  event.message = WM_USER + 310;
-  return event;
-}
-
 int GetModifiersFromACCEL(const ACCEL& accel) {
   int modifiers = EF_NONE;
   if (accel.fVirt & FSHIFT)
@@ -386,6 +384,30 @@ bool IsMouseEventFromTouch(UINT message) {
   return (message >= WM_MOUSEFIRST) && (message <= WM_MOUSELAST) &&
       (GetMessageExtraInfo() & MOUSEEVENTF_FROMTOUCH) ==
       MOUSEEVENTF_FROMTOUCH;
+}
+
+// Conversion scan_code and LParam each other.
+// uint16 scan_code:
+//     ui/events/keycodes/dom4/keycode_converter_data.h
+// 0 - 15bits: represetns the scan code.
+// 28 - 30 bits (0xE000): represents whether this is an extended key or not.
+//
+// LPARAM lParam:
+//     http://msdn.microsoft.com/en-us/library/windows/desktop/ms644984.aspx
+// 16 - 23bits: represetns the scan code.
+// 24bit (0x0100): represents whether this is an extended key or not.
+uint16 GetScanCodeFromLParam(LPARAM l_param) {
+  uint16 scan_code = ((l_param >> 16) & 0x00FF);
+  if (l_param & (1 << 24))
+    scan_code |= 0xE000;
+  return scan_code;
+}
+
+LPARAM GetLParamFromScanCode(uint16 scan_code) {
+  LPARAM l_param = static_cast<LPARAM>(scan_code & 0x00FF) << 16;
+  if ((scan_code & 0xE000) == 0xE000)
+    l_param |= (1 << 24);
+  return l_param;
 }
 
 }  // namespace ui

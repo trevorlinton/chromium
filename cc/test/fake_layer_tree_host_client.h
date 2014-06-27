@@ -8,12 +8,14 @@
 #include "base/memory/scoped_ptr.h"
 #include "cc/input/input_handler.h"
 #include "cc/test/test_context_provider.h"
-#include "cc/trees/layer_tree_host.h"
+#include "cc/trees/layer_tree_host_client.h"
+#include "cc/trees/layer_tree_host_single_thread_client.h"
 
 namespace cc {
 class OutputSurface;
 
-class FakeLayerTreeHostClient : public LayerTreeHostClient {
+class FakeLayerTreeHostClient : public LayerTreeHostClient,
+                                public LayerTreeHostSingleThreadClient {
  public:
   enum RendererOptions {
     DIRECT_3D,
@@ -24,11 +26,12 @@ class FakeLayerTreeHostClient : public LayerTreeHostClient {
   explicit FakeLayerTreeHostClient(RendererOptions options);
   virtual ~FakeLayerTreeHostClient();
 
-  virtual void WillBeginMainFrame() OVERRIDE {}
+  // LayerTreeHostClient implementation.
+  virtual void WillBeginMainFrame(int frame_id) OVERRIDE {}
   virtual void DidBeginMainFrame() OVERRIDE {}
-  virtual void Animate(double frame_begin_time) OVERRIDE {}
+  virtual void Animate(base::TimeTicks frame_begin_time) OVERRIDE {}
   virtual void Layout() OVERRIDE {}
-  virtual void ApplyScrollAndScale(gfx::Vector2d scroll_delta,
+  virtual void ApplyScrollAndScale(const gfx::Vector2d& scroll_delta,
                                    float page_scale) OVERRIDE {}
 
   virtual scoped_ptr<OutputSurface> CreateOutputSurface(bool fallback) OVERRIDE;
@@ -37,11 +40,13 @@ class FakeLayerTreeHostClient : public LayerTreeHostClient {
   virtual void DidCommit() OVERRIDE {}
   virtual void DidCommitAndDrawFrame() OVERRIDE {}
   virtual void DidCompleteSwapBuffers() OVERRIDE {}
-
-  // Used only in the single-threaded path.
-  virtual void ScheduleComposite() OVERRIDE {}
-
   virtual scoped_refptr<ContextProvider> OffscreenContextProvider() OVERRIDE;
+
+  // LayerTreeHostSingleThreadClient implementation.
+  virtual void ScheduleComposite() OVERRIDE {}
+  virtual void ScheduleAnimation() OVERRIDE {}
+  virtual void DidPostSwapBuffers() OVERRIDE {}
+  virtual void DidAbortSwapBuffers() OVERRIDE {}
 
  private:
   bool use_software_rendering_;

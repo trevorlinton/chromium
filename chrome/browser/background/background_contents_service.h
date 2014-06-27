@@ -12,18 +12,18 @@
 #include "base/gtest_prod_util.h"
 #include "base/memory/ref_counted.h"
 #include "chrome/browser/tab_contents/background_contents.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service.h"
+#include "components/keyed_service/core/keyed_service.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/common/window_container_type.h"
 #include "ui/base/window_open_disposition.h"
 #include "url/gurl.h"
 
-class CommandLine;
 class PrefService;
 class Profile;
 
 namespace base {
+class CommandLine;
 class DictionaryValue;
 }
 
@@ -51,9 +51,10 @@ struct BackgroundContentsOpenedDetails;
 // parent app is unloaded.
 class BackgroundContentsService : private content::NotificationObserver,
                                   public BackgroundContents::Delegate,
-                                  public BrowserContextKeyedService {
+                                  public KeyedService {
  public:
-  BackgroundContentsService(Profile* profile, const CommandLine* command_line);
+  BackgroundContentsService(Profile* profile,
+                            const base::CommandLine* command_line);
   virtual ~BackgroundContentsService();
 
   // Allows tests to reduce the time between a force-installed app/extension
@@ -61,15 +62,24 @@ class BackgroundContentsService : private content::NotificationObserver,
   static void SetRestartDelayForForceInstalledAppsAndExtensionsForTesting(
       int restart_delay_in_ms);
 
+  // Get the crash notification's id for the extension.
+  static std::string GetNotificationIdForExtensionForTesting(
+      const std::string& extension_id);
+
+  // Show a popup notification balloon with a crash message for a given app/
+  // extension.
+  static void ShowBalloonForTesting(const extensions::Extension* extension,
+                                    Profile* profile);
+
   // Returns the BackgroundContents associated with the passed application id,
   // or NULL if none.
-  BackgroundContents* GetAppBackgroundContents(const string16& appid);
+  BackgroundContents* GetAppBackgroundContents(const base::string16& appid);
 
   // Returns true if there's a registered BackgroundContents for this app. It
   // is possible for this routine to return true when GetAppBackgroundContents()
   // returns false, if the BackgroundContents closed due to the render process
   // crashing.
-  bool HasRegisteredBackgroundContents(const string16& appid);
+  bool HasRegisteredBackgroundContents(const base::string16& appid);
 
   // Returns all currently opened BackgroundContents (used by the task manager).
   std::vector<BackgroundContents*> GetBackgroundContents() const;
@@ -84,7 +94,7 @@ class BackgroundContentsService : private content::NotificationObserver,
   // Gets the parent application id for the passed BackgroundContents. Returns
   // an empty string if no parent application found (e.g. passed
   // BackgroundContents has already shut down).
-  const string16& GetParentApplicationId(BackgroundContents* contents) const;
+  const base::string16& GetParentApplicationId(BackgroundContents* contents) const;
 
   // Creates a new BackgroundContents using the passed |site| and
   // the |route_id| and begins tracking the object internally so it can be
@@ -96,8 +106,8 @@ class BackgroundContentsService : private content::NotificationObserver,
       content::SiteInstance* site,
       int route_id,
       Profile* profile,
-      const string16& frame_name,
-      const string16& application_id,
+      const base::string16& frame_name,
+      const base::string16& application_id,
       const std::string& partition_id,
       content::SessionStorageNamespace* session_storage_namespace);
 
@@ -154,8 +164,8 @@ class BackgroundContentsService : private content::NotificationObserver,
   // and navigates to the passed |url|.
   void LoadBackgroundContents(Profile* profile,
                               const GURL& url,
-                              const string16& frame_name,
-                              const string16& appid);
+                              const base::string16& frame_name,
+                              const base::string16& appid);
 
   // Invoked when a new BackgroundContents is opened.
   void BackgroundContentsOpened(BackgroundContentsOpenedDetails* details);
@@ -174,7 +184,7 @@ class BackgroundContentsService : private content::NotificationObserver,
 
   // Unregisters and deletes the BackgroundContents associated with the
   // passed extension.
-  void ShutdownAssociatedBackgroundContents(const string16& appid);
+  void ShutdownAssociatedBackgroundContents(const base::string16& appid);
 
   // Returns true if this BackgroundContents is in the contents_list_.
   bool IsTracked(BackgroundContents* contents) const;
@@ -197,14 +207,15 @@ class BackgroundContentsService : private content::NotificationObserver,
     // The BackgroundContents whose information we are tracking.
     BackgroundContents* contents;
     // The name of the top level frame for this BackgroundContents.
-    string16 frame_name;
+    base::string16 frame_name;
   };
 
   // Map associating currently loaded BackgroundContents with their parent
   // applications.
   // Key: application id
   // Value: BackgroundContentsInfo for the BC associated with that application
-  typedef std::map<string16, BackgroundContentsInfo> BackgroundContentsMap;
+  typedef std::map<base::string16, BackgroundContentsInfo>
+      BackgroundContentsMap;
   BackgroundContentsMap contents_map_;
 
   DISALLOW_COPY_AND_ASSIGN(BackgroundContentsService);

@@ -37,9 +37,8 @@ class CHROMEOS_EXPORT NetworkState : public ManagedState {
   virtual bool InitialPropertiesReceived(
       const base::DictionaryValue& properties) OVERRIDE;
 
-  // Fills |dictionary| with the state properties. All the properties that are
-  // accepted by PropertyChanged are stored in |dictionary|, no other values are
-  // stored.
+  // Fills |dictionary| with the state properties. All properties that are
+  // parsed by PropertyChanged are stored in |dictionary|, except |ui_data_|.
   void GetProperties(base::DictionaryValue* dictionary) const;
 
   // Returns true, if the network requires a service activation.
@@ -53,6 +52,8 @@ class CHROMEOS_EXPORT NetworkState : public ManagedState {
   const std::string& connection_state() const { return connection_state_; }
   const std::string& profile_path() const { return profile_path_; }
   const std::string& error() const { return error_; }
+  const std::string& last_error() const { return last_error_; }
+  void clear_last_error() { last_error_.clear(); }
   bool connectable() const { return connectable_; }
 
   const NetworkUIData& ui_data() const { return ui_data_; }
@@ -96,9 +97,10 @@ class CHROMEOS_EXPORT NetworkState : public ManagedState {
   // Converts the prefix length to a netmask string.
   std::string GetNetmask() const;
 
-  // Helpers (used e.g. when a state is cached)
+  // Helpers (used e.g. when a state or error is cached)
   static bool StateIsConnected(const std::string& connection_state);
   static bool StateIsConnecting(const std::string& connection_state);
+  static bool ErrorIsValid(const std::string& error);
 
   // Helper to return a full prefixed version of an IPConfig property key.
   static std::string IPConfigProperty(const char* key);
@@ -122,8 +124,15 @@ class CHROMEOS_EXPORT NetworkState : public ManagedState {
   std::string guid_;
   std::string connection_state_;
   std::string profile_path_;
-  std::string error_;
   bool connectable_;
+
+  // Reflects the current Shill Service.Error property. This might get cleared
+  // by Shill shortly after a failure.
+  std::string error_;
+
+  // Last non empty Service.Error property. Cleared by NetworkConnectionHandler
+  // when a connection attempt is initiated.
+  std::string last_error_;
 
   // This is convenient to keep cached for now, but shouldn't be necessary;
   // avoid using it if possible.

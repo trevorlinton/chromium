@@ -13,6 +13,7 @@
 #include "chrome/browser/extensions/api/preference/preference_api_constants.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
+#include "extensions/browser/extension_system.h"
 
 namespace extensions {
 namespace chromedirectsetting {
@@ -71,23 +72,24 @@ class PreferenceWhitelist {
 base::LazyInstance<PreferenceWhitelist> preference_whitelist =
     LAZY_INSTANCE_INITIALIZER;
 
-static base::LazyInstance<ProfileKeyedAPIFactory<ChromeDirectSettingAPI> >
-    g_factory = LAZY_INSTANCE_INITIALIZER;
+static base::LazyInstance<
+    BrowserContextKeyedAPIFactory<ChromeDirectSettingAPI> > g_factory =
+    LAZY_INSTANCE_INITIALIZER;
 
-ChromeDirectSettingAPI::ChromeDirectSettingAPI(Profile* profile)
-    : profile_(profile) {
-  preference_whitelist.Get().RegisterEventListeners(profile, this);
+ChromeDirectSettingAPI::ChromeDirectSettingAPI(content::BrowserContext* context)
+    : profile_(Profile::FromBrowserContext(context)) {
+  preference_whitelist.Get().RegisterEventListeners(profile_, this);
 }
 
 ChromeDirectSettingAPI::~ChromeDirectSettingAPI() {}
 
-// BrowserContextKeyedService implementation.
+// KeyedService implementation.
 void ChromeDirectSettingAPI::Shutdown() {}
 
-// ProfileKeyedAPI implementation.
-ProfileKeyedAPIFactory<ChromeDirectSettingAPI>*
-    ChromeDirectSettingAPI::GetFactoryInstance() {
-  return &g_factory.Get();
+// BrowserContextKeyedAPI implementation.
+BrowserContextKeyedAPIFactory<ChromeDirectSettingAPI>*
+ChromeDirectSettingAPI::GetFactoryInstance() {
+  return g_factory.Pointer();
 }
 
 // EventRouter::Observer implementation.
@@ -107,12 +109,12 @@ bool ChromeDirectSettingAPI::IsPreferenceOnWhitelist(
   return preference_whitelist.Get().IsPreferenceOnWhitelist(pref_key);
 }
 
-ChromeDirectSettingAPI* ChromeDirectSettingAPI::Get(Profile* profile) {
-  return
-      ProfileKeyedAPIFactory<ChromeDirectSettingAPI>::GetForProfile(profile);
+ChromeDirectSettingAPI* ChromeDirectSettingAPI::Get(
+    content::BrowserContext* context) {
+  return BrowserContextKeyedAPIFactory<ChromeDirectSettingAPI>::Get(context);
 }
 
-// ProfileKeyedAPI implementation.
+// BrowserContextKeyedAPI implementation.
 const char* ChromeDirectSettingAPI::service_name() {
   return "ChromeDirectSettingAPI";
 }
@@ -127,7 +129,7 @@ void ChromeDirectSettingAPI::OnPrefChanged(
         profile_->GetPrefs()->FindPreference(pref_key.c_str());
     const base::Value* value = preference->GetValue();
 
-    scoped_ptr<DictionaryValue> result(new DictionaryValue);
+    scoped_ptr<base::DictionaryValue> result(new base::DictionaryValue);
     result->Set(preference_api_constants::kValue, value->DeepCopy());
     base::ListValue args;
     args.Append(result.release());
@@ -151,4 +153,3 @@ void ChromeDirectSettingAPI::OnPrefChanged(
 
 }  // namespace chromedirectsetting
 }  // namespace extensions
-

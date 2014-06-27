@@ -8,6 +8,7 @@
 #include "cc/test/fake_layer_tree_host_impl.h"
 #include "cc/test/fake_output_surface.h"
 #include "cc/test/mock_quad_culler.h"
+#include "cc/test/test_shared_bitmap_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace cc {
@@ -31,9 +32,11 @@ void CheckDrawLayer(HeadsUpDisplayLayerImpl* layer,
 
 TEST(HeadsUpDisplayLayerImplTest, ResourcelessSoftwareDrawAfterResourceLoss) {
   FakeImplProxy proxy;
-  FakeLayerTreeHostImpl host_impl(&proxy);
+  TestSharedBitmapManager shared_bitmap_manager;
+  FakeLayerTreeHostImpl host_impl(&proxy, &shared_bitmap_manager);
   host_impl.CreatePendingTree();
-  host_impl.InitializeRenderer(CreateFakeOutputSurface());
+  host_impl.InitializeRenderer(
+      FakeOutputSurface::Create3d().PassAs<OutputSurface>());
   scoped_ptr<HeadsUpDisplayLayerImpl> layer =
     HeadsUpDisplayLayerImpl::Create(host_impl.pending_tree(), 1);
   layer->SetContentBounds(gfx::Size(100, 100));
@@ -43,7 +46,7 @@ TEST(HeadsUpDisplayLayerImplTest, ResourcelessSoftwareDrawAfterResourceLoss) {
       layer.get(), host_impl.resource_provider(), DRAW_MODE_HARDWARE);
 
   // Simulate a resource loss on transitioning to resourceless software mode.
-  layer->DidLoseOutputSurface();
+  layer->ReleaseResources();
 
   // Should skip resourceless software draw and not crash in UpdateHudTexture.
   CheckDrawLayer(layer.get(),

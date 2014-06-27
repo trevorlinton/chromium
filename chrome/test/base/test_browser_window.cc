@@ -66,12 +66,11 @@ content::PageTransition
   return content::PAGE_TRANSITION_LINK;
 }
 
-const OmniboxView*
-    TestBrowserWindow::TestLocationBar::GetLocationEntry() const {
+const OmniboxView* TestBrowserWindow::TestLocationBar::GetOmniboxView() const {
   return NULL;
 }
 
-OmniboxView* TestBrowserWindow::TestLocationBar::GetLocationEntry() {
+OmniboxView* TestBrowserWindow::TestLocationBar::GetOmniboxView() {
   return NULL;
 }
 
@@ -215,3 +214,13 @@ int
 TestBrowserWindow::GetRenderViewHeightInsetWithDetachedBookmarkBar() {
   return 0;
 }
+
+void TestBrowserWindow::ExecuteExtensionCommand(
+    const extensions::Extension* extension,
+    const extensions::Command& command) {}
+
+void TestBrowserWindow::ShowPageActionPopup(
+    const extensions::Extension* extension) {}
+
+void TestBrowserWindow::ShowBrowserActionPopup(
+    const extensions::Extension* extension) {}

@@ -107,6 +107,15 @@ class GaiaAuthFetcher : public net::URLFetcherDelegate {
   void StartRevokeOAuth2Token(const std::string& auth_token);
 
   // Start a request to exchange the cookies of a signed-in user session
+  // for an OAuth2 authorization code. In the case of a session with
+  // multiple accounts signed in, |session_index| indicate the which of accounts
+  // within the session.
+  //
+  // Either OnClientOAuthCodeSuccess or OnClientOAuthCodeFailure will be
+  // called on the consumer on the original thread.
+  void StartCookieForOAuthCodeExchange(const std::string& session_index);
+
+  // Start a request to exchange the cookies of a signed-in user session
   // for an OAuthLogin-scoped oauth2 token.  In the case of a session with
   // multiple accounts signed in, |session_index| indicate the which of accounts
   // within the session.
@@ -157,6 +166,9 @@ class GaiaAuthFetcher : public net::URLFetcherDelegate {
   // the call will attempt to fetch uber auth token.
   void StartOAuthLogin(const std::string& access_token,
                        const std::string& service);
+
+  // Starts a request to list the accounts in the GAIA cookie.
+  void StartListAccounts();
 
   // Implementation of net::URLFetcherDelegate
   virtual void OnURLFetchComplete(const net::URLFetcher* source) OVERRIDE;
@@ -252,6 +264,10 @@ class GaiaAuthFetcher : public net::URLFetcherDelegate {
   void OnOAuth2RevokeTokenFetched(const std::string& data,
                                   const net::URLRequestStatus& status,
                                   int response_code);
+
+  void OnListAccountsFetched(const std::string& data,
+                             const net::URLRequestStatus& status,
+                             int response_code);
 
   void OnGetUserInfoFetched(const std::string& data,
                             const net::URLRequestStatus& status,
@@ -359,6 +375,7 @@ class GaiaAuthFetcher : public net::URLFetcherDelegate {
   const GURL merge_session_gurl_;
   const GURL uberauth_token_gurl_;
   const GURL oauth_login_gurl_;
+  const GURL list_accounts_gurl_;
 
   // While a fetch is going on:
   scoped_ptr<net::URLFetcher> fetcher_;
@@ -366,6 +383,9 @@ class GaiaAuthFetcher : public net::URLFetcherDelegate {
   std::string request_body_;
   std::string requested_service_; // Currently tracked for IssueAuthToken only.
   bool fetch_pending_;
+  // This is to distinguish between the fetch for oauth login token and that for
+  // oauth code.
+  bool fetch_code_only_;
 
   friend class GaiaAuthFetcherTest;
   FRIEND_TEST_ALL_PREFIXES(GaiaAuthFetcherTest, CaptchaParse);

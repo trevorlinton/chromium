@@ -15,13 +15,13 @@
 #include "chrome/browser/extensions/extension_action_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/cocoa/extensions/extension_action_context_menu_controller.h"
-#include "chrome/common/extensions/extension.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_source.h"
+#include "extensions/common/extension.h"
 #include "grit/theme_resources.h"
 #include "skia/ext/skia_utils_mac.h"
-#import "third_party/GTM/AppKit/GTMNSAnimation+Duration.h"
+#import "third_party/google_toolbox_for_mac/src/AppKit/GTMNSAnimation+Duration.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas_skia_paint.h"
 #include "ui/gfx/image/image.h"
@@ -149,14 +149,16 @@ class ExtensionActionIconFactoryBridge
     [self setButtonType:NSMomentaryChangeButton];
     [self setShowsBorderOnlyWhileMouseInside:YES];
 
-    contextMenuController_.reset([[ExtensionActionContextMenuController alloc]
-        initWithExtension:extension
-                  browser:browser
-          extensionAction:browser_action]);
-    base::scoped_nsobject<NSMenu> contextMenu(
-        [[NSMenu alloc] initWithTitle:@""]);
-    [contextMenu setDelegate:self];
-    [self setMenu:contextMenu];
+    if (extension->ShowConfigureContextMenus()) {
+      contextMenuController_.reset([[ExtensionActionContextMenuController alloc]
+          initWithExtension:extension
+                    browser:browser
+            extensionAction:browser_action]);
+      base::scoped_nsobject<NSMenu> contextMenu(
+          [[NSMenu alloc] initWithTitle:@""]);
+      [contextMenu setDelegate:self];
+      [self setMenu:contextMenu];
+    }
 
     tabId_ = tabId;
     extension_ = extension;

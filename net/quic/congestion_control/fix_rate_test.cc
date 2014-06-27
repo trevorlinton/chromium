@@ -29,16 +29,13 @@ class FixRateReceiverPeer : public FixRateReceiver {
 class FixRateTest : public ::testing::Test {
  protected:
   FixRateTest()
-      : rtt_(QuicTime::Delta::FromMilliseconds(30)),
-        sender_(new FixRateSender(&clock_)),
+      : sender_(new FixRateSender(&clock_)),
         receiver_(new FixRateReceiverPeer()),
         start_(clock_.Now()) {
     // Make sure clock does not start at 0.
     clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(2));
   }
-  const QuicTime::Delta rtt_;
   MockClock clock_;
-  SendAlgorithmInterface::SentPacketsMap unused_packet_map_;
   scoped_ptr<FixRateSender> sender_;
   scoped_ptr<FixRateReceiverPeer> receiver_;
   const QuicTime start_;
@@ -48,7 +45,7 @@ TEST_F(FixRateTest, ReceiverAPI) {
   QuicCongestionFeedbackFrame feedback;
   QuicTime timestamp(QuicTime::Zero());
   receiver_->SetBitrate(QuicBandwidth::FromKBytesPerSecond(300));
-  receiver_->RecordIncomingPacket(1, 1, timestamp, false);
+  receiver_->RecordIncomingPacket(1, 1, timestamp);
   ASSERT_TRUE(receiver_->GenerateCongestionFeedback(&feedback));
   EXPECT_EQ(kFixRate, feedback.type);
   EXPECT_EQ(300000u, feedback.fix_rate.bitrate.ToBytesPerSecond());
@@ -58,8 +55,7 @@ TEST_F(FixRateTest, SenderAPI) {
   QuicCongestionFeedbackFrame feedback;
   feedback.type = kFixRate;
   feedback.fix_rate.bitrate = QuicBandwidth::FromKBytesPerSecond(300);
-  sender_->OnIncomingQuicCongestionFeedbackFrame(feedback,  clock_.Now(),
-                                                 unused_packet_map_);
+  sender_->OnIncomingQuicCongestionFeedbackFrame(feedback,  clock_.Now());
   EXPECT_EQ(300000, sender_->BandwidthEstimate().ToBytesPerSecond());
   EXPECT_TRUE(sender_->TimeUntilSend(clock_.Now(),
       NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA, NOT_HANDSHAKE).IsZero());
@@ -78,9 +74,9 @@ TEST_F(FixRateTest, SenderAPI) {
   EXPECT_EQ(QuicTime::Delta::Infinite(), sender_->TimeUntilSend(clock_.Now(),
       NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA, NOT_HANDSHAKE));
   clock_.AdvanceTime(QuicTime::Delta::FromMilliseconds(8));
-  sender_->OnIncomingAck(1, kDefaultMaxPacketSize, rtt_);
-  sender_->OnIncomingAck(2, kDefaultMaxPacketSize, rtt_);
-  sender_->OnIncomingAck(3, 600, rtt_);
+  sender_->OnPacketAcked(1, kDefaultMaxPacketSize);
+  sender_->OnPacketAcked(2, kDefaultMaxPacketSize);
+  sender_->OnPacketAcked(3, 600);
   EXPECT_TRUE(sender_->TimeUntilSend(clock_.Now(),
       NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA, NOT_HANDSHAKE).IsZero());
 }
@@ -92,8 +88,7 @@ TEST_F(FixRateTest, FixRatePacing) {
   QuicCongestionFeedbackFrame feedback;
   receiver_->SetBitrate(QuicBandwidth::FromKBytesPerSecond(240));
   ASSERT_TRUE(receiver_->GenerateCongestionFeedback(&feedback));
-  sender_->OnIncomingQuicCongestionFeedbackFrame(feedback, clock_.Now(),
-                                                 unused_packet_map_);
+  sender_->OnIncomingQuicCongestionFeedbackFrame(feedback, clock_.Now());
   QuicTime acc_advance_time(QuicTime::Zero());
   QuicPacketSequenceNumber sequence_number = 0;
   for (int i = 0; i < num_packets; i += 2) {
@@ -110,8 +105,8 @@ TEST_F(FixRateTest, FixRatePacing) {
     QuicTime::Delta advance_time = sender_->TimeUntilSend(clock_.Now(),
         NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA, NOT_HANDSHAKE);
     clock_.AdvanceTime(advance_time);
-    sender_->OnIncomingAck(sequence_number - 1, packet_size, rtt_);
-    sender_->OnIncomingAck(sequence_number - 2, packet_size, rtt_);
+    sender_->OnPacketAcked(sequence_number - 1, packet_size);
+    sender_->OnPacketAcked(sequence_number - 2, packet_size);
     acc_advance_time = acc_advance_time.Add(advance_time);
   }
   EXPECT_EQ(num_packets * packet_size * 1000000 / bitrate.ToBytesPerSecond(),

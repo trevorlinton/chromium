@@ -12,8 +12,8 @@
 namespace content {
 
 TouchscreenTapSuppressionController::TouchscreenTapSuppressionController(
-    GestureEventFilter* /*gef*/)
-    : gesture_event_filter_(NULL) {}
+    GestureEventQueue* /*geq*/)
+    : gesture_event_queue_(NULL) {}
 
 TouchscreenTapSuppressionController::~TouchscreenTapSuppressionController() {}
 
@@ -28,11 +28,12 @@ bool TouchscreenTapSuppressionController::ShouldDeferGestureTapDown(
   return false;
 }
 
-bool TouchscreenTapSuppressionController::ShouldSuppressGestureTap() {
+bool TouchscreenTapSuppressionController::ShouldDeferGestureShowPress(
+    const GestureEventWithLatencyInfo& /*event*/) {
   return false;
 }
 
-bool TouchscreenTapSuppressionController::ShouldSuppressGestureTapCancel() {
+bool TouchscreenTapSuppressionController::ShouldSuppressGestureTapEnd() {
   return false;
 }
 

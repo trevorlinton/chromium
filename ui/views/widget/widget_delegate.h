@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#include "ui/base/accessibility/accessibility_types.h"
+#include "ui/accessibility/ax_enums.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/views/view.h"
 
@@ -60,13 +60,13 @@ class VIEWS_EXPORT WidgetDelegate {
   // ui::MODAL_TYPE_NONE (not modal).
   virtual ui::ModalType GetModalType() const;
 
-  virtual ui::AccessibilityTypes::Role GetAccessibleWindowRole() const;
+  virtual ui::AXRole GetAccessibleWindowRole() const;
 
   // Returns the title to be read with screen readers.
-  virtual string16 GetAccessibleWindowTitle() const;
+  virtual base::string16 GetAccessibleWindowTitle() const;
 
   // Returns the text to be displayed in the window title.
-  virtual string16 GetWindowTitle() const;
+  virtual base::string16 GetWindowTitle() const;
 
   // Returns true if the window should show a title in the title bar.
   virtual bool ShouldShowWindowTitle() const;
@@ -94,11 +94,9 @@ class VIEWS_EXPORT WidgetDelegate {
   // was handled, false if it was not.
   virtual bool ExecuteWindowsCommand(int command_id);
 
-  virtual bool HandleSize(unsigned int param, const gfx::Size& size);
-
-  // Execute an app command, usually a menu item or accelerator. Return true
-  // if the command was handled, false if it was not.
   virtual bool ExecuteAppCommand(int command_id);
+
+  virtual bool HandleSize(unsigned int param, const gfx::Size& size);
 
   // Returns the window's name identifier. Used to identify this window for
   // state restoration.

@@ -13,19 +13,20 @@
 #include "ash/wm/resize_shadow_controller.h"
 #include "ash/wm/window_state.h"
 #include "ash/wm/window_util.h"
-#include "ash/wm/workspace/snap_sizer.h"
 #include "ash/wm/workspace_controller.h"
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/client/aura_constants.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/test/aura_test_base.h"
 #include "ui/aura/test/event_generator.h"
 #include "ui/aura/test/test_window_delegate.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/hit_test.h"
 #include "ui/events/event.h"
 #include "ui/gfx/screen.h"
+#include "ui/wm/core/window_util.h"
+#include "ui/wm/public/window_move_client.h"
 
 #if defined(OS_WIN)
 // Windows headers define macros for these function names which screw with us.
@@ -50,7 +51,7 @@ class TestWindowDelegate : public aura::test::TestWindowDelegate {
 
  private:
   // Overridden from aura::Test::TestWindowDelegate:
-  virtual void OnWindowDestroyed() OVERRIDE {
+  virtual void OnWindowDestroyed(aura::Window* window) OVERRIDE {
     delete this;
   }
 
@@ -66,9 +67,9 @@ class ToplevelWindowEventHandlerTest : public AshTestBase {
   aura::Window* CreateWindow(int hittest_code) {
     TestWindowDelegate* d1 = new TestWindowDelegate(hittest_code);
     aura::Window* w1 = new aura::Window(d1);
-    w1->SetType(aura::client::WINDOW_TYPE_NORMAL);
+    w1->SetType(ui::wm::WINDOW_TYPE_NORMAL);
     w1->set_id(1);
-    w1->Init(ui::LAYER_TEXTURED);
+    w1->Init(aura::WINDOW_LAYER_TEXTURED);
     aura::Window* parent =
       Shell::GetContainer(Shell::GetPrimaryRootWindow(),
                           internal::kShellWindowId_AlwaysOnTopContainer);
@@ -117,9 +118,9 @@ TEST_F(ToplevelWindowEventHandlerTest, BottomRight) {
   gfx::Point position = w1->bounds().origin();
   DragFromCenterBy(w1.get(), 100, 100);
   // Position should not have changed.
-  EXPECT_EQ(position, w1->bounds().origin());
+  EXPECT_EQ(position.ToString(), w1->bounds().origin().ToString());
   // Size should have increased by 100,100.
-  EXPECT_EQ(gfx::Size(200, 200), w1->bounds().size());
+  EXPECT_EQ(gfx::Size(200, 200).ToString(), w1->bounds().size().ToString());
 }
 
 TEST_F(ToplevelWindowEventHandlerTest, GrowBox) {
@@ -133,21 +134,21 @@ TEST_F(ToplevelWindowEventHandlerTest, GrowBox) {
   generator.MoveMouseToCenterOf(w1.get());
   generator.DragMouseBy(100, 100);
   // Position should not have changed.
-  EXPECT_EQ(position, w1->bounds().origin());
+  EXPECT_EQ(position.ToString(), w1->bounds().origin().ToString());
   // Size should have increased by 100,100.
-  EXPECT_EQ(gfx::Size(200, 200), w1->bounds().size());
+  EXPECT_EQ(gfx::Size(200, 200).ToString(), w1->bounds().size().ToString());
 
   // Shrink the wnidow by (-100, -100).
   generator.DragMouseBy(-100, -100);
   // Position should not have changed.
-  EXPECT_EQ(position, w1->bounds().origin());
+  EXPECT_EQ(position.ToString(), w1->bounds().origin().ToString());
   // Size should have decreased by 100,100.
-  EXPECT_EQ(gfx::Size(100, 100), w1->bounds().size());
+  EXPECT_EQ(gfx::Size(100, 100).ToString(), w1->bounds().size().ToString());
 
   // Enforce minimum size.
   generator.DragMouseBy(-60, -60);
-  EXPECT_EQ(position, w1->bounds().origin());
-  EXPECT_EQ(gfx::Size(40, 40), w1->bounds().size());
+  EXPECT_EQ(position.ToString(), w1->bounds().origin().ToString());
+  EXPECT_EQ(gfx::Size(40, 40).ToString(), w1->bounds().size().ToString());
 }
 
 TEST_F(ToplevelWindowEventHandlerTest, Right) {
@@ -155,9 +156,9 @@ TEST_F(ToplevelWindowEventHandlerTest, Right) {
   gfx::Point position = w1->bounds().origin();
   DragFromCenterBy(w1.get(), 100, 100);
   // Position should not have changed.
-  EXPECT_EQ(position, w1->bounds().origin());
+  EXPECT_EQ(position.ToString(), w1->bounds().origin().ToString());
   // Size should have increased by 100,0.
-  EXPECT_EQ(gfx::Size(200, 100), w1->bounds().size());
+  EXPECT_EQ(gfx::Size(200, 100).ToString(), w1->bounds().size().ToString());
 }
 
 TEST_F(ToplevelWindowEventHandlerTest, Bottom) {
@@ -165,54 +166,54 @@ TEST_F(ToplevelWindowEventHandlerTest, Bottom) {
   gfx::Point position = w1->bounds().origin();
   DragFromCenterBy(w1.get(), 100, 100);
   // Position should not have changed.
-  EXPECT_EQ(position, w1->bounds().origin());
+  EXPECT_EQ(position.ToString(), w1->bounds().origin().ToString());
   // Size should have increased by 0,100.
-  EXPECT_EQ(gfx::Size(100, 200), w1->bounds().size());
+  EXPECT_EQ(gfx::Size(100, 200).ToString(), w1->bounds().size().ToString());
 }
 
 TEST_F(ToplevelWindowEventHandlerTest, TopRight) {
   scoped_ptr<aura::Window> w1(CreateWindow(HTTOPRIGHT));
   DragFromCenterBy(w1.get(), -50, 50);
   // Position should have been offset by 0,50.
-  EXPECT_EQ(gfx::Point(0, 50), w1->bounds().origin());
+  EXPECT_EQ(gfx::Point(0, 50).ToString(), w1->bounds().origin().ToString());
   // Size should have decreased by 50,50.
-  EXPECT_EQ(gfx::Size(50, 50), w1->bounds().size());
+  EXPECT_EQ(gfx::Size(50, 50).ToString(), w1->bounds().size().ToString());
 }
 
 TEST_F(ToplevelWindowEventHandlerTest, Top) {
   scoped_ptr<aura::Window> w1(CreateWindow(HTTOP));
   DragFromCenterBy(w1.get(), 50, 50);
   // Position should have been offset by 0,50.
-  EXPECT_EQ(gfx::Point(0, 50), w1->bounds().origin());
+  EXPECT_EQ(gfx::Point(0, 50).ToString(), w1->bounds().origin().ToString());
   // Size should have decreased by 0,50.
-  EXPECT_EQ(gfx::Size(100, 50), w1->bounds().size());
+  EXPECT_EQ(gfx::Size(100, 50).ToString(), w1->bounds().size().ToString());
 }
 
 TEST_F(ToplevelWindowEventHandlerTest, Left) {
   scoped_ptr<aura::Window> w1(CreateWindow(HTLEFT));
   DragFromCenterBy(w1.get(), 50, 50);
   // Position should have been offset by 50,0.
-  EXPECT_EQ(gfx::Point(50, 0), w1->bounds().origin());
+  EXPECT_EQ(gfx::Point(50, 0).ToString(), w1->bounds().origin().ToString());
   // Size should have decreased by 50,0.
-  EXPECT_EQ(gfx::Size(50, 100), w1->bounds().size());
+  EXPECT_EQ(gfx::Size(50, 100).ToString(), w1->bounds().size().ToString());
 }
 
 TEST_F(ToplevelWindowEventHandlerTest, BottomLeft) {
   scoped_ptr<aura::Window> w1(CreateWindow(HTBOTTOMLEFT));
   DragFromCenterBy(w1.get(), 50, -50);
   // Position should have been offset by 50,0.
-  EXPECT_EQ(gfx::Point(50, 0), w1->bounds().origin());
+  EXPECT_EQ(gfx::Point(50, 0).ToString(), w1->bounds().origin().ToString());
   // Size should have decreased by 50,50.
-  EXPECT_EQ(gfx::Size(50, 50), w1->bounds().size());
+  EXPECT_EQ(gfx::Size(50, 50).ToString(), w1->bounds().size().ToString());
 }
 
 TEST_F(ToplevelWindowEventHandlerTest, TopLeft) {
   scoped_ptr<aura::Window> w1(CreateWindow(HTTOPLEFT));
   DragFromCenterBy(w1.get(), 50, 50);
   // Position should have been offset by 50,50.
-  EXPECT_EQ(gfx::Point(50, 50), w1->bounds().origin());
+  EXPECT_EQ(gfx::Point(50, 50).ToString(), w1->bounds().origin().ToString());
   // Size should have decreased by 50,50.
-  EXPECT_EQ(gfx::Size(50, 50), w1->bounds().size());
+  EXPECT_EQ(gfx::Size(50, 50).ToString(), w1->bounds().size().ToString());
 }
 
 TEST_F(ToplevelWindowEventHandlerTest, Client) {
@@ -220,7 +221,7 @@ TEST_F(ToplevelWindowEventHandlerTest, Client) {
   gfx::Rect bounds = w1->bounds();
   DragFromCenterBy(w1.get(), 100, 100);
   // Neither position nor size should have changed.
-  EXPECT_EQ(bounds, w1->bounds());
+  EXPECT_EQ(bounds.ToString(), w1->bounds().ToString());
 }
 
 TEST_F(ToplevelWindowEventHandlerTest, LeftPastMinimum) {
@@ -232,8 +233,8 @@ TEST_F(ToplevelWindowEventHandlerTest, LeftPastMinimum) {
   // Simulate a large left-to-right drag.  Window width should be clamped to
   // minimum and position change should be limited as well.
   DragFromCenterBy(w1.get(), 333, 0);
-  EXPECT_EQ(gfx::Point(60, 0), w1->bounds().origin());
-  EXPECT_EQ(gfx::Size(40, 100), w1->bounds().size());
+  EXPECT_EQ(gfx::Point(60, 0).ToString(), w1->bounds().origin().ToString());
+  EXPECT_EQ(gfx::Size(40, 100).ToString(), w1->bounds().size().ToString());
 }
 
 TEST_F(ToplevelWindowEventHandlerTest, RightPastMinimum) {
@@ -246,8 +247,8 @@ TEST_F(ToplevelWindowEventHandlerTest, RightPastMinimum) {
   // Simulate a large right-to-left drag.  Window width should be clamped to
   // minimum and position should not change.
   DragFromCenterBy(w1.get(), -333, 0);
-  EXPECT_EQ(position, w1->bounds().origin());
-  EXPECT_EQ(gfx::Size(40, 100), w1->bounds().size());
+  EXPECT_EQ(position.ToString(), w1->bounds().origin().ToString());
+  EXPECT_EQ(gfx::Size(40, 100).ToString(), w1->bounds().size().ToString());
 }
 
 TEST_F(ToplevelWindowEventHandlerTest, TopLeftPastMinimum) {
@@ -259,8 +260,8 @@ TEST_F(ToplevelWindowEventHandlerTest, TopLeftPastMinimum) {
   // Simulate a large top-left to bottom-right drag.  Window width should be
   // clamped to minimum and position should be limited.
   DragFromCenterBy(w1.get(), 333, 444);
-  EXPECT_EQ(gfx::Point(60, 60), w1->bounds().origin());
-  EXPECT_EQ(gfx::Size(40, 40), w1->bounds().size());
+  EXPECT_EQ(gfx::Point(60, 60).ToString(), w1->bounds().origin().ToString());
+  EXPECT_EQ(gfx::Size(40, 40).ToString(), w1->bounds().size().ToString());
 }
 
 TEST_F(ToplevelWindowEventHandlerTest, TopRightPastMinimum) {
@@ -273,8 +274,8 @@ TEST_F(ToplevelWindowEventHandlerTest, TopRightPastMinimum) {
   // clamped to minimum, x position should not change, and y position should
   // be clamped.
   DragFromCenterBy(w1.get(), -333, 444);
-  EXPECT_EQ(gfx::Point(0, 60), w1->bounds().origin());
-  EXPECT_EQ(gfx::Size(40, 40), w1->bounds().size());
+  EXPECT_EQ(gfx::Point(0, 60).ToString(), w1->bounds().origin().ToString());
+  EXPECT_EQ(gfx::Size(40, 40).ToString(), w1->bounds().size().ToString());
 }
 
 TEST_F(ToplevelWindowEventHandlerTest, BottomLeftPastMinimum) {
@@ -287,8 +288,8 @@ TEST_F(ToplevelWindowEventHandlerTest, BottomLeftPastMinimum) {
   // clamped to minimum, x position should be clamped, and y position should
   // not change.
   DragFromCenterBy(w1.get(), 333, -444);
-  EXPECT_EQ(gfx::Point(60, 0), w1->bounds().origin());
-  EXPECT_EQ(gfx::Size(40, 40), w1->bounds().size());
+  EXPECT_EQ(gfx::Point(60, 0).ToString(), w1->bounds().origin().ToString());
+  EXPECT_EQ(gfx::Size(40, 40).ToString(), w1->bounds().size().ToString());
 }
 
 TEST_F(ToplevelWindowEventHandlerTest, BottomRightPastMinimum) {
@@ -301,8 +302,8 @@ TEST_F(ToplevelWindowEventHandlerTest, BottomRightPastMinimum) {
   // Simulate a large bottom-right to top-left drag.  Window size should be
   // clamped to minimum and position should not change.
   DragFromCenterBy(w1.get(), -333, -444);
-  EXPECT_EQ(position, w1->bounds().origin());
-  EXPECT_EQ(gfx::Size(40, 40), w1->bounds().size());
+  EXPECT_EQ(position.ToString(), w1->bounds().origin().ToString());
+  EXPECT_EQ(gfx::Size(40, 40).ToString(), w1->bounds().size().ToString());
 }
 
 TEST_F(ToplevelWindowEventHandlerTest, BottomRightWorkArea) {
@@ -313,10 +314,11 @@ TEST_F(ToplevelWindowEventHandlerTest, BottomRightWorkArea) {
   // Drag further than work_area bottom.
   DragFromCenterBy(target.get(), 100, work_area.height());
   // Position should not have changed.
-  EXPECT_EQ(position, target->bounds().origin());
+  EXPECT_EQ(position.ToString(), target->bounds().origin().ToString());
   // Size should have increased by 100, work_area.height() - target->bounds.y()
-  EXPECT_EQ(gfx::Size(200, work_area.height() - target->bounds().y()),
-            target->bounds().size());
+  EXPECT_EQ(
+      gfx::Size(200, work_area.height() - target->bounds().y()).ToString(),
+      target->bounds().size().ToString());
 }
 
 TEST_F(ToplevelWindowEventHandlerTest, BottomLeftWorkArea) {
@@ -330,8 +332,9 @@ TEST_F(ToplevelWindowEventHandlerTest, BottomLeftWorkArea) {
   EXPECT_EQ(position.x() - 30, target->bounds().x());
   EXPECT_EQ(position.y(), target->bounds().y());
   // Size should have increased by 30, work_area.height() - target->bounds.y()
-  EXPECT_EQ(gfx::Size(130, work_area.height() - target->bounds().y()),
-            target->bounds().size());
+  EXPECT_EQ(
+      gfx::Size(130, work_area.height() - target->bounds().y()).ToString(),
+      target->bounds().size().ToString());
 }
 
 TEST_F(ToplevelWindowEventHandlerTest, BottomWorkArea) {
@@ -342,10 +345,30 @@ TEST_F(ToplevelWindowEventHandlerTest, BottomWorkArea) {
   // Drag further than work_area bottom.
   DragFromCenterBy(target.get(), 0, work_area.height());
   // Position should not have changed.
-  EXPECT_EQ(position, target->bounds().origin());
+  EXPECT_EQ(position.ToString(), target->bounds().origin().ToString());
   // Size should have increased by 0, work_area.height() - target->bounds.y()
-  EXPECT_EQ(gfx::Size(100, work_area.height() - target->bounds().y()),
-            target->bounds().size());
+  EXPECT_EQ(
+      gfx::Size(100, work_area.height() - target->bounds().y()).ToString(),
+      target->bounds().size().ToString());
+}
+
+TEST_F(ToplevelWindowEventHandlerTest, DontDragIfModalChild) {
+  scoped_ptr<aura::Window> w1(CreateWindow(HTCAPTION));
+  scoped_ptr<aura::Window> w2(CreateWindow(HTCAPTION));
+  w2->SetBounds(gfx::Rect(100, 0, 100, 100));
+  w2->SetProperty(aura::client::kModalKey, ui::MODAL_TYPE_WINDOW);
+  ::wm::AddTransientChild(w1.get(), w2.get());
+  gfx::Size size = w1->bounds().size();
+
+  // Attempt to drag w1, position and size should not change because w1 has a
+  // modal child.
+  DragFromCenterBy(w1.get(), 100, 100);
+  EXPECT_EQ("0,0", w1->bounds().origin().ToString());
+  EXPECT_EQ(size.ToString(), w1->bounds().size().ToString());
+
+  TouchDragFromCenterBy(w1.get(), 100, 100);
+  EXPECT_EQ("0,0", w1->bounds().origin().ToString());
+  EXPECT_EQ(size.ToString(), w1->bounds().size().ToString());
 }
 
 // Verifies we don't let windows drag to a -y location.
@@ -387,43 +410,28 @@ TEST_F(ToplevelWindowEventHandlerTest, GestureDrag) {
   gfx::Point end = location;
 
   // Snap right;
-  {
-    // Get the expected snapped bounds before snapping.
-    internal::SnapSizer sizer(window_state, location,
-        internal::SnapSizer::RIGHT_EDGE,
-        internal::SnapSizer::OTHER_INPUT);
-    gfx::Rect snapped_bounds = sizer.GetSnapBounds(target->bounds());
+  end.Offset(100, 0);
+  generator.GestureScrollSequence(location, end,
+      base::TimeDelta::FromMilliseconds(5),
+      10);
+  RunAllPendingInMessageLoop();
 
-    end.Offset(100, 0);
-    generator.GestureScrollSequence(location, end,
-        base::TimeDelta::FromMilliseconds(5),
-        10);
-    RunAllPendingInMessageLoop();
-
-    // Verify that the window has moved after the gesture.
-    EXPECT_NE(old_bounds.ToString(), target->bounds().ToString());
-    EXPECT_EQ(snapped_bounds.ToString(), target->bounds().ToString());
-  }
+  // Verify that the window has moved after the gesture.
+  EXPECT_NE(old_bounds.ToString(), target->bounds().ToString());
+  EXPECT_EQ(wm::WINDOW_STATE_TYPE_RIGHT_SNAPPED, window_state->GetStateType());
 
   old_bounds = target->bounds();
 
   // Snap left.
-  {
-    // Get the expected snapped bounds before snapping.
-    internal::SnapSizer sizer(window_state, location,
-        internal::SnapSizer::LEFT_EDGE,
-        internal::SnapSizer::OTHER_INPUT);
-    gfx::Rect snapped_bounds = sizer.GetSnapBounds(target->bounds());
-    end = location = target->GetBoundsInRootWindow().CenterPoint();
-    end.Offset(-100, 0);
-    generator.GestureScrollSequence(location, end,
-        base::TimeDelta::FromMilliseconds(5),
-        10);
-    RunAllPendingInMessageLoop();
+  end = location = target->GetBoundsInRootWindow().CenterPoint();
+  end.Offset(-100, 0);
+  generator.GestureScrollSequence(location, end,
+      base::TimeDelta::FromMilliseconds(5),
+      10);
+  RunAllPendingInMessageLoop();
 
-    EXPECT_NE(old_bounds.ToString(), target->bounds().ToString());
-    EXPECT_EQ(snapped_bounds.ToString(), target->bounds().ToString());
-  }
+  EXPECT_NE(old_bounds.ToString(), target->bounds().ToString());
+  EXPECT_EQ(wm::WINDOW_STATE_TYPE_LEFT_SNAPPED, window_state->GetStateType());
 
   gfx::Rect bounds_before_maximization = target->bounds();
   bounds_before_maximization.Offset(0, 100);
@@ -455,7 +463,7 @@ TEST_F(ToplevelWindowEventHandlerTest, GestureDrag) {
   RunAllPendingInMessageLoop();
   EXPECT_NE(old_bounds.ToString(), target->bounds().ToString());
   EXPECT_TRUE(window_state->IsMinimized());
-  EXPECT_TRUE(window_state->always_restores_to_restore_bounds());
+  EXPECT_TRUE(window_state->unminimize_to_restore_bounds());
   EXPECT_EQ(old_bounds.ToString(),
             window_state->GetRestoreBoundsInScreen().ToString());
 }
@@ -509,7 +517,7 @@ TEST_F(ToplevelWindowEventHandlerTest, GestureDragToRestore) {
   RunAllPendingInMessageLoop();
   EXPECT_NE(old_bounds.ToString(), window->bounds().ToString());
   EXPECT_TRUE(window_state->IsMinimized());
-  EXPECT_TRUE(window_state->always_restores_to_restore_bounds());
+  EXPECT_TRUE(window_state->unminimize_to_restore_bounds());
   EXPECT_EQ(old_bounds.ToString(),
             window_state->GetRestoreBoundsInScreen().ToString());
 }
@@ -529,52 +537,37 @@ TEST_F(ToplevelWindowEventHandlerTest, GestureDragForUnresizableWindow) {
   gfx::Point end = location;
 
   // Try to snap right. The window is not resizable. So it should not snap.
-  {
-    // Get the expected snapped bounds before the gesture.
-    internal::SnapSizer sizer(window_state, location,
-        internal::SnapSizer::RIGHT_EDGE,
-        internal::SnapSizer::OTHER_INPUT);
-    gfx::Rect snapped_bounds = sizer.GetSnapBounds(target->bounds());
+  end.Offset(100, 0);
+  generator.GestureScrollSequence(location, end,
+      base::TimeDelta::FromMilliseconds(5),
+      10);
+  RunAllPendingInMessageLoop();
 
-    end.Offset(100, 0);
-    generator.GestureScrollSequence(location, end,
-        base::TimeDelta::FromMilliseconds(5),
-        10);
-    RunAllPendingInMessageLoop();
+  // Verify that the window has moved after the gesture.
+  gfx::Rect expected_bounds(old_bounds);
+  expected_bounds.Offset(gfx::Vector2d(100, 0));
+  EXPECT_EQ(expected_bounds.ToString(), target->bounds().ToString());
 
-    // Verify that the window has moved after the gesture.
-    gfx::Rect expected_bounds(old_bounds);
-    expected_bounds.Offset(gfx::Vector2d(100, 0));
-    EXPECT_EQ(expected_bounds.ToString(), target->bounds().ToString());
-
-    // Verify that the window did not snap left.
-    EXPECT_NE(snapped_bounds.ToString(), target->bounds().ToString());
-  }
+  // Verify that the window did not snap left.
+  EXPECT_TRUE(window_state->IsNormalStateType());
 
   old_bounds = target->bounds();
 
   // Try to snap left. It should not snap.
-  {
-    // Get the expected snapped bounds before the gesture.
-    internal::SnapSizer sizer(window_state, location,
-        internal::SnapSizer::LEFT_EDGE,
-        internal::SnapSizer::OTHER_INPUT);
-    gfx::Rect snapped_bounds = sizer.GetSnapBounds(target->bounds());
-    end = location = target->GetBoundsInRootWindow().CenterPoint();
-    end.Offset(-100, 0);
-    generator.GestureScrollSequence(location, end,
-        base::TimeDelta::FromMilliseconds(5),
-        10);
-    RunAllPendingInMessageLoop();
+  end = location = target->GetBoundsInRootWindow().CenterPoint();
+  end.Offset(-100, 0);
+  generator.GestureScrollSequence(location, end,
+      base::TimeDelta::FromMilliseconds(5),
+      10);
+  RunAllPendingInMessageLoop();
 
-    // Verify that the window has moved after the gesture.
-    gfx::Rect expected_bounds(old_bounds);
-    expected_bounds.Offset(gfx::Vector2d(-100, 0));
-    EXPECT_EQ(expected_bounds.ToString(), target->bounds().ToString());
+  // Verify that the window has moved after the gesture.
+  expected_bounds = old_bounds;
+  expected_bounds.Offset(gfx::Vector2d(-100, 0));
+  EXPECT_EQ(expected_bounds.ToString(), target->bounds().ToString());
 
-    // Verify that the window did not snap left.
-    EXPECT_NE(snapped_bounds.ToString(), target->bounds().ToString());
-  }
+  // Verify that the window did not snap left.
+  EXPECT_TRUE(window_state->IsNormalStateType());
 }
 
 // Tests that dragging multiple windows at the same time is not allowed.
@@ -685,6 +678,31 @@ TEST_F(ToplevelWindowEventHandlerTest, MAYBE_MinimizeMaximizeCompletes) {
     RunAllPendingInMessageLoop();
     EXPECT_EQ("10,11 100x100", target->bounds().ToString());
   }
+}
+
+// Verifies that a drag cannot be started via
+// aura::client::WindowMoveClient::RunMoveLoop() while another drag is already
+// in progress.
+TEST_F(ToplevelWindowEventHandlerTest, RunMoveLoopFailsDuringInProgressDrag) {
+  scoped_ptr<aura::Window> window1(CreateWindow(HTCAPTION));
+  EXPECT_EQ("0,0 100x100", window1->bounds().ToString());
+  scoped_ptr<aura::Window> window2(CreateWindow(HTCAPTION));
+
+  aura::test::EventGenerator generator(Shell::GetPrimaryRootWindow(),
+                                       window1.get());
+  window1->Focus();
+  generator.PressLeftButton();
+  generator.MoveMouseBy(10, 11);
+  EXPECT_EQ("10,11 100x100", window1->bounds().ToString());
+
+  aura::client::WindowMoveClient* move_client =
+      aura::client::GetWindowMoveClient(window2->GetRootWindow());
+  EXPECT_EQ(aura::client::MOVE_CANCELED,
+            move_client->RunMoveLoop(window2.get(), gfx::Vector2d(),
+                aura::client::WINDOW_MOVE_SOURCE_MOUSE));
+
+  generator.ReleaseLeftButton();
+  EXPECT_EQ("10,11 100x100", window1->bounds().ToString());
 }
 
 // Showing the resize shadows when the mouse is over the window edges is tested

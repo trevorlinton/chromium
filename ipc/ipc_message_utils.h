@@ -11,9 +11,10 @@
 #include <string>
 #include <vector>
 
+#include "base/containers/small_map.h"
+#include "base/files/file.h"
 #include "base/format_macros.h"
 #include "base/memory/scoped_vector.h"
-#include "base/platform_file.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -265,8 +266,8 @@ struct ParamTraits<std::wstring> {
 // need this trait.
 #if !defined(WCHAR_T_IS_UTF16)
 template <>
-struct ParamTraits<string16> {
-  typedef string16 param_type;
+struct ParamTraits<base::string16> {
+  typedef base::string16 param_type;
   static void Write(Message* m, const param_type& p) {
     m->WriteString16(p);
   }
@@ -474,15 +475,15 @@ struct IPC_EXPORT ParamTraits<base::NullableString16> {
 };
 
 template <>
-struct IPC_EXPORT ParamTraits<base::PlatformFileInfo> {
-  typedef base::PlatformFileInfo param_type;
+struct IPC_EXPORT ParamTraits<base::File::Info> {
+  typedef base::File::Info param_type;
   static void Write(Message* m, const param_type& p);
   static bool Read(const Message* m, PickleIterator* iter, param_type* r);
   static void Log(const param_type& p, std::string* l);
 };
 
 template <>
-struct SimilarTypeTraits<base::PlatformFileError> {
+struct SimilarTypeTraits<base::File::Error> {
   typedef int Type;
 };
 
@@ -667,6 +668,41 @@ struct ParamTraits<ScopedVector<P> > {
         l->append(" ");
       LogParam(*p[i], l);
     }
+  }
+};
+
+template <typename NormalMap,
+          int kArraySize,
+          typename EqualKey,
+          typename MapInit>
+struct ParamTraits<base::SmallMap<NormalMap, kArraySize, EqualKey, MapInit> > {
+  typedef base::SmallMap<NormalMap, kArraySize, EqualKey, MapInit> param_type;
+  typedef typename param_type::key_type K;
+  typedef typename param_type::data_type V;
+  static void Write(Message* m, const param_type& p) {
+    WriteParam(m, static_cast<int>(p.size()));
+    typename param_type::const_iterator iter;
+    for (iter = p.begin(); iter != p.end(); ++iter) {
+      WriteParam(m, iter->first);
+      WriteParam(m, iter->second);
+    }
+  }
+  static bool Read(const Message* m, PickleIterator* iter, param_type* r) {
+    int size;
+    if (!m->ReadLength(iter, &size))
+      return false;
+    for (int i = 0; i < size; ++i) {
+      K key;
+      if (!ReadParam(m, iter, &key))
+        return false;
+      V& value = (*r)[key];
+      if (!ReadParam(m, iter, &value))
+        return false;
+    }
+    return true;
+  }
+  static void Log(const param_type& p, std::string* l) {
+    l->append("<base::SmallMap>");
   }
 };
 

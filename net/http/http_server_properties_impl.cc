@@ -7,6 +7,7 @@
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/stl_util.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "net/http/http_pipelined_host_capability.h"
 
@@ -18,9 +19,13 @@ namespace net {
 static const int kDefaultNumHostsToRemember = 200;
 
 HttpServerPropertiesImpl::HttpServerPropertiesImpl()
-    : pipeline_capability_map_(
+    : alternate_protocol_map_(AlternateProtocolMap::NO_AUTO_EVICT),
+      spdy_settings_map_(SpdySettingsMap::NO_AUTO_EVICT),
+      pipeline_capability_map_(
         new CachedPipelineCapabilityMap(kDefaultNumHostsToRemember)),
       weak_ptr_factory_(this) {
+  canoncial_suffixes_.push_back(".c.youtube.com");
+  canoncial_suffixes_.push_back(".googlevideo.com");
 }
 
 HttpServerPropertiesImpl::~HttpServerPropertiesImpl() {
@@ -41,20 +46,56 @@ void HttpServerPropertiesImpl::InitializeSpdyServers(
 
 void HttpServerPropertiesImpl::InitializeAlternateProtocolServers(
     AlternateProtocolMap* alternate_protocol_map) {
-  // First swap, and then add back all the ALTERNATE_PROTOCOL_BROKEN ones since
-  // those don't get persisted.
-  alternate_protocol_map_.swap(*alternate_protocol_map);
-  for (AlternateProtocolMap::const_iterator it =
-       alternate_protocol_map->begin();
-       it != alternate_protocol_map->end(); ++it) {
-    if (it->second.protocol == ALTERNATE_PROTOCOL_BROKEN)
-      alternate_protocol_map_[it->first] = it->second;
+  // Keep all the ALTERNATE_PROTOCOL_BROKEN ones since those don't
+  // get persisted.
+  for (AlternateProtocolMap::iterator it = alternate_protocol_map_.begin();
+       it != alternate_protocol_map_.end();) {
+    AlternateProtocolMap::iterator old_it = it;
+    ++it;
+    if (old_it->second.protocol != ALTERNATE_PROTOCOL_BROKEN) {
+      alternate_protocol_map_.Erase(old_it);
+    }
+  }
+
+  // Add the entries from persisted data.
+  for (AlternateProtocolMap::reverse_iterator it =
+           alternate_protocol_map->rbegin();
+       it != alternate_protocol_map->rend(); ++it) {
+    alternate_protocol_map_.Put(it->first, it->second);
+  }
+
+  // Attempt to find canonical servers.
+  int canonical_ports[] = { 80, 443 };
+  for (size_t i = 0; i < canoncial_suffixes_.size(); ++i) {
+    std::string canonical_suffix = canoncial_suffixes_[i];
+    for (size_t j = 0; j < arraysize(canonical_ports); ++j) {
+      HostPortPair canonical_host(canonical_suffix, canonical_ports[j]);
+      // If we already have a valid canonical server, we're done.
+      if (ContainsKey(canonical_host_to_origin_map_, canonical_host) &&
+          (alternate_protocol_map_.Peek(canonical_host_to_origin_map_[
+               canonical_host]) != alternate_protocol_map_.end())) {
+        continue;
+      }
+      // Now attempt to find a server which matches this origin and set it as
+      // canonical .
+      for (AlternateProtocolMap::const_iterator it =
+               alternate_protocol_map_.begin();
+           it != alternate_protocol_map_.end(); ++it) {
+        if (EndsWith(it->first.host(), canoncial_suffixes_[i], false)) {
+          canonical_host_to_origin_map_[canonical_host] = it->first;
+          break;
+        }
+      }
+    }
   }
 }
 
 void HttpServerPropertiesImpl::InitializeSpdySettingsServers(
     SpdySettingsMap* spdy_settings_map) {
-  spdy_settings_map_.swap(*spdy_settings_map);
+  for (SpdySettingsMap::reverse_iterator it = spdy_settings_map->rbegin();
+       it != spdy_settings_map->rend(); ++it) {
+    spdy_settings_map_.Put(it->first, it->second);
+  }
 }
 
 void HttpServerPropertiesImpl::InitializePipelineCapabilities(
@@ -120,8 +161,8 @@ base::WeakPtr<HttpServerProperties> HttpServerPropertiesImpl::GetWeakPtr() {
 void HttpServerPropertiesImpl::Clear() {
   DCHECK(CalledOnValidThread());
   spdy_servers_table_.clear();
-  alternate_protocol_map_.clear();
-  spdy_settings_map_.clear();
+  alternate_protocol_map_.Clear();
+  spdy_settings_map_.Clear();
   pipeline_capability_map_->Clear();
 }
 
@@ -158,21 +199,28 @@ void HttpServerPropertiesImpl::SetSupportsSpdy(
 }
 
 bool HttpServerPropertiesImpl::HasAlternateProtocol(
-    const HostPortPair& server) const {
-  return ContainsKey(alternate_protocol_map_, server) ||
-      g_forced_alternate_protocol;
+    const HostPortPair& server) {
+  if (alternate_protocol_map_.Get(server) != alternate_protocol_map_.end() ||
+      g_forced_alternate_protocol)
+    return true;
+
+  return GetCanonicalHost(server) != canonical_host_to_origin_map_.end();
 }
 
 PortAlternateProtocolPair
 HttpServerPropertiesImpl::GetAlternateProtocol(
-    const HostPortPair& server) const {
+    const HostPortPair& server) {
   DCHECK(HasAlternateProtocol(server));
 
   // First check the map.
-  AlternateProtocolMap::const_iterator it =
-      alternate_protocol_map_.find(server);
+  AlternateProtocolMap::iterator it = alternate_protocol_map_.Get(server);
   if (it != alternate_protocol_map_.end())
     return it->second;
+
+  // Next check the canonical host.
+  CanonicalHostMap::const_iterator canonical_host = GetCanonicalHost(server);
+  if (canonical_host != canonical_host_to_origin_map_.end())
+    return alternate_protocol_map_.Get(canonical_host->second)->second;
 
   // We must be forcing an alternate.
   DCHECK(g_forced_alternate_protocol);
@@ -212,12 +260,37 @@ void HttpServerPropertiesImpl::SetAlternateProtocol(
     }
   }
 
-  alternate_protocol_map_[server] = alternate;
+  alternate_protocol_map_.Put(server, alternate);
+
+  // If this host ends with a canonical suffix, then set it as the
+  // canonical host.
+  for (size_t i = 0; i < canoncial_suffixes_.size(); ++i) {
+    std::string canonical_suffix = canoncial_suffixes_[i];
+    if (EndsWith(server.host(), canoncial_suffixes_[i], false)) {
+      HostPortPair canonical_host(canonical_suffix, server.port());
+      canonical_host_to_origin_map_[canonical_host] = server;
+      break;
+    }
+  }
 }
 
 void HttpServerPropertiesImpl::SetBrokenAlternateProtocol(
     const HostPortPair& server) {
-  alternate_protocol_map_[server].protocol = ALTERNATE_PROTOCOL_BROKEN;
+  AlternateProtocolMap::iterator it = alternate_protocol_map_.Get(server);
+  if (it != alternate_protocol_map_.end()) {
+    it->second.protocol = ALTERNATE_PROTOCOL_BROKEN;
+    return;
+  }
+  PortAlternateProtocolPair alternate;
+  alternate.protocol = ALTERNATE_PROTOCOL_BROKEN;
+  alternate_protocol_map_.Put(server, alternate);
+}
+
+void HttpServerPropertiesImpl::ClearAlternateProtocol(
+    const HostPortPair& server) {
+  AlternateProtocolMap::iterator it = alternate_protocol_map_.Peek(server);
+  if (it != alternate_protocol_map_.end())
+    alternate_protocol_map_.Erase(it);
 }
 
 const AlternateProtocolMap&
@@ -226,8 +299,8 @@ HttpServerPropertiesImpl::alternate_protocol_map() const {
 }
 
 const SettingsMap& HttpServerPropertiesImpl::GetSpdySettings(
-    const HostPortPair& host_port_pair) const {
-  SpdySettingsMap::const_iterator it = spdy_settings_map_.find(host_port_pair);
+    const HostPortPair& host_port_pair) {
+  SpdySettingsMap::iterator it = spdy_settings_map_.Get(host_port_pair);
   if (it == spdy_settings_map_.end()) {
     CR_DEFINE_STATIC_LOCAL(SettingsMap, kEmptySettingsMap, ());
     return kEmptySettingsMap;
@@ -243,24 +316,50 @@ bool HttpServerPropertiesImpl::SetSpdySetting(
   if (!(flags & SETTINGS_FLAG_PLEASE_PERSIST))
       return false;
 
-  SettingsMap& settings_map = spdy_settings_map_[host_port_pair];
   SettingsFlagsAndValue flags_and_value(SETTINGS_FLAG_PERSISTED, value);
-  settings_map[id] = flags_and_value;
+  SpdySettingsMap::iterator it = spdy_settings_map_.Get(host_port_pair);
+  if (it == spdy_settings_map_.end()) {
+    SettingsMap settings_map;
+    settings_map[id] = flags_and_value;
+    spdy_settings_map_.Put(host_port_pair, settings_map);
+  } else {
+    SettingsMap& settings_map = it->second;
+    settings_map[id] = flags_and_value;
+  }
   return true;
 }
 
 void HttpServerPropertiesImpl::ClearSpdySettings(
     const HostPortPair& host_port_pair) {
-  spdy_settings_map_.erase(host_port_pair);
+  SpdySettingsMap::iterator it = spdy_settings_map_.Peek(host_port_pair);
+  if (it != spdy_settings_map_.end())
+    spdy_settings_map_.Erase(it);
 }
 
 void HttpServerPropertiesImpl::ClearAllSpdySettings() {
-  spdy_settings_map_.clear();
+  spdy_settings_map_.Clear();
 }
 
 const SpdySettingsMap&
 HttpServerPropertiesImpl::spdy_settings_map() const {
   return spdy_settings_map_;
+}
+
+void HttpServerPropertiesImpl::SetServerNetworkStats(
+    const HostPortPair& host_port_pair,
+    NetworkStats stats) {
+  server_network_stats_map_[host_port_pair] = stats;
+}
+
+const HttpServerProperties::NetworkStats*
+HttpServerPropertiesImpl::GetServerNetworkStats(
+    const HostPortPair& host_port_pair) const {
+  ServerNetworkStatsMap::const_iterator it =
+      server_network_stats_map_.find(host_port_pair);
+  if (it == server_network_stats_map_.end()) {
+    return NULL;
+  }
+  return &it->second;
 }
 
 HttpPipelinedHostCapability HttpServerPropertiesImpl::GetPipelineCapability(
@@ -298,6 +397,19 @@ HttpServerPropertiesImpl::GetPipelineCapabilityMap() const {
     result[it->first] = it->second;
   }
   return result;
+}
+
+HttpServerPropertiesImpl::CanonicalHostMap::const_iterator
+HttpServerPropertiesImpl::GetCanonicalHost(HostPortPair server) const {
+  for (size_t i = 0; i < canoncial_suffixes_.size(); ++i) {
+    std::string canonical_suffix = canoncial_suffixes_[i];
+    if (EndsWith(server.host(), canoncial_suffixes_[i], false)) {
+      HostPortPair canonical_host(canonical_suffix, server.port());
+      return canonical_host_to_origin_map_.find(canonical_host);
+    }
+  }
+
+  return canonical_host_to_origin_map_.end();
 }
 
 }  // namespace net

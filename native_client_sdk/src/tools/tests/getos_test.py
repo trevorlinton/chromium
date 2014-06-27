@@ -71,50 +71,25 @@ class TestGetos(TestCaseExtended):
     """honors CHROME_PATH environment."""
     with mock.patch.dict('os.environ', {'CHROME_PATH': '/dummy/file'}):
       expect = "Invalid CHROME_PATH.*/dummy/file"
+      platform = getos.GetPlatform()
       if hasattr(self, 'assertRaisesRegexp'):
         with self.assertRaisesRegexp(getos.Error, expect):
-          getos.GetChromePath()
+          getos.GetChromePath(platform)
       else:
         # TODO(sbc): remove this path once we switch to python2.7 everywhere
-        self.assertRaises(getos.Error, getos.GetChromePath)
+        self.assertRaises(getos.Error, getos.GetChromePath, platform)
 
   def testGetChromePathCheckExists(self):
     """checks that existence of explicitly CHROME_PATH is checked."""
     mock_location = '/bin/ls'
-    if getos.GetPlatform() == 'win':
+    platform = getos.GetPlatform()
+    if platform == 'win':
       mock_location = 'c:\\nowhere'
     with mock.patch.dict('os.environ', {'CHROME_PATH': mock_location}):
       with mock.patch('os.path.exists') as mock_exists:
-        chrome = getos.GetChromePath()
+        chrome = getos.GetChromePath(platform)
         self.assertEqual(chrome, mock_location)
         mock_exists.assert_called_with(chrome)
-
-  def testGetHelperPath(self):
-    """GetHelperPath checks that helper exists."""
-    platform = getos.GetPlatform()
-    # The helper is only needed on linux. On other platforms
-    # GetHelperPath() simply return empty string.
-    if platform == 'linux':
-      with mock.patch('os.path.exists') as mock_exists:
-        helper = getos.GetHelperPath(platform)
-        mock_exists.assert_called_with(helper)
-    else:
-      helper = getos.GetHelperPath(platform)
-      self.assertEqual(helper, '')
-
-  def testGetIrtBinPath(self):
-    """GetIrtBinPath checks that irtbin exists."""
-    platform = getos.GetPlatform()
-    with mock.patch('os.path.exists') as mock_exists:
-      irt = getos.GetIrtBinPath(platform)
-      mock_exists.assert_called_with(irt)
-
-  def testGetLoaderPath(self):
-    """checks that loader exists."""
-    platform = getos.GetPlatform()
-    with mock.patch('os.path.exists') as mock_exists:
-      loader = getos.GetLoaderPath(platform)
-      mock_exists.assert_called_with(loader)
 
   def testGetNaClArch(self):
     """returns a valid architecture."""

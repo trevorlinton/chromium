@@ -85,8 +85,9 @@ bool NetworkState::PropertyChanged(const std::string& key,
   } else if (key == shill::kErrorProperty) {
     if (!GetStringValue(key, value, &error_))
       return false;
-    // Shill uses "Unknown" to indicate an unset error state.
-    if (error_ == kErrorUnknown)
+    if (ErrorIsValid(error_))
+      last_error_ = error_;
+    else
       error_.clear();
     return true;
   } else if (key == IPConfigProperty(shill::kAddressProperty)) {
@@ -156,7 +157,13 @@ bool NetworkState::PropertyChanged(const std::string& key,
 bool NetworkState::InitialPropertiesReceived(
     const base::DictionaryValue& properties) {
   NET_LOG_DEBUG("InitialPropertiesReceived", path());
-  bool changed = UpdateName(properties);
+  bool changed = false;
+  if (!properties.HasKey(shill::kTypeProperty)) {
+    NET_LOG_ERROR("NetworkState has no type",
+                  shill_property_util::GetNetworkIdFromProperties(properties));
+  } else {
+    changed |= UpdateName(properties);
+  }
   bool had_ca_cert_nss = has_ca_cert_nss_;
   has_ca_cert_nss_ = IsCaCertNssSet(properties);
   changed |= had_ca_cert_nss != has_ca_cert_nss_;
@@ -200,11 +207,9 @@ void NetworkState::GetProperties(base::DictionaryValue* dictionary) const {
                                             security_);
   dictionary->SetStringWithoutPathExpansion(shill::kEapMethodProperty,
                                             eap_method_);
-  // Proxy config and ONC source are intentionally omitted: These properties are
-  // placed in NetworkState to transition ProxyConfigServiceImpl from
-  // NetworkLibrary to the new network stack. The networking extension API
-  // shouldn't depend on this member. Once ManagedNetworkConfigurationHandler
-  // is used instead of NetworkLibrary, we can remove them again.
+
+  // ui_data_ (contains ONC source) is intentionally omitted.
+
   dictionary->SetStringWithoutPathExpansion(
       shill::kNetworkTechnologyProperty,
       network_technology_);
@@ -236,7 +241,7 @@ bool NetworkState::IsConnectingState() const {
 
 bool NetworkState::IsPrivate() const {
   return !profile_path_.empty() &&
-      profile_path_ != NetworkProfileHandler::kSharedProfilePath;
+      profile_path_ != NetworkProfileHandler::GetSharedProfilePath();
 }
 
 std::string NetworkState::GetDnsServersAsString() const {
@@ -275,6 +280,12 @@ bool NetworkState::StateIsConnecting(const std::string& connection_state) {
   return (connection_state == shill::kStateAssociation ||
           connection_state == shill::kStateConfiguration ||
           connection_state == shill::kStateCarrier);
+}
+
+// static
+bool NetworkState::ErrorIsValid(const std::string& error) {
+  // Shill uses "Unknown" to indicate an unset or cleared error state.
+  return !error.empty() && error != kErrorUnknown;
 }
 
 // static

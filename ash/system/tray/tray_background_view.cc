@@ -6,7 +6,7 @@
 
 #include "ash/ash_switches.h"
 #include "ash/root_window_controller.h"
-#include "ash/screen_ash.h"
+#include "ash/screen_util.h"
 #include "ash/shelf/shelf_layout_manager.h"
 #include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
@@ -18,9 +18,9 @@
 #include "ash/system/tray/tray_event_filter.h"
 #include "ash/wm/window_animations.h"
 #include "grit/ash_resources.h"
-#include "ui/aura/root_window.h"
+#include "ui/accessibility/ax_view_state.h"
 #include "ui/aura/window.h"
-#include "ui/base/accessibility/accessible_view_state.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/image/image_skia.h"
@@ -284,11 +284,10 @@ void TrayBackgroundView::TrayContainer::UpdateLayout() {
       vertical_padding = kPaddingFromEdgeOfShelf;
       horizontal_padding = kPaddingFromEdgeOfShelf;
     }
-    set_border(views::Border::CreateEmptyBorder(
-        vertical_padding,
-        horizontal_padding,
-        vertical_padding,
-        horizontal_padding));
+    SetBorder(views::Border::CreateEmptyBorder(vertical_padding,
+                                               horizontal_padding,
+                                               vertical_padding,
+                                               horizontal_padding));
 
     views::BoxLayout* layout =
         new views::BoxLayout(views::BoxLayout::kHorizontal, 0, 0, 0);
@@ -301,11 +300,10 @@ void TrayBackgroundView::TrayContainer::UpdateLayout() {
       vertical_padding = kPaddingFromEdgeOfShelf;
       horizontal_padding = kPaddingFromEdgeOfShelf;
     }
-    set_border(views::Border::CreateEmptyBorder(
-        vertical_padding,
-        horizontal_padding,
-        vertical_padding,
-        horizontal_padding));
+    SetBorder(views::Border::CreateEmptyBorder(vertical_padding,
+                                               horizontal_padding,
+                                               vertical_padding,
+                                               horizontal_padding));
 
     views::BoxLayout* layout =
         new views::BoxLayout(views::BoxLayout::kVertical, 0, 0, 0);
@@ -333,10 +331,10 @@ TrayBackgroundView::TrayBackgroundView(
   set_notify_enter_exit_on_child(true);
 
   // Initially we want to paint the background, but without the hover effect.
-  hide_background_animator_.SetPaintsBackground(true,
-      internal::BackgroundAnimator::CHANGE_IMMEDIATE);
-  hover_background_animator_.SetPaintsBackground(false,
-      internal::BackgroundAnimator::CHANGE_IMMEDIATE);
+  hide_background_animator_.SetPaintsBackground(
+      true, BACKGROUND_CHANGE_IMMEDIATE);
+  hover_background_animator_.SetPaintsBackground(
+      false, BACKGROUND_CHANGE_IMMEDIATE);
 
   tray_container_ = new TrayContainer(shelf_alignment_);
   SetContents(tray_container_);
@@ -350,7 +348,7 @@ TrayBackgroundView::~TrayBackgroundView() {
 
 void TrayBackgroundView::Initialize() {
   GetWidget()->AddObserver(widget_observer_.get());
-  SetBorder();
+  SetTrayBorder();
 }
 
 const char* TrayBackgroundView::GetClassName() const {
@@ -362,8 +360,8 @@ void TrayBackgroundView::OnMouseEntered(const ui::MouseEvent& event) {
   if (!background_ || draw_background_as_active_ ||
       ash::switches::UseAlternateShelfLayout())
     return;
-  hover_background_animator_.SetPaintsBackground(true,
-      internal::BackgroundAnimator::CHANGE_ANIMATE);
+  hover_background_animator_.SetPaintsBackground(
+      true, BACKGROUND_CHANGE_ANIMATE);
 }
 
 void TrayBackgroundView::OnMouseExited(const ui::MouseEvent& event) {
@@ -371,24 +369,16 @@ void TrayBackgroundView::OnMouseExited(const ui::MouseEvent& event) {
   if (!background_ || draw_background_as_active_ ||
       ash::switches::UseAlternateShelfLayout())
     return;
-  hover_background_animator_.SetPaintsBackground(false,
-      internal::BackgroundAnimator::CHANGE_ANIMATE);
+  hover_background_animator_.SetPaintsBackground(
+      false, BACKGROUND_CHANGE_ANIMATE);
 }
 
 void TrayBackgroundView::ChildPreferredSizeChanged(views::View* child) {
   PreferredSizeChanged();
 }
 
-void TrayBackgroundView::OnPaintFocusBorder(gfx::Canvas* canvas) {
-  // The tray itself expands to the right and bottom edge of the screen to make
-  // sure clicking on the edges brings up the popup. However, the focus border
-  // should be only around the container.
-  if (HasFocus() && (focusable() || IsAccessibilityFocusable()))
-    DrawBorder(canvas, GetContentsBounds());
-}
-
-void TrayBackgroundView::GetAccessibleState(ui::AccessibleViewState* state) {
-  state->role = ui::AccessibilityTypes::ROLE_PUSHBUTTON;
+void TrayBackgroundView::GetAccessibleState(ui::AXViewState* state) {
+  state->role = ui::AX_ROLE_BUTTON;
   state->name = GetAccessibleNameForTray();
 }
 
@@ -401,6 +391,13 @@ void TrayBackgroundView::AboutToRequestFocusFromTabTraversal(bool reverse) {
 
 bool TrayBackgroundView::PerformAction(const ui::Event& event) {
   return false;
+}
+
+gfx::Rect TrayBackgroundView::GetFocusBounds() {
+  // The tray itself expands to the right and bottom edge of the screen to make
+  // sure clicking on the edges brings up the popup. However, the focus border
+  // should be only around the container.
+  return GetContentsBounds();
 }
 
 void TrayBackgroundView::UpdateBackground(int alpha) {
@@ -419,8 +416,7 @@ void TrayBackgroundView::SetContents(views::View* contents) {
 }
 
 void TrayBackgroundView::SetPaintsBackground(
-    bool value,
-    internal::BackgroundAnimator::ChangeType change_type) {
+    bool value, BackgroundAnimatorChangeType change_type) {
   DCHECK(!ash::switches::UseAlternateShelfLayout());
   hide_background_animator_.SetPaintsBackground(value, change_type);
 }
@@ -431,16 +427,16 @@ void TrayBackgroundView::SetContentsBackground() {
 }
 
 ShelfLayoutManager* TrayBackgroundView::GetShelfLayoutManager() {
-  return ShelfLayoutManager::ForLauncher(GetWidget()->GetNativeView());
+  return ShelfLayoutManager::ForShelf(GetWidget()->GetNativeView());
 }
 
 void TrayBackgroundView::SetShelfAlignment(ShelfAlignment alignment) {
   shelf_alignment_ = alignment;
-  SetBorder();
+  SetTrayBorder();
   tray_container_->SetAlignment(alignment);
 }
 
-void TrayBackgroundView::SetBorder() {
+void TrayBackgroundView::SetTrayBorder() {
   views::View* parent = status_area_widget_->status_area_widget_delegate();
   // Tray views are laid out right-to-left or bottom-to-top
   bool on_edge = (this == parent->child_at(0));
@@ -491,19 +487,19 @@ void TrayBackgroundView::SetBorder() {
       right_edge = kPaddingFromOuterEdgeOfLauncherVerticalAlignment;
     }
   }
-  set_border(views::Border::CreateEmptyBorder(
+  SetBorder(views::Border::CreateEmptyBorder(
       top_edge, left_edge, bottom_edge, right_edge));
 }
 
 void TrayBackgroundView::InitializeBubbleAnimations(
     views::Widget* bubble_widget) {
-  views::corewm::SetWindowVisibilityAnimationType(
+  wm::SetWindowVisibilityAnimationType(
       bubble_widget->GetNativeWindow(),
-      views::corewm::WINDOW_VISIBILITY_ANIMATION_TYPE_FADE);
-  views::corewm::SetWindowVisibilityAnimationTransition(
+      wm::WINDOW_VISIBILITY_ANIMATION_TYPE_FADE);
+  wm::SetWindowVisibilityAnimationTransition(
       bubble_widget->GetNativeWindow(),
-      views::corewm::ANIMATE_HIDE);
-  views::corewm::SetWindowVisibilityAnimationDuration(
+      wm::ANIMATE_HIDE);
+  wm::SetWindowVisibilityAnimationDuration(
       bubble_widget->GetNativeWindow(),
       base::TimeDelta::FromMilliseconds(kAnimationDurationForPopupMS));
 }
@@ -582,7 +578,7 @@ gfx::Rect TrayBackgroundView::GetBubbleAnchorRect(
         rect.width() - kPaddingFromRightEdgeOfScreenBottomAlignment,
         rect.height() - kPaddingFromBottomOfScreenBottomAlignment,
         0, 0);
-    rect = ScreenAsh::ConvertRectToScreen(target_root, rect);
+    rect = ScreenUtil::ConvertRectToScreen(target_root, rect);
   }
   return rect;
 }
@@ -625,7 +621,7 @@ void TrayBackgroundView::UpdateBubbleViewArrow(
   aura::Window* root_window =
       bubble_view->GetWidget()->GetNativeView()->GetRootWindow();
   ash::internal::ShelfLayoutManager* shelf =
-      ShelfLayoutManager::ForLauncher(root_window);
+      ShelfLayoutManager::ForShelf(root_window);
   bubble_view->SetArrowPaintType(
       (shelf && shelf->IsVisible()) ?
       views::BubbleBorder::PAINT_NORMAL :

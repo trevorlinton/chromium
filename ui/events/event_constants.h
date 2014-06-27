@@ -31,11 +31,14 @@ enum EventType {
 
   // GestureEvent types
   ET_GESTURE_SCROLL_BEGIN,
+  ET_GESTURE_TYPE_START = ET_GESTURE_SCROLL_BEGIN,
   ET_GESTURE_SCROLL_END,
   ET_GESTURE_SCROLL_UPDATE,
   ET_GESTURE_TAP,
   ET_GESTURE_TAP_DOWN,
   ET_GESTURE_TAP_CANCEL,
+  ET_GESTURE_TAP_UNCONFIRMED, // User tapped, but the tap delay hasn't expired.
+  ET_GESTURE_DOUBLE_TAP,
   ET_GESTURE_BEGIN,  // Sent before any other gesture types.
   ET_GESTURE_END,    // Sent after any other gestures.
   ET_GESTURE_TWO_FINGER_TAP,
@@ -49,11 +52,15 @@ enum EventType {
   ET_GESTURE_MULTIFINGER_SWIPE,
   ET_GESTURE_SHOW_PRESS,
 
+  // Sent by Win8+ metro when the user swipes from the bottom or top.
+  ET_GESTURE_WIN8_EDGE_SWIPE,
+
   // Scroll support.
   // TODO[davemoore] we need to unify these events w/ touch and gestures.
   ET_SCROLL,
   ET_SCROLL_FLING_START,
   ET_SCROLL_FLING_CANCEL,
+  ET_GESTURE_TYPE_END = ET_SCROLL_FLING_CANCEL,
 
   // Sent by the system to indicate any modal type operations, such as drag and
   // drop or menus, should stop.
@@ -82,6 +89,14 @@ enum EventFlags {
   EF_EXTENDED            = 1 << 8,  // Windows extended key (see WM_KEYDOWN doc)
   EF_IS_SYNTHESIZED      = 1 << 9,
   EF_ALTGR_DOWN          = 1 << 10,
+};
+
+// Flags specific to key events
+enum KeyEventFlags {
+  EF_NUMPAD_KEY         = 1 << 16,  // Key originates from number pad (Xkb only)
+  EF_IME_FABRICATED_KEY = 1 << 17,  // Key event fabricated by the underlying
+                                    // IME without a user action.
+                                    // (Linux X11 only)
 };
 
 // Flags specific to mouse events

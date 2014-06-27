@@ -6,15 +6,15 @@
 
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/avatar_menu.h"
-#include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/profiles/profiles_state.h"
+#include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/common/profile_management_switches.h"
 
 namespace extensions {
 
 bool PrincipalsPrivateExtensionFunction::RunImpl() {
-  if (!profiles::IsNewProfileManagementEnabled()) {
+  if (!switches::IsNewProfileManagement()) {
     SetError(
         "Need to enable new-profile-management to use principalsPrivate API.");
     return false;
@@ -25,18 +25,17 @@ bool PrincipalsPrivateExtensionFunction::RunImpl() {
 bool PrincipalsPrivateSignOutFunction::RunImplSafe() {
   Browser* browser = GetCurrentBrowser();
   if (browser) {
-    AvatarMenu avatar_menu(
-        &g_browser_process->profile_manager()->GetProfileInfoCache(), NULL,
-        browser);
-    avatar_menu.BeginSignOut();
+    profiles::LockProfile(browser->profile());
   }
   return true;
 }
 
 bool PrincipalsPrivateShowAvatarBubbleFunction::RunImplSafe() {
   Browser* browser = GetCurrentBrowser();
-  if (browser)
-    browser->window()->ShowAvatarBubbleFromAvatarButton();
+  if (browser) {
+    browser->window()->ShowAvatarBubbleFromAvatarButton(
+        BrowserWindow::AVATAR_BUBBLE_MODE_ACCOUNT_MANAGEMENT);
+  }
   return true;
 }
 

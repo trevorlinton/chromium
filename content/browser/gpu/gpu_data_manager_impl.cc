@@ -139,19 +139,19 @@ void GpuDataManagerImpl::UpdateVideoMemoryUsageStats(
 }
 
 void GpuDataManagerImpl::AppendRendererCommandLine(
-    CommandLine* command_line) const {
+    base::CommandLine* command_line) const {
   base::AutoLock auto_lock(lock_);
   private_->AppendRendererCommandLine(command_line);
 }
 
 void GpuDataManagerImpl::AppendGpuCommandLine(
-    CommandLine* command_line) const {
+    base::CommandLine* command_line) const {
   base::AutoLock auto_lock(lock_);
   private_->AppendGpuCommandLine(command_line);
 }
 
 void GpuDataManagerImpl::AppendPluginCommandLine(
-    CommandLine* command_line) const {
+    base::CommandLine* command_line) const {
   base::AutoLock auto_lock(lock_);
   private_->AppendPluginCommandLine(command_line);
 }
@@ -160,11 +160,6 @@ void GpuDataManagerImpl::UpdateRendererWebPrefs(
     WebPreferences* prefs) const {
   base::AutoLock auto_lock(lock_);
   private_->UpdateRendererWebPrefs(prefs);
-}
-
-gpu::GpuSwitchingOption GpuDataManagerImpl::GetGpuSwitchingOption() const {
-  base::AutoLock auto_lock(lock_);
-  return private_->GetGpuSwitchingOption();
 }
 
 std::string GpuDataManagerImpl::GetBlacklistVersion() const {
@@ -210,13 +205,6 @@ void GpuDataManagerImpl::HandleGpuSwitch() {
   base::AutoLock auto_lock(lock_);
   private_->HandleGpuSwitch();
 }
-
-#if defined(OS_WIN)
-bool GpuDataManagerImpl::IsUsingAcceleratedSurface() const {
-  base::AutoLock auto_lock(lock_);
-  return private_->IsUsingAcceleratedSurface();
-}
-#endif
 
 void GpuDataManagerImpl::BlockDomainFrom3DAPIs(
     const GURL& url, DomainGuilt guilt) {

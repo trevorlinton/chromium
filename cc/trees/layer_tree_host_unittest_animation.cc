@@ -6,6 +6,7 @@
 
 #include "cc/animation/animation_curve.h"
 #include "cc/animation/layer_animation_controller.h"
+#include "cc/animation/scroll_offset_animation_curve.h"
 #include "cc/animation/timing_function.h"
 #include "cc/layers/layer.h"
 #include "cc/layers/layer_impl.h"
@@ -115,8 +116,7 @@ class LayerTreeHostAnimationTestAddAnimation
  public:
   LayerTreeHostAnimationTestAddAnimation()
       : num_animates_(0),
-        received_animation_started_notification_(false),
-        start_time_(0.0) {
+        received_animation_started_notification_(false) {
   }
 
   virtual void BeginTest() OVERRIDE {
@@ -135,7 +135,7 @@ class LayerTreeHostAnimationTestAddAnimation
     }
 
     if (received_animation_started_notification_) {
-      EXPECT_LT(0.0, start_time_);
+      EXPECT_LT(base::TimeTicks(), start_time_);
 
       LayerAnimationController* controller_impl =
           host_impl->active_tree()->root_layer()->layer_animation_controller();
@@ -148,11 +148,13 @@ class LayerTreeHostAnimationTestAddAnimation
     }
   }
 
-  virtual void NotifyAnimationStarted(double wall_clock_time) OVERRIDE {
+  virtual void NotifyAnimationStarted(
+      base::TimeTicks monotonic_time,
+      Animation::TargetProperty target_property) OVERRIDE {
     received_animation_started_notification_ = true;
-    start_time_ = wall_clock_time;
+    start_time_ = monotonic_time;
     if (num_animates_) {
-      EXPECT_LT(0.0, start_time_);
+      EXPECT_LT(base::TimeTicks(), start_time_);
 
       LayerAnimationController* controller =
           layer_tree_host()->root_layer()->layer_animation_controller();
@@ -170,7 +172,7 @@ class LayerTreeHostAnimationTestAddAnimation
  private:
   int num_animates_;
   bool received_animation_started_notification_;
-  double start_time_;
+  base::TimeTicks start_time_;
 };
 
 SINGLE_AND_MULTI_THREAD_TEST_F(LayerTreeHostAnimationTestAddAnimation);
@@ -198,11 +200,11 @@ class LayerTreeHostAnimationTestCheckerboardDoesNotStarveDraws
       EndTest();
   }
 
-  virtual bool PrepareToDrawOnThread(
+  virtual DrawSwapReadbackResult::DrawResult PrepareToDrawOnThread(
       LayerTreeHostImpl* host_impl,
       LayerTreeHostImpl::FrameData* frame,
-      bool result) OVERRIDE {
-    return false;
+      DrawSwapReadbackResult::DrawResult draw_result) OVERRIDE {
+    return DrawSwapReadbackResult::DRAW_ABORTED_CHECKERBOARD_ANIMATIONS;
   }
 
   virtual void AfterTest() OVERRIDE { }
@@ -239,7 +241,9 @@ class LayerTreeHostAnimationTestAnimationsGetDeleted
       EndTest();
   }
 
-  virtual void NotifyAnimationFinished(double time) OVERRIDE {
+  virtual void NotifyAnimationFinished(
+      base::TimeTicks monotonic_time,
+      Animation::TargetProperty target_property) OVERRIDE {
     // Animations on the impl-side controller only get deleted during a commit,
     // so we need to schedule a commit.
     layer_tree_host()->SetNeedsCommit();
@@ -261,7 +265,7 @@ class LayerTreeHostAnimationTestTickAnimationWhileBackgrounded
       : num_animates_(0) {}
 
   virtual void BeginTest() OVERRIDE {
-    PostAddAnimationToMainThread(layer_tree_host()->root_layer());
+    PostAddLongAnimationToMainThread(layer_tree_host()->root_layer());
   }
 
   // Use WillAnimateLayers to set visible false before the animation runs and
@@ -293,6 +297,61 @@ class LayerTreeHostAnimationTestTickAnimationWhileBackgrounded
 SINGLE_AND_MULTI_THREAD_TEST_F(
     LayerTreeHostAnimationTestTickAnimationWhileBackgrounded);
 
+// Ensures that animation time remains monotonic when we switch from foreground
+// to background ticking and back, even if we're skipping draws due to
+// checkerboarding when in the foreground.
+class LayerTreeHostAnimationTestAnimationTickTimeIsMonotonic
+    : public LayerTreeHostAnimationTest {
+ public:
+  LayerTreeHostAnimationTestAnimationTickTimeIsMonotonic()
+      : has_background_ticked_(false), num_foreground_animates_(0) {}
+
+  virtual void InitializeSettings(LayerTreeSettings* settings) OVERRIDE {
+    // Make sure that drawing many times doesn't cause a checkerboarded
+    // animation to start so we avoid flake in this test.
+    settings->timeout_and_draw_when_animation_checkerboards = false;
+  }
+
+  virtual void BeginTest() OVERRIDE {
+    PostAddLongAnimationToMainThread(layer_tree_host()->root_layer());
+  }
+
+  virtual void AnimateLayers(LayerTreeHostImpl* host_impl,
+                             base::TimeTicks monotonic_time) OVERRIDE {
+    EXPECT_GE(monotonic_time, last_tick_time_);
+    last_tick_time_ = monotonic_time;
+    if (host_impl->visible()) {
+      num_foreground_animates_++;
+      if (num_foreground_animates_ > 1 && !has_background_ticked_)
+        PostSetVisibleToMainThread(false);
+      else if (has_background_ticked_)
+        EndTest();
+    } else {
+      has_background_ticked_ = true;
+      PostSetVisibleToMainThread(true);
+    }
+  }
+
+  virtual DrawSwapReadbackResult::DrawResult PrepareToDrawOnThread(
+      LayerTreeHostImpl* host_impl,
+      LayerTreeHostImpl::FrameData* frame,
+      DrawSwapReadbackResult::DrawResult draw_result) OVERRIDE {
+    if (TestEnded())
+      return draw_result;
+    return DrawSwapReadbackResult::DRAW_ABORTED_CHECKERBOARD_ANIMATIONS;
+  }
+
+  virtual void AfterTest() OVERRIDE {}
+
+ private:
+  bool has_background_ticked_;
+  int num_foreground_animates_;
+  base::TimeTicks last_tick_time_;
+};
+
+SINGLE_AND_MULTI_THREAD_TEST_F(
+    LayerTreeHostAnimationTestAnimationTickTimeIsMonotonic);
+
 // Ensures that animations do not tick when we are backgrounded and
 // and we have an empty active tree.
 class LayerTreeHostAnimationTestNoBackgroundTickingWithoutActiveTree
@@ -309,7 +368,9 @@ class LayerTreeHostAnimationTestNoBackgroundTickingWithoutActiveTree
     PostAddAnimationToMainThread(layer_tree_host()->root_layer());
   }
 
-  virtual void NotifyAnimationFinished(double time) OVERRIDE {
+  virtual void NotifyAnimationFinished(
+      base::TimeTicks monotonic_time,
+      Animation::TargetProperty target_property) OVERRIDE {
     // Replace animated commits with an empty tree.
     layer_tree_host()->SetRootLayer(make_scoped_refptr<Layer>(NULL));
   }
@@ -499,7 +560,9 @@ class LayerTreeHostAnimationTestSynchronizeAnimationStartTimes
     PostAddAnimationToMainThread(content_.get());
   }
 
-  virtual void NotifyAnimationStarted(double time) OVERRIDE {
+  virtual void NotifyAnimationStarted(
+      base::TimeTicks monotonic_time,
+      Animation::TargetProperty target_property) OVERRIDE {
     LayerAnimationController* controller =
         layer_tree_host()->root_layer()->children()[0]->
         layer_animation_controller();
@@ -554,7 +617,9 @@ class LayerTreeHostAnimationTestAnimationFinishedEvents
     PostAddInstantAnimationToMainThread(layer_tree_host()->root_layer());
   }
 
-  virtual void NotifyAnimationFinished(double time) OVERRIDE {
+  virtual void NotifyAnimationFinished(
+      base::TimeTicks monotonic_time,
+      Animation::TargetProperty target_property) OVERRIDE {
     LayerAnimationController* controller =
         layer_tree_host()->root_layer()->layer_animation_controller();
     Animation* animation =
@@ -713,6 +778,15 @@ class LayerTreeHostAnimationTestContinuousAnimate
         num_draw_layers_(0) {
   }
 
+  virtual void SetupTree() OVERRIDE {
+    LayerTreeHostAnimationTest::SetupTree();
+    // Create a fake content layer so we actually produce new content for every
+    // animation frame.
+    content_ = FakeContentLayer::Create(&client_);
+    content_->set_always_update_resources(true);
+    layer_tree_host()->root_layer()->AddChild(content_);
+  }
+
   virtual void BeginTest() OVERRIDE {
     PostSetNeedsCommitToMainThread();
   }
@@ -746,9 +820,127 @@ class LayerTreeHostAnimationTestContinuousAnimate
  private:
   int num_commit_complete_;
   int num_draw_layers_;
+  FakeContentLayerClient client_;
+  scoped_refptr<FakeContentLayer> content_;
 };
 
 MULTI_THREAD_TEST_F(LayerTreeHostAnimationTestContinuousAnimate);
+
+class LayerTreeHostAnimationTestCancelAnimateCommit
+    : public LayerTreeHostAnimationTest {
+ public:
+  LayerTreeHostAnimationTestCancelAnimateCommit()
+      : num_animate_calls_(0), num_commit_calls_(0), num_draw_calls_(0) {}
+
+  virtual void BeginTest() OVERRIDE { PostSetNeedsCommitToMainThread(); }
+
+  virtual void Animate(base::TimeTicks) OVERRIDE {
+    num_animate_calls_++;
+    // No-op animate will cancel the commit.
+    if (layer_tree_host()->source_frame_number() == 1) {
+      EndTest();
+      return;
+    }
+    layer_tree_host()->SetNeedsAnimate();
+  }
+
+  virtual void CommitCompleteOnThread(LayerTreeHostImpl* impl) OVERRIDE {
+    num_commit_calls_++;
+    if (impl->active_tree()->source_frame_number() > 1)
+      FAIL() << "Commit should have been canceled.";
+  }
+
+  virtual void DrawLayersOnThread(LayerTreeHostImpl* impl) OVERRIDE {
+    num_draw_calls_++;
+    if (impl->active_tree()->source_frame_number() > 1)
+      FAIL() << "Draw should have been canceled.";
+  }
+
+  virtual void AfterTest() OVERRIDE {
+    EXPECT_EQ(2, num_animate_calls_);
+    EXPECT_EQ(1, num_commit_calls_);
+    EXPECT_EQ(1, num_draw_calls_);
+  }
+
+ private:
+  int num_animate_calls_;
+  int num_commit_calls_;
+  int num_draw_calls_;
+  FakeContentLayerClient client_;
+  scoped_refptr<FakeContentLayer> content_;
+};
+
+MULTI_THREAD_TEST_F(LayerTreeHostAnimationTestCancelAnimateCommit);
+
+class LayerTreeHostAnimationTestForceRedraw
+    : public LayerTreeHostAnimationTest {
+ public:
+  LayerTreeHostAnimationTestForceRedraw()
+      : num_animate_(0), num_draw_layers_(0) {}
+
+  virtual void BeginTest() OVERRIDE { PostSetNeedsCommitToMainThread(); }
+
+  virtual void Animate(base::TimeTicks) OVERRIDE {
+    if (++num_animate_ < 2)
+      layer_tree_host()->SetNeedsAnimate();
+  }
+
+  virtual void Layout() OVERRIDE {
+    layer_tree_host()->SetNextCommitForcesRedraw();
+  }
+
+  virtual void DrawLayersOnThread(LayerTreeHostImpl* impl) OVERRIDE {
+    if (++num_draw_layers_ == 2)
+      EndTest();
+  }
+
+  virtual void AfterTest() OVERRIDE {
+    // The first commit will always draw; make sure the second draw triggered
+    // by the animation was not cancelled.
+    EXPECT_EQ(2, num_draw_layers_);
+    EXPECT_EQ(2, num_animate_);
+  }
+
+ private:
+  int num_animate_;
+  int num_draw_layers_;
+};
+
+MULTI_THREAD_TEST_F(LayerTreeHostAnimationTestForceRedraw);
+
+class LayerTreeHostAnimationTestAnimateAfterSetNeedsCommit
+    : public LayerTreeHostAnimationTest {
+ public:
+  LayerTreeHostAnimationTestAnimateAfterSetNeedsCommit()
+      : num_animate_(0), num_draw_layers_(0) {}
+
+  virtual void BeginTest() OVERRIDE { PostSetNeedsCommitToMainThread(); }
+
+  virtual void Animate(base::TimeTicks) OVERRIDE {
+    if (++num_animate_ <= 2) {
+      layer_tree_host()->SetNeedsCommit();
+      layer_tree_host()->SetNeedsAnimate();
+    }
+  }
+
+  virtual void DrawLayersOnThread(LayerTreeHostImpl* impl) OVERRIDE {
+    if (++num_draw_layers_ == 2)
+      EndTest();
+  }
+
+  virtual void AfterTest() OVERRIDE {
+    // The first commit will always draw; make sure the second draw triggered
+    // by the SetNeedsCommit was not cancelled.
+    EXPECT_EQ(2, num_draw_layers_);
+    EXPECT_GE(num_animate_, 2);
+  }
+
+ private:
+  int num_animate_;
+  int num_draw_layers_;
+};
+
+MULTI_THREAD_TEST_F(LayerTreeHostAnimationTestAnimateAfterSetNeedsCommit);
 
 // Make sure the main thread can still execute animations when CanDraw() is not
 // true.
@@ -770,11 +962,15 @@ class LayerTreeHostAnimationTestRunAnimationWhenNotCanDraw
     PostAddAnimationToMainThread(content_.get());
   }
 
-  virtual void NotifyAnimationStarted(double wall_clock_time) OVERRIDE {
+  virtual void NotifyAnimationStarted(
+      base::TimeTicks monotonic_time,
+      Animation::TargetProperty target_property) OVERRIDE {
     started_times_++;
   }
 
-  virtual void NotifyAnimationFinished(double wall_clock_time) OVERRIDE {
+  virtual void NotifyAnimationFinished(
+      base::TimeTicks monotonic_time,
+      Animation::TargetProperty target_property) OVERRIDE {
     EndTest();
   }
 
@@ -816,12 +1012,16 @@ class LayerTreeHostAnimationTestRunAnimationWhenNotVisible
     layer_tree_host()->SetVisible(false);
   }
 
-  virtual void NotifyAnimationStarted(double wall_clock_time) OVERRIDE {
+  virtual void NotifyAnimationStarted(
+      base::TimeTicks monotonic_time,
+      Animation::TargetProperty target_property) OVERRIDE {
     EXPECT_FALSE(visible_);
     started_times_++;
   }
 
-  virtual void NotifyAnimationFinished(double wall_clock_time) OVERRIDE {
+  virtual void NotifyAnimationFinished(
+      base::TimeTicks monotonic_time,
+      Animation::TargetProperty target_property) OVERRIDE {
     EXPECT_FALSE(visible_);
     EXPECT_EQ(1, started_times_);
     EndTest();
@@ -861,28 +1061,23 @@ class LayerTreeHostAnimationTestCheckerboardDoesntStartAnimations
     prevented_draw_ = 0;
     added_animations_ = 0;
     started_times_ = 0;
-    finished_times_ = 0;
 
     PostSetNeedsCommitToMainThread();
   }
 
-  virtual void DispatchAddInstantAnimation(Layer* layer_to_receive_animation)
-      OVERRIDE {
-    LayerTreeHostAnimationTest::DispatchAddInstantAnimation(
-        layer_to_receive_animation);
-    added_animations_++;
-  }
-
-  virtual bool PrepareToDrawOnThread(LayerTreeHostImpl* host_impl,
-                                     LayerTreeHostImpl::FrameData* frame_data,
-                                     bool result) OVERRIDE {
+  virtual DrawSwapReadbackResult::DrawResult PrepareToDrawOnThread(
+      LayerTreeHostImpl* host_impl,
+      LayerTreeHostImpl::FrameData* frame_data,
+      DrawSwapReadbackResult::DrawResult draw_result) OVERRIDE {
     if (added_animations_ < 2)
-      return result;
+      return draw_result;
     if (TestEnded())
-      return result;
+      return draw_result;
     // Act like there is checkerboard when the second animation wants to draw.
     ++prevented_draw_;
-    return false;
+    if (prevented_draw_ > 2)
+      EndTest();
+    return DrawSwapReadbackResult::DRAW_ABORTED_CHECKERBOARD_ANIMATIONS;
   }
 
   virtual void DidCommitAndDrawFrame() OVERRIDE {
@@ -900,18 +1095,12 @@ class LayerTreeHostAnimationTestCheckerboardDoesntStartAnimations
     }
   }
 
-  virtual void NotifyAnimationStarted(double wall_clock_time) OVERRIDE {
+  virtual void NotifyAnimationStarted(
+      base::TimeTicks monotonic_time,
+      Animation::TargetProperty target_property) OVERRIDE {
     if (TestEnded())
       return;
     started_times_++;
-  }
-
-  virtual void NotifyAnimationFinished(double wall_clock_time) OVERRIDE {
-    // We should be checkerboarding already, but it should still finish the
-    // first animation.
-    EXPECT_EQ(2, added_animations_);
-    finished_times_++;
-    EndTest();
   }
 
   virtual void AfterTest() OVERRIDE {
@@ -920,20 +1109,140 @@ class LayerTreeHostAnimationTestCheckerboardDoesntStartAnimations
     // The first animation should be started, but the second should not because
     // of checkerboard.
     EXPECT_EQ(1, started_times_);
-    // The first animation should still be finished.
-    EXPECT_EQ(1, finished_times_);
   }
 
   int prevented_draw_;
   int added_animations_;
   int started_times_;
-  int finished_times_;
   FakeContentLayerClient client_;
   scoped_refptr<FakeContentLayer> content_;
 };
 
 MULTI_THREAD_TEST_F(
     LayerTreeHostAnimationTestCheckerboardDoesntStartAnimations);
+
+// Verifies that when scroll offset is animated on the impl thread, updates
+// are sent back to the main thread.
+class LayerTreeHostAnimationTestScrollOffsetChangesArePropagated
+    : public LayerTreeHostAnimationTest {
+ public:
+  LayerTreeHostAnimationTestScrollOffsetChangesArePropagated() {}
+
+  virtual void SetupTree() OVERRIDE {
+    LayerTreeHostAnimationTest::SetupTree();
+
+    scroll_layer_ = FakeContentLayer::Create(&client_);
+    scroll_layer_->SetScrollClipLayerId(layer_tree_host()->root_layer()->id());
+    scroll_layer_->SetBounds(gfx::Size(1000, 1000));
+    scroll_layer_->SetScrollOffset(gfx::Vector2d(10, 20));
+    layer_tree_host()->root_layer()->AddChild(scroll_layer_);
+  }
+
+  virtual void BeginTest() OVERRIDE {
+    PostSetNeedsCommitToMainThread();
+  }
+
+  virtual void DidCommit() OVERRIDE {
+    switch (layer_tree_host()->source_frame_number()) {
+      case 1: {
+        scoped_ptr<ScrollOffsetAnimationCurve> curve(
+            ScrollOffsetAnimationCurve::Create(
+                gfx::Vector2dF(500.f, 550.f),
+                EaseInOutTimingFunction::Create()));
+        scoped_ptr<Animation> animation(Animation::Create(
+            curve.PassAs<AnimationCurve>(), 1, 0, Animation::ScrollOffset));
+        animation->set_needs_synchronized_start_time(true);
+        scroll_layer_->AddAnimation(animation.Pass());
+        break;
+      }
+      default:
+        if (scroll_layer_->scroll_offset().x() > 10 &&
+            scroll_layer_->scroll_offset().y() > 20)
+          EndTest();
+    }
+  }
+
+  virtual void AfterTest() OVERRIDE {}
+
+ private:
+  FakeContentLayerClient client_;
+  scoped_refptr<FakeContentLayer> scroll_layer_;
+};
+
+// SingleThreadProxy doesn't send scroll updates from LayerTreeHostImpl to
+// LayerTreeHost.
+MULTI_THREAD_TEST_F(LayerTreeHostAnimationTestScrollOffsetChangesArePropagated);
+
+// Ensure that animation time is correctly updated when animations are frozen
+// because of checkerboarding.
+class LayerTreeHostAnimationTestFrozenAnimationTickTime
+    : public LayerTreeHostAnimationTest {
+ public:
+  LayerTreeHostAnimationTestFrozenAnimationTickTime()
+      : started_animating_(false), num_commits_(0), num_draw_attempts_(2) {}
+
+  virtual void InitializeSettings(LayerTreeSettings* settings) OVERRIDE {
+    // Make sure that drawing many times doesn't cause a checkerboarded
+    // animation to start so we avoid flake in this test.
+    settings->timeout_and_draw_when_animation_checkerboards = false;
+  }
+
+  virtual void BeginTest() OVERRIDE {
+    PostAddAnimationToMainThread(layer_tree_host()->root_layer());
+  }
+
+  virtual void Animate(base::TimeTicks monotonic_time) OVERRIDE {
+    last_main_thread_tick_time_ = monotonic_time;
+  }
+
+  virtual void AnimateLayers(LayerTreeHostImpl* host_impl,
+                             base::TimeTicks monotonic_time) OVERRIDE {
+    if (TestEnded())
+      return;
+    if (!started_animating_) {
+      started_animating_ = true;
+      expected_impl_tick_time_ = monotonic_time;
+    } else {
+      EXPECT_EQ(expected_impl_tick_time_, monotonic_time);
+      if (num_commits_ > 2)
+        EndTest();
+    }
+  }
+
+  virtual DrawSwapReadbackResult::DrawResult PrepareToDrawOnThread(
+      LayerTreeHostImpl* host_impl,
+      LayerTreeHostImpl::FrameData* frame,
+      DrawSwapReadbackResult::DrawResult draw_result) OVERRIDE {
+    if (TestEnded())
+      return draw_result;
+    num_draw_attempts_++;
+    if (num_draw_attempts_ > 2) {
+      num_draw_attempts_ = 0;
+      PostSetNeedsCommitToMainThread();
+    }
+    return DrawSwapReadbackResult::DRAW_ABORTED_CHECKERBOARD_ANIMATIONS;
+  }
+
+  virtual void BeginCommitOnThread(LayerTreeHostImpl* host_impl) OVERRIDE {
+    if (!started_animating_)
+      return;
+    expected_impl_tick_time_ =
+        std::max(expected_impl_tick_time_, last_main_thread_tick_time_);
+    num_commits_++;
+  }
+
+  virtual void AfterTest() OVERRIDE {}
+
+ private:
+  bool started_animating_;
+  int num_commits_;
+  int num_draw_attempts_;
+  base::TimeTicks last_main_thread_tick_time_;
+  base::TimeTicks expected_impl_tick_time_;
+};
+
+// Only the non-impl-paint multi-threaded compositor freezes animations.
+MULTI_THREAD_NOIMPL_TEST_F(LayerTreeHostAnimationTestFrozenAnimationTickTime);
 
 }  // namespace
 }  // namespace cc

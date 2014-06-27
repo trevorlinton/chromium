@@ -16,6 +16,7 @@
 #include "base/win/scoped_com_initializer.h"
 #include "media/audio/audio_io.h"
 #include "media/audio/audio_manager.h"
+#include "media/audio/mock_audio_source_callback.h"
 #include "media/audio/win/audio_low_latency_output_win.h"
 #include "media/audio/win/core_audio_util_win.h"
 #include "media/base/decoder_buffer.h"
@@ -60,16 +61,6 @@ ACTION_P(QuitLoop, loop) {
   loop->PostTask(FROM_HERE, base::MessageLoop::QuitClosure());
 }
 
-class MockAudioSourceCallback : public AudioOutputStream::AudioSourceCallback {
- public:
-  MOCK_METHOD2(OnMoreData, int(AudioBus* audio_bus,
-                               AudioBuffersState buffers_state));
-  MOCK_METHOD3(OnMoreIOData, int(AudioBus* source,
-                                 AudioBus* dest,
-                                 AudioBuffersState buffers_state));
-  MOCK_METHOD1(OnError, void(AudioOutputStream* stream));
-};
-
 // This audio source implementation should be used for manual tests only since
 // it takes about 20 seconds to play out a file.
 class ReadFromFileAudioSource : public AudioOutputStream::AudioSourceCallback {
@@ -97,7 +88,7 @@ class ReadFromFileAudioSource : public AudioOutputStream::AudioSourceCallback {
     file_name = file_name.AppendASCII(kDeltaTimeMsFileName);
 
     EXPECT_TRUE(!text_file_);
-    text_file_ = file_util::OpenFile(file_name, "wt");
+    text_file_ = base::OpenFile(file_name, "wt");
     DLOG_IF(ERROR, !text_file_) << "Failed to open log file.";
 
     // Write the array which contains delta times to a text file.
@@ -107,7 +98,7 @@ class ReadFromFileAudioSource : public AudioOutputStream::AudioSourceCallback {
       ++elements_written;
     }
 
-    file_util::CloseFile(text_file_);
+    base::CloseFile(text_file_);
   }
 
   // AudioOutputStream::AudioSourceCallback implementation.
@@ -233,7 +224,7 @@ class AudioOutputStreamWrapper {
     AudioOutputStream* aos = audio_man_->MakeAudioOutputStream(
         AudioParameters(format_, channel_layout_, sample_rate_,
                         bits_per_sample_, samples_per_packet_),
-        std::string(), std::string());
+        std::string());
     EXPECT_TRUE(aos);
     return aos;
   }
@@ -260,7 +251,7 @@ static AudioOutputStream* CreateDefaultAudioOutputStream(
 TEST(WASAPIAudioOutputStreamTest, HardwareSampleRate) {
   // Skip this test in exclusive mode since the resulting rate is only utilized
   // for shared mode streams.
-  scoped_ptr<AudioManager> audio_manager(AudioManager::Create());
+  scoped_ptr<AudioManager> audio_manager(AudioManager::CreateForTesting());
   if (!CanRunAudioTests(audio_manager.get()) || ExclusiveModeIsEnabled())
     return;
 
@@ -273,7 +264,7 @@ TEST(WASAPIAudioOutputStreamTest, HardwareSampleRate) {
 
 // Test Create(), Close() calling sequence.
 TEST(WASAPIAudioOutputStreamTest, CreateAndClose) {
-  scoped_ptr<AudioManager> audio_manager(AudioManager::Create());
+  scoped_ptr<AudioManager> audio_manager(AudioManager::CreateForTesting());
   if (!CanRunAudioTests(audio_manager.get()))
     return;
   AudioOutputStream* aos = CreateDefaultAudioOutputStream(audio_manager.get());
@@ -282,7 +273,7 @@ TEST(WASAPIAudioOutputStreamTest, CreateAndClose) {
 
 // Test Open(), Close() calling sequence.
 TEST(WASAPIAudioOutputStreamTest, OpenAndClose) {
-  scoped_ptr<AudioManager> audio_manager(AudioManager::Create());
+  scoped_ptr<AudioManager> audio_manager(AudioManager::CreateForTesting());
   if (!CanRunAudioTests(audio_manager.get()))
     return;
   AudioOutputStream* aos = CreateDefaultAudioOutputStream(audio_manager.get());
@@ -292,7 +283,7 @@ TEST(WASAPIAudioOutputStreamTest, OpenAndClose) {
 
 // Test Open(), Start(), Close() calling sequence.
 TEST(WASAPIAudioOutputStreamTest, OpenStartAndClose) {
-  scoped_ptr<AudioManager> audio_manager(AudioManager::Create());
+  scoped_ptr<AudioManager> audio_manager(AudioManager::CreateForTesting());
   if (!CanRunAudioTests(audio_manager.get()))
     return;
   AudioOutputStream* aos = CreateDefaultAudioOutputStream(audio_manager.get());
@@ -306,7 +297,7 @@ TEST(WASAPIAudioOutputStreamTest, OpenStartAndClose) {
 
 // Test Open(), Start(), Stop(), Close() calling sequence.
 TEST(WASAPIAudioOutputStreamTest, OpenStartStopAndClose) {
-  scoped_ptr<AudioManager> audio_manager(AudioManager::Create());
+  scoped_ptr<AudioManager> audio_manager(AudioManager::CreateForTesting());
   if (!CanRunAudioTests(audio_manager.get()))
     return;
   AudioOutputStream* aos = CreateDefaultAudioOutputStream(audio_manager.get());
@@ -321,7 +312,7 @@ TEST(WASAPIAudioOutputStreamTest, OpenStartStopAndClose) {
 
 // Test SetVolume(), GetVolume()
 TEST(WASAPIAudioOutputStreamTest, Volume) {
-  scoped_ptr<AudioManager> audio_manager(AudioManager::Create());
+  scoped_ptr<AudioManager> audio_manager(AudioManager::CreateForTesting());
   if (!CanRunAudioTests(audio_manager.get()))
     return;
   AudioOutputStream* aos = CreateDefaultAudioOutputStream(audio_manager.get());
@@ -358,7 +349,7 @@ TEST(WASAPIAudioOutputStreamTest, Volume) {
 
 // Test some additional calling sequences.
 TEST(WASAPIAudioOutputStreamTest, MiscCallingSequences) {
-  scoped_ptr<AudioManager> audio_manager(AudioManager::Create());
+  scoped_ptr<AudioManager> audio_manager(AudioManager::CreateForTesting());
   if (!CanRunAudioTests(audio_manager.get()))
     return;
 
@@ -398,7 +389,7 @@ TEST(WASAPIAudioOutputStreamTest, MiscCallingSequences) {
 
 // Use preferred packet size and verify that rendering starts.
 TEST(WASAPIAudioOutputStreamTest, ValidPacketSize) {
-  scoped_ptr<AudioManager> audio_manager(AudioManager::Create());
+  scoped_ptr<AudioManager> audio_manager(AudioManager::CreateForTesting());
   if (!CanRunAudioTests(audio_manager.get()))
     return;
 
@@ -432,27 +423,6 @@ TEST(WASAPIAudioOutputStreamTest, ValidPacketSize) {
   aos->Close();
 }
 
-// Use a non-preferred packet size and verify that Open() fails.
-TEST(WASAPIAudioOutputStreamTest, InvalidPacketSize) {
-  scoped_ptr<AudioManager> audio_manager(AudioManager::Create());
-  if (!CanRunAudioTests(audio_manager.get()))
-    return;
-
-  if (ExclusiveModeIsEnabled())
-    return;
-
-  AudioParameters preferred_params;
-  EXPECT_TRUE(SUCCEEDED(CoreAudioUtil::GetPreferredAudioParameters(
-      eRender, eConsole, &preferred_params)));
-  int too_large_packet_size = 2 * preferred_params.frames_per_buffer();
-
-  AudioOutputStreamWrapper aosw(audio_manager.get());
-  AudioOutputStream* aos = aosw.Create(too_large_packet_size);
-  EXPECT_FALSE(aos->Open());
-
-  aos->Close();
-}
-
 // This test is intended for manual tests and should only be enabled
 // when it is required to play out data from a local PCM file.
 // By default, GTest will print out YOU HAVE 1 DISABLED TEST.
@@ -461,7 +431,7 @@ TEST(WASAPIAudioOutputStreamTest, InvalidPacketSize) {
 // environment variable to a value greater than 0.
 // The test files are approximately 20 seconds long.
 TEST(WASAPIAudioOutputStreamTest, DISABLED_ReadFromStereoFile) {
-  scoped_ptr<AudioManager> audio_manager(AudioManager::Create());
+  scoped_ptr<AudioManager> audio_manager(AudioManager::CreateForTesting());
   if (!CanRunAudioTests(audio_manager.get()))
     return;
 
@@ -483,13 +453,13 @@ TEST(WASAPIAudioOutputStreamTest, DISABLED_ReadFromStereoFile) {
   }
   ReadFromFileAudioSource file_source(file_name);
 
-  LOG(INFO) << "File name      : " << file_name.c_str();
-  LOG(INFO) << "Sample rate    : " << aosw.sample_rate();
-  LOG(INFO) << "Bits per sample: " << aosw.bits_per_sample();
-  LOG(INFO) << "#channels      : " << aosw.channels();
-  LOG(INFO) << "File size      : " << file_source.file_size();
-  LOG(INFO) << "#file segments : " << kNumFileSegments;
-  LOG(INFO) << ">> Listen to the stereo file while playing...";
+  VLOG(0) << "File name      : " << file_name.c_str();
+  VLOG(0) << "Sample rate    : " << aosw.sample_rate();
+  VLOG(0) << "Bits per sample: " << aosw.bits_per_sample();
+  VLOG(0) << "#channels      : " << aosw.channels();
+  VLOG(0) << "File size      : " << file_source.file_size();
+  VLOG(0) << "#file segments : " << kNumFileSegments;
+  VLOG(0) << ">> Listen to the stereo file while playing...";
 
   for (int i = 0; i < kNumFileSegments; i++) {
     // Each segment will start with a short (~20ms) block of zeros, hence
@@ -502,7 +472,7 @@ TEST(WASAPIAudioOutputStreamTest, DISABLED_ReadFromStereoFile) {
     aos->Stop();
   }
 
-  LOG(INFO) << ">> Stereo file playout has stopped.";
+  VLOG(0) << ">> Stereo file playout has stopped.";
   aos->Close();
 }
 
@@ -514,7 +484,7 @@ TEST(WASAPIAudioOutputStreamTest, ExclusiveModeBufferSizesAt48kHz) {
   if (!ExclusiveModeIsEnabled())
     return;
 
-  scoped_ptr<AudioManager> audio_manager(AudioManager::Create());
+  scoped_ptr<AudioManager> audio_manager(AudioManager::CreateForTesting());
   if (!CanRunAudioTests(audio_manager.get()))
     return;
 
@@ -565,7 +535,7 @@ TEST(WASAPIAudioOutputStreamTest, ExclusiveModeBufferSizesAt44kHz) {
   if (!ExclusiveModeIsEnabled())
     return;
 
-  scoped_ptr<AudioManager> audio_manager(AudioManager::Create());
+  scoped_ptr<AudioManager> audio_manager(AudioManager::CreateForTesting());
   if (!CanRunAudioTests(audio_manager.get()))
     return;
 
@@ -623,7 +593,7 @@ TEST(WASAPIAudioOutputStreamTest, ExclusiveModeMinBufferSizeAt48kHz) {
   if (!ExclusiveModeIsEnabled())
     return;
 
-  scoped_ptr<AudioManager> audio_manager(AudioManager::Create());
+  scoped_ptr<AudioManager> audio_manager(AudioManager::CreateForTesting());
   if (!CanRunAudioTests(audio_manager.get()))
     return;
 
@@ -664,7 +634,7 @@ TEST(WASAPIAudioOutputStreamTest, ExclusiveModeMinBufferSizeAt44kHz) {
   if (!ExclusiveModeIsEnabled())
     return;
 
-  scoped_ptr<AudioManager> audio_manager(AudioManager::Create());
+  scoped_ptr<AudioManager> audio_manager(AudioManager::CreateForTesting());
   if (!CanRunAudioTests(audio_manager.get()))
     return;
 

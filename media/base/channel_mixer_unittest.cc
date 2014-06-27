@@ -21,15 +21,19 @@ enum { kFrames = 16 };
 // Test all possible layout conversions can be constructed and mixed.
 TEST(ChannelMixerTest, ConstructAllPossibleLayouts) {
   for (ChannelLayout input_layout = CHANNEL_LAYOUT_MONO;
-       input_layout < CHANNEL_LAYOUT_MAX;
+       input_layout <= CHANNEL_LAYOUT_MAX;
        input_layout = static_cast<ChannelLayout>(input_layout + 1)) {
     for (ChannelLayout output_layout = CHANNEL_LAYOUT_MONO;
          output_layout < CHANNEL_LAYOUT_STEREO_DOWNMIX;
          output_layout = static_cast<ChannelLayout>(output_layout + 1)) {
       // DISCRETE can't be tested here based on the current approach.
+      // CHANNEL_LAYOUT_STEREO_AND_KEYBOARD_MIC is not mixable.
       if (input_layout == CHANNEL_LAYOUT_DISCRETE ||
-          output_layout == CHANNEL_LAYOUT_DISCRETE)
+          input_layout == CHANNEL_LAYOUT_STEREO_AND_KEYBOARD_MIC ||
+          output_layout == CHANNEL_LAYOUT_DISCRETE ||
+          output_layout == CHANNEL_LAYOUT_STEREO_AND_KEYBOARD_MIC) {
         continue;
+      }
 
       SCOPED_TRACE(base::StringPrintf(
           "Input Layout: %d, Output Layout: %d", input_layout, output_layout));
@@ -100,20 +104,26 @@ TEST_P(ChannelMixerTest, Mixing) {
   scoped_ptr<AudioBus> input_bus = AudioBus::Create(input_channels, kFrames);
   AudioParameters input_audio(AudioParameters::AUDIO_PCM_LINEAR,
                               input_layout,
+                              input_layout == CHANNEL_LAYOUT_DISCRETE ?
+                                  input_channels :
+                                  ChannelLayoutToChannelCount(input_layout),
+                              0,
                               AudioParameters::kAudioCDSampleRate, 16,
-                              kFrames);
-  if (input_layout == CHANNEL_LAYOUT_DISCRETE)
-    input_audio.SetDiscreteChannels(input_channels);
+                              kFrames,
+                              AudioParameters::NO_EFFECTS);
 
   ChannelLayout output_layout = GetParam().output_layout;
   int output_channels = GetParam().output_channels;
   scoped_ptr<AudioBus> output_bus = AudioBus::Create(output_channels, kFrames);
   AudioParameters output_audio(AudioParameters::AUDIO_PCM_LINEAR,
                                output_layout,
+                               output_layout == CHANNEL_LAYOUT_DISCRETE ?
+                                  output_channels :
+                                  ChannelLayoutToChannelCount(output_layout),
+                               0,
                                AudioParameters::kAudioCDSampleRate, 16,
-                               kFrames);
-  if (output_layout == CHANNEL_LAYOUT_DISCRETE)
-    output_audio.SetDiscreteChannels(output_channels);
+                               kFrames,
+                               AudioParameters::NO_EFFECTS);
 
   const float* channel_values = GetParam().channel_values;
   ASSERT_EQ(input_bus->channels(), GetParam().num_channel_values);

@@ -4,14 +4,23 @@
 
 #include "chrome/browser/ui/webui/options/options_ui_browsertest.h"
 
+#include "base/prefs/pref_service.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/signin/signin_manager.h"
+#include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/webui/options/options_ui.h"
+#include "chrome/browser/ui/webui/uber/uber_ui.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/test_utils.h"
 #include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -31,6 +40,8 @@
 #include "ui/base/window_open_disposition.h"
 #include "url/gurl.h"
 #endif
+
+using content::MessageLoopRunner;
 
 namespace options {
 
@@ -52,6 +63,30 @@ OptionsUIBrowserTest::OptionsUIBrowserTest() {
 
 void OptionsUIBrowserTest::NavigateToSettings() {
   const GURL& url = GURL(chrome::kChromeUISettingsURL);
+  ui_test_utils::NavigateToURLWithDisposition(browser(), url, CURRENT_TAB, 0);
+
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_TRUE(web_contents);
+  ASSERT_TRUE(web_contents->GetWebUI());
+  UberUI* uber_ui = static_cast<UberUI*>(
+      web_contents->GetWebUI()->GetController());
+  OptionsUI* options_ui = static_cast<OptionsUI*>(
+      uber_ui->GetSubpage(chrome::kChromeUISettingsFrameURL)->GetController());
+
+  // It is not possible to subscribe to the OnFinishedLoading event before the
+  // call to NavigateToURL(), because the WebUI does not yet exist at that time.
+  // However, it is safe to subscribe afterwards, because the event will always
+  // be posted asynchronously to the message loop.
+  scoped_refptr<MessageLoopRunner> message_loop_runner(new MessageLoopRunner);
+  scoped_ptr<OptionsUI::OnFinishedLoadingCallbackList::Subscription>
+      subscription = options_ui->RegisterOnFinishedLoadingCallback(
+          message_loop_runner->QuitClosure());
+  message_loop_runner->Run();
+}
+
+void OptionsUIBrowserTest::NavigateToSettingsFrame() {
+  const GURL& url = GURL(chrome::kChromeUISettingsFrameURL);
   ui_test_utils::NavigateToURL(browser(), url);
 }
 
@@ -66,25 +101,59 @@ void OptionsUIBrowserTest::VerifyNavbar() {
 }
 
 void OptionsUIBrowserTest::VerifyTitle() {
-  string16 title =
+  base::string16 title =
       browser()->tab_strip_model()->GetActiveWebContents()->GetTitle();
-  string16 expected_title = l10n_util::GetStringUTF16(IDS_SETTINGS_TITLE);
-  EXPECT_NE(title.find(expected_title), string16::npos);
+  base::string16 expected_title = l10n_util::GetStringUTF16(IDS_SETTINGS_TITLE);
+  EXPECT_NE(title.find(expected_title), base::string16::npos);
 }
 
-// Flaky, see http://crbug.com/119671.
-IN_PROC_BROWSER_TEST_F(OptionsUIBrowserTest, DISABLED_LoadOptionsByURL) {
+IN_PROC_BROWSER_TEST_F(OptionsUIBrowserTest, LoadOptionsByURL) {
   NavigateToSettings();
   VerifyTitle();
   VerifyNavbar();
 }
 
 #if !defined(OS_CHROMEOS)
+IN_PROC_BROWSER_TEST_F(OptionsUIBrowserTest, VerifyUnmanagedSignout) {
+  SigninManager* signin =
+      SigninManagerFactory::GetForProfile(browser()->profile());
+  const std::string user = "test@example.com";
+  signin->OnExternalSigninCompleted(user);
+
+  NavigateToSettingsFrame();
+
+  // This script simulates a click on the "Disconnect your Google Account"
+  // button and returns true if the hidden flag of the appropriate dialog gets
+  // flipped.
+  bool result = false;
+  ASSERT_TRUE(content::ExecuteScriptAndExtractBool(
+      browser()->tab_strip_model()->GetActiveWebContents(),
+      "var dialog = $('sync-setup-stop-syncing');"
+      "var original_status = dialog.hidden;"
+      "$('start-stop-sync').click();"
+      "domAutomationController.send(original_status && !dialog.hidden);",
+      &result));
+
+  EXPECT_TRUE(result);
+
+  content::WindowedNotificationObserver wait_for_signout(
+      chrome::NOTIFICATION_GOOGLE_SIGNED_OUT,
+      content::NotificationService::AllSources());
+
+  ASSERT_TRUE(content::ExecuteScript(
+      browser()->tab_strip_model()->GetActiveWebContents(),
+      "$('stop-syncing-ok').click();"));
+
+  wait_for_signout.Wait();
+
+  EXPECT_TRUE(browser()->profile()->GetProfileName() != user);
+  EXPECT_TRUE(signin->GetAuthenticatedUsername().empty());
+}
+
 // Regression test for http://crbug.com/301436, excluded on Chrome OS because
 // profile management in the settings UI exists on desktop platforms only.
 IN_PROC_BROWSER_TEST_F(OptionsUIBrowserTest, NavigateBackFromOverlayDialog) {
-  // Navigate to the settings page.
-  ui_test_utils::NavigateToURL(browser(), GURL("chrome://settings-frame"));
+  NavigateToSettingsFrame();
 
   // Click a button that opens an overlay dialog.
   content::WebContents* contents =
@@ -117,8 +186,8 @@ IN_PROC_BROWSER_TEST_F(OptionsUIBrowserTest, NavigateBackFromOverlayDialog) {
       profile_manager->GenerateNextProfileDirectoryPath(),
       base::Bind(&RunClosureWhenProfileInitialized,
                  run_loop.QuitClosure()),
-                 string16(),
-                 string16(),
+                 base::string16(),
+                 base::string16(),
                  std::string());
   run_loop.Run();
 

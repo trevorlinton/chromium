@@ -8,8 +8,8 @@
 #include <string>
 #include <vector>
 
-#include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/manifest_handler.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/manifest_handler.h"
 #include "extensions/common/url_pattern.h"
 
 class GURL;
@@ -58,7 +58,7 @@ class UrlHandlersParser : public ManifestHandler {
   virtual ~UrlHandlersParser();
 
   // ManifestHandler API
-  virtual bool Parse(Extension* extension, string16* error) OVERRIDE;
+  virtual bool Parse(Extension* extension, base::string16* error) OVERRIDE;
 
  private:
   virtual const std::vector<std::string> Keys() const OVERRIDE;

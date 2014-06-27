@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/logging.h"
@@ -16,25 +17,45 @@
 #include "content/common/websocket_messages.h"
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_message_macros.h"
-#include "url/gurl.h"
+#include "third_party/WebKit/public/platform/WebSerializedOrigin.h"
 #include "third_party/WebKit/public/platform/WebSocketHandle.h"
 #include "third_party/WebKit/public/platform/WebSocketHandleClient.h"
+#include "third_party/WebKit/public/platform/WebSocketHandshakeRequestInfo.h"
+#include "third_party/WebKit/public/platform/WebSocketHandshakeResponseInfo.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
 #include "third_party/WebKit/public/platform/WebVector.h"
+#include "url/gurl.h"
+#include "url/origin.h"
 
-using WebKit::WebSocketHandle;
-using WebKit::WebSocketHandleClient;
-using WebKit::WebString;
-using WebKit::WebURL;
-using WebKit::WebVector;
+using blink::WebSerializedOrigin;
+using blink::WebSocketHandle;
+using blink::WebSocketHandleClient;
+using blink::WebString;
+using blink::WebURL;
+using blink::WebVector;
 
 namespace content {
+
+namespace {
+
+const unsigned short kAbnormalShutdownOpCode = 1006;
+
+}  // namespace
 
 WebSocketBridge::WebSocketBridge()
     : channel_id_(kInvalidChannelId), client_(NULL) {}
 
 WebSocketBridge::~WebSocketBridge() {
+  if (channel_id_ != kInvalidChannelId) {
+    // The connection is abruptly disconnected by the renderer without
+    // closing handshake.
+    ChildThread::current()->Send(
+        new WebSocketMsg_DropChannel(channel_id_,
+                                     false,
+                                     kAbnormalShutdownOpCode,
+                                     std::string()));
+  }
   Disconnect();
 }
 
@@ -42,9 +63,16 @@ bool WebSocketBridge::OnMessageReceived(const IPC::Message& msg) {
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP(WebSocketBridge, msg)
     IPC_MESSAGE_HANDLER(WebSocketMsg_AddChannelResponse, DidConnect)
+    IPC_MESSAGE_HANDLER(WebSocketMsg_NotifyStartOpeningHandshake,
+                        DidStartOpeningHandshake)
+    IPC_MESSAGE_HANDLER(WebSocketMsg_NotifyFinishOpeningHandshake,
+                        DidFinishOpeningHandshake)
+    IPC_MESSAGE_HANDLER(WebSocketMsg_NotifyFailure, DidFail)
     IPC_MESSAGE_HANDLER(WebSocketMsg_SendFrame, DidReceiveData)
     IPC_MESSAGE_HANDLER(WebSocketMsg_FlowControl, DidReceiveFlowControl)
     IPC_MESSAGE_HANDLER(WebSocketMsg_DropChannel, DidClose)
+    IPC_MESSAGE_HANDLER(WebSocketMsg_NotifyClosing,
+                        DidStartClosingHandshake)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
@@ -66,6 +94,51 @@ void WebSocketBridge::DidConnect(bool fail,
   WebString protocol_to_pass = WebString::fromUTF8(selected_protocol);
   WebString extensions_to_pass = WebString::fromUTF8(extensions);
   client->didConnect(this, fail, protocol_to_pass, extensions_to_pass);
+  // |this| can be deleted here.
+}
+
+void WebSocketBridge::DidStartOpeningHandshake(
+    const WebSocketHandshakeRequest& request) {
+  DVLOG(1) << "WebSocketBridge::DidStartOpeningHandshake("
+           << request.url << ")";
+  // All strings are already encoded to ASCII in the browser.
+  blink::WebSocketHandshakeRequestInfo request_to_pass;
+  request_to_pass.setURL(WebURL(request.url));
+  for (size_t i = 0; i < request.headers.size(); ++i) {
+    const std::pair<std::string, std::string>& header = request.headers[i];
+    request_to_pass.addHeaderField(WebString::fromLatin1(header.first),
+                                   WebString::fromLatin1(header.second));
+  }
+  request_to_pass.setHeadersText(WebString::fromLatin1(request.headers_text));
+  client_->didStartOpeningHandshake(this, request_to_pass);
+}
+
+void WebSocketBridge::DidFinishOpeningHandshake(
+    const WebSocketHandshakeResponse& response) {
+  DVLOG(1) << "WebSocketBridge::DidFinishOpeningHandshake("
+           << response.url << ")";
+  // All strings are already encoded to ASCII in the browser.
+  blink::WebSocketHandshakeResponseInfo response_to_pass;
+  response_to_pass.setStatusCode(response.status_code);
+  response_to_pass.setStatusText(WebString::fromLatin1(response.status_text));
+  for (size_t i = 0; i < response.headers.size(); ++i) {
+    const std::pair<std::string, std::string>& header = response.headers[i];
+    response_to_pass.addHeaderField(WebString::fromLatin1(header.first),
+                                    WebString::fromLatin1(header.second));
+  }
+  response_to_pass.setHeadersText(WebString::fromLatin1(response.headers_text));
+  client_->didFinishOpeningHandshake(this, response_to_pass);
+}
+
+void WebSocketBridge::DidFail(const std::string& message) {
+  DVLOG(1) << "WebSocketBridge::DidFail(" << message << ")";
+  WebSocketHandleClient* client = client_;
+  Disconnect();
+  if (!client)
+    return;
+
+  WebString message_to_pass = WebString::fromUTF8(message);
+  client->didFail(this, message_to_pass);
   // |this| can be deleted here.
 }
 
@@ -106,9 +179,11 @@ void WebSocketBridge::DidReceiveFlowControl(int64_t quota) {
   // |this| can be deleted here.
 }
 
-void WebSocketBridge::DidClose(unsigned short code,
+void WebSocketBridge::DidClose(bool was_clean,
+                               unsigned short code,
                                const std::string& reason) {
   DVLOG(1) << "WebSocketBridge::DidClose("
+           << was_clean << ", "
            << code << ", "
            << reason << ")";
   WebSocketHandleClient* client = client_;
@@ -117,14 +192,23 @@ void WebSocketBridge::DidClose(unsigned short code,
     return;
 
   WebString reason_to_pass = WebString::fromUTF8(reason);
-  client->didClose(this, code, reason_to_pass);
+  client->didClose(this, was_clean, code, reason_to_pass);
+  // |this| can be deleted here.
+}
+
+void WebSocketBridge::DidStartClosingHandshake() {
+  DVLOG(1) << "WebSocketBridge::DidStartClosingHandshake()";
+  if (!client_)
+    return;
+
+  client_->didStartClosingHandshake(this);
   // |this| can be deleted here.
 }
 
 void WebSocketBridge::connect(
     const WebURL& url,
     const WebVector<WebString>& protocols,
-    const WebString& origin,
+    const WebSerializedOrigin& origin,
     WebSocketHandleClient* client) {
   DCHECK_EQ(kInvalidChannelId, channel_id_);
   WebSocketDispatcher* dispatcher =
@@ -135,11 +219,11 @@ void WebSocketBridge::connect(
   std::vector<std::string> protocols_to_pass;
   for (size_t i = 0; i < protocols.size(); ++i)
     protocols_to_pass.push_back(protocols[i].utf8());
-  GURL origin_to_pass(origin.utf8());
+  url::Origin origin_to_pass(origin);
 
-  DVLOG(1) << "Bridge#" << channel_id_ << " Connect("
-           << url << ", (" << JoinString(protocols_to_pass, ", ") << "), "
-           << origin_to_pass << ")";
+  DVLOG(1) << "Bridge#" << channel_id_ << " Connect(" << url << ", ("
+           << JoinString(protocols_to_pass, ", ") << "), "
+           << origin_to_pass.string() << ")";
 
   ChildThread::current()->Send(
       new WebSocketHostMsg_AddChannelRequest(channel_id_,
@@ -197,8 +281,9 @@ void WebSocketBridge::close(unsigned short code,
   std::string reason_to_pass = reason.utf8();
   DVLOG(1) << "Bridge #" << channel_id_ << " Close("
            << code << ", " << reason_to_pass << ")";
+  // This method is for closing handshake and hence |was_clean| shall be true.
   ChildThread::current()->Send(
-      new WebSocketMsg_DropChannel(channel_id_, code, reason_to_pass));
+      new WebSocketMsg_DropChannel(channel_id_, true, code, reason_to_pass));
 }
 
 void WebSocketBridge::Disconnect() {

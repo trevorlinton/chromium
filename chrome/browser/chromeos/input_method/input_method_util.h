@@ -13,6 +13,7 @@
 #include "base/containers/hash_tables.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
+#include "base/threading/thread_checker.h"
 #include "chromeos/ime/input_method_descriptor.h"
 
 namespace chromeos {
@@ -39,7 +40,10 @@ class InputMethodUtil {
   // into Chrome's string ID, then pulls internationalized resource string from
   // the resource bundle and returns it. These functions are not thread-safe.
   // Non-UI threads are not allowed to call them.
-  string16 TranslateString(const std::string& english_string) const;
+  // The english_string to should be a xkb id with "xkb:...:...:..." format.
+  // TODO(shuchen): this method should be removed when finish the wrapping of
+  // xkb to extension.
+  base::string16 TranslateString(const std::string& english_string) const;
 
   // Converts an input method ID to a language code of the IME. Returns "Eng"
   // when |input_method_id| is unknown.
@@ -53,11 +57,11 @@ class InputMethodUtil {
   std::string GetInputMethodDisplayNameFromId(
       const std::string& input_method_id) const;
 
-  string16 GetInputMethodShortName(
+  base::string16 GetInputMethodShortName(
       const InputMethodDescriptor& input_method) const;
-  string16 GetInputMethodMediumName(
+  base::string16 GetInputMethodMediumName(
       const InputMethodDescriptor& input_method) const;
-  string16 GetInputMethodLongName(
+  base::string16 GetInputMethodLongName(
       const InputMethodDescriptor& input_method) const;
 
   // Converts an input method ID to an input method descriptor. Returns NULL
@@ -93,9 +97,39 @@ class InputMethodUtil {
       const std::vector<std::string>& input_method_ids,
       std::vector<std::string>* out_language_codes) const;
 
-  // Returns the input method ID of the hardware keyboard. e.g. "xkb:us::eng"
-  // for the US Qwerty keyboard.
-  std::string GetHardwareInputMethodId() const;
+  // Gets first input method associated with the language.
+  // Returns empty string on error.
+  std::string GetLanguageDefaultInputMethodId(const std::string& language_code);
+
+  // Migrates the legacy xkb id to extension based xkb id.
+  // Returns true if the given input method id list is modified,
+  // returns false otherwise.
+  // TODO(shuchen): Remove this function after few milestones are passed.
+  // See: http://crbug.com/345604
+  bool MigrateXkbInputMethods(
+      std::vector<std::string>* input_method_ids);
+
+  // Updates the internal cache of hardware layouts.
+  void UpdateHardwareLayoutCache();
+
+  // Set hardware keyboard layout for testing purpose. This is for simulating
+  // "keyboard_layout" entry in VPD values.
+  void SetHardwareKeyboardLayoutForTesting(const std::string& layout);
+
+  // Fills the input method IDs of the hardware keyboard. e.g. "xkb:us::eng"
+  // for US Qwerty keyboard or "xkb:ru::rus" for Russian keyboard.
+  const std::vector<std::string>& GetHardwareInputMethodIds();
+
+  // Returns the login-allowed input method ID of the hardware keyboard, e.g.
+  // "xkb:us::eng" but not include non-login keyboard like "xkb:ru::rus". Please
+  // note that this is not a subset of returned value of
+  // GetHardwareInputMethodIds. If GetHardwareInputMethodIds returns only
+  // non-login keyboard, this function will returns "xkb:us::eng" as the
+  // fallback keyboard.
+  const std::vector<std::string>& GetHardwareLoginInputMethodIds();
+
+  // Returns true if given input method can be used to input login data.
+  bool IsLoginKeyboard(const std::string& input_method_id) const;
 
   // Returns true if the given input method id is supported.
   bool IsValidInputMethodId(const std::string& input_method_id) const;
@@ -105,6 +139,9 @@ class InputMethodUtil {
 
   // Sets the list of component extension IMEs.
   void SetComponentExtensions(const InputMethodDescriptors& imes);
+
+  // Initializes the extension based xkb IMEs for testing.
+  void InitXkbInputMethodsForTesting();
 
   // Returns the fallback input method descriptor (the very basic US
   // keyboard). This function is mostly used for testing, but may be used
@@ -140,7 +177,7 @@ class InputMethodUtil {
 
  private:
   bool TranslateStringInternal(const std::string& english_string,
-                               string16 *out_string) const;
+                               base::string16 *out_string) const;
 
   // Map from language code to associated input method IDs, etc.
   typedef std::multimap<std::string, std::string> LanguageCodeToIdsMap;
@@ -156,12 +193,17 @@ class InputMethodUtil {
   std::map<std::string, std::string> id_to_language_code_;
   InputMethodIdToDescriptorMap id_to_descriptor_;
   XkbIdToDescriptorMap xkb_id_to_descriptor_;
-  ComponentExtIMEMap component_extension_ime_id_to_descriptor_;
+  std::map<std::string, std::string> xkb_layout_to_indicator_;
 
   typedef base::hash_map<std::string, int> HashType;
   HashType english_to_resource_id_;
 
   InputMethodDelegate* delegate_;
+
+  base::ThreadChecker thread_checker_;
+  std::vector<std::string> hardware_layouts_;
+  std::vector<std::string> hardware_login_layouts_;
+  std::vector<std::string> cached_hardware_layouts_;
 
   DISALLOW_COPY_AND_ASSIGN(InputMethodUtil);
 };

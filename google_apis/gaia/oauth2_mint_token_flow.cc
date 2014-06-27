@@ -65,15 +65,15 @@ static GoogleServiceAuthError CreateAuthError(const net::URLFetcher* source) {
 
   std::string response_body;
   source->GetResponseAsString(&response_body);
-  scoped_ptr<Value> value(base::JSONReader::Read(response_body));
-  DictionaryValue* response;
+  scoped_ptr<base::Value> value(base::JSONReader::Read(response_body));
+  base::DictionaryValue* response;
   if (!value.get() || !value->GetAsDictionary(&response)) {
     return GoogleServiceAuthError::FromUnexpectedServiceResponse(
         base::StringPrintf(
             "Not able to parse a JSON object from a service response. "
             "HTTP Status of the response is: %d", source->GetResponseCode()));
   }
-  DictionaryValue* error;
+  base::DictionaryValue* error;
   if (!response->GetDictionary(kError, &error)) {
     return GoogleServiceAuthError::FromUnexpectedServiceResponse(
         "Not able to find a detailed error in a service response.");
@@ -258,7 +258,7 @@ bool OAuth2MintTokenFlow::ParseIssueAdviceResponse(
   for (size_t index = 0; index < scopes_list->GetSize(); ++index) {
     const base::DictionaryValue* scopes_entry = NULL;
     IssueAdviceInfoEntry entry;
-    string16 detail;
+    base::string16 detail;
     if (!scopes_list->GetDictionary(index, &scopes_entry) ||
         !scopes_entry->GetString(kDescriptionKey, &entry.description) ||
         !scopes_entry->GetString(kDetailKey, &detail)) {
@@ -266,11 +266,12 @@ bool OAuth2MintTokenFlow::ParseIssueAdviceResponse(
       break;
     }
 
-    TrimWhitespace(entry.description, TRIM_ALL, &entry.description);
-    static const string16 detail_separators = ASCIIToUTF16(kDetailSeparators);
+    base::TrimWhitespace(entry.description, base::TRIM_ALL, &entry.description);
+    static const base::string16 detail_separators =
+        base::ASCIIToUTF16(kDetailSeparators);
     Tokenize(detail, detail_separators, &entry.details);
     for (size_t i = 0; i < entry.details.size(); i++)
-      TrimWhitespace(entry.details[i], TRIM_ALL, &entry.details[i]);
+      base::TrimWhitespace(entry.details[i], base::TRIM_ALL, &entry.details[i]);
     issue_advice->push_back(entry);
   }
 

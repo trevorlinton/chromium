@@ -9,19 +9,23 @@
 #include "base/command_line.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/prefs/pref_service.h"
-#include "base/prefs/scoped_user_pref_update.h"
 #include "base/rand_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/managed_mode/managed_user_constants.h"
 #include "chrome/browser/managed_mode/managed_user_refresh_token_fetcher.h"
-#include "chrome/browser/managed_mode/managed_user_service.h"
-#include "chrome/browser/managed_mode/managed_user_service_factory.h"
+#include "chrome/browser/managed_mode/managed_user_shared_settings_service.h"
+#include "chrome/browser/managed_mode/managed_user_shared_settings_service_factory.h"
+#include "chrome/browser/managed_mode/managed_user_shared_settings_update.h"
 #include "chrome/browser/managed_mode/managed_user_sync_service.h"
 #include "chrome/browser/managed_mode/managed_user_sync_service_factory.h"
-#include "chrome/browser/signin/profile_oauth2_token_service.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
+#include "chrome/browser/signin/signin_manager.h"
+#include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/sync/glue/device_info.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 
@@ -39,7 +43,8 @@ class ManagedUserRegistrationUtilityImpl
   ManagedUserRegistrationUtilityImpl(
       PrefService* prefs,
       scoped_ptr<ManagedUserRefreshTokenFetcher> token_fetcher,
-      ManagedUserSyncService* service);
+      ManagedUserSyncService* service,
+      ManagedUserSharedSettingsService* shared_settings_service);
 
   virtual ~ManagedUserRegistrationUtilityImpl();
 
@@ -60,6 +65,7 @@ class ManagedUserRegistrationUtilityImpl
   virtual void OnManagedUserAcknowledged(const std::string& managed_user_id)
       OVERRIDE;
   virtual void OnManagedUsersSyncingStopped() OVERRIDE;
+  virtual void OnManagedUsersChanged() OVERRIDE;
 
  private:
   // Fetches the managed user token when we have the device name.
@@ -87,12 +93,18 @@ class ManagedUserRegistrationUtilityImpl
   // callback or reporting an error.
   void CancelPendingRegistration();
 
-  base::WeakPtrFactory<ManagedUserRegistrationUtilityImpl> weak_ptr_factory_;
+  // ManagedUserSharedSettingsUpdate acknowledgment callback for password data
+  // in shared settings.
+  void OnPasswordChangeAcknowledged(bool success);
+
   PrefService* prefs_;
   scoped_ptr<ManagedUserRefreshTokenFetcher> token_fetcher_;
 
-  // A |BrowserContextKeyedService| owned by the custodian profile.
+  // A |KeyedService| owned by the custodian profile.
   ManagedUserSyncService* managed_user_sync_service_;
+
+  // A |KeyedService| owned by the custodian profile.
+  ManagedUserSharedSettingsService* managed_user_shared_settings_service_;
 
   std::string pending_managed_user_id_;
   std::string pending_managed_user_token_;
@@ -100,17 +112,23 @@ class ManagedUserRegistrationUtilityImpl
   bool is_existing_managed_user_;
   bool avatar_updated_;
   RegistrationCallback callback_;
+  scoped_ptr<ManagedUserSharedSettingsUpdate> password_update_;
+
+  base::WeakPtrFactory<ManagedUserRegistrationUtilityImpl> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ManagedUserRegistrationUtilityImpl);
 };
 
 } // namespace
 
-ManagedUserRegistrationInfo::ManagedUserRegistrationInfo(const string16& name,
-                                                         int avatar_index)
+ManagedUserRegistrationInfo::ManagedUserRegistrationInfo(
+    const base::string16& name,
+    int avatar_index)
     : avatar_index(avatar_index),
       name(name) {
 }
+
+ManagedUserRegistrationInfo::~ManagedUserRegistrationInfo() {}
 
 ScopedTestingManagedUserRegistrationUtility::
     ScopedTestingManagedUserRegistrationUtility(
@@ -134,25 +152,28 @@ ManagedUserRegistrationUtility::Create(Profile* profile) {
 
   ProfileOAuth2TokenService* token_service =
       ProfileOAuth2TokenServiceFactory::GetForProfile(profile);
+  SigninManagerBase* signin_manager =
+      SigninManagerFactory::GetForProfile(profile);
   scoped_ptr<ManagedUserRefreshTokenFetcher> token_fetcher =
       ManagedUserRefreshTokenFetcher::Create(
           token_service,
-          token_service->GetPrimaryAccountId(),
+          signin_manager->GetAuthenticatedAccountId(),
           profile->GetRequestContext());
   ManagedUserSyncService* managed_user_sync_service =
       ManagedUserSyncServiceFactory::GetForProfile(profile);
+  ManagedUserSharedSettingsService* managed_user_shared_settings_service =
+      ManagedUserSharedSettingsServiceFactory::GetForBrowserContext(profile);
   return make_scoped_ptr(ManagedUserRegistrationUtility::CreateImpl(
       profile->GetPrefs(),
       token_fetcher.Pass(),
-      managed_user_sync_service));
+      managed_user_sync_service,
+      managed_user_shared_settings_service));
 }
 
 // static
 std::string ManagedUserRegistrationUtility::GenerateNewManagedUserId() {
   std::string new_managed_user_id;
-  bool success = base::Base64Encode(base::RandBytesAsString(8),
-                                    &new_managed_user_id);
-  DCHECK(success);
+  base::Base64Encode(base::RandBytesAsString(8), &new_managed_user_id);
   return new_managed_user_id;
 }
 
@@ -168,10 +189,12 @@ void ManagedUserRegistrationUtility::SetUtilityForTests(
 ManagedUserRegistrationUtility* ManagedUserRegistrationUtility::CreateImpl(
       PrefService* prefs,
       scoped_ptr<ManagedUserRefreshTokenFetcher> token_fetcher,
-      ManagedUserSyncService* service) {
+      ManagedUserSyncService* service,
+      ManagedUserSharedSettingsService* shared_settings_service) {
   return new ManagedUserRegistrationUtilityImpl(prefs,
                                                 token_fetcher.Pass(),
-                                                service);
+                                                service,
+                                                shared_settings_service);
 }
 
 namespace {
@@ -179,14 +202,16 @@ namespace {
 ManagedUserRegistrationUtilityImpl::ManagedUserRegistrationUtilityImpl(
     PrefService* prefs,
     scoped_ptr<ManagedUserRefreshTokenFetcher> token_fetcher,
-    ManagedUserSyncService* service)
-    : weak_ptr_factory_(this),
-      prefs_(prefs),
+    ManagedUserSyncService* service,
+    ManagedUserSharedSettingsService* shared_settings_service)
+    : prefs_(prefs),
       token_fetcher_(token_fetcher.Pass()),
       managed_user_sync_service_(service),
+      managed_user_shared_settings_service_(shared_settings_service),
       pending_managed_user_acknowledged_(false),
       is_existing_managed_user_(false),
-      avatar_updated_(false) {
+      avatar_updated_(false),
+      weak_ptr_factory_(this) {
   managed_user_sync_service_->AddObserver(this);
 }
 
@@ -203,21 +228,65 @@ void ManagedUserRegistrationUtilityImpl::Register(
   callback_ = callback;
   pending_managed_user_id_ = managed_user_id;
 
-  const DictionaryValue* dict = prefs_->GetDictionary(prefs::kManagedUsers);
+  const base::DictionaryValue* dict =
+      prefs_->GetDictionary(prefs::kManagedUsers);
   is_existing_managed_user_ = dict->HasKey(managed_user_id);
   if (!is_existing_managed_user_) {
     managed_user_sync_service_->AddManagedUser(pending_managed_user_id_,
                                                base::UTF16ToUTF8(info.name),
                                                info.master_key,
+                                               info.password_signature_key,
+                                               info.password_encryption_key,
                                                info.avatar_index);
   } else {
+    const base::DictionaryValue* value = NULL;
+    bool success =
+        dict->GetDictionaryWithoutPathExpansion(managed_user_id, &value);
+    DCHECK(success);
+    std::string key;
+    bool need_keys = !info.password_signature_key.empty() ||
+                     !info.password_encryption_key.empty();
+    bool keys_need_update =
+        need_keys &&
+        value->GetString(ManagedUserSyncService::kPasswordSignatureKey, &key) &&
+        !key.empty() &&
+        value->GetString(ManagedUserSyncService::kPasswordEncryptionKey,
+                         &key) &&
+        !key.empty();
+    if (keys_need_update) {
+      managed_user_sync_service_->UpdateManagedUser(
+          pending_managed_user_id_,
+          base::UTF16ToUTF8(info.name),
+          info.master_key,
+          info.password_signature_key,
+          info.password_encryption_key,
+          info.avatar_index);
+    } else {
+      // The user already exists and does not need to be updated.
+      OnManagedUserAcknowledged(managed_user_id);
+    }
     avatar_updated_ =
         managed_user_sync_service_->UpdateManagedUserAvatarIfNeeded(
             managed_user_id,
             info.avatar_index);
-
-    // User already exists, don't wait for acknowledgment.
-    OnManagedUserAcknowledged(managed_user_id);
+  }
+#if defined(OS_CHROMEOS)
+  const char* kAvatarKey = managed_users::kChromeOSAvatarIndex;
+#else
+  const char* kAvatarKey = managed_users::kChromeAvatarIndex;
+#endif
+  managed_user_shared_settings_service_->SetValue(
+      pending_managed_user_id_, kAvatarKey,
+      base::FundamentalValue(info.avatar_index));
+  if (!info.password_data.empty()) {
+    password_update_.reset(new ManagedUserSharedSettingsUpdate(
+        managed_user_shared_settings_service_,
+        pending_managed_user_id_,
+        managed_users::kChromeOSPasswordData,
+        scoped_ptr<base::Value>(info.password_data.DeepCopy()),
+        base::Bind(
+            &ManagedUserRegistrationUtilityImpl::OnPasswordChangeAcknowledged,
+            weak_ptr_factory_.GetWeakPtr())));
   }
 
   browser_sync::DeviceInfo::GetClientName(
@@ -239,11 +308,21 @@ void ManagedUserRegistrationUtilityImpl::OnManagedUserAcknowledged(
   CompleteRegistrationIfReady();
 }
 
+void ManagedUserRegistrationUtilityImpl::OnPasswordChangeAcknowledged(
+    bool success) {
+  DCHECK(password_update_);
+  DCHECK(success);
+  password_update_.reset();
+  CompleteRegistrationIfReady();
+}
+
 void ManagedUserRegistrationUtilityImpl::OnManagedUsersSyncingStopped() {
   AbortPendingRegistration(
       true,  // Run the callback.
       GoogleServiceAuthError(GoogleServiceAuthError::REQUEST_CANCELED));
 }
+
+void ManagedUserRegistrationUtilityImpl::OnManagedUsersChanged() {}
 
 void ManagedUserRegistrationUtilityImpl::FetchToken(
     const std::string& client_name) {
@@ -267,11 +346,14 @@ void ManagedUserRegistrationUtilityImpl::OnReceivedToken(
 }
 
 void ManagedUserRegistrationUtilityImpl::CompleteRegistrationIfReady() {
-  bool require_acknowledgment =
-      !pending_managed_user_acknowledged_ &&
-      !CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kNoManagedUserAcknowledgmentCheck);
-  if (require_acknowledgment || pending_managed_user_token_.empty())
+  bool skip_check = CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kNoManagedUserAcknowledgmentCheck);
+
+  if (!pending_managed_user_acknowledged_ && !skip_check)
+    return;
+  if (password_update_ && !skip_check)
+    return;
+  if (pending_managed_user_token_.empty())
     return;
 
   GoogleServiceAuthError error(GoogleServiceAuthError::NONE);

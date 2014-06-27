@@ -14,6 +14,7 @@
 #include "cc/test/fake_layer_tree_host_impl.h"
 #include "cc/test/geometry_test_utils.h"
 #include "cc/test/layer_test_common.h"
+#include "cc/test/test_shared_bitmap_manager.h"
 #include "cc/trees/layer_tree_host.h"
 #include "cc/trees/single_thread_proxy.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -26,21 +27,21 @@ using ::testing::Mock;
 using ::testing::StrictMock;
 using ::testing::_;
 
-#define EXPECT_SET_NEEDS_FULL_TREE_SYNC(expect, code_to_test) do {        \
+#define EXPECT_SET_NEEDS_FULL_TREE_SYNC(expect, code_to_test)               \
+  do {                                                                      \
     EXPECT_CALL(*layer_tree_host_, SetNeedsFullTreeSync()).Times((expect)); \
-    code_to_test;                                                         \
-    Mock::VerifyAndClearExpectations(layer_tree_host_.get());           \
+    code_to_test;                                                           \
+    Mock::VerifyAndClearExpectations(layer_tree_host_.get());               \
   } while (false)
-
 
 namespace cc {
 namespace {
 
 class MockLayerTreeHost : public LayerTreeHost {
  public:
-  explicit MockLayerTreeHost(LayerTreeHostClient* client)
+  explicit MockLayerTreeHost(FakeLayerTreeHostClient* client)
       : LayerTreeHost(client, NULL, LayerTreeSettings()) {
-    Initialize(NULL);
+    InitializeSingleThreaded(client);
   }
 
   MOCK_METHOD0(SetNeedsCommit, void());
@@ -51,7 +52,7 @@ class MockLayerTreeHost : public LayerTreeHost {
 class MockLayerPainter : public LayerPainter {
  public:
   virtual void Paint(SkCanvas* canvas,
-                     gfx::Rect content_rect,
+                     const gfx::Rect& content_rect,
                      gfx::RectF* opaque) OVERRIDE {}
 };
 
@@ -59,7 +60,7 @@ class MockLayerPainter : public LayerPainter {
 class LayerTest : public testing::Test {
  public:
   LayerTest()
-      : host_impl_(&proxy_),
+      : host_impl_(&proxy_, &shared_bitmap_manager_),
         fake_client_(FakeLayerTreeHostClient::DIRECT_3D) {}
 
  protected:
@@ -129,6 +130,7 @@ class LayerTest : public testing::Test {
   }
 
   FakeImplProxy proxy_;
+  TestSharedBitmapManager shared_bitmap_manager_;
   FakeLayerTreeHostImpl host_impl_;
 
   FakeLayerTreeHostClient fake_client_;
@@ -545,11 +547,13 @@ TEST_F(LayerTest, CheckPropertyChangeCausesCorrectBehavior) {
   EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetBackgroundColor(SK_ColorLTGRAY));
   EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetMasksToBounds(true));
   EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetOpacity(0.5f));
+  EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetBlendMode(SkXfermode::kHue_Mode));
+  EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetIsRootForIsolatedGroup(true));
   EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetContentsOpaque(true));
   EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetPosition(gfx::PointF(4.f, 9.f)));
-  EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetSublayerTransform(
-      gfx::Transform(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)));
-  EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetScrollable(true));
+  // We can use any layer pointer here since we aren't syncing for real.
+  EXPECT_SET_NEEDS_COMMIT(1,
+                          test_layer->SetScrollClipLayerId(test_layer->id()));
   EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetUserScrollable(true, false));
   EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetScrollOffset(
       gfx::Vector2d(10, 10)));
@@ -562,8 +566,10 @@ TEST_F(LayerTest, CheckPropertyChangeCausesCorrectBehavior) {
   EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetDoubleSided(false));
   EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetTouchEventHandlerRegion(
       gfx::Rect(10, 10)));
-  EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetDrawCheckerboardForMissingTiles(
-      !test_layer->DrawCheckerboardForMissingTiles()));
+  EXPECT_SET_NEEDS_COMMIT(
+      1,
+      test_layer->SetDrawCheckerboardForMissingTiles(
+          !test_layer->draw_checkerboard_for_missing_tiles()));
   EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetForceRenderSurface(true));
   EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetHideLayerAndSubtree(true));
 
@@ -800,19 +806,25 @@ TEST_F(LayerTest, MaskAndReplicaHasParent) {
 class LayerTreeHostFactory {
  public:
   LayerTreeHostFactory()
-      : client_(FakeLayerTreeHostClient::DIRECT_3D) {}
+      : client_(FakeLayerTreeHostClient::DIRECT_3D),
+        shared_bitmap_manager_(new TestSharedBitmapManager()) {}
 
   scoped_ptr<LayerTreeHost> Create() {
-    return LayerTreeHost::Create(&client_, NULL, LayerTreeSettings(), NULL)
-        .Pass();
+    return LayerTreeHost::CreateSingleThreaded(&client_,
+                                               &client_,
+                                               shared_bitmap_manager_.get(),
+                                               LayerTreeSettings()).Pass();
   }
 
   scoped_ptr<LayerTreeHost> Create(LayerTreeSettings settings) {
-    return LayerTreeHost::Create(&client_, NULL, settings, NULL).Pass();
+    return LayerTreeHost::CreateSingleThreaded(
+               &client_, &client_, shared_bitmap_manager_.get(), settings)
+        .Pass();
   }
 
  private:
   FakeLayerTreeHostClient client_;
+  scoped_ptr<SharedBitmapManager> shared_bitmap_manager_;
 };
 
 void AssertLayerTreeHostMatchesForSubtree(Layer* layer, LayerTreeHost* host) {

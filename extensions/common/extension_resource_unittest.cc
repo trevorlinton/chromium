@@ -50,18 +50,18 @@ TEST(ExtensionResourceTest, ResourcesOutsideOfPath) {
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
   base::FilePath inner_dir = temp.path().AppendASCII("directory");
-  ASSERT_TRUE(file_util::CreateDirectory(inner_dir));
+  ASSERT_TRUE(base::CreateDirectory(inner_dir));
   base::FilePath sub_dir = inner_dir.AppendASCII("subdir");
-  ASSERT_TRUE(file_util::CreateDirectory(sub_dir));
+  ASSERT_TRUE(base::CreateDirectory(sub_dir));
   base::FilePath inner_file = inner_dir.AppendASCII("inner");
   base::FilePath outer_file = temp.path().AppendASCII("outer");
-  ASSERT_TRUE(file_util::WriteFile(outer_file, "X", 1));
-  ASSERT_TRUE(file_util::WriteFile(inner_file, "X", 1));
+  ASSERT_TRUE(base::WriteFile(outer_file, "X", 1));
+  ASSERT_TRUE(base::WriteFile(inner_file, "X", 1));
   std::string extension_id = id_util::GenerateId("test");
 
 #if defined(OS_POSIX)
   base::FilePath symlink_file = inner_dir.AppendASCII("symlink");
-  file_util::CreateSymbolicLink(
+  base::CreateSymbolicLink(
       base::FilePath().AppendASCII("..").AppendASCII("outer"),
       symlink_file);
 #endif
@@ -123,12 +123,12 @@ TEST(ExtensionResourceTest, CreateWithAllResourcesOnDisk) {
   const char* filename = "res.ico";
   base::FilePath root_resource = temp.path().AppendASCII(filename);
   std::string data = "some foo";
-  ASSERT_TRUE(file_util::WriteFile(root_resource, data.c_str(), data.length()));
+  ASSERT_TRUE(base::WriteFile(root_resource, data.c_str(), data.length()));
 
   // Create l10n resources (for current locale and its parents).
   base::FilePath l10n_path =
       temp.path().Append(kLocaleFolder);
-  ASSERT_TRUE(file_util::CreateDirectory(l10n_path));
+  ASSERT_TRUE(base::CreateDirectory(l10n_path));
 
   std::vector<std::string> locales;
   l10n_util::GetParentLocales(l10n_util::GetApplicationLocale(std::string()),
@@ -137,8 +137,8 @@ TEST(ExtensionResourceTest, CreateWithAllResourcesOnDisk) {
   for (size_t i = 0; i < locales.size(); i++) {
     base::FilePath make_path;
     make_path = l10n_path.AppendASCII(locales[i]);
-    ASSERT_TRUE(file_util::CreateDirectory(make_path));
-    ASSERT_TRUE(file_util::WriteFile(make_path.AppendASCII(filename),
+    ASSERT_TRUE(base::CreateDirectory(make_path));
+    ASSERT_TRUE(base::WriteFile(make_path.AppendASCII(filename),
         data.c_str(), data.length()));
   }
 

@@ -5,123 +5,69 @@
 #include "chrome/browser/signin/signin_global_error.h"
 
 #include "base/logging.h"
-#include "base/prefs/pref_service.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/profile_oauth2_token_service.h"
-#include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_manager.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/signin/signin_promo.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/global_error/global_error_service.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
+#include "chrome/browser/ui/singleton_tabs.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
-#include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
+#include "net/base/url_util.h"
 #include "ui/base/l10n/l10n_util.h"
 
-SigninGlobalError::SigninGlobalError(Profile* profile)
-    : auth_error_(GoogleServiceAuthError::AuthErrorNone()), profile_(profile) {
+SigninGlobalError::SigninGlobalError(
+    SigninErrorController* error_controller,
+    Profile* profile)
+    : profile_(profile),
+      error_controller_(error_controller) {
+  error_controller_->AddObserver(this);
+  GlobalErrorServiceFactory::GetForProfile(profile_)->AddGlobalError(this);
 }
 
 SigninGlobalError::~SigninGlobalError() {
-  DCHECK(provider_set_.empty())
-      << "All AuthStatusProviders should be unregistered before"
-      << " SigninManager::Shutdown() is called";
+  DCHECK(!error_controller_)
+      << "SigninGlobalError::Shutdown() was not called";
 }
 
-void SigninGlobalError::AddProvider(const AuthStatusProvider* provider) {
-  DCHECK(provider_set_.find(provider) == provider_set_.end())
-      << "Adding same AuthStatusProvider multiple times";
-  provider_set_.insert(provider);
-  AuthStatusChanged();
-}
-
-void SigninGlobalError::RemoveProvider(const AuthStatusProvider* provider) {
-  std::set<const AuthStatusProvider*>::iterator iter =
-      provider_set_.find(provider);
-  DCHECK(iter != provider_set_.end())
-      << "Removing provider that was never added";
-  provider_set_.erase(iter);
-  AuthStatusChanged();
-}
-
-SigninGlobalError::AuthStatusProvider::AuthStatusProvider() {
-}
-
-SigninGlobalError::AuthStatusProvider::~AuthStatusProvider() {
-}
-
-void SigninGlobalError::AuthStatusChanged() {
-  // Walk all of the status providers and collect any error.
-  GoogleServiceAuthError current_error(GoogleServiceAuthError::AuthErrorNone());
-  std::string current_account_id;
-  for (std::set<const AuthStatusProvider*>::const_iterator it =
-           provider_set_.begin(); it != provider_set_.end(); ++it) {
-    current_account_id = (*it)->GetAccountId();
-    current_error = (*it)->GetAuthStatus();
-
-    // Break out if any provider reports an error (ignoring ordinary network
-    // errors, which are not surfaced to the user). This logic may eventually
-    // need to be extended to prioritize different auth errors, but for now
-    // all auth errors are treated the same.
-    if (current_error.state() != GoogleServiceAuthError::NONE &&
-        current_error.state() != GoogleServiceAuthError::CONNECTION_FAILED) {
-      break;
-    }
-  }
-  if (current_error.state() != auth_error_.state() ||
-      account_id_ != current_account_id) {
-    auth_error_ = current_error;
-    if (auth_error_.state() == GoogleServiceAuthError::NONE) {
-      account_id_.clear();
-    } else {
-      account_id_ = current_account_id;
-    }
-
-    GlobalErrorServiceFactory::GetForProfile(profile_)->NotifyErrorsChanged(
-        this);
-  }
+void SigninGlobalError::Shutdown() {
+  GlobalErrorServiceFactory::GetForProfile(profile_)->RemoveGlobalError(this);
+  error_controller_->RemoveObserver(this);
+  error_controller_ = NULL;
 }
 
 bool SigninGlobalError::HasMenuItem() {
-  return !MenuItemLabel().empty();
+  return error_controller_->HasError();
 }
 
 int SigninGlobalError::MenuItemCommandID() {
   return IDC_SHOW_SIGNIN_ERROR;
 }
 
-string16 SigninGlobalError::MenuItemLabel() {
-  if (account_id_.empty() ||
-      auth_error_.state() == GoogleServiceAuthError::NONE ||
-      auth_error_.state() == GoogleServiceAuthError::CONNECTION_FAILED) {
-    // If the user isn't signed in, or there's no auth error worth elevating to
-    // the user, don't display any menu item.
-    return string16();
-  } else {
-    // There's an auth error the user should know about - notify the user.
+base::string16 SigninGlobalError::MenuItemLabel() {
+  // Notify the user if there's an auth error the user should know about.
+  if (error_controller_->HasError())
     return l10n_util::GetStringUTF16(IDS_SYNC_SIGN_IN_ERROR_WRENCH_MENU_ITEM);
-  }
+  return base::string16();
 }
 
 void SigninGlobalError::ExecuteMenuItem(Browser* browser) {
 #if defined(OS_CHROMEOS)
-  if (auth_error_.state() != GoogleServiceAuthError::NONE) {
-    DLOG(INFO) << "Signing out the user to fix a sync error.";
+  if (error_controller_->auth_error().state() !=
+      GoogleServiceAuthError::NONE) {
+    DVLOG(1) << "Signing out the user to fix a sync error.";
     // TODO(beng): seems like this could just call chrome::AttemptUserExit().
     chrome::ExecuteCommand(browser, IDC_EXIT);
     return;
   }
 #endif
-
-  // TODO(rogerta): what we do depends on which account is reporting an error.
-  // This will be needed once the account reconcilor is implemented.  The
-  // LoginUIService will support multi-login as well.
 
   // Global errors don't show up in the wrench menu on android.
 #if !defined(OS_ANDROID)
@@ -130,8 +76,10 @@ void SigninGlobalError::ExecuteMenuItem(Browser* browser) {
     login_ui->current_login_ui()->FocusUI();
     return;
   }
-  // Need to navigate to the settings page and display the UI.
-  chrome::ShowSettingsSubPage(browser, chrome::kSyncSetupSubPage);
+
+  chrome::ShowSingletonTab(
+      browser,
+      signin::GetReauthURL(profile_, error_controller_->error_account_id()));
 #endif
 }
 
@@ -139,12 +87,12 @@ bool SigninGlobalError::HasBubbleView() {
   return !GetBubbleViewMessages().empty();
 }
 
-string16 SigninGlobalError::GetBubbleViewTitle() {
+base::string16 SigninGlobalError::GetBubbleViewTitle() {
   return l10n_util::GetStringUTF16(IDS_SIGNIN_ERROR_BUBBLE_VIEW_TITLE);
 }
 
-std::vector<string16> SigninGlobalError::GetBubbleViewMessages() {
-  std::vector<string16> messages;
+std::vector<base::string16> SigninGlobalError::GetBubbleViewMessages() {
+  std::vector<base::string16> messages;
 
   // If the user isn't signed in, no need to display an error bubble.
   SigninManagerBase* signin_manager =
@@ -155,44 +103,40 @@ std::vector<string16> SigninGlobalError::GetBubbleViewMessages() {
       return messages;
   }
 
-  switch (auth_error_.state()) {
-    // In the case of no error, or a simple network error, don't bother
-    // displaying a popup bubble.
-    case GoogleServiceAuthError::CONNECTION_FAILED:
-    case GoogleServiceAuthError::NONE:
-      return messages;
+  if (!error_controller_->HasError())
+    return messages;
 
+  switch (error_controller_->auth_error().state()) {
     // TODO(rogerta): use account id in error messages.
 
     // User credentials are invalid (bad acct, etc).
     case GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS:
+    case GoogleServiceAuthError::SERVICE_ERROR:
     case GoogleServiceAuthError::ACCOUNT_DELETED:
     case GoogleServiceAuthError::ACCOUNT_DISABLED:
-      messages.push_back(l10n_util::GetStringFUTF16(
-          IDS_SYNC_SIGN_IN_ERROR_BUBBLE_VIEW_MESSAGE,
-          l10n_util::GetStringUTF16(IDS_PRODUCT_NAME)));
+      messages.push_back(l10n_util::GetStringUTF16(
+          IDS_SYNC_SIGN_IN_ERROR_BUBBLE_VIEW_MESSAGE));
       break;
 
     // Sync service is not available for this account's domain.
     case GoogleServiceAuthError::SERVICE_UNAVAILABLE:
-      messages.push_back(l10n_util::GetStringFUTF16(
-          IDS_SYNC_UNAVAILABLE_ERROR_BUBBLE_VIEW_MESSAGE,
-          l10n_util::GetStringUTF16(IDS_PRODUCT_NAME)));
+      messages.push_back(l10n_util::GetStringUTF16(
+          IDS_SYNC_UNAVAILABLE_ERROR_BUBBLE_VIEW_MESSAGE));
       break;
 
     // Generic message for "other" errors.
     default:
-      messages.push_back(l10n_util::GetStringFUTF16(
-          IDS_SYNC_OTHER_SIGN_IN_ERROR_BUBBLE_VIEW_MESSAGE,
-          l10n_util::GetStringUTF16(IDS_PRODUCT_NAME)));
+      messages.push_back(l10n_util::GetStringUTF16(
+          IDS_SYNC_OTHER_SIGN_IN_ERROR_BUBBLE_VIEW_MESSAGE));
   }
   return messages;
 }
 
-string16 SigninGlobalError::GetBubbleViewAcceptButtonLabel() {
-  // If the service is unavailable, don't give the user the option to try
+base::string16 SigninGlobalError::GetBubbleViewAcceptButtonLabel() {
+  // If the auth service is unavailable, don't give the user the option to try
   // signing in again.
-  if (auth_error_.state() == GoogleServiceAuthError::SERVICE_UNAVAILABLE) {
+  if (error_controller_->auth_error().state() ==
+      GoogleServiceAuthError::SERVICE_UNAVAILABLE) {
     return l10n_util::GetStringUTF16(
         IDS_SYNC_UNAVAILABLE_ERROR_BUBBLE_VIEW_ACCEPT);
   } else {
@@ -200,8 +144,8 @@ string16 SigninGlobalError::GetBubbleViewAcceptButtonLabel() {
   }
 }
 
-string16 SigninGlobalError::GetBubbleViewCancelButtonLabel() {
-  return string16();
+base::string16 SigninGlobalError::GetBubbleViewCancelButtonLabel() {
+  return base::string16();
 }
 
 void SigninGlobalError::OnBubbleViewDidClose(Browser* browser) {
@@ -215,8 +159,6 @@ void SigninGlobalError::BubbleViewCancelButtonPressed(Browser* browser) {
   NOTREACHED();
 }
 
-// static
-SigninGlobalError* SigninGlobalError::GetForProfile(Profile* profile) {
-  return ProfileOAuth2TokenServiceFactory::GetForProfile(profile)->
-      signin_global_error();
+void SigninGlobalError::OnErrorChanged() {
+  GlobalErrorServiceFactory::GetForProfile(profile_)->NotifyErrorsChanged(this);
 }

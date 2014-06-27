@@ -18,8 +18,8 @@
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/web/WebElement.h"
+#include "third_party/WebKit/public/web/WebElementCollection.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
-#include "third_party/WebKit/public/web/WebNodeCollection.h"
 #include "third_party/WebKit/public/web/WebView.h"
 
 namespace safe_browsing {
@@ -92,7 +92,7 @@ struct PhishingDOMFeatureExtractor::PageFeatureState {
 struct PhishingDOMFeatureExtractor::FrameData {
   // This is our reference to document.all, which is an iterator over all
   // of the elements in the document.  It keeps track of our current position.
-  WebKit::WebNodeCollection elements;
+  blink::WebElementCollection elements;
   // The domain of the document URL, stored here so that we don't need to
   // recompute it every time it's needed.
   std::string domain;
@@ -127,7 +127,7 @@ void PhishingDOMFeatureExtractor::ExtractFeatures(
   done_callback_ = done_callback;
 
   page_feature_state_.reset(new PageFeatureState(clock_->Now()));
-  WebKit::WebView* web_view = render_view_->GetWebView();
+  blink::WebView* web_view = render_view_->GetWebView();
   if (web_view && web_view->mainFrame()) {
     cur_document_ = web_view->mainFrame()->document();
   }
@@ -158,10 +158,11 @@ void PhishingDOMFeatureExtractor::ExtractFeaturesWithTimeout() {
 
   int num_elements = 0;
   for (; !cur_document_.isNull(); cur_document_ = GetNextDocument()) {
-    WebKit::WebNode cur_node;
+    blink::WebElement cur_element;
     if (cur_frame_data_.get()) {
-      // We're resuming traversal of a frame, so just advance to the next node.
-      cur_node = cur_frame_data_->elements.nextItem();
+      // We're resuming traversal of a frame, so just advance to the next
+      // element.
+      cur_element = cur_frame_data_->elements.nextItem();
       // When we resume the traversal, the first call to nextItem() potentially
       // has to walk through the document again from the beginning, if it was
       // modified between our chunks of work.  Log how long this takes, so we
@@ -172,25 +173,21 @@ void PhishingDOMFeatureExtractor::ExtractFeaturesWithTimeout() {
       // We just moved to a new frame, so update our frame state
       // and advance to the first element.
       ResetFrameData();
-      cur_node = cur_frame_data_->elements.firstItem();
+      cur_element = cur_frame_data_->elements.firstItem();
     }
 
-    for (; !cur_node.isNull();
-         cur_node = cur_frame_data_->elements.nextItem()) {
-      if (!cur_node.isElementNode()) {
-        continue;
-      }
-      WebKit::WebElement element = cur_node.to<WebKit::WebElement>();
-      if (element.hasTagName("a")) {
-        HandleLink(element);
-      } else if (element.hasTagName("form")) {
-        HandleForm(element);
-      } else if (element.hasTagName("img")) {
-        HandleImage(element);
-      } else if (element.hasTagName("input")) {
-        HandleInput(element);
-      } else if (element.hasTagName("script")) {
-        HandleScript(element);
+    for (; !cur_element.isNull();
+         cur_element = cur_frame_data_->elements.nextItem()) {
+      if (cur_element.hasTagName("a")) {
+        HandleLink(cur_element);
+      } else if (cur_element.hasTagName("form")) {
+        HandleForm(cur_element);
+      } else if (cur_element.hasTagName("img")) {
+        HandleImage(cur_element);
+      } else if (cur_element.hasTagName("input")) {
+        HandleInput(cur_element);
+      } else if (cur_element.hasTagName("script")) {
+        HandleScript(cur_element);
       }
 
       if (++num_elements >= kClockCheckGranularity) {
@@ -236,7 +233,7 @@ void PhishingDOMFeatureExtractor::ExtractFeaturesWithTimeout() {
 }
 
 void PhishingDOMFeatureExtractor::HandleLink(
-    const WebKit::WebElement& element) {
+    const blink::WebElement& element) {
   // Count the number of times we link to a different host.
   if (!element.hasAttribute("href")) {
     DVLOG(1) << "Skipping anchor tag with no href";
@@ -244,7 +241,7 @@ void PhishingDOMFeatureExtractor::HandleLink(
   }
 
   // Retrieve the link and resolve the link in case it's relative.
-  WebKit::WebURL full_url = element.document().completeURL(
+  blink::WebURL full_url = element.document().completeURL(
       element.getAttribute("href"));
 
   std::string domain;
@@ -270,7 +267,7 @@ void PhishingDOMFeatureExtractor::HandleLink(
 }
 
 void PhishingDOMFeatureExtractor::HandleForm(
-    const WebKit::WebElement& element) {
+    const blink::WebElement& element) {
   // Increment the number of forms on this page.
   ++page_feature_state_->num_forms;
 
@@ -279,7 +276,7 @@ void PhishingDOMFeatureExtractor::HandleForm(
     return;
   }
 
-  WebKit::WebURL full_url = element.document().completeURL(
+  blink::WebURL full_url = element.document().completeURL(
       element.getAttribute("action"));
 
   std::string domain;
@@ -296,13 +293,13 @@ void PhishingDOMFeatureExtractor::HandleForm(
 }
 
 void PhishingDOMFeatureExtractor::HandleImage(
-    const WebKit::WebElement& element) {
+    const blink::WebElement& element) {
   if (!element.hasAttribute("src")) {
     DVLOG(1) << "Skipping img tag with no src";
   }
 
   // Record whether the image points to a different domain.
-  WebKit::WebURL full_url = element.document().completeURL(
+  blink::WebURL full_url = element.document().completeURL(
       element.getAttribute("src"));
   std::string domain;
   bool is_external = IsExternalDomain(full_url, &domain);
@@ -318,7 +315,7 @@ void PhishingDOMFeatureExtractor::HandleImage(
 }
 
 void PhishingDOMFeatureExtractor::HandleInput(
-    const WebKit::WebElement& element) {
+    const blink::WebElement& element) {
   // The HTML spec says that if the type is unspecified, it defaults to text.
   // In addition, any unrecognized type will be treated as a text input.
   //
@@ -343,7 +340,7 @@ void PhishingDOMFeatureExtractor::HandleInput(
 }
 
 void PhishingDOMFeatureExtractor::HandleScript(
-    const WebKit::WebElement& element) {
+    const blink::WebElement& element) {
   ++page_feature_state_->num_script_tags;
 }
 
@@ -391,9 +388,9 @@ void PhishingDOMFeatureExtractor::ResetFrameData() {
           net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES);
 }
 
-WebKit::WebDocument PhishingDOMFeatureExtractor::GetNextDocument() {
+blink::WebDocument PhishingDOMFeatureExtractor::GetNextDocument() {
   DCHECK(!cur_document_.isNull());
-  WebKit::WebFrame* frame = cur_document_.frame();
+  blink::WebFrame* frame = cur_document_.frame();
   // Advance to the next frame that contains a document, with no wrapping.
   if (frame) {
     while ((frame = frame->traverseNext(false))) {
@@ -406,7 +403,7 @@ WebKit::WebDocument PhishingDOMFeatureExtractor::GetNextDocument() {
     // current subdocument getting removed from the frame tree.
     UMA_HISTOGRAM_COUNTS("SBClientPhishing.DOMFeatureFrameRemoved", 1);
   }
-  return WebKit::WebDocument();
+  return blink::WebDocument();
 }
 
 bool PhishingDOMFeatureExtractor::IsExternalDomain(const GURL& url,

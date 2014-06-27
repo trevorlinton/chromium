@@ -126,6 +126,43 @@ void WebUILoginDisplay::SetUIEnabled(bool is_enabled) {
 void WebUILoginDisplay::SelectPod(int index) {
 }
 
+void WebUILoginDisplay::ShowBannerMessage(const std::string& message) {
+  if (!webui_handler_)
+    return;
+  webui_handler_->ShowBannerMessage(message);
+}
+
+void WebUILoginDisplay::ShowUserPodButton(
+    const std::string& username,
+    const std::string& iconURL,
+    const base::Closure& click_callback) {
+  if (!webui_handler_)
+    return;
+  webui_handler_->ShowUserPodButton(username, iconURL, click_callback);
+}
+
+void WebUILoginDisplay::HideUserPodButton(const std::string& username) {
+  if (!webui_handler_)
+    return;
+  webui_handler_->HideUserPodButton(username);
+}
+
+void WebUILoginDisplay::SetAuthType(const std::string& username,
+                                    AuthType auth_type,
+                                    const std::string& initial_value) {
+  if (!webui_handler_)
+    return;
+  webui_handler_->SetAuthType(username, auth_type, initial_value);
+}
+
+LoginDisplay::AuthType WebUILoginDisplay::GetAuthType(
+    const std::string& username) const {
+  // Return default auth type if WebUI hander is not ready.
+  if (!webui_handler_)
+    return OFFLINE_PASSWORD;
+  return webui_handler_->GetAuthType(username);
+}
+
 void WebUILoginDisplay::ShowError(int error_msg_id,
                                   int login_attempts,
                                   HelpAppLauncher::HelpTopic help_topic_id) {
@@ -185,7 +222,6 @@ void WebUILoginDisplay::ShowError(int error_msg_id,
 
   webui_handler_->ShowError(login_attempts, error_text, help_link,
                             help_topic_id);
-  AccessibilityManager::Get()->MaybeSpeak(error_text);
 }
 
 void WebUILoginDisplay::ShowErrorScreen(LoginDisplay::SigninError error_id) {
@@ -273,11 +309,11 @@ void WebUILoginDisplay::MigrateUserData(const std::string& old_password) {
 }
 
 void WebUILoginDisplay::LoadWallpaper(const std::string& username) {
-  WallpaperManager::Get()->SetUserWallpaper(username);
+  WallpaperManager::Get()->SetUserWallpaperDelayed(username);
 }
 
 void WebUILoginDisplay::LoadSigninWallpaper() {
-  WallpaperManager::Get()->SetDefaultWallpaper();
+  WallpaperManager::Get()->SetDefaultWallpaperDelayed(UserManager::kSignInUser);
 }
 
 void WebUILoginDisplay::OnSigninScreenReady() {
@@ -365,8 +401,9 @@ void WebUILoginDisplay::Signout() {
   delegate_->Signout();
 }
 
-void WebUILoginDisplay::LoginAsKioskApp(const std::string& app_id) {
-  delegate_->LoginAsKioskApp(app_id);
+void WebUILoginDisplay::LoginAsKioskApp(const std::string& app_id,
+                                        bool diagnostic_mode) {
+  delegate_->LoginAsKioskApp(app_id, diagnostic_mode);
 }
 
 void WebUILoginDisplay::OnUserActivity(const ui::Event* event) {

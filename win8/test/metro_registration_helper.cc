@@ -54,11 +54,12 @@ bool RegisterTestDefaultBrowser() {
   register_command.AppendArg("/RegServer");
 
   base::win::ScopedHandle register_handle;
-  if (base::LaunchProcess(register_command, base::LaunchOptions(),
-                          register_handle.Receive())) {
+  if (base::LaunchProcess(register_command.GetCommandLineString(),
+                          base::LaunchOptions(),
+                          &register_handle)) {
     int ret = 0;
     if (base::WaitForExitCodeWithTimeout(
-            register_handle, &ret,
+            register_handle.Get(), &ret,
             base::TimeDelta::FromSeconds(kRegistrationTimeoutSeconds))) {
       if (ret == 0) {
         return true;
@@ -97,7 +98,7 @@ bool IsTestDefaultForProtocol(const wchar_t* protocol) {
     return false;
   }
 
-  return string16(win8::test::kDefaultTestProgId).compare(current_app) == 0;
+  return !base::string16(win8::test::kDefaultTestProgId).compare(current_app);
 }
 
 }  // namespace

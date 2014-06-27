@@ -5,6 +5,9 @@
 #include "content/common/input/input_param_traits.h"
 
 #include "content/common/input/input_event.h"
+#include "content/common/input/synthetic_gesture_params.h"
+#include "content/common/input/synthetic_pinch_gesture_params.h"
+#include "content/common/input/synthetic_smooth_scroll_gesture_params.h"
 #include "content/common/input_messages.h"
 #include "ipc/ipc_message.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -14,10 +17,6 @@ namespace content {
 namespace {
 
 typedef ScopedVector<InputEvent> InputEvents;
-
-void AddTo(InputEvents& events, const WebKit::WebInputEvent& event) {
-  events.push_back(new InputEvent(event, ui::LatencyInfo(), false));
-}
 
 class InputParamTraitsTest : public testing::Test {
  protected:
@@ -41,9 +40,29 @@ class InputParamTraitsTest : public testing::Test {
   static void Compare(const SyntheticSmoothScrollGestureParams* a,
                       const SyntheticSmoothScrollGestureParams* b) {
     EXPECT_EQ(a->gesture_source_type, b->gesture_source_type);
-    EXPECT_EQ(a->distance, b->distance);
-    EXPECT_EQ(a->anchor_x, b->anchor_x);
-    EXPECT_EQ(a->anchor_y, b->anchor_y);
+    EXPECT_EQ(a->anchor, b->anchor);
+    EXPECT_EQ(a->distances.size(), b->distances.size());
+    for (size_t i = 0; i < a->distances.size(); i++)
+        EXPECT_EQ(a->distances[i], b->distances[i]);
+    EXPECT_EQ(a->prevent_fling, b->prevent_fling);
+    EXPECT_EQ(a->speed_in_pixels_s, b->speed_in_pixels_s);
+  }
+
+  static void Compare(const SyntheticPinchGestureParams* a,
+                      const SyntheticPinchGestureParams* b) {
+    EXPECT_EQ(a->gesture_source_type, b->gesture_source_type);
+    EXPECT_EQ(a->zoom_in, b->zoom_in);
+    EXPECT_EQ(a->total_num_pixels_covered, b->total_num_pixels_covered);
+    EXPECT_EQ(a->anchor, b->anchor);
+    EXPECT_EQ(a->relative_pointer_speed_in_pixels_s,
+              b->relative_pointer_speed_in_pixels_s);
+  }
+
+  static void Compare(const SyntheticTapGestureParams* a,
+                      const SyntheticTapGestureParams* b) {
+    EXPECT_EQ(a->gesture_source_type, b->gesture_source_type);
+    EXPECT_EQ(a->position, b->position);
+    EXPECT_EQ(a->duration_ms, b->duration_ms);
   }
 
   static void Compare(const SyntheticGesturePacket* a,
@@ -58,6 +77,14 @@ class InputParamTraitsTest : public testing::Test {
       case SyntheticGestureParams::SMOOTH_SCROLL_GESTURE:
         Compare(SyntheticSmoothScrollGestureParams::Cast(a->gesture_params()),
                 SyntheticSmoothScrollGestureParams::Cast(b->gesture_params()));
+        break;
+      case SyntheticGestureParams::PINCH_GESTURE:
+        Compare(SyntheticPinchGestureParams::Cast(a->gesture_params()),
+                SyntheticPinchGestureParams::Cast(b->gesture_params()));
+        break;
+      case SyntheticGestureParams::TAP_GESTURE:
+        Compare(SyntheticTapGestureParams::Cast(a->gesture_params()),
+                SyntheticTapGestureParams::Cast(b->gesture_params()));
         break;
     }
   }
@@ -119,30 +146,30 @@ TEST_F(InputParamTraitsTest, InitializedEvents) {
 
   ui::LatencyInfo latency;
 
-  WebKit::WebKeyboardEvent key_event;
-  key_event.type = WebKit::WebInputEvent::RawKeyDown;
+  blink::WebKeyboardEvent key_event;
+  key_event.type = blink::WebInputEvent::RawKeyDown;
   key_event.nativeKeyCode = 5;
   events.push_back(new InputEvent(key_event, latency, false));
 
-  WebKit::WebMouseWheelEvent wheel_event;
-  wheel_event.type = WebKit::WebInputEvent::MouseWheel;
+  blink::WebMouseWheelEvent wheel_event;
+  wheel_event.type = blink::WebInputEvent::MouseWheel;
   wheel_event.deltaX = 10;
   latency.AddLatencyNumber(ui::INPUT_EVENT_LATENCY_BEGIN_RWH_COMPONENT, 1, 1);
   events.push_back(new InputEvent(wheel_event, latency, false));
 
-  WebKit::WebMouseEvent mouse_event;
-  mouse_event.type = WebKit::WebInputEvent::MouseDown;
+  blink::WebMouseEvent mouse_event;
+  mouse_event.type = blink::WebInputEvent::MouseDown;
   mouse_event.x = 10;
   latency.AddLatencyNumber(ui::INPUT_EVENT_LATENCY_UI_COMPONENT, 2, 2);
   events.push_back(new InputEvent(mouse_event, latency, false));
 
-  WebKit::WebGestureEvent gesture_event;
-  gesture_event.type = WebKit::WebInputEvent::GestureScrollBegin;
+  blink::WebGestureEvent gesture_event;
+  gesture_event.type = blink::WebInputEvent::GestureScrollBegin;
   gesture_event.x = -1;
   events.push_back(new InputEvent(gesture_event, latency, false));
 
-  WebKit::WebTouchEvent touch_event;
-  touch_event.type = WebKit::WebInputEvent::TouchStart;
+  blink::WebTouchEvent touch_event;
+  touch_event.type = blink::WebInputEvent::TouchStart;
   touch_event.touchesLength = 1;
   touch_event.touches[0].radiusX = 1;
   events.push_back(new InputEvent(touch_event, latency, false));
@@ -165,10 +192,42 @@ TEST_F(InputParamTraitsTest, SyntheticSmoothScrollGestureParams) {
   scoped_ptr<SyntheticSmoothScrollGestureParams> gesture_params(
       new SyntheticSmoothScrollGestureParams);
   gesture_params->gesture_source_type = SyntheticGestureParams::TOUCH_INPUT;
-  gesture_params->distance = 123;
-  gesture_params->anchor_x = 234;
-  gesture_params->anchor_y = 345;
+  gesture_params->anchor.SetPoint(234, 345);
+  gesture_params->distances.push_back(gfx::Vector2d(123, -789));
+  gesture_params->distances.push_back(gfx::Vector2d(-78, 43));
+  gesture_params->prevent_fling = false;
+  gesture_params->speed_in_pixels_s = 456;
   ASSERT_EQ(SyntheticGestureParams::SMOOTH_SCROLL_GESTURE,
+            gesture_params->GetGestureType());
+  SyntheticGesturePacket packet_in;
+  packet_in.set_gesture_params(gesture_params.PassAs<SyntheticGestureParams>());
+
+  Verify(packet_in);
+}
+
+TEST_F(InputParamTraitsTest, SyntheticPinchGestureParams) {
+  scoped_ptr<SyntheticPinchGestureParams> gesture_params(
+      new SyntheticPinchGestureParams);
+  gesture_params->gesture_source_type = SyntheticGestureParams::TOUCH_INPUT;
+  gesture_params->zoom_in = true;
+  gesture_params->total_num_pixels_covered = 123;
+  gesture_params->anchor.SetPoint(234, 345);
+  gesture_params->relative_pointer_speed_in_pixels_s = 456;
+  ASSERT_EQ(SyntheticGestureParams::PINCH_GESTURE,
+            gesture_params->GetGestureType());
+  SyntheticGesturePacket packet_in;
+  packet_in.set_gesture_params(gesture_params.PassAs<SyntheticGestureParams>());
+
+  Verify(packet_in);
+}
+
+TEST_F(InputParamTraitsTest, SyntheticTapGestureParams) {
+  scoped_ptr<SyntheticTapGestureParams> gesture_params(
+      new SyntheticTapGestureParams);
+  gesture_params->gesture_source_type = SyntheticGestureParams::TOUCH_INPUT;
+  gesture_params->position.SetPoint(798, 233);
+  gesture_params->duration_ms = 13;
+  ASSERT_EQ(SyntheticGestureParams::TAP_GESTURE,
             gesture_params->GetGestureType());
   SyntheticGesturePacket packet_in;
   packet_in.set_gesture_params(gesture_params.PassAs<SyntheticGestureParams>());

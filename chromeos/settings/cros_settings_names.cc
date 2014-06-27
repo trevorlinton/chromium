@@ -30,6 +30,8 @@ const char kAccountsPrefDeviceLocalAccountAutoLoginDelay[] =
     "cros.accounts.deviceLocalAccountAutoLoginDelay";
 const char kAccountsPrefDeviceLocalAccountAutoLoginBailoutEnabled[] =
     "cros.accounts.deviceLocalAccountAutoLoginBailoutEnabled";
+const char kAccountsPrefDeviceLocalAccountPromptForNetworkWhenOffline[] =
+    "cros.accounts.deviceLocalAccountPromptForNetworkWhenOffline";
 const char kAccountsPrefSupervisedUsersEnabled[] =
     "cros.accounts.supervisedUsersEnabled";
 
@@ -140,5 +142,9 @@ const char kDeviceAttestationEnabled[] = "cros.device.attestation_enabled";
 // enabled for the device.
 const char kAttestationForContentProtectionEnabled[] =
     "cros.device.attestation_for_content_protection_enabled";
+
+// The service account identity for device-level service accounts on
+// enterprise-enrolled devices.
+const char kServiceAccountIdentity[] = "cros.service_account_identity";
 
 }  // namespace chromeos

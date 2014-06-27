@@ -12,9 +12,9 @@
 #include "base/basictypes.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
-#include "content/common/accessibility_node_data.h"
 #include "content/common/content_export.h"
 #include "third_party/WebKit/public/web/WebAXEnums.h"
+#include "ui/accessibility/ax_node_data.h"
 
 #if defined(OS_MACOSX) && __OBJC__
 @class BrowserAccessibilityCocoa;
@@ -70,7 +70,7 @@ class CONTENT_EXPORT BrowserAccessibility {
       int32 index_in_parent);
 
   // Initialize this object's data.
-  void InitializeData(const AccessibilityNodeData& src);
+  void InitializeData(const ui::AXNodeData& src);
 
   virtual void SwapChildren(std::vector<BrowserAccessibility*>& children);
 
@@ -89,8 +89,21 @@ class CONTENT_EXPORT BrowserAccessibility {
   // Returns the number of children of this object.
   uint32 child_count() const { return children_.size(); }
 
-  // Return a pointer to the child with the given index.
-  BrowserAccessibility* GetChild(uint32 child_index) const;
+  // Returns true if this is a leaf node on this platform, meaning any
+  // children should not be exposed to this platform's native accessibility
+  // layer. Each platform subclass should implement this itself.
+  // The definition of a leaf may vary depending on the platform,
+  // but a leaf node should never have children that are focusable or
+  // that might send notifications.
+  virtual bool PlatformIsLeaf() const;
+
+  // Returns the number of children of this object, or 0 if PlatformIsLeaf()
+  // returns true.
+  uint32 PlatformChildCount() const;
+
+  // Return a pointer to the child at the given index, or NULL for an
+  // invalid index. Returns NULL if PlatformIsLeaf() returns true.
+  BrowserAccessibility* PlatformGetChild(uint32 child_index) const;
 
   // Return the previous sibling of this object, or NULL if it's the first
   // child of its parent.
@@ -106,6 +119,15 @@ class CONTENT_EXPORT BrowserAccessibility {
 
   // Returns the bounds of this object in screen coordinates.
   gfx::Rect GetGlobalBoundsRect() const;
+
+  // Returns the bounds of the given range in coordinates relative to the
+  // top-left corner of the overall web area. Only valid when the
+  // role is WebAXRoleStaticText.
+  gfx::Rect GetLocalBoundsForRange(int start, int len) const;
+
+  // Same as GetLocalBoundsForRange, in screen coordinates. Only valid when
+  // the role is WebAXRoleStaticText.
+  gfx::Rect GetGlobalBoundsForRange(int start, int len) const;
 
   // Returns the deepest descendant that contains the specified point
   // (in global screen coordinates).
@@ -143,11 +165,14 @@ class CONTENT_EXPORT BrowserAccessibility {
   gfx::Rect location() const { return location_; }
   BrowserAccessibilityManager* manager() const { return manager_; }
   const std::string& name() const { return name_; }
+  const std::string& value() const { return value_; }
   int32 renderer_id() const { return renderer_id_; }
   int32 role() const { return role_; }
   int32 state() const { return state_; }
-  const std::string& value() const { return value_; }
   bool instance_active() const { return instance_active_; }
+
+  void set_name(const std::string& name) { name_ = name; }
+  void set_value(const std::string& value) { value_ = value; }
 
 #if defined(OS_MACOSX) && __OBJC__
   BrowserAccessibilityCocoa* ToBrowserAccessibilityCocoa();
@@ -170,49 +195,43 @@ class CONTENT_EXPORT BrowserAccessibility {
   // need to distinguish between the default value and a missing attribute),
   // and another that returns the default value for that type if the
   // attribute is not present. In addition, strings can be returned as
-  // either std::string or string16, for convenience.
+  // either std::string or base::string16, for convenience.
 
-  bool HasBoolAttribute(AccessibilityNodeData::BoolAttribute attr) const;
-  bool GetBoolAttribute(AccessibilityNodeData::BoolAttribute attr) const;
-  bool GetBoolAttribute(AccessibilityNodeData::BoolAttribute attr,
-                        bool* value) const;
+  bool HasBoolAttribute(ui::AXBoolAttribute attr) const;
+  bool GetBoolAttribute(ui::AXBoolAttribute attr) const;
+  bool GetBoolAttribute(ui::AXBoolAttribute attr, bool* value) const;
 
-  bool HasFloatAttribute(AccessibilityNodeData::FloatAttribute attr) const;
-  float GetFloatAttribute(AccessibilityNodeData::FloatAttribute attr) const;
-  bool GetFloatAttribute(AccessibilityNodeData::FloatAttribute attr,
-                         float* value) const;
+  bool HasFloatAttribute(ui::AXFloatAttribute attr) const;
+  float GetFloatAttribute(ui::AXFloatAttribute attr) const;
+  bool GetFloatAttribute(ui::AXFloatAttribute attr, float* value) const;
 
-  bool HasIntAttribute(AccessibilityNodeData::IntAttribute attribute) const;
-  int GetIntAttribute(AccessibilityNodeData::IntAttribute attribute) const;
-  bool GetIntAttribute(AccessibilityNodeData::IntAttribute attribute,
-                       int* value) const;
+  bool HasIntAttribute(ui::AXIntAttribute attribute) const;
+  int GetIntAttribute(ui::AXIntAttribute attribute) const;
+  bool GetIntAttribute(ui::AXIntAttribute attribute, int* value) const;
 
   bool HasStringAttribute(
-      AccessibilityNodeData::StringAttribute attribute) const;
-  const std::string& GetStringAttribute(
-      AccessibilityNodeData::StringAttribute attribute) const;
-  bool GetStringAttribute(AccessibilityNodeData::StringAttribute attribute,
+      ui::AXStringAttribute attribute) const;
+  const std::string& GetStringAttribute(ui::AXStringAttribute attribute) const;
+  bool GetStringAttribute(ui::AXStringAttribute attribute,
                           std::string* value) const;
 
-  bool GetString16Attribute(AccessibilityNodeData::StringAttribute attribute,
-                            string16* value) const;
-  string16 GetString16Attribute(
-      AccessibilityNodeData::StringAttribute attribute) const;
+  bool GetString16Attribute(ui::AXStringAttribute attribute,
+                            base::string16* value) const;
+  base::string16 GetString16Attribute(
+      ui::AXStringAttribute attribute) const;
 
-  bool HasIntListAttribute(
-      AccessibilityNodeData::IntListAttribute attribute) const;
+  bool HasIntListAttribute(ui::AXIntListAttribute attribute) const;
   const std::vector<int32>& GetIntListAttribute(
-      AccessibilityNodeData::IntListAttribute attribute) const;
-  bool GetIntListAttribute(AccessibilityNodeData::IntListAttribute attribute,
+      ui::AXIntListAttribute attribute) const;
+  bool GetIntListAttribute(ui::AXIntListAttribute attribute,
                            std::vector<int32>* value) const;
 
-  void SetStringAttribute(
-      AccessibilityNodeData::StringAttribute attribute,
-      const std::string& value);
+  void SetStringAttribute(ui::AXStringAttribute attribute,
+                          const std::string& value);
 
   // Retrieve the value of a html attribute from the attribute map and
   // returns true if found.
-  bool GetHtmlAttribute(const char* attr, string16* value) const;
+  bool GetHtmlAttribute(const char* attr, base::string16* value) const;
   bool GetHtmlAttribute(const char* attr, std::string* value) const;
 
   // Utility method to handle special cases for ARIA booleans, tristates and
@@ -232,7 +251,7 @@ class CONTENT_EXPORT BrowserAccessibility {
                        bool* is_mixed) const;
 
   // Returns true if the bit corresponding to the given state enum is 1.
-  bool HasState(WebKit::WebAXState state_enum) const;
+  bool HasState(ui::AXState state_enum) const;
 
   // Returns true if this node is an editable text field of any kind.
   bool IsEditableText() const;
@@ -256,6 +275,11 @@ class CONTENT_EXPORT BrowserAccessibility {
   // The parent of this object, may be NULL if we're the root object.
   BrowserAccessibility* parent_;
 
+ private:
+  // Return the sum of the lengths of all static text descendants,
+  // including this object if it's static text.
+  int GetStaticTextLenRecursive() const;
+
   // The index of this within its parent object.
   int32 index_in_parent_;
 
@@ -269,15 +293,15 @@ class CONTENT_EXPORT BrowserAccessibility {
   std::string name_;
   std::string value_;
   std::vector<std::pair<
-      AccessibilityNodeData::BoolAttribute, bool> > bool_attributes_;
+      ui::AXBoolAttribute, bool> > bool_attributes_;
   std::vector<std::pair<
-      AccessibilityNodeData::FloatAttribute, float> > float_attributes_;
+      ui::AXFloatAttribute, float> > float_attributes_;
   std::vector<std::pair<
-      AccessibilityNodeData::IntAttribute, int> > int_attributes_;
+      ui::AXIntAttribute, int> > int_attributes_;
   std::vector<std::pair<
-      AccessibilityNodeData::StringAttribute, std::string> > string_attributes_;
+      ui::AXStringAttribute, std::string> > string_attributes_;
   std::vector<std::pair<
-      AccessibilityNodeData::IntListAttribute, std::vector<int32> > >
+      ui::AXIntListAttribute, std::vector<int32> > >
           intlist_attributes_;
   std::vector<std::pair<std::string, std::string> > html_attributes_;
   int32 role_;

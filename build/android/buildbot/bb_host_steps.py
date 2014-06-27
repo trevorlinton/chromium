@@ -15,7 +15,6 @@ from pylib import constants
 
 SLAVE_SCRIPTS_DIR = os.path.join(bb_utils.BB_BUILD_DIR, 'scripts', 'slave')
 VALID_HOST_TESTS = set(['check_webview_licenses', 'findbugs'])
-EXPERIMENTAL_TARGETS = ['android_experimental']
 
 DIR_BUILD_ROOT = os.path.dirname(constants.DIR_SOURCE_ROOT)
 
@@ -57,18 +56,11 @@ def Compile(options):
          '--compiler=goma',
          '--target=%s' % options.target,
          '--goma-dir=%s' % bb_utils.GOMA_DIR]
-  build_targets = options.build_targets.split(',')
   bb_annotations.PrintNamedStep('compile')
-  for build_target in build_targets:
-    RunCmd(cmd + ['--build-args=%s' % build_target],
-        halt_on_failure=True,
-        cwd=DIR_BUILD_ROOT)
-  if options.experimental:
-    for compile_target in EXPERIMENTAL_TARGETS:
-      bb_annotations.PrintNamedStep('Experimental Compile %s' % compile_target)
-      RunCmd(cmd + ['--build-args=%s' % compile_target],
-             flunk_on_failure=False,
-             cwd=DIR_BUILD_ROOT)
+  if options.build_targets:
+    build_targets = options.build_targets.split(',')
+    cmd += ['--build-args', ' '.join(build_targets)]
+  RunCmd(cmd, halt_on_failure=True, cwd=DIR_BUILD_ROOT)
 
 
 def ZipBuild(options):
@@ -76,42 +68,34 @@ def ZipBuild(options):
   RunCmd([
       os.path.join(SLAVE_SCRIPTS_DIR, 'zip_build.py'),
       '--src-dir', constants.DIR_SOURCE_ROOT,
-      '--build-dir', SrcPath('out'),
       '--exclude-files', 'lib.target,gen,android_webview,jingle_unittests']
       + bb_utils.EncodeProperties(options), cwd=DIR_BUILD_ROOT)
 
 
 def ExtractBuild(options):
   bb_annotations.PrintNamedStep('extract_build')
-  RunCmd(
-      [os.path.join(SLAVE_SCRIPTS_DIR, 'extract_build.py'),
-       '--build-dir', SrcPath('build'), '--build-output-dir',
-       SrcPath('out')] + bb_utils.EncodeProperties(options),
-       warning_code=1, cwd=DIR_BUILD_ROOT)
+  RunCmd([os.path.join(SLAVE_SCRIPTS_DIR, 'extract_build.py')]
+         + bb_utils.EncodeProperties(options),
+         warning_code=1, cwd=DIR_BUILD_ROOT)
 
 
 def FindBugs(options):
+  _ = options # keeps the linter and findbugs happy, parameter is not used
   bb_annotations.PrintNamedStep('findbugs')
-  build_type = []
-  if options.target == 'Release':
-    build_type = ['--release-build']
-  RunCmd([SrcPath('build', 'android', 'findbugs_diff.py')] + build_type)
+  RunCmd([SrcPath('build', 'android', 'findbugs_diff.py')])
   RunCmd([SrcPath(
       'tools', 'android', 'findbugs_plugin', 'test',
-      'run_findbugs_plugin_tests.py')] + build_type)
+      'run_findbugs_plugin_tests.py')])
 
 
-def BisectPerfRegression(_):
+def BisectPerfRegression(options):
+  args = []
+  if options.extra_src:
+    args = ['--extra_src', options.extra_src]
   RunCmd([SrcPath('tools', 'prepare-bisect-perf-regression.py'),
           '-w', os.path.join(constants.DIR_SOURCE_ROOT, os.pardir)])
   RunCmd([SrcPath('tools', 'run-bisect-perf-regression.py'),
-          '-w', os.path.join(constants.DIR_SOURCE_ROOT, os.pardir)])
-
-
-def DownloadWebRTCResources(_):
-  bb_annotations.PrintNamedStep('download_resources')
-  RunCmd([SrcPath('third_party', 'webrtc', 'tools', 'update_resources.py'),
-          '-p', '../../../'], halt_on_failure=True)
+          '-w', os.path.join(constants.DIR_SOURCE_ROOT, os.pardir)] + args)
 
 
 def GetHostStepCmds():
@@ -120,7 +104,6 @@ def GetHostStepCmds():
       ('extract_build', ExtractBuild),
       ('check_webview_licenses', CheckWebViewLicenses),
       ('bisect_perf_regression', BisectPerfRegression),
-      ('download_webrtc_resources', DownloadWebRTCResources),
       ('findbugs', FindBugs),
       ('zip_build', ZipBuild)
   ]
@@ -129,10 +112,13 @@ def GetHostStepCmds():
 def GetHostStepsOptParser():
   parser = bb_utils.GetParser()
   parser.add_option('--steps', help='Comma separated list of host tests.')
-  parser.add_option('--build-targets', default='All',
+  parser.add_option('--build-targets', default='',
                     help='Comma separated list of build targets.')
   parser.add_option('--experimental', action='store_true',
                     help='Indicate whether to compile experimental targets.')
+  parser.add_option('--extra_src', default='',
+                    help='Path to extra source file. If this is supplied, '
+                    'bisect script will use it to override default behavior.')
 
   return parser
 
@@ -144,6 +130,9 @@ def main(argv):
     return sys.exit('Unused args %s' % args)
 
   setattr(options, 'target', options.factory_properties.get('target', 'Debug'))
+  setattr(options, 'extra_src',
+          options.factory_properties.get('extra_src', ''))
+  constants.SetBuildType(options.target)
 
   if options.steps:
     bb_utils.RunSteps(options.steps.split(','), GetHostStepCmds(), options)

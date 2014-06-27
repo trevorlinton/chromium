@@ -27,18 +27,26 @@ class AppContextMenu : public ui::SimpleMenuModel::Delegate {
   AppContextMenu(AppContextMenuDelegate* delegate,
                  Profile* profile,
                  const std::string& app_id,
-                 AppListControllerDelegate* controller,
-                 bool is_platform_app,
-                 bool is_search_result_);
+                 AppListControllerDelegate* controller);
   virtual ~AppContextMenu();
 
   // Note this could return NULL if corresponding extension is gone.
   ui::MenuModel* GetMenuModel();
 
+  void set_is_platform_app(bool is_platform_app) {
+    is_platform_app_ = is_platform_app;
+  }
+  void set_is_search_result(bool is_search_result) {
+    is_search_result_ = is_search_result;
+  }
+  void set_is_in_folder(bool is_in_folder) {
+    is_in_folder_ = is_in_folder;
+  }
+
  private:
   // ui::SimpleMenuModel::Delegate overrides:
   virtual bool IsItemForCommandIdDynamic(int command_id) const OVERRIDE;
-  virtual string16 GetLabelForCommandId(int command_id) const OVERRIDE;
+  virtual base::string16 GetLabelForCommandId(int command_id) const OVERRIDE;
   virtual bool IsCommandIdChecked(int command_id) const OVERRIDE;
   virtual bool IsCommandIdEnabled(int command_id) const OVERRIDE;
   virtual bool GetAcceleratorForCommandId(
@@ -52,6 +60,7 @@ class AppContextMenu : public ui::SimpleMenuModel::Delegate {
   AppListControllerDelegate* controller_;
   bool is_platform_app_;
   bool is_search_result_;
+  bool is_in_folder_;
 
   scoped_ptr<ui::SimpleMenuModel> menu_model_;
   scoped_ptr<extensions::ContextMenuMatcher> extension_menu_items_;

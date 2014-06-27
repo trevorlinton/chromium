@@ -124,6 +124,9 @@ remoting.ClientSession = function(accessCode, fetchPin, fetchThirdPartyToken,
       document.getElementById('send-keys-menu')
   );
 
+  /** @type {HTMLMediaElement} @private */
+  this.video_ = null;
+
   /** @type {HTMLElement} @private */
   this.resizeToClientButton_ =
       document.getElementById('screen-resize-to-client');
@@ -131,6 +134,9 @@ remoting.ClientSession = function(accessCode, fetchPin, fetchThirdPartyToken,
   this.shrinkToFitButton_ = document.getElementById('screen-shrink-to-fit');
   /** @type {HTMLElement} @private */
   this.fullScreenButton_ = document.getElementById('toggle-full-screen');
+
+  /** @type {remoting.GnubbyAuthHandler} @private */
+  this.gnubbyAuthHandler_ = null;
 
   if (this.mode_ == remoting.ClientSession.Mode.IT2ME) {
     // Resize-to-client is not supported for IT2Me hosts.
@@ -145,6 +151,8 @@ remoting.ClientSession = function(accessCode, fetchPin, fetchThirdPartyToken,
       'click', this.callSetScreenMode_, false);
   this.fullScreenButton_.addEventListener(
       'click', this.callToggleFullScreen_, false);
+  document.addEventListener(
+      'webkitfullscreenchange', this.onFullScreenChanged_.bind(this), false);
 };
 
 /**
@@ -181,7 +189,7 @@ remoting.ClientSession.prototype.updateScrollbarVisibility = function() {
     }
   }
 
-  var htmlNode = /** @type {HTMLElement} */ (document.body.parentNode);
+  var htmlNode = /** @type {HTMLElement} */ (document.documentElement);
   if (needsHorizontalScroll) {
     htmlNode.classList.remove('no-horizontal-scroll');
   } else {
@@ -211,6 +219,17 @@ remoting.ClientSession.State = {
   FAILED: 5
 };
 
+/**
+ * @param {string} state The state name.
+ * @return {remoting.ClientSession.State} The session state enum value.
+ */
+remoting.ClientSession.State.fromString = function(state) {
+  if (!remoting.ClientSession.State.hasOwnProperty(state)) {
+    throw "Invalid ClientSession.State: " + state;
+  }
+  return remoting.ClientSession.State[state];
+}
+
 /** @enum {number} */
 remoting.ClientSession.ConnectionError = {
   UNKNOWN: -1,
@@ -221,6 +240,18 @@ remoting.ClientSession.ConnectionError = {
   NETWORK_FAILURE: 4,
   HOST_OVERLOAD: 5
 };
+
+/**
+ * @param {string} error The connection error name.
+ * @return {remoting.ClientSession.ConnectionError} The connection error enum.
+ */
+remoting.ClientSession.ConnectionError.fromString = function(error) {
+  if (!remoting.ClientSession.ConnectionError.hasOwnProperty(error)) {
+    console.error('Unexpected ClientSession.ConnectionError string: ', error);
+    return remoting.ClientSession.ConnectionError.UNKNOWN;
+  }
+  return remoting.ClientSession.ConnectionError[error];
+}
 
 // The mode of this session.
 /** @enum {number} */
@@ -307,10 +338,14 @@ remoting.ClientSession.prototype.hasCapability_ = function(capability) {
 /**
  * @param {Element} container The element to add the plugin to.
  * @param {string} id Id to use for the plugin element .
+ * @param {function(string, string):boolean} onExtensionMessage The handler for
+ *     protocol extension messages. Returns true if a message is recognized;
+ *     false otherwise.
  * @return {remoting.ClientPlugin} Create plugin object for the locally
  * installed plugin.
  */
-remoting.ClientSession.prototype.createClientPlugin_ = function(container, id) {
+remoting.ClientSession.prototype.createClientPlugin_ =
+    function(container, id, onExtensionMessage) {
   var plugin = /** @type {remoting.ViewerPlugin} */
       document.createElement('embed');
 
@@ -322,7 +357,7 @@ remoting.ClientSession.prototype.createClientPlugin_ = function(container, id) {
   plugin.tabIndex = 0;  // Required, otherwise focus() doesn't work.
   container.appendChild(plugin);
 
-  return new remoting.ClientPluginAsync(plugin);
+  return new remoting.ClientPlugin(plugin, onExtensionMessage);
 };
 
 /**
@@ -350,10 +385,14 @@ remoting.ClientSession.prototype.pluginLostFocus_ = function() {
  * Adds <embed> element to |container| and readies the sesion object.
  *
  * @param {Element} container The element to add the plugin to.
+ * @param {function(string, string):boolean} onExtensionMessage The handler for
+ *     protocol extension messages. Returns true if a message is recognized;
+ *     false otherwise.
  */
 remoting.ClientSession.prototype.createPluginAndConnect =
-    function(container) {
-  this.plugin_ = this.createClientPlugin_(container, this.PLUGIN_ID);
+    function(container, onExtensionMessage) {
+  this.plugin_ = this.createClientPlugin_(container, this.PLUGIN_ID,
+                                          onExtensionMessage);
   remoting.HostSettings.load(this.hostId_,
                              this.onHostSettingsLoaded_.bind(this));
 };
@@ -440,6 +479,26 @@ remoting.ClientSession.prototype.onPluginInitialized_ = function(initialized) {
     this.applyRemapKeys_(true);
   }
 
+  // Enable MediaSource-based rendering if available.
+  if (remoting.settings.USE_MEDIA_SOURCE_RENDERING &&
+      this.plugin_.hasFeature(
+          remoting.ClientPlugin.Feature.MEDIA_SOURCE_RENDERING)) {
+    this.video_ = /** @type {HTMLMediaElement} */(
+        document.getElementById('mediasource-video-output'));
+    // Make sure that the <video> element is hidden until we get the first
+    // frame.
+    this.video_.style.width = '0px';
+    this.video_.style.height = '0px';
+
+    var renderer = new remoting.MediaSourceRenderer(this.video_);
+    this.plugin_.enableMediaSourceRendering(renderer);
+    /** @type {HTMLElement} */(document.getElementById('video-container'))
+        .classList.add('mediasource-rendering');
+  } else {
+    /** @type {HTMLElement} */(document.getElementById('video-container'))
+        .classList.remove('mediasource-rendering');
+  }
+
   /** @param {string} msg The IQ stanza to send. */
   this.plugin_.onOutgoingIqHandler = this.sendIq_.bind(this);
   /** @param {string} msg The message to log. */
@@ -455,6 +514,8 @@ remoting.ClientSession.prototype.onPluginInitialized_ = function(initialized) {
       this.onDesktopSizeChanged_.bind(this);
   this.plugin_.onSetCapabilitiesHandler =
       this.onSetCapabilities_.bind(this);
+  this.plugin_.onGnubbyAuthHandler =
+      this.processGnubbyAuthMessage_.bind(this);
   this.initiateConnection_();
 };
 
@@ -485,6 +546,11 @@ remoting.ClientSession.prototype.removePlugin = function() {
 
   // In case the user had selected full-screen mode, cancel it now.
   document.webkitCancelFullScreen();
+
+  // Remove mediasource-rendering class from video-contained - this will also
+  // hide the <video> element.
+  /** @type {HTMLElement} */(document.getElementById('video-container'))
+      .classList.remove('mediasource-rendering');
 };
 
 /**
@@ -686,7 +752,7 @@ remoting.ClientSession.prototype.setScreenMode_ =
 
   this.updateDimensions();
   if (needsScrollReset) {
-    this.scroll_(0, 0);
+    this.resetScroll_();
   }
 
 }
@@ -943,6 +1009,9 @@ remoting.ClientSession.prototype.setState_ = function(newState) {
     state = remoting.ClientSession.State.CONNECTION_DROPPED;
   }
   this.logToServer.logClientSessionStateChange(state, this.error_, this.mode_);
+  if (this.state_ == remoting.ClientSession.State.CONNECTED) {
+    this.createGnubbyAuthHandler_();
+  }
   if (this.onStateChange_) {
     this.onStateChange_(oldState, newState);
   }
@@ -979,7 +1048,7 @@ remoting.ClientSession.prototype.onResize = function() {
 
   // If bump-scrolling is enabled, adjust the plugin margins to fully utilize
   // the new window area.
-  this.scroll_(0, 0);
+  this.resetScroll_();
 
   this.updateScrollbarVisibility();
 };
@@ -1087,31 +1156,24 @@ remoting.ClientSession.prototype.updateDimensions = function() {
     }
   }
 
-  var pluginWidth = desktopWidth * scale;
-  var pluginHeight = desktopHeight * scale;
+  var pluginWidth = Math.round(desktopWidth * scale);
+  var pluginHeight = Math.round(desktopHeight * scale);
+
+  if (this.video_) {
+    this.video_.style.width = pluginWidth + 'px';
+    this.video_.style.height = pluginHeight + 'px';
+  }
 
   // Resize the plugin if necessary.
   // TODO(wez): Handle high-DPI to high-DPI properly (crbug.com/135089).
-  this.plugin_.element().width = pluginWidth;
-  this.plugin_.element().height = pluginHeight;
+  this.plugin_.element().style.width = pluginWidth + 'px';
+  this.plugin_.element().style.height = pluginHeight + 'px';
 
   // Position the container.
   // Note that clientWidth/Height take into account scrollbars.
   var clientWidth = document.documentElement.clientWidth;
   var clientHeight = document.documentElement.clientHeight;
   var parentNode = this.plugin_.element().parentNode;
-
-  if (pluginWidth < clientWidth) {
-    parentNode.style.left = (clientWidth - pluginWidth) / 2 + 'px';
-  } else {
-    parentNode.style.left = '0';
-  }
-
-  if (pluginHeight < clientHeight) {
-    parentNode.style.top = (clientHeight - pluginHeight) / 2 + 'px';
-  } else {
-    parentNode.style.top = '0';
-  }
 
   console.log('plugin dimensions: ' +
               parentNode.style.left + ',' +
@@ -1170,15 +1232,22 @@ remoting.ClientSession.prototype.requestPairing = function(clientName, onDone) {
 remoting.ClientSession.prototype.toggleFullScreen_ = function() {
   if (document.webkitIsFullScreen) {
     document.webkitCancelFullScreen();
-    this.enableBumpScroll_(false);
   } else {
     document.body.webkitRequestFullScreen(Element.ALLOW_KEYBOARD_INPUT);
-    // Don't enable bump scrolling immediately because it can result in
-    // onMouseMove firing before the webkitIsFullScreen property can be
-    // read safely (crbug.com/132180).
-    window.setTimeout(this.enableBumpScroll_.bind(this, true), 0);
   }
 };
+
+remoting.ClientSession.prototype.onFullScreenChanged_ = function () {
+  var htmlNode = /** @type {HTMLElement} */ (document.documentElement);
+  var isFullScreen = document.webkitIsFullScreen;
+  this.enableBumpScroll_(isFullScreen);
+  if (isFullScreen) {
+    htmlNode.classList.add('full-screen');
+  } else {
+    htmlNode.classList.remove('full-screen');
+  }
+};
+
 
 /**
  * Updates the options menu to reflect the current scale-to-fit and full-screen
@@ -1226,17 +1295,24 @@ remoting.ClientSession.prototype.scroll_ = function(dx, dy) {
     var result = (curr ? parseFloat(curr) : 0) - delta;
     result = Math.min(0, Math.max(minMargin, result));
     stop.stop = (result == 0 || result == minMargin);
-    return result + "px";
+    return result + 'px';
   };
 
   var stopX = { stop: false };
   style.marginLeft = adjustMargin(style.marginLeft, dx,
-                                  window.innerWidth, plugin.width, stopX);
+                                  window.innerWidth, plugin.clientWidth, stopX);
+
   var stopY = { stop: false };
   style.marginTop = adjustMargin(style.marginTop, dy,
-                                 window.innerHeight, plugin.height, stopY);
+                                window.innerHeight, plugin.clientHeight, stopY);
   return stopX.stop && stopY.stop;
-}
+};
+
+remoting.ClientSession.prototype.resetScroll_ = function() {
+  var plugin = this.plugin_.element();
+  plugin.style.marginTop = '0px';
+  plugin.style.marginLeft = '0px';
+};
 
 /**
  * Enable or disable bump-scrolling. When disabling bump scrolling, also reset
@@ -1245,17 +1321,15 @@ remoting.ClientSession.prototype.scroll_ = function(dx, dy) {
  * @param {boolean} enable True to enable bump-scrolling, false to disable it.
  */
 remoting.ClientSession.prototype.enableBumpScroll_ = function(enable) {
+  var element = /*@type{HTMLElement} */ document.documentElement;
   if (enable) {
     /** @type {null|function(Event):void} */
     this.onMouseMoveRef_ = this.onMouseMove_.bind(this);
-    this.plugin_.element().addEventListener(
-        'mousemove', this.onMouseMoveRef_, false);
+    element.addEventListener('mousemove', this.onMouseMoveRef_, false);
   } else {
-    this.plugin_.element().removeEventListener(
-        'mousemove', this.onMouseMoveRef_, false);
+    element.removeEventListener('mousemove', this.onMouseMoveRef_, false);
     this.onMouseMoveRef_ = null;
-    this.plugin_.element().style.marginLeft = 0;
-    this.plugin_.element().style.marginTop = 0;
+    this.resetScroll_();
   }
 };
 
@@ -1267,11 +1341,6 @@ remoting.ClientSession.prototype.onMouseMove_ = function(event) {
   if (this.bumpScrollTimer_) {
     window.clearTimeout(this.bumpScrollTimer_);
     this.bumpScrollTimer_ = null;
-  }
-  // It's possible to leave content full-screen mode without using the Screen
-  // Options menu, so we disable bump scrolling as soon as we detect this.
-  if (!document.webkitIsFullScreen) {
-    this.enableBumpScroll_(false);
   }
 
   /**
@@ -1326,6 +1395,46 @@ remoting.ClientSession.prototype.onMouseMove_ = function(event) {
 remoting.ClientSession.prototype.sendClipboardItem = function(mimeType, item) {
   if (!this.plugin_)
     return;
-  this.plugin_.sendClipboardItem(mimeType, item)
+  this.plugin_.sendClipboardItem(mimeType, item);
 };
 
+/**
+ * Send a gnubby-auth extension message to the host.
+ * @param {Object} data The gnubby-auth message data.
+ */
+remoting.ClientSession.prototype.sendGnubbyAuthMessage = function(data) {
+  if (!this.plugin_)
+    return;
+  this.plugin_.sendClientMessage('gnubby-auth', JSON.stringify(data));
+};
+
+/**
+ * Process a remote gnubby auth request.
+ * @param {string} data Remote gnubby request data.
+ * @private
+ */
+remoting.ClientSession.prototype.processGnubbyAuthMessage_ = function(data) {
+  if (this.gnubbyAuthHandler_) {
+    try {
+      this.gnubbyAuthHandler_.onMessage(data);
+    } catch (err) {
+      console.error('Failed to process gnubby message: ',
+          /** @type {*} */ (err));
+    }
+  } else {
+    console.error('Received unexpected gnubby message');
+  }
+};
+
+/**
+ * Create a gnubby auth handler and inform the host that gnubby auth is
+ * supported.
+ * @private
+ */
+remoting.ClientSession.prototype.createGnubbyAuthHandler_ = function() {
+  if (this.mode_ == remoting.ClientSession.Mode.ME2ME) {
+    this.gnubbyAuthHandler_ = new remoting.GnubbyAuthHandler(this);
+    // TODO(psj): Move to more generic capabilities mechanism.
+    this.sendGnubbyAuthMessage({'type': 'control', 'option': 'auth-v1'});
+  }
+};

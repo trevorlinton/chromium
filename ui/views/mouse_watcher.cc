@@ -9,7 +9,11 @@
 #include "base/event_types.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "ui/aura/env.h"
+#include "ui/aura/window.h"
+#include "ui/events/event.h"
 #include "ui/events/event_constants.h"
+#include "ui/events/event_handler.h"
 #include "ui/events/event_utils.h"
 #include "ui/gfx/screen.h"
 
@@ -19,78 +23,42 @@ namespace views {
 // the listener is notified.
 const int kNotifyListenerTimeMs = 300;
 
-class MouseWatcher::Observer : public base::MessageLoopForUI::Observer {
+class MouseWatcher::Observer : public ui::EventHandler {
  public:
   explicit Observer(MouseWatcher* mouse_watcher)
       : mouse_watcher_(mouse_watcher),
         notify_listener_factory_(this) {
-    base::MessageLoopForUI::current()->AddObserver(this);
+    aura::Env::GetInstance()->AddPreTargetHandler(this);
   }
 
   virtual ~Observer() {
-    base::MessageLoopForUI::current()->RemoveObserver(this);
+    aura::Env::GetInstance()->RemovePreTargetHandler(this);
   }
 
-  // MessageLoop::Observer implementation:
-#if defined(OS_WIN)
-  virtual base::EventStatus WillProcessEvent(
-      const base::NativeEvent& event) OVERRIDE {
-    return base::EVENT_CONTINUE;
-  }
-
-  virtual void DidProcessEvent(const base::NativeEvent& event) OVERRIDE {
-    // We spy on three different Windows messages here to see if the mouse has
-    // moved out of the bounds of the current view. The messages are:
-    //
-    // WM_MOUSEMOVE:
-    //   For when the mouse moves from the view into the rest of the browser UI,
-    //   i.e. within the bounds of the same windows HWND.
-    // WM_MOUSELEAVE:
-    //   For when the mouse moves out of the bounds of the view's HWND.
-    // WM_NCMOUSELEAVE:
-    //   For notification when the mouse leaves the _non-client_ area.
-    //
-    switch (event.message) {
-      case WM_MOUSEMOVE:
-        HandleGlobalMouseMoveEvent(MouseWatcherHost::MOUSE_MOVE);
-        break;
-      case WM_MOUSELEAVE:
-      case WM_NCMOUSELEAVE:
-        HandleGlobalMouseMoveEvent(MouseWatcherHost::MOUSE_EXIT);
-        break;
-    }
-  }
-#elif defined(USE_AURA)
-  virtual base::EventStatus WillProcessEvent(
-      const base::NativeEvent& event) OVERRIDE {
-    return base::EVENT_CONTINUE;
-  }
-  virtual void DidProcessEvent(const base::NativeEvent& event) OVERRIDE {
-    switch (ui::EventTypeFromNative(event)) {
+  // ui::EventHandler implementation:
+  virtual void OnMouseEvent(ui::MouseEvent* event) OVERRIDE {
+    switch (event->type()) {
       case ui::ET_MOUSE_MOVED:
       case ui::ET_MOUSE_DRAGGED:
-        // DRAGGED is a special case of MOVED. See events_win.cc/events_x.cc.
-        HandleGlobalMouseMoveEvent(MouseWatcherHost::MOUSE_MOVE);
+        HandleMouseEvent(MouseWatcherHost::MOUSE_MOVE);
         break;
       case ui::ET_MOUSE_EXITED:
-        HandleGlobalMouseMoveEvent(MouseWatcherHost::MOUSE_EXIT);
+        HandleMouseEvent(MouseWatcherHost::MOUSE_EXIT);
         break;
       default:
         break;
     }
   }
-#endif
 
  private:
   MouseWatcherHost* host() const { return mouse_watcher_->host_.get(); }
 
-  // Called from the message loop observer when a mouse movement has occurred.
-  void HandleGlobalMouseMoveEvent(MouseWatcherHost::MouseEventType event_type) {
-    bool contained = host()->Contains(
-        // TODO(scottmg): Native is wrong http://crbug.com/133312
-        gfx::Screen::GetNativeScreen()->GetCursorScreenPoint(),
-        event_type);
-    if (!contained) {
+  // Called when a mouse event we're interested is seen.
+  void HandleMouseEvent(MouseWatcherHost::MouseEventType event_type) {
+    // It's safe to use last_mouse_location() here as this function is invoked
+    // during event dispatching.
+    if (!host()->Contains(aura::Env::GetInstance()->last_mouse_location(),
+                          event_type)) {
       // Mouse moved outside the host's zone, start a timer to notify the
       // listener.
       if (!notify_listener_factory_.HasWeakPtrs()) {

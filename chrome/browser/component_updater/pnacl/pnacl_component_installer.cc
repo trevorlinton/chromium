@@ -4,6 +4,7 @@
 
 #include "chrome/browser/component_updater/pnacl/pnacl_component_installer.h"
 
+#include "base/atomicops.h"
 #include "base/base_paths.h"
 #include "base/bind.h"
 #include "base/callback.h"
@@ -22,15 +23,17 @@
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/component_updater/component_updater_service.h"
+#include "chrome/browser/omaha_query_params/omaha_query_params.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/chrome_switches.h"
-#include "chrome/common/omaha_query_params/omaha_query_params.h"
+#include "components/nacl/common/nacl_switches.h"
 #include "content/public/browser/browser_thread.h"
 
 using chrome::OmahaQueryParams;
 using content::BrowserThread;
+
+namespace component_updater {
 
 namespace {
 
@@ -42,7 +45,7 @@ const char kPnaclManifestName[] = "PNaCl Translator";
 // Keep in sync with chrome/browser/nacl_host/nacl_file_host.
 std::string SanitizeForPath(const std::string& input) {
   std::string result;
-  ReplaceChars(input, "-", "_", &result);
+  base::ReplaceChars(input, "-", "_", &result);
   return result;
 }
 
@@ -60,11 +63,24 @@ void SetPnaclHash(CrxComponent* component) {
 
 // If we don't have Pnacl installed, this is the version we claim.
 const char kNullVersion[] = "0.0.0.0";
+const char kMinPnaclVersion[] = "0.1.0.12773";
+
+// Initially say that we do not need OnDemand updates. This should be
+// updated by CheckVersionCompatiblity(), before doing any URLRequests
+// that depend on PNaCl.
+volatile base::subtle::Atomic32 needs_on_demand_update = 0;
+
+void CheckVersionCompatiblity(const base::Version& current_version) {
+  // Using NoBarrier, since needs_on_demand_update is standalone and does
+  // not have other associated data.
+  base::subtle::NoBarrier_Store(&needs_on_demand_update,
+                                current_version.IsOlderThan(kMinPnaclVersion));
+}
 
 // PNaCl is packaged as a multi-CRX.  This returns the platform-specific
 // subdirectory that is part of that multi-CRX.
 base::FilePath GetPlatformDir(const base::FilePath& base_path) {
-  std::string arch = SanitizeForPath(OmahaQueryParams::getNaclArch());
+  std::string arch = SanitizeForPath(OmahaQueryParams::GetNaclArch());
   return base_path.AppendASCII("_platform_specific").AppendASCII(arch);
 }
 
@@ -176,9 +192,9 @@ bool CheckPnaclComponentManifest(const base::DictionaryValue& manifest,
     LOG(WARNING) << "'pnacl-arch' field is missing from pnacl-manifest!";
     return false;
   }
-  if (arch.compare(OmahaQueryParams::getNaclArch()) != 0) {
-    LOG(WARNING) << "'pnacl-arch' field in manifest is invalid ("
-                 << arch << " vs " << OmahaQueryParams::getNaclArch() << ")";
+  if (arch.compare(OmahaQueryParams::GetNaclArch()) != 0) {
+    LOG(WARNING) << "'pnacl-arch' field in manifest is invalid (" << arch
+                 << " vs " << OmahaQueryParams::GetNaclArch() << ")";
     return false;
   }
 
@@ -260,8 +276,8 @@ bool PnaclComponentInstaller::Install(const base::DictionaryValue& manifest,
   base::FilePath path = GetPnaclBaseDirectory().AppendASCII(
       version.GetString());
   if (base::PathExists(path)) {
-    LOG(WARNING) << "Target path already exists, not installing.";
-    return false;
+    if (!base::DeleteFile(path, true))
+      return false;
   }
   if (!base::Move(unpack_path, path)) {
     LOG(WARNING) << "Move failed, not installing.";
@@ -272,6 +288,7 @@ bool PnaclComponentInstaller::Install(const base::DictionaryValue& manifest,
   // - The path service.
   // - Callbacks that requested an update.
   set_current_version(version);
+  CheckVersionCompatiblity(version);
   OverrideDirPnaclComponent(path);
   return true;
 }
@@ -308,6 +325,7 @@ void FinishPnaclUpdateRegistration(const Version& current_version,
                                    PnaclComponentInstaller* pci) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   pci->set_current_version(current_version);
+  CheckVersionCompatiblity(current_version);
   pci->set_current_fingerprint(current_fingerprint);
   CrxComponent pnacl_component = pci->GetCrxComponent();
 
@@ -325,7 +343,7 @@ void StartPnaclUpdateRegistration(PnaclComponentInstaller* pci) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE));
   base::FilePath path = pci->GetPnaclBaseDirectory();
   if (!base::PathExists(path)) {
-    if (!file_util::CreateDirectory(path)) {
+    if (!base::CreateDirectory(path)) {
       NOTREACHED() << "Could not create base Pnacl directory.";
       return;
     }
@@ -438,3 +456,14 @@ void PnaclComponentInstaller::ReRegisterPnacl() {
       BrowserThread::UI, FROM_HERE,
       base::Bind(&GetProfileInformation, this));
 }
+
+}  // namespace component_updater
+
+namespace pnacl {
+
+bool NeedsOnDemandUpdate() {
+  return base::subtle::NoBarrier_Load(
+      &component_updater::needs_on_demand_update) != 0;
+}
+
+}  // namespace pnacl

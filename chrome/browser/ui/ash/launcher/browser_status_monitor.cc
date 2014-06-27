@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/ash/launcher/browser_status_monitor.h"
 
+#include "ash/shelf/shelf_util.h"
 #include "ash/shell.h"
 #include "ash/wm/window_util.h"
 #include "base/stl_util.h"
@@ -16,10 +17,10 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "content/public/browser/web_contents.h"
-#include "ui/aura/client/activation_client.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/gfx/screen.h"
+#include "ui/wm/public/activation_client.h"
 
 BrowserStatusMonitor::LocalWebContentsObserver::LocalWebContentsObserver(
     content::WebContents* contents,
@@ -45,6 +46,13 @@ void BrowserStatusMonitor::LocalWebContentsObserver::DidNavigateMainFrame(
 
   monitor_->UpdateAppItemState(web_contents(), state);
   monitor_->UpdateBrowserItemState();
+
+  // Navigating may change the ShelfID associated with the WebContents.
+  if (browser->tab_strip_model()->GetActiveWebContents() == web_contents()) {
+    ash::SetShelfIDForWindow(
+        monitor_->GetShelfIDForWebContents(web_contents()),
+        browser->window()->GetNativeWindow());
+  }
 }
 
 BrowserStatusMonitor::BrowserStatusMonitor(
@@ -60,8 +68,8 @@ BrowserStatusMonitor::BrowserStatusMonitor(
   if (ash::Shell::HasInstance()) {
     // We can't assume all RootWindows have the same ActivationClient.
     // Add a RootWindow and its ActivationClient to the observed list.
-    ash::Shell::RootWindowList root_windows = ash::Shell::GetAllRootWindows();
-    ash::Shell::RootWindowList::const_iterator iter = root_windows.begin();
+    aura::Window::Windows root_windows = ash::Shell::GetAllRootWindows();
+    aura::Window::Windows::const_iterator iter = root_windows.begin();
     for (; iter != root_windows.end(); ++iter) {
       // |observed_activation_clients_| can have the same activation client
       // multiple times - which would be handled by the used
@@ -145,8 +153,8 @@ void BrowserStatusMonitor::OnWindowActivated(aura::Window* gained_active,
 void BrowserStatusMonitor::OnWindowDestroyed(aura::Window* window) {
   // Remove RootWindow and its ActivationClient from observed list.
   observed_root_windows_.Remove(window);
-  observed_activation_clients_.Remove(aura::client::GetActivationClient(
-      static_cast<aura::RootWindow*>(window)));
+  observed_activation_clients_.Remove(
+      aura::client::GetActivationClient(window));
 }
 
 void BrowserStatusMonitor::OnBrowserAdded(Browser* browser) {
@@ -227,6 +235,8 @@ void BrowserStatusMonitor::ActiveTabChanged(content::WebContents* old_contents,
         ChromeLauncherController::APP_STATE_ACTIVE;
     UpdateAppItemState(new_contents, state);
     UpdateBrowserItemState();
+    ash::SetShelfIDForWindow(GetShelfIDForWebContents(new_contents),
+                             browser->window()->GetNativeWindow());
   }
 }
 
@@ -250,6 +260,13 @@ void BrowserStatusMonitor::TabReplacedAt(TabStripModel* tab_strip_model,
       (tab_strip_model->GetActiveWebContents() == new_contents))
     state = ChromeLauncherController::APP_STATE_WINDOW_ACTIVE;
   UpdateAppItemState(new_contents, state);
+  UpdateBrowserItemState();
+
+  if (tab_strip_model->GetActiveWebContents() == new_contents) {
+    ash::SetShelfIDForWindow(GetShelfIDForWebContents(new_contents),
+                             browser->window()->GetNativeWindow());
+  }
+
   AddWebContentsObserver(new_contents);
 }
 
@@ -314,4 +331,9 @@ void BrowserStatusMonitor::RemoveWebContentsObserver(
       webcontents_to_observer_map_.end());
   delete webcontents_to_observer_map_[contents];
   webcontents_to_observer_map_.erase(contents);
+}
+
+ash::ShelfID BrowserStatusMonitor::GetShelfIDForWebContents(
+    content::WebContents* contents) {
+  return launcher_controller_->GetShelfIDForWebContents(contents);
 }

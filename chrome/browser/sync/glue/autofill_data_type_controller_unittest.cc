@@ -10,16 +10,16 @@
 #include "base/run_loop.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/sync/glue/autofill_data_type_controller.h"
-#include "chrome/browser/sync/glue/data_type_controller_mock.h"
 #include "chrome/browser/sync/glue/shared_change_processor_mock.h"
 #include "chrome/browser/sync/profile_sync_components_factory_mock.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/sync/profile_sync_service_mock.h"
 #include "chrome/browser/webdata/autocomplete_syncable_service.h"
 #include "chrome/browser/webdata/web_data_service_factory.h"
-#include "chrome/test/base/profile_mock.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
+#include "components/sync_driver/data_type_controller_mock.h"
 #include "components/webdata/common/web_data_service_test_util.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/notification_types.h"
@@ -91,22 +91,6 @@ class FakeWebDataService : public AutofillWebDataService {
     run_loop.Run();
   }
 
-  void GetAutofillCullingValue(bool* result) {
-    ASSERT_TRUE(BrowserThread::CurrentlyOn(BrowserThread::DB));
-    *result = AutocompleteSyncableService::FromWebDataService(
-        this)->cull_expired_entries();
-  }
-
-  bool CheckAutofillCullingValue() {
-    bool result = false;
-    base::RunLoop run_loop;
-    BrowserThread::PostTaskAndReply(BrowserThread::DB, FROM_HERE,
-        base::Bind(&FakeWebDataService::GetAutofillCullingValue,
-                   base::Unretained(this), &result), run_loop.QuitClosure());
-    run_loop.Run();
-    return result;
-  }
-
  private:
   virtual ~FakeWebDataService() {
   }
@@ -128,7 +112,7 @@ class FakeWebDataService : public AutofillWebDataService {
 
 class MockWebDataServiceWrapperSyncable : public MockWebDataServiceWrapper {
  public:
-  static BrowserContextKeyedService* Build(content::BrowserContext* profile) {
+  static KeyedService* Build(content::BrowserContext* profile) {
     return new MockWebDataServiceWrapperSyncable();
   }
 
@@ -155,6 +139,7 @@ class SyncAutofillDataTypeControllerTest : public testing::Test {
  public:
   SyncAutofillDataTypeControllerTest()
       : thread_bundle_(content::TestBrowserThreadBundle::REAL_DB_THREAD),
+        service_(&profile_),
         last_start_result_(DataTypeController::OK),
         weak_ptr_factory_(this) {}
 
@@ -206,8 +191,8 @@ class SyncAutofillDataTypeControllerTest : public testing::Test {
 
   scoped_refptr<NiceMock<SharedChangeProcessorMock> > change_processor_;
   ProfileSyncComponentsFactoryMock profile_sync_factory_;
+  TestingProfile profile_;
   ProfileSyncServiceMock service_;
-  ProfileMock profile_;
   scoped_refptr<AutofillDataTypeController> autofill_dtc_;
 
   // Stores arguments of most recent call of OnStartFinished().
@@ -222,7 +207,8 @@ class SyncAutofillDataTypeControllerTest : public testing::Test {
 TEST_F(SyncAutofillDataTypeControllerTest, StartWDSReady) {
   FakeWebDataService* web_db =
       static_cast<FakeWebDataService*>(
-          AutofillWebDataService::FromBrowserContext(&profile_).get());
+          WebDataServiceFactory::GetAutofillWebDataForProfile(
+              &profile_, Profile::EXPLICIT_ACCESS).get());
   web_db->LoadDatabase();
   autofill_dtc_->LoadModels(
     base::Bind(&SyncAutofillDataTypeControllerTest::OnLoadFinished,
@@ -255,7 +241,8 @@ TEST_F(SyncAutofillDataTypeControllerTest, StartWDSNotReady) {
 
   FakeWebDataService* web_db =
       static_cast<FakeWebDataService*>(
-        AutofillWebDataService::FromBrowserContext(&profile_).get());
+          WebDataServiceFactory::GetAutofillWebDataForProfile(
+              &profile_, Profile::EXPLICIT_ACCESS).get());
   web_db->LoadDatabase();
 
   EXPECT_CALL(*change_processor_.get(), Connect(_, _, _, _, _))
@@ -269,35 +256,6 @@ TEST_F(SyncAutofillDataTypeControllerTest, StartWDSNotReady) {
   EXPECT_TRUE(last_start_error_.IsSet());
 
   EXPECT_EQ(DataTypeController::DISABLED, autofill_dtc_->state());
-}
-
-TEST_F(SyncAutofillDataTypeControllerTest, UpdateAutofillCullingSettings) {
-  FakeWebDataService* web_db =
-      static_cast<FakeWebDataService*>(
-          AutofillWebDataService::FromBrowserContext(&profile_).get());
-
-  // Set up the experiments state.
-  ProfileSyncService* sync = ProfileSyncServiceFactory::GetForProfile(
-      &profile_);
-  syncer::Experiments experiments;
-  experiments.autofill_culling = true;
-  sync->OnExperimentsChanged(experiments);
-
-  web_db->LoadDatabase();
-  autofill_dtc_->LoadModels(
-    base::Bind(&SyncAutofillDataTypeControllerTest::OnLoadFinished,
-               weak_ptr_factory_.GetWeakPtr()));
-
-  EXPECT_FALSE(web_db->CheckAutofillCullingValue());
-
-  EXPECT_CALL(*change_processor_.get(), Connect(_, _, _, _, _))
-      .WillOnce(Return(base::WeakPtr<syncer::SyncableService>()));
-  autofill_dtc_->StartAssociating(
-      base::Bind(&SyncAutofillDataTypeControllerTest::OnStartFinished,
-                 weak_ptr_factory_.GetWeakPtr()));
-  BlockForDBThread();
-
-  EXPECT_TRUE(web_db->CheckAutofillCullingValue());
 }
 
 }  // namespace

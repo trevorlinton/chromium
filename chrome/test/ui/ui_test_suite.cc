@@ -16,6 +16,7 @@
 #include "base/process/process_iterator.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/env_vars.h"
+#include "chrome/test/base/chrome_unit_test_suite.h"
 
 UITestSuite::UITestSuite(int argc, char** argv) : ChromeTestSuite(argc, argv) {
 #if defined(OS_WIN)
@@ -25,6 +26,8 @@ UITestSuite::UITestSuite(int argc, char** argv) : ChromeTestSuite(argc, argv) {
 
 void UITestSuite::Initialize() {
   ChromeTestSuite::Initialize();
+  ChromeUnitTestSuite::InitializeProviders();
+  ChromeUnitTestSuite::InitializeResourceBundle();
 #if defined(OS_WIN)
   LoadCrashService();
 #endif
@@ -70,11 +73,13 @@ void UITestSuite::LoadCrashService() {
   base::LaunchOptions launch_options;
   launch_options.job_handle = job_handle_.Get();
   base::FilePath crash_service = exe_dir.Append(L"crash_service.exe");
+  base::win::ScopedHandle crash_service_handle;
   if (!base::LaunchProcess(crash_service.value(), base::LaunchOptions(),
-                           &crash_service_)) {
+                           &crash_service_handle)) {
     LOG(ERROR) << "Couldn't start crash_service.exe, so this ui_tests run "
                << "won't tell you if any test crashes!";
     return;
   }
+  crash_service_ = crash_service_handle.Take();
 }
 #endif

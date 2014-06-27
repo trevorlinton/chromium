@@ -64,6 +64,15 @@ void ObjectIdInvalidationMap::GetAllInvalidations(
     out->insert(out->begin(), it->second.begin(), it->second.end());
   }
 }
+void ObjectIdInvalidationMap::AcknowledgeAll() const {
+  for (IdToListMap::const_iterator it1 = map_.begin();
+       it1 != map_.end(); ++it1) {
+    for (SingleObjectInvalidationSet::const_iterator it2 = it1->second.begin();
+         it2 != it1->second.end(); ++it2) {
+      it2->Acknowledge();
+    }
+  }
+}
 
 bool ObjectIdInvalidationMap::operator==(
     const ObjectIdInvalidationMap& other) const {
@@ -85,7 +94,7 @@ scoped_ptr<base::ListValue> ObjectIdInvalidationMap::ToValue() const {
 bool ObjectIdInvalidationMap::ResetFromValue(const base::ListValue& value) {
   map_.clear();
   for (size_t i = 0; i < value.GetSize(); ++i) {
-    const DictionaryValue* dict;
+    const base::DictionaryValue* dict;
     if (!value.GetDictionary(i, &dict)) {
       return false;
     }

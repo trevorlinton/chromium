@@ -22,6 +22,8 @@
 
 namespace net {
 
+class HttpAuthChallengeTokenizer;
+
 // Mechanism OID for GSSAPI. We always use SPNEGO.
 NET_EXPORT_PRIVATE extern gss_OID CHROME_GSS_SPNEGO_MECH_OID_DESC;
 
@@ -240,7 +242,7 @@ class NET_EXPORT_PRIVATE HttpAuthGSSAPI {
   bool AllowsExplicitCredentials() const;
 
   HttpAuth::AuthorizationResult ParseChallenge(
-      HttpAuth::ChallengeTokenizer* tok);
+      HttpAuthChallengeTokenizer* tok);
 
   // Generates an authentication token.
   // The return value is an error code. If it's not |OK|, the value of
@@ -251,7 +253,7 @@ class NET_EXPORT_PRIVATE HttpAuthGSSAPI {
   // obtained using |*credentials|. If |credentials| is NULL, the default
   // credentials are used instead.
   int GenerateAuthToken(const AuthCredentials* credentials,
-                        const std::wstring& spn,
+                        const std::string& spn,
                         std::string* auth_token);
 
   // Delegation is allowed on the Kerberos ticket. This allows certain servers
@@ -260,7 +262,7 @@ class NET_EXPORT_PRIVATE HttpAuthGSSAPI {
   void Delegate();
 
  private:
-  int GetNextSecurityToken(const std::wstring& spn,
+  int GetNextSecurityToken(const std::string& spn,
                            gss_buffer_t in_token,
                            gss_buffer_t out_token);
 

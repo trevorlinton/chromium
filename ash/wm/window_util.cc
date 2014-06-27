@@ -7,33 +7,55 @@
 #include <vector>
 
 #include "ash/ash_constants.h"
+#include "ash/screen_util.h"
 #include "ash/shell.h"
 #include "ash/wm/window_properties.h"
-#include "ui/aura/client/activation_client.h"
+#include "ash/wm/window_state.h"
+#include "ash/wm/wm_event.h"
 #include "ui/aura/client/aura_constants.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_delegate.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/gfx/display.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/screen.h"
-#include "ui/views/corewm/window_util.h"
+#include "ui/gfx/size.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
+#include "ui/wm/core/window_util.h"
+#include "ui/wm/public/activation_client.h"
 
 namespace ash {
 namespace wm {
 
+namespace {
+
+// Returns the default width of a snapped window.
+int GetDefaultSnappedWindowWidth(aura::Window* window) {
+  const float kSnappedWidthWorkspaceRatio = 0.5f;
+
+  int work_area_width =
+      ScreenUtil::GetDisplayWorkAreaBoundsInParent(window).width();
+  int min_width = window->delegate() ?
+      window->delegate()->GetMinimumSize().width() : 0;
+  int ideal_width =
+      static_cast<int>(work_area_width * kSnappedWidthWorkspaceRatio);
+  return std::min(work_area_width, std::max(ideal_width, min_width));
+}
+
+}  // namespace
+
 // TODO(beng): replace many of these functions with the corewm versions.
 void ActivateWindow(aura::Window* window) {
-  views::corewm::ActivateWindow(window);
+  ::wm::ActivateWindow(window);
 }
 
 void DeactivateWindow(aura::Window* window) {
-  views::corewm::DeactivateWindow(window);
+  ::wm::DeactivateWindow(window);
 }
 
 bool IsActiveWindow(aura::Window* window) {
-  return views::corewm::IsActiveWindow(window);
+  return ::wm::IsActiveWindow(window);
 }
 
 aura::Window* GetActiveWindow() {
@@ -42,24 +64,44 @@ aura::Window* GetActiveWindow() {
 }
 
 aura::Window* GetActivatableWindow(aura::Window* window) {
-  return views::corewm::GetActivatableWindow(window);
+  return ::wm::GetActivatableWindow(window);
 }
 
 bool CanActivateWindow(aura::Window* window) {
-  return views::corewm::CanActivateWindow(window);
+  return ::wm::CanActivateWindow(window);
 }
 
 bool IsWindowMinimized(aura::Window* window) {
-  return window->GetProperty(aura::client::kShowStateKey) ==
-      ui::SHOW_STATE_MINIMIZED;
+  return ash::wm::GetWindowState(window)->IsMinimized();
 }
 
 void CenterWindow(aura::Window* window) {
-  const gfx::Display display =
-      Shell::GetScreen()->GetDisplayNearestWindow(window);
-  gfx::Rect center = display.work_area();
-  center.ClampToCenteredSize(window->bounds().size());
-  window->SetBoundsInScreen(center, display);
+  wm::WMEvent event(wm::WM_EVENT_CENTER);
+  wm::GetWindowState(window)->OnWMEvent(&event);
+}
+
+gfx::Rect GetDefaultLeftSnappedWindowBoundsInParent(aura::Window* window) {
+  gfx::Rect work_area_in_parent(ScreenUtil::GetDisplayWorkAreaBoundsInParent(
+      window));
+  return gfx::Rect(work_area_in_parent.x(),
+                   work_area_in_parent.y(),
+                   GetDefaultSnappedWindowWidth(window),
+                   work_area_in_parent.height());
+}
+
+gfx::Rect GetDefaultRightSnappedWindowBoundsInParent(aura::Window* window) {
+  gfx::Rect work_area_in_parent(ScreenUtil::GetDisplayWorkAreaBoundsInParent(
+      window));
+  int width = GetDefaultSnappedWindowWidth(window);
+  return gfx::Rect(work_area_in_parent.right() - width,
+                   work_area_in_parent.y(),
+                   width,
+                   work_area_in_parent.height());
+}
+
+void AdjustBoundsSmallerThan(const gfx::Size& max_size, gfx::Rect* bounds) {
+  bounds->set_width(std::min(bounds->width(), max_size.width()));
+  bounds->set_height(std::min(bounds->height(), max_size.height()));
 }
 
 void AdjustBoundsToEnsureMinimumWindowVisibility(const gfx::Rect& visible_area,
@@ -72,24 +114,23 @@ void AdjustBoundsToEnsureWindowVisibility(const gfx::Rect& visible_area,
                                           int min_width,
                                           int min_height,
                                           gfx::Rect* bounds) {
-  bounds->set_width(std::min(bounds->width(), visible_area.width()));
-  bounds->set_height(std::min(bounds->height(), visible_area.height()));
+  AdjustBoundsSmallerThan(visible_area.size(), bounds);
 
   min_width = std::min(min_width, visible_area.width());
   min_height = std::min(min_height, visible_area.height());
 
-  if (bounds->x() + min_width > visible_area.right()) {
+  if (bounds->right() < visible_area.x() + min_width) {
+    bounds->set_x(visible_area.x() + min_width - bounds->width());
+  } else if (bounds->x() > visible_area.right() - min_width) {
     bounds->set_x(visible_area.right() - min_width);
-  } else if (bounds->right() - min_width < 0) {
-    bounds->set_x(min_width - bounds->width());
   }
-  if (bounds->y() + min_height > visible_area.bottom()) {
+  if (bounds->bottom() < visible_area.y() + min_height) {
+    bounds->set_y(visible_area.y() + min_height - bounds->height());
+  } else if (bounds->y() > visible_area.bottom() - min_height) {
     bounds->set_y(visible_area.bottom() - min_height);
-  } else if (bounds->bottom() - min_height < 0) {
-    bounds->set_y(min_height - bounds->height());
   }
-  if (bounds->y() < 0)
-    bounds->set_y(0);
+  if (bounds->y() < visible_area.y())
+    bounds->set_y(visible_area.y());
 }
 
 bool MoveWindowToEventRoot(aura::Window* window, const ui::Event& event) {
@@ -107,16 +148,25 @@ bool MoveWindowToEventRoot(aura::Window* window, const ui::Event& event) {
   return true;
 }
 
-void ReparentChildWithTransientChildren(aura::Window* window,
-                                        aura::Window* child) {
-  window->AddChild(child);
-  ReparentTransientChildrenOfChild(window, child);
+void ReparentChildWithTransientChildren(aura::Window* child,
+                                        aura::Window* old_parent,
+                                        aura::Window* new_parent) {
+  if (child->parent() == old_parent)
+    new_parent->AddChild(child);
+  ReparentTransientChildrenOfChild(child, old_parent, new_parent);
 }
 
-void ReparentTransientChildrenOfChild(aura::Window* window,
-                                      aura::Window* child) {
-  for (size_t i = 0; i < child->transient_children().size(); ++i)
-    ReparentChildWithTransientChildren(window, child->transient_children()[i]);
+void ReparentTransientChildrenOfChild(aura::Window* child,
+                                      aura::Window* old_parent,
+                                      aura::Window* new_parent) {
+  for (size_t i = 0;
+       i < ::wm::GetTransientChildren(child).size();
+       ++i) {
+    ReparentChildWithTransientChildren(
+        ::wm::GetTransientChildren(child)[i],
+        old_parent,
+        new_parent);
+  }
 }
 
 }  // namespace wm

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,9 +13,6 @@ import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwCookieManager;
 import org.chromium.android_webview.test.util.JSUtils;
 import org.chromium.base.test.util.Feature;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.content.browser.test.util.TestCallbackHelperContainer.OnEvaluateJavaScriptResultHelper;
 import org.chromium.net.test.util.TestWebServer;
 
 import java.util.ArrayList;
@@ -24,7 +21,7 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.Callable;
 
 /**
  * Tests for the CookieManager.
@@ -124,13 +121,13 @@ public class CookieManagerTest extends AwTestBase {
                         "; expires=' + expirationDate.toUTCString();");
     }
 
-    private void waitForCookie(final String url) throws InterruptedException {
-        assertTrue(CriteriaHelper.pollForCriteria(new Criteria() {
+    private void waitForCookie(final String url) throws Exception {
+        poll(new Callable<Boolean>() {
             @Override
-            public boolean isSatisfied() {
+            public Boolean call() throws Exception {
                 return mCookieManager.getCookie(url) != null;
             }
-        }));
+        });
     }
 
     private void validateCookies(String responseCookie, String... expectedCookieNames) {
@@ -145,7 +142,7 @@ public class CookieManagerTest extends AwTestBase {
 
     @MediumTest
     @Feature({"AndroidWebView", "Privacy"})
-    public void testRemoveAllCookie() throws InterruptedException {
+    public void testRemoveAllCookie() throws Exception {
         // enable cookie
         mCookieManager.setAcceptCookie(true);
         assertTrue(mCookieManager.acceptCookie());
@@ -160,27 +157,27 @@ public class CookieManagerTest extends AwTestBase {
         mCookieManager.setCookie(url, cookie);
         assertEquals(cookie, mCookieManager.getCookie(url));
 
-        assertTrue(CriteriaHelper.pollForCriteria(new Criteria() {
+        poll(new Callable<Boolean>() {
             @Override
-            public boolean isSatisfied() {
+            public Boolean call() throws Exception {
                 return mCookieManager.hasCookies();
             }
-        }));
+        });
 
         // clean up all cookies
         mCookieManager.removeAllCookie();
-        assertTrue(CriteriaHelper.pollForCriteria(new Criteria() {
+        poll(new Callable<Boolean>() {
             @Override
-            public boolean isSatisfied() {
+            public Boolean call() throws Exception {
                 return !mCookieManager.hasCookies();
             }
-        }));
+        });
     }
 
     @MediumTest
     @Feature({"AndroidWebView", "Privacy"})
     @SuppressWarnings("deprecation")
-    public void testCookieExpiration() throws InterruptedException {
+    public void testCookieExpiration() throws Exception {
         // enable cookie
         mCookieManager.setAcceptCookie(true);
         assertTrue(mCookieManager.acceptCookie());
@@ -211,30 +208,30 @@ public class CookieManagerTest extends AwTestBase {
         assertTrue(allCookies.contains(cookie3));
 
         mCookieManager.removeSessionCookie();
-        assertTrue(CriteriaHelper.pollForCriteria(new Criteria() {
+        poll(new Callable<Boolean>() {
             @Override
-            public boolean isSatisfied() {
+            public Boolean call() throws Exception {
                 String c = mCookieManager.getCookie(url);
                 return !c.contains(cookie1) && c.contains(cookie2) && c.contains(cookie3);
             }
-        }));
+        });
 
         Thread.sleep(expiration + 1000); // wait for cookie to expire
         mCookieManager.removeExpiredCookie();
-        assertTrue(CriteriaHelper.pollForCriteria(new Criteria() {
+        poll(new Callable<Boolean>() {
             @Override
-            public boolean isSatisfied() {
+            public Boolean call() throws Exception {
                 String c = mCookieManager.getCookie(url);
                 return !c.contains(cookie1) && c.contains(cookie2) && !c.contains(cookie3);
             }
-        }));
+        });
 
         mCookieManager.removeAllCookie();
-        assertTrue(CriteriaHelper.pollForCriteria(new Criteria() {
+        poll(new Callable<Boolean>() {
             @Override
-            public boolean isSatisfied() {
+            public Boolean call() throws Exception {
                 return mCookieManager.getCookie(url) == null;
             }
-        }));
+        });
     }
 }

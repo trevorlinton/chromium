@@ -64,12 +64,12 @@ INSTRUMENTATION_TESTS = dict((suite.name, suite) for suite in [
       'org.chromium.content_shell_apk',
       'ContentShellTest',
       'content:content/test/data/android/device_files'),
-    I('ChromiumTestShell',
-      'ChromiumTestShell.apk',
-      'org.chromium.chrome.testshell',
-      'ChromiumTestShellTest',
+    I('ChromeShell',
+      'ChromeShell.apk',
+      'org.chromium.chrome.shell',
+      'ChromeShellTest',
       'chrome:chrome/test/data/android/device_files',
-      constants.CHROMIUM_TEST_SHELL_HOST_DRIVEN_DIR),
+      constants.CHROME_SHELL_HOST_DRIVEN_DIR),
     I('AndroidWebView',
       'AndroidWebView.apk',
       'org.chromium.android_webview.shell',
@@ -141,6 +141,8 @@ def RunTestSuites(options, suites):
     args.append('--release')
   if options.asan:
     args.append('--tool=asan')
+  if options.gtest_filter:
+    args.append('--gtest-filter=%s' % options.gtest_filter)
   for suite in suites:
     bb_annotations.PrintNamedStep(suite)
     cmd = ['build/android/test_runner.py', 'gtest', '-s', suite] + args
@@ -153,10 +155,11 @@ def RunChromeDriverTests(options):
   """Run all the steps for running chromedriver tests."""
   bb_annotations.PrintNamedStep('chromedriver_annotation')
   RunCmd(['chrome/test/chromedriver/run_buildbot_steps.py',
-          '--android-packages=%s,%s,%s' %
-          (constants.PACKAGE_INFO['chromium_test_shell'].package,
-           constants.PACKAGE_INFO['chrome_stable'].package,
-           constants.PACKAGE_INFO['chrome_beta'].package),
+          '--android-packages=%s,%s,%s,%s' %
+          ('chrome_shell',
+           'chrome_stable',
+           'chrome_beta',
+           'chromedriver_webview_shell'),
           '--revision=%s' % _GetRevision(options),
           '--update-log'])
 
@@ -312,7 +315,6 @@ def RunWebkitLayoutTests(options):
     RunCmd([os.path.join(SLAVE_SCRIPTS_DIR, 'chromium',
                          'archive_layout_test_results.py'),
             '--results-dir', '../../layout-test-results',
-            '--build-dir', CHROME_OUT_DIR,
             '--build-number', build_number,
             '--builder-name', builder_name,
             '--gs-bucket', gs_bucket],
@@ -400,7 +402,7 @@ def ProvisionDevices(options):
     adb.RestartAdbServer()
     RunCmd(['sleep', '1'])
 
-  if options.reboot:
+  if not options.no_reboot:
     RebootDevices()
   provision_cmd = ['build/android/provision_devices.py', '-t', options.target]
   if options.auto_reconnect:
@@ -418,13 +420,17 @@ def DeviceStatusCheck(options):
 
 def GetDeviceSetupStepCmds():
   return [
-      ('provision_devices', ProvisionDevices),
       ('device_status_check', DeviceStatusCheck),
+      ('provision_devices', ProvisionDevices),
   ]
 
 
 def RunUnitTests(options):
-  RunTestSuites(options, gtest_config.STABLE_TEST_SUITES)
+  suites = gtest_config.STABLE_TEST_SUITES
+  if options.asan:
+    suites = [s for s in suites
+              if s not in gtest_config.ASAN_EXCLUDED_TEST_SUITES]
+  RunTestSuites(options, suites)
 
 
 def RunInstrumentationTests(options):
@@ -433,7 +439,7 @@ def RunInstrumentationTests(options):
 
 
 def RunWebkitTests(options):
-  RunTestSuites(options, ['webkit_unit_tests'])
+  RunTestSuites(options, ['webkit_unit_tests', 'blink_heap_unittests'])
   RunWebkitLint(options.target)
 
 
@@ -449,11 +455,24 @@ def RunGPUTests(options):
   InstallApk(options, INSTRUMENTATION_TESTS['ContentShell'], False)
 
   bb_annotations.PrintNamedStep('gpu_tests')
-  RunCmd(['content/test/gpu/run_gpu_test',
-          '--browser=android-content-shell', 'pixel'])
+  revision = _GetRevision(options)
+  RunCmd(['content/test/gpu/run_gpu_test.py',
+          'pixel',
+          '--browser',
+          'android-content-shell',
+          '--build-revision',
+          str(revision),
+          '--upload-refimg-to-cloud-storage',
+          '--refimg-cloud-storage-bucket',
+          'chromium-gpu-archive/reference-images',
+          '--os-type',
+          'android',
+          '--test-machine-name',
+          EscapeBuilderName(
+              options.build_properties.get('buildername', 'noname'))])
 
   bb_annotations.PrintNamedStep('webgl_conformance_tests')
-  RunCmd(['content/test/gpu/run_gpu_test',
+  RunCmd(['content/test/gpu/run_gpu_test.py',
           '--browser=android-content-shell', 'webgl_conformance',
           '--webgl-conformance-version=1.0.1'])
 
@@ -510,12 +529,26 @@ def LogcatDump(options):
   # Print logcat, kill logcat monitor
   bb_annotations.PrintNamedStep('logcat_dump')
   logcat_file = os.path.join(CHROME_OUT_DIR, options.target, 'full_log')
-  with open(logcat_file, 'w') as f:
-    RunCmd([
-        os.path.join(CHROME_SRC_DIR, 'build', 'android',
-                     'adb_logcat_printer.py'),
-        LOGCAT_DIR], stdout=f)
+  RunCmd([SrcPath('build' , 'android', 'adb_logcat_printer.py'),
+          '--output-path', logcat_file, LOGCAT_DIR])
   RunCmd(['cat', logcat_file])
+
+
+def RunStackToolSteps(options):
+  """Run stack tool steps.
+
+  Stack tool is run for logcat dump, optionally for ASAN.
+  """
+  bb_annotations.PrintNamedStep('Run stack tool with logcat dump')
+  logcat_file = os.path.join(CHROME_OUT_DIR, options.target, 'full_log')
+  RunCmd([os.path.join(CHROME_SRC_DIR, 'third_party', 'android_platform',
+          'development', 'scripts', 'stack'),
+          '--more-info', logcat_file])
+  if options.asan_symbolize:
+    bb_annotations.PrintNamedStep('Run stack tool for ASAN')
+    RunCmd([
+        os.path.join(CHROME_SRC_DIR, 'build', 'android', 'asan_symbolize.py'),
+        '-l', logcat_file])
 
 
 def GenerateTestReport(options):
@@ -546,6 +579,7 @@ def MainTestWrapper(options):
       coverage_html = GenerateJavaCoverageReport(options)
       UploadHTML(options, '%s/java' % options.coverage_bucket, coverage_html,
                  'Coverage Report')
+      shutil.rmtree(coverage_html, ignore_errors=True)
 
     if options.experimental:
       RunTestSuites(options, gtest_config.EXPERIMENTAL_TEST_SUITES)
@@ -553,6 +587,8 @@ def MainTestWrapper(options):
   finally:
     # Run all post test steps
     LogcatDump(options)
+    if not options.disable_stack_tool:
+      RunStackToolSteps(options)
     GenerateTestReport(options)
     # KillHostHeartbeat() has logic to check if heartbeat process is running,
     # and kills only if it finds the process is running on the host.
@@ -567,11 +603,13 @@ def GetDeviceStepsOptParser():
                     action='append',
                     help=('Run a test suite. Test suites: "%s"' %
                           '", "'.join(VALID_TESTS)))
+  parser.add_option('--gtest-filter',
+                    help='Filter for running a subset of tests of a gtest test')
   parser.add_option('--asan', action='store_true', help='Run tests with asan.')
   parser.add_option('--install', metavar='<apk name>',
                     help='Install an apk by name')
-  parser.add_option('--reboot', action='store_true',
-                    help='Reboot devices before running tests')
+  parser.add_option('--no-reboot', action='store_true',
+                    help='Do not reboot devices during provisioning.')
   parser.add_option('--coverage-bucket',
                     help=('Bucket name to store coverage results. Coverage is '
                           'only run if this is set.'))
@@ -587,7 +625,10 @@ def GetDeviceStepsOptParser():
   parser.add_option(
       '--logcat-dump-output',
       help='The logcat dump output will be "tee"-ed into this file')
-
+  parser.add_option('--disable-stack-tool',  action='store_true',
+      help='Do not run stack tool.')
+  parser.add_option('--asan-symbolize',  action='store_true',
+      help='Run stack tool for ASAN')
   return parser
 
 

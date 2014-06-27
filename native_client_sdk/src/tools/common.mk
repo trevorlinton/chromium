@@ -14,9 +14,13 @@
 # your project only builds in one or the other then this should be overridden
 # accordingly.
 #
-VALID_TOOLCHAINS ?= pnacl newlib glibc
-TOOLCHAIN ?= $(word 1,$(VALID_TOOLCHAINS))
+ALL_TOOLCHAINS ?= pnacl newlib glibc
+ifneq ($(ENABLE_BIONIC),)
+ALL_TOOLCHAINS += bionic
+endif
 
+VALID_TOOLCHAINS ?= $(ALL_TOOLCHAINS)
+TOOLCHAIN ?= $(word 1,$(VALID_TOOLCHAINS))
 
 #
 # Top Make file, which we want to trigger a rebuild on if it changes
@@ -28,8 +32,10 @@ TOP_MAKE := $(word 1,$(MAKEFILE_LIST))
 # Figure out which OS we are running on.
 #
 GETOS := python $(NACL_SDK_ROOT)/tools/getos.py
+NACL_CONFIG := python $(NACL_SDK_ROOT)/tools/nacl_config.py
 FIXDEPS := python $(NACL_SDK_ROOT)/tools/fix_deps.py -c
 OSNAME := $(shell $(GETOS))
+GDB_PATH := $(shell $(NACL_CONFIG) -t $(TOOLCHAIN) --tool=gdb)
 
 
 #
@@ -58,7 +64,7 @@ endef
 #
 # The target for all versions
 #
-USABLE_TOOLCHAINS=$(filter $(OSNAME) pnacl newlib glibc,$(VALID_TOOLCHAINS))
+USABLE_TOOLCHAINS=$(filter $(OSNAME) $(ALL_TOOLCHAINS),$(VALID_TOOLCHAINS))
 
 ifeq ($(NO_HOST_BUILDS),1)
 USABLE_TOOLCHAINS:=$(filter-out $(OSNAME),$(USABLE_TOOLCHAINS))
@@ -108,6 +114,16 @@ ifneq (,$(findstring debug,$(MAKECMDGOALS)))
 CONFIG ?= Debug
 else
 CONFIG ?= Release
+endif
+
+
+#
+# Verify we selected a valid configuration for this example.
+#
+VALID_CONFIGS ?= Debug Release
+ifeq (,$(findstring $(CONFIG),$(VALID_CONFIGS)))
+  $(warning Availbile choices are: $(VALID_CONFIGS))
+  $(error Can not use CONFIG=$(CONFIG) on this example.)
 endif
 
 
@@ -215,10 +231,13 @@ all:
 install:
 .PHONY: install
 
+ifdef SEL_LDR
+STANDALONE = 1
+endif
 
 OUTBASE ?= .
-ifdef SEL_LDR
-OUTDIR := $(OUTBASE)/$(TOOLCHAIN)/sel_ldr_$(CONFIG)
+ifdef STANDALONE
+OUTDIR := $(OUTBASE)/$(TOOLCHAIN)/standalone_$(CONFIG)
 else
 OUTDIR := $(OUTBASE)/$(TOOLCHAIN)/$(CONFIG)
 endif
@@ -278,11 +297,18 @@ $(STAMPDIR)/$(1).stamp:
 endif
 endef
 
-
 ifeq ($(TOOLCHAIN),win)
+ifdef STANDALONE
+HOST_EXT = .exe
+else
 HOST_EXT = .dll
+endif
+else
+ifdef STANDALONE
+HOST_EXT =
 else
 HOST_EXT = .so
+endif
 endif
 
 
@@ -300,24 +326,19 @@ else
 POSIX_FLAGS ?= -g -O0 -pthread -MMD -DNACL_SDK_DEBUG
 endif
 
-ifdef SEL_LDR
+ifdef STANDALONE
 POSIX_FLAGS += -DSEL_LDR=1
 endif
 
 NACL_CFLAGS ?= -Wno-long-long -Werror
 NACL_CXXFLAGS ?= -Wno-long-long -Werror
-NACL_LDFLAGS += -Wl,-as-needed
+NACL_LDFLAGS += -Wl,-as-needed -pthread
 
 #
 # Default Paths
 #
-ifeq (,$(findstring $(TOOLCHAIN),linux mac win))
-INC_PATHS ?= $(NACL_SDK_ROOT)/include $(NACL_SDK_ROOT)/include/$(TOOLCHAIN) $(EXTRA_INC_PATHS)
-else
-INC_PATHS ?= $(NACL_SDK_ROOT)/include/$(OSNAME) $(NACL_SDK_ROOT)/include $(EXTRA_INC_PATHS)
-endif
-
-LIB_PATHS ?= $(NACL_SDK_ROOT)/lib $(EXTRA_LIB_PATHS)
+INC_PATHS := $(shell $(NACL_CONFIG) -t $(TOOLCHAIN) --include-dirs) $(EXTRA_INC_PATHS)
+LIB_PATHS := $(NACL_SDK_ROOT)/lib $(EXTRA_LIB_PATHS)
 
 #
 # Define a LOG macro that allow a command to be run in quiet mode where
@@ -394,7 +415,7 @@ ifneq (,$(findstring $(TOOLCHAIN),win))
 include $(NACL_SDK_ROOT)/tools/host_vc.mk
 endif
 
-ifneq (,$(findstring $(TOOLCHAIN),glibc newlib))
+ifneq (,$(findstring $(TOOLCHAIN),glibc newlib bionic))
 include $(NACL_SDK_ROOT)/tools/nacl_gcc.mk
 endif
 
@@ -409,23 +430,6 @@ ifeq ($(OSNAME),win)
 DEV_NULL = nul
 else
 DEV_NULL = /dev/null
-endif
-
-#
-# Assign a sensible default to CHROME_PATH.
-#
-CHROME_PATH ?= $(shell $(GETOS) --chrome 2> $(DEV_NULL))
-
-#
-# Verify we can find the Chrome executable if we need to launch it.
-#
-.PHONY: check_for_chrome
-check_for_chrome:
-ifeq (,$(wildcard $(CHROME_PATH)))
-	$(warning No valid Chrome found at CHROME_PATH=$(CHROME_PATH))
-	$(error Set CHROME_PATH via an environment variable, or command-line.)
-else
-	$(warning Using chrome at: $(CHROME_PATH))
 endif
 
 
@@ -461,34 +465,44 @@ ifeq ($(CONFIG),Debug)
 SEL_LDR_ARGS += --debug-libs
 endif
 
-ifdef SEL_LDR
-run: all
-ifndef NACL_ARCH
-	$(error Cannot run in sel_ldr unless $$NACL_ARCH is set)
-endif
-	$(SEL_LDR_PATH) $(SEL_LDR_ARGS) $(OUTDIR)/$(TARGET)_$(NACL_ARCH).nexe -- $(NEXE_ARGS)
+ifndef STANDALONE
+#
+# Assign a sensible default to CHROME_PATH.
+#
+CHROME_PATH ?= $(shell $(GETOS) --chrome 2> $(DEV_NULL))
 
-debug: all
-ifndef NACL_ARCH
-	$(error Cannot run in sel_ldr unless $$NACL_ARCH is set)
-endif
-	$(SEL_LDR_PATH) -d $(SEL_LDR_ARGS) $(OUTDIR)/$(TARGET)_$(NACL_ARCH).nexe -- $(NEXE_ARGS)
+#
+# Verify we can find the Chrome executable if we need to launch it.
+#
+
+NULL :=
+SPACE := $(NULL) # one space after NULL is required
+CHROME_PATH_ESCAPE := $(subst $(SPACE),\ ,$(CHROME_PATH))
+
+.PHONY: check_for_chrome
+check_for_chrome:
+ifeq (,$(wildcard $(CHROME_PATH_ESCAPE)))
+	$(warning No valid Chrome found at CHROME_PATH=$(CHROME_PATH))
+	$(error Set CHROME_PATH via an environment variable, or command-line.)
 else
+	$(warning Using chrome at: $(CHROME_PATH))
+endif
 PAGE ?= index.html
 PAGE_TC_CONFIG ?= "$(PAGE)?tc=$(TOOLCHAIN)&config=$(CONFIG)"
 
 .PHONY: run
 run: check_for_chrome all $(PAGE)
 	$(RUN_PY) -C $(CURDIR) -P $(PAGE_TC_CONFIG) \
-	    $(addprefix -E ,$(CHROME_ENV)) -- $(CHROME_PATH) $(CHROME_ARGS) \
+	    $(addprefix -E ,$(CHROME_ENV)) -- $(CHROME_PATH_ESCAPE) \
+	    $(CHROME_ARGS) --no-sandbox \
 	    --register-pepper-plugins="$(PPAPI_DEBUG),$(PPAPI_RELEASE)"
 
 .PHONY: run_package
 run_package: check_for_chrome all
 	@echo "$(TOOLCHAIN) $(CONFIG)" > $(CURDIR)/run_package_config
-	$(CHROME_PATH) --load-and-launch-app=$(CURDIR) $(CHROME_ARGS)
+	$(CHROME_PATH_ESCAPE) --load-and-launch-app=$(CURDIR) $(CHROME_ARGS)
 
-GDB_ARGS += -D $(TC_PATH)/$(OSNAME)_x86_newlib/bin/$(SYSARCH)-nacl-gdb
+GDB_ARGS += -D $(GDB_PATH)
 GDB_ARGS += -D --eval-command="nacl-manifest $(abspath $(OUTDIR))/$(TARGET).nmf"
 GDB_ARGS += -D $(GDB_DEBUG_TARGET)
 
@@ -496,15 +510,14 @@ GDB_ARGS += -D $(GDB_DEBUG_TARGET)
 debug: check_for_chrome all $(PAGE)
 	$(RUN_PY) $(GDB_ARGS) \
 	    -C $(CURDIR) -P $(PAGE_TC_CONFIG) \
-	    $(addprefix -E ,$(CHROME_ENV)) -- $(CHROME_PATH) $(CHROME_ARGS) \
-	    --enable-nacl-debug \
+	    $(addprefix -E ,$(CHROME_ENV)) -- $(CHROME_PATH_ESCAPE) \
+	    $(CHROME_ARGS) --enable-nacl-debug \
 	    --register-pepper-plugins="$(PPAPI_DEBUG),$(PPAPI_RELEASE)"
-endif
 
 .PHONY: serve
 serve: all
 	$(HTTPD_PY) -C $(CURDIR)
-
+endif
 
 # uppercase aliases (for backward compatibility)
 .PHONY: CHECK_FOR_CHROME DEBUG LAUNCH RUN

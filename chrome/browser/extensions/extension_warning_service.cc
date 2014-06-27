@@ -8,13 +8,12 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/common/extensions/extension.h"
-
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
 
 using content::BrowserThread;
 
@@ -24,7 +23,7 @@ ExtensionWarningService::ExtensionWarningService(Profile* profile)
     : profile_(profile) {
   DCHECK(CalledOnValidThread());
   if (profile_) {
-    registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED,
+    registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
         content::Source<Profile>(profile_->GetOriginalProfile()));
   }
 }
@@ -125,7 +124,7 @@ void ExtensionWarningService::Observe(
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
   switch (type) {
-    case chrome::NOTIFICATION_EXTENSION_UNLOADED: {
+    case chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED: {
       const Extension* extension =
           content::Details<extensions::UnloadedExtensionInfo>(details)->
           extension;

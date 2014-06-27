@@ -53,9 +53,9 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
   int GetAvailableDraftPageCount();
 
   // Setters
-  void SetInitiatorTitle(const string16& initiator_title);
+  void SetInitiatorTitle(const base::string16& initiator_title);
 
-  string16 initiator_title() { return initiator_title_; }
+  base::string16 initiator_title() { return initiator_title_; }
 
   bool source_is_modifiable() { return source_is_modifiable_; }
 
@@ -103,10 +103,6 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
   // |preview_request_id| indicates which request resulted in this response.
   void OnPreviewDataIsAvailable(int expected_pages_count,
                                 int preview_request_id);
-
-  // Notifies the Web UI renderer to reuse the preview data.
-  // |preview_request_id| indicates which request resulted in this response.
-  void OnReusePreviewData(int preview_request_id);
 
   // Notifies the Web UI that preview dialog has been destroyed. This is the
   // last chance to communicate with the initiator before the association is
@@ -195,7 +191,7 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
 
   // Store the initiator title, used for populating the print preview dialog
   // title.
-  string16 initiator_title_;
+  base::string16 initiator_title_;
 
   // Keeps track of whether OnClosePrintPreviewDialog() has been called or not.
   bool dialog_closed_;

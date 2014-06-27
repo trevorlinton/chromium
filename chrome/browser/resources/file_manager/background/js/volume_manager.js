@@ -9,32 +9,161 @@
  * flush storage", or "mounted zip archive" etc.
  *
  * @param {util.VolumeType} volumeType The type of the volume.
- * @param {string} mountPath Where the volume is mounted.
- * @param {DirectoryEntry} root The root directory entry of this volume.
+ * @param {string} volumeId ID of the volume.
+ * @param {DOMFileSystem} fileSystem The file system object for this volume.
  * @param {string} error The error if an error is found.
  * @param {string} deviceType The type of device ('usb'|'sd'|'optical'|'mobile'
  *     |'unknown') (as defined in chromeos/disks/disk_mount_manager.cc).
  *     Can be null.
  * @param {boolean} isReadOnly True if the volume is read only.
+ * @param {!{displayName:string, isCurrentProfile:boolean}} profile Profile
+ *     information.
+ * @param {string} label Label of the volume.
  * @constructor
  */
 function VolumeInfo(
-    volumeType, mountPath, root, error, deviceType, isReadOnly) {
-  this.volumeType = volumeType;
-  // TODO(hidehiko): This should include FileSystem instance.
-  this.mountPath = mountPath;
-  this.root = root;
+    volumeType,
+    volumeId,
+    fileSystem,
+    error,
+    deviceType,
+    isReadOnly,
+    profile,
+    label) {
+  this.volumeType_ = volumeType;
+  this.volumeId_ = volumeId;
+  this.fileSystem_ = fileSystem;
+  this.label_ = label;
+  this.displayRoot_ = null;
+  this.fakeEntries_ = {};
+  this.displayRoot_ = null;
+  this.displayRootPromise_ = null;
+
+  if (volumeType === util.VolumeType.DRIVE) {
+    // TODO(mtomasz): Convert fake entries to DirectoryProvider.
+    this.fakeEntries_[RootType.DRIVE_OFFLINE] = {
+      isDirectory: true,
+      rootType: RootType.DRIVE_OFFLINE,
+      toURL: function() { return 'fake-entry://drive_offline' }
+    };
+    this.fakeEntries_[RootType.DRIVE_SHARED_WITH_ME] = {
+      isDirectory: true,
+      rootType: RootType.DRIVE_SHARED_WITH_ME,
+      toURL: function() { return 'fake-entry://drive_shared_with_me'; }
+    };
+    this.fakeEntries_[RootType.DRIVE_RECENT] = {
+      isDirectory: true,
+      rootType: RootType.DRIVE_RECENT,
+      toURL: function() { return 'fake-entry://drive_recent'; }
+    };
+  }
 
   // Note: This represents if the mounting of the volume is successfully done
   // or not. (If error is empty string, the mount is successfully done).
   // TODO(hidehiko): Rename to make this more understandable.
-  this.error = error;
-  this.deviceType = deviceType;
-  this.isReadOnly = isReadOnly;
+  this.error_ = error;
+  this.deviceType_ = deviceType;
+  this.isReadOnly_ = isReadOnly;
+  this.profile_ = Object.freeze(profile);
 
-  // VolumeInfo is immutable.
-  Object.freeze(this);
+  Object.seal(this);
 }
+
+VolumeInfo.prototype = {
+  /**
+   * @return {util.VolumeType} Volume type.
+   */
+  get volumeType() {
+    return this.volumeType_;
+  },
+  /**
+   * @return {string} Volume ID.
+   */
+  get volumeId() {
+    return this.volumeId_;
+  },
+  /**
+   * @return {DOMFileSystem} File system object.
+   */
+  get fileSystem() {
+    return this.fileSystem_;
+  },
+  /**
+   * @return {DirectoryEntry} Display root path. It is null before finishing to
+   * resolve the entry.
+   */
+  get displayRoot() {
+    return this.displayRoot_;
+  },
+  /**
+   * @return {Object.<string, Object>} Fake entries.
+   */
+  get fakeEntries() {
+    return this.fakeEntries_;
+  },
+  /**
+   * @return {string} Error identifier.
+   */
+  get error() {
+    return this.error_;
+  },
+  /**
+   * @return {string} Device type identifier.
+   */
+  get deviceType() {
+    return this.deviceType_;
+  },
+  /**
+   * @return {boolean} Whether read only or not.
+   */
+  get isReadOnly() {
+    return this.isReadOnly_;
+  },
+  /**
+   * @return {!{displayName:string, isCurrentProfile:boolean}} Profile data.
+   */
+  get profile() {
+    return this.profile_;
+  },
+  /**
+   * @return {string} Label for the volume.
+   */
+  get label() {
+    return this.label_;
+  }
+};
+
+/**
+ * Starts resolving the display root and obtains it.  It may take long time for
+ * Drive. Once resolved, it is cached.
+ *
+ * @param {function(DirectoryEntry)} onSuccess Success callback with the
+ *     display root directory as an argument.
+ * @param {function(FileError)} onFailure Failure callback.
+ */
+VolumeInfo.prototype.resolveDisplayRoot = function(onSuccess, onFailure) {
+  if (!this.displayRootPromise_) {
+    // TODO(mtomasz): Do not add VolumeInfo which failed to resolve root, and
+    // remove this if logic. Call onSuccess() always, instead.
+    if (this.volumeType !== util.VolumeType.DRIVE) {
+      if (this.fileSystem_)
+        this.displayRootPromise_ = Promise.resolve(this.fileSystem_.root);
+      else
+        this.displayRootPromise_ = Promise.reject(this.error);
+    } else {
+      // For Drive, we need to resolve.
+      var displayRootURL = this.fileSystem_.root.toURL() + '/root';
+      this.displayRootPromise_ = new Promise(
+          webkitResolveLocalFileSystemURL.bind(null, displayRootURL));
+    }
+
+    // Store the obtained displayRoot.
+    this.displayRootPromise_.then(function(displayRoot) {
+      this.displayRoot_ = displayRoot;
+    }.bind(this));
+  }
+  this.displayRootPromise_.then(onSuccess, onFailure);
+};
 
 /**
  * Utilities for volume manager implementation.
@@ -47,66 +176,11 @@ var volumeManagerUtil = {};
  */
 volumeManagerUtil.validateError = function(error) {
   for (var key in util.VolumeError) {
-    if (error == util.VolumeError[key])
+    if (error === util.VolumeError[key])
       return;
   }
 
   throw new Error('Invalid mount error: ' + error);
-};
-
-/**
- * The regex pattern which matches valid mount paths.
- * The valid paths are:
- * - Either of '/drive', '/drive_shared_with_me', '/drive_offline',
- *   '/drive_recent' or '/Download'
- * - For archive, drive, removable can have (exactly one) sub directory in the
- *  root path. E.g. '/archive/foo', '/removable/usb1' etc.
- *
- * @type {RegExp}
- * @private
- */
-volumeManagerUtil.validateMountPathRegExp_ = new RegExp(
-    '^/(drive|drive_shared_with_me|drive_offline|drive_recent|Downloads|' +
-    '((archive|drive|removable)\/[^/]+))$');
-
-/**
- * Throws an Error if the validation fails.
- * @param {string} mountPath The target path of the validation.
- */
-volumeManagerUtil.validateMountPath = function(mountPath) {
-  if (!volumeManagerUtil.validateMountPathRegExp_.test(mountPath))
-    throw new Error('Invalid mount path: ' + mountPath);
-};
-
-/**
- * Returns the root entry of a volume mounted at mountPath.
- *
- * @param {string} mountPath The mounted path of the volume.
- * @param {function(DirectoryEntry)} successCallback Called when the root entry
- *     is found.
- * @param {function(FileError)} errorCallback Called when an error is found.
- * @private
- */
-volumeManagerUtil.getRootEntry_ = function(
-    mountPath, successCallback, errorCallback) {
-  // We always request FileSystem here, because requestFileSystem() grants
-  // permissions if necessary, especially for Drive File System at first mount
-  // time.
-  // Note that we actually need to request FileSystem after multi file system
-  // support, so this will be more natural code then.
-  chrome.fileBrowserPrivate.requestFileSystem(
-      'compatible',
-      function(fileSystem) {
-        // TODO(hidehiko): chrome.runtime.lastError should have error reason.
-        if (!fileSystem) {
-          errorCallback(util.createFileError(FileError.NOT_FOUND_ERR));
-          return;
-        }
-
-        fileSystem.root.getDirectory(
-            mountPath.substring(1),  // Strip leading '/'.
-            {create: false}, successCallback, errorCallback);
-      });
 };
 
 /**
@@ -115,75 +189,96 @@ volumeManagerUtil.getRootEntry_ = function(
  * @param {function(VolumeInfo)} callback Called on completion.
  */
 volumeManagerUtil.createVolumeInfo = function(volumeMetadata, callback) {
-  volumeManagerUtil.getRootEntry_(
-      volumeMetadata.mountPath,
-      function(entry) {
+  var localizedLabel;
+  switch (volumeMetadata.volumeType) {
+    case util.VolumeType.DOWNLOADS:
+      localizedLabel = str('DOWNLOADS_DIRECTORY_LABEL');
+      break;
+    case util.VolumeType.DRIVE:
+      localizedLabel = str('DRIVE_DIRECTORY_LABEL');
+      break;
+    default:
+      localizedLabel = volumeMetadata.volumeId.split(':', 2)[1];
+      break;
+  }
+
+  chrome.fileBrowserPrivate.requestFileSystem(
+      volumeMetadata.volumeId,
+      function(fileSystem) {
+        // TODO(mtomasz): chrome.runtime.lastError should have error reason.
+        if (!fileSystem) {
+          console.error('File system not found: ' + volumeMetadata.volumeId);
+          callback(new VolumeInfo(
+              volumeMetadata.volumeType,
+              volumeMetadata.volumeId,
+              null,  // File system is not found.
+              volumeMetadata.mountCondition,
+              volumeMetadata.deviceType,
+              volumeMetadata.isReadOnly,
+              volumeMetadata.profile,
+              localizedLabel));
+          return;
+        }
         if (volumeMetadata.volumeType === util.VolumeType.DRIVE) {
           // After file system is mounted, we "read" drive grand root
           // entry at first. This triggers full feed fetch on background.
           // Note: we don't need to handle errors here, because even if
           // it fails, accessing to some path later will just become
           // a fast-fetch and it re-triggers full-feed fetch.
-          entry.createReader().readEntries(
+          fileSystem.root.createReader().readEntries(
               function() { /* do nothing */ },
               function(error) {
                 console.error(
-                    'Triggering full feed fetch is failed: ' +
-                        util.getFileErrorMnemonic(error.code));
+                    'Triggering full feed fetch is failed: ' + error.name);
               });
         }
         callback(new VolumeInfo(
             volumeMetadata.volumeType,
-            volumeMetadata.mountPath,
-            entry,
+            volumeMetadata.volumeId,
+            fileSystem,
             volumeMetadata.mountCondition,
             volumeMetadata.deviceType,
-            volumeMetadata.isReadOnly));
-      },
-      function(fileError) {
-        console.error('Root entry is not found: ' +
-            volumeMetadata.mountPath + ', ' +
-            util.getFileErrorMnemonic(fileError.code));
-        callback(new VolumeInfo(
-            volumeMetadata.volumeType,
-            volumeMetadata.mountPath,
-            null,  // Root entry is not found.
-            volumeMetadata.mountCondition,
-            volumeMetadata.deviceType,
-            volumeMetadata.isReadOnly));
+            volumeMetadata.isReadOnly,
+            volumeMetadata.profile,
+            localizedLabel));
       });
 };
 
 /**
  * The order of the volume list based on root type.
- * @type {Array.<string>}
+ * @type {Array.<util.VolumeType>}
  * @const
  * @private
  */
 volumeManagerUtil.volumeListOrder_ = [
-  RootType.DRIVE, RootType.DOWNLOADS, RootType.ARCHIVE, RootType.REMOVABLE
+  util.VolumeType.DRIVE,
+  util.VolumeType.DOWNLOADS,
+  util.VolumeType.ARCHIVE,
+  util.VolumeType.REMOVABLE,
+  util.VolumeType.CLOUD_DEVICE
 ];
 
 /**
- * Compares mount paths to sort the volume list order.
- * @param {string} mountPath1 The mount path for the first volume.
- * @param {string} mountPath2 The mount path for the second volume.
- * @return {number} 0 if mountPath1 and mountPath2 are same, -1 if VolumeInfo
- *     mounted at mountPath1 should be listed before the one mounted at
- *     mountPath2, otherwise 1.
+ * Orders two volumes by volumeType and volumeId.
+ *
+ * The volumes at first are compared by volume type in the order of
+ * volumeListOrder_.  Then they are compared by volume ID.
+ *
+ * @param {VolumeInfo} volumeInfo1 Volume info to be compared.
+ * @param {VolumeInfo} volumeInfo2 Volume info to be compared.
+ * @return {number} Returns -1 if volume1 < volume2, returns 1 if volume2 >
+ *     volume1, returns 0 if volume1 === volume2.
+ * @private
  */
-volumeManagerUtil.compareMountPath = function(mountPath1, mountPath2) {
-  var order1 = volumeManagerUtil.volumeListOrder_.indexOf(
-      PathUtil.getRootType(mountPath1));
-  var order2 = volumeManagerUtil.volumeListOrder_.indexOf(
-      PathUtil.getRootType(mountPath2));
-  if (order1 != order2)
-    return order1 < order2 ? -1 : 1;
-
-  if (mountPath1 != mountPath2)
-    return mountPath1 < mountPath2 ? -1 : 1;
-
-  // The path is same.
+volumeManagerUtil.compareVolumeInfo_ = function(volumeInfo1, volumeInfo2) {
+  var typeIndex1 =
+      volumeManagerUtil.volumeListOrder_.indexOf(volumeInfo1.volumeType);
+  var typeIndex2 =
+      volumeManagerUtil.volumeListOrder_.indexOf(volumeInfo2.volumeType);
+  if (typeIndex1 !== typeIndex2)
+    return typeIndex1 < typeIndex2 ? -1 : 1;
+  if (volumeInfo1.volumeId !== volumeInfo2.volumeId)
+    return volumeInfo1.volumeId < volumeInfo2.volumeId ? -1 : 1;
   return 0;
 };
 
@@ -192,12 +287,16 @@ volumeManagerUtil.compareMountPath = function(mountPath1, mountPath2) {
  * @constructor
  */
 function VolumeInfoList() {
+  var field = 'volumeType,volumeId';
+
   /**
    * Holds VolumeInfo instances.
    * @type {cr.ui.ArrayDataModel}
    * @private
    */
   this.model_ = new cr.ui.ArrayDataModel([]);
+  this.model_.setCompareFunction(field, volumeManagerUtil.compareVolumeInfo_);
+  this.model_.sort(field, 'asc');
 
   Object.freeze(this);
 }
@@ -230,58 +329,56 @@ VolumeInfoList.prototype.removeEventListener = function(type, handler) {
  * @param {VolumeInfo} volumeInfo The information of the new volume.
  */
 VolumeInfoList.prototype.add = function(volumeInfo) {
-  var index = this.findLowerBoundIndex_(volumeInfo.mountPath);
-  if (index < this.length &&
-      this.item(index).mountPath == volumeInfo.mountPath) {
-    // Replace the VolumeInfo.
+  var index = this.findIndex(volumeInfo.volumeId);
+  if (index !== -1)
     this.model_.splice(index, 1, volumeInfo);
-  } else {
-    // Insert the VolumeInfo.
-    this.model_.splice(index, 0, volumeInfo);
-  }
+  else
+    this.model_.push(volumeInfo);
 };
 
 /**
- * Removes the VolumeInfo of the volume mounted at mountPath.
- * @param {string} mountPath The path to the location where the volume is
- *     mounted.
+ * Removes the VolumeInfo having the given ID.
+ * @param {string} volumeId ID of the volume.
  */
-VolumeInfoList.prototype.remove = function(mountPath) {
-  var index = this.findLowerBoundIndex_(mountPath);
-  if (index < this.length && this.item(index).mountPath == mountPath)
+VolumeInfoList.prototype.remove = function(volumeId) {
+  var index = this.findIndex(volumeId);
+  if (index !== -1)
     this.model_.splice(index, 1);
 };
 
 /**
- * Searches the information of the volume mounted at mountPath.
- * @param {string} mountPath The path to the location where the volume is
- *     mounted.
- * @return {VolumeInfo} The volume's information, or null if not found.
+ * Obtains an index from the volume ID.
+ * @param {string} volumeId Volume ID.
+ * @return {number} Index of the volume.
  */
-VolumeInfoList.prototype.find = function(mountPath) {
-  var index = this.findLowerBoundIndex_(mountPath);
-  if (index < this.length && this.item(index).mountPath == mountPath)
-    return this.item(index);
-
-  // Not found.
-  return null;
+VolumeInfoList.prototype.findIndex = function(volumeId) {
+  for (var i = 0; i < this.model_.length; i++) {
+    if (this.model_.item(i).volumeId === volumeId)
+      return i;
+  }
+  return -1;
 };
 
 /**
- * @param {string} mountPath The mount path of searched volume.
- * @return {number} The index of the volume if found, or the inserting
- *     position of the volume.
- * @private
+ * Searches the information of the volume that contains the passed entry.
+ * @param {Entry|Object} entry Entry on the volume to be foudn.
+ * @return {VolumeInfo} The volume's information, or null if not found.
  */
-VolumeInfoList.prototype.findLowerBoundIndex_ = function(mountPath) {
-  // Assuming the number of elements in the array data model is very small
-  // in most cases, use simple linear search, here.
+VolumeInfoList.prototype.findByEntry = function(entry) {
   for (var i = 0; i < this.length; i++) {
-    if (volumeManagerUtil.compareMountPath(
-            this.item(i).mountPath, mountPath) >= 0)
-      return i;
+    var volumeInfo = this.item(i);
+    if (volumeInfo.fileSystem &&
+        util.isSameFileSystem(volumeInfo.fileSystem, entry.filesystem)) {
+      return volumeInfo;
+    }
+    // Additionally, check fake entries.
+    for (var key in volumeInfo.fakeEntries_) {
+      var fakeEntry = volumeInfo.fakeEntries_[key];
+      if (util.isSameEntry(fakeEntry, entry))
+        return volumeInfo;
+    }
   }
-  return this.length;
+  return null;
 };
 
 /**
@@ -313,11 +410,18 @@ function VolumeManager() {
    */
   this.volumeInfoList = new VolumeInfoList();
 
+  /**
+   * Queue for mounting.
+   * @type {AsyncUtil.Queue}
+   * @private
+   */
+  this.mountQueue_ = new AsyncUtil.Queue();
+
   // The status should be merged into VolumeManager.
   // TODO(hidehiko): Remove them after the migration.
   this.driveConnectionState_ = {
     type: util.DriveConnectionType.OFFLINE,
-    reasons: [util.DriveConnectionReason.NO_SERVICE]
+    reason: util.DriveConnectionReason.NO_SERVICE
   };
 
   chrome.fileBrowserPrivate.onDriveConnectionStatusChanged.addListener(
@@ -400,28 +504,36 @@ VolumeManager.getInstance = function(callback) {
  */
 VolumeManager.prototype.initialize_ = function(callback) {
   chrome.fileBrowserPrivate.getVolumeMetadataList(function(volumeMetadataList) {
-    // Create VolumeInfo for each volume.
-    var group = new AsyncUtil.Group();
-    for (var i = 0; i < volumeMetadataList.length; i++) {
-      group.add(function(volumeMetadata, continueCallback) {
-        volumeManagerUtil.createVolumeInfo(
-            volumeMetadata,
-            function(volumeInfo) {
-              this.volumeInfoList.add(volumeInfo);
-              if (volumeMetadata.volumeType === util.VolumeType.DRIVE)
-                this.onDriveConnectionStatusChanged_();
-              continueCallback();
-            }.bind(this));
-      }.bind(this, volumeMetadataList[i]));
-    }
-
-    // Then, finalize the initialization.
-    group.run(function() {
-      // Subscribe to the mount completed event when mount points initialized.
-      chrome.fileBrowserPrivate.onMountCompleted.addListener(
-          this.onMountCompleted_.bind(this));
-      callback();
+    // We must subscribe to the mount completed event in the callback of
+    // getVolumeMetadataList. crbug.com/330061.
+    // But volumes reported by onMountCompleted events must be added after the
+    // volumes in the volumeMetadataList are mounted. crbug.com/135477.
+    this.mountQueue_.run(function(inCallback) {
+      // Create VolumeInfo for each volume.
+      var group = new AsyncUtil.Group();
+      for (var i = 0; i < volumeMetadataList.length; i++) {
+        group.add(function(volumeMetadata, continueCallback) {
+          volumeManagerUtil.createVolumeInfo(
+              volumeMetadata,
+              function(volumeInfo) {
+                this.volumeInfoList.add(volumeInfo);
+                if (volumeMetadata.volumeType === util.VolumeType.DRIVE)
+                  this.onDriveConnectionStatusChanged_();
+                continueCallback();
+              }.bind(this));
+        }.bind(this, volumeMetadataList[i]));
+      }
+      group.run(function() {
+        // Call the callback of the initialize function.
+        callback();
+        // Call the callback of AsyncQueue. Maybe it invokes callbacks
+        // registered by mountCompleted events.
+        inCallback();
+      });
     }.bind(this));
+
+    chrome.fileBrowserPrivate.onMountCompleted.addListener(
+        this.onMountCompleted_.bind(this));
   }.bind(this));
 };
 
@@ -431,79 +543,89 @@ VolumeManager.prototype.initialize_ = function(callback) {
  * @private
  */
 VolumeManager.prototype.onMountCompleted_ = function(event) {
-  if (event.eventType === 'mount') {
-    if (event.volumeMetadata.mountPath) {
-      var requestKey = this.makeRequestKey_(
-          'mount',
-          event.volumeMetadata.sourcePath);
+  this.mountQueue_.run(function(callback) {
+    switch (event.eventType) {
+      case 'mount':
+        var requestKey = this.makeRequestKey_(
+            'mount',
+            event.volumeMetadata.sourcePath);
 
-      var error = event.status === 'success' ? '' : event.status;
+        var error = event.status === 'success' ? '' : event.status;
+        if (!error || event.status === 'error_unknown_filesystem') {
+          volumeManagerUtil.createVolumeInfo(
+              event.volumeMetadata,
+              function(volumeInfo) {
+                this.volumeInfoList.add(volumeInfo);
+                this.finishRequest_(requestKey, event.status, volumeInfo);
 
-      volumeManagerUtil.createVolumeInfo(
-          event.volumeMetadata,
-          function(volumeInfo) {
-            this.volumeInfoList.add(volumeInfo);
-            this.finishRequest_(requestKey, event.status, volumeInfo.mountPath);
+                if (volumeInfo.volumeType === util.VolumeType.DRIVE) {
+                  // Update the network connection status, because until the
+                  // drive is initialized, the status is set to not ready.
+                  // TODO(mtomasz): The connection status should be migrated
+                  // into VolumeMetadata.
+                  this.onDriveConnectionStatusChanged_();
+                }
+                callback();
+              }.bind(this));
+        } else {
+          console.warn('Failed to mount a volume: ' + event.status);
+          this.finishRequest_(requestKey, event.status);
+          callback();
+        }
+        break;
 
-            if (volumeInfo.volumeType === util.VolumeType.DRIVE) {
-              // Update the network connection status, because until the
-              // drive is initialized, the status is set to not ready.
-              // TODO(hidehiko): The connection status should be migrated into
-              // VolumeMetadata.
-              this.onDriveConnectionStatusChanged_();
-            }
-          }.bind(this));
-    } else {
-      console.warn('No mount path.');
-      this.finishRequest_(requestKey, event.status);
+      case 'unmount':
+        var volumeId = event.volumeMetadata.volumeId;
+        var status = event.status;
+        if (status === util.VolumeError.PATH_UNMOUNTED) {
+          console.warn('Volume already unmounted: ', volumeId);
+          status = 'success';
+        }
+        var requestKey = this.makeRequestKey_('unmount', volumeId);
+        var requested = requestKey in this.requests_;
+        var volumeInfoIndex =
+            this.volumeInfoList.findIndex(volumeId);
+        var volumeInfo = volumeInfoIndex !== -1 ?
+            this.volumeInfoList.item(volumeInfoIndex) : null;
+        if (event.status === 'success' && !requested && volumeInfo) {
+          console.warn('Mounted volume without a request: ' + volumeId);
+          var e = new Event('externally-unmounted');
+          e.volumeInfo = volumeInfo;
+          this.dispatchEvent(e);
+        }
+
+        this.finishRequest_(requestKey, status);
+        if (event.status === 'success')
+          this.volumeInfoList.remove(event.volumeMetadata.volumeId);
+        callback();
+        break;
     }
-  } else if (event.eventType === 'unmount') {
-    var mountPath = event.volumeMetadata.mountPath;
-    volumeManagerUtil.validateMountPath(mountPath);
-    var status = event.status;
-    if (status === util.VolumeError.PATH_UNMOUNTED) {
-      console.warn('Volume already unmounted: ', mountPath);
-      status = 'success';
-    }
-    var requestKey = this.makeRequestKey_('unmount', mountPath);
-    var requested = requestKey in this.requests_;
-    if (event.status === 'success' && !requested &&
-        this.volumeInfoList.find(mountPath)) {
-      console.warn('Mounted volume without a request: ', mountPath);
-      var e = new Event('externally-unmounted');
-      e.mountPath = mountPath;
-      this.dispatchEvent(e);
-    }
-    this.finishRequest_(requestKey, status);
-
-    if (event.status === 'success')
-      this.volumeInfoList.remove(mountPath);
-  }
+  }.bind(this));
 };
 
 /**
  * Creates string to match mount events with requests.
  * @param {string} requestType 'mount' | 'unmount'. TODO(hidehiko): Replace by
  *     enum.
- * @param {string} path Source path provided by API for mount request, or
- *     mount path for unmount request.
+ * @param {string} argument Argument describing the request, eg. source file
+ *     path of the archive to be mounted, or a volumeId for unmounting.
  * @return {string} Key for |this.requests_|.
  * @private
  */
-VolumeManager.prototype.makeRequestKey_ = function(requestType, path) {
-  return requestType + ':' + path;
+VolumeManager.prototype.makeRequestKey_ = function(requestType, argument) {
+  return requestType + ':' + argument;
 };
 
 /**
  * @param {string} fileUrl File url to the archive file.
- * @param {function(string)} successCallback Success callback.
+ * @param {function(VolumeInfo)} successCallback Success callback.
  * @param {function(util.VolumeError)} errorCallback Error callback.
  */
 VolumeManager.prototype.mountArchive = function(
     fileUrl, successCallback, errorCallback) {
   chrome.fileBrowserPrivate.addMount(fileUrl, function(sourcePath) {
     console.info(
-        'Mount request: url=' + fileUrl + '; sourceUrl=' + sourcePath);
+        'Mount request: url=' + fileUrl + '; sourcePath=' + sourcePath);
     var requestKey = this.makeRequestKey_('mount', sourcePath);
     this.startRequest_(requestKey, successCallback, errorCallback);
   }.bind(this));
@@ -511,60 +633,111 @@ VolumeManager.prototype.mountArchive = function(
 
 /**
  * Unmounts volume.
- * @param {string} mountPath Volume mounted path.
- * @param {function(string)} successCallback Success callback.
+ * @param {!VolumeInfo} volumeInfo Volume to be unmounted.
+ * @param {function()} successCallback Success callback.
  * @param {function(util.VolumeError)} errorCallback Error callback.
  */
-VolumeManager.prototype.unmount = function(mountPath,
+VolumeManager.prototype.unmount = function(volumeInfo,
                                            successCallback,
                                            errorCallback) {
-  volumeManagerUtil.validateMountPath(mountPath);
-  var volumeInfo = this.volumeInfoList.find(mountPath);
-  if (!volumeInfo) {
-    errorCallback(util.VolumeError.NOT_MOUNTED);
-    return;
-  }
-
-  chrome.fileBrowserPrivate.removeMount(util.makeFilesystemUrl(mountPath));
-  var requestKey = this.makeRequestKey_('unmount', volumeInfo.mountPath);
+  chrome.fileBrowserPrivate.removeMount(volumeInfo.volumeId);
+  var requestKey = this.makeRequestKey_('unmount', volumeInfo.volumeId);
   this.startRequest_(requestKey, successCallback, errorCallback);
 };
 
 /**
- * Resolve the path to its entry.
- * @param {string} path The path to be resolved.
- * @param {function(Entry)} successCallback Called with the resolved entry on
- *     success.
- * @param {function(FileError)} errorCallback Called on error.
+ * Obtains a volume info containing the passed entry.
+ * @param {Entry|Object} entry Entry on the volume to be returned. Can be fake.
+ * @return {VolumeInfo} The VolumeInfo instance or null if not found.
  */
-VolumeManager.prototype.resolvePath = function(
-    path, successCallback, errorCallback) {
-  // Make sure the path is in the mounted volume.
-  var mountPath = PathUtil.isDriveBasedPath(path) ?
-      RootDirectory.DRIVE : PathUtil.getRootPath(path);
-  var volumeInfo = this.getVolumeInfo(mountPath);
-  if (!volumeInfo || !volumeInfo.root) {
-    errorCallback(util.createFileError(FileError.NOT_FOUND_ERR));
-    return;
-  }
-
-  webkitResolveLocalFileSystemURL(
-      util.makeFilesystemUrl(path), successCallback, errorCallback);
+VolumeManager.prototype.getVolumeInfo = function(entry) {
+  return this.volumeInfoList.findByEntry(entry);
 };
 
 /**
- * @param {string} mountPath Volume mounted path.
- * @return {VolumeInfo} The data about the volume.
+ * Obtains a volume infomration of the current profile.
+ *
+ * @param {util.VolumeType} volumeType Volume type.
+ * @return {VolumeInfo} Volume info.
  */
-VolumeManager.prototype.getVolumeInfo = function(mountPath) {
-  volumeManagerUtil.validateMountPath(mountPath);
-  return this.volumeInfoList.find(mountPath);
+VolumeManager.prototype.getCurrentProfileVolumeInfo = function(volumeType) {
+  for (var i = 0; i < this.volumeInfoList.length; i++) {
+    var volumeInfo = this.volumeInfoList.item(i);
+    if (volumeInfo.profile.isCurrentProfile &&
+        volumeInfo.volumeType === volumeType)
+      return volumeInfo;
+  }
+  return null;
+};
+
+/**
+ * Obtains location information from an entry.
+ *
+ * @param {Entry|Object} entry File or directory entry. It can be a fake entry.
+ * @return {EntryLocation} Location information.
+ */
+VolumeManager.prototype.getLocationInfo = function(entry) {
+  var volumeInfo = this.volumeInfoList.findByEntry(entry);
+  if (!volumeInfo)
+    return null;
+
+  if (util.isFakeEntry(entry)) {
+    return new EntryLocation(
+        volumeInfo,
+        entry.rootType,
+        true /* the entry points a root directory. */,
+        true /* fake entries are read only. */);
+  }
+
+  var rootType;
+  var isReadOnly;
+  var isRootEntry;
+  if (volumeInfo.volumeType === util.VolumeType.DRIVE) {
+    // For Drive, the roots are /root and /other, instead of /. Root URLs
+    // contain trailing slashes.
+    if (entry.fullPath == '/root' || entry.fullPath.indexOf('/root/') === 0) {
+      rootType = RootType.DRIVE;
+      isReadOnly = volumeInfo.isReadOnly;
+      isRootEntry = entry.fullPath === '/root';
+    } else if (entry.fullPath == '/other' ||
+               entry.fullPath.indexOf('/other/') === 0) {
+      rootType = RootType.DRIVE_OTHER;
+      isReadOnly = true;
+      isRootEntry = entry.fullPath === '/other';
+    } else {
+      // Accessing Drive files outside of /drive/root and /drive/other is not
+      // allowed, but can happen. Therefore returning null.
+      return null;
+    }
+  } else {
+    switch (volumeInfo.volumeType) {
+      case util.VolumeType.DOWNLOADS:
+        rootType = RootType.DOWNLOADS;
+        break;
+      case util.VolumeType.REMOVABLE:
+        rootType = RootType.REMOVABLE;
+        break;
+      case util.VolumeType.ARCHIVE:
+        rootType = RootType.ARCHIVE;
+        break;
+      case util.VolumeType.CLOUD_DEVICE:
+        rootType = RootType.CLOUD_DEVICE;
+        break;
+      default:
+        // Programming error, throw an exception.
+        throw new Error('Invalid volume type: ' + volumeInfo.volumeType);
+    }
+    isReadOnly = volumeInfo.isReadOnly;
+    isRootEntry = util.isSameEntry(entry, volumeInfo.fileSystem.root);
+  }
+
+  return new EntryLocation(volumeInfo, rootType, isRootEntry, isReadOnly);
 };
 
 /**
  * @param {string} key Key produced by |makeRequestKey_|.
- * @param {function(string)} successCallback To be called when request finishes
- *     successfully.
+ * @param {function(VolumeInfo)} successCallback To be called when request
+ *     finishes successfully.
  * @param {function(util.VolumeError)} errorCallback To be called when
  *     request fails.
  * @private
@@ -600,37 +773,106 @@ VolumeManager.prototype.onTimeout_ = function(key) {
 /**
  * @param {string} key Key produced by |makeRequestKey_|.
  * @param {util.VolumeError|'success'} status Status received from the API.
- * @param {string=} opt_mountPath Mount path.
+ * @param {VolumeInfo=} opt_volumeInfo Volume info of the mounted volume.
  * @private
  */
-VolumeManager.prototype.finishRequest_ = function(key, status, opt_mountPath) {
+VolumeManager.prototype.finishRequest_ = function(key, status, opt_volumeInfo) {
   var request = this.requests_[key];
   if (!request)
     return;
 
   clearTimeout(request.timeout);
-  this.invokeRequestCallbacks_(request, status, opt_mountPath);
+  this.invokeRequestCallbacks_(request, status, opt_volumeInfo);
   delete this.requests_[key];
 };
 
 /**
  * @param {Object} request Structure created in |startRequest_|.
- * @param {util.VolumeError|string} status If status == 'success'
+ * @param {util.VolumeError|string} status If status === 'success'
  *     success callbacks are called.
- * @param {string=} opt_mountPath Mount path. Required if success.
+ * @param {VolumeInfo=} opt_volumeInfo Volume info of the mounted volume.
  * @private
  */
-VolumeManager.prototype.invokeRequestCallbacks_ = function(request, status,
-                                                           opt_mountPath) {
+VolumeManager.prototype.invokeRequestCallbacks_ = function(
+    request, status, opt_volumeInfo) {
   var callEach = function(callbacks, self, args) {
     for (var i = 0; i < callbacks.length; i++) {
       callbacks[i].apply(self, args);
     }
   };
-  if (status == 'success') {
-    callEach(request.successCallbacks, this, [opt_mountPath]);
+  if (status === 'success') {
+    callEach(request.successCallbacks, this, [opt_volumeInfo]);
   } else {
     volumeManagerUtil.validateError(status);
     callEach(request.errorCallbacks, this, [status]);
   }
 };
+
+/**
+ * Location information which shows where the path points in FileManager's
+ * file system.
+ *
+ * @param {!VolumeInfo} volumeInfo Volume information.
+ * @param {RootType} rootType Root type.
+ * @param {boolean} isRootEntry Whether the entry is root entry or not.
+ * @param {boolean} isReadOnly Whether the entry is read only or not.
+ * @constructor
+ */
+function EntryLocation(volumeInfo, rootType, isRootEntry, isReadOnly) {
+  /**
+   * Volume information.
+   * @type {!VolumeInfo}
+   */
+  this.volumeInfo = volumeInfo;
+
+  /**
+   * Root type.
+   * @type {RootType}
+   */
+  this.rootType = rootType;
+
+  /**
+   * Whether the entry is root entry or not.
+   * @type {boolean}
+   */
+  this.isRootEntry = isRootEntry;
+
+  /**
+   * Whether the location obtained from the fake entry correspond to special
+   * searches.
+   * @type {boolean}
+   */
+  this.isSpecialSearchRoot =
+      this.rootType === RootType.DRIVE_OFFLINE ||
+      this.rootType === RootType.DRIVE_SHARED_WITH_ME ||
+      this.rootType === RootType.DRIVE_RECENT;
+
+  /**
+   * Whether the location is under Google Drive or a special search root which
+   * represents a special search from Google Drive.
+   * @type {boolean}
+   */
+  this.isDriveBased =
+      this.rootType === RootType.DRIVE ||
+      this.rootType === RootType.DRIVE_OTHER ||
+      this.rootType === RootType.DRIVE_SHARED_WITH_ME ||
+      this.rootType === RootType.DRIVE_RECENT ||
+      this.rootType === RootType.DRIVE_OFFLINE;
+
+  /**
+   * Whether the given path can be a target path of folder shortcut.
+   * @type {boolean}
+   */
+  this.isEligibleForFolderShortcut =
+      !this.isSpecialSearchRoot &&
+      !this.isRootEntry &&
+      this.isDriveBased;
+
+  /**
+   * Whether the entry is read only or not.
+   * @type {boolean}
+   */
+  this.isReadOnly = isReadOnly;
+
+  Object.freeze(this);
+}

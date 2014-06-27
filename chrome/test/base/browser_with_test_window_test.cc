@@ -19,10 +19,15 @@
 
 #if defined(USE_AURA)
 #include "ui/aura/test/aura_test_helper.h"
+#include "ui/compositor/test/context_factories_for_test.h"
 #endif
 
 #if defined(USE_ASH)
 #include "ash/test/ash_test_helper.h"
+#endif
+
+#if defined(TOOLKIT_VIEWS)
+#include "ui/views/test/test_views_delegate.h"
 #endif
 
 using content::NavigationController;
@@ -31,16 +36,21 @@ using content::RenderViewHostTester;
 using content::WebContents;
 
 BrowserWithTestWindowTest::BrowserWithTestWindowTest()
-    : host_desktop_type_(chrome::HOST_DESKTOP_TYPE_NATIVE) {
+    : browser_type_(Browser::TYPE_TABBED),
+      host_desktop_type_(chrome::HOST_DESKTOP_TYPE_NATIVE),
+      hosted_app_(false) {
+}
+
+BrowserWithTestWindowTest::BrowserWithTestWindowTest(
+    Browser::Type browser_type,
+    chrome::HostDesktopType host_desktop_type,
+    bool hosted_app)
+    : browser_type_(browser_type),
+      host_desktop_type_(host_desktop_type),
+      hosted_app_(hosted_app) {
 }
 
 BrowserWithTestWindowTest::~BrowserWithTestWindowTest() {
-}
-
-void BrowserWithTestWindowTest::SetHostDesktopType(
-    chrome::HostDesktopType host_desktop_type) {
-  DCHECK(!window_);
-  host_desktop_type_ = host_desktop_type;
 }
 
 void BrowserWithTestWindowTest::SetUp() {
@@ -53,10 +63,18 @@ void BrowserWithTestWindowTest::SetUp() {
       base::MessageLoopForUI::current()));
   ash_test_helper_->SetUp(true);
 #elif defined(USE_AURA)
+  // The ContextFactory must exist before any Compositors are created.
+  bool enable_pixel_output = false;
+  ui::InitializeContextFactoryForTests(enable_pixel_output);
+
   aura_test_helper_.reset(new aura::test::AuraTestHelper(
       base::MessageLoopForUI::current()));
   aura_test_helper_->SetUp();
 #endif  // USE_AURA
+#if defined(TOOLKIT_VIEWS)
+  views_delegate_.reset(CreateViewsDelegate());
+  views::ViewsDelegate::views_delegate = views_delegate_.get();
+#endif
 
   // Subclasses can provide their own Profile.
   profile_ = CreateProfile();
@@ -65,9 +83,8 @@ void BrowserWithTestWindowTest::SetUp() {
   // is responsible for cleaning it up (usually by NativeWidget destruction).
   window_.reset(CreateBrowserWindow());
 
-  Browser::CreateParams params(profile(), host_desktop_type_);
-  params.window = window_.get();
-  browser_.reset(new Browser(params));
+  browser_.reset(CreateBrowser(profile(), browser_type_, hosted_app_,
+                               host_desktop_type_, window_.get()));
 }
 
 void BrowserWithTestWindowTest::TearDown() {
@@ -83,6 +100,7 @@ void BrowserWithTestWindowTest::TearDown() {
   ash_test_helper_->TearDown();
 #elif defined(USE_AURA)
   aura_test_helper_->TearDown();
+  ui::TerminateContextFactoryForTests();
 #endif
   testing::Test::TearDown();
 
@@ -91,6 +109,11 @@ void BrowserWithTestWindowTest::TearDown() {
   base::MessageLoop::current()->PostTask(FROM_HERE,
                                          base::MessageLoop::QuitClosure());
   base::MessageLoop::current()->Run();
+
+#if defined(TOOLKIT_VIEWS)
+  views::ViewsDelegate::views_delegate = NULL;
+  views_delegate_.reset(NULL);
+#endif
 }
 
 void BrowserWithTestWindowTest::AddTab(Browser* browser, const GURL& url) {
@@ -112,10 +135,10 @@ void BrowserWithTestWindowTest::CommitPendingLoad(
   RenderViewHost* pending_rvh = RenderViewHostTester::GetPendingForController(
       controller);
   if (pending_rvh) {
-    // Simulate the ShouldClose_ACK that is received from the current renderer
+    // Simulate the BeforeUnload_ACK that is received from the current renderer
     // for a cross-site navigation.
     DCHECK_NE(old_rvh, pending_rvh);
-    RenderViewHostTester::For(old_rvh)->SendShouldCloseACK(true);
+    RenderViewHostTester::For(old_rvh)->SendBeforeUnloadACK(true);
   }
   // Commit on the pending_rvh, if one exists.
   RenderViewHost* test_rvh = pending_rvh ? pending_rvh : old_rvh;
@@ -160,7 +183,7 @@ void BrowserWithTestWindowTest::NavigateAndCommitActiveTab(const GURL& url) {
 void BrowserWithTestWindowTest::NavigateAndCommitActiveTabWithTitle(
     Browser* navigating_browser,
     const GURL& url,
-    const string16& title) {
+    const base::string16& title) {
   NavigationController* controller = &navigating_browser->tab_strip_model()->
       GetActiveWebContents()->GetController();
   NavigateAndCommit(controller, url);
@@ -195,3 +218,23 @@ void BrowserWithTestWindowTest::DestroyProfile(TestingProfile* profile) {
 BrowserWindow* BrowserWithTestWindowTest::CreateBrowserWindow() {
   return new TestBrowserWindow();
 }
+
+Browser* BrowserWithTestWindowTest::CreateBrowser(
+    Profile* profile,
+    Browser::Type browser_type,
+    bool hosted_app,
+    chrome::HostDesktopType host_desktop_type,
+    BrowserWindow* browser_window) {
+  Browser::CreateParams params(profile, host_desktop_type);
+  params.type = browser_type;
+  params.window = browser_window;
+  if (hosted_app)
+    params.app_name = "Test";
+  return new Browser(params);
+}
+
+#if defined(TOOLKIT_VIEWS)
+views::ViewsDelegate* BrowserWithTestWindowTest::CreateViewsDelegate() {
+  return new views::TestViewsDelegate;
+}
+#endif

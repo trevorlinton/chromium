@@ -67,7 +67,6 @@ void GetDefault(std::vector<std::string>* app_ids) {
     "dlppkpafhbajpcmmoheippocdidnckmm",  // Google+
     "kbpgddbgniojgndnhlkjbkpknjhppkbk",  // Google+ Hangouts
     "hhaomjibdihmijegdhdafkllkbggdgoj",  // Files
-    "hkhhlkdconhgemhegnplaldnmnmkaemd",  // Tips & Tricks
     extension_misc::kGooglePlayMusicAppId,
     "mmimngoggfoobjdlefbcabngfnmieonb",  // Play Books
     "fppdphmgcddhjeddoeghpjefkdlccljb",  // Play Movies

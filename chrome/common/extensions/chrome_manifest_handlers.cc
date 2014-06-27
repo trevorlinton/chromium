@@ -4,10 +4,10 @@
 
 #include "chrome/common/extensions/chrome_manifest_handlers.h"
 
+#include "chrome/common/extensions/api/bluetooth/bluetooth_manifest_handler.h"
 #include "chrome/common/extensions/api/commands/commands_handler.h"
 #include "chrome/common/extensions/api/extension_action/browser_action_handler.h"
 #include "chrome/common/extensions/api/extension_action/page_action_handler.h"
-#include "chrome/common/extensions/api/extension_action/script_badge_handler.h"
 #include "chrome/common/extensions/api/file_browser_handlers/file_browser_handler.h"
 #include "chrome/common/extensions/api/file_handlers/file_handlers_parser.h"
 #include "chrome/common/extensions/api/i18n/default_locale_handler.h"
@@ -20,48 +20,36 @@
 #include "chrome/common/extensions/api/media_galleries_private/media_galleries_handler.h"
 #include "chrome/common/extensions/api/omnibox/omnibox_handler.h"
 #include "chrome/common/extensions/api/plugins/plugins_handler.h"
-#include "chrome/common/extensions/api/sockets/sockets_handler.h"
+#include "chrome/common/extensions/api/sockets/sockets_manifest_handler.h"
 #include "chrome/common/extensions/api/speech/tts_engine_manifest_handler.h"
 #include "chrome/common/extensions/api/spellcheck/spellcheck_handler.h"
 #include "chrome/common/extensions/api/system_indicator/system_indicator_handler.h"
 #include "chrome/common/extensions/api/url_handlers/url_handlers_parser.h"
-#include "chrome/common/extensions/background_info.h"
-#include "chrome/common/extensions/csp_handler.h"
-#include "chrome/common/extensions/incognito_handler.h"
 #include "chrome/common/extensions/manifest_handlers/app_isolation_info.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
 #include "chrome/common/extensions/manifest_handlers/content_scripts_handler.h"
 #include "chrome/common/extensions/manifest_handlers/externally_connectable.h"
 #include "chrome/common/extensions/manifest_handlers/icons_handler.h"
-#include "chrome/common/extensions/manifest_handlers/kiosk_mode_info.h"
 #include "chrome/common/extensions/manifest_handlers/minimum_chrome_version_checker.h"
 #include "chrome/common/extensions/manifest_handlers/nacl_modules_handler.h"
-#include "chrome/common/extensions/manifest_handlers/offline_enabled_info.h"
-#include "chrome/common/extensions/manifest_handlers/requirements_handler.h"
-#include "chrome/common/extensions/manifest_handlers/sandboxed_page_info.h"
 #include "chrome/common/extensions/manifest_handlers/settings_overrides_handler.h"
-#include "chrome/common/extensions/manifest_handlers/shared_module_info.h"
 #include "chrome/common/extensions/manifest_handlers/theme_handler.h"
+#include "chrome/common/extensions/manifest_handlers/ui_overrides_handler.h"
 #include "chrome/common/extensions/manifest_url_handler.h"
 #include "chrome/common/extensions/mime_types_handler.h"
-#include "chrome/common/extensions/web_accessible_resources_handler.h"
-#include "chrome/common/extensions/webview_handler.h"
+#include "extensions/common/manifest_handlers/requirements_info.h"
 
 namespace extensions {
 
 void RegisterChromeManifestHandlers() {
-  // This can happen in unit tests, where the utility thread runs in-process.
-  if (ManifestHandler::IsRegistrationFinalized())
-    return;
+  DCHECK(!ManifestHandler::IsRegistrationFinalized());
 #if defined(ENABLE_EXTENSIONS)
   (new AppIsolationHandler)->Register();
   (new AppLaunchManifestHandler)->Register();
-  (new BackgroundManifestHandler)->Register();
+  (new BluetoothManifestHandler)->Register();
   (new BrowserActionHandler)->Register();
   (new CommandsHandler)->Register();
   (new ContentScriptsHandler)->Register();
-  (new CSPHandler(false))->Register();
-  (new CSPHandler(true))->Register();
   (new DefaultLocaleHandler)->Register();
   (new DevToolsPageHandler)->Register();
   (new ExternallyConnectableHandler)->Register();
@@ -69,39 +57,31 @@ void RegisterChromeManifestHandlers() {
   (new FileHandlersParser)->Register();
   (new HomepageURLHandler)->Register();
   (new IconsHandler)->Register();
-  (new IncognitoHandler)->Register();
 #if defined(OS_CHROMEOS)
   (new InputComponentsHandler)->Register();
 #endif
-  (new KioskModeHandler)->Register();
   (new ManagedModeHandler)->Register();
   (new MediaGalleriesHandlerParser)->Register();
   (new MimeTypesHandlerParser)->Register();
   (new MinimumChromeVersionChecker)->Register();
   (new NaClModulesHandler)->Register();
   (new OAuth2ManifestHandler)->Register();
-  (new OfflineEnabledHandler)->Register();
   (new OmniboxHandler)->Register();
   (new OptionsPageHandler)->Register();
   (new PageActionHandler)->Register();
   (new PluginsHandler)->Register();
-  (new RequirementsHandler)->Register();
-  (new SandboxedPageHandler)->Register();
+  (new RequirementsHandler)->Register();  // Depends on plugins.
   (new SettingsOverridesHandler)->Register();
-  (new ScriptBadgeHandler)->Register();
-  (new SharedModuleHandler)->Register();
-  (new SocketsHandler)->Register();
+  (new SocketsManifestHandler)->Register();
   (new SpellcheckHandler)->Register();
   (new StorageSchemaManifestHandler)->Register();
   (new SystemIndicatorHandler)->Register();
   (new ThemeHandler)->Register();
   (new TtsEngineManifestHandler)->Register();
+  (new UIOverridesHandler)->Register();
   (new UpdateURLHandler)->Register();
   (new UrlHandlersParser)->Register();
   (new URLOverridesHandler)->Register();
-  (new WebAccessibleResourcesHandler)->Register();
-  (new WebviewHandler)->Register();
-  ManifestHandler::FinalizeRegistration();
 #endif
 }
 

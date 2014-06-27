@@ -5,7 +5,7 @@
 #include "content/browser/gpu/browser_gpu_channel_host_factory.h"
 #include "content/common/gpu/client/context_provider_command_buffer.h"
 #include "content/common/gpu/client/webgraphicscontext3d_command_buffer_impl.h"
-#include "content/test/content_browser_test.h"
+#include "content/public/test/content_browser_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace content {
@@ -14,6 +14,9 @@ namespace {
 class ContextProviderCommandBufferBrowserTest : public ContentBrowserTest {
  public:
   virtual void SetUpOnMainThread() OVERRIDE {
+    if (!BrowserGpuChannelHostFactory::CanUseForTesting())
+      return;
+
     if (!GetFactory())
       BrowserGpuChannelHostFactory::Initialize(true);
 
@@ -27,19 +30,26 @@ class ContextProviderCommandBufferBrowserTest : public ContentBrowserTest {
   }
 
   scoped_ptr<WebGraphicsContext3DCommandBufferImpl> CreateContext3d() {
+    bool lose_context_when_out_of_memory = false;
     scoped_refptr<GpuChannelHost> gpu_channel_host(
         GetFactory()->EstablishGpuChannelSync(
             CAUSE_FOR_GPU_LAUNCH_WEBGRAPHICSCONTEXT3DCOMMANDBUFFERIMPL_INITIALIZE));
     scoped_ptr<WebGraphicsContext3DCommandBufferImpl> context(
         WebGraphicsContext3DCommandBufferImpl::CreateOffscreenContext(
             gpu_channel_host.get(),
-            WebKit::WebGraphicsContext3D::Attributes(),
-            GURL("chrome://gpu/ContextProviderCommandBufferTest")));
+            blink::WebGraphicsContext3D::Attributes(),
+            lose_context_when_out_of_memory,
+            GURL("chrome://gpu/ContextProviderCommandBufferTest"),
+            WebGraphicsContext3DCommandBufferImpl::SharedMemoryLimits(),
+            NULL));
     return context.Pass();
   }
 };
 
 IN_PROC_BROWSER_TEST_F(ContextProviderCommandBufferBrowserTest, LeakOnDestroy) {
+  if (!BrowserGpuChannelHostFactory::CanUseForTesting())
+    return;
+
   scoped_refptr<ContextProviderCommandBuffer> provider =
       ContextProviderCommandBuffer::Create(CreateContext3d(), "TestContext");
   provider->set_leak_on_destroy();

@@ -16,6 +16,10 @@
 #include "base/win/metro.h"
 #endif  // OS_WIN
 
+#if defined(OS_ANDROID)
+#include "chrome/browser/android/chromium_application.h"
+#endif  // OS_ANDROID
+
 // static
 bool IncognitoModePrefs::IntToAvailability(int in_value,
                                            Availability* out_value) {
@@ -35,15 +39,11 @@ IncognitoModePrefs::Availability IncognitoModePrefs::GetAvailability(
   Availability result = IncognitoModePrefs::ENABLED;
   bool valid = IntToAvailability(pref_value, &result);
   DCHECK(valid);
-#if defined(OS_WIN)
-  // Disable incognito mode windows if parental controls are on. This is only
-  // for Windows Vista and above.
-  if (base::win::IsParentalControlActivityLoggingOn()) {
+  if (ArePlatformParentalControlsEnabled()) {
     if (result == IncognitoModePrefs::FORCED)
       LOG(ERROR) << "Ignoring FORCED incognito. Parental control logging on";
     return IncognitoModePrefs::DISABLED;
   }
-#endif  // OS_WIN
   return result;
 }
 
@@ -77,13 +77,28 @@ bool IncognitoModePrefs::CanOpenBrowser(Profile* profile) {
   switch (GetAvailability(profile->GetPrefs())) {
     case IncognitoModePrefs::ENABLED:
       return true;
+
     case IncognitoModePrefs::DISABLED:
       return !profile->IsOffTheRecord();
+
     case IncognitoModePrefs::FORCED:
       return profile->IsOffTheRecord();
-    case IncognitoModePrefs::AVAILABILITY_NUM_TYPES:
+
+    default:
       NOTREACHED();
+      return false;
   }
-  NOTREACHED();
+}
+
+// static
+bool IncognitoModePrefs::ArePlatformParentalControlsEnabled() {
+#if defined(OS_WIN)
+  // Disable incognito mode windows if parental controls are on. This is only
+  // for Windows Vista and above.
+  return base::win::IsParentalControlActivityLoggingOn();
+#elif defined(OS_ANDROID)
+  return chrome::android::ChromiumApplication::AreParentalControlsEnabled();
+#else
   return false;
+#endif
 }

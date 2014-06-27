@@ -12,22 +12,22 @@
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/common/child_process_host_impl.h"
-#include "content/public/browser/notification_service.h"
-#include "content/public/browser/notification_types.h"
+#include "content/public/browser/global_request_id.h"
 #include "content/public/browser/render_widget_host_iterator.h"
 #include "content/public/browser/storage_partition.h"
 
 namespace content {
 
-MockRenderProcessHost::MockRenderProcessHost(
-    BrowserContext* browser_context)
-        : transport_dib_(NULL),
-          bad_msg_count_(0),
-          factory_(NULL),
-          id_(ChildProcessHostImpl::GenerateChildProcessUniqueId()),
-          browser_context_(browser_context),
-          prev_routing_id_(0),
-          fast_shutdown_started_(false) {
+MockRenderProcessHost::MockRenderProcessHost(BrowserContext* browser_context)
+    : transport_dib_(NULL),
+      bad_msg_count_(0),
+      factory_(NULL),
+      id_(ChildProcessHostImpl::GenerateChildProcessUniqueId()),
+      browser_context_(browser_context),
+      prev_routing_id_(0),
+      fast_shutdown_started_(false),
+      deletion_callback_called_(false),
+      is_guest_(false) {
   // Child process security operations can't be unit tested unless we add
   // ourselves as an existing child process.
   ChildProcessSecurityPolicyImpl::GetInstance()->Add(GetID());
@@ -40,8 +40,14 @@ MockRenderProcessHost::~MockRenderProcessHost() {
   delete transport_dib_;
   if (factory_)
     factory_->Remove(this);
-  // In unit tests, Release() might not have been called.
-  RenderProcessHostImpl::UnregisterHost(GetID());
+
+  // In unit tests, Cleanup() might not have been called.
+  if (!deletion_callback_called_) {
+    FOR_EACH_OBSERVER(RenderProcessHostObserver,
+                      observers_,
+                      RenderProcessHostDestroyed(this));
+    RenderProcessHostImpl::UnregisterHost(GetID());
+  }
 }
 
 void MockRenderProcessHost::EnableSendQueue() {
@@ -67,6 +73,15 @@ void MockRenderProcessHost::RemoveRoute(int32 routing_id) {
   Cleanup();
 }
 
+void MockRenderProcessHost::AddObserver(RenderProcessHostObserver* observer) {
+  observers_.AddObserver(observer);
+}
+
+void MockRenderProcessHost::RemoveObserver(
+    RenderProcessHostObserver* observer) {
+  observers_.RemoveObserver(observer);
+}
+
 bool MockRenderProcessHost::WaitForBackingStoreMsg(
     int render_widget_id,
     const base::TimeDelta& max_delay,
@@ -89,14 +104,14 @@ int MockRenderProcessHost::VisibleWidgetCount() const {
 }
 
 bool MockRenderProcessHost::IsGuest() const {
-  return false;
+  return is_guest_;
 }
 
 StoragePartition* MockRenderProcessHost::GetStoragePartition() const {
   return NULL;
 }
 
-void MockRenderProcessHost::AddWord(const string16& word) {
+void MockRenderProcessHost::AddWord(const base::string16& word) {
 }
 
 bool MockRenderProcessHost::FastShutdownIfPossible() {
@@ -128,9 +143,13 @@ bool MockRenderProcessHost::Send(IPC::Message* msg) {
 
 TransportDIB* MockRenderProcessHost::MapTransportDIB(TransportDIB::Id dib_id) {
 #if defined(OS_WIN)
-  HANDLE duped;
-  DuplicateHandle(GetCurrentProcess(), dib_id.handle, GetCurrentProcess(),
-                  &duped, 0, TRUE, DUPLICATE_SAME_ACCESS);
+  // NULL should be used here instead of INVALID_HANDLE_VALUE (or pseudo-handle)
+  // except for when dealing with the small number of Win16-derived APIs
+  // that require INVALID_HANDLE_VALUE (e.g. CreateFile and friends).
+  HANDLE duped = NULL;
+  if (!DuplicateHandle(GetCurrentProcess(), dib_id.handle, GetCurrentProcess(),
+                       &duped, 0, TRUE, DUPLICATE_SAME_ACCESS))
+    duped = NULL;
   return TransportDIB::Map(duped);
 #elif defined(TOOLKIT_GTK)
   return TransportDIB::Map(dib_id.shmkey);
@@ -169,12 +188,12 @@ bool MockRenderProcessHost::IgnoreInputEvents() const {
 
 void MockRenderProcessHost::Cleanup() {
   if (listeners_.IsEmpty()) {
-    NotificationService::current()->Notify(
-        NOTIFICATION_RENDERER_PROCESS_TERMINATED,
-        Source<RenderProcessHost>(this),
-        NotificationService::NoDetails());
+    FOR_EACH_OBSERVER(RenderProcessHostObserver,
+                      observers_,
+                      RenderProcessHostDestroyed(this));
     base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
     RenderProcessHostImpl::UnregisterHost(GetID());
+    deletion_callback_called_ = true;
   }
 }
 
@@ -230,12 +249,30 @@ base::TimeDelta MockRenderProcessHost::GetChildProcessIdleTime() const {
   return base::TimeDelta::FromMilliseconds(0);
 }
 
-void MockRenderProcessHost::SurfaceUpdated(int32 surface_id) {
-}
-
 void MockRenderProcessHost::ResumeRequestsForView(int route_id) {
 }
 
+void MockRenderProcessHost::NotifyTimezoneChange() {
+}
+
+void MockRenderProcessHost::FilterURL(bool empty_allowed, GURL* url) {
+  RenderProcessHostImpl::FilterURL(this, empty_allowed, url);
+}
+
+#if defined(ENABLE_WEBRTC)
+void MockRenderProcessHost::EnableAecDump(const base::FilePath& file) {
+}
+
+void MockRenderProcessHost::DisableAecDump() {
+}
+
+void MockRenderProcessHost::SetWebRtcLogMessageCallback(
+    base::Callback<void(const std::string&)> callback) {
+}
+#endif
+
+void MockRenderProcessHost::ResumeDeferredNavigation(
+    const GlobalRequestID& request_id) {}
 
 bool MockRenderProcessHost::OnMessageReceived(const IPC::Message& msg) {
   IPC::Listener* listener = listeners_.Lookup(msg.routing_id());

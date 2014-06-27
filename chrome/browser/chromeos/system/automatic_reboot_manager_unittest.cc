@@ -212,9 +212,8 @@ void SaveUptimeToFile(const base::FilePath& path,
 
   const std::string uptime_seconds = base::DoubleToString(uptime.InSecondsF());
   ASSERT_EQ(static_cast<int>(uptime_seconds.size()),
-            file_util::WriteFile(path,
-                                 uptime_seconds.c_str(),
-                                 uptime_seconds.size()));
+            base::WriteFile(path, uptime_seconds.c_str(),
+                            uptime_seconds.size()));
 }
 
 MockTimeSingleThreadTaskRunner::MockTimeSingleThreadTaskRunner() {
@@ -347,21 +346,25 @@ void AutomaticRebootManagerBasicTest::SetUp() {
   const base::FilePath& temp_dir = temp_dir_.path();
   const base::FilePath uptime_file = temp_dir.Append("uptime");
   task_runner_->SetUptimeFile(uptime_file);
-  ASSERT_FALSE(file_util::WriteFile(uptime_file, NULL, 0));
+  ASSERT_FALSE(base::WriteFile(uptime_file, NULL, 0));
   update_reboot_needed_uptime_file_ =
       temp_dir.Append("update_reboot_needed_uptime");
-  ASSERT_FALSE(file_util::WriteFile(
-      update_reboot_needed_uptime_file_, NULL, 0));
+  ASSERT_FALSE(base::WriteFile(update_reboot_needed_uptime_file_, NULL, 0));
   ASSERT_TRUE(PathService::Override(chromeos::FILE_UPTIME, uptime_file));
   ASSERT_TRUE(PathService::Override(chromeos::FILE_UPDATE_REBOOT_NEEDED_UPTIME,
                                     update_reboot_needed_uptime_file_));
 
   TestingBrowserProcess::GetGlobal()->SetLocalState(&local_state_);
   AutomaticRebootManager::RegisterPrefs(local_state_.registry());
+
   FakeDBusThreadManager* dbus_manager = new FakeDBusThreadManager;
+  power_manager_client_ = new FakePowerManagerClient;
+  dbus_manager->SetPowerManagerClient(
+      scoped_ptr<PowerManagerClient>(power_manager_client_));
+  update_engine_client_ = new FakeUpdateEngineClient;
+  dbus_manager->SetUpdateEngineClient(
+      scoped_ptr<UpdateEngineClient>(update_engine_client_));
   DBusThreadManager::InitializeForTesting(dbus_manager);
-  power_manager_client_ = dbus_manager->fake_power_manager_client();
-  update_engine_client_ = dbus_manager->fake_update_engine_client();
 
   EXPECT_CALL(*mock_user_manager_, IsUserLoggedIn())
      .WillRepeatedly(ReturnPointee(&is_user_logged_in_));
@@ -395,7 +398,7 @@ void AutomaticRebootManagerBasicTest::SetRebootAfterUpdate(
       base::Value::CreateBooleanValue(reboot_after_update));
   task_runner_->RunUntilIdle();
   EXPECT_EQ(expect_reboot ? 1 : 0,
-            power_manager_client_->request_restart_call_count());
+            power_manager_client_->num_request_restart_calls());
 }
 
 void AutomaticRebootManagerBasicTest::SetUptimeLimit(
@@ -411,7 +414,7 @@ void AutomaticRebootManagerBasicTest::SetUptimeLimit(
   }
   task_runner_->RunUntilIdle();
   EXPECT_EQ(expect_reboot ? 1 : 0,
-            power_manager_client_->request_restart_call_count());
+            power_manager_client_->num_request_restart_calls());
 }
 
 void AutomaticRebootManagerBasicTest::NotifyUpdateRebootNeeded() {
@@ -419,14 +422,14 @@ void AutomaticRebootManagerBasicTest::NotifyUpdateRebootNeeded() {
   automatic_reboot_manager_->UpdateStatusChanged(
       update_engine_client_->GetLastStatus());
   task_runner_->RunUntilIdle();
-  EXPECT_EQ(0, power_manager_client_->request_restart_call_count());
+  EXPECT_EQ(0, power_manager_client_->num_request_restart_calls());
 }
 
 void AutomaticRebootManagerBasicTest::NotifyResumed(bool expect_reboot) {
   automatic_reboot_manager_->SystemResumed(base::TimeDelta::FromHours(1));
   task_runner_->RunUntilIdle();
   EXPECT_EQ(expect_reboot ? 1 : 0,
-            power_manager_client_->request_restart_call_count());
+            power_manager_client_->num_request_restart_calls());
 }
 
 void AutomaticRebootManagerBasicTest::NotifyTerminating(bool expect_reboot) {
@@ -436,7 +439,7 @@ void AutomaticRebootManagerBasicTest::NotifyTerminating(bool expect_reboot) {
       content::NotificationService::NoDetails());
   task_runner_->RunUntilIdle();
   EXPECT_EQ(expect_reboot ? 1 : 0,
-            power_manager_client_->request_restart_call_count());
+            power_manager_client_->num_request_restart_calls());
 }
 
 void AutomaticRebootManagerBasicTest::FastForwardBy(
@@ -444,14 +447,14 @@ void AutomaticRebootManagerBasicTest::FastForwardBy(
     bool expect_reboot) {
   task_runner_->FastForwardBy(delta);
   EXPECT_EQ(expect_reboot ? 1 : 0,
-            power_manager_client_->request_restart_call_count());
+            power_manager_client_->num_request_restart_calls());
 }
 
 void AutomaticRebootManagerBasicTest::FastForwardUntilNoTasksRemain(
     bool expect_reboot) {
   task_runner_->FastForwardUntilNoTasksRemain();
   EXPECT_EQ(expect_reboot ? 1 : 0,
-            power_manager_client_->request_restart_call_count());
+            power_manager_client_->num_request_restart_calls());
 }
 
 void AutomaticRebootManagerBasicTest::CreateAutomaticRebootManager(
@@ -460,7 +463,7 @@ void AutomaticRebootManagerBasicTest::CreateAutomaticRebootManager(
       scoped_ptr<base::TickClock>(new MockTimeTickClock(task_runner_))));
   task_runner_->RunUntilIdle();
   EXPECT_EQ(expect_reboot ? 1 : 0,
-            power_manager_client_->request_restart_call_count());
+            power_manager_client_->num_request_restart_calls());
 
   uptime_processing_delay_ =
       base::TimeTicks() - automatic_reboot_manager_->boot_time_ -

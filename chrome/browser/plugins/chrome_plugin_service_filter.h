@@ -23,6 +23,10 @@
 class PluginPrefs;
 class Profile;
 
+namespace content {
+class WebContents;
+}
+
 // This class must be created (by calling the |GetInstance| method) on the UI
 // thread, but is safe to use on any thread after that.
 class ChromePluginServiceFilter : public content::PluginServiceFilter,
@@ -37,10 +41,10 @@ class ChromePluginServiceFilter : public content::PluginServiceFilter,
 
   // Overrides the plugin lookup mechanism for a given tab and object URL to use
   // a specifc plugin.
-  void OverridePluginForTab(int render_process_id,
-                            int render_view_id,
-                            const GURL& url,
-                            const content::WebPluginInfo& plugin);
+  void OverridePluginForFrame(int render_process_id,
+                              int render_frame_id,
+                              const GURL& url,
+                              const content::WebPluginInfo& plugin);
 
   // Restricts the given plugin to the given profile and origin of the given
   // URL.
@@ -55,8 +59,13 @@ class ChromePluginServiceFilter : public content::PluginServiceFilter,
   void AuthorizePlugin(int render_process_id,
                        const base::FilePath& plugin_path);
 
-  // Authorizes all plug-ins for a given process.
-  void AuthorizeAllPlugins(int render_process_id);
+  // Authorizes all plug-ins for a given WebContents. If |load_blocked| is true,
+  // then the renderer is told to load the plugin with given |identifier| (or
+  // pllugins if |identifier| is empty).
+  // This method can only be called on the UI thread.
+  void AuthorizeAllPlugins(content::WebContents* web_contents,
+                           bool load_blocked,
+                           const std::string& identifier);
 
   // Returns whether the plugin is found in restricted_plugins_.
   bool IsPluginRestricted(const base::FilePath& plugin_path);
@@ -64,7 +73,7 @@ class ChromePluginServiceFilter : public content::PluginServiceFilter,
   // PluginServiceFilter implementation:
   virtual bool IsPluginAvailable(
       int render_process_id,
-      int render_view_id,
+      int render_frame_id,
       const void* context,
       const GURL& url,
       const GURL& policy_url,
@@ -83,8 +92,8 @@ class ChromePluginServiceFilter : public content::PluginServiceFilter,
     OverriddenPlugin();
     ~OverriddenPlugin();
 
-    int render_view_id;
-    GURL url;  // If empty, the override applies to all urls in render_view.
+    int render_frame_id;
+    GURL url;  // If empty, the override applies to all urls in render_frame.
     content::WebPluginInfo plugin;
   };
 

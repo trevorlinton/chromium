@@ -10,10 +10,13 @@
 #include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
-#include "chrome/browser/policy/cloud/cloud_policy_core.h"
-#include "chrome/browser/policy/cloud/cloud_policy_store.h"
+#include "components/policy/core/common/cloud/cloud_policy_core.h"
+#include "components/policy/core/common/cloud/cloud_policy_store.h"
+#include "google/cacheinvalidation/include/types.h"
+#include "sync/internal_api/public/base/invalidation.h"
 #include "sync/notifier/invalidation_handler.h"
 
 namespace base {
@@ -69,6 +72,7 @@ class CloudPolicyInvalidator : public syncer::InvalidationHandler,
       syncer::InvalidatorState state) OVERRIDE;
   virtual void OnIncomingInvalidation(
       const syncer::ObjectIdInvalidationMap& invalidation_map) OVERRIDE;
+  virtual std::string GetOwnerName() const OVERRIDE;
 
   // CloudPolicyCore::Observer:
   virtual void OnCoreConnected(CloudPolicyCore* core) OVERRIDE;
@@ -165,8 +169,8 @@ class CloudPolicyInvalidator : public syncer::InvalidationHandler,
   // invalidation_version_ when such invalidations occur.
   int unknown_version_invalidation_count_;
 
-  // The acknowledgment handle for the current invalidation.
-  syncer::AckHandle ack_handle_;
+  // The most up to date invalidation.
+  scoped_ptr<syncer::Invalidation> invalidation_;
 
   // WeakPtrFactory used to create callbacks to this object.
   base::WeakPtrFactory<CloudPolicyInvalidator> weak_factory_;

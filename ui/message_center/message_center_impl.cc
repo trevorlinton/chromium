@@ -10,6 +10,7 @@
 #include "base/observer_list.h"
 #include "ui/message_center/message_center_style.h"
 #include "ui/message_center/message_center_types.h"
+#include "ui/message_center/message_center_util.h"
 #include "ui/message_center/notification.h"
 #include "ui/message_center/notification_blocker.h"
 #include "ui/message_center/notification_list.h"
@@ -151,9 +152,12 @@ ChangeQueue::ChangeQueue() {}
 ChangeQueue::~ChangeQueue() {}
 
 void ChangeQueue::ApplyChanges(MessageCenter* message_center) {
-  ScopedVector<Change>::const_iterator iter = changes_.begin();
-  for (; iter != changes_.end(); ++iter) {
-    Change* change = *iter;
+  // This method is re-entrant.
+  while (!changes_.empty()) {
+    ScopedVector<Change>::iterator iter = changes_.begin();
+    scoped_ptr<Change> change(*iter);
+    // TODO(dewittj): Replace changes_ with a deque.
+    changes_.weak_erase(iter);
     // |message_center| is taking ownership of each element here.
     switch (change->type()) {
       case CHANGE_TYPE_ADD:
@@ -171,12 +175,11 @@ void ChangeQueue::ApplyChanges(MessageCenter* message_center) {
         NOTREACHED();
     }
   }
-
-  changes_.clear();
 }
 
 void ChangeQueue::AddNotification(scoped_ptr<Notification> notification) {
   std::string id = notification->id();
+
   scoped_ptr<Change> change(
       new Change(CHANGE_TYPE_ADD, id, notification.Pass()));
   Replace(id, change.Pass());
@@ -390,6 +393,30 @@ void PopupTimersController::OnNotificationRemoved(const std::string& id,
 }  // namespace internal
 
 ////////////////////////////////////////////////////////////////////////////////
+// MessageCenterImpl::NotificationCache
+
+MessageCenterImpl::NotificationCache::NotificationCache()
+    : unread_count(0) {}
+
+MessageCenterImpl::NotificationCache::~NotificationCache() {}
+
+void MessageCenterImpl::NotificationCache::Rebuild(
+    const NotificationList::Notifications& notifications) {
+  visible_notifications = notifications;
+  RecountUnread();
+}
+
+void MessageCenterImpl::NotificationCache::RecountUnread() {
+  unread_count = 0;
+  for (NotificationList::Notifications::const_iterator iter =
+           visible_notifications.begin();
+       iter != visible_notifications.end(); ++iter) {
+    if (!(*iter)->IsRead())
+      ++unread_count;
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // MessageCenterImpl
 
 MessageCenterImpl::MessageCenterImpl()
@@ -429,21 +456,34 @@ void MessageCenterImpl::RemoveNotificationBlocker(
   blockers_.erase(iter);
 }
 
-void MessageCenterImpl::OnBlockingStateChanged() {
+void MessageCenterImpl::OnBlockingStateChanged(NotificationBlocker* blocker) {
   std::list<std::string> blocked_ids;
   NotificationList::PopupNotifications popups =
       notification_list_->GetPopupNotifications(blockers_, &blocked_ids);
 
   for (std::list<std::string>::const_iterator iter = blocked_ids.begin();
        iter != blocked_ids.end(); ++iter) {
-    MarkSinglePopupAsShown((*iter), true);
+    // Do not call MessageCenterImpl::MarkSinglePopupAsShown() directly here
+    // just for performance reason. MessageCenterImpl::MarkSinglePopupAsShown()
+    // calls NotificationList::MarkSinglePopupAsShown() and then updates the
+    // unread count, but the whole cache will be recreated below.
+    notification_list_->MarkSinglePopupAsShown((*iter), true);
+    FOR_EACH_OBSERVER(MessageCenterObserver,
+                      observer_list_,
+                      OnNotificationUpdated(*iter));
   }
+  notification_cache_.Rebuild(
+      notification_list_->GetVisibleNotifications(blockers_));
+  FOR_EACH_OBSERVER(MessageCenterObserver,
+                    observer_list_,
+                    OnBlockingStateChanged(blocker));
 }
 
 void MessageCenterImpl::SetVisibility(Visibility visibility) {
   std::set<std::string> updated_ids;
   notification_list_->SetMessageCenterVisible(
       (visibility == VISIBILITY_MESSAGE_CENTER), &updated_ids);
+  notification_cache_.RecountUnread();
 
   for (std::set<std::string>::const_iterator iter = updated_ids.begin();
        iter != updated_ids.end();
@@ -460,23 +500,29 @@ void MessageCenterImpl::SetVisibility(Visibility visibility) {
                     OnCenterVisibilityChanged(visibility));
 }
 
-bool MessageCenterImpl::IsMessageCenterVisible() {
+bool MessageCenterImpl::IsMessageCenterVisible() const {
   return notification_list_->is_message_center_visible();
 }
 
 size_t MessageCenterImpl::NotificationCount() const {
-  return notification_list_->NotificationCount();
+  return notification_cache_.visible_notifications.size();
 }
 
 size_t MessageCenterImpl::UnreadNotificationCount() const {
-  return notification_list_->unread_count();
+  return notification_cache_.unread_count;
 }
 
 bool MessageCenterImpl::HasPopupNotifications() const {
-  return notification_list_->HasPopupNotifications(blockers_);
+  return !IsMessageCenterVisible() &&
+      notification_list_->HasPopupNotifications(blockers_);
 }
 
 bool MessageCenterImpl::HasNotification(const std::string& id) {
+  // This will return true if the notification with |id| is hidden by the
+  // ChromeOS multi-profile feature. This would be harmless for now because
+  // this check will be used from the UI, so the |id| for hidden profile won't
+  // arrive here.
+  // TODO(mukai): fix this if necessary.
   return notification_list_->HasNotification(id);
 }
 
@@ -485,14 +531,14 @@ bool MessageCenterImpl::IsQuietMode() const {
 }
 
 bool MessageCenterImpl::HasClickedListener(const std::string& id) {
-  NotificationDelegate* delegate =
+  scoped_refptr<NotificationDelegate> delegate =
       notification_list_->GetNotificationDelegate(id);
-  return delegate && delegate->HasClickedListener();
+  return delegate.get() && delegate->HasClickedListener();
 }
 
 const NotificationList::Notifications&
 MessageCenterImpl::GetVisibleNotifications() {
-  return notification_list_->GetNotifications();
+  return notification_cache_.visible_notifications;
 }
 
 NotificationList::PopupNotifications
@@ -504,6 +550,11 @@ NotificationList::PopupNotifications
 // Client code interface.
 void MessageCenterImpl::AddNotification(scoped_ptr<Notification> notification) {
   DCHECK(notification.get());
+  if (GetMessageCenterShowState() == MESSAGE_CENTER_SHOW_NEVER) {
+    notification->set_shown_as_popup(false);
+    notification->set_never_timeout(true);
+    notification->set_priority(message_center::DEFAULT_PRIORITY);
+  }
 
   for (size_t i = 0; i < blockers_.size(); ++i)
     blockers_[i]->CheckState();
@@ -519,6 +570,8 @@ void MessageCenterImpl::AddNotification(scoped_ptr<Notification> notification) {
   const std::string& id = notification->id();
   bool already_exists = notification_list_->HasNotification(id);
   notification_list_->AddNotification(notification.Pass());
+  notification_cache_.Rebuild(
+      notification_list_->GetVisibleNotifications(blockers_));
 
   if (already_exists) {
     FOR_EACH_OBSERVER(
@@ -561,6 +614,8 @@ void MessageCenterImpl::UpdateNotification(
   std::string new_id = new_notification->id();
   notification_list_->UpdateNotificationMessage(old_id,
                                                 new_notification.Pass());
+  notification_cache_.Rebuild(
+     notification_list_->GetVisibleNotifications(blockers_));
   if (old_id == new_id) {
     FOR_EACH_OBSERVER(
         MessageCenterObserver, observer_list_, OnNotificationUpdated(new_id));
@@ -582,9 +637,9 @@ void MessageCenterImpl::RemoveNotification(const std::string& id,
   if (!HasNotification(id))
     return;
 
-  NotificationDelegate* delegate =
+  scoped_refptr<NotificationDelegate> delegate =
       notification_list_->GetNotificationDelegate(id);
-  if (delegate)
+  if (delegate.get())
     delegate->Close(by_user);
 
   // In many cases |id| is a reference to an existing notification instance
@@ -592,24 +647,42 @@ void MessageCenterImpl::RemoveNotification(const std::string& id,
   // copies the id explicitly here.
   std::string copied_id(id);
   notification_list_->RemoveNotification(copied_id);
+  notification_cache_.Rebuild(
+      notification_list_->GetVisibleNotifications(blockers_));
   FOR_EACH_OBSERVER(MessageCenterObserver,
                     observer_list_,
                     OnNotificationRemoved(copied_id, by_user));
 }
 
 void MessageCenterImpl::RemoveAllNotifications(bool by_user) {
-  const NotificationList::Notifications& notifications =
-      notification_list_->GetNotifications();
+  // Using not |blockers_| but an empty list since it wants to remove literally
+  // all notifications.
+  RemoveNotifications(by_user, NotificationBlockers());
+}
+
+void MessageCenterImpl::RemoveAllVisibleNotifications(bool by_user) {
+  RemoveNotifications(by_user, blockers_);
+}
+
+void MessageCenterImpl::RemoveNotifications(
+    bool by_user,
+    const NotificationBlockers& blockers) {
+  const NotificationList::Notifications notifications =
+      notification_list_->GetVisibleNotifications(blockers);
   std::set<std::string> ids;
   for (NotificationList::Notifications::const_iterator iter =
            notifications.begin(); iter != notifications.end(); ++iter) {
     ids.insert((*iter)->id());
-    NotificationDelegate* delegate = (*iter)->delegate();
-    if (delegate)
+    scoped_refptr<NotificationDelegate> delegate = (*iter)->delegate();
+    if (delegate.get())
       delegate->Close(by_user);
+    notification_list_->RemoveNotification((*iter)->id());
   }
-  notification_list_->RemoveAllNotifications();
 
+  if (!ids.empty()) {
+    notification_cache_.Rebuild(
+        notification_list_->GetVisibleNotifications(blockers_));
+  }
   for (std::set<std::string>::const_iterator iter = ids.begin();
        iter != ids.end(); ++iter) {
     FOR_EACH_OBSERVER(MessageCenterObserver,
@@ -693,14 +766,10 @@ void MessageCenterImpl::DisableNotificationsByNotifier(
     iter++;
     RemoveNotification(id, false);
   }
-}
-
-void MessageCenterImpl::ExpandNotification(const std::string& id) {
-  if (!HasNotification(id))
-    return;
-  notification_list_->MarkNotificationAsExpanded(id);
-  FOR_EACH_OBSERVER(MessageCenterObserver, observer_list_,
-                    OnNotificationUpdated(id));
+  if (!notifications.empty()) {
+    notification_cache_.Rebuild(
+        notification_list_->GetVisibleNotifications(blockers_));
+  }
 }
 
 void MessageCenterImpl::ClickOnNotification(const std::string& id) {
@@ -708,9 +777,9 @@ void MessageCenterImpl::ClickOnNotification(const std::string& id) {
     return;
   if (HasPopupNotifications())
     MarkSinglePopupAsShown(id, true);
-  NotificationDelegate* delegate =
+  scoped_refptr<NotificationDelegate> delegate =
       notification_list_->GetNotificationDelegate(id);
-  if (delegate)
+  if (delegate.get())
     delegate->Click();
   FOR_EACH_OBSERVER(
       MessageCenterObserver, observer_list_, OnNotificationClicked(id));
@@ -722,9 +791,9 @@ void MessageCenterImpl::ClickOnNotificationButton(const std::string& id,
     return;
   if (HasPopupNotifications())
     MarkSinglePopupAsShown(id, true);
-  NotificationDelegate* delegate =
+  scoped_refptr<NotificationDelegate> delegate =
       notification_list_->GetNotificationDelegate(id);
-  if (delegate)
+  if (delegate.get())
     delegate->ButtonClick(button_index);
   FOR_EACH_OBSERVER(
       MessageCenterObserver, observer_list_, OnNotificationButtonClicked(
@@ -736,6 +805,7 @@ void MessageCenterImpl::MarkSinglePopupAsShown(const std::string& id,
   if (!HasNotification(id))
     return;
   notification_list_->MarkSinglePopupAsShown(id, mark_notification_as_read);
+  notification_cache_.RecountUnread();
   FOR_EACH_OBSERVER(
       MessageCenterObserver, observer_list_, OnNotificationUpdated(id));
 }
@@ -746,9 +816,10 @@ void MessageCenterImpl::DisplayedNotification(const std::string& id) {
 
   if (HasPopupNotifications())
     notification_list_->MarkSinglePopupAsDisplayed(id);
-  NotificationDelegate* delegate =
+  notification_cache_.RecountUnread();
+  scoped_refptr<NotificationDelegate> delegate =
       notification_list_->GetNotificationDelegate(id);
-  if (delegate)
+  if (delegate.get())
     delegate->Display();
   FOR_EACH_OBSERVER(
       MessageCenterObserver, observer_list_, OnNotificationDisplayed(id));

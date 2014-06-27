@@ -9,19 +9,20 @@
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/fake_safe_browsing_database_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_file_util.h"
-#include "chrome/common/extensions/feature_switch.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/render_view_host.h"
+#include "content/public/test/browser_test_utils.h"
 #include "content/public/test/download_test_observer.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/feature_switch.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/switches.h"
 #include "grit/generated_resources.h"
@@ -52,7 +53,7 @@ class MockPromptProxy :
   bool did_succeed() const { return !extension_id_.empty(); }
   const std::string& extension_id() { return extension_id_; }
   bool confirmation_requested() const { return confirmation_requested_; }
-  const string16& error() const { return error_; }
+  const base::string16& error() const { return error_; }
 
   // To have any effect, this should be called before CreatePrompt.
   void set_record_oauth2_grant(bool record_oauth2_grant) {
@@ -61,7 +62,7 @@ class MockPromptProxy :
 
   void set_extension_id(const std::string& id) { extension_id_ = id; }
   void set_confirmation_requested() { confirmation_requested_ = true; }
-  void set_error(const string16& error) { error_ = error; }
+  void set_error(const base::string16& error) { error_ = error; }
 
   scoped_ptr<ExtensionInstallPrompt> CreatePrompt();
 
@@ -76,7 +77,7 @@ class MockPromptProxy :
   // Data reported back to us by the prompt we created.
   bool confirmation_requested_;
   std::string extension_id_;
-  string16 error_;
+  base::string16 error_;
 };
 
 class MockInstallPrompt : public ExtensionInstallPrompt {
@@ -196,9 +197,6 @@ class ExtensionCrxInstallerTest : public ExtensionBrowserTest {
     CommandLine::ForCurrentProcess()->AppendSwitch(
         switches::kEnableExperimentalExtensionApis);
 
-    ExtensionService* service = extensions::ExtensionSystem::Get(
-        browser()->profile())->extension_service();
-
     scoped_refptr<MockPromptProxy> mock_prompt =
         CreateMockPromptProxyForBrowser(browser());
 
@@ -206,8 +204,8 @@ class ExtensionCrxInstallerTest : public ExtensionBrowserTest {
     InstallWithPrompt("browsertest/scopes", std::string(), mock_prompt);
 
     scoped_refptr<PermissionSet> permissions =
-        service->extension_prefs()->GetGrantedPermissions(
-            mock_prompt->extension_id());
+        ExtensionPrefs::Get(browser()->profile())
+            ->GetGrantedPermissions(mock_prompt->extension_id());
     ASSERT_TRUE(permissions.get());
   }
 };
@@ -350,7 +348,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, DISABLED_AllowOffStore) {
     EXPECT_EQ(kTestData[i], mock_prompt->confirmation_requested()) <<
         kTestData[i];
     if (kTestData[i]) {
-      EXPECT_EQ(string16(), mock_prompt->error()) << kTestData[i];
+      EXPECT_EQ(base::string16(), mock_prompt->error()) << kTestData[i];
     } else {
       EXPECT_EQ(l10n_util::GetStringUTF16(
           IDS_EXTENSION_INSTALL_DISALLOWED_ON_SITE),
@@ -378,8 +376,15 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, HiDpiThemeTest) {
   EXPECT_FALSE(service->GetExtensionById(extension_id, false));
 }
 
+// See http://crbug.com/315299.
+#if defined(OS_WIN)
+#define MAYBE_InstallDelayedUntilNextUpdate \
+        DISABLED_InstallDelayedUntilNextUpdate
+#else
+#define MAYBE_InstallDelayedUntilNextUpdate InstallDelayedUntilNextUpdate
+#endif  // defined(OS_WIN)
 IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest,
-                       InstallDelayedUntilNextUpdate) {
+                       MAYBE_InstallDelayedUntilNextUpdate) {
   const std::string extension_id("ldnnhddmnhbkjipkidpdiheffobcpfmf");
   base::FilePath crx_path = test_data_dir_.AppendASCII("delayed_install");
   ExtensionSystem* extension_system = extensions::ExtensionSystem::Get(
@@ -419,10 +424,9 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest,
 
   // Make the extension idle again by closing the popup. This should not trigger
   //the delayed install.
-  content::WindowedNotificationObserver terminated_observer(
-      content::NOTIFICATION_RENDERER_PROCESS_TERMINATED,
-      content::Source<content::RenderProcessHost>(
-          extension_host->render_process_host()));
+  content::RenderProcessHostWatcher terminated_observer(
+      extension_host->render_process_host(),
+      content::RenderProcessHostWatcher::WATCH_FOR_HOST_DESTRUCTION);
   extension_host->render_view_host()->ClosePage();
   terminated_observer.Wait();
   ASSERT_EQ(1u, service->delayed_installs()->size());
@@ -442,6 +446,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest,
   ASSERT_EQ("3.0", extension->version()->GetString());
 }
 
+#if defined(FULL_SAFE_BROWSING)
 IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, Blacklist) {
   scoped_refptr<FakeSafeBrowsingDatabaseManager> blacklist_db(
       new FakeSafeBrowsingDatabaseManager(true));
@@ -453,6 +458,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, Blacklist) {
                                           .AppendASCII("theme_hidpi.crx");
   EXPECT_FALSE(InstallExtension(crx_path, 0));
 }
+#endif
 
 IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, NonStrictManifestCheck) {
   scoped_refptr<MockPromptProxy> mock_prompt =

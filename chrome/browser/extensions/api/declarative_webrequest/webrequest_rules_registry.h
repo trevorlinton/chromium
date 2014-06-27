@@ -21,8 +21,8 @@
 #include "chrome/browser/extensions/api/declarative_webrequest/request_stage.h"
 #include "chrome/browser/extensions/api/declarative_webrequest/webrequest_action.h"
 #include "chrome/browser/extensions/api/declarative_webrequest/webrequest_condition.h"
-#include "chrome/browser/extensions/extension_info_map.h"
-#include "extensions/common/matcher/url_matcher.h"
+#include "components/url_matcher/url_matcher.h"
+#include "extensions/browser/info_map.h"
 
 class Profile;
 class WebRequestPermissions;
@@ -76,7 +76,8 @@ class WebRequestRulesRegistry : public RulesRegistry {
   // |cache_delegate| can be NULL. In that case it constructs the registry with
   // storage functionality suspended.
   WebRequestRulesRegistry(Profile* profile,
-                          RulesCacheDelegate* cache_delegate);
+                          RulesCacheDelegate* cache_delegate,
+                          const WebViewKey& webview_key);
 
   // TODO(battre): This will become an implementation detail, because we need
   // a way to also execute the actions of the rules.
@@ -86,7 +87,7 @@ class WebRequestRulesRegistry : public RulesRegistry {
   // Returns which modifications should be executed on the network request
   // according to the rules registered in this registry.
   std::list<LinkedPtrEventResponseDelta> CreateDeltas(
-      const ExtensionInfoMap* extension_info_map,
+      const InfoMap* extension_info_map,
       const WebRequestData& request_data,
       bool crosses_incognito);
 
@@ -112,7 +113,7 @@ class WebRequestRulesRegistry : public RulesRegistry {
   virtual void ClearCacheOnNavigation();
 
   void SetExtensionInfoMapForTesting(
-      scoped_refptr<ExtensionInfoMap> extension_info_map) {
+      scoped_refptr<InfoMap> extension_info_map) {
     extension_info_map_ = extension_info_map;
   }
 
@@ -126,10 +127,11 @@ class WebRequestRulesRegistry : public RulesRegistry {
   FRIEND_TEST_ALL_PREFIXES(WebRequestRulesRegistrySimpleTest,
                            HostPermissionsChecker);
 
-  typedef std::map<URLMatcherConditionSet::ID, WebRequestRule*> RuleTriggers;
+  typedef std::map<url_matcher::URLMatcherConditionSet::ID, WebRequestRule*>
+      RuleTriggers;
   typedef std::map<WebRequestRule::RuleId, linked_ptr<WebRequestRule> >
       RulesMap;
-  typedef std::set<URLMatcherConditionSet::ID> URLMatches;
+  typedef std::set<url_matcher::URLMatcherConditionSet::ID> URLMatches;
   typedef std::set<const WebRequestRule*> RuleSet;
 
   // This bundles all consistency checkers. Returns true in case of consistency
@@ -157,9 +159,9 @@ class WebRequestRulesRegistry : public RulesRegistry {
   // and add every of the rule's URLMatcherConditionSet to
   // |remove_from_url_matcher|, so that the caller can remove them from the
   // matcher later.
-  void CleanUpAfterRule(
-      const WebRequestRule* rule,
-      std::vector<URLMatcherConditionSet::ID>* remove_from_url_matcher);
+  void CleanUpAfterRule(const WebRequestRule* rule,
+                        std::vector<url_matcher::URLMatcherConditionSet::ID>*
+                            remove_from_url_matcher);
 
   // This is a helper function to GetMatches. Rules triggered by |url_matches|
   // get added to |result| if one of their conditions is fulfilled.
@@ -179,10 +181,10 @@ class WebRequestRulesRegistry : public RulesRegistry {
 
   std::map<WebRequestRule::ExtensionId, RulesMap> webrequest_rules_;
 
-  URLMatcher url_matcher_;
+  url_matcher::URLMatcher url_matcher_;
 
   void* profile_id_;
-  scoped_refptr<ExtensionInfoMap> extension_info_map_;
+  scoped_refptr<InfoMap> extension_info_map_;
 
   DISALLOW_COPY_AND_ASSIGN(WebRequestRulesRegistry);
 };

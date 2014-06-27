@@ -20,24 +20,24 @@ static const int kTextVerticalMargin = 4;
 
 ValidationMessageBubbleDelegate::ValidationMessageBubbleDelegate(
     const gfx::Rect& anchor_in_screen,
-    const string16& main_text,
-    const string16& sub_text,
+    const base::string16& main_text,
+    const base::string16& sub_text,
     Observer* observer)
     : observer_(observer), width_(0), height_(0) {
   set_use_focusless(true);
   set_arrow(views::BubbleBorder::TOP_LEFT);
-  set_anchor_rect(anchor_in_screen);
+  SetAnchorRect(anchor_in_screen);
 
-  ResourceBundle& bundle = ResourceBundle::GetSharedInstance();
+  ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
   views::ImageView* icon = new views::ImageView();
   icon->SetImage(*bundle.GetImageSkiaNamed(IDR_INPUT_ALERT));
   gfx::Size size = icon->GetPreferredSize();
   icon->SetBounds(kPadding, kPadding, size.width(), size.height());
   AddChildView(icon);
 
-  views::Label* label = new views::Label(main_text);
+  views::Label* label = new views::Label(
+      main_text, bundle.GetFontList(ui::ResourceBundle::MediumFont));
   label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  label->SetFont(bundle.GetFont(ResourceBundle::MediumFont));
   label->set_directionality_mode(views::Label::AUTO_DETECT_DIRECTIONALITY);
   int text_start_x = kPadding + size.width() + kIconTextMargin;
   int min_available = kWindowMinWidth - text_start_x - kPadding;
@@ -86,8 +86,7 @@ void ValidationMessageBubbleDelegate::Close() {
 
 void ValidationMessageBubbleDelegate::SetPositionRelativeToAnchor(
     const gfx::Rect& anchor_in_screen) {
-  set_anchor_rect(anchor_in_screen);
-  SizeToContents();
+  SetAnchorRect(anchor_in_screen);
 }
 
 gfx::Size ValidationMessageBubbleDelegate::GetPreferredSize() {

@@ -18,28 +18,24 @@ class RendererClipboardClient : public ClipboardClient {
 
   virtual ui::Clipboard* GetClipboard() OVERRIDE;
   virtual uint64 GetSequenceNumber(ui::ClipboardType type) OVERRIDE;
-  virtual bool IsFormatAvailable(const ui::Clipboard::FormatType& format,
+  virtual bool IsFormatAvailable(ClipboardFormat format,
                                  ui::ClipboardType type) OVERRIDE;
   virtual void Clear(ui::ClipboardType type) OVERRIDE;
   virtual void ReadAvailableTypes(ui::ClipboardType type,
-                                  std::vector<string16>* types,
+                                  std::vector<base::string16>* types,
                                   bool* contains_filenames) OVERRIDE;
   virtual void ReadText(ui::ClipboardType type,
-                        string16* result) OVERRIDE;
-  virtual void ReadAsciiText(ui::ClipboardType type,
-                             std::string* result) OVERRIDE;
+                        base::string16* result) OVERRIDE;
   virtual void ReadHTML(ui::ClipboardType type,
-                        string16* markup,
+                        base::string16* markup,
                         GURL* url,
                         uint32* fragment_start,
                         uint32* fragment_end) OVERRIDE;
   virtual void ReadRTF(ui::ClipboardType type, std::string* result) OVERRIDE;
   virtual void ReadImage(ui::ClipboardType type, std::string* data) OVERRIDE;
   virtual void ReadCustomData(ui::ClipboardType clipboard_type,
-                              const string16& type,
-                              string16* data) OVERRIDE;
-  virtual void ReadData(const ui::Clipboard::FormatType& format,
-                        std::string* data) OVERRIDE;
+                              const base::string16& type,
+                              base::string16* data) OVERRIDE;
   virtual WriteContext* CreateWriteContext() OVERRIDE;
 };
 

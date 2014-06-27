@@ -14,16 +14,18 @@
 #include "base/memory/weak_ptr.h"
 #include "base/prefs/pref_change_registrar.h"
 #include "base/strings/string16.h"
+#include "base/values.h"
 #include "chrome/browser/managed_mode/managed_user_sync_service.h"
 #include "chrome/browser/managed_mode/managed_user_sync_service_observer.h"
 #include "chrome/browser/managed_mode/managed_users.h"
-#include "chrome/browser/profiles/profile_manager.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service.h"
+#include "components/keyed_service/core/keyed_service.h"
 
 class GoogleServiceAuthError;
 class ManagedUserRefreshTokenFetcher;
 class ManagedUserRegistrationUtilityTest;
+class ManagedUserSharedSettingsService;
 class PrefService;
+class Profile;
 
 namespace browser_sync {
 class DeviceInfo;
@@ -31,10 +33,14 @@ class DeviceInfo;
 
 // Structure to store registration information.
 struct ManagedUserRegistrationInfo {
-  ManagedUserRegistrationInfo(const string16& name, int avatar_index);
+  ManagedUserRegistrationInfo(const base::string16& name, int avatar_index);
+  ~ManagedUserRegistrationInfo();
   int avatar_index;
-  string16 name;
+  base::string16 name;
   std::string master_key;
+  std::string password_signature_key;
+  std::string password_encryption_key;
+  base::DictionaryValue password_data;
 };
 
 // Holds the state necessary for registering a new managed user with the
@@ -82,7 +88,8 @@ class ManagedUserRegistrationUtility {
   static ManagedUserRegistrationUtility* CreateImpl(
       PrefService* prefs,
       scoped_ptr<ManagedUserRefreshTokenFetcher> token_fetcher,
-      ManagedUserSyncService* service);
+      ManagedUserSyncService* service,
+      ManagedUserSharedSettingsService* shared_settings_service);
 
   // Set the instance of ManagedUserRegistrationUtility that will be returned
   // by next Create() call. Takes ownership of the |utility|.

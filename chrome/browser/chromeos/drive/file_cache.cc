@@ -6,6 +6,7 @@
 
 #include <vector>
 
+#include "base/callback_helpers.h"
 #include "base/file_util.h"
 #include "base/files/file_enumerator.h"
 #include "base/logging.h"
@@ -13,16 +14,17 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/sys_info.h"
-#include "base/task_runner_util.h"
 #include "chrome/browser/chromeos/drive/drive.pb.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/drive/resource_metadata_storage.h"
 #include "chrome/browser/drive/drive_api_util.h"
 #include "chromeos/chromeos_constants.h"
 #include "content/public/browser/browser_thread.h"
+#include "google_apis/drive/task_util.h"
 #include "net/base/mime_sniffer.h"
 #include "net/base/mime_util.h"
 #include "net/base/net_util.h"
+#include "third_party/cros_system_api/constants/cryptohome.h"
 
 using content::BrowserThread;
 
@@ -33,18 +35,6 @@ namespace {
 // Returns ID extracted from the path.
 std::string GetIdFromPath(const base::FilePath& path) {
   return util::UnescapeCacheFileName(path.BaseName().AsUTF8Unsafe());
-}
-
-// Runs callback with pointers dereferenced.
-// Used to implement GetFile, MarkAsMounted.
-void RunGetFileFromCacheCallback(const GetFileFromCacheCallback& callback,
-                                 base::FilePath* file_path,
-                                 FileError error) {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  DCHECK(!callback.is_null());
-  DCHECK(file_path);
-
-  callback.Run(error, *file_path);
 }
 
 }  // namespace
@@ -74,8 +64,7 @@ base::FilePath FileCache::GetCacheFilePath(const std::string& id) const {
 }
 
 void FileCache::AssertOnSequencedWorkerPool() {
-  DCHECK(!blocking_task_runner_.get() ||
-         blocking_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(blocking_task_runner_->RunsTasksOnCurrentThread());
 }
 
 bool FileCache::IsUnderFileCacheDirectory(const base::FilePath& path) const {
@@ -150,19 +139,51 @@ FileError FileCache::Store(const std::string& id,
                            const base::FilePath& source_path,
                            FileOperationType file_operation_type) {
   AssertOnSequencedWorkerPool();
-  return StoreInternal(id, md5, source_path, file_operation_type);
-}
 
-void FileCache::PinOnUIThread(const std::string& id,
-                              const FileOperationCallback& callback) {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  DCHECK(!callback.is_null());
+  int64 file_size = 0;
+  if (file_operation_type == FILE_OPERATION_COPY) {
+    if (!base::GetFileSize(source_path, &file_size)) {
+      LOG(WARNING) << "Couldn't get file size for: " << source_path.value();
+      return FILE_ERROR_FAILED;
+    }
+  }
+  if (!FreeDiskSpaceIfNeededFor(file_size))
+    return FILE_ERROR_NO_LOCAL_SPACE;
 
-  base::PostTaskAndReplyWithResult(
-      blocking_task_runner_.get(),
-      FROM_HERE,
-      base::Bind(&FileCache::Pin, base::Unretained(this), id),
-      callback);
+  // If file is mounted, return error.
+  if (mounted_files_.count(id))
+    return FILE_ERROR_IN_USE;
+
+  base::FilePath dest_path = GetCacheFilePath(id);
+  bool success = false;
+  switch (file_operation_type) {
+    case FILE_OPERATION_MOVE:
+      success = base::Move(source_path, dest_path);
+      break;
+    case FILE_OPERATION_COPY:
+      success = base::CopyFile(source_path, dest_path);
+      break;
+    default:
+      NOTREACHED();
+  }
+
+  if (!success) {
+    LOG(ERROR) << "Failed to store: "
+               << "source_path = " << source_path.value() << ", "
+               << "dest_path = " << dest_path.value() << ", "
+               << "file_operation_type = " << file_operation_type;
+    return FILE_ERROR_FAILED;
+  }
+
+  // Now that file operations have completed, update metadata.
+  FileCacheEntry cache_entry;
+  storage_->GetCacheEntry(id, &cache_entry);
+  cache_entry.set_md5(md5);
+  cache_entry.set_is_present(true);
+  if (md5.empty())
+    cache_entry.set_is_dirty(true);
+  return storage_->PutCacheEntry(id, cache_entry) ?
+      FILE_ERROR_OK : FILE_ERROR_FAILED;
 }
 
 FileError FileCache::Pin(const std::string& id) {
@@ -173,18 +194,6 @@ FileError FileCache::Pin(const std::string& id) {
   cache_entry.set_is_pinned(true);
   return storage_->PutCacheEntry(id, cache_entry) ?
       FILE_ERROR_OK : FILE_ERROR_FAILED;
-}
-
-void FileCache::UnpinOnUIThread(const std::string& id,
-                                const FileOperationCallback& callback) {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  DCHECK(!callback.is_null());
-
-  base::PostTaskAndReplyWithResult(
-      blocking_task_runner_.get(),
-      FROM_HERE,
-      base::Bind(&FileCache::Unpin, base::Unretained(this), id),
-      callback);
 }
 
 FileError FileCache::Unpin(const std::string& id) {
@@ -212,24 +221,6 @@ FileError FileCache::Unpin(const std::string& id) {
   return FILE_ERROR_OK;
 }
 
-void FileCache::MarkAsMountedOnUIThread(
-    const std::string& id,
-    const GetFileFromCacheCallback& callback) {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  DCHECK(!callback.is_null());
-
-  base::FilePath* cache_file_path = new base::FilePath;
-  base::PostTaskAndReplyWithResult(
-      blocking_task_runner_.get(),
-      FROM_HERE,
-      base::Bind(&FileCache::MarkAsMounted,
-                 base::Unretained(this),
-                 id,
-                 cache_file_path),
-      base::Bind(
-          RunGetFileFromCacheCallback, callback, base::Owned(cache_file_path)));
-}
-
 FileError FileCache::MarkAsMounted(const std::string& id,
                                    base::FilePath* cache_file_path) {
   AssertOnSequencedWorkerPool();
@@ -245,12 +236,12 @@ FileError FileCache::MarkAsMounted(const std::string& id,
 
   // Ensure the file is readable to cros_disks. See crbug.com/236994.
   base::FilePath path = GetCacheFilePath(id);
-  if (!file_util::SetPosixFilePermissions(
+  if (!base::SetPosixFilePermissions(
           path,
-          file_util::FILE_PERMISSION_READ_BY_USER |
-          file_util::FILE_PERMISSION_WRITE_BY_USER |
-          file_util::FILE_PERMISSION_READ_BY_GROUP |
-          file_util::FILE_PERMISSION_READ_BY_OTHERS))
+          base::FILE_PERMISSION_READ_BY_USER |
+          base::FILE_PERMISSION_WRITE_BY_USER |
+          base::FILE_PERMISSION_READ_BY_GROUP |
+          base::FILE_PERMISSION_READ_BY_OTHERS))
     return FILE_ERROR_FAILED;
 
   mounted_files_.insert(id);
@@ -259,21 +250,9 @@ FileError FileCache::MarkAsMounted(const std::string& id,
   return FILE_ERROR_OK;
 }
 
-void FileCache::MarkAsUnmountedOnUIThread(
-    const base::FilePath& file_path,
-    const FileOperationCallback& callback) {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  DCHECK(!callback.is_null());
-
-  base::PostTaskAndReplyWithResult(
-      blocking_task_runner_.get(),
-      FROM_HERE,
-      base::Bind(
-          &FileCache::MarkAsUnmounted, base::Unretained(this), file_path),
-      callback);
-}
-
-FileError FileCache::MarkDirty(const std::string& id) {
+FileError FileCache::OpenForWrite(
+    const std::string& id,
+    scoped_ptr<base::ScopedClosureRunner>* file_closer) {
   AssertOnSequencedWorkerPool();
 
   // Marking a file dirty means its entry and actual file blob must exist in
@@ -285,16 +264,51 @@ FileError FileCache::MarkDirty(const std::string& id) {
     return FILE_ERROR_NOT_FOUND;
   }
 
-  if (cache_entry.is_dirty())
-    return FILE_ERROR_OK;
-
   cache_entry.set_is_dirty(true);
+  cache_entry.clear_md5();
+  if (!storage_->PutCacheEntry(id, cache_entry))
+    return FILE_ERROR_FAILED;
+
+  write_opened_files_[id]++;
+  file_closer->reset(new base::ScopedClosureRunner(
+      base::Bind(&google_apis::RunTaskOnThread,
+                 blocking_task_runner_,
+                 base::Bind(&FileCache::CloseForWrite,
+                            weak_ptr_factory_.GetWeakPtr(),
+                            id))));
+  return FILE_ERROR_OK;
+}
+
+bool FileCache::IsOpenedForWrite(const std::string& id) {
+  AssertOnSequencedWorkerPool();
+  return write_opened_files_.count(id);
+}
+
+FileError FileCache::UpdateMd5(const std::string& id) {
+  AssertOnSequencedWorkerPool();
+
+  if (IsOpenedForWrite(id))
+    return FILE_ERROR_IN_USE;
+
+  FileCacheEntry cache_entry;
+  if (!storage_->GetCacheEntry(id, &cache_entry) ||
+      !cache_entry.is_present())
+    return FILE_ERROR_NOT_FOUND;
+
+  const std::string& md5 = util::GetMd5Digest(GetCacheFilePath(id));
+  if (md5.empty())
+    return FILE_ERROR_NOT_FOUND;
+
+  cache_entry.set_md5(md5);
   return storage_->PutCacheEntry(id, cache_entry) ?
       FILE_ERROR_OK : FILE_ERROR_FAILED;
 }
 
-FileError FileCache::ClearDirty(const std::string& id, const std::string& md5) {
+FileError FileCache::ClearDirty(const std::string& id) {
   AssertOnSequencedWorkerPool();
+
+  if (IsOpenedForWrite(id))
+    return FILE_ERROR_IN_USE;
 
   // Clearing a dirty file means its entry and actual file blob must exist in
   // cache.
@@ -306,14 +320,13 @@ FileError FileCache::ClearDirty(const std::string& id, const std::string& md5) {
     return FILE_ERROR_NOT_FOUND;
   }
 
-  // If a file is not dirty (it should have been marked dirty via
-  // MarkDirtyInCache), clearing its dirty state is an invalid operation.
+  // If a file is not dirty (it should have been marked dirty via OpenForWrite),
+  // clearing its dirty state is an invalid operation.
   if (!cache_entry.is_dirty()) {
     LOG(WARNING) << "Can't clear dirty state of a non-dirty file: " << id;
     return FILE_ERROR_INVALID_OPERATION;
   }
 
-  cache_entry.set_md5(md5);
   cache_entry.set_is_dirty(false);
   return storage_->PutCacheEntry(id, cache_entry) ?
       FILE_ERROR_OK : FILE_ERROR_FAILED;
@@ -369,6 +382,19 @@ bool FileCache::ClearAll() {
 bool FileCache::Initialize() {
   AssertOnSequencedWorkerPool();
 
+  // Older versions do not clear MD5 when marking entries dirty.
+  // Clear MD5 of all dirty entries to deal with old data.
+  scoped_ptr<ResourceMetadataStorage::CacheEntryIterator> it =
+      storage_->GetCacheEntryIterator();
+  for (; !it->IsAtEnd(); it->Advance()) {
+    if (it->GetValue().is_dirty()) {
+      FileCacheEntry new_entry(it->GetValue());
+      new_entry.clear_md5();
+      if (!storage_->PutCacheEntry(it->GetID(), new_entry))
+        return false;
+    }
+  }
+
   if (!RenameCacheFilesToNewFormat())
     return false;
   return true;
@@ -376,9 +402,6 @@ bool FileCache::Initialize() {
 
 void FileCache::Destroy() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-
-  // Invalidate the weak pointer.
-  weak_ptr_factory_.InvalidateWeakPtrs();
 
   // Destroy myself on the blocking pool.
   // Note that base::DeletePointer<> cannot be used as the destructor of this
@@ -429,7 +452,7 @@ bool FileCache::RecoverFilesFromCacheDirectory(
     // Read file contents to sniff mime type.
     std::vector<char> content(net::kMaxBytesToSniff);
     const int read_result =
-        file_util::ReadFile(current, &content[0], content.size());
+        base::ReadFile(current, &content[0], content.size());
     if (read_result < 0) {
       LOG(WARNING) << "Cannot read: " << current.value();
       return false;
@@ -474,7 +497,7 @@ bool FileCache::RecoverFilesFromCacheDirectory(
     // Add file number to the file name and move.
     const base::FilePath& dest_path = dest_directory.Append(dest_base_name)
         .InsertBeforeExtensionASCII(base::StringPrintf("%08d", file_number++));
-    if (!file_util::CreateDirectory(dest_directory) ||
+    if (!base::CreateDirectory(dest_directory) ||
         !base::Move(current, dest_path)) {
       LOG(WARNING) << "Failed to move: " << current.value()
                    << " to " << dest_path.value();
@@ -484,58 +507,6 @@ bool FileCache::RecoverFilesFromCacheDirectory(
   UMA_HISTOGRAM_COUNTS("Drive.NumberOfCacheFilesRecoveredAfterDBCorruption",
                        file_number - 1);
   return true;
-}
-
-FileError FileCache::StoreInternal(const std::string& id,
-                                   const std::string& md5,
-                                   const base::FilePath& source_path,
-                                   FileOperationType file_operation_type) {
-  AssertOnSequencedWorkerPool();
-
-  int64 file_size = 0;
-  if (file_operation_type == FILE_OPERATION_COPY) {
-    if (!file_util::GetFileSize(source_path, &file_size)) {
-      LOG(WARNING) << "Couldn't get file size for: " << source_path.value();
-      return FILE_ERROR_FAILED;
-    }
-  }
-  if (!FreeDiskSpaceIfNeededFor(file_size))
-    return FILE_ERROR_NO_LOCAL_SPACE;
-
-  FileCacheEntry cache_entry;
-  storage_->GetCacheEntry(id, &cache_entry);
-
-  // If file is dirty or mounted, return error.
-  if (cache_entry.is_dirty() || mounted_files_.count(id))
-    return FILE_ERROR_IN_USE;
-
-  base::FilePath dest_path = GetCacheFilePath(id);
-  bool success = false;
-  switch (file_operation_type) {
-    case FILE_OPERATION_MOVE:
-      success = base::Move(source_path, dest_path);
-      break;
-    case FILE_OPERATION_COPY:
-      success = base::CopyFile(source_path, dest_path);
-      break;
-    default:
-      NOTREACHED();
-  }
-
-  if (!success) {
-    LOG(ERROR) << "Failed to store: "
-               << "source_path = " << source_path.value() << ", "
-               << "dest_path = " << dest_path.value() << ", "
-               << "file_operation_type = " << file_operation_type;
-    return FILE_ERROR_FAILED;
-  }
-
-  // Now that file operations have completed, update metadata.
-  cache_entry.set_md5(md5);
-  cache_entry.set_is_present(true);
-  cache_entry.set_is_dirty(false);
-  return storage_->PutCacheEntry(id, cache_entry) ?
-      FILE_ERROR_OK : FILE_ERROR_FAILED;
 }
 
 FileError FileCache::MarkAsUnmounted(const base::FilePath& file_path) {
@@ -566,7 +537,7 @@ bool FileCache::HasEnoughSpaceFor(int64 num_bytes,
     free_space = base::SysInfo::AmountOfFreeDiskSpace(path);
 
   // Subtract this as if this portion does not exist.
-  free_space -= kMinFreeSpace;
+  free_space -= cryptohome::kMinFreeSpaceInBytes;
   return (free_space >= num_bytes);
 }
 
@@ -589,6 +560,19 @@ bool FileCache::RenameCacheFilesToNewFormat() {
       return false;
   }
   return true;
+}
+
+void FileCache::CloseForWrite(const std::string& id) {
+  AssertOnSequencedWorkerPool();
+
+  std::map<std::string, int>::iterator it = write_opened_files_.find(id);
+  if (it == write_opened_files_.end())
+    return;
+
+  DCHECK_LT(0, it->second);
+  --it->second;
+  if (it->second == 0)
+    write_opened_files_.erase(it);
 }
 
 }  // namespace internal

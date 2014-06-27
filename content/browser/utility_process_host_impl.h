@@ -40,7 +40,9 @@ class CONTENT_EXPORT UtilityProcessHostImpl
   virtual void SetExposedDir(const base::FilePath& dir) OVERRIDE;
   virtual void EnableMDns() OVERRIDE;
   virtual void DisableSandbox() OVERRIDE;
-  virtual void EnableZygote() OVERRIDE;
+#if defined(OS_WIN)
+  virtual void ElevatePrivileges() OVERRIDE;
+#endif
   virtual const ChildProcessData& GetData() OVERRIDE;
 #if defined(OS_POSIX)
   virtual void SetEnv(const base::EnvironmentMap& env) OVERRIDE;
@@ -55,6 +57,7 @@ class CONTENT_EXPORT UtilityProcessHostImpl
 
   // BrowserChildProcessHost:
   virtual bool OnMessageReceived(const IPC::Message& message) OVERRIDE;
+  virtual void OnProcessLaunchFailed() OVERRIDE;
   virtual void OnProcessCrashed(int exit_code) OVERRIDE;
 
   // A pointer to our client interface, who will be informed of progress.
@@ -66,17 +69,18 @@ class CONTENT_EXPORT UtilityProcessHostImpl
 
   base::FilePath exposed_dir_;
 
-  // Whether utility process needs perform presandbox initialization for MDns.
+  // Whether the utility process needs to perform presandbox initialization
+  // for mDNS.
   bool is_mdns_enabled_;
 
   // Whether to pass switches::kNoSandbox to the child.
   bool no_sandbox_;
 
+  // Whether to launch the process with elevated privileges.
+  bool run_elevated_;
+
   // Flags defined in ChildProcessHost with which to start the process.
   int child_flags_;
-
-  // Launch the utility process from the zygote. Defaults to false.
-  bool use_linux_zygote_;
 
   base::EnvironmentMap env_;
 

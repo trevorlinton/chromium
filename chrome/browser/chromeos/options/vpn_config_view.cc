@@ -5,6 +5,7 @@
 #include "chrome/browser/chromeos/options/vpn_config_view.h"
 
 #include "ash/system/chromeos/network/network_connect.h"
+#include "base/bind.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -46,7 +47,7 @@ enum ProviderTypeIndex {
   PROVIDER_TYPE_INDEX_MAX = 3,
 };
 
-string16 ProviderTypeIndexToString(int index) {
+base::string16 ProviderTypeIndexToString(int index) {
   switch (index) {
     case PROVIDER_TYPE_INDEX_L2TP_IPSEC_PSK:
       return l10n_util::GetStringUTF16(
@@ -59,7 +60,7 @@ string16 ProviderTypeIndexToString(int index) {
           IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_OPEN_VPN);
   }
   NOTREACHED();
-  return string16();
+  return base::string16();
 }
 
 int ProviderTypeToIndex(const std::string& provider_type,
@@ -100,12 +101,6 @@ std::string GetPemFromDictionary(
   return pem;
 }
 
-void ShillError(const std::string& function,
-                const std::string& error_name,
-                scoped_ptr<base::DictionaryValue> error_data) {
-  NET_LOG_ERROR("Shill Error from VpnConfigView: " + error_name, function);
-}
-
 }  // namespace
 
 namespace chromeos {
@@ -119,7 +114,7 @@ class ProviderTypeComboboxModel : public ui::ComboboxModel {
 
   // Overridden from ui::ComboboxModel:
   virtual int GetItemCount() const OVERRIDE;
-  virtual string16 GetItemAt(int index) OVERRIDE;
+  virtual base::string16 GetItemAt(int index) OVERRIDE;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ProviderTypeComboboxModel);
@@ -132,7 +127,7 @@ class VpnServerCACertComboboxModel : public ui::ComboboxModel {
 
   // Overridden from ui::ComboboxModel:
   virtual int GetItemCount() const OVERRIDE;
-  virtual string16 GetItemAt(int index) OVERRIDE;
+  virtual base::string16 GetItemAt(int index) OVERRIDE;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(VpnServerCACertComboboxModel);
@@ -145,7 +140,7 @@ class VpnUserCertComboboxModel : public ui::ComboboxModel {
 
   // Overridden from ui::ComboboxModel:
   virtual int GetItemCount() const OVERRIDE;
-  virtual string16 GetItemAt(int index) OVERRIDE;
+  virtual base::string16 GetItemAt(int index) OVERRIDE;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(VpnUserCertComboboxModel);
@@ -163,7 +158,7 @@ int ProviderTypeComboboxModel::GetItemCount() const {
   return PROVIDER_TYPE_INDEX_MAX;
 }
 
-string16 ProviderTypeComboboxModel::GetItemAt(int index) {
+base::string16 ProviderTypeComboboxModel::GetItemAt(int index) {
   return ProviderTypeIndexToString(index);
 }
 
@@ -183,7 +178,7 @@ int VpnServerCACertComboboxModel::GetItemCount() const {
       CertLibrary::CERT_TYPE_SERVER_CA) + 1;
 }
 
-string16 VpnServerCACertComboboxModel::GetItemAt(int index) {
+base::string16 VpnServerCACertComboboxModel::GetItemAt(int index) {
   if (CertLibrary::Get()->CertificatesLoading())
     return l10n_util::GetStringUTF16(
         IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_CERT_LOADING);
@@ -213,7 +208,7 @@ int VpnUserCertComboboxModel::GetItemCount() const {
   return num_certs;
 }
 
-string16 VpnUserCertComboboxModel::GetItemAt(int index) {
+base::string16 VpnUserCertComboboxModel::GetItemAt(int index) {
   if (CertLibrary::Get()->CertificatesLoading()) {
     return l10n_util::GetStringUTF16(
         IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_CERT_LOADING);
@@ -268,7 +263,7 @@ VPNConfigView::~VPNConfigView() {
   CertLibrary::Get()->RemoveObserver(this);
 }
 
-string16 VPNConfigView::GetTitle() const {
+base::string16 VPNConfigView::GetTitle() const {
   DCHECK_NE(title_, 0);
   return l10n_util::GetStringUTF16(title_);
 }
@@ -316,12 +311,12 @@ bool VPNConfigView::CanLogin() {
 }
 
 void VPNConfigView::ContentsChanged(views::Textfield* sender,
-                                    const string16& new_contents) {
+                                    const base::string16& new_contents) {
   if (sender == server_textfield_ && !service_text_modified_) {
     // Set the service name to the server name up to '.', unless it has
     // been explicitly set by the user.
-    string16 server = server_textfield_->text();
-    string16::size_type n = server.find_first_of(L'.');
+    base::string16 server = server_textfield_->text();
+    base::string16::size_type n = server.find_first_of(L'.');
     service_name_from_server_ = server.substr(0, n);
     service_textfield_->SetText(service_name_from_server_);
   }
@@ -348,7 +343,7 @@ void VPNConfigView::ButtonPressed(views::Button* sender,
                                   const ui::Event& event) {
 }
 
-void VPNConfigView::OnSelectedIndexChanged(views::Combobox* combobox) {
+void VPNConfigView::OnPerformAction(views::Combobox* combobox) {
   UpdateControls();
   UpdateErrorLabel();
   UpdateCanLogin();
@@ -535,8 +530,8 @@ void VPNConfigView::Init() {
       new views::Label(l10n_util::GetStringUTF16(
           IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_VPN_SERVER_HOSTNAME));
   layout_->AddView(server_label);
-  server_textfield_ = new views::Textfield(views::Textfield::STYLE_DEFAULT);
-  server_textfield_->SetController(this);
+  server_textfield_ = new views::Textfield();
+  server_textfield_->set_controller(this);
   layout_->AddView(server_textfield_);
   layout_->AddPaddingRow(0, views::kRelatedControlVerticalSpacing);
   if (!service_path_.empty()) {
@@ -549,8 +544,8 @@ void VPNConfigView::Init() {
   layout_->AddView(new views::Label(l10n_util::GetStringUTF16(
       IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_VPN_SERVICE_NAME)));
   if (service_path_.empty()) {
-    service_textfield_ = new views::Textfield(views::Textfield::STYLE_DEFAULT);
-    service_textfield_->SetController(this);
+    service_textfield_ = new views::Textfield();
+    service_textfield_->set_controller(this);
     layout_->AddView(service_textfield_);
     service_text_ = NULL;
   } else {
@@ -587,7 +582,7 @@ void VPNConfigView::Init() {
       IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_VPN_PSK_PASSPHRASE));
   layout_->AddView(psk_passphrase_label_);
   psk_passphrase_textfield_ = new PassphraseTextfield();
-  psk_passphrase_textfield_->SetController(this);
+  psk_passphrase_textfield_->set_controller(this);
   layout_->AddView(psk_passphrase_textfield_);
   layout_->AddView(
       new ControlledSettingIndicatorView(psk_passphrase_ui_data_));
@@ -628,8 +623,8 @@ void VPNConfigView::Init() {
   layout_->StartRow(0, 0);
   layout_->AddView(new views::Label(l10n_util::GetStringUTF16(
       IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_VPN_USERNAME)));
-  username_textfield_ = new views::Textfield(views::Textfield::STYLE_DEFAULT);
-  username_textfield_->SetController(this);
+  username_textfield_ = new views::Textfield();
+  username_textfield_->set_controller(this);
   username_textfield_->SetEnabled(username_ui_data_.IsEditable());
   layout_->AddView(username_textfield_);
   layout_->AddView(new ControlledSettingIndicatorView(username_ui_data_));
@@ -640,7 +635,7 @@ void VPNConfigView::Init() {
   layout_->AddView(new views::Label(l10n_util::GetStringUTF16(
       IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_VPN_USER_PASSPHRASE)));
   user_passphrase_textfield_ = new PassphraseTextfield();
-  user_passphrase_textfield_->SetController(this);
+  user_passphrase_textfield_->set_controller(this);
   user_passphrase_textfield_->SetEnabled(user_passphrase_ui_data_.IsEditable());
   layout_->AddView(user_passphrase_textfield_);
   layout_->AddView(
@@ -652,8 +647,8 @@ void VPNConfigView::Init() {
   otp_label_ = new views::Label(l10n_util::GetStringUTF16(
       IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_VPN_OTP));
   layout_->AddView(otp_label_);
-  otp_textfield_ = new views::Textfield(views::Textfield::STYLE_DEFAULT);
-  otp_textfield_->SetController(this);
+  otp_textfield_ = new views::Textfield();
+  otp_textfield_->set_controller(this);
   layout_->AddView(otp_textfield_);
   layout_->AddPaddingRow(0, views::kRelatedControlVerticalSpacing);
 
@@ -663,8 +658,8 @@ void VPNConfigView::Init() {
       IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_VPN_GROUP_NAME));
   layout_->AddView(group_name_label_);
   group_name_textfield_ =
-      new views::Textfield(views::Textfield::STYLE_DEFAULT);
-  group_name_textfield_->SetController(this);
+      new views::Textfield();
+  group_name_textfield_->set_controller(this);
   layout_->AddView(group_name_textfield_);
   layout_->AddView(new ControlledSettingIndicatorView(group_name_ui_data_));
   layout_->AddPaddingRow(0, views::kRelatedControlVerticalSpacing);
@@ -748,17 +743,17 @@ void VPNConfigView::InitFromProperties(
   provider_type_index_ = ProviderTypeToIndex(provider_type, client_cert_id_);
 
   if (service_text_)
-    service_text_->SetText(ASCIIToUTF16(vpn->name()));
+    service_text_->SetText(base::ASCIIToUTF16(vpn->name()));
   if (provider_type_text_label_)
     provider_type_text_label_->SetText(
         ProviderTypeIndexToString(provider_type_index_));
 
   if (server_textfield_ && !server_hostname.empty())
-    server_textfield_->SetText(UTF8ToUTF16(server_hostname));
+    server_textfield_->SetText(base::UTF8ToUTF16(server_hostname));
   if (username_textfield_ && !username.empty())
-    username_textfield_->SetText(UTF8ToUTF16(username));
+    username_textfield_->SetText(base::UTF8ToUTF16(username));
   if (group_name_textfield_ && !group_name.empty())
-    group_name_textfield_->SetText(UTF8ToUTF16(group_name));
+    group_name_textfield_->SetText(base::UTF8ToUTF16(group_name));
   if (psk_passphrase_textfield_)
     psk_passphrase_textfield_->SetShowFake(!psk_passphrase_required);
   if (save_credentials_checkbox_)
@@ -977,7 +972,7 @@ void VPNConfigView::UpdateControls() {
 
 void VPNConfigView::UpdateErrorLabel() {
   // Error message.
-  string16 error_msg;
+  base::string16 error_msg;
   bool cert_required =
       GetProviderTypeIndex() == PROVIDER_TYPE_INDEX_L2TP_IPSEC_USER_CERT;
   if (cert_required && CertLibrary::Get()->CertificatesLoaded()) {
@@ -994,7 +989,8 @@ void VPNConfigView::UpdateErrorLabel() {
     const NetworkState* vpn = NetworkHandler::Get()->network_state_handler()->
         GetNetworkState(service_path_);
     if (vpn && vpn->connection_state() == shill::kStateFailure)
-      error_msg = ash::network_connect::ErrorString(vpn->error(), vpn->path());
+      error_msg = ash::network_connect::ErrorString(
+          vpn->last_error(), vpn->path());
   }
   if (!error_msg.empty()) {
     error_label_->SetText(error_msg);
@@ -1030,11 +1026,11 @@ const std::string VPNConfigView::GetTextFromField(views::Textfield* textfield,
                                                   bool trim_whitespace) const {
   if (!textfield)
     return std::string();
-  std::string untrimmed = UTF16ToUTF8(textfield->text());
+  std::string untrimmed = base::UTF16ToUTF8(textfield->text());
   if (!trim_whitespace)
     return untrimmed;
   std::string result;
-  TrimWhitespaceASCII(untrimmed, TRIM_ALL, &result);
+  base::TrimWhitespaceASCII(untrimmed, base::TRIM_ALL, &result);
   return result;
 }
 

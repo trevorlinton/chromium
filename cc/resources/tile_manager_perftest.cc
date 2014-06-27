@@ -11,6 +11,7 @@
 #include "cc/test/fake_tile_manager.h"
 #include "cc/test/fake_tile_manager_client.h"
 #include "cc/test/lap_timer.h"
+#include "cc/test/test_shared_bitmap_manager.h"
 #include "cc/test/test_tile_priorities.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
@@ -39,19 +40,24 @@ class TileManagerPerfTest : public testing::Test {
     output_surface_ = FakeOutputSurface::Create3d();
     CHECK(output_surface_->BindToClient(&output_surface_client_));
 
-    resource_provider_ =
-        ResourceProvider::Create(output_surface_.get(), NULL, 0, false, 1);
-    tile_manager_ = make_scoped_ptr(
-        new FakeTileManager(&tile_manager_client_, resource_provider_.get()));
-    picture_pile_ = FakePicturePileImpl::CreatePile();
+    shared_bitmap_manager_.reset(new TestSharedBitmapManager());
+    resource_provider_ = ResourceProvider::Create(
+        output_surface_.get(), shared_bitmap_manager_.get(), 0, false, 1);
+    size_t raster_task_limit_bytes = 32 * 1024 * 1024;  // 16-64MB in practice.
+    tile_manager_ =
+        make_scoped_ptr(new FakeTileManager(&tile_manager_client_,
+                                            resource_provider_.get(),
+                                            raster_task_limit_bytes));
+    picture_pile_ = FakePicturePileImpl::CreateInfiniteFilledPile();
   }
 
   GlobalStateThatImpactsTilePriority GlobalStateForTest() {
     GlobalStateThatImpactsTilePriority state;
     gfx::Size tile_size = settings_.default_tile_size;
-    state.memory_limit_in_bytes =
+    state.soft_memory_limit_in_bytes =
         10000u * 4u *
         static_cast<size_t>(tile_size.width() * tile_size.height());
+    state.hard_memory_limit_in_bytes = state.soft_memory_limit_in_bytes;
     state.num_resources_limit = 10000;
     state.memory_limit_policy = ALLOW_ANYTHING;
     state.tree_priority = SMOOTHNESS_TAKES_PRIORITY;
@@ -113,7 +119,7 @@ class TileManagerPerfTest : public testing::Test {
                                     1.0,
                                     0,
                                     0,
-                                    true);
+                                    Tile::USE_LCD_TEXT);
       tile->SetPriority(ACTIVE_TREE, GetTilePriorityFromBin(bin));
       tile->SetPriority(PENDING_TREE, GetTilePriorityFromBin(bin));
       tiles->push_back(std::make_pair(tile, bin));
@@ -140,8 +146,7 @@ class TileManagerPerfTest : public testing::Test {
     timer_.Reset();
     do {
       if (priority_change_percent > 0) {
-        for (unsigned i = 0;
-             i < tile_count;
+        for (unsigned i = 0; i < tile_count;
              i += 100 / priority_change_percent) {
           Tile* tile = tiles[i].first.get();
           ManagedTileBin bin = GetNextBin(tiles[i].second);
@@ -152,12 +157,12 @@ class TileManagerPerfTest : public testing::Test {
       }
 
       tile_manager_->ManageTiles(GlobalStateForTest());
-      tile_manager_->CheckForCompletedTasks();
+      tile_manager_->UpdateVisibleTiles();
       timer_.NextLap();
     } while (!timer_.HasTimeLimitExpired());
 
-    perf_test::PrintResult("manage_tiles", "", test_name,
-                           timer_.LapsPerSecond(), "runs/s", true);
+    perf_test::PrintResult(
+        "manage_tiles", "", test_name, timer_.LapsPerSecond(), "runs/s", true);
   }
 
  private:
@@ -167,6 +172,7 @@ class TileManagerPerfTest : public testing::Test {
   scoped_refptr<FakePicturePileImpl> picture_pile_;
   FakeOutputSurfaceClient output_surface_client_;
   scoped_ptr<FakeOutputSurface> output_surface_;
+  scoped_ptr<SharedBitmapManager> shared_bitmap_manager_;
   scoped_ptr<ResourceProvider> resource_provider_;
   LapTimer timer_;
 };

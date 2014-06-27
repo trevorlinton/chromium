@@ -5,8 +5,10 @@
 #include "content/public/test/mock_render_thread.h"
 
 #include "base/message_loop/message_loop_proxy.h"
+#include "content/common/frame_messages.h"
 #include "content/common/view_messages.h"
 #include "content/public/renderer/render_process_observer.h"
+#include "content/renderer/render_view_impl.h"
 #include "ipc/ipc_message_utils.h"
 #include "ipc/ipc_sync_message.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -19,14 +21,20 @@ MockRenderThread::MockRenderThread()
       surface_id_(0),
       opener_id_(0),
       new_window_routing_id_(0),
-      new_window_main_frame_routing_id_(0) {
+      new_window_main_frame_routing_id_(0),
+      new_frame_routing_id_(0) {
 }
 
 MockRenderThread::~MockRenderThread() {
+  while (!filters_.empty()) {
+    scoped_refptr<IPC::ChannelProxy::MessageFilter> filter = filters_.back();
+    filters_.pop_back();
+    filter->OnFilterRemoved();
+  }
 }
 
 void MockRenderThread::VerifyRunJavaScriptMessageSend(
-    const string16& expected_alert_message) {
+    const base::string16& expected_alert_message) {
   const IPC::Message* alert_msg =
       sink_.GetUniqueMessageMatching(ViewHostMsg_RunJavaScriptMessage::ID);
   ASSERT_TRUE(alert_msg);
@@ -86,17 +94,9 @@ scoped_refptr<base::MessageLoopProxy>
 }
 
 void MockRenderThread::AddRoute(int32 routing_id, IPC::Listener* listener) {
-  // We may hear this for views created from OnCreateWindow as well,
-  // in which case we don't want to track the new widget.
-  if (routing_id_ == routing_id)
-    widget_ = listener;
 }
 
 void MockRenderThread::RemoveRoute(int32 routing_id) {
-  // We may hear this for views created from OnCreateWindow as well,
-  // in which case we don't want to track the new widget.
-  if (routing_id_ == routing_id)
-    widget_ = NULL;
 }
 
 int MockRenderThread::GenerateRoutingID() {
@@ -135,23 +135,20 @@ void MockRenderThread::SetResourceDispatcherDelegate(
     ResourceDispatcherDelegate* delegate) {
 }
 
-void MockRenderThread::WidgetHidden() {
-}
-
-void MockRenderThread::WidgetRestored() {
-}
-
 void MockRenderThread::EnsureWebKitInitialized() {
 }
 
-void MockRenderThread::RecordUserMetrics(const std::string& action) {
+void MockRenderThread::RecordAction(const base::UserMetricsAction& action) {
+}
+
+void MockRenderThread::RecordComputedAction(const std::string& action) {
 }
 
 scoped_ptr<base::SharedMemory>
     MockRenderThread::HostAllocateSharedMemoryBuffer(
         size_t buffer_size) {
   scoped_ptr<base::SharedMemory> shared_buf(new base::SharedMemory);
-  if (!shared_buf->CreateAndMapAnonymous(buffer_size)) {
+  if (!shared_buf->CreateAnonymous(buffer_size)) {
     NOTREACHED() << "Cannot map shared memory buffer";
     return scoped_ptr<base::SharedMemory>();
   }
@@ -160,7 +157,7 @@ scoped_ptr<base::SharedMemory>
 }
 
 void MockRenderThread::RegisterExtension(v8::Extension* extension) {
-  WebKit::WebScriptController::registerExtension(extension);
+  blink::WebScriptController::registerExtension(extension);
 }
 
 void MockRenderThread::ScheduleIdleHandler(int64 initial_delay_ms) {
@@ -177,9 +174,6 @@ void MockRenderThread::SetIdleNotificationDelayInMs(
     int64 idle_notification_delay_in_ms) {
 }
 
-void MockRenderThread::ToggleWebKitSharedTimer(bool suspend) {
-}
-
 void MockRenderThread::UpdateHistograms(int sequence_number) {
 }
 
@@ -189,6 +183,10 @@ int MockRenderThread::PostTaskToAllWebWorkers(const base::Closure& closure) {
 
 bool MockRenderThread::ResolveProxy(const GURL& url, std::string* proxy_list) {
   return false;
+}
+
+base::WaitableEvent* MockRenderThread::GetShutdownEvent() {
+  return NULL;
 }
 
 #if defined(OS_WIN)
@@ -202,12 +200,12 @@ void MockRenderThread::ReleaseCachedFonts() {
 
 void MockRenderThread::SendCloseMessage() {
   ViewMsg_Close msg(routing_id_);
-  widget_->OnMessageReceived(msg);
+  RenderViewImpl::FromRoutingID(routing_id_)->OnMessageReceived(msg);
 }
 
 // The Widget expects to be returned valid route_id.
 void MockRenderThread::OnCreateWidget(int opener_id,
-                                      WebKit::WebPopupType popup_type,
+                                      blink::WebPopupType popup_type,
                                       int* route_id,
                                       int* surface_id) {
   opener_id_ = opener_id;
@@ -226,6 +224,13 @@ void MockRenderThread::OnCreateWindow(
   *main_frame_route_id = new_window_main_frame_routing_id_;
   *surface_id = surface_id_;
   *cloned_session_storage_namespace_id = 0;
+}
+
+// The Frame expects to be returned a valid route_id different from its own.
+void MockRenderThread::OnCreateChildFrame(int new_frame_routing_id,
+                                          const std::string& frame_name,
+                                          int* new_render_frame_id) {
+  *new_render_frame_id = new_frame_routing_id_;
 }
 
 bool MockRenderThread::OnControlMessageReceived(const IPC::Message& msg) {
@@ -247,6 +252,7 @@ bool MockRenderThread::OnMessageReceived(const IPC::Message& msg) {
   IPC_BEGIN_MESSAGE_MAP_EX(MockRenderThread, msg, msg_is_ok)
     IPC_MESSAGE_HANDLER(ViewHostMsg_CreateWidget, OnCreateWidget)
     IPC_MESSAGE_HANDLER(ViewHostMsg_CreateWindow, OnCreateWindow)
+    IPC_MESSAGE_HANDLER(FrameHostMsg_CreateChildFrame, OnCreateChildFrame)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP_EX()
   return handled;

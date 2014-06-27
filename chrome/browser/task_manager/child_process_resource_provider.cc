@@ -29,14 +29,16 @@ namespace task_manager {
 class ChildProcessResource : public Resource {
  public:
   ChildProcessResource(int process_type,
-                       const string16& name,
+                       const base::string16& name,
                        base::ProcessHandle handle,
-                       int unique_process_id);
+                       int unique_process_id,
+                       int nacl_debug_stub_port);
   virtual ~ChildProcessResource();
 
   // Resource methods:
-  virtual string16 GetTitle() const OVERRIDE;
-  virtual string16 GetProfileName() const OVERRIDE;
+  virtual int GetNaClDebugStubPort() const OVERRIDE;
+  virtual base::string16 GetTitle() const OVERRIDE;
+  virtual base::string16 GetProfileName() const OVERRIDE;
   virtual gfx::ImageSkia GetIcon() const OVERRIDE;
   virtual base::ProcessHandle GetProcess() const OVERRIDE;
   virtual int GetUniqueChildProcessId() const OVERRIDE;
@@ -50,14 +52,15 @@ class ChildProcessResource : public Resource {
  private:
   // Returns a localized title for the child process.  For example, a plugin
   // process would be "Plug-in: Flash" when name is "Flash".
-  string16 GetLocalizedTitle() const;
+  base::string16 GetLocalizedTitle() const;
 
   int process_type_;
-  string16 name_;
+  base::string16 name_;
   base::ProcessHandle handle_;
   int pid_;
   int unique_process_id_;
-  mutable string16 title_;
+  int nacl_debug_stub_port_;
+  mutable base::string16 title_;
   bool network_usage_support_;
 
   // The icon painted for the child processs.
@@ -72,13 +75,15 @@ gfx::ImageSkia* ChildProcessResource::default_icon_ = NULL;
 
 ChildProcessResource::ChildProcessResource(
     int process_type,
-    const string16& name,
+    const base::string16& name,
     base::ProcessHandle handle,
-    int unique_process_id)
+    int unique_process_id,
+    int nacl_debug_stub_port)
     : process_type_(process_type),
       name_(name),
       handle_(handle),
       unique_process_id_(unique_process_id),
+      nacl_debug_stub_port_(nacl_debug_stub_port),
       network_usage_support_(false) {
   // We cache the process id because it's not cheap to calculate, and it won't
   // be available when we get the plugin disconnected notification.
@@ -94,15 +99,19 @@ ChildProcessResource::~ChildProcessResource() {
 }
 
 // Resource methods:
-string16 ChildProcessResource::GetTitle() const {
+int ChildProcessResource::GetNaClDebugStubPort() const {
+  return nacl_debug_stub_port_;
+}
+
+base::string16 ChildProcessResource::GetTitle() const {
   if (title_.empty())
     title_ = GetLocalizedTitle();
 
   return title_;
 }
 
-string16 ChildProcessResource::GetProfileName() const {
-  return string16();
+base::string16 ChildProcessResource::GetProfileName() const {
+  return base::string16();
 }
 
 gfx::ImageSkia ChildProcessResource::GetIcon() const {
@@ -149,8 +158,8 @@ void ChildProcessResource::SetSupportNetworkUsage() {
   network_usage_support_ = true;
 }
 
-string16 ChildProcessResource::GetLocalizedTitle() const {
-  string16 title = name_;
+base::string16 ChildProcessResource::GetLocalizedTitle() const {
+  base::string16 title = name_;
   if (title.empty()) {
     switch (process_type_) {
       case content::PROCESS_TYPE_PLUGIN:
@@ -219,8 +228,8 @@ ChildProcessResourceProvider::~ChildProcessResourceProvider() {
 
 Resource* ChildProcessResourceProvider::GetResource(
     int origin_pid,
-    int render_process_host_id,
-    int routing_id) {
+    int child_id,
+    int route_id) {
   PidResourceMap::iterator iter = pid_to_resources_.find(origin_pid);
   if (iter != pid_to_resources_.end())
     return iter->second;
@@ -309,7 +318,8 @@ void ChildProcessResourceProvider::AddToTaskManager(
           child_process_data.process_type,
           child_process_data.name,
           child_process_data.handle,
-          child_process_data.id);
+          child_process_data.id,
+          child_process_data.nacl_debug_stub_port);
   resources_[child_process_data.handle] = resource;
   pid_to_resources_[resource->process_id()] = resource;
   task_manager_->AddResource(resource);

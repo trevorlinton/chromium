@@ -11,20 +11,21 @@
 
 #include "base/memory/singleton.h"
 #include "base/values.h"
-#include "chrome/browser/chromeos/input_method/input_method_engine.h"
-#include "chrome/browser/extensions/api/profile_keyed_api_factory.h"
-#include "chrome/browser/extensions/extension_function.h"
-#include "chrome/common/extensions/extension.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service.h"
+#include "chrome/browser/chromeos/input_method/input_method_engine_interface.h"
+#include "components/keyed_service/core/keyed_service.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
+#include "extensions/browser/browser_context_keyed_api_factory.h"
+#include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_function.h"
+#include "extensions/common/extension.h"
 
 class Profile;
 
 namespace chromeos {
-class InputMethodEngine;
+class InputMethodEngineInterface;
 class ImeObserver;
-}
+}  // namespace chromeos
 
 namespace extensions {
 struct InputComponentInfo;
@@ -37,9 +38,11 @@ class InputImeEventRouter {
                    const std::string& extension_id,
                    const extensions::InputComponentInfo& component);
   void UnregisterAllImes(Profile* profile, const std::string& extension_id);
-  chromeos::InputMethodEngine* GetEngine(const std::string& extension_id,
-                                         const std::string& engine_id);
-  chromeos::InputMethodEngine* GetActiveEngine(const std::string& extension_id);
+  chromeos::InputMethodEngineInterface* GetEngine(
+      const std::string& extension_id,
+      const std::string& engine_id);
+  chromeos::InputMethodEngineInterface* GetActiveEngine(
+      const std::string& extension_id);
 
 
   // Called when a key event was handled.
@@ -58,10 +61,9 @@ class InputImeEventRouter {
   InputImeEventRouter();
   ~InputImeEventRouter();
 
-  std::map<std::string, std::map<std::string, chromeos::InputMethodEngine*> >
-      engines_;
-  std::map<std::string, std::map<std::string, chromeos::ImeObserver*> >
-      observers_;
+  typedef std::map<std::string, chromeos::InputMethodEngineInterface*>
+      EngineMap;
+  std::map<std::string, EngineMap> engines_;
 
   unsigned int next_request_id_;
   RequestMap request_map_;
@@ -186,25 +188,53 @@ class InputImeKeyEventHandledFunction : public AsyncExtensionFunction {
   virtual bool RunImpl() OVERRIDE;
 };
 
-class InputImeAPI : public ProfileKeyedAPI,
-                    public content::NotificationObserver {
+class InputImeSendKeyEventsFunction : public AsyncExtensionFunction {
  public:
-  explicit InputImeAPI(Profile* profile);
+  DECLARE_EXTENSION_FUNCTION("input.ime.sendKeyEvents",
+                             INPUT_IME_SENDKEYEVENTS)
+
+ protected:
+  virtual ~InputImeSendKeyEventsFunction() {}
+
+  // ExtensionFunction:
+  virtual bool RunImpl() OVERRIDE;
+};
+
+class InputImeHideInputViewFunction : public AsyncExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("input.ime.hideInputView",
+                             INPUT_IME_HIDEINPUTVIEW)
+
+ protected:
+  virtual ~InputImeHideInputViewFunction() {}
+
+  // ExtensionFunction:
+  virtual bool RunImpl() OVERRIDE;
+};
+
+class InputImeAPI : public BrowserContextKeyedAPI,
+                    public content::NotificationObserver,
+                    public EventRouter::Observer {
+ public:
+  explicit InputImeAPI(content::BrowserContext* context);
   virtual ~InputImeAPI();
 
-  // ProfileKeyedAPI implementation.
-  static ProfileKeyedAPIFactory<InputImeAPI>* GetFactoryInstance();
+  // BrowserContextKeyedAPI implementation.
+  static BrowserContextKeyedAPIFactory<InputImeAPI>* GetFactoryInstance();
 
   // content::NotificationObserver implementation.
   virtual void Observe(int type,
                        const content::NotificationSource& source,
                        const content::NotificationDetails& details) OVERRIDE;
 
+  // EventRouter::Observer implementation.
+  virtual void OnListenerAdded(const EventListenerInfo& details) OVERRIDE;
+
  private:
-  friend class ProfileKeyedAPIFactory<InputImeAPI>;
+  friend class BrowserContextKeyedAPIFactory<InputImeAPI>;
   InputImeEventRouter* input_ime_event_router();
 
-  // ProfileKeyedAPI implementation.
+  // BrowserContextKeyedAPI implementation.
   static const char* service_name() {
     return "InputImeAPI";
   }

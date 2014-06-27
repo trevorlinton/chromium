@@ -6,6 +6,7 @@
 
 #include "base/logging.h"
 #include "base/strings/string_util.h"
+#include "content/child/request_extra_data.h"
 #include "content/common/fileapi/file_system_messages.h"
 #include "content/renderer/pepper/common.h"
 #include "content/renderer/pepper/host_globals.h"
@@ -27,17 +28,16 @@
 #include "third_party/WebKit/public/web/WebFrame.h"
 #include "url/gurl.h"
 #include "url/url_util.h"
-#include "webkit/child/weburlrequest_extradata_impl.h"
 
 using ppapi::Resource;
 using ppapi::URLRequestInfoData;
 using ppapi::thunk::EnterResourceNoLock;
-using WebKit::WebData;
-using WebKit::WebHTTPBody;
-using WebKit::WebString;
-using WebKit::WebFrame;
-using WebKit::WebURL;
-using WebKit::WebURLRequest;
+using blink::WebData;
+using blink::WebHTTPBody;
+using blink::WebString;
+using blink::WebFrame;
+using blink::WebURL;
+using blink::WebURLRequest;
 
 namespace content {
 
@@ -176,10 +176,11 @@ bool CreateWebURLRequest(PP_Instance instance,
 
   if (data->has_custom_user_agent) {
     bool was_after_preconnect_request = false;
-    dest->setExtraData(new webkit_glue::WebURLRequestExtraDataImpl(
-        WebKit::WebReferrerPolicyDefault,  // Ignored.
-        WebString::fromUTF8(data->custom_user_agent),
-        was_after_preconnect_request));
+    RequestExtraData* extra_data = new RequestExtraData();
+    extra_data->set_custom_user_agent(
+        WebString::fromUTF8(data->custom_user_agent));
+    extra_data->set_was_after_preconnect_request(was_after_preconnect_request);
+    dest->setExtraData(extra_data);
   }
 
   return true;

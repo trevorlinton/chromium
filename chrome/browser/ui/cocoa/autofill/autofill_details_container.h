@@ -18,6 +18,7 @@ class AutofillDialogViewDelegate;
 }
 
 @class InfoBubbleView;
+@class AutofillBubbleController;
 
 // UI controller for details for current payment instrument.
 @interface AutofillDetailsContainer
@@ -32,6 +33,11 @@ class AutofillDialogViewDelegate;
 
   // An info bubble to display validation errors.
   base::scoped_nsobject<InfoBubbleView> errorBubble_;
+
+  AutofillBubbleController* errorBubbleController_;
+
+  // The view the current error bubble is anchored to.
+  NSView* errorBubbleAnchorView_;
 
   autofill::AutofillDialogViewDelegate* delegate_;  // Not owned.
 }
@@ -50,6 +56,17 @@ class AutofillDialogViewDelegate;
 
 // Validate every visible details section.
 - (BOOL)validate;
+
+// Find the first visible and invalid user input field. Returns nil if no field
+// is found. Looks at both direct input fields and input fields in suggestions.
+- (NSControl*)firstInvalidField;
+
+// Finds the first visible user input field. Returns nil if no field is found.
+// Looks at both direct input fields and input fields in suggestions.
+- (NSControl*)firstVisibleField;
+
+// Positions the scrollview so that given |field| is visible.
+- (void)scrollToView:(NSView*)field;
 
 @end
 

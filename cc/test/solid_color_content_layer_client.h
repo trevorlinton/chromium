@@ -11,15 +11,16 @@
 
 namespace cc {
 
-class SolidColorContentLayerClient : public cc::ContentLayerClient {
+class SolidColorContentLayerClient : public ContentLayerClient {
  public:
   explicit SolidColorContentLayerClient(SkColor color) : color_(color) {}
 
   // ContentLayerClient implementation.
   virtual void DidChangeLayerCanUseLCDText() OVERRIDE {}
   virtual void PaintContents(SkCanvas* canvas,
-                             gfx::Rect rect,
+                             const gfx::Rect& rect,
                              gfx::RectF* opaque_rect) OVERRIDE;
+  virtual bool FillsBoundsCompletely() const OVERRIDE;
 
  private:
   SkColor color_;

@@ -82,13 +82,10 @@ ExynosVideoEncodeAccelerator::MfcInputRecord::MfcInputRecord()
 ExynosVideoEncodeAccelerator::MfcOutputRecord::MfcOutputRecord()
     : at_device(false), address(NULL), length(0) {}
 
-ExynosVideoEncodeAccelerator::ExynosVideoEncodeAccelerator(
-    media::VideoEncodeAccelerator::Client* client)
+ExynosVideoEncodeAccelerator::ExynosVideoEncodeAccelerator()
     : child_message_loop_proxy_(base::MessageLoopProxy::current()),
       weak_this_ptr_factory_(this),
       weak_this_(weak_this_ptr_factory_.GetWeakPtr()),
-      client_ptr_factory_(client),
-      client_(client_ptr_factory_.GetWeakPtr()),
       encoder_thread_("ExynosEncoderThread"),
       encoder_state_(kUninitialized),
       output_buffer_byte_size_(0),
@@ -106,28 +103,26 @@ ExynosVideoEncodeAccelerator::ExynosVideoEncodeAccelerator(
       mfc_output_streamon_(false),
       mfc_output_buffer_queued_count_(0),
       device_poll_thread_("ExynosEncoderDevicePollThread"),
-      device_poll_interrupt_fd_(-1) {
-  DCHECK(client_);
-}
+      device_poll_interrupt_fd_(-1) {}
 
 ExynosVideoEncodeAccelerator::~ExynosVideoEncodeAccelerator() {
   DCHECK(!encoder_thread_.IsRunning());
   DCHECK(!device_poll_thread_.IsRunning());
 
   if (device_poll_interrupt_fd_ != -1) {
-    HANDLE_EINTR(close(device_poll_interrupt_fd_));
+    close(device_poll_interrupt_fd_);
     device_poll_interrupt_fd_ = -1;
   }
   if (gsc_fd_ != -1) {
     DestroyGscInputBuffers();
     DestroyGscOutputBuffers();
-    HANDLE_EINTR(close(gsc_fd_));
+    close(gsc_fd_);
     gsc_fd_ = -1;
   }
   if (mfc_fd_ != -1) {
     DestroyMfcInputBuffers();
     DestroyMfcOutputBuffers();
-    HANDLE_EINTR(close(mfc_fd_));
+    close(mfc_fd_);
     mfc_fd_ = -1;
   }
 }
@@ -136,11 +131,15 @@ void ExynosVideoEncodeAccelerator::Initialize(
     media::VideoFrame::Format input_format,
     const gfx::Size& input_visible_size,
     media::VideoCodecProfile output_profile,
-    uint32 initial_bitrate) {
+    uint32 initial_bitrate,
+    Client* client) {
   DVLOG(3) << "Initialize(): input_format=" << input_format
            << ", input_visible_size=" << input_visible_size.ToString()
            << ", output_profile=" << output_profile
            << ", initial_bitrate=" << initial_bitrate;
+
+  client_ptr_factory_.reset(new base::WeakPtrFactory<Client>(client));
+  client_ = client_ptr_factory_->GetWeakPtr();
 
   DCHECK(child_message_loop_proxy_->BelongsToCurrentThread());
   DCHECK_EQ(encoder_state_, kUninitialized);
@@ -156,9 +155,6 @@ void ExynosVideoEncodeAccelerator::Initialize(
   output_visible_size_ = converted_visible_size_;
 
   switch (input_format) {
-    case media::VideoFrame::RGB32:
-      input_format_fourcc_ = V4L2_PIX_FMT_RGB32;
-      break;
     case media::VideoFrame::I420:
       input_format_fourcc_ = V4L2_PIX_FMT_YUV420M;
       break;
@@ -348,7 +344,7 @@ void ExynosVideoEncodeAccelerator::Destroy() {
   DCHECK(child_message_loop_proxy_->BelongsToCurrentThread());
 
   // We're destroying; cancel all callbacks.
-  client_ptr_factory_.InvalidateWeakPtrs();
+  client_ptr_factory_.reset();
 
   // If the encoder thread is running, destroy using posted task.
   if (encoder_thread_.IsRunning()) {
@@ -799,14 +795,6 @@ bool ExynosVideoEncodeAccelerator::EnqueueGscInputRecord() {
   qbuf.memory   = V4L2_MEMORY_USERPTR;
   qbuf.m.planes = qbuf_planes;
   switch (input_format_fourcc_) {
-    case V4L2_PIX_FMT_RGB32: {
-      qbuf.m.planes[0].bytesused = input_allocated_size_.GetArea() * 4;
-      qbuf.m.planes[0].length    = input_allocated_size_.GetArea() * 4;
-      qbuf.m.planes[0].m.userptr = reinterpret_cast<unsigned long>(
-          frame->data(media::VideoFrame::kRGBPlane));
-      qbuf.length = 1;
-      break;
-    }
     case V4L2_PIX_FMT_YUV420M: {
       qbuf.m.planes[0].bytesused = input_allocated_size_.GetArea();
       qbuf.m.planes[0].length    = input_allocated_size_.GetArea();
@@ -1119,7 +1107,7 @@ void ExynosVideoEncodeAccelerator::NotifyError(Error error) {
 
   if (client_) {
     client_->NotifyError(error);
-    client_ptr_factory_.InvalidateWeakPtrs();
+    client_ptr_factory_.reset();
   }
 }
 
@@ -1199,14 +1187,7 @@ bool ExynosVideoEncodeAccelerator::CreateGscInputBuffers() {
   memset(&control, 0, sizeof(control));
   control.id    = V4L2_CID_ALPHA_COMPONENT;
   control.value = 255;
-  if (HANDLE_EINTR(ioctl(gsc_fd_, VIDIOC_S_CTRL, &control)) != 0) {
-    // TODO(posciak): This is a  temporary hack and should be removed when
-    // all platforms migrate to kernel >=3.8.
-    memset(&control, 0, sizeof(control));
-    control.id    = V4L2_CID_GLOBAL_ALPHA;
-    control.value = 255;
-    IOCTL_OR_ERROR_RETURN_FALSE(gsc_fd_, VIDIOC_S_CTRL, &control);
-  }
+  IOCTL_OR_ERROR_RETURN_FALSE(gsc_fd_, VIDIOC_S_CTRL, &control);
 
   struct v4l2_format format;
   memset(&format, 0, sizeof(format));
@@ -1523,7 +1504,7 @@ void ExynosVideoEncodeAccelerator::DestroyMfcInputBuffers() {
     MfcInputRecord& input_record = mfc_input_buffer_map_[buf];
 
     for (size_t plane = 0; plane < arraysize(input_record.fd); ++plane)
-      HANDLE_EINTR(close(mfc_input_buffer_map_[buf].fd[plane]));
+      close(mfc_input_buffer_map_[buf].fd[plane]);
   }
 
   struct v4l2_requestbuffers reqbufs;

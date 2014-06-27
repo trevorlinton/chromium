@@ -8,8 +8,10 @@
 
 #include "base/logging.h"
 #include "ui/app_list/app_list_constants.h"
+#include "ui/app_list/app_list_switches.h"
 #include "ui/app_list/app_list_view_delegate.h"
 #include "ui/app_list/pagination_model.h"
+#include "ui/app_list/views/app_list_folder_view.h"
 #include "ui/app_list/views/app_list_main_view.h"
 #include "ui/app_list/views/apps_container_view.h"
 #include "ui/app_list/views/apps_grid_view.h"
@@ -47,7 +49,7 @@ SearchResultListView* GetSearchResultListView(views::ViewModel* model) {
 ContentsView::ContentsView(AppListMainView* app_list_main_view,
                            PaginationModel* pagination_model,
                            AppListModel* model,
-                           content::WebContents* start_page_contents)
+                           AppListViewDelegate* view_delegate)
     : show_state_(SHOW_APPS),
       pagination_model_(pagination_model),
       view_model_(new views::ViewModel),
@@ -57,13 +59,13 @@ ContentsView::ContentsView(AppListMainView* app_list_main_view,
       kPageTransitionDurationInMs,
       kOverscrollPageTransitionDurationMs);
 
-  apps_container_view_ = new AppsContainerView(
-      app_list_main_view, pagination_model, model, start_page_contents);
+  apps_container_view_ =
+      new AppsContainerView(app_list_main_view, pagination_model, model);
   AddChildView(apps_container_view_);
   view_model_->Add(apps_container_view_, kIndexAppsContainer);
 
   SearchResultListView* search_results_view = new SearchResultListView(
-      app_list_main_view);
+      app_list_main_view, view_delegate);
   AddChildView(search_results_view);
   view_model_->Add(search_results_view, kIndexSearchResults);
 
@@ -76,12 +78,17 @@ ContentsView::~ContentsView() {
 void ContentsView::CancelDrag() {
   if (apps_container_view_->apps_grid_view()->has_dragged_view())
     apps_container_view_->apps_grid_view()->EndDrag(true);
+  if (apps_container_view_->app_list_folder_view()
+          ->items_grid_view()
+          ->has_dragged_view()) {
+    apps_container_view_->app_list_folder_view()->items_grid_view()->EndDrag(
+        true);
+  }
 }
 
 void ContentsView::SetDragAndDropHostOfCurrentAppList(
     ApplicationDragAndDropHost* drag_and_drop_host) {
-  apps_container_view_->apps_grid_view()->
-      SetDragAndDropHostOfCurrentAppList(drag_and_drop_host);
+  apps_container_view_->SetDragAndDropHostOfCurrentAppList(drag_and_drop_host);
 }
 
 void ContentsView::SetShowState(ShowState show_state) {
@@ -93,13 +100,12 @@ void ContentsView::SetShowState(ShowState show_state) {
 }
 
 void ContentsView::ShowStateChanged() {
-  if (show_state_ == SHOW_SEARCH_RESULTS) {
-    // TODO(xiyuan): Highlight default match instead of the first.
-    SearchResultListView* results_view =
-        GetSearchResultListView(view_model_.get());
-    if (results_view->visible())
-      results_view->SetSelectedIndex(0);
-  }
+  SearchResultListView* results_view =
+      GetSearchResultListView(view_model_.get());
+  // TODO(xiyuan): Highlight default match instead of the first.
+  if (show_state_ == SHOW_SEARCH_RESULTS && results_view->visible())
+    results_view->SetSelectedIndex(0);
+  results_view->UpdateAutoLaunchState();
 
   AnimateToIdealBounds();
 }
@@ -108,6 +114,31 @@ void ContentsView::CalculateIdealBounds() {
   gfx::Rect rect(GetContentsBounds());
   if (rect.IsEmpty())
     return;
+
+  if (app_list::switches::IsExperimentalAppListEnabled()) {
+    int incoming_view_index = 0;
+    switch (show_state_) {
+      case SHOW_APPS:
+        incoming_view_index = kIndexAppsContainer;
+        break;
+      case SHOW_SEARCH_RESULTS:
+        incoming_view_index = kIndexSearchResults;
+        break;
+      default:
+        NOTREACHED();
+    }
+
+    gfx::Rect incoming_target(rect);
+    gfx::Rect outgoing_target(rect);
+    outgoing_target.set_y(-outgoing_target.height());
+
+    for (int i = 0; i < view_model_->view_size(); ++i) {
+      view_model_->set_ideal_bounds(i,
+                                    i == incoming_view_index ? incoming_target
+                                                             : outgoing_target);
+    }
+    return;
+  }
 
   gfx::Rect container_frame(rect);
   gfx::Rect results_frame(rect);

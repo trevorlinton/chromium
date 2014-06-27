@@ -65,7 +65,7 @@ class VisitedLink : public testing::Test {
  protected:
   base::FilePath db_path_;
   virtual void SetUp() {
-    ASSERT_TRUE(file_util::CreateTemporaryFile(&db_path_));
+    ASSERT_TRUE(base::CreateTemporaryFile(&db_path_));
   }
   virtual void TearDown() {
     base::DeleteFile(db_path_, false);
@@ -144,7 +144,7 @@ TEST_F(VisitedLink, TestLoad) {
   std::vector<double> hot_load_times;
   for (int i = 0; i < load_count; i++) {
     // make sure the file has to be re-loaded
-    file_util::EvictFileFromSystemCache(db_path_);
+    base::EvictFileFromSystemCache(db_path_);
 
     // cold load (no OS cache, hopefully)
     {

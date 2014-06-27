@@ -13,14 +13,14 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/threading/sequenced_worker_pool.h"
-#include "chrome/browser/policy/cloud/cloud_policy_constants.h"
-#include "chrome/browser/policy/cloud/mock_cloud_policy_store.h"
-#include "chrome/browser/policy/cloud/policy_builder.h"
-#include "chrome/browser/policy/proto/cloud/device_management_local.pb.h"
 #include "chromeos/dbus/mock_cryptohome_client.h"
 #include "chromeos/dbus/mock_session_manager_client.h"
+#include "components/policy/core/common/cloud/cloud_policy_constants.h"
+#include "components/policy/core/common/cloud/mock_cloud_policy_store.h"
+#include "components/policy/core/common/cloud/policy_builder.h"
 #include "policy/policy_constants.h"
 #include "policy/proto/cloud_policy.pb.h"
+#include "policy/proto/device_management_local.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -41,7 +41,8 @@ namespace {
 
 const char kLegacyDeviceId[] = "legacy-device-id";
 const char kLegacyToken[] = "legacy-token";
-const char kSanitizedUsername[] = "0123456789ABCDEF0123456789ABCDEF012345678";
+const char kSanitizedUsername[] =
+    "0123456789ABCDEF0123456789ABCDEF012345678@example.com";
 const char kDefaultHomepage[] = "http://chromium.org";
 
 ACTION_P2(SendSanitizedUsername, call_status, sanitized_username) {
@@ -51,8 +52,7 @@ ACTION_P2(SendSanitizedUsername, call_status, sanitized_username) {
 
 class UserCloudPolicyStoreChromeOSTest : public testing::Test {
  protected:
-  UserCloudPolicyStoreChromeOSTest()
-      : loop_(base::MessageLoop::TYPE_UI) {}
+  UserCloudPolicyStoreChromeOSTest() {}
 
   virtual void SetUp() OVERRIDE {
     EXPECT_CALL(cryptohome_client_,
@@ -125,11 +125,11 @@ class UserCloudPolicyStoreChromeOSTest : public testing::Test {
   }
 
   void StoreUserPolicyKey(const std::vector<uint8>& public_key) {
-    ASSERT_TRUE(file_util::CreateDirectory(user_policy_key_file().DirName()));
+    ASSERT_TRUE(base::CreateDirectory(user_policy_key_file().DirName()));
     ASSERT_TRUE(
-        file_util::WriteFile(user_policy_key_file(),
-                             reinterpret_cast<const char*>(public_key.data()),
-                             public_key.size()));
+        base::WriteFile(user_policy_key_file(),
+                        reinterpret_cast<const char*>(public_key.data()),
+                        public_key.size()));
   }
 
   // Stores the current |policy_| and verifies that it is published.
@@ -159,7 +159,7 @@ class UserCloudPolicyStoreChromeOSTest : public testing::Test {
       previous_policy.Set(key::kHomepageLocation,
                           POLICY_LEVEL_MANDATORY,
                           POLICY_SCOPE_USER,
-                          base::Value::CreateStringValue(previous_value), NULL);
+                          new base::StringValue(previous_value), NULL);
     }
     EXPECT_TRUE(previous_policy.Equals(store_->policy_map()));
     EXPECT_EQ(CloudPolicyStore::STATUS_OK, store_->status());
@@ -220,7 +220,7 @@ class UserCloudPolicyStoreChromeOSTest : public testing::Test {
     return tmp_dir_.path().AppendASCII("policy");
   }
 
-  base::MessageLoop loop_;
+  base::MessageLoopForUI loop_;
   chromeos::MockCryptohomeClient cryptohome_client_;
   chromeos::MockSessionManagerClient session_manager_client_;
   UserPolicyBuilder policy_;
@@ -400,12 +400,12 @@ TEST_F(UserCloudPolicyStoreChromeOSTest, MigrationFull) {
   credentials.set_device_token(kLegacyToken);
   credentials.set_device_id(kLegacyDeviceId);
   ASSERT_TRUE(credentials.SerializeToString(&data));
-  ASSERT_NE(-1, file_util::WriteFile(token_file(), data.c_str(), data.size()));
+  ASSERT_NE(-1, base::WriteFile(token_file(), data.c_str(), data.size()));
 
   em::CachedCloudPolicyResponse cached_policy;
   cached_policy.mutable_cloud_policy()->CopyFrom(policy_.policy());
   ASSERT_TRUE(cached_policy.SerializeToString(&data));
-  ASSERT_NE(-1, file_util::WriteFile(policy_file(), data.c_str(), data.size()));
+  ASSERT_NE(-1, base::WriteFile(policy_file(), data.c_str(), data.size()));
 
   EXPECT_CALL(observer_, OnStoreLoaded(store_.get()));
   ASSERT_NO_FATAL_FAILURE(PerformPolicyLoad(""));
@@ -432,7 +432,7 @@ TEST_F(UserCloudPolicyStoreChromeOSTest, MigrationNoToken) {
   em::CachedCloudPolicyResponse cached_policy;
   cached_policy.mutable_cloud_policy()->CopyFrom(policy_.policy());
   ASSERT_TRUE(cached_policy.SerializeToString(&data));
-  ASSERT_NE(-1, file_util::WriteFile(policy_file(), data.c_str(), data.size()));
+  ASSERT_NE(-1, base::WriteFile(policy_file(), data.c_str(), data.size()));
 
   EXPECT_CALL(observer_, OnStoreLoaded(store_.get()));
   ASSERT_NO_FATAL_FAILURE(PerformPolicyLoad(""));
@@ -457,7 +457,7 @@ TEST_F(UserCloudPolicyStoreChromeOSTest, MigrationNoPolicy) {
   credentials.set_device_token(kLegacyToken);
   credentials.set_device_id(kLegacyDeviceId);
   ASSERT_TRUE(credentials.SerializeToString(&data));
-  ASSERT_NE(-1, file_util::WriteFile(token_file(), data.c_str(), data.size()));
+  ASSERT_NE(-1, base::WriteFile(token_file(), data.c_str(), data.size()));
 
   EXPECT_CALL(observer_, OnStoreLoaded(store_.get()));
   ASSERT_NO_FATAL_FAILURE(PerformPolicyLoad(""));
@@ -482,7 +482,7 @@ TEST_F(UserCloudPolicyStoreChromeOSTest, MigrationAndStoreNew) {
   em::CachedCloudPolicyResponse cached_policy;
   cached_policy.mutable_cloud_policy()->CopyFrom(policy_.policy());
   ASSERT_TRUE(cached_policy.SerializeToString(&data));
-  ASSERT_NE(-1, file_util::WriteFile(policy_file(), data.c_str(), data.size()));
+  ASSERT_NE(-1, base::WriteFile(policy_file(), data.c_str(), data.size()));
 
   EXPECT_CALL(observer_, OnStoreLoaded(store_.get()));
   ASSERT_NO_FATAL_FAILURE(PerformPolicyLoad(""));
@@ -600,7 +600,7 @@ TEST_F(UserCloudPolicyStoreChromeOSTest, LoadImmediatelyNoUserPolicyKey) {
       .WillOnce(Return(policy_.GetBlob()));
   EXPECT_CALL(cryptohome_client_,
               BlockingGetSanitizedUsername(PolicyBuilder::kFakeUsername))
-      .WillOnce(Return("wrong"));
+      .WillOnce(Return("wrong@example.com"));
 
   EXPECT_FALSE(store_->policy());
   store_->LoadImmediately();

@@ -11,19 +11,18 @@
 #include "chrome/browser/ui/omnibox/omnibox_popup_model.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/ui/views/omnibox/omnibox_views.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "grit/generated_resources.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/base/test/ui_controls.h"
-#include "ui/views/controls/textfield/native_textfield_wrapper.h"
 
 #if defined(USE_AURA)
-#include "ui/aura/root_window.h"
-#include "ui/aura/root_window_host_delegate.h"
+#include "ui/aura/test/event_generator.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_tree_host.h"
+#include "ui/events/event_processor.h"
 #endif // defined(USE_AURA)
 
 class OmniboxViewViewsTest : public InProcessBrowserTest {
@@ -36,7 +35,7 @@ class OmniboxViewViewsTest : public InProcessBrowserTest {
     ASSERT_TRUE(window);
     LocationBar* location_bar = window->GetLocationBar();
     ASSERT_TRUE(location_bar);
-    *omnibox_view = location_bar->GetLocationEntry();
+    *omnibox_view = location_bar->GetOmniboxView();
     ASSERT_TRUE(*omnibox_view);
   }
 
@@ -68,35 +67,28 @@ class OmniboxViewViewsTest : public InProcessBrowserTest {
 #if defined(USE_AURA)
   // Tap the center of the browser window.
   void TapBrowserWindowCenter() {
-    aura::RootWindowHostDelegate* rwhd =
-        browser()->window()->GetNativeWindow()->GetRootWindow()->
-        GetDispatcher()->AsRootWindowHostDelegate();
-
     gfx::Point center = BrowserView::GetBrowserViewForBrowser(
         browser())->GetBoundsInScreen().CenterPoint();
-    ui::TouchEvent press(ui::ET_TOUCH_PRESSED, center,
-                         5, base::TimeDelta::FromMilliseconds(0));
-    rwhd->OnHostTouchEvent(&press);
-
-    ui::TouchEvent release(ui::ET_TOUCH_RELEASED, center,
-                           5, base::TimeDelta::FromMilliseconds(50));
-    rwhd->OnHostTouchEvent(&release);
+    aura::test::EventGenerator generator(browser()->window()->
+        GetNativeWindow()->GetRootWindow());
+    generator.GestureTapAt(center);
   }
 
   // Touch down and release at the specified locations.
   void Tap(const gfx::Point& press_location,
            const gfx::Point& release_location) {
-    aura::RootWindowHostDelegate* rwhd =
-        browser()->window()->GetNativeWindow()->GetRootWindow()->
-        GetDispatcher()->AsRootWindowHostDelegate();
+    ui::EventProcessor* dispatcher =
+        browser()->window()->GetNativeWindow()->GetHost()->event_processor();
 
     ui::TouchEvent press(ui::ET_TOUCH_PRESSED, press_location,
                          5, base::TimeDelta::FromMilliseconds(0));
-    rwhd->OnHostTouchEvent(&press);
+    ui::EventDispatchDetails details = dispatcher->OnEventFromSource(&press);
+    ASSERT_FALSE(details.dispatcher_destroyed);
 
     ui::TouchEvent release(ui::ET_TOUCH_RELEASED, release_location,
                            5, base::TimeDelta::FromMilliseconds(50));
-    rwhd->OnHostTouchEvent(&release);
+    details = dispatcher->OnEventFromSource(&release);
+    ASSERT_FALSE(details.dispatcher_destroyed);
   }
 #endif // defined(USE_AURA)
 
@@ -112,27 +104,18 @@ class OmniboxViewViewsTest : public InProcessBrowserTest {
 };
 
 IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, PasteAndGoDoesNotLeavePopupOpen) {
-  OmniboxView* view = browser()->window()->GetLocationBar()->GetLocationEntry();
-  OmniboxViewViews* omnibox_view_views = GetOmniboxViewViews(view);
-  // This test is only relevant when OmniboxViewViews is present and is using
-  // the native textfield wrapper.
-  if (!omnibox_view_views)
-    return;
-  views::NativeTextfieldWrapper* native_textfield_wrapper =
-      static_cast<views::NativeTextfieldWrapper*>(
-          omnibox_view_views->GetNativeWrapperForTesting());
-  if (!native_textfield_wrapper)
-    return;
+  OmniboxView* view = browser()->window()->GetLocationBar()->GetOmniboxView();
+  OmniboxViewViews* omnibox_view_views = static_cast<OmniboxViewViews*>(view);
 
   // Put an URL on the clipboard.
   {
     ui::ScopedClipboardWriter clipboard_writer(
         ui::Clipboard::GetForCurrentThread(), ui::CLIPBOARD_TYPE_COPY_PASTE);
-    clipboard_writer.WriteURL(ASCIIToUTF16("http://www.example.com/"));
+    clipboard_writer.WriteURL(base::ASCIIToUTF16("http://www.example.com/"));
   }
 
   // Paste and go.
-  native_textfield_wrapper->ExecuteTextCommand(IDS_PASTE_AND_GO);
+  omnibox_view_views->ExecuteCommand(IDS_PASTE_AND_GO, ui::EF_NONE);
 
   // The popup should not be open.
   EXPECT_FALSE(view->model()->popup_model()->IsOpen());
@@ -141,7 +124,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, PasteAndGoDoesNotLeavePopupOpen) {
 IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, SelectAllOnClick) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxViewForBrowser(browser(), &omnibox_view));
-  omnibox_view->SetUserText(ASCIIToUTF16("http://www.google.com/"));
+  omnibox_view->SetUserText(base::ASCIIToUTF16("http://www.google.com/"));
 
   // Take the focus away from the omnibox.
   ASSERT_NO_FATAL_FAILURE(ClickBrowserWindowCenter());
@@ -197,7 +180,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, SelectAllOnClick) {
 IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, SelectAllOnTap) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxViewForBrowser(browser(), &omnibox_view));
-  omnibox_view->SetUserText(ASCIIToUTF16("http://www.google.com/"));
+  omnibox_view->SetUserText(base::ASCIIToUTF16("http://www.google.com/"));
 
   // Take the focus away from the omnibox.
   ASSERT_NO_FATAL_FAILURE(TapBrowserWindowCenter());

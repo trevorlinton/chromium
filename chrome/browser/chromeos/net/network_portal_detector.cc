@@ -16,16 +16,19 @@ namespace chromeos {
 
 namespace {
 
+const char kCaptivePortalStatusUnknown[] = "Unknown";
+const char kCaptivePortalStatusOffline[] = "Offline";
+const char kCaptivePortalStatusOnline[]  = "Online";
+const char kCaptivePortalStatusPortal[]  = "Portal";
+const char kCaptivePortalStatusProxyAuthRequired[] =
+    "Proxy authentication required";
+const char kCaptivePortalStatusUnrecognized[] = "Unrecognized";
+
 NetworkPortalDetector* g_network_portal_detector = NULL;
 bool g_network_portal_detector_set_for_testing = false;
 
 bool IsTestMode() {
   return CommandLine::ForCurrentProcess()->HasSwitch(::switches::kTestType);
-}
-
-bool IsEnabledInCommandLine() {
-  return !CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kDisableChromeCaptivePortalDetector);
 }
 
 // Stub implementation of NetworkPortalDetector.
@@ -39,26 +42,29 @@ class NetworkPortalDetectorStubImpl : public NetworkPortalDetector {
   }
   virtual void RemoveObserver(Observer* /* observer */) OVERRIDE {}
   virtual CaptivePortalState GetCaptivePortalState(
-      const NetworkState* /* network */) OVERRIDE {
+      const std::string& /* service_path */) OVERRIDE {
     return CaptivePortalState();
   }
   virtual bool IsEnabled() OVERRIDE { return false; }
   virtual void Enable(bool /* start_detection */) OVERRIDE {}
   virtual bool StartDetectionIfIdle() OVERRIDE { return false; }
-  virtual void EnableLazyDetection() OVERRIDE {}
-  virtual void DisableLazyDetection() OVERRIDE {}
 };
 
 }  // namespace
 
 void NetworkPortalDetector::InitializeForTesting(
     NetworkPortalDetector* network_portal_detector) {
-  CHECK(!g_network_portal_detector)
-      << "NetworkPortalDetector::InitializeForTesting() is called after "
-      << "Initialize()";
-  CHECK(network_portal_detector);
-  g_network_portal_detector = network_portal_detector;
-  g_network_portal_detector_set_for_testing = true;
+  if (network_portal_detector) {
+    CHECK(!g_network_portal_detector_set_for_testing)
+        << "NetworkPortalDetector::InitializeForTesting is called twice";
+    CHECK(network_portal_detector);
+    delete g_network_portal_detector;
+    g_network_portal_detector = network_portal_detector;
+    g_network_portal_detector_set_for_testing = true;
+  } else {
+    g_network_portal_detector = NULL;
+    g_network_portal_detector_set_for_testing = false;
+  }
 }
 
 // static
@@ -67,7 +73,7 @@ void NetworkPortalDetector::Initialize() {
     return;
   CHECK(!g_network_portal_detector)
       << "NetworkPortalDetector::Initialize() is called twice";
-  if (!IsEnabledInCommandLine() || IsTestMode()) {
+  if (IsTestMode()) {
     g_network_portal_detector = new NetworkPortalDetectorStubImpl();
   } else {
     CHECK(g_browser_process);
@@ -82,16 +88,39 @@ void NetworkPortalDetector::Shutdown() {
   CHECK(g_network_portal_detector || g_network_portal_detector_set_for_testing)
       << "NetworkPortalDetectorImpl::Shutdown() is called "
       << "without previous call to Initialize()";
-  if (g_network_portal_detector) {
-    delete g_network_portal_detector;
-    g_network_portal_detector = NULL;
-  }
+  delete g_network_portal_detector;
+  g_network_portal_detector = NULL;
 }
 
 // static
 NetworkPortalDetector* NetworkPortalDetector::Get() {
   CHECK(g_network_portal_detector)
       << "NetworkPortalDetector::Get() called before Initialize()";
+  return g_network_portal_detector;
+}
+
+// static
+std::string NetworkPortalDetector::CaptivePortalStatusString(
+    CaptivePortalStatus status) {
+  switch (status) {
+    case NetworkPortalDetectorImpl::CAPTIVE_PORTAL_STATUS_UNKNOWN:
+      return kCaptivePortalStatusUnknown;
+    case NetworkPortalDetectorImpl::CAPTIVE_PORTAL_STATUS_OFFLINE:
+      return kCaptivePortalStatusOffline;
+    case NetworkPortalDetectorImpl::CAPTIVE_PORTAL_STATUS_ONLINE:
+      return kCaptivePortalStatusOnline;
+    case NetworkPortalDetectorImpl::CAPTIVE_PORTAL_STATUS_PORTAL:
+      return kCaptivePortalStatusPortal;
+    case NetworkPortalDetectorImpl::CAPTIVE_PORTAL_STATUS_PROXY_AUTH_REQUIRED:
+      return kCaptivePortalStatusProxyAuthRequired;
+    case NetworkPortalDetectorImpl::CAPTIVE_PORTAL_STATUS_COUNT:
+      NOTREACHED();
+  }
+  return kCaptivePortalStatusUnrecognized;
+}
+
+// static
+bool NetworkPortalDetector::IsInitialized() {
   return g_network_portal_detector;
 }
 

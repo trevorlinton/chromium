@@ -55,7 +55,7 @@ std::string GetMd5(const std::string& value) {
 
 base::FilePath GetConfigPath() {
   std::string filename = "host#" + GetMd5(net::GetHostName()) + ".json";
-  return file_util::GetHomeDir().
+  return base::GetHomeDir().
       Append(".config/chrome-remote-desktop").Append(filename);
 }
 
@@ -114,8 +114,7 @@ bool RunHostScriptWithTimeout(
   return true;
 }
 
-bool RunHostScript(const std::vector<std::string>& args,
-                          int* exit_code) {
+bool RunHostScript(const std::vector<std::string>& args, int* exit_code) {
   return RunHostScriptWithTimeout(
       args, base::TimeDelta::FromMilliseconds(kDaemonTimeoutMs), exit_code);
 }
@@ -129,20 +128,43 @@ DaemonControllerDelegateLinux::~DaemonControllerDelegateLinux() {
 }
 
 DaemonController::State DaemonControllerDelegateLinux::GetState() {
-  std::vector<std::string> args;
-  args.push_back("--check-running");
+  base::FilePath script_path;
+  if (!GetScriptPath(&script_path)) {
+    return DaemonController::STATE_NOT_IMPLEMENTED;
+  }
+  CommandLine command_line(script_path);
+  command_line.AppendArg("--get-status");
+
+  std::string status;
   int exit_code = 0;
-  if (!RunHostScript(args, &exit_code)) {
+  bool result =
+      base::GetAppOutputWithExitCode(command_line, &status, &exit_code);
+  if (!result) {
     // TODO(jamiewalch): When we have a good story for installing, return
     // NOT_INSTALLED rather than NOT_IMPLEMENTED (the former suppresses
     // the relevant UI in the web-app).
     return DaemonController::STATE_NOT_IMPLEMENTED;
   }
 
-  if (exit_code == 0) {
+  if (exit_code != 0) {
+    LOG(ERROR) << "Failed to run \"" << command_line.GetCommandLineString()
+               << "\". Exit code: " << exit_code;
+    return DaemonController::STATE_UNKNOWN;
+  }
+
+  base::TrimWhitespaceASCII(status, base::TRIM_ALL, &status);
+
+  if (status == "STARTED") {
     return DaemonController::STATE_STARTED;
-  } else {
+  } else if (status == "STOPPED") {
     return DaemonController::STATE_STOPPED;
+  } else if (status == "NOT_IMPLEMENTED") {
+    return DaemonController::STATE_NOT_IMPLEMENTED;
+  } else {
+    LOG(ERROR) << "Unknown status string returned from  \""
+               << command_line.GetCommandLineString()
+               << "\": " << status;
+    return DaemonController::STATE_UNKNOWN;
   }
 }
 
@@ -187,7 +209,7 @@ void DaemonControllerDelegateLinux::SetConfigAndStart(
   // Ensure the configuration directory exists.
   base::FilePath config_dir = GetConfigPath().DirName();
   if (!base::DirectoryExists(config_dir) &&
-      !file_util::CreateDirectory(config_dir)) {
+      !base::CreateDirectory(config_dir)) {
     LOG(ERROR) << "Failed to create config directory " << config_dir.value();
     done.Run(DaemonController::RESULT_FAILED);
     return;
@@ -268,8 +290,8 @@ std::string DaemonControllerDelegateLinux::GetVersion() {
     return std::string();
   }
 
-  TrimWhitespaceASCII(version, TRIM_ALL, &version);
-  if (!ContainsOnlyChars(version, "0123456789.")) {
+  base::TrimWhitespaceASCII(version, base::TRIM_ALL, &version);
+  if (!base::ContainsOnlyChars(version, "0123456789.")) {
     LOG(ERROR) << "Received invalid host version number: " << version;
     return std::string();
   }

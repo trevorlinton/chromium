@@ -13,6 +13,7 @@
 #include "base/path_service.h"
 #include "base/process/launch.h"
 #include "base/win/registry.h"
+#include "cloud_print/common/win/cloud_print_utils.h"
 
 namespace cloud_print {
 
@@ -24,9 +25,15 @@ const wchar_t kClientStateKey[] = L"SOFTWARE\\Google\\Update\\ClientState\\";
 const wchar_t* kUsageKey = L"dr";
 const wchar_t kVersionKey[] = L"pv";
 const wchar_t kNameKey[] = L"name";
-const DWORD kInstallerResultFailedCustomError = 1;
+
+enum InstallerResult {
+  INSTALLER_RESULT_FAILED_CUSTOM_ERROR = 1,
+  INSTALLER_RESULT_FAILED_SYSTEM_ERROR = 3,
+};
+
 const wchar_t kRegValueInstallerResult[] = L"InstallerResult";
 const wchar_t kRegValueInstallerResultUIString[] = L"InstallerResultUIString";
+const wchar_t kRegValueInstallerError[] = L"InstallerError";
 
 // Uninstall related constants.
 const wchar_t kUninstallKey[] =
@@ -43,8 +50,8 @@ const wchar_t kNoRepair[] = L"NoRepair";
 }  // namespace
 
 
-void SetGoogleUpdateKeys(const string16& product_id,
-                         const string16& product_name) {
+void SetGoogleUpdateKeys(const base::string16& product_id,
+                         const base::string16& product_name) {
   base::win::RegKey key;
   if (key.Create(HKEY_LOCAL_MACHINE,
                  (cloud_print::kClientsKey + product_id).c_str(),
@@ -53,7 +60,7 @@ void SetGoogleUpdateKeys(const string16& product_id,
   }
 
   // Get the version from the resource file.
-  string16 version_string;
+  base::string16 version_string;
   scoped_ptr<FileVersionInfo> version_info(
       FileVersionInfo::CreateFileVersionInfoForCurrentModule());
 
@@ -73,7 +80,8 @@ void SetGoogleUpdateKeys(const string16& product_id,
   }
 }
 
-void SetGoogleUpdateError(const string16& product_id, const string16& message) {
+void SetGoogleUpdateError(const base::string16& product_id,
+                          const base::string16& message) {
   LOG(ERROR) << message;
   base::win::RegKey key;
   if (key.Create(HKEY_LOCAL_MACHINE,
@@ -83,14 +91,30 @@ void SetGoogleUpdateError(const string16& product_id, const string16& message) {
   }
 
   if (key.WriteValue(kRegValueInstallerResult,
-                     kInstallerResultFailedCustomError) != ERROR_SUCCESS ||
+                     INSTALLER_RESULT_FAILED_CUSTOM_ERROR) != ERROR_SUCCESS ||
       key.WriteValue(kRegValueInstallerResultUIString,
                      message.c_str()) != ERROR_SUCCESS) {
       LOG(ERROR) << "Unable to set registry keys";
   }
 }
 
-void DeleteGoogleUpdateKeys(const string16& product_id) {
+void SetGoogleUpdateError(const base::string16& product_id, HRESULT hr) {
+  LOG(ERROR) << cloud_print::GetErrorMessage(hr);
+  base::win::RegKey key;
+  if (key.Create(HKEY_LOCAL_MACHINE,
+    (cloud_print::kClientStateKey + product_id).c_str(),
+    KEY_SET_VALUE) != ERROR_SUCCESS) {
+    LOG(ERROR) << "Unable to open key";
+  }
+
+  if (key.WriteValue(kRegValueInstallerResult,
+                     INSTALLER_RESULT_FAILED_SYSTEM_ERROR) != ERROR_SUCCESS ||
+      key.WriteValue(kRegValueInstallerError, hr) != ERROR_SUCCESS) {
+    LOG(ERROR) << "Unable to set registry keys";
+  }
+}
+
+void DeleteGoogleUpdateKeys(const base::string16& product_id) {
   base::win::RegKey key;
   if (key.Open(HKEY_LOCAL_MACHINE,
                (cloud_print::kClientsKey + product_id).c_str(),
@@ -103,8 +127,8 @@ void DeleteGoogleUpdateKeys(const string16& product_id) {
   }
 }
 
-void CreateUninstallKey(const string16& uninstall_id,
-                        const string16& product_name,
+void CreateUninstallKey(const base::string16& uninstall_id,
+                        const base::string16& product_name,
                         const std::string& uninstall_switch) {
   // Now write the Windows Uninstall entries
   // Minimal error checking here since the install can continue
@@ -146,12 +170,12 @@ void CreateUninstallKey(const string16& uninstall_id,
   key.WriteValue(kNoRepair, 1);
 }
 
-void DeleteUninstallKey(const string16& uninstall_id) {
+void DeleteUninstallKey(const base::string16& uninstall_id) {
   ::RegDeleteKey(HKEY_LOCAL_MACHINE,
                  (cloud_print::kUninstallKey + uninstall_id).c_str());
 }
 
-base::FilePath GetInstallLocation(const string16& uninstall_id) {
+base::FilePath GetInstallLocation(const base::string16& uninstall_id) {
   base::win::RegKey key;
   if (key.Open(HKEY_LOCAL_MACHINE,
                (cloud_print::kUninstallKey + uninstall_id).c_str(),
@@ -159,7 +183,7 @@ base::FilePath GetInstallLocation(const string16& uninstall_id) {
     // Not installed.
     return base::FilePath();
   }
-  string16 install_path_value;
+  base::string16 install_path_value;
   key.ReadValue(kInstallLocation, &install_path_value);
   return base::FilePath(install_path_value);
 }
@@ -172,7 +196,7 @@ void DeleteProgramDir(const std::string& delete_switch) {
   if (!IsProgramsFilesParent(installer_source))
     return;
   base::FilePath temp_path;
-  if (!file_util::CreateTemporaryFile(&temp_path))
+  if (!base::CreateTemporaryFile(&temp_path))
     return;
   base::CopyFile(installer_source, temp_path);
   base::DeleteFileAfterReboot(temp_path);

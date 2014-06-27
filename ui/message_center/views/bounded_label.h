@@ -33,8 +33,8 @@ class BoundedLabelTest;
 // bounded_label.cc file for details.
 class MESSAGE_CENTER_EXPORT BoundedLabel : public views::View {
  public:
-  BoundedLabel(const string16& text, const gfx::FontList& font_list);
-  BoundedLabel(const string16& text);
+  BoundedLabel(const base::string16& text, const gfx::FontList& font_list);
+  BoundedLabel(const base::string16& text);
   virtual ~BoundedLabel();
 
   void SetColors(SkColor textColor, SkColor backgroundColor);
@@ -54,7 +54,7 @@ class MESSAGE_CENTER_EXPORT BoundedLabel : public views::View {
   virtual int GetHeightForWidth(int width) OVERRIDE;
   virtual void Paint(gfx::Canvas* canvas) OVERRIDE;
   virtual bool HitTestRect(const gfx::Rect& rect) const OVERRIDE;
-  virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE;
+  virtual void GetAccessibleState(ui::AXViewState* state) OVERRIDE;
 
  protected:
   // Overridden from views::View.
@@ -64,7 +64,7 @@ class MESSAGE_CENTER_EXPORT BoundedLabel : public views::View {
  private:
   friend class test::BoundedLabelTest;
 
-  string16 GetWrappedTextForTest(int width, int lines);
+  base::string16 GetWrappedTextForTest(int width, int lines);
 
   scoped_ptr<InnerBoundedLabel> label_;
   int line_limit_;

@@ -5,7 +5,6 @@
 #include <string>
 
 
-#include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
@@ -19,7 +18,6 @@
 #include "chrome/browser/chromeos/settings/stub_cros_settings_provider.h"
 #include "chrome/browser/managed_mode/managed_user_registration_utility.h"
 #include "chrome/browser/managed_mode/managed_user_registration_utility_stub.h"
-#include "chrome/common/chrome_switches.h"
 #include "chromeos/cryptohome/mock_async_method_caller.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/browser_test_utils.h"
@@ -48,11 +46,6 @@ class SupervisedUserTest : public chromeos::LoginManagerTest {
                          mock_async_method_caller_(NULL),
                          network_portal_detector_(NULL),
                          registration_utility_stub_(NULL) {
-  }
-
-  virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE {
-    LoginManagerTest::SetUpCommandLine(command_line);
-    command_line->AppendSwitch(::switches::kEnableManagedUsers);
   }
 
   virtual void SetUpInProcessBrowserTestFixture() OVERRIDE {
@@ -156,13 +149,12 @@ void SupervisedUserTest::LogInAsManagerAndFillUserData() {
   JSEval("$('managed-user-creation-start-button').click()");
 
   // Check that both users appear as managers, and test-manager@gmail.com is
-  // the first one. As no manager is selected, 'next' button is disabled
+  // the first one.
   JSExpect("$('managed-user-creation').currentPage_ == 'manager'");
 
   JSExpect(std::string("document.querySelectorAll(")
       .append("'#managed-user-creation-managers-pane .manager-pod.focused')")
-      .append(".length == 0"));
-  JSExpect("$('managed-user-creation-next-button').disabled");
+      .append(".length == 1"));
 
   JSExpect("$('managed-user-creation').managerList_.pods.length == 2");
   JSExpect(std::string("document.querySelectorAll(")
@@ -172,10 +164,6 @@ void SupervisedUserTest::LogInAsManagerAndFillUserData() {
       .append("'#managed-user-creation-managers-pane .manager-pod')")
       .append("[0].user.emailAddress == '").append(kTestManager).append("'"));
   // Select the first user as manager, and enter password.
-  JSEval(std::string("supervisedUserManagerPod = ")
-      .append("$('managed-user-creation').managerList_.pods[0]"));
-  JSEval(std::string("$('managed-user-creation').managerList_")
-      .append(".selectPod(supervisedUserManagerPod)"));
   JSExpect("$('managed-user-creation-next-button').disabled");
   JSSetTextField(
       "#managed-user-creation .manager-pod.focused input",
@@ -234,7 +222,7 @@ void SupervisedUserTest::CreateSupervisedUser() {
 
   EXPECT_TRUE(registration_utility_stub_->register_was_called());
   EXPECT_EQ(registration_utility_stub_->display_name(),
-            UTF8ToUTF16(kSupervisedUserDisplayName));
+            base::UTF8ToUTF16(kSupervisedUserDisplayName));
 
   registration_utility_stub_->RunSuccessCallback("token");
 
@@ -252,7 +240,8 @@ void SupervisedUserTest::SigninAsSupervisedUser() {
   ASSERT_EQ(3UL, UserManager::Get()->GetUsers().size());
   // Created supervised user have to be first in a list.
   const User* user = UserManager::Get()->GetUsers().at(0);
-  ASSERT_EQ(UTF8ToUTF16(kSupervisedUserDisplayName), user->display_name());
+  ASSERT_EQ(base::UTF8ToUTF16(kSupervisedUserDisplayName),
+            user->display_name());
   LoginUser(user->email());
 }
 
@@ -262,7 +251,8 @@ void SupervisedUserTest::RemoveSupervisedUser() {
   ASSERT_EQ(3UL, UserManager::Get()->GetUsers().size());
   // Created supervised user have to be first in a list.
   const User* user = UserManager::Get()->GetUsers().at(0);
-  ASSERT_EQ(UTF8ToUTF16(kSupervisedUserDisplayName), user->display_name());
+  ASSERT_EQ(base::UTF8ToUTF16(kSupervisedUserDisplayName),
+            user->display_name());
 
   // Open pod menu.
   JSExpect("!$('pod-row').pods[0].isActionBoxMenuActive");
@@ -378,7 +368,7 @@ IN_PROC_BROWSER_TEST_F(SupervisedUserTransactionCleanupTest,
 
   EXPECT_TRUE(registration_utility_stub_->register_was_called());
   EXPECT_EQ(registration_utility_stub_->display_name(),
-            UTF8ToUTF16(kSupervisedUserDisplayName));
+            base::UTF8ToUTF16(kSupervisedUserDisplayName));
 
   std::string user_id = registration_utility_stub_->managed_user_id();
   // Make sure user is already in list.

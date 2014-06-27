@@ -30,6 +30,8 @@ class ObjectBackedNativeHandler : public NativeHandler {
   // RouteFunction().
   virtual v8::Handle<v8::Object> NewInstance() OVERRIDE;
 
+  v8::Isolate* GetIsolate() const;
+
  protected:
   typedef base::Callback<void(const v8::FunctionCallbackInfo<v8::Value>&)>
       HandlerFunction;
@@ -40,7 +42,7 @@ class ObjectBackedNativeHandler : public NativeHandler {
   void RouteFunction(const std::string& name,
                      const HandlerFunction& handler_function);
 
-  ChromeV8Context* context() { return context_; }
+  ChromeV8Context* context() const { return context_; }
 
   virtual void Invalidate() OVERRIDE;
 

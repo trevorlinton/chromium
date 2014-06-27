@@ -18,17 +18,31 @@ var DRAG_AND_DROP_GLOBAL_DATA = '__drag_and_drop_global_data';
  *     instance.
  * @param {MetadataCache} metadataCache Metadata cache service.
  * @param {DirectoryModel} directoryModel Directory model instance.
+ * @param {VolumeManagerWrapper} volumeManager Volume manager instance.
+ * @param {MultiProfileShareDialog} multiProfileShareDialog Share dialog to be
+ *     used to share files from another profile.
  * @constructor
  */
 function FileTransferController(doc,
                                 fileOperationManager,
                                 metadataCache,
-                                directoryModel) {
+                                directoryModel,
+                                volumeManager,
+                                multiProfileShareDialog) {
   this.document_ = doc;
   this.fileOperationManager_ = fileOperationManager;
   this.metadataCache_ = metadataCache;
   this.directoryModel_ = directoryModel;
+  this.volumeManager_ = volumeManager;
+  this.multiProfileShareDialog_ = multiProfileShareDialog;
 
+  this.directoryModel_.getFileList().addEventListener(
+      'change', function(event) {
+    if (this.directoryModel_.getFileListSelection().
+        getIndexSelected(event.index)) {
+      this.onSelectionChanged_();
+    }
+  }.bind(this));
   this.directoryModel_.getFileListSelection().addEventListener('change',
       this.onSelectionChanged_.bind(this));
 
@@ -151,15 +165,19 @@ FileTransferController.prototype = {
    *     |dataTransfer.effectAllowed| property ('move', 'copy', 'copyMove').
    */
   cutOrCopy_: function(dataTransfer, effectAllowed) {
+    // Existence of the volumeInfo is checked in canXXX methods.
+    var volumeInfo = this.volumeManager_.getVolumeInfo(
+        this.currentDirectoryContentEntry);
     // Tag to check it's filemanager data.
     dataTransfer.setData('fs/tag', 'filemanager-data');
-    dataTransfer.setData('fs/sourceRoot',
-                         this.directoryModel_.getCurrentRootPath());
-    var sourcePaths =
-        this.selectedEntries_.map(function(e) { return e.fullPath; });
-    dataTransfer.setData('fs/sources', sourcePaths.join('\n'));
+    dataTransfer.setData('fs/sourceRootURL',
+                         volumeInfo.fileSystem.root.toURL());
+    var sourceURLs = util.entriesToURLs(this.selectedEntries_);
+    dataTransfer.setData('fs/sources', sourceURLs.join('\n'));
     dataTransfer.effectAllowed = effectAllowed;
     dataTransfer.setData('fs/effectallowed', effectAllowed);
+    dataTransfer.setData('fs/missingFileContents',
+                         !this.isAllSelectedFilesAvailable_());
 
     for (var i = 0; i < this.selectedFileObjects_.length; i++) {
       dataTransfer.items.add(this.selectedFileObjects_[i]);
@@ -167,30 +185,126 @@ FileTransferController.prototype = {
   },
 
   /**
-   * Extracts source root from the |dataTransfer| object.
-   *
    * @this {FileTransferController}
-   * @param {DataTransfer} dataTransfer DataTransfer object from the event.
-   * @return {string} Path or empty string (if unknown).
+   * @return {Object.<string, string>} Drag and drop global data object.
    */
-  getSourceRoot_: function(dataTransfer) {
-    var sourceRoot = dataTransfer.getData('fs/sourceRoot');
-    if (sourceRoot)
-      return sourceRoot;
-
-    // |dataTransfer| in protected mode.
+  getDragAndDropGlobalData_: function() {
     if (window[DRAG_AND_DROP_GLOBAL_DATA])
-      return window[DRAG_AND_DROP_GLOBAL_DATA].sourceRoot;
+      return window[DRAG_AND_DROP_GLOBAL_DATA];
 
     // Dragging from other tabs/windows.
     var views = chrome && chrome.extension ? chrome.extension.getViews() : [];
     for (var i = 0; i < views.length; i++) {
       if (views[i][DRAG_AND_DROP_GLOBAL_DATA])
-        return views[i][DRAG_AND_DROP_GLOBAL_DATA].sourceRoot;
+        return views[i][DRAG_AND_DROP_GLOBAL_DATA];
     }
+    return null;
+  },
+
+  /**
+   * Extracts source root URL from the |dataTransfer| object.
+   *
+   * @this {FileTransferController}
+   * @param {DataTransfer} dataTransfer DataTransfer object from the event.
+   * @return {string} URL or an empty string (if unknown).
+   */
+  getSourceRootURL_: function(dataTransfer) {
+    var sourceRootURL = dataTransfer.getData('fs/sourceRootURL');
+    if (sourceRootURL)
+      return sourceRootURL;
+
+    // |dataTransfer| in protected mode.
+    var globalData = this.getDragAndDropGlobalData_();
+    if (globalData)
+      return globalData.sourceRootURL;
 
     // Unknown source.
     return '';
+  },
+
+  /**
+   * @this {FileTransferController}
+   * @param {DataTransfer} dataTransfer DataTransfer object from the event.
+   * @return {boolean} Returns true when missing some file contents.
+   */
+  isMissingFileContents_: function(dataTransfer) {
+    var data = dataTransfer.getData('fs/missingFileContents');
+    if (!data) {
+      // |dataTransfer| in protected mode.
+      var globalData = this.getDragAndDropGlobalData_();
+      if (globalData)
+        data = globalData.missingFileContents;
+    }
+    return data === 'true';
+  },
+
+  /**
+   * Obtains entries that need to share with me.
+   * The method also observers child entries of the given entries.
+   * @param {Array.<Entries>} entries Entries.
+   * @return {Promise} Promise to be fulfilled with the entries that need to
+   *     share.
+   */
+  getMultiProfileShareEntries_: function(entries) {
+    // Utility funciton to concat arrays.
+    var concatArrays = function(arrays) {
+      return Array.prototype.concat.apply([], arrays);
+    };
+
+    // Call processEntry for each item of entries.
+    var processEntries = function(entries) {
+      return Promise.all(entries.map(processEntry)).then(concatArrays);
+    };
+
+    // Check entry type and do particular instructions.
+    var processEntry = function(entry) {
+      if (entry.isFile) {
+        // The entry is file. Obtain metadata.
+        return new Promise(function(callback) {
+          chrome.fileBrowserPrivate.getDriveEntryProperties(entry.toURL(),
+                                                            callback);
+        }).
+        then(function(metadata) {
+          if (metadata &&
+              metadata.isHosted &&
+              !metadata.sharedWithMe) {
+            return [entry];
+          } else {
+            return [];
+          }
+        });
+      } else {
+        // The entry is directory. Check child entries.
+        return readEntries(entry.createReader());
+      }
+    }.bind(this);
+
+    // Read entries from DirectoryReader and call processEntries for the chunk
+    // of entries.
+    var readEntries = function(reader) {
+      return new Promise(reader.readEntries.bind(reader)).then(
+          function(entries) {
+            if (entries.length > 0) {
+              return Promise.all(
+                  [processEntries(entries), readEntries(reader)]).
+                  then(concatArrays);
+            } else {
+              return [];
+            }
+          },
+          function(error) {
+            console.warn(
+                'Error happens while reading driectory.', error);
+            return [];
+          });
+    }.bind(this);
+
+    // Filter entries that is owned by the current user, and call
+    // processEntries.
+    return processEntries(entries.filter(function(entry) {
+      // If the volumeInfo is found, the entry belongs to the current user.
+      return !this.volumeManager_.getVolumeInfo(entry);
+    }.bind(this)));
   },
 
   /**
@@ -198,25 +312,78 @@ FileTransferController.prototype = {
    *
    * @this {FileTransferController}
    * @param {DataTransfer} dataTransfer System data transfer object.
-   * @param {string=} opt_destinationPath Paste destination.
+   * @param {DirectoryEntry=} opt_destinationEntry Paste destination.
    * @param {string=} opt_effect Desired drop/paste effect. Could be
    *     'move'|'copy' (default is copy). Ignored if conflicts with
    *     |dataTransfer.effectAllowed|.
    * @return {string} Either "copy" or "move".
    */
-  paste: function(dataTransfer, opt_destinationPath, opt_effect) {
-    var sourcePaths = (dataTransfer.getData('fs/sources') || '').split('\n');
-    var destinationPath = opt_destinationPath ||
-                          this.currentDirectoryContentPath;
+  paste: function(dataTransfer, opt_destinationEntry, opt_effect) {
+    var sourceURLs = dataTransfer.getData('fs/sources') ?
+        dataTransfer.getData('fs/sources').split('\n') : [];
     // effectAllowed set in copy/paste handlers stay uninitialized. DnD handlers
     // work fine.
-    var effectAllowed = dataTransfer.effectAllowed != 'uninitialized' ?
+    var effectAllowed = dataTransfer.effectAllowed !== 'uninitialized' ?
         dataTransfer.effectAllowed : dataTransfer.getData('fs/effectallowed');
-    var toMove = effectAllowed == 'move' ||
-        (effectAllowed == 'copyMove' && opt_effect == 'move');
+    var toMove = effectAllowed === 'move' ||
+        (effectAllowed === 'copyMove' && opt_effect === 'move');
+    var destinationEntry =
+        opt_destinationEntry || this.currentDirectoryContentEntry;
+    var entries;
+    var failureUrls;
 
-    // Start the pasting operation.
-    this.fileOperationManager_.paste(sourcePaths, destinationPath, toMove);
+    util.URLsToEntries(sourceURLs).
+    then(function(result) {
+      entries = result.entries;
+      failureUrls = result.failureUrls;
+      // Check if cross share is needed or not.
+      return this.getMultiProfileShareEntries_(entries);
+    }.bind(this)).
+    then(function(shareEntries) {
+      if (shareEntries.length === 0)
+        return;
+      return this.multiProfileShareDialog_.show(shareEntries.length > 1).
+          then(function(dialogResult) {
+            if (dialogResult === 'cancel')
+              return Promise.reject('ABORT');
+            // Do cross share.
+            // TODO(hirono): Make the loop cancellable.
+            var requestDriveShare = function(index) {
+              if (index >= shareEntries.length)
+                return Promise.cast();
+              return new Promise(function(fulfill) {
+                chrome.fileBrowserPrivate.requestDriveShare(
+                    shareEntries[index].toURL(),
+                    dialogResult,
+                    function() {
+                      // TODO(hirono): Check chrome.runtime.lastError here.
+                      fulfill();
+                    });
+              }).then(requestDriveShare.bind(null, index + 1));
+            };
+            return requestDriveShare(0);
+          });
+    }.bind(this)).
+    then(function() {
+      // Start the pasting operation.
+      this.fileOperationManager_.paste(
+          entries, destinationEntry, toMove);
+
+      // Publish events for failureUrls.
+      for (var i = 0; i < failureUrls.length; i++) {
+        var fileName =
+            decodeURIComponent(failureUrls[i].replace(/^.+\//, ''));
+        var event = new Event('source-not-found');
+        event.fileName = fileName;
+        event.progressType =
+            toMove ? ProgressItemType.MOVE : ProgressItemType.COPY;
+        this.dispatchEvent(event);
+      }
+    }.bind(this)).
+    catch(function(error) {
+      if (error !== 'ABORT')
+        console.error(error.stack ? error.stack : error);
+    });
     return toMove ? 'move' : 'copy';
   },
 
@@ -227,16 +394,15 @@ FileTransferController.prototype = {
    * @param {Entry} entry Entry to preload a thumbnail for.
    */
   preloadThumbnailImage_: function(entry) {
-    var imageUrl = entry.toURL();
     var metadataTypes = 'thumbnail|filesystem';
     var thumbnailContainer = this.document_.createElement('div');
     this.preloadedThumbnailImageNode_ = thumbnailContainer;
     this.preloadedThumbnailImageNode_.className = 'img-container';
     this.metadataCache_.get(
-        imageUrl,
+        entry,
         metadataTypes,
         function(metadata) {
-          new ThumbnailLoader(imageUrl,
+          new ThumbnailLoader(entry,
                               ThumbnailLoader.LoaderType.IMAGE,
                               metadata).
               load(thumbnailContainer,
@@ -318,12 +484,16 @@ FileTransferController.prototype = {
     }
 
     var dt = event.dataTransfer;
-
-    if (this.canCopyOrDrag_(dt)) {
-      if (this.canCutOrDrag_(dt))
+    var canCopy = this.canCopyOrDrag_(dt);
+    var canCut = this.canCutOrDrag_(dt);
+    if (canCopy || canCut) {
+      if (canCopy && canCut) {
         this.cutOrCopy_(dt, 'copyMove');
-      else
+      } else if (canCopy) {
         this.cutOrCopy_(dt, 'copy');
+      } else {
+        this.cutOrCopy_(dt, 'move');
+      }
     } else {
       event.preventDefault();
       return;
@@ -333,7 +503,8 @@ FileTransferController.prototype = {
     dt.setDragImage(dragThumbnail, 1000, 1000);
 
     window[DRAG_AND_DROP_GLOBAL_DATA] = {
-      sourceRoot: this.directoryModel_.getCurrentRootPath()
+      sourceRootURL: dt.getData('fs/sourceRootURL'),
+      missingFileContents: dt.getData('fs/missingFileContents'),
     };
   },
 
@@ -358,9 +529,9 @@ FileTransferController.prototype = {
    */
   onDragOver_: function(onlyIntoDirectories, list, event) {
     event.preventDefault();
-    var path = this.destinationPath_ ||
-        (!onlyIntoDirectories && this.currentDirectoryContentPath);
-    event.dataTransfer.dropEffect = this.selectDropEffect_(event, path);
+    var entry = this.destinationEntry_ ||
+        (!onlyIntoDirectories && this.currentDirectoryContentEntry);
+    event.dataTransfer.dropEffect = this.selectDropEffect_(event, entry);
     event.preventDefault();
   },
 
@@ -374,16 +545,14 @@ FileTransferController.prototype = {
     this.lastEnteredTarget_ = event.target;
     var item = list.getListItemAncestor(event.target);
     item = item && list.isItem(item) ? item : null;
-    if (item == this.dropTarget_)
+    if (item === this.dropTarget_)
       return;
 
     var entry = item && list.dataModel.item(item.listIndex);
-    if (entry) {
-      this.setDropTarget_(item, entry.isDirectory, event.dataTransfer,
-          entry.fullPath);
-    } else {
+    if (entry)
+      this.setDropTarget_(item, event.dataTransfer, entry);
+    else
       this.clearDropTarget_();
-    }
   },
 
   /**
@@ -399,13 +568,12 @@ FileTransferController.prototype = {
       item = item.parentNode;
     }
 
-    if (item == this.dropTarget_)
+    if (item === this.dropTarget_)
       return;
 
     var entry = item && item.entry;
     if (entry) {
-      this.setDropTarget_(item, entry.isDirectory, event.dataTransfer,
-          entry.fullPath);
+      this.setDropTarget_(item, event.dataTransfer, entry);
     } else {
       this.clearDropTarget_();
     }
@@ -418,17 +586,25 @@ FileTransferController.prototype = {
    */
   onDragEnterVolumesList_: function(list, event) {
     event.preventDefault();  // Required to prevent the cursor flicker.
+
     this.lastEnteredTarget_ = event.target;
     var item = list.getListItemAncestor(event.target);
     item = item && list.isItem(item) ? item : null;
-    if (item == this.dropTarget_)
+    if (item === this.dropTarget_)
       return;
 
-    var path = item && list.dataModel.item(item.listIndex).path;
-    if (path)
-      this.setDropTarget_(item, true /* directory */, event.dataTransfer, path);
-    else
-      this.clearDropTarget_();
+    var modelItem = item && list.dataModel.item(item.listIndex);
+    if (modelItem && modelItem.isShortcut) {
+      this.setDropTarget_(item, event.dataTransfer, modelItem.entry);
+      return;
+    }
+    if (modelItem && modelItem.isVolume && modelItem.volumeInfo.displayRoot) {
+      this.setDropTarget_(
+          item, event.dataTransfer, modelItem.volumeInfo.displayRoot);
+      return;
+    }
+
+    this.clearDropTarget_();
   },
 
   /**
@@ -439,11 +615,11 @@ FileTransferController.prototype = {
   onDragLeave_: function(list, event) {
     // If mouse moves from one element to another the 'dragenter'
     // event for the new element comes before the 'dragleave' event for
-    // the old one. In this case event.target != this.lastEnteredTarget_
+    // the old one. In this case event.target !== this.lastEnteredTarget_
     // and handler of the 'dragenter' event has already caried of
-    // drop target. So event.target == this.lastEnteredTarget_
+    // drop target. So event.target === this.lastEnteredTarget_
     // could only be if mouse goes out of listened element.
-    if (event.target == this.lastEnteredTarget_) {
+    if (event.target === this.lastEnteredTarget_) {
       this.clearDropTarget_();
       this.lastEnteredTarget_ = null;
     }
@@ -458,27 +634,26 @@ FileTransferController.prototype = {
   onDrop_: function(onlyIntoDirectories, event) {
     if (onlyIntoDirectories && !this.dropTarget_)
       return;
-    var destinationPath = this.destinationPath_ ||
-                          this.currentDirectoryContentPath;
-    if (!this.canPasteOrDrop_(event.dataTransfer, destinationPath))
+    var destinationEntry = this.destinationEntry_ ||
+                           this.currentDirectoryContentEntry;
+    if (!this.canPasteOrDrop_(event.dataTransfer, destinationEntry))
       return;
     event.preventDefault();
-    this.paste(event.dataTransfer, destinationPath,
-               this.selectDropEffect_(event, destinationPath));
+    this.paste(event.dataTransfer, destinationEntry,
+               this.selectDropEffect_(event, destinationEntry));
     this.clearDropTarget_();
   },
 
   /**
    * Sets the drop target.
+   *
    * @this {FileTransferController}
    * @param {Element} domElement Target of the drop.
-   * @param {boolean} isDirectory If the target is a directory.
    * @param {DataTransfer} dataTransfer Data transfer object.
-   * @param {string} destinationPath Destination path.
+   * @param {DirectoryEntry} destinationEntry Destination entry.
    */
-  setDropTarget_: function(domElement, isDirectory, dataTransfer,
-                           destinationPath) {
-    if (this.dropTarget_ == domElement)
+  setDropTarget_: function(domElement, dataTransfer, destinationEntry) {
+    if (this.dropTarget_ === domElement)
       return;
 
     // Remove the old drop target.
@@ -488,21 +663,21 @@ FileTransferController.prototype = {
     this.dropTarget_ = domElement;
 
     if (!domElement ||
-        !isDirectory ||
-        !this.canPasteOrDrop_(dataTransfer, destinationPath)) {
+        !destinationEntry.isDirectory ||
+        !this.canPasteOrDrop_(dataTransfer, destinationEntry)) {
       return;
     }
 
     // Add accept class if the domElement can accept the drag.
     domElement.classList.add('accepts');
-    this.destinationPath_ = destinationPath;
+    this.destinationEntry_ = destinationEntry;
 
     // Start timer changing the directory.
     this.navigateTimer_ = setTimeout(function() {
       if (domElement instanceof DirectoryItem)
         // Do custom action.
         (/** @type {DirectoryItem} */ domElement).doDropTargetAction();
-      this.directoryModel_.changeDirectory(destinationPath);
+      this.directoryModel_.changeDirectoryEntry(destinationEntry);
     }.bind(this), 2000);
   },
 
@@ -529,7 +704,7 @@ FileTransferController.prototype = {
     if (this.dropTarget_ && this.dropTarget_.classList.contains('accepts'))
       this.dropTarget_.classList.remove('accepts');
     this.dropTarget_ = null;
-    this.destinationPath_ = null;
+    this.destinationEntry_ = null;
     if (this.navigateTimer_ !== undefined) {
       clearTimeout(this.navigateTimer_);
       this.navigateTimer_ = undefined;
@@ -542,8 +717,8 @@ FileTransferController.prototype = {
    *     currently active. Otherwise, returns true.
    */
   isDocumentWideEvent_: function() {
-    return this.document_.activeElement.nodeName.toLowerCase() != 'input' ||
-        this.document_.activeElement.type.toLowerCase() != 'text';
+    return this.document_.activeElement.nodeName.toLowerCase() !== 'input' ||
+        this.document_.activeElement.type.toLowerCase() !== 'text';
   },
 
   /**
@@ -573,15 +748,33 @@ FileTransferController.prototype = {
 
   /**
    * @this {FileTransferController}
+   * @return {boolean} Returns true if all selected files are available to be
+   *     copied.
+   */
+  isAllSelectedFilesAvailable_: function() {
+    if (!this.currentDirectoryContentEntry)
+      return false;
+    var volumeInfo = this.volumeManager_.getVolumeInfo(
+        this.currentDirectoryContentEntry);
+    if (!volumeInfo)
+      return false;
+    var isDriveOffline = this.volumeManager_.getDriveConnectionState().type ===
+        util.DriveConnectionType.OFFLINE;
+    if (this.isOnDrive &&
+        isDriveOffline &&
+        !this.allDriveFilesAvailable)
+      return false;
+    return true;
+  },
+
+  /**
+   * @this {FileTransferController}
    * @return {boolean} Returns true if some files are selected and all the file
    *     on drive is available to be copied. Otherwise, returns false.
    */
   canCopyOrDrag_: function() {
-    if (this.isOnDrive &&
-        this.directoryModel_.isDriveOffline() &&
-        !this.allDriveFilesAvailable)
-      return false;
-    return this.selectedEntries_.length > 0;
+    return this.isAllSelectedFilesAvailable_() &&
+        this.selectedEntries_.length > 0;
   },
 
   /**
@@ -610,11 +803,10 @@ FileTransferController.prototype = {
 
   /**
    * @this {FileTransferController}
-   * @return {boolean} Returns true if some files are selected and all the file
-   *     on drive is available to be cut. Otherwise, returns false.
+   * @return {boolean} Returns true if the current directory is not read only.
    */
   canCutOrDrag_: function() {
-    return !this.readonly && this.canCopyOrDrag_();
+    return !this.readonly && this.selectedEntries_.length > 0;
   },
 
   /**
@@ -624,7 +816,7 @@ FileTransferController.prototype = {
     // Need to update here since 'beforepaste' doesn't fire.
     if (!this.isDocumentWideEvent_() ||
         !this.canPasteOrDrop_(event.clipboardData,
-                              this.currentDirectoryContentPath)) {
+                              this.currentDirectoryContentEntry)) {
       return;
     }
     event.preventDefault();
@@ -632,7 +824,7 @@ FileTransferController.prototype = {
 
     // On cut, we clear the clipboard after the file is pasted/moved so we don't
     // try to move/delete the original file again.
-    if (effect == 'move') {
+    if (effect === 'move') {
       this.simulateCommand_('cut', function(event) {
         event.preventDefault();
         event.clipboardData.setData('fs/clear', '');
@@ -648,7 +840,7 @@ FileTransferController.prototype = {
       return;
     // queryCommandEnabled returns true if event.defaultPrevented is true.
     if (this.canPasteOrDrop_(event.clipboardData,
-                             this.currentDirectoryContentPath)) {
+                             this.currentDirectoryContentEntry)) {
       event.preventDefault();
     }
   },
@@ -656,33 +848,25 @@ FileTransferController.prototype = {
   /**
    * @this {FileTransferController}
    * @param {DataTransfer} dataTransfer Data transfer object.
-   * @param {string?} destinationPath Destination path.
+   * @param {DirectoryEntry} destinationEntry Destination entry.
    * @return {boolean} Returns true if items stored in {@code dataTransfer} can
-   *     be pasted to {@code destinationPath}. Otherwise, returns false.
+   *     be pasted to {@code destinationEntry}. Otherwise, returns false.
    */
-  canPasteOrDrop_: function(dataTransfer, destinationPath) {
-    if (!destinationPath) {
+  canPasteOrDrop_: function(dataTransfer, destinationEntry) {
+    if (!destinationEntry)
       return false;
-    }
-    if (this.directoryModel_.isPathReadOnly(destinationPath)) {
+    var destinationLocationInfo =
+        this.volumeManager_.getLocationInfo(destinationEntry);
+    if (destinationLocationInfo.isReadOnly)
       return false;
-    }
-    if (!dataTransfer.types || dataTransfer.types.indexOf('fs/tag') == -1) {
+    if (!dataTransfer.types || dataTransfer.types.indexOf('fs/tag') === -1)
       return false;  // Unsupported type of content.
-    }
-    if (dataTransfer.getData('fs/tag') == '') {
-      // Data protected. Other checks are not possible but it makes sense to
-      // let the user try.
-      return true;
-    }
 
-    var directories = dataTransfer.getData('fs/directories').split('\n').
-                      filter(function(d) { return d != ''; });
-
-    for (var i = 0; i < directories.length; i++) {
-      if (destinationPath.substr(0, directories[i].length) == directories[i])
-        return false;  // recursive paste.
-    }
+    // Copying between different sources requires all files to be available.
+    if (this.getSourceRootURL_(dataTransfer) !==
+        destinationLocationInfo.volumeInfo.fileSystem.root.toURL() &&
+        this.isMissingFileContents_(dataTransfer))
+      return false;
 
     return true;
   },
@@ -704,7 +888,7 @@ FileTransferController.prototype = {
     var result;
     this.simulateCommand_('paste', function(event) {
       result = this.canPasteOrDrop_(event.clipboardData,
-                                    this.currentDirectoryContentPath);
+                                    this.currentDirectoryContentEntry);
     }.bind(this));
     return result;
   },
@@ -738,7 +922,7 @@ FileTransferController.prototype = {
         fileEntries.push(entries[i]);
     }
 
-    if (entries.length == 1) {
+    if (entries.length === 1) {
       // For single selection, the dragged element is created in advance,
       // otherwise an image may not be loaded at the time the 'dragstart' event
       // comes.
@@ -757,14 +941,17 @@ FileTransferController.prototype = {
 
     if (this.isOnDrive) {
       this.allDriveFilesAvailable = false;
-      var urls = entries.map(function(e) { return e.toURL() });
       this.metadataCache_.get(
-          urls, 'drive', function(props) {
+          entries, 'drive', function(props) {
         // We consider directories not available offline for the purposes of
         // file transfer since we cannot afford to recursive traversal.
         this.allDriveFilesAvailable =
-            entries.filter(function(e) {return e.isDirectory}).length == 0 &&
-            props.filter(function(p) {return !p.availableOffline}).length == 0;
+            entries.filter(function(e) {
+              return e.isDirectory;
+            }).length === 0 &&
+            props.filter(function(p) {
+              return !p.availableOffline;
+            }).length === 0;
         // |Copy| is the only menu item affected by allDriveFilesAvailable.
         // It could be open right now, update its UI.
         this.copyCommand_.disabled = !this.canCopyOrDrag_();
@@ -778,14 +965,12 @@ FileTransferController.prototype = {
   },
 
   /**
-   * Path of directory that is displaying now.
-   * If search result is displaying now, this is null.
+   * Obains directory that is displaying now.
    * @this {FileTransferController}
-   * @return {string} Path of directry that is displaying now.
+   * @return {DirectoryEntry} Entry of directry that is displaying now.
    */
-  get currentDirectoryContentPath() {
-    return this.directoryModel_.isSearching() ?
-        null : this.directoryModel_.getCurrentDirPath();
+  get currentDirectoryContentEntry() {
+    return this.directoryModel_.getCurrentDirEntry();
   },
 
   /**
@@ -801,7 +986,13 @@ FileTransferController.prototype = {
    * @return {boolean} True if the current directory is on Drive.
    */
   get isOnDrive() {
-    return PathUtil.isDriveBasedPath(this.directoryModel_.getCurrentRootPath());
+    var currentDir = this.directoryModel_.getCurrentDirEntry();
+    if (!currentDir)
+      return false;
+    var locationInfo = this.volumeManager_.getLocationInfo(currentDir);
+    if (!locationInfo)
+      return false;
+    return locationInfo.isDriveBased;
   },
 
   /**
@@ -822,13 +1013,13 @@ FileTransferController.prototype = {
   get selectedEntries_() {
     var list = this.directoryModel_.getFileList();
     var selectedIndexes = this.directoryModel_.getFileListSelection().
-                               selectedIndexes;
+        selectedIndexes;
     var entries = selectedIndexes.map(function(index) {
       return list.item(index);
     });
 
     // TODO(serya): Diagnostics for http://crbug/129642
-    if (entries.indexOf(undefined) != -1) {
+    if (entries.indexOf(undefined) !== -1) {
       var index = entries.indexOf(undefined);
       entries = entries.filter(function(e) { return !!e; });
       console.error('Invalid selection found: list items: ', list.length,
@@ -839,21 +1030,32 @@ FileTransferController.prototype = {
   },
 
   /**
+   * @param {Event} event Drag event.
+   * @param {DirectoryEntry} destinationEntry Destination entry.
    * @this {FileTransferController}
    * @return {string}  Returns the appropriate drop query type ('none', 'move'
    *     or copy') to the current modifiers status and the destination.
    */
-  selectDropEffect_: function(event, destinationPath) {
-    if (!destinationPath ||
-        this.directoryModel_.isPathReadOnly(destinationPath))
+  selectDropEffect_: function(event, destinationEntry) {
+    if (!destinationEntry)
       return 'none';
-    if (event.dataTransfer.effectAllowed == 'copyMove' &&
-        this.getSourceRoot_(event.dataTransfer) ==
-            PathUtil.getRootPath(destinationPath) &&
+    var destinationLocationInfo =
+        this.volumeManager_.getLocationInfo(destinationEntry);
+    if (!destinationLocationInfo)
+      return 'none';
+    if (destinationLocationInfo.isReadOnly)
+      return 'none';
+    if (event.dataTransfer.effectAllowed === 'move')
+      return 'move';
+    // TODO(mtomasz): Use volumeId instead of comparing roots, as soon as
+    // volumeId gets unique.
+    if (event.dataTransfer.effectAllowed === 'copyMove' &&
+        this.getSourceRootURL_(event.dataTransfer) ===
+            destinationLocationInfo.volumeInfo.fileSystem.root.toURL() &&
         !event.ctrlKey) {
       return 'move';
     }
-    if (event.dataTransfer.effectAllowed == 'copyMove' &&
+    if (event.dataTransfer.effectAllowed === 'copyMove' &&
         event.shiftKey) {
       return 'move';
     }

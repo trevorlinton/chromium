@@ -5,17 +5,21 @@
 #ifndef ASH_TEST_SHELF_VIEW_TEST_API_H_
 #define ASH_TEST_SHELF_VIEW_TEST_API_H_
 
-#include "ash/launcher/launcher_types.h"
+#include "ash/shelf/shelf_item_types.h"
 #include "base/basictypes.h"
 
 namespace gfx {
 class Rect;
+class Size;
 }
 
 namespace ash {
 
+class ShelfDelegate;
+
 namespace internal {
-class LauncherButton;
+class OverflowBubble;
+class ShelfButton;
 class ShelfView;
 }
 
@@ -31,7 +35,10 @@ class ShelfViewTestAPI {
   int GetButtonCount();
 
   // Retrieve the button at |index|.
-  internal::LauncherButton* GetButton(int index);
+  internal::ShelfButton* GetButton(int index);
+
+  // First visible button index.
+  int GetFirstVisibleIndex();
 
   // Last visible button index.
   int GetLastVisibleIndex();
@@ -55,8 +62,32 @@ class ShelfViewTestAPI {
   // An accessor for |shelf_view|.
   internal::ShelfView* shelf_view() { return shelf_view_; }
 
+  // An accessor for overflow bubble.
+  internal::OverflowBubble* overflow_bubble();
+
+  // Returns the preferred size of |shelf_view_|.
+  gfx::Size GetPreferredSize();
+
+  // Returns the button size.
+  int GetButtonSize();
+
+  // Returns the button space size.
+  int GetButtonSpacing();
+
   // Wrapper for ShelfView::SameDragType.
-  bool SameDragType(LauncherItemType typea, LauncherItemType typeb) const;
+  bool SameDragType(ShelfItemType typea, ShelfItemType typeb) const;
+
+  // Sets ShelfDelegate.
+  void SetShelfDelegate(ShelfDelegate* delegate);
+
+  // Returns re-insertable bounds in screen.
+  gfx::Rect GetBoundsForDragInsertInScreen();
+
+  // Returns true if item is ripped off.
+  bool IsRippedOffFromShelf();
+
+  // Returns true if an item is ripped off and entered into shelf.
+  bool DraggedItemFromOverflowToShelf();
 
  private:
   internal::ShelfView* shelf_view_;

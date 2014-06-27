@@ -7,6 +7,7 @@
 #include "cc/output/renderer.h"
 #include "cc/test/fake_output_surface.h"
 #include "cc/test/fake_output_surface_client.h"
+#include "cc/test/test_shared_bitmap_manager.h"
 #include "cc/test/tiled_layer_test_common.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -18,10 +19,12 @@ TEST(ScopedResourceTest, NewScopedResource) {
   scoped_ptr<OutputSurface> output_surface(FakeOutputSurface::Create3d());
   CHECK(output_surface->BindToClient(&output_surface_client));
 
-  scoped_ptr<ResourceProvider> resource_provider(
-      ResourceProvider::Create(output_surface.get(), NULL, 0, false, 1));
+  scoped_ptr<SharedBitmapManager> shared_bitmap_manager(
+      new TestSharedBitmapManager());
+  scoped_ptr<ResourceProvider> resource_provider(ResourceProvider::Create(
+      output_surface.get(), shared_bitmap_manager.get(), 0, false, 1));
   scoped_ptr<ScopedResource> texture =
-      ScopedResource::create(resource_provider.get());
+      ScopedResource::Create(resource_provider.get());
 
   // New scoped textures do not hold a texture yet.
   EXPECT_EQ(0u, texture->id());
@@ -36,10 +39,12 @@ TEST(ScopedResourceTest, CreateScopedResource) {
   scoped_ptr<OutputSurface> output_surface(FakeOutputSurface::Create3d());
   CHECK(output_surface->BindToClient(&output_surface_client));
 
-  scoped_ptr<ResourceProvider> resource_provider(
-      ResourceProvider::Create(output_surface.get(), NULL, 0, false, 1));
+  scoped_ptr<SharedBitmapManager> shared_bitmap_manager(
+      new TestSharedBitmapManager());
+  scoped_ptr<ResourceProvider> resource_provider(ResourceProvider::Create(
+      output_surface.get(), shared_bitmap_manager.get(), 0, false, 1));
   scoped_ptr<ScopedResource> texture =
-      ScopedResource::create(resource_provider.get());
+      ScopedResource::Create(resource_provider.get());
   texture->Allocate(gfx::Size(30, 30),
                     ResourceProvider::TextureUsageAny,
                     RGBA_8888);
@@ -58,11 +63,13 @@ TEST(ScopedResourceTest, ScopedResourceIsDeleted) {
   scoped_ptr<OutputSurface> output_surface(FakeOutputSurface::Create3d());
   CHECK(output_surface->BindToClient(&output_surface_client));
 
-  scoped_ptr<ResourceProvider> resource_provider(
-      ResourceProvider::Create(output_surface.get(), NULL, 0, false, 1));
+  scoped_ptr<SharedBitmapManager> shared_bitmap_manager(
+      new TestSharedBitmapManager());
+  scoped_ptr<ResourceProvider> resource_provider(ResourceProvider::Create(
+      output_surface.get(), shared_bitmap_manager.get(), 0, false, 1));
   {
     scoped_ptr<ScopedResource> texture =
-        ScopedResource::create(resource_provider.get());
+        ScopedResource::Create(resource_provider.get());
 
     EXPECT_EQ(0u, resource_provider->num_resources());
     texture->Allocate(gfx::Size(30, 30),
@@ -75,7 +82,7 @@ TEST(ScopedResourceTest, ScopedResourceIsDeleted) {
   EXPECT_EQ(0u, resource_provider->num_resources());
   {
     scoped_ptr<ScopedResource> texture =
-        ScopedResource::create(resource_provider.get());
+        ScopedResource::Create(resource_provider.get());
     EXPECT_EQ(0u, resource_provider->num_resources());
     texture->Allocate(gfx::Size(30, 30),
                       ResourceProvider::TextureUsageAny,
@@ -92,11 +99,13 @@ TEST(ScopedResourceTest, LeakScopedResource) {
   scoped_ptr<OutputSurface> output_surface(FakeOutputSurface::Create3d());
   CHECK(output_surface->BindToClient(&output_surface_client));
 
-  scoped_ptr<ResourceProvider> resource_provider(
-      ResourceProvider::Create(output_surface.get(), NULL, 0, false, 1));
+  scoped_ptr<SharedBitmapManager> shared_bitmap_manager(
+      new TestSharedBitmapManager());
+  scoped_ptr<ResourceProvider> resource_provider(ResourceProvider::Create(
+      output_surface.get(), shared_bitmap_manager.get(), 0, false, 1));
   {
     scoped_ptr<ScopedResource> texture =
-        ScopedResource::create(resource_provider.get());
+        ScopedResource::Create(resource_provider.get());
 
     EXPECT_EQ(0u, resource_provider->num_resources());
     texture->Allocate(gfx::Size(30, 30),

@@ -42,17 +42,17 @@ class RegistrarInvalidator : public Invalidator {
     registrar_.UnregisterHandler(handler);
   }
 
-  virtual void Acknowledge(const invalidation::ObjectId& id,
-                           const AckHandle& ack_handle) OVERRIDE {
-    // Do nothing.
-  }
-
   virtual InvalidatorState GetInvalidatorState() const OVERRIDE {
     return registrar_.GetInvalidatorState();
   }
 
   virtual void UpdateCredentials(
       const std::string& email, const std::string& token) OVERRIDE {
+    // Do nothing.
+  }
+
+  virtual void RequestDetailedStatus(
+      base::Callback<void(const base::DictionaryValue&)> call) const OVERRIDE {
     // Do nothing.
   }
 

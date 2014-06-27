@@ -13,7 +13,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "chrome/browser/chromeos/drive/file_errors.h"
-#include "chrome/browser/google_apis/gdata_errorcode.h"
+#include "google_apis/drive/gdata_errorcode.h"
 #include "net/base/completion_callback.h"
 
 namespace base {
@@ -172,15 +172,17 @@ class DriveFileStreamReader {
            const net::CompletionCallback& callback);
 
  private:
-  // Part of Initialize. Called after GetFileContentByPath's initialization
+  // Used to store the cancel closure returned by FileSystemInterface.
+  void StoreCancelDownloadClosure(const base::Closure& cancel_download_closure);
+
+  // Part of Initialize. Called after GetFileContent's initialization
   // is done.
-  void InitializeAfterGetFileContentByPathInitialized(
-      const net::HttpByteRange& in_byte_range,
+  void InitializeAfterGetFileContentInitialized(
+      const net::HttpByteRange& byte_range,
       const InitializeCompletionCallback& callback,
       FileError error,
-      scoped_ptr<ResourceEntry> entry,
       const base::FilePath& local_cache_file_path,
-      const base::Closure& cancel_download_closure);
+      scoped_ptr<ResourceEntry> entry);
 
   // Part of Initialize. Called when the local file open process is done.
   void InitializeAfterLocalFileOpen(
@@ -194,13 +196,14 @@ class DriveFileStreamReader {
   void OnGetContent(google_apis::GDataErrorCode error_code,
                     scoped_ptr<std::string> data);
 
-  // Called when GetFileContentByPath is completed.
-  void OnGetFileContentByPathCompletion(
+  // Called when GetFileContent is completed.
+  void OnGetFileContentCompletion(
       const InitializeCompletionCallback& callback,
       FileError error);
 
   const FileSystemGetter file_system_getter_;
   scoped_refptr<base::SequencedTaskRunner> file_task_runner_;
+  base::Closure cancel_download_closure_;
   scoped_ptr<internal::ReaderProxy> reader_proxy_;
 
   // This should remain the last member so it'll be destroyed first and

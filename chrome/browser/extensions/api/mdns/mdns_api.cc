@@ -8,8 +8,8 @@
 
 #include "base/lazy_instance.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/common/extensions/api/mdns.h"
+#include "extensions/browser/extension_system.h"
 
 namespace extensions {
 
@@ -30,9 +30,9 @@ bool IsServiceTypeWhitelisted(const std::string& service_type) {
 
 }  // namespace
 
-MDnsAPI::MDnsAPI(Profile* profile) : profile_(profile) {
-  DCHECK(profile_);
-  ExtensionSystem::Get(profile)->event_router()->RegisterObserver(
+MDnsAPI::MDnsAPI(content::BrowserContext* context) : browser_context_(context) {
+  DCHECK(browser_context_);
+  ExtensionSystem::Get(context)->event_router()->RegisterObserver(
       this, mdns::OnServiceList::kEventName);
 }
 
@@ -43,16 +43,16 @@ MDnsAPI::~MDnsAPI() {
 }
 
 // static
-MDnsAPI* MDnsAPI::Get(Profile* profile) {
-  return ProfileKeyedAPIFactory<MDnsAPI>::GetForProfile(profile);
+MDnsAPI* MDnsAPI::Get(content::BrowserContext* context) {
+  return BrowserContextKeyedAPIFactory<MDnsAPI>::Get(context);
 }
 
-static base::LazyInstance<ProfileKeyedAPIFactory<MDnsAPI> > g_factory =
+static base::LazyInstance<BrowserContextKeyedAPIFactory<MDnsAPI> > g_factory =
     LAZY_INSTANCE_INITIALIZER;
 
 // static
-ProfileKeyedAPIFactory<MDnsAPI>* MDnsAPI::GetFactoryInstance() {
-  return &g_factory.Get();
+BrowserContextKeyedAPIFactory<MDnsAPI>* MDnsAPI::GetFactoryInstance() {
+  return g_factory.Pointer();
 }
 
 void MDnsAPI::SetDnsSdRegistryForTesting(
@@ -84,14 +84,13 @@ void MDnsAPI::UpdateMDnsListeners(const EventListenerInfo& details) {
 
   // Check all listeners for service type filers.
   const EventListenerMap::ListenerList& listeners =
-      extensions::ExtensionSystem::Get(profile_)->event_router()->
-          listeners().GetEventListenersByName(details.event_name);
+      extensions::ExtensionSystem::Get(browser_context_)
+          ->event_router()
+          ->listeners()
+          .GetEventListenersByName(details.event_name);
   for (EventListenerMap::ListenerList::const_iterator it = listeners.begin();
        it != listeners.end(); ++it) {
     base::DictionaryValue* filter = ((*it)->filter.get());
-    for (base::DictionaryValue::Iterator iter(*filter);
-       !iter.IsAtEnd(); iter.Advance()) {
-    }
 
     std::string filter_value;
     filter->GetStringASCII(kEventFilterServiceTypeKey, &filter_value);
@@ -143,13 +142,16 @@ void MDnsAPI::OnDnsSdEvent(const std::string& service_type,
   scoped_ptr<base::ListValue> results = mdns::OnServiceList::Create(args);
   scoped_ptr<Event> event(
       new Event(mdns::OnServiceList::kEventName, results.Pass()));
-  event->restrict_to_profile = profile_;
+  event->restrict_to_browser_context = browser_context_;
   event->filter_info.SetServiceType(service_type);
+
+  VLOG(1) << "Broadcasting OnServiceList event: " << event.get();
 
   // TODO(justinlin): To avoid having listeners without filters getting all
   // events, modify API to have this event require filters.
-  extensions::ExtensionSystem::Get(profile_)->event_router()->
-      BroadcastEvent(event.Pass());
+  extensions::ExtensionSystem::Get(browser_context_)
+      ->event_router()
+      ->BroadcastEvent(event.Pass());
 }
 
 }  // namespace extensions

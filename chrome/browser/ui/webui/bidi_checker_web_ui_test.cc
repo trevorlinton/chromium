@@ -22,8 +22,8 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/autofill/core/browser/autofill_common_test.h"
 #include "components/autofill/core/browser/autofill_profile.h"
+#include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -106,8 +106,8 @@ void WebUIBidiCheckerBrowserTest::RunBidiCheckerOnPage(
     const std::string& page_url, bool is_rtl) {
   ui_test_utils::NavigateToURL(browser(), GURL(page_url));
   ASSERT_TRUE(RunJavascriptTest("runBidiChecker",
-                                Value::CreateStringValue(page_url),
-                                Value::CreateBooleanValue(is_rtl)));
+                                base::Value::CreateStringValue(page_url),
+                                base::Value::CreateBooleanValue(is_rtl)));
 }
 
 void WebUIBidiCheckerBrowserTestLTR::RunBidiCheckerOnPage(
@@ -163,10 +163,9 @@ static void SetupHistoryPageTest(Browser* browser,
   const GURL history_url = GURL(page_url);
   history_service->AddPage(
       history_url, base::Time::Now(), history::SOURCE_BROWSED);
-  history_service->SetPageTitle(history_url, UTF8ToUTF16(page_title));
+  history_service->SetPageTitle(history_url, base::UTF8ToUTF16(page_title));
 }
 
-// TODO(estade): fix this test: http://crbug.com/119595
 IN_PROC_BROWSER_TEST_F(WebUIBidiCheckerBrowserTestLTR,
                        TestHistoryPage) {
   // Test an Israeli news site with a Hebrew title.
@@ -176,7 +175,6 @@ IN_PROC_BROWSER_TEST_F(WebUIBidiCheckerBrowserTestLTR,
   RunBidiCheckerOnPage(chrome::kChromeUIHistoryFrameURL);
 }
 
-// TODO(estade): fix this test: http://crbug.com/119595
 IN_PROC_BROWSER_TEST_F(WebUIBidiCheckerBrowserTestRTL,
                        TestHistoryPage) {
   SetupHistoryPageTest(browser(), "http://www.google.com", "Google");
@@ -267,7 +265,7 @@ static void SetupSettingsAutofillPageTest(Profile* profile,
                                           const char* zipcode,
                                           const char* country,
                                           const char* phone) {
-  autofill::test::DisableSystemServices(profile);
+  autofill::test::DisableSystemServices(profile->GetPrefs());
   AutofillProfile autofill_profile;
   autofill::test::SetProfileInfo(&autofill_profile,
                                  first_name,
@@ -383,15 +381,8 @@ IN_PROC_BROWSER_TEST_F(WebUIBidiCheckerBrowserTestLTR,
   RunBidiCheckerOnPage(url);
 }
 
-#if defined(OS_WIN)
-// Times out on Windows. http://crbug.com/171938
-#define MAYBE_TestSettingsLanguageOptionsPage \
-    DISABLED_TestSettingsLanguageOptionsPage
-#else
-#define MAYBE_TestSettingsLanguageOptionsPage TestSettingsLanguageOptionsPage
-#endif
 IN_PROC_BROWSER_TEST_F(WebUIBidiCheckerBrowserTestRTL,
-                       MAYBE_TestSettingsLanguageOptionsPage) {
+                       TestSettingsLanguageOptionsPage) {
   std::string url(chrome::kChromeUISettingsFrameURL);
   url += std::string(chrome::kLanguageOptionsSubPage);
   RunBidiCheckerOnPage(url);

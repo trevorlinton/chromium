@@ -10,12 +10,16 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/google/google_util.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/search_engines/search_terms_data.h"
 #include "chrome/browser/search_engines/template_url.h"
 #include "chrome/browser/search_engines/template_url_prepopulate_data.h"
+#include "chrome/browser/search_engines/template_url_service.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
+#include "chrome/browser/search_engines/util.h"
 #include "jni/TemplateUrlService_jni.h"
+#include "net/base/url_util.h"
 
 using base::android::ConvertJavaStringToUTF16;
 using base::android::ConvertUTF16ToJavaString;
@@ -24,8 +28,7 @@ using base::android::ConvertUTF8ToJavaString;
 namespace {
 
 Profile* GetOriginalProfile() {
-  return g_browser_process->profile_manager()->GetDefaultProfile()->
-      GetOriginalProfile();
+  return ProfileManager::GetActiveUserProfile()->GetOriginalProfile();
 }
 
 }  // namespace
@@ -143,13 +146,30 @@ TemplateUrlServiceAndroid::GetUrlForSearchQuery(JNIEnv* env,
   const TemplateURL* default_provider =
       template_url_service_->GetDefaultSearchProvider();
 
-  string16 query(ConvertJavaStringToUTF16(env, jquery));
+  base::string16 query(ConvertJavaStringToUTF16(env, jquery));
 
   std::string url;
   if (default_provider &&
       default_provider->url_ref().SupportsReplacement() && !query.empty()) {
     url = default_provider->url_ref().ReplaceSearchTerms(
         TemplateURLRef::SearchTermsArgs(query));
+  }
+
+  return ConvertUTF8ToJavaString(env, url);
+}
+
+base::android::ScopedJavaLocalRef<jstring>
+TemplateUrlServiceAndroid::GetUrlForVoiceSearchQuery(JNIEnv* env,
+                                                     jobject obj,
+                                                     jstring jquery) {
+  base::string16 query(ConvertJavaStringToUTF16(env, jquery));
+  std::string url;
+
+  if (!query.empty()) {
+    GURL gurl = GetDefaultSearchURLForSearchTerms(GetOriginalProfile(), query);
+    if (google_util::IsGoogleSearchUrl(gurl))
+      gurl = net::AppendQueryParameter(gurl, "inm", "vs");
+    url = gurl.spec();
   }
 
   return ConvertUTF8ToJavaString(env, url);
@@ -163,7 +183,7 @@ TemplateUrlServiceAndroid::ReplaceSearchTermsInUrl(JNIEnv* env,
   TemplateURL* default_provider =
       template_url_service_->GetDefaultSearchProvider();
 
-  string16 query(ConvertJavaStringToUTF16(env, jquery));
+  base::string16 query(ConvertJavaStringToUTF16(env, jquery));
   GURL current_url(ConvertJavaStringToUTF16(env, jcurrent_url));
   GURL destination_url(current_url);
   if (default_provider && !query.empty()) {
@@ -175,10 +195,10 @@ TemplateUrlServiceAndroid::ReplaceSearchTermsInUrl(JNIEnv* env,
   return base::android::ScopedJavaLocalRef<jstring>(env, NULL);
 }
 
-static jint Init(JNIEnv* env, jobject obj) {
+static jlong Init(JNIEnv* env, jobject obj) {
   TemplateUrlServiceAndroid* template_url_service_android =
       new TemplateUrlServiceAndroid(env, obj);
-  return reinterpret_cast<jint>(template_url_service_android);
+  return reinterpret_cast<intptr_t>(template_url_service_android);
 }
 
 // static

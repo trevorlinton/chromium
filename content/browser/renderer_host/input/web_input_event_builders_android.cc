@@ -5,18 +5,21 @@
 #include "content/browser/renderer_host/input/web_input_event_builders_android.h"
 
 #include "base/logging.h"
+#include "content/browser/renderer_host/input/motion_event_android.h"
 #include "content/browser/renderer_host/input/web_input_event_util.h"
 #include "content/browser/renderer_host/input/web_input_event_util_posix.h"
 #include "ui/events/keycodes/keyboard_code_conversion_android.h"
 #include "ui/events/keycodes/keyboard_codes_posix.h"
 
-namespace content {
+using blink::WebInputEvent;
+using blink::WebKeyboardEvent;
+using blink::WebGestureEvent;
+using blink::WebMouseEvent;
+using blink::WebMouseWheelEvent;
+using blink::WebTouchEvent;
+using blink::WebTouchPoint;
 
-using WebKit::WebInputEvent;
-using WebKit::WebKeyboardEvent;
-using WebKit::WebGestureEvent;
-using WebKit::WebMouseEvent;
-using WebKit::WebMouseWheelEvent;
+namespace content {
 
 WebKeyboardEvent WebKeyboardEventBuilder::Build(WebInputEvent::Type type,
                                                 int modifiers,
@@ -48,7 +51,7 @@ WebKeyboardEvent WebKeyboardEventBuilder::Build(WebInputEvent::Type type,
   return result;
 }
 
-WebMouseEvent WebMouseEventBuilder::Build(WebKit::WebInputEvent::Type type,
+WebMouseEvent WebMouseEventBuilder::Build(blink::WebInputEvent::Type type,
                                           WebMouseEvent::Button button,
                                           double time_sec,
                                           int window_x,
@@ -128,6 +131,12 @@ WebGestureEvent WebGestureEventBuilder::Build(WebInputEvent::Type type,
   result.sourceDevice = WebGestureEvent::Touchscreen;
 
   return result;
+}
+
+blink::WebTouchEvent WebTouchEventBuilder::Build(
+    const MotionEventAndroid& event,
+    float scale) {
+  return CreateWebTouchEventFromMotionEvent(event, scale);
 }
 
 }  // namespace content

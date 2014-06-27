@@ -4,7 +4,6 @@
 
 #include "chrome/browser/chromeos/policy/device_status_collector.h"
 
-#include "base/command_line.h"
 #include "base/environment.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
@@ -15,14 +14,13 @@
 #include "base/threading/sequenced_worker_pool.h"
 #include "chrome/browser/chromeos/login/mock_user_manager.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
+#include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/policy/stub_enterprise_install_attributes.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
 #include "chrome/browser/chromeos/settings/stub_cros_settings_provider.h"
-#include "chrome/browser/policy/browser_policy_connector.h"
-#include "chrome/browser/policy/proto/cloud/device_management_backend.pb.h"
 #include "chrome/common/pref_names.h"
-#include "chromeos/chromeos_switches.h"
+#include "chrome/test/base/testing_browser_process.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/shill_device_client.h"
 #include "chromeos/network/network_handler.h"
@@ -33,6 +31,7 @@
 #include "content/public/browser/geolocation_provider.h"
 #include "content/public/test/test_browser_thread.h"
 #include "content/public/test/test_utils.h"
+#include "policy/proto/device_management_backend.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -150,8 +149,7 @@ namespace policy {
 class DeviceStatusCollectorTest : public testing::Test {
  public:
   DeviceStatusCollectorTest()
-    : message_loop_(base::MessageLoop::TYPE_UI),
-      ui_thread_(content::BrowserThread::UI, &message_loop_),
+    : ui_thread_(content::BrowserThread::UI, &message_loop_),
       file_thread_(content::BrowserThread::FILE, &message_loop_),
       io_thread_(content::BrowserThread::IO, &message_loop_),
       user_manager_(new chromeos::MockUserManager()),
@@ -180,10 +178,7 @@ class DeviceStatusCollectorTest : public testing::Test {
         new StubEnterpriseInstallAttributes();
     attributes->SetDomain("managed.com");
     attributes->SetRegistrationUser("user@managed.com");
-    BrowserPolicyConnector::SetInstallAttributesForTesting(attributes);
-
-    CommandLine::ForCurrentProcess()->AppendSwitch(
-        chromeos::switches::kEnableEnterpriseUserReporting);
+    BrowserPolicyConnectorChromeOS::SetInstallAttributesForTesting(attributes);
 
     RestartStatusCollector();
   }
@@ -258,7 +253,10 @@ class DeviceStatusCollectorTest : public testing::Test {
     return policy::DeviceStatusCollector::kIdlePollIntervalSeconds * 1000;
   }
 
-  base::MessageLoop message_loop_;
+  // Since this is a unit test running in browser_tests we must do additional
+  // unit test setup and make a TestingBrowserProcess. Must be first member.
+  TestingBrowserProcessInitializer initializer_;
+  base::MessageLoopForUI message_loop_;
   content::TestBrowserThread ui_thread_;
   content::TestBrowserThread file_thread_;
   content::TestBrowserThread io_thread_;
@@ -607,6 +605,7 @@ TEST_F(DeviceStatusCollectorTest, Location) {
 }
 
 TEST_F(DeviceStatusCollectorTest, ReportUsers) {
+  user_manager_->CreatePublicAccountUser("public@localhost");
   user_manager_->AddUser("user0@managed.com");
   user_manager_->AddUser("user1@managed.com");
   user_manager_->AddUser("user2@managed.com");

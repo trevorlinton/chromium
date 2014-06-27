@@ -15,7 +15,6 @@ namespace ash {
 namespace internal {
 
 class DragWindowController;
-class TrayUser;
 
 // DragWindowResizer is a decorator of WindowResizer and adds the ability to
 // drag windows across displays.
@@ -27,17 +26,12 @@ class ASH_EXPORT DragWindowResizer : public WindowResizer {
   // returned object. The ownership of |next_window_resizer| is taken by the
   // returned object. Returns NULL if not resizable.
   static DragWindowResizer* Create(WindowResizer* next_window_resizer,
-                                   aura::Window* window,
-                                   const gfx::Point& location,
-                                   int window_component,
-                                   aura::client::WindowMoveSource source);
+                                   wm::WindowState* window_state);
 
   // WindowResizer:
   virtual void Drag(const gfx::Point& location, int event_flags) OVERRIDE;
-  virtual void CompleteDrag(int event_flags) OVERRIDE;
+  virtual void CompleteDrag() OVERRIDE;
   virtual void RevertDrag() OVERRIDE;
-  virtual aura::Window* GetTarget() OVERRIDE;
-  virtual const gfx::Point& GetInitialLocation() const OVERRIDE;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(DragWindowResizerTest, DragWindowController);
@@ -46,7 +40,7 @@ class ASH_EXPORT DragWindowResizer : public WindowResizer {
   // displays to |next_window_resizer|. This object takes the ownership of
   // |next_window_resizer|.
   explicit DragWindowResizer(WindowResizer* next_window_resizer,
-                             const Details& details);
+                             wm::WindowState* window_state);
 
   // Updates the bounds of the phantom window for window dragging. Set true on
   // |in_original_root| if the pointer is still in |window()->GetRootWindow()|.
@@ -55,20 +49,10 @@ class ASH_EXPORT DragWindowResizer : public WindowResizer {
   // Returns true if we should allow the mouse pointer to warp.
   bool ShouldAllowMouseWarp();
 
-  // Get the user drop target underneath the given |point_in_screen| or NULL.
-  TrayUser* GetTrayUserItemAtPoint(const gfx::Point& point_in_screen);
-
-  // Check if a completed drag might cause the window to change active desktops.
-  // If the call was causing a "transfer of ownership to another desktop" and it
-  // will return false indicating that no further processing is needed.
-  bool TryDraggingToNewUser();
-
   scoped_ptr<WindowResizer> next_window_resizer_;
 
   // Shows a semi-transparent image of the window being dragged.
   scoped_ptr<DragWindowController> drag_window_controller_;
-
-  const Details details_;
 
   gfx::Point last_mouse_location_;
 

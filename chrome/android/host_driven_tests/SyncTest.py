@@ -20,8 +20,6 @@ class SyncTest(test_case.HostDrivenTestCase):
     self.additional_flags = []
 
   def SetUp(self, device, shard_index, push_deps, cleanup_test_files):
-    super(SyncTest, self).SetUp(device, shard_index, push_deps,
-                                cleanup_test_files)
     self.test_server = test_server.TestServer(
         shard_index,
         constants.TEST_SYNC_SERVER_PORT,
@@ -29,12 +27,15 @@ class SyncTest(test_case.HostDrivenTestCase):
     # These ought not to change in the middle of a test for obvious reasons.
     self.additional_flags = [
         '--sync-url=http://%s:%d/chromiumsync' %
-        (self.test_server.host, self.test_server.port)]
-    self.ports_to_forward = [self.test_server.port]
+        (self.test_server.host, self.test_server.port),
+        '--sync-deferred-startup-timeout-seconds=0']
+    super(SyncTest, self).SetUp(device, shard_index, push_deps,
+                                cleanup_test_files,
+                                [self.test_server.port])
 
   def TearDown(self):
-    self.test_server.TearDown()
     super(SyncTest, self).TearDown()
+    self.test_server.TearDown()
 
   def _RunSyncTests(self, test_names):
     full_names = []
@@ -42,19 +43,23 @@ class SyncTest(test_case.HostDrivenTestCase):
       full_names.append('SyncTest.' + test_name)
     return self._RunJavaTestFilters(full_names, self.additional_flags)
 
-  @tests_annotations.Feature(['Sync'])
-  @tests_annotations.EnormousTest
+  # http://crbug.com/348951
+  # @tests_annotations.Feature(['Sync'])
+  # @tests_annotations.EnormousTest
+  @tests_annotations.DisabledTest
   def testGetAboutSyncInfoYieldsValidData(self):
     java_tests = ['testGetAboutSyncInfoYieldsValidData']
     return self._RunSyncTests(java_tests)
 
-  @tests_annotations.Feature(['Sync'])
-  @tests_annotations.EnormousTest
+  # http://crbug.com/348117
+  # @tests_annotations.Feature(['Sync'])
+  # @tests_annotations.EnormousTest
+  @tests_annotations.DisabledTest
   def testAboutSyncPageDisplaysCurrentSyncStatus(self):
     java_tests = ['testAboutSyncPageDisplaysCurrentSyncStatus']
     return self._RunSyncTests(java_tests)
 
-  # Disabled for http://crbug.com/311091
+  # http://crbug.com/348951
   # @tests_annotations.Feature(['Sync'])
   # @tests_annotations.EnormousTest
   @tests_annotations.DisabledTest

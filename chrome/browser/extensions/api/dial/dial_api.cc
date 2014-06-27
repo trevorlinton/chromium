@@ -8,11 +8,11 @@
 
 #include "base/time/time.h"
 #include "chrome/browser/extensions/api/dial/dial_api_factory.h"
-#include "chrome/browser/extensions/event_router.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/dial.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_system.h"
 
 using base::TimeDelta;
 using content::BrowserThread;
@@ -153,8 +153,8 @@ DialDiscoverNowFunction::DialDiscoverNowFunction()
 
 bool DialDiscoverNowFunction::Prepare() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  DCHECK(GetProfile());
-  dial_ = DialAPIFactory::GetForProfile(GetProfile()).get();
+  DCHECK(browser_context());
+  dial_ = DialAPIFactory::GetForBrowserContext(browser_context()).get();
   return true;
 }
 

@@ -103,6 +103,7 @@ class FakeResourceMessageFilter : public ResourceMessageFilter {
           NULL  /* appcache_service */,
           NULL  /* blob_storage_context */,
           NULL  /* file_system_context */,
+          NULL  /* service_worker_context */,
           base::Bind(&FakeResourceMessageFilter::GetContexts,
                      base::Unretained(this))) {
   }
@@ -124,7 +125,6 @@ class ResourceSchedulerTest : public testing::Test {
  protected:
   ResourceSchedulerTest()
       : next_request_id_(0),
-        message_loop_(base::MessageLoop::TYPE_IO),
         ui_thread_(BrowserThread::UI, &message_loop_),
         io_thread_(BrowserThread::IO, &message_loop_) {
     scheduler_.OnClientCreated(kChildId, kRouteId);
@@ -140,24 +140,26 @@ class ResourceSchedulerTest : public testing::Test {
       net::RequestPriority priority,
       int route_id) {
     scoped_ptr<net::URLRequest> url_request(
-        context_.CreateRequest(GURL(url), priority, NULL));
+        context_.CreateRequest(GURL(url), priority, NULL, NULL));
     ResourceRequestInfoImpl* info = new ResourceRequestInfoImpl(
         PROCESS_TYPE_RENDERER,             // process_type
         kChildId,                          // child_id
         route_id,                          // route_id
         0,                                 // origin_pid
         ++next_request_id_,                // request_id
+        MSG_ROUTING_NONE,                  // render_frame_id
         false,                             // is_main_frame
-        0,                                 // frame_id
         false,                             // parent_is_main_frame
-        0,                                 // parent_frame_id
+        0,                                 // parent_render_frame_id
         ResourceType::SUB_RESOURCE,        // resource_type
         PAGE_TRANSITION_LINK,              // transition_type
+        false,                             // should_replace_current_entry
         false,                             // is_download
         false,                             // is_stream
         true,                              // allow_download
         false,                             // has_user_gesture
-        WebKit::WebReferrerPolicyDefault,  // referrer_policy
+        blink::WebReferrerPolicyDefault,   // referrer_policy
+        blink::WebPageVisibilityStateVisible,  // visibility_state
         NULL,                              // context
         base::WeakPtr<ResourceMessageFilter>(),  // filter
         true);                             // is_async
@@ -200,7 +202,7 @@ class ResourceSchedulerTest : public testing::Test {
   }
 
   int next_request_id_;
-  base::MessageLoop message_loop_;
+  base::MessageLoopForIO message_loop_;
   BrowserThreadImpl ui_thread_;
   BrowserThreadImpl io_thread_;
   ResourceDispatcherHostImpl rdh_;
@@ -318,19 +320,41 @@ TEST_F(ResourceSchedulerTest, LimitedNumberOfDelayableRequestsInFlight) {
   EXPECT_TRUE(high->started());
 
   const int kMaxNumDelayableRequestsPerClient = 10;  // Should match the .cc.
-  ScopedVector<TestRequest> lows;
-  for (int i = 0; i < kMaxNumDelayableRequestsPerClient; ++i) {
+  const int kMaxNumDelayableRequestsPerHost = 6;
+  ScopedVector<TestRequest> lows_singlehost;
+  // Queue up to the per-host limit (we subtract the current high-pri request).
+  for (int i = 0; i < kMaxNumDelayableRequestsPerHost - 1; ++i) {
     string url = "http://host/low" + base::IntToString(i);
-    lows.push_back(NewRequest(url.c_str(), net::LOWEST));
-    EXPECT_TRUE(lows[i]->started());
+    lows_singlehost.push_back(NewRequest(url.c_str(), net::LOWEST));
+    EXPECT_TRUE(lows_singlehost[i]->started());
   }
 
-  scoped_ptr<TestRequest> last(NewRequest("http://host/last", net::LOWEST));
-  EXPECT_FALSE(last->started());
+  scoped_ptr<TestRequest> second_last_singlehost(NewRequest("http://host/last",
+                                                            net::LOWEST));
+  scoped_ptr<TestRequest> last_singlehost(NewRequest("http://host/s_last",
+                                                     net::LOWEST));
+
+  EXPECT_FALSE(second_last_singlehost->started());
   high.reset();
-  EXPECT_FALSE(last->started());
-  lows.erase(lows.begin());
-  EXPECT_TRUE(last->started());
+  EXPECT_TRUE(second_last_singlehost->started());
+  EXPECT_FALSE(last_singlehost->started());
+  lows_singlehost.erase(lows_singlehost.begin());
+  EXPECT_TRUE(last_singlehost->started());
+
+  // Queue more requests from different hosts until we reach the total limit.
+  int expected_slots_left =
+      kMaxNumDelayableRequestsPerClient - kMaxNumDelayableRequestsPerHost;
+  EXPECT_GT(expected_slots_left, 0);
+  ScopedVector<TestRequest> lows_differenthosts;
+  for (int i = 0; i < expected_slots_left; ++i) {
+    string url = "http://host" + base::IntToString(i) + "/low";
+    lows_differenthosts.push_back(NewRequest(url.c_str(), net::LOWEST));
+    EXPECT_TRUE(lows_differenthosts[i]->started());
+  }
+
+  scoped_ptr<TestRequest> last_differenthost(NewRequest("http://host_new/last",
+                                                        net::LOWEST));
+  EXPECT_FALSE(last_differenthost->started());
 }
 
 TEST_F(ResourceSchedulerTest, RaisePriorityAndStart) {
@@ -391,7 +415,7 @@ TEST_F(ResourceSchedulerTest, LowerPriority) {
   const int kNumFillerRequests = kMaxNumDelayableRequestsPerClient - 2;
   ScopedVector<TestRequest> lows;
   for (int i = 0; i < kNumFillerRequests; ++i) {
-    string url = "http://host/low" + base::IntToString(i);
+    string url = "http://host" + base::IntToString(i) + "/low";
     lows.push_back(NewRequest(url.c_str(), net::LOWEST));
   }
 
@@ -438,6 +462,20 @@ TEST_F(ResourceSchedulerTest, NonHTTPSchedulesImmediately) {
   scoped_ptr<TestRequest> request(
       NewRequest("chrome-extension://req", net::LOWEST));
   EXPECT_TRUE(request->started());
+}
+
+TEST_F(ResourceSchedulerTest, SpdyProxySchedulesImmediately) {
+  scoped_ptr<TestRequest> high(NewRequest("http://host/high", net::HIGHEST));
+  scoped_ptr<TestRequest> low(NewRequest("http://host/low", net::LOWEST));
+
+  scoped_ptr<TestRequest> request(NewRequest("http://host/req", net::IDLE));
+  EXPECT_FALSE(request->started());
+
+  scheduler_.OnReceivedSpdyProxiedHttpResponse(kChildId, kRouteId);
+  EXPECT_TRUE(request->started());
+
+  scoped_ptr<TestRequest> after(NewRequest("http://host/after", net::IDLE));
+  EXPECT_TRUE(after->started());
 }
 
 }  // unnamed namespace

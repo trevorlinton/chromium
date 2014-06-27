@@ -14,6 +14,7 @@
 #include "media/base/limits.h"
 #include "media/video/picture.h"
 #include "ui/gl/android/scoped_java_surface.h"
+#include "ui/gl/android/surface_texture.h"
 #include "ui/gl/gl_bindings.h"
 
 namespace content {
@@ -41,8 +42,21 @@ enum { kNumPictureBuffers = media::limits::kMaxVideoFrames + 1 };
 // NotifyEndOfBitstreamBuffer() before getting output from the bitstream.
 enum { kMaxBitstreamsNotifiedInAdvance = 32 };
 
-// static
+// Because MediaCodec is thread-hostile (must be poked on a single thread) and
+// has no callback mechanism (b/11990118), we must drive it by polling for
+// complete frames (and available input buffers, when the codec is fully
+// saturated).  This function defines the polling delay.  The value used is an
+// arbitrary choice that trades off CPU utilization (spinning) against latency.
+// Mirrors android_video_encode_accelerator.cc:EncodePollDelay().
 static inline const base::TimeDelta DecodePollDelay() {
+  // An alternative to this polling scheme could be to dedicate a new thread
+  // (instead of using the ChildThread) to run the MediaCodec, and make that
+  // thread use the timeout-based flavor of MediaCodec's dequeue methods when it
+  // believes the codec should complete "soon" (e.g. waiting for an input
+  // buffer, or waiting for a picture when it knows enough complete input
+  // pictures have been fed to saturate any internal buffering).  This is
+  // speculative and it's unclear that this would be a win (nor that there's a
+  // reasonably device-agnostic way to fill in the "believes" above).
   return base::TimeDelta::FromMilliseconds(10);
 }
 
@@ -51,29 +65,26 @@ static inline const base::TimeDelta NoWaitTimeOut() {
 }
 
 AndroidVideoDecodeAccelerator::AndroidVideoDecodeAccelerator(
-    media::VideoDecodeAccelerator::Client* client,
     const base::WeakPtr<gpu::gles2::GLES2Decoder> decoder,
     const base::Callback<bool(void)>& make_context_current)
-    : client_(client),
+    : client_(NULL),
       make_context_current_(make_context_current),
       codec_(media::kCodecH264),
       state_(NO_ERROR),
       surface_texture_id_(0),
       picturebuffers_requested_(false),
-      gl_decoder_(decoder) {
-}
+      gl_decoder_(decoder) {}
 
 AndroidVideoDecodeAccelerator::~AndroidVideoDecodeAccelerator() {
   DCHECK(thread_checker_.CalledOnValidThread());
 }
 
-bool AndroidVideoDecodeAccelerator::Initialize(
-    media::VideoCodecProfile profile) {
+bool AndroidVideoDecodeAccelerator::Initialize(media::VideoCodecProfile profile,
+                                               Client* client) {
   DCHECK(!media_codec_);
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  if (!media::MediaCodecBridge::IsAvailable())
-    return false;
+  client_ = client;
 
   if (profile == media::VP8PROFILE_MAIN) {
     codec_ = media::kCodecVP8;
@@ -84,8 +95,10 @@ bool AndroidVideoDecodeAccelerator::Initialize(
   }
 
   // Only consider using MediaCodec if it's likely backed by hardware.
-  if (media::VideoCodecBridge::IsKnownUnaccelerated(codec_))
+  if (media::VideoCodecBridge::IsKnownUnaccelerated(
+          codec_, media::MEDIA_CODEC_DECODER)) {
     return false;
+  }
 
   if (!make_context_current_.Run()) {
     LOG(ERROR) << "Failed to make this decoder's GL context current.";
@@ -109,7 +122,7 @@ bool AndroidVideoDecodeAccelerator::Initialize(
   gl_decoder_->RestoreTextureUnitBindings(0);
   gl_decoder_->RestoreActiveTexture();
 
-  surface_texture_ = new gfx::SurfaceTexture(surface_texture_id_);
+  surface_texture_ = gfx::SurfaceTexture::Create(surface_texture_id_);
 
   if (!ConfigureMediaCodec()) {
     LOG(ERROR) << "Failed to create MediaCodec instance.";
@@ -210,7 +223,7 @@ void AndroidVideoDecodeAccelerator::DequeueOutput() {
     size_t size = 0;
 
     media::MediaCodecStatus status = media_codec_->DequeueOutputBuffer(
-        NoWaitTimeOut(), &buf_index, &offset, &size, &timestamp, &eos);
+        NoWaitTimeOut(), &buf_index, &offset, &size, &timestamp, &eos, NULL);
     switch (status) {
       case media::MEDIA_CODEC_DEQUEUE_OUTPUT_AGAIN_LATER:
       case media::MEDIA_CODEC_ERROR:
@@ -255,6 +268,20 @@ void AndroidVideoDecodeAccelerator::DequeueOutput() {
     }
   } while (buf_index < 0);
 
+  // This ignores the emitted ByteBuffer and instead relies on rendering to the
+  // codec's SurfaceTexture and then copying from that texture to the client's
+  // PictureBuffer's texture.  This means that each picture's data is written
+  // three times: once to the ByteBuffer, once to the SurfaceTexture, and once
+  // to the client's texture.  It would be nicer to either:
+  // 1) Render directly to the client's texture from MediaCodec (one write); or
+  // 2) Upload the ByteBuffer to the client's texture (two writes).
+  // Unfortunately neither is possible:
+  // 1) MediaCodec's use of SurfaceTexture is a singleton, and the texture
+  //    written to can't change during the codec's lifetime.  b/11990461
+  // 2) The ByteBuffer is likely to contain the pixels in a vendor-specific,
+  //    opaque/non-standard format.  It's not possible to negotiate the decoder
+  //    to emit a specific colorspace, even using HW CSC.  b/10706245
+  // So, we live with these two extra copies per picture :(
   media_codec_->ReleaseOutputBuffer(buf_index, true);
 
   if (eos) {
@@ -399,23 +426,21 @@ void AndroidVideoDecodeAccelerator::Flush() {
 
 bool AndroidVideoDecodeAccelerator::ConfigureMediaCodec() {
   DCHECK(surface_texture_.get());
-  media_codec_.reset(media::VideoCodecBridge::Create(codec_, false));
 
+  gfx::ScopedJavaSurface surface(surface_texture_.get());
+
+  // Pass a dummy 320x240 canvas size and let the codec signal the real size
+  // when it's known from the bitstream.
+  media_codec_.reset(media::VideoCodecBridge::CreateDecoder(
+      codec_, false, gfx::Size(320, 240), surface.j_surface().obj(), NULL));
   if (!media_codec_)
     return false;
 
-  gfx::ScopedJavaSurface surface(surface_texture_.get());
-  // Pass a dummy 320x240 canvas size and let the codec signal the real size
-  // when it's known from the bitstream.
-  if (!media_codec_->Start(
-           codec_, gfx::Size(320, 240), surface.j_surface().obj(), NULL)) {
-    return false;
-  }
   io_timer_.Start(FROM_HERE,
                   DecodePollDelay(),
                   this,
                   &AndroidVideoDecodeAccelerator::DoIOTask);
-  return media_codec_->GetOutputBuffers();
+  return true;
 }
 
 void AndroidVideoDecodeAccelerator::Reset() {

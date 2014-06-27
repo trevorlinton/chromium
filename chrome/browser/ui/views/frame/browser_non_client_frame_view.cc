@@ -4,7 +4,6 @@
 
 #include "chrome/browser/ui/views/frame/browser_non_client_frame_view.h"
 
-#include "base/command_line.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/avatar_menu.h"
 #include "chrome/browser/profiles/profile.h"
@@ -17,8 +16,7 @@
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/taskbar_decorator.h"
 #include "chrome/browser/ui/views/new_avatar_button.h"
-#include "chrome/browser/ui/views/profile_chooser_view.h"
-#include "chrome/common/chrome_switches.h"
+#include "chrome/common/profile_management_switches.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -48,7 +46,7 @@ void BrowserNonClientFrameView::VisibilityChanged(views::View* starting_from,
   // DrawTaskBarDecoration() has no effect. Therefore we need to call it again
   // once the window is visible.
   if (!browser_view_->IsRegularOrGuestSession() ||
-      !profiles::IsNewProfileManagementEnabled())
+      !switches::IsNewProfileManagement())
     UpdateAvatarInfo();
 }
 
@@ -70,6 +68,8 @@ void BrowserNonClientFrameView::UpdateAvatarInfo() {
           browser_view_->browser(), !browser_view_->IsRegularOrGuestSession());
       avatar_button_->set_id(VIEW_ID_AVATAR_BUTTON);
       AddChildView(avatar_button_);
+      // Invalidate here because adding a child does not invalidate the layout.
+      InvalidateLayout();
       frame_->GetRootView()->Layout();
     }
   } else if (avatar_button_) {
@@ -88,7 +88,7 @@ void BrowserNonClientFrameView::UpdateAvatarInfo() {
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   gfx::Image avatar;
   gfx::Image taskbar_badge_avatar;
-  string16 text;
+  base::string16 text;
   bool is_rectangle = false;
   if (browser_view_->IsGuestSession()) {
     avatar = rb.GetImageNamed(browser_view_->GetGuestIconResourceID());
@@ -143,14 +143,14 @@ void BrowserNonClientFrameView::UpdateAvatarInfo() {
 void BrowserNonClientFrameView::UpdateNewStyleAvatarInfo(
     views::ButtonListener* listener,
     const NewAvatarButton::AvatarButtonStyle style) {
-  DCHECK(profiles::IsNewProfileManagementEnabled());
+  DCHECK(switches::IsNewProfileManagement());
   // This should never be called in incognito mode.
   DCHECK(browser_view_->IsRegularOrGuestSession());
 
   if (browser_view_->ShouldShowAvatar()) {
     if (!new_avatar_button_) {
-      string16 profile_name =
-          profiles::GetActiveProfileDisplayName(browser_view_->browser());
+      base::string16 profile_name = profiles::GetAvatarNameForProfile(
+          browser_view_->browser()->profile());
       new_avatar_button_ = new NewAvatarButton(
           listener, profile_name, style, browser_view_->browser());
       new_avatar_button_->set_id(VIEW_ID_NEW_AVATAR_BUTTON);
@@ -162,15 +162,4 @@ void BrowserNonClientFrameView::UpdateNewStyleAvatarInfo(
     new_avatar_button_ = NULL;
     frame_->GetRootView()->Layout();
   }
-}
-
-void BrowserNonClientFrameView::ShowProfileChooserViewBubble() {
-  gfx::Point origin;
-  views::View::ConvertPointToScreen(new_avatar_button(), &origin);
-  gfx::Rect bounds(origin, size());
-
-  ProfileChooserView::ShowBubble(
-      new_avatar_button(), views::BubbleBorder::TOP_RIGHT,
-      views::BubbleBorder::ALIGN_EDGE_TO_ANCHOR_EDGE, bounds,
-      browser_view_->browser());
 }

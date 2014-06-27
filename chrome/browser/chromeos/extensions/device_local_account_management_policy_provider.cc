@@ -8,7 +8,7 @@
 
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/common/extensions/extension.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest.h"
 #include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -17,20 +17,20 @@ namespace chromeos {
 
 namespace {
 
-// Apps/extensions explicitly whitelisted for use in device-local accounts.
-const char* kDeviceLocalAccountWhitelist[] = {
+// Apps/extensions explicitly whitelisted for use in public sessions.
+const char* kPublicSessionWhitelist[] = {
   // Public sessions in general:
   "cbkkbcmdlboombapidmoeolnmdacpkch",  // Chrome RDP
   "djflhoibgkdhkhhcedjiklpkjnoahfmg",  // User Agent Switcher
   "iabmpiboiopbgfabjmgeedhcmjenhbla",  // VNC Viewer
 
   // Retail mode:
-  "ehcabepphndocfmgbdkbjibfodelmpbb",  // Angry Birds
-  "kgimkbnclbekdkabkpjhpakhhalfanda",  // Bejeweled
+  "ehcabepphndocfmgbdkbjibfodelmpbb",  // Angry Birds demo
+  "kgimkbnclbekdkabkpjhpakhhalfanda",  // Bejeweled demo
   "joodangkbfjnajiiifokapkpmhfnpleo",  // Calculator
-  "fpgfohogebplgnamlafljlcidjedbdeb",  // Calendar
+  "fpgfohogebplgnamlafljlcidjedbdeb",  // Calendar demo
   "hfhhnacclhffhdffklopdkcgdhifgngh",  // Camera
-  "cdjikkcakjcdjemakobkmijmikhkegcj",  // Chrome Remote Desktop
+  "cdjikkcakjcdjemakobkmijmikhkegcj",  // Chrome Remote Desktop demo
   "jkoildpomkimndcphjpffmephmcmkfhn",  // Chromebook Demo App
   "ielkookhdphmgbipcfmafkaiagademfp",  // Custom bookmarks
   "kogjlbfgggambihdjcpijgcbmenblimd",  // Custom bookmarks
@@ -41,28 +41,30 @@ const char* kDeviceLocalAccountWhitelist[] = {
   "iggnealjakkgfofealilhkkclnbnfnmo",  // Custom bookmarks
   "lplkobnahgbopmpkdapaihnnojkphahc",  // Custom bookmarks
   "lejnflfhjpcannpaghnahbedlabpmhoh",  // Custom bookmarks
-  "ebkhfdfghngbimnpgelagnfacdafhaba",  // Deezer
-  "npnjdccdffhdndcbeappiamcehbhjibf",  // Docs.app
-  "iddohohhpmajlkbejjjcfednjnhlnenk",  // Evernote
-  "bjdhhokmhgelphffoafoejjmlfblpdha",  // Gmail
-  "mdhnphfgagkpdhndljccoackjjhghlif",  // Google Drive
-  "fgjnkhlabjcaajddbaenilcmpcidahll",  // Google+
-  "cgmlfbhkckbedohgdepgbkflommbfkep",  // Hangouts.app
-  "edhhaiphkklkcfcbnlbpbiepchnkgkpn",  // Helper.extension
-  "diehajhcjifpahdplfdkhiboknagmfii",  // Kindle
-  "nhpmmldpbfjofkipjaieeomhnmcgihfm",  // Menu.app
-  "onbhgdmifjebcabplolilidlpgeknifi",  // Music.app
-  "kkkbcoabfhgekpnddfkaphobhinociem",  // Netflix
-  "adlphlfdhhjenpgimjochcpelbijkich",  // New York Times
-  "cgefhjmlaifaamhhoojmpcnihlbddeki",  // Pandora
-  "kpjjigggmcjinapdeipapdcnmnjealll",  // Pixlr
-  "aleodiobpjillgfjdkblghiiaegggmcm",  // Quickoffice
-  "nifkmgcdokhkjghdlgflonppnefddien",  // Sheets
-  "hdmobeajeoanbanmdlabnbnlopepchip",  // Slides
-  "dgohlccohkojjgkkfholmobjjoledflp",  // Spotify
-  "dhmdaeekeihmajjnmichlhiffffdbpde",  // Store.app
-  "jeabmjjifhfcejonjjhccaeigpnnjaak",  // TweetDeck
-  "pbdihpaifchmclcmkfdgffnnpfbobefh",  // YouTube
+  "ebkhfdfghngbimnpgelagnfacdafhaba",  // Deezer demo
+  "npnjdccdffhdndcbeappiamcehbhjibf",  // Docs.app demo
+  "iddohohhpmajlkbejjjcfednjnhlnenk",  // Evernote demo
+  "bjdhhokmhgelphffoafoejjmlfblpdha",  // Gmail demo
+  "mdhnphfgagkpdhndljccoackjjhghlif",  // Google Drive demo
+  "dondgdlndnpianbklfnehgdhkickdjck",  // Google Keep demo
+  "fgjnkhlabjcaajddbaenilcmpcidahll",  // Google+ demo
+  "ifpkhncdnjfipfjlhfidljjffdgklanh",  // Google+ Photos demo
+  "cgmlfbhkckbedohgdepgbkflommbfkep",  // Hangouts.app demo
+  "edhhaiphkklkcfcbnlbpbiepchnkgkpn",  // Helper.extension demo
+  "diehajhcjifpahdplfdkhiboknagmfii",  // Kindle demo
+  "nhpmmldpbfjofkipjaieeomhnmcgihfm",  // Menu.app demo
+  "onbhgdmifjebcabplolilidlpgeknifi",  // Music.app demo
+  "kkkbcoabfhgekpnddfkaphobhinociem",  // Netflix demo
+  "adlphlfdhhjenpgimjochcpelbijkich",  // New York Times demo
+  "cgefhjmlaifaamhhoojmpcnihlbddeki",  // Pandora demo
+  "kpjjigggmcjinapdeipapdcnmnjealll",  // Pixlr demo
+  "aleodiobpjillgfjdkblghiiaegggmcm",  // Quickoffice demo
+  "nifkmgcdokhkjghdlgflonppnefddien",  // Sheets demo
+  "hdmobeajeoanbanmdlabnbnlopepchip",  // Slides demo
+  "dgohlccohkojjgkkfholmobjjoledflp",  // Spotify demo
+  "dhmdaeekeihmajjnmichlhiffffdbpde",  // Store.app demo
+  "jeabmjjifhfcejonjjhccaeigpnnjaak",  // TweetDeck demo
+  "pbdihpaifchmclcmkfdgffnnpfbobefh",  // YouTube demo
 };
 
 }  // namespace
@@ -89,32 +91,36 @@ std::string DeviceLocalAccountManagementPolicyProvider::
 
 bool DeviceLocalAccountManagementPolicyProvider::UserMayLoad(
     const extensions::Extension* extension,
-    string16* error) const {
-  if (account_type_ == policy::DeviceLocalAccount::TYPE_KIOSK_APP) {
-    // For single-app kiosk sessions, allow only platform apps.
-    if (extension->GetType() == extensions::Manifest::TYPE_PLATFORM_APP)
+    base::string16* error) const {
+  if (account_type_ == policy::DeviceLocalAccount::TYPE_PUBLIC_SESSION) {
+    // Allow extension if it is an externally hosted component of Chrome.
+    if (extension->location() ==
+        extensions::Manifest::EXTERNAL_COMPONENT) {
       return true;
+    }
 
-  } else {
-    // Allow extension if its type is whitelisted for use in device-local
-    // accounts.
+    // Allow extension if its type is whitelisted for use in public sessions.
     if (extension->GetType() == extensions::Manifest::TYPE_HOSTED_APP)
       return true;
 
-    // Allow extension if its specific ID is whitelisted for use in device-local
-    // accounts.
-    for (size_t i = 0; i < arraysize(kDeviceLocalAccountWhitelist); ++i) {
-      if (extension->id() == kDeviceLocalAccountWhitelist[i])
+    // Allow extension if its specific ID is whitelisted for use in public
+    // sessions.
+    for (size_t i = 0; i < arraysize(kPublicSessionWhitelist); ++i) {
+      if (extension->id() == kPublicSessionWhitelist[i])
         return true;
     }
+  } else if (account_type_ == policy::DeviceLocalAccount::TYPE_KIOSK_APP) {
+    // For single-app kiosk sessions, allow only platform apps.
+    if (extension->GetType() == extensions::Manifest::TYPE_PLATFORM_APP)
+      return true;
   }
 
   // Disallow all other extensions.
   if (error) {
     *error = l10n_util::GetStringFUTF16(
           IDS_EXTENSION_CANT_INSTALL_IN_DEVICE_LOCAL_ACCOUNT,
-          UTF8ToUTF16(extension->name()),
-          UTF8ToUTF16(extension->id()));
+          base::UTF8ToUTF16(extension->name()),
+          base::UTF8ToUTF16(extension->id()));
   }
   return false;
 }

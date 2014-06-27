@@ -3,19 +3,28 @@
 // found in the LICENSE file.
 
 #include "base/bind.h"
+#include "base/command_line.h"
+#include "base/compiler_specific.h"
+#include "base/logging.h"
+#include "base/memory/scoped_ptr.h"
 #include "base/prefs/pref_service.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/browsing_data/browsing_data_helper.h"
+#include "chrome/browser/browsing_data/browsing_data_remover.h"
 #include "chrome/browser/google/google_util.h"
 #include "chrome/browser/net/url_request_mock_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -25,14 +34,80 @@
 #include "content/test/net/url_request_mock_http_job.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_util.h"
+#include "net/http/failing_http_transaction_factory.h"
+#include "net/http/http_cache.h"
+#include "net/test/spawned_test_server/spawned_test_server.h"
+#include "net/url_request/url_request_context.h"
+#include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_filter.h"
+#include "net/url_request/url_request_job.h"
 #include "net/url_request/url_request_job_factory.h"
+#include "net/url_request/url_request_test_job.h"
+#include "net/url_request/url_request_test_util.h"
 
 using content::BrowserThread;
 using content::NavigationController;
 using content::URLRequestFailedJob;
+using net::URLRequestJobFactory;
+using net::URLRequestTestJob;
 
 namespace {
+
+// A protocol handler that fails a configurable number of requests, then
+// succeeds all requests after that, keeping count of failures and successes.
+class FailFirstNRequestsProtocolHandler
+    : public URLRequestJobFactory::ProtocolHandler {
+ public:
+  FailFirstNRequestsProtocolHandler(const GURL& url, int requests_to_fail)
+      : url_(url), requests_(0), failures_(0),
+        requests_to_fail_(requests_to_fail) {}
+  virtual ~FailFirstNRequestsProtocolHandler() {}
+
+  // This method deliberately violates pointer ownership rules:
+  // AddUrlProtocolHandler() takes a scoped_ptr, taking ownership of the
+  // supplied ProtocolHandler (i.e., |this|), but also having the caller retain
+  // a pointer to |this| so the caller can use the requests() and failures()
+  // accessors.
+  void AddUrlHandler() {
+    DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
+    scoped_ptr<URLRequestJobFactory::ProtocolHandler> scoped_handler(this);
+    net::URLRequestFilter::GetInstance()->AddUrlProtocolHandler(
+        url_,
+        scoped_handler.Pass());
+  }
+
+  // net::URLRequestJobFactory::ProtocolHandler implementation
+  virtual net::URLRequestJob* MaybeCreateJob(
+      net::URLRequest* request,
+      net::NetworkDelegate* network_delegate) const OVERRIDE {
+    DCHECK_EQ(url_, request->url());
+    requests_++;
+    if (failures_ < requests_to_fail_) {
+      failures_++;
+      // Note: net::ERR_CONNECTION_RESET does not summon the Link Doctor; see
+      // NetErrorHelperCore::GetErrorPageURL.
+      return new URLRequestFailedJob(request,
+                                     network_delegate,
+                                     net::ERR_CONNECTION_RESET);
+    } else {
+      return new URLRequestTestJob(request, network_delegate,
+                                   URLRequestTestJob::test_headers(),
+                                   URLRequestTestJob::test_data_1(),
+                                   true);
+    }
+  }
+
+  int requests() const { return requests_; }
+  int failures() const { return failures_; }
+
+ private:
+  const GURL url_;
+  // These are mutable because MaybeCreateJob is const but we want this state
+  // for testing.
+  mutable int requests_;
+  mutable int failures_;
+  int requests_to_fail_;
+};
 
 class ErrorPageTest : public InProcessBrowserTest {
  public:
@@ -55,12 +130,13 @@ class ErrorPageTest : public InProcessBrowserTest {
                                     int num_navigations) {
     content::TitleWatcher title_watcher(
         browser()->tab_strip_model()->GetActiveWebContents(),
-        ASCIIToUTF16(expected_title));
+        base::ASCIIToUTF16(expected_title));
 
     ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
         browser(), url, num_navigations);
 
-    EXPECT_EQ(ASCIIToUTF16(expected_title), title_watcher.WaitAndGetTitle());
+    EXPECT_EQ(base::ASCIIToUTF16(expected_title),
+              title_watcher.WaitAndGetTitle());
   }
 
   // Navigates back in the history and waits for |num_navigations| to occur, and
@@ -79,6 +155,51 @@ class ErrorPageTest : public InProcessBrowserTest {
     NavigateHistoryAndWaitForTitle(expected_title,
                                    num_navigations,
                                    HISTORY_NAVIGATE_FORWARD);
+  }
+
+  // Confirms that the javascript variable indicating whether or not we have
+  // a stale copy in the cache has been set to |expected|.
+  bool ProbeStaleCopyValue(bool expected) {
+    const char* js_cache_probe =
+        "try {\n"
+        "    domAutomationController.send(\n"
+        "        templateData.staleCopyInCache ? 'yes' : 'no');\n"
+        "} catch (e) {\n"
+        "    domAutomationController.send(e.message);\n"
+        "}\n";
+
+    std::string result;
+    bool ret =
+        content::ExecuteScriptAndExtractString(
+            browser()->tab_strip_model()->GetActiveWebContents(),
+            js_cache_probe,
+            &result);
+    EXPECT_TRUE(ret);
+    if (!ret)
+      return false;
+    EXPECT_EQ(expected ? "yes" : "no", result);
+    return ((expected ? "yes" : "no") == result);
+  }
+
+  testing::AssertionResult ReloadStaleCopyFromCache() {
+    const char* js_reload_script =
+        "try {\n"
+        "    errorCacheLoad.reloadStaleInstance();\n"
+        "    domAutomationController.send('success');\n"
+        "} catch (e) {\n"
+        "    domAutomationController.send(e.message);\n"
+        "}\n";
+
+    std::string result;
+    bool ret = content::ExecuteScriptAndExtractString(
+        browser()->tab_strip_model()->GetActiveWebContents(),
+        js_reload_script,
+        &result);
+    EXPECT_TRUE(ret);
+    if (!ret)
+      return testing::AssertionFailure();
+    return ("success" == result ? testing::AssertionSuccess() :
+            (testing::AssertionFailure() << "Exception message is " << result));
   }
 
  protected:
@@ -101,7 +222,7 @@ class ErrorPageTest : public InProcessBrowserTest {
                                       HistoryNavigationDirection direction) {
     content::TitleWatcher title_watcher(
         browser()->tab_strip_model()->GetActiveWebContents(),
-        ASCIIToUTF16(expected_title));
+        base::ASCIIToUTF16(expected_title));
 
     content::TestNavigationObserver test_navigation_observer(
         browser()->tab_strip_model()->GetActiveWebContents(),
@@ -115,10 +236,10 @@ class ErrorPageTest : public InProcessBrowserTest {
     }
     test_navigation_observer.Wait();
 
-    EXPECT_EQ(title_watcher.WaitAndGetTitle(), ASCIIToUTF16(expected_title));
+    EXPECT_EQ(title_watcher.WaitAndGetTitle(),
+              base::ASCIIToUTF16(expected_title));
   }
 };
-
 
 class TestFailProvisionalLoadObserver : public content::WebContentsObserver {
  public:
@@ -129,11 +250,11 @@ class TestFailProvisionalLoadObserver : public content::WebContentsObserver {
   // This method is invoked when the provisional load failed.
   virtual void DidFailProvisionalLoad(
       int64 frame_id,
-      const string16& frame_unique_name,
+      const base::string16& frame_unique_name,
       bool is_main_frame,
       const GURL& validated_url,
       int error_code,
-      const string16& error_description,
+      const base::string16& error_description,
       content::RenderViewHost* render_view_host) OVERRIDE {
     fail_url_ = validated_url;
   }
@@ -145,6 +266,19 @@ class TestFailProvisionalLoadObserver : public content::WebContentsObserver {
 
   DISALLOW_COPY_AND_ASSIGN(TestFailProvisionalLoadObserver);
 };
+
+void InterceptNetworkTransactions(net::URLRequestContextGetter* getter,
+                                  net::Error error) {
+  DCHECK(content::BrowserThread::CurrentlyOn(BrowserThread::IO));
+  net::HttpCache* cache(
+      getter->GetURLRequestContext()->http_transaction_factory()->GetCache());
+  DCHECK(cache);
+  scoped_ptr<net::HttpTransactionFactory> factory(
+      new net::FailingHttpTransactionFactory(cache->GetSession(), error));
+  // Throw away old version; since this is a a browser test, we don't
+  // need to restore the old state.
+  cache->SetHttpNetworkTransactionFactoryForTesting(factory.Pass());
+}
 
 // See crbug.com/109669
 #if defined(USE_AURA) || defined(OS_WIN)
@@ -262,7 +396,9 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, MAYBE_IFrameDNSError_GoBack) {
 }
 
 // This test fails regularly on win_rel trybots. See crbug.com/121540
-#if defined(OS_WIN)
+//
+// This fails on linux_aura bringup: http://crbug.com/163931
+#if defined(OS_WIN) || (defined(OS_LINUX) && !defined(OS_CHROMEOS) && defined(USE_AURA))
 #define MAYBE_IFrameDNSError_GoBackAndForward DISABLED_IFrameDNSError_GoBackAndForward
 #else
 #define MAYBE_IFrameDNSError_GoBackAndForward IFrameDNSError_GoBackAndForward
@@ -301,8 +437,7 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, IFrameDNSError_JavaScript) {
     content::WindowedNotificationObserver load_observer(
         content::NOTIFICATION_LOAD_STOP,
         content::Source<NavigationController>(&wc->GetController()));
-    wc->GetRenderViewHost()->ExecuteJavascriptInWebFrame(
-        string16(), ASCIIToUTF16(script));
+    wc->GetMainFrame()->ExecuteJavaScript(base::ASCIIToUTF16(script));
     load_observer.Wait();
 
     // Ensure we saw the expected failure.
@@ -322,8 +457,7 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, IFrameDNSError_JavaScript) {
     content::WindowedNotificationObserver load_observer(
         content::NOTIFICATION_LOAD_STOP,
         content::Source<NavigationController>(&wc->GetController()));
-    wc->GetRenderViewHost()->ExecuteJavascriptInWebFrame(
-        string16(), ASCIIToUTF16(script));
+    wc->GetMainFrame()->ExecuteJavaScript(base::ASCIIToUTF16(script));
     load_observer.Wait();
   }
 
@@ -334,8 +468,7 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, IFrameDNSError_JavaScript) {
     content::WindowedNotificationObserver load_observer(
         content::NOTIFICATION_LOAD_STOP,
         content::Source<NavigationController>(&wc->GetController()));
-    wc->GetRenderViewHost()->ExecuteJavascriptInWebFrame(
-        string16(), ASCIIToUTF16(script));
+    wc->GetMainFrame()->ExecuteJavaScript(base::ASCIIToUTF16(script));
     load_observer.Wait();
 
     EXPECT_EQ(fail_url, fail_observer.fail_url());
@@ -350,6 +483,121 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, Page404) {
           base::FilePath(FILE_PATH_LITERAL("page404.html"))),
       "SUCCESS",
       1);
+}
+
+// Checks that when an error occurs, the stale cache status of the page
+// is correctly transferred, and that stale cached copied can be loaded
+// from the javascript.
+IN_PROC_BROWSER_TEST_F(ErrorPageTest, StaleCacheStatus) {
+  ASSERT_TRUE(test_server()->Start());
+  // Load cache with entry with "nocache" set, to create stale
+  // cache.
+  GURL test_url(test_server()->GetURL("files/nocache.html"));
+  NavigateToURLAndWaitForTitle(test_url, "Nocache Test Page", 1);
+
+  // Reload same URL after forcing an error from the the network layer;
+  // confirm that the error page is told the cached copy exists.
+  scoped_refptr<net::URLRequestContextGetter> url_request_context_getter =
+      browser()->profile()->GetRequestContext();
+  BrowserThread::PostTask(
+      BrowserThread::IO, FROM_HERE,
+      base::Bind(&InterceptNetworkTransactions, url_request_context_getter,
+                 // Note that we can't use an error that'll invoke the link
+                 // doctor.  In normal network error conditions that would
+                 // work (because the link doctor fetch would also fail,
+                 // putting us back in the main offline path), but
+                 // SetUrlRequestMocksEnabled() has also specfied a link
+                 // doctor mock, which will be accessible because it
+                 // won't go through the network cache.
+                 net::ERR_FAILED));
+
+  ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
+      // With no link doctor load, there's only one navigation.
+      browser(), test_url, 1);
+  EXPECT_TRUE(ProbeStaleCopyValue(true));
+  EXPECT_NE(base::ASCIIToUTF16("Nocache Test Page"),
+            browser()->tab_strip_model()->GetActiveWebContents()->GetTitle());
+
+  // Confirm that loading the stale copy from the cache works.
+  content::TestNavigationObserver same_tab_observer(
+      browser()->tab_strip_model()->GetActiveWebContents(), 1);
+  ASSERT_TRUE(ReloadStaleCopyFromCache());
+  same_tab_observer.Wait();
+  EXPECT_EQ(base::ASCIIToUTF16("Nocache Test Page"),
+            browser()->tab_strip_model()->GetActiveWebContents()->GetTitle());
+
+  // Clear the cache and reload the same URL; confirm the error page is told
+  // that there is no cached copy.
+  BrowsingDataRemover* remover =
+      BrowsingDataRemover::CreateForUnboundedRange(browser()->profile());
+  remover->Remove(BrowsingDataRemover::REMOVE_CACHE,
+                  BrowsingDataHelper::UNPROTECTED_WEB);
+  ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
+      browser(), test_url, 1);
+  EXPECT_TRUE(ProbeStaleCopyValue(false));
+}
+
+class ErrorPageAutoReloadTest : public InProcessBrowserTest {
+ public:
+  virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE {
+    command_line->AppendSwitch(switches::kEnableOfflineAutoReload);
+  }
+
+  void InstallProtocolHandler(const GURL& url, int requests_to_fail) {
+    protocol_handler_ = new FailFirstNRequestsProtocolHandler(
+        url,
+        requests_to_fail);
+    // Tests don't need to wait for this task to complete before using the
+    // filter; any requests that might be affected by it will end up in the IO
+    // thread's message loop after this posted task anyway.
+    BrowserThread::PostTask(
+        BrowserThread::IO, FROM_HERE,
+        base::Bind(&ErrorPageAutoReloadTest::AddFilters,
+                   base::Unretained(this)));
+  }
+
+  void NavigateToURLAndWaitForTitle(const GURL& url,
+                                    const std::string& expected_title,
+                                    int num_navigations) {
+    content::TitleWatcher title_watcher(
+        browser()->tab_strip_model()->GetActiveWebContents(),
+        base::ASCIIToUTF16(expected_title));
+
+    ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
+        browser(), url, num_navigations);
+
+    EXPECT_EQ(base::ASCIIToUTF16(expected_title),
+              title_watcher.WaitAndGetTitle());
+  }
+
+  FailFirstNRequestsProtocolHandler* protocol_handler() {
+    return protocol_handler_;
+  }
+
+ private:
+  void AddFilters() {
+    DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
+    // Note: in theory, AddUrlHandler gives ownership of |protocol_handler_| to
+    // URLRequestFilter. As soon as anything calls
+    // URLRequestFilter::ClearHandlers(), |protocol_handler_| can become
+    // invalid.
+    protocol_handler_->AddUrlHandler();
+  }
+
+  FailFirstNRequestsProtocolHandler* protocol_handler_;
+};
+
+IN_PROC_BROWSER_TEST_F(ErrorPageAutoReloadTest, AutoReload) {
+  GURL test_url("http://error.page.auto.reload");
+  const int kRequestsToFail = 2;
+  InstallProtocolHandler(test_url, kRequestsToFail);
+  NavigateToURLAndWaitForTitle(test_url, "Test One", kRequestsToFail + 1);
+  // Note that the protocol handler updates these variables on the IO thread,
+  // but this function reads them on the main thread. The requests have to be
+  // created (on the IO thread) before NavigateToURLAndWaitForTitle returns or
+  // this becomes racey.
+  EXPECT_EQ(kRequestsToFail, protocol_handler()->failures());
+  EXPECT_EQ(kRequestsToFail + 1, protocol_handler()->requests());
 }
 
 // Returns Javascript code that executes plain text search for the page.
@@ -387,7 +635,7 @@ class AddressUnreachableProtocolHandler
 // requests.  ERR_NAME_NOT_RESOLVED is more typical, but need to use a different
 // error for the Link Doctor and the original page to validate the right page
 // is being displayed.
-class ErrorPageLinkDoctorFailTest : public InProcessBrowserTest {
+class ErrorPageLinkDoctorFailTest : public ErrorPageTest {
  public:
   // InProcessBrowserTest:
   virtual void SetUpOnMainThread() OVERRIDE {
@@ -441,6 +689,50 @@ IN_PROC_BROWSER_TEST_F(ErrorPageLinkDoctorFailTest, LinkDoctorFail) {
       GetTextContentContainsStringScript("ERR_NAME_NOT_RESOLVED"),
       &result));
   EXPECT_TRUE(result);
+}
+
+// Checks that when an error occurs and a link doctor load fails, the stale
+// cache status of the page is correctly transferred, and we can load the
+// stale copy from the javascript.  Most logic copied from StaleCacheStatus
+// above.
+IN_PROC_BROWSER_TEST_F(ErrorPageLinkDoctorFailTest,
+                       StaleCacheStatusFailedLinkDoctor) {
+  ASSERT_TRUE(test_server()->Start());
+  // Load cache with entry with "nocache" set, to create stale
+  // cache.
+  GURL test_url(test_server()->GetURL("files/nocache.html"));
+  NavigateToURLAndWaitForTitle(test_url, "Nocache Test Page", 1);
+
+  // Reload same URL after forcing an error from the the network layer;
+  // confirm that the error page is told the cached copy exists.
+  scoped_refptr<net::URLRequestContextGetter> url_request_context_getter =
+      browser()->profile()->GetRequestContext();
+  BrowserThread::PostTask(
+      BrowserThread::IO, FROM_HERE,
+      base::Bind(&InterceptNetworkTransactions, url_request_context_getter,
+                 net::ERR_CONNECTION_FAILED));
+
+  ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
+      browser(), test_url, 2);
+  ProbeStaleCopyValue(true);
+
+  // Confirm that loading the stale copy from the cache works.
+  content::TestNavigationObserver same_tab_observer(
+      browser()->tab_strip_model()->GetActiveWebContents(), 1);
+  ASSERT_TRUE(ReloadStaleCopyFromCache());
+  same_tab_observer.Wait();
+  EXPECT_EQ(base::ASCIIToUTF16("Nocache Test Page"),
+            browser()->tab_strip_model()->GetActiveWebContents()->GetTitle());
+
+  // Clear the cache and reload the same URL; confirm the error page is told
+  // that there is no cached copy.
+  BrowsingDataRemover* remover =
+      BrowsingDataRemover::CreateForUnboundedRange(browser()->profile());
+  remover->Remove(BrowsingDataRemover::REMOVE_CACHE,
+                  BrowsingDataHelper::UNPROTECTED_WEB);
+  ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
+      browser(), test_url, 2);
+  ProbeStaleCopyValue(false);
 }
 
 // A test fixture that simulates failing requests for an IDN domain name.

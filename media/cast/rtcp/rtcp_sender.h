@@ -10,78 +10,74 @@
 
 #include "media/cast/cast_config.h"
 #include "media/cast/cast_defines.h"
+#include "media/cast/rtcp/receiver_rtcp_event_subscriber.h"
 #include "media/cast/rtcp/rtcp.h"
 #include "media/cast/rtcp/rtcp_defines.h"
+#include "media/cast/transport/cast_transport_defines.h"
+#include "media/cast/transport/rtcp/rtcp_builder.h"
 
 namespace media {
 namespace cast {
 
+// We limit the size of receiver logs to avoid queuing up packets. We also
+// do not need the amount of redundancy that results from filling up every
+// RTCP packet with log messages. This number should give a redundancy of
+// about 2-3 per log message.
+const size_t kMaxReceiverLogBytes = 200;
+
+class ReceiverRtcpEventSubscriber;
+
+// TODO(mikhal): Resolve duplication between this and RtcpBuilder.
 class RtcpSender {
  public:
-  RtcpSender(PacedPacketSender* const paced_packet_sender,
+  RtcpSender(scoped_refptr<CastEnvironment> cast_environment,
+             transport::PacedPacketSender* outgoing_transport,
              uint32 sending_ssrc,
              const std::string& c_name);
 
   virtual ~RtcpSender();
 
-  void SendRtcp(uint32 packet_type_flags,
-                const RtcpSenderInfo* sender_info,
-                const RtcpReportBlock* report_block,
-                uint32 pli_remote_ssrc,
-                const RtcpDlrrReportBlock* dlrr,
-                const RtcpReceiverReferenceTimeReport* rrtr,
-                const RtcpCastMessage* cast_message);
+  // Returns true if |event| is an interesting receiver event.
+  // Such an event should be sent via RTCP.
+  static bool IsReceiverEvent(const media::cast::CastLoggingEvent& event);
 
-  enum RtcpPacketType {
-    kRtcpSr     = 0x0002,
-    kRtcpRr     = 0x0004,
-    kRtcpBye    = 0x0008,
-    kRtcpPli    = 0x0010,
-    kRtcpNack   = 0x0020,
-    kRtcpFir    = 0x0040,
-    kRtcpSrReq  = 0x0200,
-    kRtcpDlrr   = 0x0400,
-    kRtcpRrtr   = 0x0800,
-    kRtcpRpsi   = 0x8000,
-    kRtcpRemb   = 0x10000,
-    kRtcpCast   = 0x20000,
-  };
+  void SendRtcpFromRtpReceiver(
+      uint32 packet_type_flags,
+      const transport::RtcpReportBlock* report_block,
+      const RtcpReceiverReferenceTimeReport* rrtr,
+      const RtcpCastMessage* cast_message,
+      const ReceiverRtcpEventSubscriber* event_subscriber,
+      uint16 target_delay_ms);
 
  private:
-  void BuildSR(const RtcpSenderInfo& sender_info,
-               const RtcpReportBlock* report_block,
-               std::vector<uint8>* packet) const;
+  void BuildRR(const transport::RtcpReportBlock* report_block,
+               Packet* packet) const;
 
-  void BuildRR(const RtcpReportBlock* report_block,
-               std::vector<uint8>* packet) const;
+  void AddReportBlocks(const transport::RtcpReportBlock& report_block,
+                       Packet* packet) const;
 
-  void AddReportBlocks(const RtcpReportBlock& report_block,
-                       std::vector<uint8>* packet) const;
+  void BuildSdec(Packet* packet) const;
 
-  void BuildSdec(std::vector<uint8>* packet) const;
+  void BuildPli(uint32 remote_ssrc, Packet* packet) const;
 
-  void BuildPli(uint32 remote_ssrc,
-                std::vector<uint8>* packet) const;
+  void BuildRemb(const RtcpRembMessage* remb, Packet* packet) const;
 
-  void BuildRemb(const RtcpRembMessage* remb,
-                 std::vector<uint8>* packet) const;
+  void BuildRpsi(const RtcpRpsiMessage* rpsi, Packet* packet) const;
 
-  void BuildRpsi(const RtcpRpsiMessage* rpsi,
-                 std::vector<uint8>* packet) const;
+  void BuildNack(const RtcpNackMessage* nack, Packet* packet) const;
 
-  void BuildNack(const RtcpNackMessage* nack,
-                 std::vector<uint8>* packet) const;
-
-  void BuildBye(std::vector<uint8>* packet) const;
-
-  void BuildDlrrRb(const RtcpDlrrReportBlock* dlrr,
-                   std::vector<uint8>* packet) const;
+  void BuildBye(Packet* packet) const;
 
   void BuildRrtr(const RtcpReceiverReferenceTimeReport* rrtr,
-                 std::vector<uint8>* packet) const;
+                 Packet* packet) const;
 
   void BuildCast(const RtcpCastMessage* cast_message,
-                 std::vector<uint8>* packet) const;
+                 uint16 target_delay_ms,
+                 Packet* packet) const;
+
+  void BuildReceiverLog(
+      const ReceiverRtcpEventSubscriber::RtcpEventMultiMap& rtcp_events,
+      Packet* packet) const;
 
   inline void BitrateToRembExponentBitrate(uint32 bitrate,
                                            uint8* exponent,
@@ -101,7 +97,8 @@ class RtcpSender {
   const std::string c_name_;
 
   // Not owned by this class.
-  PacedPacketSender* transport_;
+  transport::PacedPacketSender* const transport_;
+  scoped_refptr<CastEnvironment> cast_environment_;
 
   DISALLOW_COPY_AND_ASSIGN(RtcpSender);
 };

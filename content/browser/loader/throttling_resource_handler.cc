@@ -7,6 +7,7 @@
 #include "content/browser/loader/resource_request_info_impl.h"
 #include "content/public/browser/resource_throttle.h"
 #include "content/public/common/resource_response.h"
+#include "net/url_request/url_request.h"
 
 namespace content {
 
@@ -17,10 +18,14 @@ ThrottlingResourceHandler::ThrottlingResourceHandler(
     : LayeredResourceHandler(request, next_handler.Pass()),
       deferred_stage_(DEFERRED_NONE),
       throttles_(throttles.Pass()),
-      index_(0),
+      next_index_(0),
       cancelled_by_resource_throttle_(false) {
-  for (size_t i = 0; i < throttles_.size(); ++i)
+  for (size_t i = 0; i < throttles_.size(); ++i) {
     throttles_[i]->set_controller(this);
+    // Throttles must have a name, as otherwise, bugs where a throttle fails
+    // to resume a request can be very difficult to debug.
+    DCHECK(throttles_[i]->GetNameForLogging());
+  }
 }
 
 ThrottlingResourceHandler::~ThrottlingResourceHandler() {
@@ -33,12 +38,14 @@ bool ThrottlingResourceHandler::OnRequestRedirected(int request_id,
   DCHECK(!cancelled_by_resource_throttle_);
 
   *defer = false;
-  while (index_ < throttles_.size()) {
-    throttles_[index_]->WillRedirectRequest(new_url, defer);
-    index_++;
+  while (next_index_ < throttles_.size()) {
+    int index = next_index_;
+    throttles_[index]->WillRedirectRequest(new_url, defer);
+    next_index_++;
     if (cancelled_by_resource_throttle_)
       return false;
     if (*defer) {
+      OnRequestDefered(index);
       deferred_stage_ = DEFERRED_REDIRECT;
       deferred_url_ = new_url;
       deferred_response_ = response;
@@ -46,7 +53,7 @@ bool ThrottlingResourceHandler::OnRequestRedirected(int request_id,
     }
   }
 
-  index_ = 0;  // Reset for next time.
+  next_index_ = 0;  // Reset for next time.
 
   return next_handler_->OnRequestRedirected(request_id, new_url, response,
                                             defer);
@@ -58,21 +65,48 @@ bool ThrottlingResourceHandler::OnWillStart(int request_id,
   DCHECK(!cancelled_by_resource_throttle_);
 
   *defer = false;
-  while (index_ < throttles_.size()) {
-    throttles_[index_]->WillStartRequest(defer);
-    index_++;
+  while (next_index_ < throttles_.size()) {
+    int index = next_index_;
+    throttles_[index]->WillStartRequest(defer);
+    next_index_++;
     if (cancelled_by_resource_throttle_)
       return false;
     if (*defer) {
+      OnRequestDefered(index);
       deferred_stage_ = DEFERRED_START;
       deferred_url_ = url;
       return true;  // Do not cancel.
     }
   }
 
-  index_ = 0;  // Reset for next time.
+  next_index_ = 0;  // Reset for next time.
 
   return next_handler_->OnWillStart(request_id, url, defer);
+}
+
+bool ThrottlingResourceHandler::OnBeforeNetworkStart(int request_id,
+                                                     const GURL& url,
+                                                     bool* defer) {
+  DCHECK(!cancelled_by_resource_throttle_);
+
+  *defer = false;
+  while (next_index_ < throttles_.size()) {
+    int index = next_index_;
+    throttles_[index]->OnBeforeNetworkStart(defer);
+    next_index_++;
+    if (cancelled_by_resource_throttle_)
+      return false;
+    if (*defer) {
+      OnRequestDefered(index);
+      deferred_stage_ = DEFERRED_NETWORK_START;
+      deferred_url_ = url;
+      return true;  // Do not cancel.
+    }
+  }
+
+  next_index_ = 0;  // Reset for next time.
+
+  return next_handler_->OnBeforeNetworkStart(request_id, url, defer);
 }
 
 bool ThrottlingResourceHandler::OnResponseStarted(int request_id,
@@ -80,19 +114,21 @@ bool ThrottlingResourceHandler::OnResponseStarted(int request_id,
                                                   bool* defer) {
   DCHECK(!cancelled_by_resource_throttle_);
 
-  while (index_ < throttles_.size()) {
-    throttles_[index_]->WillProcessResponse(defer);
-    index_++;
+  while (next_index_ < throttles_.size()) {
+    int index = next_index_;
+    throttles_[index]->WillProcessResponse(defer);
+    next_index_++;
     if (cancelled_by_resource_throttle_)
       return false;
     if (*defer) {
+      OnRequestDefered(index);
       deferred_stage_ = DEFERRED_RESPONSE;
       deferred_response_ = response;
       return true;  // Do not cancel.
     }
   }
 
-  index_ = 0;  // Reset for next time.
+  next_index_ = 0;  // Reset for next time.
 
   return next_handler_->OnResponseStarted(request_id, response, defer);
 }
@@ -117,12 +153,17 @@ void ThrottlingResourceHandler::Resume() {
 
   DeferredStage last_deferred_stage = deferred_stage_;
   deferred_stage_ = DEFERRED_NONE;
+  // Clear information about the throttle that delayed the request.
+  request()->LogUnblocked();
   switch (last_deferred_stage) {
     case DEFERRED_NONE:
       NOTREACHED();
       break;
     case DEFERRED_START:
       ResumeStart();
+      break;
+    case DEFERRED_NETWORK_START:
+      ResumeNetworkStart();
       break;
     case DEFERRED_REDIRECT:
       ResumeRedirect();
@@ -141,6 +182,20 @@ void ThrottlingResourceHandler::ResumeStart() {
 
   bool defer = false;
   if (!OnWillStart(GetRequestID(), url, &defer)) {
+    controller()->Cancel();
+  } else if (!defer) {
+    controller()->Resume();
+  }
+}
+
+void ThrottlingResourceHandler::ResumeNetworkStart() {
+  DCHECK(!cancelled_by_resource_throttle_);
+
+  GURL url = deferred_url_;
+  deferred_url_ = GURL();
+
+  bool defer = false;
+  if (!OnBeforeNetworkStart(GetRequestID(), url, &defer)) {
     controller()->Cancel();
   } else if (!defer) {
     controller()->Resume();
@@ -175,6 +230,10 @@ void ThrottlingResourceHandler::ResumeResponse() {
   } else if (!defer) {
     controller()->Resume();
   }
+}
+
+void ThrottlingResourceHandler::OnRequestDefered(int throttle_index) {
+  request()->LogBlockedBy(throttles_[throttle_index]->GetNameForLogging());
 }
 
 }  // namespace content

@@ -7,96 +7,92 @@
 
 #include <string>
 
+#include "base/macros.h"
+#include "base/memory/scoped_ptr.h"
 #include "chrome/common/net/net_error_info.h"
-#include "content/public/renderer/render_view_observer.h"
-#include "third_party/WebKit/public/platform/WebURLError.h"
+#include "chrome/renderer/net/net_error_helper_core.h"
+#include "content/public/renderer/render_frame_observer.h"
+#include "content/public/renderer/render_frame_observer_tracker.h"
+#include "content/public/renderer/render_process_observer.h"
 
-namespace base {
-class DictionaryValue;
+class GURL;
+
+namespace content {
+class ResourceFetcher;
 }
 
-namespace WebKit {
+namespace blink {
 class WebFrame;
+class WebURLResponse;
+struct WebURLError;
 }
 
 // Listens for NetErrorInfo messages from the NetErrorTabHelper on the
 // browser side and updates the error page with more details (currently, just
 // DNS probe results) if/when available.
-class NetErrorHelper : public content::RenderViewObserver {
+class NetErrorHelper
+    : public content::RenderFrameObserver,
+      public content::RenderFrameObserverTracker<NetErrorHelper>,
+      public content::RenderProcessObserver,
+      public NetErrorHelperCore::Delegate {
  public:
-  explicit NetErrorHelper(content::RenderView* render_view);
+  explicit NetErrorHelper(content::RenderFrame* render_view);
   virtual ~NetErrorHelper();
 
-  // RenderViewObserver implementation.
-  virtual void DidStartProvisionalLoad(WebKit::WebFrame* frame) OVERRIDE;
-  virtual void DidFailProvisionalLoad(
-      WebKit::WebFrame* frame,
-      const WebKit::WebURLError& error) OVERRIDE;
-  virtual void DidCommitProvisionalLoad(
-      WebKit::WebFrame* frame,
-      bool is_new_navigation) OVERRIDE;
-  virtual void DidFinishLoad(WebKit::WebFrame* frame) OVERRIDE;
+  // RenderFrameObserver implementation.
+  virtual void DidStartProvisionalLoad() OVERRIDE;
+  virtual void DidCommitProvisionalLoad(bool is_new_navigation) OVERRIDE;
+  virtual void DidFinishLoad() OVERRIDE;
+  virtual void OnStop() OVERRIDE;
 
   // IPC::Listener implementation.
   virtual bool OnMessageReceived(const IPC::Message& message) OVERRIDE;
+
+  // RenderProcessObserver implementation.
+  virtual void NetworkStateChanged(bool online) OVERRIDE;
 
   // Examines |frame| and |error| to see if this is an error worthy of a DNS
   // probe.  If it is, initializes |error_strings| based on |error|,
   // |is_failed_post|, and |locale| with suitable strings and returns true.
   // If not, returns false, in which case the caller should look up error
   // strings directly using LocalizedError::GetNavigationErrorStrings.
-  static bool GetErrorStringsForDnsProbe(
-      WebKit::WebFrame* frame,
-      const WebKit::WebURLError& error,
-      bool is_failed_post,
-      const std::string& locale,
-      const std::string& accept_languages,
-      base::DictionaryValue* error_strings);
+  //
+  // Updates the NetErrorHelper with the assumption the page will be loaded
+  // immediately.
+  void GetErrorHTML(blink::WebFrame* frame,
+                    const blink::WebURLError& error,
+                    bool is_failed_post,
+                    std::string* error_html);
 
- protected:
-  // These methods handle tracking the actual state of the page; this allows
-  // unit-testing of the state tracking without having to mock out WebFrames
-  // and such.
-  void OnStartLoad(bool is_main_frame, bool is_error_page);
-  void OnFailLoad(bool is_main_frame, bool is_dns_error);
-  void OnCommitLoad(bool is_main_frame);
-  void OnFinishLoad(bool is_main_frame);
-
-  void OnNetErrorInfo(int status);
-
-  // |UpdateErrorPage| is virtual so it can be mocked out in the unittest.
-  virtual void UpdateErrorPage();
-
-  // The last DnsProbeStatus received from the browser.
-  chrome_common_net::DnsProbeStatus last_probe_status_;
+  // Returns whether a load for |url| in |frame| should have its error page
+  // suppressed.
+  bool ShouldSuppressErrorPage(blink::WebFrame* frame, const GURL& url);
 
  private:
-  WebKit::WebURLError GetUpdatedError() const;
+  // NetErrorHelperCore::Delegate implementation:
+  virtual void GenerateLocalizedErrorPage(const blink::WebURLError& error,
+                                          bool is_failed_post,
+                                          std::string* html) const OVERRIDE;
+  virtual void LoadErrorPageInMainFrame(const std::string& html,
+                                        const GURL& failed_url) OVERRIDE;
+  virtual void EnableStaleLoadBindings(const GURL& page_url) OVERRIDE;
+  virtual void UpdateErrorPage(const blink::WebURLError& error,
+                               bool is_failed_post) OVERRIDE;
+  virtual void FetchErrorPage(const GURL& url) OVERRIDE;
+  virtual void CancelFetchErrorPage() OVERRIDE;
+  virtual void ReloadPage() OVERRIDE;
 
-  // Whether the last provisional load started was for an error page.
-  bool last_start_was_error_page_;
+  void OnNetErrorInfo(int status);
+  void OnSetAltErrorPageURL(const GURL& alternate_error_page_url);
 
-  // Whether the last provisional load failure failed with a DNS error.
-  bool last_fail_was_dns_error_;
+  void OnAlternateErrorPageRetrieved(const blink::WebURLResponse& response,
+                                     const std::string& data);
 
-  // Ideally, this would be simply "last_commit_was_dns_error_page_".
-  //
-  // Unfortunately, that breaks if two DNS errors occur in a row; after the
-  // second failure, but before the second page commits, the helper can receive
-  // probe results.  If all it knows is that the last commit was a DNS error
-  // page, it will cheerfully forward the results for the second probe to the
-  // first page.
-  //
-  // Thus, the semantics of this flag are a little weird.  It is set whenever
-  // a DNS error page commits, and cleared whenever any other page commits,
-  // but it is also cleared whenever a DNS error occurs, to prevent the race
-  // described above.
-  bool forwarding_probe_results_;
+  scoped_ptr<content::ResourceFetcher> alt_error_page_fetcher_;
 
-  // The last main frame error seen by the helper.
-  WebKit::WebURLError last_error_;
+  NetErrorHelperCore core_;
 
-  bool is_failed_post_;
+  DISALLOW_COPY_AND_ASSIGN(NetErrorHelper);
 };
 
 #endif  // CHROME_RENDERER_NET_NET_ERROR_HELPER_H_

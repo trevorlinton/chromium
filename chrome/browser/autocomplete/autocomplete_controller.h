@@ -45,9 +45,6 @@ class ZeroSuggestProvider;
 // matches from a series of providers into one AutocompleteResult.
 class AutocompleteController : public AutocompleteProviderListener {
  public:
-  // Used to indicate an index that is not selected in a call to Update().
-  static const int kNoItemSelected;
-
   // |provider_types| is a bitmap containing AutocompleteProvider::Type values
   // that will (potentially, depending on platform, flags, etc.) be
   // instantiated.
@@ -77,16 +74,10 @@ class AutocompleteController : public AutocompleteProviderListener {
   // If |clear_result| is true, the controller will also erase the result set.
   void Stop(bool clear_result);
 
-  // Begin asynchronously fetching zero-suggest suggestions for |url| of
-  // classification |page_classification|. |permanent_text| is the omnibox
-  // text for the current page.
-  void StartZeroSuggest(
-      const GURL& url,
-      AutocompleteInput::PageClassification page_classification,
-      const string16& permanent_text);
-
-  // Cancels any pending zero-suggest fetch.
-  void StopZeroSuggest();
+  // Begin asynchronous fetch of zero-suggest suggestions. The |input| should
+  // contain current omnibox input, the URL of the page we are on, and
+  // that page's classification.
+  void StartZeroSuggest(const AutocompleteInput& input);
 
   // Asks the relevant provider to delete |match|, and ensures observers are
   // notified of resulting changes immediately.  This should only be called when
@@ -117,8 +108,8 @@ class AutocompleteController : public AutocompleteProviderListener {
   // parameters otherwise not available at initial construction time.  This
   // method should be called from OmniboxEditModel::OpenMatch() before the user
   // navigates to the selected match.
-  GURL GetDestinationURL(const AutocompleteMatch& match,
-                         base::TimeDelta query_formulation_time) const;
+  void UpdateMatchDestinationURL(base::TimeDelta query_formulation_time,
+                                 AutocompleteMatch* match) const;
 
   HistoryURLProvider* history_url_provider() const {
     return history_url_provider_;
@@ -224,9 +215,12 @@ class AutocompleteController : public AutocompleteProviderListener {
   // Timer used to tell the providers to Stop() searching for matches.
   base::OneShotTimer<AutocompleteController> stop_timer_;
 
-  // True if the user is in the "stop timer" field trial.  If so, the
-  // controller uses the |stop_timer_|.
-  const bool in_stop_timer_field_trial_;
+  // Amount of time (in ms) between when the user stops typing and
+  // when we send Stop() to every provider.  This is intended to avoid
+  // the disruptive effect of belated omnibox updates, updates that
+  // come after the user has had to time to read the whole dropdown
+  // and doesn't expect it to change.
+  const base::TimeDelta stop_timer_duration_;
 
   // True if a query is not currently running.
   bool done_;
@@ -234,9 +228,6 @@ class AutocompleteController : public AutocompleteProviderListener {
   // Are we in Start()? This is used to avoid updating |result_| and sending
   // notifications until Start() has been invoked on all providers.
   bool in_start_;
-
-  // Has StartZeroSuggest() been called but not Start()?
-  bool in_zero_suggest_;
 
   Profile* profile_;
 

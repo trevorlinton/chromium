@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@ package org.chromium.content.browser;
 
 import android.content.res.Configuration;
 import android.graphics.Canvas;
+import android.os.SystemClock;
 import android.test.suitebuilder.annotation.SmallTest;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -122,7 +123,7 @@ public class ContentViewScrollingTest extends ContentShellTestBase {
         runTestOnUiThread(new Runnable() {
             @Override
             public void run() {
-                getContentView().fling(System.currentTimeMillis(), 0, 0, vx, vy);
+                getContentView().fling(SystemClock.uptimeMillis(), 0, 0, vx, vy);
             }
         });
     }
@@ -193,6 +194,35 @@ public class ContentViewScrollingTest extends ContentShellTestBase {
 
         // Diagonal scroll to bottom-right.
         scrollTo(2500, 2500);
+        assertWaitForScroll(false, false);
+    }
+
+
+    /**
+     * To ensure the device properly responds to bounds-exceeding scrolls, e.g., overscroll
+     * effects are properly initialized.
+     */
+    @SmallTest
+    @Feature({"Main"})
+    public void testOverScroll() throws Throwable {
+        // Overscroll lower-left.
+        scrollTo(-10000, 10000);
+        assertWaitForScroll(true, false);
+
+        // Overscroll lower-right.
+        scrollTo(10000, 10000);
+        assertWaitForScroll(false, false);
+
+        // Overscroll upper-right.
+        scrollTo(10000, -10000);
+        assertWaitForScroll(false, true);
+
+        // Overscroll top-left.
+        scrollTo(-10000, -10000);
+        assertWaitForScroll(true, true);
+
+        // Diagonal overscroll lower-right.
+        scrollTo(10000, 10000);
         assertWaitForScroll(false, false);
     }
 

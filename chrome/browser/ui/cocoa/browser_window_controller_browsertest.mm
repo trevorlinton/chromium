@@ -8,8 +8,9 @@
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/infobars/confirm_infobar_delegate.h"
+#include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/infobars/infobar_service.h"
+#include "chrome/browser/infobars/simple_alert_infobar_delegate.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/bookmarks/bookmark_utils.h"
@@ -17,7 +18,7 @@
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
-#import "chrome/browser/ui/cocoa/browser/avatar_button_controller.h"
+#import "chrome/browser/ui/cocoa/browser/avatar_base_controller.h"
 #include "chrome/browser/ui/cocoa/browser_window_cocoa.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller_private.h"
 #import "chrome/browser/ui/cocoa/fast_resize_view.h"
@@ -69,25 +70,6 @@ enum ViewID {
   VIEW_ID_COUNT,
 };
 
-// A very simple info bar implementation used to show an infobar on the browser
-// window.
-class DummyInfoBar : public ConfirmInfoBarDelegate {
- public:
-  explicit DummyInfoBar(InfoBarService* service)
-      : ConfirmInfoBarDelegate(service) {
-  }
-
-  virtual ~DummyInfoBar() {
-  }
-
-  virtual string16 GetMessageText() const OVERRIDE {
-    return string16();
-  }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(DummyInfoBar);
-};
-
 }  // namespace
 
 class BrowserWindowControllerTest : public InProcessBrowserTest {
@@ -105,13 +87,11 @@ class BrowserWindowControllerTest : public InProcessBrowserTest {
         browser()->window()->GetNativeWindow()];
   }
 
-  void ShowInfoBar() {
-    content::WebContents* web_contents =
-        browser()->tab_strip_model()->GetActiveWebContents();
-    InfoBarService* service =
-        InfoBarService::FromWebContents(web_contents);
-    scoped_ptr<InfoBarDelegate> info_bar_delegate(new DummyInfoBar(service));
-    service->AddInfoBar(info_bar_delegate.Pass());
+  static void ShowInfoBar(Browser* browser) {
+    SimpleAlertInfoBarDelegate::Create(
+        InfoBarService::FromWebContents(
+            browser->tab_strip_model()->GetActiveWebContents()),
+        0, base::string16(), false);
   }
 
   NSView* GetViewWithID(ViewID view_id) const {
@@ -162,6 +142,11 @@ class BrowserWindowControllerTest : public InProcessBrowserTest {
     return height;
   }
 
+  void SetDevToolsWindowContentsInsets(
+      DevToolsWindow* window, int left, int top, int right, int bottom) {
+    window->SetContentsInsets(left, top, right, bottom);
+  }
+
  private:
   DISALLOW_COPY_AND_ASSIGN(BrowserWindowControllerTest);
 };
@@ -190,7 +175,7 @@ IN_PROC_BROWSER_TEST_F(BrowserWindowControllerTest,
   EXPECT_TRUE(fullscreen_button);
   EXPECT_FALSE([fullscreen_button isHidden]);
 
-  AvatarButtonController* avatar_controller =
+  AvatarBaseController* avatar_controller =
       [controller() avatarButtonController];
   NSView* avatar = [avatar_controller view];
   EXPECT_TRUE(avatar);
@@ -205,8 +190,8 @@ IN_PROC_BROWSER_TEST_F(BrowserWindowControllerTest,
   profile_manager->CreateProfileAsync(
       profile_manager->user_data_dir().Append("test"),
       create_callback,
-      ASCIIToUTF16("avatar_test"),
-      string16(),
+      base::ASCIIToUTF16("avatar_test"),
+      base::string16(),
       std::string());
 
   run_loop.Run();
@@ -318,9 +303,7 @@ IN_PROC_BROWSER_TEST_F(BrowserWindowControllerTest, SheetPosition) {
   // we'll create the shortcut window without the bookmark bar.
   chrome::ToggleBookmarkBarWhenVisible(browser()->profile());
   // Open application mode window.
-  gfx::Rect initial_bounds(0, 0, 400, 400);
-  OpenAppShortcutWindow(browser()->profile(), GURL("about:blank"),
-                        initial_bounds);
+  OpenAppShortcutWindow(browser()->profile(), GURL("about:blank"));
   Browser* popup_browser = BrowserList::GetInstance(
       chrome::GetActiveDesktop())->GetLastActive();
   NSWindow* popupWindow = popup_browser->window()->GetNativeWindow();
@@ -350,13 +333,11 @@ IN_PROC_BROWSER_TEST_F(BrowserWindowControllerTest, SheetPosition) {
 // Verify that the info bar tip is hidden when the toolbar is not visible.
 IN_PROC_BROWSER_TEST_F(BrowserWindowControllerTest,
                        InfoBarTipHiddenForWindowWithoutToolbar) {
-  ShowInfoBar();
+  ShowInfoBar(browser());
   EXPECT_FALSE(
       [[controller() infoBarContainerController] shouldSuppressTopInfoBarTip]);
 
-  gfx::Rect initial_bounds(0, 0, 400, 400);
-  OpenAppShortcutWindow(browser()->profile(), GURL("about:blank"),
-                        initial_bounds);
+  OpenAppShortcutWindow(browser()->profile(), GURL("about:blank"));
   Browser* popup_browser = BrowserList::GetInstance(
       chrome::HOST_DESKTOP_TYPE_NATIVE)->GetLastActive();
   NSWindow* popupWindow = popup_browser->window()->GetNativeWindow();
@@ -365,11 +346,7 @@ IN_PROC_BROWSER_TEST_F(BrowserWindowControllerTest,
   EXPECT_FALSE([popupController hasToolbar]);
 
   // Show infobar for controller.
-  content::WebContents* web_contents =
-      popup_browser->tab_strip_model()->GetActiveWebContents();
-  InfoBarService* service = InfoBarService::FromWebContents(web_contents);
-  scoped_ptr<InfoBarDelegate> info_bar_delegate(new DummyInfoBar(service));
-  service->AddInfoBar(info_bar_delegate.Pass());
+  ShowInfoBar(popup_browser);
   EXPECT_TRUE(
       [[popupController infoBarContainerController]
           shouldSuppressTopInfoBarTip]);
@@ -390,4 +367,17 @@ IN_PROC_BROWSER_TEST_F(BrowserWindowControllerTest,
 
   overlay.reset();
   EXPECT_TRUE(web_contents_view->GetAllowOverlappingViews());
+}
+
+// Tests that status bubble's base frame does move when devTools are docked.
+IN_PROC_BROWSER_TEST_F(BrowserWindowControllerTest,
+                       StatusBubblePositioning) {
+  NSPoint origin = [controller() statusBubbleBaseFrame].origin;
+
+  DevToolsWindow* devtools_window = DevToolsWindow::OpenDevToolsWindowForTest(
+      browser(), true);
+  SetDevToolsWindowContentsInsets(devtools_window, 10, 10, 10, 10);
+
+  NSPoint originWithDevTools = [controller() statusBubbleBaseFrame].origin;
+  EXPECT_FALSE(NSEqualPoints(origin, originWithDevTools));
 }

@@ -35,9 +35,6 @@ def ParseArgs():
   parser.add_option('--android-manifest', help='AndroidManifest.xml path')
   parser.add_option('--stamp', help='File to touch on success')
 
-  # This is part of a temporary fix for crbug.com/177552.
-  # TODO(newt): remove this once crbug.com/177552 is fixed in ninja.
-  parser.add_option('--ignore', help='this argument is ignored')
   (options, args) = parser.parse_args()
 
   if args:
@@ -104,7 +101,7 @@ def main():
     package_command.append('--non-constant-id')
   if options.custom_package:
     package_command += ['--custom-package', options.custom_package]
-  build_utils.CheckCallDie(package_command)
+  build_utils.CheckOutput(package_command)
 
   # Crunch image resources. This shrinks png files and is necessary for 9-patch
   # images to display correctly.
@@ -113,7 +110,7 @@ def main():
               'crunch',
               '-S', options.crunch_input_dir,
               '-C', options.crunch_output_dir]
-  build_utils.CheckCallDie(aapt_cmd, suppress_output=True)
+  build_utils.CheckOutput(aapt_cmd, fail_if_stderr=True)
 
   MoveImagesToNonMdpiFolders(options.crunch_output_dir)
 

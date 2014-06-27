@@ -20,12 +20,11 @@ class FindNotificationDetails;
 ////////////////////////////////////////////////////////////////////////////////
 //
 // The FindBarHost implements the container widget for the
-// find-in-page functionality. It uses the appropriate implementation from
-// find_bar_host_win.cc or find_bar_host_aura.cc to draw its content and is
-// responsible for showing, hiding, closing, and moving the widget if needed,
-// for example if the widget is obscuring the selection results. It also
-// receives notifications about the search results and communicates that to
-// the view.
+// find-in-page functionality. It uses the implementation from
+// find_bar_host_aura.cc to draw its content and is responsible for showing,
+// hiding, closing, and moving the widget if needed, for example if the widget
+// is obscuring the selection results. It also receives notifications about the
+// search results and communicates that to the view.
 //
 // There is one FindBarHost per BrowserView, and its state is updated
 // whenever the selected Tab is changed. The FindBarHost is created when
@@ -57,12 +56,12 @@ class FindBarHost : public DropdownBarHost,
   virtual void MoveWindowIfNecessary(const gfx::Rect& selection_rect,
                                      bool no_redraw) OVERRIDE;
   virtual void SetFindTextAndSelectedRange(
-      const string16& find_text,
+      const base::string16& find_text,
       const gfx::Range& selected_range) OVERRIDE;
-  virtual string16 GetFindText() OVERRIDE;
+  virtual base::string16 GetFindText() OVERRIDE;
   virtual gfx::Range GetSelectedRange() OVERRIDE;
   virtual void UpdateUIForFindResult(const FindNotificationDetails& result,
-                                     const string16& find_text) OVERRIDE;
+                                     const base::string16& find_text) OVERRIDE;
   virtual void AudibleAlert() OVERRIDE;
   virtual bool IsFindBarVisible() OVERRIDE;
   virtual void RestoreSavedFocus() OVERRIDE;
@@ -77,8 +76,8 @@ class FindBarHost : public DropdownBarHost,
   // FindBarTesting implementation:
   virtual bool GetFindBarWindowInfo(gfx::Point* position,
                                     bool* fully_visible) OVERRIDE;
-  virtual string16 GetFindSelectedText() OVERRIDE;
-  virtual string16 GetMatchCountText() OVERRIDE;
+  virtual base::string16 GetFindSelectedText() OVERRIDE;
+  virtual base::string16 GetMatchCountText() OVERRIDE;
   virtual int GetWidth() OVERRIDE;
 
   // Overridden from DropdownBarHost:

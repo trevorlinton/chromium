@@ -40,9 +40,10 @@ const char kCpuArch_Help[] =
     "  set it to whatever value is relevant to your build.\n"
     "\n"
     "Possible initial values set by GN:\n"
-    "  - \"ia32\"\n"
-    "  - \"ia64\"\n"
-    "  - \"arm\"\n";
+    "  - \"x86\"\n"
+    "  - \"x64\"\n"
+    "  - \"arm\"\n"
+    "  - \"mipsel\"\n";
 
 const char kCurrentToolchain[] = "current_toolchain";
 const char kCurrentToolchain_HelpShort[] =
@@ -154,7 +155,7 @@ const char kRootGenDir_Help[] =
     "\n"
     "  This is primarily useful for setting up include paths for generated\n"
     "  files. If you are passing this to a script, you will want to pass it\n"
-    "  through to_build_path() (see \"gn help to_build_path\") to convert it\n"
+    "  through rebase_path() (see \"gn help rebase_path\") to convert it\n"
     "  to be relative to the build directory.\n"
     "\n"
     "  See also \"target_gen_dir\" which is usually a better location for\n"
@@ -172,7 +173,7 @@ const char kRootOutDir_Help[] =
     "\n"
     "  This is primarily useful for setting up script calls. If you are\n"
     "  passing this to a script, you will want to pass it through\n"
-    "  to_build_path() (see \"gn help to_build_path\") to convert it\n"
+    "  rebase_path() (see \"gn help rebase_path\") to convert it\n"
     "  to be relative to the build directory.\n"
     "\n"
     "  See also \"target_out_dir\" which is usually a better location for\n"
@@ -180,9 +181,9 @@ const char kRootOutDir_Help[] =
     "\n"
     "Example:\n"
     "\n"
-    "  custom(\"myscript\") {\n"
+    "  action(\"myscript\") {\n"
     "    # Pass the output dir to the script.\n"
-    "    args = [ \"-o\", to_build_path(root_out_dir) ]\n"
+    "    args = [ \"-o\", rebase_path(root_out_dir, root_build_dir) ]\n"
     "  }\n";
 
 const char kTargetGenDir[] = "target_gen_dir";
@@ -198,16 +199,17 @@ const char kTargetGenDir_Help[] =
     "\n"
     "  This is primarily useful for setting up include paths for generated\n"
     "  files. If you are passing this to a script, you will want to pass it\n"
-    "  through to_build_path() (see \"gn help to_build_path\") to convert it\n"
+    "  through rebase_path() (see \"gn help rebase_path\") to convert it\n"
     "  to be relative to the build directory.\n"
     "\n"
     "  See also \"gn help root_gen_dir\".\n"
     "\n"
     "Example:\n"
     "\n"
-    "  custom(\"myscript\") {\n"
+    "  action(\"myscript\") {\n"
     "    # Pass the generated output dir to the script.\n"
-    "    args = [ \"-o\", to_build_path(target_gen_dir) ]\n"
+    "    args = [ \"-o\", rebase_path(target_gen_dir, root_build_dir) ]"
+    "\n"
     "  }\n";
 
 const char kTargetOutDir[] = "target_out_dir";
@@ -223,16 +225,17 @@ const char kTargetOutDir_Help[] =
     "\n"
     "  This is primarily useful for setting up arguments for calling\n"
     "  scripts. If you are passing this to a script, you will want to pass it\n"
-    "  through to_build_path() (see \"gn help to_build_path\") to convert it\n"
+    "  through rebase_path() (see \"gn help rebase_path\") to convert it\n"
     "  to be relative to the build directory.\n"
     "\n"
     "  See also \"gn help root_out_dir\".\n"
     "\n"
     "Example:\n"
     "\n"
-    "  custom(\"myscript\") {\n"
+    "  action(\"myscript\") {\n"
     "    # Pass the output dir to the script.\n"
-    "    args = [ \"-o\", to_build_path(target_out_dir) ]\n"
+    "    args = [ \"-o\", rebase_path(target_out_dir, root_build_dir) ]"
+    "\n"
     "  }\n";
 
 // Target variables ------------------------------------------------------------
@@ -260,15 +263,15 @@ const char kAllDependentConfigs_Help[] =
 
 const char kArgs[] = "args";
 const char kArgs_HelpShort[] =
-    "args: [string list] Arguments passed to a custom script.";
+    "args: [string list] Arguments passed to an action.";
 const char kArgs_Help[] =
-    "args: Arguments passed to a custom script.\n"
+    "args: Arguments passed to an action.\n"
     "\n"
-    "  For custom script targets, args is the list of arguments to pass\n"
-    "  to the script. Typically you would use source expansion (see\n"
+    "  For action and action_foreach targets, args is the list of arguments\n"
+    "  to pass to the script. Typically you would use source expansion (see\n"
     "  \"gn help source_expansion\") to insert the source file names.\n"
     "\n"
-    "  See also \"gn help custom\".\n";
+    "  See also \"gn help action\" and \"gn help action_foreach\".\n";
 
 const char kCflags[] = "cflags";
 const char kCflags_HelpShort[] =
@@ -393,6 +396,38 @@ const char kDefines_Help[] =
     "Example:\n"
     "  defines = [ \"AWESOME_FEATURE\", \"LOG_LEVEL=3\" ]\n";
 
+const char kDepfile[] = "depfile";
+const char kDepfile_HelpShort[] =
+    "depfile: [string] File name for input dependencies for actions.";
+const char kDepfile_Help[] =
+    "depfile: [string] File name for input dependencies for actions.\n"
+    "\n"
+    "  If nonempty, this string specifies that the current action or\n"
+    "  action_foreach target will generate the given \".d\" file containing\n"
+    "  the dependencies of the input. Empty or unset means that the script\n"
+    "  doesn't generate the files.\n"
+    "\n"
+    "  The .d file should go in the target output directory. If you have more\n"
+    "  than one source file that the script is being run over, you can use\n"
+    "  the output file expansions described in \"gn help action_foreach\" to\n"
+    "  name the .d file according to the input."
+    "\n"
+    "  The format is that of a Makefile, and all of the paths should be\n"
+    "  relative to the root build directory.\n"
+    "\n"
+    "Example:\n"
+    "  action_foreach(\"myscript_target\") {\n"
+    "    script = \"myscript.py\"\n"
+    "    sources = [ ... ]\n"
+    "\n"
+    "    # Locate the depfile in the output directory named like the\n"
+    "    # inputs but with a \".d\" appended.\n"
+    "    depfile = \"$relative_target_output_dir/{{source_name}}.d\"\n"
+    "\n"
+    "    # Say our script uses \"-o <d file>\" to indicate the depfile.\n"
+    "    args = [ \"{{source}}\", \"-o\", depfile ]\n"
+    "  }\n";
+
 const char kDeps[] = "deps";
 const char kDeps_HelpShort[] =
     "deps: [label list] Linked dependencies.";
@@ -403,9 +438,9 @@ const char kDeps_Help[] =
     "\n"
     "  Specifies dependencies of a target. Shared and dynamic libraries will\n"
     "  be linked into the current target. Other target types that can't be\n"
-    "  linked (like custom scripts and groups) listed in \"deps\" will be\n"
-    "  treated as \"datadeps\". Likewise, if the current target isn't\n"
-    "  linkable, then all deps will be treated as \"datadeps\".\n"
+    "  linked (like actions and groups) listed in \"deps\" will be treated\n"
+    "  as \"datadeps\". Likewise, if the current target isn't linkable, then\n"
+    "  all deps will be treated as \"datadeps\".\n"
     "\n"
     "  See also \"datadeps\".\n";
 
@@ -430,24 +465,6 @@ const char kDirectDependentConfigs_Help[] =
     "  directories necessary to compile a target's headers.\n"
     "\n"
     "  See also \"all_dependent_configs\".\n";
-
-const char kExternal[] = "external";
-const char kExternal_HelpShort[] =
-    "external: [boolean] Declares a target as externally generated.";
-const char kExternal_Help[] =
-    "external: Declares a target as externally generated.\n"
-    "\n"
-    "  External targets are treated like normal targets as far as dependent\n"
-    "  targets are concerned, but do not actually have their .ninja file\n"
-    "  written to disk. This allows them to be generated by an external\n"
-    "  program (e.g. GYP).\n"
-    "\n"
-    "  See also \"gn help gyp\".\n"
-    "\n"
-    "Example:\n"
-    "  static_library(\"foo\") {\n"
-    "    external = true\n"
-    "  }\n";
 
 const char kForwardDependentConfigsFrom[] = "forward_dependent_configs_from";
 const char kForwardDependentConfigsFrom_HelpShort[] =
@@ -488,18 +505,6 @@ const char kForwardDependentConfigsFrom_Help[] =
     "      forward_dependent_configs_from = deps\n"
     "    }\n";
 
-const char kGypFile[] = "gyp_file";
-const char kGypFile_HelpShort[] =
-    "gyp_file: [file name] Name of GYP file to write to in GYP mode.";
-const char kGypFile_Help[] =
-    "gyp_file: Name of GYP file to write to in GYP mode.\n"
-    "\n"
-    "  See \"gn help gyp\" for an overview of how this works.\n"
-    "\n"
-    "  Tip: If all targets in a given BUILD.gn file should go in the same\n"
-    "  GYP file, just put gyp_file = \"foo\" at the top of the file and\n"
-    "  the variable will be in scope for all targets.\n";
-
 const char kHardDep[] = "hard_dep";
 const char kHardDep_HelpShort[] =
     "hard_dep: [boolean] Indicates a target should be built before dependees.";
@@ -530,7 +535,7 @@ const char kHardDep_Help[] =
     "    ...\n"
     "  }\n"
     "\n"
-    "  custom(\"myresource\") {\n"
+    "  action(\"myresource\") {\n"
     "    hard_dep = true\n"
     "    script = \"my_generator.py\"\n"
     "    outputs = \"$target_gen_dir/myresource.h\"\n"
@@ -608,6 +613,13 @@ const char kLibs_Help[] =
     "  the \"lib_dirs\" so your library is found. If you need to specify\n"
     "  a path, you can use \"rebase_path\" to convert a path to be relative\n"
     "  to the build directory.\n"
+    "\n"
+    "  When constructing the linker command, the \"lib_prefix\" attribute of\n"
+    "  the linker tool in the current toolchain will be prepended to each\n"
+    "  library. So your BUILD file should not specify the switch prefix\n"
+    "  (like \"-l\"). On Mac, libraries ending in \".framework\" will be\n"
+    "  special-cased: the switch \"-framework\" will be prepended instead of\n"
+    "  the lib_prefix, and the \".framework\" suffix will be trimmed.\n"
     COMMON_LIB_INHERITANCE_HELP
     "\n"
     "Examples:\n"
@@ -615,6 +627,17 @@ const char kLibs_Help[] =
     "    libs = [ \"ctl3d.lib\" ]\n"
     "  On Linux:\n"
     "    libs = [ \"ld\" ]\n";
+
+const char kOutputExtension[] = "output_extension";
+const char kOutputExtension_HelpShort[] =
+    "output_extension: [string] Value to use for the output's file extension.";
+const char kOutputExtension_Help[] =
+    "output_extension: Value to use for the output's file extension.\n"
+    "\n"
+    "  Normally the file extension for a target is based on the target\n"
+    "  type and the operating system, but in rare cases you will need to\n"
+    "  override the name (for example to use \"libfreetype.so.6\" instead\n"
+    "  of libfreetype.so on Linux).";
 
 const char kOutputName[] = "output_name";
 const char kOutputName_HelpShort[] =
@@ -642,27 +665,28 @@ const char kOutputName_Help[] =
 
 const char kOutputs[] = "outputs";
 const char kOutputs_HelpShort[] =
-    "outputs: [file list] Output files for custom script and copy targets.";
+    "outputs: [file list] Output files for actions and copy targets.";
 const char kOutputs_Help[] =
-    "outputs: Output files for custom script and copy targets.\n"
+    "outputs: Output files for actions and copy targets.\n"
     "\n"
-    "  Outputs is valid for \"copy\" and \"custom\" target types and\n"
-    "  indicates the resulting files. The values may contain source\n"
-    "  expansions to generate the output names from the sources (see\n"
+    "  Outputs is valid for \"copy\", \"action\", and \"action_foreach\"\n"
+    "  target types and indicates the resulting files. The values may contain\n"
+    "  source expansions to generate the output names from the sources (see\n"
     "  \"gn help source_expansion\").\n"
     "\n"
     "  For copy targets, the outputs is the destination for the copied\n"
-    "  file(s). For custom script targets, the outputs should be the list of\n"
-    "  files generated by the script.\n";
+    "  file(s). For actions, the outputs should be the list of files\n"
+    "  generated by the script.\n";
 
 const char kScript[] = "script";
 const char kScript_HelpShort[] =
-    "script: [file name] Script file for custom script targets.";
+    "script: [file name] Script file for actions.";
 const char kScript_Help[] =
-    "script: Script file for custom script targets.\n"
+    "script: Script file for actions.\n"
     "\n"
     "  An absolute or buildfile-relative file name of a Python script to run\n"
-    "  for a custom script target (see \"gn help custom\").\n";
+    "  for a action and action_foreach targets (see \"gn help action\" and\n"
+    "  \"gn help action_foreach\").\n";
 
 const char kSourcePrereqs[] = "source_prereqs";
 const char kSourcePrereqs_HelpShort[] =
@@ -689,9 +713,9 @@ const char kSourcePrereqs_Help[] =
     "  listed in the \"outputs\" section of another target. There is no\n"
     "  reason to declare static source files as source prerequisites since\n"
     "  the normal include file dependency management will handle them more\n"
-    "  efficiently anwyay.\n"
+    "  efficiently anyway.\n"
     "\n"
-    "  For custom script targets that don't generate \".d\" files, the\n"
+    "  For action targets that don't generate \".d\" files, the\n"
     "  \"source_prereqs\" section is how you can list known compile-time\n"
     "  dependencies your script may have.\n"
     "\n"
@@ -706,7 +730,7 @@ const char kSourcePrereqs_Help[] =
     "    source_prereqs = [ \"$root_gen_dir/something/generated_data.h\" ]\n"
     "  }\n"
     "\n"
-    "  custom(\"myscript\") {\n"
+    "  action(\"myscript\") {\n"
     "    script = \"domything.py\"\n"
     "    source_prereqs = [ \"input.data\" ]\n"
     "  }\n";
@@ -767,16 +791,16 @@ const VariableInfoMap& GetTargetVariables() {
     INSERT_VARIABLE(Configs)
     INSERT_VARIABLE(Data)
     INSERT_VARIABLE(Datadeps)
+    INSERT_VARIABLE(Depfile)
     INSERT_VARIABLE(Deps)
     INSERT_VARIABLE(DirectDependentConfigs)
-    INSERT_VARIABLE(External)
     INSERT_VARIABLE(ForwardDependentConfigsFrom)
-    INSERT_VARIABLE(GypFile)
     INSERT_VARIABLE(HardDep)
     INSERT_VARIABLE(IncludeDirs)
     INSERT_VARIABLE(Ldflags)
     INSERT_VARIABLE(Libs)
     INSERT_VARIABLE(LibDirs)
+    INSERT_VARIABLE(OutputExtension)
     INSERT_VARIABLE(OutputName)
     INSERT_VARIABLE(Outputs)
     INSERT_VARIABLE(Script)

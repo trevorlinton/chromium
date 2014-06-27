@@ -39,8 +39,11 @@ class ThrottlingResourceHandler : public LayeredResourceHandler,
                                  bool* defer) OVERRIDE;
   virtual bool OnWillStart(int request_id, const GURL& url,
                            bool* defer) OVERRIDE;
+  virtual bool OnBeforeNetworkStart(int request_id,
+                                  const GURL& url,
+                                  bool* defer) OVERRIDE;
 
-  // ResourceThrottleController implementation:
+  // ResourceController implementation:
   virtual void Cancel() OVERRIDE;
   virtual void CancelAndIgnore() OVERRIDE;
   virtual void CancelWithError(int error_code) OVERRIDE;
@@ -48,19 +51,25 @@ class ThrottlingResourceHandler : public LayeredResourceHandler,
 
  private:
   void ResumeStart();
+  void ResumeNetworkStart();
   void ResumeRedirect();
   void ResumeResponse();
+
+  // Called when the throttle at |throttle_index| defers a request.  Logs the
+  // name of the throttle that delayed the request.
+  void OnRequestDefered(int throttle_index);
 
   enum DeferredStage {
     DEFERRED_NONE,
     DEFERRED_START,
+    DEFERRED_NETWORK_START,
     DEFERRED_REDIRECT,
     DEFERRED_RESPONSE
   };
   DeferredStage deferred_stage_;
 
   ScopedVector<ResourceThrottle> throttles_;
-  size_t index_;
+  size_t next_index_;
 
   GURL deferred_url_;
   scoped_refptr<ResourceResponse> deferred_response_;

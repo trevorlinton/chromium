@@ -19,12 +19,11 @@ namespace chromeos {
 
 CaptivePortalWindowProxy::CaptivePortalWindowProxy(
     Delegate* delegate,
-    gfx::NativeWindow parent,
     content::WebContents* web_contents)
     : delegate_(delegate),
       widget_(NULL),
-      parent_(parent),
-      web_contents_(web_contents) {
+      web_contents_(web_contents),
+      captive_portal_view_for_testing_(NULL) {
   DCHECK(GetState() == STATE_IDLE);
 }
 
@@ -62,10 +61,8 @@ void CaptivePortalWindowProxy::Show() {
   WebContentsModalDialogManagerDelegate* delegate =
       web_contents_modal_dialog_manager->delegate();
   DCHECK(delegate);
-
   widget_ = views::Widget::CreateWindowAsFramelessChild(
       captive_portal_view,
-      parent_,
       delegate->GetWebContentsModalDialogHost()->GetHostView());
   captive_portal_view->Init();
 
@@ -78,6 +75,7 @@ void CaptivePortalWindowProxy::Close() {
   if (GetState() == STATE_DISPLAYED)
     widget_->Close();
   captive_portal_view_.reset();
+  captive_portal_view_for_testing_ = NULL;
 }
 
 void CaptivePortalWindowProxy::OnRedirected() {
@@ -94,10 +92,17 @@ void CaptivePortalWindowProxy::OnWidgetClosing(views::Widget* widget) {
   DCHECK(GetState() == STATE_DISPLAYED);
   DCHECK(widget == widget_);
 
-  widget->RemoveObserver(this);
-  widget_ = NULL;
+  DetachFromWidget(widget);
 
   DCHECK(GetState() == STATE_IDLE);
+}
+
+void CaptivePortalWindowProxy::OnWidgetDestroying(views::Widget* widget) {
+  DetachFromWidget(widget);
+}
+
+void CaptivePortalWindowProxy::OnWidgetDestroyed(views::Widget* widget) {
+  DetachFromWidget(widget);
 }
 
 void CaptivePortalWindowProxy::InitCaptivePortalView() {
@@ -106,6 +111,7 @@ void CaptivePortalWindowProxy::InitCaptivePortalView() {
   if (!captive_portal_view_.get()) {
     captive_portal_view_.reset(
         new CaptivePortalView(ProfileHelper::GetSigninProfile(), this));
+    captive_portal_view_for_testing_ = captive_portal_view_.get();
   }
   captive_portal_view_->StartLoad();
 }
@@ -123,6 +129,13 @@ CaptivePortalWindowProxy::State CaptivePortalWindowProxy::GetState() const {
       NOTREACHED();
   }
   return STATE_UNKNOWN;
+}
+
+void CaptivePortalWindowProxy::DetachFromWidget(views::Widget* widget) {
+  if (!widget_ || widget_ != widget)
+    return;
+  widget_->RemoveObserver(this);
+  widget_ = NULL;
 }
 
 }  // namespace chromeos

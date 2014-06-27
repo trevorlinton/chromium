@@ -166,10 +166,10 @@ enum NotificationType {
   // This may get sent along with RENDERER_PROCESS_TERMINATED.
   NOTIFICATION_RENDERER_PROCESS_CLOSED,
 
-  // Indicates that a render process has become unresponsive for a period of
+  // Indicates that a RenderWidgetHost has become unresponsive for a period of
   // time. The source will be the RenderWidgetHost that corresponds to the
   // hung view, and no details are expected.
-  NOTIFICATION_RENDERER_PROCESS_HANG,
+  NOTIFICATION_RENDER_WIDGET_HOST_HANG,
 
   // This is sent when a RenderWidgetHost is being destroyed. The source is
   // the RenderWidgetHost, the details are not used.
@@ -178,11 +178,6 @@ enum NotificationType {
   // Sent after the backing store has been updated but before the widget has
   // painted. The source is the RenderWidgetHost, the details are not used.
   NOTIFICATION_RENDER_WIDGET_HOST_DID_UPDATE_BACKING_STORE,
-
-  // This notifies the observer that a PaintAtSizeACK was received. The source
-  // is the RenderWidgetHost, the details are an instance of
-  // std::pair<int, gfx::Size>.
-  NOTIFICATION_RENDER_WIDGET_HOST_DID_RECEIVE_PAINT_AT_SIZE_ACK,
 
   // This notifies the observer that a HandleInputEventACK was received. The
   // source is the RenderWidgetHost, the details are the type of event

@@ -6,8 +6,9 @@
 
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/policy/user_cloud_policy_manager_chromeos.h"
-#include "chrome/browser/policy/cloud/cloud_policy_core.h"
-#include "chrome/browser/signin/profile_oauth2_token_service.h"
+#include "chrome/browser/signin/signin_manager.h"
+#include "components/policy/core/common/cloud/cloud_policy_core.h"
+#include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "content/public/browser/notification_source.h"
 #include "google_apis/gaia/gaia_constants.h"
 
@@ -15,9 +16,12 @@ namespace policy {
 
 UserCloudPolicyTokenForwarder::UserCloudPolicyTokenForwarder(
     UserCloudPolicyManagerChromeOS* manager,
-    ProfileOAuth2TokenService* token_service)
-    : manager_(manager),
-      token_service_(token_service) {
+    ProfileOAuth2TokenService* token_service,
+    SigninManagerBase* signin_manager)
+    : OAuth2TokenService::Consumer("policy_token_forwarder"),
+      manager_(manager),
+      token_service_(token_service),
+      signin_manager_(signin_manager) {
   // Start by waiting for the CloudPolicyService to be initialized, so that
   // we can check if it already has a DMToken or not.
   if (manager_->core()->service()->IsInitializationComplete()) {
@@ -72,15 +76,12 @@ void UserCloudPolicyTokenForwarder::OnInitializationCompleted(
 }
 
 void UserCloudPolicyTokenForwarder::Initialize() {
-  if (manager_->IsClientRegistered()) {
-    // We already have a DMToken, so no need to ask for an access token.
-    // All done here.
-    Shutdown();
-    return;
-  }
+  // TODO(mnissler): Once a better way to reconfirm whether a user is on the
+  // login whitelist is available, there is no reason to fetch the OAuth2 token
+  // here if the client is already registered, so check and bail out here.
 
   if (token_service_->RefreshTokenIsAvailable(
-          token_service_->GetPrimaryAccountId()))
+          signin_manager_->GetAuthenticatedAccountId()))
     RequestAccessToken();
   else
     token_service_->AddObserver(this);
@@ -89,8 +90,9 @@ void UserCloudPolicyTokenForwarder::Initialize() {
 void UserCloudPolicyTokenForwarder::RequestAccessToken() {
   OAuth2TokenService::ScopeSet scopes;
   scopes.insert(GaiaConstants::kDeviceManagementServiceOAuth);
+  scopes.insert(GaiaConstants::kOAuthWrapBridgeUserInfoScope);
   request_ = token_service_->StartRequest(
-      token_service_->GetPrimaryAccountId(), scopes, this);
+      signin_manager_->GetAuthenticatedAccountId(), scopes, this);
 }
 
 }  // namespace policy

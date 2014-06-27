@@ -17,10 +17,10 @@
         '../../skia/skia.gyp:skia',
         '../../url/url.gyp:url_lib',
         '../base/strings/ui_strings.gyp:ui_strings',
-        '../events/events.gyp:events',
+        '../base/ui_base.gyp:ui_base',
         '../gfx/gfx.gyp:gfx',
-        '../ui.gyp:ui',
-        '../ui.gyp:ui_resources',
+        '../gfx/gfx.gyp:gfx_geometry',
+        '../resources/ui_resources.gyp:ui_resources',
       ],
       'defines': [
         'MESSAGE_CENTER_IMPLEMENTATION',
@@ -28,6 +28,8 @@
       'sources': [
         'cocoa/notification_controller.h',
         'cocoa/notification_controller.mm',
+        'cocoa/opaque_views.h',
+        'cocoa/opaque_views.mm',
         'cocoa/popup_collection.h',
         'cocoa/popup_collection.mm',
         'cocoa/popup_controller.h',
@@ -73,33 +75,51 @@
         'notifier_settings.h',
         'views/bounded_label.cc',
         'views/bounded_label.h',
+        'views/constants.h',
         'views/message_bubble_base.cc',
         'views/message_bubble_base.h',
+        'views/message_center_controller.h',
         'views/message_center_bubble.cc',
         'views/message_center_bubble.h',
         'views/message_center_button_bar.cc',
         'views/message_center_button_bar.h',
-        'views/message_center_focus_border.h',
-        'views/message_center_focus_border.cc',
         'views/message_center_view.cc',
         'views/message_center_view.h',
         'views/message_popup_collection.cc',
         'views/message_popup_collection.h',
         'views/message_view.cc',
         'views/message_view.h',
+        'views/message_view_context_menu_controller.cc',
+        'views/message_view_context_menu_controller.h',
         'views/notifier_settings_view.cc',
         'views/notifier_settings_view.h',
+        'views/notification_button.cc',
+        'views/notification_button.h',
         'views/notification_view.cc',
         'views/notification_view.h',
+        'views/padded_button.cc',
+        'views/padded_button.h',
+        'views/proportional_image_view.cc',
+        'views/proportional_image_view.h',
         'views/toast_contents_view.cc',
         'views/toast_contents_view.h',
       ],
       # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
       'msvs_disabled_warnings': [ 4267, ],
       'conditions': [
+        # This condition is for Windows 8 Metro mode support.  We need to
+        # specify a particular desktop during widget creation in that case.
+        # This is done using the desktop aura native widget framework.
+        ['use_ash==1 and OS=="win"', {
+          'dependencies': [
+            '../aura/aura.gyp:aura',
+          ],
+        }],
         ['toolkit_views==1', {
           'dependencies': [
+            '../events/events.gyp:events',
             '../views/views.gyp:views',
+            '../compositor/compositor.gyp:compositor',
           ],
         }, {
           'sources/': [
@@ -114,19 +134,6 @@
             'views/message_center_bubble.h',
             'views/message_popup_bubble.cc',
             'views/message_popup_bubble.h',
-          ],
-        }],
-        ['OS=="mac"', {
-          'dependencies': [
-            '../ui.gyp:ui_cocoa_third_party_toolkits',
-          ],
-          'include_dirs': [
-            '../../third_party/GTM',
-          ],
-        }],
-        ['toolkit_views==1', {
-          'dependencies': [
-            '../compositor/compositor.gyp:compositor',
           ],
         }],
         ['notifications==0', {  # Android and iOS.
@@ -148,14 +155,16 @@
         '../../base/base.gyp:base',
         '../../base/base.gyp:test_support_base',
         '../../skia/skia.gyp:skia',
-        '../events/events.gyp:events',
+        '../base/ui_base.gyp:ui_base',
         '../gfx/gfx.gyp:gfx',
-        '../ui.gyp:ui',
+        '../gfx/gfx.gyp:gfx_geometry',
         'message_center',
       ],
       'sources': [
         'fake_message_center.h',
         'fake_message_center.cc',
+        'fake_message_center_tray_delegate.h',
+        'fake_message_center_tray_delegate.cc',
         'fake_notifier_settings_provider.h',
         'fake_notifier_settings_provider.cc',
       ],
@@ -166,16 +175,14 @@
       'dependencies': [
         '../../base/base.gyp:base',
         '../../base/base.gyp:test_support_base',
-        '../../chrome/chrome_resources.gyp:packed_resources',
         '../../skia/skia.gyp:skia',
         '../../testing/gtest.gyp:gtest',
         '../../url/url.gyp:url_lib',
-        '../events/events.gyp:events',
+        '../base/ui_base.gyp:ui_base',
         '../gfx/gfx.gyp:gfx',
-        '../ui.gyp:ui',
-        '../ui_unittests.gyp:run_ui_unittests',
-        '../ui.gyp:ui_resources',
-        '../../url/url.gyp:url_lib',
+        '../gfx/gfx.gyp:gfx_geometry',
+        '../resources/ui_resources.gyp:ui_resources',
+        '../resources/ui_resources.gyp:ui_test_pak',
         'message_center',
         'message_center_test_support',
       ],
@@ -189,18 +196,14 @@
         'cocoa/tray_view_controller_unittest.mm',
         'message_center_tray_unittest.cc',
         'message_center_impl_unittest.cc',
+        'notification_delegate_unittest.cc',
         'notification_list_unittest.cc',
         'test/run_all_unittests.cc',
       ],
       'conditions': [
-        ['use_glib == 1 or OS == "ios"', {
-         'dependencies': [
-           '../base/strings/ui_strings.gyp:ui_unittest_strings',
-         ],
-        }],
         ['OS=="mac"', {
           'dependencies': [
-            '../ui_unittests.gyp:ui_test_support',
+            '../gfx/gfx.gyp:gfx_test_support',
           ],
         }],
         ['toolkit_views==1', {
@@ -226,7 +229,8 @@
           ],
         }],
         # See http://crbug.com/162998#c4 for why this is needed.
-        ['OS=="linux" and linux_use_tcmalloc==1', {
+        # TODO(dmikurube): Kill linux_use_tcmalloc. http://crbug.com/345554
+        ['OS=="linux" and ((use_allocator!="none" and use_allocator!="see_use_tcmalloc") or (use_allocator=="see_use_tcmalloc" and linux_use_tcmalloc==1))', {
           'dependencies': [
             '../../base/allocator/allocator.gyp:allocator',
           ],

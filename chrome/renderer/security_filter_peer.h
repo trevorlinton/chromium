@@ -6,6 +6,7 @@
 #define CHROME_RENDERER_SECURITY_FILTER_PEER_H_
 
 #include "webkit/child/resource_loader_bridge.h"
+#include "webkit/common/resource_type.h"
 
 // The SecurityFilterPeer is a proxy to a
 // webkit_glue::ResourceLoaderBridge::Peer instance.  It is used to pre-process
@@ -43,8 +44,10 @@ class SecurityFilterPeer : public webkit_glue::ResourceLoaderBridge::Peer {
   virtual void OnCompletedRequest(
       int error_code,
       bool was_ignored_by_handler,
+      bool stale_copy_in_cache,
       const std::string& security_info,
-      const base::TimeTicks& completion_time) OVERRIDE;
+      const base::TimeTicks& completion_time,
+      int64 total_transfer_size) OVERRIDE;
 
  protected:
   SecurityFilterPeer(webkit_glue::ResourceLoaderBridge* resource_loader_bridge,
@@ -75,8 +78,10 @@ class BufferedPeer : public SecurityFilterPeer {
   virtual void OnCompletedRequest(
       int error_code,
       bool was_ignored_by_handler,
+      bool stale_copy_in_cache,
       const std::string& security_info,
-      const base::TimeTicks& completion_time) OVERRIDE;
+      const base::TimeTicks& completion_time,
+      int64 total_transfer_size) OVERRIDE;
 
  protected:
   // Invoked when the entire request has been processed before the data is sent
@@ -119,8 +124,10 @@ class ReplaceContentPeer : public SecurityFilterPeer {
   virtual void OnCompletedRequest(
       int error_code,
       bool was_ignored_by_handler,
+      bool stale_copy_in_cache,
       const std::string& security_info,
-      const base::TimeTicks& completion_time) OVERRIDE;
+      const base::TimeTicks& completion_time,
+      int64 total_transfer_size) OVERRIDE;
 
  private:
   webkit_glue::ResourceResponseInfo response_info_;

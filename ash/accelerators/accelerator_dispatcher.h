@@ -6,38 +6,28 @@
 #define ASH_ACCELERATORS_ACCELERATOR_DISPATCHER_H_
 
 #include "ash/ash_export.h"
-#include "base/message_loop/message_loop.h"
-#include "ui/aura/window.h"
-#include "ui/aura/window_observer.h"
+#include "base/macros.h"
+#include "base/message_loop/message_pump_dispatcher.h"
 
 namespace ash {
 
 // Dispatcher for handling accelerators from menu.
 //
 // Wraps a nested dispatcher to which control is passed if no accelerator key
-// has been pressed.
-// TODO(pkotwicz): Port AcceleratorDispatcher to mac.
+// has been pressed. If the nested dispatcher is NULL, then the control is
+// passed back to the default dispatcher.
 // TODO(pkotwicz): Add support for a |nested_dispatcher| which sends
 //  events to a system IME.
-class ASH_EXPORT AcceleratorDispatcher : public base::MessageLoop::Dispatcher,
-                                         public aura::WindowObserver {
+class ASH_EXPORT AcceleratorDispatcher : public base::MessagePumpDispatcher {
  public:
-  AcceleratorDispatcher(base::MessageLoop::Dispatcher* nested_dispatcher,
-                        aura::Window* associated_window);
+  explicit AcceleratorDispatcher(base::MessagePumpDispatcher* dispatcher);
   virtual ~AcceleratorDispatcher();
 
-  // MessageLoop::Dispatcher overrides:
-  virtual bool Dispatch(const base::NativeEvent& event) OVERRIDE;
-
-  // aura::WindowObserver overrides:
-  virtual void OnWindowDestroying(aura::Window* window) OVERRIDE;
+  // MessagePumpDispatcher overrides:
+  virtual uint32_t Dispatch(const base::NativeEvent& event) OVERRIDE;
 
  private:
-  base::MessageLoop::Dispatcher* nested_dispatcher_;
-
-  // Window associated with |nested_dispatcher_| which is used to determine
-  // whether the |nested_dispatcher_| is allowed to receive events.
-  aura::Window* associated_window_;
+  base::MessagePumpDispatcher* nested_dispatcher_;
 
   DISALLOW_COPY_AND_ASSIGN(AcceleratorDispatcher);
 };

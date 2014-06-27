@@ -8,8 +8,11 @@ namespace sync_file_system {
 namespace drive_backend {
 
 const char kSyncRootFolderTitle[] = "Chrome Syncable FileSystem";
+const char kSyncRootFolderTitleDev[] = "Chrome Syncable FileSystem Dev";
+const char kMimeTypeOctetStream[] = "application/octet-stream";
+
 const base::FilePath::CharType kDatabaseName[] =
-    FILE_PATH_LITERAL("DriveMetadata");
+    FILE_PATH_LITERAL("DriveMetadata_v2");
 
 const char kDatabaseVersionKey[] = "VERSION";
 const int64 kCurrentDatabaseVersion = 3;
@@ -19,6 +22,8 @@ const char kFileTrackerKeyPrefix[] = "TRACKER: ";
 
 const int kMaxRetry = 5;
 const int64 kListChangesRetryDelaySeconds = 60 * 60;
+
+const int64 kInvalidTrackerID = 0;
 
 }  // namespace drive_backend
 }  // namespace sync_file_system

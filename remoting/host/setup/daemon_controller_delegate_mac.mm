@@ -224,13 +224,13 @@ bool DaemonControllerDelegateMac::DoShowPreferencePane(
     const std::string& config_data) {
   if (!config_data.empty()) {
     base::FilePath config_path;
-    if (!file_util::GetTempDir(&config_path)) {
+    if (!base::GetTempDir(&config_path)) {
       LOG(ERROR) << "Failed to get filename for saving configuration data.";
       return false;
     }
     config_path = config_path.Append(kHostConfigFileName);
 
-    int written = file_util::WriteFile(config_path, config_data.data(),
+    int written = base::WriteFile(config_path, config_data.data(),
                                        config_data.size());
     if (written != static_cast<int>(config_data.size())) {
       LOG(ERROR) << "Failed to save configuration data to: "

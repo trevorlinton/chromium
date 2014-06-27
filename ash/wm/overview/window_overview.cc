@@ -6,21 +6,23 @@
 
 #include <algorithm>
 
-#include "ash/screen_ash.h"
+#include "ash/metrics/user_metrics_recorder.h"
+#include "ash/screen_util.h"
 #include "ash/shell.h"
-#include "ash/shell_delegate.h"
 #include "ash/shell_window_ids.h"
-#include "ash/wm/mru_window_tracker.h"
+#include "ash/switchable_windows.h"
 #include "ash/wm/overview/scoped_transform_overview_window.h"
 #include "ash/wm/overview/window_selector.h"
 #include "ash/wm/overview/window_selector_item.h"
 #include "base/metrics/histogram.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/aura/client/cursor_client.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_event_dispatcher.h"
+#include "ui/compositor/layer_animation_observer.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/events/event.h"
+#include "ui/views/background.h"
 #include "ui/views/widget/widget.h"
 
 namespace ash {
@@ -124,6 +126,8 @@ WindowOverview::WindowOverview(WindowSelector* window_selector,
       single_root_window_(single_root_window),
       overview_start_time_(base::Time::Now()),
       cursor_client_(NULL) {
+  Shell* shell = Shell::GetInstance();
+  shell->OnOverviewModeStarting();
   for (WindowSelectorItemList::iterator iter = windows_->begin();
        iter != windows_->end(); ++iter) {
     (*iter)->PrepareForOverview();
@@ -141,9 +145,8 @@ WindowOverview::WindowOverview(WindowSelector* window_selector,
     // as suggested there.
     cursor_client_->LockCursor();
   }
-  ash::Shell::GetInstance()->PrependPreTargetHandler(this);
-  Shell* shell = Shell::GetInstance();
-  shell->delegate()->RecordUserMetricsAction(UMA_WINDOW_OVERVIEW);
+  shell->PrependPreTargetHandler(this);
+  shell->metrics()->RecordUserMetricsAction(UMA_WINDOW_OVERVIEW);
   HideAndTrackNonOverviewWindows();
 }
 
@@ -162,10 +165,12 @@ WindowOverview::~WindowOverview() {
   }
   if (cursor_client_)
     cursor_client_->UnlockCursor();
-  ash::Shell::GetInstance()->RemovePreTargetHandler(this);
+  ash::Shell* shell = ash::Shell::GetInstance();
+  shell->RemovePreTargetHandler(this);
   UMA_HISTOGRAM_MEDIUM_TIMES(
       "Ash.WindowSelector.TimeInOverview",
       base::Time::Now() - overview_start_time_);
+  shell->OnOverviewModeEnding();
 }
 
 void WindowOverview::SetSelection(size_t index) {
@@ -297,7 +302,7 @@ aura::Window* WindowOverview::GetEventTarget(ui::LocatedEvent* event) {
   // If the target window doesn't actually contain the event location (i.e.
   // mouse down over the window and mouse up elsewhere) then do not select the
   // window.
-  if (!target->HitTest(event->location()))
+  if (!target->ContainsPoint(event->location()))
     return NULL;
 
   return GetTargetedWindow(target);
@@ -314,29 +319,41 @@ aura::Window* WindowOverview::GetTargetedWindow(aura::Window* window) {
 }
 
 void WindowOverview::HideAndTrackNonOverviewWindows() {
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
-  for (Shell::RootWindowList::const_iterator root_iter = root_windows.begin();
+  // Add the windows to hidden_windows first so that if any are destroyed
+  // while hiding them they are tracked.
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
+  for (aura::Window::Windows::const_iterator root_iter = root_windows.begin();
        root_iter != root_windows.end(); ++root_iter) {
     for (size_t i = 0; i < kSwitchableWindowContainerIdsLength; ++i) {
       aura::Window* container = Shell::GetContainer(*root_iter,
           kSwitchableWindowContainerIds[i]);
-      // Copy the children list as it can change during iteration.
-      aura::Window::Windows children(container->children());
-      for (aura::Window::Windows::const_iterator iter = children.begin();
-           iter != children.end(); ++iter) {
+      for (aura::Window::Windows::const_iterator iter =
+           container->children().begin(); iter != container->children().end();
+           ++iter) {
         if (GetTargetedWindow(*iter) || !(*iter)->IsVisible())
           continue;
-        ui::ScopedLayerAnimationSettings settings(
-            (*iter)->layer()->GetAnimator());
-        settings.SetTransitionDuration(base::TimeDelta::FromMilliseconds(
-            ScopedTransformOverviewWindow::kTransitionMilliseconds));
-        settings.SetPreemptionStrategy(
-            ui::LayerAnimator::IMMEDIATELY_ANIMATE_TO_NEW_TARGET);
-        (*iter)->Hide();
-        (*iter)->layer()->SetOpacity(0);
         hidden_windows_.Add(*iter);
       }
     }
+  }
+
+  // Copy the window list as it can change during iteration.
+  const aura::WindowTracker::Windows hidden_windows(hidden_windows_.windows());
+  for (aura::WindowTracker::Windows::const_iterator iter =
+       hidden_windows.begin(); iter != hidden_windows.end(); ++iter) {
+    if (!hidden_windows_.Contains(*iter))
+      continue;
+    ui::ScopedLayerAnimationSettings settings(
+        (*iter)->layer()->GetAnimator());
+    settings.SetTransitionDuration(base::TimeDelta::FromMilliseconds(
+        ScopedTransformOverviewWindow::kTransitionMilliseconds));
+    settings.SetPreemptionStrategy(
+        ui::LayerAnimator::IMMEDIATELY_ANIMATE_TO_NEW_TARGET);
+    (*iter)->Hide();
+    // Hiding the window can result in it being destroyed.
+    if (!hidden_windows_.Contains(*iter))
+      continue;
+    (*iter)->layer()->SetOpacity(0);
   }
 }
 
@@ -349,7 +366,7 @@ void WindowOverview::PositionWindows() {
     }
     PositionWindowsOnRoot(single_root_window_, windows);
   } else {
-    Shell::RootWindowList root_window_list = Shell::GetAllRootWindows();
+    aura::Window::Windows root_window_list = Shell::GetAllRootWindows();
     for (size_t i = 0; i < root_window_list.size(); ++i)
       PositionWindowsFromRoot(root_window_list[i]);
   }
@@ -372,8 +389,8 @@ void WindowOverview::PositionWindowsOnRoot(
     return;
 
   gfx::Size window_size;
-  gfx::Rect total_bounds = ScreenAsh::ConvertRectToScreen(root_window,
-      ScreenAsh::GetDisplayWorkAreaBoundsInParent(
+  gfx::Rect total_bounds = ScreenUtil::ConvertRectToScreen(root_window,
+      ScreenUtil::GetDisplayWorkAreaBoundsInParent(
       Shell::GetContainer(root_window,
                           internal::kShellWindowId_DefaultContainer)));
 

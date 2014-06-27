@@ -20,6 +20,10 @@
 #include "content/public/browser/browser_thread.h"
 #include "url/gurl.h"
 
+#if defined(OS_WIN)
+#include "ui/views/win/hwnd_util.h"
+#endif
+
 namespace extensions {
 
 namespace {
@@ -30,33 +34,11 @@ namespace {
 const char kParentWindowSwitchName[] = "parent-window";
 #endif  // defined(OS_WIN)
 
-base::FilePath GetHostManifestPathFromCommandLine(
-    const std::string& native_host_name) {
-  const std::string& value =
-      CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-          switches::kNativeMessagingHosts);
-  if (value.empty())
-    return base::FilePath();
-
-  std::vector<std::string> hosts;
-  base::SplitString(value, ',', &hosts);
-  for (size_t i = 0; i < hosts.size(); ++i) {
-    std::vector<std::string> key_and_value;
-    base::SplitString(hosts[i], '=', &key_and_value);
-    if (key_and_value.size() != 2)
-      continue;
-    if (key_and_value[0] == native_host_name)
-      return base::FilePath::FromUTF8Unsafe(key_and_value[1]);
-  }
-
-  return base::FilePath();
-}
-
-
 // Default implementation on NativeProcessLauncher interface.
 class NativeProcessLauncherImpl : public NativeProcessLauncher {
  public:
-  explicit NativeProcessLauncherImpl(gfx::NativeView native_view);
+  NativeProcessLauncherImpl(bool allow_user_level_hosts,
+                            intptr_t native_window);
   virtual ~NativeProcessLauncherImpl();
 
   virtual void Launch(const GURL& origin,
@@ -66,7 +48,7 @@ class NativeProcessLauncherImpl : public NativeProcessLauncher {
  private:
   class Core : public base::RefCountedThreadSafe<Core> {
    public:
-    explicit Core(gfx::NativeView native_view);
+    Core(bool allow_user_level_hosts, intptr_t native_window);
     void Launch(const GURL& origin,
                 const std::string& native_host_name,
                 LaunchedCallback callback);
@@ -82,18 +64,20 @@ class NativeProcessLauncherImpl : public NativeProcessLauncher {
     void PostErrorResult(const LaunchedCallback& callback, LaunchResult error);
     void PostResult(const LaunchedCallback& callback,
                     base::ProcessHandle process_handle,
-                    base::PlatformFile read_file,
-                    base::PlatformFile write_file);
+                    base::File read_file,
+                    base::File write_file);
     void CallCallbackOnIOThread(LaunchedCallback callback,
                                 LaunchResult result,
                                 base::ProcessHandle process_handle,
-                                base::PlatformFile read_file,
-                                base::PlatformFile write_file);
+                                base::File read_file,
+                                base::File write_file);
 
     bool detached_;
 
-    // Handle of the native view corrsponding to the extension.
-    gfx::NativeView native_view_;
+    bool allow_user_level_hosts_;
+
+    // Handle of the native window corresponding to the extension.
+    intptr_t window_handle_;
 
     DISALLOW_COPY_AND_ASSIGN(Core);
   };
@@ -103,9 +87,11 @@ class NativeProcessLauncherImpl : public NativeProcessLauncher {
   DISALLOW_COPY_AND_ASSIGN(NativeProcessLauncherImpl);
 };
 
-NativeProcessLauncherImpl::Core::Core(gfx::NativeView native_view)
+NativeProcessLauncherImpl::Core::Core(bool allow_user_level_hosts,
+                                      intptr_t window_handle)
     : detached_(false),
-      native_view_(native_view) {
+      allow_user_level_hosts_(allow_user_level_hosts),
+      window_handle_(window_handle) {
 }
 
 NativeProcessLauncherImpl::Core::~Core() {
@@ -138,13 +124,8 @@ void NativeProcessLauncherImpl::Core::DoLaunchOnThreadPool(
   }
 
   std::string error_message;
-  scoped_ptr<NativeMessagingHostManifest> manifest;
-
-  // First check if the manifest location is specified in the command line.
   base::FilePath manifest_path =
-      GetHostManifestPathFromCommandLine(native_host_name);
-  if (manifest_path.empty())
-    manifest_path = FindManifest(native_host_name, &error_message);
+      FindManifest(native_host_name, allow_user_level_hosts_, &error_message);
 
   if (manifest_path.empty()) {
     LOG(ERROR) << "Can't find manifest for native messaging host "
@@ -153,7 +134,8 @@ void NativeProcessLauncherImpl::Core::DoLaunchOnThreadPool(
     return;
   }
 
-  manifest = NativeMessagingHostManifest::Load(manifest_path, &error_message);
+  scoped_ptr<NativeMessagingHostManifest> manifest =
+      NativeMessagingHostManifest::Load(manifest_path, &error_message);
 
   if (!manifest) {
     LOG(ERROR) << "Failed to load manifest for native messaging host "
@@ -196,17 +178,16 @@ void NativeProcessLauncherImpl::Core::DoLaunchOnThreadPool(
   // Pass handle of the native view window to the native messaging host. This
   // way the host will be able to create properly focused UI windows.
 #if defined(OS_WIN)
-  int64 window_handle = reinterpret_cast<intptr_t>(native_view_);
   command_line.AppendSwitchASCII(kParentWindowSwitchName,
-                                 base::Int64ToString(window_handle));
+                                 base::Int64ToString(window_handle_));
 #endif  // !defined(OS_WIN)
 
   base::ProcessHandle process_handle;
-  base::PlatformFile read_file;
-  base::PlatformFile write_file;
+  base::File read_file;
+  base::File write_file;
   if (NativeProcessLauncher::LaunchNativeProcess(
           command_line, &process_handle, &read_file, &write_file)) {
-    PostResult(callback, process_handle, read_file, write_file);
+    PostResult(callback, process_handle, read_file.Pass(), write_file.Pass());
   } else {
     PostErrorResult(callback, RESULT_FAILED_TO_START);
   }
@@ -216,18 +197,13 @@ void NativeProcessLauncherImpl::Core::CallCallbackOnIOThread(
     LaunchedCallback callback,
     LaunchResult result,
     base::ProcessHandle process_handle,
-    base::PlatformFile read_file,
-    base::PlatformFile write_file) {
+    base::File read_file,
+    base::File write_file) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::IO));
-  if (detached_) {
-    if (read_file != base::kInvalidPlatformFileValue)
-      base::ClosePlatformFile(read_file);
-    if (write_file != base::kInvalidPlatformFileValue)
-      base::ClosePlatformFile(write_file);
+  if (detached_)
     return;
-  }
 
-  callback.Run(result, process_handle, read_file, write_file);
+  callback.Run(result, process_handle, read_file.Pass(), write_file.Pass());
 }
 
 void NativeProcessLauncherImpl::Core::PostErrorResult(
@@ -237,25 +213,25 @@ void NativeProcessLauncherImpl::Core::PostErrorResult(
       content::BrowserThread::IO, FROM_HERE,
       base::Bind(&NativeProcessLauncherImpl::Core::CallCallbackOnIOThread, this,
                  callback, error, base::kNullProcessHandle,
-                 base::kInvalidPlatformFileValue,
-                 base::kInvalidPlatformFileValue));
+                 Passed(base::File()), Passed(base::File())));
 }
 
 void NativeProcessLauncherImpl::Core::PostResult(
     const LaunchedCallback& callback,
     base::ProcessHandle process_handle,
-    base::PlatformFile read_file,
-    base::PlatformFile write_file) {
+    base::File read_file,
+    base::File write_file) {
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
       base::Bind(&NativeProcessLauncherImpl::Core::CallCallbackOnIOThread, this,
-                 callback, RESULT_SUCCESS, process_handle, read_file,
-                 write_file));
+                 callback, RESULT_SUCCESS, process_handle,
+                 Passed(read_file.Pass()), Passed(write_file.Pass())));
 }
 
 NativeProcessLauncherImpl::NativeProcessLauncherImpl(
-    gfx::NativeView native_view)
-  : core_(new Core(native_view)) {
+    bool allow_user_level_hosts,
+    intptr_t window_handle)
+    : core_(new Core(allow_user_level_hosts, window_handle)) {
 }
 
 NativeProcessLauncherImpl::~NativeProcessLauncherImpl() {
@@ -272,9 +248,15 @@ void NativeProcessLauncherImpl::Launch(const GURL& origin,
 
 // static
 scoped_ptr<NativeProcessLauncher> NativeProcessLauncher::CreateDefault(
+    bool allow_user_level_hosts,
     gfx::NativeView native_view) {
+  intptr_t window_handle = 0;
+#if defined(OS_WIN)
+  window_handle = reinterpret_cast<intptr_t>(
+      views::HWNDForNativeView(native_view));
+#endif
   return scoped_ptr<NativeProcessLauncher>(
-      new NativeProcessLauncherImpl(native_view));
+      new NativeProcessLauncherImpl(allow_user_level_hosts, window_handle));
 }
 
 }  // namespace extensions

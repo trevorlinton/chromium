@@ -10,6 +10,7 @@
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/infobars/infobar_container_controller.h"
 #import "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
+#import "chrome/browser/ui/cocoa/nsview_additions.h"
 #import "chrome/browser/ui/cocoa/themed_window.h"
 #include "skia/ext/skia_utils_mac.h"
 #include "ui/base/theme_provider.h"
@@ -36,8 +37,8 @@
 }
 
 - (void)setInfobarType:(InfoBarDelegate::Type)infobarType {
-  SkColor topColor = GetInfoBarTopColor(infobarType);
-  SkColor bottomColor = GetInfoBarBottomColor(infobarType);
+  SkColor topColor = InfoBar::GetTopColor(infobarType);
+  SkColor bottomColor = InfoBar::GetBottomColor(infobarType);
   base::scoped_nsobject<NSGradient> gradient([[NSGradient alloc]
       initWithStartingColor:gfx::SkColorToCalibratedNSColor(topColor)
                 endingColor:gfx::SkColorToCalibratedNSColor(bottomColor)]);

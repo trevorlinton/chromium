@@ -21,20 +21,33 @@ var FEEDBACK_MIN_WIDTH = 500;
  * @type {number}
  * @const
  */
-var FEEDBACK_MIN_HEIGHT = 625;
+var FEEDBACK_MIN_HEIGHT = 585;
 
 /** @type {number}
  * @const
  */
 var CONTENT_MARGIN_HEIGHT = 40;
 
+/** @type {number}
+ * @const
+ */
+var MAX_SCREENSHOT_WIDTH = 100;
+
+/** @type {string}
+ * @const
+ */
+var SYSINFO_WINDOW_ID = 'sysinfo_window';
+
+/** @type {string}
+ * @const
+ */
+var STATS_WINDOW_ID = 'stats_window';
+
 var attachedFileBlob = null;
 var lastReader = null;
 
 var feedbackInfo = null;
 var systemInfo = null;
-
-var systemInfoWindowId = 0;
 
 /**
  * Reads the selected file when the user selects a file.
@@ -74,26 +87,24 @@ function clearAttachedFile() {
 }
 
 /**
- * Opens a new window with chrome://system, showing the current system info.
+ * Creates a closure that creates or shows a window with the given url.
+ * @param {string} windowId A string with the ID of the window we are opening.
+ * @param {string} url The destination URL of the new window.
+ * @return {function()} A function to be called to open the window.
  */
-function openSystemInfoWindow() {
-  if (systemInfoWindowId == 0) {
-    chrome.windows.create({url: 'chrome://system'}, function(win) {
-      systemInfoWindowId = win.id;
-      chrome.app.window.current().show();
-    });
-  } else {
-    chrome.windows.update(systemInfoWindowId, {drawAttention: true});
-  }
+function windowOpener(windowId, url) {
+  return function(e) {
+    e.preventDefault();
+    chrome.app.window.create(url, {id: windowId});
+  };
 }
 
 /**
  * Opens a new window with chrome://slow_trace, downloading performance data.
  */
 function openSlowTraceWindow() {
-  chrome.windows.create(
-      {url: 'chrome://slow_trace/tracing.zip#' + feedbackInfo.traceId},
-      function(win) {});
+  chrome.app.window.create(
+      'chrome://slow_trace/tracing.zip#' + feedbackInfo.traceId);
 }
 
 /**
@@ -123,26 +134,18 @@ function sendReport() {
   feedbackInfo.email = $('user-email-text').value;
 
   var useSystemInfo = false;
-  // On ChromeOS, since we gather System info, check if the user has given his
-  // permission for us to send system info.
-<if expr="pp_ifdef('chromeos')">
+  var useHistograms = false;
   if ($('sys-info-checkbox') != null &&
       $('sys-info-checkbox').checked &&
       systemInfo != null) {
-    useSystemInfo = true;
+    // Send histograms along with system info.
+    useSystemInfo = useHistograms = true;
   }
+<if expr="chromeos">
   if ($('performance-info-checkbox') == null ||
       !($('performance-info-checkbox').checked)) {
     feedbackInfo.traceId = null;
   }
-</if>
-
-// On NonChromeOS, we don't have any system information gathered except the
-// Chrome version and the OS version. Hence for Chrome, pass the system info
-// through.
-<if expr="not pp_ifdef('chromeos')">
-  if (systemInfo != null)
-    useSystemInfo = true;
 </if>
 
   if (useSystemInfo) {
@@ -155,6 +158,8 @@ function sendReport() {
       feedbackInfo.systemInformation = systemInfo;
     }
   }
+
+  feedbackInfo.sendHistograms = useHistograms;
 
   // If the user doesn't want to send the screenshot.
   if (!$('screenshot-checkbox').checked)
@@ -192,7 +197,7 @@ function dataUrlToBlob(url) {
   return new Blob([new Uint8Array(dataArray)], {type: mimeString});
 }
 
-<if expr="pp_ifdef('chromeos')">
+<if expr="chromeos">
 /**
  * Update the page when performance feedback state is changed.
  */
@@ -252,15 +257,22 @@ function initialize() {
       if (feedbackInfo.pageUrl)
         $('page-url-text').value = feedbackInfo.pageUrl;
 
-      takeScreenshot(function(screenshotDataUrl) {
-        $('screenshot-image').src = screenshotDataUrl;
-        feedbackInfo.screenshot = dataUrlToBlob(screenshotDataUrl);
+      takeScreenshot(function(screenshotCanvas) {
         // TODO(rkc):  Remove logging once crbug.com/284662 is closed.
         console.log('FEEDBACK_DEBUG: Taken screenshot. Showing window.');
+
+        // We've taken our screenshot, show the feedback page without any
+        // further delay.
         window.webkitRequestAnimationFrame(function() {
           resizeAppWindow();
         });
         chrome.app.window.current().show();
+
+        var screenshotDataUrl = screenshotCanvas.toDataURL('image/png');
+        $('screenshot-image').src = screenshotDataUrl;
+        $('screenshot-image').classList.toggle('wide-screen',
+            $('screenshot-image').width > MAX_SCREENSHOT_WIDTH);
+        feedbackInfo.screenshot = dataUrlToBlob(screenshotDataUrl);
       });
 
       chrome.feedbackPrivate.getUserEmail(function(email) {
@@ -280,7 +292,7 @@ function initialize() {
         $('attach-file').hidden = true;
       }
 
-<if expr="pp_ifdef('chromeos')">
+<if expr="chromeos">
       if (feedbackInfo.traceId && ($('performance-info-area'))) {
         $('performance-info-area').hidden = false;
         $('performance-info-checkbox').checked = true;
@@ -292,6 +304,17 @@ function initialize() {
       chrome.feedbackPrivate.getStrings(function(strings) {
         loadTimeData.data = strings;
         i18nTemplate.process(document, loadTimeData);
+
+        if ($('sys-info-url')) {
+          // Opens a new window showing the current system info.
+          $('sys-info-url').onclick =
+              windowOpener(SYSINFO_WINDOW_ID, 'chrome://system');
+        }
+        if ($('histograms-url')) {
+          // Opens a new window showing the histogram metrics.
+          $('histograms-url').onclick =
+              windowOpener(STATS_WINDOW_ID, 'chrome://histograms');
+        }
       });
     }
   });
@@ -307,18 +330,10 @@ function initialize() {
     $('send-report-button').onclick = sendReport;
     $('cancel-button').onclick = cancel;
     $('remove-attached-file').onclick = clearAttachedFile;
-<if expr="pp_ifdef('chromeos')">
+<if expr="chromeos">
     $('performance-info-checkbox').addEventListener(
         'change', performanceFeedbackChanged);
 </if>
-
-    chrome.windows.onRemoved.addListener(function(windowId, removeInfo) {
-      if (windowId == systemInfoWindowId)
-        systemInfoWindowId = 0;
-    });
-    if ($('sysinfo-url')) {
-      $('sysinfo-url').onclick = openSystemInfoWindow;
-    }
   });
 }
 

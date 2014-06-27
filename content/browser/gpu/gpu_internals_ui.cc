@@ -28,7 +28,11 @@
 #include "gpu/config/gpu_feature_type.h"
 #include "gpu/config/gpu_info.h"
 #include "grit/content_resources.h"
-#include "third_party/angle_dx11/src/common/version.h"
+#include "third_party/angle/src/common/version.h"
+
+#if defined(OS_WIN)
+#include "ui/base/win/shell.h"
+#endif
 
 namespace content {
 namespace {
@@ -87,8 +91,8 @@ std::string GPUDeviceToString(const gpu::GPUInfo::GPUDevice& gpu) {
   std::string device = base::StringPrintf("0x%04x", gpu.device_id);
   if (!gpu.device_string.empty())
     device += " [" + gpu.device_string + "]";
-  return base::StringPrintf(
-      "VENDOR = %s, DEVICE= %s", vendor.c_str(), device.c_str());
+  return base::StringPrintf("VENDOR = %s, DEVICE= %s%s",
+      vendor.c_str(), device.c_str(), gpu.active ? " *ACTIVE*" : "");
 }
 
 base::DictionaryValue* GpuInfoAsDictionaryValue() {
@@ -118,8 +122,15 @@ base::DictionaryValue* GpuInfoAsDictionaryValue() {
     basic_info->Append(NewDescriptionValuePair(
         "DisplayLink Version", gpu_info.display_link_version.GetString()));
   }
-  basic_info->Append(NewDescriptionValuePair("Driver vendor",
-                                             gpu_info.driver_vendor));
+#if defined(OS_WIN)
+  std::string compositor =
+      ui::win::IsAeroGlassEnabled() ? "Aero Glass" : "none";
+  basic_info->Append(
+      NewDescriptionValuePair("Desktop compositing", compositor));
+#endif
+
+  basic_info->Append(
+      NewDescriptionValuePair("Driver vendor", gpu_info.driver_vendor));
   basic_info->Append(NewDescriptionValuePair("Driver version",
                                              gpu_info.driver_version));
   basic_info->Append(NewDescriptionValuePair("Driver date",
@@ -146,6 +157,10 @@ base::DictionaryValue* GpuInfoAsDictionaryValue() {
                                              gpu_info.gl_ws_version));
   basic_info->Append(NewDescriptionValuePair("Window system binding extensions",
                                              gpu_info.gl_ws_extensions));
+  std::string direct_rendering = gpu_info.direct_rendering ? "Yes" : "No";
+  basic_info->Append(
+      NewDescriptionValuePair("Direct rendering", direct_rendering));
+
   std::string reset_strategy =
       base::StringPrintf("0x%04x", gpu_info.gl_reset_notification_strategy);
   basic_info->Append(NewDescriptionValuePair(
@@ -313,7 +328,7 @@ base::Value* GpuMessageHandler::OnRequestClientInfo(
   dict->SetString("operating_system",
                   base::SysInfo::OperatingSystemName() + " " +
                   base::SysInfo::OperatingSystemVersion());
-  dict->SetString("angle_revision", base::UintToString(BUILD_REVISION));
+  dict->SetString("angle_commit_id", ANGLE_COMMIT_HASH);
   dict->SetString("graphics_backend", "Skia");
   dict->SetString("blacklist_version",
       GpuDataManagerImpl::GetInstance()->GetBlacklistVersion());
@@ -334,7 +349,7 @@ void GpuMessageHandler::OnGpuInfoUpdate() {
   scoped_ptr<base::DictionaryValue> gpu_info_val(GpuInfoAsDictionaryValue());
 
   // Add in blacklisting features
-  base::DictionaryValue* feature_status = new DictionaryValue;
+  base::DictionaryValue* feature_status = new base::DictionaryValue;
   feature_status->Set("featureStatus", GetFeatureStatus());
   feature_status->Set("problems", GetProblems());
   feature_status->Set("workarounds", GetDriverBugWorkarounds());

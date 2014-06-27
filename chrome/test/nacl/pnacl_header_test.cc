@@ -25,7 +25,7 @@ PnaclHeaderTest::PnaclHeaderTest() : noncors_loads_(0), cors_loads_(0) {}
 
 PnaclHeaderTest::~PnaclHeaderTest() {}
 
-void PnaclHeaderTest::SetUp() {
+void PnaclHeaderTest::StartServer() {
   ASSERT_TRUE(embedded_test_server()->InitializeAndWaitUntilReady());
 
   // For most requests, just serve files, but register a special test handler
@@ -35,26 +35,19 @@ void PnaclHeaderTest::SetUp() {
   embedded_test_server()->RegisterRequestHandler(
       base::Bind(&PnaclHeaderTest::WatchForPexeFetch, base::Unretained(this)));
   embedded_test_server()->ServeFilesFromDirectory(test_data_dir);
-  noncors_loads_ = 0;
-  cors_loads_ = 0;
-  InProcessBrowserTest::SetUp();
-}
-
-void PnaclHeaderTest::TearDown() {
-  ASSERT_TRUE(embedded_test_server()->ShutdownAndWaitUntilComplete());
-  InProcessBrowserTest::TearDown();
 }
 
 void PnaclHeaderTest::RunLoadTest(const std::string& url,
                                   int expected_noncors,
                                   int expected_cors) {
+  StartServer();
+  LoadTestMessageHandler handler;
+  JavascriptTestObserver observer(
+      browser()->tab_strip_model()->GetActiveWebContents(),
+      &handler);
   ui_test_utils::NavigateToURL(browser(), embedded_test_server()->GetURL(url));
   // Wait until the NMF and pexe are also loaded, not just the HTML.
   // Do this by waiting till the LoadTestMessageHandler responds.
-  LoadTestMessageHandler handler;
-  JavascriptTestObserver observer(
-      browser()->tab_strip_model()->GetActiveWebContents()->GetRenderViewHost(),
-      &handler);
   EXPECT_TRUE(observer.Run()) << handler.error_message();
   EXPECT_TRUE(handler.test_passed()) << "Test failed.";
   EXPECT_EQ(expected_noncors, noncors_loads_);

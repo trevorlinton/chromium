@@ -9,6 +9,7 @@
 
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "chrome/browser/chromeos/login/managed/supervised_user_authentication.h"
 #include "chrome/browser/chromeos/login/supervised_user_manager.h"
 
 namespace chromeos {
@@ -22,26 +23,39 @@ class SupervisedUserManagerImpl
  public:
   virtual ~SupervisedUserManagerImpl();
 
+  virtual bool HasSupervisedUsers(const std::string& manager_id) const OVERRIDE;
   virtual const User* CreateUserRecord(
       const std::string& manager_id,
       const std::string& local_user_id,
       const std::string& sync_user_id,
-      const string16& display_name) OVERRIDE;
+      const base::string16& display_name) OVERRIDE;
   virtual std::string GenerateUserId() OVERRIDE;
-  virtual const User* FindByDisplayName(const string16& display_name) const
+  virtual const User* FindByDisplayName(const base::string16& display_name) const
       OVERRIDE;
   virtual const User* FindBySyncId(const std::string& sync_id) const OVERRIDE;
   virtual std::string GetUserSyncId(const std::string& user_id) const OVERRIDE;
-  virtual string16 GetManagerDisplayName(const std::string& user_id) const
+  virtual base::string16 GetManagerDisplayName(const std::string& user_id) const
       OVERRIDE;
   virtual std::string GetManagerUserId(const std::string& user_id) const
       OVERRIDE;
   virtual std::string GetManagerDisplayEmail(const std::string& user_id) const
       OVERRIDE;
-  virtual void StartCreationTransaction(const string16& display_name) OVERRIDE;
+  virtual void StartCreationTransaction(const base::string16& display_name) OVERRIDE;
   virtual void SetCreationTransactionUserId(const std::string& user_id)
       OVERRIDE;
   virtual void CommitCreationTransaction() OVERRIDE;
+  virtual SupervisedUserAuthentication* GetAuthentication() OVERRIDE;
+  virtual void GetPasswordInformation(const std::string& user_id,
+                                      base::DictionaryValue* result) OVERRIDE;
+  virtual void SetPasswordInformation(
+      const std::string& user_id,
+      const base::DictionaryValue* password_info) OVERRIDE;
+  virtual void LoadSupervisedUserToken(
+      Profile * profile,
+      const LoadTokenCallback& callback) OVERRIDE;
+  virtual void ConfigureSyncWithToken(
+      Profile* profile,
+      const std::string& token) OVERRIDE;
 
  private:
   friend class UserManager;
@@ -61,12 +75,33 @@ class SupervisedUserManagerImpl
 
   // Update name if this user is manager of some managed users.
   void UpdateManagerName(const std::string& manager_id,
-                         const string16& new_display_name);
+                         const base::string16& new_display_name);
+
+  bool GetUserStringValue(const std::string& user_id,
+                          const char* key,
+                          std::string* out_value) const;
+
+  void SetUserStringValue(const std::string& user_id,
+                          const char* key,
+                          const std::string& value);
+
+  bool GetUserIntegerValue(const std::string& user_id,
+                           const char* key,
+                           int* out_value) const;
+
+  void SetUserIntegerValue(const std::string& user_id,
+                           const char* key,
+                           const int value);
+
+  void CleanPref(const std::string& user_id,
+                 const char* key);
 
   UserManagerImpl* owner_;
 
   // Interface to the signed settings store.
   CrosSettings* cros_settings_;
+
+  scoped_ptr<SupervisedUserAuthentication> authentication_;
 
   DISALLOW_COPY_AND_ASSIGN(SupervisedUserManagerImpl);
 };

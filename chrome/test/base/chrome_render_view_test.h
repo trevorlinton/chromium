@@ -7,13 +7,13 @@
 
 #include <string>
 
-#include "chrome/renderer/chrome_content_renderer_client.h"
 #include "chrome/renderer/chrome_mock_render_thread.h"
 #include "content/public/test/render_view_test.h"
 
 namespace autofill {
 class AutofillAgent;
 class TestPasswordAutofillAgent;
+class TestPasswordGenerationAgent;
 }
 
 namespace extensions {
@@ -29,11 +29,15 @@ class ChromeRenderViewTest : public content::RenderViewTest {
   // testing::Test
   virtual void SetUp() OVERRIDE;
   virtual void TearDown() OVERRIDE;
+  virtual content::ContentClient* CreateContentClient() OVERRIDE;
+  virtual content::ContentBrowserClient* CreateContentBrowserClient() OVERRIDE;
+  virtual content::ContentRendererClient*
+      CreateContentRendererClient() OVERRIDE;
 
-  chrome::ChromeContentRendererClient chrome_content_renderer_client_;
   extensions::Dispatcher* extension_dispatcher_;
 
   autofill::TestPasswordAutofillAgent* password_autofill_;
+  autofill::TestPasswordGenerationAgent* password_generation_;
   autofill::AutofillAgent* autofill_agent_;
 
   // Naked pointer as ownership is with content::RenderViewTest::render_thread_.

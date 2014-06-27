@@ -15,9 +15,9 @@
 #include "base/prefs/pref_member.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/content_settings/content_settings_provider.h"
-#include "chrome/browser/notifications/welcome_notification.h"
+#include "chrome/browser/notifications/extension_welcome_notification.h"
 #include "chrome/common/content_settings.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service.h"
+#include "components/keyed_service/core/keyed_service.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "third_party/WebKit/public/web/WebNotificationPresenter.h"
@@ -46,7 +46,7 @@ class PrefRegistrySyncable;
 
 // The DesktopNotificationService is an object, owned by the Profile,
 // which provides the creation of desktop "toasts" to web pages and workers.
-class DesktopNotificationService : public BrowserContextKeyedService,
+class DesktopNotificationService : public KeyedService,
                                    public content::NotificationObserver {
  public:
   enum DesktopNotificationSource {
@@ -94,15 +94,15 @@ class DesktopNotificationService : public BrowserContextKeyedService,
   // Creates a data:xxxx URL which contains the full HTML for a notification
   // using supplied icon, title, and text, run through a template which contains
   // the standard formatting for notifications.
-  static string16 CreateDataUrl(const GURL& icon_url,
-                                const string16& title,
-                                const string16& body,
-                                WebKit::WebTextDirection dir);
+  static base::string16 CreateDataUrl(const GURL& icon_url,
+                                      const base::string16& title,
+                                      const base::string16& body,
+                                      blink::WebTextDirection dir);
 
   // Creates a data:xxxx URL which contains the full HTML for a notification
   // using resource template which contains the standard formatting for
   // notifications.
-  static string16 CreateDataUrl(int resource,
+  static base::string16 CreateDataUrl(int resource,
                                 const std::vector<std::string>& subst);
 
   // Add a desktop notification. On non-Ash platforms this will generate a HTML
@@ -111,19 +111,19 @@ class DesktopNotificationService : public BrowserContextKeyedService,
   // TODO(mukai): remove these methods. HTML notifications are no longer
   // supported.
   static std::string AddNotification(const GURL& origin_url,
-                                     const string16& title,
-                                     const string16& message,
+                                     const base::string16& title,
+                                     const base::string16& message,
                                      const GURL& icon_url,
-                                     const string16& replace_id,
+                                     const base::string16& replace_id,
                                      NotificationDelegate* delegate,
                                      Profile* profile);
 
   // Same as above, but takes a gfx::Image for the icon instead.
   static std::string AddIconNotification(const GURL& origin_url,
-                                         const string16& title,
-                                         const string16& message,
+                                         const base::string16& title,
+                                         const base::string16& message,
                                          const gfx::Image& icon,
-                                         const string16& replace_id,
+                                         const base::string16& replace_id,
                                          NotificationDelegate* delegate,
                                          Profile* profile);
 
@@ -151,11 +151,6 @@ class DesktopNotificationService : public BrowserContextKeyedService,
 
   ContentSetting GetContentSetting(const GURL& origin);
 
-  // Checks to see if a given origin has permission to create desktop
-  // notifications.
-  WebKit::WebNotificationPresenter::Permission
-      HasPermission(const GURL& origin);
-
   // Returns true if the notifier with |notifier_id| is allowed to send
   // notifications.
   bool IsNotifierEnabled(const message_center::NotifierId& notifier_id);
@@ -175,7 +170,8 @@ class DesktopNotificationService : public BrowserContextKeyedService,
   // Returns a display name for an origin in the process id, to be used in
   // permission infobar or on the frame of the notification toast.  Different
   // from the origin itself when dealing with extensions.
-  string16 DisplayNameForOriginInProcessId(const GURL& origin, int process_id);
+  base::string16 DisplayNameForOriginInProcessId(const GURL& origin,
+                                                 int process_id);
 
   // Notifies the observers when permissions settings change.
   void NotifySettingsChange();
@@ -233,7 +229,7 @@ class DesktopNotificationService : public BrowserContextKeyedService,
   content::NotificationRegistrar registrar_;
 
   // Welcome Notification
-  scoped_ptr<WelcomeNotification> welcome_notification;
+  scoped_ptr<ExtensionWelcomeNotification> chrome_now_welcome_notification_;
 
   DISALLOW_COPY_AND_ASSIGN(DesktopNotificationService);
 };

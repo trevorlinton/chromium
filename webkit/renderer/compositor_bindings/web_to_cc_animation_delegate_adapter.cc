@@ -9,15 +9,23 @@
 namespace webkit {
 
 WebToCCAnimationDelegateAdapter::WebToCCAnimationDelegateAdapter(
-    WebKit::WebAnimationDelegate* delegate)
+    blink::WebAnimationDelegate* delegate)
     : delegate_(delegate) {}
 
-void WebToCCAnimationDelegateAdapter::NotifyAnimationStarted(double time) {
-  delegate_->notifyAnimationStarted(time);
+void WebToCCAnimationDelegateAdapter::NotifyAnimationStarted(
+    base::TimeTicks monotonic_time,
+    cc::Animation::TargetProperty target_property) {
+  delegate_->notifyAnimationStarted(
+      (monotonic_time - base::TimeTicks()).InSecondsF(),
+      static_cast<blink::WebAnimation::TargetProperty>(target_property));
 }
 
-void WebToCCAnimationDelegateAdapter::NotifyAnimationFinished(double time) {
-  delegate_->notifyAnimationFinished(time);
+void WebToCCAnimationDelegateAdapter::NotifyAnimationFinished(
+    base::TimeTicks monotonic_time,
+    cc::Animation::TargetProperty target_property) {
+  delegate_->notifyAnimationFinished(
+      (monotonic_time - base::TimeTicks()).InSecondsF(),
+      static_cast<blink::WebAnimation::TargetProperty>(target_property));
 }
 
 }  // namespace webkit

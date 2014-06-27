@@ -53,7 +53,7 @@ void SSLManager::OnSSLCertificateError(
     const ResourceType::Type resource_type,
     const GURL& url,
     int render_process_id,
-    int render_view_id,
+    int render_frame_id,
     const net::SSLInfo& ssl_info,
     bool fatal) {
   DCHECK(delegate.get());
@@ -61,7 +61,7 @@ void SSLManager::OnSSLCertificateError(
            << net::MapCertStatusToNetError(ssl_info.cert_status) << " id: "
            << id.child_id << "," << id.request_id << " resource_type: "
            << resource_type << " url: " << url.spec() << " render_process_id: "
-           << render_process_id << " render_view_id: " << render_view_id
+           << render_process_id << " render_frame_id: " << render_frame_id
            << " cert_status: " << std::hex << ssl_info.cert_status;
 
   // A certificate error occurred.  Construct a SSLCertErrorHandler object and
@@ -74,7 +74,7 @@ void SSLManager::OnSSLCertificateError(
                                          resource_type,
                                          url,
                                          render_process_id,
-                                         render_view_id,
+                                         render_frame_id,
                                          ssl_info,
                                          fatal)));
 }
@@ -124,11 +124,14 @@ void SSLManager::DidCommitProvisionalLoad(const LoadCommittedDetails& details) {
       net::CertStatus ssl_cert_status;
       int ssl_security_bits;
       int ssl_connection_status;
+      SignedCertificateTimestampIDStatusList
+          ssl_signed_certificate_timestamp_ids;
       DeserializeSecurityInfo(details.serialized_security_info,
                               &ssl_cert_id,
                               &ssl_cert_status,
                               &ssl_security_bits,
-                              &ssl_connection_status);
+                              &ssl_connection_status,
+                              &ssl_signed_certificate_timestamp_ids);
 
       // We may not have an entry if this is a navigation to an initial blank
       // page. Reset the SSL information and add the new data we have.
@@ -137,6 +140,8 @@ void SSLManager::DidCommitProvisionalLoad(const LoadCommittedDetails& details) {
       entry->GetSSL().cert_status = ssl_cert_status;
       entry->GetSSL().security_bits = ssl_security_bits;
       entry->GetSSL().connection_status = ssl_connection_status;
+      entry->GetSSL().signed_certificate_timestamp_ids =
+          ssl_signed_certificate_timestamp_ids;
     }
   }
 

@@ -11,10 +11,12 @@
 #include "base/logging.h"
 #include "base/time/time.h"
 #include "ui/events/event_constants.h"
+#include "ui/events/gesture_event_details.h"
 #include "ui/events/gestures/gesture_types.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/events/latency_info.h"
 #include "ui/gfx/point.h"
+#include "ui/gfx/point_conversions.h"
 
 namespace gfx {
 class Transform;
@@ -47,20 +49,6 @@ class EVENTS_EXPORT Event {
     DISALLOW_COPY_AND_ASSIGN(DispatcherApi);
   };
 
-  // For testing.
-  class TestApi {
-   public:
-    explicit TestApi(Event* event) : event_(event) {}
-
-    void set_time_stamp(base::TimeDelta time_stamp) {
-      event_->time_stamp_ = time_stamp;
-    }
-
-   private:
-    TestApi();
-    Event* event_;
-  };
-
   const base::NativeEvent& native_event() const { return native_event_; }
   EventType type() const { return type_; }
   const std::string& name() const { return name_; }
@@ -75,9 +63,6 @@ class EVENTS_EXPORT Event {
   EventTarget* target() const { return target_; }
   EventPhase phase() const { return phase_; }
   EventResult result() const { return result_; }
-  bool dispatch_to_hidden_targets() const {
-    return dispatch_to_hidden_targets_;
-  }
 
   LatencyInfo* latency() { return &latency_; }
   const LatencyInfo* latency() const { return &latency_; }
@@ -141,6 +126,9 @@ class EVENTS_EXPORT Event {
       case ET_GESTURE_LONG_TAP:
       case ET_GESTURE_MULTIFINGER_SWIPE:
       case ET_GESTURE_SHOW_PRESS:
+      case ET_GESTURE_WIN8_EDGE_SWIPE:
+        // When adding a gesture event which is paired with an event which
+        // occurs earlier, add the event to |IsEndingEvent|.
         return true;
 
       case ET_SCROLL_FLING_CANCEL:
@@ -153,6 +141,21 @@ class EVENTS_EXPORT Event {
         break;
     }
     return false;
+  }
+
+  // An ending event is paired with the event which started it. Setting capture
+  // should not prevent ending events from getting to their initial target.
+  bool IsEndingEvent() const {
+    switch(type_) {
+      case ui::ET_TOUCH_CANCELLED:
+      case ui::ET_GESTURE_TAP_CANCEL:
+      case ui::ET_GESTURE_END:
+      case ui::ET_GESTURE_SCROLL_END:
+      case ui::ET_GESTURE_PINCH_END:
+        return true;
+      default:
+        return false;
+    }
   }
 
   bool IsScrollEvent() const {
@@ -206,9 +209,6 @@ class EVENTS_EXPORT Event {
     delete_native_event_ = delete_native_event;
   }
   void set_cancelable(bool cancelable) { cancelable_ = cancelable; }
-  void set_dispatch_to_hidden_targets(bool dispatch_to_hidden_targets) {
-    dispatch_to_hidden_targets_ = dispatch_to_hidden_targets;
-  }
 
   void set_time_stamp(const base::TimeDelta& time_stamp) {
     time_stamp_ = time_stamp;
@@ -216,9 +216,9 @@ class EVENTS_EXPORT Event {
 
   void set_name(const std::string& name) { name_ = name; }
 
-  void InitLatencyInfo();
-
  private:
+  friend class EventTestApi;
+
   // Safely initializes the native event members of this class.
   void Init();
   void InitWithNativeEvent(const base::NativeEvent& native_event);
@@ -228,7 +228,6 @@ class EVENTS_EXPORT Event {
   base::TimeDelta time_stamp_;
   LatencyInfo latency_;
   int flags_;
-  bool dispatch_to_hidden_targets_;
   base::NativeEvent native_event_;
   bool delete_native_event_;
   bool cancelable_;
@@ -245,32 +244,21 @@ class EVENTS_EXPORT CancelModeEvent : public Event {
 
 class EVENTS_EXPORT LocatedEvent : public Event {
  public:
-  // For testing.
-  class TestApi : public Event::TestApi {
-   public:
-    explicit TestApi(LocatedEvent* located_event)
-        : Event::TestApi(located_event),
-          located_event_(located_event) {}
-
-    void set_location(const gfx::Point& location) {
-      located_event_->location_ = location;
-    }
-
-   private:
-    TestApi();
-    LocatedEvent* located_event_;
-  };
-
   virtual ~LocatedEvent();
 
-  int x() const { return location_.x(); }
-  int y() const { return location_.y(); }
-  void set_location(const gfx::Point& location) { location_ = location; }
-  gfx::Point location() const { return location_; }
-  void set_root_location(const gfx::Point& root_location) {
+  float x() const { return location_.x(); }
+  float y() const { return location_.y(); }
+  void set_location(const gfx::PointF& location) { location_ = location; }
+  // TODO(tdresser): Always return floating point location. See
+  // crbug.com/337824.
+  gfx::Point location() const { return gfx::ToFlooredPoint(location_); }
+  gfx::PointF location_f() const { return location_; }
+  void set_root_location(const gfx::PointF& root_location) {
     root_location_ = root_location;
   }
-  gfx::Point root_location() const { return root_location_; }
+  gfx::Point root_location() const {
+    return gfx::ToFlooredPoint(root_location_);
+  }
 
   // Transform the locations using |inverted_root_transform|.
   // This is applied to both |location_| and |root_location_|.
@@ -278,11 +266,18 @@ class EVENTS_EXPORT LocatedEvent : public Event {
       const gfx::Transform& inverted_root_transform);
 
   template <class T> void ConvertLocationToTarget(T* source, T* target) {
-    if (target && target != source)
-      T::ConvertPointToTarget(source, target, &location_);
+    if (!target || target == source)
+      return;
+    // TODO(tdresser): Rewrite ConvertPointToTarget to use PointF. See
+    // crbug.com/337824.
+    gfx::Point offset = gfx::ToFlooredPoint(location_);
+    T::ConvertPointToTarget(source, target, &offset);
+    gfx::Vector2d diff = gfx::ToFlooredPoint(location_) - offset;
+    location_= location_ - diff;
   }
 
  protected:
+  friend class LocatedEventTestApi;
   explicit LocatedEvent(const base::NativeEvent& native_event);
 
   // Create a new LocatedEvent which is identical to the provided model.
@@ -298,16 +293,16 @@ class EVENTS_EXPORT LocatedEvent : public Event {
 
   // Used for synthetic events in testing.
   LocatedEvent(EventType type,
-               const gfx::Point& location,
-               const gfx::Point& root_location,
+               const gfx::PointF& location,
+               const gfx::PointF& root_location,
                base::TimeDelta time_stamp,
                int flags);
 
-  gfx::Point location_;
+  gfx::PointF location_;
 
   // |location_| multiplied by an optional transformation matrix for
   // rotations, animations and skews.
-  gfx::Point root_location_;
+  gfx::PointF root_location_;
 };
 
 class EVENTS_EXPORT MouseEvent : public LocatedEvent {
@@ -338,9 +333,10 @@ class EVENTS_EXPORT MouseEvent : public LocatedEvent {
 
   // Used for synthetic events in testing and by the gesture recognizer.
   MouseEvent(EventType type,
-             const gfx::Point& location,
-             const gfx::Point& root_location,
-             int flags);
+             const gfx::PointF& location,
+             const gfx::PointF& root_location,
+             int flags,
+             int changed_button_flags);
 
   // Conveniences to quickly test what button is down
   bool IsOnlyLeftMouseButton() const {
@@ -420,11 +416,9 @@ class EVENTS_EXPORT MouseWheelEvent : public MouseEvent {
   template <class T>
   MouseWheelEvent(const MouseWheelEvent& model,
                   T* source,
-                  T* target,
-                  EventType type,
-                  int flags)
-      : MouseEvent(model, source, target, type, flags),
-        offset_(model.x_offset(), model.y_offset()){
+                  T* target)
+      : MouseEvent(model, source, target, model.type(), model.flags()),
+        offset_(model.x_offset(), model.y_offset()) {
   }
 
   // The amount to scroll. This is in multiples of kWheelDelta.
@@ -455,16 +449,17 @@ class EVENTS_EXPORT TouchEvent : public LocatedEvent {
         radius_x_(model.radius_x_),
         radius_y_(model.radius_y_),
         rotation_angle_(model.rotation_angle_),
-        force_(model.force_) {
+        force_(model.force_),
+        source_device_id_(model.source_device_id_) {
   }
 
   TouchEvent(EventType type,
-             const gfx::Point& root_location,
+             const gfx::PointF& location,
              int touch_id,
              base::TimeDelta time_stamp);
 
   TouchEvent(EventType type,
-             const gfx::Point& location,
+             const gfx::PointF& location,
              int flags,
              int touch_id,
              base::TimeDelta timestamp,
@@ -480,6 +475,7 @@ class EVENTS_EXPORT TouchEvent : public LocatedEvent {
   float radius_y() const { return radius_y_; }
   float rotation_angle() const { return rotation_angle_; }
   float force() const { return force_; }
+  int source_device_id() const { return source_device_id_; }
 
   // Relocate the touch-point to a new |origin|.
   // This is useful when touch event is in X Root Window coordinates,
@@ -489,6 +485,9 @@ class EVENTS_EXPORT TouchEvent : public LocatedEvent {
   // Used for unit tests.
   void set_radius_x(const float r) { radius_x_ = r; }
   void set_radius_y(const float r) { radius_y_ = r; }
+  void set_source_device_id(int source_device_id) {
+    source_device_id_ = source_device_id;
+  }
 
   // Overridden from LocatedEvent.
   virtual void UpdateForRootTransform(
@@ -522,6 +521,9 @@ class EVENTS_EXPORT TouchEvent : public LocatedEvent {
 
   // Force (pressure) of the touch. Normalized to be [0, 1]. Default to be 0.0.
   float force_;
+
+  // The device id of the screen the event came from. Default to be -1.
+  int source_device_id_;
 };
 
 class EVENTS_EXPORT KeyEvent : public Event {
@@ -531,6 +533,11 @@ class EVENTS_EXPORT KeyEvent : public Event {
   // Used for synthetic events.
   KeyEvent(EventType type, KeyboardCode key_code, int flags, bool is_char);
 
+  // Used for synthetic events with code of DOM KeyboardEvent (e.g. 'KeyA')
+  // See also: ui/events/keycodes/dom4/keycode_converter_data.h
+  KeyEvent(EventType type, KeyboardCode key_code, const std::string& code,
+           int flags, bool is_char);
+
   // This allows an I18N virtual keyboard to fabricate a keyboard event that
   // does not have a corresponding KeyboardCode (example: U+00E1 Latin small
   // letter A with acute, U+0410 Cyrillic capital letter A).
@@ -539,9 +546,6 @@ class EVENTS_EXPORT KeyEvent : public Event {
   // Gets the character generated by this key event. It only supports Unicode
   // BMP characters.
   uint16 GetCharacter() const;
-
-  // Returns the copy of this key event. Used in NativeWebKeyboardEvent.
-  KeyEvent* Copy() const;
 
   KeyboardCode key_code() const { return key_code_; }
   bool is_char() const { return is_char_; }
@@ -555,13 +559,27 @@ class EVENTS_EXPORT KeyEvent : public Event {
   // TODO(msw): Additional work may be needed for analogues on other platforms.
   bool IsUnicodeKeyCode() const;
 
+  std::string code() const { return code_; }
+
   // Normalizes flags_ to make it Windows/Mac compatible. Since the way
   // of setting modifier mask on X is very different than Windows/Mac as shown
   // in http://crbug.com/127142#c8, the normalization is necessary.
   void NormalizeFlags();
 
+ protected:
+  // This allows a subclass TranslatedKeyEvent to be a non character event.
+  void set_is_char(bool is_char) { is_char_ = is_char; }
+
  private:
   KeyboardCode key_code_;
+
+  // String of 'code' defined in DOM KeyboardEvent (e.g. 'KeyA', 'Space')
+  // http://www.w3.org/TR/uievents/#keyboard-key-codes.
+  //
+  // This value represents the physical position in the keyboard and can be
+  // converted from / to keyboard scan code like XKB.
+  std::string code_;
+
   // True if this is a translated character event (vs. a raw key down). Both
   // share the same type: ET_KEY_PRESSED.
   bool is_char_;
@@ -581,6 +599,8 @@ class EVENTS_EXPORT TranslatedKeyEvent : public KeyEvent {
 
   // Used for synthetic events such as a VKEY_PROCESSKEY key event.
   TranslatedKeyEvent(bool is_press, KeyboardCode key_code, int flags);
+
+  explicit TranslatedKeyEvent(const KeyEvent& key_event);
 
   // Changes the type() of the object from ET_TRANSLATED_KEY_* to ET_KEY_* so
   // that RenderWidgetHostViewAura and NativeWidgetAura could handle the event.
@@ -607,7 +627,7 @@ class EVENTS_EXPORT ScrollEvent : public MouseEvent {
 
   // Used for tests.
   ScrollEvent(EventType type,
-              const gfx::Point& location,
+              const gfx::PointF& location,
               base::TimeDelta time_stamp,
               int flags,
               float x_offset,
@@ -641,8 +661,8 @@ class EVENTS_EXPORT ScrollEvent : public MouseEvent {
 class EVENTS_EXPORT GestureEvent : public LocatedEvent {
  public:
   GestureEvent(EventType type,
-               int x,
-               int y,
+               float x,
+               float y,
                int flags,
                base::TimeDelta time_stamp,
                const GestureEventDetails& details,

@@ -21,8 +21,6 @@ using base::android::ScopedJavaLocalRef;
 
 namespace {
 
-const int kMaxTabCount = 10;
-
 void AddTabToList(JNIEnv* env,
                   TabRestoreService::Entry* entry,
                   jobject jtabs_list) {
@@ -39,10 +37,11 @@ void AddTabToList(JNIEnv* env,
 
 void AddTabsToList(JNIEnv* env,
                    const TabRestoreService::Entries& entries,
-                   jobject jtabs_list) {
+                   jobject jtabs_list,
+                   int max_tab_count) {
   int added_count = 0;
   for (TabRestoreService::Entries::const_iterator it = entries.begin();
-       it != entries.end() && added_count < kMaxTabCount; ++it) {
+       it != entries.end() && added_count < max_tab_count; ++it) {
     TabRestoreService::Entry* entry = *it;
     DCHECK_EQ(entry->type, TabRestoreService::TAB);
     if (entry->type == TabRestoreService::TAB) {
@@ -76,19 +75,22 @@ void RecentlyClosedTabsBridge::SetRecentlyClosedCallback(JNIEnv* env,
 
 jboolean RecentlyClosedTabsBridge::GetRecentlyClosedTabs(JNIEnv* env,
                                                          jobject obj,
-                                                         jobject jtabs_list) {
+                                                         jobject jtabs_list,
+                                                         jint max_tab_count) {
   EnsureTabRestoreService();
   if (!tab_restore_service_)
     return false;
 
-  AddTabsToList(env, tab_restore_service_->entries(), jtabs_list);
+  AddTabsToList(env, tab_restore_service_->entries(), jtabs_list,
+                max_tab_count);
   return true;
 }
 
 jboolean RecentlyClosedTabsBridge::OpenRecentlyClosedTab(JNIEnv* env,
                                                          jobject obj,
                                                          jobject jtab,
-                                                         jint recent_tab_id) {
+                                                         jint recent_tab_id,
+                                                         jint j_disposition) {
   if (!tab_restore_service_)
     return false;
 
@@ -111,9 +113,11 @@ jboolean RecentlyClosedTabsBridge::OpenRecentlyClosedTab(JNIEnv* env,
   session_tab.current_navigation_index = tab_entry->current_navigation_index;
   session_tab.navigations = tab_entry->navigations;
 
+  WindowOpenDisposition disposition =
+      static_cast<WindowOpenDisposition>(j_disposition);
   SessionRestore::RestoreForeignSessionTab(web_contents,
                                            session_tab,
-                                           NEW_FOREGROUND_TAB);
+                                           disposition);
   return true;
 }
 
@@ -153,10 +157,10 @@ void RecentlyClosedTabsBridge::EnsureTabRestoreService() {
   }
 }
 
-static jint Init(JNIEnv* env, jobject obj, jobject jprofile) {
+static jlong Init(JNIEnv* env, jobject obj, jobject jprofile) {
   RecentlyClosedTabsBridge* bridge = new RecentlyClosedTabsBridge(
       ProfileAndroid::FromProfileAndroid(jprofile));
-  return reinterpret_cast<jint>(bridge);
+  return reinterpret_cast<intptr_t>(bridge);
 }
 
 // static

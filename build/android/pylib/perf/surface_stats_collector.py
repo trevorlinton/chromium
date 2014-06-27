@@ -13,6 +13,8 @@ import threading
 _SURFACE_TEXTURE_TIMESTAMPS_MESSAGE = 'SurfaceTexture update timestamps'
 _SURFACE_TEXTURE_TIMESTAMP_RE = '\d+'
 
+_MIN_NORMALIZED_FRAME_LENGTH = 0.5
+
 
 class SurfaceStatsCollector(object):
   """Collects surface stats for a SurfaceView from the output of SurfaceFlinger.
@@ -69,7 +71,8 @@ class SurfaceStatsCollector(object):
   def GetResults(self):
     return self._results or self._GetEmptyResults()
 
-  def _GetEmptyResults(self):
+  @staticmethod
+  def _GetEmptyResults():
     return [
         SurfaceStatsCollector.Result('refresh_period', None, 'seconds'),
         SurfaceStatsCollector.Result('jank_count', None, 'janks'),
@@ -79,8 +82,11 @@ class SurfaceStatsCollector(object):
     ]
 
   @staticmethod
-  def _GetNormalizedDeltas(data, refresh_period):
+  def _GetNormalizedDeltas(data, refresh_period, min_normalized_delta=None):
     deltas = [t2 - t1 for t1, t2 in zip(data, data[1:])]
+    if min_normalized_delta != None:
+      deltas = filter(lambda d: d / refresh_period >= min_normalized_delta,
+                      deltas)
     return (deltas, [delta / refresh_period for delta in deltas])
 
   @staticmethod
@@ -90,8 +96,14 @@ class SurfaceStatsCollector(object):
     seconds = timestamps[-1] - timestamps[0]
 
     frame_lengths, normalized_frame_lengths = \
-        SurfaceStatsCollector._GetNormalizedDeltas(timestamps, refresh_period)
-    length_changes, normalized_changes = \
+        SurfaceStatsCollector._GetNormalizedDeltas(
+            timestamps, refresh_period, _MIN_NORMALIZED_FRAME_LENGTH)
+    if len(frame_lengths) < frame_count - 1:
+      logging.warning('Skipping frame lengths that are too short.')
+      frame_count = len(frame_lengths) + 1
+    if len(frame_lengths) == 0:
+      raise Exception('No valid frames lengths found.')
+    _, normalized_changes = \
         SurfaceStatsCollector._GetNormalizedDeltas(
             frame_lengths, refresh_period)
     jankiness = [max(0, round(change)) for change in normalized_changes]
@@ -101,7 +113,7 @@ class SurfaceStatsCollector(object):
     return [
         SurfaceStatsCollector.Result(
             'avg_surface_fps' + result_suffix,
-            int(round(frame_count / seconds)), 'fps'),
+            int(round((frame_count - 1) / seconds)), 'fps'),
         SurfaceStatsCollector.Result(
             'jank_count' + result_suffix, jank_count, 'janks'),
         SurfaceStatsCollector.Result(

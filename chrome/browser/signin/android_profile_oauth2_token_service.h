@@ -12,11 +12,8 @@
 #include "base/callback.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
-#include "chrome/browser/signin/profile_oauth2_token_service.h"
+#include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "google_apis/gaia/google_service_auth_error.h"
-
-class TokenService;
-
 
 // A specialization of ProfileOAuth2TokenService that will be returned by
 // ProfileOAuth2TokenServiceFactory for OS_ANDROID.  This instance uses
@@ -40,7 +37,7 @@ class AndroidProfileOAuth2TokenService : public ProfileOAuth2TokenService {
       JNIEnv* env, jclass clazz, jobject j_profile_android);
 
   virtual bool RefreshTokenIsAvailable(
-      const std::string& account_id) OVERRIDE;
+      const std::string& account_id) const OVERRIDE;
 
   // Lists account IDs of all accounts with a refresh token.
   virtual std::vector<std::string> GetAccounts() OVERRIDE;
@@ -49,6 +46,11 @@ class AndroidProfileOAuth2TokenService : public ProfileOAuth2TokenService {
                         jobject obj,
                         jobjectArray accounts,
                         jstring current_account);
+
+  // Takes a the signed in sync account as well as all the other
+  // android account ids and check the token status of each.
+  void ValidateAccounts(const std::string& signed_in_account,
+                        const std::vector<std::string>& account_ids);
 
   // Triggers a notification to all observers of the OAuth2TokenService that a
   // refresh token is now available. This may cause observers to retry
@@ -78,6 +80,14 @@ class AndroidProfileOAuth2TokenService : public ProfileOAuth2TokenService {
                                 const std::string& client_id,
                                 const std::string& client_secret,
                                 const ScopeSet& scopes) OVERRIDE;
+
+  // Overriden from OAuth2TokenService to avoid compile errors. Has NOTREACHED()
+  // implementation as |AndroidProfileOAuth2TokenService| overrides
+  // |FetchOAuth2Token| and thus bypasses this method entirely.
+  virtual OAuth2AccessTokenFetcher* CreateAccessTokenFetcher(
+      const std::string& account_id,
+      net::URLRequestContextGetter* getter,
+      OAuth2AccessTokenConsumer* consumer) OVERRIDE;
 
   // Overridden from OAuth2TokenService to intercept token fetch requests and
   // redirect them to the Account Manager.

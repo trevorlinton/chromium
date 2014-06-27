@@ -29,11 +29,12 @@ class GPU_EXPORT GPUTestConfig {
     kOsMacSnowLeopard = 1 << 5,
     kOsMacLion = 1 << 6,
     kOsMacMountainLion = 1 << 7,
+    kOsMacMavericks = 1 << 8,
     kOsMac = kOsMacLeopard | kOsMacSnowLeopard | kOsMacLion |
-             kOsMacMountainLion,
-    kOsLinux = 1 << 8,
-    kOsChromeOS = 1 << 9,
-    kOsAndroid = 1 << 10,
+             kOsMacMountainLion | kOsMacMavericks,
+    kOsLinux = 1 << 9,
+    kOsChromeOS = 1 << 10,
+    kOsAndroid = 1 << 11,
   };
 
   enum BuildType {
@@ -116,6 +117,9 @@ class GPU_EXPORT GPUTestBotConfig : public GPUTestConfig {
   // Check if this bot's config matches |config_data| or any of the |configs|.
   static bool CurrentConfigMatches(const std::string& config_data);
   static bool CurrentConfigMatches(const std::vector<std::string>& configs);
+
+  // Check if the bot has blacklisted all GPU features.
+  static bool GpuBlacklistedOnBot();
 };
 
 }  // namespace gpu

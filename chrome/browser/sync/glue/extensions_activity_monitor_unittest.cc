@@ -11,9 +11,9 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/bookmarks/bookmarks_api.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/extensions/extension.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/test_browser_thread.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
 #include "sync/util/extensions_activity.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -33,7 +33,7 @@ scoped_refptr<Extension> MakeExtension(const std::string& name) {
   EXPECT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &path));
   path = path.AppendASCII(name);
 
-  DictionaryValue value;
+  base::DictionaryValue value;
   value.SetString(keys::kVersion, "1.0.0.0");
   value.SetString(keys::kName, name);
   std::string error;

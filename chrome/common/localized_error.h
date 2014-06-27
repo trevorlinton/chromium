@@ -20,7 +20,7 @@ namespace extensions {
 class Extension;
 }
 
-namespace WebKit {
+namespace blink {
 struct WebURLError;
 }
 
@@ -32,13 +32,14 @@ class LocalizedError {
                          const std::string& error_domain,
                          const GURL& failed_url,
                          bool is_post,
+                         bool stale_copy_in_cache,
                          const std::string& locale,
                          const std::string& accept_languages,
                          base::DictionaryValue* strings);
 
   // Returns a description of the encountered error.
-  static string16 GetErrorDetails(const WebKit::WebURLError& error,
-                                  bool is_post);
+  static base::string16 GetErrorDetails(const blink::WebURLError& error,
+                                        bool is_post);
 
   // Returns true if an error page exists for the specified parameters.
   static bool HasStrings(const std::string& error_domain, int error_code);

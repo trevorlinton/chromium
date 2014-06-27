@@ -13,11 +13,13 @@
 #include "base/compiler_specific.h"
 #include "sync/base/sync_export.h"
 #include "sync/internal_api/public/base/model_type.h"
-#include "sync/notifier/object_id_invalidation_map.h"
 #include "sync/protocol/sync.pb.h"
 #include "sync/sessions/data_type_tracker.h"
 
 namespace syncer {
+
+class ObjectIdInvalidationMap;
+
 namespace sessions {
 
 class SYNC_EXPORT_PRIVATE NudgeTracker {
@@ -36,7 +38,15 @@ class SYNC_EXPORT_PRIVATE NudgeTracker {
   // request as part of the next sync cycle.
   bool IsGetUpdatesRequired() const;
 
-  // Tells this class that all required update fetching and committing has
+  // Return true if should perform a sync cycle for GU retry.
+  //
+  // This is sensitive to changes in 'current time'.  Its value can be affected
+  // by SetSyncCycleStartTime(), SetNextRetryTime(), and
+  // RecordSuccessfulSyncCycle().  Please refer to those functions for more
+  // information on how this flag is maintained.
+  bool IsRetryRequired() const;
+
+  // Tells this class that all required update fetching or committing has
   // completed successfully.
   void RecordSuccessfulSyncCycle();
 
@@ -76,6 +86,15 @@ class SYNC_EXPORT_PRIVATE NudgeTracker {
   // Returns the set of currently throttled types.
   ModelTypeSet GetThrottledTypes() const;
 
+  // Returns the set of types with local changes pending.
+  ModelTypeSet GetNudgedTypes() const;
+
+  // Returns the set of types that have pending invalidations.
+  ModelTypeSet GetNotifiedTypes() const;
+
+  // Returns the set of types that have pending refresh requests.
+  ModelTypeSet GetRefreshRequestedTypes() const;
+
   // Returns the 'source' of the GetUpdate request.
   //
   // This flag is deprecated, but still used by the server.  There can be more
@@ -84,7 +103,7 @@ class SYNC_EXPORT_PRIVATE NudgeTracker {
   // performing a sync.
   //
   // See the implementation for important information about the coalesce logic.
-  sync_pb::GetUpdatesCallerInfo::GetUpdatesSource updates_source() const;
+  sync_pb::GetUpdatesCallerInfo::GetUpdatesSource GetLegacySource() const;
 
   // Fills a GetUpdatesTrigger message for the next GetUpdates request.  This is
   // used by the DownloadUpdatesCommand to dump lots of useful per-type state
@@ -100,8 +119,22 @@ class SYNC_EXPORT_PRIVATE NudgeTracker {
       ModelType type,
       sync_pb::DataTypeProgressMarker* progress) const;
 
+  // Flips the flag if we're due for a retry.
+  void SetSyncCycleStartTime(base::TimeTicks now);
+
   // Adjusts the number of hints that can be stored locally.
   void SetHintBufferSize(size_t size);
+
+  // Schedules a retry GetUpdate request for some time in the future.
+  //
+  // This is a request sent to us as part of a server response requesting
+  // that the client perform a GetUpdate request at |next_retry_time| to
+  // fetch any updates it may have missed in the first attempt.
+  //
+  // To avoid strange results from IsRetryRequired() during a sync cycle, the
+  // effects of this change are not guaranteed to take effect until
+  // SetSyncCycleStartTime() is called at the start of the *next* sync cycle.
+  void SetNextRetryTime(base::TimeTicks next_retry_time);
 
  private:
   typedef std::map<ModelType, DataTypeTracker> TypeTrackerMap;
@@ -127,6 +160,25 @@ class SYNC_EXPORT_PRIVATE NudgeTracker {
   bool invalidations_out_of_sync_;
 
   size_t num_payloads_per_type_;
+
+  base::TimeTicks last_successful_sync_time_;
+
+  // A pending update to the current_retry_time_.
+  //
+  // The GU retry time is specified by a call to SetNextRetryTime, but we don't
+  // want that change to take effect right away, since it could happen in the
+  // middle of a sync cycle.  We delay the update until the start of the next
+  // sync cycle, which is indicated by a call to SetSyncCycleStartTime().
+  base::TimeTicks next_retry_time_;
+
+  // The currently active retry GU time.  Will be null if there is no retry GU
+  // pending at this time.
+  base::TimeTicks current_retry_time_;
+
+  // The time when the sync cycle started.  This value is maintained by
+  // SetSyncCycleStartTime().  This may contain a stale value if we're not
+  // currently in a sync cycle.
+  base::TimeTicks sync_cycle_start_time_;
 
   DISALLOW_COPY_AND_ASSIGN(NudgeTracker);
 };

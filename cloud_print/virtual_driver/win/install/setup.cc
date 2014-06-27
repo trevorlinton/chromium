@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <comdef.h>
 #include <iomanip>
 #include <windows.h>
 #include <winspool.h>
@@ -63,7 +62,7 @@ const char kRegisterSwitch[] = "register";
 const char kUninstallSwitch[] = "uninstall";
 const char kUnregisterSwitch[] = "unregister";
 
-base::FilePath GetSystemPath(const string16& binary) {
+base::FilePath GetSystemPath(const base::string16& binary) {
   base::FilePath path;
   if (!PathService::Get(base::DIR_SYSTEM, &path)) {
     LOG(ERROR) << "Unable to get system path.";
@@ -72,7 +71,7 @@ base::FilePath GetSystemPath(const string16& binary) {
   return path.Append(binary);
 }
 
-base::FilePath GetNativeSystemPath(const string16& binary) {
+base::FilePath GetNativeSystemPath(const base::string16& binary) {
   if (!IsSystem64Bit())
     return GetSystemPath(binary);
   base::FilePath path;
@@ -97,7 +96,7 @@ void SpoolerServiceCommand(const char* command) {
   base::LaunchOptions options;
   options.wait = true;
   options.start_hidden = true;
-  LOG(INFO) << command_line.GetCommandLineString();
+  VLOG(0) << command_line.GetCommandLineString();
   base::LaunchProcess(command_line, options, NULL);
 }
 
@@ -140,7 +139,8 @@ HRESULT RegisterPortMonitor(bool install, const base::FilePath& install_path) {
   options.wait = true;
 
   base::win::ScopedHandle regsvr32_handle;
-  if (!base::LaunchProcess(command_line, options, regsvr32_handle.Receive())) {
+  if (!base::LaunchProcess(command_line.GetCommandLineString(), options,
+                           &regsvr32_handle)) {
     LOG(ERROR) << "Unable to launch regsvr32.exe.";
     return HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);
   }
@@ -253,7 +253,7 @@ HRESULT InstallDriver(const base::FilePath& install_path) {
     return HRESULT_FROM_WIN32(ERROR_CANNOT_MAKE);
   ReadyDriverDependencies(temp_path.path());
 
-  std::vector<string16> dependent_array;
+  std::vector<base::string16> dependent_array;
   // Add all files. AddPrinterDriverEx will removes unnecessary.
   for (size_t i = 0; i < arraysize(kDependencyList); ++i) {
     base::FilePath file_path = temp_path.path().Append(kDependencyList[i]);
@@ -270,8 +270,6 @@ HRESULT InstallDriver(const base::FilePath& install_path) {
   base::FilePath ui_help_path = temp_path.path().Append(kHelpName);
 
   if (!base::PathExists(xps_path)) {
-    SetGoogleUpdateError(kGoogleUpdateProductId,
-                         LoadLocalString(IDS_ERROR_NO_XPS));
     return HRESULT_FROM_WIN32(ERROR_BAD_DRIVER);
   }
 
@@ -286,18 +284,18 @@ HRESULT InstallDriver(const base::FilePath& install_path) {
   driver_info.pDriverPath = const_cast<LPWSTR>(xps_path.value().c_str());
   driver_info.pConfigFile = const_cast<LPWSTR>(ui_path.value().c_str());
 
-  string16 dependent_files(JoinString(dependent_array, L'\n'));
+  base::string16 dependent_files(JoinString(dependent_array, L'\n'));
   dependent_files.push_back(L'\n');
   std::replace(dependent_files.begin(), dependent_files.end(), L'\n', L'\0');
   driver_info.pDependentFiles = &dependent_files[0];
 
   // Set up user visible strings.
-  string16 manufacturer = LoadLocalString(IDS_GOOGLE);
+  base::string16 manufacturer = LoadLocalString(IDS_GOOGLE);
   driver_info.pszMfgName = const_cast<LPWSTR>(manufacturer.c_str());
   driver_info.pszProvider = const_cast<LPWSTR>(manufacturer.c_str());
   driver_info.pszOEMUrl = const_cast<LPWSTR>(kGcpUrl);
   driver_info.dwlDriverVersion = GetVersionNumber();
-  string16 driver_name = LoadLocalString(IDS_DRIVER_NAME);
+  base::string16 driver_name = LoadLocalString(IDS_DRIVER_NAME);
   driver_info.pName = const_cast<LPWSTR>(driver_name.c_str());
 
   if (!::AddPrinterDriverEx(NULL, 6, reinterpret_cast<BYTE*>(&driver_info),
@@ -310,7 +308,7 @@ HRESULT InstallDriver(const base::FilePath& install_path) {
 
 HRESULT UninstallDriver() {
   int tries = 3;
-  string16 driver_name = LoadLocalString(IDS_DRIVER_NAME);
+  base::string16 driver_name = LoadLocalString(IDS_DRIVER_NAME);
   while (!DeletePrinterDriverEx(NULL,
                                 NULL,
                                 const_cast<LPWSTR>(driver_name.c_str()),
@@ -339,12 +337,12 @@ HRESULT InstallPrinter(void) {
 
   // None of the print API structures likes constant strings even though they
   // don't modify the string.  const_casting is the cleanest option.
-  string16 driver_name = LoadLocalString(IDS_DRIVER_NAME);
+  base::string16 driver_name = LoadLocalString(IDS_DRIVER_NAME);
   printer_info.pDriverName = const_cast<LPWSTR>(driver_name.c_str());
   printer_info.pPrinterName = const_cast<LPWSTR>(driver_name.c_str());
   printer_info.pComment =  const_cast<LPWSTR>(driver_name.c_str());
   printer_info.pLocation = const_cast<LPWSTR>(kGcpUrl);
-  string16 port_name;
+  base::string16 port_name;
   printer_info.pPortName = const_cast<LPWSTR>(kPortName);
   printer_info.Attributes = PRINTER_ATTRIBUTE_DIRECT|PRINTER_ATTRIBUTE_LOCAL;
   printer_info.pPrintProcessor = L"winprint";
@@ -362,7 +360,7 @@ HRESULT UninstallPrinter(void) {
   HANDLE handle = NULL;
   PRINTER_DEFAULTS printer_defaults = {0};
   printer_defaults.DesiredAccess = PRINTER_ALL_ACCESS;
-  string16 driver_name = LoadLocalString(IDS_DRIVER_NAME);
+  base::string16 driver_name = LoadLocalString(IDS_DRIVER_NAME);
   if (!OpenPrinter(const_cast<LPWSTR>(driver_name.c_str()),
                    &handle,
                    &printer_defaults)) {
@@ -536,17 +534,26 @@ int WINAPI WinMain(__in  HINSTANCE hInstance,
                    __in  HINSTANCE hPrevInstance,
                    __in  LPSTR lpCmdLine,
                    __in  int nCmdShow) {
+  using namespace cloud_print;
+
   base::AtExitManager at_exit_manager;
   CommandLine::Init(0, NULL);
-  HRESULT retval = cloud_print::ExecuteCommands();
 
-  LOG(INFO) << _com_error(retval).ErrorMessage() << " HRESULT=0x" <<
-               std::setbase(16) << retval;
+  HRESULT retval = ExecuteCommands();
+
+  if (retval == HRESULT_FROM_WIN32(ERROR_BAD_DRIVER)) {
+    SetGoogleUpdateError(kGoogleUpdateProductId,
+                         LoadLocalString(IDS_ERROR_NO_XPS));
+  } else if (FAILED(retval)) {
+    SetGoogleUpdateError(kGoogleUpdateProductId, retval);
+  }
+
+  VLOG(0) << GetErrorMessage(retval)
+          << " HRESULT=0x" << std::setbase(16) << retval;
 
   // Installer is silent by default as required by Google Update.
   if (CommandLine::ForCurrentProcess()->HasSwitch("verbose")) {
-    cloud_print::DisplayWindowsMessage(NULL, retval,
-        cloud_print::LoadLocalString(IDS_DRIVER_NAME));
+    DisplayWindowsMessage(NULL, retval, LoadLocalString(IDS_DRIVER_NAME));
   }
   return retval;
 }

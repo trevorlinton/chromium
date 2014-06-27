@@ -8,8 +8,6 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/about_signin_internals.h"
 #include "chrome/browser/signin/about_signin_internals_factory.h"
-#include "chrome/browser/signin/token_service.h"
-#include "chrome/browser/signin/token_service_factory.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
@@ -54,9 +52,10 @@ SignInInternalsUI::~SignInInternalsUI() {
   }
 }
 
-bool SignInInternalsUI::OverrideHandleWebUIMessage(const GURL& source_url,
-                                                   const std::string& name,
-                                                   const ListValue& content) {
+bool SignInInternalsUI::OverrideHandleWebUIMessage(
+    const GURL& source_url,
+    const std::string& name,
+    const base::ListValue& content) {
   if (name == "getSigninInfo") {
     Profile* profile = Profile::FromWebUI(web_ui());
     if (!profile)
@@ -80,7 +79,8 @@ bool SignInInternalsUI::OverrideHandleWebUIMessage(const GURL& source_url,
   return false;
 }
 
-void SignInInternalsUI::OnSigninStateChanged(scoped_ptr<DictionaryValue> info) {
+void SignInInternalsUI::OnSigninStateChanged(
+    scoped_ptr<base::DictionaryValue> info) {
   const std::string& event_handler = "chrome.signin.onSigninInfoChanged.fire";
   web_ui()->CallJavascriptFunction(event_handler, *info);
 }

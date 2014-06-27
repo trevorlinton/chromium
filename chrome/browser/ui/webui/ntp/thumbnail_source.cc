@@ -20,32 +20,35 @@
 using content::BrowserThread;
 
 // Set ThumbnailService now as Profile isn't thread safe.
-ThumbnailSource::ThumbnailSource(Profile* profile, bool prefix_match)
+ThumbnailSource::ThumbnailSource(Profile* profile, bool capture_thumbnails)
     : thumbnail_service_(ThumbnailServiceFactory::GetForProfile(profile)),
       profile_(profile),
-      prefix_match_(prefix_match) {
+      capture_thumbnails_(capture_thumbnails) {
 }
 
 ThumbnailSource::~ThumbnailSource() {
 }
 
 std::string ThumbnailSource::GetSource() const {
-  return prefix_match_ ?
+  return capture_thumbnails_ ?
       chrome::kChromeUIThumbnailHost2 : chrome::kChromeUIThumbnailHost;
 }
 
 void ThumbnailSource::StartDataRequest(
     const std::string& path,
     int render_process_id,
-    int render_view_id,
+    int render_frame_id,
     const content::URLDataSource::GotDataCallback& callback) {
   scoped_refptr<base::RefCountedMemory> data;
-  if (thumbnail_service_->GetPageThumbnail(GURL(path), prefix_match_, &data)) {
+  if (thumbnail_service_->GetPageThumbnail(GURL(path), capture_thumbnails_,
+                                           &data)) {
     // We have the thumbnail.
     callback.Run(data.get());
   } else {
     callback.Run(default_thumbnail_.get());
   }
+  if (capture_thumbnails_)
+    thumbnail_service_->AddForcedURL(GURL(path));
 }
 
 std::string ThumbnailSource::GetMimeType(const std::string&) const {

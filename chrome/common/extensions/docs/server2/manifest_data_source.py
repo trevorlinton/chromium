@@ -6,8 +6,8 @@ import json
 
 from data_source import DataSource
 import features_utility
+from future import Future
 from manifest_features import ConvertDottedKeysToNested
-from third_party.json_schema_compiler.json_parse import Parse
 
 def _ListifyAndSortDocs(features, app_name):
   '''Convert a |feautres| dictionary, and all 'children' dictionaries, into
@@ -47,16 +47,20 @@ def _ListifyAndSortDocs(features, app_name):
           value['example'] = '{...}'
         elif example == '[]':
           value['example'] = '[...]'
+        elif example == '[{}]':
+          value['example'] = '[{...}]'
         else:
           coerce_example_to_feature(value)
       if 'children' in value:
         features[key]['children'] = convert_and_sort(value['children'])
     return sorted(features.values(), key=sort_key)
 
-  # Replace {{title}} in the 'name' manifest property example with |app_name|
+  # Replace {{platform}} in the 'name' manifest property example with
+  # |app_name|, the convention that the normal template rendering uses.
+  # TODO(kalman): Make the example a template and pass this through there.
   if 'name' in features:
     name = features['name']
-    name['example'] = name['example'].replace('{{title}}', app_name)
+    name['example'] = name['example'].replace('{{platform}}', app_name)
 
   features = convert_and_sort(features)
 
@@ -105,27 +109,29 @@ class ManifestDataSource(DataSource):
         ManifestDataSource)
 
   def _CreateManifestData(self):
-    def for_templates(manifest_features, platform):
-      return _AddLevelAnnotations(
-          _ListifyAndSortDocs(
-              ConvertDottedKeysToNested(
-                  features_utility.Filtered(manifest_features, platform)),
-              app_name=platform.capitalize()))
-    manifest_features = self._features_bundle.GetManifestFeatures()
-    return {
-      'apps': for_templates(manifest_features, 'apps'),
-      'extensions': for_templates(manifest_features, 'extensions')
-    }
+    future_manifest_features = self._features_bundle.GetManifestFeatures()
+    def resolve():
+      manifest_features = future_manifest_features.Get()
+      def for_templates(manifest_features, platform):
+        return _AddLevelAnnotations(_ListifyAndSortDocs(
+            ConvertDottedKeysToNested(
+                features_utility.Filtered(manifest_features, platform + 's')),
+            app_name=platform.capitalize()))
+      return {
+        'apps': for_templates(manifest_features, 'app'),
+        'extensions': for_templates(manifest_features, 'extension')
+      }
+    return Future(callback=resolve)
 
-  def _GetCachedManifestData(self, force_update=False):
+  def _GetCachedManifestData(self):
     data = self._object_store.Get('manifest_data').Get()
-    if data is None or force_update:
-      data = self._CreateManifestData()
+    if data is None:
+      data = self._CreateManifestData().Get()
       self._object_store.Set('manifest_data', data)
     return data
 
   def Cron(self):
-    self._GetCachedManifestData(force_update=True)
+    return self._CreateManifestData()
 
   def get(self, key):
     return self._GetCachedManifestData().get(key)

@@ -85,6 +85,11 @@ function loggingUpload(callback) {
   sendMessage({'method': 'logging.upload'}, callback);
 }
 
+// Will call |callback(uploadResult)| on completion.
+function loggingStopAndUpload(callback) {
+  sendMessage({'method': 'logging.stopAndUpload'}, callback);
+}
+
 // Will call |callback()| on completion.
 function loggingDiscard(callback) {
   sendMessage({'method': 'logging.discard'}, callback);
@@ -119,24 +124,6 @@ function isExtensionEnabled(callback) {
 }
 
 //
-// Manual tests.
-//
-
-function manualTestChooseDesktopMedia() {
-  chooseDesktopMedia(function(results) {
-      alert('Cancel ID: ' + results.cancelId +
-            ', stream ID: ' + results.streamId);
-    });
-}
-
-function manualTestListenForSinksChangedEvent() {
-  listenForSinksChangedEvent(function(msg) {
-      if (msg['eventName'] && msg['eventName'] == 'onSinksChanged')
-        alert('Got onSinksChanged event.');
-    });
-}
-
-//
 // Automated tests.
 //
 
@@ -146,8 +133,10 @@ function manualTestListenForSinksChangedEvent() {
 var TESTS = [
   testCpuGetInfo,
   testLogging,
+  testLoggingSetMetaDataAfterStart,
   testDisabledLogging,
   testDisabledLoggingButUpload,
+  testDisabledLoggingWithStopAndUpload,
   testEnabledLoggingButDiscard,
   testGetSinks,
   testGetActiveSink,
@@ -159,6 +148,8 @@ var TESTS = [
   // Uncomment to manually test timeout logic.
   //testTimeout,
 ];
+
+var TEST_TIMEOUT_MS = 3000;
 
 function runAllTests(callback) {
   var results = '';
@@ -190,7 +181,7 @@ function runAllTests(callback) {
     function onTimeout() {
       nextTest(test.name, '', true);
     }
-    setTimeout(onTimeout, 3000);
+    setTimeout(onTimeout, TEST_TIMEOUT_MS);
   }
 
   function nextTest(testName, currentResults, timedOut) {
@@ -250,6 +241,19 @@ function testLogging(callback) {
     });
 }
 
+// Tests starting the log, setting metadata, turning on upload, and then
+// stopping the log.
+function testLoggingSetMetaDataAfterStart(callback) {
+  loggingStart(function() {
+      loggingSetMetadata([{'bingo': 'bongo', 'smurf': 'geburf'}], function() {
+          loggingUploadOnRenderClose();
+          loggingStop(function() {
+              callback('');
+            });
+        });
+    });
+}
+
 // Starts and stops logging while auto-upload is disabled.
 function testDisabledLogging(callback) {
   loggingNoUploadOnRenderClose();
@@ -276,6 +280,20 @@ function testDisabledLoggingButUpload(callback) {
     });
 }
 
+// Starts logging while auto-upload is disabled. Uses the
+// stopAndUpload function to stop, then upload, the results.
+function testDisabledLoggingWithStopAndUpload(callback) {
+  loggingNoUploadOnRenderClose();
+  loggingStart(function() {
+      loggingStopAndUpload(function(loggingResult) {
+          if (loggingResult != '')
+            callback('');
+          else
+            callback('Got empty upload result.');
+      });
+  });
+}
+
 // Starts and stops logging while auto-upload is enabled, but
 // requests logs be discarded after stopping logging.
 function testEnabledLoggingButDiscard(callback) {
@@ -291,10 +309,9 @@ function testEnabledLoggingButDiscard(callback) {
 
 function testGetSinks(callback) {
   getSinks(function(sinks) {
-      if (sinks.length == 0)
-        callback('Got no sinks.');
-      else
-        callback('');
+      // Some bots may have no audio sinks installed, in which case we
+      // will get an empty list here.
+      callback('');
     });
 }
 

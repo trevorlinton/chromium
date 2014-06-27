@@ -17,6 +17,10 @@
 #include "net/base/mime_util.h"
 #include "net/base/platform_mime_util.h"
 
+#if defined(OS_ANDROID)
+#include "base/android/build_info.h"
+#endif
+
 using std::string;
 
 namespace {
@@ -120,7 +124,7 @@ struct MimeInfo {
 };
 
 static const MimeInfo primary_mappings[] = {
-  { "text/html", "html,htm" },
+  { "text/html", "html,htm,shtml,shtm" },
   { "text/css", "css" },
   { "text/xml", "xml" },
   { "image/gif", "gif" },
@@ -135,7 +139,7 @@ static const MimeInfo primary_mappings[] = {
   { "video/webm", "webm" },
   { "audio/webm", "webm" },
   { "audio/wav", "wav" },
-  { "application/xhtml+xml", "xhtml,xht" },
+  { "application/xhtml+xml", "xhtml,xht,xhtm" },
   { "application/x-chrome-extension", "crx" },
   { "multipart/related", "mhtml,mht" }
 };
@@ -156,10 +160,10 @@ static const MimeInfo secondary_mappings[] = {
   { "image/svg+xml", "svg,svgz" },
   { "message/rfc822", "eml" },
   { "text/plain", "txt,text" },
-  { "text/html", "shtml,ehtml" },
+  { "text/html", "ehtml" },
   { "application/rss+xml", "rss" },
   { "application/rdf+xml", "rdf" },
-  { "text/xml", "xsl,xbl" },
+  { "text/xml", "xsl,xbl,xslt" },
   { "application/vnd.mozilla.xul+xml", "xul" },
   { "application/x-shockwave-flash", "swf,swl" },
   { "application/pkcs7-mime", "p7m,p7c,p7z" },
@@ -277,6 +281,12 @@ static const char* const common_media_types[] = {
   // Wav.
   "audio/wav",
   "audio/x-wav",
+
+#if defined(OS_ANDROID)
+  // HLS. Supported by Android ICS and above.
+  "application/vnd.apple.mpegurl",
+  "application/x-mpegurl",
+#endif
 };
 
 // List of proprietary types only supported by Google Chrome.
@@ -304,11 +314,11 @@ static const char* const proprietary_media_types[] = {
 static const char* const common_media_codecs[] = {
 #if !defined(OS_ANDROID)  // Android doesn't support Ogg Theora.
   "theora",
-  "vp9",  // TODO(tomfinegan): Move vp9 back down with vp8 once VP9 is supported
-          // on Android. https://crbug.com/285016
 #endif
+  "opus",
   "vorbis",
   "vp8",
+  "vp9",
   "1"  // WAVE_FORMAT_PCM.
 };
 
@@ -319,21 +329,11 @@ static const char* const proprietary_media_codecs[] = {
   "mp4a"
 };
 
-// Note: does not include javascript types list (see supported_javascript_types)
+// Note:
+// - does not include javascript types list (see supported_javascript_types)
+// - does not include types starting with "text/" (see
+//   IsSupportedNonImageMimeType())
 static const char* const supported_non_image_types[] = {
-  "text/cache-manifest",
-  "text/html",
-  "text/xml",
-  "text/xsl",
-  "text/plain",
-  // Many users complained about css files served for
-  // download instead of displaying in the browser:
-  // http://code.google.com/p/chromium/issues/detail?id=7192
-  // So, by including "text/css" into this list we choose Firefox
-  // behavior - css files will be displayed:
-  "text/css",
-  "text/vnd.chromium.ftp-dir",
-  "text/",
   "image/svg+xml",  // SVG is text-based XML, even though it has an image/ type
   "application/xml",
   "application/atom+xml",
@@ -409,20 +409,31 @@ static const char* const supported_javascript_types[] = {
   "text/livescript"
 };
 
+#if defined(OS_ANDROID)
+static bool IsCodecSupportedOnAndroid(const std::string& codec) {
+  // VP9 is supported only in KitKat+ (API Level 19).
+  if ((!codec.compare("vp9") || !codec.compare("vp9.0")) &&
+      base::android::BuildInfo::GetInstance()->sdk_int() < 19) {
+    return false;
+  }
+
+  // TODO(vigneshv): Change this similar to the VP9 check once Opus is
+  // supported on Android (http://crbug.com/318436).
+  if (!codec.compare("opus")) {
+    return false;
+  }
+  return true;
+}
+#endif
+
 struct MediaFormatStrict {
   const char* mime_type;
   const char* codecs_list;
 };
 
 static const MediaFormatStrict format_codec_mappings[] = {
-  // TODO(tomfinegan): Remove this if/else when VP9 is supported on Android.
-  // https://crbug.com/285016
-#if !defined(OS_ANDROID)
-  { "video/webm", "vorbis,vp8,vp8.0,vp9,vp9.0" },
-#else
-  { "video/webm", "vorbis,vp8,vp8.0" },
-#endif
-  { "audio/webm", "vorbis" },
+  { "video/webm", "opus,vorbis,vp8,vp8.0,vp9,vp9.0" },
+  { "audio/webm", "opus,vorbis" },
   { "audio/wav", "1" }
 };
 
@@ -471,8 +482,13 @@ void MimeUtil::InitializeMimeTypeMaps() {
   for (size_t i = 0; i < arraysize(supported_javascript_types); ++i)
     javascript_map_.insert(supported_javascript_types[i]);
 
-  for (size_t i = 0; i < arraysize(common_media_codecs); ++i)
+  for (size_t i = 0; i < arraysize(common_media_codecs); ++i) {
+#if defined(OS_ANDROID)
+    if (!IsCodecSupportedOnAndroid(common_media_codecs[i]))
+      continue;
+#endif
     codecs_map_.insert(common_media_codecs[i]);
+  }
 #if defined(USE_PROPRIETARY_CODECS)
   for (size_t i = 0; i < arraysize(proprietary_media_codecs); ++i)
     codecs_map_.insert(proprietary_media_codecs[i]);
@@ -486,8 +502,13 @@ void MimeUtil::InitializeMimeTypeMaps() {
                      false);
 
     MimeMappings codecs;
-    for (size_t j = 0; j < mime_type_codecs.size(); ++j)
+    for (size_t j = 0; j < mime_type_codecs.size(); ++j) {
+#if defined(OS_ANDROID)
+      if (!IsCodecSupportedOnAndroid(mime_type_codecs[j]))
+        continue;
+#endif
       codecs.insert(mime_type_codecs[j]);
+    }
     strict_format_map_[format_codec_mappings[i].mime_type] = codecs;
   }
 }
@@ -503,7 +524,9 @@ bool MimeUtil::IsSupportedMediaMimeType(const std::string& mime_type) const {
 bool MimeUtil::IsSupportedNonImageMimeType(const std::string& mime_type) const {
   return non_image_map_.find(mime_type) != non_image_map_.end() ||
       (mime_type.compare(0, 5, "text/") == 0 &&
-       !IsUnsupportedTextMimeType(mime_type));
+       !IsUnsupportedTextMimeType(mime_type)) ||
+      (mime_type.compare(0, 12, "application/") == 0 &&
+       MatchesMimeType("application/*+json", mime_type));
 }
 
 bool MimeUtil::IsUnsupportedTextMimeType(const std::string& mime_type) const {
@@ -653,7 +676,7 @@ void MimeUtil::ParseCodecString(const std::string& codecs,
                                 std::vector<std::string>* codecs_out,
                                 bool strip) {
   std::string no_quote_codecs;
-  TrimString(codecs, "\"", &no_quote_codecs);
+  base::TrimString(codecs, "\"", &no_quote_codecs);
   base::SplitString(no_quote_codecs, ',', codecs_out);
 
   if (!strip)
@@ -859,7 +882,8 @@ void GetExtensionsFromHardCodedMappings(
                                    &this_extensions);
       for (size_t j = 0; j < this_extensions.size(); ++j) {
 #if defined(OS_WIN)
-        base::FilePath::StringType extension(UTF8ToWide(this_extensions[j]));
+        base::FilePath::StringType extension(
+            base::UTF8ToWide(this_extensions[j]));
 #else
         base::FilePath::StringType extension(this_extensions[j]);
 #endif

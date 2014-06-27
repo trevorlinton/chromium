@@ -297,10 +297,14 @@ class BluetoothDetailedView : public TrayDetailsView,
 
   // Add settings entries.
   void AppendSettingsEntries() {
+    if (!ash::Shell::GetInstance()->
+            system_tray_delegate()->ShouldShowSettings()) {
+      return;
+    }
+
     // Add bluetooth device requires a browser window, hide it for non logged in
     // user.
-    if (login_ == user::LOGGED_IN_NONE ||
-        login_ == user::LOGGED_IN_LOCKED)
+    if (login_ == user::LOGGED_IN_NONE || login_ == user::LOGGED_IN_LOCKED)
       return;
 
     ash::SystemTrayDelegate* delegate =
@@ -353,10 +357,14 @@ class BluetoothDetailedView : public TrayDetailsView,
     ash::SystemTrayDelegate* delegate =
         ash::Shell::GetInstance()->system_tray_delegate();
     if (sender == footer()->content()) {
-      owner()->system_tray()->ShowDefaultView(BUBBLE_USE_EXISTING);
+      TransitionToDefaultView();
     } else if (sender == manage_devices_) {
       delegate->ManageBluetoothDevices();
     } else if (sender == enable_bluetooth_) {
+      Shell::GetInstance()->metrics()->RecordUserMetricsAction(
+          delegate->GetBluetoothEnabled() ?
+          ash::UMA_STATUS_AREA_BLUETOOTH_DISABLED :
+          ash::UMA_STATUS_AREA_BLUETOOTH_ENABLED);
       delegate->ToggleBluetooth();
     } else {
       if (!delegate->GetBluetoothEnabled())
@@ -427,6 +435,8 @@ views::View* TrayBluetooth::CreateDefaultView(user::LoginStatus status) {
 views::View* TrayBluetooth::CreateDetailedView(user::LoginStatus status) {
   if (!Shell::GetInstance()->system_tray_delegate()->GetBluetoothAvailable())
     return NULL;
+  Shell::GetInstance()->metrics()->RecordUserMetricsAction(
+      ash::UMA_STATUS_AREA_DETAILED_BLUETOOTH_VIEW);
   CHECK(detailed_ == NULL);
   detailed_ = new tray::BluetoothDetailedView(this, status);
   return detailed_;

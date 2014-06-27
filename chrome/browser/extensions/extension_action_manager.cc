@@ -9,18 +9,17 @@
 #include "chrome/browser/extensions/api/system_indicator/system_indicator_manager_factory.h"
 #include "chrome/browser/extensions/extension_action.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
-#include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/extension_action/action_info.h"
 #include "chrome/common/extensions/api/extension_action/page_action_handler.h"
-#include "chrome/common/extensions/api/extension_action/script_badge_handler.h"
-#include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/feature_switch.h"
-#include "components/browser_context_keyed_service/browser_context_dependency_manager.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service_factory.h"
+#include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/keyed_service/content/browser_context_keyed_service_factory.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/extensions_browser_client.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/feature_switch.h"
 
 namespace extensions {
 
@@ -46,14 +45,14 @@ class ExtensionActionManagerFactory : public BrowserContextKeyedServiceFactory {
           BrowserContextDependencyManager::GetInstance()) {
   }
 
-  virtual BrowserContextKeyedService* BuildServiceInstanceFor(
+  virtual KeyedService* BuildServiceInstanceFor(
       content::BrowserContext* profile) const OVERRIDE {
     return new ExtensionActionManager(static_cast<Profile*>(profile));
   }
 
   virtual content::BrowserContext* GetBrowserContextToUse(
       content::BrowserContext* context) const OVERRIDE {
-    return chrome::GetBrowserContextRedirectedInIncognito(context);
+    return ExtensionsBrowserClient::Get()->GetOriginalContext(context);
   }
 };
 
@@ -68,7 +67,7 @@ ExtensionActionManager::ExtensionActionManager(Profile* profile)
     : profile_(profile) {
   CHECK_EQ(profile, profile->GetOriginalProfile())
       << "Don't instantiate this with an incognito profile.";
-  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED,
+  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
                  content::Source<Profile>(profile));
 }
 
@@ -86,12 +85,11 @@ void ExtensionActionManager::Observe(
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
   switch (type) {
-    case chrome::NOTIFICATION_EXTENSION_UNLOADED: {
+    case chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED: {
       const Extension* extension =
           content::Details<UnloadedExtensionInfo>(details)->extension;
       page_actions_.erase(extension->id());
       browser_actions_.erase(extension->id());
-      script_badges_.erase(extension->id());
       system_indicators_.erase(extension->id());
       break;
     }
@@ -118,7 +116,7 @@ ExtensionAction* GetOrCreateOrNull(
 
   // Only create action info for enabled extensions.
   // This avoids bugs where actions are recreated just after being removed
-  // in response to NOTIFICATION_EXTENSION_UNLOADED in
+  // in response to NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED in
   // ExtensionActionManager::Observe()
   ExtensionService* service =
       ExtensionSystem::Get(profile)->extension_service();
@@ -135,10 +133,6 @@ ExtensionAction* GetOrCreateOrNull(
 
 ExtensionAction* ExtensionActionManager::GetPageAction(
     const extensions::Extension& extension) const {
-  // The action box changes the meaning of the page action area, so we
-  // need to convert page actions into browser actions.
-  if (FeatureSwitch::script_badges()->IsEnabled())
-    return NULL;
   return GetOrCreateOrNull(&page_actions_, extension.id(),
                            ActionInfo::TYPE_PAGE,
                            ActionInfo::GetPageActionInfo(&extension),
@@ -147,17 +141,10 @@ ExtensionAction* ExtensionActionManager::GetPageAction(
 
 ExtensionAction* ExtensionActionManager::GetBrowserAction(
     const extensions::Extension& extension) const {
-  const ActionInfo* action_info = ActionInfo::GetBrowserActionInfo(&extension);
-  ActionInfo::Type action_type = ActionInfo::TYPE_BROWSER;
-  if (FeatureSwitch::script_badges()->IsEnabled() &&
-      ActionInfo::GetPageActionInfo(&extension)) {
-    // The action box changes the meaning of the page action area, so we
-    // need to convert page actions into browser actions.
-    action_info = ActionInfo::GetPageActionInfo(&extension);
-    action_type = ActionInfo::TYPE_PAGE;
-  }
   return GetOrCreateOrNull(&browser_actions_, extension.id(),
-                           action_type, action_info, profile_);
+                           ActionInfo::TYPE_BROWSER,
+                           ActionInfo::GetBrowserActionInfo(&extension),
+                           profile_);
 }
 
 ExtensionAction* ExtensionActionManager::GetSystemIndicator(
@@ -172,14 +159,6 @@ ExtensionAction* ExtensionActionManager::GetSystemIndicator(
   return GetOrCreateOrNull(&system_indicators_, extension.id(),
                            ActionInfo::TYPE_SYSTEM_INDICATOR,
                            ActionInfo::GetSystemIndicatorInfo(&extension),
-                           profile_);
-}
-
-ExtensionAction* ExtensionActionManager::GetScriptBadge(
-    const extensions::Extension& extension) const {
-  return GetOrCreateOrNull(&script_badges_, extension.id(),
-                           ActionInfo::TYPE_SCRIPT_BADGE,
-                           ActionInfo::GetScriptBadgeInfo(&extension),
                            profile_);
 }
 

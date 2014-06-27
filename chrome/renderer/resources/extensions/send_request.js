@@ -74,6 +74,11 @@ function handleResponse(requestId, name, success, responseList, error) {
         validate(responseList, request.callbackSchema.parameters);
       }
       safeCallbackApply(name, request, request.callback, responseList);
+    } else if (error) {
+      // The native call caused an error, but no callback was present.
+      // Notify the developer of the error via the console.
+      console.error("Error in response handler for " + (name || "unknown") +
+          ": " + error + (request.stack ? "\n" + request.stack : ""));
     }
   } finally {
     delete requests[requestId];
@@ -159,6 +164,8 @@ function clearCalledSendRequest() {
 exports.sendRequest = sendRequest;
 exports.getCalledSendRequest = getCalledSendRequest;
 exports.clearCalledSendRequest = clearCalledSendRequest;
+exports.safeCallbackApply = safeCallbackApply;
+exports.getExtensionStackTrace = getExtensionStackTrace;
 
 // Called by C++.
 exports.handleResponse = handleResponse;

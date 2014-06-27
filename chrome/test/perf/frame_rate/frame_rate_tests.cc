@@ -94,12 +94,6 @@ class FrameRateTest
     // Turn on chrome.Interval to get higher-resolution timestamps on frames.
     launch_arguments_.AppendSwitch(switches::kEnableBenchmarking);
 
-    // UI tests boot up render views starting from about:blank. This causes
-    // the renderer to start up thinking it cannot use the GPU. To work
-    // around that, and allow the frame rate test to use the GPU, we must
-    // pass kAllowWebUICompositing.
-    launch_arguments_.AppendSwitch(switches::kAllowWebUICompositing);
-
     // Some of the tests may launch http requests through JSON or AJAX
     // which causes a security error (cross domain request) when the page
     // is loaded from the local file system ( file:// ). The following switch
@@ -236,7 +230,7 @@ class FrameRateTest
         &json));
 
     std::map<std::string, std::string> results;
-    ASSERT_TRUE(JsonDictionaryToMap(WideToUTF8(json), &results));
+    ASSERT_TRUE(JsonDictionaryToMap(base::WideToUTF8(json), &results));
 
     ASSERT_TRUE(results.find("mean") != results.end());
     ASSERT_TRUE(results.find("sigma") != results.end());

@@ -5,18 +5,13 @@
 #include "chrome/common/extensions/mime_types_handler.h"
 
 #include "base/logging.h"
-#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/common/extensions/extension_constants.h"
-#include "content/public/common/url_constants.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_constants.h"
-#include "extensions/common/url_pattern.h"
-#include "url/gurl.h"
-#include "url/url_util.h"
 
 namespace keys = extensions::manifest_keys;
 namespace errors = extensions::manifest_errors;
@@ -24,11 +19,11 @@ namespace errors = extensions::manifest_errors;
 namespace {
 
 const char* const kMIMETypeHandlersWhitelist[] = {
-  extension_misc::kQuickOfficeComponentExtensionId,
-  extension_misc::kQuickOfficeDevExtensionId,
-  extension_misc::kQuickOfficeExtensionId,
-  extension_misc::kStreamsPrivateTestExtensionId
-};
+    extension_misc::kPdfExtensionId,
+    extension_misc::kQuickOfficeComponentExtensionId,
+    extension_misc::kQuickOfficeInternalExtensionId,
+    extension_misc::kQuickOfficeExtensionId,
+    extension_misc::kStreamsPrivateTestExtensionId};
 
 // Stored on the Extension.
 struct MimeTypesHandlerInfo : public extensions::Extension::ManifestData {
@@ -85,11 +80,11 @@ MimeTypesHandlerParser::~MimeTypesHandlerParser() {
 }
 
 bool MimeTypesHandlerParser::Parse(extensions::Extension* extension,
-                                   string16* error) {
+                                   base::string16* error) {
   const base::ListValue* mime_types_value = NULL;
   if (!extension->manifest()->GetList(keys::kMIMETypes,
                                       &mime_types_value)) {
-    *error = ASCIIToUTF16(errors::kInvalidMimeTypesHandler);
+    *error = base::ASCIIToUTF16(errors::kInvalidMimeTypesHandler);
     return false;
   }
 
@@ -98,7 +93,7 @@ bool MimeTypesHandlerParser::Parse(extensions::Extension* extension,
   for (size_t i = 0; i < mime_types_value->GetSize(); ++i) {
     std::string filter;
     if (!mime_types_value->GetString(i, &filter)) {
-      *error = ASCIIToUTF16(errors::kInvalidMIMETypes);
+      *error = base::ASCIIToUTF16(errors::kInvalidMIMETypes);
       return false;
     }
     info->handler_.AddMIMEType(filter);

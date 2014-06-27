@@ -2,10 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/manifest_handlers/offline_enabled_info.h"
 #include "chrome/common/extensions/manifest_tests/extension_manifest_test.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
+#include "extensions/common/manifest_handlers/offline_enabled_info.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace extensions {
@@ -36,6 +36,9 @@ TEST_F(ExtensionManifestOfflineEnabledTest, OfflineEnabled) {
   scoped_refptr<Extension> extension_5(
       LoadAndExpectSuccess("offline_default_platform_app.json"));
   EXPECT_TRUE(OfflineEnabledInfo::IsOfflineEnabled(extension_5.get()));
+  scoped_refptr<Extension> extension_6(
+      LoadAndExpectSuccess("offline_default_platform_app_with_webview.json"));
+  EXPECT_FALSE(OfflineEnabledInfo::IsOfflineEnabled(extension_6.get()));
 }
 
 }  // namespace extensions

@@ -4,7 +4,7 @@
 <translation id="376869769528291915">:</translation>
 <translation id="6015796118275082299">Any</translation>
 <translation id="2094750046714988961">No es pot iniciar el generador de perfils perquè l'emmagatzematge extern no està preparat.</translation>
-<translation id="1256337885411059545">No es pot reproduir el vídeo.</translation>
+<translation id="1256337885411059545">No es pot reproduir el vídeo</translation>
 <translation id="2520230379124234395">El generador de perfils s'ha iniciat.</translation>
 <translation id="7821540960913969614">Defineix la data</translation>
 <translation id="4859501799452851758">El generador de perfils ha finalitzat. Els resultats són a <ph name="FILENAME"/>.</translation>
@@ -29,6 +29,7 @@
 <translation id="5789643057113097023">.</translation>
 <translation id="1768717197362323622">Mil·lisegon</translation>
 <translation id="2841013758207633010">Hora</translation>
+<translation id="7138678301420049075">Altres</translation>
 <translation id="6643016212128521049">Esborra</translation>
 <translation id="2429669115401274487">p.m.</translation>
 <translation id="7781164152564914424">Defineix el mes</translation>

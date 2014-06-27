@@ -4,23 +4,28 @@
 
 #include "chrome/browser/sync_file_system/drive_backend/register_app_task.h"
 
+#include <vector>
+
 #include "base/files/scoped_temp_dir.h"
 #include "base/format_macros.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "chrome/browser/drive/drive_uploader.h"
 #include "chrome/browser/drive/fake_drive_service.h"
-#include "chrome/browser/google_apis/gdata_wapi_parser.h"
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_constants.h"
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_util.h"
+#include "chrome/browser/sync_file_system/drive_backend/fake_drive_service_helper.h"
 #include "chrome/browser/sync_file_system/drive_backend/metadata_database.h"
 #include "chrome/browser/sync_file_system/drive_backend/metadata_database.pb.h"
 #include "chrome/browser/sync_file_system/drive_backend/sync_engine_context.h"
-#include "chrome/browser/sync_file_system/drive_backend_v1/fake_drive_service_helper.h"
 #include "chrome/browser/sync_file_system/sync_file_system_test_util.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "google_apis/drive/gdata_wapi_parser.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/leveldatabase/src/helpers/memenv/memenv.h"
 #include "third_party/leveldatabase/src/include/leveldb/db.h"
+#include "third_party/leveldatabase/src/include/leveldb/env.h"
 #include "third_party/leveldatabase/src/include/leveldb/write_batch.h"
 
 namespace sync_file_system {
@@ -30,8 +35,7 @@ namespace {
 const int64 kSyncRootTrackerID = 100;
 }  // namespace
 
-class RegisterAppTaskTest : public testing::Test,
-                            public SyncEngineContext {
+class RegisterAppTaskTest : public testing::Test {
  public:
   RegisterAppTaskTest()
       : next_file_id_(1000),
@@ -40,18 +44,26 @@ class RegisterAppTaskTest : public testing::Test,
 
   virtual void SetUp() OVERRIDE {
     ASSERT_TRUE(database_dir_.CreateUniqueTempDir());
+    in_memory_env_.reset(leveldb::NewMemEnv(leveldb::Env::Default()));
 
-    fake_drive_service_.reset(new drive::FakeDriveService);
-    ASSERT_TRUE(fake_drive_service_->LoadAccountMetadataForWapi(
+    scoped_ptr<drive::FakeDriveService>
+        fake_drive_service(new drive::FakeDriveService);
+    ASSERT_TRUE(fake_drive_service->LoadAccountMetadataForWapi(
         "sync_file_system/account_metadata.json"));
-    ASSERT_TRUE(fake_drive_service_->LoadResourceListForWapi(
+    ASSERT_TRUE(fake_drive_service->LoadResourceListForWapi(
         "gdata/empty_feed.json"));
 
-    drive_uploader_.reset(new drive::DriveUploader(
-        fake_drive_service_.get(), base::MessageLoopProxy::current()));
+    scoped_ptr<drive::DriveUploaderInterface>
+        drive_uploader(new drive::DriveUploader(
+            fake_drive_service.get(), base::MessageLoopProxy::current()));
 
     fake_drive_service_helper_.reset(new FakeDriveServiceHelper(
-        fake_drive_service_.get(), drive_uploader_.get()));
+        fake_drive_service.get(), drive_uploader.get(),
+        kSyncRootFolderTitle));
+
+    context_.reset(new SyncEngineContext(
+        fake_drive_service.PassAs<drive::DriveServiceInterface>(),
+        drive_uploader.Pass(), base::MessageLoopProxy::current()));
 
     ASSERT_EQ(google_apis::HTTP_CREATED,
               fake_drive_service_helper_->AddOrphanedFolder(
@@ -59,16 +71,8 @@ class RegisterAppTaskTest : public testing::Test,
   }
 
   virtual void TearDown() OVERRIDE {
-    metadata_database_.reset();
+    context_.reset();
     base::RunLoop().RunUntilIdle();
-  }
-
-  virtual drive::DriveServiceInterface* GetDriveService() OVERRIDE {
-    return fake_drive_service_.get();
-  }
-
-  virtual MetadataDatabase* GetMetadataDatabase() OVERRIDE {
-    return metadata_database_.get();
   }
 
  protected:
@@ -76,6 +80,7 @@ class RegisterAppTaskTest : public testing::Test,
     leveldb::DB* db = NULL;
     leveldb::Options options;
     options.create_if_missing = true;
+    options.env = in_memory_env_.get();
     leveldb::Status status =
         leveldb::DB::Open(options, database_dir_.path().AsUTF8Unsafe(), &db);
     EXPECT_TRUE(status.ok());
@@ -109,23 +114,25 @@ class RegisterAppTaskTest : public testing::Test,
     batch.Put(kDatabaseVersionKey,
               base::Int64ToString(kCurrentDatabaseVersion));
     PutServiceMetadataToBatch(service_metadata, &batch);
-    PutFileToBatch(sync_root_metadata, &batch);
-    PutTrackerToBatch(sync_root_tracker, &batch);
+    PutFileMetadataToBatch(sync_root_metadata, &batch);
+    PutFileTrackerToBatch(sync_root_tracker, &batch);
     EXPECT_TRUE(db->Write(leveldb::WriteOptions(), &batch).ok());
   }
 
   void CreateMetadataDatabase(scoped_ptr<leveldb::DB> db) {
     ASSERT_TRUE(db);
-    ASSERT_FALSE(metadata_database_);
+    ASSERT_FALSE(context_->GetMetadataDatabase());
+    scoped_ptr<MetadataDatabase> metadata_db;
     ASSERT_EQ(SYNC_STATUS_OK,
               MetadataDatabase::CreateForTesting(
-                  db.Pass(), &metadata_database_));
+                  db.Pass(), &metadata_db));
+    context_->SetMetadataDatabase(metadata_db.Pass());
   }
 
   SyncStatusCode RunRegisterAppTask(const std::string& app_id) {
-    RegisterAppTask task(this, app_id);
+    RegisterAppTask task(context_.get(), app_id);
     SyncStatusCode status = SYNC_STATUS_UNKNOWN;
-    task.Run(CreateResultReceiver(&status));
+    task.RunSequential(CreateResultReceiver(&status));
     base::RunLoop().RunUntilIdle();
     return status;
   }
@@ -152,8 +159,8 @@ class RegisterAppTaskTest : public testing::Test,
     tracker.set_active(true);
 
     leveldb::WriteBatch batch;
-    PutFileToBatch(metadata, &batch);
-    PutTrackerToBatch(tracker, &batch);
+    PutFileMetadataToBatch(metadata, &batch);
+    PutFileTrackerToBatch(tracker, &batch);
     EXPECT_TRUE(db->Write(leveldb::WriteOptions(), &batch).ok());
   }
 
@@ -177,30 +184,20 @@ class RegisterAppTaskTest : public testing::Test,
     tracker.set_active(false);
 
     leveldb::WriteBatch batch;
-    PutFileToBatch(metadata, &batch);
-    PutTrackerToBatch(tracker, &batch);
+    PutFileMetadataToBatch(metadata, &batch);
+    PutFileTrackerToBatch(tracker, &batch);
     EXPECT_TRUE(db->Write(leveldb::WriteOptions(), &batch).ok());
   }
 
   size_t CountRegisteredAppRoot() {
-    // TODO(tzik): Add function to MetadataDatabase to list trackers by parent.
-    typedef MetadataDatabase::TrackersByTitle TrackersByTitle;
-    const TrackersByTitle& trackers_by_title =
-        metadata_database_->trackers_by_parent_and_title_[kSyncRootTrackerID];
-
-    size_t count = 0;
-    for (TrackersByTitle::const_iterator itr = trackers_by_title.begin();
-         itr != trackers_by_title.end(); ++itr) {
-      if (itr->second.has_active())
-        ++count;
-    }
-
-    return count;
+    std::vector<std::string> app_ids;
+    context_->GetMetadataDatabase()->GetRegisteredAppIDs(&app_ids);
+    return app_ids.size();
   }
 
   bool IsAppRegistered(const std::string& app_id) {
-    TrackerSet trackers;
-    if (!metadata_database_->FindTrackersByParentAndTitle(
+    TrackerIDSet trackers;
+    if (!context_->GetMetadataDatabase()->FindTrackersByParentAndTitle(
             kSyncRootTrackerID, app_id, &trackers))
       return false;
     return trackers.has_active();
@@ -215,13 +212,16 @@ class RegisterAppTaskTest : public testing::Test,
   }
 
   bool HasRemoteAppRoot(const std::string& app_id) {
-    TrackerSet files;
-    if (!metadata_database_->FindTrackersByParentAndTitle(
+    TrackerIDSet files;
+    if (!context_->GetMetadataDatabase()->FindTrackersByParentAndTitle(
             kSyncRootTrackerID, app_id, &files) ||
         !files.has_active())
       return false;
 
-    std::string app_root_folder_id = files.active_tracker()->file_id();
+    FileTracker app_root_tracker;
+    EXPECT_TRUE(context_->GetMetadataDatabase()->FindTrackerByTrackerID(
+        files.active_tracker(), &app_root_tracker));
+    std::string app_root_folder_id = app_root_tracker.file_id();
     scoped_ptr<google_apis::ResourceEntry> entry;
     if (google_apis::HTTP_SUCCESS !=
         fake_drive_service_helper_->GetResourceEntry(
@@ -236,6 +236,8 @@ class RegisterAppTaskTest : public testing::Test,
     return base::StringPrintf("file_id_%" PRId64, next_file_id_++);
   }
 
+  scoped_ptr<leveldb::Env> in_memory_env_;
+
   std::string sync_root_folder_id_;
 
   int64 next_file_id_;
@@ -244,11 +246,8 @@ class RegisterAppTaskTest : public testing::Test,
   content::TestBrowserThreadBundle browser_threads_;
   base::ScopedTempDir database_dir_;
 
-  scoped_ptr<drive::FakeDriveService> fake_drive_service_;
-  scoped_ptr<drive::DriveUploader> drive_uploader_;
+  scoped_ptr<SyncEngineContext> context_;
   scoped_ptr<FakeDriveServiceHelper> fake_drive_service_helper_;
-
-  scoped_ptr<MetadataDatabase> metadata_database_;
 
   DISALLOW_COPY_AND_ASSIGN(RegisterAppTaskTest);
 };

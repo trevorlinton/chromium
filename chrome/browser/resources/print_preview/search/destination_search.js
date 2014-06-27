@@ -43,6 +43,14 @@ cr.define('print_preview', function() {
     this.metrics_ = metrics;
 
     /**
+     * Whether or not a UMA histogram for the register promo being shown was
+     * already recorded.
+     * @type {bool}
+     * @private
+     */
+    this.registerPromoShownMetricRecorded_ = false;
+
+    /**
      * Search box used to search through the destination lists.
      * @type {!print_preview.SearchBox}
      * @private
@@ -103,6 +111,14 @@ cr.define('print_preview', function() {
    */
   DestinationSearch.LIST_BOTTOM_PADDING_ = 18;
 
+  /**
+   * Number of unregistered destinations that may be promoted to the top.
+   * @type {number}
+   * @const
+   * @private
+   */
+  DestinationSearch.MAX_PROMOTED_UNREGISTERED_PRINTERS_ = 2;
+
   DestinationSearch.prototype = {
     __proto__: print_preview.Component.prototype,
 
@@ -113,9 +129,15 @@ cr.define('print_preview', function() {
 
     /** @param {boolean} isVisible Whether the component is visible. */
     setIsVisible: function(isVisible) {
+      if (this.getIsVisible() == isVisible) {
+        return;
+      }
       if (isVisible) {
+        setIsVisible(this.getElement(), true);
+        setTimeout(function(element) {
+          element.classList.remove('transparent');
+        }.bind(this, this.getElement()), 0);
         this.searchBox_.focus();
-        this.getElement().classList.remove('transparent');
         var promoEl = this.getChildElement('.cloudprint-promo');
         if (getIsVisible(promoEl)) {
           this.metrics_.incrementDestinationSearchBucket(
@@ -158,6 +180,15 @@ cr.define('print_preview', function() {
     /** @override */
     enterDocument: function() {
       print_preview.Component.prototype.enterDocument.call(this);
+
+      this.getElement().addEventListener('webkitTransitionEnd', function f(e) {
+        if (e.target != e.currentTarget || e.propertyName != 'opacity')
+          return;
+        if (e.target.classList.contains('transparent')) {
+          setIsVisible(e.target, false);
+        }
+      });
+
       this.tracker.add(
           this.getChildElement('.page > .close-button'),
           'click',
@@ -280,6 +311,8 @@ cr.define('print_preview', function() {
       var recentDestinations = [];
       var localDestinations = [];
       var cloudDestinations = [];
+      var unregisteredCloudDestinations = [];
+
       this.destinationStore_.destinations.forEach(function(destination) {
         if (destination.isRecent) {
           recentDestinations.push(destination);
@@ -288,12 +321,31 @@ cr.define('print_preview', function() {
             destination.origin == print_preview.Destination.Origin.DEVICE) {
           localDestinations.push(destination);
         } else {
-          cloudDestinations.push(destination);
+          if (destination.connectionStatus ==
+                print_preview.Destination.ConnectionStatus.UNREGISTERED) {
+            unregisteredCloudDestinations.push(destination);
+          } else {
+            cloudDestinations.push(destination);
+          }
         }
       });
+
+      if (unregisteredCloudDestinations.length != 0 &&
+          !this.registerPromoShownMetricRecorded_) {
+        this.metrics_.incrementDestinationSearchBucket(
+          print_preview.Metrics.DestinationSearchBucket.REGISTER_PROMO_SHOWN);
+        this.registerPromoShownMetricRecorded_ = true;
+      }
+
+      var finalCloudDestinations = unregisteredCloudDestinations.slice(
+        0, DestinationSearch.MAX_PROMOTED_UNREGISTERED_PRINTERS_).concat(
+          cloudDestinations,
+          unregisteredCloudDestinations.slice(
+            DestinationSearch.MAX_PROMOTED_UNREGISTERED_PRINTERS_));
+
       this.recentList_.updateDestinations(recentDestinations);
       this.localList_.updateDestinations(localDestinations);
-      this.cloudList_.updateDestinations(cloudDestinations);
+      this.cloudList_.updateDestinations(finalCloudDestinations);
     },
 
     /**

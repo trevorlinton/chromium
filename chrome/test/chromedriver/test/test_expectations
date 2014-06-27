@@ -29,7 +29,6 @@ _REVISION_NEGATIVE_FILTER['HEAD'] = [
     'ClickScrollingTest.testShouldBeAbleToClickOnAnElementHiddenByDoubleOverflow',
     'ClickScrollingTest.testShouldNotBeAbleToClickElementThatIsOutOfViewInANonScrollableFrame',
     'ClickScrollingTest.testShouldNotScrollIfAlreadyScrolledAndElementIsInView',
-    'ClickTest.testCanClickAnImageMapArea',
     'ClickTest.testShouldBeAbleToClickOnAnElementInFrameGreaterThanTwoViewports',
     'CombinedInputActionsTest.testClickingOnFormElements',
     'CoordinatesTest.testShouldScrollPageAndGetCoordinatesOfAnElementThatIsOutOfViewPort',
@@ -86,12 +85,12 @@ _REVISION_NEGATIVE_FILTER['HEAD'] = [
     'WindowTest.*',
     # Flaky: https://code.google.com/p/chromedriver/issues/detail?id=528
     'PageLoadingTest.testShouldDoNothingIfThereIsNothingToGoBackTo',
+    # Flaky: https://code.google.com/p/chromedriver/issues/detail?id=653
+    'PageLoadingTest.testShouldBeAbleToNavigateBackInTheBrowserHistoryInPresenceOfIframes',
+    'PageLoadingTest.testShouldBeAbleToNavigateBackInTheBrowserHistory',
 ]
 _REVISION_NEGATIVE_FILTER['31'] = _REVISION_NEGATIVE_FILTER['HEAD'] + [
     'I18nTest.*',  # This was fixed in a later version of 31 than we use.
-]
-_REVISION_NEGATIVE_FILTER['30'] = _REVISION_NEGATIVE_FILTER['HEAD'] + [
-    'I18nTest.*',
 ]
 
 
@@ -103,7 +102,7 @@ _OS_NEGATIVE_FILTER['win'] = [
     'RenderedWebElementTest.testHoverPersists',
     'RenderedWebElementTest.canClickOnASuckerFishStyleMenu',
     # Flaky: https://code.google.com/p/chromedriver/issues/detail?id=416
-    'TakesScreenshotTest.testShouldCaptureScreenshotAtIFramePageAfterSwitching',
+    'TakesScreenshotTest.testShouldCaptureScreenshotAtFramePageAfterSwitching',
     'TakesScreenshotTest.testShouldCaptureScreenshotAtFramePage',
 ]
 _OS_NEGATIVE_FILTER['linux'] = []
@@ -116,8 +115,10 @@ _OS_NEGATIVE_FILTER['mac'] = [
     'AlertsTest.testShouldAllowUsersToAcceptAnAlertInAFrame',
     # Flaky: https://code.google.com/p/chromedriver/issues/detail?id=375
     'PageLoadingTest.testShouldBeAbleToNavigateBackInTheBrowserHistoryInPresenceOfIframes',
+    # Flaky: https://code.google.com/p/chromedriver/issues/detail?id=416
+    'TakesScreenshotTest.testShouldCaptureScreenshotAtFramePage',
 ]
-_OS_NEGATIVE_FILTER['android'] = [
+_OS_NEGATIVE_FILTER['android:chrome'] = [
     'ChromeOptionsFunctionalTest.canStartChromeWithCustomOptions',
     'ClickScrollingTest.testShouldBeAbleToClickElementThatIsOutOfViewInANestedFrame',
     'ClickScrollingTest.testShouldBeAbleToClickElementThatIsOutOfViewInANestedFrameThatIsOutOfView',
@@ -152,9 +153,6 @@ _OS_NEGATIVE_FILTER['android'] = [
     # http://crbug.com/156390
     'DragAndDropTest.*',
 
-    # Flick touch events are not yet implemented.
-    'TouchFlickTest.*',
-
     # Scrolling touch events are not supported.
     'TouchScrollTest.*',
 
@@ -166,7 +164,7 @@ _OS_NEGATIVE_FILTER['android'] = [
     "SessionHandlingTest.callingQuitMoreThanOnceOnASessionIsANoOp",
     # Test is written using local files; doesn't work on Android.
     'UploadTest.testFileUploading',
-    # Not applicable on Chromium Test Shell (doesn't support tabs).
+    # Not applicable on ChromeShell (doesn't support tabs).
     'WindowSwitchingTest.*',
 
     # Flaky: https://code.google.com/p/chromedriver/issues/detail?id=441
@@ -185,6 +183,25 @@ _OS_NEGATIVE_FILTER['android'] = [
     # https://code.google.com/p/chromedriver/issues/detail?id=604
     'I18nTest.*',
 ]
+_OS_NEGATIVE_FILTER['android:chrome_stable'] = (
+    _OS_NEGATIVE_FILTER['android:chrome'])
+_OS_NEGATIVE_FILTER['android:chrome_beta'] = (
+    _OS_NEGATIVE_FILTER['android:chrome'])
+_OS_NEGATIVE_FILTER['android:chrome_shell'] = (
+    _OS_NEGATIVE_FILTER['android:chrome'])
+_OS_NEGATIVE_FILTER['android:chromedriver_webview_shell'] = (
+    _OS_NEGATIVE_FILTER['android:chrome'] + [
+         # https://code.google.com/p/chromedriver/issues/detail?id=645
+        'ClickScrollingTest.testShouldBeAbleToClickElementInAFrameThatIsOutOfView',
+        'ClickScrollingTest.testShouldBeAbleToClickElementThatIsOutOfViewInAFrameThatIsOutOfView',
+        'FormHandlingTest.handleFormWithJavascriptAction',
+        'TypingTest.testShouldReportKeyCodeOfArrowKeysUpDownEvents',
+        'TypingTest.testShouldReportKeyCodeOfArrowKeys',
+        'CombinedInputActionsTest.testCanClickOnLinks',
+        'CombinedInputActionsTest.testCanClickOnLinksWithAnOffset',
+        'CombinedInputActionsTest.testMouseMovementWorksWhenNavigatingToAnotherPage',
+    ]
+)
 
 
 def _GetRevisionNegativeFilter(chrome_version):

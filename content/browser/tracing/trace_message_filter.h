@@ -26,8 +26,7 @@ class TraceMessageFilter : public BrowserMessageFilter {
                                  bool* message_was_ok) OVERRIDE;
 
   void SendBeginTracing(const std::string& category_filter_str,
-                        base::debug::TraceLog::Options options,
-                        bool tracing_startup);
+                        base::debug::TraceLog::Options options);
   void SendEndTracing();
   void SendEnableMonitoring(const std::string& category_filter_str,
                             base::debug::TraceLog::Options options);
@@ -46,7 +45,7 @@ class TraceMessageFilter : public BrowserMessageFilter {
   void OnChildSupportsTracing();
   void OnEndTracingAck(const std::vector<std::string>& known_categories);
   void OnCaptureMonitoringSnapshotAcked();
-  void OnTraceNotification(int notification);
+  void OnWatchEventMatched();
   void OnTraceBufferPercentFullReply(float percent_full);
   void OnTraceDataCollected(const std::string& data);
   void OnMonitoringTraceDataCollected(const std::string& data);

@@ -7,6 +7,7 @@
 
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/gtest_prod_util.h"
 #include "chrome/browser/search/iframe_source.h"
 
 // Serves HTML for displaying suggestions using iframes, e.g.
@@ -25,7 +26,7 @@ class MostVisitedIframeSource : public IframeSource {
   virtual void StartDataRequest(
       const std::string& path_and_query,
       int render_process_id,
-      int render_view_id,
+      int render_frame_id,
       const content::URLDataSource::GotDataCallback& callback) OVERRIDE;
 
  protected:
@@ -33,6 +34,10 @@ class MostVisitedIframeSource : public IframeSource {
   virtual std::string GetSource() const OVERRIDE;
 
   virtual bool ServesPath(const std::string& path) const OVERRIDE;
+
+ private:
+  FRIEND_TEST_ALL_PREFIXES(MostVisitedIframeSourceTest,
+                           LogEndpointIsValidWithProvider);
 
   DISALLOW_COPY_AND_ASSIGN(MostVisitedIframeSource);
 };

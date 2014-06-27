@@ -15,7 +15,6 @@
 #include "content/common/content_export.h"
 #include "ui/base/layout.h"
 
-class CommandLine;
 class GURL;
 
 namespace base {
@@ -65,16 +64,6 @@ CONTENT_EXPORT ContentRendererClient* SetRendererClientForTesting(
 CONTENT_EXPORT ContentUtilityClient* SetUtilityClientForTesting(
     ContentUtilityClient* u);
 
-// Returns the user agent string being used by the browser. SetContentClient()
-// must be called prior to calling this, and this routine must be used
-// instead of webkit_glue::GetUserAgent() in order to ensure that we use
-// the same user agent string everywhere.
-// TODO(dpranke): This is caused by webkit_glue being a library that can
-// get linked into multiple linkable objects, causing us to have multiple
-// static values of the user agent. This will be fixed when we clean up
-// webkit_glue.
-CONTENT_EXPORT const std::string& GetUserAgent(const GURL& url);
-
 // Interface that the embedder implements.
 class CONTENT_EXPORT ContentClient {
  public:
@@ -118,7 +107,7 @@ class CONTENT_EXPORT ContentClient {
   virtual std::string GetUserAgent() const;
 
   // Returns a string resource given its id.
-  virtual string16 GetLocalizedString(int message_id) const;
+  virtual base::string16 GetLocalizedString(int message_id) const;
 
   // Return the contents of a resource in a StringPiece given the resource id.
   virtual base::StringPiece GetDataResource(

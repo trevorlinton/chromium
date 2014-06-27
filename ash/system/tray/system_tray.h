@@ -56,9 +56,6 @@ class ASH_EXPORT SystemTray : public internal::TrayBackgroundView,
   // Returns all tray items that has been added to system tray.
   const std::vector<SystemTrayItem*>& GetTrayItems() const;
 
-  // Returns all tray user items that were added to the system tray.
-  const std::vector<internal::TrayUser*>& GetTrayUserItems() const;
-
   // Shows the default view of all items.
   void ShowDefaultView(BubbleCreationType creation_type);
 
@@ -94,8 +91,8 @@ class ASH_EXPORT SystemTray : public internal::TrayBackgroundView,
   // Temporarily hides/unhides the notification bubble.
   void SetHideNotifications(bool hidden);
 
-  // Returns true if the launcher should be forced visible when auto-hidden.
-  bool ShouldShowLauncher() const;
+  // Returns true if the shelf should be forced visible when auto-hidden.
+  bool ShouldShowShelf() const;
 
   // Returns true if there is a system bubble (already visible or in the process
   // of being created).
@@ -154,9 +151,8 @@ class ASH_EXPORT SystemTray : public internal::TrayBackgroundView,
   // Get the tray item view (or NULL) for a given |tray_item| in a unit test.
   views::View* GetTrayItemViewForTest(SystemTrayItem* tray_item);
 
-  // Add a tray user item for testing purposes. Note: The passed |tray_user|
-  // will be owned by the SystemTray after the call.
-  void AddTrayUserItemForTest(internal::TrayUser* tray_user);
+  // Gets tray_date_ for browser tests.
+  internal::TrayDate* GetTrayDateForTesting() const;
 
  private:
   // Creates the default set of items for the sytem tray.
@@ -205,10 +201,6 @@ class ASH_EXPORT SystemTray : public internal::TrayBackgroundView,
 
   // Owned items.
   ScopedVector<SystemTrayItem> items_;
-
-  // User items - note, this is a subset of the |items_| list. Note that no
-  // item in this list needs to be deleted.
-  std::vector<internal::TrayUser*> user_items_;
 
   // Pointers to members of |items_|.
   SystemTrayItem* detailed_item_;

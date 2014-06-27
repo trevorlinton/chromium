@@ -9,7 +9,8 @@
 
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "third_party/WebKit/public/web/WebSourceBuffer.h"
+#include "base/time/time.h"
+#include "third_party/WebKit/public/platform/WebSourceBuffer.h"
 
 namespace media {
 class ChunkDemuxer;
@@ -17,26 +18,36 @@ class ChunkDemuxer;
 
 namespace content {
 
-class WebSourceBufferImpl : public WebKit::WebSourceBuffer {
+class WebSourceBufferImpl : public blink::WebSourceBuffer {
  public:
   WebSourceBufferImpl(const std::string& id, media::ChunkDemuxer* demuxer);
   virtual ~WebSourceBufferImpl();
 
-  // WebKit::WebSourceBuffer implementation.
-  virtual WebKit::WebTimeRanges buffered() OVERRIDE;
-  virtual void append(const unsigned char* data, unsigned length) OVERRIDE;
-  virtual void abort() OVERRIDE;
-  // TODO(acolwell): Add OVERRIDE when Blink-side changes land.
+  // blink::WebSourceBuffer implementation.
+  virtual bool setMode(AppendMode mode);
+  virtual blink::WebTimeRanges buffered();
+  virtual void append(
+      const unsigned char* data,
+      unsigned length,
+      double* timestamp_offset);
+  virtual void abort();
   virtual void remove(double start, double end);
-  virtual bool setTimestampOffset(double offset) OVERRIDE;
-  // TODO(acolwell): Add OVERRIDE when Blink-side changes land.
+  virtual bool setTimestampOffset(double offset);
   virtual void setAppendWindowStart(double start);
   virtual void setAppendWindowEnd(double end);
-  virtual void removedFromMediaSource() OVERRIDE;
+  virtual void removedFromMediaSource();
 
  private:
   std::string id_;
   media::ChunkDemuxer* demuxer_;  // Owned by WebMediaPlayerImpl.
+
+  // Controls the offset applied to timestamps when processing appended media
+  // segments. It is initially 0, which indicates that no offset is being
+  // applied. Both setTimestampOffset() and append() may update this value.
+  base::TimeDelta timestamp_offset_;
+
+  base::TimeDelta append_window_start_;
+  base::TimeDelta append_window_end_;
 
   DISALLOW_COPY_AND_ASSIGN(WebSourceBufferImpl);
 };

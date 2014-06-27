@@ -5,6 +5,7 @@
 #include "chrome/browser/chromeos/drive/file_system/truncate_operation.h"
 
 #include "base/bind.h"
+#include "base/callback_helpers.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_platform_file_closer.h"
 #include "base/logging.h"
@@ -17,6 +18,7 @@
 #include "chrome/browser/chromeos/drive/file_errors.h"
 #include "chrome/browser/chromeos/drive/file_system/download_operation.h"
 #include "chrome/browser/chromeos/drive/file_system/operation_observer.h"
+#include "chrome/browser/chromeos/drive/job_scheduler.h"
 #include "content/public/browser/browser_thread.h"
 
 using content::BrowserThread;
@@ -29,19 +31,14 @@ namespace {
 // then marks the resource is dirty on |cache|.
 FileError TruncateOnBlockingPool(internal::ResourceMetadata* metadata,
                                  internal::FileCache* cache,
-                                 const std::string& resource_id,
+                                 const std::string& local_id,
                                  const base::FilePath& local_cache_path,
-                                 int64 length,
-                                 std::string* local_id) {
+                                 int64 length) {
   DCHECK(metadata);
   DCHECK(cache);
-  DCHECK(local_id);
 
-  FileError error = metadata->GetIdByResourceId(resource_id, local_id);
-  if (error != FILE_ERROR_OK)
-    return error;
-
-  error = cache->MarkDirty(*local_id);
+  scoped_ptr<base::ScopedClosureRunner> file_closer;
+  FileError error = cache->OpenForWrite(local_id, &file_closer);
   if (error != FILE_ERROR_OK)
     return error;
 
@@ -55,7 +52,7 @@ FileError TruncateOnBlockingPool(internal::ResourceMetadata* metadata,
     return FILE_ERROR_FAILED;
 
   DCHECK_NE(base::kInvalidPlatformFileValue, file);
-  base::ScopedPlatformFileCloser file_closer(&file);
+  base::ScopedPlatformFileCloser platform_file_closer(&file);
 
   if (!base::TruncatePlatformFile(file, length))
     return FILE_ERROR_FAILED;
@@ -133,26 +130,24 @@ void TruncateOperation::TruncateAfterEnsureFileDownloadedByPath(
     return;
   }
 
-  std::string* local_id = new std::string;
   base::PostTaskAndReplyWithResult(
       blocking_task_runner_.get(),
       FROM_HERE,
       base::Bind(&TruncateOnBlockingPool,
-                 metadata_, cache_, entry->resource_id(), local_file_path,
-                 length, local_id),
+                 metadata_, cache_, entry->local_id(), local_file_path, length),
       base::Bind(
           &TruncateOperation::TruncateAfterTruncateOnBlockingPool,
-          weak_ptr_factory_.GetWeakPtr(), base::Owned(local_id), callback));
+          weak_ptr_factory_.GetWeakPtr(), entry->local_id(), callback));
 }
 
 void TruncateOperation::TruncateAfterTruncateOnBlockingPool(
-    const std::string* local_id,
+    const std::string& local_id,
     const FileOperationCallback& callback,
     FileError error) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(!callback.is_null());
 
-  observer_->OnCacheFileUploadNeededByOperation(*local_id);
+  observer_->OnEntryUpdatedByOperation(local_id);
 
   callback.Run(error);
 }

@@ -13,11 +13,15 @@
 #include "base/location.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/bookmarks/bookmark_model.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/glue/bookmark_change_processor.h"
+#include "chrome/browser/undo/bookmark_undo_service.h"
+#include "chrome/browser/undo/bookmark_undo_service_factory.h"
+#include "chrome/browser/undo/bookmark_undo_utils.h"
 #include "content/public/browser/browser_thread.h"
 #include "sync/api/sync_error.h"
 #include "sync/internal_api/public/delete_journal.h"
@@ -25,6 +29,7 @@
 #include "sync/internal_api/public/read_transaction.h"
 #include "sync/internal_api/public/write_node.h"
 #include "sync/internal_api/public/write_transaction.h"
+#include "sync/internal_api/syncapi_internal.h"
 #include "sync/syncable/syncable_write_transaction.h"
 #include "sync/util/cryptographer.h"
 #include "sync/util/data_type_histogram.h"
@@ -55,6 +60,10 @@ const char kBookmarkBarTag[] = "bookmark_bar";
 const char kMobileBookmarksTag[] = "synced_bookmarks";
 const char kOtherBookmarksTag[] = "other_bookmarks";
 
+// Maximum number of bytes to allow in a title (must match sync's internal
+// limits; see write_node.cc).
+const int kTitleLimitBytes = 255;
+
 // Bookmark comparer for map of bookmark nodes.
 class BookmarkComparer {
  public:
@@ -69,7 +78,17 @@ class BookmarkComparer {
     if (node1->is_folder() != node2->is_folder())
       return node1->is_folder();
 
-    int result = node1->GetTitle().compare(node2->GetTitle());
+    // Truncate bookmark titles in the form sync does internally to avoid
+    // mismatches due to sync munging titles.
+    std::string title1 = base::UTF16ToUTF8(node1->GetTitle());
+    syncer::SyncAPINameToServerName(title1, &title1);
+    base::TruncateUTF8ToByteSize(title1, kTitleLimitBytes, &title1);
+
+    std::string title2 = base::UTF16ToUTF8(node2->GetTitle());
+    syncer::SyncAPINameToServerName(title2, &title2);
+    base::TruncateUTF8ToByteSize(title2, kTitleLimitBytes, &title2);
+
+    int result = title1.compare(title2);
     if (result != 0)
       return result < 0;
 
@@ -128,7 +147,7 @@ const BookmarkNode* BookmarkNodeFinder::FindBookmarkNode(
     const GURL& url, const std::string& title, bool is_folder) {
   // Create a bookmark node from the given bookmark attributes.
   BookmarkNode temp_node(url);
-  temp_node.SetTitle(UTF8ToUTF16(title));
+  temp_node.SetTitle(base::UTF8ToUTF16(title));
   if (is_folder)
     temp_node.set_type(BookmarkNode::FOLDER);
   else
@@ -323,7 +342,11 @@ bool BookmarkModelAssociator::SyncModelHasUserCreatedNodes(bool* has_nodes) {
 bool BookmarkModelAssociator::NodesMatch(
     const BookmarkNode* bookmark,
     const syncer::BaseNode* sync_node) const {
-  if (bookmark->GetTitle() != UTF8ToUTF16(sync_node->GetTitle()))
+  std::string truncated_title = base::UTF16ToUTF8(bookmark->GetTitle());
+  base::TruncateUTF8ToByteSize(truncated_title,
+                               kTitleLimitBytes,
+                               &truncated_title);
+  if (truncated_title != sync_node->GetTitle())
     return false;
   if (bookmark->is_folder() != sync_node->GetIsFolder())
     return false;
@@ -363,6 +386,11 @@ bool BookmarkModelAssociator::GetSyncIdForTaggedNode(const std::string& tag,
 syncer::SyncError BookmarkModelAssociator::AssociateModels(
     syncer::SyncMergeResult* local_merge_result,
     syncer::SyncMergeResult* syncer_merge_result) {
+  // Since any changes to the bookmark model made here are not user initiated,
+  // these change should not be undoable and so suspend the undo tracking.
+#if !defined(OS_ANDROID)
+  ScopedSuspendBookmarkUndo suspend_undo(profile_);
+#endif
   syncer::SyncError error = CheckModelSyncState(local_merge_result,
                                                 syncer_merge_result);
   if (error.IsSet())
@@ -706,13 +734,10 @@ bool BookmarkModelAssociator::CryptoReadyIfNecessary() {
 syncer::SyncError BookmarkModelAssociator::CheckModelSyncState(
     syncer::SyncMergeResult* local_merge_result,
     syncer::SyncMergeResult* syncer_merge_result) const {
-  std::string version_str;
-  if (bookmark_model_->root_node()->GetMetaInfo(kBookmarkTransactionVersionKey,
-                                                &version_str)) {
+  int64 native_version =
+      bookmark_model_->root_node()->sync_transaction_version();
+  if (native_version != syncer::syncable::kInvalidTransactionVersion) {
     syncer::ReadTransaction trans(FROM_HERE, user_share_);
-    int64 native_version = syncer::syncable::kInvalidTransactionVersion;
-    if (!base::StringToInt64(version_str, &native_version))
-      return syncer::SyncError();
     local_merge_result->set_pre_association_version(native_version);
 
     int64 sync_version = trans.GetModelVersion(syncer::BOOKMARKS);
@@ -724,8 +749,9 @@ syncer::SyncError BookmarkModelAssociator::CheckModelSyncState(
                                 syncer::MODEL_TYPE_COUNT);
 
       // Clear version on bookmark model so that we only report error once.
-      bookmark_model_->DeleteNodeMetaInfo(bookmark_model_->root_node(),
-                                          kBookmarkTransactionVersionKey);
+      bookmark_model_->SetNodeSyncTransactionVersion(
+          bookmark_model_->root_node(),
+          syncer::syncable::kInvalidTransactionVersion);
 
       // If the native version is higher, there was a sync persistence failure,
       // and we need to delay association until after a GetUpdates.

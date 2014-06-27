@@ -9,15 +9,17 @@
 #include "chrome/browser/extensions/api/declarative_content/content_condition.h"
 #include "chrome/browser/extensions/api/declarative_content/content_constants.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/extensions/extension_messages.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension_messages.h"
+
+using url_matcher::URLMatcherConditionSet;
 
 namespace extensions {
 
@@ -26,7 +28,8 @@ ContentRulesRegistry::ContentRulesRegistry(Profile* profile,
     : RulesRegistry(profile,
                     declarative_content_constants::kOnPageChanged,
                     content::BrowserThread::UI,
-                    cache_delegate) {
+                    cache_delegate,
+                    WebViewKey(0, 0)) {
   extension_info_map_ = ExtensionSystem::Get(profile)->info_map();
 
   registrar_.Add(this, content::NOTIFICATION_RENDERER_PROCESS_CREATED,

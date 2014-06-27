@@ -8,10 +8,11 @@
 #include "ash/wm/coordinate_conversion.h"
 #include "base/timer/timer.h"
 #include "ui/aura/env.h"
-#include "ui/aura/root_window.h"
+#include "ui/aura/window_tree_host.h"
 #include "ui/events/event.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/event_handler.h"
+#include "ui/events/event_processor.h"
 #include "ui/gfx/point.h"
 #include "ui/gfx/vector2d.h"
 
@@ -122,7 +123,8 @@ void AutoclickControllerImpl::InitClickTimer() {
 }
 
 void AutoclickControllerImpl::OnMouseEvent(ui::MouseEvent* event) {
-  if (event->type() == ui::ET_MOUSE_MOVED) {
+  if (event->type() == ui::ET_MOUSE_MOVED &&
+      !(event->flags() & ui::EF_IS_SYNTHESIZED)) {
     mouse_event_flags_ = event->flags();
 
     gfx::Point mouse_location = event->root_location();
@@ -185,20 +187,26 @@ void AutoclickControllerImpl::DoAutoclick() {
   anchor_location_ = click_location;
   wm::ConvertPointFromScreen(root_window, &click_location);
 
-  aura::WindowEventDispatcher* dispatcher = root_window->GetDispatcher();
-  dispatcher->ConvertPointToHost(&click_location);
+  aura::WindowTreeHost* host = root_window->GetHost();
+  host->ConvertPointToHost(&click_location);
 
   ui::MouseEvent press_event(ui::ET_MOUSE_PRESSED,
                              click_location,
                              click_location,
-                             mouse_event_flags_ | ui::EF_LEFT_MOUSE_BUTTON);
+                             mouse_event_flags_ | ui::EF_LEFT_MOUSE_BUTTON,
+                             ui::EF_LEFT_MOUSE_BUTTON);
   ui::MouseEvent release_event(ui::ET_MOUSE_RELEASED,
                                click_location,
                                click_location,
-                               mouse_event_flags_ | ui::EF_LEFT_MOUSE_BUTTON);
+                               mouse_event_flags_ | ui::EF_LEFT_MOUSE_BUTTON,
+                               ui::EF_LEFT_MOUSE_BUTTON);
 
-  dispatcher->AsRootWindowHostDelegate()->OnHostMouseEvent(&press_event);
-  dispatcher->AsRootWindowHostDelegate()->OnHostMouseEvent(&release_event);
+  ui::EventDispatchDetails details =
+      host->event_processor()->OnEventFromSource(&press_event);
+  if (!details.dispatcher_destroyed)
+    details = host->event_processor()->OnEventFromSource(&release_event);
+  if (details.dispatcher_destroyed)
+    return;
 }
 
 // static.

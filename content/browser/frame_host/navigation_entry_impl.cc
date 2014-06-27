@@ -53,6 +53,7 @@ NavigationEntryImpl::NavigationEntryImpl()
       should_replace_entry_(false),
       should_clear_history_list_(false),
       can_load_local_resources_(false),
+      frame_tree_node_id_(-1),
       nw_win_id_(0) {
 }
 
@@ -60,7 +61,7 @@ NavigationEntryImpl::NavigationEntryImpl(SiteInstanceImpl* instance,
                                          int page_id,
                                          const GURL& url,
                                          const Referrer& referrer,
-                                         const string16& title,
+                                         const base::string16& title,
                                          PageTransition transition_type,
                                          bool is_renderer_initiated)
     : unique_id_(GetUniqueIDInConstructor()),
@@ -82,6 +83,7 @@ NavigationEntryImpl::NavigationEntryImpl(SiteInstanceImpl* instance,
       should_replace_entry_(false),
       should_clear_history_list_(false),
       can_load_local_resources_(false),
+      frame_tree_node_id_(-1),
       nw_win_id_(0) {
 }
 
@@ -130,12 +132,12 @@ const GURL& NavigationEntryImpl::GetVirtualURL() const {
   return virtual_url_.is_empty() ? url_ : virtual_url_;
 }
 
-void NavigationEntryImpl::SetTitle(const string16& title) {
+void NavigationEntryImpl::SetTitle(const base::string16& title) {
   title_ = title;
   cached_display_title_.clear();
 }
 
-const string16& NavigationEntryImpl::GetTitle() const {
+const base::string16& NavigationEntryImpl::GetTitle() const {
   return title_;
 }
 
@@ -166,7 +168,7 @@ void NavigationEntryImpl::SetBindings(int bindings) {
   bindings_ = bindings;
 }
 
-const string16& NavigationEntryImpl::GetTitleForDisplay(
+const base::string16& NavigationEntryImpl::GetTitleForDisplay(
     const std::string& languages) const {
   // Most pages have real titles. Don't even bother caching anything if this is
   // the case.
@@ -179,7 +181,7 @@ const string16& NavigationEntryImpl::GetTitleForDisplay(
     return cached_display_title_;
 
   // Use the virtual URL first if any, and fall back on using the real URL.
-  string16 title;
+  base::string16 title;
   if (!virtual_url_.is_empty()) {
     title = net::FormatUrl(virtual_url_, languages);
   } else if (!url_.is_empty()) {
@@ -188,8 +190,8 @@ const string16& NavigationEntryImpl::GetTitleForDisplay(
 
   // For file:// URLs use the filename as the title, not the full path.
   if (url_.SchemeIsFile()) {
-    string16::size_type slashpos = title.rfind('/');
-    if (slashpos != string16::npos)
+    base::string16::size_type slashpos = title.rfind('/');
+    if (slashpos != base::string16::npos)
       title = title.substr(slashpos + 1);
   }
 
@@ -289,6 +291,10 @@ int NavigationEntryImpl::GetHttpStatusCode() const {
   return http_status_code_;
 }
 
+bool NavigationEntryImpl::IsRestored() const {
+  return restore_type_ != RESTORE_NONE;
+}
+
 void NavigationEntryImpl::SetCanLoadLocalResources(bool allow) {
   can_load_local_resources_ = allow;
 }
@@ -306,13 +312,14 @@ const std::string& NavigationEntryImpl::GetFrameToNavigate() const {
 }
 
 void NavigationEntryImpl::SetExtraData(const std::string& key,
-                                       const string16& data) {
+                                       const base::string16& data) {
   extra_data_[key] = data;
 }
 
 bool NavigationEntryImpl::GetExtraData(const std::string& key,
-                                       string16* data) const {
-  std::map<std::string, string16>::const_iterator iter = extra_data_.find(key);
+                                       base::string16* data) const {
+  std::map<std::string, base::string16>::const_iterator iter =
+      extra_data_.find(key);
   if (iter == extra_data_.end())
     return false;
   *data = iter->second;
@@ -332,6 +339,7 @@ void NavigationEntryImpl::ResetForCommit() {
   set_should_replace_entry(false);
   redirect_chain_.clear();
   set_should_clear_history_list(false);
+  set_frame_tree_node_id(-1);
 }
 
 void NavigationEntryImpl::SetScreenshotPNGData(

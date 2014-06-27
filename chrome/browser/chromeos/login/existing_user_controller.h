@@ -78,14 +78,15 @@ class ExistingUserController : public LoginDisplay::Delegate,
   virtual void CancelPasswordChangedFlow() OVERRIDE;
   virtual void CreateAccount() OVERRIDE;
   virtual void CompleteLogin(const UserContext& user_context) OVERRIDE;
-  virtual string16 GetConnectedNetworkName() OVERRIDE;
+  virtual base::string16 GetConnectedNetworkName() OVERRIDE;
   virtual bool IsSigninInProgress() const OVERRIDE;
   virtual void Login(const UserContext& user_context) OVERRIDE;
   virtual void MigrateUserData(const std::string& old_password) OVERRIDE;
   virtual void LoginAsRetailModeUser() OVERRIDE;
   virtual void LoginAsGuest() OVERRIDE;
   virtual void LoginAsPublicAccount(const std::string& username) OVERRIDE;
-  virtual void LoginAsKioskApp(const std::string& app_id) OVERRIDE;
+  virtual void LoginAsKioskApp(const std::string& app_id,
+                               bool diagnostic_mode) OVERRIDE;
   virtual void OnSigninScreenReady() OVERRIDE;
   virtual void OnUserSelected(const std::string& username) OVERRIDE;
   virtual void OnStartEnterpriseEnrollment() OVERRIDE;
@@ -172,8 +173,8 @@ class ExistingUserController : public LoginDisplay::Delegate,
 
   // Handles result of consumer kiosk configurability check and starts
   // enable kiosk screen if applicable.
-  void OnConsumerKioskModeCheckCompleted(
-      KioskAppManager::ConsumerKioskModeStatus status);
+  void OnConsumerKioskAutoLaunchCheckCompleted(
+      KioskAppManager::ConsumerKioskAutoLaunchStatus status);
 
   // Enters the enterprise enrollment screen. |forced| is true if this is the
   // result of an auto-enrollment check, and the user shouldn't be able to
@@ -211,6 +212,9 @@ class ExistingUserController : public LoginDisplay::Delegate,
 
   // Updates the |login_display_| attached to this controller.
   void UpdateLoginDisplay(const UserList& users);
+
+  // Sends an accessibility alert event to extension listeners.
+  void SendAccessibilityAlert(const std::string& alert_text);
 
   // Public session auto-login timer.
   scoped_ptr<base::OneShotTimer<ExistingUserController> > auto_login_timer_;

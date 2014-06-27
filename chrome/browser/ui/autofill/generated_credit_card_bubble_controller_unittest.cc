@@ -14,7 +14,7 @@
 #include "chrome/browser/ui/autofill/test_generated_credit_card_bubble_view.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/autofill/core/browser/autofill_common_test.h"
+#include "components/autofill/core/browser/autofill_test_utils.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/page_transition_types.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -31,11 +31,11 @@ namespace autofill {
 namespace {
 
 base::string16 BackingCard() {
-  return ASCIIToUTF16("Visa - 1111");
+  return base::ASCIIToUTF16("Visa - 1111");
 }
 
 base::string16 FrontingCard() {
-  return ASCIIToUTF16("Mastercard - 4444");
+  return base::ASCIIToUTF16("Mastercard - 4444");
 }
 
 base::string16 RangeOfString(const base::string16& string,

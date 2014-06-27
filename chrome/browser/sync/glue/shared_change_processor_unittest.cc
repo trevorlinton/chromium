@@ -10,10 +10,10 @@
 #include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
 #include "base/message_loop/message_loop.h"
-#include "chrome/browser/sync/glue/data_type_error_handler_mock.h"
 #include "chrome/browser/sync/profile_sync_components_factory_impl.h"
 #include "chrome/browser/sync/profile_sync_components_factory_mock.h"
 #include "chrome/browser/sync/profile_sync_service_mock.h"
+#include "components/sync_driver/data_type_error_handler_mock.h"
 #include "content/public/test/test_browser_thread.h"
 #include "sync/api/fake_syncable_service.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -37,7 +37,8 @@ class SyncSharedChangeProcessorTest : public testing::Test {
  public:
   SyncSharedChangeProcessorTest()
       : ui_thread_(BrowserThread::UI, &ui_loop_),
-        db_thread_(BrowserThread::DB) {}
+        db_thread_(BrowserThread::DB),
+        sync_service_(&profile_) {}
 
   virtual ~SyncSharedChangeProcessorTest() {
     EXPECT_FALSE(db_syncable_service_.get());
@@ -117,6 +118,7 @@ class SyncSharedChangeProcessorTest : public testing::Test {
 
   scoped_refptr<SharedChangeProcessor> shared_change_processor_;
   NiceMock<ProfileSyncComponentsFactoryMock> sync_factory_;
+  TestingProfile profile_;
   NiceMock<ProfileSyncServiceMock> sync_service_;
   StrictMock<DataTypeErrorHandlerMock> error_handler_;
 

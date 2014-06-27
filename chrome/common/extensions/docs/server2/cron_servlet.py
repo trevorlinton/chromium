@@ -3,7 +3,7 @@
 # found in the LICENSE file.
 
 import logging
-import time
+import posixpath
 import traceback
 
 from app_yaml_helper import AppYamlHelper
@@ -12,16 +12,20 @@ from appengine_wrappers import (
 from branch_utility import BranchUtility
 from compiled_file_system import CompiledFileSystem
 from data_source_registry import CreateDataSources
-from empty_dir_file_system import EmptyDirFileSystem
 from environment import IsDevServer
+from extensions_paths import EXAMPLES, PUBLIC_TEMPLATES, STATIC_DOCS
 from file_system_util import CreateURLsFromPaths
+from future import Future
+from gcs_file_system_provider import CloudStorageFileSystemProvider
 from github_file_system_provider import GithubFileSystemProvider
 from host_file_system_provider import HostFileSystemProvider
 from object_store_creator import ObjectStoreCreator
 from render_servlet import RenderServlet
 from server_instance import ServerInstance
 from servlet import Servlet, Request, Response
-import svn_constants
+from special_paths import SITE_VERIFICATION_FILE
+from timer import Timer, TimerClosure
+
 
 class _SingletonRenderServletDelegate(RenderServlet.Delegate):
   def __init__(self, server_instance):
@@ -55,7 +59,7 @@ def _RequestEachItem(title, items, request_callback):
   '''
   _cronlog.info('%s: starting', title)
   success_count, failure_count = 0, 0
-  start_time = time.time()
+  timer = Timer()
   try:
     for i, item in enumerate(items):
       def error_message(detail):
@@ -73,9 +77,9 @@ def _RequestEachItem(title, items, request_callback):
         failure_count += 1
         if IsDeadlineExceededError(e): raise
   finally:
-    elapsed_seconds = time.time() - start_time
-    _cronlog.info('%s: rendered %s of %s with %s failures in %s seconds',
-        title, success_count, len(items), failure_count, elapsed_seconds);
+    _cronlog.info('%s: rendered %s of %s with %s failures in %s',
+        title, success_count, len(items), failure_count,
+        timer.Stop().FormatElapsed())
   return success_count == len(items)
 
 class CronServlet(Servlet):
@@ -99,6 +103,9 @@ class CronServlet(Servlet):
 
     def CreateGithubFileSystemProvider(self, object_store_creator):
       return GithubFileSystemProvider(object_store_creator)
+
+    def CreateGCSFileSystemProvider(self, object_store_creator):
+      return CloudStorageFileSystemProvider(object_store_creator)
 
     def GetAppVersion(self):
       return GetAppVersion()
@@ -141,62 +148,87 @@ class CronServlet(Servlet):
       delegate = _SingletonRenderServletDelegate(server_instance)
       return RenderServlet(request, delegate).Get()
 
-    def request_files_in_dir(path, prefix=''):
+    def request_files_in_dir(path, prefix='', strip_ext=None):
       '''Requests every file found under |path| in this host file system, with
-      a request prefix of |prefix|.
+      a request prefix of |prefix|. |strip_ext| is an optional list of file
+      extensions that should be stripped from paths before requesting.
       '''
-      files = [name for name, _ in CreateURLsFromPaths(trunk_fs, path, prefix)]
+      def maybe_strip_ext(name):
+        if name == SITE_VERIFICATION_FILE or not strip_ext:
+          return name
+        base, ext = posixpath.splitext(name)
+        return base if ext in strip_ext else name
+      files = [maybe_strip_ext(name)
+               for name, _ in CreateURLsFromPaths(trunk_fs, path, prefix)]
       return _RequestEachItem(path, files, render)
 
     results = []
 
     try:
+      # Start running the hand-written Cron methods first; they can be run in
+      # parallel. They are resolved at the end.
+      def run_cron_for_future(target):
+        title = target.__class__.__name__
+        future, init_timer = TimerClosure(target.Cron)
+        assert isinstance(future, Future), (
+            '%s.Cron() did not return a Future' % title)
+        def resolve():
+          resolve_timer = Timer()
+          try:
+            future.Get()
+          except Exception as e:
+            _cronlog.error('%s: error %s' % (title, traceback.format_exc()))
+            results.append(False)
+            if IsDeadlineExceededError(e): raise
+          finally:
+            resolve_timer.Stop()
+            _cronlog.info('%s took %s: %s to initialize and %s to resolve' %
+                (title,
+                 init_timer.With(resolve_timer).FormatElapsed(),
+                 init_timer.FormatElapsed(),
+                 resolve_timer.FormatElapsed()))
+        return Future(callback=resolve)
+
+      targets = (CreateDataSources(server_instance).values() +
+                 [server_instance.content_providers])
+      title = 'initializing %s parallel Cron targets' % len(targets)
+      _cronlog.info(title)
+      timer = Timer()
+      try:
+        cron_futures = [run_cron_for_future(target) for target in targets]
+      finally:
+        _cronlog.info('%s took %s' % (title, timer.Stop().FormatElapsed()))
+
       # Rendering the public templates will also pull in all of the private
       # templates.
-      results.append(request_files_in_dir(svn_constants.PUBLIC_TEMPLATE_PATH))
+      results.append(request_files_in_dir(PUBLIC_TEMPLATES,
+                                          strip_ext=('.html', '.md')))
 
       # Rendering the public templates will have pulled in the .js and
       # manifest.json files (for listing examples on the API reference pages),
       # but there are still images, CSS, etc.
-      results.append(request_files_in_dir(svn_constants.STATIC_PATH,
-                                          prefix='static/'))
+      results.append(request_files_in_dir(STATIC_DOCS, prefix='static'))
 
       # Samples are too expensive to run on the dev server, where there is no
       # parallel fetch.
-      if not IsDevServer():
+      #
+      # XXX(kalman): Currently samples are *always* too expensive to fetch, so
+      # disabling them for now. It won't break anything so long as we're still
+      # not enforcing that everything gets cached for normal instances.
+      if False:  # should be "not IsDevServer()":
         # Fetch each individual sample file.
-        results.append(request_files_in_dir(svn_constants.EXAMPLES_PATH,
-                                            prefix='extensions/examples/'))
+        results.append(request_files_in_dir(EXAMPLES,
+                                            prefix='extensions/examples'))
 
-        # Fetch the zip file of each example (contains all the individual
-        # files).
-        example_zips = []
-        for root, _, files in trunk_fs.Walk(svn_constants.EXAMPLES_PATH):
-          example_zips.extend(
-              root + '.zip' for name in files if name == 'manifest.json')
-        results.append(_RequestEachItem(
-            'example zips',
-            example_zips,
-            lambda path: render('extensions/examples/' + path)))
-
-      def run_cron(data_source):
-        title = data_source.__class__.__name__
-        _cronlog.info('%s: starting' % title)
-        start_time = time.time()
-        try:
-          data_source.Cron()
-        except Exception as e:
-          _cronlog.error('%s: error %s' % (title, traceback.format_exc()))
-          results.append(False)
-          if IsDeadlineExceededError(e): raise
-        finally:
-          _cronlog.info(
-              '%s: took %s seconds' % (title, time.time() - start_time))
-
-      for data_source in CreateDataSources(server_instance).values():
-        run_cron(data_source)
-
-      run_cron(server_instance.content_providers)
+      # Resolve the hand-written Cron method futures.
+      title = 'resolving %s parallel Cron targets' % len(targets)
+      _cronlog.info(title)
+      timer = Timer()
+      try:
+        for future in cron_futures:
+          future.Get()
+      finally:
+        _cronlog.info('%s took %s' % (title, timer.Stop().FormatElapsed()))
 
     except:
       results.append(False)
@@ -226,7 +258,6 @@ class CronServlet(Servlet):
         self._GetMostRecentRevision())
 
     app_yaml_handler = AppYamlHelper(
-        svn_constants.APP_YAML_PATH,
         server_instance_near_head.object_store_creator,
         server_instance_near_head.host_file_system_provider)
 
@@ -250,7 +281,7 @@ class CronServlet(Servlet):
     '''
     head_fs = (
         self._CreateServerInstance(None).host_file_system_provider.GetTrunk())
-    return head_fs.Stat('/').version
+    return head_fs.Stat('').version
 
   def _CreateServerInstance(self, revision):
     '''Creates a ServerInstance pinned to |revision|, or HEAD if None.
@@ -263,8 +294,11 @@ class CronServlet(Servlet):
         object_store_creator, max_trunk_revision=revision)
     github_file_system_provider = self._delegate.CreateGithubFileSystemProvider(
         object_store_creator)
+    gcs_file_system_provider = self._delegate.CreateGCSFileSystemProvider(
+        object_store_creator)
     return ServerInstance(object_store_creator,
                           CompiledFileSystem.Factory(object_store_creator),
                           branch_utility,
                           host_file_system_provider,
-                          github_file_system_provider)
+                          github_file_system_provider,
+                          gcs_file_system_provider)

@@ -39,14 +39,14 @@ class CC_EXPORT Proxy {
   bool IsMainThread() const;
   bool IsImplThread() const;
   bool IsMainThreadBlocked() const;
-#ifndef NDEBUG
+#if DCHECK_IS_ON
   void SetMainThreadBlocked(bool is_main_thread_blocked);
   void SetCurrentThreadIsImplThread(bool is_impl_thread);
 #endif
 
   virtual ~Proxy();
 
-  virtual bool CompositeAndReadback(void* pixels, gfx::Rect rect) = 0;
+  virtual bool CompositeAndReadback(void* pixels, const gfx::Rect& rect) = 0;
 
   virtual void FinishAllRendering() = 0;
 
@@ -68,7 +68,7 @@ class CC_EXPORT Proxy {
   virtual void SetNeedsAnimate() = 0;
   virtual void SetNeedsUpdateLayers() = 0;
   virtual void SetNeedsCommit() = 0;
-  virtual void SetNeedsRedraw(gfx::Rect damage_rect) = 0;
+  virtual void SetNeedsRedraw(const gfx::Rect& damage_rect) = 0;
   virtual void SetNextCommitWaitsForActivation() = 0;
 
   virtual void NotifyInputThrottledUntilCommit() = 0;
@@ -84,7 +84,7 @@ class CC_EXPORT Proxy {
   virtual bool BeginMainFrameRequested() const = 0;
 
   // Must be called before using the proxy.
-  virtual void Start(scoped_ptr<OutputSurface> first_output_surface) = 0;
+  virtual void Start() = 0;
   virtual void Stop() = 0;   // Must be called before deleting the proxy.
 
   // Forces 3D commands on all contexts to wait for all previous SwapBuffers
@@ -112,7 +112,7 @@ class CC_EXPORT Proxy {
  private:
   scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
   scoped_refptr<base::SingleThreadTaskRunner> impl_task_runner_;
-#ifndef NDEBUG
+#if DCHECK_IS_ON
   bool impl_thread_is_overridden_;
   bool is_main_thread_blocked_;
 #endif
@@ -120,7 +120,7 @@ class CC_EXPORT Proxy {
   DISALLOW_COPY_AND_ASSIGN(Proxy);
 };
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON
 class DebugScopedSetMainThreadBlocked {
  public:
   explicit DebugScopedSetMainThreadBlocked(Proxy* proxy) : proxy_(proxy) {

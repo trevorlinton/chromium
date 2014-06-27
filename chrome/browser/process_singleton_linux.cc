@@ -41,9 +41,6 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#if defined(TOOLKIT_GTK)
-#include <gdk/gdk.h>
-#endif
 #include <signal.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -77,15 +74,20 @@
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#if defined(TOOLKIT_GTK)
-// #include "chrome/browser/ui/gtk/process_singleton_dialog.h"
-#endif
+//#include "chrome/browser/ui/process_singleton_dialog_linux.h"
 #include "chrome/common/chrome_constants.h"
 #include "content/public/browser/browser_thread.h"
-// #include "grit/chromium_strings.h"
-// #include "grit/generated_resources.h"
+//#include "grit/chromium_strings.h"
+//#include "grit/generated_resources.h"
 #include "net/base/net_util.h"
 #include "ui/base/l10n/l10n_util.h"
+
+#if defined(TOOLKIT_GTK)
+#include <gdk/gdk.h>
+#endif
+#if defined(TOOLKIT_VIEWS) && !defined(OS_CHROMEOS)
+#include "ui/views/linux_ui/linux_ui.h"
+#endif
 
 using content::BrowserThread;
 
@@ -127,7 +129,7 @@ int SetCloseOnExec(int fd) {
 
 // Close a socket and check return value.
 void CloseSocket(int fd) {
-  int rv = HANDLE_EINTR(close(fd));
+  int rv = IGNORE_EINTR(close(fd));
   DCHECK_EQ(0, rv) << "Error closing socket: " << safe_strerror(errno);
 }
 
@@ -232,7 +234,7 @@ void SetupSocket(const std::string& path, int* sock, struct sockaddr_un* addr) {
 // Read a symbolic link, return empty string if given path is not a symbol link.
 base::FilePath ReadLink(const base::FilePath& path) {
   base::FilePath target;
-  if (!file_util::ReadSymbolicLink(path, &target)) {
+  if (!base::ReadSymbolicLink(path, &target)) {
     // The only errno that should occur is ENOENT.
     if (errno != 0 && errno != ENOENT)
       PLOG(ERROR) << "readlink(" << path.value() << ") failed";
@@ -251,7 +253,7 @@ bool UnlinkPath(const base::FilePath& path) {
 
 // Create a symlink. Returns true on success.
 bool SymlinkPath(const base::FilePath& target, const base::FilePath& path) {
-  if (!file_util::CreateSymbolicLink(target, path)) {
+  if (!base::CreateSymbolicLink(target, path)) {
     // Double check the value in case symlink suceeded but we got an incorrect
     // failure due to NFS packet loss & retry.
     int saved_errno = errno;
@@ -299,23 +301,18 @@ bool DisplayProfileInUseError(const base::FilePath& lock_path,
                               const std::string& hostname,
                               int pid) {
 #if 0
-  string16 error = l10n_util::GetStringFUTF16(
+  base::string16 error = l10n_util::GetStringFUTF16(
       IDS_PROFILE_IN_USE_LINUX,
       base::IntToString16(pid),
-      ASCIIToUTF16(hostname));
-  string16 relaunch_button_text = l10n_util::GetStringUTF16(
+      base::ASCIIToUTF16(hostname));
+  base::string16 relaunch_button_text = l10n_util::GetStringUTF16(
       IDS_PROFILE_IN_USE_LINUX_RELAUNCH);
-  LOG(ERROR) << base::SysWideToNativeMB(UTF16ToWide(error)).c_str();
-  if (!g_disable_prompt) {
-#if defined(TOOLKIT_GTK)
-    return ProcessSingletonDialog::ShowAndRun(
-        UTF16ToUTF8(error), UTF16ToUTF8(relaunch_button_text));
-#else
-    NOTIMPLEMENTED();
-#endif
-  }
-#endif
+  LOG(ERROR) << base::SysWideToNativeMB(base::UTF16ToWide(error)).c_str();
+  if (!g_disable_prompt)
+    return ShowProcessSingletonDialog(error, relaunch_button_text);
   return false;
+#endif
+  return true;
 }
 
 bool IsChromeProcess(pid_t pid) {
@@ -357,7 +354,7 @@ bool ConnectSocket(ScopedSocket* socket,
                    const base::FilePath& socket_path,
                    const base::FilePath& cookie_path) {
   base::FilePath socket_target;
-  if (file_util::ReadSymbolicLink(socket_path, &socket_target)) {
+  if (base::ReadSymbolicLink(socket_path, &socket_target)) {
     // It's a symlink. Read the cookie.
     base::FilePath cookie = ReadLink(cookie_path);
     if (cookie.empty())
@@ -826,6 +823,13 @@ ProcessSingleton::NotifyResult ProcessSingleton::NotifyOtherProcessWithTimeout(
     // window, GTK will not automatically call this for us.
     gdk_notify_startup_complete();
 #endif
+#if defined(TOOLKIT_VIEWS) && !defined(OS_CHROMEOS)
+    // Likely NULL in unit tests.
+    views::LinuxUI* linux_ui = views::LinuxUI::instance();
+    if (linux_ui)
+      linux_ui->NotifyWindowManagerStartupComplete();
+#endif
+
     // Assume the other process is handling the request.
     return PROCESS_NOTIFIED;
   }

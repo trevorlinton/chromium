@@ -4,20 +4,23 @@
 
 #include "base/basictypes.h"
 #include "base/bind.h"
+#include "base/path_service.h"
 #include "base/run_loop.h"
+#include "ui/aura/client/focus_client.h"
+#include "ui/aura/env.h"
+#include "ui/aura/window.h"
+#include "ui/aura/window_tree_host.h"
+#include "ui/base/resource/resource_bundle.h"
+#include "ui/base/ui_base_paths.h"
+#include "ui/events/event_processor.h"
 #include "ui/gfx/native_widget_types.h"
+#include "ui/gl/gl_surface.h"
 #include "ui/views/test/widget_test.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/dialog_delegate.h"
+#include "ui/wm/public/activation_client.h"
 
-#if defined(USE_AURA)
-#include "ui/aura/client/activation_client.h"
-#include "ui/aura/client/focus_client.h"
-#include "ui/aura/env.h"
-#include "ui/aura/root_window.h"
-#endif
-
-#if defined(USE_AURA) && !defined(OS_CHROMEOS)
+#if !defined(OS_CHROMEOS)
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 #endif
 
@@ -133,9 +136,6 @@ class NestedLoopCaptureView : public View {
     base::MessageLoop::ScopedNestableTaskAllower allow(loop);
 
     base::RunLoop run_loop;
-#if defined(USE_AURA)
-    run_loop.set_dispatcher(aura::Env::GetInstance()->GetDispatcher());
-#endif
     run_loop.Run();
     return true;
   }
@@ -147,8 +147,24 @@ class NestedLoopCaptureView : public View {
 
 }  // namespace
 
-#if defined(OS_WIN) && defined(USE_AURA)
-// Tests whether activation and focus change works correctly in Windows AURA.
+class WidgetTestInteractive : public WidgetTest {
+ public:
+  WidgetTestInteractive() {}
+  virtual ~WidgetTestInteractive() {}
+
+  virtual void SetUp() OVERRIDE {
+    gfx::GLSurface::InitializeOneOffForTests();
+    base::FilePath pak_dir;
+    PathService::Get(base::DIR_MODULE, &pak_dir);
+    base::FilePath pak_file;
+    pak_file = pak_dir.Append(FILE_PATH_LITERAL("ui_test.pak"));
+    ui::ResourceBundle::InitSharedInstanceWithPakPath(pak_file);
+    WidgetTest::SetUp();
+  }
+};
+
+#if defined(OS_WIN)
+// Tests whether activation and focus change works correctly in Windows.
 // We test the following:-
 // 1. If the active aura window is correctly set when a top level widget is
 //    created.
@@ -158,10 +174,10 @@ class NestedLoopCaptureView : public View {
 //    window for widget 1 should be set and that for widget 2 should reset.
 // TODO(ananta)
 // Discuss with erg on how to write this test for linux x11 aura.
-TEST_F(WidgetTest, DesktopNativeWidgetAuraActivationAndFocusTest) {
+TEST_F(WidgetTestInteractive, DesktopNativeWidgetAuraActivationAndFocusTest) {
   // Create widget 1 and expect the active window to be its window.
   View* contents_view1 = new View;
-  contents_view1->set_focusable(true);
+  contents_view1->SetFocusable(true);
   Widget widget1;
   Widget::InitParams init_params =
       CreateParams(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
@@ -193,7 +209,8 @@ TEST_F(WidgetTest, DesktopNativeWidgetAuraActivationAndFocusTest) {
   widget2.Show();
   aura::Window* root_window2 = widget2.GetNativeView()->GetRootWindow();
   contents_view2->RequestFocus();
-  ::SetActiveWindow(root_window2->GetDispatcher()->GetAcceleratedWidget());
+  ::SetActiveWindow(
+      root_window2->GetHost()->GetAcceleratedWidget());
 
   aura::client::ActivationClient* activation_client2 =
       aura::client::GetActivationClient(root_window2);
@@ -205,14 +222,15 @@ TEST_F(WidgetTest, DesktopNativeWidgetAuraActivationAndFocusTest) {
   // Now set focus back to widget 1 and expect the active window to be its
   // window.
   contents_view1->RequestFocus();
-  ::SetActiveWindow(root_window1->GetDispatcher()->GetAcceleratedWidget());
+  ::SetActiveWindow(
+      root_window1->GetHost()->GetAcceleratedWidget());
   EXPECT_EQ(activation_client2->GetActiveWindow(),
             reinterpret_cast<aura::Window*>(NULL));
   EXPECT_EQ(activation_client1->GetActiveWindow(), widget1.GetNativeView());
 }
 #endif
 
-TEST_F(WidgetTest, CaptureAutoReset) {
+TEST_F(WidgetTestInteractive, CaptureAutoReset) {
   Widget* toplevel = CreateTopLevelFramelessPlatformWidget();
   View* container = new View;
   toplevel->SetContentsView(container);
@@ -224,7 +242,7 @@ TEST_F(WidgetTest, CaptureAutoReset) {
   // By default, mouse release removes capture.
   gfx::Point click_location(45, 15);
   ui::MouseEvent release(ui::ET_MOUSE_RELEASED, click_location, click_location,
-      ui::EF_LEFT_MOUSE_BUTTON);
+                         ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
   toplevel->OnMouseEvent(&release);
   EXPECT_FALSE(toplevel->HasCapture());
 
@@ -241,7 +259,7 @@ TEST_F(WidgetTest, CaptureAutoReset) {
   RunPendingMessages();
 }
 
-TEST_F(WidgetTest, ResetCaptureOnGestureEnd) {
+TEST_F(WidgetTestInteractive, ResetCaptureOnGestureEnd) {
   Widget* toplevel = CreateTopLevelFramelessPlatformWidget();
   View* container = new View;
   toplevel->SetContentsView(container);
@@ -271,9 +289,9 @@ TEST_F(WidgetTest, ResetCaptureOnGestureEnd) {
   gfx::Point click_location(45, 15);
 
   ui::MouseEvent press(ui::ET_MOUSE_PRESSED, click_location, click_location,
-      ui::EF_LEFT_MOUSE_BUTTON);
+                       ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
   ui::MouseEvent release(ui::ET_MOUSE_RELEASED, click_location, click_location,
-      ui::EF_LEFT_MOUSE_BUTTON);
+                         ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
 
   EXPECT_TRUE(toplevel->HasCapture());
 
@@ -297,7 +315,7 @@ TEST_F(WidgetTest, ResetCaptureOnGestureEnd) {
 // Checks that if a mouse-press triggers a capture on a different widget (which
 // consumes the mouse-release event), then the target of the press does not have
 // capture.
-TEST_F(WidgetTest, DisableCaptureWidgetFromMousePress) {
+TEST_F(WidgetTestInteractive, DisableCaptureWidgetFromMousePress) {
   // The test creates two widgets: |first| and |second|.
   // The View in |first| makes |second| visible, sets capture on it, and starts
   // a nested loop (like a menu does). The View in |second| terminates the
@@ -324,9 +342,10 @@ TEST_F(WidgetTest, DisableCaptureWidgetFromMousePress) {
                  base::Owned(new ui::MouseEvent(ui::ET_MOUSE_RELEASED,
                                                 location,
                                                 location,
+                                                ui::EF_LEFT_MOUSE_BUTTON,
                                                 ui::EF_LEFT_MOUSE_BUTTON))));
   ui::MouseEvent press(ui::ET_MOUSE_PRESSED, location, location,
-                       ui::EF_LEFT_MOUSE_BUTTON);
+                       ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
   first->OnMouseEvent(&press);
   EXPECT_FALSE(first->HasCapture());
   first->Close();
@@ -335,7 +354,7 @@ TEST_F(WidgetTest, DisableCaptureWidgetFromMousePress) {
 
 // Tests some grab/ungrab events.
 // TODO(estade): can this be enabled now that this is an interactive ui test?
-TEST_F(WidgetTest, DISABLED_GrabUngrab) {
+TEST_F(WidgetTestInteractive, DISABLED_GrabUngrab) {
   Widget* toplevel = CreateTopLevelPlatformWidget();
   Widget* child1 = CreateChildNativeWidgetWithParent(toplevel);
   Widget* child2 = CreateChildNativeWidgetWithParent(toplevel);
@@ -358,7 +377,7 @@ TEST_F(WidgetTest, DISABLED_GrabUngrab) {
   // Click on child1
   gfx::Point p1(45, 45);
   ui::MouseEvent pressed(ui::ET_MOUSE_PRESSED, p1, p1,
-                         ui::EF_LEFT_MOUSE_BUTTON);
+                         ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
   toplevel->OnMouseEvent(&pressed);
 
   EXPECT_TRUE(toplevel->HasCapture());
@@ -366,7 +385,7 @@ TEST_F(WidgetTest, DISABLED_GrabUngrab) {
   EXPECT_FALSE(child2->HasCapture());
 
   ui::MouseEvent released(ui::ET_MOUSE_RELEASED, p1, p1,
-                          ui::EF_LEFT_MOUSE_BUTTON);
+                          ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
   toplevel->OnMouseEvent(&released);
 
   EXPECT_FALSE(toplevel->HasCapture());
@@ -378,7 +397,7 @@ TEST_F(WidgetTest, DISABLED_GrabUngrab) {
   // Click on child2
   gfx::Point p2(315, 45);
   ui::MouseEvent pressed2(ui::ET_MOUSE_PRESSED, p2, p2,
-                          ui::EF_LEFT_MOUSE_BUTTON);
+                          ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
   toplevel->OnMouseEvent(&pressed2);
   EXPECT_TRUE(pressed2.handled());
   EXPECT_TRUE(toplevel->HasCapture());
@@ -386,7 +405,7 @@ TEST_F(WidgetTest, DISABLED_GrabUngrab) {
   EXPECT_FALSE(child1->HasCapture());
 
   ui::MouseEvent released2(ui::ET_MOUSE_RELEASED, p2, p2,
-                           ui::EF_LEFT_MOUSE_BUTTON);
+                           ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
   toplevel->OnMouseEvent(&released2);
   EXPECT_FALSE(toplevel->HasCapture());
   EXPECT_FALSE(child1->HasCapture());
@@ -397,7 +416,7 @@ TEST_F(WidgetTest, DISABLED_GrabUngrab) {
 
 // Tests mouse move outside of the window into the "resize controller" and back
 // will still generate an OnMouseEntered and OnMouseExited event..
-TEST_F(WidgetTest, CheckResizeControllerEvents) {
+TEST_F(WidgetTestInteractive, CheckResizeControllerEvents) {
   Widget* toplevel = CreateTopLevelPlatformWidget();
 
   toplevel->SetBounds(gfx::Rect(0, 0, 100, 100));
@@ -411,21 +430,24 @@ TEST_F(WidgetTest, CheckResizeControllerEvents) {
 
   // Move to an outside position.
   gfx::Point p1(200, 200);
-  ui::MouseEvent moved_out(ui::ET_MOUSE_MOVED, p1, p1, ui::EF_NONE);
+  ui::MouseEvent moved_out(ui::ET_MOUSE_MOVED, p1, p1, ui::EF_NONE,
+                           ui::EF_NONE);
   toplevel->OnMouseEvent(&moved_out);
   EXPECT_EQ(0, view->EnteredCalls());
   EXPECT_EQ(0, view->ExitedCalls());
 
   // Move onto the active view.
   gfx::Point p2(95, 95);
-  ui::MouseEvent moved_over(ui::ET_MOUSE_MOVED, p2, p2, ui::EF_NONE);
+  ui::MouseEvent moved_over(ui::ET_MOUSE_MOVED, p2, p2, ui::EF_NONE,
+                            ui::EF_NONE);
   toplevel->OnMouseEvent(&moved_over);
   EXPECT_EQ(1, view->EnteredCalls());
   EXPECT_EQ(0, view->ExitedCalls());
 
   // Move onto the outer resizing border.
   gfx::Point p3(102, 95);
-  ui::MouseEvent moved_resizer(ui::ET_MOUSE_MOVED, p3, p3, ui::EF_NONE);
+  ui::MouseEvent moved_resizer(ui::ET_MOUSE_MOVED, p3, p3, ui::EF_NONE,
+                               ui::EF_NONE);
   toplevel->OnMouseEvent(&moved_resizer);
   EXPECT_EQ(0, view->EnteredCalls());
   EXPECT_EQ(1, view->ExitedCalls());
@@ -470,23 +492,19 @@ class WidgetActivationTest : public Widget {
 
 // Tests whether the widget only becomes active when the underlying window
 // is really active.
-TEST_F(WidgetTest, WidgetNotActivatedOnFakeActivationMessages) {
+TEST_F(WidgetTestInteractive, WidgetNotActivatedOnFakeActivationMessages) {
   WidgetActivationTest widget1;
   Widget::InitParams init_params =
       CreateParams(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
   init_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
-#if defined(USE_AURA)
   init_params.native_widget = new DesktopNativeWidgetAura(&widget1);
-#endif
   init_params.bounds = gfx::Rect(0, 0, 200, 200);
   widget1.Init(init_params);
   widget1.Show();
   EXPECT_EQ(true, widget1.active());
 
   WidgetActivationTest widget2;
-#if defined(USE_AURA)
   init_params.native_widget = new DesktopNativeWidgetAura(&widget2);
-#endif
   widget2.Init(init_params);
   widget2.Show();
   EXPECT_EQ(true, widget2.active());
@@ -505,7 +523,7 @@ TEST_F(WidgetTest, WidgetNotActivatedOnFakeActivationMessages) {
 }
 #endif
 
-#if defined(USE_AURA) && !defined(OS_CHROMEOS)
+#if !defined(OS_CHROMEOS)
 // Provides functionality to create a window modal dialog.
 class ModalDialogDelegate : public DialogDelegateView {
  public:
@@ -526,7 +544,7 @@ class ModalDialogDelegate : public DialogDelegateView {
 // Tests whether the focused window is set correctly when a modal window is
 // created and destroyed. When it is destroyed it should focus the owner
 // window.
-TEST_F(WidgetTest, WindowModalWindowDestroyedActivationTest) {
+TEST_F(WidgetTestInteractive, WindowModalWindowDestroyedActivationTest) {
   // Create a top level widget.
   Widget top_level_widget;
   Widget::InitParams init_params =
@@ -563,7 +581,7 @@ TEST_F(WidgetTest, WindowModalWindowDestroyedActivationTest) {
 }
 
 // Test that when opening a system-modal window, capture is released.
-TEST_F(WidgetTest, SystemModalWindowReleasesCapture) {
+TEST_F(WidgetTestInteractive, SystemModalWindowReleasesCapture) {
   // Create a top level widget.
   Widget top_level_widget;
   Widget::InitParams init_params =
@@ -637,6 +655,16 @@ class WidgetCaptureTest : public ViewsTestBase {
   virtual ~WidgetCaptureTest() {
   }
 
+  virtual void SetUp() OVERRIDE {
+    gfx::GLSurface::InitializeOneOffForTests();
+    base::FilePath pak_dir;
+    PathService::Get(base::DIR_MODULE, &pak_dir);
+    base::FilePath pak_file;
+    pak_file = pak_dir.Append(FILE_PATH_LITERAL("ui_test.pak"));
+    ui::ResourceBundle::InitSharedInstanceWithPakPath(pak_file);
+    ViewsTestBase::SetUp();
+  }
+
   // Verifies Widget::SetCapture() results in updating native capture along with
   // invoking the right Widget function.
   void TestCapture(bool use_desktop_native_widget) {
@@ -683,7 +711,7 @@ class WidgetCaptureTest : public ViewsTestBase {
  private:
   NativeWidget* CreateNativeWidget(bool create_desktop_native_widget,
                                    Widget* widget) {
-#if defined(USE_AURA) && !defined(OS_CHROMEOS)
+#if !defined(OS_CHROMEOS)
     if (create_desktop_native_widget)
       return new DesktopNativeWidgetAura(widget);
 #endif
@@ -698,14 +726,14 @@ TEST_F(WidgetCaptureTest, Capture) {
   TestCapture(false);
 }
 
-#if defined(USE_AURA) && !defined(OS_CHROMEOS)
+#if !defined(OS_LINUX)
 // See description in TestCapture(). Creates DesktopNativeWidget.
 TEST_F(WidgetCaptureTest, CaptureDesktopNativeWidget) {
   TestCapture(true);
 }
 #endif
 
-#if defined(USE_AURA) && !defined(OS_CHROMEOS)
+#if !defined(OS_CHROMEOS)
 namespace {
 
 // Used to veirfy OnMouseEvent() has been invoked.
@@ -734,7 +762,7 @@ class MouseEventTrackingWidget : public Widget {
 
 }  // namespace
 
-#if defined(OS_LINUX) && !defined(OS_CHROMEOS) && defined(USE_AURA)
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
 // TODO(erg): linux_aura bringup: http://crbug.com/163931
 #define MAYBE_MouseEventDispatchedToRightWindow \
   DISABLED_MouseEventDispatchedToRightWindow
@@ -772,9 +800,10 @@ TEST_F(WidgetCaptureTest, MAYBE_MouseEventDispatchedToRightWindow) {
   // Send a mouse event to the RootWindow associated with |widget1|. Even though
   // |widget2| has capture, |widget1| should still get the event.
   ui::MouseEvent mouse_event(ui::ET_MOUSE_EXITED, gfx::Point(), gfx::Point(),
-                             ui::EF_NONE);
-  widget1.GetNativeWindow()->GetDispatcher()->AsRootWindowHostDelegate()->
-      OnHostMouseEvent(&mouse_event);
+                             ui::EF_NONE, ui::EF_NONE);
+  ui::EventDispatchDetails details = widget1.GetNativeWindow()->
+      GetHost()->event_processor()->OnEventFromSource(&mouse_event);
+  ASSERT_FALSE(details.dispatcher_destroyed);
   EXPECT_TRUE(widget1.GetAndClearGotMouseEvent());
   EXPECT_FALSE(widget2.GetAndClearGotMouseEvent());
 }

@@ -24,6 +24,7 @@
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/grid_layout.h"
+#include "ui/views/painter.h"
 
 namespace message_center {
 
@@ -50,7 +51,6 @@ class NotificationCenterButton : public views::ToggleImageButton {
  protected:
   // Overridden from views::View:
   virtual gfx::Size GetPreferredSize() OVERRIDE;
-  virtual void OnPaintFocusBorder(gfx::Canvas* canvas) OVERRIDE;
 
  private:
   gfx::Size size_;
@@ -74,18 +74,15 @@ NotificationCenterButton::NotificationCenterButton(
   if (text_id)
     SetTooltipText(resource_bundle.GetLocalizedString(text_id));
 
-  set_focusable(true);
+  SetFocusable(true);
   set_request_focus_on_press(false);
+
+  SetFocusPainter(views::Painter::CreateSolidFocusPainter(
+      kFocusBorderColor,
+      gfx::Insets(1, 2, 2, 2)));
 }
 
 gfx::Size NotificationCenterButton::GetPreferredSize() { return size_; }
-
-void NotificationCenterButton::OnPaintFocusBorder(gfx::Canvas* canvas) {
-  if (HasFocus() && (focusable() || IsAccessibilityFocusable())) {
-    canvas->DrawRect(gfx::Rect(2, 1, width() - 4, height() - 3),
-                     kFocusBorderColor);
-  }
-}
 
 // MessageCenterButtonBar /////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -102,8 +99,7 @@ MessageCenterButtonBar::MessageCenterButtonBar(
       close_all_button_(NULL),
       settings_button_(NULL),
       quiet_mode_button_(NULL) {
-  if (get_use_acceleration_when_possible())
-    SetPaintToLayer(true);
+  SetPaintToLayer(true);
   set_background(
       views::Background::CreateSolidBackground(kMessageCenterBackgroundColor));
 
@@ -117,14 +113,11 @@ MessageCenterButtonBar::MessageCenterButtonBar(
   title_arrow_->set_size(gfx::Size(kChevronWidth, kButtonSize));
 
   // Keyboardists can use the gear button to switch modes.
-  title_arrow_->set_focusable(false);
+  title_arrow_->SetFocusable(false);
   AddChildView(title_arrow_);
 
-  gfx::Font notification_label_font =
-      ResourceBundle::GetSharedInstance().GetFont(ResourceBundle::BaseFont);
   notification_label_ = new views::Label(
-      l10n_util::GetStringUTF16(IDS_MESSAGE_CENTER_FOOTER_TITLE),
-      notification_label_font);
+      l10n_util::GetStringUTF16(IDS_MESSAGE_CENTER_FOOTER_TITLE));
   notification_label_->SetAutoColorReadabilityEnabled(false);
   notification_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   notification_label_->SetEnabledColor(kRegularTextColor);

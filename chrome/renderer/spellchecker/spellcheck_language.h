@@ -9,8 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "base/files/file.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/platform_file.h"
 #include "base/strings/string16.h"
 #include "chrome/renderer/spellchecker/spellcheck_worditerator.h"
 
@@ -21,7 +21,7 @@ class SpellcheckLanguage {
   SpellcheckLanguage();
   ~SpellcheckLanguage();
 
-  void Init(base::PlatformFile file, const std::string& language);
+  void Init(base::File file, const std::string& language);
 
   // SpellCheck a word.
   // Returns true if spelled correctly, false otherwise.
@@ -34,12 +34,12 @@ class SpellcheckLanguage {
   // If the word is spelled correctly, the vector is empty.
   // If optional_suggestions is NULL, suggested words will not be looked up.
   // Note that doing suggest lookups can be slow.
-  bool SpellCheckWord(const char16* in_word,
+  bool SpellCheckWord(const base::char16* in_word,
                       int in_word_len,
                       int tag,
                       int* misspelling_start,
                       int* misspelling_len,
-                      std::vector<string16>* optional_suggestions);
+                      std::vector<base::string16>* optional_suggestions);
 
   // Initialize |spellcheck_| if that hasn't happened yet.
   bool InitializeIfNeeded();
@@ -52,7 +52,7 @@ class SpellcheckLanguage {
 
   // Returns whether or not the given word is a contraction of valid words
   // (e.g. "word:word").
-  bool IsValidContraction(const string16& word, int tag);
+  bool IsValidContraction(const base::string16& word, int tag);
 
   // Represents character attributes used for filtering out characters which
   // are not supported by this SpellCheck object.

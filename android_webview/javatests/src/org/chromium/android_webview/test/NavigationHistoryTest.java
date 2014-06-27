@@ -1,18 +1,15 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 package org.chromium.android_webview.test;
 
-import android.test.FlakyTest;
-import android.test.suitebuilder.annotation.MediumTest;
 import android.test.suitebuilder.annotation.SmallTest;
 
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.test.util.CommonResources;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.DisabledTest;
-import org.chromium.base.test.util.Feature;
 import org.chromium.content.browser.NavigationEntry;
 import org.chromium.content.browser.NavigationHistory;
 import org.chromium.content.browser.test.util.HistoryUtils;
@@ -21,6 +18,9 @@ import org.chromium.net.test.util.TestWebServer;
 
 import java.util.concurrent.Callable;
 
+/**
+ * Navigation history tests.
+ */
 public class NavigationHistoryTest extends AwTestBase {
 
     private static final String PAGE_1_PATH = "/page1.html";
@@ -41,6 +41,7 @@ public class NavigationHistoryTest extends AwTestBase {
     @Override
     public void setUp() throws Exception {
         super.setUp();
+        AwContents.setShouldDownloadFavicons();
         mContentsClient = new TestAwContentsClient();
         final AwTestContainerView testContainerView =
             createAwTestContainerViewOnMainSync(mContentsClient);
@@ -284,34 +285,34 @@ public class NavigationHistoryTest extends AwTestBase {
         getAwSettingsOnUiThread(mAwContents).setJavaScriptEnabled(true);
         loadUrlSync(mAwContents, onPageFinishedHelper, loginPageUrl);
         // Since the page performs an async action, we can't rely on callbacks.
-        assertTrue(pollOnUiThread(new Callable<Boolean>() {
+        pollOnUiThread(new Callable<Boolean>() {
             @Override
             public Boolean call() {
                 String title = mAwContents.getContentViewCore().getTitle();
                 return LOGIN_RESPONSE_PAGE_TITLE.equals(title);
             }
-        }));
+        });
         executeJavaScriptAndWaitForResult(mAwContents,
                 mContentsClient,
                 "link = document.getElementById('" + LOGIN_RESPONSE_PAGE_HELP_LINK_ID + "');" +
                 "link.click();");
-        assertTrue(pollOnUiThread(new Callable<Boolean>() {
+        pollOnUiThread(new Callable<Boolean>() {
             @Override
             public Boolean call() {
                 String title = mAwContents.getContentViewCore().getTitle();
                 return PAGE_1_TITLE.equals(title);
             }
-        }));
+        });
         // Verify that we can still go back to the login response page despite that
         // it is non-cacheable.
         HistoryUtils.goBackSync(getInstrumentation(), mAwContents.getContentViewCore(),
                 onPageFinishedHelper);
-        assertTrue(pollOnUiThread(new Callable<Boolean>() {
+        pollOnUiThread(new Callable<Boolean>() {
             @Override
             public Boolean call() {
                 String title = mAwContents.getContentViewCore().getTitle();
                 return LOGIN_RESPONSE_PAGE_TITLE.equals(title);
             }
-        }));
+        });
     }
 }

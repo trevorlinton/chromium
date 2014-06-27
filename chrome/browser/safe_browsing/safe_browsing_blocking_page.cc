@@ -45,11 +45,11 @@
 #include "ui/base/webui/jstemplate_builder.h"
 #include "ui/base/webui/web_ui_util.h"
 
+using base::UserMetricsAction;
 using content::BrowserThread;
 using content::InterstitialPage;
 using content::OpenURLParams;
 using content::Referrer;
-using content::UserMetricsAction;
 using content::WebContents;
 
 namespace {
@@ -71,10 +71,12 @@ const char kSbReportPhishingErrorUrl[] =
 const char kLearnMoreMalwareUrl[] =
     "https://www.google.com/support/bin/answer.py?answer=45449&topic=360"
     "&sa=X&oi=malwarewarninglink&resnum=1&ct=help";
+
+// URL for malware and phishing, V2.
 const char kLearnMoreMalwareUrlV2[] =
-    "https://www.google.com/goodtoknow/online-safety/malware/";
+    "https://www.google.com/transparencyreport/safebrowsing/";
 const char kLearnMorePhishingUrlV2[] =
-    "https://www.google.com/goodtoknow/online-safety/phishing/";
+    "https://www.google.com/transparencyreport/safebrowsing/";
 
 // URL for the "Learn more" link on the phishing blocking page.
 const char kLearnMorePhishingUrl[] =
@@ -450,6 +452,7 @@ void SafeBrowsingBlockingPage::SetReportingPreference(bool report) {
       web_contents_->GetBrowserContext());
   PrefService* pref = profile->GetPrefs();
   pref->SetBoolean(prefs::kSafeBrowsingReportingEnabled, report);
+  UMA_HISTOGRAM_BOOLEAN("SB2.SetReportingEnabled", report);
 }
 
 void SafeBrowsingBlockingPage::OnProceed() {
@@ -761,7 +764,9 @@ void SafeBrowsingBlockingPage::FinishMalwareDetails(int64 delay_ms) {
   if (malware_details_.get() == NULL)
     return;  // Not all interstitials have malware details (eg phishing).
 
-  if (IsPrefEnabled(prefs::kSafeBrowsingReportingEnabled)) {
+  const bool enabled = IsPrefEnabled(prefs::kSafeBrowsingReportingEnabled);
+  UMA_HISTOGRAM_BOOLEAN("SB2.ReportingIsEnabled", enabled);
+  if (enabled) {
     // Finish the malware details collection, send it over.
     BrowserThread::PostDelayedTask(
         BrowserThread::IO, FROM_HERE,
@@ -854,7 +859,7 @@ SafeBrowsingBlockingPageV1::SafeBrowsingBlockingPageV1(
 
 std::string SafeBrowsingBlockingPageV1::GetHTMLContents() {
   // Load the HTML page and create the template components.
-  DictionaryValue strings;
+  base::DictionaryValue strings;
   ResourceBundle& rb = ResourceBundle::GetSharedInstance();
   std::string html;
 
@@ -872,12 +877,12 @@ std::string SafeBrowsingBlockingPageV1::GetHTMLContents() {
 }
 
 void SafeBrowsingBlockingPageV1::PopulateStringDictionary(
-    DictionaryValue* strings,
-    const string16& title,
-    const string16& headline,
-    const string16& description1,
-    const string16& description2,
-    const string16& description3) {
+    base::DictionaryValue* strings,
+    const base::string16& title,
+    const base::string16& headline,
+    const base::string16& description1,
+    const base::string16& description2,
+    const base::string16& description3) {
   strings->SetString("title", title);
   strings->SetString("headLine", headline);
   strings->SetString("description1", description1);
@@ -888,23 +893,23 @@ void SafeBrowsingBlockingPageV1::PopulateStringDictionary(
 }
 
 void SafeBrowsingBlockingPageV1::PopulateMultipleThreatStringDictionary(
-    DictionaryValue* strings) {
+    base::DictionaryValue* strings) {
 
-  string16 malware_label =
+  base::string16 malware_label =
       l10n_util::GetStringUTF16(IDS_SAFE_BROWSING_MALWARE_LABEL);
-  string16 malware_link =
+  base::string16 malware_link =
       l10n_util::GetStringUTF16(IDS_SAFE_BROWSING_MALWARE_DIAGNOSTIC_PAGE);
-  string16 phishing_label =
+  base::string16 phishing_label =
       l10n_util::GetStringUTF16(IDS_SAFE_BROWSING_PHISHING_LABEL);
-  string16 phishing_link =
+  base::string16 phishing_link =
       l10n_util::GetStringUTF16(IDS_SAFE_BROWSING_PHISHING_REPORT_ERROR);
 
-  ListValue* error_strings = new ListValue;
+  base::ListValue* error_strings = new base::ListValue;
   for (UnsafeResourceList::const_iterator iter = unsafe_resources_.begin();
        iter != unsafe_resources_.end(); ++iter) {
     const UnsafeResource& resource = *iter;
     SBThreatType threat_type = resource.threat_type;
-    DictionaryValue* current_error_strings = new DictionaryValue;
+    base::DictionaryValue* current_error_strings = new base::DictionaryValue;
     if (threat_type == SB_THREAT_TYPE_URL_MALWARE ||
         threat_type == SB_THREAT_TYPE_CLIENT_SIDE_MALWARE_URL) {
       current_error_strings->SetString("type", "malware");
@@ -931,10 +936,10 @@ void SafeBrowsingBlockingPageV1::PopulateMultipleThreatStringDictionary(
           l10n_util::GetStringUTF16(IDS_SAFE_BROWSING_MALWARE_HEADLINE),
           l10n_util::GetStringFUTF16(
               IDS_SAFE_BROWSING_MULTI_THREAT_DESCRIPTION1,
-              UTF8ToUTF16(web_contents_->GetURL().host())),
+              base::UTF8ToUTF16(web_contents_->GetURL().host())),
           l10n_util::GetStringUTF16(
               IDS_SAFE_BROWSING_MULTI_THREAT_DESCRIPTION2),
-          string16());
+          base::string16());
       break;
     case TYPE_MALWARE:
       PopulateStringDictionary(
@@ -943,7 +948,7 @@ void SafeBrowsingBlockingPageV1::PopulateMultipleThreatStringDictionary(
           l10n_util::GetStringUTF16(IDS_SAFE_BROWSING_MALWARE_HEADLINE),
           l10n_util::GetStringFUTF16(
               IDS_SAFE_BROWSING_MULTI_MALWARE_DESCRIPTION1,
-              UTF8ToUTF16(web_contents_->GetURL().host())),
+              base::UTF8ToUTF16(web_contents_->GetURL().host())),
           l10n_util::GetStringUTF16(
               IDS_SAFE_BROWSING_MULTI_MALWARE_DESCRIPTION2),
           l10n_util::GetStringUTF16(
@@ -956,9 +961,9 @@ void SafeBrowsingBlockingPageV1::PopulateMultipleThreatStringDictionary(
           l10n_util::GetStringUTF16(IDS_SAFE_BROWSING_PHISHING_HEADLINE),
           l10n_util::GetStringFUTF16(
               IDS_SAFE_BROWSING_MULTI_PHISHING_DESCRIPTION1,
-              UTF8ToUTF16(web_contents_->GetURL().host())),
-          string16(),
-          string16());
+              base::UTF8ToUTF16(web_contents_->GetURL().host())),
+          base::string16(),
+          base::string16());
       break;
   }
 
@@ -974,12 +979,12 @@ void SafeBrowsingBlockingPageV1::PopulateMultipleThreatStringDictionary(
 }
 
 void SafeBrowsingBlockingPageV1::PopulateMalwareStringDictionary(
-    DictionaryValue* strings) {
+    base::DictionaryValue* strings) {
   NOTREACHED();
 }
 
 void SafeBrowsingBlockingPageV1::PopulatePhishingStringDictionary(
-    DictionaryValue* strings) {
+    base::DictionaryValue* strings) {
   NOTREACHED();
 }
 
@@ -1004,7 +1009,7 @@ SafeBrowsingBlockingPageV2::SafeBrowsingBlockingPageV2(
 
 std::string SafeBrowsingBlockingPageV2::GetHTMLContents() {
   // Load the HTML page and create the template components.
-  DictionaryValue strings;
+  base::DictionaryValue strings;
   ResourceBundle& rb = ResourceBundle::GetSharedInstance();
   std::string html;
 
@@ -1035,12 +1040,12 @@ std::string SafeBrowsingBlockingPageV2::GetHTMLContents() {
 }
 
 void SafeBrowsingBlockingPageV2::PopulateStringDictionary(
-    DictionaryValue* strings,
-    const string16& title,
-    const string16& headline,
-    const string16& description1,
-    const string16& description2,
-    const string16& description3) {
+    base::DictionaryValue* strings,
+    const base::string16& title,
+    const base::string16& headline,
+    const base::string16& description1,
+    const base::string16& description2,
+    const base::string16& description3) {
   strings->SetString("title", title);
   strings->SetString("headLine", headline);
   strings->SetString("description1", description1);
@@ -1091,15 +1096,15 @@ void SafeBrowsingBlockingPageV2::PopulateStringDictionary(
 }
 
 void SafeBrowsingBlockingPageV2::PopulateMultipleThreatStringDictionary(
-    DictionaryValue* strings) {
+    base::DictionaryValue* strings) {
   NOTREACHED();
 }
 
 void SafeBrowsingBlockingPageV2::PopulateMalwareStringDictionary(
-    DictionaryValue* strings) {
+    base::DictionaryValue* strings) {
   // Check to see if we're blocking the main page, or a sub-resource on the
   // main page.
-  string16 headline, description1, description2, description3;
+  base::string16 headline, description1, description2, description3;
 
 
   description3 = l10n_util::GetStringUTF16(
@@ -1109,7 +1114,7 @@ void SafeBrowsingBlockingPageV2::PopulateMalwareStringDictionary(
     description1 = l10n_util::GetStringFUTF16(
         IDS_SAFE_BROWSING_MALWARE_V2_DESCRIPTION1,
         l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
-        UTF8ToUTF16(url_.host()));
+        base::UTF8ToUTF16(url_.host()));
     description2 = l10n_util::GetStringUTF16(
         IDS_SAFE_BROWSING_MALWARE_V2_DESCRIPTION2);
     strings->SetString("details", l10n_util::GetStringUTF16(
@@ -1120,13 +1125,13 @@ void SafeBrowsingBlockingPageV2::PopulateMalwareStringDictionary(
     description1 = l10n_util::GetStringFUTF16(
         IDS_SAFE_BROWSING_MALWARE_V2_DESCRIPTION1_SUBRESOURCE,
         l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
-        UTF8ToUTF16(web_contents_->GetURL().host()));
+        base::UTF8ToUTF16(web_contents_->GetURL().host()));
     description2 = l10n_util::GetStringFUTF16(
         IDS_SAFE_BROWSING_MALWARE_V2_DESCRIPTION2_SUBRESOURCE,
-        UTF8ToUTF16(url_.host()));
+        base::UTF8ToUTF16(url_.host()));
     strings->SetString("details", l10n_util::GetStringFUTF16(
           IDS_SAFE_BROWSING_MALWARE_V2_DETAILS_SUBRESOURCE,
-          UTF8ToUTF16(url_.host())));
+          base::UTF8ToUTF16(url_.host())));
   }
 
   PopulateStringDictionary(
@@ -1153,28 +1158,28 @@ void SafeBrowsingBlockingPageV2::PopulateMalwareStringDictionary(
     strings->SetString("confirm_text",
                        l10n_util::GetStringFUTF16(
                            IDS_SAFE_BROWSING_MALWARE_V2_REPORTING_AGREE,
-                           UTF8ToUTF16(privacy_link)));
+                           base::UTF8ToUTF16(privacy_link)));
     if (IsPrefEnabled(prefs::kSafeBrowsingReportingEnabled))
       strings->SetString(kBoxChecked, "yes");
     else
       strings->SetString(kBoxChecked, std::string());
   }
 
-  strings->SetString("report_error", string16());
+  strings->SetString("report_error", base::string16());
   strings->SetString("learnMore",
       l10n_util::GetStringUTF16(IDS_SAFE_BROWSING_MALWARE_V2_LEARN_MORE));
 }
 
 void SafeBrowsingBlockingPageV2::PopulatePhishingStringDictionary(
-    DictionaryValue* strings) {
+    base::DictionaryValue* strings) {
   PopulateStringDictionary(
       strings,
       l10n_util::GetStringUTF16(IDS_SAFE_BROWSING_PHISHING_V2_TITLE),
       l10n_util::GetStringUTF16(IDS_SAFE_BROWSING_PHISHING_V2_HEADLINE),
       l10n_util::GetStringFUTF16(IDS_SAFE_BROWSING_PHISHING_V2_DESCRIPTION1,
                                  l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
-                                 UTF8ToUTF16(url_.host())),
-      string16(),
+                                 base::UTF8ToUTF16(url_.host())),
+      base::string16(),
       l10n_util::GetStringUTF16(IDS_SAFE_BROWSING_PHISHING_V2_DESCRIPTION2));
 
   strings->SetString("details", std::string());

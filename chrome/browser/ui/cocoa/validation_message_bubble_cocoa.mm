@@ -12,7 +12,7 @@
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "grit/theme_resources.h"
-#import "third_party/GTM/AppKit/GTMUILocalizerAndLayoutTweaker.h"
+#import "third_party/google_toolbox_for_mac/src/AppKit/GTMUILocalizerAndLayoutTweaker.h"
 #import "ui/base/cocoa/base_view.h"
 #import "ui/base/cocoa/flipped_view.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -29,8 +29,8 @@ const CGFloat kTextVerticalMargin = 4;
 
 - (id)init:(NSWindow*)parentWindow
 anchoredAt:(NSPoint)anchorPoint
-  mainText:(const string16&)mainText
-   subText:(const string16&)subText {
+  mainText:(const base::string16&)mainText
+   subText:(const base::string16&)subText {
 
   base::scoped_nsobject<InfoBubbleWindow> window(
       [[InfoBubbleWindow alloc] initWithContentRect:
@@ -59,8 +59,8 @@ anchoredAt:(NSPoint)anchorPoint
   return self;
 }
 
-+ (NSView*)constructContentView:(const string16&)mainText
-                        subText:(const string16&)subText {
++ (NSView*)constructContentView:(const base::string16&)mainText
+                        subText:(const base::string16&)subText {
   NSRect contentFrame = NSMakeRect(kWindowPadding, kWindowPadding, 0, 0);
   FlippedView* contentView = [[FlippedView alloc] initWithFrame:contentFrame];
 
@@ -153,8 +153,8 @@ class ValidationMessageBubbleCocoa : public chrome::ValidationMessageBubble {
  public:
   ValidationMessageBubbleCocoa(content::RenderWidgetHost* widget_host,
                                const gfx::Rect& anchor_in_root_view,
-                               const string16& main_text,
-                               const string16& sub_text) {
+                               const base::string16& main_text,
+                               const base::string16& sub_text) {
     controller_.reset([[[ValidationMessageBubbleController alloc]
                         init:[widget_host->GetView()->GetNativeView() window]
                   anchoredAt:GetAnchorPoint(widget_host, anchor_in_root_view)
@@ -186,8 +186,8 @@ namespace chrome {
 scoped_ptr<ValidationMessageBubble> ValidationMessageBubble::CreateAndShow(
     content::RenderWidgetHost* widget_host,
     const gfx::Rect& anchor_in_root_view,
-    const string16& main_text,
-    const string16& sub_text) {
+    const base::string16& main_text,
+    const base::string16& sub_text) {
   return scoped_ptr<ValidationMessageBubble>(new ValidationMessageBubbleCocoa(
       widget_host, anchor_in_root_view, main_text, sub_text)).Pass();
 }

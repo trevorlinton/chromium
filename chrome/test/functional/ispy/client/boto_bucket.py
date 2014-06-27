@@ -6,10 +6,13 @@
 import os
 import sys
 
-# boto is located in depot_tools/third_party/
+# boto requires depot_tools/third_party be in the path. Use
+# src/tools/find_depot_tools.py to add this directory.
 sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir,
-                             os.pardir, os.pardir, os.pardir, os.pardir,
-                             'depot_tools', 'third_party'))
+                             os.pardir, os.pardir, os.pardir, 'tools'))
+import find_depot_tools
+DEPOT_TOOLS_PATH = find_depot_tools.add_depot_tools_to_path()
+sys.path.append(os.path.join(os.path.abspath(DEPOT_TOOLS_PATH), 'third_party'))
 import boto
 
 from ..common import cloud_bucket

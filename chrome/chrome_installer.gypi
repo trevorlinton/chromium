@@ -65,7 +65,10 @@
           ],
           'sources': [
             'installer/gcapi/gcapi_last_run_test.cc',
+            'installer/gcapi/gcapi_omaha_experiment_test.cc',
             'installer/gcapi/gcapi_reactivation_test.cc',
+            'installer/gcapi/gcapi_test_registry_overrider.cc',
+            'installer/gcapi/gcapi_test_registry_overrider.h',
             'installer/gcapi/gcapi_test.cc',
             'installer/gcapi/gcapi_test.rc',
             'installer/gcapi/resource.h',
@@ -148,35 +151,38 @@
         {
           'target_name': 'installer_util_strings',
           'type': 'none',
-          'rules': [
+          'actions': [
             {
-              'rule_name': 'installer_util_strings',
-              'extension': 'grd',
+              'action_name': 'installer_util_strings',
               'variables': {
-                'create_string_rc_py' : 'installer/util/prebuild/create_string_rc.py',
+                'create_string_rc_py': 'installer/util/prebuild/create_string_rc.py',
               },
+              'conditions': [
+                ['branding=="Chrome"', {
+                  'variables': {
+                    'brand_strings': 'google_chrome_strings',
+                  },
+                }, {
+                  'variables': {
+                    'brand_strings': 'chromium_strings',
+                  },
+                }],
+              ],
               'inputs': [
                 '<(create_string_rc_py)',
-                '<(RULE_INPUT_PATH)',
+                'app/<(brand_strings).grd',
               ],
               'outputs': [
-                # Don't use <(RULE_INPUT_ROOT) to create the output file
-                # name, because the base name of the input
-                # (generated_resources.grd) doesn't match the generated file
-                # (installer_util_strings.h).
                 '<(SHARED_INTERMEDIATE_DIR)/installer_util_strings/installer_util_strings.h',
                 '<(SHARED_INTERMEDIATE_DIR)/installer_util_strings/installer_util_strings.rc',
               ],
               'action': ['python',
                          '<(create_string_rc_py)',
-                         '<(SHARED_INTERMEDIATE_DIR)/installer_util_strings',
-                         '<(branding)',],
-              'message': 'Generating resources from <(RULE_INPUT_PATH)',
-              'msvs_cygwin_shell': 1,
+                         '-i', 'app/<(brand_strings).grd:resources',
+                         '-n', 'installer_util_strings',
+                         '-o', '<(SHARED_INTERMEDIATE_DIR)/installer_util_strings',],
+              'message': 'Generating installer_util_strings',
             },
-          ],
-          'sources': [
-            'app/chromium_strings.grd',
           ],
           'direct_dependent_settings': {
             'include_dirs': [
@@ -251,8 +257,6 @@
             '../base/base.gyp:base',
             '../breakpad/breakpad.gyp:breakpad_handler',
             '../chrome/common_constants.gyp:common_constants',
-            '../chrome_frame/chrome_frame.gyp:chrome_tab_idl',
-            '../chrome_frame/chrome_frame.gyp:npchrome_frame',
             '../rlz/rlz.gyp:rlz_lib',
             '../third_party/zlib/zlib.gyp:zlib',
           ],
@@ -267,15 +271,10 @@
             ],
           },
           'sources': [
+            '<(SHARED_INTERMEDIATE_DIR)/installer_util_strings/installer_util_strings.rc',
             'installer/mini_installer/chrome.release',
             'installer/setup/archive_patch_helper.cc',
             'installer/setup/archive_patch_helper.h',
-            'installer/setup/cf_migration.cc',
-            'installer/setup/cf_migration.h',
-            'installer/setup/chrome_frame_quick_enable.cc',
-            'installer/setup/chrome_frame_quick_enable.h',
-            'installer/setup/chrome_frame_ready_mode.cc',
-            'installer/setup/chrome_frame_ready_mode.h',
             'installer/setup/install.cc',
             'installer/setup/install.h',
             'installer/setup/install_worker.cc',
@@ -294,6 +293,9 @@
             'installer/setup/uninstall.h',
           ],
           'msvs_settings': {
+            'VCCLCompilerTool': {
+              'EnableEnhancedInstructionSet': '4',  # NoExtensions
+            },
             'VCLinkerTool': {
               'SubSystem': '2',     # Set /SUBSYSTEM:WINDOWS
             },
@@ -310,7 +312,7 @@
               'rule_name': 'setup_version',
               'extension': 'version',
               'variables': {
-                'version_py_path': '../chrome/tools/build/version.py',
+                'version_py_path': '<(DEPTH)/build/util/version.py',
                 'template_input_path': 'installer/setup/setup_exe_version.rc.version',
               },
               'inputs': [
@@ -333,39 +335,8 @@
               'process_outputs_as_sources': 1,
               'message': 'Generating version information'
             },
-            {
-              'rule_name': 'server_dlls',
-              'extension': 'release',
-              'variables': {
-                'scan_server_dlls_py' : 'tools/build/win/scan_server_dlls.py',
-                'template_file': 'installer/mini_installer/chrome.release',
-              },
-              'inputs': [
-                '<(scan_server_dlls_py)',
-                '<(template_file)'
-              ],
-              'outputs': [
-                '<(INTERMEDIATE_DIR)/registered_dlls.h',
-              ],
-              'action': [
-                'python',
-                '<(scan_server_dlls_py)',
-                '--output_dir=<(PRODUCT_DIR)',
-                '--input_file=<(RULE_INPUT_PATH)',
-                '--header_output_dir=<(INTERMEDIATE_DIR)',
-                # TODO(sgk):  may just use environment variables
-                #'--distribution=$(CHROMIUM_BUILD)',
-                '--distribution=_google_chrome',
-              ],
-              'msvs_cygwin_shell': 1,
-            },
           ],
           'conditions': [
-            ['component == "shared_library"', {
-              'variables': {
-                'win_use_external_manifest': 1,
-              },
-            }],
             # TODO(mark):  <(branding_dir) should be defined by the
             # global condition block at the bottom of the file, but
             # this doesn't work due to the following issue:
@@ -384,15 +355,6 @@
                  'branding_dir_100': 'app/theme/default_100_percent/chromium',
               },
             }],
-            ['target_arch=="x64"', {
-              'dependencies!': [
-                '../chrome_frame/chrome_frame.gyp:chrome_tab_idl',
-                '../chrome_frame/chrome_frame.gyp:npchrome_frame',
-              ],
-              'defines': [
-                'OMIT_CHROME_FRAME',
-              ],
-            }],
           ],
         },
         {
@@ -405,7 +367,6 @@
             '../base/base.gyp:base',
             '../base/base.gyp:base_i18n',
             '../base/base.gyp:test_support_base',
-            '../chrome_frame/chrome_frame.gyp:chrome_tab_idl',
             '../testing/gmock.gyp:gmock',
             '../testing/gtest.gyp:gtest',
           ],
@@ -447,34 +408,6 @@
             'installer/setup/setup_util_unittest.cc',
             'installer/setup/setup_util_unittest.h',
           ],
-          'rules': [
-            {
-              'rule_name': 'server_dlls',               # Move to lib
-              'extension': 'release',
-              'variables': {
-                'scan_server_dlls_py' : 'tools/build/win/scan_server_dlls.py',
-                'template_file': 'installer/mini_installer/chrome.release',
-              },
-              'inputs': [
-                '<(scan_server_dlls_py)',
-                '<(template_file)'
-              ],
-              'outputs': [
-                '<(INTERMEDIATE_DIR)/registered_dlls.h',
-              ],
-              'action': [
-                'python',
-                '<(scan_server_dlls_py)',
-                '--output_dir=<(PRODUCT_DIR)',
-                '--input_file=<(RULE_INPUT_PATH)',
-                '--header_output_dir=<(INTERMEDIATE_DIR)',
-                # TODO(sgk):  may just use environment variables
-                #'--distribution=$(CHROMIUM_BUILD)',
-                '--distribution=_google_chrome',
-              ],
-              'msvs_cygwin_shell': 1,
-            },
-          ],
           # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
           'msvs_disabled_warnings': [ 4267, ],
         },
@@ -497,7 +430,7 @@
               '<@(nacl_win64_defines)',
           ],
               'dependencies': [
-              '<(DEPTH)/base/base.gyp:base_nacl_win64',
+              '<(DEPTH)/base/base.gyp:base_win64',
           ],
           'configurations': {
             'Common_Base': {
@@ -582,6 +515,9 @@
               '<(PRODUCT_DIR)/libwidevinecdmadapter.so',
               '<(PRODUCT_DIR)/libwidevinecdm.so',
             ],
+            'packaging_files_common': [
+              '<(DEPTH)/build/linux/bin/eu-strip',
+            ],
           }],
           ['target_arch=="x64"', {
             'deb_arch': 'amd64',
@@ -590,6 +526,9 @@
               '<(PRODUCT_DIR)/nacl_irt_x86_64.nexe',
               '<(PRODUCT_DIR)/libwidevinecdmadapter.so',
               '<(PRODUCT_DIR)/libwidevinecdm.so',
+            ],
+            'packaging_files_common': [
+              '<!(which eu-strip)',
             ],
           }],
           ['target_arch=="arm"', {
@@ -1105,40 +1044,6 @@
                 },
               ],  # actions
             }],  # buildtype=="Official"
-            ['branding=="Chrome" and buildtype=="Official"', {
-              'actions': [
-                {
-                  # copy_keychain_reauthorize.sh explains why this isn't in a
-                  # 'copies' block, but briefly: this is a prebuilt signed
-                  # binary component that relies on a correct signature to
-                  # function properly, and a normal 'copies' block sadly makes
-                  # a trivial modification to the file such that its signature
-                  # is no longer valid.
-                  'action_name': 'Copy keychain_reauthorize',
-                  'variables': {
-                    'keychain_reauthorize_path': 'tools/build/mac/copy_keychain_reauthorize.sh',
-                    'keychain_reauthorize_normal_path': 'installer/mac/internal/keychain_reauthorize/com.google.Chrome',
-                    'keychain_reauthorize_canary_path': 'installer/mac/internal/keychain_reauthorize/com.google.Chrome.canary',
-                    'keychain_reauthorize_output_dir': '<(mac_packaging_dir)/.keychain_reauthorize',
-                  },
-                  'inputs': [
-                    '<(keychain_reauthorize_path)',
-                    '<(keychain_reauthorize_normal_path)',
-                    '<(keychain_reauthorize_canary_path)',
-                  ],
-                  'outputs': [
-                    '<(keychain_reauthorize_output_dir)/com.google.Chrome',
-                    '<(keychain_reauthorize_output_dir)/com.google.Chrome.canary',
-                  ],
-                  'action': [
-                    '<(keychain_reauthorize_path)',
-                    '<(keychain_reauthorize_output_dir)',
-                    '<(keychain_reauthorize_normal_path)',
-                    '<(keychain_reauthorize_canary_path)',
-                  ],
-                },
-              ],  # actions
-            }],  # branding=="Chrome" and buildtype=="Official"
           ],  # conditions
           'copies': [
             {
@@ -1165,8 +1070,8 @@
                 }],  # mac_keystone
                 ['branding=="Chrome" and buildtype=="Official"', {
                   'files': [
-                    'app/theme/google_chrome/app_canary.icns',
-                    'app/theme/google_chrome/document_canary.icns',
+                    'app/theme/google_chrome/mac/app_canary.icns',
+                    'app/theme/google_chrome/mac/document_canary.icns',
                     'installer/mac/internal/chrome_canary_dmg_dsstore',
                     'installer/mac/internal/chrome_canary_dmg_icon.icns',
                     'installer/mac/internal/chrome_dmg_background.png',

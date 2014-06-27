@@ -50,6 +50,7 @@
 #include "sync/test/engine/test_syncable_utils.h"
 #include "sync/test/fake_encryptor.h"
 #include "sync/test/fake_sync_encryption_handler.h"
+#include "sync/test/sessions/mock_debug_info_getter.h"
 #include "sync/util/cryptographer.h"
 #include "sync/util/extensions_activity.h"
 #include "sync/util/time.h"
@@ -104,6 +105,7 @@ using syncable::SPECIFICS;
 using syncable::SYNCING;
 using syncable::UNITTEST;
 
+using sessions::MockDebugInfoGetter;
 using sessions::StatusController;
 using sessions::SyncSessionContext;
 using sessions::SyncSession;
@@ -148,15 +150,10 @@ class SyncerTest : public testing::Test,
       int size) OVERRIDE {
     last_client_invalidation_hint_buffer_size_ = size;
   }
-  virtual void OnShouldStopSyncingPermanently() OVERRIDE {
-  }
-  virtual void OnSyncProtocolError(
-      const sessions::SyncSessionSnapshot& snapshot) OVERRIDE {
-  }
-
-  void GetWorkers(std::vector<ModelSafeWorker*>* out) {
-    out->push_back(worker_.get());
-  }
+  virtual void OnReceivedGuRetryDelay(const base::TimeDelta& delay) OVERRIDE {}
+  virtual void OnReceivedMigrationRequest(ModelTypeSet types) OVERRIDE {}
+  virtual void OnProtocolEvent(const ProtocolEvent& event) OVERRIDE {}
+  virtual void OnSyncProtocolError(const SyncProtocolError& error) OVERRIDE {}
 
   void GetModelSafeRoutingInfo(ModelSafeRoutingInfo* out) {
     // We're just testing the sync engine here, so we shunt everything to
@@ -167,13 +164,13 @@ class SyncerTest : public testing::Test,
     }
   }
 
-  virtual void OnSyncEngineEvent(const SyncEngineEvent& event) OVERRIDE {
+  virtual void OnSyncCycleEvent(const SyncCycleEvent& event) OVERRIDE {
     DVLOG(1) << "HandleSyncEngineEvent in unittest " << event.what_happened;
     // we only test for entry-specific events, not status changed ones.
     switch (event.what_happened) {
-      case SyncEngineEvent::SYNC_CYCLE_BEGIN: // Fall through.
-      case SyncEngineEvent::STATUS_CHANGED:
-      case SyncEngineEvent::SYNC_CYCLE_ENDED:
+      case SyncCycleEvent::SYNC_CYCLE_BEGIN: // Fall through.
+      case SyncCycleEvent::STATUS_CHANGED:
+      case SyncCycleEvent::SYNC_CYCLE_ENDED:
         return;
       default:
         CHECK(false) << "Handling unknown error type in unit tests!!";
@@ -181,23 +178,32 @@ class SyncerTest : public testing::Test,
     saw_syncer_event_ = true;
   }
 
-  void SyncShareNudge() {
+  virtual void OnActionableError(const SyncProtocolError& error) OVERRIDE {}
+  virtual void OnRetryTimeChanged(base::Time retry_time) OVERRIDE {}
+  virtual void OnThrottledTypesChanged(ModelTypeSet throttled_types) OVERRIDE {}
+  virtual void OnMigrationRequested(ModelTypeSet types) OVERRIDE {}
+
+  void ResetSession() {
     session_.reset(SyncSession::Build(context_.get(), this));
+  }
+
+  void SyncShareNudge() {
+    ResetSession();
 
     // Pretend we've seen a local change, to make the nudge_tracker look normal.
     nudge_tracker_.RecordLocalChange(ModelTypeSet(BOOKMARKS));
 
     EXPECT_TRUE(
         syncer_->NormalSyncShare(
-            GetRoutingInfoTypes(context_->routing_info()),
+            context_->GetEnabledTypes(),
             nudge_tracker_,
             session_.get()));
   }
 
   void SyncShareConfigure() {
-    session_.reset(SyncSession::Build(context_.get(), this));
+    ResetSession();
     EXPECT_TRUE(syncer_->ConfigureSyncShare(
-            GetRoutingInfoTypes(context_->routing_info()),
+            context_->GetEnabledTypes(),
             sync_pb::GetUpdatesCallerInfo::RECONFIGURATION,
             session_.get()));
   }
@@ -206,29 +212,31 @@ class SyncerTest : public testing::Test,
     dir_maker_.SetUp();
     mock_server_.reset(new MockConnectionManager(directory(),
                                                  &cancelation_signal_));
+    debug_info_getter_.reset(new MockDebugInfoGetter);
     EnableDatatype(BOOKMARKS);
     EnableDatatype(NIGORI);
     EnableDatatype(PREFERENCES);
     EnableDatatype(NIGORI);
-    worker_ = new FakeModelWorker(GROUP_PASSIVE);
+    workers_.push_back(scoped_refptr<ModelSafeWorker>(
+        new FakeModelWorker(GROUP_PASSIVE)));
     std::vector<SyncEngineEventListener*> listeners;
     listeners.push_back(this);
 
     ModelSafeRoutingInfo routing_info;
-    std::vector<ModelSafeWorker*> workers;
-
     GetModelSafeRoutingInfo(&routing_info);
-    GetWorkers(&workers);
+
+    model_type_registry_.reset(new ModelTypeRegistry(workers_, directory()));
 
     context_.reset(
         new SyncSessionContext(
-            mock_server_.get(), directory(), workers,
+            mock_server_.get(), directory(),
             extensions_activity_,
-            listeners, NULL, &traffic_recorder_,
+            listeners, debug_info_getter_.get(), &traffic_recorder_,
+            model_type_registry_.get(),
             true,  // enable keystore encryption
             false,  // force enable pre-commit GU avoidance experiment
             "fake_invalidator_client_id"));
-    context_->set_routing_info(routing_info);
+    context_->SetRoutingInfo(routing_info);
     syncer_ = new Syncer(&cancelation_signal_);
 
     syncable::ReadTransaction trans(FROM_HERE, directory());
@@ -437,7 +445,7 @@ class SyncerTest : public testing::Test,
     GetModelSafeRoutingInfo(&routing_info);
 
     if (context_) {
-      context_->set_routing_info(routing_info);
+      context_->SetRoutingInfo(routing_info);
     }
 
     mock_server_->ExpectGetUpdatesRequestTypes(enabled_datatypes_);
@@ -450,7 +458,7 @@ class SyncerTest : public testing::Test,
     GetModelSafeRoutingInfo(&routing_info);
 
     if (context_) {
-      context_->set_routing_info(routing_info);
+      context_->SetRoutingInfo(routing_info);
     }
 
     mock_server_->ExpectGetUpdatesRequestTypes(enabled_datatypes_);
@@ -458,6 +466,18 @@ class SyncerTest : public testing::Test,
 
   Cryptographer* GetCryptographer(syncable::BaseTransaction* trans) {
     return directory()->GetCryptographer(trans);
+  }
+
+  // Configures SyncSessionContext and NudgeTracker so Syncer won't call
+  // GetUpdates prior to Commit. This method can be used to ensure a Commit is
+  // not preceeded by GetUpdates.
+  void ConfigureNoGetUpdatesRequired() {
+    context_->set_server_enabled_pre_commit_update_avoidance(true);
+    nudge_tracker_.OnInvalidationsEnabled();
+    nudge_tracker_.RecordSuccessfulSyncCycle();
+
+    ASSERT_FALSE(context_->ShouldFetchUpdatesBeforeCommit());
+    ASSERT_FALSE(nudge_tracker_.IsGetUpdatesRequired());
   }
 
   base::MessageLoop message_loop_;
@@ -481,17 +501,19 @@ class SyncerTest : public testing::Test,
   Syncer* syncer_;
 
   scoped_ptr<SyncSession> session_;
+  scoped_ptr<ModelTypeRegistry> model_type_registry_;
   scoped_ptr<SyncSessionContext> context_;
   bool saw_syncer_event_;
   base::TimeDelta last_short_poll_interval_received_;
   base::TimeDelta last_long_poll_interval_received_;
   base::TimeDelta last_sessions_commit_delay_seconds_;
   int last_client_invalidation_hint_buffer_size_;
-  scoped_refptr<ModelSafeWorker> worker_;
+  std::vector<scoped_refptr<ModelSafeWorker> > workers_;
 
   ModelTypeSet enabled_datatypes_;
   TrafficRecorder traffic_recorder_;
   sessions::NudgeTracker nudge_tracker_;
+  scoped_ptr<MockDebugInfoGetter> debug_info_getter_;
 
   DISALLOW_COPY_AND_ASSIGN(SyncerTest);
 };
@@ -529,9 +551,11 @@ TEST_F(SyncerTest, GetCommitIdsFiltersThrottledEntries) {
   }
 
   // Now sync without enabling bookmarks.
+  mock_server_->ExpectGetUpdatesRequestTypes(
+      Difference(context_->GetEnabledTypes(), ModelTypeSet(BOOKMARKS)));
+  ResetSession();
   syncer_->NormalSyncShare(
-      Difference(GetRoutingInfoTypes(context_->routing_info()),
-                 ModelTypeSet(BOOKMARKS)),
+      Difference(context_->GetEnabledTypes(), ModelTypeSet(BOOKMARKS)),
       nudge_tracker_,
       session_.get());
 
@@ -544,10 +568,7 @@ TEST_F(SyncerTest, GetCommitIdsFiltersThrottledEntries) {
   }
 
   // Sync again with bookmarks enabled.
-  syncer_->NormalSyncShare(
-      GetRoutingInfoTypes(context_->routing_info()),
-      nudge_tracker_,
-      session_.get());
+  mock_server_->ExpectGetUpdatesRequestTypes(context_->GetEnabledTypes());
   SyncShareNudge();
   {
     // It should have been committed.
@@ -2515,6 +2536,131 @@ TEST_F(SyncerTest, CommitManyItemsInOneGo_CommitConflict) {
   EXPECT_EQ(1U, mock_server_->commit_messages().size());
   EXPECT_EQ(items_to_commit - (kDefaultMaxCommitBatchSize - 1),
             directory()->unsynced_entity_count());
+}
+
+// Tests that sending debug info events works.
+TEST_F(SyncerTest, SendDebugInfoEventsOnGetUpdates_HappyCase) {
+  debug_info_getter_->AddDebugEvent();
+  debug_info_getter_->AddDebugEvent();
+
+  SyncShareNudge();
+
+  // Verify we received one GetUpdates request with two debug info events.
+  EXPECT_EQ(1U, mock_server_->requests().size());
+  ASSERT_TRUE(mock_server_->last_request().has_get_updates());
+  EXPECT_EQ(2, mock_server_->last_request().debug_info().events_size());
+
+  SyncShareNudge();
+
+  // See that we received another GetUpdates request, but that it contains no
+  // debug info events.
+  EXPECT_EQ(2U, mock_server_->requests().size());
+  ASSERT_TRUE(mock_server_->last_request().has_get_updates());
+  EXPECT_EQ(0, mock_server_->last_request().debug_info().events_size());
+
+  debug_info_getter_->AddDebugEvent();
+
+  SyncShareNudge();
+
+  // See that we received another GetUpdates request and it contains one debug
+  // info event.
+  EXPECT_EQ(3U, mock_server_->requests().size());
+  ASSERT_TRUE(mock_server_->last_request().has_get_updates());
+  EXPECT_EQ(1, mock_server_->last_request().debug_info().events_size());
+}
+
+// Tests that debug info events are dropped on server error.
+TEST_F(SyncerTest, SendDebugInfoEventsOnGetUpdates_PostFailsDontDrop) {
+  debug_info_getter_->AddDebugEvent();
+  debug_info_getter_->AddDebugEvent();
+
+  mock_server_->FailNextPostBufferToPathCall();
+  SyncShareNudge();
+
+  // Verify we attempted to send one GetUpdates request with two debug info
+  // events.
+  EXPECT_EQ(1U, mock_server_->requests().size());
+  ASSERT_TRUE(mock_server_->last_request().has_get_updates());
+  EXPECT_EQ(2, mock_server_->last_request().debug_info().events_size());
+
+  SyncShareNudge();
+
+  // See that the client resent the two debug info events.
+  EXPECT_EQ(2U, mock_server_->requests().size());
+  ASSERT_TRUE(mock_server_->last_request().has_get_updates());
+  EXPECT_EQ(2, mock_server_->last_request().debug_info().events_size());
+
+  // The previous send was successful so this next one shouldn't generate any
+  // debug info events.
+  SyncShareNudge();
+  EXPECT_EQ(3U, mock_server_->requests().size());
+  ASSERT_TRUE(mock_server_->last_request().has_get_updates());
+  EXPECT_EQ(0, mock_server_->last_request().debug_info().events_size());
+}
+
+// Tests that sending debug info events on Commit works.
+TEST_F(SyncerTest, SendDebugInfoEventsOnCommit_HappyCase) {
+  // Make sure GetUpdate isn't call as it would "steal" debug info events before
+  // Commit has a chance to send them.
+  ConfigureNoGetUpdatesRequired();
+
+  // Generate a debug info event and trigger a commit.
+  debug_info_getter_->AddDebugEvent();
+  CreateUnsyncedDirectory("X", "id_X");
+  SyncShareNudge();
+
+  // Verify that the last request received is a Commit and that it contains a
+  // debug info event.
+  EXPECT_EQ(1U, mock_server_->requests().size());
+  ASSERT_TRUE(mock_server_->last_request().has_commit());
+  EXPECT_EQ(1, mock_server_->last_request().debug_info().events_size());
+
+  // Generate another commit, but no debug info event.
+  CreateUnsyncedDirectory("Y", "id_Y");
+  SyncShareNudge();
+
+  // See that it was received and contains no debug info events.
+  EXPECT_EQ(2U, mock_server_->requests().size());
+  ASSERT_TRUE(mock_server_->last_request().has_commit());
+  EXPECT_EQ(0, mock_server_->last_request().debug_info().events_size());
+}
+
+// Tests that debug info events are not dropped on server error.
+TEST_F(SyncerTest, SendDebugInfoEventsOnCommit_PostFailsDontDrop) {
+  // Make sure GetUpdate isn't call as it would "steal" debug info events before
+  // Commit has a chance to send them.
+  ConfigureNoGetUpdatesRequired();
+
+  mock_server_->FailNextPostBufferToPathCall();
+
+  // Generate a debug info event and trigger a commit.
+  debug_info_getter_->AddDebugEvent();
+  CreateUnsyncedDirectory("X", "id_X");
+  SyncShareNudge();
+
+  // Verify that the last request sent is a Commit and that it contains a debug
+  // info event.
+  EXPECT_EQ(1U, mock_server_->requests().size());
+  ASSERT_TRUE(mock_server_->last_request().has_commit());
+  EXPECT_EQ(1, mock_server_->last_request().debug_info().events_size());
+
+  // Try again.
+  SyncShareNudge();
+
+  // Verify that we've received another Commit and that it contains a debug info
+  // event (just like the previous one).
+  EXPECT_EQ(2U, mock_server_->requests().size());
+  ASSERT_TRUE(mock_server_->last_request().has_commit());
+  EXPECT_EQ(1, mock_server_->last_request().debug_info().events_size());
+
+  // Generate another commit and try again.
+  CreateUnsyncedDirectory("Y", "id_Y");
+  SyncShareNudge();
+
+  // See that it was received and contains no debug info events.
+  EXPECT_EQ(3U, mock_server_->requests().size());
+  ASSERT_TRUE(mock_server_->last_request().has_commit());
+  EXPECT_EQ(0, mock_server_->last_request().debug_info().events_size());
 }
 
 TEST_F(SyncerTest, HugeConflict) {

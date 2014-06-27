@@ -405,10 +405,6 @@ void DriveMetadataStore::DidInitialize(const InitializationCallback& callback,
   callback.Run(db_status_, contents->created);
 }
 
-leveldb::DB* DriveMetadataStore::GetDBInstanceForTesting() {
-  return db_.get();
-}
-
 void DriveMetadataStore::SetLargestChangeStamp(
     int64 largest_changestamp,
     const SyncStatusCallback& callback) {
@@ -463,9 +459,7 @@ void DriveMetadataStore::DeleteEntry(
   DCHECK(CalledOnValidThread());
   MetadataMap::iterator found = metadata_map_.find(url.origin());
   if (found == metadata_map_.end()) {
-    base::MessageLoopProxy::current()->PostTask(
-        FROM_HERE,
-        base::Bind(callback, SYNC_DATABASE_ERROR_NOT_FOUND));
+    RunSoon(FROM_HERE, base::Bind(callback, SYNC_DATABASE_ERROR_NOT_FOUND));
     return;
   }
 
@@ -476,9 +470,7 @@ void DriveMetadataStore::DeleteEntry(
     return;
   }
 
-  base::MessageLoopProxy::current()->PostTask(
-      FROM_HERE,
-      base::Bind(callback, SYNC_DATABASE_ERROR_NOT_FOUND));
+  RunSoon(FROM_HERE, base::Bind(callback, SYNC_DATABASE_ERROR_NOT_FOUND));
 }
 
 SyncStatusCode DriveMetadataStore::ReadEntry(const FileSystemURL& url,
@@ -579,6 +571,7 @@ void DriveMetadataStore::EnableOrigin(
 
   std::map<GURL, std::string>::iterator found = disabled_origins_.find(origin);
   if (found == disabled_origins_.end()) {
+    RunSoon(FROM_HERE, base::Bind(callback, SYNC_DATABASE_ERROR_NOT_FOUND));
     // |origin| has not been registered yet.
     return;
   }
@@ -602,8 +595,10 @@ void DriveMetadataStore::DisableOrigin(
   DCHECK(CalledOnValidThread());
 
   std::string resource_id;
-  if (!EraseIfExists(&incremental_sync_origins_, origin, &resource_id))
+  if (!EraseIfExists(&incremental_sync_origins_, origin, &resource_id)) {
+    RunSoon(FROM_HERE, base::Bind(callback, SYNC_DATABASE_ERROR_NOT_FOUND));
     return;
+  }
   disabled_origins_[origin] = resource_id;
 
   scoped_ptr<leveldb::WriteBatch> batch(new leveldb::WriteBatch);
@@ -623,8 +618,10 @@ void DriveMetadataStore::RemoveOrigin(
 
   std::string resource_id;
   if (!EraseIfExists(&incremental_sync_origins_, origin, &resource_id) &&
-      !EraseIfExists(&disabled_origins_, origin, &resource_id))
+      !EraseIfExists(&disabled_origins_, origin, &resource_id)) {
+    RunSoon(FROM_HERE, base::Bind(callback, SYNC_DATABASE_ERROR_NOT_FOUND));
     return;
+  }
   origin_by_resource_id_.erase(resource_id);
 
   scoped_ptr<leveldb::WriteBatch> batch(new leveldb::WriteBatch);
@@ -636,20 +633,12 @@ void DriveMetadataStore::RemoveOrigin(
   WriteToDB(batch.Pass(), callback);
 }
 
-void DriveMetadataStore::DidUpdateOrigin(
-    const SyncStatusCallback& callback,
-    SyncStatusCode status) {
-  UpdateDBStatus(status);
-  callback.Run(status);
-}
-
 void DriveMetadataStore::WriteToDB(scoped_ptr<leveldb::WriteBatch> batch,
                                    const SyncStatusCallback& callback) {
   DCHECK(CalledOnValidThread());
   if (db_status_ != SYNC_STATUS_OK &&
       db_status_ != SYNC_DATABASE_ERROR_NOT_FOUND) {
-    base::MessageLoopProxy::current()->PostTask(
-        FROM_HERE, base::Bind(callback, SYNC_DATABASE_ERROR_FAILED));
+    RunSoon(FROM_HERE, base::Bind(callback, SYNC_DATABASE_ERROR_FAILED));
     return;
   }
 
@@ -792,12 +781,12 @@ scoped_ptr<base::ListValue> DriveMetadataStore::DumpFiles(const GURL& origin) {
     // Convert Drive specific metadata to Common File metadata object.
     const DriveMetadata& metadata = itr->second;
 
-    base::DictionaryValue* file = new DictionaryValue;
+    base::DictionaryValue* file = new base::DictionaryValue;
     file->SetString("path", itr->first.AsUTF8Unsafe());
     file->SetString("title", itr->first.BaseName().AsUTF8Unsafe());
     file->SetString("type", DriveTypeToString(metadata.type()));
 
-    base::DictionaryValue* details = new DictionaryValue;
+    base::DictionaryValue* details = new base::DictionaryValue;
     details->SetString("resource_id", metadata.resource_id());
     details->SetString("md5", metadata.md5_checksum());
     details->SetString("dirty", metadata.to_be_fetched() ? "true" : "false");

@@ -8,12 +8,12 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/manifest_handlers/content_scripts_handler.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/resource_controller.h"
 #include "content/public/browser/resource_throttle.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/url_pattern.h"
 #include "net/url_request/url_request.h"
 
@@ -46,6 +46,10 @@ class UserScriptListener::Throttle
     }
   }
 
+  virtual const char* GetNameForLogging() const OVERRIDE {
+    return "UserScriptListener::Throttle";
+  }
+
  private:
   bool should_defer_;
   bool did_defer_;
@@ -68,7 +72,7 @@ UserScriptListener::UserScriptListener()
 
   registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_LOADED,
                  content::NotificationService::AllSources());
-  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED,
+  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
                  content::NotificationService::AllSources());
   registrar_.Add(this, chrome::NOTIFICATION_USER_SCRIPTS_UPDATED,
                  content::NotificationService::AllSources());
@@ -219,7 +223,7 @@ void UserScriptListener::Observe(int type,
       break;
     }
 
-    case chrome::NOTIFICATION_EXTENSION_UNLOADED: {
+    case chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED: {
       Profile* profile = content::Source<Profile>(source).ptr();
       const Extension* unloaded_extension =
           content::Details<UnloadedExtensionInfo>(details)->extension;

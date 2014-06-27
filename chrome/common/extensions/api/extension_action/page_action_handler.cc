@@ -6,9 +6,9 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_file_util.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
 #include "grit/generated_resources.h"
 
@@ -23,14 +23,14 @@ PageActionHandler::PageActionHandler() {
 PageActionHandler::~PageActionHandler() {
 }
 
-bool PageActionHandler::Parse(Extension* extension, string16* error) {
+bool PageActionHandler::Parse(Extension* extension, base::string16* error) {
   scoped_ptr<ActionInfo> page_action_info;
   const base::DictionaryValue* page_action_value = NULL;
 
   if (extension->manifest()->HasKey(keys::kPageActions)) {
     const base::ListValue* list_value = NULL;
     if (!extension->manifest()->GetList(keys::kPageActions, &list_value)) {
-      *error = ASCIIToUTF16(errors::kInvalidPageActionsList);
+      *error = base::ASCIIToUTF16(errors::kInvalidPageActionsList);
       return false;
     }
 
@@ -41,24 +41,24 @@ bool PageActionHandler::Parse(Extension* extension, string16* error) {
       // a page_actions key in the manifest.  Don't set |page_action_value|.
     } else if (list_value_length == 1u) {
       if (!list_value->GetDictionary(0, &page_action_value)) {
-        *error = ASCIIToUTF16(errors::kInvalidPageAction);
+        *error = base::ASCIIToUTF16(errors::kInvalidPageAction);
         return false;
       }
     } else {  // list_value_length > 1u.
-      *error = ASCIIToUTF16(errors::kInvalidPageActionsListSize);
+      *error = base::ASCIIToUTF16(errors::kInvalidPageActionsListSize);
       return false;
     }
   } else if (extension->manifest()->HasKey(keys::kPageAction)) {
     if (!extension->manifest()->GetDictionary(keys::kPageAction,
                                               &page_action_value)) {
-      *error = ASCIIToUTF16(errors::kInvalidPageAction);
+      *error = base::ASCIIToUTF16(errors::kInvalidPageAction);
       return false;
     }
   }
 
   // An extension cannot have both browser and page actions.
   if (extension->manifest()->HasKey(keys::kBrowserAction)) {
-    *error = ASCIIToUTF16(errors::kOneUISurfaceOnly);
+    *error = base::ASCIIToUTF16(errors::kOneUISurfaceOnly);
     return false;
   }
 

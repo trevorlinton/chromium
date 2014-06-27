@@ -6,9 +6,12 @@
 #define CONTENT_BROWSER_STREAMS_STREAM_HANDLE_IMPL_H_
 
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop_proxy.h"
 #include "base/synchronization/lock.h"
 #include "content/public/browser/stream_handle.h"
+
+namespace base {
+class MessageLoopProxy;
+}
 
 namespace content {
 
@@ -18,7 +21,8 @@ class StreamHandleImpl : public StreamHandle {
  public:
   StreamHandleImpl(const base::WeakPtr<Stream>& stream,
                    const GURL& original_url,
-                   const std::string& mime_type);
+                   const std::string& mime_type,
+                   scoped_refptr<net::HttpResponseHeaders> response_headers);
   virtual ~StreamHandleImpl();
 
  private:
@@ -26,11 +30,13 @@ class StreamHandleImpl : public StreamHandle {
   virtual const GURL& GetURL() OVERRIDE;
   virtual const GURL& GetOriginalURL() OVERRIDE;
   virtual const std::string& GetMimeType() OVERRIDE;
+  virtual scoped_refptr<net::HttpResponseHeaders> GetResponseHeaders() OVERRIDE;
 
   base::WeakPtr<Stream> stream_;
   GURL url_;
   GURL original_url_;
   std::string mime_type_;
+  scoped_refptr<net::HttpResponseHeaders> response_headers_;
   base::MessageLoopProxy* stream_message_loop_;
 };
 

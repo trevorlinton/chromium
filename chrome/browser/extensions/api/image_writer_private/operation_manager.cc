@@ -5,19 +5,20 @@
 #include "base/lazy_instance.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/extensions/api/image_writer_private/destroy_partitions_operation.h"
 #include "chrome/browser/extensions/api/image_writer_private/error_messages.h"
 #include "chrome/browser/extensions/api/image_writer_private/operation.h"
 #include "chrome/browser/extensions/api/image_writer_private/operation_manager.h"
 #include "chrome/browser/extensions/api/image_writer_private/write_from_file_operation.h"
 #include "chrome/browser/extensions/api/image_writer_private/write_from_url_operation.h"
-#include "chrome/browser/extensions/event_router.h"
 #include "chrome/browser/extensions/event_router_forwarder.h"
-#include "chrome/browser/extensions/extension_host.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
-#include "chrome/browser/extensions/extension_system_factory.h"
+#include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
+#include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_host.h"
+#include "extensions/browser/extension_system.h"
 
 namespace image_writer_api = extensions::api::image_writer_private;
 
@@ -26,12 +27,11 @@ namespace image_writer {
 
 using content::BrowserThread;
 
-OperationManager::OperationManager(Profile* profile)
-    : profile_(profile),
-      weak_factory_(this) {
+OperationManager::OperationManager(content::BrowserContext* context)
+    : profile_(Profile::FromBrowserContext(context)), weak_factory_(this) {
   registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNINSTALLED,
                  content::Source<Profile>(profile_));
-  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED,
+  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
                  content::Source<Profile>(profile_));
   registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_PROCESS_TERMINATED,
                  content::Source<Profile>(profile_));
@@ -58,44 +58,47 @@ void OperationManager::Shutdown() {
 void OperationManager::StartWriteFromUrl(
     const ExtensionId& extension_id,
     GURL url,
-    content::RenderViewHost* rvh,
     const std::string& hash,
-    bool saveImageAsDownload,
-    const std::string& storage_unit_id,
+    const std::string& device_path,
     const Operation::StartWriteCallback& callback) {
-
   OperationMap::iterator existing_operation = operations_.find(extension_id);
 
   if (existing_operation != operations_.end()) {
-    return callback.Run(false,
-                        error::kOperationAlreadyInProgress);
+    return callback.Run(false, error::kOperationAlreadyInProgress);
   }
 
   scoped_refptr<Operation> operation(
       new WriteFromUrlOperation(weak_factory_.GetWeakPtr(),
                                 extension_id,
-                                rvh,
+                                profile_->GetRequestContext(),
                                 url,
                                 hash,
-                                saveImageAsDownload,
-                                storage_unit_id));
-
+                                device_path));
   operations_[extension_id] = operation;
-
   BrowserThread::PostTask(BrowserThread::FILE,
                           FROM_HERE,
-                          base::Bind(&Operation::Start,
-                                     operation.get()));
-
+                          base::Bind(&Operation::Start, operation));
   callback.Run(true, "");
 }
 
 void OperationManager::StartWriteFromFile(
     const ExtensionId& extension_id,
-    const std::string& storage_unit_id,
+    const base::FilePath& path,
+    const std::string& device_path,
     const Operation::StartWriteCallback& callback) {
-  // Currently unimplemented.
-  callback.Run(false, error::kFileOperationsNotImplemented);
+  OperationMap::iterator existing_operation = operations_.find(extension_id);
+
+  if (existing_operation != operations_.end()) {
+    return callback.Run(false, error::kOperationAlreadyInProgress);
+  }
+
+  scoped_refptr<Operation> operation(new WriteFromFileOperation(
+      weak_factory_.GetWeakPtr(), extension_id, path, device_path));
+  operations_[extension_id] = operation;
+  BrowserThread::PostTask(BrowserThread::FILE,
+                          FROM_HERE,
+                          base::Bind(&Operation::Start, operation));
+  callback.Run(true, "");
 }
 
 void OperationManager::CancelWrite(
@@ -114,11 +117,29 @@ void OperationManager::CancelWrite(
   }
 }
 
+void OperationManager::DestroyPartitions(
+    const ExtensionId& extension_id,
+    const std::string& device_path,
+    const Operation::StartWriteCallback& callback) {
+  OperationMap::iterator existing_operation = operations_.find(extension_id);
+
+  if (existing_operation != operations_.end()) {
+    return callback.Run(false, error::kOperationAlreadyInProgress);
+  }
+
+  scoped_refptr<Operation> operation(new DestroyPartitionsOperation(
+      weak_factory_.GetWeakPtr(), extension_id, device_path));
+  operations_[extension_id] = operation;
+  BrowserThread::PostTask(BrowserThread::FILE,
+                          FROM_HERE,
+                          base::Bind(&Operation::Start, operation));
+  callback.Run(true, "");
+}
+
 void OperationManager::OnProgress(const ExtensionId& extension_id,
                                   image_writer_api::Stage stage,
                                   int progress) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  DVLOG(2) << "progress - " << stage << " at " << progress << "%";
 
   image_writer_api::ProgressInfo info;
   info.stage = stage;
@@ -155,7 +176,6 @@ void OperationManager::OnError(const ExtensionId& extension_id,
 
   DLOG(ERROR) << "ImageWriter error: " << error_message;
 
-  // TODO(haven): Set up error messages. http://crbug.com/284880
   info.stage = stage;
   info.percent_complete = progress;
 
@@ -193,7 +213,7 @@ void OperationManager::Observe(int type,
       DeleteOperation(content::Details<const Extension>(details).ptr()->id());
       break;
     }
-    case chrome::NOTIFICATION_EXTENSION_UNLOADED: {
+    case chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED: {
       DeleteOperation(content::Details<const Extension>(details).ptr()->id());
       break;
     }
@@ -218,17 +238,16 @@ void OperationManager::Observe(int type,
   }
 }
 
-OperationManager* OperationManager::Get(Profile* profile) {
-  return ProfileKeyedAPIFactory<OperationManager>::
-      GetForProfile(profile);
+OperationManager* OperationManager::Get(content::BrowserContext* context) {
+  return BrowserContextKeyedAPIFactory<OperationManager>::Get(context);
 }
 
-static base::LazyInstance<ProfileKeyedAPIFactory<OperationManager> >
+static base::LazyInstance<BrowserContextKeyedAPIFactory<OperationManager> >
     g_factory = LAZY_INSTANCE_INITIALIZER;
 
-ProfileKeyedAPIFactory<OperationManager>*
-    OperationManager::GetFactoryInstance() {
-  return &g_factory.Get();
+BrowserContextKeyedAPIFactory<OperationManager>*
+OperationManager::GetFactoryInstance() {
+  return g_factory.Pointer();
 }
 
 

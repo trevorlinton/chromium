@@ -30,7 +30,7 @@ bool ConvertEcPrime256v1PublicKeyInfoToJwk(
       spki->subjectPublicKey.data[0] != kUncompressedEncodingType)
     return false;
 
-  public_key_jwk->SetString("alg", "EC");
+  public_key_jwk->SetString("kty", "EC");
   public_key_jwk->SetString("crv", "P-256");
 
   base::StringPiece x(
@@ -69,7 +69,7 @@ bool ConvertEcPublicKeyInfoToJwk(
   return false;
 }
 
-typedef scoped_ptr_malloc<
+typedef scoped_ptr<
     CERTSubjectPublicKeyInfo,
     crypto::NSSDestroyer<CERTSubjectPublicKeyInfo,
                          SECKEY_DestroySubjectPublicKeyInfo> >

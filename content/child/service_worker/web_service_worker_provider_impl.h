@@ -7,45 +7,40 @@
 
 #include "base/compiler_specific.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/scoped_ptr.h"
 #include "third_party/WebKit/public/platform/WebServiceWorkerProvider.h"
-#include "third_party/WebKit/public/platform/WebServiceWorkerProviderClient.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
-#include "third_party/WebKit/public/web/WebSecurityOrigin.h"
 
-namespace WebKit {
-class WebString;
+namespace blink {
 class WebURL;
-}
-
-namespace IPC {
-class Sender;
+class WebServiceWorkerProviderClient;
 }
 
 namespace content {
 
+class ServiceWorkerDispatcher;
 class ThreadSafeSender;
-class ServiceWorkerMessageFilter;
 
 class WebServiceWorkerProviderImpl
-    : NON_EXPORTED_BASE(public WebKit::WebServiceWorkerProvider) {
+    : NON_EXPORTED_BASE(public blink::WebServiceWorkerProvider) {
  public:
-  WebServiceWorkerProviderImpl(
-      ThreadSafeSender* thread_safe_sender,
-      ServiceWorkerMessageFilter* message_filter,
-      const WebKit::WebURL& origin,
-      scoped_ptr<WebKit::WebServiceWorkerProviderClient> client);
+  WebServiceWorkerProviderImpl(ThreadSafeSender* thread_safe_sender,
+                               int provider_id);
   virtual ~WebServiceWorkerProviderImpl();
 
-  virtual void registerServiceWorker(const WebKit::WebURL& pattern,
-                                     const WebKit::WebURL& script_url,
+  virtual void setClient(blink::WebServiceWorkerProviderClient* client);
+
+  virtual void registerServiceWorker(const blink::WebURL& pattern,
+                                     const blink::WebURL& script_url,
                                      WebServiceWorkerCallbacks*);
 
-  virtual void unregisterServiceWorker(const WebKit::WebURL& pattern,
+  virtual void unregisterServiceWorker(const blink::WebURL& pattern,
                                        WebServiceWorkerCallbacks*);
 
  private:
+  ServiceWorkerDispatcher* GetDispatcher();
+
   scoped_refptr<ThreadSafeSender> thread_safe_sender_;
-  scoped_ptr<WebKit::WebServiceWorkerProviderClient> client_;
+  const int provider_id_;
 
   DISALLOW_COPY_AND_ASSIGN(WebServiceWorkerProviderImpl);
 };

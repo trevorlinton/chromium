@@ -39,9 +39,9 @@ PepperFileRefHost::PepperFileRefHost(BrowserPpapiHost* host,
 
   int render_process_id;
   int unused;
-  if (!host->GetRenderViewIDsForInstance(instance,
-                                         &render_process_id,
-                                         &unused)) {
+  if (!host->GetRenderFrameIDsForInstance(instance,
+                                          &render_process_id,
+                                          &unused)) {
     return;
   }
 
@@ -53,15 +53,15 @@ PepperFileRefHost::PepperFileRefHost(BrowserPpapiHost* host,
     return;
   }
 
-  PepperFileSystemBrowserHost* fs_host = NULL;
-  if (fs_resource_host->IsFileSystemHost())
-    fs_host = static_cast<PepperFileSystemBrowserHost*>(fs_resource_host);
-  if (fs_host == NULL) {
+  if (!fs_resource_host->IsFileSystemHost()) {
     DLOG(ERROR) << "Filesystem PP_Resource is not PepperFileSystemBrowserHost";
     return;
   }
 
-  fs_type_ = fs_host->GetType();
+  PepperFileSystemBrowserHost* file_system_host =
+      static_cast<PepperFileSystemBrowserHost*>(fs_resource_host);
+  file_system_host_ = file_system_host->AsWeakPtr();
+  fs_type_ = file_system_host->GetType();
   if ((fs_type_ != PP_FILESYSTEMTYPE_LOCALPERSISTENT) &&
       (fs_type_ != PP_FILESYSTEMTYPE_LOCALTEMPORARY) &&
       (fs_type_ != PP_FILESYSTEMTYPE_ISOLATED)) {
@@ -72,7 +72,7 @@ PepperFileRefHost::PepperFileRefHost(BrowserPpapiHost* host,
   backend_.reset(new PepperInternalFileRefBackend(
       host->GetPpapiHost(),
       render_process_id,
-      base::AsWeakPtr(fs_host),
+      file_system_host->AsWeakPtr(),
       path));
 }
 
@@ -88,9 +88,9 @@ PepperFileRefHost::PepperFileRefHost(BrowserPpapiHost* host,
 
   int render_process_id;
   int unused;
-  if (!host->GetRenderViewIDsForInstance(instance,
-                                         &render_process_id,
-                                         &unused)) {
+  if (!host->GetRenderFrameIDsForInstance(instance,
+                                          &render_process_id,
+                                          &unused)) {
     return;
   }
 
@@ -120,6 +120,11 @@ base::FilePath PepperFileRefHost::GetExternalFilePath() const {
   if (backend_)
     return backend_->GetExternalFilePath();
   return base::FilePath();
+}
+
+base::WeakPtr<PepperFileSystemBrowserHost>
+PepperFileRefHost::GetFileSystemHost() const {
+  return file_system_host_;
 }
 
 int32_t PepperFileRefHost::CanRead() const {
@@ -175,12 +180,12 @@ int32_t PepperFileRefHost::OnResourceMessageReceived(
 
 int32_t PepperFileRefHost::OnMakeDirectory(
     ppapi::host::HostMessageContext* context,
-    bool make_ancestors) {
+    int32_t make_directory_flags) {
   int32_t rv = CanCreate();
   if (rv != PP_OK)
     return rv;
-  return backend_->MakeDirectory(context->MakeReplyMessageContext(),
-                                 make_ancestors);
+  return backend_->MakeDirectory(
+      context->MakeReplyMessageContext(), make_directory_flags);
 }
 
 int32_t PepperFileRefHost::OnTouch(ppapi::host::HostMessageContext* context,

@@ -163,6 +163,21 @@ TextDirection GetFirstStrongCharacterDirection(const string16& text) {
   return LEFT_TO_RIGHT;
 }
 
+TextDirection GetLastStrongCharacterDirection(const string16& text) {
+  const UChar* string = text.c_str();
+  size_t position = text.length();
+  while (position > 0) {
+    UChar32 character;
+    size_t prev_position = position;
+    U16_PREV(string, 0, prev_position, character);
+    TextDirection direction = GetCharacterDirection(character);
+    if (direction != UNKNOWN_DIRECTION)
+      return direction;
+    position = prev_position;
+  }
+  return LEFT_TO_RIGHT;
+}
+
 TextDirection GetStringDirection(const string16& text) {
   const UChar* string = text.c_str();
   size_t length = text.length();
@@ -248,15 +263,18 @@ bool AdjustStringForLocaleDirection(string16* text) {
   bool has_rtl_chars = StringContainsStrongRTLChars(*text);
   if (!ui_direction_is_rtl && has_rtl_chars) {
     WrapStringWithRTLFormatting(text);
-    text->insert(0U, 1U, kLeftToRightMark);
+    text->insert(static_cast<size_t>(0), static_cast<size_t>(1),
+                 kLeftToRightMark);
     text->push_back(kLeftToRightMark);
   } else if (ui_direction_is_rtl && has_rtl_chars) {
     WrapStringWithRTLFormatting(text);
-    text->insert(0U, 1U, kRightToLeftMark);
+    text->insert(static_cast<size_t>(0), static_cast<size_t>(1),
+                 kRightToLeftMark);
     text->push_back(kRightToLeftMark);
   } else if (ui_direction_is_rtl) {
     WrapStringWithLTRFormatting(text);
-    text->insert(0U, 1U, kRightToLeftMark);
+    text->insert(static_cast<size_t>(0), static_cast<size_t>(1),
+                 kRightToLeftMark);
     text->push_back(kRightToLeftMark);
   } else {
     return false;
@@ -317,7 +335,8 @@ void WrapStringWithLTRFormatting(string16* text) {
     return;
 
   // Inserting an LRE (Left-To-Right Embedding) mark as the first character.
-  text->insert(0U, 1U, kLeftToRightEmbeddingMark);
+  text->insert(static_cast<size_t>(0), static_cast<size_t>(1),
+               kLeftToRightEmbeddingMark);
 
   // Inserting a PDF (Pop Directional Formatting) mark as the last character.
   text->push_back(kPopDirectionalFormatting);
@@ -328,7 +347,8 @@ void WrapStringWithRTLFormatting(string16* text) {
     return;
 
   // Inserting an RLE (Right-To-Left Embedding) mark as the first character.
-  text->insert(0U, 1U, kRightToLeftEmbeddingMark);
+  text->insert(static_cast<size_t>(0), static_cast<size_t>(1),
+               kRightToLeftEmbeddingMark);
 
   // Inserting a PDF (Pop Directional Formatting) mark as the last character.
   text->push_back(kPopDirectionalFormatting);

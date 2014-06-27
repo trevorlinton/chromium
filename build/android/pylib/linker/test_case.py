@@ -29,46 +29,44 @@
 
    To build and run the linker tests, do the following:
 
-     ninja -C out/Debug content_linker_test_apk
+     ninja -C out/Debug chromium_linker_test_apk
      build/android/test_runner.py linker
 
 """
+# pylint: disable=R0201
 
 import logging
 import os
 import re
-import StringIO
-import subprocess
-import tempfile
 import time
 
 from pylib import constants
 from pylib import android_commands
-from pylib import flag_changer
 from pylib.base import base_test_result
+
 
 ResultType = base_test_result.ResultType
 
-_PACKAGE_NAME='org.chromium.content_linker_test_apk'
-_ACTIVITY_NAME='.ContentLinkerTestActivity'
-_COMMAND_LINE_FILE='/data/local/tmp/content-linker-test-command-line'
+_PACKAGE_NAME = 'org.chromium.chromium_linker_test_apk'
+_ACTIVITY_NAME = '.ChromiumLinkerTestActivity'
+_COMMAND_LINE_FILE = '/data/local/tmp/chromium-linker-test-command-line'
 
 # Path to the Linker.java source file.
-_LINKER_JAVA_SOURCE_PATH = \
-    'content/public/android/java/src/org/chromium/content/app/Linker.java'
+_LINKER_JAVA_SOURCE_PATH = (
+    'base/android/java/src/org/chromium/base/library_loader/Linker.java')
 
 # A regular expression used to extract the browser shared RELRO configuration
 # from the Java source file above.
-_RE_LINKER_BROWSER_CONFIG = \
-    re.compile(r'.*BROWSER_SHARED_RELRO_CONFIG\s+=\s+' + \
-               'BROWSER_SHARED_RELRO_CONFIG_(\S+)\s*;.*',
-               re.MULTILINE | re.DOTALL)
+_RE_LINKER_BROWSER_CONFIG = re.compile(
+    r'.*BROWSER_SHARED_RELRO_CONFIG\s+=\s+' +
+        'BROWSER_SHARED_RELRO_CONFIG_(\S+)\s*;.*',
+    re.MULTILINE | re.DOTALL)
 
 # Logcat filters used during each test. Only the 'chromium' one is really
 # needed, but the logs are added to the TestResult in case of error, and
-# it is handy to have the 'content_android_linker' ones as well when
+# it is handy to have the 'chromium_android_linker' ones as well when
 # troubleshooting.
-_LOGCAT_FILTERS = [ '*:s', 'chromium:v', 'content_android_linker:v' ]
+_LOGCAT_FILTERS = [ '*:s', 'chromium:v', 'chromium_android_linker:v' ]
 #_LOGCAT_FILTERS = [ '*:v' ]  ## DEBUG
 
 # Regular expression used to match status lines in logcat.
@@ -148,19 +146,6 @@ def _CheckLinkerTestStatus(logcat):
 
   # Didn't find anything.
   return (False, None, None)
-
-
-def _WaitForLinkerTestStatus(adb, timeout):
-  """Wait up to |timeout| seconds until the full linker test status lines appear
-     in the logcat being recorded with |adb|.
-  Args:
-    adb: An AndroidCommands instance. This assumes adb.StartRecordingLogcat()
-         was called previously.
-    timeout: Timeout in seconds.
-  Returns:
-    ResultType.TIMEOUT in case of timeout, ResulType.PASS if both status lines
-    report 'SUCCESS', or ResulType.FAIL otherwise.
-  """
 
 
 def _StartActivityAndWaitForLinkerTestStatus(adb, timeout):
@@ -276,7 +261,6 @@ def _CheckLoadAddressRandomization(lib_map_list, process_type):
 
   # For each library, check the randomness of its load addresses.
   bad_libs = {}
-  success = True
   for lib_name, lib_address_list in lib_addr_map.iteritems():
     # If all addresses are different, skip to next item.
     lib_address_set = set(lib_address_list)
@@ -304,17 +288,17 @@ class LinkerTestCaseBase(object):
     """
     self.is_low_memory = is_low_memory
     if is_low_memory:
-        test_suffix = 'ForLowMemoryDevice'
+      test_suffix = 'ForLowMemoryDevice'
     else:
-        test_suffix = 'ForRegularDevice'
+      test_suffix = 'ForRegularDevice'
     class_name = self.__class__.__name__
     self.qualified_name = '%s.%s' % (class_name, test_suffix)
     self.tagged_name = self.qualified_name
 
-  def _RunTest(self, adb):
+  def _RunTest(self, _adb):
     """Run the test, must be overriden.
     Args:
-      adb: An AndroidCommands instance to the device.
+      _adb: An AndroidCommands instance to the device.
     Returns:
       A (status, log) tuple, where <status> is a ResultType constant, and <log>
       is the logcat output captured during the test in case of error, or None
@@ -499,7 +483,7 @@ class LinkerRandomizationTest(LinkerTestCaseBase):
     browser_lib_map_list = []
     renderer_lib_map_list = []
     logs_list = []
-    for loop in range(max_loops):
+    for _ in range(max_loops):
       # Start the activity.
       result, logs = _StartActivityAndWaitForLinkerTestStatus(adb, timeout=30)
       if result == ResultType.TIMEOUT:
@@ -554,67 +538,3 @@ class LinkerRandomizationTest(LinkerTestCaseBase):
       return ResultType.FAIL, renderer_logs
 
     return ResultType.PASS, logs
-
-
-class LinkerLowMemoryThresholdTest(LinkerTestCaseBase):
-  """This test checks that the definitions for the low-memory device physical
-     RAM threshold are identical in the base/ and linker sources. Because these
-     two components should absolutely not depend on each other, it's difficult
-     to perform this check correctly at runtime inside the linker test binary
-     without introducing hairy dependency issues in the build, or complicated
-     plumbing at runtime.
-
-     To work-around this, this test looks directly into the sources for a
-     definition of the same constant that should look like:
-
-       #define ANDROID_LOW_MEMORY_DEVICE_THRESHOLD_MB  <number>
-
-     And will check that the values for <number> are identical in all of
-     them."""
-
-  # A regular expression used to find the definition of the threshold in all
-  # sources:
-  _RE_THRESHOLD_DEFINITION = re.compile(
-      r'^\s*#\s*define\s+ANDROID_LOW_MEMORY_DEVICE_THRESHOLD_MB\s+(\d+)\s*$',
-      re.MULTILINE)
-
-  # The list of source files, relative to DIR_SOURCE_ROOT, which must contain
-  # a line that matches the re above.
-  _SOURCES_LIST = [
-      'base/android/sys_utils.cc',
-      'content/common/android/linker/linker_jni.cc' ]
-
-  def _RunTest(self, adb):
-    failure = False
-    values = []
-    # First, collect all the values in all input sources.
-    re = LinkerLowMemoryThresholdTest._RE_THRESHOLD_DEFINITION
-    for source in LinkerLowMemoryThresholdTest._SOURCES_LIST:
-      source_path = os.path.join(constants.DIR_SOURCE_ROOT, source);
-      if not os.path.exists(source_path):
-        logging.error('Missing source file: ' + source_path)
-        failure = True
-        continue
-      with open(source_path) as f:
-        source_text = f.read()
-        # For some reason, re.match() never works here.
-        source_values = re.findall(source_text)
-        if not source_values:
-          logging.error('Missing low-memory threshold definition in ' + \
-                        source_path)
-          logging.error('Source:\n%s\n' % source_text)
-          failure = True
-          continue
-        values += source_values
-
-    # Second, check that they are all the same.
-    if not failure:
-      for value in values[1:]:
-        if value != values[0]:
-          logging.error('Value mismatch: ' + repr(values))
-          failure = True
-
-    if failure:
-      return ResultType.FAIL, 'Incorrect low-end memory threshold definitions!'
-
-    return ResultType.PASS, ''

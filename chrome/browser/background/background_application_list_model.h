@@ -10,9 +10,9 @@
 
 #include "base/basictypes.h"
 #include "base/observer_list.h"
-#include "chrome/common/extensions/extension.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
+#include "extensions/common/extension.h"
 
 class Profile;
 
@@ -127,7 +127,7 @@ class BackgroundApplicationListModel : public content::NotificationObserver {
   // Invoked by Observe for NOTIFICATION_EXTENSION_LOADED.
   void OnExtensionLoaded(const extensions::Extension* extension);
 
-  // Invoked by Observe for NOTIFICATION_EXTENSION_UNLOADED.
+  // Invoked by Observe for NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED.
   void OnExtensionUnloaded(const extensions::Extension* extension);
 
   // Invoked by Observe for NOTIFICATION_EXTENSION_PERMISSIONS_UPDATED.
@@ -148,7 +148,7 @@ class BackgroundApplicationListModel : public content::NotificationObserver {
 
   ApplicationMap applications_;
   extensions::ExtensionList extensions_;
-  ObserverList<Observer> observers_;
+  ObserverList<Observer, true> observers_;
   Profile* profile_;
   content::NotificationRegistrar registrar_;
 

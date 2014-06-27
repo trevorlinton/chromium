@@ -14,12 +14,10 @@
 #include "chrome/browser/local_discovery/cloud_print_printer_list.h"
 #include "chrome/browser/local_discovery/privet_device_lister.h"
 #include "chrome/browser/local_discovery/privet_http.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
+#include "chrome/browser/signin/signin_manager.h"
 #include "content/public/browser/web_ui_message_handler.h"
 
-#if defined(ENABLE_FULL_PRINTING) && !defined(OS_CHROMEOS) && \
-  !defined(OS_MACOSX)
+#if defined(ENABLE_FULL_PRINTING) && !defined(OS_CHROMEOS)
 #define CLOUD_PRINT_CONNECTOR_UI_AVAILABLE
 #endif
 
@@ -38,7 +36,7 @@ class LocalDiscoveryUIHandler : public content::WebUIMessageHandler,
                                 public PrivetRegisterOperation::Delegate,
                                 public PrivetDeviceLister::Delegate,
                                 public CloudPrintPrinterList::Delegate,
-                                content::NotificationObserver {
+                                public SigninManagerBase::Observer {
  public:
   LocalDiscoveryUIHandler();
   virtual ~LocalDiscoveryUIHandler();
@@ -59,7 +57,7 @@ class LocalDiscoveryUIHandler : public content::WebUIMessageHandler,
       const std::string& action,
       PrivetRegisterOperation::FailureReason reason,
       int printer_http_code,
-      const DictionaryValue* json) OVERRIDE;
+      const base::DictionaryValue* json) OVERRIDE;
 
   virtual void OnPrivetRegisterDone(
       PrivetRegisterOperation* operation,
@@ -79,10 +77,11 @@ class LocalDiscoveryUIHandler : public content::WebUIMessageHandler,
 
   virtual void OnCloudPrintPrinterListUnavailable() OVERRIDE;
 
-  // content::NotificationObserver implementation.
-  virtual void Observe(int type,
-                       const content::NotificationSource& source,
-                       const content::NotificationDetails& details) OVERRIDE;
+  // SigninManagerBase::Observer implementation.
+  virtual void GoogleSigninSucceeded(const std::string& username,
+                                     const std::string& password) OVERRIDE;
+
+  virtual void GoogleSignedOut(const std::string& username) OVERRIDE;
 
  private:
   typedef std::map<std::string, DeviceDescription> DeviceDescriptionMap;
@@ -122,7 +121,8 @@ class LocalDiscoveryUIHandler : public content::WebUIMessageHandler,
   void SendRegisterError();
 
   // Singal to the web interface that registration has finished.
-  void SendRegisterDone(const DeviceDescription& device);
+  void SendRegisterDone(const std::string& service_name,
+                        const DeviceDescription& device);
 
   // Set the visibility of the page.
   void SetIsVisible(bool visible);
@@ -146,15 +146,11 @@ class LocalDiscoveryUIHandler : public content::WebUIMessageHandler,
 
   void CheckUserLoggedIn();
 
-  void ScheduleQuery(int timeout_seconds);
-
-  void SendQuery(int next_timeout_seconds);
-
 #if defined(CLOUD_PRINT_CONNECTOR_UI_AVAILABLE)
   void StartCloudPrintConnector();
   void OnCloudPrintPrefsChanged();
-  void ShowCloudPrintSetupDialog(const ListValue* args);
-  void HandleDisableCloudPrintConnector(const ListValue* args);
+  void ShowCloudPrintSetupDialog(const base::ListValue* args);
+  void HandleDisableCloudPrintConnector(const base::ListValue* args);
   void SetupCloudPrintConnectorSection();
   void RemoveCloudPrintConnectorSection();
   void RefreshCloudPrintStatusFromService();
@@ -190,16 +186,12 @@ class LocalDiscoveryUIHandler : public content::WebUIMessageHandler,
   // List of printers from cloud print.
   scoped_ptr<CloudPrintPrinterList> cloud_print_printer_list_;
 
-  // Callback for requery.
-  base::CancelableCallback<void()> requery_callback_;
-
 #if defined(CLOUD_PRINT_CONNECTOR_UI_AVAILABLE)
   StringPrefMember cloud_print_connector_email_;
   BooleanPrefMember cloud_print_connector_enabled_;
   bool cloud_print_connector_ui_enabled_;
 #endif
 
-  content::NotificationRegistrar notification_registrar_;
   DISALLOW_COPY_AND_ASSIGN(LocalDiscoveryUIHandler);
 };
 

@@ -169,27 +169,27 @@ StaticSocketDataProvider::StaticSocketDataProvider(MockRead* reads,
 StaticSocketDataProvider::~StaticSocketDataProvider() {}
 
 const MockRead& StaticSocketDataProvider::PeekRead() const {
-  DCHECK(!at_read_eof());
+  CHECK(!at_read_eof());
   return reads_[read_index_];
 }
 
 const MockWrite& StaticSocketDataProvider::PeekWrite() const {
-  DCHECK(!at_write_eof());
+  CHECK(!at_write_eof());
   return writes_[write_index_];
 }
 
 const MockRead& StaticSocketDataProvider::PeekRead(size_t index) const {
-  DCHECK_LT(index, read_count_);
+  CHECK_LT(index, read_count_);
   return reads_[index];
 }
 
 const MockWrite& StaticSocketDataProvider::PeekWrite(size_t index) const {
-  DCHECK_LT(index, write_count_);
+  CHECK_LT(index, write_count_);
   return writes_[index];
 }
 
 MockRead StaticSocketDataProvider::GetNextRead() {
-  DCHECK(!at_read_eof());
+  CHECK(!at_read_eof());
   reads_[read_index_].time_stamp = base::Time::Now();
   return reads_[read_index_++];
 }
@@ -199,7 +199,12 @@ MockWriteResult StaticSocketDataProvider::OnWrite(const std::string& data) {
     // Not using mock writes; succeed synchronously.
     return MockWriteResult(SYNCHRONOUS, data.length());
   }
-  DCHECK(!at_write_eof());
+  EXPECT_FALSE(at_write_eof());
+  if (at_write_eof()) {
+    // Show what the extra write actually consists of.
+    EXPECT_EQ("<unexpected write>", data);
+    return MockWriteResult(SYNCHRONOUS, ERR_UNEXPECTED);
+  }
 
   // Check that what we are writing matches the expectation.
   // Then give the mocked return value.
@@ -667,6 +672,8 @@ MockClientSocketFactory::CreateDatagramClientSocket(
   scoped_ptr<MockUDPClientSocket> socket(
       new MockUDPClientSocket(data_provider, net_log));
   data_provider->set_socket(socket.get());
+  if (bind_type == DatagramSocket::RANDOM_BIND)
+    socket->set_source_port(rand_int_cb.Run(1025, 65535));
   return socket.PassAs<DatagramClientSocket>();
 }
 
@@ -698,9 +705,9 @@ void MockClientSocketFactory::ClearSSLSessionCache() {
 const char MockClientSocket::kTlsUnique[] = "MOCK_TLSUNIQ";
 
 MockClientSocket::MockClientSocket(const BoundNetLog& net_log)
-    : weak_factory_(this),
-      connected_(false),
-      net_log_(net_log) {
+    : connected_(false),
+      net_log_(net_log),
+      weak_factory_(this) {
   IPAddressNumber ip;
   CHECK(ParseIPLiteralToNumber("192.0.2.33", &ip));
   peer_addr_ = IPEndPoint(ip, 0);
@@ -773,6 +780,12 @@ MockClientSocket::GetNextProto(std::string* proto, std::string* server_protos) {
   proto->clear();
   server_protos->clear();
   return SSLClientSocket::kNextProtoUnsupported;
+}
+
+scoped_refptr<X509Certificate>
+MockClientSocket::GetUnverifiedServerCertificateChain() const {
+  NOTREACHED();
+  return NULL;
 }
 
 MockClientSocket::~MockClientSocket() {}
@@ -1099,7 +1112,8 @@ DeterministicMockUDPClientSocket::DeterministicMockUDPClientSocket(
     net::NetLog* net_log,
     DeterministicSocketData* data)
     : connected_(false),
-      helper_(net_log, data) {
+      helper_(net_log, data),
+      source_port_(123) {
 }
 
 DeterministicMockUDPClientSocket::~DeterministicMockUDPClientSocket() {}
@@ -1171,7 +1185,7 @@ int DeterministicMockUDPClientSocket::GetLocalAddress(
   IPAddressNumber ip;
   bool rv = ParseIPLiteralToNumber("192.0.2.33", &ip);
   CHECK(rv);
-  *address = IPEndPoint(ip, 123);
+  *address = IPEndPoint(ip, source_port_);
   return OK;
 }
 
@@ -1435,6 +1449,7 @@ MockUDPClientSocket::MockUDPClientSocket(SocketDataProvider* data,
       read_offset_(0),
       read_data_(SYNCHRONOUS, ERR_UNEXPECTED),
       need_read_data_(true),
+      source_port_(123),
       pending_buf_(NULL),
       pending_buf_len_(0),
       net_log_(BoundNetLog::Make(net_log, net::NetLog::SOURCE_NONE)),
@@ -1446,7 +1461,8 @@ MockUDPClientSocket::MockUDPClientSocket(SocketDataProvider* data,
 
 MockUDPClientSocket::~MockUDPClientSocket() {}
 
-int MockUDPClientSocket::Read(IOBuffer* buf, int buf_len,
+int MockUDPClientSocket::Read(IOBuffer* buf,
+                              int buf_len,
                               const CompletionCallback& callback) {
   if (!connected_)
     return ERR_UNEXPECTED;
@@ -1513,7 +1529,7 @@ int MockUDPClientSocket::GetLocalAddress(IPEndPoint* address) const {
   IPAddressNumber ip;
   bool rv = ParseIPLiteralToNumber("192.0.2.33", &ip);
   CHECK(rv);
-  *address = IPEndPoint(ip, 123);
+  *address = IPEndPoint(ip, source_port_);
   return OK;
 }
 
@@ -1808,6 +1824,8 @@ DeterministicMockClientSocketFactory::CreateDatagramClientSocket(
       new DeterministicMockUDPClientSocket(net_log, data_provider));
   data_provider->set_delegate(socket->AsWeakPtr());
   udp_client_sockets().push_back(socket.get());
+  if (bind_type == DatagramSocket::RANDOM_BIND)
+    socket->set_source_port(rand_int_cb.Run(1025, 65535));
   return socket.PassAs<DatagramClientSocket>();
 }
 

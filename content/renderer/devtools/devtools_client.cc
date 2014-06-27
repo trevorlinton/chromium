@@ -16,10 +16,9 @@
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/web/WebDevToolsFrontend.h"
 #include "ui/base/ui_base_switches.h"
-#include "webkit/common/appcache/appcache_interfaces.h"
 
-using WebKit::WebDevToolsFrontend;
-using WebKit::WebString;
+using blink::WebDevToolsFrontend;
+using blink::WebString;
 
 namespace content {
 
@@ -30,8 +29,8 @@ DevToolsClient::DevToolsClient(RenderViewImpl* render_view)
       WebDevToolsFrontend::create(
           render_view->webview(),
           this,
-          ASCIIToUTF16(command_line.GetSwitchValueASCII(switches::kLang))));
-  appcache::AddSupportedScheme(chrome::kChromeDevToolsScheme);
+          base::ASCIIToUTF16(
+              command_line.GetSwitchValueASCII(switches::kLang))));
 }
 
 DevToolsClient::~DevToolsClient() {

@@ -5,12 +5,11 @@
 #ifndef MEDIA_CAST_RTP_RECEIVER_RTP_PARSER_RTP_PARSER_H_
 #define MEDIA_CAST_RTP_RECEIVER_RTP_PARSER_RTP_PARSER_H_
 
-#include "media/cast/rtp_common/rtp_defines.h"
+#include "media/cast/rtp_receiver/rtp_receiver_defines.h"
+#include "media/cast/transport/cast_transport_defines.h"
 
 namespace media {
 namespace cast {
-
-class RtpData;
 
 struct RtpParserConfig {
   RtpParserConfig() {
@@ -21,30 +20,36 @@ struct RtpParserConfig {
 
   uint32 ssrc;
   int payload_type;
-  AudioCodec audio_codec;
-  VideoCodec video_codec;
+  transport::AudioCodec audio_codec;
+  transport::VideoCodec video_codec;
   int audio_channels;
 };
 
 class RtpParser {
  public:
-  RtpParser(RtpData* incoming_payload_callback,
-            const RtpParserConfig parser_config);
+  RtpParser(const RtpParserConfig parser_config);
 
-  ~RtpParser();
+  virtual ~RtpParser();
 
-  bool ParsePacket(const uint8* packet, size_t length,
+  bool ParsePacket(const uint8* packet,
+                   size_t length,
                    RtpCastHeader* rtp_header);
-
+ protected:
+  virtual void OnReceivedPayloadData(const uint8* payload_data,
+                                     size_t payload_size,
+                                     const RtpCastHeader& rtp_header) = 0;
  private:
-  bool ParseCommon(const uint8* packet, size_t length,
+  bool ParseCommon(const uint8* packet,
+                   size_t length,
                    RtpCastHeader* rtp_header);
 
-  bool ParseCast(const uint8* packet, size_t length,
-                 RtpCastHeader* rtp_header);
+  bool ParseCast(const uint8* packet, size_t length, RtpCastHeader* rtp_header);
 
-  RtpData* data_callback_;
   RtpParserConfig parser_config_;
+  transport::FrameIdWrapHelper frame_id_wrap_helper_;
+  transport::FrameIdWrapHelper reference_frame_id_wrap_helper_;
+
+  DISALLOW_COPY_AND_ASSIGN(RtpParser);
 };
 
 }  // namespace cast

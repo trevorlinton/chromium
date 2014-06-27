@@ -5,10 +5,10 @@
 #include "chrome/browser/extensions/extension_installer.h"
 
 #include "base/bind.h"
-#include "chrome/browser/extensions/extension_system.h"
-#include "chrome/browser/extensions/management_policy.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/management_policy.h"
 
 namespace extensions {
 
@@ -27,8 +27,8 @@ void ExtensionInstaller::CheckRequirements(
   requirements_checker_->Check(extension_, callback);
 }
 
-string16 ExtensionInstaller::CheckManagementPolicy() {
-  string16 error;
+base::string16 ExtensionInstaller::CheckManagementPolicy() {
+  base::string16 error;
   bool allowed = ExtensionSystem::Get(profile_)->management_policy()
       ->UserMayLoad(extension_.get(), &error);
   DCHECK(allowed || !error.empty());

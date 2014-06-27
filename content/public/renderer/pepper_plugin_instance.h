@@ -7,8 +7,10 @@
 
 #include "base/basictypes.h"
 #include "base/process/process_handle.h"
+#include "base/strings/string16.h"
 #include "content/common/content_export.h"
 #include "ppapi/c/pp_resource.h"
+#include "ppapi/c/pp_var.h"
 #include "ppapi/c/private/ppb_instance_private.h"
 
 class GURL;
@@ -32,8 +34,12 @@ namespace IPC {
 struct ChannelHandle;
 }
 
-namespace WebKit {
+namespace blink {
 class WebPluginContainer;
+}
+
+namespace v8 {
+class Isolate;
 }
 
 namespace content {
@@ -47,7 +53,9 @@ class PepperPluginInstance {
 
   virtual content::RenderView* GetRenderView() = 0;
 
-  virtual WebKit::WebPluginContainer* GetContainer() = 0;
+  virtual blink::WebPluginContainer* GetContainer() = 0;
+
+  virtual v8::Isolate* GetIsolate() const = 0;
 
   virtual ppapi::VarTracker* GetVarTracker() = 0;
 
@@ -93,6 +101,15 @@ class PepperPluginInstance {
 
   // Creates a pending PepperFileRefRendererHost. Returns 0 on failure.
   virtual int MakePendingFileRefRendererHost(const base::FilePath& path) = 0;
+
+  // Sets a read-only property on the <embed> tag for this plugin instance.
+  virtual void SetEmbedProperty(PP_Var key, PP_Var value) = 0;
+
+  // Sets the selected text for this plugin.
+  virtual void SetSelectedText(const base::string16& selected_text) = 0;
+
+  // Sets the link currently under the cursor.
+  virtual void SetLinkUnderCursor(const std::string& url) = 0;
 };
 
 }  // namespace content

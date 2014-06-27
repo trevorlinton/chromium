@@ -14,7 +14,7 @@
 #include "base/strings/string_piece.h"
 #include "base/task_runner.h"
 #include "chrome/browser/profile_resetter/automatic_profile_resetter_mementos.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service.h"
+#include "components/keyed_service/core/keyed_service.h"
 
 class AutomaticProfileResetterDelegate;
 class Profile;
@@ -34,7 +34,7 @@ class ListValue;
 // working after a short delay.
 // All methods in this class shall be called on the UI thread, except when noted
 // otherwise.
-class AutomaticProfileResetter : public BrowserContextKeyedService {
+class AutomaticProfileResetter : public KeyedService {
  public:
   // Enumeration listing the possible outcomes of triggering the profile reset
   // prompt.
@@ -95,6 +95,10 @@ class AutomaticProfileResetter : public BrowserContextKeyedService {
   // definitive action (and we are not yet performing a reset).
   bool IsResetPromptFlowActive() const;
 
+  // Returns whether or not the profile reset banner should be shown on the
+  // WebUI-based settings page.
+  bool ShouldShowResetBanner() const;
+
   // Called to give notice that the reset bubble has actually been shown.
   void NotifyDidShowResetBubble();
 
@@ -110,6 +114,10 @@ class AutomaticProfileResetter : public BrowserContextKeyedService {
   // PromptResult, dismiss the prompt, and conclude the reset prompt flow early
   // without setting off any resets in the future.
   void NotifyDidCloseWebUIResetDialog(bool performed_reset);
+
+  // Called to give notice that reset banner has been dismissed as a result of
+  // user action on the WebUI-based settings page itself.
+  void NotifyDidCloseWebUIResetBanner();
 
   base::WeakPtr<AutomaticProfileResetter> AsWeakPtr() {
     return weak_ptr_factory_.GetWeakPtr();
@@ -130,7 +138,7 @@ class AutomaticProfileResetter : public BrowserContextKeyedService {
   void SetTaskRunnerForWaitingForTesting(
       const scoped_refptr<base::TaskRunner>& task_runner);
 
-  // BrowserContextKeyedService:
+  // KeyedService:
   virtual void Shutdown() OVERRIDE;
 
  private:
@@ -246,6 +254,8 @@ class AutomaticProfileResetter : public BrowserContextKeyedService {
   std::string program_;
 
   scoped_ptr<EvaluationResults> evaluation_results_;
+
+  bool should_show_reset_banner_;
 
   scoped_ptr<AutomaticProfileResetterDelegate> delegate_;
   scoped_refptr<base::TaskRunner> task_runner_for_waiting_;

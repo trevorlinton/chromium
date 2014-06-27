@@ -12,7 +12,7 @@
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkPaint.h"
-#include "ui/base/accessibility/accessible_view_state.h"
+#include "ui/accessibility/ax_view_state.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/events/event.h"
 #include "ui/gfx/animation/slide_animation.h"
@@ -61,7 +61,7 @@ Slider::Slider(SliderListener* listener, Orientation orientation)
       bar_active_images_(kBarImagesActive),
       bar_disabled_images_(kBarImagesDisabled) {
   EnableCanvasFlippingForRTLUI(true);
-  set_focusable(true);
+  SetFocusable(true);
   UpdateState(true);
 }
 
@@ -104,7 +104,7 @@ void Slider::SetValueInternal(float value, SliderChangeReason reason) {
   }
   if (accessibility_events_enabled_ && GetWidget()) {
     NotifyAccessibilityEvent(
-        ui::AccessibilityTypes::EVENT_VALUE_CHANGED, true);
+        ui::AX_EVENT_VALUE_CHANGED, true);
   }
 }
 
@@ -167,8 +167,21 @@ void Slider::UpdateState(bool control_on) {
   SchedulePaint();
 }
 
-void Slider::SetAccessibleName(const string16& name) {
+void Slider::SetAccessibleName(const base::string16& name) {
   accessible_name_ = name;
+}
+
+void Slider::OnPaintFocus(gfx::Canvas* canvas) {
+  if (!HasFocus())
+    return;
+
+  if (!focus_border_color_) {
+    canvas->DrawFocusRect(GetLocalBounds());
+  } else if (HasFocus()) {
+    canvas->DrawSolidFocusRect(
+        gfx::Rect(1, 1, width() - 3, height() - 3),
+        focus_border_color_);
+  }
 }
 
 gfx::Size Slider::GetPreferredSize() {
@@ -248,6 +261,7 @@ void Slider::OnPaint(gfx::Canvas* canvas) {
     canvas->DrawImageInt(*thumb_, thumb_x, button_cy);
   }
   View::OnPaint(canvas);
+  OnPaintFocus(canvas);
 }
 
 bool Slider::OnMousePressed(const ui::MouseEvent& event) {
@@ -309,20 +323,11 @@ void Slider::AnimationProgressed(const gfx::Animation* animation) {
   SchedulePaint();
 }
 
-void Slider::GetAccessibleState(ui::AccessibleViewState* state) {
-  state->role = ui::AccessibilityTypes::ROLE_SLIDER;
+void Slider::GetAccessibleState(ui::AXViewState* state) {
+  state->role = ui::AX_ROLE_SLIDER;
   state->name = accessible_name_;
-  state->value = UTF8ToUTF16(
+  state->value = base::UTF8ToUTF16(
       base::StringPrintf("%d%%", (int)(value_ * 100 + 0.5)));
-}
-
-void Slider::OnPaintFocusBorder(gfx::Canvas* canvas) {
-  if (!focus_border_color_) {
-    View::OnPaintFocusBorder(canvas);
-  } else if (HasFocus() && (focusable() || IsAccessibilityFocusable())) {
-    canvas->DrawRect(gfx::Rect(1, 1, width() - 3, height() - 3),
-                     focus_border_color_);
-  }
 }
 
 }  // namespace views

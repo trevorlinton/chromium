@@ -9,6 +9,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/memory/ref_counted.h"
+#include "chrome/browser/external_protocol/external_protocol_handler.h"
 #include "content/public/browser/resource_dispatcher_host_delegate.h"
 
 class DelayedResourceQueue;
@@ -51,13 +52,6 @@ class ChromeResourceDispatcherHostDelegate
       int child_id,
       int route_id,
       ScopedVector<content::ResourceThrottle>* throttles) OVERRIDE;
-   virtual void WillTransferRequestToNewProcess(
-      int old_child_id,
-      int old_route_id,
-      int old_request_id,
-      int new_child_id,
-      int new_route_id,
-      int new_request_id) OVERRIDE;
   virtual void DownloadStarting(
       net::URLRequest* request,
       content::ResourceContext* resource_context,
@@ -67,11 +61,6 @@ class ChromeResourceDispatcherHostDelegate
       bool is_content_initiated,
       bool must_download,
       ScopedVector<content::ResourceThrottle>* throttles) OVERRIDE;
-  virtual bool AcceptSSLClientCertificateRequest(
-        net::URLRequest* request,
-        net::SSLCertRequestInfo* cert_request_info) OVERRIDE;
-  virtual bool AcceptAuthRequest(net::URLRequest* request,
-                                 net::AuthChallengeInfo* auth_info) OVERRIDE;
   virtual content::ResourceDispatcherHostLoginDelegate* CreateLoginDelegate(
       net::AuthChallengeInfo* auth_info, net::URLRequest* request) OVERRIDE;
   virtual bool HandleExternalProtocol(const GURL& url,
@@ -102,6 +91,12 @@ class ChromeResourceDispatcherHostDelegate
       net::URLRequest* request,
       content::ResourceContext* resource_context,
       content::ResourceResponse* response) OVERRIDE;
+  virtual void RequestComplete(net::URLRequest* url_request) OVERRIDE;
+
+  // Called on the UI thread. Allows switching out the
+  // ExternalProtocolHandler::Delegate for testing code.
+  static void SetExternalProtocolHandlerDelegateForTesting(
+      ExternalProtocolHandler::Delegate* delegate);
 
  private:
   void AppendStandardResourceThrottles(
@@ -109,14 +104,6 @@ class ChromeResourceDispatcherHostDelegate
       content::ResourceContext* resource_context,
       ResourceType::Type resource_type,
       ScopedVector<content::ResourceThrottle>* throttles);
-
-  // Adds Chrome experiment and metrics state as custom headers to |request|.
-  // This is a best-effort attempt, and does not interrupt the request if the
-  // headers can not be appended.
-  void AppendChromeMetricsHeaders(
-      net::URLRequest* request,
-      content::ResourceContext* resource_context,
-      ResourceType::Type resource_type);
 
 #if defined(ENABLE_ONE_CLICK_SIGNIN)
   // Append headers required to tell Gaia whether the sync interstitial

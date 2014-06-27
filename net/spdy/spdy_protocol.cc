@@ -33,11 +33,23 @@ void SpdySynReplyIR::Visit(SpdyFrameVisitor* visitor) const {
   return visitor->VisitSynReply(*this);
 }
 
+SpdyRstStreamIR::SpdyRstStreamIR(SpdyStreamId stream_id,
+                                 SpdyRstStreamStatus status,
+                                 base::StringPiece description)
+    : SpdyFrameWithStreamIdIR(stream_id),
+      description_(description) {
+  set_status(status);
+}
+
+SpdyRstStreamIR::~SpdyRstStreamIR() {}
+
 void SpdyRstStreamIR::Visit(SpdyFrameVisitor* visitor) const {
   return visitor->VisitRstStream(*this);
 }
 
-SpdySettingsIR::SpdySettingsIR() : clear_settings_(false) {}
+SpdySettingsIR::SpdySettingsIR()
+    : clear_settings_(false),
+      is_ack_(false) {}
 
 SpdySettingsIR::~SpdySettingsIR() {}
 
@@ -47,6 +59,20 @@ void SpdySettingsIR::Visit(SpdyFrameVisitor* visitor) const {
 
 void SpdyPingIR::Visit(SpdyFrameVisitor* visitor) const {
   return visitor->VisitPing(*this);
+}
+
+SpdyGoAwayIR::SpdyGoAwayIR(SpdyStreamId last_good_stream_id,
+                           SpdyGoAwayStatus status,
+                           const base::StringPiece& description)
+    : description_(description) {
+      set_last_good_stream_id(last_good_stream_id);
+  set_status(status);
+}
+
+SpdyGoAwayIR::~SpdyGoAwayIR() {}
+
+const base::StringPiece& SpdyGoAwayIR::description() const {
+  return description_;
 }
 
 void SpdyGoAwayIR::Visit(SpdyFrameVisitor* visitor) const {
@@ -61,22 +87,16 @@ void SpdyWindowUpdateIR::Visit(SpdyFrameVisitor* visitor) const {
   return visitor->VisitWindowUpdate(*this);
 }
 
-SpdyCredentialIR::SpdyCredentialIR(int16 slot) {
-  set_slot(slot);
-}
-
-SpdyCredentialIR::~SpdyCredentialIR() {}
-
-void SpdyCredentialIR::Visit(SpdyFrameVisitor* visitor) const {
-  return visitor->VisitCredential(*this);
-}
-
 void SpdyBlockedIR::Visit(SpdyFrameVisitor* visitor) const {
   return visitor->VisitBlocked(*this);
 }
 
 void SpdyPushPromiseIR::Visit(SpdyFrameVisitor* visitor) const {
   return visitor->VisitPushPromise(*this);
+}
+
+void SpdyContinuationIR::Visit(SpdyFrameVisitor* visitor) const {
+  return visitor->VisitContinuation(*this);
 }
 
 }  // namespace net

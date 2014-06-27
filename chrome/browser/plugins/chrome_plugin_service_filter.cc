@@ -4,20 +4,33 @@
 
 #include "chrome/browser/plugins/chrome_plugin_service_filter.h"
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/plugins/plugin_metadata.h"
 #include "chrome/browser/plugins/plugin_prefs.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/common/render_messages.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/plugin_service.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/resource_context.h"
+#include "content/public/browser/web_contents.h"
 
 using content::BrowserThread;
 using content::PluginService;
+
+namespace {
+
+void AuthorizeRenderer(content::RenderFrameHost* render_frame_host) {
+  ChromePluginServiceFilter::GetInstance()->AuthorizePlugin(
+      render_frame_host->GetProcess()->GetID(), base::FilePath());
+}
+
+}
 
 // static
 ChromePluginServiceFilter* ChromePluginServiceFilter::GetInstance() {
@@ -38,15 +51,15 @@ void ChromePluginServiceFilter::UnregisterResourceContext(
   resource_context_map_.erase(context);
 }
 
-void ChromePluginServiceFilter::OverridePluginForTab(
+void ChromePluginServiceFilter::OverridePluginForFrame(
     int render_process_id,
-    int render_view_id,
+    int render_frame_id,
     const GURL& url,
     const content::WebPluginInfo& plugin) {
   base::AutoLock auto_lock(lock_);
   ProcessDetails* details = GetOrRegisterProcess(render_process_id);
   OverriddenPlugin overridden_plugin;
-  overridden_plugin.render_view_id = render_view_id;
+  overridden_plugin.render_frame_id = render_frame_id;
   overridden_plugin.url = url;
   overridden_plugin.plugin = plugin;
   details->overridden_plugins.push_back(overridden_plugin);
@@ -75,7 +88,7 @@ bool ChromePluginServiceFilter::IsPluginRestricted(
 
 bool ChromePluginServiceFilter::IsPluginAvailable(
     int render_process_id,
-    int render_view_id,
+    int render_frame_id,
     const void* context,
     const GURL& url,
     const GURL& policy_url,
@@ -86,7 +99,7 @@ bool ChromePluginServiceFilter::IsPluginAvailable(
   // Check whether the plugin is overridden.
   if (details) {
     for (size_t i = 0; i < details->overridden_plugins.size(); ++i) {
-      if (details->overridden_plugins[i].render_view_id == render_view_id &&
+      if (details->overridden_plugins[i].render_frame_id == render_frame_id &&
           (details->overridden_plugins[i].url == url ||
            details->overridden_plugins[i].url.is_empty())) {
 
@@ -156,8 +169,16 @@ void ChromePluginServiceFilter::AuthorizePlugin(
   details->authorized_plugins.insert(plugin_path);
 }
 
-void ChromePluginServiceFilter::AuthorizeAllPlugins(int render_process_id) {
-  AuthorizePlugin(render_process_id, base::FilePath());
+void ChromePluginServiceFilter::AuthorizeAllPlugins(
+    content::WebContents* web_contents,
+    bool load_blocked,
+    const std::string& identifier) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  web_contents->ForEachFrame(base::Bind(&AuthorizeRenderer));
+  if (load_blocked) {
+    web_contents->SendToAllFrames(new ChromeViewMsg_LoadBlockedPlugins(
+        MSG_ROUTING_NONE, identifier));
+  }
 }
 
 ChromePluginServiceFilter::ChromePluginServiceFilter() {
@@ -217,7 +238,7 @@ ChromePluginServiceFilter::GetProcess(
 }
 
 ChromePluginServiceFilter::OverriddenPlugin::OverriddenPlugin()
-    : render_view_id(MSG_ROUTING_NONE) {
+    : render_frame_id(MSG_ROUTING_NONE) {
 }
 
 ChromePluginServiceFilter::OverriddenPlugin::~OverriddenPlugin() {

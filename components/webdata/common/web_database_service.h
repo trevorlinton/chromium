@@ -70,11 +70,7 @@ class WEBDATA_EXPORT WebDatabaseService
   // Initializes the web database service.
   virtual void LoadDatabase();
 
-  // Unloads the database without actually shutting down the service.  This can
-  // be used to temporarily reduce the browser process' memory footprint.
-  virtual void UnloadDatabase();
-
-  // Unloads database and will not reload.
+  // Unloads the database and shuts down the service.
   virtual void ShutdownDatabase();
 
   // Gets a pointer to the WebDatabase (owned by WebDatabaseService).
@@ -135,9 +131,6 @@ class WEBDATA_EXPORT WebDatabaseService
   // PostTask on DB thread may outlive us.
   scoped_refptr<WebDataServiceBackend> wds_backend_;
 
-  // All vended weak pointers are invalidated in ShutdownDatabase().
-  base::WeakPtrFactory<WebDatabaseService> weak_ptr_factory_;
-
   // Callbacks to be called once the DB has loaded.
   LoadedCallbacks loaded_callbacks_;
 
@@ -148,6 +141,9 @@ class WEBDATA_EXPORT WebDatabaseService
   bool db_loaded_;
 
   scoped_refptr<base::MessageLoopProxy> db_thread_;
+
+  // All vended weak pointers are invalidated in ShutdownDatabase().
+  base::WeakPtrFactory<WebDatabaseService> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(WebDatabaseService);
 };

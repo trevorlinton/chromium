@@ -21,6 +21,7 @@
 #include "ppapi/shared_impl/var.h"
 #include "ppapi/shared_impl/var_tracker.h"
 #include "third_party/WebKit/public/platform/WebArrayBuffer.h"
+#include "third_party/WebKit/public/web/WebArrayBufferConverter.h"
 
 using ppapi::ArrayBufferVar;
 using ppapi::ArrayVar;
@@ -81,11 +82,14 @@ typedef base::hash_set<HashedHandle> ParentHandleSet;
 // associated with it in the map will be returned, otherwise a new V8 value will
 // be created and added to the map. |did_create| indicates whether a new v8
 // value was created as a result of calling the function.
-bool GetOrCreateV8Value(const PP_Var& var,
+bool GetOrCreateV8Value(v8::Handle<v8::Context> context,
+                        const PP_Var& var,
                         v8::Handle<v8::Value>* result,
                         bool* did_create,
                         VarHandleMap* visited_ids,
-                        ParentVarSet* parent_ids) {
+                        ParentVarSet* parent_ids,
+                        ResourceConverter* resource_converter) {
+  v8::Isolate* isolate = context->GetIsolate();
   *did_create = false;
 
   if (ppapi::VarTracker::IsVarTypeRefcounted(var.type)) {
@@ -100,19 +104,21 @@ bool GetOrCreateV8Value(const PP_Var& var,
 
   switch (var.type) {
     case PP_VARTYPE_UNDEFINED:
-      *result = v8::Undefined();
+      *result = v8::Undefined(isolate);
       break;
     case PP_VARTYPE_NULL:
-      *result = v8::Null();
+      *result = v8::Null(isolate);
       break;
     case PP_VARTYPE_BOOL:
-      *result = (var.value.as_bool == PP_TRUE) ? v8::True() : v8::False();
+      *result = (var.value.as_bool == PP_TRUE)
+          ? v8::True(isolate)
+          : v8::False(isolate);
       break;
     case PP_VARTYPE_INT32:
-      *result = v8::Integer::New(var.value.as_int);
+      *result = v8::Integer::New(isolate, var.value.as_int);
       break;
     case PP_VARTYPE_DOUBLE:
-      *result = v8::Number::New(var.value.as_double);
+      *result = v8::Number::New(isolate, var.value.as_double);
       break;
     case PP_VARTYPE_STRING: {
       StringVar* string = StringVar::FromPPVar(var);
@@ -122,10 +128,14 @@ bool GetOrCreateV8Value(const PP_Var& var,
         return false;
       }
       const std::string& value = string->value();
-      // Create a string object rather than a string primitive. This allows us
-      // to have multiple references to the same string in javascript, which
-      // matches the reference behavior of PP_Vars.
-      *result = v8::String::New(value.c_str(), value.size())->ToObject();
+      // Create a string primitive rather than a string object. This is lossy
+      // in the sense that string primitives in JavaScript can't be referenced
+      // in the same way that string vars can in pepper. But that information
+      // isn't very useful and primitive strings are a more expected form in JS.
+      *result = v8::String::NewFromUtf8(isolate,
+                                        value.c_str(),
+                                        v8::String::kNormalString,
+                                        value.size());
       break;
     }
     case PP_VARTYPE_ARRAY_BUFFER: {
@@ -137,21 +147,25 @@ bool GetOrCreateV8Value(const PP_Var& var,
       }
       HostArrayBufferVar* host_buffer =
           static_cast<HostArrayBufferVar*>(buffer);
-      *result = host_buffer->webkit_buffer().toV8Value();
+      *result = blink::WebArrayBufferConverter::toV8Value(
+          &host_buffer->webkit_buffer());
       break;
     }
     case PP_VARTYPE_ARRAY:
-      *result = v8::Array::New();
+      *result = v8::Array::New(isolate);
       break;
     case PP_VARTYPE_DICTIONARY:
-      *result = v8::Object::New();
+      *result = v8::Object::New(isolate);
       break;
     case PP_VARTYPE_OBJECT:
-    case PP_VARTYPE_RESOURCE:
-      // TODO(mgiuca): Convert PP_VARTYPE_RESOURCE vars into the correct V8
-      // type. (http://crbug.com/177017)
       result->Clear();
       return false;
+    case PP_VARTYPE_RESOURCE:
+      if (!resource_converter->ToV8Value(var, context, result)) {
+        result->Clear();
+        return false;
+      }
+      break;
   }
 
   *did_create = true;
@@ -206,8 +220,8 @@ bool GetOrCreateVar(v8::Handle<v8::Value> val,
   } else if (val->IsArray()) {
     *result = (new ArrayVar())->GetPPVar();
   } else if (val->IsObject()) {
-    scoped_ptr<WebKit::WebArrayBuffer> web_array_buffer(
-        WebKit::WebArrayBuffer::createFromV8Value(val));
+    scoped_ptr<blink::WebArrayBuffer> web_array_buffer(
+        blink::WebArrayBufferConverter::createFromV8Value(val));
     if (web_array_buffer.get()) {
       scoped_refptr<HostArrayBufferVar> buffer_var(new HostArrayBufferVar(
           *web_array_buffer));
@@ -273,14 +287,15 @@ bool V8VarConverter::ToV8Value(const PP_Var& var,
                                v8::Handle<v8::Context> context,
                                v8::Handle<v8::Value>* result) {
   v8::Context::Scope context_scope(context);
-  v8::HandleScope handle_scope(context->GetIsolate());
+  v8::Isolate* isolate = context->GetIsolate();
+  v8::EscapableHandleScope handle_scope(isolate);
 
   VarHandleMap visited_ids;
   ParentVarSet parent_ids;
 
   std::stack<StackEntry<PP_Var> > stack;
   stack.push(StackEntry<PP_Var>(var));
-  v8::Handle<v8::Value> root;
+  v8::Local<v8::Value> root;
   bool is_root = true;
 
   while (!stack.empty()) {
@@ -297,8 +312,9 @@ bool V8VarConverter::ToV8Value(const PP_Var& var,
     }
 
     bool did_create = false;
-    if (!GetOrCreateV8Value(current_var, &current_v8, &did_create,
-                            &visited_ids, &parent_ids)) {
+    if (!GetOrCreateV8Value(context, current_var, &current_v8, &did_create,
+                            &visited_ids, &parent_ids,
+                            resource_converter_.get())) {
       return false;
     }
 
@@ -321,8 +337,9 @@ bool V8VarConverter::ToV8Value(const PP_Var& var,
       for (size_t i = 0; i < array_var->elements().size(); ++i) {
         const PP_Var& child_var = array_var->elements()[i].get();
         v8::Handle<v8::Value> child_v8;
-        if (!GetOrCreateV8Value(child_var, &child_v8, &did_create,
-                                &visited_ids, &parent_ids)) {
+        if (!GetOrCreateV8Value(context, child_var, &child_v8, &did_create,
+                                &visited_ids, &parent_ids,
+                                resource_converter_.get())) {
           return false;
         }
         if (did_create && CanHaveChildren(child_var))
@@ -351,14 +368,19 @@ bool V8VarConverter::ToV8Value(const PP_Var& var,
         const std::string& key = iter->first;
         const PP_Var& child_var = iter->second.get();
         v8::Handle<v8::Value> child_v8;
-        if (!GetOrCreateV8Value(child_var, &child_v8, &did_create,
-                                &visited_ids, &parent_ids)) {
+        if (!GetOrCreateV8Value(context, child_var, &child_v8, &did_create,
+                                &visited_ids, &parent_ids,
+                                resource_converter_.get())) {
           return false;
         }
         if (did_create && CanHaveChildren(child_var))
           stack.push(child_var);
         v8::TryCatch try_catch;
-        v8_object->Set(v8::String::New(key.c_str(), key.length()), child_v8);
+        v8_object->Set(v8::String::NewFromUtf8(isolate,
+                                               key.c_str(),
+                                               v8::String::kNormalString,
+                                               key.length()),
+                       child_v8);
         if (try_catch.HasCaught()) {
           LOG(ERROR) << "Setter for property " << key.c_str() << " threw an "
               << "exception.";
@@ -368,7 +390,7 @@ bool V8VarConverter::ToV8Value(const PP_Var& var,
     }
   }
 
-  *result = handle_scope.Close(root);
+  *result = handle_scope.Escape(root);
   return true;
 }
 
@@ -472,7 +494,7 @@ void V8VarConverter::FromV8Value(
 
         // Extend this test to cover more types as necessary and if sensible.
         if (!key->IsString() && !key->IsNumber()) {
-          NOTREACHED() << "Key \"" << *v8::String::AsciiValue(key) << "\" "
+          NOTREACHED() << "Key \"" << *v8::String::Utf8Value(key) << "\" "
                           "is neither a string nor a number";
           message_loop_proxy_->PostTask(FROM_HERE,
               base::Bind(callback, ScopedPPVar(PP_MakeUndefined()), false));

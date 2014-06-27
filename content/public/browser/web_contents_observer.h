@@ -9,6 +9,7 @@
 #include "base/process/process_handle.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/navigation_controller.h"
+#include "content/public/common/frame_navigate_params.h"
 #include "content/public/common/page_transition_types.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
@@ -17,9 +18,11 @@
 namespace content {
 
 class NavigationEntry;
+class RenderFrameHost;
 class RenderViewHost;
 class WebContents;
 class WebContentsImpl;
+struct AXEventNotificationDetails;
 struct FaviconURL;
 struct FrameNavigateParams;
 struct LoadCommittedDetails;
@@ -44,11 +47,20 @@ struct ResourceRequestDetails;
 class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
                                            public IPC::Sender {
  public:
-  // Only one of the two methods below will be called when a RVH is created for
-  // a WebContents, depending on whether it's for an interstitial or not.
+  // Called when a RenderFrameHost associated with this WebContents is created.
+  virtual void RenderFrameCreated(RenderFrameHost* render_frame_host) {}
+
+  // Called whenever a RenderFrameHost associated with this WebContents is
+  // deleted.
+  virtual void RenderFrameDeleted(RenderFrameHost* render_frame_host) {}
+
+  // This is called when a RVH is created for a WebContents, but not if it's an
+  // interstitial.
   virtual void RenderViewCreated(RenderViewHost* render_view_host) {}
-  virtual void RenderViewForInterstitialPageCreated(
-      RenderViewHost* render_view_host) {}
+
+  // Called for every RenderFrameHost that's created for an interstitial.
+  virtual void RenderFrameForInterstitialPageCreated(
+      RenderFrameHost* render_frame_host) {}
 
   // This method is invoked when the RenderView of the current RenderViewHost
   // is ready, e.g. because we recreated it after a crash.
@@ -62,9 +74,11 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
 
   // This method is invoked when the process for the current RenderView crashes.
   // The WebContents continues to use the RenderViewHost, e.g. when the user
-  // reloads the current page.
-  // When the RenderViewHost is deleted, the RenderViewDeleted method will be
-  // invoked.
+  // reloads the current page. When the RenderViewHost itself is deleted, the
+  // RenderViewDeleted method will be invoked.
+  //
+  // Note that this is equivalent to
+  // RenderProcessHostObserver::RenderProcessExited().
   virtual void RenderProcessGone(base::TerminationStatus status) {}
 
   // This method is invoked when a WebContents swaps its render view host with
@@ -79,8 +93,12 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   virtual void AboutToNavigateRenderView(
       RenderViewHost* render_view_host) {}
 
-  // This method is invoked right after the navigation was initiated.
-  virtual void NavigateToPendingEntry(
+  // This method is invoked after the browser process starts a navigation to a
+  // pending NavigationEntry. It is not called for renderer-initiated
+  // navigations unless they are sent to the browser process via OpenURL. It may
+  // be called multiple times for a given navigation, such as a typed URL
+  // followed by a cross-process client or server redirect.
+  virtual void DidStartNavigationToPendingEntry(
       const GURL& url,
       NavigationController::ReloadType reload_type) {}
 
@@ -111,7 +129,7 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   // WebContentsObserver::DidGetRedirectForResourceRequest instead.
   virtual void ProvisionalChangeToMainFrameUrl(
       const GURL& url,
-      RenderViewHost* render_view_host) {}
+      RenderFrameHost* render_frame_host) {}
 
   // This method is invoked when the provisional load was successfully
   // committed. The |render_view_host| is now the current RenderViewHost of the
@@ -122,7 +140,7 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   // this signal without a prior DidStartProvisionalLoadForFrame signal.
   virtual void DidCommitProvisionalLoadForFrame(
       int64 frame_id,
-      const string16& frame_unique_name,
+      const base::string16& frame_unique_name,
       bool is_main_frame,
       const GURL& url,
       PageTransition transition_type,
@@ -130,11 +148,11 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
 
   // This method is invoked when the provisional load failed.
   virtual void DidFailProvisionalLoad(int64 frame_id,
-                                      const string16& frame_unique_name,
+                                      const base::string16& frame_unique_name,
                                       bool is_main_frame,
                                       const GURL& validated_url,
                                       int error_code,
-                                      const string16& error_description,
+                                      const base::string16& error_description,
                                       RenderViewHost* render_view_host) {}
 
   // If the provisional load corresponded to the main frame, this method is
@@ -180,7 +198,7 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
                            const GURL& validated_url,
                            bool is_main_frame,
                            int error_code,
-                           const string16& error_description,
+                           const base::string16& error_description,
                            RenderViewHost* render_view_host) {}
 
   // This method is invoked when content was loaded from an in-memory cache.
@@ -195,6 +213,7 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   // This method is invoked when a redirect was received while requesting a
   // resource.
   virtual void DidGetRedirectForResourceRequest(
+      RenderViewHost* render_view_host,
       const ResourceRedirectDetails& details) {}
 
   // This method is invoked when a new non-pending navigation entry is created.
@@ -217,6 +236,10 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
 
   virtual void FrameDetached(RenderViewHost* render_view_host,
                              int64 frame_id) {}
+
+  // This method is invoked when the renderer has completed its first paint
+  // after a non-empty layout.
+  virtual void DidFirstVisuallyNonEmptyPaint(int32 page_id) {}
 
   // These two methods correspond to the points in time when the spinner of the
   // tab starts and stops spinning.
@@ -286,6 +309,9 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   virtual void DidShowFullscreenWidget(int routing_id) {}
   virtual void DidDestroyFullscreenWidget(int routing_id) {}
 
+  // Invoked when the renderer has toggled the tab into/out of fullscreen mode.
+  virtual void DidToggleFullscreenModeForTab(bool entered_fullscreen) {}
+
   // Invoked when visible SSL state (as defined by SSLStatus) changes.
   virtual void DidChangeVisibleSSLState() {}
 
@@ -302,8 +328,15 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   // Invoked when a user cancels a before unload dialog.
   virtual void BeforeUnloadDialogCancelled() {}
 
+  // Invoked when an accessibility event is received from the renderer.
+  virtual void AccessibilityEventReceived(
+      const std::vector<AXEventNotificationDetails>& details) {}
+
   // IPC::Listener implementation.
   virtual bool OnMessageReceived(const IPC::Message& message) OVERRIDE;
+
+  // nw interface
+  virtual bool OnMessageReceived(RenderViewHost* render_view_host, const IPC::Message& message);
 
   // IPC::Sender implementation.
   virtual bool Send(IPC::Message* message) OVERRIDE;

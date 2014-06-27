@@ -39,6 +39,57 @@ OmniboxPopupModel::OmniboxPopupModel(
 OmniboxPopupModel::~OmniboxPopupModel() {
 }
 
+// static
+void OmniboxPopupModel::ComputeMatchMaxWidths(int contents_width,
+                                              int separator_width,
+                                              int description_width,
+                                              int available_width,
+                                              bool allow_shrinking_contents,
+                                              int* contents_max_width,
+                                              int* description_max_width) {
+  if (available_width <= 0) {
+    *contents_max_width = 0;
+    *description_max_width = 0;
+    return;
+  }
+
+  *contents_max_width = contents_width;
+  *description_max_width = description_width;
+
+  // If the description is empty, the contents can get the full width.
+  if (!description_width)
+    return;
+
+  available_width -= separator_width;
+
+  if (contents_width + description_width > available_width) {
+    if (allow_shrinking_contents) {
+      // Try to split the available space fairly between contents and
+      // description (if one wants less than half, give it all it wants and
+      // give the other the remaining space; otherwise, give each half).
+      // However, if this makes the contents too narrow to show a significant
+      // amount of information, give the contents more space.
+      *contents_max_width = std::max(
+          (available_width + 1) / 2, available_width - description_width);
+
+      const int kMinimumContentsWidth = 300;
+      *contents_max_width = std::min(
+          std::max(*contents_max_width, kMinimumContentsWidth), contents_width);
+    }
+
+    // Give the description the remaining space, unless this makes it too small
+    // to display anything meaningful, in which case just hide the description
+    // and let the contents take up the whole width.
+    *description_max_width = available_width - *contents_max_width;
+    const int kMinimumDescriptionWidth = 75;
+    if (*description_max_width <
+        std::min(description_width, kMinimumDescriptionWidth)) {
+      *description_max_width = 0;
+      *contents_max_width = contents_width;
+    }
+  }
+}
+
 bool OmniboxPopupModel::IsOpen() const {
   return view_->IsOpen();
 }
@@ -106,7 +157,7 @@ void OmniboxPopupModel::SetSelectedLine(size_t line,
   // Update the edit with the new data for this match.
   // TODO(pkasting): If |selected_line_| moves to the controller, this can be
   // eliminated and just become a call to the observer on the edit.
-  string16 keyword;
+  base::string16 keyword;
   bool is_keyword_hint;
   match.GetKeywordUIState(edit_model_->profile(), &keyword, &is_keyword_hint);
 
@@ -167,7 +218,7 @@ void OmniboxPopupModel::TryDeletingCurrentItem() {
   autocomplete_controller()->Stop(false);
 
   const AutocompleteMatch& match = result().match_at(selected_line_);
-  if (match.deletable) {
+  if (match.SupportsDeletion()) {
     const size_t selected_line = selected_line_;
     const bool was_temporary_text = !manually_selected_match_.empty();
 

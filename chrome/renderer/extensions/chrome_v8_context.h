@@ -10,13 +10,14 @@
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "chrome/renderer/extensions/module_system.h"
+#include "chrome/renderer/extensions/pepper_request_proxy.h"
 #include "chrome/renderer/extensions/request_sender.h"
 #include "chrome/renderer/extensions/safe_builtins.h"
 #include "chrome/renderer/extensions/scoped_persistent.h"
 #include "extensions/common/features/feature.h"
 #include "v8/include/v8.h"
 
-namespace WebKit {
+namespace blink {
 class WebFrame;
 }
 
@@ -31,7 +32,7 @@ class Extension;
 class ChromeV8Context : public RequestSender::Source {
  public:
   ChromeV8Context(v8::Handle<v8::Context> context,
-                  WebKit::WebFrame* frame,
+                  blink::WebFrame* frame,
                   const Extension* extension,
                   Feature::Context context_type);
   virtual ~ChromeV8Context();
@@ -54,7 +55,7 @@ class ChromeV8Context : public RequestSender::Source {
     return extension_.get();
   }
 
-  WebKit::WebFrame* web_frame() const {
+  blink::WebFrame* web_frame() const {
     return web_frame_;
   }
 
@@ -73,6 +74,10 @@ class ChromeV8Context : public RequestSender::Source {
   }
   const SafeBuiltins* safe_builtins() const {
     return &safe_builtins_;
+  }
+
+  PepperRequestProxy* pepper_request_proxy() {
+    return &pepper_request_proxy_;
   }
 
   // Returns the ID of the extension associated with this context, or empty
@@ -94,16 +99,18 @@ class ChromeV8Context : public RequestSender::Source {
                                     int argc,
                                     v8::Handle<v8::Value> argv[]) const;
 
+  void DispatchEvent(const char* event_name, v8::Handle<v8::Array> args) const;
+
   // Fires the onunload event on the unload_event module.
   void DispatchOnUnloadEvent();
 
   // Returns the availability of the API |api_name|.
   Feature::Availability GetAvailability(const std::string& api_name);
 
-  // Returns whether the API |api_name| or any part of the API could be
+  // Returns whether the API |api| or any part of the API could be
   // available in this context without taking into account the context's
   // extension.
-  bool IsAnyFeatureAvailableToContext(const std::string& api_name);
+  bool IsAnyFeatureAvailableToContext(const extensions::Feature& api);
 
   // Returns a string description of the type of context this is.
   std::string GetContextTypeDescription();
@@ -126,7 +133,7 @@ class ChromeV8Context : public RequestSender::Source {
 
   // The WebFrame associated with this context. This can be NULL because this
   // object can outlive is destroyed asynchronously.
-  WebKit::WebFrame* web_frame_;
+  blink::WebFrame* web_frame_;
 
   // The extension associated with this context, or NULL if there is none. This
   // might be a hosted app in the case that this context is hosting a web URL.
@@ -140,6 +147,9 @@ class ChromeV8Context : public RequestSender::Source {
 
   // Contains safe copies of builtin objects like Function.prototype.
   SafeBuiltins safe_builtins_;
+
+  // The proxy for this context for making API calls from Pepper via Javascript.
+  PepperRequestProxy pepper_request_proxy_;
 
   v8::Isolate* isolate_;
 

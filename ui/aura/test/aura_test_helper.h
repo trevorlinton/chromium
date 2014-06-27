@@ -7,13 +7,11 @@
 
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
+#include "ui/aura/window_event_dispatcher.h"
+#include "ui/aura/window_tree_host.h"
 
 namespace base {
 class MessageLoopForUI;
-}
-
-namespace gfx {
-class SurfaceFactoryOzone;
 }
 
 namespace ui {
@@ -22,7 +20,6 @@ class ScopedAnimationDurationScaleMode;
 }
 
 namespace aura {
-class RootWindow;
 class TestScreen;
 namespace client {
 class DefaultActivationClient;
@@ -50,7 +47,9 @@ class AuraTestHelper {
   // Flushes message loop.
   void RunAllPendingInMessageLoop();
 
-  RootWindow* root_window() { return root_window_.get(); }
+  Window* root_window() { return host_->window(); }
+  ui::EventProcessor* event_processor() { return host_->event_processor(); }
+  WindowTreeHost* host() { return host_.get(); }
 
   TestScreen* test_screen() { return test_screen_.get(); }
 
@@ -58,8 +57,8 @@ class AuraTestHelper {
   base::MessageLoopForUI* message_loop_;
   bool setup_called_;
   bool teardown_called_;
-  bool owns_root_window_;
-  scoped_ptr<RootWindow> root_window_;
+  bool owns_host_;
+  scoped_ptr<WindowTreeHost> host_;
   scoped_ptr<TestWindowTreeClient> stacking_client_;
   scoped_ptr<client::DefaultActivationClient> activation_client_;
   scoped_ptr<client::DefaultCaptureClient> capture_client_;
@@ -67,10 +66,6 @@ class AuraTestHelper {
   scoped_ptr<client::FocusClient> focus_client_;
   scoped_ptr<TestScreen> test_screen_;
   scoped_ptr<ui::ScopedAnimationDurationScaleMode> zero_duration_mode_;
-
-#if defined(USE_OZONE)
-  scoped_ptr<gfx::SurfaceFactoryOzone> surface_factory_;
-#endif
 
   DISALLOW_COPY_AND_ASSIGN(AuraTestHelper);
 };

@@ -146,11 +146,7 @@ void ZoomBubbleView::AdjustForFullscreen(const gfx::Rect& screen_bounds) {
   const int x_pos = base::i18n::IsRTL() ?
       screen_bounds.x() + bubble_half_width + kFullscreenPaddingEnd :
       screen_bounds.right() - bubble_half_width - kFullscreenPaddingEnd;
-  set_anchor_rect(gfx::Rect(x_pos, screen_bounds.y(), 0, 0));
-
-  // Used to update |views::BubbleDelegate::anchor_rect_| in a semi-hacky way.
-  // TODO(dbeam): update only the bounds of this view or its border or frame.
-  SizeToContents();
+  SetAnchorRect(gfx::Rect(x_pos, screen_bounds.y(), 0, 0));
 }
 
 void ZoomBubbleView::Refresh() {
@@ -220,13 +216,14 @@ void ZoomBubbleView::Init() {
   int zoom_percent = zoom_controller->zoom_percent();
   label_ = new views::Label(
       l10n_util::GetStringFUTF16Int(IDS_TOOLTIP_ZOOM, zoom_percent));
-  label_->SetFont(
-      ResourceBundle::GetSharedInstance().GetFont(ResourceBundle::MediumFont));
+  label_->SetFontList(
+      ui::ResourceBundle::GetSharedInstance().GetFontList(
+          ui::ResourceBundle::MediumFont));
   AddChildView(label_);
 
   views::LabelButton* set_default_button = new views::LabelButton(
       this, l10n_util::GetStringUTF16(IDS_ZOOM_SET_DEFAULT));
-  set_default_button->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
+  set_default_button->SetStyle(views::Button::STYLE_BUTTON);
   set_default_button->SetHorizontalAlignment(gfx::ALIGN_CENTER);
   AddChildView(set_default_button);
 

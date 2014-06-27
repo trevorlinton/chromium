@@ -33,7 +33,9 @@ const char kMetricDb[] = "Metrics";
 const double kDefaultMaxValue = 0.0;
 
 // If the db is quiet for this number of minutes, then it is considered down.
-const base::TimeDelta kActiveIntervalTimeout = base::TimeDelta::FromMinutes(5);
+const base::TimeDelta kActiveIntervalTimeout() {
+  return base::TimeDelta::FromMinutes(5);
+}
 
 TimeRange ActiveIntervalToTimeRange(const std::string& start_time,
                                     const std::string& end_time) {
@@ -55,12 +57,12 @@ double StringToDouble(const std::string& s) {
 // Returns an event from the given JSON string; the scoped_ptr will be NULL if
 // we are unable to properly parse the JSON.
 scoped_ptr<Event> EventFromJSON(const std::string& data) {
-  Value* value = base::JSONReader::Read(data);
-  DictionaryValue* dict = NULL;
+  base::Value* value = base::JSONReader::Read(data);
+  base::DictionaryValue* dict = NULL;
   if (!value || !value->GetAsDictionary(&dict))
     return scoped_ptr<Event>();
 
-  return Event::FromValue(scoped_ptr<DictionaryValue>(dict));
+  return Event::FromValue(scoped_ptr<base::DictionaryValue>(dict));
 }
 
 }  // namespace
@@ -91,7 +93,7 @@ scoped_ptr<Database> Database::Create(base::FilePath path) {
     path = path.AppendASCII(kDbDir);
   }
   scoped_ptr<Database> database;
-  if (!base::DirectoryExists(path) && !file_util::CreateDirectory(path))
+  if (!base::DirectoryExists(path) && !base::CreateDirectory(path))
     return database.Pass();
   database.reset(new Database(path));
 
@@ -475,7 +477,7 @@ scoped_ptr<leveldb::DB> Database::SafelyOpenDatabase(
 #if defined(OS_POSIX)
   std::string name = path_.AppendASCII(path).value();
 #elif defined(OS_WIN)
-  std::string name = WideToUTF8(path_.AppendASCII(path).value());
+  std::string name = base::WideToUTF8(path_.AppendASCII(path).value());
 #endif
 
   leveldb::DB* database;
@@ -575,7 +577,7 @@ void Database::UpdateActiveInterval() {
   std::string end_time;
   // If the last update was too long ago.
   if (start_time_key_.empty() ||
-      current_time - last_update_time_ > kActiveIntervalTimeout) {
+      current_time - last_update_time_ > kActiveIntervalTimeout()) {
     start_time_key_ = key_builder_->CreateActiveIntervalKey(current_time);
     end_time = start_time_key_;
   } else {

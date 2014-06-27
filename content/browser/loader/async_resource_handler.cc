@@ -87,7 +87,8 @@ AsyncResourceHandler::AsyncResourceHandler(
       did_defer_(false),
       has_checked_for_sufficient_resources_(false),
       sent_received_response_msg_(false),
-      sent_first_data_msg_(false) {
+      sent_first_data_msg_(false),
+      reported_transfer_size_(0) {
   InitializeResourceBufferConstants();
 }
 
@@ -151,6 +152,7 @@ bool AsyncResourceHandler::OnRequestRedirected(int request_id,
     return false;
 
   *defer = did_defer_ = true;
+  OnDefer();
 
   if (rdh_->delegate()) {
     rdh_->delegate()->OnRequestRedirected(
@@ -158,6 +160,8 @@ bool AsyncResourceHandler::OnRequestRedirected(int request_id,
   }
 
   DevToolsNetLogObserver::PopulateResponseInfo(request(), response);
+  response->head.encoded_data_length = request()->GetTotalReceivedBytes();
+  reported_transfer_size_ = 0;
   response->head.request_start = request()->creation_time();
   response->head.response_start = TimeTicks::Now();
   return info->filter()->Send(new ResourceMsg_ReceivedRedirect(
@@ -196,6 +200,14 @@ bool AsyncResourceHandler::OnResponseStarted(int request_id,
             net::GetHostOrSpecFromURL(request_url))));
   }
 
+  // If the parent handler downloaded the resource to a file, grant the child
+  // read permissions on it.
+  if (!response->head.download_file_path.empty()) {
+    rdh_->RegisterDownloadedTempFile(
+        info->GetChildID(), info->GetRequestID(),
+        response->head.download_file_path);
+  }
+
   response->head.request_start = request()->creation_time();
   response->head.response_start = TimeTicks::Now();
   info->filter()->Send(new ResourceMsg_ReceivedResponse(request_id,
@@ -216,6 +228,12 @@ bool AsyncResourceHandler::OnResponseStarted(int request_id,
 bool AsyncResourceHandler::OnWillStart(int request_id,
                                        const GURL& url,
                                        bool* defer) {
+  return true;
+}
+
+bool AsyncResourceHandler::OnBeforeNetworkStart(int request_id,
+                                                const GURL& url,
+                                                bool* defer) {
   return true;
 }
 
@@ -272,8 +290,10 @@ bool AsyncResourceHandler::OnReadCompleted(int request_id, int bytes_read,
   }
 
   int data_offset = buffer_->GetLastAllocationOffset();
-  int encoded_data_length =
-      DevToolsNetLogObserver::GetAndResetEncodedDataLength(request());
+
+  int64_t current_transfer_size = request()->GetTotalReceivedBytes();
+  int encoded_data_length = current_transfer_size - reported_transfer_size_;
+  reported_transfer_size_ = current_transfer_size;
 
   filter->Send(new ResourceMsg_DataReceived(
       request_id, data_offset, bytes_read, encoded_data_length));
@@ -287,6 +307,7 @@ bool AsyncResourceHandler::OnReadCompleted(int request_id, int bytes_read,
         "Net.AsyncResourceHandler_PendingDataCount_WhenFull",
         pending_data_count_, 0, 100, 100);
     *defer = did_defer_ = true;
+    OnDefer();
   }
 
   return true;
@@ -294,8 +315,9 @@ bool AsyncResourceHandler::OnReadCompleted(int request_id, int bytes_read,
 
 void AsyncResourceHandler::OnDataDownloaded(
     int request_id, int bytes_downloaded) {
-  int encoded_data_length =
-      DevToolsNetLogObserver::GetAndResetEncodedDataLength(request());
+  int64_t current_transfer_size = request()->GetTotalReceivedBytes();
+  int encoded_data_length = current_transfer_size - reported_transfer_size_;
+  reported_transfer_size_ = current_transfer_size;
 
   ResourceMessageFilter* filter = GetFilter();
   if (filter) {
@@ -304,13 +326,14 @@ void AsyncResourceHandler::OnDataDownloaded(
   }
 }
 
-bool AsyncResourceHandler::OnResponseCompleted(
+void AsyncResourceHandler::OnResponseCompleted(
     int request_id,
     const net::URLRequestStatus& status,
-    const std::string& security_info) {
+    const std::string& security_info,
+    bool* defer) {
   const ResourceRequestInfoImpl* info = GetRequestInfo();
   if (!info->filter())
-    return false;
+    return;
 
   // If we crash here, figure out what URL the renderer was requesting.
   // http://crbug.com/107692
@@ -325,8 +348,6 @@ bool AsyncResourceHandler::OnResponseCompleted(
   // when the message is sent, we should get better crash reports.
   CHECK(status.status() != net::URLRequestStatus::SUCCESS ||
         sent_received_response_msg_);
-
-  TimeTicks completion_time = TimeTicks::Now();
 
   int error_code = status.error();
   bool was_ignored_by_handler = info->WasIgnoredByHandler();
@@ -347,13 +368,16 @@ bool AsyncResourceHandler::OnResponseCompleted(
     error_code = net::ERR_FAILED;
   }
 
+  ResourceMsg_RequestCompleteData request_complete_data;
+  request_complete_data.error_code = error_code;
+  request_complete_data.was_ignored_by_handler = was_ignored_by_handler;
+  request_complete_data.exists_in_cache = request()->response_info().was_cached;
+  request_complete_data.security_info = security_info;
+  request_complete_data.completion_time = TimeTicks::Now();
+  request_complete_data.encoded_data_length =
+      request()->GetTotalReceivedBytes();
   info->filter()->Send(
-      new ResourceMsg_RequestComplete(request_id,
-                                      error_code,
-                                      was_ignored_by_handler,
-                                      security_info,
-                                      completion_time));
-  return true;
+      new ResourceMsg_RequestComplete(request_id, request_complete_data));
 }
 
 bool AsyncResourceHandler::EnsureResourceBufferIsInitialized() {
@@ -377,8 +401,13 @@ bool AsyncResourceHandler::EnsureResourceBufferIsInitialized() {
 void AsyncResourceHandler::ResumeIfDeferred() {
   if (did_defer_) {
     did_defer_ = false;
+    request()->LogUnblocked();
     controller()->Resume();
   }
+}
+
+void AsyncResourceHandler::OnDefer() {
+  request()->LogBlockedBy("AsyncResourceHandler");
 }
 
 }  // namespace content

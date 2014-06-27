@@ -15,10 +15,10 @@
 class MockStatusIcon : public StatusIcon {
   virtual void SetImage(const gfx::ImageSkia& image) OVERRIDE {}
   virtual void SetPressedImage(const gfx::ImageSkia& image) OVERRIDE {}
-  virtual void SetToolTip(const string16& tool_tip) OVERRIDE {}
+  virtual void SetToolTip(const base::string16& tool_tip) OVERRIDE {}
   virtual void DisplayBalloon(const gfx::ImageSkia& icon,
-                              const string16& title,
-                              const string16& contents) OVERRIDE {}
+                              const base::string16& title,
+                              const base::string16& contents) OVERRIDE {}
   virtual void UpdatePlatformContextMenu(
       StatusIconMenuModel* menu) OVERRIDE {}
 };
@@ -28,7 +28,7 @@ class TestStatusTray : public StatusTray {
   virtual StatusIcon* CreatePlatformStatusIcon(
       StatusIconType type,
       const gfx::ImageSkia& image,
-      const string16& tool_tip) OVERRIDE {
+      const base::string16& tool_tip) OVERRIDE {
     return new MockStatusIcon();
   }
 
@@ -41,7 +41,7 @@ TEST(StatusTrayTest, Create) {
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   gfx::ImageSkia* image = rb.GetImageSkiaNamed(IDR_STATUS_TRAY_ICON);
   tray.CreateStatusIcon(
-      StatusTray::OTHER_ICON, *image, ASCIIToUTF16("tool tip"));
+      StatusTray::OTHER_ICON, *image, base::ASCIIToUTF16("tool tip"));
   EXPECT_EQ(1U, tray.GetStatusIconsForTest().size());
 }
 
@@ -51,7 +51,7 @@ TEST(StatusTrayTest, CreateRemove) {
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   gfx::ImageSkia* image = rb.GetImageSkiaNamed(IDR_STATUS_TRAY_ICON);
   StatusIcon* icon = tray.CreateStatusIcon(
-      StatusTray::OTHER_ICON, *image, ASCIIToUTF16("tool tip"));
+      StatusTray::OTHER_ICON, *image, base::ASCIIToUTF16("tool tip"));
   EXPECT_EQ(1U, tray.GetStatusIconsForTest().size());
   tray.RemoveStatusIcon(icon);
   EXPECT_EQ(0U, tray.GetStatusIconsForTest().size());

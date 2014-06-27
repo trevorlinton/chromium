@@ -9,6 +9,7 @@
 
 #include "base/bind.h"
 #include "base/debug/alias.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/file_util.h"
 #include "base/format_macros.h"
 #include "base/memory/ref_counted_memory.h"
@@ -19,7 +20,6 @@
 #include "base/time/time.h"
 #include "chrome/browser/history/url_database.h"
 #include "chrome/common/chrome_version_info.h"
-#include "chrome/common/dump_without_crashing.h"
 #include "sql/recovery.h"
 #include "sql/statement.h"
 #include "sql/transaction.h"
@@ -121,7 +121,7 @@ void DumpWithoutCrashing2000(const std::string& debug_info) {
   base::strlcpy(debug_buf, debug_info.c_str(), arraysize(debug_buf));
   base::debug::Alias(&debug_buf);
 
-  logging::DumpWithoutCrashing();
+  base::debug::DumpWithoutCrashing();
 }
 
 void ReportCorrupt(sql::Connection* db, size_t startup_kb) {
@@ -140,7 +140,7 @@ void ReportCorrupt(sql::Connection* db, size_t startup_kb) {
     std::vector<std::string> messages;
 
     const base::TimeTicks before = base::TimeTicks::Now();
-    db->IntegrityCheck(&messages);
+    db->FullIntegrityCheck(&messages);
     base::StringAppendF(&debug_info, "# %" PRIx64 " ms, %" PRIuS " records\n",
                         (base::TimeTicks::Now() - before).InMilliseconds(),
                         messages.size());
@@ -275,6 +275,9 @@ void GenerateDiagnostics(sql::Connection* db,
   }
 }
 
+// NOTE(shess): Schema modifications must consider initial creation in
+// |InitImpl()|, recovery in |RecoverDatabaseOrRaze()|, and history pruning in
+// |RetainDataForPageUrls()|.
 bool InitTables(sql::Connection* db) {
   const char kIconMappingSql[] =
       "CREATE TABLE IF NOT EXISTS icon_mapping"
@@ -313,6 +316,9 @@ bool InitTables(sql::Connection* db) {
   return true;
 }
 
+// NOTE(shess): Schema modifications must consider initial creation in
+// |InitImpl()|, recovery in |RecoverDatabaseOrRaze()|, and history pruning in
+// |RetainDataForPageUrls()|.
 bool InitIndices(sql::Connection* db) {
   const char kIconMappingUrlIndexSql[] =
       "CREATE INDEX IF NOT EXISTS icon_mapping_page_url_idx"
@@ -342,22 +348,32 @@ bool InitIndices(sql::Connection* db) {
 enum RecoveryEventType {
   RECOVERY_EVENT_RECOVERED = 0,
   RECOVERY_EVENT_FAILED_SCOPER,
-  RECOVERY_EVENT_FAILED_META_VERSION_ERROR,
-  RECOVERY_EVENT_FAILED_META_VERSION_NONE,
+  RECOVERY_EVENT_FAILED_META_VERSION_ERROR,  // obsolete
+  RECOVERY_EVENT_FAILED_META_VERSION_NONE,  // obsolete
   RECOVERY_EVENT_FAILED_META_WRONG_VERSION6,  // obsolete
-  RECOVERY_EVENT_FAILED_META_WRONG_VERSION5,
+  RECOVERY_EVENT_FAILED_META_WRONG_VERSION5,  // obsolete
   RECOVERY_EVENT_FAILED_META_WRONG_VERSION,
-  RECOVERY_EVENT_FAILED_RECOVER_META,
+  RECOVERY_EVENT_FAILED_RECOVER_META,  // obsolete
   RECOVERY_EVENT_FAILED_META_INSERT,  // obsolete
   RECOVERY_EVENT_FAILED_INIT,
-  RECOVERY_EVENT_FAILED_RECOVER_FAVICONS,
-  RECOVERY_EVENT_FAILED_FAVICONS_INSERT,
-  RECOVERY_EVENT_FAILED_RECOVER_FAVICON_BITMAPS,
-  RECOVERY_EVENT_FAILED_FAVICON_BITMAPS_INSERT,
-  RECOVERY_EVENT_FAILED_RECOVER_ICON_MAPPING,
-  RECOVERY_EVENT_FAILED_ICON_MAPPING_INSERT,
-  RECOVERY_EVENT_RECOVERED_VERSION6,
+  RECOVERY_EVENT_FAILED_RECOVER_FAVICONS,  // obsolete
+  RECOVERY_EVENT_FAILED_FAVICONS_INSERT,  // obsolete
+  RECOVERY_EVENT_FAILED_RECOVER_FAVICON_BITMAPS,  // obsolete
+  RECOVERY_EVENT_FAILED_FAVICON_BITMAPS_INSERT,  // obsolete
+  RECOVERY_EVENT_FAILED_RECOVER_ICON_MAPPING,  // obsolete
+  RECOVERY_EVENT_FAILED_ICON_MAPPING_INSERT,  // obsolete
+  RECOVERY_EVENT_RECOVERED_VERSION6,  // obsolete
   RECOVERY_EVENT_FAILED_META_INIT,
+  RECOVERY_EVENT_FAILED_META_VERSION,
+  RECOVERY_EVENT_DEPRECATED,
+  RECOVERY_EVENT_FAILED_V5_INITSCHEMA,  // obsolete
+  RECOVERY_EVENT_FAILED_V5_AUTORECOVER_FAVICONS,  // obsolete
+  RECOVERY_EVENT_FAILED_V5_AUTORECOVER_ICON_MAPPING,  // obsolete
+  RECOVERY_EVENT_RECOVERED_VERSION5,  // obsolete
+  RECOVERY_EVENT_FAILED_AUTORECOVER_FAVICONS,
+  RECOVERY_EVENT_FAILED_AUTORECOVER_FAVICON_BITMAPS,
+  RECOVERY_EVENT_FAILED_AUTORECOVER_ICON_MAPPING,
+  RECOVERY_EVENT_FAILED_COMMIT,
 
   // Always keep this at the end.
   RECOVERY_EVENT_MAX,
@@ -388,7 +404,7 @@ void RecoverDatabaseOrRaze(sql::Connection* db, const base::FilePath& db_path) {
   size_t favicon_bitmaps_rows_recovered = 0;
   size_t icon_mapping_rows_recovered = 0;
   int64 original_size = 0;
-  file_util::GetFileSize(db_path, &original_size);
+  base::GetFileSize(db_path, &original_size);
 
   scoped_ptr<sql::Recovery> recovery = sql::Recovery::Begin(db, db_path);
   if (!recovery) {
@@ -405,75 +421,46 @@ void RecoverDatabaseOrRaze(sql::Connection* db, const base::FilePath& db_path) {
     return;
   }
 
-  // Setup the meta recovery table, and check that the version number
-  // is covered by the recovery code.
-  // TODO(shess): sql::Recovery should provide a helper to handle meta.
-  int version = 0;  // For reporting which version was recovered.
-  {
-    const char kRecoverySql[] =
-        "CREATE VIRTUAL TABLE temp.recover_meta USING recover"
-        "("
-        "corrupt.meta,"
-        "key TEXT NOT NULL,"
-        "value TEXT"  // Really?  Never int?
-        ")";
-    if (!recovery->db()->Execute(kRecoverySql)) {
-      // TODO(shess): Failure to create the recover_meta table could
-      // mean that the main database is too corrupt to access, or that
-      // the meta table doesn't exist.
-      sql::Recovery::Rollback(recovery.Pass());
-      RecordRecoveryEvent(RECOVERY_EVENT_FAILED_RECOVER_META);
-      return;
-    }
+  // Setup the meta recovery table and fetch the version number from
+  // the corrupt database.
+  int version = 0;
+  if (!recovery->SetupMeta() || !recovery->GetMetaVersionNumber(&version)) {
+    // TODO(shess): Prior histograms indicate all failures are in
+    // creating the recover virtual table for corrupt.meta.  The table
+    // may not exist, or the database may be too far gone.  Either
+    // way, unclear how to resolve.
+    sql::Recovery::Rollback(recovery.Pass());
+    RecordRecoveryEvent(RECOVERY_EVENT_FAILED_META_VERSION);
+    return;
+  }
 
-    {
-      const char kRecoveryVersionSql[] =
-          "SELECT value FROM recover_meta WHERE key = 'version'";
-      sql::Statement recovery_version(
-          recovery->db()->GetUniqueStatement(kRecoveryVersionSql));
-      if (!recovery_version.Step()) {
-        if (!recovery_version.Succeeded()) {
-          RecordRecoveryEvent(RECOVERY_EVENT_FAILED_META_VERSION_ERROR);
-          // TODO(shess): An error while processing the statement is
-          // probably not recoverable.
-        } else {
-          RecordRecoveryEvent(RECOVERY_EVENT_FAILED_META_VERSION_NONE);
-          // TODO(shess): If a positive version lock cannot be achieved,
-          // the database could still be recovered by optimistically
-          // attempting to copy things.  In the limit, the schema found
-          // could be inspected.  Less clear is whether optimistic
-          // recovery really makes sense.
-        }
-        recovery_version.Clear();
-        sql::Recovery::Rollback(recovery.Pass());
-        return;
-      }
-      version = recovery_version.ColumnInt(0);
+  // This code may be able to fetch version information that the regular
+  // deprecation path cannot.
+  // NOTE(shess): v5 and v6 are currently not deprecated in the normal Init()
+  // path, but are deprecated in the recovery path in the interest of keeping
+  // the code simple.  http://crbug.com/327485 for numbers.
+  DCHECK_LE(kDeprecatedVersionNumber, 6);
+  if (version <= 6) {
+    sql::Recovery::Unrecoverable(recovery.Pass());
+    RecordRecoveryEvent(RECOVERY_EVENT_DEPRECATED);
+    return;
+  }
 
-      // Recovery code is generally schema-dependent.  Version 7 and
-      // version 6 are very similar, so can be handled together.
-      // Track version 5, to see whether it's worth writing recovery
-      // code for.
-      if (version != 7 && version != 6) {
-        if (version == 5) {
-          RecordRecoveryEvent(RECOVERY_EVENT_FAILED_META_WRONG_VERSION5);
-        } else {
-          RecordRecoveryEvent(RECOVERY_EVENT_FAILED_META_WRONG_VERSION);
-        }
-        recovery_version.Clear();
-        sql::Recovery::Rollback(recovery.Pass());
-        return;
-      }
-    }
+  // Earlier versions have been handled or deprecated, later versions should be
+  // impossible.
+  if (version != 7) {
+    sql::Recovery::Unrecoverable(recovery.Pass());
+    RecordRecoveryEvent(RECOVERY_EVENT_FAILED_META_WRONG_VERSION);
+    return;
+  }
 
-    // Either version 6 or version 7 recovers to current.
-    sql::MetaTable recover_meta_table;
-    if (!recover_meta_table.Init(recovery->db(), kCurrentVersionNumber,
-                                 kCompatibleVersionNumber)) {
-      sql::Recovery::Rollback(recovery.Pass());
-      RecordRecoveryEvent(RECOVERY_EVENT_FAILED_META_INIT);
-      return;
-    }
+  // Recover to current schema version.
+  sql::MetaTable recover_meta_table;
+  if (!recover_meta_table.Init(recovery->db(), kCurrentVersionNumber,
+                               kCompatibleVersionNumber)) {
+    sql::Recovery::Rollback(recovery.Pass());
+    RecordRecoveryEvent(RECOVERY_EVENT_FAILED_META_INIT);
+    return;
   }
 
   // Create a fresh version of the database.  The recovery code uses
@@ -493,114 +480,22 @@ void RecoverDatabaseOrRaze(sql::Connection* db, const base::FilePath& db_path) {
     return;
   }
 
-  // Setup favicons table.
-  {
-    // Version 6 had the |sizes| column, version 7 removed it.  The
-    // recover virtual table treats more columns than expected as an
-    // error, but if _fewer_ columns are present, they can be treated
-    // as NULL.  SQLite requires this because ALTER TABLE adds columns
-    // to the schema, but not to the actual table storage.
-    const char kRecoverySql[] =
-        "CREATE VIRTUAL TABLE temp.recover_favicons USING recover"
-        "("
-        "corrupt.favicons,"
-        "id ROWID,"
-        "url TEXT NOT NULL,"
-        "icon_type INTEGER,"
-        "sizes TEXT"
-        ")";
-    if (!recovery->db()->Execute(kRecoverySql)) {
-      // TODO(shess): Failure to create the recovery table probably
-      // means unrecoverable.
-      sql::Recovery::Rollback(recovery.Pass());
-      RecordRecoveryEvent(RECOVERY_EVENT_FAILED_RECOVER_FAVICONS);
-      return;
-    }
-
-    // TODO(shess): Check if the DEFAULT 1 will just cover the
-    // COALESCE().  Either way, the new code has a literal 1 rather
-    // than a NULL, right?
-    const char kCopySql[] =
-        "INSERT OR REPLACE INTO main.favicons "
-        "SELECT id, url, COALESCE(icon_type, 1) FROM recover_favicons";
-    if (!recovery->db()->Execute(kCopySql)) {
-      // TODO(shess): The recover_favicons table should mask problems
-      // with the source file, so this implies failure to write to the
-      // recovery database.
-      sql::Recovery::Rollback(recovery.Pass());
-      RecordRecoveryEvent(RECOVERY_EVENT_FAILED_FAVICONS_INSERT);
-      return;
-    }
-    favicons_rows_recovered = recovery->db()->GetLastChangeCount();
+  if (!recovery->AutoRecoverTable("favicons", 0, &favicons_rows_recovered)) {
+    sql::Recovery::Rollback(recovery.Pass());
+    RecordRecoveryEvent(RECOVERY_EVENT_FAILED_AUTORECOVER_FAVICONS);
+    return;
   }
-
-  // Setup favicons_bitmaps table.
-  {
-    const char kRecoverySql[] =
-        "CREATE VIRTUAL TABLE temp.recover_favicons_bitmaps USING recover"
-        "("
-        "corrupt.favicon_bitmaps,"
-        "id ROWID,"
-        "icon_id INTEGER STRICT NOT NULL,"
-        "last_updated INTEGER,"
-        "image_data BLOB,"
-        "width INTEGER,"
-        "height INTEGER"
-        ")";
-    if (!recovery->db()->Execute(kRecoverySql)) {
-      // TODO(shess): Failure to create the recovery table probably
-      // means unrecoverable.
-      sql::Recovery::Rollback(recovery.Pass());
-      RecordRecoveryEvent(RECOVERY_EVENT_FAILED_RECOVER_FAVICON_BITMAPS);
-      return;
-    }
-
-    const char kCopySql[] =
-        "INSERT OR REPLACE INTO main.favicon_bitmaps "
-        "SELECT id, icon_id, COALESCE(last_updated, 0), image_data, "
-        " COALESCE(width, 0), COALESCE(height, 0) "
-        "FROM recover_favicons_bitmaps";
-    if (!recovery->db()->Execute(kCopySql)) {
-      // TODO(shess): The recover_faviconbitmaps table should mask
-      // problems with the source file, so this implies failure to
-      // write to the recovery database.
-      sql::Recovery::Rollback(recovery.Pass());
-      RecordRecoveryEvent(RECOVERY_EVENT_FAILED_FAVICON_BITMAPS_INSERT);
-      return;
-    }
-    favicon_bitmaps_rows_recovered = recovery->db()->GetLastChangeCount();
+  if (!recovery->AutoRecoverTable("favicon_bitmaps", 0,
+                                  &favicon_bitmaps_rows_recovered)) {
+    sql::Recovery::Rollback(recovery.Pass());
+    RecordRecoveryEvent(RECOVERY_EVENT_FAILED_AUTORECOVER_FAVICON_BITMAPS);
+    return;
   }
-
-  // Setup icon_mapping table.
-  {
-    const char kRecoverySql[] =
-        "CREATE VIRTUAL TABLE temp.recover_icon_mapping USING recover"
-        "("
-        "corrupt.icon_mapping,"
-        "id ROWID,"
-        "page_url TEXT STRICT NOT NULL,"
-        "icon_id INTEGER STRICT"
-        ")";
-    if (!recovery->db()->Execute(kRecoverySql)) {
-      // TODO(shess): Failure to create the recovery table probably
-      // means unrecoverable.
-      sql::Recovery::Rollback(recovery.Pass());
-      RecordRecoveryEvent(RECOVERY_EVENT_FAILED_RECOVER_ICON_MAPPING);
-      return;
-    }
-
-    const char kCopySql[] =
-        "INSERT OR REPLACE INTO main.icon_mapping "
-        "SELECT id, page_url, icon_id FROM recover_icon_mapping";
-    if (!recovery->db()->Execute(kCopySql)) {
-      // TODO(shess): The recover_icon_mapping table should mask
-      // problems with the source file, so this implies failure to
-      // write to the recovery database.
-      sql::Recovery::Rollback(recovery.Pass());
-      RecordRecoveryEvent(RECOVERY_EVENT_FAILED_ICON_MAPPING_INSERT);
-      return;
-    }
-    icon_mapping_rows_recovered = recovery->db()->GetLastChangeCount();
+  if (!recovery->AutoRecoverTable("icon_mapping", 0,
+                                  &icon_mapping_rows_recovered)) {
+    sql::Recovery::Rollback(recovery.Pass());
+    RecordRecoveryEvent(RECOVERY_EVENT_FAILED_AUTORECOVER_ICON_MAPPING);
+    return;
   }
 
   // TODO(shess): Is it possible/likely to have broken foreign-key
@@ -613,7 +508,10 @@ void RecoverDatabaseOrRaze(sql::Connection* db, const base::FilePath& db_path) {
   // and sequence the statements, as it is basically a form of garbage
   // collection.
 
-  ignore_result(sql::Recovery::Recovered(recovery.Pass()));
+  if (!sql::Recovery::Recovered(recovery.Pass())) {
+    RecordRecoveryEvent(RECOVERY_EVENT_FAILED_COMMIT);
+    return;
+  }
 
   // Track the size of the recovered database relative to the size of
   // the input database.  The size should almost always be smaller,
@@ -621,7 +519,7 @@ void RecoverDatabaseOrRaze(sql::Connection* db, const base::FilePath& db_path) {
   // percentage results are very low, something is awry.
   int64 final_size = 0;
   if (original_size > 0 &&
-      file_util::GetFileSize(db_path, &final_size) &&
+      base::GetFileSize(db_path, &final_size) &&
       final_size > 0) {
     int percentage = static_cast<int>(original_size * 100 / final_size);
     UMA_HISTOGRAM_PERCENTAGE("History.FaviconsRecoveredPercentage",
@@ -638,11 +536,7 @@ void RecoverDatabaseOrRaze(sql::Connection* db, const base::FilePath& db_path) {
   UMA_HISTOGRAM_COUNTS_10000("History.FaviconsRecoveredRowsIconMapping",
                              icon_mapping_rows_recovered);
 
-  if (version == 6) {
-    RecordRecoveryEvent(RECOVERY_EVENT_RECOVERED_VERSION6);
-  } else {
-    RecordRecoveryEvent(RECOVERY_EVENT_RECOVERED);
-  }
+  RecordRecoveryEvent(RECOVERY_EVENT_RECOVERED);
 }
 
 void DatabaseErrorCallback(sql::Connection* db,
@@ -1235,7 +1129,7 @@ sql::InitStatus ThumbnailDatabase::OpenDatabase(sql::Connection* db,
                                                 const base::FilePath& db_name) {
   size_t startup_kb = 0;
   int64 size_64;
-  if (file_util::GetFileSize(db_name, &size_64))
+  if (base::GetFileSize(db_name, &size_64))
     startup_kb = static_cast<size_t>(size_64 / 1024);
 
   db->set_histogram_tag("Thumbnail");

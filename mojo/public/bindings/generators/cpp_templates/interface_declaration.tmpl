@@ -1,0 +1,34 @@
+{%- import "interface_macros.tmpl" as interface_macros %}
+class {{interface.name}}Proxy;
+class {{interface.name}}Stub;
+{% if interface.peer %}
+class {{interface.peer}};
+{% endif %}
+
+class {{interface.name}} {
+ public:
+  typedef {{interface.name}}Proxy _Proxy;
+  typedef {{interface.name}}Stub _Stub;
+{% if interface.peer %}
+  typedef {{interface.peer}} _Peer;
+{% else %}
+  typedef mojo::NoInterface _Peer;
+{% endif %}
+
+{#--- Enums #}
+{%- for enum in interface.enums %}
+{%    macro enum_def() %}{% include "enum_declaration.tmpl" %}{% endmacro %}
+  {{enum_def()|indent(2)}}
+{%- endfor %}
+
+{#--- Methods #}
+{%- for method in interface.methods %}
+  virtual void {{method.name}}({{interface_macros.declare_request_params(method)}}) = 0;
+{%- endfor %}
+};
+
+// A typesafe variant of MessagePipeHandle.
+typedef mojo::Interface<{{interface.name}}>::Handle {{interface.name}}Handle;
+
+// A typesafe variant of ScopedMessagePipeHandle.
+typedef mojo::Interface<{{interface.name}}>::ScopedHandle Scoped{{interface.name}}Handle;

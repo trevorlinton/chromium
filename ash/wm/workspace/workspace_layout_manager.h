@@ -7,13 +7,17 @@
 
 #include <set>
 
+#include "ash/ash_export.h"
 #include "ash/shell_observer.h"
-#include "ash/wm/base_layout_manager.h"
+#include "ash/wm/window_state_observer.h"
+#include "ash/wm/wm_types.h"
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "ui/base/ui_base_types.h"
+#include "base/memory/scoped_ptr.h"
+#include "ui/aura/layout_manager.h"
 #include "ui/aura/window_observer.h"
 #include "ui/gfx/rect.h"
+#include "ui/wm/public/activation_change_observer.h"
 
 namespace aura {
 class RootWindow;
@@ -25,18 +29,34 @@ class Layer;
 }
 
 namespace ash {
+namespace wm {
+class WindowState;
+class WMEvent;
+}
 
 namespace internal {
 
 class ShelfLayoutManager;
+class WorkspaceLayoutManagerDelegate;
 
 // LayoutManager used on the window created for a workspace.
-class ASH_EXPORT WorkspaceLayoutManager : public BaseLayoutManager {
+class ASH_EXPORT WorkspaceLayoutManager
+    : public aura::LayoutManager,
+      public aura::WindowObserver,
+      public aura::client::ActivationChangeObserver,
+      public ShellObserver,
+      public wm::WindowStateObserver {
  public:
   explicit WorkspaceLayoutManager(aura::Window* window);
   virtual ~WorkspaceLayoutManager();
 
   void SetShelf(internal::ShelfLayoutManager* shelf);
+
+  // A delegate which can be set to add a backdrop behind the top most visible
+  // window. With the call the ownership of the delegate will be transferred to
+  // the WorkspaceLayoutManager.
+  void SetMaximizeBackdropDelegate(
+      scoped_ptr<WorkspaceLayoutManagerDelegate> delegate);
 
   // Overridden from aura::LayoutManager:
   virtual void OnWindowResized() OVERRIDE {}
@@ -52,47 +72,73 @@ class ASH_EXPORT WorkspaceLayoutManager : public BaseLayoutManager {
   virtual void OnDisplayWorkAreaInsetsChanged() OVERRIDE;
 
   // Overriden from WindowObserver:
+  virtual void OnWindowHierarchyChanged(
+      const WindowObserver::HierarchyChangeParams& params) OVERRIDE;
   virtual void OnWindowPropertyChanged(aura::Window* window,
                                        const void* key,
                                        intptr_t old) OVERRIDE;
+  virtual void OnWindowStackingChanged(aura::Window* window) OVERRIDE;
+  virtual void OnWindowDestroying(aura::Window* window) OVERRIDE;
+  virtual void OnWindowBoundsChanged(aura::Window* window,
+                                     const gfx::Rect& old_bounds,
+                                     const gfx::Rect& new_bounds) OVERRIDE;
 
-  // ash::WindowSettings::Observer overrides:
-  virtual void OnTrackedByWorkspaceChanged(wm::WindowState* window_state,
-                                           bool old) OVERRIDE;
+  // aura::client::ActivationChangeObserver overrides:
+  virtual void OnWindowActivated(aura::Window* gained_active,
+                                 aura::Window* lost_active) OVERRIDE;
 
   // WindowStateObserver overrides:
-  virtual void OnWindowShowTypeChanged(wm::WindowState* window_state,
-                                       wm::WindowShowType old_type) OVERRIDE;
+  virtual void OnPostWindowStateTypeChange(
+      wm::WindowState* window_state,
+      wm::WindowStateType old_type) OVERRIDE;
 
  private:
-  // Overridden from BaseLayoutManager:
-  virtual void ShowStateChanged(wm::WindowState* window_state,
-                                ui::WindowShowState last_show_state) OVERRIDE;
-  virtual void AdjustAllWindowsBoundsForWorkAreaChange(
-      AdjustWindowReason reason) OVERRIDE;
-  virtual void AdjustWindowBoundsForWorkAreaChange(
-      wm::WindowState* window_state,
-      AdjustWindowReason reason) OVERRIDE;
+  typedef std::set<aura::Window*> WindowSet;
 
-  void AdjustWindowBoundsWhenAdded(wm::WindowState* window_state);
+  // Adjusts the bounds of all managed windows when the display area changes.
+  // This happens when the display size, work area insets has changed.
+  // If this is called for a display size change (i.e. |event|
+  // is DISPLAY_RESIZED), the non-maximized/non-fullscreen
+  // windows are readjusted to make sure the window is completely within the
+  // display region. Otherwise, it makes sure at least some parts of the window
+  // is on display.
+  void AdjustAllWindowsBoundsForWorkAreaChange(const wm::WMEvent* event);
 
-  void UpdateDesktopVisibility();
+  // Updates the visibility state of the shelf.
+  void UpdateShelfVisibility();
 
-  // Updates the bounds of the window for a show state change from
-  // |last_show_state|.
-  void UpdateBoundsFromShowState(wm::WindowState* window_state,
-                                 ui::WindowShowState last_show_state);
+  // Updates the fullscreen state of the workspace and notifies Shell if it
+  // has changed.
+  void UpdateFullscreenState();
+
+  // Updates the bounds of the window for a stte type change from
+  // |old_show_type|.
+  void UpdateBoundsFromStateType(wm::WindowState* window_state,
+                                 wm::WindowStateType old_state_type);
 
   // If |window_state| is maximized or fullscreen the bounds of the
   // window are set and true is returned. Does nothing otherwise.
   bool SetMaximizedOrFullscreenBounds(wm::WindowState* window_state);
 
+  // Animates the window bounds to |bounds|.
+  void SetChildBoundsAnimated(aura::Window* child, const gfx::Rect& bounds);
+
   internal::ShelfLayoutManager* shelf_;
   aura::Window* window_;
+  aura::Window* root_window_;
 
-  // The work area. Cached to avoid unnecessarily moving windows during a
-  // workspace switch.
+  // Set of windows we're listening to.
+  WindowSet windows_;
+
+  // The work area in the coordinates of |window_|.
   gfx::Rect work_area_in_parent_;
+
+  // True if this workspace is currently in fullscreen mode.
+  bool is_fullscreen_;
+
+  // A window which covers the full container and which gets inserted behind the
+  // topmost visible window.
+  scoped_ptr<WorkspaceLayoutManagerDelegate> backdrop_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(WorkspaceLayoutManager);
 };

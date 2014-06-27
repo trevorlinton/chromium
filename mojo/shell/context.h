@@ -5,6 +5,8 @@
 #ifndef MOJO_SHELL_CONTEXT_H_
 #define MOJO_SHELL_CONTEXT_H_
 
+#include "mojo/service_manager/service_manager.h"
+#include "mojo/shell/keep_alive.h"
 #include "mojo/shell/loader.h"
 #include "mojo/shell/storage.h"
 #include "mojo/shell/task_runners.h"
@@ -16,6 +18,9 @@
 namespace mojo {
 namespace shell {
 
+class DynamicServiceLoader;
+
+// The "global" context for the shell's main process.
 class Context {
  public:
   Context();
@@ -24,6 +29,8 @@ class Context {
   TaskRunners* task_runners() { return &task_runners_; }
   Storage* storage() { return &storage_; }
   Loader* loader() { return &loader_; }
+  ServiceManager* service_manager() { return &service_manager_; }
+  KeepAliveCounter* keep_alive_counter() { return &keep_alive_counter_; }
 
 #if defined(OS_ANDROID)
   jobject activity() const { return activity_.obj(); }
@@ -34,10 +41,14 @@ class Context {
   TaskRunners task_runners_;
   Storage storage_;
   Loader loader_;
+  ServiceManager service_manager_;
+  scoped_ptr<DynamicServiceLoader> dynamic_service_loader_;
 
 #if defined(OS_ANDROID)
   base::android::ScopedJavaGlobalRef<jobject> activity_;
 #endif  // defined(OS_ANDROID)
+
+  KeepAliveCounter keep_alive_counter_;
 
   DISALLOW_COPY_AND_ASSIGN(Context);
 };

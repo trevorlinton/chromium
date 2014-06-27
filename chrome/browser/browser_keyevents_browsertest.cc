@@ -20,14 +20,12 @@
 #include "content/public/browser/dom_operation_notification_details.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_service.h"
-#include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
 #include "content/public/test/browser_test_utils.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "ui/events/keycodes/keyboard_codes.h"
-#include "ui/views/controls/textfield/textfield.h"
 
 // TODO(kbr): remove: http://crbug.com/222296
 #if defined(OS_MACOSX)
@@ -36,7 +34,6 @@
 
 using content::DomOperationNotificationDetails;
 using content::NavigationController;
-using content::RenderViewHost;
 
 namespace {
 
@@ -97,10 +94,11 @@ const wchar_t* GetBoolString(bool value) {
 // A class to help wait for the finish of a key event test.
 class TestFinishObserver : public content::NotificationObserver {
  public:
-  explicit TestFinishObserver(RenderViewHost* render_view_host)
+  explicit TestFinishObserver(content::WebContents* web_contents)
       : finished_(false), waiting_(false) {
-    registrar_.Add(this, content::NOTIFICATION_DOM_OPERATION_RESPONSE,
-                   content::Source<RenderViewHost>(render_view_host));
+    registrar_.Add(this,
+                   content::NOTIFICATION_DOM_OPERATION_RESPONSE,
+                   content::Source<content::WebContents>(web_contents));
   }
 
   bool WaitForFinish() {
@@ -211,7 +209,7 @@ class BrowserKeyEventsTest : public InProcessBrowserTest {
         browser()->tab_strip_model()->GetWebContentsAt(tab_index),
         kGetFocusedElementJS,
         &actual));
-    ASSERT_EQ(WideToUTF8(focused), actual);
+    ASSERT_EQ(base::WideToUTF8(focused), actual);
   }
 
   void SetFocusedElement(int tab_index, const wchar_t* focused) {
@@ -232,7 +230,7 @@ class BrowserKeyEventsTest : public InProcessBrowserTest {
         browser()->tab_strip_model()->GetWebContentsAt(tab_index),
         base::StringPrintf(kGetTextBoxValueJS, id),
         &actual));
-    ASSERT_EQ(WideToUTF8(value), actual);
+    ASSERT_EQ(base::WideToUTF8(value), actual);
   }
 
   void SetTextBoxValue(int tab_index, const wchar_t* id,
@@ -243,7 +241,7 @@ class BrowserKeyEventsTest : public InProcessBrowserTest {
         browser()->tab_strip_model()->GetWebContentsAt(tab_index),
         base::StringPrintf(kSetTextBoxValueJS, id, value),
         &actual));
-    ASSERT_EQ(WideToUTF8(value), actual);
+    ASSERT_EQ(base::WideToUTF8(value), actual);
   }
 
   void StartTest(int tab_index, int result_length) {
@@ -271,8 +269,7 @@ class BrowserKeyEventsTest : public InProcessBrowserTest {
     // because the test finished message might be arrived before returning
     // from the SendKeyPressSync() method.
     TestFinishObserver finish_observer(
-        browser()->tab_strip_model()->GetWebContentsAt(tab_index)->
-            GetRenderViewHost());
+        browser()->tab_strip_model()->GetWebContentsAt(tab_index));
 
     ASSERT_TRUE(ui_test_utils::SendKeyPressSync(
         browser(), test.key, test.ctrl, test.shift, test.alt, test.command));
@@ -396,9 +393,9 @@ IN_PROC_BROWSER_TEST_F(BrowserKeyEventsTest, DISABLED_NormalKeyEvents) {
 
 #if defined(OS_WIN) || defined(OS_LINUX)
 
-#if defined(OS_LINUX) || (defined(OS_WIN) && defined(USE_AURA))
+#if defined(OS_LINUX) || defined(OS_WIN)
 // Linux: http://crbug.com/129235
-// Win Aura: crbug.com/269564
+// Win: crbug.com/269564
 #define MAYBE_CtrlKeyEvents DISABLED_CtrlKeyEvents
 #else
 #define MAYBE_CtrlKeyEvents CtrlKeyEvents
@@ -667,7 +664,7 @@ IN_PROC_BROWSER_TEST_F(BrowserKeyEventsTest, DISABLED_AccessKeys) {
 }
 
 // Flaky, http://crbug.com/69475.
-#if defined(OS_LINUX) || (defined(OS_WIN) && defined(USE_AURA))
+#if defined(OS_LINUX) || defined(OS_WIN)
 #define MAYBE_ReservedAccelerators DISABLED_ReservedAccelerators
 #else
 #define MAYBE_ReservedAccelerators ReservedAccelerators

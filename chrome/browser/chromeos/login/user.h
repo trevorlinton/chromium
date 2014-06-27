@@ -24,6 +24,16 @@ extern const int kDefaultImagesCount;
 // back once user homedir is mounted. |username_hash| is used to identify
 // user homedir mount point.
 struct UserContext {
+  // The authentication flow used during sign-in.
+  enum AuthFlow {
+    // Online authentication against GAIA. GAIA did not redirect to a SAML IdP.
+    AUTH_FLOW_GAIA_WITHOUT_SAML,
+    // Online authentication against GAIA. GAIA redirected to a SAML IdP.
+    AUTH_FLOW_GAIA_WITH_SAML,
+    // Offline authentication against a cached password.
+    AUTH_FLOW_OFFLINE
+  };
+
   UserContext();
   UserContext(const std::string& username,
               const std::string& password,
@@ -36,14 +46,21 @@ struct UserContext {
               const std::string& password,
               const std::string& auth_code,
               const std::string& username_hash,
-              bool using_oauth);
+              bool using_oauth,
+              AuthFlow auth_flow);
   virtual ~UserContext();
   bool operator==(const UserContext& context) const;
+
+  void CopyFrom(const UserContext& other);
+
   std::string username;
   std::string password;
+  bool need_password_hashing;
+  std::string key_label;
   std::string auth_code;
   std::string username_hash;
   bool using_oauth;
+  AuthFlow auth_flow;
 };
 
 // A class representing information about a previously logged in user.
@@ -96,7 +113,8 @@ class User {
     DEFAULT = 2,
     UNKNOWN = 3,
     ONLINE = 4,
-    WALLPAPER_TYPE_COUNT = 5
+    POLICY = 5,  // Controlled by policy, can't be changed by the user.
+    WALLPAPER_TYPE_COUNT = 6
   };
 
   // Returns the user type.
@@ -106,7 +124,10 @@ class User {
   const std::string& email() const { return email_; }
 
   // Returns the human name to display for this user.
-  string16 GetDisplayName() const;
+  base::string16 GetDisplayName() const;
+
+  // Returns given name of user, or empty string if given name is unknown.
+  const base::string16& given_name() const { return given_name_; }
 
   // Returns the account name part of the email. Use the display form of the
   // email if available and use_display_name == true. Otherwise use canonical.
@@ -147,14 +168,18 @@ class User {
   // True if image is being loaded from file.
   bool image_is_loading() const { return image_is_loading_; }
 
-  // OAuth token status for this user.
-  OAuthTokenStatus oauth_token_status() const { return oauth_token_status_; }
-
   // The displayed user name.
-  string16 display_name() const { return display_name_; }
+  base::string16 display_name() const { return display_name_; }
 
   // The displayed (non-canonical) user email.
   virtual std::string display_email() const;
+
+  // OAuth token status for this user.
+  OAuthTokenStatus oauth_token_status() const { return oauth_token_status_; }
+
+  // Whether online authentication against GAIA should be enforced during the
+  // user's next sign-in.
+  bool force_online_signin() const { return force_online_signin_; }
 
   // True if the user's session can be locked (i.e. the user has a password with
   // which to unlock the session).
@@ -168,6 +193,11 @@ class User {
   // True if current user is active within the current session.
   virtual bool is_active() const;
 
+  // True if the user Profile is created.
+  bool is_profile_created() const {
+    return profile_is_created_;
+  }
+
  protected:
   friend class SupervisedUserManagerImpl;
   friend class UserManagerImpl;
@@ -175,6 +205,7 @@ class User {
   // For testing:
   friend class MockUserManager;
   friend class FakeUserManager;
+  friend class UserAddingScreenTest;
 
   // Do not allow anyone else to create new User instances.
   static User* CreateRegularUser(const std::string& email);
@@ -186,10 +217,6 @@ class User {
 
   explicit User(const std::string& email);
   virtual ~User();
-
-  bool is_profile_created() const {
-    return profile_is_created_;
-  }
 
   const std::string* GetAccountLocale() const {
     return account_locale_.get();
@@ -207,13 +234,11 @@ class User {
   // If |is_loading| is |true|, that means user image is being loaded from file.
   void SetStubImage(int image_index, bool is_loading);
 
-  void set_oauth_token_status(OAuthTokenStatus status) {
-    oauth_token_status_ = status;
-  }
-
-  void set_display_name(const string16& display_name) {
+  void set_display_name(const base::string16& display_name) {
     display_name_ = display_name;
   }
+
+  void set_given_name(const base::string16& given_name) { given_name_ = given_name; }
 
   void set_display_email(const std::string& display_email) {
     display_email_ = display_email;
@@ -221,12 +246,24 @@ class User {
 
   const UserImage& user_image() const { return user_image_; }
 
+  void set_oauth_token_status(OAuthTokenStatus status) {
+    oauth_token_status_ = status;
+  }
+
+  void set_force_online_signin(bool force_online_signin) {
+    force_online_signin_ = force_online_signin;
+  }
+
   void set_username_hash(const std::string& username_hash) {
     username_hash_ = username_hash;
   }
 
   void set_is_logged_in(bool is_logged_in) {
     is_logged_in_ = is_logged_in;
+  }
+
+  void set_can_lock(bool can_lock) {
+    can_lock_ = can_lock;
   }
 
   void set_is_active(bool is_active) {
@@ -242,11 +279,13 @@ class User {
 
  private:
   std::string email_;
-  string16 display_name_;
+  base::string16 display_name_;
+  base::string16 given_name_;
   // The displayed user email, defaults to |email_|.
   std::string display_email_;
   UserImage user_image_;
   OAuthTokenStatus oauth_token_status_;
+  bool force_online_signin_;
 
   // This is set to chromeos locale if account data has been downloaded.
   // (Or failed to download, but at least one download attempt finished).
@@ -266,6 +305,9 @@ class User {
 
   // True if current user image is being loaded from file.
   bool image_is_loading_;
+
+  // True if user is able to lock screen.
+  bool can_lock_;
 
   // True if user is currently logged in in current session.
   bool is_logged_in_;

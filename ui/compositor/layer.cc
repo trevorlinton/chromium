@@ -8,11 +8,13 @@
 
 #include "base/command_line.h"
 #include "base/debug/trace_event.h"
+#include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "cc/base/scoped_ptr_algorithm.h"
 #include "cc/layers/content_layer.h"
 #include "cc/layers/delegated_renderer_layer.h"
+#include "cc/layers/picture_layer.h"
 #include "cc/layers/solid_color_layer.h"
 #include "cc/layers/texture_layer.h"
 #include "cc/output/copy_output_request.h"
@@ -39,6 +41,15 @@ const ui::Layer* GetRoot(const ui::Layer* layer) {
   return layer;
 }
 
+struct UIImplSidePaintingStatus {
+  UIImplSidePaintingStatus()
+      : enabled(ui::IsUIImplSidePaintingEnabled()) {
+  }
+  bool enabled;
+};
+base::LazyInstance<UIImplSidePaintingStatus> g_ui_impl_side_painting_status =
+    LAZY_INSTANCE_INITIALIZER;
+
 }  // namespace
 
 namespace ui {
@@ -50,7 +61,7 @@ Layer::Layer()
       visible_(true),
       force_render_surface_(false),
       fills_bounds_opaquely_(true),
-      layer_updated_externally_(false),
+      fills_bounds_completely_(false),
       background_blur_radius_(0),
       layer_saturation_(0.0f),
       layer_brightness_(0.0f),
@@ -61,6 +72,7 @@ Layer::Layer()
       zoom_(1),
       zoom_inset_(0),
       delegate_(NULL),
+      owner_(NULL),
       cc_layer_(NULL),
       scale_content_(true),
       device_scale_factor_(1.0f) {
@@ -74,7 +86,7 @@ Layer::Layer(LayerType type)
       visible_(true),
       force_render_surface_(false),
       fills_bounds_opaquely_(true),
-      layer_updated_externally_(false),
+      fills_bounds_completely_(false),
       background_blur_radius_(0),
       layer_saturation_(0.0f),
       layer_brightness_(0.0f),
@@ -85,6 +97,7 @@ Layer::Layer(LayerType type)
       zoom_(1),
       zoom_inset_(0),
       delegate_(NULL),
+      owner_(NULL),
       cc_layer_(NULL),
       scale_content_(true),
       device_scale_factor_(1.0f) {
@@ -110,6 +123,11 @@ Layer::~Layer() {
     children_[i]->parent_ = NULL;
   cc_layer_->RemoveLayerAnimationEventObserver(this);
   cc_layer_->RemoveFromParent();
+}
+
+// static
+bool Layer::UsingPictureLayer() {
+  return g_ui_impl_side_painting_status.Get().enabled;
 }
 
 Compositor* Layer::GetCompositor() {
@@ -428,6 +446,10 @@ void Layer::SetFillsBoundsOpaquely(bool fills_bounds_opaquely) {
   cc_layer_->SetContentsOpaque(fills_bounds_opaquely);
 }
 
+void Layer::SetFillsBoundsCompletely(bool fills_bounds_completely) {
+  fills_bounds_completely_ = fills_bounds_completely;
+}
+
 void Layer::SwitchToLayer(scoped_refptr<cc::Layer> new_layer) {
   // Finish animations being handled by cc_layer_.
   if (animator_.get()) {
@@ -470,7 +492,11 @@ void Layer::SwitchToLayer(scoped_refptr<cc::Layer> new_layer) {
 }
 
 void Layer::SwitchCCLayerForTest() {
-  scoped_refptr<cc::ContentLayer> new_layer = cc::ContentLayer::Create(this);
+  scoped_refptr<cc::Layer> new_layer;
+  if (Layer::UsingPictureLayer())
+    new_layer = cc::PictureLayer::Create(this);
+  else
+    new_layer = cc::ContentLayer::Create(this);
   SwitchToLayer(new_layer);
   content_layer_ = new_layer;
 }
@@ -484,7 +510,6 @@ void Layer::SetExternalTexture(Texture* texture) {
 
   DCHECK_EQ(type_, LAYER_TEXTURED);
   DCHECK(!solid_color_layer_.get());
-  layer_updated_externally_ = true;
   texture_ = texture;
   if (!texture_layer_.get()) {
     scoped_refptr<cc::TextureLayer> new_layer = cc::TextureLayer::Create(this);
@@ -501,7 +526,6 @@ void Layer::SetTextureMailbox(
     float scale_factor) {
   DCHECK_EQ(type_, LAYER_TEXTURED);
   DCHECK(!solid_color_layer_.get());
-  layer_updated_externally_ = true;
   texture_ = NULL;
   if (!texture_layer_.get() || !texture_layer_->uses_mailbox()) {
     scoped_refptr<cc::TextureLayer> new_layer =
@@ -527,10 +551,9 @@ void Layer::SetShowDelegatedContent(cc::DelegatedFrameProvider* frame_provider,
   DCHECK_EQ(type_, LAYER_TEXTURED);
 
   scoped_refptr<cc::DelegatedRendererLayer> new_layer =
-      cc::DelegatedRendererLayer::Create(NULL, frame_provider);
+      cc::DelegatedRendererLayer::Create(frame_provider);
   SwitchToLayer(new_layer);
   delegated_renderer_layer_ = new_layer;
-  layer_updated_externally_ = true;
 
   delegated_frame_size_in_dip_ = frame_size_in_dip;
   RecomputeDrawsContentAndUVRect();
@@ -540,11 +563,14 @@ void Layer::SetShowPaintedContent() {
   if (content_layer_.get())
     return;
 
-  scoped_refptr<cc::ContentLayer> new_layer = cc::ContentLayer::Create(this);
+  scoped_refptr<cc::Layer> new_layer;
+  if (Layer::UsingPictureLayer())
+    new_layer = cc::PictureLayer::Create(this);
+  else
+    new_layer = cc::ContentLayer::Create(this);
   SwitchToLayer(new_layer);
   content_layer_ = new_layer;
 
-  layer_updated_externally_ = false;
   mailbox_ = cc::TextureMailbox();
   texture_ = NULL;
 
@@ -623,7 +649,7 @@ void Layer::RequestCopyOfOutput(scoped_ptr<cc::CopyOutputRequest> request) {
 }
 
 void Layer::PaintContents(SkCanvas* sk_canvas,
-                          gfx::Rect clip,
+                          const gfx::Rect& clip,
                           gfx::RectF* opaque) {
   TRACE_EVENT0("ui", "Layer::PaintContents");
   scoped_ptr<gfx::Canvas> canvas(gfx::Canvas::CreateCanvasWithoutScaling(
@@ -642,16 +668,11 @@ void Layer::PaintContents(SkCanvas* sk_canvas,
     canvas->Restore();
 }
 
+bool Layer::FillsBoundsCompletely() const { return fills_bounds_completely_; }
+
 unsigned Layer::PrepareTexture() {
   DCHECK(texture_layer_.get());
   return texture_->PrepareTexture();
-}
-
-WebKit::WebGraphicsContext3D* Layer::Context3d() {
-  DCHECK(texture_layer_.get());
-  if (texture_.get())
-    return texture_->HostContext3D();
-  return NULL;
 }
 
 bool Layer::PrepareTextureMailbox(
@@ -669,8 +690,22 @@ void Layer::SetForceRenderSurface(bool force) {
   cc_layer_->SetForceRenderSurface(force_render_surface_);
 }
 
-std::string Layer::DebugName() {
-  return name_;
+class LayerDebugInfo : public base::debug::ConvertableToTraceFormat {
+ public:
+  explicit LayerDebugInfo(std::string name) : name_(name) { }
+  virtual void AppendAsTraceFormat(std::string* out) const OVERRIDE {
+    base::DictionaryValue dictionary;
+    dictionary.SetString("layer_name", name_);
+    base::JSONWriter::Write(&dictionary, out);
+  }
+
+ private:
+  virtual ~LayerDebugInfo() { }
+  std::string name_;
+};
+
+scoped_refptr<base::debug::ConvertableToTraceFormat> Layer::TakeDebugInfo() {
+  return new LayerDebugInfo(name_);
 }
 
 void Layer::OnAnimationStarted(const cc::AnimationEvent& event) {
@@ -721,7 +756,7 @@ bool Layer::ConvertPointFromAncestor(const Layer* ancestor,
   return result;
 }
 
-void Layer::SetBoundsImmediately(const gfx::Rect& bounds) {
+void Layer::SetBoundsFromAnimation(const gfx::Rect& bounds) {
   if (bounds == bounds_)
     return;
 
@@ -748,16 +783,16 @@ void Layer::SetBoundsImmediately(const gfx::Rect& bounds) {
   }
 }
 
-void Layer::SetTransformImmediately(const gfx::Transform& transform) {
+void Layer::SetTransformFromAnimation(const gfx::Transform& transform) {
   RecomputeCCTransformFromTransform(transform);
 }
 
-void Layer::SetOpacityImmediately(float opacity) {
+void Layer::SetOpacityFromAnimation(float opacity) {
   cc_layer_->SetOpacity(opacity);
   ScheduleDraw();
 }
 
-void Layer::SetVisibilityImmediately(bool visible) {
+void Layer::SetVisibilityFromAnimation(bool visible) {
   if (visible_ == visible)
     return;
 
@@ -765,48 +800,20 @@ void Layer::SetVisibilityImmediately(bool visible) {
   cc_layer_->SetHideLayerAndSubtree(!visible_);
 }
 
-void Layer::SetBrightnessImmediately(float brightness) {
+void Layer::SetBrightnessFromAnimation(float brightness) {
   layer_brightness_ = brightness;
   SetLayerFilters();
 }
 
-void Layer::SetGrayscaleImmediately(float grayscale) {
+void Layer::SetGrayscaleFromAnimation(float grayscale) {
   layer_grayscale_ = grayscale;
   SetLayerFilters();
 }
 
-void Layer::SetColorImmediately(SkColor color) {
+void Layer::SetColorFromAnimation(SkColor color) {
   DCHECK_EQ(type_, LAYER_SOLID_COLOR);
   solid_color_layer_->SetBackgroundColor(color);
   SetFillsBoundsOpaquely(SkColorGetA(color) == 0xFF);
-}
-
-void Layer::SetBoundsFromAnimation(const gfx::Rect& bounds) {
-  SetBoundsImmediately(bounds);
-}
-
-void Layer::SetTransformFromAnimation(const gfx::Transform& transform) {
-  SetTransformImmediately(transform);
-}
-
-void Layer::SetOpacityFromAnimation(float opacity) {
-  SetOpacityImmediately(opacity);
-}
-
-void Layer::SetVisibilityFromAnimation(bool visibility) {
-  SetVisibilityImmediately(visibility);
-}
-
-void Layer::SetBrightnessFromAnimation(float brightness) {
-  SetBrightnessImmediately(brightness);
-}
-
-void Layer::SetGrayscaleFromAnimation(float grayscale) {
-  SetGrayscaleImmediately(grayscale);
-}
-
-void Layer::SetColorFromAnimation(SkColor color) {
-  SetColorImmediately(color);
 }
 
 void Layer::ScheduleDrawForAnimation() {
@@ -908,7 +915,10 @@ void Layer::CreateWebLayer() {
     solid_color_layer_ = cc::SolidColorLayer::Create();
     cc_layer_ = solid_color_layer_.get();
   } else {
-    content_layer_ = cc::ContentLayer::Create(this);
+    if (Layer::UsingPictureLayer())
+      content_layer_ = cc::PictureLayer::Create(this);
+    else
+      content_layer_ = cc::ContentLayer::Create(this);
     cc_layer_ = content_layer_.get();
   }
   cc_layer_->SetAnchorPoint(gfx::PointF());

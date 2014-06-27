@@ -216,7 +216,6 @@ class PriorityGetter : public BufferedSpdyFramerVisitorInterface {
   virtual void OnSynStream(SpdyStreamId stream_id,
                            SpdyStreamId associated_stream_id,
                            SpdyPriority priority,
-                           uint8 credential_slot,
                            bool fin,
                            bool unidirectional,
                            const SpdyHeaderBlock& headers) OVERRIDE {
@@ -228,6 +227,9 @@ class PriorityGetter : public BufferedSpdyFramerVisitorInterface {
   virtual void OnHeaders(SpdyStreamId stream_id,
                          bool fin,
                          const SpdyHeaderBlock& headers) OVERRIDE {}
+  virtual void OnDataFrameHeader(SpdyStreamId stream_id,
+                                 size_t length,
+                                 bool fin) OVERRIDE {}
   virtual void OnStreamFrameData(SpdyStreamId stream_id,
                                  const char* data,
                                  size_t len,
@@ -235,7 +237,7 @@ class PriorityGetter : public BufferedSpdyFramerVisitorInterface {
   virtual void OnSettings(bool clear_persisted) OVERRIDE {}
   virtual void OnSetting(
       SpdySettingsIds id, uint8 flags, uint32 value) OVERRIDE {}
-  virtual void OnPing(uint32 unique_id) OVERRIDE {}
+  virtual void OnPing(SpdyPingId unique_id, bool is_ack) OVERRIDE {}
   virtual void OnRstStream(SpdyStreamId stream_id,
                            SpdyRstStreamStatus status) OVERRIDE {}
   virtual void OnGoAway(SpdyStreamId last_accepted_stream_id,
@@ -538,15 +540,12 @@ base::WeakPtr<SpdySession> CreateSpdySessionHelper(
 
   EXPECT_EQ(OK, rv);
 
-  base::WeakPtr<SpdySession> spdy_session;
-  EXPECT_EQ(
-      expected_status,
+  base::WeakPtr<SpdySession> spdy_session =
       http_session->spdy_session_pool()->CreateAvailableSessionFromSocket(
-          key, connection.Pass(), net_log, OK, &spdy_session,
-          is_secure));
-  EXPECT_EQ(expected_status == OK, spdy_session != NULL);
-  EXPECT_EQ(expected_status == OK,
-            HasSpdySession(http_session->spdy_session_pool(), key));
+          key, connection.Pass(), net_log, OK, is_secure);
+  // Failure is reported asynchronously.
+  EXPECT_TRUE(spdy_session != NULL);
+  EXPECT_TRUE(HasSpdySession(http_session->spdy_session_pool(), key));
   return spdy_session;
 }
 
@@ -560,14 +559,14 @@ base::WeakPtr<SpdySession> CreateInsecureSpdySession(
                                  OK, false /* is_secure */);
 }
 
-void TryCreateInsecureSpdySessionExpectingFailure(
+base::WeakPtr<SpdySession> TryCreateInsecureSpdySessionExpectingFailure(
     const scoped_refptr<HttpNetworkSession>& http_session,
     const SpdySessionKey& key,
     Error expected_error,
     const BoundNetLog& net_log) {
   DCHECK_LT(expected_error, ERR_IO_PENDING);
-  CreateSpdySessionHelper(http_session, key, net_log,
-                          expected_error, false /* is_secure */);
+  return CreateSpdySessionHelper(http_session, key, net_log,
+                                 expected_error, false /* is_secure */);
 }
 
 base::WeakPtr<SpdySession> CreateSecureSpdySession(
@@ -641,17 +640,15 @@ base::WeakPtr<SpdySession> CreateFakeSpdySessionHelper(
     Error expected_status) {
   EXPECT_NE(expected_status, ERR_IO_PENDING);
   EXPECT_FALSE(HasSpdySession(pool, key));
-  base::WeakPtr<SpdySession> spdy_session;
   scoped_ptr<ClientSocketHandle> handle(new ClientSocketHandle());
   handle->SetSocket(scoped_ptr<StreamSocket>(new FakeSpdySessionClientSocket(
       expected_status == OK ? ERR_IO_PENDING : expected_status)));
-  EXPECT_EQ(
-      expected_status,
+  base::WeakPtr<SpdySession> spdy_session =
       pool->CreateAvailableSessionFromSocket(
-          key, handle.Pass(), BoundNetLog(), OK, &spdy_session,
-          true /* is_secure */));
-  EXPECT_EQ(expected_status == OK, spdy_session != NULL);
-  EXPECT_EQ(expected_status == OK, HasSpdySession(pool, key));
+          key, handle.Pass(), BoundNetLog(), OK, true /* is_secure */);
+  // Failure is reported asynchronously.
+  EXPECT_TRUE(spdy_session != NULL);
+  EXPECT_TRUE(HasSpdySession(pool, key));
   return spdy_session;
 }
 
@@ -662,11 +659,12 @@ base::WeakPtr<SpdySession> CreateFakeSpdySession(SpdySessionPool* pool,
   return CreateFakeSpdySessionHelper(pool, key, OK);
 }
 
-void TryCreateFakeSpdySessionExpectingFailure(SpdySessionPool* pool,
-                                              const SpdySessionKey& key,
-                                              Error expected_error) {
+base::WeakPtr<SpdySession> TryCreateFakeSpdySessionExpectingFailure(
+    SpdySessionPool* pool,
+    const SpdySessionKey& key,
+    Error expected_error) {
   DCHECK_LT(expected_error, ERR_IO_PENDING);
-  CreateFakeSpdySessionHelper(pool, key, expected_error);
+  return CreateFakeSpdySessionHelper(pool, key, expected_error);
 }
 
 SpdySessionPoolPeer::SpdySessionPoolPeer(SpdySessionPool* pool) : pool_(pool) {
@@ -747,24 +745,22 @@ SpdyFrame* SpdyTestUtil::ConstructSpdyFrame(
       break;
     case SYN_STREAM:
       {
-        size_t credential_slot = is_spdy2() ? 0 : header_info.credential_slot;
         frame = framer.CreateSynStream(header_info.id, header_info.assoc_id,
                                        header_info.priority,
-                                       credential_slot,
                                        header_info.control_flags,
-                                       header_info.compressed, headers.get());
+                                       headers.get());
       }
       break;
     case SYN_REPLY:
       frame = framer.CreateSynReply(header_info.id, header_info.control_flags,
-                                    header_info.compressed, headers.get());
+                                    headers.get());
       break;
     case RST_STREAM:
       frame = framer.CreateRstStream(header_info.id, header_info.status);
       break;
     case HEADERS:
       frame = framer.CreateHeaders(header_info.id, header_info.control_flags,
-                                   header_info.compressed, headers.get());
+                                   headers.get());
       break;
     default:
       ADD_FAILURE();
@@ -851,18 +847,27 @@ std::string SpdyTestUtil::ConstructSpdyReplyString(
   return reply_string;
 }
 
+// TODO(jgraettinger): Eliminate uses of this method in tests (prefer
+// SpdySettingsIR).
 SpdyFrame* SpdyTestUtil::ConstructSpdySettings(
     const SettingsMap& settings) const {
-  return CreateFramer()->CreateSettings(settings);
+  SpdySettingsIR settings_ir;
+  for (SettingsMap::const_iterator it = settings.begin();
+       it != settings.end();
+       ++it) {
+    settings_ir.AddSetting(
+        it->first,
+        (it->second.first & SETTINGS_FLAG_PLEASE_PERSIST) != 0,
+        (it->second.first & SETTINGS_FLAG_PERSISTED) != 0,
+        it->second.second);
+  }
+  return CreateFramer()->SerializeSettings(settings_ir);
 }
 
-SpdyFrame* SpdyTestUtil::ConstructSpdyCredential(
-    const SpdyCredential& credential) const {
-  return CreateFramer()->CreateCredentialFrame(credential);
-}
-
-SpdyFrame* SpdyTestUtil::ConstructSpdyPing(uint32 ping_id) const {
-  return CreateFramer()->CreatePingFrame(ping_id);
+SpdyFrame* SpdyTestUtil::ConstructSpdyPing(uint32 ping_id, bool is_ack) const {
+  SpdyPingIR ping_ir(ping_id);
+  ping_ir.set_is_ack(is_ack);
+  return CreateFramer()->SerializePing(ping_ir);
 }
 
 SpdyFrame* SpdyTestUtil::ConstructSpdyGoAway() const {
@@ -871,18 +876,23 @@ SpdyFrame* SpdyTestUtil::ConstructSpdyGoAway() const {
 
 SpdyFrame* SpdyTestUtil::ConstructSpdyGoAway(
     SpdyStreamId last_good_stream_id) const {
-  return CreateFramer()->CreateGoAway(last_good_stream_id, GOAWAY_OK);
+  SpdyGoAwayIR go_ir(last_good_stream_id, GOAWAY_OK, "go away");
+  return CreateFramer()->SerializeGoAway(go_ir);
 }
 
 SpdyFrame* SpdyTestUtil::ConstructSpdyWindowUpdate(
     const SpdyStreamId stream_id, uint32 delta_window_size) const {
-  return CreateFramer()->CreateWindowUpdate(stream_id, delta_window_size);
+  SpdyWindowUpdateIR update_ir(stream_id, delta_window_size);
+  return CreateFramer()->SerializeWindowUpdate(update_ir);
 }
 
+// TODO(jgraettinger): Eliminate uses of this method in tests (prefer
+// SpdyRstStreamIR).
 SpdyFrame* SpdyTestUtil::ConstructSpdyRstStream(
     SpdyStreamId stream_id,
     SpdyRstStreamStatus status) const {
-  return CreateFramer()->CreateRstStream(stream_id, status);
+  SpdyRstStreamIR rst_ir(stream_id, status, "RST");
+  return CreateFramer()->SerializeRstStream(rst_ir);
 }
 
 SpdyFrame* SpdyTestUtil::ConstructSpdyGet(
@@ -1142,9 +1152,10 @@ SpdyFrame* SpdyTestUtil::ConstructSpdyPostSynReply(
 
 SpdyFrame* SpdyTestUtil::ConstructSpdyBodyFrame(int stream_id, bool fin) {
   SpdyFramer framer(spdy_version_);
-  return framer.CreateDataFrame(
-      stream_id, kUploadData, kUploadDataSize,
-      fin ? DATA_FLAG_FIN : DATA_FLAG_NONE);
+  SpdyDataIR data_ir(stream_id,
+                     base::StringPiece(kUploadData, kUploadDataSize));
+  data_ir.set_fin(fin);
+  return framer.SerializeData(data_ir);
 }
 
 SpdyFrame* SpdyTestUtil::ConstructSpdyBodyFrame(int stream_id,
@@ -1152,8 +1163,9 @@ SpdyFrame* SpdyTestUtil::ConstructSpdyBodyFrame(int stream_id,
                                                 uint32 len,
                                                 bool fin) {
   SpdyFramer framer(spdy_version_);
-  return framer.CreateDataFrame(
-      stream_id, data, len, fin ? DATA_FLAG_FIN : DATA_FLAG_NONE);
+  SpdyDataIR data_ir(stream_id, base::StringPiece(data, len));
+  data_ir.set_fin(fin);
+  return framer.SerializeData(data_ir);
 }
 
 SpdyFrame* SpdyTestUtil::ConstructWrappedSpdyFrame(

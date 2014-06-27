@@ -7,45 +7,52 @@
 
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop_proxy.h"
+#include "third_party/WebKit/public/platform/WebAnimationCurve.h"
 #include "third_party/WebKit/public/platform/WebCompositorSupport.h"
 #include "third_party/WebKit/public/platform/WebLayer.h"
 #include "third_party/WebKit/public/platform/WebTransformOperations.h"
 
-namespace WebKit {
+namespace blink {
 class WebGraphicsContext3D;
 }
 
 namespace webkit {
 
-class WebCompositorSupportImpl : public WebKit::WebCompositorSupport {
+class WebCompositorSupportImpl : public blink::WebCompositorSupport {
  public:
   WebCompositorSupportImpl();
   virtual ~WebCompositorSupportImpl();
 
-  virtual WebKit::WebLayer* createLayer();
-  virtual WebKit::WebContentLayer* createContentLayer(
-      WebKit::WebContentLayerClient* client);
-  virtual WebKit::WebExternalTextureLayer* createExternalTextureLayer(
-      WebKit::WebExternalTextureLayerClient* client);
-  virtual WebKit::WebImageLayer* createImageLayer();
-  virtual WebKit::WebNinePatchLayer* createNinePatchLayer();
-  virtual WebKit::WebSolidColorLayer* createSolidColorLayer();
-  virtual WebKit::WebScrollbarLayer* createScrollbarLayer(
-      WebKit::WebScrollbar* scrollbar,
-      WebKit::WebScrollbarThemePainter painter,
-      WebKit::WebScrollbarThemeGeometry*);
-  virtual WebKit::WebScrollbarLayer* createSolidColorScrollbarLayer(
-      WebKit::WebScrollbar::Orientation orientation, int thumb_thickness,
+  virtual blink::WebLayer* createLayer();
+  virtual blink::WebContentLayer* createContentLayer(
+      blink::WebContentLayerClient* client);
+  virtual blink::WebExternalTextureLayer* createExternalTextureLayer(
+      blink::WebExternalTextureLayerClient* client);
+  virtual blink::WebImageLayer* createImageLayer();
+  virtual blink::WebNinePatchLayer* createNinePatchLayer();
+  virtual blink::WebSolidColorLayer* createSolidColorLayer();
+  virtual blink::WebScrollbarLayer* createScrollbarLayer(
+      blink::WebScrollbar* scrollbar,
+      blink::WebScrollbarThemePainter painter,
+      blink::WebScrollbarThemeGeometry*);
+  virtual blink::WebScrollbarLayer* createSolidColorScrollbarLayer(
+      blink::WebScrollbar::Orientation orientation, int thumb_thickness,
       bool is_left_side_vertical_scrollbar);
-  virtual WebKit::WebAnimation* createAnimation(
-      const WebKit::WebAnimationCurve& curve,
-      WebKit::WebAnimation::TargetProperty target,
+  virtual blink::WebAnimation* createAnimation(
+      const blink::WebAnimationCurve& curve,
+      blink::WebAnimation::TargetProperty target,
       int animation_id);
-  virtual WebKit::WebFilterAnimationCurve* createFilterAnimationCurve();
-  virtual WebKit::WebFloatAnimationCurve* createFloatAnimationCurve();
-  virtual WebKit::WebTransformAnimationCurve* createTransformAnimationCurve();
-  virtual WebKit::WebTransformOperations* createTransformOperations();
-  virtual WebKit::WebFilterOperations* createFilterOperations();
+  virtual blink::WebFilterAnimationCurve* createFilterAnimationCurve();
+  virtual blink::WebFloatAnimationCurve* createFloatAnimationCurve();
+#if WEB_SCROLL_OFFSET_ANIMATION_CURVE_IS_DEFINED
+  virtual blink::WebScrollOffsetAnimationCurve*
+      createScrollOffsetAnimationCurve(
+          blink::WebFloatPoint target_value,
+          blink::WebAnimationCurve::TimingFunctionType timing_function);
+#endif
+  virtual blink::WebTransformAnimationCurve* createTransformAnimationCurve();
+  virtual blink::WebTransformOperations* createTransformOperations();
+  virtual blink::WebFilterOperations* createFilterOperations();
 
  private:
   DISALLOW_COPY_AND_ASSIGN(WebCompositorSupportImpl);

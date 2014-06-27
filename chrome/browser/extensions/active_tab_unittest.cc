@@ -13,11 +13,7 @@
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_id.h"
-#include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/extension_builder.h"
 #include "chrome/common/extensions/features/feature_channel.h"
-#include "chrome/common/extensions/permissions/permissions_data.h"
-#include "chrome/common/extensions/value_builder.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_details.h"
@@ -28,7 +24,11 @@
 #include "content/public/common/frame_navigate_params.h"
 #include "content/public/common/page_transition_types.h"
 #include "content/public/test/test_browser_thread.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/extension_builder.h"
 #include "extensions/common/features/feature.h"
+#include "extensions/common/permissions/permissions_data.h"
+#include "extensions/common/value_builder.h"
 
 using base::DictionaryValue;
 using base::ListValue;
@@ -56,6 +56,13 @@ scoped_refptr<const Extension> CreateTestExtension(
       .SetID(id)
       .Build();
 }
+
+enum PermittedFeature {
+  PERMITTED_NONE,
+  PERMITTED_SCRIPT_ONLY,
+  PERMITTED_CAPTURE_ONLY,
+  PERMITTED_BOTH
+};
 
 class ActiveTabTest : public ChromeRenderViewHostTestHarness {
  protected:
@@ -86,17 +93,35 @@ class ActiveTabTest : public ChromeRenderViewHostTestHarness {
 
   bool IsAllowed(const scoped_refptr<const Extension>& extension,
                  const GURL& url) {
-    return IsAllowed(extension, url, tab_id());
+    return IsAllowed(extension, url, PERMITTED_BOTH, tab_id());
   }
 
   bool IsAllowed(const scoped_refptr<const Extension>& extension,
                  const GURL& url,
+                 PermittedFeature feature) {
+    return IsAllowed(extension, url, feature, tab_id());
+  }
+
+  bool IsAllowed(const scoped_refptr<const Extension>& extension,
+                 const GURL& url,
+                 PermittedFeature feature,
                  int tab_id) {
-    return PermissionsData::CanExecuteScriptOnPage(
-               extension.get(), url, url, tab_id, NULL, -1, NULL) &&
-           PermissionsData::CanCaptureVisiblePage(
-               extension.get(), url, tab_id, NULL) &&
-           HasTabsPermission(extension, tab_id);
+    bool script = PermissionsData::CanExecuteScriptOnPage(
+               extension.get(), url, url, tab_id, NULL, -1, NULL);
+    bool capture = HasTabsPermission(extension, tab_id) &&
+        PermissionsData::CanCaptureVisiblePage(extension.get(), tab_id, NULL);
+    switch (feature) {
+      case PERMITTED_SCRIPT_ONLY:
+        return script && !capture;
+      case PERMITTED_CAPTURE_ONLY:
+        return capture && !script;
+      case PERMITTED_BOTH:
+        return script && capture;
+      case PERMITTED_NONE:
+        return !script && !capture;
+    }
+    NOTREACHED();
+    return false;
   }
 
   bool IsBlocked(const scoped_refptr<const Extension>& extension,
@@ -107,11 +132,7 @@ class ActiveTabTest : public ChromeRenderViewHostTestHarness {
   bool IsBlocked(const scoped_refptr<const Extension>& extension,
                  const GURL& url,
                  int tab_id) {
-    // Note: can't check HasTabsPermission because it isn't URL specific.
-    return !PermissionsData::CanExecuteScriptOnPage(
-               extension.get(), url, url, tab_id, NULL, -1, NULL) &&
-           !PermissionsData::CanCaptureVisiblePage(
-               extension.get(), url, tab_id, NULL);
+    return IsAllowed(extension, url, PERMITTED_NONE, tab_id);
   }
 
   bool HasTabsPermission(const scoped_refptr<const Extension>& extension) {
@@ -173,7 +194,7 @@ TEST_F(ActiveTabTest, GrantToSinglePage) {
 
   // Other subdomains shouldn't be given access.
   GURL mail_google("http://mail.google.com");
-  EXPECT_TRUE(IsBlocked(extension, mail_google));
+  EXPECT_TRUE(IsAllowed(extension, mail_google, PERMITTED_CAPTURE_ONLY));
   EXPECT_TRUE(IsBlocked(another_extension, mail_google));
   EXPECT_TRUE(IsBlocked(extension_without_active_tab, mail_google));
 
@@ -233,8 +254,8 @@ TEST_F(ActiveTabTest, GrantToSinglePage) {
   active_tab_permission_granter()->GrantIfRequested(
       extension_without_active_tab.get());
 
-  EXPECT_TRUE(IsBlocked(extension, google));
-  EXPECT_TRUE(IsBlocked(another_extension, google));
+  EXPECT_TRUE(IsAllowed(extension, google, PERMITTED_CAPTURE_ONLY));
+  EXPECT_TRUE(IsAllowed(another_extension, google, PERMITTED_CAPTURE_ONLY));
   EXPECT_TRUE(IsBlocked(extension_without_active_tab, google));
 
   EXPECT_TRUE(IsAllowed(extension, chromium));
@@ -253,8 +274,8 @@ TEST_F(ActiveTabTest, GrantToSinglePage) {
   EXPECT_TRUE(IsAllowed(another_extension, google));
   EXPECT_TRUE(IsBlocked(extension_without_active_tab, google));
 
-  EXPECT_TRUE(IsBlocked(extension, chromium));
-  EXPECT_TRUE(IsBlocked(another_extension, chromium));
+  EXPECT_TRUE(IsAllowed(extension, chromium, PERMITTED_CAPTURE_ONLY));
+  EXPECT_TRUE(IsAllowed(another_extension, chromium, PERMITTED_CAPTURE_ONLY));
   EXPECT_TRUE(IsBlocked(extension_without_active_tab, chromium));
 };
 
@@ -272,7 +293,7 @@ TEST_F(ActiveTabTest, Uninstalling) {
   UnloadedExtensionInfo details(extension.get(),
                                 UnloadedExtensionInfo::REASON_DISABLE);
   content::NotificationService::current()->Notify(
-      chrome::NOTIFICATION_EXTENSION_UNLOADED,
+      chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
       content::Source<Profile>(Profile::FromBrowserContext(
           web_contents()->GetBrowserContext())),
       content::Details<UnloadedExtensionInfo>(&details));
@@ -294,7 +315,7 @@ TEST_F(ActiveTabTest, OnlyActiveTab) {
 
   active_tab_permission_granter()->GrantIfRequested(extension.get());
 
-  EXPECT_TRUE(IsAllowed(extension, google, tab_id()));
+  EXPECT_TRUE(IsAllowed(extension, google, PERMITTED_BOTH, tab_id()));
   EXPECT_TRUE(IsBlocked(extension, google, tab_id() + 1));
   EXPECT_FALSE(HasTabsPermission(extension, tab_id() + 1));
 }
@@ -310,36 +331,36 @@ TEST_F(ActiveTabTest, NavigateInPage) {
   GURL google_h1("http://www.google.com#h1");
   NavigateAndCommit(google_h1);
 
-  EXPECT_TRUE(IsAllowed(extension, google, tab_id()));
-  EXPECT_TRUE(IsAllowed(extension, google_h1, tab_id()));
+  EXPECT_TRUE(IsAllowed(extension, google));
+  EXPECT_TRUE(IsAllowed(extension, google_h1));
 
   GURL chromium("http://www.chromium.org");
   NavigateAndCommit(chromium);
 
-  EXPECT_FALSE(IsAllowed(extension, google, tab_id()));
-  EXPECT_FALSE(IsAllowed(extension, google_h1, tab_id()));
-  EXPECT_FALSE(IsAllowed(extension, chromium, tab_id()));
+  EXPECT_FALSE(IsAllowed(extension, google));
+  EXPECT_FALSE(IsAllowed(extension, google_h1));
+  EXPECT_FALSE(IsAllowed(extension, chromium));
 
   active_tab_permission_granter()->GrantIfRequested(extension.get());
 
-  EXPECT_FALSE(IsAllowed(extension, google, tab_id()));
-  EXPECT_FALSE(IsAllowed(extension, google_h1, tab_id()));
-  EXPECT_TRUE(IsAllowed(extension, chromium, tab_id()));
+  EXPECT_FALSE(IsAllowed(extension, google));
+  EXPECT_FALSE(IsAllowed(extension, google_h1));
+  EXPECT_TRUE(IsAllowed(extension, chromium));
 
   GURL chromium_h1("http://www.chromium.org#h1");
   NavigateAndCommit(chromium_h1);
 
-  EXPECT_FALSE(IsAllowed(extension, google, tab_id()));
-  EXPECT_FALSE(IsAllowed(extension, google_h1, tab_id()));
-  EXPECT_TRUE(IsAllowed(extension, chromium, tab_id()));
-  EXPECT_TRUE(IsAllowed(extension, chromium_h1, tab_id()));
+  EXPECT_FALSE(IsAllowed(extension, google));
+  EXPECT_FALSE(IsAllowed(extension, google_h1));
+  EXPECT_TRUE(IsAllowed(extension, chromium));
+  EXPECT_TRUE(IsAllowed(extension, chromium_h1));
 
   Reload();
 
-  EXPECT_FALSE(IsAllowed(extension, google, tab_id()));
-  EXPECT_FALSE(IsAllowed(extension, google_h1, tab_id()));
-  EXPECT_FALSE(IsAllowed(extension, chromium, tab_id()));
-  EXPECT_FALSE(IsAllowed(extension, chromium_h1, tab_id()));
+  EXPECT_FALSE(IsAllowed(extension, google));
+  EXPECT_FALSE(IsAllowed(extension, google_h1));
+  EXPECT_FALSE(IsAllowed(extension, chromium));
+  EXPECT_FALSE(IsAllowed(extension, chromium_h1));
 }
 
 TEST_F(ActiveTabTest, ChromeUrlGrants) {
@@ -348,7 +369,8 @@ TEST_F(ActiveTabTest, ChromeUrlGrants) {
   active_tab_permission_granter()->GrantIfRequested(
       extension_with_tab_capture.get());
   // Do not grant tabs/hosts permissions for tab.
-  EXPECT_TRUE(IsBlocked(extension_with_tab_capture, internal, tab_id()));
+  EXPECT_TRUE(IsAllowed(extension_with_tab_capture, internal,
+                        PERMITTED_CAPTURE_ONLY));
   EXPECT_TRUE(PermissionsData::HasAPIPermissionForTab(
       extension_with_tab_capture.get(),
       tab_id(),

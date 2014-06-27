@@ -10,6 +10,8 @@ from telemetry import test
 from telemetry.core import util
 from telemetry.page import page_measurement
 from telemetry.page import page_set
+from telemetry.value import merge_values
+from telemetry.value import scalar
 
 
 def _GeometricMean(values):
@@ -57,13 +59,17 @@ class _DomPerfMeasurement(page_measurement.PageMeasurement):
 
   def DidRunTest(self, browser, results):
     # Now give the geometric mean as the total for the combined runs.
-    scores = []
-    for result in results.page_results:
-      scores.append(result[SCORE_TRACE_NAME].output_value)
-    total = _GeometricMean(scores)
-    results.AddSummary(SCORE_TRACE_NAME, SCORE_UNIT, total, 'Total')
+    combined = merge_values.MergeLikeValuesFromDifferentPages(
+        results.all_page_specific_values,
+        group_by_name_suffix=True)
+    combined_score = [x for x in combined if x.name == SCORE_TRACE_NAME][0]
+    total = _GeometricMean(combined_score.values)
+    results.AddSummaryValue(
+        scalar.ScalarValue(None, 'Total.' + SCORE_TRACE_NAME, SCORE_UNIT,
+                           total))
 
 
+@test.Disabled('android', 'linux')
 class DomPerf(test.Test):
   """A suite of JavaScript benchmarks for exercising the browser's DOM.
 

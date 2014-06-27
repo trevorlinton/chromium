@@ -12,11 +12,10 @@
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "ui/aura/client/capture_client.h"
-#include "ui/aura/client/drag_drop_delegate.h"
 #include "ui/aura/env.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_delegate.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/base/hit_test.h"
@@ -29,6 +28,7 @@
 #include "ui/gfx/rect_conversions.h"
 #include "ui/views/views_delegate.h"
 #include "ui/views/widget/native_widget_aura.h"
+#include "ui/wm/public/drag_drop_delegate.h"
 
 namespace ash {
 namespace internal {
@@ -114,8 +114,8 @@ class DragDropTrackerDelegate : public aura::WindowDelegate {
   virtual void OnPaint(gfx::Canvas* canvas) OVERRIDE {
   }
   virtual void OnDeviceScaleFactorChanged(float device_scale_factor) OVERRIDE {}
-  virtual void OnWindowDestroying() OVERRIDE {}
-  virtual void OnWindowDestroyed() OVERRIDE {}
+  virtual void OnWindowDestroying(aura::Window* window) OVERRIDE {}
+  virtual void OnWindowDestroyed(aura::Window* window) OVERRIDE {}
   virtual void OnWindowTargetVisibilityChanged(bool visible) OVERRIDE {}
   virtual bool HasHitTestMask() const OVERRIDE {
     return true;
@@ -123,8 +123,6 @@ class DragDropTrackerDelegate : public aura::WindowDelegate {
   virtual void GetHitTestMask(gfx::Path* mask) const OVERRIDE {
     DCHECK(mask->isEmpty());
   }
-  virtual void DidRecreateLayer(ui::Layer* old_layer,
-                                ui::Layer* new_layer) OVERRIDE {}
 
  private:
   DragDropController* drag_drop_controller_;
@@ -228,7 +226,7 @@ int DragDropController::StartDragAndDrop(
     cancel_animation_->End();
 
   if (should_block_during_drag_drop_) {
-    base::RunLoop run_loop(aura::Env::GetInstance()->GetDispatcher());
+    base::RunLoop run_loop;
     quit_closure_ = run_loop.QuitClosure();
     base::MessageLoopForUI* loop = base::MessageLoopForUI::current();
     base::MessageLoop::ScopedNestableTaskAllower allow_nested(loop);
@@ -461,14 +459,10 @@ void DragDropController::OnGestureEvent(ui::GestureEvent* event) {
 }
 
 void DragDropController::OnWindowDestroyed(aura::Window* window) {
-  if (drag_window_ == window) {
-    drag_window_->RemoveObserver(this);
+  if (drag_window_ == window)
     drag_window_ = NULL;
-  }
-  if (drag_source_window_ == window) {
-    drag_source_window_->RemoveObserver(this);
+  if (drag_source_window_ == window)
     drag_source_window_ = NULL;
-  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -63,14 +63,17 @@ void FileSystemBackend::AddSystemMountPoints() {
   system_mount_points_->RegisterFileSystem(
       "archive",
       fileapi::kFileSystemTypeNativeLocal,
+      fileapi::FileSystemMountOption(),
       chromeos::CrosDisksClient::GetArchiveMountPoint());
   system_mount_points_->RegisterFileSystem(
       "removable",
       fileapi::kFileSystemTypeNativeLocal,
+      fileapi::FileSystemMountOption(fileapi::COPY_SYNC_OPTION_SYNC),
       chromeos::CrosDisksClient::GetRemovableDiskMountPoint());
   system_mount_points_->RegisterFileSystem(
       "oem",
       fileapi::kFileSystemTypeRestrictedNativeLocal,
+      fileapi::FileSystemMountOption(),
       base::FilePath(FILE_PATH_LITERAL("/usr/share/oem")));
 }
 
@@ -90,15 +93,51 @@ bool FileSystemBackend::CanHandleType(fileapi::FileSystemType type) const {
 void FileSystemBackend::Initialize(fileapi::FileSystemContext* context) {
 }
 
-void FileSystemBackend::OpenFileSystem(
-    const GURL& origin_url,
-    fileapi::FileSystemType type,
-    fileapi::OpenFileSystemMode mode,
-    const OpenFileSystemCallback& callback) {
-  // TODO(nhiroki): Deprecate OpenFileSystem for non-sandboxed filesystem.
-  // (http://crbug.com/297412)
-  NOTREACHED();
-  callback.Run(GURL(), std::string(), base::PLATFORM_FILE_ERROR_SECURITY);
+void FileSystemBackend::ResolveURL(const fileapi::FileSystemURL& url,
+                                   fileapi::OpenFileSystemMode mode,
+                                   const OpenFileSystemCallback& callback) {
+  std::string id;
+  fileapi::FileSystemType type;
+  base::FilePath path;
+  fileapi::FileSystemMountOption option;
+  if (!mount_points_->CrackVirtualPath(
+           url.virtual_path(), &id, &type, &path, &option) &&
+      !system_mount_points_->CrackVirtualPath(
+           url.virtual_path(), &id, &type, &path, &option)) {
+    // Not under a mount point, so return an error, since the root is not
+    // accessible.
+    GURL root_url = GURL(fileapi::GetExternalFileSystemRootURIString(
+        url.origin(), std::string()));
+    callback.Run(root_url, std::string(), base::File::FILE_ERROR_SECURITY);
+    return;
+  }
+
+  std::string name;
+  // Construct a URL restricted to the found mount point.
+  std::string root_url =
+      fileapi::GetExternalFileSystemRootURIString(url.origin(), id);
+
+  // For removable and archives, the file system root is the external mount
+  // point plus the inner mount point.
+  if (id == "archive" || id == "removable") {
+    std::vector<std::string> components;
+    url.virtual_path().GetComponents(&components);
+    DCHECK_EQ(id, components.at(0));
+    if (components.size() < 2) {
+      // Unable to access /archive and /removable directories directly. The
+      // inner mount name must be specified.
+      callback.Run(
+          GURL(root_url), std::string(), base::File::FILE_ERROR_SECURITY);
+      return;
+    }
+    std::string inner_mount_name = components[1];
+    root_url += inner_mount_name + "/";
+    name = inner_mount_name;
+  } else {
+    name = id;
+  }
+
+  callback.Run(GURL(root_url), name, base::File::FILE_OK);
 }
 
 fileapi::FileSystemQuotaUtil* FileSystemBackend::GetQuotaUtil() {
@@ -144,16 +183,7 @@ void FileSystemBackend::GrantFullAccessToExtension(
   DCHECK(special_storage_policy_->IsFileHandler(extension_id));
   if (!special_storage_policy_->IsFileHandler(extension_id))
     return;
-
-  std::vector<fileapi::MountPoints::MountPointInfo> files;
-  mount_points_->AddMountPointInfosTo(&files);
-  system_mount_points_->AddMountPointInfosTo(&files);
-
-  for (size_t i = 0; i < files.size(); ++i) {
-    file_access_permissions_->GrantAccessPermission(
-        extension_id,
-        base::FilePath::FromUTF8Unsafe(files[i].name));
-  }
+  file_access_permissions_->GrantFullAccessPermission(extension_id);
 }
 
 void FileSystemBackend::GrantFileAccessToExtension(
@@ -166,9 +196,11 @@ void FileSystemBackend::GrantFileAccessToExtension(
   std::string id;
   fileapi::FileSystemType type;
   base::FilePath path;
-  if (!mount_points_->CrackVirtualPath(virtual_path, &id, &type, &path) &&
+  fileapi::FileSystemMountOption option;
+  if (!mount_points_->CrackVirtualPath(virtual_path,
+                                       &id, &type, &path, &option) &&
       !system_mount_points_->CrackVirtualPath(virtual_path,
-                                              &id, &type, &path)) {
+                                              &id, &type, &path, &option)) {
     return;
   }
 
@@ -208,20 +240,20 @@ fileapi::AsyncFileUtil* FileSystemBackend::GetAsyncFileUtil(
 
 fileapi::CopyOrMoveFileValidatorFactory*
 FileSystemBackend::GetCopyOrMoveFileValidatorFactory(
-    fileapi::FileSystemType type, base::PlatformFileError* error_code) {
+    fileapi::FileSystemType type, base::File::Error* error_code) {
   DCHECK(error_code);
-  *error_code = base::PLATFORM_FILE_OK;
+  *error_code = base::File::FILE_OK;
   return NULL;
 }
 
 fileapi::FileSystemOperation* FileSystemBackend::CreateFileSystemOperation(
     const fileapi::FileSystemURL& url,
     fileapi::FileSystemContext* context,
-    base::PlatformFileError* error_code) const {
+    base::File::Error* error_code) const {
   DCHECK(url.is_valid());
 
   if (!IsAccessAllowed(url)) {
-    *error_code = base::PLATFORM_FILE_ERROR_SECURITY;
+    *error_code = base::File::FILE_ERROR_SECURITY;
     return NULL;
   }
 
@@ -231,6 +263,11 @@ fileapi::FileSystemOperation* FileSystemBackend::CreateFileSystemOperation(
   return fileapi::FileSystemOperation::Create(
       url, context,
       make_scoped_ptr(new fileapi::FileSystemOperationContext(context)));
+}
+
+bool FileSystemBackend::SupportsStreaming(
+    const fileapi::FileSystemURL& url) const {
+  return false;
 }
 
 scoped_ptr<webkit_blob::FileStreamReader>
@@ -273,7 +310,8 @@ FileSystemBackend::CreateFileStreamWriter(
   DCHECK(url.type() == fileapi::kFileSystemTypeNativeLocal);
   return scoped_ptr<fileapi::FileStreamWriter>(
       fileapi::FileStreamWriter::CreateForLocalFile(
-          context->default_file_task_runner(), url.path(), offset));
+          context->default_file_task_runner(), url.path(), offset,
+          fileapi::FileStreamWriter::OPEN_EXISTING_FILE));
 }
 
 bool FileSystemBackend::GetVirtualPath(

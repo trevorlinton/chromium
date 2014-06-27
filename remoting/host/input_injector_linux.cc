@@ -4,9 +4,9 @@
 
 #include "remoting/host/input_injector.h"
 
-#include <X11/Xlib.h>
-#include <X11/extensions/XTest.h>
 #include <X11/extensions/XInput.h>
+#include <X11/extensions/XTest.h>
+#include <X11/Xlib.h>
 
 #include <set>
 
@@ -14,12 +14,12 @@
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
-#include "base/logging.h"
 #include "base/single_thread_task_runner.h"
+#include "remoting/base/logging.h"
 #include "remoting/host/clipboard.h"
 #include "remoting/proto/internal.pb.h"
-#include "third_party/skia/include/core/SkPoint.h"
-#include "ui/base/keycodes/keycode_converter.h"
+#include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
+#include "ui/events/keycodes/dom4/keycode_converter.h"
 
 namespace remoting {
 
@@ -27,6 +27,7 @@ namespace {
 
 using protocol::ClipboardEvent;
 using protocol::KeyEvent;
+using protocol::TextEvent;
 using protocol::MouseEvent;
 
 // Pixel-to-wheel-ticks conversion ratio used by GTK.
@@ -47,6 +48,7 @@ class InputInjectorLinux : public InputInjector {
 
   // InputStub interface.
   virtual void InjectKeyEvent(const KeyEvent& event) OVERRIDE;
+  virtual void InjectTextEvent(const TextEvent& event) OVERRIDE;
   virtual void InjectMouseEvent(const MouseEvent& event) OVERRIDE;
 
   // InputInjector interface.
@@ -66,6 +68,7 @@ class InputInjectorLinux : public InputInjector {
 
     // Mirrors the InputStub interface.
     void InjectKeyEvent(const KeyEvent& event);
+    void InjectTextEvent(const TextEvent& event);
     void InjectMouseEvent(const MouseEvent& event);
 
     // Mirrors the InputInjector interface.
@@ -99,7 +102,7 @@ class InputInjectorLinux : public InputInjector {
     scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
     std::set<int> pressed_keys_;
-    SkIPoint latest_mouse_position_;
+    webrtc::DesktopVector latest_mouse_position_;
     float wheel_ticks_x_;
     float wheel_ticks_y_;
 
@@ -148,6 +151,10 @@ void InputInjectorLinux::InjectKeyEvent(const KeyEvent& event) {
   core_->InjectKeyEvent(event);
 }
 
+void InputInjectorLinux::InjectTextEvent(const TextEvent& event) {
+  core_->InjectTextEvent(event);
+}
+
 void InputInjectorLinux::InjectMouseEvent(const MouseEvent& event) {
   core_->InjectMouseEvent(event);
 }
@@ -160,7 +167,7 @@ void InputInjectorLinux::Start(
 InputInjectorLinux::Core::Core(
     scoped_refptr<base::SingleThreadTaskRunner> task_runner)
     : task_runner_(task_runner),
-      latest_mouse_position_(SkIPoint::Make(-1, -1)),
+      latest_mouse_position_(-1, -1),
       wheel_ticks_x_(0.0f),
       wheel_ticks_y_(0.0f),
       display_(XOpenDisplay(NULL)),
@@ -253,6 +260,10 @@ void InputInjectorLinux::Core::InjectKeyEvent(const KeyEvent& event) {
   XFlush(display_);
 }
 
+void InputInjectorLinux::Core::InjectTextEvent(const TextEvent& event) {
+  NOTIMPLEMENTED();
+}
+
 InputInjectorLinux::Core::~Core() {
   CHECK(pressed_keys_.empty());
 }
@@ -299,7 +310,7 @@ void InputInjectorLinux::Core::InjectMouseEvent(const MouseEvent& event) {
   if (event.has_delta_x() &&
       event.has_delta_y() &&
       (event.delta_x() != 0 || event.delta_y() != 0)) {
-    latest_mouse_position_ = SkIPoint::Make(-1, -1);
+    latest_mouse_position_.set(-1, -1);
     VLOG(3) << "Moving mouse by " << event.delta_x() << "," << event.delta_y();
     XTestFakeRelativeMotionEvent(display_,
                                  event.delta_x(), event.delta_y(),
@@ -310,16 +321,16 @@ void InputInjectorLinux::Core::InjectMouseEvent(const MouseEvent& event) {
     // a MotionNotify even if the mouse position hasn't changed, which confuses
     // apps which assume MotionNotify implies movement. See crbug.com/138075.
     bool inject_motion = true;
-    SkIPoint new_mouse_position(SkIPoint::Make(event.x(), event.y()));
+    webrtc::DesktopVector new_mouse_position(
+        webrtc::DesktopVector(event.x(), event.y()));
     if (event.has_button() && event.has_button_down() && !event.button_down()) {
-      if (new_mouse_position == latest_mouse_position_)
+      if (new_mouse_position.equals(latest_mouse_position_))
         inject_motion = false;
     }
 
     if (inject_motion) {
-      latest_mouse_position_ =
-          SkIPoint::Make(std::max(0, new_mouse_position.x()),
-                         std::max(0, new_mouse_position.y()));
+      latest_mouse_position_.set(std::max(0, new_mouse_position.x()),
+                                 std::max(0, new_mouse_position.y()));
 
       VLOG(3) << "Moving mouse to " << latest_mouse_position_.x()
               << "," << latest_mouse_position_.y();
@@ -433,7 +444,7 @@ void InputInjectorLinux::Core::InitMouseButtonMap() {
   XFreeDeviceList(devices);
 
   if (!device_found) {
-    LOG(INFO) << "Cannot find XTest device.";
+    HOST_LOG << "Cannot find XTest device.";
     return;
   }
 

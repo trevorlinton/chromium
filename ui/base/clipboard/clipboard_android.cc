@@ -129,39 +129,50 @@ void ClipboardMap::Clear() {
 
 // If the internal map contains a plain-text entry and it does not match that
 // in the Android clipboard, clear the map and insert the Android text into it.
+// If there is an HTML entry in the Android clipboard it gets inserted in the
+// map.
 void ClipboardMap::SyncWithAndroidClipboard() {
   lock_.AssertAcquired();
   JNIEnv* env = AttachCurrentThread();
 
+  // Update the plain text clipboard entry
   std::map<std::string, std::string>::const_iterator it =
     map_.find(kPlainTextFormat);
-
-  if (!Java_Clipboard_hasPlainText(env, clipboard_manager_.obj())) {
-    if (it != map_.end())
-      // We have plain text on this side, but Android doesn't. Nuke ours.
-      map_.clear();
-    return;
-  }
-
-  ScopedJavaLocalRef<jstring> java_string =
+  ScopedJavaLocalRef<jstring> java_string_text =
       Java_Clipboard_getCoercedText(env, clipboard_manager_.obj());
-
-  if (!java_string.obj()) {
-    // Tolerate a null value from the Java side, even though that should not
-    // happen since hasPlainText has already returned true.
-    // Should only happen if someone is using the clipboard on multiple
-    // threads and clears it out after hasPlainText but before we get here...
-    if (it != map_.end())
+  if (java_string_text.obj()) {
+    std::string android_string = ConvertJavaStringToUTF8(java_string_text);
+    if (!android_string.empty() &&
+        (it == map_.end() || it->second != android_string)) {
+      // There is a different string in the Android clipboard than we have.
+      // Clear the map on our side.
+      map_.clear();
+      map_[kPlainTextFormat] = android_string;
+    }
+  } else {
+    if (it != map_.end()) {
       // We have plain text on this side, but Android doesn't. Nuke ours.
       map_.clear();
+    }
+  }
+
+  if (!Java_Clipboard_isHTMLClipboardSupported(env)) {
     return;
   }
 
-  // If Android text differs from ours (or we have none), then copy Android's.
-  std::string android_string = ConvertJavaStringToUTF8(java_string);
-  if (it == map_.end() || it->second != android_string) {
-    map_.clear();
-    map_[kPlainTextFormat] = android_string;
+  // Update the html clipboard entry
+  ScopedJavaLocalRef<jstring> java_string_html =
+      Java_Clipboard_getHTMLText(env, clipboard_manager_.obj());
+  if (java_string_html.obj()) {
+    std::string android_string = ConvertJavaStringToUTF8(java_string_html);
+    if (!android_string.empty()) {
+      map_[kHTMLFormat] = android_string;
+      return;
+    }
+  }
+  it = map_.find(kHTMLFormat);
+  if (it != map_.end()) {
+    map_.erase(kHTMLFormat);
   }
 }
 
@@ -232,7 +243,7 @@ void Clipboard::Clear(ClipboardType type) {
 }
 
 void Clipboard::ReadAvailableTypes(ClipboardType type,
-                                   std::vector<string16>* types,
+                                   std::vector<base::string16>* types,
                                    bool* contains_filenames) const {
   DCHECK(CalledOnValidThread());
   DCHECK_EQ(type, CLIPBOARD_TYPE_COPY_PASTE);
@@ -248,12 +259,12 @@ void Clipboard::ReadAvailableTypes(ClipboardType type,
   *contains_filenames = false;
 }
 
-void Clipboard::ReadText(ClipboardType type, string16* result) const {
+void Clipboard::ReadText(ClipboardType type, base::string16* result) const {
   DCHECK(CalledOnValidThread());
   DCHECK_EQ(type, CLIPBOARD_TYPE_COPY_PASTE);
   std::string utf8;
   ReadAsciiText(type, &utf8);
-  *result = UTF8ToUTF16(utf8);
+  *result = base::UTF8ToUTF16(utf8);
 }
 
 void Clipboard::ReadAsciiText(ClipboardType type, std::string* result) const {
@@ -264,7 +275,7 @@ void Clipboard::ReadAsciiText(ClipboardType type, std::string* result) const {
 
 // Note: |src_url| isn't really used. It is only implemented in Windows
 void Clipboard::ReadHTML(ClipboardType type,
-                         string16* markup,
+                         base::string16* markup,
                          std::string* src_url,
                          uint32* fragment_start,
                          uint32* fragment_end) const {
@@ -274,7 +285,7 @@ void Clipboard::ReadHTML(ClipboardType type,
     src_url->clear();
 
   std::string input = g_map.Get().Get(kHTMLFormat);
-  *markup = UTF8ToUTF16(input);
+  *markup = base::UTF8ToUTF16(input);
 
   *fragment_start = 0;
   *fragment_end = static_cast<uint32>(markup->length());
@@ -306,13 +317,13 @@ SkBitmap Clipboard::ReadImage(ClipboardType type) const {
 }
 
 void Clipboard::ReadCustomData(ClipboardType clipboard_type,
-                               const string16& type,
-                               string16* result) const {
+                               const base::string16& type,
+                               base::string16* result) const {
   DCHECK(CalledOnValidThread());
   NOTIMPLEMENTED();
 }
 
-void Clipboard::ReadBookmark(string16* title, std::string* url) const {
+void Clipboard::ReadBookmark(base::string16* title, std::string* url) const {
   DCHECK(CalledOnValidThread());
   NOTIMPLEMENTED();
 }

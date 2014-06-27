@@ -12,10 +12,11 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "cc/base/cc_export.h"
+#include "cc/base/rolling_time_delta_history.h"
 #include "cc/output/context_provider.h"
+#include "cc/output/overlay_candidate_validator.h"
 #include "cc/output/software_output_device.h"
 #include "cc/scheduler/frame_rate_controller.h"
-#include "cc/scheduler/rolling_time_delta_history.h"
 
 namespace base { class SingleThreadTaskRunner; }
 
@@ -49,10 +50,10 @@ class CC_EXPORT OutputSurface : public FrameRateControllerClient {
 
   explicit OutputSurface(scoped_refptr<ContextProvider> context_provider);
 
-  explicit OutputSurface(scoped_ptr<cc::SoftwareOutputDevice> software_device);
+  explicit OutputSurface(scoped_ptr<SoftwareOutputDevice> software_device);
 
   OutputSurface(scoped_refptr<ContextProvider> context_provider,
-                scoped_ptr<cc::SoftwareOutputDevice> software_device);
+                scoped_ptr<SoftwareOutputDevice> software_device);
 
   virtual ~OutputSurface();
 
@@ -114,7 +115,7 @@ class CC_EXPORT OutputSurface : public FrameRateControllerClient {
   virtual void EnsureBackbuffer();
   virtual void DiscardBackbuffer();
 
-  virtual void Reshape(gfx::Size size, float scale_factor);
+  virtual void Reshape(const gfx::Size& size, float scale_factor);
   virtual gfx::Size SurfaceSize() const;
 
   virtual void BindFramebuffer();
@@ -139,6 +140,11 @@ class CC_EXPORT OutputSurface : public FrameRateControllerClient {
   // device is present, returns 0.
   base::TimeDelta GpuLatencyEstimate();
 
+  // Get the class capable of informing cc of hardware overlay capability.
+  OverlayCandidateValidator* overlay_candidate_validator() const {
+    return overlay_candidate_validator_.get();
+  }
+
  protected:
   // Synchronously initialize context3d and enter hardware mode.
   // This can only supported in threaded compositing mode.
@@ -151,18 +157,17 @@ class CC_EXPORT OutputSurface : public FrameRateControllerClient {
 
   void PostSwapBuffersComplete();
 
-  struct cc::OutputSurface::Capabilities capabilities_;
+  struct OutputSurface::Capabilities capabilities_;
   scoped_refptr<ContextProvider> context_provider_;
-  scoped_ptr<cc::SoftwareOutputDevice> software_device_;
-  bool has_gl_discard_backbuffer_;
-  bool has_swap_buffers_complete_callback_;
+  scoped_ptr<SoftwareOutputDevice> software_device_;
+  scoped_ptr<OverlayCandidateValidator> overlay_candidate_validator_;
   gfx::Size surface_size_;
   float device_scale_factor_;
 
   // The FrameRateController is deprecated.
   // Platforms should move to native BeginImplFrames instead.
-  void OnVSyncParametersChanged(base::TimeTicks timebase,
-                                base::TimeDelta interval);
+  void CommitVSyncParameters(base::TimeTicks timebase,
+                             base::TimeDelta interval);
   virtual void FrameRateControllerTick(bool throttled,
                                        const BeginFrameArgs& args) OVERRIDE;
   scoped_ptr<FrameRateController> frame_rate_controller_;
@@ -177,7 +182,7 @@ class CC_EXPORT OutputSurface : public FrameRateControllerClient {
 
   // Forwarded to OutputSurfaceClient but threaded through OutputSurface
   // first so OutputSurface has a chance to update the FrameRateController
-  void SetNeedsRedrawRect(gfx::Rect damage_rect);
+  void SetNeedsRedrawRect(const gfx::Rect& damage_rect);
   void BeginImplFrame(const BeginFrameArgs& args);
   void DidSwapBuffers();
   void OnSwapBuffersComplete();
@@ -185,8 +190,8 @@ class CC_EXPORT OutputSurface : public FrameRateControllerClient {
   void DidLoseOutputSurface();
   void SetExternalStencilTest(bool enabled);
   void SetExternalDrawConstraints(const gfx::Transform& transform,
-                                  gfx::Rect viewport,
-                                  gfx::Rect clip,
+                                  const gfx::Rect& viewport,
+                                  const gfx::Rect& clip,
                                   bool valid_for_tile_management);
 
   // virtual for testing.

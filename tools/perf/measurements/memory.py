@@ -3,18 +3,21 @@
 # found in the LICENSE file.
 
 from metrics import memory
+from metrics import power
 from telemetry.page import page_measurement
 
 class Memory(page_measurement.PageMeasurement):
   def __init__(self):
-    super(Memory, self).__init__('stress_memory')
+    super(Memory, self).__init__('RunStressMemory')
     self._memory_metric = None
+    self._power_metric = power.PowerMetric()
 
   def DidStartBrowser(self, browser):
     self._memory_metric = memory.MemoryMetric(browser)
 
   def DidNavigateToPage(self, page, tab):
     self._memory_metric.Start(page, tab)
+    self._power_metric.Start(page, tab)
 
   def CustomizeBrowserOptions(self, options):
     memory.MemoryMetric.CustomizeBrowserOptions(options)
@@ -22,12 +25,11 @@ class Memory(page_measurement.PageMeasurement):
     # a high frequency.
     options.AppendExtraBrowserArgs('--memory-metrics')
 
-  def CanRunForPage(self, page):
-    return hasattr(page, 'stress_memory')
-
   def MeasurePage(self, page, tab, results):
+    self._power_metric.Stop(page, tab)
     self._memory_metric.Stop(page, tab)
     self._memory_metric.AddResults(tab, results)
+    self._power_metric.AddResults(tab, results)
 
     if tab.browser.is_profiler_active('tcmalloc-heap'):
       # The tcmalloc_heap_profiler dumps files at regular
@@ -40,6 +42,3 @@ class Memory(page_measurement.PageMeasurement):
           chrome.memoryBenchmarking.heapProfilerDump('browser', 'final');
         }
       """)
-
-  def DidRunTest(self, browser, results):
-    self._memory_metric.AddSummaryResults(results)

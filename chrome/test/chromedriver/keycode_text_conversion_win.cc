@@ -4,9 +4,8 @@
 
 #include "chrome/test/chromedriver/keycode_text_conversion.h"
 
+#include <stdlib.h>
 #include <windows.h>
-
-#include <cctype>
 
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/test/chromedriver/chrome/ui_events.h"
@@ -26,17 +25,17 @@ bool ConvertKeyCodeToText(
     keyboard_state[VK_MENU] |= 0x80;
   wchar_t chars[5];
   int code = ::ToUnicode(key_code, scan_code, keyboard_state, chars, 4, 0);
-  // |ToUnicode| converts some non-text key codes like F1 to various ASCII
+  // |ToUnicode| converts some non-text key codes like F1 to various
   // control chars. Filter those out.
-  if (code <= 0 || (code == 1 && std::iscntrl(chars[0])))
+  if (code <= 0 || (code == 1 && iswcntrl(chars[0])))
     *text = std::string();
   else
-    WideToUTF8(chars, code, text);
+    base::WideToUTF8(chars, code, text);
   return true;
 }
 
 bool ConvertCharToKeyCode(
-    char16 key, ui::KeyboardCode* key_code, int *necessary_modifiers,
+    base::char16 key, ui::KeyboardCode* key_code, int *necessary_modifiers,
     std::string* error_msg) {
   short vkey_and_modifiers = ::VkKeyScanW(key);
   bool translated = vkey_and_modifiers != -1 &&

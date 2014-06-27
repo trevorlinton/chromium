@@ -16,29 +16,30 @@
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread.h"
+#include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/input_method/input_method_configuration.h"
 #include "chrome/browser/chromeos/input_method/mock_input_method_manager.h"
 #include "chrome/browser/chromeos/login/authenticator.h"
 #include "chrome/browser/chromeos/login/login_status_consumer.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
+#include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/policy/enterprise_install_attributes.h"
+#include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
 #include "chrome/browser/chromeos/settings/device_settings_test_helper.h"
 #include "chrome/browser/chromeos/settings/mock_owner_key_util.h"
 #include "chrome/browser/io_thread.h"
 #include "chrome/browser/net/predictor.h"
-#include "chrome/browser/policy/browser_policy_connector.h"
-#include "chrome/browser/policy/cloud/device_management_service.h"
-#include "chrome/browser/policy/policy_service.h"
-#include "chrome/browser/policy/proto/cloud/device_management_backend.pb.h"
 #include "chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/rlz/rlz.h"
+#include "chrome/common/chrome_content_client.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/test/base/chrome_unit_test_suite.h"
 #include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chromeos/chromeos_switches.h"
@@ -51,6 +52,9 @@
 #include "chromeos/network/network_handler.h"
 #include "chromeos/system/mock_statistics_provider.h"
 #include "chromeos/system/statistics_provider.h"
+#include "components/policy/core/common/cloud/device_management_service.h"
+#include "components/policy/core/common/policy_service.h"
+#include "components/policy/core/common/policy_switches.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_browser_thread.h"
 #include "content/public/test/test_utils.h"
@@ -62,8 +66,10 @@
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_status.h"
 #include "net/url_request/url_request_test_util.h"
+#include "policy/proto/device_management_backend.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/message_center/message_center.h"
 
 #if defined(ENABLE_RLZ)
 #include "rlz/lib/rlz_value_store.h"
@@ -114,12 +120,6 @@ const char kDMPolicyRequest[] =
 
 const char kDMToken[] = "1234";
 
-// Used to mark |flag|, indicating that RefreshPolicies() has executed its
-// callback.
-void SetFlag(bool* flag) {
-  *flag = true;
-}
-
 // Single task of the fake IO loop used in the test, that just waits until
 // it is signaled to quit or perform some work.
 // |completion| is the event to wait for, and |work| is the task to invoke
@@ -153,7 +153,6 @@ class LoginUtilsTest : public testing::Test,
   LoginUtilsTest()
       : fake_io_thread_completion_(false, false),
         fake_io_thread_("fake_io_thread"),
-        loop_(base::MessageLoop::TYPE_IO),
         browser_process_(TestingBrowserProcess::GetGlobal()),
         local_state_(browser_process_),
         ui_thread_(BrowserThread::UI, &loop_),
@@ -165,6 +164,14 @@ class LoginUtilsTest : public testing::Test,
         prepared_profile_(NULL) {}
 
   virtual void SetUp() OVERRIDE {
+    ChromeUnitTestSuite::InitializeProviders();
+    ChromeUnitTestSuite::InitializeResourceBundle();
+
+    content_client_.reset(new ChromeContentClient);
+    content::SetContentClient(content_client_.get());
+    browser_content_client_.reset(new chrome::ChromeContentBrowserClient());
+    content::SetBrowserClientForTesting(browser_content_client_.get());
+
     // This test is not a full blown InProcessBrowserTest, and doesn't have
     // all the usual threads running. However a lot of subsystems pulled from
     // ProfileImpl post to IO (usually from ProfileIOData), and DCHECK that
@@ -198,13 +205,15 @@ class LoginUtilsTest : public testing::Test,
 
     CommandLine* command_line = CommandLine::ForCurrentProcess();
     command_line->AppendSwitchASCII(
-        ::switches::kDeviceManagementUrl, kDMServer);
-    command_line->AppendSwitchASCII(switches::kLoginProfile, "user");
+        policy::switches::kDeviceManagementUrl, kDMServer);
+
+    if (!command_line->HasSwitch(::switches::kMultiProfiles))
+      command_line->AppendSwitchASCII(switches::kLoginProfile, "user");
 
     // DBusThreadManager should be initialized before io_thread_state_, as
     // DBusThreadManager is used from chromeos::ProxyConfigServiceImpl,
     // which is part of io_thread_state_.
-    DBusThreadManager::InitializeForTesting(&fake_dbus_thread_manager_);
+    DBusThreadManager::InitializeWithStub();
 
     SystemSaltGetter::Initialize();
     LoginState::Initialize();
@@ -238,7 +247,8 @@ class LoginUtilsTest : public testing::Test,
     browser_process_->SetSystemRequestContext(
         new net::TestURLRequestContextGetter(
             base::MessageLoopProxy::current()));
-    connector_ = browser_process_->browser_policy_connector();
+    connector_ =
+        browser_process_->platform_part()->browser_policy_connector_chromeos();
     connector_->Init(local_state_.Get(),
                      browser_process_->system_request_context());
 
@@ -253,12 +263,17 @@ class LoginUtilsTest : public testing::Test,
     RLZTracker::EnableZeroDelayForTesting();
 #endif
 
+    // Message center is used by UserManager.
+    message_center::MessageCenter::Initialize();
+
     RunUntilIdle();
   }
 
   virtual void TearDown() OVERRIDE {
     cryptohome::AsyncMethodCaller::Shutdown();
     mock_async_method_caller_ = NULL;
+
+    message_center::MessageCenter::Shutdown();
 
     test_user_manager_.reset();
 
@@ -267,6 +282,8 @@ class LoginUtilsTest : public testing::Test,
 
     // LoginUtils instance must not outlive Profile instances.
     LoginUtils::Set(NULL);
+
+    system::StatisticsProvider::SetTestProvider(NULL);
 
     input_method::Shutdown();
     LoginState::Shutdown();
@@ -279,6 +296,10 @@ class LoginUtilsTest : public testing::Test,
     browser_process_->SetBrowserPolicyConnector(NULL);
     QuitIOLoop();
     RunUntilIdle();
+
+    browser_content_client_.reset();
+    content_client_.reset();
+    content::SetContentClient(NULL);
   }
 
   void TearDownOnIO() {
@@ -367,7 +388,6 @@ class LoginUtilsTest : public testing::Test,
     // we need to trigger creation of Profile-related services.
     ChromeBrowserMainExtraPartsProfiles::
         EnsureBrowserContextKeyedServiceFactoriesBuilt();
-    ProfileManager::AllowGetDefaultProfile();
 
     DeviceSettingsTestHelper device_settings_test_helper;
     DeviceSettingsService::Get()->SetSessionManager(
@@ -380,7 +400,7 @@ class LoginUtilsTest : public testing::Test,
 
     scoped_refptr<Authenticator> authenticator =
         LoginUtils::Get()->CreateAuthenticator(this);
-    authenticator->CompleteLogin(ProfileManager::GetDefaultProfile(),
+    authenticator->CompleteLogin(ProfileHelper::GetSigninProfile(),
                                  UserContext(username,
                                              "password",
                                              std::string(),
@@ -392,7 +412,12 @@ class LoginUtilsTest : public testing::Test,
     const bool kHasCookies = false;
     const bool kHasActiveSession = false;
     LoginUtils::Get()->PrepareProfile(
-        UserContext(username, "password", std::string(), username, kUsingOAuth),
+        UserContext(username,
+                    "password",
+                    std::string(),
+                    username,
+                    kUsingOAuth,
+                    UserContext::AUTH_FLOW_GAIA_WITHOUT_SAML),
         std::string(), kHasCookies, kHasActiveSession, this);
     device_settings_test_helper.Flush();
     RunUntilIdle();
@@ -453,11 +478,18 @@ class LoginUtilsTest : public testing::Test,
   }
 
  protected:
+  // Must be the first member variable as browser_process_ and local_state_
+  // rely on this being set up.
+  TestingBrowserProcessInitializer initializer_;
+
+  scoped_ptr<ChromeContentClient> content_client_;
+  scoped_ptr<chrome::ChromeContentBrowserClient> browser_content_client_;
+
   base::Closure fake_io_thread_work_;
   base::WaitableEvent fake_io_thread_completion_;
   base::Thread fake_io_thread_;
 
-  base::MessageLoop loop_;
+  base::MessageLoopForIO loop_;
   TestingBrowserProcess* browser_process_;
   ScopedTestingLocalState local_state_;
 
@@ -467,7 +499,6 @@ class LoginUtilsTest : public testing::Test,
   scoped_ptr<content::TestBrowserThread> io_thread_;
   scoped_ptr<IOThread> io_thread_state_;
 
-  FakeDBusThreadManager fake_dbus_thread_manager_;
   input_method::MockInputMethodManager* mock_input_method_manager_;
   disks::MockDiskMountManager mock_disk_mount_manager_;
   net::TestURLFetcherFactory test_url_fetcher_factory_;
@@ -476,9 +507,8 @@ class LoginUtilsTest : public testing::Test,
 
   chromeos::system::MockStatisticsProvider mock_statistics_provider_;
 
-  policy::BrowserPolicyConnector* connector_;
+  policy::BrowserPolicyConnectorChromeOS* connector_;
 
-  // Initialized after |fake_dbus_thread_manager_| is set up.
   scoped_ptr<ScopedTestDeviceSettingsService> test_device_settings_service_;
   scoped_ptr<ScopedTestCrosSettings> test_cros_settings_;
   scoped_ptr<ScopedTestUserManager> test_user_manager_;
@@ -496,11 +526,28 @@ class LoginUtilsTest : public testing::Test,
   DISALLOW_COPY_AND_ASSIGN(LoginUtilsTest);
 };
 
+class LoginUtilsParamTest
+    : public LoginUtilsTest,
+      public testing::WithParamInterface<bool> {
+ public:
+  LoginUtilsParamTest() {}
+
+  virtual void SetUp() OVERRIDE {
+    CommandLine* command_line = CommandLine::ForCurrentProcess();
+    if (GetParam())
+      command_line->AppendSwitch(::switches::kMultiProfiles);
+    LoginUtilsTest::SetUp();
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(LoginUtilsParamTest);
+};
+
 class LoginUtilsBlockingLoginTest
     : public LoginUtilsTest,
       public testing::WithParamInterface<int> {};
 
-TEST_F(LoginUtilsTest, NormalLoginDoesntBlock) {
+TEST_P(LoginUtilsParamTest, NormalLoginDoesntBlock) {
   UserManager* user_manager = UserManager::Get();
   EXPECT_FALSE(user_manager->IsUserLoggedIn());
   EXPECT_FALSE(connector_->IsEnterpriseManaged());
@@ -516,7 +563,7 @@ TEST_F(LoginUtilsTest, NormalLoginDoesntBlock) {
   EXPECT_EQ(kUsername, user_manager->GetLoggedInUser()->email());
 }
 
-TEST_F(LoginUtilsTest, EnterpriseLoginDoesntBlockForNormalUser) {
+TEST_P(LoginUtilsParamTest, EnterpriseLoginDoesntBlockForNormalUser) {
   UserManager* user_manager = UserManager::Get();
   EXPECT_FALSE(user_manager->IsUserLoggedIn());
   EXPECT_FALSE(connector_->IsEnterpriseManaged());
@@ -541,7 +588,7 @@ TEST_F(LoginUtilsTest, EnterpriseLoginDoesntBlockForNormalUser) {
 }
 
 #if defined(ENABLE_RLZ)
-TEST_F(LoginUtilsTest, RlzInitialized) {
+TEST_P(LoginUtilsParamTest, RlzInitialized) {
   // No RLZ brand code set initially.
   EXPECT_FALSE(local_state_.Get()->HasPrefPath(prefs::kRLZBrand));
 
@@ -559,10 +606,10 @@ TEST_F(LoginUtilsTest, RlzInitialized) {
   EXPECT_EQ(std::string(), local_state_.Get()->GetString(prefs::kRLZBrand));
 
   // RLZ value for homepage access point should have been initialized.
-  string16 rlz_string;
+  base::string16 rlz_string;
   EXPECT_TRUE(RLZTracker::GetAccessPointRlz(
       RLZTracker::CHROME_HOME_PAGE, &rlz_string));
-  EXPECT_EQ(string16(), rlz_string);
+  EXPECT_EQ(base::string16(), rlz_string);
 }
 #endif
 
@@ -675,6 +722,10 @@ INSTANTIATE_TEST_CASE_P(
     LoginUtilsBlockingLoginTestInstance,
     LoginUtilsBlockingLoginTest,
     testing::Values(0, 1, 2, 3, 4, 5));
+
+INSTANTIATE_TEST_CASE_P(LoginUtilsParamTestInstantiation,
+                        LoginUtilsParamTest,
+                        testing::Bool());
 
 }  // namespace
 

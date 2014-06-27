@@ -19,14 +19,11 @@ ChildTraceMessageFilter::ChildTraceMessageFilter(
 
 void ChildTraceMessageFilter::OnFilterAdded(IPC::Channel* channel) {
   channel_ = channel;
-  TraceLog::GetInstance()->SetNotificationCallback(
-      base::Bind(&ChildTraceMessageFilter::OnTraceNotification, this));
   channel_->Send(new TracingHostMsg_ChildSupportsTracing());
 }
 
 void ChildTraceMessageFilter::OnFilterRemoved() {
-  TraceLog::GetInstance()->SetNotificationCallback(
-      TraceLog::NotificationCallback());
+  channel_ = NULL;
 }
 
 bool ChildTraceMessageFilter::OnMessageReceived(const IPC::Message& message) {
@@ -52,8 +49,7 @@ ChildTraceMessageFilter::~ChildTraceMessageFilter() {}
 void ChildTraceMessageFilter::OnBeginTracing(
     const std::string& category_filter_str,
     base::TimeTicks browser_time,
-    int options,
-    bool tracing_startup) {
+    int options) {
 #if defined(__native_client__)
   // NaCl and system times are offset by a bit, so subtract some time from
   // the captured timestamps. The value might be off by a bit due to messaging
@@ -63,14 +59,10 @@ void ChildTraceMessageFilter::OnBeginTracing(
   TraceLog::GetInstance()->SetTimeOffset(time_offset);
 #endif
 
-  // Some subprocesses handle --trace-startup by themselves to begin
-  // trace as early as possible. Don't start twice, otherwise the trace
-  // buffer can't be correctly flushed on the end of startup tracing.
-  if (!tracing_startup || !TraceLog::GetInstance()->IsEnabled()) {
-    TraceLog::GetInstance()->SetEnabled(
-        base::debug::CategoryFilter(category_filter_str),
-        static_cast<base::debug::TraceLog::Options>(options));
-  }
+  TraceLog::GetInstance()->SetEnabled(
+      base::debug::CategoryFilter(category_filter_str),
+      base::debug::TraceLog::RECORDING_MODE,
+      static_cast<base::debug::TraceLog::Options>(options));
 }
 
 void ChildTraceMessageFilter::OnEndTracing() {
@@ -90,6 +82,7 @@ void ChildTraceMessageFilter::OnEnableMonitoring(
     int options) {
   TraceLog::GetInstance()->SetEnabled(
       base::debug::CategoryFilter(category_filter_str),
+      base::debug::TraceLog::MONITORING_MODE,
       static_cast<base::debug::TraceLog::Options>(options));
 }
 
@@ -104,11 +97,8 @@ void ChildTraceMessageFilter::OnCaptureMonitoringSnapshot() {
   // CaptureMonitoringSnapshotAck below. We are already on the IO thread,
   // so the OnMonitoringTraceDataCollected calls will not be deferred.
   TraceLog::GetInstance()->FlushButLeaveBufferIntact(
-      base::Bind(&ChildTraceMessageFilter::
-                 OnMonitoringTraceDataCollected,
+      base::Bind(&ChildTraceMessageFilter::OnMonitoringTraceDataCollected,
                  this));
-
-  channel_->Send(new TracingHostMsg_CaptureMonitoringSnapshotAck());
 }
 
 void ChildTraceMessageFilter::OnGetTraceBufferPercentFull() {
@@ -119,12 +109,22 @@ void ChildTraceMessageFilter::OnGetTraceBufferPercentFull() {
 
 void ChildTraceMessageFilter::OnSetWatchEvent(const std::string& category_name,
                                               const std::string& event_name) {
-  TraceLog::GetInstance()->SetWatchEvent(category_name.c_str(),
-                                         event_name.c_str());
+  TraceLog::GetInstance()->SetWatchEvent(
+      category_name, event_name,
+      base::Bind(&ChildTraceMessageFilter::OnWatchEventMatched, this));
 }
 
 void ChildTraceMessageFilter::OnCancelWatchEvent() {
   TraceLog::GetInstance()->CancelWatchEvent();
+}
+
+void ChildTraceMessageFilter::OnWatchEventMatched() {
+  if (!ipc_message_loop_->BelongsToCurrentThread()) {
+    ipc_message_loop_->PostTask(FROM_HERE,
+        base::Bind(&ChildTraceMessageFilter::OnWatchEventMatched, this));
+    return;
+  }
+  channel_->Send(new TracingHostMsg_WatchEventMatched);
 }
 
 void ChildTraceMessageFilter::OnTraceDataCollected(
@@ -161,16 +161,9 @@ void ChildTraceMessageFilter::OnMonitoringTraceDataCollected(
   }
   channel_->Send(new TracingHostMsg_MonitoringTraceDataCollected(
       events_str_ptr->data()));
-}
 
-void ChildTraceMessageFilter::OnTraceNotification(int notification) {
-  if (!ipc_message_loop_->BelongsToCurrentThread()) {
-    ipc_message_loop_->PostTask(FROM_HERE,
-        base::Bind(&ChildTraceMessageFilter::OnTraceNotification, this,
-                   notification));
-    return;
-  }
-  channel_->Send(new TracingHostMsg_TraceNotification(notification));
+  if (!has_more_events)
+    channel_->Send(new TracingHostMsg_CaptureMonitoringSnapshotAck());
 }
 
 }  // namespace tracing

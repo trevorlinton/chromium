@@ -25,7 +25,7 @@ namespace {
 
 void WriteCallbackAdapter(
     const SyncableFileSystemOperation::WriteCallback& callback,
-    base::PlatformFileError status) {
+    base::File::Error status) {
   callback.Run(status, 0, true);
 }
 
@@ -79,7 +79,7 @@ void SyncableFileSystemOperation::CreateFile(
     const StatusCallback& callback) {
   DCHECK(CalledOnValidThread());
   if (!operation_runner_.get()) {
-    callback.Run(base::PLATFORM_FILE_ERROR_NOT_FOUND);
+    callback.Run(base::File::FILE_ERROR_NOT_FOUND);
     return;
   }
   DCHECK(operation_runner_.get());
@@ -101,11 +101,11 @@ void SyncableFileSystemOperation::CreateDirectory(
     const StatusCallback& callback) {
   DCHECK(CalledOnValidThread());
   if (!operation_runner_.get()) {
-    callback.Run(base::PLATFORM_FILE_ERROR_NOT_FOUND);
+    callback.Run(base::File::FILE_ERROR_NOT_FOUND);
     return;
   }
   if (!is_directory_operation_enabled_) {
-    callback.Run(base::PLATFORM_FILE_ERROR_INVALID_OPERATION);
+    callback.Run(base::File::FILE_ERROR_INVALID_OPERATION);
     return;
   }
   DCHECK(operation_runner_.get());
@@ -128,7 +128,7 @@ void SyncableFileSystemOperation::Copy(
     const StatusCallback& callback) {
   DCHECK(CalledOnValidThread());
   if (!operation_runner_.get()) {
-    callback.Run(base::PLATFORM_FILE_ERROR_NOT_FOUND);
+    callback.Run(base::File::FILE_ERROR_NOT_FOUND);
     return;
   }
   DCHECK(operation_runner_.get());
@@ -150,7 +150,7 @@ void SyncableFileSystemOperation::Move(
     const StatusCallback& callback) {
   DCHECK(CalledOnValidThread());
   if (!operation_runner_.get()) {
-    callback.Run(base::PLATFORM_FILE_ERROR_NOT_FOUND);
+    callback.Run(base::File::FILE_ERROR_NOT_FOUND);
     return;
   }
   DCHECK(operation_runner_.get());
@@ -202,7 +202,7 @@ void SyncableFileSystemOperation::Remove(
     const StatusCallback& callback) {
   DCHECK(CalledOnValidThread());
   if (!operation_runner_.get()) {
-    callback.Run(base::PLATFORM_FILE_ERROR_NOT_FOUND);
+    callback.Run(base::File::FILE_ERROR_NOT_FOUND);
     return;
   }
   DCHECK(operation_runner_.get());
@@ -224,7 +224,7 @@ void SyncableFileSystemOperation::Write(
     const WriteCallback& callback) {
   DCHECK(CalledOnValidThread());
   if (!operation_runner_.get()) {
-    callback.Run(base::PLATFORM_FILE_ERROR_NOT_FOUND, 0, true);
+    callback.Run(base::File::FILE_ERROR_NOT_FOUND, 0, true);
     return;
   }
   DCHECK(operation_runner_.get());
@@ -247,7 +247,7 @@ void SyncableFileSystemOperation::Truncate(
     const StatusCallback& callback) {
   DCHECK(CalledOnValidThread());
   if (!operation_runner_.get()) {
-    callback.Run(base::PLATFORM_FILE_ERROR_NOT_FOUND);
+    callback.Run(base::File::FILE_ERROR_NOT_FOUND);
     return;
   }
   DCHECK(operation_runner_.get());
@@ -274,7 +274,6 @@ void SyncableFileSystemOperation::TouchFile(
 void SyncableFileSystemOperation::OpenFile(
     const FileSystemURL& url,
     int file_flags,
-    base::ProcessHandle peer_handle,
     const OpenFileCallback& callback) {
   NOTREACHED();
 }
@@ -298,7 +297,7 @@ void SyncableFileSystemOperation::CopyInForeignFile(
     const StatusCallback& callback) {
   DCHECK(CalledOnValidThread());
   if (!operation_runner_.get()) {
-    callback.Run(base::PLATFORM_FILE_ERROR_NOT_FOUND);
+    callback.Run(base::File::FILE_ERROR_NOT_FOUND);
     return;
   }
   DCHECK(operation_runner_.get());
@@ -346,7 +345,7 @@ void SyncableFileSystemOperation::MoveFileLocal(
   impl_->MoveFileLocal(src_url, dest_url, option, callback);
 }
 
-base::PlatformFileError SyncableFileSystemOperation::SyncGetPlatformPath(
+base::File::Error SyncableFileSystemOperation::SyncGetPlatformPath(
     const FileSystemURL& url,
     base::FilePath* platform_path) {
   return impl_->SyncGetPlatformPath(url, platform_path);
@@ -371,10 +370,11 @@ SyncableFileSystemOperation::SyncableFileSystemOperation(
   impl_.reset(fileapi::FileSystemOperation::Create(
       url_, file_system_context, operation_context.Pass()));
   operation_runner_ = backend->sync_context()->operation_runner();
-  is_directory_operation_enabled_ = IsSyncFSDirectoryOperationEnabled();
+  is_directory_operation_enabled_ = IsSyncFSDirectoryOperationEnabled(
+      url.origin());
 }
 
-void SyncableFileSystemOperation::DidFinish(base::PlatformFileError status) {
+void SyncableFileSystemOperation::DidFinish(base::File::Error status) {
   DCHECK(CalledOnValidThread());
   DCHECK(!completion_callback_.is_null());
   if (operation_runner_.get())
@@ -384,7 +384,7 @@ void SyncableFileSystemOperation::DidFinish(base::PlatformFileError status) {
 
 void SyncableFileSystemOperation::DidWrite(
     const WriteCallback& callback,
-    base::PlatformFileError result,
+    base::File::Error result,
     int64 bytes,
     bool complete) {
   DCHECK(CalledOnValidThread());
@@ -399,7 +399,7 @@ void SyncableFileSystemOperation::DidWrite(
 
 void SyncableFileSystemOperation::OnCancelled() {
   DCHECK(!completion_callback_.is_null());
-  completion_callback_.Run(base::PLATFORM_FILE_ERROR_ABORT);
+  completion_callback_.Run(base::File::FILE_ERROR_ABORT);
 }
 
 }  // namespace sync_file_system

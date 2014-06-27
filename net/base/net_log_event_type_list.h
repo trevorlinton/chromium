@@ -558,6 +558,38 @@ EVENT_TYPE(SOCKET_WRITE_ERROR)
 //  }
 EVENT_TYPE(SSL_CERTIFICATES_RECEIVED)
 
+// Signed Certificate Timestamps were received from the server.
+// The following parameters are attached to the event:
+// {
+//    "embedded_scts": Base64-encoded SignedCertificateTimestampList,
+//    "scts_from_ocsp_response": Base64-encoded SignedCertificateTimestampList,
+//    "scts_from_tls_extension": Base64-encoded SignedCertificateTimestampList,
+// }
+//
+// The SignedCertificateTimestampList is defined in RFC6962 and is exactly as
+// received from the server.
+EVENT_TYPE(SIGNED_CERTIFICATE_TIMESTAMPS_RECEIVED)
+
+// Signed Certificate Timestamps were checked.
+// The following parameters are attached to the event:
+// {
+//    "verified_scts": <A list of SCTs>,
+//    "invalid_scts": <A list of SCTs>,
+//    "scts_from_unknown_logs": <A list of SCTs>,
+// }
+//
+// Where each SCT is an object:
+// {
+//    "origin": <one of: "embedded_in_certificate", "tls_extension", "ocsp">,
+//    "version": <numeric version>,
+//    "log_id": <base64-encoded log id>,
+//    "timestamp": <numeric timestamp in milliseconds since the Unix epoch>,
+//    "hash_algorithm": <name of the hash algorithm>,
+//    "signature_algorithm": <name of the signature algorithm>,
+//    "signature_data": <base64-encoded signature bytes>,
+// }
+EVENT_TYPE(SIGNED_CERTIFICATE_TIMESTAMPS_CHECKED)
+
 // ------------------------------------------------------------------------
 // DatagramSocket
 // ------------------------------------------------------------------------
@@ -749,12 +781,18 @@ EVENT_TYPE(URL_REQUEST_JOB_BYTES_READ)
 EVENT_TYPE(URL_REQUEST_JOB_FILTERED_BYTES_READ)
 
 // This event is sent when the priority of a net::URLRequest is
-// changed after it has started. The parameters attached to this event
-// are:
+// changed after it has started. The following parameters are attached:
 //   {
 //     "priority": <Numerical value of the priority (higher is more important)>,
 //   }
 EVENT_TYPE(URL_REQUEST_SET_PRIORITY)
+
+EVENT_TYPE(URL_REQUEST_REDIRECT_JOB)
+// This event is logged when a URLRequestRedirectJob is started for a request.
+// The following parameters are attached:
+//   {
+//     "reason": <Reason for the redirect, as a string>,
+//   }
 
 // ------------------------------------------------------------------------
 // HttpCache
@@ -956,6 +994,14 @@ EVENT_TYPE(HTTP_TRANSACTION_SEND_REQUEST_BODY)
 //     "headers": <The list of header:value pairs>,
 //   }
 EVENT_TYPE(HTTP_TRANSACTION_SPDY_SEND_REQUEST_HEADERS)
+
+// This event is sent for a HTTP request over a SPDY stream.
+// The following parameters are attached:
+//   {
+//     "headers": <The list of header:value pairs>,
+//     "quic_priority": <Integer representing the priority of this request>,
+//   }
+EVENT_TYPE(HTTP_TRANSACTION_QUIC_SEND_REQUEST_HEADERS)
 
 // Measures the time to read HTTP response headers from the server.
 EVENT_TYPE(HTTP_TRANSACTION_READ_HEADERS)
@@ -1298,12 +1344,13 @@ EVENT_TYPE(QUIC_SESSION_PACKET_RECEIVED)
 
 // Session sent a QUIC packet.
 //   {
-//     "encryption_level": <The EncryptionLevel of the packet>
+//     "encryption_level": <The EncryptionLevel of the packet>,
+//     "transmission_type": <The TransmissionType of the packet>,
 //     "packet_sequence_number": <The packet's full 64-bit sequence number,
 //                                as a base-10 string.>,
 //     "size": <The size of the packet in bytes>
 //   }
-EVENT_TYPE(QUIC_SESSION_PACKET_RETRANSMITTED)
+EVENT_TYPE(QUIC_SESSION_PACKET_SENT)
 
 // Session retransmitted a QUIC packet.
 //   {
@@ -1312,11 +1359,12 @@ EVENT_TYPE(QUIC_SESSION_PACKET_RETRANSMITTED)
 //     "new_packet_sequence_number": <The new packet's full 64-bit sequence
 //                                    number, as a base-10 string.>,
 //   }
-EVENT_TYPE(QUIC_SESSION_PACKET_SENT)
+EVENT_TYPE(QUIC_SESSION_PACKET_RETRANSMITTED)
 
 // Session received a QUIC packet header for a valid packet.
 //   {
-//     "guid": <The 64-bit GUID for this connection, as a base-10 string>,
+//     "connection_id": <The 64-bit CONNECTION_ID for this connection, as a
+//                       base-10 string>,
 //     "public_flags": <The public flags set for this packet>,
 //     "packet_sequence_number": <The packet's full 64-bit sequence number,
 //                                as a base-10 string.>,
@@ -1378,6 +1426,39 @@ EVENT_TYPE(QUIC_SESSION_ACK_FRAME_RECEIVED)
 //       }
 //   }
 EVENT_TYPE(QUIC_SESSION_ACK_FRAME_SENT)
+
+// Session sent a WINDOW_UPDATE frame.
+//   {
+//     "stream_id": <The id of the stream which this data is for>,
+//     "byte_offset": <Byte offset in the stream>,
+//   }
+EVENT_TYPE(QUIC_SESSION_WINDOW_UPDATE_FRAME_SENT)
+
+// Session sent a BLOCKED frame.
+//   {
+//     "stream_id": <The id of the stream which this data is for>,
+//   }
+EVENT_TYPE(QUIC_SESSION_BLOCKED_FRAME_SENT)
+
+// Session received a STOP_WAITING frame.
+//   {
+//     "sent_info": <Details of packet sent by the peer>
+//       {
+//         "least_unacked": <Lowest sequence number of a packet sent by the peer
+//                           for which it has not received an ACK>,
+//       }
+//   }
+EVENT_TYPE(QUIC_SESSION_STOP_WAITING_FRAME_RECEIVED)
+
+// Session sent an STOP_WAITING frame.
+//   {
+//     "sent_info": <Details of packet sent by the peer>
+//       {
+//         "least_unacked": <Lowest sequence number of a packet sent by the peer
+//                           for which it has not received an ACK>,
+//       }
+//   }
+EVENT_TYPE(QUIC_SESSION_STOP_WAITING_FRAME_SENT)
 
 // Session recevied a RST_STREAM frame.
 //   {
@@ -1470,7 +1551,8 @@ EVENT_TYPE(QUIC_SESSION_VERSION_NEGOTIATED)
 
 // Session revived a QUIC packet packet via FEC.
 //   {
-//     "guid": <The 64-bit GUID for this connection, as a base-10 string>,
+//     "connection_id": <The 64-bit CONNECTION_ID for this connection, as a
+//                       base-10 string>,
 //     "public_flags": <The public flags set for this packet>,
 //     "packet_sequence_number": <The packet's full 64-bit sequence number,
 //                                as a base-10 string.>,
@@ -2235,3 +2317,7 @@ EVENT_TYPE(SIMPLE_CACHE_ENTRY_CLOSE_BEGIN)
 // This event is created when the Simple Cache finishes a CloseEntry call.  It
 // contains no parameters.
 EVENT_TYPE(SIMPLE_CACHE_ENTRY_CLOSE_END)
+
+// This event is created (in a source of the same name) when the internal DNS
+// resolver creates a UDP socket to check for global IPv6 connectivity.
+EVENT_TYPE(IPV6_REACHABILITY_CHECK)

@@ -2,26 +2,24 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-from fnmatch import fnmatch
 import logging
-import mimetypes
 import posixpath
 import traceback
-from urlparse import urlsplit
 
-from data_source_registry import CreateDataSources
+from branch_utility import BranchUtility
+from environment import IsPreviewServer
 from file_system import FileNotFoundError
 from redirector import Redirector
 from servlet import Servlet, Response
-from svn_constants import DOCS_PATH, PUBLIC_TEMPLATE_PATH
+from special_paths import SITE_VERIFICATION_FILE
 from third_party.handlebar import Handlebar
 
 
 def _MakeHeaders(content_type):
   return {
-    'x-frame-options': 'sameorigin',
-    'content-type': content_type,
-    'cache-control': 'max-age=300',
+    'X-Frame-Options': 'sameorigin',
+    'Content-Type': content_type,
+    'Cache-Control': 'max-age=300',
   }
 
 
@@ -40,25 +38,21 @@ class RenderServlet(Servlet):
   def Get(self):
     ''' Render the page for a request.
     '''
-    # TODO(kalman): a consistent path syntax (even a Path class?) so that we
-    # can stop being so conservative with stripping and adding back the '/'s.
     path = self._request.path.lstrip('/')
+
+    # The server used to be partitioned based on Chrome channel, but it isn't
+    # anymore. Redirect from the old state.
+    channel_name, path = BranchUtility.SplitChannelNameFromPath(path)
+    if channel_name is not None:
+      return Response.Redirect('/' + path, permanent=True)
+
     server_instance = self._delegate.CreateServerInstance()
 
     try:
       return self._GetSuccessResponse(path, server_instance)
     except FileNotFoundError:
-      # Maybe it didn't find the file because its canonical location is
-      # somewhere else; this is distinct from "redirects", which are typically
-      # explicit. This is implicit.
-      canonical_result = server_instance.path_canonicalizer.Canonicalize(path)
-      redirect = canonical_result.path.lstrip('/')
-      if path != redirect:
-        return Response.Redirect('/' + redirect,
-                                 permanent=canonical_result.permanent)
-
-      # Not found for reals. Find the closest 404.html file and serve that;
-      # e.g. if the path is extensions/manifest/typo.html then first look for
+      # Find the closest 404.html file and serve that, e.g. if the path is
+      # extensions/manifest/typo.html then first look for
       # extensions/manifest/404.html, then extensions/404.html, then 404.html.
       #
       # Failing that just print 'Not Found' but that should preferrably never
@@ -66,38 +60,72 @@ class RenderServlet(Servlet):
       path_components = path.split('/')
       for i in xrange(len(path_components) - 1, -1, -1):
         try:
-          path_404 = posixpath.join(*(path_components[0:i] + ['404.html']))
+          path_404 = posixpath.join(*(path_components[0:i] + ['404']))
           response = self._GetSuccessResponse(path_404, server_instance)
+          if response.status != 200:
+            continue
           return Response.NotFound(response.content.ToString(),
                                    headers=response.headers)
         except FileNotFoundError: continue
-      logging.error('No 404.html found in %s' % path)
+      logging.warning('No 404.html found in %s' % path)
       return Response.NotFound('Not Found', headers=_MakeHeaders('text/plain'))
 
-  def _GetSuccessResponse(self, path, server_instance):
+  def _GetSuccessResponse(self, request_path, server_instance):
     '''Returns the Response from trying to render |path| with
     |server_instance|.  If |path| isn't found then a FileNotFoundError will be
     raised, such that the only responses that will be returned from this method
     are Ok and Redirect.
     '''
-    content_provider, path = (
-        server_instance.content_providers.GetByServeFrom(path))
+    content_provider, serve_from, path = (
+        server_instance.content_providers.GetByServeFrom(request_path))
     assert content_provider, 'No ContentProvider found for %s' % path
 
     redirect = Redirector(
         server_instance.compiled_fs_factory,
         content_provider.file_system).Redirect(self._request.host, path)
     if redirect is not None:
+      # Absolute redirects stay absolute, relative redirects are relative to
+      # |serve_from|; all redirects eventually need to be *served* as absolute.
+      if not redirect.startswith('/'):
+        redirect = '/' + posixpath.join(serve_from, redirect)
       return Response.Redirect(redirect, permanent=False)
 
-    content_and_type = content_provider.GetContentAndType(
-        self._request.host, path).Get()
+    canonical_path = content_provider.GetCanonicalPath(path)
+    if canonical_path != path:
+      redirect_path = posixpath.join(serve_from, canonical_path)
+      return Response.Redirect('/' + redirect_path, permanent=False)
+
+    if request_path.endswith('/'):
+      # Directory request hasn't been redirected by now. Default behaviour is
+      # to redirect as though it were a file.
+      return Response.Redirect('/' + request_path.rstrip('/'),
+                               permanent=False)
+
+    if not path:
+      # Empty-path request hasn't been redirected by now. It doesn't exist.
+      raise FileNotFoundError('Empty path')
+
+    content_and_type = content_provider.GetContentAndType(path).Get()
     if not content_and_type.content:
       logging.error('%s had empty content' % path)
 
-    if isinstance(content_and_type.content, Handlebar):
-      content_and_type.content = server_instance.template_renderer.Render(
-          content_and_type.content, self._request)
+    content = content_and_type.content
+    if isinstance(content, Handlebar):
+      template_content, template_warnings = (
+          server_instance.template_renderer.Render(content, self._request))
+      # HACK: the site verification file (google2ed...) doesn't have a title.
+      content, doc_warnings = server_instance.document_renderer.Render(
+          template_content,
+          path,
+          render_title=path != SITE_VERIFICATION_FILE)
+      warnings = template_warnings + doc_warnings
+      if warnings:
+        sep = '\n - '
+        logging.warning('Rendering %s:%s%s' % (path, sep, sep.join(warnings)))
 
-    return Response.Ok(content_and_type.content,
-                       headers=_MakeHeaders(content_and_type.content_type))
+    content_type = content_and_type.content_type
+    if isinstance(content, unicode):
+      content = content.encode('utf-8')
+      content_type += '; charset=utf-8'
+
+    return Response.Ok(content, headers=_MakeHeaders(content_type))

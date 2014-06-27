@@ -16,7 +16,7 @@
 #include "grit/generated_resources.h"
 #include "grit/locale_settings.h"
 #include "grit/theme_resources.h"
-#include "ui/base/accessibility/accessible_view_state.h"
+#include "ui/accessibility/ax_view_state.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/views/controls/button/label_button.h"
@@ -26,7 +26,7 @@
 #include "ui/views/layout/layout_constants.h"
 #include "ui/views/widget/widget.h"
 
-using content::UserMetricsAction;
+using base::UserMetricsAction;
 
 namespace {
 
@@ -111,7 +111,7 @@ ConflictingModuleView::~ConflictingModuleView() {
 }
 
 void ConflictingModuleView::ShowBubble() {
-  StartFade(true);
+  GetWidget()->Show();
 
   IntegerPrefMember bubble_shown;
   bubble_shown.Init(
@@ -176,11 +176,11 @@ void ConflictingModuleView::Init() {
                               0, kMessageBubblePadding);
   learn_more_button_ = new views::LabelButton(this,
       l10n_util::GetStringUTF16(IDS_CONFLICTS_LEARN_MORE));
-  learn_more_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
+  learn_more_button_->SetStyle(views::Button::STYLE_BUTTON);
   layout->AddView(learn_more_button_);
   not_now_button_ = new views::LabelButton(this,
       l10n_util::GetStringUTF16(IDS_CONFLICTS_NOT_NOW));
-  not_now_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
+  not_now_button_->SetStyle(views::Button::STYLE_BUTTON);
   layout->AddView(not_now_button_);
 
   content::RecordAction(
@@ -211,14 +211,14 @@ void ConflictingModuleView::ButtonPressed(views::Button* sender,
 }
 
 void ConflictingModuleView::GetAccessibleState(
-    ui::AccessibleViewState* state) {
-  state->role = ui::AccessibilityTypes::ROLE_ALERT;
+    ui::AXViewState* state) {
+  state->role = ui::AX_ROLE_ALERT;
 }
 
 void ConflictingModuleView::ViewHierarchyChanged(
   const ViewHierarchyChangedDetails& details) {
   if (details.is_add && details.child == this)
-    NotifyAccessibilityEvent(ui::AccessibilityTypes::EVENT_ALERT, true);
+    NotifyAccessibilityEvent(ui::AX_EVENT_ALERT, true);
 }
 
 void ConflictingModuleView::Observe(

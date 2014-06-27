@@ -4,17 +4,21 @@
 
 #include "content/common/input/web_input_event_traits.h"
 
+#include <bitset>
+
 #include "base/logging.h"
 
-using WebKit::WebGestureEvent;
-using WebKit::WebInputEvent;
-using WebKit::WebKeyboardEvent;
-using WebKit::WebMouseEvent;
-using WebKit::WebMouseWheelEvent;
-using WebKit::WebTouchEvent;
+using blink::WebGestureEvent;
+using blink::WebInputEvent;
+using blink::WebKeyboardEvent;
+using blink::WebMouseEvent;
+using blink::WebMouseWheelEvent;
+using blink::WebTouchEvent;
 
 namespace content {
 namespace {
+
+const int kInvalidTouchIndex = -1;
 
 bool CanCoalesce(const WebKeyboardEvent& event_to_coalesce,
                  const WebKeyboardEvent& event) {
@@ -87,12 +91,39 @@ void Coalesce(const WebMouseWheelEvent& event_to_coalesce,
   event->timeStampSeconds = event_to_coalesce.timeStampSeconds;
 }
 
+// Returns |kInvalidTouchIndex| iff |event| lacks a touch with an ID of |id|.
+int GetIndexOfTouchID(const WebTouchEvent& event, int id) {
+  for (unsigned i = 0; i < event.touchesLength; ++i) {
+    if (event.touches[i].id == id)
+      return i;
+  }
+  return kInvalidTouchIndex;
+}
+
 bool CanCoalesce(const WebTouchEvent& event_to_coalesce,
                  const WebTouchEvent& event) {
-  return event.type == event_to_coalesce.type &&
-         event.type == WebInputEvent::TouchMove &&
-         event.modifiers == event_to_coalesce.modifiers &&
-         event.touchesLength == event_to_coalesce.touchesLength;
+  if (event.type != event_to_coalesce.type ||
+      event.type != WebInputEvent::TouchMove ||
+      event.modifiers != event_to_coalesce.modifiers ||
+      event.touchesLength != event_to_coalesce.touchesLength ||
+      event.touchesLength > WebTouchEvent::touchesLengthCap)
+    return false;
+
+  COMPILE_ASSERT(WebTouchEvent::touchesLengthCap <= sizeof(int32_t) * 8U,
+                 suboptimal_touches_length_cap_size);
+  // Ensure that we have a 1-to-1 mapping of pointer ids between touches.
+  std::bitset<WebTouchEvent::touchesLengthCap> unmatched_event_touches(
+      (1 << event.touchesLength) - 1);
+  for (unsigned i = 0; i < event_to_coalesce.touchesLength; ++i) {
+    int event_touch_index =
+        GetIndexOfTouchID(event, event_to_coalesce.touches[i].id);
+    if (event_touch_index == kInvalidTouchIndex)
+      return false;
+    if (!unmatched_event_touches[event_touch_index])
+      return false;
+    unmatched_event_touches[event_touch_index] = false;
+  }
+  return unmatched_event_touches.none();
 }
 
 void Coalesce(const WebTouchEvent& event_to_coalesce, WebTouchEvent* event) {
@@ -106,8 +137,9 @@ void Coalesce(const WebTouchEvent& event_to_coalesce, WebTouchEvent* event) {
   WebTouchEvent old_event = *event;
   *event = event_to_coalesce;
   for (unsigned i = 0; i < event->touchesLength; ++i) {
-    if (old_event.touches[i].state == WebKit::WebTouchPoint::StateMoved)
-      event->touches[i].state = WebKit::WebTouchPoint::StateMoved;
+    int i_old = GetIndexOfTouchID(old_event, event->touches[i].id);
+    if (old_event.touches[i_old].state == blink::WebTouchPoint::StateMoved)
+      event->touches[i].state = blink::WebTouchPoint::StateMoved;
   }
 }
 
@@ -237,7 +269,7 @@ const char* WebInputEventTraits::GetName(WebInputEvent::Type type) {
     CASE_TYPE(TouchEnd);
     CASE_TYPE(TouchCancel);
     default:
-      // Must include default to let WebKit::WebInputEvent add new event types
+      // Must include default to let blink::WebInputEvent add new event types
       // before they're added here.
       DLOG(WARNING) <<
           "Unhandled WebInputEvent type in WebInputEventTraits::GetName.\n";
@@ -281,6 +313,30 @@ void WebInputEventTraits::Coalesce(const WebInputEvent& event_to_coalesce,
                                    WebInputEvent* event) {
   DCHECK(event);
   Apply(WebInputEventCoalesce(), event->type, event_to_coalesce, event);
+}
+
+bool WebInputEventTraits::IgnoresAckDisposition(
+    blink::WebInputEvent::Type type) {
+  switch (type) {
+    case WebInputEvent::GestureTapDown:
+    case WebInputEvent::GestureShowPress:
+    case WebInputEvent::GestureTapCancel:
+    case WebInputEvent::GestureTap:
+    case WebInputEvent::GesturePinchBegin:
+    case WebInputEvent::GesturePinchEnd:
+    case WebInputEvent::GestureScrollBegin:
+    case WebInputEvent::GestureScrollEnd:
+    case WebInputEvent::TouchCancel:
+    case WebInputEvent::MouseDown:
+    case WebInputEvent::MouseUp:
+    case WebInputEvent::MouseEnter:
+    case WebInputEvent::MouseLeave:
+    case WebInputEvent::ContextMenu:
+      return true;
+    default:
+      break;
+  }
+  return false;
 }
 
 }  // namespace content

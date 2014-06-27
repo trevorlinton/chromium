@@ -4,29 +4,25 @@
 
 #include "base/prefs/pref_service.h"
 #include "base/prefs/testing_pref_store.h"
-#include "chrome/browser/signin/profile_oauth2_token_service.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
+#include "chrome/browser/signin/signin_manager.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/sync/managed_user_signin_manager_wrapper.h"
 #include "chrome/browser/sync/profile_sync_service_mock.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/testing_profile.h"
-
-ProfileSyncServiceMock::ProfileSyncServiceMock()
-    : ProfileSyncService(
-          NULL,
-          NULL,
-          NULL,
-          NULL,
-          ProfileSyncService::MANUAL_START) {}
+#include "components/signin/core/browser/profile_oauth2_token_service.h"
 
 ProfileSyncServiceMock::ProfileSyncServiceMock(Profile* profile)
     : ProfileSyncService(
           NULL,
           profile,
-          NULL,
+          new ManagedUserSigninManagerWrapper(
+              profile,
+              SigninManagerFactory::GetForProfile(profile)),
           ProfileOAuth2TokenServiceFactory::GetForProfile(profile),
-          ProfileSyncService::MANUAL_START) {}
+          browser_sync::MANUAL_START) {}
 
 ProfileSyncServiceMock::~ProfileSyncServiceMock() {
 }
@@ -39,7 +35,7 @@ TestingProfile* ProfileSyncServiceMock::MakeSignedInTestingProfile() {
 }
 
 // static
-BrowserContextKeyedService* ProfileSyncServiceMock::BuildMockProfileSyncService(
+KeyedService* ProfileSyncServiceMock::BuildMockProfileSyncService(
     content::BrowserContext* profile) {
   return new ProfileSyncServiceMock(static_cast<Profile*>(profile));
 }
@@ -53,3 +49,7 @@ ScopedVector<browser_sync::DeviceInfo>
   return devices.Pass();
 }
 
+scoped_ptr<browser_sync::DeviceInfo>
+    ProfileSyncServiceMock::GetLocalDeviceInfo() const {
+  return scoped_ptr<browser_sync::DeviceInfo>(GetLocalDeviceInfoMock()).Pass();
+}

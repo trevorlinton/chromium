@@ -1,19 +1,27 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 package org.chromium.content_shell;
 
+import android.app.Activity;
 import android.content.Context;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
+import android.view.View;
 import android.widget.FrameLayout;
 
 import org.chromium.base.CalledByNative;
+import org.chromium.base.CommandLine;
 import org.chromium.base.JNINamespace;
+import org.chromium.base.ThreadUtils;
+import org.chromium.content.browser.ActivityContentVideoViewClient;
+import org.chromium.content.browser.ContentVideoViewClient;
 import org.chromium.content.browser.ContentView;
+import org.chromium.content.browser.ContentViewClient;
 import org.chromium.content.browser.ContentViewRenderView;
-import org.chromium.ui.WindowAndroid;
+import org.chromium.content.common.ContentSwitches;
+import org.chromium.ui.base.WindowAndroid;
 
 /**
  * Container and generator of ShellViews.
@@ -30,20 +38,37 @@ public class ShellManager extends FrameLayout {
 
     // The target for all content rendering.
     private ContentViewRenderView mContentViewRenderView;
+    private ContentViewClient mContentViewClient;
 
     /**
      * Constructor for inflating via XML.
      */
-    public ShellManager(Context context, AttributeSet attrs) {
+    public ShellManager(final Context context, AttributeSet attrs) {
         super(context, attrs);
         nativeInit(this);
-        mContentViewRenderView = new ContentViewRenderView(context) {
+        mContentViewClient = new ContentViewClient() {
             @Override
-            protected void onReadyToRender() {
-                if (sStartup) {
-                    mActiveShell.loadUrl(mStartupUrl);
-                    sStartup = false;
-                }
+            public ContentVideoViewClient getContentVideoViewClient() {
+                return new ActivityContentVideoViewClient((Activity) context) {
+                    @Override
+                    public boolean onShowCustomView(View view) {
+                        boolean success = super.onShowCustomView(view);
+                        if (!CommandLine.getInstance().hasSwitch(
+                                ContentSwitches.DISABLE_OVERLAY_FULLSCREEN_VIDEO_SUBTITLE)) {
+                            setOverlayVideoMode(true);
+                        }
+                        return success;
+                    }
+
+                    @Override
+                    public void onDestroyContentVideoView() {
+                        super.onDestroyContentVideoView();
+                        if (!CommandLine.getInstance().hasSwitch(
+                                ContentSwitches.DISABLE_OVERLAY_FULLSCREEN_VIDEO_SUBTITLE)) {
+                            setOverlayVideoMode(false);
+                        }
+                    }
+                };
             }
         };
     }
@@ -52,7 +77,17 @@ public class ShellManager extends FrameLayout {
      * @param window The window used to generate all shells.
      */
     public void setWindow(WindowAndroid window) {
+        assert window != null;
         mWindow = window;
+        mContentViewRenderView = new ContentViewRenderView(getContext(), window) {
+            @Override
+            protected void onReadyToRender() {
+                if (sStartup) {
+                    mActiveShell.loadUrl(mStartupUrl);
+                    sStartup = false;
+                }
+            }
+        };
     }
 
     /**
@@ -81,19 +116,38 @@ public class ShellManager extends FrameLayout {
      * @param url The URL the shell should load upon creation.
      */
     public void launchShell(String url) {
+        ThreadUtils.assertOnUiThread();
+        Shell previousShell = mActiveShell;
         nativeLaunchShell(url);
+        if (previousShell != null) previousShell.close();
+    }
+
+    /**
+     * Enter or leave overlay video mode.
+     * @param enabled Whether overlay mode is enabled.
+     */
+    public void setOverlayVideoMode(boolean enabled) {
+        if (mContentViewRenderView == null) return;
+        mContentViewRenderView.setOverlayVideoMode(enabled);
     }
 
     @SuppressWarnings("unused")
     @CalledByNative
-    private Object createShell() {
+    private Object createShell(long nativeShellPtr) {
+        assert mContentViewRenderView != null;
         LayoutInflater inflater =
                 (LayoutInflater) getContext().getSystemService(Context.LAYOUT_INFLATER_SERVICE);
         Shell shellView = (Shell) inflater.inflate(R.layout.shell_view, null);
-        shellView.setWindow(mWindow);
+        shellView.initialize(nativeShellPtr, mWindow, mContentViewClient);
 
-        if (mActiveShell != null) closeShell(mActiveShell);
+        // TODO(tedchoc): Allow switching back to these inactive shells.
+        if (mActiveShell != null) removeShell(mActiveShell);
 
+        showShell(shellView);
+        return shellView;
+    }
+
+    private void showShell(Shell shellView) {
         shellView.setContentViewRenderView(mContentViewRenderView);
         addView(shellView, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
@@ -103,18 +157,15 @@ public class ShellManager extends FrameLayout {
             mContentViewRenderView.setCurrentContentView(contentView);
             contentView.onShow();
         }
-
-        return shellView;
     }
 
-    @SuppressWarnings("unused")
     @CalledByNative
-    private void closeShell(Shell shellView) {
+    private void removeShell(Shell shellView) {
         if (shellView == mActiveShell) mActiveShell = null;
+        if (shellView.getParent() == null) return;
         ContentView contentView = shellView.getContentView();
         if (contentView != null) contentView.onHide();
         shellView.setContentViewRenderView(null);
-        shellView.setWindow(null);
         removeView(shellView);
     }
 

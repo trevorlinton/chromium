@@ -4,7 +4,6 @@
 
 #include "cc/layers/picture_layer.h"
 
-#include "cc/debug/devtools_instrumentation.h"
 #include "cc/layers/content_layer_client.h"
 #include "cc/layers/picture_layer_impl.h"
 #include "cc/trees/layer_tree_impl.h"
@@ -17,12 +16,12 @@ scoped_refptr<PictureLayer> PictureLayer::Create(ContentLayerClient* client) {
 }
 
 PictureLayer::PictureLayer(ContentLayerClient* client)
-  : client_(client),
-    pile_(make_scoped_refptr(new PicturePile())),
-    instrumentation_object_tracker_(id()),
-    is_mask_(false),
-    update_source_frame_number_(-1) {
-}
+    : client_(client),
+      pile_(make_scoped_refptr(new PicturePile())),
+      instrumentation_object_tracker_(id()),
+      is_mask_(false),
+      has_gpu_rasterization_hint_(false),
+      update_source_frame_number_(-1) {}
 
 PictureLayer::~PictureLayer() {
 }
@@ -44,7 +43,6 @@ void PictureLayer::PushPropertiesTo(LayerImpl* base_layer) {
     // Using layer_impl because either bounds() or paint_properties().bounds
     // may disagree and either one could have been pushed to layer_impl.
     pile_->Resize(gfx::Size());
-    pile_->UpdateRecordedRegion();
   } else if (update_source_frame_number_ ==
              layer_tree_host()->source_frame_number()) {
     // If update called, then pile size must match bounds pushed to impl layer.
@@ -52,6 +50,8 @@ void PictureLayer::PushPropertiesTo(LayerImpl* base_layer) {
   }
 
   layer_impl->SetIsMask(is_mask_);
+  layer_impl->SetHasGpuRasterizationHint(has_gpu_rasterization_hint_);
+
   // Unlike other properties, invalidation must always be set on layer_impl.
   // See PictureLayerImpl::PushPropertiesTo for more details.
   layer_impl->invalidation_.Clear();
@@ -64,7 +64,6 @@ void PictureLayer::SetLayerTreeHost(LayerTreeHost* host) {
   if (host) {
     pile_->SetMinContentsScale(host->settings().minimum_contents_scale);
     pile_->SetTileGridSize(host->settings().default_tile_size);
-    pile_->set_num_raster_threads(host->settings().num_raster_threads);
     pile_->set_slow_down_raster_scale_factor(
         host->debug_state().slow_down_raster_scale_factor);
     pile_->set_show_debug_picture_borders(
@@ -83,16 +82,20 @@ void PictureLayer::SetNeedsDisplayRect(const gfx::RectF& layer_rect) {
 }
 
 bool PictureLayer::Update(ResourceUpdateQueue* queue,
-                          const OcclusionTracker* occlusion) {
-  // Do not early-out of this function so that PicturePile::Update has a chance
-  // to record pictures due to changing visibility of this layer.
+                          const OcclusionTracker<Layer>* occlusion) {
+  update_source_frame_number_ = layer_tree_host()->source_frame_number();
+  bool updated = Layer::Update(queue, occlusion);
+
+  if (last_updated_visible_content_rect_ == visible_content_rect() &&
+      pile_->size() == paint_properties().bounds &&
+      pending_invalidation_.IsEmpty()) {
+    // Only early out if the visible content rect of this layer hasn't changed.
+    return updated;
+  }
 
   TRACE_EVENT1("cc", "PictureLayer::Update",
                "source_frame_number",
                layer_tree_host()->source_frame_number());
-
-  update_source_frame_number_ = layer_tree_host()->source_frame_number();
-  bool updated = Layer::Update(queue, occlusion);
 
   pile_->Resize(paint_properties().bounds);
 
@@ -108,14 +111,17 @@ bool PictureLayer::Update(ResourceUpdateQueue* queue,
     // the full page content must always be provided in the picture layer.
     visible_layer_rect = gfx::Rect(bounds());
   }
-  devtools_instrumentation::ScopedLayerTask paint_layer(
-      devtools_instrumentation::kPaintLayer, id());
+  DCHECK(client_);
   updated |= pile_->Update(client_,
                            SafeOpaqueBackgroundColor(),
                            contents_opaque(),
+                           client_->FillsBoundsCompletely(),
                            pile_invalidation_,
                            visible_layer_rect,
+                           update_source_frame_number_,
                            rendering_stats_instrumentation());
+  last_updated_visible_content_rect_ = visible_content_rect();
+
   if (updated) {
     SetNeedsPushProperties();
   } else {
@@ -129,6 +135,14 @@ bool PictureLayer::Update(ResourceUpdateQueue* queue,
 
 void PictureLayer::SetIsMask(bool is_mask) {
   is_mask_ = is_mask;
+}
+
+void PictureLayer::SetHasGpuRasterizationHint(bool has_hint) {
+  DCHECK(IsPropertyChangeAllowed());
+  if (has_gpu_rasterization_hint_ == has_hint)
+    return;
+  has_gpu_rasterization_hint_ = has_hint;
+  SetNeedsCommit();
 }
 
 bool PictureLayer::SupportsLCDText() const {

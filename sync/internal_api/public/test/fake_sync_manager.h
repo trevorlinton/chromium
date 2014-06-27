@@ -68,6 +68,9 @@ class FakeSyncManager : public SyncManager {
   // Posts a method to update the invalidator state on the sync thread.
   virtual void OnInvalidatorStateChange(InvalidatorState state) OVERRIDE;
 
+  // Returns this class name for logging purposes.
+  virtual std::string GetOwnerName() const OVERRIDE;
+
   // Block until the sync thread has finished processing any pending messages.
   void WaitForSyncThread();
 
@@ -81,7 +84,7 @@ class FakeSyncManager : public SyncManager {
       int sync_server_port,
       bool use_ssl,
       scoped_ptr<HttpPostProviderFactory> post_factory,
-      const std::vector<ModelSafeWorker*>& workers,
+      const std::vector<scoped_refptr<ModelSafeWorker> >& workers,
       ExtensionsActivity* extensions_activity,
       ChangeDelegate* change_delegate,
       const SyncCredentials& credentials,
@@ -116,6 +119,7 @@ class FakeSyncManager : public SyncManager {
   virtual void SaveChanges() OVERRIDE;
   virtual void ShutdownOnSyncThread() OVERRIDE;
   virtual UserShare* GetUserShare() OVERRIDE;
+  virtual syncer::SyncCore* GetSyncCore() OVERRIDE;
   virtual const std::string cache_guid() OVERRIDE;
   virtual bool ReceivedExperiment(Experiments* experiments) OVERRIDE;
   virtual bool HasUnsyncedItems() OVERRIDE;

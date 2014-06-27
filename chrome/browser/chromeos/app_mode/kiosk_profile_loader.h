@@ -18,8 +18,6 @@ class Profile;
 
 namespace chromeos {
 
-class KioskAppManager;
-
 // KioskProfileLoader loads a special profile for a given app. It first
 // attempts to login for the app's generated user id. If the login is
 // successful, it prepares app profile then calls the delegate.
@@ -35,8 +33,8 @@ class KioskProfileLoader : public LoginPerformer::Delegate,
     virtual ~Delegate() {}
   };
 
-  KioskProfileLoader(KioskAppManager* kiosk_app_manager,
-                     const std::string& app_id,
+  KioskProfileLoader(const std::string& app_user_id,
+                     bool use_guest_mount,
                      Delegate* delegate);
 
   virtual ~KioskProfileLoader();
@@ -61,9 +59,8 @@ class KioskProfileLoader : public LoginPerformer::Delegate,
   // LoginUtils::Delegate implementation:
   virtual void OnProfilePrepared(Profile* profile) OVERRIDE;
 
-  KioskAppManager* kiosk_app_manager_;
-  const std::string app_id_;
   std::string user_id_;
+  bool use_guest_mount_;
   Delegate* delegate_;
   scoped_ptr<CryptohomedChecker> cryptohomed_checker_;
   scoped_ptr<LoginPerformer> login_performer_;

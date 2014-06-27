@@ -23,8 +23,8 @@ namespace {
 
 // Retrieves the executable and profile paths on the FILE thread.
 void GetFilePaths(const base::FilePath& profile_path,
-                  string16* exec_path_out,
-                  string16* profile_path_out) {
+                  base::string16* exec_path_out,
+                  base::string16* profile_path_out) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::FILE));
 
   base::FilePath executable_path = base::MakeAbsoluteFilePath(
@@ -61,7 +61,7 @@ void VersionHandler::RegisterMessages() {
       base::Unretained(this)));
 }
 
-void VersionHandler::HandleRequestVersionInfo(const ListValue* args) {
+void VersionHandler::HandleRequestVersionInfo(const base::ListValue* args) {
 #if defined(ENABLE_PLUGINS)
   // The Flash version information is needed in the response, so make sure
   // the plugins are loaded.
@@ -72,8 +72,8 @@ void VersionHandler::HandleRequestVersionInfo(const ListValue* args) {
 
   // Grab the executable path on the FILE thread. It is returned in
   // OnGotFilePaths.
-  string16* exec_path_buffer = new string16;
-  string16* profile_path_buffer = new string16;
+  base::string16* exec_path_buffer = new base::string16;
+  base::string16* profile_path_buffer = new base::string16;
   content::BrowserThread::PostTaskAndReply(
       content::BrowserThread::FILE, FROM_HERE,
           base::Bind(&GetFilePaths, Profile::FromWebUI(web_ui())->GetPath(),
@@ -96,7 +96,7 @@ void VersionHandler::HandleRequestVersionInfo(const ListValue* args) {
   for (size_t i = 0; i < active_groups.size(); ++i) {
     std::string line = active_groups[i].trial_name + ":" +
                        active_groups[i].group_name;
-    ReplaceChars(line, "-", kNonBreakingHyphenUTF8String, &line);
+    base::ReplaceChars(line, "-", kNonBreakingHyphenUTF8String, &line);
     variations.push_back(line);
   }
 #else
@@ -104,22 +104,22 @@ void VersionHandler::HandleRequestVersionInfo(const ListValue* args) {
   chrome_variations::GetFieldTrialActiveGroupIdsAsStrings(&variations);
 #endif
 
-  ListValue variations_list;
+  base::ListValue variations_list;
   for (std::vector<std::string>::const_iterator it = variations.begin();
       it != variations.end(); ++it) {
-    variations_list.Append(Value::CreateStringValue(*it));
+    variations_list.Append(base::Value::CreateStringValue(*it));
   }
 
   // In release mode, this will return an empty list to clear the section.
   web_ui()->CallJavascriptFunction("returnVariationInfo", variations_list);
 }
 
-void VersionHandler::OnGotFilePaths(string16* executable_path_data,
-                                    string16* profile_path_data) {
+void VersionHandler::OnGotFilePaths(base::string16* executable_path_data,
+                                    base::string16* profile_path_data) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
 
-  StringValue exec_path(*executable_path_data);
-  StringValue profile_path(*profile_path_data);
+  base::StringValue exec_path(*executable_path_data);
+  base::StringValue profile_path(*profile_path_data);
   web_ui()->CallJavascriptFunction("returnFilePaths", exec_path, profile_path);
 }
 
@@ -130,7 +130,7 @@ void VersionHandler::OnGotPlugins(
   std::vector<content::WebPluginInfo> info_array;
   content::PluginService::GetInstance()->GetPluginInfoArray(
       GURL(), content::kFlashPluginSwfMimeType, false, &info_array, NULL);
-  string16 flash_version =
+  base::string16 flash_version =
       l10n_util::GetStringUTF16(IDS_PLUGINS_DISABLED_PLUGIN);
   PluginPrefs* plugin_prefs =
       PluginPrefs::GetForProfile(Profile::FromWebUI(web_ui())).get();
@@ -143,7 +143,7 @@ void VersionHandler::OnGotPlugins(
     }
   }
 
-  StringValue arg(flash_version);
+  base::StringValue arg(flash_version);
   web_ui()->CallJavascriptFunction("returnFlashVersion", arg);
 }
 #endif  // defined(ENABLE_PLUGINS)

@@ -20,7 +20,7 @@
 #include "chrome/common/chrome_version_info.h"
 #include "chrome/common/url_constants.h"
 #include "grit/locale_settings.h"
-#import "third_party/GTM/AppKit/GTMUILocalizerAndLayoutTweaker.h"
+#import "third_party/google_toolbox_for_mac/src/AppKit/GTMUILocalizerAndLayoutTweaker.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "url/gurl.h"
 
@@ -106,8 +106,8 @@ bool ShowFirstRun(Profile* profile) {
     // on the first run it may not have been enabled due to the missing opt-in
     // from the user.  If the user agreed now, enable breakpad if necessary.
     if (!breakpad::IsCrashReporterEnabled() && stats_enabled) {
-      breakpad::InitCrashReporter();
-      breakpad::InitCrashProcessInfo();
+      breakpad::InitCrashReporter(std::string());
+      breakpad::InitCrashProcessInfo(std::string());
     }
 
     // If selected set as default browser.

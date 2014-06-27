@@ -13,13 +13,13 @@
 #include "base/test/scoped_path_override.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/policy/device_local_account.h"
+#include "chrome/browser/chromeos/policy/proto/chrome_device_policy.pb.h"
 #include "chrome/browser/chromeos/settings/device_settings_test_helper.h"
-#include "chrome/browser/policy/proto/chromeos/chrome_device_policy.pb.h"
-#include "chrome/browser/policy/proto/cloud/device_management_backend.pb.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chromeos/settings/cros_settings_names.h"
+#include "policy/proto/device_management_backend.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -246,7 +246,7 @@ TEST_F(DeviceSettingsProviderTest, StatsReportingMigration) {
   base::FilePath consent_file;
   ASSERT_TRUE(PathService::Get(chrome::DIR_USER_DATA, &consent_file));
   consent_file = consent_file.AppendASCII("Consent To Send Stats");
-  ASSERT_EQ(1, file_util::WriteFile(consent_file, "0", 1));
+  ASSERT_EQ(1, base::WriteFile(consent_file, "0", 1));
 
   // This should trigger migration because the metrics policy isn't in the blob.
   device_settings_test_helper_.set_policy_blob(std::string());

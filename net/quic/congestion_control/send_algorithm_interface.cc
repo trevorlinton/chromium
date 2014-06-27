@@ -4,25 +4,29 @@
 
 #include "net/quic/congestion_control/send_algorithm_interface.h"
 
-#include "net/quic/congestion_control/cubic.h"
 #include "net/quic/congestion_control/fix_rate_sender.h"
+#include "net/quic/congestion_control/inter_arrival_sender.h"
 #include "net/quic/congestion_control/tcp_cubic_sender.h"
+#include "net/quic/quic_protocol.h"
 
 namespace net {
 
 const bool kUseReno = false;
-// Maximum number of outstanding packets for tcp.
-const QuicTcpCongestionWindow kMaxTcpCongestionWindow = 200;
+
+class RttStats;
 
 // Factory for send side congestion control algorithm.
 SendAlgorithmInterface* SendAlgorithmInterface::Create(
     const QuicClock* clock,
-    CongestionFeedbackType type) {
+    const RttStats* rtt_stats,
+    CongestionFeedbackType type,
+    QuicConnectionStats* stats) {
   switch (type) {
     case kTCP:
-      return new TcpCubicSender(clock, kUseReno, kMaxTcpCongestionWindow);
+      return new TcpCubicSender(clock, rtt_stats, kUseReno,
+                                kMaxTcpCongestionWindow, stats);
     case kInterArrival:
-      break;  // TODO(pwestin) Implement.
+      return new InterArrivalSender(clock, rtt_stats);
     case kFixRate:
       return new FixRateSender(clock);
   }

@@ -4,10 +4,13 @@
 
 #include "ui/base/ime/input_method_base.h"
 
+#include "base/bind.h"
 #include "base/logging.h"
+#include "base/message_loop/message_loop.h"
 #include "ui/base/ime/input_method_delegate.h"
 #include "ui/base/ime/input_method_observer.h"
 #include "ui/base/ime/text_input_client.h"
+#include "ui/events/event.h"
 
 namespace ui {
 
@@ -47,12 +50,9 @@ void InputMethodBase::SetFocusedTextInputClient(TextInputClient* client) {
 }
 
 void InputMethodBase::DetachTextInputClient(TextInputClient* client) {
-  if (text_input_client_ == client) {
-    OnWillChangeFocusedClient(client, NULL);
-    text_input_client_ = NULL;
-    OnDidChangeFocusedClient(client, NULL);
-    NotifyTextInputStateChanged(text_input_client_);
-  }
+  if (text_input_client_ != client)
+    return;
+  SetFocusedTextInputClientInternal(NULL);
 }
 
 TextInputClient* InputMethodBase::GetTextInputClient() const {
@@ -63,20 +63,6 @@ void InputMethodBase::OnTextInputTypeChanged(const TextInputClient* client) {
   if (!IsTextInputClientFocused(client))
     return;
   NotifyTextInputStateChanged(client);
-}
-
-void InputMethodBase::OnCaretBoundsChanged(const TextInputClient* client) {
-  if (!IsTextInputClientFocused(client))
-    return;
-  FOR_EACH_OBSERVER(InputMethodObserver,
-                    observer_list_,
-                    OnCaretBoundsChanged(client));
-}
-
-void InputMethodBase::OnInputLocaleChanged() {
-  FOR_EACH_OBSERVER(InputMethodObserver,
-                    observer_list_,
-                    OnInputLocaleChanged());
 }
 
 TextInputType InputMethodBase::GetTextInputType() const {
@@ -92,6 +78,10 @@ TextInputMode InputMethodBase::GetTextInputMode() const {
 bool InputMethodBase::CanComposeInline() const {
   TextInputClient* client = GetTextInputClient();
   return client ? client->CanComposeInline() : true;
+}
+
+void InputMethodBase::ShowImeIfNeeded() {
+  FOR_EACH_OBSERVER(InputMethodObserver, observer_list_, OnShowImeIfNeeded());
 }
 
 void InputMethodBase::AddObserver(InputMethodObserver* observer) {
@@ -117,15 +107,11 @@ void InputMethodBase::OnInputMethodChanged() const {
 }
 
 bool InputMethodBase::DispatchKeyEventPostIME(
-    const base::NativeEvent& native_event) const {
-  return delegate_ ? delegate_->DispatchKeyEventPostIME(native_event) : false;
-}
+    const ui::KeyEvent& event) const {
+  if (!delegate_)
+    return false;
 
-bool InputMethodBase::DispatchFabricatedKeyEventPostIME(EventType type,
-                                                        KeyboardCode key_code,
-                                                        int flags) const {
-  return delegate_ ? delegate_->DispatchFabricatedKeyEventPostIME
-      (type, key_code, flags) : false;
+  return delegate_->DispatchKeyEventPostIME(event);
 }
 
 void InputMethodBase::NotifyTextInputStateChanged(
@@ -144,6 +130,40 @@ void InputMethodBase::SetFocusedTextInputClientInternal(
   text_input_client_ = client;  // NULL allowed.
   OnDidChangeFocusedClient(old, client);
   NotifyTextInputStateChanged(text_input_client_);
+}
+
+void InputMethodBase::OnCandidateWindowShown() {
+  base::MessageLoop::current()->PostTask(
+      FROM_HERE,
+      base::Bind(&InputMethodBase::CandidateWindowShownCallback, AsWeakPtr()));
+}
+
+void InputMethodBase::OnCandidateWindowUpdated() {
+  base::MessageLoop::current()->PostTask(
+      FROM_HERE,
+      base::Bind(&InputMethodBase::CandidateWindowUpdatedCallback,
+                 AsWeakPtr()));
+}
+
+void InputMethodBase::OnCandidateWindowHidden() {
+  base::MessageLoop::current()->PostTask(
+      FROM_HERE,
+      base::Bind(&InputMethodBase::CandidateWindowHiddenCallback, AsWeakPtr()));
+}
+
+void InputMethodBase::CandidateWindowShownCallback() {
+  if (text_input_client_)
+    text_input_client_->OnCandidateWindowShown();
+}
+
+void InputMethodBase::CandidateWindowUpdatedCallback() {
+  if (text_input_client_)
+    text_input_client_->OnCandidateWindowUpdated();
+}
+
+void InputMethodBase::CandidateWindowHiddenCallback() {
+  if (text_input_client_)
+    text_input_client_->OnCandidateWindowHidden();
 }
 
 }  // namespace ui

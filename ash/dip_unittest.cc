@@ -7,7 +7,7 @@
 
 #include "ash/ash_switches.h"
 #include "ash/display/display_manager.h"
-#include "ash/launcher/launcher.h"
+#include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
@@ -15,17 +15,17 @@
 #include "ash/wm/window_util.h"
 #include "base/command_line.h"
 #include "base/memory/scoped_ptr.h"
-#include "ui/aura/client/activation_client.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/compositor/layer.h"
 #include "ui/gfx/display.h"
 #include "ui/gfx/insets.h"
 #include "ui/gfx/screen.h"
-#include "ui/views/corewm/shadow.h"
-#include "ui/views/corewm/shadow_controller.h"
-#include "ui/views/corewm/shadow_types.h"
 #include "ui/views/widget/widget.h"
+#include "ui/wm/core/shadow.h"
+#include "ui/wm/core/shadow_controller.h"
+#include "ui/wm/core/shadow_types.h"
+#include "ui/wm/public/activation_client.h"
 
 namespace ash {
 
@@ -62,11 +62,11 @@ TEST_F(DIPTest, WorkArea) {
   EXPECT_EQ("0,0,47,0", display_2x.bounds().InsetsFrom(work_area).ToString());
 
   // Sanity check if the workarea's inset hight is same as
-  // the launcher's height.
-  Launcher* launcher = Launcher::ForPrimaryDisplay();
+  // the shelf's height.
+  Shelf* shelf = Shelf::ForPrimaryDisplay();
   EXPECT_EQ(
       display_2x.bounds().InsetsFrom(work_area).height(),
-      launcher->shelf_widget()->GetNativeView()->layer()->bounds().height());
+      shelf->shelf_widget()->GetNativeView()->layer()->bounds().height());
 }
 
 TEST_F(DIPTest, WorkAreaForLegacyShelfLayout) {
@@ -101,11 +101,11 @@ TEST_F(DIPTest, WorkAreaForLegacyShelfLayout) {
   EXPECT_EQ("0,0,48,0", display_2x.bounds().InsetsFrom(work_area).ToString());
 
   // Sanity check if the workarea's inset hight is same as
-  // the launcher's height.
-  Launcher* launcher = Launcher::ForPrimaryDisplay();
+  // the shelf's height.
+  Shelf* shelf = Shelf::ForPrimaryDisplay();
   EXPECT_EQ(
       display_2x.bounds().InsetsFrom(work_area).height(),
-      launcher->shelf_widget()->GetNativeView()->layer()->bounds().height());
+      shelf->shelf_widget()->GetNativeView()->layer()->bounds().height());
 }
 
 }  // namespace ash

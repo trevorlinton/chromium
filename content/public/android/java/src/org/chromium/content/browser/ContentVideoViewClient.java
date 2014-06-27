@@ -21,8 +21,9 @@ public interface ContentVideoViewClient {
     /**
      * Called when the video view is ready to be shown. Must be implemented.
      * @param view The view to show.
+     * @return whether the video is actually shown.
      */
-    public void onShowCustomView(View view);
+    public boolean onShowCustomView(View view);
 
     /**
      * Called when it's time to destroy the video view. Must be implemented.
@@ -34,10 +35,4 @@ public interface ContentVideoViewClient {
      * If null is returned, the default video loading view is used.
      */
     public View getVideoLoadingProgressView();
-
-    /**
-     * Allows the embedder to replace the default playback controls by returning a custom
-     * implementation. If null is returned, the default controls are used.
-     */
-    public ContentVideoViewControls createControls();
 }

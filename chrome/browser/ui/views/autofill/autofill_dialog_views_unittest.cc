@@ -90,11 +90,11 @@ class AutofillDialogViewsTest : public TestWithBrowserView {
 
  protected:
   void SetSectionsFocusable() {
-    dialog()->GetLoadingShieldForTesting()->set_focusable(true);
+    dialog()->GetLoadingShieldForTesting()->SetFocusable(true);
     // The sign in web view is not focusable until a web contents is created.
     // TODO(dbeam): figure out how to create a web contents on the right thread.
-    dialog()->GetNotificationAreaForTesting()->set_focusable(true);
-    dialog()->GetScrollableAreaForTesting()->set_focusable(true);
+    dialog()->GetNotificationAreaForTesting()->SetFocusable(true);
+    dialog()->GetScrollableAreaForTesting()->SetFocusable(true);
   }
 
  private:
@@ -182,6 +182,17 @@ TEST_F(AutofillDialogViewsTest, LoadingFocus) {
   EXPECT_TRUE(scrollable_area->IsFocusable());
   EXPECT_FALSE(loading_shield->IsFocusable());
   EXPECT_FALSE(sign_in_web_view->IsFocusable());
+}
+
+TEST_F(AutofillDialogViewsTest, ImeEventDoesntCrash) {
+  // IMEs create synthetic events with no backing native event.
+  views::FocusManager* focus_manager = dialog()->GetWidget()->GetFocusManager();
+  views::View* focused_view = focus_manager->GetFocusedView();
+  ASSERT_STREQ(DecoratedTextfield::kViewClassName,
+               focused_view->GetClassName());
+  EXPECT_FALSE(dialog()->HandleKeyEvent(
+      static_cast<views::Textfield*>(focused_view),
+      ui::KeyEvent(ui::ET_KEY_PRESSED, ui::VKEY_A, 0, false)));
 }
 
 }  // namespace autofill

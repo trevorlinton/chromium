@@ -9,10 +9,10 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/common/extensions/permissions/permissions_data.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/permissions/api_permission_set.h"
+#include "extensions/common/permissions/permissions_data.h"
 
 namespace extensions {
 
@@ -38,7 +38,7 @@ AppIsolationHandler::AppIsolationHandler() {
 AppIsolationHandler::~AppIsolationHandler() {
 }
 
-bool AppIsolationHandler::Parse(Extension* extension, string16* error) {
+bool AppIsolationHandler::Parse(Extension* extension, base::string16* error) {
   // Platform apps always get isolated storage.
   if (extension->is_platform_app()) {
     extension->SetManifestData(keys::kIsolation, new AppIsolationInfo(true));
@@ -59,7 +59,7 @@ bool AppIsolationHandler::Parse(Extension* extension, string16* error) {
 
   const base::ListValue* isolation_list = NULL;
   if (!extension->manifest()->GetList(keys::kIsolation, &isolation_list)) {
-    *error = ASCIIToUTF16(manifest_errors::kInvalidIsolation);
+    *error = base::ASCIIToUTF16(manifest_errors::kInvalidIsolation);
     return false;
   }
 

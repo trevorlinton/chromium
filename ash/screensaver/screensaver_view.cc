@@ -11,7 +11,7 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
-#include "ui/aura/root_window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/gfx/screen.h"
 #include "ui/views/controls/webview/webview.h"
 #include "ui/views/layout/fill_layout.h"
@@ -124,7 +124,7 @@ void ScreensaverView::Close() {
 
 void ScreensaverView::AddChildWebContents() {
   content::BrowserContext* context =
-      Shell::GetInstance()->delegate()->GetCurrentBrowserContext();
+      Shell::GetInstance()->delegate()->GetActiveBrowserContext();
   screensaver_webview_ = new views::WebView(context);
   SetLayoutManager(new views::FillLayout);
   AddChildView(screensaver_webview_);

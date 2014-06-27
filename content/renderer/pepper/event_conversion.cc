@@ -26,14 +26,14 @@
 using ppapi::EventTimeToPPTimeTicks;
 using ppapi::InputEventData;
 using ppapi::PPTimeTicksToEventTime;
-using WebKit::WebInputEvent;
-using WebKit::WebKeyboardEvent;
-using WebKit::WebMouseEvent;
-using WebKit::WebMouseWheelEvent;
-using WebKit::WebString;
-using WebKit::WebTouchEvent;
-using WebKit::WebTouchPoint;
-using WebKit::WebUChar;
+using blink::WebInputEvent;
+using blink::WebKeyboardEvent;
+using blink::WebMouseEvent;
+using blink::WebMouseWheelEvent;
+using blink::WebString;
+using blink::WebTouchEvent;
+using blink::WebTouchPoint;
+using blink::WebUChar;
 
 namespace content {
 
@@ -127,7 +127,6 @@ InputEventData GetEventWithCommonFieldsAndType(const WebInputEvent& web_event) {
   InputEventData result;
   result.event_type = ConvertEventTypes(web_event.type);
   result.event_time_stamp = EventTimeToPPTimeTicks(web_event.timeStampSeconds);
-  result.usb_key_code = 0;
   return result;
 }
 
@@ -138,7 +137,6 @@ void AppendKeyEvent(const WebInputEvent& event,
   InputEventData result = GetEventWithCommonFieldsAndType(event);
   result.event_modifiers = key_event.modifiers;
   result.key_code = key_event.windowsKeyCode;
-  result.usb_key_code = UsbKeyCodeForKeyboardEvent(key_event);
   result.code = CodeForKeyboardEvent(key_event);
   result_events->push_back(result);
 }
@@ -370,7 +368,7 @@ WebKeyboardEvent* BuildCharEvent(const InputEventData& event) {
   // Make sure to not read beyond the buffer in case some bad code doesn't
   // NULL-terminate it (this is called from plugins).
   size_t text_length_cap = WebKeyboardEvent::textLengthCap;
-  base::string16 text16 = UTF8ToUTF16(event.character_text);
+  base::string16 text16 = base::UTF8ToUTF16(event.character_text);
 
   memset(key_event->text, 0, text_length_cap);
   memset(key_event->unmodifiedText, 0, text_length_cap);
@@ -461,7 +459,7 @@ WebMouseWheelEvent* BuildMouseWheelEvent(const InputEventData& event) {
 #endif
 
 // Convert a character string to a Windows virtual key code. Adapted from
-// src/third_party/WebKit/Tools/DumpRenderTree/chromium/EventSender.cpp. This
+// src/content/shell/renderer/test_runner/event_sender.cc. This
 // is used by CreateSimulatedWebInputEvents to convert keyboard events.
 void GetKeyCode(const std::string& char_text,
                 WebUChar* code,
@@ -608,7 +606,7 @@ WebInputEvent* CreateWebInputEvent(const InputEventData& event) {
 }
 
 // Generate a coherent sequence of input events to simulate a user event.
-// From src/third_party/WebKit/Tools/DumpRenderTree/chromium/EventSender.cpp.
+// From src/content/shell/renderer/test_runner/event_sender.cc.
 std::vector<linked_ptr<WebInputEvent> > CreateSimulatedWebInputEvents(
     const ppapi::InputEventData& event,
     int plugin_x,

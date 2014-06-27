@@ -18,7 +18,10 @@ class SelectFileDialogImpl : public SelectFileDialog {
   static SelectFileDialogImpl* Create(Listener* listener,
                                       SelectFilePolicy* policy);
 
-  void OnFileSelected(JNIEnv* env, jobject java_object, jstring filepath);
+  void OnFileSelected(JNIEnv* env,
+                      jobject java_object,
+                      jstring filepath,
+                      jstring display_name);
   void OnFileNotSelected(JNIEnv* env, jobject java_object);
 
   // From SelectFileDialog
@@ -49,9 +52,6 @@ class SelectFileDialogImpl : public SelectFileDialog {
   virtual bool HasMultipleFileTypeChoicesImpl() OVERRIDE;
 
   base::android::ScopedJavaGlobalRef<jobject> java_object_;
-
-  // Stores the state whether select_file_dialog is running.
-  bool is_running_;
 
   DISALLOW_COPY_AND_ASSIGN(SelectFileDialogImpl);
 };

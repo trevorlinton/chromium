@@ -19,26 +19,29 @@
  @private
   base::Closure stop_callback_;
   base::scoped_nsobject<NSButton> stopButton_;
+  base::scoped_nsobject<NSButton> minimizeButton_;
 }
 
 - (id)initWithCallback:(const base::Closure&)stop_callback
-                  text:(const string16&)text;
+                  text:(const base::string16&)text;
 - (void)stopSharing:(id)sender;
+- (void)minimize:(id)sender;
 
 @end
 
 class ScreenCaptureNotificationUICocoa : public ScreenCaptureNotificationUI {
  public:
-  explicit ScreenCaptureNotificationUICocoa(const string16& text);
+  explicit ScreenCaptureNotificationUICocoa(const base::string16& text);
   virtual ~ScreenCaptureNotificationUICocoa();
 
   // ScreenCaptureNotificationUI interface.
-  virtual void OnStarted(const base::Closure& stop_callback) OVERRIDE;
+  virtual gfx::NativeViewId OnStarted(const base::Closure& stop_callback)
+      OVERRIDE;
 
  private:
   friend class ScreenCaptureNotificationUICocoaTest;
 
-  const string16 text_;
+  const base::string16 text_;
   base::scoped_nsobject<ScreenCaptureNotificationController> windowController_;
 
   DISALLOW_COPY_AND_ASSIGN(ScreenCaptureNotificationUICocoa);

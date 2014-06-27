@@ -22,6 +22,8 @@ class URLRequestContext;
 
 namespace content {
 
+struct WebSocketHandshakeRequest;
+struct WebSocketHandshakeResponse;
 class WebSocketHost;
 
 // Creates a WebSocketHost object for each WebSocket channel, and dispatches
@@ -32,7 +34,7 @@ class CONTENT_EXPORT WebSocketDispatcherHost : public BrowserMessageFilter {
 
   // Given a routing_id, WebSocketHostFactory returns a new instance of
   // WebSocketHost or its subclass.
-  typedef base::Callback<WebSocketHost*(int)> WebSocketHostFactory;
+  typedef base::Callback<WebSocketHost*(int)> WebSocketHostFactory;  // NOLINT
 
   // Return value for methods that may delete the WebSocketHost. This enum is
   // binary-compatible with net::WebSocketEventInterface::ChannelState, to make
@@ -43,14 +45,15 @@ class CONTENT_EXPORT WebSocketDispatcherHost : public BrowserMessageFilter {
     WEBSOCKET_HOST_DELETED
   };
 
-  explicit WebSocketDispatcherHost(
+  WebSocketDispatcherHost(
+      int process_id,
       const GetRequestContextCallback& get_context_callback);
 
   // For testing. Specify a factory method that creates mock version of
   // WebSocketHost.
-  WebSocketDispatcherHost(
-      const GetRequestContextCallback& get_context_callback,
-      const WebSocketHostFactory& websocket_host_factory);
+  WebSocketDispatcherHost(int process_id,
+                          const GetRequestContextCallback& get_context_callback,
+                          const WebSocketHostFactory& websocket_host_factory);
 
   // BrowserMessageFilter:
   virtual bool OnMessageReceived(const IPC::Message& message,
@@ -79,15 +82,35 @@ class CONTENT_EXPORT WebSocketDispatcherHost : public BrowserMessageFilter {
   WebSocketHostState SendFlowControl(int routing_id,
                                      int64 quota) WARN_UNUSED_RESULT;
 
-  // Sends a WebSocketMsg_SendClosing IPC
-  WebSocketHostState SendClosing(int routing_id) WARN_UNUSED_RESULT;
+  // Sends a WebSocketMsg_NotifyClosing IPC
+  WebSocketHostState NotifyClosingHandshake(int routing_id) WARN_UNUSED_RESULT;
+
+  // Sends a WebSocketMsg_NotifyStartOpeningHandshake IPC.
+  WebSocketHostState NotifyStartOpeningHandshake(
+      int routing_id,
+      const WebSocketHandshakeRequest& request) WARN_UNUSED_RESULT;
+
+  // Sends a WebSocketMsg_NotifyFinishOpeningHandshake IPC.
+  WebSocketHostState NotifyFinishOpeningHandshake(
+      int routing_id,
+      const WebSocketHandshakeResponse& response) WARN_UNUSED_RESULT;
+
+  // Sends a WebSocketMsg_NotifyFailure IPC and deletes and unregisters the
+  // channel.
+  WebSocketHostState NotifyFailure(
+      int routing_id,
+      const std::string& message) WARN_UNUSED_RESULT;
 
   // Sends a WebSocketMsg_DropChannel IPC and deletes and unregisters the
   // channel.
   WebSocketHostState DoDropChannel(
       int routing_id,
+      bool was_clean,
       uint16 code,
       const std::string& reason) WARN_UNUSED_RESULT;
+
+  // Returns whether the associated renderer process can read raw cookies.
+  bool CanReadRawCookies() const;
 
  private:
   typedef base::hash_map<int, WebSocketHost*> WebSocketHostTable;
@@ -113,6 +136,9 @@ class CONTENT_EXPORT WebSocketDispatcherHost : public BrowserMessageFilter {
   // Table of WebSocketHost objects, owned by this object, indexed by
   // routing_id.
   WebSocketHostTable hosts_;
+
+  // The the process ID of the associated renderer process.
+  const int process_id_;
 
   // A callback which returns the appropriate net::URLRequestContext for us to
   // use.

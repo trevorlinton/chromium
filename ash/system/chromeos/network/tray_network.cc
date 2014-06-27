@@ -5,6 +5,7 @@
 #include "ash/system/chromeos/network/tray_network.h"
 
 #include "ash/ash_switches.h"
+#include "ash/metrics/user_metrics_recorder.h"
 #include "ash/shell.h"
 #include "ash/system/chromeos/network/network_icon_animation.h"
 #include "ash/system/chromeos/network/network_state_list_detailed_view.h"
@@ -24,7 +25,7 @@
 #include "grit/ash_resources.h"
 #include "grit/ash_strings.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
-#include "ui/base/accessibility/accessible_view_state.h"
+#include "ui/accessibility/ax_view_state.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/views/controls/image_view.h"
@@ -83,10 +84,12 @@ class NetworkTrayView : public TrayItemView,
     // Update accessibility.
     const NetworkState* connected_network =
         handler->ConnectedNetworkByType(NetworkTypePattern::NonVirtual());
-    if (connected_network)
-      UpdateConnectionStatus(UTF8ToUTF16(connected_network->name()), true);
-    else
+    if (connected_network) {
+      UpdateConnectionStatus(
+          base::UTF8ToUTF16(connected_network->name()), true);
+    } else {
       UpdateConnectionStatus(base::string16(), false);
+    }
   }
 
   void UpdateAlignment(ShelfAlignment alignment) {
@@ -98,9 +101,9 @@ class NetworkTrayView : public TrayItemView,
   }
 
   // views::View override.
-  virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE {
+  virtual void GetAccessibleState(ui::AXViewState* state) OVERRIDE {
     state->name = connection_status_string_;
-    state->role = ui::AccessibilityTypes::ROLE_PUSHBUTTON;
+    state->role = ui::AX_ROLE_BUTTON;
   }
 
   // network_icon::AnimationObserver
@@ -120,7 +123,7 @@ class NetworkTrayView : public TrayItemView,
     if (new_connection_status_string != connection_status_string_) {
       connection_status_string_ = new_connection_status_string;
       if(!connection_status_string_.empty())
-        NotifyAccessibilityEvent(ui::AccessibilityTypes::EVENT_ALERT, true);
+        NotifyAccessibilityEvent(ui::AX_EVENT_ALERT, true);
     }
   }
 
@@ -262,11 +265,15 @@ TrayNetwork::TrayNetwork(SystemTray* system_tray)
       detailed_(NULL),
       request_wifi_view_(false) {
   network_state_observer_.reset(new TrayNetworkStateObserver(this));
-  Shell::GetInstance()->system_tray_notifier()->AddNetworkObserver(this);
+  SystemTrayNotifier* notifier = Shell::GetInstance()->system_tray_notifier();
+  notifier->AddNetworkObserver(this);
+  notifier->AddNetworkPortalDetectorObserver(this);
 }
 
 TrayNetwork::~TrayNetwork() {
-  Shell::GetInstance()->system_tray_notifier()->RemoveNetworkObserver(this);
+  SystemTrayNotifier* notifier = Shell::GetInstance()->system_tray_notifier();
+  notifier->RemoveNetworkObserver(this);
+  notifier->RemoveNetworkPortalDetectorObserver(this);
 }
 
 views::View* TrayNetwork::CreateTrayView(user::LoginStatus status) {
@@ -289,6 +296,8 @@ views::View* TrayNetwork::CreateDefaultView(user::LoginStatus status) {
 
 views::View* TrayNetwork::CreateDetailedView(user::LoginStatus status) {
   CHECK(detailed_ == NULL);
+  Shell::GetInstance()->metrics()->RecordUserMetricsAction(
+    ash::UMA_STATUS_AREA_DETAILED_NETWORK_VIEW);
   if (!chromeos::NetworkHandler::IsInitialized())
     return NULL;
   if (request_wifi_view_) {
@@ -333,9 +342,18 @@ void TrayNetwork::RequestToggleWifi() {
   }
   NetworkStateHandler* handler = NetworkHandler::Get()->network_state_handler();
   bool enabled = handler->IsTechnologyEnabled(NetworkTypePattern::WiFi());
+  Shell::GetInstance()->metrics()->RecordUserMetricsAction(
+      enabled ?
+      ash::UMA_STATUS_AREA_DISABLE_WIFI :
+      ash::UMA_STATUS_AREA_ENABLE_WIFI);
   handler->SetTechnologyEnabled(NetworkTypePattern::WiFi(),
                                 !enabled,
                                 chromeos::network_handler::ErrorCallback());
+}
+
+void TrayNetwork::OnCaptivePortalDetected(
+    const std::string& /* service_path */) {
+  NetworkStateChanged(false);
 }
 
 void TrayNetwork::NetworkStateChanged(bool list_changed) {

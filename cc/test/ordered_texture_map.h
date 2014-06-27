@@ -9,7 +9,7 @@
 
 #include "base/containers/hash_tables.h"
 #include "base/memory/ref_counted.h"
-#include "third_party/WebKit/public/platform/WebGraphicsContext3D.h"
+#include "third_party/khronos/GLES2/gl2.h"
 
 namespace cc {
 
@@ -20,21 +20,21 @@ class OrderedTextureMap {
   OrderedTextureMap();
   ~OrderedTextureMap();
 
-  void Append(WebKit::WebGLId id, scoped_refptr<TestTexture> texture);
-  void Replace(WebKit::WebGLId id, scoped_refptr<TestTexture> texture);
-  void Remove(WebKit::WebGLId id);
+  void Append(GLuint id, scoped_refptr<TestTexture> texture);
+  void Replace(GLuint id, scoped_refptr<TestTexture> texture);
+  void Remove(GLuint id);
 
   size_t Size();
 
-  bool ContainsId(WebKit::WebGLId id);
+  bool ContainsId(GLuint id);
 
-  scoped_refptr<TestTexture> TextureForId(WebKit::WebGLId id);
-  WebKit::WebGLId IdAt(size_t index);
+  scoped_refptr<TestTexture> TextureForId(GLuint id);
+  GLuint IdAt(size_t index);
 
  private:
-  typedef base::hash_map<WebKit::WebGLId, scoped_refptr<TestTexture> >
+  typedef base::hash_map<GLuint, scoped_refptr<TestTexture> >
       TextureMap;
-  typedef std::vector<WebKit::WebGLId> TextureList;
+  typedef std::vector<GLuint> TextureList;
 
   TextureMap textures_;
   TextureList ordered_textures_;

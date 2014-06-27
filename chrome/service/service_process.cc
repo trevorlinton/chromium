@@ -35,7 +35,7 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_switches.h"
 
-#if defined(OS_LINUX) || defined(OS_OPENBSD)
+#if defined(USE_GLIB)
 #include <glib-object.h>
 #endif
 
@@ -101,18 +101,19 @@ void PrepareRestartOnCrashEnviroment(
   // The encoding we use for the info is "title|context|direction" where
   // direction is either env_vars::kRtlLocale or env_vars::kLtrLocale depending
   // on the current locale.
-  string16 dlg_strings(l10n_util::GetStringUTF16(IDS_CRASH_RECOVERY_TITLE));
+  base::string16 dlg_strings(
+      l10n_util::GetStringUTF16(IDS_CRASH_RECOVERY_TITLE));
   dlg_strings.push_back('|');
-  string16 adjusted_string(
-      l10n_util::GetStringFUTF16(IDS_SERVICE_CRASH_RECOVERY_CONTENT,
+  base::string16 adjusted_string(l10n_util::GetStringFUTF16(
+      IDS_SERVICE_CRASH_RECOVERY_CONTENT,
       l10n_util::GetStringUTF16(IDS_GOOGLE_CLOUD_PRINT)));
   base::i18n::AdjustStringForLocaleDirection(&adjusted_string);
   dlg_strings.append(adjusted_string);
   dlg_strings.push_back('|');
-  dlg_strings.append(ASCIIToUTF16(
+  dlg_strings.append(base::ASCIIToUTF16(
       base::i18n::IsRTL() ? env_vars::kRtlLocale : env_vars::kLtrLocale));
 
-  env->SetVar(env_vars::kRestartInfo, UTF16ToUTF8(dlg_strings));
+  env->SetVar(env_vars::kRestartInfo, base::UTF16ToUTF8(dlg_strings));
 }
 
 }  // namespace
@@ -143,7 +144,7 @@ bool ServiceProcess::Initialize(base::MessageLoopForUI* message_loop,
   char **argv_pointer = argv.get();
   gtk_init_check(&argc, &argv_pointer);
   free(argv[0]);
-#elif defined(OS_LINUX) || defined(OS_OPENBSD)
+#elif defined(USE_GLIB)
   // g_type_init has been deprecated since version 2.35.
 #if !GLIB_CHECK_VERSION(2, 35, 0)
   // GLib type system initialization is needed for gconf.

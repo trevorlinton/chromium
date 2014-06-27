@@ -48,15 +48,15 @@ void AudioDecoderConfig::Initialize(AudioCodec codec,
   CHECK((extra_data_size != 0) == (extra_data != NULL));
 
   if (record_stats) {
-    UMA_HISTOGRAM_ENUMERATION("Media.AudioCodec", codec, kAudioCodecMax);
+    UMA_HISTOGRAM_ENUMERATION("Media.AudioCodec", codec, kAudioCodecMax + 1);
     UMA_HISTOGRAM_ENUMERATION("Media.AudioSampleFormat", sample_format,
-                              kSampleFormatMax);
+                              kSampleFormatMax + 1);
     UMA_HISTOGRAM_ENUMERATION("Media.AudioChannelLayout", channel_layout,
-                              CHANNEL_LAYOUT_MAX);
-    AudioSampleRate asr = media::AsAudioSampleRate(samples_per_second);
-    if (asr != kUnexpectedAudioSampleRate) {
+                              CHANNEL_LAYOUT_MAX + 1);
+    AudioSampleRate asr;
+    if (ToAudioSampleRate(samples_per_second, &asr)) {
       UMA_HISTOGRAM_ENUMERATION("Media.AudioSamplesPerSecond", asr,
-                                kUnexpectedAudioSampleRate);
+                                kAudioSampleRateMax + 1);
     } else {
       UMA_HISTOGRAM_COUNTS(
           "Media.AudioSamplesPerSecondUnexpected", samples_per_second);
@@ -103,6 +103,21 @@ bool AudioDecoderConfig::Matches(const AudioDecoderConfig& config) const {
           (sample_format() == config.sample_format()) &&
           (seek_preroll() == config.seek_preroll()) &&
           (codec_delay() == config.codec_delay()));
+}
+
+std::string AudioDecoderConfig::AsHumanReadableString() const {
+  std::ostringstream s;
+  s << "codec: " << codec()
+    << " bytes_per_channel: " << bytes_per_channel()
+    << " channel_layout: " << channel_layout()
+    << " samples_per_second: " << samples_per_second()
+    << " sample_format: " << sample_format()
+    << " bytes_per_frame: " << bytes_per_frame()
+    << " seek_preroll: " << seek_preroll().InMilliseconds() << "ms"
+    << " codec_delay: " << codec_delay().InMilliseconds() << "ms"
+    << " has extra data? " << (extra_data() ? "true" : "false")
+    << " encrypted? " << (is_encrypted() ? "true" : "false");
+  return s.str();
 }
 
 }  // namespace media

@@ -9,9 +9,10 @@ include_rules = [
   # For bridge/c/c_utility.h in npruntime_util.cc
   "+bridge",
   "+cc",
+  "-cc/surfaces",
   "+grit",  # For generated headers
   "+skia",
-  "+third_party/angle_dx11",
+  "+third_party/angle",
   "+third_party/hyphen",
   "+third_party/leveldatabase",
   "+third_party/skia",
@@ -27,10 +28,11 @@ include_rules = [
   # For gpu/
   "+ui/gfx",
   "+ui/gl",
+  "+gpu/GLES2",
   "+gpu/command_buffer/client",
   "+gpu/command_buffer/common",
   "+gpu/command_buffer/service",
-  "+gpu/GLES2",
+  "+gpu/skia_bindings",
   "+third_party/khronos/GLES2",
 
   # TODO(brettw) - review these; move up if it's ok, or remove the dependency

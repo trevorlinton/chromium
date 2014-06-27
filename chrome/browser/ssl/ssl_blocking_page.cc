@@ -11,6 +11,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/renderer_preferences_util.h"
@@ -37,10 +38,16 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/webui/jstemplate_builder.h"
 
+#if defined(ENABLE_CAPTIVE_PORTAL_DETECTION)
+#include "chrome/browser/captive_portal/captive_portal_service.h"
+#include "chrome/browser/captive_portal/captive_portal_service_factory.h"
+#endif
+
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
 #endif
 
+using base::ASCIIToUTF16;
 using base::TimeTicks;
 using content::InterstitialPage;
 using content::NavigationController;
@@ -53,7 +60,7 @@ enum SSLBlockingPageCommands {
   CMD_DONT_PROCEED,
   CMD_PROCEED,
   CMD_MORE,
-  CMD_RELOAD,
+  CMD_RELOAD
 };
 
 // Events for UMA.
@@ -74,6 +81,15 @@ enum SSLBlockingPageEvent {
   PROCEED_INTERNAL_HOSTNAME,
   SHOW_NEW_SITE,
   PROCEED_NEW_SITE,
+  PROCEED_MANUAL_NONOVERRIDABLE,
+  CAPTIVE_PORTAL_DETECTION_ENABLED,
+  CAPTIVE_PORTAL_DETECTION_ENABLED_OVERRIDABLE,
+  CAPTIVE_PORTAL_PROBE_COMPLETED,
+  CAPTIVE_PORTAL_PROBE_COMPLETED_OVERRIDABLE,
+  CAPTIVE_PORTAL_NO_RESPONSE,
+  CAPTIVE_PORTAL_NO_RESPONSE_OVERRIDABLE,
+  CAPTIVE_PORTAL_DETECTED,
+  CAPTIVE_PORTAL_DETECTED_OVERRIDABLE,
   UNUSED_BLOCKING_PAGE_EVENT,
 };
 
@@ -88,10 +104,40 @@ void RecordSSLBlockingPageDetailedStats(
     int cert_error,
     bool overridable,
     bool internal,
-    int num_visits) {
+    int num_visits,
+    bool captive_portal_detection_enabled,
+    bool captive_portal_probe_completed,
+    bool captive_portal_no_response,
+    bool captive_portal_detected) {
   UMA_HISTOGRAM_ENUMERATION("interstitial.ssl_error_type",
-     SSLErrorInfo::NetErrorToErrorType(cert_error), SSLErrorInfo::END_OF_ENUM);
+      SSLErrorInfo::NetErrorToErrorType(cert_error), SSLErrorInfo::END_OF_ENUM);
+#if defined(ENABLE_CAPTIVE_PORTAL_DETECTION)
+  if (captive_portal_detection_enabled)
+    RecordSSLBlockingPageEventStats(
+        overridable ?
+        CAPTIVE_PORTAL_DETECTION_ENABLED_OVERRIDABLE :
+        CAPTIVE_PORTAL_DETECTION_ENABLED);
+  if (captive_portal_probe_completed)
+    RecordSSLBlockingPageEventStats(
+        overridable ?
+        CAPTIVE_PORTAL_PROBE_COMPLETED_OVERRIDABLE :
+        CAPTIVE_PORTAL_PROBE_COMPLETED);
+  // Log only one of portal detected and no response results.
+  if (captive_portal_detected)
+    RecordSSLBlockingPageEventStats(
+        overridable ?
+        CAPTIVE_PORTAL_DETECTED_OVERRIDABLE :
+        CAPTIVE_PORTAL_DETECTED);
+  else if (captive_portal_no_response)
+    RecordSSLBlockingPageEventStats(
+        overridable ?
+        CAPTIVE_PORTAL_NO_RESPONSE_OVERRIDABLE :
+        CAPTIVE_PORTAL_NO_RESPONSE);
+#endif
   if (!overridable) {
+    if (proceed) {
+      RecordSSLBlockingPageEventStats(PROCEED_MANUAL_NONOVERRIDABLE);
+    }
     // Overridable is false if the user didn't have any option except to turn
     // back. If that's the case, don't record some of the metrics.
     return;
@@ -156,7 +202,13 @@ SSLBlockingPage::SSLBlockingPage(
       overridable_(overridable),
       strict_enforcement_(strict_enforcement),
       internal_(false),
-      num_visits_(-1) {
+      num_visits_(-1),
+      captive_portal_detection_enabled_(false),
+      captive_portal_probe_completed_(false),
+      captive_portal_no_response_(false),
+      captive_portal_detected_(false) {
+  Profile* profile = Profile::FromBrowserContext(
+      web_contents->GetBrowserContext());
   // For UMA stats.
   if (net::IsHostnameNonUnique(request_url_.HostNoBrackets()))
     internal_ = true;
@@ -166,8 +218,7 @@ SSLBlockingPage::SSLBlockingPage(
     if (internal_)
       RecordSSLBlockingPageEventStats(SHOW_INTERNAL_HOSTNAME);
     HistoryService* history_service = HistoryServiceFactory::GetForProfile(
-        Profile::FromBrowserContext(web_contents->GetBrowserContext()),
-        Profile::EXPLICIT_ACCESS);
+        profile, Profile::EXPLICIT_ACCESS);
     if (history_service) {
       history_service->GetVisibleVisitCountToHost(
           request_url_,
@@ -176,6 +227,16 @@ SSLBlockingPage::SSLBlockingPage(
                     base::Unretained(this)));
     }
   }
+
+#if defined(ENABLE_CAPTIVE_PORTAL_DETECTION)
+  captive_portal::CaptivePortalService* captive_portal_service =
+      captive_portal::CaptivePortalServiceFactory::GetForProfile(profile);
+  captive_portal_detection_enabled_ = captive_portal_service ->enabled();
+  captive_portal_service ->DetectCaptivePortal();
+  registrar_.Add(this,
+                 chrome::NOTIFICATION_CAPTIVE_PORTAL_CHECK_RESULT,
+                 content::Source<Profile>(profile));
+#endif
 
   interstitial_page_ = InterstitialPage::Create(
       web_contents_, true, request_url, this);
@@ -188,7 +249,11 @@ SSLBlockingPage::~SSLBlockingPage() {
                                        cert_error_,
                                        overridable_ && !strict_enforcement_,
                                        internal_,
-                                       num_visits_);
+                                       num_visits_,
+                                       captive_portal_detection_enabled_,
+                                       captive_portal_probe_completed_,
+                                       captive_portal_no_response_,
+                                       captive_portal_detected_);
     // The page is closed without the user having chosen what to do, default to
     // deny.
     NotifyDenyCertificate();
@@ -196,7 +261,7 @@ SSLBlockingPage::~SSLBlockingPage() {
 }
 
 std::string SSLBlockingPage::GetHTMLContents() {
-  DictionaryValue strings;
+  base::DictionaryValue strings;
   int resource_id;
   if (overridable_ && !strict_enforcement_) {
     // Let's build the overridable error page.
@@ -245,7 +310,7 @@ std::string SSLBlockingPage::GetHTMLContents() {
         l10n_util::GetStringUTF16(IDS_SSL_BLOCKING_PAGE_TECH_TITLE));
 
     // Strings that are dependent on the URL.
-    string16 url(ASCIIToUTF16(request_url_.host()));
+    base::string16 url(ASCIIToUTF16(request_url_.host()));
     bool rtl = base::i18n::IsRTL();
     strings.SetString("textDirection", rtl ? "rtl" : "ltr");
     if (rtl)
@@ -265,32 +330,32 @@ std::string SSLBlockingPage::GetHTMLContents() {
     // Strings that are dependent on the error type.
     SSLErrorInfo::ErrorType type =
         SSLErrorInfo::NetErrorToErrorType(cert_error_);
-    string16 errorType;
+    base::string16 errorType;
     if (type == SSLErrorInfo::CERT_REVOKED) {
-      errorType = string16(ASCIIToUTF16("Key revocation"));
+      errorType = base::string16(ASCIIToUTF16("Key revocation"));
       strings.SetString(
           "failure",
           l10n_util::GetStringUTF16(IDS_SSL_BLOCKING_PAGE_REVOKED));
     } else if (type == SSLErrorInfo::CERT_INVALID) {
-      errorType = string16(ASCIIToUTF16("Malformed certificate"));
+      errorType = base::string16(ASCIIToUTF16("Malformed certificate"));
       strings.SetString(
           "failure",
           l10n_util::GetStringUTF16(IDS_SSL_BLOCKING_PAGE_FORMATTED));
     } else if (type == SSLErrorInfo::CERT_PINNED_KEY_MISSING) {
-      errorType = string16(ASCIIToUTF16("Certificate pinning failure"));
+      errorType = base::string16(ASCIIToUTF16("Certificate pinning failure"));
       strings.SetString(
           "failure",
           l10n_util::GetStringFUTF16(IDS_SSL_BLOCKING_PAGE_PINNING,
                                      url.c_str()));
     } else if (type == SSLErrorInfo::CERT_WEAK_KEY_DH) {
-      errorType = string16(ASCIIToUTF16("Weak DH public key"));
+      errorType = base::string16(ASCIIToUTF16("Weak DH public key"));
       strings.SetString(
           "failure",
           l10n_util::GetStringFUTF16(IDS_SSL_BLOCKING_PAGE_WEAK_DH,
                                      url.c_str()));
     } else {
       // HSTS failure.
-      errorType = string16(ASCIIToUTF16("HSTS failure"));
+      errorType = base::string16(ASCIIToUTF16("HSTS failure"));
       strings.SetString(
           "failure",
           l10n_util::GetStringFUTF16(IDS_SSL_BLOCKING_PAGE_HSTS, url.c_str()));
@@ -302,16 +367,18 @@ std::string SSLBlockingPage::GetHTMLContents() {
                                                 errorType.c_str()));
 
     // Strings that display the invalid cert.
-    string16 subject(ASCIIToUTF16(ssl_info_.cert->subject().GetDisplayName()));
-    string16 issuer(ASCIIToUTF16(ssl_info_.cert->issuer().GetDisplayName()));
+    base::string16 subject(
+        ASCIIToUTF16(ssl_info_.cert->subject().GetDisplayName()));
+    base::string16 issuer(
+        ASCIIToUTF16(ssl_info_.cert->issuer().GetDisplayName()));
     std::string hashes;
-    for (std::vector<net::HashValue>::iterator it =
+    for (std::vector<net::HashValue>::const_iterator it =
             ssl_info_.public_key_hashes.begin();
          it != ssl_info_.public_key_hashes.end();
          ++it) {
       base::StringAppendF(&hashes, "%s ", it->ToString().c_str());
     }
-    string16 fingerprint(ASCIIToUTF16(hashes));
+    base::string16 fingerprint(ASCIIToUTF16(hashes));
     if (rtl) {
       // These are always going to be LTR.
       base::i18n::WrapStringWithLTRFormatting(&subject);
@@ -339,6 +406,7 @@ std::string SSLBlockingPage::GetHTMLContents() {
 void SSLBlockingPage::OverrideEntry(NavigationEntry* entry) {
   int cert_id = content::CertStore::GetInstance()->StoreCert(
       ssl_info_.cert.get(), web_contents_->GetRenderProcessHost()->GetID());
+  DCHECK(cert_id);
 
   entry->GetSSL().security_style =
       content::SECURITY_STYLE_AUTHENTICATION_BROKEN;
@@ -380,7 +448,11 @@ void SSLBlockingPage::OnProceed() {
                                      cert_error_,
                                      overridable_ && !strict_enforcement_,
                                      internal_,
-                                     num_visits_);
+                                     num_visits_,
+                                     captive_portal_detection_enabled_,
+                                     captive_portal_probe_completed_,
+                                     captive_portal_no_response_,
+                                     captive_portal_detected_);
   // Accepting the certificate resumes the loading of the page.
   NotifyAllowCertificate();
 }
@@ -390,7 +462,11 @@ void SSLBlockingPage::OnDontProceed() {
                                      cert_error_,
                                      overridable_ && !strict_enforcement_,
                                      internal_,
-                                     num_visits_);
+                                     num_visits_,
+                                     captive_portal_detection_enabled_,
+                                     captive_portal_probe_completed_,
+                                     captive_portal_no_response_,
+                                     captive_portal_detected_);
   NotifyDenyCertificate();
 }
 
@@ -414,8 +490,8 @@ void SSLBlockingPage::NotifyAllowCertificate() {
 
 // static
 void SSLBlockingPage::SetExtraInfo(
-    DictionaryValue* strings,
-    const std::vector<string16>& extra_info) {
+    base::DictionaryValue* strings,
+    const std::vector<base::string16>& extra_info) {
   DCHECK_LT(extra_info.size(), 5U);  // We allow 5 paragraphs max.
   const char* keys[5] = {
       "moreInfo1", "moreInfo2", "moreInfo3", "moreInfo4", "moreInfo5"
@@ -434,4 +510,32 @@ void SSLBlockingPage::OnGotHistoryCount(HistoryService::Handle handle,
                                         int num_visits,
                                         base::Time first_visit) {
   num_visits_ = num_visits;
+}
+
+void SSLBlockingPage::Observe(
+    int type,
+    const content::NotificationSource& source,
+    const content::NotificationDetails& details) {
+#if defined(ENABLE_CAPTIVE_PORTAL_DETECTION)
+  if (type == chrome::NOTIFICATION_CAPTIVE_PORTAL_CHECK_RESULT) {
+    captive_portal_probe_completed_ = true;
+    captive_portal::CaptivePortalService::Results* results =
+        content::Details<captive_portal::CaptivePortalService::Results>(
+            details).ptr();
+    // If a captive portal was detected at any point when the interstitial was
+    // displayed, assume that the interstitial was caused by a captive portal.
+    // Example scenario:
+    // 1- Interstitial displayed and captive portal detected, setting the flag.
+    // 2- Captive portal detection automatically opens portal login page.
+    // 3- User logs in on the portal login page.
+    // A notification will be received here for RESULT_INTERNET_CONNECTED. Make
+    // sure we don't clear the captive portal flag, since the interstitial was
+    // potentially caused by the captive portal.
+    captive_portal_detected_ = captive_portal_detected_ ||
+        (results->result == captive_portal::RESULT_BEHIND_CAPTIVE_PORTAL);
+    // Also keep track of non-HTTP portals and error cases.
+    captive_portal_no_response_ = captive_portal_no_response_ ||
+        (results->result == captive_portal::RESULT_NO_RESPONSE);
+  }
+#endif
 }

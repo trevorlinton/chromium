@@ -11,6 +11,7 @@ void EnumerateGPUDevice(gpu::GPUInfo::Enumerator* enumerator,
   enumerator->BeginGPUDevice();
   enumerator->AddInt("vendorId", device.vendor_id);
   enumerator->AddInt("deviceId", device.device_id);
+  enumerator->AddBool("active", device.active);
   enumerator->AddString("vendorString", device.vendor_string);
   enumerator->AddString("deviceString", device.device_string);
   enumerator->EndGPUDevice();
@@ -22,7 +23,8 @@ namespace gpu {
 
 GPUInfo::GPUDevice::GPUDevice()
     : vendor_id(0),
-      device_id(0) {
+      device_id(0),
+      active(false) {
 }
 
 GPUInfo::GPUDevice::~GPUDevice() { }
@@ -36,6 +38,7 @@ GPUInfo::GPUInfo()
       gl_reset_notification_strategy(0),
       can_lose_context(false),
       software_rendering(false),
+      direct_rendering(true),
       sandboxed(false) {
 }
 
@@ -70,6 +73,7 @@ void GPUInfo::EnumerateFields(Enumerator* enumerator) const {
     bool can_lose_context;
     GpuPerformanceStats performance_stats;
     bool software_rendering;
+    bool direct_rendering;
     bool sandboxed;
 #if defined(OS_WIN)
     DxDiagNode dx_diagnostics;
@@ -121,6 +125,7 @@ void GPUInfo::EnumerateFields(Enumerator* enumerator) const {
   enumerator->AddBool("can_lose_context", can_lose_context);
   // TODO(kbr): add performance_stats.
   enumerator->AddBool("softwareRendering", software_rendering);
+  enumerator->AddBool("directRendering", direct_rendering);
   enumerator->AddBool("sandboxed", sandboxed);
   // TODO(kbr): add dx_diagnostics on Windows.
   enumerator->EndAuxAttributes();

@@ -26,6 +26,7 @@ class BluetoothDeviceWin : public BluetoothDevice {
   // BluetoothDevice override
   virtual uint32 GetBluetoothClass() const OVERRIDE;
   virtual std::string GetAddress() const OVERRIDE;
+  virtual VendorIDSource GetVendorIDSource() const OVERRIDE;
   virtual uint16 GetVendorID() const OVERRIDE;
   virtual uint16 GetProductID() const OVERRIDE;
   virtual uint16 GetDeviceID() const OVERRIDE;
@@ -33,13 +34,7 @@ class BluetoothDeviceWin : public BluetoothDevice {
   virtual bool IsConnected() const OVERRIDE;
   virtual bool IsConnectable() const OVERRIDE;
   virtual bool IsConnecting() const OVERRIDE;
-  virtual ServiceList GetServices() const OVERRIDE;
-  virtual void GetServiceRecords(
-      const ServiceRecordsCallback& callback,
-      const ErrorCallback& error_callback) OVERRIDE;
-  virtual void ProvidesServiceWithName(
-      const std::string& name,
-      const ProvidesServiceCallback& callback) OVERRIDE;
+  virtual UUIDList GetUUIDs() const OVERRIDE;
   virtual bool ExpectingPinCode() const OVERRIDE;
   virtual bool ExpectingPasskey() const OVERRIDE;
   virtual bool ExpectingConfirmation() const OVERRIDE;
@@ -71,7 +66,10 @@ class BluetoothDeviceWin : public BluetoothDevice {
       const base::Closure& callback,
       const ErrorCallback& error_callback) OVERRIDE;
 
-  const BluetoothServiceRecord* GetServiceRecord(const std::string& uuid) const;
+  // Used by BluetoothProfileWin to retrieve the service record for the given
+  // |uuid|.
+  const BluetoothServiceRecord* GetServiceRecord(
+      const std::string& uuid) const;
 
  protected:
   // BluetoothDevice override
@@ -104,7 +102,10 @@ class BluetoothDeviceWin : public BluetoothDevice {
   bool visible_;
 
   // The services (identified by UUIDs) that this device provides.
-  ServiceList service_uuids_;
+  UUIDList uuids_;
+
+  // The service records retrieved from SDP.
+  typedef ScopedVector<BluetoothServiceRecord> ServiceRecordList;
   ServiceRecordList service_record_list_;
 
   DISALLOW_COPY_AND_ASSIGN(BluetoothDeviceWin);

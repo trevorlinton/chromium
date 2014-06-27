@@ -7,10 +7,10 @@
 #include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/gpu/gpu_feature_checker.h"
-#include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/manifest_handlers/requirements_handler.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest.h"
+#include "extensions/common/manifest_handlers/requirements_info.h"
 #include "gpu/config/gpu_feature_type.h"
 #include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -47,6 +47,13 @@ void RequirementsChecker::Check(scoped_refptr<const Extension> extension,
           l10n_util::GetStringUTF8(IDS_EXTENSION_NPAPI_NOT_SUPPORTED));
     }
 #endif  // defined(OS_WIN)
+  }
+
+  if (requirements.window_shape) {
+#if !defined(USE_AURA)
+    errors_.push_back(
+        l10n_util::GetStringUTF8(IDS_EXTENSION_WINDOW_SHAPE_NOT_SUPPORTED));
+#endif  // !defined(USE_AURA)
   }
 
   if (requirements.webgl) {

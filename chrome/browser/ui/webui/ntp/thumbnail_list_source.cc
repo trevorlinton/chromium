@@ -22,13 +22,13 @@
 
 namespace {
 
-const char* html_header =
-    "<!DOCTYPE HTML>\n<html>\n<head>\n<title>TopSites Thumbnails</title>\n"
+const char kHtmlHeader[] =
+    "<!DOCTYPE html>\n<html>\n<head>\n<title>TopSites Thumbnails</title>\n"
     "<meta charset=\"utf-8\">\n"
     "<style type=\"text/css\">\nimg.thumb {border: 1px solid black;}\n"
     "li {white-space: nowrap;}\n</style>\n";
-const char* html_body = "</head>\n<body>\n";
-const char* html_footer = "</body>\n</html>\n";
+const char kHtmlBody[] = "</head>\n<body>\n";
+const char kHtmlFooter[] = "</body>\n</html>\n";
 
 // If |want_thumbnails| == true, then renders elements in |mvurl_list| that have
 // thumbnails, with their thumbnails. Otherwise renders elements in |mvurl_list|
@@ -39,9 +39,17 @@ void RenderMostVisitedURLList(
     bool want_thumbnails,
     std::vector<std::string>* out) {
   DCHECK_EQ(mvurl_list.size(), base64_encoded_pngs.size());
-  out->push_back("<div><ul>\n");
+  bool doing_forced_urls = true;
+  out->push_back("<div><b>Forced URLs:</b></div>\n"
+                 "<div><ul>\n");
   for (size_t i = 0; i < mvurl_list.size(); ++i) {
     const history::MostVisitedURL& mvurl = mvurl_list[i];
+    if (doing_forced_urls && mvurl.last_forced_time.is_null()) {
+      out->push_back("</ul></div>\n"
+                     "<div><b>Non-forced URLs:</b></div>\n"
+                     "<div><ul>\n");
+      doing_forced_urls = false;
+    }
     bool has_thumbnail = !base64_encoded_pngs[i].empty();
     if (has_thumbnail == want_thumbnails) {
       out->push_back("<li>\n");
@@ -84,12 +92,12 @@ std::string ThumbnailListSource::GetSource() const {
 void ThumbnailListSource::StartDataRequest(
     const std::string& path,
     int render_process_id,
-    int render_view_id,
+    int render_frame_id,
     const content::URLDataSource::GotDataCallback& callback) {
   profile_->GetTopSites()->GetMostVisitedURLs(
       base::Bind(&ThumbnailListSource::OnMostVisitedURLsAvailable,
                  weak_ptr_factory_.GetWeakPtr(),
-                 callback));
+                 callback), true);
 }
 
 std::string ThumbnailListSource::GetMimeType(const std::string& path) const {
@@ -121,18 +129,16 @@ void ThumbnailListSource::OnMostVisitedURLsAvailable(
   for (size_t i = 0; i < num_mv; ++i) {
     scoped_refptr<base::RefCountedMemory> data;
     if (thumbnail_service_->GetPageThumbnail(mvurl_list[i].url, false, &data)) {
-      std::string data_str;
-      data_str.assign(reinterpret_cast<const char*>(data->front()),
-                      data->size());
-      base::Base64Encode(data_str, &base64_encoded_pngs[i]);
+      base::Base64Encode(std::string(data->front_as<char>(), data->size()),
+                         &base64_encoded_pngs[i]);
       ++num_mv_with_thumb;
     }
   }
 
   // Render HTML to embed URLs and thumbnails.
   std::vector<std::string> out;
-  out.push_back(html_header);
-  out.push_back(html_body);
+  out.push_back(kHtmlHeader);
+  out.push_back(kHtmlBody);
   if (num_mv_with_thumb > 0) {
     out.push_back("<h2>TopSites URLs with Thumbnails</h2>\n");
     RenderMostVisitedURLList(mvurl_list, base64_encoded_pngs, true, &out);
@@ -141,7 +147,7 @@ void ThumbnailListSource::OnMostVisitedURLsAvailable(
     out.push_back("<h2>TopSites URLs without Thumbnails</h2>\n");
     RenderMostVisitedURLList(mvurl_list, base64_encoded_pngs, false, &out);
   }
-  out.push_back(html_footer);
+  out.push_back(kHtmlFooter);
 
   std::string out_html = JoinString(out, "");
   callback.Run(base::RefCountedString::TakeString(&out_html));

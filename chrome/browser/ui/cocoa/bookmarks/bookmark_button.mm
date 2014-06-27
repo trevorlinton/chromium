@@ -13,11 +13,12 @@
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_folder_window.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_button_cell.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
+#import "chrome/browser/ui/cocoa/nsview_additions.h"
 #import "chrome/browser/ui/cocoa/view_id_util.h"
 #include "content/public/browser/user_metrics.h"
 #include "ui/gfx/scoped_ns_graphics_context_save_gstate_mac.h"
 
-using content::UserMetricsAction;
+using base::UserMetricsAction;
 
 // The opacity of the bookmark button drag image.
 static const CGFloat kDragImageOpacity = 0.7;
@@ -404,25 +405,14 @@ BookmarkButton* gDraggedButton = nil; // Weak
 }
 
 - (BOOL)isOpaque {
-  // Make this control opaque so that sub pixel anti aliasing works when core
-  // animation is enabled.
+  // Make this control opaque so that sub-pixel anti-aliasing works when
+  // CoreAnimation is enabled.
   return YES;
 }
 
 - (void)drawRect:(NSRect)rect {
-  // Draw the toolbar background.
-  {
-    gfx::ScopedNSGraphicsContextSaveGState scopedGSState;
-    NSView* toolbarView = [[self superview] superview];
-    NSRect frame = [self convertRect:[self bounds] toView:toolbarView];
-
-    NSAffineTransform* transform = [NSAffineTransform transform];
-    [transform translateXBy:-NSMinX(frame) yBy:-NSMinY(frame)];
-    [transform concat];
-
-    [toolbarView drawRect:[toolbarView bounds]];
-  }
-
+  NSView* bookmarkBarToolbarView = [[self superview] superview];
+  [self cr_drawUsingAncestor:bookmarkBarToolbarView inRect:(NSRect)rect];
   [super drawRect:rect];
 }
 

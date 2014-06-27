@@ -12,7 +12,7 @@
 #include "chrome/browser/local_discovery/privet_device_lister.h"
 #include "chrome/browser/local_discovery/privet_http.h"
 #include "chrome/browser/notifications/notification_delegate.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service.h"
+#include "components/keyed_service/core/keyed_service.h"
 
 class NotificationUIManager;
 
@@ -26,11 +26,14 @@ class ServiceDiscoverySharedClient;
 class PrivetDeviceLister;
 class PrivetHTTPAsynchronousFactory;
 class PrivetHTTPResolution;
-class PrivetTrafficDetector;
 struct DeviceDescription;
 
+#if defined(ENABLE_MDNS)
+class PrivetTrafficDetector;
+#endif  // ENABLE_MDNS
+
 // Contains logic related to notifications not tied actually displaying them.
-class PrivetNotificationsListener : public PrivetInfoOperation::Delegate {
+class PrivetNotificationsListener  {
  public:
   class Delegate {
    public:
@@ -57,12 +60,6 @@ class PrivetNotificationsListener : public PrivetInfoOperation::Delegate {
   void DeviceRemoved(const std::string& name);
   virtual void DeviceCacheFlushed();
 
-  // PrivetInfoOperation::Delegate implementation.
-  virtual void OnPrivetInfoDone(
-      PrivetInfoOperation* operation,
-      int http_code,
-      const base::DictionaryValue* json_value) OVERRIDE;
-
  private:
   struct DeviceContext {
     DeviceContext();
@@ -70,7 +67,7 @@ class PrivetNotificationsListener : public PrivetInfoOperation::Delegate {
 
     bool notification_may_be_active;
     bool registered;
-    scoped_ptr<PrivetInfoOperation> info_operation;
+    scoped_ptr<PrivetJSONOperation> info_operation;
     scoped_ptr<PrivetHTTPResolution> privet_http_resolution;
     scoped_ptr<PrivetHTTPClient> privet_http;
   };
@@ -78,6 +75,9 @@ class PrivetNotificationsListener : public PrivetInfoOperation::Delegate {
   typedef std::map<std::string, linked_ptr<DeviceContext> > DeviceContextMap;
 
   void CreateInfoOperation(scoped_ptr<PrivetHTTPClient> http_client);
+  void OnPrivetInfoDone(DeviceContext* device,
+                        const base::DictionaryValue* json_value);
+
 
   void NotifyDeviceRemoved();
 
@@ -89,7 +89,7 @@ class PrivetNotificationsListener : public PrivetInfoOperation::Delegate {
 };
 
 class PrivetNotificationService
-    : public BrowserContextKeyedService,
+    : public KeyedService,
       public PrivetDeviceLister::Delegate,
       public PrivetNotificationsListener::Delegate,
       public base::SupportsWeakPtr<PrivetNotificationService> {
@@ -119,9 +119,12 @@ class PrivetNotificationService
   content::BrowserContext* profile_;
   scoped_ptr<PrivetDeviceLister> device_lister_;
   scoped_refptr<ServiceDiscoverySharedClient> service_discovery_client_;
-  scoped_refptr<PrivetTrafficDetector> traffic_detector_;
   scoped_ptr<PrivetNotificationsListener> privet_notifications_listener_;
   BooleanPrefMember enable_privet_notification_member_;
+
+#if defined(ENABLE_MDNS)
+  scoped_refptr<PrivetTrafficDetector> traffic_detector_;
+#endif  // ENABLE_MDNS
 };
 
 class PrivetNotificationDelegate : public NotificationDelegate {

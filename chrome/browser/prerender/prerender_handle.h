@@ -38,6 +38,9 @@ class PrerenderHandle : public base::NonThreadSafe,
     // Signals that the prerender has had its load event.
     virtual void OnPrerenderStopLoading(PrerenderHandle* handle) = 0;
 
+    // Signals that the prerender has had its 'DOMContentLoaded' event.
+    virtual void OnPrerenderDomContentLoaded(PrerenderHandle* handle) = 0;
+
     // Signals that the prerender has stopped running.
     virtual void OnPrerenderStop(PrerenderHandle* handle) = 0;
 
@@ -73,6 +76,8 @@ class PrerenderHandle : public base::NonThreadSafe,
   // True if we started a prerender, and it has finished loading.
   bool IsFinishedLoading() const;
 
+  PrerenderContents* contents() const;
+
   // Returns whether the prerender matches the URL provided.
   bool Matches(
       const GURL& url,
@@ -82,17 +87,24 @@ class PrerenderHandle : public base::NonThreadSafe,
   // the other PrerenderHandle object specified.
   bool RepresentingSamePrerenderAs(PrerenderHandle* other) const;
 
+  // Retrieves the SessionStorageNamespace of the underlying prerender, if
+  // available.
+  content::SessionStorageNamespace* GetSessionStorageNamespace() const;
+
+  // Returns the child id of the prerender.
+  int GetChildId() const;
+
  private:
   friend class PrerenderManager;
 
   explicit PrerenderHandle(PrerenderManager::PrerenderData* prerender_data);
 
-  void AdoptPrerenderDataFrom(PrerenderHandle* other_handle);
-
   // From PrerenderContents::Observer:
   virtual void OnPrerenderStart(PrerenderContents* prerender_contents) OVERRIDE;
   virtual void OnPrerenderStopLoading(PrerenderContents* prerender_contents)
       OVERRIDE;
+  virtual void OnPrerenderDomContentLoaded(
+      PrerenderContents* prerender_contents) OVERRIDE;
   virtual void OnPrerenderStop(PrerenderContents* prerender_contents) OVERRIDE;
   virtual void OnPrerenderCreatedMatchCompleteReplacement(
       PrerenderContents* contents, PrerenderContents* replacement) OVERRIDE;

@@ -11,6 +11,7 @@
 #include <string>
 
 #include "base/basictypes.h"
+#include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -27,9 +28,14 @@ class SingleThreadTaskRunner;
 }  // namespace base
 
 namespace syncer {
+class SyncNetworkChannel;
+class GCMNetworkChannelDelegate;
 
-// TODO(akalin): Generalize the interface so it can use any Invalidator.
-// (http://crbug.com/140409).
+// Callback type for function that creates SyncNetworkChannel. This function
+// gets passed into NonBlockingInvalidator constructor.
+typedef base::Callback<scoped_ptr<SyncNetworkChannel>(void)>
+    NetworkChannelCreator;
+
 class SYNC_EXPORT_PRIVATE NonBlockingInvalidator
     : public Invalidator,
       // InvalidationHandler to "observe" our Core via WeakHandle.
@@ -37,13 +43,15 @@ class SYNC_EXPORT_PRIVATE NonBlockingInvalidator
  public:
   // |invalidation_state_tracker| must be initialized.
   NonBlockingInvalidator(
-      const notifier::NotifierOptions& notifier_options,
+      NetworkChannelCreator network_channel_creator,
       const std::string& invalidator_client_id,
-      const InvalidationStateMap& initial_invalidation_state_map,
+      const UnackedInvalidationsMap& saved_invalidations,
       const std::string& invalidation_bootstrap_data,
       const WeakHandle<InvalidationStateTracker>&
           invalidation_state_tracker,
-      const std::string& client_info);
+      const std::string& client_info,
+      const scoped_refptr<net::URLRequestContextGetter>&
+          request_context_getter);
 
   virtual ~NonBlockingInvalidator();
 
@@ -52,18 +60,30 @@ class SYNC_EXPORT_PRIVATE NonBlockingInvalidator
   virtual void UpdateRegisteredIds(InvalidationHandler* handler,
                                    const ObjectIdSet& ids) OVERRIDE;
   virtual void UnregisterHandler(InvalidationHandler* handler) OVERRIDE;
-  virtual void Acknowledge(const invalidation::ObjectId& id,
-                           const AckHandle& ack_handle) OVERRIDE;
   virtual InvalidatorState GetInvalidatorState() const OVERRIDE;
   virtual void UpdateCredentials(
       const std::string& email, const std::string& token) OVERRIDE;
+  virtual void RequestDetailedStatus(
+      base::Callback<void(const base::DictionaryValue&)> callback) const
+      OVERRIDE;
 
   // InvalidationHandler implementation.
   virtual void OnInvalidatorStateChange(InvalidatorState state) OVERRIDE;
   virtual void OnIncomingInvalidation(
       const ObjectIdInvalidationMap& invalidation_map) OVERRIDE;
+  virtual std::string GetOwnerName() const OVERRIDE;
 
+  // Static functions to construct callback that creates network channel for
+  // SyncSystemResources. The goal is to pass network channel to invalidator at
+  // the same time not exposing channel specific parameters to invalidator and
+  // channel implementation to client of invalidator.
+  static NetworkChannelCreator MakePushClientChannelCreator(
+      const notifier::NotifierOptions& notifier_options);
+  static NetworkChannelCreator MakeGCMNetworkChannelCreator(
+      scoped_refptr<net::URLRequestContextGetter> request_context_getter,
+      scoped_ptr<GCMNetworkChannelDelegate> delegate);
  private:
+  struct InitializeOptions;
   class Core;
 
   InvalidatorRegistrar registrar_;

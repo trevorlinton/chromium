@@ -9,6 +9,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/font_list.h"
 #include "ui/gfx/insets.h"
 #include "ui/gfx/text_utils.h"
 #include "ui/views/bubble/bubble_border.h"
@@ -36,35 +37,13 @@ const int kEllipsesButtonTag = -1;
 
 namespace views {
 
-class TouchEditingMenuButtonBorder : public LabelButtonBorder {
- public:
-  TouchEditingMenuButtonBorder(Button::ButtonStyle style,
-                               const gfx::Insets& insets)
-      : LabelButtonBorder(style),
-        insets_(insets) {
-  }
-
-  virtual ~TouchEditingMenuButtonBorder() {
-  }
-
- private:
-  // Overridden from LabelButtonBorder
-  virtual gfx::Insets GetInsets() const OVERRIDE {
-    return insets_;
-  }
-
-  gfx::Insets insets_;
-
-  DISALLOW_COPY_AND_ASSIGN(TouchEditingMenuButtonBorder);
-};
-
 TouchEditingMenuView::TouchEditingMenuView(
     TouchEditingMenuController* controller,
     gfx::Rect anchor_rect,
     gfx::NativeView context)
     : BubbleDelegateView(NULL, views::BubbleBorder::BOTTOM_CENTER),
       controller_(controller) {
-  set_anchor_rect(anchor_rect);
+  SetAnchorRect(anchor_rect);
   set_shadow(views::BubbleBorder::SMALL_SHADOW);
   set_parent_window(context);
   set_margins(gfx::Insets(kMenuMargin, kMenuMargin, kMenuMargin, kMenuMargin));
@@ -143,22 +122,27 @@ void TouchEditingMenuView::CreateButtons() {
 
   // Finally, add ellipses button.
   AddChildView(CreateButton(
-      UTF8ToUTF16(kEllipsesButtonText), kEllipsesButtonTag));
+      base::UTF8ToUTF16(kEllipsesButtonText), kEllipsesButtonTag));
   Layout();
 }
 
-Button* TouchEditingMenuView::CreateButton(const string16& title, int tag) {
-  string16 label = gfx::RemoveAcceleratorChar(title, '&', NULL, NULL);
+Button* TouchEditingMenuView::CreateButton(const base::string16& title,
+                                           int tag) {
+  base::string16 label = gfx::RemoveAcceleratorChar(title, '&', NULL, NULL);
   LabelButton* button = new LabelButton(this, label);
-  button->set_focusable(true);
+  button->SetFocusable(true);
   button->set_request_focus_on_press(false);
-  gfx::Font font = ui::ResourceBundle::GetSharedInstance().GetFont(
-      ui::ResourceBundle::SmallFont);
-  int v_border = (kMenuButtonHeight - font.GetHeight()) / 2;
-  int h_border = (kMenuButtonWidth - font.GetStringWidth(label)) / 2;
-  button->set_border(new TouchEditingMenuButtonBorder(button->style(),
-      gfx::Insets(v_border, h_border, v_border, h_border)));
-  button->SetFont(font);
+  const gfx::FontList& font_list =
+      ui::ResourceBundle::GetSharedInstance().GetFontList(
+          ui::ResourceBundle::SmallFont);
+  scoped_ptr<LabelButtonBorder> button_border(
+      new LabelButtonBorder(button->style()));
+  int v_border = (kMenuButtonHeight - font_list.GetHeight()) / 2;
+  int h_border = (kMenuButtonWidth - gfx::GetStringWidth(label, font_list)) / 2;
+  button_border->set_insets(
+      gfx::Insets(v_border, h_border, v_border, h_border));
+  button->SetBorder(button_border.PassAs<Border>());
+  button->SetFontList(font_list);
   button->set_tag(tag);
   return button;
 }

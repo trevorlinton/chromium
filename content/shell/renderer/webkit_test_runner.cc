@@ -27,8 +27,15 @@
 #include "content/public/renderer/render_view_visitor.h"
 #include "content/public/test/layouttest_support.h"
 #include "content/shell/common/shell_messages.h"
+#include "content/shell/common/shell_switches.h"
 #include "content/shell/common/webkit_test_helpers.h"
+#include "content/shell/renderer/gc_controller.h"
+#include "content/shell/renderer/leak_detector.h"
 #include "content/shell/renderer/shell_render_process_observer.h"
+#include "content/shell/renderer/test_runner/WebTask.h"
+#include "content/shell/renderer/test_runner/WebTestInterfaces.h"
+#include "content/shell/renderer/test_runner/WebTestProxy.h"
+#include "content/shell/renderer/test_runner/WebTestRunner.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_util.h"
 #include "skia/ext/platform_canvas.h"
@@ -42,10 +49,6 @@
 #include "third_party/WebKit/public/platform/WebURLError.h"
 #include "third_party/WebKit/public/platform/WebURLRequest.h"
 #include "third_party/WebKit/public/platform/WebURLResponse.h"
-#include "third_party/WebKit/public/testing/WebTask.h"
-#include "third_party/WebKit/public/testing/WebTestInterfaces.h"
-#include "third_party/WebKit/public/testing/WebTestProxy.h"
-#include "third_party/WebKit/public/testing/WebTestRunner.h"
 #include "third_party/WebKit/public/web/WebArrayBufferView.h"
 #include "third_party/WebKit/public/web/WebContextMenuData.h"
 #include "third_party/WebKit/public/web/WebDataSource.h"
@@ -55,34 +58,35 @@
 #include "third_party/WebKit/public/web/WebFrame.h"
 #include "third_party/WebKit/public/web/WebHistoryItem.h"
 #include "third_party/WebKit/public/web/WebKit.h"
+#include "third_party/WebKit/public/web/WebLeakDetector.h"
 #include "third_party/WebKit/public/web/WebScriptSource.h"
 #include "third_party/WebKit/public/web/WebTestingSupport.h"
 #include "third_party/WebKit/public/web/WebView.h"
 #include "ui/gfx/rect.h"
 #include "webkit/common/webpreferences.h"
-#include "webkit/glue/webkit_glue.h"
 
-using WebKit::Platform;
-using WebKit::WebArrayBufferView;
-using WebKit::WebContextMenuData;
-using WebKit::WebDevToolsAgent;
-using WebKit::WebDeviceMotionData;
-using WebKit::WebDeviceOrientationData;
-using WebKit::WebElement;
-using WebKit::WebFrame;
-using WebKit::WebGamepads;
-using WebKit::WebHistoryItem;
-using WebKit::WebPoint;
-using WebKit::WebRect;
-using WebKit::WebScriptSource;
-using WebKit::WebSize;
-using WebKit::WebString;
-using WebKit::WebURL;
-using WebKit::WebURLError;
-using WebKit::WebURLRequest;
-using WebKit::WebTestingSupport;
-using WebKit::WebVector;
-using WebKit::WebView;
+using blink::Platform;
+using blink::WebArrayBufferView;
+using blink::WebContextMenuData;
+using blink::WebDevToolsAgent;
+using blink::WebDeviceMotionData;
+using blink::WebDeviceOrientationData;
+using blink::WebElement;
+using blink::WebFrame;
+using blink::WebGamepads;
+using blink::WebHistoryItem;
+using blink::WebPoint;
+using blink::WebRect;
+using blink::WebScriptSource;
+using blink::WebSize;
+using blink::WebString;
+using blink::WebURL;
+using blink::WebURLError;
+using blink::WebURLRequest;
+using blink::WebScreenOrientation;
+using blink::WebTestingSupport;
+using blink::WebVector;
+using blink::WebView;
 using WebTestRunner::WebTask;
 using WebTestRunner::WebTestInterfaces;
 using WebTestRunner::WebTestProxyBase;
@@ -112,7 +116,7 @@ void MakeBitmapOpaque(SkBitmap* bitmap) {
 void CopyCanvasToBitmap(SkCanvas* canvas,  SkBitmap* snapshot) {
   SkBaseDevice* device = skia::GetTopDevice(*canvas);
   const SkBitmap& bitmap = device->accessBitmap(false);
-  const bool success = bitmap.copyTo(snapshot, SkBitmap::kARGB_8888_Config);
+  const bool success = bitmap.copyTo(snapshot, kPMColor_SkColorType);
   DCHECK(success);
 
 #if !defined(OS_MACOSX)
@@ -186,6 +190,20 @@ class NavigateAwayVisitor : public RenderViewVisitor {
   DISALLOW_COPY_AND_ASSIGN(NavigateAwayVisitor);
 };
 
+class UseSynchronousResizeModeVisitor : public RenderViewVisitor {
+ public:
+  explicit UseSynchronousResizeModeVisitor(bool enable) : enable_(enable) {}
+  virtual ~UseSynchronousResizeModeVisitor() {}
+
+  virtual bool Visit(RenderView* render_view) OVERRIDE {
+    UseSynchronousResizeMode(render_view, enable_);
+    return true;
+  }
+
+ private:
+  bool enable_;
+};
+
 }  // namespace
 
 WebKitTestRunner::WebKitTestRunner(RenderView* render_view)
@@ -194,7 +212,9 @@ WebKitTestRunner::WebKitTestRunner(RenderView* render_view)
       proxy_(NULL),
       focused_view_(NULL),
       is_main_window_(false),
-      focus_on_next_commit_(false) {
+      focus_on_next_commit_(false),
+      leak_detector_(new LeakDetector())
+{
   UseMockMediaStreams(render_view);
 }
 
@@ -216,6 +236,18 @@ void WebKitTestRunner::setGamepadData(const WebGamepads& gamepads) {
   SetMockGamepads(gamepads);
 }
 
+void WebKitTestRunner::didConnectGamepad(
+    int index,
+    const blink::WebGamepad& gamepad) {
+  MockGamepadConnected(index, gamepad);
+}
+
+void WebKitTestRunner::didDisconnectGamepad(
+    int index,
+    const blink::WebGamepad& gamepad) {
+  MockGamepadDisconnected(index, gamepad);
+}
+
 void WebKitTestRunner::setDeviceMotionData(const WebDeviceMotionData& data) {
   SetMockDeviceMotionData(data);
 }
@@ -223,6 +255,11 @@ void WebKitTestRunner::setDeviceMotionData(const WebDeviceMotionData& data) {
 void WebKitTestRunner::setDeviceOrientationData(
     const WebDeviceOrientationData& data) {
   SetMockDeviceOrientationData(data);
+}
+
+void WebKitTestRunner::setScreenOrientation(
+    const WebScreenOrientation& orientation) {
+  SetMockScreenOrientation(orientation);
 }
 
 void WebKitTestRunner::printMessage(const std::string& message) {
@@ -241,7 +278,7 @@ void WebKitTestRunner::postDelayedTask(WebTask* task, long long ms) {
 }
 
 WebString WebKitTestRunner::registerIsolatedFileSystem(
-    const WebKit::WebVector<WebKit::WebString>& absolute_filenames) {
+    const blink::WebVector<blink::WebString>& absolute_filenames) {
   std::vector<base::FilePath> files;
   for (size_t i = 0; i < absolute_filenames.size(); ++i)
     files.push_back(base::FilePath::FromUTF16Unsafe(absolute_filenames[i]));
@@ -279,8 +316,7 @@ WebURL WebKitTestRunner::localFileToDataURL(const WebURL& file_url) {
         routing_id(), local_path, &contents));
 
   std::string contents_base64;
-  if (!base::Base64Encode(contents, &contents_base64))
-    return WebURL();
+  base::Base64Encode(contents, &contents_base64);
 
   const char data_url_prefix[] = "data:text/css:charset=utf-8;base64,";
   return WebURL(GURL(data_url_prefix + contents_base64));
@@ -297,10 +333,10 @@ WebURL WebKitTestRunner::rewriteLayoutTestsURL(const std::string& utf8_url) {
       ShellRenderProcessObserver::GetInstance()->webkit_source_dir().Append(
           FILE_PATH_LITERAL("LayoutTests/"));
 #if defined(OS_WIN)
-  std::string utf8_path = WideToUTF8(replace_path.value());
+  std::string utf8_path = base::WideToUTF8(replace_path.value());
 #else
   std::string utf8_path =
-      WideToUTF8(base::SysNativeMBToWide(replace_path.value()));
+      base::WideToUTF8(base::SysNativeMBToWide(replace_path.value()));
 #endif
   std::string new_url =
       std::string("file://") + utf8_path + utf8_url.substr(kPrefixLen);
@@ -350,7 +386,8 @@ std::string WebKitTestRunner::makeURLErrorDescription(
 }
 
 void WebKitTestRunner::useUnfortunateSynchronousResizeMode(bool enable) {
-  UseSynchronousResizeMode(render_view(), enable);
+  UseSynchronousResizeModeVisitor visitor(enable);
+  RenderView::ForEach(&visitor);
 }
 
 void WebKitTestRunner::enableAutoResizeMode(const WebSize& min_size,
@@ -364,8 +401,12 @@ void WebKitTestRunner::disableAutoResizeMode(const WebSize& new_size) {
     ForceResizeRenderView(render_view(), new_size);
 }
 
-void WebKitTestRunner::showDevTools() {
-  Send(new ShellViewHostMsg_ShowDevTools(routing_id()));
+void WebKitTestRunner::clearDevToolsLocalStorage() {
+  Send(new ShellViewHostMsg_ClearDevToolsLocalStorage(routing_id()));
+}
+
+void WebKitTestRunner::showDevTools(const std::string& settings) {
+  Send(new ShellViewHostMsg_ShowDevTools(routing_id(), settings));
 }
 
 void WebKitTestRunner::closeDevTools() {
@@ -499,7 +540,7 @@ bool WebKitTestRunner::allowExternalPages() {
 
 void WebKitTestRunner::captureHistoryForWindow(
     WebTestProxyBase* proxy,
-    WebVector<WebKit::WebHistoryItem>* history,
+    WebVector<blink::WebHistoryItem>* history,
     size_t* currentEntryIndex) {
   size_t pos = 0;
   std::vector<int>::iterator id;
@@ -529,9 +570,12 @@ void WebKitTestRunner::captureHistoryForWindow(
 
 // RenderViewObserver  --------------------------------------------------------
 
-void WebKitTestRunner::DidClearWindowObject(WebFrame* frame) {
+void WebKitTestRunner::DidClearWindowObject(WebFrame* frame, int world_id) {
   WebTestingSupport::injectInternalsObject(frame);
-  ShellRenderProcessObserver::GetInstance()->test_interfaces()->bindTo(frame);
+  if (world_id == 0) {
+    ShellRenderProcessObserver::GetInstance()->test_interfaces()->bindTo(frame);
+    GCController::Install(frame);
+  }
 }
 
 bool WebKitTestRunner::OnMessageReceived(const IPC::Message& message) {
@@ -542,6 +586,7 @@ bool WebKitTestRunner::OnMessageReceived(const IPC::Message& message) {
     IPC_MESSAGE_HANDLER(ShellViewMsg_SessionHistory, OnSessionHistory)
     IPC_MESSAGE_HANDLER(ShellViewMsg_Reset, OnReset)
     IPC_MESSAGE_HANDLER(ShellViewMsg_NotifyDone, OnNotifyDone)
+    IPC_MESSAGE_HANDLER(ShellViewMsg_TryLeakDetection, OnTryLeakDetection)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
 
@@ -604,12 +649,8 @@ void WebKitTestRunner::CaptureDump() {
       ShellRenderProcessObserver::GetInstance()->test_interfaces();
 
   if (interfaces->testRunner()->shouldDumpAsAudio()) {
-    const WebArrayBufferView* audio_data =
-        interfaces->testRunner()->audioData();
-    std::vector<unsigned char> vector_data(
-        static_cast<const unsigned char*>(audio_data->baseAddress()),
-        static_cast<const unsigned char*>(audio_data->baseAddress()) +
-            audio_data->byteLength());
+    std::vector<unsigned char> vector_data;
+    interfaces->testRunner()->getAudioData(&vector_data);
     Send(new ShellViewHostMsg_AudioDump(routing_id(), vector_data));
   } else {
     Send(new ShellViewHostMsg_TextDump(routing_id(),
@@ -685,6 +726,22 @@ void WebKitTestRunner::OnReset() {
 void WebKitTestRunner::OnNotifyDone() {
   render_view()->GetWebView()->mainFrame()->executeScript(
       WebScriptSource(WebString::fromUTF8("testRunner.notifyDone();")));
+}
+
+void WebKitTestRunner::OnTryLeakDetection() {
+  base::MessageLoop::current()->PostTask(
+      FROM_HERE,
+      base::Bind(&WebKitTestRunner::TryLeakDetection, base::Unretained(this)));
+}
+
+void WebKitTestRunner::TryLeakDetection() {
+  WebFrame* main_frame = render_view()->GetWebView()->mainFrame();
+  DCHECK_EQ(GURL(kAboutBlankURL), GURL(main_frame->document().url()));
+  DCHECK(!main_frame->isLoading());
+
+  LeakDetectionResult result = leak_detector_->TryLeakDetection(
+      render_view()->GetWebView()->mainFrame());
+  Send(new ShellViewHostMsg_LeakDetectionDone(routing_id(), result));
 }
 
 }  // namespace content

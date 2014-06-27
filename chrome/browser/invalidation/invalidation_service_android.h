@@ -9,8 +9,9 @@
 #include "base/compiler_specific.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/threading/non_thread_safe.h"
+#include "chrome/browser/invalidation/invalidation_logger.h"
 #include "chrome/browser/invalidation/invalidation_service.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service.h"
+#include "components/keyed_service/core/keyed_service.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "sync/notifier/invalidator_registrar.h"
@@ -18,8 +19,8 @@
 class Profile;
 
 namespace invalidation {
-
 class InvalidationControllerAndroid;
+class InvalidationLogger;
 
 // This InvalidationService is used to deliver invalidations on Android.  The
 // Android operating system has its own mechanisms for delivering invalidations.
@@ -48,11 +49,13 @@ class InvalidationServiceAndroid
       const syncer::ObjectIdSet& ids) OVERRIDE;
   virtual void UnregisterInvalidationHandler(
       syncer::InvalidationHandler* handler) OVERRIDE;
-  virtual void AcknowledgeInvalidation(
-      const invalidation::ObjectId& id,
-      const syncer::AckHandle& ack_handle) OVERRIDE;
   virtual syncer::InvalidatorState GetInvalidatorState() const OVERRIDE;
   virtual std::string GetInvalidatorClientId() const OVERRIDE;
+  virtual InvalidationLogger* GetInvalidationLogger() OVERRIDE;
+  virtual void RequestDetailedStatus(
+      base::Callback<void(const base::DictionaryValue&)> caller) const
+      OVERRIDE;
+  virtual InvalidationAuthProvider* GetInvalidationAuthProvider() OVERRIDE;
 
   // content::NotificationObserver implementation.
   virtual void Observe(int type,
@@ -68,6 +71,10 @@ class InvalidationServiceAndroid
   content::NotificationRegistrar registrar_;
   syncer::InvalidatorState invalidator_state_;
   scoped_ptr<InvalidationControllerAndroid> invalidation_controller_;
+
+  // The invalidation logger object we use to record state changes
+  // and invalidations.
+  InvalidationLogger logger_;
 
   DISALLOW_COPY_AND_ASSIGN(InvalidationServiceAndroid);
 };

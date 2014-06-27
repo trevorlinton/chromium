@@ -47,7 +47,6 @@ class MEDIA_EXPORT AudioBus {
   static scoped_ptr<AudioBus> WrapMemory(int channels, int frames, void* data);
   static scoped_ptr<AudioBus> WrapMemory(const AudioParameters& params,
                                          void* data);
-  // Returns the required memory size to use the WrapMemory() method.
   static int CalculateMemorySize(const AudioParameters& params);
 
   // Calculates the required size for an AudioBus given the number of channels
@@ -105,6 +104,10 @@ class MEDIA_EXPORT AudioBus {
   // is provided, no adjustment is done.
   void Scale(float volume);
 
+  // Swaps channels identified by |a| and |b|.  The caller needs to make sure
+  // the channels are valid.
+  void SwapChannels(int a, int b);
+
  private:
   friend struct base::DefaultDeleter<AudioBus>;
   ~AudioBus();
@@ -119,7 +122,7 @@ class MEDIA_EXPORT AudioBus {
   void BuildChannelData(int channels, int aligned_frame, float* data);
 
   // Contiguous block of channel memory.
-  scoped_ptr_malloc<float, base::ScopedPtrAlignedFree> data_;
+  scoped_ptr<float, base::AlignedFreeDeleter> data_;
 
   std::vector<float*> channel_data_;
   int frames_;

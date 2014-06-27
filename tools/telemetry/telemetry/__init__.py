@@ -5,8 +5,17 @@
 """A library for cross-platform browser tests."""
 
 import inspect
+import logging
 import os
 import sys
+
+# Ensure Python >= 2.7.
+if sys.version_info < (2, 7):
+  print >> sys.stderr, 'Need Python 2.7 or greater.'
+  sys.exit(-1)
+
+from telemetry.util import global_hooks
+global_hooks.InstallHooks()
 
 from telemetry.core.browser import Browser
 from telemetry.core.browser_options import BrowserFinderOptions
@@ -14,6 +23,7 @@ from telemetry.core.tab import Tab
 
 from telemetry.page.page_measurement import PageMeasurement
 from telemetry.page.page_runner import Run as RunPage
+
 
 __all__ = []
 
@@ -28,36 +38,3 @@ for x in dir():
   if (inspect.isclass(getattr(m, x)) or
       inspect.isfunction(getattr(m, x))):
     __all__.append(x)
-
-
-def RemoveAllStalePycFiles(base_dir):
-  for dirname, _, filenames in os.walk(base_dir):
-    if '.svn' in dirname or '.git' in dirname:
-      continue
-    for filename in filenames:
-      root, ext = os.path.splitext(filename)
-      if ext != '.pyc':
-        continue
-
-      pyc_path = os.path.join(dirname, filename)
-      py_path = os.path.join(dirname, root + '.py')
-      if os.path.exists(py_path):
-        continue
-
-      try:
-        os.remove(pyc_path)
-      except OSError:
-        # Avoid race, in case we're running simultaneous instances.
-        pass
-
-    if os.listdir(dirname):
-      continue
-
-    try:
-      os.removedirs(dirname)
-    except OSError:
-      # Avoid race, in case we're running simultaneous instances.
-      pass
-
-
-RemoveAllStalePycFiles(os.path.dirname(__file__))

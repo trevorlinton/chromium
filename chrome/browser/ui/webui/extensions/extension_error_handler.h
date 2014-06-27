@@ -9,6 +9,7 @@
 
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/memory/weak_ptr.h"
 #include "content/public/browser/web_ui_message_handler.h"
 
 namespace base {
@@ -43,27 +44,34 @@ class ExtensionErrorHandler : public content::WebUIMessageHandler {
 
   // Handle the "requestFileSource" call.
   void HandleRequestFileSource(const base::ListValue* args);
+
+  // Called when |error_ui_util::HandleRequestFileSource| finishes.
+  void OnFileSourceHandled(const base::DictionaryValue& source);
+
   // Handle the "openDevTools" call.
   void HandleOpenDevTools(const base::ListValue* args);
 
   // Populate the results for a manifest file's content in response to the
   // "requestFileSource" call. Highlight the part of the manifest which
   // corresponds to the given |key| and |specific| locations. Caller owns
-  // |dict| and |contents|.
+  // |dict|.
   void GetManifestFileCallback(base::DictionaryValue* dict,
                                const std::string& key,
                                const std::string& specific,
-                               std::string* contents);
+                               const std::string& contents);
 
   // Populate the results for a source file's content in response to the
   // "requestFileSource" call. Highlight the part of the source which
   // corresponds to the given |line_number|.
   void GetSourceFileCallback(base::DictionaryValue* results,
                              int line_number,
-                             std::string* contents);
+                             const std::string& contents);
 
   // The profile with which this Handler is associated.
   Profile* profile_;
+
+  // Weak pointer factory for posting background tasks.
+  base::WeakPtrFactory<ExtensionErrorHandler> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionErrorHandler);
 };

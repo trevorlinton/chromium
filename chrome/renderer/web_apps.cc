@@ -7,12 +7,14 @@
 #include <string>
 #include <vector>
 
+#include "base/command_line.h"
 #include "base/json/json_reader.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/web_application_info.h"
 #include "grit/common_resources.h"
 #include "grit/generated_resources.h"
@@ -28,19 +30,19 @@
 #include "ui/gfx/size.h"
 #include "url/gurl.h"
 
-using WebKit::WebDocument;
-using WebKit::WebElement;
-using WebKit::WebFrame;
-using WebKit::WebNode;
-using WebKit::WebNodeList;
-using WebKit::WebString;
+using blink::WebDocument;
+using blink::WebElement;
+using blink::WebFrame;
+using blink::WebNode;
+using blink::WebNodeList;
+using blink::WebString;
 
 namespace web_apps {
 namespace {
 
 // Sizes a single size (the width or height) from a 'sizes' attribute. A size
 // matches must match the following regex: [1-9][0-9]*.
-int ParseSingleIconSize(const string16& text) {
+int ParseSingleIconSize(const base::string16& text) {
   // Size must not start with 0, and be between 0 and 9.
   if (text.empty() || !(text[0] >= L'1' && text[0] <= L'9'))
     return 0;
@@ -59,8 +61,8 @@ int ParseSingleIconSize(const string16& text) {
 // Parses an icon size. An icon size must match the following regex:
 // [1-9][0-9]*x[1-9][0-9]*.
 // If the input couldn't be parsed, a size with a width/height == 0 is returned.
-gfx::Size ParseIconSize(const string16& text) {
-  std::vector<string16> sizes;
+gfx::Size ParseIconSize(const base::string16& text) {
+  std::vector<base::string16> sizes;
   base::SplitStringDontTrim(text, L'x', &sizes);
   if (sizes.size() != 2)
     return gfx::Size();
@@ -96,11 +98,11 @@ void AddInstallIcon(const WebElement& link,
 
 }  // namespace
 
-bool ParseIconSizes(const string16& text,
+bool ParseIconSizes(const base::string16& text,
                     std::vector<gfx::Size>* sizes,
                     bool* is_any) {
   *is_any = false;
-  std::vector<string16> size_strings;
+  std::vector<base::string16> size_strings;
   base::SplitStringAlongWhitespace(text, &size_strings);
   for (size_t i = 0; i < size_strings.size(); ++i) {
     if (EqualsASCII(size_strings[i], "any")) {
@@ -121,7 +123,7 @@ bool ParseIconSizes(const string16& text,
 
 bool ParseWebAppFromWebDocument(WebFrame* frame,
                                 WebApplicationInfo* app_info,
-                                string16* error) {
+                                base::string16* error) {
   WebDocument document = frame->document();
   if (document.isNull())
     return true;
@@ -144,8 +146,15 @@ bool ParseWebAppFromWebDocument(WebFrame* frame,
       // see also
       //   <http://en.wikipedia.org/wiki/Favicon>
       //   <http://dev.w3.org/html5/spec/Overview.html#rel-icon>
+      //
+      // Streamlined Hosted Apps also support "apple-touch-icon" and
+      // "apple-touch-icon-precomposed".
       if (LowerCaseEqualsASCII(rel, "icon") ||
-          LowerCaseEqualsASCII(rel, "shortcut icon")) {
+          LowerCaseEqualsASCII(rel, "shortcut icon") ||
+          (CommandLine::ForCurrentProcess()->
+              HasSwitch(switches::kEnableStreamlinedHostedApps) &&
+            (LowerCaseEqualsASCII(rel, "apple-touch-icon") ||
+             LowerCaseEqualsASCII(rel, "apple-touch-icon-precomposed")))) {
         AddInstallIcon(elem, &app_info->icons);
       }
     } else if (elem.hasTagName("meta") && elem.hasAttribute("name")) {

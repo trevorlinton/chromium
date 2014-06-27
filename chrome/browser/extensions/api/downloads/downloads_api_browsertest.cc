@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// Disable everything on windows only. http://crbug.com/306144
+#ifndef OS_WIN
+
 #include <algorithm>
 
 #include "base/file_util.h"
@@ -52,8 +55,6 @@
 #include "webkit/browser/fileapi/file_system_operation_runner.h"
 #include "webkit/browser/fileapi/file_system_url.h"
 
-// Disable everything due to issue 306144
-#if 0
 using content::BrowserContext;
 using content::BrowserThread;
 using content::DownloadItem;
@@ -365,7 +366,7 @@ class DownloadExtensionTest : public ExtensionApiTest {
                            "    \"previous\": \"in_progress\","
                            "    \"current\": \"interrupted\"}}]",
                            item->GetId(),
-                           content::InterruptReasonDebugString(
+                           content::DownloadInterruptReasonToString(
                              expected_error).c_str()));
   }
 
@@ -622,6 +623,7 @@ class MockIconExtractorImpl : public DownloadFileIconExtractor {
   virtual ~MockIconExtractorImpl() {}
 
   virtual bool ExtractIconURLForPath(const base::FilePath& path,
+                                     float scale,
                                      IconLoader::IconSize icon_size,
                                      IconURLCallback callback) OVERRIDE {
     EXPECT_STREQ(expected_path_.value().c_str(), path.value().c_str());
@@ -642,6 +644,8 @@ class MockIconExtractorImpl : public DownloadFileIconExtractor {
  private:
   void RunCallback() {
     callback_.Run(response_);
+    // Drop the reference on extension function to avoid memory leaks.
+    callback_ = IconURLCallback();
   }
 
   base::FilePath             expected_path_;
@@ -704,8 +708,8 @@ class HTML5FileWriter {
                                    int length) {
     // Create a temp file.
     base::FilePath temp_file;
-    if (!file_util::CreateTemporaryFile(&temp_file) ||
-        file_util::WriteFile(temp_file, data, length) != length) {
+    if (!base::CreateTemporaryFile(&temp_file) ||
+        base::WriteFile(temp_file, data, length) != length) {
       return false;
     }
     // Invoke the fileapi to copy it into the sandboxed filesystem.
@@ -727,9 +731,9 @@ class HTML5FileWriter {
  private:
   static void CopyInCompletion(bool* result,
                                base::WaitableEvent* done_event,
-                               base::PlatformFileError error) {
+                               base::File::Error error) {
     DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
-    *result = error == base::PLATFORM_FILE_OK;
+    *result = error == base::File::FILE_OK;
     done_event->Signal();
   }
 
@@ -806,9 +810,11 @@ api::InterruptReason InterruptReasonContentToExtension(
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_Open) {
   LoadExtension("downloads_split");
+  DownloadsOpenFunction* open_function = new DownloadsOpenFunction();
+  open_function->set_user_gesture(true);
   EXPECT_STREQ(errors::kInvalidId,
                RunFunctionAndReturnError(
-                   new DownloadsOpenFunction(),
+                   open_function,
                    "[-42]").c_str());
 
   DownloadItem* download_item = CreateSlowTestDownload();
@@ -822,14 +828,26 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                          "  \"paused\": false,"
                          "  \"url\": \"%s\"}]",
                          download_item->GetURL().spec().c_str())));
+  open_function = new DownloadsOpenFunction();
+  open_function->set_user_gesture(true);
   EXPECT_STREQ(errors::kNotComplete,
                RunFunctionAndReturnError(
-                   new DownloadsOpenFunction(),
+                   open_function,
                    DownloadItemIdAsArgList(download_item)).c_str());
 
   FinishPendingSlowDownloads();
   EXPECT_FALSE(download_item->GetOpened());
-  EXPECT_TRUE(RunFunction(new DownloadsOpenFunction(),
+
+  open_function = new DownloadsOpenFunction();
+  EXPECT_STREQ(errors::kUserGesture,
+               RunFunctionAndReturnError(
+                  open_function,
+                  DownloadItemIdAsArgList(download_item)).c_str());
+  EXPECT_FALSE(download_item->GetOpened());
+
+  open_function = new DownloadsOpenFunction();
+  open_function->set_user_gesture(true);
+  EXPECT_TRUE(RunFunction(open_function,
                           DownloadItemIdAsArgList(download_item)));
   EXPECT_TRUE(download_item->GetOpened());
 }
@@ -838,12 +856,19 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_PauseResumeCancelErase) {
   DownloadItem* download_item = CreateSlowTestDownload();
   ASSERT_TRUE(download_item);
+  std::string error;
 
   // Call pause().  It should succeed and the download should be paused on
   // return.
   EXPECT_TRUE(RunFunction(new DownloadsPauseFunction(),
                           DownloadItemIdAsArgList(download_item)));
   EXPECT_TRUE(download_item->IsPaused());
+
+  // Calling removeFile on a non-active download yields kNotComplete
+  // and should not crash. http://crbug.com/319984
+  error = RunFunctionAndReturnError(new DownloadsRemoveFileFunction(),
+                                    DownloadItemIdAsArgList(download_item));
+  EXPECT_STREQ(errors::kNotComplete, error.c_str());
 
   // Calling pause() twice shouldn't be an error.
   EXPECT_TRUE(RunFunction(new DownloadsPauseFunction(),
@@ -875,17 +900,17 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                           DownloadItemIdAsArgList(download_item)));
   EXPECT_EQ(DownloadItem::CANCELLED, download_item->GetState());
 
-  // Calling paused on a non-active download yields kInvalidId.
-  std::string error = RunFunctionAndReturnError(
+  // Calling paused on a non-active download yields kNotInProgress.
+  error = RunFunctionAndReturnError(
       new DownloadsPauseFunction(), DownloadItemIdAsArgList(download_item));
   EXPECT_STREQ(errors::kNotInProgress, error.c_str());
 
-  // Calling resume on a non-active download yields kInvalidId
+  // Calling resume on a non-active download yields kNotResumable
   error = RunFunctionAndReturnError(
       new DownloadsResumeFunction(), DownloadItemIdAsArgList(download_item));
   EXPECT_STREQ(errors::kNotResumable, error.c_str());
 
-  // Calling paused on a non-existent download yields kInvalidId.
+  // Calling pause on a non-existent download yields kInvalidId.
   error = RunFunctionAndReturnError(
       new DownloadsPauseFunction(), "[-42]");
   EXPECT_STREQ(errors::kInvalidId, error.c_str());
@@ -893,6 +918,11 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   // Calling resume on a non-existent download yields kInvalidId
   error = RunFunctionAndReturnError(
       new DownloadsResumeFunction(), "[-42]");
+  EXPECT_STREQ(errors::kInvalidId, error.c_str());
+
+  // Calling removeFile on a non-existent download yields kInvalidId.
+  error = RunFunctionAndReturnError(
+      new DownloadsRemoveFileFunction(), "[-42]");
   EXPECT_STREQ(errors::kInvalidId, error.c_str());
 
   int id = download_item->GetId();
@@ -1023,7 +1053,7 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   base::FilePath real_path = all_downloads[0]->GetTargetFilePath();
   base::FilePath fake_path = all_downloads[1]->GetTargetFilePath();
 
-  EXPECT_EQ(0, file_util::WriteFile(real_path, "", 0));
+  EXPECT_EQ(0, base::WriteFile(real_path, "", 0));
   ASSERT_TRUE(base::PathExists(real_path));
   ASSERT_FALSE(base::PathExists(fake_path));
 
@@ -1512,8 +1542,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                          result_id)));
 }
 
-#if defined(OS_WIN) && defined(USE_AURA)
-// This test is very flaky on Win Aura. http://crbug.com/248438
+#if defined(OS_WIN)
+// This test is very flaky on Win. http://crbug.com/248438
 #define MAYBE_DownloadExtensionTest_Download_UnsafeHeaders \
     DISABLED_DownloadExtensionTest_Download_UnsafeHeaders
 #else
@@ -1664,13 +1694,13 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
       << kInvalidURLs[index];
   }
 
-  EXPECT_STREQ("net::ERR_ACCESS_DENIED", RunFunctionAndReturnError(
+  EXPECT_STREQ("NETWORK_INVALID_REQUEST", RunFunctionAndReturnError(
       new DownloadsDownloadFunction(),
       "[{\"url\": \"javascript:document.write(\\\"hello\\\");\"}]").c_str());
-  EXPECT_STREQ("net::ERR_ACCESS_DENIED", RunFunctionAndReturnError(
+  EXPECT_STREQ("NETWORK_INVALID_REQUEST", RunFunctionAndReturnError(
       new DownloadsDownloadFunction(),
       "[{\"url\": \"javascript:return false;\"}]").c_str());
-  EXPECT_STREQ("net::ERR_NOT_IMPLEMENTED", RunFunctionAndReturnError(
+  EXPECT_STREQ("NETWORK_FAILED", RunFunctionAndReturnError(
       new DownloadsDownloadFunction(),
       "[{\"url\": \"ftp://example.com/example.txt\"}]").c_str());
 }
@@ -1762,7 +1792,7 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 }
 
 // Valid file URLs are valid URLs.
-#if defined(OS_WIN) && defined(USE_AURA)
+#if defined(OS_WIN)
 // Disabled due to crbug.com/175711
 #define MAYBE_DownloadExtensionTest_Download_File \
         DISABLED_DownloadExtensionTest_Download_File
@@ -1928,7 +1958,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
       content::DOWNLOAD_INTERRUPT_REASON_SERVER_BAD_CONTENT,
       base::StringPrintf("[{\"danger\": \"safe\","
                          "  \"incognito\": false,"
-                         "  \"bytesReceived\": 0,"
+                         "  \"bytesReceived\": 0.0,"
+                         "  \"fileSize\": 0.0,"
                          "  \"mime\": \"\","
                          "  \"paused\": false,"
                          "  \"url\": \"%s\"}]",
@@ -1965,15 +1996,17 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 
   ASSERT_TRUE(WaitFor(api::OnCreated::kEventName,
       base::StringPrintf("[{\"danger\": \"safe\","
-                          "  \"incognito\": false,"
-                          "  \"mime\": \"text/html\","
-                          "  \"paused\": false,"
-                          "  \"url\": \"%s\"}]", download_url.c_str())));
+                         "  \"incognito\": false,"
+                         "  \"bytesReceived\": 0.0,"
+                         "  \"fileSize\": 0.0,"
+                         "  \"mime\": \"text/html\","
+                         "  \"paused\": false,"
+                         "  \"url\": \"%s\"}]", download_url.c_str())));
   ASSERT_TRUE(WaitFor(api::OnChanged::kEventName,
       base::StringPrintf("[{\"id\": %d,"
-                          "  \"state\": {"
-                          "    \"previous\": \"in_progress\","
-                          "    \"current\": \"complete\"}}]", result_id)));
+                         "  \"state\": {"
+                         "    \"previous\": \"in_progress\","
+                         "    \"current\": \"complete\"}}]", result_id)));
 }
 
 // Test that DownloadsDownloadFunction propagates the |method| and |body|
@@ -3484,8 +3517,15 @@ void OnDangerPromptCreated(DownloadDangerPrompt* prompt) {
   prompt->InvokeActionForTesting(DownloadDangerPrompt::ACCEPT);
 }
 
+#if defined(OS_MACOSX)
+// Flakily triggers and assert on Mac.
+// http://crbug.com/180759
+#define MAYBE_DownloadExtensionTest_AcceptDanger DownloadExtensionTest_AcceptDanger
+#else
+#define MAYBE_DownloadExtensionTest_AcceptDanger DISABLED_DownloadExtensionTest_AcceptDanger
+#endif
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
-                       DownloadExtensionTest_AcceptDanger) {
+                       MAYBE_DownloadExtensionTest_AcceptDanger) {
   // Download a file that will be marked dangerous; click the browser action
   // button; the browser action poup will call acceptDanger(); when the
   // DownloadDangerPrompt is created, pretend that the user clicks the Accept
@@ -3614,4 +3654,5 @@ TEST(ExtensionDetermineDownloadFilenameInternal,
             warnings.begin()->warning_type());
   EXPECT_EQ("incumbent", warnings.begin()->extension_id());
 }
-#endif // Issue 306144
+
+#endif  // http://crbug.com/3061144

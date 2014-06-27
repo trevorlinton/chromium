@@ -14,8 +14,8 @@
 
 #if defined(USE_AURA)
 #include "chrome/browser/ui/host_desktop.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_tree_host.h"
 #endif
 
 namespace {
@@ -62,7 +62,8 @@ void ShowCertificateViewer(content::WebContents* web_contents,
   if (chrome::GetHostDesktopTypeForNativeWindow(parent) !=
       chrome::HOST_DESKTOP_TYPE_ASH) {
     ShowCertificateViewerImpl(
-        web_contents, parent->GetDispatcher()->GetAcceleratedWidget(), cert);
+        web_contents,
+        parent->GetHost()->GetAcceleratedWidget(), cert);
   } else {
     NOTIMPLEMENTED();
   }

@@ -3,46 +3,81 @@
 # found in the LICENSE file.
 
 import csv
+import inspect
 import json
+import logging
 import os
 
+from telemetry.core import util
 from telemetry.page import cloud_storage
 from telemetry.page import page as page_module
 from telemetry.page import page_set_archive_info
+from telemetry.page.actions.navigate import NavigateAction
+
+# TODO(nednguyen): Remove this when crbug.com/239179 is marked fixed
+LEGACY_NAME_CONVERSION_DICT = {
+  'endure' : 'RunEndure',
+  'navigate_steps' : 'RunNavigateSteps',
+  'media_metrics' : 'RunMediaMetrics',
+  'stress_memory' : 'RunStressMemory',
+  'no_op' : 'RunNoOp',
+  'repaint' : 'RunRepaint',
+  'smoothness' : 'RunSmoothness',
+  'webrtc' : 'RunWebrtc'
+}
+
+
+class PageSetError(Exception):
+  pass
 
 
 class PageSet(object):
-  def __init__(self, file_path='', attributes=None):
+  def __init__(self, file_path='', description='', archive_data_file='',
+               credentials_path=None, user_agent_type=None,
+               make_javascript_deterministic=True, startup_url='', pages=None,
+               serving_dirs=None):
     self.file_path = file_path
-
     # These attributes can be set dynamically by the page set.
-    self.description = ''
-    self.archive_data_file = ''
-    self.credentials_path = None
-    self.user_agent_type = None
-    self.make_javascript_deterministic = True
-    self.navigate_steps = {'action': 'navigate'}
+    self.description = description
+    self.archive_data_file = archive_data_file
+    self.credentials_path = credentials_path
+    self.user_agent_type = user_agent_type
+    self.make_javascript_deterministic = make_javascript_deterministic
+    self.wpr_archive_info = None
+    self.startup_url = startup_url
+    if pages:
+      self.pages = pages
+    else:
+      self.pages = []
+    if serving_dirs:
+      self.serving_dirs = serving_dirs
+    else:
+      self.serving_dirs = set()
 
+  def _InitializeFromDict(self, attributes):
     if attributes:
       for k, v in attributes.iteritems():
-        setattr(self, k, v)
-
-    # Create a PageSetArchiveInfo object.
-    if self.archive_data_file:
-      self.wpr_archive_info = page_set_archive_info.PageSetArchiveInfo.FromFile(
-          os.path.join(self._base_dir, self.archive_data_file), file_path)
-    else:
-      self.wpr_archive_info = None
+        if k in LEGACY_NAME_CONVERSION_DICT:
+          setattr(self, LEGACY_NAME_CONVERSION_DICT[k], v)
+        else:
+          setattr(self, k, v)
 
     # Create a Page object for every page.
     self.pages = []
     if attributes and 'pages' in attributes:
       for page_attributes in attributes['pages']:
         url = page_attributes.pop('url')
-
         page = page_module.Page(
-            url, self, attributes=page_attributes, base_dir=self._base_dir)
-        self.pages.append(page)
+            url, self, base_dir=self._base_dir)
+        for k, v in page_attributes.iteritems():
+          setattr(page, k, v)
+        page._SchemeErrorCheck()  # pylint: disable=W0212
+        for legacy_name in LEGACY_NAME_CONVERSION_DICT:
+          if hasattr(page, legacy_name):
+            setattr(page, LEGACY_NAME_CONVERSION_DICT[legacy_name],
+                    getattr(page, legacy_name))
+            delattr(page, legacy_name)
+        self.AddPage(page)
 
     # Prepend _base_dir to our serving dirs.
     # Always use realpath to ensure no duplicates in set.
@@ -53,12 +88,23 @@ class PageSet(object):
       for serving_dir in attributes['serving_dirs']:
         self.serving_dirs.add(
             os.path.realpath(os.path.join(self._base_dir, serving_dir)))
+    self._Initialize()
+
+  def _Initialize(self):
+    # Create a PageSetArchiveInfo object.
+    if self.archive_data_file:
+      self.wpr_archive_info = page_set_archive_info.PageSetArchiveInfo.FromFile(
+          os.path.join(self._base_dir, self.archive_data_file))
 
     # Attempt to download the credentials file.
     if self.credentials_path:
-      cloud_storage.GetIfChanged(
-          cloud_storage.INTERNAL_BUCKET,
-          os.path.join(self._base_dir, self.credentials_path))
+      try:
+        cloud_storage.GetIfChanged(
+            os.path.join(self._base_dir, self.credentials_path))
+      except (cloud_storage.CredentialsError,
+              cloud_storage.PermissionError):
+        logging.warning('Cannot retrieve credential file: %s',
+                        self.credentials_path)
 
     # Scan every serving directory for .sha1 files
     # and download them from Cloud Storage. Assume all data is public.
@@ -69,26 +115,76 @@ class PageSet(object):
         all_serving_dirs.add(page.serving_dir)
     # Scan all serving dirs.
     for serving_dir in all_serving_dirs:
-      if serving_dir == '/':
-        raise ValueError('Trying to serve "/" from HTTP server.')
+      if os.path.splitdrive(serving_dir)[1] == '/':
+        raise ValueError('Trying to serve root directory from HTTP server.')
       for dirpath, _, filenames in os.walk(serving_dir):
         for filename in filenames:
           path, extension = os.path.splitext(
               os.path.join(dirpath, filename))
           if extension != '.sha1':
             continue
-          cloud_storage.GetIfChanged(cloud_storage.PUBLIC_BUCKET, path)
+          cloud_storage.GetIfChanged(path)
 
-  @classmethod
-  def FromFile(cls, file_path):
+  def AddPage(self, page):
+    self.pages.append(page)
+
+  # In json page_set, a page inherits attributes from its page_set. With
+  # python page_set, this property will no longer be needed since pages can
+  # share property through a common ancestor class.
+  # TODO(nednguyen): move this to page when crbug.com/239179 is marked fixed
+  def RunNavigateSteps(self, action_runner):
+    action_runner.RunAction(NavigateAction())
+
+  @staticmethod
+  def FromFile(file_path):
+    _, ext_name = os.path.splitext(file_path)
+    if ext_name == '.json':
+      return PageSet.FromJSONFile(file_path)
+    elif ext_name == '.py':
+      return PageSet.FromPythonFile(file_path)
+    else:
+      raise PageSetError("Pageset %s has unsupported file type" % file_path)
+
+  @staticmethod
+  def FromPythonFile(file_path):
+    page_set_classes = []
+    module = util.GetPythonPageSetModule(file_path)
+    for m in dir(module):
+      if m.endswith('PageSet') and m != 'PageSet':
+        page_set_classes.append(getattr(module, m))
+    if len(page_set_classes) != 1:
+      raise PageSetError("Pageset file needs to contain exactly 1 pageset class"
+                         " with prefix 'PageSet'")
+    page_set = page_set_classes[0]()
+    page_set.file_path = file_path
+    page_set._Initialize() # pylint: disable=W0212
+    for page in page_set.pages:
+      page.page_set = page_set
+      page_class = page.__class__
+
+      for method_name, method in inspect.getmembers(page_class,
+                                                    predicate=inspect.ismethod):
+        if method_name.startswith("Run"):
+          args, _, _, _ = inspect.getargspec(method)
+          if not (args[0] == "self" and args[1] == "action_runner"):
+            raise PageSetError("""Definition of Run<...> method of all
+pages in %s must be in the form of def Run<...>(self, action_runner):"""
+                                     % file_path)
+    return page_set
+
+
+  @staticmethod
+  def FromJSONFile(file_path):
     with open(file_path, 'r') as f:
       contents = f.read()
     data = json.loads(contents)
-    return cls.FromDict(data, file_path)
+    return PageSet.FromDict(data, file_path)
 
-  @classmethod
-  def FromDict(cls, data, file_path):
-    return cls(file_path, data)
+  @staticmethod
+  def FromDict(attributes, file_path=''):
+    page_set = PageSet(file_path)
+    page_set._InitializeFromDict(attributes) # pylint: disable=W0212
+    return page_set
 
   @property
   def _base_dir(self):
@@ -121,7 +217,7 @@ class PageSet(object):
 
       for csv_row in csv_reader:
         if csv_row[url_index] in page_set_dict:
-          pages.append(page_set_dict[csv_row[url_index]])
+          self.AddPage(page_set_dict[csv_row[url_index]])
         else:
           raise Exception('Unusable results_file.')
 

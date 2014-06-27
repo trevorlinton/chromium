@@ -77,6 +77,9 @@ class TempFile;
 //   Complete when NexeReadDidOpen is invoked.
 class PnaclCoordinator: public CallbackSource<FileStreamData> {
  public:
+  // Maximum number of object files passable to the translator. Cannot be
+  // changed without changing the RPC signatures.
+  const static size_t kMaxTranslatorObjectFiles = 16;
   virtual ~PnaclCoordinator();
 
   // The factory method for translations.
@@ -92,11 +95,11 @@ class PnaclCoordinator: public CallbackSource<FileStreamData> {
 
   // Run |translate_notify_callback_| with an error condition that is not
   // PPAPI specific.  Also set ErrorInfo report.
-  void ReportNonPpapiError(PluginErrorCode err, const nacl::string& message);
+  void ReportNonPpapiError(PP_NaClError err, const nacl::string& message);
   // Run when faced with a PPAPI error condition. Bring control back to the
   // plugin by invoking the |translate_notify_callback_|.
   // Also set ErrorInfo report.
-  void ReportPpapiError(PluginErrorCode err,
+  void ReportPpapiError(PP_NaClError err,
                         int32_t pp_error, const nacl::string& message);
   // Bring control back to the plugin by invoking the
   // |translate_notify_callback_|.  This does not set the ErrorInfo report,
@@ -112,6 +115,11 @@ class PnaclCoordinator: public CallbackSource<FileStreamData> {
   // Return a callback that should be notified when |bytes_compiled| bytes
   // have been compiled.
   pp::CompletionCallback GetCompileProgressCallback(int64_t bytes_compiled);
+
+  // Return a callback that should be notified when an interesting UMA timing
+  // is ready to be reported.
+  pp::CompletionCallback GetUMATimeCallback(const nacl::string& event_name,
+                                            int64_t microsecs);
 
   // Get the last known load progress.
   void GetCurrentProgress(int64_t* bytes_loaded, int64_t* bytes_total);
@@ -172,6 +180,10 @@ class PnaclCoordinator: public CallbackSource<FileStreamData> {
   // Invoked when the read descriptor for nexe_file_ is created.
   void NexeReadDidOpen(int32_t pp_error);
 
+  // Invoked when a UMA timing measurement from the translate thread is ready.
+  void DoUMATimeMeasure(
+      int32_t pp_error, const nacl::string& event_name, int64_t microsecs);
+
   // Keeps track of the pp_error upon entry to TranslateFinished,
   // for inspection after cleanup.
   int32_t translate_finish_error_;
@@ -202,7 +214,12 @@ class PnaclCoordinator: public CallbackSource<FileStreamData> {
   PnaclOptions pnacl_options_;
 
   // Object file, produced by the translator and consumed by the linker.
-  nacl::scoped_ptr<TempFile> obj_file_;
+  std::vector<TempFile*> obj_files_;
+  nacl::scoped_ptr<nacl::DescWrapper> invalid_desc_wrapper_;
+  // Number of split modules (threads) for llc
+  int split_module_count_;
+  int num_object_files_opened_;
+
   // Translated nexe file, produced by the linker.
   nacl::scoped_ptr<TempFile> temp_nexe_file_;
   // Passed to the browser, which sets it to true if there is a translation
@@ -219,9 +236,6 @@ class PnaclCoordinator: public CallbackSource<FileStreamData> {
   // was already run/consumed.
   bool error_already_reported_;
 
-  // True if compilation is off_the_record.
-  bool off_the_record_;
-
   // State for timing and size information for UMA stats.
   int64_t pnacl_init_time_;
   int64_t pexe_size_;  // Count as we stream -- will converge to pexe size.
@@ -229,8 +243,8 @@ class PnaclCoordinator: public CallbackSource<FileStreamData> {
   int64_t expected_pexe_size_;   // Expected download total (-1 if unknown).
 
   // The helper thread used to do translations via SRPC.
-  // Keep this last in declaration order to ensure the other variables
-  // haven't been destroyed yet when its destructor runs.
+  // It accesses fields of PnaclCoordinator so it must have a
+  // shorter lifetime.
   nacl::scoped_ptr<PnaclTranslateThread> translate_thread_;
 };
 

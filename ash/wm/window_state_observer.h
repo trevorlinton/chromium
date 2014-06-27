@@ -14,17 +14,24 @@ class WindowState;
 
 class ASH_EXPORT WindowStateObserver {
  public:
-  // Called when the tracked_by_workspace has changed.
-  virtual void OnTrackedByWorkspaceChanged(
-      WindowState* window,
-      bool old_value) {}
-
-  // Called when the window's show type has changed. This is different from
-  // kWindowShowStatekey property change as this will be invoked when the window
+  // Following observer methods are different from kWindowShowStatekey
+  // property change as they will be invoked when the window
   // gets left/right maximized, and auto positioned. |old_type| is the value
   // before the change.
-  virtual void OnWindowShowTypeChanged(WindowState* window_state,
-                                       WindowShowType old_type) {}
+
+  // Called after the window's state type is set to new type, but before
+  // the window's bounds has been updated for the new type.
+  // This is used to update the shell state such as work area so
+  // that the window can use the correct environment to update its bounds.
+  // TODO(oshima): Remove this once docked windows has its own state.
+  virtual void OnPreWindowStateTypeChange(WindowState* window_state,
+                                          WindowStateType old_type) {}
+
+  // Called after the window's state has been updated.
+  // This is used to update the shell state that depends on the updated
+  // window bounds, such as shelf visibility.
+  virtual void OnPostWindowStateTypeChange(WindowState* window_state,
+                                           WindowStateType old_type) {}
 };
 
 }  // namespace wm

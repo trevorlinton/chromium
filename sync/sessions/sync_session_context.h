@@ -3,39 +3,30 @@
 // found in the LICENSE file.
 
 // SyncSessionContext encapsulates the contextual information and engine
-// components specific to a SyncSession. A context is accessible via
-// a SyncSession so that session SyncerCommands and parts of the engine have
-// a convenient way to access other parts. In this way it can be thought of as
-// the surrounding environment for the SyncSession. The components of this
-// environment are either valid or not valid for the entire context lifetime,
-// or they are valid for explicitly scoped periods of time by using Scoped
-// installation utilities found below. This means that the context assumes no
-// ownership whatsoever of any object that was not created by the context
-// itself.
+// components specific to a SyncSession.  Unlike the SyncSession, the context
+// can be reused across several sync cycles.
+//
+// The context does not take ownership of its pointer members.  It's up to
+// the surrounding classes to ensure those members remain valid while the
+// context is in use.
 //
 // It can only be used from the SyncerThread.
 
 #ifndef SYNC_SESSIONS_SYNC_SESSION_CONTEXT_H_
 #define SYNC_SESSIONS_SYNC_SESSION_CONTEXT_H_
 
-#include <map>
 #include <string>
-#include <vector>
 
-#include "base/stl_util.h"
 #include "sync/base/sync_export.h"
-#include "sync/engine/sync_directory_commit_contributor.h"
-#include "sync/engine/sync_directory_update_handler.h"
-#include "sync/engine/sync_engine_event.h"
-#include "sync/engine/syncer_types.h"
+#include "sync/engine/sync_engine_event_listener.h"
 #include "sync/engine/traffic_recorder.h"
-#include "sync/internal_api/public/engine/model_safe_worker.h"
-#include "sync/protocol/sync.pb.h"
 #include "sync/sessions/debug_info_getter.h"
+#include "sync/sessions/model_type_registry.h"
 
 namespace syncer {
 
 class ExtensionsActivity;
+class ModelTypeRegistry;
 class ServerConnectionManager;
 
 namespace syncable {
@@ -50,16 +41,17 @@ class TestScopedSessionEventListener;
 
 class SYNC_EXPORT_PRIVATE SyncSessionContext {
  public:
-  SyncSessionContext(ServerConnectionManager* connection_manager,
-                     syncable::Directory* directory,
-                     const std::vector<ModelSafeWorker*>& workers,
-                     ExtensionsActivity* extensions_activity,
-                     const std::vector<SyncEngineEventListener*>& listeners,
-                     DebugInfoGetter* debug_info_getter,
-                     TrafficRecorder* traffic_recorder,
-                     bool keystore_encryption_enabled,
-                     bool client_enabled_pre_commit_update_avoidance,
-                     const std::string& invalidator_client_id);
+  SyncSessionContext(
+      ServerConnectionManager* connection_manager,
+      syncable::Directory* directory,
+      ExtensionsActivity* extensions_activity,
+      const std::vector<SyncEngineEventListener*>& listeners,
+      DebugInfoGetter* debug_info_getter,
+      TrafficRecorder* traffic_recorder,
+      ModelTypeRegistry* model_type_registry,
+      bool keystore_encryption_enabled,
+      bool client_enabled_pre_commit_update_avoidance,
+      const std::string& invalidator_client_id);
 
   ~SyncSessionContext();
 
@@ -70,23 +62,9 @@ class SYNC_EXPORT_PRIVATE SyncSessionContext {
     return directory_;
   }
 
-  const ModelSafeRoutingInfo& routing_info() const {
-    return routing_info_;
-  }
+  ModelTypeSet GetEnabledTypes() const;
 
-  void set_routing_info(const ModelSafeRoutingInfo& routing_info);
-
-  UpdateHandlerMap* update_handler_map() {
-    return &update_handler_map_;
-  }
-
-  CommitContributorMap* commit_contributor_map() {
-    return &commit_contributor_map_;
-  }
-
-  const std::vector<scoped_refptr<ModelSafeWorker> >& workers() const {
-    return workers_;
-  }
+  void SetRoutingInfo(const ModelSafeRoutingInfo& routing_info);
 
   ExtensionsActivity* extensions_activity() {
     return extensions_activity_.get();
@@ -114,9 +92,8 @@ class SYNC_EXPORT_PRIVATE SyncSessionContext {
   }
   int32 max_commit_batch_size() const { return max_commit_batch_size_; }
 
-  void NotifyListeners(const SyncEngineEvent& event) {
-    FOR_EACH_OBSERVER(SyncEngineEventListener, listeners_,
-                      OnSyncEngineEvent(event));
+  ObserverList<SyncEngineEventListener>* listeners() {
+    return &listeners_;
   }
 
   TrafficRecorder* traffic_recorder() {
@@ -148,6 +125,10 @@ class SYNC_EXPORT_PRIVATE SyncSessionContext {
     server_enabled_pre_commit_update_avoidance_ = value;
   }
 
+  ModelTypeRegistry* model_type_registry() {
+    return model_type_registry_;
+  }
+
  private:
   // Rather than force clients to set and null-out various context members, we
   // extend our encapsulation boundary to scoped helpers that take care of this
@@ -158,29 +139,6 @@ class SYNC_EXPORT_PRIVATE SyncSessionContext {
 
   ServerConnectionManager* const connection_manager_;
   syncable::Directory* const directory_;
-
-  // A cached copy of SyncBackendRegistrar's routing info.
-  // Must be updated manually when SBR's state is modified.
-  ModelSafeRoutingInfo routing_info_;
-
-  // A map of 'update handlers', one for each enabled type.
-  // This must be kept in sync with the routing info.  Our temporary solution to
-  // that problem is to initialize this map in set_routing_info().
-  UpdateHandlerMap update_handler_map_;
-
-  // Deleter for the |update_handler_map_|.
-  STLValueDeleter<UpdateHandlerMap> update_handler_deleter_;
-
-  // A map of 'commit contributors', one for each enabled type.
-  // This must be kept in sync with the routing info.  Our temporary solution to
-  // that problem is to initialize this map in set_routing_info().
-  CommitContributorMap commit_contributor_map_;
-
-  // Deleter for the |commit_contributor_map_|.
-  STLValueDeleter<CommitContributorMap> commit_contributor_deleter_;
-
-  // The set of ModelSafeWorkers.  Used to execute tasks of various threads.
-  std::vector<scoped_refptr<ModelSafeWorker> > workers_;
 
   // We use this to stuff extensions activity into CommitMessages so the server
   // can correlate commit traffic with extension-related bookmark mutations.
@@ -201,6 +159,8 @@ class SYNC_EXPORT_PRIVATE SyncSessionContext {
   DebugInfoGetter* const debug_info_getter_;
 
   TrafficRecorder* traffic_recorder_;
+
+  ModelTypeRegistry* model_type_registry_;
 
   // Satus information to be sent up to the server.
   sync_pb::ClientStatus client_status_;

@@ -21,9 +21,8 @@ namespace proxy {
 
 class ProxyChannel;
 
-class PPAPI_PROXY_EXPORT PpapiCommandBufferProxy
-    : public gpu::CommandBuffer,
-      public gpu::GpuControl {
+class PPAPI_PROXY_EXPORT PpapiCommandBufferProxy : public gpu::CommandBuffer,
+                                                   public gpu::GpuControl {
  public:
   PpapiCommandBufferProxy(const HostResource& resource,
                           ProxyChannel* channel);
@@ -35,40 +34,43 @@ class PPAPI_PROXY_EXPORT PpapiCommandBufferProxy
   virtual State GetLastState() OVERRIDE;
   virtual int32 GetLastToken() OVERRIDE;
   virtual void Flush(int32 put_offset) OVERRIDE;
-  virtual State FlushSync(int32 put_offset, int32 last_known_get) OVERRIDE;
+  virtual void WaitForTokenInRange(int32 start, int32 end) OVERRIDE;
+  virtual void WaitForGetOffsetInRange(int32 start, int32 end) OVERRIDE;
   virtual void SetGetBuffer(int32 transfer_buffer_id) OVERRIDE;
   virtual void SetGetOffset(int32 get_offset) OVERRIDE;
-  virtual gpu::Buffer CreateTransferBuffer(size_t size, int32* id) OVERRIDE;
+  virtual scoped_refptr<gpu::Buffer> CreateTransferBuffer(size_t size,
+                                                          int32* id) OVERRIDE;
   virtual void DestroyTransferBuffer(int32 id) OVERRIDE;
-  virtual gpu::Buffer GetTransferBuffer(int32 id) OVERRIDE;
+  virtual scoped_refptr<gpu::Buffer> GetTransferBuffer(int32 id) OVERRIDE;
   virtual void SetToken(int32 token) OVERRIDE;
   virtual void SetParseError(gpu::error::Error error) OVERRIDE;
   virtual void SetContextLostReason(gpu::error::ContextLostReason reason)
       OVERRIDE;
 
   // gpu::GpuControl implementation:
-  virtual bool SupportsGpuMemoryBuffer() OVERRIDE;
+  virtual gpu::Capabilities GetCapabilities() OVERRIDE;
   virtual gfx::GpuMemoryBuffer* CreateGpuMemoryBuffer(
       size_t width,
       size_t height,
       unsigned internalformat,
       int32* id) OVERRIDE;
   virtual void DestroyGpuMemoryBuffer(int32 id) OVERRIDE;
-  virtual bool GenerateMailboxNames(unsigned num,
-                                    std::vector<gpu::Mailbox>* names) OVERRIDE;
   virtual uint32 InsertSyncPoint() OVERRIDE;
   virtual void SignalSyncPoint(uint32 sync_point,
                                const base::Closure& callback) OVERRIDE;
   virtual void SignalQuery(uint32 query,
                            const base::Closure& callback) OVERRIDE;
+  virtual void SetSurfaceVisible(bool visible) OVERRIDE;
   virtual void SendManagedMemoryStats(const gpu::ManagedMemoryStats& stats)
       OVERRIDE;
+  virtual void Echo(const base::Closure& callback) OVERRIDE;
+  virtual uint32 CreateStreamTexture(uint32 texture_id) OVERRIDE;
 
  private:
   bool Send(IPC::Message* msg);
   void UpdateState(const gpu::CommandBuffer::State& state, bool success);
 
-  typedef base::hash_map<int32, gpu::Buffer> TransferBufferMap;
+  typedef base::hash_map<int32, scoped_refptr<gpu::Buffer> > TransferBufferMap;
   TransferBufferMap transfer_buffers_;
 
   State last_state_;

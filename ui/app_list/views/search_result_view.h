@@ -43,8 +43,7 @@ class SearchResultView : public views::CustomButton,
   // Internal class name.
   static const char kViewClassName[];
 
-  SearchResultView(SearchResultListView* list_view,
-                   SearchResultViewDelegate* delegate);
+  SearchResultView(SearchResultListView* list_view);
   virtual ~SearchResultView();
 
   // Sets/gets SearchResult displayed by this view.
@@ -54,6 +53,9 @@ class SearchResultView : public views::CustomButton,
   // Clears reference to SearchResult but don't schedule repaint.
   void ClearResultNoRepaint();
 
+  // Clears the selected action.
+  void ClearSelectedAction();
+
  private:
   void UpdateTitleText();
   void UpdateDetailsText();
@@ -62,6 +64,7 @@ class SearchResultView : public views::CustomButton,
   virtual const char* GetClassName() const OVERRIDE;
   virtual gfx::Size GetPreferredSize() OVERRIDE;
   virtual void Layout() OVERRIDE;
+  virtual bool OnKeyPressed(const ui::KeyEvent& event) OVERRIDE;
   virtual void ChildPreferredSizeChanged(views::View* child) OVERRIDE;
   virtual void OnPaint(gfx::Canvas* canvas) OVERRIDE;
 
@@ -90,9 +93,6 @@ class SearchResultView : public views::CustomButton,
 
   // Parent list view. Owned by views hierarchy.
   SearchResultListView* list_view_;
-
-  // Not owned by us.
-  SearchResultViewDelegate* delegate_;
 
   views::ImageView* icon_;  // Owned by views hierarchy.
   scoped_ptr<gfx::RenderText> title_text_;

@@ -9,15 +9,15 @@
  * @param {HTMLElement} element DOM Element of preview panel.
  * @param {PreviewPanel.VisibilityType} visibilityType Initial value of the
  *     visibility type.
- * @param {string} currentPath Initial value of the current path.
  * @param {MetadataCache} metadataCache Metadata cache.
+ * @param {VolumeManagerWrapper} volumeManager Volume manager.
  * @constructor
  * @extends {cr.EventTarget}
  */
 var PreviewPanel = function(element,
                             visibilityType,
-                            currentPath,
-                            metadataCache) {
+                            metadataCache,
+                            volumeManager) {
   /**
    * The cached height of preview panel.
    * @type {number}
@@ -33,11 +33,11 @@ var PreviewPanel = function(element,
   this.visibilityType_ = visibilityType;
 
   /**
-   * Current path to be displayed.
-   * @type {string}
+   * Current entry to be displayed.
+   * @type {Entry}
    * @private
    */
-  this.currentPath_ = currentPath || '/';
+  this.currentEntry_ = null;
 
   /**
    * Dom element of the preview panel.
@@ -50,13 +50,17 @@ var PreviewPanel = function(element,
    * @type {BreadcrumbsController}
    */
   this.breadcrumbs = new BreadcrumbsController(
-      element.querySelector('#search-breadcrumbs'), metadataCache);
+      element.querySelector('#search-breadcrumbs'),
+      metadataCache,
+      volumeManager);
 
   /**
    * @type {PreviewPanel.Thumbnails}
    */
   this.thumbnails = new PreviewPanel.Thumbnails(
-      element.querySelector('.preview-thumbnails'), metadataCache);
+      element.querySelector('.preview-thumbnails'),
+      metadataCache,
+      volumeManager);
 
   /**
    * @type {HTMLElement}
@@ -91,6 +95,12 @@ var PreviewPanel = function(element,
    * @private
    */
   this.sequence_ = 0;
+
+  /**
+   * @type {VolumeManagerWrapper}
+   * @private
+   */
+  this.volumeManager_ = volumeManager;
 
   cr.EventTarget.call(this);
 };
@@ -130,11 +140,13 @@ PreviewPanel.prototype = {
   __proto__: cr.EventTarget.prototype,
 
   /**
-   * Setter for the current path.
-   * @param {string} path New path.
+   * Setter for the current entry.
+   * @param {Entry} entry New entry.
    */
-  set currentPath(path) {
-    this.currentPath_ = path;
+  set currentEntry(entry) {
+    if (util.isSameEntry(this.currentEntry_, entry))
+      return;
+    this.currentEntry_ = entry;
     this.updateVisibility_();
     this.updatePreviewArea_();
   },
@@ -147,6 +159,9 @@ PreviewPanel.prototype = {
   set visibilityType(visibilityType) {
     this.visibilityType_ = visibilityType;
     this.updateVisibility_();
+    // Also update the preview area contents, because the update is surpressed
+    // while the visibility is hiding or hidden.
+    this.updatePreviewArea_();
   },
 
   get visible() {
@@ -170,8 +185,10 @@ PreviewPanel.prototype = {
 PreviewPanel.prototype.initialize = function() {
   this.element_.addEventListener('webkitTransitionEnd',
                                  this.onTransitionEnd_.bind(this));
-  this.updatePreviewArea_();
   this.updateVisibility_();
+  // Also update the preview area contents, because the update is surpressed
+  // while the visibility is hiding or hidden.
+  this.updatePreviewArea_();
 };
 
 /**
@@ -198,8 +215,11 @@ PreviewPanel.prototype.updateVisibility_ = function() {
       newVisible = true;
       break;
     case PreviewPanel.VisibilityType.AUTO:
-      newVisible = this.selection_.entries.length != 0 ||
-          !PathUtil.isRootPath(this.currentPath_);
+      newVisible =
+          this.selection_.entries.length !== 0 ||
+          (this.currentEntry_ &&
+           !this.volumeManager_.getLocationInfo(
+               this.currentEntry_).isRootEntry);
       break;
     case PreviewPanel.VisibilityType.ALWAYS_HIDDEN:
       newVisible = false;
@@ -231,17 +251,24 @@ PreviewPanel.prototype.updateVisibility_ = function() {
  * @private
  */
 PreviewPanel.prototype.updatePreviewArea_ = function(breadCrumbsVisible) {
+  // If the previw panel is hiding, does not update the current view.
+  if (!this.visible)
+    return;
   var selection = this.selection_;
 
-  // Check if the breadcrumb list should show instead on the preview text.
-  var path;
-  if (this.selection_.totalCount == 1)
-    path = this.selection_.entries[0].fullPath;
-  else if (this.selection_.totalCount == 0)
-    path = this.currentPath_;
+  // Update thumbnails.
+  this.thumbnails.selection = selection.totalCount !== 0 ?
+      selection : {entries: [this.currentEntry_]};
 
-  if (path) {
-    this.breadcrumbs.show(PathUtil.getRootPath(path), path);
+  // Check if the breadcrumb list should show instead on the preview text.
+  var entry;
+  if (this.selection_.totalCount == 1)
+    entry = this.selection_.entries[0];
+  else if (this.selection_.totalCount == 0)
+    entry = this.currentEntry_;
+
+  if (entry) {
+    this.breadcrumbs.show(entry);
     this.calculatingSizeLabel_.hidden = true;
     this.previewText_.textContent = '';
     return;
@@ -356,11 +383,13 @@ PreviewPanel.CalculatingSizeLabel.prototype.onStep_ = function() {
  *
  * @param {HTMLElement} element DOM Element of thumbnail container.
  * @param {MetadataCache} metadataCache MetadataCache.
+ * @param {VolumeManagerWrapper} volumeManager Volume manager instance.
  * @constructor
  */
-PreviewPanel.Thumbnails = function(element, metadataCache) {
+PreviewPanel.Thumbnails = function(element, metadataCache, volumeManager) {
   this.element_ = element;
   this.metadataCache_ = metadataCache;
+  this.volumeManager_ = volumeManager;
   this.sequence_ = 0;
   Object.seal(this);
 };
@@ -418,6 +447,7 @@ PreviewPanel.Thumbnails.prototype.loadThumbnails_ = function(selection) {
       FileGrid.decorateThumbnailBox(box,
                                     entries[i],
                                     this.metadataCache_,
+                                    this.volumeManager_,
                                     ThumbnailLoader.FillMode.FILL,
                                     FileGrid.ThumbnailQuality.LOW,
                                     i == 0 && length == 1 &&
@@ -441,8 +471,7 @@ PreviewPanel.Thumbnails.prototype.loadThumbnails_ = function(selection) {
  * @param {transform} transform Transformation to be applied to the image.
  * @private
  */
-PreviewPanel.Thumbnails.prototype.setZoomedImage_ =
-    function(image, transform) {
+PreviewPanel.Thumbnails.prototype.setZoomedImage_ = function(image, transform) {
   if (!image)
     return;
   var width = image.width || 0;

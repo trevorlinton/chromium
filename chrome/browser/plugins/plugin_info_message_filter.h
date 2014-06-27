@@ -47,7 +47,7 @@ class PluginInfoMessageFilter : public content::BrowserMessageFilter {
         const content::WebPluginInfo& plugin,
         const PluginMetadata* plugin_metadata,
         ChromeViewHostMsg_GetPluginInfo_Status* status) const;
-    bool FindEnabledPlugin(int render_view_id,
+    bool FindEnabledPlugin(int render_frame_id,
                            const GURL& url,
                            const GURL& top_origin_url,
                            const std::string& mime_type,
@@ -60,7 +60,8 @@ class PluginInfoMessageFilter : public content::BrowserMessageFilter {
                                  const GURL& plugin_url,
                                  const std::string& resource,
                                  ContentSetting* setting,
-                                 bool* is_default) const;
+                                 bool* is_default,
+                                 bool* is_managed) const;
     void MaybeGrantAccess(const ChromeViewHostMsg_GetPluginInfo_Status& status,
                           const base::FilePath& path) const;
 
@@ -88,7 +89,7 @@ class PluginInfoMessageFilter : public content::BrowserMessageFilter {
 
   virtual ~PluginInfoMessageFilter();
 
-  void OnGetPluginInfo(int render_view_id,
+  void OnGetPluginInfo(int render_frame_id,
                        const GURL& url,
                        const GURL& top_origin_url,
                        const std::string& mime_type,

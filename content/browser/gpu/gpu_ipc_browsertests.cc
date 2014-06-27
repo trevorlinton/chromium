@@ -9,9 +9,9 @@
 #include "content/common/gpu/client/context_provider_command_buffer.h"
 #include "content/common/gpu/client/webgraphicscontext3d_command_buffer_impl.h"
 #include "content/common/gpu/gpu_process_launch_causes.h"
-#include "content/public/browser/browser_thread.h"
+#include "content/public/browser/gpu_data_manager.h"
 #include "content/public/common/content_switches.h"
-#include "content/test/content_browser_test.h"
+#include "content/public/test/content_browser_test.h"
 #include "ui/gl/gl_switches.h"
 #include "webkit/common/gpu/webgraphicscontext3d_in_process_command_buffer_impl.h"
 
@@ -19,24 +19,33 @@ namespace {
 
 using content::WebGraphicsContext3DCommandBufferImpl;
 
+const content::CauseForGpuLaunch kInitCause =
+    content::
+        CAUSE_FOR_GPU_LAUNCH_WEBGRAPHICSCONTEXT3DCOMMANDBUFFERIMPL_INITIALIZE;
+
 class ContextTestBase : public content::ContentBrowserTest {
  public:
   virtual void SetUpOnMainThread() OVERRIDE {
+    if (!content::BrowserGpuChannelHostFactory::CanUseForTesting())
+      return;
+
     if (!content::BrowserGpuChannelHostFactory::instance())
       content::BrowserGpuChannelHostFactory::Initialize(true);
 
     content::BrowserGpuChannelHostFactory* factory =
         content::BrowserGpuChannelHostFactory::instance();
     CHECK(factory);
+    bool lose_context_when_out_of_memory = false;
     scoped_refptr<content::GpuChannelHost> gpu_channel_host(
-        factory->EstablishGpuChannelSync(
-            content::
-                CAUSE_FOR_GPU_LAUNCH_WEBGRAPHICSCONTEXT3DCOMMANDBUFFERIMPL_INITIALIZE));
+        factory->EstablishGpuChannelSync(kInitCause));
     context_.reset(
         WebGraphicsContext3DCommandBufferImpl::CreateOffscreenContext(
             gpu_channel_host.get(),
-            WebKit::WebGraphicsContext3D::Attributes(),
-            GURL()));
+            blink::WebGraphicsContext3D::Attributes(),
+            lose_context_when_out_of_memory,
+            GURL(),
+            WebGraphicsContext3DCommandBufferImpl::SharedMemoryLimits(),
+            NULL));
     CHECK(context_.get());
     context_->makeContextCurrent();
     context_support_ = context_->GetContextSupport();
@@ -50,7 +59,7 @@ class ContextTestBase : public content::ContentBrowserTest {
   }
 
  protected:
-  scoped_ptr<WebGraphicsContext3DCommandBufferImpl> context_;
+  scoped_ptr<content::WebGraphicsContext3DCommandBufferImpl> context_;
   gpu::ContextSupport* context_support_;
 };
 
@@ -65,10 +74,13 @@ namespace content {
 class BrowserGpuChannelHostFactoryTest : public ContextTestBase {
  public:
   virtual void SetUpOnMainThread() OVERRIDE {
+    if (!BrowserGpuChannelHostFactory::CanUseForTesting())
+      return;
+
     // Start all tests without a gpu channel so that the tests exercise a
     // consistent codepath.
-    if (!content::BrowserGpuChannelHostFactory::instance())
-      content::BrowserGpuChannelHostFactory::Initialize(false);
+    if (!BrowserGpuChannelHostFactory::instance())
+      BrowserGpuChannelHostFactory::Initialize(false);
 
     CHECK(GetFactory());
 
@@ -101,9 +113,7 @@ class BrowserGpuChannelHostFactoryTest : public ContextTestBase {
 
   void EstablishAndWait() {
     base::RunLoop run_loop;
-    GetFactory()->EstablishGpuChannel(
-        CAUSE_FOR_GPU_LAUNCH_WEBGRAPHICSCONTEXT3DCOMMANDBUFFERIMPL_INITIALIZE,
-        run_loop.QuitClosure());
+    GetFactory()->EstablishGpuChannel(kInitCause, run_loop.QuitClosure());
     run_loop.Run();
   }
 
@@ -117,15 +127,22 @@ class BrowserGpuChannelHostFactoryTest : public ContextTestBase {
   }
 
   scoped_ptr<WebGraphicsContext3DCommandBufferImpl> CreateContext() {
+    bool lose_context_when_out_of_memory = false;
     return make_scoped_ptr(
         WebGraphicsContext3DCommandBufferImpl::CreateOffscreenContext(
             GetGpuChannel(),
-            WebKit::WebGraphicsContext3D::Attributes(),
-            GURL()));
+            blink::WebGraphicsContext3D::Attributes(),
+            lose_context_when_out_of_memory,
+            GURL(),
+            WebGraphicsContext3DCommandBufferImpl::SharedMemoryLimits(),
+            NULL));
   }
 };
 
 IN_PROC_BROWSER_TEST_F(BrowserGpuChannelHostFactoryTest, Basic) {
+  if (!context_)
+    return;
+
   DCHECK(!IsChannelEstablished());
   EstablishAndWait();
   EXPECT_TRUE(GetGpuChannel() != NULL);
@@ -133,11 +150,12 @@ IN_PROC_BROWSER_TEST_F(BrowserGpuChannelHostFactoryTest, Basic) {
 
 IN_PROC_BROWSER_TEST_F(BrowserGpuChannelHostFactoryTest,
                        EstablishAndTerminate) {
+  if (!context_)
+    return;
+
   DCHECK(!IsChannelEstablished());
   base::RunLoop run_loop;
-  GetFactory()->EstablishGpuChannel(
-      CAUSE_FOR_GPU_LAUNCH_WEBGRAPHICSCONTEXT3DCOMMANDBUFFERIMPL_INITIALIZE,
-      run_loop.QuitClosure());
+  GetFactory()->EstablishGpuChannel(kInitCause, run_loop.QuitClosure());
   GetFactory()->Terminate();
 
   // The callback should still trigger.
@@ -145,21 +163,26 @@ IN_PROC_BROWSER_TEST_F(BrowserGpuChannelHostFactoryTest,
 }
 
 IN_PROC_BROWSER_TEST_F(BrowserGpuChannelHostFactoryTest, AlreadyEstablished) {
+  if (!context_)
+    return;
+
   DCHECK(!IsChannelEstablished());
   scoped_refptr<GpuChannelHost> gpu_channel =
-      GetFactory()->EstablishGpuChannelSync(
-          CAUSE_FOR_GPU_LAUNCH_WEBGRAPHICSCONTEXT3DCOMMANDBUFFERIMPL_INITIALIZE);
+      GetFactory()->EstablishGpuChannelSync(kInitCause);
 
   // Expect established callback immediately.
   bool event = false;
   GetFactory()->EstablishGpuChannel(
-      CAUSE_FOR_GPU_LAUNCH_WEBGRAPHICSCONTEXT3DCOMMANDBUFFERIMPL_INITIALIZE,
+      kInitCause,
       base::Bind(&BrowserGpuChannelHostFactoryTest::Signal, &event));
   EXPECT_TRUE(event);
   EXPECT_EQ(gpu_channel, GetGpuChannel());
 }
 
 IN_PROC_BROWSER_TEST_F(BrowserGpuChannelHostFactoryTest, CrashAndRecover) {
+  if (!context_)
+    return;
+
   DCHECK(!IsChannelEstablished());
   EstablishAndWait();
   scoped_refptr<GpuChannelHost> host = GetGpuChannel();

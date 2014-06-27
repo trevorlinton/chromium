@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,14 +14,15 @@ import org.chromium.android_webview.AwSettings;
 import org.chromium.android_webview.test.util.AwQuotaManagerBridgeTestUtil;
 import org.chromium.base.test.util.Feature;
 import org.chromium.content.browser.test.util.CallbackHelper;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.net.test.util.TestWebServer;
 
 import java.util.ArrayList;
-import java.util.concurrent.Callable;
 import java.util.List;
+import java.util.concurrent.Callable;
 
+/**
+ * Tests for the AwQuotaManagerBridge.
+ */
 public class AwQuotaManagerBridgeTest extends AwTestBase {
     private TestAwContentsClient mContentsClient;
     private AwTestContainerView mTestView;
@@ -162,63 +163,45 @@ public class AwQuotaManagerBridgeTest extends AwTestBase {
     @LargeTest
     @Feature({"AndroidWebView", "WebStore"})
     public void testDeleteAllWithAppCache() throws Exception {
-        long currentUsage = getUsageForOrigin(mOrigin);
-        assertEquals(0, currentUsage);
+        final long initialUsage = getUsageForOrigin(mOrigin);
 
         useAppCache();
-        assertTrue(CriteriaHelper.pollForCriteria(new Criteria() {
+        poll(new Callable<Boolean>() {
             @Override
-            public boolean isSatisfied() {
-                try {
-                    return getUsageForOrigin(mOrigin) > 0;
-                } catch (Exception e) {
-                    return false;
-                }
+            public Boolean call() throws Exception {
+                return getUsageForOrigin(mOrigin) > initialUsage;
             }
-        }));
+        });
 
         deleteAllData();
-        assertTrue(CriteriaHelper.pollForCriteria(new Criteria() {
+        poll(new Callable<Boolean>() {
             @Override
-            public boolean isSatisfied() {
-                try {
-                    return getUsageForOrigin(mOrigin) == 0;
-                } catch (Exception e) {
-                    return false;
-                }
+            public Boolean call() throws Exception {
+                return getUsageForOrigin(mOrigin) == 0;
             }
-        }));
+        });
     }
 
     @LargeTest
     @Feature({"AndroidWebView", "WebStore"})
     public void testDeleteOriginWithAppCache() throws Exception {
-        long currentUsage = getUsageForOrigin(mOrigin);
-        assertEquals(0, currentUsage);
+        final long initialUsage = getUsageForOrigin(mOrigin);
 
         useAppCache();
-        assertTrue(CriteriaHelper.pollForCriteria(new Criteria() {
+        poll(new Callable<Boolean>() {
             @Override
-            public boolean isSatisfied() {
-                try {
-                    return getUsageForOrigin(mOrigin) > 0;
-                } catch (Exception e) {
-                    return false;
-                }
+            public Boolean call() throws Exception {
+                return getUsageForOrigin(mOrigin) > initialUsage;
             }
-        }));
+        });
 
         deleteOrigin(mOrigin);
-        assertTrue(CriteriaHelper.pollForCriteria(new Criteria() {
+        poll(new Callable<Boolean>() {
             @Override
-            public boolean isSatisfied() {
-                try {
-                    return getUsageForOrigin(mOrigin) == 0;
-                } catch (Exception e) {
-                    return false;
-                }
+            public Boolean call() throws Exception {
+                return getUsageForOrigin(mOrigin) == 0;
             }
-        }));
+        });
     }
 
     @LargeTest
@@ -226,15 +209,11 @@ public class AwQuotaManagerBridgeTest extends AwTestBase {
     public void testGetResultsMatch() throws Exception {
         useAppCache();
 
-        CriteriaHelper.pollForCriteria(new Criteria() {
+        poll(new Callable<Boolean>() {
             @Override
-            public boolean isSatisfied() {
-                try {
-                    return AwQuotaManagerBridgeTestUtil.getOrigins(
-                                AwQuotaManagerBridgeTest.this).mOrigins.length > 0;
-                } catch (Exception e) {
-                    return false;
-                }
+            public Boolean call() throws Exception {
+                return AwQuotaManagerBridgeTestUtil.getOrigins(
+                            AwQuotaManagerBridgeTest.this).mOrigins.length > 0;
             }
         });
 

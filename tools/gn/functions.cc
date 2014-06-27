@@ -6,56 +6,19 @@
 
 #include <iostream>
 
+#include "base/environment.h"
 #include "base/strings/string_util.h"
 #include "tools/gn/config.h"
 #include "tools/gn/config_values_generator.h"
 #include "tools/gn/err.h"
 #include "tools/gn/input_file.h"
-#include "tools/gn/item_tree.h"
 #include "tools/gn/parse_tree.h"
 #include "tools/gn/scheduler.h"
 #include "tools/gn/scope.h"
 #include "tools/gn/settings.h"
-#include "tools/gn/target_manager.h"
+#include "tools/gn/template.h"
 #include "tools/gn/token.h"
 #include "tools/gn/value.h"
-
-namespace {
-
-// This is called when a template is invoked. When we see a template
-// declaration, that funciton is RunTemplate.
-Value RunTemplateInvocation(Scope* scope,
-                            const FunctionCallNode* invocation,
-                            const std::vector<Value>& args,
-                            BlockNode* block,
-                            const FunctionCallNode* rule,
-                            Err* err) {
-  if (!EnsureNotProcessingImport(invocation, scope, err))
-    return Value();
-
-  Scope block_scope(scope);
-  if (!FillTargetBlockScope(scope, invocation,
-                            invocation->function().value().as_string(),
-                            block, args, &block_scope, err))
-    return Value();
-
-  // Run the block for the rule invocation.
-  block->ExecuteBlockInScope(&block_scope, err);
-  if (err->has_error())
-    return Value();
-
-  // Now run the rule itself with that block as the current scope.
-  rule->block()->ExecuteBlockInScope(&block_scope, err);
-  if (err->has_error())
-    return Value();
-
-  block_scope.CheckForUnusedVars(err);
-  return Value();
-}
-
-}  // namespace
-
-// ----------------------------------------------------------------------------
 
 bool EnsureNotProcessingImport(const ParseNode* node,
                                const Scope* scope,
@@ -98,7 +61,7 @@ bool FillTargetBlockScope(const Scope* scope,
   // the block in.
   const Scope* default_scope = scope->GetTargetDefaults(target_type);
   if (default_scope) {
-    if (!default_scope->NonRecursiveMergeTo(block_scope, function,
+    if (!default_scope->NonRecursiveMergeTo(block_scope, false, function,
                                             "target defaults", err))
       return false;
   }
@@ -261,29 +224,21 @@ Value RunConfig(const FunctionCallNode* function,
   Label label(MakeLabelForScope(scope, function, args[0].string_value()));
 
   if (g_scheduler->verbose_logging())
-    g_scheduler->Log("Generating config", label.GetUserVisibleName(true));
+    g_scheduler->Log("Defining config", label.GetUserVisibleName(true));
 
-  // Create the empty config object.
-  ItemTree* tree = &scope->settings()->build_settings()->item_tree();
-  Config* config = Config::GetConfig(scope->settings(), function->GetRange(),
-                                     label, NULL, err);
-  if (err->has_error())
-    return Value();
+  // Create the new config.
+  scoped_ptr<Config> config(new Config(scope->settings(), label));
+  config->set_defined_from(function);
 
   // Fill it.
   const SourceDir& input_dir = scope->GetSourceDir();
-  ConfigValuesGenerator gen(&config->config_values(), scope,
-                            function->function(), input_dir, err);
+  ConfigValuesGenerator gen(&config->config_values(), scope, input_dir, err);
   gen.Run();
   if (err->has_error())
     return Value();
 
   // Mark as complete.
-  {
-    base::AutoLock lock(tree->lock());
-    tree->MarkItemDefinedLocked(scope->settings()->build_settings(), label,
-                                err);
-  }
+  scope->settings()->build_settings()->ItemDefined(config.PassAs<Item>());
   return Value();
 }
 
@@ -340,16 +295,29 @@ const char kDefined_Help[] =
     "  Returns true if the given argument is defined. This is most useful in\n"
     "  templates to assert that the caller set things up properly.\n"
     "\n"
+    "  You can pass an identifier:\n"
+    "    defined(foo)\n"
+    "  which will return true or false depending on whether foo is defined in\n"
+    "  the current scope.\n"
+    "\n"
+    "  You can also check a named scope:\n"
+    "    defined(foo.bar)\n"
+    "  which returns true if both foo is defined and bar is defined on the\n"
+    "  named scope foo. It will throw an error if foo is defined but is not\n"
+    "  a scope.\n"
+    "\n"
     "Example:\n"
     "\n"
     "  template(\"mytemplate\") {\n"
     "    # To help users call this template properly...\n"
-    "    assert(defined(sources), \"Sources must be defined\")\n"
+    "    assert(defined(invoker.sources), \"Sources must be defined\")\n"
     "\n"
     "    # If we want to accept an optional \"values\" argument, we don't\n"
     "    # want to dereference something that may not be defined.\n"
-    "    if (!defined(outputs)) {\n"
-    "      outputs = []\n"
+    "    if (defined(invoker.values)) {\n"
+    "      values = invoker.values\n"
+    "    } else {\n"
+    "      values = \"some default value\"\n"
     "    }\n"
     "  }\n";
 
@@ -358,17 +326,78 @@ Value RunDefined(Scope* scope,
                  const ListNode* args_list,
                  Err* err) {
   const std::vector<const ParseNode*>& args_vector = args_list->contents();
-  const IdentifierNode* identifier = NULL;
-  if (args_vector.size() != 1 ||
-      !(identifier = args_vector[0]->AsIdentifier())) {
-    *err = Err(function, "Bad argument to defined().",
-        "defined() takes one argument which should be an identifier.");
+  if (args_vector.size() != 1) {
+    *err = Err(function, "Wrong number of arguments to defined().",
+               "Expecting exactly one.");
     return Value();
   }
 
-  if (scope->GetValue(identifier->value().value()))
-    return Value(function, true);
-  return Value(function, false);
+  const IdentifierNode* identifier = args_vector[0]->AsIdentifier();
+  if (identifier) {
+    // Passed an identifier "defined(foo)".
+    if (scope->GetValue(identifier->value().value()))
+      return Value(function, true);
+    return Value(function, false);
+  }
+
+  const AccessorNode* accessor = args_vector[0]->AsAccessor();
+  if (accessor) {
+    // Passed an accessor "defined(foo.bar)".
+    if (accessor->member()) {
+      // The base of the accessor must be a scope if it's defined.
+      const Value* base = scope->GetValue(accessor->base().value());
+      if (!base)
+        return Value(function, false);
+      if (!base->VerifyTypeIs(Value::SCOPE, err))
+        return Value();
+
+      // Check the member inside the scope to see if its defined.
+      if (base->scope_value()->GetValue(accessor->member()->value().value()))
+        return Value(function, true);
+      return Value(function, false);
+    }
+  }
+
+  // Argument is invalid.
+  *err = Err(function, "Bad thing passed to defined().",
+      "It should be of the form defined(foo) or defined(foo.bar).");
+  return Value();
+}
+
+// getenv ----------------------------------------------------------------------
+
+const char kGetEnv[] = "getenv";
+const char kGetEnv_Help[] =
+    "getenv: Get an environment variable.\n"
+    "\n"
+    "  value = getenv(env_var_name)\n"
+    "\n"
+    "  Returns the value of the given enironment variable. If the value is\n"
+    "  not found, it will try to look up the variable with the \"opposite\"\n"
+    "  case (based on the case of the first letter of the variable), but\n"
+    "  is otherwise case-sensitive.\n"
+    "\n"
+    "  If the environment variable is not found, the empty string will be\n"
+    "  returned. Note: it might be nice to extend this if we had the concept\n"
+    "  of \"none\" in the language to indicate lookup failure.\n"
+    "\n"
+    "Example:\n"
+    "\n"
+    "  home_dir = getenv(\"HOME\")\n";
+
+Value RunGetEnv(Scope* scope,
+                const FunctionCallNode* function,
+                const std::vector<Value>& args,
+                Err* err) {
+  if (!EnsureSingleStringArg(function, args, err))
+    return Value();
+
+  scoped_ptr<base::Environment> env(base::Environment::Create());
+
+  std::string result;
+  if (!env->GetVar(args[0].string_value().c_str(), &result))
+    return Value(function, "");  // Not found, return empty string.
+  return Value(function, result);
 }
 
 // import ----------------------------------------------------------------------
@@ -382,10 +411,10 @@ const char kImport_Help[] =
     "\n"
     "  By convention, imported files are named with a .gni extension.\n"
     "\n"
-    "  It does not do an \"include\". The imported file is executed in a\n"
-    "  standalone environment from the caller of the import command. The\n"
-    "  results of this execution are cached for other files that import the\n"
-    "  same .gni file.\n"
+    "  An import is different than a C++ \"include\". The imported file is\n"
+    "  executed in a standalone environment from the caller of the import\n"
+    "  command. The results of this execution are cached for other files that\n"
+    "  import the same .gni file.\n"
     "\n"
     "  Note that you can not import a BUILD.gn file that's otherwise used\n"
     "  in the build. Files must either be imported or implicitly loaded as\n"
@@ -393,9 +422,9 @@ const char kImport_Help[] =
     "\n"
     "  The imported file's scope will be merged with the scope at the point\n"
     "  import was called. If there is a conflict (both the current scope and\n"
-    "  the imported file define some variable or rule with the same name)\n"
-    "  a runtime error will be thrown. Therefore, it's good practice to\n"
-    "  minimize the stuff that an imported file defines.\n"
+    "  the imported file define some variable or rule with the same name but\n"
+    "  different value), a runtime error will be thrown. Therefore, it's good\n"
+    "  practice to minimize the stuff that an imported file defines.\n"
     "\n"
     "Examples:\n"
     "\n"
@@ -408,8 +437,7 @@ Value RunImport(Scope* scope,
                 const FunctionCallNode* function,
                 const std::vector<Value>& args,
                 Err* err) {
-  if (!EnsureSingleStringArg(function, args, err) ||
-      !EnsureNotProcessingImport(function, scope, err))
+  if (!EnsureSingleStringArg(function, args, err))
     return Value();
 
   const SourceDir& input_dir = scope->GetSourceDir();
@@ -548,15 +576,17 @@ struct FunctionInfoInitializer {
     #define INSERT_FUNCTION(command) \
         map[k##command] = FunctionInfo(&Run##command, k##command##_Help);
 
+    INSERT_FUNCTION(Action)
+    INSERT_FUNCTION(ActionForEach)
     INSERT_FUNCTION(Assert)
     INSERT_FUNCTION(Component)
     INSERT_FUNCTION(Config)
     INSERT_FUNCTION(Copy)
-    INSERT_FUNCTION(Custom)
     INSERT_FUNCTION(DeclareArgs)
     INSERT_FUNCTION(Defined)
     INSERT_FUNCTION(ExecScript)
     INSERT_FUNCTION(Executable)
+    INSERT_FUNCTION(GetEnv)
     INSERT_FUNCTION(Group)
     INSERT_FUNCTION(Import)
     INSERT_FUNCTION(Print)
@@ -596,15 +626,14 @@ Value RunFunction(Scope* scope,
   FunctionInfoMap::const_iterator found_function =
       function_map.find(name.value());
   if (found_function == function_map.end()) {
-    // No build-in function matching this, check for a template.
-    const FunctionCallNode* rule =
+    // No built-in function matching this, check for a template.
+    const Template* templ =
         scope->GetTemplate(function->function().value().as_string());
-    if (rule) {
+    if (templ) {
       Value args = args_list->Execute(scope, err);
       if (err->has_error())
         return Value();
-      return RunTemplateInvocation(scope, function, args.list_value(), block,
-                                   rule, err);
+      return templ->Invoke(scope, function, args.list_value(), block, err);
     }
 
     *err = Err(name, "Unknown function.");

@@ -32,16 +32,6 @@ scoped_refptr<DevToolsAgentHost> DevToolsAgentHost::GetForWorker(
       worker_route_id);
 }
 
-// Called on the UI thread.
-// static
-bool DevToolsAgentHost::HasForWorker(
-    int worker_process_id,
-    int worker_route_id) {
-  return WorkerDevToolsManager::HasDevToolsAgentHostForWorker(
-      worker_process_id,
-      worker_route_id);
-}
-
 namespace {
 
 typedef std::map<WorkerDevToolsManager::WorkerId,
@@ -52,13 +42,15 @@ base::LazyInstance<AgentHosts>::Leaky g_orphan_map = LAZY_INSTANCE_INITIALIZER;
 }  // namespace
 
 struct WorkerDevToolsManager::TerminatedInspectedWorker {
-  TerminatedInspectedWorker(WorkerId id, const GURL& url, const string16& name)
+  TerminatedInspectedWorker(WorkerId id,
+                            const GURL& url,
+                            const base::string16& name)
       : old_worker_id(id),
         worker_url(url),
         worker_name(name) {}
   WorkerId old_worker_id;
   GURL worker_url;
-  string16 worker_name;
+  base::string16 worker_name;
 };
 
 
@@ -202,7 +194,7 @@ class WorkerDevToolsManager::DetachedClientHosts {
 
 struct WorkerDevToolsManager::InspectedWorker {
   InspectedWorker(WorkerProcessHost* host, int route_id, const GURL& url,
-                  const string16& name)
+                  const base::string16& name)
       : host(host),
         route_id(route_id),
         worker_url(url),
@@ -210,7 +202,7 @@ struct WorkerDevToolsManager::InspectedWorker {
   WorkerProcessHost* const host;
   int const route_id;
   GURL worker_url;
-  string16 worker_name;
+  base::string16 worker_name;
 };
 
 // static
@@ -228,14 +220,6 @@ DevToolsAgentHost* WorkerDevToolsManager::GetDevToolsAgentHostForWorker(
   if (it == g_agent_map.Get().end())
     return new WorkerDevToolsAgentHost(id);
   return it->second;
-}
-
-// static
-bool WorkerDevToolsManager::HasDevToolsAgentHostForWorker(
-    int worker_process_id,
-    int worker_route_id) {
-  WorkerId id(worker_process_id, worker_route_id);
-  return g_agent_map.Get().find(id) != g_agent_map.Get().end();
 }
 
 WorkerDevToolsManager::WorkerDevToolsManager() {

@@ -59,6 +59,14 @@ fun_r:_lock
 fun_r:_flsbuf
 fun_r:_unlock_file
 fun_r:_getstream
+fun_r:_open_osfhandle
 
 # http://crbug.com/272065
 obj:*NLAapi.dll
+
+# Presumably atomic-based optimization in the system allocator.
+fun_r:_heap_alloc_dbg_impl
+
+# http://crbug.com/348908 - looks like TSan doesn't
+# intercept memset() from VS2013 CRT.
+fun_r:memset

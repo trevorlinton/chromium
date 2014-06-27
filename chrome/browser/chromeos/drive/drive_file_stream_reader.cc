@@ -13,8 +13,8 @@
 #include "chrome/browser/chromeos/drive/drive.pb.h"
 #include "chrome/browser/chromeos/drive/file_system_interface.h"
 #include "chrome/browser/chromeos/drive/local_file_reader.h"
-#include "chrome/browser/google_apis/task_util.h"
 #include "content/public/browser/browser_thread.h"
+#include "google_apis/drive/task_util.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_byte_range.h"
@@ -26,13 +26,32 @@ namespace {
 
 // Converts FileError code to net::Error code.
 int FileErrorToNetError(FileError error) {
-  return net::PlatformFileErrorToNetError(FileErrorToPlatformError(error));
+  return net::FileErrorToNetError(FileErrorToBaseFileError(error));
 }
 
-// Runs task on UI thread.
-void RunTaskOnUIThread(const base::Closure& task) {
-  google_apis::RunTaskOnThread(
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI), task);
+// Computes the concrete |start| offset and the |length| of |range| in a file
+// of |total| size.
+//
+// This is a thin wrapper of HttpByteRange::ComputeBounds, extended to allow
+// an empty range at the end of the file, like "Range: bytes 0-" on a zero byte
+// file. This is for convenience in unifying implementation with the seek
+// operation of stream reader. HTTP doesn't allow such ranges but we want to
+// treat such seeking as valid.
+bool ComputeConcretePosition(net::HttpByteRange range, int64 total,
+                             int64* start, int64* length) {
+  // The special case when empty range in the end of the file is selected.
+  if (range.HasFirstBytePosition() && range.first_byte_position() == total) {
+    *start = range.first_byte_position();
+    *length = 0;
+    return true;
+  }
+
+  // Otherwise forward to HttpByteRange::ComputeBounds.
+  if (!range.ComputeBounds(total))
+    return false;
+  *start = range.first_byte_position();
+  *length = range.last_byte_position() - range.first_byte_position() + 1;
+  return true;
 }
 
 }  // namespace
@@ -245,10 +264,10 @@ void NetworkReaderProxy::OnCompleted(FileError error) {
 
 namespace {
 
-// Calls FileSystemInterface::GetFileContentByPath if the file system
+// Calls FileSystemInterface::GetFileContent if the file system
 // is available. If not, the |completion_callback| is invoked with
 // FILE_ERROR_FAILED.
-void GetFileContentByPathOnUIThread(
+base::Closure GetFileContentOnUIThread(
     const DriveFileStreamReader::FileSystemGetter& file_system_getter,
     const base::FilePath& drive_file_path,
     const GetFileContentInitializedCallback& initialized_callback,
@@ -259,33 +278,36 @@ void GetFileContentByPathOnUIThread(
   FileSystemInterface* file_system = file_system_getter.Run();
   if (!file_system) {
     completion_callback.Run(FILE_ERROR_FAILED);
-    return;
+    return base::Closure();
   }
 
-  file_system->GetFileContentByPath(drive_file_path,
-                                    initialized_callback,
-                                    get_content_callback,
-                                    completion_callback);
+  return google_apis::CreateRelayCallback(
+      file_system->GetFileContent(drive_file_path,
+                                  initialized_callback,
+                                  get_content_callback,
+                                  completion_callback));
 }
 
-// Helper to run FileSystemInterface::GetFileContentByPath on UI thread.
-void GetFileContentByPath(
+// Helper to run FileSystemInterface::GetFileContent on UI thread.
+void GetFileContent(
     const DriveFileStreamReader::FileSystemGetter& file_system_getter,
     const base::FilePath& drive_file_path,
     const GetFileContentInitializedCallback& initialized_callback,
     const google_apis::GetContentCallback& get_content_callback,
-    const FileOperationCallback& completion_callback) {
+    const FileOperationCallback& completion_callback,
+    const base::Callback<void(const base::Closure&)>& reply_callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
 
-  BrowserThread::PostTask(
+  BrowserThread::PostTaskAndReplyWithResult(
       BrowserThread::UI,
       FROM_HERE,
-      base::Bind(&GetFileContentByPathOnUIThread,
+      base::Bind(&GetFileContentOnUIThread,
                  file_system_getter,
                  drive_file_path,
                  google_apis::CreateRelayCallback(initialized_callback),
                  google_apis::CreateRelayCallback(get_content_callback),
-                 google_apis::CreateRelayCallback(completion_callback)));
+                 google_apis::CreateRelayCallback(completion_callback)),
+      reply_callback);
 }
 
 }  // namespace
@@ -314,19 +336,21 @@ void DriveFileStreamReader::Initialize(
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   DCHECK(!callback.is_null());
 
-  GetFileContentByPath(
+  GetFileContent(
       file_system_getter_,
       drive_file_path,
       base::Bind(&DriveFileStreamReader
-                     ::InitializeAfterGetFileContentByPathInitialized,
+                     ::InitializeAfterGetFileContentInitialized,
                  weak_ptr_factory_.GetWeakPtr(),
                  byte_range,
                  callback),
       base::Bind(&DriveFileStreamReader::OnGetContent,
                  weak_ptr_factory_.GetWeakPtr()),
-      base::Bind(&DriveFileStreamReader::OnGetFileContentByPathCompletion,
+      base::Bind(&DriveFileStreamReader::OnGetFileContentCompletion,
                  weak_ptr_factory_.GetWeakPtr(),
-                 callback));
+                 callback),
+      base::Bind(&DriveFileStreamReader::StoreCancelDownloadClosure,
+                 weak_ptr_factory_.GetWeakPtr()));
 }
 
 int DriveFileStreamReader::Read(net::IOBuffer* buffer, int buffer_length,
@@ -338,14 +362,21 @@ int DriveFileStreamReader::Read(net::IOBuffer* buffer, int buffer_length,
   return reader_proxy_->Read(buffer, buffer_length, callback);
 }
 
-void DriveFileStreamReader::InitializeAfterGetFileContentByPathInitialized(
-    const net::HttpByteRange& in_byte_range,
+void DriveFileStreamReader::StoreCancelDownloadClosure(
+    const base::Closure& cancel_download_closure) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
+  cancel_download_closure_ = cancel_download_closure;
+}
+
+void DriveFileStreamReader::InitializeAfterGetFileContentInitialized(
+    const net::HttpByteRange& byte_range,
     const InitializeCompletionCallback& callback,
     FileError error,
-    scoped_ptr<ResourceEntry> entry,
     const base::FilePath& local_cache_file_path,
-    const base::Closure& ui_cancel_download_closure) {
+    scoped_ptr<ResourceEntry> entry) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
+  // StoreCancelDownloadClosure() should be called before this function.
+  DCHECK(!cancel_download_closure_.is_null());
 
   if (error != FILE_ERROR_OK) {
     callback.Run(FileErrorToNetError(error), scoped_ptr<ResourceEntry>());
@@ -353,32 +384,25 @@ void DriveFileStreamReader::InitializeAfterGetFileContentByPathInitialized(
   }
   DCHECK(entry);
 
-  net::HttpByteRange byte_range = in_byte_range;
-  if (!byte_range.ComputeBounds(entry->file_info().size())) {
+  int64 range_start = 0, range_length = 0;
+  if (!ComputeConcretePosition(byte_range, entry->file_info().size(),
+                               &range_start, &range_length)) {
     // If |byte_range| is invalid (e.g. out of bounds), return with an error.
     // At the same time, we cancel the in-flight downloading operation if
     // needed and and invalidate weak pointers so that we won't
     // receive unwanted callbacks.
-    if (!ui_cancel_download_closure.is_null())
-      ui_cancel_download_closure.Run();
+    cancel_download_closure_.Run();
     weak_ptr_factory_.InvalidateWeakPtrs();
     callback.Run(
         net::ERR_REQUEST_RANGE_NOT_SATISFIABLE, scoped_ptr<ResourceEntry>());
     return;
   }
 
-  // Note: both boundary of |byte_range| are inclusive.
-  int64 range_length =
-      byte_range.last_byte_position() - byte_range.first_byte_position() + 1;
-  DCHECK_GE(range_length, 0);
-
   if (local_cache_file_path.empty()) {
     // The file is not cached, and being downloaded.
-    DCHECK(!ui_cancel_download_closure.is_null());
     reader_proxy_.reset(
         new internal::NetworkReaderProxy(
-            byte_range.first_byte_position(), range_length,
-            base::Bind(&RunTaskOnUIThread, ui_cancel_download_closure)));
+            range_start, range_length, cancel_download_closure_));
     callback.Run(net::OK, entry.Pass());
     return;
   }
@@ -389,7 +413,7 @@ void DriveFileStreamReader::InitializeAfterGetFileContentByPathInitialized(
   util::LocalFileReader* file_reader_ptr = file_reader.get();
   file_reader_ptr->Open(
       local_cache_file_path,
-      byte_range.first_byte_position(),
+      range_start,
       base::Bind(
           &DriveFileStreamReader::InitializeAfterLocalFileOpen,
           weak_ptr_factory_.GetWeakPtr(),
@@ -424,7 +448,7 @@ void DriveFileStreamReader::OnGetContent(google_apis::GDataErrorCode error_code,
   reader_proxy_->OnGetContent(data.Pass());
 }
 
-void DriveFileStreamReader::OnGetFileContentByPathCompletion(
+void DriveFileStreamReader::OnGetFileContentCompletion(
     const InitializeCompletionCallback& callback,
     FileError error) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));

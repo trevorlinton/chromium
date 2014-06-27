@@ -6,16 +6,16 @@
 #define ASH_SHELF_SHELF_NAVIGATOR_H_
 
 #include "ash/ash_export.h"
-#include "ash/launcher/launcher_types.h"
+#include "ash/shelf/shelf_constants.h"
 
 namespace ash {
 
-class LauncherModel;
+class ShelfModel;
 
 // Scans the current shelf item and returns the index of the shelf item which
 // should be activated next for the specified |direction|. Returns -1 if fails
 // to find such item.
-ASH_EXPORT int GetNextActivatedItemIndex(const LauncherModel& model,
+ASH_EXPORT int GetNextActivatedItemIndex(const ShelfModel& model,
                                          CycleDirection direction);
 
 }  // namespace ash

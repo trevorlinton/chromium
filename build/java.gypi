@@ -44,6 +44,7 @@
 #  res_extra_dirs - A list of extra directories containing Android resources.
 #    These directories may be generated at build time.
 #  res_extra_files - A list of the files in res_extra_dirs.
+#  never_lint - Set to 1 to not run lint on this target.
 
 {
   'dependencies': [
@@ -73,6 +74,10 @@
     'intermediate_dir': '<(SHARED_INTERMEDIATE_DIR)/<(_target_name)',
     'classes_dir': '<(intermediate_dir)/classes',
     'compile_stamp': '<(intermediate_dir)/compile.stamp',
+    'lint_stamp': '<(intermediate_dir)/lint.stamp',
+    'lint_result': '<(intermediate_dir)/lint_result.xml',
+    'lint_config': '<(intermediate_dir)/lint_config.xml',
+    'never_lint%': 0,
     'proguard_config%': '',
     'proguard_preprocess%': '0',
     'variables': {
@@ -178,16 +183,16 @@
             # resources in dependencies can be resolved.
             'all_res_dirs': ['<@(res_input_dirs)',
                              '>@(dependencies_res_input_dirs)',],
-            # Write the inputs list to a file, so that the action command
-            # line won't exceed the OS limits when calculating the checksum
-            # of the list.
-            'inputs_list_file': '>|(inputs_list.<(_target_name).gypcmd >@(_inputs))'
+            # Write the inputs list to a file, so that its mtime is updated when
+            # the list of inputs changes.
+            'inputs_list_file': '>|(java_resources.<(_target_name).gypcmd >@(resource_input_paths) >@(dependencies_res_files))'
           },
           'inputs': [
             '<(DEPTH)/build/android/gyp/util/build_utils.py',
             '<(DEPTH)/build/android/gyp/process_resources.py',
             '>@(resource_input_paths)',
             '>@(dependencies_res_files)',
+            '>(inputs_list_file)',
           ],
           'outputs': [
             '<(R_stamp)',
@@ -204,11 +209,6 @@
             '--non-constant-id',
             '--custom-package', '<(R_package)',
             '--stamp', '<(R_stamp)',
-
-            # Add hash of inputs to the command line, so if inputs change
-            # (e.g. if a resource if removed), the command will be re-run.
-            # TODO(newt): remove this once crbug.com/177552 is fixed in ninja.
-            '--ignore=>!(md5sum >(inputs_list_file))',
           ],
         },
         # Generate API 14 resources.
@@ -265,9 +265,6 @@
             '--output-path=<(jar_path)',
             '--proguard-config=<(proguard_config)',
             '--classpath=<(android_sdk_jar) >(input_jars_paths)',
-
-            # TODO(newt): remove this once http://crbug.com/177552 is fixed in ninja.
-            '--ignore=>!(echo \'>(_inputs)\' | md5sum)',
           ]
         },
       ],
@@ -278,16 +275,12 @@
       'action_name': 'javac_<(_target_name)',
       'message': 'Compiling <(_target_name) java sources',
       'variables': {
-        'all_src_dirs': [
-          '>(java_in_dir)/src',
-          '>@(additional_src_dirs)',
-          '>@(generated_src_dirs)',
-        ],
+        'java_sources': ['>!@(find >(java_in_dir)/src >(additional_src_dirs) -name "*.java")'],
       },
       'inputs': [
         '<(DEPTH)/build/android/gyp/util/build_utils.py',
         '<(DEPTH)/build/android/gyp/javac.py',
-        '>!@(find >(java_in_dir)/src >(additional_src_dirs) -name "*.java")',
+        '>@(java_sources)',
         '>@(input_jars_paths)',
         '>@(additional_input_paths)',
       ],
@@ -298,14 +291,30 @@
         'python', '<(DEPTH)/build/android/gyp/javac.py',
         '--output-dir=<(classes_dir)',
         '--classpath=>(input_jars_paths)',
-        '--src-dirs=>(all_src_dirs)',
+        '--src-gendirs=>(generated_src_dirs)',
         '--javac-includes=<(javac_includes)',
         '--chromium-code=<(chromium_code)',
         '--stamp=<(compile_stamp)',
-
-        # TODO(newt): remove this once http://crbug.com/177552 is fixed in ninja.
-        '--ignore=>!(echo \'>(_inputs)\' | md5sum)',
+        '>@(java_sources)',
       ]
+    },
+    {
+      'variables': {
+        'src_dirs': [
+          '<(java_in_dir)/src',
+          '>@(additional_src_dirs)',
+        ],
+        'stamp_path': '<(lint_stamp)',
+        'result_path': '<(lint_result)',
+        'config_path': '<(lint_config)',
+      },
+      'inputs': [
+        '<(compile_stamp)',
+      ],
+      'outputs': [
+        '<(lint_stamp)',
+      ],
+      'includes': [ 'android/lint_action.gypi' ],
     },
     {
       'action_name': 'jar_<(_target_name)',
@@ -324,9 +333,6 @@
         '--classes-dir=<(classes_dir)',
         '--jar-path=<(javac_jar_path)',
         '--excluded-classes=<(jar_excluded_classes)',
-
-        # TODO(newt): remove this once http://crbug.com/177552 is fixed in ninja.
-        '--ignore=>!(echo \'>(_inputs)\' | md5sum)',
       ]
     },
     {
@@ -362,9 +368,6 @@
         'python', '<(DEPTH)/build/android/gyp/jar_toc.py',
         '--jar-path=<(jar_final_path)',
         '--toc-path=<(jar_final_path).TOC',
-
-        # TODO(newt): remove this once http://crbug.com/177552 is fixed in ninja.
-        '--ignore=>!(echo \'>(_inputs)\' | md5sum)',
       ]
     },
     {

@@ -63,7 +63,7 @@ class WEBVIEW_EXPORT WebDialogView : public views::ClientView,
   // Overridden from views::WidgetDelegate:
   virtual bool CanResize() const OVERRIDE;
   virtual ui::ModalType GetModalType() const OVERRIDE;
-  virtual string16 GetWindowTitle() const OVERRIDE;
+  virtual base::string16 GetWindowTitle() const OVERRIDE;
   virtual std::string GetWindowName() const OVERRIDE;
   virtual void WindowClosing() OVERRIDE;
   virtual views::View* GetContentsView() OVERRIDE;
@@ -75,7 +75,7 @@ class WEBVIEW_EXPORT WebDialogView : public views::ClientView,
 
   // Overridden from ui::WebDialogDelegate:
   virtual ui::ModalType GetDialogModalType() const OVERRIDE;
-  virtual string16 GetDialogTitle() const OVERRIDE;
+  virtual base::string16 GetDialogTitle() const OVERRIDE;
   virtual GURL GetDialogContentURL() const OVERRIDE;
   virtual void GetWebUIMessageHandlers(
       std::vector<content::WebUIMessageHandler*>* handlers) const OVERRIDE;
@@ -110,7 +110,8 @@ class WEBVIEW_EXPORT WebDialogView : public views::ClientView,
                               const gfx::Rect& initial_pos,
                               bool user_gesture,
                               bool* was_blocked) OVERRIDE;
-  virtual void LoadingStateChanged(content::WebContents* source) OVERRIDE;
+  virtual void LoadingStateChanged(content::WebContents* source,
+                                   bool to_different_document) OVERRIDE;
   virtual void BeforeUnloadFired(content::WebContents* tab,
                                  bool proceed,
                                  bool* proceed_to_fire_unload) OVERRIDE;

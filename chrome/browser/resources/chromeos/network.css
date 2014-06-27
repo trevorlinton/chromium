@@ -32,17 +32,39 @@
   margin: 2px;
 }
 
-#network-status-table {
+.state-table {
   border-collapse: collapse;
 }
 
-#network-status-table tr td {
+.state-table tr td {
   border: 1px solid rgb(220, 220, 220);
   font-size: 13px;
 }
 
-.network-status-table-header {
+.state-table-header {
   font-weight: bold;
+}
+
+.state-table-expand-button-cell {
+  text-align: center;
+}
+
+.state-table-expand-button {
+  background-color: #f0f0f0;
+  border: 1px solid;
+  border-color: #a0a0a0;
+  height: 12px;
+  margin: 4px;
+  padding: 0;
+  width: 12px;
+}
+
+.state-table-expand-button-expanded {
+  background-color: #b0b0b0;
+}
+
+.state-table-expanded-cell {
+  white-space: pre-wrap;
 }
 
 .network-level-tag {

@@ -17,6 +17,7 @@
 #include "chrome/renderer/extensions/logging_native_handler.h"
 #include "chrome/renderer/extensions/object_backed_native_handler.h"
 #include "chrome/renderer/extensions/safe_builtins.h"
+#include "chrome/renderer/extensions/utils_native_handler.h"
 #include "ui/base/resource/resource_bundle.h"
 
 #include <map>
@@ -99,10 +100,11 @@ class ModuleSystemTest::StringSourceMap : public ModuleSystem::SourceMap {
   StringSourceMap() {}
   virtual ~StringSourceMap() {}
 
-  virtual v8::Handle<v8::Value> GetSource(const std::string& name) OVERRIDE {
+  virtual v8::Handle<v8::Value> GetSource(v8::Isolate* isolate,
+                                          const std::string& name) OVERRIDE {
     if (source_map_.count(name) == 0)
-      return v8::Undefined();
-    return v8::String::New(source_map_[name].c_str());
+      return v8::Undefined(isolate);
+    return v8::String::NewFromUtf8(isolate, source_map_[name].c_str());
   }
 
   virtual bool Contains(const std::string& name) OVERRIDE {
@@ -133,17 +135,24 @@ ModuleSystemTest::ModuleSystemTest()
       should_assertions_be_made_(true) {
   context_->v8_context()->Enter();
   assert_natives_ = new AssertNatives(context_.get());
-  module_system_.reset(new ModuleSystem(context_.get(), source_map_.get()));
-  module_system_->RegisterNativeHandler("assert", scoped_ptr<NativeHandler>(
+
+  {
+    scoped_ptr<ModuleSystem> module_system(
+        new ModuleSystem(context_.get(), source_map_.get()));
+    context_->set_module_system(module_system.Pass());
+  }
+  ModuleSystem* module_system = context_->module_system();
+  module_system->RegisterNativeHandler("assert", scoped_ptr<NativeHandler>(
       assert_natives_));
-  module_system_->RegisterNativeHandler("logging", scoped_ptr<NativeHandler>(
+  module_system->RegisterNativeHandler("logging", scoped_ptr<NativeHandler>(
       new extensions::LoggingNativeHandler(context_.get())));
-  module_system_->SetExceptionHandlerForTest(
+  module_system->RegisterNativeHandler("utils", scoped_ptr<NativeHandler>(
+      new extensions::UtilsNativeHandler(context_.get())));
+  module_system->SetExceptionHandlerForTest(
       scoped_ptr<ModuleSystem::ExceptionHandler>(new FailsOnException));
 }
 
 ModuleSystemTest::~ModuleSystemTest() {
-  module_system_.reset();
   context_->v8_context()->Exit();
 }
 
@@ -162,7 +171,7 @@ void ModuleSystemTest::RegisterModule(const std::string& name,
 void ModuleSystemTest::OverrideNativeHandler(const std::string& name,
                                              const std::string& code) {
   RegisterModule(name, code);
-  module_system_->OverrideNativeHandlerForTest(name);
+  context_->module_system()->OverrideNativeHandlerForTest(name);
 }
 
 void ModuleSystemTest::RegisterTestFile(const std::string& module_name,
@@ -188,9 +197,10 @@ void ModuleSystemTest::ExpectNoAssertionsMade() {
 }
 
 v8::Handle<v8::Object> ModuleSystemTest::CreateGlobal(const std::string& name) {
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
-  v8::Handle<v8::Object> object = v8::Object::New();
-  v8::Context::GetCurrent()->Global()->Set(v8::String::New(name.c_str()),
-                                           object);
-  return handle_scope.Close(object);
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::EscapableHandleScope handle_scope(isolate);
+  v8::Local<v8::Object> object = v8::Object::New(isolate);
+  isolate->GetCurrentContext()->Global()->Set(
+      v8::String::NewFromUtf8(isolate, name.c_str()), object);
+  return handle_scope.Escape(object);
 }

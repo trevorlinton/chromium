@@ -6,30 +6,30 @@
 #define CHROME_BROWSER_MEDIA_CHROME_MIDI_PERMISSION_CONTEXT_FACTORY_H_
 
 #include "base/memory/singleton.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service_factory.h"
+#include "components/keyed_service/content/browser_context_keyed_service_factory.h"
 
-class ChromeMIDIPermissionContext;
+class ChromeMidiPermissionContext;
 class Profile;
 
-class ChromeMIDIPermissionContextFactory
+class ChromeMidiPermissionContextFactory
     : public BrowserContextKeyedServiceFactory {
  public:
-  static ChromeMIDIPermissionContext* GetForProfile(Profile* profile);
-  static ChromeMIDIPermissionContextFactory* GetInstance();
+  static ChromeMidiPermissionContext* GetForProfile(Profile* profile);
+  static ChromeMidiPermissionContextFactory* GetInstance();
 
  private:
-  friend struct DefaultSingletonTraits<ChromeMIDIPermissionContextFactory>;
+  friend struct DefaultSingletonTraits<ChromeMidiPermissionContextFactory>;
 
-  ChromeMIDIPermissionContextFactory();
-  virtual ~ChromeMIDIPermissionContextFactory();
+  ChromeMidiPermissionContextFactory();
+  virtual ~ChromeMidiPermissionContextFactory();
 
   // BrowserContextKeyedBaseFactory methods:
-  virtual BrowserContextKeyedService* BuildServiceInstanceFor(
+  virtual KeyedService* BuildServiceInstanceFor(
       content::BrowserContext* profile) const OVERRIDE;
   virtual content::BrowserContext* GetBrowserContextToUse(
       content::BrowserContext* context) const OVERRIDE;
 
-  DISALLOW_COPY_AND_ASSIGN(ChromeMIDIPermissionContextFactory);
+  DISALLOW_COPY_AND_ASSIGN(ChromeMidiPermissionContextFactory);
 };
 
 #endif  // CHROME_BROWSER_MEDIA_CHROME_MIDI_PERMISSION_CONTEXT_FACTORY_H_

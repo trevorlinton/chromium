@@ -10,6 +10,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram.h"
+#include "base/metrics/sparse_histogram.h"
 #include "base/prefs/pref_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -59,12 +60,10 @@ const char kUserPreferencesKey[] = "preferences";
 const char kUserPreferencesIsUserControlledKey[] = "preferences_iuc";
 
 // Keys used in the output dictionary of the program.
-const char kCombinedStatusMaskKeys[][26] = {
-    "combined_status_mask_bit1", "combined_status_mask_bit2",
-    "combined_status_mask_bit3", "combined_status_mask_bit4"};
+const char kCombinedStatusMaskKeyPrefix[] = "combined_status_mask_bit";
 const char kHadPromptedAlreadyKey[] = "had_prompted_already";
-const char kSatisfiedCriteriaMaskKeys[][29] = {"satisfied_criteria_mask_bit1",
-                                               "satisfied_criteria_mask_bit2"};
+const char kShouldPromptKey[] = "should_prompt";
+const char kSatisfiedCriteriaMaskKeyPrefix[] = "satisfied_criteria_mask_bit";
 
 // Keys used in both the input and output dictionary of the program.
 const char kMementoValueInFileKey[] = "memento_value_in_file";
@@ -73,7 +72,7 @@ const char kMementoValueInPrefsKey[] = "memento_value_in_prefs";
 
 // Number of bits, and maximum value (exclusive) for the mask whose bits
 // indicate which of reset criteria were satisfied.
-const size_t kSatisfiedCriteriaMaskNumberOfBits = 2u;
+const size_t kSatisfiedCriteriaMaskNumberOfBits = 5u;
 const uint32 kSatisfiedCriteriaMaskMaximumValue =
     (1u << kSatisfiedCriteriaMaskNumberOfBits);
 
@@ -83,13 +82,6 @@ const uint32 kSatisfiedCriteriaMaskMaximumValue =
 const size_t kCombinedStatusMaskNumberOfBits = 4u;
 const uint32 kCombinedStatusMaskMaximumValue =
     (1u << kCombinedStatusMaskNumberOfBits);
-
-COMPILE_ASSERT(
-    arraysize(kSatisfiedCriteriaMaskKeys) == kSatisfiedCriteriaMaskNumberOfBits,
-    satisfied_criteria_mask_bits_mismatch);
-COMPILE_ASSERT(
-    arraysize(kCombinedStatusMaskKeys) == kCombinedStatusMaskNumberOfBits,
-    combined_status_mask_bits_mismatch);
 
 // Returns whether or not a dry-run shall be performed.
 bool ShouldPerformDryRun() {
@@ -148,7 +140,7 @@ void BuildSubTreesFromPreferences(
   base::DictionaryValue* is_user_controlled_tree = new base::DictionaryValue;
   for (std::vector<std::string>::const_iterator it = pref_names.begin();
        it != pref_names.end(); ++it) {
-    scoped_ptr<Value> pref_value_owned;
+    scoped_ptr<base::Value> pref_value_owned;
     if (pref_name_to_value_map->RemoveWithoutPathExpansion(*it,
                                                            &pref_value_owned)) {
       value_tree->Set(*it, pref_value_owned.release());
@@ -359,7 +351,8 @@ class AutomaticProfileResetter::InputBuilder
 // Encapsulates the output values extracted from the evaluator program.
 struct AutomaticProfileResetter::EvaluationResults {
   EvaluationResults()
-      : had_prompted_already(false),
+      : should_prompt(false),
+        had_prompted_already(false),
         satisfied_criteria_mask(0),
         combined_status_mask(0) {}
 
@@ -367,6 +360,7 @@ struct AutomaticProfileResetter::EvaluationResults {
   std::string memento_value_in_local_state;
   std::string memento_value_in_file;
 
+  bool should_prompt;
   bool had_prompted_already;
   uint32 satisfied_criteria_mask;
   uint32 combined_status_mask;
@@ -381,6 +375,7 @@ AutomaticProfileResetter::AutomaticProfileResetter(Profile* profile)
       enumeration_of_loaded_modules_ready_(false),
       template_url_service_ready_(false),
       has_already_dismissed_prompt_(false),
+      should_show_reset_banner_(false),
       weak_ptr_factory_(this) {
   DCHECK(profile_);
 }
@@ -445,6 +440,7 @@ void AutomaticProfileResetter::TriggerProfileReset(bool send_feedback) {
   DCHECK_EQ(state_, STATE_HAS_SHOWN_BUBBLE);
 
   state_ = STATE_PERFORMING_RESET;
+  should_show_reset_banner_ = false;
 
   ReportPromptResult(PROMPT_ACTION_RESET);
   delegate_->TriggerProfileSettingsReset(
@@ -457,6 +453,8 @@ void AutomaticProfileResetter::SkipProfileReset() {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
   DCHECK_EQ(state_, STATE_HAS_SHOWN_BUBBLE);
 
+  should_show_reset_banner_ = false;
+
   ReportPromptResult(PROMPT_ACTION_NO_RESET);
   delegate_->DismissPrompt();
   FinishResetPromptFlow();
@@ -465,6 +463,11 @@ void AutomaticProfileResetter::SkipProfileReset() {
 bool AutomaticProfileResetter::IsResetPromptFlowActive() const {
   return state_ == STATE_HAS_TRIGGERED_PROMPT ||
       state_ == STATE_HAS_SHOWN_BUBBLE;
+}
+
+bool AutomaticProfileResetter::ShouldShowResetBanner() const {
+  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
+  return should_show_reset_banner_ && ShouldPerformLiveRun();
 }
 
 void AutomaticProfileResetter::NotifyDidShowResetBubble() {
@@ -511,6 +514,11 @@ void AutomaticProfileResetter::NotifyDidCloseWebUIResetDialog(
     }
     FinishResetPromptFlow();
   }
+}
+
+void AutomaticProfileResetter::NotifyDidCloseWebUIResetBanner() {
+  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
+  should_show_reset_banner_ = false;
 }
 
 void AutomaticProfileResetter::SetProgramForTesting(
@@ -635,10 +643,13 @@ scoped_ptr<AutomaticProfileResetter::EvaluationResults>
   UMA_HISTOGRAM_ENUMERATION("AutomaticProfileReset.InterpreterResult",
                             interpreter.result(),
                             JtlInterpreter::RESULT_MAX);
+  UMA_HISTOGRAM_SPARSE_SLOWLY("AutomaticProfileReset.ProgramChecksum",
+                              interpreter.CalculateProgramChecksum());
 
   // In each case below, the respective field in result originally contains the
   // default, so if the getter fails, we still have the correct value there.
   scoped_ptr<EvaluationResults> results(new EvaluationResults);
+  interpreter.GetOutputBoolean(kShouldPromptKey, &results->should_prompt);
   interpreter.GetOutputBoolean(kHadPromptedAlreadyKey,
                                &results->had_prompted_already);
   interpreter.GetOutputString(kMementoValueInPrefsKey,
@@ -647,15 +658,18 @@ scoped_ptr<AutomaticProfileResetter::EvaluationResults>
                               &results->memento_value_in_local_state);
   interpreter.GetOutputString(kMementoValueInFileKey,
                               &results->memento_value_in_file);
-  for (size_t i = 0; i < arraysize(kCombinedStatusMaskKeys); ++i) {
+  for (size_t i = 0; i < kCombinedStatusMaskNumberOfBits; ++i) {
     bool flag = false;
-    if (interpreter.GetOutputBoolean(kCombinedStatusMaskKeys[i], &flag) && flag)
+    std::string mask_i_th_bit_key =
+        kCombinedStatusMaskKeyPrefix + base::IntToString(i + 1);
+    if (interpreter.GetOutputBoolean(mask_i_th_bit_key, &flag) && flag)
       results->combined_status_mask |= (1 << i);
   }
-  for (size_t i = 0; i < arraysize(kSatisfiedCriteriaMaskKeys); ++i) {
+  for (size_t i = 0; i < kSatisfiedCriteriaMaskNumberOfBits; ++i) {
     bool flag = false;
-    if (interpreter.GetOutputBoolean(kSatisfiedCriteriaMaskKeys[i], &flag) &&
-        flag)
+    std::string mask_i_th_bit_key =
+        kSatisfiedCriteriaMaskKeyPrefix + base::IntToString(i + 1);
+    if (interpreter.GetOutputBoolean(mask_i_th_bit_key, &flag) && flag)
       results->satisfied_criteria_mask |= (1 << i);
   }
   return results.Pass();
@@ -679,7 +693,10 @@ void AutomaticProfileResetter::FinishEvaluationFlow(
   ReportStatistics(results->satisfied_criteria_mask,
                    results->combined_status_mask);
 
-  if (results->satisfied_criteria_mask != 0 && !results->had_prompted_already) {
+  if (results->should_prompt)
+    should_show_reset_banner_ = true;
+
+  if (results->should_prompt && !results->had_prompted_already) {
     evaluation_results_ = results.Pass();
     BeginResetPromptFlow();
   } else {

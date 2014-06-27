@@ -8,9 +8,11 @@
 #include <string>
 #include <vector>
 
+#include "base/gtest_prod_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "google_apis/gaia/oauth2_api_call_flow.h"
+#include "url/gurl.h"
 
 class GoogleServiceAuthError;
 class OAuth2MintTokenFlowTest;
@@ -43,8 +45,8 @@ struct IssueAdviceInfoEntry {
   IssueAdviceInfoEntry();
   ~IssueAdviceInfoEntry();
 
-  string16 description;
-  std::vector<string16> details;
+  base::string16 description;
+  std::vector<base::string16> details;
 
   bool operator==(const IssueAdviceInfoEntry& rhs) const;
 };

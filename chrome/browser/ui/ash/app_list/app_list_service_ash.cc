@@ -6,6 +6,7 @@
 
 #include "ash/shell.h"
 #include "base/files/file_path.h"
+#include "base/memory/scoped_ptr.h"
 #include "base/memory/singleton.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/app_list_service_impl.h"
@@ -24,7 +25,8 @@ class AppListServiceAsh : public AppListServiceImpl {
  private:
   friend struct DefaultSingletonTraits<AppListServiceAsh>;
 
-  AppListServiceAsh() {}
+  AppListServiceAsh();
+  virtual ~AppListServiceAsh();
 
   // AppListService overrides:
   virtual base::FilePath GetProfilePath(
@@ -33,13 +35,23 @@ class AppListServiceAsh : public AppListServiceImpl {
   virtual void ShowForProfile(Profile* default_profile) OVERRIDE;
   virtual bool IsAppListVisible() const OVERRIDE;
   virtual void DismissAppList() OVERRIDE;
-  virtual void EnableAppList(Profile* initial_profile) OVERRIDE;
+  virtual void EnableAppList(Profile* initial_profile,
+                             AppListEnableSource enable_source) OVERRIDE;
   virtual gfx::NativeWindow GetAppListWindow() OVERRIDE;
   virtual Profile* GetCurrentAppListProfile() OVERRIDE;
-  virtual AppListControllerDelegate* CreateControllerDelegate() OVERRIDE;
+  virtual AppListControllerDelegate* GetControllerDelegate() OVERRIDE;
+
+  scoped_ptr<AppListControllerDelegateAsh> controller_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(AppListServiceAsh);
 };
+
+AppListServiceAsh::AppListServiceAsh()
+    : controller_delegate_(new AppListControllerDelegateAsh()) {
+}
+
+AppListServiceAsh::~AppListServiceAsh() {
+}
 
 base::FilePath AppListServiceAsh::GetProfilePath(
     const base::FilePath& user_data_dir) {
@@ -65,7 +77,8 @@ void AppListServiceAsh::DismissAppList() {
     ash::Shell::GetInstance()->ToggleAppList(NULL);
 }
 
-void AppListServiceAsh::EnableAppList(Profile* initial_profile) {}
+void AppListServiceAsh::EnableAppList(Profile* initial_profile,
+                                      AppListEnableSource enable_source) {}
 
 gfx::NativeWindow AppListServiceAsh::GetAppListWindow() {
   if (ash::Shell::HasInstance())
@@ -77,8 +90,8 @@ Profile* AppListServiceAsh::GetCurrentAppListProfile() {
   return ChromeLauncherController::instance()->profile();
 }
 
-AppListControllerDelegate* AppListServiceAsh::CreateControllerDelegate() {
-  return new AppListControllerDelegateAsh();
+AppListControllerDelegate* AppListServiceAsh::GetControllerDelegate() {
+  return controller_delegate_.get();
 }
 
 }  // namespace

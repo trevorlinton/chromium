@@ -13,9 +13,10 @@ import org.chromium.chrome.browser.profiles.Profile;
 /**
  * This is a helper class to use favicon_service.cc's functionality.
  *
- * You can request a favicon image by web page URL. Note that an instance of this class should be
- * created & used & destroyed (by destroy()) in the same thread due to the C++ CancelableTaskTracker
- * class requirement.
+ * You can request a favicon image by web page URL. Note that an instance of
+ * this class should be created & used & destroyed (by destroy()) in the same
+ * thread due to the C++ base::CancelableTaskTracker class
+ * requirement.
  */
 public class FaviconHelper {
 
@@ -25,7 +26,7 @@ public class FaviconHelper {
     public static final int TOUCH_ICON = 1 << 1;
     public static final int TOUCH_PRECOMPOSED_ICON = 1 << 2;
 
-    private int mNativeFaviconHelper;
+    private long mNativeFaviconHelper;
 
     /**
      * Callback interface for getting the result from getLocalFaviconImageForURL method.
@@ -57,6 +58,7 @@ public class FaviconHelper {
      * Clean up the C++ side of this class. After the call, this class instance shouldn't be used.
      */
     public void destroy() {
+        assert mNativeFaviconHelper != 0;
         nativeDestroy(mNativeFaviconHelper);
         mNativeFaviconHelper = 0;
     }
@@ -86,14 +88,14 @@ public class FaviconHelper {
      * @param image The bitmap image to find the dominant color for.
      * @return The dominant color in {@link Color} format.
      */
-    public int getDominantColorForBitmap(Bitmap image) {
-        return nativeGetDominantColorForBitmap(mNativeFaviconHelper, image);
+    public static int getDominantColorForBitmap(Bitmap image) {
+        return nativeGetDominantColorForBitmap(image);
     }
 
     /**
      * Get 16x16 Favicon bitmap for the requested arguments. Only retrives favicons in synced
-     * session storage. (e.g. favicons synced from other devices). TODO (apiccion) provide a way
-     * to obtain higher resolution favicons.
+     * session storage. (e.g. favicons synced from other devices).
+     * TODO(apiccion): provide a way to obtain higher resolution favicons.
      * @param profile   Profile used for the FaviconService construction.
      * @param pageUrl   The target Page URL to get the favicon.
      *
@@ -104,13 +106,12 @@ public class FaviconHelper {
         return nativeGetSyncedFaviconImageForURL(mNativeFaviconHelper, profile, pageUrl);
     }
 
-    private static native int nativeInit();
-    private static native void nativeDestroy(int nativeFaviconHelper);
-    private static native boolean nativeGetLocalFaviconImageForURL(int nativeFaviconHelper,
+    private static native long nativeInit();
+    private static native void nativeDestroy(long nativeFaviconHelper);
+    private static native boolean nativeGetLocalFaviconImageForURL(long nativeFaviconHelper,
             Profile profile, String pageUrl, int iconTypes, int desiredSizeInDip,
             FaviconImageCallback faviconImageCallback);
-    private static native Bitmap nativeGetSyncedFaviconImageForURL(int nativeFaviconHelper,
+    private static native Bitmap nativeGetSyncedFaviconImageForURL(long nativeFaviconHelper,
             Profile profile, String pageUrl);
-    private static native int nativeGetDominantColorForBitmap(int nativeFaviconHelper,
-            Bitmap image);
+    private static native int nativeGetDominantColorForBitmap(Bitmap image);
 }

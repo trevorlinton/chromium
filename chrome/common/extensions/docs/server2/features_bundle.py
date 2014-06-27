@@ -2,16 +2,25 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import posixpath
+
+from compiled_file_system import SingleFile, Unicode
+from extensions_paths import (
+    API_FEATURES, JSON_TEMPLATES, MANIFEST_FEATURES, PERMISSION_FEATURES)
 import features_utility
-import svn_constants
+from file_system import FileNotFoundError
+from future import Future
 from third_party.json_schema_compiler.json_parse import Parse
 
 
-def _AddPlatformsFromDependencies(feature, features_bundle):
+def _AddPlatformsFromDependencies(feature,
+                                  api_features,
+                                  manifest_features,
+                                  permission_features):
   features_map = {
-    'api': features_bundle.GetAPIFeatures(),
-    'manifest': features_bundle.GetManifestFeatures(),
-    'permission': features_bundle.GetPermissionFeatures()
+    'api': api_features,
+    'manifest': manifest_features,
+    'permission': permission_features,
   }
   dependencies = feature.get('dependencies')
   if dependencies is None:
@@ -31,24 +40,34 @@ def _AddPlatformsFromDependencies(feature, features_bundle):
 
 class _FeaturesCache(object):
   def __init__(self, file_system, compiled_fs_factory, *json_paths):
-    self._file_system = file_system
-    self._cache = compiled_fs_factory.Create(
-        file_system, self._CreateCache, type(self))
+    populate = self._CreateCache
+    if len(json_paths) == 1:
+      populate = SingleFile(populate)
+
+    self._cache = compiled_fs_factory.Create(file_system, populate, type(self))
+    self._text_cache = compiled_fs_factory.ForUnicode(file_system)
     self._json_path = json_paths[0]
     self._extra_paths = json_paths[1:]
 
+  @Unicode
   def _CreateCache(self, _, features_json):
+    extra_path_futures = [self._text_cache.GetFromFile(path)
+                          for path in self._extra_paths]
     features = features_utility.Parse(Parse(features_json))
-    for path in self._extra_paths:
-      extra_json = self._file_system.ReadSingle(path).Get()
+    for path_future in extra_path_futures:
+      try:
+        extra_json = path_future.Get()
+      except FileNotFoundError:
+        # Not all file system configurations have the extra files.
+        continue
       features = features_utility.MergedWith(
           features_utility.Parse(Parse(extra_json)), features)
     return features
 
   def GetFeatures(self):
     if self._json_path is None:
-      return {}
-    return self._cache.GetFromFile(self._json_path).Get()
+      return Future(value={})
+    return self._cache.GetFromFile(self._json_path)
 
 
 class FeaturesBundle(object):
@@ -58,18 +77,22 @@ class FeaturesBundle(object):
     self._api_cache = _FeaturesCache(
         file_system,
         compiled_fs_factory,
-        svn_constants.API_FEATURES_PATH)
+        API_FEATURES)
     self._manifest_cache = _FeaturesCache(
         file_system,
         compiled_fs_factory,
-        svn_constants.MANIFEST_FEATURES_PATH,
-        svn_constants.MANIFEST_JSON_PATH)
+        MANIFEST_FEATURES,
+        posixpath.join(JSON_TEMPLATES, 'manifest.json'))
     self._permission_cache = _FeaturesCache(
         file_system,
         compiled_fs_factory,
-        svn_constants.PERMISSION_FEATURES_PATH,
-        svn_constants.PERMISSIONS_JSON_PATH)
-    self._object_store = object_store_creator.Create(_FeaturesCache, 'features')
+        PERMISSION_FEATURES,
+        posixpath.join(JSON_TEMPLATES, 'permissions.json'))
+    # Namespace the object store by the file system ID because this class is
+    # used by the availability finder cross-channel.
+    # TODO(kalman): Configure this at the ObjectStore level.
+    self._object_store = object_store_creator.Create(
+        _FeaturesCache, category=file_system.GetIdentity())
 
   def GetPermissionFeatures(self):
     return self._permission_cache.GetFeatures()
@@ -79,14 +102,23 @@ class FeaturesBundle(object):
 
   def GetAPIFeatures(self):
     api_features = self._object_store.Get('api_features').Get()
-    if api_features is None:
-      api_features = self._api_cache.GetFeatures()
+    if api_features is not None:
+      return Future(value=api_features)
+
+    api_features_future = self._api_cache.GetFeatures()
+    manifest_features_future = self._manifest_cache.GetFeatures()
+    permission_features_future = self._permission_cache.GetFeatures()
+    def resolve():
+      api_features = api_features_future.Get()
+      manifest_features = manifest_features_future.Get()
+      permission_features = permission_features_future.Get()
       # TODO(rockot): Handle inter-API dependencies more gracefully.
       # Not yet a problem because there is only one such case (windows -> tabs).
       # If we don't store this value before annotating platforms, inter-API
       # dependencies will lead to infinite recursion.
-      self._object_store.Set('api_features', api_features)
       for feature in api_features.itervalues():
-        _AddPlatformsFromDependencies(feature, self)
+        _AddPlatformsFromDependencies(
+            feature, api_features, manifest_features, permission_features)
       self._object_store.Set('api_features', api_features)
-    return api_features
+      return api_features
+    return Future(callback=resolve)

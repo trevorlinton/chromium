@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/devtools_http_handler.h"
@@ -19,6 +20,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
+#include "content/public/common/user_agent.h"
 #include "content/shell/browser/shell.h"
 #include "grit/shell_resources.h"
 #include "net/socket/tcp_listen_socket.h"
@@ -35,6 +37,10 @@ using content::WebContents;
 
 namespace {
 
+#if defined(OS_ANDROID)
+const char kFrontEndURL[] =
+    "http://chrome-devtools-frontend.appspot.com/serve_rev/%s/devtools.html";
+#endif
 const char kTargetTypePage[] = "page";
 
 net::StreamListenSocketFactory* CreateSocketFactory() {
@@ -101,13 +107,13 @@ Target::Target(WebContents* web_contents) {
   agent_host_ =
       DevToolsAgentHost::GetOrCreateFor(web_contents->GetRenderViewHost());
   id_ = agent_host_->GetId();
-  title_ = UTF16ToUTF8(web_contents->GetTitle());
+  title_ = base::UTF16ToUTF8(web_contents->GetTitle());
   url_ = web_contents->GetURL();
   content::NavigationController& controller = web_contents->GetController();
   content::NavigationEntry* entry = controller.GetActiveEntry();
   if (entry != NULL && entry->GetURL().is_valid())
     favicon_url_ = entry->GetFavicon().url;
-  last_activity_time_ = web_contents->GetLastSelectedTime();
+  last_activity_time_ = web_contents->GetLastActiveTime();
 }
 
 bool Target::Activate() const {
@@ -135,10 +141,12 @@ namespace content {
 
 ShellDevToolsDelegate::ShellDevToolsDelegate(BrowserContext* browser_context)
     : browser_context_(browser_context) {
-  // Note that Content Shell always used bundled DevTools frontend,
-  // even on Android, because the shell is used for running layout tests.
+  std::string frontend_url;
+#if defined(OS_ANDROID)
+  frontend_url = base::StringPrintf(kFrontEndURL, GetWebKitRevision().c_str());
+#endif
   devtools_http_handler_ =
-      DevToolsHttpHandler::Start(CreateSocketFactory(), std::string(), this);
+      DevToolsHttpHandler::Start(CreateSocketFactory(), frontend_url, this);
 }
 
 ShellDevToolsDelegate::~ShellDevToolsDelegate() {
@@ -150,12 +158,20 @@ void ShellDevToolsDelegate::Stop() {
 }
 
 std::string ShellDevToolsDelegate::GetDiscoveryPageHTML() {
+#if defined(OS_ANDROID)
+  return std::string();
+#else
   return ResourceBundle::GetSharedInstance().GetRawDataResource(
       IDR_CONTENT_SHELL_DEVTOOLS_DISCOVERY_PAGE).as_string();
+#endif
 }
 
 bool ShellDevToolsDelegate::BundlesFrontendResources() {
+#if defined(OS_ANDROID)
+  return false;
+#else
   return true;
+#endif
 }
 
 base::FilePath ShellDevToolsDelegate::GetDebugFrontendDir() {

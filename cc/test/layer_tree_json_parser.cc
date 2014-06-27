@@ -19,12 +19,12 @@ namespace {
 
 scoped_refptr<Layer> ParseTreeFromValue(base::Value* val,
                                         ContentLayerClient* content_client) {
-  DictionaryValue* dict;
+  base::DictionaryValue* dict;
   bool success = true;
   success &= val->GetAsDictionary(&dict);
   std::string layer_type;
   success &= dict->GetString("LayerType", &layer_type);
-  ListValue* list;
+  base::ListValue* list;
   success &= dict->GetList("Bounds", &list);
   int width, height;
   success &= list->GetInteger(0, &width);
@@ -50,7 +50,7 @@ scoped_refptr<Layer> ParseTreeFromValue(base::Value* val,
     success &= list->GetInteger(2, &aperture_width);
     success &= list->GetInteger(3, &aperture_height);
 
-    ListValue* bounds;
+    base::ListValue* bounds;
     success &= dict->GetList("ImageBounds", &bounds);
     double image_width, image_height;
     success &= bounds->GetDouble(0, &image_width);
@@ -69,8 +69,7 @@ scoped_refptr<Layer> ParseTreeFromValue(base::Value* val,
     scoped_refptr<NinePatchLayer> nine_patch_layer = NinePatchLayer::Create();
 
     SkBitmap bitmap;
-    bitmap.setConfig(SkBitmap::kARGB_8888_Config, image_width, image_height);
-    bitmap.allocPixels(NULL, NULL);
+    bitmap.allocN32Pixels(image_width, image_height);
     bitmap.setImmutable();
     nine_patch_layer->SetBitmap(bitmap);
     nine_patch_layer->SetAperture(
@@ -101,8 +100,27 @@ scoped_refptr<Layer> ParseTreeFromValue(base::Value* val,
     new_layer->SetContentsOpaque(contents_opaque);
 
   bool scrollable;
+  // TODO(wjmaclean) At some time in the future we may wish to test that a
+  // reconstructed layer tree contains the correct linkage for the scroll
+  // clip layer. This is complicated by the fact that the json output doesn't
+  // (currently) re-construct the tree with the same layer IDs as the original.
+  // But, since a clip layer is always an ancestor of the scrollable layer, we
+  // can just count the number of upwards hops to the clip layer and write that
+  // into the json file (with 0 hops implying no clip layer, i.e. not
+  // scrollable). Reconstructing the tree can then be accomplished by passing
+  // the parent pointer to this function and traversing the same number of
+  // ancestors to determine the pointer to the clip layer. The LayerTreesMatch()
+  // function should then check that both original and reconstructed layers
+  // have the same positioning with respect to their clip layers.
+  //
+  // For now, we can safely indicate a layer is scrollable by giving it a
+  // pointer to itself, something not normally allowed in a working tree.
+  //
+  // https://code.google.com/p/chromium/issues/detail?id=330622
+  //
   if (dict->GetBoolean("Scrollable", &scrollable))
-    new_layer->SetScrollable(scrollable);
+    new_layer->SetScrollClipLayerId(scrollable ? new_layer->id()
+                                               : Layer::INVALID_ID);
 
   bool wheel_handler;
   if (dict->GetBoolean("WheelHandler", &wheel_handler))
@@ -110,7 +128,7 @@ scoped_refptr<Layer> ParseTreeFromValue(base::Value* val,
 
   if (dict->HasKey("TouchRegion")) {
     success &= dict->GetList("TouchRegion", &list);
-    cc::Region touch_region;
+    Region touch_region;
     for (size_t i = 0; i < list->GetSize(); ) {
       int rect_x, rect_y, rect_width, rect_height;
       success &= list->GetInteger(i++, &rect_x);
@@ -132,7 +150,7 @@ scoped_refptr<Layer> ParseTreeFromValue(base::Value* val,
   new_layer->SetTransform(layer_transform);
 
   success &= dict->GetList("Children", &list);
-  for (ListValue::const_iterator it = list->begin();
+  for (base::ListValue::const_iterator it = list->begin();
        it != list->end(); ++it) {
     new_layer->AddChild(ParseTreeFromValue(*it, content_client));
   }

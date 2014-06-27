@@ -10,14 +10,14 @@
 #include "base/message_loop/message_loop.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/policy/device_cloud_policy_store_chromeos.h"
+#include "chrome/browser/chromeos/policy/proto/chrome_device_policy.pb.h"
 #include "chrome/browser/chromeos/settings/device_oauth2_token_service.h"
 #include "chrome/browser/chromeos/settings/device_oauth2_token_service_factory.h"
-#include "chrome/browser/policy/cloud/cloud_policy_constants.h"
-#include "chrome/browser/policy/proto/chromeos/chrome_device_policy.pb.h"
-#include "chrome/browser/policy/proto/cloud/device_management_backend.pb.h"
 #include "chromeos/chromeos_switches.h"
+#include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "net/http/http_status_code.h"
+#include "policy/proto/device_management_backend.pb.h"
 
 namespace em = enterprise_management;
 
@@ -46,6 +46,7 @@ EnrollmentHandlerChromeOS::EnrollmentHandlerChromeOS(
     const std::string& client_id,
     bool is_auto_enrollment,
     const std::string& requisition,
+    const std::string& current_state_key,
     const AllowedDeviceModes& allowed_device_modes,
     const EnrollmentCallback& completion_callback)
     : store_(store),
@@ -56,6 +57,7 @@ EnrollmentHandlerChromeOS::EnrollmentHandlerChromeOS(
       client_id_(client_id),
       is_auto_enrollment_(is_auto_enrollment),
       requisition_(requisition),
+      current_state_key_(current_state_key),
       allowed_device_modes_(allowed_device_modes),
       completion_callback_(completion_callback),
       device_mode_(DEVICE_MODE_NOT_SET),
@@ -109,13 +111,24 @@ void EnrollmentHandlerChromeOS::OnPolicyFetched(CloudPolicyClient* client) {
 
   validator->ValidateTimestamp(base::Time(), base::Time::NowFromSystemTime(),
                                CloudPolicyValidatorBase::TIMESTAMP_REQUIRED);
-  if (install_attributes_->IsEnterpriseDevice())
-    validator->ValidateDomain(install_attributes_->GetDomain());
+
+  // If this is re-enrollment, make sure that the new policy matches the
+  // previously-enrolled domain.
+  std::string domain;
+  if (install_attributes_->IsEnterpriseDevice()) {
+    domain = install_attributes_->GetDomain();
+    validator->ValidateDomain(domain);
+  }
   validator->ValidateDMToken(client->dm_token(),
                              CloudPolicyValidatorBase::DM_TOKEN_REQUIRED);
   validator->ValidatePolicyType(dm_protocol::kChromeDevicePolicyType);
   validator->ValidatePayload();
-  validator->ValidateInitialKey();
+  // If |domain| is empty here, the policy validation code will just use the
+  // domain from the username field in the policy itself to do key validation.
+  // TODO(mnissler): Plumb the enrolling user's username into this object so
+  // we can validate the username on the resulting policy, and use the domain
+  // from that username to validate the key below (http://crbug.com/343074).
+  validator->ValidateInitialKey(GetPolicyVerificationKey(), domain);
   validator.release()->StartValidation(
       base::Bind(&EnrollmentHandlerChromeOS::PolicyValidated,
                  weak_ptr_factory_.GetWeakPtr()));
@@ -182,7 +195,7 @@ void EnrollmentHandlerChromeOS::AttemptRegistration() {
     enrollment_step_ = STEP_REGISTRATION;
     client_->Register(em::DeviceRegisterRequest::DEVICE,
                       auth_token_, client_id_, is_auto_enrollment_,
-                      requisition_);
+                      requisition_, current_state_key_);
   }
 }
 
@@ -300,8 +313,9 @@ void EnrollmentHandlerChromeOS::HandleLockDeviceResult(
     case EnterpriseInstallAttributes::LOCK_SUCCESS:
       // Get the token service so we can store our robot refresh token.
       enrollment_step_ = STEP_STORE_ROBOT_AUTH;
-      chromeos::DeviceOAuth2TokenServiceFactory::Get(
-          base::Bind(&EnrollmentHandlerChromeOS::DidGetTokenService,
+      chromeos::DeviceOAuth2TokenServiceFactory::Get()->SetAndSaveRefreshToken(
+          refresh_token_,
+          base::Bind(&EnrollmentHandlerChromeOS::HandleRobotAuthTokenStored,
                      weak_ptr_factory_.GetWeakPtr()));
       return;
     case EnterpriseInstallAttributes::LOCK_NOT_READY:
@@ -340,18 +354,10 @@ void EnrollmentHandlerChromeOS::HandleLockDeviceResult(
       EnrollmentStatus::STATUS_LOCK_ERROR));
 }
 
-void EnrollmentHandlerChromeOS::DidGetTokenService(
-    chromeos::DeviceOAuth2TokenService* token_service) {
+void EnrollmentHandlerChromeOS::HandleRobotAuthTokenStored(bool result) {
   CHECK_EQ(STEP_STORE_ROBOT_AUTH, enrollment_step_);
-  // Store the robot API auth refresh token.
-  if (!token_service) {
-    LOG(ERROR) << "Failed to store API refresh token (no token service).";
-    ReportResult(EnrollmentStatus::ForStatus(
-        EnrollmentStatus::STATUS_ROBOT_REFRESH_STORE_FAILED));
-    return;
-  }
 
-  if (!token_service->SetAndSaveRefreshToken(refresh_token_)) {
+  if (!result) {
     LOG(ERROR) << "Failed to store API refresh token.";
     ReportResult(EnrollmentStatus::ForStatus(
         EnrollmentStatus::STATUS_ROBOT_REFRESH_STORE_FAILED));

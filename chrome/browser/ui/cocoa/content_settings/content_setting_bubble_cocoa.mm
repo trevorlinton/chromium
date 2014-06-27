@@ -19,7 +19,7 @@
 #include "content/public/browser/plugin_service.h"
 #include "grit/generated_resources.h"
 #include "skia/ext/skia_utils_mac.h"
-#import "third_party/GTM/AppKit/GTMUILocalizerAndLayoutTweaker.h"
+#import "third_party/google_toolbox_for_mac/src/AppKit/GTMUILocalizerAndLayoutTweaker.h"
 #import "ui/base/cocoa/controls/hyperlink_button_cell.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -239,8 +239,6 @@ MediaMenuParts::~MediaMenuParts() {}
       nibPath = @"ContentBlockedDownloads"; break;
     case CONTENT_SETTINGS_TYPE_MIDI_SYSEX:
       nibPath = @"ContentBlockedMIDISysEx"; break;
-    case CONTENT_SETTINGS_TYPE_SAVE_PASSWORD:
-      nibPath = @"ContentBlockedSavePassword"; break;
     // These content types have no bubble:
     case CONTENT_SETTINGS_TYPE_DEFAULT:
     case CONTENT_SETTINGS_TYPE_NOTIFICATIONS:
@@ -348,29 +346,12 @@ MediaMenuParts::~MediaMenuParts() {}
 }
 
 - (void)initializeBlockedPluginsList {
-  NSMutableArray* pluginArray = [NSMutableArray array];
-  const std::set<std::string>& plugins =
-      contentSettingBubbleModel_->bubble_content().resource_identifiers;
-  if (plugins.empty()) {
-    int delta = NSMinY([titleLabel_ frame]) -
-                NSMinY([blockedResourcesField_ frame]);
-    [blockedResourcesField_ removeFromSuperview];
-    NSRect frame = [[self window] frame];
-    frame.size.height -= delta;
-    [[self window] setFrame:frame display:NO];
-  } else {
-    PluginFinder* finder = PluginFinder::GetInstance();
-    for (std::set<std::string>::iterator it = plugins.begin();
-         it != plugins.end(); ++it) {
-      NSString* name =
-          SysUTF16ToNSString(finder->FindPluginNameWithIdentifier(*it));
-      [pluginArray addObject:name];
-    }
-    [blockedResourcesField_
-        setStringValue:[pluginArray componentsJoinedByString:@"\n"]];
-    [GTMUILocalizerAndLayoutTweaker
-        sizeToFitFixedWidthTextField:blockedResourcesField_];
-  }
+  int delta = NSMinY([titleLabel_ frame]) -
+              NSMinY([blockedResourcesField_ frame]);
+  [blockedResourcesField_ removeFromSuperview];
+  NSRect frame = [[self window] frame];
+  frame.size.height -= delta;
+  [[self window] setFrame:frame display:NO];
 }
 
 - (void)initializePopupList {
@@ -782,16 +763,6 @@ MediaMenuParts::~MediaMenuParts() {}
 
 - (IBAction)manageBlocking:(id)sender {
   contentSettingBubbleModel_->OnManageLinkClicked();
-}
-
-- (IBAction)saveBubble:(id)sender {
-  contentSettingBubbleModel_->OnSaveClicked();
-  [self close];
-}
-
-- (IBAction)blacklistBubble:(id)sender {
-  contentSettingBubbleModel_->OnCancelClicked();
-  [self close];
 }
 
 - (IBAction)closeBubble:(id)sender {

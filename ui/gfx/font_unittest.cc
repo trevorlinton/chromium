@@ -5,10 +5,11 @@
 #include "ui/gfx/font.h"
 
 #include "base/strings/string16.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
+#if defined(OS_LINUX) && !defined(USE_OZONE)
 #include <pango/pango.h>
 #elif defined(OS_WIN)
 #include "ui/gfx/platform_font_win.h"
@@ -22,7 +23,7 @@ class FontTest : public testing::Test {
   // Fulfills the memory management contract as outlined by the comment at
   // gfx::Font::GetNativeFont().
   void FreeIfNecessary(NativeFont font) {
-#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
+#if defined(OS_LINUX) && !defined(USE_OZONE)
     pango_font_description_free(font);
 #endif
   }
@@ -63,15 +64,17 @@ TEST_F(FontTest, LoadArial) {
   EXPECT_EQ(cf.GetStyle(), Font::NORMAL);
   EXPECT_EQ(cf.GetFontSize(), 16);
   EXPECT_EQ(cf.GetFontName(), "Arial");
+  EXPECT_EQ("arial", StringToLowerASCII(cf.GetActualFontNameForTesting()));
   FreeIfNecessary(native);
 }
 
 TEST_F(FontTest, LoadArialBold) {
   Font cf("Arial", 16);
-  Font bold(cf.DeriveFont(0, Font::BOLD));
+  Font bold(cf.Derive(0, Font::BOLD));
   NativeFont native = bold.GetNativeFont();
   EXPECT_TRUE(native);
   EXPECT_EQ(bold.GetStyle(), Font::BOLD);
+  EXPECT_EQ("arial", StringToLowerASCII(cf.GetActualFontNameForTesting()));
   FreeIfNecessary(native);
 }
 
@@ -92,11 +95,7 @@ TEST_F(FontTest, CapHeight) {
   Font cf("Arial", 16);
   EXPECT_GT(cf.GetCapHeight(), 0);
   EXPECT_GT(cf.GetCapHeight(), cf.GetHeight() / 2);
-#if defined(OS_CHROMEOS) || defined(OS_LINUX)
-  EXPECT_EQ(cf.GetCapHeight(), cf.GetBaseline());
-#else
   EXPECT_LT(cf.GetCapHeight(), cf.GetBaseline());
-#endif
 }
 
 TEST_F(FontTest, AvgWidths) {
@@ -107,38 +106,50 @@ TEST_F(FontTest, AvgWidths) {
   EXPECT_GT(cf.GetExpectedTextWidth(3), cf.GetExpectedTextWidth(2));
 }
 
-TEST_F(FontTest, AvgCharWidth) {
-  Font cf("Arial", 16);
-  EXPECT_GT(cf.GetAverageCharacterWidth(), 0);
-}
+#if !defined(OS_WIN)
+// On Windows, Font::GetActualFontNameForTesting() doesn't work well for now.
+// http://crbug.com/327287
+//
+// Check that fonts used for testing are installed and enabled. On Mac
+// fonts may be installed but still need enabling in Font Book.app.
+// http://crbug.com/347429
+TEST_F(FontTest, GetActualFontNameForTesting) {
+  Font arial("Arial", 16);
+  EXPECT_EQ("arial", StringToLowerASCII(arial.GetActualFontNameForTesting()))
+      << "********\n"
+      << "Your test environment seems to be missing Arial font, which is "
+      << "needed for unittests.  Check if Arial font is installed.\n"
+      << "********";
+  Font symbol("Symbol", 16);
+  EXPECT_EQ("symbol", StringToLowerASCII(symbol.GetActualFontNameForTesting()))
+      << "********\n"
+      << "Your test environment seems to be missing Symbol font, which is "
+      << "needed for unittests.  Check if Symbol font is installed.\n"
+      << "********";
 
-TEST_F(FontTest, Widths) {
-  Font cf("Arial", 16);
-  EXPECT_EQ(cf.GetStringWidth(base::string16()), 0);
-  EXPECT_GT(cf.GetStringWidth(ASCIIToUTF16("a")),
-            cf.GetStringWidth(base::string16()));
-  EXPECT_GT(cf.GetStringWidth(ASCIIToUTF16("ab")),
-            cf.GetStringWidth(ASCIIToUTF16("a")));
-  EXPECT_GT(cf.GetStringWidth(ASCIIToUTF16("abc")),
-            cf.GetStringWidth(ASCIIToUTF16("ab")));
+  const char* const invalid_font_name = "no_such_font_name";
+  Font fallback_font(invalid_font_name, 16);
+  EXPECT_NE(invalid_font_name,
+            StringToLowerASCII(fallback_font.GetActualFontNameForTesting()));
 }
+#endif
 
 #if defined(OS_WIN)
-TEST_F(FontTest, DeriveFontResizesIfSizeTooSmall) {
+TEST_F(FontTest, DeriveResizesIfSizeTooSmall) {
   Font cf("Arial", 8);
   // The minimum font size is set to 5 in browser_main.cc.
   ScopedMinimumFontSizeCallback minimum_size(5);
 
-  Font derived_font = cf.DeriveFont(-4);
+  Font derived_font = cf.Derive(-4, cf.GetStyle());
   EXPECT_EQ(5, derived_font.GetFontSize());
 }
 
-TEST_F(FontTest, DeriveFontKeepsOriginalSizeIfHeightOk) {
+TEST_F(FontTest, DeriveKeepsOriginalSizeIfHeightOk) {
   Font cf("Arial", 8);
   // The minimum font size is set to 5 in browser_main.cc.
   ScopedMinimumFontSizeCallback minimum_size(5);
 
-  Font derived_font = cf.DeriveFont(-2);
+  Font derived_font = cf.Derive(-2, cf.GetStyle());
   EXPECT_EQ(6, derived_font.GetFontSize());
 }
 #endif  // defined(OS_WIN)

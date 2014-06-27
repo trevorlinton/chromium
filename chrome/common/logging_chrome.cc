@@ -33,6 +33,7 @@
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/debug/debugger.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/environment.h"
 #include "base/file_util.h"
 #include "base/files/file_path.h"
@@ -47,7 +48,6 @@
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/dump_without_crashing.h"
 #include "chrome/common/env_vars.h"
 #include "ipc/ipc_logging.h"
 
@@ -96,7 +96,7 @@ void SilentRuntimeReportHandler(const std::string& str) {
 // Handler to silently dump the current process when there is an assert in
 // chrome.
 void DumpProcessAssertHandler(const std::string& str) {
-  logging::DumpWithoutCrashing();
+  base::debug::DumpWithoutCrashing();
 }
 #endif  // OS_WIN
 MSVC_ENABLE_OPTIMIZE();
@@ -176,12 +176,12 @@ base::FilePath SetUpSymlinkIfNeeded(const base::FilePath& symlink_path,
       if (symlink_exists) // only warn if we might expect it to succeed.
         DPLOG(WARNING) << "Unable to unlink " << symlink_path.value();
     }
-    if (!file_util::CreateSymbolicLink(target_path, symlink_path)) {
+    if (!base::CreateSymbolicLink(target_path, symlink_path)) {
       DPLOG(ERROR) << "Unable to create symlink " << symlink_path.value()
                    << " pointing at " << target_path.value();
     }
   } else {
-    if (!file_util::ReadSymbolicLink(symlink_path, &target_path))
+    if (!base::ReadSymbolicLink(symlink_path, &target_path))
       DPLOG(ERROR) << "Unable to read symlink " << symlink_path.value();
   }
   return target_path;
@@ -209,7 +209,8 @@ base::FilePath GetSessionLogFile(const CommandLine& command_line) {
     base::FilePath profile_dir;
     std::string login_profile_value =
         command_line.GetSwitchValueASCII(chromeos::switches::kLoginProfile);
-    if (login_profile_value == chrome::kLegacyProfileDir) {
+    if (login_profile_value == chrome::kLegacyProfileDir ||
+        login_profile_value == chrome::kTestUserProfileDir) {
       profile_dir = base::FilePath(login_profile_value);
     } else {
       // We could not use g_browser_process > profile_helper() here.
@@ -243,17 +244,11 @@ void RedirectChromeLogging(const CommandLine& command_line) {
   // Always force a new symlink when redirecting.
   base::FilePath target_path = SetUpSymlinkIfNeeded(log_path, true);
 
-  logging::DcheckState dcheck_state =
-      command_line.HasSwitch(switches::kEnableDCHECK) ?
-      logging::ENABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS :
-      logging::DISABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS;
-
   // ChromeOS always logs through the symlink, so it shouldn't be
   // deleted if it already exists.
   logging::LoggingSettings settings;
   settings.logging_dest = DetermineLogMode(command_line);
   settings.log_file = log_path.value().c_str();
-  settings.dcheck_state = dcheck_state;
   if (!logging::InitLogging(settings)) {
     DLOG(ERROR) << "Unable to initialize logging to " << log_path.value();
     RemoveSymlinkAndLog(log_path, target_path);
@@ -303,17 +298,11 @@ void InitChromeLogging(const CommandLine& command_line,
     log_locking_state = DONT_LOCK_LOG_FILE;
   }
 
-  logging::DcheckState dcheck_state =
-      command_line.HasSwitch(switches::kEnableDCHECK) ?
-      logging::ENABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS :
-      logging::DISABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS;
-
   logging::LoggingSettings settings;
   settings.logging_dest = logging_dest;
   settings.log_file = log_path.value().c_str();
   settings.lock_log = log_locking_state;
   settings.delete_old = delete_old_log_file;
-  settings.dcheck_state = dcheck_state;
   bool success = logging::InitLogging(settings);
 
 #if defined(OS_CHROMEOS)
@@ -370,14 +359,10 @@ void InitChromeLogging(const CommandLine& command_line,
   logging::LogEventProvider::Initialize(kChromeTraceProviderName);
 #endif
 
-#ifdef NDEBUG
-  if (command_line.HasSwitch(switches::kSilentDumpOnDCHECK) &&
-      command_line.HasSwitch(switches::kEnableDCHECK)) {
-#if defined(OS_WIN)
+#if DCHECK_IS_ON && defined(NDEBUG) && defined(OS_WIN)
+  if (command_line.HasSwitch(switches::kSilentDumpOnDCHECK))
     logging::SetLogReportHandler(DumpProcessAssertHandler);
 #endif
-  }
-#endif  // NDEBUG
 
   chrome_logging_initialized_ = true;
 }
@@ -436,7 +421,7 @@ size_t GetFatalAssertions(AssertionList* assertions) {
   while (!log_file.eof()) {
     getline(log_file, utf8_line);
     if (utf8_line.find(":FATAL:") != std::string::npos) {
-      wide_line = UTF8ToWide(utf8_line);
+      wide_line = base::UTF8ToWide(utf8_line);
       if (assertions)
         assertions->push_back(wide_line);
       ++assertion_count;

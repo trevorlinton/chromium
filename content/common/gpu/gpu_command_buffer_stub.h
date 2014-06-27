@@ -61,7 +61,7 @@ class GpuCommandBufferStub
     virtual ~DestructionObserver() {}
   };
 
-  typedef base::Callback<void(const ui::LatencyInfo&)>
+  typedef base::Callback<void(const std::vector<ui::LatencyInfo>&)>
       LatencyInfoCallback;
 
   GpuCommandBufferStub(
@@ -121,6 +121,8 @@ class GpuCommandBufferStub
 
   gfx::GpuPreference gpu_preference() { return gpu_preference_; }
 
+  int32 GetRequestedAttribute(int attr) const;
+
   // Sends a message to the console.
   void SendConsoleMessage(int32 id, const std::string& message);
 
@@ -141,8 +143,10 @@ class GpuCommandBufferStub
 
   void MarkContextLost();
 
+  uint64 GetMemoryUsage() const;
+
  private:
-  GpuMemoryManager* GetMemoryManager();
+  GpuMemoryManager* GetMemoryManager() const;
   bool MakeCurrent();
   void Destroy();
 
@@ -171,7 +175,6 @@ class GpuCommandBufferStub
 
   void OnSetSurfaceVisible(bool visible);
 
-  void OnDiscardBackbuffer();
   void OnEnsureBackbuffer();
 
   void OnRetireSyncPoint(uint32 sync_point);
@@ -193,7 +196,8 @@ class GpuCommandBufferStub
 
   void OnCommandProcessed();
   void OnParseError();
-  void OnSetLatencyInfo(const ui::LatencyInfo& latency_info);
+  void OnSetLatencyInfo(const std::vector<ui::LatencyInfo>& latency_info);
+  void OnCreateStreamTexture(uint32 texture_id, int32* stream_id);
 
   void ReportState();
 

@@ -159,6 +159,11 @@ class ExtensionApiTest : public ExtensionBrowserTest {
   bool RunPlatformAppTestWithArg(
       const std::string& extension_name, const char* custom_arg);
 
+  // Similar to RunPlatformAppTest, with custom |flags| (as defined in the Flags
+  // enum). The kFlagLaunchPlatformApp flag is automatically added.
+  bool RunPlatformAppTestWithFlags(const std::string& extension_name,
+                                   int flags);
+
   // Start the test server, and store details of its state.  Those details
   // will be available to javascript tests using chrome.test.getConfig().
   bool StartEmbeddedTestServer();
@@ -167,6 +172,11 @@ class ExtensionApiTest : public ExtensionBrowserTest {
   // details will be available to javascript tests using
   // chrome.test.getConfig().
   bool StartWebSocketServer(const base::FilePath& root_directory);
+
+  // Start the test FTP server, and store details of its state. Those
+  // details will be available to JavaScript tests using
+  // chrome.test.getConfig().
+  bool StartFTPServer(const base::FilePath& root_directory);
 
   // Start the spawned test server, and store details of its state.  Those
   // details will be available to javascript tests using
@@ -178,7 +188,7 @@ class ExtensionApiTest : public ExtensionBrowserTest {
   const extensions::Extension* GetSingleLoadedExtension();
 
   // All extensions tested by ExtensionApiTest are in the "api_test" dir.
-  virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE;
+  virtual void SetUpCommandLine(base::CommandLine* command_line) OVERRIDE;
 
   // If it failed, what was the error message?
   std::string message_;
@@ -191,10 +201,13 @@ class ExtensionApiTest : public ExtensionBrowserTest {
 
   // Hold details of the test, set in C++, which can be accessed by
   // javascript using chrome.test.getConfig().
-  scoped_ptr<DictionaryValue> test_config_;
+  scoped_ptr<base::DictionaryValue> test_config_;
 
   // Hold the test WebSocket server.
   scoped_ptr<net::SpawnedTestServer> websocket_server_;
+
+  // Hold the test FTP server.
+  scoped_ptr<net::SpawnedTestServer> ftp_server_;
 };
 
 #endif  // CHROME_BROWSER_EXTENSIONS_EXTENSION_APITEST_H_

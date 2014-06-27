@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/views/omnibox/omnibox_popup_contents_view.h"
 
+#include <algorithm>
+
 #include "chrome/browser/search/search.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/omnibox/omnibox_view.h"
@@ -20,7 +22,7 @@
 #include "ui/views/window/non_client_view.h"
 
 #if defined(USE_AURA)
-#include "ui/views/corewm/window_animations.h"
+#include "ui/wm/core/window_animations.h"
 #endif
 
 // This is the number of pixels in the border image interior to the actual
@@ -85,7 +87,7 @@ void OmniboxPopupContentsView::Init() {
   // necessarily our final class yet, and we may have subclasses
   // overriding CreateResultView.
   for (size_t i = 0; i < AutocompleteResult::kMaxMatches; ++i) {
-    OmniboxResultView* result_view = CreateResultView(this, i, font_list_);
+    OmniboxResultView* result_view = CreateResultView(i, font_list_);
     result_view->SetVisible(false);
     AddChildViewAt(result_view, static_cast<int>(i));
   }
@@ -170,11 +172,18 @@ void OmniboxPopupContentsView::UpdatePopupAppearance() {
   // Update the match cached by each row, in the process of doing so make sure
   // we have enough row views.
   const size_t result_size = model_->result().size();
+  max_match_contents_width_ = 0;
   for (size_t i = 0; i < result_size; ++i) {
     OmniboxResultView* view = result_view_at(i);
-    view->SetMatch(GetMatchAtIndex(i));
+    const AutocompleteMatch& match = GetMatchAtIndex(i);
+    view->SetMatch(match);
     view->SetVisible(i >= hidden_matches);
+    if (match.type == AutocompleteMatchType::SEARCH_SUGGEST_INFINITE) {
+      max_match_contents_width_ = std::max(
+          max_match_contents_width_, view->GetMatchContentsWidth());
+    }
   }
+
   for (size_t i = result_size; i < AutocompleteResult::kMaxMatches; ++i)
     child_at(i)->SetVisible(false);
 
@@ -214,8 +223,8 @@ void OmniboxPopupContentsView::UpdatePopupAppearance() {
     if (!popup_.get())
       return;
 #if defined(USE_AURA)
-    views::corewm::SetWindowVisibilityAnimationTransition(
-        popup_->GetNativeView(), views::corewm::ANIMATE_NONE);
+    wm::SetWindowVisibilityAnimationTransition(
+        popup_->GetNativeView(), wm::ANIMATE_NONE);
 #endif
     popup_->SetContentsView(this);
     popup_->StackAbove(omnibox_view_->GetRelativeWindowForPopup());
@@ -226,7 +235,7 @@ void OmniboxPopupContentsView::UpdatePopupAppearance() {
       // window showing.
       return;
     }
-    popup_->Show();
+    popup_->ShowInactive();
   } else {
     // Animate the popup shrinking, but don't animate growing larger since that
     // would make the popup feel less responsive.
@@ -293,8 +302,8 @@ void OmniboxPopupContentsView::Layout() {
   SchedulePaint();
 }
 
-views::View* OmniboxPopupContentsView::GetEventHandlerForPoint(
-    const gfx::Point& point) {
+views::View* OmniboxPopupContentsView::GetEventHandlerForRect(
+    const gfx::Rect& rect) {
   return this;
 }
 
@@ -402,10 +411,9 @@ int OmniboxPopupContentsView::CalculatePopupHeight() {
 }
 
 OmniboxResultView* OmniboxPopupContentsView::CreateResultView(
-    OmniboxResultViewModel* model,
     int model_index,
     const gfx::FontList& font_list) {
-  return new OmniboxResultView(model, model_index, location_bar_view_,
+  return new OmniboxResultView(this, model_index, location_bar_view_,
                                font_list);
 }
 
@@ -496,12 +504,8 @@ void OmniboxPopupContentsView::OpenSelectedLine(
   size_t index = GetIndexForPoint(event.location());
   if (!HasMatchAt(index))
     return;
-
-  // OpenMatch() may close the popup, which will clear the result set and, by
-  // extension, |match| and its contents.  So copy the relevant match out to
-  // make sure it stays alive until the call completes.
-  AutocompleteMatch match = model_->result().match_at(index);
-  omnibox_view_->OpenMatch(match, disposition, GURL(), index);
+  omnibox_view_->OpenMatch(model_->result().match_at(index), disposition,
+                           GURL(), base::string16(), index);
 }
 
 OmniboxResultView* OmniboxPopupContentsView::result_view_at(size_t i) {

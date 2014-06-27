@@ -7,31 +7,7 @@ import sys
 
 from file_system import FileSystem, StatInfo, FileNotFoundError
 from future import Future
-from object_store_creator import ObjectStoreCreator
 
-
-class _AsyncUncachedFuture(object):
-  def __init__(self,
-               uncached_read_futures,
-               stats_for_uncached,
-               current_results,
-               file_system,
-               object_store):
-    self._uncached_read_futures = uncached_read_futures
-    self._stats_for_uncached = stats_for_uncached
-    self._current_results = current_results
-    self._file_system = file_system
-    self._object_store = object_store
-
-  def Get(self):
-    new_results = self._uncached_read_futures.Get()
-    # Update the cached data in the object store. This is a path -> (read,
-    # version) mapping.
-    self._object_store.SetMulti(dict(
-        (path, (new_result, self._stats_for_uncached[path].version))
-        for path, new_result in new_results.iteritems()))
-    new_results.update(self._current_results)
-    return new_results
 
 class CachingFileSystem(FileSystem):
   '''FileSystem which implements a caching layer on top of |file_system|. It's
@@ -51,8 +27,6 @@ class CachingFileSystem(FileSystem):
     # which starting empty is designed for. Without this optimisation, cron
     # runs are extra slow.
     self._read_object_store = create_object_store('read', start_empty=False)
-    self._read_binary_object_store = create_object_store('read-binary',
-                                                         start_empty=False)
 
   def Refresh(self):
     return self._file_system.Refresh()
@@ -79,18 +53,17 @@ class CachingFileSystem(FileSystem):
     else:
       file_version = dir_stat.child_versions.get(file_path)
       if file_version is None:
-        raise FileNotFoundError('No stat found for %s in %s' % (path, dir_path))
+        raise FileNotFoundError('No stat found for %s in %s (found %s)' %
+                                (path, dir_path, dir_stat.child_versions))
       stat_info = StatInfo(file_version)
 
     return stat_info
 
-  def Read(self, paths, binary=False):
+  def Read(self, paths):
     '''Reads a list of files. If a file is in memcache and it is not out of
     date, it is returned. Otherwise, the file is retrieved from the file system.
     '''
-    read_object_store = (self._read_binary_object_store if binary else
-                         self._read_object_store)
-    read_values = read_object_store.GetMulti(paths).Get()
+    read_values = self._read_object_store.GetMulti(paths).Get()
     stat_values = self._stat_object_store.GetMulti(paths).Get()
     results = {}  # maps path to read value
     uncached = {}  # maps path to stat value
@@ -115,16 +88,20 @@ class CachingFileSystem(FileSystem):
     if not uncached:
       return Future(value=results)
 
-    return Future(delegate=_AsyncUncachedFuture(
-        self._file_system.Read(uncached.keys(), binary=binary),
-        uncached,
-        results,
-        self,
-        read_object_store))
+    uncached_read_futures = self._file_system.Read(uncached.keys())
+    def resolve():
+      new_results = uncached_read_futures.Get()
+      # Update the cached data in the object store. This is a path -> (read,
+      # version) mapping.
+      self._read_object_store.SetMulti(dict(
+          (path, (new_result, uncached[path].version))
+          for path, new_result in new_results.iteritems()))
+      new_results.update(results)
+      return new_results
+    return Future(callback=resolve)
 
   def GetIdentity(self):
     return self._file_system.GetIdentity()
 
   def __repr__(self):
-    return '<%s of %s>' % (type(self).__name__,
-                           type(self._file_system).__name__)
+    return '%s of <%s>' % (type(self).__name__, repr(self._file_system))

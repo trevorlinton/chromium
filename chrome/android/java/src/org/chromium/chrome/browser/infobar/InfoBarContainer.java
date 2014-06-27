@@ -19,6 +19,7 @@ import com.google.common.annotations.VisibleForTesting;
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.CalledByNative;
 import org.chromium.content.browser.DeviceUtils;
+import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.UiUtils;
 
 import java.util.ArrayDeque;
@@ -67,7 +68,7 @@ public class InfoBarContainer extends LinearLayout {
     private InfoBarAnimationListener mAnimationListener;
 
     // Native InfoBarContainer pointer which will be set by nativeInit()
-    private int mNativeInfoBarContainer;
+    private long mNativeInfoBarContainer;
 
     private final Activity mActivity;
 
@@ -89,14 +90,14 @@ public class InfoBarContainer extends LinearLayout {
     // True when this container has been emptied and its native counterpart has been destroyed.
     private boolean mDestroyed = false;
 
-    // The id of the tab associated with us. Set to TabBase.INVALID_TAB_ID if no tab is associated.
+    // The id of the tab associated with us. Set to Tab.INVALID_TAB_ID if no tab is associated.
     private int mTabId;
 
     // Parent view that contains us.
     private ViewGroup mParentView;
 
     public InfoBarContainer(Activity activity, AutoLoginProcessor autoLoginProcessor,
-            int tabId, ViewGroup parentView, int nativeWebContents) {
+            int tabId, ViewGroup parentView, WebContents webContents) {
         super(activity);
         setOrientation(LinearLayout.VERTICAL);
         mAnimationListener = null;
@@ -116,7 +117,7 @@ public class InfoBarContainer extends LinearLayout {
 
         // Chromium's InfoBarContainer may add an InfoBar immediately during this initialization
         // call, so make sure everything in the InfoBarContainer is completely ready beforehand.
-        mNativeInfoBarContainer = nativeInit(nativeWebContents, mAutoLoginDelegate);
+        mNativeInfoBarContainer = nativeInit(webContents, mAutoLoginDelegate);
     }
 
     public void setAnimationListener(InfoBarAnimationListener listener) {
@@ -174,10 +175,8 @@ public class InfoBarContainer extends LinearLayout {
         mTabId = tabId;
         mParentView = parentView;
 
-        if (getParent() != null) {
-            removeFromParentView();
-            addToParentView();
-        }
+        removeFromParentView();
+        addToParentView();
     }
 
     @Override
@@ -512,11 +511,11 @@ public class InfoBarContainer extends LinearLayout {
         return null;
     }
 
-    public int getNative() {
+    public long getNative() {
         return mNativeInfoBarContainer;
     }
 
-    private native int nativeInit(int webContentsPtr, AutoLoginDelegate autoLoginDelegate);
+    private native long nativeInit(WebContents webContents, AutoLoginDelegate autoLoginDelegate);
 
-    private native void nativeDestroy(int nativeInfoBarContainerAndroid);
+    private native void nativeDestroy(long nativeInfoBarContainerAndroid);
 }

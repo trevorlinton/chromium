@@ -8,71 +8,94 @@
 #include "base/prefs/pref_service.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/chrome_signin_manager_delegate.h"
+#include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/signin/signin_global_error.h"
+#include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/ui/global_error/global_error_service.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/notification_service.h"
 
-FakeSigninManagerBase::FakeSigninManagerBase() {
-}
+FakeSigninManagerBase::FakeSigninManagerBase(Profile* profile)
+    : SigninManagerBase(
+          ChromeSigninClientFactory::GetInstance()->GetForProfile(profile)) {}
 
 FakeSigninManagerBase::~FakeSigninManagerBase() {
 }
 
-void FakeSigninManagerBase::InitTokenService() {
-}
-
 // static
-BrowserContextKeyedService* FakeSigninManagerBase::Build(
-    content::BrowserContext* profile) {
-  return new FakeSigninManagerBase();
+KeyedService* FakeSigninManagerBase::Build(content::BrowserContext* context) {
+  SigninManagerBase* manager;
+  Profile* profile = static_cast<Profile*>(context);
+#if defined(OS_CHROMEOS)
+  manager = new FakeSigninManagerBase(profile);
+#else
+  manager = new FakeSigninManager(profile);
+#endif
+  manager->Initialize(profile, NULL);
+  SigninManagerFactory::GetInstance()
+      ->NotifyObserversOfSigninManagerCreationForTesting(manager);
+  return manager;
 }
 
 #if !defined (OS_CHROMEOS)
 
 FakeSigninManager::FakeSigninManager(Profile* profile)
-    : SigninManager(scoped_ptr<SigninManagerDelegate>(
-        new ChromeSigninManagerDelegate(profile))) {
-}
+    : SigninManager(
+          ChromeSigninClientFactory::GetInstance()->GetForProfile(profile)) {}
 
 FakeSigninManager::~FakeSigninManager() {
 }
 
-void FakeSigninManager::InitTokenService() {
-}
-
-void FakeSigninManager::StartSignInWithCredentials(
-    const std::string& session_index,
+void FakeSigninManager::StartSignInWithRefreshToken(
+    const std::string& refresh_token,
     const std::string& username,
     const std::string& password,
     const OAuthTokenFetchedCallback& oauth_fetched_callback) {
   set_auth_in_progress(username);
+  set_password(password);
   if (!oauth_fetched_callback.is_null())
-    oauth_fetched_callback.Run("fake_oauth_token");
+    oauth_fetched_callback.Run(refresh_token);
 }
+
 
 void FakeSigninManager::CompletePendingSignin() {
   SetAuthenticatedUsername(GetUsernameForAuthInProgress());
   set_auth_in_progress(std::string());
+  FOR_EACH_OBSERVER(Observer,
+                    observer_list_,
+                    GoogleSigninSucceeded(authenticated_username_, password_));
+}
+
+void FakeSigninManager::SignIn(const std::string& username,
+                               const std::string& password) {
+  StartSignInWithRefreshToken(
+      std::string(), username, password, OAuthTokenFetchedCallback());
+  CompletePendingSignin();
+}
+
+void FakeSigninManager::FailSignin(const GoogleServiceAuthError& error) {
+  FOR_EACH_OBSERVER(Observer, observer_list_, GoogleSigninFailed(error));
 }
 
 void FakeSigninManager::SignOut() {
   if (IsSignoutProhibited())
     return;
   set_auth_in_progress(std::string());
+  set_password(std::string());
+  const std::string username = authenticated_username_;
   authenticated_username_.clear();
+
+  // TODO(blundell): Eliminate this notification send once crbug.com/333997 is
+  // fixed.
+  GoogleServiceSignoutDetails details(username);
   content::NotificationService::current()->Notify(
       chrome::NOTIFICATION_GOOGLE_SIGNED_OUT,
       content::Source<Profile>(profile_),
-      content::NotificationService::NoDetails());
-}
+      content::Details<const GoogleServiceSignoutDetails>(&details));
 
-// static
-BrowserContextKeyedService* FakeSigninManager::Build(
-    content::BrowserContext* profile) {
-  return new FakeSigninManager(static_cast<Profile*>(profile));
+  FOR_EACH_OBSERVER(SigninManagerBase::Observer, observer_list_,
+                    GoogleSignedOut(username));
 }
 
 #endif  // !defined (OS_CHROMEOS)

@@ -21,4 +21,7 @@ CookieMonsterTest.GarbageCollectionTriggers
 ClientSocketPoolBaseTest.DisableCleanupTimer
 
 # Flaky, see http://crbug.com/108422
-SSLClientSocketTest.ConnectMismatched
+SSLClientSocketTest.*
+
+# DrM-i#1465
+URLRequestTest.ResolveShortcutTest

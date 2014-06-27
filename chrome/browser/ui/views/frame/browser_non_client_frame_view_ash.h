@@ -35,7 +35,7 @@ class BrowserNonClientFrameViewAsh
 
   // BrowserNonClientFrameView overrides:
   virtual gfx::Rect GetBoundsForTabStrip(views::View* tabstrip) const OVERRIDE;
-  virtual TabStripInsets GetTabStripInsets(bool force_restored) const OVERRIDE;
+  virtual int GetTopInset() const OVERRIDE;
   virtual int GetThemeBackgroundXInset() const OVERRIDE;
   virtual void UpdateThrobber(bool running) OVERRIDE;
 
@@ -55,9 +55,8 @@ class BrowserNonClientFrameViewAsh
   virtual void Layout() OVERRIDE;
   virtual const char* GetClassName() const OVERRIDE;
   virtual bool HitTestRect(const gfx::Rect& rect) const OVERRIDE;
-  virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE;
+  virtual void GetAccessibleState(ui::AXViewState* state) OVERRIDE;
   virtual gfx::Size GetMinimumSize() OVERRIDE;
-  virtual void OnThemeChanged() OVERRIDE;
 
   // Overridden from chrome::TabIconViewModel:
   virtual bool ShouldTabIconViewAnimate() const OVERRIDE;
@@ -70,16 +69,22 @@ class BrowserNonClientFrameViewAsh
   FRIEND_TEST_ALL_PREFIXES(BrowserNonClientFrameViewAshTest,
                            ImmersiveFullscreen);
 
-  // Distance between top of window and client area.
-  int NonClientTopBorderHeight() const;
+  // Distance between the left edge of the NonClientFrameView and the tab strip.
+  int GetTabStripLeftInset() const;
 
-  // Returns true if we should use a short header, such as for popup windows.
-  bool UseShortHeader() const;
+  // Distance between the right edge of the NonClientFrameView and the tab
+  // strip.
+  int GetTabStripRightInset() const;
 
   // Returns true if we should use a super short header with light bars instead
   // of regular tabs. This header is used in immersive fullscreen when the
   // top-of-window views are not revealed.
   bool UseImmersiveLightbarHeaderStyle() const;
+
+  // Returns true if the header should be painted so that it looks the same as
+  // the header used for packaged apps. Packaged apps use a different color
+  // scheme than browser windows.
+  bool UsePackagedAppHeaderStyle() const;
 
   // Layout the incognito icon.
   void LayoutAvatar();
@@ -94,18 +99,9 @@ class BrowserNonClientFrameViewAsh
 
   void PaintToolbarBackground(gfx::Canvas* canvas);
 
-  // Windows without a toolbar need to draw their own line under the header,
-  // above the content area.
+  // Draws the line under the header for windows without a toolbar and not using
+  // the packaged app header style.
   void PaintContentEdge(gfx::Canvas* canvas);
-
-  // Returns the id of the header frame image based on the browser type,
-  // activation state and incognito mode.
-  int GetThemeFrameImageId() const;
-
-  // Returns the id of the header frame overlay image based on the activation
-  // state and incognito mode.
-  // Returns 0 if no overlay image should be used.
-  int GetThemeFrameOverlayImageId() const;
 
   // View which contains the window controls.
   ash::FrameCaptionButtonContainerView* caption_button_container_;

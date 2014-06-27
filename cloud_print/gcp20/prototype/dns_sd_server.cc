@@ -13,7 +13,6 @@
 #include "base/strings/stringprintf.h"
 #include "cloud_print/gcp20/prototype/dns_packet_parser.h"
 #include "cloud_print/gcp20/prototype/dns_response_builder.h"
-#include "net/base/big_endian.h"
 #include "net/base/dns_util.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_util.h"
@@ -60,7 +59,7 @@ bool DnsSdServer::Start(const ServiceParameters& serv_params, uint32 full_ttl,
   full_ttl_ = full_ttl;
   metadata_ = metadata;
 
-  LOG(INFO) << "DNS server started";
+  VLOG(0) << "DNS server started";
   LOG(WARNING) << "DNS server does not support probing";
 
   SendAnnouncement(full_ttl_);
@@ -85,7 +84,7 @@ void DnsSdServer::Shutdown() {
   SendAnnouncement(0);  // TTL is 0
   socket_->Close();
   socket_.reset(NULL);
-  LOG(INFO) << "DNS server stopped";
+  VLOG(0) << "DNS server stopped";
 }
 
 void DnsSdServer::UpdateMetadata(const std::vector<std::string>& metadata) {
@@ -101,7 +100,7 @@ void DnsSdServer::UpdateMetadata(const std::vector<std::string>& metadata) {
   if (!CommandLine::ForCurrentProcess()->HasSwitch("no-announcement")) {
     DnsResponseBuilder builder(current_ttl);
 
-    builder.AppendTxt(serv_params_.service_name_, current_ttl, metadata_);
+    builder.AppendTxt(serv_params_.service_name_, current_ttl, metadata_, true);
     scoped_refptr<net::IOBufferWithSize> buffer(builder.Build());
 
     DCHECK(buffer.get() != NULL);
@@ -172,7 +171,7 @@ void DnsSdServer::ProcessMessage(int len, net::IOBufferWithSize* buf) {
     if (success) {
       ProccessQuery(current_ttl, query, &builder);
     } else {  // if (success)
-      LOG(INFO) << "Broken package";
+      VLOG(0) << "Broken package";
       break;
     }
   }
@@ -203,7 +202,20 @@ void DnsSdServer::ProccessQuery(uint32 current_ttl, const DnsQueryRecord& query,
       if (query.qname == serv_params_.service_type_ ||
           query.qname == serv_params_.secondary_service_type_) {
         builder->AppendPtr(query.qname, current_ttl,
-                           serv_params_.service_name_);
+                           serv_params_.service_name_, true);
+
+        if (CommandLine::ForCurrentProcess()->HasSwitch("extended-response")) {
+          builder->AppendSrv(serv_params_.service_name_, current_ttl,
+                             kSrvPriority, kSrvWeight, serv_params_.http_port_,
+                             serv_params_.service_domain_name_, false);
+          builder->AppendA(serv_params_.service_domain_name_, current_ttl,
+                           serv_params_.http_ipv4_, false);
+          builder->AppendAAAA(serv_params_.service_domain_name_, current_ttl,
+                              serv_params_.http_ipv6_, false);
+          builder->AppendTxt(serv_params_.service_name_, current_ttl, metadata_,
+                             false);
+        }
+
         responded = true;
       }
 
@@ -213,7 +225,7 @@ void DnsSdServer::ProccessQuery(uint32 current_ttl, const DnsQueryRecord& query,
       if (query.qname == serv_params_.service_name_) {
         builder->AppendSrv(serv_params_.service_name_, current_ttl,
                            kSrvPriority, kSrvWeight, serv_params_.http_port_,
-                           serv_params_.service_domain_name_);
+                           serv_params_.service_domain_name_, true);
         responded = true;
       }
       break;
@@ -221,14 +233,23 @@ void DnsSdServer::ProccessQuery(uint32 current_ttl, const DnsQueryRecord& query,
       log = "Processing A query";
       if (query.qname == serv_params_.service_domain_name_) {
         builder->AppendA(serv_params_.service_domain_name_, current_ttl,
-                         serv_params_.http_ipv4_);
+                         serv_params_.http_ipv4_, true);
+        responded = true;
+      }
+      break;
+    case net::dns_protocol::kTypeAAAA:
+      log = "Processing AAAA query";
+      if (query.qname == serv_params_.service_domain_name_) {
+        builder->AppendAAAA(serv_params_.service_domain_name_, current_ttl,
+                            serv_params_.http_ipv6_, true);
         responded = true;
       }
       break;
     case net::dns_protocol::kTypeTXT:
       log = "Processing TXT query";
       if (query.qname == serv_params_.service_name_) {
-        builder->AppendTxt(serv_params_.service_name_, current_ttl, metadata_);
+        builder->AppendTxt(serv_params_.service_name_, current_ttl, metadata_,
+                           true);
         responded = true;
       }
       break;
@@ -261,15 +282,18 @@ void DnsSdServer::SendAnnouncement(uint32 ttl) {
     DnsResponseBuilder builder(ttl);
 
     builder.AppendPtr(serv_params_.service_type_, ttl,
-                      serv_params_.service_name_);
+                     serv_params_.service_name_, true);
     builder.AppendPtr(serv_params_.secondary_service_type_, ttl,
-                      serv_params_.service_name_);
-    builder.AppendSrv(serv_params_.service_name_, ttl, kSrvPriority, kSrvWeight,
-                      serv_params_.http_port_,
-                      serv_params_.service_domain_name_);
+                      serv_params_.service_name_, true);
+    builder.AppendSrv(serv_params_.service_name_, ttl, kSrvPriority,
+                      kSrvWeight, serv_params_.http_port_,
+                      serv_params_.service_domain_name_, true);
     builder.AppendA(serv_params_.service_domain_name_, ttl,
-                    serv_params_.http_ipv4_);
-    builder.AppendTxt(serv_params_.service_name_, ttl, metadata_);
+                    serv_params_.http_ipv4_, true);
+    builder.AppendAAAA(serv_params_.service_domain_name_, ttl,
+                       serv_params_.http_ipv6_, true);
+    builder.AppendTxt(serv_params_.service_name_, ttl, metadata_, true);
+
     scoped_refptr<net::IOBufferWithSize> buffer(builder.Build());
 
     DCHECK(buffer.get() != NULL);

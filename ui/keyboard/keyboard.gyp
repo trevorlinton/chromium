@@ -43,10 +43,12 @@
         '../../skia/skia.gyp:skia',
         '../../url/url.gyp:url_lib',
         '../aura/aura.gyp:aura',
+        '../base/ui_base.gyp:ui_base',
         '../compositor/compositor.gyp:compositor',
         '../events/events.gyp:events',
         '../gfx/gfx.gyp:gfx',
-        '../ui.gyp:ui',
+        '../gfx/gfx.gyp:gfx_geometry',
+        '../wm/wm.gyp:wm_core',
         'keyboard_resources',
       ],
       'defines': [
@@ -62,13 +64,11 @@
         'keyboard_controller_observer.h',
         'keyboard_controller_proxy.cc',
         'keyboard_controller_proxy.h',
+        'keyboard_layout_manager.h',
+        'keyboard_layout_manager.cc',
         'keyboard_export.h',
         'keyboard_switches.cc',
         'keyboard_switches.h',
-        'keyboard_ui_controller.cc',
-        'keyboard_ui_controller.h',
-        'keyboard_ui_handler.cc',
-        'keyboard_ui_handler.h',
         'keyboard_util.cc',
         'keyboard_util.h',
       ]
@@ -82,26 +82,35 @@
         '../../content/content.gyp:content',
         '../../skia/skia.gyp:skia',
         '../../testing/gtest.gyp:gtest',
+        '../../url/url.gyp:url_lib',
         '../aura/aura.gyp:aura',
         '../aura/aura.gyp:aura_test_support',
+        '../base/ui_base.gyp:ui_base',
         '../compositor/compositor.gyp:compositor',
+        '../compositor/compositor.gyp:compositor_test_support',
         '../gfx/gfx.gyp:gfx',
-        '../ui.gyp:ui',
-        '../ui_unittests.gyp:run_ui_unittests',
+        '../gfx/gfx.gyp:gfx_geometry',
+        '../resources/ui_resources.gyp:ui_test_pak',
         'keyboard',
       ],
       'sources': [
+        'test/run_all_unittests.cc',
         'keyboard_controller_unittest.cc',
-        'keyboard_test_suite.cc',
       ],
       'conditions': [
-        ['OS=="linux" and linux_use_tcmalloc==1', {
+        # TODO(dmikurube): Kill linux_use_tcmalloc. http://crbug.com/345554
+        ['OS=="linux" and ((use_allocator!="none" and use_allocator!="see_use_tcmalloc") or (use_allocator=="see_use_tcmalloc" and linux_use_tcmalloc==1))', {
           'dependencies': [
             '<(DEPTH)/base/allocator/allocator.gyp:allocator',
           ],
           'link_settings': {
             'ldflags': ['-rdynamic'],
           },
+        }],
+        ['OS=="win" and win_use_allocator_shim==1', {
+          'dependencies': [
+            '<(DEPTH)/base/allocator/allocator.gyp:allocator',
+          ],
         }],
       ],
     },

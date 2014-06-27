@@ -22,11 +22,11 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_util.h"
+#include "base/task/cancelable_task_tracker.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/download/download_item_model.h"
 #include "chrome/browser/icon_manager.h"
-#include "chrome/common/cancelable_task_tracker.h"
 #include "content/public/browser/download_item.h"
 #include "content/public/browser/download_manager.h"
 #include "ui/gfx/animation/animation_delegate.h"
@@ -55,8 +55,7 @@ class DownloadItemView : public views::ButtonListener,
                          public content::DownloadItem::Observer,
                          public gfx::AnimationDelegate {
  public:
-  DownloadItemView(content::DownloadItem* download,
-                   DownloadShelfView* parent);
+  DownloadItemView(content::DownloadItem* download, DownloadShelfView* parent);
   virtual ~DownloadItemView();
 
   // Timer callback for handling animations
@@ -86,8 +85,8 @@ class DownloadItemView : public views::ButtonListener,
   virtual void OnMouseExited(const ui::MouseEvent& event) OVERRIDE;
   virtual bool OnKeyPressed(const ui::KeyEvent& event) OVERRIDE;
   virtual bool GetTooltipText(const gfx::Point& p,
-                              string16* tooltip) const OVERRIDE;
-  virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE;
+                              base::string16* tooltip) const OVERRIDE;
+  virtual void GetAccessibleState(ui::AXViewState* state) OVERRIDE;
   virtual void OnThemeChanged() OVERRIDE;
 
   // Overridden from ui::EventHandler:
@@ -108,6 +107,9 @@ class DownloadItemView : public views::ButtonListener,
  protected:
   // Overridden from views::View:
   virtual void OnPaint(gfx::Canvas* canvas) OVERRIDE;
+  virtual void OnPaintBackground(gfx::Canvas* canvas) OVERRIDE;
+  virtual void OnFocus() OVERRIDE;
+  virtual void OnBlur() OVERRIDE;
 
  private:
   enum State {
@@ -144,10 +146,14 @@ class DownloadItemView : public views::ButtonListener,
 
   void OpenDownload();
 
-  // Submit the downloaded file to the safebrowsing download feedback service.
-  // If true is returned, the DownloadItem and |this| have been deleted.  If
-  // false is returned, nothing has changed.
-  bool BeginDownloadFeedback();
+  // Submits the downloaded file to the safebrowsing download feedback service.
+  // Returns whether submission was successful. On successful submission,
+  // |this| and the DownloadItem will have been deleted.
+  bool SubmitDownloadToFeedbackService();
+
+  // If the user has |enabled| uploading, calls SubmitDownloadToFeedbackService.
+  // Otherwise, it simply removes the DownloadItem without uploading.
+  void PossiblySubmitDownloadToFeedbackService(bool enabled);
 
   void LoadIcon();
   void LoadIconIfItemPathChanged();
@@ -240,13 +246,13 @@ class DownloadItemView : public views::ButtonListener,
   DownloadShelfView* shelf_;
 
   // Elements of our particular download
-  string16 status_text_;
+  base::string16 status_text_;
 
   // The font list used to print the file name and status.
   gfx::FontList font_list_;
 
   // The tooltip.  Only displayed when not showing a warning dialog.
-  string16 tooltip_text_;
+  base::string16 tooltip_text_;
 
   // The current state (normal, hot or pushed) of the body and drop-down.
   State body_state_;
@@ -281,7 +287,7 @@ class DownloadItemView : public views::ButtonListener,
   gfx::Point drag_start_point_;
 
   // For canceling an in progress icon request.
-  CancelableTaskTracker cancelable_task_tracker_;
+  base::CancelableTaskTracker cancelable_task_tracker_;
 
   // A model class to control the status text we display.
   DownloadItemModel model_;
@@ -326,7 +332,7 @@ class DownloadItemView : public views::ButtonListener,
   scoped_ptr<DownloadShelfContextMenuView> context_menu_;
 
   // The name of this view as reported to assistive technology.
-  string16 accessible_name_;
+  base::string16 accessible_name_;
 
   // The icon loaded in the download shelf is based on the file path of the
   // item.  Store the path used, so that we can detect a change in the path

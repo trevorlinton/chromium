@@ -28,6 +28,7 @@
 #include "sync/notifier/invalidation_util.h"
 #include "sync/notifier/invalidator.h"
 #include "sync/notifier/non_blocking_invalidator.h"
+#include "sync/notifier/object_id_invalidation_map.h"
 #include "sync/tools/null_invalidation_state_tracker.h"
 
 #if defined(OS_MACOSX)
@@ -64,6 +65,10 @@ class NotificationPrinter : public InvalidationHandler {
       LOG(INFO) << "Remote invalidation: "
                 << invalidation_map.ToString();
     }
+  }
+
+  virtual std::string GetOwnerName() const OVERRIDE {
+    return "NotificationPrinter";
   }
 
  private:
@@ -176,17 +181,21 @@ int SyncListenNotificationsMain(int argc, char* argv[]) {
       ParseNotifierOptions(
           command_line,
           new MyTestURLRequestContextGetter(io_thread.message_loop_proxy()));
+  syncer::NetworkChannelCreator network_channel_creator =
+      syncer::NonBlockingInvalidator::MakePushClientChannelCreator(
+          notifier_options);
   const char kClientInfo[] = "sync_listen_notifications";
   NullInvalidationStateTracker null_invalidation_state_tracker;
   scoped_ptr<Invalidator> invalidator(
       new NonBlockingInvalidator(
-          notifier_options,
+          network_channel_creator,
           base::RandBytesAsString(8),
-          null_invalidation_state_tracker.GetAllInvalidationStates(),
+          null_invalidation_state_tracker.GetSavedInvalidations(),
           null_invalidation_state_tracker.GetBootstrapData(),
           WeakHandle<InvalidationStateTracker>(
               null_invalidation_state_tracker.AsWeakPtr()),
-          kClientInfo));
+          kClientInfo,
+          notifier_options.request_context_getter));
 
   NotificationPrinter notification_printer;
 

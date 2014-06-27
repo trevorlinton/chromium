@@ -3,13 +3,17 @@
 # found in the LICENSE file.
 
 import logging
-import sys
 import time
 
 from metrics import rendering_stats
 from telemetry.page import page_measurement
+from telemetry.page.perf_tests_helper import FlattenList
+import telemetry.core.timeline.bounds as timeline_bounds
+from telemetry.core.timeline.model import TimelineModel
 from telemetry.core.timeline.model import MarkerMismatchError
 from telemetry.core.timeline.model import MarkerOverlapError
+
+TIMELINE_MARKER = 'RasterizeAndRecord'
 
 
 class RasterizeAndRecord(page_measurement.PageMeasurement):
@@ -18,19 +22,20 @@ class RasterizeAndRecord(page_measurement.PageMeasurement):
     self._metrics = None
     self._compositing_features_enabled = False
 
-  def AddCommandLineOptions(self, parser):
-    parser.add_option('--raster-record-repeat', dest='raster_record_repeat',
+  @classmethod
+  def AddCommandLineArgs(cls, parser):
+    parser.add_option('--raster-record-repeat', type='int',
                       default=20,
-                      help='Repetitions in raster and record loops.' +
-                      'Higher values reduce variance, but can cause' +
+                      help='Repetitions in raster and record loops.'
+                      'Higher values reduce variance, but can cause'
                       'instability (timeouts, event buffer overflows, etc.).')
-    parser.add_option('--start-wait-time', dest='start_wait_time',
+    parser.add_option('--start-wait-time', type='float',
                       default=5,
-                      help='Wait time before the benchmark is started ' +
+                      help='Wait time before the benchmark is started '
                       '(must be long enought to load all content)')
-    parser.add_option('--stop-wait-time', dest='stop_wait_time',
-                      default=10,
-                      help='Wait time before measurement is taken ' +
+    parser.add_option('--stop-wait-time', type='float',
+                      default=15,
+                      help='Wait time before measurement is taken '
                       '(must be long enough to render one frame)')
 
   def CustomizeBrowserOptions(self, options):
@@ -39,8 +44,7 @@ class RasterizeAndRecord(page_measurement.PageMeasurement):
     # de-scheduled.
     options.AppendExtraBrowserArgs([
         '--enable-gpu-benchmarking',
-        '--slow-down-raster-scale-factor=%d' % int(
-            options.raster_record_repeat),
+        '--slow-down-raster-scale-factor=%d' % options.raster_record_repeat,
         # Enable impl-side-painting. Current version of benchmark only works for
         # this mode.
         '--enable-impl-side-painting',
@@ -57,20 +61,10 @@ class RasterizeAndRecord(page_measurement.PageMeasurement):
       self._compositing_features_enabled = True
 
   def MeasurePage(self, page, tab, results):
-    # Exit if threaded forced compositing is not enabled.
-    if (not self._compositing_features_enabled):
+    if not self._compositing_features_enabled:
       logging.warning('Warning: compositing feature status unknown or not '+
                       'forced and threaded. Skipping measurement.')
-      sys.exit(0)
-
-    # TODO(ernstm): Remove this temporary workaround when reference build has
-    # been updated to branch 1671 or later.
-    backend = tab.browser._browser_backend # pylint: disable=W0212
-    if (not hasattr(backend, 'chrome_branch_number') or
-        (sys.platform != 'android' and backend.chrome_branch_number < 1671)):
-      print ('Warning: rasterize_and_record requires Chrome branch 1671 or '
-             'later. Skipping measurement.')
-      sys.exit(0)
+      return
 
     # Rasterize only what's visible.
     tab.ExecuteJavaScript(
@@ -78,7 +72,7 @@ class RasterizeAndRecord(page_measurement.PageMeasurement):
 
     # Wait until the page has loaded and come to a somewhat steady state.
     # Needs to be adjusted for every device (~2 seconds for workstation).
-    time.sleep(float(self.options.start_wait_time))
+    time.sleep(self.options.start_wait_time)
 
     # Render one frame before we start gathering a trace. On some pages, the
     # first frame requested has more variance in the number of pixels
@@ -90,37 +84,44 @@ class RasterizeAndRecord(page_measurement.PageMeasurement):
           'window.__rafFired  = true;'
         '});')
 
-    time.sleep(float(self.options.stop_wait_time))
+    time.sleep(self.options.stop_wait_time)
     tab.browser.StartTracing('webkit.console,benchmark', 60)
 
     tab.ExecuteJavaScript(
         'window.__rafFired = false;'
         'window.webkitRequestAnimationFrame(function() {'
           'chrome.gpuBenchmarking.setNeedsDisplayOnAllLayers();'
-          'console.time("' + rendering_stats.RENDER_PROCESS_MARKER + '");'
+          'console.time("' + TIMELINE_MARKER + '");'
           'window.__rafFired  = true;'
         '});')
     # Wait until the frame was drawn.
     # Needs to be adjusted for every device and for different
     # raster_record_repeat counts.
     # TODO(ernstm): replace by call-back.
-    time.sleep(float(self.options.stop_wait_time))
+    time.sleep(self.options.stop_wait_time)
     tab.ExecuteJavaScript(
-        'console.timeEnd("' + rendering_stats.RENDER_PROCESS_MARKER + '")')
+        'console.timeEnd("' + TIMELINE_MARKER + '")')
 
-    timeline = tab.browser.StopTracing().AsTimelineModel()
+    tracing_timeline_data = tab.browser.StopTracing()
+    timeline = TimelineModel(timeline_data=tracing_timeline_data)
     try:
-      timeline_markers = timeline.FindTimelineMarkers(
-          rendering_stats.RENDER_PROCESS_MARKER)
+      timeline_markers = timeline.FindTimelineMarkers(TIMELINE_MARKER)
     except (MarkerMismatchError, MarkerOverlapError) as e:
       raise page_measurement.MeasurementFailure(str(e))
-    stats = rendering_stats.RenderingStats(timeline_markers, timeline_markers)
+    timeline_ranges = [ timeline_bounds.Bounds.CreateFromEvent(marker)
+                        for marker in timeline_markers ]
+    renderer_process = timeline.GetRendererProcessFromTab(tab)
 
-    results.Add('rasterize_time', 'ms',
-                max(stats.rasterize_time))
-    results.Add('record_time', 'ms',
-                max(stats.record_time))
+    stats = rendering_stats.RenderingStats(
+        renderer_process, timeline.browser_process, timeline_ranges)
+
+    results.Add('rasterize_time', 'ms', max(FlattenList(stats.rasterize_times)))
+    results.Add('record_time', 'ms', max(FlattenList(stats.record_times)))
     results.Add('rasterized_pixels', 'pixels',
-                max(stats.rasterized_pixel_count))
+                max(FlattenList(stats.rasterized_pixel_counts)))
     results.Add('recorded_pixels', 'pixels',
-                max(stats.recorded_pixel_count))
+                max(FlattenList(stats.recorded_pixel_counts)))
+
+  def CleanUpAfterPage(self, page, tab):
+    if tab.browser.is_tracing_running:
+      tab.browser.StopTracing()

@@ -108,7 +108,7 @@ TEST_F(MacUtilTest, TestExcludeFileFromBackups) {
   const char dummy_data[] = "All your base are belong to us!";
   // Dump something real into the file.
   ASSERT_EQ(static_cast<int>(arraysize(dummy_data)),
-      file_util::WriteFile(dummy_file_path, dummy_data, arraysize(dummy_data)));
+            WriteFile(dummy_file_path, dummy_data, arraysize(dummy_data)));
   NSString* fileURLString =
       [NSString stringWithUTF8String:dummy_file_path.value().c_str()];
   NSURL* fileURL = [NSURL URLWithString:fileURLString];
@@ -220,7 +220,7 @@ TEST_F(MacUtilTest, TestRemoveQuarantineAttribute) {
   ScopedTempDir temp_dir_;
   ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
   FilePath dummy_folder_path = temp_dir_.path().Append("DummyFolder");
-  ASSERT_TRUE(file_util::CreateDirectory(dummy_folder_path));
+  ASSERT_TRUE(base::CreateDirectory(dummy_folder_path));
   const char* quarantine_str = "0000;4b392bb2;Chromium;|org.chromium.Chromium";
   const char* file_path_str = dummy_folder_path.value().c_str();
   EXPECT_EQ(0, setxattr(file_path_str, "com.apple.quarantine",
@@ -238,7 +238,7 @@ TEST_F(MacUtilTest, TestRemoveQuarantineAttributeTwice) {
   ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
   FilePath dummy_folder_path = temp_dir_.path().Append("DummyFolder");
   const char* file_path_str = dummy_folder_path.value().c_str();
-  ASSERT_TRUE(file_util::CreateDirectory(dummy_folder_path));
+  ASSERT_TRUE(base::CreateDirectory(dummy_folder_path));
   EXPECT_EQ(-1, getxattr(file_path_str, "com.apple.quarantine", NULL, 0, 0, 0));
   // No quarantine attribute to begin with, but RemoveQuarantineAttribute still
   // succeeds because in the end the folder still doesn't have the quarantine

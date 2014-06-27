@@ -35,7 +35,7 @@ const char kSetDefaults_Help[] =
     "  static_library(\"mylib\")\n"
     "    # The configs will be auto-populated as above. You can remove it if\n"
     "    # you don't want the default for a particular default:\n"
-    "    configs -= \"//tools/mything:setgings\"\n"
+    "    configs -= \"//tools/mything:settings\"\n"
     "  }\n";
 
 Value RunSetDefaults(Scope* scope,
@@ -82,7 +82,8 @@ Value RunSetDefaults(Scope* scope,
   // Now copy the values set on the scope we made into the free-floating one
   // (with no containing scope) used to hold the target defaults.
   Scope* dest = scope->MakeTargetDefaults(target_type);
-  block_scope.NonRecursiveMergeTo(dest, function, "<SHOULD NOT FAIL>", err);
+  block_scope.NonRecursiveMergeTo(dest, false, function,
+                                  "<SHOULD NOT FAIL>", err);
   return Value();
 }
 

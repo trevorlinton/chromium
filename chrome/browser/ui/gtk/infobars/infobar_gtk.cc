@@ -52,8 +52,8 @@ const int InfoBar::kDefaultBarTargetHeight = 36;
 // static
 const int InfoBarGtk::kEndOfLabelSpacing = 6;
 
-InfoBarGtk::InfoBarGtk(InfoBarService* owner, InfoBarDelegate* delegate)
-    : InfoBar(owner, delegate),
+InfoBarGtk::InfoBarGtk(scoped_ptr<InfoBarDelegate> delegate)
+    : InfoBar(delegate.Pass()),
       bg_box_(NULL),
       hbox_(NULL),
       theme_service_(NULL),
@@ -63,7 +63,32 @@ InfoBarGtk::InfoBarGtk(InfoBarService* owner, InfoBarDelegate* delegate)
 InfoBarGtk::~InfoBarGtk() {
 }
 
-void InfoBarGtk::InitWidgets() {
+GdkColor InfoBarGtk::GetBorderColor() const {
+  DCHECK(theme_service_);
+  return theme_service_->GetBorderColor();
+}
+
+int InfoBarGtk::AnimatingHeight() const {
+  return animation().is_animating() ? bar_target_height() : 0;
+}
+
+SkColor InfoBarGtk::ConvertGetColor(ColorGetter getter) {
+  double r, g, b;
+  (this->*getter)(delegate()->GetInfoBarType(), &r, &g, &b);
+  return SkColorSetARGB(255, 255 * r, 255 * g, 255 * b);
+}
+
+void InfoBarGtk::GetTopColor(InfoBarDelegate::Type type,
+                             double* r, double* g, double* b) {
+  GetBackgroundColor(InfoBar::GetTopColor(type), r, g, b);
+}
+
+void InfoBarGtk::GetBottomColor(InfoBarDelegate::Type type,
+                                double* r, double* g, double* b) {
+  GetBackgroundColor(InfoBar::GetBottomColor(type), r, g, b);
+}
+
+void InfoBarGtk::PlatformSpecificSetOwner() {
   DCHECK(owner());
   DCHECK(!theme_service_);
   theme_service_ = GtkThemeService::GetFrom(Profile::FromBrowserContext(
@@ -112,31 +137,6 @@ void InfoBarGtk::InitWidgets() {
   registrar_.Add(this, chrome::NOTIFICATION_BROWSER_THEME_CHANGED,
                  content::Source<ThemeService>(theme_service_));
   UpdateBorderColor();
-}
-
-GdkColor InfoBarGtk::GetBorderColor() const {
-  DCHECK(theme_service_);
-  return theme_service_->GetBorderColor();
-}
-
-int InfoBarGtk::AnimatingHeight() const {
-  return animation().is_animating() ? bar_target_height() : 0;
-}
-
-SkColor InfoBarGtk::ConvertGetColor(ColorGetter getter) {
-  double r, g, b;
-  (this->*getter)(delegate()->GetInfoBarType(), &r, &g, &b);
-  return SkColorSetARGB(255, 255 * r, 255 * g, 255 * b);
-}
-
-void InfoBarGtk::GetTopColor(InfoBarDelegate::Type type,
-                             double* r, double* g, double* b) {
-  GetBackgroundColor(GetInfoBarTopColor(type), r, g, b);
-}
-
-void InfoBarGtk::GetBottomColor(InfoBarDelegate::Type type,
-                                double* r, double* g, double* b) {
-  GetBackgroundColor(GetInfoBarBottomColor(type), r, g, b);
 }
 
 void InfoBarGtk::PlatformSpecificShow(bool animate) {
@@ -211,12 +211,12 @@ GtkWidget* InfoBarGtk::CreateMenuButton(const std::string& text) {
   return button;
 }
 
-void InfoBarGtk::AddLabelWithInlineLink(const string16& display_text,
-                                        const string16& link_text,
+void InfoBarGtk::AddLabelWithInlineLink(const base::string16& display_text,
+                                        const base::string16& link_text,
                                         size_t link_offset,
                                         GCallback callback) {
   DCHECK(hbox_);
-  GtkWidget* link_button = CreateLinkButton(UTF16ToUTF8(link_text));
+  GtkWidget* link_button = CreateLinkButton(base::UTF16ToUTF8(link_text));
   gtk_util::ForceFontSizePixels(
       GTK_CHROME_LINK_BUTTON(link_button)->label, 13.4);
   DCHECK(callback);
@@ -231,9 +231,9 @@ void InfoBarGtk::AddLabelWithInlineLink(const string16& display_text,
 
   // Need to insert the link inside the display text.
   GtkWidget* initial_label = CreateLabel(
-      UTF16ToUTF8(display_text.substr(0, link_offset)));
+      base::UTF16ToUTF8(display_text.substr(0, link_offset)));
   GtkWidget* trailing_label = CreateLabel(
-      UTF16ToUTF8(display_text.substr(link_offset)));
+      base::UTF16ToUTF8(display_text.substr(link_offset)));
 
   gtk_util::ForceFontSizePixels(initial_label, 13.4);
   gtk_util::ForceFontSizePixels(trailing_label, 13.4);
@@ -274,7 +274,7 @@ void InfoBarGtk::UpdateBorderColor() {
 void InfoBarGtk::OnCloseButton(GtkWidget* button) {
   // If we're not owned, we're already closing, so don't call
   // InfoBarDismissed(), since this can lead to us double-recording dismissals.
-  if (delegate() && owner())
+  if (owner())
     delegate()->InfoBarDismissed();
   RemoveSelf();
 }

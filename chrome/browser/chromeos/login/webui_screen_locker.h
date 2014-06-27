@@ -57,6 +57,16 @@ class WebUIScreenLocker : public WebUILoginView,
   virtual void ScreenLockReady() OVERRIDE;
   virtual void OnAuthenticate() OVERRIDE;
   virtual void SetInputEnabled(bool enabled) OVERRIDE;
+  virtual void ShowBannerMessage(const std::string& message) OVERRIDE;
+  virtual void ShowUserPodButton(const std::string& username,
+                                 const std::string& iconURL,
+                                 const base::Closure& click_callback) OVERRIDE;
+  virtual void HideUserPodButton(const std::string& username) OVERRIDE;
+  virtual void SetAuthType(const std::string& username,
+                           LoginDisplay::AuthType auth_type,
+                           const std::string& initial_value) OVERRIDE;
+  virtual LoginDisplay::AuthType GetAuthType(const std::string& username)
+      const OVERRIDE;
   virtual void ShowErrorMessage(
       int error_msg_id,
       HelpAppLauncher::HelpTopic help_topic_id) OVERRIDE;
@@ -71,7 +81,7 @@ class WebUIScreenLocker : public WebUILoginView,
   virtual void CancelPasswordChangedFlow() OVERRIDE;
   virtual void CreateAccount() OVERRIDE;
   virtual void CompleteLogin(const UserContext& user_context) OVERRIDE;
-  virtual string16 GetConnectedNetworkName() OVERRIDE;
+  virtual base::string16 GetConnectedNetworkName() OVERRIDE;
   virtual bool IsSigninInProgress() const OVERRIDE;
   virtual void Login(const UserContext& user_context) OVERRIDE;
   virtual void LoginAsRetailModeUser() OVERRIDE;
@@ -89,7 +99,8 @@ class WebUIScreenLocker : public WebUILoginView,
   virtual void ResyncUserData() OVERRIDE;
   virtual void SetDisplayEmail(const std::string& email) OVERRIDE;
   virtual void Signout() OVERRIDE;
-  virtual void LoginAsKioskApp(const std::string& app_id) OVERRIDE;
+  virtual void LoginAsKioskApp(const std::string& app_id,
+                               bool diagnostic_mode) OVERRIDE;
 
   // content::NotificationObserver (via WebUILoginView) implementation.
   virtual void Observe(int type,

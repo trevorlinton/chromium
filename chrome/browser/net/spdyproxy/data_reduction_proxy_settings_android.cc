@@ -204,40 +204,38 @@ bool DataReductionProxySettingsAndroid::Register(JNIEnv* env) {
   return register_natives_impl_result;
 }
 
-// Metrics methods -- obsolete; see crbug/241518
-void DataReductionProxySettingsAndroid::RecordDataReductionInit() {
-  UMA_HISTOGRAM_ENUMERATION("SpdyProxyAuth.State", CHROME_STARTUP,
-                            NUM_SPDY_PROXY_AUTH_STATE);
-}
-
 void DataReductionProxySettingsAndroid::AddDefaultProxyBypassRules() {
    DataReductionProxySettings::AddDefaultProxyBypassRules();
 
-  // TODO(bengr): See http://crbug.com/169959. For some reason the data
-  // reduction proxy is breaking the omnibox SearchProvider.  Remove this rule
-  // when this is fixed.
-  AddURLPatternToBypass("http://www.google.com/complete/search*");
+  // Chrome cannot authenticate with the data reduction proxy when fetching URLs
+  // from the settings menu.
+  AddURLPatternToBypass("http://www.google.com/policies/privacy*");
 }
 
 void DataReductionProxySettingsAndroid::SetProxyConfigs(bool enabled,
+                                                        bool restricted,
                                                         bool at_startup) {
+  // Sanity check: If there's no fallback proxy, we can't do a restricted mode.
+  std::string fallback = GetDataReductionProxyFallback();
+  if (fallback.empty() && enabled && restricted)
+      enabled = false;
+
   // Keys duplicated from proxy_config_dictionary.cc
   // TODO(bengr): Move these to proxy_config_dictionary.h and reuse them here.
   const char kProxyMode[] = "mode";
   const char kProxyPacURL[] = "pac_url";
   const char kProxyBypassList[] = "bypass_list";
 
-  LogProxyState(enabled, at_startup);
+  LogProxyState(enabled, restricted, at_startup);
 
   PrefService* prefs = GetOriginalProfilePrefs();
   DCHECK(prefs);
   DictionaryPrefUpdate update(prefs, prefs::kProxy);
   base::DictionaryValue* dict = update.Get();
-  // TODO(marq): All of the UMA in here are obsolete.
   if (enabled) {
     // Convert to a data URI and update the PAC settings.
     std::string base64_pac;
-    base::Base64Encode(GetProxyPacScript(), &base64_pac);
+    base::Base64Encode(GetProxyPacScript(restricted), &base64_pac);
 
     dict->SetString(kProxyPacURL,
                     "data:application/x-ns-proxy-autoconfig;base64," +
@@ -246,29 +244,10 @@ void DataReductionProxySettingsAndroid::SetProxyConfigs(bool enabled,
                     ProxyModeToString(ProxyPrefs::MODE_PAC_SCRIPT));
     dict->SetString(kProxyBypassList, JoinString(BypassRules(), ", "));
 
-    if (at_startup) {
-      UMA_HISTOGRAM_ENUMERATION("SpdyProxyAuth.State",
-                                SPDY_PROXY_AUTH_ON_AT_STARTUP,
-                                NUM_SPDY_PROXY_AUTH_STATE);
-    } else if (!DataReductionProxySettings::HasTurnedOn()) {
-      // SPDY proxy auth is turned on by user action for the first time in
-      // this session.
-      UMA_HISTOGRAM_ENUMERATION("SpdyProxyAuth.State",
-                                SPDY_PROXY_AUTH_ON_BY_USER,
-                                NUM_SPDY_PROXY_AUTH_STATE);
-      DataReductionProxySettings::SetHasTurnedOn();
-    }
   } else {
     dict->SetString(kProxyMode, ProxyModeToString(ProxyPrefs::MODE_SYSTEM));
     dict->SetString(kProxyPacURL, "");
     dict->SetString(kProxyBypassList, "");
-
-    if (!at_startup && !DataReductionProxySettings::HasTurnedOff()) {
-      UMA_HISTOGRAM_ENUMERATION("SpdyProxyAuth.State",
-                                SPDY_PROXY_AUTH_OFF_BY_USER,
-                                NUM_SPDY_PROXY_AUTH_STATE);
-      DataReductionProxySettings::SetHasTurnedOff();
-    }
   }
 }
 
@@ -290,7 +269,8 @@ DataReductionProxySettingsAndroid::GetDailyContentLengths(
 }
 
 // TODO(bengr): Replace with our own ProxyResolver.
-std::string DataReductionProxySettingsAndroid::GetProxyPacScript() {
+std::string DataReductionProxySettingsAndroid::GetProxyPacScript(
+    bool restricted) {
   // Compose the PAC-only bypass code; these will be URL patterns that
   // are matched by regular expression. Host bypasses are handled outside
   // of the PAC file using the regular proxy bypass list configs.
@@ -304,12 +284,13 @@ std::string DataReductionProxySettingsAndroid::GetProxyPacScript() {
       DataReductionProxySettings::GetDataReductionProxyOrigin());
   std::string fallback_host = ProtocolAndHostForPACString(
       DataReductionProxySettings::GetDataReductionProxyFallback());
+  std::string hosts = restricted ? fallback_host : proxy_host + fallback_host;
   std::string pac = "function FindProxyForURL(url, host) {"
       "  if (" + bypass_clause + ") {"
       "    return 'DIRECT';"
       "  } "
       "  if (url.substring(0, 5) == 'http:') {"
-      "    return '" + proxy_host + fallback_host + "DIRECT';"
+      "    return '" + hosts + "DIRECT';"
       "  }"
       "  return 'DIRECT';"
       "}";
@@ -317,8 +298,8 @@ std::string DataReductionProxySettingsAndroid::GetProxyPacScript() {
 }
 
 // Used by generated jni code.
-static jint Init(JNIEnv* env, jobject obj) {
+static jlong Init(JNIEnv* env, jobject obj) {
   DataReductionProxySettingsAndroid* settings =
       new DataReductionProxySettingsAndroid(env, obj);
-  return reinterpret_cast<jint>(settings);
+  return reinterpret_cast<intptr_t>(settings);
 }

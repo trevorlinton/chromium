@@ -11,16 +11,14 @@
 #include "base/compiler_specific.h"
 #include "ipc/ipc_listener.h"
 
-namespace WebKit {
+namespace blink {
 class WebSocketStreamHandle;
 }
 
-namespace webkit_glue {
+namespace content {
+
 class WebSocketStreamHandleBridge;
 class WebSocketStreamHandleDelegate;
-}
-
-namespace content {
 
 // Dispatches socket stream related messages sent to a child process from the
 // main browser process.  There is one instance per child process.  Messages
@@ -31,9 +29,9 @@ class SocketStreamDispatcher : public IPC::Listener {
   SocketStreamDispatcher();
   virtual ~SocketStreamDispatcher() {}
 
-  static webkit_glue::WebSocketStreamHandleBridge* CreateBridge(
-      WebKit::WebSocketStreamHandle* handle,
-      webkit_glue::WebSocketStreamHandleDelegate* delegate);
+  static WebSocketStreamHandleBridge* CreateBridge(
+      blink::WebSocketStreamHandle* handle,
+      WebSocketStreamHandleDelegate* delegate);
 
   // IPC::Listener implementation.
   virtual bool OnMessageReceived(const IPC::Message& msg) OVERRIDE;

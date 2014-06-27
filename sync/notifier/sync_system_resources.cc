@@ -17,7 +17,10 @@
 #include "google/cacheinvalidation/deps/callback.h"
 #include "google/cacheinvalidation/include/types.h"
 #include "jingle/notifier/listener/push_client.h"
+#include "sync/notifier/gcm_network_channel.h"
+#include "sync/notifier/gcm_network_channel_delegate.h"
 #include "sync/notifier/invalidation_util.h"
+#include "sync/notifier/push_client_channel.h"
 
 namespace syncer {
 
@@ -128,6 +131,81 @@ void SyncInvalidationScheduler::RunPostedTask(invalidation::Closure* task) {
   delete task;
 }
 
+SyncNetworkChannel::SyncNetworkChannel()
+    : invalidator_state_(DEFAULT_INVALIDATION_ERROR),
+      received_messages_count_(0) {}
+
+SyncNetworkChannel::~SyncNetworkChannel() {
+  STLDeleteElements(&network_status_receivers_);
+}
+
+void SyncNetworkChannel::SetMessageReceiver(
+    invalidation::MessageCallback* incoming_receiver) {
+  incoming_receiver_.reset(incoming_receiver);
+}
+
+void SyncNetworkChannel::AddNetworkStatusReceiver(
+    invalidation::NetworkStatusCallback* network_status_receiver) {
+  network_status_receiver->Run(invalidator_state_ == INVALIDATIONS_ENABLED);
+  network_status_receivers_.push_back(network_status_receiver);
+}
+
+void SyncNetworkChannel::SetSystemResources(
+    invalidation::SystemResources* resources) {
+  // Do nothing.
+}
+
+void SyncNetworkChannel::AddObserver(Observer* observer) {
+  observers_.AddObserver(observer);
+}
+
+void SyncNetworkChannel::RemoveObserver(Observer* observer) {
+  observers_.RemoveObserver(observer);
+}
+
+scoped_ptr<SyncNetworkChannel> SyncNetworkChannel::CreatePushClientChannel(
+    const notifier::NotifierOptions& notifier_options) {
+  scoped_ptr<notifier::PushClient> push_client(
+      notifier::PushClient::CreateDefaultOnIOThread(notifier_options));
+  return scoped_ptr<SyncNetworkChannel>(
+      new PushClientChannel(push_client.Pass()));
+}
+
+scoped_ptr<SyncNetworkChannel> SyncNetworkChannel::CreateGCMNetworkChannel(
+    scoped_refptr<net::URLRequestContextGetter> request_context_getter,
+    scoped_ptr<GCMNetworkChannelDelegate> delegate) {
+  return scoped_ptr<SyncNetworkChannel>(new GCMNetworkChannel(
+      request_context_getter, delegate.Pass()));
+}
+
+void SyncNetworkChannel::NotifyStateChange(InvalidatorState invalidator_state) {
+  // Remember state for future NetworkStatusReceivers.
+  invalidator_state_ = invalidator_state;
+  // Notify NetworkStatusReceivers in cacheinvalidation.
+  for (NetworkStatusReceiverList::const_iterator it =
+           network_status_receivers_.begin();
+       it != network_status_receivers_.end(); ++it) {
+    (*it)->Run(invalidator_state_ == INVALIDATIONS_ENABLED);
+  }
+  // Notify observers.
+  FOR_EACH_OBSERVER(Observer, observers_,
+                    OnNetworkChannelStateChanged(invalidator_state_));
+}
+
+bool SyncNetworkChannel::DeliverIncomingMessage(const std::string& message) {
+  if (!incoming_receiver_) {
+    DLOG(ERROR) << "No receiver for incoming notification";
+    return false;
+  }
+  received_messages_count_++;
+  incoming_receiver_->Run(message);
+  return true;
+}
+
+int SyncNetworkChannel::GetReceivedMessagesCount() const {
+  return received_messages_count_;
+}
+
 SyncStorage::SyncStorage(StateWriter* state_writer,
                          invalidation::Scheduler* scheduler)
     : state_writer_(state_writer),
@@ -195,14 +273,14 @@ void SyncStorage::RunAndDeleteReadKeyCallback(
 }
 
 SyncSystemResources::SyncSystemResources(
-    scoped_ptr<notifier::PushClient> push_client,
+    SyncNetworkChannel* sync_network_channel,
     StateWriter* state_writer)
     : is_started_(false),
       logger_(new SyncLogger()),
       internal_scheduler_(new SyncInvalidationScheduler()),
       listener_scheduler_(new SyncInvalidationScheduler()),
       storage_(new SyncStorage(state_writer, internal_scheduler_.get())),
-      push_client_channel_(push_client.Pass()) {
+      sync_network_channel_(sync_network_channel) {
 }
 
 SyncSystemResources::~SyncSystemResources() {
@@ -240,8 +318,8 @@ SyncStorage* SyncSystemResources::storage() {
   return storage_.get();
 }
 
-PushClientChannel* SyncSystemResources::network() {
-  return &push_client_channel_;
+SyncNetworkChannel* SyncSystemResources::network() {
+  return sync_network_channel_;
 }
 
 SyncInvalidationScheduler* SyncSystemResources::internal_scheduler() {

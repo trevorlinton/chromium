@@ -43,8 +43,8 @@
 
 namespace content {
 
-using WebKit::WebGLId;
-using WebKit::WebGraphicsContext3D;
+using blink::WebGLId;
+using blink::WebGraphicsContext3D;
 
 content::GLHelper::ScalerQuality kQualities[] = {
   content::GLHelper::SCALER_QUALITY_BEST,
@@ -62,14 +62,16 @@ class GLHelperTest : public testing::Test {
  protected:
   virtual void SetUp() {
     WebGraphicsContext3D::Attributes attributes;
+    bool lose_context_when_out_of_memory = false;
     context_ = webkit::gpu::WebGraphicsContext3DInProcessCommandBufferImpl::
-        CreateOffscreenContext(attributes);
+        CreateOffscreenContext(attributes, lose_context_when_out_of_memory);
     context_->makeContextCurrent();
 
     helper_.reset(
-        new content::GLHelper(context_.get(), context_->GetContextSupport()));
+        new content::GLHelper(context_->GetGLInterface(),
+                              context_->GetContextSupport()));
     helper_scaling_.reset(new content::GLHelperScaling(
-        context_.get(),
+        context_->GetGLInterface(),
         helper_.get()));
   }
 
@@ -102,11 +104,11 @@ class GLHelperTest : public testing::Test {
         std::vector<gfx::PNGCodec::Comment>(),
         &compressed));
     ASSERT_TRUE(compressed.size());
-    FILE* f = file_util::OpenFile(filename, "wb");
+    FILE* f = base::OpenFile(filename, "wb");
     ASSERT_TRUE(f);
     ASSERT_EQ(fwrite(&*compressed.begin(), 1, compressed.size(), f),
               compressed.size());
-    file_util::CloseFile(f);
+    base::CloseFile(f);
   }
 
   scoped_ptr<webkit::gpu::WebGraphicsContext3DInProcessCommandBufferImpl>
@@ -291,12 +293,13 @@ TEST_F(GLHelperTest, DISABLED_ScaleTestImage) {
           gfx::Rect(0, 0,
                     dst_size.width(),
                     dst_size.height()),
-          static_cast<unsigned char *>(output_pixels.getPixels()));
+          static_cast<unsigned char *>(output_pixels.getPixels()),
+          SkBitmap::kARGB_8888_Config);
       context_->deleteTexture(dst_texture);
       std::string filename = base::StringPrintf("testoutput_%s_%d.ppm",
                                                 kQualityNames[q],
                                                 percents[p]);
-      LOG(INFO) << "Writing " <<  filename;
+      VLOG(0) << "Writing " <<  filename;
       SaveToFile(&output_pixels, base::FilePath::FromUTF8Unsafe(filename));
     }
   }

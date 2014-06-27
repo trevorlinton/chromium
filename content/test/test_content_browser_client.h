@@ -22,8 +22,7 @@ class TestContentBrowserClient : public ContentBrowserClient {
 
   virtual WebContentsViewPort* OverrideCreateWebContentsView(
       WebContents* web_contents,
-      RenderViewHostDelegateView** render_view_host_delegate_view,
-      const WebContents::CreateParams& params) OVERRIDE;
+      RenderViewHostDelegateView** render_view_host_delegate_view) OVERRIDE;
   virtual base::FilePath GetDefaultDownloadDirectory() OVERRIDE;
 
  private:

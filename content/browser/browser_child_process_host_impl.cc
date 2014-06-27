@@ -129,12 +129,7 @@ void BrowserChildProcessHostImpl::TerminateAll() {
 }
 
 void BrowserChildProcessHostImpl::Launch(
-#if defined(OS_WIN)
     SandboxedProcessLauncherDelegate* delegate,
-#elif defined(OS_POSIX)
-    bool use_zygote,
-    const base::EnvironmentMap& environ,
-#endif
     CommandLine* cmd_line) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
 
@@ -144,7 +139,6 @@ void BrowserChildProcessHostImpl::Launch(
   const CommandLine& browser_command_line = *CommandLine::ForCurrentProcess();
   static const char* kForwardSwitches[] = {
     switches::kDisableLogging,
-    switches::kEnableDCHECK,
     switches::kEnableLogging,
     switches::kLoggingLevel,
     switches::kTraceToConsole,
@@ -161,13 +155,7 @@ void BrowserChildProcessHostImpl::Launch(
                              arraysize(kForwardSwitches));
 
   child_process_.reset(new ChildProcessLauncher(
-#if defined(OS_WIN)
       delegate,
-#elif defined(OS_POSIX)
-      use_zygote,
-      environ,
-      child_process_host_->TakeClientFileDescriptor(),
-#endif
       cmd_line,
       data_.id,
       this));
@@ -192,7 +180,12 @@ base::ProcessHandle BrowserChildProcessHostImpl::GetHandle() const {
   return child_process_->GetHandle();
 }
 
-void BrowserChildProcessHostImpl::SetName(const string16& name) {
+void BrowserChildProcessHostImpl::SetNaClDebugStubPort(int port) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
+  data_.nacl_debug_stub_port = port;
+}
+
+void BrowserChildProcessHostImpl::SetName(const base::string16& name) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   data_.name = name;
 }
@@ -311,6 +304,11 @@ void BrowserChildProcessHostImpl::OnChildDisconnected() {
 
 bool BrowserChildProcessHostImpl::Send(IPC::Message* message) {
   return child_process_host_->Send(message);
+}
+
+void BrowserChildProcessHostImpl::OnProcessLaunchFailed() {
+  delegate_->OnProcessLaunchFailed();
+  delete delegate_;  // Will delete us
 }
 
 void BrowserChildProcessHostImpl::OnProcessLaunched() {

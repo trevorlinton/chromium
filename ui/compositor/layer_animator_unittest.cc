@@ -120,12 +120,41 @@ class DeletingLayerAnimationObserver : public LayerAnimationObserver {
   DISALLOW_COPY_AND_ASSIGN(DeletingLayerAnimationObserver);
 };
 
+class LayerAnimatorDestructionObserver {
+ public:
+  LayerAnimatorDestructionObserver() : animator_deleted_(false) {}
+  virtual ~LayerAnimatorDestructionObserver() {}
+
+  void NotifyAnimatorDeleted() {
+    animator_deleted_ = true;
+  }
+
+  bool IsAnimatorDeleted() {
+    return animator_deleted_;
+  }
+
+ private:
+  bool animator_deleted_;
+
+  DISALLOW_COPY_AND_ASSIGN(LayerAnimatorDestructionObserver);
+};
+
 class TestLayerAnimator : public LayerAnimator {
  public:
-  TestLayerAnimator() : LayerAnimator(base::TimeDelta::FromSeconds(0)) {}
+  TestLayerAnimator() : LayerAnimator(base::TimeDelta::FromSeconds(0)),
+      destruction_observer_(NULL) {}
+
+  void SetDestructionObserver(
+      LayerAnimatorDestructionObserver* observer) {
+    destruction_observer_ = observer;
+  }
 
  protected:
-  virtual ~TestLayerAnimator() {}
+  virtual ~TestLayerAnimator() {
+    if (destruction_observer_) {
+      destruction_observer_->NotifyAnimatorDeleted();
+    }
+  }
 
   virtual void ProgressAnimation(LayerAnimationSequence* sequence,
                                  base::TimeTicks now) OVERRIDE {
@@ -134,6 +163,8 @@ class TestLayerAnimator : public LayerAnimator {
   }
 
  private:
+  LayerAnimatorDestructionObserver* destruction_observer_;
+
   DISALLOW_COPY_AND_ASSIGN(TestLayerAnimator);
 };
 
@@ -1642,6 +1673,30 @@ TEST(LayerAnimatorTest, InterruptedImplicitAnimationObservers) {
   EXPECT_FLOAT_EQ(1.0f, delegate.GetBrightnessForAnimation());
 }
 
+// Tests that LayerAnimator is not deleted after the animation completes as long
+// as there is a live ScopedLayerAnimationSettings object wrapped around it.
+TEST(LayerAnimatorTest, AnimatorKeptAliveBySettings) {
+  // Note we are using a raw pointer unlike in other tests.
+  TestLayerAnimator* animator = new TestLayerAnimator();
+  LayerAnimatorDestructionObserver destruction_observer;
+  animator->SetDestructionObserver(&destruction_observer);
+  AnimationContainerElement* element = animator;
+  animator->set_disable_timer_for_test(true);
+  TestLayerAnimationDelegate delegate;
+  animator->SetDelegate(&delegate);
+  {
+    // ScopedLayerAnimationSettings should keep the Animator alive as long as
+    // it is alive, even beyond the end of the animation.
+    ScopedLayerAnimationSettings settings(animator);
+    base::TimeTicks now = gfx::FrameTime::Now();
+    animator->SetBrightness(0.5);
+    element->Step(now + base::TimeDelta::FromSeconds(1));
+    EXPECT_FALSE(destruction_observer.IsAnimatorDeleted());
+  }
+  // ScopedLayerAnimationSettings was destroyed, so Animator should be deleted.
+  EXPECT_TRUE(destruction_observer.IsAnimatorDeleted());
+}
+
 // Tests that an observer added to a scoped settings object is not notified
 // when the animator is destroyed unless explicitly requested.
 TEST(LayerAnimatorTest, ImplicitObserversAtAnimatorDestruction) {
@@ -2185,9 +2240,9 @@ TEST(LayerAnimatorTest, Color) {
 TEST(LayerAnimatorTest, SchedulePauseForProperties) {
   scoped_refptr<LayerAnimator> animator(LayerAnimator::CreateDefaultAnimator());
   animator->set_preemption_strategy(LayerAnimator::ENQUEUE_NEW_ANIMATION);
-  animator->SchedulePauseForProperties(base::TimeDelta::FromMilliseconds(100),
-                                       LayerAnimationElement::TRANSFORM,
-                                       LayerAnimationElement::BOUNDS, -1);
+  animator->SchedulePauseForProperties(
+      base::TimeDelta::FromMilliseconds(100),
+      LayerAnimationElement::TRANSFORM | LayerAnimationElement::BOUNDS);
   EXPECT_TRUE(animator->IsAnimatingProperty(LayerAnimationElement::TRANSFORM));
   EXPECT_TRUE(animator->IsAnimatingProperty(LayerAnimationElement::BOUNDS));
   EXPECT_FALSE(animator->IsAnimatingProperty(LayerAnimationElement::OPACITY));

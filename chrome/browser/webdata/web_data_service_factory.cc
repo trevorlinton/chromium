@@ -11,31 +11,33 @@
 #include "chrome/browser/sync/glue/sync_start_util.h"
 #include "chrome/browser/ui/profile_error_dialog.h"
 #include "chrome/browser/webdata/autocomplete_syncable_service.h"
-#include "chrome/browser/webdata/autofill_profile_syncable_service.h"
 #include "chrome/browser/webdata/keyword_table.h"
 #include "chrome/browser/webdata/logins_table.h"
-#include "chrome/browser/webdata/token_service_table.h"
-#include "chrome/browser/webdata/token_web_data.h"
 #include "chrome/browser/webdata/web_apps_table.h"
 #include "chrome/browser/webdata/web_data_service.h"
 #include "chrome/browser/webdata/web_intents_table.h"
 #include "components/autofill/core/browser/autofill_country.h"
+#include "components/autofill/core/browser/webdata/autofill_profile_syncable_service.h"
 #include "components/autofill/core/browser/webdata/autofill_table.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
-#include "components/browser_context_keyed_service/browser_context_dependency_manager.h"
+#include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/signin/core/browser/webdata/token_service_table.h"
+#include "components/signin/core/browser/webdata/token_web_data.h"
 #include "components/webdata/common/webdata_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
 
 using autofill::AutofillWebDataService;
+using autofill::AutofillProfileSyncableService;
 using content::BrowserThread;
 
 namespace {
 
 // Callback to show error dialog on profile load error.
-void ProfileErrorCallback(sql::InitStatus status) {
+void ProfileErrorCallback(ProfileErrorType type, sql::InitStatus status) {
   ShowProfileErrorDialog(
+      type,
       (status == sql::INIT_FAILURE) ?
       IDS_COULDNT_OPEN_PROFILE_ERROR : IDS_PROFILE_TOO_NEW_ERROR);
 }
@@ -99,15 +101,18 @@ WebDataServiceWrapper::WebDataServiceWrapper(Profile* profile) {
   web_database_->LoadDatabase();
 
   autofill_web_data_ = new AutofillWebDataService(
-      web_database_, ui_thread, db_thread, base::Bind(&ProfileErrorCallback));
+      web_database_, ui_thread, db_thread, base::Bind(
+          &ProfileErrorCallback, PROFILE_ERROR_DB_AUTOFILL_WEB_DATA));
   autofill_web_data_->Init();
 
   token_web_data_ = new TokenWebData(
-      web_database_, base::Bind(&ProfileErrorCallback));
+      web_database_, ui_thread, db_thread, base::Bind(
+         &ProfileErrorCallback, PROFILE_ERROR_DB_TOKEN_WEB_DATA));
   token_web_data_->Init();
 
   web_data_ = new WebDataService(
-      web_database_, base::Bind(&ProfileErrorCallback));
+      web_database_, base::Bind(&ProfileErrorCallback,
+                                PROFILE_ERROR_DB_WEB_DATA));
   web_data_->Init();
 
   autofill_web_data_->GetAutofillBackend(
@@ -141,36 +146,6 @@ scoped_refptr<TokenWebData> WebDataServiceWrapper::GetTokenWebData() {
 }
 
 // static
-scoped_refptr<AutofillWebDataService>
-AutofillWebDataService::FromBrowserContext(content::BrowserContext* context) {
-  // For this service, the implicit/explicit distinction doesn't
-  // really matter; it's just used for a DCHECK.  So we currently
-  // cheat and always say EXPLICIT_ACCESS.
-  WebDataServiceWrapper* wrapper =
-      WebDataServiceFactory::GetForProfile(
-          static_cast<Profile*>(context), Profile::EXPLICIT_ACCESS);
-  if (wrapper)
-    return wrapper->GetAutofillWebData();
-  // |wrapper| can be NULL in Incognito mode.
-  return scoped_refptr<AutofillWebDataService>(NULL);
-}
-
-// static
-scoped_refptr<TokenWebData> TokenWebData::FromBrowserContext(
-    content::BrowserContext* context) {
-  // For this service, the implicit/explicit distinction doesn't
-  // really matter; it's just used for a DCHECK.  So we currently
-  // cheat and always say EXPLICIT_ACCESS.
-  WebDataServiceWrapper* wrapper =
-      WebDataServiceFactory::GetForProfile(
-          static_cast<Profile*>(context), Profile::EXPLICIT_ACCESS);
-  if (wrapper)
-    return wrapper->GetTokenWebData();
-  // |wrapper| can be NULL in Incognito mode.
-  return scoped_refptr<TokenWebData>(NULL);
-}
-
-// static
 scoped_refptr<WebDataService> WebDataService::FromBrowserContext(
     content::BrowserContext* context) {
   // For this service, the implicit/explicit distinction doesn't
@@ -196,10 +171,11 @@ WebDataServiceFactory::~WebDataServiceFactory() {}
 
 // static
 WebDataServiceWrapper* WebDataServiceFactory::GetForProfile(
-    Profile* profile, Profile::ServiceAccessType access_type) {
+    Profile* profile,
+    Profile::ServiceAccessType access_type) {
   // If |access_type| starts being used for anything other than this
   // DCHECK, we need to start taking it as a parameter to
-  // AutofillWebDataService::FromBrowserContext (see above).
+  // the *WebDataService::FromBrowserContext() functions (see above).
   DCHECK(access_type != Profile::IMPLICIT_ACCESS || !profile->IsOffTheRecord());
   return static_cast<WebDataServiceWrapper*>(
           GetInstance()->GetServiceForBrowserContext(profile, true));
@@ -207,13 +183,39 @@ WebDataServiceWrapper* WebDataServiceFactory::GetForProfile(
 
 // static
 WebDataServiceWrapper* WebDataServiceFactory::GetForProfileIfExists(
-    Profile* profile, Profile::ServiceAccessType access_type) {
+    Profile* profile,
+    Profile::ServiceAccessType access_type) {
   // If |access_type| starts being used for anything other than this
   // DCHECK, we need to start taking it as a parameter to
-  // AutofillWebDataService::FromBrowserContext (see above).
+  // the *WebDataService::FromBrowserContext() functions (see above).
   DCHECK(access_type != Profile::IMPLICIT_ACCESS || !profile->IsOffTheRecord());
   return static_cast<WebDataServiceWrapper*>(
           GetInstance()->GetServiceForBrowserContext(profile, false));
+}
+
+// static
+scoped_refptr<AutofillWebDataService>
+WebDataServiceFactory::GetAutofillWebDataForProfile(
+    Profile* profile,
+    Profile::ServiceAccessType access_type) {
+  WebDataServiceWrapper* wrapper =
+      WebDataServiceFactory::GetForProfile(profile, access_type);
+  // |wrapper| can be NULL in Incognito mode.
+  return wrapper ?
+      wrapper->GetAutofillWebData() :
+      scoped_refptr<AutofillWebDataService>(NULL);
+}
+
+// static
+scoped_refptr<TokenWebData>
+WebDataServiceFactory::GetTokenWebDataForProfile(
+    Profile* profile,
+    Profile::ServiceAccessType access_type) {
+  WebDataServiceWrapper* wrapper =
+      WebDataServiceFactory::GetForProfile(profile, access_type);
+  // |wrapper| can be NULL in Incognito mode.
+  return wrapper ? wrapper->GetTokenWebData()
+                 : scoped_refptr<TokenWebData>(NULL);
 }
 
 // static
@@ -226,7 +228,7 @@ content::BrowserContext* WebDataServiceFactory::GetBrowserContextToUse(
   return chrome::GetBrowserContextRedirectedInIncognito(context);
 }
 
-BrowserContextKeyedService* WebDataServiceFactory::BuildServiceInstanceFor(
+KeyedService* WebDataServiceFactory::BuildServiceInstanceFor(
     content::BrowserContext* profile) const {
   return new WebDataServiceWrapper(static_cast<Profile*>(profile));
 }

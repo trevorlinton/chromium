@@ -11,7 +11,6 @@
 #include "chrome/browser/notifications/desktop_notification_service_factory.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
-#include "content/public/test/test_browser_thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/web/WebNotificationPresenter.h"
 
@@ -27,43 +26,6 @@ class DesktopNotificationServiceTest : public ChromeRenderViewHostTestHarness {
   DesktopNotificationService* service_;
 };
 
-TEST_F(DesktopNotificationServiceTest, SettingsForSchemes) {
-  GURL url("file:///html/test.html");
-
-  EXPECT_EQ(CONTENT_SETTING_ASK,
-            service_->GetDefaultContentSetting(NULL));
-  EXPECT_EQ(WebKit::WebNotificationPresenter::PermissionNotAllowed,
-            service_->HasPermission(url));
-
-  service_->GrantPermission(url);
-  EXPECT_EQ(WebKit::WebNotificationPresenter::PermissionAllowed,
-            service_->HasPermission(url));
-
-  service_->DenyPermission(url);
-  EXPECT_EQ(WebKit::WebNotificationPresenter::PermissionDenied,
-            service_->HasPermission(url));
-
-  GURL https_url("https://testurl");
-  GURL http_url("http://testurl");
-  EXPECT_EQ(CONTENT_SETTING_ASK,
-            service_->GetDefaultContentSetting(NULL));
-  EXPECT_EQ(WebKit::WebNotificationPresenter::PermissionNotAllowed,
-            service_->HasPermission(http_url));
-  EXPECT_EQ(WebKit::WebNotificationPresenter::PermissionNotAllowed,
-            service_->HasPermission(https_url));
-
-  service_->GrantPermission(https_url);
-  EXPECT_EQ(WebKit::WebNotificationPresenter::PermissionNotAllowed,
-            service_->HasPermission(http_url));
-  EXPECT_EQ(WebKit::WebNotificationPresenter::PermissionAllowed,
-            service_->HasPermission(https_url));
-
-  service_->DenyPermission(http_url);
-  EXPECT_EQ(WebKit::WebNotificationPresenter::PermissionDenied,
-            service_->HasPermission(http_url));
-  EXPECT_EQ(WebKit::WebNotificationPresenter::PermissionAllowed,
-            service_->HasPermission(https_url));
-}
 
 TEST_F(DesktopNotificationServiceTest, GetNotificationsSettings) {
   service_->GrantPermission(GURL("http://allowed2.com"));

@@ -22,6 +22,7 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/debug/trace_event.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/singleton.h"
@@ -32,9 +33,9 @@
 #include "base/strings/stringprintf.h"
 #include "base/sys_byteorder.h"
 #include "base/threading/thread.h"
-#include "base/x11/x11_error_tracker.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkPostConfig.h"
+#include "ui/base/x/x11_menu_list.h"
 #include "ui/base/x/x11_util_internal.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/keycodes/keyboard_code_conversion_x.h"
@@ -47,6 +48,7 @@
 #include "ui/gfx/point_conversions.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/size.h"
+#include "ui/gfx/x/x11_error_tracker.h"
 
 #if defined(OS_FREEBSD)
 #include <sys/sysctl.h>
@@ -259,10 +261,24 @@ bool IsShapeAvailable() {
 
 }
 
+// A list of bogus sizes in mm that X detects that should be ignored.
+// See crbug.com/136533. The first element maintains the minimum
+// size required to be valid size.
+const unsigned long kInvalidDisplaySizeList[][2] = {
+  {40, 30},
+  {50, 40},
+  {160, 90},
+  {160, 100},
+};
+
 }  // namespace
 
 bool XDisplayExists() {
   return (gfx::GetXDisplay() != NULL);
+}
+
+bool IsXInput2Available() {
+  return DeviceDataManager::GetInstance()->IsXInput2Available();
 }
 
 static SharedMemorySupport DoQuerySharedMemorySupport(XDisplay* dpy) {
@@ -302,7 +318,7 @@ static SharedMemorySupport DoQuerySharedMemorySupport(XDisplay* dpy) {
   memset(&shminfo, 0, sizeof(shminfo));
   shminfo.shmid = shmkey;
 
-  base::X11ErrorTracker err_tracker;
+  gfx::X11ErrorTracker err_tracker;
   bool result = XShmAttach(dpy, &shminfo);
   if (result)
     VLOG(1) << "X got shared memory segment " << shmkey;
@@ -381,7 +397,7 @@ void UnrefCustomXCursor(::Cursor cursor) {
 
 XcursorImage* SkBitmapToXcursorImage(const SkBitmap* cursor_image,
                                      const gfx::Point& hotspot) {
-  DCHECK(cursor_image->config() == SkBitmap::kARGB_8888_Config);
+  DCHECK(cursor_image->colorType() == kPMColor_SkColorType);
   gfx::Point hotspot_point = hotspot;
   SkBitmap scaled;
 
@@ -429,7 +445,7 @@ int CoalescePendingMotionEvents(const XEvent* xev,
   XDisplay* display = xev->xany.display;
   int event_type = xev->xgeneric.evtype;
 
-  DCHECK_EQ(event_type, XI_Motion);
+  DCHECK(event_type == XI_Motion || event_type == XI_TouchUpdate);
 
   while (XPending(display)) {
     XEvent next_event;
@@ -459,6 +475,7 @@ int CoalescePendingMotionEvents(const XEvent* xev,
       // and that no buttons or modifiers have changed.
       if (xievent->event == next_xievent->event &&
           xievent->child == next_xievent->child &&
+          xievent->detail == next_xievent->detail &&
           xievent->buttons.mask_len == next_xievent->buttons.mask_len &&
           (memcmp(xievent->buttons.mask,
                   next_xievent->buttons.mask,
@@ -476,15 +493,14 @@ int CoalescePendingMotionEvents(const XEvent* xev,
         XGetEventData(display, &last_event->xcookie);
         ++num_coalesced;
         continue;
-      } else {
-        // This isn't an event we want so free its cookie data.
-        XFreeEventData(display, &next_event.xcookie);
       }
     }
+    // This isn't an event we want so free its cookie data.
+    XFreeEventData(display, &next_event.xcookie);
     break;
   }
 
-  if (num_coalesced > 0) {
+  if (event_type == XI_Motion && num_coalesced > 0) {
     base::TimeDelta delta = ui::EventTimeFromNative(last_event) -
         ui::EventTimeFromNative(const_cast<XEvent*>(xev));
     UMA_HISTOGRAM_COUNTS_10000("Event.CoalescedCount.Mouse", num_coalesced);
@@ -586,11 +602,24 @@ void ClearX11DefaultRootWindow() {
 }
 
 bool IsWindowVisible(XID window) {
+  TRACE_EVENT0("ui", "IsWindowVisible");
+
   XWindowAttributes win_attributes;
   if (!XGetWindowAttributes(gfx::GetXDisplay(), window, &win_attributes))
     return false;
   if (win_attributes.map_state != IsViewable)
     return false;
+
+  // Minimized windows are not visible.
+  std::vector<Atom> wm_states;
+  if (GetAtomArrayProperty(window, "_NET_WM_STATE", &wm_states)) {
+    Atom hidden_atom = GetAtom("_NET_WM_STATE_HIDDEN");
+    if (std::find(wm_states.begin(), wm_states.end(), hidden_atom) !=
+            wm_states.end()) {
+      return false;
+    }
+  }
+
   // Some compositing window managers (notably kwin) do not actually unmap
   // windows on desktop switch, so we also must check the current desktop.
   int window_desktop, current_desktop;
@@ -615,11 +644,22 @@ bool GetWindowRect(XID window, gfx::Rect* rect) {
     return false;
 
   *rect = gfx::Rect(x, y, width, height);
+
+  std::vector<int> insets;
+  if (GetIntArrayProperty(window, "_NET_FRAME_EXTENTS", &insets) &&
+      insets.size() == 4) {
+    rect->Inset(-insets[0], -insets[2], -insets[1], -insets[3]);
+  }
+  // Not all window managers support _NET_FRAME_EXTENTS so return true even if
+  // requesting the property fails.
+
   return true;
 }
 
 
 bool WindowContainsPoint(XID window, gfx::Point screen_loc) {
+  TRACE_EVENT0("ui", "WindowContainsPoint");
+
   gfx::Rect window_rect;
   if (!GetWindowRect(window, &window_rect))
     return false;
@@ -636,27 +676,44 @@ bool WindowContainsPoint(XID window, gfx::Point screen_loc) {
   // rectangles. This means to determine if a point is inside a window for the
   // purpose of input handling we have to check the rectangles in the ShapeInput
   // list.
-  int dummy;
-  int input_rects_size = 0;
-  XRectangle* input_rects = XShapeGetRectangles(
-      gfx::GetXDisplay(), window, ShapeInput, &input_rects_size, &dummy);
-  if (!input_rects)
-    return true;
-  bool is_in_input_rects = false;
-  for (int i = 0; i < input_rects_size; ++i) {
-    // The ShapeInput rects appear to be in window space, so we have to
-    // translate by the window_rect's offset to map to screen space.
-    gfx::Rect input_rect =
-        gfx::Rect(input_rects[i].x + window_rect.x(),
-                  input_rects[i].y + window_rect.y(),
-                  input_rects[i].width, input_rects[i].height);
-    if (input_rect.Contains(screen_loc)) {
-      is_in_input_rects = true;
-      break;
+  // According to http://www.x.org/releases/current/doc/xextproto/shape.html,
+  // we need to also respect the ShapeBounding rectangles.
+  // The effective input region of a window is defined to be the intersection
+  // of the client input region with both the default input region and the
+  // client bounding region. Any portion of the client input region that is not
+  // included in both the default input region and the client bounding region
+  // will not be included in the effective input region on the screen.
+  int rectangle_kind[] = {ShapeInput, ShapeBounding};
+  for (size_t kind_index = 0;
+       kind_index < arraysize(rectangle_kind);
+       kind_index++) {
+    int dummy;
+    int shape_rects_size = 0;
+    XRectangle* shape_rects = XShapeGetRectangles(gfx::GetXDisplay(),
+                                                  window,
+                                                  rectangle_kind[kind_index],
+                                                  &shape_rects_size,
+                                                  &dummy);
+    if (!shape_rects)
+      continue;
+    bool is_in_shape_rects = false;
+    for (int i = 0; i < shape_rects_size; ++i) {
+      // The ShapeInput and ShapeBounding rects are to be in window space, so we
+      // have to translate by the window_rect's offset to map to screen space.
+      gfx::Rect shape_rect =
+          gfx::Rect(shape_rects[i].x + window_rect.x(),
+                    shape_rects[i].y + window_rect.y(),
+                    shape_rects[i].width, shape_rects[i].height);
+      if (shape_rect.Contains(screen_loc)) {
+        is_in_shape_rects = true;
+        break;
+      }
     }
+    XFree(shape_rects);
+    if (!is_in_shape_rects)
+      return false;
   }
-  XFree(input_rects);
-  return is_in_input_rects;
+  return true;
 }
 
 
@@ -872,7 +929,7 @@ bool SetIntArrayProperty(XID window,
   for (size_t i = 0; i < value.size(); ++i)
     data[i] = value[i];
 
-  base::X11ErrorTracker err_tracker;
+  gfx::X11ErrorTracker err_tracker;
   XChangeProperty(gfx::GetXDisplay(),
                   window,
                   name_atom,
@@ -897,7 +954,7 @@ bool SetAtomArrayProperty(XID window,
   for (size_t i = 0; i < value.size(); ++i)
     data[i] = value[i];
 
-  base::X11ErrorTracker err_tracker;
+  gfx::X11ErrorTracker err_tracker;
   XChangeProperty(gfx::GetXDisplay(),
                   window,
                   name_atom,
@@ -906,6 +963,22 @@ bool SetAtomArrayProperty(XID window,
                   PropModeReplace,
                   reinterpret_cast<const unsigned char*>(data.get()),
                   value.size());  // num items
+  return !err_tracker.FoundNewError();
+}
+
+bool SetStringProperty(XID window,
+                       Atom property,
+                       Atom type,
+                       const std::string& value) {
+  gfx::X11ErrorTracker err_tracker;
+  XChangeProperty(gfx::GetXDisplay(),
+                  window,
+                  property,
+                  type,
+                  8,
+                  PropModeReplace,
+                  reinterpret_cast<const unsigned char*>(value.c_str()),
+                  value.size());
   return !err_tracker.FoundNewError();
 }
 
@@ -921,8 +994,8 @@ Atom GetAtom(const char* name) {
 
 void SetWindowClassHint(XDisplay* display,
                         XID window,
-                        std::string res_name,
-                        std::string res_class) {
+                        const std::string& res_name,
+                        const std::string& res_class) {
   XClassHint class_hints;
   // const_cast is safe because XSetClassHint does not modify the strings.
   // Just to be safe, the res_name and res_class parameters are local copies,
@@ -930,6 +1003,18 @@ void SetWindowClassHint(XDisplay* display,
   class_hints.res_name = const_cast<char*>(res_name.c_str());
   class_hints.res_class = const_cast<char*>(res_class.c_str());
   XSetClassHint(display, window, &class_hints);
+}
+
+void SetWindowRole(XDisplay* display, XID window, const std::string& role) {
+  if (role.empty()) {
+    XDeleteProperty(display, window, GetAtom("WM_WINDOW_ROLE"));
+  } else {
+    char* role_c = const_cast<char*>(role.c_str());
+    XChangeProperty(display, window, GetAtom("WM_WINDOW_ROLE"), XA_STRING, 8,
+                    PropModeReplace,
+                    reinterpret_cast<unsigned char*>(role_c),
+                    role.size());
+  }
 }
 
 XID GetParentWindow(XID window) {
@@ -952,6 +1037,26 @@ XID GetHighestAncestorWindow(XID window, XID root) {
       return window;
     window = parent;
   }
+}
+
+bool GetCustomFramePrefDefault() {
+  // Ideally, we'd use the custom frame by default and just fall back on using
+  // system decorations for the few (?) tiling window managers where the custom
+  // frame doesn't make sense (e.g. awesome, ion3, ratpoison, xmonad, etc.) or
+  // other WMs where it has issues (e.g. Fluxbox -- see issue 19130).  The EWMH
+  // _NET_SUPPORTING_WM property makes it easy to look up a name for the current
+  // WM, but at least some of the WMs in the latter group don't set it.
+  // Instead, we default to using system decorations for all WMs and
+  // special-case the ones where the custom frame should be used.
+  ui::WindowManagerName wm_type = GuessWindowManager();
+  return (wm_type == WM_BLACKBOX ||
+          wm_type == WM_COMPIZ ||
+          wm_type == WM_ENLIGHTENMENT ||
+          wm_type == WM_METACITY ||
+          wm_type == WM_MUFFIN ||
+          wm_type == WM_MUTTER ||
+          wm_type == WM_OPENBOX ||
+          wm_type == WM_XFWM4);
 }
 
 bool GetWindowDesktop(XID window, int* desktop) {
@@ -979,6 +1084,18 @@ bool EnumerateChildren(EnumerateWindowsDelegate* delegate, XID window,
   if (depth > max_depth)
     return false;
 
+  std::vector<XID> windows;
+  std::vector<XID>::iterator iter;
+  if (depth == 0) {
+    XMenuList::GetInstance()->InsertMenuWindowXIDs(&windows);
+    // Enumerate the menus first.
+    for (iter = windows.begin(); iter != windows.end(); iter++) {
+      if (delegate->ShouldStopIterating(*iter))
+        return true;
+    }
+    windows.clear();
+  }
+
   XID root, parent, *children;
   unsigned int num_children;
   int status = XQueryTree(gfx::GetXDisplay(), window, &root, &parent, &children,
@@ -986,7 +1103,6 @@ bool EnumerateChildren(EnumerateWindowsDelegate* delegate, XID window,
   if (status == 0)
     return false;
 
-  std::vector<XID> windows;
   for (int i = static_cast<int>(num_children) - 1; i >= 0; i--)
     windows.push_back(children[i]);
 
@@ -994,7 +1110,6 @@ bool EnumerateChildren(EnumerateWindowsDelegate* delegate, XID window,
 
   // XQueryTree returns the children of |window| in bottom-to-top order, so
   // reverse-iterate the list to check the windows from top-to-bottom.
-  std::vector<XID>::iterator iter;
   for (iter = windows.begin(); iter != windows.end(); iter++) {
     if (IsWindowNamed(*iter) && delegate->ShouldStopIterating(*iter))
       return true;
@@ -1030,6 +1145,7 @@ void EnumerateTopLevelWindows(ui::EnumerateWindowsDelegate* delegate) {
     ui::EnumerateAllWindows(delegate, kMaxSearchDepth);
     return;
   }
+  XMenuList::GetInstance()->InsertMenuWindowXIDs(&stack);
 
   std::vector<XID>::iterator iter;
   for (iter = stack.begin(); iter != stack.end(); iter++) {
@@ -1141,10 +1257,9 @@ bool CopyAreaToCanvas(XID drawable,
       image->data[i + 3] = 0xff;
 
     SkBitmap bitmap;
-    bitmap.setConfig(SkBitmap::kARGB_8888_Config,
-                     image->width, image->height,
-                     image->bytes_per_line);
-    bitmap.setPixels(image->data);
+    bitmap.installPixels(SkImageInfo::MakeN32Premul(image->width,
+                                                    image->height),
+                         image->data, image->bytes_per_line);
     gfx::ImageSkia image_skia;
     gfx::ImageSkiaRep image_rep(bitmap, canvas->image_scale());
     image_skia.AddRepresentation(image_rep);
@@ -1190,7 +1305,7 @@ bool GetWindowManagerName(std::string* wm_name) {
   // _NET_SUPPORTING_WM_CHECK property pointing to itself (to avoid a stale
   // property referencing an ID that's been recycled for another window), so we
   // check that too.
-  base::X11ErrorTracker err_tracker;
+  gfx::X11ErrorTracker err_tracker;
   int wm_window_property = 0;
   bool result = GetIntProperty(
       wm_window, "_NET_SUPPORTING_WM_CHECK", &wm_window_property);
@@ -1311,6 +1426,25 @@ bool IsX11WindowFullScreen(XID window) {
   int height = HeightOfScreen(screen);
   return window_rect.size() == gfx::Size(width, height);
 #endif
+}
+
+bool IsXDisplaySizeBlackListed(unsigned long mm_width,
+                               unsigned long mm_height) {
+  // Ignore if the reported display is smaller than minimum size.
+  if (mm_width <= kInvalidDisplaySizeList[0][0] ||
+      mm_height <= kInvalidDisplaySizeList[0][1]) {
+    LOG(WARNING) << "Smaller than minimum display size";
+    return true;
+  }
+  for (unsigned long i = 1 ; i < arraysize(kInvalidDisplaySizeList); ++i) {
+    const unsigned long* size = kInvalidDisplaySizeList[i];
+    if (mm_width == size[0] && mm_height == size[1]) {
+      LOG(WARNING) << "Black listed display size detected:"
+                   << size[0] << "x" << size[1];
+      return true;
+    }
+  }
+  return false;
 }
 
 const unsigned char* XRefcountedMemory::front() const {

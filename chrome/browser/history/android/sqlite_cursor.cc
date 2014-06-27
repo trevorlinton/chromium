@@ -55,7 +55,7 @@ ScopedJavaLocalRef<jobject> SQLiteCursor::NewJavaSqliteCursor(
     FaviconService* favicon_service) {
   SQLiteCursor* cursor = new SQLiteCursor(column_names, statement, service,
                                           favicon_service);
-  return Java_SQLiteCursor_create(env, reinterpret_cast<jint>(cursor));
+  return Java_SQLiteCursor_create(env, reinterpret_cast<intptr_t>(cursor));
 }
 
 bool SQLiteCursor::RegisterSqliteCursor(JNIEnv* env) {
@@ -80,7 +80,7 @@ ScopedJavaLocalRef<jobjectArray> SQLiteCursor::GetColumnNames(JNIEnv* env,
 ScopedJavaLocalRef<jstring> SQLiteCursor::GetString(JNIEnv* env,
                                                     jobject obj,
                                                     jint column) {
-  string16 value = statement_->statement()->ColumnString16(column);
+  base::string16 value = statement_->statement()->ColumnString16(column);
   return ScopedJavaLocalRef<jstring>(env,
       env->NewString(value.data(), value.size()));
 }
@@ -205,7 +205,7 @@ void SQLiteCursor::GetFaviconForIDInUIThread(
     const FaviconService::FaviconRawCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   if (!tracker_.get())
-    tracker_.reset(new CancelableTaskTracker());
+    tracker_.reset(new base::CancelableTaskTracker());
   favicon_service_->GetLargestRawFaviconForID(id, callback, tracker_.get());
 }
 

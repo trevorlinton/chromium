@@ -43,7 +43,6 @@ class FakePageDelegate : public InstantPage::Delegate {
                     content::PageTransition transition,
                     WindowOpenDisposition disposition,
                     bool is_search_type));
-  MOCK_METHOD1(InstantPageLoadFailed, void(content::WebContents* contents));
 };
 
 }  // namespace
@@ -61,8 +60,6 @@ class InstantPageTest : public ChromeRenderViewHostTestHarness {
 };
 
 void InstantPageTest::SetUp() {
-  CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kEnableInstantExtendedAPI);
   ChromeRenderViewHostTestHarness::SetUp();
   SearchTabHelper::CreateForWebContents(web_contents());
 }
@@ -150,29 +147,8 @@ TEST_F(InstantPageTest, PageSupportsInstant) {
   // Assume the page supports instant. Invoke the message reply handler to make
   // sure the InstantPage is notified about the instant support state.
   const content::NavigationEntry* entry =
-      web_contents()->GetController().GetActiveEntry();
+      web_contents()->GetController().GetLastCommittedEntry();
   EXPECT_TRUE(entry);
   SearchTabHelper::FromWebContents(web_contents())->InstantSupportChanged(true);
   EXPECT_TRUE(page->supports_instant());
-}
-
-TEST_F(InstantPageTest, AppropriateMessagesSentToIncognitoPages) {
-  page.reset(new InstantPage(&delegate, "", NULL, true));
-  page->SetContents(web_contents());
-  NavigateAndCommit(GURL(chrome::kChromeSearchLocalNtpUrl));
-  process()->sink().ClearMessages();
-
-  // Incognito pages should get these messages.
-  page->sender()->SetOmniboxBounds(gfx::Rect());
-  EXPECT_TRUE(MessageWasSent(ChromeViewMsg_SearchBoxMarginChange::ID));
-  page->sender()->ToggleVoiceSearch();
-  EXPECT_TRUE(MessageWasSent(ChromeViewMsg_SearchBoxToggleVoiceSearch::ID));
-
-  // Incognito pages should not get any others.
-  page->sender()->FocusChanged(
-      OMNIBOX_FOCUS_NONE, OMNIBOX_FOCUS_CHANGE_EXPLICIT);
-  EXPECT_FALSE(MessageWasSent(ChromeViewMsg_SearchBoxFocusChanged::ID));
-
-  page->sender()->SetInputInProgress(false);
-  EXPECT_FALSE(MessageWasSent(ChromeViewMsg_SearchBoxSetInputInProgress::ID));
 }

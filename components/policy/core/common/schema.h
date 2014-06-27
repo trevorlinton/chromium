@@ -6,52 +6,114 @@
 #define COMPONENTS_POLICY_CORE_COMMON_SCHEMA_H_
 
 #include <string>
-#include <vector>
 
 #include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/memory/scoped_vector.h"
+#include "base/memory/ref_counted.h"
 #include "base/values.h"
 #include "components/policy/policy_export.h"
 
 namespace policy {
 namespace internal {
 
+struct POLICY_EXPORT SchemaData;
 struct POLICY_EXPORT SchemaNode;
 struct POLICY_EXPORT PropertyNode;
 struct POLICY_EXPORT PropertiesNode;
 
 }  // namespace internal
 
+// Option flags passed to Schema::Validate() and Schema::Normalize(), describing
+// the strategy to handle unknown properties or invalid values for dict type.
+// Note that in Schema::Normalize() allowed errors will be dropped and thus
+// ignored.
+// Unknown error indicates that some value in a dictionary (may or may not be
+// the one in root) have unknown property name according to schema.
+// Invalid error indicates a validation failure against the schema. As
+// validation is done recursively, a validation failure of dict properties or
+// list items might be ignored (or dropped in Normalize()) or trigger whole
+// dictionary/list validation failure.
+enum SchemaOnErrorStrategy {
+  // No errors will be allowed.
+  SCHEMA_STRICT = 0,
+  // Unknown properties in the top-level dictionary will be ignored.
+  SCHEMA_ALLOW_UNKNOWN_TOPLEVEL,
+  // Unknown properties in any dictionary will be ignored.
+  SCHEMA_ALLOW_UNKNOWN,
+  // Mismatched values will be ignored at the toplevel.
+  SCHEMA_ALLOW_INVALID_TOPLEVEL,
+  // Mismatched values will be ignored at the top-level value.
+  // Unknown properties in any dictionary will be ignored.
+  SCHEMA_ALLOW_INVALID_TOPLEVEL_AND_ALLOW_UNKNOWN,
+  // Mismatched values will be ignored.
+  SCHEMA_ALLOW_INVALID,
+};
+
 // Describes the expected type of one policy. Also recursively describes the
 // types of inner elements, for structured types.
 // Objects of this class refer to external, immutable data and are cheap to
 // copy.
-// Use the SchemaOwner class to parse a schema and get Schema objects.
 class POLICY_EXPORT Schema {
  public:
+  // Used internally to store shared data.
+  class InternalStorage;
+
   // Builds an empty, invalid schema.
   Schema();
 
-  // Builds a schema pointing to the inner structure of |schema|. If |schema|
-  // is NULL then this Schema instance will be invalid.
-  // Does not take ownership of |schema|.
-  explicit Schema(const internal::SchemaNode* schema);
-
+  // Makes a copy of |schema| that shares the same internal storage.
   Schema(const Schema& schema);
+
+  ~Schema();
 
   Schema& operator=(const Schema& schema);
 
+  // Returns a Schema that references static data. This can be used by
+  // the embedder to pass structures generated at compile time, which can then
+  // be quickly loaded at runtime.
+  static Schema Wrap(const internal::SchemaData* data);
+
+  // Parses the JSON schema in |schema| and returns a Schema that owns
+  // the internal representation. If |schema| is invalid then an invalid Schema
+  // is returned and |error| contains a reason for the failure.
+  static Schema Parse(const std::string& schema, std::string* error);
+
   // Returns true if this Schema is valid. Schemas returned by the methods below
   // may be invalid, and in those cases the other methods must not be used.
-  bool valid() const { return schema_ != NULL; }
+  bool valid() const { return node_ != NULL; }
 
   base::Value::Type type() const;
+
+  // Validate |value| against current schema, |strategy| is the strategy to
+  // handle unknown properties or invalid values. Allowed errors will be
+  // ignored. |error_path| and |error| will contain the last error location and
+  // detailed message if |value| doesn't strictly conform to the schema. If
+  // |value| doesn't conform to the schema even within the allowance of
+  // |strategy|, false will be returned and |error_path| and |error| will
+  // contain the corresponding error that caused the failure. |error_path| can
+  // be NULL and in that case no error path will be returned.
+  bool Validate(const base::Value& value,
+                SchemaOnErrorStrategy strategy,
+                std::string* error_path,
+                std::string* error) const;
+
+  // Similar to Validate() but drop values with errors instead of ignoring them.
+  // |changed| is a pointer to a boolean value, and indicate whether |value|
+  // is changed or not (probably dropped properties or items). Be sure to set
+  // the bool that |changed| pointed to to false before calling Normalize().
+  // |changed| can be NULL and in that case no boolean will be set.
+  // This function will also take the ownership of dropped base::Value and
+  // destroy them.
+  bool Normalize(base::Value* value,
+                 SchemaOnErrorStrategy strategy,
+                 std::string* error_path,
+                 std::string* error,
+                 bool* changed) const;
 
   // Used to iterate over the known properties of TYPE_DICTIONARY schemas.
   class POLICY_EXPORT Iterator {
    public:
-    explicit Iterator(const internal::PropertiesNode* properties);
+    Iterator(const scoped_refptr<const InternalStorage>& storage,
+             const internal::PropertiesNode* node);
     Iterator(const Iterator& iterator);
     ~Iterator();
 
@@ -70,6 +132,7 @@ class POLICY_EXPORT Schema {
     Schema schema() const;
 
    private:
+    scoped_refptr<const InternalStorage> storage_;
     const internal::PropertyNode* it_;
     const internal::PropertyNode* end_;
   };
@@ -99,57 +162,16 @@ class POLICY_EXPORT Schema {
   Schema GetItems() const;
 
  private:
-  const internal::SchemaNode* schema_;
-};
+  // Builds a schema pointing to the inner structure of |storage|,
+  // rooted at |node|.
+  Schema(const scoped_refptr<const InternalStorage>& storage,
+         const internal::SchemaNode* node);
 
-// Owns schemas for policies of a given component.
-class POLICY_EXPORT SchemaOwner {
- public:
-  ~SchemaOwner();
+  bool ValidateIntegerRestriction(int index, int value) const;
+  bool ValidateStringRestriction(int index, const char* str) const;
 
-  // The returned Schema is valid only during the lifetime of the SchemaOwner
-  // that created it. It may be obtained multiple times.
-  Schema schema() const { return Schema(root_); }
-
-  // Returns a SchemaOwner that references static data. This can be used by
-  // the embedder to pass structures generated at compile time, which can then
-  // be quickly loaded at runtime.
-  // Note: PropertiesNodes must have their PropertyNodes sorted by key.
-  static scoped_ptr<SchemaOwner> Wrap(const internal::SchemaNode* schema);
-
-  // Parses the JSON schema in |schema| and returns a SchemaOwner that owns
-  // the internal representation. If |schema| is invalid then NULL is returned
-  // and |error| contains a reason for the failure.
-  static scoped_ptr<SchemaOwner> Parse(const std::string& schema,
-                                       std::string* error);
-
- private:
-  explicit SchemaOwner(const internal::SchemaNode* root);
-
-  // Parses the JSON schema in |schema| and returns the root SchemaNode if
-  // successful, otherwise returns NULL. Any intermediate objects built by
-  // this method are appended to the ScopedVectors.
-  const internal::SchemaNode* Parse(const base::DictionaryValue& schema,
-                                    std::string* error);
-
-  // Helper for Parse().
-  const internal::SchemaNode* ParseDictionary(
-      const base::DictionaryValue& schema,
-      std::string* error);
-
-  // Helper for Parse().
-  const internal::SchemaNode* ParseList(const base::DictionaryValue& schema,
-                                        std::string* error);
-
-  const internal::SchemaNode* root_;
-  ScopedVector<internal::SchemaNode> schema_nodes_;
-  // Note: |property_nodes_| contains PropertyNode[] elements and must be
-  // cleared manually to properly use delete[].
-  std::vector<internal::PropertyNode*> property_nodes_;
-  ScopedVector<internal::PropertiesNode> properties_nodes_;
-  ScopedVector<std::string> keys_;
-
-  DISALLOW_COPY_AND_ASSIGN(SchemaOwner);
+  scoped_refptr<const InternalStorage> storage_;
+  const internal::SchemaNode* node_;
 };
 
 }  // namespace policy

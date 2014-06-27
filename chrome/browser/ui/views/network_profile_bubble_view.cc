@@ -9,7 +9,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/network_profile_bubble.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/ui/views/toolbar_view.h"
+#include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/common/pref_names.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
@@ -106,7 +106,7 @@ void NetworkProfileBubbleView::Init() {
 
   views::LabelButton* ok_button = new views::LabelButton(
       this, l10n_util::GetStringUTF16(IDS_OK));
-  ok_button->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
+  ok_button->SetStyle(views::Button::STYLE_BUTTON);
   ok_button->SetIsDefault(true);
   layout->AddView(ok_button);
 }

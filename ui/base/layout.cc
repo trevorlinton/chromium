@@ -20,6 +20,7 @@
 
 #if defined(OS_WIN)
 #include "base/win/metro.h"
+#include "ui/gfx/win/dpi.h"
 #include <Windows.h>
 #endif  // defined(OS_WIN)
 
@@ -61,7 +62,7 @@ bool UseTouchOptimizedUI() {
 #endif  // defined(OS_WIN)
 
 const float kScaleFactorScales[] = {1.0f, 1.0f, 1.25f, 1.33f, 1.4f, 1.5f, 1.8f,
-                                    2.0f};
+                                    2.0f, 3.0f};
 COMPILE_ASSERT(NUM_SCALE_FACTORS == arraysize(kScaleFactorScales),
                kScaleFactorScales_incorrect_size);
 
@@ -90,7 +91,7 @@ void SetSupportedScaleFactors(
   for (std::vector<ScaleFactor>::const_iterator it =
           g_supported_scale_factors->begin();
        it != g_supported_scale_factors->end(); ++it) {
-    scales.push_back(GetImageScale(*it));
+    scales.push_back(kScaleFactorScales[*it]);
   }
   gfx::ImageSkia::SetSupportedScales(scales);
 }
@@ -117,7 +118,11 @@ ScaleFactor GetSupportedScaleFactor(float scale) {
 }
 
 float GetImageScale(ScaleFactor scale_factor) {
-  return kScaleFactorScales[scale_factor];
+#if defined(OS_WIN)
+  if (gfx::IsHighDPIEnabled())
+    return gfx::win::GetDeviceScaleFactor();
+#endif
+  return GetScaleForScaleFactor(scale_factor);
 }
 
 bool IsScaleFactorSupported(ScaleFactor scale_factor) {
@@ -142,6 +147,10 @@ ScaleFactor FindClosestScaleFactorUnsafe(float scale) {
     }
   }
   return closest_match;
+}
+
+float GetScaleForScaleFactor(ScaleFactor scale_factor) {
+  return kScaleFactorScales[scale_factor];
 }
 
 namespace test {

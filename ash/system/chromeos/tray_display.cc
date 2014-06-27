@@ -39,7 +39,8 @@ DisplayManager* GetDisplayManager() {
 }
 
 base::string16 GetDisplayName(int64 display_id) {
-  return UTF8ToUTF16(GetDisplayManager()->GetDisplayNameForId(display_id));
+  return base::UTF8ToUTF16(
+      GetDisplayManager()->GetDisplayNameForId(display_id));
 }
 
 base::string16 GetDisplaySize(int64 display_id) {
@@ -55,7 +56,7 @@ base::string16 GetDisplaySize(int64 display_id) {
     return base::string16();
 
   DCHECK(display->is_valid());
-  return UTF8ToUTF16(display->size().ToString());
+  return base::UTF8ToUTF16(display->size().ToString());
 }
 
 // Returns 1-line information for the specified display, like
@@ -106,88 +107,22 @@ base::string16 GetAllDisplayInfo() {
   return JoinString(lines, '\n');
 }
 
-// Returns the name of the currently connected external display.
-// This should not be used when the external display is used for
-// mirroring.
-base::string16 GetExternalDisplayName() {
-  DisplayManager* display_manager = GetDisplayManager();
-  DCHECK(!display_manager->IsMirrored());
-
-  int64 external_id = gfx::Display::kInvalidDisplayID;
-  for (size_t i = 0; i < display_manager->GetNumDisplays(); ++i) {
-    int64 id = display_manager->GetDisplayAt(i).id();
-    if (id != gfx::Display::InternalDisplayId()) {
-      external_id = id;
-      break;
-    }
-  }
-
-  if (external_id == gfx::Display::kInvalidDisplayID)
-    return l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_UNKNOWN_DISPLAY_NAME);
-
-  // The external display name may have an annotation of "(width x height)" in
-  // case that the display is rotated or its resolution is changed.
-  base::string16 name = GetDisplayName(external_id);
-  const DisplayInfo& display_info =
-      display_manager->GetDisplayInfo(external_id);
-  if (display_info.rotation() != gfx::Display::ROTATE_0 ||
-      display_info.ui_scale() != 1.0f ||
-      !display_info.overscan_insets_in_dip().empty()) {
-    name = l10n_util::GetStringFUTF16(
-        IDS_ASH_STATUS_TRAY_DISPLAY_ANNOTATED_NAME,
-        name, GetDisplaySize(external_id));
-  } else if (display_info.overscan_insets_in_dip().empty() &&
-             display_info.has_overscan()) {
-    name = l10n_util::GetStringFUTF16(
-        IDS_ASH_STATUS_TRAY_DISPLAY_ANNOTATED_NAME,
-        name, l10n_util::GetStringUTF16(
-            IDS_ASH_STATUS_TRAY_DISPLAY_ANNOTATION_OVERSCAN));
-  }
-
-  return name;
-}
-
-base::string16 GetTrayDisplayMessage(base::string16* additional_message_out) {
-  DisplayManager* display_manager = GetDisplayManager();
-  if (display_manager->GetNumDisplays() > 1) {
-    if (GetDisplayManager()->HasInternalDisplay()) {
-      return l10n_util::GetStringFUTF16(
-          IDS_ASH_STATUS_TRAY_DISPLAY_EXTENDED, GetExternalDisplayName());
-    }
-    return l10n_util::GetStringUTF16(
-        IDS_ASH_STATUS_TRAY_DISPLAY_EXTENDED_NO_INTERNAL);
-  }
-
-  if (display_manager->IsMirrored()) {
-    if (GetDisplayManager()->HasInternalDisplay()) {
-      return l10n_util::GetStringFUTF16(
-          IDS_ASH_STATUS_TRAY_DISPLAY_MIRRORING,
-          GetDisplayName(display_manager->mirrored_display_id()));
-    }
-    return l10n_util::GetStringUTF16(
-        IDS_ASH_STATUS_TRAY_DISPLAY_MIRRORING_NO_INTERNAL);
-  }
-
-  int64 primary_id = Shell::GetScreen()->GetPrimaryDisplay().id();
-  if (display_manager->HasInternalDisplay() &&
-      !display_manager->IsInternalDisplayId(primary_id)) {
-    if (additional_message_out) {
-      *additional_message_out = l10n_util::GetStringUTF16(
-          IDS_ASH_STATUS_TRAY_DISPLAY_DOCKED_DESCRIPTION);
-    }
-    return l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_DISPLAY_DOCKED);
-  }
-
-  return base::string16();
-}
-
 void OpenSettings() {
-  user::LoginStatus login_status =
-      Shell::GetInstance()->system_tray_delegate()->GetUserLoginStatus();
-  if (login_status == user::LOGGED_IN_USER ||
-      login_status == user::LOGGED_IN_OWNER ||
-      login_status == user::LOGGED_IN_GUEST) {
-    Shell::GetInstance()->system_tray_delegate()->ShowDisplaySettings();
+  // switch is intentionally introduced without default, to cause an error when
+  // a new type of login status is introduced.
+  switch (Shell::GetInstance()->system_tray_delegate()->GetUserLoginStatus()) {
+    case user::LOGGED_IN_NONE:
+    case user::LOGGED_IN_LOCKED:
+      return;
+
+    case user::LOGGED_IN_USER:
+    case user::LOGGED_IN_OWNER:
+    case user::LOGGED_IN_GUEST:
+    case user::LOGGED_IN_RETAIL_MODE:
+    case user::LOGGED_IN_PUBLIC:
+    case user::LOGGED_IN_LOCALLY_MANAGED:
+    case user::LOGGED_IN_KIOSK_APP:
+      Shell::GetInstance()->system_tray_delegate()->ShowDisplaySettings();
   }
 }
 
@@ -224,6 +159,7 @@ class DisplayView : public internal::ActionableView {
       message = GetDisplayInfoLine(GetDisplayManager()->first_display_id());
     SetVisible(!message.empty());
     label_->SetText(message);
+    SetAccessibleName(message);
     Layout();
   }
 
@@ -237,8 +173,86 @@ class DisplayView : public internal::ActionableView {
     if (tray_message.empty() && display_message.empty())
       return false;
 
-    *tooltip = tray_message + ASCIIToUTF16("\n") + display_message;
+    *tooltip = tray_message + base::ASCIIToUTF16("\n") + display_message;
     return true;
+  }
+
+  // Returns the name of the currently connected external display.
+  // This should not be used when the external display is used for
+  // mirroring.
+  static base::string16 GetExternalDisplayName() {
+    DisplayManager* display_manager = GetDisplayManager();
+    DCHECK(!display_manager->IsMirrored());
+
+    int64 external_id = gfx::Display::kInvalidDisplayID;
+    for (size_t i = 0; i < display_manager->GetNumDisplays(); ++i) {
+      int64 id = display_manager->GetDisplayAt(i).id();
+      if (id != gfx::Display::InternalDisplayId()) {
+        external_id = id;
+        break;
+      }
+    }
+
+    if (external_id == gfx::Display::kInvalidDisplayID) {
+      return l10n_util::GetStringUTF16(
+          IDS_ASH_STATUS_TRAY_UNKNOWN_DISPLAY_NAME);
+    }
+
+    // The external display name may have an annotation of "(width x height)" in
+    // case that the display is rotated or its resolution is changed.
+    base::string16 name = GetDisplayName(external_id);
+    const DisplayInfo& display_info =
+        display_manager->GetDisplayInfo(external_id);
+    if (display_info.rotation() != gfx::Display::ROTATE_0 ||
+        display_info.configured_ui_scale() != 1.0f ||
+        !display_info.overscan_insets_in_dip().empty()) {
+      name = l10n_util::GetStringFUTF16(
+          IDS_ASH_STATUS_TRAY_DISPLAY_ANNOTATED_NAME,
+          name, GetDisplaySize(external_id));
+    } else if (display_info.overscan_insets_in_dip().empty() &&
+               display_info.has_overscan()) {
+      name = l10n_util::GetStringFUTF16(
+          IDS_ASH_STATUS_TRAY_DISPLAY_ANNOTATED_NAME,
+          name, l10n_util::GetStringUTF16(
+              IDS_ASH_STATUS_TRAY_DISPLAY_ANNOTATION_OVERSCAN));
+    }
+
+    return name;
+  }
+
+  static base::string16 GetTrayDisplayMessage(
+      base::string16* additional_message_out) {
+    DisplayManager* display_manager = GetDisplayManager();
+    if (display_manager->GetNumDisplays() > 1) {
+      if (GetDisplayManager()->HasInternalDisplay()) {
+        return l10n_util::GetStringFUTF16(
+            IDS_ASH_STATUS_TRAY_DISPLAY_EXTENDED, GetExternalDisplayName());
+      }
+      return l10n_util::GetStringUTF16(
+          IDS_ASH_STATUS_TRAY_DISPLAY_EXTENDED_NO_INTERNAL);
+    }
+
+    if (display_manager->IsMirrored()) {
+      if (GetDisplayManager()->HasInternalDisplay()) {
+        return l10n_util::GetStringFUTF16(
+            IDS_ASH_STATUS_TRAY_DISPLAY_MIRRORING,
+            GetDisplayName(display_manager->mirrored_display_id()));
+      }
+      return l10n_util::GetStringUTF16(
+          IDS_ASH_STATUS_TRAY_DISPLAY_MIRRORING_NO_INTERNAL);
+    }
+
+    int64 primary_id = Shell::GetScreen()->GetPrimaryDisplay().id();
+    if (display_manager->HasInternalDisplay() &&
+        !display_manager->IsInternalDisplayId(primary_id)) {
+      if (additional_message_out) {
+        *additional_message_out = l10n_util::GetStringUTF16(
+            IDS_ASH_STATUS_TRAY_DISPLAY_DOCKED_DESCRIPTION);
+      }
+      return l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_DISPLAY_DOCKED);
+    }
+
+    return base::string16();
   }
 
  private:
@@ -246,7 +260,7 @@ class DisplayView : public internal::ActionableView {
     const DisplayInfo& display_info = GetDisplayManager()->GetDisplayInfo(
         GetDisplayManager()->first_display_id());
     return display_info.rotation() != gfx::Display::ROTATE_0 ||
-        display_info.ui_scale() != 1.0f ||
+        display_info.configured_ui_scale() != 1.0f ||
         !display_info.overscan_insets_in_dip().empty() ||
         display_info.has_overscan();
   }
@@ -261,7 +275,6 @@ class DisplayView : public internal::ActionableView {
     int label_max_width = bounds().width() - kTrayPopupPaddingHorizontal * 2 -
         kTrayPopupPaddingBetweenItems - image_->GetPreferredSize().width();
     label_->SizeToFit(label_max_width);
-    PreferredSizeChanged();
   }
 
   views::ImageView* image_;
@@ -300,7 +313,7 @@ bool TrayDisplay::GetDisplayMessageForNotification(
   // Display is added or removed. Use the same message as the one in
   // the system tray.
   if (display_info_.size() != old_info.size()) {
-    *message_out = GetTrayDisplayMessage(additional_message_out);
+    *message_out = DisplayView::GetTrayDisplayMessage(additional_message_out);
     return true;
   }
 
@@ -311,11 +324,12 @@ bool TrayDisplay::GetDisplayMessageForNotification(
     // for the transition between docked mode and mirrored display. Falls back
     // to GetTrayDisplayMessage().
     if (old_iter == old_info.end()) {
-      *message_out = GetTrayDisplayMessage(additional_message_out);
+      *message_out = DisplayView::GetTrayDisplayMessage(additional_message_out);
       return true;
     }
 
-    if (iter->second.ui_scale() != old_iter->second.ui_scale()) {
+    if (iter->second.configured_ui_scale() !=
+        old_iter->second.configured_ui_scale()) {
       *message_out = l10n_util::GetStringFUTF16(
           IDS_ASH_STATUS_TRAY_DISPLAY_RESOLUTION_CHANGED,
           GetDisplayName(iter->first),
@@ -367,9 +381,11 @@ void TrayDisplay::CreateOrUpdateNotification(
       kNotificationId,
       message,
       additional_message,
-      bundle.GetImageNamed(IDR_AURA_UBER_TRAY_DISPLAY),
+      bundle.GetImageNamed(IDR_AURA_NOTIFICATION_DISPLAY),
       base::string16(),  // display_source
-      message_center::NotifierId(system_notifier::NOTIFIER_DISPLAY),
+      message_center::NotifierId(
+          message_center::NotifierId::SYSTEM_COMPONENT,
+          system_notifier::kNotifierDisplay),
       message_center::RichNotificationData(),
       new message_center::HandleNotificationClickedDelegate(
           base::Bind(&OpenSettings))));
@@ -409,6 +425,15 @@ base::string16 TrayDisplay::GetDefaultViewMessage() const {
     return base::string16();
 
   return static_cast<DisplayView*>(default_)->label()->text();
+}
+
+bool TrayDisplay::GetAccessibleStateForTesting(ui::AXViewState* state) {
+  views::View* view = default_;
+  if (view) {
+    view->GetAccessibleState(state);
+    return true;
+  }
+  return false;
 }
 
 }  // namespace internal

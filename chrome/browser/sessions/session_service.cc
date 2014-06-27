@@ -36,7 +36,6 @@
 #include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/extensions/extension.h"
 #include "components/startup_metric_utils/startup_metric_utils.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
@@ -44,6 +43,7 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/session_storage_namespace.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/common/extension.h"
 
 #if defined(OS_MACOSX)
 #include "chrome/browser/app_controller_mac.h"
@@ -207,7 +207,7 @@ SessionService::SessionService(const base::FilePath& save_path)
 
 SessionService::~SessionService() {
   // The BrowserList should outlive the SessionService since it's static and
-  // the SessionService is a BrowserContextKeyedService.
+  // the SessionService is a KeyedService.
   BrowserList::RemoveObserver(this);
   Save();
 }
@@ -328,15 +328,18 @@ void SessionService::WindowClosing(const SessionID& window_id) {
     // false to true, so only update it if already true.
     has_open_trackable_browsers_ = HasOpenTrackableBrowsers(window_id);
   }
-  if (should_record_close_as_pending())
+  if (!has_open_trackable_browsers_)
     pending_window_close_ids_.insert(window_id.id());
   else
     window_closing_ids_.insert(window_id.id());
 }
 
 void SessionService::WindowClosed(const SessionID& window_id) {
-  if (!ShouldTrackChangesToWindow(window_id))
+  if (!ShouldTrackChangesToWindow(window_id)) {
+    // The last window may be one that is not tracked.
+    MaybeDeleteSessionOnlyData();
     return;
+  }
 
   windows_tracking_.erase(window_id.id());
 
@@ -347,19 +350,12 @@ void SessionService::WindowClosed(const SessionID& window_id) {
              pending_window_close_ids_.end()) {
     // We'll hit this if user closed the last tab in a window.
     has_open_trackable_browsers_ = HasOpenTrackableBrowsers(window_id);
-    if (should_record_close_as_pending())
+    if (!has_open_trackable_browsers_)
       pending_window_close_ids_.insert(window_id.id());
     else
       ScheduleCommand(CreateWindowClosedCommand(window_id.id()));
   }
-  // Clear session data if the last window for a profile has been closed and
-  // closing the last window would normally close Chrome, unless background mode
-  // is active.
-  if (!has_open_trackable_browsers_ &&
-      !browser_defaults::kBrowserAliveWithNoWindows &&
-      !g_browser_process->background_mode_manager()->IsBackgroundModeActive()) {
-    DeleteSessionOnlyData(profile());
-  }
+  MaybeDeleteSessionOnlyData();
 }
 
 void SessionService::SetWindowType(const SessionID& window_id,
@@ -501,9 +497,9 @@ void SessionService::SetTabUserAgentOverride(
       kCommandSetTabUserAgentOverride, tab_id.id(), user_agent_override));
 }
 
-CancelableTaskTracker::TaskId SessionService::GetLastSession(
+base::CancelableTaskTracker::TaskId SessionService::GetLastSession(
     const SessionCallback& callback,
-    CancelableTaskTracker* tracker) {
+    base::CancelableTaskTracker* tracker) {
   // OnGotSessionCommands maps the SessionCommands to browser state, then run
   // the callback.
   return ScheduleGetLastSessionCommands(
@@ -1768,4 +1764,22 @@ void SessionService::TabClosing(WebContents* contents) {
             contents->GetClosedByUserGesture());
   RecordSessionUpdateHistogramData(content::NOTIFICATION_WEB_CONTENTS_DESTROYED,
                                    &last_updated_tab_closed_time_);
+}
+
+void SessionService::MaybeDeleteSessionOnlyData() {
+  // Clear session data if the last window for a profile has been closed and
+  // closing the last window would normally close Chrome, unless background mode
+  // is active.
+  if (has_open_trackable_browsers_ ||
+      browser_defaults::kBrowserAliveWithNoWindows ||
+      g_browser_process->background_mode_manager()->IsBackgroundModeActive()) {
+    return;
+  }
+
+  // Check for any open windows for the current profile that we aren't tracking.
+  for (chrome::BrowserIterator it; !it.done(); it.Next()) {
+    if ((*it)->profile() == profile())
+      return;
+  }
+  DeleteSessionOnlyData(profile());
 }

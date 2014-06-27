@@ -66,15 +66,19 @@ GURL GetFileManagerMainPageUrl() {
 
 GURL GetFileManagerMainPageUrlWithParams(
     ui::SelectFileDialog::Type type,
-    const string16& title,
-    const base::FilePath& default_virtual_path,
+    const base::string16& title,
+    const GURL& current_directory_url,
+    const GURL& selection_url,
+    const std::string& target_name,
     const ui::SelectFileDialog::FileTypeInfo* file_types,
     int file_type_index,
     const base::FilePath::StringType& default_extension) {
   base::DictionaryValue arg_value;
   arg_value.SetString("type", GetDialogTypeAsString(type));
   arg_value.SetString("title", title);
-  arg_value.SetString("defaultPath", default_virtual_path.value());
+  arg_value.SetString("currentDirectoryURL", current_directory_url.spec());
+  arg_value.SetString("selectionURL", selection_url.spec());
+  arg_value.SetString("targetName", target_name);
   arg_value.SetString("defaultExtension", default_extension);
 
   if (file_types) {
@@ -90,7 +94,7 @@ GURL GetFileManagerMainPageUrlWithParams(
       dict->Set("extensions", extensions_list);
 
       if (i < file_types->extension_description_overrides.size()) {
-        string16 desc = file_types->extension_description_overrides[i];
+        base::string16 desc = file_types->extension_description_overrides[i];
         dict->SetString("description", desc);
       }
 
@@ -116,16 +120,6 @@ GURL GetFileManagerMainPageUrlWithParams(
   std::string url = GetFileManagerMainPageUrl().spec() + '?' +
       net::EscapeUrlEncodedData(json_args,
                                 false);  // Space to %20 instead of +.
-  return GURL(url);
-}
-
-GURL GetActionChoiceUrl(const base::FilePath& virtual_path,
-                        bool advanced_mode) {
-  std::string url = GetFileManagerUrl("/action_choice.html").spec();
-  if (advanced_mode)
-    url += "?advanced-mode";
-  url += "#/" + net::EscapeUrlEncodedData(virtual_path.value(),
-                                          false);  // Space to %20 instead of +.
   return GURL(url);
 }
 

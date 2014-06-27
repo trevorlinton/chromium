@@ -7,7 +7,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/website_settings/website_settings_ui.h"
 #include "grit/generated_resources.h"
-#include "ui/base/accessibility/accessible_view_state.h"
+#include "ui/accessibility/ax_view_state.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/simple_menu_model.h"
 #include "ui/gfx/image/image.h"
@@ -54,7 +54,7 @@ class PermissionMenuButton : public views::MenuButton,
   // |PermissionMenuButton|. If the |show_menu_marker| flag is true, then a
   // small icon is be displayed next to the button |text|, indicating that the
   // button opens a drop down menu.
-  PermissionMenuButton(const string16& text,
+  PermissionMenuButton(const base::string16& text,
                        PermissionMenuModel* model,
                        bool show_menu_marker);
   virtual ~PermissionMenuButton();
@@ -63,10 +63,10 @@ class PermissionMenuButton : public views::MenuButton,
   virtual gfx::Size GetPreferredSize() OVERRIDE;
 
   // Overridden from views::TextButton.
-  virtual void SetText(const string16& text) OVERRIDE;
+  virtual void SetText(const base::string16& text) OVERRIDE;
 
   // Overridden from views::View.
-  virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE;
+  virtual void GetAccessibleState(ui::AXViewState* state) OVERRIDE;
 
  private:
   // Overridden from views::MenuButtonListener.
@@ -83,7 +83,7 @@ class PermissionMenuButton : public views::MenuButton,
 // PermissionMenuButton
 ///////////////////////////////////////////////////////////////////////////////
 
-PermissionMenuButton::PermissionMenuButton(const string16& text,
+PermissionMenuButton::PermissionMenuButton(const base::string16& text,
                                            PermissionMenuModel* model,
                                            bool show_menu_marker)
     : MenuButton(NULL, text, this, show_menu_marker),
@@ -115,12 +115,12 @@ gfx::Size PermissionMenuButton::GetPreferredSize() {
   return prefsize;
 }
 
-void PermissionMenuButton::SetText(const string16& text) {
+void PermissionMenuButton::SetText(const base::string16& text) {
   MenuButton::SetText(text);
   SizeToPreferredSize();
 }
 
-void PermissionMenuButton::GetAccessibleState(ui::AccessibleViewState* state) {
+void PermissionMenuButton::GetAccessibleState(ui::AXViewState* state) {
   MenuButton::GetAccessibleState(state);
   state->value = text();
 }
@@ -216,7 +216,7 @@ PermissionSelectorView::PermissionSelectorView(
       menu_button_model_.get(),
       button_enabled);
   menu_button_->SetEnabled(button_enabled);
-  menu_button_->set_focusable(button_enabled);
+  menu_button_->SetFocusable(button_enabled);
   menu_button_->SetAccessibleName(
       WebsiteSettingsUI::PermissionTypeToUIString(type));
   layout->AddView(menu_button_);

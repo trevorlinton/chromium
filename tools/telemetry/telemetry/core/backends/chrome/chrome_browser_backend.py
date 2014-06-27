@@ -11,19 +11,22 @@ import socket
 import sys
 import urllib2
 
+from telemetry import decorators
 from telemetry.core import exceptions
+from telemetry.core import forwarders
 from telemetry.core import user_agent
 from telemetry.core import util
 from telemetry.core import web_contents
 from telemetry.core import wpr_modes
 from telemetry.core import wpr_server
 from telemetry.core.backends import browser_backend
-from telemetry.core.backends.chrome import extension_dict_backend
+from telemetry.core.backends.chrome import extension_backend
 from telemetry.core.backends.chrome import misc_web_contents_backend
 from telemetry.core.backends.chrome import system_info_backend
 from telemetry.core.backends.chrome import tab_list_backend
 from telemetry.core.backends.chrome import tracing_backend
 from telemetry.unittest import options_for_unittests
+
 
 class ChromeBrowserBackend(browser_backend.BrowserBackend):
   """An abstract class for chrome browser backends. Provides basic functionality
@@ -47,10 +50,16 @@ class ChromeBrowserBackend(browser_backend.BrowserBackend):
     self._output_profile_path = output_profile_path
     self._extensions_to_load = extensions_to_load
 
-    self.webpagereplay_local_http_port = util.GetAvailableLocalPort()
-    self.webpagereplay_local_https_port = util.GetAvailableLocalPort()
-    self.webpagereplay_remote_http_port = self.webpagereplay_local_http_port
-    self.webpagereplay_remote_https_port = self.webpagereplay_local_https_port
+    if browser_options.netsim:
+      self.wpr_port_pairs = forwarders.PortPairs(
+          http=forwarders.PortPair(80, 80),
+          https=forwarders.PortPair(443, 443),
+          dns=forwarders.PortPair(53, 53))
+    else:
+      self.wpr_port_pairs = forwarders.PortPairs(
+          http=forwarders.PortPair(0, 0),
+          https=forwarders.PortPair(0, 0),
+          dns=None)
 
     if (self.browser_options.dont_override_profile and
         not options_for_unittests.AreSet()):
@@ -58,39 +67,52 @@ class ChromeBrowserBackend(browser_backend.BrowserBackend):
                        'unexpected effects due to profile-specific settings, '
                        'such as about:flags settings, cookies, and '
                        'extensions.\n')
-    self._misc_web_contents_backend = (
-        misc_web_contents_backend.MiscWebContentsBackend(self))
-    self._extension_dict_backend = None
-    if supports_extensions:
-      self._extension_dict_backend = (
-          extension_dict_backend.ExtensionDictBackend(self))
 
   def AddReplayServerOptions(self, extra_wpr_args):
-    extra_wpr_args.append('--no-dns_forwarding')
+    if self.browser_options.netsim:
+      extra_wpr_args.append('--net=%s' % self.browser_options.netsim)
+    else:
+      extra_wpr_args.append('--no-dns_forwarding')
 
   @property
+  @decorators.Cache
   def misc_web_contents_backend(self):
-    """Access to chrome://oobe/login page which is neither a tab nor an
-    extension."""
-    return self._misc_web_contents_backend
+    """Access to chrome://oobe/login page."""
+    return misc_web_contents_backend.MiscWebContentsBackend(self)
 
   @property
-  def extension_dict_backend(self):
-    return self._extension_dict_backend
+  @decorators.Cache
+  def extension_backend(self):
+    if not self.supports_extensions:
+      return None
+    return extension_backend.ExtensionBackendDict(self)
 
   def GetBrowserStartupArgs(self):
     args = []
     args.extend(self.browser_options.extra_browser_args)
     args.append('--disable-background-networking')
+    args.append('--enable-net-benchmarking')
     args.append('--metrics-recording-only')
-    args.append('--no-first-run')
     args.append('--no-default-browser-check')
-    args.append('--no-proxy-server')
-    if self.browser_options.wpr_mode != wpr_modes.WPR_OFF:
-      args.extend(wpr_server.GetChromeFlags(
-          self.WEBPAGEREPLAY_HOST,
-          self.webpagereplay_remote_http_port,
-          self.webpagereplay_remote_https_port))
+    args.append('--no-first-run')
+
+    # Turn on GPU benchmarking extension for all runs. The only side effect of
+    # the extension being on is that render stats are tracked. This is believed
+    # to be effectively free. And, by doing so here, it avoids us having to
+    # programmatically inspect a pageset's actions in order to determine if it
+    # might eventually scroll.
+    args.append('--enable-gpu-benchmarking')
+
+    # Set --no-proxy-server to work around some XP issues unless
+    # some other flag indicates a proxy is needed.
+    if not '--enable-spdy-proxy-auth' in args:
+      args.append('--no-proxy-server')
+
+    if self.browser_options.netsim:
+      args.append('--ignore-certificate-errors')
+    elif self.browser_options.wpr_mode != wpr_modes.WPR_OFF:
+      args.extend(wpr_server.GetChromeFlags(self.forwarder_factory.host_ip,
+                                            self.wpr_port_pairs))
     args.extend(user_agent.GetChromeUserAgentArgumentFromType(
         self.browser_options.browser_user_agent_type))
 
@@ -116,18 +138,19 @@ class ChromeBrowserBackend(browser_backend.BrowserBackend):
 
     return args
 
-  def _WaitForBrowserToComeUp(self, wait_for_extensions=True, timeout=None):
-    def IsBrowserUp():
-      try:
-        self.Request('', timeout=timeout)
-      except (exceptions.BrowserGoneException,
-              exceptions.BrowserConnectionGoneException):
-        return False
-      else:
-        return True
+  def HasBrowserFinishedLaunching(self):
     try:
-      util.WaitFor(IsBrowserUp, timeout=30)
-    except util.TimeoutException:
+      self.Request('')
+    except (exceptions.BrowserGoneException,
+            exceptions.BrowserConnectionGoneException):
+      return False
+    else:
+      return True
+
+  def _WaitForBrowserToComeUp(self, wait_for_extensions=True):
+    try:
+      util.WaitFor(self.HasBrowserFinishedLaunching, timeout=30)
+    except (util.TimeoutException, exceptions.ProcessGoneException) as e:
       raise exceptions.BrowserGoneException(self.GetStackTrace())
 
     def AllExtensionsLoaded():
@@ -140,9 +163,9 @@ class ChromeBrowserBackend(browser_backend.BrowserBackend):
            document.readyState == 'interactive')
       """
       for e in self._extensions_to_load:
-        if not e.extension_id in self._extension_dict_backend:
+        if not e.extension_id in self.extension_backend:
           return False
-        extension_object = self._extension_dict_backend[e.extension_id]
+        extension_object = self.extension_backend[e.extension_id]
         try:
           res = extension_object.EvaluateJavaScript(
               extension_ready_js % e.extension_id)
@@ -169,10 +192,8 @@ class ChromeBrowserBackend(browser_backend.BrowserBackend):
         logging.error('ExtensionsToLoad: ' +
             repr([e.extension_id for e in self._extensions_to_load]))
         logging.error('Extension list: ' +
-            pprint.pformat(self._extension_dict_backend.GetExtensionInfoList(),
-                           indent=4))
+            pprint.pformat(self._extension_backend, indent=4))
         raise
-
 
   def _PostBrowserStartupInitialization(self):
     # Detect version information.
@@ -204,6 +225,9 @@ class ChromeBrowserBackend(browser_backend.BrowserBackend):
     # Detection has failed: assume 18.0.1025.168 ~= Chrome Android.
     self._inspector_protocol_version = 1.0
     self._chrome_branch_number = 1025
+
+  def ListInspectableContexts(self):
+    return json.loads(self.Request(''))
 
   def Request(self, path, timeout=None, throw_network_exception=False):
     url = 'http://127.0.0.1:%i/json' % self._port
@@ -254,12 +278,32 @@ class ChromeBrowserBackend(browser_backend.BrowserBackend):
       self._tracing_backend = tracing_backend.TracingBackend(self._port)
     return self._tracing_backend.StartTracing(custom_categories, timeout)
 
+  @property
+  def is_tracing_running(self):
+    if not self._tracing_backend:
+      return None
+    return self._tracing_backend.is_tracing_running
+
   def StopTracing(self):
-    """ Stops tracing and returns the result as TraceResult object. """
+    """ Stops tracing and returns the result as TimelineData object. """
+    for (i, debugger_url) in enumerate(self._browser.tabs):
+      tab = self.tab_list_backend.Get(i, None)
+      if tab:
+        success = tab.EvaluateJavaScript(
+            "console.time('" + debugger_url + "');" +
+            "console.timeEnd('" + debugger_url + "');" +
+            "console.time.toString().indexOf('[native code]') != -1;")
+        if not success:
+          raise Exception('Page stomped on console.time')
+        self._tracing_backend.AddTabToMarkerMapping(tab, debugger_url)
     return self._tracing_backend.StopTracing()
 
   def GetProcessName(self, cmd_line):
     """Returns a user-friendly name for the process of the given |cmd_line|."""
+    if not cmd_line:
+      # TODO(tonyg): Eventually we should make all of these known and add an
+      # assertion.
+      return 'unknown'
     if 'nacl_helper_bootstrap' in cmd_line:
       return 'nacl_helper_bootstrap'
     if ':sandboxed_process' in cmd_line:

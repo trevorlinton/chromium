@@ -69,6 +69,10 @@ typedef	_BSD_SOCKLEN_T_	socklen_t;
 #define	SOCK_RDM	4		/* reliably-delivered message */
 #define	SOCK_SEQPACKET	5		/* sequenced packet stream */
 
+/* Socket type flags that can be or'd with the above types */
+#define SOCK_CLOEXEC 0x100
+#define SOCK_NONBLOCK 0x200
+
 /*
  * Option flags per-socket.
  */
@@ -209,7 +213,6 @@ struct sockproto {
 				_SS_PAD1SIZE - _SS_ALIGNSIZE)
 
 struct sockaddr_storage {
-	unsigned char		ss_len;		/* address length */
 	sa_family_t	ss_family;	/* address family */
 	char		__ss_pad1[_SS_PAD1SIZE];
 	int64_t		__ss_align;	/* force desired structure storage alignment */

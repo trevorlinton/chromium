@@ -124,7 +124,7 @@ class PlatformAppLoadAndLaunchBrowserTest : public PlatformAppBrowserTest {
 
     // Start an actual browser because we can't shut down with just an app
     // window.
-    CreateBrowser(ProfileManager::GetDefaultProfile());
+    CreateBrowser(ProfileManager::GetActiveUserProfile());
   }
 
  private:
@@ -136,8 +136,9 @@ class PlatformAppLoadAndLaunchBrowserTest : public PlatformAppBrowserTest {
 }  // namespace
 
 
-// TODO(jackhou): Make this test not flaky on Vista. See http://crbug.com/176897
-#if defined(OS_WIN)
+// TODO(jackhou): Make this test not flaky on Vista or Linux Aura. See
+// http://crbug.com/176897
+#if defined(OS_WIN) || (defined(OS_LINUX) && defined(USE_AURA))
 #define MAYBE_LoadAndLaunchAppChromeNotRunning \
         DISABLED_LoadAndLaunchAppChromeNotRunning
 #else

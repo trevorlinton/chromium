@@ -6,7 +6,8 @@
 
 #include <string.h>
 
-#include "gpu/command_buffer/common/logging.h"
+#include "base/logging.h"
+#include "base/rand_util.h"
 
 namespace gpu {
 
@@ -27,8 +28,32 @@ void Mailbox::SetZero() {
 }
 
 void Mailbox::SetName(const int8* n) {
-  GPU_DCHECK(IsZero() || !memcmp(name, n, sizeof(name)));
+  DCHECK(IsZero() || !memcmp(name, n, sizeof(name)));
   memcpy(name, n, sizeof(name));
+}
+
+Mailbox Mailbox::Generate() {
+  Mailbox result;
+  // Generates cryptographically-secure bytes.
+  base::RandBytes(result.name, sizeof(result.name));
+#if !defined(NDEBUG)
+  int8 value = 1;
+  for (size_t i = 1; i < sizeof(result.name); ++i)
+    value ^= result.name[i];
+  result.name[0] = value;
+#endif
+  return result;
+}
+
+bool Mailbox::Verify() const {
+#if !defined(NDEBUG)
+  int8 value = 1;
+  for (size_t i = 0; i < sizeof(name); ++i)
+    value ^= name[i];
+  return value == 0;
+#else
+  return true;
+#endif
 }
 
 }  // namespace gpu

@@ -46,8 +46,6 @@ void InitLoggingForDaemon(const std::string& log_file) {
       logging::LOG_TO_SYSTEM_DEBUG_LOG : logging::LOG_TO_FILE;
   settings.log_file = log_file.c_str();
   settings.lock_log = logging::DONT_LOCK_LOG_FILE;
-  settings.dcheck_state =
-      logging::ENABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS;
   CHECK(logging::InitLogging(settings));
 }
 
@@ -255,13 +253,17 @@ bool Daemon::SpawnIfNeeded() {
 
 bool Daemon::Kill() {
   pid_t daemon_pid = Socket::GetUnixDomainSocketProcessOwner(identifier_);
-  if (daemon_pid < 0)
-    return true;  // No daemon running.
+  if (daemon_pid < 0) {
+    LOG(ERROR) << "No forwarder daemon seems to be running";
+    return true;
+  }
   if (kill(daemon_pid, SIGTERM) < 0) {
-    if (errno == ESRCH /* invalid PID */)
+    if (errno == ESRCH /* invalid PID */) {
       // The daemon exited for some reason (e.g. kill by a process other than
       // us) right before the call to kill() above.
+      LOG(ERROR) << "Could not kill daemon with PID " << daemon_pid;
       return true;
+    }
     PError("kill");
     return false;
   }

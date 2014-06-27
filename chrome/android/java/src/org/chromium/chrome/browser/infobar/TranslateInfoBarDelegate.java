@@ -5,7 +5,6 @@
 package org.chromium.chrome.browser.infobar;
 
 import org.chromium.base.CalledByNative;
-import org.chromium.chrome.browser.infobar.InfoBar;
 
 /**
  * Translate JNI methods
@@ -22,30 +21,32 @@ public class TranslateInfoBarDelegate {
 
     @CalledByNative
     boolean changeTranslateInfoBarTypeAndPointer(
-            int newNativeInfoBar, int translateBarType) {
-        mInfoBar.changeInfoBarTypeAndNativePointer(translateBarType, newNativeInfoBar);
+            long newNativeInfoBar, int translateBarType, int new_target_language) {
+        mInfoBar.changeInfoBarTypeAndNativePointer(
+                translateBarType, new_target_language, newNativeInfoBar);
         return true;
     }
 
     @CalledByNative
     InfoBar showTranslateInfoBar(
-            int nativeInfoBar, int translateBarType,
+            long nativeInfoBar, int translateBarType,
             int sourceLanguageIndex, int targetLanguageIndex, boolean autoTranslatePair,
-            boolean showNeverInfobar, String[] languages) {
+            boolean showNeverInfobar, boolean triggeredFromMenu,
+            String[] languages) {
         mInfoBar = new TranslateInfoBar(nativeInfoBar, this, translateBarType,
                 sourceLanguageIndex, targetLanguageIndex, autoTranslatePair, showNeverInfobar,
-                languages);
+                triggeredFromMenu, languages);
         return mInfoBar;
     }
 
-    public void applyTranslateOptions(int nativeTranslateInfoBar,
+    public void applyTranslateOptions(long nativeTranslateInfoBar,
             int sourceLanguageIndex, int targetLanguageIndex, boolean alwaysTranslate,
             boolean neverTranslateLanguage, boolean neverTranslateSite) {
         nativeApplyTranslateOptions(nativeTranslateInfoBar, sourceLanguageIndex,
                 targetLanguageIndex, alwaysTranslate, neverTranslateLanguage, neverTranslateSite);
     }
 
-    private native void nativeApplyTranslateOptions(int nativeTranslateInfoBar,
+    private native void nativeApplyTranslateOptions(long nativeTranslateInfoBar,
             int sourceLanguageIndex, int targetLanguageIndex, boolean alwaysTranslate,
             boolean neverTranslateLanguage, boolean neverTranslateSite);
 }

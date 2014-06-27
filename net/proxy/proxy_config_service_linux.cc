@@ -22,6 +22,7 @@
 #include "base/environment.h"
 #include "base/file_util.h"
 #include "base/files/file_path.h"
+#include "base/files/scoped_file.h"
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
 #include "base/nix/xdg_util.h"
@@ -836,7 +837,7 @@ bool SettingGetterImplGSettings::LoadAndCheckVersion(
     }
   }
 
-  VLOG(1) << "All gsettings proxy tests OK.";
+  VLOG(1) << "All gsettings tests OK. Will get proxy config from gsettings.";
   return true;
 }
 #endif  // defined(USE_GIO)
@@ -887,10 +888,10 @@ class SettingGetterImplKDE : public ProxyConfigServiceLinux::SettingGetter,
         base::FilePath kde4_config = KDEHomeToConfigPath(kde4_path);
         bool use_kde4 = false;
         if (base::DirectoryExists(kde4_path)) {
-          base::PlatformFileInfo kde3_info;
-          base::PlatformFileInfo kde4_info;
-          if (file_util::GetFileInfo(kde4_config, &kde4_info)) {
-            if (file_util::GetFileInfo(kde3_config, &kde3_info)) {
+          base::File::Info kde3_info;
+          base::File::Info kde4_info;
+          if (base::GetFileInfo(kde4_config, &kde4_info)) {
+            if (base::GetFileInfo(kde3_config, &kde3_info)) {
               use_kde4 = kde4_info.last_modified >= kde3_info.last_modified;
             } else {
               use_kde4 = true;
@@ -1174,7 +1175,7 @@ class SettingGetterImplKDE : public ProxyConfigServiceLinux::SettingGetter,
   // each relevant name-value pair to the appropriate value table.
   void UpdateCachedSettings() {
     base::FilePath kioslaverc = kde_config_dir_.Append("kioslaverc");
-    file_util::ScopedFILE input(file_util::OpenFile(kioslaverc, "r"));
+    base::ScopedFILE input(base::OpenFile(kioslaverc, "r"));
     if (!input.get())
       return;
     ResetCachedSettings();
@@ -1218,8 +1219,8 @@ class SettingGetterImplKDE : public ProxyConfigServiceLinux::SettingGetter,
         *(split++) = 0;
         std::string key = line;
         std::string value = split;
-        TrimWhitespaceASCII(key, TRIM_ALL, &key);
-        TrimWhitespaceASCII(value, TRIM_ALL, &value);
+        base::TrimWhitespaceASCII(key, base::TRIM_ALL, &key);
+        base::TrimWhitespaceASCII(value, base::TRIM_ALL, &value);
         // Skip this line if the key name is empty.
         if (key.empty())
           continue;
@@ -1233,7 +1234,7 @@ class SettingGetterImplKDE : public ProxyConfigServiceLinux::SettingGetter,
           // Trim the localization indicator off.
           key.resize(length);
           // Remove any resulting trailing whitespace.
-          TrimWhitespaceASCII(key, TRIM_TRAILING, &key);
+          base::TrimWhitespaceASCII(key, base::TRIM_TRAILING, &key);
           // Skip this line if the key name is now empty.
           if (key.empty())
             continue;
@@ -1581,17 +1582,7 @@ void ProxyConfigServiceLinux::Delegate::SetUpAndFetchInitialConfig(
   // mislead us.
 
   bool got_config = false;
-  // node-webkit: prioritize environment variables.
-  //
-  // Consulting environment variables doesn't need to be done from the
-  // default glib main loop, but it's a tiny enough amount of work.
-  if (GetConfigFromEnv(&cached_config_)) {
-    cached_config_.set_source(PROXY_CONFIG_SOURCE_ENV);
-    cached_config_.set_id(1);  // Mark it as valid.
-    VLOG(1) << "Obtained proxy settings from environment variables";
-    got_config = true;
-  }
-  if (!got_config && setting_getter_.get() &&
+  if (setting_getter_.get() &&
       setting_getter_->Init(glib_thread_task_runner, file_loop) &&
       GetConfigFromSettings(&cached_config_)) {
     cached_config_.set_id(1);  // Mark it as valid.
@@ -1631,6 +1622,17 @@ void ProxyConfigServiceLinux::Delegate::SetUpAndFetchInitialConfig(
     }
   }
 
+  if (!got_config) {
+    // We fall back on environment variables.
+    //
+    // Consulting environment variables doesn't need to be done from the
+    // default glib main loop, but it's a tiny enough amount of work.
+    if (GetConfigFromEnv(&cached_config_)) {
+      cached_config_.set_source(PROXY_CONFIG_SOURCE_ENV);
+      cached_config_.set_id(1);  // Mark it as valid.
+      VLOG(1) << "Obtained proxy settings from environment variables";
+    }
+  }
 }
 
 // Depending on the SettingGetter in use, this method will be called

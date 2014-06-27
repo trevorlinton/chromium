@@ -7,9 +7,11 @@
 #include <limits>
 
 #include "base/command_line.h"
+#include "base/cpu.h"
 #include "base/debug/crash_logging.h"
 #include "base/logging.h"
 #include "base/metrics/histogram.h"
+#include "base/metrics/sparse_histogram.h"
 #include "base/rand_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -36,8 +38,9 @@
 #include "ppapi/c/ppp.h"
 #include "ppapi/proxy/interface_list.h"
 #include "ppapi/proxy/plugin_globals.h"
+#include "ppapi/proxy/plugin_message_filter.h"
 #include "ppapi/proxy/ppapi_messages.h"
-#include "ppapi/shared_impl/api_id.h"
+#include "ppapi/proxy/resource_reply_thread_registrar.h"
 #include "third_party/WebKit/public/web/WebKit.h"
 #include "ui/base/ui_base_switches.h"
 
@@ -51,6 +54,40 @@
 
 #if defined(OS_WIN)
 extern sandbox::TargetServices* g_target_services;
+
+// Used by EnumSystemLocales for warming up.
+static BOOL CALLBACK EnumLocalesProc(LPTSTR lpLocaleString) {
+  return TRUE;
+}
+
+static BOOL CALLBACK EnumLocalesProcEx(
+    LPWSTR lpLocaleString,
+    DWORD dwFlags,
+    LPARAM lParam) {
+  return TRUE;
+}
+
+// Warm up language subsystems before the sandbox is turned on.
+static void WarmupWindowsLocales(const ppapi::PpapiPermissions& permissions) {
+  ::GetUserDefaultLangID();
+  ::GetUserDefaultLCID();
+
+  if (permissions.HasPermission(ppapi::PERMISSION_FLASH)) {
+    if (base::win::GetVersion() >= base::win::VERSION_VISTA) {
+      typedef BOOL (WINAPI *PfnEnumSystemLocalesEx)
+          (LOCALE_ENUMPROCEX, DWORD, LPARAM, LPVOID);
+
+      HMODULE handle_kern32 = GetModuleHandleW(L"Kernel32.dll");
+      PfnEnumSystemLocalesEx enum_sys_locales_ex =
+          reinterpret_cast<PfnEnumSystemLocalesEx>
+              (GetProcAddress(handle_kern32, "EnumSystemLocalesEx"));
+
+      enum_sys_locales_ex(EnumLocalesProcEx, LOCALE_WINDOWS, 0, 0);
+    } else {
+      EnumSystemLocalesW(EnumLocalesProc, LCID_INSTALLED);
+    }
+  }
+}
 #else
 extern void* g_target_services;
 #endif
@@ -60,49 +97,25 @@ namespace content {
 typedef int32_t (*InitializeBrokerFunc)
     (PP_ConnectInstance_Func* connect_instance_func);
 
-PpapiThread::DispatcherMessageListener::DispatcherMessageListener(
-    PpapiThread* owner) : owner_(owner) {
-}
-
-PpapiThread::DispatcherMessageListener::~DispatcherMessageListener() {
-}
-
-bool PpapiThread::DispatcherMessageListener::OnMessageReceived(
-    const IPC::Message& msg) {
-  // The first parameter should be a plugin dispatcher ID.
-  PickleIterator iter(msg);
-  uint32 id = 0;
-  if (!msg.ReadUInt32(&iter, &id)) {
-    NOTREACHED();
-    return false;
-  }
-  std::map<uint32, ppapi::proxy::PluginDispatcher*>::iterator dispatcher =
-      owner_->plugin_dispatchers_.find(id);
-  if (dispatcher != owner_->plugin_dispatchers_.end())
-    return dispatcher->second->OnMessageReceived(msg);
-
-  return false;
-}
-
 PpapiThread::PpapiThread(const CommandLine& command_line, bool is_broker)
     : is_broker_(is_broker),
       connect_instance_func_(NULL),
       local_pp_module_(
           base::RandInt(0, std::numeric_limits<PP_Module>::max())),
-      next_plugin_dispatcher_id_(1),
-      dispatcher_message_listener_(this) {
+      next_plugin_dispatcher_id_(1) {
   ppapi::proxy::PluginGlobals* globals = ppapi::proxy::PluginGlobals::Get();
   globals->set_plugin_proxy_delegate(this);
   globals->set_command_line(
       command_line.GetSwitchValueASCII(switches::kPpapiFlashArgs));
 
   webkit_platform_support_.reset(new PpapiWebKitPlatformSupportImpl);
-  WebKit::initialize(webkit_platform_support_.get());
+  blink::initialize(webkit_platform_support_.get());
 
-  // Register interfaces that expect messages from the browser process. Please
-  // note that only those InterfaceProxy-based ones require registration.
-  AddRoute(ppapi::API_ID_PPB_HOSTRESOLVER_PRIVATE,
-           &dispatcher_message_listener_);
+  if (!is_broker_) {
+    channel()->AddFilter(
+        new ppapi::proxy::PluginMessageFilter(
+            NULL, globals->resource_reply_thread_registrar()));
+  }
 }
 
 PpapiThread::~PpapiThread() {
@@ -113,7 +126,7 @@ void PpapiThread::Shutdown() {
   if (plugin_entry_points_.shutdown_module)
     plugin_entry_points_.shutdown_module();
   webkit_platform_support_->Shutdown();
-  WebKit::shutdown();
+  blink::shutdown();
 }
 
 bool PpapiThread::Send(IPC::Message* msg) {
@@ -135,7 +148,6 @@ bool PpapiThread::OnControlMessageReceived(const IPC::Message& msg) {
     IPC_MESSAGE_HANDLER(PpapiMsg_SetNetworkState, OnSetNetworkState)
     IPC_MESSAGE_HANDLER(PpapiMsg_Crash, OnCrash)
     IPC_MESSAGE_HANDLER(PpapiMsg_Hang, OnHang)
-    IPC_MESSAGE_HANDLER(PpapiPluginMsg_ResourceReply, OnResourceReply)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
@@ -258,12 +270,14 @@ void PpapiThread::OnLoadPlugin(const base::FilePath& path,
   base::ScopedNativeLibrary library;
   if (plugin_entry_points_.initialize_module == NULL) {
     // Load the plugin from the specified library.
-    std::string error;
+    base::NativeLibraryLoadError error;
     library.Reset(base::LoadNativeLibrary(path, &error));
     if (!library.is_valid()) {
-      LOG(ERROR) << "Failed to load Pepper module from "
-        << path.value() << " (error: " << error << ")";
+      LOG(ERROR) << "Failed to load Pepper module from " << path.value()
+                 << " (error: " << error.ToString() << ")";
       ReportLoadResult(path, LOAD_FAILED);
+      // Report detailed reason for load failure.
+      ReportLoadErrorCode(path, error);
       return;
     }
 
@@ -307,19 +321,32 @@ void PpapiThread::OnLoadPlugin(const base::FilePath& path,
   // can be loaded. TODO(cpu): consider changing to the loading style of
   // regular plugins.
   if (g_target_services) {
-    // Let Flash load DRM before lockdown on Vista+.
-    if (permissions.HasPermission(ppapi::PERMISSION_FLASH) &&
-        base::win::OSInfo::GetInstance()->version() >=
-        base::win::VERSION_VISTA ) {
-      LoadLibrary(L"dxva2.dll");
+    // Let Flash load DXVA before lockdown on Vista+.
+    if (permissions.HasPermission(ppapi::PERMISSION_FLASH)) {
+      if (base::win::OSInfo::GetInstance()->version() >=
+          base::win::VERSION_VISTA) {
+        LoadLibraryA("dxva2.dll");
+      }
+
+      if (base::win::OSInfo::GetInstance()->version() >=
+          base::win::VERSION_WIN7) {
+        base::CPU cpu;
+        if ((cpu.vendor_name() == "AuthenticAMD") && (cpu.family() > 0x14)) {
+          // The AMD crypto acceleration is only AMD Bulldozer and above.
+#if defined(_WIN64)
+          LoadLibraryA("amdhcp64.dll");
+#else
+          LoadLibraryA("amdhcp32.dll");
+#endif
+        }
+      }
     }
 
     // Cause advapi32 to load before the sandbox is turned on.
     unsigned int dummy_rand;
     rand_s(&dummy_rand);
-    // Warm up language subsystems before the sandbox is turned on.
-    ::GetUserDefaultLangID();
-    ::GetUserDefaultLCID();
+
+    WarmupWindowsLocales(permissions);
 
     g_target_services->LowerToken();
   }
@@ -384,13 +411,6 @@ void PpapiThread::OnCreateChannel(base::ProcessId renderer_pid,
   }
 
   Send(new PpapiHostMsg_ChannelCreated(channel_handle));
-}
-
-void PpapiThread::OnResourceReply(
-    const ppapi::proxy::ResourceMessageReplyParams& reply_params,
-    const IPC::Message& nested_msg) {
-  ppapi::proxy::PluginDispatcher::DispatchResourceReply(reply_params,
-                                                        nested_msg);
 }
 
 void PpapiThread::OnSetNetworkState(bool online) {
@@ -485,21 +505,36 @@ void PpapiThread::SavePluginName(const base::FilePath& path) {
 void PpapiThread::ReportLoadResult(const base::FilePath& path,
                                    LoadResult result) {
   DCHECK_LT(result, LOAD_RESULT_MAX);
-
-  std::ostringstream histogram_name;
-  histogram_name << "Plugin.Ppapi" << (is_broker_ ? "Broker" : "Plugin")
-                 << "LoadResult_" << path.BaseName().MaybeAsASCII();
+  std::string histogram_name = std::string("Plugin.Ppapi") +
+                               (is_broker_ ? "Broker" : "Plugin") +
+                               "LoadResult_" + path.BaseName().MaybeAsASCII();
 
   // Note: This leaks memory, which is expected behavior.
   base::HistogramBase* histogram =
       base::LinearHistogram::FactoryGet(
-          histogram_name.str(),
+          histogram_name,
           1,
           LOAD_RESULT_MAX,
           LOAD_RESULT_MAX + 1,
           base::HistogramBase::kUmaTargetedHistogramFlag);
 
   histogram->Add(result);
+}
+
+void PpapiThread::ReportLoadErrorCode(
+    const base::FilePath& path,
+    const base::NativeLibraryLoadError& error) {
+#if defined(OS_WIN)
+  // Only report load error code on Windows because that's the only platform
+  // that has a numerical error value.
+  std::string histogram_name =
+      std::string("Plugin.Ppapi") + (is_broker_ ? "Broker" : "Plugin") +
+      "LoadErrorCode_" + path.BaseName().MaybeAsASCII();
+
+  // For sparse histograms, we can use the macro, as it does not incorporate a
+  // static.
+  UMA_HISTOGRAM_SPARSE_SLOWLY(histogram_name, error.code);
+#endif
 }
 
 }  // namespace content

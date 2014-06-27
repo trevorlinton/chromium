@@ -20,6 +20,7 @@
 #include <AudioUnit/AudioUnit.h>
 #include <CoreAudio/CoreAudio.h>
 
+#include "base/cancelable_callback.h"
 #include "base/compiler_specific.h"
 #include "base/synchronization/lock.h"
 #include "media/audio/audio_io.h"
@@ -28,6 +29,7 @@
 namespace media {
 
 class AudioManagerMac;
+class AudioPullFifo;
 
 // Implementation of AudioOuputStream for Mac OS X using the
 // AUHAL Audio Unit present in OS 10.4 and later.
@@ -83,6 +85,9 @@ class AUHALStream : public AudioOutputStream {
                   UInt32 number_of_frames,
                   AudioBufferList* io_data);
 
+  // Called by either |audio_fifo_| or Render() to provide audio data.
+  void ProvideInput(int frame_delay, AudioBus* dest);
+
   // Helper method to enable input and output.
   bool EnableIO(bool enable, UInt32 scope);
 
@@ -108,15 +113,15 @@ class AUHALStream : public AudioOutputStream {
   double GetPlayoutLatency(const AudioTimeStamp* output_time_stamp);
 
   // Our creator, the audio manager needs to be notified when we close.
-  AudioManagerMac* manager_;
+  AudioManagerMac* const manager_;
 
-  AudioParameters params_;
+  const AudioParameters params_;
   // For convenience - same as in params_.
-  int input_channels_;
-  int output_channels_;
+  const int input_channels_;
+  const int output_channels_;
 
   // Buffer-size.
-  size_t number_of_frames_;
+  const size_t number_of_frames_;
 
   // Pointer to the object that will provide the audio samples.
   AudioSourceCallback* source_;
@@ -131,7 +136,7 @@ class AUHALStream : public AudioOutputStream {
 
   // The audio device to use with the AUHAL.
   // We can potentially handle both input and output with this device.
-  AudioDeviceID device_;
+  const AudioDeviceID device_;
 
   // The AUHAL Audio Unit which talks to |device_|.
   AudioUnit audio_unit_;
@@ -145,10 +150,6 @@ class AUHALStream : public AudioOutputStream {
   // The flag used to stop the streaming.
   bool stopped_;
 
-  // The flag used to indicate if the AudioManager has been notified of a
-  // potential device change.  Reset to false during Start().
-  bool notified_for_possible_device_change_;
-
   // The input AudioUnit renders its data here.
   scoped_ptr<uint8[]> input_buffer_list_storage_;
   AudioBufferList* input_buffer_list_;
@@ -158,6 +159,16 @@ class AUHALStream : public AudioOutputStream {
 
   // Container for retrieving data from AudioSourceCallback::OnMoreIOData().
   scoped_ptr<AudioBus> output_bus_;
+
+  // Dynamically allocated FIFO used when CoreAudio asks for unexpected frame
+  // sizes.
+  scoped_ptr<AudioPullFifo> audio_fifo_;
+
+  // Current buffer delay.  Set by Render().
+  uint32 current_hardware_pending_bytes_;
+
+  // Used to defer Start() to workaround http://crbug.com/160920.
+  base::CancelableClosure deferred_start_cb_;
 
   DISALLOW_COPY_AND_ASSIGN(AUHALStream);
 };

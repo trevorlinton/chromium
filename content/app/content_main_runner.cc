@@ -30,6 +30,7 @@
 #include "content/common/set_process_title.h"
 #include "content/common/url_schemes.h"
 #include "content/gpu/in_process_gpu_thread.h"
+#include "content/public/app/content_main.h"
 #include "content/public/app/content_main_delegate.h"
 #include "content/public/app/startup_helper_win.h"
 #include "content/public/browser/content_browser_client.h"
@@ -50,7 +51,6 @@
 #include "ui/base/ui_base_paths.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/gfx/win/dpi.h"
-#include "webkit/common/user_agent/user_agent.h"
 
 #if defined(USE_TCMALLOC)
 #include "third_party/tcmalloc/chromium/src/gperftools/malloc_extension.h"
@@ -101,6 +101,10 @@ int tc_set_new_mode(int mode);
 }
 #endif
 
+#if defined(USE_MOJO)
+#include "content/app/mojo/mojo_init.h"
+#endif
+
 namespace content {
 extern int GpuMain(const content::MainFunctionParams&);
 #if defined(ENABLE_PLUGINS)
@@ -133,13 +137,15 @@ void EnableThemeSupportOnAllWindowStations() {
 
   HWINSTA winsta0 = ::OpenWindowStationA("WinSta0", FALSE, GENERIC_READ);
   if (!winsta0) {
-    DLOG(INFO) << "Unable to open to WinSta0, we: "<< ::GetLastError();
+    DVLOG(0) << "Unable to open to WinSta0, we: "<< ::GetLastError();
     return;
   }
   if (!::SetProcessWindowStation(winsta0)) {
     // Could not set the alternate window station. There is a possibility
     // that the theme wont be correctly initialized.
     NOTREACHED() << "Unable to switch to WinSta0, we: "<< ::GetLastError();
+    ::CloseWindowStation(winsta0);
+    return;
   }
 
   HWND window = ::CreateWindowExW(0, L"Static", L"", WS_POPUP | WS_DISABLED,
@@ -377,14 +383,6 @@ int RunZygote(const MainFunctionParams& main_function_params,
       command_line.GetSwitchValueASCII(switches::kProcessType);
   ContentClientInitializer::Set(process_type, delegate);
 
-  // If a custom user agent was passed on the command line, we need
-  // to (re)set it now, rather than using the default one the zygote
-  // initialized.
-  if (command_line.HasSwitch(switches::kUserAgent)) {
-    webkit_glue::SetUserAgent(
-        command_line.GetSwitchValueASCII(switches::kUserAgent), true);
-  }
-
   // The StatsTable must be initialized in each process; we already
   // initialized for the browser process, now we need to initialize
   // within the new processes as well.
@@ -406,6 +404,27 @@ int RunZygote(const MainFunctionParams& main_function_params,
 #endif  // defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
 
 #if !defined(OS_IOS)
+static void RegisterMainThreadFactories() {
+#if !defined(CHROME_MULTIPLE_DLL_BROWSER)
+  UtilityProcessHost::RegisterUtilityMainThreadFactory(
+      CreateInProcessUtilityThread);
+  RenderProcessHost::RegisterRendererMainThreadFactory(
+      CreateInProcessRendererThread);
+  GpuProcessHost::RegisterGpuMainThreadFactory(
+      CreateInProcessGpuThread);
+#else
+  CommandLine& command_line = *CommandLine::ForCurrentProcess();
+  if (command_line.HasSwitch(switches::kSingleProcess)) {
+    LOG(FATAL) <<
+        "--single-process is not supported in chrome multiple dll browser.";
+  }
+  if (command_line.HasSwitch(switches::kInProcessGPU)) {
+    LOG(FATAL) <<
+        "--in-process-gpu is not supported in chrome multiple dll browser.";
+  }
+#endif
+}
+
 // Run the FooMain() for a given process type.
 // If |process_type| is empty, runs BrowserMain().
 // Returns the exit code for this process.
@@ -430,14 +449,7 @@ int RunNamedProcessTypeMain(
 #endif  // !CHROME_MULTIPLE_DLL_BROWSER
   };
 
-#if !defined(CHROME_MULTIPLE_DLL_BROWSER)
-  UtilityProcessHost::RegisterUtilityMainThreadFactory(
-      CreateInProcessUtilityThread);
-  RenderProcessHost::RegisterRendererMainThreadFactory(
-      CreateInProcessRendererThread);
-  GpuProcessHost::RegisterGpuMainThreadFactory(
-      CreateInProcessGpuThread);
-#endif
+  RegisterMainThreadFactories();
 
   for (size_t i = 0; i < arraysize(kMainFunctions); ++i) {
     if (process_type == kMainFunctions[i].name) {
@@ -481,7 +493,8 @@ class ContentMainRunnerImpl : public ContentMainRunner {
       : is_initialized_(false),
         is_shutdown_(false),
         completed_basic_startup_(false),
-        delegate_(NULL) {
+        delegate_(NULL),
+        ui_task_(NULL) {
 #if defined(OS_WIN)
     memset(&sandbox_info_, 0, sizeof(sandbox_info_));
 #endif
@@ -517,22 +530,15 @@ class ContentMainRunnerImpl : public ContentMainRunner {
   }
 #endif
 
+  virtual int Initialize(const ContentMainParams& params) OVERRIDE {
+    ui_task_ = params.ui_task;
+
 #if defined(OS_WIN)
-  virtual int Initialize(HINSTANCE instance,
-                         sandbox::SandboxInterfaceInfo* sandbox_info,
-                         ContentMainDelegate* delegate) OVERRIDE {
-    // argc/argv are ignored on Windows; see command_line.h for details.
-    int argc = 0;
-    char** argv = NULL;
-
     RegisterInvalidParamHandler();
-    _Module.Init(NULL, static_cast<HINSTANCE>(instance));
+    _Module.Init(NULL, static_cast<HINSTANCE>(params.instance));
 
-    sandbox_info_ = *sandbox_info;
+    sandbox_info_ = *params.sandbox_info;
 #else  // !OS_WIN
-  virtual int Initialize(int argc,
-                         const char** argv,
-                         ContentMainDelegate* delegate) OVERRIDE {
 
 #if defined(OS_ANDROID)
     // See note at the initialization of ExitManager, below; basically,
@@ -574,7 +580,7 @@ class ContentMainRunnerImpl : public ContentMainRunner {
           MallocExtension::GetBytesAllocatedOnCurrentThread,
           tracked_objects::TIME_SOURCE_TYPE_TCMALLOC);
     }
-#endif
+#endif  // !OS_MACOSX && USE_TCMALLOC
 
     // On Android,
     // - setlocale() is not supported.
@@ -602,7 +608,7 @@ class ContentMainRunnerImpl : public ContentMainRunner {
 #endif  // !OS_WIN
 
     is_initialized_ = true;
-    delegate_ = delegate;
+    delegate_ = params.delegate;
 
     base::EnableTerminationOnHeapCorruption();
     base::EnableTerminationOnOutOfMemory();
@@ -613,7 +619,12 @@ class ContentMainRunnerImpl : public ContentMainRunner {
     // A consequence of this is that you can't use the ctor/dtor-based
     // TRACE_EVENT methods on Linux or iOS builds till after we set this up.
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
-    exit_manager_.reset(new base::AtExitManager);
+    if (!ui_task_) {
+      // When running browser tests, don't create a second AtExitManager as that
+      // interfers with shutdown when objects created before ContentMain is
+      // called are destructed when it returns.
+      exit_manager_.reset(new base::AtExitManager);
+    }
 #endif  // !OS_ANDROID && !OS_IOS
 
 #if defined(OS_MACOSX)
@@ -627,11 +638,25 @@ class ContentMainRunnerImpl : public ContentMainRunner {
     // On Android, the command line is initialized when library is loaded and
     // we have already started our TRACE_EVENT0.
 #if !defined(OS_ANDROID)
+    // argc/argv are ignored on Windows and Android; see command_line.h for
+    // details.
+    int argc = 0;
+    const char** argv = NULL;
+
+#if !defined(OS_WIN)
+    argc = params.argc;
+    argv = params.argv;
+#endif
+
     CommandLine::Init(argc, argv);
+
+#if !defined(OS_IOS)
+    SetProcessTitleFromCommandLine(argv);
+#endif
 #endif // !OS_ANDROID
 
     int exit_code;
-    if (delegate && delegate->BasicStartupComplete(&exit_code))
+    if (delegate_ && delegate_->BasicStartupComplete(&exit_code))
       return exit_code;
 
     completed_basic_startup_ = true;
@@ -639,6 +664,11 @@ class ContentMainRunnerImpl : public ContentMainRunner {
     const CommandLine& command_line = *CommandLine::ForCurrentProcess();
     std::string process_type =
         command_line.GetSwitchValueASCII(switches::kProcessType);
+
+#if defined(USE_MOJO)
+    // Initialize mojo here so that services can be registered.
+    InitializeMojo();
+#endif
 
     if (!GetContentClient())
       SetContentClient(&empty_content_client_);
@@ -657,6 +687,7 @@ class ContentMainRunnerImpl : public ContentMainRunner {
           command_line.GetSwitchValueASCII(switches::kTraceStartup));
       base::debug::TraceLog::GetInstance()->SetEnabled(
           category_filter,
+          base::debug::TraceLog::RECORDING_MODE,
           base::debug::TraceLog::RECORD_UNTIL_FULL);
     }
 #if !defined(OS_ANDROID)
@@ -672,13 +703,13 @@ class ContentMainRunnerImpl : public ContentMainRunner {
     // It's important not to allocate the ports for processes which don't
     // register with the power monitor - see crbug.com/88867.
     if (process_type.empty() ||
-        (delegate &&
-         delegate->ProcessRegistersWithSystemProcess(process_type))) {
+        (delegate_ &&
+         delegate_->ProcessRegistersWithSystemProcess(process_type))) {
       base::PowerMonitorDeviceSource::AllocateSystemIOPorts();
     }
 
     if (!process_type.empty() &&
-        (!delegate || delegate->ShouldSendMachPort(process_type))) {
+        (!delegate_ || delegate_->ShouldSendMachPort(process_type))) {
       MachBroker::ChildSendTaskPortToParent();
     }
 #elif defined(OS_WIN)
@@ -721,26 +752,18 @@ class ContentMainRunnerImpl : public ContentMainRunner {
 
     InitializeStatsTable(command_line);
 
-    if (delegate)
-      delegate->PreSandboxStartup();
-
-    // Set any custom user agent passed on the command line now so the string
-    // doesn't change between calls to webkit_glue::GetUserAgent(), otherwise it
-    // defaults to the user agent set during SetContentClient().
-    if (command_line.HasSwitch(switches::kUserAgent)) {
-      webkit_glue::SetUserAgent(
-          command_line.GetSwitchValueASCII(switches::kUserAgent), true);
-    }
+    if (delegate_)
+      delegate_->PreSandboxStartup();
 
     if (!process_type.empty())
       CommonSubprocessInit(process_type);
 
 #if defined(OS_WIN)
-    CHECK(InitializeSandbox(sandbox_info));
+    CHECK(InitializeSandbox(params.sandbox_info));
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
     if (process_type == switches::kRendererProcess ||
         process_type == switches::kPpapiPluginProcess ||
-        (delegate && delegate->DelaySandboxInitialization(process_type))) {
+        (delegate_ && delegate_->DelaySandboxInitialization(process_type))) {
       // On OS X the renderer sandbox needs to be initialized later in the
       // startup sequence in RendererMainPlatformDelegate::EnableSandbox().
     } else {
@@ -748,12 +771,8 @@ class ContentMainRunnerImpl : public ContentMainRunner {
     }
 #endif
 
-    if (delegate)
-      delegate->SandboxInitialized(process_type);
-
-#if defined(OS_POSIX) && !defined(OS_IOS)
-    SetProcessTitleFromCommandLine(argv);
-#endif
+    if (delegate_)
+      delegate_->SandboxInitialized(process_type);
 
     // Return -1 to indicate no early termination.
     return -1;
@@ -767,6 +786,7 @@ class ContentMainRunnerImpl : public ContentMainRunner {
           command_line.GetSwitchValueASCII(switches::kProcessType);
 
     MainFunctionParams main_params(command_line);
+    main_params.ui_task = ui_task_;
 #if defined(OS_WIN)
     main_params.sandbox_info = &sandbox_info_;
 #elif defined(OS_MACOSX)
@@ -832,6 +852,8 @@ class ContentMainRunnerImpl : public ContentMainRunner {
 #elif defined(OS_MACOSX)
   scoped_ptr<base::mac::ScopedNSAutoreleasePool> autorelease_pool_;
 #endif
+
+  base::Closure* ui_task_;
 
   DISALLOW_COPY_AND_ASSIGN(ContentMainRunnerImpl);
 };

@@ -6,10 +6,10 @@
 #define CHROME_COMMON_EXTENSIONS_API_STORAGE_STORAGE_SCHEMA_MANIFEST_HANDLER_H_
 
 #include "base/basictypes.h"
-#include "chrome/common/extensions/manifest_handler.h"
+#include "extensions/common/manifest_handler.h"
 
 namespace policy {
-class SchemaOwner;
+class Schema;
 }
 
 namespace extensions {
@@ -22,16 +22,16 @@ class StorageSchemaManifestHandler : public ManifestHandler {
 
 #if defined(ENABLE_CONFIGURATION_POLICY)
   // Returns the managed storage schema defined for |extension|.
-  // If the schema is invalid then NULL is returned, and the failure reason
-  // is stored in |error|.
+  // If the schema is invalid then the Schema returned is invalid too, and
+  // the failure reason is stored in |error|.
   // This function does file I/O and must be called on a thread that allows I/O.
-  static scoped_ptr<policy::SchemaOwner> GetSchema(const Extension* extension,
-                                                   std::string* error);
+  static policy::Schema GetSchema(const Extension* extension,
+                                  std::string* error);
 #endif
 
  private:
   // ManifestHandler implementation:
-  virtual bool Parse(Extension* extension, string16* error) OVERRIDE;
+  virtual bool Parse(Extension* extension, base::string16* error) OVERRIDE;
   virtual bool Validate(const Extension* extension,
                         std::string* error,
                         std::vector<InstallWarning>* warnings) const OVERRIDE;

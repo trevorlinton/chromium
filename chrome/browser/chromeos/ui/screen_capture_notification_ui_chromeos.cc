@@ -12,7 +12,7 @@
 namespace chromeos {
 
 ScreenCaptureNotificationUIChromeOS::ScreenCaptureNotificationUIChromeOS(
-    const string16& text)
+    const base::string16& text)
     : text_(text) {
 }
 
@@ -22,17 +22,18 @@ ScreenCaptureNotificationUIChromeOS::~ScreenCaptureNotificationUIChromeOS() {
   ash::Shell::GetInstance()->system_tray_notifier()->NotifyScreenCaptureStop();
 }
 
-void ScreenCaptureNotificationUIChromeOS::OnStarted(
+gfx::NativeViewId ScreenCaptureNotificationUIChromeOS::OnStarted(
     const base::Closure& stop_callback) {
   ash::Shell::GetInstance()->system_tray_notifier()->NotifyScreenCaptureStart(
       stop_callback, text_);
+  return 0;
 }
 
 }  // namespace chromeos
 
 // static
 scoped_ptr<ScreenCaptureNotificationUI> ScreenCaptureNotificationUI::Create(
-    const string16& text) {
+    const base::string16& text) {
   return scoped_ptr<ScreenCaptureNotificationUI>(
       new chromeos::ScreenCaptureNotificationUIChromeOS(text));
 }

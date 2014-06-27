@@ -1,14 +1,17 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 package org.chromium.content.browser.input;
+
+import static org.chromium.base.test.util.ScalableTimeout.scaleTimeout;
 
 import android.test.suitebuilder.annotation.LargeTest;
 
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.content.browser.ContentView;
+import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.content.browser.test.util.DOMUtils;
@@ -19,7 +22,7 @@ import org.chromium.content_shell_apk.ContentShellTestBase;
 import java.util.concurrent.TimeUnit;
 
 public class SelectPopupTest extends ContentShellTestBase {
-    private static final int WAIT_TIMEOUT_SECONDS = 2;
+    private static final long WAIT_TIMEOUT_SECONDS = scaleTimeout(2);
     private static final String SELECT_URL = UrlUtils.encodeHtmlDataUri(
             "<html><head><meta name=\"viewport\"" +
             "content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0\" /></head>" +
@@ -35,17 +38,21 @@ public class SelectPopupTest extends ContentShellTestBase {
             "</select>" +
             "</body></html>");
 
-    private static class PopupShowingCriteria implements Criteria {
+    private class PopupShowingCriteria implements Criteria {
         @Override
         public boolean isSatisfied() {
-            return SelectPopupDialog.getCurrent() != null;
+            ContentViewCore contentViewCore
+                    = getActivity().getActiveContentView().getContentViewCore();
+            return contentViewCore.getSelectPopupForTest() != null;
         }
     }
 
-    private static class PopupHiddenCriteria implements Criteria {
+    private class PopupHiddenCriteria implements Criteria {
         @Override
         public boolean isSatisfied() {
-            return SelectPopupDialog.getCurrent() == null;
+            ContentViewCore contentViewCore
+                    = getActivity().getActiveContentView().getContentViewCore();
+            return contentViewCore.getSelectPopupForTest() == null;
         }
     }
 

@@ -14,22 +14,24 @@ namespace media {
 namespace cast {
 
 class Vp8Decoder;
+class VideoFrame;
 
 // This class is not thread safe; it's only called from the cast video decoder
 // thread.
 class VideoDecoder : public base::NonThreadSafe {
  public:
-  explicit VideoDecoder(const VideoReceiverConfig& video_config);
+  VideoDecoder(const VideoReceiverConfig& video_config,
+               scoped_refptr<CastEnvironment> cast_environment);
   virtual ~VideoDecoder();
 
-  // Decode a video frame. Decoded (raw) frame will be returned in the
-  // provided video_frame.
-  bool DecodeVideoFrame(const EncodedVideoFrame* encoded_frame,
+  // Decode a video frame. Decoded (raw) frame will be returned via the
+  // provided callback
+  bool DecodeVideoFrame(const transport::EncodedVideoFrame* encoded_frame,
                         const base::TimeTicks render_time,
-                        I420VideoFrame* video_frame);
+                        const VideoFrameDecodedCallback& frame_decoded_cb);
 
  private:
-  VideoCodec codec_;
+  transport::VideoCodec codec_;
   scoped_ptr<Vp8Decoder> vp8_decoder_;
 
   DISALLOW_COPY_AND_ASSIGN(VideoDecoder);

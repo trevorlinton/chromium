@@ -22,6 +22,7 @@ namespace gles2 {
 
 class Buffer;
 class ErrorState;
+class ErrorStateClient;
 class FeatureInfo;
 class Framebuffer;
 class Program;
@@ -93,23 +94,27 @@ struct Vec4 {
 };
 
 struct GPU_EXPORT ContextState {
-  ContextState(FeatureInfo* feature_info, Logger* logger);
+  ContextState(FeatureInfo* feature_info,
+               ErrorStateClient* error_state_client,
+               Logger* logger);
   ~ContextState();
 
   void Initialize();
 
-  void RestoreState() const;
+  void RestoreState(const ContextState* prev_state) const;
   void InitCapabilities() const;
   void InitState() const;
 
   void RestoreActiveTexture() const;
-  void RestoreAllTextureUnitBindings() const;
+  void RestoreAllTextureUnitBindings(const ContextState* prev_state) const;
+  void RestoreActiveTextureUnitBinding(unsigned int target) const;
   void RestoreAttribute(GLuint index) const;
   void RestoreBufferBindings() const;
   void RestoreGlobalState() const;
   void RestoreProgramBindings() const;
   void RestoreRenderbufferBindings() const;
-  void RestoreTextureUnitBindings(GLuint unit) const;
+  void RestoreTextureUnitBindings(
+      GLuint unit, const ContextState* prev_state) const;
 
   // Helper for getting cached state.
   bool GetStateAsGLint(
@@ -148,7 +153,9 @@ struct GPU_EXPORT ContextState {
   // The currently bound renderbuffer
   scoped_refptr<Renderbuffer> bound_renderbuffer;
 
-  scoped_refptr<QueryManager::Query> current_query;
+  // A map of of target -> Query for current queries
+  typedef std::map<GLuint, scoped_refptr<QueryManager::Query> > QueryMap;
+  QueryMap current_queries;
 
   bool pack_reverse_row_order;
 

@@ -5,10 +5,12 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_OPTIONS_MANAGED_USER_IMPORT_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_OPTIONS_MANAGED_USER_IMPORT_HANDLER_H_
 
+#include "base/callback_list.h"
 #include "base/memory/weak_ptr.h"
+#include "base/scoped_observer.h"
+#include "chrome/browser/managed_mode/managed_user_sync_service_observer.h"
 #include "chrome/browser/ui/webui/options/options_ui.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
+#include "components/signin/core/browser/signin_error_controller.h"
 
 namespace base {
 class DictionaryValue;
@@ -18,8 +20,13 @@ class ListValue;
 namespace options {
 
 // Handler for the 'import existing managed user' dialog.
-class ManagedUserImportHandler : public OptionsPageUIHandler {
+class ManagedUserImportHandler : public OptionsPageUIHandler,
+                                 public ManagedUserSyncServiceObserver,
+                                 public SigninErrorController::Observer {
  public:
+  typedef base::CallbackList<void(const std::string&, const std::string&)>
+      CallbackList;
+
   ManagedUserImportHandler();
   virtual ~ManagedUserImportHandler();
 
@@ -31,11 +38,20 @@ class ManagedUserImportHandler : public OptionsPageUIHandler {
   // WebUIMessageHandler implementation.
   virtual void RegisterMessages() OVERRIDE;
 
-  // content::NotificationObserver implementation.
-  virtual void Observe(int type,
-                       const content::NotificationSource& source,
-                       const content::NotificationDetails& details) OVERRIDE;
+  // ManagedUserSyncServiceObserver implementation.
+  virtual void OnManagedUserAcknowledged(const std::string& managed_user_id)
+      OVERRIDE {}
+  virtual void OnManagedUsersSyncingStopped() OVERRIDE {}
+  virtual void OnManagedUsersChanged() OVERRIDE;
+
+  // SigninErrorController::Observer implementation.
+  virtual void OnErrorChanged() OVERRIDE;
+
  private:
+  // Clears the cached list of managed users and fetches the new list of managed
+  // users.
+  void FetchManagedUsers();
+
   // Callback for the "requestManagedUserImportUpdate" message.
   // Checks the sign-in status of the custodian and accordingly
   // sends an update to the WebUI. The update can be to show/hide
@@ -60,6 +76,15 @@ class ManagedUserImportHandler : public OptionsPageUIHandler {
 
   bool IsAccountConnected() const;
   bool HasAuthError() const;
+
+  // Called when a managed user shared setting is changed. If the avatar was
+  // changed, FetchManagedUsers() is called.
+  void OnSharedSettingChanged(const std::string& managed_user_id,
+                              const std::string& key);
+
+  scoped_ptr<CallbackList::Subscription> subscription_;
+
+  ScopedObserver<SigninErrorController, ManagedUserImportHandler> observer_;
 
   base::WeakPtrFactory<ManagedUserImportHandler> weak_ptr_factory_;
 

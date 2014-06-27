@@ -5,16 +5,18 @@
 #ifndef CC_TEST_FAKE_LAYER_TREE_HOST_H_
 #define CC_TEST_FAKE_LAYER_TREE_HOST_H_
 
+#include "cc/debug/micro_benchmark_controller.h"
 #include "cc/test/fake_impl_proxy.h"
 #include "cc/test/fake_layer_tree_host_client.h"
 #include "cc/test/fake_layer_tree_host_impl.h"
+#include "cc/test/test_shared_bitmap_manager.h"
 #include "cc/trees/layer_tree_host.h"
 #include "cc/trees/layer_tree_impl.h"
 #include "cc/trees/tree_synchronizer.h"
 
 namespace cc {
 
-class FakeLayerTreeHost : protected LayerTreeHost {
+class FakeLayerTreeHost : public LayerTreeHost {
  public:
   static scoped_ptr<FakeLayerTreeHost> Create();
 
@@ -36,21 +38,24 @@ class FakeLayerTreeHost : protected LayerTreeHost {
 
   using LayerTreeHost::ScheduleMicroBenchmark;
   using LayerTreeHost::SetOutputSurfaceLostForTesting;
+  using LayerTreeHost::InitializeSingleThreaded;
   using LayerTreeHost::InitializeForTesting;
   void UpdateLayers(ResourceUpdateQueue* queue) {
     LayerTreeHost::UpdateLayers(queue);
+  }
+
+  MicroBenchmarkController* GetMicroBenchmarkController() {
+    return &micro_benchmark_controller_;
   }
 
   bool needs_commit() { return needs_commit_; }
 
  private:
   FakeLayerTreeHost(LayerTreeHostClient* client,
-                    const LayerTreeSettings& settings)
-      : LayerTreeHost(client, NULL, settings),
-        host_impl_(settings, &proxy_),
-        needs_commit_(false) {}
+                    const LayerTreeSettings& settings);
 
   FakeImplProxy proxy_;
+  TestSharedBitmapManager manager_;
   FakeLayerTreeHostImpl host_impl_;
   bool needs_commit_;
 };

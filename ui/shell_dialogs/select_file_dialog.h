@@ -170,7 +170,7 @@ class SHELL_DIALOGS_EXPORT SelectFileDialog
                   const base::FilePath::StringType& default_extension,
                   gfx::NativeWindow owning_window,
                   void* params,
-                  const base::FilePath& working_dir = base::FilePath());
+                  const base::FilePath& working_dir);
   bool HasMultipleFileTypeChoices();
 
   // Sets the global ShellDialogsDelegate. Defaults to NULL.
@@ -194,7 +194,7 @@ class SHELL_DIALOGS_EXPORT SelectFileDialog
       const base::FilePath::StringType& default_extension,
       gfx::NativeWindow owning_window,
       void* params,
-      const base::FilePath& working_dir = base::FilePath()) = 0;
+      const base::FilePath& working_dir) = 0;
 
   // Returns the global ShellDialogsDelegate instance if any.
   ShellDialogsDelegate* GetShellDialogsDelegate();

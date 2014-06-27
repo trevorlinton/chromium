@@ -138,7 +138,7 @@ class BASE_PREFS_EXPORT PrefService : public base::NonThreadSafe {
     const PrefService* pref_service_;
   };
 
-  // You may wish to use PrefServiceBuilder or one of its subclasses
+  // You may wish to use PrefServiceFactory or one of its subclasses
   // for simplified construction.
   PrefService(
       PrefNotifierImpl* pref_notifier,
@@ -221,13 +221,6 @@ class BASE_PREFS_EXPORT PrefService : public base::NonThreadSafe {
   // registered preference. In that case, will never return NULL.
   const base::Value* GetDefaultPrefValue(const char* path) const;
 
-  // Deprecated. Do not add calls to this method.
-  // Marks that the user store should not prune out empty values for |key| when
-  // writting to disk.
-  // TODO(gab): Enforce this at a lower level for all values and remove this
-  // method.
-  void MarkUserStoreNeedsEmptyValue(const std::string& key) const;
-
   // Returns true if a value has been set for the specified path.
   // NOTE: this is NOT the same as FindPreference. In particular
   // FindPreference returns whether RegisterXXX has been invoked, where as
@@ -265,20 +258,19 @@ class BASE_PREFS_EXPORT PrefService : public base::NonThreadSafe {
   // Returns the PrefRegistry object for this service. You should not
   // use this; the intent is for no registrations to take place after
   // PrefService has been constructed.
+  //
+  // Instead of using this method, the recommended approach is to
+  // register all preferences for a class Xyz up front in a static
+  // Xyz::RegisterPrefs function, which gets invoked early in the
+  // application's start-up, before a PrefService is created.
+  //
+  // As an example, prefs registration in Chrome is triggered by the
+  // functions chrome::RegisterPrefs (for global preferences) and
+  // chrome::RegisterProfilePrefs (for user-specific preferences)
+  // implemented in chrome/browser/prefs/browser_prefs.cc.
   PrefRegistry* DeprecatedGetPrefRegistry();
 
  protected:
-  // Adds the registered preferences from the PrefRegistry instance
-  // passed to us at construction time.
-  void AddInitialPreferences();
-
-  // Updates local caches for a preference registered at |path|. The
-  // |default_value| must not be NULL as it determines the preference
-  // value's type.  AddRegisteredPreference must not be called twice
-  // for the same path.
-  void AddRegisteredPreference(const char* path,
-                               base::Value* default_value);
-
   // The PrefNotifier handles registering and notifying preference observers.
   // It is created and owned by this PrefService. Subclasses may access it for
   // unit testing.

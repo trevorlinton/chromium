@@ -91,6 +91,9 @@ bool SharedMemory::MapAt(off_t offset, size_t bytes) {
   if (bytes > static_cast<size_t>(std::numeric_limits<int>::max()))
     return false;
 
+  if (memory_)
+    return false;
+
   memory_ = mmap(NULL, bytes, PROT_READ | (read_only_ ? 0 : PROT_WRITE),
                  MAP_SHARED, mapped_file_, offset);
 
@@ -130,17 +133,23 @@ void SharedMemory::Close() {
   }
 }
 
-void SharedMemory::Lock() {
+void SharedMemory::LockDeprecated() {
   NOTIMPLEMENTED();
 }
 
-void SharedMemory::Unlock() {
+void SharedMemory::UnlockDeprecated() {
   NOTIMPLEMENTED();
 }
 
 bool SharedMemory::ShareToProcessCommon(ProcessHandle process,
                                         SharedMemoryHandle *new_handle,
-                                        bool close_self) {
+                                        bool close_self,
+                                        ShareMode share_mode) {
+  if (share_mode == SHARE_READONLY) {
+    // Untrusted code can't create descriptors or handles, which is needed to
+    // drop permissions.
+    return false;
+  }
   const int new_fd = dup(mapped_file_);
   if (new_fd < 0) {
     DPLOG(ERROR) << "dup() failed.";

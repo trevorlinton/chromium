@@ -49,10 +49,10 @@ IPC_MESSAGE_CONTROL1(FileSystemMsg_DidSucceed,
                      int /* request_id */)
 IPC_MESSAGE_CONTROL2(FileSystemMsg_DidReadMetadata,
                      int /* request_id */,
-                     base::PlatformFileInfo)
+                     base::File::Info)
 IPC_MESSAGE_CONTROL3(FileSystemMsg_DidCreateSnapshotFile,
                      int /* request_id */,
-                     base::PlatformFileInfo,
+                     base::File::Info,
                      base::FilePath /* true platform path */)
 IPC_MESSAGE_CONTROL3(FileSystemMsg_DidReadDirectory,
                      int /* request_id */,
@@ -69,7 +69,7 @@ IPC_MESSAGE_CONTROL4(FileSystemMsg_DidOpenFile,
                      quota::QuotaLimitType /* quota_policy */)
 IPC_MESSAGE_CONTROL2(FileSystemMsg_DidFail,
                      int /* request_id */,
-                     base::PlatformFileError /* error_code */)
+                     base::File::Error /* error_code */)
 
 // File system messages sent from the child process to the browser.
 
@@ -133,13 +133,6 @@ IPC_MESSAGE_CONTROL2(FileSystemHostMsg_ReadDirectory,
                      GURL /* path */)
 
 // WebFileWriter::write() message.
-IPC_MESSAGE_CONTROL4(FileSystemHostMsg_WriteDeprecated,
-                     int /* request id */,
-                     GURL /* file path */,
-                     GURL /* blob URL */,
-                     int64 /* position */)
-
-// WebFileWriter::write() message.
 IPC_MESSAGE_CONTROL4(FileSystemHostMsg_Write,
                      int /* request id */,
                      GURL /* file path */,
@@ -164,16 +157,6 @@ IPC_MESSAGE_CONTROL2(FileSystemHostMsg_CancelWrite,
                      int /* request id */,
                      int /* id of request to cancel */)
 
-// Pepper's OpenFile message.
-IPC_MESSAGE_CONTROL3(FileSystemHostMsg_OpenPepperFile,
-                     int /* request id */,
-                     GURL /* file path */,
-                     int /* pp_open_flags */)
-
-// Pepper's NotifyCloseFile message.
-IPC_MESSAGE_CONTROL1(FileSystemHostMsg_NotifyCloseFile,
-                     int /* file_open_id */)
-
 // WebFileSystem::createSnapshotFileAndReadMetadata() message.
 IPC_MESSAGE_CONTROL2(FileSystemHostMsg_CreateSnapshotFile,
                      int /* request_id */,
@@ -189,11 +172,3 @@ IPC_MESSAGE_CONTROL1(FileSystemHostMsg_DidReceiveSnapshotFile,
 IPC_SYNC_MESSAGE_CONTROL1_1(FileSystemHostMsg_SyncGetPlatformPath,
                             GURL /* file path */,
                             base::FilePath /* platform_path */)
-
-// Pre- and post-update notifications for ppapi implementation.
-IPC_MESSAGE_CONTROL1(FileSystemHostMsg_WillUpdate,
-                     GURL /* file_path */)
-
-IPC_MESSAGE_CONTROL2(FileSystemHostMsg_DidUpdate,
-                     GURL /* file_path */,
-                     int64 /* delta */)

@@ -9,12 +9,13 @@
 #include "tools/gn/scope.h"
 #include "tools/gn/variables.h"
 
-BinaryTargetGenerator::BinaryTargetGenerator(Target* target,
-                                             Scope* scope,
-                                             const Token& function_token,
-                                             Target::OutputType type,
-                                             Err* err)
-    : TargetGenerator(target, scope, function_token, err),
+BinaryTargetGenerator::BinaryTargetGenerator(
+    Target* target,
+    Scope* scope,
+    const FunctionCallNode* function_call,
+    Target::OutputType type,
+    Err* err)
+    : TargetGenerator(target, scope, function_call, err),
       output_type_(type) {
 }
 
@@ -28,7 +29,7 @@ void BinaryTargetGenerator::DoRun() {
   if (err_->has_error())
     return;
 
-  FillExternal();
+  FillOutputExtension();
   if (err_->has_error())
     return;
 
@@ -46,12 +47,10 @@ void BinaryTargetGenerator::DoRun() {
 
   // Config values (compiler flags, etc.) set directly on this target.
   ConfigValuesGenerator gen(&target_->config_values(), scope_,
-                            function_token_, scope_->GetSourceDir(), err_);
+                            scope_->GetSourceDir(), err_);
   gen.Run();
   if (err_->has_error())
     return;
-
-  SetToolchainDependency();
 }
 
 void BinaryTargetGenerator::FillOutputName() {
@@ -61,4 +60,13 @@ void BinaryTargetGenerator::FillOutputName() {
   if (!value->VerifyTypeIs(Value::STRING, err_))
     return;
   target_->set_output_name(value->string_value());
+}
+
+void BinaryTargetGenerator::FillOutputExtension() {
+  const Value* value = scope_->GetValue(variables::kOutputExtension, true);
+  if (!value)
+    return;
+  if (!value->VerifyTypeIs(Value::STRING, err_))
+    return;
+  target_->set_output_extension(value->string_value());
 }

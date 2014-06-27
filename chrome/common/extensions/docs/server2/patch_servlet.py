@@ -7,12 +7,10 @@ import logging
 from urlparse import urlparse
 
 from appengine_url_fetcher import AppEngineUrlFetcher
-from caching_file_system import CachingFileSystem
 from caching_rietveld_patcher import CachingRietveldPatcher
 from chained_compiled_file_system import ChainedCompiledFileSystem
-from compiled_file_system import  CompiledFileSystem
 from environment import IsDevServer
-from host_file_system_provider import HostFileSystemProvider
+from extensions_paths import CONTENT_PROVIDERS
 from instance_servlet import InstanceServlet
 from render_servlet import RenderServlet
 from rietveld_patcher import RietveldPatcher, RietveldPatcherError
@@ -20,8 +18,9 @@ from object_store_creator import ObjectStoreCreator
 from patched_file_system import PatchedFileSystem
 from server_instance import ServerInstance
 from servlet import Request, Response, Servlet
-import svn_constants
 import url_constants
+from gcs_file_system_provider import CloudStorageFileSystemProvider
+
 
 class _PatchServletDelegate(RenderServlet.Delegate):
   def __init__(self, issue, delegate):
@@ -38,8 +37,7 @@ class _PatchServletDelegate(RenderServlet.Delegate):
         object_store_creator).GetTrunk()
 
     rietveld_patcher = CachingRietveldPatcher(
-        RietveldPatcher(svn_constants.EXTENSIONS_PATH,
-                        self._issue,
+        RietveldPatcher(self._issue,
                         AppEngineUrlFetcher(url_constants.CODEREVIEW_SERVER)),
         object_store_creator)
 
@@ -60,13 +58,22 @@ class _PatchServletDelegate(RenderServlet.Delegate):
 
     branch_utility = self._delegate.CreateBranchUtility(object_store_creator)
 
-    return ServerInstance(object_store_creator,
-                          combined_compiled_fs_factory,
-                          branch_utility,
-                          patched_host_file_system_provider,
-                          self._delegate.CreateGithubFileSystemProvider(
-                              object_store_creator),
-                          base_path='/_patch/%s/' % self._issue)
+    server_instance = ServerInstance(
+        object_store_creator,
+        combined_compiled_fs_factory,
+        branch_utility,
+        patched_host_file_system_provider,
+        self._delegate.CreateGithubFileSystemProvider(object_store_creator),
+        CloudStorageFileSystemProvider(object_store_creator),
+        base_path='/_patch/%s/' % self._issue)
+
+    # HACK: if content_providers.json changes in this patch then the cron needs
+    # to be re-run to pull in the new configuration.
+    _, _, modified = rietveld_patcher.GetPatchedFiles()
+    if CONTENT_PROVIDERS in modified:
+      server_instance.content_providers.Cron().Get()
+
+    return server_instance
 
 class PatchServlet(Servlet):
   '''Servlet which renders patched docs.

@@ -65,6 +65,7 @@ class CC_EXPORT RenderPass {
   ~RenderPass();
 
   static scoped_ptr<RenderPass> Create();
+  static scoped_ptr<RenderPass> Create(size_t num_layers);
 
   // A shallow copy of the render pass, which does not include its quads or copy
   // requests.
@@ -75,13 +76,13 @@ class CC_EXPORT RenderPass {
                       ScopedPtrVector<RenderPass>* out);
 
   void SetNew(Id id,
-              gfx::Rect output_rect,
-              gfx::RectF damage_rect,
+              const gfx::Rect& output_rect,
+              const gfx::RectF& damage_rect,
               const gfx::Transform& transform_to_root_target);
 
   void SetAll(Id id,
-              gfx::Rect output_rect,
-              gfx::RectF damage_rect,
+              const gfx::Rect& output_rect,
+              const gfx::RectF& damage_rect,
               const gfx::Transform& transform_to_root_target,
               bool has_transparent_background);
 
@@ -111,6 +112,7 @@ class CC_EXPORT RenderPass {
   SharedQuadStateList shared_quad_state_list;
 
  protected:
+  explicit RenderPass(size_t num_layers);
   RenderPass();
 
  private:

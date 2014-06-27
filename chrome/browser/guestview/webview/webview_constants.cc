@@ -12,6 +12,7 @@ const char kEventConsoleMessage[] = "webview.onConsoleMessage";
 const char kEventContentLoad[] = "webview.onContentLoad";
 const char kEventDialog[] = "webview.onDialog";
 const char kEventExit[] = "webview.onExit";
+const char kEventFindReply[] = "webview.onFindReply";
 const char kEventLoadAbort[] = "webview.onLoadAbort";
 const char kEventLoadCommit[] = "webview.onLoadCommit";
 const char kEventLoadProgress[] = "webview.onLoadProgress";
@@ -23,8 +24,11 @@ const char kEventPermissionRequest[] = "webview.onPermissionRequest";
 const char kEventResponsive[] = "webview.onResponsive";
 const char kEventSizeChanged[] = "webview.onSizeChanged";
 const char kEventUnresponsive[] = "webview.onUnresponsive";
+const char kEventZoomChange[] = "webview.onZoomChange";
 
 // Parameters/properties on events.
+const char kFindSearchText[] = "searchText";
+const char kFindFinalUpdate[] = "finalUpdate";
 const char kLevel[] = "level";
 const char kLine[] = "line";
 const char kMessage[] = "message";
@@ -47,15 +51,28 @@ const char kProgress[] = "progress";
 const char kReason[] = "reason";
 const char kRequestId[] = "requestId";
 const char kSourceId[] = "sourceId";
+const char kOldZoomFactor[] = "oldZoomFactor";
+const char kNewZoomFactor[] = "newZoomFactor";
 
 // Internal parameters/properties on events.
 const char kInternalCurrentEntryIndex[] = "currentEntryIndex";
 const char kInternalEntryCount[] = "entryCount";
 const char kInternalProcessId[] = "processId";
 
+// Parameters to callback functions.
+const char kFindNumberOfMatches[] = "numberOfMatches";
+const char kFindActiveMatchOrdinal[] = "activeMatchOrdinal";
+const char kFindSelectionRect[] = "selectionRect";
+const char kFindRectLeft[] = "left";
+const char kFindRectTop[] = "top";
+const char kFindRectWidth[] = "width";
+const char kFindRectHeight[] = "height";
+const char kFindCanceled[] = "canceled";
+
 // Initialization parameters.
 const char kParameterUserAgentOverride[] = "userAgentOverride";
 
+// Miscellaneous.
 const unsigned int kMaxOutstandingPermissionRequests = 1024;
 
 }  // namespace webview

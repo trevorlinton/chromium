@@ -18,13 +18,13 @@
 namespace {
 
 const int kMaxRestartAttempts = 10;
-const char kPrivetDeviceTypeDnsString[] = "\x07_privet\x04_tcp\x05local";
+const char kPrivetDeviceTypeDnsString[] = "\x07_privet";
 
 void GetNetworkListOnFileThread(
     const base::Callback<void(const net::NetworkInterfaceList&)> callback) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::FILE));
   net::NetworkInterfaceList networks;
-  if (!GetNetworkList(&networks))
+  if (!GetNetworkList(&networks, net::INCLUDE_HOST_SCOPE_VIRTUAL_INTERFACES))
     return;
 
   net::NetworkInterfaceList ip4_networks;
@@ -39,15 +39,10 @@ void GetNetworkListOnFileThread(
 
   net::IPAddressNumber localhost_prefix(4, 0);
   localhost_prefix[0] = 127;
-  ip4_networks.push_back(net::NetworkInterface("lo", localhost_prefix, 8));
+  ip4_networks.push_back(
+      net::NetworkInterface("lo", "lo", 0, localhost_prefix, 8));
   content::BrowserThread::PostTask(content::BrowserThread::IO, FROM_HERE,
                                    base::Bind(callback, ip4_networks));
-}
-
-bool IsIpPrefixEqual(const net::IPAddressNumber& ip1,
-                     const net::IPAddressNumber& ip2) {
-  return !ip1.empty() && ip1.size() == ip2.size() &&
-         std::equal(ip1.begin(), ip1.end() - 1, ip2.begin());
 }
 
 }  // namespace
@@ -162,7 +157,7 @@ bool PrivetTrafficDetector::IsPrivetPacket(int rv) const {
     return false;
   const char* substring_begin = kPrivetDeviceTypeDnsString;
   const char* substring_end = substring_begin +
-                              arraysize(kPrivetDeviceTypeDnsString);
+                              arraysize(kPrivetDeviceTypeDnsString) - 1;
   // Check for expected substring, any Privet device must include this.
   return std::search(buffer_begin, buffer_end, substring_begin,
                      substring_end) != buffer_end;

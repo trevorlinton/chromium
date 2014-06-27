@@ -7,8 +7,8 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/version.h"
 #include "chrome/common/chrome_version_info.h"
-#include "chrome/common/extensions/extension.h"
 #include "extensions/common/error_utils.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
 #include "grit/chromium_strings.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -24,17 +24,18 @@ MinimumChromeVersionChecker::MinimumChromeVersionChecker() {
 MinimumChromeVersionChecker::~MinimumChromeVersionChecker() {
 }
 
-bool MinimumChromeVersionChecker::Parse(Extension* extension, string16* error) {
+bool MinimumChromeVersionChecker::Parse(Extension* extension,
+                                        base::string16* error) {
   std::string minimum_version_string;
   if (!extension->manifest()->GetString(keys::kMinimumChromeVersion,
                                         &minimum_version_string)) {
-    *error = ASCIIToUTF16(errors::kInvalidMinimumChromeVersion);
+    *error = base::ASCIIToUTF16(errors::kInvalidMinimumChromeVersion);
     return false;
   }
 
   Version minimum_version(minimum_version_string);
   if (!minimum_version.IsValid()) {
-    *error = ASCIIToUTF16(errors::kInvalidMinimumChromeVersion);
+    *error = base::ASCIIToUTF16(errors::kInvalidMinimumChromeVersion);
     return false;
   }
 

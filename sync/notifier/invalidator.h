@@ -15,7 +15,6 @@
 #include "sync/internal_api/public/base/model_type.h"
 #include "sync/notifier/invalidation_util.h"
 #include "sync/notifier/invalidator_state.h"
-#include "sync/notifier/object_id_invalidation_map.h"
 
 namespace syncer {
 class InvalidationHandler;
@@ -69,10 +68,6 @@ class SYNC_EXPORT Invalidator {
   // associated with |handler|.
   virtual void UnregisterHandler(InvalidationHandler* handler) = 0;
 
-  // Acknowledge that an invalidation for |id| was handled.
-  virtual void Acknowledge(const invalidation::ObjectId& id,
-                           const AckHandle& ack_handle) = 0;
-
   // Returns the current invalidator state.  When called from within
   // InvalidationHandler::OnInvalidatorStateChange(), this must return
   // the updated state.
@@ -83,6 +78,10 @@ class SYNC_EXPORT Invalidator {
   // once.
   virtual void UpdateCredentials(
       const std::string& email, const std::string& token) = 0;
+
+  // Requests internal detailed status to be posted back to the callback.
+  virtual void RequestDetailedStatus(
+      base::Callback<void(const base::DictionaryValue&)> callback) const = 0;
 };
 }  // namespace syncer
 

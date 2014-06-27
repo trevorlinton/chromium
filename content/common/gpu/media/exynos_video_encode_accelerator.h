@@ -11,6 +11,7 @@
 #include "base/memory/linked_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread.h"
+#include "content/common/content_export.h"
 #include "media/video/video_encode_accelerator.h"
 #include "ui/gfx/size.h"
 
@@ -32,17 +33,18 @@ namespace content {
 // V4L2 devices exported by the Multi Format Codec and GScaler hardware blocks
 // on the Exynos platform.  The threading model of this class is the same as the
 // ExynosVideoDecodeAccelerator (from which class this was designed).
-class ExynosVideoEncodeAccelerator : public media::VideoEncodeAccelerator {
+class CONTENT_EXPORT ExynosVideoEncodeAccelerator
+    : public media::VideoEncodeAccelerator {
  public:
-  explicit ExynosVideoEncodeAccelerator(
-      media::VideoEncodeAccelerator::Client* client);
+  ExynosVideoEncodeAccelerator();
   virtual ~ExynosVideoEncodeAccelerator();
 
   // media::VideoEncodeAccelerator implementation.
   virtual void Initialize(media::VideoFrame::Format format,
                           const gfx::Size& input_visible_size,
                           media::VideoCodecProfile output_profile,
-                          uint32 initial_bitrate) OVERRIDE;
+                          uint32 initial_bitrate,
+                          Client* client) OVERRIDE;
   virtual void Encode(const scoped_refptr<media::VideoFrame>& frame,
                       bool force_keyframe) OVERRIDE;
   virtual void UseOutputBitstreamBuffer(
@@ -201,7 +203,7 @@ class ExynosVideoEncodeAccelerator : public media::VideoEncodeAccelerator {
   // To expose client callbacks from VideoEncodeAccelerator.
   // NOTE: all calls to these objects *MUST* be executed on
   // child_message_loop_proxy_.
-  base::WeakPtrFactory<Client> client_ptr_factory_;
+  scoped_ptr<base::WeakPtrFactory<Client> > client_ptr_factory_;
   base::WeakPtr<Client> client_;
 
   //

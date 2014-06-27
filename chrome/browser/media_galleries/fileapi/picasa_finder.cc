@@ -13,8 +13,8 @@
 #include "base/file_util.h"
 #include "base/path_service.h"
 #include "base/strings/string16.h"
-#include "chrome/browser/storage_monitor/storage_info.h"
 #include "chrome/common/media_galleries/picasa_types.h"
+#include "components/storage_monitor/storage_info.h"
 #include "content/public/browser/browser_thread.h"
 
 #if defined(OS_WIN)
@@ -39,7 +39,7 @@ base::FilePath GetCustomPicasaAppDataPathFromWinRegistry() {
     return base::FilePath();
   }
 
-  string16 value;
+  base::string16 value;
   if (key.ReadValue(kPicasaRegistryAppDataPathKey, &value) != ERROR_SUCCESS)
     return base::FilePath();
   if (value.empty())
@@ -86,8 +86,8 @@ void FinishOnOriginalThread(const DeviceIDCallback& callback,
                             const base::FilePath& database_path) {
   std::string device_id;
   if (!database_path.empty()) {
-    device_id = StorageInfo::MakeDeviceId(StorageInfo::PICASA,
-                                          database_path.AsUTF8Unsafe());
+    device_id = storage_monitor::StorageInfo::MakeDeviceId(
+        storage_monitor::StorageInfo::PICASA, database_path.AsUTF8Unsafe());
   }
   callback.Run(device_id);
 }

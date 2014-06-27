@@ -5,8 +5,6 @@
 #ifndef CHROME_BROWSER_CHROMEOS_CHARGER_REPLACE_CHARGER_LINK_DIALOG_H_
 #define CHROME_BROWSER_CHROMEOS_CHARGER_REPLACE_CHARGER_LINK_DIALOG_H_
 
-#include "base/basictypes.h"
-#include "base/compiler_specific.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/web_dialogs/web_dialog_delegate.h"
 
@@ -24,7 +22,7 @@ class ChargerLinkDialog : public ui::WebDialogDelegate {
  private:
   // ui::WebDialogDelegate implementation.
   virtual ui::ModalType GetDialogModalType() const OVERRIDE;
-  virtual string16 GetDialogTitle() const OVERRIDE;
+  virtual base::string16 GetDialogTitle() const OVERRIDE;
   virtual GURL GetDialogContentURL() const OVERRIDE;
   virtual void GetWebUIMessageHandlers(
       std::vector<content::WebUIMessageHandler*>* handlers) const OVERRIDE;

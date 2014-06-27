@@ -5,9 +5,14 @@
 #ifndef UI_VIEWS_LINUX_UI_LINUX_UI_H_
 #define UI_VIEWS_LINUX_UI_LINUX_UI_H_
 
+#include <string>
+
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/ime/linux/linux_input_method_context_factory.h"
+#include "ui/events/x/text_edit_key_bindings_delegate_x11.h"
+#include "ui/gfx/linux_font_delegate.h"
 #include "ui/shell_dialogs/linux_shell_dialog.h"
+#include "ui/views/controls/button/button.h"
 #include "ui/views/linux_ui/status_icon_linux.h"
 #include "ui/views/views_export.h"
 
@@ -23,6 +28,10 @@ class NativeTheme;
 }
 
 namespace views {
+class Border;
+class LabelButton;
+class View;
+class NativeThemeChangeObserver;
 class WindowButtonOrderObserver;
 
 // Adapter class with targets to render like different toolkits. Set by any
@@ -33,7 +42,9 @@ class WindowButtonOrderObserver;
 // complex method that pokes around with dlopen against a libuigtk2.so, a
 // liuigtk3.so, etc.
 class VIEWS_EXPORT LinuxUI : public ui::LinuxInputMethodContextFactory,
-                             public ui::LinuxShellDialog {
+                             public gfx::LinuxFontDelegate,
+                             public ui::LinuxShellDialog,
+                             public ui::TextEditKeyBindingsDelegateX11 {
  public:
   virtual ~LinuxUI() {}
 
@@ -49,8 +60,7 @@ class VIEWS_EXPORT LinuxUI : public ui::LinuxInputMethodContextFactory,
 
   virtual void Initialize() = 0;
 
-  // Returns an themed image per theme_provider.h
-  virtual bool UseNativeTheme() const = 0;
+  // Returns a themed image per theme_provider.h
   virtual gfx::Image GetThemeImageNamed(int id) const = 0;
   virtual bool GetColor(int id, SkColor* color) const = 0;
   virtual bool HasCustomImage(int id) const = 0;
@@ -85,7 +95,18 @@ class VIEWS_EXPORT LinuxUI : public ui::LinuxInputMethodContextFactory,
   // Create a native status icon.
   virtual scoped_ptr<StatusIconLinux> CreateLinuxStatusIcon(
       const gfx::ImageSkia& image,
-      const string16& tool_tip) const = 0;
+      const base::string16& tool_tip) const = 0;
+
+  // Returns the icon for a given content type from the icon theme.
+  // TODO(davidben): Add an observer for the theme changing, so we can drop the
+  // caches.
+  virtual gfx::Image GetIconForContentType(
+      const std::string& content_type, int size) const = 0;
+
+  // Builds a Border which paints the native button style.
+  virtual scoped_ptr<Border> CreateNativeBorder(
+      views::LabelButton* owning_button,
+      scoped_ptr<views::Border> border) = 0;
 
   // Notifies the observer about changes about how window buttons should be
   // laid out. If the order is anything other than the default min,max,close on
@@ -96,6 +117,21 @@ class VIEWS_EXPORT LinuxUI : public ui::LinuxInputMethodContextFactory,
   // Removes the observer from the LinuxUI's list.
   virtual void RemoveWindowButtonOrderObserver(
       WindowButtonOrderObserver* observer) = 0;
+
+  // Notifies the observer when the native theme changes.
+  virtual void AddNativeThemeChangeObserver(
+      NativeThemeChangeObserver* observer) = 0;
+  virtual void RemoveNativeThemeChangeObserver(
+      NativeThemeChangeObserver* observer) = 0;
+
+  // Determines whether the user's window manager is Unity.
+  virtual bool UnityIsRunning() = 0;
+
+  // Notifies the window manager that start up has completed.
+  // Normally Chromium opens a new window on startup and GTK does this
+  // automatically. In case Chromium does not open a new window on startup,
+  // e.g. an existing browser window already exists, this should be called.
+  virtual void NotifyWindowManagerStartupComplete() = 0;
 };
 
 }  // namespace views

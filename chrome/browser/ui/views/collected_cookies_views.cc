@@ -20,7 +20,6 @@
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/collected_cookies_infobar_delegate.h"
-#include "chrome/browser/ui/views/constrained_window_views.h"
 #include "chrome/browser/ui/views/cookie_info_view.h"
 #include "chrome/common/pref_names.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
@@ -29,7 +28,6 @@
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/browser/web_contents_view.h"
 #include "grit/generated_resources.h"
 #include "grit/locale_settings.h"
 #include "grit/theme_resources.h"
@@ -97,9 +95,8 @@ class InfobarView : public views::View {
 #else
     SkColor border_color = color_utils::GetSysSkColor(COLOR_3DSHADOW);
 #endif
-    views::Border* border = views::Border::CreateSolidBorder(
-        kInfobarBorderSize, border_color);
-    content_->set_border(border);
+    content_->SetBorder(
+        views::Border::CreateSolidBorder(kInfobarBorderSize, border_color));
 
     ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
     info_image_ = new views::ImageView();
@@ -112,13 +109,13 @@ class InfobarView : public views::View {
   // |setting| on |domain_name| was created.
   void UpdateVisibility(bool is_visible,
                         ContentSetting setting,
-                        const string16& domain_name) {
+                        const base::string16& domain_name) {
     if (!is_visible) {
       SetVisible(false);
       return;
     }
 
-    string16 label;
+    base::string16 label;
     switch (setting) {
       case CONTENT_SETTING_BLOCK:
         label = l10n_util::GetStringFUTF16(
@@ -154,7 +151,7 @@ class InfobarView : public views::View {
                              views::kRelatedControlSmallHorizontalSpacing));
     content_->AddChildView(info_image_);
     content_->AddChildView(label_);
-    UpdateVisibility(false, CONTENT_SETTING_BLOCK, string16());
+    UpdateVisibility(false, CONTENT_SETTING_BLOCK, base::string16());
   }
 
   // views::View overrides.
@@ -200,6 +197,7 @@ CollectedCookiesViews::CollectedCookiesViews(content::WebContents* web_contents)
       allowed_cookies_tree_(NULL),
       blocked_cookies_tree_(NULL),
       block_allowed_button_(NULL),
+      delete_allowed_button_(NULL),
       allow_blocked_button_(NULL),
       for_session_blocked_button_(NULL),
       cookie_info_view_(NULL),
@@ -215,16 +213,14 @@ CollectedCookiesViews::CollectedCookiesViews(content::WebContents* web_contents)
       web_contents_modal_dialog_manager->delegate();
   DCHECK(modal_delegate);
   window_ = views::Widget::CreateWindowAsFramelessChild(
-      this,
-      web_contents->GetView()->GetNativeView(),
-      modal_delegate->GetWebContentsModalDialogHost()->GetHostView());
+      this, modal_delegate->GetWebContentsModalDialogHost()->GetHostView());
   web_contents_modal_dialog_manager->ShowDialog(window_->GetNativeView());
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // CollectedCookiesViews, views::DialogDelegate implementation:
 
-string16 CollectedCookiesViews::GetWindowTitle() const {
+base::string16 CollectedCookiesViews::GetWindowTitle() const {
   return l10n_util::GetStringUTF16(IDS_COLLECTED_COOKIES_DIALOG_TITLE);
 }
 
@@ -232,7 +228,7 @@ int CollectedCookiesViews::GetDialogButtons() const {
   return ui::DIALOG_BUTTON_CANCEL;
 }
 
-string16 CollectedCookiesViews::GetDialogButtonLabel(
+base::string16 CollectedCookiesViews::GetDialogButtonLabel(
     ui::DialogButton button) const {
   return l10n_util::GetStringUTF16(IDS_CLOSE);
 }
@@ -250,15 +246,6 @@ bool CollectedCookiesViews::Cancel() {
   return true;
 }
 
-// TODO(wittman): Remove this override once we move to the new style frame view
-// on all dialogs.
-views::NonClientFrameView* CollectedCookiesViews::CreateNonClientFrameView(
-    views::Widget* widget) {
-  return CreateConstrainedStyleNonClientFrameView(
-      widget,
-      web_contents_->GetBrowserContext());
-}
-
 ui::ModalType CollectedCookiesViews::GetModalType() const {
 #if defined(USE_ASH)
   return ui::MODAL_TYPE_CHILD;
@@ -272,12 +259,16 @@ ui::ModalType CollectedCookiesViews::GetModalType() const {
 
 void CollectedCookiesViews::ButtonPressed(views::Button* sender,
                                           const ui::Event& event) {
-  if (sender == block_allowed_button_)
+  if (sender == block_allowed_button_) {
     AddContentException(allowed_cookies_tree_, CONTENT_SETTING_BLOCK);
-  else if (sender == allow_blocked_button_)
+  } else if (sender == delete_allowed_button_) {
+    allowed_cookies_tree_model_->DeleteCookieNode(
+        static_cast<CookieTreeNode*>(allowed_cookies_tree_->GetSelectedNode()));
+  } else if (sender == allow_blocked_button_) {
     AddContentException(blocked_cookies_tree_, CONTENT_SETTING_ALLOW);
-  else if (sender == for_session_blocked_button_)
+  } else if (sender == for_session_blocked_button_) {
     AddContentException(blocked_cookies_tree_, CONTENT_SETTING_SESSION_ONLY);
+  }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -331,19 +322,14 @@ void CollectedCookiesViews::Init() {
                         GridLayout::USE_PREF, 0, 0);
 
   layout->StartRow(0, single_column_layout_id);
-  views::TabbedPane* tabbed_pane = NULL;
-  if (DialogDelegate::UseNewStyle()) {
-    tabbed_pane = new views::TabbedPane(false);
-    layout->SetInsets(gfx::Insets(kTabbedPaneTopPadding, 0, 0, 0));
-  } else {
-    tabbed_pane = new views::TabbedPane(true);
-  }
+  views::TabbedPane* tabbed_pane = new views::TabbedPane();
+  layout->SetInsets(gfx::Insets(kTabbedPaneTopPadding, 0, 0, 0));
 
   layout->AddView(tabbed_pane);
   // NOTE: Panes must be added after |tabbed_pane| has been added to its parent.
-  string16 label_allowed = l10n_util::GetStringUTF16(
+  base::string16 label_allowed = l10n_util::GetStringUTF16(
       IDS_COLLECTED_COOKIES_ALLOWED_COOKIES_TAB_LABEL);
-  string16 label_blocked = l10n_util::GetStringUTF16(
+  base::string16 label_blocked = l10n_util::GetStringUTF16(
       IDS_COLLECTED_COOKIES_BLOCKED_COOKIES_TAB_LABEL);
   tabbed_pane->AddTab(label_allowed, CreateAllowedPane());
   tabbed_pane->AddTab(label_blocked, CreateBlockedPane());
@@ -354,9 +340,7 @@ void CollectedCookiesViews::Init() {
   layout->StartRow(0, single_column_layout_id);
   cookie_info_view_ = new CookieInfoView();
   layout->AddView(cookie_info_view_);
-  layout->AddPaddingRow(0, DialogDelegate::UseNewStyle() ?
-                           kCookieInfoBottomPadding :
-                           views::kRelatedControlVerticalSpacing);
+  layout->AddPaddingRow(0, kCookieInfoBottomPadding);
 
   layout->StartRow(0, single_column_layout_id);
   infobar_ = new InfobarView();
@@ -386,7 +370,11 @@ views::View* CollectedCookiesViews::CreateAllowedPane() {
 
   block_allowed_button_ = new views::LabelButton(this,
       l10n_util::GetStringUTF16(IDS_COLLECTED_COOKIES_BLOCK_BUTTON));
-  block_allowed_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
+  block_allowed_button_->SetStyle(views::Button::STYLE_BUTTON);
+
+  delete_allowed_button_ = new views::LabelButton(this,
+      l10n_util::GetStringUTF16(IDS_COOKIES_REMOVE_LABEL));
+  delete_allowed_button_->SetStyle(views::Button::STYLE_BUTTON);
 
   // Create the view that holds all the controls together.  This will be the
   // pane added to the tabbed pane.
@@ -394,10 +382,8 @@ views::View* CollectedCookiesViews::CreateAllowedPane() {
 
   views::View* pane = new views::View();
   GridLayout* layout = GridLayout::CreatePanel(pane);
-  if (DialogDelegate::UseNewStyle()) {
-    layout->SetInsets(kVPanelPadding, views::kButtonHEdgeMarginNew,
-                      kVPanelPadding, views::kButtonHEdgeMarginNew);
-  }
+  layout->SetInsets(kVPanelPadding, views::kButtonHEdgeMarginNew,
+                    kVPanelPadding, views::kButtonHEdgeMarginNew);
   pane->SetLayoutManager(layout);
 
   const int single_column_layout_id = 0;
@@ -405,11 +391,17 @@ views::View* CollectedCookiesViews::CreateAllowedPane() {
   column_set->AddColumn(GridLayout::LEADING, GridLayout::FILL, 1,
                         GridLayout::USE_PREF, 0, 0);
 
+  const int three_columns_layout_id = 1;
+  column_set = layout->AddColumnSet(three_columns_layout_id);
+  column_set->AddColumn(GridLayout::LEADING, GridLayout::CENTER, 0,
+                        GridLayout::USE_PREF, 0, 0);
+  column_set->AddPaddingColumn(0, views::kRelatedControlHorizontalSpacing);
+  column_set->AddColumn(GridLayout::LEADING, GridLayout::CENTER, 0,
+                        GridLayout::USE_PREF, 0, 0);
+
   layout->StartRow(0, single_column_layout_id);
   layout->AddView(allowed_label_);
-  layout->AddPaddingRow(0, DialogDelegate::UseNewStyle() ?
-                           kLabelBottomPadding :
-                           views::kRelatedControlVerticalSpacing);
+  layout->AddPaddingRow(0, kLabelBottomPadding);
 
   layout->StartRow(1, single_column_layout_id);
   layout->AddView(CreateScrollView(allowed_cookies_tree_), 1, 1,
@@ -417,9 +409,9 @@ views::View* CollectedCookiesViews::CreateAllowedPane() {
                   kTreeViewHeight);
   layout->AddPaddingRow(0, views::kRelatedControlVerticalSpacing);
 
-  layout->StartRow(0, single_column_layout_id);
-  layout->AddView(block_allowed_button_, 1, 1, GridLayout::LEADING,
-                  GridLayout::CENTER);
+  layout->StartRow(0, three_columns_layout_id);
+  layout->AddView(block_allowed_button_);
+  layout->AddView(delete_allowed_button_);
 
   return pane;
 }
@@ -452,10 +444,10 @@ views::View* CollectedCookiesViews::CreateBlockedPane() {
 
   allow_blocked_button_ = new views::LabelButton(this,
       l10n_util::GetStringUTF16(IDS_COLLECTED_COOKIES_ALLOW_BUTTON));
-  allow_blocked_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
+  allow_blocked_button_->SetStyle(views::Button::STYLE_BUTTON);
   for_session_blocked_button_ = new views::LabelButton(this,
       l10n_util::GetStringUTF16(IDS_COLLECTED_COOKIES_SESSION_ONLY_BUTTON));
-  for_session_blocked_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
+  for_session_blocked_button_->SetStyle(views::Button::STYLE_BUTTON);
 
   // Create the view that holds all the controls together.  This will be the
   // pane added to the tabbed pane.
@@ -463,10 +455,8 @@ views::View* CollectedCookiesViews::CreateBlockedPane() {
 
   views::View* pane = new views::View();
   GridLayout* layout = GridLayout::CreatePanel(pane);
-  if (DialogDelegate::UseNewStyle()) {
-    layout->SetInsets(kVPanelPadding, views::kButtonHEdgeMarginNew,
-                      kVPanelPadding, views::kButtonHEdgeMarginNew);
-  }
+  layout->SetInsets(kVPanelPadding, views::kButtonHEdgeMarginNew,
+                    kVPanelPadding, views::kButtonHEdgeMarginNew);
   pane->SetLayoutManager(layout);
 
   const int single_column_layout_id = 0;
@@ -484,9 +474,7 @@ views::View* CollectedCookiesViews::CreateBlockedPane() {
 
   layout->StartRow(0, single_column_layout_id);
   layout->AddView(blocked_label_, 1, 1, GridLayout::FILL, GridLayout::FILL);
-  layout->AddPaddingRow(0, DialogDelegate::UseNewStyle() ?
-                           kLabelBottomPadding :
-                           views::kRelatedControlVerticalSpacing);
+  layout->AddPaddingRow(0, kLabelBottomPadding);
 
   layout->StartRow(1, single_column_layout_id);
   layout->AddView(
@@ -502,15 +490,11 @@ views::View* CollectedCookiesViews::CreateBlockedPane() {
 }
 
 views::View* CollectedCookiesViews::CreateScrollView(views::TreeView* pane) {
-  if (DialogDelegate::UseNewStyle()) {
-    views::ScrollView* scroll_view = new views::ScrollView();
-    scroll_view->SetContents(pane);
-    scroll_view->set_border(
-        views::Border::CreateSolidBorder(1, kCookiesBorderColor));
-    return scroll_view;
-  } else {
-    return pane->CreateParentIfNecessary();
-  }
+  views::ScrollView* scroll_view = new views::ScrollView();
+  scroll_view->SetContents(pane);
+  scroll_view->SetBorder(
+      views::Border::CreateSolidBorder(1, kCookiesBorderColor));
+  return scroll_view;
 }
 
 void CollectedCookiesViews::EnableControls() {
@@ -525,6 +509,7 @@ void CollectedCookiesViews::EnableControls() {
     }
   }
   block_allowed_button_->SetEnabled(enable_allowed_buttons);
+  delete_allowed_button_->SetEnabled(node != NULL);
 
   bool enable_blocked_buttons = false;
   node = blocked_cookies_tree_->GetSelectedNode();

@@ -134,12 +134,12 @@ IN_PROC_BROWSER_TEST_F(RedirectTest, ClientEmptyReferer) {
   base::ScopedTempDir temp_directory;
   ASSERT_TRUE(temp_directory.CreateUniqueTempDir());
   base::FilePath temp_file;
-  ASSERT_TRUE(file_util::CreateTemporaryFileInDir(temp_directory.path(),
-                                                  &temp_file));
+  ASSERT_TRUE(base::CreateTemporaryFileInDir(temp_directory.path(),
+                                             &temp_file));
   ASSERT_EQ(static_cast<int>(file_redirect_contents.size()),
-            file_util::WriteFile(temp_file,
-                                 file_redirect_contents.data(),
-                                 file_redirect_contents.size()));
+            base::WriteFile(temp_file,
+                            file_redirect_contents.data(),
+                            file_redirect_contents.size()));
 
   // Navigate to the file through the browser. The client redirect will appear
   // as two page visits in the browser.
@@ -169,7 +169,7 @@ IN_PROC_BROWSER_TEST_F(RedirectTest, ClientCancelled) {
   // as client redirect and the redirect will be recoreded, which can cause
   // this test failed.
   content::SimulateMouseClick(web_contents, 0,
-      WebKit::WebMouseEvent::ButtonLeft);
+      blink::WebMouseEvent::ButtonLeft);
   navigation_observer.Wait();
 
   std::vector<GURL> redirects = GetRedirects(first_url);
@@ -236,7 +236,7 @@ IN_PROC_BROWSER_TEST_F(RedirectTest, NoHttpToFile) {
   ui_test_utils::NavigateToURL(browser(), initial_url);
   // We make sure the title doesn't match the title from the file, because the
   // nav should not have taken place.
-  EXPECT_NE(ASCIIToUTF16("File!"),
+  EXPECT_NE(base::ASCIIToUTF16("File!"),
             browser()->tab_strip_model()->GetActiveWebContents()->GetTitle());
 }
 
@@ -291,7 +291,7 @@ IN_PROC_BROWSER_TEST_F(RedirectTest,
 
   // Check to make sure the navigation did in fact take place and we are
   // at the expected page.
-  EXPECT_EQ(ASCIIToUTF16("Title Of Awesomeness"),
+  EXPECT_EQ(base::ASCIIToUTF16("Title Of Awesomeness"),
             browser()->tab_strip_model()->GetActiveWebContents()->GetTitle());
 
   bool final_navigation_not_redirect = true;

@@ -8,18 +8,18 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
-#include "chrome/browser/extensions/extension_prefs.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/extensions/extension_basic_info.h"
 #include "chrome/browser/ui/webui/extensions/extension_icon_source.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_icon_set.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
+#include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
 #include "grit/browser_resources.h"
 #include "grit/generated_resources.h"
 
@@ -57,14 +57,15 @@ GURL ExtensionInfoUI::GetURL(const std::string& extension_id) {
 
 void ExtensionInfoUI::AddExtensionDataToSource(
     const std::string& extension_id) {
-  ExtensionService* extension_service = ExtensionSystem::Get(
-      Profile::FromWebUI(web_ui()))->extension_service();
+  Profile* profile = Profile::FromWebUI(web_ui());
+  ExtensionService* extension_service =
+      ExtensionSystem::Get(profile)->extension_service();
   const Extension* extension =
       extension_service->extensions()->GetByID(extension_id);
   if (!extension)
     return;
 
-  DictionaryValue extension_data;
+  base::DictionaryValue extension_data;
   GetExtensionBasicInfo(extension, true, &extension_data);
   source_->AddLocalizedStrings(extension_data);
 
@@ -74,10 +75,10 @@ void ExtensionInfoUI::AddExtensionDataToSource(
                                       extension_misc::EXTENSION_ICON_MEDIUM,
                                       ExtensionIconSet::MATCH_BIGGER,
                                       false, NULL);
-  source_->AddString("icon", UTF8ToUTF16(icon.spec()));
+  source_->AddString("icon", base::UTF8ToUTF16(icon.spec()));
   // Set the last update time (the install time).
-  base::Time install_time = extension_service->extension_prefs()->
-      GetInstallTime(extension_id);
+  base::Time install_time =
+      ExtensionPrefs::Get(profile)->GetInstallTime(extension_id);
   source_->AddString("installTime", base::TimeFormatShortDate(install_time));
 }
 

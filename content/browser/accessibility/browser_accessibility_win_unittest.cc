@@ -11,6 +11,7 @@
 #include "content/browser/accessibility/browser_accessibility_manager_win.h"
 #include "content/browser/accessibility/browser_accessibility_state_impl.h"
 #include "content/browser/accessibility/browser_accessibility_win.h"
+#include "content/browser/renderer_host/legacy_render_widget_host_win.h"
 #include "content/common/accessibility_messages.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/win/atl_module.h"
@@ -110,31 +111,31 @@ void BrowserAccessibilityTest::SetUp() {
 // Test that BrowserAccessibilityManager correctly releases the tree of
 // BrowserAccessibility instances upon delete.
 TEST_F(BrowserAccessibilityTest, TestNoLeaks) {
-  // Create AccessibilityNodeData objects for a simple document tree,
+  // Create ui::AXNodeData objects for a simple document tree,
   // representing the accessibility information used to initialize
   // BrowserAccessibilityManager.
-  AccessibilityNodeData button;
+  ui::AXNodeData button;
   button.id = 2;
   button.SetName("Button");
-  button.role = WebKit::WebAXRoleButton;
+  button.role = ui::AX_ROLE_BUTTON;
   button.state = 0;
 
-  AccessibilityNodeData checkbox;
+  ui::AXNodeData checkbox;
   checkbox.id = 3;
   checkbox.SetName("Checkbox");
-  checkbox.role = WebKit::WebAXRoleCheckBox;
+  checkbox.role = ui::AX_ROLE_CHECK_BOX;
   checkbox.state = 0;
 
-  AccessibilityNodeData root;
+  ui::AXNodeData root;
   root.id = 1;
   root.SetName("Document");
-  root.role = WebKit::WebAXRoleRootWebArea;
+  root.role = ui::AX_ROLE_ROOT_WEB_AREA;
   root.state = 0;
   root.child_ids.push_back(2);
   root.child_ids.push_back(3);
 
   // Construct a BrowserAccessibilityManager with this
-  // AccessibilityNodeData tree and a factory for an instance-counting
+  // ui::AXNodeData tree and a factory for an instance-counting
   // BrowserAccessibility, and ensure that exactly 3 instances were
   // created. Note that the manager takes ownership of the factory.
   CountedBrowserAccessibility::reset();
@@ -179,24 +180,24 @@ TEST_F(BrowserAccessibilityTest, TestNoLeaks) {
 }
 
 TEST_F(BrowserAccessibilityTest, TestChildrenChange) {
-  // Create AccessibilityNodeData objects for a simple document tree,
+  // Create ui::AXNodeData objects for a simple document tree,
   // representing the accessibility information used to initialize
   // BrowserAccessibilityManager.
-  AccessibilityNodeData text;
+  ui::AXNodeData text;
   text.id = 2;
-  text.role = WebKit::WebAXRoleStaticText;
+  text.role = ui::AX_ROLE_STATIC_TEXT;
   text.SetName("old text");
   text.state = 0;
 
-  AccessibilityNodeData root;
+  ui::AXNodeData root;
   root.id = 1;
   root.SetName("Document");
-  root.role = WebKit::WebAXRoleRootWebArea;
+  root.role = ui::AX_ROLE_ROOT_WEB_AREA;
   root.state = 0;
   root.child_ids.push_back(2);
 
   // Construct a BrowserAccessibilityManager with this
-  // AccessibilityNodeData tree and a factory for an instance-counting
+  // ui::AXNodeData tree and a factory for an instance-counting
   // BrowserAccessibility.
   CountedBrowserAccessibility::reset();
   scoped_ptr<BrowserAccessibilityManager> manager(
@@ -220,20 +221,20 @@ TEST_F(BrowserAccessibilityTest, TestChildrenChange) {
   base::win::ScopedBstr name;
   hr = text_accessible->get_accName(childid_self, name.Receive());
   ASSERT_EQ(S_OK, hr);
-  EXPECT_EQ(L"old text", string16(name));
+  EXPECT_EQ(L"old text", base::string16(name));
   name.Reset();
 
   text_dispatch.Release();
   text_accessible.Release();
 
   // Notify the BrowserAccessibilityManager that the text child has changed.
-  AccessibilityNodeData text2;
+  ui::AXNodeData text2;
   text2.id = 2;
-  text2.role = WebKit::WebAXRoleStaticText;
+  text2.role = ui::AX_ROLE_STATIC_TEXT;
   text2.SetName("new text");
   text2.SetName("old text");
   AccessibilityHostMsg_EventParams param;
-  param.event_type = WebKit::WebAXEventChildrenChanged;
+  param.event_type = ui::AX_EVENT_CHILDREN_CHANGED;
   param.nodes.push_back(text2);
   param.id = text2.id;
   std::vector<AccessibilityHostMsg_EventParams> events;
@@ -251,7 +252,7 @@ TEST_F(BrowserAccessibilityTest, TestChildrenChange) {
 
   hr = text_accessible->get_accName(childid_self, name.Receive());
   ASSERT_EQ(S_OK, hr);
-  EXPECT_EQ(L"new text", string16(name));
+  EXPECT_EQ(L"new text", base::string16(name));
 
   text_dispatch.Release();
   text_accessible.Release();
@@ -263,35 +264,35 @@ TEST_F(BrowserAccessibilityTest, TestChildrenChange) {
 }
 
 TEST_F(BrowserAccessibilityTest, TestChildrenChangeNoLeaks) {
-  // Create AccessibilityNodeData objects for a simple document tree,
+  // Create ui::AXNodeData objects for a simple document tree,
   // representing the accessibility information used to initialize
   // BrowserAccessibilityManager.
-  AccessibilityNodeData div;
+  ui::AXNodeData div;
   div.id = 2;
-  div.role = WebKit::WebAXRoleGroup;
+  div.role = ui::AX_ROLE_GROUP;
   div.state = 0;
 
-  AccessibilityNodeData text3;
+  ui::AXNodeData text3;
   text3.id = 3;
-  text3.role = WebKit::WebAXRoleStaticText;
+  text3.role = ui::AX_ROLE_STATIC_TEXT;
   text3.state = 0;
 
-  AccessibilityNodeData text4;
+  ui::AXNodeData text4;
   text4.id = 4;
-  text4.role = WebKit::WebAXRoleStaticText;
+  text4.role = ui::AX_ROLE_STATIC_TEXT;
   text4.state = 0;
 
   div.child_ids.push_back(3);
   div.child_ids.push_back(4);
 
-  AccessibilityNodeData root;
+  ui::AXNodeData root;
   root.id = 1;
-  root.role = WebKit::WebAXRoleRootWebArea;
+  root.role = ui::AX_ROLE_ROOT_WEB_AREA;
   root.state = 0;
   root.child_ids.push_back(2);
 
   // Construct a BrowserAccessibilityManager with this
-  // AccessibilityNodeData tree and a factory for an instance-counting
+  // ui::AXNodeData tree and a factory for an instance-counting
   // BrowserAccessibility and ensure that exactly 4 instances were
   // created. Note that the manager takes ownership of the factory.
   CountedBrowserAccessibility::reset();
@@ -305,7 +306,7 @@ TEST_F(BrowserAccessibilityTest, TestChildrenChangeNoLeaks) {
   // were removed and ensure that only one BrowserAccessibility instance exists.
   root.child_ids.clear();
   AccessibilityHostMsg_EventParams param;
-  param.event_type = WebKit::WebAXEventChildrenChanged;
+  param.event_type = ui::AX_EVENT_CHILDREN_CHANGED;
   param.nodes.push_back(root);
   param.id = root.id;
   std::vector<AccessibilityHostMsg_EventParams> events;
@@ -322,19 +323,19 @@ TEST_F(BrowserAccessibilityTest, TestChildrenChangeNoLeaks) {
 TEST_F(BrowserAccessibilityTest, TestTextBoundaries) {
   std::string text1_value = "One two three.\nFour five six.";
 
-  AccessibilityNodeData text1;
+  ui::AXNodeData text1;
   text1.id = 11;
-  text1.role = WebKit::WebAXRoleTextField;
+  text1.role = ui::AX_ROLE_TEXT_FIELD;
   text1.state = 0;
-  text1.AddStringAttribute(AccessibilityNodeData::ATTR_VALUE, text1_value);
+  text1.AddStringAttribute(ui::AX_ATTR_VALUE, text1_value);
   std::vector<int32> line_breaks;
   line_breaks.push_back(15);
   text1.AddIntListAttribute(
-      AccessibilityNodeData::ATTR_LINE_BREAKS, line_breaks);
+      ui::AX_ATTR_LINE_BREAKS, line_breaks);
 
-  AccessibilityNodeData root;
+  ui::AXNodeData root;
   root.id = 1;
-  root.role = WebKit::WebAXRoleRootWebArea;
+  root.role = ui::AX_ROLE_ROOT_WEB_AREA;
   root.state = 0;
   root.child_ids.push_back(11);
 
@@ -348,14 +349,14 @@ TEST_F(BrowserAccessibilityTest, TestTextBoundaries) {
   BrowserAccessibilityWin* root_obj =
       manager->GetRoot()->ToBrowserAccessibilityWin();
   BrowserAccessibilityWin* text1_obj =
-      root_obj->GetChild(0)->ToBrowserAccessibilityWin();
+      root_obj->PlatformGetChild(0)->ToBrowserAccessibilityWin();
 
   long text1_len;
   ASSERT_EQ(S_OK, text1_obj->get_nCharacters(&text1_len));
 
   base::win::ScopedBstr text;
   ASSERT_EQ(S_OK, text1_obj->get_text(0, text1_len, text.Receive()));
-  ASSERT_EQ(text1_value, base::UTF16ToUTF8(string16(text)));
+  ASSERT_EQ(text1_value, base::UTF16ToUTF8(base::string16(text)));
   text.Reset();
 
   ASSERT_EQ(S_OK, text1_obj->get_text(0, 4, text.Receive()));
@@ -419,22 +420,22 @@ TEST_F(BrowserAccessibilityTest, TestSimpleHypertext) {
   const std::string text1_name = "One two three.";
   const std::string text2_name = " Four five six.";
 
-  AccessibilityNodeData text1;
+  ui::AXNodeData text1;
   text1.id = 11;
-  text1.role = WebKit::WebAXRoleStaticText;
-  text1.state = 1 << WebKit::WebAXStateReadonly;
+  text1.role = ui::AX_ROLE_STATIC_TEXT;
+  text1.state = 1 << ui::AX_STATE_READ_ONLY;
   text1.SetName(text1_name);
 
-  AccessibilityNodeData text2;
+  ui::AXNodeData text2;
   text2.id = 12;
-  text2.role = WebKit::WebAXRoleStaticText;
-  text2.state = 1 << WebKit::WebAXStateReadonly;
+  text2.role = ui::AX_ROLE_STATIC_TEXT;
+  text2.state = 1 << ui::AX_STATE_READ_ONLY;
   text2.SetName(text2_name);
 
-  AccessibilityNodeData root;
+  ui::AXNodeData root;
   root.id = 1;
-  root.role = WebKit::WebAXRoleRootWebArea;
-  root.state = 1 << WebKit::WebAXStateReadonly;
+  root.role = ui::AX_ROLE_ROOT_WEB_AREA;
+  root.state = 1 << ui::AX_STATE_READ_ONLY;
   root.child_ids.push_back(11);
   root.child_ids.push_back(12);
 
@@ -453,7 +454,7 @@ TEST_F(BrowserAccessibilityTest, TestSimpleHypertext) {
 
   base::win::ScopedBstr text;
   ASSERT_EQ(S_OK, root_obj->get_text(0, text_len, text.Receive()));
-  EXPECT_EQ(text1_name + text2_name, base::UTF16ToUTF8(string16(text)));
+  EXPECT_EQ(text1_name + text2_name, base::UTF16ToUTF8(base::string16(text)));
 
   long hyperlink_count;
   ASSERT_EQ(S_OK, root_obj->get_nHyperlinks(&hyperlink_count));
@@ -487,42 +488,42 @@ TEST_F(BrowserAccessibilityTest, TestComplexHypertext) {
   const std::string button1_text_name = "red";
   const std::string link1_text_name = "blue";
 
-  AccessibilityNodeData text1;
+  ui::AXNodeData text1;
   text1.id = 11;
-  text1.role = WebKit::WebAXRoleStaticText;
-  text1.state = 1 << WebKit::WebAXStateReadonly;
+  text1.role = ui::AX_ROLE_STATIC_TEXT;
+  text1.state = 1 << ui::AX_STATE_READ_ONLY;
   text1.SetName(text1_name);
 
-  AccessibilityNodeData text2;
+  ui::AXNodeData text2;
   text2.id = 12;
-  text2.role = WebKit::WebAXRoleStaticText;
-  text2.state = 1 << WebKit::WebAXStateReadonly;
+  text2.role = ui::AX_ROLE_STATIC_TEXT;
+  text2.state = 1 << ui::AX_STATE_READ_ONLY;
   text2.SetName(text2_name);
 
-  AccessibilityNodeData button1, button1_text;
+  ui::AXNodeData button1, button1_text;
   button1.id = 13;
   button1_text.id = 15;
   button1_text.SetName(button1_text_name);
-  button1.role = WebKit::WebAXRoleButton;
-  button1_text.role = WebKit::WebAXRoleStaticText;
-  button1.state = 1 << WebKit::WebAXStateReadonly;
-  button1_text.state = 1 << WebKit::WebAXStateReadonly;
+  button1.role = ui::AX_ROLE_BUTTON;
+  button1_text.role = ui::AX_ROLE_STATIC_TEXT;
+  button1.state = 1 << ui::AX_STATE_READ_ONLY;
+  button1_text.state = 1 << ui::AX_STATE_READ_ONLY;
   button1.child_ids.push_back(15);
 
-  AccessibilityNodeData link1, link1_text;
+  ui::AXNodeData link1, link1_text;
   link1.id = 14;
   link1_text.id = 16;
   link1_text.SetName(link1_text_name);
-  link1.role = WebKit::WebAXRoleLink;
-  link1_text.role = WebKit::WebAXRoleStaticText;
-  link1.state = 1 << WebKit::WebAXStateReadonly;
-  link1_text.state = 1 << WebKit::WebAXStateReadonly;
+  link1.role = ui::AX_ROLE_LINK;
+  link1_text.role = ui::AX_ROLE_STATIC_TEXT;
+  link1.state = 1 << ui::AX_STATE_READ_ONLY;
+  link1_text.state = 1 << ui::AX_STATE_READ_ONLY;
   link1.child_ids.push_back(16);
 
-  AccessibilityNodeData root;
+  ui::AXNodeData root;
   root.id = 1;
-  root.role = WebKit::WebAXRoleRootWebArea;
-  root.state = 1 << WebKit::WebAXStateReadonly;
+  root.role = ui::AX_ROLE_ROOT_WEB_AREA;
+  root.state = 1 << ui::AX_STATE_READ_ONLY;
   root.child_ids.push_back(11);
   root.child_ids.push_back(13);
   root.child_ids.push_back(12);
@@ -549,7 +550,7 @@ TEST_F(BrowserAccessibilityTest, TestComplexHypertext) {
   const std::string embed = base::UTF16ToUTF8(
       BrowserAccessibilityWin::kEmbeddedCharacter);
   EXPECT_EQ(text1_name + embed + text2_name + embed,
-            UTF16ToUTF8(string16(text)));
+            base::UTF16ToUTF8(base::string16(text)));
   text.Reset();
 
   long hyperlink_count;
@@ -567,7 +568,7 @@ TEST_F(BrowserAccessibilityTest, TestComplexHypertext) {
             hyperlink.QueryInterface<IAccessibleText>(hypertext.Receive()));
   EXPECT_EQ(S_OK, hypertext->get_text(0, 3, text.Receive()));
   EXPECT_STREQ(button1_text_name.c_str(),
-               base::UTF16ToUTF8(string16(text)).c_str());
+               base::UTF16ToUTF8(base::string16(text)).c_str());
   text.Reset();
   hyperlink.Release();
   hypertext.Release();
@@ -577,7 +578,7 @@ TEST_F(BrowserAccessibilityTest, TestComplexHypertext) {
             hyperlink.QueryInterface<IAccessibleText>(hypertext.Receive()));
   EXPECT_EQ(S_OK, hypertext->get_text(0, 4, text.Receive()));
   EXPECT_STREQ(link1_text_name.c_str(),
-               base::UTF16ToUTF8(string16(text)).c_str());
+               base::UTF16ToUTF8(base::string16(text)).c_str());
   text.Reset();
   hyperlink.Release();
   hypertext.Release();
@@ -602,12 +603,14 @@ TEST_F(BrowserAccessibilityTest, TestCreateEmptyDocument) {
   // Try creating an empty document with busy state. Readonly is
   // set automatically.
   CountedBrowserAccessibility::reset();
-  const int32 busy_state = 1 << WebKit::WebAXStateBusy;
-  const int32 readonly_state = 1 << WebKit::WebAXStateReadonly;
-  const int32 enabled_state = 1 << WebKit::WebAXStateEnabled;
+  const int32 busy_state = 1 << ui::AX_STATE_BUSY;
+  const int32 readonly_state = 1 << ui::AX_STATE_READ_ONLY;
+  const int32 enabled_state = 1 << ui::AX_STATE_ENABLED;
+  scoped_ptr<content::LegacyRenderWidgetHostHWND> accessible_hwnd(
+      content::LegacyRenderWidgetHostHWND::Create(GetDesktopWindow()));
   scoped_ptr<BrowserAccessibilityManager> manager(
       new BrowserAccessibilityManagerWin(
-          GetDesktopWindow(),
+          accessible_hwnd.get(),
           NULL,
           BrowserAccessibilityManagerWin::GetEmptyDocument(),
           NULL,
@@ -616,24 +619,24 @@ TEST_F(BrowserAccessibilityTest, TestCreateEmptyDocument) {
   // Verify the root is as we expect by default.
   BrowserAccessibility* root = manager->GetRoot();
   EXPECT_EQ(0, root->renderer_id());
-  EXPECT_EQ(WebKit::WebAXRoleRootWebArea, root->role());
+  EXPECT_EQ(ui::AX_ROLE_ROOT_WEB_AREA, root->role());
   EXPECT_EQ(busy_state | readonly_state | enabled_state, root->state());
 
   // Tree with a child textfield.
-  AccessibilityNodeData tree1_1;
+  ui::AXNodeData tree1_1;
   tree1_1.id = 1;
-  tree1_1.role = WebKit::WebAXRoleRootWebArea;
+  tree1_1.role = ui::AX_ROLE_ROOT_WEB_AREA;
   tree1_1.child_ids.push_back(2);
 
-  AccessibilityNodeData tree1_2;
+  ui::AXNodeData tree1_2;
   tree1_2.id = 2;
-  tree1_2.role = WebKit::WebAXRoleTextField;
+  tree1_2.role = ui::AX_ROLE_TEXT_FIELD;
 
   // Process a load complete.
   std::vector<AccessibilityHostMsg_EventParams> params;
   params.push_back(AccessibilityHostMsg_EventParams());
   AccessibilityHostMsg_EventParams* msg = &params[0];
-  msg->event_type = WebKit::WebAXEventLoadComplete;
+  msg->event_type = ui::AX_EVENT_LOAD_COMPLETE;
   msg->nodes.push_back(tree1_1);
   msg->nodes.push_back(tree1_2);
   msg->id = tree1_1.id;
@@ -646,18 +649,18 @@ TEST_F(BrowserAccessibilityTest, TestCreateEmptyDocument) {
   EXPECT_NE(root, manager->GetRoot());
 
   // And the proper child remains.
-  EXPECT_EQ(WebKit::WebAXRoleTextField, acc1_2->role());
+  EXPECT_EQ(ui::AX_ROLE_TEXT_FIELD, acc1_2->role());
   EXPECT_EQ(2, acc1_2->renderer_id());
 
   // Tree with a child button.
-  AccessibilityNodeData tree2_1;
+  ui::AXNodeData tree2_1;
   tree2_1.id = 1;
-  tree2_1.role = WebKit::WebAXRoleRootWebArea;
+  tree2_1.role = ui::AX_ROLE_ROOT_WEB_AREA;
   tree2_1.child_ids.push_back(3);
 
-  AccessibilityNodeData tree2_2;
+  ui::AXNodeData tree2_2;
   tree2_2.id = 3;
-  tree2_2.role = WebKit::WebAXRoleButton;
+  tree2_2.role = ui::AX_ROLE_BUTTON;
 
   msg->nodes.clear();
   msg->nodes.push_back(tree2_1);
@@ -673,7 +676,7 @@ TEST_F(BrowserAccessibilityTest, TestCreateEmptyDocument) {
   EXPECT_NE(root, manager->GetRoot());
 
   // And the new child exists.
-  EXPECT_EQ(WebKit::WebAXRoleButton, acc2_2->role());
+  EXPECT_EQ(ui::AX_ROLE_BUTTON, acc2_2->role());
   EXPECT_EQ(3, acc2_2->renderer_id());
 
   // Ensure we properly cleaned up.
@@ -681,7 +684,6 @@ TEST_F(BrowserAccessibilityTest, TestCreateEmptyDocument) {
   ASSERT_EQ(0, CountedBrowserAccessibility::num_instances());
 }
 
-#if defined(USE_AURA)
 TEST(BrowserAccessibilityManagerWinTest, TestAccessibleHWND) {
   HWND desktop_hwnd = GetDesktopWindow();
   base::win::ScopedComPtr<IAccessible> desktop_hwnd_iaccessible;
@@ -690,9 +692,12 @@ TEST(BrowserAccessibilityManagerWinTest, TestAccessibleHWND) {
       IID_IAccessible,
       reinterpret_cast<void**>(desktop_hwnd_iaccessible.Receive())));
 
+  scoped_ptr<content::LegacyRenderWidgetHostHWND> accessible_hwnd(
+      content::LegacyRenderWidgetHostHWND::Create(GetDesktopWindow()));
+
   scoped_ptr<BrowserAccessibilityManagerWin> manager(
       new BrowserAccessibilityManagerWin(
-          desktop_hwnd,
+          accessible_hwnd.get(),
           desktop_hwnd_iaccessible,
           BrowserAccessibilityManagerWin::GetEmptyDocument(),
           NULL));
@@ -715,9 +720,11 @@ TEST(BrowserAccessibilityManagerWinTest, TestAccessibleHWND) {
   ASSERT_EQ(NULL, manager->parent_hwnd());
 
   // Now create it again.
+  accessible_hwnd = content::LegacyRenderWidgetHostHWND::Create(
+      GetDesktopWindow());
   manager.reset(
       new BrowserAccessibilityManagerWin(
-          desktop_hwnd,
+          accessible_hwnd.get(),
           desktop_hwnd_iaccessible,
           BrowserAccessibilityManagerWin::GetEmptyDocument(),
           NULL));
@@ -729,6 +736,5 @@ TEST(BrowserAccessibilityManagerWinTest, TestAccessibleHWND) {
   // crash on destruction (to be caught by SyzyASAN or other tools).
   manager.reset(NULL);
 }
-#endif
 
 }  // namespace content

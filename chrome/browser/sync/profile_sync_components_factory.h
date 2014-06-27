@@ -8,13 +8,14 @@
 #include <string>
 
 #include "base/memory/weak_ptr.h"
-#include "chrome/browser/sync/glue/data_type_controller.h"
-#include "chrome/browser/sync/glue/data_type_error_handler.h"
+#include "components/sync_driver/data_type_controller.h"
+#include "components/sync_driver/data_type_error_handler.h"
 #include "sync/api/sync_merge_result.h"
 #include "sync/internal_api/public/util/unrecoverable_error_handler.h"
 #include "sync/internal_api/public/util/weak_handle.h"
 
 class PasswordStore;
+class Profile;
 class ProfileSyncService;
 class WebDataService;
 
@@ -29,6 +30,10 @@ class GenericChangeProcessor;
 class SharedChangeProcessor;
 class SyncBackendHost;
 class DataTypeErrorHandler;
+}  // namespace browser_sync
+
+namespace sync_driver {
+class SyncPrefs;
 }
 
 namespace syncer {
@@ -83,6 +88,12 @@ class ProfileSyncComponentsFactory {
       browser_sync::FailedDataTypesHandler* failed_data_types_handler) = 0;
 
   // Creating this in the factory helps us mock it out in testing.
+  virtual browser_sync::SyncBackendHost* CreateSyncBackendHost(
+      const std::string& name,
+      Profile* profile,
+      const base::WeakPtr<sync_driver::SyncPrefs>& sync_prefs) = 0;
+
+  // Creating this in the factory helps us mock it out in testing.
   virtual browser_sync::GenericChangeProcessor* CreateGenericChangeProcessor(
       ProfileSyncService* profile_sync_service,
       browser_sync::DataTypeErrorHandler* error_handler,
@@ -101,10 +112,6 @@ class ProfileSyncComponentsFactory {
   // Legacy datatypes that need to be converted to the SyncableService API.
   virtual SyncComponents CreateBookmarkSyncComponents(
       ProfileSyncService* profile_sync_service,
-      browser_sync::DataTypeErrorHandler* error_handler) = 0;
-  virtual SyncComponents CreatePasswordSyncComponents(
-      ProfileSyncService* profile_sync_service,
-      PasswordStore* password_store,
       browser_sync::DataTypeErrorHandler* error_handler) = 0;
   virtual SyncComponents CreateTypedUrlSyncComponents(
       ProfileSyncService* profile_sync_service,

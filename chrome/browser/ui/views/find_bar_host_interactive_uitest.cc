@@ -26,6 +26,7 @@
 #include "ui/views/view.h"
 #include "ui/views/views_delegate.h"
 
+using base::ASCIIToUTF16;
 using content::WebContents;
 
 namespace {
@@ -38,12 +39,12 @@ class FindInPageTest : public InProcessBrowserTest {
     FindBarHost::disable_animations_during_testing_ = true;
   }
 
-  string16 GetFindBarText() {
+  base::string16 GetFindBarText() {
     FindBar* find_bar = browser()->GetFindBarController()->find_bar();
     return find_bar->GetFindText();
   }
 
-  string16 GetFindBarSelectedText() {
+  base::string16 GetFindBarSelectedText() {
     FindBarTesting* find_bar =
         browser()->GetFindBarController()->find_bar()->GetFindBarTesting();
     return find_bar->GetFindSelectedText();
@@ -278,15 +279,13 @@ IN_PROC_BROWSER_TEST_F(FindInPageTest, MAYBE_FocusRestoreOnTabSwitch) {
   EXPECT_TRUE(ui_test_utils::IsViewFocused(browser(), VIEW_ID_OMNIBOX));
 }
 
+// FindInPage on Mac doesn't use prepopulated values. Search there is global.
+#if !defined(OS_MACOSX) && !defined(USE_AURA)
 // Flaky because the test server fails to start? See: http://crbug.com/96594.
 // This tests that whenever you clear values from the Find box and close it that
 // it respects that and doesn't show you the last search, as reported in bug:
 // http://crbug.com/40121. For Aura see bug http://crbug.com/292299.
 IN_PROC_BROWSER_TEST_F(FindInPageTest, PrepopulateRespectBlank) {
-#if defined(OS_MACOSX) || defined(USE_AURA)
-  // FindInPage on Mac doesn't use prepopulated values. Search there is global.
-  return;
-#endif
   ASSERT_TRUE(test_server()->Start());
 
   // Make sure Chrome is in the foreground, otherwise sending input
@@ -312,7 +311,7 @@ IN_PROC_BROWSER_TEST_F(FindInPageTest, PrepopulateRespectBlank) {
       browser(), ui::VKEY_BACK, false, false, false, false));
 
   // Validate we have cleared the text.
-  EXPECT_EQ(string16(), GetFindBarText());
+  EXPECT_EQ(base::string16(), GetFindBarText());
 
   // Close the Find box.
   ASSERT_TRUE(ui_test_utils::SendKeyPressSync(
@@ -323,7 +322,7 @@ IN_PROC_BROWSER_TEST_F(FindInPageTest, PrepopulateRespectBlank) {
 
   // After the Find box has been reopened, it should not have been prepopulated
   // with "a" again.
-  EXPECT_EQ(string16(), GetFindBarText());
+  EXPECT_EQ(base::string16(), GetFindBarText());
 
   // Close the Find box.
   ASSERT_TRUE(ui_test_utils::SendKeyPressSync(
@@ -335,8 +334,9 @@ IN_PROC_BROWSER_TEST_F(FindInPageTest, PrepopulateRespectBlank) {
 
   // After the Find box has been reopened, it should still have no prepopulate
   // value.
-  EXPECT_EQ(string16(), GetFindBarText());
+  EXPECT_EQ(base::string16(), GetFindBarText());
 }
+#endif
 
 // Flaky on Win. http://crbug.com/92467
 // Flaky on ChromeOS. http://crbug.com/118216
@@ -387,7 +387,7 @@ IN_PROC_BROWSER_TEST_F(FindInPageTest, MAYBE_PasteWithoutTextChange) {
   ASSERT_TRUE(ui_test_utils::SendKeyPressSync(
       browser(), ui::VKEY_C, true, false, false, false));
 
-  string16 str;
+  base::string16 str;
   ui::Clipboard::GetForCurrentThread()->ReadText(ui::CLIPBOARD_TYPE_COPY_PASTE,
                                                  &str);
 

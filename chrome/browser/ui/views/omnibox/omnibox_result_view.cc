@@ -15,9 +15,11 @@
 
 #include "base/i18n/bidi_line_iterator.h"
 #include "base/memory/scoped_vector.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "chrome/browser/ui/omnibox/omnibox_popup_model.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
-#include "chrome/browser/ui/views/omnibox/omnibox_result_view_model.h"
+#include "chrome/browser/ui/views/omnibox/omnibox_popup_contents_view.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -25,8 +27,10 @@
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/image/image.h"
+#include "ui/gfx/range/range.h"
 #include "ui/gfx/render_text.h"
 #include "ui/gfx/text_elider.h"
+#include "ui/gfx/text_utils.h"
 #include "ui/native_theme/native_theme.h"
 
 #if defined(OS_WIN)
@@ -39,8 +43,6 @@
 
 namespace {
 
-const char16 kEllipsis[] = { 0x2026, 0x0 };
-
 // The minimum distance between the top and bottom of the {icon|text} and the
 // top or bottom of the row.
 const int kMinimumIconVerticalPadding = 2;
@@ -50,22 +52,6 @@ const int kMinimumTextVerticalPadding = 3;
 
 ////////////////////////////////////////////////////////////////////////////////
 // OmniboxResultView, public:
-
-// Precalculated data used to draw a complete visual run within the match.
-// This will include all or part of at least one, and possibly several,
-// classifications.
-struct OmniboxResultView::RunData {
-  RunData() : run_start(0), visual_order(0), is_rtl(false), pixel_width(0) {}
-
-  size_t run_start;  // Offset within the match text where this run begins.
-  int visual_order;  // Where this run occurs in visual order.  The earliest
-  // run drawn is run 0.
-  bool is_rtl;
-  int pixel_width;
-
-  // Styled text classification pieces within this run, in logical order.
-  Classifications classifications;
-};
 
 // This class is a utility class for calculations affected by whether the result
 // view is horizontally mirrored.  The drawing functions can be written as if
@@ -103,11 +89,10 @@ class OmniboxResultView::MirroringContext {
   DISALLOW_COPY_AND_ASSIGN(MirroringContext);
 };
 
-OmniboxResultView::OmniboxResultView(
-    OmniboxResultViewModel* model,
-    int model_index,
-    LocationBarView* location_bar_view,
-    const gfx::FontList& font_list)
+OmniboxResultView::OmniboxResultView(OmniboxPopupContentsView* model,
+                                     int model_index,
+                                     LocationBarView* location_bar_view,
+                                     const gfx::FontList& font_list)
     : edge_item_padding_(LocationBarView::GetItemPadding()),
       item_padding_(LocationBarView::GetItemPadding()),
       minimum_text_vertical_padding_(kMinimumTextVerticalPadding),
@@ -115,10 +100,9 @@ OmniboxResultView::OmniboxResultView(
       model_index_(model_index),
       location_bar_view_(location_bar_view),
       font_list_(font_list),
-      font_height_(std::max(font_list.GetHeight(),
-                            font_list.DeriveFontList(gfx::BOLD).GetHeight())),
-      ellipsis_width_(font_list.GetPrimaryFont().GetStringWidth(
-          string16(kEllipsis))),
+      font_height_(
+          std::max(font_list.GetHeight(),
+                   font_list.DeriveWithStyle(gfx::Font::BOLD).GetHeight())),
       mirroring_context_(new MirroringContext()),
       keyword_icon_(new views::ImageView()),
       animation_(new gfx::SlideAnimation(this)) {
@@ -181,11 +165,12 @@ SkColor OmniboxResultView::GetColor(
 
 void OmniboxResultView::SetMatch(const AutocompleteMatch& match) {
   match_ = match;
+  ResetRenderTexts();
   animation_->Reset();
 
-  if (match.associated_keyword.get()) {
+  AutocompleteMatch* associated_keyword_match = match_.associated_keyword.get();
+  if (associated_keyword_match) {
     keyword_icon_->SetImage(GetKeywordIcon());
-
     if (!keyword_icon_->parent())
       AddChildView(keyword_icon_.get());
   } else if (keyword_icon_->parent()) {
@@ -204,6 +189,10 @@ void OmniboxResultView::ShowKeyword(bool show_keyword) {
 
 void OmniboxResultView::Invalidate() {
   keyword_icon_->SetImage(GetKeywordIcon());
+  // While the text in the RenderTexts may not have changed, the styling
+  // (color/bold) may need to change. So we reset them to cause them to be
+  // recomputed in OnPaint().
+  ResetRenderTexts();
   SchedulePaint();
 }
 
@@ -226,30 +215,203 @@ int OmniboxResultView::GetTextHeight() const {
   return font_height_;
 }
 
-void OmniboxResultView::PaintMatch(gfx::Canvas* canvas,
-                                   const AutocompleteMatch& match,
-                                   int x) {
-  x = DrawString(canvas, match.contents, match.contents_class, false, x,
-                 text_bounds_.y());
+void OmniboxResultView::PaintMatch(
+    const AutocompleteMatch& match,
+    gfx::RenderText* contents,
+    gfx::RenderText* description,
+    gfx::Canvas* canvas,
+    int x) const {
+  int y = text_bounds_.y();
 
-  // Paint the description.
-  // TODO(pkasting): Because we paint in multiple separate pieces, we can wind
-  // up with no space even for an ellipsis for one or both of these pieces.
-  // Instead, we should paint the entire match as a single long string.  This
-  // would also let us use a more properly-localizable string than we get with
-  // just the IDS_AUTOCOMPLETE_MATCH_DESCRIPTION_SEPARATOR.
-  if (!match.description.empty()) {
-    string16 separator =
+  if (!separator_rendertext_) {
+    const base::string16& separator =
         l10n_util::GetStringUTF16(IDS_AUTOCOMPLETE_MATCH_DESCRIPTION_SEPARATOR);
-    ACMatchClassifications classifications;
-    classifications.push_back(
-        ACMatchClassification(0, ACMatchClassification::NONE));
-    x = DrawString(canvas, separator, classifications, true, x,
-                   text_bounds_.y());
-
-    DrawString(canvas, match.description, match.description_class, true, x,
-               text_bounds_.y());
+    separator_rendertext_.reset(CreateRenderText(separator).release());
+    separator_rendertext_->SetColor(GetColor(GetState(), DIMMED_TEXT));
+    separator_width_ = separator_rendertext_->GetContentWidth();
   }
+
+  int contents_max_width, description_max_width;
+  OmniboxPopupModel::ComputeMatchMaxWidths(
+      contents->GetContentWidth(),
+      separator_width_,
+      description ? description->GetContentWidth() : 0,
+      mirroring_context_->remaining_width(x),
+      !AutocompleteMatch::IsSearchType(match.type),
+      &contents_max_width,
+      &description_max_width);
+
+  x = DrawRenderText(match, contents, true, canvas, x, y, contents_max_width);
+
+  if (description_max_width != 0) {
+    x = DrawRenderText(match, separator_rendertext_.get(), false, canvas, x, y,
+                       separator_width_);
+    DrawRenderText(match, description, false, canvas, x, y,
+                   description_max_width);
+  }
+}
+
+int OmniboxResultView::DrawRenderText(
+    const AutocompleteMatch& match,
+    gfx::RenderText* render_text,
+    bool contents,
+    gfx::Canvas* canvas,
+    int x,
+    int y,
+    int max_width) const {
+  DCHECK(!render_text->text().empty());
+
+  const int remaining_width = mirroring_context_->remaining_width(x);
+  int right_x = x + max_width;
+
+  // Infinite suggestions should appear with the leading ellipses vertically
+  // stacked.
+  if (contents &&
+      (match.type == AutocompleteMatchType::SEARCH_SUGGEST_INFINITE)) {
+    // When the directionality of suggestion doesn't match the UI, we try to
+    // vertically stack the ellipsis by restricting the end edge (right_x).
+    const bool is_ui_rtl = base::i18n::IsRTL();
+    const bool is_match_contents_rtl =
+        (render_text->GetTextDirection() == base::i18n::RIGHT_TO_LEFT);
+    const int offset =
+        GetDisplayOffset(match, is_ui_rtl, is_match_contents_rtl);
+
+    scoped_ptr<gfx::RenderText> prefix_render_text(
+        CreateRenderText(base::UTF8ToUTF16(
+            match.GetAdditionalInfo(kACMatchPropertyContentsPrefix))));
+    const int prefix_width = prefix_render_text->GetContentWidth();
+    int prefix_x = x;
+
+    const int max_match_contents_width = model_->max_match_contents_width();
+
+    if (is_ui_rtl != is_match_contents_rtl) {
+      // RTL infinite suggestions appear near the left edge in LTR UI, while LTR
+      // infinite suggestions appear near the right edge in RTL UI. This is
+      // against the natural horizontal alignment of the text. We reduce the
+      // width of the box for suggestion display, so that the suggestions appear
+      // in correct confines.  This reduced width allows us to modify the text
+      // alignment (see below).
+      right_x = x + std::min(remaining_width - prefix_width,
+                             std::max(offset, max_match_contents_width));
+      prefix_x = right_x;
+      // We explicitly set the horizontal alignment so that when LTR suggestions
+      // show in RTL UI (or vice versa), their ellipses appear stacked in a
+      // single column.
+      render_text->SetHorizontalAlignment(
+          is_match_contents_rtl ? gfx::ALIGN_RIGHT : gfx::ALIGN_LEFT);
+    } else {
+      // If the dropdown is wide enough, place the ellipsis at the position
+      // where the omitted text would have ended. Otherwise reduce the offset of
+      // the ellipsis such that the widest suggestion reaches the end of the
+      // dropdown.
+      const int start_offset = std::max(prefix_width,
+          std::min(remaining_width - max_match_contents_width, offset));
+      right_x = x + std::min(remaining_width, start_offset + max_width);
+      x += start_offset;
+      prefix_x = x - prefix_width;
+    }
+    prefix_render_text->SetDirectionalityMode(is_match_contents_rtl ?
+        gfx::DIRECTIONALITY_FORCE_RTL : gfx::DIRECTIONALITY_FORCE_LTR);
+    prefix_render_text->SetHorizontalAlignment(
+          is_match_contents_rtl ? gfx::ALIGN_RIGHT : gfx::ALIGN_LEFT);
+    prefix_render_text->SetDisplayRect(gfx::Rect(
+          mirroring_context_->mirrored_left_coord(
+              prefix_x, prefix_x + prefix_width), y,
+          prefix_width, height()));
+    prefix_render_text->Draw(canvas);
+  }
+
+  // Set the display rect to trigger eliding.
+  render_text->SetDisplayRect(gfx::Rect(
+      mirroring_context_->mirrored_left_coord(x, right_x), y,
+      right_x - x, height()));
+  render_text->Draw(canvas);
+  return right_x;
+}
+
+scoped_ptr<gfx::RenderText> OmniboxResultView::CreateRenderText(
+    const base::string16& text) const {
+  scoped_ptr<gfx::RenderText> render_text(gfx::RenderText::CreateInstance());
+  render_text->SetCursorEnabled(false);
+  render_text->SetElideBehavior(gfx::ELIDE_AT_END);
+  render_text->SetFontList(font_list_);
+  render_text->SetText(text);
+  return render_text.Pass();
+}
+
+scoped_ptr<gfx::RenderText> OmniboxResultView::CreateClassifiedRenderText(
+    const base::string16& text,
+    const ACMatchClassifications& classifications,
+    bool force_dim) const {
+  scoped_ptr<gfx::RenderText> render_text(CreateRenderText(text));
+  const size_t text_length = render_text->text().length();
+  for (size_t i = 0; i < classifications.size(); ++i) {
+    const size_t text_start = classifications[i].offset;
+    if (text_start >= text_length)
+      break;
+
+    const size_t text_end = (i < (classifications.size() - 1)) ?
+        std::min(classifications[i + 1].offset, text_length) :
+        text_length;
+    const gfx::Range current_range(text_start, text_end);
+
+    // Calculate style-related data.
+    if (classifications[i].style & ACMatchClassification::MATCH)
+      render_text->ApplyStyle(gfx::BOLD, true, current_range);
+
+    ColorKind color_kind = TEXT;
+    if (classifications[i].style & ACMatchClassification::URL) {
+      color_kind = URL;
+      // Consider logical string for domain "ABC.comי/hello" where ABC are
+      // Hebrew (RTL) characters. This string should ideally show as
+      // "CBA.com/hello". If we do not force LTR on URL, it will appear as
+      // "com/hello.CBA".
+      // With IDN and RTL TLDs, it might be okay to allow RTL rendering of URLs,
+      // but it still has some pitfalls like :
+      // ABC.COM/abc-pqr/xyz/FGH will appear as HGF/abc-pqr/xyz/MOC.CBA which
+      // really confuses the path hierarchy of the URL.
+      // Also, if the URL supports https, the appearance will change into LTR
+      // directionality.
+      // In conclusion, LTR rendering of URL is probably the safest bet.
+      render_text->SetDirectionalityMode(gfx::DIRECTIONALITY_FORCE_LTR);
+    } else if (force_dim ||
+        (classifications[i].style & ACMatchClassification::DIM)) {
+      color_kind = DIMMED_TEXT;
+    }
+    render_text->ApplyColor(GetColor(GetState(), color_kind), current_range);
+  }
+  return render_text.Pass();
+}
+
+int OmniboxResultView::GetMatchContentsWidth() const {
+  InitContentsRenderTextIfNecessary();
+  return contents_rendertext_ ? contents_rendertext_->GetContentWidth() : 0;
+}
+
+// TODO(skanuj): This is probably identical across all OmniboxResultView rows in
+// the omnibox dropdown. Consider sharing the result.
+int OmniboxResultView::GetDisplayOffset(
+    const AutocompleteMatch& match,
+    bool is_ui_rtl,
+    bool is_match_contents_rtl) const {
+  if (match.type != AutocompleteMatchType::SEARCH_SUGGEST_INFINITE)
+    return 0;
+
+  const base::string16& input_text =
+      base::UTF8ToUTF16(match.GetAdditionalInfo(kACMatchPropertyInputText));
+  int contents_start_index = 0;
+  base::StringToInt(match.GetAdditionalInfo(kACMatchPropertyContentsStartIndex),
+                    &contents_start_index);
+
+  scoped_ptr<gfx::RenderText> input_render_text(CreateRenderText(input_text));
+  const gfx::Range& glyph_bounds =
+      input_render_text->GetGlyphBounds(contents_start_index);
+  const int start_padding = is_match_contents_rtl ?
+      std::max(glyph_bounds.start(), glyph_bounds.end()) :
+      std::min(glyph_bounds.start(), glyph_bounds.end());
+
+  return is_ui_rtl ?
+      (input_render_text->GetContentWidth() - start_padding) : start_padding;
 }
 
 // static
@@ -283,18 +445,6 @@ void OmniboxResultView::CommonInitColors(const ui::NativeTheme* theme,
     colors[i][DIVIDER] =
         color_utils::AlphaBlend(colors[i][TEXT], colors[i][BACKGROUND], 0x34);
   }
-}
-
-// static
-bool OmniboxResultView::SortRunsLogically(const RunData& lhs,
-                                          const RunData& rhs) {
-  return lhs.run_start < rhs.run_start;
-}
-
-// static
-bool OmniboxResultView::SortRunsVisually(const RunData& lhs,
-                                         const RunData& rhs) {
-  return lhs.visual_order < rhs.visual_order;
 }
 
 // static
@@ -336,234 +486,25 @@ const gfx::ImageSkia* OmniboxResultView::GetKeywordIcon() const {
       (GetState() == SELECTED) ? IDR_OMNIBOX_TTS_SELECTED : IDR_OMNIBOX_TTS);
 }
 
-int OmniboxResultView::DrawString(
-    gfx::Canvas* canvas,
-    const string16& text,
-    const ACMatchClassifications& classifications,
-    bool force_dim,
-    int x,
-    int y) {
-  if (text.empty())
-    return x;
-
-  // Check whether or not this text is a URL.  URLs are always displayed LTR
-  // regardless of locale.
-  bool is_url = true;
-  for (ACMatchClassifications::const_iterator i(classifications.begin());
-       i != classifications.end(); ++i) {
-    if (!(i->style & ACMatchClassification::URL)) {
-      is_url = false;
-      break;
-    }
-  }
-
-  // Split the text into visual runs.  We do this first so that we don't need to
-  // worry about whether our eliding might change the visual display in
-  // unintended ways, e.g. by removing directional markings or by adding an
-  // ellipsis that's not enclosed in appropriate markings.
-  base::i18n::BiDiLineIterator bidi_line;
-  if (!bidi_line.Open(text, base::i18n::IsRTL(), is_url))
-    return x;
-  const int num_runs = bidi_line.CountRuns();
-  ScopedVector<gfx::RenderText> render_texts;
-  Runs runs;
-  for (int run = 0; run < num_runs; ++run) {
-    int run_start_int = 0, run_length_int = 0;
-    // The index we pass to GetVisualRun corresponds to the position of the run
-    // in the displayed text. For example, the string "Google in HEBREW" (where
-    // HEBREW is text in the Hebrew language) has two runs: "Google in " which
-    // is an LTR run, and "HEBREW" which is an RTL run. In an LTR context, the
-    // run "Google in " has the index 0 (since it is the leftmost run
-    // displayed). In an RTL context, the same run has the index 1 because it
-    // is the rightmost run. This is why the order in which we traverse the
-    // runs is different depending on the locale direction.
-    const UBiDiDirection run_direction = bidi_line.GetVisualRun(
-        (base::i18n::IsRTL() && !is_url) ? (num_runs - run - 1) : run,
-        &run_start_int, &run_length_int);
-    DCHECK_GT(run_length_int, 0);
-    runs.push_back(RunData());
-    RunData* current_run = &runs.back();
-    current_run->run_start = run_start_int;
-    const size_t run_end = current_run->run_start + run_length_int;
-    current_run->visual_order = run;
-    current_run->is_rtl = !is_url && (run_direction == UBIDI_RTL);
-
-    // Compute classifications for this run.
-    for (size_t i = 0; i < classifications.size(); ++i) {
-      const size_t text_start =
-          std::max(classifications[i].offset, current_run->run_start);
-      if (text_start >= run_end)
-        break;  // We're past the last classification in the run.
-
-      const size_t text_end = (i < (classifications.size() - 1)) ?
-          std::min(classifications[i + 1].offset, run_end) : run_end;
-      if (text_end <= current_run->run_start)
-        continue;  // We haven't reached the first classification in the run.
-
-      render_texts.push_back(gfx::RenderText::CreateInstance());
-      gfx::RenderText* render_text = render_texts.back();
-      current_run->classifications.push_back(render_text);
-      render_text->SetText(text.substr(text_start, text_end - text_start));
-      render_text->SetFontList(font_list_);
-
-      // Calculate style-related data.
-      if (classifications[i].style & ACMatchClassification::MATCH)
-        render_text->SetStyle(gfx::BOLD, true);
-      const ResultViewState state = GetState();
-      if (classifications[i].style & ACMatchClassification::URL)
-        render_text->SetColor(GetColor(state, URL));
-      else if (classifications[i].style & ACMatchClassification::DIM)
-        render_text->SetColor(GetColor(state, DIMMED_TEXT));
-      else
-        render_text->SetColor(GetColor(state, force_dim ? DIMMED_TEXT : TEXT));
-
-      current_run->pixel_width += render_text->GetStringSize().width();
-    }
-    DCHECK(!current_run->classifications.empty());
-  }
-  DCHECK(!runs.empty());
-
-  // Sort into logical order so we can elide logically.
-  std::sort(runs.begin(), runs.end(), &SortRunsLogically);
-
-  // Now determine what to elide, if anything.  Several subtle points:
-  //   * Because we have the run data, we can get edge cases correct, like
-  //     whether to place an ellipsis before or after the end of a run when the
-  //     text needs to be elided at the run boundary.
-  //   * The "or one before it" comments below refer to cases where an earlier
-  //     classification fits completely, but leaves too little space for an
-  //     ellipsis that turns out to be needed later.  These cases are commented
-  //     more completely in Elide().
-  int remaining_width = mirroring_context_->remaining_width(x);
-  for (Runs::iterator i(runs.begin()); i != runs.end(); ++i) {
-    if (i->pixel_width > remaining_width) {
-      // This run or one before it needs to be elided.
-      for (Classifications::iterator j(i->classifications.begin());
-           j != i->classifications.end(); ++j) {
-        const int width = (*j)->GetStringSize().width();
-        if (width > remaining_width) {
-          // This classification or one before it needs to be elided.  Erase all
-          // further classifications and runs so Elide() can simply reverse-
-          // iterate over everything to find the specific classification to
-          // elide.
-          i->classifications.erase(++j, i->classifications.end());
-          runs.erase(++i, runs.end());
-          Elide(&runs, remaining_width);
-          break;
-        }
-        remaining_width -= width;
-      }
-      break;
-    }
-    remaining_width -= i->pixel_width;
-  }
-
-  // Sort back into visual order so we can display the runs correctly.
-  std::sort(runs.begin(), runs.end(), &SortRunsVisually);
-
-  // Draw the runs.
-  for (Runs::iterator i(runs.begin()); i != runs.end(); ++i) {
-    const bool reverse_visible_order = (i->is_rtl != base::i18n::IsRTL());
-    if (reverse_visible_order)
-      std::reverse(i->classifications.begin(), i->classifications.end());
-    for (Classifications::const_iterator j(i->classifications.begin());
-         j != i->classifications.end(); ++j) {
-      const gfx::Size size = (*j)->GetStringSize();
-      // Align the text runs to a common baseline.
-      const gfx::Rect rect(
-          mirroring_context_->mirrored_left_coord(x, x + size.width()), y,
-          size.width(), height());
-      (*j)->SetDisplayRect(rect);
-      (*j)->Draw(canvas);
-      x += size.width();
-    }
-  }
-
-  return x;
+bool OmniboxResultView::ShowOnlyKeywordMatch() const {
+  return match_.associated_keyword &&
+      (keyword_icon_->x() <= icon_bounds_.right());
 }
 
-void OmniboxResultView::Elide(Runs* runs, int remaining_width) const {
-  // The complexity of this function is due to edge cases like the following:
-  // We have 100 px of available space, an initial classification that takes 86
-  // px, and a font that has a 15 px wide ellipsis character.  Now if the first
-  // classification is followed by several very narrow classifications (e.g. 3
-  // px wide each), we don't know whether we need to elide or not at the time we
-  // see the first classification -- it depends on how many subsequent
-  // classifications follow, and some of those may be in the next run (or
-  // several runs!).  This is why instead we let our caller move forward until
-  // we know we definitely need to elide, and then in this function we move
-  // backward again until we find a string that we can successfully do the
-  // eliding on.
-  bool on_trailing_classification = true;
-  for (Runs::reverse_iterator i(runs->rbegin()); i != runs->rend(); ++i) {
-    for (Classifications::reverse_iterator j(i->classifications.rbegin());
-         j != i->classifications.rend(); ++j) {
-      if (!on_trailing_classification) {
-        // We also add this classification's width (sans ellipsis) back to the
-        // available width since we want to consider the available space we'll
-        // have when we draw this classification.
-        remaining_width += (*j)->GetStringSize().width();
+void OmniboxResultView::ResetRenderTexts() const {
+  contents_rendertext_.reset();
+  description_rendertext_.reset();
+  separator_rendertext_.reset();
+  keyword_contents_rendertext_.reset();
+  keyword_description_rendertext_.reset();
+}
 
-        // If we reached here, we couldn't fit an ellipsis in the space taken by
-        // the previous classifications we looped over (see comments at bottom
-        // of loop).  Append one here to represent those elided portions.
-        (*j)->SetText((*j)->text() + kEllipsis);
-      }
-      on_trailing_classification = false;
-
-      // Can we fit at least an ellipsis?
-      gfx::Font font((*j)->GetStyle(gfx::BOLD) ?
-          (*j)->GetPrimaryFont().DeriveFont(0, gfx::Font::BOLD) :
-          (*j)->GetPrimaryFont());
-      string16 elided_text(
-          gfx::ElideText((*j)->text(), font, remaining_width,
-          gfx::ELIDE_AT_END));
-      Classifications::reverse_iterator prior(j + 1);
-      const bool on_leading_classification =
-          (prior == i->classifications.rend());
-      if (elided_text.empty() && (remaining_width >= ellipsis_width_) &&
-          on_leading_classification) {
-        // Edge case: This classification is bold, we can't fit a bold ellipsis
-        // but we can fit a normal one, and this is the first classification in
-        // the run.  We should display a lone normal ellipsis, because appending
-        // one to the end of the previous run might put it in the wrong visual
-        // location (if the previous run is reversed from the normal visual
-        // order).
-        // NOTE: If this isn't the first classification in the run, we don't
-        // need to bother with this; see note below.
-        elided_text = kEllipsis;
-      }
-      if (!elided_text.empty()) {
-        // Success.  Elide this classification and stop.
-        (*j)->SetText(elided_text);
-
-        // If we could only fit an ellipsis, then only make it bold if there was
-        // an immediate prior classification in this run that was also bold, or
-        // it will look orphaned.
-        if ((*j)->GetStyle(gfx::BOLD) && (elided_text.length() == 1) &&
-            (on_leading_classification || !(*prior)->GetStyle(gfx::BOLD)))
-          (*j)->SetStyle(gfx::BOLD, false);
-
-        // Erase any other classifications that come after the elided one.
-        i->classifications.erase(j.base(), i->classifications.end());
-        runs->erase(i.base(), runs->end());
-        return;
-      }
-
-      // We couldn't fit an ellipsis.  Move back one classification,
-      // append an ellipsis, and try again.
-      // NOTE: In the edge case that a bold ellipsis doesn't fit but a
-      // normal one would, and we reach here, then there is a previous
-      // classification in this run, and so either:
-      //   * It's normal, and will be able to draw successfully with the
-      //     ellipsis we'll append to it, or
-      //   * It is also bold, in which case we don't want to fall back
-      //     to a normal ellipsis anyway (see comment above).
-    }
+void OmniboxResultView::InitContentsRenderTextIfNecessary() const {
+  if (!contents_rendertext_) {
+    contents_rendertext_.reset(
+        CreateClassifiedRenderText(
+            match_.contents, match_.contents_class, false).release());
   }
-
-  // We couldn't draw anything.
-  runs->clear();
 }
 
 void OmniboxResultView::Layout() {
@@ -605,23 +546,42 @@ void OmniboxResultView::OnPaint(gfx::Canvas* canvas) {
   if (state != NORMAL)
     canvas->DrawColor(GetColor(state, BACKGROUND));
 
-  if (!match_.associated_keyword.get() ||
-      keyword_icon_->x() > icon_bounds_.right()) {
-    // Paint the icon.
+  // NOTE: While animating the keyword match, both matches may be visible.
+
+  if (!ShowOnlyKeywordMatch()) {
     canvas->DrawImageInt(GetIcon(), GetMirroredXForRect(icon_bounds_),
                          icon_bounds_.y());
-
-    // Paint the text.
     int x = GetMirroredXForRect(text_bounds_);
     mirroring_context_->Initialize(x, text_bounds_.width());
-    PaintMatch(canvas, match_, x);
+    InitContentsRenderTextIfNecessary();
+    if (!description_rendertext_ && !match_.description.empty()) {
+      description_rendertext_.reset(
+          CreateClassifiedRenderText(
+              match_.description, match_.description_class, true).release());
+    }
+    PaintMatch(match_, contents_rendertext_.get(),
+               description_rendertext_.get(), canvas, x);
   }
 
-  if (match_.associated_keyword.get()) {
-    // Paint the keyword text.
+  AutocompleteMatch* keyword_match = match_.associated_keyword.get();
+  if (keyword_match) {
     int x = GetMirroredXForRect(keyword_text_bounds_);
     mirroring_context_->Initialize(x, keyword_text_bounds_.width());
-    PaintMatch(canvas, *match_.associated_keyword.get(), x);
+    if (!keyword_contents_rendertext_) {
+      keyword_contents_rendertext_.reset(
+          CreateClassifiedRenderText(keyword_match->contents,
+                                     keyword_match->contents_class,
+                                     false).release());
+    }
+    if (!keyword_description_rendertext_ &&
+        !keyword_match->description.empty()) {
+      keyword_description_rendertext_.reset(
+          CreateClassifiedRenderText(keyword_match->description,
+                                     keyword_match->description_class,
+                                     true).release());
+    }
+    PaintMatch(*keyword_match, keyword_contents_rendertext_.get(),
+               keyword_description_rendertext_.get(), canvas, x);
   }
 }
 

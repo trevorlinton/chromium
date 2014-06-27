@@ -12,16 +12,17 @@
 #include "base/message_loop/message_loop.h"
 #include "base/prefs/pref_service.h"
 #include "base/time/time.h"
-#include "chrome/browser/policy/cloud/cloud_policy_client_registration_helper.h"
-#include "chrome/browser/policy/cloud/user_cloud_policy_manager.h"
-#include "chrome/browser/policy/proto/cloud/device_management_backend.pb.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_manager.h"
 #include "chrome/common/pref_names.h"
+#include "components/policy/core/common/cloud/cloud_policy_client_registration_helper.h"
+#include "components/policy/core/common/cloud/user_cloud_policy_manager.h"
 #include "components/policy/core/common/policy_switches.h"
+#include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "net/base/network_change_notifier.h"
 #include "net/url_request/url_request_context_getter.h"
+#include "policy/proto/device_management_backend.pb.h"
 
 namespace policy {
 
@@ -39,25 +40,31 @@ enterprise_management::DeviceRegisterRequest::Type GetRegistrationType() {
 UserPolicySigninService::UserPolicySigninService(
     Profile* profile,
     PrefService* local_state,
-    scoped_refptr<net::URLRequestContextGetter> request_context,
     DeviceManagementService* device_management_service,
+    UserCloudPolicyManager* policy_manager,
+    SigninManager* signin_manager,
+    scoped_refptr<net::URLRequestContextGetter> system_request_context,
     ProfileOAuth2TokenService* token_service)
     : UserPolicySigninServiceBase(profile,
                                   local_state,
-                                  request_context,
-                                  device_management_service),
+                                  device_management_service,
+                                  policy_manager,
+                                  signin_manager,
+                                  system_request_context),
       weak_factory_(this),
-      oauth2_token_service_(token_service) {}
+      oauth2_token_service_(token_service),
+      profile_prefs_(profile->GetPrefs()) {}
 
 UserPolicySigninService::~UserPolicySigninService() {}
 
-void UserPolicySigninService::RegisterPolicyClient(
+void UserPolicySigninService::RegisterForPolicy(
     const std::string& username,
     const PolicyRegistrationCallback& callback) {
   // Create a new CloudPolicyClient for fetching the DMToken.
-  scoped_ptr<CloudPolicyClient> policy_client = PrepareToRegister(username);
+  scoped_ptr<CloudPolicyClient> policy_client = CreateClientForRegistrationOnly(
+      username);
   if (!policy_client) {
-    callback.Run(policy_client.Pass());
+    callback.Run(std::string(), std::string());
     return;
   }
 
@@ -65,11 +72,8 @@ void UserPolicySigninService::RegisterPolicyClient(
 
   // Fire off the registration process. Callback keeps the CloudPolicyClient
   // alive for the length of the registration process.
-  const bool force_load_policy = false;
   registration_helper_.reset(new CloudPolicyClientRegistrationHelper(
-      profile()->GetRequestContext(),
       policy_client.get(),
-      force_load_policy,
       GetRegistrationType()));
   registration_helper_->StartRegistration(
       oauth2_token_service_,
@@ -84,11 +88,7 @@ void UserPolicySigninService::CallPolicyRegistrationCallback(
     scoped_ptr<CloudPolicyClient> client,
     PolicyRegistrationCallback callback) {
   registration_helper_.reset();
-  if (!client->is_registered()) {
-    // Registration failed, so free the client and pass NULL to the callback.
-    client.reset();
-  }
-  callback.Run(client.Pass());
+  callback.Run(client->dm_token(), client->client_id());
 }
 
 void UserPolicySigninService::Shutdown() {
@@ -99,7 +99,7 @@ void UserPolicySigninService::Shutdown() {
 
 void UserPolicySigninService::OnInitializationCompleted(
     CloudPolicyService* service) {
-  UserCloudPolicyManager* manager = GetManager();
+  UserCloudPolicyManager* manager = policy_manager();
   DCHECK_EQ(service, manager->core()->service());
   DCHECK(service->IsInitializationComplete());
   // The service is now initialized - if the client is not yet registered, then
@@ -119,7 +119,7 @@ void UserPolicySigninService::OnInitializationCompleted(
   }
 
   base::Time last_check_time = base::Time::FromInternalValue(
-      profile()->GetPrefs()->GetInt64(prefs::kLastPolicyCheckTime));
+      profile_prefs_->GetInt64(prefs::kLastPolicyCheckTime));
   base::Time now = base::Time::Now();
   base::Time next_check_time = last_check_time + retry_delay;
 
@@ -141,20 +141,17 @@ void UserPolicySigninService::RegisterCloudPolicyService() {
   // If the user signed-out while this task was waiting then Shutdown() would
   // have been called, which would have invalidated this task. Since we're here
   // then the user must still be signed-in.
-  const std::string& username = GetSigninManager()->GetAuthenticatedUsername();
+  const std::string& username = signin_manager()->GetAuthenticatedUsername();
   DCHECK(!username.empty());
-  DCHECK(!GetManager()->IsClientRegistered());
-  DCHECK(GetManager()->core()->client());
+  DCHECK(!policy_manager()->IsClientRegistered());
+  DCHECK(policy_manager()->core()->client());
 
   // Persist the current time as the last policy registration attempt time.
-  profile()->GetPrefs()->SetInt64(prefs::kLastPolicyCheckTime,
-                                  base::Time::Now().ToInternalValue());
+  profile_prefs_->SetInt64(prefs::kLastPolicyCheckTime,
+                           base::Time::Now().ToInternalValue());
 
-  const bool force_load_policy = false;
   registration_helper_.reset(new CloudPolicyClientRegistrationHelper(
-      profile()->GetRequestContext(),
-      GetManager()->core()->client(),
-      force_load_policy,
+      policy_manager()->core()->client(),
       GetRegistrationType()));
   registration_helper_->StartRegistration(
       oauth2_token_service_,

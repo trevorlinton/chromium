@@ -25,6 +25,7 @@
 #include "chrome/browser/ui/webui/chromeos/login/enrollment_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/error_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/eula_screen_handler.h"
+#include "chrome/browser/ui/webui/chromeos/login/gaia_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/kiosk_app_menu_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/kiosk_autolaunch_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/kiosk_enable_screen_handler.h"
@@ -81,22 +82,6 @@ const char kEnrollmentHTMLPath[] = "enrollment.html";
 const char kEnrollmentCSSPath[] = "enrollment.css";
 const char kEnrollmentJSPath[] = "enrollment.js";
 
-// Filter handler of chrome://oobe data source.
-bool HandleRequestCallback(
-    const std::string& path,
-    const content::WebUIDataSource::GotDataCallback& callback) {
-  if (UserManager::Get()->IsUserLoggedIn() &&
-      !UserManager::Get()->IsLoggedInAsStub() &&
-      !ScreenLocker::default_screen_locker()) {
-    scoped_refptr<base::RefCountedBytes> empty_bytes =
-        new base::RefCountedBytes();
-    callback.Run(empty_bytes.get());
-    return true;
-  }
-
-  return false;
-}
-
 // Creates a WebUIDataSource for chrome://oobe
 content::WebUIDataSource* CreateOobeUIDataSource(
     const base::DictionaryValue& localized_strings,
@@ -150,6 +135,7 @@ const char OobeUI::kScreenOobeNetwork[]     = "connect";
 const char OobeUI::kScreenOobeEula[]        = "eula";
 const char OobeUI::kScreenOobeUpdate[]      = "update";
 const char OobeUI::kScreenOobeEnrollment[]  = "oauth-enrollment";
+const char OobeUI::kScreenOobeReset[]       = "reset";
 const char OobeUI::kScreenGaiaSignin[]      = "gaia-signin";
 const char OobeUI::kScreenAccountPicker[]   = "account-picker";
 const char OobeUI::kScreenKioskAutolaunch[] = "autolaunch";
@@ -164,7 +150,7 @@ const char OobeUI::kScreenTermsOfService[]  = "terms-of-service";
 const char OobeUI::kScreenWrongHWID[]       = "wrong-hwid";
 const char OobeUI::kScreenAppLaunchSplash[] = "app-launch-splash";
 const char OobeUI::kScreenConfirmPassword[] = "confirm-password";
-const char OobeUI::kScreenMessageBox[]      = "message-box";
+const char OobeUI::kScreenFatalError[]      = "fatal-error";
 
 OobeUI::OobeUI(content::WebUI* web_ui, const GURL& url)
     : WebUIController(web_ui),
@@ -257,13 +243,18 @@ OobeUI::OobeUI(content::WebUI* web_ui, const GURL& url)
   error_screen_handler_ = new ErrorScreenHandler(network_state_informer_);
   AddScreenHandler(error_screen_handler_);
 
+  gaia_screen_handler_ = new GaiaScreenHandler(network_state_informer_);
+  AddScreenHandler(gaia_screen_handler_);
+
   signin_screen_handler_ = new SigninScreenHandler(network_state_informer_,
                                                    error_screen_handler_,
-                                                   core_handler_);
+                                                   core_handler_,
+                                                   gaia_screen_handler_);
   AddScreenHandler(signin_screen_handler_);
 
   AppLaunchSplashScreenHandler* app_launch_splash_screen_handler =
-      new AppLaunchSplashScreenHandler();
+      new AppLaunchSplashScreenHandler(network_state_informer_,
+                                       error_screen_handler_);
   AddScreenHandler(app_launch_splash_screen_handler);
   app_launch_splash_screen_actor_ = app_launch_splash_screen_handler;
 
@@ -385,9 +376,12 @@ void OobeUI::GetLocalizedStrings(base::DictionaryValue* localized_strings) {
   }
 
   bool keyboard_driven_oobe =
-      system::keyboard_settings::ForceKeyboardDrivenUINavigation();
+      system::InputDeviceSettings::Get()->ForceKeyboardDrivenUINavigation();
   localized_strings->SetString("highlightStrength",
                                keyboard_driven_oobe ? "strong" : "normal");
+
+  bool new_kiosk_ui = KioskAppMenuHandler::EnableNewKioskUI();
+  localized_strings->SetString("newKioskUI", new_kiosk_ui ? "on" : "off");
 }
 
 void OobeUI::InitializeScreenMaps() {
@@ -396,6 +390,7 @@ void OobeUI::InitializeScreenMaps() {
   screen_names_[SCREEN_OOBE_EULA] = kScreenOobeEula;
   screen_names_[SCREEN_OOBE_UPDATE] = kScreenOobeUpdate;
   screen_names_[SCREEN_OOBE_ENROLLMENT] = kScreenOobeEnrollment;
+  screen_names_[SCREEN_OOBE_RESET] = kScreenOobeReset;
   screen_names_[SCREEN_GAIA_SIGNIN] = kScreenGaiaSignin;
   screen_names_[SCREEN_ACCOUNT_PICKER] = kScreenAccountPicker;
   screen_names_[SCREEN_KIOSK_AUTOLAUNCH] = kScreenKioskAutolaunch;
@@ -410,7 +405,7 @@ void OobeUI::InitializeScreenMaps() {
   screen_names_[SCREEN_WRONG_HWID] = kScreenWrongHWID;
   screen_names_[SCREEN_APP_LAUNCH_SPLASH] = kScreenAppLaunchSplash;
   screen_names_[SCREEN_CONFIRM_PASSWORD] = kScreenConfirmPassword;
-  screen_names_[SCREEN_MESSAGE_BOX] = kScreenMessageBox;
+  screen_names_[SCREEN_FATAL_ERROR] = kScreenFatalError;
 
   screen_ids_.clear();
   for (size_t i = 0; i < screen_names_.size(); ++i)
@@ -428,8 +423,20 @@ void OobeUI::InitializeHandlers() {
     ready_callbacks_[i].Run();
   ready_callbacks_.clear();
 
-  for (size_t i = 0; i < handlers_.size(); ++i)
-    handlers_[i]->InitializeBase();
+  // Notify 'initialize' for synchronously loaded screens.
+  for (size_t i = 0; i < handlers_.size(); ++i) {
+    if (handlers_[i]->async_assets_load_id().empty())
+      handlers_[i]->InitializeBase();
+  }
+}
+
+void OobeUI::OnScreenAssetsLoaded(const std::string& async_assets_load_id) {
+  DCHECK(!async_assets_load_id.empty());
+
+  for (size_t i = 0; i < handlers_.size(); ++i) {
+    if (handlers_[i]->async_assets_load_id() == async_assets_load_id)
+      handlers_[i]->InitializeBase();
+  }
 }
 
 bool OobeUI::IsJSReady(const base::Closure& display_is_ready_callback) {
@@ -446,11 +453,15 @@ void OobeUI::ShowRetailModeLoginSpinner() {
   signin_screen_handler_->ShowRetailModeLoginSpinner();
 }
 
-void OobeUI::ShowSigninScreen(SigninScreenHandlerDelegate* delegate,
+void OobeUI::ShowSigninScreen(const LoginScreenContext& context,
+                              SigninScreenHandlerDelegate* delegate,
                               NativeWindowDelegate* native_window_delegate) {
   signin_screen_handler_->SetDelegate(delegate);
   signin_screen_handler_->SetNativeWindowDelegate(native_window_delegate);
-  signin_screen_handler_->Show(core_handler_->show_oobe_ui());
+
+  LoginScreenContext actual_context(context);
+  actual_context.set_oobe_ui(core_handler_->show_oobe_ui());
+  signin_screen_handler_->Show(actual_context);
 }
 
 void OobeUI::ResetSigninScreenHandlerDelegate() {

@@ -90,7 +90,8 @@ void RenderParamsFromPrintSettings(const printing::PrintSettings& settings,
 
 PrintingMessageFilter::PrintingMessageFilter(int render_process_id,
                                              Profile* profile)
-    : profile_io_data_(ProfileIOData::FromResourceContext(
+    : BrowserMessageFilter(PrintMsgStart),
+      profile_io_data_(ProfileIOData::FromResourceContext(
           profile->GetResourceContext())),
       render_process_id_(render_process_id),
       queue_(g_browser_process->print_job_manager()->queue()) {
@@ -168,7 +169,7 @@ void PrintingMessageFilter::OnAllocateTempFileForPrinting(
   *sequence_number = g_printing_file_descriptor_map.Get().sequence++;
 
   base::FilePath path;
-  if (file_util::CreateTemporaryFile(&path)) {
+  if (base::CreateTemporaryFile(&path)) {
     int fd = open(path.value().c_str(), O_WRONLY);
     if (fd >= 0) {
       SequenceToPathMap::iterator it = map->find(*sequence_number);
@@ -244,9 +245,8 @@ void PrintingMessageFilter::CreatePrintDialogForFile(
       wc->GetView()->GetTopLevelNativeWindow(),
       path,
       wc->GetTitle(),
-      string16(),
-      std::string("application/pdf"),
-      false);
+      base::string16(),
+      std::string("application/pdf"));
 }
 #endif  // defined(OS_CHROMEOS)
 
@@ -400,7 +400,7 @@ void PrintingMessageFilter::OnScriptedPrintReply(
   if (params.params.dpi && params.params.document_cookie) {
 #if defined(OS_ANDROID)
     int file_descriptor;
-    const string16& device_name = printer_query->settings().device_name();
+    const base::string16& device_name = printer_query->settings().device_name();
     if (base::StringToInt(device_name, &file_descriptor)) {
       BrowserThread::PostTask(
           BrowserThread::UI, FROM_HERE,
@@ -427,7 +427,7 @@ void PrintingMessageFilter::UpdateFileDescriptor(int render_view_id, int fd) {
 #endif
 
 void PrintingMessageFilter::OnUpdatePrintSettings(
-    int document_cookie, const DictionaryValue& job_settings,
+    int document_cookie, const base::DictionaryValue& job_settings,
     IPC::Message* reply_msg) {
   scoped_refptr<printing::PrinterQuery> printer_query;
   if (!profile_io_data_->printing_enabled()->GetValue()) {

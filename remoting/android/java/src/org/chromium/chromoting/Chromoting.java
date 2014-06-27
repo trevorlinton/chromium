@@ -10,39 +10,36 @@ import android.accounts.AccountManagerCallback;
 import android.accounts.AccountManagerFuture;
 import android.accounts.AuthenticatorException;
 import android.accounts.OperationCanceledException;
+import android.app.ActionBar;
 import android.app.Activity;
-import android.content.Context;
+import android.app.AlertDialog;
+import android.app.ProgressDialog;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.HandlerThread;
-import android.text.Html;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
-import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
-import android.widget.TextView;
 import android.widget.ListView;
 import android.widget.Toast;
 
 import org.chromium.chromoting.jni.JniInterface;
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
 
 import java.io.IOException;
-import java.net.URL;
-import java.net.URLConnection;
-import java.util.Scanner;
+import java.util.Arrays;
 
 /**
  * The user interface for querying and displaying a user's host list from the directory server. It
  * also requests and renews authentication tokens using the system account manager.
  */
-public class Chromoting extends Activity {
+public class Chromoting extends Activity implements JniInterface.ConnectionListener,
+        AccountManagerCallback<Bundle>, ActionBar.OnNavigationListener, HostListLoader.Callback,
+        View.OnClickListener {
     /** Only accounts of this type will be selectable for authentication. */
     private static final String ACCOUNT_TYPE = "com.google";
 
@@ -50,39 +47,95 @@ public class Chromoting extends Activity {
     private static final String TOKEN_SCOPE = "oauth2:https://www.googleapis.com/auth/chromoting " +
             "https://www.googleapis.com/auth/googletalk";
 
-    /** Path from which to download a user's host list JSON object. */
-    private static final String HOST_LIST_PATH =
-            "https://www.googleapis.com/chromoting/v1/@me/hosts?key=";
+    /** Web page to be displayed in the Help screen when launched from this activity. */
+    private static final String HELP_URL =
+            "http://support.google.com/chrome/?p=mobile_crd_hostslist";
 
-    /** Color to use for hosts that are online. */
-    private static final String HOST_COLOR_ONLINE = "green";
-
-    /** Color to use for hosts that are offline. */
-    private static final String HOST_COLOR_OFFLINE = "red";
+    /** Web page to be displayed when user triggers the hyperlink for setting up hosts. */
+    private static final String HOST_SETUP_URL =
+            "https://support.google.com/chrome/answer/1649523";
 
     /** User's account details. */
     private Account mAccount;
 
+    /** List of accounts on the system. */
+    private Account[] mAccounts;
+
+    /** SpinnerAdapter used in the action bar for selecting accounts. */
+    private AccountsAdapter mAccountsAdapter;
+
     /** Account auth token. */
     private String mToken;
 
+    /** Helper for fetching the host list. */
+    private HostListLoader mHostListLoader;
+
     /** List of hosts. */
-    private JSONArray mHosts;
+    private HostInfo[] mHosts = new HostInfo[0];
 
     /** Refresh button. */
     private MenuItem mRefreshButton;
 
-    /** Account switcher. */
-    private MenuItem mAccountSwitcher;
-
-    /** Greeting at the top of the displayed list. */
-    private TextView mGreeting;
-
     /** Host list as it appears to the user. */
-    private ListView mList;
+    private ListView mHostListView;
 
-    /** Callback handler to be used for network operations. */
-    private Handler mNetwork;
+    /** Progress view shown instead of the host list when the host list is loading. */
+    private View mProgressView;
+
+    /** Dialog for reporting connection progress. */
+    private ProgressDialog mProgressIndicator;
+
+    /**
+     * This is set when receiving an authentication error from the HostListLoader. If that occurs,
+     * this flag is set and a fresh authentication token is fetched from the AccountsService, and
+     * used to request the host list a second time.
+     */
+    boolean mTriedNewAuthToken;
+
+    /** Shows a warning explaining that a Google account is required, then closes the activity. */
+    private void showNoAccountsDialog() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setMessage(R.string.noaccounts_message);
+        builder.setPositiveButton(R.string.noaccounts_add_account,
+                new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int id) {
+                        Intent intent = new Intent(Settings.ACTION_ADD_ACCOUNT);
+                        intent.putExtra(Settings.EXTRA_ACCOUNT_TYPES,
+                                new String[] { ACCOUNT_TYPE });
+                        if (intent.resolveActivity(getPackageManager()) != null) {
+                            startActivity(intent);
+                        }
+                        finish();
+                    }
+                });
+        builder.setNegativeButton(R.string.close, new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialog, int id) {
+                    finish();
+                }
+            });
+        builder.setOnCancelListener(new DialogInterface.OnCancelListener() {
+                @Override
+                public void onCancel(DialogInterface dialog) {
+                    finish();
+                }
+            });
+
+        AlertDialog dialog = builder.create();
+        dialog.show();
+    }
+
+    /** Shows or hides the progress indicator for loading the host list. */
+    private void setHostListProgressVisible(boolean visible) {
+        mHostListView.setVisibility(visible ? View.GONE : View.VISIBLE);
+        mProgressView.setVisibility(visible ? View.VISIBLE : View.GONE);
+
+        // Hiding the host-list does not automatically hide the empty view, so do that here.
+        if (visible) {
+            mHostListView.getEmptyView().setVisibility(View.GONE);
+        }
+    }
 
     /**
      * Called when the activity is first created. Loads the native library and requests an
@@ -93,42 +146,63 @@ public class Chromoting extends Activity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.main);
 
+        mTriedNewAuthToken = false;
+        mHostListLoader = new HostListLoader();
+
         // Get ahold of our view widgets.
-        mGreeting = (TextView)findViewById(R.id.hostList_greeting);
-        mList = (ListView)findViewById(R.id.hostList_chooser);
+        mHostListView = (ListView)findViewById(R.id.hostList_chooser);
+        mHostListView.setEmptyView(findViewById(R.id.hostList_empty));
+        mProgressView = findViewById(R.id.hostList_progress);
+
+        findViewById(R.id.host_setup_link_android).setOnClickListener(this);
 
         // Bring native components online.
         JniInterface.loadLibrary(this);
+    }
 
-        // Thread responsible for downloading/displaying host list.
-        HandlerThread thread = new HandlerThread("auth_callback");
-        thread.start();
-        mNetwork = new Handler(thread.getLooper());
+    /**
+     * Called when the activity becomes visible. This happens on initial launch and whenever the
+     * user switches to the activity, for example, by using the window-switcher or when coming from
+     * the device's lock screen.
+     */
+    @Override
+    public void onStart() {
+        super.onStart();
+
+        mAccounts = AccountManager.get(this).getAccountsByType(ACCOUNT_TYPE);
+        if (mAccounts.length == 0) {
+            showNoAccountsDialog();
+            return;
+        }
 
         SharedPreferences prefs = getPreferences(MODE_PRIVATE);
+        int index = -1;
         if (prefs.contains("account_name") && prefs.contains("account_type")) {
-            // Perform authentication using saved account selection.
             mAccount = new Account(prefs.getString("account_name", null),
                     prefs.getString("account_type", null));
-            AccountManager.get(this).getAuthToken(mAccount, TOKEN_SCOPE, null, this,
-                    new HostListDirectoryGrabber(this), mNetwork);
-            if (mAccountSwitcher != null) {
-                mAccountSwitcher.setTitle(mAccount.name);
-            }
-        } else {
-            // Request auth callback once user has chosen an account.
-            Log.i("auth", "Requesting auth token from system");
-            AccountManager.get(this).getAuthTokenByFeatures(
-                    ACCOUNT_TYPE,
-                    TOKEN_SCOPE,
-                    null,
-                    this,
-                    null,
-                    null,
-                    new HostListDirectoryGrabber(this),
-                    mNetwork
-                );
+            index = Arrays.asList(mAccounts).indexOf(mAccount);
         }
+        if (index == -1) {
+            // Preference not loaded, or does not correspond to a valid account, so just pick the
+            // first account arbitrarily.
+            index = 0;
+            mAccount = mAccounts[0];
+        }
+
+        if (mAccounts.length == 1) {
+            getActionBar().setDisplayShowTitleEnabled(true);
+            getActionBar().setNavigationMode(ActionBar.NAVIGATION_MODE_STANDARD);
+            getActionBar().setTitle(R.string.mode_me2me);
+            getActionBar().setSubtitle(mAccount.name);
+        } else {
+            mAccountsAdapter = new AccountsAdapter(this, mAccounts);
+            getActionBar().setDisplayShowTitleEnabled(false);
+            getActionBar().setNavigationMode(ActionBar.NAVIGATION_MODE_LIST);
+            getActionBar().setListNavigationCallbacks(mAccountsAdapter, this);
+            getActionBar().setSelectedNavigationItem(index);
+        }
+
+        refreshHostList();
     }
 
     /** Called when the activity is finally finished. */
@@ -138,26 +212,27 @@ public class Chromoting extends Activity {
         JniInterface.disconnectFromHost();
     }
 
+    /** Called when the display is rotated (as registered in the manifest). */
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+
+        // Reload the spinner resources, since the font sizes are dependent on the screen
+        // orientation.
+        if (mAccounts.length != 1) {
+            mAccountsAdapter.notifyDataSetChanged();
+        }
+    }
+
     /** Called to initialize the action bar. */
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         getMenuInflater().inflate(R.menu.chromoting_actionbar, menu);
         mRefreshButton = menu.findItem(R.id.actionbar_directoryrefresh);
-        mAccountSwitcher = menu.findItem(R.id.actionbar_accountswitcher);
-
-        Account[] usableAccounts = AccountManager.get(this).getAccountsByType(ACCOUNT_TYPE);
-        if (usableAccounts.length == 1 && usableAccounts[0].equals(mAccount)) {
-            // If we're using the only available account, don't offer account switching.
-            // (If there are *no* accounts available, clicking this allows you to add a new one.)
-            mAccountSwitcher.setEnabled(false);
-        }
 
         if (mAccount == null) {
-            // If no account has been chosen, don't allow the user to refresh the listing.
+            // If there is no account, don't allow the user to refresh the listing.
             mRefreshButton.setEnabled(false);
-        } else {
-            // If the user has picked an account, show its name directly on the account switcher.
-            mAccountSwitcher.setTitle(mAccount.name);
         }
 
         return super.onCreateOptionsMenu(menu);
@@ -166,258 +241,208 @@ public class Chromoting extends Activity {
     /** Called whenever an action bar button is pressed. */
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        if (item == mAccountSwitcher) {
-            // The account switcher triggers a listing of all available accounts.
-            AccountManager.get(this).getAuthTokenByFeatures(
-                    ACCOUNT_TYPE,
-                    TOKEN_SCOPE,
-                    null,
-                    this,
-                    null,
-                    null,
-                    new HostListDirectoryGrabber(this),
-                    mNetwork
-                );
+        switch (item.getItemId()) {
+            case R.id.actionbar_directoryrefresh:
+                refreshHostList();
+                return true;
+
+            case R.id.actionbar_help:
+                HelpActivity.launch(this, HELP_URL);
+                return true;
+
+            default:
+                return super.onOptionsItemSelected(item);
         }
-        else {
-            // The refresh button simply makes use of the currently-chosen account.
-            AccountManager.get(this).getAuthToken(mAccount, TOKEN_SCOPE, null, this,
-                    new HostListDirectoryGrabber(this), mNetwork);
+    }
+
+    /** Called when the user touches hyperlinked text. */
+    @Override
+    public void onClick(View view) {
+        HelpActivity.launch(this, HOST_SETUP_URL);
+    }
+
+    /** Called when the user taps on a host entry. */
+    public void connectToHost(HostInfo host) {
+        mProgressIndicator = ProgressDialog.show(this,
+              host.name, getString(R.string.footer_connecting), true, true,
+              new DialogInterface.OnCancelListener() {
+                  @Override
+                  public void onCancel(DialogInterface dialog) {
+                      JniInterface.disconnectFromHost();
+                  }
+              });
+        SessionConnector connector = new SessionConnector(this, this, mHostListLoader);
+        connector.connectToHost(mAccount.name, mToken, host);
+    }
+
+    private void refreshHostList() {
+        mTriedNewAuthToken = false;
+        setHostListProgressVisible(true);
+
+        // The refresh button simply makes use of the currently-chosen account.
+        AccountManager.get(this).getAuthToken(mAccount, TOKEN_SCOPE, null, this, this, null);
+    }
+
+    @Override
+    public void run(AccountManagerFuture<Bundle> future) {
+        Log.i("auth", "User finished with auth dialogs");
+        Bundle result = null;
+        String explanation = null;
+        try {
+            // Here comes our auth token from the Android system.
+            result = future.getResult();
+            String authToken = result.getString(AccountManager.KEY_AUTHTOKEN);
+            Log.i("auth", "Received an auth token from system");
+
+            mToken = authToken;
+
+            mHostListLoader.retrieveHostList(authToken, this);
+        } catch (OperationCanceledException ex) {
+            // User canceled authentication. No need to report an error.
+        } catch (AuthenticatorException ex) {
+            explanation = getString(R.string.error_unexpected);
+        } catch (IOException ex) {
+            explanation = getString(R.string.error_network_error);
         }
 
+        if (result == null) {
+            if (explanation != null) {
+                Toast.makeText(this, explanation, Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+
+        String authToken = result.getString(AccountManager.KEY_AUTHTOKEN);
+        Log.i("auth", "Received an auth token from system");
+
+        mToken = authToken;
+
+        mHostListLoader.retrieveHostList(authToken, this);
+    }
+
+    @Override
+    public boolean onNavigationItemSelected(int itemPosition, long itemId) {
+        mAccount = mAccounts[itemPosition];
+
+        getPreferences(MODE_PRIVATE).edit().putString("account_name", mAccount.name).
+                    putString("account_type", mAccount.type).apply();
+
+        // The current host list is no longer valid for the new account, so clear the list.
+        mHosts = new HostInfo[0];
+        updateUi();
+        refreshHostList();
         return true;
     }
 
-    /**
-     * Processes the authentication token once the system provides it. Once in possession of such a
-     * token, attempts to request a host list from the directory server. In case of a bad response,
-     * this is retried once in case the system's cached auth token had expired.
-     */
-    private class HostListDirectoryGrabber implements AccountManagerCallback<Bundle> {
-        /** Whether authentication has already been attempted. */
-        private boolean mAlreadyTried;
-
-        /** Communication with the screen. */
-        private Activity mUi;
-
-        /** Constructor. */
-        public HostListDirectoryGrabber(Activity ui) {
-            mAlreadyTried = false;
-            mUi = ui;
-        }
-
-        /**
-         * Retrieves the host list from the directory server. This method performs
-         * network operations and must be run an a non-UI thread.
-         */
-        @Override
-        public void run(AccountManagerFuture<Bundle> future) {
-            Log.i("auth", "User finished with auth dialogs");
-            try {
-                // Here comes our auth token from the Android system.
-                Bundle result = future.getResult();
-                String accountName = result.getString(AccountManager.KEY_ACCOUNT_NAME);
-                String accountType = result.getString(AccountManager.KEY_ACCOUNT_TYPE);
-                String authToken = result.getString(AccountManager.KEY_AUTHTOKEN);
-                Log.i("auth", "Received an auth token from system");
-
-                synchronized (mUi) {
-                    mAccount = new Account(accountName, accountType);
-                    mToken = authToken;
-                    getPreferences(MODE_PRIVATE).edit().putString("account_name", accountName).
-                            putString("account_type", accountType).apply();
-                }
-
-                // Send our HTTP request to the directory server.
-                URLConnection link =
-                        new URL(HOST_LIST_PATH + JniInterface.nativeGetApiKey()).openConnection();
-                link.addRequestProperty("client_id", JniInterface.nativeGetClientId());
-                link.addRequestProperty("client_secret", JniInterface.nativeGetClientSecret());
-                link.setRequestProperty("Authorization", "OAuth " + authToken);
-
-                // Listen for the server to respond.
-                StringBuilder response = new StringBuilder();
-                Scanner incoming = new Scanner(link.getInputStream());
-                Log.i("auth", "Successfully authenticated to directory server");
-                while (incoming.hasNext()) {
-                    response.append(incoming.nextLine());
-                }
-                incoming.close();
-
-                // Interpret what the directory server told us.
-                JSONObject data = new JSONObject(String.valueOf(response)).getJSONObject("data");
-                mHosts = data.getJSONArray("items");
-                Log.i("hostlist", "Received host listing from directory server");
-            } catch (RuntimeException ex) {
-                // Make sure any other failure is reported to the user (as an unknown error).
-                throw ex;
-            } catch (Exception ex) {
-                // Assemble error message to display to the user.
-                String explanation = getString(R.string.error_unknown);
-                if (ex instanceof OperationCanceledException) {
-                    explanation = getString(R.string.error_auth_canceled);
-                } else if (ex instanceof AuthenticatorException) {
-                    explanation = getString(R.string.error_no_accounts);
-                } else if (ex instanceof IOException) {
-                    if (!mAlreadyTried) {
-                        // This was our first connection attempt.
-
-                        synchronized (mUi) {
-                            if (mAccount != null) {
-                                // We got an account, but couldn't log into it. We'll retry in case
-                                // the system's cached authentication token had already expired.
-                                AccountManager authenticator = AccountManager.get(mUi);
-                                mAlreadyTried = true;
-
-                                Log.w("auth", "Requesting renewal of rejected auth token");
-                                authenticator.invalidateAuthToken(mAccount.type, mToken);
-                                mToken = null;
-                                authenticator.getAuthToken(
-                                        mAccount, TOKEN_SCOPE, null, mUi, this, mNetwork);
-
-                                // We're not in an error state *yet*.
-                                return;
-                            }
-                        }
-
-                        // We didn't even get an account, so the auth server is likely unreachable.
-                        explanation = getString(R.string.error_bad_connection);
-                    } else {
-                        // Authentication truly failed.
-                        Log.e("auth", "Fresh auth token was also rejected");
-                        explanation = getString(R.string.error_auth_failed);
-                    }
-                } else if (ex instanceof JSONException) {
-                    explanation = getString(R.string.error_unexpected_response);
-                    runOnUiThread(new HostListDisplayer(mUi));
-                }
-
-                mHosts = null;
-                Log.w("auth", ex);
-                Toast.makeText(mUi, explanation, Toast.LENGTH_LONG).show();
-            }
-
-            // Share our findings with the user.
-            runOnUiThread(new HostListDisplayer(mUi));
-        }
+    @Override
+    public void onHostListReceived(HostInfo[] hosts) {
+        // Store a copy of the array, so that it can't be mutated by the HostListLoader. HostInfo
+        // is an immutable type, so a shallow copy of the array is sufficient here.
+        mHosts = Arrays.copyOf(hosts, hosts.length);
+        setHostListProgressVisible(false);
+        updateUi();
     }
 
-    /** Formats the host list and offers it to the user. */
-    private class HostListDisplayer implements Runnable {
-        /** Communication with the screen. */
-        private Activity mUi;
-
-        /** Constructor. */
-        public HostListDisplayer(Activity ui) {
-            mUi = ui;
-        }
-
-        /**
-         * Updates the infotext and host list display.
-         * This method affects the UI and must be run on its same thread.
-         */
-        @Override
-        public void run() {
-            synchronized (mUi) {
-                mRefreshButton.setEnabled(mAccount != null);
-                if (mAccount != null) {
-                    mAccountSwitcher.setTitle(mAccount.name);
-                }
-            }
-
-            if (mHosts == null) {
-                mGreeting.setText(getString(R.string.inst_empty_list));
-                mList.setAdapter(null);
+    @Override
+    public void onError(HostListLoader.Error error) {
+        String explanation = null;
+        switch (error) {
+            case AUTH_FAILED:
+                break;
+            case NETWORK_ERROR:
+                explanation = getString(R.string.error_network_error);
+                break;
+            case UNEXPECTED_RESPONSE:
+            case SERVICE_UNAVAILABLE:
+            case UNKNOWN:
+                explanation = getString(R.string.error_unexpected);
+                break;
+            default:
+                // Unreachable.
                 return;
-            }
+        }
 
-            mGreeting.setText(getString(R.string.inst_host_list));
+        if (explanation != null) {
+            Toast.makeText(this, explanation, Toast.LENGTH_LONG).show();
+            setHostListProgressVisible(false);
+            return;
+        }
 
-            ArrayAdapter<JSONObject> displayer = new HostListAdapter(mUi, R.layout.host);
-            Log.i("hostlist", "About to populate host list display");
-            try {
-                int index = 0;
-                while (!mHosts.isNull(index)) {
-                    displayer.add(mHosts.getJSONObject(index));
-                    ++index;
-                }
-                mList.setAdapter(displayer);
-            }
-            catch(JSONException ex) {
-                Log.w("hostlist", ex);
-                Toast.makeText(
-                        mUi, getString(R.string.error_cataloging_hosts), Toast.LENGTH_LONG).show();
+        // This is the AUTH_FAILED case.
 
-                // Close the application.
-                finish();
-            }
+        if (!mTriedNewAuthToken) {
+            // This was our first connection attempt.
+
+            AccountManager authenticator = AccountManager.get(this);
+            mTriedNewAuthToken = true;
+
+            Log.w("auth", "Requesting renewal of rejected auth token");
+            authenticator.invalidateAuthToken(mAccount.type, mToken);
+            mToken = null;
+            authenticator.getAuthToken(mAccount, TOKEN_SCOPE, null, this, this, null);
+
+            // We're not in an error state *yet*.
+            return;
+        } else {
+            // Authentication truly failed.
+            Log.e("auth", "Fresh auth token was also rejected");
+            explanation = getString(R.string.error_authentication_failed);
+            Toast.makeText(this, explanation, Toast.LENGTH_LONG).show();
+            setHostListProgressVisible(false);
         }
     }
 
-    /** Describes the appearance and behavior of each host list entry. */
-    private class HostListAdapter extends ArrayAdapter<JSONObject> {
-        /** Constructor. */
-        public HostListAdapter(Context context, int textViewResourceId) {
-            super(context, textViewResourceId);
+    /**
+     * Updates the infotext and host list display.
+     */
+    private void updateUi() {
+        mRefreshButton.setEnabled(mAccount != null);
+
+        ArrayAdapter<HostInfo> displayer = new HostListAdapter(this, R.layout.host, mHosts);
+        Log.i("hostlist", "About to populate host list display");
+        mHostListView.setAdapter(displayer);
+    }
+
+    @Override
+    public void onConnectionState(JniInterface.ConnectionListener.State state,
+            JniInterface.ConnectionListener.Error error) {
+        boolean dismissProgress = false;
+        switch (state) {
+            case INITIALIZING:
+            case CONNECTING:
+            case AUTHENTICATED:
+                // The connection is still being established.
+                break;
+
+            case CONNECTED:
+                dismissProgress = true;
+                // Display the remote desktop.
+                startActivityForResult(new Intent(this, Desktop.class), 0);
+                break;
+
+            case FAILED:
+                dismissProgress = true;
+                Toast.makeText(this, getString(error.message()), Toast.LENGTH_LONG).show();
+                // Close the Desktop view, if it is currently running.
+                finishActivity(0);
+                break;
+
+            case CLOSED:
+                // No need to show toast in this case. Either the connection will have failed
+                // because of an error, which will trigger toast already. Or the disconnection will
+                // have been initiated by the user.
+                dismissProgress = true;
+                finishActivity(0);
+                break;
+
+            default:
+                // Unreachable, but required by Google Java style and findbugs.
+                assert false : "Unreached";
         }
 
-        /** Generates a View corresponding to this particular host. */
-        @Override
-        public View getView(int position, View convertView, ViewGroup parent) {
-            TextView target = (TextView)super.getView(position, convertView, parent);
-
-            try {
-                final JSONObject host = getItem(position);
-                target.setText(Html.fromHtml(host.getString("hostName") + " (<font color = \"" +
-                        (host.getString("status").equals("ONLINE") ? HOST_COLOR_ONLINE :
-                        HOST_COLOR_OFFLINE) + "\">" + host.getString("status") + "</font>)"));
-
-                if (host.getString("status").equals("ONLINE")) {  // Host is online.
-                    target.setOnClickListener(new View.OnClickListener() {
-                            @Override
-                            public void onClick(View v) {
-                                try {
-                                    synchronized (getContext()) {
-                                        JniInterface.connectToHost(mAccount.name, mToken,
-                                                host.getString("jabberId"),
-                                                host.getString("hostId"),
-                                                host.getString("publicKey"),
-                                                new Runnable() {
-                                            @Override
-                                            public void run() {
-                                                startActivity(
-                                                        new Intent(getContext(), Desktop.class));
-                                            }
-                                        });
-                                    }
-                                }
-                                catch(JSONException ex) {
-                                    Log.w("host", ex);
-                                    Toast.makeText(getContext(),
-                                            getString(R.string.error_reading_host),
-                                            Toast.LENGTH_LONG).show();
-
-                                    // Close the application.
-                                    finish();
-                                }
-                            }
-                        });
-                } else {  // Host is offline.
-                    // Disallow interaction with this entry.
-                    target.setEnabled(false);
-                }
-            }
-            catch(JSONException ex) {
-                Log.w("hostlist", ex);
-                Toast.makeText(getContext(),
-                        getString(R.string.error_displaying_host),
-                        Toast.LENGTH_LONG).show();
-
-                // Close the application.
-                finish();
-            }
-
-            return target;
+        if (dismissProgress && mProgressIndicator != null) {
+            mProgressIndicator.dismiss();
+            mProgressIndicator = null;
         }
     }
 }

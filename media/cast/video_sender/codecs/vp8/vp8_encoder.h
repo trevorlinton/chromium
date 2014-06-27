@@ -7,8 +7,13 @@
 
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/threading/thread_checker.h"
 #include "media/cast/cast_config.h"
 #include "third_party/libvpx/source/libvpx/vpx/vpx_encoder.h"
+
+namespace media {
+class VideoFrame;
+}
 
 // VPX forward declaration.
 typedef struct vpx_codec_ctx vpx_enc_ctx_t;
@@ -20,14 +25,17 @@ const int kNumberOfVp8VideoBuffers = 3;
 
 class Vp8Encoder {
  public:
-  Vp8Encoder(const VideoSenderConfig& video_config,
-             uint8 max_unacked_frames);
+  Vp8Encoder(const VideoSenderConfig& video_config, uint8 max_unacked_frames);
 
   ~Vp8Encoder();
 
+  // Initialize the encoder before Encode() can be called. This method
+  // must be called on the thread that Encode() is called.
+  void Initialize();
+
   // Encode a raw image (as a part of a video stream).
-  bool Encode(const I420VideoFrame& input_image,
-              EncodedVideoFrame* encoded_image);
+  bool Encode(const scoped_refptr<media::VideoFrame>& video_frame,
+              transport::EncodedVideoFrame* encoded_image);
 
   // Update the encoder with a new target bit rate.
   void UpdateRates(uint32 new_bitrate);
@@ -35,7 +43,7 @@ class Vp8Encoder {
   // Set the next frame to be a key frame.
   void GenerateKeyFrame();
 
-  void LatestFrameIdToReference(uint8 frame_id);
+  void LatestFrameIdToReference(uint32 frame_id);
 
  private:
   enum Vp8Buffers {
@@ -54,7 +62,7 @@ class Vp8Encoder {
   Vp8Buffers GetNextBufferToUpdate();
 
   // Calculate which previous frame to reference.
-  uint8 GetLatestFrameIdToReference();
+  uint32 GetLatestFrameIdToReference();
 
   // Get encoder flags for our referenced encoder buffers.
   void GetCodecReferenceFlags(vpx_codec_flags_t* flags);
@@ -69,16 +77,21 @@ class Vp8Encoder {
 
   // VP8 internal objects.
   scoped_ptr<vpx_codec_enc_cfg_t> config_;
-  vpx_enc_ctx_t* encoder_;
+  scoped_ptr<vpx_enc_ctx_t> encoder_;
   vpx_image_t* raw_image_;
 
   bool key_frame_requested_;
   int64 timestamp_;
-  uint8 last_encoded_frame_id_;
-  uint8 used_buffers_frame_id_[kNumberOfVp8VideoBuffers];
+  uint32 last_encoded_frame_id_;
+  uint32 used_buffers_frame_id_[kNumberOfVp8VideoBuffers];
   bool acked_frame_buffers_[kNumberOfVp8VideoBuffers];
   Vp8Buffers last_used_vp8_buffer_;
   int number_of_repeated_buffers_;
+
+  // This is bound to the thread where Initialize() is called.
+  base::ThreadChecker thread_checker_;
+
+  DISALLOW_COPY_AND_ASSIGN(Vp8Encoder);
 };
 
 }  // namespace cast

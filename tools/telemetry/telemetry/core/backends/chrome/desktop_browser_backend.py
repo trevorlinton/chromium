@@ -1,6 +1,7 @@
 # Copyright 2013 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
+
 import glob
 import heapq
 import logging
@@ -11,9 +12,11 @@ import sys
 import tempfile
 import time
 
+from telemetry.core import exceptions
 from telemetry.core import util
 from telemetry.core.backends import browser_backend
 from telemetry.core.backends.chrome import chrome_browser_backend
+
 
 class DesktopBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
   """The backend for controlling a locally-executed browser instance, on Linux,
@@ -38,7 +41,8 @@ class DesktopBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
       raise Exception('Cannot create browser, no executable found!')
 
     self._flash_path = flash_path
-    if self._flash_path and not os.path.exists(self._flash_path):
+    if (browser_options.warn_if_no_flash
+        and self._flash_path and not os.path.exists(self._flash_path)):
       logging.warning(('Could not find flash at %s. Running without flash.\n\n'
                        'To fix this see http://go/read-src-internal') %
                       self._flash_path)
@@ -49,9 +53,8 @@ class DesktopBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
           'Content shell does not support extensions.')
 
     self._browser_directory = browser_directory
-    self._port = util.GetAvailableLocalPort()
+    self._port = None
     self._profile_dir = None
-    self._supports_net_benchmarking = True
     self._tmp_minidump_dir = tempfile.mkdtemp()
 
     self._SetupProfile()
@@ -82,6 +85,7 @@ class DesktopBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
     env = os.environ.copy()
     env['CHROME_HEADLESS'] = '1'  # Don't upload minidumps.
     env['BREAKPAD_DUMP_LOCATION'] = self._tmp_minidump_dir
+    logging.debug('Starting Chrome %s', args)
     if not self.browser_options.show_stdout:
       self._tmp_output_file = tempfile.NamedTemporaryFile('w', 0)
       self._proc = subprocess.Popen(
@@ -96,18 +100,25 @@ class DesktopBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
       self.Close()
       raise
 
+  def HasBrowserFinishedLaunching(self):
+    # In addition to the functional check performed by the base class, quickly
+    # check if the browser process is still alive.
+    self._proc.poll()
+    if self._proc.returncode:
+      raise exceptions.ProcessGoneException(
+          "Return code: %d" % self._proc.returncode)
+    return super(DesktopBrowserBackend, self).HasBrowserFinishedLaunching()
+
   def GetBrowserStartupArgs(self):
     args = super(DesktopBrowserBackend, self).GetBrowserStartupArgs()
+    self._port = util.GetUnreservedAvailableLocalPort()
     args.append('--remote-debugging-port=%i' % self._port)
     args.append('--enable-crash-reporter-for-testing')
+    args.append('--use-mock-keychain')
     if not self.is_content_shell:
       args.append('--window-size=1280,1024')
       if self._flash_path:
         args.append('--ppapi-flash-path=%s' % self._flash_path)
-      if self._supports_net_benchmarking:
-        args.append('--enable-net-benchmarking')
-      else:
-        args.append('--enable-benchmarking')
       if not self.browser_options.dont_override_profile:
         args.append('--user-data-dir=%s' % self._tmp_profile_dir)
     return args
@@ -124,13 +135,6 @@ class DesktopBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
 
   def Start(self):
     self._LaunchBrowser()
-
-    # For old chrome versions, might have to relaunch to have the
-    # correct net_benchmarking switch.
-    if self.chrome_branch_number < 1418:
-      self.Close()
-      self._supports_net_benchmarking = False
-      self._LaunchBrowser()
 
   @property
   def pid(self):
@@ -150,7 +154,13 @@ class DesktopBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
     return self._proc.poll() == None
 
   def GetStandardOutput(self):
-    assert self._tmp_output_file, "Can't get standard output with show_stdout"
+    if not self._tmp_output_file:
+      if self.browser_options.show_stdout:
+        # This can happen in the case that loading the Chrome binary fails.
+        # We print rather than using logging here, because that makes a
+        # recursive call to this function.
+        print >> sys.stderr, "Can't get standard output with --show_stdout"
+      return ''
     self._tmp_output_file.flush()
     try:
       with open(self._tmp_output_file.name) as f:
@@ -171,17 +181,17 @@ class DesktopBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
       return self.GetStandardOutput()
     most_recent_dump = heapq.nlargest(1, dumps, os.path.getmtime)[0]
     if os.path.getmtime(most_recent_dump) < (time.time() - (5 * 60)):
-      logging.warn('Crash dump is older than 5 minutes. May not be correct.')
+      logging.warning('Crash dump is older than 5 minutes. May not be correct.')
+
+    symbols = glob.glob(os.path.join(self._browser_directory, '*.breakpad*'))
+    if not symbols:
+      logging.warning('No breakpad symbols found. Returning browser stdout.')
+      return self.GetStandardOutput()
 
     minidump = most_recent_dump + '.stripped'
     with open(most_recent_dump, 'rb') as infile:
       with open(minidump, 'wb') as outfile:
         outfile.write(''.join(infile.read().partition('MDMP')[1:]))
-
-    symbols = glob.glob(os.path.join(os.path.dirname(stackwalk), '*.breakpad*'))
-    if not symbols:
-      logging.warning('No breakpad symbols found. Returning browser stdout.')
-      return self.GetStandardOutput()
 
     symbols_path = os.path.join(self._tmp_minidump_dir, 'symbols')
     for symbol in sorted(symbols, key=os.path.getmtime, reverse=True):
@@ -218,22 +228,23 @@ class DesktopBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
         return self._proc.poll() != None
 
       # Try to politely shutdown, first.
-      self._proc.terminate()
-      try:
-        util.WaitFor(IsClosed, timeout=1)
-        self._proc = None
-      except util.TimeoutException:
-        pass
+      if not IsClosed():
+        self._proc.terminate()
+        try:
+          util.WaitFor(IsClosed, timeout=5)
+          self._proc = None
+        except util.TimeoutException:
+          logging.warning('Failed to gracefully shutdown. Proceeding to kill.')
 
       # Kill it.
       if not IsClosed():
         self._proc.kill()
         try:
-          util.WaitFor(IsClosed, timeout=5)
-          self._proc = None
+          util.WaitFor(IsClosed, timeout=10)
         except util.TimeoutException:
-          self._proc = None
           raise Exception('Could not shutdown the browser.')
+        finally:
+          self._proc = None
 
     if self._output_profile_path:
       # If we need the output then double check that it exists.
@@ -249,6 +260,3 @@ class DesktopBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
     if self._tmp_output_file:
       self._tmp_output_file.close()
       self._tmp_output_file = None
-
-  def CreateForwarder(self, *port_pairs):
-    return browser_backend.DoNothingForwarder(*port_pairs)

@@ -13,6 +13,7 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/chrome_version_info.h"
 #include "content/public/common/content_switches.h"
 #include "media/base/media_switches.h"
 
@@ -38,14 +39,27 @@ void SetChromeSpecificCommandLineFlags() {
   SetCommandLineSwitch(switches::kEnableAutologin);
 
   // Enable prerender for the omnibox.
-  SetCommandLineSwitchASCII(
-      switches::kPrerenderMode, switches::kPrerenderModeSwitchValueEnabled);
-  SetCommandLineSwitchASCII(
-      switches::kPrerenderFromOmnibox,
-      switches::kPrerenderFromOmniboxSwitchValueEnabled);
+  SetCommandLineSwitchASCII(switches::kPrerenderMode,
+                            switches::kPrerenderModeSwitchValueEnabled);
+  SetCommandLineSwitchASCII(switches::kPrerenderFromOmnibox,
+                            switches::kPrerenderFromOmniboxSwitchValueEnabled);
+
+  // Disable syncing favicons on low end devices.
   if (base::android::SysUtils::IsLowEndDevice())
-    SetCommandLineSwitch(switches::kDisableSyncFavicons);
-#if defined(GOOGLE_TV)
-  SetCommandLineSwitch(switches::kPpapiInProcess);
-#endif
+    SetCommandLineSwitchASCII(switches::kDisableSyncTypes, "Favicon Images");
+
+  // Enable DOM Distiller on local builds, canary and dev-channel.
+  chrome::VersionInfo::Channel channel = chrome::VersionInfo::GetChannel();
+  if (channel == chrome::VersionInfo::CHANNEL_UNKNOWN ||
+      channel == chrome::VersionInfo::CHANNEL_CANARY ||
+      channel == chrome::VersionInfo::CHANNEL_DEV) {
+    SetCommandLineSwitch(switches::kEnableDomDistiller);
+  }
+
+  // Enable the Fast Text Autosizer on local builds, canary and dev-channel.
+  if (channel == chrome::VersionInfo::CHANNEL_UNKNOWN ||
+      channel == chrome::VersionInfo::CHANNEL_CANARY ||
+      channel == chrome::VersionInfo::CHANNEL_DEV) {
+    SetCommandLineSwitch(switches::kEnableFastTextAutosizing);
+  }
 }

@@ -44,7 +44,6 @@ InstantPage::InstantPage(Delegate* delegate, const std::string& instant_url,
                          Profile* profile, bool is_incognito)
     : profile_(profile),
       delegate_(delegate),
-      ipc_sender_(InstantIPCSender::Create(is_incognito)),
       instant_url_(instant_url),
       is_incognito_(is_incognito) {
 }
@@ -55,7 +54,6 @@ void InstantPage::SetContents(content::WebContents* web_contents) {
   if (!web_contents)
     return;
 
-  sender()->SetContents(web_contents);
   Observe(web_contents);
   SearchModel* model = SearchTabHelper::FromWebContents(contents())->model();
   model->AddObserver(this);
@@ -71,35 +69,13 @@ bool InstantPage::ShouldProcessAboutToNavigateMainFrame() {
 
 void InstantPage::DidCommitProvisionalLoadForFrame(
     int64 /* frame_id */,
-    const string16& frame_unique_name,
+    const base::string16& frame_unique_name,
     bool is_main_frame,
     const GURL& url,
     content::PageTransition /* transition_type */,
     content::RenderViewHost* /* render_view_host */) {
   if (is_main_frame && ShouldProcessAboutToNavigateMainFrame())
     delegate_->InstantPageAboutToNavigateMainFrame(contents(), url);
-}
-
-void InstantPage::DidNavigateMainFrame(
-    const content::LoadCommittedDetails& details,
-    const content::FrameNavigateParams& /* params */) {
-  // A 204 can be sent by the search provider as a lightweight signal
-  // to fall back to the local page, and we obviously want to fall back
-  // if we get any response code that indicates an error.
-  if (details.http_status_code == 204 || details.http_status_code >= 400)
-    delegate_->InstantPageLoadFailed(contents());
-}
-
-void InstantPage::DidFailProvisionalLoad(
-    int64 /* frame_id */,
-    const string16& frame_unique_name,
-    bool is_main_frame,
-    const GURL& /* validated_url */,
-    int /* error_code */,
-    const string16& /* error_description */,
-    content::RenderViewHost* /* render_view_host */) {
-  if (is_main_frame)
-    delegate_->InstantPageLoadFailed(contents());
 }
 
 void InstantPage::ModelChanged(const SearchModel::State& old_state,
@@ -120,6 +96,5 @@ void InstantPage::ClearContents() {
   if (contents())
     SearchTabHelper::FromWebContents(contents())->model()->RemoveObserver(this);
 
-  sender()->SetContents(NULL);
   Observe(NULL);
 }

@@ -12,6 +12,8 @@
 #include "chrome/common/local_discovery/service_discovery_client.h"
 #include "chrome/utility/utility_message_handler.h"
 
+struct LocalDiscoveryMsg_SocketInfo;
+
 namespace net {
 class MDnsClient;
 }
@@ -53,10 +55,12 @@ class ServiceDiscoveryMessageHandler : public chrome::UtilityMessageHandler {
                 const base::Closure& task);
 
   // IPC message handlers.
-  void OnSetSockets(const base::FileDescriptor& socket_v4,
-                    const base::FileDescriptor& socket_v6);
+#if defined(OS_POSIX)
+  void OnSetSockets(const std::vector<LocalDiscoveryMsg_SocketInfo>& sockets);
+#endif  // OS_POSIX
   void OnStartWatcher(uint64 id, const std::string& service_type);
   void OnDiscoverServices(uint64 id, bool force_update);
+  void OnSetActivelyRefreshServices(uint64 id, bool actively_refresh_services);
   void OnDestroyWatcher(uint64 id);
   void OnResolveService(uint64 id, const std::string& service_name);
   void OnDestroyResolver(uint64 id);
@@ -67,6 +71,7 @@ class ServiceDiscoveryMessageHandler : public chrome::UtilityMessageHandler {
   void InitializeMdns();
   void StartWatcher(uint64 id, const std::string& service_type);
   void DiscoverServices(uint64 id, bool force_update);
+  void SetActivelyRefreshServices(uint64 id, bool actively_refresh_services);
   void DestroyWatcher(uint64 id);
   void ResolveService(uint64 id, const std::string& service_name);
   void DestroyResolver(uint64 id);

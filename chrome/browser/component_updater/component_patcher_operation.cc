@@ -24,6 +24,8 @@
 
 using crypto::SecureHash;
 
+namespace component_updater {
+
 namespace {
 
 const char kInput[] = "input";
@@ -73,7 +75,7 @@ ComponentUnpacker::Error DeltaUpdateOp::Run(base::DictionaryValue* command_args,
 
   const base::FilePath parent = output_abs_path_.DirName();
   if (!base::DirectoryExists(parent)) {
-    if (!file_util::CreateDirectory(parent))
+    if (!base::CreateDirectory(parent))
       return ComponentUnpacker::kIoError;
   }
 
@@ -220,3 +222,4 @@ ComponentUnpacker::Error DeltaUpdateOpPatchCourgette::DoRun(
                         error);
 }
 
+}  // namespace component_updater

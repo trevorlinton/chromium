@@ -32,6 +32,7 @@ class PluginURLFetcher : public webkit_glue::ResourceLoaderBridge::Peer {
                    bool notify_redirects,
                    bool is_plugin_src_load,
                    int origin_pid,
+                   int render_frame_id,
                    int render_view_id,
                    unsigned long resource_id,
                    bool copy_stream_data);
@@ -61,8 +62,10 @@ class PluginURLFetcher : public webkit_glue::ResourceLoaderBridge::Peer {
   virtual void OnCompletedRequest(
       int error_code,
       bool was_ignored_by_handler,
+      bool stale_copy_in_cache,
       const std::string& security_info,
-      const base::TimeTicks& completion_time) OVERRIDE;
+      const base::TimeTicks& completion_time,
+      int64 total_transfer_size) OVERRIDE;
 
   PluginStreamUrl* plugin_stream_;
   GURL url_;

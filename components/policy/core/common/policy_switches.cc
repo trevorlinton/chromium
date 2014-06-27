@@ -13,8 +13,18 @@ namespace switches {
 // policy which affects many users is changed.
 const char kCloudPolicyInvalidationDelay[]  = "cloud-policy-invalidation-delay";
 
-// Disables pushing cloud policy to Chrome using an invalidation service.
-const char kDisableCloudPolicyPush[]        = "disable-cloud-policy-push";
+// Specifies the URL at which to fetch configuration policy from the device
+// management backend. Specifying this switch turns on managed policy from the
+// device management backend.
+const char kDeviceManagementUrl[]           = "device-management-url";
+
+// Enables fetching and storing cloud policy for components.
+const char kEnableComponentCloudPolicy[]    = "enable-component-cloud-policy";
+
+// Disables the verification of policy signing keys.
+// TODO(atwilson): Remove this once all test servers have been updated to
+// produce verification signatures.
+const char kDisablePolicyKeyVerification[] = "disable-policy-key-verification";
 
 #if defined(OS_ANDROID) || defined(OS_IOS)
 // Registers for cloud policy using the BROWSER client type instead of the

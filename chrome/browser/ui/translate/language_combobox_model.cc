@@ -22,12 +22,8 @@ int LanguageComboboxModel::GetItemCount() const {
   return model_->GetNumberOfLanguages();
 }
 
-string16 LanguageComboboxModel::GetItemAt(int index) {
+base::string16 LanguageComboboxModel::GetItemAt(int index) {
   return model_->GetLanguageNameAt(index);
-}
-
-bool LanguageComboboxModel::IsItemSeparatorAt(int index) {
-  return false;
 }
 
 int LanguageComboboxModel::GetDefaultIndex() const {

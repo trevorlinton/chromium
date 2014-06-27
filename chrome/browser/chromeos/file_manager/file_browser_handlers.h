@@ -17,7 +17,6 @@
 
 class FileBrowserHandler;
 class GURL;
-class PrefService;
 class Profile;
 
 namespace base {
@@ -56,7 +55,6 @@ FileBrowserHandlerList FindFileBrowserHandlers(
 bool ExecuteFileBrowserHandler(
     Profile* profile,
     const extensions::Extension* extension,
-    int32 tab_id,
     const std::string& action_id,
     const std::vector<fileapi::FileSystemURL>& file_urls,
     const file_tasks::FileTaskFinishedCallback& done);

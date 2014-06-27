@@ -14,7 +14,7 @@ def _CheckSphinxBuild(input_api, output_api):
   """
 
   try:
-    subprocess.check_output(['make', 'SPHINXOPTS=-Wa'],
+    subprocess.check_output(['make', 'presubmit', 'SPHINXOPTS=-Wa'],
                             stderr=subprocess.STDOUT)
   except subprocess.CalledProcessError as e:
     return [output_api.PresubmitNotifyResult('sphinx_build failed:\n' +

@@ -11,13 +11,15 @@
 #include "base/prefs/pref_registry_simple.h"
 #include "chrome/browser/extensions/test_extension_service.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/extensions/background_info.h"
-#include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/extension_set.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_pref_service_syncable.h"
+#include "chrome/test/base/testing_profile.h"
 #include "components/user_prefs/pref_registry_syncable.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "extensions/common/constants.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/extension_set.h"
+#include "extensions/common/manifest_handlers/background_info.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace extensions {
@@ -82,7 +84,10 @@ class ComponentLoaderTest : public testing::Test {
   ComponentLoaderTest()
       // Note: we pass the same pref service here, to stand in for both
       // user prefs and local state.
-      : component_loader_(&extension_service_, &prefs_, &local_state_) {
+      : component_loader_(&extension_service_,
+                          &prefs_,
+                          &local_state_,
+                          &profile_) {
   }
 
   virtual void SetUp() OVERRIDE {
@@ -108,6 +113,7 @@ class ComponentLoaderTest : public testing::Test {
   MockExtensionService extension_service_;
   TestingPrefServiceSyncable prefs_;
   TestingPrefServiceSimple local_state_;
+  TestingProfile profile_;
   ComponentLoader component_loader_;
 
   // The root directory of the text extension.
@@ -115,6 +121,8 @@ class ComponentLoaderTest : public testing::Test {
 
   // The contents of the text extension's manifest file.
   std::string manifest_contents_;
+
+  content::TestBrowserThreadBundle thread_bundle_;
 
   base::FilePath GetBasePath() {
     base::FilePath test_data_dir;
@@ -124,7 +132,7 @@ class ComponentLoaderTest : public testing::Test {
 };
 
 TEST_F(ComponentLoaderTest, ParseManifest) {
-  scoped_ptr<DictionaryValue> manifest;
+  scoped_ptr<base::DictionaryValue> manifest;
 
   // Test invalid JSON.
   manifest.reset(

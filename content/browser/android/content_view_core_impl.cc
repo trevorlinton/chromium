@@ -11,28 +11,34 @@
 #include "base/command_line.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
+#include "base/metrics/histogram.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "cc/layers/layer.h"
 #include "cc/output/begin_frame_args.h"
+#include "content/browser/android/gesture_event_type.h"
 #include "content/browser/android/interstitial_page_delegate_android.h"
 #include "content/browser/android/load_url_params.h"
-#include "content/browser/android/touch_point.h"
 #include "content/browser/frame_host/interstitial_page_impl.h"
 #include "content/browser/frame_host/navigation_controller_impl.h"
 #include "content/browser/frame_host/navigation_entry_impl.h"
 #include "content/browser/media/android/browser_media_player_manager.h"
 #include "content/browser/renderer_host/compositor_impl_android.h"
+#include "content/browser/renderer_host/input/motion_event_android.h"
 #include "content/browser/renderer_host/input/web_input_event_builders_android.h"
+#include "content/browser/renderer_host/input/web_input_event_util.h"
 #include "content/browser/renderer_host/java/java_bound_object.h"
 #include "content/browser/renderer_host/java/java_bridge_dispatcher_host_manager.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_android.h"
+#include "content/browser/screen_orientation/screen_orientation_dispatcher_host.h"
 #include "content/browser/ssl/ssl_host_state.h"
 #include "content/browser/web_contents/web_contents_view_android.h"
+#include "content/common/input/web_input_event_traits.h"
 #include "content/common/input_messages.h"
 #include "content/common/view_messages.h"
+#include "content/public/browser/android/external_video_surface_container.h"
 #include "content/public/browser/browser_accessibility_state.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/favicon_status.h"
@@ -40,21 +46,23 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/notification_types.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/menu_item.h"
 #include "content/public/common/page_transition_types.h"
+#include "content/public/common/user_agent.h"
 #include "jni/ContentViewCore_jni.h"
 #include "third_party/WebKit/public/web/WebBindings.h"
 #include "third_party/WebKit/public/web/WebInputEvent.h"
 #include "ui/base/android/view_android.h"
 #include "ui/base/android/window_android.h"
+#include "ui/events/gesture_detection/gesture_config_helper.h"
 #include "ui/gfx/android/java_bitmap.h"
 #include "ui/gfx/screen.h"
 #include "ui/gfx/size_conversions.h"
 #include "ui/gfx/size_f.h"
-#include "webkit/common/user_agent/user_agent_util.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF16;
@@ -63,16 +71,19 @@ using base::android::ConvertUTF16ToJavaString;
 using base::android::ConvertUTF8ToJavaString;
 using base::android::ScopedJavaGlobalRef;
 using base::android::ScopedJavaLocalRef;
-using WebKit::WebGestureEvent;
-using WebKit::WebInputEvent;
+using blink::WebGestureEvent;
+using blink::WebInputEvent;
 
 // Describes the type and enabled state of a select popup item.
-// Keep in sync with the value defined in SelectPopupDialog.java
-enum PopupItemType {
-  POPUP_ITEM_TYPE_GROUP = 0,
-  POPUP_ITEM_TYPE_DISABLED,
-  POPUP_ITEM_TYPE_ENABLED
+namespace {
+
+enum {
+#define DEFINE_POPUP_ITEM_TYPE(name, value) POPUP_ITEM_TYPE_##name = value,
+#include "content/browser/android/popup_item_type_list.h"
+#undef DEFINE_POPUP_ITEM_TYPE
 };
+
+} //namespace
 
 namespace content {
 
@@ -103,7 +114,64 @@ ScopedJavaLocalRef<jobject> CreateJavaRect(
                                       static_cast<int>(rect.y()),
                                       static_cast<int>(rect.right()),
                                       static_cast<int>(rect.bottom())));
-};
+}
+
+int ToGestureEventType(WebInputEvent::Type type) {
+  switch (type) {
+    case WebInputEvent::GestureScrollBegin:
+      return SCROLL_START;
+    case WebInputEvent::GestureScrollEnd:
+      return SCROLL_END;
+    case WebInputEvent::GestureScrollUpdate:
+      return SCROLL_BY;
+    case WebInputEvent::GestureFlingStart:
+      return FLING_START;
+    case WebInputEvent::GestureFlingCancel:
+      return FLING_CANCEL;
+    case WebInputEvent::GestureShowPress:
+      return SHOW_PRESS;
+    case WebInputEvent::GestureTap:
+      return SINGLE_TAP_CONFIRMED;
+    case WebInputEvent::GestureTapUnconfirmed:
+      return SINGLE_TAP_UNCONFIRMED;
+    case WebInputEvent::GestureTapDown:
+      return TAP_DOWN;
+    case WebInputEvent::GestureTapCancel:
+      return TAP_CANCEL;
+    case WebInputEvent::GestureDoubleTap:
+      return DOUBLE_TAP;
+    case WebInputEvent::GestureLongPress:
+      return LONG_PRESS;
+    case WebInputEvent::GestureLongTap:
+      return LONG_TAP;
+    case WebInputEvent::GesturePinchBegin:
+      return PINCH_BEGIN;
+    case WebInputEvent::GesturePinchEnd:
+      return PINCH_END;
+    case WebInputEvent::GesturePinchUpdate:
+      return PINCH_BY;
+    case WebInputEvent::GestureTwoFingerTap:
+    case WebInputEvent::GestureScrollUpdateWithoutPropagation:
+    default:
+      NOTREACHED() << "Invalid source gesture type: "
+                   << WebInputEventTraits::GetName(type);
+      return -1;
+  };
+}
+
+float GetPrimaryDisplayDeviceScaleFactor() {
+  const gfx::Display& display =
+      gfx::Screen::GetNativeScreen()->GetPrimaryDisplay();
+  return display.device_scale_factor();
+}
+
+ui::GestureProvider::Config GetGestureProviderConfig() {
+  ui::GestureProvider::Config config = ui::DefaultGestureProviderConfig();
+  config.disable_click_delay =
+      CommandLine::ForCurrentProcess()->HasSwitch(switches::kDisableClickDelay);
+  return config;
+}
+
 }  // namespace
 
 // Enables a callback when the underlying WebContents is destroyed, to enable
@@ -154,8 +222,8 @@ ContentViewCore* ContentViewCore::GetNativeContentViewCore(JNIEnv* env,
       Java_ContentViewCore_getNativeContentViewCore(env, obj));
 }
 
-ContentViewCoreImpl::ContentViewCoreImpl(JNIEnv* env, jobject obj,
-                                         bool hardware_accelerated,
+ContentViewCoreImpl::ContentViewCoreImpl(JNIEnv* env,
+                                         jobject obj,
                                          WebContents* web_contents,
                                          ui::ViewAndroid* view_android,
                                          ui::WindowAndroid* window_android)
@@ -163,27 +231,18 @@ ContentViewCoreImpl::ContentViewCoreImpl(JNIEnv* env, jobject obj,
       java_ref_(env, obj),
       web_contents_(static_cast<WebContentsImpl*>(web_contents)),
       root_layer_(cc::Layer::Create()),
-      tab_crashed_(false),
+      dpi_scale_(GetPrimaryDisplayDeviceScaleFactor()),
       vsync_interval_(base::TimeDelta::FromMicroseconds(
           kDefaultVSyncIntervalMicros)),
       expected_browser_composite_time_(base::TimeDelta::FromMicroseconds(
           kDefaultVSyncIntervalMicros * kDefaultBrowserCompositeVSyncFraction)),
       view_android_(view_android),
       window_android_(window_android),
-      device_orientation_(0) {
+      gesture_provider_(GetGestureProviderConfig(), this),
+      device_orientation_(0),
+      geolocation_needs_pause_(false) {
   CHECK(web_contents) <<
       "A ContentViewCoreImpl should be created with a valid WebContents.";
-
-  // When a tab is restored (from a saved state), it does not have a renderer
-  // process. We treat it like the tab is crashed. If the content is loaded
-  // when the tab is shown, tab_crashed_ will be reset.
-  UpdateTabCrashedFlag();
-
-  // TODO(leandrogracia): make use of the hardware_accelerated argument.
-
-  const gfx::Display& display =
-      gfx::Screen::GetNativeScreen()->GetPrimaryDisplay();
-  dpi_scale_ = display.device_scale_factor();
 
   // Currently, the only use case we have for overriding a user agent involves
   // spoofing a desktop Linux user agent for "Request desktop site".
@@ -192,7 +251,7 @@ ContentViewCoreImpl::ContentViewCoreImpl(JNIEnv* env, jobject obj,
   const char kLinuxInfoStr[] = "X11; Linux x86_64";
   std::string product = content::GetContentClient()->GetProduct();
   std::string spoofed_ua =
-      webkit_glue::BuildUserAgentFromOSAndProduct(kLinuxInfoStr, product);
+      BuildUserAgentFromOSAndProduct(kLinuxInfoStr, product);
   web_contents->SetUserAgentOverride(spoofed_ua);
 
   InitWebContents();
@@ -204,11 +263,16 @@ ContentViewCoreImpl::~ContentViewCoreImpl() {
   java_ref_.reset();
   if (!j_obj.is_null()) {
     Java_ContentViewCore_onNativeContentViewCoreDestroyed(
-        env, j_obj.obj(), reinterpret_cast<jint>(this));
+        env, j_obj.obj(), reinterpret_cast<intptr_t>(this));
   }
   // Make sure nobody calls back into this object while we are tearing things
   // down.
   notification_registrar_.RemoveAll();
+}
+
+base::android::ScopedJavaLocalRef<jobject>
+ContentViewCoreImpl::GetWebContentsAndroid(JNIEnv* env, jobject obj) {
+  return web_contents_->GetJavaWebContents();
 }
 
 void ContentViewCoreImpl::OnJavaContentViewCoreDestroyed(JNIEnv* env,
@@ -247,6 +311,18 @@ void ContentViewCoreImpl::Observe(int type,
       if (switched_details->first) {
         old_pid = GetRenderProcessIdFromRenderViewHost(
             switched_details->first);
+
+        RenderWidgetHostViewAndroid* view =
+            static_cast<RenderWidgetHostViewAndroid*>(
+                switched_details->first->GetView());
+        if (view)
+          view->SetContentViewCore(NULL);
+
+        view = static_cast<RenderWidgetHostViewAndroid*>(
+            switched_details->second->GetView());
+
+        if (view)
+          view->SetContentViewCore(this);
       }
       int new_pid = GetRenderProcessIdFromRenderViewHost(
           web_contents_->GetRenderViewHost());
@@ -260,6 +336,8 @@ void ContentViewCoreImpl::Observe(int type,
         }
       }
       SetFocusInternal(HasFocus());
+      if (geolocation_needs_pause_)
+        PauseOrResumeGeolocation(true);
       break;
     }
     case NOTIFICATION_RENDERER_PROCESS_CREATED: {
@@ -294,6 +372,11 @@ void ContentViewCoreImpl::Observe(int type,
 void ContentViewCoreImpl::RenderViewReady() {
   if (device_orientation_ != 0)
     SendOrientationChangeEventInternal();
+}
+
+void ContentViewCoreImpl::OnGestureEvent(const ui::GestureEventData& gesture) {
+  SendGestureEvent(
+      CreateWebGestureEventFromGestureEventData(gesture, 1.f / dpi_scale()));
 }
 
 RenderWidgetHostViewAndroid*
@@ -332,9 +415,6 @@ void ContentViewCoreImpl::OnShow(JNIEnv* env, jobject obj) {
 
 void ContentViewCoreImpl::Show() {
   GetWebContents()->WasShown();
-  // Displaying WebContents may trigger a lazy reload, spawning a new renderer
-  // for the tab.
-  UpdateTabCrashedFlag();
 }
 
 void ContentViewCoreImpl::Hide() {
@@ -348,24 +428,32 @@ void ContentViewCoreImpl::PauseVideo() {
     host->Send(new ViewMsg_PauseVideo(host->GetRoutingID()));
 }
 
+void ContentViewCoreImpl::PauseOrResumeGeolocation(bool should_pause) {
+  geolocation_needs_pause_ = should_pause;
+  RenderViewHostImpl* rvh =
+      static_cast<RenderViewHostImpl*>(web_contents_->GetRenderViewHost());
+  if (rvh) {
+    scoped_refptr<GeolocationDispatcherHost> geolocation_dispatcher =
+        static_cast<RenderProcessHostImpl*>(
+            web_contents_->GetRenderProcessHost())->
+            geolocation_dispatcher_host();
+    if (geolocation_dispatcher.get()) {
+      BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
+          base::Bind(&GeolocationDispatcherHost::PauseOrResume,
+          geolocation_dispatcher,
+          rvh->GetRoutingID(),
+          should_pause));
+      geolocation_needs_pause_ = false;
+    }
+  }
+}
+
 void ContentViewCoreImpl::OnTabCrashed() {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
   if (obj.is_null())
     return;
   Java_ContentViewCore_resetVSyncNotification(env, obj.obj());
-
-  // Note that we might reach this place multiple times while the
-  // ContentViewCore remains crashed. E.g. if two tabs share the render process
-  // and the process crashes, this will be called for each tab. If the user
-  // reload one tab, a new render process is created and it can be shared by the
-  // other tab. But if user closes the reloaded tab before reloading the other
-  // tab, the new render process will be shut down. This will trigger the other
-  // tab's OnTabCrashed() called again as two tabs share the same
-  // BrowserRenderProcessHost. The Java side will distinguish this case using
-  // tab_crashed_ passed below.
-  Java_ContentViewCore_onTabCrash(env, obj.obj(), tab_crashed_);
-  tab_crashed_ = true;
 }
 
 // All positions and sizes are in CSS pixels.
@@ -407,15 +495,21 @@ void ContentViewCoreImpl::UpdateFrameInfo(
       controls_offset.y(),
       content_offset.y(),
       overdraw_bottom_height);
+#if defined(VIDEO_HOLE)
+  ExternalVideoSurfaceContainer* surface_container =
+      ExternalVideoSurfaceContainer::FromWebContents(web_contents_);
+  if (surface_container)
+    surface_container->OnFrameInfoUpdated();
+#endif  // defined(VIDEO_HOLE)
 }
 
-void ContentViewCoreImpl::SetTitle(const string16& title) {
+void ContentViewCoreImpl::SetTitle(const base::string16& title) {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
   if (obj.is_null())
     return;
   ScopedJavaLocalRef<jstring> jtitle =
-      ConvertUTF8ToJavaString(env, UTF16ToUTF8(title));
+      ConvertUTF8ToJavaString(env, base::UTF16ToUTF8(title));
   Java_ContentViewCore_setTitle(env, obj.obj(), jtitle.obj());
 }
 
@@ -458,7 +552,7 @@ void ContentViewCoreImpl::ShowSelectPopupMenu(
 
   ScopedJavaLocalRef<jintArray> enabled_array(env,
                                               env->NewIntArray(items.size()));
-  std::vector<string16> labels;
+  std::vector<base::string16> labels;
   labels.reserve(items.size());
   for (size_t i = 0; i < items.size(); ++i) {
     labels.push_back(items[i].label);
@@ -476,38 +570,87 @@ void ContentViewCoreImpl::ShowSelectPopupMenu(
 }
 
 void ContentViewCoreImpl::ConfirmTouchEvent(InputEventAckState ack_result) {
-  JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jobject> j_obj = java_ref_.get(env);
-  if (j_obj.is_null())
-    return;
-  Java_ContentViewCore_confirmTouchEvent(env, j_obj.obj(),
-                                         static_cast<jint>(ack_result));
+  const bool event_consumed = ack_result == INPUT_EVENT_ACK_STATE_CONSUMED;
+  gesture_provider_.OnTouchEventAck(event_consumed);
 }
 
-void ContentViewCoreImpl::UnhandledFlingStartEvent() {
+void ContentViewCoreImpl::OnGestureEventAck(const blink::WebGestureEvent& event,
+                                            InputEventAckState ack_result) {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> j_obj = java_ref_.get(env);
   if (j_obj.is_null())
     return;
-  Java_ContentViewCore_unhandledFlingStartEvent(env, j_obj.obj());
+
+  switch (event.type) {
+    case WebInputEvent::GestureFlingStart:
+      if (ack_result == INPUT_EVENT_ACK_STATE_CONSUMED) {
+        // The view expects the fling velocity in pixels/s.
+        Java_ContentViewCore_onFlingStartEventConsumed(env, j_obj.obj(),
+            event.data.flingStart.velocityX * dpi_scale(),
+            event.data.flingStart.velocityY * dpi_scale());
+      } else {
+        // If a scroll ends with a fling, a SCROLL_END event is never sent.
+        // However, if that fling went unconsumed, we still need to let the
+        // listeners know that scrolling has ended.
+        Java_ContentViewCore_onScrollEndEventAck(env, j_obj.obj());
+      }
+
+      if (ack_result == INPUT_EVENT_ACK_STATE_NO_CONSUMER_EXISTS) {
+        // The view expects the fling velocity in pixels/s.
+        Java_ContentViewCore_onFlingStartEventHadNoConsumer(env, j_obj.obj(),
+            event.data.flingStart.velocityX * dpi_scale(),
+            event.data.flingStart.velocityY * dpi_scale());
+      }
+      break;
+    case WebInputEvent::GestureFlingCancel:
+      Java_ContentViewCore_onFlingCancelEventAck(env, j_obj.obj());
+      break;
+    case WebInputEvent::GestureScrollBegin:
+      Java_ContentViewCore_onScrollBeginEventAck(env, j_obj.obj());
+      break;
+    case WebInputEvent::GestureScrollUpdate:
+      if (ack_result == INPUT_EVENT_ACK_STATE_CONSUMED)
+        Java_ContentViewCore_onScrollUpdateGestureConsumed(env, j_obj.obj());
+      break;
+    case WebInputEvent::GestureScrollEnd:
+      Java_ContentViewCore_onScrollEndEventAck(env, j_obj.obj());
+      break;
+    case WebInputEvent::GesturePinchBegin:
+      Java_ContentViewCore_onPinchBeginEventAck(env, j_obj.obj());
+      break;
+    case WebInputEvent::GesturePinchEnd:
+      Java_ContentViewCore_onPinchEndEventAck(env, j_obj.obj());
+      break;
+    case WebInputEvent::GestureDoubleTap:
+      Java_ContentViewCore_onDoubleTapEventAck(env, j_obj.obj());
+      break;
+    default:
+      break;
+  }
 }
 
-void ContentViewCoreImpl::OnScrollUpdateGestureConsumed() {
-  JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jobject> j_obj = java_ref_.get(env);
-  if (j_obj.is_null())
-    return;
-  Java_ContentViewCore_onScrollUpdateGestureConsumed(env, j_obj.obj());
-}
+bool ContentViewCoreImpl::FilterInputEvent(const blink::WebInputEvent& event) {
+  if (event.type != WebInputEvent::GestureTap &&
+      event.type != WebInputEvent::GestureDoubleTap &&
+      event.type != WebInputEvent::GestureLongTap &&
+      event.type != WebInputEvent::GestureLongPress)
+    return false;
 
-void ContentViewCoreImpl::HasTouchEventHandlers(bool need_touch_events) {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> j_obj = java_ref_.get(env);
   if (j_obj.is_null())
-    return;
-  Java_ContentViewCore_hasTouchEventHandlers(env,
-                                             j_obj.obj(),
-                                             need_touch_events);
+    return false;
+
+  const blink::WebGestureEvent& gesture =
+      static_cast<const blink::WebGestureEvent&>(event);
+  int gesture_type = ToGestureEventType(event.type);
+  return Java_ContentViewCore_filterTapOrPressEvent(env,
+                                                    j_obj.obj(),
+                                                    gesture_type,
+                                                    gesture.x * dpi_scale(),
+                                                    gesture.y * dpi_scale());
+
+  // TODO(jdduke): Also report double-tap UMA, crbug/347568.
 }
 
 bool ContentViewCoreImpl::HasFocus() {
@@ -555,14 +698,19 @@ void ContentViewCoreImpl::ShowPastePopup(int x_dip, int y_dip) {
                                       static_cast<jint>(y_dip));
 }
 
-unsigned int ContentViewCoreImpl::GetScaledContentTexture(
+void ContentViewCoreImpl::GetScaledContentBitmap(
     float scale,
-    gfx::Size* out_size) {
+    jobject jbitmap_config,
+    gfx::Rect src_subrect,
+    const base::Callback<void(bool, const SkBitmap&)>& result_callback) {
   RenderWidgetHostViewAndroid* view = GetRenderWidgetHostViewAndroid();
-  if (!view)
-    return 0;
-
-  return view->GetScaledContentTexture(scale, out_size);
+  if (!view) {
+    result_callback.Run(false, SkBitmap());
+    return;
+  }
+  SkBitmap::Config skbitmap_format = gfx::ConvertToSkiaConfig(jbitmap_config);
+  view->GetScaledContentBitmap(scale, skbitmap_format, src_subrect,
+      result_callback);
 }
 
 void ContentViewCoreImpl::StartContentIntent(const GURL& content_url) {
@@ -598,47 +746,13 @@ void ContentViewCoreImpl::ShowDisambiguationPopup(
                                                java_bitmap.obj());
 }
 
-ScopedJavaLocalRef<jobject> ContentViewCoreImpl::CreateOnePointTouchGesture(
-    int32 start_x, int32 start_y, int32 delta_x, int32 delta_y) {
+ScopedJavaLocalRef<jobject> ContentViewCoreImpl::CreateTouchEventSynthesizer() {
   JNIEnv* env = AttachCurrentThread();
 
   ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
   if (obj.is_null())
     return ScopedJavaLocalRef<jobject>();
-  return Java_ContentViewCore_createOnePointTouchGesture(
-      env, obj.obj(), start_x, start_y, delta_x, delta_y);
-}
-
-ScopedJavaLocalRef<jobject> ContentViewCoreImpl::CreateTwoPointTouchGesture(
-    int32 start_x0, int32 start_y0, int32 delta_x0, int32 delta_y0,
-    int32 start_x1, int32 start_y1, int32 delta_x1, int32 delta_y1) {
-  JNIEnv* env = AttachCurrentThread();
-
-  ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
-  if (obj.is_null())
-    return ScopedJavaLocalRef<jobject>();
-  return Java_ContentViewCore_createTwoPointTouchGesture(
-      env, obj.obj(), start_x0, start_y0, delta_x0, delta_y0,
-      start_x1, start_y1, delta_x1, delta_y1);
-}
-
-void ContentViewCoreImpl::NotifyExternalSurface(
-    int player_id, bool is_request, const gfx::RectF& rect) {
-  JNIEnv* env = AttachCurrentThread();
-
-  ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
-  if (obj.is_null())
-    return;
-
-  Java_ContentViewCore_notifyExternalSurface(
-      env,
-      obj.obj(),
-      static_cast<jint>(player_id),
-      static_cast<jboolean>(is_request),
-      static_cast<jfloat>(rect.x()),
-      static_cast<jfloat>(rect.y()),
-      static_cast<jfloat>(rect.width()),
-      static_cast<jfloat>(rect.height()));
+  return Java_ContentViewCore_createTouchEventSynthesizer(env, obj.obj());
 }
 
 ScopedJavaLocalRef<jobject> ContentViewCoreImpl::GetContentVideoViewClient() {
@@ -659,6 +773,32 @@ ScopedJavaLocalRef<jobject> ContentViewCoreImpl::GetContext() {
     return ScopedJavaLocalRef<jobject>();
 
   return Java_ContentViewCore_getContext(env, obj.obj());
+}
+
+bool ContentViewCoreImpl::ShouldBlockMediaRequest(const GURL& url) {
+  JNIEnv* env = AttachCurrentThread();
+
+  ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
+  if (obj.is_null())
+    return true;
+  ScopedJavaLocalRef<jstring> j_url = ConvertUTF8ToJavaString(env, url.spec());
+  return Java_ContentViewCore_shouldBlockMediaRequest(env, obj.obj(),
+                                                      j_url.obj());
+}
+
+void ContentViewCoreImpl::DidStopFlinging() {
+  JNIEnv* env = AttachCurrentThread();
+
+  ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
+  if (!obj.is_null())
+    Java_ContentViewCore_onNativeFlingStopped(env, obj.obj());
+}
+
+gfx::Size ContentViewCoreImpl::GetViewSize() const {
+  gfx::Size size = GetViewportSizeDip();
+  gfx::Size offset = GetViewportSizeOffsetDip();
+  size.Enlarge(-offset.width(), -offset.height());
+  return size;
 }
 
 gfx::Size ContentViewCoreImpl::GetPhysicalBackingSize() const {
@@ -693,12 +833,12 @@ gfx::Size ContentViewCoreImpl::GetViewportSizeOffsetPix() const {
 
 gfx::Size ContentViewCoreImpl::GetViewportSizeDip() const {
   return gfx::ToCeiledSize(
-      gfx::ScaleSize(GetViewportSizePix(), 1.0f / GetDpiScale()));
+      gfx::ScaleSize(GetViewportSizePix(), 1.0f / dpi_scale()));
 }
 
 gfx::Size ContentViewCoreImpl::GetViewportSizeOffsetDip() const {
   return gfx::ToCeiledSize(
-      gfx::ScaleSize(GetViewportSizeOffsetPix(), 1.0f / GetDpiScale()));
+      gfx::ScaleSize(GetViewportSizeOffsetPix(), 1.0f / dpi_scale()));
 }
 
 float ContentViewCoreImpl::GetOverdrawBottomHeightDip() const {
@@ -707,7 +847,7 @@ float ContentViewCoreImpl::GetOverdrawBottomHeightDip() const {
   if (j_obj.is_null())
     return 0.f;
   return Java_ContentViewCore_getOverdrawBottomHeightPix(env, j_obj.obj())
-      / GetDpiScale();
+      / dpi_scale();
 }
 
 void ContentViewCoreImpl::AttachLayer(scoped_refptr<cc::Layer> layer) {
@@ -721,7 +861,6 @@ void ContentViewCoreImpl::RemoveLayer(scoped_refptr<cc::Layer> layer) {
 void ContentViewCoreImpl::LoadUrl(
     NavigationController::LoadURLParams& params) {
   GetWebContents()->GetController().LoadURLWithParams(params);
-  UpdateTabCrashedFlag();
 }
 
 void ContentViewCoreImpl::AddBeginFrameSubscriber() {
@@ -834,11 +973,6 @@ void ContentViewCoreImpl::LoadUrl(
   LoadUrl(params);
 }
 
-jint ContentViewCoreImpl::GetCurrentRenderProcessId(JNIEnv* env, jobject obj) {
-  return GetRenderProcessIdFromRenderViewHost(
-      web_contents_->GetRenderViewHost());
-}
-
 ScopedJavaLocalRef<jstring> ContentViewCoreImpl::GetURL(
     JNIEnv* env, jobject) const {
   return ConvertUTF8ToJavaString(env, GetWebContents()->GetURL().spec());
@@ -880,37 +1014,71 @@ void ContentViewCoreImpl::SendOrientationChangeEvent(JNIEnv* env,
   }
 }
 
-jboolean ContentViewCoreImpl::SendTouchEvent(JNIEnv* env,
-                                             jobject obj,
-                                             jlong time_ms,
-                                             jint type,
-                                             jobjectArray pts) {
+void ContentViewCoreImpl::CancelActiveTouchSequenceIfNecessary() {
   RenderWidgetHostViewAndroid* rwhv = GetRenderWidgetHostViewAndroid();
-  if (rwhv) {
-    using WebKit::WebTouchEvent;
-    WebKit::WebTouchEvent event;
-    TouchPoint::BuildWebTouchEvent(env, type, time_ms, GetDpiScale(), pts,
-        event);
-    rwhv->SendTouchEvent(event);
-    return true;
-  }
-  return false;
+  // Avoid synthesizing a touch cancel event if it cannot be forwarded.
+  if (!rwhv)
+    return;
+
+  const ui::MotionEvent* current_down_event =
+      gesture_provider_.GetCurrentDownEvent();
+  if (!current_down_event)
+    return;
+
+  scoped_ptr<ui::MotionEvent> cancel_event = current_down_event->Cancel();
+  DCHECK(cancel_event);
+  if (!gesture_provider_.OnTouchEvent(*cancel_event))
+    return;
+
+  rwhv->SendTouchEvent(
+      CreateWebTouchEventFromMotionEvent(*cancel_event, 1.f / dpi_scale()));
 }
 
-float ContentViewCoreImpl::GetTouchPaddingDip() {
-  return 48.0f / GetDpiScale();
+jboolean ContentViewCoreImpl::OnTouchEvent(JNIEnv* env,
+                                           jobject obj,
+                                           jobject motion_event,
+                                           jlong time_ms,
+                                           jint android_action,
+                                           jint pointer_count,
+                                           jint history_size,
+                                           jint action_index,
+                                           jfloat pos_x_0,
+                                           jfloat pos_y_0,
+                                           jfloat pos_x_1,
+                                           jfloat pos_y_1,
+                                           jint pointer_id_0,
+                                           jint pointer_id_1,
+                                           jfloat touch_major_0,
+                                           jfloat touch_major_1) {
+  RenderWidgetHostViewAndroid* rwhv = GetRenderWidgetHostViewAndroid();
+  if (!rwhv)
+    return false;
+
+  MotionEventAndroid event(env,
+                           motion_event,
+                           time_ms,
+                           android_action,
+                           pointer_count,
+                           history_size,
+                           action_index,
+                           pos_x_0,
+                           pos_y_0,
+                           pos_x_1,
+                           pos_y_1,
+                           pointer_id_0,
+                           pointer_id_1,
+                           touch_major_0,
+                           touch_major_1);
+
+  if (!gesture_provider_.OnTouchEvent(event))
+    return false;
+
+  rwhv->SendTouchEvent(WebTouchEventBuilder::Build(event, 1.f / dpi_scale()));
+  return true;
 }
 
 float ContentViewCoreImpl::GetDpiScale() const {
   return dpi_scale_;
-}
-
-void ContentViewCoreImpl::RequestContentClipping(
-    const gfx::Rect& clipping,
-    const gfx::Size& content_size) {
-  RenderWidgetHostViewAndroid* rwhv = GetRenderWidgetHostViewAndroid();
-  if (rwhv)
-    rwhv->RequestContentClipping(clipping, content_size);
 }
 
 jboolean ContentViewCoreImpl::SendMouseMoveEvent(JNIEnv* env,
@@ -922,10 +1090,10 @@ jboolean ContentViewCoreImpl::SendMouseMoveEvent(JNIEnv* env,
   if (!rwhv)
     return false;
 
-  WebKit::WebMouseEvent event = WebMouseEventBuilder::Build(
+  blink::WebMouseEvent event = WebMouseEventBuilder::Build(
       WebInputEvent::MouseMove,
-      WebKit::WebMouseEvent::ButtonNone,
-      time_ms / 1000.0, x / GetDpiScale(), y / GetDpiScale(), 0, 1);
+      blink::WebMouseEvent::ButtonNone,
+      time_ms / 1000.0, x / dpi_scale(), y / dpi_scale(), 0, 1);
 
   rwhv->SendMouseEvent(event);
   return true;
@@ -949,36 +1117,38 @@ jboolean ContentViewCoreImpl::SendMouseWheelEvent(JNIEnv* env,
   } else {
     return false;
   }
-  WebKit::WebMouseWheelEvent event = WebMouseWheelEventBuilder::Build(
-      direction, time_ms / 1000.0, x / GetDpiScale(), y / GetDpiScale());
+  blink::WebMouseWheelEvent event = WebMouseWheelEventBuilder::Build(
+      direction, time_ms / 1000.0, x / dpi_scale(), y / dpi_scale());
 
   rwhv->SendMouseWheelEvent(event);
   return true;
 }
 
 WebGestureEvent ContentViewCoreImpl::MakeGestureEvent(
-    WebInputEvent::Type type, long time_ms, float x, float y) const {
+    WebInputEvent::Type type, int64 time_ms, float x, float y) const {
   return WebGestureEventBuilder::Build(
-      type, time_ms / 1000.0, x / GetDpiScale(), y / GetDpiScale());
+      type, time_ms / 1000.0, x / dpi_scale(), y / dpi_scale());
 }
 
 void ContentViewCoreImpl::SendGestureEvent(
-    const WebKit::WebGestureEvent& event) {
+    const blink::WebGestureEvent& event) {
   RenderWidgetHostViewAndroid* rwhv = GetRenderWidgetHostViewAndroid();
   if (rwhv)
     rwhv->SendGestureEvent(event);
 }
 
-void ContentViewCoreImpl::UpdateTabCrashedFlag() {
-  // Since RenderWidgetHostView is associated with the lifetime of the renderer
-  // process, we use it to test whether there is a renderer process.
-  tab_crashed_ = !(web_contents_->GetRenderWidgetHostView());
-}
-
-void ContentViewCoreImpl::ScrollBegin(JNIEnv* env, jobject obj, jlong time_ms,
-                                      jfloat x, jfloat y) {
+void ContentViewCoreImpl::ScrollBegin(JNIEnv* env,
+                                      jobject obj,
+                                      jlong time_ms,
+                                      jfloat x,
+                                      jfloat y,
+                                      jfloat hintx,
+                                      jfloat hinty) {
   WebGestureEvent event = MakeGestureEvent(
       WebInputEvent::GestureScrollBegin, time_ms, x, y);
+  event.data.scrollBegin.deltaXHint = hintx / dpi_scale();
+  event.data.scrollBegin.deltaYHint = hinty / dpi_scale();
+
   SendGestureEvent(event);
 }
 
@@ -992,8 +1162,8 @@ void ContentViewCoreImpl::ScrollBy(JNIEnv* env, jobject obj, jlong time_ms,
                                    jfloat x, jfloat y, jfloat dx, jfloat dy) {
   WebGestureEvent event = MakeGestureEvent(
       WebInputEvent::GestureScrollUpdate, time_ms, x, y);
-  event.data.scrollUpdate.deltaX = -dx / GetDpiScale();
-  event.data.scrollUpdate.deltaY = -dy / GetDpiScale();
+  event.data.scrollUpdate.deltaX = -dx / dpi_scale();
+  event.data.scrollUpdate.deltaY = -dy / dpi_scale();
 
   SendGestureEvent(event);
 }
@@ -1002,11 +1172,8 @@ void ContentViewCoreImpl::FlingStart(JNIEnv* env, jobject obj, jlong time_ms,
                                      jfloat x, jfloat y, jfloat vx, jfloat vy) {
   WebGestureEvent event = MakeGestureEvent(
       WebInputEvent::GestureFlingStart, time_ms, x, y);
-
-  // Velocity should not be scaled by DIP since that interacts poorly with the
-  // deceleration constants.  The DIP scaling is done on the renderer.
-  event.data.flingStart.velocityX = vx;
-  event.data.flingStart.velocityY = vy;
+  event.data.flingStart.velocityX = vx / dpi_scale();
+  event.data.flingStart.velocityY = vy / dpi_scale();
 
   SendGestureEvent(event);
 }
@@ -1018,59 +1185,11 @@ void ContentViewCoreImpl::FlingCancel(JNIEnv* env, jobject obj, jlong time_ms) {
 }
 
 void ContentViewCoreImpl::SingleTap(JNIEnv* env, jobject obj, jlong time_ms,
-                                    jfloat x, jfloat y,
-                                    jboolean disambiguation_popup_tap) {
+                                    jfloat x, jfloat y) {
   WebGestureEvent event = MakeGestureEvent(
       WebInputEvent::GestureTap, time_ms, x, y);
-
-  event.data.tap.tapCount = 1;
-  if (!disambiguation_popup_tap) {
-    const float touch_padding_dip = GetTouchPaddingDip();
-    event.data.tap.width = touch_padding_dip;
-    event.data.tap.height = touch_padding_dip;
-  }
-
-  SendGestureEvent(event);
-}
-
-void ContentViewCoreImpl::SingleTapUnconfirmed(JNIEnv* env, jobject obj,
-                                               jlong time_ms,
-                                               jfloat x, jfloat y) {
-  WebGestureEvent event = MakeGestureEvent(
-      WebInputEvent::GestureTapUnconfirmed, time_ms, x, y);
-
   event.data.tap.tapCount = 1;
 
-  const float touch_padding_dip = GetTouchPaddingDip();
-  event.data.tap.width = touch_padding_dip;
-  event.data.tap.height = touch_padding_dip;
-
-  SendGestureEvent(event);
-}
-
-void ContentViewCoreImpl::ShowPressState(JNIEnv* env, jobject obj,
-                                         jlong time_ms,
-                                         jfloat x, jfloat y) {
-  WebGestureEvent event = MakeGestureEvent(
-      WebInputEvent::GestureShowPress, time_ms, x, y);
-  SendGestureEvent(event);
-}
-
-void ContentViewCoreImpl::ShowPressCancel(JNIEnv* env,
-                                          jobject obj,
-                                          jlong time_ms,
-                                          jfloat x,
-                                          jfloat y) {
-  WebGestureEvent event = MakeGestureEvent(
-      WebInputEvent::GestureTapCancel, time_ms, x, y);
-  SendGestureEvent(event);
-}
-
-void ContentViewCoreImpl::TapDown(JNIEnv* env, jobject obj,
-                                  jlong time_ms,
-                                  jfloat x, jfloat y) {
-  WebGestureEvent event = MakeGestureEvent(
-      WebInputEvent::GestureTapDown, time_ms, x, y);
   SendGestureEvent(event);
 }
 
@@ -1078,35 +1197,17 @@ void ContentViewCoreImpl::DoubleTap(JNIEnv* env, jobject obj, jlong time_ms,
                                     jfloat x, jfloat y) {
   WebGestureEvent event = MakeGestureEvent(
       WebInputEvent::GestureDoubleTap, time_ms, x, y);
+  // Set the tap count to 1 even for DoubleTap, in order to be consistent with
+  // double tap behavior on a mobile viewport. See crbug.com/234986 for context.
+  event.data.tap.tapCount = 1;
+
   SendGestureEvent(event);
 }
 
 void ContentViewCoreImpl::LongPress(JNIEnv* env, jobject obj, jlong time_ms,
-                                    jfloat x, jfloat y,
-                                    jboolean disambiguation_popup_tap) {
+                                    jfloat x, jfloat y) {
   WebGestureEvent event = MakeGestureEvent(
       WebInputEvent::GestureLongPress, time_ms, x, y);
-
-  if (!disambiguation_popup_tap) {
-    const float touch_padding_dip = GetTouchPaddingDip();
-    event.data.longPress.width = touch_padding_dip;
-    event.data.longPress.height = touch_padding_dip;
-  }
-
-  SendGestureEvent(event);
-}
-
-void ContentViewCoreImpl::LongTap(JNIEnv* env, jobject obj, jlong time_ms,
-                                  jfloat x, jfloat y,
-                                  jboolean disambiguation_popup_tap) {
-  WebGestureEvent event = MakeGestureEvent(
-      WebInputEvent::GestureLongTap, time_ms, x, y);
-
-  if (!disambiguation_popup_tap) {
-    const float touch_padding_dip = GetTouchPaddingDip();
-    event.data.longPress.width = touch_padding_dip;
-    event.data.longPress.height = touch_padding_dip;
-  }
 
   SendGestureEvent(event);
 }
@@ -1137,59 +1238,55 @@ void ContentViewCoreImpl::PinchBy(JNIEnv* env, jobject obj, jlong time_ms,
 void ContentViewCoreImpl::SelectBetweenCoordinates(JNIEnv* env, jobject obj,
                                                    jfloat x1, jfloat y1,
                                                    jfloat x2, jfloat y2) {
-  if (GetRenderWidgetHostViewAndroid()) {
-    GetRenderWidgetHostViewAndroid()->SelectRange(
-        gfx::Point(x1 / GetDpiScale(), y1 / GetDpiScale()),
-        gfx::Point(x2 / GetDpiScale(), y2 / GetDpiScale()));
-  }
+  if (!web_contents_ || !web_contents_->GetFocusedFrame())
+    return;
+
+  RenderFrameHostImpl* frame =
+      static_cast<RenderFrameHostImpl*>(web_contents_->GetFocusedFrame());
+  frame->SelectRange(gfx::Point(x1 / dpi_scale(), y1 / dpi_scale()),
+                     gfx::Point(x2 / dpi_scale(), y2 / dpi_scale()));
 }
 
 void ContentViewCoreImpl::MoveCaret(JNIEnv* env, jobject obj,
                                     jfloat x, jfloat y) {
   if (GetRenderWidgetHostViewAndroid()) {
     GetRenderWidgetHostViewAndroid()->MoveCaret(
-        gfx::Point(x / GetDpiScale(), y / GetDpiScale()));
+        gfx::Point(x / dpi_scale(), y / dpi_scale()));
   }
 }
 
-jboolean ContentViewCoreImpl::CanGoBack(JNIEnv* env, jobject obj) {
-  return web_contents_->GetController().CanGoBack();
+void ContentViewCoreImpl::ResetGestureDetectors(JNIEnv* env, jobject obj) {
+  gesture_provider_.ResetGestureDetectors();
 }
 
-jboolean ContentViewCoreImpl::CanGoForward(JNIEnv* env, jobject obj) {
-  return web_contents_->GetController().CanGoForward();
+void ContentViewCoreImpl::IgnoreRemainingTouchEvents(JNIEnv* env, jobject obj) {
+  CancelActiveTouchSequenceIfNecessary();
 }
 
-jboolean ContentViewCoreImpl::CanGoToOffset(JNIEnv* env, jobject obj,
-                                            jint offset) {
-  return web_contents_->GetController().CanGoToOffset(offset);
+void ContentViewCoreImpl::OnWindowFocusLost(JNIEnv* env, jobject obj) {
+  CancelActiveTouchSequenceIfNecessary();
 }
 
-void ContentViewCoreImpl::GoBack(JNIEnv* env, jobject obj) {
-  web_contents_->GetController().GoBack();
-  UpdateTabCrashedFlag();
+void ContentViewCoreImpl::SetDoubleTapSupportForPageEnabled(JNIEnv* env,
+                                                            jobject obj,
+                                                            jboolean enabled) {
+  gesture_provider_.SetDoubleTapSupportForPageEnabled(enabled);
 }
 
-void ContentViewCoreImpl::GoForward(JNIEnv* env, jobject obj) {
-  web_contents_->GetController().GoForward();
-  UpdateTabCrashedFlag();
+void ContentViewCoreImpl::SetDoubleTapSupportEnabled(JNIEnv* env,
+                                                     jobject obj,
+                                                     jboolean enabled) {
+  gesture_provider_.SetDoubleTapSupportForPlatformEnabled(enabled);
 }
 
-void ContentViewCoreImpl::GoToOffset(JNIEnv* env, jobject obj, jint offset) {
-  web_contents_->GetController().GoToOffset(offset);
-  UpdateTabCrashedFlag();
-}
-
-void ContentViewCoreImpl::GoToNavigationIndex(JNIEnv* env,
-                                              jobject obj,
-                                              jint index) {
-  web_contents_->GetController().GoToIndex(index);
-  UpdateTabCrashedFlag();
+void ContentViewCoreImpl::SetMultiTouchZoomSupportEnabled(JNIEnv* env,
+                                                          jobject obj,
+                                                          jboolean enabled) {
+  gesture_provider_.SetMultiTouchSupportEnabled(enabled);
 }
 
 void ContentViewCoreImpl::LoadIfNecessary(JNIEnv* env, jobject obj) {
   web_contents_->GetController().LoadIfNecessary();
-  UpdateTabCrashedFlag();
 }
 
 void ContentViewCoreImpl::RequestRestoreLoad(JNIEnv* env, jobject obj) {
@@ -1200,14 +1297,19 @@ void ContentViewCoreImpl::StopLoading(JNIEnv* env, jobject obj) {
   web_contents_->Stop();
 }
 
-void ContentViewCoreImpl::Reload(JNIEnv* env, jobject obj) {
-  // Set check_for_repost parameter to false as we have no repost confirmation
-  // dialog ("confirm form resubmission" screen will still appear, however).
+void ContentViewCoreImpl::Reload(JNIEnv* env,
+                                 jobject obj,
+                                 jboolean check_for_repost) {
   if (web_contents_->GetController().NeedsReload())
     web_contents_->GetController().LoadIfNecessary();
   else
-    web_contents_->GetController().Reload(true);
-  UpdateTabCrashedFlag();
+    web_contents_->GetController().Reload(check_for_repost);
+}
+
+void ContentViewCoreImpl::ReloadIgnoringCache(JNIEnv* env,
+                                              jobject obj,
+                                              jboolean check_for_repost) {
+  web_contents_->GetController().ReloadIgnoringCache(check_for_repost);
 }
 
 void ContentViewCoreImpl::CancelPendingReload(JNIEnv* env, jobject obj) {
@@ -1220,8 +1322,16 @@ void ContentViewCoreImpl::ContinuePendingReload(JNIEnv* env, jobject obj) {
 
 void ContentViewCoreImpl::ClearHistory(JNIEnv* env, jobject obj) {
   // TODO(creis): Do callers of this need to know if it fails?
-  if (web_contents_->GetController().CanPruneAllButVisible())
-    web_contents_->GetController().PruneAllButVisible();
+  if (web_contents_->GetController().CanPruneAllButLastCommitted())
+    web_contents_->GetController().PruneAllButLastCommitted();
+}
+
+void ContentViewCoreImpl::SetAllowJavascriptInterfacesInspection(
+    JNIEnv* env,
+    jobject obj,
+    jboolean allow) {
+  web_contents_->java_bridge_dispatcher_host_manager()
+      ->SetAllowObjectContentsInspection(allow);
 }
 
 void ContentViewCoreImpl::AddJavascriptInterface(
@@ -1240,11 +1350,14 @@ void ContentViewCoreImpl::AddJavascriptInterface(
   JavaBridgeDispatcherHostManager* java_bridge =
       web_contents_->java_bridge_dispatcher_host_manager();
   java_bridge->SetRetainedObjectSet(weak_retained_object_set);
-  NPObject* bound_object = JavaBoundObject::Create(scoped_object, scoped_clazz,
-                                                   java_bridge->AsWeakPtr());
+  NPObject* bound_object =
+      JavaBoundObject::Create(scoped_object,
+                              scoped_clazz,
+                              java_bridge->AsWeakPtr(),
+                              java_bridge->GetAllowObjectContentsInspection());
   java_bridge->AddNamedObject(ConvertJavaStringToUTF16(env, name),
                               bound_object);
-  WebKit::WebBindings::releaseObject(bound_object);
+  blink::WebBindings::releaseObject(bound_object);
 }
 
 void ContentViewCoreImpl::RemoveJavascriptInterface(JNIEnv* env,
@@ -1302,20 +1415,14 @@ jboolean ContentViewCoreImpl::OnAnimate(JNIEnv* env, jobject /* obj */,
   return view->Animate(base::TimeTicks::FromInternalValue(frame_time_micros));
 }
 
-jboolean ContentViewCoreImpl::PopulateBitmapFromCompositor(JNIEnv* env,
-                                                           jobject obj,
-                                                           jobject jbitmap) {
-  RenderWidgetHostViewAndroid* view = GetRenderWidgetHostViewAndroid();
-  if (!view)
-    return false;
-
-  return view->PopulateBitmapWithContents(jbitmap);
-}
-
 void ContentViewCoreImpl::WasResized(JNIEnv* env, jobject obj) {
   RenderWidgetHostViewAndroid* view = GetRenderWidgetHostViewAndroid();
-  if (view)
+  if (view) {
+    RenderWidgetHostImpl* host = RenderWidgetHostImpl::From(
+        view->GetRenderWidgetHost());
+    host->SendScreenRects();
     view->WasResized();
+  }
 }
 
 void ContentViewCoreImpl::ShowInterstitialPage(
@@ -1332,33 +1439,6 @@ void ContentViewCoreImpl::ShowInterstitialPage(
 jboolean ContentViewCoreImpl::IsShowingInterstitialPage(JNIEnv* env,
                                                         jobject obj) {
   return web_contents_->ShowingInterstitialPage();
-}
-
-void ContentViewCoreImpl::AttachExternalVideoSurface(JNIEnv* env,
-                                                     jobject obj,
-                                                     jint player_id,
-                                                     jobject jsurface) {
-#if defined(GOOGLE_TV)
-  RenderViewHostImpl* rvhi = static_cast<RenderViewHostImpl*>(
-      web_contents_->GetRenderViewHost());
-  if (rvhi && rvhi->media_player_manager()) {
-    rvhi->media_player_manager()->AttachExternalVideoSurface(
-        static_cast<int>(player_id), jsurface);
-  }
-#endif
-}
-
-void ContentViewCoreImpl::DetachExternalVideoSurface(JNIEnv* env,
-                                                     jobject obj,
-                                                     jint player_id) {
-#if defined(GOOGLE_TV)
-  RenderViewHostImpl* rvhi = static_cast<RenderViewHostImpl*>(
-      web_contents_->GetRenderViewHost());
-  if (rvhi && rvhi->media_player_manager()) {
-    rvhi->media_player_manager()->DetachExternalVideoSurface(
-        static_cast<int>(player_id));
-  }
-#endif
 }
 
 jboolean ContentViewCoreImpl::IsRenderWidgetHostViewReady(JNIEnv* env,
@@ -1480,14 +1560,6 @@ int ContentViewCoreImpl::GetNativeImeAdapter(JNIEnv* env, jobject obj) {
   return rwhva->GetNativeImeAdapter();
 }
 
-void ContentViewCoreImpl::UndoScrollFocusedEditableNodeIntoView(
-    JNIEnv* env,
-    jobject obj) {
-  RenderViewHost* host = web_contents_->GetRenderViewHost();
-  host->Send(
-      new ViewMsg_UndoScrollFocusedEditableNodeIntoView(host->GetRoutingID()));
-}
-
 namespace {
 void JavaScriptResultCallback(const ScopedJavaGlobalRef<jobject>& callback,
                               const base::Value* result) {
@@ -1518,8 +1590,8 @@ void ContentViewCoreImpl::EvaluateJavaScript(JNIEnv* env,
 
   if (!callback) {
     // No callback requested.
-    rvh->ExecuteJavascriptInWebFrame(string16(),  // frame_xpath
-                                     ConvertJavaStringToUTF16(env, script));
+    web_contents_->GetMainFrame()->ExecuteJavaScript(
+        ConvertJavaStringToUTF16(env, script));
     return;
   }
 
@@ -1527,11 +1599,10 @@ void ContentViewCoreImpl::EvaluateJavaScript(JNIEnv* env,
   // base::Callback.
   ScopedJavaGlobalRef<jobject> j_callback;
   j_callback.Reset(env, callback);
-  content::RenderViewHost::JavascriptResultCallback c_callback =
+  content::RenderFrameHost::JavaScriptResultCallback c_callback =
       base::Bind(&JavaScriptResultCallback, j_callback);
 
-  rvh->ExecuteJavascriptInWebFrameCallbackResult(
-      string16(),  // frame_xpath
+  web_contents_->GetMainFrame()->ExecuteJavaScript(
       ConvertJavaStringToUTF16(env, script),
       c_callback);
 }
@@ -1542,7 +1613,7 @@ bool ContentViewCoreImpl::GetUseDesktopUserAgent(
   return entry && entry->GetIsOverridingUserAgent();
 }
 
-void ContentViewCoreImpl::UpdateImeAdapter(int native_ime_adapter,
+void ContentViewCoreImpl::UpdateImeAdapter(long native_ime_adapter,
                                            int text_input_type,
                                            const std::string& text,
                                            int selection_start,
@@ -1612,36 +1683,108 @@ void ContentViewCoreImpl::SetAccessibilityEnabled(JNIEnv* env, jobject obj,
     accessibility_state->OnScreenReaderDetected();
     // If it was actually enabled globally, enable it for this RenderWidget now.
     if (accessibility_state->IsAccessibleBrowser() && host_impl)
-      host_impl->SetAccessibilityMode(AccessibilityModeComplete);
+      host_impl->AddAccessibilityMode(AccessibilityModeComplete);
   } else {
-    accessibility_state->DisableAccessibility();
+    accessibility_state->ResetAccessibilityMode();
     if (host_impl)
-      host_impl->SetAccessibilityMode(AccessibilityModeOff);
+      host_impl->ResetAccessibilityMode();
   }
 }
 
 void ContentViewCoreImpl::SendOrientationChangeEventInternal() {
   RenderWidgetHostViewAndroid* rwhv = GetRenderWidgetHostViewAndroid();
   if (rwhv)
-    rwhv->UpdateScreenInfo(rwhv->GetNativeView());
+    rwhv->UpdateScreenInfo(GetViewAndroid());
 
   RenderViewHostImpl* rvhi = static_cast<RenderViewHostImpl*>(
       web_contents_->GetRenderViewHost());
   rvhi->SendOrientationChangeEvent(device_orientation_);
+
+  // TODO(mlamouri): temporary plumbing for Screen Orientation, this will change
+  // in the future. It might leave ContentViewCoreImpl or simply replace the
+  // SendOrientationChangeEvent call above.
+  blink::WebScreenOrientation orientation =
+      blink::WebScreenOrientationPortraitPrimary;
+
+  switch (device_orientation_) {
+    case 0:
+      orientation = blink::WebScreenOrientationPortraitPrimary;
+      break;
+    case 90:
+      orientation = blink::WebScreenOrientationLandscapePrimary;
+      break;
+    case -90:
+      orientation = blink::WebScreenOrientationLandscapeSecondary;
+      break;
+    case 180:
+      orientation = blink::WebScreenOrientationPortraitSecondary;
+      break;
+    default:
+      NOTREACHED();
+  }
+
+  ScreenOrientationDispatcherHost* sodh =
+      static_cast<RenderProcessHostImpl*>(web_contents_->
+          GetRenderProcessHost())->screen_orientation_dispatcher_host();
+
+  // sodh can be null if the RenderProcessHost is in the process of being
+  // destroyed or not yet initialized.
+  if (sodh)
+    sodh->OnOrientationChange(orientation);
+}
+
+void ContentViewCoreImpl::ExtractSmartClipData(JNIEnv* env,
+                                               jobject obj,
+                                               jint x,
+                                               jint y,
+                                               jint width,
+                                               jint height) {
+  gfx::Rect rect(
+      static_cast<int>(x / dpi_scale()),
+      static_cast<int>(y / dpi_scale()),
+      static_cast<int>((width > 0 && width < dpi_scale()) ?
+          1 : (int)(width / dpi_scale())),
+      static_cast<int>((height > 0 && height < dpi_scale()) ?
+          1 : (int)(height / dpi_scale())));
+  GetWebContents()->Send(new ViewMsg_ExtractSmartClipData(
+      GetWebContents()->GetRoutingID(), rect));
+}
+
+jint ContentViewCoreImpl::GetCurrentRenderProcessId(JNIEnv* env, jobject obj) {
+  return GetRenderProcessIdFromRenderViewHost(
+      web_contents_->GetRenderViewHost());
+}
+
+void ContentViewCoreImpl::OnSmartClipDataExtracted(
+    const base::string16& result) {
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
+  if (obj.is_null())
+    return;
+  ScopedJavaLocalRef<jstring> jresult = ConvertUTF16ToJavaString(env, result);
+  Java_ContentViewCore_onSmartClipDataExtracted(
+      env, obj.obj(), jresult.obj());
+}
+
+void ContentViewCoreImpl::WebContentsDestroyed(WebContents* web_contents) {
+  WebContentsViewAndroid* wcva =
+      static_cast<WebContentsViewAndroid*>(web_contents->GetView());
+  DCHECK(wcva);
+  wcva->SetContentViewCore(NULL);
 }
 
 // This is called for each ContentView.
-jint Init(JNIEnv* env, jobject obj,
-          jboolean hardware_accelerated,
-          jint native_web_contents,
-          jint view_android,
-          jint window_android) {
+jlong Init(JNIEnv* env,
+           jobject obj,
+           jlong native_web_contents,
+           jlong view_android,
+           jlong window_android) {
   ContentViewCoreImpl* view = new ContentViewCoreImpl(
-      env, obj, hardware_accelerated,
+      env, obj,
       reinterpret_cast<WebContents*>(native_web_contents),
       reinterpret_cast<ui::ViewAndroid*>(view_android),
       reinterpret_cast<ui::WindowAndroid*>(window_android));
-  return reinterpret_cast<jint>(view);
+  return reinterpret_cast<intptr_t>(view);
 }
 
 bool RegisterContentViewCore(JNIEnv* env) {

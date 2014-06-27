@@ -61,6 +61,17 @@ struct WlanApi {
                   close_handle_func;
   }
 
+  template <typename T>
+  DWORD OpenHandle(DWORD client_version, DWORD* cur_version, T* handle) const {
+    HANDLE temp_handle;
+    DWORD result = open_handle_func(client_version, NULL, cur_version,
+                                    &temp_handle);
+    if (result != ERROR_SUCCESS)
+      return result;
+    handle->Set(temp_handle);
+    return ERROR_SUCCESS;
+  }
+
   HMODULE module;
   WlanOpenHandleFunc open_handle_func;
   WlanEnumInterfacesFunc enum_interfaces_func;
@@ -116,7 +127,7 @@ bool FileURLToFilePath(const GURL& url, base::FilePath* file_path) {
     file_path_str = base::SysNativeMBToWide(path);
     return !file_path_str.empty();
   }
-  file_path_str.assign(UTF8ToWide(path));
+  file_path_str.assign(base::UTF8ToWide(path));
 
   // We used to try too hard and see if |path| made up entirely of
   // the 1st 256 characters in the Unicode was a zero-extended UTF-16.
@@ -127,7 +138,7 @@ bool FileURLToFilePath(const GURL& url, base::FilePath* file_path) {
   return true;
 }
 
-bool GetNetworkList(NetworkInterfaceList* networks) {
+bool GetNetworkList(NetworkInterfaceList* networks, int policy) {
   // GetAdaptersAddresses() may require IO operations.
   base::ThreadRestrictions::AssertIOAllowed();
   bool is_xp = base::win::GetVersion() < base::win::VERSION_VISTA;
@@ -159,7 +170,14 @@ bool GetNetworkList(NetworkInterfaceList* networks) {
       continue;
     }
 
-    std::string name = adapter->AdapterName;
+    // Ignore any HOST side vmware adapters with a description like:
+    // VMware Virtual Ethernet Adapter for VMnet1
+    // but don't ignore any GUEST side adapters with a description like:
+    // VMware Accelerated AMD PCNet Adapter #2
+    if (policy == EXCLUDE_HOST_SCOPE_VIRTUAL_INTERFACES &&
+        strstr(adapter->AdapterName, "VMnet") != NULL) {
+      continue;
+    }
 
     for (IP_ADAPTER_UNICAST_ADDRESS* address = adapter->FirstUnicastAddress;
          address; address = address->Next) {
@@ -189,9 +207,12 @@ bool GetNetworkList(NetworkInterfaceList* networks) {
               }
             }
           }
+          uint32 index =
+              (family == AF_INET) ? adapter->IfIndex : adapter->Ipv6IfIndex;
           networks->push_back(
-              NetworkInterface(adapter->AdapterName, endpoint.address(),
-                               net_prefix));
+              NetworkInterface(adapter->AdapterName,
+                               base::SysWideToNativeMB(adapter->FriendlyName),
+                               index, endpoint.address(), net_prefix));
         }
       }
     }
@@ -236,8 +257,7 @@ WifiPHYLayerProtocol GetWifiPHYLayerProtocol() {
   WlanHandle client;
   DWORD cur_version = 0;
   const DWORD kMaxClientVersion = 2;
-  DWORD result = wlanapi.open_handle_func(kMaxClientVersion, NULL, &cur_version,
-                                          client.Receive());
+  DWORD result = wlanapi.OpenHandle(kMaxClientVersion, &cur_version, &client);
   if (result != ERROR_SUCCESS)
     return WIFI_PHY_LAYER_PROTOCOL_NONE;
 

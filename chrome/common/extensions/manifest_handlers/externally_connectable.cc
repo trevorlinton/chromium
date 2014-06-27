@@ -9,10 +9,10 @@
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/common/extensions/api/manifest_types.h"
-#include "chrome/common/extensions/permissions/permissions_data.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/permissions/api_permission_set.h"
+#include "extensions/common/permissions/permissions_data.h"
 #include "extensions/common/url_pattern.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "url/gurl.h"
@@ -56,7 +56,7 @@ ExternallyConnectableHandler::ExternallyConnectableHandler() {}
 ExternallyConnectableHandler::~ExternallyConnectableHandler() {}
 
 bool ExternallyConnectableHandler::Parse(Extension* extension,
-                                         string16* error) {
+                                         base::string16* error) {
   const base::Value* externally_connectable = NULL;
   CHECK(extension->manifest()->Get(keys::kExternallyConnectable,
                                    &externally_connectable));
@@ -91,7 +91,7 @@ ExternallyConnectableInfo* ExternallyConnectableInfo::Get(
 scoped_ptr<ExternallyConnectableInfo> ExternallyConnectableInfo::FromValue(
     const base::Value& value,
     std::vector<InstallWarning>* install_warnings,
-    string16* error) {
+    base::string16* error) {
   scoped_ptr<ExternallyConnectable> externally_connectable =
       ExternallyConnectable::FromValue(value, error);
   if (!externally_connectable)

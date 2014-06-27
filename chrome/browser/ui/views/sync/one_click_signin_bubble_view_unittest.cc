@@ -52,8 +52,8 @@ class OneClickSigninBubbleViewTest : public views::ViewsTestBase {
 
     OneClickSigninBubbleView::ShowBubble(
         bubble_type,
-        string16(),
-        string16(),
+        base::string16(),
+        base::string16(),
         delegate.Pass(),
         anchor_widget_->GetContentsView(),
         base::Bind(&OneClickSigninBubbleViewTest::OnStartSync,
@@ -62,7 +62,6 @@ class OneClickSigninBubbleViewTest : public views::ViewsTestBase {
     OneClickSigninBubbleView* view =
         OneClickSigninBubbleView::view_for_testing();
     EXPECT_TRUE(view != NULL);
-    view->message_loop_for_testing_ = base::MessageLoop::current();
     return view;
   }
 
@@ -152,7 +151,7 @@ TEST_F(OneClickSigninBubbleViewTest, BubbleOkButton) {
   views::ButtonListener* listener = view;
   const ui::MouseEvent event(ui::ET_MOUSE_PRESSED,
                              gfx::Point(), gfx::Point(),
-                             0);
+                             0, 0);
   listener->ButtonPressed(view->ok_button_, event);
 
   // View should no longer be showing.  The message loop will exit once the
@@ -170,7 +169,7 @@ TEST_F(OneClickSigninBubbleViewTest, DialogOkButton) {
   views::ButtonListener* listener = view;
   const ui::MouseEvent event(ui::ET_MOUSE_PRESSED,
                              gfx::Point(), gfx::Point(),
-                             0);
+                             0, 0);
   listener->ButtonPressed(view->ok_button_, event);
 
   // View should no longer be showing and sync should start
@@ -190,7 +189,7 @@ TEST_F(OneClickSigninBubbleViewTest, DialogUndoButton) {
   views::ButtonListener* listener = view;
   const ui::MouseEvent event(ui::ET_MOUSE_PRESSED,
                              gfx::Point(), gfx::Point(),
-                             0);
+                             0, 0);
   listener->ButtonPressed(view->undo_button_, event);
 
   // View should no longer be showing.  The message loop will exit once the

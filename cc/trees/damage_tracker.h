@@ -6,7 +6,6 @@
 #define CC_TREES_DAMAGE_TRACKER_H_
 
 #include <vector>
-#include "base/containers/hash_tables.h"
 #include "base/memory/scoped_ptr.h"
 #include "cc/base/cc_export.h"
 #include "cc/layers/layer_lists.h"
@@ -33,12 +32,14 @@ class CC_EXPORT DamageTracker {
   ~DamageTracker();
 
   void DidDrawDamagedArea() { current_damage_rect_ = gfx::RectF(); }
-  void AddDamageNextUpdate(gfx::RectF dmg) { current_damage_rect_.Union(dmg); }
+  void AddDamageNextUpdate(const gfx::RectF& dmg) {
+    current_damage_rect_.Union(dmg);
+  }
   void UpdateDamageTrackingState(
       const LayerImplList& layer_list,
       int target_surface_layer_id,
       bool target_surface_property_changed_only_from_descendant,
-      gfx::Rect target_surface_content_rect,
+      const gfx::Rect& target_surface_content_rect,
       LayerImpl* target_surface_mask_layer,
       const FilterOperations& filters);
 
@@ -53,22 +54,36 @@ class CC_EXPORT DamageTracker {
   gfx::RectF TrackDamageFromSurfaceMask(LayerImpl* target_surface_mask_layer);
   gfx::RectF TrackDamageFromLeftoverRects();
 
-  gfx::RectF RemoveRectFromCurrentFrame(int layer_id, bool* layer_is_new);
-  void SaveRectForNextFrame(int layer_id, const gfx::RectF& target_space_rect);
+  void PrepareRectHistoryForUpdate();
 
   // These helper functions are used only in TrackDamageFromActiveLayers().
   void ExtendDamageForLayer(LayerImpl* layer, gfx::RectF* target_damage_rect);
   void ExtendDamageForRenderSurface(LayerImpl* layer,
                                     gfx::RectF* target_damage_rect);
 
-  // To correctly track exposed regions, two hashtables of rects are maintained.
-  // The "current" map is used to compute exposed regions of the current frame,
-  // while the "next" map is used to collect layer rects that are used in the
-  // next frame.
-  typedef base::hash_map<int, gfx::RectF> RectMap;
-  scoped_ptr<RectMap> current_rect_history_;
-  scoped_ptr<RectMap> next_rect_history_;
+  struct RectMapData {
+    RectMapData() : layer_id_(0), mailboxId_(0) {}
+    explicit RectMapData(int layer_id) : layer_id_(layer_id), mailboxId_(0) {}
+    void Update(const gfx::RectF& rect, unsigned int mailboxId) {
+      mailboxId_ = mailboxId;
+      rect_ = rect;
+    }
 
+    bool operator < (const RectMapData& other) const {
+      return layer_id_ < other.layer_id_;
+    }
+
+    int layer_id_;
+    unsigned int mailboxId_;
+    gfx::RectF rect_;
+  };
+  typedef std::vector<RectMapData> SortedRectMap;
+
+  RectMapData& RectDataForLayer(int layer_id, bool* layer_is_new);
+
+  SortedRectMap rect_history_;
+
+  unsigned int mailboxId_;
   gfx::RectF current_damage_rect_;
 
   DISALLOW_COPY_AND_ASSIGN(DamageTracker);

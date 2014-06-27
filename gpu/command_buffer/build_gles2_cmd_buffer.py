@@ -11,12 +11,13 @@ import os.path
 import sys
 import re
 from optparse import OptionParser
+from subprocess import call
 
 _SIZE_OF_UINT32 = 4
 _SIZE_OF_COMMAND_HEADER = 4
 _FIRST_SPECIFIC_COMMAND_ID = 256
 
-_LICENSE = """// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+_LICENSE = """// Copyright (c) 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,6 +25,8 @@ _LICENSE = """// Copyright (c) 2012 The Chromium Authors. All rights reserved.
 
 _DO_NOT_EDIT_WARNING = """// This file is auto-generated from
 // gpu/command_buffer/build_gles2_cmd_buffer.py
+// It's formatted by clang-format using chromium coding style:
+//    clang-format -i -style=chromium filename
 // DO NOT EDIT!
 
 """
@@ -53,9 +56,17 @@ _GL_TYPES = {
   'GLclampf': 'float',
   'GLvoid': 'void',
   'GLfixed': 'int',
-  'GLclampx': 'int',
+  'GLclampx': 'int'
+}
+
+_GL_TYPES_32 = {
   'GLintptr': 'long int',
-  'GLsizeiptr': 'long int',
+  'GLsizeiptr': 'long int'
+}
+
+_GL_TYPES_64 = {
+  'GLintptr': 'long long int',
+  'GLsizeiptr': 'long long int'
 }
 
 # Capabilites selected with glEnable
@@ -1171,6 +1182,7 @@ _PEPPER_INTERFACES = [
   {'name': 'ChromiumEnableFeature', 'dev': False},
   {'name': 'ChromiumMapSub', 'dev': False},
   {'name': 'Query', 'dev': False},
+  {'name': 'DrawBuffers', 'dev': True},
 ]
 
 # This table specifies types and other special data for the commands that
@@ -1212,6 +1224,7 @@ _PEPPER_INTERFACES = [
 # valid_args:   A dictionary of argument indices to args to use in unit tests
 #               when they can not be automatically determined.
 # pepper_interface: The pepper interface that is used for this extension
+# pepper_name:  The name of the function as exposed to pepper.
 # pepper_args:  A string representing the argument list (what would appear in
 #               C/C++ between the parentheses for the function declaration)
 #               that the Pepper API expects for this function. Use this only if
@@ -1246,6 +1259,7 @@ _FUNCTION_INFO = {
     'decoder_func': 'DoBindFramebuffer',
     'gl_test_func': 'glBindFramebufferEXT',
     'gen_func': 'GenFramebuffersEXT',
+    'trace_level': 1,
   },
   'BindRenderbuffer': {
     'type': 'Bind',
@@ -1259,14 +1273,17 @@ _FUNCTION_INFO = {
     'gen_func': 'GenTextures',
     # TODO(gman): remove this once client side caching works.
     'client_test': False,
+    'trace_level': 1,
   },
-  'BlitFramebufferEXT': {
-    'decoder_func': 'DoBlitFramebufferEXT',
+  'BlitFramebufferCHROMIUM': {
+    'decoder_func': 'DoBlitFramebufferCHROMIUM',
     'unit_test': False,
     'extension': True,
     'pepper_interface': 'FramebufferBlit',
+    'pepper_name': 'BlitFramebufferEXT',
     'defer_reads': True,
     'defer_draws': True,
+    'trace_level': 1,
   },
   'BufferData': {
     'type': 'Manual',
@@ -1289,6 +1306,7 @@ _FUNCTION_INFO = {
   'Clear': {
     'decoder_func': 'DoClear',
     'defer_draws': True,
+    'trace_level': 1,
   },
   'ClearColor': {
     'type': 'StateSet',
@@ -1311,12 +1329,15 @@ _FUNCTION_INFO = {
   },
   'ConsumeTextureCHROMIUM': {
     'decoder_func': 'DoConsumeTextureCHROMIUM',
+    'impl_func': False,
     'type': 'PUT',
     'data_type': 'GLbyte',
-    'count': 64,
+    'count': 64,  # GL_MAILBOX_SIZE_CHROMIUM
     'unit_test': False,
+    'client_test': False,
     'extension': True,
     'chromium': True,
+    'trace_level': 1,
   },
   'ClearStencil': {
     'type': 'StateSet',
@@ -1513,6 +1534,7 @@ _FUNCTION_INFO = {
     'type': 'Manual',
     'cmd_args': 'GLenumDrawMode mode, GLint first, GLsizei count',
     'defer_draws': True,
+    'trace_level': 2,
   },
   'DrawElements': {
     'type': 'Manual',
@@ -1520,6 +1542,7 @@ _FUNCTION_INFO = {
                 'GLenumIndexType type, GLuint index_offset',
     'client_test': False,
     'defer_draws': True,
+    'trace_level': 2,
   },
   'Enable': {
     'decoder_func': 'DoEnable',
@@ -1547,6 +1570,7 @@ _FUNCTION_INFO = {
   'FramebufferTexture2D': {
     'decoder_func': 'DoFramebufferTexture2D',
     'gl_test_func': 'glFramebufferTexture2DEXT',
+    'trace_level': 1,
   },
   'FramebufferTexture2DMultisampleEXT': {
     'decoder_func': 'DoFramebufferTexture2DMultisample',
@@ -1554,6 +1578,7 @@ _FUNCTION_INFO = {
     'expectation': False,
     'unit_test': False,
     'extension': True,
+    'trace_level': 1,
   },
   'GenerateMipmap': {
     'decoder_func': 'DoGenerateMipmap',
@@ -1757,12 +1782,20 @@ _FUNCTION_INFO = {
     'client_test': False,
     },
   'GetString': {
-      'type': 'Custom',
-      'client_test': False,
-      'cmd_args': 'GLenumStringType name, uint32 bucket_id',
+    'type': 'Custom',
+    'client_test': False,
+    'cmd_args': 'GLenumStringType name, uint32 bucket_id',
   },
-  'GetTexParameterfv': {'type': 'GETn', 'result': ['SizedResult<GLfloat>']},
-  'GetTexParameteriv': {'type': 'GETn', 'result': ['SizedResult<GLint>']},
+  'GetTexParameterfv': {
+    'type': 'GETn',
+    'decoder_func': 'DoGetTexParameterfv',
+    'result': ['SizedResult<GLfloat>']
+  },
+  'GetTexParameteriv': {
+    'type': 'GETn',
+    'decoder_func': 'DoGetTexParameteriv',
+    'result': ['SizedResult<GLint>']
+  },
   'GetTranslatedShaderSourceANGLE': {
     'type': 'STRn',
     'get_len_func': 'DoGetShaderiv',
@@ -1889,25 +1922,40 @@ _FUNCTION_INFO = {
   },
   'ProduceTextureCHROMIUM': {
     'decoder_func': 'DoProduceTextureCHROMIUM',
+    'impl_func': False,
     'type': 'PUT',
     'data_type': 'GLbyte',
-    'count': 64,
+    'count': 64,  # GL_MAILBOX_SIZE_CHROMIUM
     'unit_test': False,
+    'client_test': False,
     'extension': True,
     'chromium': True,
+    'trace_level': 1,
   },
   'RenderbufferStorage': {
     'decoder_func': 'DoRenderbufferStorage',
     'gl_test_func': 'glRenderbufferStorageEXT',
     'expectation': False,
   },
-  'RenderbufferStorageMultisampleEXT': {
-    'decoder_func': 'DoRenderbufferStorageMultisample',
-    'gl_test_func': 'glRenderbufferStorageMultisampleEXT',
+  'RenderbufferStorageMultisampleCHROMIUM': {
+    'cmd_comment':
+        '// GL_CHROMIUM_framebuffer_multisample\n',
+    'decoder_func': 'DoRenderbufferStorageMultisampleCHROMIUM',
+    'gl_test_func': 'glRenderbufferStorageMultisampleCHROMIUM',
     'expectation': False,
     'unit_test': False,
     'extension': True,
     'pepper_interface': 'FramebufferMultisample',
+    'pepper_name': 'RenderbufferStorageMultisampleEXT',
+  },
+  'RenderbufferStorageMultisampleEXT': {
+    'cmd_comment':
+        '// GL_EXT_multisampled_render_to_texture\n',
+    'decoder_func': 'DoRenderbufferStorageMultisampleEXT',
+    'gl_test_func': 'glRenderbufferStorageMultisampleEXT',
+    'expectation': False,
+    'unit_test': False,
+    'extension': True,
   },
   'ReadPixels': {
     'cmd_comment':
@@ -1973,6 +2021,7 @@ _FUNCTION_INFO = {
     'unit_test': False,
     'client_test': False,
     'extension': True,
+    'trace_level': 1,
   },
   'TexImage2D': {
     'type': 'Manual',
@@ -1981,7 +2030,6 @@ _FUNCTION_INFO = {
   },
   'TexParameterf': {
     'decoder_func': 'DoTexParameterf',
-    'gl_test_func': 'glTexParameteri',
     'valid_args': {
       '2': 'GL_NEAREST'
     },
@@ -1998,7 +2046,7 @@ _FUNCTION_INFO = {
     'data_value': 'GL_NEAREST',
     'count': 1,
     'decoder_func': 'DoTexParameterfv',
-    'gl_test_func': 'glTexParameteri',
+    'gl_test_func': 'glTexParameterf',
     'first_element_only': True,
   },
   'TexParameteriv': {
@@ -2122,9 +2170,8 @@ _FUNCTION_INFO = {
     'pepper_interface': 'ChromiumMapSub',
   },
   'UseProgram': {
+    'type': 'Bind',
     'decoder_func': 'DoUseProgram',
-    'impl_func': False,
-    'unit_test': False,
   },
   'ValidateProgram': {'decoder_func': 'DoValidateProgram'},
   'VertexAttrib1f': {'decoder_func': 'DoVertexAttrib1f'},
@@ -2200,23 +2247,13 @@ _FUNCTION_INFO = {
     'client_test': False,
   },
   'CreateStreamTextureCHROMIUM':  {
-    'type': 'Custom',
-    'cmd_args': 'GLuint client_id, void* result',
-    'result': ['GLuint'],
+    'type': 'HandWritten',
+    'impl_func': False,
+    'gen_cmd': False,
     'immediate': False,
-    'impl_func': False,
-    'expectation': False,
     'extension': True,
     'chromium': True,
-    'client_test': False,
-   },
-  'DestroyStreamTextureCHROMIUM':  {
-    'type': 'Custom',
-    'impl_func': False,
-    'expectation': False,
-    'extension': True,
-    'chromium': True,
-   },
+  },
   'TexImageIOSurface2DCHROMIUM': {
     'decoder_func': 'DoTexImageIOSurface2DCHROMIUM',
     'unit_test': False,
@@ -2251,6 +2288,7 @@ _FUNCTION_INFO = {
     'client_test': False,
     'unit_test': False,
     'extension': True,
+    'pepper_interface': 'DrawBuffers',
   },
   'DrawElementsInstancedANGLE': {
     'type': 'Manual',
@@ -2469,6 +2507,13 @@ _FUNCTION_INFO = {
     'impl_func': True,
     'extension': True,
     'chromium': True,
+    'trace_level': 1,
+  },
+  'DiscardBackbufferCHROMIUM': {
+    'type': 'Custom',
+    'impl_func': True,
+    'extension': True,
+    'chromium': True,
   },
 }
 
@@ -2537,72 +2582,9 @@ class CWriter(object):
     lines = string.splitlines()
     num_lines = len(lines)
     for ii in range(0, num_lines):
-      self.__WriteLine(lines[ii], ii < (num_lines - 1) or string[-1] == '\n')
-
-  def __FindSplit(self, string):
-    """Finds a place to split a string."""
-    splitter = string.find('=')
-    if splitter >= 1 and not string[splitter + 1] == '=' and splitter < 80:
-      return splitter
-    # parts = string.split('(')
-    parts = re.split("(?<=[^\"])\((?!\")", string)
-    fptr = re.compile('\*\w*\)')
-    if len(parts) > 1:
-      splitter = len(parts[0])
-      for ii in range(1, len(parts)):
-        # Don't split on the dot in "if (.condition)".
-        if (not parts[ii - 1][-3:] == "if " and
-            # Don't split "(.)" or "(.*fptr)".
-            (len(parts[ii]) > 0 and
-                not parts[ii][0] == ")" and not fptr.match(parts[ii]))
-            and splitter < 80):
-          return splitter
-        splitter += len(parts[ii]) + 1
-    done = False
-    end = len(string)
-    last_splitter = -1
-    while not done:
-      splitter = string[0:end].rfind(',')
-      if splitter < 0 or (splitter > 0 and string[splitter - 1] == '"'):
-        return last_splitter
-      elif splitter >= 80:
-        end = splitter
-      else:
-        return splitter
-
-  def __WriteLine(self, line, ends_with_eol):
-    """Given a signle line, writes it to a file, splitting if it's > 80 chars"""
-    if len(line) >= 80:
-      i = self.__FindSplit(line)
-      if i > 0:
-        line1 = line[0:i + 1]
-        if line1[-1] == ' ':
-          line1 = line1[:-1]
-        lineend = ''
-        if line1[0] == '#':
-          lineend = ' \\'
-        nolint = ''
-        if len(line1) > 80:
-          nolint = '  // NOLINT'
-        self.__AddLine(line1 + nolint + lineend + '\n')
-        match = re.match("( +)", line1)
-        indent = ""
-        if match:
-          indent = match.group(1)
-        splitter = line[i]
-        if not splitter == ',':
-          indent = "    " + indent
-        self.__WriteLine(indent + line[i + 1:].lstrip(), True)
-        return
-    nolint = ''
-    if len(line) > 80:
-      nolint = '  // NOLINT'
-    self.__AddLine(line + nolint)
-    if ends_with_eol:
-      self.__AddLine('\n')
-
-  def __AddLine(self, line):
-    self.content.append(line)
+      self.content.append(lines[ii])
+      if ii < (num_lines - 1) or string[-1] == '\n':
+        self.content.append('\n')
 
   def Close(self):
     """Close the file."""
@@ -2685,6 +2667,7 @@ class TypeHandler(object):
     file.Write("  typedef %s ValueType;\n" % func.name)
     file.Write("  static const CommandId kCmdId = k%s;\n" % func.name)
     func.WriteCmdArgFlag(file)
+    func.WriteCmdFlag(file)
     file.Write("\n")
     result = func.GetInfo('result')
     if not result == None:
@@ -2859,17 +2842,18 @@ COMPILE_ASSERT(offsetof(%(cmd_name)s::Result, %(field_name)s) == %(offset)d,
 
   def WriteHandlerDeferReadWrite(self, func, file):
     """Writes the code to handle deferring reads or writes."""
-    defer_reads = func.GetInfo('defer_reads')
     defer_draws = func.GetInfo('defer_draws')
-    conditions = []
+    defer_reads = func.GetInfo('defer_reads')
+    if defer_draws or defer_reads:
+      file.Write("  error::Error error;\n")
     if defer_draws:
-      conditions.append('ShouldDeferDraws()');
+      file.Write("  error = WillAccessBoundFramebufferForDraw();\n")
+      file.Write("  if (error != error::kNoError)\n")
+      file.Write("    return error;\n")
     if defer_reads:
-      conditions.append('ShouldDeferReads()');
-    if not conditions:
-      return
-    file.Write("  if (%s)\n" % ' || '.join(conditions))
-    file.Write("    return error::kDeferCommandUntilLater;\n")
+      file.Write("  error = WillAccessBoundFramebufferForRead();\n")
+      file.Write("  if (error != error::kNoError)\n")
+      file.Write("    return error;\n")
 
   def WriteValidUnitTest(self, func, file, test, extra = {}):
     """Writes a valid unit test."""
@@ -3716,7 +3700,9 @@ TEST_F(%(test_name)s, %(name)sValidArgs) {
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
   EXPECT_EQ(GL_NO_ERROR, GetGLError());
 }
-
+"""
+      if func.GetInfo("gen_func"):
+          valid_test += """
 TEST_F(%(test_name)s, %(name)sValidArgsNewId) {
   EXPECT_CALL(*gl_, %(gl_func_name)s(kNewServiceId));
   EXPECT_CALL(*gl_, %(gl_gen_func_name)s(1, _))
@@ -3729,8 +3715,6 @@ TEST_F(%(test_name)s, %(name)sValidArgsNewId) {
   EXPECT_TRUE(Get%(resource_type)s(kNewClientId) != NULL);
 }
 """
-      gen_func_names = {
-      }
       self.WriteValidUnitTest(func, file, valid_test, {
           'resource_type': func.GetOriginalArgs()[0].resource_type,
           'gl_gen_func_name': func.GetInfo("gen_func"),
@@ -3745,7 +3729,9 @@ TEST_F(%(test_name)s, %(name)sValidArgs) {
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
   EXPECT_EQ(GL_NO_ERROR, GetGLError());
 }
-
+"""
+      if func.GetInfo("gen_func"):
+          valid_test += """
 TEST_F(%(test_name)s, %(name)sValidArgsNewId) {
   EXPECT_CALL(*gl_, %(gl_func_name)s(%(first_gl_arg)s, kNewServiceId));
   EXPECT_CALL(*gl_, %(gl_gen_func_name)s(1, _))
@@ -3758,8 +3744,6 @@ TEST_F(%(test_name)s, %(name)sValidArgsNewId) {
   EXPECT_TRUE(Get%(resource_type)s(kNewClientId) != NULL);
 }
 """
-      gen_func_names = {
-      }
       self.WriteValidUnitTest(func, file, valid_test, {
           'first_arg': func.GetOriginalArgs()[0].GetValidArg(func, 0, 0),
           'first_gl_arg': func.GetOriginalArgs()[0].GetValidGLArg(func, 0, 0),
@@ -3801,7 +3785,7 @@ TEST_F(%(test_name)s, %(name)sInvalidArgs%(arg_index)d_%(value_index)d) {
     SetGLError(GL_INVALID_OPERATION, "%(name)s\", \"%(id)s reserved id");
     return;
   }
-  if (Bind%(type)sHelper(%(arg_string)s)) {
+  if (%(name)sHelper(%(arg_string)s)) {
     helper_->%(name)s(%(arg_string)s);
   }
   CheckGLError();
@@ -3919,7 +3903,8 @@ class GENnHandler(TypeHandler):
       MakeIds(this, 0, %(args)s);
   %(name)sHelper(%(args)s);
   helper_->%(name)sImmediate(%(args)s);
-  helper_->CommandBufferHelper::Flush();
+  if (share_group_->bind_generates_resource())
+    helper_->CommandBufferHelper::Flush();
 %(log_code)s
   CheckGLError();
 }
@@ -4351,7 +4336,7 @@ TEST_F(%(test_name)s, %(name)sInvalidArgs) {
 """ % func.GetOriginalArgs()[1].name)
       file.Write("""  GPU_CLIENT_DCHECK_CODE_BLOCK({
     for (GLsizei i = 0; i < n; ++i) {
-      GPU_DCHECK(%s[i] != 0);
+      DCHECK(%s[i] != 0);
     }
   });
 """ % func.GetOriginalArgs()[1].name)
@@ -4758,6 +4743,9 @@ TEST_F(%(test_name)s, %(name)sInvalidArgs%(arg_index)d_%(value_index)d) {
 
   def WriteGLES2Implementation(self, func, file):
     """Overrriden from TypeHandler."""
+    impl_func = func.GetInfo('impl_func')
+    if (impl_func != None and impl_func != True):
+      return;
     file.Write("%s GLES2Implementation::%s(%s) {\n" %
                (func.return_type, func.original_name,
                 func.MakeTypedOriginalArgString("")))
@@ -4778,6 +4766,9 @@ TEST_F(%(test_name)s, %(name)sInvalidArgs%(arg_index)d_%(value_index)d) {
 
   def WriteGLES2ImplementationUnitTest(self, func, file):
     """Writes the GLES2 Implemention unit test."""
+    client_test = func.GetInfo('client_test')
+    if (client_test != None and client_test != True):
+      return;
     code = """
 TEST_F(GLES2ImplementationTest, %(name)s) {
   %(type)s data[%(count)d] = {0};
@@ -6412,6 +6403,11 @@ class Function(object):
     else:
       return self.MakeTypedOriginalArgString(prefix, False)
 
+  def GetPepperName(self):
+    if self.GetInfo("pepper_name"):
+      return self.GetInfo("pepper_name")
+    return self.name
+
   def MakeTypedCmdArgString(self, prefix, add_comma = False):
     """Gets a typed list of arguments as they need to be for command buffers."""
     args = self.GetCmdArgs()
@@ -6462,6 +6458,25 @@ class Function(object):
   def WriteValidationCode(self, file):
     """Writes the validation code for a command."""
     pass
+
+  def WriteCmdFlag(self, file):
+    """Writes the cmd cmd_flags constant."""
+    flags = []
+    trace_level = 3  # By default trace only at the highest level
+    if hasattr(self.info, 'trace_level'):
+      if (self.info.trace_level < 0) or (self.info.trace_level > 3):
+        raise KeyError("Unhandled trace_level: %d" % self.info.trace_level)
+      trace_level = self.info.trace_level
+
+    flags.append('CMD_FLAG_SET_TRACE_LEVEL(%d)' % trace_level)
+
+    if len(flags) > 0:
+      cmd_flags = ' | '.join(flags)
+    else:
+      cmd_flags = 0
+
+    file.Write("  static const uint8 cmd_flags = %s;\n" % cmd_flags)
+
 
   def WriteCmdArgFlag(self, file):
     """Writes the cmd kArgFlags constant."""
@@ -6903,7 +6918,7 @@ class GLGenerator(object):
 
   def ParseGLH(self, filename):
     """Parses the cmd_buffer_functions.txt file and extracts the functions"""
-    f = open("gpu/command_buffer/cmd_buffer_functions.txt", "r")
+    f = open(filename, "r")
     functions = f.read()
     f.close()
     for line in functions.splitlines():
@@ -7164,7 +7179,7 @@ void ContextState::InitState() const {
       file.Write("    case GL_%s:\n" % capability['name'].upper())
       file.Write("      return enable_flags.%s;\n" % capability['name'])
     file.Write("""    default:
-      GPU_NOTREACHED();
+      NOTREACHED();
       return false;
   }
 }
@@ -7565,8 +7580,7 @@ const size_t GLES2Util::enum_to_string_table_len_ =
     """Writes the Pepper OpenGLES interface definition."""
     file = CHeaderWriter(
         filename,
-        "// OpenGL ES interface.\n",
-        2)
+        "// OpenGL ES interface.\n")
 
     file.Write("#include \"ppapi/c/pp_resource.h\"\n")
     if dev:
@@ -7575,6 +7589,13 @@ const size_t GLES2Util::enum_to_string_table_len_ =
       file.Write("\n#ifndef __gl2_h_\n")
       for (k, v) in _GL_TYPES.iteritems():
         file.Write("typedef %s %s;\n" % (v, k))
+      file.Write("#ifdef _WIN64\n")
+      for (k, v) in _GL_TYPES_64.iteritems():
+        file.Write("typedef %s %s;\n" % (v, k))
+      file.Write("#else\n")
+      for (k, v) in _GL_TYPES_32.iteritems():
+        file.Write("typedef %s %s;\n" % (v, k))
+      file.Write("#endif  // _WIN64\n")
       file.Write("#endif  // __gl2_h_\n\n")
 
     for interface in self.pepper_interfaces:
@@ -7596,7 +7617,8 @@ const size_t GLES2Util::enum_to_string_table_len_ =
           arg = context_arg + ", " + original_arg
         else:
           arg = context_arg
-        file.Write("  %s (*%s)(%s);\n" % (func.return_type, func.name, arg))
+        file.Write("  %s (*%s)(%s);\n" %
+                   (func.return_type, func.GetPepperName(), arg))
       file.Write("};\n\n")
 
 
@@ -7639,7 +7661,8 @@ const size_t GLES2Util::enum_to_string_table_len_ =
         arg = context_arg + ", " + original_arg
       else:
         arg = context_arg
-      file.Write("%s %s(%s) {\n" % (func.return_type, func.name, arg))
+      file.Write("%s %s(%s) {\n" %
+                 (func.return_type, func.GetPepperName(), arg))
       file.Write("  Enter3D enter(context_id, true);\n")
       file.Write("  if (enter.succeeded()) {\n")
 
@@ -7672,7 +7695,7 @@ const size_t GLES2Util::enum_to_string_table_len_ =
                  "ppb_opengles2 = {\n" % interface.GetStructName())
       file.Write("    &")
       file.Write(",\n    &".join(
-        f.name for f in self.original_functions
+        f.GetPepperName() for f in self.original_functions
           if f.InPepperInterface(interface)))
       file.Write("\n")
 
@@ -7704,8 +7727,8 @@ const size_t GLES2Util::enum_to_string_table_len_ =
       interface = self.interface_info[func.GetInfo('pepper_interface') or '']
 
       file.Write("%s GL_APIENTRY gl%s(%s) {\n" %
-                 (func.return_type, func.name,
-                  func.MakeTypedOriginalArgString("")))
+                 (func.return_type, func.GetPepperName(),
+                  func.MakeTypedPepperArgString("")))
       return_str = "" if func.return_type == "void" else "return "
       interface_str = "glGet%sInterfacePPAPI()" % interface.GetName()
       original_arg = func.MakeOriginalArgString("")
@@ -7719,28 +7742,38 @@ const size_t GLES2Util::enum_to_string_table_len_ =
                    (interface.GetStructName(), interface_str))
         file.Write("  if (ext)\n")
         file.Write("    %sext->%s(%s);\n" %
-                   (return_str, func.name, arg))
+                   (return_str, func.GetPepperName(), arg))
         if return_str:
           file.Write("  %s0;\n" % return_str)
       else:
         file.Write("  %s%s->%s(%s);\n" %
-                   (return_str, interface_str, func.name, arg))
+                   (return_str, interface_str, func.GetPepperName(), arg))
       file.Write("}\n\n")
     file.Close()
+
+  def WriteMojoGLCallVisitor(self, filename):
+    """Provides the GL implementation for mojo"""
+    file = CWriter(filename)
+    file.Write(_LICENSE)
+    file.Write(_DO_NOT_EDIT_WARNING)
+
+    for func in self.original_functions:
+      if not func.IsCoreGLFunction():
+        continue
+      file.Write("VISIT_GL_CALL(%s, %s, (%s), (%s))\n" %
+                             (func.name, func.return_type,
+                              func.MakeTypedOriginalArgString(""),
+                              func.MakeOriginalArgString("")))
+
+    file.Close()
+
+def Format(generated_files):
+  for filename in generated_files:
+    call(["clang-format", "-i", "-style=chromium", filename])
 
 def main(argv):
   """This is the main function."""
   parser = OptionParser()
-  parser.add_option(
-      "-g", "--generate-implementation-templates", action="store_true",
-      help="generates files that are generally hand edited..")
-  parser.add_option(
-      "--alternate-mode", type="choice",
-      choices=("ppapi", "chrome_ppapi", "chrome_ppapi_proxy", "nacl_ppapi"),
-      help="generate files for other projects. \"ppapi\" will generate ppapi "
-      "bindings. \"chrome_ppapi\" generate chrome implementation for ppapi. "
-      "\"chrome_ppapi_proxy\" will generate the glue for the chrome IPC ppapi"
-      "proxy. \"nacl_ppapi\" will generate NaCl implementation for ppapi")
   parser.add_option(
       "--output-dir",
       help="base directory for resulting files, under chrome/src. default is "
@@ -7768,56 +7801,86 @@ def main(argv):
   os.chdir(os.path.dirname(__file__) + "/../..")
 
   gen = GLGenerator(options.verbose)
-  gen.ParseGLH("common/GLES2/gl2.h")
+  gen.ParseGLH("gpu/command_buffer/cmd_buffer_functions.txt")
 
   # Support generating files under gen/
   if options.output_dir != None:
     os.chdir(options.output_dir)
 
-  if options.alternate_mode == "ppapi":
-    # To trigger this action, do "make ppapi_gles_bindings"
-    os.chdir("ppapi");
-    gen.WritePepperGLES2Interface("c/ppb_opengles2.h", False)
-    gen.WritePepperGLES2Interface("c/dev/ppb_opengles2ext_dev.h", True)
-    gen.WriteGLES2ToPPAPIBridge("lib/gl/gles2/gles2.c")
+  gen.WritePepperGLES2Interface("ppapi/c/ppb_opengles2.h", False)
+  gen.WritePepperGLES2Interface("ppapi/c/dev/ppb_opengles2ext_dev.h", True)
+  gen.WriteGLES2ToPPAPIBridge("ppapi/lib/gl/gles2/gles2.c")
+  gen.WritePepperGLES2Implementation(
+      "ppapi/shared_impl/ppb_opengles2_shared.cc")
+  os.chdir("gpu/command_buffer")
+  gen.WriteCommandIds("common/gles2_cmd_ids_autogen.h")
+  gen.WriteFormat("common/gles2_cmd_format_autogen.h")
+  gen.WriteFormatTest("common/gles2_cmd_format_test_autogen.h")
+  gen.WriteGLES2InterfaceHeader("client/gles2_interface_autogen.h")
+  gen.WriteGLES2InterfaceStub("client/gles2_interface_stub_autogen.h")
+  gen.WriteGLES2InterfaceStubImpl(
+      "client/gles2_interface_stub_impl_autogen.h")
+  gen.WriteGLES2ImplementationHeader("client/gles2_implementation_autogen.h")
+  gen.WriteGLES2Implementation("client/gles2_implementation_impl_autogen.h")
+  gen.WriteGLES2ImplementationUnitTests(
+      "client/gles2_implementation_unittest_autogen.h")
+  gen.WriteGLES2TraceImplementationHeader(
+      "client/gles2_trace_implementation_autogen.h")
+  gen.WriteGLES2TraceImplementation(
+      "client/gles2_trace_implementation_impl_autogen.h")
+  gen.WriteGLES2CLibImplementation("client/gles2_c_lib_autogen.h")
+  gen.WriteCmdHelperHeader("client/gles2_cmd_helper_autogen.h")
+  gen.WriteServiceImplementation("service/gles2_cmd_decoder_autogen.h")
+  gen.WriteServiceContextStateHeader("service/context_state_autogen.h")
+  gen.WriteServiceContextStateImpl("service/context_state_impl_autogen.h")
+  gen.WriteClientContextStateHeader("client/client_context_state_autogen.h")
+  gen.WriteClientContextStateImpl(
+      "client/client_context_state_impl_autogen.h")
+  gen.WriteServiceUnitTests("service/gles2_cmd_decoder_unittest_%d_autogen.h")
+  gen.WriteServiceUtilsHeader("service/gles2_cmd_validation_autogen.h")
+  gen.WriteServiceUtilsImplementation(
+      "service/gles2_cmd_validation_implementation_autogen.h")
+  gen.WriteCommonUtilsHeader("common/gles2_cmd_utils_autogen.h")
+  gen.WriteCommonUtilsImpl("common/gles2_cmd_utils_implementation_autogen.h")
+  gen.WriteGLES2Header("../GLES2/gl2chromium_autogen.h")
+  gen.WriteMojoGLCallVisitor(
+      "../../mojo/public/gles2/gles2_call_visitor_autogen.h")
 
-  elif options.alternate_mode == "chrome_ppapi":
-    # To trigger this action, do "make ppapi_gles_implementation"
-    gen.WritePepperGLES2Implementation(
-        "ppapi/shared_impl/ppb_opengles2_shared.cc")
-
-  else:
-    os.chdir("gpu/command_buffer")
-    gen.WriteCommandIds("common/gles2_cmd_ids_autogen.h")
-    gen.WriteFormat("common/gles2_cmd_format_autogen.h")
-    gen.WriteFormatTest("common/gles2_cmd_format_test_autogen.h")
-    gen.WriteGLES2InterfaceHeader("client/gles2_interface_autogen.h")
-    gen.WriteGLES2InterfaceStub("client/gles2_interface_stub_autogen.h")
-    gen.WriteGLES2InterfaceStubImpl(
-        "client/gles2_interface_stub_impl_autogen.h")
-    gen.WriteGLES2ImplementationHeader("client/gles2_implementation_autogen.h")
-    gen.WriteGLES2Implementation("client/gles2_implementation_impl_autogen.h")
-    gen.WriteGLES2ImplementationUnitTests(
-        "client/gles2_implementation_unittest_autogen.h")
-    gen.WriteGLES2TraceImplementationHeader(
-        "client/gles2_trace_implementation_autogen.h")
-    gen.WriteGLES2TraceImplementation(
-        "client/gles2_trace_implementation_impl_autogen.h")
-    gen.WriteGLES2CLibImplementation("client/gles2_c_lib_autogen.h")
-    gen.WriteCmdHelperHeader("client/gles2_cmd_helper_autogen.h")
-    gen.WriteServiceImplementation("service/gles2_cmd_decoder_autogen.h")
-    gen.WriteServiceContextStateHeader("service/context_state_autogen.h")
-    gen.WriteServiceContextStateImpl("service/context_state_impl_autogen.h")
-    gen.WriteClientContextStateHeader("client/client_context_state_autogen.h")
-    gen.WriteClientContextStateImpl(
-        "client/client_context_state_impl_autogen.h")
-    gen.WriteServiceUnitTests("service/gles2_cmd_decoder_unittest_%d_autogen.h")
-    gen.WriteServiceUtilsHeader("service/gles2_cmd_validation_autogen.h")
-    gen.WriteServiceUtilsImplementation(
-        "service/gles2_cmd_validation_implementation_autogen.h")
-    gen.WriteCommonUtilsHeader("common/gles2_cmd_utils_autogen.h")
-    gen.WriteCommonUtilsImpl("common/gles2_cmd_utils_implementation_autogen.h")
-    gen.WriteGLES2Header("../GLES2/gl2chromium_autogen.h")
+  Format([
+      "common/gles2_cmd_format_autogen.h",
+      "common/gles2_cmd_format_test_autogen.h",
+      "common/gles2_cmd_ids_autogen.h",
+      "common/gles2_cmd_utils_autogen.h",
+      "common/gles2_cmd_utils_implementation_autogen.h",
+      "client/client_context_state_autogen.h",
+      "client/client_context_state_impl_autogen.h",
+      "client/gles2_cmd_helper_autogen.h",
+      "client/gles2_c_lib_autogen.h",
+      "client/gles2_implementation_autogen.h",
+      "client/gles2_implementation_impl_autogen.h",
+      "client/gles2_implementation_unittest_autogen.h",
+      "client/gles2_interface_autogen.h",
+      "client/gles2_interface_stub_autogen.h",
+      "client/gles2_interface_stub_impl_autogen.h",
+      "client/gles2_trace_implementation_autogen.h",
+      "client/gles2_trace_implementation_impl_autogen.h",
+      "service/context_state_autogen.h",
+      "service/context_state_impl_autogen.h",
+      "service/gles2_cmd_decoder_autogen.h",
+      "service/gles2_cmd_decoder_unittest_0_autogen.h",
+      "service/gles2_cmd_decoder_unittest_1_autogen.h",
+      "service/gles2_cmd_decoder_unittest_2_autogen.h",
+      "service/gles2_cmd_decoder_unittest_3_autogen.h",
+      "service/gles2_cmd_validation_autogen.h",
+      "service/gles2_cmd_validation_implementation_autogen.h"])
+  os.chdir("../..")
+  Format([
+      "gpu/GLES2/gl2chromium_autogen.h",
+      "mojo/public/gles2/gles2_call_visitor_autogen.h",
+      "ppapi/c/dev/ppb_opengles2ext_dev.h",
+      "ppapi/c/ppb_opengles2.h",
+      "ppapi/lib/gl/gles2/gles2.c",
+      "ppapi/shared_impl/ppb_opengles2_shared.cc"])
 
   if gen.errors > 0:
     print "%d errors" % gen.errors

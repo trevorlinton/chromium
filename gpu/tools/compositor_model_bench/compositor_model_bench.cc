@@ -31,16 +31,13 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/time/time.h"
-
 #include "gpu/tools/compositor_model_bench/render_model_utils.h"
 #include "gpu/tools/compositor_model_bench/render_models.h"
 #include "gpu/tools/compositor_model_bench/render_tree.h"
-
+#include "ui/gl/gl_surface.h"
 
 using base::TimeTicks;
-using file_util::CloseFile;
 using base::DirectoryExists;
-using file_util::OpenFile;
 using base::PathExists;
 using std::queue;
 using std::string;
@@ -188,8 +185,8 @@ class Simulator {
 
   // Initialize the OpenGL context.
   bool InitGLContext() {
-    if (!InitializeGLBindings(gfx::kGLImplementationDesktopGL)) {
-      LOG(FATAL) << "InitializeGLBindings failed";
+    if (!gfx::GLSurface::InitializeOneOff()) {
+      LOG(FATAL) << "gfx::GLSurface::InitializeOneOff failed";
       return false;
     }
 
@@ -275,7 +272,7 @@ class Simulator {
   void DumpOutput() {
     LOG(INFO) << "Successfully ran " << sims_completed_.size() << " tests";
 
-    FILE* f = OpenFile(output_path_, "w");
+    FILE* f = base::OpenFile(output_path_, "w");
 
     if (!f) {
       LOG(ERROR) << "Failed to open output file " <<
@@ -301,7 +298,7 @@ class Simulator {
     }
 
     fputs("\t]\n}", f);
-    CloseFile(f);
+    base::CloseFile(f);
   }
 
   bool UpdateTestStatus() {

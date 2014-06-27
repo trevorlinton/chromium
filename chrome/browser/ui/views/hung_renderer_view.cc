@@ -4,20 +4,20 @@
 
 #include "chrome/browser/ui/views/hung_renderer_view.h"
 
-#if defined(OS_WIN) && !defined(USE_AURA)
-#include <windows.h>
-#endif
-
 #include "base/i18n/rtl.h"
 #include "base/memory/scoped_vector.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/favicon/favicon_tab_helper.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/ui/browser_dialogs.h"
+#include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/chrome_web_modal_dialog_manager_delegate.h"
 #include "chrome/browser/ui/tab_contents/core_tab_helper.h"
 #include "chrome/browser/ui/tab_contents/tab_contents_iterator.h"
+#include "chrome/browser/ui/views/constrained_window_views.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/logging_chrome.h"
+#include "components/web_modal/web_contents_modal_dialog_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
@@ -36,6 +36,13 @@
 #include "ui/views/layout/layout_constants.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/client_view.h"
+
+#if defined(OS_WIN)
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/shell_integration.h"
+#include "ui/base/win/shell.h"
+#include "ui/views/win/hwnd_util.h"
+#endif
 
 #if defined(USE_AURA)
 #include "ui/aura/window.h"
@@ -111,9 +118,9 @@ int HungPagesTableModel::RowCount() {
   return static_cast<int>(tab_observers_.size());
 }
 
-string16 HungPagesTableModel::GetText(int row, int column_id) {
+base::string16 HungPagesTableModel::GetText(int row, int column_id) {
   DCHECK(row >= 0 && row < RowCount());
-  string16 title = tab_observers_[row]->web_contents()->GetTitle();
+  base::string16 title = tab_observers_[row]->web_contents()->GetTitle();
   if (title.empty())
     title = CoreTabHelper::GetDefaultTitle();
   // TODO(xji): Consider adding a special case if the title text is a URL,
@@ -176,10 +183,6 @@ void HungPagesTableModel::WebContentsObserverImpl::WebContentsDestroyed(
 
 // static
 gfx::ImageSkia* HungRendererDialogView::frozen_icon_ = NULL;
-
-// The distance in pixels from the top of the relevant contents to place the
-// warning window.
-static const int kOverlayContentsOffsetY = 50;
 
 // The dimensions of the hung pages list table view, in pixels.
 static const int kTableViewWidth = 300;
@@ -246,16 +249,29 @@ void HungRendererDialogView::ShowForWebContents(WebContents* contents) {
     return;
 
   if (!GetWidget()->IsActive()) {
-    gfx::Rect bounds = GetDisplayBounds(contents);
+    // Place the dialog over content's browser window, similar to modal dialogs.
+    Browser* browser = chrome::FindBrowserWithWebContents(contents);
+    if (browser) {
+      ChromeWebModalDialogManagerDelegate* manager = browser;
+      UpdateBrowserModalDialogPosition(
+          GetWidget(), manager->GetWebContentsModalDialogHost());
+    }
 
     gfx::NativeView frame_view =
         platform_util::GetTopLevel(contents->GetView()->GetNativeView());
-
     views::Widget* insert_after =
         views::Widget::GetWidgetForNativeView(frame_view);
-    GetWidget()->SetBoundsConstrained(bounds);
     if (insert_after)
       GetWidget()->StackAboveWidget(insert_after);
+
+#if defined(OS_WIN)
+    // Group the hung renderer dialog with the browsers with the same profile.
+    Profile* profile =
+        Profile::FromBrowserContext(contents->GetBrowserContext());
+    ui::win::SetAppIdForWindow(
+        ShellIntegration::GetChromiumModelIdForProfile(profile->GetPath()),
+        views::HWNDForWidget(GetWidget()));
+#endif
 
     // We only do this if the window isn't active (i.e. hasn't been shown yet,
     // or is currently shown but deactivated for another WebContents). This is
@@ -283,7 +299,7 @@ void HungRendererDialogView::EndForWebContents(WebContents* contents) {
 ///////////////////////////////////////////////////////////////////////////////
 // HungRendererDialogView, views::DialogDelegate implementation:
 
-string16 HungRendererDialogView::GetWindowTitle() const {
+base::string16 HungRendererDialogView::GetWindowTitle() const {
   return l10n_util::GetStringUTF16(IDS_BROWSER_HANGMONITOR_RENDERER_TITLE);
 }
 
@@ -302,7 +318,7 @@ int HungRendererDialogView::GetDialogButtons() const {
   return ui::DIALOG_BUTTON_OK;
 }
 
-string16 HungRendererDialogView::GetDialogButtonLabel(
+base::string16 HungRendererDialogView::GetDialogButtonLabel(
     ui::DialogButton button) const {
   if (button == ui::DIALOG_BUTTON_OK)
     return l10n_util::GetStringUTF16(IDS_BROWSER_HANGMONITOR_RENDERER_WAIT);
@@ -313,7 +329,7 @@ views::View* HungRendererDialogView::CreateExtraView() {
   DCHECK(!kill_button_);
   kill_button_ = new views::LabelButton(this,
       l10n_util::GetStringUTF16(IDS_BROWSER_HANGMONITOR_RENDERER_END));
-  kill_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
+  kill_button_->SetStyle(views::Button::STYLE_BUTTON);
   return kill_button_;
 }
 
@@ -335,8 +351,9 @@ bool HungRendererDialogView::UseNewStyleForThisDialog() const {
   // Use the old dialog style without Aero glass, otherwise the dialog will be
   // visually constrained to browser window bounds. See http://crbug.com/323278
   return ui::win::IsAeroGlassEnabled();
-#endif
+#else
   return views::DialogDelegateView::UseNewStyleForThisDialog();
+#endif
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -419,26 +436,6 @@ void HungRendererDialogView::Init() {
                   views::GridLayout::FILL, kTableViewWidth, kTableViewHeight);
 
   initialized_ = true;
-}
-
-gfx::Rect HungRendererDialogView::GetDisplayBounds(
-    WebContents* contents) {
-#if defined(USE_AURA)
-  gfx::Rect contents_bounds(
-      contents->GetView()->GetNativeView()->GetBoundsInRootWindow());
-#elif defined(OS_WIN)
-  HWND contents_hwnd = contents->GetView()->GetNativeView();
-  RECT contents_bounds_rect;
-  GetWindowRect(contents_hwnd, &contents_bounds_rect);
-  gfx::Rect contents_bounds(contents_bounds_rect);
-#endif
-  gfx::Rect window_bounds = GetWidget()->GetWindowBoundsInScreen();
-
-  int window_x = contents_bounds.x() +
-      (contents_bounds.width() - window_bounds.width()) / 2;
-  int window_y = contents_bounds.y() + kOverlayContentsOffsetY;
-  return gfx::Rect(window_x, window_y, window_bounds.width(),
-                   window_bounds.height());
 }
 
 // static

@@ -36,7 +36,6 @@
 #include "chrome/common/net/url_fixer_upper.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/notification_types.h"
 #include "net/base/escape.h"
@@ -147,9 +146,10 @@ void HistoryQuickProvider::DoAutocomplete() {
       // provider completions compete with the URL-what-you-typed
       // match as normal.
       if (url_db) {
-        const std::string host(UTF16ToUTF8(autocomplete_input_.text().substr(
-            autocomplete_input_.parts().host.begin,
-            autocomplete_input_.parts().host.len)));
+        const std::string host(base::UTF16ToUTF8(
+            autocomplete_input_.text().substr(
+                autocomplete_input_.parts().host.begin,
+                autocomplete_input_.parts().host.len)));
         // We want to put the URL-what-you-typed match first if either
         // * the user visited the URL before (intranet or internet).
         // * it's a URL on a host that user visited before and this
@@ -224,8 +224,8 @@ void HistoryQuickProvider::DoAutocomplete() {
       (OmniboxFieldTrial::ReorderForLegalDefaultMatch(
          autocomplete_input_.current_page_classification()) ||
        (!PreventInlineAutocomplete(autocomplete_input_) &&
-        matches.begin()->can_inline)) ?
-      matches.begin()->raw_score :
+        matches.begin()->can_inline())) ?
+      matches.begin()->raw_score() :
       (AutocompleteResult::kLowestDefaultScore - 1);
   if (will_have_url_what_you_typed_match_first) {
     max_match_score = std::min(max_match_score,
@@ -240,7 +240,7 @@ void HistoryQuickProvider::DoAutocomplete() {
     if (!template_url ||
         !template_url->IsSearchURL(history_match.url_info.url())) {
       // Set max_match_score to the score we'll assign this result:
-      max_match_score = std::min(max_match_score, history_match.raw_score);
+      max_match_score = std::min(max_match_score, history_match.raw_score());
       matches_.push_back(QuickMatchToACMatch(history_match, max_match_score));
       // Mark this max_match_score as being used:
       max_match_score--;
@@ -252,8 +252,10 @@ AutocompleteMatch HistoryQuickProvider::QuickMatchToACMatch(
     const ScoredHistoryMatch& history_match,
     int score) {
   const history::URLRow& info = history_match.url_info;
-  AutocompleteMatch match(this, score, !!info.visit_count(),
-      history_match.url_matches.empty() ? AutocompleteMatchType::HISTORY_TITLE :
+  AutocompleteMatch match(
+      this, score, !!info.visit_count(),
+      history_match.url_matches().empty() ?
+          AutocompleteMatchType::HISTORY_TITLE :
           AutocompleteMatchType::HISTORY_URL);
   match.typed_count = info.typed_count();
   match.destination_url = info.url();
@@ -261,7 +263,7 @@ AutocompleteMatch HistoryQuickProvider::QuickMatchToACMatch(
 
   // Format the URL autocomplete presentation.
   std::vector<size_t> offsets =
-      OffsetsFromTermMatches(history_match.url_matches);
+      OffsetsFromTermMatches(history_match.url_matches());
   const net::FormatUrlTypes format_types = net::kFormatUrlOmitAll &
       ~(!history_match.match_in_scheme ? 0 : net::kFormatUrlOmitHTTP);
   match.fill_into_edit =
@@ -269,15 +271,13 @@ AutocompleteMatch HistoryQuickProvider::QuickMatchToACMatch(
           net::FormatUrlWithOffsets(info.url(), languages_, format_types,
               net::UnescapeRule::SPACES, NULL, NULL, &offsets));
   history::TermMatches new_matches =
-      ReplaceOffsetsInTermMatches(history_match.url_matches, offsets);
+      ReplaceOffsetsInTermMatches(history_match.url_matches(), offsets);
   match.contents = net::FormatUrl(info.url(), languages_, format_types,
               net::UnescapeRule::SPACES, NULL, NULL, NULL);
   match.contents_class =
       SpansFromTermMatch(new_matches, match.contents.length(), true);
 
-  match.allowed_to_be_default_match = history_match.can_inline &&
-      !PreventInlineAutocomplete(autocomplete_input_);
-  if (match.allowed_to_be_default_match) {
+  if (history_match.can_inline()) {
     DCHECK(!new_matches.empty());
     size_t inline_autocomplete_offset = new_matches[0].offset +
         new_matches[0].length;
@@ -289,12 +289,14 @@ AutocompleteMatch HistoryQuickProvider::QuickMatchToACMatch(
       match.inline_autocompletion =
           match.fill_into_edit.substr(inline_autocomplete_offset);
     }
+    match.allowed_to_be_default_match = match.inline_autocompletion.empty() ||
+        !PreventInlineAutocomplete(autocomplete_input_);
   }
 
   // Format the description autocomplete presentation.
   match.description = info.title();
   match.description_class = SpansFromTermMatch(
-      history_match.title_matches, match.description.length(), false);
+      history_match.title_matches(), match.description.length(), false);
 
   match.RecordAdditionalInfo("typed count", info.typed_count());
   match.RecordAdditionalInfo("visit count", info.visit_count());
@@ -313,36 +315,4 @@ history::InMemoryURLIndex* HistoryQuickProvider::GetIndex() {
     return NULL;
 
   return history_service->InMemoryIndex();
-}
-
-// static
-ACMatchClassifications HistoryQuickProvider::SpansFromTermMatch(
-    const history::TermMatches& matches,
-    size_t text_length,
-    bool is_url) {
-  ACMatchClassification::Style url_style =
-      is_url ? ACMatchClassification::URL : ACMatchClassification::NONE;
-  ACMatchClassifications spans;
-  if (matches.empty()) {
-    if (text_length)
-      spans.push_back(ACMatchClassification(0, url_style));
-    return spans;
-  }
-  if (matches[0].offset)
-    spans.push_back(ACMatchClassification(0, url_style));
-  size_t match_count = matches.size();
-  for (size_t i = 0; i < match_count;) {
-    size_t offset = matches[i].offset;
-    spans.push_back(ACMatchClassification(offset,
-        ACMatchClassification::MATCH | url_style));
-    // Skip all adjacent matches.
-    do {
-      offset += matches[i].length;
-      ++i;
-    } while ((i < match_count) && (offset == matches[i].offset));
-    if (offset < text_length)
-      spans.push_back(ACMatchClassification(offset, url_style));
-  }
-
-  return spans;
 }

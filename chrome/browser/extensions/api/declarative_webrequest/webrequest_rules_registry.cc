@@ -14,11 +14,14 @@
 #include "chrome/browser/extensions/api/declarative_webrequest/webrequest_constants.h"
 #include "chrome/browser/extensions/api/web_request/web_request_api_helpers.h"
 #include "chrome/browser/extensions/api/web_request/web_request_permissions.h"
-#include "chrome/browser/extensions/extension_system.h"
-#include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/permissions/permissions_data.h"
+#include "chrome/browser/profiles/profile.h"
+#include "extensions/browser/extension_system.h"
 #include "extensions/common/error_utils.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/permissions/permissions_data.h"
 #include "net/url_request/url_request.h"
+
+using url_matcher::URLMatcherConditionSet;
 
 namespace {
 
@@ -36,11 +39,13 @@ namespace extensions {
 
 WebRequestRulesRegistry::WebRequestRulesRegistry(
     Profile* profile,
-    RulesCacheDelegate* cache_delegate)
+    RulesCacheDelegate* cache_delegate,
+    const WebViewKey& webview_key)
     : RulesRegistry(profile,
                     declarative_webrequest_constants::kOnRequest,
                     content::BrowserThread::IO,
-                    cache_delegate),
+                    cache_delegate,
+                    webview_key),
       profile_id_(profile) {
   if (profile)
     extension_info_map_ = ExtensionSystem::Get(profile)->info_map();
@@ -73,7 +78,7 @@ std::set<const WebRequestRule*> WebRequestRulesRegistry::GetMatches(
 }
 
 std::list<LinkedPtrEventResponseDelta> WebRequestRulesRegistry::CreateDeltas(
-    const ExtensionInfoMap* extension_info_map,
+    const InfoMap* extension_info_map,
     const WebRequestData& request_data,
     bool crosses_incognito) {
   if (webrequest_rules_.empty())

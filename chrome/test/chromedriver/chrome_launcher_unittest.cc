@@ -13,6 +13,7 @@
 #include "base/path_service.h"
 #include "base/strings/string_split.h"
 #include "base/values.h"
+#include "chrome/common/chrome_constants.h"
 #include "chrome/test/chromedriver/chrome/status.h"
 #include "chrome/test/chromedriver/chrome_launcher.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -40,10 +41,34 @@ bool AddExtensionForInstall(const std::string& relative_path,
     return false;
 
   std::string crx_encoded;
-  if (!base::Base64Encode(crx_contents, &crx_encoded))
-    return false;
+  base::Base64Encode(crx_contents, &crx_encoded);
   extensions->push_back(crx_encoded);
   return true;
+}
+
+TEST(ProcessExtensions, GenerateIds) {
+  std::vector<std::string> extensions;
+  base::ScopedTempDir extension_dir;
+  Switches switches;
+  std::vector<std::string> bg_pages;
+
+  ASSERT_TRUE(AddExtensionForInstall("no_key_in_manifest.crx", &extensions));
+  ASSERT_TRUE(AddExtensionForInstall("same_key_as_header.crx", &extensions));
+  ASSERT_TRUE(AddExtensionForInstall("diff_key_from_header.crx", &extensions));
+
+  ASSERT_TRUE(extension_dir.CreateUniqueTempDir());
+
+  Status status = internal::ProcessExtensions(extensions, extension_dir.path(),
+                                              false, &switches, &bg_pages);
+
+  ASSERT_EQ(kOk, status.code()) << status.message();
+  ASSERT_EQ(3u, bg_pages.size());
+  ASSERT_EQ("chrome-extension://llphabdmknikmpmkioimgdfbohinlekl/"
+            "_generated_background_page.html", bg_pages[0]);
+  ASSERT_EQ("chrome-extension://dfdeoklpcichfcnoaomfpagfiibhomnh/"
+            "_generated_background_page.html", bg_pages[1]);
+  ASSERT_EQ("chrome-extension://ioccpomhcpklobebcbeohnmffkmcokbm/"
+            "_generated_background_page.html", bg_pages[2]);
 }
 
 TEST(ProcessExtensions, SingleExtensionWithBgPage) {
@@ -151,7 +176,8 @@ TEST(PrepareUserDataDir, CustomPrefs) {
   ASSERT_EQ(kOk, status.code());
 
   base::FilePath prefs_file =
-      temp_dir.path().AppendASCII("Default").AppendASCII("Preferences");
+      temp_dir.path().AppendASCII(chrome::kInitialProfile).Append(
+          chrome::kPreferencesFilename);
   std::string prefs_str;
   ASSERT_TRUE(base::ReadFileToString(prefs_file, &prefs_str));
   scoped_ptr<base::Value> prefs_value(base::JSONReader::Read(prefs_str));
@@ -160,7 +186,8 @@ TEST(PrepareUserDataDir, CustomPrefs) {
   AssertEQ(*prefs_dict, "myPrefsKey", "ok");
   AssertEQ(*prefs_dict, "pref.sub", "1");
 
-  base::FilePath local_state_file = temp_dir.path().AppendASCII("Local State");
+  base::FilePath local_state_file =
+      temp_dir.path().Append(chrome::kLocalStateFilename);
   std::string local_state_str;
   ASSERT_TRUE(base::ReadFileToString(local_state_file, &local_state_str));
   scoped_ptr<base::Value> local_state_value(

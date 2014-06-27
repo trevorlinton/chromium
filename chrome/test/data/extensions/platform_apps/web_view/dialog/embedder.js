@@ -41,11 +41,11 @@ embedder.getHTMLForGuestWithTitle_ = function(title) {
 
 embedder.test = {};
 embedder.test.succeed = function() {
-  chrome.test.sendMessage('DoneDialogTest.PASSED');
+  chrome.test.sendMessage('TEST_PASSED');
 };
 
 embedder.test.fail = function() {
-  chrome.test.sendMessage('DoneDialogTest.FAILED');
+  chrome.test.sendMessage('TEST_FAILED');
 };
 
 embedder.test.assertEq = function(a, b) {
@@ -248,6 +248,7 @@ function testConfirmDialogDefaultGCCancel() {
     embedder.test.assertEq(messageText, e.messageText);
     // Prevent default to leave cleanup in the GC's hands.
     e.preventDefault();
+    window.setTimeout(function() { window.gc(); });
   };
 
   setUpDialogTest(messageCallback, dialogHandler);

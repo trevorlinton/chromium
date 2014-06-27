@@ -12,47 +12,38 @@
 #include "content/public/renderer/render_view.h"
 #include "content/public/test/layouttest_support.h"
 #include "content/shell/common/shell_switches.h"
+#include "content/shell/renderer/shell_render_frame_observer.h"
 #include "content/shell/renderer/shell_render_process_observer.h"
 #include "content/shell/renderer/shell_render_view_observer.h"
+#include "content/shell/renderer/test_runner/WebTestInterfaces.h"
+#include "content/shell/renderer/test_runner/WebTestProxy.h"
+#include "content/shell/renderer/test_runner/WebTestRunner.h"
 #include "content/shell/renderer/webkit_test_runner.h"
 #include "content/test/mock_webclipboard_impl.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamCenter.h"
-#include "third_party/WebKit/public/testing/WebTestInterfaces.h"
-#include "third_party/WebKit/public/testing/WebTestProxy.h"
-#include "third_party/WebKit/public/testing/WebTestRunner.h"
 #include "third_party/WebKit/public/web/WebPluginParams.h"
 #include "third_party/WebKit/public/web/WebView.h"
 #include "v8/include/v8.h"
 
-using WebKit::WebAudioDevice;
-using WebKit::WebClipboard;
-using WebKit::WebFrame;
-using WebKit::WebMIDIAccessor;
-using WebKit::WebMIDIAccessorClient;
-using WebKit::WebMediaStreamCenter;
-using WebKit::WebMediaStreamCenterClient;
-using WebKit::WebPlugin;
-using WebKit::WebPluginParams;
-using WebKit::WebRTCPeerConnectionHandler;
-using WebKit::WebRTCPeerConnectionHandlerClient;
-using WebKit::WebThemeEngine;
+using blink::WebAudioDevice;
+using blink::WebClipboard;
+using blink::WebFrame;
+using blink::WebMIDIAccessor;
+using blink::WebMIDIAccessorClient;
+using blink::WebMediaStreamCenter;
+using blink::WebMediaStreamCenterClient;
+using blink::WebPlugin;
+using blink::WebPluginParams;
+using blink::WebRTCPeerConnectionHandler;
+using blink::WebRTCPeerConnectionHandlerClient;
+using blink::WebThemeEngine;
 using WebTestRunner::WebTestDelegate;
 using WebTestRunner::WebTestInterfaces;
 using WebTestRunner::WebTestProxyBase;
 
 namespace content {
 
-namespace {
-ShellContentRendererClient* g_renderer_client;
-}
-
-ShellContentRendererClient* ShellContentRendererClient::Get() {
-  return g_renderer_client;
-}
-
 ShellContentRendererClient::ShellContentRendererClient() {
-  DCHECK(!g_renderer_client);
-  g_renderer_client = this;
   if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kDumpRenderTree)) {
     EnableWebTestProxyCreation(
         base::Bind(&ShellContentRendererClient::WebTestProxyCreated,
@@ -61,7 +52,6 @@ ShellContentRendererClient::ShellContentRendererClient() {
 }
 
 ShellContentRendererClient::~ShellContentRendererClient() {
-  g_renderer_client = NULL;
 }
 
 void ShellContentRendererClient::RenderThreadStarted() {
@@ -73,6 +63,10 @@ void ShellContentRendererClient::RenderThreadStarted() {
 #endif
 }
 
+void ShellContentRendererClient::RenderFrameCreated(RenderFrame* render_frame) {
+  new ShellRenderFrameObserver(render_frame);
+}
+
 void ShellContentRendererClient::RenderViewCreated(RenderView* render_view) {
   new ShellRenderViewObserver(render_view);
 
@@ -82,11 +76,6 @@ void ShellContentRendererClient::RenderViewCreated(RenderView* render_view) {
   test_runner->Reset();
   render_view->GetWebView()->setSpellCheckClient(
       test_runner->proxy()->spellCheckClient());
-  render_view->GetWebView()->setValidationMessageClient(
-      test_runner->proxy()->validationMessageClient());
-  render_view->GetWebView()->setPermissionClient(
-      ShellRenderProcessObserver::GetInstance()->test_interfaces()->testRunner()
-          ->webPermissions());
   WebTestDelegate* delegate =
       ShellRenderProcessObserver::GetInstance()->test_delegate();
   if (delegate == static_cast<WebTestDelegate*>(test_runner))
@@ -94,7 +83,7 @@ void ShellContentRendererClient::RenderViewCreated(RenderView* render_view) {
 }
 
 bool ShellContentRendererClient::OverrideCreatePlugin(
-    RenderView* render_view,
+    RenderFrame* render_frame,
     WebFrame* frame,
     const WebPluginParams& params,
     WebPlugin** plugin) {
@@ -180,7 +169,7 @@ void ShellContentRendererClient::WebTestProxyCreated(RenderView* render_view,
 }
 
 bool ShellContentRendererClient::AllowBrowserPlugin(
-    WebKit::WebPluginContainer* container) {
+    blink::WebPluginContainer* container) {
   if (CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kEnableBrowserPluginForAllViewTypes)) {
     // Allow BrowserPlugin if forced by command line flag. This is generally

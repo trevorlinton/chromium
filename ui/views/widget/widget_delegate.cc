@@ -57,16 +57,16 @@ ui::ModalType WidgetDelegate::GetModalType() const {
   return ui::MODAL_TYPE_NONE;
 }
 
-ui::AccessibilityTypes::Role WidgetDelegate::GetAccessibleWindowRole() const {
-  return ui::AccessibilityTypes::ROLE_WINDOW;
+ui::AXRole WidgetDelegate::GetAccessibleWindowRole() const {
+  return ui::AX_ROLE_WINDOW;
 }
 
-string16 WidgetDelegate::GetAccessibleWindowTitle() const {
+base::string16 WidgetDelegate::GetAccessibleWindowTitle() const {
   return GetWindowTitle();
 }
 
-string16 WidgetDelegate::GetWindowTitle() const {
-  return string16();
+base::string16 WidgetDelegate::GetWindowTitle() const {
+  return base::string16();
 }
 
 bool WidgetDelegate::ShouldShowWindowTitle() const {
@@ -107,12 +107,12 @@ bool WidgetDelegate::ExecuteWindowsCommand(int command_id) {
   return false;
 }
 
-bool WidgetDelegate::HandleSize(unsigned int param, const gfx::Size& size) {
-  return false;
-}
-
 bool WidgetDelegate::ExecuteAppCommand(int command_id) {
   return ExecuteWindowsCommand(command_id);
+}
+
+bool WidgetDelegate::HandleSize(unsigned int param, const gfx::Size& size) {
+  return false;
 }
 
 std::string WidgetDelegate::GetWindowName() const {

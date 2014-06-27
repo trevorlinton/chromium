@@ -9,8 +9,8 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/content_browser_test_utils.h"
 #include "content/shell/browser/shell.h"
-#include "content/test/content_browser_test_utils.h"
 
 // TODO(wolenetz): Fix Media.YUV* tests on MSVS 2012 x64. crbug.com/180074
 #if defined(OS_WIN) && defined(ARCH_CPU_X86_64) && _MSC_VER == 1700
@@ -25,14 +25,6 @@ namespace content {
 const char MediaBrowserTest::kEnded[] = "ENDED";
 const char MediaBrowserTest::kError[] = "ERROR";
 const char MediaBrowserTest::kFailed[] = "FAILED";
-
-void MediaBrowserTest::SetUp() {
-  // TODO(danakj): The GPU Video Decoder needs real GL bindings.
-  // crbug.com/269087
-  UseRealGLBindings();
-
-  ContentBrowserTest::SetUp();
-}
 
 void MediaBrowserTest::RunMediaTestPage(
     const char* html_page, std::vector<StringPair>* query_params,
@@ -59,20 +51,20 @@ void MediaBrowserTest::RunMediaTestPage(
 }
 
 void MediaBrowserTest::RunTest(const GURL& gurl, const char* expected) {
-  const string16 expected_title = ASCIIToUTF16(expected);
+  const base::string16 expected_title = base::ASCIIToUTF16(expected);
   DVLOG(1) << "Running test URL: " << gurl;
   TitleWatcher title_watcher(shell()->web_contents(), expected_title);
   AddWaitForTitles(&title_watcher);
   NavigateToURL(shell(), gurl);
 
-  string16 final_title = title_watcher.WaitAndGetTitle();
+  base::string16 final_title = title_watcher.WaitAndGetTitle();
   EXPECT_EQ(expected_title, final_title);
 }
 
 void MediaBrowserTest::AddWaitForTitles(content::TitleWatcher* title_watcher) {
-  title_watcher->AlsoWaitForTitle(ASCIIToUTF16(kEnded));
-  title_watcher->AlsoWaitForTitle(ASCIIToUTF16(kError));
-  title_watcher->AlsoWaitForTitle(ASCIIToUTF16(kFailed));
+  title_watcher->AlsoWaitForTitle(base::ASCIIToUTF16(kEnded));
+  title_watcher->AlsoWaitForTitle(base::ASCIIToUTF16(kError));
+  title_watcher->AlsoWaitForTitle(base::ASCIIToUTF16(kFailed));
 }
 
 // Tests playback and seeking of an audio or video file over file or http based
@@ -115,6 +107,14 @@ IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearSilentTheora) {
 
 IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearWebm) {
   PlayVideo("bear.webm", GetParam());
+}
+
+IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearOpusWebm) {
+  PlayVideo("bear-opus.webm", GetParam());
+}
+
+IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearOpusOgg) {
+  PlayVideo("bear-opus.ogg", GetParam());
 }
 
 IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearSilentWebm) {
@@ -168,15 +168,19 @@ IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearWavGsmms) {
   PlayAudio("bear_gsm_ms.wav", GetParam());
 }
 
-IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearWavMulaw) {
-  PlayAudio("bear_mulaw.wav", GetParam());
-}
-
 IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearFlac) {
   PlayAudio("bear.flac", GetParam());
 }
 #endif
 #endif
+
+IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearWavAlaw) {
+  PlayAudio("bear_alaw.wav", GetParam());
+}
+
+IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearWavMulaw) {
+  PlayAudio("bear_mulaw.wav", GetParam());
+}
 
 IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearWavPcm) {
   PlayAudio("bear_pcm.wav", GetParam());

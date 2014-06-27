@@ -5,18 +5,17 @@
 
 import logging
 import os
-import platform
 import subprocess
 import sys
 
 from telemetry.core import browser
-from telemetry.core import platform as core_platform
 from telemetry.core import possible_browser
 from telemetry.core import util
 from telemetry.core.backends.chrome import cros_interface
 from telemetry.core.backends.chrome import desktop_browser_backend
+from telemetry.core.platform import factory
 
-ALL_BROWSER_TYPES = ','.join([
+ALL_BROWSER_TYPES = [
     'exact',
     'release',
     'release_x64',
@@ -24,15 +23,21 @@ ALL_BROWSER_TYPES = ','.join([
     'debug_x64',
     'canary',
     'content-shell-debug',
+    'content-shell-debug_x64',
     'content-shell-release',
-    'system'])
+    'content-shell-release_x64',
+    'system']
 
 class PossibleDesktopBrowser(possible_browser.PossibleBrowser):
   """A desktop browser that can be controlled."""
 
   def __init__(self, browser_type, finder_options, executable, flash_path,
                is_content_shell, browser_directory, is_local_build=False):
-    super(PossibleDesktopBrowser, self).__init__(browser_type, finder_options)
+    target_os = sys.platform.lower()
+    super(PossibleDesktopBrowser, self).__init__(browser_type, target_os,
+        finder_options)
+    assert browser_type in ALL_BROWSER_TYPES, \
+        'Please add %s to ALL_BROWSER_TYPES' % browser_type
     self._local_executable = executable
     self._flash_path = flash_path
     self._is_content_shell = is_content_shell
@@ -43,15 +48,17 @@ class PossibleDesktopBrowser(possible_browser.PossibleBrowser):
     return 'PossibleDesktopBrowser(browser_type=%s, executable=%s)' % (
         self.browser_type, self._local_executable)
 
+  @property
+  def _platform_backend(self):
+    return factory.GetPlatformBackendForCurrentOS()
+
   def Create(self):
     backend = desktop_browser_backend.DesktopBrowserBackend(
         self.finder_options.browser_options, self._local_executable,
         self._flash_path, self._is_content_shell, self._browser_directory,
         output_profile_path=self.finder_options.output_profile_path,
         extensions_to_load=self.finder_options.extensions_to_load)
-    b = browser.Browser(backend,
-                        core_platform.CreatePlatformBackendForCurrentOS())
-    return b
+    return browser.Browser(backend, self._platform_backend)
 
   def SupportsOptions(self, finder_options):
     if (len(finder_options.extensions_to_load) != 0) and self._is_content_shell:
@@ -96,35 +103,29 @@ def FindAllAvailableBrowsers(finder_options):
   else:
     chrome_root = util.GetChromiumSrcDir()
 
+  flash_bin_dir = os.path.join(
+      chrome_root, 'third_party', 'adobe', 'flash', 'binaries', 'ppapi')
+
   chromium_app_names = []
   if sys.platform == 'darwin':
     chromium_app_names.append('Chromium.app/Contents/MacOS/Chromium')
     chromium_app_names.append('Google Chrome.app/Contents/MacOS/Google Chrome')
     content_shell_app_name = 'Content Shell.app/Contents/MacOS/Content Shell'
-    mac_dir = 'mac'
-    if platform.architecture()[0] == '64bit':
-      mac_dir = 'mac_64'
-    flash_path = os.path.join(
-        chrome_root, 'third_party', 'adobe', 'flash', 'binaries', 'ppapi',
-        mac_dir, 'PepperFlashPlayer.plugin')
+    flash_bin = 'PepperFlashPlayer.plugin'
+    flash_path = os.path.join(flash_bin_dir, 'mac', flash_bin)
+    flash_path_64 = os.path.join(flash_bin_dir, 'mac_64', flash_bin)
   elif sys.platform.startswith('linux'):
     chromium_app_names.append('chrome')
     content_shell_app_name = 'content_shell'
-    linux_dir = 'linux'
-    if platform.architecture()[0] == '64bit':
-      linux_dir = 'linux_x64'
-    flash_path = os.path.join(
-        chrome_root, 'third_party', 'adobe', 'flash', 'binaries', 'ppapi',
-        linux_dir, 'libpepflashplayer.so')
+    flash_bin = 'libpepflashplayer.so'
+    flash_path = os.path.join(flash_bin_dir, 'linux', flash_bin)
+    flash_path_64 = os.path.join(flash_bin_dir, 'linux_x64', flash_bin)
   elif sys.platform.startswith('win'):
     chromium_app_names.append('chrome.exe')
     content_shell_app_name = 'content_shell.exe'
-    win_dir = 'win'
-    if platform.architecture()[0] == '64bit':
-      win_dir = 'win_x64'
-    flash_path = os.path.join(
-        chrome_root, 'third_party', 'adobe', 'flash', 'binaries', 'ppapi',
-        win_dir, 'pepflashplayer.dll')
+    flash_bin = 'pepflashplayer.dll'
+    flash_path = os.path.join(flash_bin_dir, 'win', flash_bin)
+    flash_path_64 = os.path.join(flash_bin_dir, 'win_x64', flash_bin)
   else:
     raise Exception('Platform not recognized')
 
@@ -148,10 +149,11 @@ def FindAllAvailableBrowsers(finder_options):
     browser_directory = os.path.join(chrome_root, build_dir, type_dir)
     app = os.path.join(browser_directory, app_name)
     if IsExecutable(app):
-      browsers.append(PossibleDesktopBrowser(browser_type, finder_options,
-                                             app, flash_path, content_shell,
-                                             browser_directory,
-                                             is_local_build=True))
+      is_64 = browser_type.endswith('_x64')
+      browsers.append(PossibleDesktopBrowser(
+          browser_type, finder_options, app,
+          flash_path_64 if is_64 else flash_path,
+          content_shell, browser_directory, is_local_build=True))
       return True
     return False
 
@@ -203,27 +205,27 @@ def FindAllAvailableBrowsers(finder_options):
                         os.getenv('PROGRAMFILES'),
                         os.getenv('LOCALAPPDATA')]
 
-    def AddIfFoundWin(browser_name, app_path):
-      browser_directory = os.path.join(path, app_path)
+    def AddIfFoundWin(browser_name, search_path, app_path):
+      browser_directory = os.path.join(search_path, app_path)
       for chromium_app_name in chromium_app_names:
         app = os.path.join(browser_directory, chromium_app_name)
         if IsExecutable(app):
           browsers.append(PossibleDesktopBrowser(browser_name, finder_options,
-                                                 app, flash_path, False,
+                                                 app, None, False,
                                                  browser_directory))
-        return True
+          return True
       return False
 
     for path in win_search_paths:
       if not path:
         continue
-      if AddIfFoundWin('canary', canary_path):
+      if AddIfFoundWin('canary', path, canary_path):
         break
 
     for path in win_search_paths:
       if not path:
         continue
-      if AddIfFoundWin('system', system_path):
+      if AddIfFoundWin('system', path, system_path):
         break
 
   if len(browsers) and not has_display:

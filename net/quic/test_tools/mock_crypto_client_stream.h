@@ -14,6 +14,8 @@
 
 namespace net {
 
+class QuicSessionKey;
+
 class MockCryptoClientStream : public QuicCryptoClientStream {
  public:
   // HandshakeMode enumerates the handshake mode MockCryptoClientStream should
@@ -34,10 +36,12 @@ class MockCryptoClientStream : public QuicCryptoClientStream {
   };
 
   MockCryptoClientStream(
-      const string& server_hostname,
-      QuicSession* session,
+      const QuicSessionKey& server_key,
+      QuicClientSessionBase* session,
+      ProofVerifyContext* verify_context,
       QuicCryptoClientConfig* crypto_config,
-      HandshakeMode handshake_mode);
+      HandshakeMode handshake_mode,
+      const ProofVerifyDetails* proof_verify_details_);
   virtual ~MockCryptoClientStream();
 
   // CryptoFramerVisitorInterface implementation.
@@ -55,6 +59,9 @@ class MockCryptoClientStream : public QuicCryptoClientStream {
 
  private:
   void SetConfigNegotiated();
+  QuicClientSessionBase* client_session();
+
+  const ProofVerifyDetails* proof_verify_details_;
 };
 
 }  // namespace net

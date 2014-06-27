@@ -45,8 +45,8 @@
 #include "ui/shell_dialogs/select_file_dialog.h"
 
 class BrowserContentSettingBubbleModelDelegate;
+class BrowserContentTranslateDriverObserver;
 class BrowserInstantController;
-class BrowserLanguageStateObserver;
 class BrowserSyncedWindowDelegate;
 class BrowserToolbarModelDelegate;
 class BrowserTabRestoreServiceDelegate;
@@ -66,6 +66,7 @@ namespace chrome {
 class BrowserCommandController;
 class FastUnloadController;
 class UnloadController;
+class ValidationMessageBubble;
 }
 
 namespace content {
@@ -285,10 +286,10 @@ class Browser : public TabStripModelObserver,
   gfx::Image GetCurrentPageIcon() const;
 
   // Gets the title of the window based on the selected tab's title.
-  string16 GetWindowTitleForCurrentTab() const;
+  base::string16 GetWindowTitleForCurrentTab() const;
 
   // Prepares a title string for display (removes embedded newlines, etc).
-  static void FormatTitleForDisplay(string16* title);
+  static void FormatTitleForDisplay(base::string16* title);
 
   // OnBeforeUnload handling //////////////////////////////////////////////////
 
@@ -394,28 +395,6 @@ class Browser : public TabStripModelObserver,
 
   /////////////////////////////////////////////////////////////////////////////
 
-  // Helper function to run unload listeners on a WebContents.
-  static bool RunUnloadEventsHelper(content::WebContents* contents);
-
-  // Helper function to handle JS out of memory notifications
-  static void JSOutOfMemoryHelper(content::WebContents* web_contents);
-
-  // Helper function to register a protocol handler.
-  static void RegisterProtocolHandlerHelper(content::WebContents* web_contents,
-                                            const std::string& protocol,
-                                            const GURL& url,
-                                            const string16& title,
-                                            bool user_gesture,
-                                            BrowserWindow* window);
-
-  // Helper function to handle find results.
-  static void FindReplyHelper(content::WebContents* web_contents,
-                              int request_id,
-                              int number_of_matches,
-                              const gfx::Rect& selection_rect,
-                              int active_match_ordinal,
-                              bool final_update);
-
   // Called by chrome::Navigate() when a navigation has occurred in a tab in
   // this Browser. Updates the UI for the start of this navigation.
   void UpdateUIForNavigationInTab(content::WebContents* contents,
@@ -463,6 +442,18 @@ class Browser : public TabStripModelObserver,
       content::WebContents* source,
       const content::NativeWebKeyboardEvent& event) OVERRIDE;
   virtual void OverscrollUpdate(int delta_y) OVERRIDE;
+  virtual void ShowValidationMessage(content::WebContents* web_contents,
+                                     const gfx::Rect& anchor_in_root_view,
+                                     const base::string16& main_text,
+                                     const base::string16& sub_text) OVERRIDE;
+  virtual void HideValidationMessage(
+      content::WebContents* web_contents) OVERRIDE;
+  virtual void MoveValidationMessage(
+      content::WebContents* web_contents,
+      const gfx::Rect& anchor_in_root_view) OVERRIDE;
+  virtual bool PreHandleGestureEvent(
+      content::WebContents* source,
+      const blink::WebGestureEvent& event) OVERRIDE;
 
   bool is_type_tabbed() const { return type_ == TYPE_TABBED; }
   bool is_type_popup() const { return type_ == TYPE_POPUP; }
@@ -558,7 +549,8 @@ class Browser : public TabStripModelObserver,
                               bool* was_blocked) OVERRIDE;
   virtual void ActivateContents(content::WebContents* contents) OVERRIDE;
   virtual void DeactivateContents(content::WebContents* contents) OVERRIDE;
-  virtual void LoadingStateChanged(content::WebContents* source) OVERRIDE;
+  virtual void LoadingStateChanged(content::WebContents* source,
+                                   bool to_different_document) OVERRIDE;
   virtual void CloseContents(content::WebContents* source) OVERRIDE;
   virtual void MoveContents(content::WebContents* source,
                             const gfx::Rect& pos) OVERRIDE;
@@ -579,7 +571,6 @@ class Browser : public TabStripModelObserver,
   virtual bool ShouldFocusLocationBarByDefault(
       content::WebContents* source) OVERRIDE;
   virtual void SetFocusToLocationBar(bool select_all) OVERRIDE;
-  virtual void RenderWidgetShowing() OVERRIDE;
   virtual int GetExtraRenderViewHeight() const OVERRIDE;
   virtual void ViewSourceForTab(content::WebContents* source,
                                 const GURL& page_url) OVERRIDE;
@@ -593,13 +584,13 @@ class Browser : public TabStripModelObserver,
       content::WebContents* web_contents,
       int route_id,
       WindowContainerType window_container_type,
-      const string16& frame_name,
+      const base::string16& frame_name,
       const GURL& target_url,
       const std::string& partition_id,
       content::SessionStorageNamespace* session_storage_namespace) OVERRIDE;
   virtual void WebContentsCreated(content::WebContents* source_contents,
-                                  int64 source_frame_id,
-                                  const string16& frame_name,
+                                  int opener_render_frame_id,
+                                  const base::string16& frame_name,
                                   const GURL& target_url,
                                   content::WebContents* new_contents) OVERRIDE;
   virtual void RendererUnresponsive(content::WebContents* source) OVERRIDE;
@@ -612,7 +603,9 @@ class Browser : public TabStripModelObserver,
   virtual content::JavaScriptDialogManager*
       GetJavaScriptDialogManager() OVERRIDE;
   virtual content::ColorChooser* OpenColorChooser(
-      content::WebContents* web_contents, SkColor color) OVERRIDE;
+      content::WebContents* web_contents,
+      SkColor color,
+      const std::vector<content::ColorSuggestion>& suggestions) OVERRIDE;
   virtual void RunFileChooser(
       content::WebContents* web_contents,
       const content::FileChooserParams& params) OVERRIDE;
@@ -624,11 +617,10 @@ class Browser : public TabStripModelObserver,
       bool enter_fullscreen) OVERRIDE;
   virtual bool IsFullscreenForTabOrPending(
       const content::WebContents* web_contents) const OVERRIDE;
-  virtual void JSOutOfMemory(content::WebContents* web_contents) OVERRIDE;
   virtual void RegisterProtocolHandler(content::WebContents* web_contents,
                                        const std::string& protocol,
                                        const GURL& url,
-                                       const string16& title,
+                                       const base::string16& title,
                                        bool user_gesture) OVERRIDE;
   virtual void UpdatePreferredSize(content::WebContents* source,
                                    const gfx::Size& pref_size) OVERRIDE;
@@ -659,7 +651,9 @@ class Browser : public TabStripModelObserver,
   // Overridden from CoreTabHelperDelegate:
   // Note that the caller is responsible for deleting |old_contents|.
   virtual void SwapTabContents(content::WebContents* old_contents,
-                               content::WebContents* new_contents) OVERRIDE;
+                               content::WebContents* new_contents,
+                               bool did_start_load,
+                               bool did_finish_load) OVERRIDE;
   virtual bool CanReloadContents(
       content::WebContents* web_contents) const OVERRIDE;
   virtual bool CanSaveContents(
@@ -776,10 +770,8 @@ class Browser : public TabStripModelObserver,
   // Shared code between Reload() and ReloadIgnoringCache().
   void ReloadInternal(WindowOpenDisposition disposition, bool ignore_cache);
 
-  // Depending on the disposition, return the current tab or a clone of the
-  // current tab.
-  content::WebContents* GetOrCloneTabForDisposition(
-      WindowOpenDisposition disposition);
+  // Returns true if the Browser window should show the location bar.
+  bool ShouldShowLocationBar() const;
 
   // Implementation of SupportsWindowFeature and CanSupportWindowFeature. If
   // |check_fullscreen| is true, the set of features reflect the actual state of
@@ -799,7 +791,7 @@ class Browser : public TabStripModelObserver,
   bool MaybeCreateBackgroundContents(
       int route_id,
       content::WebContents* opener_web_contents,
-      const string16& frame_name,
+      const base::string16& frame_name,
       const GURL& target_url,
       const std::string& partition_id,
       content::SessionStorageNamespace* session_storage_namespace);
@@ -936,7 +928,9 @@ class Browser : public TabStripModelObserver,
   // The following factory is used to close the frame at a later time.
   base::WeakPtrFactory<Browser> weak_factory_;
 
-  scoped_ptr<BrowserLanguageStateObserver> language_state_observer_;
+  scoped_ptr<BrowserContentTranslateDriverObserver> translate_driver_observer_;
+
+  scoped_ptr<chrome::ValidationMessageBubble> validation_message_bubble_;
 
   DISALLOW_COPY_AND_ASSIGN(Browser);
 };

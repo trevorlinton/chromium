@@ -30,11 +30,11 @@ MockWebRTCPeerConnectionHandlerClient::
 ~MockWebRTCPeerConnectionHandlerClient() {}
 
 void MockWebRTCPeerConnectionHandlerClient::didGenerateICECandidateWorker(
-    const WebKit::WebRTCICECandidate& candidate) {
+    const blink::WebRTCICECandidate& candidate) {
   if (!candidate.isNull()) {
-    candidate_sdp_ = UTF16ToUTF8(candidate.candidate());
+    candidate_sdp_ = base::UTF16ToUTF8(candidate.candidate());
     candidate_mline_index_ = candidate.sdpMLineIndex();
-    candidate_mid_ = UTF16ToUTF8(candidate.sdpMid());
+    candidate_mid_ = base::UTF16ToUTF8(candidate.sdpMid());
   } else {
     candidate_sdp_ = "";
     candidate_mline_index_ = -1;
@@ -43,12 +43,12 @@ void MockWebRTCPeerConnectionHandlerClient::didGenerateICECandidateWorker(
 }
 
 void MockWebRTCPeerConnectionHandlerClient::didAddRemoteStreamWorker(
-    const WebKit::WebMediaStream& stream_descriptor) {
+    const blink::WebMediaStream& stream_descriptor) {
   remote_steam_ = stream_descriptor;
 }
 
 void MockWebRTCPeerConnectionHandlerClient::didRemoveRemoteStreamWorker(
-    const WebKit::WebMediaStream& stream_descriptor) {
+    const blink::WebMediaStream& stream_descriptor) {
   remote_steam_.reset();
 }
 

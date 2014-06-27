@@ -4,14 +4,17 @@
 
 #include "components/autofill/content/browser/wallet/wallet_items.h"
 
+#include <limits>
+
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "components/autofill/content/browser/wallet/gaia_account.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/credit_card.h"
+#include "grit/component_scaled_resources.h"
 #include "grit/component_strings.h"
-#include "grit/webkit_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image.h"
@@ -100,7 +103,6 @@ base::string16 DisplayStringFromType(WalletItems::MaskedInstrument::Type type) {
 WalletItems::MaskedInstrument::MaskedInstrument(
     const base::string16& descriptive_name,
     const WalletItems::MaskedInstrument::Type& type,
-    const std::vector<base::string16>& supported_currencies,
     const base::string16& last_four_digits,
     int expiration_month,
     int expiration_year,
@@ -109,14 +111,13 @@ WalletItems::MaskedInstrument::MaskedInstrument(
     const std::string& object_id)
     : descriptive_name_(descriptive_name),
       type_(type),
-      supported_currencies_(supported_currencies),
       last_four_digits_(last_four_digits),
       expiration_month_(expiration_month),
       expiration_year_(expiration_year),
       address_(address.Pass()),
       status_(status),
       object_id_(object_id) {
-  DCHECK(address_.get());
+  DCHECK(address_);
 }
 
 WalletItems::MaskedInstrument::~MaskedInstrument() {}
@@ -154,28 +155,16 @@ scoped_ptr<WalletItems::MaskedInstrument>
     return scoped_ptr<MaskedInstrument>();
   }
 
-  const DictionaryValue* address_dict;
+  const base::DictionaryValue* address_dict;
   if (!dictionary.GetDictionary("billing_address", &address_dict)) {
     DLOG(ERROR) << "Response from Google wallet missing address";
     return scoped_ptr<MaskedInstrument>();
   }
   scoped_ptr<Address> address = Address::CreateDisplayAddress(*address_dict);
 
-  if (!address.get()) {
+  if (!address) {
     DLOG(ERROR) << "Response from Google wallet contained malformed address";
     return scoped_ptr<MaskedInstrument>();
-  }
-
-  std::vector<base::string16> supported_currencies;
-  const ListValue* supported_currency_list;
-  if (dictionary.GetList("supported_currency", &supported_currency_list)) {
-    for (size_t i = 0; i < supported_currency_list->GetSize(); ++i) {
-      base::string16 currency;
-      if (supported_currency_list->GetString(i, &currency))
-        supported_currencies.push_back(currency);
-    }
-  } else {
-    DVLOG(1) << "Response from Google Wallet missing supported currency";
   }
 
   int expiration_month;
@@ -192,7 +181,6 @@ scoped_ptr<WalletItems::MaskedInstrument>
 
   return scoped_ptr<MaskedInstrument>(new MaskedInstrument(descriptive_name,
                                                            type,
-                                                           supported_currencies,
                                                            last_four_digits,
                                                            expiration_month,
                                                            expiration_year,
@@ -207,22 +195,20 @@ bool WalletItems::MaskedInstrument::operator==(
     return false;
   if (type_ != other.type_)
     return false;
-  if (supported_currencies_ != other.supported_currencies_)
-    return false;
   if (last_four_digits_ != other.last_four_digits_)
     return false;
   if (expiration_month_ != other.expiration_month_)
     return false;
   if (expiration_year_ != other.expiration_year_)
     return false;
-  if (address_.get()) {
-    if (other.address_.get()) {
-      if (*address_.get() != *other.address_.get())
+  if (address_) {
+    if (other.address_) {
+      if (*address_ != *other.address_)
         return false;
     } else {
       return false;
     }
-  } else if (other.address_.get()) {
+  } else if (other.address_) {
     return false;
   }
   if (status_ != other.status_)
@@ -281,6 +267,13 @@ bool WalletItems::SupportsCard(const base::string16& card_number,
    return false;
 }
 
+std::string WalletItems::ObfuscatedGaiaId() const {
+  if (active_account_index_ >= gaia_accounts_.size())
+    return std::string();
+
+  return gaia_accounts_[active_account_index_]->obfuscated_id();
+}
+
 base::string16 WalletItems::MaskedInstrument::DisplayName() const {
 #if defined(OS_ANDROID)
   // TODO(aruslan): improve this stub implementation.
@@ -301,7 +294,7 @@ base::string16 WalletItems::MaskedInstrument::DisplayNameDetail() const {
 
 base::string16 WalletItems::MaskedInstrument::TypeAndLastFourDigits() const {
   // TODO(dbeam): i18n.
-  return DisplayStringFromType(type_) + ASCIIToUTF16(" - ") +
+  return DisplayStringFromType(type_) + base::ASCIIToUTF16(" - ") +
          last_four_digits();
 }
 
@@ -416,13 +409,12 @@ WalletItems::WalletItems(const std::vector<RequiredAction>& required_actions,
                          const std::string& google_transaction_id,
                          const std::string& default_instrument_id,
                          const std::string& default_address_id,
-                         const std::string& obfuscated_gaia_id,
                          AmexPermission amex_permission)
     : required_actions_(required_actions),
       google_transaction_id_(google_transaction_id),
       default_instrument_id_(default_instrument_id),
       default_address_id_(default_address_id),
-      obfuscated_gaia_id_(obfuscated_gaia_id),
+      active_account_index_(std::numeric_limits<size_t>::max()),
       amex_permission_(amex_permission) {}
 
 WalletItems::~WalletItems() {}
@@ -430,7 +422,7 @@ WalletItems::~WalletItems() {}
 scoped_ptr<WalletItems>
     WalletItems::CreateWalletItems(const base::DictionaryValue& dictionary) {
   std::vector<RequiredAction> required_action;
-  const ListValue* required_action_list;
+  const base::ListValue* required_action_list;
   if (dictionary.GetList("required_action", &required_action_list)) {
     for (size_t i = 0; i < required_action_list->GetSize(); ++i) {
       std::string action_string;
@@ -463,9 +455,7 @@ scoped_ptr<WalletItems>
   if (!dictionary.GetString("default_address_id", &default_address_id))
     DVLOG(1) << "Response from Google wallet missing default_address_id";
 
-  std::string obfuscated_gaia_id;
-  if (!dictionary.GetString("obfuscated_gaia_id", &obfuscated_gaia_id))
-    DVLOG(1) << "Response from Google wallet missing obfuscated gaia id";
+  // obfuscated_gaia_id is deprecated.
 
   bool amex_disallowed = true;
   if (!dictionary.GetBoolean("amex_disallowed", &amex_disallowed))
@@ -477,23 +467,36 @@ scoped_ptr<WalletItems>
                                                        google_transaction_id,
                                                        default_instrument_id,
                                                        default_address_id,
-                                                       obfuscated_gaia_id,
                                                        amex_permission));
+  std::vector<std::string> gaia_accounts;
+  const base::ListValue* gaia_profiles;
+  if (dictionary.GetList("gaia_profile", &gaia_profiles)) {
+    for (size_t i = 0; i < gaia_profiles->GetSize(); ++i) {
+      const base::DictionaryValue* account_dict;
+      std::string email;
+      if (!gaia_profiles->GetDictionary(i, &account_dict))
+        continue;
 
-  const ListValue* legal_docs;
+      scoped_ptr<GaiaAccount> gaia_account(
+          GaiaAccount::Create(*account_dict));
+      if (gaia_account)
+        wallet_items->AddAccount(gaia_account.Pass());
+    }
+  } else {
+    DVLOG(1) << "Response from Google wallet missing GAIA accounts";
+  }
+
+  const base::ListValue* legal_docs;
   if (dictionary.GetList("required_legal_document", &legal_docs)) {
     for (size_t i = 0; i < legal_docs->GetSize(); ++i) {
-      const DictionaryValue* legal_doc_dict;
+      const base::DictionaryValue* legal_doc_dict;
       if (legal_docs->GetDictionary(i, &legal_doc_dict)) {
         scoped_ptr<LegalDocument> legal_doc(
             LegalDocument::CreateLegalDocument(*legal_doc_dict));
-        if (legal_doc.get()) {
+        if (legal_doc)
           wallet_items->AddLegalDocument(legal_doc.Pass());
-        } else {
-          DLOG(ERROR) << "Malformed legal document in response from "
-                         "Google wallet";
+        else
           return scoped_ptr<WalletItems>();
-        }
       }
     }
 
@@ -506,34 +509,30 @@ scoped_ptr<WalletItems>
     DVLOG(1) << "Response from Google wallet missing legal docs";
   }
 
-  const ListValue* instruments;
+  const base::ListValue* instruments;
   if (dictionary.GetList("instrument", &instruments)) {
     for (size_t i = 0; i < instruments->GetSize(); ++i) {
-      const DictionaryValue* instrument_dict;
+      const base::DictionaryValue* instrument_dict;
       if (instruments->GetDictionary(i, &instrument_dict)) {
         scoped_ptr<MaskedInstrument> instrument(
             MaskedInstrument::CreateMaskedInstrument(*instrument_dict));
-        if (instrument.get())
+        if (instrument)
           wallet_items->AddInstrument(instrument.Pass());
-        else
-          DLOG(ERROR) << "Malformed instrument in response from Google Wallet";
       }
     }
   } else {
     DVLOG(1) << "Response from Google wallet missing instruments";
   }
 
-  const ListValue* addresses;
+  const base::ListValue* addresses;
   if (dictionary.GetList("address", &addresses)) {
     for (size_t i = 0; i < addresses->GetSize(); ++i) {
-      const DictionaryValue* address_dict;
+      const base::DictionaryValue* address_dict;
       if (addresses->GetDictionary(i, &address_dict)) {
         scoped_ptr<Address> address(
             Address::CreateAddressWithID(*address_dict));
-        if (address.get())
+        if (address)
           wallet_items->AddAddress(address.Pass());
-        else
-          DLOG(ERROR) << "Malformed address in response from Google Wallet";
       }
     }
   } else {
@@ -543,17 +542,33 @@ scoped_ptr<WalletItems>
   return wallet_items.Pass();
 }
 
+void WalletItems::AddAccount(scoped_ptr<GaiaAccount> account) {
+  if (account->index() != gaia_accounts_.size()) {
+    DVLOG(1) << "Tried to add account out of order";
+    return;
+  }
+
+  if (account->is_active())
+    active_account_index_ = account->index();
+
+  gaia_accounts_.push_back(account.release());
+}
+
 bool WalletItems::operator==(const WalletItems& other) const {
   return google_transaction_id_ == other.google_transaction_id_ &&
          default_instrument_id_ == other.default_instrument_id_ &&
          default_address_id_ == other.default_address_id_ &&
          required_actions_ == other.required_actions_ &&
-         obfuscated_gaia_id_ == other.obfuscated_gaia_id_ &&
+         // This check is technically redundant, but is useful for tests.
+         ObfuscatedGaiaId() == other.ObfuscatedGaiaId() &&
+         active_account_index() == other.active_account_index() &&
+         VectorsAreEqual<GaiaAccount>(gaia_accounts(),
+                                      other.gaia_accounts()) &&
          VectorsAreEqual<MaskedInstrument>(instruments(),
-                                           other.instruments()) &&
+                                            other.instruments()) &&
          VectorsAreEqual<Address>(addresses(), other.addresses()) &&
          VectorsAreEqual<LegalDocument>(legal_documents(),
-                                        other.legal_documents());
+                                         other.legal_documents());
 }
 
 bool WalletItems::operator!=(const WalletItems& other) const {

@@ -23,12 +23,10 @@
 #include "chrome/common/child_process_logging.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/chrome_version_info.h"
 #include "chrome/common/metrics/variations/variations_util.h"
 #include "chrome/common/net/net_resource_provider.h"
 #include "chrome/common/render_messages.h"
 #include "chrome/common/url_constants.h"
-#include "chrome/renderer/chrome_content_renderer_client.h"
 #include "chrome/renderer/content_settings_observer.h"
 #include "chrome/renderer/extensions/extension_localization_peer.h"
 #include "chrome/renderer/security_filter_peer.h"
@@ -40,26 +38,20 @@
 #include "net/base/net_errors.h"
 #include "net/base/net_module.h"
 #include "third_party/WebKit/public/web/WebCache.h"
-#include "third_party/WebKit/public/web/WebCrossOriginPreflightResultCache.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebFontCache.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
 #include "third_party/WebKit/public/web/WebRuntimeFeatures.h"
 #include "third_party/WebKit/public/web/WebSecurityPolicy.h"
 #include "third_party/WebKit/public/web/WebView.h"
-#include "third_party/sqlite/sqlite3.h"
-#include "v8/include/v8.h"
 
 #if defined(OS_WIN)
 #include "base/win/iat_patch_function.h"
 #endif
 
-using WebKit::WebCache;
-using WebKit::WebCrossOriginPreflightResultCache;
-using WebKit::WebFontCache;
-using WebKit::WebRuntimeFeatures;
-using WebKit::WebSecurityPolicy;
-using WebKit::WebString;
+using blink::WebCache;
+using blink::WebRuntimeFeatures;
+using blink::WebSecurityPolicy;
+using blink::WebString;
 using content::RenderThread;
 
 namespace {
@@ -254,7 +246,7 @@ void HeapStatisticsCollector::SendStatsToBrowser(int round_id) {
 bool ChromeRenderProcessObserver::is_incognito_process_ = false;
 
 ChromeRenderProcessObserver::ChromeRenderProcessObserver(
-    chrome::ChromeContentRendererClient* client)
+    ChromeContentRendererClient* client)
     : client_(client),
       clear_cache_pending_(false),
       webkit_initialized_(false),
@@ -267,13 +259,8 @@ ChromeRenderProcessObserver::ChromeRenderProcessObserver(
   }
 
 #if defined(ENABLE_AUTOFILL_DIALOG)
-#if defined(OS_MACOSX)
-  bool enable_autofill = command_line.HasSwitch(
-      autofill::switches::kEnableInteractiveAutocomplete);
-#else
   bool enable_autofill = !command_line.HasSwitch(
       autofill::switches::kDisableInteractiveAutocomplete);
-#endif
   WebRuntimeFeatures::enableRequestAutocomplete(
       enable_autofill ||
       command_line.HasSwitch(switches::kEnableExperimentalWebPlatformFeatures));
@@ -307,8 +294,7 @@ ChromeRenderProcessObserver::ChromeRenderProcessObserver(
 #elif defined(OS_WIN)
   // crypt32.dll is used to decode X509 certificates for Chromoting.
   // Only load this library when the feature is enabled.
-  std::string error;
-  base::LoadNativeLibrary(base::FilePath(L"crypt32.dll"), &error);
+  base::LoadNativeLibrary(base::FilePath(L"crypt32.dll"), NULL);
 #endif
   // Setup initial set of crash dump data for Field Trials in this renderer.
   chrome_variations::SetChildProcessLoggingVariationList();
@@ -329,7 +315,6 @@ bool ChromeRenderProcessObserver::OnControlMessageReceived(
     IPC_MESSAGE_HANDLER(ChromeViewMsg_GetV8HeapStats, OnGetV8HeapStats)
     IPC_MESSAGE_HANDLER(ChromeViewMsg_GetCacheResourceStats,
                         OnGetCacheResourceStats)
-    IPC_MESSAGE_HANDLER(ChromeViewMsg_PurgeMemory, OnPurgeMemory)
     IPC_MESSAGE_HANDLER(ChromeViewMsg_SetContentSettingRules,
                         OnSetContentSettingRules)
     IPC_MESSAGE_UNHANDLED(handled = false)
@@ -351,7 +336,7 @@ void ChromeRenderProcessObserver::WebKitInitialized() {
   // that can commit synchronously.  No code should be runnable in these pages,
   // so it should not need to access anything nor should it allow javascript
   // URLs since it should never be visible to the user.
-  WebString native_scheme(ASCIIToUTF16(chrome::kChromeNativeScheme));
+  WebString native_scheme(base::ASCIIToUTF16(chrome::kChromeNativeScheme));
   WebSecurityPolicy::registerURLSchemeAsDisplayIsolated(native_scheme);
   WebSecurityPolicy::registerURLSchemeAsEmptyDocument(native_scheme);
   WebSecurityPolicy::registerURLSchemeAsNoAccess(native_scheme);
@@ -415,34 +400,6 @@ void ChromeRenderProcessObserver::OnSetFieldTrialGroup(
 
 void ChromeRenderProcessObserver::OnGetV8HeapStats() {
   HeapStatisticsCollector::Instance()->InitiateCollection();
-}
-
-void ChromeRenderProcessObserver::OnPurgeMemory() {
-  if (!webkit_initialized_)
-    return;
-
-  // Clear the object cache (as much as possible; some live objects cannot be
-  // freed).
-  WebCache::clear();
-
-  // Clear the font/glyph cache.
-  WebFontCache::clear();
-
-  // Clear the Cross-Origin Preflight cache.
-  WebCrossOriginPreflightResultCache::clear();
-
-  // Release all freeable memory from the SQLite process-global page cache (a
-  // low-level object which backs the Connection-specific page caches).
-  while (sqlite3_release_memory(std::numeric_limits<int>::max()) > 0) {
-  }
-
-  v8::V8::LowMemoryNotification();
-
-  // Tell our allocator to release any free pages it's still holding.
-  base::allocator::ReleaseFreeMemory();
-
-  if (client_)
-    client_->OnPurgeMemory();
 }
 
 void ChromeRenderProcessObserver::ExecutePendingClearCache() {

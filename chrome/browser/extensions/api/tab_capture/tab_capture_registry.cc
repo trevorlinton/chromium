@@ -6,12 +6,9 @@
 
 #include "base/lazy_instance.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/extensions/event_router.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/fullscreen/fullscreen_controller.h"
-#include "chrome/common/extensions/extension.h"
-#include "components/browser_context_keyed_service/browser_context_dependency_manager.h"
+#include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
@@ -19,6 +16,9 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
 
 using content::BrowserThread;
 using extensions::TabCaptureRegistry;
@@ -105,11 +105,11 @@ TabCaptureRequest::TabCaptureRequest(
 TabCaptureRequest::~TabCaptureRequest() {
 }
 
-TabCaptureRegistry::TabCaptureRegistry(Profile* profile)
-    : profile_(profile) {
+TabCaptureRegistry::TabCaptureRegistry(content::BrowserContext* context)
+    : profile_(Profile::FromBrowserContext(context)) {
   MediaCaptureDevicesDispatcher::GetInstance()->AddObserver(this);
   registrar_.Add(this,
-                 chrome::NOTIFICATION_EXTENSION_UNLOADED,
+                 chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
                  content::Source<Profile>(profile_));
   registrar_.Add(this,
                  chrome::NOTIFICATION_FULLSCREEN_CHANGED,
@@ -121,17 +121,17 @@ TabCaptureRegistry::~TabCaptureRegistry() {
 }
 
 // static
-TabCaptureRegistry* TabCaptureRegistry::Get(Profile* profile) {
-  return ProfileKeyedAPIFactory<TabCaptureRegistry>::GetForProfile(profile);
+TabCaptureRegistry* TabCaptureRegistry::Get(content::BrowserContext* context) {
+  return BrowserContextKeyedAPIFactory<TabCaptureRegistry>::Get(context);
 }
 
-static base::LazyInstance<ProfileKeyedAPIFactory<TabCaptureRegistry> >
+static base::LazyInstance<BrowserContextKeyedAPIFactory<TabCaptureRegistry> >
     g_factory = LAZY_INSTANCE_INITIALIZER;
 
 // static
-ProfileKeyedAPIFactory<TabCaptureRegistry>*
+BrowserContextKeyedAPIFactory<TabCaptureRegistry>*
 TabCaptureRegistry::GetFactoryInstance() {
-  return &g_factory.Get();
+  return g_factory.Pointer();
 }
 
 const TabCaptureRegistry::RegistryCaptureInfo
@@ -152,7 +152,7 @@ void TabCaptureRegistry::Observe(int type,
                                  const content::NotificationDetails& details) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   switch (type) {
-    case chrome::NOTIFICATION_EXTENSION_UNLOADED: {
+    case chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED: {
       // Cleanup all the requested media streams for this extension.
       const std::string& extension_id =
           content::Details<extensions::UnloadedExtensionInfo>(details)->
@@ -330,7 +330,7 @@ void TabCaptureRegistry::DispatchStatusChangeEvent(
   args->Append(info->ToValue().release());
   scoped_ptr<Event> event(new Event(tab_capture::OnStatusChanged::kEventName,
       args.Pass()));
-  event->restrict_to_profile = profile_;
+  event->restrict_to_browser_context = profile_;
 
   router->DispatchEventToExtension(request->extension_id, event.Pass());
 }

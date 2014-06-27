@@ -9,12 +9,12 @@
 #include "base/i18n/rtl.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/cancelable_task_tracker.h"
 #include "chrome/browser/favicon/favicon_service.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url.h"
 #include "chrome/browser/search_engines/template_url_service.h"
-#include "chrome/common/cancelable_task_tracker.h"
 #include "chrome/common/favicon/favicon_types.h"
 #include "grit/generated_resources.h"
 #include "grit/ui_resources.h"
@@ -114,7 +114,7 @@ class ModelEntry {
   gfx::ImageSkia favicon_;
   LoadState load_state_;
   TemplateURLTableModel* model_;
-  CancelableTaskTracker tracker_;
+  base::CancelableTaskTracker tracker_;
 
   DISALLOW_COPY_AND_ASSIGN(ModelEntry);
 };
@@ -183,11 +183,11 @@ int TemplateURLTableModel::RowCount() {
   return static_cast<int>(entries_.size());
 }
 
-string16 TemplateURLTableModel::GetText(int row, int col_id) {
+base::string16 TemplateURLTableModel::GetText(int row, int col_id) {
   DCHECK(row >= 0 && row < RowCount());
   const TemplateURL* url = entries_[row]->template_url();
   if (col_id == IDS_SEARCH_ENGINES_EDITOR_DESCRIPTION_COLUMN) {
-    string16 url_short_name = url->short_name();
+    base::string16 url_short_name = url->short_name();
     // TODO(xji): Consider adding a special case if the short name is a URL,
     // since those should always be displayed LTR. Please refer to
     // http://crbug.com/6726 for more information.
@@ -261,8 +261,8 @@ void TemplateURLTableModel::Remove(int index) {
 }
 
 void TemplateURLTableModel::Add(int index,
-                                const string16& short_name,
-                                const string16& keyword,
+                                const base::string16& short_name,
+                                const base::string16& keyword,
                                 const std::string& url) {
   DCHECK(index >= 0 && index <= RowCount());
   DCHECK(!url.empty());
@@ -279,8 +279,8 @@ void TemplateURLTableModel::Add(int index,
 }
 
 void TemplateURLTableModel::ModifyTemplateURL(int index,
-                                              const string16& title,
-                                              const string16& keyword,
+                                              const base::string16& title,
+                                              const base::string16& keyword,
                                               const std::string& url) {
   DCHECK(index >= 0 && index <= RowCount());
   DCHECK(!url.empty());

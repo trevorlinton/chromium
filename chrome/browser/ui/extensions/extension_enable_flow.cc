@@ -6,12 +6,14 @@
 
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/extensions/extension_enable_flow_delegate.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
+#include "extensions/browser/extension_registry.h"
+#include "extensions/browser/extension_system.h"
 
 using extensions::Extension;
 
@@ -53,7 +55,8 @@ void ExtensionEnableFlow::Run() {
       extensions::ExtensionSystem::Get(profile_)->extension_service();
   const Extension* extension = service->GetExtensionById(extension_id_, true);
   if (!extension) {
-    extension = service->GetTerminatedExtension(extension_id_);
+    extension = extensions::ExtensionRegistry::Get(profile_)->GetExtensionById(
+        extension_id_, extensions::ExtensionRegistry::TERMINATED);
     // It's possible (though unlikely) the app could have been uninstalled since
     // the user clicked on it.
     if (!extension)
@@ -84,8 +87,8 @@ void ExtensionEnableFlow::CheckPermissionAndMaybePromptUser() {
     return;
   }
 
-  extensions::ExtensionPrefs* extension_prefs = service->extension_prefs();
-  if (!extension_prefs->DidExtensionEscalatePermissions(extension_id_)) {
+  extensions::ExtensionPrefs* prefs = extensions::ExtensionPrefs::Get(profile_);
+  if (!prefs->DidExtensionEscalatePermissions(extension_id_)) {
     // Enable the extension immediately if its privileges weren't escalated.
     // This is a no-op if the extension was previously terminated.
     service->EnableExtension(extension_id_);

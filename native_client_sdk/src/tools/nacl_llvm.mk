@@ -10,14 +10,13 @@
 #
 # Paths to Tools
 #
-PNACL_BIN = $(TC_PATH)/$(OSNAME)_$(TOOLCHAIN)/bin
-PNACL_CC ?= $(PNACL_BIN)/pnacl-clang -c
-PNACL_CXX ?= $(PNACL_BIN)/pnacl-clang++ -c
-PNACL_LINK ?= $(PNACL_BIN)/pnacl-clang++
-PNACL_LIB ?= $(PNACL_BIN)/pnacl-ar
-PNACL_STRIP ?= $(PNACL_BIN)/pnacl-strip
-PNACL_FINALIZE ?= $(PNACL_BIN)/pnacl-finalize
-PNACL_TRANSLATE ?= $(PNACL_BIN)/pnacl-translate
+PNACL_CC := $(shell $(NACL_CONFIG) -t $(TOOLCHAIN) --tool=cc)
+PNACL_CXX := $(shell $(NACL_CONFIG) -t $(TOOLCHAIN) --tool=c++)
+PNACL_LINK := $(shell $(NACL_CONFIG) -t $(TOOLCHAIN) --tool=c++)
+PNACL_LIB := $(shell $(NACL_CONFIG) -t $(TOOLCHAIN) --tool=ar)
+PNACL_STRIP := $(shell $(NACL_CONFIG) -t $(TOOLCHAIN) --tool=strip)
+PNACL_FINALIZE := $(shell $(NACL_CONFIG) -t $(TOOLCHAIN) --tool=finalize)
+PNACL_TRANSLATE := $(shell $(NACL_CONFIG) -t $(TOOLCHAIN) --tool=translate)
 
 #
 # Compile Macro
@@ -27,17 +26,17 @@ PNACL_TRANSLATE ?= $(PNACL_BIN)/pnacl-translate
 # $3 = Include Directories
 #
 define C_COMPILER_RULE
--include $(call SRC_TO_DEP,$(1),_pnacl)
-$(call SRC_TO_OBJ,$(1),_pnacl): $(1) $(TOP_MAKE) | $(dir $(call SRC_TO_OBJ,$(1)))dir.stamp
+-include $(call SRC_TO_DEP,$(1))
+$(call SRC_TO_OBJ,$(1)): $(1) $(TOP_MAKE) | $(dir $(call SRC_TO_OBJ,$(1)))dir.stamp
 	$(call LOG,CC  ,$$@,$(PNACL_CC) -o $$@ -c $$< $(POSIX_FLAGS) $(2) $(NACL_CFLAGS))
-	@$(FIXDEPS) $(call SRC_TO_DEP_PRE_FIXUP,$(1),_pnacl)
+	@$(FIXDEPS) $(call SRC_TO_DEP_PRE_FIXUP,$(1))
 endef
 
 define CXX_COMPILER_RULE
--include $(call SRC_TO_DEP,$(1),_pnacl)
-$(call SRC_TO_OBJ,$(1),_pnacl): $(1) $(TOP_MAKE) | $(dir $(call SRC_TO_OBJ,$(1)))dir.stamp
+-include $(call SRC_TO_DEP,$(1))
+$(call SRC_TO_OBJ,$(1)): $(1) $(TOP_MAKE) | $(dir $(call SRC_TO_OBJ,$(1)))dir.stamp
 	$(call LOG,CXX ,$$@,$(PNACL_CXX) -o $$@ -c $$< $(POSIX_FLAGS) $(2) $(NACL_CFLAGS))
-	@$(FIXDEPS) $(call SRC_TO_DEP_PRE_FIXUP,$(1),_pnacl)
+	@$(FIXDEPS) $(call SRC_TO_DEP_PRE_FIXUP,$(1))
 endef
 
 
@@ -78,7 +77,7 @@ $(STAMPDIR)/$(1).stamp: $(LIBDIR)/$(TOOLCHAIN)/$(CONFIG)/lib$(1).a
 	@echo "TOUCHED $$@" > $(STAMPDIR)/$(1).stamp
 
 all: $(LIBDIR)/$(TOOLCHAIN)/$(CONFIG)/lib$(1).a
-$(LIBDIR)/$(TOOLCHAIN)/$(CONFIG)/lib$(1).a: $(foreach src,$(2),$(call SRC_TO_OBJ,$(src),_pnacl))
+$(LIBDIR)/$(TOOLCHAIN)/$(CONFIG)/lib$(1).a: $(foreach src,$(2),$(call SRC_TO_OBJ,$(src)))
 	$(MKDIR) -p $$(dir $$@)
 	$(RM) -f $$@
 	$(call LOG,LIB,$$@,$(PNACL_LIB) -cr $$@ $$^ $(3))
@@ -130,7 +129,7 @@ endef
 # using the finalizing to a .pexe.  This enables debugging.
 #
 define LINK_RULE
-$(call LINKER_RULE,$(OUTDIR)/$(1),$(foreach src,$(2),$(call SRC_TO_OBJ,$(src),_pnacl)),$(filter-out pthread,$(3)),$(4),$(LIB_PATHS),$(5))
+$(call LINKER_RULE,$(OUTDIR)/$(1),$(foreach src,$(2),$(call SRC_TO_OBJ,$(src))),$(filter-out pthread,$(3)),$(4),$(LIB_PATHS),$(5))
 endef
 
 
@@ -168,7 +167,7 @@ NMF:=python $(NACL_SDK_ROOT)/tools/create_nmf.py
 ifeq ($(CONFIG),Debug)
 EXECUTABLES=$(OUTDIR)/$(1)_x86_32.nexe $(OUTDIR)/$(1)_x86_64.nexe $(OUTDIR)/$(1)_arm.nexe
 else
-EXECUTABLES=$(OUTDIR)/$(1).pexe
+EXECUTABLES=$(OUTDIR)/$(1).pexe $(OUTDIR)/$(1)_unstripped.bc
 endif
 
 define NMF_RULE

@@ -7,6 +7,7 @@
 
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
+#include "chrome/browser/translate/translate_tab_helper.h"
 #include "chrome/browser/ui/translate/translate_bubble_model.h"
 #include "chrome/browser/ui/translate/translate_bubble_view_state_transition.h"
 
@@ -15,17 +16,23 @@ class TranslateUIDelegate;
 // The standard implementation of TranslateBubbleModel.
 class TranslateBubbleModelImpl : public TranslateBubbleModel {
  public:
-  TranslateBubbleModelImpl(TranslateBubbleModel::ViewState view_type,
+  TranslateBubbleModelImpl(TranslateTabHelper::TranslateStep step,
                            scoped_ptr<TranslateUIDelegate> ui_delegate);
   virtual ~TranslateBubbleModelImpl();
+
+  // Converts a TranslateStep to a ViewState.
+  // This function never returns VIEW_STATE_ADVANCED.
+  static TranslateBubbleModel::ViewState TranslateStepToViewState(
+      TranslateTabHelper::TranslateStep step);
 
   // TranslateBubbleModel methods.
   virtual TranslateBubbleModel::ViewState GetViewState() const OVERRIDE;
   virtual void SetViewState(TranslateBubbleModel::ViewState view_state)
       OVERRIDE;
+  virtual void ShowError(TranslateErrors::Type error_type) OVERRIDE;
   virtual void GoBackFromAdvanced() OVERRIDE;
   virtual int GetNumberOfLanguages() const OVERRIDE;
-  virtual string16 GetLanguageNameAt(int index) const OVERRIDE;
+  virtual base::string16 GetLanguageNameAt(int index) const OVERRIDE;
   virtual int GetOriginalLanguageIndex() const OVERRIDE;
   virtual void UpdateOriginalLanguageIndex(int index) OVERRIDE;
   virtual int GetTargetLanguageIndex() const OVERRIDE;
@@ -36,7 +43,8 @@ class TranslateBubbleModelImpl : public TranslateBubbleModel {
   virtual void SetAlwaysTranslate(bool value) OVERRIDE;
   virtual void Translate() OVERRIDE;
   virtual void RevertTranslation() OVERRIDE;
-  virtual void TranslationDeclined() OVERRIDE;
+  virtual void TranslationDeclined(bool explicitly_closed) OVERRIDE;
+  virtual bool IsPageTranslatedInCurrentLanguages() const OVERRIDE;
 
  private:
   scoped_ptr<TranslateUIDelegate> ui_delegate_;

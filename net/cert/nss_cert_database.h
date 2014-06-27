@@ -9,13 +9,18 @@
 #include <vector>
 
 #include "base/basictypes.h"
+#include "base/callback_forward.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
+#include "crypto/scoped_nss_types.h"
 #include "net/base/net_export.h"
 #include "net/cert/cert_type.h"
 #include "net/cert/x509_certificate.h"
 
-template <typename T> struct DefaultSingletonTraits;
+namespace base {
+template <typename T> struct DefaultLazyInstanceTraits;
+class TaskRunner;
+}
 template <class ObserverType> class ObserverListThreadSafe;
 
 namespace net {
@@ -88,23 +93,44 @@ class NET_EXPORT NSSCertDatabase {
     DISTRUSTED_OBJ_SIGN   = 1 << 5,
   };
 
+  typedef base::Callback<void(scoped_ptr<CertificateList> certs)>
+      ListCertsCallback;
+
+  // DEPRECATED: See http://crbug.com/329735.
   static NSSCertDatabase* GetInstance();
 
   // Get a list of unique certificates in the certificate database (one
   // instance of all certificates).
-  void ListCerts(CertificateList* certs);
+  // DEPRECATED by |ListCerts|. See http://crbug.com/340460.
+  virtual void ListCertsSync(CertificateList* certs);
+
+  // Asynchronously get a list of unique certificates in the certificate
+  // database (one instance of all certificates). Note that the callback may be
+  // run even after the database is deleted.
+  virtual void ListCerts(const ListCertsCallback& callback);
+
+  // Get the default slot for public key data.
+  virtual crypto::ScopedPK11Slot GetPublicSlot() const;
+
+  // Get the default slot for private key or mixed private/public key data.
+  virtual crypto::ScopedPK11Slot GetPrivateSlot() const;
 
   // Get the default module for public key data.
   // The returned pointer must be stored in a scoped_refptr<CryptoModule>.
+  // DEPRECATED: use GetPublicSlot instead.
+  // TODO(mattm): remove usage of this method and remove it.
   CryptoModule* GetPublicModule() const;
 
   // Get the default module for private key or mixed private/public key data.
   // The returned pointer must be stored in a scoped_refptr<CryptoModule>.
+  // DEPRECATED: use GetPrivateSlot instead.
+  // TODO(mattm): remove usage of this method and remove it.
   CryptoModule* GetPrivateModule() const;
 
   // Get all modules.
   // If |need_rw| is true, only writable modules will be returned.
-  void ListModules(CryptoModuleList* modules, bool need_rw) const;
+  // TODO(mattm): come up with better alternative to CryptoModuleList.
+  virtual void ListModules(CryptoModuleList* modules, bool need_rw) const;
 
   // Import certificates and private keys from PKCS #12 blob into the module.
   // If |is_extractable| is false, mark the private key as being unextractable
@@ -178,25 +204,49 @@ class NET_EXPORT NSSCertDatabase {
   // Check whether cert is stored in a readonly slot.
   bool IsReadOnly(const X509Certificate* cert) const;
 
+  // Check whether cert is stored in a hardware slot.
+  bool IsHardwareBacked(const X509Certificate* cert) const;
+
   // Registers |observer| to receive notifications of certificate changes.  The
   // thread on which this is called is the thread on which |observer| will be
   // called back with notifications.
+  // NOTE: CertDatabase::AddObserver should be preferred. Observers registered
+  // here will only recieve notifications generated directly through the
+  // NSSCertDatabase, but not those from the CertDatabase. The CertDatabase
+  // observers will recieve both.
   void AddObserver(Observer* observer);
 
   // Unregisters |observer| from receiving notifications.  This must be called
   // on the same thread on which AddObserver() was called.
   void RemoveObserver(Observer* observer);
 
- private:
-  friend struct DefaultSingletonTraits<NSSCertDatabase>;
+  // Overrides task runner that's used for running slow tasks.
+  void SetSlowTaskRunnerForTest(
+      const scoped_refptr<base::TaskRunner>& task_runner);
 
+ protected:
   NSSCertDatabase();
-  ~NSSCertDatabase();
+  virtual ~NSSCertDatabase();
+
+  // Certificate listing implementation used by |ListCerts| and |ListCertsSync|.
+  // Static so it may safely be used on the worker thread.
+  static void ListCertsImpl(CertificateList* certs);
+
+  // Gets task runner that should be used for slow tasks like certificate
+  // listing. Defaults to a base::WorkerPool runner, but may be overriden
+  // in tests (see SetSlowTaskRunnerForTest).
+  scoped_refptr<base::TaskRunner> GetSlowTaskRunner() const;
+
+ private:
+  friend struct base::DefaultLazyInstanceTraits<NSSCertDatabase>;
 
   // Broadcasts notifications to all registered observers.
   void NotifyObserversOfCertAdded(const X509Certificate* cert);
   void NotifyObserversOfCertRemoved(const X509Certificate* cert);
   void NotifyObserversOfCACertChanged(const X509Certificate* cert);
+
+  // Task runner that should be used in tests if set.
+  scoped_refptr<base::TaskRunner> slow_task_runner_for_test_;
 
   const scoped_refptr<ObserverListThreadSafe<Observer> > observer_list_;
 

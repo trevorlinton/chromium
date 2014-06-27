@@ -16,6 +16,8 @@ class URLRequest;
 
 namespace prerender {
 
+extern const char kChromeNavigateExtraDataKey[];
+
 // ID indicating that no experiment is active.
 const uint8 kNoExperiment = 0;
 
@@ -56,6 +58,12 @@ void GatherPagespeedData(const ResourceType::Type resource_type,
 // Static method gathering stats about a URLRequest for which a response has
 // just started.
 void URLRequestResponseStarted(net::URLRequest* request);
+
+// Report a URL was canceled due to trying to handle an external URL.
+void ReportPrerenderExternalURL();
+
+// Report a URL was canceled due to unsupported prerender scheme.
+void ReportUnsupportedPrerenderScheme(const GURL& url);
 
 }  // namespace prerender
 

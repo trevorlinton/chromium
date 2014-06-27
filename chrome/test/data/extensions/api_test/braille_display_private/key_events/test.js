@@ -10,29 +10,42 @@ var pass = chrome.test.callbackPass;
 var EXPECTED_EVENTS = [
   { "command": "line_up" },
   { "command": "line_down" },
+  { "command": "pan_left" },
+  { "command": "pan_right" },
+  { "command": "top" },
+  { "command": "bottom" },
+  { "command": "routing", "displayPosition": 5 },
 ]
+for (var i = 0; i < 256; ++i) {
+  EXPECTED_EVENTS.push({ "command": "dots", "brailleDots": i });
+}
 
 var event_number = 0;
-var callbackCompleted;
+var allEventsReceived;
 
 function eventListener(event) {
-  console.log("Received event: " + event);
-  chrome.test.assertEq(event, EXPECTED_EVENTS[event_number]);
+  chrome.test.assertTrue(event_number< EXPECTED_EVENTS.length);
+  chrome.test.assertEq(EXPECTED_EVENTS[event_number], event);
   if (++event_number == EXPECTED_EVENTS.length) {
-    callbackCompleted();
+    allEventsReceived();
   }
-  console.log("Event number: " + event_number);
 }
 
 function waitForDisplay(callback) {
   var callbackCompleted = chrome.test.callbackAdded();
   var displayStateHandler = function(state) {
+    if (!callbackCompleted) {
+      return;
+    }
     chrome.test.assertTrue(state.available, "Display not available");
     chrome.test.assertEq(11, state.textCellCount);
     callback(state);
     callbackCompleted();
     chrome.brailleDisplayPrivate.onDisplayStateChanged.removeListener(
         displayStateHandler);
+    // Prevent additional runs if the onDisplayStateChanged event
+    // is fired before getDisplayState invokes the callback.
+    callbackCompleted = null;
   };
   chrome.brailleDisplayPrivate.onDisplayStateChanged.addListener(
       displayStateHandler);
@@ -48,7 +61,7 @@ function waitForDisplay(callback) {
 chrome.test.runTests([
   function testKeyEvents() {
     chrome.brailleDisplayPrivate.onKeyEvent.addListener(eventListener);
-    callbackCompleted = chrome.test.callbackAdded();
+    allEventsReceived = chrome.test.callbackAdded();
     waitForDisplay(pass());
   }
 ]);

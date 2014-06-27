@@ -35,13 +35,14 @@ class VectorPlatformDeviceEmf : public SkBitmapDevice, public PlatformDevice {
   virtual void DrawToNativeContext(HDC dc, int x, int y,
                                    const RECT* src_rect) OVERRIDE;
   // SkBaseDevice methods.
-  virtual uint32_t getDeviceCapabilities();
   virtual void drawPaint(const SkDraw& draw, const SkPaint& paint) OVERRIDE;
   virtual void drawPoints(const SkDraw& draw, SkCanvas::PointMode mode,
                           size_t count, const SkPoint[],
                           const SkPaint& paint) OVERRIDE;
   virtual void drawRect(const SkDraw& draw, const SkRect& r,
                         const SkPaint& paint) OVERRIDE;
+  virtual void drawRRect(const SkDraw&, const SkRRect& rr,
+                         const SkPaint& paint) OVERRIDE;
   virtual void drawPath(const SkDraw& draw, const SkPath& path,
                         const SkPaint& paint,
                         const SkMatrix* prePathMatrix = NULL,
@@ -78,9 +79,13 @@ class VectorPlatformDeviceEmf : public SkBitmapDevice, public PlatformDevice {
   void LoadClipRegion();
 
  protected:
+#ifdef SK_SUPPORT_LEGACY_COMPATIBLEDEVICE_CONFIG
   virtual SkBaseDevice* onCreateCompatibleDevice(SkBitmap::Config, int width,
                                                  int height, bool isOpaque,
                                                  Usage usage) OVERRIDE;
+#endif
+  virtual SkBaseDevice* onCreateDevice(const SkImageInfo& info,
+                                       Usage usage) OVERRIDE;
 
  private:
   // Applies the SkPaint's painting properties in the current GDI context, if

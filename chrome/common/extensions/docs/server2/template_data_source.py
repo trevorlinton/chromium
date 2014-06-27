@@ -8,28 +8,55 @@ import traceback
 
 from data_source import DataSource
 from docs_server_utils import FormatKey
+from extensions_paths import (
+    ARTICLES_TEMPLATES, INTROS_TEMPLATES, PRIVATE_TEMPLATES)
 from file_system import FileNotFoundError
-from svn_constants import PRIVATE_TEMPLATE_PATH
+from future import Collect
+from path_util import AssertIsDirectory
 
 
 class TemplateDataSource(DataSource):
   '''Provides a DataSource interface for compiled templates.
   '''
-
-  def __init__(self, server_instance, _, partial_dir=PRIVATE_TEMPLATE_PATH):
+  def __init__(self, server_instance, request=None):
+    self._dir = type(self)._BASE
+    AssertIsDirectory(self._dir)
+    self._request = request
     self._template_cache = server_instance.compiled_fs_factory.ForTemplates(
         server_instance.host_file_system_provider.GetTrunk())
-    self._partial_dir = partial_dir
+    self._file_system = server_instance.host_file_system_provider.GetTrunk()
 
   def get(self, path):
     try:
-      return self._template_cache.GetFromFile('%s/%s.html' %
-          (self._partial_dir, path)).Get()
+      return self._template_cache.GetFromFile('%s%s' %
+          (self._dir, FormatKey(path))).Get()
     except FileNotFoundError:
       logging.warning(traceback.format_exc())
       return None
 
   def Cron(self):
-    # TODO(kalman): Implement this; probably by finding all files that can be
-    # compiled to templates underneath |self._partial_dir| and compiling them.
-    pass
+    futures = []
+    for root, _, files in self._file_system.Walk(self._dir):
+      futures += [self._template_cache.GetFromFile(
+                      posixpath.join(self._dir, root, f))
+                  for f in files
+                  if posixpath.splitext(f)[1] == '.html']
+    return Collect(futures)
+
+
+class ArticleDataSource(TemplateDataSource):
+  '''Serves templates for Articles.
+  '''
+  _BASE = ARTICLES_TEMPLATES
+
+
+class IntroDataSource(TemplateDataSource):
+  '''Serves templates for Intros.
+  '''
+  _BASE = INTROS_TEMPLATES
+
+
+class PartialDataSource(TemplateDataSource):
+  '''Serves templates for private templates.
+  '''
+  _BASE = PRIVATE_TEMPLATES

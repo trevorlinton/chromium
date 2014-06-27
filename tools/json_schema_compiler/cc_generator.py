@@ -46,8 +46,10 @@ class _Generator(object):
       .Append('#include "base/strings/string_number_conversions.h"')
       .Append('#include "base/strings/utf_string_conversions.h"')
       .Append('#include "%s/%s.h"' %
-          (self._namespace.source_file_dir, self._namespace.unix_name))
+              (self._namespace.source_file_dir, self._namespace.short_filename))
       .Cblock(self._type_helper.GenerateIncludes(include_soft=True))
+      .Append()
+      .Append('using base::UTF8ToUTF16;')
       .Append()
       .Concat(cpp_util.OpenNamespace(self._cpp_namespace))
       .Cblock(self._type_helper.GetNamespaceStart())
@@ -91,6 +93,7 @@ class _Generator(object):
     (c.Concat(self._type_helper.GetNamespaceEnd())
       .Cblock(cpp_util.CloseNamespace(self._cpp_namespace))
     )
+    c.Append()
     return c
 
   def _GenerateType(self, cpp_namespace, type_):
@@ -528,7 +531,8 @@ class _Generator(object):
       .Sblock('scoped_ptr<Params> Params::Create(%s) {' % self._GenerateParams(
         ['const base::ListValue& args']))
       .Concat(self._GenerateParamsCheck(function, 'args'))
-      .Append('scoped_ptr<Params> params(new Params());'))
+      .Append('scoped_ptr<Params> params(new Params());')
+    )
 
     for param in function.params:
       c.Concat(self._InitializePropertyToDefault(param, 'params'))
@@ -590,7 +594,6 @@ class _Generator(object):
     |failure_value|.
     """
     c = Code()
-    c.Sblock('{')
 
     underlying_type = self._type_helper.FollowRef(type_)
 
@@ -603,10 +606,13 @@ class _Generator(object):
             '"\'%%(key)s\': expected ' + '%s, got " + %s' % (
                 type_.name,
                 self._util_cc_helper.GetValueTypeString(
-                    '%%(src_var)s', True))))
-          .Append('return %(failure_value)s;')
-          .Eblock('}')
-          .Append('%(dst_var)s.reset(new %(cpp_type)s(temp));')
+                    '%%(src_var)s', True)))))
+        c.Append('%(dst_var)s.reset();')
+        if not self._generate_error_messages:
+          c.Append('return %(failure_value)s;')
+        (c.Eblock('}')
+          .Append('else')
+          .Append('  %(dst_var)s.reset(new %(cpp_type)s(temp));')
         )
       else:
         (c.Sblock('if (!%s) {' % cpp_util.GetAsFundamentalValue(
@@ -627,15 +633,23 @@ class _Generator(object):
           .Sblock('if (!%(src_var)s->GetAsDictionary(&dictionary)) {')
           .Concat(self._GenerateError(
             '"\'%%(key)s\': expected dictionary, got " + ' +
-            self._util_cc_helper.GetValueTypeString('%%(src_var)s', True)))
-          .Append('return %(failure_value)s;')
-          .Eblock('}')
+            self._util_cc_helper.GetValueTypeString('%%(src_var)s', True))))
+        # If an optional property fails to populate, the population can still
+        # succeed with a warning. If no error messages are generated, this
+        # warning is not set and we fail out instead.
+        if not self._generate_error_messages:
+          c.Append('return %(failure_value)s;')
+        (c.Eblock('}')
+          .Sblock('else {')
           .Append('scoped_ptr<%(cpp_type)s> temp(new %(cpp_type)s());')
           .Append('if (!%%(cpp_type)s::Populate(%s)) {' % self._GenerateArgs(
             ('*dictionary', 'temp.get()')))
           .Append('  return %(failure_value)s;')
-          .Append('}')
-          .Append('%(dst_var)s = temp.Pass();')
+        )
+        (c.Append('}')
+          .Append('else')
+          .Append('  %(dst_var)s = temp.Pass();')
+          .Eblock('}')
         )
       else:
         (c.Append('const base::DictionaryValue* dictionary = NULL;')
@@ -662,8 +676,13 @@ class _Generator(object):
           .Concat(self._GenerateError(
             '"\'%%(key)s\': expected list, got " + ' +
             self._util_cc_helper.GetValueTypeString('%%(src_var)s', True)))
-          .Append('return %(failure_value)s;')
-          .Eblock('}'))
+      )
+      if is_ptr and self._generate_error_messages:
+        c.Append('%(dst_var)s.reset();')
+      else:
+        c.Append('return %(failure_value)s;')
+      c.Eblock('}')
+      c.Sblock('else {')
       item_type = self._type_helper.FollowRef(underlying_type.item_type)
       if item_type.property_type == PropertyType.ENUM:
         c.Concat(self._GenerateListValueToEnumArrayConversion(
@@ -677,12 +696,15 @@ class _Generator(object):
               underlying_type,
               'list',
               dst_var,
-              is_ptr))
-          .Concat(self._GenerateError(
+              is_ptr)))
+        c.Concat(self._GenerateError(
             '"unable to populate array \'%%(parent_key)s\'"'))
-          .Append('return %(failure_value)s;')
-          .Eblock('}')
-        )
+        if is_ptr and self._generate_error_messages:
+          c.Append('%(dst_var)s.reset();')
+        else:
+          c.Append('return %(failure_value)s;')
+        c.Eblock('}')
+      c.Eblock('}')
     elif underlying_type.property_type == PropertyType.CHOICES:
       if is_ptr:
         (c.Append('scoped_ptr<%(cpp_type)s> temp(new %(cpp_type)s());')
@@ -701,14 +723,18 @@ class _Generator(object):
                                                     dst_var,
                                                     failure_value))
     elif underlying_type.property_type == PropertyType.BINARY:
-      (c.Sblock('if (!%(src_var)s->IsType(base::Value::TYPE_BINARY)) {')
+      (c.Append('const base::BinaryValue* binary_value = NULL;')
+        .Sblock('if (!%(src_var)s->IsType(base::Value::TYPE_BINARY)) {')
         .Concat(self._GenerateError(
           '"\'%%(key)s\': expected binary, got " + ' +
           self._util_cc_helper.GetValueTypeString('%%(src_var)s', True)))
-        .Append('return %(failure_value)s;')
-        .Eblock('}')
-        .Append('const base::BinaryValue* binary_value =')
-        .Append('    static_cast<const base::BinaryValue*>(%(src_var)s);')
+      )
+      if not self._generate_error_messages:
+        c.Append('return %(failure_value)s;')
+      (c.Eblock('}')
+        .Sblock('else {')
+        .Append(' binary_value =')
+        .Append('   static_cast<const base::BinaryValue*>(%(src_var)s);')
       )
       if is_ptr:
         (c.Append('%(dst_var)s.reset(')
@@ -719,16 +745,19 @@ class _Generator(object):
         (c.Append('%(dst_var)s.assign(binary_value->GetBuffer(),')
           .Append('                   binary_value->GetSize());')
         )
+      c.Eblock('}')
     else:
       raise NotImplementedError(type_)
-    return c.Eblock('}').Substitute({
+    if c.IsEmpty():
+      return c
+    return Code().Sblock('{').Concat(c.Substitute({
       'cpp_type': self._type_helper.GetCppType(type_),
       'src_var': src_var,
       'dst_var': dst_var,
       'failure_value': failure_value,
       'key': type_.name,
-      'parent_key': type_.parent.name
-    })
+      'parent_key': type_.parent.name,
+    })).Eblock('}')
 
   def _GenerateListValueToEnumArrayConversion(self,
                                               item_type,
@@ -925,8 +954,13 @@ class _Generator(object):
     c = Code()
     if not self._generate_error_messages:
       return c
-    (c.Append('if (error)')
-      .Append('  *error = UTF8ToUTF16(' + body + ');'))
+    (c.Append('if (error) {')
+      .Append('  if (error->length())')
+      .Append('    error->append(UTF8ToUTF16("; "));')
+      .Append('  error->append(UTF8ToUTF16(%s));' % body)
+      .Append('}')
+      .Append('else')
+      .Append('  *error = UTF8ToUTF16(%s);' % body))
     return c
 
   def _GenerateParams(self, params):

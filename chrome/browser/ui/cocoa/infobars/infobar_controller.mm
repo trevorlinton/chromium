@@ -116,11 +116,14 @@
 }
 
 - (void)removeSelf {
-  infobar_->RemoveSelfCocoa();
+  infobar_->RemoveSelf();
 }
 
 - (void)addAdditionalControls {
   // Default implementation does nothing.
+}
+
+- (void)infobarWillHide {
 }
 
 - (void)infobarWillClose {
@@ -149,9 +152,6 @@
 }
 
 - (void)disablePopUpMenu:(NSMenu*)menu {
-  // Remove the menu if visible.
-  [menu cancelTracking];
-
   // If the menu is re-opened, prevent queries to update items.
   [menu setDelegate:nil];
 
@@ -171,13 +171,16 @@
   // The former doesn't show links in a nice way, but the latter can't be added
   // in IB without a containing scroll view, so create the NSTextView
   // programmatically.
-  label_.reset([[HyperlinkTextView alloc]
-      initWithFrame:[labelPlaceholder_ frame]]);
-  [label_.get() setAutoresizingMask:[labelPlaceholder_ autoresizingMask]];
+  base::scoped_nsobject<HyperlinkTextView> newLabel(
+    [[HyperlinkTextView alloc] initWithFrame:[labelPlaceholder_ frame]]);
+  [newLabel setDrawsBackgroundUsingSuperview:YES];
+  [newLabel setAutoresizingMask:[labelPlaceholder_ autoresizingMask]];
   [[labelPlaceholder_ superview]
-      replaceSubview:labelPlaceholder_ with:label_.get()];
+      replaceSubview:labelPlaceholder_ with:newLabel];
   labelPlaceholder_ = nil;  // Now released.
-  [label_.get() setDelegate:self];
+  [newLabel setDelegate:self];
+
+  label_.reset(newLabel.release());
 }
 
 @end

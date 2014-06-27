@@ -4,6 +4,7 @@
 
 #include "chrome/browser/extensions/api/system_display/system_display_api.h"
 
+#include "base/debug/leak_annotations.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/extensions/api/system_display/display_info_provider.h"
 #include "chrome/browser/extensions/extension_apitest.h"
@@ -13,7 +14,7 @@
 #include "ui/gfx/screen.h"
 
 #if defined(OS_CHROMEOS)
-#include "ash/screen_ash.h"
+#include "ash/display/screen_ash.h"
 #include "ash/shell.h"
 #endif
 
@@ -175,6 +176,8 @@ class SystemDisplayApiTest: public ExtensionApiTest {
 
   virtual void SetUpOnMainThread() OVERRIDE {
     ExtensionApiTest::SetUpOnMainThread();
+    ANNOTATE_LEAKING_OBJECT_PTR(
+        gfx::Screen::GetScreenByType(gfx::SCREEN_TYPE_NATIVE));
     gfx::Screen::SetScreenInstance(gfx::SCREEN_TYPE_NATIVE, screen_.get());
     DisplayInfoProvider::InitializeForTesting(provider_.get());
   }
@@ -182,7 +185,7 @@ class SystemDisplayApiTest: public ExtensionApiTest {
   virtual void CleanUpOnMainThread() OVERRIDE {
 #if defined(OS_CHROMEOS)
     gfx::Screen::SetScreenInstance(gfx::SCREEN_TYPE_NATIVE,
-                                   ash::Shell::GetInstance()->screen());
+                                   ash::Shell::GetScreen());
 #endif
     ExtensionApiTest::CleanUpOnMainThread();
   }

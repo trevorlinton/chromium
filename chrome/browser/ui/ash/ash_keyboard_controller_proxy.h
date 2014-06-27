@@ -7,8 +7,8 @@
 
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
-#include "chrome/browser/extensions/extension_function_dispatcher.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "extensions/browser/extension_function_dispatcher.h"
 #include "ui/keyboard/keyboard_controller_proxy.h"
 
 class ExtensionFunctionDispatcher;
@@ -26,6 +26,8 @@ namespace ui {
 class InputMethod;
 }
 
+// Subclass of KeyboardControllerProxy. It is used by KeyboardController to get
+// access to the virtual keyboard window and setup Chrome extension functions.
 class AshKeyboardControllerProxy
     : public keyboard::KeyboardControllerProxy,
       public content::WebContentsObserver,
@@ -35,6 +37,8 @@ class AshKeyboardControllerProxy
   virtual ~AshKeyboardControllerProxy();
 
  private:
+  friend class AshKeyboardControllerProxyTest;
+
   void OnRequest(const ExtensionHostMsg_Request_Params& params);
 
   // keyboard::KeyboardControllerProxy overrides
@@ -45,6 +49,7 @@ class AshKeyboardControllerProxy
       const content::MediaResponseCallback& callback) OVERRIDE;
   virtual void SetupWebContents(content::WebContents* contents) OVERRIDE;
   virtual void ShowKeyboardContainer(aura::Window* container) OVERRIDE;
+  virtual void EnsureCaretInWorkArea() OVERRIDE;
 
   // The overridden implementation dispatches
   // chrome.virtualKeyboardPrivate.onTextInputBoxFocused event to extension to

@@ -10,7 +10,6 @@
 #include "ash/display/display_manager.h"
 #include "ash/display/output_configurator_animation.h"
 #include "ash/display/resolution_notification_controller.h"
-#include "ash/screen_ash.h"
 #include "ash/shell.h"
 #include "base/bind.h"
 #include "base/logging.h"
@@ -18,7 +17,6 @@
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/display/display_preferences.h"
-#include "chromeos/display/output_configurator.h"
 #include "content/public/browser/web_ui.h"
 #include "grit/ash_strings.h"
 #include "grit/generated_resources.h"
@@ -55,9 +53,33 @@ int64 GetDisplayId(const base::ListValue* args) {
   return display_id;
 }
 
-bool CompareResolution(ash::internal::Resolution r1,
-                       ash::internal::Resolution r2) {
-  return r1.size.GetArea() < r2.size.GetArea();
+bool CompareDisplayMode(ash::internal::DisplayMode d1,
+                        ash::internal::DisplayMode d2) {
+  if (d1.size.GetArea() == d2.size.GetArea())
+    return d1.refresh_rate < d2.refresh_rate;
+  return d1.size.GetArea() < d2.size.GetArea();
+}
+
+base::string16 GetColorProfileName(ui::ColorCalibrationProfile profile) {
+  switch (profile) {
+    case ui::COLOR_PROFILE_STANDARD:
+      return l10n_util::GetStringUTF16(
+          IDS_OPTIONS_SETTINGS_DISPLAY_OPTIONS_COLOR_PROFILE_STANDARD);
+    case ui::COLOR_PROFILE_DYNAMIC:
+      return l10n_util::GetStringUTF16(
+          IDS_OPTIONS_SETTINGS_DISPLAY_OPTIONS_COLOR_PROFILE_DYNAMIC);
+    case ui::COLOR_PROFILE_MOVIE:
+      return l10n_util::GetStringUTF16(
+          IDS_OPTIONS_SETTINGS_DISPLAY_OPTIONS_COLOR_PROFILE_MOVIE);
+    case ui::COLOR_PROFILE_READING:
+      return l10n_util::GetStringUTF16(
+          IDS_OPTIONS_SETTINGS_DISPLAY_OPTIONS_COLOR_PROFILE_READING);
+    case ui::NUM_COLOR_PROFILES:
+      break;
+  }
+
+  NOTREACHED();
+  return base::string16();
 }
 
 }  // namespace
@@ -71,7 +93,7 @@ DisplayOptionsHandler::~DisplayOptionsHandler() {
 }
 
 void DisplayOptionsHandler::GetLocalizedValues(
-    DictionaryValue* localized_strings) {
+    base::DictionaryValue* localized_strings) {
   DCHECK(localized_strings);
   RegisterTitle(localized_strings, "displayOptionsPage",
                 IDS_OPTIONS_SETTINGS_DISPLAY_OPTIONS_TAB_TITLE);
@@ -110,6 +132,9 @@ void DisplayOptionsHandler::GetLocalizedValues(
   localized_strings->SetString(
       "startCalibratingOverscan", l10n_util::GetStringUTF16(
           IDS_OPTIONS_SETTINGS_DISPLAY_OPTIONS_START_CALIBRATING_OVERSCAN));
+  localized_strings->SetString(
+      "selectedDisplayColorProfile", l10n_util::GetStringUTF16(
+          IDS_OPTIONS_SETTINGS_DISPLAY_OPTIONS_COLOR_PROFILE));
 }
 
 void DisplayOptionsHandler::InitializePage() {
@@ -144,6 +169,10 @@ void DisplayOptionsHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       "setOrientation",
       base::Bind(&DisplayOptionsHandler::HandleSetOrientation,
+                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "setColorProfile",
+      base::Bind(&DisplayOptionsHandler::HandleSetColorProfile,
                  base::Unretained(this)));
 }
 
@@ -188,12 +217,12 @@ void DisplayOptionsHandler::SendDisplayInfo(
     js_display->SetBoolean("isInternal", display.IsInternal());
     js_display->SetInteger("orientation",
                            static_cast<int>(display_info.rotation()));
-    std::vector<ash::internal::Resolution> resolutions;
+    std::vector<ash::internal::DisplayMode> display_modes;
     std::vector<float> ui_scales;
     if (display.IsInternal()) {
       ui_scales = DisplayManager::GetScalesForDisplay(display_info);
       gfx::SizeF base_size = display_info.bounds_in_native().size();
-      base_size.Scale(1.0f / display.device_scale_factor());
+      base_size.Scale(1.0f / display_info.device_scale_factor());
       if (display_info.rotation() == gfx::Display::ROTATE_90 ||
           display_info.rotation() == gfx::Display::ROTATE_270) {
         float tmp = base_size.width();
@@ -203,31 +232,31 @@ void DisplayOptionsHandler::SendDisplayInfo(
       for (size_t i = 0; i < ui_scales.size(); ++i) {
         gfx::SizeF new_size = base_size;
         new_size.Scale(ui_scales[i]);
-        resolutions.push_back(ash::internal::Resolution(
-            gfx::ToFlooredSize(new_size), false /* interlaced */));
+        display_modes.push_back(ash::internal::DisplayMode(
+            gfx::ToFlooredSize(new_size), -1.0f, false, false));
       }
     } else {
-      for (size_t i = 0; i < display_info.resolutions().size(); ++i)
-        resolutions.push_back(display_info.resolutions()[i]);
+      for (size_t i = 0; i < display_info.display_modes().size(); ++i)
+        display_modes.push_back(display_info.display_modes()[i]);
     }
-    std::sort(resolutions.begin(), resolutions.end(), CompareResolution);
+    std::sort(display_modes.begin(), display_modes.end(), CompareDisplayMode);
 
     base::ListValue* js_resolutions = new base::ListValue();
     gfx::Size current_size = display_info.bounds_in_native().size();
     gfx::Insets current_overscan = display_info.GetOverscanInsetsInPixel();
-    for (size_t i = 0; i < resolutions.size(); ++i) {
+    for (size_t i = 0; i < display_modes.size(); ++i) {
       base::DictionaryValue* resolution_info = new base::DictionaryValue();
-      gfx::Size resolution = resolutions[i].size;
+      gfx::Size resolution = display_modes[i].size;
       if (!ui_scales.empty()) {
         resolution_info->SetDouble("scale", ui_scales[i]);
         if (ui_scales[i] == 1.0f)
           resolution_info->SetBoolean("isBest", true);
         resolution_info->SetBoolean(
-            "selected", display_info.ui_scale() == ui_scales[i]);
+            "selected", display_info.configured_ui_scale() == ui_scales[i]);
       } else {
         // Picks the largest one as the "best", which is the last element
-        // because |resolutions| is sorted by its area.
-        if (i == resolutions.size() - 1)
+        // because |display_modes| is sorted by its area.
+        if (i == display_modes.size() - 1)
           resolution_info->SetBoolean("isBest", true);
         resolution_info->SetBoolean("selected", (resolution == current_size));
         resolution.Enlarge(
@@ -235,9 +264,26 @@ void DisplayOptionsHandler::SendDisplayInfo(
       }
       resolution_info->SetInteger("width", resolution.width());
       resolution_info->SetInteger("height", resolution.height());
+      if (display_modes[i].refresh_rate > 0.0f) {
+        resolution_info->SetDouble("refreshRate",
+                                   display_modes[i].refresh_rate);
+      }
       js_resolutions->Append(resolution_info);
     }
     js_display->Set("resolutions", js_resolutions);
+
+    js_display->SetInteger("colorProfile", display_info.color_profile());
+    base::ListValue* available_color_profiles = new base::ListValue();
+    for (size_t i = 0;
+         i < display_info.available_color_profiles().size(); ++i) {
+      base::DictionaryValue* color_profile_dict = new base::DictionaryValue();
+      ui::ColorCalibrationProfile color_profile =
+          display_info.available_color_profiles()[i];
+      color_profile_dict->SetInteger("profileId", color_profile);
+      color_profile_dict->SetString("name", GetColorProfileName(color_profile));
+      available_color_profiles->Append(color_profile_dict);
+    }
+    js_display->Set("availableColorProfiles", available_color_profiles);
     js_displays.Append(js_display);
   }
 
@@ -353,11 +399,11 @@ void DisplayOptionsHandler::HandleSetResolution(const base::ListValue* args) {
   gfx::Size old_resolution = display_info.bounds_in_native().size();
   bool has_new_resolution = false;
   bool has_old_resolution = false;
-  for (size_t i = 0; i < display_info.resolutions().size(); ++i) {
-    ash::internal::Resolution resolution = display_info.resolutions()[i];
-    if (resolution.size == new_resolution)
+  for (size_t i = 0; i < display_info.display_modes().size(); ++i) {
+    ash::internal::DisplayMode display_mode = display_info.display_modes()[i];
+    if (display_mode.size == new_resolution)
       has_new_resolution = true;
-    if (resolution.size == old_resolution)
+    if (display_mode.size == old_resolution)
       has_old_resolution = true;
   }
   if (!has_new_resolution) {
@@ -400,6 +446,35 @@ void DisplayOptionsHandler::HandleSetOrientation(const base::ListValue* args) {
     LOG(ERROR) << "Invalid rotation: " << rotation_value << " Falls back to 0";
 
   GetDisplayManager()->SetDisplayRotation(display_id, new_rotation);
+}
+
+void DisplayOptionsHandler::HandleSetColorProfile(const base::ListValue* args) {
+  DCHECK(!args->empty());
+  int64 display_id = GetDisplayId(args);
+  if (display_id == gfx::Display::kInvalidDisplayID)
+    return;
+
+  std::string profile_value;
+  if (!args->GetString(1, &profile_value)) {
+    LOG(ERROR) << "Invalid profile_value";
+    return;
+  }
+
+  int profile_id;
+  if (!base::StringToInt(profile_value, &profile_id)) {
+    LOG(ERROR) << "Invalid profile: " << profile_value;
+    return;
+  }
+
+  if (profile_id < ui::COLOR_PROFILE_STANDARD ||
+      profile_id > ui::COLOR_PROFILE_READING) {
+    LOG(ERROR) << "Invalid profile_id: " << profile_id;
+    return;
+  }
+
+  GetDisplayManager()->SetColorCalibrationProfile(
+      display_id, static_cast<ui::ColorCalibrationProfile>(profile_id));
+  SendAllDisplayInfo();
 }
 
 }  // namespace options

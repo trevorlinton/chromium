@@ -11,7 +11,9 @@
 
 #include "base/debug/crash_logging.h"
 
+namespace base {
 class CommandLine;
+}
 
 namespace crash_keys {
 
@@ -23,7 +25,7 @@ size_t RegisterChromeCrashKeys();
 void SetClientID(const std::string& client_id);
 
 // Sets the kSwitch and kNumSwitches keys based on the given |command_line|.
-void SetSwitchesFromCommandLine(const CommandLine* command_line);
+void SetSwitchesFromCommandLine(const base::CommandLine* command_line);
 
 // Sets the list of active experiment/variations info.
 void SetVariationsList(const std::vector<std::string>& variations);
@@ -84,6 +86,10 @@ extern const char kNumExtensionsCount[];
 // The number of render views/tabs open in a renderer process.
 extern const char kNumberOfViews[];
 
+// Type of shutdown. The value is one of "close" for WINDOW_CLOSE,
+// "exit" for BROWSER_EXIT, or "end" for END_SESSION.
+extern const char kShutdownType[];
+
 // GPU information.
 #if !defined(OS_ANDROID)
 extern const char kGPUVendorID[];
@@ -103,6 +109,11 @@ extern const char kGPURenderer[];
 // ScopedPrinterInfo.
 const size_t kPrinterInfoCount = 4;
 extern const char kPrinterInfo[];
+
+#if defined(OS_CHROMEOS)
+// The number of simultaneous users in multi profile sessions.
+extern const char kNumberOfUsers[];
+#endif
 
 #if defined(OS_MACOSX)
 namespace mac {

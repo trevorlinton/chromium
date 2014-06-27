@@ -16,15 +16,22 @@
 #include "chrome/browser/history/history_service.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/extensions/feature_switch.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_interrupt_reasons.h"
 #include "extensions/common/constants.h"
+#include "extensions/common/feature_switch.h"
 #include "grit/generated_resources.h"
+#include "net/base/mime_util.h"
 #include "net/base/net_util.h"
 #include "ui/base/l10n/l10n_util.h"
+
+#if defined(ENABLE_PLUGINS)
+#include "chrome/browser/plugins/plugin_prefs.h"
+#include "content/public/browser/plugin_service.h"
+#include "content/public/common/webplugininfo.h"
+#endif
 
 using content::BrowserThread;
 using content::DownloadItem;
@@ -51,6 +58,11 @@ void VisitCountsToVisitedBefore(
 
 } // namespace
 
+DownloadTargetInfo::DownloadTargetInfo()
+    : is_filetype_handled_safely(false) {}
+
+DownloadTargetInfo::~DownloadTargetInfo() {}
+
 DownloadTargetDeterminerDelegate::~DownloadTargetDeterminerDelegate() {
 }
 
@@ -59,7 +71,7 @@ DownloadTargetDeterminer::DownloadTargetDeterminer(
     const base::FilePath& initial_virtual_path,
     DownloadPrefs* download_prefs,
     DownloadTargetDeterminerDelegate* delegate,
-    const content::DownloadTargetCallback& callback)
+    const CompletionCallback& callback)
     : next_state_(STATE_GENERATE_TARGET_PATH),
       should_prompt_(false),
       should_notify_extensions_(false),
@@ -67,6 +79,7 @@ DownloadTargetDeterminer::DownloadTargetDeterminer(
       conflict_action_(DownloadPathReservationTracker::OVERWRITE),
       danger_type_(download->GetDangerType()),
       virtual_path_(initial_virtual_path),
+      is_filetype_handled_safely_(false),
       download_(download),
       is_resumption_(download_->GetLastReason() !=
                          content::DOWNLOAD_INTERRUPT_REASON_NONE &&
@@ -111,6 +124,12 @@ void DownloadTargetDeterminer::DoLoop() {
         break;
       case STATE_DETERMINE_LOCAL_PATH:
         result = DoDetermineLocalPath();
+        break;
+      case STATE_DETERMINE_MIME_TYPE:
+        result = DoDetermineMimeType();
+        break;
+      case STATE_DETERMINE_IF_HANDLED_SAFELY_BY_BROWSER:
+        result = DoDetermineIfHandledSafely();
         break;
       case STATE_CHECK_DOWNLOAD_URL:
         result = DoCheckDownloadUrl();
@@ -305,7 +324,7 @@ DownloadTargetDeterminer::Result
   DCHECK(!virtual_path_.empty());
   DCHECK(local_path_.empty());
 
-  next_state_ = STATE_CHECK_DOWNLOAD_URL;
+  next_state_ = STATE_DETERMINE_MIME_TYPE;
 
   delegate_->DetermineLocalPath(
       download_,
@@ -325,6 +344,139 @@ void DownloadTargetDeterminer::DetermineLocalPathDone(
     return;
   }
   local_path_ = local_path;
+  DoLoop();
+}
+
+DownloadTargetDeterminer::Result
+    DownloadTargetDeterminer::DoDetermineMimeType() {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DCHECK(!virtual_path_.empty());
+  DCHECK(!local_path_.empty());
+  DCHECK(mime_type_.empty());
+
+  next_state_ = STATE_DETERMINE_IF_HANDLED_SAFELY_BY_BROWSER;
+
+  if (virtual_path_ == local_path_) {
+    delegate_->GetFileMimeType(
+        local_path_,
+        base::Bind(&DownloadTargetDeterminer::DetermineMimeTypeDone,
+                   weak_ptr_factory_.GetWeakPtr()));
+    return QUIT_DOLOOP;
+  }
+  return CONTINUE;
+}
+
+void DownloadTargetDeterminer::DetermineMimeTypeDone(
+    const std::string& mime_type) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DVLOG(20) << "MIME type: " << mime_type;
+  mime_type_ = mime_type;
+  DoLoop();
+}
+
+#if defined(ENABLE_PLUGINS)
+// The code below is used by DoDetermineIfHandledSafely to determine if the
+// file type is handled by a sandboxed plugin.
+namespace {
+
+void InvokeClosureAfterGetPluginCallback(
+    const base::Closure& closure,
+    const std::vector<content::WebPluginInfo>& unused) {
+  closure.Run();
+}
+
+enum ActionOnStalePluginList {
+  RETRY_IF_STALE_PLUGIN_LIST,
+  IGNORE_IF_STALE_PLUGIN_LIST
+};
+
+void IsHandledBySafePlugin(content::ResourceContext* resource_context,
+                           const GURL& url,
+                           const std::string& mime_type,
+                           ActionOnStalePluginList stale_plugin_action,
+                           const base::Callback<void(bool)>& callback) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
+  DCHECK(!mime_type.empty());
+  using content::WebPluginInfo;
+
+  std::string actual_mime_type;
+  bool is_stale = false;
+  WebPluginInfo plugin_info;
+
+  content::PluginService* plugin_service =
+      content::PluginService::GetInstance();
+  bool plugin_found = plugin_service->GetPluginInfo(-1, -1, resource_context,
+                                                    url, GURL(), mime_type,
+                                                    false, &is_stale,
+                                                    &plugin_info,
+                                                    &actual_mime_type);
+  if (is_stale && stale_plugin_action == RETRY_IF_STALE_PLUGIN_LIST) {
+    // The GetPlugins call causes the plugin list to be refreshed. Once that's
+    // done we can retry the GetPluginInfo call. We break out of this cycle
+    // after a single retry in order to avoid retrying indefinitely.
+    plugin_service->GetPlugins(
+        base::Bind(&InvokeClosureAfterGetPluginCallback,
+                   base::Bind(&IsHandledBySafePlugin,
+                              resource_context,
+                              url,
+                              mime_type,
+                              IGNORE_IF_STALE_PLUGIN_LIST,
+                              callback)));
+    return;
+  }
+  // In practice, we assume that retrying once is enough.
+  DCHECK(!is_stale);
+  bool is_handled_safely =
+      plugin_found &&
+      (plugin_info.type == WebPluginInfo::PLUGIN_TYPE_PEPPER_IN_PROCESS ||
+       plugin_info.type == WebPluginInfo::PLUGIN_TYPE_PEPPER_OUT_OF_PROCESS);
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE, base::Bind(callback, is_handled_safely));
+}
+
+} // namespace
+#endif  // ENABLE_PLUGINS
+
+DownloadTargetDeterminer::Result
+    DownloadTargetDeterminer::DoDetermineIfHandledSafely() {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DCHECK(!virtual_path_.empty());
+  DCHECK(!local_path_.empty());
+  DCHECK(!is_filetype_handled_safely_);
+
+  next_state_ = STATE_CHECK_DOWNLOAD_URL;
+
+  if (mime_type_.empty())
+    return CONTINUE;
+
+  if (net::IsSupportedMimeType(mime_type_)) {
+    is_filetype_handled_safely_ = true;
+    return CONTINUE;
+  }
+
+#if defined(ENABLE_PLUGINS)
+  BrowserThread::PostTask(
+      BrowserThread::IO,
+      FROM_HERE,
+      base::Bind(
+          &IsHandledBySafePlugin,
+          GetProfile()->GetResourceContext(),
+          net::FilePathToFileURL(local_path_),
+          mime_type_,
+          RETRY_IF_STALE_PLUGIN_LIST,
+          base::Bind(&DownloadTargetDeterminer::DetermineIfHandledSafelyDone,
+                     weak_ptr_factory_.GetWeakPtr())));
+  return QUIT_DOLOOP;
+#else
+  return CONTINUE;
+#endif
+}
+
+void DownloadTargetDeterminer::DetermineIfHandledSafelyDone(
+    bool is_handled_safely) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  is_filetype_handled_safely_ = is_handled_safely;
+  DVLOG(20) << "Is file type handled safely: " << is_filetype_handled_safely_;
   DoLoop();
 }
 
@@ -462,7 +614,7 @@ DownloadTargetDeterminer::Result
   // Range of the <random> uniquifier.
   const int kUnconfirmedUniquifierRange = 1000000;
 #if defined(OS_WIN)
-  string16 unconfirmed_format =
+  base::string16 unconfirmed_format =
       l10n_util::GetStringUTF16(IDS_DOWNLOAD_UNCONFIRMED_PREFIX);
 #else
   std::string unconfirmed_format =
@@ -484,15 +636,20 @@ void DownloadTargetDeterminer::ScheduleCallbackAndDeleteSelf() {
             << " Intermediate:" << intermediate_path_.AsUTF8Unsafe()
             << " Should prompt:" << should_prompt_
             << " Danger type:" << danger_type_;
+  scoped_ptr<DownloadTargetInfo> target_info(new DownloadTargetInfo);
+
+  target_info->target_path = local_path_;
+  target_info->target_disposition =
+      (HasPromptedForPath() || should_prompt_
+           ? DownloadItem::TARGET_DISPOSITION_PROMPT
+           : DownloadItem::TARGET_DISPOSITION_OVERWRITE);
+  target_info->danger_type = danger_type_;
+  target_info->intermediate_path = intermediate_path_;
+  target_info->mime_type = mime_type_;
+  target_info->is_filetype_handled_safely = is_filetype_handled_safely_;
+
   base::MessageLoop::current()->PostTask(
-      FROM_HERE,
-      base::Bind(completion_callback_,
-                 local_path_,
-                 (HasPromptedForPath() || should_prompt_
-                      ? DownloadItem::TARGET_DISPOSITION_PROMPT
-                      : DownloadItem::TARGET_DISPOSITION_OVERWRITE),
-                 danger_type_,
-                 intermediate_path_));
+      FROM_HERE, base::Bind(completion_callback_, base::Passed(&target_info)));
   completion_callback_.Reset();
   delete this;
 }
@@ -631,12 +788,11 @@ void DownloadTargetDeterminer::OnDownloadDestroyed(
 }
 
 // static
-void DownloadTargetDeterminer::Start(
-    content::DownloadItem* download,
-    const base::FilePath& initial_virtual_path,
-    DownloadPrefs* download_prefs,
-    DownloadTargetDeterminerDelegate* delegate,
-    const content::DownloadTargetCallback& callback) {
+void DownloadTargetDeterminer::Start(content::DownloadItem* download,
+                                     const base::FilePath& initial_virtual_path,
+                                     DownloadPrefs* download_prefs,
+                                     DownloadTargetDeterminerDelegate* delegate,
+                                     const CompletionCallback& callback) {
   // DownloadTargetDeterminer owns itself and will self destruct when the job is
   // complete or the download item is destroyed. The callback is always invoked
   // asynchronously.

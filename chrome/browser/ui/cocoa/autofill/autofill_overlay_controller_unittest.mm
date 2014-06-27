@@ -9,7 +9,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
-#import "ui/base/test/ui_cocoa_test_helper.h"
+#import "ui/gfx/test/ui_cocoa_test_helper.h"
 
 namespace {
 
@@ -33,9 +33,12 @@ TEST_VIEW(AutofillOverlayControllerTest, [controller_ view])
 
 TEST_F(AutofillOverlayControllerTest, Subviews) {
   NSView* view = [controller_ view];
-  ASSERT_EQ(1U, [[view subviews] count]);
-
-  EXPECT_TRUE([view isKindOfClass:[NSBox class]]);
-  EXPECT_TRUE([[[view subviews] objectAtIndex:0] isMemberOfClass:
-          [NSView class]]);
+  ASSERT_EQ(2U, [[view subviews] count]);
+  EXPECT_TRUE(
+      [[[view subviews] objectAtIndex:0] isKindOfClass:[NSView class]]);
+  EXPECT_TRUE(
+      [[[view subviews] objectAtIndex:0] conformsToProtocol:
+          @protocol(AutofillLayout)]);
+  EXPECT_TRUE(
+      [[[view subviews] objectAtIndex:1] isMemberOfClass:[NSImageView class]]);
 }

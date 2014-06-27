@@ -12,6 +12,7 @@
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "net/spdy/spdy_protocol.h"
 #include "net/tools/epoll_server/epoll_server.h"
 #include "net/tools/flip_server/create_listener.h"
 #include "net/tools/flip_server/mem_cache.h"
@@ -24,6 +25,7 @@ namespace net {
 class FlipAcceptor;
 class MemoryCache;
 struct SSLState;
+class SpdySM;
 
 // A frame of data to be sent.
 class DataFrame {
@@ -45,9 +47,9 @@ class SMConnection : public SMConnectionInterface,
   virtual ~SMConnection();
 
   static SMConnection* NewSMConnection(EpollServer* epoll_server,
-                                       SSLState *ssl_state,
+                                       SSLState* ssl_state,
                                        MemoryCache* memory_cache,
-                                       FlipAcceptor *acceptor,
+                                       FlipAcceptor* acceptor,
                                        std::string log_prefix);
 
   // TODO(mbelshe): Make these private.
@@ -99,7 +101,7 @@ class SMConnection : public SMConnectionInterface,
 
  private:
   // Decide if SPDY was negotiated.
-  bool WasSpdyNegotiated();
+  bool WasSpdyNegotiated(SpdyMajorVersion* version_negotiated);
 
   // Initialize the protocol interfaces we'll need for this connection.
   // Returns true if successful, false otherwise.
@@ -124,6 +126,7 @@ class SMConnection : public SMConnectionInterface,
                MemoryCache* memory_cache,
                FlipAcceptor* acceptor,
                std::string log_prefix);
+
  private:
   int fd_;
   int events_;
@@ -135,16 +138,16 @@ class SMConnection : public SMConnectionInterface,
 
   SMConnectionPoolInterface* connection_pool_;
 
-  EpollServer *epoll_server_;
-  SSLState *ssl_state_;
+  EpollServer* epoll_server_;
+  SSLState* ssl_state_;
   MemoryCache* memory_cache_;
-  FlipAcceptor *acceptor_;
+  FlipAcceptor* acceptor_;
   std::string client_ip_;
 
   RingBuffer read_buffer_;
 
   OutputList output_list_;
-  SMInterface* sm_spdy_interface_;
+  SpdySM* sm_spdy_interface_;
   SMInterface* sm_http_interface_;
   SMInterface* sm_streamer_interface_;
   SMInterface* sm_interface_;

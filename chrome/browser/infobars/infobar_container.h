@@ -9,22 +9,19 @@
 
 #include "base/compiler_specific.h"
 #include "base/time/time.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #include "third_party/skia/include/core/SkColor.h"
 
 class InfoBar;
-class InfoBarDelegate;
-class InfoBarService;
 
 // InfoBarContainer is a cross-platform base class to handle the visibility-
-// related aspects of InfoBars.  While InfoBars own themselves, the
+// related aspects of InfoBars.  While InfoBarService owns the InfoBars, the
 // InfoBarContainer is responsible for telling particular InfoBars that they
 // should be hidden or visible.
 //
 // Platforms need to subclass this to implement a few platform-specific
 // functions, which are pure virtual here.
-class InfoBarContainer : public content::NotificationObserver {
+class InfoBarContainer : public InfoBarService::Observer {
  public:
   class Delegate {
    public:
@@ -47,8 +44,9 @@ class InfoBarContainer : public content::NotificationObserver {
   virtual ~InfoBarContainer();
 
   // Changes the InfoBarService for which this container is showing infobars.
-  // This will remove all current infobars from the container, add the infobars
-  // from |infobar_service|, and show them all.  |infobar_service| may be NULL.
+  // This will hide all current infobars, remove them from the container, add
+  // the infobars from |infobar_service|, and show them all.  |infobar_service|
+  // may be NULL.
   void ChangeInfoBarService(InfoBarService* infobar_service);
 
   // Returns the amount by which to overlap the toolbar above, and, when
@@ -73,8 +71,7 @@ class InfoBarContainer : public content::NotificationObserver {
   void OnInfoBarStateChanged(bool is_animating);
 
   // Called by |infobar| to request that it be removed from the container.  At
-  // this point, |infobar| should already be hidden.  Once the infobar is
-  // removed, it is guaranteed to delete itself and will not be re-added again.
+  // this point, |infobar| should already be hidden.
   void RemoveInfoBar(InfoBar* infobar);
 
   const Delegate* delegate() const { return delegate_; }
@@ -91,50 +88,29 @@ class InfoBarContainer : public content::NotificationObserver {
   // AddInfoBar()).
   virtual void PlatformSpecificAddInfoBar(InfoBar* infobar,
                                           size_t position) = 0;
-  virtual void PlatformSpecificRemoveInfoBar(InfoBar* infobar) = 0;
-#if defined(OS_ANDROID)
-  // This is a temporary hook that can be removed once infobar code for
-  // Android is upstreamed and the translate infobar implemented as three
-  // different infobars like GTK does.
+  // TODO(miguelg): Remove this; it is only necessary for Android, and only
+  // until the translate infobar is implemented as three different infobars like
+  // GTK does.
   virtual void PlatformSpecificReplaceInfoBar(InfoBar* old_infobar,
                                               InfoBar* new_infobar) {}
-#endif
+  virtual void PlatformSpecificRemoveInfoBar(InfoBar* infobar) = 0;
   virtual void PlatformSpecificInfoBarStateChanged(bool is_animating) {}
 
  private:
   typedef std::vector<InfoBar*> InfoBars;
 
-  // content::NotificationObserver:
-  virtual void Observe(int type,
-                       const content::NotificationSource& source,
-                       const content::NotificationDetails& details) OVERRIDE;
-
-  // Hides an InfoBar for the specified delegate, in response to a notification
-  // from the selected InfoBarService.  The InfoBar's disappearance will be
-  // animated if |use_animation| is true. The InfoBar will call back to
-  // RemoveInfoBar() to remove itself once it's hidden (which may mean
-  // synchronously).  Returns the position within |infobars_| the infobar was
-  // previously at.
-  size_t HideInfoBar(InfoBar* infobar, bool use_animation);
-
-  // Find an existing infobar in the container.
-  InfoBar* FindInfoBar(InfoBarDelegate* delegate);
-
-  // Hides all infobars in this container without animation.
-  void HideAllInfoBars();
-
-  void ReplaceInfoBar(InfoBarDelegate* old_delegate,
-                      InfoBarDelegate* new_delegate);
+  // InfoBarService::Observer:
+  virtual void OnInfoBarAdded(InfoBar* infobar) OVERRIDE;
+  virtual void OnInfoBarRemoved(InfoBar* infobar, bool animate) OVERRIDE;
+  virtual void OnInfoBarReplaced(InfoBar* old_infobar,
+                                 InfoBar* new_infobar) OVERRIDE;
+  virtual void OnServiceShuttingDown(InfoBarService* service) OVERRIDE;
 
   // Adds |infobar| to this container before the existing infobar at position
   // |position| and calls Show() on it.  |animate| is passed along to
   // infobar->Show().  Depending on the value of |callback_status|, this calls
   // infobar->set_container(this) either before or after the call to Show() so
   // that OnInfoBarStateChanged() either will or won't be called as a result.
-  //
-  // This should be called only once for an infobar -- once it's added, it can
-  // be repeatedly shown and hidden, but not removed and then re-added (see
-  // comments on RemoveInfoBar()).
   enum CallbackStatus { NO_CALLBACK, WANT_CALLBACK };
   void AddInfoBar(InfoBar* infobar,
                   size_t position,
@@ -144,7 +120,6 @@ class InfoBarContainer : public content::NotificationObserver {
   void UpdateInfoBarArrowTargetHeights();
   int ArrowTargetHeightForInfoBar(size_t infobar_index) const;
 
-  content::NotificationRegistrar registrar_;
   Delegate* delegate_;
   InfoBarService* infobar_service_;
   InfoBars infobars_;

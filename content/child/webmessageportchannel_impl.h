@@ -24,7 +24,7 @@ class ChildThread;
 
 // This is thread safe.
 class WebMessagePortChannelImpl
-    : public WebKit::WebMessagePortChannel,
+    : public blink::WebMessagePortChannel,
       public IPC::Listener,
       public base::RefCountedThreadSafe<WebMessagePortChannelImpl> {
  public:
@@ -32,6 +32,11 @@ class WebMessagePortChannelImpl
   WebMessagePortChannelImpl(int route_id,
                             int message_port_id,
                             base::MessageLoopProxy* child_thread_loop);
+
+  // Extracts port IDs for passing on to the browser process, and queues any
+  // received messages. Takes ownership of the passed array (and deletes it).
+  static std::vector<int> ExtractMessagePortIDs(
+      blink::WebMessagePortChannelArray* channels);
 
   // Queues received and incoming messages until there are no more in-flight
   // messages, then sends all of them to the browser process.
@@ -43,22 +48,24 @@ class WebMessagePortChannelImpl
   virtual ~WebMessagePortChannelImpl();
 
   // WebMessagePortChannel implementation.
-  virtual void setClient(WebKit::WebMessagePortChannelClient* client);
+  virtual void setClient(blink::WebMessagePortChannelClient* client);
   virtual void destroy();
-  virtual void entangle(WebKit::WebMessagePortChannel* channel);
-  virtual void postMessage(const WebKit::WebString& message,
-                           WebKit::WebMessagePortChannelArray* channels);
-  virtual bool tryGetMessage(WebKit::WebString* message,
-                             WebKit::WebMessagePortChannelArray& channels);
+  virtual void entangle(blink::WebMessagePortChannel* channel);
+  virtual void postMessage(const blink::WebString& message,
+                           blink::WebMessagePortChannelArray* channels);
+  virtual bool tryGetMessage(blink::WebString* message,
+                             blink::WebMessagePortChannelArray& channels);
 
   void Init();
   void Entangle(scoped_refptr<WebMessagePortChannelImpl> channel);
   void Send(IPC::Message* message);
+  void PostMessage(const base::string16& message,
+                   blink::WebMessagePortChannelArray* channels);
 
   // IPC::Listener implementation.
   virtual bool OnMessageReceived(const IPC::Message& message) OVERRIDE;
 
-  void OnMessage(const string16& message,
+  void OnMessage(const base::string16& message,
                  const std::vector<int>& sent_message_port_ids,
                  const std::vector<int>& new_routing_ids);
   void OnMessagesQueued();
@@ -67,14 +74,14 @@ class WebMessagePortChannelImpl
     Message();
     ~Message();
 
-    string16 message;
+    base::string16 message;
     std::vector<WebMessagePortChannelImpl*> ports;
   };
 
   typedef std::queue<Message> MessageQueue;
   MessageQueue message_queue_;
 
-  WebKit::WebMessagePortChannelClient* client_;
+  blink::WebMessagePortChannelClient* client_;
   base::Lock lock_;  // Locks access to above.
 
   int route_id_;  // The routing id for this object.

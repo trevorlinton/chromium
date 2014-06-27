@@ -41,7 +41,7 @@ PredictorTabHelper::PredictorTabHelper(content::WebContents* web_contents)
 PredictorTabHelper::~PredictorTabHelper() {
 }
 
-void PredictorTabHelper::NavigateToPendingEntry(
+void PredictorTabHelper::DidStartNavigationToPendingEntry(
     const GURL& url,
     content::NavigationController::ReloadType reload_type) {
   Profile* profile =
@@ -49,9 +49,7 @@ void PredictorTabHelper::NavigateToPendingEntry(
   chrome_browser_net::Predictor* predictor = profile->GetNetworkPredictor();
   if (!predictor)
     return;
-  if (!CommandLine::ForCurrentProcess()->HasSwitch(switches::kChromeFrame) &&
-      (url.SchemeIs(content::kHttpScheme) ||
-       url.SchemeIs(content::kHttpsScheme)))
+  if (url.SchemeIs(content::kHttpScheme) || url.SchemeIs(content::kHttpsScheme))
     predictor->PreconnectUrlAndSubresources(url, GURL());
 }
 

@@ -22,6 +22,7 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "content/public/test/test_utils.h"
 #include "grit/generated_resources.h"
+#include "ui/views/controls/button/label_button.h"
 
 class NewAvatarMenuButtonTest : public InProcessBrowserTest {
  public:
@@ -60,13 +61,13 @@ void NewAvatarMenuButtonTest::CreateTestingProfile() {
 
   // Sign in the default profile
   ProfileInfoCache& cache = profile_manager->GetProfileInfoCache();
-  cache.SetUserNameOfProfileAtIndex(0, UTF8ToUTF16("user_name"));
+  cache.SetUserNameOfProfileAtIndex(0, base::UTF8ToUTF16("user_name"));
 
   base::FilePath path;
   PathService::Get(chrome::DIR_USER_DATA, &path);
   path = path.AppendASCII("test_profile");
   if (!base::PathExists(path))
-    ASSERT_TRUE(file_util::CreateDirectory(path));
+    ASSERT_TRUE(base::CreateDirectory(path));
   Profile* profile =
       Profile::CreateProfile(path, NULL, Profile::CREATE_MODE_SYNCHRONOUS);
   profile_manager->RegisterTestingProfile(profile, true, false);
@@ -82,14 +83,25 @@ void NewAvatarMenuButtonTest::StartAvatarMenu() {
   ASSERT_TRUE(button);
   ASSERT_FALSE(browser_view->frame()->GetAvatarMenuButton());
 
-  ProfileChooserView::set_close_on_deactivate(false);
-  ui::MouseEvent mouse_ev(ui::ET_MOUSE_RELEASED, gfx::Point(), gfx::Point(), 0);
+  ProfileChooserView::clear_close_on_deactivate_for_testing();
+  ui::MouseEvent mouse_ev(ui::ET_MOUSE_RELEASED, gfx::Point(), gfx::Point(), 0,
+                          0);
   button->NotifyClick(mouse_ev);
   base::MessageLoop::current()->RunUntilIdle();
   EXPECT_TRUE(ProfileChooserView::IsShowing());
 }
 
-IN_PROC_BROWSER_TEST_F(NewAvatarMenuButtonTest, SignOut) {
+#if defined(OS_CHROMEOS) || defined (OS_LINUX) || defined (OS_WIN)
+// This test doesn't make sense for ChromeOS since it has a different
+// multi-profiles menu in the system tray instead.
+//
+// Test fails flakily on Linux and Windows http://crbug.com/352710
+#define MAYBE_SignOut DISABLED_SignOut
+#else
+#define MAYBE_SignOut SignOut
+#endif
+
+IN_PROC_BROWSER_TEST_F(NewAvatarMenuButtonTest, MAYBE_SignOut) {
   // If multiprofile mode is not enabled, you can't switch between profiles.
   if (!profiles::IsMultipleProfilesEnabled())
     return;
@@ -110,13 +122,10 @@ IN_PROC_BROWSER_TEST_F(NewAvatarMenuButtonTest, SignOut) {
       menu->GetItemAt(menu->GetActiveProfileIndex());
   EXPECT_FALSE(menu_item_before.signin_required);
 
-  ui::MouseEvent mouse_ev(ui::ET_MOUSE_RELEASED, gfx::Point(), gfx::Point(), 0);
-  menu->SetLogoutURL("about:blank");
-
-  ProfileChooserView::profile_bubble_->LinkClicked(
-      static_cast<views::Link*>(
-          ProfileChooserView::profile_bubble_->signout_current_profile_link_),
-      0);
+  ui::MouseEvent mouse_ev(
+      ui::ET_MOUSE_RELEASED, gfx::Point(), gfx::Point(), 0, 0);
+  ProfileChooserView::profile_bubble_->ButtonPressed(
+      ProfileChooserView::profile_bubble_->lock_button_, mouse_ev);
 
   EXPECT_TRUE(menu->GetItemAt(menu->GetActiveProfileIndex()).signin_required);
 

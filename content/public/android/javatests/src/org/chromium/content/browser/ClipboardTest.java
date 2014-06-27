@@ -4,13 +4,12 @@
 
 package org.chromium.content.browser;
 
-import android.content.ClipboardManager;
 import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.os.Build;
 import android.test.suitebuilder.annotation.LargeTest;
 import android.text.TextUtils;
-import android.view.KeyEvent;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Feature;
@@ -22,6 +21,9 @@ import org.chromium.content_shell_apk.ContentShellTestBase;
 
 import java.util.concurrent.Callable;
 
+/**
+ * Tests rich text clipboard functionality.
+ */
 public class ClipboardTest extends ContentShellTestBase {
     private static final String TEST_PAGE_DATA_URL = UrlUtils.encodeHtmlDataUri(
             "<html><body>Hello, <a href=\"http://www.example.com/\">world</a>, how <b> " +
@@ -51,8 +53,9 @@ public class ClipboardTest extends ContentShellTestBase {
         clipboardManager.setPrimaryClip(ClipData.newPlainText(null, ""));
         assertFalse(hasPrimaryClip(clipboardManager));
 
-        getImeAdapter().selectAll();
-        getImeAdapter().copy();
+        ImeAdapter adapter = getContentViewCore().getImeAdapterForTest();
+        selectAll(adapter);
+        copy(adapter);
 
         // Waits until data has been made available on the Android clipboard.
         assertTrue(CriteriaHelper.pollForCriteria(new Criteria() {
@@ -81,8 +84,22 @@ public class ClipboardTest extends ContentShellTestBase {
         }
     }
 
-    private ImeAdapter getImeAdapter() {
-        return getContentViewCore().getImeAdapterForTest();
+    private void copy(final ImeAdapter adapter) {
+        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
+            @Override
+            public void run() {
+                adapter.copy();
+            }
+        });
+    }
+
+    private void selectAll(final ImeAdapter adapter) {
+        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
+            @Override
+            public void run() {
+                adapter.selectAll();
+            }
+        });
     }
 
     // Returns whether there is a primary clip with content on the current clipboard.

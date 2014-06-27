@@ -33,6 +33,10 @@ struct GPU_EXPORT GPUInfo {
     // Device ids are unique to vendor, not to one another.
     uint32 device_id;
 
+    // Whether this GPU is the currently used one.
+    // Currently this field is only supported and meaningful on OS X.
+    bool active;
+
     // The strings that describe the GPU.
     // In Linux these strings are obtained through libpci.
     // In Win/MacOSX, these two strings are not filled at the moment.
@@ -43,6 +47,10 @@ struct GPU_EXPORT GPUInfo {
 
   GPUInfo();
   ~GPUInfo();
+
+  bool SupportsAccelerated2dCanvas() const {
+    return !can_lose_context && !software_rendering;
+  }
 
   // Whether more GPUInfo fields might be collected in the future.
   bool finalized;
@@ -133,6 +141,10 @@ struct GPU_EXPORT GPUInfo {
   GpuPerformanceStats performance_stats;
 
   bool software_rendering;
+
+  // Whether the driver uses direct rendering. True on most platforms, false on
+  // X11 when using remote X.
+  bool direct_rendering;
 
   // Whether the gpu process is running in a sandbox.
   bool sandboxed;

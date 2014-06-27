@@ -12,12 +12,17 @@ bool RenderWidgetHostDelegate::PreHandleKeyboardEvent(
   return false;
 }
 
-bool RenderWidgetHostDelegate::PreHandleWheelEvent(
-    const WebKit::WebMouseWheelEvent& event) {
+bool RenderWidgetHostDelegate::HandleWheelEvent(
+    const blink::WebMouseWheelEvent& event) {
   return false;
 }
 
-#if defined(OS_WIN) && defined(USE_AURA)
+bool RenderWidgetHostDelegate::PreHandleGestureEvent(
+    const blink::WebGestureEvent& event) {
+  return false;
+}
+
+#if defined(OS_WIN)
 gfx::NativeViewAccessible
 RenderWidgetHostDelegate::GetParentNativeViewAccessible() {
   return NULL;

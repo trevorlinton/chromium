@@ -45,6 +45,11 @@ cr.define('options', function() {
       };
     },
 
+    /** @override */
+    didShowPage: function() {
+      $('managed-user-created-switch').focus();
+    },
+
     /**
      * Sets the profile info used in the dialog and updates the profile name
      * displayed. Called by the profile creation overlay when this overlay is
@@ -59,23 +64,9 @@ cr.define('options', function() {
      * @private
      */
     setProfileInfo_: function(info) {
-      function HTMLEscape(original) {
-        return original.replace(/&/g, '&amp;')
-                       .replace(/</g, '&lt;')
-                       .replace(/>/g, '&gt;')
-                       .replace(/"/g, '&quot;')
-                       .replace(/'/g, '&#39;');
-      }
-
-      var MAX_LENGTH = 50;
-      function elide(original) {
-        if (original.length <= MAX_LENGTH)
-          return original;
-        return original.substring(0, MAX_LENGTH - 3) + '...';
-      }
-
       this.profileInfo_ = info;
-      var elidedName = elide(info.name);
+      var MAX_LENGTH = 50;
+      var elidedName = elide(info.name, MAX_LENGTH);
       $('managed-user-created-title').textContent =
           loadTimeData.getStringF('managedUserCreatedTitle', elidedName);
       $('managed-user-created-switch').textContent =
@@ -87,7 +78,8 @@ cr.define('options', function() {
       $('managed-user-created-text').innerHTML =
           loadTimeData.getStringF('managedUserCreatedText',
                                   HTMLEscape(elidedName),
-                                  HTMLEscape(elide(info.custodianEmail)));
+                                  HTMLEscape(elide(info.custodianEmail,
+                                                   MAX_LENGTH)));
     },
 
     /** @override */

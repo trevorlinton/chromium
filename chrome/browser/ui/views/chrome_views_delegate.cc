@@ -14,6 +14,8 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/views/accessibility/accessibility_event_router_views.h"
 #include "chrome/common/pref_names.h"
+#include "grit/chrome_unscaled_resources.h"
+#include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/screen.h"
@@ -28,13 +30,17 @@
 #endif
 
 #if defined(USE_AURA)
-#include "ui/aura/root_window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #endif
 
 #if defined(USE_AURA) && !defined(OS_CHROMEOS)
 #include "chrome/browser/ui/host_desktop.h"
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 #include "ui/views/widget/native_widget_aura.h"
+#endif
+
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+#include "ui/views/linux_ui/linux_ui.h"
 #endif
 
 #if defined(USE_ASH)
@@ -77,7 +83,7 @@ void ChromeViewsDelegate::SaveWindowPlacement(const views::Widget* window,
 
   DCHECK(prefs->FindPreference(window_name.c_str()));
   DictionaryPrefUpdate update(prefs, window_name.c_str());
-  DictionaryValue* window_preferences = update.Get();
+  base::DictionaryValue* window_preferences = update.Get();
   window_preferences->SetInteger("left", bounds.x());
   window_preferences->SetInteger("top", bounds.y());
   window_preferences->SetInteger("right", bounds.right());
@@ -102,7 +108,8 @@ bool ChromeViewsDelegate::GetSavedWindowPlacement(
     return false;
 
   DCHECK(prefs->FindPreference(window_name.c_str()));
-  const DictionaryValue* dictionary = prefs->GetDictionary(window_name.c_str());
+  const base::DictionaryValue* dictionary =
+      prefs->GetDictionary(window_name.c_str());
   int left, top, right, bottom;
   if (!dictionary || !dictionary->GetInteger("left", &left) ||
       !dictionary->GetInteger("top", &top) ||
@@ -133,16 +140,17 @@ bool ChromeViewsDelegate::GetSavedWindowPlacement(
 }
 
 void ChromeViewsDelegate::NotifyAccessibilityEvent(
-    views::View* view, ui::AccessibilityTypes::Event event_type) {
+    views::View* view, ui::AXEvent event_type) {
   AccessibilityEventRouterViews::GetInstance()->HandleAccessibilityEvent(
       view, event_type);
 }
 
-void ChromeViewsDelegate::NotifyMenuItemFocused(const string16& menu_name,
-                                                const string16& menu_item_name,
-                                                int item_index,
-                                                int item_count,
-                                                bool has_submenu) {
+void ChromeViewsDelegate::NotifyMenuItemFocused(
+    const base::string16& menu_name,
+    const base::string16& menu_item_name,
+    int item_index,
+    int item_count,
+    bool has_submenu) {
   AccessibilityEventRouterViews::GetInstance()->HandleMenuItemFocused(
       menu_name, menu_item_name, item_index, item_count, has_submenu);
 }
@@ -155,6 +163,12 @@ HICON ChromeViewsDelegate::GetDefaultWindowIcon() const {
 bool ChromeViewsDelegate::IsWindowInMetro(gfx::NativeWindow window) const {
   return chrome::IsNativeViewInAsh(window);
 }
+
+#elif defined(OS_LINUX) && !defined(OS_CHROMEOS)
+gfx::ImageSkia* ChromeViewsDelegate::GetDefaultWindowIcon() const {
+  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
+  return rb.GetImageSkiaNamed(IDR_PRODUCT_LOGO_64);
+}
 #endif
 
 views::NonClientFrameView* ChromeViewsDelegate::CreateDefaultNonClientFrameView(
@@ -164,21 +178,6 @@ views::NonClientFrameView* ChromeViewsDelegate::CreateDefaultNonClientFrameView(
     return ash::Shell::GetInstance()->CreateDefaultNonClientFrameView(widget);
 #endif
   return NULL;
-}
-
-bool ChromeViewsDelegate::UseTransparentWindows() const {
-#if defined(USE_ASH)
-  // TODO(scottmg): http://crbug.com/133312. This needs context to determine
-  // if it's desktop or ash.
-#if defined(OS_CHROMEOS)
-  return true;
-#else
-  NOTIMPLEMENTED();
-  return false;
-#endif
-#else
-  return false;
-#endif
 }
 
 void ChromeViewsDelegate::AddRef() {
@@ -198,6 +197,10 @@ content::WebContents* ChromeViewsDelegate::CreateWebContents(
 void ChromeViewsDelegate::OnBeforeWidgetInit(
     views::Widget::InitParams* params,
     views::internal::NativeWidgetDelegate* delegate) {
+  // We need to determine opacity if it's not already specified.
+  if (params->opacity == views::Widget::InitParams::INFER_OPACITY)
+    params->opacity = GetOpacityForInitParams(*params);
+
   // If we already have a native_widget, we don't have to try to come
   // up with one.
   if (params->native_widget)
@@ -302,3 +305,22 @@ base::TimeDelta
 ChromeViewsDelegate::GetDefaultTextfieldObscuredRevealDuration() {
   return base::TimeDelta();
 }
+
+bool ChromeViewsDelegate::WindowManagerProvidesTitleBar(bool maximized) {
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+  // On Ubuntu Unity, the system always provides a title bar for maximized
+  // windows.
+  views::LinuxUI* ui = views::LinuxUI::instance();
+  return maximized && ui && ui->UnityIsRunning();
+#endif
+
+  return false;
+}
+
+#if !defined(USE_AURA) && !defined(USE_CHROMEOS)
+views::Widget::InitParams::WindowOpacity
+ChromeViewsDelegate::GetOpacityForInitParams(
+    const views::Widget::InitParams& params) {
+  return views::Widget::InitParams::OPAQUE_WINDOW;
+}
+#endif

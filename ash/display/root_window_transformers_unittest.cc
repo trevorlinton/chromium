@@ -6,9 +6,9 @@
 
 #include "ash/display/display_info.h"
 #include "ash/display/display_manager.h"
-#include "ash/launcher/launcher.h"
 #include "ash/magnifier/magnification_controller.h"
-#include "ash/screen_ash.h"
+#include "ash/screen_util.h"
+#include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
@@ -16,9 +16,9 @@
 #include "ash/test/mirror_window_test_api.h"
 #include "base/synchronization/waitable_event.h"
 #include "ui/aura/env.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/root_window_transformer.h"
 #include "ui/aura/test/event_generator.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_tracker.h"
 #include "ui/events/event_handler.h"
 #include "ui/gfx/display.h"
@@ -113,7 +113,8 @@ gfx::Display::Rotation GetStoredRotation(int64 id) {
 }
 
 float GetStoredUIScale(int64 id) {
-  return Shell::GetInstance()->display_manager()->GetDisplayInfo(id).ui_scale();
+  return Shell::GetInstance()->display_manager()->GetDisplayInfo(id).
+      GetEffectiveUIScale();
 }
 
 }  // namespace
@@ -142,9 +143,9 @@ TEST_F(RootWindowTransformersTest, MAYBE_RotateAndMagnify) {
 
   UpdateDisplay("120x200,300x400*2");
   gfx::Display display1 = Shell::GetScreen()->GetPrimaryDisplay();
-  int64 display2_id = ScreenAsh::GetSecondaryDisplay().id();
+  int64 display2_id = ScreenUtil::GetSecondaryDisplay().id();
 
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
   aura::test::EventGenerator generator1(root_windows[0]);
   aura::test::EventGenerator generator2(root_windows[1]);
 
@@ -153,7 +154,7 @@ TEST_F(RootWindowTransformersTest, MAYBE_RotateAndMagnify) {
   EXPECT_EQ("120x200", root_windows[0]->bounds().size().ToString());
   EXPECT_EQ("150x200", root_windows[1]->bounds().size().ToString());
   EXPECT_EQ("120,0 150x200",
-            ScreenAsh::GetSecondaryDisplay().bounds().ToString());
+            ScreenUtil::GetSecondaryDisplay().bounds().ToString());
   generator1.MoveMouseToInHost(40, 80);
   EXPECT_EQ("50,90", event_handler.GetLocationAndReset());
   EXPECT_EQ("50,90",
@@ -172,7 +173,7 @@ TEST_F(RootWindowTransformersTest, MAYBE_RotateAndMagnify) {
   EXPECT_EQ("200x120", root_windows[0]->bounds().size().ToString());
   EXPECT_EQ("150x200", root_windows[1]->bounds().size().ToString());
   EXPECT_EQ("200,0 150x200",
-            ScreenAsh::GetSecondaryDisplay().bounds().ToString());
+            ScreenUtil::GetSecondaryDisplay().bounds().ToString());
   generator1.MoveMouseToInHost(39, 120);
   EXPECT_EQ("110,70", event_handler.GetLocationAndReset());
   EXPECT_EQ("110,70",
@@ -184,7 +185,7 @@ TEST_F(RootWindowTransformersTest, MAYBE_RotateAndMagnify) {
   DisplayLayout display_layout(DisplayLayout::BOTTOM, 50);
   display_manager->SetLayoutForCurrentDisplays(display_layout);
   EXPECT_EQ("50,120 150x200",
-            ScreenAsh::GetSecondaryDisplay().bounds().ToString());
+            ScreenUtil::GetSecondaryDisplay().bounds().ToString());
 
   display_manager->SetDisplayRotation(display2_id,
                                       gfx::Display::ROTATE_270);
@@ -195,7 +196,7 @@ TEST_F(RootWindowTransformersTest, MAYBE_RotateAndMagnify) {
   EXPECT_EQ("200x120", root_windows[0]->bounds().size().ToString());
   EXPECT_EQ("200x150", root_windows[1]->bounds().size().ToString());
   EXPECT_EQ("50,120 200x150",
-            ScreenAsh::GetSecondaryDisplay().bounds().ToString());
+            ScreenUtil::GetSecondaryDisplay().bounds().ToString());
   generator2.MoveMouseToInHost(172, 219);
   EXPECT_EQ("95,80", event_handler.GetLocationAndReset());
   EXPECT_EQ("145,200",
@@ -214,7 +215,7 @@ TEST_F(RootWindowTransformersTest, MAYBE_RotateAndMagnify) {
   EXPECT_EQ("200x150", root_windows[1]->bounds().size().ToString());
   // Dislay must share at least 100, so the x's offset becomes 20.
   EXPECT_EQ("20,200 200x150",
-            ScreenAsh::GetSecondaryDisplay().bounds().ToString());
+            ScreenUtil::GetSecondaryDisplay().bounds().ToString());
   generator1.MoveMouseToInHost(39, 59);
   EXPECT_EQ("70,120", event_handler.GetLocationAndReset());
   EXPECT_EQ(gfx::Display::ROTATE_180, GetStoredRotation(display1.id()));
@@ -235,8 +236,8 @@ TEST_F(RootWindowTransformersTest, ScaleAndMagnify) {
 
   gfx::Display display1 = Shell::GetScreen()->GetPrimaryDisplay();
   gfx::Display::SetInternalDisplayId(display1.id());
-  gfx::Display display2 = ScreenAsh::GetSecondaryDisplay();
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
+  gfx::Display display2 = ScreenUtil::GetSecondaryDisplay();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
   MagnificationController* magnifier =
       Shell::GetInstance()->magnification_controller();
 
@@ -256,7 +257,7 @@ TEST_F(RootWindowTransformersTest, ScaleAndMagnify) {
   DisplayManager* display_manager = Shell::GetInstance()->display_manager();
   display_manager->SetDisplayUIScale(display1.id(), 1.25);
   display1 = Shell::GetScreen()->GetPrimaryDisplay();
-  display2 = ScreenAsh::GetSecondaryDisplay();
+  display2 = ScreenUtil::GetSecondaryDisplay();
   magnifier->SetEnabled(true);
   EXPECT_EQ(2.0f, magnifier->GetScale());
   EXPECT_EQ("0,0 375x250", display1.bounds().ToString());
@@ -275,8 +276,8 @@ TEST_F(RootWindowTransformersTest, MAYBE_TouchScaleAndMagnify) {
 
   UpdateDisplay("200x200*2");
   gfx::Display display = Shell::GetScreen()->GetPrimaryDisplay();
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
-  aura::RootWindow* root_window = root_windows[0];
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
+  aura::Window* root_window = root_windows[0];
   aura::test::EventGenerator generator(root_window);
   MagnificationController* magnifier =
       Shell::GetInstance()->magnification_controller();
@@ -315,7 +316,7 @@ TEST_F(RootWindowTransformersTest, MAYBE_ConvertHostToRootCoords) {
   UpdateDisplay("600x400*2/r@1.5");
 
   gfx::Display display1 = Shell::GetScreen()->GetPrimaryDisplay();
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
   EXPECT_EQ("0,0 300x450", display1.bounds().ToString());
   EXPECT_EQ("0,0 300x450", root_windows[0]->bounds().ToString());
   EXPECT_EQ(1.5f, GetStoredUIScale(display1.id()));

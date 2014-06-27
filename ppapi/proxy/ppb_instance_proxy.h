@@ -39,8 +39,6 @@ class PPB_Instance_Proxy : public InterfaceProxy,
   PPB_Instance_Proxy(Dispatcher* dispatcher);
   virtual ~PPB_Instance_Proxy();
 
-  static const Info* GetInfoPrivate();
-
   // InterfaceProxy implementation.
   virtual bool OnMessageReceived(const IPC::Message& msg);
 
@@ -60,6 +58,7 @@ class PPB_Instance_Proxy : public InterfaceProxy,
   virtual uint32_t GetAudioHardwareOutputBufferSize(PP_Instance instance)
       OVERRIDE;
   virtual PP_Var GetDefaultCharSet(PP_Instance instance) OVERRIDE;
+  virtual void SetPluginToHandleFindRequests(PP_Instance instance) OVERRIDE;
   virtual void NumberOfFindResultsChanged(PP_Instance instance,
                                           int32_t total,
                                           PP_Bool final_result) OVERRIDE;
@@ -117,19 +116,20 @@ class PPB_Instance_Proxy : public InterfaceProxy,
   virtual PP_Var GetPluginReferrerURL(
       PP_Instance instance,
       PP_URLComponents_Dev* components) OVERRIDE;
-  virtual void KeyAdded(PP_Instance instance,
-                        PP_Var key_system,
-                        PP_Var session_id) OVERRIDE;
-  virtual void KeyMessage(PP_Instance instance,
-                          PP_Var key_system,
-                          PP_Var session_id,
-                          PP_Var message,
-                          PP_Var default_url) OVERRIDE;
-  virtual void KeyError(PP_Instance instance,
-                        PP_Var key_system,
-                        PP_Var session_id,
-                        int32_t media_error,
-                        int32_t system_code) OVERRIDE;
+  virtual void SessionCreated(PP_Instance instance,
+                              uint32_t session_id,
+                              PP_Var web_session_id) OVERRIDE;
+  virtual void SessionMessage(PP_Instance instance,
+                              uint32_t session_id,
+                              PP_Var message,
+                              PP_Var destination_url) OVERRIDE;
+  virtual void SessionReady(PP_Instance instance, uint32_t session_id) OVERRIDE;
+  virtual void SessionClosed(PP_Instance instance,
+                             uint32_t session_id) OVERRIDE;
+  virtual void SessionError(PP_Instance instance,
+                            uint32_t session_id,
+                            int32_t media_error,
+                            uint32_t system_code) OVERRIDE;
   virtual void DeliverBlock(PP_Instance instance,
                             PP_Resource decrypted_block,
                             const PP_DecryptedBlockInfo* block_info) OVERRIDE;
@@ -173,6 +173,12 @@ class PPB_Instance_Proxy : public InterfaceProxy,
                                                  uint32_t *result);
   void OnHostMsgGetDefaultCharSet(PP_Instance instance,
                                   SerializedVarReturnValue result);
+  void OnHostMsgSetPluginToHandleFindRequests(PP_Instance instance);
+  void OnHostMsgNumberOfFindResultsChanged(PP_Instance instance,
+                                           int32_t total,
+                                           PP_Bool final_result);
+  void OnHostMsgSelectFindResultChanged(PP_Instance instance,
+                                        int32_t index);
   void OnHostMsgSetFullscreen(PP_Instance instance,
                               PP_Bool fullscreen,
                               PP_Bool* result);
@@ -220,19 +226,22 @@ class PPB_Instance_Proxy : public InterfaceProxy,
                                      SerializedVarReturnValue result);
   void OnHostMsgGetPluginReferrerURL(PP_Instance instance,
                                      SerializedVarReturnValue result);
-  virtual void OnHostMsgKeyAdded(PP_Instance instance,
-                                 SerializedVarReceiveInput key_system,
-                                 SerializedVarReceiveInput session_id);
-  virtual void OnHostMsgKeyMessage(PP_Instance instance,
-                                   SerializedVarReceiveInput key_system,
-                                   SerializedVarReceiveInput session_id,
-                                   SerializedVarReceiveInput message,
-                                   SerializedVarReceiveInput default_url);
-  virtual void OnHostMsgKeyError(PP_Instance instance,
-                                 SerializedVarReceiveInput key_system,
-                                 SerializedVarReceiveInput session_id,
-                                 int32_t media_error,
-                                 int32_t system_code);
+  virtual void OnHostMsgSessionCreated(
+      PP_Instance instance,
+      uint32_t session_id,
+      SerializedVarReceiveInput web_session_id);
+  virtual void OnHostMsgSessionMessage(
+      PP_Instance instance,
+      uint32_t session_id,
+      SerializedVarReceiveInput message,
+      SerializedVarReceiveInput destination_url);
+  virtual void OnHostMsgSessionReady(PP_Instance instance, uint32_t session_id);
+  virtual void OnHostMsgSessionClosed(PP_Instance instance,
+                                      uint32_t session_id);
+  virtual void OnHostMsgSessionError(PP_Instance instance,
+                                     uint32_t session_id,
+                                     int32_t media_error,
+                                     uint32_t system_code);
   virtual void OnHostMsgDecoderInitializeDone(
       PP_Instance instance,
       PP_DecryptorStreamType decoder_type,

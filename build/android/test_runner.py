@@ -11,10 +11,13 @@ import logging
 import optparse
 import os
 import shutil
+import signal
 import sys
+import threading
 
 from pylib import android_commands
 from pylib import constants
+from pylib import forwarder
 from pylib import ports
 from pylib.base import base_test_result
 from pylib.base import test_dispatcher
@@ -34,6 +37,7 @@ from pylib.uiautomator import setup as uiautomator_setup
 from pylib.uiautomator import test_options as uiautomator_test_options
 from pylib.utils import command_option_parser
 from pylib.utils import report_results
+from pylib.utils import reraiser_thread
 from pylib.utils import run_tests_helper
 
 
@@ -99,9 +103,11 @@ def AddGTestOptions(option_parser):
   option_parser.add_option('-s', '--suite', dest='suite_name',
                            help=('Executable name of the test suite to run '
                                  '(use -s help to list them).'))
-  option_parser.add_option('-f', '--gtest-filter', dest='test_filter',
+  option_parser.add_option('-f', '--gtest_filter', '--gtest-filter',
+                           dest='test_filter',
                            help='googletest-style filter string.')
-  option_parser.add_option('--gtest-also-run-disabled-tests',
+  option_parser.add_option('--gtest_also_run_disabled_tests',
+                           '--gtest-also-run-disabled-tests',
                            dest='run_disabled', action='store_true',
                            help='Also run disabled tests if applicable.')
   option_parser.add_option('-a', '--test-arguments', dest='test_arguments',
@@ -170,12 +176,6 @@ def AddJavaTestOptions(option_parser):
                            help='Saves the JSON file for each UI Perf test.')
   option_parser.add_option('--official-build', action='store_true',
                            help='Run official build tests.')
-  option_parser.add_option('--keep_test_server_ports',
-                           action='store_true',
-                           help=('Indicates the test server ports must be '
-                                 'kept. When this is run via a sharder '
-                                 'the test server ports should be kept and '
-                                 'should not be reset.'))
   option_parser.add_option('--test_data', action='append', default=[],
                            help=('Each instance defines a directory of test '
                                  'data that should be copied to the target(s) '
@@ -186,7 +186,7 @@ def AddJavaTestOptions(option_parser):
                                  'chromium build directory.'))
 
 
-def ProcessJavaTestOptions(options, error_func):
+def ProcessJavaTestOptions(options):
   """Processes options/arguments and populates |options| with defaults."""
 
   if options.annotation_str:
@@ -202,10 +202,6 @@ def ProcessJavaTestOptions(options, error_func):
   else:
     options.exclude_annotations = []
 
-  if not options.keep_test_server_ports:
-    if not ports.ResetTestServerPortAllocation():
-      raise Exception('Failed to reset test server port.')
-
 
 def AddInstrumentationTestOptions(option_parser):
   """Adds Instrumentation test options to |option_parser|."""
@@ -213,7 +209,7 @@ def AddInstrumentationTestOptions(option_parser):
   option_parser.usage = '%prog instrumentation [options]'
   option_parser.commands_dict = {}
   option_parser.example = ('%prog instrumentation '
-                           '--test-apk=ChromiumTestShellTest')
+                           '--test-apk=ChromeShellTest')
 
   AddJavaTestOptions(option_parser)
   AddCommonOptions(option_parser)
@@ -249,7 +245,7 @@ def ProcessInstrumentationOptions(options, error_func):
     instrumentation tests.
   """
 
-  ProcessJavaTestOptions(options, error_func)
+  ProcessJavaTestOptions(options)
 
   if options.java_only and options.python_only:
     error_func('Options java_only (-j) and python_only (-p) '
@@ -299,8 +295,8 @@ def AddUIAutomatorTestOptions(option_parser):
   option_parser.usage = '%prog uiautomator [options]'
   option_parser.commands_dict = {}
   option_parser.example = (
-      '%prog uiautomator --test-jar=chromium_testshell_uiautomator_tests'
-      ' --package=chromium_test_shell')
+      '%prog uiautomator --test-jar=chrome_shell_uiautomator_tests'
+      ' --package=chrome_shell')
   option_parser.add_option(
       '--package',
       help=('Package under test. Possible values: %s' %
@@ -327,7 +323,7 @@ def ProcessUIAutomatorOptions(options, error_func):
     uiautomator tests.
   """
 
-  ProcessJavaTestOptions(options, error_func)
+  ProcessJavaTestOptions(options)
 
   if not options.package:
     error_func('--package is required.')
@@ -371,7 +367,7 @@ def AddMonkeyTestOptions(option_parser):
   option_parser.usage = '%prog monkey [options]'
   option_parser.commands_dict = {}
   option_parser.example = (
-      '%prog monkey --package=chromium_test_shell')
+      '%prog monkey --package=chrome_shell')
 
   option_parser.add_option(
       '--package',
@@ -434,11 +430,19 @@ def AddPerfTestOptions(option_parser):
 
   option_parser.usage = '%prog perf [options]'
   option_parser.commands_dict = {}
-  option_parser.example = ('%prog perf --steps perf_steps.json')
+  option_parser.example = ('%prog perf '
+                           '[--single-step -- command args] or '
+                           '[--steps perf_steps.json] or '
+                           '[--print-step step]')
 
   option_parser.add_option(
+      '--single-step',
+      action='store_true',
+      help='Execute the given command with retries, but only print the result '
+           'for the "most successful" round.')
+  option_parser.add_option(
       '--steps',
-      help='JSON file containing the list of perf steps to run.')
+      help='JSON file containing the list of commands to run.')
   option_parser.add_option(
       '--flaky-steps',
       help=('A JSON file containing steps that are flaky '
@@ -460,7 +464,7 @@ def AddPerfTestOptions(option_parser):
   AddCommonOptions(option_parser)
 
 
-def ProcessPerfTestOptions(options, error_func):
+def ProcessPerfTestOptions(options, args, error_func):
   """Processes all perf test options.
 
   Args:
@@ -471,14 +475,21 @@ def ProcessPerfTestOptions(options, error_func):
     A PerfOptions named tuple which contains all options relevant to
     perf tests.
   """
-  if not options.steps and not options.print_step:
-    error_func('Please specify --steps or --print-step')
+  # Only one of steps, print_step or single_step must be provided.
+  count = len(filter(None,
+                     [options.steps, options.print_step, options.single_step]))
+  if count != 1:
+    error_func('Please specify one of: --steps, --print-step, --single-step.')
+  single_step = None
+  if options.single_step:
+    single_step = ' '.join(args[2:])
   return perf_test_options.PerfOptions(
       options.steps, options.flaky_steps, options.print_step,
-      options.no_timeout, options.test_filter, options.dry_run)
+      options.no_timeout, options.test_filter, options.dry_run,
+      single_step)
 
 
-def _RunGTests(options, error_func, devices):
+def _RunGTests(options, devices):
   """Subcommand of RunTestsCommands which runs gtests."""
   ProcessGTestOptions(options)
 
@@ -516,7 +527,7 @@ def _RunGTests(options, error_func, devices):
   return exit_code
 
 
-def _RunLinkerTests(options, error_func, devices):
+def _RunLinkerTests(options, devices):
   """Subcommand of RunTestsCommands which runs linker tests."""
   runner_factory, tests = linker_setup.Setup(options, devices)
 
@@ -527,7 +538,7 @@ def _RunLinkerTests(options, error_func, devices):
   report_results.LogFull(
       results=results,
       test_type='Linker test',
-      test_package='ContentLinkerTest')
+      test_package='ChromiumLinkerTest')
 
   return exit_code
 
@@ -616,10 +627,10 @@ def _RunMonkeyTests(options, error_func, devices):
   return exit_code
 
 
-def _RunPerfTests(options, error_func, devices):
+def _RunPerfTests(options, args, error_func, devices):
   """Subcommand of RunTestsCommands which runs perf tests."""
-  perf_options = ProcessPerfTestOptions(options, error_func)
-    # Just print the results from a single previously executed step.
+  perf_options = ProcessPerfTestOptions(options, args, error_func)
+  # Just print the results from a single previously executed step.
   if perf_options.print_step:
     return perf_test_runner.PrintTestOutput(perf_options.print_step)
 
@@ -633,6 +644,12 @@ def _RunPerfTests(options, error_func, devices):
       results=results,
       test_type='Perf',
       test_package='Perf')
+
+  if perf_options.single_step:
+    return perf_test_runner.PrintTestOutput('single_step')
+
+  perf_test_runner.PrintSummary(tests)
+
   # Always return 0 on the sharding stage. Individual tests exit_code
   # will be returned on the print_step stage.
   return 0
@@ -680,18 +697,27 @@ def RunTestsCommand(command, options, args, option_parser):
   """
 
   # Check for extra arguments
-  if len(args) > 2:
+  if len(args) > 2 and command != 'perf':
     option_parser.error('Unrecognized arguments: %s' % (' '.join(args[2:])))
     return constants.ERROR_EXIT_CODE
+  if command == 'perf':
+    if ((options.single_step and len(args) <= 2) or
+        (not options.single_step and len(args) > 2)):
+      option_parser.error('Unrecognized arguments: %s' % (' '.join(args)))
+      return constants.ERROR_EXIT_CODE
 
   ProcessCommonOptions(options)
 
   devices = _GetAttachedDevices(options.test_device)
 
+  forwarder.Forwarder.RemoveHostLog()
+  if not ports.ResetTestServerPortAllocation():
+    raise Exception('Failed to reset test server port.')
+
   if command == 'gtest':
-    return _RunGTests(options, option_parser.error, devices)
+    return _RunGTests(options, devices)
   elif command == 'linker':
-    return _RunLinkerTests(options, option_parser.error, devices)
+    return _RunLinkerTests(options, devices)
   elif command == 'instrumentation':
     return _RunInstrumentationTests(options, option_parser.error, devices)
   elif command == 'uiautomator':
@@ -699,18 +725,18 @@ def RunTestsCommand(command, options, args, option_parser):
   elif command == 'monkey':
     return _RunMonkeyTests(options, option_parser.error, devices)
   elif command == 'perf':
-    return _RunPerfTests(options, option_parser.error, devices)
+    return _RunPerfTests(options, args, option_parser.error, devices)
   else:
     raise Exception('Unknown test type.')
 
 
-def HelpCommand(command, options, args, option_parser):
+def HelpCommand(command, _options, args, option_parser):
   """Display help for a certain command, or overall help.
 
   Args:
     command: String indicating the command that was received to trigger
         this function.
-    options: optparse options dictionary.
+    options: optparse options dictionary. unused.
     args: List of extra args from optparse.
     option_parser: optparse.OptionParser object.
 
@@ -766,11 +792,17 @@ VALID_COMMANDS = {
     }
 
 
-def main(argv):
+def DumpThreadStacks(_signal, _frame):
+  for thread in threading.enumerate():
+    reraiser_thread.LogThreadStack(thread)
+
+
+def main():
+  signal.signal(signal.SIGUSR1, DumpThreadStacks)
   option_parser = command_option_parser.CommandOptionParser(
       commands_dict=VALID_COMMANDS)
   return command_option_parser.ParseAndExecute(option_parser)
 
 
 if __name__ == '__main__':
-  sys.exit(main(sys.argv))
+  sys.exit(main())

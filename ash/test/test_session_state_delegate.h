@@ -22,6 +22,10 @@ class TestSessionStateDelegate : public SessionStateDelegate {
   const std::string& get_activated_user() { return activated_user_; }
 
   // SessionStateDelegate:
+  virtual content::BrowserContext* GetBrowserContextByIndex(
+      MultiProfileIndex index) OVERRIDE;
+  virtual content::BrowserContext* GetBrowserContextForWindow(
+      aura::Window* window) OVERRIDE;
   virtual int GetMaximumNumberOfLoggedInUsers() const OVERRIDE;
   virtual int NumberOfLoggedInUsers() const OVERRIDE;
   virtual bool IsActiveUserSessionStarted() const OVERRIDE;
@@ -38,17 +42,14 @@ class TestSessionStateDelegate : public SessionStateDelegate {
   virtual const std::string GetUserID(
       ash::MultiProfileIndex index) const OVERRIDE;
   virtual const gfx::ImageSkia& GetUserImage(
-      ash::MultiProfileIndex index) const OVERRIDE;
-  virtual void GetLoggedInUsers(UserIdList* users) OVERRIDE;
+      content::BrowserContext* context) const OVERRIDE;
+  virtual bool ShouldShowAvatar(aura::Window* window) OVERRIDE;
   virtual void SwitchActiveUser(const std::string& user_id) OVERRIDE;
-  virtual void SwitchActiveUserToNext() OVERRIDE;
+  virtual void CycleActiveUser(CycleUser cycle_user) OVERRIDE;
   virtual void AddSessionStateObserver(
       ash::SessionStateObserver* observer) OVERRIDE;
   virtual void RemoveSessionStateObserver(
       ash::SessionStateObserver* observer) OVERRIDE;
-  virtual bool TransferWindowToDesktopOfUser(
-      aura::Window* window,
-      ash::MultiProfileIndex index) OVERRIDE;
 
   // TODO(oshima): Use state machine instead of using boolean variables.
 
@@ -76,10 +77,8 @@ class TestSessionStateDelegate : public SessionStateDelegate {
   // running now.
   void SetUserAddingScreenRunning(bool user_adding_screen_running);
 
-  // Returns the number of calls to TransferWindowToDesktopOfUser.
-  int num_transfer_to_desktop_of_user_calls() {
-    return num_transfer_to_desktop_of_user_calls_;
-  }
+  // Setting non NULL image enables avatar icon.
+  void SetUserImage(const gfx::ImageSkia& user_image);
 
  private:
   // Whether a session is in progress and there is an active user.
@@ -110,10 +109,7 @@ class TestSessionStateDelegate : public SessionStateDelegate {
   std::string activated_user_;
 
   // A test user image.
-  gfx::ImageSkia null_image_;
-
-  // The number of calls which happened to TransferWindowToDesktopOfUser.
-  int num_transfer_to_desktop_of_user_calls_;
+  gfx::ImageSkia user_image_;
 
   DISALLOW_COPY_AND_ASSIGN(TestSessionStateDelegate);
 };

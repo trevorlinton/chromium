@@ -10,9 +10,7 @@
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
-#include "chrome/browser/ui/search/instant_ipc_sender.h"
 #include "chrome/browser/ui/search/search_model_observer.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/page_transition_types.h"
@@ -52,9 +50,6 @@ class InstantPage : public content::WebContentsObserver,
         const content::WebContents* contents,
         const GURL& url) = 0;
 
-    // Called when the page fails to load for whatever reason.
-    virtual void InstantPageLoadFailed(content::WebContents* contents) = 0;
-
    protected:
     virtual ~Delegate();
   };
@@ -63,9 +58,6 @@ class InstantPage : public content::WebContentsObserver,
 
   // The WebContents corresponding to the page we're talking to. May be NULL.
   content::WebContents* contents() const { return web_contents(); }
-
-  // Used to send IPC messages to the page.
-  InstantIPCSender* sender() const { return ipc_sender_.get(); }
 
   // Returns the Instant URL that was loaded for this page. Returns the empty
   // string if no URL was explicitly loaded as is the case for InstantTab.
@@ -108,27 +100,14 @@ class InstantPage : public content::WebContentsObserver,
   FRIEND_TEST_ALL_PREFIXES(InstantPageTest,
                            PageURLDoesntBelongToInstantRenderer);
   FRIEND_TEST_ALL_PREFIXES(InstantPageTest, PageSupportsInstant);
-  FRIEND_TEST_ALL_PREFIXES(InstantPageTest,
-                           AppropriateMessagesSentToIncognitoPages);
 
   // Overridden from content::WebContentsObserver:
   virtual void DidCommitProvisionalLoadForFrame(
       int64 frame_id,
-      const string16& frame_unique_name,
+      const base::string16& frame_unique_name,
       bool is_main_frame,
       const GURL& url,
       content::PageTransition transition_type,
-      content::RenderViewHost* render_view_host) OVERRIDE;
-  virtual void DidNavigateMainFrame(
-      const content::LoadCommittedDetails& details,
-      const content::FrameNavigateParams& params) OVERRIDE;
-  virtual void DidFailProvisionalLoad(
-      int64 frame_id,
-      const string16& frame_unique_name,
-      bool is_main_frame,
-      const GURL& validated_url,
-      int error_code,
-      const string16& error_description,
       content::RenderViewHost* render_view_host) OVERRIDE;
 
   // Overridden from SearchModelObserver:
@@ -145,7 +124,6 @@ class InstantPage : public content::WebContentsObserver,
   Profile* profile_;
 
   Delegate* const delegate_;
-  scoped_ptr<InstantIPCSender> ipc_sender_;
   const std::string instant_url_;
   const bool is_incognito_;
 

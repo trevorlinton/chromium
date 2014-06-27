@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,27 +11,25 @@
 #include "base/prefs/pref_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/google/google_util.h"
+#include "chrome/browser/infobars/infobar.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/ubertoken_fetcher.h"
+#include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
+#include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/ui/sync/sync_promo_ui.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "content/public/browser/navigation_controller.h"
-#include "content/public/browser/notification_details.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
-#include "content/public/browser/notification_source.h"
-#include "content/public/browser/notification_types.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/referrer.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "google_apis/gaia/gaia_urls.h"
+#include "google_apis/gaia/ubertoken_fetcher.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
@@ -50,8 +48,8 @@ namespace {
 
 // This class is created by the AutoLoginInfoBarDelegate when the user wishes to
 // auto-login.  It holds context information needed while re-issuing service
-// tokens using the TokenService, gets the browser cookies with the TokenAuth
-// API, and finally redirects the user to the correct page.
+// tokens using the OAuth2TokenService, gets the browser cookies with the
+// TokenAuth API, and finally redirects the user to the correct page.
 class AutoLoginRedirector : public UbertokenConsumer,
                             public content::WebContentsObserver {
  public:
@@ -83,9 +81,17 @@ AutoLoginRedirector::AutoLoginRedirector(
     const std::string& args)
     : content::WebContentsObserver(web_contents),
       args_(args) {
-  ubertoken_fetcher_.reset(new UbertokenFetcher(
-      Profile::FromBrowserContext(web_contents->GetBrowserContext()), this));
-  ubertoken_fetcher_->StartFetchingToken();
+  Profile* profile =
+      Profile::FromBrowserContext(web_contents->GetBrowserContext());
+  ProfileOAuth2TokenService* token_service =
+      ProfileOAuth2TokenServiceFactory::GetForProfile(profile);
+  SigninManagerBase* signin_manager =
+      SigninManagerFactory::GetInstance()->GetForProfile(profile);
+  ubertoken_fetcher_.reset(new UbertokenFetcher(token_service,
+                                                this,
+                                                profile->GetRequestContext()));
+  ubertoken_fetcher_->StartFetchingToken(
+      signin_manager->GetAuthenticatedAccountId());
 }
 
 AutoLoginRedirector::~AutoLoginRedirector() {
@@ -125,30 +131,50 @@ void AutoLoginRedirector::RedirectToMergeSession(const std::string& token) {
 // AutoLoginInfoBarDelegate ---------------------------------------------------
 
 // static
-void AutoLoginInfoBarDelegate::Create(InfoBarService* infobar_service,
+bool AutoLoginInfoBarDelegate::Create(content::WebContents* web_contents,
                                       const Params& params) {
-  infobar_service->AddInfoBar(scoped_ptr<InfoBarDelegate>(
+  // If |web_contents| is hosted in a WebDialog, there may be no infobar
+  // service.
+  InfoBarService* infobar_service =
+    InfoBarService::FromWebContents(web_contents);
+  if (!infobar_service)
+    return false;
+
+  Profile* profile =
+      Profile::FromBrowserContext(web_contents->GetBrowserContext());
 #if defined(OS_ANDROID)
-      new AutoLoginInfoBarDelegateAndroid(infobar_service, params)
+  typedef AutoLoginInfoBarDelegateAndroid Delegate;
 #else
-      new AutoLoginInfoBarDelegate(infobar_service, params)
+  typedef AutoLoginInfoBarDelegate Delegate;
 #endif
-      ));
+  return !!infobar_service->AddInfoBar(ConfirmInfoBarDelegate::CreateInfoBar(
+      scoped_ptr<ConfirmInfoBarDelegate>(new Delegate(params, profile))));
 }
 
-AutoLoginInfoBarDelegate::AutoLoginInfoBarDelegate(
-    InfoBarService* owner,
-    const Params& params)
-    : ConfirmInfoBarDelegate(owner),
+AutoLoginInfoBarDelegate::AutoLoginInfoBarDelegate(const Params& params,
+                                                   Profile* profile)
+    : ConfirmInfoBarDelegate(),
       params_(params),
+      profile_(profile),
       button_pressed_(false) {
   RecordHistogramAction(SHOWN);
-  registrar_.Add(this, chrome::NOTIFICATION_GOOGLE_SIGNED_OUT,
-                 content::Source<Profile>(Profile::FromBrowserContext(
-                     web_contents()->GetBrowserContext())));
+
+  // The AutoLogin infobar is shown in incognito mode on Android, so a
+  // SigninManager isn't guaranteed to exist for |profile_|.
+  SigninManagerBase* signin_manager =
+      SigninManagerFactory::GetInstance()->GetForProfile(profile_);
+  if (signin_manager)
+    signin_manager->AddObserver(this);
 }
 
 AutoLoginInfoBarDelegate::~AutoLoginInfoBarDelegate() {
+  // The AutoLogin infobar is shown in incognito mode on Android, so a
+  // SigninManager isn't guaranteed to exist for |profile_|.
+  SigninManagerBase* signin_manager =
+      SigninManagerFactory::GetInstance()->GetForProfile(profile_);
+  if (signin_manager)
+    signin_manager->RemoveObserver(this);
+
   if (!button_pressed_)
     RecordHistogramAction(IGNORED);
 }
@@ -171,12 +197,12 @@ AutoLoginInfoBarDelegate*
   return this;
 }
 
-string16 AutoLoginInfoBarDelegate::GetMessageText() const {
+base::string16 AutoLoginInfoBarDelegate::GetMessageText() const {
   return l10n_util::GetStringFUTF16(IDS_AUTOLOGIN_INFOBAR_MESSAGE,
-                                    UTF8ToUTF16(params_.username));
+                                    base::UTF8ToUTF16(params_.username));
 }
 
-string16 AutoLoginInfoBarDelegate::GetButtonLabel(
+base::string16 AutoLoginInfoBarDelegate::GetButtonLabel(
     InfoBarButton button) const {
   return l10n_util::GetStringUTF16((button == BUTTON_OK) ?
       IDS_AUTOLOGIN_INFOBAR_OK_BUTTON : IDS_AUTOLOGIN_INFOBAR_CANCEL_BUTTON);
@@ -199,15 +225,8 @@ bool AutoLoginInfoBarDelegate::Cancel() {
   return true;
 }
 
-void AutoLoginInfoBarDelegate::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
-  DCHECK_EQ(chrome::NOTIFICATION_GOOGLE_SIGNED_OUT, type);
-  // owner() can be NULL when InfoBarService removes us. See
-  // |InfoBarDelegate::clear_owner|.
-  if (owner())
-    owner()->RemoveInfoBar(this);
+void AutoLoginInfoBarDelegate::GoogleSignedOut(const std::string& username) {
+  infobar()->RemoveSelf();
 }
 
 void AutoLoginInfoBarDelegate::RecordHistogramAction(Actions action) {

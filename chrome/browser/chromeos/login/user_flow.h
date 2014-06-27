@@ -19,10 +19,13 @@ class UserFlow {
  public:
   UserFlow();
   virtual ~UserFlow() = 0;
+  // Indicates if screen locking should be enabled or disabled for a flow.
+  virtual bool CanLockScreen() = 0;
   virtual bool ShouldShowSettings() = 0;
   virtual bool ShouldLaunchBrowser() = 0;
   virtual bool ShouldSkipPostLoginScreens() = 0;
   virtual bool HandleLoginFailure(const LoginFailure& failure) = 0;
+  virtual void HandleLoginSuccess(const UserContext& context) = 0;
   virtual bool HandlePasswordChangeDetected() = 0;
   virtual void HandleOAuthTokenStatusChange(User::OAuthTokenStatus status) = 0;
   virtual void LaunchExtraSteps(Profile* profile) = 0;
@@ -44,10 +47,12 @@ class DefaultUserFlow : public UserFlow {
  public:
   virtual ~DefaultUserFlow();
 
+  virtual bool CanLockScreen() OVERRIDE;
   virtual bool ShouldShowSettings() OVERRIDE;
   virtual bool ShouldLaunchBrowser() OVERRIDE;
   virtual bool ShouldSkipPostLoginScreens() OVERRIDE;
   virtual bool HandleLoginFailure(const LoginFailure& failure) OVERRIDE;
+  virtual void HandleLoginSuccess(const UserContext& context) OVERRIDE;
   virtual bool HandlePasswordChangeDetected() OVERRIDE;
   virtual void HandleOAuthTokenStatusChange(User::OAuthTokenStatus status)
       OVERRIDE;

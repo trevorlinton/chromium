@@ -9,6 +9,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "content/renderer/accessibility/blink_ax_enum_conversion.h"
 #include "third_party/WebKit/public/platform/WebRect.h"
 #include "third_party/WebKit/public/platform/WebSize.h"
 #include "third_party/WebKit/public/platform/WebString.h"
@@ -23,12 +24,13 @@
 #include "third_party/WebKit/public/web/WebInputElement.h"
 #include "third_party/WebKit/public/web/WebNode.h"
 
-using WebKit::WebAXObject;
-using WebKit::WebDocument;
-using WebKit::WebDocumentType;
-using WebKit::WebElement;
-using WebKit::WebNode;
-using WebKit::WebVector;
+using base::UTF16ToUTF8;
+using blink::WebAXObject;
+using blink::WebDocument;
+using blink::WebDocumentType;
+using blink::WebElement;
+using blink::WebNode;
+using blink::WebVector;
 
 namespace content {
 namespace {
@@ -49,155 +51,149 @@ bool IsParentUnignoredOf(const WebAXObject& ancestor,
   return LowerCaseEqualsASCII(html_value, "true");
 }
 
-// Provides a conversion between the WebAXObject state
-// accessors and a state bitmask that can be serialized and sent to the
-// Browser process. Rare state are sent as boolean attributes instead.
-uint32 ConvertState(const WebAXObject& o) {
-  uint32 state = 0;
-  if (o.isChecked())
-    state |= (1 << WebKit::WebAXStateChecked);
-
-  if (o.isCollapsed())
-    state |= (1 << WebKit::WebAXStateCollapsed);
-
-  if (o.canSetFocusAttribute())
-    state |= (1 << WebKit::WebAXStateFocusable);
-
-  if (o.isFocused())
-    state |= (1 << WebKit::WebAXStateFocused);
-
-  if (o.role() == WebKit::WebAXRolePopUpButton ||
-      o.ariaHasPopup()) {
-    state |= (1 << WebKit::WebAXStateHaspopup);
-    if (!o.isCollapsed())
-      state |= (1 << WebKit::WebAXStateExpanded);
+std::string GetEquivalentAriaRoleString(const ui::AXRole role) {
+  switch (role) {
+    case ui::AX_ROLE_ARTICLE:
+      return "article";
+    case ui::AX_ROLE_BANNER:
+      return "banner";
+    case ui::AX_ROLE_COMPLEMENTARY:
+      return "complementary";
+    case ui::AX_ROLE_CONTENT_INFO:
+    case ui::AX_ROLE_FOOTER:
+      return "contentinfo";
+    case ui::AX_ROLE_MAIN:
+      return "main";
+    case ui::AX_ROLE_NAVIGATION:
+      return "navigation";
+    case ui::AX_ROLE_REGION:
+      return "region";
+    default:
+      break;
   }
 
-  if (o.isHovered())
-    state |= (1 << WebKit::WebAXStateHovered);
-
-  if (o.isIndeterminate())
-    state |= (1 << WebKit::WebAXStateIndeterminate);
-
-  if (!o.isVisible())
-    state |= (1 << WebKit::WebAXStateInvisible);
-
-  if (o.isLinked())
-    state |= (1 << WebKit::WebAXStateLinked);
-
-  if (o.isMultiSelectable())
-    state |= (1 << WebKit::WebAXStateMultiselectable);
-
-  if (o.isOffScreen())
-    state |= (1 << WebKit::WebAXStateOffscreen);
-
-  if (o.isPressed())
-    state |= (1 << WebKit::WebAXStatePressed);
-
-  if (o.isPasswordField())
-    state |= (1 << WebKit::WebAXStateProtected);
-
-  if (o.isReadOnly())
-    state |= (1 << WebKit::WebAXStateReadonly);
-
-  if (o.isRequired())
-    state |= (1 << WebKit::WebAXStateRequired);
-
-  if (o.canSetSelectedAttribute())
-    state |= (1 << WebKit::WebAXStateSelectable);
-
-  if (o.isSelected())
-    state |= (1 << WebKit::WebAXStateSelected);
-
-  if (o.isVisited())
-    state |= (1 << WebKit::WebAXStateVisited);
-
-  if (o.isEnabled())
-    state |= (1 << WebKit::WebAXStateEnabled);
-
-  if (o.isVertical())
-    state |= (1 << WebKit::WebAXStateVertical);
-
-  if (o.isVisited())
-    state |= (1 << WebKit::WebAXStateVisited);
-
-  return state;
+  return std::string();
 }
+
+void AddIntListAttributeFromWebObjects(ui::AXIntListAttribute attr,
+                                       WebVector<WebAXObject> objects,
+                                       ui::AXNodeData* dst) {
+  std::vector<int32> ids;
+  for(size_t i = 0; i < objects.size(); i++)
+    ids.push_back(objects[i].axID());
+  if (ids.size() > 0)
+    dst->AddIntListAttribute(attr, ids);
+}
+
 
 }  // Anonymous namespace
 
 void SerializeAccessibilityNode(
     const WebAXObject& src,
-    AccessibilityNodeData* dst) {
-  dst->role = src.role();
-  dst->state = ConvertState(src);
+    ui::AXNodeData* dst) {
+  dst->role = AXRoleFromBlink(src.role());
+  dst->state = AXStateFromBlink(src);
   dst->location = src.boundingBoxRect();
   dst->id = src.axID();
-  std::string name = UTF16ToUTF8(src.title());
+  std::string name = base::UTF16ToUTF8(src.title());
 
   std::string value;
   if (src.valueDescription().length()) {
-    dst->AddStringAttribute(dst->ATTR_VALUE,
+    dst->AddStringAttribute(ui::AX_ATTR_VALUE,
                             UTF16ToUTF8(src.valueDescription()));
   } else {
-    dst->AddStringAttribute(dst->ATTR_VALUE, UTF16ToUTF8(src.stringValue()));
+    dst->AddStringAttribute(ui::AX_ATTR_VALUE, UTF16ToUTF8(src.stringValue()));
   }
 
-  if (dst->role == WebKit::WebAXRoleColorWell) {
+  if (dst->role == ui::AX_ROLE_COLOR_WELL) {
     int r, g, b;
     src.colorValue(r, g, b);
-    dst->AddIntAttribute(dst->ATTR_COLOR_VALUE_RED, r);
-    dst->AddIntAttribute(dst->ATTR_COLOR_VALUE_GREEN, g);
-    dst->AddIntAttribute(dst->ATTR_COLOR_VALUE_BLUE, b);
+    dst->AddIntAttribute(ui::AX_ATTR_COLOR_VALUE_RED, r);
+    dst->AddIntAttribute(ui::AX_ATTR_COLOR_VALUE_GREEN, g);
+    dst->AddIntAttribute(ui::AX_ATTR_COLOR_VALUE_BLUE, b);
+  }
+
+  if (dst->role == ui::AX_ROLE_INLINE_TEXT_BOX) {
+    dst->AddIntAttribute(ui::AX_ATTR_TEXT_DIRECTION,
+                         AXTextDirectionFromBlink(src.textDirection()));
+
+    WebVector<int> src_character_offsets;
+    src.characterOffsets(src_character_offsets);
+    std::vector<int32> character_offsets;
+    character_offsets.reserve(src_character_offsets.size());
+    for (size_t i = 0; i < src_character_offsets.size(); ++i)
+      character_offsets.push_back(src_character_offsets[i]);
+    dst->AddIntListAttribute(ui::AX_ATTR_CHARACTER_OFFSETS, character_offsets);
+
+    WebVector<int> src_word_starts;
+    WebVector<int> src_word_ends;
+    src.wordBoundaries(src_word_starts, src_word_ends);
+    std::vector<int32> word_starts;
+    std::vector<int32> word_ends;
+    word_starts.reserve(src_word_starts.size());
+    word_ends.reserve(src_word_starts.size());
+    for (size_t i = 0; i < src_word_starts.size(); ++i) {
+      word_starts.push_back(src_word_starts[i]);
+      word_ends.push_back(src_word_ends[i]);
+    }
+    dst->AddIntListAttribute(ui::AX_ATTR_WORD_STARTS, word_starts);
+    dst->AddIntListAttribute(ui::AX_ATTR_WORD_ENDS, word_ends);
   }
 
   if (src.accessKey().length())
-    dst->AddStringAttribute(dst->ATTR_ACCESS_KEY, UTF16ToUTF8(src.accessKey()));
+    dst->AddStringAttribute(ui::AX_ATTR_ACCESS_KEY,
+        UTF16ToUTF8(src.accessKey()));
   if (src.actionVerb().length())
-    dst->AddStringAttribute(dst->ATTR_ACTION, UTF16ToUTF8(src.actionVerb()));
+    dst->AddStringAttribute(ui::AX_ATTR_ACTION, UTF16ToUTF8(src.actionVerb()));
   if (src.isAriaReadOnly())
-    dst->AddBoolAttribute(dst->ATTR_ARIA_READONLY, true);
+    dst->AddBoolAttribute(ui::AX_ATTR_ARIA_READONLY, true);
   if (src.isButtonStateMixed())
-    dst->AddBoolAttribute(dst->ATTR_BUTTON_MIXED, true);
+    dst->AddBoolAttribute(ui::AX_ATTR_BUTTON_MIXED, true);
   if (src.canSetValueAttribute())
-    dst->AddBoolAttribute(dst->ATTR_CAN_SET_VALUE, true);
+    dst->AddBoolAttribute(ui::AX_ATTR_CAN_SET_VALUE, true);
   if (src.accessibilityDescription().length()) {
-    dst->AddStringAttribute(dst->ATTR_DESCRIPTION,
+    dst->AddStringAttribute(ui::AX_ATTR_DESCRIPTION,
                             UTF16ToUTF8(src.accessibilityDescription()));
   }
   if (src.hasComputedStyle()) {
-    dst->AddStringAttribute(dst->ATTR_DISPLAY,
+    dst->AddStringAttribute(ui::AX_ATTR_DISPLAY,
                             UTF16ToUTF8(src.computedStyleDisplay()));
   }
   if (src.helpText().length())
-    dst->AddStringAttribute(dst->ATTR_HELP, UTF16ToUTF8(src.helpText()));
+    dst->AddStringAttribute(ui::AX_ATTR_HELP, UTF16ToUTF8(src.helpText()));
   if (src.keyboardShortcut().length()) {
-    dst->AddStringAttribute(dst->ATTR_SHORTCUT,
+    dst->AddStringAttribute(ui::AX_ATTR_SHORTCUT,
                             UTF16ToUTF8(src.keyboardShortcut()));
   }
   if (!src.titleUIElement().isDetached()) {
-    dst->AddIntAttribute(dst->ATTR_TITLE_UI_ELEMENT,
+    dst->AddIntAttribute(ui::AX_ATTR_TITLE_UI_ELEMENT,
                          src.titleUIElement().axID());
   }
-  if (!src.url().isEmpty())
-    dst->AddStringAttribute(dst->ATTR_URL, src.url().spec());
+  if (!src.ariaActiveDescendant().isDetached()) {
+    dst->AddIntAttribute(ui::AX_ATTR_ACTIVEDESCENDANT_ID,
+                         src.ariaActiveDescendant().axID());
+  }
 
-  if (dst->role == WebKit::WebAXRoleHeading)
-    dst->AddIntAttribute(dst->ATTR_HIERARCHICAL_LEVEL, src.headingLevel());
-  else if ((dst->role == WebKit::WebAXRoleTreeItem ||
-            dst->role == WebKit::WebAXRoleRow) &&
+  if (!src.url().isEmpty())
+    dst->AddStringAttribute(ui::AX_ATTR_URL, src.url().spec());
+
+  if (dst->role == ui::AX_ROLE_HEADING)
+    dst->AddIntAttribute(ui::AX_ATTR_HIERARCHICAL_LEVEL, src.headingLevel());
+  else if ((dst->role == ui::AX_ROLE_TREE_ITEM ||
+            dst->role == ui::AX_ROLE_ROW) &&
            src.hierarchicalLevel() > 0) {
-    dst->AddIntAttribute(dst->ATTR_HIERARCHICAL_LEVEL, src.hierarchicalLevel());
+    dst->AddIntAttribute(ui::AX_ATTR_HIERARCHICAL_LEVEL,
+        src.hierarchicalLevel());
   }
 
   // Treat the active list box item as focused.
-  if (dst->role == WebKit::WebAXRoleListBoxOption &&
+  if (dst->role == ui::AX_ROLE_LIST_BOX_OPTION &&
       src.isSelectedOptionActive()) {
-    dst->state |= (1 << WebKit::WebAXStateFocused);
+    dst->state |= (1 << ui::AX_STATE_FOCUSED);
   }
 
   if (src.canvasHasFallbackContent())
-    dst->AddBoolAttribute(dst->ATTR_CANVAS_HAS_FALLBACK, true);
+    dst->AddBoolAttribute(ui::AX_ATTR_CANVAS_HAS_FALLBACK, true);
 
   WebNode node = src.node();
   bool is_iframe = false;
@@ -208,29 +204,29 @@ void SerializeAccessibilityNode(
 
   if (!node.isNull() && node.isElementNode()) {
     WebElement element = node.to<WebElement>();
-    is_iframe = (element.tagName() == ASCIIToUTF16("IFRAME"));
+    is_iframe = (element.tagName() == base::ASCIIToUTF16("IFRAME"));
 
     if (LowerCaseEqualsASCII(element.getAttribute("aria-expanded"), "true"))
-      dst->state |= (1 << WebKit::WebAXStateExpanded);
+      dst->state |= (1 << ui::AX_STATE_EXPANDED);
 
     // TODO(ctguil): The tagName in WebKit is lower cased but
     // HTMLElement::nodeName calls localNameUpper. Consider adding
     // a WebElement method that returns the original lower cased tagName.
     dst->AddStringAttribute(
-        dst->ATTR_HTML_TAG,
+        ui::AX_ATTR_HTML_TAG,
         StringToLowerASCII(UTF16ToUTF8(element.tagName())));
     for (unsigned i = 0; i < element.attributeCount(); ++i) {
-      std::string name = StringToLowerASCII(UTF16ToUTF8(
+      std::string name = StringToLowerASCII(base::UTF16ToUTF8(
           element.attributeLocalName(i)));
-      std::string value = UTF16ToUTF8(element.attributeValue(i));
+      std::string value = base::UTF16ToUTF8(element.attributeValue(i));
       dst->html_attributes.push_back(std::make_pair(name, value));
     }
 
-    if (dst->role == WebKit::WebAXRoleEditableText ||
-        dst->role == WebKit::WebAXRoleTextArea ||
-        dst->role == WebKit::WebAXRoleTextField) {
-      dst->AddIntAttribute(dst->ATTR_TEXT_SEL_START, src.selectionStart());
-      dst->AddIntAttribute(dst->ATTR_TEXT_SEL_END, src.selectionEnd());
+    if (dst->role == ui::AX_ROLE_EDITABLE_TEXT ||
+        dst->role == ui::AX_ROLE_TEXT_AREA ||
+        dst->role == ui::AX_ROLE_TEXT_FIELD) {
+      dst->AddIntAttribute(ui::AX_ATTR_TEXT_SEL_START, src.selectionStart());
+      dst->AddIntAttribute(ui::AX_ATTR_TEXT_SEL_END, src.selectionEnd());
 
       WebVector<int> src_line_breaks;
       src.lineBreaks(src_line_breaks);
@@ -239,21 +235,25 @@ void SerializeAccessibilityNode(
         line_breaks.reserve(src_line_breaks.size());
         for (size_t i = 0; i < src_line_breaks.size(); ++i)
           line_breaks.push_back(src_line_breaks[i]);
-        dst->AddIntListAttribute(dst->ATTR_LINE_BREAKS, line_breaks);
+        dst->AddIntListAttribute(ui::AX_ATTR_LINE_BREAKS, line_breaks);
       }
     }
 
     // ARIA role.
     if (element.hasAttribute("role")) {
-      dst->AddStringAttribute(dst->ATTR_ROLE,
+      dst->AddStringAttribute(ui::AX_ATTR_ROLE,
                               UTF16ToUTF8(element.getAttribute("role")));
+    } else {
+      std::string role = GetEquivalentAriaRoleString(dst->role);
+      if (!role.empty())
+        dst->AddStringAttribute(ui::AX_ATTR_ROLE, role);
     }
 
     // Live region attributes
-    live_atomic = UTF16ToUTF8(element.getAttribute("aria-atomic"));
-    live_busy = UTF16ToUTF8(element.getAttribute("aria-busy"));
-    live_status = UTF16ToUTF8(element.getAttribute("aria-live"));
-    live_relevant = UTF16ToUTF8(element.getAttribute("aria-relevant"));
+    live_atomic = base::UTF16ToUTF8(element.getAttribute("aria-atomic"));
+    live_busy = base::UTF16ToUTF8(element.getAttribute("aria-busy"));
+    live_status = base::UTF16ToUTF8(element.getAttribute("aria-live"));
+    live_relevant = base::UTF16ToUTF8(element.getAttribute("aria-relevant"));
   }
 
   // Walk up the parent chain to set live region attributes of containers
@@ -269,110 +269,111 @@ void SerializeAccessibilityNode(
       if (container_elem.hasAttribute("aria-atomic") &&
           container_live_atomic.empty()) {
         container_live_atomic =
-            UTF16ToUTF8(container_elem.getAttribute("aria-atomic"));
+            base::UTF16ToUTF8(container_elem.getAttribute("aria-atomic"));
       }
       if (container_elem.hasAttribute("aria-busy") &&
           container_live_busy.empty()) {
         container_live_busy =
-            UTF16ToUTF8(container_elem.getAttribute("aria-busy"));
+            base::UTF16ToUTF8(container_elem.getAttribute("aria-busy"));
       }
       if (container_elem.hasAttribute("aria-live") &&
           container_live_status.empty()) {
         container_live_status =
-            UTF16ToUTF8(container_elem.getAttribute("aria-live"));
+            base::UTF16ToUTF8(container_elem.getAttribute("aria-live"));
       }
       if (container_elem.hasAttribute("aria-relevant") &&
           container_live_relevant.empty()) {
         container_live_relevant =
-            UTF16ToUTF8(container_elem.getAttribute("aria-relevant"));
+            base::UTF16ToUTF8(container_elem.getAttribute("aria-relevant"));
       }
     }
     container_accessible = container_accessible.parentObject();
   }
 
   if (!live_atomic.empty())
-    dst->AddBoolAttribute(dst->ATTR_LIVE_ATOMIC, IsTrue(live_atomic));
+    dst->AddBoolAttribute(ui::AX_ATTR_LIVE_ATOMIC, IsTrue(live_atomic));
   if (!live_busy.empty())
-    dst->AddBoolAttribute(dst->ATTR_LIVE_BUSY, IsTrue(live_busy));
+    dst->AddBoolAttribute(ui::AX_ATTR_LIVE_BUSY, IsTrue(live_busy));
   if (!live_status.empty())
-    dst->AddStringAttribute(dst->ATTR_LIVE_STATUS, live_status);
+    dst->AddStringAttribute(ui::AX_ATTR_LIVE_STATUS, live_status);
   if (!live_relevant.empty())
-    dst->AddStringAttribute(dst->ATTR_LIVE_RELEVANT, live_relevant);
+    dst->AddStringAttribute(ui::AX_ATTR_LIVE_RELEVANT, live_relevant);
 
   if (!container_live_atomic.empty()) {
-    dst->AddBoolAttribute(dst->ATTR_CONTAINER_LIVE_ATOMIC,
+    dst->AddBoolAttribute(ui::AX_ATTR_CONTAINER_LIVE_ATOMIC,
                           IsTrue(container_live_atomic));
   }
   if (!container_live_busy.empty()) {
-    dst->AddBoolAttribute(dst->ATTR_CONTAINER_LIVE_BUSY,
+    dst->AddBoolAttribute(ui::AX_ATTR_CONTAINER_LIVE_BUSY,
                           IsTrue(container_live_busy));
   }
   if (!container_live_status.empty()) {
-    dst->AddStringAttribute(dst->ATTR_CONTAINER_LIVE_STATUS,
+    dst->AddStringAttribute(ui::AX_ATTR_CONTAINER_LIVE_STATUS,
                             container_live_status);
   }
   if (!container_live_relevant.empty()) {
-    dst->AddStringAttribute(dst->ATTR_CONTAINER_LIVE_RELEVANT,
+    dst->AddStringAttribute(ui::AX_ATTR_CONTAINER_LIVE_RELEVANT,
                             container_live_relevant);
   }
 
-  if (dst->role == WebKit::WebAXRoleProgressIndicator ||
-      dst->role == WebKit::WebAXRoleScrollBar ||
-      dst->role == WebKit::WebAXRoleSlider ||
-      dst->role == WebKit::WebAXRoleSpinButton) {
-    dst->AddFloatAttribute(dst->ATTR_VALUE_FOR_RANGE, src.valueForRange());
-    dst->AddFloatAttribute(dst->ATTR_MAX_VALUE_FOR_RANGE,
+  if (dst->role == ui::AX_ROLE_PROGRESS_INDICATOR ||
+      dst->role == ui::AX_ROLE_SCROLL_BAR ||
+      dst->role == ui::AX_ROLE_SLIDER ||
+      dst->role == ui::AX_ROLE_SPIN_BUTTON) {
+    dst->AddFloatAttribute(ui::AX_ATTR_VALUE_FOR_RANGE, src.valueForRange());
+    dst->AddFloatAttribute(ui::AX_ATTR_MAX_VALUE_FOR_RANGE,
                            src.maxValueForRange());
-    dst->AddFloatAttribute(dst->ATTR_MIN_VALUE_FOR_RANGE,
+    dst->AddFloatAttribute(ui::AX_ATTR_MIN_VALUE_FOR_RANGE,
                            src.minValueForRange());
   }
 
-  if (dst->role == WebKit::WebAXRoleDocument ||
-      dst->role == WebKit::WebAXRoleWebArea) {
-    dst->AddStringAttribute(dst->ATTR_HTML_TAG, "#document");
+  if (dst->role == ui::AX_ROLE_DOCUMENT ||
+      dst->role == ui::AX_ROLE_WEB_AREA) {
+    dst->AddStringAttribute(ui::AX_ATTR_HTML_TAG, "#document");
     const WebDocument& document = src.document();
     if (name.empty())
       name = UTF16ToUTF8(document.title());
-    dst->AddStringAttribute(dst->ATTR_DOC_TITLE, UTF16ToUTF8(document.title()));
-    dst->AddStringAttribute(dst->ATTR_DOC_URL, document.url().spec());
+    dst->AddStringAttribute(ui::AX_ATTR_DOC_TITLE,
+        UTF16ToUTF8(document.title()));
+    dst->AddStringAttribute(ui::AX_ATTR_DOC_URL, document.url().spec());
     dst->AddStringAttribute(
-        dst->ATTR_DOC_MIMETYPE,
+        ui::AX_ATTR_DOC_MIMETYPE,
         document.isXHTMLDocument() ? "text/xhtml" : "text/html");
-    dst->AddBoolAttribute(dst->ATTR_DOC_LOADED, src.isLoaded());
-    dst->AddFloatAttribute(dst->ATTR_DOC_LOADING_PROGRESS,
+    dst->AddBoolAttribute(ui::AX_ATTR_DOC_LOADED, src.isLoaded());
+    dst->AddFloatAttribute(ui::AX_ATTR_DOC_LOADING_PROGRESS,
                            src.estimatedLoadingProgress());
 
     const WebDocumentType& doctype = document.doctype();
     if (!doctype.isNull()) {
-      dst->AddStringAttribute(dst->ATTR_DOC_DOCTYPE,
+      dst->AddStringAttribute(ui::AX_ATTR_DOC_DOCTYPE,
                               UTF16ToUTF8(doctype.name()));
     }
 
     const gfx::Size& scroll_offset = document.frame()->scrollOffset();
-    dst->AddIntAttribute(dst->ATTR_SCROLL_X, scroll_offset.width());
-    dst->AddIntAttribute(dst->ATTR_SCROLL_Y, scroll_offset.height());
+    dst->AddIntAttribute(ui::AX_ATTR_SCROLL_X, scroll_offset.width());
+    dst->AddIntAttribute(ui::AX_ATTR_SCROLL_Y, scroll_offset.height());
 
     const gfx::Size& min_offset = document.frame()->minimumScrollOffset();
-    dst->AddIntAttribute(dst->ATTR_SCROLL_X_MIN, min_offset.width());
-    dst->AddIntAttribute(dst->ATTR_SCROLL_Y_MIN, min_offset.height());
+    dst->AddIntAttribute(ui::AX_ATTR_SCROLL_X_MIN, min_offset.width());
+    dst->AddIntAttribute(ui::AX_ATTR_SCROLL_Y_MIN, min_offset.height());
 
     const gfx::Size& max_offset = document.frame()->maximumScrollOffset();
-    dst->AddIntAttribute(dst->ATTR_SCROLL_X_MAX, max_offset.width());
-    dst->AddIntAttribute(dst->ATTR_SCROLL_Y_MAX, max_offset.height());
+    dst->AddIntAttribute(ui::AX_ATTR_SCROLL_X_MAX, max_offset.width());
+    dst->AddIntAttribute(ui::AX_ATTR_SCROLL_Y_MAX, max_offset.height());
   }
 
-  if (dst->role == WebKit::WebAXRoleTable) {
+  if (dst->role == ui::AX_ROLE_TABLE) {
     int column_count = src.columnCount();
     int row_count = src.rowCount();
     if (column_count > 0 && row_count > 0) {
       std::set<int32> unique_cell_id_set;
       std::vector<int32> cell_ids;
       std::vector<int32> unique_cell_ids;
-      dst->AddIntAttribute(dst->ATTR_TABLE_COLUMN_COUNT, column_count);
-      dst->AddIntAttribute(dst->ATTR_TABLE_ROW_COUNT, row_count);
+      dst->AddIntAttribute(ui::AX_ATTR_TABLE_COLUMN_COUNT, column_count);
+      dst->AddIntAttribute(ui::AX_ATTR_TABLE_ROW_COUNT, row_count);
       WebAXObject header = src.headerContainerObject();
       if (!header.isDetached())
-        dst->AddIntAttribute(dst->ATTR_TABLE_HEADER_ID, header.axID());
+        dst->AddIntAttribute(ui::AX_ATTR_TABLE_HEADER_ID, header.axID());
       for (int i = 0; i < column_count * row_count; ++i) {
         WebAXObject cell = src.cellForColumnAndRow(
             i % column_count, i / column_count);
@@ -386,37 +387,37 @@ void SerializeAccessibilityNode(
         }
         cell_ids.push_back(cell_id);
       }
-      dst->AddIntListAttribute(dst->ATTR_CELL_IDS, cell_ids);
-      dst->AddIntListAttribute(dst->ATTR_UNIQUE_CELL_IDS, unique_cell_ids);
+      dst->AddIntListAttribute(ui::AX_ATTR_CELL_IDS, cell_ids);
+      dst->AddIntListAttribute(ui::AX_ATTR_UNIQUE_CELL_IDS, unique_cell_ids);
     }
   }
 
-  if (dst->role == WebKit::WebAXRoleRow) {
-    dst->AddIntAttribute(dst->ATTR_TABLE_ROW_INDEX, src.rowIndex());
+  if (dst->role == ui::AX_ROLE_ROW) {
+    dst->AddIntAttribute(ui::AX_ATTR_TABLE_ROW_INDEX, src.rowIndex());
     WebAXObject header = src.rowHeader();
     if (!header.isDetached())
-      dst->AddIntAttribute(dst->ATTR_TABLE_ROW_HEADER_ID, header.axID());
+      dst->AddIntAttribute(ui::AX_ATTR_TABLE_ROW_HEADER_ID, header.axID());
   }
 
-  if (dst->role == WebKit::WebAXRoleColumn) {
-    dst->AddIntAttribute(dst->ATTR_TABLE_COLUMN_INDEX, src.columnIndex());
+  if (dst->role == ui::AX_ROLE_COLUMN) {
+    dst->AddIntAttribute(ui::AX_ATTR_TABLE_COLUMN_INDEX, src.columnIndex());
     WebAXObject header = src.columnHeader();
     if (!header.isDetached())
-      dst->AddIntAttribute(dst->ATTR_TABLE_COLUMN_HEADER_ID, header.axID());
+      dst->AddIntAttribute(ui::AX_ATTR_TABLE_COLUMN_HEADER_ID, header.axID());
   }
 
-  if (dst->role == WebKit::WebAXRoleCell ||
-      dst->role == WebKit::WebAXRoleRowHeader ||
-      dst->role == WebKit::WebAXRoleColumnHeader) {
-    dst->AddIntAttribute(dst->ATTR_TABLE_CELL_COLUMN_INDEX,
+  if (dst->role == ui::AX_ROLE_CELL ||
+      dst->role == ui::AX_ROLE_ROW_HEADER ||
+      dst->role == ui::AX_ROLE_COLUMN_HEADER) {
+    dst->AddIntAttribute(ui::AX_ATTR_TABLE_CELL_COLUMN_INDEX,
                          src.cellColumnIndex());
-    dst->AddIntAttribute(dst->ATTR_TABLE_CELL_COLUMN_SPAN,
+    dst->AddIntAttribute(ui::AX_ATTR_TABLE_CELL_COLUMN_SPAN,
                          src.cellColumnSpan());
-    dst->AddIntAttribute(dst->ATTR_TABLE_CELL_ROW_INDEX, src.cellRowIndex());
-    dst->AddIntAttribute(dst->ATTR_TABLE_CELL_ROW_SPAN, src.cellRowSpan());
+    dst->AddIntAttribute(ui::AX_ATTR_TABLE_CELL_ROW_INDEX, src.cellRowIndex());
+    dst->AddIntAttribute(ui::AX_ATTR_TABLE_CELL_ROW_SPAN, src.cellRowSpan());
   }
 
-  dst->AddStringAttribute(dst->ATTR_NAME, name);
+  dst->AddStringAttribute(ui::AX_ATTR_NAME, name);
 
   // Add the ids of *indirect* children - those who are children of this node,
   // but whose parent is *not* this node. One example is a table
@@ -424,31 +425,45 @@ void SerializeAccessibilityNode(
   // parent is the row, the row adds it as a child, and the column adds it
   // as an indirect child.
   int child_count = src.childCount();
+  std::vector<int32> indirect_child_ids;
   for (int i = 0; i < child_count; ++i) {
     WebAXObject child = src.childAt(i);
-    std::vector<int32> indirect_child_ids;
     if (!is_iframe && !child.isDetached() && !IsParentUnignoredOf(src, child))
       indirect_child_ids.push_back(child.axID());
-    if (indirect_child_ids.size() > 0) {
-      dst->AddIntListAttribute(
-          dst->ATTR_INDIRECT_CHILD_IDS, indirect_child_ids);
-    }
   }
+  if (indirect_child_ids.size() > 0) {
+    dst->AddIntListAttribute(ui::AX_ATTR_INDIRECT_CHILD_IDS,
+                             indirect_child_ids);
+  }
+
+  WebVector<WebAXObject> controls;
+  if (src.ariaControls(controls))
+    AddIntListAttributeFromWebObjects(ui::AX_ATTR_CONTROLS_IDS, controls, dst);
+
+  WebVector<WebAXObject> describedby;
+  if (src.ariaDescribedby(describedby)) {
+    AddIntListAttributeFromWebObjects(
+        ui::AX_ATTR_DESCRIBEDBY_IDS, describedby, dst);
+  }
+
+  WebVector<WebAXObject> flowTo;
+  if (src.ariaFlowTo(flowTo))
+    AddIntListAttributeFromWebObjects(ui::AX_ATTR_FLOWTO_IDS, flowTo, dst);
+
+  WebVector<WebAXObject> labelledby;
+  if (src.ariaLabelledby(labelledby)) {
+    AddIntListAttributeFromWebObjects(
+        ui::AX_ATTR_LABELLEDBY_IDS, labelledby, dst);
+  }
+
+  WebVector<WebAXObject> owns;
+  if (src.ariaOwns(owns))
+    AddIntListAttributeFromWebObjects(ui::AX_ATTR_OWNS_IDS, owns, dst);
 }
 
 bool ShouldIncludeChildNode(
     const WebAXObject& parent,
     const WebAXObject& child) {
-  switch(parent.role()) {
-    case WebKit::WebAXRoleSlider:
-    case WebKit::WebAXRoleEditableText:
-    case WebKit::WebAXRoleTextArea:
-    case WebKit::WebAXRoleTextField:
-      return false;
-    default:
-      break;
-  }
-
   // The child may be invalid due to issues in webkit accessibility code.
   // Don't add children that are invalid thus preventing a crash.
   // https://bugs.webkit.org/show_bug.cgi?id=44149
@@ -462,7 +477,7 @@ bool ShouldIncludeChildNode(
   WebNode node = parent.node();
   if (!node.isNull() && node.isElementNode()) {
     WebElement element = node.to<WebElement>();
-    is_iframe = (element.tagName() == ASCIIToUTF16("IFRAME"));
+    is_iframe = (element.tagName() == base::ASCIIToUTF16("IFRAME"));
   }
 
   return (is_iframe || IsParentUnignoredOf(parent, child));

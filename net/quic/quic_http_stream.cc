@@ -5,6 +5,7 @@
 #include "net/quic/quic_http_stream.h"
 
 #include "base/callback_helpers.h"
+#include "base/metrics/histogram.h"
 #include "base/strings/stringprintf.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -37,6 +38,7 @@ QuicHttpStream::QuicHttpStream(const base::WeakPtr<QuicClientSession>& session)
       response_status_(OK),
       response_headers_received_(false),
       read_buf_(new GrowableIOBuffer()),
+      closed_stream_received_bytes_(0),
       user_buffer_len_(0),
       weak_factory_(this) {
   DCHECK(session_);
@@ -57,6 +59,15 @@ int QuicHttpStream::InitializeStream(const HttpRequestInfo* request_info,
   if (!session_)
     return was_handshake_confirmed_ ? ERR_CONNECTION_CLOSED :
         ERR_QUIC_HANDSHAKE_FAILED;
+
+  if (request_info->url.SchemeIsSecure()) {
+    SSLInfo ssl_info;
+    bool secure_session = session_->GetSSLInfo(&ssl_info) && ssl_info.cert;
+    UMA_HISTOGRAM_BOOLEAN("Net.QuicSession.SecureResourceSecureSession",
+                          secure_session);
+    if (!secure_session)
+      return ERR_REQUEST_FOR_SECURE_RESOURCE_OVER_INSECURE_QUIC;
+  }
 
   stream_net_log_ = stream_net_log;
   request_info_ = request_info;
@@ -99,19 +110,8 @@ int QuicHttpStream::SendRequest(const HttpRequestHeaders& request_headers,
   QuicPriority priority = ConvertRequestPriorityToQuicPriority(priority_);
   stream_->set_priority(priority);
   // Store the serialized request headers.
-  SpdyHeaderBlock headers;
   CreateSpdyHeadersFromHttpRequest(*request_info_, request_headers,
-                                   &headers, 3, /*direct=*/true);
-  request_ = stream_->compressor()->CompressHeadersWithPriority(priority,
-                                                                headers);
-  // Log the actual request with the URL Request's net log.
-  stream_net_log_.AddEvent(
-      NetLog::TYPE_HTTP_TRANSACTION_SPDY_SEND_REQUEST_HEADERS,
-      base::Bind(&SpdyHeaderBlockNetLogCallback, &headers));
-  // Also log to the QuicSession's net log.
-  stream_->net_log().AddEvent(
-      NetLog::TYPE_QUIC_HTTP_STREAM_SEND_REQUEST_HEADERS,
-      base::Bind(&SpdyHeaderBlockNetLogCallback, &headers));
+                                   &request_headers_, SPDY3, /*direct=*/true);
 
   // Store the request body.
   request_body_stream_ = request_info_->upload_data_stream;
@@ -217,8 +217,9 @@ int QuicHttpStream::ReadResponseBody(
 void QuicHttpStream::Close(bool not_reusable) {
   // Note: the not_reusable flag has no meaning for SPDY streams.
   if (stream_) {
+    closed_stream_received_bytes_ = stream_->stream_bytes_read();
     stream_->SetDelegate(NULL);
-    stream_->Close(QUIC_STREAM_CANCELLED);
+    stream_->Reset(QUIC_STREAM_CANCELLED);
     stream_ = NULL;
   }
 }
@@ -249,6 +250,14 @@ bool QuicHttpStream::IsConnectionReusable() const {
   return false;
 }
 
+int64 QuicHttpStream::GetTotalReceivedBytes() const {
+  if (stream_) {
+    return stream_->stream_bytes_read();
+  }
+
+  return closed_stream_received_bytes_;
+}
+
 bool QuicHttpStream::GetLoadTimingInfo(LoadTimingInfo* load_timing_info) const {
   // TODO(mmenke):  Figure out what to do here.
   return true;
@@ -276,18 +285,6 @@ void QuicHttpStream::Drain(HttpNetworkSession* session) {
 
 void QuicHttpStream::SetPriority(RequestPriority priority) {
   priority_ = priority;
-}
-
-int QuicHttpStream::OnSendData() {
-  // TODO(rch): Change QUIC IO to provide notifications to the streams.
-  NOTREACHED();
-  return OK;
-}
-
-int QuicHttpStream::OnSendDataComplete(int status, bool* eof) {
-  // TODO(rch): Change QUIC IO to provide notifications to the streams.
-  NOTREACHED();
-  return OK;
 }
 
 int QuicHttpStream::OnDataReceived(const char* data, int length) {
@@ -338,6 +335,7 @@ void QuicHttpStream::OnClose(QuicErrorCode error) {
     response_status_ = ERR_ABORTED;
   }
 
+  closed_stream_received_bytes_ = stream_->stream_bytes_read();
   stream_ = NULL;
   if (!callback_.is_null())
     DoCallback(response_status_);
@@ -424,12 +422,21 @@ int QuicHttpStream::DoSendHeaders() {
   if (!stream_)
     return ERR_UNEXPECTED;
 
+  // Log the actual request with the URL Request's net log.
+  stream_net_log_.AddEvent(
+      NetLog::TYPE_HTTP_TRANSACTION_QUIC_SEND_REQUEST_HEADERS,
+      base::Bind(&QuicRequestNetLogCallback, &request_headers_, priority_));
+  // Also log to the QuicSession's net log.
+  stream_->net_log().AddEvent(
+      NetLog::TYPE_QUIC_HTTP_STREAM_SEND_REQUEST_HEADERS,
+      base::Bind(&QuicRequestNetLogCallback, &request_headers_, priority_));
+
   bool has_upload_data = request_body_stream_ != NULL;
 
   next_state_ = STATE_SEND_HEADERS_COMPLETE;
-  return stream_->WriteStreamData(
-      request_, !has_upload_data,
-      base::Bind(&QuicHttpStream::OnIOComplete, weak_factory_.GetWeakPtr()));
+  int rv = stream_->WriteHeaders(request_headers_, !has_upload_data, NULL);
+  request_headers_.clear();
+  return rv;
 }
 
 int QuicHttpStream::DoSendHeadersComplete(int rv) {
@@ -524,7 +531,7 @@ int QuicHttpStream::ParseResponseHeaders() {
       NetLog::TYPE_QUIC_HTTP_STREAM_READ_RESPONSE_HEADERS,
       base::Bind(&SpdyHeaderBlockNetLogCallback, &headers));
 
-  if (!SpdyHeadersToHttpResponse(headers, 3, response_info_)) {
+  if (!SpdyHeadersToHttpResponse(headers, SPDY3, response_info_)) {
     DLOG(WARNING) << "Invalid headers";
     return ERR_QUIC_PROTOCOL_ERROR;
   }

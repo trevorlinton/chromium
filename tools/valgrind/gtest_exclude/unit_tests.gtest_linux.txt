@@ -30,5 +30,5 @@ HttpPipeliningCompatibilityClientTest.*
 # http://crbug.com/238964
 CpuInfoProviderTest.*
 
-# Fails flakily. http://crbug.com/255771
-NetworkStatsTestUDP.UDPEcho*
+# http://crbug.com/336349
+NTPUserDataLoggerTest.TestLogging

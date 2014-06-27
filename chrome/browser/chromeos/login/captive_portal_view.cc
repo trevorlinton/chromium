@@ -4,7 +4,6 @@
 
 #include "chrome/browser/chromeos/login/captive_portal_view.h"
 
-#include "ash/wm/custom_frame_view_ash.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/captive_portal/captive_portal_detector.h"
 #include "chrome/browser/chromeos/login/captive_portal_window_proxy.h"
@@ -49,14 +48,14 @@ ui::ModalType CaptivePortalView::GetModalType() const {
   return ui::MODAL_TYPE_SYSTEM;
 }
 
-string16 CaptivePortalView::GetWindowTitle() const {
-  string16 network_name;
+base::string16 CaptivePortalView::GetWindowTitle() const {
+  base::string16 network_name;
   const NetworkState* default_network =
       NetworkHandler::Get()->network_state_handler()->DefaultNetwork();
   std::string default_network_name =
       default_network ? default_network->name() : std::string();
   if (!default_network_name.empty()) {
-    network_name = ASCIIToUTF16(default_network_name);
+    network_name = base::ASCIIToUTF16(default_network_name);
   } else {
     DLOG(ERROR)
         << "No active/default network, but captive portal window is shown.";
@@ -72,15 +71,7 @@ bool CaptivePortalView::ShouldShowWindowTitle() const {
 
 views::NonClientFrameView* CaptivePortalView::CreateNonClientFrameView(
     views::Widget* widget) {
-  if (views::DialogDelegate::UseNewStyle()) {
-    const bool force_opaque_border = false;
-    return views::DialogDelegate::CreateNewStyleFrameView(widget,
-                                                          force_opaque_border);
-  }
-  ash::CustomFrameViewAsh* frame = new ash::CustomFrameViewAsh(widget);
-  // Always use "active" look.
-  frame->SetInactiveRenderingDisabled(true);
-  return frame;
+  return views::DialogDelegate::CreateDialogFrameView(widget);
 }
 
 void CaptivePortalView::NavigationStateChanged(
@@ -93,14 +84,14 @@ void CaptivePortalView::NavigationStateChanged(
   // Note, |url| will be empty for "client3.google.com/generate_204" page.
   if (!redirected_  && url != GURL::EmptyGURL() &&
       url != GURL(CaptivePortalStartURL())) {
-    DLOG(INFO) << CaptivePortalStartURL() << " vs " << url.spec();
     redirected_ = true;
     proxy_->OnRedirected();
   }
 }
 
-void CaptivePortalView::LoadingStateChanged(content::WebContents* source) {
-  SimpleWebViewDialog::LoadingStateChanged(source);
+void CaptivePortalView::LoadingStateChanged(content::WebContents* source,
+    bool to_different_document) {
+  SimpleWebViewDialog::LoadingStateChanged(source, to_different_document);
   // TODO(nkostylev): Fix case of no connectivity, check HTTP code returned.
   // Disable this heuristic as it has false positives.
   // Relying on just shill portal check to close dialog is fine.

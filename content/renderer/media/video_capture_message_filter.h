@@ -18,6 +18,10 @@
 #include "ipc/ipc_channel_proxy.h"
 #include "media/video/capture/video_capture.h"
 
+namespace gpu {
+struct MailboxHolder;
+}  // namespace gpu
+
 namespace content {
 
 class CONTENT_EXPORT VideoCaptureMessageFilter
@@ -34,12 +38,27 @@ class CONTENT_EXPORT VideoCaptureMessageFilter
 
     // Called when a video frame buffer is received from the browser process.
     virtual void OnBufferReceived(int buffer_id,
-                                  base::Time timestamp,
-                                  const media::VideoCaptureFormat& format) = 0;
+                                  const media::VideoCaptureFormat& format,
+                                  base::TimeTicks timestamp) = 0;
+
+    // Called when a video mailbox buffer is received from the browser process.
+    virtual void OnMailboxBufferReceived(
+        int buffer_id,
+        const gpu::MailboxHolder& mailbox_holder,
+        const media::VideoCaptureFormat& format,
+        base::TimeTicks timestamp) = 0;
 
     // Called when state of a video capture device has changed in the browser
     // process.
     virtual void OnStateChanged(VideoCaptureState state) = 0;
+
+    // Called upon reception of device's supported formats back from browser.
+    virtual void OnDeviceSupportedFormatsEnumerated(
+        const media::VideoCaptureFormats& supported_formats) = 0;
+
+    // Called upon reception of format(s) in use by a device back from browser.
+    virtual void OnDeviceFormatsInUseReceived(
+        const media::VideoCaptureFormats& formats_in_use) = 0;
 
     // Called when the delegate has been added to filter's delegate list.
     // |device_id| is the device id for the delegate.
@@ -85,11 +104,28 @@ class CONTENT_EXPORT VideoCaptureMessageFilter
   // Receive a filled buffer from browser process.
   void OnBufferReceived(int device_id,
                         int buffer_id,
-                        base::Time timestamp,
-                        const media::VideoCaptureFormat& format);
+                        const media::VideoCaptureFormat& format,
+                        base::TimeTicks timestamp);
+
+  // Receive a filled texture mailbox buffer from browser process.
+  void OnMailboxBufferReceived(int device_id,
+                               int buffer_id,
+                               const gpu::MailboxHolder& mailbox_holder,
+                               const media::VideoCaptureFormat& format,
+                               base::TimeTicks timestamp);
 
   // State of browser process' video capture device has changed.
   void OnDeviceStateChanged(int device_id, VideoCaptureState state);
+
+  // Receive a device's supported formats back from browser process.
+  void OnDeviceSupportedFormatsEnumerated(
+      int device_id,
+      const media::VideoCaptureFormats& supported_formats);
+
+  // Receive the formats in-use by a device back from browser process.
+  void OnDeviceFormatsInUseReceived(
+      int device_id,
+      const media::VideoCaptureFormats& formats_in_use);
 
   // Finds the delegate associated with |device_id|, NULL if not found.
   Delegate* find_delegate(int device_id) const;

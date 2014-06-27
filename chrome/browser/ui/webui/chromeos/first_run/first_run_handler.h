@@ -21,10 +21,20 @@ class FirstRunHandler : public FirstRunActor,
   FirstRunHandler();
   // Overriden from FirstRunActor.
   virtual bool IsInitialized() OVERRIDE;
-  virtual void AddBackgroundHole(int x, int y, int width, int height) OVERRIDE;
+  virtual void SetBackgroundVisible(bool visible) OVERRIDE;
+  virtual void AddRectangularHole(int x, int y, int width, int height) OVERRIDE;
+  virtual void AddRoundHole(int x, int y, float radius) OVERRIDE;
   virtual void RemoveBackgroundHoles() OVERRIDE;
-  virtual void ShowStep(const std::string& name,
-                        const StepPosition& position) OVERRIDE;
+  virtual void ShowStepPositioned(const std::string& name,
+                                  const StepPosition& position) OVERRIDE;
+  virtual void ShowStepPointingTo(const std::string& name,
+                                  int x,
+                                  int y,
+                                  int offset) OVERRIDE;
+  virtual void HideCurrentStep() OVERRIDE;
+  virtual void Finalize() OVERRIDE;
+  virtual bool IsFinalizing() OVERRIDE;
+
  private:
   // Overriden from content::WebUIMessageHandler.
   virtual void RegisterMessages() OVERRIDE;
@@ -32,8 +42,13 @@ class FirstRunHandler : public FirstRunActor,
   // Handlers for calls from JS.
   void HandleInitialized(const base::ListValue* args);
   void HandleNextButtonClicked(const base::ListValue* args);
+  void HandleHelpButtonClicked(const base::ListValue* args);
+  void HandleStepShown(const base::ListValue* args);
+  void HandleStepHidden(const base::ListValue* args);
+  void HandleFinalized(const base::ListValue* args);
 
   bool is_initialized_;
+  bool is_finalizing_;
 
   DISALLOW_COPY_AND_ASSIGN(FirstRunHandler);
 };

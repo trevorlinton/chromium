@@ -4,18 +4,24 @@
 
 #include "content/browser/streams/stream_handle_impl.h"
 
+#include "base/bind.h"
+#include "base/location.h"
+#include "base/message_loop/message_loop_proxy.h"
 #include "content/browser/streams/stream.h"
-#include "content/public/browser/browser_thread.h"
+#include "net/http/http_response_headers.h"
 
 namespace content {
 
-StreamHandleImpl::StreamHandleImpl(const base::WeakPtr<Stream>& stream,
-                                   const GURL& original_url,
-                                   const std::string& mime_type)
+StreamHandleImpl::StreamHandleImpl(
+    const base::WeakPtr<Stream>& stream,
+    const GURL& original_url,
+    const std::string& mime_type,
+    scoped_refptr<net::HttpResponseHeaders> response_headers)
     : stream_(stream),
       url_(stream->url()),
       original_url_(original_url),
       mime_type_(mime_type),
+      response_headers_(response_headers),
       stream_message_loop_(base::MessageLoopProxy::current().get()) {}
 
 StreamHandleImpl::~StreamHandleImpl() {
@@ -33,6 +39,10 @@ const GURL& StreamHandleImpl::GetOriginalURL() {
 
 const std::string& StreamHandleImpl::GetMimeType() {
   return mime_type_;
+}
+
+scoped_refptr<net::HttpResponseHeaders> StreamHandleImpl::GetResponseHeaders() {
+  return response_headers_;
 }
 
 }  // namespace content

@@ -33,7 +33,7 @@ static base::LazyInstance<base::Lock>::Leaky
     g_timezone_bundle_lock = LAZY_INSTANCE_INITIALIZER;
 
 // Returns an exemplary city in the given timezone.
-string16 GetExemplarCity(const icu::TimeZone& zone) {
+base::string16 GetExemplarCity(const icu::TimeZone& zone) {
   // TODO(jungshik): After upgrading to ICU 4.6, use U_ICUDATA_ZONE
   static const char* zone_bundle_name = NULL;
 
@@ -58,13 +58,13 @@ string16 GetExemplarCity(const icu::TimeZone& zone) {
 
   // Resource keys for timezones use ':' in place of '/'.
   ReplaceSubstringsAfterOffset(&zone_id_str, 0, "/", ":");
-  scoped_ptr_malloc<UResourceBundle, UResClose> zone_item(
+  scoped_ptr<UResourceBundle, UResClose> zone_item(
       ures_getByKey(zone_strings, zone_id_str.c_str(), NULL, &status));
   icu::UnicodeString city;
   if (!U_FAILURE(status)) {
     city = icu::ures_getUnicodeStringByKey(zone_item.get(), "ec", &status);
     if (U_SUCCESS(status))
-      return string16(city.getBuffer(), city.length());
+      return base::string16(city.getBuffer(), city.length());
   }
 
   // Fallback case in case of failure.
@@ -78,11 +78,11 @@ string16 GetExemplarCity(const icu::TimeZone& zone) {
     zone_id_str.erase(0, slash_pos + 1);
   // zone id has '_' in place of ' '.
   ReplaceSubstringsAfterOffset(&zone_id_str, 0, "_", " ");
-  return ASCIIToUTF16(zone_id_str);
+  return base::ASCIIToUTF16(zone_id_str);
 }
 
 // Gets the given timezone's name for visualization.
-string16 GetTimezoneName(const icu::TimeZone& timezone) {
+base::string16 GetTimezoneName(const icu::TimeZone& timezone) {
   // Instead of using the raw_offset, use the offset in effect now.
   // For instance, US Pacific Time, the offset shown will be -7 in summer
   // while it'll be -8 in winter.
@@ -112,9 +112,11 @@ string16 GetTimezoneName(const icu::TimeZone& timezone) {
   // rules (e.g. US Mountain Time in Denver vs Phoenix).
   icu::UnicodeString name;
   timezone.getDisplayName(dst_offset != 0, icu::TimeZone::LONG, name);
-  string16 result(l10n_util::GetStringFUTF16(
-      IDS_OPTIONS_SETTINGS_TIMEZONE_DISPLAY_TEMPLATE, ASCIIToUTF16(offset_str),
-      string16(name.getBuffer(), name.length()), GetExemplarCity(timezone)));
+  base::string16 result(l10n_util::GetStringFUTF16(
+      IDS_OPTIONS_SETTINGS_TIMEZONE_DISPLAY_TEMPLATE,
+      base::ASCIIToUTF16(offset_str),
+      base::string16(name.getBuffer(), name.length()),
+      GetExemplarCity(timezone)));
   base::i18n::AdjustStringForLocaleDirection(&result);
   return result;
 }

@@ -10,7 +10,7 @@
 
 #include "chrome/browser/chromeos/extensions/file_manager/private_api_base.h"
 #include "chrome/browser/chromeos/file_manager/zip_file_creator.h"
-#include "chrome/browser/google_apis/gdata_errorcode.h"
+#include "google_apis/drive/gdata_errorcode.h"
 
 namespace google_apis {
 class AuthServiceInterface;
@@ -18,15 +18,16 @@ class AuthServiceInterface;
 
 namespace extensions {
 
-// Implements the chrome.fileBrowserPrivate.logoutUser method.
-class FileBrowserPrivateLogoutUserFunction
+// Implements the chrome.fileBrowserPrivate.logoutUserForReauthentication
+// method.
+class FileBrowserPrivateLogoutUserForReauthenticationFunction
     : public ChromeSyncExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("fileBrowserPrivate.logoutUser",
-                             FILEBROWSERPRIVATE_LOGOUTUSER)
+  DECLARE_EXTENSION_FUNCTION("fileBrowserPrivate.logoutUserForReauthentication",
+                             FILEBROWSERPRIVATE_LOGOUTUSERFORREAUTHENTICATION)
 
  protected:
-  virtual ~FileBrowserPrivateLogoutUserFunction() {}
+  virtual ~FileBrowserPrivateLogoutUserForReauthenticationFunction() {}
 
   // SyncExtensionFunction overrides.
   virtual bool RunImpl() OVERRIDE;
@@ -136,6 +137,32 @@ class FileBrowserPrivateRequestWebStoreAccessTokenFunction
   void OnAccessTokenFetched(google_apis::GDataErrorCode code,
                             const std::string& access_token);
 
+};
+
+class FileBrowserPrivateGetProfilesFunction
+    : public ChromeSyncExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("fileBrowserPrivate.getProfiles",
+                             FILEBROWSERPRIVATE_GETPROFILES);
+
+ protected:
+  virtual ~FileBrowserPrivateGetProfilesFunction() {}
+
+  // AsyncExtensionFunction overrides.
+  virtual bool RunImpl() OVERRIDE;
+};
+
+class FileBrowserPrivateVisitDesktopFunction
+    : public ChromeSyncExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("fileBrowserPrivate.visitDesktop",
+                             FILEBROWSERPRIVATE_VISITDESKTOP);
+
+ protected:
+  virtual ~FileBrowserPrivateVisitDesktopFunction() {}
+
+  // AsyncExtensionFunction overrides.
+  virtual bool RunImpl() OVERRIDE;
 };
 
 }  // namespace extensions

@@ -4,7 +4,6 @@
 
 #import "chrome/browser/ui/cocoa/omnibox/omnibox_view_mac.h"
 
-#include "chrome/browser/search/search.h"
 #include "chrome/browser/ui/cocoa/cocoa_profile_test.h"
 #include "chrome/browser/ui/omnibox/omnibox_edit_controller.h"
 #include "chrome/browser/ui/omnibox/omnibox_popup_model.h"
@@ -14,6 +13,7 @@
 #include "chrome/test/base/testing_profile.h"
 #include "testing/platform_test.h"
 #include "ui/gfx/image/image.h"
+#include "ui/gfx/font.h"
 #include "ui/gfx/rect.h"
 
 namespace {
@@ -73,6 +73,9 @@ class TestingToolbarModelDelegate : public ToolbarModelDelegate {
   virtual content::WebContents* GetActiveWebContents() const OVERRIDE {
     return NULL;
   }
+  virtual bool InTabbedBrowser() const OVERRIDE {
+    return true;
+  }
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TestingToolbarModelDelegate);
@@ -86,10 +89,13 @@ class TestingOmniboxEditController : public OmniboxEditController {
   }
   virtual ~TestingOmniboxEditController() {}
 
+ protected:
   // Overridden from OmniboxEditController:
   virtual void Update(const content::WebContents* contents) OVERRIDE {}
   virtual void OnChanged() OVERRIDE {}
   virtual void OnSetFocus() OVERRIDE {}
+  virtual void ShowURL() OVERRIDE {}
+  virtual void HideURL() OVERRIDE {}
   virtual InstantController* GetInstant() OVERRIDE { return NULL; }
   virtual content::WebContents* GetWebContents() OVERRIDE { return NULL; }
   virtual ToolbarModel* GetToolbarModel() OVERRIDE { return toolbar_model_; }
@@ -113,11 +119,10 @@ class OmniboxViewMacTest : public CocoaProfileTest {
 };
 
 TEST_F(OmniboxViewMacTest, GetFieldFont) {
-  EXPECT_TRUE(OmniboxViewMac::GetFieldFont());
+  EXPECT_TRUE(OmniboxViewMac::GetFieldFont(gfx::Font::NORMAL));
 }
 
 TEST_F(OmniboxViewMacTest, TabToAutocomplete) {
-  chrome::EnableInstantExtendedAPIForTesting();
   OmniboxViewMac view(NULL, profile(), NULL, NULL);
 
   // This is deleted by the omnibox view.
@@ -161,15 +166,15 @@ TEST_F(OmniboxViewMacTest, SetGrayTextAutocompletion) {
   MockOmniboxPopupView popup_view;
   OmniboxPopupModel popup_model(&popup_view, model);
 
-  view.SetUserText(ASCIIToUTF16("Alfred"));
-  EXPECT_EQ("Alfred", UTF16ToUTF8(view.GetText()));
-  view.SetGrayTextAutocompletion(ASCIIToUTF16(" Hitchcock"));
-  EXPECT_EQ("Alfred", UTF16ToUTF8(view.GetText()));
-  EXPECT_EQ(" Hitchcock", UTF16ToUTF8(view.GetGrayTextAutocompletion()));
+  view.SetUserText(base::ASCIIToUTF16("Alfred"));
+  EXPECT_EQ("Alfred", base::UTF16ToUTF8(view.GetText()));
+  view.SetGrayTextAutocompletion(base::ASCIIToUTF16(" Hitchcock"));
+  EXPECT_EQ("Alfred", base::UTF16ToUTF8(view.GetText()));
+  EXPECT_EQ(" Hitchcock", base::UTF16ToUTF8(view.GetGrayTextAutocompletion()));
 
-  view.SetUserText(string16());
-  EXPECT_EQ(string16(), view.GetText());
-  EXPECT_EQ(string16(), view.GetGrayTextAutocompletion());
+  view.SetUserText(base::string16());
+  EXPECT_EQ(base::string16(), view.GetText());
+  EXPECT_EQ(base::string16(), view.GetGrayTextAutocompletion());
 }
 
 TEST_F(OmniboxViewMacTest, UpDownArrow) {

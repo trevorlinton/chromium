@@ -12,18 +12,22 @@
 #include "gpu/command_buffer/service/context_group.h"
 #include "gpu/command_buffer/service/framebuffer_manager.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
+#include "gpu/command_buffer/service/gles2_cmd_decoder_mock.h"
 #include "gpu/command_buffer/service/program_manager.h"
 #include "gpu/command_buffer/service/query_manager.h"
 #include "gpu/command_buffer/service/renderbuffer_manager.h"
 #include "gpu/command_buffer/service/shader_manager.h"
-#include "gpu/command_buffer/service/stream_texture_manager_mock.h"
 #include "gpu/command_buffer/service/test_helper.h"
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "gpu/command_buffer/service/vertex_array_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/gl/gl_context_stub.h"
+#include "ui/gl/gl_context_stub_with_extensions.h"
 #include "ui/gl/gl_surface_stub.h"
 #include "ui/gl/gl_mock.h"
+
+namespace base {
+class CommandLine;
+}
 
 namespace gpu {
 namespace gles2 {
@@ -138,11 +142,6 @@ class GLES2DecoderTestBase : public testing::Test {
     return group_->program_manager();
   }
 
-  ::testing::StrictMock<MockStreamTextureManager>*
-  stream_texture_manager() const {
-    return stream_texture_manager_.get();
-  }
-
   void DoCreateProgram(GLuint client_id, GLuint service_id);
   void DoCreateShader(GLenum shader_type, GLuint client_id, GLuint service_id);
 
@@ -152,15 +151,26 @@ class GLES2DecoderTestBase : public testing::Test {
     memory_tracker_ = memory_tracker;
   }
 
-  void InitDecoder(
-      const char* extensions,
-      bool has_alpha,
-      bool has_depth,
-      bool has_stencil,
-      bool request_alpha,
-      bool request_depth,
-      bool request_stencil,
-      bool bind_generates_resource);
+  struct InitState {
+    InitState();
+
+    std::string extensions;
+    std::string gl_version;
+    bool has_alpha;
+    bool has_depth;
+    bool has_stencil;
+    bool request_alpha;
+    bool request_depth;
+    bool request_stencil;
+    bool bind_generates_resource;
+    bool lose_context_when_out_of_memory;
+  };
+
+  void InitDecoder(const InitState& init);
+  void InitDecoderWithCommandLine(const InitState& init,
+                                  const base::CommandLine* command_line);
+
+  void ResetDecoder();
 
   const ContextGroup& group() const {
     return *group_.get();
@@ -183,12 +193,6 @@ class GLES2DecoderTestBase : public testing::Test {
       GLuint client_id, GLuint service_id,
       GLuint vertex_shader_client_id, GLuint vertex_shader_service_id,
       GLuint fragment_shader_client_id, GLuint fragment_shader_service_id);
-
-  void SetupExpectationsForClearingUniforms(
-      UniformInfo* uniforms, size_t num_uniforms) {
-    TestHelper::SetupExpectationsForClearingUniforms(
-        gl_.get(), uniforms, num_uniforms);
-  }
 
   void SetupInitCapabilitiesExpectations();
   void SetupInitStateExpectations();
@@ -241,11 +245,12 @@ class GLES2DecoderTestBase : public testing::Test {
       GLsizei width, GLsizei height, GLint border,
       GLenum format, GLenum type,
       uint32 shared_memory_id, uint32 shared_memory_offset);
-  void DoTexImage2DSameSize(
-      GLenum target, GLint level, GLenum internal_format,
+  void DoTexImage2DConvertInternalFormat(
+      GLenum target, GLint level, GLenum requested_internal_format,
       GLsizei width, GLsizei height, GLint border,
       GLenum format, GLenum type,
-      uint32 shared_memory_id, uint32 shared_memory_offset);
+      uint32 shared_memory_id, uint32 shared_memory_offset,
+      GLenum expected_internal_format);
   void DoRenderbufferStorage(
       GLenum target, GLenum internal_format, GLenum actual_format,
       GLsizei width, GLsizei height, GLenum error);
@@ -280,12 +285,13 @@ class GLES2DecoderTestBase : public testing::Test {
 
   void DeleteIndexBuffer();
 
-  void SetupClearTextureExpections(
+  void SetupClearTextureExpectations(
       GLuint service_id,
       GLuint old_service_id,
       GLenum bind_target,
       GLenum target,
       GLint level,
+      GLenum internal_format,
       GLenum format,
       GLenum type,
       GLsizei width,
@@ -479,8 +485,8 @@ class GLES2DecoderTestBase : public testing::Test {
   // Use StrictMock to make 100% sure we know how GL will be called.
   scoped_ptr< ::testing::StrictMock< ::gfx::MockGLInterface> > gl_;
   scoped_refptr<gfx::GLSurfaceStub> surface_;
-  scoped_refptr<gfx::GLContextStub> context_;
-  scoped_ptr<GLES2Decoder> mock_decoder_;
+  scoped_refptr<gfx::GLContextStubWithExtensions> context_;
+  scoped_ptr<MockGLES2Decoder> mock_decoder_;
   scoped_ptr<GLES2Decoder> decoder_;
   MemoryTracker* memory_tracker_;
 
@@ -510,10 +516,11 @@ class GLES2DecoderTestBase : public testing::Test {
 
     virtual ~MockCommandBufferEngine();
 
-    virtual gpu::Buffer GetSharedMemoryBuffer(int32 shm_id) OVERRIDE;
+    virtual scoped_refptr<gpu::Buffer> GetSharedMemoryBuffer(int32 shm_id)
+        OVERRIDE;
 
     void ClearSharedMemory() {
-      memset(data_.get(), kInitialMemoryValue, kSharedBufferSize);
+      memset(valid_buffer_->memory(), kInitialMemoryValue, kSharedBufferSize);
     }
 
     virtual void set_token(int32 token) OVERRIDE;
@@ -527,16 +534,13 @@ class GLES2DecoderTestBase : public testing::Test {
     virtual int32 GetGetOffset() OVERRIDE;
 
    private:
-    scoped_ptr<int8[]> data_;
-    gpu::Buffer valid_buffer_;
-    gpu::Buffer invalid_buffer_;
+    scoped_refptr<gpu::Buffer> valid_buffer_;
+    scoped_refptr<gpu::Buffer> invalid_buffer_;
   };
 
   void AddExpectationsForVertexAttribManager();
 
   scoped_ptr< ::testing::StrictMock<MockCommandBufferEngine> > engine_;
-  scoped_ptr< ::testing::StrictMock<MockStreamTextureManager> >
-      stream_texture_manager_;
   scoped_refptr<ContextGroup> group_;
 };
 

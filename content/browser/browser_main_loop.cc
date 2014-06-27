@@ -34,19 +34,21 @@
 #include "content/browser/gpu/gpu_process_host_ui_shim.h"
 #include "content/browser/histogram_synchronizer.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
+#include "content/browser/media/capture/audio_mirroring_manager.h"
+#include "content/browser/media/media_internals.h"
 #include "content/browser/net/browser_online_state_observer.h"
 #include "content/browser/plugin_service_impl.h"
-#include "content/browser/renderer_host/media/audio_mirroring_manager.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
+#include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/speech/speech_recognition_manager_impl.h"
 #include "content/browser/startup_task_runner.h"
-#include "content/browser/tracing/trace_controller_impl.h"
 #include "content/browser/webui/content_web_ui_controller_factory.h"
 #include "content/browser/webui/url_data_manager.h"
 #include "content/public/browser/browser_main_parts.h"
 #include "content/public/browser/browser_shutdown.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/tracing_controller.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/main_function_params.h"
 #include "content/public/common/result_codes.h"
@@ -61,13 +63,18 @@
 #include "ui/base/clipboard/clipboard.h"
 
 #if defined(USE_AURA)
-#include "content/browser/aura/image_transport_factory.h"
+#include "content/browser/compositor/image_transport_factory.h"
 #endif
 
 #if defined(OS_ANDROID)
 #include "base/android/jni_android.h"
 #include "content/browser/android/browser_startup_controller.h"
 #include "content/browser/android/surface_texture_peer_browser_impl.h"
+#include "ui/gl/gl_surface.h"
+#endif
+
+#if defined(OS_MACOSX) && !defined(OS_IOS)
+#include "content/browser/theme_helper_mac.h"
 #endif
 
 #if defined(OS_WIN)
@@ -75,19 +82,18 @@
 #include <commctrl.h>
 #include <shellapi.h>
 
-#include "base/win/text_services_message_filter.h"
 #include "content/browser/system_message_window_win.h"
 #include "content/common/sandbox_win.h"
 #include "net/base/winsock_init.h"
 #include "ui/base/l10n/l10n_util_win.h"
 #endif
 
-#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
+#if defined(USE_GLIB)
 #include <glib-object.h>
 #endif
 
-#if defined(OS_LINUX)
-#include "content/browser/device_monitor_linux.h"
+#if defined(OS_LINUX) && defined(USE_UDEV)
+#include "content/browser/device_monitor_udev.h"
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
 #include "content/browser/device_monitor_mac.h"
 #endif
@@ -109,6 +115,10 @@
 
 #if defined(USE_X11)
 #include <X11/Xlib.h>
+#endif
+
+#if defined(USE_OZONE)
+#include "ui/ozone/ozone_platform.h"
 #endif
 
 // One of the linux specific headers defines this as a macro.
@@ -175,7 +185,7 @@ void SetupSandbox(const CommandLine& parsed_command_line) {
 }
 #endif
 
-#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
+#if defined(USE_GLIB)
 static void GLibLogHandler(const gchar* log_domain,
                            GLogLevelFlags log_level,
                            const gchar* message,
@@ -224,6 +234,8 @@ static void GLibLogHandler(const gchar* log_domain,
   } else if (strstr(message, "Attempting to store changes into") ||
              strstr(message, "Attempting to set the permissions of")) {
     LOG(ERROR) << message << " (http://bugs.chromium.org/161366)";
+  } else if (strstr(message, "drawable is not a native X11 window")) {
+    LOG(ERROR) << message << " (http://bugs.chromium.org/329991)";
   } else {
     LOG(DFATAL) << log_domain << ": " << message;
   }
@@ -313,7 +325,11 @@ BrowserMainLoop::BrowserMainLoop(const MainFunctionParams& parameters)
     : parameters_(parameters),
       parsed_command_line_(parameters.command_line),
       result_code_(RESULT_CODE_NORMAL_EXIT),
-      created_threads_(false) {
+      created_threads_(false),
+      // ContentMainRunner should have enabled tracing of the browser process
+      // when kTraceStartup is in the command line.
+      is_tracing_startup_(
+          parameters.command_line.HasSwitch(switches::kTraceStartup)) {
   DCHECK(!g_current_browser_main_loop);
   g_current_browser_main_loop = this;
 }
@@ -336,6 +352,13 @@ void BrowserMainLoop::Init() {
 
 void BrowserMainLoop::EarlyInitialization() {
   TRACE_EVENT0("startup", "BrowserMainLoop::EarlyInitialization");
+
+#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
+  // No thread should be created before this call, as SetupSandbox()
+  // will end-up using fork().
+  SetupSandbox(parsed_command_line_);
+#endif
+
 #if defined(USE_X11)
   if (parsed_command_line_.HasSwitch(switches::kSingleProcess) ||
       parsed_command_line_.HasSwitch(switches::kInProcessGPU)) {
@@ -345,10 +368,10 @@ void BrowserMainLoop::EarlyInitialization() {
   }
 #endif
 
-  // Due to bugs in GLib we need to initialize GLib/GTK before we start threads;
-  // see crbug.com/309093. Sandbox setup spawns sub-processes and a thread
-  // running waitpid().
-#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
+  // GLib's spawning of new processes is buggy, so it's important that at this
+  // point GLib does not need to start DBUS. Chrome should always start with
+  // DBUS_SESSION_BUS_ADDRESS properly set. See crbug.com/309093.
+#if defined(USE_GLIB)
   // g_type_init will be deprecated in 2.36. 2.35 is the development
   // version for 2.36, hence do not call g_type_init starting 2.35.
   // http://developer.gnome.org/gobject/unstable/gobject-Type-Information.html#g-type-init
@@ -379,13 +402,6 @@ void BrowserMainLoop::EarlyInitialization() {
   // We want to be sure to init NSPR on the main thread.
   crypto::EnsureNSPRInit();
 #endif  // !defined(USE_OPENSSL)
-
-#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
-  SetupSandbox(parsed_command_line_);
-#endif
-
-  if (parsed_command_line_.HasSwitch(switches::kEnableSSLCachedInfo))
-    net::SSLConfigService::EnableCachedInfo();
 
 #if !defined(OS_IOS)
   if (parsed_command_line_.HasSwitch(switches::kRendererProcessLimit)) {
@@ -421,7 +437,7 @@ void BrowserMainLoop::MainMessageLoopStart() {
 
   // Create a MessageLoop if one does not already exist for the current thread.
   if (!base::MessageLoop::current())
-    main_message_loop_.reset(new base::MessageLoop(base::MessageLoop::TYPE_UI));
+    main_message_loop_.reset(new base::MessageLoopForUI);
 
   InitializeMainThread();
 
@@ -451,11 +467,12 @@ void BrowserMainLoop::MainMessageLoopStart() {
   }
   {
     TRACE_EVENT0("startup", "BrowserMainLoop::Subsystem:AudioMan")
-    audio_manager_.reset(media::AudioManager::Create());
+    audio_manager_.reset(media::AudioManager::Create(
+        MediaInternals::GetInstance()));
   }
   {
-    TRACE_EVENT0("startup", "BrowserMainLoop::Subsystem:MIDIManager")
-    midi_manager_.reset(media::MIDIManager::Create());
+    TRACE_EVENT0("startup", "BrowserMainLoop::Subsystem:MidiManager")
+    midi_manager_.reset(media::MidiManager::Create());
   }
   {
     TRACE_EVENT0("startup", "BrowserMainLoop::Subsystem:ContentWebUIController")
@@ -467,14 +484,6 @@ void BrowserMainLoop::MainMessageLoopStart() {
     TRACE_EVENT0("startup", "BrowserMainLoop::Subsystem:AudioMirroringManager")
     audio_mirroring_manager_.reset(new AudioMirroringManager());
   }
-
-  // Start tracing to a file if needed.
-  if (base::debug::TraceLog::GetInstance()->IsEnabled()) {
-    TRACE_EVENT0("startup", "BrowserMainLoop::InitStartupTracing")
-    TraceControllerImpl::GetInstance()->InitStartupTracing(
-        parsed_command_line_);
-  }
-
   {
     TRACE_EVENT0("startup", "BrowserMainLoop::Subsystem:OnlineStateObserver")
     online_state_observer_.reset(new BrowserOnlineStateObserver);
@@ -488,21 +497,20 @@ void BrowserMainLoop::MainMessageLoopStart() {
 
 #if defined(OS_WIN)
   system_message_window_.reset(new SystemMessageWindowWin);
-
-  if (base::win::IsTSFAwareRequired()) {
-    // Create a TSF message filter for the message loop. MessageLoop takes
-    // ownership of the filter.
-    scoped_ptr<base::win::TextServicesMessageFilter> tsf_message_filter(
-      new base::win::TextServicesMessageFilter);
-    if (tsf_message_filter->Init()) {
-      base::MessageLoopForUI::current()->SetMessageFilter(
-        tsf_message_filter.PassAs<base::MessageLoopForUI::MessageFilter>());
-    }
-  }
 #endif
 
   if (parts_)
     parts_->PostMainMessageLoopStart();
+
+#if !defined(OS_IOS)
+  // Start tracing to a file if needed. Only do this after starting the main
+  // message loop to avoid calling MessagePumpForUI::ScheduleWork() before
+  // MessagePumpForUI::Start() as it will crash the browser.
+  if (is_tracing_startup_) {
+    TRACE_EVENT0("startup", "BrowserMainLoop::InitStartupTracing")
+    InitStartupTracing(parsed_command_line_);
+  }
+#endif  // !defined(OS_IOS)
 
 #if defined(OS_ANDROID)
   {
@@ -736,10 +744,8 @@ void BrowserMainLoop::ShutdownThreadsAndCleanUp() {
       base::Bind(base::IgnoreResult(&base::ThreadRestrictions::SetIOAllowed),
                  true));
 
-  if (RenderProcessHost::run_renderer_in_process() &&
-      !RenderProcessHost::AllHostsIterator().IsAtEnd()) {
-    delete RenderProcessHost::AllHostsIterator().GetCurrentValue();
-  }
+  if (RenderProcessHost::run_renderer_in_process())
+    RenderProcessHostImpl::ShutDownInProcessRenderer();
 
   if (parts_) {
     TRACE_EVENT0("shutdown",
@@ -773,6 +779,10 @@ void BrowserMainLoop::ShutdownThreadsAndCleanUp() {
     ImageTransportFactory::Terminate();
   }
 #endif
+
+#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
+  ZygoteHostImpl::GetInstance()->TearDownAfterLastChild();
+#endif  // defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
 
   // The device monitors are using |system_monitor_| as dependency, so delete
   // them before |system_monitor_| goes away.
@@ -934,6 +944,13 @@ int BrowserMainLoop::BrowserThreadsStarted() {
 #if !defined(OS_IOS)
   HistogramSynchronizer::GetInstance();
 
+#if defined(OS_ANDROID)
+  // On Android, GLSurface::InitializeOneOff() must be called before initalizing
+  // the GpuDataManagerImpl as it uses the GL bindings. crbug.com/326295
+  if (!gfx::GLSurface::InitializeOneOff())
+    LOG(FATAL) << "GLSurface::InitializeOneOff failed";
+#endif
+
   // Initialize the GpuDataManager before we set up the MessageLoops because
   // otherwise we'll trigger the assertion about doing IO on the UI thread.
   GpuDataManagerImpl::GetInstance()->Initialize();
@@ -956,10 +973,16 @@ int BrowserMainLoop::BrowserThreadsStarted() {
 #endif
 #endif
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) && defined(USE_UDEV)
   device_monitor_linux_.reset(new DeviceMonitorLinux());
 #elif defined(OS_MACOSX)
   device_monitor_mac_.reset(new DeviceMonitorMac());
+#endif
+
+#if defined(USE_OZONE)
+  ui::OzonePlatform::Initialize();
+  ui::EventFactoryOzone::GetInstance()->SetFileTaskRunner(
+      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE));
 #endif
 
   // RDH needs the IO thread to be created
@@ -1020,7 +1043,12 @@ int BrowserMainLoop::BrowserThreadsStarted() {
             GpuProcessHost::GPU_PROCESS_KIND_SANDBOXED,
             CAUSE_FOR_GPU_LAUNCH_BROWSER_STARTUP));
   }
+
+#if defined(OS_MACOSX)
+  ThemeHelperMac::GetInstance();
+#endif
 #endif  // !defined(OS_IOS)
+
   return result_code_;
 }
 
@@ -1057,7 +1085,7 @@ void BrowserMainLoop::MainMessageLoopRun() {
   // Android's main message loop is the Java message loop.
   NOTREACHED();
 #else
-  DCHECK_EQ(base::MessageLoop::TYPE_UI, base::MessageLoop::current()->type());
+  DCHECK(base::MessageLoopForUI::IsCurrent());
   if (parameters_.ui_task)
     base::MessageLoopForUI::current()->PostTask(FROM_HERE,
                                                 *parameters_.ui_task);
@@ -1065,6 +1093,44 @@ void BrowserMainLoop::MainMessageLoopRun() {
   base::RunLoop run_loop;
   run_loop.Run();
 #endif
+}
+
+void BrowserMainLoop::InitStartupTracing(const CommandLine& command_line) {
+  DCHECK(is_tracing_startup_);
+
+  base::FilePath trace_file = command_line.GetSwitchValuePath(
+      switches::kTraceStartupFile);
+  // trace_file = "none" means that startup events will show up for the next
+  // begin/end tracing (via about:tracing or AutomationProxy::BeginTracing/
+  // EndTracing, for example).
+  if (trace_file == base::FilePath().AppendASCII("none"))
+    return;
+
+  if (trace_file.empty()) {
+    // Default to saving the startup trace into the current dir.
+    trace_file = base::FilePath().AppendASCII("chrometrace.log");
+  }
+
+  std::string delay_str = command_line.GetSwitchValueASCII(
+      switches::kTraceStartupDuration);
+  int delay_secs = 5;
+  if (!delay_str.empty() && !base::StringToInt(delay_str, &delay_secs)) {
+    DLOG(WARNING) << "Could not parse --" << switches::kTraceStartupDuration
+        << "=" << delay_str << " defaulting to 5 (secs)";
+    delay_secs = 5;
+  }
+
+  BrowserThread::PostDelayedTask(
+      BrowserThread::UI, FROM_HERE,
+      base::Bind(&BrowserMainLoop::EndStartupTracing,
+                 base::Unretained(this), trace_file),
+      base::TimeDelta::FromSeconds(delay_secs));
+}
+
+void BrowserMainLoop::EndStartupTracing(const base::FilePath& trace_file) {
+  is_tracing_startup_ = false;
+  TracingController::GetInstance()->DisableRecording(
+      trace_file, TracingController::TracingFileResultCallback());
 }
 
 }  // namespace content

@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef NET_QUIC_TEST_TOOLS_QUIC_CLIENT_H_
-#define NET_QUIC_TEST_TOOLS_QUIC_CLIENT_H_
+#ifndef NET_QUIC_TEST_TOOLS_QUIC_TEST_CLIENT_H_
+#define NET_QUIC_TEST_TOOLS_QUIC_TEST_CLIENT_H_
 
 #include <string>
 
@@ -12,30 +12,34 @@
 #include "net/quic/quic_framer.h"
 #include "net/quic/quic_packet_creator.h"
 #include "net/quic/quic_protocol.h"
-#include "net/quic/test_tools/quic_test_writer.h"
 #include "net/tools/quic/quic_client.h"
 
 namespace net {
 
 class ProofVerifier;
+class QuicSessionKey;
 
 namespace tools {
+
+class QuicPacketWriterWrapper;
 
 namespace test {
 
 class HTTPMessage;
+class MockableQuicClient;
 
 // A toy QUIC client used for testing.
-class QuicTestClient :  public ReliableQuicStream::Visitor {
+class QuicTestClient :  public QuicDataStream::Visitor {
  public:
-  QuicTestClient(IPEndPoint server_address, const string& server_hostname,
+  QuicTestClient(IPEndPoint server_address,
+                 const QuicSessionKey& server_key,
                  const QuicVersionVector& supported_versions);
   QuicTestClient(IPEndPoint server_address,
-                 const string& server_hostname,
+                 const QuicSessionKey& server_key,
                  bool secure,
                  const QuicVersionVector& supported_versions);
   QuicTestClient(IPEndPoint server_address,
-                 const string& server_hostname,
+                 const QuicSessionKey& server_key,
                  bool secure,
                  const QuicConfig& config,
                  const QuicVersionVector& supported_versions);
@@ -58,9 +62,7 @@ class QuicTestClient :  public ReliableQuicStream::Visitor {
   // Wraps data in a quic packet and sends it.
   ssize_t SendData(string data, bool last_data);
 
-  QuicPacketCreator::Options* options() { return client_->options(); }
-
-  const BalsaHeaders *response_headers() const {return &headers_;}
+  QuicPacketCreator::Options* options();
 
   void WaitForResponse();
 
@@ -72,31 +74,41 @@ class QuicTestClient :  public ReliableQuicStream::Visitor {
   void WaitForResponseForMs(int timeout_ms);
   void WaitForInitialResponseForMs(int timeout_ms);
   ssize_t Send(const void *buffer, size_t size);
+  bool response_complete() const { return response_complete_; }
+  bool response_headers_complete() const;
+  const BalsaHeaders* response_headers() const;
   int response_size() const;
+  int response_header_size() const { return response_header_size_; }
+  int response_body_size() const { return response_body_size_; }
   size_t bytes_read() const;
   size_t bytes_written() const;
+  bool buffer_body() const { return buffer_body_; }
+  void set_buffer_body(bool buffer_body) { buffer_body_ = buffer_body; }
 
-  // From ReliableQuicStream::Visitor
-  virtual void OnClose(ReliableQuicStream* stream) OVERRIDE;
+  // From QuicDataStream::Visitor
+  virtual void OnClose(QuicDataStream* stream) OVERRIDE;
 
   // Configures client_ to take ownership of and use the writer.
   // Must be called before initial connect.
-  void UseWriter(net::test::QuicTestWriter* writer);
-  // If the given GUID is nonzero, configures client_ to use a specific GUID
-  // instead of a random one.
-  void UseGuid(QuicGuid guid);
+  void UseWriter(QuicPacketWriterWrapper* writer);
+  // If the given ConnectionId is nonzero, configures client_ to use a specific
+  // ConnectionId instead of a random one.
+  void UseConnectionId(QuicConnectionId connection_id);
 
   // Returns NULL if the maximum number of streams have already been created.
-  QuicReliableClientStream* GetOrCreateStream();
+  QuicSpdyClientStream* GetOrCreateStream();
 
   QuicRstStreamErrorCode stream_error() { return stream_error_; }
-  QuicErrorCode connection_error() { return client()->session()->error(); }
+  QuicErrorCode connection_error();
 
-  QuicClient* client() { return client_.get(); }
+  QuicClient* client();
 
   // cert_common_name returns the common name value of the server's certificate,
   // or the empty string if no certificate was presented.
   const string& cert_common_name() const;
+
+  // Get the server config map.
+  QuicTagValueMap GetServerConfig() const;
 
   const string& response_body() {return response_;}
   bool connected() const;
@@ -105,21 +117,32 @@ class QuicTestClient :  public ReliableQuicStream::Visitor {
 
   void set_priority(QuicPriority priority) { priority_ = priority; }
 
+  void WaitForWriteToFlush();
+
  private:
-  void Initialize(IPEndPoint address, const string& hostname, bool secure);
+  void Initialize(IPEndPoint address,
+                  const QuicSessionKey& server_key,
+                  bool secure);
 
   IPEndPoint server_address_;
   IPEndPoint client_address_;
-  scoped_ptr<QuicClient> client_;  // The actual client
-  QuicReliableClientStream* stream_;
+  QuicSessionKey server_key_;
+  scoped_ptr<MockableQuicClient> client_;  // The actual client
+  QuicSpdyClientStream* stream_;
 
   QuicRstStreamErrorCode stream_error_;
 
+  bool response_complete_;
+  bool response_headers_complete_;
   BalsaHeaders headers_;
   QuicPriority priority_;
   string response_;
   uint64 bytes_read_;
   uint64 bytes_written_;
+  // The number of uncompressed HTTP header bytes received.
+  int response_header_size_;
+  // The number of HTTP body bytes received.
+  int response_body_size_;
   // True if we tried to connect already since the last call to Disconnect().
   bool connect_attempted_;
   bool secure_;
@@ -127,6 +150,8 @@ class QuicTestClient :  public ReliableQuicStream::Visitor {
   // something causes a connection reset, it will not automatically reconnect
   // unless auto_reconnect_ is true.
   bool auto_reconnect_;
+  // Should we buffer the response body? Defaults to true.
+  bool buffer_body_;
 
   // proof_verifier_ points to a RecordingProofVerifier that is owned by
   // client_.
@@ -138,4 +163,4 @@ class QuicTestClient :  public ReliableQuicStream::Visitor {
 }  // namespace tools
 }  // namespace net
 
-#endif  // NET_QUIC_TEST_TOOLS_QUIC_CLIENT_H_
+#endif  // NET_QUIC_TEST_TOOLS_QUIC_TEST_CLIENT_H_

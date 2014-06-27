@@ -6,7 +6,7 @@
 
 #include "base/stl_util.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
+#include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync_file_system/file_change.h"
 #include "chrome/browser/sync_file_system/local/local_file_change_tracker.h"
@@ -19,6 +19,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/storage_partition.h"
+#include "extensions/browser/extension_system.h"
 #include "url/gurl.h"
 #include "webkit/browser/fileapi/file_system_context.h"
 #include "webkit/browser/fileapi/file_system_url.h"
@@ -96,16 +97,15 @@ void LocalFileSyncService::OriginChangeMap::SetOriginEnabled(
 
 // LocalFileSyncService -------------------------------------------------------
 
-LocalFileSyncService::LocalFileSyncService(Profile* profile)
-    : profile_(profile),
-      sync_context_(new LocalFileSyncContext(
-          profile_->GetPath(),
-          BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI).get(),
-          BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO)
-              .get())),
-      local_change_processor_(NULL) {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  sync_context_->AddOriginChangeObserver(this);
+scoped_ptr<LocalFileSyncService> LocalFileSyncService::Create(
+    Profile* profile) {
+  return make_scoped_ptr(new LocalFileSyncService(profile, NULL));
+}
+
+scoped_ptr<LocalFileSyncService> LocalFileSyncService::CreateForTesting(
+    Profile* profile,
+    leveldb::Env* env) {
+  return make_scoped_ptr(new LocalFileSyncService(profile, env));
 }
 
 LocalFileSyncService::~LocalFileSyncService() {
@@ -141,7 +141,6 @@ void LocalFileSyncService::RegisterURLForWaitingSync(
 
 void LocalFileSyncService::ProcessLocalChange(
     const SyncFileCallback& callback) {
-  DCHECK(local_change_processor_);
   // Pick an origin to process next.
   GURL origin;
   if (!origin_change_map_.NextOriginToProcess(&origin)) {
@@ -163,8 +162,13 @@ void LocalFileSyncService::ProcessLocalChange(
 }
 
 void LocalFileSyncService::SetLocalChangeProcessor(
-    LocalChangeProcessor* processor) {
-  local_change_processor_ = processor;
+    LocalChangeProcessor* local_change_processor) {
+  local_change_processor_ = local_change_processor;
+}
+
+void LocalFileSyncService::SetLocalChangeProcessorCallback(
+    const GetLocalChangeProcessorCallback& get_local_change_processor) {
+  get_local_change_processor_ = get_local_change_processor;
 }
 
 void LocalFileSyncService::HasPendingLocalChanges(
@@ -178,6 +182,12 @@ void LocalFileSyncService::HasPendingLocalChanges(
   }
   sync_context_->HasPendingLocalChanges(
       origin_to_contexts_[url.origin()], url, callback);
+}
+
+void LocalFileSyncService::PromoteDemotedChanges() {
+  for (OriginToContext::iterator iter = origin_to_contexts_.begin();
+       iter != origin_to_contexts_.end(); ++iter)
+    sync_context_->PromoteDemotedChanges(iter->first, iter->second);
 }
 
 void LocalFileSyncService::GetLocalFileMetadata(
@@ -214,7 +224,8 @@ void LocalFileSyncService::PrepareForProcessRemoteChange(
                    SyncFileMetadata(), FileChangeList());
       return;
     }
-    GURL site_url = extension_service->GetSiteForExtensionId(extension->id());
+    GURL site_url =
+        extensions::util::GetSiteForExtensionId(extension->id(), profile_);
     DCHECK(!site_url.is_empty());
     scoped_refptr<fileapi::FileSystemContext> file_system_context =
         content::BrowserContext::GetStoragePartitionForSite(
@@ -243,9 +254,16 @@ void LocalFileSyncService::ApplyRemoteChange(
     const FileSystemURL& url,
     const SyncStatusCallback& callback) {
   DCHECK(ContainsKey(origin_to_contexts_, url.origin()));
+  util::Log(logging::LOG_VERBOSE, FROM_HERE,
+            "[Remote -> Local] ApplyRemoteChange: %s on %s",
+            change.DebugString().c_str(),
+            url.DebugString().c_str());
+
   sync_context_->ApplyRemoteChange(
       origin_to_contexts_[url.origin()],
-      change, local_path, url, callback);
+      change, local_path, url,
+      base::Bind(&LocalFileSyncService::DidApplyRemoteChange, AsWeakPtr(),
+                 callback));
 }
 
 void LocalFileSyncService::FinalizeRemoteSync(
@@ -301,6 +319,20 @@ void LocalFileSyncService::SetOriginEnabled(const GURL& origin, bool enabled) {
   if (!ContainsKey(origin_to_contexts_, origin))
     return;
   origin_change_map_.SetOriginEnabled(origin, enabled);
+}
+
+LocalFileSyncService::LocalFileSyncService(Profile* profile,
+                                           leveldb::Env* env_override)
+    : profile_(profile),
+      sync_context_(new LocalFileSyncContext(
+          profile_->GetPath(),
+          env_override,
+          BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI).get(),
+          BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO)
+              .get())),
+      local_change_processor_(NULL) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  sync_context_->AddOriginChangeObserver(this);
 }
 
 void LocalFileSyncService::DidInitializeFileSystemContext(
@@ -359,6 +391,15 @@ void LocalFileSyncService::RunLocalSyncCallback(
   callback.Run(status, url);
 }
 
+void LocalFileSyncService::DidApplyRemoteChange(
+    const SyncStatusCallback& callback,
+    SyncStatusCode status) {
+  util::Log(logging::LOG_VERBOSE, FROM_HERE,
+            "[Remote -> Local] ApplyRemoteChange finished --> %s",
+            SyncStatusCodeToString(status));
+  callback.Run(status);
+}
+
 void LocalFileSyncService::DidGetFileForLocalSync(
     SyncStatusCode status,
     const LocalFileSyncInfo& sync_file_info,
@@ -380,7 +421,7 @@ void LocalFileSyncService::DidGetFileForLocalSync(
   DVLOG(1) << "ProcessLocalChange: " << sync_file_info.url.DebugString()
            << " change:" << next_change.DebugString();
 
-  local_change_processor_->ApplyLocalChange(
+  GetLocalChangeProcessor(sync_file_info.url)->ApplyLocalChange(
       next_change,
       sync_file_info.local_file_path,
       sync_file_info.metadata,
@@ -402,7 +443,7 @@ void LocalFileSyncService::ProcessNextChangeForURL(
            << " status:" << status;
 
   if (status == SYNC_STATUS_RETRY) {
-    local_change_processor_->ApplyLocalChange(
+    GetLocalChangeProcessor(sync_file_info.url)->ApplyLocalChange(
         processed_change,
         sync_file_info.local_file_path,
         sync_file_info.metadata,
@@ -430,7 +471,7 @@ void LocalFileSyncService::ProcessNextChangeForURL(
   }
 
   FileChange next_change = changes.front();
-  local_change_processor_->ApplyLocalChange(
+  GetLocalChangeProcessor(url)->ApplyLocalChange(
       changes.front(),
       sync_file_info.local_file_path,
       sync_file_info.metadata,
@@ -438,6 +479,14 @@ void LocalFileSyncService::ProcessNextChangeForURL(
       base::Bind(&LocalFileSyncService::ProcessNextChangeForURL,
                  AsWeakPtr(), base::Passed(&snapshot), sync_file_info,
                  next_change, changes.PopAndGetNewList()));
+}
+
+LocalChangeProcessor* LocalFileSyncService::GetLocalChangeProcessor(
+    const FileSystemURL& url) {
+  if (!get_local_change_processor_.is_null())
+    return get_local_change_processor_.Run(url.origin());
+  DCHECK(local_change_processor_);
+  return local_change_processor_;
 }
 
 }  // namespace sync_file_system

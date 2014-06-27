@@ -23,11 +23,11 @@
 #include "third_party/WebKit/public/web/WebDataSource.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebElement.h"
+#include "third_party/WebKit/public/web/WebElementCollection.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
 #include "third_party/WebKit/public/web/WebHitTestResult.h"
 #include "third_party/WebKit/public/web/WebImageCache.h"
 #include "third_party/WebKit/public/web/WebNode.h"
-#include "third_party/WebKit/public/web/WebNodeList.h"
 #include "third_party/WebKit/public/web/WebSecurityOrigin.h"
 #include "third_party/WebKit/public/web/WebView.h"
 #include "url/url_canon.h"
@@ -37,39 +37,30 @@ namespace android_webview {
 
 namespace {
 
-bool AllowMixedContent(const WebKit::WebURL& url) {
-  // We treat non-standard schemes as "secure" in the WebView to allow them to
-  // be used for request interception.
-  // TODO(benm): Tighten this restriction by requiring embedders to register
-  // their custom schemes? See b/9420953.
-  GURL gurl(url);
-  return !gurl.IsStandard();
-}
-
-GURL GetAbsoluteUrl(const WebKit::WebNode& node, const string16& url_fragment) {
+GURL GetAbsoluteUrl(const blink::WebNode& node,
+                    const base::string16& url_fragment) {
   return GURL(node.document().completeURL(url_fragment));
 }
 
-string16 GetHref(const WebKit::WebElement& element) {
+base::string16 GetHref(const blink::WebElement& element) {
   // Get the actual 'href' attribute, which might relative if valid or can
   // possibly contain garbage otherwise, so not using absoluteLinkURL here.
   return element.getAttribute("href");
 }
 
-GURL GetAbsoluteSrcUrl(const WebKit::WebElement& element) {
+GURL GetAbsoluteSrcUrl(const blink::WebElement& element) {
   if (element.isNull())
     return GURL();
   return GetAbsoluteUrl(element, element.getAttribute("src"));
 }
 
-WebKit::WebNode GetImgChild(const WebKit::WebNode& node) {
+blink::WebElement GetImgChild(const blink::WebElement& element) {
   // This implementation is incomplete (for example if is an area tag) but
   // matches the original WebViewClassic implementation.
 
-  WebKit::WebNodeList list = node.getElementsByTagName("img");
-  if (list.length() > 0)
-    return list.item(0);
-  return WebKit::WebNode();
+  blink::WebElementCollection collection = element.getElementsByTagName("img");
+  DCHECK(!collection.isNull());
+  return collection.firstItem();
 }
 
 bool RemovePrefixAndAssignIfMatches(const base::StringPiece& prefix,
@@ -81,8 +72,8 @@ bool RemovePrefixAndAssignIfMatches(const base::StringPiece& prefix,
     url_canon::RawCanonOutputW<1024> output;
     url_util::DecodeURLEscapeSequences(spec.data() + prefix.length(),
         spec.length() - prefix.length(), &output);
-    std::string decoded_url = UTF16ToUTF8(
-        string16(output.data(), output.length()));
+    std::string decoded_url = base::UTF16ToUTF8(
+        base::string16(output.data(), output.length()));
     dest->assign(decoded_url.begin(), decoded_url.end());
     return true;
   }
@@ -108,6 +99,8 @@ void DistinguishAndAssignSrcLinkType(const GURL& url, AwHitTestData* data) {
   } else {
     data->type = AwHitTestData::SRC_LINK_TYPE;
     data->extra_data_for_type = url.possibly_invalid_spec();
+    if (!data->extra_data_for_type.empty())
+      data->href = base::UTF8ToUTF16(data->extra_data_for_type);
   }
 }
 
@@ -132,6 +125,8 @@ void PopulateHitTestData(const GURL& absolute_link_url,
   } else if (has_link_url && has_image_url && !is_javascript_scheme) {
     data->type = AwHitTestData::SRC_IMAGE_LINK_TYPE;
     data->extra_data_for_type = data->img_src.possibly_invalid_spec();
+    if (absolute_link_url.is_valid())
+      data->href = base::UTF8ToUTF16(absolute_link_url.possibly_invalid_spec());
   } else if (!has_link_url && has_image_url) {
     data->type = AwHitTestData::IMAGE_TYPE;
     data->extra_data_for_type = data->img_src.possibly_invalid_spec();
@@ -145,7 +140,6 @@ void PopulateHitTestData(const GURL& absolute_link_url,
 
 AwRenderViewExt::AwRenderViewExt(content::RenderView* render_view)
     : content::RenderViewObserver(render_view), page_scale_factor_(0.0f) {
-  render_view->GetWebView()->setPermissionClient(this);
 }
 
 AwRenderViewExt::~AwRenderViewExt() {
@@ -175,9 +169,9 @@ bool AwRenderViewExt::OnMessageReceived(const IPC::Message& message) {
 void AwRenderViewExt::OnDocumentHasImagesRequest(int id) {
   bool hasImages = false;
   if (render_view()) {
-    WebKit::WebView* webview = render_view()->GetWebView();
+    blink::WebView* webview = render_view()->GetWebView();
     if (webview) {
-      WebKit::WebVector<WebKit::WebElement> images;
+      blink::WebVector<blink::WebElement> images;
       webview->mainFrame()->document().images(images);
       hasImages = !images.isEmpty();
     }
@@ -186,28 +180,12 @@ void AwRenderViewExt::OnDocumentHasImagesRequest(int id) {
                                                    hasImages));
 }
 
-bool AwRenderViewExt::allowDisplayingInsecureContent(
-      WebKit::WebFrame* frame,
-      bool enabled_per_settings,
-      const WebKit::WebSecurityOrigin& origin,
-      const WebKit::WebURL& url) {
-  return enabled_per_settings ? true : AllowMixedContent(url);
-}
-
-bool AwRenderViewExt::allowRunningInsecureContent(
-      WebKit::WebFrame* frame,
-      bool enabled_per_settings,
-      const WebKit::WebSecurityOrigin& origin,
-      const WebKit::WebURL& url) {
-  return enabled_per_settings ? true : AllowMixedContent(url);
-}
-
-void AwRenderViewExt::DidCommitProvisionalLoad(WebKit::WebFrame* frame,
+void AwRenderViewExt::DidCommitProvisionalLoad(blink::WebFrame* frame,
                                                bool is_new_navigation) {
   content::DocumentState* document_state =
       content::DocumentState::FromDataSource(frame->dataSource());
   if (document_state->can_load_local_resources()) {
-    WebKit::WebSecurityOrigin origin = frame->document().securityOrigin();
+    blink::WebSecurityOrigin origin = frame->document().securityOrigin();
     origin.grantLoadLocalResources();
   }
 }
@@ -239,7 +217,7 @@ void AwRenderViewExt::CheckContentsSize() {
 
   gfx::Size contents_size;
 
-  WebKit::WebFrame* main_frame = render_view()->GetWebView()->mainFrame();
+  blink::WebFrame* main_frame = render_view()->GetWebView()->mainFrame();
   if (main_frame)
     contents_size = main_frame->contentsSize();
 
@@ -264,15 +242,15 @@ void AwRenderViewExt::Navigate(const GURL& url) {
   // the browser side (in RenderViewHostManger), to the IPCmessages and to the
   // RenderViewObserver. Thus, clearing decoding image cache on Navigate, seems
   // a more acceptable compromise.
-  WebKit::WebImageCache::clear();
+  blink::WebImageCache::clear();
 }
 
-void AwRenderViewExt::FocusedNodeChanged(const WebKit::WebNode& node) {
+void AwRenderViewExt::FocusedNodeChanged(const blink::WebNode& node) {
   if (node.isNull() || !node.isElementNode() || !render_view())
     return;
 
   // Note: element is not const due to innerText() is not const.
-  WebKit::WebElement element = node.toConst<WebKit::WebElement>();
+  blink::WebElement element = node.toConst<blink::WebElement>();
   AwHitTestData data;
 
   data.href = GetHref(element);
@@ -283,10 +261,10 @@ void AwRenderViewExt::FocusedNodeChanged(const WebKit::WebNode& node) {
     absolute_link_url = GetAbsoluteUrl(node, data.href);
 
   GURL absolute_image_url;
-  const WebKit::WebNode child_img = GetImgChild(node);
-  if (!child_img.isNull() && child_img.isElementNode()) {
+  const blink::WebElement child_img = GetImgChild(element);
+  if (!child_img.isNull()) {
     absolute_image_url =
-        GetAbsoluteSrcUrl(child_img.toConst<WebKit::WebElement>());
+        GetAbsoluteSrcUrl(child_img);
   }
 
   PopulateHitTestData(absolute_link_url,
@@ -300,9 +278,9 @@ void AwRenderViewExt::OnDoHitTest(int view_x, int view_y) {
   if (!render_view() || !render_view()->GetWebView())
     return;
 
-  const WebKit::WebHitTestResult result =
+  const blink::WebHitTestResult result =
       render_view()->GetWebView()->hitTestResultAt(
-          WebKit::WebPoint(view_x, view_y));
+          blink::WebPoint(view_x, view_y));
   AwHitTestData data;
 
   if (!result.urlElement().isNull()) {

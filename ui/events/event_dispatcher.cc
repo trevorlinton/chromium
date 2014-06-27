@@ -6,6 +6,9 @@
 
 #include <algorithm>
 
+#include "ui/events/event_target.h"
+#include "ui/events/event_targeter.h"
+
 namespace ui {
 
 namespace {
@@ -40,7 +43,42 @@ Event* EventDispatcherDelegate::current_event() {
   return dispatcher_ ? dispatcher_->current_event() : NULL;
 }
 
-bool EventDispatcherDelegate::DispatchEvent(EventTarget* target, Event* event) {
+EventDispatchDetails EventDispatcherDelegate::DispatchEvent(EventTarget* target,
+                                                            Event* event) {
+  CHECK(target);
+  Event::DispatcherApi dispatch_helper(event);
+  dispatch_helper.set_phase(EP_PREDISPATCH);
+  dispatch_helper.set_result(ER_UNHANDLED);
+
+  EventDispatchDetails details = PreDispatchEvent(target, event);
+  if (!event->handled() &&
+      !details.dispatcher_destroyed &&
+      !details.target_destroyed) {
+    details = DispatchEventToTarget(target, event);
+  }
+  bool target_destroyed_during_dispatch = details.target_destroyed;
+  if (!details.dispatcher_destroyed) {
+    details = PostDispatchEvent(target_destroyed_during_dispatch ?
+        NULL : target, *event);
+  }
+
+  details.target_destroyed |= target_destroyed_during_dispatch;
+  return details;
+}
+
+EventDispatchDetails EventDispatcherDelegate::PreDispatchEvent(
+    EventTarget* target, Event* event) {
+  return EventDispatchDetails();
+}
+
+EventDispatchDetails EventDispatcherDelegate::PostDispatchEvent(
+    EventTarget* target, const Event& event) {
+  return EventDispatchDetails();
+}
+
+EventDispatchDetails EventDispatcherDelegate::DispatchEventToTarget(
+    EventTarget* target,
+    Event* event) {
   EventDispatcher* old_dispatcher = dispatcher_;
   EventDispatcher dispatcher(this);
   dispatcher_ = &dispatcher;
@@ -50,8 +88,15 @@ bool EventDispatcherDelegate::DispatchEvent(EventTarget* target, Event* event) {
   else if (old_dispatcher)
     old_dispatcher->OnDispatcherDelegateDestroyed();
 
-  return !dispatcher.delegate_destroyed();
+  EventDispatchDetails details;
+  details.dispatcher_destroyed = dispatcher.delegate_destroyed();
+  details.target_destroyed =
+      (!details.dispatcher_destroyed && !CanDispatchToTarget(target));
+  return details;
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// EventDispatcher:
 
 EventDispatcher::EventDispatcher(EventDispatcherDelegate* delegate)
     : delegate_(delegate),

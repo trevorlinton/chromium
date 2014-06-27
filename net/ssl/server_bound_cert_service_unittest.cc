@@ -50,18 +50,6 @@ class FailingTaskRunner : public base::TaskRunner {
   DISALLOW_COPY_AND_ASSIGN(FailingTaskRunner);
 };
 
-class ServerBoundCertServiceTest : public testing::Test {
- public:
-  ServerBoundCertServiceTest()
-      : service_(new ServerBoundCertService(
-            new DefaultServerBoundCertStore(NULL),
-            base::MessageLoopProxy::current())) {
-  }
-
- protected:
-  scoped_ptr<ServerBoundCertService> service_;
-};
-
 class MockServerBoundCertStoreWithAsyncGet
     : public DefaultServerBoundCertStore {
  public:
@@ -128,6 +116,18 @@ MockServerBoundCertStoreWithAsyncGet::CallGetServerBoundCertCallbackWithResult(
                                                     cert));
 }
 
+class ServerBoundCertServiceTest : public testing::Test {
+ public:
+  ServerBoundCertServiceTest()
+      : service_(new ServerBoundCertService(
+            new DefaultServerBoundCertStore(NULL),
+            base::MessageLoopProxy::current())) {
+  }
+
+ protected:
+  scoped_ptr<ServerBoundCertService> service_;
+};
+
 TEST_F(ServerBoundCertServiceTest, GetDomainForHost) {
   EXPECT_EQ("google.com",
             ServerBoundCertService::GetDomainForHost("google.com"));
@@ -146,9 +146,6 @@ TEST_F(ServerBoundCertServiceTest, GetDomainForHost) {
   EXPECT_EQ("127.0.0.1",
             ServerBoundCertService::GetDomainForHost("127.0.0.1"));
 }
-
-// See http://crbug.com/91512 - implement OpenSSL version of CreateSelfSigned.
-#if !defined(USE_OPENSSL)
 
 TEST_F(ServerBoundCertServiceTest, GetCacheMiss) {
   std::string host("encrypted.google.com");
@@ -771,8 +768,6 @@ TEST_F(ServerBoundCertServiceTest, AsyncStoreGetThenCreateNoCertsInStore) {
   EXPECT_FALSE(request_handle1.is_active());
   EXPECT_FALSE(request_handle2.is_active());
 }
-
-#endif  // !defined(USE_OPENSSL)
 
 }  // namespace
 

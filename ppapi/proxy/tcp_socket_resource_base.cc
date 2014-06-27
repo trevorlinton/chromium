@@ -84,7 +84,8 @@ int32_t TCPSocketResourceBase::BindImpl(
       BROWSER,
       PpapiHostMsg_TCPSocket_Bind(*addr),
       base::Bind(&TCPSocketResourceBase::OnPluginMsgBindReply,
-                 base::Unretained(this)));
+                 base::Unretained(this)),
+      callback);
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -106,7 +107,8 @@ int32_t TCPSocketResourceBase::ConnectImpl(
       BROWSER,
       PpapiHostMsg_TCPSocket_Connect(host, port),
       base::Bind(&TCPSocketResourceBase::OnPluginMsgConnectReply,
-                 base::Unretained(this)));
+                 base::Unretained(this)),
+      callback);
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -127,7 +129,8 @@ int32_t TCPSocketResourceBase::ConnectWithNetAddressImpl(
       BROWSER,
       PpapiHostMsg_TCPSocket_ConnectWithNetAddress(*addr),
       base::Bind(&TCPSocketResourceBase::OnPluginMsgConnectReply,
-                 base::Unretained(this)));
+                 base::Unretained(this)),
+      callback);
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -172,7 +175,8 @@ int32_t TCPSocketResourceBase::SSLHandshakeImpl(
                                           trusted_certificates_,
                                           untrusted_certificates_),
       base::Bind(&TCPSocketResourceBase::OnPluginMsgSSLHandshakeReply,
-                 base::Unretained(this)));
+                 base::Unretained(this)),
+      callback);
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -185,32 +189,13 @@ PP_Resource TCPSocketResourceBase::GetServerCertificateImpl() {
 PP_Bool TCPSocketResourceBase::AddChainBuildingCertificateImpl(
     PP_Resource certificate,
     PP_Bool trusted) {
-  // TODO(raymes): The plumbing for this functionality is implemented but the
-  // certificates aren't yet used for the connection, so just return false for
-  // now.
+  // TODO(raymes): This is exposed in the private PPB_TCPSocket_Private
+  // interface for Flash but isn't currently implemented due to security
+  // implications. It is exposed so that it can be hooked up on the Flash side
+  // and if we decide to implement it we can do so without modifying the Flash
+  // codebase.
+  NOTIMPLEMENTED();
   return PP_FALSE;
-
-  thunk::EnterResourceNoLock<thunk::PPB_X509Certificate_Private_API>
-  enter_cert(certificate, true);
-  if (enter_cert.failed())
-    return PP_FALSE;
-
-  PP_Var der_var = enter_cert.object()->GetField(
-      PP_X509CERTIFICATE_PRIVATE_RAW);
-  ArrayBufferVar* der_array_buffer = ArrayBufferVar::FromPPVar(der_var);
-  PP_Bool success = PP_FALSE;
-  if (der_array_buffer) {
-    const char* der_bytes = static_cast<const char*>(der_array_buffer->Map());
-    uint32_t der_length = der_array_buffer->ByteLength();
-    std::vector<char> der(der_bytes, der_bytes + der_length);
-    if (PP_ToBool(trusted))
-      trusted_certificates_.push_back(der);
-    else
-      untrusted_certificates_.push_back(der);
-    success = PP_TRUE;
-  }
-  PpapiGlobals::Get()->GetVarTracker()->ReleaseVar(der_var);
-  return success;
 }
 
 int32_t TCPSocketResourceBase::ReadImpl(
@@ -233,7 +218,8 @@ int32_t TCPSocketResourceBase::ReadImpl(
       BROWSER,
       PpapiHostMsg_TCPSocket_Read(bytes_to_read_),
       base::Bind(&TCPSocketResourceBase::OnPluginMsgReadReply,
-                 base::Unretained(this)));
+                 base::Unretained(this)),
+      callback);
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -259,7 +245,8 @@ int32_t TCPSocketResourceBase::WriteImpl(
       BROWSER,
       PpapiHostMsg_TCPSocket_Write(std::string(buffer, bytes_to_write)),
       base::Bind(&TCPSocketResourceBase::OnPluginMsgWriteReply,
-                 base::Unretained(this)));
+                 base::Unretained(this)),
+      callback);
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -280,7 +267,8 @@ int32_t TCPSocketResourceBase::ListenImpl(
       BROWSER,
       PpapiHostMsg_TCPSocket_Listen(backlog),
       base::Bind(&TCPSocketResourceBase::OnPluginMsgListenReply,
-                 base::Unretained(this)));
+                 base::Unretained(this)),
+      callback);
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -301,7 +289,8 @@ int32_t TCPSocketResourceBase::AcceptImpl(
       BROWSER,
       PpapiHostMsg_TCPSocket_Accept(),
       base::Bind(&TCPSocketResourceBase::OnPluginMsgAcceptReply,
-                 base::Unretained(this)));
+                 base::Unretained(this)),
+      callback);
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -363,7 +352,8 @@ int32_t TCPSocketResourceBase::SetOptionImpl(
       BROWSER,
       PpapiHostMsg_TCPSocket_SetOption(name, option_data),
       base::Bind(&TCPSocketResourceBase::OnPluginMsgSetOptionReply,
-                 base::Unretained(this)));
+                 base::Unretained(this)),
+      callback);
   return PP_OK_COMPLETIONPENDING;
 }
 

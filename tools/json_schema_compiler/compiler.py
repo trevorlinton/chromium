@@ -26,18 +26,20 @@ from cpp_type_generator import CppTypeGenerator
 from dart_generator import DartGenerator
 import json_schema
 from model import Model
+from ppapi_generator import PpapiGenerator
 from schema_loader import SchemaLoader
 
 # Names of supported code generators, as specified on the command-line.
 # First is default.
-GENERATORS = ['cpp', 'cpp-bundle', 'dart']
+GENERATORS = ['cpp', 'cpp-bundle', 'dart', 'ppapi']
 
 def GenerateSchema(generator,
                    filenames,
                    root,
                    destdir,
                    root_namespace,
-                   dart_overrides_dir):
+                   dart_overrides_dir,
+                   impl_dir):
   schema_loader = SchemaLoader(
       os.path.dirname(os.path.relpath(os.path.normpath(filenames[0]), root)),
       os.path.dirname(filenames[0]))
@@ -70,13 +72,6 @@ def GenerateSchema(generator,
     path, filename = os.path.split(schema_filename)
     short_filename, extension = os.path.splitext(filename)
 
-    # Filenames are checked against the unix_names of the namespaces they
-    # generate because the gyp uses the names of the JSON files to generate
-    # the names of the .cc and .h files. We want these to be using unix_names.
-    if namespace.unix_name != short_filename:
-      sys.exit("Filename %s is illegal. Name files using unix_hacker style." %
-               schema_filename)
-
   # Construct the type generator with all the namespaces in this model.
   type_generator = CppTypeGenerator(api_model,
                                     schema_loader,
@@ -87,7 +82,9 @@ def GenerateSchema(generator,
                                               api_model,
                                               api_defs,
                                               type_generator,
-                                              root_namespace)
+                                              root_namespace,
+                                              namespace.source_file_dir,
+                                              impl_dir)
     generators = [
       ('generated_api.cc', cpp_bundle_generator.api_cc_generator),
       ('generated_api.h', cpp_bundle_generator.api_h_generator),
@@ -97,13 +94,19 @@ def GenerateSchema(generator,
   elif generator == 'cpp':
     cpp_generator = CppGenerator(type_generator, root_namespace)
     generators = [
-      ('%s.h' % namespace.unix_name, cpp_generator.h_generator),
-      ('%s.cc' % namespace.unix_name, cpp_generator.cc_generator)
+      ('%s.h' % short_filename, cpp_generator.h_generator),
+      ('%s.cc' % short_filename, cpp_generator.cc_generator)
     ]
   elif generator == 'dart':
     generators = [
       ('%s.dart' % namespace.unix_name, DartGenerator(
           dart_overrides_dir))
+    ]
+  elif generator == 'ppapi':
+    generator = PpapiGenerator()
+    generators = [
+      (os.path.join('api', 'ppb_%s.idl' % namespace.unix_name),
+       generator.idl_generator),
     ]
   else:
     raise Exception('Unrecognised generator %s' % generator)
@@ -137,6 +140,8 @@ if __name__ == '__main__':
       ' %s' % GENERATORS)
   parser.add_option('-D', '--dart-overrides-dir', dest='dart_overrides_dir',
       help='Adds custom dart from files in the given directory (Dart only).')
+  parser.add_option('-i', '--impl-dir', dest='impl_dir',
+      help='The root path of all API implementations')
 
   (opts, filenames) = parser.parse_args()
 
@@ -150,6 +155,7 @@ if __name__ == '__main__':
         "Unless in bundle mode, only one file can be specified at a time.")
 
   result = GenerateSchema(opts.generator, filenames, opts.root, opts.destdir,
-                          opts.namespace, opts.dart_overrides_dir)
+                          opts.namespace, opts.dart_overrides_dir,
+                          opts.impl_dir)
   if not opts.destdir:
     print result

@@ -13,6 +13,7 @@
 #include "chrome/browser/spellchecker/spellcheck_host_metrics.h"
 #include "chrome/browser/spellchecker/spellcheck_hunspell_dictionary.h"
 #include "chrome/browser/spellchecker/spellcheck_platform_mac.h"
+#include "chrome/browser/spellchecker/spelling_service_client.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/spellcheck_messages.h"
 #include "components/user_prefs/user_prefs.h"
@@ -167,19 +168,8 @@ void SpellcheckService::InitForRenderer(content::RenderProcessHost* process) {
 
   if (hunspell_dictionary_->GetDictionaryFile() !=
       base::kInvalidPlatformFileValue) {
-#if defined(OS_POSIX)
-    file = base::FileDescriptor(hunspell_dictionary_->GetDictionaryFile(),
-                                false);
-#elif defined(OS_WIN)
-    BOOL ok = ::DuplicateHandle(::GetCurrentProcess(),
-                                hunspell_dictionary_->GetDictionaryFile(),
-                                process->GetHandle(),
-                                &file,
-                                0,
-                                false,
-                                DUPLICATE_SAME_ACCESS);
-    DCHECK(ok) << ::GetLastError();
-#endif
+    file = IPC::GetFileHandleForProcess(
+        hunspell_dictionary_->GetDictionaryFile(), process->GetHandle(), false);
   }
 
   process->Send(new SpellCheckMsg_Init(
@@ -307,6 +297,7 @@ void SpellcheckService::OnSpellCheckDictionaryChanged() {
   chrome::spellcheck_common::GetISOLanguageCountryCodeFromLocale(
       dictionary, &language_code, &country_code);
   feedback_sender_->OnLanguageCountryChange(language_code, country_code);
+  UpdateFeedbackSenderState();
 }
 
 void SpellcheckService::OnUseSpellingServiceChanged() {
@@ -314,4 +305,14 @@ void SpellcheckService::OnUseSpellingServiceChanged() {
       prefs::kSpellCheckUseSpellingService);
   if (metrics_)
     metrics_->RecordSpellingServiceStats(enabled);
+  UpdateFeedbackSenderState();
+}
+
+void SpellcheckService::UpdateFeedbackSenderState() {
+  if (SpellingServiceClient::IsAvailable(
+          context_, SpellingServiceClient::SPELLCHECK)) {
+    feedback_sender_->StartFeedbackCollection();
+  } else {
+    feedback_sender_->StopFeedbackCollection();
+  }
 }

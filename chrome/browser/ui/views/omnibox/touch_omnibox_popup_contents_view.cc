@@ -11,13 +11,14 @@
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/path.h"
 #include "ui/gfx/rect.h"
+#include "ui/gfx/render_text.h"
 #include "ui/gfx/size.h"
 #include "ui/views/view.h"
 
 // TouchOmniboxResultView ------------------------------------------------
 
 TouchOmniboxResultView::TouchOmniboxResultView(
-    OmniboxResultViewModel* model,
+    OmniboxPopupContentsView* model,
     int model_index,
     LocationBarView* location_bar_view,
     const gfx::FontList& font_list)
@@ -30,23 +31,25 @@ TouchOmniboxResultView::TouchOmniboxResultView(
 TouchOmniboxResultView::~TouchOmniboxResultView() {
 }
 
-void TouchOmniboxResultView::PaintMatch(gfx::Canvas* canvas,
-                                        const AutocompleteMatch& match,
-                                        int x) {
+void TouchOmniboxResultView::PaintMatch(
+    const AutocompleteMatch& match,
+    gfx::RenderText* contents,
+    gfx::RenderText* description,
+    gfx::Canvas* canvas,
+    int x) const {
   int y = text_bounds().y();
 
   if (!match.description.empty()) {
     // We use our base class's GetTextHeight below because we need the height
     // of a single line of text.
-    DrawString(canvas, match.description, match.description_class, true, x, y);
+    DrawRenderText(match, description, false, canvas, x, y, -1);
     y += OmniboxResultView::GetTextHeight();
   } else {
     // When we have only one line of content (no description), we center the
     // single line vertically on our two-lines-tall results box.
     y += OmniboxResultView::GetTextHeight() / 2;
   }
-
-  DrawString(canvas, match.contents, match.contents_class, false, x, y);
+  DrawRenderText(match, contents, true, canvas, x, y, -1);
 }
 
 int TouchOmniboxResultView::GetTextHeight() const {
@@ -100,10 +103,9 @@ void TouchOmniboxPopupContentsView::PaintResultViews(gfx::Canvas* canvas) {
 }
 
 OmniboxResultView* TouchOmniboxPopupContentsView::CreateResultView(
-    OmniboxResultViewModel* model,
     int model_index,
     const gfx::FontList& font_list) {
-  return new TouchOmniboxResultView(model, model_index, location_bar_view(),
+  return new TouchOmniboxResultView(this, model_index, location_bar_view(),
                                     font_list);
 }
 

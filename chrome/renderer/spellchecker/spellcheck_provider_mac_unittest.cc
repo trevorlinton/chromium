@@ -23,7 +23,7 @@ struct MessageParameters {
 
   int router_id;
   int request_id;
-  string16 text;
+  base::string16 text;
   std::vector<SpellCheckMarker> markers;
 };
 
@@ -53,7 +53,7 @@ void FakeMessageArrival(SpellCheckProvider* provider,
 TEST_F(SpellCheckProviderMacTest, SingleRoundtripSuccess) {
   FakeTextCheckingCompletion completion;
 
-  provider_.RequestTextChecking(WebKit::WebString("hello "),
+  provider_.RequestTextChecking(blink::WebString("hello "),
                                 &completion,
                                 std::vector<SpellCheckMarker>());
   EXPECT_EQ(completion.completion_count_, 0U);
@@ -62,7 +62,7 @@ TEST_F(SpellCheckProviderMacTest, SingleRoundtripSuccess) {
 
   MessageParameters read_parameters =
       ReadRequestTextCheck(provider_.messages_[0]);
-  EXPECT_EQ(read_parameters.text, UTF8ToUTF16("hello "));
+  EXPECT_EQ(read_parameters.text, base::UTF8ToUTF16("hello "));
 
   FakeMessageArrival(&provider_, read_parameters);
   EXPECT_EQ(completion.completion_count_, 1U);
@@ -71,11 +71,11 @@ TEST_F(SpellCheckProviderMacTest, SingleRoundtripSuccess) {
 
 TEST_F(SpellCheckProviderMacTest, TwoRoundtripSuccess) {
   FakeTextCheckingCompletion completion1;
-  provider_.RequestTextChecking(WebKit::WebString("hello "),
+  provider_.RequestTextChecking(blink::WebString("hello "),
                                 &completion1,
                                 std::vector<SpellCheckMarker>());
   FakeTextCheckingCompletion completion2;
-  provider_.RequestTextChecking(WebKit::WebString("bye "),
+  provider_.RequestTextChecking(blink::WebString("bye "),
                                 &completion2,
                                 std::vector<SpellCheckMarker>());
 
@@ -86,11 +86,11 @@ TEST_F(SpellCheckProviderMacTest, TwoRoundtripSuccess) {
 
   MessageParameters read_parameters1 =
       ReadRequestTextCheck(provider_.messages_[0]);
-  EXPECT_EQ(read_parameters1.text, UTF8ToUTF16("hello "));
+  EXPECT_EQ(read_parameters1.text, base::UTF8ToUTF16("hello "));
 
   MessageParameters read_parameters2 =
       ReadRequestTextCheck(provider_.messages_[1]);
-  EXPECT_EQ(read_parameters2.text, UTF8ToUTF16("bye "));
+  EXPECT_EQ(read_parameters2.text, base::UTF8ToUTF16("bye "));
 
   FakeMessageArrival(&provider_, read_parameters1);
   EXPECT_EQ(completion1.completion_count_, 1U);

@@ -7,6 +7,7 @@ import os.path
 from json_parse import OrderedDict
 from memoize import memoize
 
+
 class ParseException(Exception):
   """Thrown when data in the model is invalid.
   """
@@ -15,6 +16,7 @@ class ParseException(Exception):
     hierarchy.append(message)
     Exception.__init__(
         self, 'Model parse exception at:\n' + '\n'.join(hierarchy))
+
 
 class Model(object):
   """Model of all namespaces that comprise an API.
@@ -34,12 +36,52 @@ class Model(object):
     self.namespaces[namespace.name] = namespace
     return namespace
 
+
+def CreateFeature(name, model):
+  if isinstance(model, dict):
+    return SimpleFeature(name, model)
+  return ComplexFeature(name, [SimpleFeature(name, child) for child in model])
+
+
+class ComplexFeature(object):
+  """A complex feature which may be made of several simple features.
+
+  Properties:
+  - |name| the name of the feature
+  - |unix_name| the unix_name of the feature
+  - |feature_list| a list of simple features which make up the feature
+  """
+  def __init__(self, feature_name, features):
+    self.name = feature_name
+    self.unix_name = UnixName(self.name)
+    self.feature_list = features
+
+class SimpleFeature(object):
+  """A simple feature, which can make up a complex feature, as specified in
+  files such as chrome/common/extensions/api/_permission_features.json.
+
+  Properties:
+  - |name| the name of the feature
+  - |unix_name| the unix_name of the feature
+  - |channel| the channel where the feature is released
+  - |extension_types| the types which can use the feature
+  - |whitelist| a list of extensions allowed to use the feature
+  """
+  def __init__(self, feature_name, feature_def):
+    self.name = feature_name
+    self.unix_name = UnixName(self.name)
+    self.channel = feature_def['channel']
+    self.extension_types = feature_def['extension_types']
+    self.whitelist = feature_def.get('whitelist')
+
+
 class Namespace(object):
   """An API namespace.
 
   Properties:
   - |name| the name of the namespace
   - |description| the description of the namespace
+  - |deprecated| a reason and possible alternative for a deprecated api
   - |unix_name| the unix_name of the namespace
   - |source_file| the file that contained the namespace definition
   - |source_file_dir| the directory component of |source_file|
@@ -61,9 +103,11 @@ class Namespace(object):
                        'on the API summary page.' % self.name)
       json['description'] = ''
     self.description = json['description']
+    self.deprecated = json.get('deprecated', None)
     self.unix_name = UnixName(self.name)
     self.source_file = source_file
     self.source_file_dir, self.source_file_filename = os.path.split(source_file)
+    self.short_filename = os.path.basename(source_file).split('.')[0]
     self.parent = None
     self.platforms = _GetPlatforms(json)
     toplevel_origin = Origin(from_client=True, from_json=True)
@@ -71,9 +115,12 @@ class Namespace(object):
     self.functions = _GetFunctions(self, json, self)
     self.events = _GetEvents(self, json, self)
     self.properties = _GetProperties(self, json, self, toplevel_origin)
-    self.compiler_options = (json.get('compiler_options', {})
-        if include_compiler_options else {})
+    if include_compiler_options:
+      self.compiler_options = json.get('compiler_options', {})
+    else:
+      self.compiler_options = {}
     self.documentation_options = json.get('documentation_options', {})
+
 
 class Origin(object):
   """Stores the possible origin of model object as a pair of bools. These are:
@@ -92,6 +139,7 @@ class Origin(object):
       raise ValueError('One of from_client or from_json must be true')
     self.from_client = from_client
     self.from_json = from_json
+
 
 class Type(object):
   """A Type defined in the json.
@@ -142,6 +190,7 @@ class Type(object):
     elif 'enum' in json and json_type == 'string':
       self.property_type = PropertyType.ENUM
       self.enum_values = [EnumValue(value) for value in json['enum']]
+      self.cpp_omit_enum_type = 'cpp_omit_enum_type' in json
     elif json_type == 'any':
       self.property_type = PropertyType.ANY
     elif json_type == 'binary':
@@ -198,6 +247,7 @@ class Type(object):
       self.function = Function(self, function_name, json, namespace, origin)
     else:
       raise ParseException(self, 'Unsupported JSON type %s' % json_type)
+
 
 class Function(object):
   """A Function defined in the API.
@@ -272,6 +322,7 @@ class Function(object):
                           namespace,
                           origin)
 
+
 class Property(object):
   """A property of a type OR a parameter to a function.
   Properties:
@@ -282,6 +333,7 @@ class Property(object):
   - |description| a description of the property (if provided)
   - |type_| the model.Type of this property
   - |simple_name| the name of this Property without a namespace
+  - |deprecated| a reason and possible alternative for a deprecated property
   """
   def __init__(self, parent, name, json, namespace, origin):
     """Creates a Property from JSON.
@@ -295,6 +347,7 @@ class Property(object):
     self.description = json.get('description', None)
     self.optional = json.get('optional', None)
     self.instance_of = json.get('isInstanceOf', None)
+    self.deprecated = json.get('deprecated')
 
     # HACK: only support very specific value types.
     is_allowed_value = (
@@ -384,10 +437,12 @@ class _Enum(object):
   def __str__(self):
     return repr(self)
 
+
 class _PropertyTypeInfo(_Enum):
   def __init__(self, is_fundamental, name):
     _Enum.__init__(self, name)
     self.is_fundamental = is_fundamental
+
 
 class PropertyType(object):
   """Enum of different types of properties/parameters.
@@ -405,6 +460,7 @@ class PropertyType(object):
   OBJECT = _PropertyTypeInfo(False, "object")
   REF = _PropertyTypeInfo(False, "ref")
   STRING = _PropertyTypeInfo(True, "string")
+
 
 @memoize
 def UnixName(name):
@@ -427,10 +483,12 @@ def UnixName(name):
       unix_name.append(c.lower())
   return ''.join(unix_name)
 
+
 def _StripNamespace(name, namespace):
   if name.startswith(namespace.name + '.'):
     return name[len(namespace.name + '.'):]
   return name
+
 
 def _GetModelHierarchy(entity):
   """Returns the hierarchy of the given model entity."""
@@ -443,6 +501,7 @@ def _GetModelHierarchy(entity):
   hierarchy.reverse()
   return hierarchy
 
+
 def _GetTypes(parent, json, namespace, origin):
   """Creates Type objects extracted from |json|.
   """
@@ -451,6 +510,7 @@ def _GetTypes(parent, json, namespace, origin):
     type_ = Type(parent, type_json['id'], type_json, namespace, origin)
     types[type_.name] = type_
   return types
+
 
 def _GetFunctions(parent, json, namespace):
   """Creates Function objects extracted from |json|.
@@ -465,6 +525,7 @@ def _GetFunctions(parent, json, namespace):
     functions[function.name] = function
   return functions
 
+
 def _GetEvents(parent, json, namespace):
   """Creates Function objects generated from the events in |json|.
   """
@@ -478,6 +539,7 @@ def _GetEvents(parent, json, namespace):
     events[event.name] = event
   return events
 
+
 def _GetProperties(parent, json, namespace, origin):
   """Generates Property objects extracted from |json|.
   """
@@ -486,9 +548,11 @@ def _GetProperties(parent, json, namespace, origin):
     properties[name] = Property(parent, name, property_json, namespace, origin)
   return properties
 
+
 class _PlatformInfo(_Enum):
   def __init__(self, name):
     _Enum.__init__(self, name)
+
 
 class Platforms(object):
   """Enum of the possible platforms.
@@ -498,6 +562,7 @@ class Platforms(object):
   LINUX = _PlatformInfo("linux")
   MAC = _PlatformInfo("mac")
   WIN = _PlatformInfo("win")
+
 
 def _GetPlatforms(json):
   if 'platforms' not in json or json['platforms'] == None:

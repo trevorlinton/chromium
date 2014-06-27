@@ -49,6 +49,11 @@ const FieldTranslationEntry ipsec_fields[] = {
     { ::onc::ipsec::kServerCAPEMs, shill::kL2tpIpsecCaCertPemProperty},
     {NULL}};
 
+const FieldTranslationEntry xauth_fields[] = {
+    { ::onc::vpn::kPassword, shill::kL2tpIpsecXauthPasswordProperty},
+    { ::onc::vpn::kUsername, shill::kL2tpIpsecXauthUserProperty},
+    {NULL}};
+
 const FieldTranslationEntry l2tp_fields[] = {
     { ::onc::vpn::kPassword, shill::kL2tpIpsecPasswordProperty},
     // We don't synchronize l2tp's SaveCredentials field for now, as Shill
@@ -83,7 +88,14 @@ const FieldTranslationEntry openvpn_fields[] = {
     { ::onc::openvpn::kStaticChallenge, shill::kOpenVPNStaticChallengeProperty},
     { ::onc::openvpn::kTLSAuthContents, shill::kOpenVPNTLSAuthContentsProperty},
     { ::onc::openvpn::kTLSRemote, shill::kOpenVPNTLSRemoteProperty},
-    { ::onc::vpn::kUsername, shill::kOpenVPNUserProperty}, {NULL}};
+    { ::onc::vpn::kUsername, shill::kOpenVPNUserProperty},
+    { ::onc::openvpn::kVerifyHash, shill::kOpenVPNVerifyHashProperty},
+    {NULL}};
+
+const FieldTranslationEntry verify_x509_fields[] = {
+    { ::onc::verify_x509::kName, shill::kOpenVPNVerifyX509NameProperty},
+    { ::onc::verify_x509::kType, shill::kOpenVPNVerifyX509TypeProperty},
+    {NULL}};
 
 const FieldTranslationEntry vpn_fields[] = {
     { ::onc::vpn::kAutoConnect, shill::kAutoConnectProperty},
@@ -172,7 +184,9 @@ const OncValueTranslationEntry onc_value_translation_table[] = {
   { &kEAPSignature, eap_fields },
   { &kIPsecSignature, ipsec_fields },
   { &kL2TPSignature, l2tp_fields },
+  { &kXAUTHSignature, xauth_fields },
   { &kOpenVPNSignature, openvpn_fields },
+  { &kVerifyX509Signature, verify_x509_fields },
   { &kVPNSignature, vpn_fields },
   { &kWiFiSignature, wifi_fields },
   { &kWiFiWithStateSignature, wifi_fields },

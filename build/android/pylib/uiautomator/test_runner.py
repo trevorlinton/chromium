@@ -5,6 +5,7 @@
 """Class for running uiautomator tests on a single device."""
 
 from pylib import constants
+from pylib import flag_changer
 from pylib.instrumentation import test_options as instr_test_options
 from pylib.instrumentation import test_runner as instr_test_runner
 
@@ -12,8 +13,7 @@ from pylib.instrumentation import test_runner as instr_test_runner
 class TestRunner(instr_test_runner.TestRunner):
   """Responsible for running a series of tests connected to a single device."""
 
-  def __init__(self, test_options, device, shard_index, test_pkg,
-               ports_to_forward):
+  def __init__(self, test_options, device, shard_index, test_pkg):
     """Create a new TestRunner.
 
     Args:
@@ -21,8 +21,6 @@ class TestRunner(instr_test_runner.TestRunner):
       device: Attached android device.
       shard_index: Shard index.
       test_pkg: A TestPackage object.
-      ports_to_forward: A list of port numbers for which to set up forwarders.
-          Can be optionally requested by a test case.
     """
     # Create an InstrumentationOptions object to pass to the super class
     instrumentation_options = instr_test_options.InstrumentationOptions(
@@ -41,8 +39,12 @@ class TestRunner(instr_test_runner.TestRunner):
         test_apk_path=None,
         test_apk_jar_path=None)
     super(TestRunner, self).__init__(instrumentation_options, device,
-                                     shard_index, test_pkg, ports_to_forward)
+                                     shard_index, test_pkg)
 
+    cmdline_file = constants.PACKAGE_INFO[test_options.package].cmdline_file
+    self.flags = None
+    if cmdline_file:
+      self.flags = flag_changer.FlagChanger(self.adb, cmdline_file)
     self._package = constants.PACKAGE_INFO[test_options.package].package
     self._activity = constants.PACKAGE_INFO[test_options.package].activity
 
@@ -57,10 +59,11 @@ class TestRunner(instr_test_runner.TestRunner):
   #override
   def _RunTest(self, test, timeout):
     self.adb.ClearApplicationState(self._package)
-    if 'Feature:FirstRunExperience' in self.test_pkg.GetTestAnnotations(test):
-      self.flags.RemoveFlags(['--disable-fre'])
-    else:
-      self.flags.AddFlags(['--disable-fre'])
+    if self.flags:
+      if 'Feature:FirstRunExperience' in self.test_pkg.GetTestAnnotations(test):
+        self.flags.RemoveFlags(['--disable-fre'])
+      else:
+        self.flags.AddFlags(['--disable-fre'])
     self.adb.StartActivity(self._package,
                            self._activity,
                            wait_for_completion=True,

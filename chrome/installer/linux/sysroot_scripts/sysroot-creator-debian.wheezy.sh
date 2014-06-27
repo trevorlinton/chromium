@@ -31,11 +31,18 @@ readonly REQUIRED_TOOLS="wget"
 # Package Config
 ######################################################################
 
-# this is where we get all the debian packages from
+# This is where we get all the debian packages from.
 readonly DEBIAN_REPO=http://http.us.debian.org/debian
+readonly REPO_BASEDIR="${DEBIAN_REPO}/dists/wheezy"
 
-readonly PACKAGE_LIST_AMD64="${DEBIAN_REPO}/dists/wheezy/main/binary-amd64/Packages.bz2"
-readonly PACKAGE_LIST_I386="${DEBIAN_REPO}/dists/wheezy/main/binary-i386/Packages.bz2"
+readonly RELEASE_FILE="Release"
+readonly RELEASE_FILE_GPG="Release.gpg"
+readonly RELEASE_LIST="${REPO_BASEDIR}/${RELEASE_FILE}"
+readonly RELEASE_LIST_GPG="${REPO_BASEDIR}/${RELEASE_FILE_GPG}"
+readonly PACKAGE_FILE_AMD64="main/binary-amd64/Packages.bz2"
+readonly PACKAGE_FILE_I386="main/binary-i386/Packages.bz2"
+readonly PACKAGE_LIST_AMD64="${REPO_BASEDIR}/${PACKAGE_FILE_AMD64}"
+readonly PACKAGE_LIST_I386="${REPO_BASEDIR}/${PACKAGE_FILE_I386}"
 
 # Sysroot packages: these are the packages needed to build chrome.
 # NOTE: When DEBIAN_PACKAGES is modified, the packagelist files must be updated
@@ -66,6 +73,8 @@ readonly DEBIAN_PACKAGES="\
   libdbus-glib-1-2 \
   libelf1 \
   libelf-dev \
+  libexif12 \
+  libexif-dev \
   libexpat1 \
   libexpat1-dev \
   libffi5 \
@@ -312,6 +321,18 @@ CreateTarBall() {
   tar zcf ${tarball} -C ${INSTALL_ROOT} .
 }
 
+CheckBuildSysrootArgs() {
+  if [ "$#" -ne "1" ]; then
+    echo "ERROR: BuildSysroot commands only take 1 argument"
+    exit 1
+  fi
+
+  if [ -z "$1" ]; then
+    echo "ERROR: tarball name required"
+    exit 1
+  fi
+}
+
 ######################################################################
 #
 ######################################################################
@@ -430,11 +451,12 @@ CleanupJailSymlinks() {
 #@
 #@    Build everything and package it
 BuildSysrootAmd64() {
+  CheckBuildSysrootArgs $@
   ClearInstallDir
   InstallIntoSysroot ${DEBIAN_DEP_FILES_AMD64}
   CleanupJailSymlinks
   HacksAndPatchesAmd64
-  CreateTarBall $1
+  CreateTarBall "$1"
 }
 
 #@
@@ -442,11 +464,69 @@ BuildSysrootAmd64() {
 #@
 #@    Build everything and package it
 BuildSysrootI386() {
+  CheckBuildSysrootArgs $@
   ClearInstallDir
   InstallIntoSysroot ${DEBIAN_DEP_FILES_I386}
   CleanupJailSymlinks
   HacksAndPatchesI386
-  CreateTarBall $1
+  CreateTarBall "$1"
+}
+
+#
+# CheckForDebianGPGKeys
+#
+#     Make sure the Debian GPG keys exist. Otherwise print a helpful message.
+#
+CheckForDebianGPGKeys() {
+  if [ ! -e "/etc/apt/trusted.gpg.d/debian-archive-wheezy-automatic.gpg" ]  ||
+     [ ! -e "/etc/apt/trusted.gpg.d/debian-archive-wheezy-stable.gpg" ]; then
+    echo "Debian GPG keys missing. Install the debian-archive-keyring package."
+    exit 1
+  fi
+}
+
+#
+# VerifyPackageListing
+#
+#     Verifies the downloaded Packages.bz2 file has the right checksums.
+#
+VerifyPackageListing() {
+  local file_path=$1
+  local output_file=$2
+  local release_file="${TMP}/${RELEASE_FILE}"
+  local release_file_gpg="${TMP}/${RELEASE_FILE_GPG}"
+
+  CheckForDebianGPGKeys
+
+  DownloadOrCopy ${RELEASE_LIST} ${release_file}
+  DownloadOrCopy ${RELEASE_LIST_GPG} ${release_file_gpg}
+  echo "Verifying: ${release_file} with ${release_file_gpg}"
+  gpgv --keyring /etc/apt/trusted.gpg.d/debian-archive-wheezy-automatic.gpg \
+       --keyring /etc/apt/trusted.gpg.d/debian-archive-wheezy-stable.gpg \
+       ${release_file_gpg} ${release_file}
+
+  echo "Verifying: ${output_file}"
+  local checksums=$(grep ${file_path} ${release_file} | cut -d " " -f 2)
+  local md5sum=$(echo ${checksums} | cut -d " " -f 1)
+  local sha1sum=$(echo ${checksums} | cut -d " " -f 2)
+  local sha256sum=$(echo ${checksums} | cut -d " " -f 3)
+
+  if [ "${#md5sum}" -ne "32" ]; then
+    echo "Bad md5sum from ${RELEASE_LIST}"
+    exit 1
+  fi
+  if [ "${#sha1sum}" -ne "40" ]; then
+    echo "Bad sha1sum from ${RELEASE_LIST}"
+    exit 1
+  fi
+  if [ "${#sha256sum}" -ne "64" ]; then
+    echo "Bad sha256sum from ${RELEASE_LIST}"
+    exit 1
+  fi
+
+  echo "${md5sum}  ${output_file}" | md5sum --quiet -c
+  echo "${sha1sum}  ${output_file}" | sha1sum --quiet -c
+  echo "${sha256sum}  ${output_file}" | sha256sum --quiet -c
 }
 
 #
@@ -480,6 +560,7 @@ GeneratePackageList() {
 UpdatePackageListsAmd64() {
   local package_list="${TMP}/Packages.wheezy_amd64.bz2"
   DownloadOrCopy ${PACKAGE_LIST_AMD64} ${package_list}
+  VerifyPackageListing ${PACKAGE_FILE_AMD64} ${package_list}
   bzcat ${package_list} | egrep '^(Package:|Filename:)' > ${TMP}/Packages
 
   GeneratePackageList ${DEBIAN_DEP_LIST_AMD64} "${DEBIAN_PACKAGES}"
@@ -493,6 +574,7 @@ UpdatePackageListsAmd64() {
 UpdatePackageListsI386() {
   local package_list="${TMP}/Packages.wheezy_i386.bz2"
   DownloadOrCopy ${PACKAGE_LIST_I386} ${package_list}
+  VerifyPackageListing ${PACKAGE_FILE_I386} ${package_list}
   bzcat ${package_list} | egrep '^(Package:|Filename:)' > ${TMP}/Packages
 
   GeneratePackageList ${DEBIAN_DEP_LIST_I386} "${DEBIAN_PACKAGES}"

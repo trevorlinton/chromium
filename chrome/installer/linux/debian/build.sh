@@ -63,15 +63,9 @@ stage_install_debian() {
     local DEFAULT_FLAGS="--user-data-dir=\"${SXS_USER_DATA_DIR}\""
 
     # Avoid file collisions between channels.
-    # TODO(phajdan.jr): Do that for all packages for SxS,
-    # http://crbug.com/38598 .
-    # We can't do this for now for all packages because of
-    # http://crbug.com/295103 , and ultimately http://crbug.com/22703 .
-    # Also see https://groups.google.com/a/chromium.org/d/msg/chromium-dev/DBEqOORaRiw/pE0bNI6h0kcJ .
-    if [ "$CHANNEL" = "trunk" ] || [ "$CHANNEL" = "asan" ]; then
-      local PACKAGE="${PACKAGE}-${CHANNEL}"
-      local INSTALLDIR="${INSTALLDIR}-${CHANNEL}"
-    fi
+    local INSTALLDIR="${INSTALLDIR}-${CHANNEL}"
+
+    local PACKAGE="${PACKAGE}-${CHANNEL}"
 
     # Make it possible to distinguish between menu entries
     # for different channels.
@@ -106,13 +100,9 @@ do_package() {
   echo "Packaging ${ARCHITECTURE}..."
   PREDEPENDS="$COMMON_PREDEPS"
   DEPENDS="${COMMON_DEPS}"
-  # Trunk is a special package, mostly for development testing, so don't make
-  # it replace any installed release packages.
-  if [ "$CHANNEL" != "trunk" ] && [ "$CHANNEL" != "asan" ]; then
-    REPLACES="${PACKAGE}"
-    CONFLICTS="${PACKAGE}"
-    PROVIDES="${PACKAGE}, www-browser"
-  fi
+  REPLACES=""
+  CONFLICTS=""
+  PROVIDES="www-browser"
   gen_changelog
   process_template "${SCRIPTDIR}/control.template" "${DEB_CONTROL}"
   export DEB_HOST_ARCH="${ARCHITECTURE}"

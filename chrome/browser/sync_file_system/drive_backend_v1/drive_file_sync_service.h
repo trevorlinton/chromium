@@ -16,8 +16,12 @@
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/threading/non_thread_safe.h"
+#include "chrome/browser/drive/drive_notification_manager_factory.h"
 #include "chrome/browser/drive/drive_notification_observer.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/sync_file_system/conflict_resolution_resolver.h"
+#include "chrome/browser/sync_file_system/drive_backend/sync_task_manager.h"
 #include "chrome/browser/sync_file_system/drive_backend_v1/api_util_interface.h"
 #include "chrome/browser/sync_file_system/drive_backend_v1/drive_metadata_store.h"
 #include "chrome/browser/sync_file_system/drive_backend_v1/local_sync_operation_resolver.h"
@@ -31,7 +35,6 @@
 #include "chrome/browser/sync_file_system/sync_direction.h"
 #include "chrome/browser/sync_file_system/sync_file_system.pb.h"
 #include "chrome/browser/sync_file_system/sync_status_code.h"
-#include "chrome/browser/sync_file_system/sync_task_manager.h"
 
 class ExtensionService;
 
@@ -48,16 +51,15 @@ namespace sync_file_system {
 namespace drive_backend {
 class LocalSyncDelegate;
 class RemoteSyncDelegate;
-}
-
 class SyncTaskManager;
+}
 
 // Maintains remote file changes.
 // Owned by SyncFileSystemService (which is a per-profile object).
 class DriveFileSyncService : public RemoteFileSyncService,
                              public LocalChangeProcessor,
                              public drive_backend::APIUtilObserver,
-                             public SyncTaskManager::Client,
+                             public drive_backend::SyncTaskManager::Client,
                              public base::NonThreadSafe,
                              public base::SupportsWeakPtr<DriveFileSyncService>,
                              public drive::DriveNotificationObserver {
@@ -70,6 +72,8 @@ class DriveFileSyncService : public RemoteFileSyncService,
 
   // Creates DriveFileSyncService.
   static scoped_ptr<DriveFileSyncService> Create(Profile* profile);
+  static void AppendDependsOnFactories(
+      std::set<BrowserContextKeyedServiceFactory*>* factories);
 
   // Creates DriveFileSyncService instance for testing.
   // |metadata_store| must be initialized beforehand.
@@ -78,12 +82,6 @@ class DriveFileSyncService : public RemoteFileSyncService,
       const base::FilePath& base_dir,
       scoped_ptr<drive_backend::APIUtilInterface> api_util,
       scoped_ptr<DriveMetadataStore> metadata_store);
-
-  // Destroys |sync_service| and passes the ownership of |sync_client| to caller
-  // for testing.
-  static scoped_ptr<drive_backend::APIUtilInterface>
-      DestroyAndPassAPIUtilForTesting(
-          scoped_ptr<DriveFileSyncService> sync_service);
 
   // RemoteFileSyncService overrides.
   virtual void AddServiceObserver(Observer* observer) OVERRIDE;
@@ -105,17 +103,25 @@ class DriveFileSyncService : public RemoteFileSyncService,
   virtual RemoteServiceState GetCurrentState() const OVERRIDE;
   virtual void GetOriginStatusMap(OriginStatusMap* status_map) OVERRIDE;
   virtual scoped_ptr<base::ListValue> DumpFiles(const GURL& origin) OVERRIDE;
+  virtual scoped_ptr<base::ListValue> DumpDatabase() OVERRIDE;
   virtual void SetSyncEnabled(bool enabled) OVERRIDE;
-  virtual SyncStatusCode SetConflictResolutionPolicy(
+  virtual SyncStatusCode SetDefaultConflictResolutionPolicy(
       ConflictResolutionPolicy policy) OVERRIDE;
-  virtual ConflictResolutionPolicy GetConflictResolutionPolicy() const OVERRIDE;
-  virtual void GetRemoteVersions(
-      const fileapi::FileSystemURL& url,
-      const RemoteVersionsCallback& callback) OVERRIDE;
+  virtual SyncStatusCode SetConflictResolutionPolicy(
+      const GURL& origin,
+      ConflictResolutionPolicy policy) OVERRIDE;
+  virtual ConflictResolutionPolicy GetDefaultConflictResolutionPolicy() const
+      OVERRIDE;
+  virtual ConflictResolutionPolicy GetConflictResolutionPolicy(
+      const GURL& origin) const OVERRIDE;
+  virtual void GetRemoteVersions(const fileapi::FileSystemURL& url,
+                                 const RemoteVersionsCallback& callback)
+      OVERRIDE;
   virtual void DownloadRemoteVersion(
       const fileapi::FileSystemURL& url,
       const std::string& version_id,
       const DownloadVersionCallback& callback) OVERRIDE;
+  virtual void PromoteDemotedChanges() OVERRIDE;
 
   // LocalChangeProcessor overrides.
   virtual void ApplyLocalChange(
@@ -135,7 +141,9 @@ class DriveFileSyncService : public RemoteFileSyncService,
 
   // SyncTaskManager::Client overrides.
   virtual void MaybeScheduleNextTask() OVERRIDE;
-  virtual void NotifyLastOperationStatus(SyncStatusCode sync_status) OVERRIDE;
+  virtual void NotifyLastOperationStatus(
+      SyncStatusCode sync_status,
+      bool used_network) OVERRIDE;
 
   static std::string PathToTitle(const base::FilePath& path);
   static base::FilePath TitleToPath(const std::string& title);
@@ -161,10 +169,10 @@ class DriveFileSyncService : public RemoteFileSyncService,
 
   explicit DriveFileSyncService(Profile* profile);
 
-  void Initialize(scoped_ptr<SyncTaskManager> task_manager,
+  void Initialize(scoped_ptr<drive_backend::SyncTaskManager> task_manager,
                   const SyncStatusCallback& callback);
   void InitializeForTesting(
-      scoped_ptr<SyncTaskManager> task_manager,
+      scoped_ptr<drive_backend::SyncTaskManager> task_manager,
       const base::FilePath& base_dir,
       scoped_ptr<drive_backend::APIUtilInterface> sync_client,
       scoped_ptr<DriveMetadataStore> metadata_store,
@@ -173,9 +181,6 @@ class DriveFileSyncService : public RemoteFileSyncService,
   void DidInitializeMetadataStore(const SyncStatusCallback& callback,
                                   SyncStatusCode status,
                                   bool created);
-  void DidGetDriveRootResourceId(const SyncStatusCallback& callback,
-                                 google_apis::GDataErrorCode error,
-                                 const std::string& root_resource_id);
 
   void UpdateServiceStateFromLastOperationStatus(
       SyncStatusCode sync_status,
@@ -234,9 +239,6 @@ class DriveFileSyncService : public RemoteFileSyncService,
   void UpdateRegisteredOrigins();
 
   void StartBatchSync(const SyncStatusCallback& callback);
-  void GetDriveDirectoryForOrigin(const GURL& origin,
-                                  const SyncStatusCallback& callback,
-                                  const std::string& sync_root_resource_id);
   void DidGetDriveDirectoryForOrigin(const GURL& origin,
                                      const SyncStatusCallback& callback,
                                      SyncStatusCode status,
@@ -284,7 +286,6 @@ class DriveFileSyncService : public RemoteFileSyncService,
       const base::Time& updated_time,
       SyncFileType file_type);
   void RemoveRemoteChange(const fileapi::FileSystemURL& url);
-  void MaybeMarkAsIncrementalSyncOrigin(const GURL& origin);
 
   // TODO(kinuko,tzik): Move this out of DriveFileSyncService.
   void MarkConflict(
@@ -323,9 +324,6 @@ class DriveFileSyncService : public RemoteFileSyncService,
                                         SyncAction action_taken,
                                         SyncDirection direction);
 
-  void HandleSyncRootDirectoryChange(const google_apis::ResourceEntry& entry);
-  void HandleOriginRootDirectoryChange(const google_apis::ResourceEntry& entry);
-
   void EnsureSyncRootDirectory(const ResourceIdCallback& callback);
   void DidEnsureSyncRoot(const ResourceIdCallback& callback,
                          google_apis::GDataErrorCode error,
@@ -352,7 +350,7 @@ class DriveFileSyncService : public RemoteFileSyncService,
 
   Profile* profile_;
 
-  scoped_ptr<SyncTaskManager> task_manager_;
+  scoped_ptr<drive_backend::SyncTaskManager> task_manager_;
 
   scoped_ptr<drive_backend::LocalSyncDelegate> running_local_sync_task_;
   scoped_ptr<drive_backend::RemoteSyncDelegate> running_remote_sync_task_;

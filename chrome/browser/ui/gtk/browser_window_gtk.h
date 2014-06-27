@@ -21,6 +21,7 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
+#include "ui/base/gtk/gtk_floating_container.h"
 #include "ui/base/gtk/gtk_signal.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/base/x/active_window_watcher_x_observer.h"
@@ -94,6 +95,7 @@ class BrowserWindowGtk
   virtual void UpdateDevTools() OVERRIDE;
   virtual void UpdateLoadingAnimations(bool should_animate) OVERRIDE;
   virtual void SetStarredState(bool is_starred) OVERRIDE;
+  virtual void SetTranslateIconToggled(bool is_lit) OVERRIDE;
   virtual void OnActiveTabChanged(content::WebContents* old_contents,
                                   content::WebContents* new_contents,
                                   int index,
@@ -135,14 +137,17 @@ class BrowserWindowGtk
   virtual void ShowUpdateChromeDialog() OVERRIDE;
   virtual void ShowBookmarkBubble(const GURL& url,
                                   bool already_bookmarked) OVERRIDE;
-  virtual void ShowTranslateBubble(
-      content::WebContents* contents,
-      TranslateBubbleModel::ViewState view_state) OVERRIDE;
+  virtual void ShowBookmarkAppBubble(
+      const WebApplicationInfo& web_app_info,
+      const std::string& extension_id) OVERRIDE;
+  virtual void ShowTranslateBubble(content::WebContents* contents,
+                                   TranslateTabHelper::TranslateStep step,
+                                   TranslateErrors::Type error_type) OVERRIDE;
 #if defined(ENABLE_ONE_CLICK_SIGNIN)
   virtual void ShowOneClickSigninBubble(
       OneClickSigninBubbleType type,
-      const string16& email,
-      const string16& error_message,
+      const base::string16& email,
+      const base::string16& error_message,
       const StartSyncCallback& start_sync_callback) OVERRIDE;
 #endif
   virtual bool IsDownloadShelfVisible() const OVERRIDE;
@@ -175,12 +180,19 @@ class BrowserWindowGtk
       GetWebContentsModalDialogHost() OVERRIDE;
   virtual void ShowAvatarBubble(content::WebContents* web_contents,
                                 const gfx::Rect& rect) OVERRIDE;
-  virtual void ShowAvatarBubbleFromAvatarButton() OVERRIDE;
+  virtual void ShowAvatarBubbleFromAvatarButton(AvatarBubbleMode mode) OVERRIDE;
   virtual void ShowPasswordGenerationBubble(
       const gfx::Rect& rect,
       const autofill::PasswordForm& form,
       autofill::PasswordGenerator* password_generator) OVERRIDE;
   virtual int GetRenderViewHeightInsetWithDetachedBookmarkBar() OVERRIDE;
+  virtual void ExecuteExtensionCommand(
+      const extensions::Extension* extension,
+      const extensions::Command& command) OVERRIDE;
+  virtual void ShowPageActionPopup(
+      const extensions::Extension* extension) OVERRIDE;
+  virtual void ShowBrowserActionPopup(
+      const extensions::Extension* extension) OVERRIDE;
 
   // Overridden from NotificationObserver:
   virtual void Observe(int type,
@@ -464,16 +476,14 @@ class BrowserWindowGtk
   // Hides docked devtools.
   void HideDevToolsContainer();
 
-  // Reads split position from the current tab's devtools window and applies
-  // it to the devtools split.
-  void UpdateDevToolsSplitPosition();
-
   // Called when the preference changes.
   void OnUseCustomChromeFrameChanged();
 
-  // Determine whether we use should default to native decorations or the custom
-  // frame based on the currently-running window manager.
-  static bool GetCustomFramePrefDefault();
+  // Handler for |devtools_floating_container_|'s "set-floating-position"
+  // signal.
+  static void OnDevToolsContainerSetFloatingPosition(
+      GtkFloatingContainer* container, GtkAllocation* allocation,
+      BrowserWindowGtk* browser_window);
 
   // The position and size of the current window.
   gfx::Rect bounds_;
@@ -521,19 +531,17 @@ class BrowserWindowGtk
   // into events and sent to the extension.
   scoped_ptr<ExtensionKeybindingRegistryGtk> extension_keybinding_registry_;
 
-  DevToolsDockSide devtools_dock_side_;
-
   // Docked devtools window instance. NULL when current tab is not inspected
   // or is inspected with undocked version of DevToolsWindow.
   DevToolsWindow* devtools_window_;
 
-  // Split pane containing the contents_container_ and the devtools_container_.
-  // Owned by contents_vsplit_.
-  GtkWidget* contents_hsplit_;
+  // Resizing strategy of contents_container_ inside
+  // devtools_floating_container_. Non-empty only if docked devtools is visible.
+  DevToolsContentsResizingStrategy contents_resizing_strategy_;
 
-  // Split pane containing the contents_hsplit_ and the devtools_container_.
+  // Floating container for devtools_container_ and contents_container_.
   // Owned by render_area_vbox_.
-  GtkWidget* contents_vsplit_;
+  GtkWidget* devtools_floating_container_;
 
   // The tab strip.  Always non-NULL.
   scoped_ptr<TabStripGtk> tabstrip_;

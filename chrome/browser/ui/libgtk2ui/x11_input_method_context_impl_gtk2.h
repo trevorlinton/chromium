@@ -13,6 +13,7 @@
 #include "ui/base/ime/linux/linux_input_method_context.h"
 #include "ui/gfx/rect.h"
 
+typedef struct _GdkDrawable GdkWindow;
 typedef struct _GtkIMContext GtkIMContext;
 
 namespace libgtk2ui {
@@ -26,10 +27,8 @@ class X11InputMethodContextImplGtk2 : public ui::LinuxInputMethodContext {
   virtual ~X11InputMethodContextImplGtk2();
 
   // Overriden from ui::LinuxInputMethodContext
-  virtual bool DispatchKeyEvent(const base::NativeEvent& native_key_event)
-      OVERRIDE;
+  virtual bool DispatchKeyEvent(const ui::KeyEvent& key_event) OVERRIDE;
   virtual void Reset() OVERRIDE;
-  virtual base::i18n::TextDirection GetInputTextDirection() const OVERRIDE;
   virtual void OnTextInputTypeChanged(ui::TextInputType text_input_type)
       OVERRIDE;
   virtual void OnCaretBoundsChanged(const gfx::Rect& caret_bounds) OVERRIDE;
@@ -61,6 +60,9 @@ class X11InputMethodContextImplGtk2 : public ui::LinuxInputMethodContext {
   // An alias to |gtk_context_simple_| or |gtk_multicontext_| depending on the
   // text input type.  Can be NULL when it's not focused.
   GtkIMContext* gtk_context_;
+
+  // Last set client window.
+  GdkWindow* gdk_last_set_client_window_;
 
   // Last known caret bounds relative to the screen coordinates.
   gfx::Rect last_caret_bounds_;

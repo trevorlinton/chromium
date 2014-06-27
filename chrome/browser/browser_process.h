@@ -22,7 +22,6 @@ class BackgroundModeManager;
 class BookmarkPromptController;
 class ChromeNetLog;
 class CRLSetFetcher;
-class ComponentUpdateService;
 class DownloadRequestLimiter;
 class DownloadStatusUpdater;
 class GLStringManager;
@@ -33,15 +32,12 @@ class IOThread;
 class MediaFileSystemRegistry;
 class MetricsService;
 class NotificationUIManager;
-class PnaclComponentInstaller;
 class PrefRegistrySimple;
 class PrefService;
 class Profile;
 class ProfileManager;
-class RenderWidgetSnapshotTaker;
 class SafeBrowsingService;
 class StatusTray;
-class StorageMonitor;
 class WatchDogThread;
 #if defined(ENABLE_WEBRTC)
 class WebRtcLogUploader;
@@ -49,6 +45,11 @@ class WebRtcLogUploader;
 
 namespace chrome_variations {
 class VariationsService;
+}
+
+namespace component_updater {
+class ComponentUpdateService;
+class PnaclComponentInstaller;
 }
 
 namespace extensions {
@@ -78,6 +79,10 @@ class PrintJobManager;
 class PrintPreviewDialogController;
 }
 
+namespace rappor {
+class RapporService;
+}
+
 namespace safe_browsing {
 class ClientSideDetectionService;
 }
@@ -100,6 +105,7 @@ class BrowserProcess {
 
   // Services: any of these getters may return NULL
   virtual MetricsService* metrics_service() = 0;
+  virtual rappor::RapporService* rappor_service() = 0;
   virtual ProfileManager* profile_manager() = 0;
   virtual PrefService* local_state() = 0;
   virtual net::URLRequestContextGetter* system_request_context() = 0;
@@ -142,15 +148,12 @@ class BrowserProcess {
 
   virtual GpuModeManager* gpu_mode_manager() = 0;
 
-  virtual RenderWidgetSnapshotTaker* GetRenderWidgetSnapshotTaker() = 0;
-
   virtual AutomationProviderList* GetAutomationProviderList() = 0;
 
   virtual void CreateDevToolsHttpProtocolHandler(
       chrome::HostDesktopType host_desktop_type,
       const std::string& ip,
-      int port,
-      const std::string& frontend_url) = 0;
+      int port) = 0;
 
   virtual unsigned int AddRefModule() = 0;
   virtual unsigned int ReleaseModule() = 0;
@@ -205,17 +208,16 @@ class BrowserProcess {
 
   virtual prerender::PrerenderTracker* prerender_tracker() = 0;
 
-  virtual ComponentUpdateService* component_updater() = 0;
+  virtual component_updater::ComponentUpdateService* component_updater() = 0;
 
   virtual CRLSetFetcher* crl_set_fetcher() = 0;
 
-  virtual PnaclComponentInstaller* pnacl_component_installer() = 0;
+  virtual component_updater::PnaclComponentInstaller*
+      pnacl_component_installer() = 0;
 
   virtual BookmarkPromptController* bookmark_prompt_controller() = 0;
 
   virtual MediaFileSystemRegistry* media_file_system_registry() = 0;
-
-  virtual StorageMonitor* storage_monitor() = 0;
 
   virtual bool created_local_state() const = 0;
 

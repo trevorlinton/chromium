@@ -106,12 +106,6 @@ class BreakpadClient {
   // |crash_dir| was set.
   virtual bool GetCrashDumpLocation(base::FilePath* crash_dir);
 
-#if defined(OS_POSIX)
-  // Sets a function that'll be invoked to dump the current process when
-  // without crashing.
-  virtual void SetDumpWithoutCrashingFunction(void (*function)());
-#endif
-
   // Register all of the potential crash keys that can be sent to the crash
   // reporting server. Returns the size of the union of all keys.
   virtual size_t RegisterCrashKeys();
@@ -137,6 +131,9 @@ class BreakpadClient {
   // Install additional breakpad filter callbacks.
   virtual void InstallAdditionalFilters(BreakpadRef breakpad);
 #endif
+
+  // Returns true if breakpad should run in the given process type.
+  virtual bool EnableBreakpadForProcess(const std::string& process_type);
 };
 
 }  // namespace breakpad

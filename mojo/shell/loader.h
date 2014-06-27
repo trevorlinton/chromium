@@ -25,8 +25,10 @@ class Loader {
  public:
   class Delegate {
    public:
+    // |mime_type| is NULL if a mime type was not specified.
     virtual void DidCompleteLoad(const GURL& app_url,
-                                 const base::FilePath& app_path) = 0;
+                                 const base::FilePath& app_path,
+                                 const std::string* mime_type) = 0;
 
    protected:
     virtual ~Delegate();
@@ -52,6 +54,7 @@ class Loader {
 
   Loader(base::SingleThreadTaskRunner* network_runner,
          base::SingleThreadTaskRunner* file_runner,
+         base::MessageLoopProxy* cache_runner,
          scoped_ptr<net::NetworkDelegate> network_delegate,
          base::FilePath base_path);
   ~Loader();
@@ -60,7 +63,6 @@ class Loader {
 
  private:
   scoped_refptr<base::SingleThreadTaskRunner> file_runner_;
-  scoped_ptr<base::Thread> cache_thread_;
   scoped_refptr<URLRequestContextGetter> url_request_context_getter_;
 
   DISALLOW_COPY_AND_ASSIGN(Loader);

@@ -287,6 +287,25 @@ TEST(GURLTest, GetOrigin) {
   }
 }
 
+TEST(GURLTest, GetAsReferrer) {
+  struct TestCase {
+    const char* input;
+    const char* expected;
+  } cases[] = {
+    {"http://www.google.com", "http://www.google.com/"},
+    {"http://user:pass@www.google.com:21/blah#baz", "http://www.google.com:21/blah"},
+    {"http://user@www.google.com", "http://www.google.com/"},
+    {"http://:pass@www.google.com", "http://www.google.com/"},
+    {"http://:@www.google.com", "http://www.google.com/"},
+    {"http://www.google.com/temp/foo?q#b", "http://www.google.com/temp/foo?q"},
+  };
+  for (size_t i = 0; i < ARRAYSIZE(cases); i++) {
+    GURL url(cases[i].input);
+    GURL origin = url.GetAsReferrer();
+    EXPECT_EQ(cases[i].expected, origin.spec());
+  }
+}
+
 TEST(GURLTest, GetWithEmptyPath) {
   struct TestCase {
     const char* input;
@@ -348,6 +367,29 @@ TEST(GURLTest, Replacements) {
     EXPECT_EQ(replace_cases[i].expected, output.spec());
     EXPECT_EQ(output.SchemeIsFileSystem(), output.inner_url() != NULL);
   }
+}
+
+TEST(GURLTest, ClearFragmentOnDataUrl) {
+  // http://crbug.com/291747 - a data URL may legitimately have trailing
+  // whitespace in the spec after the ref is cleared. Test this does not trigger
+  // the url_parse::Parsed importing validation DCHECK in GURL.
+  GURL url(" data: one ? two # three ");
+
+  // By default the trailing whitespace will have been stripped.
+  EXPECT_EQ("data: one ? two # three", url.spec());
+  GURL::Replacements repl;
+  repl.ClearRef();
+  GURL url_no_ref = url.ReplaceComponents(repl);
+
+  EXPECT_EQ("data: one ? two ", url_no_ref.spec());
+
+  // Importing a parsed url via this constructor overload will retain trailing
+  // whitespace.
+  GURL import_url(url_no_ref.spec(),
+                  url_no_ref.parsed_for_possibly_invalid_spec(),
+                  url_no_ref.is_valid());
+  EXPECT_EQ(url_no_ref, import_url);
+  EXPECT_EQ(import_url.query(), " two ");
 }
 
 TEST(GURLTest, PathForRequest) {
@@ -528,4 +570,16 @@ TEST(GURLTest, IsStandard) {
 
   GURL c("foo://bar/baz");
   EXPECT_FALSE(c.IsStandard());
+}
+
+TEST(GURLTest, SchemeIsHTTPOrHTTPS) {
+  EXPECT_TRUE(GURL("http://bar/").SchemeIsHTTPOrHTTPS());
+  EXPECT_TRUE(GURL("HTTPS://BAR").SchemeIsHTTPOrHTTPS());
+  EXPECT_FALSE(GURL("ftp://bar/").SchemeIsHTTPOrHTTPS());
+}
+
+TEST(GURLTest, SchemeIsWSOrWSS) {
+  EXPECT_TRUE(GURL("WS://BAR/").SchemeIsWSOrWSS());
+  EXPECT_TRUE(GURL("wss://bar/").SchemeIsWSOrWSS());
+  EXPECT_FALSE(GURL("http://bar/").SchemeIsWSOrWSS());
 }

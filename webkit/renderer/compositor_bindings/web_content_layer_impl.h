@@ -16,32 +16,34 @@ class IntRect;
 class FloatRect;
 }
 
-namespace WebKit { class WebContentLayerClient; }
+namespace blink { class WebContentLayerClient; }
 
 namespace webkit {
 
-class WebContentLayerImpl : public WebKit::WebContentLayer,
+class WebContentLayerImpl : public blink::WebContentLayer,
                             public cc::ContentLayerClient {
  public:
   WEBKIT_COMPOSITOR_BINDINGS_EXPORT explicit WebContentLayerImpl(
-      WebKit::WebContentLayerClient*);
+      blink::WebContentLayerClient*);
 
   // WebContentLayer implementation.
-  virtual WebKit::WebLayer* layer();
+  virtual blink::WebLayer* layer();
   virtual void setDoubleSided(bool double_sided);
   virtual void setDrawCheckerboardForMissingTiles(bool checkerboard);
+  virtual void setHasGpuRasterizationHint(bool has_hint);
 
  protected:
   virtual ~WebContentLayerImpl();
 
   // ContentLayerClient implementation.
   virtual void PaintContents(SkCanvas* canvas,
-                             gfx::Rect clip,
+                             const gfx::Rect& clip,
                              gfx::RectF* opaque) OVERRIDE;
   virtual void DidChangeLayerCanUseLCDText() OVERRIDE;
+  virtual bool FillsBoundsCompletely() const OVERRIDE;
 
   scoped_ptr<WebLayerImpl> layer_;
-  WebKit::WebContentLayerClient* client_;
+  blink::WebContentLayerClient* client_;
   bool draws_content_;
 
  private:

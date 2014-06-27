@@ -5,8 +5,9 @@
 #include "base/basictypes.h"
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/test/ui_controls_factory_aura.h"
+#include "ui/aura/window.h"
+#include "ui/aura/window_tree_host.h"
 #include "ui/base/test/ui_controls_aura.h"
 #include "ui/base/test/ui_controls_internal_win.h"
 
@@ -36,7 +37,8 @@ class UIControlsWin : public UIControlsAura {
                             bool alt,
                             bool command) {
     DCHECK(!command);  // No command key on Aura
-    HWND window = native_window->GetDispatcher()->GetAcceleratedWidget();
+    HWND window =
+        native_window->GetHost()->GetAcceleratedWidget();
     return SendKeyPressImpl(
         window, key, control, shift, alt, base::Closure());
   }
@@ -48,18 +50,17 @@ class UIControlsWin : public UIControlsAura {
                                           bool command,
                                           const base::Closure& task) {
     DCHECK(!command);  // No command key on Aura
-    HWND window = native_window->GetDispatcher()->GetAcceleratedWidget();
+    HWND window =
+        native_window->GetHost()->GetAcceleratedWidget();
     return SendKeyPressImpl(window, key, control, shift, alt, task);
   }
-  virtual bool SendMouseMove(long x, long y) {
-    gfx::Point point(x, y);
-    return SendMouseMoveImpl(point.x(), point.y(), base::Closure());
+  virtual bool SendMouseMove(long screen_x, long screen_y) {
+    return SendMouseMoveImpl(screen_x, screen_y, base::Closure());
   }
-  virtual bool SendMouseMoveNotifyWhenDone(long x,
-                                           long y,
+  virtual bool SendMouseMoveNotifyWhenDone(long screen_x,
+                                           long screen_y,
                                            const base::Closure& task) {
-    gfx::Point point(x, y);
-    return SendMouseMoveImpl(point.x(), point.y(), task);
+    return SendMouseMoveImpl(screen_x, screen_y, task);
   }
   virtual bool SendMouseEvents(MouseButton type, int state) {
     return SendMouseEventsImpl(type, state, base::Closure());
@@ -83,7 +84,7 @@ class UIControlsWin : public UIControlsAura {
 
 }  // namespace
 
-UIControlsAura* CreateUIControlsAura(aura::RootWindow* root_window) {
+UIControlsAura* CreateUIControlsAura(WindowTreeHost* host) {
   return new UIControlsWin();
 }
 

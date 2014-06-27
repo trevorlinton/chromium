@@ -231,7 +231,7 @@ var domExpectedActivity = [
     //'Document.location',
     'HTMLDocument.write',
     'HTMLDocument.writeln',
-    'HTMLElement.innerHTML',
+    'Element.innerHTML',
     // Navigator access
     'Window.navigator',
     'Geolocation.getCurrentPosition',
@@ -248,9 +248,6 @@ var domExpectedActivity = [
     'Storage.getItem',
     'Storage.removeItem',
     'Storage.clear',
-    // Notification access
-    'Window.webkitNotifications',
-    'NotificationCenter.createNotification',
     // Cache access
     'Window.applicationCache',
     // Web database access
@@ -364,6 +361,41 @@ testCases.push({
               result['activities'][0]['other']['webRequest']);
           chrome.test.succeed();
         });
+  }
+});
+
+testCases.push({
+  func: function deleteActivities() {
+    var activityIds = [];
+    var filter = new Object();
+    filter.extensionId = FRIEND_EXTENSION_ID;
+    filter.activityType = 'any';
+    filter.apiCall = 'tabs.executeScript';
+    chrome.activityLogPrivate.getExtensionActivities(filter, function(result) {
+      chrome.test.assertEq(6, result['activities'].length);
+      for (var i = 0; i < result['activities'].length; i++)
+        activityIds.push(result['activities'][i]['activityId']);
+      chrome.test.assertEq(6, activityIds.length);
+      chrome.activityLogPrivate.deleteActivities(['-1', '-2', '-3']);
+      chrome.activityLogPrivate.getExtensionActivities(filter,
+          function(result) {
+            chrome.test.assertEq(6, result['activities'].length);
+            chrome.activityLogPrivate.deleteActivities([activityIds[0]]);
+            chrome.activityLogPrivate.getExtensionActivities(filter,
+                function(result) {
+                  chrome.test.assertEq(5, result['activities'].length);
+                  for (var i = 0; i < result['activities'].length; i++)
+                    chrome.test.assertFalse(activityIds[0] ==
+                        result['activities'][i]['activityId']);
+                  chrome.activityLogPrivate.deleteActivities(activityIds);
+                  chrome.activityLogPrivate.getExtensionActivities(filter,
+                      function(result) {
+                        chrome.test.assertEq(0, result['activities'].length);
+                        chrome.test.succeed();
+                      });
+                });
+          });
+    });
   }
 });
 

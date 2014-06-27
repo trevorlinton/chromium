@@ -30,8 +30,8 @@
 #include "ui/views/controls/menu/submenu_view.h"
 #include "ui/views/widget/widget.h"
 
+using base::UserMetricsAction;
 using content::PageNavigator;
-using content::UserMetricsAction;
 using views::MenuItemView;
 
 // Max width of a menu. There does not appear to be an OS value for this, yet
@@ -104,14 +104,14 @@ void BookmarkMenuDelegate::SetActiveMenu(const BookmarkNode* node,
   menu_ = node_to_menu_map_[node];
 }
 
-string16 BookmarkMenuDelegate::GetTooltipText(
+base::string16 BookmarkMenuDelegate::GetTooltipText(
     int id,
     const gfx::Point& screen_loc) const {
   MenuIDToNodeMap::const_iterator i = menu_id_to_node_map_.find(id);
   // When removing bookmarks it may be possible to end up here without a node.
   if (i == menu_id_to_node_map_.end()) {
     DCHECK(is_mutating_model_);
-    return string16();
+    return base::string16();
   }
 
   const BookmarkNode* node = i->second;
@@ -119,7 +119,7 @@ string16 BookmarkMenuDelegate::GetTooltipText(
     return BookmarkBarView::CreateToolTipForURLAndTitle(
         parent_, screen_loc, node->url(), node->GetTitle(), profile_);
   }
-  return string16();
+  return base::string16();
 }
 
 bool BookmarkMenuDelegate::IsTriggerableEvent(views::MenuItemView* menu,

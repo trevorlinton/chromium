@@ -237,9 +237,16 @@ typedef void (GL_APIENTRYP PFNGLBINDUNIFORMLOCATIONCHROMIUMPROC) (
 #endif
 #endif  /* GL_CHROMIUM_command_buffer_query */
 
-/* GL_EXT_framebuffer_multisample */
-#ifndef GL_EXT_framebuffer_multisample
-#define GL_EXT_framebuffer_multisample 1
+/* GL_CHROMIUM_framebuffer_multisample */
+#ifndef GL_CHROMIUM_framebuffer_multisample
+#define GL_CHROMIUM_framebuffer_multisample 1
+
+#ifdef GL_GLEXT_PROTOTYPES
+GL_APICALL void GL_APIENTRY glRenderbufferStorageMultisampleCHROMIUM (GLenum, GLsizei, GLenum, GLsizei, GLsizei);
+GL_APICALL void GL_APIENTRY glBlitFramebufferCHROMIUM (GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter);
+#endif
+typedef void (GL_APIENTRYP PFNGLRENDERBUFFERSTORAGEMULTISAMPLECHROMIUMPROC) (GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height);
+typedef void (GL_APIENTRYP PFNGLBLITFRAMEBUFFERCHROMIUMPROC) (GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter);
 
 #ifndef GL_FRAMEBUFFER_BINDING_EXT
 #define GL_FRAMEBUFFER_BINDING_EXT GL_FRAMEBUFFER_BINDING
@@ -312,7 +319,7 @@ typedef void (GL_APIENTRYP PFNGLBINDUNIFORMLOCATIONCHROMIUMPROC) (
 #ifndef GL_FRAMEBUFFER_BINDING
 #define GL_FRAMEBUFFER_BINDING 0x8CA6
 #endif
-#endif  /* GL_EXT_framebuffer_multisample */
+#endif  /* GL_CHROMIUM_framebuffer_multisample */
 
 /* GL_CHROMIUM_texture_compression_dxt3 */
 #ifndef GL_CHROMIUM_texture_compression_dxt3
@@ -343,6 +350,12 @@ typedef void (GL_APIENTRYP PFNGLBINDUNIFORMLOCATIONCHROMIUMPROC) (
 #define GL_ASYNC_PIXEL_PACK_COMPLETED_CHROMIUM 0x84F6
 #endif
 #endif  /* GL_CHROMIUM_async_pixel_transfers */
+
+#if defined(OS_CHROMEOS)
+#ifndef GL_BIND_GENERATES_RESOURCE_CHROMIUM
+#define GL_BIND_GENERATES_RESOURCE_CHROMIUM 0x9244
+#endif
+#endif
 
 /* GL_CHROMIUM_copy_texture */
 #ifndef GL_CHROMIUM_copy_texture
@@ -600,11 +613,6 @@ typedef void (GL_APIENTRYP PFNGLGETPROGRAMINFOCHROMIUMPROC) (
    GLuint program, GLsizei bufsize, GLsizei* size, void* info);
 #endif  /* GL_CHROMIUM_get_multiple */
 
-/* GL_CHROMIUM_front_buffer_cached */
-#ifndef GL_CHROMIUM_front_buffer_cached
-#define GL_CHROMIUM_front_buffer_cached 1
-#endif  /* GL_CHROMIUM_front_buffer_cached */
-
 /* GL_CHROMIUM_sync_point */
 #ifndef GL_CHROMIUM_sync_point
 #define GL_CHROMIUM_sync_point 1
@@ -615,6 +623,20 @@ GL_APICALL void GL_APIENTRY glWaitSyncPointCHROMIUM(GLuint sync_point);
 typedef GLuint (GL_APIENTRYP PFNGLINSERTSYNCPOINTCHROMIUMPROC) ();
 typedef void (GL_APIENTRYP PFNGLWAITSYNCPOINTCHROMIUMPROC) (GLuint sync_point);
 #endif  /* GL_CHROMIUM_sync_point */
+
+#ifndef GL_CHROMIUM_color_buffer_float_rgba
+#define GL_CHROMIUM_color_buffer_float_rgba 1
+#ifndef GL_RGBA32F
+#define GL_RGBA32F 0x8814
+#endif
+#endif /* GL_CHROMIUM_color_buffer_float_rgba */
+
+#ifndef GL_CHROMIUM_color_buffer_float_rgb
+#define GL_CHROMIUM_color_buffer_float_rgb 1
+#ifndef GL_RGB32F
+#define GL_RGB32F 0x8815
+#endif
+#endif /* GL_CHROMIUM_color_buffer_float_rgb */
 
 #ifdef __cplusplus
 }

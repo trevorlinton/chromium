@@ -134,10 +134,6 @@ class TabStrip : public views::View,
 
   TabStripController* controller() const { return controller_.get(); }
 
-  // Creates and returns a tab that can be used for dragging. Ownership passes
-  // to the caller.
-  Tab* CreateTabForDragging();
-
   // Returns true if a drag session is currently active.
   bool IsDragSessionActive() const;
 
@@ -161,6 +157,10 @@ class TabStrip : public views::View,
   // window caption area of the browser window.
   bool IsPositionInWindowCaption(const gfx::Point& point);
 
+  // Returns true if the specified rect (in TabStrip coordinates) intersects
+  // the window caption area of the browser window.
+  bool IsRectInWindowCaption(const gfx::Rect& rect);
+
   // Set the background offset used by inactive tabs to match the frame image.
   void SetBackgroundOffset(const gfx::Point& offset);
 
@@ -177,6 +177,9 @@ class TabStrip : public views::View,
   // Stops any ongoing animations. If |layout| is true and an animation is
   // ongoing this does a layout.
   void StopAnimating(bool layout);
+
+  // Called to indicate whether the given URL is a supported file.
+  void FileSupported(const GURL& url, bool supported);
 
   // TabController overrides:
   virtual const ui::ListSelectionModel& GetSelectionModel() OVERRIDE;
@@ -200,7 +203,7 @@ class TabStrip : public views::View,
                             const ui::LocatedEvent& event) OVERRIDE;
   virtual bool EndDrag(EndDragReason reason) OVERRIDE;
   virtual Tab* GetTabAt(Tab* tab,
-                            const gfx::Point& tab_in_tab_coordinates) OVERRIDE;
+                        const gfx::Point& tab_in_tab_coordinates) OVERRIDE;
   virtual void OnMouseEventInTab(views::View* source,
                                  const ui::MouseEvent& event) OVERRIDE;
   virtual bool ShouldPaintTab(const Tab* tab, gfx::Rect* clip) OVERRIDE;
@@ -220,9 +223,8 @@ class TabStrip : public views::View,
   virtual int OnDragUpdated(const ui::DropTargetEvent& event) OVERRIDE;
   virtual void OnDragExited() OVERRIDE;
   virtual int OnPerformDrop(const ui::DropTargetEvent& event) OVERRIDE;
-  virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE;
-  virtual views::View* GetEventHandlerForPoint(
-      const gfx::Point& point) OVERRIDE;
+  virtual void GetAccessibleState(ui::AXViewState* state) OVERRIDE;
+  virtual views::View* GetEventHandlerForRect(const gfx::Rect& rect) OVERRIDE;
   virtual views::View* GetTooltipHandlerForPoint(
       const gfx::Point& point) OVERRIDE;
 
@@ -266,6 +268,7 @@ class TabStrip : public views::View,
   FRIEND_TEST_ALL_PREFIXES(TabDragControllerTest, GestureEndShouldEndDragTest);
   friend class TabStripTest;
   FRIEND_TEST_ALL_PREFIXES(TabStripTest, TabHitTestMaskWhenStacked);
+  FRIEND_TEST_ALL_PREFIXES(TabStripTest, ClippedTabCloseButton);
 
   // Used during a drop session of a url. Tracks the position of the drop as
   // well as a window used to highlight where the drop occurs.
@@ -291,6 +294,12 @@ class TabStrip : public views::View,
     // Renders the drop indicator.
     views::Widget* arrow_window;
     views::ImageView* arrow_view;
+
+    // The URL for the drop event.
+    GURL url;
+
+    // Whether the MIME type of the file pointed to by |url| is supported.
+    bool file_supported;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(DropInfo);

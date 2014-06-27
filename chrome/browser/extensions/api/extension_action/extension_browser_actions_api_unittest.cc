@@ -6,9 +6,9 @@
 
 #include "base/values.h"
 #include "chrome/browser/extensions/api/extension_action/extension_action_api.h"
-#include "chrome/common/extensions/extension.h"
-#include "third_party/skia/include/core/SkColor.h"
+#include "extensions/common/extension.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/skia/include/core/SkColor.h"
 
 namespace extensions {
 
@@ -47,6 +47,10 @@ TEST(ExtensionBrowserActionsApiTest, ChangeBadgeBackgroundCSSTooLong) {
 
 TEST(ExtensionBrowserActionsApiTest, ChangeBadgeBackgroundCSSInvalid) {
   RunFailTest("#-22128");
+}
+
+TEST(ExtensionBrowserActionsApiTest, ChangeBadgeBackgroundCSSInvalidWithPlus) {
+  RunFailTest("#+22128");
 }
 
 }  // namespace extensions

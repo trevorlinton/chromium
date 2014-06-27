@@ -7,19 +7,17 @@
 import logging
 import os.path
 import sys
-import time
 import traceback
 
 from pylib import constants
 from pylib.base import base_test_result
 from pylib.base import base_test_runner
+from pylib.linker import test_case
 from pylib.utils import apk_helper
-
-import test_case
 
 
 # Name of the Android package to install for this to work.
-_PACKAGE_NAME = 'ContentLinkerTest'
+_PACKAGE_NAME = 'ChromiumLinkerTest'
 
 
 class LinkerExceptionTestResult(base_test_result.BaseTestResult):

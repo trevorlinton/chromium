@@ -33,7 +33,7 @@ GdkPixbuf* GetPixbufForNode(const BookmarkNode* node,
 // Returns a GtkWindow with a visual hierarchy for passing to
 // gtk_drag_set_icon_widget().
 GtkWidget* GetDragRepresentation(GdkPixbuf* pixbuf,
-                                 const string16& title,
+                                 const base::string16& title,
                                  GtkThemeService* provider);
 GtkWidget* GetDragRepresentationForNode(const BookmarkNode* node,
                                         BookmarkModel* model,
@@ -112,6 +112,6 @@ bool CreateNewBookmarkFromNetscapeURL(GtkSelectionData* selection_data,
 
 // Returns a name for the given URL. Used for drags into bookmark areas when
 // the source doesn't specify a title.
-string16 GetNameForURL(const GURL& url);
+base::string16 GetNameForURL(const GURL& url);
 
 #endif  // CHROME_BROWSER_UI_GTK_BOOKMARKS_BOOKMARK_UTILS_GTK_H_

@@ -11,20 +11,12 @@
 #include "ui/views/context_menu_controller.h"
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 
-class BrowserDesktopRootWindowHost;
+class BrowserDesktopWindowTreeHost;
 class BrowserFrame;
 class BrowserView;
 
-namespace aura {
-namespace client {
-class UserActionClient;
-}
-}
-
-namespace views {
-namespace corewm {
+namespace wm {
 class VisibilityController;
-}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -54,7 +46,6 @@ class DesktopBrowserFrameAura : public views::DesktopNativeWidgetAura,
   virtual const views::NativeWidget* AsNativeWidget() const OVERRIDE;
   virtual bool UsesNativeSystemMenu() const OVERRIDE;
   virtual int GetMinimizeButtonOffset() const OVERRIDE;
-  virtual void TabStripDisplayModeChanged() OVERRIDE;
 
  private:
   // The BrowserView is our ClientView. This is a pointer to it.
@@ -62,10 +53,9 @@ class DesktopBrowserFrameAura : public views::DesktopNativeWidgetAura,
   BrowserFrame* browser_frame_;
 
   // Owned by the RootWindow.
-  BrowserDesktopRootWindowHost* browser_desktop_root_window_host_;
+  BrowserDesktopWindowTreeHost* browser_desktop_window_tree_host_;
 
-  scoped_ptr<aura::client::UserActionClient> user_action_client_;
-  scoped_ptr<views::corewm::VisibilityController> visibility_controller_;
+  scoped_ptr<wm::VisibilityController> visibility_controller_;
 
   DISALLOW_COPY_AND_ASSIGN(DesktopBrowserFrameAura);
 };

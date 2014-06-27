@@ -7,9 +7,7 @@
 
 #include <set>
 #include <string>
-#include <vector>
 
-#include "base/callback_forward.h"
 #include "base/files/file_path.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -17,6 +15,7 @@
 #include "chrome/browser/chromeos/drive/resource_metadata_storage.h"
 
 namespace base {
+class ScopedClosureRunner;
 class SequencedTaskRunner;
 }  // namespace base
 
@@ -25,11 +24,6 @@ namespace drive {
 class FileCacheEntry;
 
 namespace internal {
-
-// Callback for GetFileFromCache.
-typedef base::Callback<void(FileError error,
-                            const base::FilePath& cache_file_path)>
-    GetFileFromCacheCallback;
 
 // Interface class used for getting the free disk space. Tests can inject an
 // implementation that reports fake free disk space.
@@ -55,8 +49,9 @@ class FileCache {
 
   // |cache_file_directory| stores cached files.
   //
-  // |blocking_task_runner| is used to post a task to the blocking worker
-  // pool for file operations. Must not be null.
+  // |blocking_task_runner| indicates the blocking worker pool for cache
+  // operations. All operations on this FileCache must be run on this runner.
+  // Must not be null.
   //
   // |free_disk_space_getter| is used to inject a custom free disk space
   // getter for testing. NULL must be passed for production code.
@@ -81,7 +76,7 @@ class FileCache {
   scoped_ptr<Iterator> GetIterator();
 
   // Frees up disk space to store a file with |num_bytes| size content, while
-  // keeping kMinFreeSpace bytes on the disk, if needed.
+  // keeping cryptohome::kMinFreeSpaceInBytes bytes on the disk, if needed.
   // Returns true if we successfully manage to have enough space, otherwise
   // false.
   bool FreeDiskSpaceIfNeededFor(int64 num_bytes);
@@ -93,53 +88,39 @@ class FileCache {
 
   // Stores |source_path| as a cache of the remote content of the file
   // with |id| and |md5|.
+  // Pass an empty string as MD5 to mark the entry as dirty.
   FileError Store(const std::string& id,
                   const std::string& md5,
                   const base::FilePath& source_path,
                   FileOperationType file_operation_type);
 
-  // Runs Pin() on |blocking_task_runner_|, and calls |callback| with the result
-  // asynchronously.
-  // |callback| must not be null.
-  // Must be called on the UI thread.
-  void PinOnUIThread(const std::string& id,
-                     const FileOperationCallback& callback);
-
   // Pins the specified entry.
   FileError Pin(const std::string& id);
 
-  // Runs Unpin() on |blocking_task_runner_|, and calls |callback| with the
-  // result asynchronously.
-  // |callback| must not be null.
-  // Must be called on the UI thread.
-  void UnpinOnUIThread(const std::string& id,
-                       const FileOperationCallback& callback);
-
   // Unpins the specified entry.
   FileError Unpin(const std::string& id);
-
-  // Runs MarkAsMounted() on |blocking_task_runner_|, and calls |callback| with
-  // the result asynchronously.
-  // |callback| must not be null.
-  // Must be called on the UI thread.
-  void MarkAsMountedOnUIThread(const std::string& id,
-                               const GetFileFromCacheCallback& callback);
 
   // Sets the state of the cache entry corresponding to |id| as mounted.
   FileError MarkAsMounted(const std::string& id,
                           base::FilePath* cache_file_path);
 
-  // Set the state of the cache entry corresponding to file_path as unmounted.
-  // |callback| must not be null.
-  // Must be called on the UI thread.
-  void MarkAsUnmountedOnUIThread(const base::FilePath& file_path,
-                                 const FileOperationCallback& callback);
+  // Sets the state of the cache entry corresponding to file_path as unmounted.
+  FileError MarkAsUnmounted(const base::FilePath& file_path);
 
-  // Marks the specified entry dirty.
-  FileError MarkDirty(const std::string& id);
+  // Opens the cache file corresponding to |id| for write. |file_closer| should
+  // be kept alive until writing finishes.
+  // This method must be called before writing to cache files.
+  FileError OpenForWrite(const std::string& id,
+                         scoped_ptr<base::ScopedClosureRunner>* file_closer);
 
-  // Clears dirty state of the specified entry and updates its MD5.
-  FileError ClearDirty(const std::string& id, const std::string& md5);
+  // Returns true if the cache file corresponding to |id| is write-opened.
+  bool IsOpenedForWrite(const std::string& id);
+
+  // Calculates MD5 of the cache file and updates the stored value.
+  FileError UpdateMd5(const std::string& id);
+
+  // Clears dirty state of the specified entry.
+  FileError ClearDirty(const std::string& id);
 
   // Removes the specified cache entry and delete cache files if available.
   FileError Remove(const std::string& id);
@@ -155,7 +136,7 @@ class FileCache {
   // Must be called on the UI thread.
   void Destroy();
 
-  // Moves files in the cache directory which are not manged by FileCache to
+  // Moves files in the cache directory which are not managed by FileCache to
   // |dest_directory|.
   // |recovered_cache_info| should contain cache info recovered from the trashed
   // metadata DB. It is used to ignore non-dirty files.
@@ -166,7 +147,6 @@ class FileCache {
 
  private:
   friend class FileCacheTest;
-  friend class FileCacheTestOnUIThread;
 
   ~FileCache();
 
@@ -182,24 +162,17 @@ class FileCache {
   // Destroys the cache on the blocking pool.
   void DestroyOnBlockingPool();
 
-  // Used to implement Store and StoreLocallyModifiedOnUIThread.
-  // TODO(hidehiko): Merge this method with Store(), after
-  // StoreLocallyModifiedOnUIThread is removed.
-  FileError StoreInternal(const std::string& id,
-                          const std::string& md5,
-                          const base::FilePath& source_path,
-                          FileOperationType file_operation_type);
-
-  // Used to implement MarkAsUnmountedOnUIThread.
-  FileError MarkAsUnmounted(const base::FilePath& file_path);
-
   // Returns true if we have sufficient space to store the given number of
-  // bytes, while keeping kMinFreeSpace bytes on the disk.
+  // bytes, while keeping cryptohome::kMinFreeSpaceInBytes bytes on the disk.
   bool HasEnoughSpaceFor(int64 num_bytes, const base::FilePath& path);
 
   // Renames cache files from old "prefix:id.md5" format to the new format.
   // TODO(hashimoto): Remove this method at some point.
   bool RenameCacheFilesToNewFormat();
+
+  // This method must be called after writing to a cache file.
+  // Used to implement OpenForWrite().
+  void CloseForWrite(const std::string& id);
 
   const base::FilePath cache_file_directory_;
 
@@ -209,22 +182,18 @@ class FileCache {
 
   FreeDiskSpaceGetterInterface* free_disk_space_getter_;  // Not owned.
 
+  // IDs of files being write-opened.
+  std::map<std::string, int> write_opened_files_;
+
   // IDs of files marked mounted.
   std::set<std::string> mounted_files_;
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.
+  // This object should be accessed only on |blocking_task_runner_|.
   base::WeakPtrFactory<FileCache> weak_ptr_factory_;
   DISALLOW_COPY_AND_ASSIGN(FileCache);
 };
-
-// The minimum free space to keep. Operations that add cache files return
-// FILE_ERROR_NO_LOCAL_SPACE if the available space is smaller than
-// this value.
-//
-// Copied from cryptohome/homedirs.h.
-// TODO(satorux): Share the constant.
-const int64 kMinFreeSpace = 512 * 1LL << 20;
 
 }  // namespace internal
 }  // namespace drive

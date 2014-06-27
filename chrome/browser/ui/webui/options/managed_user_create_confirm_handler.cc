@@ -13,11 +13,11 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/signin/signin_manager.h"
-#include "chrome/browser/signin/signin_manager_base.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/startup/startup_types.h"
+#include "components/signin/core/browser/signin_manager_base.h"
 #include "content/public/browser/web_ui.h"
 #include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -62,7 +62,7 @@ void ManagedUserCreateConfirmHandler::RegisterMessages() {
 void ManagedUserCreateConfirmHandler::SwitchToProfile(
       const base::ListValue* args) {
   DCHECK(args);
-  const Value* file_path_value;
+  const base::Value* file_path_value;
   if (!args->Get(0, &file_path_value))
     return;
 

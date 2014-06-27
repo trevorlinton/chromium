@@ -8,8 +8,7 @@
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
 #include "media/cast/audio_sender/audio_encoder.h"
-#include "media/cast/rtcp/rtcp.h"
-#include "media/cast/rtp_sender/rtp_sender.h"
+#include "media/cast/transport/cast_transport_defines.h"
 
 namespace media {
 namespace cast {
@@ -19,141 +18,122 @@ const int64 kMinSchedulingDelayMs = 1;
 class LocalRtcpAudioSenderFeedback : public RtcpSenderFeedback {
  public:
   explicit LocalRtcpAudioSenderFeedback(AudioSender* audio_sender)
-      : audio_sender_(audio_sender) {
-  }
+      : audio_sender_(audio_sender) {}
 
-  virtual void OnReceivedReportBlock(
-      const RtcpReportBlock& report_block) OVERRIDE {
-  }
-
-  virtual void OnReceivedIntraFrameRequest() OVERRIDE {
-    DCHECK(false) << "Invalid callback";
-  }
-
-  virtual void OnReceivedRpsi(uint8 payload_type,
-                              uint64 picture_id) OVERRIDE {
-    DCHECK(false) << "Invalid callback";
-  }
-
-  virtual void OnReceivedRemb(uint32 bitrate) OVERRIDE {
-    DCHECK(false) << "Invalid callback";
-  }
-
-  virtual void OnReceivedNackRequest(
-      const std::list<uint16>& nack_sequence_numbers) OVERRIDE {
-    DCHECK(false) << "Invalid callback";
-  }
-
-  virtual void OnReceivedCastFeedback(
-      const RtcpCastMessage& cast_feedback) OVERRIDE {
+  virtual void OnReceivedCastFeedback(const RtcpCastMessage& cast_feedback)
+      OVERRIDE {
     if (!cast_feedback.missing_frames_and_packets_.empty()) {
       audio_sender_->ResendPackets(cast_feedback.missing_frames_and_packets_);
     }
-    VLOG(1) << "Received audio ACK "
+    VLOG(2) << "Received audio ACK "
             << static_cast<int>(cast_feedback.ack_frame_id_);
   }
 
  private:
   AudioSender* audio_sender_;
+
+  DISALLOW_IMPLICIT_CONSTRUCTORS(LocalRtcpAudioSenderFeedback);
 };
 
-class LocalRtpSenderStatistics : public RtpSenderStatistics {
- public:
-  explicit LocalRtpSenderStatistics(RtpSender* rtp_sender)
-     : rtp_sender_(rtp_sender) {
-  }
-
-  virtual void GetStatistics(const base::TimeTicks& now,
-                             RtcpSenderInfo* sender_info) OVERRIDE {
-    rtp_sender_->RtpStatistics(now, sender_info);
-  }
-
- private:
-  RtpSender* rtp_sender_;
-};
-
+// TODO(mikhal): Reduce heap allocation when not needed.
 AudioSender::AudioSender(scoped_refptr<CastEnvironment> cast_environment,
                          const AudioSenderConfig& audio_config,
-                         PacedPacketSender* const paced_packet_sender)
-      : incoming_feedback_ssrc_(audio_config.incoming_feedback_ssrc),
-        cast_environment_(cast_environment),
-        rtp_sender_(cast_environment->Clock(), &audio_config, NULL,
-                    paced_packet_sender),
-        rtcp_feedback_(new LocalRtcpAudioSenderFeedback(this)),
-        rtp_audio_sender_statistics_(
-            new LocalRtpSenderStatistics(&rtp_sender_)),
-        rtcp_(cast_environment->Clock(),
-              rtcp_feedback_.get(),
-              paced_packet_sender,
-              rtp_audio_sender_statistics_.get(),
-              NULL,
-              audio_config.rtcp_mode,
-              base::TimeDelta::FromMilliseconds(audio_config.rtcp_interval),
-              true,
-              audio_config.sender_ssrc,
-              audio_config.rtcp_c_name),
-        weak_factory_(this) {
-  rtcp_.SetRemoteSSRC(audio_config.incoming_feedback_ssrc);
-
+                         transport::CastTransportSender* const transport_sender)
+    : cast_environment_(cast_environment),
+      transport_sender_(transport_sender),
+      rtp_stats_(audio_config.frequency),
+      rtcp_feedback_(new LocalRtcpAudioSenderFeedback(this)),
+      rtcp_(cast_environment,
+            rtcp_feedback_.get(),
+            transport_sender_,
+            NULL,  // paced sender.
+            NULL,
+            audio_config.rtcp_mode,
+            base::TimeDelta::FromMilliseconds(audio_config.rtcp_interval),
+            audio_config.sender_ssrc,
+            audio_config.incoming_feedback_ssrc,
+            audio_config.rtcp_c_name),
+      timers_initialized_(false),
+      cast_initialization_cb_(STATUS_AUDIO_UNINITIALIZED),
+      weak_factory_(this) {
+  rtcp_.SetCastReceiverEventHistorySize(kReceiverRtcpEventHistorySize);
   if (!audio_config.use_external_encoder) {
-    audio_encoder_ = new AudioEncoder(cast_environment, audio_config);
+    audio_encoder_.reset(
+        new AudioEncoder(cast_environment,
+                         audio_config,
+                         base::Bind(&AudioSender::SendEncodedAudioFrame,
+                                    weak_factory_.GetWeakPtr())));
+    cast_initialization_cb_ = audio_encoder_->InitializationResult();
   }
-  ScheduleNextRtcpReport();
+  transport_sender_->SubscribeAudioRtpStatsCallback(
+      base::Bind(&AudioSender::StoreStatistics, weak_factory_.GetWeakPtr()));
 }
 
 AudioSender::~AudioSender() {}
 
-void AudioSender::InsertRawAudioFrame(
-    const PcmAudioFrame* audio_frame,
-    const base::TimeTicks& recorded_time,
-    const base::Closure callback) {
-  DCHECK(audio_encoder_.get()) << "Invalid internal state";
-
-  audio_encoder_->InsertRawAudioFrame(audio_frame, recorded_time,
-      base::Bind(&AudioSender::SendEncodedAudioFrame,
-                 weak_factory_.GetWeakPtr()),
-      callback);
+void AudioSender::InitializeTimers() {
+  DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
+  if (!timers_initialized_) {
+    timers_initialized_ = true;
+    ScheduleNextRtcpReport();
+  }
 }
 
-void AudioSender::InsertCodedAudioFrame(const EncodedAudioFrame* audio_frame,
-                                        const base::TimeTicks& recorded_time,
-                                        const base::Closure callback) {
-  DCHECK(audio_encoder_.get() == NULL) << "Invalid internal state";
-  rtp_sender_.IncomingEncodedAudioFrame(audio_frame, recorded_time);
-  callback.Run();
+void AudioSender::InsertAudio(scoped_ptr<AudioBus> audio_bus,
+                              const base::TimeTicks& recorded_time) {
+  DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
+  DCHECK(audio_encoder_.get()) << "Invalid internal state";
+  audio_encoder_->InsertAudio(audio_bus.Pass(), recorded_time);
 }
 
 void AudioSender::SendEncodedAudioFrame(
-    scoped_ptr<EncodedAudioFrame> audio_frame,
+    scoped_ptr<transport::EncodedAudioFrame> audio_frame,
     const base::TimeTicks& recorded_time) {
-  rtp_sender_.IncomingEncodedAudioFrame(audio_frame.get(), recorded_time);
+  DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
+  InitializeTimers();
+  transport_sender_->InsertCodedAudioFrame(audio_frame.get(), recorded_time);
 }
 
 void AudioSender::ResendPackets(
     const MissingFramesAndPacketsMap& missing_frames_and_packets) {
-  rtp_sender_.ResendPackets(missing_frames_and_packets);
+  DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
+  transport_sender_->ResendPackets(true, missing_frames_and_packets);
 }
 
-void AudioSender::IncomingRtcpPacket(const uint8* packet, size_t length,
-                                     const base::Closure callback) {
-  rtcp_.IncomingRtcpPacket(packet, length);
-  cast_environment_->PostTask(CastEnvironment::MAIN, FROM_HERE, callback);
+void AudioSender::IncomingRtcpPacket(scoped_ptr<Packet> packet) {
+  DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
+  rtcp_.IncomingRtcpPacket(&packet->front(), packet->size());
 }
 
 void AudioSender::ScheduleNextRtcpReport() {
+  DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
   base::TimeDelta time_to_next =
       rtcp_.TimeToSendNextRtcpReport() - cast_environment_->Clock()->NowTicks();
 
-  time_to_next = std::max(time_to_next,
-      base::TimeDelta::FromMilliseconds(kMinSchedulingDelayMs));
+  time_to_next = std::max(
+      time_to_next, base::TimeDelta::FromMilliseconds(kMinSchedulingDelayMs));
 
-  cast_environment_->PostDelayedTask(CastEnvironment::MAIN, FROM_HERE,
+  cast_environment_->PostDelayedTask(
+      CastEnvironment::MAIN,
+      FROM_HERE,
       base::Bind(&AudioSender::SendRtcpReport, weak_factory_.GetWeakPtr()),
-                 time_to_next);
+      time_to_next);
+}
+
+void AudioSender::StoreStatistics(
+    const transport::RtcpSenderInfo& sender_info,
+    base::TimeTicks time_sent,
+    uint32 rtp_timestamp) {
+  rtp_stats_.Store(sender_info, time_sent, rtp_timestamp);
 }
 
 void AudioSender::SendRtcpReport() {
-  rtcp_.SendRtcpReport(incoming_feedback_ssrc_);
+  DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
+  // We don't send audio logging messages since all captured audio frames will
+  // be sent.
+  transport::RtcpSenderLogMessage empty_msg;
+  rtp_stats_.UpdateInfo(cast_environment_->Clock()->NowTicks());
+  rtcp_.SendRtcpFromRtpSender(empty_msg, rtp_stats_.sender_info());
   ScheduleNextRtcpReport();
 }
 

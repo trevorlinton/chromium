@@ -14,12 +14,13 @@ cr.define('cloudprint', function() {
    * @private
    */
   CloudDestinationParser.Field_ = {
-    LAST_ACCESS: 'accessTime',
     CAPABILITIES: 'capabilities',
     CONNECTION_STATUS: 'connectionStatus',
+    DESCRIPTION: 'description',
     DISPLAY_NAME: 'displayName',
     ID: 'id',
     IS_TOS_ACCEPTED: 'isTosAccepted',
+    LAST_ACCESS: 'accessTime',
     TAGS: 'tags',
     TYPE: 'type'
   };
@@ -77,7 +78,9 @@ cr.define('cloudprint', function() {
       lastAccessTime: parseInt(
           json[CloudDestinationParser.Field_.LAST_ACCESS], 10) || Date.now(),
       isTosAccepted: (id == print_preview.Destination.GooglePromotedId.FEDEX) ?
-          json[CloudDestinationParser.Field_.IS_TOS_ACCEPTED] : null
+          json[CloudDestinationParser.Field_.IS_TOS_ACCEPTED] : null,
+      cloudID: id,
+      description: json[CloudDestinationParser.Field_.DESCRIPTION]
     };
     var cloudDest = new print_preview.Destination(
         id,

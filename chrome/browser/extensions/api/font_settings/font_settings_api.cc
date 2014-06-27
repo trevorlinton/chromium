@@ -18,7 +18,6 @@
 #include "chrome/browser/extensions/api/preference/preference_api.h"
 #include "chrome/browser/extensions/api/preference/preference_helpers.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/font_settings.h"
 #include "chrome/common/pref_names.h"
@@ -26,6 +25,7 @@
 #include "content/public/browser/font_list_async.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
+#include "extensions/browser/extension_system.h"
 #include "extensions/common/error_utils.h"
 
 #if defined(OS_WIN)
@@ -204,19 +204,20 @@ void FontSettingsEventRouter::OnFontPrefChanged(
       pref_name);
 }
 
-FontSettingsAPI::FontSettingsAPI(Profile* profile)
-    : font_settings_event_router_(new FontSettingsEventRouter(profile)) {
-}
+FontSettingsAPI::FontSettingsAPI(content::BrowserContext* context)
+    : font_settings_event_router_(
+          new FontSettingsEventRouter(Profile::FromBrowserContext(context))) {}
 
 FontSettingsAPI::~FontSettingsAPI() {
 }
 
-static base::LazyInstance<ProfileKeyedAPIFactory<FontSettingsAPI> >
-g_factory = LAZY_INSTANCE_INITIALIZER;
+static base::LazyInstance<BrowserContextKeyedAPIFactory<FontSettingsAPI> >
+    g_factory = LAZY_INSTANCE_INITIALIZER;
 
 // static
-ProfileKeyedAPIFactory<FontSettingsAPI>* FontSettingsAPI::GetFactoryInstance() {
-  return &g_factory.Get();
+BrowserContextKeyedAPIFactory<FontSettingsAPI>*
+FontSettingsAPI::GetFactoryInstance() {
+  return g_factory.Pointer();
 }
 
 bool FontSettingsClearFontFunction::RunImpl() {
@@ -382,7 +383,7 @@ bool SetFontPrefExtensionFunction::RunImpl() {
   base::DictionaryValue* details = NULL;
   EXTENSION_FUNCTION_VALIDATE(args_->GetDictionary(0, &details));
 
-  Value* value;
+  base::Value* value;
   EXTENSION_FUNCTION_VALIDATE(details->Get(GetKey(), &value));
 
   PreferenceAPI::Get(GetProfile())

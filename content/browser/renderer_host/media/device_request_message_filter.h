@@ -24,22 +24,32 @@ class CONTENT_EXPORT DeviceRequestMessageFilter : public BrowserMessageFilter,
                                                   public MediaStreamRequester {
  public:
   DeviceRequestMessageFilter(ResourceContext* resource_context,
-                             MediaStreamManager* media_stream_manager);
+                             MediaStreamManager* media_stream_manager,
+                             int render_process_id);
 
   // MediaStreamRequester implementation.
   // TODO(vrk): Replace MediaStreamRequester interface with a single callback so
   // we don't have to override all these callbacks we don't care about.
   // (crbug.com/249476)
   virtual void StreamGenerated(
-      const std::string& label, const StreamDeviceInfoArray& audio_devices,
-      const StreamDeviceInfoArray& video_devices) OVERRIDE;
-  virtual void StreamGenerationFailed(const std::string& label) OVERRIDE;
-  virtual void StopGeneratedStream(int render_view_id,
-                                   const std::string& label) OVERRIDE;
-  virtual void DeviceOpened(const std::string& label,
-                            const StreamDeviceInfo& video_device) OVERRIDE;
+      int render_view_id, int page_request_id, const std::string& label,
+      const StreamDeviceInfoArray& audio_devices,
+      const StreamDeviceInfoArray& video_devices) OVERRIDE {}
+  virtual void StreamGenerationFailed(
+      int render_view_id,
+      int page_request_id,
+      content::MediaStreamRequestResult result) OVERRIDE {}
+  virtual void DeviceStopped(int render_view_id,
+                             const std::string& label,
+                             const StreamDeviceInfo& device) OVERRIDE {}
+  virtual void DeviceOpened(int render_view_id,
+                            int page_request_id,
+                            const std::string& label,
+                            const StreamDeviceInfo& video_device) OVERRIDE {}
   // DevicesEnumerated() is the only callback we're interested in.
-  virtual void DevicesEnumerated(const std::string& label,
+  virtual void DevicesEnumerated(int render_view_id,
+                                 int page_request_id,
+                                 const std::string& label,
                                  const StreamDeviceInfoArray& devices) OVERRIDE;
 
   // BrowserMessageFilter implementation.
@@ -52,9 +62,6 @@ class CONTENT_EXPORT DeviceRequestMessageFilter : public BrowserMessageFilter,
 
  private:
   void OnGetSources(int request_id, const GURL& security_origin);
-  void HmacDeviceIds(const GURL& origin,
-                     const StreamDeviceInfoArray& raw_devices,
-                     StreamDeviceInfoArray* devices_with_guids);
 
   // Owned by ProfileIOData which is guaranteed to outlive DRMF.
   ResourceContext* resource_context_;
@@ -64,6 +71,8 @@ class CONTENT_EXPORT DeviceRequestMessageFilter : public BrowserMessageFilter,
   typedef std::vector<DeviceRequest> DeviceRequestList;
   // List of all requests.
   DeviceRequestList requests_;
+
+  int render_process_id_;
 
   DISALLOW_COPY_AND_ASSIGN(DeviceRequestMessageFilter);
 };

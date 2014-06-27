@@ -13,6 +13,7 @@
 #include "content/child/npapi/webplugin_delegate_impl.h"
 #include "content/child/npapi/webplugin_resource_client.h"
 #include "content/child/plugin_messages.h"
+#include "content/common/cursors/webcursor.h"
 #include "content/plugin/plugin_channel.h"
 #include "content/plugin/plugin_thread.h"
 #include "content/plugin/webplugin_proxy.h"
@@ -20,14 +21,13 @@
 #include "content/public/common/content_constants.h"
 #include "content/public/common/content_switches.h"
 #include "skia/ext/platform_device.h"
+#include "third_party/WebKit/public/platform/WebCursorInfo.h"
 #include "third_party/WebKit/public/web/WebBindings.h"
-#include "third_party/WebKit/public/web/WebCursorInfo.h"
 #include "third_party/npapi/bindings/npapi.h"
 #include "third_party/npapi/bindings/npruntime.h"
-#include "webkit/common/cursors/webcursor.h"
 
-using WebKit::WebBindings;
-using WebKit::WebCursorInfo;
+using blink::WebBindings;
+using blink::WebCursorInfo;
 
 namespace content {
 
@@ -273,7 +273,7 @@ void WebPluginDelegateStub::OnSetFocus(bool focused) {
 }
 
 void WebPluginDelegateStub::OnHandleInputEvent(
-    const WebKit::WebInputEvent *event,
+    const blink::WebInputEvent *event,
     bool* handled,
     WebCursor* cursor) {
   WebCursor::CursorInfo cursor_info;
@@ -317,7 +317,8 @@ void WebPluginDelegateStub::OnGetPluginScriptableObject(int* route_id) {
   WebBindings::releaseObject(object);
 }
 
-void WebPluginDelegateStub::OnGetFormValue(string16* value, bool* success) {
+void WebPluginDelegateStub::OnGetFormValue(base::string16* value,
+                                           bool* success) {
   *success = false;
   if (!delegate_)
     return;
@@ -338,18 +339,17 @@ void WebPluginDelegateStub::OnSetContentAreaFocus(bool has_focus) {
 
 #if defined(OS_WIN) && !defined(USE_AURA)
 void WebPluginDelegateStub::OnImeCompositionUpdated(
-    const string16& text,
+    const base::string16& text,
     const std::vector<int>& clauses,
     const std::vector<int>& target,
     int cursor_position) {
   if (delegate_)
     delegate_->ImeCompositionUpdated(text, clauses, target, cursor_position);
-#if defined(OS_WIN) && !defined(USE_AURA)
   webplugin_->UpdateIMEStatus();
-#endif
 }
 
-void WebPluginDelegateStub::OnImeCompositionCompleted(const string16& text) {
+void WebPluginDelegateStub::OnImeCompositionCompleted(
+    const base::string16& text) {
   if (delegate_)
     delegate_->ImeCompositionCompleted(text);
 }
@@ -382,7 +382,8 @@ void WebPluginDelegateStub::OnWindowFrameChanged(const gfx::Rect& window_frame,
     delegate_->WindowFrameChanged(window_frame, view_frame);
 }
 
-void WebPluginDelegateStub::OnImeCompositionCompleted(const string16& text) {
+void WebPluginDelegateStub::OnImeCompositionCompleted(
+    const base::string16& text) {
   if (delegate_)
     delegate_->ImeCompositionCompleted(text);
 }
@@ -441,7 +442,8 @@ void WebPluginDelegateStub::OnFetchURL(
                       params.notify_redirect,
                       params.is_plugin_src_load,
                       channel_->renderer_id(),
-                      params.render_view_id);
+                      params.render_frame_id,
+                      webplugin_->host_render_view_routing_id());
 }
 
 }  // namespace content

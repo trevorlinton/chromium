@@ -16,7 +16,6 @@
 #include "grit/ash_resources.h"
 #include "grit/ash_strings.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "ui/base/accessibility/accessible_view_state.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image.h"
 #include "ui/views/controls/image_view.h"
@@ -109,7 +108,7 @@ class SettingsDefaultView : public ActionableView,
       return;
 
     base::string16 accessible_name = label_ ?
-        label_->text() + ASCIIToUTF16(", ") +
+        label_->text() + base::ASCIIToUTF16(", ") +
             PowerStatus::Get()->GetAccessibleNameString() :
         PowerStatus::Get()->GetAccessibleNameString();
     SetAccessibleName(accessible_name);

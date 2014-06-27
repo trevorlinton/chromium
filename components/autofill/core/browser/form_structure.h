@@ -5,12 +5,15 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_FORM_STRUCTURE_H_
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_FORM_STRUCTURE_H_
 
+#include <set>
 #include <string>
 #include <vector>
 
+#include "base/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
+#include "base/strings/string16.h"
 #include "components/autofill/core/browser/autofill_field.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/field_types.h"
@@ -113,7 +116,7 @@ class FormStructure {
   // return false.
   bool ShouldBeCrowdsourced() const;
 
-  // Sets the field types and experiment id to be those set for |cached_form|.
+  // Sets the field types to be those set for |cached_form|.
   void UpdateFromCache(const FormStructure& cached_form);
 
   // Logs quality metrics for |this|, which should be a user-submitted form.
@@ -136,6 +139,28 @@ class FormStructure {
   void ParseFieldTypesFromAutocompleteAttributes(bool* found_types,
                                                  bool* found_sections);
 
+  // Determines whether |type| and |field| match.
+  typedef base::Callback<bool(ServerFieldType type,
+                              const AutofillField& field)>
+      InputFieldComparator;
+
+  // Fills in |fields_| that match |types| (via |matches|) with info from
+  // |get_info|.
+  bool FillFields(
+      const std::vector<ServerFieldType>& types,
+      const InputFieldComparator& matches,
+      const base::Callback<base::string16(const AutofillType&)>& get_info,
+      const std::string& app_locale);
+
+  // Returns the values that can be filled into the form structure for the
+  // given type. For example, there's no way to fill in a value of "The Moon"
+  // into ADDRESS_HOME_STATE if the form only has a
+  // <select autocomplete="region"> with no "The Moon" option. Returns an
+  // empty set if the form doesn't reference the given type or if all inputs
+  // are accepted (e.g., <input type="text" autocomplete="region">).
+  // All returned values are standardized to upper case.
+  std::set<base::string16> PossibleValues(ServerFieldType type);
+
   const AutofillField* field(size_t index) const;
   AutofillField* field(size_t index);
   size_t field_count() const;
@@ -157,8 +182,6 @@ class FormStructure {
     upload_required_ = required;
   }
   UploadRequired upload_required() const { return upload_required_; }
-
-  virtual std::string server_experiment_id() const;
 
   // Returns a FormData containing the data this form structure knows about.
   // |user_submitted| is currently always false.
@@ -226,10 +249,6 @@ class FormStructure {
   // Whether the server expects us to always upload, never upload, or default
   // to the stored upload rates.
   UploadRequired upload_required_;
-
-  // The server experiment corresponding to the server types returned for this
-  // form.
-  std::string server_experiment_id_;
 
   // GET or POST.
   RequestMethod method_;

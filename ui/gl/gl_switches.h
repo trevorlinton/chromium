@@ -30,7 +30,6 @@ GL_EXPORT extern const char kEnableGPUServiceLogging[];
 GL_EXPORT extern const char kEnableGPUClientLogging[];
 GL_EXPORT extern const char kEnableGPUServiceTracing[];
 GL_EXPORT extern const char kGpuNoContextLost[];
-GL_EXPORT extern const char kGpuSwapDelay[];
 
 GL_EXPORT extern const char kSupportsDualGpus[];
 GL_EXPORT extern const char kGpuSwitching[];
@@ -44,6 +43,8 @@ GL_EXPORT extern const char kGpuSwitchingOptionNameAutomatic[];
 GL_EXPORT extern const char kUseGL[];
 GL_EXPORT extern const char kSwiftShaderPath[];
 GL_EXPORT extern const char kTestGLLib[];
+GL_EXPORT extern const char kDisableGLDrawingForTests[];
+GL_EXPORT extern const char kUseGpuInTests[];
 
 GL_EXPORT extern const char* kGLSwitchesCopiedFromGpuProcessHost[];
 GL_EXPORT extern const int kGLSwitchesCopiedFromGpuProcessHostNumSwitches;

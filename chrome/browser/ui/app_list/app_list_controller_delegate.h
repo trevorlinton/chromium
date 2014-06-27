@@ -7,10 +7,9 @@
 
 #include <string>
 
-#include "chrome/browser/extensions/extension_prefs.h"
+#include "chrome/common/extensions/extension_constants.h"
 #include "ui/gfx/native_widget_types.h"
 
-class ExtensionSet;
 class Profile;
 
 namespace base {
@@ -19,6 +18,7 @@ class FilePath;
 
 namespace extensions {
 class Extension;
+class ExtensionSet;
 class InstallTracker;
 }
 
@@ -81,6 +81,14 @@ class AppListControllerDelegate {
   virtual void DoCreateShortcutsFlow(Profile* profile,
                                      const std::string& extension_id) = 0;
 
+  // Whether the controller supports a Show App Info flow.
+  virtual bool CanDoShowAppInfoFlow();
+
+  // Show the dialog with the application's information. Call only if
+  // CanDoShowAppInfoFlow() returns true.
+  virtual void DoShowAppInfoFlow(Profile* profile,
+                                 const std::string& extension_id);
+
   // Handle the "create window" context menu items of Chrome App.
   // |incognito| is true to create an incognito window.
   virtual void CreateNewWindow(Profile* profile, bool incognito) = 0;
@@ -130,12 +138,12 @@ class AppListControllerDelegate {
   // Gets/sets the launch type for an app.
   // The launch type specifies whether a hosted app should launch as a separate
   // window, fullscreened or as a tab.
-  extensions::ExtensionPrefs::LaunchType GetExtensionLaunchType(
+  extensions::LaunchType GetExtensionLaunchType(
       Profile* profile, const std::string& app_id);
   virtual void SetExtensionLaunchType(
       Profile* profile,
       const std::string& extension_id,
-      extensions::ExtensionPrefs::LaunchType launch_type);
+      extensions::LaunchType launch_type);
 
   // Returns true if the given extension is installed.
   bool IsExtensionInstalled(Profile* profile, const std::string& app_id);
@@ -143,7 +151,7 @@ class AppListControllerDelegate {
   extensions::InstallTracker* GetInstallTrackerFor(Profile* profile);
 
   // Get the list of installed apps for the given profile.
-  void GetApps(Profile* profile, ExtensionSet* out_apps);
+  void GetApps(Profile* profile, extensions::ExtensionSet* out_apps);
 };
 
 #endif  // CHROME_BROWSER_UI_APP_LIST_APP_LIST_CONTROLLER_DELEGATE_H_

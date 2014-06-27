@@ -21,7 +21,7 @@
 #include "base/memory/scoped_vector.h"
 #include "base/win/scoped_comptr.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
-#include "ui/base/ui_export.h"
+#include "ui/base/ui_base_export.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/vector2d.h"
 
@@ -124,7 +124,8 @@ class DataObjectImpl : public DownloadFileObserver,
   Observer* observer_;
 };
 
-class UI_EXPORT OSExchangeDataProviderWin : public OSExchangeData::Provider {
+class UI_BASE_EXPORT OSExchangeDataProviderWin
+    : public OSExchangeData::Provider {
  public:
   // Returns true if source has plain text that is a valid url.
   static bool HasPlainTextURL(IDataObject* source);
@@ -148,11 +149,12 @@ class UI_EXPORT OSExchangeDataProviderWin : public OSExchangeData::Provider {
 
   // OSExchangeData::Provider methods.
   virtual Provider* Clone() const;
+  virtual void MarkOriginatedFromRenderer();
+  virtual bool DidOriginateFromRenderer() const;
   virtual void SetString(const base::string16& data);
   virtual void SetURL(const GURL& url, const base::string16& title);
   virtual void SetFilename(const base::FilePath& path);
-  virtual void SetFilenames(
-      const std::vector<OSExchangeData::FileInfo>& filenames);
+  virtual void SetFilenames(const std::vector<FileInfo>& filenames);
   virtual void SetPickledData(const OSExchangeData::CustomFormat& format,
                               const Pickle& data);
   virtual void SetFileContents(const base::FilePath& filename,
@@ -160,17 +162,18 @@ class UI_EXPORT OSExchangeDataProviderWin : public OSExchangeData::Provider {
   virtual void SetHtml(const base::string16& html, const GURL& base_url);
 
   virtual bool GetString(base::string16* data) const;
-  virtual bool GetURLAndTitle(GURL* url, base::string16* title) const;
+  virtual bool GetURLAndTitle(OSExchangeData::FilenameToURLPolicy policy,
+                              GURL* url,
+                              base::string16* title) const;
   virtual bool GetFilename(base::FilePath* path) const;
-  virtual bool GetFilenames(
-      std::vector<OSExchangeData::FileInfo>* filenames) const;
+  virtual bool GetFilenames(std::vector<FileInfo>* filenames) const;
   virtual bool GetPickledData(const OSExchangeData::CustomFormat& format,
                               Pickle* data) const;
   virtual bool GetFileContents(base::FilePath* filename,
                                std::string* file_contents) const;
   virtual bool GetHtml(base::string16* html, GURL* base_url) const;
   virtual bool HasString() const;
-  virtual bool HasURL() const;
+  virtual bool HasURL(OSExchangeData::FilenameToURLPolicy policy) const;
   virtual bool HasFile() const;
   virtual bool HasFileContents() const;
   virtual bool HasHtml() const;
@@ -178,7 +181,6 @@ class UI_EXPORT OSExchangeDataProviderWin : public OSExchangeData::Provider {
       const OSExchangeData::CustomFormat& format) const;
   virtual void SetDownloadFileInfo(
       const OSExchangeData::DownloadFileInfo& download_info);
-  virtual void SetInDragLoop(bool in_drag_loop) OVERRIDE;
 #if defined(USE_AURA)
   virtual void SetDragImage(const gfx::ImageSkia& image,
                             const gfx::Vector2d& cursor_offset) OVERRIDE;

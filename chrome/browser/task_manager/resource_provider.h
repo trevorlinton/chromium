@@ -56,8 +56,8 @@ class Resource {
     TASKMANAGER_RESOURCE_TYPE_LIST(TASKMANAGER_RESOURCE_TYPE_LIST_ENUM)
   };
 
-  virtual string16 GetTitle() const = 0;
-  virtual string16 GetProfileName() const = 0;
+  virtual base::string16 GetTitle() const = 0;
+  virtual base::string16 GetProfileName() const = 0;
   virtual gfx::ImageSkia GetIcon() const = 0;
   virtual base::ProcessHandle GetProcess() const = 0;
   virtual int GetUniqueChildProcessId() const = 0;
@@ -65,7 +65,7 @@ class Resource {
   virtual int GetRoutingID() const;
 
   virtual bool ReportsCacheStats() const;
-  virtual WebKit::WebCache::ResourceTypeStats GetWebCoreCacheStats() const;
+  virtual blink::WebCache::ResourceTypeStats GetWebCoreCacheStats() const;
 
   virtual bool ReportsFPS() const;
   virtual float GetFPS() const;
@@ -73,12 +73,11 @@ class Resource {
   virtual bool ReportsSqliteMemoryUsed() const;
   virtual size_t SqliteMemoryUsedBytes() const;
 
-  // Return extension associated with the resource, or NULL if not applicable.
-  virtual const extensions::Extension* GetExtension() const;
-
   virtual bool ReportsV8MemoryStats() const;
   virtual size_t GetV8MemoryAllocated() const;
   virtual size_t GetV8MemoryUsed() const;
+
+  virtual int GetNaClDebugStubPort() const;
 
   // Returns true if this resource can be inspected using developer tools.
   virtual bool CanInspect() const;
@@ -107,14 +106,10 @@ class Resource {
   virtual void Refresh() {}
 
   virtual void NotifyResourceTypeStats(
-      const WebKit::WebCache::ResourceTypeStats& stats) {}
+      const blink::WebCache::ResourceTypeStats& stats) {}
   virtual void NotifyFPS(float fps) {}
   virtual void NotifyV8HeapStats(size_t v8_memory_allocated,
                                  size_t v8_memory_used) {}
-
-  // Returns true if this resource is not visible to the user because it lives
-  // in the background (e.g. extension background page, background contents).
-  virtual bool IsBackground() const;
 
   static const char* GetResourceTypeAsString(const Type type) {
     switch (type) {
@@ -123,17 +118,10 @@ class Resource {
     }
   }
 
-  // Returns resource identifier that is unique within single task manager
-  // session (between StartUpdating and StopUpdating).
-  int get_unique_id() { return unique_id_; }
-
  protected:
-  Resource() : unique_id_(0) {}
+  Resource() {}
 
  private:
-  friend class ::TaskManagerModel;
-  int unique_id_;
-
   DISALLOW_COPY_AND_ASSIGN(Resource);
 };
 
@@ -157,9 +145,9 @@ class ResourceProvider : public base::RefCountedThreadSafe<ResourceProvider> {
  public:
   // Should return the resource associated to the specified ids, or NULL if
   // the resource does not belong to this provider.
-  virtual Resource* GetResource(int process_id,
-                                int render_process_host_id,
-                                int routing_id) = 0;
+  virtual Resource* GetResource(int origin_pid,
+                                int child_id,
+                                int route_id) = 0;
   virtual void StartUpdating() = 0;
   virtual void StopUpdating() = 0;
 

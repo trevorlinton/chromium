@@ -15,10 +15,10 @@
 #include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "content/child/npapi/webplugin_delegate.h"
+#include "content/common/cursors/webcursor.h"
 #include "third_party/npapi/bindings/npapi.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/rect.h"
-#include "webkit/common/cursors/webcursor.h"
 
 #if defined(USE_X11)
 #include "ui/base/x/x11_util.h"
@@ -93,7 +93,7 @@ class WebPluginDelegateImpl : public WebPluginDelegate {
                               const gfx::Rect& clip_rect) OVERRIDE;
   virtual void Paint(SkCanvas* canvas, const gfx::Rect& rect) OVERRIDE;
   virtual void SetFocus(bool focused) OVERRIDE;
-  virtual bool HandleInputEvent(const WebKit::WebInputEvent& event,
+  virtual bool HandleInputEvent(const blink::WebInputEvent& event,
                                 WebCursor::CursorInfo* cursor_info) OVERRIDE;
   virtual NPObject* GetPluginScriptableObject() OVERRIDE;
   virtual NPP GetPluginNPP() OVERRIDE;
@@ -129,6 +129,7 @@ class WebPluginDelegateImpl : public WebPluginDelegate {
                         bool notify_redirects,
                         bool is_plugin_src_load,
                         int origin_pid,
+                        int render_frame_id,
                         int render_view_id) OVERRIDE;
   // End of WebPluginDelegate implementation.
 
@@ -282,7 +283,7 @@ class WebPluginDelegateImpl : public WebPluginDelegate {
 
   // Does platform-specific event handling. Arguments and return are identical
   // to HandleInputEvent.
-  bool PlatformHandleInputEvent(const WebKit::WebInputEvent& event,
+  bool PlatformHandleInputEvent(const blink::WebInputEvent& event,
                                 WebCursor::CursorInfo* cursor_info);
 
   // Closes down and destroys our plugin instance.
@@ -387,13 +388,11 @@ class WebPluginDelegateImpl : public WebPluginDelegate {
   // GetProcAddress intercepter for windowless plugins.
   static FARPROC WINAPI GetProcAddressPatch(HMODULE module, LPCSTR name);
 
-#if defined(USE_AURA)
   // WindowFromPoint patch for Flash windowless plugins. When flash receives
   // mouse move messages it calls the WindowFromPoint API to eventually convert
   // the mouse coordinates to screen. We need to return the dummy plugin parent
   // window for Aura to ensure that these conversions occur correctly.
   static HWND WINAPI WindowFromPointPatch(POINT point);
-#endif
 
   // The mouse hook proc which handles mouse capture in windowed plugins.
   static LRESULT CALLBACK MouseHookProc(int code, WPARAM wParam,
@@ -450,7 +449,7 @@ class WebPluginDelegateImpl : public WebPluginDelegate {
   void OnModalLoopEntered();
 
   // Returns true if the message passed in corresponds to a user gesture.
-  static bool IsUserGesture(const WebKit::WebInputEvent& event);
+  static bool IsUserGesture(const blink::WebInputEvent& event);
 
   // The url with which the plugin was instantiated.
   std::string plugin_url_;

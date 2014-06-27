@@ -4,12 +4,17 @@
 
 #include "content/child/child_thread.h"
 
+#include <signal.h>
+
 #include <string>
 
 #include "base/allocator/allocator_extension.h"
 #include "base/base_switches.h"
+#include "base/basictypes.h"
 #include "base/command_line.h"
+#include "base/debug/leak_annotations.h"
 #include "base/lazy_instance.h"
+#include "base/logging.h"
 #include "base/message_loop/message_loop.h"
 #include "base/process/kill.h"
 #include "base/process/process_handle.h"
@@ -22,7 +27,9 @@
 #include "content/child/child_histogram_message_filter.h"
 #include "content/child/child_process.h"
 #include "content/child/child_resource_message_filter.h"
+#include "content/child/child_shared_bitmap_manager.h"
 #include "content/child/fileapi/file_system_dispatcher.h"
+#include "content/child/fileapi/webfilesystem_impl.h"
 #include "content/child/power_monitor_broadcast_source.h"
 #include "content/child/quota_dispatcher.h"
 #include "content/child/quota_message_filter.h"
@@ -38,7 +45,7 @@
 #include "ipc/ipc_switches.h"
 #include "ipc/ipc_sync_channel.h"
 #include "ipc/ipc_sync_message_filter.h"
-#include "webkit/glue/webkit_glue.h"
+#include "webkit/child/resource_loader_bridge.h"
 
 #if defined(OS_WIN)
 #include "content/common/handle_enumerator_win.h"
@@ -63,6 +70,50 @@ base::LazyInstance<base::ThreadLocalPointer<ChildThread> > g_lazy_tls =
 // terminates child processes automatically. For unsandboxed processes (i.e.
 // plugins), PluginThread has EnsureTerminateMessageFilter.
 #if defined(OS_POSIX)
+
+// A thread delegate that waits for |duration| and then signals the process
+// with SIGALRM.
+class WaitAndExitDelegate : public base::PlatformThread::Delegate {
+ public:
+  explicit WaitAndExitDelegate(base::TimeDelta duration)
+      : duration_(duration) {}
+  virtual ~WaitAndExitDelegate() OVERRIDE {}
+
+  virtual void ThreadMain() OVERRIDE {
+    base::PlatformThread::Sleep(duration_);
+    // This used to be implemented with alarm(2). Make sure to not break
+    // anything that requires the process being signaled.
+    CHECK_EQ(0, raise(SIGALRM));
+
+    base::PlatformThread::Sleep((base::TimeDelta::FromSeconds(10)));
+    // If something erroneously blocked SIGALRM, this will trigger.
+    NOTREACHED();
+    _exit(0);
+  }
+
+ private:
+  const base::TimeDelta duration_;
+  DISALLOW_COPY_AND_ASSIGN(WaitAndExitDelegate);
+};
+
+// This is similar to using alarm(2), except it will spawn a thread
+// which will sleep for |duration| before raising SIGALRM.
+bool CreateAlarmThread(base::TimeDelta duration) {
+  scoped_ptr<WaitAndExitDelegate> delegate(new WaitAndExitDelegate(duration));
+
+  const bool thread_created = base::PlatformThread::CreateNonJoinable(
+      0 /* stack_size */, delegate.get());
+  if (!thread_created)
+    return false;
+
+  // A non joinable thread has been created. The thread will either terminate
+  // the process or will be terminated by the process. Therefore, keep the
+  // delegate object alive for the lifetime of the process.
+  WaitAndExitDelegate* leaking_delegate = delegate.release();
+  ANNOTATE_LEAKING_OBJECT_PTR(leaking_delegate);
+  ignore_result(leaking_delegate);
+  return true;
+}
 
 class SuicideOnChannelErrorFilter : public IPC::ChannelProxy::MessageFilter {
  public:
@@ -89,7 +140,12 @@ class SuicideOnChannelErrorFilter : public IPC::ChannelProxy::MessageFilter {
       // it 60 seconds to run exit handlers. Exit handlers may including ones
       // that write profile data to disk (which happens under profile collection
       // mode).
-      alarm(60);
+      CHECK(CreateAlarmThread(base::TimeDelta::FromSeconds(60)));
+#if defined(LEAK_SANITIZER)
+      // Invoke LeakSanitizer early to avoid detecting shutdown-only leaks. If
+      // leaks are found, the process will exit here.
+      __lsan_do_leak_check();
+#endif
     } else {
       _exit(0);
     }
@@ -113,7 +169,10 @@ base::LazyInstance<base::Lock> g_lazy_child_thread_lock =
 // doesn't handle the case. Thus, we need our own class here.
 struct CondVarLazyInstanceTraits {
   static const bool kRegisterOnExit = true;
-  static const bool kAllowedToAccessOnNonjoinableThread ALLOW_UNUSED = false;
+#ifndef NDEBUG
+  static const bool kAllowedToAccessOnNonjoinableThread = false;
+#endif
+
   static base::ConditionVariable* New(void* instance) {
     return new (instance) base::ConditionVariable(
         g_lazy_child_thread_lock.Pointer());
@@ -136,8 +195,17 @@ void QuitMainThreadMessageLoop() {
 
 }  // namespace
 
+ChildThread::ChildThreadMessageRouter::ChildThreadMessageRouter(
+    IPC::Sender* sender)
+    : sender_(sender) {}
+
+bool ChildThread::ChildThreadMessageRouter::Send(IPC::Message* msg) {
+  return sender_->Send(msg);
+}
+
 ChildThread::ChildThread()
-    : channel_connected_factory_(this),
+    : router_(this),
+      channel_connected_factory_(this),
       in_browser_process_(false) {
   channel_name_ = CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
       switches::kProcessChannelID);
@@ -146,6 +214,7 @@ ChildThread::ChildThread()
 
 ChildThread::ChildThread(const std::string& channel_name)
     : channel_name_(channel_name),
+      router_(this),
       channel_connected_factory_(this),
       in_browser_process_(true) {
   Init();
@@ -202,8 +271,8 @@ void ChildThread::Init() {
   channel_->AddFilter(new tracing::ChildTraceMessageFilter(
       ChildProcess::current()->io_message_loop_proxy()));
   channel_->AddFilter(resource_message_filter_.get());
-  channel_->AddFilter(quota_message_filter_.get());
-  channel_->AddFilter(service_worker_message_filter_.get());
+  channel_->AddFilter(quota_message_filter_->GetFilter());
+  channel_->AddFilter(service_worker_message_filter_->GetFilter());
 
   // In single process mode we may already have a power monitor
   if (!base::PowerMonitor::Get()) {
@@ -221,19 +290,6 @@ void ChildThread::Init() {
   if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kProcessType))
     channel_->AddFilter(new SuicideOnChannelErrorFilter());
 #endif
-
-  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kTraceToConsole)) {
-    std::string category_string =
-        CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-            switches::kTraceToConsole);
-
-    if (!category_string.size())
-      category_string = "*";
-
-    base::debug::TraceLog::GetInstance()->SetEnabled(
-        base::debug::CategoryFilter(category_string),
-        base::debug::TraceLog::ECHO_TO_CONSOLE);
-  }
 
   base::MessageLoop::current()->PostDelayedTask(
       FROM_HERE,
@@ -258,6 +314,9 @@ void ChildThread::Init() {
       ::HeapProfilerStop,
       ::GetHeapProfile));
 #endif
+
+  shared_bitmap_manager_.reset(
+      new ChildSharedBitmapManager(thread_safe_sender()));
 }
 
 ChildThread::~ChildThread() {
@@ -265,8 +324,6 @@ ChildThread::~ChildThread() {
   IPC::Logging::GetInstance()->SetIPCSender(NULL);
 #endif
 
-  channel_->RemoveFilter(service_worker_message_filter_.get());
-  channel_->RemoveFilter(quota_message_filter_.get());
   channel_->RemoveFilter(histogram_message_filter_.get());
   channel_->RemoveFilter(sync_message_filter_.get());
 
@@ -287,6 +344,7 @@ void ChildThread::Shutdown() {
   // safely shutdown blink in their Shutdown implementation.
   file_system_dispatcher_.reset();
   quota_dispatcher_.reset();
+  WebFileSystemImpl::DeleteThreadSpecificInstance();
 }
 
 void ChildThread::OnChannelConnected(int32 peer_pid) {
@@ -308,20 +366,13 @@ bool ChildThread::Send(IPC::Message* msg) {
   return channel_->Send(msg);
 }
 
-void ChildThread::AddRoute(int32 routing_id, IPC::Listener* listener) {
+MessageRouter* ChildThread::GetRouter() {
   DCHECK(base::MessageLoop::current() == message_loop());
-
-  router_.AddRoute(routing_id, listener);
-}
-
-void ChildThread::RemoveRoute(int32 routing_id) {
-  DCHECK(base::MessageLoop::current() == message_loop());
-
-  router_.RemoveRoute(routing_id);
+  return &router_;
 }
 
 webkit_glue::ResourceLoaderBridge* ChildThread::CreateBridge(
-    const webkit_glue::ResourceLoaderBridge::RequestInfo& request_info) {
+    const RequestInfo& request_info) {
   return resource_dispatcher()->CreateBridge(request_info);
 }
 
@@ -439,10 +490,9 @@ void ChildThread::OnDumpHandles() {
               switches::kAuditAllHandles)));
   handle_enum->EnumerateHandles();
   Send(new ChildProcessHostMsg_DumpHandlesDone);
-  return;
-#endif
-
+#else
   NOTIMPLEMENTED();
+#endif
 }
 
 #if defined(USE_TCMALLOC)
@@ -474,7 +524,6 @@ void ChildThread::ShutdownThread() {
   g_child_thread->message_loop()->PostTask(
       FROM_HERE, base::Bind(&QuitMainThreadMessageLoop));
 }
-
 #endif
 
 void ChildThread::OnProcessFinalRelease() {
@@ -493,7 +542,7 @@ void ChildThread::OnProcessFinalRelease() {
 }
 
 void ChildThread::EnsureConnected() {
-  LOG(INFO) << "ChildThread::EnsureConnected()";
+  VLOG(0) << "ChildThread::EnsureConnected()";
   base::KillProcess(base::GetCurrentProcessHandle(), 0, false);
 }
 

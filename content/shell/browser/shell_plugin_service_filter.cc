@@ -15,12 +15,12 @@ ShellPluginServiceFilter::~ShellPluginServiceFilter() {}
 
 bool ShellPluginServiceFilter::IsPluginAvailable(
     int render_process_id,
-    int render_view_id,
+    int render_frame_id,
     const void* context,
     const GURL& url,
     const GURL& policy_url,
     WebPluginInfo* plugin) {
-  return plugin->name == ASCIIToUTF16("WebKit Test PlugIn");
+  return plugin->name == base::ASCIIToUTF16("WebKit Test PlugIn");
 }
 
 bool ShellPluginServiceFilter::CanLoadPlugin(int render_process_id,

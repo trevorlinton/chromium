@@ -15,6 +15,20 @@ namespace iphoto {
 
 class IPhotoDataProvider;
 
+// Presents a virtual file system containing iPhoto contents in the
+// following organization:
+// /                    = virtual root
+// |- /Albums
+//    |- /AlbumName     = An album entry by name.
+//       |- pic1.jpg    = Entries for photos in the album.
+//       |- pic2.jpg
+//    |- /AnotherAlbum
+//       |- pic3.jpg
+//       |- /originals  = A directory for originals.
+//          |- pic3.jpg = Original picture. Same name as album photo.
+
+extern const char kIPhotoAlbumsDir[];
+
 class IPhotoFileUtil : public NativeMediaFileUtil {
  public:
   explicit IPhotoFileUtil(MediaPathFilter* media_path_filter);
@@ -34,22 +48,22 @@ class IPhotoFileUtil : public NativeMediaFileUtil {
       scoped_ptr<fileapi::FileSystemOperationContext> context,
       const fileapi::FileSystemURL& url,
       const CreateSnapshotFileCallback& callback) OVERRIDE;
-  virtual base::PlatformFileError GetFileInfoSync(
+  virtual base::File::Error GetFileInfoSync(
       fileapi::FileSystemOperationContext* context,
       const fileapi::FileSystemURL& url,
-      base::PlatformFileInfo* file_info,
+      base::File::Info* file_info,
       base::FilePath* platform_path) OVERRIDE;
-  virtual base::PlatformFileError ReadDirectorySync(
+  virtual base::File::Error ReadDirectorySync(
       fileapi::FileSystemOperationContext* context,
       const fileapi::FileSystemURL& url,
       EntryList* file_list) OVERRIDE;
-  virtual base::PlatformFileError CreateSnapshotFileSync(
+  virtual base::File::Error DeleteDirectorySync(
       fileapi::FileSystemOperationContext* context,
-      const fileapi::FileSystemURL& url,
-      base::PlatformFileInfo* file_info,
-      base::FilePath* platform_path,
-      scoped_refptr<webkit_blob::ShareableFileReference>* file_ref) OVERRIDE;
-  virtual base::PlatformFileError GetLocalFilePath(
+      const fileapi::FileSystemURL& url) OVERRIDE;
+  virtual base::File::Error DeleteFileSync(
+      fileapi::FileSystemOperationContext* context,
+      const fileapi::FileSystemURL& url) OVERRIDE;
+  virtual base::File::Error GetLocalFilePath(
       fileapi::FileSystemOperationContext* context,
       const fileapi::FileSystemURL& url,
       base::FilePath* local_file_path) OVERRIDE;

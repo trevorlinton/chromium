@@ -5,6 +5,7 @@
 #include "chrome/browser/chromeos/options/wifi_config_view.h"
 
 #include "ash/system/chromeos/network/network_connect.h"
+#include "base/bind.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -13,6 +14,7 @@
 #include "chrome/browser/chromeos/options/passphrase_textfield.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chromeos/login/login_state.h"
+#include "chromeos/network/favorite_state.h"
 #include "chromeos/network/network_configuration_handler.h"
 #include "chromeos/network/network_event_log.h"
 #include "chromeos/network/network_handler.h"
@@ -20,6 +22,7 @@
 #include "chromeos/network/network_state_handler.h"
 #include "chromeos/network/network_ui_data.h"
 #include "chromeos/network/shill_property_util.h"
+#include "chromeos/tpm_token_loader.h"
 #include "components/onc/onc_constants.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
@@ -106,7 +109,7 @@ class SecurityComboboxModel : public ui::ComboboxModel {
 
   // Overridden from ui::ComboboxModel:
   virtual int GetItemCount() const OVERRIDE;
-  virtual string16 GetItemAt(int index) OVERRIDE;
+  virtual base::string16 GetItemAt(int index) OVERRIDE;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(SecurityComboboxModel);
@@ -119,7 +122,7 @@ class EAPMethodComboboxModel : public ui::ComboboxModel {
 
   // Overridden from ui::ComboboxModel:
   virtual int GetItemCount() const OVERRIDE;
-  virtual string16 GetItemAt(int index) OVERRIDE;
+  virtual base::string16 GetItemAt(int index) OVERRIDE;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(EAPMethodComboboxModel);
@@ -132,7 +135,7 @@ class Phase2AuthComboboxModel : public ui::ComboboxModel {
 
   // Overridden from ui::ComboboxModel:
   virtual int GetItemCount() const OVERRIDE;
-  virtual string16 GetItemAt(int index) OVERRIDE;
+  virtual base::string16 GetItemAt(int index) OVERRIDE;
 
  private:
   views::Combobox* eap_method_combobox_;
@@ -147,7 +150,7 @@ class ServerCACertComboboxModel : public ui::ComboboxModel {
 
   // Overridden from ui::ComboboxModel:
   virtual int GetItemCount() const OVERRIDE;
-  virtual string16 GetItemAt(int index) OVERRIDE;
+  virtual base::string16 GetItemAt(int index) OVERRIDE;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ServerCACertComboboxModel);
@@ -160,7 +163,7 @@ class UserCertComboboxModel : public ui::ComboboxModel {
 
   // Overridden from ui::ComboboxModel:
   virtual int GetItemCount() const OVERRIDE;
-  virtual string16 GetItemAt(int index) OVERRIDE;
+  virtual base::string16 GetItemAt(int index) OVERRIDE;
 
  private:
   WifiConfigView* owner_;
@@ -179,7 +182,7 @@ SecurityComboboxModel::~SecurityComboboxModel() {
 int SecurityComboboxModel::GetItemCount() const {
     return SECURITY_INDEX_COUNT;
   }
-string16 SecurityComboboxModel::GetItemAt(int index) {
+base::string16 SecurityComboboxModel::GetItemAt(int index) {
   if (index == SECURITY_INDEX_NONE)
     return l10n_util::GetStringUTF16(
         IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_SECURITY_NONE);
@@ -190,7 +193,7 @@ string16 SecurityComboboxModel::GetItemAt(int index) {
     return l10n_util::GetStringUTF16(
         IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_SECURITY_PSK);
   NOTREACHED();
-  return string16();
+  return base::string16();
 }
 
 // EAPMethodComboboxModel ------------------------------------------------------
@@ -204,7 +207,7 @@ EAPMethodComboboxModel::~EAPMethodComboboxModel() {
 int EAPMethodComboboxModel::GetItemCount() const {
   return EAP_METHOD_INDEX_COUNT;
 }
-string16 EAPMethodComboboxModel::GetItemAt(int index) {
+base::string16 EAPMethodComboboxModel::GetItemAt(int index) {
   if (index == EAP_METHOD_INDEX_NONE)
     return l10n_util::GetStringUTF16(
         IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_EAP_METHOD_NONE);
@@ -221,7 +224,7 @@ string16 EAPMethodComboboxModel::GetItemAt(int index) {
     return l10n_util::GetStringUTF16(
         IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_EAP_METHOD_TTLS);
   NOTREACHED();
-  return string16();
+  return base::string16();
 }
 
 // Phase2AuthComboboxModel -----------------------------------------------------
@@ -249,7 +252,7 @@ int Phase2AuthComboboxModel::GetItemCount() const {
   return 0;
 }
 
-string16 Phase2AuthComboboxModel::GetItemAt(int index) {
+base::string16 Phase2AuthComboboxModel::GetItemAt(int index) {
   if (index == PHASE_2_AUTH_INDEX_AUTO)
     return l10n_util::GetStringUTF16(
         IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_PHASE_2_AUTH_AUTO);
@@ -269,7 +272,7 @@ string16 Phase2AuthComboboxModel::GetItemAt(int index) {
     return l10n_util::GetStringUTF16(
         IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_PHASE_2_AUTH_CHAP);
   NOTREACHED();
-  return string16();
+  return base::string16();
 }
 
 // ServerCACertComboboxModel ---------------------------------------------------
@@ -288,7 +291,7 @@ int ServerCACertComboboxModel::GetItemCount() const {
       CertLibrary::CERT_TYPE_SERVER_CA) + 2;
 }
 
-string16 ServerCACertComboboxModel::GetItemAt(int index) {
+base::string16 ServerCACertComboboxModel::GetItemAt(int index) {
   if (CertLibrary::Get()->CertificatesLoading())
     return l10n_util::GetStringUTF16(
         IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_CERT_LOADING);
@@ -314,7 +317,7 @@ UserCertComboboxModel::~UserCertComboboxModel() {
 
 int UserCertComboboxModel::GetItemCount() const {
   if (!owner_->UserCertActive())
-    return 0;
+    return 1;  // "None installed" (combobox must have at least 1 entry)
   if (CertLibrary::Get()->CertificatesLoading())
     return 1;  // "Loading"
   int num_certs =
@@ -324,9 +327,10 @@ int UserCertComboboxModel::GetItemCount() const {
   return num_certs;
 }
 
-string16 UserCertComboboxModel::GetItemAt(int index) {
+base::string16 UserCertComboboxModel::GetItemAt(int index) {
   if (!owner_->UserCertActive())
-    return string16();
+    return l10n_util::GetStringUTF16(
+        IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_USER_CERT_NONE_INSTALLED);
   if (CertLibrary::Get()->CertificatesLoading())
     return l10n_util::GetStringUTF16(
         IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_CERT_LOADING);
@@ -379,7 +383,10 @@ WifiConfigView::~WifiConfigView() {
   CertLibrary::Get()->RemoveObserver(this);
 }
 
-string16 WifiConfigView::GetTitle() const {
+base::string16 WifiConfigView::GetTitle() const {
+  const NetworkState* network = GetNetworkState();
+  if (network && network->type() == shill::kTypeEthernet)
+    return l10n_util::GetStringUTF16(IDS_OPTIONS_SETTINGS_CONFIGURE_ETHERNET);
   return l10n_util::GetStringUTF16(IDS_OPTIONS_SETTINGS_JOIN_WIFI_NETWORKS);
 }
 
@@ -399,7 +406,7 @@ views::View* WifiConfigView::GetInitiallyFocusedView() {
 bool WifiConfigView::CanLogin() {
   static const size_t kMinWirelessPasswordLen = 5;
 
-  // We either have an existing wifi network or the user entered an SSID.
+  // We either have an existing network or the user entered an SSID.
   if (service_path_.empty() && GetSsid().empty())
     return false;
 
@@ -497,7 +504,7 @@ void WifiConfigView::RefreshEapFields() {
                                     passphrase_ui_data_.IsEditable());
   passphrase_label_->SetEnabled(passphrase_enabled);
   if (!passphrase_enabled)
-    passphrase_textfield_->SetText(string16());
+    passphrase_textfield_->SetText(base::string16());
 
   // User cert.
   bool certs_loading = CertLibrary::Get()->CertificatesLoading();
@@ -526,7 +533,7 @@ void WifiConfigView::RefreshEapFields() {
   subject_match_label_->SetEnabled(subject_match_enabled);
   subject_match_textfield_->SetEnabled(subject_match_enabled);
   if (!subject_match_enabled)
-    subject_match_textfield_->SetText(string16());
+    subject_match_textfield_->SetText(base::string16());
 
   // No anonymous identity if no phase 2 auth.
   bool identity_anonymous_enabled = phase_2_auth_enabled;
@@ -534,7 +541,7 @@ void WifiConfigView::RefreshEapFields() {
       identity_anonymous_enabled && identity_anonymous_ui_data_.IsEditable());
   identity_anonymous_label_->SetEnabled(identity_anonymous_enabled);
   if (!identity_anonymous_enabled)
-    identity_anonymous_textfield_->SetText(string16());
+    identity_anonymous_textfield_->SetText(base::string16());
 
   RefreshShareCheckbox();
 }
@@ -581,11 +588,11 @@ void WifiConfigView::UpdateErrorLabel() {
     }
   }
   if (error_msg.empty() && !service_path_.empty()) {
-    const NetworkState* wifi = NetworkHandler::Get()->network_state_handler()->
-        GetNetworkState(service_path_);
-    if (wifi && wifi->connection_state() == shill::kStateFailure)
+    const NetworkState* network = GetNetworkState();
+    if (network && network->connection_state() == shill::kStateFailure) {
       error_msg = ash::network_connect::ErrorString(
-          wifi->error(), wifi->path());
+          network->last_error(), network->path());
+    }
   }
   if (!error_msg.empty()) {
     error_label_->SetText(error_msg);
@@ -596,7 +603,7 @@ void WifiConfigView::UpdateErrorLabel() {
 }
 
 void WifiConfigView::ContentsChanged(views::Textfield* sender,
-                                     const string16& new_contents) {
+                                     const base::string16& new_contents) {
   UpdateDialogButtons();
 }
 
@@ -611,25 +618,27 @@ bool WifiConfigView::HandleKeyEvent(views::Textfield* sender,
 
 void WifiConfigView::ButtonPressed(views::Button* sender,
                                    const ui::Event& event) {
-  if (sender == passphrase_visible_button_) {
-    if (passphrase_textfield_) {
-      passphrase_textfield_->SetObscured(!passphrase_textfield_->IsObscured());
-      passphrase_visible_button_->SetToggled(
-          !passphrase_textfield_->IsObscured());
+  if (sender == passphrase_visible_button_ && passphrase_textfield_) {
+    if (passphrase_textfield_->GetTextInputType() == ui::TEXT_INPUT_TYPE_TEXT) {
+      passphrase_textfield_->SetTextInputType(ui::TEXT_INPUT_TYPE_PASSWORD);
+      passphrase_visible_button_->SetToggled(false);
+    } else {
+      passphrase_textfield_->SetTextInputType(ui::TEXT_INPUT_TYPE_TEXT);
+      passphrase_visible_button_->SetToggled(true);
     }
   } else {
     NOTREACHED();
   }
 }
 
-void WifiConfigView::OnSelectedIndexChanged(views::Combobox* combobox) {
+void WifiConfigView::OnPerformAction(views::Combobox* combobox) {
   if (combobox == security_combobox_) {
     bool passphrase_enabled = PassphraseActive();
     passphrase_label_->SetEnabled(passphrase_enabled);
     passphrase_textfield_->SetEnabled(passphrase_enabled &&
                                       passphrase_ui_data_.IsEditable());
     if (!passphrase_enabled)
-      passphrase_textfield_->SetText(string16());
+      passphrase_textfield_->SetText(base::string16());
     RefreshShareCheckbox();
   } else if (combobox == user_cert_combobox_) {
     RefreshShareCheckbox();
@@ -647,12 +656,14 @@ void WifiConfigView::OnCertificatesLoaded(bool initial_load) {
 }
 
 bool WifiConfigView::Login() {
-  const bool share_default = true;
+  const NetworkState* network = GetNetworkState();
 
   // Set configuration properties.
   base::DictionaryValue properties;
-  bool share_network = GetShareNetwork(share_default);
 
+  // Default shared state for non-private networks is true.
+  const bool share_default = !network || !network->IsPrivate();
+  bool share_network = GetShareNetwork(share_default);
   bool only_policy_autoconnect =
       onc::PolicyAllowsOnlyPolicyNetworksToAutoconnect(!share_network);
   if (only_policy_autoconnect) {
@@ -661,6 +672,8 @@ bool WifiConfigView::Login() {
   }
 
   if (service_path_.empty()) {
+    // TODO(stevenjb): Support modifying existing EAP configurations.
+    // Will probably wait to do this in WebUI instead.
     properties.SetStringWithoutPathExpansion(
         shill::kTypeProperty, shill::kTypeWifi);
     shill_property_util::SetSSID(GetSsid(), &properties);
@@ -670,7 +683,6 @@ bool WifiConfigView::Login() {
         shill::kSaveCredentialsProperty, GetSaveCredentials());
     std::string security = shill::kSecurityNone;
     if (!eap_method_combobox_) {
-      // Hidden ordinary Wi-Fi connection.
       switch (security_combobox_->selected_index()) {
         case SECURITY_INDEX_NONE:
           security = shill::kSecurityNone;
@@ -688,7 +700,6 @@ bool WifiConfigView::Login() {
             shill::kPassphraseProperty, GetPassphrase());
       }
     } else {
-      // Hidden 802.1X EAP Wi-Fi connection.
       security = shill::kSecurity8021x;
       SetEapProperties(&properties);
     }
@@ -699,29 +710,38 @@ bool WifiConfigView::Login() {
     ash::network_connect::CreateConfigurationAndConnect(&properties,
                                                         share_network);
   } else {
-    const NetworkState* wifi = NetworkHandler::Get()->network_state_handler()->
-        GetNetworkState(service_path_);
-    if (!wifi) {
-      // Shill no longer knows about this wifi network (edge case).
+    if (!network) {
+      // Shill no longer knows about this network (edge case).
       // TODO(stevenjb): Add notification for this.
       NET_LOG_ERROR("Network not found", service_path_);
       return true;  // Close dialog
     }
     if (eap_method_combobox_) {
-      // Visible 802.1X EAP Wi-Fi connection.
       SetEapProperties(&properties);
       properties.SetBooleanWithoutPathExpansion(
           shill::kSaveCredentialsProperty, GetSaveCredentials());
     } else {
-      // Visible ordinary Wi-Fi connection.
       const std::string passphrase = GetPassphrase();
       if (!passphrase.empty()) {
         properties.SetStringWithoutPathExpansion(
             shill::kPassphraseProperty, passphrase);
       }
     }
-    ash::network_connect::ConfigureNetworkAndConnect(
-        service_path_, properties, share_network);
+    if (network->type() == shill::kTypeEthernet) {
+      // When configuring an ethernet service, we actually configure the
+      // EthernetEap service, which exists in the Profile only.
+      // See crbug.com/126870 for more info.
+      properties.SetStringWithoutPathExpansion(shill::kTypeProperty,
+                                               shill::kTypeEthernetEap);
+      share_network = false;
+      // Set the TPM PIN.
+      properties.SetStringWithoutPathExpansion(
+          shill::kEapPinProperty, TPMTokenLoader::Get()->tpm_user_pin());
+      ash::network_connect::CreateConfiguration(&properties, share_network);
+    } else {
+      ash::network_connect::ConfigureNetworkAndConnect(
+          service_path_, properties, share_network);
+    }
   }
   return true;  // dialog will be closed
 }
@@ -729,8 +749,8 @@ bool WifiConfigView::Login() {
 std::string WifiConfigView::GetSsid() const {
   std::string result;
   if (ssid_textfield_ != NULL) {
-    std::string untrimmed = UTF16ToUTF8(ssid_textfield_->text());
-    TrimWhitespaceASCII(untrimmed, TRIM_ALL, &result);
+    std::string untrimmed = base::UTF16ToUTF8(ssid_textfield_->text());
+    base::TrimWhitespaceASCII(untrimmed, base::TRIM_ALL, &result);
   }
   return result;
 }
@@ -738,7 +758,7 @@ std::string WifiConfigView::GetSsid() const {
 std::string WifiConfigView::GetPassphrase() const {
   std::string result;
   if (passphrase_textfield_ != NULL)
-    result = UTF16ToUTF8(passphrase_textfield_->text());
+    result = base::UTF16ToUTF8(passphrase_textfield_->text());
   return result;
 }
 
@@ -817,7 +837,7 @@ bool WifiConfigView::GetEapUseSystemCas() const {
 
 std::string WifiConfigView::GetEapSubjectMatch() const {
   DCHECK(subject_match_textfield_);
-  return UTF16ToUTF8(subject_match_textfield_->text());
+  return base::UTF16ToUTF8(subject_match_textfield_->text());
 }
 
 std::string WifiConfigView::GetEapClientCertPkcs11Id() const {
@@ -834,12 +854,12 @@ std::string WifiConfigView::GetEapClientCertPkcs11Id() const {
 
 std::string WifiConfigView::GetEapIdentity() const {
   DCHECK(identity_textfield_);
-  return UTF16ToUTF8(identity_textfield_->text());
+  return base::UTF16ToUTF8(identity_textfield_->text());
 }
 
 std::string WifiConfigView::GetEapAnonymousIdentity() const {
   DCHECK(identity_anonymous_textfield_);
-  return UTF16ToUTF8(identity_anonymous_textfield_->text());
+  return base::UTF16ToUTF8(identity_anonymous_textfield_->text());
 }
 
 void WifiConfigView::SetEapProperties(base::DictionaryValue* properties) {
@@ -875,38 +895,37 @@ void WifiConfigView::SetEapProperties(base::DictionaryValue* properties) {
 void WifiConfigView::Cancel() {
 }
 
-// This will initialize the view depending on if we have a wifi network or not.
-// And if we are doing simple password encryption or the more complicated
-// 802.1x encryption.
-// If we are creating the "Join other network..." dialog, we will allow user
-// to enter the data. And if they select the 802.1x encryption, we will show
-// the 802.1x fields.
 void WifiConfigView::Init(bool show_8021x) {
-  const NetworkState* wifi = NetworkHandler::Get()->network_state_handler()->
-      GetNetworkState(service_path_);
-  if (wifi) {
-    DCHECK(wifi->type() == shill::kTypeWifi);
-    if (wifi->security() == shill::kSecurity8021x)
+  const NetworkState* network = GetNetworkState();
+  if (network) {
+    if (network->type() == shill::kTypeWifi) {
+      if (network->security() == shill::kSecurity8021x)
+        show_8021x = true;
+    } else if (network->type() == shill::kTypeEthernet) {
       show_8021x = true;
-    ParseWiFiEAPUIProperty(&eap_method_ui_data_, wifi, ::onc::eap::kOuter);
-    ParseWiFiEAPUIProperty(&phase_2_auth_ui_data_, wifi, ::onc::eap::kInner);
-    ParseWiFiEAPUIProperty(&user_cert_ui_data_, wifi,
-                           ::onc::eap::kClientCertRef);
-    ParseWiFiEAPUIProperty(&server_ca_cert_ui_data_, wifi,
-                           ::onc::eap::kServerCARef);
-    if (server_ca_cert_ui_data_.IsManaged()) {
-      ParseWiFiEAPUIProperty(&server_ca_cert_ui_data_, wifi,
-                             ::onc::eap::kUseSystemCAs);
+    } else {
+      NOTREACHED() << "Unexpected network type for WifiConfigView: "
+                   << network->type() << " Path: " << service_path_;
     }
-    ParseWiFiEAPUIProperty(&identity_ui_data_, wifi, ::onc::eap::kIdentity);
-    ParseWiFiEAPUIProperty(&identity_anonymous_ui_data_, wifi,
-                           ::onc::eap::kAnonymousIdentity);
-    ParseWiFiEAPUIProperty(&save_credentials_ui_data_, wifi,
-                           ::onc::eap::kSaveCredentials);
+    ParseEAPUIProperty(&eap_method_ui_data_, network, ::onc::eap::kOuter);
+    ParseEAPUIProperty(&phase_2_auth_ui_data_, network, ::onc::eap::kInner);
+    ParseEAPUIProperty(
+        &user_cert_ui_data_, network, ::onc::eap::kClientCertRef);
+    ParseEAPUIProperty(
+        &server_ca_cert_ui_data_, network, ::onc::eap::kServerCARef);
+    if (server_ca_cert_ui_data_.IsManaged()) {
+      ParseEAPUIProperty(
+          &server_ca_cert_ui_data_, network, ::onc::eap::kUseSystemCAs);
+    }
+    ParseEAPUIProperty(&identity_ui_data_, network, ::onc::eap::kIdentity);
+    ParseEAPUIProperty(
+        &identity_anonymous_ui_data_, network, ::onc::eap::kAnonymousIdentity);
+    ParseEAPUIProperty(
+        &save_credentials_ui_data_, network, ::onc::eap::kSaveCredentials);
     if (show_8021x)
-      ParseWiFiEAPUIProperty(&passphrase_ui_data_, wifi, ::onc::eap::kPassword);
+      ParseEAPUIProperty(&passphrase_ui_data_, network, ::onc::eap::kPassword);
     else
-      ParseWiFiUIProperty(&passphrase_ui_data_, wifi, ::onc::wifi::kPassphrase);
+      ParseUIProperty(&passphrase_ui_data_, network, ::onc::wifi::kPassphrase);
   }
 
   views::GridLayout* layout = views::GridLayout::CreatePanel(this);
@@ -929,26 +948,29 @@ void WifiConfigView::Init(bool show_8021x) {
                         views::GridLayout::USE_PREF, 0, kPasswordVisibleWidth);
 
   // SSID input
-  layout->StartRow(0, column_view_set_id);
-  layout->AddView(new views::Label(l10n_util::GetStringUTF16(
-      IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_NETWORK_ID)));
-  if (!wifi) {
-    ssid_textfield_ = new views::Textfield(views::Textfield::STYLE_DEFAULT);
-    ssid_textfield_->SetController(this);
-    ssid_textfield_->SetAccessibleName(l10n_util::GetStringUTF16(
-        IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_NETWORK_ID));
-    layout->AddView(ssid_textfield_);
-  } else {
-    views::Label* label = new views::Label(UTF8ToUTF16(wifi->name()));
-    label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-    layout->AddView(label);
+  if (!network || network->type() != shill::kTypeEthernet) {
+    layout->StartRow(0, column_view_set_id);
+    layout->AddView(new views::Label(l10n_util::GetStringUTF16(
+        IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_NETWORK_ID)));
+    if (!network) {
+      ssid_textfield_ = new views::Textfield();
+      ssid_textfield_->set_controller(this);
+      ssid_textfield_->SetAccessibleName(l10n_util::GetStringUTF16(
+          IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_NETWORK_ID));
+      layout->AddView(ssid_textfield_);
+    } else {
+      views::Label* label =
+          new views::Label(base::UTF8ToUTF16(network->name()));
+      label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+      layout->AddView(label);
+    }
+    layout->AddPaddingRow(0, views::kRelatedControlVerticalSpacing);
   }
-  layout->AddPaddingRow(0, views::kRelatedControlVerticalSpacing);
 
   // Security select
-  if (!wifi && !show_8021x) {
+  if (!network && !show_8021x) {
     layout->StartRow(0, column_view_set_id);
-    string16 label_text = l10n_util::GetStringUTF16(
+    base::string16 label_text = l10n_util::GetStringUTF16(
         IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_SECURITY);
     layout->AddView(new views::Label(label_text));
     security_combobox_model_.reset(new internal::SecurityComboboxModel);
@@ -966,7 +988,7 @@ void WifiConfigView::Init(bool show_8021x) {
 
     // EAP method
     layout->StartRow(0, column_view_set_id);
-    string16 eap_label_text = l10n_util::GetStringUTF16(
+    base::string16 eap_label_text = l10n_util::GetStringUTF16(
         IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_EAP_METHOD);
     layout->AddView(new views::Label(eap_label_text));
     eap_method_combobox_model_.reset(new internal::EAPMethodComboboxModel);
@@ -981,7 +1003,7 @@ void WifiConfigView::Init(bool show_8021x) {
 
     // Phase 2 authentication
     layout->StartRow(0, column_view_set_id);
-    string16 phase_2_label_text = l10n_util::GetStringUTF16(
+    base::string16 phase_2_label_text = l10n_util::GetStringUTF16(
         IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_PHASE_2_AUTH);
     phase_2_auth_label_ = new views::Label(phase_2_label_text);
     layout->AddView(phase_2_auth_label_);
@@ -999,7 +1021,7 @@ void WifiConfigView::Init(bool show_8021x) {
 
     // Server CA certificate
     layout->StartRow(0, column_view_set_id);
-    string16 server_ca_cert_label_text = l10n_util::GetStringUTF16(
+    base::string16 server_ca_cert_label_text = l10n_util::GetStringUTF16(
         IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_CERT_SERVER_CA);
     server_ca_cert_label_ = new views::Label(server_ca_cert_label_text);
     layout->AddView(server_ca_cert_label_);
@@ -1019,20 +1041,19 @@ void WifiConfigView::Init(bool show_8021x) {
 
     // Subject Match
     layout->StartRow(0, column_view_set_id);
-    string16 subject_match_label_text = l10n_util::GetStringUTF16(
+    base::string16 subject_match_label_text = l10n_util::GetStringUTF16(
         IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_EAP_SUBJECT_MATCH);
     subject_match_label_ = new views::Label(subject_match_label_text);
     layout->AddView(subject_match_label_);
-    subject_match_textfield_ =
-        new views::Textfield(views::Textfield::STYLE_DEFAULT);
+    subject_match_textfield_ = new views::Textfield();
     subject_match_textfield_->SetAccessibleName(subject_match_label_text);
-    subject_match_textfield_->SetController(this);
+    subject_match_textfield_->set_controller(this);
     layout->AddView(subject_match_textfield_);
     layout->AddPaddingRow(0, views::kRelatedControlVerticalSpacing);
 
     // User certificate
     layout->StartRow(0, column_view_set_id);
-    string16 user_cert_label_text = l10n_util::GetStringUTF16(
+    base::string16 user_cert_label_text = l10n_util::GetStringUTF16(
         IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_CERT);
     user_cert_label_ = new views::Label(user_cert_label_text);
     layout->AddView(user_cert_label_);
@@ -1048,13 +1069,13 @@ void WifiConfigView::Init(bool show_8021x) {
 
     // Identity
     layout->StartRow(0, column_view_set_id);
-    string16 identity_label_text = l10n_util::GetStringUTF16(
+    base::string16 identity_label_text = l10n_util::GetStringUTF16(
         IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_CERT_IDENTITY);
     identity_label_ = new views::Label(identity_label_text);
     layout->AddView(identity_label_);
-    identity_textfield_ = new views::Textfield(views::Textfield::STYLE_DEFAULT);
+    identity_textfield_ = new views::Textfield();
     identity_textfield_->SetAccessibleName(identity_label_text);
-    identity_textfield_->SetController(this);
+    identity_textfield_->set_controller(this);
     identity_textfield_->SetEnabled(identity_ui_data_.IsEditable());
     layout->AddView(identity_textfield_);
     layout->AddView(new ControlledSettingIndicatorView(identity_ui_data_));
@@ -1064,14 +1085,16 @@ void WifiConfigView::Init(bool show_8021x) {
   // Passphrase input
   layout->StartRow(0, column_view_set_id);
   int label_text_id = IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_PASSPHRASE;
-  string16 passphrase_label_text = l10n_util::GetStringUTF16(label_text_id);
+  base::string16 passphrase_label_text =
+      l10n_util::GetStringUTF16(label_text_id);
   passphrase_label_ = new views::Label(passphrase_label_text);
   layout->AddView(passphrase_label_);
   passphrase_textfield_ = new PassphraseTextfield();
-  passphrase_textfield_->SetController(this);
+  passphrase_textfield_->set_controller(this);
   // Disable passphrase input initially for other network.
-  passphrase_label_->SetEnabled(wifi);
-  passphrase_textfield_->SetEnabled(wifi && passphrase_ui_data_.IsEditable());
+  passphrase_label_->SetEnabled(network);
+  passphrase_textfield_->SetEnabled(network &&
+                                    passphrase_ui_data_.IsEditable());
   passphrase_textfield_->SetAccessibleName(passphrase_label_text);
   layout->AddView(passphrase_textfield_);
 
@@ -1080,7 +1103,7 @@ void WifiConfigView::Init(bool show_8021x) {
   } else {
     // Password visible button.
     passphrase_visible_button_ = new views::ToggleImageButton(this);
-    passphrase_visible_button_->set_focusable(true);
+    passphrase_visible_button_->SetFocusable(true);
     passphrase_visible_button_->SetTooltipText(
         l10n_util::GetStringUTF16(
             IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_PASSPHRASE_SHOW));
@@ -1117,11 +1140,10 @@ void WifiConfigView::Init(bool show_8021x) {
         new views::Label(l10n_util::GetStringUTF16(
             IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_CERT_IDENTITY_ANONYMOUS));
     layout->AddView(identity_anonymous_label_);
-    identity_anonymous_textfield_ = new views::Textfield(
-        views::Textfield::STYLE_DEFAULT);
+    identity_anonymous_textfield_ = new views::Textfield();
     identity_anonymous_label_->SetEnabled(false);
     identity_anonymous_textfield_->SetEnabled(false);
-    identity_anonymous_textfield_->SetController(this);
+    identity_anonymous_textfield_->set_controller(this);
     layout->AddView(identity_anonymous_textfield_);
     layout->AddView(
         new ControlledSettingIndicatorView(identity_anonymous_ui_data_));
@@ -1145,7 +1167,7 @@ void WifiConfigView::Init(bool show_8021x) {
   }
 
   // Share network
-  if (!wifi || wifi->profile_path().empty()) {
+  if (!network || network->profile_path().empty()) {
     layout->StartRow(0, column_view_set_id);
     share_network_checkbox_ = new views::Checkbox(
         l10n_util::GetStringUTF16(
@@ -1165,17 +1187,18 @@ void WifiConfigView::Init(bool show_8021x) {
 
   // Initialize the field and checkbox values.
 
-  if (!wifi && show_8021x)
+  if (!network && show_8021x)
     RefreshEapFields();
 
   RefreshShareCheckbox();
   UpdateErrorLabel();
 
-  if (wifi) {
+  if (network) {
     NetworkHandler::Get()->network_configuration_handler()->GetProperties(
         service_path_,
         base::Bind(&WifiConfigView::InitFromProperties,
-                   weak_ptr_factory_.GetWeakPtr(), show_8021x),
+                   weak_ptr_factory_.GetWeakPtr(),
+                   show_8021x),
         base::Bind(&ShillError, "GetProperties"));
   }
 }
@@ -1188,7 +1211,7 @@ void WifiConfigView::InitFromProperties(
     std::string passphrase;
     properties.GetStringWithoutPathExpansion(
         shill::kPassphraseProperty, &passphrase);
-    passphrase_textfield_->SetText(UTF8ToUTF16(passphrase));
+    passphrase_textfield_->SetText(base::UTF8ToUTF16(passphrase));
     return;
   }
 
@@ -1225,14 +1248,15 @@ void WifiConfigView::InitFromProperties(
     std::string eap_anonymous_identity;
     properties.GetStringWithoutPathExpansion(
         shill::kEapAnonymousIdentityProperty, &eap_anonymous_identity);
-    identity_anonymous_textfield_->SetText(UTF8ToUTF16(eap_anonymous_identity));
+    identity_anonymous_textfield_->SetText(
+        base::UTF8ToUTF16(eap_anonymous_identity));
   }
 
   // Subject match
   std::string subject_match;
   properties.GetStringWithoutPathExpansion(
       shill::kEapSubjectMatchProperty, &subject_match);
-  subject_match_textfield_->SetText(UTF8ToUTF16(subject_match));
+  subject_match_textfield_->SetText(base::UTF8ToUTF16(subject_match));
 
   // Server CA certificate.
   if (CaCertActive()) {
@@ -1284,14 +1308,14 @@ void WifiConfigView::InitFromProperties(
   std::string eap_identity;
   properties.GetStringWithoutPathExpansion(
       shill::kEapIdentityProperty, &eap_identity);
-  identity_textfield_->SetText(UTF8ToUTF16(eap_identity));
+  identity_textfield_->SetText(base::UTF8ToUTF16(eap_identity));
 
   // Passphrase
   if (PassphraseActive()) {
     std::string eap_password;
     properties.GetStringWithoutPathExpansion(
         shill::kEapPasswordProperty, &eap_password);
-    passphrase_textfield_->SetText(UTF8ToUTF16(eap_password));
+    passphrase_textfield_->SetText(base::UTF8ToUTF16(eap_password));
     // If 'Connectable' is True, show a fake passphrase to indicate that it
     // has already been set.
     bool connectable = false;
@@ -1317,35 +1341,45 @@ void WifiConfigView::InitFocus() {
     view_to_focus->RequestFocus();
 }
 
+bool WifiConfigView::IsConfigureDialog() {
+  const NetworkState* network = GetNetworkState();
+  return network && network->type() == shill::kTypeEthernet;
+}
+
 void WifiConfigView::NetworkPropertiesUpdated(const NetworkState* network) {
   if (network->path() != service_path_)
     return;
   UpdateErrorLabel();
 }
 
-// static
-void WifiConfigView::ParseWiFiUIProperty(
-    NetworkPropertyUIData* property_ui_data,
-    const NetworkState* network,
-    const std::string& key) {
-  ::onc::ONCSource onc_source = ::onc::ONC_SOURCE_NONE;
-  const base::DictionaryValue* onc =
-      onc::FindPolicyForActiveUser(network->guid(), &onc_source);
-
-  property_ui_data->ParseOncProperty(
-      onc_source,
-      onc,
-      base::StringPrintf("%s.%s", ::onc::network_config::kWiFi, key.c_str()));
+const NetworkState* WifiConfigView::GetNetworkState() const {
+  if (service_path_.empty())
+    return NULL;
+  return NetworkHandler::Get()->network_state_handler()->GetNetworkState(
+      service_path_);
 }
 
 // static
-void WifiConfigView::ParseWiFiEAPUIProperty(
-    NetworkPropertyUIData* property_ui_data,
-    const NetworkState* network,
-    const std::string& key) {
-  ParseWiFiUIProperty(
-      property_ui_data, network,
-      base::StringPrintf("%s.%s", ::onc::wifi::kEAP, key.c_str()));
+void WifiConfigView::ParseUIProperty(NetworkPropertyUIData* property_ui_data,
+                                     const NetworkState* network,
+                                     const std::string& key) {
+  ::onc::ONCSource onc_source = ::onc::ONC_SOURCE_NONE;
+  const base::DictionaryValue* onc =
+      onc::FindPolicyForActiveUser(network->guid(), &onc_source);
+  std::string onc_tag = network->type() == shill::kTypeEthernet
+                            ? ::onc::network_config::kWiFi
+                            : ::onc::network_config::kEthernet;
+  property_ui_data->ParseOncProperty(onc_source, onc, onc_tag + '.' + key);
+}
+
+// static
+void WifiConfigView::ParseEAPUIProperty(NetworkPropertyUIData* property_ui_data,
+                                        const NetworkState* network,
+                                        const std::string& key) {
+  std::string onc_tag = network->type() == shill::kTypeEthernet
+                            ? ::onc::ethernet::kEAP
+                            : ::onc::wifi::kEAP;
+  ParseUIProperty(property_ui_data, network, onc_tag + '.' + key);
 }
 
 }  // namespace chromeos

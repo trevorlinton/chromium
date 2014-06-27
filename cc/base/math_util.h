@@ -11,6 +11,7 @@
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "cc/base/cc_export.h"
+#include "ui/gfx/box_f.h"
 #include "ui/gfx/point3_f.h"
 #include "ui/gfx/point_f.h"
 #include "ui/gfx/size.h"
@@ -24,6 +25,7 @@ class Rect;
 class RectF;
 class Transform;
 class Vector2dF;
+class Vector2d;
 }
 
 namespace cc {
@@ -98,10 +100,12 @@ class CC_EXPORT MathUtil {
   //
   // These functions return the axis-aligned rect that encloses the correctly
   // clipped, transformed polygon.
-  static gfx::Rect MapClippedRect(const gfx::Transform& transform,
-                                  gfx::Rect rect);
+  static gfx::Rect MapEnclosingClippedRect(const gfx::Transform& transform,
+                                           const gfx::Rect& rect);
   static gfx::RectF MapClippedRect(const gfx::Transform& transform,
                                    const gfx::RectF& rect);
+  static gfx::Rect ProjectEnclosingClippedRect(const gfx::Transform& transform,
+                                               const gfx::Rect& rect);
   static gfx::RectF ProjectClippedRect(const gfx::Transform& transform,
                                        const gfx::RectF& rect);
 
@@ -115,7 +119,7 @@ class CC_EXPORT MathUtil {
                              gfx::PointF clipped_quad[8],
                              int* num_vertices_in_clipped_quad);
 
-  static gfx::RectF ComputeEnclosingRectOfVertices(gfx::PointF vertices[],
+  static gfx::RectF ComputeEnclosingRectOfVertices(const gfx::PointF vertices[],
                                                    int num_vertices);
   static gfx::RectF ComputeEnclosingClippedRect(
       const HomogeneousCoordinate& h1,
@@ -129,7 +133,7 @@ class CC_EXPORT MathUtil {
                             const gfx::QuadF& quad,
                             bool* clipped);
   static gfx::PointF MapPoint(const gfx::Transform& transform,
-                              gfx::PointF point,
+                              const gfx::PointF& point,
                               bool* clipped);
   static gfx::Point3F MapPoint(const gfx::Transform&,
                                const gfx::Point3F&,
@@ -138,7 +142,7 @@ class CC_EXPORT MathUtil {
                                 const gfx::QuadF& quad,
                                 bool* clipped);
   static gfx::PointF ProjectPoint(const gfx::Transform& transform,
-                                  gfx::PointF point,
+                                  const gfx::PointF& point,
                                   bool* clipped);
 
   static gfx::Vector2dF ComputeTransform2dScaleComponents(const gfx::Transform&,
@@ -155,23 +159,25 @@ class CC_EXPORT MathUtil {
 
   // Returns the smallest angle between the given two vectors in degrees.
   // Neither vector is assumed to be normalized.
-  static float SmallestAngleBetweenVectors(gfx::Vector2dF v1,
-                                           gfx::Vector2dF v2);
+  static float SmallestAngleBetweenVectors(const gfx::Vector2dF& v1,
+                                           const gfx::Vector2dF& v2);
 
   // Projects the |source| vector onto |destination|. Neither vector is assumed
   // to be normalized.
-  static gfx::Vector2dF ProjectVector(gfx::Vector2dF source,
-                                      gfx::Vector2dF destination);
+  static gfx::Vector2dF ProjectVector(const gfx::Vector2dF& source,
+                                      const gfx::Vector2dF& destination);
 
   // Conversion to value.
-  static scoped_ptr<base::Value> AsValue(gfx::Size s);
-  static scoped_ptr<base::Value> AsValue(gfx::SizeF s);
-  static scoped_ptr<base::Value> AsValue(gfx::Rect r);
+  static scoped_ptr<base::Value> AsValue(const gfx::Size& s);
+  static scoped_ptr<base::Value> AsValue(const gfx::SizeF& s);
+  static scoped_ptr<base::Value> AsValue(const gfx::Rect& r);
   static bool FromValue(const base::Value*, gfx::Rect* out_rect);
-  static scoped_ptr<base::Value> AsValue(gfx::PointF q);
+  static scoped_ptr<base::Value> AsValue(const gfx::PointF& q);
+  static scoped_ptr<base::Value> AsValue(const gfx::Vector2d& v);
   static scoped_ptr<base::Value> AsValue(const gfx::QuadF& q);
   static scoped_ptr<base::Value> AsValue(const gfx::RectF& rect);
   static scoped_ptr<base::Value> AsValue(const gfx::Transform& transform);
+  static scoped_ptr<base::Value> AsValue(const gfx::BoxF& box);
 
   // Returns a base::Value representation of the floating point value.
   // If the value is inf, returns max double/float representation.

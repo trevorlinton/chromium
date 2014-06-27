@@ -2,7 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//crypto/ssl/flags.gni")
+import("//build/config/crypto.gni")
+import("//build/config/ui.gni")
 import("//tools/grit/grit_rule.gni")
 
 executable("chrome") {
@@ -51,7 +52,7 @@ executable("chrome") {
 
   # TODO(brettw) this isn't right for all platforms.
   if (!use_aura) {
-    sources -= "app/chrome_exe_main_aura.cc"
+    sources -= [ "app/chrome_exe_main_aura.cc" ]
   }
 
   if (!is_win) {
@@ -63,12 +64,9 @@ executable("chrome") {
 }
 
 static_library("browser") {
-  external = true
-
   if (is_linux) {
-    libs = [ "dl" ]
     if (toolkit_uses_gtk) {
-      libs += "gconf-2"
+      libs = [ "gconf-2" ]
     }
   }
   if (is_linux) {
@@ -83,13 +81,11 @@ static_library("browser") {
 }
 
 static_library("common") {
-  external = true
-
   if (use_nss && is_linux) {
     # common/net uses NSS.
     # TODO(brettw) have a better way to express this without having to do
     # "if (use_nss)" everywhere.
-    configs += "//third_party/nss:nss_linux_config"
+    configs += [ "//third_party/nss:nss_linux_config" ]
   }
   deps = [
   ]
@@ -112,6 +108,8 @@ source_set("debugger") {
     "browser/devtools/browser_list_tabcontents_provider.h",
     "browser/devtools/devtools_adb_bridge.cc",
     "browser/devtools/devtools_adb_bridge.h",
+    "browser/devtools/devtools_contents_resizing_strategy.cc",
+    "browser/devtools/devtools_contents_resizing_strategy.h",
     "browser/devtools/devtools_embedder_message_dispatcher.cc",
     "browser/devtools/devtools_embedder_message_dispatcher.h",
     "browser/devtools/devtools_file_helper.cc",
@@ -152,7 +150,7 @@ source_set("debugger") {
       "browser/devtools/devtools_window.cc",
       "browser/devtools/remote_debugging_server.cc",
     ]
-    deps -= "//third_party/libusb"
+    deps -= [ "//third_party/libusb" ]
   }
 
   # TODO implement debug_devtools
@@ -168,15 +166,12 @@ source_set("debugger") {
 }
 
 source_set("plugin") {
-  external = true
 }
 
 source_set("renderer") {
-  external = true
 }
 
 source_set("utility") {
-  external = true
 }
 
 
@@ -184,9 +179,9 @@ source_set("utility") {
 
 about_credits_file = "$root_gen_dir/about_credits.html"
 build_relative_about_credits_file =
-  rebase_path(about_credits_file, ".", root_build_dir)
+  rebase_path(about_credits_file, root_build_dir)
 
-custom("about_credits") {
+action("about_credits") {
   script = "//tools/licenses.py"
   outputs = [ about_credits_file ]
 
@@ -256,7 +251,6 @@ custom("about_credits") {
 #  if (!is_ios) {
 #    deps += [
 #      ":component_extension_resources",
-#      ":devtools_discovery_page_resources",
 #      ":options_resources",
 #      ":quota_internals_resources",
 #      ":sync_file_system_internals_resources",
@@ -265,9 +259,6 @@ custom("about_credits") {
 #}
 #grit("component_extension_resources") {
 #  source = "browser/resources/component_extension_resources.grd"
-#}
-#grit("devtools_discovery_page_resources") {
-#  source = "browser/devtools/frontend/devtools_discovery_page_resources.grd"
 #}
 #grit("memory_internals_resources") {
 #  source = "browser/resources/memory_internals_resources.grd"

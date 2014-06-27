@@ -10,7 +10,6 @@
 #include "base/id_map.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
-#include "chrome/browser/chromeos/drive/file_system_interface.h"
 #include "chrome/browser/chromeos/drive/job_list.h"
 #include "chrome/browser/chromeos/drive/job_queue.h"
 #include "chrome/browser/drive/drive_service_interface.h"
@@ -25,33 +24,46 @@ class SeqencedTaskRunner;
 
 namespace drive {
 
-// The JobScheduler is responsible for queuing and scheduling drive
-// jobs.
+class EventLogger;
+
+// Priority of a job.  Higher values are lower priority.
+enum ContextType {
+  USER_INITIATED,
+  BACKGROUND,
+  // Indicates the number of values of this enum.
+  NUM_CONTEXT_TYPES,
+};
+
+struct ClientContext {
+  explicit ClientContext(ContextType in_type) : type(in_type) {}
+  ContextType type;
+};
+
+// The JobScheduler is responsible for queuing and scheduling drive jobs.
+// Because jobs are executed concurrently by priority and retried for network
+// failures, there is no guarantee of orderings.
 //
-// All jobs are processed in order of priority.
-//   - Jobs that occur as a result of a direct user action are handled
-//     immediately (i.e. the client context is USER_INITIATED).
-//   - Jobs that are done in response to state changes or server actions are run
-//     in the background (i.e. the client context is BACKGROUND).
+// Jobs are grouped into two priority levels:
+//   - USER_INITIATED jobs are those occur as a result of direct user actions.
+//   - BACKGROUND jobs runs in response to state changes, server actions, etc.
+// USER_INITIATED jobs must be handled immediately, thus have higher priority.
+// BACKGROUND jobs run only after all USER_INITIATED jobs have run.
 //
-// All jobs are retried a maximum of kMaxRetryCount when they fail due to
-// throttling or server error.  The delay before retrying a job is shared
-// between jobs.  It doubles in length on each failure, up to 16 seconds.
-//
-// Jobs are grouped into two types:
-//   - File jobs are any job that transfer the contents of files.
-//     By default, they are only run when connected to WiFi.
-//   - Metadata jobs are any jobs that operate on File metadata or
-//     the directory structure.  Up to kMaxJobCount[METADATA_QUEUE] jobs are run
-//     concurrently.
-//
-// Because jobs are executed by priority and the potential for network failures,
-// there is no guarantee of ordering of operations.
+// Orthogonally, jobs are grouped into two types:
+//   - "File jobs" transfer the contents of files.
+//   - "Metadata jobs" operates on file metadata or the directory structure.
+// On WiFi or Ethernet connections, all types of jobs just run.
+// On mobile connections (2G/3G/4G), we don't want large background traffic.
+// USER_INITIATED jobs or metadata jobs will run. BACKGROUND file jobs wait
+// in the queue until the network type changes.
+// On offline case, no jobs run. USER_INITIATED jobs fail immediately.
+// BACKGROUND jobs stay in the queue and wait for network connection.
 class JobScheduler
     : public net::NetworkChangeNotifier::ConnectionTypeObserver,
       public JobListInterface {
  public:
   JobScheduler(PrefService* pref_service,
+               EventLogger* logger,
                DriveServiceInterface* drive_service,
                base::SequencedTaskRunner* blocking_task_runner);
   virtual ~JobScheduler();
@@ -103,15 +115,21 @@ class JobScheduler
       const GURL& next_link,
       const google_apis::GetResourceListCallback& callback);
 
+  // Adds a GetResourceEntry operation to the queue.
+  void GetResourceEntry(const std::string& resource_id,
+                        const ClientContext& context,
+                        const google_apis::GetResourceEntryCallback& callback);
+
   // Adds a GetShareUrl operation to the queue.
   void GetShareUrl(const std::string& resource_id,
                    const GURL& embed_origin,
                    const ClientContext& context,
                    const google_apis::GetShareUrlCallback& callback);
 
-  // Adds a DeleteResource operation to the queue.
-  void DeleteResource(const std::string& resource_id,
-                      const google_apis::EntryActionCallback& callback);
+  // Adds a TrashResource operation to the queue.
+  void TrashResource(const std::string& resource_id,
+                     const ClientContext& context,
+                     const google_apis::EntryActionCallback& callback);
 
   // Adds a CopyResource operation to the queue.
   void CopyResource(
@@ -121,30 +139,20 @@ class JobScheduler
       const base::Time& last_modified,
       const google_apis::GetResourceEntryCallback& callback);
 
-  // Adds a CopyHostedDocument operation to the queue.
-  void CopyHostedDocument(
-      const std::string& resource_id,
-      const std::string& new_title,
-      const google_apis::GetResourceEntryCallback& callback);
-
-  // Adds a MoveResource operation to the queue.
-  void MoveResource(
+  // Adds a UpdateResource operation to the queue.
+  void UpdateResource(
       const std::string& resource_id,
       const std::string& parent_resource_id,
       const std::string& new_title,
       const base::Time& last_modified,
+      const base::Time& last_viewed_by_me,
+      const ClientContext& context,
       const google_apis::GetResourceEntryCallback& callback);
 
   // Adds a RenameResource operation to the queue.
   void RenameResource(const std::string& resource_id,
                       const std::string& new_title,
                       const google_apis::EntryActionCallback& callback);
-
-  // Adds a TouchResource operation to the queue.
-  void TouchResource(const std::string& resource_id,
-                     const base::Time& modified_date,
-                     const base::Time& last_viewed_by_me_date,
-                     const google_apis::GetResourceEntryCallback& callback);
 
   // Adds a AddResourceToDirectory operation to the queue.
   void AddResourceToDirectory(const std::string& parent_resource_id,
@@ -155,12 +163,16 @@ class JobScheduler
   void RemoveResourceFromDirectory(
       const std::string& parent_resource_id,
       const std::string& resource_id,
+      const ClientContext& context,
       const google_apis::EntryActionCallback& callback);
 
   // Adds a AddNewDirectory operation to the queue.
-  void AddNewDirectory(const std::string& parent_resource_id,
-                       const std::string& directory_title,
-                       const google_apis::GetResourceEntryCallback& callback);
+  void AddNewDirectory(
+      const std::string& parent_resource_id,
+      const std::string& directory_title,
+      const DriveServiceInterface::AddNewDirectoryOptions& options,
+      const ClientContext& context,
+      const google_apis::GetResourceEntryCallback& callback);
 
   // Adds a DownloadFile operation to the queue.
   // The first two arguments |virtual_path| and |expected_file_size| are used
@@ -181,6 +193,7 @@ class JobScheduler
                      const base::FilePath& local_file_path,
                      const std::string& title,
                      const std::string& content_type,
+                     const DriveUploader::UploadNewFileOptions& options,
                      const ClientContext& context,
                      const google_apis::GetResourceEntryCallback& callback);
 
@@ -190,17 +203,9 @@ class JobScheduler
       const base::FilePath& drive_file_path,
       const base::FilePath& local_file_path,
       const std::string& content_type,
-      const std::string& etag,
+      const DriveUploader::UploadExistingFileOptions& options,
       const ClientContext& context,
       const google_apis::GetResourceEntryCallback& callback);
-
-  // Adds a CreateFile operation to the queue.
-  void CreateFile(const std::string& parent_resource_id,
-                  const base::FilePath& drive_file_path,
-                  const std::string& title,
-                  const std::string& content_type,
-                  const ClientContext& context,
-                  const google_apis::GetResourceEntryCallback& callback);
 
   // Adds a GetResourceListInDirectoryByWapi operation to the queue.
   // |callback| must not be null.
@@ -213,6 +218,12 @@ class JobScheduler
   void GetRemainingResourceList(
       const GURL& next_link,
       const google_apis::GetResourceListCallback& callback);
+
+  // Adds AddPermission operation to the queue. |callback| must not be null.
+  void AddPermission(const std::string& resource_id,
+                     const std::string& email,
+                     google_apis::drive::PermissionRole role,
+                     const google_apis::EntryActionCallback& callback);
 
  private:
   friend class JobSchedulerTest;
@@ -390,6 +401,7 @@ class JobScheduler
   // The list of observers for the scheduler.
   ObserverList<JobListObserver> observer_list_;
 
+  EventLogger* logger_;
   DriveServiceInterface* drive_service_;
   scoped_ptr<DriveUploaderInterface> uploader_;
 

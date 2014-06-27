@@ -23,6 +23,7 @@
 #include "base/win/windows_version.h"
 #include "chrome/app/chrome_dll_resource.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/browser_shutdown.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -67,8 +68,8 @@
 #include "win8/util/win8_util.h"
 
 #if defined(USE_AURA)
-#include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #endif
 
 #if defined(USE_ASH)
@@ -111,45 +112,28 @@ void MigrateAppLauncherEnabledPref() {
   }
 }
 
-// Icons are added to the resources of the DLL using icon names. The icon index
-// for the app list icon is named IDR_X_APP_LIST or (for official builds)
-// IDR_X_APP_LIST_SXS for Chrome Canary. Creating shortcuts needs to specify a
-// resource index, which are different to icon names.  They are 0 based and
-// contiguous. As Google Chrome builds have extra icons the icon for Google
-// Chrome builds need to be higher. Unfortunately these indexes are not in any
-// generated header file.
 int GetAppListIconIndex() {
-  const int kAppListIconIndex = 5;
-  const int kAppListIconIndexSxS = 6;
-  const int kAppListIconIndexChromium = 1;
-#if defined(GOOGLE_CHROME_BUILD)
-  if (InstallUtil::IsChromeSxSProcess())
-    return kAppListIconIndexSxS;
-  return kAppListIconIndex;
-#else
-  return kAppListIconIndexChromium;
-#endif
+  BrowserDistribution* dist = BrowserDistribution::GetDistribution();
+  return dist->GetIconIndex(BrowserDistribution::SHORTCUT_APP_LAUNCHER);
 }
 
-string16 GetAppListIconPath() {
+base::string16 GetAppListIconPath() {
   base::FilePath icon_path;
   if (!PathService::Get(base::FILE_EXE, &icon_path)) {
     NOTREACHED();
-    return string16();
+    return base::string16();
   }
 
   std::stringstream ss;
   ss << "," << GetAppListIconIndex();
-  string16 result = icon_path.value();
-  result.append(UTF8ToUTF16(ss.str()));
+  base::string16 result = icon_path.value();
+  result.append(base::UTF8ToUTF16(ss.str()));
   return result;
 }
 
-string16 GetAppListShortcutName() {
-  chrome::VersionInfo::Channel channel = chrome::VersionInfo::GetChannel();
-  if (channel == chrome::VersionInfo::CHANNEL_CANARY)
-    return l10n_util::GetStringUTF16(IDS_APP_LIST_SHORTCUT_NAME_CANARY);
-  return l10n_util::GetStringUTF16(IDS_APP_LIST_SHORTCUT_NAME);
+base::string16 GetAppListShortcutName() {
+  BrowserDistribution* dist = BrowserDistribution::GetDistribution();
+  return dist->GetShortcutName(BrowserDistribution::SHORTCUT_APP_LAUNCHER);
 }
 
 CommandLine GetAppListCommandLine() {
@@ -167,7 +151,7 @@ CommandLine GetAppListCommandLine() {
   return command_line;
 }
 
-string16 GetAppModelId() {
+base::string16 GetAppModelId() {
   // The AppModelId should be the same for all profiles in a user data directory
   // but different for different user data directories, so base it on the
   // initial profile in the current user data directory.
@@ -220,7 +204,7 @@ void SetDidRunForNDayActiveStats() {
 // fiddle with the same shortcuts could cause race issues.
 void CreateAppListShortcuts(
     const base::FilePath& user_data_dir,
-    const string16& app_model_id,
+    const base::string16& app_model_id,
     const ShellIntegration::ShortcutLocations& creation_locations) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::FILE));
 
@@ -242,9 +226,9 @@ void CreateAppListShortcuts(
     return;
   }
 
-  string16 app_list_shortcut_name = GetAppListShortcutName();
+  base::string16 app_list_shortcut_name = GetAppListShortcutName();
 
-  string16 wide_switches(GetAppListCommandLine().GetArgumentsString());
+  base::string16 wide_switches(GetAppListCommandLine().GetArgumentsString());
 
   base::win::ShortcutProperties shortcut_properties;
   shortcut_properties.set_target(chrome_exe);
@@ -259,7 +243,7 @@ void CreateAppListShortcuts(
         shortcut_paths[i].Append(app_list_shortcut_name).
             AddExtension(installer::kLnkExt);
     if (!base::PathExists(shortcut_file.DirName()) &&
-        !file_util::CreateDirectory(shortcut_file.DirName())) {
+        !base::CreateDirectory(shortcut_file.DirName())) {
       NOTREACHED();
       return;
     }
@@ -280,15 +264,6 @@ void CreateAppListShortcuts(
 // Customizes the app list |hwnd| for Windows (eg: disable aero peek, set up
 // restart params).
 void SetWindowAttributes(HWND hwnd) {
-  // Vista and lower do not offer pinning to the taskbar, which makes any
-  // presence on the taskbar useless. So, hide the window on the taskbar
-  // for these versions of Windows.
-  if (base::win::GetVersion() <= base::win::VERSION_VISTA) {
-    LONG_PTR ex_styles = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
-    ex_styles |= WS_EX_TOOLWINDOW;
-    SetWindowLongPtr(hwnd, GWL_EXSTYLE, ex_styles);
-  }
-
   if (base::win::GetVersion() > base::win::VERSION_VISTA) {
     // Disable aero peek. Without this, hovering over the taskbar popup puts
     // Windows into a mode for switching between windows in the same
@@ -302,11 +277,11 @@ void SetWindowAttributes(HWND hwnd) {
 
   ui::win::SetAppIdForWindow(GetAppModelId(), hwnd);
   CommandLine relaunch = GetAppListCommandLine();
-  string16 app_name(GetAppListShortcutName());
+  base::string16 app_name(GetAppListShortcutName());
   ui::win::SetRelaunchDetailsForWindow(
       relaunch.GetCommandLineString(), app_name, hwnd);
   ::SetWindowText(hwnd, app_name.c_str());
-  string16 icon_path = GetAppListIconPath();
+  base::string16 icon_path = GetAppListIconPath();
   ui::win::SetAppIconForWindow(icon_path, hwnd);
 }
 
@@ -321,13 +296,13 @@ class AppListFactoryWin : public AppListFactory {
 
   virtual AppList* CreateAppList(
       Profile* profile,
+      AppListService* service,
       const base::Closure& on_should_dismiss) OVERRIDE {
-    // The controller will be owned by the view delegate, and the delegate is
-    // owned by the app list view. The app list view manages it's own lifetime.
-    scoped_ptr<AppListControllerDelegate> controller_delegate(
-        new AppListControllerDelegateWin(service_));
-    AppListViewDelegate* view_delegate = new AppListViewDelegate(
-        controller_delegate.Pass(), profile);
+    // The view delegate will be owned by the app list view. The app list view
+    // manages it's own lifetime.
+    AppListViewDelegate* view_delegate =
+        new AppListViewDelegate(profile,
+                                service->GetControllerDelegate());
     app_list::AppListView* view = new app_list::AppListView(view_delegate);
     gfx::Point cursor = gfx::Screen::GetNativeScreen()->GetCursorScreenPoint();
     view->InitAsBubbleAtFixedLocation(NULL,
@@ -359,8 +334,11 @@ AppListServiceWin::AppListServiceWin()
     : enable_app_list_on_next_init_(false),
       shower_(new AppListShower(
           scoped_ptr<AppListFactory>(new AppListFactoryWin(this)),
-          scoped_ptr<KeepAliveService>(new KeepAliveServiceImpl))),
-      weak_factory_(this) {}
+          scoped_ptr<KeepAliveService>(new KeepAliveServiceImpl),
+          this)),
+      controller_delegate_(new AppListControllerDelegateWin(this)),
+      weak_factory_(this) {
+}
 
 AppListServiceWin::~AppListServiceWin() {
 }
@@ -377,12 +355,8 @@ Profile* AppListServiceWin::GetCurrentAppListProfile() {
   return shower_->profile();
 }
 
-AppListControllerDelegate* AppListServiceWin::CreateControllerDelegate() {
-  return new AppListControllerDelegateWin(this);
-}
-
-app_list::AppListModel* AppListServiceWin::GetAppListModelForTesting() {
-  return static_cast<AppListWin*>(shower_->app_list())->model();
+AppListControllerDelegate* AppListServiceWin::GetControllerDelegate() {
+  return controller_delegate_.get();
 }
 
 void AppListServiceWin::ShowForProfile(Profile* requested_profile) {
@@ -428,8 +402,7 @@ void AppListServiceWin::OnLoadProfileForWarmup(Profile* initial_profile) {
                       base::Time::Now() - before_warmup);
 }
 
-void AppListServiceWin::SetAppListNextPaintCallback(
-    const base::Closure& callback) {
+void AppListServiceWin::SetAppListNextPaintCallback(void (*callback)()) {
   app_list::AppListView::SetNextPaintCallback(callback);
 }
 
@@ -452,7 +425,7 @@ void AppListServiceWin::Init(Profile* initial_profile) {
 
   if (enable_app_list_on_next_init_) {
     enable_app_list_on_next_init_ = false;
-    EnableAppList(initial_profile);
+    EnableAppList(initial_profile, ENABLE_ON_REINSTALL);
     CreateShortcut();
   }
 
@@ -483,7 +456,7 @@ void AppListServiceWin::Init(Profile* initial_profile) {
       chrome_launcher_support::UninstallLegacyAppLauncher(
           chrome_launcher_support::USER_LEVEL_INSTALLATION);
     }
-    EnableAppList(initial_profile);
+    EnableAppList(initial_profile, ENABLE_ON_REINSTALL);
     CreateShortcut();
   }
 #endif
@@ -491,8 +464,7 @@ void AppListServiceWin::Init(Profile* initial_profile) {
   ScheduleWarmup();
 
   MigrateAppLauncherEnabledPref();
-  HandleCommandLineFlags(initial_profile);
-  SendUsageStats();
+  PerformStartupChecks(initial_profile);
 }
 
 void AppListServiceWin::CreateForProfile(Profile* profile) {
@@ -511,11 +483,8 @@ void AppListServiceWin::CreateShortcut() {
   ShellIntegration::ShortcutLocations shortcut_locations;
   shortcut_locations.on_desktop = true;
   shortcut_locations.in_quick_launch_bar = true;
-  shortcut_locations.in_applications_menu = true;
-  BrowserDistribution* dist = BrowserDistribution::GetDistribution();
-  shortcut_locations.applications_menu_subdir =
-      dist->GetStartMenuShortcutSubfolder(
-          BrowserDistribution::SUBFOLDER_CHROME);
+  shortcut_locations.applications_menu_location =
+      ShellIntegration::APP_MENU_LOCATION_SUBDIR_CHROME;
   base::FilePath user_data_dir(
       g_browser_process->profile_manager()->user_data_dir());
 
@@ -538,8 +507,10 @@ void AppListServiceWin::ScheduleWarmup() {
 }
 
 bool AppListServiceWin::IsWarmupNeeded() {
-  if (!g_browser_process || g_browser_process->IsShuttingDown())
+  if (!g_browser_process || g_browser_process->IsShuttingDown() ||
+      browser_shutdown::IsTryingToQuit()) {
     return false;
+  }
 
   // We only need to initialize the view if there's no view already created and
   // there's no profile loading to be shown.

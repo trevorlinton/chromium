@@ -35,7 +35,8 @@ cr.define('local_discovery', function() {
     MANAGE_CLICKED: 9,
     REGISTER_CANCEL_ON_PRINTER: 10,
     REGISTER_TIMEOUT: 11,
-    MAX_EVENT: 12,
+    LOG_IN_STARTED_FROM_REGISTER_OVERLAY_PROMO: 12,
+    MAX_EVENT: 13,
   };
 
   /**
@@ -49,6 +50,12 @@ cr.define('local_discovery', function() {
    * @type bool
    */
   var isUserLoggedIn = true;
+
+  /**
+   * Whether or not the path-based dialog has been shown.
+   * @type bool
+   */
+  var dialogFromPathHasBeenShown = false;
 
   /**
    * Focus manager for page.
@@ -300,6 +307,11 @@ cr.define('local_discovery', function() {
         devices[name] = new Device(info, isUserLoggedIn);
         devices[name].renderDevice();
       }
+
+      if (name == getOverlayIDFromPath() && !dialogFromPathHasBeenShown) {
+        dialogFromPathHasBeenShown = true;
+        devices[name].showRegister();
+      }
     } else {
       if (devices.hasOwnProperty(name)) {
         devices[name].removeDevice();
@@ -388,6 +400,11 @@ cr.define('local_discovery', function() {
    */
   function onRegistrationSuccess(device_data) {
     hideRegisterOverlay();
+
+    if (device_data.service_name == getOverlayIDFromPath()) {
+      window.close();
+    }
+
     var deviceDOM = createCloudDeviceDOM(device_data);
     $('cloud-devices').insertBefore(deviceDOM, $('cloud-devices').firstChild);
     recordUmaEvent(DEVICES_PAGE_EVENTS.REGISTER_SUCCESS);
@@ -397,7 +414,7 @@ cr.define('local_discovery', function() {
    * Update visibility status for page.
    */
   function updateVisibility() {
-    chrome.send('isVisible', [!document.webkitHidden]);
+    chrome.send('isVisible', [!document.hidden]);
   }
 
   /**
@@ -470,7 +487,8 @@ cr.define('local_discovery', function() {
     isUserLoggedIn = userLoggedIn;
 
     $('cloud-devices-login-promo').hidden = isUserLoggedIn;
-
+    $('register-overlay-login-promo').hidden = isUserLoggedIn;
+    $('register-continue-button').disabled = !isUserLoggedIn;
 
     if (isUserLoggedIn) {
       requestPrinterList();
@@ -479,6 +497,7 @@ cr.define('local_discovery', function() {
       $('cloud-devices-loading').hidden = true;
       $('cloud-devices-unavailable').hidden = true;
       clearElement($('cloud-devices'));
+      hideRegisterOverlay();
     }
 
     updateUIToReflectState();
@@ -497,6 +516,12 @@ cr.define('local_discovery', function() {
     openSignInPage();
   }
 
+  function registerOverlayLoginButtonClicked() {
+    recordUmaEvent(
+      DEVICES_PAGE_EVENTS.LOG_IN_STARTED_FROM_REGISTER_OVERLAY_PROMO);
+    openSignInPage();
+  }
+
   function cloudDevicesLoginButtonClicked() {
     recordUmaEvent(DEVICES_PAGE_EVENTS.LOG_IN_STARTED_FROM_DEVICE_LIST_PROMO);
     openSignInPage();
@@ -507,7 +532,7 @@ cr.define('local_discovery', function() {
    * @private
    */
   function setupCloudPrintConnectorSection(disabled, label, allowed) {
-    if (!cr.isChromeOS && !cr.isMac) {
+    if (!cr.isChromeOS) {
       $('cloudPrintConnectorLabel').textContent = label;
       if (disabled || !allowed) {
         $('cloudPrintConnectorSetupButton').textContent =
@@ -536,13 +561,19 @@ cr.define('local_discovery', function() {
   }
 
   function removeCloudPrintConnectorSection() {
-    if (!cr.isChromeOS && !cr.isMac) {
+    if (!cr.isChromeOS) {
        var connectorSectionElm = $('cloud-print-connector-section');
        if (connectorSectionElm)
           connectorSectionElm.parentNode.removeChild(connectorSectionElm);
      }
   }
 
+  function getOverlayIDFromPath() {
+    if (document.location.pathname == '/register') {
+      var params = parseQueryParams(document.location);
+      return params['id'] || null;
+    }
+  }
 
   document.addEventListener('DOMContentLoaded', function() {
     cr.ui.overlay.setupOverlay($('overlay'));
@@ -569,10 +600,12 @@ cr.define('local_discovery', function() {
       'click',
       registerLoginButtonClicked);
 
-    updateVisibility();
-    document.addEventListener('webkitvisibilitychange', updateVisibility,
-                              false);
+    $('register-overlay-login-button').addEventListener(
+      'click',
+      registerOverlayLoginButtonClicked);
 
+    updateVisibility();
+    document.addEventListener('visibilitychange', updateVisibility, false);
 
     focusManager = new LocalDiscoveryFocusManager();
     focusManager.initialize();

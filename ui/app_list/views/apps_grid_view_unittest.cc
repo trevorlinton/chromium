@@ -7,14 +7,18 @@
 #include <string>
 
 #include "base/basictypes.h"
+#include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/timer/timer.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/app_list/app_list_item_model.h"
+#include "ui/app_list/app_list_constants.h"
+#include "ui/app_list/app_list_folder_item.h"
+#include "ui/app_list/app_list_item.h"
 #include "ui/app_list/app_list_model.h"
+#include "ui/app_list/app_list_switches.h"
 #include "ui/app_list/pagination_model.h"
 #include "ui/app_list/test/app_list_test_model.h"
 #include "ui/app_list/views/app_list_item_view.h"
@@ -103,12 +107,11 @@ class AppsGridViewTest : public views::ViewsTestBase {
     model_.reset(new AppListTestModel);
     pagination_model_.reset(new PaginationModel);
 
-    apps_grid_view_.reset(
-        new AppsGridView(NULL, pagination_model_.get(), NULL));
+    apps_grid_view_.reset(new AppsGridView(NULL, pagination_model_.get()));
     apps_grid_view_->SetLayout(kIconDimension, kCols, kRows);
     apps_grid_view_->SetBoundsRect(gfx::Rect(gfx::Size(kWidth, kHeight)));
     apps_grid_view_->SetModel(model_.get());
-    apps_grid_view_->SetItemList(model_->item_list());
+    apps_grid_view_->SetItemList(model_->top_level_item_list());
 
     test_api_.reset(new AppsGridViewTestApi(apps_grid_view_.get()));
   }
@@ -118,13 +121,19 @@ class AppsGridViewTest : public views::ViewsTestBase {
   }
 
  protected:
+  void EnsureFoldersEnabled() {
+    // Folders require AppList sync to be enabled.
+    CommandLine::ForCurrentProcess()->AppendSwitch(
+        switches::kEnableSyncAppList);
+  }
+
   AppListItemView* GetItemViewAt(int index) {
     return static_cast<AppListItemView*>(
         test_api_->GetViewAtModelIndex(index));
   }
 
   AppListItemView* GetItemViewForPoint(const gfx::Point& point) {
-    for (size_t i = 0; i < model_->item_list()->item_count(); ++i) {
+    for (size_t i = 0; i < model_->top_level_item_list()->item_count(); ++i) {
       AppListItemView* view = GetItemViewAt(i);
       if (view->bounds().Contains(point))
         return view;
@@ -133,7 +142,7 @@ class AppsGridViewTest : public views::ViewsTestBase {
   }
 
   gfx::Rect GetItemTileRectAt(int row, int col) {
-    DCHECK_GT(model_->item_list()->item_count(), 0u);
+    DCHECK_GT(model_->top_level_item_list()->item_count(), 0u);
 
     gfx::Insets insets(apps_grid_view_->GetInsets());
     gfx::Rect rect(gfx::Point(insets.left(), insets.top()),
@@ -155,11 +164,11 @@ class AppsGridViewTest : public views::ViewsTestBase {
         to - view->bounds().origin());
 
     ui::MouseEvent pressed_event(ui::ET_MOUSE_PRESSED,
-                                 translated_from, from, 0);
+                                 translated_from, from, 0, 0);
     apps_grid_view_->InitiateDrag(view, pointer, pressed_event);
 
     ui::MouseEvent drag_event(ui::ET_MOUSE_DRAGGED,
-                              translated_to, to, 0);
+                              translated_to, to, 0, 0);
     apps_grid_view_->UpdateDragFromItem(pointer, drag_event);
   }
 
@@ -206,7 +215,7 @@ TEST_F(AppsGridViewTest, EnsureHighlightedVisible) {
   EXPECT_EQ(1, pagination_model_->selected_page());
 
   // Highlight last one in the model and last page should be selected.
-  model_->HighlightItemAt(model_->item_list()->item_count() - 1);
+  model_->HighlightItemAt(model_->top_level_item_list()->item_count() - 1);
   EXPECT_EQ(kPages - 1, pagination_model_->selected_page());
 }
 
@@ -218,7 +227,7 @@ TEST_F(AppsGridViewTest, RemoveSelectedLastApp) {
 
   AppListItemView* last_view = GetItemViewAt(kLastItemIndex);
   apps_grid_view_->SetSelectedView(last_view);
-  model_->item_list()->DeleteItem(model_->GetItemName(kLastItemIndex));
+  model_->DeleteItem(model_->GetItemName(kLastItemIndex));
 
   EXPECT_FALSE(apps_grid_view_->IsSelectedView(last_view));
 
@@ -228,7 +237,8 @@ TEST_F(AppsGridViewTest, RemoveSelectedLastApp) {
   EXPECT_TRUE(apps_grid_view_->IsSelectedView(view));
 }
 
-TEST_F(AppsGridViewTest, MouseDrag) {
+TEST_F(AppsGridViewTest, MouseDragWithFolderDisabled) {
+  CommandLine::ForCurrentProcess()->AppendSwitch(switches::kDisableSyncAppList);
   const int kTotalItems = 4;
   model_->PopulateApps(kTotalItems);
   EXPECT_EQ(std::string("Item 0,Item 1,Item 2,Item 3"),
@@ -253,7 +263,7 @@ TEST_F(AppsGridViewTest, MouseDrag) {
 
   // Deleting an item keeps remaining intact.
   SimulateDrag(AppsGridView::MOUSE, from, to);
-  model_->item_list()->DeleteItem(model_->GetItemName(0));
+  model_->DeleteItem(model_->GetItemName(0));
   apps_grid_view_->EndDrag(false);
   EXPECT_EQ(std::string("Item 1,Item 2,Item 3"),
             model_->GetModelContent());
@@ -264,6 +274,187 @@ TEST_F(AppsGridViewTest, MouseDrag) {
   model_->CreateAndAddItem("Extra");
   apps_grid_view_->EndDrag(false);
   EXPECT_EQ(std::string("Item 1,Item 2,Item 3,Extra"),
+            model_->GetModelContent());
+  test_api_->LayoutToIdealBounds();
+}
+
+TEST_F(AppsGridViewTest, MouseDragItemIntoFolder) {
+  EnsureFoldersEnabled();
+
+  size_t kTotalItems = 3;
+  model_->PopulateApps(kTotalItems);
+  EXPECT_EQ(model_->top_level_item_list()->item_count(), kTotalItems);
+  EXPECT_EQ(std::string("Item 0,Item 1,Item 2"), model_->GetModelContent());
+
+  gfx::Point from = GetItemTileRectAt(0, 1).CenterPoint();
+  gfx::Point to = GetItemTileRectAt(0, 0).CenterPoint();
+
+  // Dragging item_1 over item_0 creates a folder.
+  SimulateDrag(AppsGridView::MOUSE, from, to);
+  apps_grid_view_->EndDrag(false);
+  EXPECT_EQ(kTotalItems - 1, model_->top_level_item_list()->item_count());
+  EXPECT_EQ(AppListFolderItem::kItemType,
+            model_->top_level_item_list()->item_at(0)->GetItemType());
+  AppListFolderItem* folder_item = static_cast<AppListFolderItem*>(
+      model_->top_level_item_list()->item_at(0));
+  EXPECT_EQ(2u, folder_item->ChildItemCount());
+  AppListItem* item_0 = model_->FindItem("Item 0");
+  EXPECT_TRUE(item_0->IsInFolder());
+  EXPECT_EQ(folder_item->id(), item_0->folder_id());
+  AppListItem* item_1 = model_->FindItem("Item 1");
+  EXPECT_TRUE(item_1->IsInFolder());
+  EXPECT_EQ(folder_item->id(), item_1->folder_id());
+  std::string expected_items = folder_item->id() + ",Item 2";
+  EXPECT_EQ(expected_items, model_->GetModelContent());
+  test_api_->LayoutToIdealBounds();
+
+  // Dragging item_2 to the folder adds item_2 to the folder.
+  SimulateDrag(AppsGridView::MOUSE, from, to);
+  apps_grid_view_->EndDrag(false);
+
+  EXPECT_EQ(kTotalItems - 2, model_->top_level_item_list()->item_count());
+  EXPECT_EQ(folder_item->id(), model_->GetModelContent());
+  EXPECT_EQ(3u, folder_item->ChildItemCount());
+  item_0 = model_->FindItem("Item 0");
+  EXPECT_TRUE(item_0->IsInFolder());
+  EXPECT_EQ(folder_item->id(), item_0->folder_id());
+  item_1 = model_->FindItem("Item 1");
+  EXPECT_TRUE(item_1->IsInFolder());
+  EXPECT_EQ(folder_item->id(), item_1->folder_id());
+  AppListItem* item_2 = model_->FindItem("Item 2");
+  EXPECT_TRUE(item_2->IsInFolder());
+  EXPECT_EQ(folder_item->id(), item_2->folder_id());
+  test_api_->LayoutToIdealBounds();
+}
+
+TEST_F(AppsGridViewTest, MouseDragMaxItemsInFolder) {
+  EnsureFoldersEnabled();
+
+  // Create and add a folder with 15 items in it.
+  size_t kTotalItems = kMaxFolderItems - 1;
+  model_->CreateAndPopulateFolderWithApps(kTotalItems);
+  EXPECT_EQ(1u, model_->top_level_item_list()->item_count());
+  EXPECT_EQ(AppListFolderItem::kItemType,
+            model_->top_level_item_list()->item_at(0)->GetItemType());
+  AppListFolderItem* folder_item = static_cast<AppListFolderItem*>(
+      model_->top_level_item_list()->item_at(0));
+  EXPECT_EQ(kTotalItems, folder_item->ChildItemCount());
+
+  // Create and add another 2 items.
+  model_->PopulateAppWithId(kTotalItems);
+  model_->PopulateAppWithId(kTotalItems + 1);
+  EXPECT_EQ(3u, model_->top_level_item_list()->item_count());
+  EXPECT_EQ(folder_item->id(), model_->top_level_item_list()->item_at(0)->id());
+  EXPECT_EQ(model_->GetItemName(kMaxFolderItems - 1),
+            model_->top_level_item_list()->item_at(1)->id());
+  EXPECT_EQ(model_->GetItemName(kMaxFolderItems),
+            model_->top_level_item_list()->item_at(2)->id());
+
+  gfx::Point from = GetItemTileRectAt(0, 1).CenterPoint();
+  gfx::Point to = GetItemTileRectAt(0, 0).CenterPoint();
+
+  // Dragging one item into the folder, the folder should accept the item.
+  SimulateDrag(AppsGridView::MOUSE, from, to);
+  apps_grid_view_->EndDrag(false);
+  EXPECT_EQ(2u, model_->top_level_item_list()->item_count());
+  EXPECT_EQ(folder_item->id(), model_->top_level_item_list()->item_at(0)->id());
+  EXPECT_EQ(kMaxFolderItems, folder_item->ChildItemCount());
+  EXPECT_EQ(model_->GetItemName(kMaxFolderItems),
+            model_->top_level_item_list()->item_at(1)->id());
+  test_api_->LayoutToIdealBounds();
+
+  // Dragging the last item over the folder, the folder won't accept the new
+  // item, instead, it will re-order the items.
+  SimulateDrag(AppsGridView::MOUSE, from, to);
+  apps_grid_view_->EndDrag(false);
+  EXPECT_EQ(2u, model_->top_level_item_list()->item_count());
+  EXPECT_EQ(model_->GetItemName(kMaxFolderItems),
+            model_->top_level_item_list()->item_at(0)->id());
+  EXPECT_EQ(folder_item->id(), model_->top_level_item_list()->item_at(1)->id());
+  EXPECT_EQ(kMaxFolderItems, folder_item->ChildItemCount());
+  test_api_->LayoutToIdealBounds();
+}
+
+TEST_F(AppsGridViewTest, MouseDragItemReorder) {
+  // This test assumes Folders are enabled.
+  EnsureFoldersEnabled();
+
+  size_t kTotalItems = 2;
+  model_->PopulateApps(kTotalItems);
+  EXPECT_EQ(2u, model_->top_level_item_list()->item_count());
+  EXPECT_EQ(std::string("Item 0,Item 1"), model_->GetModelContent());
+
+  gfx::Point from = GetItemTileRectAt(0, 1).CenterPoint();
+  int reorder_offset = (GetItemTileRectAt(0, 1).CenterPoint() -
+                        GetItemTileRectAt(0, 0).CenterPoint()).Length() -
+                       kReorderDroppingCircleRadius -
+                       kPreferredIconDimension / 2 + 5;
+  gfx::Point to = gfx::Point(from.x() - reorder_offset, from.y());
+
+  // Dragging item_1 closing to item_0 should leads to re-ordering these two
+  // items.
+  SimulateDrag(AppsGridView::MOUSE, from, to);
+  apps_grid_view_->EndDrag(false);
+  EXPECT_EQ(2u, model_->top_level_item_list()->item_count());
+  EXPECT_EQ(std::string("Item 1,Item 0"), model_->GetModelContent());
+  test_api_->LayoutToIdealBounds();
+}
+
+TEST_F(AppsGridViewTest, MouseDragFolderReorder) {
+  EnsureFoldersEnabled();
+
+  size_t kTotalItems = 2;
+  model_->CreateAndPopulateFolderWithApps(kTotalItems);
+  model_->PopulateAppWithId(kTotalItems);
+  EXPECT_EQ(2u, model_->top_level_item_list()->item_count());
+  EXPECT_EQ(AppListFolderItem::kItemType,
+            model_->top_level_item_list()->item_at(0)->GetItemType());
+  AppListFolderItem* folder_item = static_cast<AppListFolderItem*>(
+      model_->top_level_item_list()->item_at(0));
+  EXPECT_EQ("Item 2", model_->top_level_item_list()->item_at(1)->id());
+
+  gfx::Point from = GetItemTileRectAt(0, 0).CenterPoint();
+  gfx::Point to = GetItemTileRectAt(0, 1).CenterPoint();
+
+  // Dragging folder over item_1 should leads to re-ordering these two
+  // items.
+  SimulateDrag(AppsGridView::MOUSE, from, to);
+  apps_grid_view_->EndDrag(false);
+  EXPECT_EQ(2u, model_->top_level_item_list()->item_count());
+  EXPECT_EQ("Item 2", model_->top_level_item_list()->item_at(0)->id());
+  EXPECT_EQ(folder_item->id(), model_->top_level_item_list()->item_at(1)->id());
+  test_api_->LayoutToIdealBounds();
+}
+
+TEST_F(AppsGridViewTest, MouseDragWithCancelDeleteAddItem) {
+  size_t kTotalItems = 4;
+  model_->PopulateApps(kTotalItems);
+  EXPECT_EQ(model_->top_level_item_list()->item_count(), kTotalItems);
+  EXPECT_EQ(std::string("Item 0,Item 1,Item 2,Item 3"),
+            model_->GetModelContent());
+
+  gfx::Point from = GetItemTileRectAt(0, 0).CenterPoint();
+  gfx::Point to = GetItemTileRectAt(0, 1).CenterPoint();
+
+  // Canceling drag should keep existing order.
+  SimulateDrag(AppsGridView::MOUSE, from, to);
+  apps_grid_view_->EndDrag(true);
+  EXPECT_EQ(std::string("Item 0,Item 1,Item 2,Item 3"),
+            model_->GetModelContent());
+  test_api_->LayoutToIdealBounds();
+
+  // Deleting an item keeps remaining intact.
+  SimulateDrag(AppsGridView::MOUSE, from, to);
+  model_->DeleteItem(model_->GetItemName(2));
+  apps_grid_view_->EndDrag(false);
+  EXPECT_EQ(std::string("Item 0,Item 1,Item 3"), model_->GetModelContent());
+  test_api_->LayoutToIdealBounds();
+
+  // Adding a launcher item cancels the drag and respects the order.
+  SimulateDrag(AppsGridView::MOUSE, from, to);
+  model_->CreateAndAddItem("Extra");
+  apps_grid_view_->EndDrag(false);
+  EXPECT_EQ(std::string("Item 0,Item 1,Item 3,Extra"),
             model_->GetModelContent());
   test_api_->LayoutToIdealBounds();
 }
@@ -317,7 +508,8 @@ TEST_F(AppsGridViewTest, MouseDragFlipPage) {
   apps_grid_view_->EndDrag(true);
 }
 
-TEST_F(AppsGridViewTest, SimultaneousDrag) {
+TEST_F(AppsGridViewTest, SimultaneousDragWithFolderDisabled) {
+  CommandLine::ForCurrentProcess()->AppendSwitch(switches::kDisableSyncAppList);
   const int kTotalItems = 4;
   model_->PopulateApps(kTotalItems);
   EXPECT_EQ(std::string("Item 0,Item 1,Item 2,Item 3"),
@@ -433,31 +625,33 @@ TEST_F(AppsGridViewTest, ItemLabelShortNameOverride) {
   // should always be the full name of the app.
   std::string expected_text("xyz");
   std::string expected_tooltip("tooltip");
-  model_->CreateAndAddItem(expected_text, expected_tooltip);
+  AppListItem* item = model_->CreateAndAddItem("Item with short name");
+  model_->SetItemNameAndShortName(item, expected_tooltip, expected_text);
 
-  string16 actual_tooltip;
+  base::string16 actual_tooltip;
   AppListItemView* item_view = GetItemViewAt(0);
   ASSERT_TRUE(item_view);
   const views::Label* title_label = item_view->title();
   EXPECT_TRUE(title_label->GetTooltipText(
       title_label->bounds().CenterPoint(), &actual_tooltip));
-  EXPECT_EQ(expected_tooltip, UTF16ToUTF8(actual_tooltip));
-  EXPECT_EQ(expected_text, UTF16ToUTF8(title_label->text()));
+  EXPECT_EQ(expected_tooltip, base::UTF16ToUTF8(actual_tooltip));
+  EXPECT_EQ(expected_text, base::UTF16ToUTF8(title_label->text()));
 }
 
 TEST_F(AppsGridViewTest, ItemLabelNoShortName) {
   // If the app's full name and short name are the same, use the default tooltip
   // behavior of the label (only show a tooltip if the title is truncated).
   std::string title("a");
-  model_->CreateAndAddItem(title, title);
+  AppListItem* item = model_->CreateAndAddItem(title);
+  model_->SetItemNameAndShortName(item, title, "");
 
-  string16 actual_tooltip;
+  base::string16 actual_tooltip;
   AppListItemView* item_view = GetItemViewAt(0);
   ASSERT_TRUE(item_view);
   const views::Label* title_label = item_view->title();
   EXPECT_FALSE(title_label->GetTooltipText(
       title_label->bounds().CenterPoint(), &actual_tooltip));
-  EXPECT_EQ(title, UTF16ToUTF8(title_label->text()));
+  EXPECT_EQ(title, base::UTF16ToUTF8(title_label->text()));
 }
 
 }  // namespace test

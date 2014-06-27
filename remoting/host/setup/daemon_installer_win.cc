@@ -293,14 +293,14 @@ void DaemonCommandLineInstallerWin::Install() {
   }
 
   // Launch the updater process and wait for its termination.
-  string16 command_line = WideToUTF16(
+  base::string16 command_line = base::WideToUTF16(
       base::StringPrintf(kGoogleUpdateCommandLineFormat,
                          google_update.c_str(),
                          kHostOmahaAppid,
                          kOmahaLanguage));
 
   base::LaunchOptions options;
-  if (!base::LaunchProcess(command_line, options, process_.Receive())) {
+  if (!base::LaunchProcess(command_line, options, &process_)) {
     result = GetLastError();
     Done(HRESULT_FROM_WIN32(result));
     return;

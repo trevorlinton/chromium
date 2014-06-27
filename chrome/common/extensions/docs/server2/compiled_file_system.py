@@ -5,8 +5,10 @@
 import sys
 
 import schema_util
+from docs_server_utils import ToUnicode
 from file_system import FileNotFoundError
-from future import Gettable, Future
+from future import Future
+from path_util import AssertIsDirectory, AssertIsFile
 from third_party.handlebar import Handlebar
 from third_party.json_schema_compiler import json_parse
 from third_party.json_schema_compiler.memoize import memoize
@@ -20,9 +22,29 @@ def SingleFile(fn):
   passed to CompiledFileSystem.Create, indicating that the function only
   needs access to the file which is given in the function's callback. When
   this is the case some optimisations can be done.
+
+  Note that this decorator must be listed first in any list of decorators to
+  have any effect.
   '''
   _SINGLE_FILE_FUNCTIONS.add(fn)
   return fn
+
+
+def Unicode(fn):
+  '''A decorator which can be optionally applied to the compilation function
+  passed to CompiledFileSystem.Create, indicating that the function processes
+  the file's data as Unicode text.
+  '''
+
+  # The arguments passed to fn can be (self, path, data) or (path, data). In
+  # either case the last argument is |data|, which should be converted to
+  # Unicode.
+  def convert_args(args):
+    args = list(args)
+    args[-1] = ToUnicode(args[-1])
+    return args
+
+  return lambda *args: fn(*convert_args(args))
 
 
 class _CacheEntry(object):
@@ -78,7 +100,8 @@ class CompiledFileSystem(object):
       These are memoized over file systems tied to different branches.
       '''
       return self.Create(file_system,
-                         SingleFile(lambda _, data: json_parse.Parse(data)),
+                         SingleFile(lambda _, data:
+                             json_parse.Parse(ToUnicode(data))),
                          CompiledFileSystem,
                          category='json')
 
@@ -89,7 +112,7 @@ class CompiledFileSystem(object):
       as Model and APISchemaGraph.
       '''
       return self.Create(file_system,
-                         SingleFile(schema_util.ProcessSchema),
+                         SingleFile(Unicode(schema_util.ProcessSchema)),
                          CompiledFileSystem,
                          category='api-schema')
 
@@ -99,8 +122,18 @@ class CompiledFileSystem(object):
       '''
       return self.Create(
           file_system,
-          SingleFile(lambda path, text: Handlebar(text, name=path)),
+          SingleFile(lambda path, text: Handlebar(ToUnicode(text), name=path)),
           CompiledFileSystem)
+
+    @memoize
+    def ForUnicode(self, file_system):
+      '''Creates a CompiledFileSystem for Unicode text processing.
+      '''
+      return self.Create(
+        file_system,
+        SingleFile(lambda _, text: ToUnicode(text)),
+        CompiledFileSystem,
+        category='text')
 
   def __init__(self,
                file_system,
@@ -165,14 +198,16 @@ class CompiledFileSystem(object):
 
       return first_layer_files + get_from_future_listing(second_layer_listing)
 
-    return Future(delegate=Gettable(resolve))
+    return Future(callback=resolve)
 
-  def GetFromFile(self, path, binary=False):
+  def GetFromFile(self, path):
     '''Calls |compilation_function| on the contents of the file at |path|.  If
     |binary| is True then the file will be read as binary - but this will only
     apply for the first time the file is fetched; if already cached, |binary|
     will be ignored.
     '''
+    AssertIsFile(path)
+
     try:
       version = self._file_system.Stat(path).version
     except FileNotFoundError:
@@ -182,19 +217,18 @@ class CompiledFileSystem(object):
     if (cache_entry is not None) and (version == cache_entry.version):
       return Future(value=cache_entry._cache_data)
 
-    future_files = self._file_system.ReadSingle(path, binary=binary)
+    future_files = self._file_system.ReadSingle(path)
     def resolve():
       cache_data = self._compilation_function(path, future_files.Get())
       self._file_object_store.Set(path, _CacheEntry(cache_data, version))
       return cache_data
-    return Future(delegate=Gettable(resolve))
+    return Future(callback=resolve)
 
   def GetFromFileListing(self, path):
     '''Calls |compilation_function| on the listing of the files at |path|.
     Assumes that the path given is to a directory.
     '''
-    if not path.endswith('/'):
-      path += '/'
+    AssertIsDirectory(path)
 
     try:
       version = self._file_system.Stat(path).version
@@ -210,7 +244,7 @@ class CompiledFileSystem(object):
       cache_data = self._compilation_function(path, recursive_list_future.Get())
       self._list_object_store.Set(path, _CacheEntry(cache_data, version))
       return cache_data
-    return Future(delegate=Gettable(resolve))
+    return Future(callback=resolve)
 
   def GetFileVersion(self, path):
     cache_entry = self._file_object_store.Get(path).Get()
@@ -225,3 +259,6 @@ class CompiledFileSystem(object):
     if cache_entry is not None:
       return cache_entry.version
     return self._file_system.Stat(path).version
+
+  def FileExists(self, path):
+    return self._file_system.Exists(path)

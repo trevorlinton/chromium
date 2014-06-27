@@ -74,25 +74,8 @@ const int kDefaultPrerenderServiceTimeoutMs = 1000;
 const char kSkipPrerenderLocalCanadidates[] = "SkipPrerenderLocalCandidates";
 const char kSkipPrerenderServiceCanadidates[] =
     "SkipPrerenderServiceCandidates";
-
-
-void SetupPrefetchFieldTrial() {
-  chrome::VersionInfo::Channel channel = chrome::VersionInfo::GetChannel();
-  if (channel == chrome::VersionInfo::CHANNEL_STABLE ||
-      channel == chrome::VersionInfo::CHANNEL_BETA) {
-    return;
-  }
-
-  const FieldTrial::Probability divisor = 1000;
-  const FieldTrial::Probability prefetch_probability = 500;
-  scoped_refptr<FieldTrial> trial(
-      FieldTrialList::FactoryGetFieldTrial(
-          "Prefetch", divisor, "ContentPrefetchPrefetchOff",
-          2014, 12, 31, FieldTrial::SESSION_RANDOMIZED, NULL));
-  const int kPrefetchOnGroup = trial->AppendGroup("ContentPrefetchPrefetchOn",
-                                                  prefetch_probability);
-  PrerenderManager::SetIsPrefetchEnabled(trial->group() == kPrefetchOnGroup);
-}
+const char kDisableSessionStorageNamespaceMerging[] =
+    "DisableSessionStorageNamespaceMerging";
 
 void SetupPrerenderFieldTrial() {
   const FieldTrial::Probability divisor = 1000;
@@ -190,12 +173,11 @@ void SetupPrerenderFieldTrial() {
 
 void ConfigureOmniboxPrerender();
 
-void ConfigurePrefetchAndPrerender(const CommandLine& command_line) {
+void ConfigurePrerender(const CommandLine& command_line) {
   enum PrerenderOption {
     PRERENDER_OPTION_AUTO,
     PRERENDER_OPTION_DISABLED,
     PRERENDER_OPTION_ENABLED,
-    PRERENDER_OPTION_PREFETCH_ONLY,
   };
 
   PrerenderOption prerender_option = PRERENDER_OPTION_AUTO;
@@ -212,9 +194,6 @@ void ConfigurePrefetchAndPrerender(const CommandLine& command_line) {
       // The empty string means the option was provided with no value, and that
       // means enable.
       prerender_option = PRERENDER_OPTION_ENABLED;
-    } else if (switch_value ==
-               switches::kPrerenderModeSwitchValuePrefetchOnly) {
-      prerender_option = PRERENDER_OPTION_PREFETCH_ONLY;
     } else {
       prerender_option = PRERENDER_OPTION_DISABLED;
       LOG(ERROR) << "Invalid --prerender option received on command line: "
@@ -225,20 +204,13 @@ void ConfigurePrefetchAndPrerender(const CommandLine& command_line) {
 
   switch (prerender_option) {
     case PRERENDER_OPTION_AUTO:
-      SetupPrefetchFieldTrial();
       SetupPrerenderFieldTrial();
       break;
     case PRERENDER_OPTION_DISABLED:
-      PrerenderManager::SetIsPrefetchEnabled(false);
       PrerenderManager::SetMode(PrerenderManager::PRERENDER_MODE_DISABLED);
       break;
     case PRERENDER_OPTION_ENABLED:
-      PrerenderManager::SetIsPrefetchEnabled(true);
       PrerenderManager::SetMode(PrerenderManager::PRERENDER_MODE_ENABLED);
-      break;
-    case PRERENDER_OPTION_PREFETCH_ONLY:
-      PrerenderManager::SetIsPrefetchEnabled(true);
-      PrerenderManager::SetMode(PrerenderManager::PRERENDER_MODE_DISABLED);
       break;
     default:
       NOTREACHED();
@@ -320,7 +292,7 @@ string GetLocalPredictorSpecValue(string spec_key) {
 bool IsUnencryptedSyncEnabled(Profile* profile) {
   ProfileSyncService* service = ProfileSyncServiceFactory::GetInstance()->
       GetForProfile(profile);
-  return service && service->GetSessionModelAssociator() &&
+  return service && service->GetOpenTabsUIDelegate() &&
       !service->EncryptEverythingEnabled();
 }
 
@@ -474,6 +446,11 @@ bool SkipLocalPredictorLocalCandidates() {
 bool SkipLocalPredictorServiceCandidates() {
   return GetLocalPredictorSpecValue(kSkipPrerenderServiceCanadidates) ==
       kEnabledGroup;
+}
+
+bool ShouldMergeSessionStorageNamespaces() {
+  return GetLocalPredictorSpecValue(kDisableSessionStorageNamespaceMerging) !=
+      kDisabledGroup;
 }
 
 }  // namespace prerender

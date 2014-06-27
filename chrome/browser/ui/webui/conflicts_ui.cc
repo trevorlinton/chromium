@@ -34,7 +34,7 @@
 #include "ui/base/layout.h"
 #include "ui/base/resource/resource_bundle.h"
 
-using content::UserMetricsAction;
+using base::UserMetricsAction;
 using content::WebContents;
 using content::WebUIMessageHandler;
 
@@ -85,7 +85,7 @@ class ConflictsDOMHandler : public WebUIMessageHandler,
   virtual void RegisterMessages();
 
   // Callback for the "requestModuleList" message.
-  void HandleRequestModuleList(const ListValue* args);
+  void HandleRequestModuleList(const base::ListValue* args);
 
  private:
   void SendModuleList();
@@ -105,7 +105,7 @@ void ConflictsDOMHandler::RegisterMessages() {
                  base::Unretained(this)));
 }
 
-void ConflictsDOMHandler::HandleRequestModuleList(const ListValue* args) {
+void ConflictsDOMHandler::HandleRequestModuleList(const base::ListValue* args) {
   // This request is handled asynchronously. See Observe for when we reply back.
   registrar_.Add(this, chrome::NOTIFICATION_MODULE_LIST_ENUMERATED,
                  content::NotificationService::AllSources());
@@ -114,14 +114,14 @@ void ConflictsDOMHandler::HandleRequestModuleList(const ListValue* args) {
 
 void ConflictsDOMHandler::SendModuleList() {
   EnumerateModulesModel* loaded_modules = EnumerateModulesModel::GetInstance();
-  ListValue* list = loaded_modules->GetModuleList();
-  DictionaryValue results;
+  base::ListValue* list = loaded_modules->GetModuleList();
+  base::DictionaryValue results;
   results.Set("moduleList", list);
 
   // Add the section title and the total count for bad modules found.
   int confirmed_bad = loaded_modules->confirmed_bad_modules_detected();
   int suspected_bad = loaded_modules->suspected_bad_modules_detected();
-  string16 table_title;
+  base::string16 table_title;
   if (!confirmed_bad && !suspected_bad) {
     table_title += l10n_util::GetStringFUTF16(
         IDS_CONFLICTS_CHECK_PAGE_TABLE_TITLE_SUFFIX_ONE,

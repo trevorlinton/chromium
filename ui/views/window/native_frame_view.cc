@@ -6,7 +6,6 @@
 
 #include "ui/views/widget/native_widget.h"
 #include "ui/views/widget/widget.h"
-#include "ui/views/widget/widget_delegate.h"
 
 #if defined(OS_WIN)
 #include "ui/views/win/hwnd_util.h"
@@ -35,9 +34,8 @@ gfx::Rect NativeFrameView::GetBoundsForClientView() const {
 gfx::Rect NativeFrameView::GetWindowBoundsForClientBounds(
     const gfx::Rect& client_bounds) const {
 #if defined(OS_WIN)
-  BOOL has_menu = frame_->has_menu_bar() ? TRUE : FALSE;
   return views::GetWindowBoundsForClientBounds(
-                                               static_cast<View*>(const_cast<NativeFrameView*>(this)), client_bounds, has_menu);
+      static_cast<View*>(const_cast<NativeFrameView*>(this)), client_bounds);
 #else
   // TODO(sad):
   return client_bounds;
@@ -45,25 +43,7 @@ gfx::Rect NativeFrameView::GetWindowBoundsForClientBounds(
 }
 
 int NativeFrameView::NonClientHitTest(const gfx::Point& point) {
-  int component = frame_->client_view()->NonClientHitTest(point);
-
-  // If the test is non-client then we decide whether can resize.
-  if (component == HTNOWHERE&&
-      frame_->widget_delegate() &&
-      !frame_->widget_delegate()->CanResize()) {
-    // Get what's the component under the mouse.
-    HWND hwnd = (HWND)GetWidget()->GetNativeView();
-    POINT temp = point.ToPOINT();
-    MapWindowPoints(hwnd, HWND_DESKTOP, &temp, 1);
-    int component = DefWindowProc(hwnd, WM_NCHITTEST,
-                                  0, MAKELPARAM(temp.x, temp.y));
-
-    // Return border if the component is resize handle.
-    if (component >= HTLEFT && component <= HTBOTTOMRIGHT)
-      return HTBORDER;
-  }
-
-  return component;
+  return frame_->client_view()->NonClientHitTest(point);
 }
 
 void NativeFrameView::GetWindowMask(const gfx::Size& size,

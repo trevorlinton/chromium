@@ -13,22 +13,34 @@ as well as generating the lists of possible actions in situations where
 there are many possible actions.
 
 See also:
-  content/browser/user_metrics.h
+  base/metrics/user_metrics.h
   http://wiki.corp.google.com/twiki/bin/view/Main/ChromeUserExperienceMetrics
 
-If run with a "--hash" argument, chromeactions.txt will be updated.
+After extracting all actions, the content will go through a pretty print
+function to make sure it's well formatted. If the file content needs to be
+changed, a window will be prompted asking for user's consent. The old version
+will also be saved in a backup file.
 """
 
 __author__ = 'evanm (Evan Martin)'
 
-import hashlib
 from HTMLParser import HTMLParser
+import logging
 import os
 import re
+import shutil
 import sys
+from xml.dom import minidom
+
+import print_style
 
 sys.path.insert(1, os.path.join(sys.path[0], '..', '..', 'python'))
 from google import path_utils
+
+# Import the metrics/common module for pretty print xml.
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'common'))
+import diff_util
+import pretty_print_xml
 
 # Files that are known to use content::RecordComputedAction(), which means
 # they require special handling code in this script.
@@ -47,7 +59,14 @@ KNOWN_COMPUTED_USERS = (
   'about_flags.cc', # do not generate a warning; see AddAboutFlagsActions()
   'external_metrics.cc',  # see AddChromeOSActions()
   'core_options_handler.cc',  # see AddWebUIActions()
-  'browser_render_process_host.cc'  # see AddRendererActions()
+  'browser_render_process_host.cc',  # see AddRendererActions()
+  'render_thread_impl.cc',  # impl of RenderThread::RecordComputedAction()
+  'render_process_host_impl.cc',  # browser side impl for
+                                  # RenderThread::RecordComputedAction()
+  'mock_render_thread.cc',  # mock of RenderThread::RecordComputedAction()
+  'ppb_pdf_impl.cc',  # see AddClosedSourceActions()
+  'pepper_pdf_host.cc',  # see AddClosedSourceActions()
+  'key_systems_support_uma.cc',  # See AddKeySystemSupportActions()
 )
 
 # Language codes used in Chrome. The list should be updated when a new
@@ -78,41 +97,40 @@ LANGUAGE_CODES = (
 
 # Input method IDs used in Chrome OS. The list should be updated when a
 # new input method is added to
-# chrome/browser/chromeos/input_method/input_methods.txt in the Chrome tree, as
+# chromeos/ime/input_methods.txt in the Chrome tree, as
 # follows:
 #
-# % sort chrome/browser/chromeos/input_method/input_methods.txt | \
+# % sort chromeos/ime/input_methods.txt | \
 #   perl -ne "print \"'\$1', \" if /^([^#]+?)\s/" | \
 #   fold -w75 -s | perl -pe 's/^/  /;s/ $//'; echo
 #
 # The script extracts input method IDs from input_methods.txt.
 INPUT_METHOD_IDS = (
-  'english-m', 'm17n:am:sera', 'm17n:ar:kbd', 'm17n:bn:itrans',
-  'm17n:fa:isiri', 'm17n:gu:itrans', 'm17n:hi:itrans', 'm17n:kn:itrans',
-  'm17n:ml:itrans', 'm17n:mr:itrans', 'm17n:ta:inscript', 'm17n:ta:itrans',
-  'm17n:ta:phonetic', 'm17n:ta:tamil99', 'm17n:ta:typewriter',
-  'm17n:te:itrans', 'm17n:th:kesmanee', 'm17n:th:pattachote',
-  'm17n:th:tis820', 'm17n:vi:tcvn', 'm17n:vi:telex', 'm17n:vi:viqr',
-  'm17n:vi:vni', 'm17n:zh:cangjie', 'm17n:zh:quick', 'mozc', 'mozc-chewing',
-  'mozc-dv', 'mozc-hangul', 'mozc-jp', 'pinyin', 'pinyin-dv', 'xkb:be::fra',
-  'xkb:be::ger', 'xkb:be::nld', 'xkb:bg::bul', 'xkb:bg:phonetic:bul',
-  'xkb:br::por', 'xkb:ca::fra', 'xkb:ca:eng:eng', 'xkb:ch::ger',
-  'xkb:ch:fr:fra', 'xkb:cz::cze', 'xkb:de::ger', 'xkb:de:neo:ger',
-  'xkb:dk::dan', 'xkb:ee::est', 'xkb:es::spa', 'xkb:es:cat:cat',
-  'xkb:fi::fin', 'xkb:fr::fra', 'xkb:gb:dvorak:eng', 'xkb:gb:extd:eng',
-  'xkb:gr::gre', 'xkb:hr::scr', 'xkb:hu::hun', 'xkb:il::heb', 'xkb:it::ita',
-  'xkb:jp::jpn', 'xkb:kr:kr104:kor', 'xkb:latam::spa', 'xkb:lt::lit',
-  'xkb:lv:apostrophe:lav', 'xkb:no::nob', 'xkb:pl::pol', 'xkb:pt::por',
-  'xkb:ro::rum', 'xkb:rs::srp', 'xkb:ru::rus', 'xkb:ru:phonetic:rus',
-  'xkb:se::swe', 'xkb:si::slv', 'xkb:sk::slo', 'xkb:tr::tur', 'xkb:ua::ukr',
-  'xkb:us::eng', 'xkb:us:altgr-intl:eng', 'xkb:us:colemak:eng',
-  'xkb:us:dvorak:eng', 'xkb:us:intl:eng',
+  'xkb:am:phonetic:arm', 'xkb:be::fra', 'xkb:be::ger', 'xkb:be::nld',
+  'xkb:bg::bul', 'xkb:bg:phonetic:bul', 'xkb:br::por', 'xkb:by::bel',
+  'xkb:ca::fra', 'xkb:ca:eng:eng', 'xkb:ca:multix:fra', 'xkb:ch::ger',
+  'xkb:ch:fr:fra', 'xkb:cz::cze', 'xkb:cz:qwerty:cze', 'xkb:de::ger',
+  'xkb:de:neo:ger', 'xkb:dk::dan', 'xkb:ee::est', 'xkb:es::spa',
+  'xkb:es:cat:cat', 'xkb:fi::fin', 'xkb:fr::fra', 'xkb:gb:dvorak:eng',
+  'xkb:gb:extd:eng', 'xkb:ge::geo', 'xkb:gr::gre', 'xkb:hr::scr',
+  'xkb:hu::hun', 'xkb:il::heb', 'xkb:is::ice', 'xkb:it::ita', 'xkb:jp::jpn',
+  'xkb:latam::spa', 'xkb:lt::lit', 'xkb:lv:apostrophe:lav', 'xkb:mn::mon',
+  'xkb:no::nob', 'xkb:pl::pol', 'xkb:pt::por', 'xkb:ro::rum', 'xkb:rs::srp',
+  'xkb:ru::rus', 'xkb:ru:phonetic:rus', 'xkb:se::swe', 'xkb:si::slv',
+  'xkb:sk::slo', 'xkb:tr::tur', 'xkb:ua::ukr', 'xkb:us::eng',
+  'xkb:us:altgr-intl:eng', 'xkb:us:colemak:eng', 'xkb:us:dvorak:eng',
+  'xkb:us:intl:eng',
 )
 
 # The path to the root of the repository.
 REPOSITORY_ROOT = os.path.join(path_utils.ScriptDir(), '..', '..', '..')
 
 number_of_files_total = 0
+
+# Tags that need to be inserted to each 'action' tag and their default content.
+TAGS = {'description': 'Please enter the description of the metric.',
+        'owner': ('Please list the metric\'s owners. Add more owner tags as '
+                  'needed.')}
 
 
 def AddComputedActions(actions):
@@ -143,7 +161,6 @@ def AddComputedActions(actions):
   for input_method_id in INPUT_METHOD_IDS:
     actions.add('LanguageOptions_DisableInputMethod_%s' % input_method_id)
     actions.add('LanguageOptions_EnableInputMethod_%s' % input_method_id)
-    actions.add('InputMethodOptions_Open_%s' % input_method_id)
   for language_code in LANGUAGE_CODES:
     actions.add('LanguageOptions_UiLanguageChange_%s' % language_code)
     actions.add('LanguageOptions_SpellCheckLanguageChange_%s' % language_code)
@@ -199,10 +216,11 @@ def AddAndroidActions(actions):
   Arguments
     actions: set of actions to add to.
   """
-  actions.add('Cast_Sender_CastEnterFullscreen');
   actions.add('Cast_Sender_CastDeviceSelected');
-  actions.add('Cast_Sender_YouTubeDeviceSelected');
+  actions.add('Cast_Sender_CastEnterFullscreen');
+  actions.add('Cast_Sender_CastMediaType');
   actions.add('Cast_Sender_CastPlayRequested');
+  actions.add('Cast_Sender_YouTubeDeviceSelected');
   actions.add('DataReductionProxy_PromoDisplayed');
   actions.add('DataReductionProxy_PromoLearnMore');
   actions.add('DataReductionProxy_TurnedOn');
@@ -217,6 +235,9 @@ def AddAndroidActions(actions):
   actions.add('MobileContextMenuCopyImageLinkAddress')
   actions.add('MobileContextMenuCopyLinkAddress')
   actions.add('MobileContextMenuCopyLinkText')
+  actions.add('MobileContextMenuDownloadImage')
+  actions.add('MobileContextMenuDownloadLink')
+  actions.add('MobileContextMenuDownloadVideo')
   actions.add('MobileContextMenuImage')
   actions.add('MobileContextMenuLink')
   actions.add('MobileContextMenuOpenImageInNewTab')
@@ -227,7 +248,9 @@ def AddAndroidActions(actions):
   actions.add('MobileContextMenuSearchByImage')
   actions.add('MobileContextMenuShareLink')
   actions.add('MobileContextMenuText')
+  actions.add('MobileContextMenuVideo')
   actions.add('MobileContextMenuViewImage')
+  actions.add('MobileFirstEditInOmnibox')
   actions.add('MobileFocusedFakeboxOnNtp')
   actions.add('MobileFocusedOmniboxNotOnNtp')
   actions.add('MobileFocusedOmniboxOnNtp')
@@ -235,10 +258,12 @@ def AddAndroidActions(actions):
   actions.add('MobileFreSignInSuccessful')
   actions.add('MobileFreSkipSignIn')
   actions.add('MobileMenuAddToBookmarks')
+  actions.add('MobileMenuAddToHomescreen')
   actions.add('MobileMenuAllBookmarks')
   actions.add('MobileMenuBack')
   actions.add('MobileMenuCloseAllTabs')
   actions.add('MobileMenuCloseTab')
+  actions.add('MobileMenuDirectShare')
   actions.add('MobileMenuFeedback')
   actions.add('MobileMenuFindInPage')
   actions.add('MobileMenuForward')
@@ -246,8 +271,10 @@ def AddAndroidActions(actions):
   actions.add('MobileMenuNewIncognitoTab')
   actions.add('MobileMenuNewTab')
   actions.add('MobileMenuOpenTabs')
+  actions.add('MobileMenuPrint')
   actions.add('MobileMenuQuit')
   actions.add('MobileMenuReload')
+  actions.add('MobileMenuRequestDesktopSite')
   actions.add('MobileMenuSettings')
   actions.add('MobileMenuShare')
   actions.add('MobileMenuShow')
@@ -377,6 +404,15 @@ def AddExtensionActions(actions):
   actions.add('GoogleNow.ButtonClicked1')
   actions.add('GoogleNow.Dismissed')
 
+  # Actions sent by Chrome Connectivity Diagnostics.
+  actions.add('ConnectivityDiagnostics.LaunchSource.OfflineChromeOS')
+  actions.add('ConnectivityDiagnostics.LaunchSource.WebStore')
+  actions.add('ConnectivityDiagnostics.UA.LogsShown')
+  actions.add('ConnectivityDiagnostics.UA.PassingTestsShown')
+  actions.add('ConnectivityDiagnostics.UA.SettingsShown')
+  actions.add('ConnectivityDiagnostics.UA.TestResultExpanded')
+  actions.add('ConnectivityDiagnostics.UA.TestSuiteRun')
+
 def GrepForActions(path, actions):
   """Grep a source file for calls to UserMetrics functions.
 
@@ -477,28 +513,6 @@ def WalkDirectory(root_path, actions, extensions, callback):
       if ext in extensions:
         callback(os.path.join(path, file), actions)
 
-def GrepForRendererActions(path, actions):
-  """Grep a source file for calls to RenderThread::RecordUserMetrics.
-
-  Arguments:
-    path: path to the file
-    actions: set of actions to add to
-  """
-  # We look for the ViewHostMsg_UserMetricsRecordAction constructor.
-  # This should be on one line.
-  action_re = re.compile(
-      r'[^a-zA-Z]RenderThread::Get\(\)->RecordUserMetrics\("([^"]*)')
-  action_re2 = re.compile(
-      r'[^a-zA-Z]RenderThreadImpl::current\(\)->RecordUserMetrics\("([^"]*)')
-  for line in open(path):
-    match = action_re.search(line)
-    if match:  # Call to RecordUserMetrics through Content API
-      actions.add(match.group(1))
-      continue
-    match = action_re2.search(line)
-    if match:  # Call to RecordUserMetrics inside Content
-      actions.add(match.group(1))
-
 def AddLiteralActions(actions):
   """Add literal actions specified via calls to UserMetrics functions.
 
@@ -508,10 +522,14 @@ def AddLiteralActions(actions):
   EXTENSIONS = ('.cc', '.mm', '.c', '.m')
 
   # Walk the source tree to process all .cc files.
+  ash_root = os.path.normpath(os.path.join(REPOSITORY_ROOT, 'ash'))
+  WalkDirectory(ash_root, actions, EXTENSIONS, GrepForActions)
   chrome_root = os.path.normpath(os.path.join(REPOSITORY_ROOT, 'chrome'))
   WalkDirectory(chrome_root, actions, EXTENSIONS, GrepForActions)
   content_root = os.path.normpath(os.path.join(REPOSITORY_ROOT, 'content'))
   WalkDirectory(content_root, actions, EXTENSIONS, GrepForActions)
+  net_root = os.path.normpath(os.path.join(REPOSITORY_ROOT, 'net'))
+  WalkDirectory(net_root, actions, EXTENSIONS, GrepForActions)
   webkit_root = os.path.normpath(os.path.join(REPOSITORY_ROOT, 'webkit'))
   WalkDirectory(os.path.join(webkit_root, 'glue'), actions, EXTENSIONS,
                 GrepForActions)
@@ -527,21 +545,6 @@ def AddWebUIActions(actions):
   resources_root = os.path.join(REPOSITORY_ROOT, 'chrome', 'browser',
                                 'resources')
   WalkDirectory(resources_root, actions, ('.html'), GrepForWebUIActions)
-
-def AddRendererActions(actions):
-  """Add user actions sent via calls to RenderThread::RecordUserMetrics.
-
-  Arguments:
-    actions: set of actions to add to.
-  """
-  EXTENSIONS = ('.cc', '.mm', '.c', '.m')
-
-  chrome_renderer_root = os.path.join(REPOSITORY_ROOT, 'chrome', 'renderer')
-  content_renderer_root = os.path.join(REPOSITORY_ROOT, 'content', 'renderer')
-  WalkDirectory(chrome_renderer_root, actions, EXTENSIONS,
-                GrepForRendererActions)
-  WalkDirectory(content_renderer_root, actions, EXTENSIONS,
-                GrepForRendererActions)
 
 def AddHistoryPageActions(actions):
   """Add actions that are used in History page.
@@ -565,34 +568,228 @@ def AddHistoryPageActions(actions):
   actions.add('HistoryPage_ConfirmRemoveSelected')
   actions.add('HistoryPage_CancelRemoveSelected')
 
-def main(argv):
-  if '--hash' in argv:
-    hash_output = True
-  else:
-    hash_output = False
-    print >>sys.stderr, "WARNING: If you added new UMA tags, you must" + \
-           " use the --hash option to update chromeactions.txt."
-  # if we do a hash output, we want to only append NEW actions, and we know
-  # the file we want to work on
+def AddKeySystemSupportActions(actions):
+  """Add actions that are used for key system support metrics.
+
+  Arguments
+    actions: set of actions to add to.
+  """
+  actions.add('KeySystemSupport.Widevine.Queried')
+  actions.add('KeySystemSupport.WidevineWithType.Queried')
+  actions.add('KeySystemSupport.Widevine.Supported')
+  actions.add('KeySystemSupport.WidevineWithType.Supported')
+
+def AddAutomaticResetBannerActions(actions):
+  """Add actions that are used for the automatic profile settings reset banners
+  in chrome://settings.
+
+  Arguments
+    actions: set of actions to add to.
+  """
+  # These actions relate to the the automatic settings reset banner shown as
+  # a result of the reset prompt.
+  actions.add('AutomaticReset_WebUIBanner_BannerShown')
+  actions.add('AutomaticReset_WebUIBanner_ManuallyClosed')
+  actions.add('AutomaticReset_WebUIBanner_ResetClicked')
+
+  # These actions relate to the the automatic settings reset banner shown as
+  # a result of settings hardening.
+  actions.add('AutomaticSettingsReset_WebUIBanner_BannerShown')
+  actions.add('AutomaticSettingsReset_WebUIBanner_ManuallyClosed')
+  actions.add('AutomaticSettingsReset_WebUIBanner_LearnMoreClicked')
+
+
+class Error(Exception):
+  pass
+
+
+def _ExtractText(parent_dom, tag_name):
+  """Extract the text enclosed by |tag_name| under |parent_dom|
+
+  Args:
+    parent_dom: The parent Element under which text node is searched for.
+    tag_name: The name of the tag which contains a text node.
+
+  Returns:
+    A (list of) string enclosed by |tag_name| under |parent_dom|.
+  """
+  texts = []
+  for child_dom in parent_dom.getElementsByTagName(tag_name):
+    text_dom = child_dom.childNodes
+    if text_dom.length != 1:
+      raise Error('More than 1 child node exists under %s' % tag_name)
+    if text_dom[0].nodeType != minidom.Node.TEXT_NODE:
+      raise Error('%s\'s child node is not a text node.' % tag_name)
+    texts.append(text_dom[0].data)
+  return texts
+
+
+class Action(object):
+  def __init__(self, name, description, owners, obsolete=None):
+    self.name = name
+    self.description = description
+    self.owners = owners
+    self.obsolete = obsolete
+
+
+def ParseActionFile(file_content):
+  """Parse the XML data currently stored in the file.
+
+  Args:
+    file_content: a string containing the action XML file content.
+
+  Returns:
+    (actions, actions_dict) actions is a set with all user actions' names.
+    actions_dict is a dict from user action name to Action object.
+  """
+  dom = minidom.parseString(file_content)
+
+  comment_nodes = []
+  # Get top-level comments. It is assumed that all comments are placed before
+  # <acionts> tag. Therefore the loop will stop if it encounters a non-comment
+  # node.
+  for node in dom.childNodes:
+    if node.nodeType == minidom.Node.COMMENT_NODE:
+      comment_nodes.append(node)
+    else:
+      break
+
   actions = set()
+  actions_dict = {}
+  # Get each user action data.
+  for action_dom in dom.getElementsByTagName('action'):
+    action_name = action_dom.getAttribute('name')
+    actions.add(action_name)
 
-  chromeactions_path = os.path.join(path_utils.ScriptDir(), "chromeactions.txt")
+    owners = _ExtractText(action_dom, 'owner')
+    # There is only one description for each user action. Get the first element
+    # of the returned list.
+    description_list = _ExtractText(action_dom, 'description')
+    if len(description_list) > 1:
+      logging.error('user actions "%s" has more than one descriptions. Exactly '
+                    'one description is needed for each user action. Please '
+                    'fix.', action_name)
+      sys.exit(1)
+    description = description_list[0] if description_list else None
+    # There is at most one obsolete tag for each user action.
+    obsolete_list = _ExtractText(action_dom, 'obsolete')
+    if len(obsolete_list) > 1:
+      logging.error('user actions "%s" has more than one obsolete tag. At most '
+                    'one obsolete tag can be added for each user action. Please'
+                    ' fix.', action_name)
+      sys.exit(1)
+    obsolete = obsolete_list[0] if obsolete_list else None
+    actions_dict[action_name] = Action(action_name, description, owners,
+                                       obsolete)
+  return actions, actions_dict, comment_nodes
 
-  if hash_output:
-    f = open(chromeactions_path)
-    for line in f:
-      part = line.rpartition("\t")
-      part = part[2].strip()
-      actions.add(part)
-    f.close()
 
+def _CreateActionTag(doc, action_name, action_object):
+  """Create a new action tag.
+
+  Format of an action tag:
+  <action name="name">
+    <owner>Owner</owner>
+    <description>Description.</description>
+    <obsolete>Deprecated.</obsolete>
+  </action>
+
+  <obsolete> is an optional tag. It's added to user actions that are no longer
+  used any more.
+
+  If action_name is in actions_dict, the values to be inserted are based on the
+  corresponding Action object. If action_name is not in actions_dict, the
+  default value from TAGS is used.
+
+  Args:
+    doc: The document under which the new action tag is created.
+    action_name: The name of an action.
+    action_object: An action object representing the data to be inserted.
+
+  Returns:
+    An action tag Element with proper children elements.
+  """
+  action_dom = doc.createElement('action')
+  action_dom.setAttribute('name', action_name)
+
+  # Create owner tag.
+  if action_object and action_object.owners:
+    # If owners for this action is not None, use the stored value. Otherwise,
+    # use the default value.
+    for owner in action_object.owners:
+      owner_dom = doc.createElement('owner')
+      owner_dom.appendChild(doc.createTextNode(owner))
+      action_dom.appendChild(owner_dom)
+  else:
+    # Use default value.
+    owner_dom = doc.createElement('owner')
+    owner_dom.appendChild(doc.createTextNode(TAGS.get('owner', '')))
+    action_dom.appendChild(owner_dom)
+
+  # Create description tag.
+  description_dom = doc.createElement('description')
+  action_dom.appendChild(description_dom)
+  if action_object and action_object.description:
+    # If description for this action is not None, use the store value.
+    # Otherwise, use the default value.
+    description_dom.appendChild(doc.createTextNode(
+        action_object.description))
+  else:
+    description_dom.appendChild(doc.createTextNode(
+        TAGS.get('description', '')))
+
+  # Create obsolete tag.
+  if action_object and action_object.obsolete:
+    obsolete_dom = doc.createElement('obsolete')
+    action_dom.appendChild(obsolete_dom)
+    obsolete_dom.appendChild(doc.createTextNode(
+        action_object.obsolete))
+
+  return action_dom
+
+
+def PrettyPrint(actions, actions_dict, comment_nodes=[]):
+  """Given a list of action data, create a well-printed minidom document.
+
+  Args:
+    actions: A list of action names.
+    actions_dict: A mappting from action name to Action object.
+
+  Returns:
+    A well-printed minidom document that represents the input action data.
+  """
+  doc = minidom.Document()
+
+  # Attach top-level comments.
+  for node in comment_nodes:
+    doc.appendChild(node)
+
+  actions_element = doc.createElement('actions')
+  doc.appendChild(actions_element)
+
+  # Attach action node based on updated |actions|.
+  for action in sorted(actions):
+    actions_element.appendChild(
+        _CreateActionTag(doc, action, actions_dict.get(action, None)))
+
+  return print_style.GetPrintStyle().PrettyPrintNode(doc)
+
+
+def main(argv):
+  presubmit = ('--presubmit' in argv)
+  actions_xml_path = os.path.join(path_utils.ScriptDir(), 'actions.xml')
+
+  # Save the original file content.
+  with open(actions_xml_path, 'rb') as f:
+    original_xml = f.read()
+
+  actions, actions_dict, comment_nodes = ParseActionFile(original_xml)
 
   AddComputedActions(actions)
   # TODO(fmantek): bring back webkit editor actions.
   # AddWebKitEditorActions(actions)
   AddAboutFlagsActions(actions)
   AddWebUIActions(actions)
-  AddRendererActions(actions)
 
   AddLiteralActions(actions)
 
@@ -600,27 +797,36 @@ def main(argv):
   # print "Found {0} entries".format(len(actions))
 
   AddAndroidActions(actions)
+  AddAutomaticResetBannerActions(actions)
   AddBookmarkManagerActions(actions)
   AddChromeOSActions(actions)
   AddClosedSourceActions(actions)
   AddExtensionActions(actions)
   AddHistoryPageActions(actions)
+  AddKeySystemSupportActions(actions)
 
-  if hash_output:
-    f = open(chromeactions_path, "wb")
+  pretty = PrettyPrint(actions, actions_dict, comment_nodes)
+  if original_xml == pretty:
+    print 'actions.xml is correctly pretty-printed.'
+    sys.exit(0)
+  if presubmit:
+    logging.info('actions.xml is not formatted correctly; run '
+                 'extract_actions.py to fix.')
+    sys.exit(1)
 
+  # Prompt user to consent on the change.
+  if not diff_util.PromptUserToAcceptDiff(
+      original_xml, pretty, 'Is the new version acceptable?'):
+    logging.error('Aborting')
+    sys.exit(1)
 
-  # Print out the actions as a sorted list.
-  for action in sorted(actions):
-    if hash_output:
-      hash = hashlib.md5()
-      hash.update(action)
-      print >>f, '0x%s\t%s' % (hash.hexdigest()[:16], action)
-    else:
-      print action
+  print 'Creating backup file: actions.old.xml.'
+  shutil.move(actions_xml_path, 'actions.old.xml')
 
-  if hash_output:
-    print "Done. Do not forget to add chromeactions.txt to your changelist"
+  with open(actions_xml_path, 'wb') as f:
+    f.write(pretty)
+  print ('Updated %s. Don\'t forget to add it to your changelist' %
+         actions_xml_path)
   return 0
 
 

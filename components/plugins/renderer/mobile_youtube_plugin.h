@@ -16,9 +16,9 @@ namespace plugins {
 // mobile youtube app.
 class MobileYouTubePlugin : public PluginPlaceholder {
  public:
-  MobileYouTubePlugin(content::RenderView* render_view,
-                      WebKit::WebFrame* frame,
-                      const WebKit::WebPluginParams& params,
+  MobileYouTubePlugin(content::RenderFrame* render_frame,
+                      blink::WebFrame* frame,
+                      const blink::WebPluginParams& params,
                       base::StringPiece& template_html,
                       GURL placeholderDataUrl);
 
@@ -26,12 +26,17 @@ class MobileYouTubePlugin : public PluginPlaceholder {
   static bool IsYouTubeURL(const GURL& url, const std::string& mime_type);
 
  private:
+  virtual ~MobileYouTubePlugin();
+
   // Opens a youtube app in the current tab.
-  void OpenYoutubeUrlCallback(const webkit_glue::CppArgumentList& args,
-                              webkit_glue::CppVariant* result);
+  void OpenYoutubeUrlCallback();
 
   // WebViewPlugin::Delegate (via PluginPlaceholder) method
-  virtual void BindWebFrame(WebKit::WebFrame* frame) OVERRIDE;
+  virtual void BindWebFrame(blink::WebFrame* frame) OVERRIDE;
+
+  // gin::Wrappable (via PluginPlaceholder) method
+  virtual gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
+      v8::Isolate* isolate) OVERRIDE;
 
   DISALLOW_COPY_AND_ASSIGN(MobileYouTubePlugin);
 };

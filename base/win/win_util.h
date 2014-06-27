@@ -126,9 +126,12 @@ BASE_EXPORT bool DisplayVirtualKeyboard();
 // above. Returns true on success.
 BASE_EXPORT bool DismissVirtualKeyboard();
 
-// Returns monitor info after correcting rcWorkArea based on metro version.
-// see bug #247430 for more details.
-BASE_EXPORT BOOL GetMonitorInfoWrapper(HMONITOR monitor, MONITORINFO* mi);
+// Returns true if the machine is enrolled to a domain.
+BASE_EXPORT bool IsEnrolledToDomain();
+
+// Used by tests to mock any wanted state. Call with |state| set to true to
+// simulate being in a domain and false otherwise.
+BASE_EXPORT void SetDomainStateForTesting(bool state);
 
 }  // namespace win
 }  // namespace base

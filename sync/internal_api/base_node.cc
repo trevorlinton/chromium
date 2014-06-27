@@ -8,7 +8,6 @@
 
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/values.h"
 #include "sync/internal_api/public/base_transaction.h"
 #include "sync/internal_api/syncapi_internal.h"
 #include "sync/protocol/app_specifics.pb.h"
@@ -39,24 +38,6 @@ static int64 IdToMetahandle(syncable::BaseTransaction* trans,
   if (!entry.good())
     return kInvalidId;
   return entry.GetMetahandle();
-}
-
-static bool EndsWithSpace(const std::string& string) {
-  return !string.empty() && *string.rbegin() == ' ';
-}
-
-// In the reverse direction, if a server name matches the pattern of a
-// server-illegal name followed by one or more spaces, remove the trailing
-// space.
-static void ServerNameToSyncAPIName(const std::string& server_name,
-                                    std::string* out) {
-  CHECK(out);
-  int length_to_copy = server_name.length();
-  if (IsNameServerIllegalAfterTrimming(server_name) &&
-      EndsWithSpace(server_name)) {
-    --length_to_copy;
-  }
-  *out = std::string(server_name.c_str(), length_to_copy);
 }
 
 BaseNode::BaseNode() : password_data_(new sync_pb::PasswordSpecificsData) {}
@@ -227,36 +208,8 @@ int BaseNode::GetPositionIndex() const {
   return GetEntry()->GetPositionIndex();
 }
 
-base::DictionaryValue* BaseNode::GetSummaryAsValue() const {
-  base::DictionaryValue* node_info = new base::DictionaryValue();
-  node_info->SetString("id", base::Int64ToString(GetId()));
-  node_info->SetBoolean("isFolder", GetIsFolder());
-  node_info->SetString("title", GetTitle());
-  node_info->Set("type", ModelTypeToValue(GetModelType()));
-  return node_info;
-}
-
-base::DictionaryValue* BaseNode::GetDetailsAsValue() const {
-  base::DictionaryValue* node_info = GetSummaryAsValue();
-  node_info->SetString(
-      "modificationTime", GetTimeDebugString(GetModificationTime()));
-  node_info->SetString("parentId", base::Int64ToString(GetParentId()));
-  // Specifics are already in the Entry value, so no need to duplicate
-  // it here.
-  node_info->SetString("externalId", base::Int64ToString(GetExternalId()));
-  if (GetEntry()->ShouldMaintainPosition() &&
-      !GetEntry()->GetIsDel()) {
-    node_info->SetString("successorId", base::Int64ToString(GetSuccessorId()));
-    node_info->SetString(
-        "predecessorId", base::Int64ToString(GetPredecessorId()));
-  }
-  if (GetEntry()->GetIsDir()) {
-    node_info->SetString(
-        "firstChildId", base::Int64ToString(GetFirstChildId()));
-  }
-  node_info->Set(
-      "entry", GetEntry()->ToValue(GetTransaction()->GetCryptographer()));
-  return node_info;
+base::DictionaryValue* BaseNode::ToValue() const {
+  return GetEntry()->ToValue(GetTransaction()->GetCryptographer());
 }
 
 int64 BaseNode::GetExternalId() const {
@@ -311,17 +264,6 @@ const sync_pb::ExtensionSpecifics& BaseNode::GetExtensionSpecifics() const {
 const sync_pb::SessionSpecifics& BaseNode::GetSessionSpecifics() const {
   DCHECK_EQ(GetModelType(), SESSIONS);
   return GetEntitySpecifics().session();
-}
-
-const sync_pb::ManagedUserSettingSpecifics&
-    BaseNode::GetManagedUserSettingSpecifics() const {
-  DCHECK_EQ(GetModelType(), MANAGED_USER_SETTINGS);
-  return GetEntitySpecifics().managed_user_setting();
-}
-
-const sync_pb::ManagedUserSpecifics& BaseNode::GetManagedUserSpecifics() const {
-  DCHECK_EQ(GetModelType(), MANAGED_USERS);
-  return GetEntitySpecifics().managed_user();
 }
 
 const sync_pb::DeviceInfoSpecifics& BaseNode::GetDeviceInfoSpecifics() const {

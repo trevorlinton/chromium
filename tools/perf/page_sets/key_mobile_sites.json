@@ -4,6 +4,7 @@
   "credentials_path": "data/credentials.json",
   "user_agent_type": "mobile",
   "smoothness": { "action": "scroll" },
+  "repaint": { "action": "repaint_continuously", "seconds": 5 },
   "pages": [
     {
       "url": "http://www.androidpolice.com/2012/10/03/rumor-evidence-mounts-that-an-lg-optimus-g-nexus-is-coming-along-with-a-nexus-phone-certification-program/",
@@ -11,14 +12,16 @@
     },
     {
       "url": "http://nytimes.com/",
-      "why": "Top news site"
+      "why": "Top news site",
+      "fastpath": true
     },
     {
       "url": "http://iphone.capitolvolkswagen.com/index.htm#new-inventory_p_2Fsb-new_p_2Ehtm_p_3Freset_p_3DInventoryListing",
       "why": "Typical mobile business site",
       "navigate_steps": [
         { "action": "navigate" },
-        { "action": "wait", "condition": "element", "text": "Next 35" }
+        { "action": "wait", "condition": "element", "text": "Next 35" },
+        { "action": "wait", "javascript": "document.body.scrollHeight > 2560"}
       ]
     },
     {
@@ -27,13 +30,15 @@
     },
     {
       "url": "http://cuteoverload.com",
-      "why": "Image-heavy site"
+      "why": "Image-heavy site",
+      "fastpath": true
     },
     {
       "url": "http://theverge.com",
       "why": "Top tech blog"
     },
     {
+      "disabled": "Does not work with rasterize_and_record benchmark on N5; crbug.com/317141",
       "url": "http://www.theverge.com/2012/10/28/3568746/amazon-7-inch-fire-hd-ipad-mini-ad-ballsy",
       "why": "Top tech blog",
       "navigate_steps": [
@@ -144,7 +149,12 @@
     },
     {
       "url": "http://answers.yahoo.com/question/index?qid=20110117024343AAopj8f",
-      "why": "#1 Alexa reference"
+      "why": "#1 Alexa reference",
+      "navigate_steps": [
+        { "action": "navigate" },
+        { "action": "wait", "condition": "element", "text": "Other Answers (1 - 20 of 149)" },
+        { "action": "javascript_click", "text": "Other Answers (1 - 20 of 149)" }
+      ]
     },
     {
       "url": "http://sports.yahoo.com/",
@@ -160,12 +170,19 @@
       "credentials": "google",
       "navigate_steps": [
         { "action": "navigate" },
-        { "action": "wait", "condition": "element", "text": "Inbox" }
+        { "action": "wait", "javascript": "document.getElementById('og_user_warning') !== null" },
+        { "action": "wait", "javascript": "document.getElementById('og_user_warning') === null" }
       ],
-      "smoothness": {
-        "action": "scroll",
-        "scrollable_element_function": "function(callback) { callback(document.getElementById('views').childNodes[1].firstChild); }"
-      }
+      "smoothness": [
+        {
+          "action": "scroll",
+          "scrollable_element_function": "function(callback) { callback(document.getElementById('views').childNodes[1].firstChild); }"
+        },
+        {
+          "action": "scroll",
+          "scrollable_element_function": "function(callback) { callback(document.getElementById('views').childNodes[1].firstChild); }"
+        }
+      ]
     },
     {
       "url": "http://mlb.com/",
@@ -177,7 +194,8 @@
     },
     {
       "url": "http://slashdot.org/",
-      "why": "crbug.com/169827"
+      "why": "crbug.com/169827",
+      "fastpath": true
     },
     {
       "url": "http://worldjournal.com/",
@@ -205,11 +223,13 @@
     },
     {
       "url": "http://www.reddit.com/r/programming/comments/1g96ve",
-      "why": "#5 Alexa news"
+      "why": "#5 Alexa news",
+      "fastpath": true
     },
     {
       "url": "http://www.boingboing.net",
-      "why": "Problematic use of fixed position elements"
+      "why": "Problematic use of fixed position elements",
+      "fastpath": true
     },
     {
       "disabled": "Page behaves non-deterministically, replaced with test version for now",
@@ -223,7 +243,7 @@
       "smoothness": {
         "action": "scroll",
         "scroll_requires_touch": true,
-        "remaining_scroll_distance_function": "function() { return Math.max(0, 1250 + document.getElementById('element-19').contentDocument.getElementById('element-22').getBoundingClientRect().top); }"
+        "scroll_distance_function": "function() { return Math.max(0, 1250 + document.getElementById('element-19').contentDocument.getElementById('element-22').getBoundingClientRect().top); }"
       }
     },
     {
@@ -236,13 +256,36 @@
       "smoothness": {
         "action": "scroll",
         "scroll_requires_touch": true,
-        "remaining_scroll_distance_function": "function() { return Math.max(0, 1250 + document.getElementById('element-5').getBoundingClientRect().top); }"
+        "scroll_distance_function": "function() { return Math.max(0, 1250 + document.getElementById('element-5').getBoundingClientRect().top); }"
       }
     },
     {
       "disabled": "Doesn't scroll; crbug.com/249736",
       "url": "http://forecast.io",
       "why": "crbug.com/231413"
+    },
+    {
+      "url": "http://mobile-news.sandbox.google.com/news/pt1",
+      "why": "Google News: accelerated scrolling version",
+      "navigate_steps": [
+        { "action": "navigate" },
+        { "action": "wait", "javascript": "typeof NEWS_telemetryReady !== 'undefined' && NEWS_telemetryReady == true" }
+      ]
+    },
+    {
+      "url": "http://mobile-news.sandbox.google.com/news/pt0",
+      "why": "Google News: this iOS version is slower than accelerated scrolling",
+      "navigate_steps": [
+        { "action": "navigate" },
+        { "action": "wait", "javascript": "document.getElementById(':h') != null" },
+        { "action": "wait", "seconds": 1 }
+      ],
+      "smoothness": {
+        "action": "scroll",
+        "scroll_requires_touch": true,
+        "scrollable_element_function": "function(callback) { callback(document.getElementById(':5')); }",
+        "remaining_scroll_distance_function": "function() { return Math.max(0, 2500 + document.getElementById(':h').getBoundingClientRect().top); }"
+      }
     }
   ]
 }

@@ -20,7 +20,7 @@ namespace {
 class MasterPreferencesTest : public testing::Test {
  protected:
   virtual void SetUp() {
-    ASSERT_TRUE(file_util::CreateTemporaryFile(&prefs_file_));
+    ASSERT_TRUE(base::CreateTemporaryFile(&prefs_file_));
   }
 
   virtual void TearDown() {
@@ -76,7 +76,7 @@ TEST_F(MasterPreferencesTest, ParseDistroParams) {
     "  }\n"
     "} \n";
 
-  EXPECT_TRUE(file_util::WriteFile(prefs_file(), text, strlen(text)));
+  EXPECT_TRUE(base::WriteFile(prefs_file(), text, strlen(text)));
   installer::MasterPreferences prefs(prefs_file());
   EXPECT_TRUE(prefs.read_from_file());
 
@@ -135,7 +135,7 @@ TEST_F(MasterPreferencesTest, ParseMissingDistroParams) {
     "  }\n"
     "} \n";
 
-  EXPECT_TRUE(file_util::WriteFile(prefs_file(), text, strlen(text)));
+  EXPECT_TRUE(base::WriteFile(prefs_file(), text, strlen(text)));
   installer::MasterPreferences prefs(prefs_file());
   EXPECT_TRUE(prefs.read_from_file());
 
@@ -194,7 +194,7 @@ TEST_F(MasterPreferencesTest, FirstRunTabs) {
     "  ]\n"
     "} \n";
 
-  EXPECT_TRUE(file_util::WriteFile(prefs_file(), text, strlen(text)));
+  EXPECT_TRUE(base::WriteFile(prefs_file(), text, strlen(text)));
   installer::MasterPreferences prefs(prefs_file());
   typedef std::vector<std::string> TabsVector;
   TabsVector tabs = prefs.GetFirstRunTabs();
@@ -215,7 +215,7 @@ TEST(MasterPrefsExtension, ValidateExtensionJSON) {
       .AppendASCII("good").AppendASCII("Preferences");
 
   installer::MasterPreferences prefs(prefs_path);
-  DictionaryValue* extensions = NULL;
+  base::DictionaryValue* extensions = NULL;
   EXPECT_TRUE(prefs.GetExtensionsBlock(&extensions));
   int location = 0;
   EXPECT_TRUE(extensions->GetInteger(
@@ -241,7 +241,7 @@ TEST(MasterPrefsExtension, ValidateExtensionJSON) {
 TEST_F(MasterPreferencesTest, GetInstallPreferencesTest) {
   // Create a temporary prefs file.
   base::FilePath prefs_file;
-  ASSERT_TRUE(file_util::CreateTemporaryFile(&prefs_file));
+  ASSERT_TRUE(base::CreateTemporaryFile(&prefs_file));
   const char text[] =
     "{ \n"
     "  \"distribution\": { \n"
@@ -252,7 +252,7 @@ TEST_F(MasterPreferencesTest, GetInstallPreferencesTest) {
     "     \"verbose_logging\": false\n"
     "  }\n"
     "} \n";
-  EXPECT_TRUE(file_util::WriteFile(prefs_file, text, strlen(text)));
+  EXPECT_TRUE(base::WriteFile(prefs_file, text, strlen(text)));
 
   // Make sure command line values override the values in master preferences.
   std::wstring cmd_str(
@@ -300,55 +300,30 @@ TEST_F(MasterPreferencesTest, GetInstallPreferencesTest) {
 }
 
 TEST_F(MasterPreferencesTest, TestDefaultInstallConfig) {
-  std::wstringstream chrome_cmd, cf_cmd;
+  std::wstringstream chrome_cmd;
   chrome_cmd << "setup.exe";
-  cf_cmd << "setup.exe --" << installer::switches::kChromeFrame;
 
   CommandLine chrome_install(CommandLine::FromString(chrome_cmd.str()));
-  CommandLine cf_install(CommandLine::FromString(cf_cmd.str()));
 
   installer::MasterPreferences pref_chrome(chrome_install);
-  installer::MasterPreferences pref_cf(cf_install);
 
   EXPECT_FALSE(pref_chrome.is_multi_install());
   EXPECT_TRUE(pref_chrome.install_chrome());
-  EXPECT_FALSE(pref_chrome.install_chrome_frame());
-
-  EXPECT_FALSE(pref_cf.is_multi_install());
-  EXPECT_FALSE(pref_cf.install_chrome());
-  EXPECT_TRUE(pref_cf.install_chrome_frame());
 }
 
 TEST_F(MasterPreferencesTest, TestMultiInstallConfig) {
   using installer::switches::kMultiInstall;
   using installer::switches::kChrome;
-  using installer::switches::kChromeFrame;
 
   std::wstringstream chrome_cmd, cf_cmd, chrome_cf_cmd;
   chrome_cmd << "setup.exe --" << kMultiInstall << " --" << kChrome;
-  cf_cmd << "setup.exe --" << kMultiInstall << " --" << kChromeFrame;
-  chrome_cf_cmd << "setup.exe --" << kMultiInstall << " --" << kChrome <<
-      " --" << kChromeFrame;
 
   CommandLine chrome_install(CommandLine::FromString(chrome_cmd.str()));
-  CommandLine cf_install(CommandLine::FromString(cf_cmd.str()));
-  CommandLine chrome_cf_install(CommandLine::FromString(chrome_cf_cmd.str()));
 
   installer::MasterPreferences pref_chrome(chrome_install);
-  installer::MasterPreferences pref_cf(cf_install);
-  installer::MasterPreferences pref_chrome_cf(chrome_cf_install);
 
   EXPECT_TRUE(pref_chrome.is_multi_install());
   EXPECT_TRUE(pref_chrome.install_chrome());
-  EXPECT_FALSE(pref_chrome.install_chrome_frame());
-
-  EXPECT_TRUE(pref_cf.is_multi_install());
-  EXPECT_FALSE(pref_cf.install_chrome());
-  EXPECT_TRUE(pref_cf.install_chrome_frame());
-
-  EXPECT_TRUE(pref_chrome_cf.is_multi_install());
-  EXPECT_TRUE(pref_chrome_cf.install_chrome());
-  EXPECT_TRUE(pref_chrome_cf.install_chrome_frame());
 }
 
 TEST_F(MasterPreferencesTest, EnforceLegacyCreateAllShortcutsFalse) {

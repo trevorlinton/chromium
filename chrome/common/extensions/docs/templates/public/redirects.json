@@ -1,7 +1,9 @@
 {
-  "": "//developers.google.com/chrome",
-  "apps.html": "/apps/about_apps.html",
-  "apps": "/apps/about_apps.html",
-  "extensions": "/extensions/index.html",
-  "index.html": "//developers.google.com/chrome"
+  "": "/home/index",
+  "apps": "/apps/about_apps",
+  "devtools": "/devtools/index",
+  "extensions": "/extensions/index",
+  "multidevice": "/multidevice/index",
+  "native-client": "/native-client/overview",
+  "webstore": "/webstore/index"
 }

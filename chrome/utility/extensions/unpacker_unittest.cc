@@ -9,12 +9,14 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/utility/extensions/unpacker.h"
 #include "extensions/common/constants.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+
+using base::ASCIIToUTF16;
 
 namespace extensions {
 
@@ -134,7 +136,7 @@ TEST_F(UnpackerTest, UnzipDirectoryError) {
   SetupUnpacker("good_package.crx");
   base::FilePath path =
       temp_dir_.path().AppendASCII(kTempExtensionName);
-  ASSERT_TRUE(file_util::WriteFile(path, "foo", 3));
+  ASSERT_TRUE(base::WriteFile(path, "foo", 3));
   EXPECT_FALSE(unpacker_->Run());
   EXPECT_TRUE(StartsWith(unpacker_->error_message(),
               ASCIIToUTF16(kExpected),

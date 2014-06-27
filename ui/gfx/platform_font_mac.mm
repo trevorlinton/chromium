@@ -105,15 +105,6 @@ int PlatformFontMac::GetCapHeight() const {
   return cap_height_;
 }
 
-int PlatformFontMac::GetAverageCharacterWidth() const {
-  return average_width_;
-}
-
-int PlatformFontMac::GetStringWidth(const base::string16& text) const {
-  return Canvas::GetStringWidth(text,
-                                Font(const_cast<PlatformFontMac*>(this)));
-}
-
 int PlatformFontMac::GetExpectedTextWidth(int length) const {
   return length * average_width_;
 }
@@ -124,6 +115,10 @@ int PlatformFontMac::GetStyle() const {
 
 std::string PlatformFontMac::GetFontName() const {
   return font_name_;
+}
+
+std::string PlatformFontMac::GetActualFontNameForTesting() const {
+  return base::SysNSStringToUTF8([native_font_ familyName]);
 }
 
 int PlatformFontMac::GetFontSize() const {

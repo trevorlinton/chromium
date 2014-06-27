@@ -22,7 +22,7 @@
 using base::ResetAndReturn;
 
 namespace base {
-class MessageLoopProxy;
+class SingleThreadTaskRunner;
 }
 
 namespace media {
@@ -30,7 +30,8 @@ namespace media {
 class FakeVideoDecoder : public VideoDecoder {
  public:
   // Constructs an object with a decoding delay of |decoding_delay| frames.
-  explicit FakeVideoDecoder(int decoding_delay);
+  explicit FakeVideoDecoder(int decoding_delay,
+                            bool supports_get_decode_output);
   virtual ~FakeVideoDecoder();
 
   // VideoDecoder implementation.
@@ -40,6 +41,7 @@ class FakeVideoDecoder : public VideoDecoder {
                       const DecodeCB& decode_cb) OVERRIDE;
   virtual void Reset(const base::Closure& closure) OVERRIDE;
   virtual void Stop(const base::Closure& closure) OVERRIDE;
+  virtual scoped_refptr<VideoFrame> GetDecodeOutput() OVERRIDE;
 
   // Holds the next init/read/reset/stop callback from firing.
   void HoldNextInit();
@@ -71,11 +73,11 @@ class FakeVideoDecoder : public VideoDecoder {
   void DoReset();
   void DoStop();
 
-  scoped_refptr<base::MessageLoopProxy> message_loop_;
-  base::WeakPtrFactory<FakeVideoDecoder> weak_factory_;
-  base::WeakPtr<FakeVideoDecoder> weak_this_;
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
   const int decoding_delay_;
+
+  bool supports_get_decode_output_;
 
   State state_;
 
@@ -89,6 +91,9 @@ class FakeVideoDecoder : public VideoDecoder {
   std::list<scoped_refptr<VideoFrame> > decoded_frames_;
 
   int total_bytes_decoded_;
+
+  // NOTE: Weak pointers must be invalidated before all other member variables.
+  base::WeakPtrFactory<FakeVideoDecoder> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeVideoDecoder);
 };

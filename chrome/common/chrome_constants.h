@@ -24,6 +24,10 @@ extern const base::FilePath::CharType kHelperProcessExecutableNameChromium[];
 extern const base::FilePath::CharType kBrowserProcessExecutablePathChromium[];
 extern const base::FilePath::CharType kHelperProcessExecutablePathChromium[];
 #if defined(OS_MACOSX)
+// NOTE: if you change the value of kFrameworkName, please don't forget to
+// update components/test/run_all_unittests.cc as well.
+// TODO(tfarina): Remove the comment above, when you fix components to use plist
+// on Mac.
 extern const base::FilePath::CharType kFrameworkName[];
 
 // The helper .app bundle name and executable name may have one of these
@@ -56,11 +60,13 @@ extern const base::FilePath::CharType kBookmarksFileName[];
 extern const base::FilePath::CharType kCacheDirname[];
 extern const base::FilePath::CharType kCookieFilename[];
 extern const base::FilePath::CharType kCRLSetFilename[];
+extern const base::FilePath::CharType kCLDDataFilename[];
 extern const base::FilePath::CharType kCustomDictionaryFileName[];
 extern const base::FilePath::CharType kExtensionActivityLogFilename[];
 extern const base::FilePath::CharType kExtensionsCookieFilename[];
 extern const base::FilePath::CharType kFaviconsFilename[];
 extern const base::FilePath::CharType kFirstRunSentinel[];
+extern const base::FilePath::CharType kGCMStoreDirname[];
 extern const base::FilePath::CharType kHistoryFilename[];
 extern const base::FilePath::CharType kJumpListIconDirname[];
 extern const base::FilePath::CharType kLocalStateFilename[];
@@ -71,6 +77,7 @@ extern const base::FilePath::CharType kMediaCacheDirname[];
 extern const base::FilePath::CharType kNewTabThumbnailsFilename[];
 extern const base::FilePath::CharType kOBCertFilename[];
 extern const base::FilePath::CharType kPreferencesFilename[];
+extern const base::FilePath::CharType kProtectedPreferencesFilename[];
 extern const base::FilePath::CharType kReadmeFilename[];
 extern const base::FilePath::CharType kResetPromptMementoFilename[];
 extern const base::FilePath::CharType kSafeBrowsingBaseFilename[];
@@ -153,6 +160,11 @@ extern const char kTestUserProfileDir[];
 
 // Used to identify the application to the system AV function in Windows.
 extern const char kApplicationClientIDStringForAVScanning[];
+
+#if defined(OS_ANDROID)
+// The largest reasonable length we'd assume for a meta tag attribute.
+extern const size_t kMaxMetaTagAttributeLength;
+#endif
 
 }  // namespace chrome
 

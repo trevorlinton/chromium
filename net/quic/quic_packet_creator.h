@@ -18,8 +18,6 @@
 #include "net/quic/quic_framer.h"
 #include "net/quic/quic_protocol.h"
 
-NET_EXPORT_PRIVATE extern bool FLAGS_pad_quic_handshake_packets;
-
 namespace net {
 namespace test {
 class QuicPacketCreatorPeer;
@@ -27,6 +25,7 @@ class QuicPacketCreatorPeer;
 
 class QuicAckNotifier;
 class QuicRandom;
+class QuicRandomBoolSource;
 
 class NET_EXPORT_PRIVATE QuicPacketCreator : public QuicFecBuilderInterface {
  public:
@@ -35,19 +34,19 @@ class NET_EXPORT_PRIVATE QuicPacketCreator : public QuicFecBuilderInterface {
     Options()
         : max_packet_length(kDefaultMaxPacketSize),
           max_packets_per_fec_group(0),
-          send_guid_length(PACKET_8BYTE_GUID),
+          send_connection_id_length(PACKET_8BYTE_CONNECTION_ID),
           send_sequence_number_length(PACKET_1BYTE_SEQUENCE_NUMBER) {}
 
     size_t max_packet_length;
     // 0 indicates fec is disabled.
     size_t max_packets_per_fec_group;
-    // Length of guid to send over the wire.
-    QuicGuidLength send_guid_length;
+    // Length of connection_id to send over the wire.
+    QuicConnectionIdLength send_connection_id_length;
     QuicSequenceNumberLength send_sequence_number_length;
   };
 
   // QuicRandom* required for packet entropy.
-  QuicPacketCreator(QuicGuid guid,
+  QuicPacketCreator(QuicConnectionId connection_id,
                     QuicFramer* framer,
                     QuicRandom* random_generator,
                     bool is_server);
@@ -74,7 +73,7 @@ class NET_EXPORT_PRIVATE QuicPacketCreator : public QuicFecBuilderInterface {
   // The overhead the framing will add for a packet with one frame.
   static size_t StreamFramePacketOverhead(
       QuicVersion version,
-      QuicGuidLength guid_length,
+      QuicConnectionIdLength connection_id_length,
       bool include_version,
       QuicSequenceNumberLength sequence_number_length,
       InFecGroup is_in_fec_group);
@@ -86,7 +85,7 @@ class NET_EXPORT_PRIVATE QuicPacketCreator : public QuicFecBuilderInterface {
   // If data is empty and fin is true, the expected behavior is to consume the
   // fin but return 0.
   size_t CreateStreamFrame(QuicStreamId id,
-                           base::StringPiece data,
+                           const IOVector& data,
                            QuicStreamOffset offset,
                            bool fin,
                            QuicFrame* frame);
@@ -96,7 +95,7 @@ class NET_EXPORT_PRIVATE QuicPacketCreator : public QuicFecBuilderInterface {
   // The |notifier| is not owned by the QuicPacketGenerator and must outlive the
   // generated packet.
   size_t CreateStreamFrameWithNotifier(QuicStreamId id,
-                                       base::StringPiece data,
+                                       const IOVector& data,
                                        QuicStreamOffset offset,
                                        bool fin,
                                        QuicAckNotifier* notifier,
@@ -187,7 +186,6 @@ class NET_EXPORT_PRIVATE QuicPacketCreator : public QuicFecBuilderInterface {
 
   void FillPacketHeader(QuicFecGroupNumber fec_group,
                         bool fec_flag,
-                        bool fec_entropy_flag,
                         QuicPacketHeader* header);
 
   // Allows a frame to be added without creating retransmittable frames.
@@ -200,9 +198,9 @@ class NET_EXPORT_PRIVATE QuicPacketCreator : public QuicFecBuilderInterface {
   void MaybeAddPadding();
 
   Options options_;
-  QuicGuid guid_;
+  QuicConnectionId connection_id_;
   QuicFramer* framer_;
-  QuicRandom* random_generator_;
+  scoped_ptr<QuicRandomBoolSource> random_bool_source_;
   QuicPacketSequenceNumber sequence_number_;
   QuicFecGroupNumber fec_group_number_;
   scoped_ptr<QuicFecGroup> fec_group_;

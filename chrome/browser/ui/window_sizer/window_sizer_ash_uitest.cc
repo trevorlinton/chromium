@@ -2,10 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ash/launcher/launcher.h"
+#include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_view.h"
 #include "ash/shell.h"
-#include "ash/test/launcher_test_api.h"
+#include "ash/test/shelf_test_api.h"
 #include "base/command_line.h"
 #include "base/message_loop/message_loop.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
@@ -13,8 +13,8 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/test/event_generator.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/test/ui_controls.h"
 #include "ui/views/controls/menu/menu_controller.h"
 #include "ui/views/view.h"
@@ -43,17 +43,17 @@ void CloseBrowser(Browser* browser) {
   base::MessageLoop::current()->RunUntilIdle();
 }
 
-gfx::Rect GetChromeIconBoundsForRootWindow(aura::RootWindow* root_window) {
-  ash::Launcher* launcher = ash::Launcher::ForWindow(root_window);
+gfx::Rect GetChromeIconBoundsForRootWindow(aura::Window* root_window) {
+  ash::Shelf* shelf = ash::Shelf::ForWindow(root_window);
   const ash::internal::ShelfView* shelf_view =
-      ash::test::LauncherTestAPI(launcher).shelf_view();
+      ash::test::ShelfTestAPI(shelf).shelf_view();
   const views::ViewModel* view_model = shelf_view->view_model_for_test();
 
   EXPECT_EQ(2, view_model->view_size());
   return view_model->view_at(1)->GetBoundsInScreen();
 }
 
-void OpenBrowserUsingShelfOnRootWindow(aura::RootWindow* root_window) {
+void OpenBrowserUsingShelfOnRootWindow(aura::Window* root_window) {
   aura::test::EventGenerator generator(root_window);
   gfx::Point center =
       GetChromeIconBoundsForRootWindow(root_window).CenterPoint();
@@ -69,18 +69,16 @@ void OpenBrowserUsingShelfOnRootWindow(aura::RootWindow* root_window) {
 
 #if defined(OS_WIN)
 #define MAYBE_OpenBrowserUsingShelfOnOtherDisplay DISABLED_OpenBrowserUsingShelfOnOtherDisplay
-#define MAYBE_OpenBrowserUsingContextMenuOnOtherDisplay DISABLED_OpenBrowserUsingContextMenuOnOtherDisplay
 #else
 #define MAYBE_OpenBrowserUsingShelfOnOtherDisplay OpenBrowserUsingShelfOnOtherDisplay
-#define MAYBE_OpenBrowserUsingContextMenuOnOtherDisplay OpenBrowserUsingContextMenuOnOtherDisplay
 #endif
 
 IN_PROC_BROWSER_TEST_F(WindowSizerTest,
                        MAYBE_OpenBrowserUsingShelfOnOtherDisplay) {
   // Don't shutdown when closing the last browser window.
-  chrome::StartKeepAlive();
+  chrome::IncrementKeepAliveCount();
 
-  ash::Shell::RootWindowList root_windows = ash::Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = ash::Shell::GetAllRootWindows();
 
   BrowserList* browser_list =
       BrowserList::GetInstance(chrome::HOST_DESKTOP_TYPE_ASH);
@@ -111,8 +109,8 @@ IN_PROC_BROWSER_TEST_F(WindowSizerTest,
             browser_list->get(0)->window()->GetNativeWindow()->GetRootWindow());
   EXPECT_EQ(root_windows[0], ash::Shell::GetTargetRootWindow());
 
-  // Balanced with the chrome::StartKeepAlive above.
-  chrome::EndKeepAlive();
+  // Balanced with the chrome::IncrementKeepAliveCount above.
+  chrome::DecrementKeepAliveCount();
 }
 
 namespace {
@@ -150,7 +148,7 @@ class WindowSizerContextMenuTest : public WindowSizerTest {
   DISALLOW_COPY_AND_ASSIGN(WindowSizerContextMenuTest);
 };
 
-void OpenBrowserUsingContextMenuOnRootWindow(aura::RootWindow* root_window) {
+void OpenBrowserUsingContextMenuOnRootWindow(aura::Window* root_window) {
   gfx::Point chrome_icon =
       GetChromeIconBoundsForRootWindow(root_window).CenterPoint();
   gfx::Point release_point = chrome_icon;
@@ -163,14 +161,15 @@ void OpenBrowserUsingContextMenuOnRootWindow(aura::RootWindow* root_window) {
 
 }  // namespace
 
+// Test is flaky: http://crbug.com/346799
 IN_PROC_BROWSER_TEST_F(WindowSizerContextMenuTest,
-                       MAYBE_OpenBrowserUsingContextMenuOnOtherDisplay) {
+                       DISABLED_OpenBrowserUsingContextMenuOnOtherDisplay) {
   // Don't shutdown when closing the last browser window.
-  chrome::StartKeepAlive();
+  chrome::IncrementKeepAliveCount();
 
   views::MenuController::TurnOffMenuSelectionHoldForTest();
 
-  ash::Shell::RootWindowList root_windows = ash::Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = ash::Shell::GetAllRootWindows();
 
   BrowserList* browser_list =
       BrowserList::GetInstance(chrome::HOST_DESKTOP_TYPE_ASH);
@@ -195,6 +194,6 @@ IN_PROC_BROWSER_TEST_F(WindowSizerContextMenuTest,
             browser_list->get(1)->window()->GetNativeWindow()->GetRootWindow());
   EXPECT_EQ(root_windows[0], ash::Shell::GetTargetRootWindow());
 
-  // Balanced with the chrome::StartKeepAlive above.
-  chrome::EndKeepAlive();
+  // Balanced with the chrome::IncrementKeepAliveCount above.
+  chrome::DecrementKeepAliveCount();
 }

@@ -49,7 +49,6 @@ PRUNE_PATHS = set([
     os.path.join('third_party','perl'),
     os.path.join('third_party','psyco_win32'),
     os.path.join('third_party','pylib'),
-    os.path.join('third_party','python_26'),
     os.path.join('third_party','pywebsocket'),
     os.path.join('third_party','syzygy'),
     os.path.join('tools','gn'),
@@ -83,11 +82,8 @@ ADDITIONAL_PATHS = (
     os.path.join('chrome', 'common', 'extensions', 'docs', 'examples'),
     os.path.join('chrome', 'test', 'chromeos', 'autotest'),
     os.path.join('chrome', 'test', 'data'),
-    os.path.join('googleurl'),
-#    os.path.join('native_client'),
-#    os.path.join('native_client_sdk'),
+    os.path.join('native_client'),
     os.path.join('net', 'tools', 'spdyshark'),
-    os.path.join('ppapi'),
     os.path.join('sdch', 'open-vcdiff'),
     os.path.join('testing', 'gmock'),
     os.path.join('testing', 'gtest'),
@@ -101,9 +97,6 @@ ADDITIONAL_PATHS = (
     os.path.join('v8'),
     # Fake directory so we can include the strongtalk license.
     os.path.join('v8', 'strongtalk'),
-
-    os.path.join('content', 'nw'),
-    #os.path.join('third_party', 'node'),
 )
 
 
@@ -111,12 +104,6 @@ ADDITIONAL_PATHS = (
 # can't provide a README.chromium.  Please prefer a README.chromium
 # wherever possible.
 SPECIAL_CASES = {
-    os.path.join('content', 'nw'): {
-        "Name": "node-webkit",
-        "URL": "https://github.com/rogerwang/node-webkit",
-        "License": "MIT",
-        "License File": "LICENSE",
-    },
     os.path.join('native_client'): {
         "Name": "native client",
         "URL": "http://code.google.com/p/nativeclient",
@@ -152,23 +139,11 @@ SPECIAL_CASES = {
         # Absolute path here is resolved as relative to the source root.
         "License File": "/LICENSE.chromium_os",
     },
-    os.path.join('third_party', 'GTM'): {
-        "Name": "Google Toolbox for Mac",
-        "URL": "http://code.google.com/p/google-toolbox-for-mac/",
-        "License": "Apache 2.0",
-        "License File": "COPYING",
-    },
     os.path.join('third_party', 'lss'): {
         "Name": "linux-syscall-support",
         "URL": "http://code.google.com/p/linux-syscall-support/",
         "License": "BSD",
         "License File": "/LICENSE",
-    },
-    os.path.join('third_party', 'node'): {
-        "Name": "Node.js",
-        "URL": "http://nodejs.org",
-        "License": "MIT",
-        "License File": "LICENSE",
     },
     os.path.join('third_party', 'ots'): {
         "Name": "OTS (OpenType Sanitizer)",
@@ -352,7 +327,7 @@ def FilterDirsWithFiles(dirs_list, root):
 
 def FindThirdPartyDirs(prune_paths, root):
     """Find all third_party directories underneath the source root."""
-    third_party_dirs = []
+    third_party_dirs = set()
     for path, dirs, files in os.walk(root):
         path = path[len(root)+1:]  # Pretty up the path.
 
@@ -372,7 +347,7 @@ def FindThirdPartyDirs(prune_paths, root):
             for dir in dirs:
                 dirpath = os.path.join(path, dir)
                 if dirpath not in prune_paths:
-                    third_party_dirs.append(dirpath)
+                    third_party_dirs.add(dirpath)
 
             # Don't recurse into any subdirs from here.
             dirs[:] = []
@@ -385,7 +360,7 @@ def FindThirdPartyDirs(prune_paths, root):
 
     for dir in ADDITIONAL_PATHS:
         if dir not in prune_paths:
-            third_party_dirs.append(dir)
+            third_party_dirs.add(dir)
 
     return third_party_dirs
 

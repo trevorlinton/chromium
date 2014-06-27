@@ -447,7 +447,7 @@ NET_EXPORT_PRIVATE AddressFamily GetAddressFamily(
     const IPAddressNumber& address);
 
 // Maps the given AddressFamily to either AF_INET, AF_INET6 or AF_UNSPEC.
-int ConvertAddressFamily(AddressFamily address_family);
+NET_EXPORT_PRIVATE int ConvertAddressFamily(AddressFamily address_family);
 
 // Parses an IP address literal (either IPv4 or IPv6) to its numeric value.
 // Returns true on success and fills |ip_number| with the numeric value.
@@ -515,28 +515,42 @@ NET_EXPORT_PRIVATE bool IsLocalhost(const std::string& host);
 struct NET_EXPORT NetworkInterface {
   NetworkInterface();
   NetworkInterface(const std::string& name,
+                   const std::string& friendly_name,
+                   uint32 interface_index,
                    const IPAddressNumber& address,
                    size_t network_prefix);
   ~NetworkInterface();
 
   std::string name;
+  std::string friendly_name;  // Same as |name| on non-Windows.
+  uint32 interface_index;  // Always 0 on Android.
   IPAddressNumber address;
   size_t network_prefix;
 };
 
 typedef std::vector<NetworkInterface> NetworkInterfaceList;
 
+// Policy settings to include/exclude network interfaces.
+enum HostAddressSelectionPolicy {
+  EXCLUDE_HOST_SCOPE_VIRTUAL_INTERFACES           = 0x1,
+  INCLUDE_HOST_SCOPE_VIRTUAL_INTERFACES           = 0x2,
+  // Include temp address only when interface has both permanent and
+  // temp addresses.
+  INCLUDE_ONLY_TEMP_IPV6_ADDRESS_IF_POSSIBLE      = 0x4,
+};
+
 // Returns list of network interfaces except loopback interface. If an
 // interface has more than one address, a separate entry is added to
 // the list for each address.
 // Can be called only on a thread that allows IO.
-NET_EXPORT bool GetNetworkList(NetworkInterfaceList* networks);
+NET_EXPORT bool GetNetworkList(NetworkInterfaceList* networks,
+                               int policy);
 
 // General category of the IEEE 802.11 (wifi) physical layer operating mode.
 enum WifiPHYLayerProtocol {
   // No wifi support or no associated AP.
   WIFI_PHY_LAYER_PROTOCOL_NONE,
-  // An obsolete modes introduced by the original 802.11, e.g. IR, FHSS,
+  // An obsolete modes introduced by the original 802.11, e.g. IR, FHSS.
   WIFI_PHY_LAYER_PROTOCOL_ANCIENT,
   // 802.11a, OFDM-based rates.
   WIFI_PHY_LAYER_PROTOCOL_A,
@@ -565,6 +579,7 @@ unsigned MaskPrefixLength(const IPAddressNumber& mask);
 // See http://tools.ietf.org/html/rfc2474 for details.
 enum DiffServCodePoint {
   DSCP_NO_CHANGE = -1,
+  DSCP_FIRST = DSCP_NO_CHANGE,
   DSCP_DEFAULT = 0,  // Same as DSCP_CS0
   DSCP_CS0  = 0,   // The default
   DSCP_CS1  = 8,   // Bulk/background traffic
@@ -587,6 +602,7 @@ enum DiffServCodePoint {
   DSCP_EF   = 46,  // Voice
   DSCP_CS6  = 48,  // Voice
   DSCP_CS7  = 56,  // Control messages
+  DSCP_LAST = DSCP_CS7
 };
 
 }  // namespace net

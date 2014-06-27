@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,8 @@
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "chrome/browser/component_updater/component_patcher.h"
+
+namespace component_updater {
 
 class ComponentPatcherWin : public ComponentPatcher {
  public:
@@ -20,5 +22,7 @@ class ComponentPatcherWin : public ComponentPatcher {
  private:
   DISALLOW_COPY_AND_ASSIGN(ComponentPatcherWin);
 };
+
+}  // namespace component_updater
 
 #endif  // CHROME_BROWSER_COMPONENT_UPDATER_COMPONENT_PATCHER_WIN_H_

@@ -19,6 +19,7 @@
 #include "content/public/browser/user_metrics.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
+#include "ui/accessibility/ax_view_state.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/events/keycodes/keyboard_codes.h"
@@ -32,7 +33,7 @@
 #include "ui/views/layout/layout_constants.h"
 #include "ui/views/widget/widget.h"
 
-using content::UserMetricsAction;
+using base::UserMetricsAction;
 using views::ColumnSet;
 using views::GridLayout;
 
@@ -127,25 +128,33 @@ bool BookmarkBubbleView::AcceleratorPressed(
   return BubbleDelegateView::AcceleratorPressed(accelerator);
 }
 
+void BookmarkBubbleView::OnNativeThemeChanged(const ui::NativeTheme* theme) {
+  views::BubbleDelegateView::OnNativeThemeChanged(theme);
+  const SkColor background_color = theme->GetSystemColor(
+      ui::NativeTheme::kColorId_DialogBackground);
+  set_color(background_color);
+  set_background(views::Background::CreateSolidBackground(background_color));
+}
+
 void BookmarkBubbleView::Init() {
   views::Label* title_label = new views::Label(
       l10n_util::GetStringUTF16(
           newly_bookmarked_ ? IDS_BOOKMARK_BUBBLE_PAGE_BOOKMARKED :
                               IDS_BOOKMARK_BUBBLE_PAGE_BOOKMARK));
   ui::ResourceBundle* rb = &ui::ResourceBundle::GetSharedInstance();
-  title_label->SetFont(rb->GetFont(ui::ResourceBundle::MediumFont));
+  title_label->SetFontList(rb->GetFontList(ui::ResourceBundle::MediumFont));
 
   remove_button_ = new views::LabelButton(this, l10n_util::GetStringUTF16(
       IDS_BOOKMARK_BUBBLE_REMOVE_BOOKMARK));
-  remove_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
+  remove_button_->SetStyle(views::Button::STYLE_BUTTON);
 
   edit_button_ = new views::LabelButton(
       this, l10n_util::GetStringUTF16(IDS_BOOKMARK_BUBBLE_OPTIONS));
-  edit_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
+  edit_button_->SetStyle(views::Button::STYLE_BUTTON);
 
   close_button_ = new views::LabelButton(
       this, l10n_util::GetStringUTF16(IDS_DONE));
-  close_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
+  close_button_->SetStyle(views::Button::STYLE_BUTTON);
   close_button_->SetIsDefault(true);
 
   views::Label* combobox_label = new views::Label(
@@ -153,7 +162,8 @@ void BookmarkBubbleView::Init() {
 
   parent_combobox_ = new views::Combobox(&parent_model_);
   parent_combobox_->set_listener(this);
-  parent_combobox_->SetAccessibleName(combobox_label->text());
+  parent_combobox_->SetAccessibleName(
+      l10n_util::GetStringUTF16(IDS_BOOKMARK_AX_BUBBLE_FOLDER_TEXT));
 
   GridLayout* layout = new GridLayout(this);
   SetLayoutManager(layout);
@@ -199,6 +209,9 @@ void BookmarkBubbleView::Init() {
   layout->AddView(label);
   title_tf_ = new views::Textfield();
   title_tf_->SetText(GetTitle());
+  title_tf_->SetAccessibleName(
+      l10n_util::GetStringUTF16(IDS_BOOKMARK_AX_BUBBLE_TITLE_TEXT));
+
   layout->AddView(title_tf_, 5, 1);
 
   layout->AddPaddingRow(0, views::kUnrelatedControlHorizontalSpacing);
@@ -262,16 +275,13 @@ BookmarkBubbleView::BookmarkBubbleView(
       sync_promo_view_(NULL),
       remove_bookmark_(false),
       apply_edits_(true) {
-  const SkColor background_color = GetNativeTheme()->GetSystemColor(
-      ui::NativeTheme::kColorId_DialogBackground);
-  set_color(background_color);
-  set_background(views::Background::CreateSolidBackground(background_color));
+  set_move_with_anchor(true);
   set_margins(gfx::Insets(views::kPanelVertMargin, 0, 0, 0));
   // Compensate for built-in vertical padding in the anchor view's image.
   set_anchor_view_insets(gfx::Insets(2, 0, 2, 0));
 }
 
-string16 BookmarkBubbleView::GetTitle() {
+base::string16 BookmarkBubbleView::GetTitle() {
   BookmarkModel* bookmark_model =
       BookmarkModelFactory::GetForProfile(profile_);
   const BookmarkNode* node =
@@ -280,7 +290,7 @@ string16 BookmarkBubbleView::GetTitle() {
     return node->GetTitle();
   else
     NOTREACHED();
-  return string16();
+  return base::string16();
 }
 
 gfx::Size BookmarkBubbleView::GetMinimumSize() {
@@ -289,12 +299,20 @@ gfx::Size BookmarkBubbleView::GetMinimumSize() {
   return size;
 }
 
+void BookmarkBubbleView::GetAccessibleState(ui::AXViewState* state) {
+  BubbleDelegateView::GetAccessibleState(state);
+  state->name =
+      l10n_util::GetStringUTF16(
+          newly_bookmarked_ ? IDS_BOOKMARK_BUBBLE_PAGE_BOOKMARKED :
+                              IDS_BOOKMARK_AX_BUBBLE_PAGE_BOOKMARK);
+}
+
 void BookmarkBubbleView::ButtonPressed(views::Button* sender,
                                        const ui::Event& event) {
   HandleButtonPressed(sender);
 }
 
-void BookmarkBubbleView::OnSelectedIndexChanged(views::Combobox* combobox) {
+void BookmarkBubbleView::OnPerformAction(views::Combobox* combobox) {
   if (combobox->selected_index() + 1 == parent_model_.GetItemCount()) {
     content::RecordAction(UserMetricsAction("BookmarkBubble_EditFromCombobox"));
     ShowEditor();
@@ -307,13 +325,13 @@ void BookmarkBubbleView::HandleButtonPressed(views::Button* sender) {
     // Set this so we remove the bookmark after the window closes.
     remove_bookmark_ = true;
     apply_edits_ = false;
-    StartFade(false);
+    GetWidget()->Close();
   } else if (sender == edit_button_) {
     content::RecordAction(UserMetricsAction("BookmarkBubble_Edit"));
     ShowEditor();
   } else {
     DCHECK_EQ(close_button_, sender);
-    StartFade(false);
+    GetWidget()->Close();
   }
 }
 
@@ -340,7 +358,7 @@ void BookmarkBubbleView::ApplyEdits() {
   BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile_);
   const BookmarkNode* node = model->GetMostRecentlyAddedNodeForURL(url_);
   if (node) {
-    const string16 new_title = title_tf_->text();
+    const base::string16 new_title = title_tf_->text();
     if (new_title != node->GetTitle()) {
       model->SetTitle(node, new_title);
       content::RecordAction(

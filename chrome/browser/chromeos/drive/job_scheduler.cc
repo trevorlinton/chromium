@@ -10,11 +10,10 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
-#include "chrome/browser/chromeos/drive/logging.h"
-#include "chrome/browser/google_apis/drive_api_parser.h"
-#include "chrome/browser/google_apis/task_util.h"
+#include "chrome/browser/drive/event_logger.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/browser_thread.h"
+#include "google_apis/drive/drive_api_parser.h"
 
 using content::BrowserThread;
 
@@ -22,13 +21,51 @@ namespace drive {
 
 namespace {
 
-const int kMaxThrottleCount = 4;
-
-// According to the API documentation, this should be the same as
+// All jobs are retried at maximum of kMaxRetryCount when they fail due to
+// throttling or server error.  The delay before retrying a job is shared among
+// jobs. It doubles in length on each failure, upto 2^kMaxThrottleCount seconds.
+//
+// According to the API documentation, kMaxRetryCount should be the same as
 // kMaxThrottleCount (https://developers.google.com/drive/handle-errors).
 // But currently multiplied by 2 to ensure upload related jobs retried for a
 // sufficient number of times. crbug.com/269918
-const int kMaxRetryCount = 2*kMaxThrottleCount;
+const int kMaxThrottleCount = 4;
+const int kMaxRetryCount = 2 * kMaxThrottleCount;
+
+// GetDefaultValue returns a value constructed by the default constructor.
+template<typename T> struct DefaultValueCreator {
+  static T GetDefaultValue() { return T(); }
+};
+template<typename T> struct DefaultValueCreator<const T&> {
+  static T GetDefaultValue() { return T(); }
+};
+
+// Helper of CreateErrorRunCallback implementation.
+// Provides:
+// - ResultType; the type of the Callback which should be returned by
+//     CreateErrorRunCallback.
+// - Run(): a static function which takes the original |callback| and |error|,
+//     and runs the |callback|.Run() with the error code and default values
+//     for remaining arguments.
+template<typename CallbackType> struct CreateErrorRunCallbackHelper;
+
+// CreateErrorRunCallback with two arguments.
+template<typename P1>
+struct CreateErrorRunCallbackHelper<void(google_apis::GDataErrorCode, P1)> {
+  static void Run(
+      const base::Callback<void(google_apis::GDataErrorCode, P1)>& callback,
+      google_apis::GDataErrorCode error) {
+    callback.Run(error, DefaultValueCreator<P1>::GetDefaultValue());
+  }
+};
+
+// Returns a callback with the tail parameter bound to its default value.
+// In other words, returned_callback.Run(error) runs callback.Run(error, T()).
+template<typename CallbackType>
+base::Callback<void(google_apis::GDataErrorCode)>
+CreateErrorRunCallback(const base::Callback<CallbackType>& callback) {
+  return base::Bind(&CreateErrorRunCallbackHelper<CallbackType>::Run, callback);
+}
 
 // Parameter struct for RunUploadNewFile.
 struct UploadNewFileParams {
@@ -36,6 +73,7 @@ struct UploadNewFileParams {
   base::FilePath local_file_path;
   std::string title;
   std::string content_type;
+  DriveUploader::UploadNewFileOptions options;
   UploadCompletionCallback callback;
   google_apis::ProgressCallback progress_callback;
 };
@@ -48,6 +86,7 @@ google_apis::CancelCallback RunUploadNewFile(
                                  params.local_file_path,
                                  params.title,
                                  params.content_type,
+                                 params.options,
                                  params.callback,
                                  params.progress_callback);
 }
@@ -57,6 +96,7 @@ struct UploadExistingFileParams {
   std::string resource_id;
   base::FilePath local_file_path;
   std::string content_type;
+  DriveUploader::UploadExistingFileOptions options;
   std::string etag;
   UploadCompletionCallback callback;
   google_apis::ProgressCallback progress_callback;
@@ -69,7 +109,7 @@ google_apis::CancelCallback RunUploadExistingFile(
   return uploader->UploadExistingFile(params.resource_id,
                                       params.local_file_path,
                                       params.content_type,
-                                      params.etag,
+                                      params.options,
                                       params.callback,
                                       params.progress_callback);
 }
@@ -96,6 +136,7 @@ google_apis::CancelCallback RunResumeUploadFile(
 
 }  // namespace
 
+// Metadata jobs are cheap, so we run them concurrently. File jobs run serially.
 const int JobScheduler::kMaxJobCount[] = {
   5,  // METADATA_QUEUE
   1,  // FILE_QUEUE
@@ -120,11 +161,13 @@ struct JobScheduler::ResumeUploadParams {
 
 JobScheduler::JobScheduler(
     PrefService* pref_service,
+    EventLogger* logger,
     DriveServiceInterface* drive_service,
     base::SequencedTaskRunner* blocking_task_runner)
     : throttle_count_(0),
       wait_until_(base::Time::Now()),
       disable_throttling_(false),
+      logger_(logger),
       drive_service_(drive_service),
       uploader_(new DriveUploader(drive_service, blocking_task_runner)),
       pref_service_(pref_service),
@@ -204,7 +247,7 @@ void JobScheduler::GetAboutResource(
                  weak_ptr_factory_.GetWeakPtr(),
                  new_job->job_info.job_id,
                  callback));
-  new_job->abort_callback = google_apis::CreateErrorRunCallback(callback);
+  new_job->abort_callback = CreateErrorRunCallback(callback);
   StartJob(new_job);
 }
 
@@ -220,7 +263,7 @@ void JobScheduler::GetAppList(const google_apis::AppListCallback& callback) {
                  weak_ptr_factory_.GetWeakPtr(),
                  new_job->job_info.job_id,
                  callback));
-  new_job->abort_callback = google_apis::CreateErrorRunCallback(callback);
+  new_job->abort_callback = CreateErrorRunCallback(callback);
   StartJob(new_job);
 }
 
@@ -237,7 +280,7 @@ void JobScheduler::GetAllResourceList(
                  weak_ptr_factory_.GetWeakPtr(),
                  new_job->job_info.job_id,
                  callback));
-  new_job->abort_callback = google_apis::CreateErrorRunCallback(callback);
+  new_job->abort_callback = CreateErrorRunCallback(callback);
   StartJob(new_job);
 }
 
@@ -257,7 +300,7 @@ void JobScheduler::GetResourceListInDirectory(
                  weak_ptr_factory_.GetWeakPtr(),
                  new_job->job_info.job_id,
                  callback));
-  new_job->abort_callback = google_apis::CreateErrorRunCallback(callback);
+  new_job->abort_callback = CreateErrorRunCallback(callback);
   StartJob(new_job);
 }
 
@@ -276,7 +319,7 @@ void JobScheduler::Search(
                  weak_ptr_factory_.GetWeakPtr(),
                  new_job->job_info.job_id,
                  callback));
-  new_job->abort_callback = google_apis::CreateErrorRunCallback(callback);
+  new_job->abort_callback = CreateErrorRunCallback(callback);
   StartJob(new_job);
 }
 
@@ -295,7 +338,7 @@ void JobScheduler::GetChangeList(
                  weak_ptr_factory_.GetWeakPtr(),
                  new_job->job_info.job_id,
                  callback));
-  new_job->abort_callback = google_apis::CreateErrorRunCallback(callback);
+  new_job->abort_callback = CreateErrorRunCallback(callback);
   StartJob(new_job);
 }
 
@@ -314,7 +357,7 @@ void JobScheduler::GetRemainingChangeList(
                  weak_ptr_factory_.GetWeakPtr(),
                  new_job->job_info.job_id,
                  callback));
-  new_job->abort_callback = google_apis::CreateErrorRunCallback(callback);
+  new_job->abort_callback = CreateErrorRunCallback(callback);
   StartJob(new_job);
 }
 
@@ -333,7 +376,28 @@ void JobScheduler::GetRemainingFileList(
                  weak_ptr_factory_.GetWeakPtr(),
                  new_job->job_info.job_id,
                  callback));
-  new_job->abort_callback = google_apis::CreateErrorRunCallback(callback);
+  new_job->abort_callback = CreateErrorRunCallback(callback);
+  StartJob(new_job);
+}
+
+void JobScheduler::GetResourceEntry(
+    const std::string& resource_id,
+    const ClientContext& context,
+    const google_apis::GetResourceEntryCallback& callback) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DCHECK(!callback.is_null());
+
+  JobEntry* new_job = CreateNewJob(TYPE_GET_RESOURCE_ENTRY);
+  new_job->context = context;
+  new_job->task = base::Bind(
+      &DriveServiceInterface::GetResourceEntry,
+      base::Unretained(drive_service_),
+      resource_id,
+      base::Bind(&JobScheduler::OnGetResourceEntryJobDone,
+                 weak_ptr_factory_.GetWeakPtr(),
+                 new_job->job_info.job_id,
+                 callback));
+  new_job->abort_callback = CreateErrorRunCallback(callback);
   StartJob(new_job);
 }
 
@@ -356,22 +420,23 @@ void JobScheduler::GetShareUrl(
                  weak_ptr_factory_.GetWeakPtr(),
                  new_job->job_info.job_id,
                  callback));
-  new_job->abort_callback = google_apis::CreateErrorRunCallback(callback);
+  new_job->abort_callback = CreateErrorRunCallback(callback);
   StartJob(new_job);
 }
 
-void JobScheduler::DeleteResource(
+void JobScheduler::TrashResource(
     const std::string& resource_id,
+    const ClientContext& context,
     const google_apis::EntryActionCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(!callback.is_null());
 
-  JobEntry* new_job = CreateNewJob(TYPE_DELETE_RESOURCE);
+  JobEntry* new_job = CreateNewJob(TYPE_TRASH_RESOURCE);
+  new_job->context = context;
   new_job->task = base::Bind(
-      &DriveServiceInterface::DeleteResource,
+      &DriveServiceInterface::TrashResource,
       base::Unretained(drive_service_),
       resource_id,
-      "",  // etag
       base::Bind(&JobScheduler::OnEntryActionJobDone,
                  weak_ptr_factory_.GetWeakPtr(),
                  new_job->job_info.job_id,
@@ -401,53 +466,36 @@ void JobScheduler::CopyResource(
                  weak_ptr_factory_.GetWeakPtr(),
                  new_job->job_info.job_id,
                  callback));
-  new_job->abort_callback = google_apis::CreateErrorRunCallback(callback);
+  new_job->abort_callback = CreateErrorRunCallback(callback);
   StartJob(new_job);
 }
 
-void JobScheduler::CopyHostedDocument(
-    const std::string& resource_id,
-    const std::string& new_title,
-    const google_apis::GetResourceEntryCallback& callback) {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  DCHECK(!callback.is_null());
-
-  JobEntry* new_job = CreateNewJob(TYPE_COPY_HOSTED_DOCUMENT);
-  new_job->task = base::Bind(
-      &DriveServiceInterface::CopyHostedDocument,
-      base::Unretained(drive_service_),
-      resource_id,
-      new_title,
-      base::Bind(&JobScheduler::OnGetResourceEntryJobDone,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 new_job->job_info.job_id,
-                 callback));
-  new_job->abort_callback = google_apis::CreateErrorRunCallback(callback);
-  StartJob(new_job);
-}
-
-void JobScheduler::MoveResource(
+void JobScheduler::UpdateResource(
     const std::string& resource_id,
     const std::string& parent_resource_id,
     const std::string& new_title,
     const base::Time& last_modified,
+    const base::Time& last_viewed_by_me,
+    const ClientContext& context,
     const google_apis::GetResourceEntryCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(!callback.is_null());
 
-  JobEntry* new_job = CreateNewJob(TYPE_MOVE_RESOURCE);
+  JobEntry* new_job = CreateNewJob(TYPE_UPDATE_RESOURCE);
+  new_job->context = context;
   new_job->task = base::Bind(
-      &DriveServiceInterface::MoveResource,
+      &DriveServiceInterface::UpdateResource,
       base::Unretained(drive_service_),
       resource_id,
       parent_resource_id,
       new_title,
       last_modified,
+      last_viewed_by_me,
       base::Bind(&JobScheduler::OnGetResourceEntryJobDone,
                  weak_ptr_factory_.GetWeakPtr(),
                  new_job->job_info.job_id,
                  callback));
-  new_job->abort_callback = google_apis::CreateErrorRunCallback(callback);
+  new_job->abort_callback = CreateErrorRunCallback(callback);
   StartJob(new_job);
 }
 
@@ -469,29 +517,6 @@ void JobScheduler::RenameResource(
                  new_job->job_info.job_id,
                  callback));
   new_job->abort_callback = callback;
-  StartJob(new_job);
-}
-
-void JobScheduler::TouchResource(
-    const std::string& resource_id,
-    const base::Time& modified_date,
-    const base::Time& last_viewed_by_me_date,
-    const google_apis::GetResourceEntryCallback& callback) {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  DCHECK(!callback.is_null());
-
-  JobEntry* new_job = CreateNewJob(TYPE_TOUCH_RESOURCE);
-  new_job->task = base::Bind(
-      &DriveServiceInterface::TouchResource,
-      base::Unretained(drive_service_),
-      resource_id,
-      modified_date,
-      last_viewed_by_me_date,
-      base::Bind(&JobScheduler::OnGetResourceEntryJobDone,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 new_job->job_info.job_id,
-                 callback));
-  new_job->abort_callback = google_apis::CreateErrorRunCallback(callback);
   StartJob(new_job);
 }
 
@@ -519,10 +544,12 @@ void JobScheduler::AddResourceToDirectory(
 void JobScheduler::RemoveResourceFromDirectory(
     const std::string& parent_resource_id,
     const std::string& resource_id,
+    const ClientContext& context,
     const google_apis::EntryActionCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 
   JobEntry* new_job = CreateNewJob(TYPE_REMOVE_RESOURCE_FROM_DIRECTORY);
+  new_job->context = context;
   new_job->task = base::Bind(
       &DriveServiceInterface::RemoveResourceFromDirectory,
       base::Unretained(drive_service_),
@@ -539,20 +566,24 @@ void JobScheduler::RemoveResourceFromDirectory(
 void JobScheduler::AddNewDirectory(
     const std::string& parent_resource_id,
     const std::string& directory_title,
+    const DriveServiceInterface::AddNewDirectoryOptions& options,
+    const ClientContext& context,
     const google_apis::GetResourceEntryCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 
   JobEntry* new_job = CreateNewJob(TYPE_ADD_NEW_DIRECTORY);
+  new_job->context = context;
   new_job->task = base::Bind(
       &DriveServiceInterface::AddNewDirectory,
       base::Unretained(drive_service_),
       parent_resource_id,
       directory_title,
+      options,
       base::Bind(&JobScheduler::OnGetResourceEntryJobDone,
                  weak_ptr_factory_.GetWeakPtr(),
                  new_job->job_info.job_id,
                  callback));
-  new_job->abort_callback = google_apis::CreateErrorRunCallback(callback);
+  new_job->abort_callback = CreateErrorRunCallback(callback);
   StartJob(new_job);
 }
 
@@ -583,8 +614,7 @@ JobID JobScheduler::DownloadFile(
       base::Bind(&JobScheduler::UpdateProgress,
                  weak_ptr_factory_.GetWeakPtr(),
                  new_job->job_info.job_id));
-  new_job->abort_callback =
-      google_apis::CreateErrorRunCallback(download_action_callback);
+  new_job->abort_callback = CreateErrorRunCallback(download_action_callback);
   StartJob(new_job);
   return new_job->job_info.job_id;
 }
@@ -595,6 +625,7 @@ void JobScheduler::UploadNewFile(
     const base::FilePath& local_file_path,
     const std::string& title,
     const std::string& content_type,
+    const DriveUploader::UploadNewFileOptions& options,
     const ClientContext& context,
     const google_apis::GetResourceEntryCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
@@ -608,6 +639,7 @@ void JobScheduler::UploadNewFile(
   params.local_file_path = local_file_path;
   params.title = title;
   params.content_type = content_type;
+  params.options = options;
 
   ResumeUploadParams resume_params;
   resume_params.local_file_path = params.local_file_path;
@@ -622,7 +654,7 @@ void JobScheduler::UploadNewFile(
                                         weak_ptr_factory_.GetWeakPtr(),
                                         new_job->job_info.job_id);
   new_job->task = base::Bind(&RunUploadNewFile, uploader_.get(), params);
-  new_job->abort_callback = google_apis::CreateErrorRunCallback(callback);
+  new_job->abort_callback = CreateErrorRunCallback(callback);
   StartJob(new_job);
 }
 
@@ -631,7 +663,7 @@ void JobScheduler::UploadExistingFile(
     const base::FilePath& drive_file_path,
     const base::FilePath& local_file_path,
     const std::string& content_type,
-    const std::string& etag,
+    const DriveUploader::UploadExistingFileOptions& options,
     const ClientContext& context,
     const google_apis::GetResourceEntryCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
@@ -644,7 +676,7 @@ void JobScheduler::UploadExistingFile(
   params.resource_id = resource_id;
   params.local_file_path = local_file_path;
   params.content_type = content_type;
-  params.etag = etag;
+  params.options = options;
 
   ResumeUploadParams resume_params;
   resume_params.local_file_path = params.local_file_path;
@@ -659,44 +691,7 @@ void JobScheduler::UploadExistingFile(
                                         weak_ptr_factory_.GetWeakPtr(),
                                         new_job->job_info.job_id);
   new_job->task = base::Bind(&RunUploadExistingFile, uploader_.get(), params);
-  new_job->abort_callback = google_apis::CreateErrorRunCallback(callback);
-  StartJob(new_job);
-}
-
-void JobScheduler::CreateFile(
-    const std::string& parent_resource_id,
-    const base::FilePath& drive_file_path,
-    const std::string& title,
-    const std::string& content_type,
-    const ClientContext& context,
-    const google_apis::GetResourceEntryCallback& callback) {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-
-  const base::FilePath kDevNull(FILE_PATH_LITERAL("/dev/null"));
-
-  JobEntry* new_job = CreateNewJob(TYPE_CREATE_FILE);
-  new_job->job_info.file_path = drive_file_path;
-  new_job->context = context;
-
-  UploadNewFileParams params;
-  params.parent_resource_id = parent_resource_id;
-  params.local_file_path = kDevNull;  // Upload an empty file.
-  params.title = title;
-  params.content_type = content_type;
-
-  ResumeUploadParams resume_params;
-  resume_params.local_file_path = params.local_file_path;
-  resume_params.content_type = params.content_type;
-
-  params.callback = base::Bind(&JobScheduler::OnUploadCompletionJobDone,
-                               weak_ptr_factory_.GetWeakPtr(),
-                               new_job->job_info.job_id,
-                               resume_params,
-                               callback);
-  params.progress_callback = google_apis::ProgressCallback();
-
-  new_job->task = base::Bind(&RunUploadNewFile, uploader_.get(), params);
-  new_job->abort_callback = google_apis::CreateErrorRunCallback(callback);
+  new_job->abort_callback = CreateErrorRunCallback(callback);
   StartJob(new_job);
 }
 
@@ -716,7 +711,7 @@ void JobScheduler::GetResourceListInDirectoryByWapi(
                  weak_ptr_factory_.GetWeakPtr(),
                  new_job->job_info.job_id,
                  callback));
-  new_job->abort_callback = google_apis::CreateErrorRunCallback(callback);
+  new_job->abort_callback = CreateErrorRunCallback(callback);
   StartJob(new_job);
 }
 
@@ -735,7 +730,29 @@ void JobScheduler::GetRemainingResourceList(
                  weak_ptr_factory_.GetWeakPtr(),
                  new_job->job_info.job_id,
                  callback));
-  new_job->abort_callback = google_apis::CreateErrorRunCallback(callback);
+  new_job->abort_callback = CreateErrorRunCallback(callback);
+  StartJob(new_job);
+}
+
+void JobScheduler::AddPermission(
+    const std::string& resource_id,
+    const std::string& email,
+    google_apis::drive::PermissionRole role,
+    const google_apis::EntryActionCallback& callback) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DCHECK(!callback.is_null());
+
+  JobEntry* new_job = CreateNewJob(TYPE_ADD_PERMISSION);
+  new_job->task = base::Bind(&DriveServiceInterface::AddPermission,
+                             base::Unretained(drive_service_),
+                             resource_id,
+                             email,
+                             role,
+                             base::Bind(&JobScheduler::OnEntryActionJobDone,
+                                        weak_ptr_factory_.GetWeakPtr(),
+                                        new_job->job_info.job_id,
+                                        callback));
+  new_job->abort_callback = callback;
   StartJob(new_job);
 }
 
@@ -765,11 +782,11 @@ void JobScheduler::QueueJob(JobID job_id) {
 
   const std::string retry_prefix = job_entry->retry_count > 0 ?
       base::StringPrintf(" (retry %d)", job_entry->retry_count) : "";
-  util::Log(logging::LOG_INFO,
-            "Job queued%s: %s - %s",
-            retry_prefix.c_str(),
-            job_info.ToString().c_str(),
-            GetQueueInfo(queue_type).c_str());
+  logger_->Log(logging::LOG_INFO,
+               "Job queued%s: %s - %s",
+               retry_prefix.c_str(),
+               job_info.ToString().c_str(),
+               GetQueueInfo(queue_type).c_str());
 }
 
 void JobScheduler::DoJobLoop(QueueType queue_type) {
@@ -817,10 +834,10 @@ void JobScheduler::DoJobLoop(QueueType queue_type) {
 
   UpdateWait();
 
-  util::Log(logging::LOG_INFO,
-            "Job started: %s - %s",
-            job_info->ToString().c_str(),
-            GetQueueInfo(queue_type).c_str());
+  logger_->Log(logging::LOG_INFO,
+               "Job started: %s - %s",
+               job_info->ToString().c_str(),
+               GetQueueInfo(queue_type).c_str());
 }
 
 int JobScheduler::GetCurrentAcceptedPriority(QueueType queue_type) {
@@ -874,12 +891,12 @@ bool JobScheduler::OnJobDone(JobID job_id, google_apis::GDataErrorCode error) {
 
   const base::TimeDelta elapsed = base::Time::Now() - job_info->start_time;
   bool success = (GDataToFileError(error) == FILE_ERROR_OK);
-  util::Log(success ? logging::LOG_INFO : logging::LOG_WARNING,
-            "Job done: %s => %s (elapsed time: %sms) - %s",
-            job_info->ToString().c_str(),
-            GDataErrorCodeToString(error).c_str(),
-            base::Int64ToString(elapsed.InMilliseconds()).c_str(),
-            GetQueueInfo(queue_type).c_str());
+  logger_->Log(success ? logging::LOG_INFO : logging::LOG_WARNING,
+               "Job done: %s => %s (elapsed time: %sms) - %s",
+               job_info->ToString().c_str(),
+               GDataErrorCodeToString(error).c_str(),
+               base::Int64ToString(elapsed.InMilliseconds()).c_str(),
+               GetQueueInfo(queue_type).c_str());
 
   // Retry, depending on the error.
   const bool is_server_error =
@@ -1094,19 +1111,19 @@ JobScheduler::QueueType JobScheduler::GetJobQueueType(JobType type) {
     case TYPE_GET_CHANGE_LIST:
     case TYPE_GET_REMAINING_CHANGE_LIST:
     case TYPE_GET_REMAINING_FILE_LIST:
+    case TYPE_GET_RESOURCE_ENTRY:
     case TYPE_GET_SHARE_URL:
-    case TYPE_DELETE_RESOURCE:
+    case TYPE_TRASH_RESOURCE:
     case TYPE_COPY_RESOURCE:
-    case TYPE_COPY_HOSTED_DOCUMENT:
-    case TYPE_MOVE_RESOURCE:
+    case TYPE_UPDATE_RESOURCE:
     case TYPE_RENAME_RESOURCE:
-    case TYPE_TOUCH_RESOURCE:
     case TYPE_ADD_RESOURCE_TO_DIRECTORY:
     case TYPE_REMOVE_RESOURCE_FROM_DIRECTORY:
     case TYPE_ADD_NEW_DIRECTORY:
     case TYPE_CREATE_FILE:
     case TYPE_GET_RESOURCE_LIST_IN_DIRECTORY_BY_WAPI:
     case TYPE_GET_REMAINING_RESOURCE_LIST:
+    case TYPE_ADD_PERMISSION:
       return METADATA_QUEUE;
 
     case TYPE_DOWNLOAD_FILE:
@@ -1124,12 +1141,12 @@ void JobScheduler::AbortNotRunningJob(JobEntry* job,
 
   const base::TimeDelta elapsed = base::Time::Now() - job->job_info.start_time;
   const QueueType queue_type = GetJobQueueType(job->job_info.job_type);
-  util::Log(logging::LOG_INFO,
-            "Job aborted: %s => %s (elapsed time: %sms) - %s",
-            job->job_info.ToString().c_str(),
-            GDataErrorCodeToString(error).c_str(),
-            base::Int64ToString(elapsed.InMilliseconds()).c_str(),
-            GetQueueInfo(queue_type).c_str());
+  logger_->Log(logging::LOG_INFO,
+               "Job aborted: %s => %s (elapsed time: %sms) - %s",
+               job->job_info.ToString().c_str(),
+               GDataErrorCodeToString(error).c_str(),
+               base::Int64ToString(elapsed.InMilliseconds()).c_str(),
+               GetQueueInfo(queue_type).c_str());
 
   base::Callback<void(google_apis::GDataErrorCode)> callback =
       job->abort_callback;

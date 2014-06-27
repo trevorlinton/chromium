@@ -48,7 +48,6 @@
 #define CONTENT_BROWSER_RENDERER_HOST_MEDIA_VIDEO_CAPTURE_CONTROLLER_H_
 
 #include <list>
-#include <map>
 
 #include "base/compiler_specific.h"
 #include "base/memory/ref_counted.h"
@@ -83,6 +82,7 @@ class CONTENT_EXPORT VideoCaptureController {
   void AddClient(const VideoCaptureControllerID& id,
                  VideoCaptureControllerEventHandler* event_handler,
                  base::ProcessHandle render_process,
+                 media::VideoCaptureSessionId session_id,
                  const media::VideoCaptureParams& params);
 
   // Stop video capture. This will take back all buffers held by by
@@ -98,11 +98,17 @@ class CONTENT_EXPORT VideoCaptureController {
   // prematurely closed.
   void StopSession(int session_id);
 
-  // Return a buffer previously given in
-  // VideoCaptureControllerEventHandler::OnBufferReady.
+  // Return a buffer with id |buffer_id| previously given in
+  // VideoCaptureControllerEventHandler::OnBufferReady. In the case that the
+  // buffer was backed by a texture, |sync_point| will be waited on before
+  // destroying or recycling the texture, to synchronize with texture users in
+  // the renderer process.
   void ReturnBuffer(const VideoCaptureControllerID& id,
                     VideoCaptureControllerEventHandler* event_handler,
-                    int buffer_id);
+                    int buffer_id,
+                    uint32 sync_point);
+
+  const media::VideoCaptureFormat& GetVideoCaptureFormat() const;
 
  private:
   class VideoCaptureDeviceClient;
@@ -111,10 +117,11 @@ class CONTENT_EXPORT VideoCaptureController {
   typedef std::list<ControllerClient*> ControllerClients;
 
   // Worker functions on IO thread. Called by the VideoCaptureDeviceClient.
-  void DoIncomingCapturedFrameOnIOThread(
-      const scoped_refptr<media::VideoFrame>& captured_frame,
-      int frame_rate,
-      base::Time timestamp);
+  void DoIncomingCapturedVideoFrameOnIOThread(
+      const scoped_refptr<media::VideoCaptureDevice::Client::Buffer>& buffer,
+      const media::VideoCaptureFormat& format,
+      const scoped_refptr<media::VideoFrame>& frame,
+      base::TimeTicks timestamp);
   void DoErrorOnIOThread();
   void DoDeviceStoppedOnIOThread();
   void DoBufferDestroyedOnIOThread(int buffer_id_to_drop);
@@ -139,6 +146,8 @@ class CONTENT_EXPORT VideoCaptureController {
   // Takes on only the states 'STARTED' and 'ERROR'. 'ERROR' is an absorbing
   // state which stops the flow of data to clients.
   VideoCaptureState state_;
+
+  media::VideoCaptureFormat video_capture_format_;
 
   base::WeakPtrFactory<VideoCaptureController> weak_ptr_factory_;
 

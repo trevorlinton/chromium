@@ -20,16 +20,20 @@
 namespace media {
 
 OpenSLESOutputStream::OpenSLESOutputStream(AudioManagerAndroid* manager,
-                                           const AudioParameters& params)
+                                           const AudioParameters& params,
+                                           SLint32 stream_type)
     : audio_manager_(manager),
+      stream_type_(stream_type),
       callback_(NULL),
       player_(NULL),
       simple_buffer_queue_(NULL),
       active_buffer_index_(0),
       buffer_size_bytes_(0),
       started_(false),
+      muted_(false),
       volume_(1.0) {
-  DVLOG(2) << "OpenSLESOutputStream::OpenSLESOutputStream()";
+  DVLOG(2) << "OpenSLESOutputStream::OpenSLESOutputStream("
+           << "stream_type=" << stream_type << ")";
   format_.formatType = SL_DATAFORMAT_PCM;
   format_.numChannels = static_cast<SLuint32>(params.channels());
   // Provides sampling rate in milliHertz to OpenSLES.
@@ -128,6 +132,7 @@ void OpenSLESOutputStream::Stop() {
   DCHECK_EQ(0u, buffer_queue_state.index);
 #endif
 
+  callback_ = NULL;
   started_ = false;
 }
 
@@ -170,6 +175,12 @@ void OpenSLESOutputStream::SetVolume(double volume) {
 void OpenSLESOutputStream::GetVolume(double* volume) {
   DCHECK(thread_checker_.CalledOnValidThread());
   *volume = static_cast<double>(volume_);
+}
+
+void OpenSLESOutputStream::SetMute(bool muted) {
+  DVLOG(2) << "OpenSLESOutputStream::SetMute(" << muted << ")";
+  DCHECK(thread_checker_.CalledOnValidThread());
+  muted_ = muted;
 }
 
 bool OpenSLESOutputStream::CreatePlayer() {
@@ -240,11 +251,11 @@ bool OpenSLESOutputStream::CreatePlayer() {
           player_object_.Get(), SL_IID_ANDROIDCONFIGURATION, &player_config),
       false);
 
-  SLint32 stream_type = SL_ANDROID_STREAM_VOICE;
+  // Set configuration using the stream type provided at construction.
   LOG_ON_FAILURE_AND_RETURN(
       (*player_config)->SetConfiguration(player_config,
                                          SL_ANDROID_KEY_STREAM_TYPE,
-                                         &stream_type,
+                                         &stream_type_,
                                          sizeof(SLint32)),
       false);
 
@@ -324,7 +335,7 @@ void OpenSLESOutputStream::FillBufferQueueNoLock() {
   // Note: If the internal representation ever changes from 16-bit PCM to
   // raw float, the data must be clipped and sanitized since it may come
   // from an untrusted source such as NaCl.
-  audio_bus_->Scale(volume_);
+  audio_bus_->Scale(muted_ ? 0.0f : volume_);
   audio_bus_->ToInterleaved(frames_filled,
                             format_.bitsPerSample / 8,
                             audio_data_[active_buffer_index_]);

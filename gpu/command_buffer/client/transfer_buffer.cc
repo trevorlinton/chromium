@@ -5,6 +5,9 @@
 // A class to Manage a growing transfer buffer.
 
 #include "gpu/command_buffer/client/transfer_buffer.h"
+
+#include "base/debug/trace_event.h"
+#include "base/logging.h"
 #include "gpu/command_buffer/client/cmd_buffer_helper.h"
 
 namespace gpu {
@@ -51,11 +54,11 @@ bool TransferBuffer::Initialize(
 
 void TransferBuffer::Free() {
   if (HaveBuffer()) {
+    TRACE_EVENT0("gpu", "TransferBuffer::Free");
     helper_->Finish();
     helper_->command_buffer()->DestroyTransferBuffer(buffer_id_);
     buffer_id_ = -1;
-    buffer_.ptr = NULL;
-    buffer_.size = 0;
+    buffer_ = NULL;
     result_buffer_ = NULL;
     result_shm_offset_ = 0;
     ring_buffer_.reset();
@@ -82,7 +85,7 @@ void TransferBuffer::FreePendingToken(void* p, unsigned int token) {
 void TransferBuffer::AllocateRingBuffer(unsigned int size) {
   for (;size >= min_buffer_size_; size /= 2) {
     int32 id = -1;
-    gpu::Buffer buffer =
+    scoped_refptr<gpu::Buffer> buffer =
         helper_->command_buffer()->CreateTransferBuffer(size, &id);
     if (id != -1) {
       buffer_ = buffer;
@@ -90,11 +93,11 @@ void TransferBuffer::AllocateRingBuffer(unsigned int size) {
           alignment_,
           id,
           result_size_,
-          buffer_.size - result_size_,
+          buffer_->size() - result_size_,
           helper_,
-          static_cast<char*>(buffer_.ptr) + result_size_));
+          static_cast<char*>(buffer_->memory()) + result_size_));
       buffer_id_ = id;
-      result_buffer_ = buffer_.ptr;
+      result_buffer_ = buffer_->memory();
       result_shm_offset_ = 0;
       return;
     }
@@ -118,7 +121,7 @@ static int Log2Floor(uint32 n) {
       log += shift;
     }
   }
-  GPU_DCHECK_EQ(value, 1u);
+  DCHECK_EQ(value, 1u);
   return log;
 }
 
@@ -143,7 +146,7 @@ void TransferBuffer::ReallocateRingBuffer(unsigned int size) {
   needed_buffer_size = std::max(needed_buffer_size, default_buffer_size_);
   needed_buffer_size = std::min(needed_buffer_size, max_buffer_size_);
 
-  if (usable_ && (!HaveBuffer() || needed_buffer_size > buffer_.size)) {
+  if (usable_ && (!HaveBuffer() || needed_buffer_size > buffer_->size())) {
     if (HaveBuffer()) {
       Free();
     }
@@ -153,7 +156,7 @@ void TransferBuffer::ReallocateRingBuffer(unsigned int size) {
 
 void* TransferBuffer::AllocUpTo(
     unsigned int size, unsigned int* size_allocated) {
-  GPU_DCHECK(size_allocated);
+  DCHECK(size_allocated);
 
   ReallocateRingBuffer(size);
 

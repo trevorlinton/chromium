@@ -44,12 +44,12 @@ AdViewGuest::~AdViewGuest() {
 
 void AdViewGuest::DidCommitProvisionalLoadForFrame(
     int64 frame_id,
-    const string16& frame_unique_name,
+    const base::string16& frame_unique_name,
     bool is_main_frame,
     const GURL& url,
     content::PageTransition transition_type,
     content::RenderViewHost* render_view_host) {
-  scoped_ptr<DictionaryValue> args(new DictionaryValue());
+  scoped_ptr<base::DictionaryValue> args(new base::DictionaryValue());
   args->SetString(guestview::kUrl, url.spec());
   args->SetBoolean(guestview::kIsTopLevel, is_main_frame);
   DispatchEvent(new GuestView::Event(adview::kEventLoadCommit, args.Pass()));
@@ -57,17 +57,17 @@ void AdViewGuest::DidCommitProvisionalLoadForFrame(
 
 void AdViewGuest::DidFailProvisionalLoad(
     int64 frame_id,
-    const string16& frame_unique_name,
+    const base::string16& frame_unique_name,
     bool is_main_frame,
     const GURL& validated_url,
     int error_code,
-    const string16& error_description,
+    const base::string16& error_description,
     content::RenderViewHost* render_view_host) {
   // Translate the |error_code| into an error string.
   std::string error_type;
-  RemoveChars(net::ErrorToString(error_code), "net::", &error_type);
+  base::RemoveChars(net::ErrorToString(error_code), "net::", &error_type);
 
-  scoped_ptr<DictionaryValue> args(new DictionaryValue());
+  scoped_ptr<base::DictionaryValue> args(new base::DictionaryValue());
   args->SetBoolean(guestview::kIsTopLevel, is_main_frame);
   args->SetString(guestview::kUrl, validated_url.spec());
   args->SetString(guestview::kReason, error_type);

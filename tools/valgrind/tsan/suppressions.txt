@@ -263,22 +263,6 @@
 }
 
 {
-  bug_84726_a
-  ThreadSanitizer:Race
-  fun:qsort_r
-  fun:qsort
-  fun:_xdg_mime_alias_read_from_file
-}
-
-{
-  bug_84726_b
-  ThreadSanitizer:Race
-  fun:qsort_r
-  fun:qsort
-  fun:_cairo_bentley_ottmann_tessellate_polygon
-}
-
-{
   bug_177061
   ThreadSanitizer:Race
   ...
@@ -437,18 +421,7 @@
   ...
   fun:disk_cache::EntryImpl::WriteDataImpl*
 }
-{
-  bug_66835a
-  ThreadSanitizer:Race
-  fun:getenv
-  fun:::EnvironmentImpl::GetVarImpl
-  fun:::EnvironmentImpl::GetVar
-  fun:ShellIntegrationLinux::GetDesktopName
-  fun:::GetIsDefaultWebClient
-  fun:ShellIntegration::GetDefaultBrowser
-  fun:::RecordDefaultBrowserUMAStat
-  fun:base::internal::RunnableAdapter::Run
-}
+
 {
   bug_66835b
   ThreadSanitizer:Race
@@ -568,7 +541,7 @@
   bug_93932_g
   ThreadSanitizer:Race
   ...
-  fun:frame_thread_free
+  fun:ff_frame_thread_free
   ...
   fun:avcodec_close
 }
@@ -653,100 +626,12 @@
   fun:tracked_objects::DeathData::RecordDeath
 }
 {
-  bug_103711a
+  bug_104769
   ThreadSanitizer:Race
-  fun:webrtc::Trace::SetLevelFilter
-}
-{
-  bug_103711b
-  ThreadSanitizer:Race
-  fun:webrtc::TraceImpl::TraceCheck
-}
-{
-  bug_103711c
-  ThreadSanitizer:Race
-  fun:webrtc::ThreadPosix::*
-}
-{
-  bug_103711d
-  ThreadSanitizer:Race
-  fun:webrtc::FileWrapper*::*
-  ...
-  fun:webrtc::TraceImpl::StaticInstance
-  fun:webrtc::Trace::ReturnTrace
-  fun:webrtc::voe::SharedData::~SharedData
-  fun:webrtc::VoiceEngineImpl::~VoiceEngineImpl
-  ...
-  fun:webrtc::VoiceEngine::Delete
-  fun:WebRTCAutoDelete::reset
-  ...
-  fun:content::WebRTCAudioDeviceTest_Construct_Test::TestBody
-}
-{
-  bug_103711e
-  ThreadSanitizer:Race
-  ...
-  fun:content::WebRTCAudioDeviceTest::OnMessageReceived
-  ...
-  fun:IPC::*
-  fun:IPC::Channel::ChannelImpl::OnFileCanReadWithoutBlocking
-  ...
-  fun:base::MessagePumpLibevent::FileDescriptorWatcher::OnFileCanReadWithoutBlocking
-  fun:base::MessagePumpLibevent::OnLibeventNotification
-  fun:event_process_active
+  fun:timeout_correct
   fun:event_base_loop
-}
-{
-  bug_103711f
-  ThreadSanitizer:Race
-  fun:webrtc::TracePosix::AddTime
-  fun:webrtc::TraceImpl::AddImpl
-  fun:webrtc::Trace::Add
-  fun:webrtc::ThreadPosix::Run
-}
-{
-  bug_103711g
-  ThreadSanitizer:Race
-  fun:content::WebRTCAudioDeviceTest::SetUp
-}
-{
-  bug_103711h
-  ThreadSanitizer:Race
-  fun:webrtc::EventWrapper::~EventWrapper
-  fun:webrtc::EventPosix::~EventPosix
-  fun:webrtc::ProcessThreadImpl::~ProcessThreadImpl
-  fun:webrtc::ProcessThread::DestroyProcessThread
-  fun:webrtc::voe::SharedData::~SharedData
-  fun:webrtc::VoiceEngineImpl::~VoiceEngineImpl
-  fun:webrtc::VoiceEngine::Delete
-  fun:WebRTCAutoDelete::reset
-  fun:WebRTCAutoDelete::~WebRTCAutoDelete
-  fun:content::WebRTCAudioDeviceTest_Construct_Test::TestBody
-}
-{
-  bug_103711i
-  ThreadSanitizer:Race
-  fun:webrtc::ProcessThreadImpl::Process
-  fun:webrtc::ProcessThreadImpl::Run
-  fun:webrtc::ThreadPosix::Run
-  fun:StartThread
-}
-{
-  bug_103711j
-  ThreadSanitizer:Race
-  fun:webrtc::ProcessThreadImpl::Stop
-  fun:webrtc::VoEBaseImpl::TerminateInternal
-  fun:webrtc::VoEBaseImpl::Terminate
-  fun:content::WebRTCAudioDeviceTest_PlayLocalFile_Test::TestBody
-}
-{
-   bug_104769
-   ThreadSanitizer:Race
-   fun:timeout_correct
-   fun:event_base_loop
-   fun:base::MessagePumpLibevent::Run
-   fun:base::MessageLoop::RunInternal
-   fun:base::MessageLoop::RunHandler
+  fun:base::MessagePumpLibevent::Run
+  fun:base::MessageLoop::RunHandler
 }
 {
   bug_104776_maybe_benign
@@ -768,31 +653,31 @@
   fun:DispatchToMethod
 }
 {
-   bug_107903_a
-   ThreadSanitizer:Race
-   ...
-   fun:TestProfileSyncService::~TestProfileSyncService
-   fun:scoped_ptr::reset
-   fun:ProfileSyncServiceAutofillTest::TearDown
+  bug_107903_a
+  ThreadSanitizer:Race
+  ...
+  fun:TestProfileSyncService::~TestProfileSyncService
+  fun:scoped_ptr::reset
+  fun:ProfileSyncServiceAutofillTest::TearDown
 }
 {
-   bug_107903_b
-   ThreadSanitizer:Race
-   ...
-   fun:syncer::SyncManager::SyncInternal::ShutdownOnSyncThread
-   fun:syncer::SyncManager::ShutdownOnSyncThread
-   fun:browser_sync::SyncBackendHost::Core::DoShutdown
-   fun:base::internal::RunnableAdapter::Run
+  bug_107903_b
+  ThreadSanitizer:Race
+  ...
+  fun:syncer::SyncManager::SyncInternal::ShutdownOnSyncThread
+  fun:syncer::SyncManager::ShutdownOnSyncThread
+  fun:browser_sync::SyncBackendHost::Core::DoShutdown
+  fun:base::internal::RunnableAdapter::Run
 }
 {
-   bug_107903_c
-   ThreadSanitizer:Race
-   fun:syncable::DirectoryChangeDelegate::~DirectoryChangeDelegate
-   fun:syncer::SyncManager::SyncInternal::~SyncInternal
-   fun:syncer::SyncManager::~SyncManager
-   fun:scoped_ptr::reset
-   fun:browser_sync::SyncBackendHost::Core::DoShutdown
-   fun:base::internal::RunnableAdapter::Run
+  bug_107903_c
+  ThreadSanitizer:Race
+  fun:syncable::DirectoryChangeDelegate::~DirectoryChangeDelegate
+  fun:syncer::SyncManager::SyncInternal::~SyncInternal
+  fun:syncer::SyncManager::~SyncManager
+  fun:scoped_ptr::reset
+  fun:browser_sync::SyncBackendHost::Core::DoShutdown
+  fun:base::internal::RunnableAdapter::Run
 }
 {
   bug_108408
@@ -954,21 +839,11 @@
   fun:base::internal::RunnableAdapter::Run
 }
 {
-  bug_131001
+  bug_137701
   ThreadSanitizer:Race
   ...
-  fun:media::AudioOutputMixer::StopStream
-  fun:media::AudioOutputProxy::Stop
-  fun:media::AudioOutputController::DoStopCloseAndClearStream
-  fun:media::AudioOutputController::DoClose
-  fun:base::internal::RunnableAdapter::Run
-}
-{
-   bug_137701
-   ThreadSanitizer:Race
-   ...
-   fun:_output_*
-   fun:_vsnprintf_helper
+  fun:_output_*
+  fun:_vsnprintf_helper
 }
 {
   bug_137973_a
@@ -1038,19 +913,19 @@
   fun:content::RenderViewHostTestHarness::SetUp
 }
 {
-   bug_178433a
-   ThreadSanitizer:Race
-   fun:scoped_refptr::operator->
-   fun:base::WaitableEvent::Signal
-   fun:base::debug::TraceSamplingThread::ThreadMain
-   fun:base::::ThreadFunc
+  bug_178433a
+  ThreadSanitizer:Race
+  fun:scoped_refptr::operator->
+  fun:base::WaitableEvent::Signal
+  fun:base::debug::TraceSamplingThread::ThreadMain
+  fun:base::::ThreadFunc
 }
 {
-   bug_178433b
-   ThreadSanitizer:Race
-   fun:base::internal::scoped_ptr_impl::get
-   ...
-   fun:base::debug::TraceSamplingThread::ThreadMain
+  bug_178433b
+  ThreadSanitizer:Race
+  fun:base::internal::scoped_ptr_impl::get
+  ...
+  fun:base::debug::TraceSamplingThread::ThreadMain
 }
 {
   bug_225123
@@ -1069,7 +944,7 @@
 {
   bug_256792
   ThreadSanitizer:Race
-  fun:media::AudioManagerLinux::~AudioManagerLinux
+  fun:media::AudioManagerAlsa::~AudioManagerAlsa
   fun:content::MockAudioManager::~MockAudioManager
   fun:content::MockAudioManager::~MockAudioManager
   fun:base::DefaultDeleter*
@@ -1134,79 +1009,80 @@
   fun:base::::ThreadFunc
 }
 {
-   bug_313726
-   ThreadSanitizer:Race
-   fun:MessageLoopHelper::TimerExpired
-   fun:base::internal::RunnableAdapter::Run
+  bug_313726
+  ThreadSanitizer:Race
+  fun:MessageLoopHelper::TimerExpired
+  fun:base::internal::RunnableAdapter::Run
 }
 {
-   bug_313733_a
-   ThreadSanitizer:Race
-   fun:base::TimeDelta::InMicroseconds
-   fun:net::QuicTime::Delta::IsZero
-   fun:net::TcpCubicSender::SmoothedRtt
-   fun:net::QuicCongestionManager::SmoothedRtt
-   fun:net::tools::test::::EndToEndTest_InitialRTT_Test::TestBody
-   fun:testing::internal::HandleSehExceptionsInMethodIfSupported
+  bug_329253
+  ThreadSanitizer:Race
+  fun:setlocale
+  fun:base::ScopedLocale::ScopedLocale
+  fun:ClientHintsTest_HintsWellFormattedWithNonEnLocale_Test::TestBody
+  fun:testing::internal::HandleSehExceptionsInMethodIfSupported
 }
 {
-   bug_313733_b
-   ThreadSanitizer:Race
-   fun:base::TimeDelta::operator=
-   fun:net::QuicTime::Delta::operator=
-   fun:net::TcpCubicSender::AckAccounting
-   fun:net::TcpCubicSender::OnIncomingAck
-   fun:net::QuicCongestionManager::OnIncomingAckFrame
-   fun:net::QuicConnection::ProcessAckFrame
-   fun:net::QuicConnection::OnPacketComplete
-   fun:net::QuicFramer::ProcessDataPacket
-   fun:net::QuicFramer::ProcessPacket
-   fun:net::QuicConnection::ProcessUdpPacket
-   fun:net::tools::QuicDispatcher::ProcessPacket
-   fun:net::tools::QuicServer::MaybeDispatchPacket
-   fun:net::tools::QuicServer::ReadAndDispatchSinglePacket
-   fun:net::tools::QuicServer::OnEvent
-   fun:net::EpollServer::CallReadyListCallbacks
-   fun:net::EpollServer::WaitForEventsAndCallHandleEvents
-   fun:net::EpollServer::WaitForEventsAndExecuteCallbacks
-   fun:net::tools::QuicServer::WaitForEvents
-   fun:net::tools::test::ServerThread::Run
-   fun:base::SimpleThread::ThreadMain
-   fun:base::::ThreadFunc
+  bug_328521a
+  ThreadSanitizer:Race
+  fun:PR_Lock
+  fun:pk11_getKeyFromList
+  fun:pk11_CreateSymKey
+  fun:pk11_ImportSymKeyWithTempl
+  fun:PK11_ImportSymKey
+  fun:crypto::HMAC::Init
+  fun:crypto::HMAC::Init
+  fun:crypto::HMAC::Init
+  fun:crypto::HMAC::Init
+  fun:remoting::protocol::AuthenticationMethod::ApplyHashFunction
+  fun:remoting::MakeHostPinHash
+  fun:`anonymous namespace'::VerifyGetPinHashResponse
+  fun:`anonymous namespace'::VerifyGetPinHashResponse
+  fun:`anonymous namespace'::VerifyGetPinHashResponse
+  fun:`anonymous namespace'::VerifyGetPinHashResponse
+  fun:remoting::Me2MeNativeMessagingHostTest_All_Test::TestBody
 }
 {
-   bug_313733_c
-   ThreadSanitizer:Race
-   fun:net::QuicCryptoServerStream::OnHandshakeMessage
-   fun:net::CryptoFramer::Process
-   fun:net::CryptoFramer::ProcessInput
-   fun:net::QuicCryptoStream::ProcessData
-   fun:net::ReliableQuicStream::ProcessRawData
-   fun:net::QuicStreamSequencer::OnStreamFrame
-   fun:net::ReliableQuicStream::OnStreamFrame
-   fun:net::QuicSession::OnStreamFrames
-   fun:net::VisitorShim::OnStreamFrames
-   fun:net::QuicConnection::OnPacketComplete
-   fun:net::QuicFramer::ProcessDataPacket
-   fun:net::QuicFramer::ProcessPacket
-   fun:net::QuicConnection::ProcessUdpPacket
-   fun:net::tools::QuicDispatcher::ProcessPacket
-   fun:net::tools::QuicServer::MaybeDispatchPacket
-   fun:net::tools::QuicServer::ReadAndDispatchSinglePacket
-   fun:net::tools::QuicServer::OnEvent
-   fun:net::EpollServer::CallReadyListCallbacks
-   fun:net::EpollServer::WaitForEventsAndCallHandleEvents
-   fun:net::EpollServer::WaitForEventsAndExecuteCallbacks
-   fun:net::tools::QuicServer::WaitForEvents
-   fun:net::tools::test::ServerThread::Run
-   fun:base::SimpleThread::ThreadMain
-   fun:base::::ThreadFunc
+  bug_328521b
+  ThreadSanitizer:Race
+  fun:PR_Lock
+  fun:sftk_SessionFromHandle
+  fun:NSC_GenerateKeyPair
+  fun:PK11_GenerateKeyPairWithOpFlags
+  fun:PK11_GenerateKeyPairWithFlags
+  fun:PK11_GenerateKeyPair
+  fun:crypto::RSAPrivateKey::CreateWithParams
+  fun:crypto::RSAPrivateKey::CreateWithParams
+  fun:crypto::RSAPrivateKey::Create
+  fun:crypto::RSAPrivateKey::Create
+  fun:remoting::RsaKeyPair::Generate
+  fun:remoting::Me2MeNativeMessagingHost::ProcessGenerateKeyPair
+  fun:remoting::Me2MeNativeMessagingHost::ProcessMessage
+  fun:remoting::Me2MeNativeMessagingHost::ProcessMessage
+  fun:base::internal::RunnableAdapter::Run
 }
 {
-   bug_313733_d
-   ThreadSanitizer:Race
-   fun:net::QuicCryptoStream::handshake_confirmed
-   fun:net::QuicSession::IsCryptoHandshakeConfirmed
-   fun:net::tools::test::::EndToEndTest_LimitMaxPacketSizeAndCongestionWindowAndRTT_Test::TestBody
-   fun:testing::internal::HandleSehExceptionsInMethodIfSupported
+  bug_330903
+  ThreadSanitizer:Race
+  fun:gcm::GCMClientMock::SetIsLoading
+  fun:gcm::GCMProfileServiceRegisterTest_GCMClientLoadingCompletedAfterReadingRegistration_Test::TestBody
+  fun:testing::internal::HandleSehExceptionsInMethodIfSupported
+}
+{
+  bug_344704
+  ThreadSanitizer:Race
+  fun:base::Thread::message_loop
+  fun:printing::PrintJob::UpdatePrintedDocument
+  fun:printing::PrintJob::ControlledWorkerShutdown
+  fun:printing::PrintJob::Stop
+  fun:PrintJobTest_SimplePrint_Test::TestBody
+}
+{
+  bug_350982
+  ThreadSanitizer:Race
+  fun:change_state
+  fun:vp9_worker_sync
+  fun:decode_tile
+  fun:decode_tiles
+  fun:vp9_decode_frame
 }

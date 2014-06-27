@@ -88,6 +88,13 @@ class IPC_EXPORT ChannelProxy : public Sender, public base::NonThreadSafe {
     // the message be handled in the default way.
     virtual bool OnMessageReceived(const Message& message);
 
+    // Called to query the Message classes supported by the filter.  Return
+    // false to indicate that all message types should reach the filter, or true
+    // if the resulting contents of |supported_message_classes| may be used to
+    // selectively offer messages of a particular class to the filter.
+    virtual bool GetSupportedMessageClasses(
+        std::vector<uint32>* supported_message_classes) const;
+
    protected:
     virtual ~MessageFilter();
 
@@ -226,9 +233,18 @@ class IPC_EXPORT ChannelProxy : public Sender, public base::NonThreadSafe {
     // List of filters.  This is only accessed on the IPC thread.
     std::vector<scoped_refptr<MessageFilter> > filters_;
     scoped_refptr<base::SingleThreadTaskRunner> ipc_task_runner_;
+
+    // Note, channel_ may be set on the Listener thread or the IPC thread.
+    // But once it has been set, it must only be read or cleared on the IPC
+    // thread.
     scoped_ptr<Channel> channel_;
     std::string channel_id_;
     bool channel_connected_called_;
+
+    // Routes a given message to a proper subset of |filters_|, depending
+    // on which message classes a filter might support.
+    class MessageFilterRouter;
+    scoped_ptr<MessageFilterRouter> message_filter_router_;
 
     // Holds filters between the AddFilter call on the listerner thread and the
     // IPC thread when they're added to filters_.

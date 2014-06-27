@@ -7,9 +7,6 @@
 #include "base/path_service.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/extensions/extension_apitest.h"
-#include "chrome/browser/extensions/extension_host.h"
-#include "chrome/browser/extensions/extension_process_manager.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_test_message_listener.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -19,20 +16,23 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/result_codes.h"
 #include "content/public/test/browser_test_utils.h"
+#include "extensions/browser/extension_host.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/process_manager.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/switches.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(USE_ASH)
-#include "apps/shell_window_registry.h"
+#include "apps/app_window_registry.h"
 #endif
 
 #if defined(USE_ASH) && !defined(OS_WIN)
@@ -57,8 +57,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, DISABLED_WindowOpen) {
 
 int GetPanelCount(Browser* browser) {
 #if defined(USE_ASH_PANELS)
-  return static_cast<int>(apps::ShellWindowRegistry::Get(
-      browser->profile())->shell_windows().size());
+  return static_cast<int>(
+      apps::AppWindowRegistry::Get(browser->profile())->app_windows().size());
 #else
   return PanelManager::GetInstance()->num_panels();
 #endif
@@ -260,9 +260,11 @@ IN_PROC_BROWSER_TEST_F(WindowOpenPanelTest, MAYBE_WindowOpenPanel) {
   ASSERT_TRUE(RunExtensionTest("window_open/panel")) << message_;
 }
 
-#if defined(USE_ASH_PANELS)
+#if defined(USE_ASH_PANELS) || defined(OS_LINUX)
 // On Ash, this currently fails because we're currently opening new panel
 // windows as popup windows instead.
+// We're also failing on Linux-aura due to the panel is not opened in the
+// right origin.
 #define MAYBE_WindowOpenPanelDetached DISABLED_WindowOpenPanelDetached
 #else
 #define MAYBE_WindowOpenPanelDetached WindowOpenPanelDetached

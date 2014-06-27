@@ -6,31 +6,35 @@
 
 #include "base/bind.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/extensions/extension_prefs.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/notification_service.h"
+#include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/pref_names.h"
 
 namespace extensions {
 
 InstallTracker::InstallTracker(Profile* profile,
                                extensions::ExtensionPrefs* prefs) {
-  ExtensionSorting* sorting = prefs->extension_sorting();
+  AppSorting* sorting = prefs->app_sorting();
 
   registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_INSTALLED,
       content::Source<Profile>(profile));
   registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_LOADED,
       content::Source<Profile>(profile));
-  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED,
+  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
       content::Source<Profile>(profile));
   registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNINSTALLED,
       content::Source<Profile>(profile));
+  registrar_.Add(this,
+                 chrome::NOTIFICATION_EXTENSION_UPDATE_DISABLED,
+                 content::Source<Profile>(profile));
   registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_LAUNCHER_REORDERED,
-      content::Source<ExtensionSorting>(sorting));
+      content::Source<AppSorting>(sorting));
   registrar_.Add(this, chrome::NOTIFICATION_APP_INSTALLED_TO_APPLIST,
       content::Source<Profile>(profile));
 
   pref_change_registrar_.Init(prefs->pref_service());
-  pref_change_registrar_.Add(prefs::kExtensionsPref,
+  pref_change_registrar_.Add(pref_names::kExtensions,
                              base::Bind(&InstallTracker::OnAppsReordered,
                                         base::Unretained(this)));
 }
@@ -47,23 +51,25 @@ void InstallTracker::RemoveObserver(InstallObserver* observer) {
 }
 
 void InstallTracker::OnBeginExtensionInstall(
-    const std::string& extension_id,
-    const std::string& extension_name,
-    const gfx::ImageSkia& installing_icon,
-    bool is_app,
-    bool is_platform_app) {
+    const InstallObserver::ExtensionInstallParams& params) {
   FOR_EACH_OBSERVER(InstallObserver, observers_,
-                    OnBeginExtensionInstall(extension_id,
-                                            extension_name,
-                                            installing_icon,
-                                            is_app,
-                                            is_platform_app));
+                    OnBeginExtensionInstall(params));
+}
+
+void InstallTracker::OnBeginExtensionDownload(const std::string& extension_id) {
+  FOR_EACH_OBSERVER(
+      InstallObserver, observers_, OnBeginExtensionDownload(extension_id));
 }
 
 void InstallTracker::OnDownloadProgress(const std::string& extension_id,
                                         int percent_downloaded) {
   FOR_EACH_OBSERVER(InstallObserver, observers_,
                     OnDownloadProgress(extension_id, percent_downloaded));
+}
+
+void InstallTracker::OnBeginCrxInstall(const std::string& extension_id) {
+  FOR_EACH_OBSERVER(
+      InstallObserver, observers_, OnBeginCrxInstall(extension_id));
 }
 
 void InstallTracker::OnInstallFailure(
@@ -95,7 +101,7 @@ void InstallTracker::Observe(int type,
                         OnExtensionLoaded(extension));
       break;
     }
-    case chrome::NOTIFICATION_EXTENSION_UNLOADED: {
+    case chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED: {
       const content::Details<extensions::UnloadedExtensionInfo>& unload_info(
           details);
       const Extension* extension = unload_info->extension;
@@ -109,6 +115,13 @@ void InstallTracker::Observe(int type,
 
       FOR_EACH_OBSERVER(InstallObserver, observers_,
                         OnExtensionUninstalled(extension));
+      break;
+    }
+    case chrome::NOTIFICATION_EXTENSION_UPDATE_DISABLED: {
+      const Extension* extension =
+          content::Details<const Extension>(details).ptr();
+      FOR_EACH_OBSERVER(
+          InstallObserver, observers_, OnDisabledExtensionUpdated(extension));
       break;
     }
     case chrome::NOTIFICATION_EXTENSION_LAUNCHER_REORDERED: {

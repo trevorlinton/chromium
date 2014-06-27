@@ -6,6 +6,9 @@
 
 #include <algorithm>
 
+using std::max;
+using std::min;
+
 namespace net {
 
 // Note(pwestin): the magic clamping numbers come from the original code in
@@ -34,7 +37,7 @@ void HybridSlowStart::Restart() {
 }
 
 void HybridSlowStart::Reset(QuicPacketSequenceNumber end_sequence_number) {
-  DLOG(INFO) << "Reset hybrid slow start @" << end_sequence_number;
+  DVLOG(1) << "Reset hybrid slow start @" << end_sequence_number;
   round_start_ = last_time_ = clock_->ApproximateNow();
   end_sequence_number_ = end_sequence_number;
   current_rtt_ = QuicTime::Delta::Zero();
@@ -86,10 +89,10 @@ void HybridSlowStart::Update(QuicTime::Delta rtt, QuicTime::Delta delay_min) {
   if (sample_count_ == kHybridStartMinSamples) {
     int accepted_variance_us = delay_min.ToMicroseconds() >>
         kHybridStartDelayFactorExp;
-    accepted_variance_us = std::min(accepted_variance_us,
-                                    kHybridStartDelayMaxThresholdUs);
+    accepted_variance_us = min(accepted_variance_us,
+                               kHybridStartDelayMaxThresholdUs);
     QuicTime::Delta accepted_variance = QuicTime::Delta::FromMicroseconds(
-        std::max(accepted_variance_us, kHybridStartDelayMinThresholdUs));
+        max(accepted_variance_us, kHybridStartDelayMinThresholdUs));
 
     if (current_rtt_ > delay_min.Add(accepted_variance)) {
       found_delay_ = true;

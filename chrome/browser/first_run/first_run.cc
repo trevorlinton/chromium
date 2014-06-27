@@ -10,13 +10,12 @@
 #include "base/compiler_specific.h"
 #include "base/file_util.h"
 #include "base/files/file_path.h"
-#include "base/json/json_file_value_serializer.h"
 #include "base/lazy_instance.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram.h"
 #include "base/path_service.h"
 #include "base/prefs/pref_service.h"
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -31,6 +30,8 @@
 #include "chrome/browser/importer/importer_progress_observer.h"
 #include "chrome/browser/importer/importer_uma.h"
 #include "chrome/browser/importer/profile_writer.h"
+#include "chrome/browser/prefs/chrome_pref_service_factory.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/search_engines/template_url_service.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
@@ -41,10 +42,12 @@
 #include "chrome/browser/signin/signin_tracker.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/global_error/global_error_service.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/webui/ntp/new_tab_ui.h"
+#include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
@@ -62,7 +65,7 @@
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "url/gurl.h"
 
-using content::UserMetricsAction;
+using base::UserMetricsAction;
 
 namespace {
 
@@ -81,8 +84,7 @@ bool g_should_do_autofill_personal_data_manager_first_run = false;
 // ImportEnded() is called asynchronously. Thus we have to handle both cases.
 class ImportEndedObserver : public importer::ImporterProgressObserver {
  public:
-  ImportEndedObserver() : ended_(false),
-                          should_quit_message_loop_(false) {}
+  ImportEndedObserver() : ended_(false) {}
   virtual ~ImportEndedObserver() {}
 
   // importer::ImporterProgressObserver:
@@ -91,12 +93,12 @@ class ImportEndedObserver : public importer::ImporterProgressObserver {
   virtual void ImportItemEnded(importer::ImportItem item) OVERRIDE {}
   virtual void ImportEnded() OVERRIDE {
     ended_ = true;
-    if (should_quit_message_loop_)
-      base::MessageLoop::current()->Quit();
+    if (!callback_for_import_end_.is_null())
+      callback_for_import_end_.Run();
   }
 
-  void set_should_quit_message_loop() {
-    should_quit_message_loop_ = true;
+  void set_callback_for_import_end(const base::Closure& callback) {
+    callback_for_import_end_ = callback;
   }
 
   bool ended() const {
@@ -107,7 +109,9 @@ class ImportEndedObserver : public importer::ImporterProgressObserver {
   // Set if the import has ended.
   bool ended_;
 
-  bool should_quit_message_loop_;
+  base::Closure callback_for_import_end_;
+
+  DISALLOW_COPY_AND_ASSIGN(ImportEndedObserver);
 };
 
 // Helper class that performs delayed first-run tasks that need more of the
@@ -162,24 +166,11 @@ void DoDelayedInstallExtensions() {
 
 void DoDelayedInstallExtensionsIfNeeded(
     installer::MasterPreferences* install_prefs) {
-  DictionaryValue* extensions = 0;
+  base::DictionaryValue* extensions = 0;
   if (install_prefs->GetExtensionsBlock(&extensions)) {
     VLOG(1) << "Extensions block found in master preferences";
     DoDelayedInstallExtensions();
   }
-}
-
-base::FilePath GetDefaultPrefFilePath(bool create_profile_dir,
-                                      const base::FilePath& user_data_dir) {
-  base::FilePath default_pref_dir =
-      profiles::GetDefaultProfileDir(user_data_dir);
-  if (create_profile_dir) {
-    if (!base::PathExists(default_pref_dir)) {
-      if (!file_util::CreateDirectory(default_pref_dir))
-        return base::FilePath();
-    }
-  }
-  return profiles::GetProfilePrefsPath(default_pref_dir);
 }
 
 // Sets the |items| bitfield according to whether the import data specified by
@@ -247,8 +238,10 @@ void ImportFromSourceProfile(ExternalProcessImporterHost* importer_host,
                                      new ProfileWriter(target_profile));
   // If the import process has not errored out, block on it.
   if (!observer.ended()) {
-    observer.set_should_quit_message_loop();
-    base::MessageLoop::current()->Run();
+    base::RunLoop loop;
+    observer.set_callback_for_import_end(loop.QuitClosure());
+    loop.Run();
+    observer.set_callback_for_import_end(base::Closure());
   }
 }
 
@@ -262,7 +255,7 @@ void ImportFromFile(Profile* profile,
 
   const base::FilePath::StringType& import_bookmarks_path_str =
 #if defined(OS_WIN)
-      UTF8ToUTF16(import_bookmarks_path);
+      base::UTF8ToUTF16(import_bookmarks_path);
 #else
       import_bookmarks_path;
 #endif
@@ -370,14 +363,16 @@ void FirstRunBubbleLauncher::Observe(
   // Suppress the first run bubble if a Gaia sign in page, the continue
   // URL for the sign in page or the sync setup page is showing.
   if (contents &&
-      (gaia::IsGaiaSignonRealm(contents->GetURL().GetOrigin()) ||
+      (contents->GetURL().GetOrigin().spec() ==
+           chrome::kChromeUIChromeSigninURL ||
+       gaia::IsGaiaSignonRealm(contents->GetURL().GetOrigin()) ||
        signin::IsContinueUrlForWebBasedSigninFlow(contents->GetURL()) ||
-       contents->GetURL() == GURL(std::string(chrome::kChromeUISettingsURL) +
-                                  chrome::kSyncSetupSubPage))) {
+       (contents->GetURL() ==
+        chrome::GetSettingsUrl(chrome::kSyncSetupSubPage)))) {
     return;
   }
 
-  if (contents && contents->GetURL().SchemeIs(chrome::kChromeUIScheme)) {
+  if (contents && contents->GetURL().SchemeIs(content::kChromeUIScheme)) {
     // Suppress the first run bubble if 'make chrome metro' flow is showing.
     if (contents->GetURL().host() == chrome::kChromeUIMetroFlowHost)
       return;
@@ -437,31 +432,32 @@ installer::MasterPreferences* LoadMasterPrefs() {
   return install_prefs;
 }
 
+// Makes chrome the user's default browser according to policy or
+// |make_chrome_default_for_user| if no policy is set.
+void ProcessDefaultBrowserPolicy(bool make_chrome_default_for_user) {
+  // Only proceed if chrome can be made default unattended. The interactive case
+  // (Windows 8+) is handled by the first run default browser prompt.
+  if (ShellIntegration::CanSetAsDefaultBrowser() ==
+          ShellIntegration::SET_DEFAULT_UNATTENDED) {
+    // The policy has precedence over the user's choice.
+    if (g_browser_process->local_state()->IsManagedPreference(
+            prefs::kDefaultBrowserSettingEnabled)) {
+      if (g_browser_process->local_state()->GetBoolean(
+          prefs::kDefaultBrowserSettingEnabled)) {
+        ShellIntegration::SetAsDefaultBrowser();
+      }
+    } else if (make_chrome_default_for_user) {
+        ShellIntegration::SetAsDefaultBrowser();
+    }
+  }
+}
+
 }  // namespace
 
 namespace first_run {
 namespace internal {
 
 FirstRunState first_run_ = FIRST_RUN_UNKNOWN;
-
-bool GeneratePrefFile(const base::FilePath& user_data_dir,
-                      const installer::MasterPreferences& master_prefs) {
-  base::FilePath user_prefs = GetDefaultPrefFilePath(true, user_data_dir);
-  if (user_prefs.empty())
-    return false;
-
-  const base::DictionaryValue& master_prefs_dict =
-      master_prefs.master_dictionary();
-
-  JSONFileValueSerializer serializer(user_prefs);
-
-  // Call Serialize (which does IO) on the main thread, which would _normally_
-  // be verboten. In this case however, we require this IO to synchronously
-  // complete before Chrome can start (as master preferences seed the Local
-  // State and Preferences files). This won't trip ThreadIORestrictions as they
-  // won't have kicked in yet on the main thread.
-  return serializer.Serialize(master_prefs_dict);
-}
 
 void SetupMasterPrefsFromInstallPrefs(
     const installer::MasterPreferences& install_prefs,
@@ -528,7 +524,7 @@ void SetupMasterPrefsFromInstallPrefs(
   if (install_prefs.GetBool(
           installer::master_preferences::kMakeChromeDefaultForUser,
           &value) && value) {
-    out_prefs->make_chrome_default = true;
+    out_prefs->make_chrome_default_for_user = true;
   }
 
   if (install_prefs.GetBool(
@@ -542,36 +538,26 @@ void SetupMasterPrefsFromInstallPrefs(
       &out_prefs->import_bookmarks_path);
 
   out_prefs->variations_seed = install_prefs.GetVariationsSeed();
+  out_prefs->variations_seed_signature =
+      install_prefs.GetVariationsSeedSignature();
 
   install_prefs.GetString(
       installer::master_preferences::kDistroSuppressDefaultBrowserPromptPref,
       &out_prefs->suppress_default_browser_prompt_for_version);
 }
 
-void SetDefaultBrowser(installer::MasterPreferences* install_prefs){
-  // Even on the first run we only allow for the user choice to take effect if
-  // no policy has been set by the admin.
-  if (!g_browser_process->local_state()->IsManagedPreference(
-          prefs::kDefaultBrowserSettingEnabled)) {
-    bool value = false;
-    if (install_prefs->GetBool(
-            installer::master_preferences::kMakeChromeDefaultForUser,
-            &value) && value) {
-      ShellIntegration::SetAsDefaultBrowser();
-    }
-  } else {
-    if (g_browser_process->local_state()->GetBoolean(
-            prefs::kDefaultBrowserSettingEnabled)) {
-      ShellIntegration::SetAsDefaultBrowser();
-    }
-  }
+bool GetFirstRunSentinelFilePath(base::FilePath* path) {
+  base::FilePath user_data_dir;
+  if (!PathService::Get(chrome::DIR_USER_DATA, &user_data_dir))
+    return false;
+  *path = user_data_dir.Append(chrome::kFirstRunSentinel);
+  return true;
 }
 
 bool CreateSentinel() {
   base::FilePath first_run_sentinel;
-  if (!internal::GetFirstRunSentinelFilePath(&first_run_sentinel))
-    return false;
-  return file_util::WriteFile(first_run_sentinel, "", 0) != -1;
+  return GetFirstRunSentinelFilePath(&first_run_sentinel) &&
+      base::WriteFile(first_run_sentinel, "", 0) != -1;
 }
 
 // -- Platform-specific functions --
@@ -591,43 +577,32 @@ MasterPrefs::MasterPrefs()
       homepage_defined(false),
       do_import_items(0),
       dont_import_items(0),
-      make_chrome_default(false),
+      make_chrome_default_for_user(false),
       suppress_first_run_default_browser_prompt(false) {
 }
 
 MasterPrefs::~MasterPrefs() {}
 
 bool IsChromeFirstRun() {
-  if (internal::first_run_ != internal::FIRST_RUN_UNKNOWN)
-    return internal::first_run_ == internal::FIRST_RUN_TRUE;
-
-  internal::first_run_ = internal::FIRST_RUN_FALSE;
-
-  base::FilePath first_run_sentinel;
-  const CommandLine* command_line = CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(switches::kForceFirstRun)) {
-    internal::first_run_ = internal::FIRST_RUN_TRUE;
-  } else if (command_line->HasSwitch(switches::kCancelFirstRun)) {
-    internal::first_run_ = internal::FIRST_RUN_CANCEL;
-  } else if (!command_line->HasSwitch(switches::kNoFirstRun) &&
-             internal::GetFirstRunSentinelFilePath(&first_run_sentinel) &&
-             !base::PathExists(first_run_sentinel)) {
-    internal::first_run_ = internal::FIRST_RUN_TRUE;
+  if (internal::first_run_ == internal::FIRST_RUN_UNKNOWN) {
+    internal::first_run_ = internal::FIRST_RUN_FALSE;
+    const CommandLine* command_line = CommandLine::ForCurrentProcess();
+    if (command_line->HasSwitch(switches::kForceFirstRun) ||
+        (!command_line->HasSwitch(switches::kNoFirstRun) &&
+         !internal::IsFirstRunSentinelPresent())) {
+      internal::first_run_ = internal::FIRST_RUN_TRUE;
+    }
   }
-
   return internal::first_run_ == internal::FIRST_RUN_TRUE;
 }
 
 bool IsFirstRunSuppressed(const CommandLine& command_line) {
-  return command_line.HasSwitch(switches::kCancelFirstRun) ||
-      command_line.HasSwitch(switches::kNoFirstRun);
+  return command_line.HasSwitch(switches::kNoFirstRun);
 }
 
 void CreateSentinelIfNeeded() {
-  if (IsChromeFirstRun() ||
-      internal::first_run_ == internal::FIRST_RUN_CANCEL) {
+  if (IsChromeFirstRun())
     internal::CreateSentinel();
-  }
 }
 
 std::string GetPingDelayPrefName() {
@@ -645,9 +620,8 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
 
 bool RemoveSentinel() {
   base::FilePath first_run_sentinel;
-  if (!internal::GetFirstRunSentinelFilePath(&first_run_sentinel))
-    return false;
-  return base::DeleteFile(first_run_sentinel, false);
+  return internal::GetFirstRunSentinelFilePath(&first_run_sentinel) &&
+      base::DeleteFile(first_run_sentinel, false);
 }
 
 bool SetShowFirstRunBubblePref(FirstRunBubbleOptions show_bubble_option) {
@@ -707,14 +681,15 @@ ProcessMasterPreferencesResult ProcessMasterPreferences(
     if (!internal::ShowPostInstallEULAIfNeeded(install_prefs.get()))
       return EULA_EXIT_NOW;
 
-    if (!internal::GeneratePrefFile(user_data_dir, *install_prefs.get()))
-      DLOG(ERROR) << "Failed to generate master_preferences in user data dir.";
+    if (!chrome_prefs::InitializePrefsFromMasterPrefs(
+            profiles::GetDefaultProfileDir(user_data_dir),
+            install_prefs->master_dictionary())) {
+      DLOG(ERROR) << "Failed to initialize from master_preferences.";
+    }
 
     DoDelayedInstallExtensionsIfNeeded(install_prefs.get());
 
     internal::SetupMasterPrefsFromInstallPrefs(*install_prefs, out_prefs);
-
-    internal::SetDefaultBrowser(install_prefs.get());
   }
 
   return FIRST_RUN_PROCEED;
@@ -808,12 +783,10 @@ void AutoImport(
   g_auto_import_state |= AUTO_IMPORT_CALLED;
 }
 
-void DoPostImportTasks(Profile* profile, bool make_chrome_default) {
-  if (make_chrome_default &&
-      ShellIntegration::CanSetAsDefaultBrowser() ==
-          ShellIntegration::SET_DEFAULT_UNATTENDED) {
-    ShellIntegration::SetAsDefaultBrowser();
-  }
+void DoPostImportTasks(Profile* profile, bool make_chrome_default_for_user) {
+  // Only set default browser after import as auto import relies on the current
+  // default browser to know what to import from.
+  ProcessDefaultBrowserPolicy(make_chrome_default_for_user);
 
   // Display the first run bubble if there is a default search provider.
   TemplateURLService* template_url =

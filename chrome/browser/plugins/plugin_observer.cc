@@ -13,6 +13,7 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/content_settings/host_content_settings_map.h"
 #include "chrome/browser/infobars/confirm_infobar_delegate.h"
+#include "chrome/browser/infobars/infobar.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/infobars/simple_alert_infobar_delegate.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
@@ -24,6 +25,7 @@
 #include "chrome/common/render_messages.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/plugin_service.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
@@ -63,9 +65,9 @@ class ConfirmInstallDialogDelegate : public TabModalConfirmDialogDelegate,
                                scoped_ptr<PluginMetadata> plugin_metadata);
 
   // TabModalConfirmDialogDelegate methods:
-  virtual string16 GetTitle() OVERRIDE;
-  virtual string16 GetMessage() OVERRIDE;
-  virtual string16 GetAcceptButtonTitle() OVERRIDE;
+  virtual base::string16 GetTitle() OVERRIDE;
+  virtual base::string16 GetDialogMessage() OVERRIDE;
+  virtual base::string16 GetAcceptButtonTitle() OVERRIDE;
   virtual void OnAccepted() OVERRIDE;
   virtual void OnCanceled() OVERRIDE;
 
@@ -88,17 +90,17 @@ ConfirmInstallDialogDelegate::ConfirmInstallDialogDelegate(
       plugin_metadata_(plugin_metadata.Pass()) {
 }
 
-string16 ConfirmInstallDialogDelegate::GetTitle() {
+base::string16 ConfirmInstallDialogDelegate::GetTitle() {
   return l10n_util::GetStringFUTF16(
       IDS_PLUGIN_CONFIRM_INSTALL_DIALOG_TITLE, plugin_metadata_->name());
 }
 
-string16 ConfirmInstallDialogDelegate::GetMessage() {
+base::string16 ConfirmInstallDialogDelegate::GetDialogMessage() {
   return l10n_util::GetStringFUTF16(IDS_PLUGIN_CONFIRM_INSTALL_DIALOG_MSG,
                                     plugin_metadata_->name());
 }
 
-string16 ConfirmInstallDialogDelegate::GetAcceptButtonTitle() {
+base::string16 ConfirmInstallDialogDelegate::GetAcceptButtonTitle() {
   return l10n_util::GetStringUTF16(
       IDS_PLUGIN_CONFIRM_INSTALL_DIALOG_ACCEPT_BUTTON);
 }
@@ -118,6 +120,72 @@ void ConfirmInstallDialogDelegate::OnlyWeakObserversLeft() {
   Cancel();
 }
 #endif  // defined(ENABLE_PLUGIN_INSTALLATION)
+
+// ReloadPluginInfoBarDelegate -------------------------------------------------
+
+class ReloadPluginInfoBarDelegate : public ConfirmInfoBarDelegate {
+ public:
+  static void Create(InfoBarService* infobar_service,
+                     content::NavigationController* controller,
+                     const base::string16& message);
+
+ private:
+  ReloadPluginInfoBarDelegate(content::NavigationController* controller,
+                              const base::string16& message);
+  virtual ~ReloadPluginInfoBarDelegate();
+
+  // ConfirmInfobarDelegate:
+  virtual int GetIconID() const OVERRIDE;
+  virtual base::string16 GetMessageText() const OVERRIDE;
+  virtual int GetButtons() const OVERRIDE;
+  virtual base::string16 GetButtonLabel(InfoBarButton button) const OVERRIDE;
+  virtual bool Accept() OVERRIDE;
+
+  content::NavigationController* controller_;
+  base::string16 message_;
+};
+
+// static
+void ReloadPluginInfoBarDelegate::Create(
+    InfoBarService* infobar_service,
+    content::NavigationController* controller,
+    const base::string16& message) {
+  infobar_service->AddInfoBar(
+      ConfirmInfoBarDelegate::CreateInfoBar(scoped_ptr<ConfirmInfoBarDelegate>(
+          new ReloadPluginInfoBarDelegate(controller, message))));
+}
+
+ReloadPluginInfoBarDelegate::ReloadPluginInfoBarDelegate(
+    content::NavigationController* controller,
+    const base::string16& message)
+    : controller_(controller),
+      message_(message) {}
+
+ReloadPluginInfoBarDelegate::~ReloadPluginInfoBarDelegate(){ }
+
+int ReloadPluginInfoBarDelegate::GetIconID() const {
+  return IDR_INFOBAR_PLUGIN_CRASHED;
+}
+
+base::string16 ReloadPluginInfoBarDelegate::GetMessageText() const {
+  return message_;
+}
+
+int ReloadPluginInfoBarDelegate::GetButtons() const {
+  return BUTTON_OK;
+}
+
+base::string16 ReloadPluginInfoBarDelegate::GetButtonLabel(
+    InfoBarButton button) const {
+  DCHECK_EQ(BUTTON_OK, button);
+  return l10n_util::GetStringUTF16(IDS_RELOAD_PAGE_WITH_PLUGIN);
+}
+
+bool ReloadPluginInfoBarDelegate::Accept() {
+  controller_->Reload(true);
+  return true;
+}
+
 }  // namespace
 
 // PluginObserver -------------------------------------------------------------
@@ -127,7 +195,7 @@ class PluginObserver::PluginPlaceholderHost : public PluginInstallerObserver {
  public:
   PluginPlaceholderHost(PluginObserver* observer,
                         int routing_id,
-                        string16 plugin_name,
+                        base::string16 plugin_name,
                         PluginInstaller* installer)
       : PluginInstallerObserver(installer),
         observer_(observer),
@@ -182,9 +250,9 @@ PluginObserver::~PluginObserver() {
 #endif
 }
 
-void PluginObserver::RenderViewCreated(
-    content::RenderViewHost* render_view_host) {
-#if defined(USE_AURA) && defined(OS_WIN)
+void PluginObserver::RenderFrameCreated(
+    content::RenderFrameHost* render_frame_host) {
+#if defined(OS_WIN)
   // If the window belongs to the Ash desktop, before we navigate we need
   // to tell the renderview that NPAPI plugins are not supported so it does
   // not try to instantiate them. The final decision is actually done in
@@ -208,8 +276,8 @@ void PluginObserver::RenderViewCreated(
   if (chrome::GetActiveDesktop() == chrome::HOST_DESKTOP_TYPE_ASH ||
       chrome::GetHostDesktopTypeForNativeView(window) ==
       chrome::HOST_DESKTOP_TYPE_ASH) {
-    int routing_id = render_view_host->GetRoutingID();
-    render_view_host->Send(new ChromeViewMsg_NPAPINotSupported(routing_id));
+    int routing_id = render_frame_host->GetRoutingID();
+    render_frame_host->Send(new ChromeViewMsg_NPAPINotSupported(routing_id));
   }
 #endif
 }
@@ -218,9 +286,9 @@ void PluginObserver::PluginCrashed(const base::FilePath& plugin_path,
                                    base::ProcessId plugin_pid) {
   DCHECK(!plugin_path.value().empty());
 
-  string16 plugin_name =
+  base::string16 plugin_name =
       PluginService::GetInstance()->GetPluginDisplayNameByPath(plugin_path);
-  string16 infobar_text;
+  base::string16 infobar_text;
 #if defined(OS_WIN)
   // Find out whether the plugin process is still alive.
   // Note: Although the chances are slim, it is possible that after the plugin
@@ -256,9 +324,10 @@ void PluginObserver::PluginCrashed(const base::FilePath& plugin_path,
   UMA_HISTOGRAM_COUNTS("Plugin.ShowCrashedInfobar", 1);
 #endif
 
-  SimpleAlertInfoBarDelegate::Create(
+  ReloadPluginInfoBarDelegate::Create(
       InfoBarService::FromWebContents(web_contents()),
-      IDR_INFOBAR_PLUGIN_CRASHED, infobar_text, true);
+      &web_contents()->GetController(),
+      infobar_text);
 }
 
 bool PluginObserver::OnMessageReceived(const IPC::Message& message) {
@@ -287,7 +356,7 @@ bool PluginObserver::OnMessageReceived(const IPC::Message& message) {
 }
 
 void PluginObserver::OnBlockedUnauthorizedPlugin(
-    const string16& name,
+    const base::string16& name,
     const std::string& identifier) {
   UnauthorizedPluginInfoBarDelegate::Create(
       InfoBarService::FromWebContents(web_contents()),
@@ -303,15 +372,14 @@ void PluginObserver::OnBlockedOutdatedPlugin(int placeholder_id,
   // Find plugin to update.
   PluginInstaller* installer = NULL;
   scoped_ptr<PluginMetadata> plugin;
-  bool ret = finder->FindPluginWithIdentifier(identifier, &installer, &plugin);
-  DCHECK(ret);
-
-  plugin_placeholders_[placeholder_id] =
-      new PluginPlaceholderHost(this, placeholder_id,
-                                plugin->name(), installer);
-  OutdatedPluginInfoBarDelegate::Create(
-      InfoBarService::FromWebContents(web_contents()), installer,
-      plugin.Pass());
+  if (finder->FindPluginWithIdentifier(identifier, &installer, &plugin)) {
+    plugin_placeholders_[placeholder_id] = new PluginPlaceholderHost(
+        this, placeholder_id, plugin->name(), installer);
+    OutdatedPluginInfoBarDelegate::Create(InfoBarService::FromWebContents(
+        web_contents()), installer, plugin.Pass());
+  } else {
+    NOTREACHED();
+  }
 #else
   // If we don't support third-party plug-in installation, we shouldn't have
   // outdated plug-ins.
@@ -371,15 +439,15 @@ void PluginObserver::OnRemovePluginPlaceholderHost(int placeholder_id) {
 
 void PluginObserver::OnOpenAboutPlugins() {
   web_contents()->OpenURL(OpenURLParams(
-      GURL(chrome::kAboutPluginsURL),
+      GURL(chrome::kChromeUIPluginsURL),
       content::Referrer(web_contents()->GetURL(),
-                        WebKit::WebReferrerPolicyDefault),
+                        blink::WebReferrerPolicyDefault),
       NEW_FOREGROUND_TAB, content::PAGE_TRANSITION_AUTO_BOOKMARK, false));
 }
 
 void PluginObserver::OnCouldNotLoadPlugin(const base::FilePath& plugin_path) {
   g_browser_process->metrics_service()->LogPluginLoadingError(plugin_path);
-  string16 plugin_name =
+  base::string16 plugin_name =
       PluginService::GetInstance()->GetPluginDisplayNameByPath(plugin_path);
   SimpleAlertInfoBarDelegate::Create(
       InfoBarService::FromWebContents(web_contents()),

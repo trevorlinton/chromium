@@ -12,10 +12,10 @@
 #include "third_party/WebKit/public/web/WebFrame.h"
 #include "third_party/WebKit/public/web/WebView.h"
 
-using WebKit::WebAXObject;
-using WebKit::WebDocument;
-using WebKit::WebFrame;
-using WebKit::WebView;
+using blink::WebAXObject;
+using blink::WebDocument;
+using blink::WebFrame;
+using blink::WebView;
 
 namespace content {
 
@@ -44,59 +44,75 @@ WebDocument RendererAccessibility::GetMainDocument() {
 
 #ifndef NDEBUG
 const std::string RendererAccessibility::AccessibilityEventToString(
-    WebKit::WebAXEvent event) {
+    ui::AXEvent event) {
   switch (event) {
-    case WebKit::WebAXEventActiveDescendantChanged:
+    case ui::AX_EVENT_ACTIVEDESCENDANTCHANGED:
       return "active descendant changed";
-    case WebKit::WebAXEventAriaAttributeChanged:
+    case ui::AX_EVENT_ARIA_ATTRIBUTE_CHANGED:
       return "aria attribute changed";
-    case WebKit::WebAXEventAutocorrectionOccured:
-      return "autocorrection occurred";
-    case WebKit::WebAXEventBlur:
-      return "blur";
-    case WebKit::WebAXEventAlert:
+    case ui::AX_EVENT_ALERT:
       return "alert";
-    case WebKit::WebAXEventCheckedStateChanged:
+    case ui::AX_EVENT_AUTOCORRECTION_OCCURED:
+      return "autocorrection occurred";
+    case ui::AX_EVENT_BLUR:
+      return "blur";
+    case ui::AX_EVENT_CHECKED_STATE_CHANGED:
       return "check state changed";
-    case WebKit::WebAXEventChildrenChanged:
+    case ui::AX_EVENT_CHILDREN_CHANGED:
       return "children changed";
-    case WebKit::WebAXEventFocus:
+    case ui::AX_EVENT_FOCUS:
       return "focus changed";
-    case WebKit::WebAXEventInvalidStatusChanged:
-      return "invalid status changed";
-    case WebKit::WebAXEventLayoutComplete:
-      return "layout complete";
-    case WebKit::WebAXEventLiveRegionChanged:
-      return "live region changed";
-    case WebKit::WebAXEventLoadComplete:
-      return "load complete";
-    case WebKit::WebAXEventMenuListItemSelected:
-      return "menu list item selected";
-    case WebKit::WebAXEventMenuListValueChanged:
-      return "menu list changed";
-    case WebKit::WebAXEventShow:
-      return "object show";
-    case WebKit::WebAXEventHide:
+    case ui::AX_EVENT_HIDE:
       return "object hide";
-    case WebKit::WebAXEventRowCountChanged:
-      return "row count changed";
-    case WebKit::WebAXEventRowCollapsed:
+    case ui::AX_EVENT_INVALID_STATUS_CHANGED:
+      return "invalid status changed";
+    case ui::AX_EVENT_LAYOUT_COMPLETE:
+      return "layout complete";
+    case ui::AX_EVENT_LIVE_REGION_CHANGED:
+      return "live region changed";
+    case ui::AX_EVENT_LOAD_COMPLETE:
+      return "load complete";
+    case ui::AX_EVENT_LOCATION_CHANGED:
+      return "location changed";
+    case ui::AX_EVENT_MENU_END:
+      return "menu end";
+    case ui::AX_EVENT_MENU_LIST_ITEM_SELECTED:
+      return "menu list item selected";
+    case ui::AX_EVENT_MENU_LIST_VALUE_CHANGED:
+      return "menu list changed";
+    case ui::AX_EVENT_MENU_POPUP_END:
+      return "menu popup end";
+    case ui::AX_EVENT_MENU_POPUP_START:
+      return "menu popup start";
+    case ui::AX_EVENT_MENU_START:
+      return "menu start";
+    case ui::AX_EVENT_NONE:
+      return "none";
+    case ui::AX_EVENT_ROW_COLLAPSED:
       return "row collapsed";
-    case WebKit::WebAXEventRowExpanded:
+    case ui::AX_EVENT_ROW_COUNT_CHANGED:
+      return "row count changed";
+    case ui::AX_EVENT_ROW_EXPANDED:
       return "row expanded";
-    case WebKit::WebAXEventScrolledToAnchor:
+    case ui::AX_EVENT_SCROLL_POSITION_CHANGED:
+      return "scroll position changed";
+    case ui::AX_EVENT_SCROLLED_TO_ANCHOR:
       return "scrolled to anchor";
-    case WebKit::WebAXEventSelectedChildrenChanged:
+    case ui::AX_EVENT_SELECTED_CHILDREN_CHANGED:
       return "selected children changed";
-    case WebKit::WebAXEventSelectedTextChanged:
+    case ui::AX_EVENT_SELECTED_TEXT_CHANGED:
       return "selected text changed";
-    case WebKit::WebAXEventTextChanged:
+    case ui::AX_EVENT_SELECTION_CHANGED:
+      return "selection changed";
+    case ui::AX_EVENT_SHOW:
+      return "object show";
+    case ui::AX_EVENT_TEXT_CHANGED:
       return "text changed";
-    case WebKit::WebAXEventTextInserted:
+    case ui::AX_EVENT_TEXT_INSERTED:
       return "text inserted";
-    case WebKit::WebAXEventTextRemoved:
+    case ui::AX_EVENT_TEXT_REMOVED:
       return "text removed";
-    case WebKit::WebAXEventValueChanged:
+    case ui::AX_EVENT_VALUE_CHANGED:
       return "value changed";
     default:
       NOTREACHED();

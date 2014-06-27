@@ -14,17 +14,19 @@ import android.test.suitebuilder.annotation.SmallTest;
 
 import com.google.common.annotations.VisibleForTesting;
 
-import org.chromium.base.ActivityStatus;
+import static org.chromium.base.test.util.ScalableTimeout.scaleTimeout;
+
+import org.chromium.base.ApplicationStatus;
 import org.chromium.base.test.util.Feature;
-import org.chromium.chrome.testshell.ChromiumTestShellTestBase;
+import org.chromium.chrome.shell.ChromeShellTestBase;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.sync.signin.AccountManagerHelper;
 
-public class DelayedSyncControllerTest extends ChromiumTestShellTestBase {
+public class DelayedSyncControllerTest extends ChromeShellTestBase {
     private static final Account TEST_ACCOUNT =
             AccountManagerHelper.createAccountFromName("something@gmail.com");
-    private static final long WAIT_FOR_LAUNCHER_MS = 10 * 1000;
+    private static final long WAIT_FOR_LAUNCHER_MS = scaleTimeout(10 * 1000);
     private static final long POLL_INTERVAL_MS = 100;
     private TestDelayedSyncController mController;
 
@@ -43,7 +45,7 @@ public class DelayedSyncControllerTest extends ChromiumTestShellTestBase {
     protected void setUp() throws Exception {
         super.setUp();
         mController = new TestDelayedSyncController();
-        launchChromiumTestShellWithBlankPage();
+        launchChromeShellWithBlankPage();
     }
 
     @SmallTest
@@ -112,6 +114,6 @@ public class DelayedSyncControllerTest extends ChromiumTestShellTestBase {
     }
 
     private static boolean isActivityResumed() {
-        return ActivityStatus.isApplicationVisible();
+        return ApplicationStatus.hasVisibleActivities();
     }
 }

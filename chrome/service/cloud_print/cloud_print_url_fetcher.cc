@@ -9,7 +9,7 @@
 #include "base/values.h"
 #include "chrome/common/cloud_print/cloud_print_constants.h"
 #include "chrome/common/cloud_print/cloud_print_helpers.h"
-#include "chrome/service/cloud_print/cloud_print_helpers.h"
+#include "chrome/service/cloud_print/cloud_print_service_helpers.h"
 #include "chrome/service/cloud_print/cloud_print_token_store.h"
 #include "chrome/service/net/service_url_request_context.h"
 #include "chrome/service/service_process.h"
@@ -200,7 +200,7 @@ void CloudPrintURLFetcher::OnURLFetchComplete(
       // response, we will retry (to handle the case where we got redirected
       // to a non-cloudprint-server URL eg. for authentication).
       bool succeeded = false;
-      scoped_ptr<DictionaryValue> response_dict =
+      scoped_ptr<base::DictionaryValue> response_dict =
           ParseResponseJSON(data, &succeeded);
 
       if (response_dict) {

@@ -40,9 +40,13 @@ namespace {
 // The DLLs listed here are known (or under strong suspicion) of causing crashes
 // when they are loaded in the renderer. Note: at runtime we generate short
 // versions of the dll name only if the dll has an extension.
+// For more information about how this list is generated, and how to get off
+// of it, see:
+// https://sites.google.com/a/chromium.org/dev/Home/third-party-developers
 const wchar_t* const kTroublesomeDlls[] = {
   L"adialhk.dll",                 // Kaspersky Internet Security.
   L"acpiz.dll",                   // Unknown.
+  L"akinsofthook32.dll",          // Akinsoft Software Engineering.
   L"avgrsstx.dll",                // AVG 8.
   L"babylonchromepi.dll",         // Babylon translator.
   L"btkeyind.dll",                // Widcomm Bluetooth.
@@ -216,7 +220,7 @@ void AddGenericDllEvictionPolicy(sandbox::TargetPolicy* policy) {
 }
 
 // Returns the object path prepended with the current logon session.
-string16 PrependWindowsSessionPath(const char16* object) {
+base::string16 PrependWindowsSessionPath(const base::char16* object) {
   // Cache this because it can't change after process creation.
   static uintptr_t s_session_id = 0;
   if (s_session_id == 0) {
@@ -399,13 +403,15 @@ bool ProcessDebugFlags(CommandLine* command_line, bool is_in_sandbox) {
 #ifndef OFFICIAL_BUILD
 base::win::IATPatchFunction g_iat_patch_duplicate_handle;
 
-BOOL (WINAPI *g_iat_orig_duplicate_handle)(HANDLE source_process_handle,
-                                           HANDLE source_handle,
-                                           HANDLE target_process_handle,
-                                           LPHANDLE target_handle,
-                                           DWORD desired_access,
-                                           BOOL inherit_handle,
-                                           DWORD options);
+typedef BOOL (WINAPI *DuplicateHandleFunctionPtr)(HANDLE source_process_handle,
+                                                  HANDLE source_handle,
+                                                  HANDLE target_process_handle,
+                                                  LPHANDLE target_handle,
+                                                  DWORD desired_access,
+                                                  BOOL inherit_handle,
+                                                  DWORD options);
+
+DuplicateHandleFunctionPtr g_iat_orig_duplicate_handle;
 
 NtQueryObject g_QueryObject = NULL;
 
@@ -466,13 +472,14 @@ BOOL WINAPI DuplicateHandlePatch(HANDLE source_process_handle,
   if (!::IsProcessInJob(target_process_handle, NULL, &is_in_job)) {
     // We need a handle with permission to check the job object.
     if (ERROR_ACCESS_DENIED == ::GetLastError()) {
-      base::win::ScopedHandle process;
+      HANDLE temp_handle;
       CHECK(g_iat_orig_duplicate_handle(::GetCurrentProcess(),
                                         target_process_handle,
                                         ::GetCurrentProcess(),
-                                        process.Receive(),
+                                        &temp_handle,
                                         PROCESS_QUERY_INFORMATION,
                                         FALSE, 0));
+      base::win::ScopedHandle process(temp_handle);
       CHECK(::IsProcessInJob(process, NULL, &is_in_job));
     }
   }
@@ -482,10 +489,11 @@ BOOL WINAPI DuplicateHandlePatch(HANDLE source_process_handle,
     CHECK(!inherit_handle) << kDuplicateHandleWarning;
 
     // Duplicate the handle again, to get the final permissions.
-    base::win::ScopedHandle handle;
+    HANDLE temp_handle;
     CHECK(g_iat_orig_duplicate_handle(target_process_handle, *target_handle,
-                                      ::GetCurrentProcess(), handle.Receive(),
+                                      ::GetCurrentProcess(), &temp_handle,
                                       0, FALSE, DUPLICATE_SAME_ACCESS));
+    base::win::ScopedHandle handle(temp_handle);
 
     // Callers use CHECK macro to make sure we get the right stack.
     CheckDuplicateHandle(handle);
@@ -511,7 +519,7 @@ void SetJobLevel(const CommandLine& cmd_line,
 // Just have to figure out what needs to be warmed up first.
 void AddBaseHandleClosePolicy(sandbox::TargetPolicy* policy) {
   // TODO(cpu): Add back the BaseNamedObjects policy.
-  string16 object_path = PrependWindowsSessionPath(
+  base::string16 object_path = PrependWindowsSessionPath(
       L"\\BaseNamedObjects\\windows_shell_global_counters");
   policy->AddKernelObjectToClose(L"Section", object_path.data());
 }
@@ -541,10 +549,13 @@ bool InitBrokerServices(sandbox::BrokerServices* broker_services) {
     DWORD result = ::GetModuleFileNameW(module, module_name, MAX_PATH);
     if (result && (result != MAX_PATH)) {
       ResolveNTFunctionPtr("NtQueryObject", &g_QueryObject);
-      g_iat_orig_duplicate_handle = ::DuplicateHandle;
-      g_iat_patch_duplicate_handle.Patch(
+      result = g_iat_patch_duplicate_handle.Patch(
           module_name, "kernel32.dll", "DuplicateHandle",
           DuplicateHandlePatch);
+      CHECK(result == 0);
+      g_iat_orig_duplicate_handle =
+          reinterpret_cast<DuplicateHandleFunctionPtr>(
+              g_iat_patch_duplicate_handle.original_function());
     }
   }
 #endif
@@ -560,6 +571,16 @@ bool InitTargetServices(sandbox::TargetServices* target_services) {
   return sandbox::SBOX_ALL_OK == result;
 }
 
+bool ShouldUseDirectWrite() {
+  // If the flag is currently on, and we're on Win7 or above, we enable
+  // DirectWrite. Skia does not require the additions to DirectWrite in QFE
+  // 2670838, so a Win7 check is sufficient. We do not currently attempt to
+  // support Vista, where SP2 and the Platform Update are required.
+  const CommandLine& command_line = *CommandLine::ForCurrentProcess();
+  return command_line.HasSwitch(switches::kEnableDirectWrite) &&
+         base::win::GetVersion() >= base::win::VERSION_WIN7;
+}
+
 base::ProcessHandle StartSandboxedProcess(
     SandboxedProcessLauncherDelegate* delegate,
     CommandLine* cmd_line) {
@@ -570,7 +591,7 @@ base::ProcessHandle StartSandboxedProcess(
 
   bool in_sandbox = true;
   if (delegate)
-    delegate->ShouldSandbox(&in_sandbox);
+    in_sandbox = delegate->ShouldSandbox();
 
   if (browser_command_line.HasSwitch(switches::kNoSandbox) ||
       cmd_line->HasSwitch(switches::kNoSandbox)) {
@@ -599,7 +620,6 @@ base::ProcessHandle StartSandboxedProcess(
     return process;
   }
 
-  base::win::ScopedProcessInformation target;
   sandbox::TargetPolicy* policy = g_broker_services->CreatePolicy();
 
   sandbox::MitigationFlags mitigations = sandbox::MITIGATION_HEAP_TERMINATE |
@@ -627,7 +647,15 @@ base::ProcessHandle StartSandboxedProcess(
   if (!disable_default_policy && !AddPolicyForSandboxedProcess(policy))
     return 0;
 
-  if (type_str != switches::kRendererProcess) {
+  if (type_str == switches::kRendererProcess) {
+    if (ShouldUseDirectWrite()) {
+      AddDirectory(base::DIR_WINDOWS_FONTS,
+                  NULL,
+                  true,
+                  sandbox::TargetPolicy::FILES_ALLOW_READONLY,
+                  policy);
+    }
+  } else {
     // Hack for Google Desktop crash. Trick GD into not injecting its DLL into
     // this subprocess. See
     // http://code.google.com/p/chromium/issues/detail?id=25580
@@ -671,11 +699,13 @@ base::ProcessHandle StartSandboxedProcess(
 
   TRACE_EVENT_BEGIN_ETW("StartProcessWithAccess::LAUNCHPROCESS", 0, 0);
 
+  PROCESS_INFORMATION temp_process_info = {};
   result = g_broker_services->SpawnTarget(
-      cmd_line->GetProgram().value().c_str(),
-      cmd_line->GetCommandLineString().c_str(),
-      policy, target.Receive());
+               cmd_line->GetProgram().value().c_str(),
+               cmd_line->GetCommandLineString().c_str(),
+               policy, &temp_process_info);
   policy->Release();
+  base::win::ScopedProcessInformation target(temp_process_info);
 
   TRACE_EVENT_END_ETW("StartProcessWithAccess::LAUNCHPROCESS", 0, 0);
 

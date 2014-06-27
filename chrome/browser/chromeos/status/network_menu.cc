@@ -76,7 +76,7 @@ class NetworkMenuModel : public ui::MenuModel {
           sub_menu_model(NULL),
           flags(0) {
     }
-    MenuItem(ui::MenuModel::ItemType type, string16 label, gfx::ImageSkia icon,
+    MenuItem(ui::MenuModel::ItemType type, base::string16 label, gfx::ImageSkia icon,
              const std::string& service_path, int flags)
         : type(type),
           label(label),
@@ -85,7 +85,7 @@ class NetworkMenuModel : public ui::MenuModel {
           sub_menu_model(NULL),
           flags(flags) {
     }
-    MenuItem(ui::MenuModel::ItemType type, string16 label, gfx::ImageSkia icon,
+    MenuItem(ui::MenuModel::ItemType type, base::string16 label, gfx::ImageSkia icon,
              NetworkMenuModel* sub_menu_model, int flags)
         : type(type),
           label(label),
@@ -95,7 +95,7 @@ class NetworkMenuModel : public ui::MenuModel {
     }
 
     ui::MenuModel::ItemType type;
-    string16 label;
+    base::string16 label;
     gfx::ImageSkia icon;
     std::string service_path;
     NetworkMenuModel* sub_menu_model;  // Weak ptr.
@@ -122,9 +122,9 @@ class NetworkMenuModel : public ui::MenuModel {
   virtual int GetItemCount() const OVERRIDE;
   virtual ui::MenuModel::ItemType GetTypeAt(int index) const OVERRIDE;
   virtual ui::MenuSeparatorType GetSeparatorTypeAt(int index) const OVERRIDE;
-  virtual string16 GetLabelAt(int index) const OVERRIDE;
+  virtual base::string16 GetLabelAt(int index) const OVERRIDE;
   virtual bool IsItemDynamicAt(int index) const OVERRIDE;
-  virtual const gfx::Font* GetLabelFontAt(int index) const OVERRIDE;
+  virtual const gfx::FontList* GetLabelFontListAt(int index) const OVERRIDE;
   virtual bool GetAcceleratorAt(int index,
                                 ui::Accelerator* accelerator) const OVERRIDE;
   virtual bool IsItemCheckedAt(int index) const OVERRIDE;
@@ -201,7 +201,7 @@ class MainMenuModel : public NetworkMenuModel {
 
  private:
   void AddWirelessNetworkMenuItem(const NetworkState* wifi_network, int flag);
-  void AddMessageItem(const string16& msg);
+  void AddMessageItem(const base::string16& msg);
 
   scoped_ptr<MoreMenuModel> more_menu_model_;
 
@@ -236,7 +236,7 @@ ui::MenuSeparatorType NetworkMenuModel::GetSeparatorTypeAt(int index) const {
   return ui::NORMAL_SEPARATOR;
 }
 
-string16 NetworkMenuModel::GetLabelAt(int index) const {
+base::string16 NetworkMenuModel::GetLabelAt(int index) const {
   return menu_items_[index].label;
 }
 
@@ -244,15 +244,14 @@ bool NetworkMenuModel::IsItemDynamicAt(int index) const {
   return false;
 }
 
-const gfx::Font* NetworkMenuModel::GetLabelFontAt(int index) const {
-  const gfx::Font* font = NULL;
+const gfx::FontList* NetworkMenuModel::GetLabelFontListAt(int index) const {
+  const gfx::FontList* font_list = NULL;
   if (menu_items_[index].flags & FLAG_ASSOCIATED) {
-    ResourceBundle& resource_bundle = ResourceBundle::GetSharedInstance();
-    font = &resource_bundle.GetFont(
-        browser_defaults::kAssociatedNetworkFontStyle);
+    ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
+    font_list = &rb.GetFontList(browser_defaults::kAssociatedNetworkFontStyle);
   }
 
-  return font;
+  return font_list;
 }
 
 bool NetworkMenuModel::GetAcceleratorAt(int index,
@@ -346,17 +345,17 @@ void NetworkMenuModel::ShowOther(const std::string& type) const {
 
 void MainMenuModel::AddWirelessNetworkMenuItem(const NetworkState* network,
                                                int flag) {
-  string16 label;
+  base::string16 label;
   // Ampersand is a valid character in an SSID, but menu2 uses it to mark
   // "mnemonics" for keyboard shortcuts.
   std::string wifi_name = EscapeAmpersands(network->name());
   if (network->IsConnectingState()) {
     label = l10n_util::GetStringFUTF16(
         IDS_STATUSBAR_NETWORK_DEVICE_STATUS,
-        UTF8ToUTF16(wifi_name),
+        base::UTF8ToUTF16(wifi_name),
         l10n_util::GetStringUTF16(IDS_STATUSBAR_NETWORK_DEVICE_CONNECTING));
   } else {
-    label = UTF8ToUTF16(wifi_name);
+    label = base::UTF8ToUTF16(wifi_name);
   }
 
   // We do not have convenient access to whether or not it might be possible
@@ -372,7 +371,7 @@ void MainMenuModel::AddWirelessNetworkMenuItem(const NetworkState* network,
                label, icon, network->path(), flag));
 }
 
-void MainMenuModel::AddMessageItem(const string16& msg) {
+void MainMenuModel::AddMessageItem(const base::string16& msg) {
   menu_items_.push_back(MenuItem(
       ui::MenuModel::TYPE_COMMAND, msg,
       gfx::ImageSkia(), std::string(), FLAG_DISABLED));
@@ -384,7 +383,7 @@ void MainMenuModel::InitMenuItems(bool should_open_button_options) {
   NetworkStateHandler* handler = NetworkHandler::Get()->network_state_handler();
 
   // Populate our MenuItems with the current list of networks.
-  string16 label;
+  base::string16 label;
 
   // Ethernet
   // Only display an ethernet icon if enabled, and an ethernet network exists.
@@ -436,10 +435,10 @@ void MainMenuModel::InitMenuItems(bool should_open_button_options) {
       if (network->IsConnectingState()) {
         label = l10n_util::GetStringFUTF16(
             IDS_STATUSBAR_NETWORK_DEVICE_STATUS,
-            UTF8ToUTF16(network_name),
+            base::UTF8ToUTF16(network_name),
             l10n_util::GetStringUTF16(IDS_STATUSBAR_NETWORK_DEVICE_CONNECTING));
       } else {
-        label = UTF8ToUTF16(network_name);
+        label = base::UTF8ToUTF16(network_name);
       }
 
       int flag = FLAG_CELLULAR;
@@ -617,9 +616,9 @@ void MoreMenuModel::InitMenuItems(bool should_open_button_options) {
   if (default_network) {
     std::string ip_address = default_network->ip_address();
     if (!ip_address.empty()) {
-      address_items.push_back(MenuItem(ui::MenuModel::TYPE_COMMAND,
-          ASCIIToUTF16(ip_address), gfx::ImageSkia(), std::string(),
-                       FLAG_DISABLED));
+      address_items.push_back(MenuItem(
+          ui::MenuModel::TYPE_COMMAND, base::ASCIIToUTF16(ip_address),
+          gfx::ImageSkia(), std::string(), FLAG_DISABLED));
     }
   }
 
@@ -629,8 +628,8 @@ void MoreMenuModel::InitMenuItems(bool should_open_button_options) {
     std::string label = l10n_util::GetStringUTF8(
         IDS_STATUSBAR_NETWORK_DEVICE_ETHERNET) + " " + ethernet_address;
     address_items.push_back(MenuItem(
-        ui::MenuModel::TYPE_COMMAND,
-        UTF8ToUTF16(label), gfx::ImageSkia(), std::string(), FLAG_DISABLED));
+        ui::MenuModel::TYPE_COMMAND, base::UTF8ToUTF16(label),
+        gfx::ImageSkia(), std::string(), FLAG_DISABLED));
   }
 
   std::string wifi_address =
@@ -639,8 +638,8 @@ void MoreMenuModel::InitMenuItems(bool should_open_button_options) {
     std::string label = l10n_util::GetStringUTF8(
         IDS_STATUSBAR_NETWORK_DEVICE_WIFI) + " " + wifi_address;
     address_items.push_back(MenuItem(
-        ui::MenuModel::TYPE_COMMAND,
-        UTF8ToUTF16(label), gfx::ImageSkia(), std::string(), FLAG_DISABLED));
+        ui::MenuModel::TYPE_COMMAND, base::UTF8ToUTF16(label),
+        gfx::ImageSkia(), std::string(), FLAG_DISABLED));
   }
 
   menu_items_ = link_items;

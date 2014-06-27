@@ -111,8 +111,8 @@ void RenderTextMac::EnsureLayout() {
   runs_.clear();
   runs_valid_ = false;
 
-  const Font& font = GetPrimaryFont();
-  CTFontRef ct_font = base::mac::NSToCFCast(font.GetNativeFont());
+  CTFontRef ct_font = base::mac::NSToCFCast(
+      font_list().GetPrimaryFont().GetNativeFont());
 
   const void* keys[] = { kCTFontAttributeName };
   const void* values[] = { ct_font };
@@ -174,6 +174,8 @@ void RenderTextMac::DrawVisualText(Canvas* canvas) {
     renderer.DrawDecorations(run.origin.x(), run.origin.y(), run.width,
                              run.underline, run.strike, run.diagonal_strike);
   }
+
+  renderer.EndDiagonalStrike();
 }
 
 RenderTextMac::TextRun::TextRun()

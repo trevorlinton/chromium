@@ -14,7 +14,8 @@ from telemetry.page import page_set
 from telemetry.page import page_test
 
 conformance_path = os.path.join(
-    util.GetChromiumSrcDir(), 'third_party', 'webgl_conformance')
+    util.GetChromiumSrcDir(),
+    'third_party', 'webgl', 'src', 'sdk', 'tests')
 
 conformance_harness_script = r"""
   var testHarness = {};
@@ -29,7 +30,7 @@ conformance_harness_script = r"""
     testHarness._originalLog.apply(window.console, [msg]);
   }
 
-  testHarness.reportResults = function(success, msg) {
+  testHarness.reportResults = function(url, success, msg) {
     testHarness._allTestSucceeded = testHarness._allTestSucceeded && !!success;
     if(!success) {
       testHarness._failures++;
@@ -38,7 +39,7 @@ conformance_harness_script = r"""
       }
     }
   };
-  testHarness.notifyFinished = function() {
+  testHarness.notifyFinished = function(url) {
     testHarness._finished = true;
   };
   testHarness.navigateToPage = function(src) {
@@ -59,28 +60,31 @@ def _WebGLTestMessages(tab):
 
 class WebglConformanceValidator(page_test.PageTest):
   def __init__(self):
-    super(WebglConformanceValidator, self).__init__('ValidatePage')
+    super(WebglConformanceValidator, self).__init__('ValidatePage',
+        attempts=1,
+        max_errors=10)
 
   def ValidatePage(self, page, tab, results):
     if not _DidWebGLTestSucceed(tab):
       raise page_test.Failure(_WebGLTestMessages(tab))
 
   def CustomizeBrowserOptions(self, options):
-    options.AppendExtraBrowserArgs(
-        '--disable-gesture-requirement-for-media-playback')
+    options.AppendExtraBrowserArgs([
+        '--disable-gesture-requirement-for-media-playback',
+        '--disable-domain-blocking-for-3d-apis',
+        '--disable-gpu-process-crash-limit'
+    ])
 
 
 class WebglConformance(test_module.Test):
   """Conformance with Khronos WebGL Conformance Tests"""
   test = WebglConformanceValidator
 
-  @staticmethod
-  def AddTestCommandLineOptions(parser):
-    group = optparse.OptionGroup(parser, 'WebGL conformance options')
+  @classmethod
+  def AddTestCommandLineArgs(cls, group):
     group.add_option('--webgl-conformance-version',
         help='Version of the WebGL conformance tests to run.',
         default='1.0.1')
-    parser.add_option_group(group)
 
   def CreatePageSet(self, options):
     tests = self._ParseTests('00_test_list.txt',

@@ -55,6 +55,8 @@ class OmniboxUIHandler : public AutocompleteControllerDelegate,
   // - third element: boolean indicating whether we should set
   //   prevent_inline_autocomplete or not.
   // - fourth element: boolean indicating whether we should set prefer_keyword
+  // - fifth element: current page classification value (enum
+  //   PageClassification from omnibox_event.proto)
   void StartOmniboxQuery(const base::ListValue* input);
 
   // Helper function for OnResultChanged().
@@ -68,7 +70,7 @@ class OmniboxUIHandler : public AutocompleteControllerDelegate,
   // Looks up whether the hostname is a typed host (i.e., has received
   // typed visits).  Return true if the lookup succeeded; if so, the
   // value of |is_typed_host| is set appropriately.
-  bool LookupIsTypedHost(const string16& host, bool* is_typed_host) const;
+  bool LookupIsTypedHost(const base::string16& host, bool* is_typed_host) const;
 
   // Re-initializes the AutocompleteController in preparation for the
   // next query.

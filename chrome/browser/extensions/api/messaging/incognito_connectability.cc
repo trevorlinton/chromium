@@ -8,10 +8,11 @@
 #include "base/logging.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/simple_message_box.h"
-#include "chrome/common/extensions/extension.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
+#include "extensions/common/extension.h"
 #include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -41,17 +42,18 @@ int IncognitoConnectability::ScopedAlertTracker::GetAndResetAlertCount() {
   return result;
 }
 
-IncognitoConnectability::IncognitoConnectability(Profile* profile) {
-  CHECK(profile->IsOffTheRecord());
+IncognitoConnectability::IncognitoConnectability(
+    content::BrowserContext* context) {
+  CHECK(context->IsOffTheRecord());
 }
 
 IncognitoConnectability::~IncognitoConnectability() {
 }
 
 // static
-IncognitoConnectability* IncognitoConnectability::Get(Profile* profile) {
-  return ProfileKeyedAPIFactory<IncognitoConnectability>::GetForProfile(
-      profile);
+IncognitoConnectability* IncognitoConnectability::Get(
+    content::BrowserContext* context) {
+  return BrowserContextKeyedAPIFactory<IncognitoConnectability>::Get(context);
 }
 
 bool IncognitoConnectability::Query(const Extension* extension,
@@ -79,10 +81,10 @@ bool IncognitoConnectability::Query(const Extension* extension,
       result = chrome::ShowMessageBox(
           web_contents ? web_contents->GetView()->GetTopLevelNativeWindow()
                        : NULL,
-          string16(),  // no title
+          base::string16(),  // no title
           l10n_util::GetStringFUTF16(template_id,
-                                     UTF8ToUTF16(origin.spec()),
-                                     UTF8ToUTF16(extension->name())),
+                                     base::UTF8ToUTF16(origin.spec()),
+                                     base::UTF8ToUTF16(extension->name())),
           chrome::MESSAGE_BOX_TYPE_QUESTION);
       break;
     }
@@ -112,13 +114,14 @@ bool IncognitoConnectability::IsInMap(const Extension* extension,
   return it != map.end() && it->second.count(origin) > 0;
 }
 
-static base::LazyInstance<ProfileKeyedAPIFactory<IncognitoConnectability> >
-    g_factory = LAZY_INSTANCE_INITIALIZER;
+static base::LazyInstance<
+    BrowserContextKeyedAPIFactory<IncognitoConnectability> > g_factory =
+    LAZY_INSTANCE_INITIALIZER;
 
 // static
-ProfileKeyedAPIFactory<IncognitoConnectability>*
+BrowserContextKeyedAPIFactory<IncognitoConnectability>*
 IncognitoConnectability::GetFactoryInstance() {
-  return &g_factory.Get();
+  return g_factory.Pointer();
 }
 
 }  // namespace extensions

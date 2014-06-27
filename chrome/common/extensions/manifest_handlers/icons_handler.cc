@@ -10,10 +10,10 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_file_util.h"
 #include "chrome/common/extensions/manifest_handler_helpers.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
@@ -73,11 +73,11 @@ IconsHandler::IconsHandler() {
 IconsHandler::~IconsHandler() {
 }
 
-bool IconsHandler::Parse(Extension* extension, string16* error) {
+bool IconsHandler::Parse(Extension* extension, base::string16* error) {
   scoped_ptr<IconsInfo> icons_info(new IconsInfo);
   const base::DictionaryValue* icons_dict = NULL;
   if (!extension->manifest()->GetDictionary(keys::kIcons, &icons_dict)) {
-    *error = ASCIIToUTF16(manifest_errors::kInvalidIcons);
+    *error = base::ASCIIToUTF16(manifest_errors::kInvalidIcons);
     return false;
   }
 

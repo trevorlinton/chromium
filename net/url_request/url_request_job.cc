@@ -16,6 +16,7 @@
 #include "net/base/load_states.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_delegate.h"
+#include "net/filter/filter.h"
 #include "net/http/http_response_headers.h"
 #include "net/url_request/url_request.h"
 
@@ -59,7 +60,6 @@ void URLRequestJob::Kill() {
 
 void URLRequestJob::DetachRequest() {
   request_ = NULL;
-  OnDetachRequest();
 }
 
 // This function calls ReadData to get stream data. If a filter exists, passes
@@ -109,6 +109,10 @@ void URLRequestJob::StopCaching() {
 bool URLRequestJob::GetFullRequestHeaders(HttpRequestHeaders* headers) const {
   // Most job types don't send request headers.
   return false;
+}
+
+int64 URLRequestJob::GetTotalReceivedBytes() const {
+  return 0;
 }
 
 LoadState URLRequestJob::GetLoadState() const {
@@ -213,6 +217,12 @@ void URLRequestJob::FollowDeferredRedirect() {
   FollowRedirect(redirect_url, redirect_status_code);
 }
 
+void URLRequestJob::ResumeNetworkStart() {
+  // This should only be called for HTTP Jobs, and implemented in the derived
+  // class.
+  NOTREACHED();
+}
+
 bool URLRequestJob::GetMimeType(std::string* mime_type) const {
   return false;
 }
@@ -276,6 +286,19 @@ bool URLRequestJob::CanEnablePrivacyMode() const {
   return request_->CanEnablePrivacyMode();
 }
 
+CookieStore* URLRequestJob::GetCookieStore() const {
+  DCHECK(request_);
+
+  return request_->cookie_store();
+}
+
+void URLRequestJob::NotifyBeforeNetworkStart(bool* defer) {
+  if (!request_)
+    return;
+
+  request_->NotifyBeforeNetworkStart(defer);
+}
+
 void URLRequestJob::NotifyHeadersComplete() {
   if (!request_ || !request_->has_delegate())
     return;  // The request was destroyed, so there is no more work to do.
@@ -304,6 +327,10 @@ void URLRequestJob::NotifyHeadersComplete() {
   GURL new_location;
   int http_status_code;
   if (IsRedirectResponse(&new_location, &http_status_code)) {
+    // Redirect response bodies are not read. Notify the transaction
+    // so it does not treat being stopped as an error.
+    DoneReadingRedirectResponse();
+
     const GURL& url = request_->url();
 
     // Move the reference fragment of the old location to the new one if the
@@ -316,10 +343,6 @@ void URLRequestJob::NotifyHeadersComplete() {
                           url.parsed_for_possibly_invalid_spec().ref);
       new_location = new_location.ReplaceComponents(replacements);
     }
-
-    // Redirect response bodies are not read. Notify the transaction
-    // so it does not treat being stopped as an error.
-    DoneReading();
 
     bool defer_redirect = false;
     request_->NotifyReceivedRedirect(new_location, &defer_redirect);
@@ -414,8 +437,13 @@ void URLRequestJob::NotifyStartError(const URLRequestStatus &status) {
   DCHECK(!has_handled_response_);
   has_handled_response_ = true;
   if (request_) {
+    // There may be relevant information in the response info even in the
+    // error case.
+    GetResponseInfo(&request_->response_info_);
+
     request_->set_status(status);
     request_->NotifyResponseStarted();
+    // We may have been deleted.
   }
 }
 
@@ -502,6 +530,9 @@ bool URLRequestJob::ReadRawData(IOBuffer* buf, int buf_size,
 
 void URLRequestJob::DoneReading() {
   // Do nothing.
+}
+
+void URLRequestJob::DoneReadingRedirectResponse() {
 }
 
 void URLRequestJob::FilteredDataRead(int bytes_read) {
@@ -637,6 +668,10 @@ bool URLRequestJob::ReadFilteredData(int* bytes_read) {
   return rv;
 }
 
+void URLRequestJob::DestroyFilters() {
+  filter_.reset();
+}
+
 const URLRequestStatus URLRequestJob::GetStatus() {
   if (request_)
     return request_->status();
@@ -681,15 +716,6 @@ bool URLRequestJob::ReadRawDataHelper(IOBuffer* buf, int buf_size,
   bool rv = ReadRawData(buf, buf_size, bytes_read);
 
   if (!request_->status().is_io_pending()) {
-    // If |filter_| is NULL, and logging all bytes is enabled, log the raw
-    // bytes read.
-    if (!filter_.get() && request() && request()->net_log().IsLoggingBytes() &&
-        *bytes_read > 0) {
-      request()->net_log().AddByteTransferEvent(
-          NetLog::TYPE_URL_REQUEST_JOB_BYTES_READ,
-          *bytes_read, raw_read_buffer_->data());
-    }
-
     // If the read completes synchronously, either success or failure,
     // invoke the OnRawReadComplete callback so we can account for the
     // completed read.
@@ -706,6 +732,14 @@ void URLRequestJob::FollowRedirect(const GURL& location, int http_status_code) {
 
 void URLRequestJob::OnRawReadComplete(int bytes_read) {
   DCHECK(raw_read_buffer_.get());
+  // If |filter_| is non-NULL, bytes will be logged after it is applied instead.
+  if (!filter_.get() && request() && request()->net_log().IsLoggingBytes() &&
+      bytes_read > 0) {
+    request()->net_log().AddByteTransferEvent(
+        NetLog::TYPE_URL_REQUEST_JOB_BYTES_READ,
+        bytes_read, raw_read_buffer_->data());
+  }
+
   if (bytes_read > 0) {
     RecordBytesRead(bytes_read);
   }

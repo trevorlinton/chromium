@@ -26,7 +26,7 @@ bool ReadStringVector(PickleIterator* iter,
   if (!iter->ReadInt(&size))
     return false;
 
-  string16 pickle_data;
+  base::string16 pickle_data;
   for (int i = 0; i < size; i++) {
     if (!iter->ReadString16(&pickle_data))
       return false;
@@ -151,11 +151,11 @@ bool DeserializeFormFieldData(PickleIterator* iter,
 
 std::ostream& operator<<(std::ostream& os, const FormFieldData& field) {
   return os
-      << UTF16ToUTF8(field.label)
+      << base::UTF16ToUTF8(field.label)
       << " "
-      << UTF16ToUTF8(field.name)
+      << base::UTF16ToUTF8(field.name)
       << " "
-      << UTF16ToUTF8(field.value)
+      << base::UTF16ToUTF8(field.value)
       << " "
       << field.form_control_type
       << " "

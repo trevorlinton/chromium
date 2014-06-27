@@ -10,25 +10,16 @@ import android.text.SpannableString;
 import android.text.SpannableStringBuilder;
 import android.text.TextUtils;
 import android.text.style.ClickableSpan;
-import android.view.LayoutInflater;
 import android.view.View;
-import android.widget.Button;
 import android.widget.CheckBox;
 
-import org.chromium.base.CalledByNative;
-import org.chromium.chrome.browser.infobar.ContentWrapperView;
-import org.chromium.chrome.browser.infobar.InfoBar;
-import org.chromium.chrome.browser.infobar.InfoBarLayout;
-import org.chromium.chrome.browser.infobar.TwoButtonInfoBar;
-import org.chromium.content.browser.DeviceUtils;
 import org.chromium.chrome.R;
+import org.chromium.content.browser.DeviceUtils;
 
 /**
  * Java version of the translate infobar
  */
 public class TranslateInfoBar extends TwoButtonInfoBar implements SubPanelListener {
-    private static String LOG_TAG = "TranslateInfoBar";
-
     // Needs to be kept in sync with the Type enum in translate_infobar_delegate.h.
     public static final int BEFORE_TRANSLATE_INFOBAR = 0;
     public static final int TRANSLATING_INFOBAR = 1;
@@ -44,20 +35,21 @@ public class TranslateInfoBar extends TwoButtonInfoBar implements SubPanelListen
     public static final int MAX_PANEL_INDEX = 4;
 
     private int mInfoBarType;
-    private TranslateOptions mOptions;
+    private final TranslateOptions mOptions;
     private int mOptionsPanelViewType;
     private TranslateSubPanel mSubPanel;
     private final boolean mShouldShowNeverBar;
     private final TranslateInfoBarDelegate mTranslateDelegate;
 
-    public TranslateInfoBar(int nativeInfoBarPtr, TranslateInfoBarDelegate delegate,
+    public TranslateInfoBar(long nativeInfoBarPtr, TranslateInfoBarDelegate delegate,
             int infoBarType, int sourceLanguageIndex, int targetLanguageIndex,
-            boolean autoTranslatePair, boolean shouldShowNeverBar, String[] languages) {
+            boolean autoTranslatePair, boolean shouldShowNeverBar,
+            boolean triggeredFromMenu, String[] languages) {
         super(null, BACKGROUND_TYPE_INFO,
                 R.drawable.infobar_translate);
         mTranslateDelegate = delegate;
         mOptions = new TranslateOptions(sourceLanguageIndex, targetLanguageIndex, languages,
-                autoTranslatePair);
+                autoTranslatePair, triggeredFromMenu);
         mInfoBarType = infoBarType;
         mShouldShowNeverBar = shouldShowNeverBar;
         mOptionsPanelViewType = NO_PANEL;
@@ -123,9 +115,9 @@ public class TranslateInfoBar extends TwoButtonInfoBar implements SubPanelListen
     public CharSequence getMessageText(Context context) {
         switch (getInfoBarType()) {
             case BEFORE_TRANSLATE_INFOBAR:
-              String template = context.getString(R.string.translate_infobar_text);
-              return formatBeforeInfoBarMessage(template, mOptions.sourceLanguage(),
-                      mOptions.targetLanguage(), LANGUAGE_PANEL);
+                String template = context.getString(R.string.translate_infobar_text);
+                return formatBeforeInfoBarMessage(template, mOptions.sourceLanguage(),
+                        mOptions.targetLanguage(), LANGUAGE_PANEL);
             case AFTER_TRANSLATE_INFOBAR:
                 String translated = context.getString(
                         R.string.translate_infobar_translation_done, mOptions.targetLanguage());
@@ -189,10 +181,12 @@ public class TranslateInfoBar extends TwoButtonInfoBar implements SubPanelListen
             return;
         }
 
-        if (getInfoBarType() == AFTER_TRANSLATE_INFOBAR && !needsAlwaysPanel()) {
+        if (getInfoBarType() == AFTER_TRANSLATE_INFOBAR &&
+                !needsAlwaysPanel() &&
+                !mOptions.triggeredFromMenu()) {
             // Long always translate version
-            TranslateCheckBox checkBox = new TranslateCheckBox(mOptions, this);
-            checkBox.createContent(getContext(), layout);
+             TranslateCheckBox checkBox = new TranslateCheckBox(mOptions, this);
+             checkBox.createContent(getContext(), layout);
         }
 
         super.createContent(layout);
@@ -300,18 +294,18 @@ public class TranslateInfoBar extends TwoButtonInfoBar implements SubPanelListen
 
         SpannableString formattedSourceLanguage = new SpannableString(sourceLanguage);
         formattedSourceLanguage.setSpan(new ClickableSpan() {
-                @Override
-                public void onClick(View view) {
-                    swapPanel(panelId);
-                }
+            @Override
+            public void onClick(View view) {
+                swapPanel(panelId);
+            }
         }, 0, sourceLanguage.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
 
         SpannableString formattedTargetLanguage = new SpannableString(targetLanguage);
         formattedTargetLanguage.setSpan(new ClickableSpan() {
-                @Override
-                public void onClick(View view) {
-                    swapPanel(panelId);
-                }
+            @Override
+            public void onClick(View view) {
+                swapPanel(panelId);
+            }
         }, 0, targetLanguage.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
 
         return TextUtils.expandTemplate(template, formattedSourceLanguage, formattedTargetLanguage);
@@ -326,10 +320,10 @@ public class TranslateInfoBar extends TwoButtonInfoBar implements SubPanelListen
         result.append(statement).append(" ");
         SpannableString formattedChange = new SpannableString(linkText);
         formattedChange.setSpan(new ClickableSpan() {
-                @Override
-                public void onClick(View view) {
-                    swapPanel(panelId);
-                }
+            @Override
+            public void onClick(View view) {
+                swapPanel(panelId);
+            }
         }, 0, linkText.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
         result.append(formattedChange);
         return result;
@@ -339,10 +333,12 @@ public class TranslateInfoBar extends TwoButtonInfoBar implements SubPanelListen
         return mInfoBarType;
     }
 
-    void changeInfoBarTypeAndNativePointer(int infoBarType, int newNativePointer) {
+    void changeInfoBarTypeAndNativePointer(
+            int infoBarType,int newTargetLanguage,  long newNativePointer) {
         if (infoBarType >= 0 && infoBarType < MAX_INFOBAR_INDEX) {
             mInfoBarType = infoBarType;
             replaceNativePointer(newNativePointer);
+            mOptions.setTargetLanguage(newTargetLanguage);
             updateViewForCurrentState(createView());
         } else {
             assert false : "Trying to change the InfoBar to a type that is invalid.";

@@ -29,13 +29,14 @@
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/extensions/extension_action.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service.h"
 #include "chrome/browser/search_engines/template_url_service_test_util.h"
-#include "chrome/browser/thumbnails/render_widget_snapshot_taker.h"
 #include "chrome/browser/ui/app_modal_dialogs/app_modal_dialog.h"
+#include "chrome/browser/ui/app_modal_dialogs/app_modal_dialog_queue.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -52,7 +53,6 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/find_in_page_observer.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/dom_operation_notification_details.h"
 #include "content/public/browser/download_item.h"
 #include "content/public/browser/download_manager.h"
@@ -79,10 +79,9 @@
 
 #if defined(USE_AURA)
 #include "ash/shell.h"
-#include "ui/aura/root_window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #endif
 
-using content::BrowserThread;
 using content::DomOperationNotificationDetails;
 using content::NativeWebKeyboardEvent;
 using content::NavigationController;
@@ -97,6 +96,7 @@ namespace ui_test_utils {
 
 namespace {
 
+#if defined(OS_WIN)
 const char kSnapshotBaseName[] = "ChromiumSnapshot";
 const char kSnapshotExtension[] = ".png";
 
@@ -121,6 +121,7 @@ base::FilePath GetSnapshotFileName(const base::FilePath& snapshot_directory) {
   }
   return snapshot_file;
 }
+#endif  // defined(OS_WIN)
 
 Browser* WaitForBrowserNotInSet(std::set<Browser*> excluded_browsers) {
   Browser* new_browser = GetBrowserNotInSet(excluded_browsers);
@@ -135,7 +136,7 @@ Browser* WaitForBrowserNotInSet(std::set<Browser*> excluded_browsers) {
 
 }  // namespace
 
-bool GetCurrentTabTitle(const Browser* browser, string16* title) {
+bool GetCurrentTabTitle(const Browser* browser, base::string16* title) {
   WebContents* web_contents =
       browser->tab_strip_model()->GetActiveWebContents();
   if (!web_contents)
@@ -161,6 +162,14 @@ Browser* OpenURLOffTheRecord(Profile* profile, const GURL& url) {
 void NavigateToURL(chrome::NavigateParams* params) {
   chrome::Navigate(params);
   content::WaitForLoadStop(params->target_contents);
+}
+
+
+void NavigateToURLWithPost(Browser* browser, const GURL& url) {
+  chrome::NavigateParams params(browser, url,
+                                content::PAGE_TRANSITION_FORM_SUBMIT);
+  params.uses_post = true;
+  NavigateToURL(&params);
 }
 
 void NavigateToURL(Browser* browser, const GURL& url) {
@@ -256,6 +265,13 @@ void NavigateToURLBlockUntilNavigationsComplete(Browser* browser,
       BROWSER_TEST_WAIT_FOR_NAVIGATION);
 }
 
+void WaitUntilDevToolsWindowLoaded(DevToolsWindow* window) {
+  scoped_refptr<content::MessageLoopRunner> runner =
+      new content::MessageLoopRunner;
+  window->SetLoadCompletedCallback(runner->QuitClosure());
+  runner->Run();
+}
+
 base::FilePath GetTestFilePath(const base::FilePath& dir,
                                const base::FilePath& file) {
   base::FilePath path;
@@ -311,6 +327,10 @@ bool GetRelativeBuildDirectory(base::FilePath* build_dir) {
 }
 
 AppModalDialog* WaitForAppModalDialog() {
+  AppModalDialogQueue* dialog_queue = AppModalDialogQueue::GetInstance();
+  if (dialog_queue->HasActiveDialog())
+    return dialog_queue->active_dialog();
+
   content::WindowedNotificationObserver observer(
       chrome::NOTIFICATION_APP_MODAL_DIALOG_SHOWN,
       content::NotificationService::AllSources());
@@ -318,8 +338,11 @@ AppModalDialog* WaitForAppModalDialog() {
   return content::Source<AppModalDialog>(observer.source()).ptr();
 }
 
-int FindInPage(WebContents* tab, const string16& search_string,
-               bool forward, bool match_case, int* ordinal,
+int FindInPage(WebContents* tab,
+               const base::string16& search_string,
+               bool forward,
+               bool match_case,
+               int* ordinal,
                gfx::Rect* selection_rect) {
   FindTabHelper* find_tab_helper = FindTabHelper::FromWebContents(tab);
   find_tab_helper->StartFinding(search_string, forward, match_case);
@@ -373,9 +396,9 @@ void DownloadURL(Browser* browser, const GURL& download_url) {
 
 void SendToOmniboxAndSubmit(LocationBar* location_bar,
                             const std::string& input) {
-  OmniboxView* omnibox = location_bar->GetLocationEntry();
+  OmniboxView* omnibox = location_bar->GetOmniboxView();
   omnibox->model()->OnSetFocus(false);
-  omnibox->SetUserText(ASCIIToUTF16(input));
+  omnibox->SetUserText(base::ASCIIToUTF16(input));
   location_bar->AcceptInput();
   while (!omnibox->model()->autocomplete_controller()->done()) {
     content::WindowedNotificationObserver observer(
@@ -464,7 +487,7 @@ bool SaveScreenSnapshotToDirectory(const base::FilePath& directory,
     if (ui::GrabDesktopSnapshot(bounds, &png_data) &&
         png_data.size() <= INT_MAX) {
       int bytes = static_cast<int>(png_data.size());
-      int written = file_util::WriteFile(
+      int written = base::WriteFile(
           out_path, reinterpret_cast<char*>(&png_data[0]), bytes);
       succeeded = (written == bytes);
     }
@@ -508,7 +531,7 @@ HistoryEnumerator::HistoryEnumerator(Profile* profile) {
   HistoryService* hs = HistoryServiceFactory::GetForProfile(
       profile, Profile::EXPLICIT_ACCESS);
   hs->QueryHistory(
-      string16(),
+      base::string16(),
       history::QueryOptions(),
       &consumer_,
       base::Bind(&HistoryEnumerator::HistoryQueryComplete,

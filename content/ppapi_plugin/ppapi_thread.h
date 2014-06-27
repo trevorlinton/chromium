@@ -16,7 +16,6 @@
 #include "build/build_config.h"
 #include "content/child/child_thread.h"
 #include "content/public/common/pepper_plugin_info.h"
-#include "ipc/ipc_listener.h"
 #include "ppapi/c/pp_module.h"
 #include "ppapi/c/trusted/ppp_broker.h"
 #include "ppapi/proxy/connection.h"
@@ -28,9 +27,8 @@
 #include "base/win/scoped_handle.h"
 #endif
 
-class CommandLine;
-
 namespace base {
+class CommandLine;
 class FilePath;
 }
 
@@ -46,7 +44,7 @@ class PpapiThread : public ChildThread,
                     public ppapi::proxy::PluginDispatcher::PluginDelegate,
                     public ppapi::proxy::PluginProxyDelegate {
  public:
-  PpapiThread(const CommandLine& command_line, bool is_broker);
+  PpapiThread(const base::CommandLine& command_line, bool is_broker);
   virtual ~PpapiThread();
   virtual void Shutdown() OVERRIDE;
 
@@ -60,22 +58,6 @@ class PpapiThread : public ChildThread,
     INIT_FAILED,
     // NOTE: Add new values only immediately above this line.
     LOAD_RESULT_MAX  // Boundary value for UMA_HISTOGRAM_ENUMERATION.
-  };
-
-  // This class finds the target PluginDispatcher for each message it receives
-  // and forwards the message.
-  class DispatcherMessageListener : public IPC::Listener {
-   public:
-    explicit DispatcherMessageListener(PpapiThread* owner);
-    virtual ~DispatcherMessageListener();
-
-    // IPC::Listener implementation.
-    virtual bool OnMessageReceived(const IPC::Message& msg) OVERRIDE;
-
-   private:
-    PpapiThread* owner_;
-
-    DISALLOW_COPY_AND_ASSIGN(DispatcherMessageListener);
   };
 
   // ChildThread overrides.
@@ -114,9 +96,6 @@ class PpapiThread : public ChildThread,
   void OnCreateChannel(base::ProcessId renderer_pid,
                        int renderer_child_id,
                        bool incognito);
-  void OnResourceReply(
-      const ppapi::proxy::ResourceMessageReplyParams& reply_params,
-      const IPC::Message& nested_msg);
   void OnSetNetworkState(bool online);
   void OnCrash();
   void OnHang();
@@ -132,6 +111,10 @@ class PpapiThread : public ChildThread,
   void SavePluginName(const base::FilePath& path);
 
   void ReportLoadResult(const base::FilePath& path, LoadResult result);
+
+  // Reports |error| to UMA when plugin load fails.
+  void ReportLoadErrorCode(const base::FilePath& path,
+                           const base::NativeLibraryLoadError& error);
 
   // True if running in a broker process rather than a normal plugin process.
   bool is_broker_;
@@ -172,8 +155,6 @@ class PpapiThread : public ChildThread,
   // Caches the handle to the peer process if this is a broker.
   base::win::ScopedHandle peer_handle_;
 #endif
-
-  DispatcherMessageListener dispatcher_message_listener_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(PpapiThread);
 };

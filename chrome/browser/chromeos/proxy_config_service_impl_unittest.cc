@@ -242,6 +242,8 @@ class ProxyConfigServiceImplTest : public testing::Test {
     ShillServiceClient::TestInterface* service_test =
         DBusThreadManager::Get()->GetShillServiceClient()->GetTestInterface();
 
+    // Process any pending notifications before clearing services.
+    loop_.RunUntilIdle();
     service_test->ClearServices();
 
     // Sends a notification about the added profile.
@@ -304,7 +306,7 @@ class ProxyConfigServiceImplTest : public testing::Test {
     DBusThreadManager::Get()->GetShillServiceClient()->GetTestInterface()->
         SetServiceProperty(network->path(),
                            shill::kProxyConfigProperty,
-                           StringValue(proxy_config));
+                           base::StringValue(proxy_config));
   }
 
   // Synchronously gets the latest proxy config.

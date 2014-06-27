@@ -32,13 +32,12 @@ void SafeJsonParser::StartWorkOnIOThread() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   UtilityProcessHost* host =
       UtilityProcessHost::Create(this, base::MessageLoopProxy::current().get());
-  host->EnableZygote();
   host->Send(new ChromeUtilityMsg_ParseJSON(unsafe_json_));
 }
 
 void SafeJsonParser::OnJSONParseSucceeded(const base::ListValue& wrapper) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
-  const Value* value = NULL;
+  const base::Value* value = NULL;
   CHECK(wrapper.Get(0, &value));
 
   parsed_json_.reset(value->DeepCopy());

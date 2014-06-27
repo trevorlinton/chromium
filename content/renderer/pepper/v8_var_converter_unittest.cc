@@ -56,6 +56,11 @@ class MockResourceConverter : public content::ResourceConverter {
     *was_resource = false;
     return true;
   }
+  virtual bool ToV8Value(const PP_Var& var,
+                         v8::Handle<v8::Context> context,
+                         v8::Handle<v8::Value>* result) OVERRIDE {
+    return false;
+  }
 };
 
 // Maps PP_Var IDs to the V8 value handle they correspond to.
@@ -165,11 +170,11 @@ class V8VarConverterTest : public testing::Test {
   virtual void SetUp() {
     ProxyLock::Acquire();
     v8::HandleScope handle_scope(isolate_);
-    v8::Handle<v8::ObjectTemplate> global = v8::ObjectTemplate::New();
+    v8::Handle<v8::ObjectTemplate> global = v8::ObjectTemplate::New(isolate_);
     context_.Reset(isolate_, v8::Context::New(isolate_, NULL, global));
   }
   virtual void TearDown() {
-    context_.Dispose();
+    context_.Reset();
     ASSERT_TRUE(PpapiGlobals::Get()->GetVarTracker()->GetLiveVars().empty());
     ProxyLock::Release();
   }
@@ -201,9 +206,9 @@ class V8VarConverterTest : public testing::Test {
 
   bool RoundTrip(const PP_Var& var, PP_Var* result) {
     v8::HandleScope handle_scope(isolate_);
-    v8::Context::Scope context_scope(isolate_, context_);
     v8::Local<v8::Context> context =
         v8::Local<v8::Context>::New(isolate_, context_);
+    v8::Context::Scope context_scope(context);
     v8::Handle<v8::Value> v8_result;
     if (!converter_->ToV8Value(var, context, &v8_result))
       return false;
@@ -221,7 +226,7 @@ class V8VarConverterTest : public testing::Test {
     if (!RoundTrip(expected.get(), &actual_var))
       return false;
     ScopedPPVar actual(ScopedPPVar::PassRef(), actual_var);
-    return TestEqual(expected.get(), actual.get());
+    return TestEqual(expected.get(), actual.get(), false);
   }
 
   v8::Isolate* isolate_;
@@ -329,9 +334,9 @@ TEST_F(V8VarConverterTest, DictionaryArrayRoundTripTest) {
 TEST_F(V8VarConverterTest, Cycles) {
   // Check that cycles aren't converted.
   v8::HandleScope handle_scope(isolate_);
-  v8::Context::Scope context_scope(isolate_, context_);
   v8::Local<v8::Context> context =
       v8::Local<v8::Context>::New(isolate_, context_);
+  v8::Context::Scope context_scope(context);
 
   // Var->V8 conversion.
   {
@@ -365,14 +370,17 @@ TEST_F(V8VarConverterTest, Cycles) {
 
   // V8->Var conversion.
   {
-    v8::Handle<v8::Object> object = v8::Object::New();
-    v8::Handle<v8::Array> array = v8::Array::New();
+    v8::Handle<v8::Object> object = v8::Object::New(isolate_);
+    v8::Handle<v8::Array> array = v8::Array::New(isolate_);
 
     PP_Var var_result;
 
     // Array <-> dictionary cycle.
     std::string key = "1";
-    object->Set(v8::String::New(key.c_str(), key.length()), array);
+    object->Set(
+        v8::String::NewFromUtf8(
+            isolate_, key.c_str(), v8::String::kNormalString, key.length()),
+        array);
     array->Set(0, object);
 
     ASSERT_FALSE(FromV8ValueSync(object, context, &var_result));
@@ -395,7 +403,9 @@ TEST_F(V8VarConverterTest, StrangeDictionaryKeyTest) {
   {
     // Test non-string key types. They should be cast to strings.
     v8::HandleScope handle_scope(isolate_);
-    v8::Context::Scope context_scope(isolate_, context_);
+    v8::Local<v8::Context> context =
+        v8::Local<v8::Context>::New(isolate_, context_);
+    v8::Context::Scope context_scope(context);
 
     const char* source = "(function() {"
         "return {"
@@ -408,7 +418,8 @@ TEST_F(V8VarConverterTest, StrangeDictionaryKeyTest) {
         "};"
         "})();";
 
-    v8::Handle<v8::Script> script(v8::Script::New(v8::String::New(source)));
+    v8::Handle<v8::Script> script(
+        v8::Script::Compile(v8::String::NewFromUtf8(isolate_, source)));
     v8::Handle<v8::Object> object = script->Run().As<v8::Object>();
     ASSERT_FALSE(object.IsEmpty());
 
@@ -433,7 +444,7 @@ TEST_F(V8VarConverterTest, StrangeDictionaryKeyTest) {
     ScopedPPVar release_expected(
         ScopedPPVar::PassRef(), expected->GetPPVar());
 
-    ASSERT_TRUE(TestEqual(release_expected.get(), release_actual.get()));
+    ASSERT_TRUE(TestEqual(release_expected.get(), release_actual.get(), true));
   }
 }
 

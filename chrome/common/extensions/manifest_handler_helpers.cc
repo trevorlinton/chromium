@@ -8,9 +8,9 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_icon_set.h"
 #include "extensions/common/error_utils.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
 
 
@@ -35,7 +35,7 @@ bool LoadIconsFromDictionary(const base::DictionaryValue* icons_value,
                              const int* icon_sizes,
                              size_t num_icon_sizes,
                              ExtensionIconSet* icons,
-                             string16* error) {
+                             base::string16* error) {
   DCHECK(icons);
   for (size_t i = 0; i < num_icon_sizes; ++i) {
     std::string key = base::IntToString(icon_sizes[i]);

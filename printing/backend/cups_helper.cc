@@ -62,7 +62,7 @@ void ParseLpOptions(const base::FilePath& filepath,
       continue;
     }
 
-    TrimWhitespaceASCII(line, TRIM_ALL, &line);
+    base::TrimWhitespaceASCII(line, base::TRIM_ALL, &line);
     if (line.empty())
       continue;
 
@@ -80,7 +80,8 @@ void ParseLpOptions(const base::FilePath& filepath,
     }
 
     line = line.substr(space_found + 1);
-    TrimWhitespaceASCII(line, TRIM_ALL, &line);  // Remove extra spaces.
+    // Remove extra spaces.
+    base::TrimWhitespaceASCII(line, base::TRIM_ALL, &line);
     if (line.empty())
       continue;
     // Parse the selected printer custom options.
@@ -99,7 +100,7 @@ void MarkLpOptions(const std::string& printer_name, ppd_file_t** ppd) {
   std::vector<base::FilePath> file_locations;
   file_locations.push_back(base::FilePath(kSystemLpOptionPath));
   file_locations.push_back(base::FilePath(
-      file_util::GetHomeDir().Append(kUserLpOptionPath)));
+      base::GetHomeDir().Append(kUserLpOptionPath)));
 
   for (std::vector<base::FilePath>::const_iterator it = file_locations.begin();
        it != file_locations.end(); ++it) {
@@ -341,11 +342,11 @@ bool ParsePpdCapabilities(
     const std::string& printer_capabilities,
     PrinterSemanticCapsAndDefaults* printer_info) {
   base::FilePath ppd_file_path;
-  if (!file_util::CreateTemporaryFile(&ppd_file_path))
+  if (!base::CreateTemporaryFile(&ppd_file_path))
     return false;
 
   int data_size = printer_capabilities.length();
-  if (data_size != file_util::WriteFile(
+  if (data_size != base::WriteFile(
                        ppd_file_path,
                        printer_capabilities.data(),
                        data_size)) {

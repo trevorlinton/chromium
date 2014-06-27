@@ -24,17 +24,16 @@ extern "C" {
 #include "ui/gfx/x/x11_types.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_implementation.h"
-#include "ui/gl/vsync_provider.h"
+#include "ui/gl/sync_control_vsync_provider.h"
 
 namespace gfx {
 
 namespace {
 
 // scoped_ptr functor for XFree(). Use as follows:
-//   scoped_ptr_malloc<XVisualInfo, ScopedPtrXFree> foo(...);
+//   scoped_ptr<XVisualInfo, ScopedPtrXFree> foo(...);
 // where "XVisualInfo" is any X type that is freed with XFree.
-class ScopedPtrXFree {
- public:
+struct ScopedPtrXFree {
   void operator()(void* x) const {
     ::XFree(x);
   }
@@ -165,7 +164,7 @@ class SGIVideoSyncProviderThreadShim {
     visual_info_template.visualid = XVisualIDFromVisual(attributes.visual);
 
     int visual_info_count = 0;
-    scoped_ptr_malloc<XVisualInfo, ScopedPtrXFree> visual_info_list(
+    scoped_ptr<XVisualInfo, ScopedPtrXFree> visual_info_list(
         XGetVisualInfo(display_, VisualIDMask,
                        &visual_info_template, &visual_info_count));
 
@@ -600,6 +599,10 @@ bool NativeViewGLSurfaceGLX::IsOffscreen() {
 }
 
 bool NativeViewGLSurfaceGLX::SwapBuffers() {
+  TRACE_EVENT2("gpu", "NativeViewGLSurfaceGLX:RealSwapBuffers",
+      "width", GetSize().width(),
+      "height", GetSize().height());
+
   glXSwapBuffers(g_display, GetDrawableHandle());
   return true;
 }
@@ -612,13 +615,8 @@ void* NativeViewGLSurfaceGLX::GetHandle() {
   return reinterpret_cast<void*>(GetDrawableHandle());
 }
 
-std::string NativeViewGLSurfaceGLX::GetExtensions() {
-  std::string extensions = GLSurface::GetExtensions();
-  if (gfx::g_driver_glx.ext.b_GLX_MESA_copy_sub_buffer) {
-    extensions += extensions.empty() ? "" : " ";
-    extensions += "GL_CHROMIUM_post_sub_buffer";
-  }
-  return extensions;
+bool NativeViewGLSurfaceGLX::SupportsPostSubBuffer() {
+  return gfx::g_driver_glx.ext.b_GLX_MESA_copy_sub_buffer;
 }
 
 void* NativeViewGLSurfaceGLX::GetConfig() {
@@ -648,7 +646,7 @@ void* NativeViewGLSurfaceGLX::GetConfig() {
     int visual_id = XVisualIDFromVisual(attributes.visual);
 
     int num_elements = 0;
-    scoped_ptr_malloc<GLXFBConfig, ScopedPtrXFree> configs(
+    scoped_ptr<GLXFBConfig, ScopedPtrXFree> configs(
         glXGetFBConfigs(g_display,
                         DefaultScreen(g_display),
                         &num_elements));
@@ -730,7 +728,7 @@ bool PbufferGLSurfaceGLX::Initialize() {
   };
 
   int num_elements = 0;
-  scoped_ptr_malloc<GLXFBConfig, ScopedPtrXFree> configs(
+  scoped_ptr<GLXFBConfig, ScopedPtrXFree> configs(
       glXChooseFBConfig(g_display,
                         DefaultScreen(g_display),
                         config_attributes,

@@ -298,6 +298,20 @@ var tests = [
     bookmarkManager.canEdit(pass(function(result) {
       assertTrue(result, 'Should be able to edit bookmarks');
     }));
+  },
+
+  function getSetMetaInfo() {
+    bookmarkManager.getMetaInfo(nodeA.id, "meta", pass(function(result) {
+      assertTrue(!result);
+    }));
+    chrome.test.listenOnce(bookmarkManager.onMetaInfoChanged, pass(
+        function(id) {
+      assertEq(nodeA.id, id);
+    }));
+    bookmarkManager.setMetaInfo(nodeA.id, "meta", "bla");
+    bookmarkManager.getMetaInfo(nodeA.id, "meta", pass(function(result) {
+      assertEq("bla", result);
+    }));
   }
 ];
 

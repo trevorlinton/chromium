@@ -76,6 +76,13 @@ base::StringPiece FindFilenameNoExtension(const std::string* path);
 // preserved.
 void RemoveFilename(std::string* path);
 
+// Returns if the given character is a slash. This allows both slashes and
+// backslashes for consistency between Posix and Windows (as opposed to
+// FilePath::IsSeparator which is based on the current platform).
+inline bool IsSlash(const char ch) {
+  return ch == '/' || ch == '\\';
+}
+
 // Returns true if the given path ends with a slash.
 bool EndsWithSlash(const std::string& s);
 
@@ -137,5 +144,37 @@ std::string PathToSystem(const std::string& path);
 // to the given directory, which also must be source-absolute.
 std::string RebaseSourceAbsolutePath(const std::string& input,
                                      const SourceDir& dest_dir);
+
+// Returns the given directory with no terminating slash at the end, such that
+// appending a slash and more stuff will produce a valid path.
+//
+// If the directory refers to either the source or system root, we'll append
+// a "." so this remains valid.
+std::string DirectoryWithNoLastSlash(const SourceDir& dir);
+
+// Returns the "best" SourceDir representing the given path. If it's inside the
+// given source_root, a source-relative directory will be returned (e.g.
+// "//foo/bar.cc". If it's outside of the source root, a system-absolute
+// directory will be returned.
+SourceDir SourceDirForPath(const base::FilePath& source_root,
+                           const base::FilePath& path);
+
+// Like SourceDirForPath but returns the SourceDir representing the current
+// directory.
+SourceDir SourceDirForCurrentDirectory(const base::FilePath& source_root);
+
+// -----------------------------------------------------------------------------
+
+// These functions return the various flavors of output and gen directories.
+SourceDir GetToolchainOutputDir(const Settings* settings);
+SourceDir GetToolchainGenDir(const Settings* settings);
+SourceDir GetOutputDirForSourceDir(const Settings* settings,
+                                   const SourceDir& source_dir);
+SourceDir GetGenDirForSourceDir(const Settings* settings,
+                                const SourceDir& source_dir);
+SourceDir GetTargetOutputDir(const Target* target);
+SourceDir GetTargetGenDir(const Target* target);
+SourceDir GetCurrentOutputDir(const Scope* scope);
+SourceDir GetCurrentGenDir(const Scope* scope);
 
 #endif  // TOOLS_GN_FILESYSTEM_UTILS_H_

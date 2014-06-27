@@ -12,6 +12,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_info_interface.h"
+#include "chrome/browser/profiles/profile_info_util.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/ui/browser.h"
@@ -82,15 +83,15 @@ class Observer : public chrome::BrowserListObserver,
 }
 
 - (IBAction)switchToProfileFromMenu:(id)sender {
-  menu_->SwitchToProfile([sender tag], false);
-  ProfileMetrics::LogProfileSwitchUser(ProfileMetrics::SWITCH_PROFILE_MENU);
+  menu_->SwitchToProfile([sender tag], false,
+                         ProfileMetrics::SWITCH_PROFILE_MENU);
 }
 
 - (IBAction)switchToProfileFromDock:(id)sender {
   // Explicitly bring to the foreground when taking action from the dock.
   [NSApp activateIgnoringOtherApps:YES];
-  menu_->SwitchToProfile([sender tag], false);
-  ProfileMetrics::LogProfileSwitchUser(ProfileMetrics::SWITCH_PROFILE_DOCK);
+  menu_->SwitchToProfile([sender tag], false,
+                         ProfileMetrics::SWITCH_PROFILE_DOCK);
 }
 
 - (IBAction)editProfile:(id)sender {
@@ -129,7 +130,16 @@ class Observer : public chrome::BrowserListObserver,
     if (dock) {
       [item setIndentationLevel:1];
     } else {
-      [item setImage:itemData.icon.ToNSImage()];
+      gfx::Image itemIcon = itemData.icon;
+      // The image might be too large and need to be resized (i.e. if this is
+      // a signed-in user using the GAIA profile photo).
+      if (itemIcon.Width() > profiles::kAvatarIconWidth ||
+          itemIcon.Height() > profiles::kAvatarIconHeight) {
+        itemIcon = profiles::GetAvatarIconForWebUI(itemIcon, true);
+      }
+      DCHECK(itemIcon.Width() <= profiles::kAvatarIconWidth);
+      DCHECK(itemIcon.Height() <= profiles::kAvatarIconHeight);
+      [item setImage:itemIcon.ToNSImage()];
       [item setState:itemData.active ? NSOnState : NSOffState];
     }
     [menu insertItem:item atIndex:i + offset];
@@ -139,6 +149,14 @@ class Observer : public chrome::BrowserListObserver,
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem*)menuItem {
+  // In guest mode, chrome://settings isn't available, so disallow creating
+  // or editing a profile.
+  Profile* activeProfile = ProfileManager::GetLastUsedProfile();
+  if (activeProfile->IsGuestSession()) {
+    return [menuItem action] != @selector(newProfile:) &&
+           [menuItem action] != @selector(editProfile:);
+  }
+
   const AvatarMenu::Item& itemData = menu_->GetItemAt(
       menu_->GetActiveProfileIndex());
   if ([menuItem action] == @selector(switchToProfileFromDock:) ||
@@ -204,14 +222,15 @@ class Observer : public chrome::BrowserListObserver,
   if (!browser)
     return;
 
-  size_t active_profile_index = menu_->GetActiveProfileIndex();
+  // In guest mode, there is no active menu item.
+  size_t activeProfileIndex = browser->profile()->IsGuestSession() ?
+      std::string::npos : menu_->GetActiveProfileIndex();
 
   // Update the state for the menu items.
   for (size_t i = 0; i < menu_->GetNumberOfItems(); ++i) {
     size_t tag = menu_->GetItemAt(i).menu_index;
     [[[self menu] itemWithTag:tag]
-        setState:active_profile_index == tag ? NSOnState
-                                             : NSOffState];
+        setState:activeProfileIndex == tag ? NSOnState : NSOffState];
   }
 }
 

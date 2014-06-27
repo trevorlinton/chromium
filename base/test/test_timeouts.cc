@@ -16,7 +16,7 @@ namespace {
 
 // ASan and TSan instrument each memory access. This may slow the execution
 // down significantly.
-#if defined(ADDRESS_SANITIZER) || defined(THREAD_SANITIZER)
+#if defined(ADDRESS_SANITIZER) || defined(THREAD_SANITIZER) || defined(SYZYASAN)
 static const int kTimeoutMultiplier = 2;
 #else
 static const int kTimeoutMultiplier = 1;
@@ -68,7 +68,7 @@ int TestTimeouts::action_max_timeout_ms_ = 30000;
 #endif  // NDEBUG
 int TestTimeouts::large_test_timeout_ms_ = 10 * 60 * 1000;
 
-int TestTimeouts::test_launcher_timeout_ms_ = 70000;
+int TestTimeouts::test_launcher_timeout_ms_ = 45000;
 
 // static
 void TestTimeouts::Initialize() {

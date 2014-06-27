@@ -30,16 +30,19 @@
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/session_manager_client.h"
+#include "components/policy/core/common/policy_switches.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_switches.h"
 #include "gpu/command_buffer/service/gpu_switches.h"
 #include "media/base/media_switches.h"
+#include "ui/app_list/app_list_switches.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/compositor/compositor_switches.h"
 #include "ui/events/event_switches.h"
 #include "ui/gfx/switches.h"
 #include "ui/gl/gl_switches.h"
-#include "ui/views/corewm/corewm_switches.h"
+#include "ui/ozone/ozone_switches.h"
+#include "ui/wm/core/wm_core_switches.h"
 #include "url/gurl.h"
 
 using content::BrowserThread;
@@ -48,7 +51,7 @@ namespace chromeos {
 
 namespace {
 
-// Increase logging level for Guest mode to avoid LOG(INFO) messages in logs.
+// Increase logging level for Guest mode to avoid INFO messages in logs.
 const char kGuestModeLoggingLevel[] = "1";
 
 // Format of command line switch.
@@ -65,140 +68,147 @@ std::string DeriveCommandLine(const GURL& start_url,
   DCHECK_NE(&base_command_line, command_line);
 
   static const char* kForwardSwitches[] = {
-      ::switches::kAllowFiltersOverIPC,
-      ::switches::kAllowWebUICompositing,
-      ::switches::kDeviceManagementUrl,
-      ::switches::kDisableAccelerated2dCanvas,
-      ::switches::kDisableAcceleratedOverflowScroll,
-      ::switches::kDisableAcceleratedPlugins,
-      ::switches::kDisableAcceleratedVideoDecode,
-      ::switches::kDisableBrowserPluginCompositing,
-      ::switches::kDisableDeadlineScheduling,
-      ::switches::kDisableDelegatedRenderer,
-      ::switches::kDisableForceCompositingMode,
-      ::switches::kDisableGpuShaderDiskCache,
-      ::switches::kDisableGpuWatchdog,
-      ::switches::kDisableGpuCompositing,
-      ::switches::kDisablePrefixedEncryptedMedia,
-      ::switches::kDisablePanelFitting,
-      ::switches::kDisableSeccompFilterSandbox,
-      ::switches::kDisableSetuidSandbox,
-      ::switches::kDisableThreadedCompositing,
-      ::switches::kDisableTouchDragDrop,
-      ::switches::kDisableTouchEditing,
-      ::switches::kDisableUniversalAcceleratedOverflowScroll,
-      ::switches::kDisableWebKitMediaSource,
-      ::switches::kDisableAcceleratedFixedRootBackground,
-      ::switches::kEnableAcceleratedFixedRootBackground,
-      ::switches::kEnableAcceleratedOverflowScroll,
-      ::switches::kEnableBeginFrameScheduling,
-      ::switches::kEnableCompositingForFixedPosition,
-      ::switches::kEnableDeadlineScheduling,
-      ::switches::kEnableDelegatedRenderer,
-      ::switches::kEnableEncryptedMedia,
-      ::switches::kEnableGestureTapHighlight,
-      ::switches::kDisableGestureTapHighlight,
-      ::switches::kDisableGpuSandbox,
-      ::switches::kEnableLogging,
-      ::switches::kEnablePinch,
-      ::switches::kEnableRepaintAfterLayout,
-      ::switches::kEnableThreadedCompositing,
-      ::switches::kEnableTouchDragDrop,
-      ::switches::kEnableTouchEditing,
-      ::switches::kEnableUniversalAcceleratedOverflowScroll,
-      ::switches::kEnableViewport,
-      ::switches::kForceDeviceScaleFactor,
-      ::switches::kGpuStartupDialog,
-      ::switches::kGpuSandboxAllowSysVShm,
-      ::switches::kMultiProfiles,
-      ::switches::kNoSandbox,
-      ::switches::kPpapiFlashArgs,
-      ::switches::kPpapiFlashInProcess,
-      ::switches::kPpapiFlashPath,
-      ::switches::kPpapiFlashVersion,
-      ::switches::kPpapiInProcess,
-      ::switches::kRendererStartupDialog,
-      ::switches::kEnableShareGroupAsyncTextureUpload,
-      ::switches::kTabCaptureUpscaleQuality,
-      ::switches::kTabCaptureDownscaleQuality,
+    ::switches::kDisableAccelerated2dCanvas,
+    ::switches::kDisableAcceleratedOverflowScroll,
+    ::switches::kDisableAcceleratedVideoDecode,
+    ::switches::kDisableBrowserPluginCompositing,
+    ::switches::kDisableDelegatedRenderer,
+    ::switches::kDisableFastTextAutosizing,
+    ::switches::kDisableFiltersOverIPC,
+    ::switches::kDisableForceCompositingMode,
+    ::switches::kDisableGpuShaderDiskCache,
+    ::switches::kDisableGpuWatchdog,
+    ::switches::kDisableGpuCompositing,
+    ::switches::kDisableGpuRasterization,
+    ::switches::kDisableImplSidePainting,
+    ::switches::kDisableLowResTiling,
+    ::switches::kDisableMapImage,
+    ::switches::kDisablePrefixedEncryptedMedia,
+    ::switches::kDisablePanelFitting,
+    ::switches::kDisableRepaintAfterLayout,
+    ::switches::kDisableSeccompFilterSandbox,
+    ::switches::kDisableSetuidSandbox,
+    ::switches::kDisableThreadedCompositing,
+    ::switches::kDisableTouchDragDrop,
+    ::switches::kDisableTouchEditing,
+    ::switches::kDisableUniversalAcceleratedOverflowScroll,
+    ::switches::kDisableUnprefixedMediaSource,
+    ::switches::kDisableWebKitMediaSource,
+    ::switches::kDisableAcceleratedFixedRootBackground,
+    ::switches::kEnableAcceleratedFixedRootBackground,
+    ::switches::kEnableAcceleratedOverflowScroll,
+    ::switches::kEnableBeginFrameScheduling,
+    ::switches::kEnableCompositingForFixedPosition,
+    ::switches::kEnableDelegatedRenderer,
+    ::switches::kEnableEncryptedMedia,
+    ::switches::kEnableFastTextAutosizing,
+    ::switches::kEnableGestureTapHighlight,
+    ::switches::kDisableGestureTapHighlight,
+    ::switches::kDisableGpuSandbox,
+    ::switches::kEnableDeferredFilters,
+    ::switches::kEnableGpuRasterization,
+    ::switches::kEnableImplSidePainting,
+    ::switches::kEnableLogging,
+    ::switches::kEnableLowResTiling,
+    ::switches::kEnableMapImage,
+    ::switches::kEnablePinch,
+    ::switches::kEnableRepaintAfterLayout,
+    ::switches::kEnableThreadedCompositing,
+    ::switches::kEnableTouchDragDrop,
+    ::switches::kEnableTouchEditing,
+    ::switches::kEnableUniversalAcceleratedOverflowScroll,
+    ::switches::kEnableViewport,
+    ::switches::kEnableViewportMeta,
+    ::switches::kMainFrameResizesAreOrientationChanges,
+    ::switches::kForceDeviceScaleFactor,
+    ::switches::kForceGpuRasterization,
+    ::switches::kGpuStartupDialog,
+    ::switches::kGpuSandboxAllowSysVShm,
+    ::switches::kGpuSandboxFailuresFatal,
+    ::switches::kGpuSandboxStartAfterInitialization,
+    ::switches::kMultiProfiles,
+    ::switches::kNoSandbox,
+    ::switches::kNumRasterThreads,
+    ::switches::kPpapiFlashArgs,
+    ::switches::kPpapiFlashPath,
+    ::switches::kPpapiFlashVersion,
+    ::switches::kPpapiInProcess,
+    ::switches::kRendererStartupDialog,
+    ::switches::kEnableShareGroupAsyncTextureUpload,
+    ::switches::kTabCaptureUpscaleQuality,
+    ::switches::kTabCaptureDownscaleQuality,
 #if defined(USE_XI2_MT)
-      ::switches::kTouchCalibration,
+    ::switches::kTouchCalibration,
 #endif
-      ::switches::kTouchDevices,
-      ::switches::kTouchEvents,
-      ::switches::kTouchOptimizedUI,
-      ::switches::kUIDisableDeadlineScheduling,
-      ::switches::kUIDisableThreadedCompositing,
-      ::switches::kUIEnableDeadlineScheduling,
-      ::switches::kUIMaxFramesPending,
-      ::switches::kUIPrioritizeInGpuProcess,
+    ::switches::kTouchDevices,
+    ::switches::kTouchEvents,
+    ::switches::kTouchOptimizedUI,
+    ::switches::kUIDisableThreadedCompositing,
+    ::switches::kUIPrioritizeInGpuProcess,
 #if defined(USE_CRAS)
-      ::switches::kUseCras,
+    ::switches::kUseCras,
 #endif
-      ::switches::kUseGL,
-      ::switches::kUserDataDir,
-      ::switches::kV,
-      ::switches::kVModule,
-      ::switches::kEnableWebGLDraftExtensions,
+    ::switches::kUseDiscardableMemory,
+    ::switches::kUseGL,
+    ::switches::kUserDataDir,
+    ::switches::kV,
+    ::switches::kVModule,
+    ::switches::kWebGLCommandBufferSizeKb,
+    ::switches::kEnableWebGLDraftExtensions,
 #if defined(ENABLE_WEBRTC)
-      ::switches::kDisableWebRtcHWDecoding,
-      ::switches::kDisableWebRtcHWEncoding,
-      ::switches::kEnableWebRtcHWVp8Encoding,
+    ::switches::kDisableWebRtcHWDecoding,
+    ::switches::kDisableWebRtcHWEncoding,
+    ::switches::kEnableAudioTrackProcessing,
+    ::switches::kEnableWebRtcHWVp8Encoding,
 #endif
-      ash::switches::kAshDefaultWallpaperLarge,
-      ash::switches::kAshDefaultWallpaperSmall,
-#if defined(OS_CHROMEOS)
-      ash::switches::kAshDisableAudioDeviceMenu,
+#if defined(USE_OZONE)
+    ::switches::kOzonePlatform,
 #endif
-      ash::switches::kAshGuestWallpaperLarge,
-      ash::switches::kAshGuestWallpaperSmall,
-      ash::switches::kAshHostWindowBounds,
-      ash::switches::kAshTouchHud,
-      ash::switches::kAuraLegacyPowerButton,
-      // Please keep these in alphabetical order. Non-UI Compositor switches
-      // here should also be added to
-      // content/browser/renderer_host/render_process_host_impl.cc.
-      cc::switches::kBackgroundColorInsteadOfCheckerboard,
-      cc::switches::kCompositeToMailbox,
-      cc::switches::kDisableCompositedAntialiasing,
-      cc::switches::kDisableCompositorTouchHitTesting,
-      cc::switches::kDisableImplSidePainting,
-      cc::switches::kDisableMapImage,
-      cc::switches::kDisableThreadedAnimation,
-      cc::switches::kEnableImplSidePainting,
-      cc::switches::kEnableMapImage,
-      cc::switches::kEnablePartialSwap,
-      cc::switches::kEnablePerTilePainting,
-      cc::switches::kEnablePinchVirtualViewport,
-      cc::switches::kEnableTopControlsPositionCalculation,
-      cc::switches::kForceDirectLayerDrawing,
-      cc::switches::kLowResolutionContentsScaleFactor,
-      cc::switches::kMaxTilesForInterestArea,
-      cc::switches::kMaxUnusedResourceMemoryUsagePercentage,
-      cc::switches::kNumRasterThreads,
-      cc::switches::kShowCompositedLayerBorders,
-      cc::switches::kShowFPSCounter,
-      cc::switches::kShowNonOccludingRects,
-      cc::switches::kShowOccludingRects,
-      cc::switches::kShowPropertyChangedRects,
-      cc::switches::kShowReplicaScreenSpaceRects,
-      cc::switches::kShowScreenSpaceRects,
-      cc::switches::kShowSurfaceDamageRects,
-      cc::switches::kSlowDownRasterScaleFactor,
-      cc::switches::kTraceOverdraw,
-      cc::switches::kUIDisablePartialSwap,
-      cc::switches::kUIEnablePerTilePainting,
-      chromeos::switches::kDbusStub,
-      chromeos::switches::kDisableLoginAnimations,
-      chromeos::switches::kDisableOobeAnimation,
-      chromeos::switches::kHasChromeOSDiamondKey,
-      chromeos::switches::kHasChromeOSKeyboard,
-      chromeos::switches::kLoginProfile,
-      chromeos::switches::kNaturalScrollDefault,
-      ::switches::kEnableBrowserTextSubpixelPositioning,
-      ::switches::kEnableWebkitTextSubpixelPositioning,
-      views::corewm::switches::kNoDropShadows,
-      views::corewm::switches::kWindowAnimationsDisabled,
+    app_list::switches::kDisableSyncAppList,
+    app_list::switches::kEnableSyncAppList,
+    ash::switches::kAshDefaultWallpaperLarge,
+    ash::switches::kAshDefaultWallpaperSmall,
+    ash::switches::kAshGuestWallpaperLarge,
+    ash::switches::kAshGuestWallpaperSmall,
+    ash::switches::kAshHostWindowBounds,
+    ash::switches::kAshTouchHud,
+    ash::switches::kAuraLegacyPowerButton,
+    // Please keep these in alphabetical order. Non-UI Compositor switches
+    // here should also be added to
+    // content/browser/renderer_host/render_process_host_impl.cc.
+    cc::switches::kCompositeToMailbox,
+    cc::switches::kDisableCompositedAntialiasing,
+    cc::switches::kDisableCompositorTouchHitTesting,
+    cc::switches::kDisableMainFrameBeforeActivation,
+    cc::switches::kDisableMainFrameBeforeDraw,
+    cc::switches::kDisableThreadedAnimation,
+    cc::switches::kEnableGpuBenchmarking,
+    cc::switches::kEnablePinchVirtualViewport,
+    cc::switches::kEnableMainFrameBeforeActivation,
+    cc::switches::kEnableTopControlsPositionCalculation,
+    cc::switches::kMaxTilesForInterestArea,
+    cc::switches::kMaxUnusedResourceMemoryUsagePercentage,
+    cc::switches::kShowCompositedLayerBorders,
+    cc::switches::kShowFPSCounter,
+    cc::switches::kShowLayerAnimationBounds,
+    cc::switches::kShowNonOccludingRects,
+    cc::switches::kShowOccludingRects,
+    cc::switches::kShowPropertyChangedRects,
+    cc::switches::kShowReplicaScreenSpaceRects,
+    cc::switches::kShowScreenSpaceRects,
+    cc::switches::kShowSurfaceDamageRects,
+    cc::switches::kSlowDownRasterScaleFactor,
+    cc::switches::kUIDisablePartialSwap,
+    chromeos::switches::kDbusStub,
+    chromeos::switches::kDisableLoginAnimations,
+    chromeos::switches::kHasChromeOSDiamondKey,
+    chromeos::switches::kHasChromeOSKeyboard,
+    chromeos::switches::kLoginProfile,
+    chromeos::switches::kNaturalScrollDefault,
+    ::switches::kEnableBrowserTextSubpixelPositioning,
+    ::switches::kEnableWebkitTextSubpixelPositioning,
+    policy::switches::kDeviceManagementUrl,
+    wm::switches::kWindowAnimationsDisabled,
   };
   command_line->CopySwitchesFrom(base_command_line,
                                  kForwardSwitches,
@@ -225,15 +235,6 @@ std::string DeriveCommandLine(const GURL& start_url,
         ::switches::kRegisterPepperPlugins,
         base_command_line.GetSwitchValueNative(
             ::switches::kRegisterPepperPlugins).c_str());
-  }
-
-  // TODO(zelidrag): Remove this hack that get us around compositing bug from
-  // http://crbug.com/179256 once that bug is resolved.
-  if (command_line->HasSwitch(::switches::kForceAppMode)) {
-    std::string switch_to_remove("--");
-    switch_to_remove.append(cc::switches::kEnablePartialSwap);
-    cmd_line_str = cmd_line_str.replace(cmd_line_str.find(switch_to_remove),
-                                        switch_to_remove.length(), "");
   }
 
   return cmd_line_str;
@@ -331,6 +332,7 @@ void ChromeRestartRequest::RestartJob() {
 
 std::string GetOffTheRecordCommandLine(
     const GURL& start_url,
+    bool is_oobe_completed,
     const CommandLine& base_command_line,
     CommandLine* command_line) {
   base::DictionaryValue otr_switches;
@@ -342,6 +344,12 @@ std::string GetOffTheRecordCommandLine(
   // Override the home page.
   otr_switches.SetString(::switches::kHomePage,
                          GURL(chrome::kChromeUINewTabURL).spec());
+
+  // If OOBE is not finished yet, lock down the guest session to not allow
+  // surfing the web. Guest mode is still useful to inspect logs and run network
+  // diagnostics.
+  if (!is_oobe_completed)
+    otr_switches.SetString(switches::kOobeGuestSession, std::string());
 
   return DeriveCommandLine(start_url,
                            base_command_line,

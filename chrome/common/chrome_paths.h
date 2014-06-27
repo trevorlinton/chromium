@@ -7,6 +7,10 @@
 
 #include "build/build_config.h"
 
+namespace base {
+class FilePath;
+}
+
 // This file declares path keys for the chrome module.  These can be used with
 // the PathService to access various special directories and files.
 
@@ -41,6 +45,8 @@ enum {
 #if defined(OS_MACOSX) && !defined(OS_IOS)
   DIR_MANAGED_PREFS,            // Directory that stores the managed prefs plist
                                 // files for the current user.
+  DIR_USER_APPLICATIONS,        // ~/Applications
+  DIR_USER_LIBRARY,             // ~/Library
 #endif
 #if defined(OS_CHROMEOS) || (defined(OS_MACOSX) && !defined(OS_IOS))
   DIR_USER_EXTERNAL_EXTENSIONS,  // Directory for per-user external extensions
@@ -83,7 +89,6 @@ enum {
   DIR_PNACL_BASE,               // Full path to the base dir for PNaCl.
   DIR_PNACL_COMPONENT,          // Full path to the latest PNaCl version
                                 // (subdir of DIR_PNACL_BASE).
-  FILE_O3D_PLUGIN,              // Full path to the O3D Pepper plugin file.
   FILE_O1D_PLUGIN,              // Full path to the O1D Pepper plugin file.
   FILE_EFFECTS_PLUGIN,          // Full path to the Effects Pepper plugin file.
   FILE_GTALK_PLUGIN,            // Full path to the GTalk Pepper plugin file.
@@ -106,6 +111,13 @@ enum {
                                    // files to be installed when managed user
                                    // session starts.
 
+#if defined(OS_LINUX) || (defined(OS_MACOSX) && !defined(OS_IOS))
+  DIR_NATIVE_MESSAGING,         // System directory where native messaging host
+                                // manifest files are stored.
+  DIR_USER_NATIVE_MESSAGING,    // Directory with Native Messaging Hosts
+                                // installed per-user.
+#endif
+
   // Valid only in development environment; TODO(darin): move these
   DIR_GEN_TEST_DATA,            // Directory where generated test data resides.
   DIR_TEST_DATA,                // Directory where unit test data resides.
@@ -116,6 +128,10 @@ enum {
 
 // Call once to register the provider for the path keys defined above.
 void RegisterPathProvider();
+
+// Get or set the invalid user data dir that was originally specified.
+void SetInvalidSpecifiedUserDataDir(const base::FilePath& user_data_dir);
+const base::FilePath& GetInvalidSpecifiedUserDataDir();
 
 }  // namespace chrome
 

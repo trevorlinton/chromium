@@ -4,42 +4,21 @@
 
 #include "net/quic/quic_crypto_client_stream.h"
 
-#include "net/base/completion_callback.h"
-#include "net/base/net_errors.h"
 #include "net/quic/crypto/crypto_protocol.h"
 #include "net/quic/crypto/crypto_utils.h"
 #include "net/quic/crypto/null_encrypter.h"
 #include "net/quic/crypto/proof_verifier.h"
-#include "net/quic/crypto/proof_verifier_chromium.h"
+#include "net/quic/quic_client_session_base.h"
 #include "net/quic/quic_protocol.h"
-#include "net/quic/quic_session.h"
-#include "net/ssl/ssl_connection_status_flags.h"
-#include "net/ssl/ssl_info.h"
 
 namespace net {
-
-namespace {
-
-// Copies CertVerifyResult from |verify_details| to |cert_verify_result|.
-void CopyCertVerifyResult(
-    const ProofVerifyDetails* verify_details,
-    scoped_ptr<CertVerifyResult>* cert_verify_result) {
-  const CertVerifyResult* cert_verify_result_other =
-      &(reinterpret_cast<const ProofVerifyDetailsChromium*>(
-          verify_details))->cert_verify_result;
-  CertVerifyResult* result_copy = new CertVerifyResult;
-  result_copy->CopyFrom(*cert_verify_result_other);
-  cert_verify_result->reset(result_copy);
-}
-
-}  // namespace
 
 QuicCryptoClientStream::ProofVerifierCallbackImpl::ProofVerifierCallbackImpl(
     QuicCryptoClientStream* stream)
     : stream_(stream) {}
 
 QuicCryptoClientStream::ProofVerifierCallbackImpl::
-    ~ProofVerifierCallbackImpl() {}
+~ProofVerifierCallbackImpl() {}
 
 void QuicCryptoClientStream::ProofVerifierCallbackImpl::Run(
     bool ok,
@@ -63,18 +42,19 @@ void QuicCryptoClientStream::ProofVerifierCallbackImpl::Cancel() {
   stream_ = NULL;
 }
 
-
 QuicCryptoClientStream::QuicCryptoClientStream(
-    const string& server_hostname,
-    QuicSession* session,
+    const QuicSessionKey& server_key,
+    QuicClientSessionBase* session,
+    ProofVerifyContext* verify_context,
     QuicCryptoClientConfig* crypto_config)
     : QuicCryptoStream(session),
       next_state_(STATE_IDLE),
       num_client_hellos_(0),
       crypto_config_(crypto_config),
-      server_hostname_(server_hostname),
+      server_key_(server_key),
       generation_counter_(0),
-      proof_verify_callback_(NULL) {
+      proof_verify_callback_(NULL),
+      verify_context_(verify_context) {
 }
 
 QuicCryptoClientStream::~QuicCryptoClientStream() {
@@ -91,49 +71,13 @@ void QuicCryptoClientStream::OnHandshakeMessage(
 }
 
 bool QuicCryptoClientStream::CryptoConnect() {
-  next_state_ = STATE_SEND_CHLO;
+  next_state_ = STATE_INITIALIZE;
   DoHandshakeLoop(NULL);
   return true;
 }
 
 int QuicCryptoClientStream::num_sent_client_hellos() const {
   return num_client_hellos_;
-}
-
-// TODO(rtenneti): Add unittests for GetSSLInfo which exercise the various ways
-// we learn about SSL info (sync vs async vs cached).
-bool QuicCryptoClientStream::GetSSLInfo(SSLInfo* ssl_info) {
-  ssl_info->Reset();
-  if (!cert_verify_result_) {
-    return false;
-  }
-
-  ssl_info->cert_status = cert_verify_result_->cert_status;
-  ssl_info->cert = cert_verify_result_->verified_cert;
-
-  // TODO(rtenneti): Figure out what to set for the following.
-  // Temporarily hard coded cipher_suite as 0xc031 to represent
-  // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 (from
-  // net/ssl/ssl_cipher_suite_names.cc) and encryption as 256.
-  int cipher_suite = 0xc02f;
-  int ssl_connection_status = 0;
-  ssl_connection_status |=
-      (cipher_suite & SSL_CONNECTION_CIPHERSUITE_MASK) <<
-       SSL_CONNECTION_CIPHERSUITE_SHIFT;
-  ssl_connection_status |=
-      (SSL_CONNECTION_VERSION_TLS1_2 & SSL_CONNECTION_VERSION_MASK) <<
-       SSL_CONNECTION_VERSION_SHIFT;
-
-  ssl_info->public_key_hashes = cert_verify_result_->public_key_hashes;
-  ssl_info->is_issued_by_known_root =
-      cert_verify_result_->is_issued_by_known_root;
-
-  ssl_info->connection_status = ssl_connection_status;
-  ssl_info->client_cert_sent = false;
-  ssl_info->channel_id_sent = false;
-  ssl_info->security_bits = 256;
-  ssl_info->handshake_type = SSLInfo::HANDSHAKE_FULL;
-  return true;
 }
 
 // kMaxClientHellos is the maximum number of times that we'll send a client
@@ -149,7 +93,7 @@ void QuicCryptoClientStream::DoHandshakeLoop(
   QuicErrorCode error;
   string error_details;
   QuicCryptoClientConfig::CachedState* cached =
-      crypto_config_->LookupOrCreate(server_hostname_);
+      crypto_config_->LookupOrCreate(server_key_);
 
   if (in != NULL) {
     DVLOG(1) << "Client: Received " << in->DebugString();
@@ -159,6 +103,17 @@ void QuicCryptoClientStream::DoHandshakeLoop(
     const State state = next_state_;
     next_state_ = STATE_IDLE;
     switch (state) {
+      case STATE_INITIALIZE: {
+        if (!cached->IsEmpty() && !cached->signature().empty() &&
+            server_key_.is_https()) {
+          DCHECK(crypto_config_->proof_verifier());
+          // If the cached state needs to be verified, do it now.
+          next_state_ = STATE_VERIFY_PROOF;
+        } else {
+          next_state_ = STATE_SEND_CHLO;
+        }
+        break;
+      }
       case STATE_SEND_CHLO: {
         // Send the client hello in plaintext.
         session()->connection()->SetDefaultEncryptionLevel(ENCRYPTION_NONE);
@@ -170,7 +125,25 @@ void QuicCryptoClientStream::DoHandshakeLoop(
 
         if (!cached->IsComplete(session()->connection()->clock()->WallNow())) {
           crypto_config_->FillInchoateClientHello(
-              server_hostname_, cached, &crypto_negotiated_params_, &out);
+              server_key_,
+              session()->connection()->supported_versions().front(),
+              cached, &crypto_negotiated_params_, &out);
+          // Pad the inchoate client hello to fill up a packet.
+          const size_t kFramingOverhead = 50;  // A rough estimate.
+          const size_t max_packet_size =
+              session()->connection()->options()->max_packet_length;
+          if (max_packet_size <= kFramingOverhead) {
+            DLOG(DFATAL) << "max_packet_length (" << max_packet_size
+                         << ") has no room for framing overhead.";
+            CloseConnection(QUIC_INTERNAL_ERROR);
+            return;
+          }
+          if (kClientHelloMinimumSize > max_packet_size - kFramingOverhead) {
+            DLOG(DFATAL) << "Client hello won't fit in a single packet.";
+            CloseConnection(QUIC_INTERNAL_ERROR);
+            return;
+          }
+          out.set_minimum_size(max_packet_size - kFramingOverhead);
           next_state_ = STATE_RECV_REJ;
           DVLOG(1) << "Client: Sending " << out.DebugString();
           SendHandshakeMessage(out);
@@ -178,8 +151,9 @@ void QuicCryptoClientStream::DoHandshakeLoop(
         }
         session()->config()->ToHandshakeMessage(&out);
         error = crypto_config_->FillClientHello(
-            server_hostname_,
-            session()->connection()->guid(),
+            server_key_,
+            session()->connection()->connection_id(),
+            session()->connection()->supported_versions().front(),
             cached,
             session()->connection()->clock()->WallNow(),
             session()->connection()->random_generator(),
@@ -194,10 +168,8 @@ void QuicCryptoClientStream::DoHandshakeLoop(
           return;
         }
         if (cached->proof_verify_details()) {
-          CopyCertVerifyResult(cached->proof_verify_details(),
-                               &cert_verify_result_);
-        } else {
-          cert_verify_result_.reset();
+          client_session()->OnProofVerifyDetailsAvailable(
+              *cached->proof_verify_details());
         }
         next_state_ = STATE_RECV_SHLO;
         DVLOG(1) << "Client: Sending " << out.DebugString();
@@ -241,10 +213,9 @@ void QuicCryptoClientStream::DoHandshakeLoop(
           return;
         }
         if (!cached->proof_valid()) {
-          ProofVerifier* verifier = crypto_config_->proof_verifier();
-          if (!verifier) {
-            // If no verifier is set then we don't check the certificates.
-            cached->SetProofValid();
+          if (!server_key_.is_https()) {
+            // We don't check the certificates for insecure QUIC connections.
+            SetCachedProofValid(cached);
           } else if (!cached->signature().empty()) {
             next_state_ = STATE_VERIFY_PROOF;
             break;
@@ -264,10 +235,11 @@ void QuicCryptoClientStream::DoHandshakeLoop(
         verify_ok_ = false;
 
         ProofVerifier::Status status = verifier->VerifyProof(
-            server_hostname_,
+            server_key_.host(),
             cached->server_config(),
             cached->certs(),
             cached->signature(),
+            verify_context_.get(),
             &verify_error_details_,
             &verify_details_,
             proof_verify_callback);
@@ -287,7 +259,7 @@ void QuicCryptoClientStream::DoHandshakeLoop(
       }
       case STATE_VERIFY_PROOF_COMPLETE:
         if (!verify_ok_) {
-          CopyCertVerifyResult(verify_details_.get(), &cert_verify_result_);
+          client_session()->OnProofVerifyDetailsAvailable(*verify_details_);
           CloseConnectionWithDetails(
               QUIC_PROOF_INVALID, "Proof invalid: " + verify_error_details_);
           return;
@@ -297,7 +269,7 @@ void QuicCryptoClientStream::DoHandshakeLoop(
         if (generation_counter_ != cached->generation_counter()) {
           next_state_ = STATE_VERIFY_PROOF;
         } else {
-          cached->SetProofValid();
+          SetCachedProofValid(cached);
           cached->SetProofVerifyDetails(verify_details_.release());
           next_state_ = STATE_SEND_CHLO;
         }
@@ -333,8 +305,10 @@ void QuicCryptoClientStream::DoHandshakeLoop(
           return;
         }
         error = crypto_config_->ProcessServerHello(
-            *in, session()->connection()->guid(), cached,
-            &crypto_negotiated_params_, &error_details);
+            *in, session()->connection()->connection_id(),
+            session()->connection()->server_supported_versions(),
+            cached, &crypto_negotiated_params_, &error_details);
+
         if (error != QUIC_NO_ERROR) {
           CloseConnectionWithDetails(
               error, "Server hello invalid: " + error_details);
@@ -371,6 +345,16 @@ void QuicCryptoClientStream::DoHandshakeLoop(
         return;
     }
   }
+}
+
+void QuicCryptoClientStream::SetCachedProofValid(
+    QuicCryptoClientConfig::CachedState* cached) {
+  cached->SetProofValid();
+  client_session()->OnProofValid(*cached);
+}
+
+QuicClientSessionBase* QuicCryptoClientStream::client_session() {
+  return reinterpret_cast<QuicClientSessionBase*>(session());
 }
 
 }  // namespace net

@@ -14,20 +14,20 @@
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/signed_in_devices/signed_in_devices_api.h"
-#include "chrome/browser/extensions/event_router.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/glue/device_info.h"
 #include "chrome/browser/sync/profile_sync_service.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/common/extensions/api/signed_in_devices.h"
-#include "chrome/common/extensions/extension.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
+#include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
 
 using browser_sync::DeviceInfo;
 namespace extensions {
@@ -86,26 +86,27 @@ void SignedInDevicesChangeObserver::OnDeviceInfoChange() {
       api::signed_in_devices::OnDeviceInfoChange::kEventName,
       result.Pass()));
 
-  event->restrict_to_profile = profile_;
+  event->restrict_to_browser_context = profile_;
 
   ExtensionSystem::Get(profile_)->event_router()->DispatchEventToExtension(
       extension_id_, event.Pass());
 }
 
-static base::LazyInstance<ProfileKeyedAPIFactory<SignedInDevicesManager> >
-g_factory = LAZY_INSTANCE_INITIALIZER;
+static base::LazyInstance<
+    BrowserContextKeyedAPIFactory<SignedInDevicesManager> > g_factory =
+    LAZY_INSTANCE_INITIALIZER;
 
 // static
-ProfileKeyedAPIFactory<SignedInDevicesManager>*
-    SignedInDevicesManager::GetFactoryInstance() {
-  return &g_factory.Get();
+BrowserContextKeyedAPIFactory<SignedInDevicesManager>*
+SignedInDevicesManager::GetFactoryInstance() {
+  return g_factory.Pointer();
 }
 
 SignedInDevicesManager::SignedInDevicesManager()
     : profile_(NULL) {}
 
-SignedInDevicesManager::SignedInDevicesManager(Profile* profile)
-    : profile_(profile) {
+SignedInDevicesManager::SignedInDevicesManager(content::BrowserContext* context)
+    : profile_(Profile::FromBrowserContext(context)) {
   extensions::EventRouter* router = extensions::ExtensionSystem::Get(
       profile_)->event_router();
 
@@ -116,7 +117,7 @@ SignedInDevicesManager::SignedInDevicesManager(Profile* profile)
 
   // Register for unload event so we could clear all our listeners when
   // extensions have unloaded.
-  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED,
+  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
                  content::Source<Profile>(profile_->GetOriginalProfile()));
 }
 
@@ -162,11 +163,10 @@ void SignedInDevicesManager::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  DCHECK_EQ(type, chrome::NOTIFICATION_EXTENSION_UNLOADED);
+  DCHECK_EQ(type, chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED);
   UnloadedExtensionInfo* reason =
       content::Details<UnloadedExtensionInfo>(details).ptr();
   RemoveChangeObserverForExtension(reason->extension->id());
 }
 
 }  // namespace extensions
-

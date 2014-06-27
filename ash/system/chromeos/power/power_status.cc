@@ -48,15 +48,23 @@ void SanitizeProto(power_manager::PowerSupplyProperties* proto) {
 base::string16 GetBatteryTimeAccessibilityString(int hour, int min) {
   DCHECK(hour || min);
   if (hour && !min) {
-    return ui::TimeFormat::TimeDurationLong(base::TimeDelta::FromHours(hour));
+    return ui::TimeFormat::Simple(ui::TimeFormat::FORMAT_DURATION,
+                                  ui::TimeFormat::LENGTH_LONG,
+                                  base::TimeDelta::FromHours(hour));
   }
   if (min && !hour) {
-    return ui::TimeFormat::TimeDurationLong(base::TimeDelta::FromMinutes(min));
+    return ui::TimeFormat::Simple(ui::TimeFormat::FORMAT_DURATION,
+                                  ui::TimeFormat::LENGTH_LONG,
+                                  base::TimeDelta::FromMinutes(min));
   }
   return l10n_util::GetStringFUTF16(
       IDS_ASH_STATUS_TRAY_BATTERY_TIME_ACCESSIBLE,
-      ui::TimeFormat::TimeDurationLong(base::TimeDelta::FromHours(hour)),
-      ui::TimeFormat::TimeDurationLong(base::TimeDelta::FromMinutes(min)));
+      ui::TimeFormat::Simple(ui::TimeFormat::FORMAT_DURATION,
+                             ui::TimeFormat::LENGTH_LONG,
+                             base::TimeDelta::FromHours(hour)),
+      ui::TimeFormat::Simple(ui::TimeFormat::FORMAT_DURATION,
+                             ui::TimeFormat::LENGTH_LONG,
+                             base::TimeDelta::FromMinutes(min)));
 }
 
 static PowerStatus* g_power_status = NULL;
@@ -189,15 +197,8 @@ bool PowerStatus::IsUsbChargerConnected() const {
 }
 
 bool PowerStatus::IsOriginalSpringChargerConnected() const {
-  // Use has_external_power() as a workaround for R31 and R32 to detect
-  // the spring original charger, due to the fact the enum
-  // PowerSupplyProperties_ExternalPower_ORIGINAL_SPRING_CHARGER can't
-  // be integrated back to the older releases. has_exteranl_pwower() returns
-  // false for PowerSupplyProperties_ExternalPower_ORIGINAL_SPRING_CHARGER.
-  // TODO(jennyz): change this to use
-  // PowerSupplyProperties_ExternalPower_ORIGINAL_SPRING_CHARGER on trunk
-  // after the change has been merged.
-  return !proto_.has_external_power();
+  return proto_.external_power() == power_manager::
+      PowerSupplyProperties_ExternalPower_ORIGINAL_SPRING_CHARGER;
 }
 
 gfx::ImageSkia PowerStatus::GetBatteryImage(IconSet icon_set) const {
@@ -264,7 +265,7 @@ base::string16 PowerStatus::GetAccessibleNameString() const {
     int hour = 0, min = 0;
     PowerStatus::SplitTimeIntoHoursAndMinutes(time, &hour, &min);
     base::string16 minute = min < 10 ?
-        ASCIIToUTF16("0") + base::IntToString16(min) :
+        base::ASCIIToUTF16("0") + base::IntToString16(min) :
         base::IntToString16(min);
     battery_time_accessible =
         l10n_util::GetStringFUTF16(
@@ -275,7 +276,7 @@ base::string16 PowerStatus::GetAccessibleNameString() const {
   }
   return battery_time_accessible.empty() ?
       battery_percentage_accessible :
-      battery_percentage_accessible + ASCIIToUTF16(". ") +
+      battery_percentage_accessible + base::ASCIIToUTF16(". ") +
       battery_time_accessible;
 }
 

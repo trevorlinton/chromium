@@ -4,23 +4,21 @@
 
 #include "chrome/browser/ui/views/frame/glass_browser_frame_view.h"
 
-#include "base/command_line.h"
 #include "base/prefs/pref_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/app/chrome_dll_resource.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/views/avatar_menu_button.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/new_avatar_button.h"
 #include "chrome/browser/ui/views/tabs/tab.h"
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
-#include "chrome/browser/ui/views/toolbar_view.h"
-#include "chrome/common/chrome_switches.h"
+#include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/profile_management_switches.h"
 #include "content/public/browser/notification_service.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
@@ -90,7 +88,7 @@ GlassBrowserFrameView::GlassBrowserFrameView(BrowserFrame* frame,
     InitThrobberIcons();
 
   if (browser_view->IsRegularOrGuestSession() &&
-      profiles::IsNewProfileManagementEnabled())
+      switches::IsNewProfileManagement())
     UpdateNewStyleAvatarInfo(this, NewAvatarButton::NATIVE_BUTTON);
   else
     UpdateAvatarInfo();
@@ -115,7 +113,7 @@ gfx::Rect GlassBrowserFrameView::GetBoundsForTabStrip(
   // The new avatar button is optionally displayed to the left of the
   // minimize button.
   if (new_avatar_button()) {
-    DCHECK(profiles::IsNewProfileManagementEnabled());
+    DCHECK(switches::IsNewProfileManagement());
     minimize_button_offset -= new_avatar_button()->width();
   }
 
@@ -131,7 +129,7 @@ gfx::Rect GlassBrowserFrameView::GetBoundsForTabStrip(
     if (!browser_view()->ShouldShowAvatar() && frame()->IsMaximized())
       tabstrip_x += avatar_bounds_.x();
     else if (browser_view()->IsRegularOrGuestSession() &&
-        profiles::IsNewProfileManagementEnabled())
+        switches::IsNewProfileManagement())
       tabstrip_x = width() - minimize_button_offset;
 
     minimize_button_offset = width();
@@ -139,17 +137,13 @@ gfx::Rect GlassBrowserFrameView::GetBoundsForTabStrip(
   int tabstrip_width = minimize_button_offset - tabstrip_x -
       (frame()->IsMaximized() ?
           kNewTabCaptionMaximizedSpacing : kNewTabCaptionRestoredSpacing);
-  return gfx::Rect(tabstrip_x, GetTabStripInsets(false).top,
+  return gfx::Rect(tabstrip_x, NonClientTopBorderHeight(),
                    std::max(0, tabstrip_width),
                    tabstrip->GetPreferredSize().height());
 }
 
-BrowserNonClientFrameView::TabStripInsets
-GlassBrowserFrameView::GetTabStripInsets(bool restored) const {
-  if (!browser_view()->IsTabStripVisible())
-    return TabStripInsets();
-  // TODO: include OTR and caption.
-  return TabStripInsets(NonClientTopBorderHeight(restored), 0, 0);
+int GlassBrowserFrameView::GetTopInset() const {
+  return GetClientAreaInsets().top();
 }
 
 int GlassBrowserFrameView::GetThemeBackgroundXInset() const {
@@ -270,7 +264,7 @@ void GlassBrowserFrameView::OnPaint(gfx::Canvas* canvas) {
 
 void GlassBrowserFrameView::Layout() {
   if (browser_view()->IsRegularOrGuestSession() &&
-      profiles::IsNewProfileManagementEnabled())
+      switches::IsNewProfileManagement())
     LayoutNewStyleAvatar();
   else
     LayoutAvatar();
@@ -291,8 +285,10 @@ bool GlassBrowserFrameView::HitTestRect(const gfx::Rect& rect) const {
 // GlassBrowserFrameView, views::ButtonListener overrides:
 void GlassBrowserFrameView::ButtonPressed(views::Button* sender,
                                           const ui::Event& event) {
-  if (sender == new_avatar_button())
-    ShowProfileChooserViewBubble();
+  if (sender == new_avatar_button()) {
+    browser_view()->ShowAvatarBubbleFromAvatarButton(
+        BrowserWindow::AVATAR_BUBBLE_MODE_DEFAULT);
+  }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -310,16 +306,15 @@ int GlassBrowserFrameView::NonClientBorderThickness() const {
   return kNonClientBorderThickness;
 }
 
-int GlassBrowserFrameView::NonClientTopBorderHeight(
-    bool restored) const {
-  if (!restored && frame()->IsFullscreen())
+int GlassBrowserFrameView::NonClientTopBorderHeight() const {
+  if (frame()->IsFullscreen())
     return 0;
 
   // We'd like to use FrameBorderThickness() here, but the maximized Aero glass
   // frame has a 0 frame border around most edges and a CYSIZEFRAME-thick border
   // at the top (see AeroGlassFrame::OnGetMinMaxInfo()).
   return gfx::win::GetSystemMetricsInDIP(SM_CYSIZEFRAME) +
-      ((!restored && !frame()->ShouldLeaveOffsetNearTopBorder()) ?
+      (!frame()->ShouldLeaveOffsetNearTopBorder() ?
       -kTabstripTopShadowThickness : kNonClientRestoredExtraThickness);
 }
 
@@ -348,7 +343,7 @@ void GlassBrowserFrameView::PaintToolbarBackground(gfx::Canvas* canvas) {
                    : y;
   canvas->TileImageInt(*theme_toolbar,
                        x + GetThemeBackgroundXInset(),
-                       dest_y - GetTabStripInsets(false).top, x,
+                       dest_y - GetTopInset(), x,
                        dest_y, w, theme_toolbar->height());
 
   if (browser_view()->IsTabStripVisible()) {
@@ -445,7 +440,7 @@ void GlassBrowserFrameView::PaintRestoredClientEdge(gfx::Canvas* canvas) {
 }
 
 void GlassBrowserFrameView::LayoutNewStyleAvatar() {
-  DCHECK(profiles::IsNewProfileManagementEnabled());
+  DCHECK(switches::IsNewProfileManagement());
   if (!new_avatar_button())
     return;
 
@@ -459,7 +454,7 @@ void GlassBrowserFrameView::LayoutNewStyleAvatar() {
     button_x = width() - frame()->GetMinimizeButtonOffset() +
         kNewAvatarButtonOffset;
 
-  int button_y = frame()->IsMaximized() ? NonClientTopBorderHeight(false) : 1;
+  int button_y = frame()->IsMaximized() ? NonClientTopBorderHeight() : 1;
   new_avatar_button()->SetBounds(
       button_x,
       button_y,
@@ -481,11 +476,11 @@ void GlassBrowserFrameView::LayoutAvatar() {
   if (base::i18n::IsRTL())
     avatar_x += width() - frame()->GetMinimizeButtonOffset();
 
-  int avatar_bottom = GetTabStripInsets(false).top +
+  int avatar_bottom = GetTopInset() +
       browser_view()->GetTabStripHeight() - kAvatarBottomSpacing;
   int avatar_restored_y = avatar_bottom - incognito_icon.height();
   int avatar_y = frame()->IsMaximized() ?
-      (NonClientTopBorderHeight(false) + kTabstripTopShadowThickness) :
+      (NonClientTopBorderHeight() + kTabstripTopShadowThickness) :
       avatar_restored_y;
   avatar_bounds_.SetRect(avatar_x, avatar_y, incognito_icon.width(),
       browser_view()->ShouldShowAvatar() ? (avatar_bottom - avatar_y) : 0);
@@ -501,7 +496,7 @@ gfx::Insets GlassBrowserFrameView::GetClientAreaInsets() const {
   if (!browser_view()->IsTabStripVisible())
     return gfx::Insets();
 
-  const int top_height = NonClientTopBorderHeight(false);
+  const int top_height = NonClientTopBorderHeight();
   const int border_thickness = NonClientBorderThickness();
   return gfx::Insets(top_height,
                      border_thickness,
@@ -569,7 +564,7 @@ void GlassBrowserFrameView::Observe(
   switch (type) {
     case chrome::NOTIFICATION_PROFILE_CACHED_INFO_CHANGED:
       if (browser_view()->IsRegularOrGuestSession() &&
-          profiles::IsNewProfileManagementEnabled())
+          switches::IsNewProfileManagement())
         UpdateNewStyleAvatarInfo(this, NewAvatarButton::NATIVE_BUTTON);
       else
         UpdateAvatarInfo();

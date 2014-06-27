@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/metrics/field_trial.h"
 #include "chrome/browser/search/instant_service.h"
 #include "chrome/browser/search_engines/template_url_service.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
@@ -18,8 +19,16 @@ class InstantServiceObserver;
 // Embedded Search / Instant implementation classes.
 class InstantUnitTestBase : public BrowserWithTestWindowTest {
  protected:
+  InstantUnitTestBase();
+  virtual ~InstantUnitTestBase();
+
   virtual void SetUp() OVERRIDE;
   virtual void TearDown() OVERRIDE;
+
+#if !defined(OS_IOS) && !defined(OS_ANDROID)
+  // Query extraction is always enabled on Android and iOS.
+  void SetUpWithoutQueryExtraction();
+#endif
 
   // Adds and sets the default search provider using the base_url.
   // The base_url should have the http[s]:// prefix and a trailing / after the
@@ -37,6 +46,10 @@ class InstantUnitTestBase : public BrowserWithTestWindowTest {
 
   InstantService* instant_service_;
   TemplateURLService* template_url_service_;
+  scoped_ptr<base::FieldTrialList> field_trial_list_;
+
+ private:
+  void SetUpHelper();
 };
 
 #endif  // CHROME_BROWSER_SEARCH_INSTANT_UNITTEST_BASE_H_

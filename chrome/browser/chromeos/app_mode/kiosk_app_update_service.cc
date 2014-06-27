@@ -8,14 +8,17 @@
 #include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part_chromeos.h"
+#include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
 #include "chrome/browser/chromeos/system/automatic_reboot_manager.h"
 #include "chrome/browser/extensions/api/runtime/runtime_api.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
-#include "chrome/browser/extensions/extension_system_factory.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/profiles/profile.h"
-#include "components/browser_context_keyed_service/browser_context_dependency_manager.h"
+#include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/extension_system_provider.h"
+#include "extensions/browser/extensions_browser_client.h"
+#include "extensions/common/extension.h"
 
 namespace chromeos {
 
@@ -65,10 +68,16 @@ void KioskAppUpdateService::Shutdown() {
     service->RemoveUpdateObserver(this);
 }
 
-void KioskAppUpdateService::OnAppUpdateAvailable(const std::string& app_id) {
-  DCHECK(!app_id_.empty());
-  if (app_id != app_id_)
+void KioskAppUpdateService::OnAppUpdateAvailable(
+    const extensions::Extension* extension) {
+  if (extension->id() != app_id_)
     return;
+
+  // Clears cached app data so that it will be reloaded if update from app
+  // does not finish in this run.
+  KioskAppManager::Get()->ClearAppData(app_id_);
+  KioskAppManager::Get()->UpdateAppDataFromProfile(
+      app_id_, profile_, extension);
 
   extensions::RuntimeEventRouter::DispatchOnRestartRequiredEvent(
       profile_,
@@ -108,7 +117,8 @@ KioskAppUpdateServiceFactory::KioskAppUpdateServiceFactory()
     : BrowserContextKeyedServiceFactory(
         "KioskAppUpdateService",
         BrowserContextDependencyManager::GetInstance()) {
-  DependsOn(extensions::ExtensionSystemFactory::GetInstance());
+  DependsOn(
+      extensions::ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
 }
 
 KioskAppUpdateServiceFactory::~KioskAppUpdateServiceFactory() {
@@ -131,8 +141,7 @@ KioskAppUpdateServiceFactory* KioskAppUpdateServiceFactory::GetInstance() {
   return Singleton<KioskAppUpdateServiceFactory>::get();
 }
 
-BrowserContextKeyedService*
-KioskAppUpdateServiceFactory::BuildServiceInstanceFor(
+KeyedService* KioskAppUpdateServiceFactory::BuildServiceInstanceFor(
     content::BrowserContext* context) const {
   return new KioskAppUpdateService(
       Profile::FromBrowserContext(context),

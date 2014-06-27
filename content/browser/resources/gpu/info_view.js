@@ -37,6 +37,11 @@ cr.define('gpu', function() {
       // Client info
       if (browserBridge.clientInfo) {
         var clientInfo = browserBridge.clientInfo;
+
+        var commandLineParts = clientInfo.command_line.split(' ');
+        commandLineParts.shift(); // Pop off the exe path
+        var commandLineString = commandLineParts.join(' ')
+
         this.setTable_('client-info', [
           {
             description: 'Data exported',
@@ -59,12 +64,16 @@ cr.define('gpu', function() {
             value: clientInfo.driver_bug_list_version
           },
           {
-            description: 'ANGLE revision',
-            value: clientInfo.angle_revision
+            description: 'ANGLE commit id',
+            value: clientInfo.angle_commit_id
           },
           {
             description: '2D graphics backend',
             value: clientInfo.graphics_backend
+          },
+          {
+            description: 'Command Line Args',
+            value: commandLineString
           }]);
       } else {
         this.setText_('client-info', '... loading...');
@@ -83,6 +92,7 @@ cr.define('gpu', function() {
         'flash_stage3d_baseline': 'Flash Stage3D Baseline profile',
         'texture_sharing': 'Texture Sharing',
         'video_decode': 'Video Decode',
+        'video_encode': 'Video Encode',
         'video': 'Video',
         // GPU Switching
         'gpu_switching': 'GPU Switching',
@@ -291,6 +301,35 @@ cr.define('gpu', function() {
         link.href = 'https://bugs.webkit.org/show_bug.cgi?id=' + bugid;
         problemEl.appendChild(link);
         nbugs++;
+      }
+
+      if (problem.affectedGpuSettings.length > 0) {
+        var brNode = document.createElement('br');
+        problemEl.appendChild(brNode);
+
+        var iNode = document.createElement('i');
+        problemEl.appendChild(iNode);
+
+        var headNode = document.createElement('span');
+        if (problem.tag == 'disabledFeatures')
+          headNode.textContent = 'Disabled Features: ';
+        else  // problem.tag == 'workarounds'
+          headNode.textContent = 'Applied Workarounds: ';
+        iNode.appendChild(headNode);
+        for (j = 0; j < problem.affectedGpuSettings.length; ++j) {
+          if (j > 0) {
+            var separateNode = document.createElement('span');
+            separateNode.textContent = ', ';
+            iNode.appendChild(separateNode);
+          }
+          var nameNode = document.createElement('span');
+          if (problem.tag == 'disabledFeatures')
+            nameNode.classList.add('feature-red');
+          else  // problem.tag == 'workarounds'
+            nameNode.classList.add('feature-yellow');
+          nameNode.textContent = problem.affectedGpuSettings[j];
+          iNode.appendChild(nameNode);
+        }
       }
 
       return problemEl;

@@ -4,16 +4,18 @@
 
 #include "chrome/browser/ui/browser_command_controller.h"
 
+#include "base/command_line.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/command_updater.h"
-#include "chrome/browser/profiles/profile_destroyer.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_window_state.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/profile_management_switches.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/test_browser_window.h"
 #include "chrome/test/base/testing_browser_process.h"
@@ -141,9 +143,17 @@ TEST_F(BrowserCommandControllerTest, AppFullScreen) {
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_FULLSCREEN));
 }
 
-TEST_F(BrowserCommandControllerTest, AvatarMenuDisabledWhenOnlyOneProfile) {
+TEST_F(BrowserCommandControllerTest, OldAvatarMenuDisabledWhenOnlyOneProfile) {
+#if defined(OS_CHROMEOS)
+  // TODO(nkostylev): Cleanup this code once multi-profiles are enabled by
+  // default on CrOS. http://crbug.com/351655
+  CommandLine::ForCurrentProcess()->AppendSwitch(switches::kMultiProfiles);
+#endif
+
   if (!profiles::IsMultipleProfilesEnabled())
     return;
+
+  EXPECT_FALSE(switches::IsNewProfileManagement());
 
   TestingProfileManager testing_profile_manager(
       TestingBrowserProcess::GetGlobal());
@@ -160,13 +170,139 @@ TEST_F(BrowserCommandControllerTest, AvatarMenuDisabledWhenOnlyOneProfile) {
 
   testing_profile_manager.CreateTestingProfile("p2");
   ASSERT_EQ(2U, profile_manager->GetNumberOfProfiles());
+#if defined(OS_CHROMEOS)
+  // Chrome OS uses system tray menu to handle multi-profiles.
+  EXPECT_FALSE(command_updater->IsCommandEnabled(IDC_SHOW_AVATAR_MENU));
+#else
   EXPECT_TRUE(command_updater->IsCommandEnabled(IDC_SHOW_AVATAR_MENU));
+#endif
 
   testing_profile_manager.DeleteTestingProfile("p1");
   ASSERT_EQ(1U, profile_manager->GetNumberOfProfiles());
   EXPECT_FALSE(command_updater->IsCommandEnabled(IDC_SHOW_AVATAR_MENU));
 
   testing_profile_manager.DeleteTestingProfile("p2");
+}
+
+TEST_F(BrowserCommandControllerTest, NewAvatarMenuEnabledWhenOnlyOneProfile) {
+#if defined(OS_CHROMEOS)
+  // TODO(nkostylev): Cleanup this code once multi-profiles are enabled by
+  // default on CrOS. http://crbug.com/351655
+  CommandLine::ForCurrentProcess()->AppendSwitch(switches::kMultiProfiles);
+#endif
+
+  if (!profiles::IsMultipleProfilesEnabled())
+    return;
+
+  // The command line is reset at the end of every test by the test suite.
+  CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kNewProfileManagement);
+  EXPECT_TRUE(switches::IsNewProfileManagement());
+
+  TestingProfileManager testing_profile_manager(
+      TestingBrowserProcess::GetGlobal());
+  ASSERT_TRUE(testing_profile_manager.SetUp());
+  ProfileManager* profile_manager = testing_profile_manager.profile_manager();
+
+  chrome::BrowserCommandController command_controller(browser(),
+                                                      profile_manager);
+  const CommandUpdater* command_updater = command_controller.command_updater();
+
+  testing_profile_manager.CreateTestingProfile("p1");
+  ASSERT_EQ(1U, profile_manager->GetNumberOfProfiles());
+#if defined(OS_CHROMEOS)
+  // Chrome OS uses system tray menu to handle multi-profiles.
+  EXPECT_FALSE(command_updater->IsCommandEnabled(IDC_SHOW_AVATAR_MENU));
+#else
+  EXPECT_TRUE(command_updater->IsCommandEnabled(IDC_SHOW_AVATAR_MENU));
+#endif
+  testing_profile_manager.DeleteTestingProfile("p1");
+}
+
+TEST_F(BrowserCommandControllerTest, NewAvatarMenuEnabledInGuestMode) {
+#if defined(OS_CHROMEOS)
+  // TODO(nkostylev): Cleanup this code once multi-profiles are enabled by
+  // default on CrOS. http://crbug.com/351655
+  CommandLine::ForCurrentProcess()->AppendSwitch(switches::kMultiProfiles);
+#endif
+
+  if (!profiles::IsMultipleProfilesEnabled())
+    return;
+
+  // The command line is reset at the end of every test by the test suite.
+  CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kNewProfileManagement);
+  EXPECT_TRUE(switches::IsNewProfileManagement());
+
+  TestingProfileManager testing_profile_manager(
+      TestingBrowserProcess::GetGlobal());
+  ASSERT_TRUE(testing_profile_manager.SetUp());
+  ProfileManager* profile_manager = testing_profile_manager.profile_manager();
+
+  // Set up guest a profile.
+  TestingProfile::Builder guest_builder;
+  guest_builder.SetIncognito();  // Guest profiles are off the record.
+  guest_builder.SetGuestSession();
+  guest_builder.SetPath(ProfileManager::GetGuestProfilePath());
+  scoped_ptr<TestingProfile>guest_profile = guest_builder.Build();
+
+  ASSERT_TRUE(guest_profile->IsGuestSession());
+
+  // Create a new browser based on the guest profile.
+  Browser::CreateParams profile_params(guest_profile.get(),
+                                       chrome::GetActiveDesktop());
+  scoped_ptr<Browser> guest_browser(
+      chrome::CreateBrowserWithTestWindowForParams(&profile_params));
+  chrome::BrowserCommandController command_controller(guest_browser.get(),
+                                                      profile_manager);
+  const CommandUpdater* command_updater = command_controller.command_updater();
+#if defined(OS_CHROMEOS)
+  // Chrome OS uses system tray menu to handle multi-profiles.
+  EXPECT_FALSE(command_updater->IsCommandEnabled(IDC_SHOW_AVATAR_MENU));
+#else
+  EXPECT_TRUE(command_updater->IsCommandEnabled(IDC_SHOW_AVATAR_MENU));
+#endif
+}
+
+TEST_F(BrowserCommandControllerTest, AvatarMenuAlwaysDisabledInIncognitoMode) {
+#if defined(OS_CHROMEOS)
+  // TODO(nkostylev): Cleanup this code once multi-profiles are enabled by
+  // default on CrOS. http://crbug.com/351655
+  CommandLine::ForCurrentProcess()->AppendSwitch(switches::kMultiProfiles);
+#endif
+
+  if (!profiles::IsMultipleProfilesEnabled())
+    return;
+
+  TestingProfileManager testing_profile_manager(
+      TestingBrowserProcess::GetGlobal());
+  ASSERT_TRUE(testing_profile_manager.SetUp());
+
+  // Set up a profile with an off the record profile.
+  TestingProfile::Builder normal_builder;
+  scoped_ptr<TestingProfile> original_profile = normal_builder.Build();
+
+  // Create a new browser based on the off the record profile.
+  Browser::CreateParams profile_params(
+      original_profile->GetOffTheRecordProfile(), chrome::GetActiveDesktop());
+  scoped_ptr<Browser> otr_browser(
+      chrome::CreateBrowserWithTestWindowForParams(&profile_params));
+
+  ProfileManager* profile_manager = testing_profile_manager.profile_manager();
+  chrome::BrowserCommandController command_controller(otr_browser.get(),
+                                                      profile_manager);
+  const CommandUpdater* command_updater = command_controller.command_updater();
+
+  // The old style avatar menu should be disabled.
+  EXPECT_FALSE(switches::IsNewProfileManagement());
+  EXPECT_FALSE(command_updater->IsCommandEnabled(IDC_SHOW_AVATAR_MENU));
+
+  // The new style avatar menu should also be disabled.
+  // The command line is reset at the end of every test by the test suite.
+  CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kNewProfileManagement);
+  EXPECT_TRUE(switches::IsNewProfileManagement());
+  EXPECT_FALSE(command_updater->IsCommandEnabled(IDC_SHOW_AVATAR_MENU));
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -291,8 +427,7 @@ TEST_F(BrowserCommandControllerFullscreenTest,
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_FULLSCREEN));
 }
 
-TEST_F(BrowserCommandControllerTest,
-    IncognitoModeOnSigninAllowedPrefChange) {
+TEST_F(BrowserCommandControllerTest, IncognitoModeOnSigninAllowedPrefChange) {
   TestingProfileManager testing_profile_manager(
       TestingBrowserProcess::GetGlobal());
   ASSERT_TRUE(testing_profile_manager.SetUp());
@@ -302,9 +437,9 @@ TEST_F(BrowserCommandControllerTest,
   builder.SetIncognito();
   scoped_ptr<TestingProfile> profile2(builder.Build());
   TestingProfile::Builder builder2;
-  TestingProfile* profile1 = builder2.Build().release();
-  profile2->SetOriginalProfile(profile1);
-  EXPECT_EQ(profile2->GetOriginalProfile(), profile1);
+  scoped_ptr<TestingProfile> profile1 = builder2.Build();
+  profile2->SetOriginalProfile(profile1.get());
+  EXPECT_EQ(profile2->GetOriginalProfile(), profile1.get());
   profile1->SetOffTheRecordProfile(profile2.PassAs<Profile>());
 
   // Create a new browser based on the off the record profile.
@@ -314,21 +449,17 @@ TEST_F(BrowserCommandControllerTest,
       chrome::CreateBrowserWithTestWindowForParams(&profile_params));
 
   ProfileManager* profile_manager = testing_profile_manager.profile_manager();
-  chrome::BrowserCommandController* command_controller =
-      new chrome::BrowserCommandController(browser2.get(), profile_manager);
-  const CommandUpdater* command_updater = command_controller->command_updater();
+  chrome::BrowserCommandController command_controller(browser2.get(),
+                                                      profile_manager);
+  const CommandUpdater* command_updater = command_controller.command_updater();
 
   // Check that the SYNC_SETUP command is updated on preference change.
   EXPECT_TRUE(command_updater->IsCommandEnabled(IDC_SHOW_SYNC_SETUP));
   profile1->GetPrefs()->SetBoolean(prefs::kSigninAllowed, false);
   EXPECT_FALSE(command_updater->IsCommandEnabled(IDC_SHOW_SYNC_SETUP));
-  delete command_controller;
-  browser2.reset();
-  ProfileDestroyer::DestroyProfileWhenAppropriate(profile1);
 }
 
-TEST_F(BrowserCommandControllerTest,
-    OnSigninAllowedPrefChange) {
+TEST_F(BrowserCommandControllerTest, OnSigninAllowedPrefChange) {
   TestingProfileManager testing_profile_manager(
       TestingBrowserProcess::GetGlobal());
   ASSERT_TRUE(testing_profile_manager.SetUp());

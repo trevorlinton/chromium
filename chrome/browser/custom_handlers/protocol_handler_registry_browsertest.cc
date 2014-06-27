@@ -9,7 +9,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/custom_handlers/protocol_handler_registry_factory.h"
-#include "chrome/browser/tab_contents/render_view_context_menu.h"
+#include "chrome/browser/renderer_context_menu/render_view_context_menu_test_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -21,36 +21,13 @@
 
 using content::WebContents;
 
-namespace {
-
-class TestRenderViewContextMenu : public RenderViewContextMenu {
- public:
-  TestRenderViewContextMenu(WebContents* web_contents,
-                            content::ContextMenuParams params)
-      : RenderViewContextMenu(web_contents, params) { }
-
-  virtual void PlatformInit() OVERRIDE { }
-  virtual void PlatformCancel() OVERRIDE { }
-  virtual bool GetAcceleratorForCommandId(
-      int command_id,
-      ui::Accelerator* accelerator) OVERRIDE {
-    return false;
-  }
-
-  bool IsItemPresent(int command_id) {
-    return menu_model_.GetIndexOfCommandId(command_id) != -1;
-  }
-};
-
-}  // namespace
-
 class RegisterProtocolHandlerBrowserTest : public InProcessBrowserTest {
  public:
   RegisterProtocolHandlerBrowserTest() { }
 
   TestRenderViewContextMenu* CreateContextMenu(GURL url) {
     content::ContextMenuParams params;
-    params.media_type = WebKit::WebContextMenuData::MediaTypeNone;
+    params.media_type = blink::WebContextMenuData::MediaTypeNone;
     params.link_url = url;
     params.unfiltered_link_url = url;
     WebContents* web_contents =
@@ -62,14 +39,15 @@ class RegisterProtocolHandlerBrowserTest : public InProcessBrowserTest {
     params.writing_direction_right_to_left = 0;
 #endif  // OS_MACOSX
     TestRenderViewContextMenu* menu = new TestRenderViewContextMenu(
-        browser()->tab_strip_model()->GetActiveWebContents(), params);
+        browser()->tab_strip_model()->GetActiveWebContents()->GetMainFrame(),
+        params);
     menu->Init();
     return menu;
   }
 
   void AddProtocolHandler(const std::string& protocol,
                           const GURL& url,
-                          const string16& title) {
+                          const base::string16& title) {
     ProtocolHandler handler = ProtocolHandler::CreateProtocolHandler(
           protocol, url, title);
     ProtocolHandlerRegistry* registry =
@@ -92,7 +70,7 @@ IN_PROC_BROWSER_TEST_F(RegisterProtocolHandlerBrowserTest,
 
   AddProtocolHandler(std::string("web+search"),
                      GURL("http://www.google.com/%s"),
-                     UTF8ToUTF16(std::string("Test handler")));
+                     base::UTF8ToUTF16(std::string("Test handler")));
   GURL url("web+search:testing");
   ProtocolHandlerRegistry* registry =
       ProtocolHandlerRegistryFactory::GetForProfile(browser()->profile());
@@ -105,7 +83,7 @@ IN_PROC_BROWSER_TEST_F(RegisterProtocolHandlerBrowserTest, CustomHandler) {
   ASSERT_TRUE(test_server()->Start());
   GURL handler_url = test_server()->GetURL("files/custom_handler_foo.html");
   AddProtocolHandler("foo", handler_url,
-                     UTF8ToUTF16(std::string("Test foo Handler")));
+                     base::UTF8ToUTF16(std::string("Test foo Handler")));
 
   ui_test_utils::NavigateToURL(browser(), GURL("foo:test"));
 

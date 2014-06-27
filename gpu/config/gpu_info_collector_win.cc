@@ -27,6 +27,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread.h"
 #include "base/threading/worker_pool.h"
 #include "base/win/registry.h"
@@ -182,11 +183,11 @@ Version DisplayLinkVersion() {
   if (key.OpenKey(L"Core", KEY_READ | KEY_WOW64_64KEY))
     return Version();
 
-  string16 version;
+  base::string16 version;
   if (key.ReadValue(L"Version", &version))
     return Version();
 
-  return Version(WideToASCII(version));
+  return Version(base::UTF16ToASCII(version));
 }
 
 // Returns whether Lenovo dCute is installed.
@@ -210,8 +211,9 @@ bool IsLenovoDCuteInstalled() {
 bool D3D11ShouldWork(const GPUInfo& gpu_info) {
   // TODO(apatrick): This is a temporary change to see what impact disabling
   // D3D11 stats collection has on Canary.
+#if 1
   return false;
-
+#else
   // Windows XP never supports D3D11. It seems to be less stable that D3D9 on
   // Vista.
   if (base::win::GetVersion() <= base::win::VERSION_VISTA)
@@ -222,6 +224,7 @@ bool D3D11ShouldWork(const GPUInfo& gpu_info) {
     return false;
 
   return true;
+#endif
 }
 
 // Collects information about the level of D3D11 support and records it in
@@ -407,7 +410,7 @@ bool CollectDriverInfoD3D(const std::wstring& device_id,
             key, L"DriverVersion", NULL, NULL,
             reinterpret_cast<LPBYTE>(value), &dwcb_data);
         if (result == ERROR_SUCCESS)
-          driver_version = WideToASCII(std::wstring(value));
+          driver_version = base::UTF16ToASCII(std::wstring(value));
 
         std::string driver_date;
         dwcb_data = sizeof(value);
@@ -415,7 +418,7 @@ bool CollectDriverInfoD3D(const std::wstring& device_id,
             key, L"DriverDate", NULL, NULL,
             reinterpret_cast<LPBYTE>(value), &dwcb_data);
         if (result == ERROR_SUCCESS)
-          driver_date = WideToASCII(std::wstring(value));
+          driver_date = base::UTF16ToASCII(std::wstring(value));
 
         std::string driver_vendor;
         dwcb_data = sizeof(value);
@@ -423,7 +426,7 @@ bool CollectDriverInfoD3D(const std::wstring& device_id,
             key, L"ProviderName", NULL, NULL,
             reinterpret_cast<LPBYTE>(value), &dwcb_data);
         if (result == ERROR_SUCCESS) {
-          driver_vendor = WideToASCII(std::wstring(value));
+          driver_vendor = base::UTF16ToASCII(std::wstring(value));
           if (driver_vendor == "Advanced Micro Devices, Inc." ||
               driver_vendor == "ATI Technologies Inc.") {
             // We are conservative and assume that in the absence of a clear
@@ -449,7 +452,7 @@ bool CollectDriverInfoD3D(const std::wstring& device_id,
   return found;
 }
 
-bool CollectContextGraphicsInfo(GPUInfo* gpu_info) {
+CollectInfoResult CollectContextGraphicsInfo(GPUInfo* gpu_info) {
   TRACE_EVENT0("gpu", "CollectGraphicsInfo");
 
   DCHECK(gpu_info);
@@ -459,12 +462,13 @@ bool CollectContextGraphicsInfo(GPUInfo* gpu_info) {
         CommandLine::ForCurrentProcess()->GetSwitchValueASCII(switches::kUseGL);
     if (requested_implementation_name == "swiftshader") {
       gpu_info->software_rendering = true;
-      return false;
+      return kCollectInfoNonFatalFailure;
     }
   }
 
-  if (!CollectGraphicsInfoGL(gpu_info))
-    return false;
+  CollectInfoResult result = CollectGraphicsInfoGL(gpu_info);
+  if (result != kCollectInfoSuccess)
+    return result;
 
   // ANGLE's renderer strings are of the form:
   // ANGLE (<adapter_identifier> Direct3D<version> vs_x_x ps_x_x)
@@ -514,7 +518,7 @@ bool CollectContextGraphicsInfo(GPUInfo* gpu_info) {
     gpu_info->finalized = true;
   }
 
-  return true;
+  return kCollectInfoSuccess;
 }
 
 GpuIDResult CollectGpuID(uint32* vendor_id, uint32* device_id) {
@@ -537,8 +541,8 @@ GpuIDResult CollectGpuID(uint32* vendor_id, uint32* device_id) {
     int vendor = 0, device = 0;
     std::wstring vendor_string = id.substr(8, 4);
     std::wstring device_string = id.substr(17, 4);
-    base::HexStringToInt(WideToASCII(vendor_string), &vendor);
-    base::HexStringToInt(WideToASCII(device_string), &device);
+    base::HexStringToInt(base::UTF16ToASCII(vendor_string), &vendor);
+    base::HexStringToInt(base::UTF16ToASCII(device_string), &device);
     *vendor_id = vendor;
     *device_id = device;
     return kGpuIDSuccess;
@@ -546,7 +550,7 @@ GpuIDResult CollectGpuID(uint32* vendor_id, uint32* device_id) {
   return kGpuIDFailure;
 }
 
-bool CollectBasicGraphicsInfo(GPUInfo* gpu_info) {
+CollectInfoResult CollectBasicGraphicsInfo(GPUInfo* gpu_info) {
   TRACE_EVENT0("gpu", "CollectPreliminaryGraphicsInfo");
 
   DCHECK(gpu_info);
@@ -587,18 +591,18 @@ bool CollectBasicGraphicsInfo(GPUInfo* gpu_info) {
   }
 
   if (id.length() <= 20)
-    return false;
+    return kCollectInfoNonFatalFailure;
 
   int vendor_id = 0, device_id = 0;
-  string16 vendor_id_string = id.substr(8, 4);
-  string16 device_id_string = id.substr(17, 4);
-  base::HexStringToInt(WideToASCII(vendor_id_string), &vendor_id);
-  base::HexStringToInt(WideToASCII(device_id_string), &device_id);
+  base::string16 vendor_id_string = id.substr(8, 4);
+  base::string16 device_id_string = id.substr(17, 4);
+  base::HexStringToInt(base::UTF16ToASCII(vendor_id_string), &vendor_id);
+  base::HexStringToInt(base::UTF16ToASCII(device_id_string), &device_id);
   gpu_info->gpu.vendor_id = vendor_id;
   gpu_info->gpu.device_id = device_id;
   // TODO(zmo): we only need to call CollectDriverInfoD3D() if we use ANGLE.
   if (!CollectDriverInfoD3D(id, gpu_info))
-    return false;
+    return kCollectInfoNonFatalFailure;
 
   // Collect basic information about supported D3D11 features. Delay for 45
   // seconds so as not to regress performance tests.
@@ -620,20 +624,20 @@ bool CollectBasicGraphicsInfo(GPUInfo* gpu_info) {
     }
   }
 
-  return true;
+  return kCollectInfoSuccess;
 }
 
-bool CollectDriverInfoGL(GPUInfo* gpu_info) {
+CollectInfoResult CollectDriverInfoGL(GPUInfo* gpu_info) {
   TRACE_EVENT0("gpu", "CollectDriverInfoGL");
 
   if (!gpu_info->driver_version.empty())
-    return true;
+    return kCollectInfoSuccess;
 
   std::string gl_version_string = gpu_info->gl_version_string;
 
-  return RE2::PartialMatch(gl_version_string,
-                           "([\\d\\.]+)$",
-                           &gpu_info->driver_version);
+  bool parsed = RE2::PartialMatch(
+      gl_version_string, "([\\d\\.]+)$", &gpu_info->driver_version);
+  return parsed ? kCollectInfoSuccess : kCollectInfoNonFatalFailure;
 }
 
 void MergeGPUInfo(GPUInfo* basic_gpu_info,

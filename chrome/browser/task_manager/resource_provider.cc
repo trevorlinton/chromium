@@ -24,8 +24,8 @@ bool Resource::ReportsCacheStats() const {
   return false;
 }
 
-WebKit::WebCache::ResourceTypeStats Resource::GetWebCoreCacheStats() const {
-  return WebKit::WebCache::ResourceTypeStats();
+blink::WebCache::ResourceTypeStats Resource::GetWebCoreCacheStats() const {
+  return blink::WebCache::ResourceTypeStats();
 }
 
 bool Resource::ReportsFPS() const {
@@ -44,10 +44,6 @@ size_t Resource::SqliteMemoryUsedBytes() const {
   return 0;
 }
 
-const extensions::Extension* Resource::GetExtension() const {
-  return NULL;
-}
-
 bool Resource::ReportsV8MemoryStats() const {
   return false;
 }
@@ -60,16 +56,16 @@ size_t Resource::GetV8MemoryUsed() const {
   return 0;
 }
 
+int Resource::GetNaClDebugStubPort() const {
+  return 0;
+}
+
 bool Resource::CanInspect() const {
   return false;
 }
 
 content::WebContents* Resource::GetWebContents() const {
   return NULL;
-}
-
-bool Resource::IsBackground() const {
-  return false;
 }
 
 }  // namespace task_manager

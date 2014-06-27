@@ -17,8 +17,8 @@
 #include "chrome/browser/sessions/tab_restore_service.h"
 #include "chrome/browser/sessions/tab_restore_service_delegate.h"
 #include "chrome/browser/sessions/tab_restore_service_factory.h"
-#include "chrome/browser/sync/glue/session_model_associator.h"
 #include "chrome/browser/sync/glue/synced_session.h"
+#include "chrome/browser/sync/open_tabs_ui_delegate.h"
 #include "chrome/browser/sync/profile_sync_service.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/ui/browser.h"
@@ -142,7 +142,7 @@ struct RecentTabsSubMenuModel::TabNavigationItem {
 
   TabNavigationItem(const std::string& session_tag,
                     const SessionID::id_type& tab_id,
-                    const string16& title,
+                    const base::string16& title,
                     const GURL& url)
       : session_tag(session_tag),
         tab_id(tab_id),
@@ -157,7 +157,7 @@ struct RecentTabsSubMenuModel::TabNavigationItem {
   // Empty for local tabs, non-empty for other devices' tabs.
   std::string session_tag;
   SessionID::id_type tab_id;  // -1 for invalid, >= 0 otherwise.
-  string16 title;
+  base::string16 title;
   GURL url;
 };
 
@@ -167,13 +167,13 @@ const int RecentTabsSubMenuModel::kDisabledRecentlyClosedHeaderCommandId = 1121;
 RecentTabsSubMenuModel::RecentTabsSubMenuModel(
     ui::AcceleratorProvider* accelerator_provider,
     Browser* browser,
-    browser_sync::SessionModelAssociator* associator)
+    browser_sync::OpenTabsUIDelegate* open_tabs_delegate)
     : ui::SimpleMenuModel(this),
       browser_(browser),
-      associator_(associator),
+      open_tabs_delegate_(open_tabs_delegate),
       last_local_model_index_(-1),
-      default_favicon_(ResourceBundle::GetSharedInstance().
-          GetNativeImageNamed(IDR_DEFAULT_FAVICON)),
+      default_favicon_(ui::ResourceBundle::GetSharedInstance().
+                       GetNativeImageNamed(IDR_DEFAULT_FAVICON)),
       weak_ptr_factory_(this) {
   // Invoke asynchronous call to load tabs from local last session, which does
   // nothing if the tabs have already been loaded or they shouldn't be loaded.
@@ -285,11 +285,11 @@ void RecentTabsSubMenuModel::ExecuteCommand(int command_id, int event_flags) {
                                   browser_->host_desktop_type(), disposition);
       }
     } else {  // Restore tab of session from other devices.
-      browser_sync::SessionModelAssociator* associator = GetModelAssociator();
-      if (!associator)
+      browser_sync::OpenTabsUIDelegate* open_tabs = GetOpenTabsUIDelegate();
+      if (!open_tabs)
         return;
       const SessionTab* tab;
-      if (!associator->GetForeignTab(item.session_tag, item.tab_id, &tab))
+      if (!open_tabs->GetForeignTab(item.session_tag, item.tab_id, &tab))
         return;
       if (tab->navigations.empty())
         return;
@@ -313,12 +313,13 @@ void RecentTabsSubMenuModel::ExecuteCommand(int command_id, int event_flags) {
   }
 }
 
-const gfx::Font* RecentTabsSubMenuModel::GetLabelFontAt(int index) const {
+const gfx::FontList* RecentTabsSubMenuModel::GetLabelFontListAt(
+    int index) const {
   int command_id = GetCommandIdAt(index);
   if (command_id == kRecentlyClosedHeaderCommandId ||
       IsDeviceNameCommandId(command_id)) {
-    return &ResourceBundle::GetSharedInstance().GetFont(
-        ResourceBundle::BoldFont);
+    return &ui::ResourceBundle::GetSharedInstance().GetFontList(
+        ui::ResourceBundle::BoldFont);
   }
   return NULL;
 }
@@ -333,9 +334,10 @@ int RecentTabsSubMenuModel::GetMaxWidthForItemAtIndex(int item_index) const {
   return 320;
 }
 
-bool RecentTabsSubMenuModel::GetURLAndTitleForItemAtIndex(int index,
-                                                          std::string* url,
-                                                          string16* title) {
+bool RecentTabsSubMenuModel::GetURLAndTitleForItemAtIndex(
+    int index,
+    std::string* url,
+    base::string16* title) {
   int command_id = GetCommandIdAt(index);
   if (IsTabModelCommandId(command_id)) {
     TabNavigationItems* tab_items = NULL;
@@ -384,7 +386,7 @@ void RecentTabsSubMenuModel::BuildLocalEntries() {
     InsertItemWithStringIdAt(++last_local_model_index_,
                              kRecentlyClosedHeaderCommandId,
                              IDS_NEW_TAB_RECENTLY_CLOSED);
-    ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+    ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
     SetIcon(last_local_model_index_,
             rb.GetNativeImageNamed(IDR_RECENTLY_CLOSED_WINDOW));
 
@@ -422,9 +424,9 @@ void RecentTabsSubMenuModel::BuildTabsFromOtherDevices() {
   // a menu item, because they are always only built once (i.e. invoked from
   // Constructor()) and don't change after that.
 
-  browser_sync::SessionModelAssociator* associator = GetModelAssociator();
+  browser_sync::OpenTabsUIDelegate* open_tabs = GetOpenTabsUIDelegate();
   std::vector<const browser_sync::SyncedSession*> sessions;
-  if (!associator || !associator->GetAllForeignSessions(&sessions)) {
+  if (!open_tabs || !open_tabs->GetAllForeignSessions(&sessions)) {
     AddSeparator(ui::NORMAL_SEPARATOR);
     AddItemWithStringId(IDC_RECENT_TABS_NO_DEVICE_TABS,
                         IDS_RECENT_TABS_NO_DEVICE_TABS);
@@ -443,7 +445,7 @@ void RecentTabsSubMenuModel::BuildTabsFromOtherDevices() {
 
     // Get windows of session.
     std::vector<const SessionWindow*> windows;
-    if (!associator->GetForeignSession(session_tag, &windows) ||
+    if (!open_tabs->GetForeignSession(session_tag, &windows) ||
         windows.empty()) {
       continue;
     }
@@ -477,7 +479,7 @@ void RecentTabsSubMenuModel::BuildTabsFromOtherDevices() {
     AddSeparator(ui::NORMAL_SEPARATOR);
     int command_id = kMinDeviceNameCommandId + i;
     DCHECK_LE(command_id, kMaxDeviceNameCommandId);
-    AddItem(command_id, UTF8ToUTF16(session->session_name));
+    AddItem(command_id, base::UTF8ToUTF16(session->session_name));
     AddDeviceFavicon(GetItemCount() - 1, session->device_type);
 
     // Build tab menu items from sorted session tabs.
@@ -498,7 +500,7 @@ void RecentTabsSubMenuModel::BuildTabsFromOtherDevices() {
 }
 
 void RecentTabsSubMenuModel::BuildLocalTabItem(int session_id,
-                                               const string16& title,
+                                               const base::string16& title,
                                                const GURL& url,
                                                int curr_model_index) {
   TabNavigationItem item(std::string(), session_id, title, url);
@@ -507,7 +509,7 @@ void RecentTabsSubMenuModel::BuildLocalTabItem(int session_id,
   // See comments in BuildLocalEntries() about usage of InsertItem*At().
   // There may be no tab title, in which case, use the url as tab title.
   InsertItemAt(curr_model_index, command_id,
-               title.empty() ? UTF8ToUTF16(item.url.spec()) : title);
+               title.empty() ? base::UTF8ToUTF16(item.url.spec()) : title);
   AddTabFavicon(command_id, item.url);
   local_tab_navigation_items_.push_back(item);
 }
@@ -526,7 +528,7 @@ void RecentTabsSubMenuModel::BuildLocalWindowItem(
         IDS_NEW_TAB_RECENTLY_CLOSED_WINDOW_MULTIPLE,
         base::IntToString16(num_tabs)));
   }
-  ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   SetIcon(curr_model_index, rb.GetNativeImageNamed(IDR_RECENTLY_CLOSED_WINDOW));
   local_window_items_.push_back(window_id);
 }
@@ -546,7 +548,7 @@ void RecentTabsSubMenuModel::BuildOtherDevicesTabItem(
   // There may be no tab title, in which case, use the url as tab title.
   AddItem(command_id,
           current_navigation.title().empty() ?
-              UTF8ToUTF16(item.url.spec()) : current_navigation.title());
+              base::UTF8ToUTF16(item.url.spec()) : current_navigation.title());
   AddTabFavicon(command_id, item.url);
   other_devices_tab_navigation_items_.push_back(item);
 }
@@ -574,7 +576,7 @@ void RecentTabsSubMenuModel::AddDeviceFavicon(
       break;
   };
 
-  ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   SetIcon(index_in_menu, rb.GetNativeImageNamed(favicon_id));
 }
 
@@ -588,12 +590,11 @@ void RecentTabsSubMenuModel::AddTabFavicon(int command_id, const GURL& url) {
     // --sync-tab-favicons switch is on; according to zea@, this flag is now
     // automatically enabled for iOS and android, and they're looking into
     // enabling it for other platforms.
-    browser_sync::SessionModelAssociator* associator = GetModelAssociator();
+    browser_sync::OpenTabsUIDelegate* open_tabs = GetOpenTabsUIDelegate();
     scoped_refptr<base::RefCountedMemory> favicon_png;
-    if (associator &&
-        associator->GetSyncedFaviconForPageURL(url.spec(), &favicon_png)) {
-      gfx::Image image = gfx::Image::CreateFrom1xPNGBytes(favicon_png->front(),
-                                                          favicon_png->size());
+    if (open_tabs &&
+        open_tabs->GetSyncedFaviconForPageURL(url.spec(), &favicon_png)) {
+      gfx::Image image = gfx::Image::CreateFrom1xPNGBytes(favicon_png);
       SetIcon(index_in_menu, image);
       return;
     }
@@ -609,8 +610,7 @@ void RecentTabsSubMenuModel::AddTabFavicon(int command_id, const GURL& url) {
     return;
 
   favicon_service->GetFaviconImageForURL(
-      FaviconService::FaviconForURLParams(browser_->profile(),
-                                          url,
+      FaviconService::FaviconForURLParams(url,
                                           chrome::FAVICON,
                                           gfx::kFaviconSize),
       base::Bind(&RecentTabsSubMenuModel::OnFaviconDataAvailable,
@@ -661,16 +661,16 @@ void RecentTabsSubMenuModel::ClearLocalEntries() {
   local_window_items_.clear();
 }
 
-browser_sync::SessionModelAssociator*
-    RecentTabsSubMenuModel::GetModelAssociator() {
-  if (!associator_) {
+browser_sync::OpenTabsUIDelegate*
+    RecentTabsSubMenuModel::GetOpenTabsUIDelegate() {
+  if (!open_tabs_delegate_) {
     ProfileSyncService* service = ProfileSyncServiceFactory::GetInstance()->
         GetForProfile(browser_->profile());
-    // Only return the associator if it exists and it is done syncing sessions.
+    // Only return the delegate if it exists and it is done syncing sessions.
     if (service && service->ShouldPushChanges())
-      associator_ = service->GetSessionModelAssociator();
+      open_tabs_delegate_ = service->GetOpenTabsUIDelegate();
   }
-  return associator_;
+  return open_tabs_delegate_;
 }
 
 void RecentTabsSubMenuModel::TabRestoreServiceChanged(

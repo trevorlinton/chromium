@@ -8,9 +8,8 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
-#include "chrome/browser/google_apis/gdata_errorcode.h"
-#include "chrome/browser/sync_file_system/sync_callbacks.h"
-#include "chrome/browser/sync_file_system/sync_task.h"
+#include "chrome/browser/sync_file_system/drive_backend/sync_task.h"
+#include "google_apis/drive/gdata_errorcode.h"
 
 namespace drive {
 class DriveServiceInterface;
@@ -32,13 +31,14 @@ class ListChangesTask : public SyncTask {
   explicit ListChangesTask(SyncEngineContext* sync_context);
   virtual ~ListChangesTask();
 
-  virtual void Run(const SyncStatusCallback& callback) OVERRIDE;
+  virtual void Run(scoped_ptr<SyncTaskToken> token) OVERRIDE;
 
  private:
-  void DidListChanges(const SyncStatusCallback& callback,
+  void DidListChanges(scoped_ptr<SyncTaskToken> token,
                       google_apis::GDataErrorCode error,
                       scoped_ptr<google_apis::ResourceList> resource_list);
 
+  bool IsContextReady();
   MetadataDatabase* metadata_database();
   drive::DriveServiceInterface* drive_service();
 

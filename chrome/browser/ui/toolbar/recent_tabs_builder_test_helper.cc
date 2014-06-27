@@ -9,6 +9,8 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/sync/glue/session_model_associator.h"
+#include "chrome/browser/sync/open_tabs_ui_delegate.h"
+#include "chrome/browser/sync/sessions2/sessions_sync_manager.h"
 #include "sync/protocol/session_specifics.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -20,7 +22,7 @@ const char kBaseTabUrl[] = "http://foo/?";
 const char kTabTitleFormat[] = "session=%d;window=%d;tab=%d";
 
 struct TitleTimestampPair {
-  string16 title;
+  base::string16 title;
   base::Time timestamp;
 };
 
@@ -61,7 +63,7 @@ struct RecentTabsBuilderTestHelper::TabInfo {
   TabInfo() : id(0) {}
   SessionID::id_type id;
   base::Time timestamp;
-  string16 title;
+  base::string16 title;
 };
 struct RecentTabsBuilderTestHelper::WindowInfo {
   WindowInfo() : id(0) {}
@@ -131,13 +133,13 @@ SessionID::id_type RecentTabsBuilderTestHelper::GetWindowID(int session_index,
 void RecentTabsBuilderTestHelper::AddTab(int session_index, int window_index) {
   base::Time timestamp =
       start_time_ + base::TimeDelta::FromMinutes(base::RandUint64());
-  AddTabWithInfo(session_index, window_index, timestamp, string16());
+  AddTabWithInfo(session_index, window_index, timestamp, base::string16());
 }
 
 void RecentTabsBuilderTestHelper::AddTabWithInfo(int session_index,
                                                  int window_index,
                                                  base::Time timestamp,
-                                                 const string16& title) {
+                                                 const base::string16& title) {
   TabInfo tab_info;
   tab_info.id = CreateUniqueID();
   tab_info.timestamp = timestamp;
@@ -163,13 +165,13 @@ base::Time RecentTabsBuilderTestHelper::GetTabTimestamp(int session_index,
       .tabs[tab_index].timestamp;
 }
 
-string16 RecentTabsBuilderTestHelper::GetTabTitle(int session_index,
-                                                  int window_index,
-                                                  int tab_index) {
-  string16 title =
+base::string16 RecentTabsBuilderTestHelper::GetTabTitle(int session_index,
+                                                        int window_index,
+                                                        int tab_index) {
+  base::string16 title =
       sessions_[session_index].windows[window_index].tabs[tab_index].title;
   if (title.empty()) {
-    title = UTF8ToUTF16(ToTabTitle(
+    title = base::UTF8ToUTF16(ToTabTitle(
         GetSessionID(session_index),
         GetWindowID(session_index, window_index),
         GetTabID(session_index, window_index, tab_index)));
@@ -177,7 +179,35 @@ string16 RecentTabsBuilderTestHelper::GetTabTitle(int session_index,
   return title;
 }
 
-void RecentTabsBuilderTestHelper::RegisterRecentTabs(
+void RecentTabsBuilderTestHelper::ExportToSessionsSyncManager(
+    browser_sync::SessionsSyncManager* manager) {
+  syncer::SyncChangeList changes;
+  for (int s = 0; s < GetSessionCount(); ++s) {
+    sync_pb::EntitySpecifics session_entity;
+    sync_pb::SessionSpecifics* meta = session_entity.mutable_session();
+    BuildSessionSpecifics(s, meta);
+    for (int w = 0; w < GetWindowCount(s); ++w) {
+      BuildWindowSpecifics(s, w, meta);
+      for (int t = 0; t < GetTabCount(s, w); ++t) {
+        sync_pb::EntitySpecifics entity;
+        sync_pb::SessionSpecifics* tab_base = entity.mutable_session();
+        BuildTabSpecifics(s, w, t, tab_base);
+        changes.push_back(syncer::SyncChange(
+            FROM_HERE, syncer::SyncChange::ACTION_ADD,
+            syncer::SyncData::CreateRemoteData(
+                tab_base->tab_node_id(), entity, GetTabTimestamp(s, w, t))));
+      }
+    }
+    changes.push_back(syncer::SyncChange(
+        FROM_HERE, syncer::SyncChange::ACTION_ADD,
+        syncer::SyncData::CreateRemoteData(1, session_entity,
+                                          GetSessionTimestamp(s))));
+  }
+  manager->ProcessSyncChanges(FROM_HERE, changes);
+  VerifyExport(manager);
+}
+
+void RecentTabsBuilderTestHelper::ExportToSessionModelAssociator(
     browser_sync::SessionModelAssociator* associator) {
   for (int s = 0; s < GetSessionCount(); ++s) {
     sync_pb::SessionSpecifics meta;
@@ -193,22 +223,26 @@ void RecentTabsBuilderTestHelper::RegisterRecentTabs(
     }
     associator->AssociateForeignSpecifics(meta, GetSessionTimestamp(s));
   }
+  VerifyExport(associator);
+}
 
+void RecentTabsBuilderTestHelper::VerifyExport(
+    browser_sync::OpenTabsUIDelegate* delegate) {
   // Make sure data is populated correctly in SessionModelAssociator.
   std::vector<const browser_sync::SyncedSession*> sessions;
-  ASSERT_TRUE(associator->GetAllForeignSessions(&sessions));
+  ASSERT_TRUE(delegate->GetAllForeignSessions(&sessions));
   ASSERT_EQ(GetSessionCount(), static_cast<int>(sessions.size()));
   for (int s = 0; s < GetSessionCount(); ++s) {
     std::vector<const SessionWindow*> windows;
-    ASSERT_TRUE(associator->GetForeignSession(ToSessionTag(GetSessionID(s)),
-                                              &windows));
+    ASSERT_TRUE(delegate->GetForeignSession(ToSessionTag(GetSessionID(s)),
+                                            &windows));
     ASSERT_EQ(GetWindowCount(s), static_cast<int>(windows.size()));
     for (int w = 0; w < GetWindowCount(s); ++w)
       ASSERT_EQ(GetTabCount(s, w), static_cast<int>(windows[w]->tabs.size()));
   }
 }
 
-std::vector<string16>
+std::vector<base::string16>
 RecentTabsBuilderTestHelper::GetTabTitlesSortedByRecency() {
   std::vector<TitleTimestampPair> tabs;
   for (int s = 0; s < GetSessionCount(); ++s) {
@@ -223,7 +257,7 @@ RecentTabsBuilderTestHelper::GetTabTitlesSortedByRecency() {
   }
   sort(tabs.begin(), tabs.end(), SortTabTimesByRecency);
 
-  std::vector<string16> titles;
+  std::vector<base::string16> titles;
   for (size_t i = 0; i < tabs.size(); ++i)
     titles.push_back(tabs[i].title);
   return titles;
@@ -274,7 +308,7 @@ void RecentTabsBuilderTestHelper::BuildTabSpecifics(
   sync_pb::TabNavigation* navigation = tab->add_navigation();
   navigation->set_virtual_url(ToTabUrl(session_id, window_id, tab_id));
   navigation->set_referrer("referrer");
-  navigation->set_title(UTF16ToUTF8(GetTabTitle(
+  navigation->set_title(base::UTF16ToUTF8(GetTabTitle(
       session_index, window_index, tab_index)));
   navigation->set_page_transition(sync_pb::SyncEnums_PageTransition_TYPED);
 }

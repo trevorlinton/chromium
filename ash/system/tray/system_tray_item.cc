@@ -12,7 +12,8 @@
 namespace ash {
 
 SystemTrayItem::SystemTrayItem(SystemTray* system_tray)
-    : system_tray_(system_tray) {
+    : system_tray_(system_tray),
+      restore_focus_(false) {
 }
 
 SystemTrayItem::~SystemTrayItem() {
@@ -84,7 +85,7 @@ bool SystemTrayItem::ShouldHideArrow() const {
   return false;
 }
 
-bool SystemTrayItem::ShouldShowLauncher() const {
+bool SystemTrayItem::ShouldShowShelf() const {
   return true;
 }
 

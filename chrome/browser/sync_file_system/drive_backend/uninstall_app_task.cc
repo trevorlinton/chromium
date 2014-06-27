@@ -8,14 +8,15 @@
 #include "base/location.h"
 #include "chrome/browser/drive/drive_api_util.h"
 #include "chrome/browser/drive/drive_service_interface.h"
-#include "chrome/browser/google_apis/drive_api_parser.h"
-#include "chrome/browser/google_apis/gdata_wapi_parser.h"
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_constants.h"
+#include "chrome/browser/sync_file_system/drive_backend/drive_backend_util.h"
 #include "chrome/browser/sync_file_system/drive_backend/metadata_database.h"
 #include "chrome/browser/sync_file_system/drive_backend/metadata_database.pb.h"
 #include "chrome/browser/sync_file_system/drive_backend/sync_engine_context.h"
-#include "chrome/browser/sync_file_system/drive_backend/tracker_set.h"
+#include "chrome/browser/sync_file_system/drive_backend/tracker_id_set.h"
 #include "chrome/browser/sync_file_system/syncable_file_system_util.h"
+#include "google_apis/drive/drive_api_parser.h"
+#include "google_apis/drive/gdata_wapi_parser.h"
 
 namespace sync_file_system {
 namespace drive_backend {
@@ -33,8 +34,8 @@ UninstallAppTask::UninstallAppTask(SyncEngineContext* sync_context,
 UninstallAppTask::~UninstallAppTask() {
 }
 
-void UninstallAppTask::Run(const SyncStatusCallback& callback) {
-  if (!metadata_database() || !drive_service()) {
+void UninstallAppTask::RunSequential(const SyncStatusCallback& callback) {
+  if (!IsContextReady()) {
     RunSoon(FROM_HERE, base::Bind(callback, SYNC_STATUS_FAILED));
     return;
   }
@@ -46,7 +47,7 @@ void UninstallAppTask::Run(const SyncStatusCallback& callback) {
   DCHECK_EQ(RemoteFileSyncService::UNINSTALL_AND_PURGE_REMOTE, uninstall_flag_);
 
   int64 sync_root_tracker_id = metadata_database()->GetSyncRootTrackerID();
-  TrackerSet trackers;
+  TrackerIDSet trackers;
   if (!metadata_database()->FindTrackersByParentAndTitle(
           sync_root_tracker_id, app_id_, &trackers) ||
       !trackers.has_active()) {
@@ -54,23 +55,30 @@ void UninstallAppTask::Run(const SyncStatusCallback& callback) {
     return;
   }
 
-  FileTracker* app_root_tracker = trackers.active_tracker();
-  app_root_tracker_id_ = app_root_tracker->tracker_id();
-  DCHECK(app_root_tracker->has_synced_details());
+  FileTracker app_root_tracker;
+  if (!metadata_database()->FindTrackerByTrackerID(
+          trackers.active_tracker(), &app_root_tracker)) {
+    NOTREACHED();
+    callback.Run(SYNC_STATUS_FAILED);
+    return;
+  }
+  app_root_tracker_id_ = app_root_tracker.tracker_id();
+  DCHECK(app_root_tracker.has_synced_details());
 
   drive_service()->DeleteResource(
-      app_root_tracker->file_id(),
+      app_root_tracker.file_id(),
       std::string(),  // etag
       base::Bind(&UninstallAppTask::DidDeleteAppRoot,
                  weak_ptr_factory_.GetWeakPtr(),
                  callback,
-                 metadata_database()->GetLargestChangeID()));
+                 metadata_database()->GetLargestKnownChangeID()));
 }
 
 void UninstallAppTask::DidDeleteAppRoot(const SyncStatusCallback& callback,
                                         int64 change_id,
                                         google_apis::GDataErrorCode error) {
-  if (error != google_apis::HTTP_SUCCESS &&
+  SyncStatusCode status = GDataErrorCodeToSyncStatusCode(error);
+  if (status != SYNC_STATUS_OK &&
       error != google_apis::HTTP_NOT_FOUND) {
     callback.Run(SYNC_STATUS_FAILED);
     return;
@@ -79,11 +87,17 @@ void UninstallAppTask::DidDeleteAppRoot(const SyncStatusCallback& callback,
   metadata_database()->UnregisterApp(app_id_, callback);
 }
 
+bool UninstallAppTask::IsContextReady() {
+  return sync_context_->GetMetadataDatabase() &&
+      sync_context_->GetDriveService();
+}
+
 MetadataDatabase* UninstallAppTask::metadata_database() {
   return sync_context_->GetMetadataDatabase();
 }
 
 drive::DriveServiceInterface* UninstallAppTask::drive_service() {
+  set_used_network(true);
   return sync_context_->GetDriveService();
 }
 

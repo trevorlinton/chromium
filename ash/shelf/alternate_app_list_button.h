@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,19 +13,19 @@ class ShelfWidget;
 
 namespace internal {
 
-class LauncherButtonHost;
+class ShelfButtonHost;
 
-// Button used for the AppList icon on the launcher.
-// This class is an alternate implementation to
-// ash::internal::AppListButton for the purposes of testing an
-// alternate shelf layout (see ash_switches: UseAlternateShelfLayout).
+// Button used for the AppList icon on the shelf.
+// This class is an alternate implementation to ash::internal::AppListButton
+// for the purposes of testing an alternate shelf layout
+// (see ash_switches: UseAlternateShelfLayout).
 class AlternateAppListButton : public views::ImageButton {
  public:
   // Bounds size (inset) required for the app icon image (in pixels).
   static const int kImageBoundsSize;
 
   AlternateAppListButton(views::ButtonListener* listener,
-                         LauncherButtonHost* host,
+                         ShelfButtonHost* host,
                          ShelfWidget* shelf_widget);
   virtual ~AlternateAppListButton();
 
@@ -39,13 +39,13 @@ class AlternateAppListButton : public views::ImageButton {
   virtual void OnMouseEntered(const ui::MouseEvent& event) OVERRIDE;
   virtual void OnMouseExited(const ui::MouseEvent& event) OVERRIDE;
   virtual void OnPaint(gfx::Canvas* canvas) OVERRIDE;
-  virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE;
+  virtual void GetAccessibleState(ui::AXViewState* state) OVERRIDE;
 
   // ui::EventHandler overrides:
   virtual void OnGestureEvent(ui::GestureEvent* event) OVERRIDE;
 
  private:
-  LauncherButtonHost* host_;
+  ShelfButtonHost* host_;
   // Reference to the shelf widget containing this button, owned by the
   // root window controller.
   ShelfWidget* shelf_widget_;

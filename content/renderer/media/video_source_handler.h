@@ -10,6 +10,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/scoped_ptr.h"
 #include "content/common/content_export.h"
 #include "third_party/libjingle/source/talk/app/webrtc/videosourceinterface.h"
 
@@ -21,6 +22,7 @@ namespace content {
 
 class MediaStreamDependencyFactory;
 class MediaStreamRegistryInterface;
+class PpFrameReceiver;
 
 // Interface used by the effects pepper plugin to get captured frame
 // from the video track.
@@ -40,29 +42,39 @@ class CONTENT_EXPORT FrameReaderInterface {
 class CONTENT_EXPORT VideoSourceHandler {
  public:
   // |registry| is used to look up the media stream by url. If a NULL |registry|
-  // is given, the global WebKit::WebMediaStreamRegistry will be used.
+  // is given, the global blink::WebMediaStreamRegistry will be used.
   explicit VideoSourceHandler(MediaStreamRegistryInterface* registry);
   virtual ~VideoSourceHandler();
   // Connects to the first video track in the MediaStream specified by |url| and
   // the received frames will be delivered via |reader|.
   // Returns true on success and false on failure.
   bool Open(const std::string& url, FrameReaderInterface* reader);
-  // Closes |reader|'s connection with the first video track in
-  // the MediaStream specified by |url|, i.e. stops receiving frames from the
-  // video track.
+  // Closes |reader|'s connection with the video track, i.e. stops receiving
+  // frames from the video track.
   // Returns true on success and false on failure.
-  bool Close(const std::string& url, FrameReaderInterface* reader);
+  bool Close(FrameReaderInterface* reader);
 
   // Gets the VideoRenderer associated with |reader|.
   // Made it public only for testing purpose.
   cricket::VideoRenderer* GetReceiver(FrameReaderInterface* reader);
 
  private:
+  struct SourceInfo {
+    SourceInfo(scoped_refptr<webrtc::VideoSourceInterface> source,
+               FrameReaderInterface* reader);
+    ~SourceInfo();
+
+    scoped_ptr<PpFrameReceiver> receiver_;
+    scoped_refptr<webrtc::VideoSourceInterface> source_;
+  };
+
+  typedef std::map<FrameReaderInterface*, SourceInfo*> SourceInfoMap;
+
   scoped_refptr<webrtc::VideoSourceInterface> GetFirstVideoSource(
       const std::string& url);
 
   MediaStreamRegistryInterface* registry_;
-  std::map<FrameReaderInterface*, cricket::VideoRenderer*> reader_to_receiver_;
+  SourceInfoMap reader_to_receiver_;
 
   DISALLOW_COPY_AND_ASSIGN(VideoSourceHandler);
 };

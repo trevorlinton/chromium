@@ -59,13 +59,20 @@ class CppTypeGenerator(object):
     """
     return '%s_NONE' % self.FollowRef(type_).unix_name.upper()
 
+  def GetEnumLastValue(self, type_):
+    """Gets the enum value in the given model.Property indicating the last value
+    for the type.
+    """
+    return '%s_LAST' % self.FollowRef(type_).unix_name.upper()
+
   def GetEnumValue(self, type_, enum_value):
     """Gets the enum value of the given model.Property of the given type.
 
     e.g VAR_STRING
     """
-    value = '%s_%s' % (self.FollowRef(type_).unix_name.upper(),
-                       cpp_util.Classname(enum_value.name.upper()))
+    value = cpp_util.Classname(enum_value.name.upper())
+    if not type_.cpp_omit_enum_type:
+      value = '%s_%s' % (self.FollowRef(type_).unix_name.upper(), value)
     # To avoid collisions with built-in OS_* preprocessor definitions, we add a
     # trailing slash to enum names that start with OS_.
     if value.startswith("OS_"):

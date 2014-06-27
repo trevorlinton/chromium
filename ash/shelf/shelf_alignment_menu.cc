@@ -4,6 +4,7 @@
 
 #include "ash/shelf/shelf_alignment_menu.h"
 
+#include "ash/metrics/user_metrics_recorder.h"
 #include "ash/shelf/shelf_layout_manager.h"
 #include "ash/shelf/shelf_types.h"
 #include "ash/shell.h"
@@ -33,7 +34,7 @@ ShelfAlignmentMenu::ShelfAlignmentMenu(aura::Window* root)
 ShelfAlignmentMenu::~ShelfAlignmentMenu() {}
 
 bool ShelfAlignmentMenu::IsCommandIdChecked(int command_id) const {
-  return internal::ShelfLayoutManager::ForLauncher(root_window_)->
+  return internal::ShelfLayoutManager::ForShelf(root_window_)->
       SelectValueForShelfAlignment(
           MENU_ALIGN_BOTTOM == command_id,
           MENU_ALIGN_LEFT == command_id,
@@ -54,14 +55,20 @@ bool ShelfAlignmentMenu::GetAcceleratorForCommandId(
 void ShelfAlignmentMenu::ExecuteCommand(int command_id, int event_flags) {
   switch (static_cast<MenuItem>(command_id)) {
     case MENU_ALIGN_LEFT:
+      Shell::GetInstance()->metrics()->
+          RecordUserMetricsAction(UMA_SHELF_ALIGNMENT_SET_LEFT);
       Shell::GetInstance()->SetShelfAlignment(SHELF_ALIGNMENT_LEFT,
                                               root_window_);
       break;
     case MENU_ALIGN_BOTTOM:
+      Shell::GetInstance()->metrics()->
+          RecordUserMetricsAction(UMA_SHELF_ALIGNMENT_SET_BOTTOM);
       Shell::GetInstance()->SetShelfAlignment(SHELF_ALIGNMENT_BOTTOM,
                                               root_window_);
       break;
     case MENU_ALIGN_RIGHT:
+      Shell::GetInstance()->metrics()->
+          RecordUserMetricsAction(UMA_SHELF_ALIGNMENT_SET_RIGHT);
       Shell::GetInstance()->SetShelfAlignment(SHELF_ALIGNMENT_RIGHT,
                                               root_window_);
       break;

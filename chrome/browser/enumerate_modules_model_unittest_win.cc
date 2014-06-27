@@ -204,21 +204,22 @@ TEST_F(EnumerateModulesTest, MatchFunction) {
         kMatchineEntryList[i].blacklist;
 
     SCOPED_TRACE("Test case no " + base::IntToString(i) +
-                 ": '" + UTF16ToASCII(test.name) + "'");
+                 ": '" + base::UTF16ToASCII(test.name) + "'");
     EXPECT_EQ(kMatchineEntryList[i].expected_result,
               ModuleEnumerator::Match(test, blacklist));
   }
 }
 
 const struct CollapsePathList {
-  string16 expected_result;
-  string16 test_case;
+  base::string16 expected_result;
+  base::string16 test_case;
 } kCollapsePathList[] = {
   // Negative testing (should not collapse this path).
-  { ASCIIToUTF16("c:\\a\\a.dll"), ASCIIToUTF16("c:\\a\\a.dll") },
+  { base::ASCIIToUTF16("c:\\a\\a.dll"), base::ASCIIToUTF16("c:\\a\\a.dll") },
   // These two are to test that we select the maximum collapsed path.
-  { ASCIIToUTF16("%foo%\\a.dll"), ASCIIToUTF16("c:\\foo\\a.dll") },
-  { ASCIIToUTF16("%x%\\a.dll"), ASCIIToUTF16("c:\\foo\\bar\\a.dll") },
+  { base::ASCIIToUTF16("%foo%\\a.dll"), base::ASCIIToUTF16("c:\\foo\\a.dll") },
+  { base::ASCIIToUTF16("%x%\\a.dll"),
+    base::ASCIIToUTF16("c:\\foo\\bar\\a.dll") },
 };
 
 TEST_F(EnumerateModulesTest, CollapsePath) {
@@ -234,8 +235,8 @@ TEST_F(EnumerateModulesTest, CollapsePath) {
     module.location = kCollapsePathList[i].test_case;
     module_enumerator->CollapsePath(&module);
 
-    SCOPED_TRACE("Test case no " + base::IntToString(i) +
-                 ": '" + UTF16ToASCII(kCollapsePathList[i].expected_result) +
+    SCOPED_TRACE("Test case no " + base::IntToString(i) + ": '" +
+                 base::UTF16ToASCII(kCollapsePathList[i].expected_result) +
                  "'");
     EXPECT_EQ(kCollapsePathList[i].expected_result, module.location);
   }

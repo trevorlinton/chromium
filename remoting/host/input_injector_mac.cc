@@ -4,9 +4,9 @@
 
 #include "remoting/host/input_injector.h"
 
-#include <algorithm>
 #include <ApplicationServices/ApplicationServices.h>
 #include <Carbon/Carbon.h>
+#include <algorithm>
 
 #include "base/basictypes.h"
 #include "base/bind.h"
@@ -15,29 +15,45 @@
 #include "base/mac/scoped_cftyperef.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
+#include "base/strings/utf_string_conversions.h"
 #include "remoting/host/clipboard.h"
 #include "remoting/proto/internal.pb.h"
 #include "remoting/protocol/message_decoder.h"
-#include "skia/ext/skia_utils_mac.h"
-#include "third_party/skia/include/core/SkPoint.h"
-#include "third_party/skia/include/core/SkRect.h"
+#include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
 #include "third_party/webrtc/modules/desktop_capture/mac/desktop_configuration.h"
-#include "ui/base/keycodes/keycode_converter.h"
+#include "ui/events/keycodes/dom4/keycode_converter.h"
 
 namespace remoting {
 
 namespace {
 
+void SetOrClearBit(uint64_t &value, uint64_t bit, bool set_bit) {
+  value = set_bit ? (value | bit) : (value & ~bit);
+}
+
+void CreateAndPostKeyEvent(int keycode,
+                           bool pressed,
+                           int flags,
+                           const base::string16& unicode) {
+  base::ScopedCFTypeRef<CGEventRef> eventRef(
+      CGEventCreateKeyboardEvent(NULL, keycode, pressed));
+  if (eventRef) {
+    CGEventSetFlags(eventRef, flags);
+    if (!unicode.empty())
+      CGEventKeyboardSetUnicodeString(eventRef, unicode.size(), &(unicode[0]));
+    CGEventPost(kCGSessionEventTap, eventRef);
+  }
+}
+
+// This value is not defined. Give it the obvious name so that if it is ever
+// added there will be a handy compilation error to remind us to remove this
+// definition.
+const int kVK_RightCommand = 0x36;
+
 using protocol::ClipboardEvent;
 using protocol::KeyEvent;
+using protocol::TextEvent;
 using protocol::MouseEvent;
-
-// skia/ext/skia_utils_mac.h only defines CGRectToSkRect().
-SkIRect CGRectToSkIRect(const CGRect& rect) {
-  SkIRect result;
-  gfx::CGRectToSkRect(rect).round(&result);
-  return result;
-}
 
 // A class to generate events on Mac.
 class InputInjectorMac : public InputInjector {
@@ -51,6 +67,7 @@ class InputInjectorMac : public InputInjector {
 
   // InputStub interface.
   virtual void InjectKeyEvent(const KeyEvent& event) OVERRIDE;
+  virtual void InjectTextEvent(const TextEvent& event) OVERRIDE;
   virtual void InjectMouseEvent(const MouseEvent& event) OVERRIDE;
 
   // InputInjector interface.
@@ -68,6 +85,7 @@ class InputInjectorMac : public InputInjector {
 
     // Mirrors the InputStub interface.
     void InjectKeyEvent(const KeyEvent& event);
+    void InjectTextEvent(const TextEvent& event);
     void InjectMouseEvent(const MouseEvent& event);
 
     // Mirrors the InputInjector interface.
@@ -80,9 +98,11 @@ class InputInjectorMac : public InputInjector {
     virtual ~Core();
 
     scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-    SkIPoint mouse_pos_;
+    webrtc::DesktopVector mouse_pos_;
     uint32 mouse_button_state_;
     scoped_ptr<Clipboard> clipboard_;
+    CGEventFlags left_modifiers_;
+    CGEventFlags right_modifiers_;
 
     DISALLOW_COPY_AND_ASSIGN(Core);
   };
@@ -109,6 +129,10 @@ void InputInjectorMac::InjectKeyEvent(const KeyEvent& event) {
   core_->InjectKeyEvent(event);
 }
 
+void InputInjectorMac::InjectTextEvent(const TextEvent& event) {
+  core_->InjectTextEvent(event);
+}
+
 void InputInjectorMac::InjectMouseEvent(const MouseEvent& event) {
   core_->InjectMouseEvent(event);
 }
@@ -122,7 +146,9 @@ InputInjectorMac::Core::Core(
     scoped_refptr<base::SingleThreadTaskRunner> task_runner)
     : task_runner_(task_runner),
       mouse_button_state_(0),
-      clipboard_(Clipboard::Create()) {
+      clipboard_(Clipboard::Create()),
+      left_modifiers_(0),
+      right_modifiers_(0) {
   // Ensure that local hardware events are not suppressed after injecting
   // input events.  This allows LocalInputMonitor to detect if the local mouse
   // is being moved whilst a remote user is connected.
@@ -163,18 +189,43 @@ void InputInjectorMac::Core::InjectKeyEvent(const KeyEvent& event) {
   if (keycode == key_converter->InvalidNativeKeycode())
     return;
 
-  base::ScopedCFTypeRef<CGEventRef> eventRef(
-      CGEventCreateKeyboardEvent(NULL, keycode, event.pressed()));
-
-  if (eventRef) {
-    // We only need to manually set CapsLock: Mac ignores NumLock.
-    // Modifier keys work correctly already via press/release event injection.
-    if (event.lock_states() & protocol::KeyEvent::LOCK_STATES_CAPSLOCK)
-      CGEventSetFlags(eventRef, kCGEventFlagMaskAlphaShift);
-
-    // Post the event to the current session.
-    CGEventPost(kCGSessionEventTap, eventRef);
+  // If this is a modifier key, remember its new state so that it can be
+  // correctly applied to subsequent events.
+  if (keycode == kVK_Command) {
+    SetOrClearBit(left_modifiers_, kCGEventFlagMaskCommand, event.pressed());
+  } else if (keycode == kVK_Shift) {
+    SetOrClearBit(left_modifiers_, kCGEventFlagMaskShift, event.pressed());
+  } else if (keycode == kVK_Control) {
+    SetOrClearBit(left_modifiers_, kCGEventFlagMaskControl, event.pressed());
+  } else if (keycode == kVK_Option) {
+    SetOrClearBit(left_modifiers_, kCGEventFlagMaskAlternate, event.pressed());
+  } else if (keycode == kVK_RightCommand) {
+    SetOrClearBit(right_modifiers_, kCGEventFlagMaskCommand, event.pressed());
+  } else if (keycode == kVK_RightShift) {
+    SetOrClearBit(right_modifiers_, kCGEventFlagMaskShift, event.pressed());
+  } else if (keycode == kVK_RightControl) {
+    SetOrClearBit(right_modifiers_, kCGEventFlagMaskControl, event.pressed());
+  } else if (keycode == kVK_RightOption) {
+    SetOrClearBit(right_modifiers_, kCGEventFlagMaskAlternate, event.pressed());
   }
+
+  // In addition to the modifier keys pressed right now, we also need to set
+  // AlphaShift if caps lock was active at the client (Mac ignores NumLock).
+  uint64_t flags = left_modifiers_ | right_modifiers_;
+  if (event.lock_states() & protocol::KeyEvent::LOCK_STATES_CAPSLOCK)
+    flags |= kCGEventFlagMaskAlphaShift;
+
+  CreateAndPostKeyEvent(keycode, event.pressed(), flags, base::string16());
+}
+
+void InputInjectorMac::Core::InjectTextEvent(const TextEvent& event) {
+  DCHECK(event.has_text());
+  base::string16 text = base::UTF8ToUTF16(event.text());
+
+  // Applications that ignore UnicodeString field will see the text event as
+  // Space key.
+  CreateAndPostKeyEvent(kVK_Space, true, 0, text);
+  CreateAndPostKeyEvent(kVK_Space, false, 0, text);
 }
 
 void InputInjectorMac::Core::InjectMouseEvent(const MouseEvent& event) {
@@ -185,7 +236,7 @@ void InputInjectorMac::Core::InjectMouseEvent(const MouseEvent& event) {
     // accordingly.
 
     // Set the mouse position assuming single-monitor.
-    mouse_pos_ = SkIPoint::Make(event.x(), event.y());
+    mouse_pos_.set(event.x(), event.y());
 
     // Fetch the desktop configuration.
     // TODO(wez): Optimize this out, or at least only enumerate displays in
@@ -197,20 +248,19 @@ void InputInjectorMac::Core::InjectMouseEvent(const MouseEvent& event) {
             webrtc::MacDesktopConfiguration::TopLeftOrigin);
 
     // Translate the mouse position into desktop coordinates.
-    mouse_pos_ += SkIPoint::Make(desktop_config.pixel_bounds.left(),
-                                 desktop_config.pixel_bounds.top());
+    mouse_pos_.add(webrtc::DesktopVector(desktop_config.pixel_bounds.left(),
+                                         desktop_config.pixel_bounds.top()));
 
     // Constrain the mouse position to the desktop coordinates.
-    mouse_pos_ = SkIPoint::Make(
+    mouse_pos_.set(
        std::max(desktop_config.pixel_bounds.left(),
            std::min(desktop_config.pixel_bounds.right(), mouse_pos_.x())),
        std::max(desktop_config.pixel_bounds.top(),
            std::min(desktop_config.pixel_bounds.bottom(), mouse_pos_.y())));
 
     // Convert from pixel to Density Independent Pixel coordinates.
-    mouse_pos_ = SkIPoint::Make(
-        SkScalarRound(mouse_pos_.x() / desktop_config.dip_to_pixel_scale),
-        SkScalarRound(mouse_pos_.y() / desktop_config.dip_to_pixel_scale));
+    mouse_pos_.set(mouse_pos_.x() / desktop_config.dip_to_pixel_scale,
+                   mouse_pos_.y() / desktop_config.dip_to_pixel_scale);
 
     VLOG(3) << "Moving mouse to " << mouse_pos_.x() << "," << mouse_pos_.y();
   }
@@ -280,8 +330,7 @@ void InputInjectorMac::Core::Stop() {
   clipboard_->Stop();
 }
 
-InputInjectorMac::Core::~Core() {
-}
+InputInjectorMac::Core::~Core() {}
 
 }  // namespace
 

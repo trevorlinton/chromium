@@ -127,6 +127,12 @@ std::string BluetoothAdapterMac::GetName() const {
   return name_;
 }
 
+void BluetoothAdapterMac::SetName(const std::string& name,
+                                  const base::Closure& callback,
+                                  const ErrorCallback& error_callback) {
+  NOTIMPLEMENTED();
+}
+
 bool BluetoothAdapterMac::IsInitialized() const {
   return true;
 }
@@ -142,6 +148,19 @@ bool BluetoothAdapterMac::IsPowered() const {
 void BluetoothAdapterMac::SetPowered(bool powered,
                                      const base::Closure& callback,
                                      const ErrorCallback& error_callback) {
+  NOTIMPLEMENTED();
+}
+
+bool BluetoothAdapterMac::IsDiscoverable() const {
+  NOTIMPLEMENTED();
+  return false;
+}
+
+void BluetoothAdapterMac::SetDiscoverable(
+    bool discoverable,
+    const base::Closure& callback,
+    const ErrorCallback& error_callback) {
+  NOTIMPLEMENTED();
 }
 
 bool BluetoothAdapterMac::IsDiscovering() const {
@@ -149,7 +168,12 @@ bool BluetoothAdapterMac::IsDiscovering() const {
       discovery_status_ == DISCOVERY_STOPPING;
 }
 
-void BluetoothAdapterMac::StartDiscovering(
+void BluetoothAdapterMac::ReadLocalOutOfBandPairingData(
+    const BluetoothOutOfBandPairingDataCallback& callback,
+    const ErrorCallback& error_callback) {
+}
+
+void BluetoothAdapterMac::AddDiscoverySession(
     const base::Closure& callback,
     const ErrorCallback& error_callback) {
   if (discovery_status_ == DISCOVERING) {
@@ -162,8 +186,9 @@ void BluetoothAdapterMac::StartDiscovering(
   MaybeStartDeviceInquiry();
 }
 
-void BluetoothAdapterMac::StopDiscovering(const base::Closure& callback,
-                                          const ErrorCallback& error_callback) {
+void BluetoothAdapterMac::RemoveDiscoverySession(
+    const base::Closure& callback,
+    const ErrorCallback& error_callback) {
   if (discovery_status_ == NOT_DISCOVERING) {
     error_callback.Run();
     return;
@@ -173,9 +198,8 @@ void BluetoothAdapterMac::StopDiscovering(const base::Closure& callback,
   MaybeStopDeviceInquiry();
 }
 
-void BluetoothAdapterMac::ReadLocalOutOfBandPairingData(
-    const BluetoothOutOfBandPairingDataCallback& callback,
-    const ErrorCallback& error_callback) {
+void BluetoothAdapterMac::RemovePairingDelegateInternal(
+    BluetoothDevice::PairingDelegate* pairing_delegate) {
 }
 
 void BluetoothAdapterMac::Init() {

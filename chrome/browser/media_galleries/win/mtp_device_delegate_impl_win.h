@@ -8,10 +8,10 @@
 #include <queue>
 
 #include "base/callback.h"
+#include "base/files/file.h"
 #include "base/location.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/platform_file.h"
 #include "base/strings/string16.h"
 #include "base/win/scoped_comptr.h"
 #include "chrome/browser/media_galleries/fileapi/mtp_device_async_delegate.h"
@@ -37,30 +37,30 @@ class MTPDeviceDelegateImplWin : public MTPDeviceAsyncDelegate {
  public:
   // Structure used to represent MTP device storage partition details.
   struct StorageDeviceInfo {
-    StorageDeviceInfo(const string16& pnp_device_id,
-                      const string16& registered_device_path,
-                      const string16& storage_object_id);
+    StorageDeviceInfo(const base::string16& pnp_device_id,
+                      const base::string16& registered_device_path,
+                      const base::string16& storage_object_id);
 
     // The PnP Device Id, used to open the device for communication,
     // e.g. "\\?\usb#vid_04a9&pid_3073#12#{6ac27878-a6fa-4155-ba85-f1d4f33}".
-    const string16 pnp_device_id;
+    const base::string16 pnp_device_id;
 
     // The media file system root path, which is obtained during the
     // registration of MTP device storage partition as a file system,
     // e.g. "\\MTP:StorageSerial:SID-{10001,E,9823}:237483".
-    const string16 registered_device_path;
+    const base::string16 registered_device_path;
 
     // The MTP device storage partition object identifier, used to enumerate the
     // storage contents, e.g. "s10001".
-    const string16 storage_object_id;
+    const base::string16 storage_object_id;
   };
 
  private:
   friend void OnGetStorageInfoCreateDelegate(
-      const string16& device_location,
+      const base::string16& device_location,
       const CreateMTPDeviceAsyncDelegateCallback& callback,
-      string16* pnp_device_id,
-      string16* storage_object_id,
+      base::string16* pnp_device_id,
+      base::string16* storage_object_id,
       bool succeeded);
 
   enum InitializationState {
@@ -72,19 +72,19 @@ class MTPDeviceDelegateImplWin : public MTPDeviceAsyncDelegate {
   // Used to represent pending task details.
   struct PendingTaskInfo {
     PendingTaskInfo(const tracked_objects::Location& location,
-                    const base::Callback<base::PlatformFileError(void)>& task,
-                    const base::Callback<void(base::PlatformFileError)>& reply);
+                    const base::Callback<base::File::Error(void)>& task,
+                    const base::Callback<void(base::File::Error)>& reply);
 
     const tracked_objects::Location location;
-    const base::Callback<base::PlatformFileError(void)> task;
-    const base::Callback<void(base::PlatformFileError)> reply;
+    const base::Callback<base::File::Error(void)> task;
+    const base::Callback<void(base::File::Error)> reply;
   };
 
   // Defers the device initializations until the first file operation request.
   // Do all the initializations in EnsureInitAndRunTask() function.
-  MTPDeviceDelegateImplWin(const string16& registered_device_path,
-                           const string16& pnp_device_id,
-                           const string16& storage_object_id);
+  MTPDeviceDelegateImplWin(const base::string16& registered_device_path,
+                           const base::string16& pnp_device_id,
+                           const base::string16& storage_object_id);
 
   // Destructed via CancelPendingTasksAndDeleteDelegate().
   virtual ~MTPDeviceDelegateImplWin();
@@ -102,6 +102,12 @@ class MTPDeviceDelegateImplWin : public MTPDeviceAsyncDelegate {
       const base::FilePath& device_file_path,
       const base::FilePath& local_path,
       const CreateSnapshotFileSuccessCallback& success_callback,
+      const ErrorCallback& error_callback) OVERRIDE;
+  virtual bool IsStreaming() OVERRIDE;
+  virtual void ReadBytes(
+      const base::FilePath& device_file_path,
+      net::IOBuffer* buf, int64 offset, int buf_len,
+      const ReadBytesSuccessCallback& success_callback,
       const ErrorCallback& error_callback) OVERRIDE;
   virtual void CancelPendingTasksAndDeleteDelegate() OVERRIDE;
 
@@ -140,8 +146,8 @@ class MTPDeviceDelegateImplWin : public MTPDeviceAsyncDelegate {
   // invoked to notify the caller about the platform file |error|.
   void OnGetFileInfo(const GetFileInfoSuccessCallback& success_callback,
                      const ErrorCallback& error_callback,
-                     base::PlatformFileInfo* file_info,
-                     base::PlatformFileError error);
+                     base::File::Info* file_info,
+                     base::File::Error error);
 
   // Called when ReadDirectory() completes. |file_list| contains the directory
   // file entries information. |error| specifies the platform file error code.
@@ -154,7 +160,7 @@ class MTPDeviceDelegateImplWin : public MTPDeviceAsyncDelegate {
   void OnDidReadDirectory(const ReadDirectorySuccessCallback& success_callback,
                           const ErrorCallback& error_callback,
                           fileapi::AsyncFileUtil::EntryList* file_list,
-                          base::PlatformFileError error);
+                          base::File::Error error);
 
   // Called when the get file stream request completes.
   // |file_details.request_info| contains the CreateSnapshot request param
@@ -166,7 +172,7 @@ class MTPDeviceDelegateImplWin : public MTPDeviceAsyncDelegate {
   //
   // If the get file stream request fails, |error| is set accordingly.
   void OnGetFileStream(scoped_ptr<SnapshotFileDetails> file_details,
-                       base::PlatformFileError error);
+                       base::File::Error error);
 
   // Called when WriteDataChunkIntoSnapshotFile() completes.
   // |bytes_written| specifies the number of bytes written into the

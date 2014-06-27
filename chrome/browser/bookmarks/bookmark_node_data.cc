@@ -28,6 +28,8 @@ BookmarkNodeData::Element::Element(const BookmarkNode* node)
       date_added(node->date_added()),
       date_folder_modified(node->date_folder_modified()),
       id_(node->id()) {
+  if (node->GetMetaInfoMap())
+    meta_info_map = *node->GetMetaInfoMap();
   for (int i = 0; i < node->child_count(); ++i)
     children.push_back(Element(node->GetChild(i)));
 }
@@ -40,6 +42,12 @@ void BookmarkNodeData::Element::WriteToPickle(Pickle* pickle) const {
   pickle->WriteString(url.spec());
   pickle->WriteString16(title);
   pickle->WriteInt64(id_);
+  pickle->WriteUInt64(meta_info_map.size());
+  for (BookmarkNode::MetaInfoMap::const_iterator it = meta_info_map.begin();
+      it != meta_info_map.end(); ++it) {
+    pickle->WriteString(it->first);
+    pickle->WriteString(it->second);
+  }
   if (!is_url) {
     pickle->WriteUInt64(children.size());
     for (std::vector<Element>::const_iterator i = children.begin();
@@ -61,6 +69,19 @@ bool BookmarkNodeData::Element::ReadFromPickle(Pickle* pickle,
   url = GURL(url_spec);
   date_added = base::Time();
   date_folder_modified = base::Time();
+  meta_info_map.clear();
+  uint64 meta_field_count;
+  if (!pickle->ReadUInt64(iterator, &meta_field_count))
+    return false;
+  for (uint64 i = 0; i < meta_field_count; ++i) {
+    std::string key;
+    std::string value;
+    if (!pickle->ReadString(iterator, &key) ||
+        !pickle->ReadString(iterator, &value)) {
+      return false;
+    }
+    meta_info_map[key] = value;
+  }
   children.clear();
   if (!is_url) {
     uint64 children_count;
@@ -115,7 +136,7 @@ bool BookmarkNodeData::ReadFromVector(
   return true;
 }
 
-bool BookmarkNodeData::ReadFromTuple(const GURL& url, const string16& title) {
+bool BookmarkNodeData::ReadFromTuple(const GURL& url, const base::string16& title) {
   Clear();
 
   if (!url.is_valid())
@@ -132,15 +153,16 @@ bool BookmarkNodeData::ReadFromTuple(const GURL& url, const string16& title) {
 }
 
 #if !defined(OS_MACOSX)
-void BookmarkNodeData::WriteToClipboard(ui::ClipboardType type) {
-  DCHECK_EQ(type, ui::CLIPBOARD_TYPE_COPY_PASTE);
+void BookmarkNodeData::WriteToClipboard(ui::ClipboardType clipboard_type) {
+  DCHECK(clipboard_type == ui::CLIPBOARD_TYPE_COPY_PASTE ||
+         clipboard_type == ui::CLIPBOARD_TYPE_SELECTION);
   ui::ScopedClipboardWriter scw(ui::Clipboard::GetForCurrentThread(),
-                                ui::CLIPBOARD_TYPE_COPY_PASTE);
+                                clipboard_type);
 
   // If there is only one element and it is a URL, write the URL to the
   // clipboard.
   if (elements.size() == 1 && elements[0].is_url) {
-    const string16& title = elements[0].title;
+    const base::string16& title = elements[0].title;
     const std::string url = elements[0].url.spec();
 
     scw.WriteBookmark(title, url);
@@ -154,7 +176,7 @@ void BookmarkNodeData::WriteToClipboard(ui::ClipboardType type) {
     // want to clobber the X clipboard when the user copies out of the omnibox
     // on Linux (on Windows and Mac, there is no difference between these
     // functions).
-    scw.WriteText(UTF8ToUTF16(url));
+    scw.WriteText(base::UTF8ToUTF16(url));
   }
 
   Pickle pickle;
@@ -176,7 +198,7 @@ bool BookmarkNodeData::ReadFromClipboard(ui::ClipboardType type) {
       return true;
   }
 
-  string16 title;
+  base::string16 title;
   std::string url;
   clipboard->ReadBookmark(&title, &url);
   if (!url.empty()) {

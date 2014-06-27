@@ -16,7 +16,6 @@
 #include "base/prefs/testing_pref_service.h"
 #include "base/run_loop.h"
 #include "chrome/browser/chromeos/drive/change_list_loader.h"
-#include "chrome/browser/chromeos/drive/change_list_processor.h"
 #include "chrome/browser/chromeos/drive/drive.pb.h"
 #include "chrome/browser/chromeos/drive/fake_free_disk_space_getter.h"
 #include "chrome/browser/chromeos/drive/file_system_observer.h"
@@ -24,10 +23,12 @@
 #include "chrome/browser/chromeos/drive/job_scheduler.h"
 #include "chrome/browser/chromeos/drive/sync_client.h"
 #include "chrome/browser/chromeos/drive/test_util.h"
+#include "chrome/browser/drive/drive_api_util.h"
+#include "chrome/browser/drive/event_logger.h"
 #include "chrome/browser/drive/fake_drive_service.h"
-#include "chrome/browser/google_apis/drive_api_parser.h"
-#include "chrome/browser/google_apis/test_util.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "google_apis/drive/drive_api_parser.h"
+#include "google_apis/drive/test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace drive {
@@ -81,6 +82,7 @@ class FileSystemTest : public testing::Test {
     pref_service_.reset(new TestingPrefServiceSimple);
     test_util::RegisterDrivePrefs(pref_service_->registry());
 
+    logger_.reset(new EventLogger);
     fake_drive_service_.reset(new FakeDriveService);
     fake_drive_service_->LoadResourceListForWapi(
         "gdata/root_feed.json");
@@ -90,6 +92,7 @@ class FileSystemTest : public testing::Test {
     fake_free_disk_space_getter_.reset(new FakeFreeDiskSpaceGetter);
 
     scheduler_.reset(new JobScheduler(pref_service_.get(),
+                                      logger_.get(),
                                       fake_drive_service_.get(),
                                       base::MessageLoopProxy::current().get()));
 
@@ -100,13 +103,13 @@ class FileSystemTest : public testing::Test {
 
   void SetUpResourceMetadataAndFileSystem() {
     const base::FilePath metadata_dir = temp_dir_.path().AppendASCII("meta");
-    ASSERT_TRUE(file_util::CreateDirectory(metadata_dir));
+    ASSERT_TRUE(base::CreateDirectory(metadata_dir));
     metadata_storage_.reset(new internal::ResourceMetadataStorage(
         metadata_dir, base::MessageLoopProxy::current().get()));
     ASSERT_TRUE(metadata_storage_->Initialize());
 
     const base::FilePath cache_dir = temp_dir_.path().AppendASCII("files");
-    ASSERT_TRUE(file_util::CreateDirectory(cache_dir));
+    ASSERT_TRUE(base::CreateDirectory(cache_dir));
     cache_.reset(new internal::FileCache(
         metadata_storage_.get(),
         cache_dir,
@@ -119,9 +122,10 @@ class FileSystemTest : public testing::Test {
     ASSERT_EQ(FILE_ERROR_OK, resource_metadata_->Initialize());
 
     const base::FilePath temp_file_dir = temp_dir_.path().AppendASCII("tmp");
-    ASSERT_TRUE(file_util::CreateDirectory(temp_file_dir));
+    ASSERT_TRUE(base::CreateDirectory(temp_file_dir));
     file_system_.reset(new FileSystem(
         pref_service_.get(),
+        logger_.get(),
         cache_.get(),
         fake_drive_service_.get(),
         scheduler_.get(),
@@ -139,18 +143,17 @@ class FileSystemTest : public testing::Test {
   bool LoadFullResourceList() {
     FileError error = FILE_ERROR_FAILED;
     file_system_->change_list_loader_for_testing()->LoadIfNeeded(
-        internal::DirectoryFetchInfo(),
         google_apis::test_util::CreateCopyResultCallback(&error));
     test_util::RunBlockingPoolTask();
     return error == FILE_ERROR_OK;
   }
 
   // Gets resource entry by path synchronously.
-  scoped_ptr<ResourceEntry> GetResourceEntryByPathSync(
+  scoped_ptr<ResourceEntry> GetResourceEntrySync(
       const base::FilePath& file_path) {
     FileError error = FILE_ERROR_FAILED;
     scoped_ptr<ResourceEntry> entry;
-    file_system_->GetResourceEntryByPath(
+    file_system_->GetResourceEntry(
         file_path,
         google_apis::test_util::CreateCopyResultCallback(&error, &entry));
     test_util::RunBlockingPoolTask();
@@ -159,21 +162,31 @@ class FileSystemTest : public testing::Test {
   }
 
   // Gets directory info by path synchronously.
-  scoped_ptr<ResourceEntryVector> ReadDirectoryByPathSync(
+  scoped_ptr<ResourceEntryVector> ReadDirectorySync(
       const base::FilePath& file_path) {
     FileError error = FILE_ERROR_FAILED;
-    scoped_ptr<ResourceEntryVector> entries;
-    file_system_->ReadDirectoryByPath(
+    scoped_ptr<ResourceEntryVector> entries(new ResourceEntryVector);
+    file_system_->ReadDirectory(
         file_path,
-        google_apis::test_util::CreateCopyResultCallback(&error, &entries));
+        base::Bind(&AccumulateReadDirectoryResult, entries.get()),
+        google_apis::test_util::CreateCopyResultCallback(&error));
     test_util::RunBlockingPoolTask();
-
+    if (error != FILE_ERROR_OK)
+      entries.reset();
     return entries.Pass();
+  }
+
+  // Used to implement ReadDirectorySync().
+  static void AccumulateReadDirectoryResult(
+      ResourceEntryVector* out_entries,
+      scoped_ptr<ResourceEntryVector> entries) {
+    ASSERT_TRUE(entries);
+    out_entries->insert(out_entries->end(), entries->begin(), entries->end());
   }
 
   // Returns true if an entry exists at |file_path|.
   bool EntryExists(const base::FilePath& file_path) {
-    return GetResourceEntryByPathSync(file_path);
+    return GetResourceEntrySync(file_path);
   }
 
   // Flag for specifying the timestamp of the test filesystem cache.
@@ -192,7 +205,7 @@ class FileSystemTest : public testing::Test {
     resource_metadata_.reset();
 
     const base::FilePath metadata_dir = temp_dir_.path().AppendASCII("meta");
-    ASSERT_TRUE(file_util::CreateDirectory(metadata_dir));
+    ASSERT_TRUE(base::CreateDirectory(metadata_dir));
     scoped_ptr<internal::ResourceMetadataStorage,
                test_util::DestroyHelperForTests> metadata_storage(
         new internal::ResourceMetadataStorage(
@@ -209,19 +222,19 @@ class FileSystemTest : public testing::Test {
               resource_metadata->SetLargestChangestamp(changestamp));
 
     // drive/root
-    const std::string root_resource_id =
-        fake_drive_service_->GetRootResourceId();
+    ResourceEntry root;
+    ASSERT_EQ(FILE_ERROR_OK, resource_metadata->GetResourceEntryByPath(
+        util::GetDriveMyDriveRootPath(), &root));
+    root.set_resource_id(fake_drive_service_->GetRootResourceId());
+    ASSERT_EQ(FILE_ERROR_OK, resource_metadata->RefreshEntry(root));
+
     std::string local_id;
-    ASSERT_EQ(FILE_ERROR_OK,
-              resource_metadata->AddEntry(util::CreateMyDriveRootEntry(
-                  root_resource_id), &local_id));
-    const std::string root_local_id = local_id;
 
     // drive/root/File1
     ResourceEntry file1;
     file1.set_title("File1");
     file1.set_resource_id("resource_id:File1");
-    file1.set_parent_local_id(root_local_id);
+    file1.set_parent_local_id(root.local_id());
     file1.mutable_file_specific_info()->set_md5("md5");
     file1.mutable_file_info()->set_is_directory(false);
     file1.mutable_file_info()->set_size(1048576);
@@ -231,7 +244,7 @@ class FileSystemTest : public testing::Test {
     ResourceEntry dir1;
     dir1.set_title("Dir1");
     dir1.set_resource_id("resource_id:Dir1");
-    dir1.set_parent_local_id(root_local_id);
+    dir1.set_parent_local_id(root.local_id());
     dir1.mutable_file_info()->set_is_directory(true);
     ASSERT_EQ(FILE_ERROR_OK, resource_metadata->AddEntry(dir1, &local_id));
     const std::string dir1_local_id = local_id;
@@ -275,6 +288,7 @@ class FileSystemTest : public testing::Test {
   // dependencies to Profile in general.
   scoped_ptr<TestingPrefServiceSimple> pref_service_;
 
+  scoped_ptr<EventLogger> logger_;
   scoped_ptr<FakeDriveService> fake_drive_service_;
   scoped_ptr<FakeFreeDiskSpaceGetter> fake_free_disk_space_getter_;
   scoped_ptr<JobScheduler> scheduler_;
@@ -288,6 +302,225 @@ class FileSystemTest : public testing::Test {
   scoped_ptr<FileSystem> file_system_;
 };
 
+TEST_F(FileSystemTest, Copy) {
+  base::FilePath src_file_path(FILE_PATH_LITERAL("drive/root/File 1.txt"));
+  base::FilePath dest_file_path(FILE_PATH_LITERAL("drive/root/Copied.txt"));
+  EXPECT_TRUE(GetResourceEntrySync(src_file_path));
+  EXPECT_FALSE(GetResourceEntrySync(dest_file_path));
+
+  FileError error = FILE_ERROR_FAILED;
+  file_system_->Copy(src_file_path,
+                     dest_file_path,
+                     false,  // preserve_last_modified,
+                     google_apis::test_util::CreateCopyResultCallback(&error));
+  test_util::RunBlockingPoolTask();
+  EXPECT_EQ(FILE_ERROR_OK, error);
+
+  // Entry is added on the server.
+  scoped_ptr<ResourceEntry> entry = GetResourceEntrySync(dest_file_path);
+  ASSERT_TRUE(entry);
+
+  google_apis::GDataErrorCode status = google_apis::GDATA_OTHER_ERROR;
+  scoped_ptr<google_apis::ResourceEntry> resource_entry;
+  fake_drive_service_->GetResourceEntry(
+      entry->resource_id(),
+      google_apis::test_util::CreateCopyResultCallback(&status,
+                                                       &resource_entry));
+  test_util::RunBlockingPoolTask();
+  EXPECT_EQ(google_apis::HTTP_SUCCESS, status);
+  ASSERT_TRUE(resource_entry);
+  EXPECT_EQ(entry->title(), resource_entry->title());
+  EXPECT_TRUE(resource_entry->is_file());
+}
+
+TEST_F(FileSystemTest, Move) {
+  base::FilePath src_file_path(FILE_PATH_LITERAL("drive/root/File 1.txt"));
+  base::FilePath dest_file_path(
+      FILE_PATH_LITERAL("drive/root/Directory 1/Moved.txt"));
+  EXPECT_TRUE(GetResourceEntrySync(src_file_path));
+  EXPECT_FALSE(GetResourceEntrySync(dest_file_path));
+  scoped_ptr<ResourceEntry> parent =
+      GetResourceEntrySync(dest_file_path.DirName());
+  ASSERT_TRUE(parent);
+
+  FileError error = FILE_ERROR_FAILED;
+  file_system_->Move(src_file_path,
+                     dest_file_path,
+                     google_apis::test_util::CreateCopyResultCallback(&error));
+  test_util::RunBlockingPoolTask();
+  EXPECT_EQ(FILE_ERROR_OK, error);
+
+  // Entry is moved on the server.
+  scoped_ptr<ResourceEntry> entry = GetResourceEntrySync(dest_file_path);
+  ASSERT_TRUE(entry);
+
+  google_apis::GDataErrorCode status = google_apis::GDATA_OTHER_ERROR;
+  scoped_ptr<google_apis::ResourceEntry> resource_entry;
+  fake_drive_service_->GetResourceEntry(
+      entry->resource_id(),
+      google_apis::test_util::CreateCopyResultCallback(&status,
+                                                       &resource_entry));
+  test_util::RunBlockingPoolTask();
+  EXPECT_EQ(google_apis::HTTP_SUCCESS, status);
+  ASSERT_TRUE(resource_entry);
+  EXPECT_EQ(entry->title(), resource_entry->title());
+
+  const google_apis::Link* parent_link =
+      resource_entry->GetLinkByType(google_apis::Link::LINK_PARENT);
+  ASSERT_TRUE(parent_link);
+  EXPECT_EQ(parent->resource_id(),
+            util::ExtractResourceIdFromUrl(parent_link->href()));
+}
+
+TEST_F(FileSystemTest, Remove) {
+  base::FilePath file_path(FILE_PATH_LITERAL("drive/root/File 1.txt"));
+  scoped_ptr<ResourceEntry> entry = GetResourceEntrySync(file_path);
+  ASSERT_TRUE(entry);
+
+  FileError error = FILE_ERROR_FAILED;
+  file_system_->Remove(
+      file_path,
+      false,  // is_resursive
+      google_apis::test_util::CreateCopyResultCallback(&error));
+  test_util::RunBlockingPoolTask();
+  EXPECT_EQ(FILE_ERROR_OK, error);
+
+  // Entry is removed on the server.
+  google_apis::GDataErrorCode status = google_apis::GDATA_OTHER_ERROR;
+  scoped_ptr<google_apis::ResourceEntry> resource_entry;
+  fake_drive_service_->GetResourceEntry(
+      entry->resource_id(),
+      google_apis::test_util::CreateCopyResultCallback(&status,
+                                                       &resource_entry));
+  test_util::RunBlockingPoolTask();
+  EXPECT_EQ(google_apis::HTTP_SUCCESS, status);
+  ASSERT_TRUE(resource_entry);
+  EXPECT_TRUE(resource_entry->deleted());
+}
+
+TEST_F(FileSystemTest, CreateDirectory) {
+  base::FilePath directory_path(FILE_PATH_LITERAL("drive/root/New Directory"));
+  EXPECT_FALSE(GetResourceEntrySync(directory_path));
+
+  FileError error = FILE_ERROR_FAILED;
+  file_system_->CreateDirectory(
+      directory_path,
+      true,  // is_exclusive
+      false,  // is_recursive
+      google_apis::test_util::CreateCopyResultCallback(&error));
+  test_util::RunBlockingPoolTask();
+  EXPECT_EQ(FILE_ERROR_OK, error);
+
+  // Directory is created on the server.
+  scoped_ptr<ResourceEntry> entry = GetResourceEntrySync(directory_path);
+  ASSERT_TRUE(entry);
+
+  google_apis::GDataErrorCode status = google_apis::GDATA_OTHER_ERROR;
+  scoped_ptr<google_apis::ResourceEntry> resource_entry;
+  fake_drive_service_->GetResourceEntry(
+      entry->resource_id(),
+      google_apis::test_util::CreateCopyResultCallback(&status,
+                                                       &resource_entry));
+  test_util::RunBlockingPoolTask();
+  EXPECT_EQ(google_apis::HTTP_SUCCESS, status);
+  ASSERT_TRUE(resource_entry);
+  EXPECT_EQ(entry->title(), resource_entry->title());
+  EXPECT_TRUE(resource_entry->is_folder());
+}
+
+TEST_F(FileSystemTest, CreateFile) {
+  base::FilePath file_path(FILE_PATH_LITERAL("drive/root/New File.txt"));
+  EXPECT_FALSE(GetResourceEntrySync(file_path));
+
+  FileError error = FILE_ERROR_FAILED;
+  file_system_->CreateFile(
+      file_path,
+      true,  // is_exclusive
+      "text/plain",
+      google_apis::test_util::CreateCopyResultCallback(&error));
+  test_util::RunBlockingPoolTask();
+  EXPECT_EQ(FILE_ERROR_OK, error);
+
+  // File is created on the server.
+  scoped_ptr<ResourceEntry> entry = GetResourceEntrySync(file_path);
+  ASSERT_TRUE(entry);
+
+  google_apis::GDataErrorCode status = google_apis::GDATA_OTHER_ERROR;
+  scoped_ptr<google_apis::ResourceEntry> resource_entry;
+  fake_drive_service_->GetResourceEntry(
+      entry->resource_id(),
+      google_apis::test_util::CreateCopyResultCallback(&status,
+                                                       &resource_entry));
+  test_util::RunBlockingPoolTask();
+  EXPECT_EQ(google_apis::HTTP_SUCCESS, status);
+  ASSERT_TRUE(resource_entry);
+  EXPECT_EQ(entry->title(), resource_entry->title());
+  EXPECT_TRUE(resource_entry->is_file());
+}
+
+TEST_F(FileSystemTest, TouchFile) {
+  base::FilePath file_path(FILE_PATH_LITERAL("drive/root/File 1.txt"));
+  scoped_ptr<ResourceEntry> entry = GetResourceEntrySync(file_path);
+  ASSERT_TRUE(entry);
+
+  base::Time last_accessed =
+      base::Time::FromInternalValue(entry->file_info().last_accessed()) +
+      base::TimeDelta::FromSeconds(1);
+  base::Time last_modified =
+      base::Time::FromInternalValue(entry->file_info().last_modified()) +
+      base::TimeDelta::FromSeconds(1);
+
+  FileError error = FILE_ERROR_FAILED;
+  file_system_->TouchFile(
+      file_path,
+      last_accessed,
+      last_modified,
+      google_apis::test_util::CreateCopyResultCallback(&error));
+  test_util::RunBlockingPoolTask();
+  EXPECT_EQ(FILE_ERROR_OK, error);
+
+  // File is touched on the server.
+  google_apis::GDataErrorCode status = google_apis::GDATA_OTHER_ERROR;
+  scoped_ptr<google_apis::ResourceEntry> resource_entry;
+  fake_drive_service_->GetResourceEntry(
+      entry->resource_id(),
+      google_apis::test_util::CreateCopyResultCallback(&status,
+                                                       &resource_entry));
+  test_util::RunBlockingPoolTask();
+  EXPECT_EQ(google_apis::HTTP_SUCCESS, status);
+  ASSERT_TRUE(resource_entry);
+  EXPECT_EQ(last_accessed, resource_entry->last_viewed_time());
+  EXPECT_EQ(last_modified, resource_entry->updated_time());
+}
+
+TEST_F(FileSystemTest, TruncateFile) {
+  base::FilePath file_path(FILE_PATH_LITERAL("drive/root/File 1.txt"));
+  scoped_ptr<ResourceEntry> entry = GetResourceEntrySync(file_path);
+  ASSERT_TRUE(entry);
+
+  const int64 kLength = entry->file_info().size() + 100;
+
+  FileError error = FILE_ERROR_FAILED;
+  file_system_->TruncateFile(
+      file_path,
+      kLength,
+      google_apis::test_util::CreateCopyResultCallback(&error));
+  test_util::RunBlockingPoolTask();
+  EXPECT_EQ(FILE_ERROR_OK, error);
+
+  // File is touched on the server.
+  google_apis::GDataErrorCode status = google_apis::GDATA_OTHER_ERROR;
+  scoped_ptr<google_apis::ResourceEntry> resource_entry;
+  fake_drive_service_->GetResourceEntry(
+      entry->resource_id(),
+      google_apis::test_util::CreateCopyResultCallback(&status,
+                                                       &resource_entry));
+  test_util::RunBlockingPoolTask();
+  EXPECT_EQ(google_apis::HTTP_SUCCESS, status);
+  ASSERT_TRUE(resource_entry);
+  EXPECT_EQ(kLength, resource_entry->file_size());
+}
+
 TEST_F(FileSystemTest, DuplicatedAsyncInitialization) {
   base::RunLoop loop;
 
@@ -295,71 +528,38 @@ TEST_F(FileSystemTest, DuplicatedAsyncInitialization) {
   const GetResourceEntryCallback& callback = base::Bind(
       &AsyncInitializationCallback, &counter, 2, loop.QuitClosure());
 
-  file_system_->GetResourceEntryByPath(
+  file_system_->GetResourceEntry(
       base::FilePath(FILE_PATH_LITERAL("drive/root")), callback);
-  file_system_->GetResourceEntryByPath(
+  file_system_->GetResourceEntry(
       base::FilePath(FILE_PATH_LITERAL("drive/root")), callback);
   loop.Run();  // Wait to get our result
   EXPECT_EQ(2, counter);
 
-  // Although GetResourceEntryByPath() was called twice, the resource list
-  // should only be loaded once. In the past, there was a bug that caused
-  // it to be loaded twice.
   EXPECT_EQ(1, fake_drive_service_->resource_list_load_count());
-  // See the comment in GetMyDriveRoot test case why this is 2.
-  EXPECT_EQ(2, fake_drive_service_->about_resource_load_count());
-
-  // "Fast fetch" will fire an OnirectoryChanged event.
-  ASSERT_EQ(1u, mock_directory_observer_->changed_directories().size());
-  EXPECT_EQ(base::FilePath(FILE_PATH_LITERAL("drive")),
-            mock_directory_observer_->changed_directories()[0]);
 }
 
 TEST_F(FileSystemTest, GetGrandRootEntry) {
   const base::FilePath kFilePath(FILE_PATH_LITERAL("drive"));
-  scoped_ptr<ResourceEntry> entry = GetResourceEntryByPathSync(kFilePath);
+  scoped_ptr<ResourceEntry> entry = GetResourceEntrySync(kFilePath);
   ASSERT_TRUE(entry);
-  EXPECT_EQ(util::kDriveGrandRootSpecialResourceId, entry->resource_id());
-
-  // Getting the grand root entry should not cause the resource load to happen.
-  EXPECT_EQ(0, fake_drive_service_->about_resource_load_count());
-  EXPECT_EQ(0, fake_drive_service_->resource_list_load_count());
+  EXPECT_EQ(util::kDriveGrandRootLocalId, entry->local_id());
 }
 
 TEST_F(FileSystemTest, GetOtherDirEntry) {
   const base::FilePath kFilePath(FILE_PATH_LITERAL("drive/other"));
-  scoped_ptr<ResourceEntry> entry = GetResourceEntryByPathSync(kFilePath);
+  scoped_ptr<ResourceEntry> entry = GetResourceEntrySync(kFilePath);
   ASSERT_TRUE(entry);
-  EXPECT_EQ(util::kDriveOtherDirSpecialResourceId, entry->resource_id());
-
-  // Getting the "other" directory entry should not cause the resource load to
-  // happen.
-  EXPECT_EQ(0, fake_drive_service_->about_resource_load_count());
-  EXPECT_EQ(0, fake_drive_service_->resource_list_load_count());
+  EXPECT_EQ(util::kDriveOtherDirLocalId, entry->local_id());
 }
 
 TEST_F(FileSystemTest, GetMyDriveRoot) {
   const base::FilePath kFilePath(FILE_PATH_LITERAL("drive/root"));
-  scoped_ptr<ResourceEntry> entry = GetResourceEntryByPathSync(kFilePath);
+  scoped_ptr<ResourceEntry> entry = GetResourceEntrySync(kFilePath);
   ASSERT_TRUE(entry);
   EXPECT_EQ(fake_drive_service_->GetRootResourceId(), entry->resource_id());
 
-  // Absence of "drive/root" in the local metadata triggers the "fast fetch"
-  // of "drive" directory. Fetch of "drive" grand root directory has a special
-  // implementation. Instead of normal GetResourceListInDirectory(), it is
-  // emulated by calling GetAboutResource() so that the resource_id of
-  // "drive/root" is listed.
-  // Together with the normal GetAboutResource() call to retrieve the largest
-  // changestamp, the method is called twice.
-  EXPECT_EQ(2, fake_drive_service_->about_resource_load_count());
-
   // After "fast fetch" is done, full resource list is fetched.
   EXPECT_EQ(1, fake_drive_service_->resource_list_load_count());
-
-  // "Fast fetch" will fire an OnirectoryChanged event.
-  ASSERT_EQ(1u, mock_directory_observer_->changed_directories().size());
-  EXPECT_EQ(base::FilePath(FILE_PATH_LITERAL("drive")),
-            mock_directory_observer_->changed_directories()[0]);
 }
 
 TEST_F(FileSystemTest, GetExistingFile) {
@@ -369,15 +569,11 @@ TEST_F(FileSystemTest, GetExistingFile) {
 
   const base::FilePath kFilePath(
       FILE_PATH_LITERAL("drive/root/Directory 1/SubDirectory File 1.txt"));
-  scoped_ptr<ResourceEntry> entry = GetResourceEntryByPathSync(kFilePath);
+  scoped_ptr<ResourceEntry> entry = GetResourceEntrySync(kFilePath);
   ASSERT_TRUE(entry);
   EXPECT_EQ("file:subdirectory_file_1_id", entry->resource_id());
 
-  // One server changestamp check (about_resource), three directory load for
-  // "drive", "drive/root", and "drive/root/Directory 1", and one background
-  // full resource list loading. Note that the directory load for "drive" is
-  // special and resorts to about_resource.
-  EXPECT_EQ(2, fake_drive_service_->about_resource_load_count());
+  EXPECT_EQ(1, fake_drive_service_->about_resource_load_count());
   EXPECT_EQ(2, fake_drive_service_->directory_load_count());
   EXPECT_EQ(1, fake_drive_service_->blocked_resource_list_load_count());
 }
@@ -385,7 +581,7 @@ TEST_F(FileSystemTest, GetExistingFile) {
 TEST_F(FileSystemTest, GetExistingDocument) {
   const base::FilePath kFilePath(
       FILE_PATH_LITERAL("drive/root/Document 1 excludeDir-test.gdoc"));
-  scoped_ptr<ResourceEntry> entry = GetResourceEntryByPathSync(kFilePath);
+  scoped_ptr<ResourceEntry> entry = GetResourceEntrySync(kFilePath);
   ASSERT_TRUE(entry);
   EXPECT_EQ("document:5_document_resource_id", entry->resource_id());
 }
@@ -393,26 +589,15 @@ TEST_F(FileSystemTest, GetExistingDocument) {
 TEST_F(FileSystemTest, GetNonExistingFile) {
   const base::FilePath kFilePath(
       FILE_PATH_LITERAL("drive/root/nonexisting.file"));
-  scoped_ptr<ResourceEntry> entry = GetResourceEntryByPathSync(kFilePath);
+  scoped_ptr<ResourceEntry> entry = GetResourceEntrySync(kFilePath);
   EXPECT_FALSE(entry);
-}
-
-TEST_F(FileSystemTest, GetExistingDirectory) {
-  const base::FilePath kFilePath(FILE_PATH_LITERAL("drive/root/Directory 1"));
-  scoped_ptr<ResourceEntry> entry = GetResourceEntryByPathSync(kFilePath);
-  ASSERT_TRUE(entry);
-  ASSERT_EQ("folder:1_folder_resource_id", entry->resource_id());
-
-  // The changestamp should be propagated to the directory.
-  EXPECT_EQ(fake_drive_service_->largest_changestamp(),
-            entry->directory_specific_info().changestamp());
 }
 
 TEST_F(FileSystemTest, GetInSubSubdir) {
   const base::FilePath kFilePath(
       FILE_PATH_LITERAL("drive/root/Directory 1/Sub Directory Folder/"
                         "Sub Sub Directory Folder"));
-  scoped_ptr<ResourceEntry> entry = GetResourceEntryByPathSync(kFilePath);
+  scoped_ptr<ResourceEntry> entry = GetResourceEntrySync(kFilePath);
   ASSERT_TRUE(entry);
   ASSERT_EQ("folder:sub_sub_directory_folder_id", entry->resource_id());
 }
@@ -423,44 +608,34 @@ TEST_F(FileSystemTest, GetOrphanFile) {
   // Entry without parents are placed under "drive/other".
   const base::FilePath kFilePath(
       FILE_PATH_LITERAL("drive/other/Orphan File 1.txt"));
-  scoped_ptr<ResourceEntry> entry = GetResourceEntryByPathSync(kFilePath);
+  scoped_ptr<ResourceEntry> entry = GetResourceEntrySync(kFilePath);
   ASSERT_TRUE(entry);
   EXPECT_EQ("file:1_orphanfile_resource_id", entry->resource_id());
 }
 
-TEST_F(FileSystemTest, ReadDirectoryByPath_Root) {
-  // ReadDirectoryByPath() should kick off the resource list loading.
+TEST_F(FileSystemTest, ReadDirectory_Root) {
+  // ReadDirectory() should kick off the resource list loading.
   scoped_ptr<ResourceEntryVector> entries(
-      ReadDirectoryByPathSync(base::FilePath::FromUTF8Unsafe("drive")));
+      ReadDirectorySync(base::FilePath::FromUTF8Unsafe("drive")));
   // The root directory should be read correctly.
   ASSERT_TRUE(entries);
-  ASSERT_EQ(2U, entries->size());
+  ASSERT_EQ(3U, entries->size());
 
-  // The found two directories should be /drive/root and /drive/other.
-  bool found_other = false;
-  bool found_my_drive = false;
-  for (size_t i = 0; i < entries->size(); ++i) {
-    const base::FilePath title =
-        base::FilePath::FromUTF8Unsafe((*entries)[i].title());
-    if (title == base::FilePath(util::kDriveOtherDirName)) {
-      found_other = true;
-    } else if (title == base::FilePath(util::kDriveMyDriveRootDirName)) {
-      found_my_drive = true;
-    }
-  }
-
-  EXPECT_TRUE(found_other);
-  EXPECT_TRUE(found_my_drive);
-
-  ASSERT_EQ(1u, mock_directory_observer_->changed_directories().size());
-  EXPECT_EQ(base::FilePath(FILE_PATH_LITERAL("drive")),
-            mock_directory_observer_->changed_directories()[0]);
+  // The found three directories should be /drive/root, /drive/other and
+  // /drive/trash.
+  std::set<base::FilePath> found;
+  for (size_t i = 0; i < entries->size(); ++i)
+    found.insert(base::FilePath::FromUTF8Unsafe((*entries)[i].title()));
+  EXPECT_EQ(3U, found.size());
+  EXPECT_EQ(1U, found.count(base::FilePath(util::kDriveMyDriveRootDirName)));
+  EXPECT_EQ(1U, found.count(base::FilePath(util::kDriveOtherDirName)));
+  EXPECT_EQ(1U, found.count(base::FilePath(util::kDriveTrashDirName)));
 }
 
-TEST_F(FileSystemTest, ReadDirectoryByPath_NonRootDirectory) {
-  // ReadDirectoryByPath() should kick off the resource list loading.
+TEST_F(FileSystemTest, ReadDirectory_NonRootDirectory) {
+  // ReadDirectory() should kick off the resource list loading.
   scoped_ptr<ResourceEntryVector> entries(
-      ReadDirectoryByPathSync(
+      ReadDirectorySync(
           base::FilePath::FromUTF8Unsafe("drive/root/Directory 1")));
   // The non root directory should also be read correctly.
   // There was a bug (crbug.com/181487), which broke this behavior.
@@ -473,20 +648,22 @@ TEST_F(FileSystemTest, LoadFileSystemFromUpToDateCache) {
   ASSERT_NO_FATAL_FAILURE(SetUpTestFileSystem(USE_SERVER_TIMESTAMP));
 
   // Kicks loading of cached file system and query for server update.
-  EXPECT_TRUE(ReadDirectoryByPathSync(util::GetDriveMyDriveRootPath()));
+  EXPECT_TRUE(ReadDirectorySync(util::GetDriveMyDriveRootPath()));
 
   // SetUpTestFileSystem and "account_metadata.json" have the same
   // changestamp (i.e. the local metadata is up-to-date), so no request for
   // new resource list (i.e., call to GetResourceList) should happen.
-  EXPECT_EQ(1, fake_drive_service_->about_resource_load_count());
   EXPECT_EQ(0, fake_drive_service_->resource_list_load_count());
 
   // Since the file system has verified that it holds the latest snapshot,
   // it should change its state to "loaded", which admits periodic refresh.
   // To test it, call CheckForUpdates and verify it does try to check updates.
+  const int about_resource_load_count_before =
+      fake_drive_service_->about_resource_load_count();
   file_system_->CheckForUpdates();
   test_util::RunBlockingPoolTask();
-  EXPECT_EQ(2, fake_drive_service_->about_resource_load_count());
+  EXPECT_LT(about_resource_load_count_before,
+            fake_drive_service_->about_resource_load_count());
 }
 
 TEST_F(FileSystemTest, LoadFileSystemFromCacheWhileOffline) {
@@ -498,12 +675,12 @@ TEST_F(FileSystemTest, LoadFileSystemFromCacheWhileOffline) {
   fake_drive_service_->set_offline(true);
 
   // Load the root.
-  EXPECT_TRUE(ReadDirectoryByPathSync(util::GetDriveGrandRootPath()));
+  EXPECT_TRUE(ReadDirectorySync(util::GetDriveGrandRootPath()));
   // Loading of about resource should not happen as it's offline.
   EXPECT_EQ(0, fake_drive_service_->about_resource_load_count());
 
   // Load "My Drive".
-  EXPECT_TRUE(ReadDirectoryByPathSync(util::GetDriveMyDriveRootPath()));
+  EXPECT_TRUE(ReadDirectorySync(util::GetDriveMyDriveRootPath()));
   EXPECT_EQ(0, fake_drive_service_->about_resource_load_count());
 
   // Tests that cached data can be loaded even if the server is not reachable.
@@ -534,36 +711,23 @@ TEST_F(FileSystemTest, LoadFileSystemFromCacheWhileOffline) {
 }
 
 TEST_F(FileSystemTest, ReadDirectoryWhileRefreshing) {
-  // Enter the "refreshing" state so the fast fetch will be performed.
+  // Use old timestamp so the fast fetch will be performed.
   ASSERT_NO_FATAL_FAILURE(SetUpTestFileSystem(USE_OLD_TIMESTAMP));
-  file_system_->CheckForUpdates();
 
   // The list of resources in "drive/root/Dir1" should be fetched.
-  EXPECT_TRUE(ReadDirectoryByPathSync(base::FilePath(
+  EXPECT_TRUE(ReadDirectorySync(base::FilePath(
       FILE_PATH_LITERAL("drive/root/Dir1"))));
   EXPECT_EQ(1, fake_drive_service_->directory_load_count());
 
   ASSERT_LE(1u, mock_directory_observer_->changed_directories().size());
 }
 
-TEST_F(FileSystemTest, GetResourceEntryExistingWhileRefreshing) {
-  // Enter the "refreshing" state.
-  ASSERT_NO_FATAL_FAILURE(SetUpTestFileSystem(USE_OLD_TIMESTAMP));
-  file_system_->CheckForUpdates();
-
-  // If an entry is already found in local metadata, no directory fetch happens.
-  EXPECT_TRUE(GetResourceEntryByPathSync(base::FilePath(
-      FILE_PATH_LITERAL("drive/root/Dir1/File2"))));
-  EXPECT_EQ(0, fake_drive_service_->directory_load_count());
-}
-
 TEST_F(FileSystemTest, GetResourceEntryNonExistentWhileRefreshing) {
-  // Enter the "refreshing" state so the fast fetch will be performed.
+  // Use old timestamp so the fast fetch will be performed.
   ASSERT_NO_FATAL_FAILURE(SetUpTestFileSystem(USE_OLD_TIMESTAMP));
-  file_system_->CheckForUpdates();
 
   // If an entry is not found, parent directory's resource list is fetched.
-  EXPECT_FALSE(GetResourceEntryByPathSync(base::FilePath(
+  EXPECT_FALSE(GetResourceEntrySync(base::FilePath(
       FILE_PATH_LITERAL("drive/root/Dir1/NonExistentFile"))));
   EXPECT_EQ(1, fake_drive_service_->directory_load_count());
 
@@ -588,13 +752,34 @@ TEST_F(FileSystemTest, CreateDirectoryByImplicitLoad) {
   EXPECT_EQ(FILE_ERROR_EXISTS, error);
 }
 
+TEST_F(FileSystemTest, CreateDirectoryRecursively) {
+  // Intentionally *not* calling LoadFullResourceList(), for testing that
+  // CreateDirectory ensures the resource list is loaded before it runs.
+
+  base::FilePath new_directory(
+      FILE_PATH_LITERAL("drive/root/Directory 1/a/b/c/d"));
+  FileError error = FILE_ERROR_FAILED;
+  file_system_->CreateDirectory(
+      new_directory,
+      true,  // is_exclusive
+      true,  // is_recursive
+      google_apis::test_util::CreateCopyResultCallback(&error));
+  test_util::RunBlockingPoolTask();
+
+  EXPECT_EQ(FILE_ERROR_OK, error);
+
+  scoped_ptr<ResourceEntry> entry(GetResourceEntrySync(new_directory));
+  ASSERT_TRUE(entry);
+  EXPECT_TRUE(entry->file_info().is_directory());
+}
+
 TEST_F(FileSystemTest, PinAndUnpin) {
   ASSERT_TRUE(LoadFullResourceList());
 
   base::FilePath file_path(FILE_PATH_LITERAL("drive/root/File 1.txt"));
 
   // Get the file info.
-  scoped_ptr<ResourceEntry> entry(GetResourceEntryByPathSync(file_path));
+  scoped_ptr<ResourceEntry> entry(GetResourceEntrySync(file_path));
   ASSERT_TRUE(entry);
 
   // Pin the file.
@@ -631,7 +816,7 @@ TEST_F(FileSystemTest, PinAndUnpin_NotSynced) {
   base::FilePath file_path(FILE_PATH_LITERAL("drive/root/File 1.txt"));
 
   // Get the file info.
-  scoped_ptr<ResourceEntry> entry(GetResourceEntryByPathSync(file_path));
+  scoped_ptr<ResourceEntry> entry(GetResourceEntrySync(file_path));
   ASSERT_TRUE(entry);
 
   // Unpin the file just after pinning. File fetch should be cancelled.
@@ -670,7 +855,7 @@ TEST_F(FileSystemTest, MarkCacheFileAsMountedAndUnmounted) {
   ASSERT_TRUE(LoadFullResourceList());
 
   base::FilePath file_in_root(FILE_PATH_LITERAL("drive/root/File 1.txt"));
-  scoped_ptr<ResourceEntry> entry(GetResourceEntryByPathSync(file_in_root));
+  scoped_ptr<ResourceEntry> entry(GetResourceEntrySync(file_in_root));
   ASSERT_TRUE(entry);
 
   // Write to cache.

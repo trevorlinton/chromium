@@ -7,6 +7,7 @@
 #include "base/allocator/allocator_shim.h"
 #include "base/base_switches.h"
 #include "base/command_line.h"
+#include "base/debug/leak_annotations.h"
 #include "base/debug/trace_event.h"
 #include "base/logging.h"
 #include "base/metrics/histogram.h"
@@ -19,7 +20,6 @@
 #include "ui/base/ime/input_method_initializer.h"
 
 #if defined(OS_WIN)
-#include "base/win/metro.h"
 #include "base/win/windows_version.h"
 #include "ui/base/win/scoped_ole_initializer.h"
 #endif
@@ -53,17 +53,13 @@ class BrowserMainRunnerImpl : public BrowserMainRunner {
 #endif
 
 #if defined(OS_WIN)
-      if (parameters.command_line.HasSwitch(
-              switches::kEnableTextServicesFramework)) {
-        base::win::SetForceToUseTSF();
-      } else if (base::win::GetVersion() < base::win::VERSION_VISTA) {
+      if (base::win::GetVersion() < base::win::VERSION_VISTA) {
         // When "Extend support of advanced text services to all programs"
         // (a.k.a. Cicero Unaware Application Support; CUAS) is enabled on
         // Windows XP and handwriting modules shipped with Office 2003 are
         // installed, "penjpn.dll" and "skchui.dll" will be loaded and then
-        // crash
-        // unless a user installs Office 2003 SP3. To prevent these modules from
-        // being loaded, disable TSF entirely. crbug/160914.
+        // crash unless a user installs Office 2003 SP3. To prevent these
+        // modules from being loaded, disable TSF entirely. crbug.com/160914.
         // TODO(yukawa): Add a high-level wrapper for this instead of calling
         // Win32 API here directly.
         ImmDisableTextFrameService(static_cast<DWORD>(-1));
@@ -125,6 +121,14 @@ class BrowserMainRunnerImpl : public BrowserMainRunner {
   virtual void Shutdown() OVERRIDE {
     DCHECK(initialization_started_);
     DCHECK(!is_shutdown_);
+#ifdef LEAK_SANITIZER
+    // Invoke leak detection now, to avoid dealing with shutdown-only leaks.
+    // Normally this will have already happened in
+    // BroserProcessImpl::ReleaseModule(), so this call has no effect. This is
+    // only for processes which do not instantiate a BrowserProcess.
+    // If leaks are found, the process will exit here.
+    __lsan_do_leak_check();
+#endif
     // The shutdown tracing got enabled in AttemptUserExit earlier, but someone
     // needs to write the result to disc. For that a dumper needs to get created
     // which will dump the traces to disc when it gets destroyed.

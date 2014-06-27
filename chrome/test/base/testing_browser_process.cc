@@ -7,9 +7,11 @@
 #include "base/prefs/pref_service.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
+#include "chrome/browser/apps/chrome_apps_client.h"
 #include "chrome/browser/background/background_mode_manager.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_impl.h"
+#include "chrome/browser/extensions/chrome_extensions_browser_client.h"
 #include "chrome/browser/printing/print_job_manager.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/bookmarks/bookmark_prompt_controller.h"
@@ -23,19 +25,18 @@
 #include "chrome/browser/notifications/notification_ui_manager.h"
 #include "chrome/browser/prerender/prerender_tracker.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
-#include "chrome/browser/thumbnails/render_widget_snapshot_taker.h"
 #endif
 
 #if !defined(OS_IOS) && !defined(OS_ANDROID)
 #include "chrome/browser/media_galleries/media_file_system_registry.h"
-#include "chrome/browser/storage_monitor/storage_monitor.h"
-#include "chrome/browser/storage_monitor/test_storage_monitor.h"
+#include "components/storage_monitor/storage_monitor.h"
+#include "components/storage_monitor/test_storage_monitor.h"
 #endif
 
 #if defined(ENABLE_CONFIGURATION_POLICY)
-#include "chrome/browser/policy/browser_policy_connector.h"
+#include "components/policy/core/browser/browser_policy_connector.h"
 #else
-#include "chrome/browser/policy/policy_service_stub.h"
+#include "components/policy/core/common/policy_service_stub.h"
 #endif  // defined(ENABLE_CONFIGURATION_POLICY)
 
 #if defined(ENABLE_FULL_PRINTING)
@@ -48,17 +49,32 @@ TestingBrowserProcess* TestingBrowserProcess::GetGlobal() {
   return static_cast<TestingBrowserProcess*>(g_browser_process);
 }
 
+// static
+void TestingBrowserProcess::CreateInstance() {
+  DCHECK(!g_browser_process);
+  g_browser_process = new TestingBrowserProcess;
+}
+
+// static
+void TestingBrowserProcess::DeleteInstance() {
+  // g_browser_process must be NULL during its own destruction.
+  BrowserProcess* browser_process = g_browser_process;
+  g_browser_process = NULL;
+  delete browser_process;
+}
+
 TestingBrowserProcess::TestingBrowserProcess()
     : notification_service_(content::NotificationService::Create()),
       module_ref_count_(0),
       app_locale_("en"),
-#if !defined(OS_IOS)
-      render_widget_snapshot_taker_(new RenderWidgetSnapshotTaker),
-#endif
       local_state_(NULL),
       io_thread_(NULL),
       system_request_context_(NULL),
-      platform_part_(new TestingBrowserProcessPlatformPart()) {
+      platform_part_(new TestingBrowserProcessPlatformPart()),
+      extensions_browser_client_(
+          new extensions::ChromeExtensionsBrowserClient) {
+  extensions::ExtensionsBrowserClient::Set(extensions_browser_client_.get());
+  apps::AppsClient::Set(ChromeAppsClient::GetInstance());
 }
 
 TestingBrowserProcess::~TestingBrowserProcess() {
@@ -66,6 +82,7 @@ TestingBrowserProcess::~TestingBrowserProcess() {
 #if defined(ENABLE_CONFIGURATION_POLICY)
   SetBrowserPolicyConnector(NULL);
 #endif
+  extensions::ExtensionsBrowserClient::Set(NULL);
 
   // Destructors for some objects owned by TestingBrowserProcess will use
   // g_browser_process if it is not NULL, so it must be NULL before proceeding.
@@ -79,6 +96,10 @@ void TestingBrowserProcess::EndSession() {
 }
 
 MetricsService* TestingBrowserProcess::metrics_service() {
+  return NULL;
+}
+
+rappor::RapporService* TestingBrowserProcess::rappor_service() {
   return NULL;
 }
 
@@ -101,6 +122,13 @@ ProfileManager* TestingBrowserProcess::profile_manager() {
 
 void TestingBrowserProcess::SetProfileManager(ProfileManager* profile_manager) {
 #if !defined(OS_IOS)
+  // NotificationUIManager can contain references to elements in the current
+  // ProfileManager (for example, the MessageCenterSettingsController maintains
+  // a pointer to the ProfileInfoCache). So when we change the ProfileManager
+  // (typically during test shutdown) make sure to reset any objects that might
+  // maintain references to it. See SetLocalState() for a description of a
+  // similar situation.
+  notification_ui_manager_.reset();
   profile_manager_.reset(profile_manager);
 #endif
 }
@@ -118,7 +146,7 @@ policy::BrowserPolicyConnector*
     TestingBrowserProcess::browser_policy_connector() {
 #if defined(ENABLE_CONFIGURATION_POLICY)
   if (!browser_policy_connector_)
-    browser_policy_connector_.reset(new policy::BrowserPolicyConnector());
+    browser_policy_connector_ = platform_part_->CreateBrowserPolicyConnector();
   return browser_policy_connector_.get();
 #else
   return NULL;
@@ -148,16 +176,6 @@ GLStringManager* TestingBrowserProcess::gl_string_manager() {
 
 GpuModeManager* TestingBrowserProcess::gpu_mode_manager() {
   return NULL;
-}
-
-RenderWidgetSnapshotTaker*
-TestingBrowserProcess::GetRenderWidgetSnapshotTaker() {
-#if defined(OS_IOS)
-  NOTREACHED();
-  return NULL;
-#else
-  return render_widget_snapshot_taker_.get();
-#endif
 }
 
 BackgroundModeManager* TestingBrowserProcess::background_mode_manager() {
@@ -227,8 +245,7 @@ AutomationProviderList* TestingBrowserProcess::GetAutomationProviderList() {
 void TestingBrowserProcess::CreateDevToolsHttpProtocolHandler(
     chrome::HostDesktopType host_desktop_type,
     const std::string& ip,
-    int port,
-    const std::string& frontend_url) {
+    int port) {
 }
 
 unsigned int TestingBrowserProcess::AddRefModule() {
@@ -314,7 +331,8 @@ prerender::PrerenderTracker* TestingBrowserProcess::prerender_tracker() {
 #endif
 }
 
-ComponentUpdateService* TestingBrowserProcess::component_updater() {
+component_updater::ComponentUpdateService*
+TestingBrowserProcess::component_updater() {
   return NULL;
 }
 
@@ -322,7 +340,8 @@ CRLSetFetcher* TestingBrowserProcess::crl_set_fetcher() {
   return NULL;
 }
 
-PnaclComponentInstaller* TestingBrowserProcess::pnacl_component_installer() {
+component_updater::PnaclComponentInstaller*
+TestingBrowserProcess::pnacl_component_installer() {
   return NULL;
 }
 
@@ -332,15 +351,6 @@ BookmarkPromptController* TestingBrowserProcess::bookmark_prompt_controller() {
   return NULL;
 #else
   return bookmark_prompt_controller_.get();
-#endif
-}
-
-StorageMonitor* TestingBrowserProcess::storage_monitor() {
-#if defined(OS_IOS) || defined(OS_ANDROID)
-  NOTIMPLEMENTED();
-  return NULL;
-#else
-  return storage_monitor_.get();
 #endif
 }
 
@@ -422,9 +432,12 @@ void TestingBrowserProcess::SetSafeBrowsingService(
 #endif
 }
 
-void TestingBrowserProcess::SetStorageMonitor(
-    scoped_ptr<StorageMonitor> storage_monitor) {
-#if !defined(OS_IOS) && !defined(OS_ANDROID)
-  storage_monitor_ = storage_monitor.Pass();
-#endif
+///////////////////////////////////////////////////////////////////////////////
+
+TestingBrowserProcessInitializer::TestingBrowserProcessInitializer() {
+  TestingBrowserProcess::CreateInstance();
+}
+
+TestingBrowserProcessInitializer::~TestingBrowserProcessInitializer() {
+  TestingBrowserProcess::DeleteInstance();
 }

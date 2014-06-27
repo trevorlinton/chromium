@@ -10,6 +10,7 @@
 #include <string>
 
 #include "base/file_util.h"
+#include "base/sequenced_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/sequenced_worker_pool.h"
@@ -18,17 +19,21 @@
 #include "chrome/browser/drive/drive_api_util.h"
 #include "chrome/browser/drive/drive_uploader.h"
 #include "chrome/browser/drive/gdata_wapi_service.h"
-#include "chrome/browser/google_apis/drive_api_parser.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/profile_oauth2_token_service.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
+#include "chrome/browser/signin/signin_manager.h"
+#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/sync_file_system/drive_backend/drive_backend_constants.h"
 #include "chrome/browser/sync_file_system/drive_backend_v1/drive_file_sync_util.h"
 #include "chrome/browser/sync_file_system/logger.h"
 #include "chrome/browser/sync_file_system/syncable_file_system_util.h"
-#include "chrome/common/extensions/extension.h"
+#include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/common/constants.h"
-#include "net/base/mime_util.h"
+#include "extensions/common/extension.h"
+#include "google_apis/drive/drive_api_parser.h"
+#include "google_apis/drive/drive_api_url_generator.h"
+#include "google_apis/drive/gdata_wapi_url_generator.h"
 
 namespace sync_file_system {
 namespace drive_backend {
@@ -40,13 +45,7 @@ enum ParentType {
   PARENT_TYPE_DIRECTORY,
 };
 
-const char kSyncRootDirectoryName[] = "Chrome Syncable FileSystem";
-const char kSyncRootDirectoryNameDev[] = "Chrome Syncable FileSystem Dev";
-const char kMimeTypeOctetStream[] = "application/octet-stream";
-
 const char kFakeAccountId[] = "test_user@gmail.com";
-const char kFakeServerBaseUrl[] = "https://fake_server/";
-const char kFakeDownloadServerBaseUrl[] = "https://fake_download_server/";
 
 void EmptyGDataErrorCodeCallback(google_apis::GDataErrorCode error) {}
 
@@ -144,8 +143,8 @@ std::string GetMimeTypeFromTitle(const std::string& title) {
 bool CreateTemporaryFile(const base::FilePath& dir_path,
                          webkit_blob::ScopedFile* temp_file) {
   base::FilePath temp_file_path;
-  const bool success = file_util::CreateDirectory(dir_path) &&
-      file_util::CreateTemporaryFileInDir(dir_path, &temp_file_path);
+  const bool success = base::CreateDirectory(dir_path) &&
+      base::CreateTemporaryFileInDir(dir_path, &temp_file_path);
   if (!success)
     return success;
   *temp_file =
@@ -159,39 +158,38 @@ bool CreateTemporaryFile(const base::FilePath& dir_path,
 
 APIUtil::APIUtil(Profile* profile,
                  const base::FilePath& temp_dir_path)
-    : wapi_url_generator_(
-          GURL(google_apis::GDataWapiUrlGenerator::kBaseUrlForProduction),
-          GURL(google_apis::GDataWapiUrlGenerator::
-               kBaseDownloadUrlForProduction)),
-      drive_api_url_generator_(
-          GURL(google_apis::DriveApiUrlGenerator::kBaseUrlForProduction),
-          GURL(google_apis::DriveApiUrlGenerator::
-               kBaseDownloadUrlForProduction)),
+    : oauth_service_(ProfileOAuth2TokenServiceFactory::GetForProfile(profile)),
+      signin_manager_(SigninManagerFactory::GetForProfile(profile)),
       upload_next_key_(0),
-      temp_dir_path_(temp_dir_path) {
-  ProfileOAuth2TokenService* oauth_service =
-      ProfileOAuth2TokenServiceFactory::GetForProfile(profile);
+      temp_dir_path_(temp_dir_path),
+      has_initialized_token_(false) {
+  base::SequencedWorkerPool* blocking_pool =
+      content::BrowserThread::GetBlockingPool();
+  scoped_refptr<base::SequencedTaskRunner> task_runner(
+      blocking_pool->GetSequencedTaskRunner(blocking_pool->GetSequenceToken()));
   if (IsDriveAPIDisabled()) {
     drive_service_.reset(new drive::GDataWapiService(
-        oauth_service,
+        oauth_service_,
         profile->GetRequestContext(),
-        content::BrowserThread::GetBlockingPool(),
+        task_runner.get(),
         GURL(google_apis::GDataWapiUrlGenerator::kBaseUrlForProduction),
         GURL(google_apis::GDataWapiUrlGenerator::kBaseDownloadUrlForProduction),
         std::string() /* custom_user_agent */));
   } else {
     drive_service_.reset(new drive::DriveAPIService(
-        oauth_service,
+        oauth_service_,
         profile->GetRequestContext(),
-        content::BrowserThread::GetBlockingPool(),
+        task_runner.get(),
         GURL(google_apis::DriveApiUrlGenerator::kBaseUrlForProduction),
         GURL(google_apis::DriveApiUrlGenerator::kBaseDownloadUrlForProduction),
         GURL(google_apis::GDataWapiUrlGenerator::kBaseUrlForProduction),
         std::string() /* custom_user_agent */));
   }
 
-  drive_service_->Initialize(oauth_service->GetPrimaryAccountId());
+  drive_service_->Initialize(signin_manager_->GetAuthenticatedAccountId());
   drive_service_->AddObserver(this);
+  has_initialized_token_ = drive_service_->HasRefreshToken();
+
   net::NetworkChangeNotifier::AddConnectionTypeObserver(this);
 
   drive_uploader_.reset(new drive::DriveUploader(
@@ -204,22 +202,16 @@ scoped_ptr<APIUtil> APIUtil::CreateForTesting(
     scoped_ptr<drive::DriveUploaderInterface> drive_uploader) {
   return make_scoped_ptr(new APIUtil(
       temp_dir_path,
-      GURL(kFakeServerBaseUrl),
-      GURL(kFakeDownloadServerBaseUrl),
       drive_service.Pass(),
       drive_uploader.Pass(),
       kFakeAccountId));
 }
 
 APIUtil::APIUtil(const base::FilePath& temp_dir_path,
-                 const GURL& base_url,
-                 const GURL& base_download_url,
                  scoped_ptr<drive::DriveServiceInterface> drive_service,
                  scoped_ptr<drive::DriveUploaderInterface> drive_uploader,
                  const std::string& account_id)
-    : wapi_url_generator_(base_url, base_download_url),
-      drive_api_url_generator_(base_url, base_download_url),
-      upload_next_key_(0),
+    : upload_next_key_(0),
       temp_dir_path_(temp_dir_path) {
   drive_service_ = drive_service.Pass();
   drive_service_->Initialize(account_id);
@@ -351,13 +343,15 @@ void APIUtil::DidGetDirectory(const std::string& parent_resource_id,
       feed->entries(), title, resource_id, parent_type);
   if (!entry) {
     DVLOG(2) << "Directory not found. Creating: " << directory_name;
-    drive_service_->AddNewDirectory(resource_id,
-                                    directory_name,
-                                    base::Bind(&APIUtil::DidCreateDirectory,
-                                               AsWeakPtr(),
-                                               parent_resource_id,
-                                               title,
-                                               callback));
+    drive_service_->AddNewDirectory(
+        resource_id,
+        directory_name,
+        drive::DriveServiceInterface::AddNewDirectoryOptions(),
+        base::Bind(&APIUtil::DidCreateDirectory,
+                   AsWeakPtr(),
+                   parent_resource_id,
+                   title,
+                   callback));
     return;
   }
   DVLOG(2) << "Found Drive directory.";
@@ -548,6 +542,7 @@ void APIUtil::UploadNewFile(const std::string& directory_resource_id,
       local_file_path,
       title,
       mime_type,
+      drive::DriveUploader::UploadNewFileOptions(),
       base::Bind(&UploadResultAdapter, did_upload_callback),
       google_apis::ProgressCallback());
 }
@@ -577,13 +572,15 @@ void APIUtil::CreateDirectory(const std::string& parent_resource_id,
   // directories if there're duplicated directories. This must be ok
   // for current design but we'll need to merge directories when we support
   // 'real' directories.
-  drive_service_->AddNewDirectory(parent_resource_id,
-                                  title,
-                                  base::Bind(&APIUtil::DidCreateDirectory,
-                                             AsWeakPtr(),
-                                             parent_resource_id,
-                                             title,
-                                             callback));
+  drive_service_->AddNewDirectory(
+      parent_resource_id,
+      title,
+      drive::DriveServiceInterface::AddNewDirectoryOptions(),
+      base::Bind(&APIUtil::DidCreateDirectory,
+                 AsWeakPtr(),
+                 parent_resource_id,
+                 title,
+                 callback));
 }
 
 void APIUtil::DeleteFile(const std::string& resource_id,
@@ -606,17 +603,10 @@ void APIUtil::DeleteFile(const std::string& resource_id,
   }
 
   // Expected remote_file_md5 is empty so do a force delete.
-  drive_service_->DeleteResource(
+  drive_service_->TrashResource(
       resource_id,
-      std::string(),
       base::Bind(&APIUtil::DidDeleteFile, AsWeakPtr(), callback));
   return;
-}
-
-GURL APIUtil::ResourceIdToResourceLink(const std::string& resource_id) const {
-  return IsDriveAPIDisabled()
-      ? wapi_url_generator_.GenerateEditUrl(resource_id)
-      : drive_api_url_generator_.GetFilesGetUrl(resource_id);
 }
 
 void APIUtil::EnsureSyncRootIsNotInMyDrive(
@@ -658,8 +648,8 @@ void APIUtil::DidGetDriveRootResourceIdForEnsureSyncRoot(
 // TODO(calvinlo): Delete this when Sync Directory Operations are supported by
 // default.
 std::string APIUtil::GetSyncRootDirectoryName() {
-  return IsSyncFSDirectoryOperationEnabled() ? kSyncRootDirectoryNameDev
-                                             : kSyncRootDirectoryName;
+  return IsSyncFSDirectoryOperationEnabled() ? kSyncRootFolderTitleDev
+                                             : kSyncRootFolderTitle;
 }
 
 // static
@@ -675,6 +665,10 @@ GURL APIUtil::DirectoryTitleToOrigin(const std::string& title) {
 
 void APIUtil::OnReadyToSendRequests() {
   DCHECK(CalledOnValidThread());
+  if (!has_initialized_token_) {
+    drive_service_->Initialize(signin_manager_->GetAuthenticatedAccountId());
+    has_initialized_token_ = true;
+  }
   FOR_EACH_OBSERVER(APIUtilObserver, observers_, OnAuthenticated());
 }
 
@@ -903,6 +897,8 @@ void APIUtil::UploadExistingFileInternal(
     return;
   }
 
+  drive::DriveUploader::UploadExistingFileOptions options;
+  options.etag = entry->etag();
   std::string mime_type = GetMimeTypeFromTitle(entry->title());
   UploadKey upload_key = RegisterUploadCallback(callback);
   ResourceEntryCallback did_upload_callback =
@@ -911,7 +907,7 @@ void APIUtil::UploadExistingFileInternal(
       entry->resource_id(),
       local_file_path,
       mime_type,
-      entry->etag(),
+      options,
       base::Bind(&UploadResultAdapter, did_upload_callback),
       google_apis::ProgressCallback());
 }
@@ -961,9 +957,8 @@ void APIUtil::DeleteFileInternal(const std::string& remote_file_md5,
   DVLOG(2) << "Got resource entry for deleting file";
 
   // Move the file to trash (don't delete it completely).
-  drive_service_->DeleteResource(
+  drive_service_->TrashResource(
       entry->resource_id(),
-      entry->etag(),
       base::Bind(&APIUtil::DidDeleteFile, AsWeakPtr(), callback));
 }
 
@@ -1081,9 +1076,8 @@ void APIUtil::DeleteEntriesForEnsuringTitleUniqueness(
 
   // We don't care conflicts here as other clients may be also deleting this
   // file, so passing an empty etag.
-  drive_service_->DeleteResource(
+  drive_service_->TrashResource(
       entry->resource_id(),
-      std::string(),  // empty etag
       base::Bind(&APIUtil::DidDeleteEntriesForEnsuringTitleUniqueness,
                  AsWeakPtr(),
                  base::Passed(&entries),

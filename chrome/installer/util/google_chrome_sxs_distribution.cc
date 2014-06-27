@@ -8,6 +8,7 @@
 
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "chrome/common/chrome_icon_resources_win.h"
 
 #include "installer_util_strings.h"  // NOLINT
 
@@ -18,12 +19,8 @@ const wchar_t kChannelName[] = L"canary";
 const wchar_t kBrowserAppId[] = L"ChromeCanary";
 const wchar_t kBrowserProgIdPrefix[] = L"ChromeSSHTM";
 const wchar_t kBrowserProgIdDesc[] = L"Chrome Canary HTML Document";
-const int kSxSIconIndex = 4;
 const wchar_t kCommandExecuteImplUuid[] =
     L"{1BEAC3E3-B852-44F4-B468-8906C062422E}";
-
-// The Chrome App Launcher Canary icon is index 6; see chrome_exe.rc.
-const int kSxSAppLauncherIconIndex = 6;
 
 }  // namespace
 
@@ -32,11 +29,11 @@ GoogleChromeSxSDistribution::GoogleChromeSxSDistribution()
   GoogleChromeDistribution::set_product_guid(kChromeSxSGuid);
 }
 
-string16 GoogleChromeSxSDistribution::GetBaseAppName() {
+base::string16 GoogleChromeSxSDistribution::GetBaseAppName() {
   return L"Google Chrome Canary";
 }
 
-string16 GoogleChromeSxSDistribution::GetShortcutName(
+base::string16 GoogleChromeSxSDistribution::GetShortcutName(
     ShortcutType shortcut_type) {
   switch (shortcut_type) {
     case SHORTCUT_CHROME_ALTERNATE:
@@ -53,24 +50,36 @@ string16 GoogleChromeSxSDistribution::GetShortcutName(
   }
 }
 
-string16 GoogleChromeSxSDistribution::GetBaseAppId() {
+base::string16 GoogleChromeSxSDistribution::GetStartMenuShortcutSubfolder(
+    Subfolder subfolder_type) {
+  switch (subfolder_type) {
+    case SUBFOLDER_APPS:
+      return installer::GetLocalizedString(
+          IDS_APP_SHORTCUTS_SUBDIR_NAME_CANARY_BASE);
+    default:
+      DCHECK_EQ(subfolder_type, SUBFOLDER_CHROME);
+      return GetShortcutName(SHORTCUT_CHROME);
+  }
+}
+
+base::string16 GoogleChromeSxSDistribution::GetBaseAppId() {
   return kBrowserAppId;
 }
 
-string16 GoogleChromeSxSDistribution::GetBrowserProgIdPrefix() {
+base::string16 GoogleChromeSxSDistribution::GetBrowserProgIdPrefix() {
   return kBrowserProgIdPrefix;
 }
 
-string16 GoogleChromeSxSDistribution::GetBrowserProgIdDesc() {
+base::string16 GoogleChromeSxSDistribution::GetBrowserProgIdDesc() {
   return kBrowserProgIdDesc;
 }
 
-string16 GoogleChromeSxSDistribution::GetInstallSubDir() {
+base::string16 GoogleChromeSxSDistribution::GetInstallSubDir() {
   return GoogleChromeDistribution::GetInstallSubDir().append(
       installer::kSxSSuffix);
 }
 
-string16 GoogleChromeSxSDistribution::GetUninstallRegPath() {
+base::string16 GoogleChromeSxSDistribution::GetUninstallRegPath() {
   return GoogleChromeDistribution::GetUninstallRegPath().append(
       installer::kSxSSuffix);
 }
@@ -82,19 +91,19 @@ BrowserDistribution::DefaultBrowserControlPolicy
 
 int GoogleChromeSxSDistribution::GetIconIndex(ShortcutType shortcut_type) {
   if (shortcut_type == SHORTCUT_APP_LAUNCHER)
-    return kSxSAppLauncherIconIndex;
+    return icon_resources::kSxSAppLauncherIndex;
   DCHECK(shortcut_type == SHORTCUT_CHROME ||
          shortcut_type == SHORTCUT_CHROME_ALTERNATE) << shortcut_type;
-  return kSxSIconIndex;
+  return icon_resources::kSxSApplicationIndex;
 }
 
-bool GoogleChromeSxSDistribution::GetChromeChannel(string16* channel) {
+bool GoogleChromeSxSDistribution::GetChromeChannel(base::string16* channel) {
   *channel = kChannelName;
   return true;
 }
 
 bool GoogleChromeSxSDistribution::GetCommandExecuteImplClsid(
-    string16* handler_class_uuid) {
+    base::string16* handler_class_uuid) {
   if (handler_class_uuid)
     *handler_class_uuid = kCommandExecuteImplUuid;
   return true;
@@ -112,6 +121,6 @@ bool GoogleChromeSxSDistribution::HasUserExperiments() {
   return true;
 }
 
-string16 GoogleChromeSxSDistribution::ChannelName() {
+base::string16 GoogleChromeSxSDistribution::ChannelName() {
   return kChannelName;
 }

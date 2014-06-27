@@ -8,8 +8,8 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_sorting.h"
 #include "chrome/browser/infobars/confirm_infobar_delegate.h"
+#include "chrome/browser/infobars/infobar.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/themes/theme_service.h"
@@ -24,9 +24,12 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
+#include "extensions/browser/app_sorting.h"
+#include "extensions/browser/extension_prefs.h"
 #include "extensions/common/id_util.h"
 
 using content::WebContents;
+using extensions::AppSorting;
 using extensions::Extension;
 
 class ExtensionInstallUIBrowserTest : public ExtensionBrowserTest {
@@ -41,7 +44,7 @@ class ExtensionInstallUIBrowserTest : public ExtensionBrowserTest {
         InfoBarService::FromWebContents(web_contents);
     ASSERT_EQ(1U, infobar_service->infobar_count());
     ConfirmInfoBarDelegate* delegate =
-        infobar_service->infobar_at(0)->AsConfirmInfoBarDelegate();
+        infobar_service->infobar_at(0)->delegate()->AsConfirmInfoBarDelegate();
     ASSERT_TRUE(delegate);
     delegate->Cancel();
     ASSERT_EQ(0U, infobar_service->infobar_count());
@@ -142,8 +145,9 @@ IN_PROC_BROWSER_TEST_F(ExtensionInstallUIBrowserTest,
   InstallThemeAndVerify("theme", "camo theme");
 }
 
+// TODO(samarth): remove along with NTP4 code.
 IN_PROC_BROWSER_TEST_F(ExtensionInstallUIBrowserTest,
-                       AppInstallConfirmation) {
+                       DISABLED_AppInstallConfirmation) {
   int num_tabs = browser()->tab_strip_model()->count();
 
   base::FilePath app_dir = test_data_dir_.AppendASCII("app");
@@ -161,8 +165,9 @@ IN_PROC_BROWSER_TEST_F(ExtensionInstallUIBrowserTest,
   }
 }
 
+// TODO(samarth): remove along with NTP4 code.
 IN_PROC_BROWSER_TEST_F(ExtensionInstallUIBrowserTest,
-                       AppInstallConfirmation_Incognito) {
+                       DISABLED_AppInstallConfirmation_Incognito) {
   Browser* incognito_browser = CreateIncognitoBrowser();
 
   int num_incognito_tabs = incognito_browser->tab_strip_model()->count();
@@ -211,12 +216,9 @@ class NewTabUISortingBrowserTest : public ExtensionInstallUIBrowserTest,
   DISALLOW_COPY_AND_ASSIGN(NewTabUISortingBrowserTest);
 };
 
-#if defined(OS_WIN)
-#define MAYBE_ReorderDuringInstall DISABLED_ReorderDuringInstall
-#else
-#define MAYBE_ReorderDuringInstall ReorderDuringInstall
-#endif
-IN_PROC_BROWSER_TEST_F(NewTabUISortingBrowserTest, MAYBE_ReorderDuringInstall) {
+// TODO(samarth): remove along with NTP4 code.
+IN_PROC_BROWSER_TEST_F(NewTabUISortingBrowserTest,
+                       DISABLED_ReorderDuringInstall) {
   ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUINewTabURL));
   ExtensionService* service = extensions::ExtensionSystem::Get(
       browser()->profile())->extension_service();
@@ -226,19 +228,19 @@ IN_PROC_BROWSER_TEST_F(NewTabUISortingBrowserTest, MAYBE_ReorderDuringInstall) {
   const extensions::Extension* webstore_extension =
       service->GetInstalledExtension(extension_misc::kWebStoreAppId);
   EXPECT_TRUE(webstore_extension);
-  ExtensionSorting* sorting = service->extension_prefs()->extension_sorting();
+  AppSorting* sorting =
+      extensions::ExtensionPrefs::Get(browser()->profile())->app_sorting();
 
   // Register for notifications in the same way as AppLauncherHandler.
   registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_LAUNCHER_REORDERED,
-      content::Source<ExtensionSorting>(sorting));
+      content::Source<AppSorting>(sorting));
   // ExtensionAppItem calls this when an app install starts.
   sorting->EnsureValidOrdinals(app_id, syncer::StringOrdinal());
   // Vefify the app is not actually installed yet.
   EXPECT_FALSE(service->GetInstalledExtension(app_id));
   // Move the test app from the end to be before the web store.
-  service->OnExtensionMoved(app_id,
-                            std::string(),
-                            extension_misc::kWebStoreAppId);
+  sorting->OnExtensionMoved(
+      app_id, base::EmptyString(), extension_misc::kWebStoreAppId);
   EXPECT_EQ(app_id, last_reordered_extension_id_);
 
   // Now install the app.

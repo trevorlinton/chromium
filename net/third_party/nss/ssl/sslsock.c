@@ -28,94 +28,6 @@
 
 #define SET_ERROR_CODE   /* reminder */
 
-struct cipherPolicyStr {
-	int		cipher;
-	unsigned char 	export;	/* policy value for export policy */
-	unsigned char 	france;	/* policy value for france policy */
-};
-
-typedef struct cipherPolicyStr cipherPolicy;
-
-/* This table contains two preconfigured policies: Export and France.
-** It is used only by the functions NSS_SetDomesticPolicy, 
-** NSS_SetExportPolicy, and NSS_SetFrancePolicy.
-** Order of entries is not important.
-*/
-static cipherPolicy ssl_ciphers[] = {	   /*   Export           France   */
- {  SSL_EN_RC4_128_WITH_MD5,		    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  SSL_EN_RC4_128_EXPORT40_WITH_MD5,	    SSL_ALLOWED,     SSL_ALLOWED },
- {  SSL_EN_RC2_128_CBC_WITH_MD5,	    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  SSL_EN_RC2_128_CBC_EXPORT40_WITH_MD5,   SSL_ALLOWED,     SSL_ALLOWED },
- {  SSL_EN_DES_64_CBC_WITH_MD5,		    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  SSL_EN_DES_192_EDE3_CBC_WITH_MD5,	    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  SSL_RSA_WITH_RC4_128_MD5,		    SSL_RESTRICTED,  SSL_NOT_ALLOWED },
- {  SSL_RSA_WITH_RC4_128_SHA,		    SSL_RESTRICTED,  SSL_NOT_ALLOWED },
- {  SSL_RSA_FIPS_WITH_3DES_EDE_CBC_SHA,	    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  SSL_RSA_WITH_3DES_EDE_CBC_SHA,	    SSL_RESTRICTED,  SSL_NOT_ALLOWED },
- {  SSL_RSA_FIPS_WITH_DES_CBC_SHA,	    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  SSL_RSA_WITH_DES_CBC_SHA,		    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  SSL_RSA_EXPORT_WITH_RC4_40_MD5,	    SSL_ALLOWED,     SSL_ALLOWED },
- {  SSL_RSA_EXPORT_WITH_RC2_CBC_40_MD5,	    SSL_ALLOWED,     SSL_ALLOWED },
- {  SSL_DHE_RSA_WITH_DES_CBC_SHA,           SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  SSL_DHE_DSS_WITH_DES_CBC_SHA,           SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  SSL_DHE_RSA_WITH_3DES_EDE_CBC_SHA,      SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  SSL_DHE_DSS_WITH_3DES_EDE_CBC_SHA,      SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_DHE_DSS_WITH_RC4_128_SHA,           SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  SSL_RSA_WITH_NULL_MD5,		    SSL_ALLOWED,     SSL_ALLOWED },
- {  SSL_RSA_WITH_NULL_SHA,		    SSL_ALLOWED,     SSL_ALLOWED },
- {  TLS_RSA_WITH_NULL_SHA256,		    SSL_ALLOWED,     SSL_ALLOWED },
- {  TLS_DHE_DSS_WITH_AES_128_CBC_SHA, 	    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_DHE_RSA_WITH_AES_128_CBC_SHA,       SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_DHE_RSA_WITH_AES_128_CBC_SHA256,    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_DHE_RSA_WITH_AES_128_GCM_SHA256,    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_RSA_WITH_AES_128_CBC_SHA,     	    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_RSA_WITH_AES_128_CBC_SHA256,        SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_RSA_WITH_AES_128_GCM_SHA256,        SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_DHE_DSS_WITH_AES_256_CBC_SHA, 	    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_DHE_RSA_WITH_AES_256_CBC_SHA,       SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_DHE_RSA_WITH_AES_256_CBC_SHA256,    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_RSA_WITH_AES_256_CBC_SHA,     	    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_RSA_WITH_AES_256_CBC_SHA256,        SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_DHE_DSS_WITH_CAMELLIA_128_CBC_SHA,  SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_DHE_RSA_WITH_CAMELLIA_128_CBC_SHA,  SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_RSA_WITH_CAMELLIA_128_CBC_SHA, 	    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_DHE_DSS_WITH_CAMELLIA_256_CBC_SHA,  SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_DHE_RSA_WITH_CAMELLIA_256_CBC_SHA,  SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_RSA_WITH_CAMELLIA_256_CBC_SHA, 	    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_RSA_WITH_SEED_CBC_SHA,		    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_RSA_EXPORT1024_WITH_DES_CBC_SHA,    SSL_ALLOWED,     SSL_NOT_ALLOWED },
- {  TLS_RSA_EXPORT1024_WITH_RC4_56_SHA,     SSL_ALLOWED,     SSL_NOT_ALLOWED },
-#ifdef NSS_ENABLE_ECC
- {  TLS_ECDH_ECDSA_WITH_NULL_SHA,           SSL_ALLOWED,     SSL_ALLOWED },
- {  TLS_ECDH_ECDSA_WITH_RC4_128_SHA,        SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDH_ECDSA_WITH_3DES_EDE_CBC_SHA,   SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDH_ECDSA_WITH_AES_128_CBC_SHA,    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDH_ECDSA_WITH_AES_256_CBC_SHA,    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDHE_ECDSA_WITH_NULL_SHA,          SSL_ALLOWED,     SSL_ALLOWED },
- {  TLS_ECDHE_ECDSA_WITH_RC4_128_SHA,       SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA,  SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,   SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,   SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305, SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDH_RSA_WITH_NULL_SHA,             SSL_ALLOWED,     SSL_ALLOWED },
- {  TLS_ECDH_RSA_WITH_RC4_128_SHA,          SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDH_RSA_WITH_3DES_EDE_CBC_SHA,     SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDH_RSA_WITH_AES_128_CBC_SHA,      SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDH_RSA_WITH_AES_256_CBC_SHA,      SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDHE_RSA_WITH_NULL_SHA,            SSL_ALLOWED,     SSL_ALLOWED },
- {  TLS_ECDHE_RSA_WITH_RC4_128_SHA,         SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA,    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,     SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256,  SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,  SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,     SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
- {  TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,   SSL_NOT_ALLOWED, SSL_NOT_ALLOWED },
-#endif /* NSS_ENABLE_ECC */
- {  0,					    SSL_NOT_ALLOWED, SSL_NOT_ALLOWED }
-};
-
 static const sslSocketOps ssl_default_ops = {	/* No SSL. */
     ssl_DefConnect,
     NULL,
@@ -173,7 +85,11 @@ static sslOptions ssl_defaults = {
     PR_FALSE,   /* requireSafeNegotiation */
     PR_FALSE,   /* enableFalseStart   */
     PR_TRUE,    /* cbcRandomIV        */
-    PR_FALSE    /* enableOCSPStapling */
+    PR_FALSE,   /* enableOCSPStapling */
+    PR_TRUE,    /* enableNPN          */
+    PR_FALSE,   /* enableALPN         */
+    PR_FALSE,   /* enableSignedCertTimestamps */
+    PR_FALSE    /* enableFallbackSCSV */
 };
 
 /*
@@ -366,6 +282,8 @@ ssl_DupSocket(sslSocket *os)
 	    ss->badCertArg            = os->badCertArg;
 	    ss->handshakeCallback     = os->handshakeCallback;
 	    ss->handshakeCallbackData = os->handshakeCallbackData;
+	    ss->canFalseStartCallback = os->canFalseStartCallback;
+	    ss->canFalseStartCallbackData = os->canFalseStartCallbackData;
 	    ss->pkcs11PinArg          = os->pkcs11PinArg;
 	    ss->getChannelID          = os->getChannelID;
 	    ss->getChannelIDArg       = os->getChannelIDArg;
@@ -863,6 +781,22 @@ SSL_OptionSet(PRFileDesc *fd, PRInt32 which, PRBool on)
        ss->opt.enableOCSPStapling = on;
        break;
 
+      case SSL_ENABLE_NPN:
+	ss->opt.enableNPN = on;
+	break;
+
+      case SSL_ENABLE_ALPN:
+	ss->opt.enableALPN = on;
+	break;
+
+      case SSL_ENABLE_SIGNED_CERT_TIMESTAMPS:
+	ss->opt.enableSignedCertTimestamps = on;
+	break;
+
+      case SSL_ENABLE_FALLBACK_SCSV:
+       ss->opt.enableFallbackSCSV = on;
+       break;
+
       default:
 	PORT_SetError(SEC_ERROR_INVALID_ARGS);
 	rv = SECFailure;
@@ -933,6 +867,12 @@ SSL_OptionGet(PRFileDesc *fd, PRInt32 which, PRBool *pOn)
     case SSL_ENABLE_FALSE_START:  on = ss->opt.enableFalseStart;   break;
     case SSL_CBC_RANDOM_IV:       on = ss->opt.cbcRandomIV;        break;
     case SSL_ENABLE_OCSP_STAPLING: on = ss->opt.enableOCSPStapling; break;
+    case SSL_ENABLE_NPN:          on = ss->opt.enableNPN;          break;
+    case SSL_ENABLE_ALPN:         on = ss->opt.enableALPN;         break;
+    case SSL_ENABLE_SIGNED_CERT_TIMESTAMPS:
+	on = ss->opt.enableSignedCertTimestamps;
+	break;
+    case SSL_ENABLE_FALLBACK_SCSV: on = ss->opt.enableFallbackSCSV; break;
 
     default:
 	PORT_SetError(SEC_ERROR_INVALID_ARGS);
@@ -994,6 +934,14 @@ SSL_OptionGetDefault(PRInt32 which, PRBool *pOn)
     case SSL_ENABLE_OCSP_STAPLING:
        on = ssl_defaults.enableOCSPStapling;
        break;
+    case SSL_ENABLE_NPN:          on = ssl_defaults.enableNPN;          break;
+    case SSL_ENABLE_ALPN:         on = ssl_defaults.enableALPN;         break;
+    case SSL_ENABLE_SIGNED_CERT_TIMESTAMPS:
+	on = ssl_defaults.enableSignedCertTimestamps;
+	break;
+    case SSL_ENABLE_FALLBACK_SCSV:
+	on = ssl_defaults.enableFallbackSCSV;
+	break;
 
     default:
 	PORT_SetError(SEC_ERROR_INVALID_ARGS);
@@ -1159,6 +1107,22 @@ SSL_OptionSetDefault(PRInt32 which, PRBool on)
 
       case SSL_ENABLE_OCSP_STAPLING:
        ssl_defaults.enableOCSPStapling = on;
+       break;
+
+      case SSL_ENABLE_NPN:
+	ssl_defaults.enableNPN = on;
+	break;
+
+      case SSL_ENABLE_ALPN:
+	ssl_defaults.enableALPN = on;
+	break;
+
+      case SSL_ENABLE_SIGNED_CERT_TIMESTAMPS:
+	ssl_defaults.enableSignedCertTimestamps = on;
+	break;
+
+      case SSL_ENABLE_FALLBACK_SCSV:
+       ssl_defaults.enableFallbackSCSV = on;
        break;
 
       default:
@@ -1327,6 +1291,19 @@ SSL_CipherPrefSet(PRFileDesc *fd, PRInt32 which, PRBool enabled)
     return rv;
 }
 
+SECStatus
+SSL_CipherOrderSet(PRFileDesc *fd, const PRUint16 *ciphers, unsigned int len)
+{
+    sslSocket *ss = ssl_FindSocket(fd);
+
+    if (!ss) {
+	SSL_DBG(("%d: SSL[%d]: bad socket in CipherOrderSet", SSL_GETPID(),
+		fd));
+	return SECFailure;
+    }
+    return ssl3_CipherOrderSet(ss, ciphers, len);
+}
+
 SECStatus 
 SSL_CipherPrefGet(PRFileDesc *fd, PRInt32 which, PRBool *enabled)
 {
@@ -1357,10 +1334,10 @@ SECStatus
 NSS_SetDomesticPolicy(void)
 {
     SECStatus      status = SECSuccess;
-    cipherPolicy * policy;
+    const PRUint16 *cipher;
 
-    for (policy = ssl_ciphers; policy->cipher != 0; ++policy) {
-	status = SSL_SetPolicy(policy->cipher, SSL_ALLOWED);
+    for (cipher = SSL_ImplementedCiphers; *cipher != 0; ++cipher) {
+	status = SSL_SetPolicy(*cipher, SSL_ALLOWED);
 	if (status != SECSuccess)
 	    break;
     }
@@ -1665,11 +1642,6 @@ SSL_GetSRTPCipher(PRFileDesc *fd, PRUint16 *cipher)
 PRFileDesc *
 SSL_ReconfigFD(PRFileDesc *model, PRFileDesc *fd)
 {
-    PORT_SetError(PR_NOT_IMPLEMENTED_ERROR);
-    PR_NOT_REACHED("not implemented");
-    return NULL;
-
-#if 0
     sslSocket * sm = NULL, *ss = NULL;
     int i;
     sslServerCerts * mc = NULL;
@@ -1797,7 +1769,6 @@ SSL_ReconfigFD(PRFileDesc *model, PRFileDesc *fd)
     return fd;
 loser:
     return NULL;
-#endif
 }
 
 PRBool
@@ -1989,6 +1960,29 @@ SSL_PeerStapledOCSPResponses(PRFileDesc *fd)
     }
     
     return &ss->sec.ci.sid->peerCertStatus;
+}
+
+const SECItem *
+SSL_PeerSignedCertTimestamps(PRFileDesc *fd)
+{
+    sslSocket *ss = ssl_FindSocket(fd);
+
+    if (!ss) {
+       SSL_DBG(("%d: SSL[%d]: bad socket in SSL_PeerSignedCertTimestamps",
+		SSL_GETPID(), fd));
+       return NULL;
+    }
+
+    if (!ss->sec.ci.sid) {
+       PORT_SetError(SEC_ERROR_NOT_INITIALIZED);
+       return NULL;
+    }
+
+    if (ss->sec.ci.sid->version < SSL_LIBRARY_VERSION_3_0) {
+	PORT_SetError(SSL_ERROR_FEATURE_NOT_SUPPORTED_FOR_SSL2);
+	return NULL;
+    }
+    return &ss->sec.ci.sid->u.ssl3.signedCertTimestamps;
 }
 
 SECStatus

@@ -284,6 +284,12 @@ void RecordDownloadInterrupted(DownloadInterruptReason reason,
   UMA_HISTOGRAM_BOOLEAN("Download.InterruptedUnknownSize", unknown_size);
 }
 
+void RecordMaliciousDownloadClassified(DownloadDangerType danger_type) {
+  UMA_HISTOGRAM_ENUMERATION("Download.MaliciousDownloadClassified",
+                            danger_type,
+                            DOWNLOAD_DANGER_TYPE_MAX);
+}
+
 void RecordDangerousDownloadAccept(DownloadDangerType danger_type,
                                    const base::FilePath& file_path) {
   UMA_HISTOGRAM_ENUMERATION("Download.DangerousDownloadValidated",
@@ -311,11 +317,11 @@ void RecordDangerousDownloadDiscard(DownloadDiscardReason reason,
     case DOWNLOAD_DISCARD_DUE_TO_SHUTDOWN:
       UMA_HISTOGRAM_ENUMERATION(
           "Download.Discard", danger_type, DOWNLOAD_DANGER_TYPE_MAX);
-      break;
       if (danger_type == DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE) {
         UMA_HISTOGRAM_SPARSE_SLOWLY("Download.DangerousFile.Discard",
                                     GetDangerousFileType(file_path));
       }
+      break;
     default:
       NOTREACHED();
   }
@@ -332,7 +338,7 @@ void RecordDownloadWriteLoopCount(int count) {
 
 void RecordAcceptsRanges(const std::string& accepts_ranges,
                          int64 download_len,
-                         const std::string& etag) {
+                         bool has_strong_validator) {
   int64 max = 1024 * 1024 * 1024;  // One Terabyte.
   download_len /= 1024;  // In Kilobytes
   static const int kBuckets = 50;
@@ -349,10 +355,8 @@ void RecordAcceptsRanges(const std::string& accepts_ranges,
                                 1,
                                 max,
                                 kBuckets);
-    // ETags that start with "W/" are considered weak ETags which don't imply
-    // byte-wise equality.
-    if (!StartsWithASCII(etag, "w/", false))
-      RecordDownloadCount(STRONG_ETAG_AND_ACCEPTS_RANGES);
+    if (has_strong_validator)
+      RecordDownloadCount(STRONG_VALIDATOR_AND_ACCEPTS_RANGES);
   } else {
     UMA_HISTOGRAM_CUSTOM_COUNTS("Download.AcceptRangesMissingOrInvalid.KBytes",
                                 download_len,
@@ -611,6 +615,16 @@ void RecordSavePackageEvent(SavePackageEvent event) {
   UMA_HISTOGRAM_ENUMERATION("Download.SavePackage",
                             event,
                             SAVE_PACKAGE_LAST_ENTRY);
+}
+
+void RecordOriginStateOnResumption(bool is_partial,
+                                   int state) {
+  if (is_partial)
+    UMA_HISTOGRAM_ENUMERATION("Download.OriginStateOnPartialResumption", state,
+                              ORIGIN_STATE_ON_RESUMPTION_MAX);
+  else
+    UMA_HISTOGRAM_ENUMERATION("Download.OriginStateOnFullResumption", state,
+                              ORIGIN_STATE_ON_RESUMPTION_MAX);
 }
 
 }  // namespace content

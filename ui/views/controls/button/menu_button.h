@@ -9,7 +9,6 @@
 
 #include "base/strings/string16.h"
 #include "base/time/time.h"
-#include "ui/gfx/font.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/button/text_button.h"
 
@@ -34,7 +33,7 @@ class VIEWS_EXPORT MenuButton : public TextButton {
 
   // Create a Button.
   MenuButton(ButtonListener* listener,
-             const string16& text,
+             const base::string16& text,
              MenuButtonListener* menu_button_listener,
              bool show_menu_marker);
   virtual ~MenuButton();
@@ -63,7 +62,7 @@ class VIEWS_EXPORT MenuButton : public TextButton {
   virtual void OnGestureEvent(ui::GestureEvent* event) OVERRIDE;
   virtual bool OnKeyPressed(const ui::KeyEvent& event) OVERRIDE;
   virtual bool OnKeyReleased(const ui::KeyEvent& event) OVERRIDE;
-  virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE;
+  virtual void GetAccessibleState(ui::AXViewState* state) OVERRIDE;
 
  protected:
   // Paint the menu marker image.
@@ -88,7 +87,7 @@ class VIEWS_EXPORT MenuButton : public TextButton {
   // menu. There is no clean way to get the second click event because the
   // menu is displayed using a modal loop and, unlike regular menus in Windows,
   // the button is not part of the displayed menu.
-  base::Time menu_closed_time_;
+  base::TimeTicks menu_closed_time_;
 
   // Our listener. Not owned.
   MenuButtonListener* listener_;

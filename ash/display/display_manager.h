@@ -17,18 +17,20 @@
 #include "ui/gfx/display.h"
 
 #if defined(OS_CHROMEOS)
-#include "chromeos/display/output_configurator.h"
+#include "ui/display/chromeos/output_configurator.h"
 #endif
 
 namespace gfx {
 class Display;
 class Insets;
 class Rect;
+class Screen;
 }
 
 namespace ash {
 class AcceleratorControllerTest;
 class DisplayController;
+class ScreenAsh;
 
 namespace test {
 class DisplayManagerTestApi;
@@ -43,7 +45,7 @@ class DisplayLayoutStore;
 // TODO(oshima): Make this non internal.
 class ASH_EXPORT DisplayManager
 #if defined(OS_CHROMEOS)
-    : public chromeos::OutputConfigurator::SoftwareMirroringController
+    : public ui::OutputConfigurator::SoftwareMirroringController
 #endif
       {
  public:
@@ -59,7 +61,9 @@ class ASH_EXPORT DisplayManager
     virtual void CloseNonDesktopDisplay() = 0;
 
     // Called before and after the display configuration changes.
-    virtual void PreDisplayConfigurationChange(bool display_removed) = 0;
+    // When |clear_focus| is true, the implementation should
+    // deactivate the active window and set the focus window to NULL.
+    virtual void PreDisplayConfigurationChange(bool clear_focus) = 0;
     virtual void PostDisplayConfigurationChange() = 0;
   };
 
@@ -94,6 +98,10 @@ class ASH_EXPORT DisplayManager
 
   DisplayLayoutStore* layout_store() {
     return layout_store_.get();
+  }
+
+  gfx::Screen* screen() {
+    return screen_;
   }
 
   void set_delegate(Delegate* delegate) { delegate_ = delegate; }
@@ -166,11 +174,12 @@ class ASH_EXPORT DisplayManager
                                gfx::Display::Rotation rotation,
                                float ui_scale,
                                const gfx::Insets* overscan_insets,
-                               const gfx::Size& resolution_in_pixels);
+                               const gfx::Size& resolution_in_pixels,
+                               ui::ColorCalibrationProfile color_profile);
 
-  // Returns the display's selected resolution.
-  bool GetSelectedResolutionForDisplayId(int64 display_id,
-                                         gfx::Size* resolution_out) const;
+  // Returns the display's selected mode.
+  bool GetSelectedModeForDisplayId(int64 display_id,
+                                   DisplayMode* mode_out) const;
 
   // Tells if the virtual resolution feature is enabled.
   bool IsDisplayUIScalingEnabled() const;
@@ -179,6 +188,10 @@ class ASH_EXPORT DisplayManager
   // Returns an empty insets (0, 0, 0, 0) if no insets are specified for
   // the display.
   gfx::Insets GetOverscanInsets(int64 display_id) const;
+
+  // Sets the color calibration of the display to |profile|.
+  void SetColorCalibrationProfile(int64 display_id,
+                                  ui::ColorCalibrationProfile profile);
 
   // Called when display configuration has changed. The new display
   // configurations is passed as a vector of Display object, which
@@ -245,6 +258,10 @@ class ASH_EXPORT DisplayManager
     return second_display_mode_ == MIRRORING;
   };
 
+  bool virtual_keyboard_root_window_enabled() const {
+    return second_display_mode_ == VIRTUAL_KEYBOARD;
+  };
+
   // Sets/gets second display mode.
   void SetSecondDisplayMode(SecondDisplayMode mode);
   SecondDisplayMode second_display_mode() const {
@@ -258,6 +275,9 @@ class ASH_EXPORT DisplayManager
   // Creates mirror window if the software mirror mode is enabled.
   // This is used only for bootstrap.
   void CreateMirrorWindowIfAny();
+
+  // Create a screen instance to be used during shutdown.
+  void CreateScreenForShutdown() const;
 
 private:
   FRIEND_TEST_ALL_PREFIXES(ExtendedDesktopTest, ConvertPoint);
@@ -289,6 +309,9 @@ private:
   // a display.
   void InsertAndUpdateDisplayInfo(const DisplayInfo& new_info);
 
+  // Called when the display info is updated through InsertAndUpdateDisplayInfo.
+  void OnDisplayInfoUpdated(const DisplayInfo& display_info);
+
   // Creates a display object from the DisplayInfo for |display_id|.
   gfx::Display CreateDisplayFromDisplayInfoById(int64 display_id);
 
@@ -307,11 +330,15 @@ private:
 
   Delegate* delegate_;  // not owned.
 
+  scoped_ptr<ScreenAsh> screen_ash_;
+  // This is to have an accessor without ScreenAsh definition.
+  gfx::Screen* screen_;
+
   scoped_ptr<DisplayLayoutStore> layout_store_;
 
   int64 first_display_id_;
 
-  // List of current active dispays.
+  // List of current active displays.
   DisplayList displays_;
 
   int num_connected_displays_;
@@ -321,13 +348,13 @@ private:
   // The mapping from the display ID to its internal data.
   std::map<int64, DisplayInfo> display_info_;
 
-  // Selected resolutions for displays. Key is the displays' ID.
-  std::map<int64, gfx::Size> resolutions_;
+  // Selected display modes for displays. Key is the displays' ID.
+  std::map<int64, DisplayMode> display_modes_;
 
   // When set to true, the host window's resize event updates
   // the display's size. This is set to true when running on
   // desktop environment (for debugging) so that resizing the host
-  // window wil update the display properly. This is set to false
+  // window will update the display properly. This is set to false
   // on device as well as during the unit tests.
   bool change_display_upon_host_resize_;
 

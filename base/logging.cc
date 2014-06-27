@@ -65,16 +65,6 @@ typedef pthread_mutex_t* MutexHandle;
 
 namespace logging {
 
-DcheckState g_dcheck_state = DISABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS;
-
-DcheckState get_dcheck_state() {
-  return g_dcheck_state;
-}
-
-void set_dcheck_state(DcheckState state) {
-  g_dcheck_state = state;
-}
-
 namespace {
 
 VlogInfo* g_vlog_info = NULL;
@@ -82,6 +72,13 @@ VlogInfo* g_vlog_info_prev = NULL;
 
 const char* const log_severity_names[LOG_NUM_SEVERITIES] = {
   "INFO", "WARNING", "ERROR", "ERROR_REPORT", "FATAL" };
+
+const char* log_severity_name(int severity)
+{
+  if (severity >= 0 && severity < LOG_NUM_SEVERITIES)
+    return log_severity_names[severity];
+  return "UNKNOWN";
+}
 
 int min_log_level = 0;
 
@@ -355,15 +352,13 @@ LoggingSettings::LoggingSettings()
     : logging_dest(LOG_DEFAULT),
       log_file(NULL),
       lock_log(LOCK_LOG_FILE),
-      delete_old(APPEND_TO_OLD_LOG_FILE),
-      dcheck_state(DISABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS) {}
+      delete_old(APPEND_TO_OLD_LOG_FILE) {}
 
 bool BaseInitLoggingImpl(const LoggingSettings& settings) {
 #if defined(OS_NACL)
   // Can log only to the system debug log.
   CHECK_EQ(settings.logging_dest & ~LOG_TO_SYSTEM_DEBUG_LOG, 0);
 #endif
-  g_dcheck_state = settings.dcheck_state;
   CommandLine* command_line = CommandLine::ForCurrentProcess();
   // Don't bother initializing g_vlog_info unless we use one of the
   // vlog switches.
@@ -494,7 +489,7 @@ void DisplayDebugMessageInDialog(const std::string& str) {
     backslash[1] = 0;
   wcscat_s(prog_name, MAX_PATH, L"debug_message.exe");
 
-  std::wstring cmdline = UTF8ToWide(str);
+  std::wstring cmdline = base::UTF8ToWide(str);
   if (cmdline.empty())
     return;
 
@@ -602,13 +597,13 @@ LogMessage::~LogMessage() {
     }
     __android_log_write(priority, "chromium", str_newline.c_str());
 #endif
-    fprintf(stderr, "%s", str_newline.c_str());
+    ignore_result(fwrite(str_newline.data(), str_newline.size(), 1, stderr));
     fflush(stderr);
   } else if (severity_ >= kAlwaysPrintErrorLevel) {
     // When we're only outputting to a log file, above a certain log level, we
     // should still output to stderr so that we can better detect and diagnose
     // problems with unit tests, especially on the buildbots.
-    fprintf(stderr, "%s", str_newline.c_str());
+    ignore_result(fwrite(str_newline.data(), str_newline.size(), 1, stderr));
     fflush(stderr);
   }
 
@@ -633,7 +628,8 @@ LogMessage::~LogMessage() {
                 &num_written,
                 NULL);
 #else
-      fprintf(log_file, "%s", str_newline.c_str());
+      ignore_result(fwrite(
+          str_newline.data(), str_newline.size(), 1, log_file));
       fflush(log_file);
 #endif
     }
@@ -646,25 +642,20 @@ LogMessage::~LogMessage() {
     str_newline.copy(str_stack, arraysize(str_stack));
     base::debug::Alias(str_stack);
 
-    // display a message or break into the debugger on a fatal error
-    if (base::debug::BeingDebugged()) {
-      base::debug::BreakDebugger();
+    if (log_assert_handler) {
+      // Make a copy of the string for the handler out of paranoia.
+      log_assert_handler(std::string(stream_.str()));
     } else {
-      if (log_assert_handler) {
-        // make a copy of the string for the handler out of paranoia
-        log_assert_handler(std::string(stream_.str()));
-      } else {
-        // Don't use the string with the newline, get a fresh version to send to
-        // the debug message process. We also don't display assertions to the
-        // user in release mode. The enduser can't do anything with this
-        // information, and displaying message boxes when the application is
-        // hosed can cause additional problems.
+      // Don't use the string with the newline, get a fresh version to send to
+      // the debug message process. We also don't display assertions to the
+      // user in release mode. The enduser can't do anything with this
+      // information, and displaying message boxes when the application is
+      // hosed can cause additional problems.
 #ifndef NDEBUG
-        DisplayDebugMessageInDialog(stream_.str());
+      DisplayDebugMessageInDialog(stream_.str());
 #endif
-        // Crash the process to generate a dump.
-        base::debug::BreakDebugger();
-      }
+      // Crash the process to generate a dump.
+      base::debug::BreakDebugger();
     }
   } else if (severity_ == LOG_ERROR_REPORT) {
     // We are here only if the user runs with --enable-dcheck in release mode.
@@ -711,7 +702,7 @@ void LogMessage::Init(const char* file, int line) {
   if (log_tickcount)
     stream_ << TickCount() << ':';
   if (severity_ >= 0)
-    stream_ << log_severity_names[severity_];
+    stream_ << log_severity_name(severity_);
   else
     stream_ << "VERBOSE" << -severity_;
 
@@ -862,5 +853,5 @@ std::wstring GetLogFileFullPath() {
 }  // namespace logging
 
 std::ostream& operator<<(std::ostream& out, const wchar_t* wstr) {
-  return out << WideToUTF8(std::wstring(wstr));
+  return out << base::WideToUTF8(std::wstring(wstr));
 }

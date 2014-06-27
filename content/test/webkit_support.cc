@@ -4,15 +4,21 @@
 
 #include "content/test/webkit_support.h"
 
+#include <string>
+
+#include "base/command_line.h"
 #include "base/message_loop/message_loop.h"
+#include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/strings/string_tokenizer.h"
+#include "content/public/common/content_switches.h"
+#include "content/public/common/user_agent.h"
 #include "content/test/test_webkit_platform_support.h"
 #include "third_party/WebKit/public/web/WebCache.h"
 #include "third_party/WebKit/public/web/WebKit.h"
 #include "third_party/WebKit/public/web/WebRuntimeFeatures.h"
+#include "ui/base/resource/resource_bundle.h"
 #include "url/url_util.h"
-#include "webkit/common/user_agent/user_agent.h"
-#include "webkit/common/user_agent/user_agent_util.h"
 
 #if defined(OS_ANDROID)
 #include "base/android/jni_android.h"
@@ -26,6 +32,20 @@
 namespace content {
 
 namespace {
+
+void EnableBlinkPlatformLogChannels(const std::string& channels) {
+  if (channels.empty())
+    return;
+  base::StringTokenizer t(channels, ", ");
+  while (t.GetNext())
+    blink::enableLogChannel(t.token().c_str());
+}
+
+void ParseBlinkCommandLineArgumentsForUnitTests() {
+  const CommandLine& command_line = *CommandLine::ForCurrentProcess();
+  EnableBlinkPlatformLogChannels(
+      command_line.GetSwitchValueASCII(switches::kBlinkPlatformLogChannels));
+}
 
 class TestEnvironment {
  public:
@@ -41,6 +61,19 @@ class TestEnvironment {
 
     // TestWebKitPlatformSupport must be instantiated after MessageLoopType.
     webkit_platform_support_.reset(new TestWebKitPlatformSupport);
+
+#if defined(OS_WIN)
+    base::FilePath pak_file;
+    PathService::Get(base::DIR_MODULE, &pak_file);
+    pak_file = pak_file.AppendASCII("ui_test.pak");
+    ui::ResourceBundle::InitSharedInstanceWithPakPath(pak_file);
+#endif
+  }
+
+  ~TestEnvironment() {
+#if defined(OS_WIN)
+    ui::ResourceBundle::CleanupSharedInstance();
+#endif
   }
 
   TestWebKitPlatformSupport* webkit_platform_support() const {
@@ -57,9 +90,10 @@ TestEnvironment* test_environment;
 }  // namespace
 
 void SetUpTestEnvironmentForUnitTests() {
-  WebKit::WebRuntimeFeatures::enableStableFeatures(true);
-  WebKit::WebRuntimeFeatures::enableExperimentalFeatures(true);
-  WebKit::WebRuntimeFeatures::enableTestOnlyFeatures(true);
+  ParseBlinkCommandLineArgumentsForUnitTests();
+
+  blink::WebRuntimeFeatures::enableExperimentalFeatures(true);
+  blink::WebRuntimeFeatures::enableTestOnlyFeatures(true);
 
 #if defined(OS_ANDROID)
   JNIEnv* env = base::android::AttachCurrentThread();
@@ -75,8 +109,6 @@ void SetUpTestEnvironmentForUnitTests() {
   // at same time.
   url_util::Initialize();
   test_environment = new TestEnvironment;
-  webkit_glue::SetUserAgent(webkit_glue::BuildUserAgentFromProduct(
-      "DumpRenderTree/0.0.0.0"), false);
 }
 
 void TearDownTestEnvironment() {
@@ -85,7 +117,7 @@ void TearDownTestEnvironment() {
   base::RunLoop().RunUntilIdle();
 
   if (RunningOnValgrind())
-    WebKit::WebCache::clear();
+    blink::WebCache::clear();
   delete test_environment;
   test_environment = NULL;
 }

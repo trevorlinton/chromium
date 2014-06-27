@@ -17,51 +17,52 @@ namespace net {
 namespace tools {
 namespace test {
 
-QuicVersion QuicVersionMax() { return QuicSupportedVersions().front(); }
-
-QuicVersion QuicVersionMin() { return QuicSupportedVersions().back(); }
-
-MockConnection::MockConnection(QuicGuid guid,
-                               IPEndPoint address,
-                               int fd,
-                               EpollServer* eps,
-                               bool is_server)
-    : QuicConnection(guid, address,
-                     new QuicEpollConnectionHelper(eps),
-                     new QuicDefaultPacketWriter(fd), is_server,
-                     QuicSupportedVersions()),
-      has_mock_helper_(false),
-      writer_(net::test::QuicConnectionPeer::GetWriter(this)),
-      helper_(helper()) {
-}
-
-MockConnection::MockConnection(QuicGuid guid,
-                               IPEndPoint address,
-                               bool is_server)
-    : QuicConnection(guid, address, new testing::NiceMock<MockHelper>(),
+MockConnection::MockConnection(bool is_server)
+    : QuicConnection(kTestConnectionId,
+                     IPEndPoint(net::test::Loopback4(), kTestPort),
+                     new testing::NiceMock<MockHelper>(),
                      new testing::NiceMock<MockPacketWriter>(),
                      is_server, QuicSupportedVersions()),
-      has_mock_helper_(true),
       writer_(net::test::QuicConnectionPeer::GetWriter(this)),
       helper_(helper()) {
 }
 
-MockConnection::MockConnection(QuicGuid guid,
-                               IPEndPoint address,
-                               QuicConnectionHelperInterface* helper,
-                               QuicPacketWriter* writer,
+MockConnection::MockConnection(IPEndPoint address,
                                bool is_server)
-    : QuicConnection(guid, address, helper, writer, is_server,
-                     QuicSupportedVersions()),
-      has_mock_helper_(false) {
+    : QuicConnection(kTestConnectionId, address,
+                     new testing::NiceMock<MockHelper>(),
+                     new testing::NiceMock<MockPacketWriter>(),
+                     is_server, QuicSupportedVersions()),
+      writer_(net::test::QuicConnectionPeer::GetWriter(this)),
+      helper_(helper()) {
+}
+
+MockConnection::MockConnection(QuicConnectionId connection_id,
+                               bool is_server)
+    : QuicConnection(connection_id,
+                     IPEndPoint(net::test::Loopback4(), kTestPort),
+                     new testing::NiceMock<MockHelper>(),
+                     new testing::NiceMock<MockPacketWriter>(),
+                     is_server, QuicSupportedVersions()),
+      writer_(net::test::QuicConnectionPeer::GetWriter(this)),
+      helper_(helper()) {
+}
+
+MockConnection::MockConnection(bool is_server,
+                               const QuicVersionVector& supported_versions)
+    : QuicConnection(kTestConnectionId,
+                     IPEndPoint(net::test::Loopback4(), kTestPort),
+                     new testing::NiceMock<MockHelper>(),
+                     new testing::NiceMock<MockPacketWriter>(),
+                     is_server, supported_versions),
+      writer_(net::test::QuicConnectionPeer::GetWriter(this)),
+      helper_(helper()) {
 }
 
 MockConnection::~MockConnection() {
 }
 
 void MockConnection::AdvanceTime(QuicTime::Delta delta) {
-  CHECK(has_mock_helper_) << "Cannot advance time unless a MockClock is being"
-                             " used";
   static_cast<MockHelper*>(helper())->AdvanceTime(delta);
 }
 
@@ -73,25 +74,9 @@ uint64 SimpleRandom::RandUint64() {
   return seed_;
 }
 
-MockQuicSessionOwner::MockQuicSessionOwner() {
-}
-
-MockQuicSessionOwner::~MockQuicSessionOwner() {
-}
-
-bool TestDecompressorVisitor::OnDecompressedData(StringPiece data) {
-  data.AppendToString(&data_);
-  return true;
-}
-
-void TestDecompressorVisitor::OnDecompressionError() {
-  error_ = true;
-}
-
 TestSession::TestSession(QuicConnection* connection,
-                         const QuicConfig& config,
-                         bool is_server)
-    : QuicSession(connection, config, is_server),
+                         const QuicConfig& config)
+    : QuicSession(connection, config),
       crypto_stream_(NULL) {
 }
 
@@ -105,16 +90,22 @@ QuicCryptoStream* TestSession::GetCryptoStream() {
   return crypto_stream_;
 }
 
-MockAckNotifierDelegate::MockAckNotifierDelegate() {
-}
-
-MockAckNotifierDelegate::~MockAckNotifierDelegate() {
-}
-
 MockPacketWriter::MockPacketWriter() {
 }
 
 MockPacketWriter::~MockPacketWriter() {
+}
+
+MockQuicServerSessionVisitor::MockQuicServerSessionVisitor() {
+}
+
+MockQuicServerSessionVisitor::~MockQuicServerSessionVisitor() {
+}
+
+MockAckNotifierDelegate::MockAckNotifierDelegate() {
+}
+
+MockAckNotifierDelegate::~MockAckNotifierDelegate() {
 }
 
 }  // namespace test

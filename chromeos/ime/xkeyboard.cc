@@ -10,9 +10,11 @@
 #include <set>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/process/kill.h"
 #include "base/process/launch.h"
 #include "base/process/process_handle.h"
 #include "base/strings/string_util.h"
@@ -23,7 +25,6 @@
 // These includes conflict with base/tracked_objects.h so must come last.
 #include <X11/XKBlib.h>
 #include <X11/Xlib.h>
-#include <glib.h>
 
 namespace chromeos {
 namespace input_method {
@@ -33,12 +34,64 @@ Display* GetXDisplay() {
   return base::MessagePumpForUI::GetDefaultXDisplay();
 }
 
+// The delay in milliseconds that we'll wait between checking if
+// setxkbmap command finished.
+const int kSetLayoutCommandCheckDelayMs = 100;
+
 // The command we use to set the current XKB layout and modifier key mapping.
 // TODO(yusukes): Use libxkbfile.so instead of the command (crosbug.com/13105)
 const char kSetxkbmapCommand[] = "/usr/bin/setxkbmap";
 
 // A string for obtaining a mask value for Num Lock.
 const char kNumLockVirtualModifierString[] = "NumLock";
+
+const char *kISOLevel5ShiftLayoutIds[] = {
+  "ca(multix)",
+  "de(neo)",
+};
+
+const char *kAltGrLayoutIds[] = {
+  "be",
+  "be",
+  "be",
+  "bg",
+  "bg(phonetic)",
+  "br",
+  "ca",
+  "ca(eng)",
+  "ca(multix)",
+  "ch",
+  "ch(fr)",
+  "cz",
+  "de",
+  "de(neo)",
+  "dk",
+  "ee",
+  "es",
+  "es(cat)",
+  "fi",
+  "fr",
+  "gb(dvorak)",
+  "gb(extd)",
+  "gr",
+  "hr",
+  "il",
+  "it",
+  "latam",
+  "lt",
+  "no",
+  "pl",
+  "pt",
+  "ro",
+  "se",
+  "si",
+  "sk",
+  "tr",
+  "ua",
+  "us(altgr-intl)",
+  "us(intl)",
+};
+
 
 // Returns false if |layout_name| contains a bad character.
 bool CheckLayoutName(const std::string& layout_name) {
@@ -64,23 +117,31 @@ class XKeyboardImpl : public XKeyboard {
   XKeyboardImpl();
   virtual ~XKeyboardImpl() {}
 
+  // Adds/removes observer.
+  virtual void AddObserver(Observer* observer) OVERRIDE;
+  virtual void RemoveObserver(Observer* observer) OVERRIDE;
+
   // Overridden from XKeyboard:
   virtual bool SetCurrentKeyboardLayoutByName(
       const std::string& layout_name) OVERRIDE;
   virtual bool ReapplyCurrentKeyboardLayout() OVERRIDE;
   virtual void ReapplyCurrentModifierLockStatus() OVERRIDE;
-  virtual void SetLockedModifiers(
-      ModifierLockStatus new_caps_lock_status,
-      ModifierLockStatus new_num_lock_status) OVERRIDE;
-  virtual void SetNumLockEnabled(bool enable_num_lock) OVERRIDE;
+  virtual void DisableNumLock() OVERRIDE;
   virtual void SetCapsLockEnabled(bool enable_caps_lock) OVERRIDE;
-  virtual bool NumLockIsEnabled() OVERRIDE;
   virtual bool CapsLockIsEnabled() OVERRIDE;
-  virtual unsigned int GetNumLockMask() OVERRIDE;
-  virtual void GetLockedModifiers(bool* out_caps_lock_enabled,
-                                  bool* out_num_lock_enabled) OVERRIDE;
+  virtual bool IsISOLevel5ShiftAvailable() const OVERRIDE;
+  virtual bool IsAltGrAvailable() const OVERRIDE;
+  virtual bool SetAutoRepeatEnabled(bool enabled) OVERRIDE;
+  virtual bool SetAutoRepeatRate(const AutoRepeatRate& rate) OVERRIDE;
 
  private:
+  // Returns a mask for Num Lock (e.g. 1U << 4). Returns 0 on error.
+  unsigned int GetNumLockMask();
+
+  // Sets the caps-lock status. Note that calling this function always disables
+  // the num-lock.
+  void SetLockedModifiers(bool caps_lock_enabled);
+
   // This function is used by SetLayout() and RemapModifierKeys(). Calls
   // setxkbmap command if needed, and updates the last_full_layout_name_ cache.
   bool SetLayoutInternal(const std::string& layout_name, bool force);
@@ -90,15 +151,18 @@ class XKeyboardImpl : public XKeyboard {
   // TODO(yusukes): Use libxkbfile.so instead of the command (crosbug.com/13105)
   void MaybeExecuteSetLayoutCommand();
 
+  // Polls to see setxkbmap process exits.
+  void PollUntilChildFinish(const base::ProcessHandle handle);
+
   // Called when execve'd setxkbmap process exits.
-  static void OnSetLayoutFinish(pid_t pid, int status, XKeyboardImpl* self);
+  void OnSetLayoutFinish();
 
   const bool is_running_on_chrome_os_;
   unsigned int num_lock_mask_;
 
-  // The current Num Lock and Caps Lock status. If true, enabled.
-  bool current_num_lock_status_;
+  // The current Caps Lock status. If true, enabled.
   bool current_caps_lock_status_;
+
   // The XKB layout name which we set last time like "us" and "us(dvorak)".
   std::string current_layout_name_;
 
@@ -107,19 +171,88 @@ class XKeyboardImpl : public XKeyboard {
 
   base::ThreadChecker thread_checker_;
 
+  base::WeakPtrFactory<XKeyboardImpl> weak_factory_;
+
+  ObserverList<Observer> observers_;
+
   DISALLOW_COPY_AND_ASSIGN(XKeyboardImpl);
 };
 
 XKeyboardImpl::XKeyboardImpl()
-    : is_running_on_chrome_os_(base::SysInfo::IsRunningOnChromeOS()) {
+    : is_running_on_chrome_os_(base::SysInfo::IsRunningOnChromeOS()),
+      weak_factory_(this) {
+  // X must be already initialized.
+  CHECK(GetXDisplay());
+
   num_lock_mask_ = GetNumLockMask();
 
-  // web_input_event_aurax11.cc seems to assume that Mod2Mask is always assigned
-  // to Num Lock.
-  // TODO(yusukes): Check the assumption is really okay. If not, modify the Aura
-  // code, and then remove the CHECK below.
-  CHECK(!is_running_on_chrome_os_ || (num_lock_mask_ == Mod2Mask));
-  GetLockedModifiers(&current_caps_lock_status_, &current_num_lock_status_);
+  if (is_running_on_chrome_os_) {
+    // Some code seems to assume that Mod2Mask is always assigned to
+    // Num Lock.
+    //
+    // TODO(yusukes): Check the assumption is really okay. If not,
+    // modify the Aura code, and then remove the CHECK below.
+    LOG_IF(ERROR, num_lock_mask_ != Mod2Mask)
+        << "NumLock is not assigned to Mod2Mask.  : " << num_lock_mask_;
+  }
+
+  current_caps_lock_status_ = CapsLockIsEnabled();
+}
+
+void XKeyboardImpl::AddObserver(XKeyboard::Observer* observer) {
+  observers_.AddObserver(observer);
+}
+
+void XKeyboardImpl::RemoveObserver(XKeyboard::Observer* observer) {
+  observers_.RemoveObserver(observer);
+}
+
+unsigned int XKeyboardImpl::GetNumLockMask() {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  static const unsigned int kBadMask = 0;
+
+  unsigned int real_mask = kBadMask;
+  XkbDescPtr xkb_desc =
+      XkbGetKeyboard(GetXDisplay(), XkbAllComponentsMask, XkbUseCoreKbd);
+  if (!xkb_desc)
+    return kBadMask;
+
+  if (xkb_desc->dpy && xkb_desc->names) {
+    const std::string string_to_find(kNumLockVirtualModifierString);
+    for (size_t i = 0; i < XkbNumVirtualMods; ++i) {
+      const unsigned int virtual_mod_mask = 1U << i;
+      char* virtual_mod_str_raw_ptr =
+          XGetAtomName(xkb_desc->dpy, xkb_desc->names->vmods[i]);
+      if (!virtual_mod_str_raw_ptr)
+        continue;
+      const std::string virtual_mod_str = virtual_mod_str_raw_ptr;
+      XFree(virtual_mod_str_raw_ptr);
+
+      if (string_to_find == virtual_mod_str) {
+        if (!XkbVirtualModsToReal(xkb_desc, virtual_mod_mask, &real_mask)) {
+          DVLOG(1) << "XkbVirtualModsToReal failed";
+          real_mask = kBadMask;  // reset the return value, just in case.
+        }
+        break;
+      }
+    }
+  }
+  XkbFreeKeyboard(xkb_desc, 0, True /* free all components */);
+  return real_mask;
+}
+
+void XKeyboardImpl::SetLockedModifiers(bool caps_lock_enabled) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
+  // Always turn off num lock.
+  unsigned int affect_mask = num_lock_mask_;
+  unsigned int value_mask = 0;
+
+  affect_mask |= LockMask;
+  value_mask |= (caps_lock_enabled ? LockMask : 0);
+  current_caps_lock_status_ = caps_lock_enabled;
+
+  XkbLockModifiers(GetXDisplay(), XkbUseCoreKbd, affect_mask, value_mask);
 }
 
 bool XKeyboardImpl::SetLayoutInternal(const std::string& layout_name,
@@ -175,115 +308,96 @@ void XKeyboardImpl::MaybeExecuteSetLayoutCommand() {
     return;
   }
 
-  // g_child_watch_add is necessary to prevent the process from becoming a
-  // zombie.
-  const base::ProcessId pid = base::GetProcId(handle);
-  g_child_watch_add(pid,
-                    reinterpret_cast<GChildWatchFunc>(OnSetLayoutFinish),
-                    this);
-  DVLOG(1) << "ExecuteSetLayoutCommand: " << layout_to_set << ": pid=" << pid;
+  PollUntilChildFinish(handle);
+
+  DVLOG(1) << "ExecuteSetLayoutCommand: "
+           << layout_to_set << ": pid=" << base::GetProcId(handle);
 }
 
-bool XKeyboardImpl::NumLockIsEnabled() {
-  bool num_lock_enabled = false;
-  GetLockedModifiers(NULL /* Caps Lock */, &num_lock_enabled);
-  return num_lock_enabled;
+// Delay and loop until child process finishes and call the callback.
+void XKeyboardImpl::PollUntilChildFinish(const base::ProcessHandle handle) {
+  int exit_code;
+  DVLOG(1) << "PollUntilChildFinish: poll for pid=" << base::GetProcId(handle);
+  switch (base::GetTerminationStatus(handle, &exit_code)) {
+    case base::TERMINATION_STATUS_STILL_RUNNING:
+      DVLOG(1) << "PollUntilChildFinish: Try waiting again";
+      base::MessageLoop::current()->PostDelayedTask(
+          FROM_HERE,
+          base::Bind(&XKeyboardImpl::PollUntilChildFinish,
+                 weak_factory_.GetWeakPtr(), handle),
+          base::TimeDelta::FromMilliseconds(kSetLayoutCommandCheckDelayMs));
+      return;
+
+    case base::TERMINATION_STATUS_NORMAL_TERMINATION:
+      DVLOG(1) << "PollUntilChildFinish: Child process finished";
+      OnSetLayoutFinish();
+      return;
+
+    case base::TERMINATION_STATUS_ABNORMAL_TERMINATION:
+      DVLOG(1) << "PollUntilChildFinish: Abnormal exit code: " << exit_code;
+      OnSetLayoutFinish();
+      return;
+
+    default:
+      NOTIMPLEMENTED();
+      OnSetLayoutFinish();
+      return;
+  }
 }
 
 bool XKeyboardImpl::CapsLockIsEnabled() {
-  bool caps_lock_enabled = false;
-  GetLockedModifiers(&caps_lock_enabled, NULL /* Num Lock */);
-  return caps_lock_enabled;
-}
-
-unsigned int XKeyboardImpl::GetNumLockMask() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  static const unsigned int kBadMask = 0;
-
-  unsigned int real_mask = kBadMask;
-  XkbDescPtr xkb_desc =
-      XkbGetKeyboard(GetXDisplay(), XkbAllComponentsMask, XkbUseCoreKbd);
-  if (!xkb_desc)
-    return kBadMask;
-
-  if (xkb_desc->dpy && xkb_desc->names && xkb_desc->names->vmods) {
-    const std::string string_to_find(kNumLockVirtualModifierString);
-    for (size_t i = 0; i < XkbNumVirtualMods; ++i) {
-      const unsigned int virtual_mod_mask = 1U << i;
-      char* virtual_mod_str_raw_ptr =
-          XGetAtomName(xkb_desc->dpy, xkb_desc->names->vmods[i]);
-      if (!virtual_mod_str_raw_ptr)
-        continue;
-      const std::string virtual_mod_str = virtual_mod_str_raw_ptr;
-      XFree(virtual_mod_str_raw_ptr);
-
-      if (string_to_find == virtual_mod_str) {
-        if (!XkbVirtualModsToReal(xkb_desc, virtual_mod_mask, &real_mask)) {
-          DVLOG(1) << "XkbVirtualModsToReal failed";
-          real_mask = kBadMask;  // reset the return value, just in case.
-        }
-        break;
-      }
-    }
-  }
-  XkbFreeKeyboard(xkb_desc, 0, True /* free all components */);
-  return real_mask;
-}
-
-void XKeyboardImpl::GetLockedModifiers(bool* out_caps_lock_enabled,
-                                       bool* out_num_lock_enabled) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-
-  if (out_num_lock_enabled && !num_lock_mask_) {
-    DVLOG(1) << "Cannot get locked modifiers. Num Lock mask unknown.";
-    if (out_caps_lock_enabled)
-      *out_caps_lock_enabled = false;
-    if (out_num_lock_enabled)
-      *out_num_lock_enabled = false;
-    return;
-  }
-
   XkbStateRec status;
   XkbGetState(GetXDisplay(), XkbUseCoreKbd, &status);
-  if (out_caps_lock_enabled)
-    *out_caps_lock_enabled = status.locked_mods & LockMask;
-  if (out_num_lock_enabled)
-    *out_num_lock_enabled = status.locked_mods & num_lock_mask_;
+  return (status.locked_mods & LockMask);
 }
 
-void XKeyboardImpl::SetLockedModifiers(ModifierLockStatus new_caps_lock_status,
-                                       ModifierLockStatus new_num_lock_status) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  if (!num_lock_mask_) {
-    DVLOG(1) << "Cannot set locked modifiers. Num Lock mask unknown.";
-    return;
+bool XKeyboardImpl::IsISOLevel5ShiftAvailable() const {
+  for (size_t i = 0; i < arraysize(kISOLevel5ShiftLayoutIds); ++i) {
+    if (current_layout_name_ == kISOLevel5ShiftLayoutIds[i])
+      return true;
   }
-
-  unsigned int affect_mask = 0;
-  unsigned int value_mask = 0;
-  if (new_caps_lock_status != kDontChange) {
-    affect_mask |= LockMask;
-    value_mask |= ((new_caps_lock_status == kEnableLock) ? LockMask : 0);
-    current_caps_lock_status_ = (new_caps_lock_status == kEnableLock);
-  }
-  if (new_num_lock_status != kDontChange) {
-    affect_mask |= num_lock_mask_;
-    value_mask |= ((new_num_lock_status == kEnableLock) ? num_lock_mask_ : 0);
-    current_num_lock_status_ = (new_num_lock_status == kEnableLock);
-  }
-
-  if (affect_mask)
-    XkbLockModifiers(GetXDisplay(), XkbUseCoreKbd, affect_mask, value_mask);
+  return false;
 }
 
-void XKeyboardImpl::SetNumLockEnabled(bool enable_num_lock) {
-  SetLockedModifiers(
-      kDontChange, enable_num_lock ? kEnableLock : kDisableLock);
+bool XKeyboardImpl::IsAltGrAvailable() const {
+  for (size_t i = 0; i < arraysize(kAltGrLayoutIds); ++i) {
+    if (current_layout_name_ == kAltGrLayoutIds[i])
+      return true;
+  }
+  return false;
+}
+
+
+bool XKeyboardImpl::SetAutoRepeatEnabled(bool enabled) {
+  if (enabled)
+    XAutoRepeatOn(GetXDisplay());
+  else
+    XAutoRepeatOff(GetXDisplay());
+  DVLOG(1) << "Set auto-repeat mode to: " << (enabled ? "on" : "off");
+  return true;
+}
+
+bool XKeyboardImpl::SetAutoRepeatRate(const AutoRepeatRate& rate) {
+  DVLOG(1) << "Set auto-repeat rate to: "
+           << rate.initial_delay_in_ms << " ms delay, "
+           << rate.repeat_interval_in_ms << " ms interval";
+  if (XkbSetAutoRepeatRate(GetXDisplay(), XkbUseCoreKbd,
+                           rate.initial_delay_in_ms,
+                           rate.repeat_interval_in_ms) != True) {
+    DVLOG(1) << "Failed to set auto-repeat rate";
+    return false;
+  }
+  return true;
 }
 
 void XKeyboardImpl::SetCapsLockEnabled(bool enable_caps_lock) {
-  SetLockedModifiers(
-      enable_caps_lock ? kEnableLock : kDisableLock, kDontChange);
+  bool old_state = current_caps_lock_status_;
+  SetLockedModifiers(enable_caps_lock);
+  if (old_state != enable_caps_lock) {
+    FOR_EACH_OBSERVER(XKeyboard::Observer, observers_,
+                      OnCapsLockChanged(enable_caps_lock));
+  }
 }
 
 bool XKeyboardImpl::SetCurrentKeyboardLayoutByName(
@@ -304,49 +418,24 @@ bool XKeyboardImpl::ReapplyCurrentKeyboardLayout() {
 }
 
 void XKeyboardImpl::ReapplyCurrentModifierLockStatus() {
-  SetLockedModifiers(current_caps_lock_status_ ? kEnableLock : kDisableLock,
-                     current_num_lock_status_ ? kEnableLock : kDisableLock);
+  SetLockedModifiers(current_caps_lock_status_);
 }
 
-// static
-void XKeyboardImpl::OnSetLayoutFinish(pid_t pid,
-                                      int status,
-                                      XKeyboardImpl* self) {
-  DVLOG(1) << "OnSetLayoutFinish: pid=" << pid;
-  if (self->execute_queue_.empty()) {
+void XKeyboardImpl::DisableNumLock() {
+  SetCapsLockEnabled(current_caps_lock_status_);
+}
+
+void XKeyboardImpl::OnSetLayoutFinish() {
+  if (execute_queue_.empty()) {
     DVLOG(1) << "OnSetLayoutFinish: execute_queue_ is empty. "
-             << "base::LaunchProcess failed? pid=" << pid;
+             << "base::LaunchProcess failed?";
     return;
   }
-  self->execute_queue_.pop();
-  self->MaybeExecuteSetLayoutCommand();
+  execute_queue_.pop();
+  MaybeExecuteSetLayoutCommand();
 }
 
 }  // namespace
-
-// static
-bool XKeyboard::SetAutoRepeatEnabled(bool enabled) {
-  if (enabled)
-    XAutoRepeatOn(GetXDisplay());
-  else
-    XAutoRepeatOff(GetXDisplay());
-  DVLOG(1) << "Set auto-repeat mode to: " << (enabled ? "on" : "off");
-  return true;
-}
-
-// static
-bool XKeyboard::SetAutoRepeatRate(const AutoRepeatRate& rate) {
-  DVLOG(1) << "Set auto-repeat rate to: "
-           << rate.initial_delay_in_ms << " ms delay, "
-           << rate.repeat_interval_in_ms << " ms interval";
-  if (XkbSetAutoRepeatRate(GetXDisplay(), XkbUseCoreKbd,
-                           rate.initial_delay_in_ms,
-                           rate.repeat_interval_in_ms) != True) {
-    DVLOG(1) << "Failed to set auto-repeat rate";
-    return false;
-  }
-  return true;
-}
 
 // static
 bool XKeyboard::GetAutoRepeatEnabledForTesting() {

@@ -14,6 +14,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/extensions/crx_installer_error.h"
+#include "chrome/browser/extensions/extension_install_prompt_experiment.h"
 #include "extensions/common/url_pattern.h"
 #include "google_apis/gaia/oauth2_mint_token_flow.h"
 #include "google_apis/gaia/oauth2_token_service.h"
@@ -51,6 +52,8 @@ class ExtensionInstallPrompt
       public OAuth2TokenService::Consumer,
       public base::SupportsWeakPtr<ExtensionInstallPrompt> {
  public:
+  // This enum is associated with Extensions.InstallPrompt_Type UMA histogram.
+  // Do not modify existing values and add new values only to the end.
   enum PromptType {
     UNSET_PROMPT_TYPE = -1,
     INSTALL_PROMPT = 0,
@@ -80,16 +83,16 @@ class ExtensionInstallPrompt
     ~Prompt();
 
     // Sets the permission list for this prompt.
-    void SetPermissions(const std::vector<string16>& permissions);
+    void SetPermissions(const std::vector<base::string16>& permissions);
     // Sets the permission list details for this prompt.
-    void SetPermissionsDetails(const std::vector<string16>& details);
+    void SetPermissionsDetails(const std::vector<base::string16>& details);
     void SetIsShowingDetails(DetailsType type,
                              size_t index,
                              bool is_showing_details);
-    void SetInlineInstallWebstoreData(const std::string& localized_user_count,
-                                      bool show_user_count,
-                                      double average_rating,
-                                      int rating_count);
+    void SetWebstoreData(const std::string& localized_user_count,
+                         bool show_user_count,
+                         double average_rating,
+                         int rating_count);
     void SetOAuthIssueAdvice(const IssueAdviceInfo& issue_advice);
     void SetUserNameFromProfile(Profile* profile);
 
@@ -97,18 +100,19 @@ class ExtensionInstallPrompt
     void set_type(PromptType type) { type_ = type; }
 
     // Getters for UI element labels.
-    string16 GetDialogTitle() const;
-    string16 GetHeading() const;
+    base::string16 GetDialogTitle() const;
+    base::string16 GetHeading() const;
     int GetDialogButtons() const;
     bool HasAcceptButtonLabel() const;
-    string16 GetAcceptButtonLabel() const;
+    base::string16 GetAcceptButtonLabel() const;
     bool HasAbortButtonLabel() const;
-    string16 GetAbortButtonLabel() const;
-    string16 GetPermissionsHeading() const;
-    string16 GetOAuthHeading() const;
-    string16 GetRetainedFilesHeading() const;
+    base::string16 GetAbortButtonLabel() const;
+    base::string16 GetPermissionsHeading() const;
+    base::string16 GetOAuthHeading() const;
+    base::string16 GetRetainedFilesHeading() const;
 
     bool ShouldShowPermissions() const;
+    bool ShouldShowExplanationText() const;
 
     // Getters for webstore metadata. Only populated when the type is
     // INLINE_INSTALL_PROMPT.
@@ -119,17 +123,17 @@ class ExtensionInstallPrompt
     // that they append to the star display area.
     typedef void(*StarAppender)(const gfx::ImageSkia*, void*);
     void AppendRatingStars(StarAppender appender, void* data) const;
-    string16 GetRatingCount() const;
-    string16 GetUserCount() const;
+    base::string16 GetRatingCount() const;
+    base::string16 GetUserCount() const;
     size_t GetPermissionCount() const;
     size_t GetPermissionsDetailsCount() const;
-    string16 GetPermission(size_t index) const;
-    string16 GetPermissionsDetails(size_t index) const;
+    base::string16 GetPermission(size_t index) const;
+    base::string16 GetPermissionsDetails(size_t index) const;
     bool GetIsShowingDetails(DetailsType type, size_t index) const;
     size_t GetOAuthIssueCount() const;
     const IssueAdviceInfoEntry& GetOAuthIssue(size_t index) const;
     size_t GetRetainedFileCount() const;
-    string16 GetRetainedFile(size_t index) const;
+    base::string16 GetRetainedFile(size_t index) const;
 
     // Populated for BUNDLE_INSTALL_PROMPT.
     const extensions::BundleInstaller* bundle() const { return bundle_; }
@@ -151,6 +155,15 @@ class ExtensionInstallPrompt
     const gfx::Image& icon() const { return icon_; }
     void set_icon(const gfx::Image& icon) { icon_ = icon; }
 
+    bool has_webstore_data() const { return has_webstore_data_; }
+
+    const ExtensionInstallPromptExperiment* experiment() const {
+      return experiment_;
+    }
+    void set_experiment(ExtensionInstallPromptExperiment* experiment) {
+      experiment_ = experiment;
+    }
+
    private:
     bool ShouldDisplayRevokeFilesButton() const;
 
@@ -158,8 +171,8 @@ class ExtensionInstallPrompt
 
     // Permissions that are being requested (may not be all of an extension's
     // permissions if only additional ones are being requested)
-    std::vector<string16> permissions_;
-    std::vector<string16> details_;
+    std::vector<base::string16> permissions_;
+    std::vector<base::string16> details_;
     std::vector<bool> is_showing_details_for_permissions_;
     std::vector<bool> is_showing_details_for_oauth_;
     bool is_showing_details_for_retained_files_;
@@ -169,7 +182,7 @@ class ExtensionInstallPrompt
     IssueAdviceInfo oauth_issue_advice_;
 
     // User name to be used in Oauth heading label.
-    string16 oauth_user_name_;
+    base::string16 oauth_user_name_;
 
     // The extension or bundle being installed.
     const extensions::Extension* extension_;
@@ -190,7 +203,13 @@ class ExtensionInstallPrompt
     // false if localized_user_count_ represents the number zero).
     bool show_user_count_;
 
+    // Whether or not this prompt has been populated with data from the
+    // webstore.
+    bool has_webstore_data_;
+
     std::vector<base::FilePath> retained_files_;
+
+    scoped_refptr<ExtensionInstallPromptExperiment> experiment_;
   };
 
   static const int kMinExtensionRating = 0;
@@ -313,7 +332,8 @@ class ExtensionInstallPrompt
   virtual void ConfirmExternalInstall(
       Delegate* delegate,
       const extensions::Extension* extension,
-      const ShowDialogCallback& show_dialog_callback);
+      const ShowDialogCallback& show_dialog_callback,
+      const Prompt& prompt);
 
   // This is called by the extension permissions API to verify whether an
   // extension may be granted additional permissions.

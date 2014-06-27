@@ -50,7 +50,11 @@ def DeviceInfo(serial, options):
   device_build_type = device_adb.GetBuildType()
   device_product_name = device_adb.GetProductName()
 
-  battery = device_adb.GetBatteryInfo()
+  try:
+    battery = device_adb.GetBatteryInfo()
+  except Exception as e:
+    battery = None
+    logging.error('Unable to obtain battery info for %s, %s', serial, e)
 
   def _GetData(re_expression, line, lambda_function=lambda x:x):
     if not line:
@@ -59,17 +63,6 @@ def DeviceInfo(serial, options):
     if found and len(found):
       return lambda_function(found[0])
     return 'Unknown'
-
-  if options.device_status_dashboard:
-    # Dashboard does not track install speed. Do not unnecessarily install.
-    install_speed = 'Unknown'
-  else:
-    install_output = GetCmdOutput(
-      ['%s/build/android/adb_install_apk.py' % constants.DIR_SOURCE_ROOT,
-       '--apk',
-       '%s/build/android/CheckInstallApk-debug.apk' % constants.DIR_SOURCE_ROOT
-      ])
-    install_speed = _GetData('(\d+) KB/s', install_output)
 
   ac_power = _GetData('AC powered: (\w+)', battery)
   battery_level = _GetData('level: (\d+)', battery)
@@ -85,7 +78,6 @@ def DeviceInfo(serial, options):
             '  Battery temp: %s' % battery_temp,
             '  IMEI slice: %s' % imei_slice,
             '  Wifi IP: %s' % device_adb.GetWifiIP(),
-            '  Install Speed: %s KB/s' % install_speed,
             '']
 
   errors = []
@@ -97,14 +89,8 @@ def DeviceInfo(serial, options):
       errors += ['Setup wizard not disabled. Was it provisioned correctly?']
   if device_product_name == 'mantaray' and ac_power != 'true':
     errors += ['Mantaray device not connected to AC power.']
-  # TODO(navabi): Insert warning once we have a better handle of what install
-  # speeds to expect. The following lines were causing too many alerts.
-  # if install_speed < 500:
-  #   errors += ['Device install speed too low. Do not use for testing.']
 
-  # Causing the device status check step fail for slow install speed or low
-  # battery currently is too disruptive to the bots (especially try bots).
-  # Turn off devices with low battery and the step does not fail.
+  # Turn off devices with low battery.
   if battery_level < 15:
     device_adb.EnableAdbRoot()
     device_adb.Shutdown()
@@ -221,7 +207,7 @@ def RestartUsb():
   if not os.path.isfile('/usr/bin/restart_usb'):
     print ('ERROR: Could not restart usb. /usr/bin/restart_usb not installed '
            'on host (see BUG=305769).')
-    return 1
+    return False
 
   lsusb_proc = bb_utils.SpawnCmd(['lsusb'], stdout=subprocess.PIPE)
   lsusb_output, _ = lsusb_proc.communicate()
@@ -232,7 +218,7 @@ def RestartUsb():
   usb_devices = [re.findall('Bus (\d\d\d) Device (\d\d\d)', lsusb_line)[0]
                  for lsusb_line in lsusb_output.strip().split('\n')]
 
-  failed_restart = False
+  all_restarted = True
   # Walk USB devices from leaves up (i.e reverse sorted) restarting the
   # connection. If a parent node (e.g. usb hub) is restarted before the
   # devices connected to it, the (bus, dev) for the hub can change, making the
@@ -243,14 +229,11 @@ def RestartUsb():
       return_code = bb_utils.RunCmd(['/usr/bin/restart_usb', bus, dev])
       if return_code:
         print 'Error restarting USB device /dev/bus/usb/%s/%s' % (bus, dev)
-        failed_restart = True
+        all_restarted = False
       else:
         print 'Restarted USB device /dev/bus/usb/%s/%s' % (bus, dev)
 
-  if failed_restart:
-    return 1
-
-  return 0
+  return all_restarted
 
 
 def KillAllAdb():
@@ -292,19 +275,30 @@ def main():
   if args:
     parser.error('Unknown options %s' % args)
 
+  # Remove the last builds "bad devices" before checking device statuses.
+  android_commands.ResetBadDevices()
+
   if options.restart_usb:
     expected_devices = GetLastDevices(os.path.abspath(options.out_dir))
     devices = android_commands.GetAttachedDevices()
-    # Only restart usb if devices are missing
+    # Only restart usb if devices are missing.
     if set(expected_devices) != set(devices):
       KillAllAdb()
-      if RestartUsb():
-        return 1
       retries = 5
+      usb_restarted = True
+      if not RestartUsb():
+        usb_restarted = False
+        bb_annotations.PrintWarning()
+        print 'USB reset stage failed, wait for any device to come back.'
       while retries:
         time.sleep(1)
         devices = android_commands.GetAttachedDevices()
         if set(expected_devices) == set(devices):
+          # All devices are online, keep going.
+          break
+        if not usb_restarted and devices:
+          # The USB wasn't restarted, but there's at least one device online.
+          # No point in trying to wait for all devices.
           break
         retries -= 1
 
@@ -353,8 +347,8 @@ def main():
 
   if False in fail_step_lst:
     # TODO(navabi): Build fails on device status check step if there exists any
-    # devices with critically low battery or install speed. Remove those devices
-    # from testing, allowing build to continue with good devices.
+    # devices with critically low battery. Remove those devices from testing,
+    # allowing build to continue with good devices.
     return 1
 
   if not devices:

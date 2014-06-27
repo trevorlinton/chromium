@@ -18,7 +18,9 @@ namespace gfx {
 enum GpuMemoryBufferType {
   EMPTY_BUFFER,
   SHARED_MEMORY_BUFFER,
-  EGL_CLIENT_BUFFER
+  ANDROID_NATIVE_BUFFER,
+  IO_SURFACE_BUFFER,
+  GPU_MEMORY_BUFFER_TYPE_LAST = IO_SURFACE_BUFFER
 };
 
 struct GpuMemoryBufferHandle {
@@ -28,6 +30,9 @@ struct GpuMemoryBufferHandle {
 #if defined(OS_ANDROID)
         , native_buffer(NULL)
 #endif
+#if defined(OS_MACOSX)
+        , io_surface_id(0)
+#endif
   {
   }
   bool is_null() const { return type == EMPTY_BUFFER; }
@@ -36,6 +41,10 @@ struct GpuMemoryBufferHandle {
 #if defined(OS_ANDROID)
   EGLClientBuffer native_buffer;
 #endif
+#if defined(OS_MACOSX)
+  uint32 io_surface_id;
+#endif
+
 };
 
 // Interface for creating and accessing a zero-copy GPU memory buffer.

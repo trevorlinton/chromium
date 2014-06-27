@@ -9,15 +9,14 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/memory/linked_ptr.h"
-#include "chrome/browser/extensions/api/profile_keyed_api_factory.h"
+#include "base/task/cancelable_task_tracker.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
-#include "chrome/browser/extensions/event_router.h"
 #include "chrome/browser/history/history_notifications.h"
 #include "chrome/browser/history/history_service.h"
-#include "chrome/common/cancelable_task_tracker.h"
 #include "chrome/common/extensions/api/history.h"
 #include "content/public/browser/notification_registrar.h"
+#include "extensions/browser/browser_context_keyed_api_factory.h"
+#include "extensions/browser/event_router.h"
 
 namespace base {
 class ListValue;
@@ -54,27 +53,26 @@ class HistoryEventRouter : public content::NotificationObserver {
   DISALLOW_COPY_AND_ASSIGN(HistoryEventRouter);
 };
 
-class HistoryAPI : public ProfileKeyedAPI,
-                   public EventRouter::Observer {
+class HistoryAPI : public BrowserContextKeyedAPI, public EventRouter::Observer {
  public:
-  explicit HistoryAPI(Profile* profile);
+  explicit HistoryAPI(content::BrowserContext* context);
   virtual ~HistoryAPI();
 
-  // BrowserContextKeyedService implementation.
+  // KeyedService implementation.
   virtual void Shutdown() OVERRIDE;
 
-  // ProfileKeyedAPI implementation.
-  static ProfileKeyedAPIFactory<HistoryAPI>* GetFactoryInstance();
+  // BrowserContextKeyedAPI implementation.
+  static BrowserContextKeyedAPIFactory<HistoryAPI>* GetFactoryInstance();
 
   // EventRouter::Observer implementation.
   virtual void OnListenerAdded(const EventListenerInfo& details) OVERRIDE;
 
  private:
-  friend class ProfileKeyedAPIFactory<HistoryAPI>;
+  friend class BrowserContextKeyedAPIFactory<HistoryAPI>;
 
-  Profile* profile_;
+  content::BrowserContext* browser_context_;
 
-  // ProfileKeyedAPI implementation.
+  // BrowserContextKeyedAPI implementation.
   static const char* service_name() {
     return "HistoryAPI";
   }
@@ -84,8 +82,8 @@ class HistoryAPI : public ProfileKeyedAPI,
   scoped_ptr<HistoryEventRouter> history_event_router_;
 };
 
-template<>
-void ProfileKeyedAPIFactory<HistoryAPI>::DeclareFactoryDependencies();
+template <>
+void BrowserContextKeyedAPIFactory<HistoryAPI>::DeclareFactoryDependencies();
 
 // Base class for history function APIs.
 class HistoryFunction : public ChromeAsyncExtensionFunction {
@@ -119,28 +117,12 @@ class HistoryFunctionWithCallback : public HistoryFunction {
 
   // The consumer for the HistoryService callbacks.
   CancelableRequestConsumer cancelable_consumer_;
-  CancelableTaskTracker task_tracker_;
+  base::CancelableTaskTracker task_tracker_;
 
  private:
   // The actual call to SendResponse.  This is required since the semantics for
   // CancelableRequestConsumerT require it to be accessed after the call.
   void SendResponseToCallback();
-};
-
-class HistoryGetMostVisitedFunction : public HistoryFunctionWithCallback {
- public:
-  DECLARE_EXTENSION_FUNCTION("experimental.history.getMostVisited",
-                             EXPERIMENTAL_HISTORY_GETMOSTVISITED)
-
- protected:
-  virtual ~HistoryGetMostVisitedFunction() {}
-
-  // HistoryFunctionWithCallback:
-  virtual bool RunAsyncImpl() OVERRIDE;
-
-  // Callback for the history function to provide results.
-  void QueryComplete(CancelableRequestProvider::Handle handle,
-                     const history::FilteredURLList& data);
 };
 
 class HistoryGetVisitsFunction : public HistoryFunctionWithCallback {

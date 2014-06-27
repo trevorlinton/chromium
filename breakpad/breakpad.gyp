@@ -16,6 +16,7 @@
           'target_name': 'minidump_stackwalk',
           'type': 'executable',
           'includes': ['breakpad_tools.gypi'],
+          'defines': ['BPLOG_MINIMUM_SEVERITY=SEVERITY_ERROR'],
           'sources': [
             'src/processor/basic_code_module.h',
             'src/processor/basic_code_modules.cc',
@@ -29,6 +30,8 @@
             'src/processor/disassembler_x86.cc',
             'src/processor/disassembler_x86.h',
             'src/processor/exploitability.cc',
+            'src/processor/exploitability_linux.cc',
+            'src/processor/exploitability_linux.h',
             'src/processor/exploitability_win.cc',
             'src/processor/exploitability_win.h',
             'src/processor/logging.cc',
@@ -42,12 +45,15 @@
             'src/processor/simple_symbol_supplier.cc',
             'src/processor/simple_symbol_supplier.h',
             'src/processor/source_line_resolver_base.cc',
+            'src/processor/stack_frame_cpu.cc',
             'src/processor/stack_frame_symbolizer.cc',
             'src/processor/stackwalker.cc',
             'src/processor/stackwalker_amd64.cc',
             'src/processor/stackwalker_amd64.h',
             'src/processor/stackwalker_arm.cc',
             'src/processor/stackwalker_arm.h',
+            'src/processor/stackwalker_arm64.cc',
+            'src/processor/stackwalker_arm64.h',
             'src/processor/stackwalker_mips.cc',
             'src/processor/stackwalker_mips.h',
             'src/processor/stackwalker_ppc.cc',
@@ -334,7 +340,7 @@
         },
       ],
     }],
-    [ 'OS=="linux" or OS=="android"', {
+    [ 'OS=="linux" or OS=="android" or OS=="freebsd"', {
       'conditions': [
         ['OS=="android"', {
           'defines': [
@@ -575,13 +581,13 @@
             'src/common/linux/file_id_unittest.cc',
             'src/common/linux/linux_libc_support_unittest.cc',
             'src/common/linux/synth_elf.cc',
+            'src/common/linux/tests/auto_testfile.h',
             'src/common/linux/tests/crash_generator.cc',
             'src/common/linux/tests/crash_generator.h',
             'src/common/memory_range.h',
             'src/common/memory_unittest.cc',
             'src/common/simple_string_dictionary_unittest.cc',
             'src/common/test_assembler.cc',
-            'src/common/tests/auto_testfile.h',
             'src/common/tests/file_utils.cc',
             'src/common/tests/file_utils.h',
             'src/tools/linux/md2core/minidump_memory_range.h',
@@ -750,24 +756,7 @@
             'src',
             'src/client/mac/Framework',
             'src/common/mac',
-            # For GTMLogger.
-            '<(DEPTH)/third_party/GTM',
-            '<(DEPTH)/third_party/GTM/Foundation',
           ],
-          'link_settings': {
-            # Build the version of GTMLogger.m in third_party rather than the
-            # one in src/common/mac because the former catches all exceptions
-            # whereas the latter lets them propagate, which can cause odd
-            # crashes.
-            'sources': [
-              '<(DEPTH)/third_party/GTM/Foundation/GTMLogger.h',
-              '<(DEPTH)/third_party/GTM/Foundation/GTMLogger.m',
-            ],
-            'include_dirs': [
-              '<(DEPTH)/third_party/GTM',
-              '<(DEPTH)/third_party/GTM/Foundation',
-            ],
-          },
         }
       ]
     }],
@@ -860,6 +849,21 @@
           'dependencies': [
             'breakpad_utilities',
           ],
+        }
+      ],
+    }],
+    ['OS=="android"', {
+      'targets': [
+        {
+          'target_name': 'breakpad_unittests_stripped',
+          'type': 'none',
+          'dependencies': [ 'breakpad_unittests' ],
+          'actions': [{
+            'action_name': 'strip breakpad_unittests',
+            'inputs': [ '<(PRODUCT_DIR)/breakpad_unittests' ],
+            'outputs': [ '<(PRODUCT_DIR)/breakpad_unittests_stripped' ],
+            'action': [ '<(android_strip)', '<@(_inputs)', '-o', '<@(_outputs)' ],
+          }],
         }
       ],
     }],

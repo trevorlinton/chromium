@@ -25,7 +25,7 @@
 #include "chrome/browser/ui/android/tab_model/tab_model_list.h"
 #endif
 
-using WebKit::WebWindowFeatures;
+using blink::WebWindowFeatures;
 
 const size_t kMaximumNumberOfPopups = 25;
 
@@ -96,7 +96,7 @@ bool PopupBlockerTabHelper::MaybeBlockPopup(
     if (blocked_popups_.size() < kMaximumNumberOfPopups) {
       blocked_popups_.Add(new BlockedRequest(params, window_features));
       TabSpecificContentSettings::FromWebContents(web_contents())->
-          OnContentBlocked(CONTENT_SETTINGS_TYPE_POPUPS, std::string());
+          OnContentBlocked(CONTENT_SETTINGS_TYPE_POPUPS);
     }
     return true;
   }
@@ -109,7 +109,7 @@ void PopupBlockerTabHelper::AddBlockedPopup(const BlockedWindowParams& params) {
   if (blocked_popups_.size() < kMaximumNumberOfPopups) {
     blocked_popups_.Add(new BlockedRequest(nav_params, params.features()));
     TabSpecificContentSettings::FromWebContents(web_contents())->
-        OnContentBlocked(CONTENT_SETTINGS_TYPE_POPUPS, std::string());
+        OnContentBlocked(CONTENT_SETTINGS_TYPE_POPUPS);
   }
 }
 
@@ -117,6 +117,8 @@ void PopupBlockerTabHelper::ShowBlockedPopup(int32 id) {
   BlockedRequest* popup = blocked_popups_.Lookup(id);
   if (!popup)
     return;
+  // We set user_gesture to true here, so the new popup gets correctly focused.
+  popup->params.user_gesture = true;
 #if defined(OS_ANDROID)
   TabModelList::HandlePopupNavigation(&popup->params);
 #else
@@ -135,8 +137,9 @@ size_t PopupBlockerTabHelper::GetBlockedPopupsCount() const {
   return blocked_popups_.size();
 }
 
-std::map<int32, GURL> PopupBlockerTabHelper::GetBlockedPopupRequests() {
-  std::map<int32, GURL> result;
+PopupBlockerTabHelper::PopupIdMap
+    PopupBlockerTabHelper::GetBlockedPopupRequests() {
+  PopupIdMap result;
   for (IDMap<BlockedRequest, IDMapOwnPointer>::const_iterator iter(
            &blocked_popups_);
        !iter.IsAtEnd();

@@ -8,9 +8,12 @@
 #include "base/memory/scoped_ptr.h"
 #include "ui/events/ozone/event_factory_ozone.h"
 #include "ui/gfx/ozone/surface_factory_ozone.h"
+#include "ui/ozone/ime/input_method_context_factory_ozone.h"
 #include "ui/ozone/ozone_export.h"
 
 namespace ui {
+
+class CursorFactoryOzone;
 
 // Base class for Ozone platform implementations.
 //
@@ -40,6 +43,9 @@ class OZONE_EXPORT OzonePlatform {
   // inject these objects themselves. Ownership is retained by OzonePlatform.
   virtual gfx::SurfaceFactoryOzone* GetSurfaceFactoryOzone() = 0;
   virtual ui::EventFactoryOzone* GetEventFactoryOzone() = 0;
+  virtual ui::InputMethodContextFactoryOzone*
+      GetInputMethodContextFactoryOzone() = 0;
+  virtual ui::CursorFactoryOzone* GetCursorFactoryOzone() = 0;
 
  private:
   static OzonePlatform* instance_;

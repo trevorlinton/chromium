@@ -7,10 +7,15 @@
 #include "base/strings/utf_string_conversions.h"
 #include "ui/events/event.h"
 #include "ui/gfx/render_text.h"
+#include "ui/views/background.h"
+#include "ui/views/border.h"
+#include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/layout/grid_layout.h"
 #include "ui/views/view.h"
+
+using base::ASCIIToUTF16;
 
 namespace views {
 namespace examples {
@@ -22,7 +27,7 @@ class MultilineExample::RenderTextView : public View {
     render_text_->SetHorizontalAlignment(gfx::ALIGN_CENTER);
     render_text_->SetColor(SK_ColorBLACK);
     render_text_->SetMultiline(true);
-    set_border(Border::CreateSolidBorder(2, SK_ColorGRAY));
+    SetBorder(Border::CreateSolidBorder(2, SK_ColorGRAY));
   }
 
   virtual void OnPaint(gfx::Canvas* canvas) OVERRIDE {
@@ -45,13 +50,16 @@ class MultilineExample::RenderTextView : public View {
     // TODO(ckocagil): Why does this happen?
     if (w == 0)
       return View::GetHeightForWidth(w);
-    gfx::Rect rect = render_text_->display_rect();
+    const gfx::Rect old_rect = render_text_->display_rect();
+    gfx::Rect rect = old_rect;
     rect.set_width(w - GetInsets().width());
     render_text_->SetDisplayRect(rect);
-    return render_text_->GetStringSize().height() + GetInsets().height();
+    int height = render_text_->GetStringSize().height() + GetInsets().height();
+    render_text_->SetDisplayRect(old_rect);
+    return height;
   }
 
-  void SetText(const string16& new_contents) {
+  void SetText(const base::string16& new_contents) {
     // Color and style the text inside |test_range| to test colors and styles.
     gfx::Range test_range(1, 21);
     test_range.set_start(std::min(test_range.start(), new_contents.length()));
@@ -100,7 +108,7 @@ void MultilineExample::CreateExampleView(View* container) {
   label_ = new Label();
   label_->SetText(ASCIIToUTF16(kTestString));
   label_->SetMultiLine(true);
-  label_->set_border(Border::CreateSolidBorder(2, SK_ColorCYAN));
+  label_->SetBorder(Border::CreateSolidBorder(2, SK_ColorCYAN));
 
   label_checkbox_ = new Checkbox(ASCIIToUTF16("views::Label:"));
   label_checkbox_->SetChecked(true);
@@ -108,7 +116,7 @@ void MultilineExample::CreateExampleView(View* container) {
   label_checkbox_->set_request_focus_on_press(false);
 
   textfield_ = new Textfield();
-  textfield_->SetController(this);
+  textfield_->set_controller(this);
   textfield_->SetText(ASCIIToUTF16(kTestString));
 
   GridLayout* layout = new GridLayout(container);
@@ -134,7 +142,7 @@ void MultilineExample::CreateExampleView(View* container) {
 }
 
 void MultilineExample::ContentsChanged(Textfield* sender,
-                                       const string16& new_contents) {
+                                       const base::string16& new_contents) {
   render_text_view_->SetText(new_contents);
   if (label_checkbox_->checked())
     label_->SetText(new_contents);
@@ -149,7 +157,8 @@ bool MultilineExample::HandleKeyEvent(Textfield* sender,
 
 void MultilineExample::ButtonPressed(Button* sender, const ui::Event& event) {
   DCHECK_EQ(sender, label_checkbox_);
-  label_->SetText(label_checkbox_->checked() ? textfield_->text() : string16());
+  label_->SetText(label_checkbox_->checked() ? textfield_->text() :
+                                               base::string16());
   container()->Layout();
   container()->SchedulePaint();
 }

@@ -13,6 +13,7 @@ A Feature may have other keys from a _features.json file as well. Features with
 a whitelist are ignored as they are only useful to specific apps or extensions.
 '''
 
+from branch_utility import BranchUtility
 from copy import deepcopy
 
 def _GetPlatformsForExtensionTypes(extension_types):
@@ -30,12 +31,20 @@ def Parse(features_json):
   features = {}
 
   def ignore_feature(name, value):
-    '''Returns true if this feature should be ignored. This is defined by the
-    presence of a 'whitelist' property for non-private APIs. Private APIs
-    shouldn't have whitelisted features ignored since they're inherently
-    private. Logic elsewhere makes sure not to list private APIs.
+    '''Returns true if this feature should be ignored. Features are ignored if
+    they are only available to whitelisted apps or component extensions/apps, as
+    in these cases the APIs are not available to public developers.
+
+    Private APIs are also unavailable to public developers, but logic elsewhere
+    makes sure they are not listed. So they shouldn't be ignored via this
+    mechanism.
     '''
-    return 'whitelist' in value and not name.endswith('Private')
+    if name.endswith('Private'):
+      return False
+
+    return value.get('location') == 'component' or 'whitelist' in value
+
+    return False
 
   for name, value in deepcopy(features_json).iteritems():
     # Some feature names correspond to a list, typically because they're
@@ -45,19 +54,48 @@ def Parse(features_json):
     if isinstance(value, list):
       available_values = [subvalue for subvalue in value
                           if not ignore_feature(name, subvalue)]
-      value = available_values[0] if available_values else value[0]
+      if not available_values:
+        continue
+
+      if len(available_values) == 1:
+        value = available_values[0]
+      else:
+        # Multiple available values probably implies different feature
+        # configurations for apps vs extensions. Currently, this is 'commands'.
+        # To get the ball rolling, add a hack to combine the extension types.
+        # See http://crbug.com/316194.
+        extension_types = set()
+        for value in available_values:
+          extension_types.update(value.get('extension_types', ()))
+
+        # For the base value, select the one with the most recent availability.
+        channel_names = BranchUtility.GetAllChannelNames()
+        available_values.sort(
+            key=lambda v: channel_names.index(v.get('channel', 'stable')))
+        value = available_values[0]
+
+        value['extension_types'] = list(extension_types)
 
     if ignore_feature(name, value):
       continue
 
-    features[name] = { 'platforms': [] }
-
+    # Now we transform 'extension_types' into the more useful 'platforms'.
+    #
+    # But first, note that 'platforms' has a double meaning. In the docserver
+    # model (what we're in the process of generating) it means 'apps' vs
+    # 'extensions'. In the JSON features as read from Chrome it means 'win' vs
+    # 'mac'. Ignore the latter.
+    value.pop('platforms', None)
     extension_types = value.pop('extension_types', None)
-    if extension_types is not None:
-      features[name]['platforms'] = _GetPlatformsForExtensionTypes(
-          extension_types)
 
-    features[name]['name'] = name
+    platforms = []
+    if extension_types is not None:
+      platforms = _GetPlatformsForExtensionTypes(extension_types)
+
+    features[name] = {
+      'name': name,
+      'platforms': platforms,
+    }
     features[name].update(value)
 
   return features

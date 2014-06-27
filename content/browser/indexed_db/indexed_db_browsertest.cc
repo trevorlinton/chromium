@@ -21,12 +21,13 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/content_browser_test.h"
+#include "content/public/test/content_browser_test_utils.h"
 #include "content/shell/browser/shell.h"
-#include "content/test/content_browser_test.h"
-#include "content/test/content_browser_test_utils.h"
 #include "webkit/browser/database/database_util.h"
 #include "webkit/browser/quota/quota_manager.h"
 
+using base::ASCIIToUTF16;
 using quota::QuotaManager;
 using webkit_database::DatabaseUtil;
 
@@ -43,9 +44,9 @@ class IndexedDBBrowserTest : public ContentBrowserTest {
     // a #pass or #fail ref.
     Shell* the_browser = incognito ? CreateOffTheRecordBrowser() : shell();
 
-    LOG(INFO) << "Navigating to URL and blocking.";
+    VLOG(0) << "Navigating to URL and blocking.";
     NavigateToURLBlockUntilNavigationsComplete(the_browser, test_url, 2);
-    LOG(INFO) << "Navigation done.";
+    VLOG(0) << "Navigation done.";
     std::string result =
         the_browser->web_contents()->GetLastCommittedURL().ref();
     if (result != "pass") {
@@ -66,7 +67,7 @@ class IndexedDBBrowserTest : public ContentBrowserTest {
     if (hash)
       url = GURL(url.spec() + hash);
 
-    string16 expected_title16(ASCIIToUTF16(expected_string));
+    base::string16 expected_title16(ASCIIToUTF16(expected_string));
     TitleWatcher title_watcher(shell->web_contents(), expected_title16);
     NavigateToURL(shell, url);
     EXPECT_EQ(expected_title16, title_watcher.WaitAndGetTitle());
@@ -168,11 +169,6 @@ IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, TransactionTest) {
   SimpleTest(GetTestUrl("indexeddb", "transaction_test.html"));
 }
 
-// http://crbug.com/239366
-IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, DISABLED_ValueSizeTest) {
-  SimpleTest(GetTestUrl("indexeddb", "value_size_test.html"));
-}
-
 IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, CallbackAccounting) {
   SimpleTest(GetTestUrl("indexeddb", "callback_accounting.html"));
 }
@@ -239,7 +235,7 @@ static void CopyLevelDBToProfile(Shell* shell,
   // If we don't create the destination directory first, the contents of the
   // leveldb directory are copied directly into profile/IndexedDB instead of
   // profile/IndexedDB/file__0.xxx/
-  ASSERT_TRUE(file_util::CreateDirectory(dest));
+  ASSERT_TRUE(base::CreateDirectory(dest));
   const bool kRecursive = true;
   ASSERT_TRUE(base::CopyDirectory(test_data_dir,
                                   context->data_path(),
@@ -347,7 +343,7 @@ IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, LevelDBLogFileTest) {
   base::FilePath log_file_path =
       GetContext()->data_path().Append(leveldb_dir).Append(log_file);
   int64 size;
-  EXPECT_TRUE(file_util::GetFileSize(log_file_path, &size));
+  EXPECT_TRUE(base::GetFileSize(log_file_path, &size));
   EXPECT_GT(size, 0);
 }
 
@@ -358,6 +354,31 @@ IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, CanDeleteWhenOverQuotaTest) {
   EXPECT_GT(size, kQuotaKilobytes * 1024);
   SetQuota(kQuotaKilobytes);
   SimpleTest(GetTestUrl("indexeddb", "delete_over_quota.html"));
+}
+
+IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, DeleteCompactsBackingStore) {
+  const GURL test_url = GetTestUrl("indexeddb", "delete_compact.html");
+  SimpleTest(GURL(test_url.spec() + "#fill"));
+  int64 after_filling = RequestDiskUsage();
+  EXPECT_GT(after_filling, 0);
+
+  SimpleTest(GURL(test_url.spec() + "#purge"));
+  int64 after_deleting = RequestDiskUsage();
+  EXPECT_LT(after_deleting, after_filling);
+
+  // The above tests verify basic assertions - that filling writes data and
+  // deleting reduces the amount stored.
+
+  // The below tests make assumptions about implementation specifics, such as
+  // data compression, compaction efficiency, and the maximum amount of
+  // metadata and log data remains after a deletion. It is possible that
+  // changes to the implementation may require these constants to be tweaked.
+
+  const int kTestFillBytes = 1024 * 1024 * 5;  // 5MB
+  EXPECT_GT(after_filling, kTestFillBytes);
+
+  const int kTestCompactBytes = 1024 * 1024 * 1;  // 1MB
+  EXPECT_LT(after_deleting, kTestCompactBytes);
 }
 
 // Complex multi-step (converted from pyauto) tests begin here.
@@ -404,7 +425,7 @@ IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, ConnectionsClosedOnTabClose) {
   NavigateAndWaitForTitle(new_shell, "version_change_blocked.html", "#tab2",
                           "setVersion(3) blocked");
 
-  string16 expected_title16(ASCIIToUTF16("setVersion(3) complete"));
+  base::string16 expected_title16(ASCIIToUTF16("setVersion(3) complete"));
   TitleWatcher title_watcher(new_shell->web_contents(), expected_title16);
 
   base::KillProcess(
@@ -426,7 +447,7 @@ IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, ForceCloseEventTest) {
                  GetContext(),
                  GURL("file:///")));
 
-  string16 expected_title16(ASCIIToUTF16("connection closed"));
+  base::string16 expected_title16(ASCIIToUTF16("connection closed"));
   TitleWatcher title_watcher(shell()->web_contents(), expected_title16);
   EXPECT_EQ(expected_title16, title_watcher.WaitAndGetTitle());
 }
@@ -438,8 +459,14 @@ class IndexedDBBrowserTestSingleProcess : public IndexedDBBrowserTest {
   }
 };
 
+// Crashing on Android due to kSingleProcess flag: http://crbug.com/342525
+#if defined(OS_ANDROID)
+#define MAYBE_RenderThreadShutdownTest DISABLED_RenderThreadShutdownTest
+#else
+#define MAYBE_RenderThreadShutdownTest RenderThreadShutdownTest
+#endif
 IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTestSingleProcess,
-                       RenderThreadShutdownTest) {
+                       MAYBE_RenderThreadShutdownTest) {
   SimpleTest(GetTestUrl("indexeddb", "shutdown_with_requests.html"));
 }
 

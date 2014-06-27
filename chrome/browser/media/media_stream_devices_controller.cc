@@ -5,8 +5,10 @@
 #include "chrome/browser/media/media_stream_devices_controller.h"
 
 #include "base/command_line.h"
+#include "base/metrics/histogram.h"
 #include "base/prefs/pref_service.h"
 #include "base/prefs/scoped_user_pref_update.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/content_settings/content_settings_provider.h"
 #include "chrome/browser/content_settings/host_content_settings_map.h"
@@ -23,6 +25,9 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/media_stream_request.h"
 #include "extensions/common/constants.h"
+#include "grit/generated_resources.h"
+#include "grit/theme_resources.h"
+#include "ui/base/l10n/l10n_util.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/login/user_manager.h"
@@ -32,13 +37,17 @@ using content::BrowserThread;
 
 namespace {
 
-bool HasAnyAvailableDevice() {
-  const content::MediaStreamDevices& audio_devices =
-      MediaCaptureDevicesDispatcher::GetInstance()->GetAudioCaptureDevices();
-  const content::MediaStreamDevices& video_devices =
-      MediaCaptureDevicesDispatcher::GetInstance()->GetVideoCaptureDevices();
+bool HasAvailableDevicesForRequest(const content::MediaStreamRequest& request) {
+  bool has_audio_device =
+      request.audio_type == content::MEDIA_NO_SERVICE ||
+      !MediaCaptureDevicesDispatcher::GetInstance()->GetAudioCaptureDevices()
+          .empty();
+  bool has_video_device =
+      request.video_type == content::MEDIA_NO_SERVICE ||
+      !MediaCaptureDevicesDispatcher::GetInstance()->GetVideoCaptureDevices()
+          .empty();
 
-  return !audio_devices.empty() || !video_devices.empty();
+  return has_audio_device && has_video_device;
 }
 
 bool IsInKioskMode() {
@@ -52,6 +61,14 @@ bool IsInKioskMode() {
   return false;
 #endif
 }
+
+enum DevicePermissionActions {
+  kAllowHttps = 0,
+  kAllowHttp,
+  kDeny,
+  kCancel,
+  kPermissionActionsMax  // Must always be last!
+};
 
 }  // namespace
 
@@ -118,6 +135,7 @@ MediaStreamDevicesController::MediaStreamDevicesController(
 MediaStreamDevicesController::~MediaStreamDevicesController() {
   if (!callback_.is_null()) {
     callback_.Run(content::MediaStreamDevices(),
+                  content::MEDIA_DEVICE_INVALID_STATE,
                   scoped_ptr<content::MediaStreamUI>());
   }
 }
@@ -137,26 +155,29 @@ void MediaStreamDevicesController::RegisterProfilePrefs(
                           user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
-
+// TODO(gbillock): rename? doesn't actually dismiss. More of a 'check profile
+// and system for compatibility' thing.
 bool MediaStreamDevicesController::DismissInfoBarAndTakeActionOnSettings() {
   // Tab capture is allowed for extensions only and infobar is not shown for
   // extensions.
   if (request_.audio_type == content::MEDIA_TAB_AUDIO_CAPTURE ||
       request_.video_type == content::MEDIA_TAB_VIDEO_CAPTURE) {
-    Deny(false);
+    Deny(false, content::MEDIA_DEVICE_INVALID_STATE);
     return true;
   }
 
   // Deny the request if the security origin is empty, this happens with
   // file access without |--allow-file-access-from-files| flag.
   if (request_.security_origin.is_empty()) {
-    Deny(false);
+    Deny(false, content::MEDIA_DEVICE_INVALID_SECURITY_ORIGIN);
     return true;
   }
 
-  // Deny the request if there is no device attached to the OS.
-  if (!HasAnyAvailableDevice()) {
-    Deny(false);
+  // Deny the request if there is no device attached to the OS of the
+  // requested type. If both audio and video is requested, both types must be
+  // available.
+  if (!HasAvailableDevicesForRequest(request_)) {
+    Deny(false, content::MEDIA_DEVICE_NO_HARDWARE);
     return true;
   }
 
@@ -169,13 +190,13 @@ bool MediaStreamDevicesController::DismissInfoBarAndTakeActionOnSettings() {
   // Filter any parts of the request that have been blocked by default and deny
   // it if nothing is left to accept.
   if (FilterBlockedByDefaultDevices() == 0) {
-    Deny(false);
+    Deny(false, content::MEDIA_DEVICE_PERMISSION_DENIED);
     return true;
   }
 
   // Check if the media default setting is set to block.
   if (IsDefaultMediaAccessBlocked()) {
-    Deny(false);
+    Deny(false, content::MEDIA_DEVICE_PERMISSION_DENIED);
     return true;
   }
 
@@ -191,7 +212,7 @@ bool MediaStreamDevicesController::DismissInfoBarAndTakeActionOnSettings() {
          MediaCaptureDevicesDispatcher::GetInstance()->GetRequestedVideoDevice(
              request_.requested_video_device_id) == NULL);
     if (no_matched_audio_device || no_matched_video_device) {
-      Deny(false);
+      Deny(false, content::MEDIA_DEVICE_PERMISSION_DENIED);
       return true;
     }
   }
@@ -321,10 +342,16 @@ void MediaStreamDevicesController::Accept(bool update_content_setting) {
   }
   content::MediaResponseCallback cb = callback_;
   callback_.Reset();
-  cb.Run(devices, ui.Pass());
+  cb.Run(devices,
+         devices.empty() ?
+             content::MEDIA_DEVICE_NO_HARDWARE : content::MEDIA_DEVICE_OK,
+         ui.Pass());
 }
 
-void MediaStreamDevicesController::Deny(bool update_content_setting) {
+void MediaStreamDevicesController::Deny(
+    bool update_content_setting,
+    content::MediaStreamRequestResult result) {
+  DLOG(WARNING) << "MediaStreamDevicesController::Deny: " << result;
   NotifyUIRequestDenied();
 
   if (update_content_setting)
@@ -332,7 +359,71 @@ void MediaStreamDevicesController::Deny(bool update_content_setting) {
 
   content::MediaResponseCallback cb = callback_;
   callback_.Reset();
-  cb.Run(content::MediaStreamDevices(), scoped_ptr<content::MediaStreamUI>());
+  cb.Run(content::MediaStreamDevices(),
+         result,
+         scoped_ptr<content::MediaStreamUI>());
+}
+
+int MediaStreamDevicesController::GetIconID() const {
+  if (HasVideo())
+    return IDR_INFOBAR_MEDIA_STREAM_CAMERA;
+
+  return IDR_INFOBAR_MEDIA_STREAM_MIC;
+}
+
+base::string16 MediaStreamDevicesController::GetMessageText() const {
+  int message_id = IDS_MEDIA_CAPTURE_AUDIO_AND_VIDEO;
+  if (!HasAudio())
+    message_id = IDS_MEDIA_CAPTURE_VIDEO_ONLY;
+  else if (!HasVideo())
+    message_id = IDS_MEDIA_CAPTURE_AUDIO_ONLY;
+  return l10n_util::GetStringFUTF16(
+      message_id, base::UTF8ToUTF16(GetSecurityOriginSpec()));
+}
+
+base::string16 MediaStreamDevicesController::GetMessageTextFragment() const {
+  int message_id = IDS_MEDIA_CAPTURE_AUDIO_AND_VIDEO_PERMISSION_FRAGMENT;
+  if (!HasAudio())
+    message_id = IDS_MEDIA_CAPTURE_VIDEO_ONLY_PERMISSION_FRAGMENT;
+  else if (!HasVideo())
+    message_id = IDS_MEDIA_CAPTURE_AUDIO_ONLY_PERMISSION_FRAGMENT;
+  return l10n_util::GetStringUTF16(message_id);
+}
+
+bool MediaStreamDevicesController::HasUserGesture() const {
+  return request_.user_gesture;
+}
+
+GURL MediaStreamDevicesController::GetRequestingHostname() const {
+  return request_.security_origin;
+}
+
+void MediaStreamDevicesController::PermissionGranted() {
+  GURL origin(GetSecurityOriginSpec());
+  if (origin.SchemeIsSecure()) {
+    UMA_HISTOGRAM_ENUMERATION("Media.DevicePermissionActions",
+                              kAllowHttps, kPermissionActionsMax);
+  } else {
+    UMA_HISTOGRAM_ENUMERATION("Media.DevicePermissionActions",
+                              kAllowHttp, kPermissionActionsMax);
+  }
+  Accept(true);
+}
+
+void MediaStreamDevicesController::PermissionDenied() {
+  UMA_HISTOGRAM_ENUMERATION("Media.DevicePermissionActions",
+                            kDeny, kPermissionActionsMax);
+  Deny(true, content::MEDIA_DEVICE_PERMISSION_DENIED);
+}
+
+void MediaStreamDevicesController::Cancelled() {
+  UMA_HISTOGRAM_ENUMERATION("Media.DevicePermissionActions",
+                            kCancel, kPermissionActionsMax);
+  Deny(true, content::MEDIA_DEVICE_PERMISSION_DISMISSED);
+}
+
+void MediaStreamDevicesController::RequestFinished() {
+  delete this;
 }
 
 MediaStreamDevicesController::DevicePolicy
@@ -487,10 +578,6 @@ bool MediaStreamDevicesController::ShouldAlwaysAllowOrigin() const {
 
 void MediaStreamDevicesController::SetPermission(bool allowed) const {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-#if defined(OS_ANDROID)
-  // We do not support sticky operations on Android yet.
-  return;
-#endif
   ContentSettingsPattern primary_pattern =
       ContentSettingsPattern::FromURLNoWildcard(request_.security_origin);
   // Check the pattern is valid or not. When the request is from a file access,

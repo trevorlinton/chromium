@@ -10,9 +10,8 @@
 
 #include "chrome/installer/util/util_constants.h"
 
-class CommandLine;
-
 namespace base {
+class CommandLine;
 class FilePath;
 }  // namespace base
 
@@ -27,7 +26,8 @@ class MasterPreferences;
 // populated with the type of archive found. |delegated_to_existing| is set to
 // |true| if installation was delegated to a pre-existing higher version.
 InstallStatus InstallProductsHelper(const InstallationState& original_state,
-                                    const CommandLine& cmd_line,
+                                    const base::FilePath& setup_exe,
+                                    const base::CommandLine& cmd_line,
                                     const MasterPreferences& prefs,
                                     const InstallerState& installer_state,
                                     base::FilePath* installer_directory,

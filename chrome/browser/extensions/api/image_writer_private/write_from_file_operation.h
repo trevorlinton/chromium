@@ -15,13 +15,12 @@ class WriteFromFileOperation : public Operation {
  public:
   WriteFromFileOperation(base::WeakPtr<OperationManager> manager,
                          const ExtensionId& extension_id,
-                         const base::FilePath& path,
+                         const base::FilePath& user_file_path,
                          const std::string& storage_unit_id);
-  virtual void Start() OVERRIDE;
+  virtual void StartImpl() OVERRIDE;
 
  private:
   virtual ~WriteFromFileOperation();
-  const base::FilePath path_;
 };
 
 }  // namespace image_writer

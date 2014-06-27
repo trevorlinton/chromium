@@ -7,11 +7,11 @@
 #include "ash/accelerators/accelerator_controller.h"
 #include "ash/shell.h"
 #include "ash/wm/window_state.h"
-#include "ui/aura/root_window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/accelerators/accelerator_manager.h"
 #include "ui/events/event.h"
-#include "ui/views/corewm/window_util.h"
+#include "ui/wm/core/window_util.h"
 
 namespace ash {
 namespace {
@@ -47,7 +47,7 @@ bool IsSystemKey(ui::KeyboardCode key_code) {
 bool CanConsumeSystemKeys(aura::Window* target) {
   if (!target)  // Can be NULL in tests.
     return false;
-  aura::Window* top_level = views::corewm::GetToplevelWindow(target);
+  aura::Window* top_level = ::wm::GetToplevelWindow(target);
   return top_level && wm::GetWindowState(top_level)->can_consume_system_keys();
 }
 
@@ -58,7 +58,7 @@ bool ShouldProcessAcceleratorsNow(const ui::Accelerator& accelerator,
   if (!target)
     return true;
 
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
   if (std::find(root_windows.begin(), root_windows.end(), target) !=
       root_windows.end())
     return true;

@@ -83,7 +83,6 @@ class ContentSettingBubbleModel : public content::NotificationObserver {
     RadioGroup radio_group;
     bool radio_group_enabled;
     std::vector<DomainList> domain_lists;
-    std::set<std::string> resource_identifiers;
     std::string custom_link;
     bool custom_link_enabled;
     std::string manage_link;
@@ -117,15 +116,9 @@ class ContentSettingBubbleModel : public content::NotificationObserver {
   virtual void OnMediaMenuClicked(content::MediaStreamType type,
                                   const std::string& selected_device_id) {}
 
-  // Called by the view code when the cancel button in clicked by the user.
-  virtual void OnCancelClicked() {}
-
   // Called by the view code when the bubble is closed by the user using the
   // Done button.
   virtual void OnDoneClicked() {}
-
-  // Called by the view code when the save button in clicked by the user.
-  virtual void OnSaveClicked() {}
 
  protected:
   ContentSettingBubbleModel(
@@ -164,7 +157,12 @@ class ContentSettingBubbleModel : public content::NotificationObserver {
   void set_selected_device(const content::MediaStreamDevice& device) {
     bubble_content_.media_menus[device.type].selected_device = device;
   }
-  void AddBlockedResource(const std::string& resource_identifier);
+  bool setting_is_managed() {
+    return setting_is_managed_;
+  }
+  void set_setting_is_managed(bool managed) {
+    setting_is_managed_ = managed;
+  }
 
  private:
   content::WebContents* web_contents_;
@@ -173,6 +171,9 @@ class ContentSettingBubbleModel : public content::NotificationObserver {
   BubbleContent bubble_content_;
   // A registrar for listening for WEB_CONTENTS_DESTROYED notifications.
   content::NotificationRegistrar registrar_;
+  // A flag that indicates if the content setting managed i.e. can't be
+  // controlled by the user.
+  bool setting_is_managed_;
 
   DISALLOW_COPY_AND_ASSIGN(ContentSettingBubbleModel);
 };
@@ -187,30 +188,11 @@ class ContentSettingTitleAndLinkModel : public ContentSettingBubbleModel {
   Delegate* delegate() const { return delegate_; }
 
  private:
-  void SetBlockedResources();
   void SetTitle();
   void SetManageLink();
   virtual void OnManageLinkClicked() OVERRIDE;
 
   Delegate* delegate_;
-};
-
-class SavePasswordBubbleModel : public ContentSettingTitleAndLinkModel {
- public:
-  SavePasswordBubbleModel(Delegate* delegate,
-                          content::WebContents* web_contents,
-                          Profile* profile);
-  virtual ~SavePasswordBubbleModel();
-  virtual void OnCancelClicked() OVERRIDE;
-  virtual void OnDoneClicked() OVERRIDE;
-  virtual void OnSaveClicked() OVERRIDE;
-
- private:
-  void SetTitle();
-
-  TabSpecificContentSettings::PasswordSavingState state_;
-
-  DISALLOW_COPY_AND_ASSIGN(SavePasswordBubbleModel);
 };
 
 class ContentSettingRPHBubbleModel : public ContentSettingTitleAndLinkModel {

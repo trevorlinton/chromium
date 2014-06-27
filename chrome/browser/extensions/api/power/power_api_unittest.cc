@@ -14,11 +14,11 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/power/power_api_manager.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/power_save_blocker.h"
+#include "extensions/common/extension.h"
 
 namespace utils = extension_function_test_utils;
 
@@ -166,7 +166,7 @@ class PowerApiTest : public BrowserWithTestWindowTest {
     UnloadedExtensionInfo details(
         extension, UnloadedExtensionInfo::REASON_UNINSTALL);
     PowerApiManager::GetInstance()->Observe(
-        chrome::NOTIFICATION_EXTENSION_UNLOADED,
+        chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
         content::Source<Profile>(browser()->profile()),
         content::Details<UnloadedExtensionInfo>(&details));
   }

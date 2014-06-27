@@ -31,13 +31,6 @@ void StartShutdownTracing();
 void AttemptRestart();
 
 #if defined(OS_WIN)
-// Windows 8 specific: Like AttemptRestart but if chrome is running
-// in desktop mode it starts in metro mode and vice-versa. The switching like
-// the restarting is controlled by a preference.
-void AttemptRestartWithModeSwitch();
-void AttemptRestartToDesktopMode();
-void AttemptRestartToMetroMode();
-
 enum AshExecutionStatus {
   ASH_KEEP_RUNNING,
   ASH_TERMINATE,
@@ -47,6 +40,13 @@ enum AshExecutionStatus {
 // |ash_execution_status| parameter indicates if we should exit Ash after
 // activating desktop.
 void ActivateDesktopHelper(AshExecutionStatus ash_execution_status);
+
+// Windows 8 specific: Like AttemptRestart but if chrome is running
+// in desktop mode it starts in metro mode and vice-versa. The switching like
+// the restarting is controlled by a preference.
+void AttemptRestartWithModeSwitch();
+void AttemptRestartToDesktopMode();
+void AttemptRestartToMetroMode();
 #endif
 
 // Attempt to exit by closing all browsers.  This is equivalent to
@@ -59,11 +59,13 @@ void ActivateDesktopHelper(AshExecutionStatus ash_execution_status);
 void AttemptExit();
 
 #if defined(OS_CHROMEOS)
-// This is equivalent to AttemptUserExit, except that it always set
-// exit cleanly bit. ChromeOS checks if it can exit without user
-// interactions, so it will always exit the browser.  This is used to
-// handle SIGTERM on chromeos which is a signal to force shutdown
-// the chrome.
+// Shutdown chrome cleanly without blocking. This is called
+// when SIGTERM is received on Chrome OS, and always sets
+// exit-cleanly bit and exits the browser, even if there is
+// ongoing downloads or a page with onbeforeunload handler.
+//
+// If you need to exit or restart in your code on ChromeOS,
+// use AttemptExit or AttemptRestart respectively.
 void ExitCleanly();
 #endif
 
@@ -81,13 +83,14 @@ void SessionEnding();
 
 // Tells the BrowserList to keep the application alive after the last Browser
 // closes. This is implemented as a count, so callers should pair their calls
-// to StartKeepAlive() with matching calls to EndKeepAlive() when they no
+// to IncrementKeepAliveCount() with matching calls to DecrementKeepAliveCount()
+// when they no
 // longer need to keep the application running.
-void StartKeepAlive();
+void IncrementKeepAliveCount();
 
 // Stops keeping the application alive after the last Browser is closed.
-// Should match a previous call to StartKeepAlive().
-void EndKeepAlive();
+// Should match a previous call to IncrementKeepAliveCount().
+void DecrementKeepAliveCount();
 
 // Returns true if application will continue running after the last Browser
 // closes.

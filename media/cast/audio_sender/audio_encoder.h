@@ -7,54 +7,43 @@
 
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/threading/thread_checker.h"
+#include "media/base/audio_bus.h"
 #include "media/cast/cast_config.h"
 #include "media/cast/cast_environment.h"
-#include "media/cast/rtp_sender/rtp_sender.h"
 
-namespace webrtc {
-class AudioCodingModule;
+namespace base {
+class TimeTicks;
 }
 
 namespace media {
 namespace cast {
 
-class WebrtEncodedDataCallback;
-
-// Thread safe class.
-// It should be called from the main cast thread; however that is not required.
-class AudioEncoder : public base::RefCountedThreadSafe<AudioEncoder> {
+class AudioEncoder {
  public:
-  typedef base::Callback<void(scoped_ptr<EncodedAudioFrame>,
+  typedef base::Callback<void(scoped_ptr<transport::EncodedAudioFrame>,
                               const base::TimeTicks&)> FrameEncodedCallback;
 
-  AudioEncoder(scoped_refptr<CastEnvironment> cast_environment,
-               const AudioSenderConfig& audio_config);
-
-  // The audio_frame must be valid until the closure callback is called.
-  // The closure callback is called from the main cast thread as soon as
-  // the encoder is done with the frame; it does not mean that the encoded frame
-  // has been sent out.
-  void InsertRawAudioFrame(const PcmAudioFrame* audio_frame,
-                           const base::TimeTicks& recorded_time,
-                           const FrameEncodedCallback& frame_encoded_callback,
-                           const base::Closure callback);
-
- protected:
+  AudioEncoder(const scoped_refptr<CastEnvironment>& cast_environment,
+               const AudioSenderConfig& audio_config,
+               const FrameEncodedCallback& frame_encoded_callback);
   virtual ~AudioEncoder();
 
+  CastInitializationStatus InitializationResult() const;
+
+  void InsertAudio(scoped_ptr<AudioBus> audio_bus,
+                   const base::TimeTicks& recorded_time);
+
  private:
-  friend class base::RefCountedThreadSafe<AudioEncoder>;
+  class ImplBase;
+  class OpusImpl;
+  class Pcm16Impl;
 
-  void EncodeAudioFrameThread(
-      const PcmAudioFrame* audio_frame,
-      const base::TimeTicks& recorded_time,
-      const FrameEncodedCallback& frame_encoded_callback,
-      const base::Closure release_callback);
+  const scoped_refptr<CastEnvironment> cast_environment_;
+  scoped_refptr<ImplBase> impl_;
 
-  scoped_refptr<CastEnvironment> cast_environment_;
-  scoped_ptr<webrtc::AudioCodingModule> audio_encoder_;
-  scoped_ptr<WebrtEncodedDataCallback> webrtc_encoder_callback_;
-  uint32 timestamp_;
+  // Used to ensure only one thread invokes InsertAudio().
+  base::ThreadChecker insert_thread_checker_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioEncoder);
 };

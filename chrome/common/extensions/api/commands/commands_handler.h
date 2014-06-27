@@ -9,9 +9,9 @@
 
 #include "base/memory/scoped_ptr.h"
 #include "chrome/common/extensions/command.h"
-#include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/manifest_handler.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest.h"
+#include "extensions/common/manifest_handler.h"
 
 namespace extensions {
 
@@ -25,12 +25,10 @@ struct CommandsInfo : public Extension::ManifestData {
   // Get*Command[s] in CommandService).
   scoped_ptr<Command> browser_action_command;
   scoped_ptr<Command> page_action_command;
-  scoped_ptr<Command> script_badge_command;
   CommandMap named_commands;
 
   static const Command* GetBrowserActionCommand(const Extension* extension);
   static const Command* GetPageActionCommand(const Extension* extension);
-  static const Command* GetScriptBadgeCommand(const Extension* extension);
   static const CommandMap* GetNamedCommands(const Extension* extension);
 };
 
@@ -40,7 +38,7 @@ class CommandsHandler : public ManifestHandler {
   CommandsHandler();
   virtual ~CommandsHandler();
 
-  virtual bool Parse(Extension* extension, string16* error) OVERRIDE;
+  virtual bool Parse(Extension* extension, base::string16* error) OVERRIDE;
   virtual bool AlwaysParseForType(Manifest::Type type) const OVERRIDE;
 
  private:

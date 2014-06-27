@@ -19,8 +19,8 @@
 #include "chrome/browser/drive/drive_notification_manager.h"
 #include "chrome/browser/drive/drive_notification_manager_factory.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/sync_file_system/drive_backend/drive_backend_util.h"
 #include "chrome/browser/sync_file_system/drive_backend_v1/api_util.h"
 #include "chrome/browser/sync_file_system/drive_backend_v1/drive_file_sync_util.h"
 #include "chrome/browser/sync_file_system/drive_backend_v1/drive_metadata_store.h"
@@ -32,9 +32,12 @@
 #include "chrome/browser/sync_file_system/sync_file_system.pb.h"
 #include "chrome/browser/sync_file_system/sync_file_type.h"
 #include "chrome/browser/sync_file_system/syncable_file_system_util.h"
-#include "chrome/common/extensions/extension.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/extension_system_provider.h"
+#include "extensions/browser/extensions_browser_client.h"
 #include "extensions/common/constants.h"
+#include "extensions/common/extension.h"
 #include "webkit/browser/fileapi/file_system_url.h"
 #include "webkit/common/blob/scoped_file.h"
 #include "webkit/common/fileapi/file_system_util.h"
@@ -89,12 +92,22 @@ DriveFileSyncService::~DriveFileSyncService() {
 scoped_ptr<DriveFileSyncService> DriveFileSyncService::Create(
     Profile* profile) {
   scoped_ptr<DriveFileSyncService> service(new DriveFileSyncService(profile));
-  scoped_ptr<SyncTaskManager> task_manager(
-      new SyncTaskManager(service->AsWeakPtr()));
+  scoped_ptr<drive_backend::SyncTaskManager> task_manager(
+      new drive_backend::SyncTaskManager(service->AsWeakPtr(),
+                                         0 /* maximum_background_task */));
   SyncStatusCallback callback = base::Bind(
-      &SyncTaskManager::Initialize, task_manager->AsWeakPtr());
+      &drive_backend::SyncTaskManager::Initialize, task_manager->AsWeakPtr());
   service->Initialize(task_manager.Pass(), callback);
   return service.Pass();
+}
+
+void DriveFileSyncService::AppendDependsOnFactories(
+    std::set<BrowserContextKeyedServiceFactory*>* factories) {
+  DCHECK(factories);
+  factories->insert(drive::DriveNotificationManagerFactory::GetInstance());
+  factories->insert(ProfileOAuth2TokenServiceFactory::GetInstance());
+  factories->insert(
+      extensions::ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
 }
 
 scoped_ptr<DriveFileSyncService> DriveFileSyncService::CreateForTesting(
@@ -103,22 +116,17 @@ scoped_ptr<DriveFileSyncService> DriveFileSyncService::CreateForTesting(
     scoped_ptr<drive_backend::APIUtilInterface> api_util,
     scoped_ptr<DriveMetadataStore> metadata_store) {
   scoped_ptr<DriveFileSyncService> service(new DriveFileSyncService(profile));
-  scoped_ptr<SyncTaskManager> task_manager(
-      new SyncTaskManager(service->AsWeakPtr()));
+  scoped_ptr<drive_backend::SyncTaskManager> task_manager(
+      new drive_backend::SyncTaskManager(service->AsWeakPtr(),
+                                         0 /* maximum_background_task */));
   SyncStatusCallback callback = base::Bind(
-      &SyncTaskManager::Initialize, task_manager->AsWeakPtr());
+      &drive_backend::SyncTaskManager::Initialize, task_manager->AsWeakPtr());
   service->InitializeForTesting(task_manager.Pass(),
                                 base_dir,
                                 api_util.Pass(),
                                 metadata_store.Pass(),
                                 callback);
   return service.Pass();
-}
-
-scoped_ptr<drive_backend::APIUtilInterface>
-DriveFileSyncService::DestroyAndPassAPIUtilForTesting(
-    scoped_ptr<DriveFileSyncService> sync_service) {
-  return sync_service->api_util_.Pass();
 }
 
 void DriveFileSyncService::AddServiceObserver(Observer* observer) {
@@ -144,9 +152,10 @@ void DriveFileSyncService::RegisterOrigin(
 
   pending_origin_operations_.Push(origin, OriginOperation::REGISTERING);
 
-  task_manager_->ScheduleTaskAtPriority(
+  task_manager_->ScheduleTask(
+      FROM_HERE,
       base::Bind(&DriveFileSyncService::DoRegisterOrigin, AsWeakPtr(), origin),
-      SyncTaskManager::PRIORITY_HIGH,
+      drive_backend::SyncTaskManager::PRIORITY_HIGH,
       callback);
 }
 
@@ -154,9 +163,10 @@ void DriveFileSyncService::EnableOrigin(
     const GURL& origin,
     const SyncStatusCallback& callback) {
   pending_origin_operations_.Push(origin, OriginOperation::ENABLING);
-  task_manager_->ScheduleTaskAtPriority(
+  task_manager_->ScheduleTask(
+      FROM_HERE,
       base::Bind(&DriveFileSyncService::DoEnableOrigin, AsWeakPtr(), origin),
-      SyncTaskManager::PRIORITY_HIGH,
+      drive_backend::SyncTaskManager::PRIORITY_HIGH,
       callback);
 }
 
@@ -164,9 +174,10 @@ void DriveFileSyncService::DisableOrigin(
     const GURL& origin,
     const SyncStatusCallback& callback) {
   pending_origin_operations_.Push(origin, OriginOperation::DISABLING);
-  task_manager_->ScheduleTaskAtPriority(
+  task_manager_->ScheduleTask(
+      FROM_HERE,
       base::Bind(&DriveFileSyncService::DoDisableOrigin, AsWeakPtr(), origin),
-      SyncTaskManager::PRIORITY_HIGH,
+      drive_backend::SyncTaskManager::PRIORITY_HIGH,
       callback);
 }
 
@@ -175,18 +186,21 @@ void DriveFileSyncService::UninstallOrigin(
     UninstallFlag flag,
     const SyncStatusCallback& callback) {
   pending_origin_operations_.Push(origin, OriginOperation::UNINSTALLING);
-  task_manager_->ScheduleTaskAtPriority(
+  task_manager_->ScheduleTask(
+      FROM_HERE,
       base::Bind(&DriveFileSyncService::DoUninstallOrigin, AsWeakPtr(),
                  origin, flag),
-      SyncTaskManager::PRIORITY_HIGH,
+      drive_backend::SyncTaskManager::PRIORITY_HIGH,
       callback);
 }
 
 void DriveFileSyncService::ProcessRemoteChange(
     const SyncFileCallback& callback) {
   task_manager_->ScheduleTask(
+      FROM_HERE,
       base::Bind(&DriveFileSyncService::DoProcessRemoteChange, AsWeakPtr(),
                  callback),
+      drive_backend::SyncTaskManager::PRIORITY_MED,
       base::Bind(&EmptyStatusCallback));
 }
 
@@ -242,6 +256,11 @@ scoped_ptr<base::ListValue> DriveFileSyncService::DumpFiles(
   return metadata_store_->DumpFiles(origin);
 }
 
+scoped_ptr<base::ListValue> DriveFileSyncService::DumpDatabase() {
+  // Not implemented (yet).
+  return scoped_ptr<base::ListValue>();
+}
+
 void DriveFileSyncService::SetSyncEnabled(bool enabled) {
   if (sync_enabled_ == enabled)
     return;
@@ -257,14 +276,26 @@ void DriveFileSyncService::SetSyncEnabled(bool enabled) {
       OnRemoteServiceStateUpdated(GetCurrentState(), status_message));
 }
 
+SyncStatusCode DriveFileSyncService::SetDefaultConflictResolutionPolicy(
+    ConflictResolutionPolicy policy) {
+  conflict_resolution_resolver_.set_policy(policy);
+  return SYNC_STATUS_OK;
+}
+
 SyncStatusCode DriveFileSyncService::SetConflictResolutionPolicy(
+    const GURL& origin,
     ConflictResolutionPolicy policy) {
   conflict_resolution_resolver_.set_policy(policy);
   return SYNC_STATUS_OK;
 }
 
 ConflictResolutionPolicy
-DriveFileSyncService::GetConflictResolutionPolicy() const {
+DriveFileSyncService::GetDefaultConflictResolutionPolicy() const {
+  return conflict_resolution_resolver_.policy();
+}
+
+ConflictResolutionPolicy
+DriveFileSyncService::GetConflictResolutionPolicy(const GURL& origin) const {
   return conflict_resolution_resolver_.policy();
 }
 
@@ -272,8 +303,10 @@ void DriveFileSyncService::GetRemoteVersions(
     const fileapi::FileSystemURL& url,
     const RemoteVersionsCallback& callback) {
   task_manager_->ScheduleTask(
+      FROM_HERE,
       base::Bind(&DriveFileSyncService::DoGetRemoteVersions, AsWeakPtr(),
                  url, callback),
+      drive_backend::SyncTaskManager::PRIORITY_MED,
       base::Bind(&EmptyStatusCallback));
 }
 
@@ -282,9 +315,14 @@ void DriveFileSyncService::DownloadRemoteVersion(
     const std::string& version_id,
     const DownloadVersionCallback& callback) {
   task_manager_->ScheduleTask(
+      FROM_HERE,
       base::Bind(&DriveFileSyncService::DoDownloadRemoteVersion, AsWeakPtr(),
                  url, version_id, callback),
+      drive_backend::SyncTaskManager::PRIORITY_MED,
       base::Bind(&EmptyStatusCallback));
+}
+
+void DriveFileSyncService::PromoteDemotedChanges() {
 }
 
 void DriveFileSyncService::ApplyLocalChange(
@@ -294,18 +332,20 @@ void DriveFileSyncService::ApplyLocalChange(
     const FileSystemURL& url,
     const SyncStatusCallback& callback) {
   task_manager_->ScheduleTask(
+      FROM_HERE,
       base::Bind(&DriveFileSyncService::DoApplyLocalChange, AsWeakPtr(),
                  local_file_change,
                  local_file_path,
                  local_file_metadata,
                  url),
+      drive_backend::SyncTaskManager::PRIORITY_MED,
       callback);
 }
 
 void DriveFileSyncService::OnAuthenticated() {
   if (state_ == REMOTE_SERVICE_OK)
     return;
-  util::Log(logging::LOG_INFO, FROM_HERE, "OnAuthenticated");
+  util::Log(logging::LOG_VERBOSE, FROM_HERE, "OnAuthenticated");
 
   UpdateServiceState(REMOTE_SERVICE_OK, "Authenticated");
 
@@ -316,7 +356,7 @@ void DriveFileSyncService::OnAuthenticated() {
 void DriveFileSyncService::OnNetworkConnected() {
   if (state_ == REMOTE_SERVICE_OK)
     return;
-  util::Log(logging::LOG_INFO, FROM_HERE, "OnNetworkConnected");
+  util::Log(logging::LOG_VERBOSE, FROM_HERE, "OnNetworkConnected");
 
   UpdateServiceState(REMOTE_SERVICE_OK, "Network connected");
 
@@ -336,7 +376,7 @@ DriveFileSyncService::DriveFileSyncService(Profile* profile)
 }
 
 void DriveFileSyncService::Initialize(
-    scoped_ptr<SyncTaskManager> task_manager,
+    scoped_ptr<drive_backend::SyncTaskManager> task_manager,
     const SyncStatusCallback& callback) {
   DCHECK(profile_);
   DCHECK(!metadata_store_);
@@ -361,7 +401,7 @@ void DriveFileSyncService::Initialize(
 }
 
 void DriveFileSyncService::InitializeForTesting(
-    scoped_ptr<SyncTaskManager> task_manager,
+    scoped_ptr<drive_backend::SyncTaskManager> task_manager,
     const base::FilePath& base_dir,
     scoped_ptr<drive_backend::APIUtilInterface> api_util,
     scoped_ptr<DriveMetadataStore> metadata_store,
@@ -435,7 +475,8 @@ void DriveFileSyncService::UpdateServiceStateFromLastOperationStatus(
     case SYNC_STATUS_OK:
       // If the last Drive-related operation was successful we can
       // change the service state to OK.
-      if (GDataErrorCodeToSyncStatusCode(gdata_error) == SYNC_STATUS_OK)
+      if (drive_backend::GDataErrorCodeToSyncStatusCode(gdata_error) ==
+          SYNC_STATUS_OK)
         UpdateServiceState(REMOTE_SERVICE_OK, std::string());
       break;
 
@@ -481,7 +522,7 @@ void DriveFileSyncService::UpdateServiceState(RemoteServiceState state,
 
   // Notify remote sync service state if the state has been changed.
   if (old_state != GetCurrentState()) {
-    util::Log(logging::LOG_INFO, FROM_HERE,
+    util::Log(logging::LOG_VERBOSE, FROM_HERE,
               "Service state changed: %d->%d: %s",
               old_state, GetCurrentState(), description.c_str());
     FOR_EACH_OBSERVER(
@@ -570,7 +611,10 @@ void DriveFileSyncService::DoUninstallOrigin(
   //    origin directory on the remote drive was created.
   // 2) origin or sync root folder is deleted on Drive.
   if (resource_id.empty()) {
-    callback.Run(SYNC_STATUS_UNKNOWN_ORIGIN);
+    if (metadata_store_->IsKnownOrigin(origin))
+      DidUninstallOrigin(origin, callback, google_apis::HTTP_SUCCESS);
+    else
+      callback.Run(SYNC_STATUS_UNKNOWN_ORIGIN);
     return;
   }
 
@@ -1134,7 +1178,7 @@ void DriveFileSyncService::NotifyConflict(
 SyncStatusCode DriveFileSyncService::GDataErrorCodeToSyncStatusCodeWrapper(
     google_apis::GDataErrorCode error) {
   last_gdata_error_ = error;
-  SyncStatusCode status = GDataErrorCodeToSyncStatusCode(error);
+  SyncStatusCode status = drive_backend::GDataErrorCodeToSyncStatusCode(error);
   if (status != SYNC_STATUS_OK && !api_util_->IsAuthenticated())
     return SYNC_STATUS_AUTHENTICATION_FAILED;
   return status;
@@ -1148,7 +1192,9 @@ void DriveFileSyncService::MaybeStartFetchChanges() {
   if (!pending_batch_sync_origins_.empty()) {
     if (GetCurrentState() == REMOTE_SERVICE_OK || may_have_unfetched_changes_) {
       task_manager_->ScheduleTaskIfIdle(
-          base::Bind(&DriveFileSyncService::StartBatchSync, AsWeakPtr()));
+          FROM_HERE,
+          base::Bind(&DriveFileSyncService::StartBatchSync, AsWeakPtr()),
+          SyncStatusCallback());
     }
     return;
   }
@@ -1156,8 +1202,10 @@ void DriveFileSyncService::MaybeStartFetchChanges() {
   if (may_have_unfetched_changes_ &&
       !metadata_store_->incremental_sync_origins().empty()) {
     task_manager_->ScheduleTaskIfIdle(
+        FROM_HERE,
         base::Bind(&DriveFileSyncService::FetchChangesForIncrementalSync,
-                   AsWeakPtr()));
+                   AsWeakPtr()),
+        SyncStatusCallback());
   }
 }
 
@@ -1189,7 +1237,8 @@ void DriveFileSyncService::MaybeScheduleNextTask() {
 }
 
 void DriveFileSyncService::NotifyLastOperationStatus(
-    SyncStatusCode sync_status) {
+    SyncStatusCode sync_status,
+    bool used_network) {
   UpdateServiceStateFromLastOperationStatus(sync_status, last_gdata_error_);
 }
 

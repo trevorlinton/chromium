@@ -15,7 +15,6 @@
 #include "content/browser/accessibility/accessibility_tree_formatter_utils_win.h"
 #include "content/browser/accessibility/browser_accessibility_manager.h"
 #include "content/browser/accessibility/browser_accessibility_win.h"
-#include "content/common/accessibility_node_data.h"
 #include "third_party/iaccessible2/ia2_api_all.h"
 #include "ui/base/win/atl_module.h"
 
@@ -76,7 +75,7 @@ void AccessibilityTreeFormatter::AddProperties(
   if (hresult == S_OK)
     dict->SetString("value", msaa_variant.m_str);
 
-  std::vector<string16> state_strings;
+  std::vector<base::string16> state_strings;
   int32 ia_state = acc_obj->ia_state();
 
   // Avoid flakiness: these states depend on whether the window is focused
@@ -87,19 +86,19 @@ void AccessibilityTreeFormatter::AddProperties(
   IAccessibleStateToStringVector(ia_state, &state_strings);
   IAccessible2StateToStringVector(acc_obj->ia2_state(), &state_strings);
   base::ListValue* states = new base::ListValue;
-  for (std::vector<string16>::const_iterator it = state_strings.begin();
+  for (std::vector<base::string16>::const_iterator it = state_strings.begin();
        it != state_strings.end();
        ++it) {
-    states->AppendString(UTF16ToUTF8(*it));
+    states->AppendString(base::UTF16ToUTF8(*it));
   }
   dict->Set("states", states);
 
-  const std::vector<string16>& ia2_attributes = acc_obj->ia2_attributes();
+  const std::vector<base::string16>& ia2_attributes = acc_obj->ia2_attributes();
   base::ListValue* attributes = new base::ListValue;
-  for (std::vector<string16>::const_iterator it = ia2_attributes.begin();
+  for (std::vector<base::string16>::const_iterator it = ia2_attributes.begin();
        it != ia2_attributes.end();
        ++it) {
-    attributes->AppendString(UTF16ToUTF8(*it));
+    attributes->AppendString(base::UTF16ToUTF8(*it));
   }
   dict->Set("attributes", attributes);
 
@@ -199,15 +198,16 @@ void AccessibilityTreeFormatter::AddProperties(
   }
 }
 
-string16 AccessibilityTreeFormatter::ToString(const base::DictionaryValue& dict,
-                                              const string16& indent) {
-  string16 line;
+base::string16 AccessibilityTreeFormatter::ToString(
+    const base::DictionaryValue& dict,
+    const base::string16& indent) {
+  base::string16 line;
 
-  string16 role_value;
+  base::string16 role_value;
   dict.GetString("role", &role_value);
-  WriteAttribute(true, UTF16ToUTF8(role_value), &line);
+  WriteAttribute(true, base::UTF16ToUTF8(role_value), &line);
 
-  string16 name_value;
+  base::string16 name_value;
   dict.GetString("name", &name_value);
   WriteAttribute(true, base::StringPrintf(L"name='%ls'", name_value.c_str()),
                  &line);
@@ -220,11 +220,11 @@ string16 AccessibilityTreeFormatter::ToString(const base::DictionaryValue& dict,
 
     switch (value->GetType()) {
       case base::Value::TYPE_STRING: {
-        string16 string_value;
+        base::string16 string_value;
         value->GetAsString(&string_value);
         WriteAttribute(false,
                        StringPrintf(L"%ls='%ls'",
-                                    UTF8ToUTF16(attribute_name).c_str(),
+                                    base::UTF8ToUTF16(attribute_name).c_str(),
                                     string_value.c_str()),
                        &line);
         break;
@@ -234,7 +234,8 @@ string16 AccessibilityTreeFormatter::ToString(const base::DictionaryValue& dict,
         value->GetAsInteger(&int_value);
         WriteAttribute(false,
                        base::StringPrintf(L"%ls=%d",
-                                          UTF8ToUTF16(attribute_name).c_str(),
+                                          base::UTF8ToUTF16(
+                                              attribute_name).c_str(),
                                           int_value),
                        &line);
         break;
@@ -244,7 +245,8 @@ string16 AccessibilityTreeFormatter::ToString(const base::DictionaryValue& dict,
         value->GetAsDouble(&double_value);
         WriteAttribute(false,
                        base::StringPrintf(L"%ls=%.2f",
-                                          UTF8ToUTF16(attribute_name).c_str(),
+                                          base::UTF8ToUTF16(
+                                              attribute_name).c_str(),
                                           double_value),
                        &line);
         break;
@@ -257,7 +259,7 @@ string16 AccessibilityTreeFormatter::ToString(const base::DictionaryValue& dict,
         for (base::ListValue::const_iterator it = list_value->begin();
              it != list_value->end();
              ++it) {
-          string16 string_value;
+          base::string16 string_value;
           if ((*it)->GetAsString(&string_value))
             WriteAttribute(false, string_value, &line);
         }
@@ -286,7 +288,7 @@ string16 AccessibilityTreeFormatter::ToString(const base::DictionaryValue& dict,
     }
   }
 
-  return indent + line + ASCIIToUTF16("\n");
+  return indent + line + base::ASCIIToUTF16("\n");
 }
 
 // static

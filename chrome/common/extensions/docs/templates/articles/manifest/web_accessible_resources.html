@@ -1,8 +1,9 @@
 <h1 id="web_accessible_resources">Manifest - Web Accessible Resources</h1>
 
 <p>
-An array of strings specifying the paths (relative to the package root) of
-packaged resources that are expected to be usable in the context of a web page.
+An array of strings specifying the paths of packaged resources that are expected
+to be usable in the context of a web page. These paths are relative to the package
+root, and may contain wildcards.
 For example, an extension that injects a content script with the intention of
 building up some custom interface for <code>example.com</code> would whitelist
 any resources that interface requires (images, icons, stylesheets, scripts,
@@ -13,10 +14,11 @@ etc.) as follows:
 {
   ...
   "web_accessible_resources": [
-    "images/my-awesome-image1.png",
-    "images/my-amazing-icon1.png",
+    "images/*.png",
     "style/double-rainbow.css",
-    "script/double-rainbow.js"
+    "script/double-rainbow.js",
+    "script/main.js",
+    "templates/*"
   ],
   ...
 }
@@ -31,7 +33,19 @@ mechanisms like XHR.
 </p>
 
 <p>
-Injected content scripts themselves do not need to be whitelisted.
+A navigation from a web origin to an extension resource will be blocked unless
+the resource is listed as web accessible. Note these corner cases:
+</p>
+<ul>
+<li>When an extension uses the $(ref:webRequest) or $(ref:declarativeWebRequest)
+APIs to redirect a public resource request to a resource that is not web
+accessible, such request is also blocked.</li>
+<li>The above holds true even if the resource that is not web accessible is
+owned by the redirecting extension.</li>
+</ul>
+
+<p>
+<a href="http://developer.chrome.com/extensions/content_scripts.html">Content scripts</a> themselves do not need to be whitelisted.
 </p>
 
 <p>
@@ -39,7 +53,7 @@ Prior to manifest version 2 all resources within an extension could be accessed
 from any page on the web. This allowed a malicious website to
 <a href="http://en.wikipedia.org/wiki/Device_fingerprint">fingerprint</a> the
 extensions that a user has installed or exploit vulnerabilities (for example
-<a href="http://en.wikipedia.org/wiki/Cross-site_scripting">XSS bugs</a>)within
+<a href="http://en.wikipedia.org/wiki/Cross-site_scripting">XSS bugs</a>) within
 installed extensions. Limiting availability to only resources which are
 explicitly intended to be web accessible serves to both minimize the available
 attack surface and protect the privacy of users.

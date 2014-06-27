@@ -7,8 +7,6 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
-#include "chrome/common/extensions/extension_messages.h"
-#include "chrome/common/extensions/permissions/permissions_data.h"
 #include "chrome/renderer/chrome_render_process_observer.h"
 #include "chrome/renderer/extensions/chrome_v8_context.h"
 #include "chrome/renderer/extensions/dispatcher.h"
@@ -19,11 +17,14 @@
 #include "content/public/renderer/render_view.h"
 #include "content/public/renderer/v8_value_converter.h"
 #include "extensions/common/error_utils.h"
+#include "extensions/common/extension_messages.h"
 #include "extensions/common/manifest_constants.h"
+#include "extensions/common/permissions/permissions_data.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebVector.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
+#include "third_party/WebKit/public/web/WebScopedUserGesture.h"
 #include "third_party/WebKit/public/web/WebView.h"
 #include "v8/include/v8.h"
 
@@ -33,11 +34,11 @@ namespace {
 const int kUserScriptIdleTimeoutMs = 200;
 }
 
-using WebKit::WebDocument;
-using WebKit::WebFrame;
-using WebKit::WebString;
-using WebKit::WebVector;
-using WebKit::WebView;
+using blink::WebDocument;
+using blink::WebFrame;
+using blink::WebString;
+using blink::WebVector;
+using blink::WebView;
 
 namespace extensions {
 
@@ -166,6 +167,10 @@ void UserScriptScheduler::ExecuteCodeImpl(
 
   std::string error;
 
+  scoped_ptr<blink::WebScopedUserGesture> gesture;
+  if (params.user_gesture)
+    gesture.reset(new blink::WebScopedUserGesture);
+
   for (std::vector<WebFrame*>::iterator frame_it = frame_vector.begin();
        frame_it != frame_vector.end(); ++frame_it) {
     WebFrame* child_frame = *frame_it;
@@ -211,7 +216,7 @@ void UserScriptScheduler::ExecuteCodeImpl(
                                          extension->id());
         script_value = child_frame->executeScriptAndReturnValue(source);
       } else {
-        WebKit::WebVector<v8::Local<v8::Value> > results;
+        blink::WebVector<v8::Local<v8::Value> > results;
         std::vector<WebScriptSource> sources;
         sources.push_back(source);
         int isolated_world_id =
@@ -238,10 +243,8 @@ void UserScriptScheduler::ExecuteCodeImpl(
             result ? result : base::Value::CreateNullValue());
       }
     } else {
-      child_frame->document().insertUserStyleSheet(
-          WebString::fromUTF8(params.code),
-          // Author level is consistent with WebView::injectStyleSheet.
-          WebDocument::UserStyleAuthorLevel);
+      child_frame->document().insertStyleSheet(
+          WebString::fromUTF8(params.code));
     }
   }
 

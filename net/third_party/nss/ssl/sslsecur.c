@@ -97,14 +97,13 @@ ssl_Do1stHandshake(sslSocket *ss)
 	    ss->securityHandshake = 0;
 	}
 	if (ss->handshake == 0) {
-	    ssl_GetRecvBufLock(ss);
-	    ss->gs.recordLen = 0;
-	    ss->gs.writeOffset = 0;
-	    ss->gs.readOffset = 0;
-	    ssl_ReleaseRecvBufLock(ss);
-
-	    SSL_TRC(3, ("%d: SSL[%d]: handshake is completed",
-			SSL_GETPID(), ss->fd));
+	    /* for v3 this is done in ssl3_FinishHandshake */
+	    if (!ss->firstHsDone && ss->version < SSL_LIBRARY_VERSION_3_0) {
+		ssl_GetRecvBufLock(ss);
+		ss->gs.recordLen = 0;
+		ssl_FinishHandshake(ss);
+		ssl_ReleaseRecvBufLock(ss);
+	    }
 	    break;
 	}
 	rv = (*ss->handshake)(ss);
@@ -123,6 +122,24 @@ ssl_Do1stHandshake(sslSocket *ss)
 	rv = SECFailure;
     }
     return rv;
+}
+
+void
+ssl_FinishHandshake(sslSocket *ss)
+{
+    PORT_Assert( ss->opt.noLocks || ssl_Have1stHandshakeLock(ss) );
+    PORT_Assert( ss->opt.noLocks || ssl_HaveRecvBufLock(ss) );
+
+    SSL_TRC(3, ("%d: SSL[%d]: handshake is completed", SSL_GETPID(), ss->fd));
+
+    ss->firstHsDone = PR_TRUE;
+    ss->enoughFirstHsDone = PR_TRUE;
+    ss->gs.writeOffset = 0;
+    ss->gs.readOffset  = 0;
+
+    if (ss->handshakeCallback) {
+	(ss->handshakeCallback)(ss->fd, ss->handshakeCallbackData);
+    }
 }
 
 /*
@@ -330,7 +347,7 @@ SSL_HandshakeCallback(PRFileDesc *fd, SSLHandshakeCallback cb,
 */
 SECStatus
 SSL_SetCanFalseStartCallback(PRFileDesc *fd, SSLCanFalseStartCallback cb,
-			     void *client_data)
+			     void *arg)
 {
     sslSocket *ss;
 
@@ -350,7 +367,7 @@ SSL_SetCanFalseStartCallback(PRFileDesc *fd, SSLCanFalseStartCallback cb,
     ssl_GetSSL3HandshakeLock(ss);
 
     ss->canFalseStartCallback     = cb;
-    ss->canFalseStartCallbackData = client_data;
+    ss->canFalseStartCallbackData = arg;
 
     ssl_ReleaseSSL3HandshakeLock(ss);
     ssl_Release1stHandshakeLock(ss);
@@ -358,19 +375,15 @@ SSL_SetCanFalseStartCallback(PRFileDesc *fd, SSLCanFalseStartCallback cb,
     return SECSuccess;
 }
 
-/* A utility function that can be called from a custom SSLCanFalseStartCallback
-** function to determine what NSS would have done for this connection if the
-** custom callback was not implemented.
-*/
 SECStatus
-SSL_DefaultCanFalseStart(PRFileDesc *fd, PRBool *canFalseStart)
+SSL_RecommendedCanFalseStart(PRFileDesc *fd, PRBool *canFalseStart)
 {
     sslSocket *ss;
 
     *canFalseStart = PR_FALSE;
     ss = ssl_FindSocket(fd);
     if (!ss) {
-	SSL_DBG(("%d: SSL[%d]: bad socket in SSL_DefaultCanFalseStart",
+	SSL_DBG(("%d: SSL[%d]: bad socket in SSL_RecommendedCanFalseStart",
 		 SSL_GETPID(), fd));
 	return SECFailure;
     }
@@ -587,6 +600,9 @@ DoRecv(sslSocket *ss, unsigned char *out, int len, int flags)
     int              amount;
     int              available;
 
+    /* ssl3_GatherAppDataRecord may call ssl_FinishHandshake, which needs the
+     * 1stHandshakeLock. */
+    ssl_Get1stHandshakeLock(ss);
     ssl_GetRecvBufLock(ss);
 
     available = ss->gs.writeOffset - ss->gs.readOffset;
@@ -653,6 +669,7 @@ DoRecv(sslSocket *ss, unsigned char *out, int len, int flags)
 
 done:
     ssl_ReleaseRecvBufLock(ss);
+    ssl_Release1stHandshakeLock(ss);
     return rv;
 }
 
@@ -1219,7 +1236,7 @@ ssl_SecureRead(sslSocket *ss, unsigned char *buf, int len)
 int
 ssl_SecureSend(sslSocket *ss, const unsigned char *buf, int len, int flags)
 {
-    int              rv		= 0;
+    int rv = 0;
 
     SSL_TRC(2, ("%d: SSL[%d]: SecureSend: sending %d bytes",
 		SSL_GETPID(), ss->fd, len));
@@ -1254,14 +1271,15 @@ ssl_SecureSend(sslSocket *ss, const unsigned char *buf, int len, int flags)
     	ss->writerThread = PR_GetCurrentThread();
     /* If any of these is non-zero, the initial handshake is not done. */
     if (!ss->firstHsDone) {
-	PRBool canFalseStart = PR_FALSE;
+	PRBool falseStart = PR_FALSE;
 	ssl_Get1stHandshakeLock(ss);
-	if (ss->version >= SSL_LIBRARY_VERSION_3_0) {
+	if (ss->opt.enableFalseStart &&
+	    ss->version >= SSL_LIBRARY_VERSION_3_0) {
 	    ssl_GetSSL3HandshakeLock(ss);
-	    canFalseStart = ss->ssl3.hs.canFalseStart;
+	    falseStart = ss->ssl3.hs.canFalseStart;
 	    ssl_ReleaseSSL3HandshakeLock(ss);
 	}
-	if (!canFalseStart &&
+	if (!falseStart &&
 	    (ss->handshake || ss->nextHandshake || ss->securityHandshake)) {
 	    rv = ssl_Do1stHandshake(ss);
 	}
@@ -1284,6 +1302,17 @@ ssl_SecureSend(sslSocket *ss, const unsigned char *buf, int len, int flags)
 	PORT_SetError(PR_INVALID_ARGUMENT_ERROR);
     	rv = PR_FAILURE;
 	goto done;
+    }
+
+    if (!ss->firstHsDone) {
+	PORT_Assert(ss->version >= SSL_LIBRARY_VERSION_3_0);
+#ifdef DEBUG
+	ssl_GetSSL3HandshakeLock(ss);
+	PORT_Assert(ss->ssl3.hs.canFalseStart);
+	ssl_ReleaseSSL3HandshakeLock(ss);
+#endif
+	SSL_TRC(3, ("%d: SSL[%d]: SecureSend: sending data due to false start",
+		    SSL_GETPID(), ss->fd));
     }
 
     /* Send out the data using one of these functions:
@@ -1369,10 +1398,6 @@ SSL_SetURL(PRFileDesc *fd, const char *url)
 SECStatus
 SSL_SetTrustAnchors(PRFileDesc *fd, CERTCertList *certList)
 {
-    PORT_SetError(PR_NOT_IMPLEMENTED_ERROR);
-    PR_NOT_REACHED("not implemented");
-    return SECFailure;
-#if 0
     sslSocket *   ss = ssl_FindSocket(fd);
     CERTDistNames *names = NULL;
 
@@ -1400,7 +1425,6 @@ SSL_SetTrustAnchors(PRFileDesc *fd, CERTCertList *certList)
     ssl_Release1stHandshakeLock(ss);
 
     return SECSuccess;
-#endif
 }
 
 /*
@@ -1441,6 +1465,49 @@ SSL_InvalidateSession(PRFileDesc *fd)
 
 	ssl_ReleaseSSL3HandshakeLock(ss);
 	ssl_Release1stHandshakeLock(ss);
+    }
+    return rv;
+}
+
+static void
+ssl3_CacheSessionUnlocked(sslSocket *ss)
+{
+    PORT_Assert(!ss->sec.isServer);
+
+    if (ss->ssl3.hs.cacheSID) {
+	ss->sec.cache(ss->sec.ci.sid);
+	ss->ssl3.hs.cacheSID = PR_FALSE;
+    }
+}
+
+SECStatus
+SSL_CacheSession(PRFileDesc *fd)
+{
+    sslSocket *   ss = ssl_FindSocket(fd);
+    SECStatus     rv = SECFailure;
+
+    if (ss) {
+	ssl_Get1stHandshakeLock(ss);
+	ssl_GetSSL3HandshakeLock(ss);
+
+	ssl3_CacheSessionUnlocked(ss);
+	rv = SECSuccess;
+
+	ssl_ReleaseSSL3HandshakeLock(ss);
+	ssl_Release1stHandshakeLock(ss);
+    }
+    return rv;
+}
+
+SECStatus
+SSL_CacheSessionUnlocked(PRFileDesc *fd)
+{
+    sslSocket *   ss = ssl_FindSocket(fd);
+    SECStatus     rv = SECFailure;
+
+    if (ss) {
+	ssl3_CacheSessionUnlocked(ss);
+	rv = SECSuccess;
     }
     return rv;
 }

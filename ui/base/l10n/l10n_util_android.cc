@@ -10,14 +10,12 @@
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
 #include "base/strings/string_util.h"
+#include "base/time/time.h"
 #include "jni/LocalizationUtils_jni.h"
 #include "third_party/icu/source/common/unicode/uloc.h"
+#include "ui/base/l10n/time_format.h"
 
 namespace l10n_util {
-
-jboolean IsRTL(JNIEnv* env, jclass clazz) {
-  return base::i18n::IsRTL();
-}
 
 jint GetFirstStrongCharacterDirection(JNIEnv* env, jclass clazz,
                                       jstring string) {
@@ -30,6 +28,20 @@ std::string GetDefaultLocale() {
   ScopedJavaLocalRef<jstring> locale = Java_LocalizationUtils_getDefaultLocale(
       env);
   return ConvertJavaStringToUTF8(locale);
+}
+
+bool IsLayoutRtl() {
+  static bool is_layout_rtl_cached = false;
+  static bool layout_rtl_cache;
+
+  if (!is_layout_rtl_cached) {
+    is_layout_rtl_cached = true;
+    JNIEnv* env = base::android::AttachCurrentThread();
+    layout_rtl_cache =
+        static_cast<bool>(Java_LocalizationUtils_isLayoutRtl(env));
+  }
+
+  return layout_rtl_cache;
 }
 
 namespace {
@@ -71,8 +83,8 @@ ScopedJavaLocalRef<jobject> NewJavaLocale(
 
 }  // namespace
 
-string16 GetDisplayNameForLocale(const std::string& locale,
-                                 const std::string& display_locale) {
+base::string16 GetDisplayNameForLocale(const std::string& locale,
+                                       const std::string& display_locale) {
   JNIEnv* env = base::android::AttachCurrentThread();
   ScopedJavaLocalRef<jobject> java_locale =
       NewJavaLocale(env, locale);
@@ -85,6 +97,16 @@ string16 GetDisplayNameForLocale(const std::string& locale,
           java_locale.obj(),
           java_display_locale.obj()));
   return ConvertJavaStringToUTF16(java_result);
+}
+
+jstring GetDurationString(JNIEnv* env, jclass clazz, jlong timeInMillis) {
+  ScopedJavaLocalRef<jstring> jtime_remaining =
+      base::android::ConvertUTF16ToJavaString(
+          env,
+          ui::TimeFormat::Simple(
+              ui::TimeFormat::FORMAT_REMAINING, ui::TimeFormat::LENGTH_SHORT,
+              base::TimeDelta::FromMilliseconds(timeInMillis)));
+  return jtime_remaining.Release();
 }
 
 bool RegisterLocalizationUtil(JNIEnv* env) {

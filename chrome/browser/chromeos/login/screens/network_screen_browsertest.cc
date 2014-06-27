@@ -36,7 +36,7 @@ namespace login {
 
 class MockNetworkStateHelper : public NetworkStateHelper {
  public:
-  MOCK_CONST_METHOD0(GetCurrentNetworkName, string16(void));
+  MOCK_CONST_METHOD0(GetCurrentNetworkName, base::string16(void));
   MOCK_CONST_METHOD0(IsConnected, bool(void));
   MOCK_CONST_METHOD0(IsConnecting, bool(void));
 };
@@ -53,11 +53,12 @@ class NetworkScreenTest : public WizardInProcessBrowserTest {
   virtual void SetUpInProcessBrowserTestFixture() OVERRIDE {
     WizardInProcessBrowserTest::SetUpInProcessBrowserTestFixture();
 
-    FakeDBusThreadManager* fake_dbus_thread_manager =
-        new FakeDBusThreadManager;
-    DBusThreadManager::InitializeForTesting(fake_dbus_thread_manager);
-    fake_session_manager_client_ =
-        fake_dbus_thread_manager->fake_session_manager_client();
+    FakeDBusThreadManager* fake_dbus_thread_manager = new FakeDBusThreadManager;
+    fake_dbus_thread_manager->SetFakeClients();
+    fake_session_manager_client_ = new FakeSessionManagerClient;
+    fake_dbus_thread_manager->SetSessionManagerClient(
+        scoped_ptr<SessionManagerClient>(fake_session_manager_client_));
+    DBusThreadManager::SetInstanceForTesting(fake_dbus_thread_manager);
   }
 
   virtual void SetUpOnMainThread() OVERRIDE {
@@ -79,7 +80,6 @@ class NetworkScreenTest : public WizardInProcessBrowserTest {
 
   virtual void TearDownInProcessBrowserTestFixture() OVERRIDE {
     InProcessBrowserTest::TearDownInProcessBrowserTestFixture();
-    DBusThreadManager::Shutdown();
   }
 
   void EmulateContinueButtonExit(NetworkScreen* network_screen) {
@@ -95,7 +95,7 @@ class NetworkScreenTest : public WizardInProcessBrowserTest {
   void SetDefaultNetworkStateHelperExpectations() {
     EXPECT_CALL(*mock_network_state_helper_, GetCurrentNetworkName())
         .Times(AnyNumber())
-        .WillRepeatedly((Return(string16())));
+        .WillRepeatedly((Return(base::string16())));
     EXPECT_CALL(*mock_network_state_helper_, IsConnected())
         .Times(AnyNumber())
         .WillRepeatedly((Return(false)));
@@ -129,8 +129,6 @@ IN_PROC_BROWSER_TEST_F(NetworkScreenTest, CanConnect) {
 
   // EXPECT_TRUE(actor_->IsContinueEnabled());
   EmulateContinueButtonExit(network_screen_);
-  EXPECT_EQ(
-      1, fake_session_manager_client_->emit_login_prompt_ready_call_count());
 }
 
 IN_PROC_BROWSER_TEST_F(NetworkScreenTest, Timeout) {
@@ -151,8 +149,6 @@ IN_PROC_BROWSER_TEST_F(NetworkScreenTest, Timeout) {
   // EXPECT_FALSE(actor_->IsContinueEnabled());
   // EXPECT_FALSE(actor_->IsConnecting());
   // actor_->ClearErrors();
-  EXPECT_EQ(
-      1, fake_session_manager_client_->emit_login_prompt_ready_call_count());
 }
 
 }  // namespace chromeos

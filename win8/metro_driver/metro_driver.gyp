@@ -8,17 +8,31 @@
         'chromium_code': 1,
       },
       'includes': [
+        '../../build/util/version.gypi',
         '../../build/win_precompile.gypi',
-        '../../chrome/version.gypi',
       ],
       'target_defaults': {
+        # This and the force include below is a workaround for intsafe.h in
+        # VS 2010.
+        'msvs_system_include_dirs': [
+          '<(DEPTH)/build',
+        ],
         'msvs_settings': {
-            'VCLinkerTool': {
-                'AdditionalDependencies': [
-                    'D2D1.lib',
-                    'D3D11.lib',
-                ],
-            },
+          'VCLinkerTool': {
+            'AdditionalDependencies': [
+              'D2D1.lib',
+              'D3D11.lib',
+              'runtimeobject.lib',
+            ],
+            'DelayLoadDLLs': [
+              'API-MS-WIN-CORE-WINRT-ERROR-L1-1-0.DLL',
+              'API-MS-WIN-CORE-WINRT-L1-1-0.DLL',
+              'API-MS-WIN-CORE-WINRT-STRING-L1-1-0.DLL',
+            ],
+          },
+          'VCCLCompilerTool': {
+            'ForcedIncludeFiles': [ 'intsafe_workaround.h', ],
+          },
         },
       },
       'targets': [
@@ -65,8 +79,10 @@
           ],
           'sources': [
             'display_properties.cc',
+            'display_properties.h',
             'metro_driver.cc',
             'metro_driver.h',
+            'metro_driver_win7.cc',
             'stdafx.h',
             'winrt_utils.cc',
             'winrt_utils.h',
@@ -75,7 +91,7 @@
           'conditions': [
             ['use_aura==1', {
               'dependencies': [
-                '../win8.gyp:metro_viewer',
+                '../win8.gyp:metro_viewer_constants',
               ],
               'sources': [
                 'chrome_app_view_ash.cc',
@@ -84,6 +100,9 @@
                 'direct3d_helper.h',
                 'file_picker_ash.cc',
                 'file_picker_ash.h',
+              ],
+              'includes': [
+                'ime/ime.gypi',
               ],
             }, {  # use_aura!=1
               'sources': [

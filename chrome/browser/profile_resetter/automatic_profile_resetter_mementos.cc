@@ -52,7 +52,7 @@ std::string LocalStateHostedPromptMemento::ReadValue() const {
   PrefService* local_state = g_browser_process->local_state();
   DCHECK(local_state);
 
-  const DictionaryValue* prompt_shown_dict =
+  const base::DictionaryValue* prompt_shown_dict =
       local_state->GetDictionary(prefs::kProfileResetPromptMemento);
   std::string profile_key = GetProfileKey();
   if (!prompt_shown_dict || profile_key.empty()) {
@@ -120,7 +120,7 @@ void FileHostedPromptMemento::StoreValueOnFileThread(
     const base::FilePath& memento_file_path,
     const std::string& value) {
   int retval =
-      file_util::WriteFile(memento_file_path, value.c_str(), value.size());
+      base::WriteFile(memento_file_path, value.c_str(), value.size());
   DCHECK_EQ(retval, (int)value.size());
 }
 

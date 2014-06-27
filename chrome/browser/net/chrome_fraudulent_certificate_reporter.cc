@@ -51,6 +51,28 @@ static std::string BuildReport(const std::string& hostname,
   for (size_t i = 0; i < pem_encoded_chain.size(); ++i)
     *cert_chain += pem_encoded_chain[i];
 
+  for (net::HashValueVector::const_iterator i =
+      ssl_info.public_key_hashes.begin(); i !=
+      ssl_info.public_key_hashes.end(); ++i) {
+    request.add_public_key_hash(i->ToString());
+  }
+
+  const char* const* required_pins;
+  const char* const* excluded_pins;
+  if (net::TransportSecurityState::GetPinsForDebugging(
+          hostname, &required_pins, &excluded_pins)) {
+    for (size_t i = 0; required_pins[i]; i++) {
+      net::HashValue hash_value(net::HASH_VALUE_SHA1);
+      memcpy(hash_value.data(), required_pins[i], hash_value.size());
+      request.add_pin(hash_value.ToString());
+    }
+    for (size_t i = 0; excluded_pins[i]; i++) {
+      net::HashValue hash_value(net::HASH_VALUE_SHA1);
+      memcpy(hash_value.data(), excluded_pins[i], hash_value.size());
+      request.add_pin("!" + hash_value.ToString());
+    }
+  }
+
   std::string out;
   request.SerializeToString(&out);
   return out;
@@ -60,9 +82,9 @@ scoped_ptr<net::URLRequest>
 ChromeFraudulentCertificateReporter::CreateURLRequest(
     net::URLRequestContext* context) {
   scoped_ptr<net::URLRequest> request =
-      context->CreateRequest(upload_url_, net::DEFAULT_PRIORITY, this);
-  request->set_load_flags(net::LOAD_DO_NOT_SEND_COOKIES |
-                          net::LOAD_DO_NOT_SAVE_COOKIES);
+      context->CreateRequest(upload_url_, net::DEFAULT_PRIORITY, this, NULL);
+  request->SetLoadFlags(net::LOAD_DO_NOT_SEND_COOKIES |
+                        net::LOAD_DO_NOT_SAVE_COOKIES);
   return request.Pass();
 }
 

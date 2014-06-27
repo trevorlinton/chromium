@@ -4,11 +4,13 @@
 
 #include "content/renderer/browser_plugin/browser_plugin_browsertest.h"
 
+#include "base/debug/leak_annotations.h"
 #include "base/files/file_path.h"
 #include "base/memory/singleton.h"
 #include "base/path_service.h"
 #include "base/pickle.h"
 #include "content/public/common/content_constants.h"
+#include "content/public/renderer/content_renderer_client.h"
 #include "content/renderer/browser_plugin/browser_plugin.h"
 #include "content/renderer/browser_plugin/browser_plugin_manager_factory.h"
 #include "content/renderer/browser_plugin/mock_browser_plugin.h"
@@ -16,14 +18,17 @@
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/renderer_webkitplatformsupport_impl.h"
 #include "skia/ext/platform_canvas.h"
-#include "third_party/WebKit/public/web/WebCursorInfo.h"
+#include "third_party/WebKit/public/platform/WebCursorInfo.h"
 #include "third_party/WebKit/public/web/WebInputEvent.h"
 #include "third_party/WebKit/public/web/WebScriptSource.h"
+
+namespace content {
 
 namespace {
 const char kHTMLForBrowserPluginObject[] =
     "<object id='browserplugin' width='640px' height='480px'"
-    " src='foo' type='%s'>";
+    " src='foo' type='%s'></object>"
+    "<script>document.querySelector('object').nonExistentAttribute;</script>";
 
 const char kHTMLForBrowserPluginWithAllAttributes[] =
     "<object id='browserplugin' width='640' height='480' type='%s'"
@@ -47,12 +52,10 @@ const char kHTMLForPartitionedPersistedPluginObject[] =
 
 std::string GetHTMLForBrowserPluginObject() {
   return base::StringPrintf(kHTMLForBrowserPluginObject,
-                            content::kBrowserPluginMimeType);
+                            kBrowserPluginMimeType);
 }
 
 }  // namespace
-
-namespace content {
 
 class TestContentRendererClient : public ContentRendererClient {
  public:
@@ -61,7 +64,7 @@ class TestContentRendererClient : public ContentRendererClient {
   virtual ~TestContentRendererClient() {
   }
   virtual bool AllowBrowserPlugin(
-      WebKit::WebPluginContainer* container) OVERRIDE {
+      blink::WebPluginContainer* container) OVERRIDE {
     // Allow BrowserPlugin for tests.
     return true;
   }
@@ -96,8 +99,6 @@ BrowserPluginTest::BrowserPluginTest() {}
 BrowserPluginTest::~BrowserPluginTest() {}
 
 void BrowserPluginTest::SetUp() {
-  test_content_renderer_client_.reset(new TestContentRendererClient);
-  SetRendererClientForTesting(test_content_renderer_client_.get());
   BrowserPluginManager::set_factory_for_testing(
       TestBrowserPluginManagerFactory::GetInstance());
   content::RenderViewTest::SetUp();
@@ -106,15 +107,23 @@ void BrowserPluginTest::SetUp() {
 void BrowserPluginTest::TearDown() {
   BrowserPluginManager::set_factory_for_testing(
       TestBrowserPluginManagerFactory::GetInstance());
-  content::RenderViewTest::TearDown();
-  test_content_renderer_client_.reset();
+#if defined(LEAK_SANITIZER)
+  // Do this before shutting down V8 in RenderViewTest::TearDown().
+  // http://crbug.com/328552
+  __lsan_do_leak_check();
+#endif
+  RenderViewTest::TearDown();
+}
+
+ContentRendererClient* BrowserPluginTest::CreateContentRendererClient() {
+  return new TestContentRendererClient;
 }
 
 std::string BrowserPluginTest::ExecuteScriptAndReturnString(
     const std::string& script) {
   v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
   v8::Handle<v8::Value> value = GetMainFrame()->executeScriptAndReturnValue(
-      WebKit::WebScriptSource(WebKit::WebString::fromUTF8(script.c_str())));
+      blink::WebScriptSource(blink::WebString::fromUTF8(script.c_str())));
   if (value.IsEmpty() || !value->IsString())
     return std::string();
 
@@ -129,7 +138,7 @@ int BrowserPluginTest::ExecuteScriptAndReturnInt(
     const std::string& script) {
   v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
   v8::Handle<v8::Value> value = GetMainFrame()->executeScriptAndReturnValue(
-      WebKit::WebScriptSource(WebKit::WebString::fromUTF8(script.c_str())));
+      blink::WebScriptSource(blink::WebString::fromUTF8(script.c_str())));
   if (value.IsEmpty() || !value->IsInt32())
     return 0;
 
@@ -142,7 +151,7 @@ bool BrowserPluginTest::ExecuteScriptAndReturnBool(
     const std::string& script, bool* result) {
   v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
   v8::Handle<v8::Value> value = GetMainFrame()->executeScriptAndReturnValue(
-      WebKit::WebScriptSource(WebKit::WebString::fromUTF8(script.c_str())));
+      blink::WebScriptSource(blink::WebString::fromUTF8(script.c_str())));
   if (value.IsEmpty() || !value->IsBoolean())
     return false;
 
@@ -219,7 +228,7 @@ TEST_F(BrowserPluginTest, InitialResize) {
 // correct behavior.
 TEST_F(BrowserPluginTest, ParseAllAttributes) {
   std::string html = base::StringPrintf(kHTMLForBrowserPluginWithAllAttributes,
-                                        content::kBrowserPluginMimeType);
+                                        kBrowserPluginMimeType);
   LoadHTML(html.c_str());
   bool result;
   bool has_value = ExecuteScriptAndReturnBool(
@@ -318,11 +327,17 @@ TEST_F(BrowserPluginTest, ResizeFlowControl) {
   browser_plugin_manager()->sink().ClearMessages();
 
   // Resize the browser plugin three times.
+
   ExecuteJavaScript("document.getElementById('browserplugin').width = '641px'");
+  GetMainFrame()->view()->layout();
   ProcessPendingMessages();
+
   ExecuteJavaScript("document.getElementById('browserplugin').width = '642px'");
+  GetMainFrame()->view()->layout();
   ProcessPendingMessages();
+
   ExecuteJavaScript("document.getElementById('browserplugin').width = '643px'");
+  GetMainFrame()->view()->layout();
   ProcessPendingMessages();
 
   // Expect to see one resize messsage in the sink. BrowserPlugin will not issue
@@ -396,7 +411,7 @@ TEST_F(BrowserPluginTest, RemovePlugin) {
 // BrowserPlugin that has never navigated.
 TEST_F(BrowserPluginTest, RemovePluginBeforeNavigation) {
   std::string html = base::StringPrintf(kHTMLForSourcelessPluginObject,
-                                        content::kBrowserPluginMimeType);
+                                        kBrowserPluginMimeType);
   LoadHTML(html.c_str());
   EXPECT_FALSE(browser_plugin_manager()->sink().GetUniqueMessageMatching(
       BrowserPluginHostMsg_PluginDestroyed::ID));
@@ -411,14 +426,14 @@ TEST_F(BrowserPluginTest, RemovePluginBeforeNavigation) {
 // correctly.
 TEST_F(BrowserPluginTest, PartitionAttribute) {
   std::string html = base::StringPrintf(kHTMLForPartitionedPluginObject,
-                                        content::kBrowserPluginMimeType);
+                                        kBrowserPluginMimeType);
   LoadHTML(html.c_str());
   std::string partition_value = ExecuteScriptAndReturnString(
       "document.getElementById('browserplugin').partition");
   EXPECT_STREQ("someid", partition_value.c_str());
 
   html = base::StringPrintf(kHTMLForPartitionedPersistedPluginObject,
-                            content::kBrowserPluginMimeType);
+                            kBrowserPluginMimeType);
   LoadHTML(html.c_str());
   partition_value = ExecuteScriptAndReturnString(
       "document.getElementById('browserplugin').partition");
@@ -438,7 +453,7 @@ TEST_F(BrowserPluginTest, PartitionAttribute) {
 
   // Load a browser tag without 'src' defined.
   html = base::StringPrintf(kHTMLForSourcelessPluginObject,
-                            content::kBrowserPluginMimeType);
+                            kBrowserPluginMimeType);
   LoadHTML(html.c_str());
 
   // Ensure we don't parse just "persist:" string and return exception.
@@ -455,7 +470,7 @@ TEST_F(BrowserPluginTest, PartitionAttribute) {
 // partition attribute is invalid.
 TEST_F(BrowserPluginTest, InvalidPartition) {
   std::string html = base::StringPrintf(kHTMLForInvalidPartitionedPluginObject,
-                                        content::kBrowserPluginMimeType);
+                                        kBrowserPluginMimeType);
   LoadHTML(html.c_str());
   // Attempt to navigate with an invalid partition.
   {
@@ -501,7 +516,7 @@ TEST_F(BrowserPluginTest, InvalidPartition) {
 // cannot be modified.
 TEST_F(BrowserPluginTest, ImmutableAttributesAfterNavigation) {
   std::string html = base::StringPrintf(kHTMLForSourcelessPluginObject,
-                                        content::kBrowserPluginMimeType);
+                                        kBrowserPluginMimeType);
   LoadHTML(html.c_str());
 
   ExecuteJavaScript(
@@ -547,7 +562,7 @@ TEST_F(BrowserPluginTest, ImmutableAttributesAfterNavigation) {
 
 TEST_F(BrowserPluginTest, AutoSizeAttributes) {
   std::string html = base::StringPrintf(kHTMLForSourcelessPluginObject,
-                                        content::kBrowserPluginMimeType);
+                                        kBrowserPluginMimeType);
   LoadHTML(html.c_str());
   const char* kSetAutoSizeParametersAndNavigate =
     "var browserplugin = document.getElementById('browserplugin');"

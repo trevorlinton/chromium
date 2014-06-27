@@ -26,14 +26,14 @@ class TestConfirmBubbleModel : public ConfirmBubbleModel {
                          bool* link_clicked);
   TestConfirmBubbleModel();
   virtual ~TestConfirmBubbleModel() OVERRIDE;
-  virtual string16 GetTitle() const OVERRIDE;
-  virtual string16 GetMessageText() const OVERRIDE;
+  virtual base::string16 GetTitle() const OVERRIDE;
+  virtual base::string16 GetMessageText() const OVERRIDE;
   virtual gfx::Image* GetIcon() const OVERRIDE;
   virtual int GetButtons() const OVERRIDE;
-  virtual string16 GetButtonLabel(BubbleButton button) const OVERRIDE;
+  virtual base::string16 GetButtonLabel(BubbleButton button) const OVERRIDE;
   virtual void Accept() OVERRIDE;
   virtual void Cancel() OVERRIDE;
-  virtual string16 GetLinkText() const OVERRIDE;
+  virtual base::string16 GetLinkText() const OVERRIDE;
   virtual void LinkClicked() OVERRIDE;
 
  private:
@@ -57,12 +57,12 @@ TestConfirmBubbleModel::~TestConfirmBubbleModel() {
   *model_deleted_ = true;
 }
 
-string16 TestConfirmBubbleModel::GetTitle() const {
-  return ASCIIToUTF16("Test");
+base::string16 TestConfirmBubbleModel::GetTitle() const {
+  return base::ASCIIToUTF16("Test");
 }
 
-string16 TestConfirmBubbleModel::GetMessageText() const {
-  return ASCIIToUTF16("Test Message");
+base::string16 TestConfirmBubbleModel::GetMessageText() const {
+  return base::ASCIIToUTF16("Test Message");
 }
 
 gfx::Image* TestConfirmBubbleModel::GetIcon() const {
@@ -74,8 +74,10 @@ int TestConfirmBubbleModel::GetButtons() const {
   return BUTTON_OK | BUTTON_CANCEL;
 }
 
-string16 TestConfirmBubbleModel::GetButtonLabel(BubbleButton button) const {
-  return button == BUTTON_OK ? ASCIIToUTF16("OK") : ASCIIToUTF16("Cancel");
+base::string16 TestConfirmBubbleModel::GetButtonLabel(
+    BubbleButton button) const {
+  return button == BUTTON_OK ? base::ASCIIToUTF16("OK")
+                             : base::ASCIIToUTF16("Cancel");
 }
 
 void TestConfirmBubbleModel::Accept() {
@@ -86,8 +88,8 @@ void TestConfirmBubbleModel::Cancel() {
   *cancel_clicked_ = true;
 }
 
-string16 TestConfirmBubbleModel::GetLinkText() const {
-  return ASCIIToUTF16("Link");
+base::string16 TestConfirmBubbleModel::GetLinkText() const {
+  return base::ASCIIToUTF16("Link");
 }
 
 void TestConfirmBubbleModel::LinkClicked() {

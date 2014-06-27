@@ -16,15 +16,13 @@ namespace ppapi {
 PPB_VideoDecoder_Shared::PPB_VideoDecoder_Shared(PP_Instance instance)
     : Resource(OBJECT_IS_IMPL, instance),
       graphics_context_(0),
-      gles2_impl_(NULL) {
-}
+      gles2_impl_(NULL) {}
 
 PPB_VideoDecoder_Shared::PPB_VideoDecoder_Shared(
     const HostResource& host_resource)
     : Resource(OBJECT_IS_PROXY, host_resource),
       graphics_context_(0),
-      gles2_impl_(NULL) {
-}
+      gles2_impl_(NULL) {}
 
 PPB_VideoDecoder_Shared::~PPB_VideoDecoder_Shared() {
   // Destroy() must be called before the object is destroyed.
@@ -73,8 +71,8 @@ bool PPB_VideoDecoder_Shared::SetResetCallback(
 bool PPB_VideoDecoder_Shared::SetBitstreamBufferCallback(
     int32 bitstream_buffer_id,
     scoped_refptr<TrackedCallback> callback) {
-  return bitstream_buffer_callbacks_.insert(
-      std::make_pair(bitstream_buffer_id, callback)).second;
+  return bitstream_buffer_callbacks_.insert(std::make_pair(bitstream_buffer_id,
+                                                           callback)).second;
 }
 
 void PPB_VideoDecoder_Shared::RunFlushCallback(int32 result) {
@@ -86,7 +84,8 @@ void PPB_VideoDecoder_Shared::RunResetCallback(int32 result) {
 }
 
 void PPB_VideoDecoder_Shared::RunBitstreamBufferCallback(
-    int32 bitstream_buffer_id, int32 result) {
+    int32 bitstream_buffer_id,
+    int32 result) {
   CallbackById::iterator it =
       bitstream_buffer_callbacks_.find(bitstream_buffer_id);
   DCHECK(it != bitstream_buffer_callbacks_.end());
@@ -96,8 +95,14 @@ void PPB_VideoDecoder_Shared::RunBitstreamBufferCallback(
 }
 
 void PPB_VideoDecoder_Shared::FlushCommandBuffer() {
-  if (gles2_impl_)
-    gles2_impl_->Flush();
+  // Ensure that graphics_context is still live before using gles2_impl_.
+  // Our "plugin reference" is not enough to keep graphics_context alive if
+  // DidDeleteInstance() has been called.
+  if (PpapiGlobals::Get()->GetResourceTracker()->GetResource(
+          graphics_context_)) {
+    if (gles2_impl_)
+      gles2_impl_->Flush();
+  }
 }
 
 }  // namespace ppapi

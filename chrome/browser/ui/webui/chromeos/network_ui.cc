@@ -12,6 +12,7 @@
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/url_constants.h"
+#include "chromeos/network/favorite_state.h"
 #include "chromeos/network/network_event_log.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
@@ -28,7 +29,8 @@ namespace {
 const char kStringsJsFile[] = "strings.js";
 const char kRequestNetworkInfoCallback[] = "requestNetworkInfo";
 const char kNetworkEventLogTag[] = "networkEventLog";
-const char kNetworkStateTag[] = "networkState";
+const char kNetworkStateTag[] = "networkStates";
+const char kFavoriteStateTag[] = "favoriteStates";
 const char kOnNetworkInfoReceivedFunction[] = "NetworkUI.onNetworkInfoReceived";
 
 class NetworkMessageHandler : public content::WebUIMessageHandler {
@@ -43,6 +45,7 @@ class NetworkMessageHandler : public content::WebUIMessageHandler {
   void CollectNetworkInfo(const base::ListValue* value) const;
   std::string GetNetworkEventLog() const;
   void GetNetworkState(base::DictionaryValue* output) const;
+  void GetFavoriteState(base::DictionaryValue* output) const;
   void RespondToPage(const base::DictionaryValue& value) const;
 
   DISALLOW_COPY_AND_ASSIGN(NetworkMessageHandler);
@@ -65,9 +68,15 @@ void NetworkMessageHandler::CollectNetworkInfo(
     const base::ListValue* value) const {
   base::DictionaryValue data;
   data.SetString(kNetworkEventLogTag, GetNetworkEventLog());
+
   base::DictionaryValue* networkState = new base::DictionaryValue;
   GetNetworkState(networkState);
   data.Set(kNetworkStateTag, networkState);
+
+  base::DictionaryValue* favoriteState = new base::DictionaryValue;
+  GetFavoriteState(favoriteState);
+  data.Set(kFavoriteStateTag, favoriteState);
+
   RespondToPage(data);
 }
 
@@ -91,7 +100,6 @@ void NetworkMessageHandler::GetNetworkState(
       chromeos::NetworkHandler::Get()->network_state_handler();
   chromeos::NetworkStateHandler::NetworkStateList network_list;
   handler->GetNetworkList(&network_list);
-
   for (chromeos::NetworkStateHandler::NetworkStateList::const_iterator it =
            network_list.begin();
        it != network_list.end();
@@ -99,6 +107,22 @@ void NetworkMessageHandler::GetNetworkState(
     base::DictionaryValue* properties = new base::DictionaryValue;
     (*it)->GetProperties(properties);
     output->Set((*it)->path(), properties);
+  }
+}
+
+void NetworkMessageHandler::GetFavoriteState(
+    base::DictionaryValue* output) const {
+  chromeos::NetworkStateHandler* handler =
+      chromeos::NetworkHandler::Get()->network_state_handler();
+  chromeos::NetworkStateHandler::FavoriteStateList favorite_list;
+  handler->GetFavoriteList(&favorite_list);
+  for (chromeos::NetworkStateHandler::FavoriteStateList::const_iterator it =
+           favorite_list.begin();
+       it != favorite_list.end();
+       ++it) {
+    // Get the complete dictionary of FavoriteState properties.
+    const base::DictionaryValue& properties = (*it)->properties();
+    output->Set((*it)->path(), properties.DeepCopy());
   }
 }
 
@@ -122,6 +146,8 @@ NetworkUI::NetworkUI(content::WebUI* web_ui)
   html->AddLocalizedString("logLevelDebugText", IDS_NETWORK_LOG_LEVEL_DEBUG);
   html->AddLocalizedString("logLevelFileinfoText",
                            IDS_NETWORK_LOG_LEVEL_FILEINFO);
+  html->AddLocalizedString("logLevelTimeDetailText",
+                           IDS_NETWORK_LOG_LEVEL_TIME_DETAIL);
   html->AddLocalizedString("logEntryFormat", IDS_NETWORK_LOG_ENTRY);
   html->SetJsonPath(kStringsJsFile);
 

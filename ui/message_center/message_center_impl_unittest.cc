@@ -16,6 +16,8 @@
 #include "ui/message_center/notification_blocker.h"
 #include "ui/message_center/notification_types.h"
 
+using base::UTF8ToUTF16;
+
 namespace message_center {
 namespace {
 
@@ -27,7 +29,7 @@ class MessageCenterImplTest : public testing::Test,
   virtual void SetUp() OVERRIDE {
     MessageCenter::Initialize();
     message_center_ = MessageCenter::Get();
-    loop_.reset(new base::MessageLoop(base::MessageLoop::TYPE_DEFAULT));
+    loop_.reset(new base::MessageLoop);
     run_loop_.reset(new base::RunLoop());
     closure_ = run_loop_->QuitClosure();
   }
@@ -83,8 +85,7 @@ class ToggledNotificationBlocker : public NotificationBlocker {
   void SetNotificationsEnabled(bool enabled) {
     if (notifications_enabled_ != enabled) {
       notifications_enabled_ = enabled;
-      FOR_EACH_OBSERVER(
-          NotificationBlocker::Observer, observers(), OnBlockingStateChanged());
+      NotifyBlockingStateChanged();
     }
   }
 
@@ -121,11 +122,40 @@ class PopupNotificationBlocker : public ToggledNotificationBlocker {
   DISALLOW_COPY_AND_ASSIGN(PopupNotificationBlocker);
 };
 
+class TotalNotificationBlocker : public PopupNotificationBlocker {
+ public:
+  TotalNotificationBlocker(MessageCenter* message_center,
+                           const NotifierId& allowed_notifier)
+      : PopupNotificationBlocker(message_center, allowed_notifier) {}
+  virtual ~TotalNotificationBlocker() {}
+
+  // NotificationBlocker overrides:
+  virtual bool ShouldShowNotification(
+      const NotifierId& notifier_id) const OVERRIDE {
+    return ShouldShowNotificationAsPopup(notifier_id);
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(TotalNotificationBlocker);
+};
+
 bool PopupNotificationsContain(
     const NotificationList::PopupNotifications& popups,
     const std::string& id) {
   for (NotificationList::PopupNotifications::const_iterator iter =
            popups.begin(); iter != popups.end(); ++iter) {
+    if ((*iter)->id() == id)
+      return true;
+  }
+  return false;
+}
+
+// Right now, MessageCenter::HasNotification() returns regardless of blockers.
+bool NotificationsContain(
+    const NotificationList::Notifications& notifications,
+    const std::string& id) {
+  for (NotificationList::Notifications::const_iterator iter =
+           notifications.begin(); iter != notifications.end(); ++iter) {
     if ((*iter)->id() == id)
       return true;
   }
@@ -459,6 +489,96 @@ TEST_F(MessageCenterImplTest, NotificationBlockerAllowsPopups) {
   EXPECT_EQ(4u, message_center()->GetVisibleNotifications().size());
 }
 
+// TotalNotificationBlocker suppresses showing notifications even from the list.
+// This would provide the feature to 'separated' message centers per-profile for
+// ChromeOS multi-login.
+TEST_F(MessageCenterImplTest, TotalNotificationBlocker) {
+  NotifierId notifier_id1(NotifierId::APPLICATION, "app1");
+  NotifierId notifier_id2(NotifierId::APPLICATION, "app2");
+  TotalNotificationBlocker blocker(message_center(), notifier_id2);
+
+  message_center()->AddNotification(scoped_ptr<Notification>(new Notification(
+      NOTIFICATION_TYPE_SIMPLE,
+      "id1",
+      UTF8ToUTF16("title"),
+      UTF8ToUTF16("message"),
+      gfx::Image() /* icon */,
+      base::string16() /* display_source */,
+      notifier_id1,
+      RichNotificationData(),
+      NULL)));
+  message_center()->AddNotification(scoped_ptr<Notification>(new Notification(
+      NOTIFICATION_TYPE_SIMPLE,
+      "id2",
+      UTF8ToUTF16("title"),
+      UTF8ToUTF16("message"),
+      gfx::Image() /* icon */,
+      base::string16() /* display_source */,
+      notifier_id2,
+      RichNotificationData(),
+      NULL)));
+
+  // "id1" becomes invisible while "id2" is still visible.
+  blocker.SetNotificationsEnabled(false);
+  EXPECT_EQ(1u, message_center()->NotificationCount());
+  NotificationList::Notifications notifications =
+      message_center()->GetVisibleNotifications();
+  EXPECT_FALSE(NotificationsContain(notifications, "id1"));
+  EXPECT_TRUE(NotificationsContain(notifications, "id2"));
+
+  message_center()->AddNotification(scoped_ptr<Notification>(new Notification(
+      NOTIFICATION_TYPE_SIMPLE,
+      "id3",
+      UTF8ToUTF16("title"),
+      UTF8ToUTF16("message"),
+      gfx::Image() /* icon */,
+      base::string16() /* display_source */,
+      notifier_id1,
+      RichNotificationData(),
+      NULL)));
+  message_center()->AddNotification(scoped_ptr<Notification>(new Notification(
+      NOTIFICATION_TYPE_SIMPLE,
+      "id4",
+      UTF8ToUTF16("title"),
+      UTF8ToUTF16("message"),
+      gfx::Image() /* icon */,
+      base::string16() /* display_source */,
+      notifier_id2,
+      RichNotificationData(),
+      NULL)));
+  EXPECT_EQ(2u, message_center()->NotificationCount());
+  notifications = message_center()->GetVisibleNotifications();
+  EXPECT_FALSE(NotificationsContain(notifications, "id1"));
+  EXPECT_TRUE(NotificationsContain(notifications, "id2"));
+  EXPECT_FALSE(NotificationsContain(notifications, "id3"));
+  EXPECT_TRUE(NotificationsContain(notifications, "id4"));
+
+  blocker.SetNotificationsEnabled(true);
+  EXPECT_EQ(4u, message_center()->NotificationCount());
+  notifications = message_center()->GetVisibleNotifications();
+  EXPECT_TRUE(NotificationsContain(notifications, "id1"));
+  EXPECT_TRUE(NotificationsContain(notifications, "id2"));
+  EXPECT_TRUE(NotificationsContain(notifications, "id3"));
+  EXPECT_TRUE(NotificationsContain(notifications, "id4"));
+
+  // RemoveAllVisibleNotifications should remove just visible notifications.
+  blocker.SetNotificationsEnabled(false);
+  message_center()->RemoveAllVisibleNotifications(false /* by_user */);
+  EXPECT_EQ(0u, message_center()->NotificationCount());
+  blocker.SetNotificationsEnabled(true);
+  EXPECT_EQ(2u, message_center()->NotificationCount());
+  notifications = message_center()->GetVisibleNotifications();
+  EXPECT_TRUE(NotificationsContain(notifications, "id1"));
+  EXPECT_FALSE(NotificationsContain(notifications, "id2"));
+  EXPECT_TRUE(NotificationsContain(notifications, "id3"));
+  EXPECT_FALSE(NotificationsContain(notifications, "id4"));
+
+  // And RemoveAllNotifications should remove all.
+  blocker.SetNotificationsEnabled(false);
+  message_center()->RemoveAllNotifications(false /* by_user */);
+  EXPECT_EQ(0u, message_center()->NotificationCount());
+}
+
 TEST_F(MessageCenterImplTest, QueueUpdatesWithCenterVisible) {
   std::string id("id1");
   std::string id2("id2");
@@ -606,6 +726,38 @@ TEST_F(MessageCenterImplTest, QueuedDirectUpdates) {
   EXPECT_EQ(new_size, mc_notification->image().Size());
   EXPECT_EQ(new_size, buttons[0].icon.Size());
   EXPECT_EQ(new_size, buttons[1].icon.Size());
+}
+
+TEST_F(MessageCenterImplTest, CachedUnreadCount) {
+  message_center()->AddNotification(
+      scoped_ptr<Notification>(CreateSimpleNotification("id1")));
+  message_center()->AddNotification(
+      scoped_ptr<Notification>(CreateSimpleNotification("id2")));
+  message_center()->AddNotification(
+      scoped_ptr<Notification>(CreateSimpleNotification("id3")));
+  ASSERT_EQ(3u, message_center()->UnreadNotificationCount());
+
+  // Mark 'displayed' on all notifications by using for-loop. This shouldn't
+  // recreate |notifications| inside of the loop.
+  const NotificationList::Notifications& notifications =
+      message_center()->GetVisibleNotifications();
+  for (NotificationList::Notifications::const_iterator iter =
+           notifications.begin(); iter != notifications.end(); ++iter) {
+    message_center()->DisplayedNotification((*iter)->id());
+  }
+  EXPECT_EQ(0u, message_center()->UnreadNotificationCount());
+
+  // Imitate the timeout, which recovers the unread count. Again, this shouldn't
+  // recreate |notifications| inside of the loop.
+  for (NotificationList::Notifications::const_iterator iter =
+           notifications.begin(); iter != notifications.end(); ++iter) {
+    message_center()->MarkSinglePopupAsShown((*iter)->id(), false);
+  }
+  EXPECT_EQ(3u, message_center()->UnreadNotificationCount());
+
+  // Opening the message center will reset the unread count.
+  message_center()->SetVisibility(VISIBILITY_MESSAGE_CENTER);
+  EXPECT_EQ(0u, message_center()->UnreadNotificationCount());
 }
 
 }  // namespace internal

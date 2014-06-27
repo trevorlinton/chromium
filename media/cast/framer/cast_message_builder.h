@@ -11,14 +11,14 @@
 
 #include "media/cast/framer/frame_id_map.h"
 #include "media/cast/rtcp/rtcp.h"
-#include "media/cast/rtp_common/rtp_defines.h"
+#include "media/cast/rtp_receiver/rtp_receiver_defines.h"
 
 namespace media {
 namespace cast {
 
 class RtpPayloadFeedback;
 
-typedef std::map<uint8, base::TimeTicks> TimeLastNackMap;
+typedef std::map<uint32, base::TimeTicks> TimeLastNackMap;
 
 class CastMessageBuilder {
  public:
@@ -30,7 +30,7 @@ class CastMessageBuilder {
                      int max_unacked_frames);
   ~CastMessageBuilder();
 
-  void CompleteFrameReceived(uint8 frame_id, bool is_key_frame);
+  void CompleteFrameReceived(uint32 frame_id, bool is_key_frame);
   bool TimeToSendNextCastMessage(base::TimeTicks* time_to_send);
   void UpdateCastMessage();
   void Reset();
@@ -57,7 +57,7 @@ class CastMessageBuilder {
 
   bool slowing_down_ack_;
   bool acked_last_frame_;
-  uint8 last_acked_frame_id_;
+  uint32 last_acked_frame_id_;
 
   DISALLOW_COPY_AND_ASSIGN(CastMessageBuilder);
 };

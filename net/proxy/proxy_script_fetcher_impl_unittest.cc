@@ -30,6 +30,8 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
 
+using base::ASCIIToUTF16;
+
 namespace net {
 
 // TODO(eroman):
@@ -124,8 +126,8 @@ class BasicNetworkDelegate : public NetworkDelegate {
       URLRequest* request,
       const CompletionCallback& callback,
       const HttpResponseHeaders* original_response_headers,
-      scoped_refptr<HttpResponseHeaders>* override_response_headers)
-      OVERRIDE {
+      scoped_refptr<HttpResponseHeaders>* override_response_headers,
+      GURL* allowed_unsafe_redirect_url) OVERRIDE {
     return OK;
   }
 
@@ -175,10 +177,6 @@ class BasicNetworkDelegate : public NetworkDelegate {
       SocketStream* stream,
       const CompletionCallback& callback) OVERRIDE {
     return OK;
-  }
-
-  virtual void OnRequestWaitStateChange(const net::URLRequest& request,
-                                        RequestWaitState state) OVERRIDE {
   }
 
   DISALLOW_COPY_AND_ASSIGN(BasicNetworkDelegate);

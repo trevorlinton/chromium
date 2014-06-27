@@ -118,6 +118,9 @@ HttpHandler::HttpHandler(
       CommandMapping(kPost,
                      "session/:sessionId/url",
                      WrapToCommand("Navigate", base::Bind(&ExecuteGet))),
+      CommandMapping(kPost,
+                     "session/:sessionId/chromium/launch_app",
+                     WrapToCommand("LaunchApp", base::Bind(&ExecuteLaunchApp))),
       CommandMapping(kGet,
                      "session/:sessionId/alert",
                      WrapToCommand("IsAlertOpen",
@@ -492,7 +495,7 @@ HttpHandler::HttpHandler(
                      base::Bind(&UnimplementedCommand)),
       CommandMapping(kPost,
                      "session/:sessionId/touch/flick",
-                     base::Bind(&UnimplementedCommand)),
+                     WrapToCommand("TouchFlick", base::Bind(&ExecuteFlick))),
       CommandMapping(kPost,
                      "session/:sessionId/log",
                      WrapToCommand("GetLog", base::Bind(&ExecuteGetLog))),
@@ -520,6 +523,15 @@ HttpHandler::HttpHandler(
       CommandMapping(kGet,
                      "session/:sessionId/is_loading",
                      WrapToCommand("IsLoading", base::Bind(&ExecuteIsLoading))),
+      CommandMapping(kGet,
+                     "session/:sessionId/autoreport",
+                     WrapToCommand("IsAutoReporting",
+                                   base::Bind(&ExecuteIsAutoReporting))),
+      CommandMapping(kPost,
+                     "session/:sessionId/autoreport",
+                     WrapToCommand(
+                         "SetAutoReporting",
+                         base::Bind(&ExecuteSetAutoReporting))),
   };
   command_map_.reset(
       new CommandMap(commands, commands + arraysize(commands)));
@@ -643,15 +655,7 @@ scoped_ptr<net::HttpServerResponseInfo> HttpHandler::PrepareResponseHelper(
     return response.Pass();
   }
 
-  if (trimmed_path == internal::kNewSessionPathPattern && status.IsOk()) {
-    // Creating a session involves a HTTP request to /session, which is
-    // supposed to redirect to /session/:sessionId, which returns the
-    // session info.
-    scoped_ptr<net::HttpServerResponseInfo> response(
-        new net::HttpServerResponseInfo(net::HTTP_SEE_OTHER));
-    response->AddHeader("Location", url_base_ + "session/" + session_id);
-    return response.Pass();
-  } else if (status.IsError()) {
+  if (status.IsError()) {
     Status full_status(status);
     full_status.AddDetails(base::StringPrintf(
         "Driver info: chromedriver=%s,platform=%s %s %s",

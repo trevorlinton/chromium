@@ -7,8 +7,10 @@
 """Creates a TOC file from a Java jar.
 
 The TOC file contains the non-package API of the jar. This includes all
-public/protected classes/functions/members and the values of static final
-variables. Some other information (major/minor javac version) is also included.
+public/protected/package classes/functions/members and the values of static
+final variables (members with package access are kept because in some cases we
+have multiple libraries with the same package, particularly test+non-test). Some
+other information (major/minor javac version) is also included.
 
 This TOC file then can be used to determine if a dependent library should be
 rebuilt when this jar changes. I.e. any change to the jar that would require a
@@ -16,7 +18,6 @@ rebuild, will have a corresponding change in the TOC file.
 """
 
 import optparse
-import os
 import re
 import sys
 import zipfile
@@ -38,13 +39,13 @@ def GetClassesInZipFile(zip_file):
 def CallJavap(classpath, classes):
   javap_cmd = [
       'javap',
-      '-protected',  # In reality both public & protected.
+      '-package',  # Show public/protected/package.
       # -verbose is required to get constant values (which can be inlined in
       # dependents).
       '-verbose',
       '-classpath', classpath
       ] + classes
-  return build_utils.CheckCallDie(javap_cmd, suppress_output=True)
+  return build_utils.CheckOutput(javap_cmd)
 
 
 def ExtractToc(disassembled_classes):
@@ -89,14 +90,11 @@ def DoJarToc(options):
   build_utils.Touch(toc_path)
 
 
-def main(argv):
+def main():
   parser = optparse.OptionParser()
   parser.add_option('--jar-path', help='Input .jar path.')
   parser.add_option('--toc-path', help='Output .jar.TOC path.')
   parser.add_option('--stamp', help='Path to touch on success.')
-
-  # TODO(newt): remove this once http://crbug.com/177552 is fixed in ninja.
-  parser.add_option('--ignore', help='Ignored.')
 
   options, _ = parser.parse_args()
 
@@ -107,4 +105,4 @@ def main(argv):
 
 
 if __name__ == '__main__':
-  sys.exit(main(sys.argv))
+  sys.exit(main())

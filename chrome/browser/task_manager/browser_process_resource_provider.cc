@@ -43,17 +43,10 @@ BrowserProcessResource::BrowserProcessResource()
       default_icon_ = new gfx::ImageSkia(gfx::ImageSkiaRep(*bitmap, 1.0f));
     }
   }
-#elif defined(OS_POSIX) && !defined(OS_MACOSX)
+#elif defined(OS_POSIX)
   if (!default_icon_) {
     ResourceBundle& rb = ResourceBundle::GetSharedInstance();
     default_icon_ = rb.GetImageSkiaNamed(IDR_PRODUCT_LOGO_16);
-  }
-#elif defined(OS_MACOSX)
-  if (!default_icon_) {
-    // IDR_PRODUCT_LOGO_16 doesn't quite look like chrome/mac's icns icon. Load
-    // the real app icon (requires a nsimage->image_skia->nsimage
-    // conversion :-().
-    default_icon_ = new gfx::ImageSkia(gfx::ApplicationIconAtSize(16));
   }
 #else
   // TODO(port): Port icon code.
@@ -67,15 +60,15 @@ BrowserProcessResource::~BrowserProcessResource() {
 }
 
 // Resource methods:
-string16 BrowserProcessResource::GetTitle() const {
+base::string16 BrowserProcessResource::GetTitle() const {
   if (title_.empty()) {
     title_ = l10n_util::GetStringUTF16(IDS_TASK_MANAGER_WEB_BROWSER_CELL_TEXT);
   }
   return title_;
 }
 
-string16 BrowserProcessResource::GetProfileName() const {
-  return string16();
+base::string16 BrowserProcessResource::GetProfileName() const {
+  return base::string16();
 }
 
 gfx::ImageSkia BrowserProcessResource::GetIcon() const {
@@ -143,9 +136,9 @@ BrowserProcessResourceProvider::~BrowserProcessResourceProvider() {
 
 Resource* BrowserProcessResourceProvider::GetResource(
     int origin_pid,
-    int render_process_host_id,
-    int routing_id) {
-  if (origin_pid || render_process_host_id != -1) {
+    int child_id,
+    int route_id) {
+  if (origin_pid || child_id != -1) {
     return NULL;
   }
 

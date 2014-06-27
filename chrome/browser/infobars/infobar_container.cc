@@ -9,12 +9,9 @@
 #include <algorithm>
 
 #include "base/logging.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/infobars/infobar.h"
 #include "chrome/browser/infobars/infobar_delegate.h"
 #include "chrome/browser/infobars/infobar_service.h"
-#include "content/public/browser/notification_details.h"
-#include "content/public/browser/notification_source.h"
 #include "ui/gfx/animation/slide_animation.h"
 
 InfoBarContainer::Delegate::~Delegate() {
@@ -29,27 +26,31 @@ InfoBarContainer::InfoBarContainer(Delegate* delegate)
 InfoBarContainer::~InfoBarContainer() {
   // RemoveAllInfoBarsForDestruction() should have already cleared our infobars.
   DCHECK(infobars_.empty());
+  if (infobar_service_)
+    infobar_service_->RemoveObserver(this);
 }
 
 void InfoBarContainer::ChangeInfoBarService(InfoBarService* infobar_service) {
-  HideAllInfoBars();
+  if (infobar_service_)
+    infobar_service_->RemoveObserver(this);
+
+  // Hides all infobars in this container without animation.
+  while (!infobars_.empty()) {
+    InfoBar* infobar = infobars_.front();
+    // Inform the infobar that it's hidden.  If it was already closing, this
+    // deletes it.  Otherwise, this ensures the infobar will be deleted if it's
+    // closed while it's not in an InfoBarContainer.
+    infobar->Hide(false);
+  }
 
   infobar_service_ = infobar_service;
   if (infobar_service_) {
-    content::Source<InfoBarService> source(infobar_service_);
-    registrar_.Add(this, chrome::NOTIFICATION_TAB_CONTENTS_INFOBAR_ADDED,
-                   source);
-    registrar_.Add(this, chrome::NOTIFICATION_TAB_CONTENTS_INFOBAR_REMOVED,
-                   source);
-    registrar_.Add(this, chrome::NOTIFICATION_TAB_CONTENTS_INFOBAR_REPLACED,
-                   source);
+    infobar_service_->AddObserver(this);
 
     for (size_t i = 0; i < infobar_service_->infobar_count(); ++i) {
       // As when we removed the infobars above, we prevent callbacks to
-      // OnInfoBarAnimated() for each infobar.
-      AddInfoBar(
-          infobar_service_->infobar_at(i)->CreateInfoBar(infobar_service_),
-          i, false, NO_CALLBACK);
+      // OnInfoBarStateChanged() for each infobar.
+      AddInfoBar(infobar_service_->infobar_at(i), i, false, NO_CALLBACK);
     }
   }
 
@@ -109,84 +110,30 @@ void InfoBarContainer::RemoveAllInfoBarsForDestruction() {
   ChangeInfoBarService(NULL);
 }
 
-void InfoBarContainer::Observe(int type,
-                               const content::NotificationSource& source,
-                               const content::NotificationDetails& details) {
-  switch (type) {
-    case chrome::NOTIFICATION_TAB_CONTENTS_INFOBAR_ADDED:
-      AddInfoBar(
-          content::Details<InfoBarAddedDetails>(details)->CreateInfoBar(
-              infobar_service_),
-          infobars_.size(), true, WANT_CALLBACK);
-      break;
-
-    case chrome::NOTIFICATION_TAB_CONTENTS_INFOBAR_REMOVED: {
-      InfoBarRemovedDetails* removed_details =
-          content::Details<InfoBarRemovedDetails>(details).ptr();
-      HideInfoBar(FindInfoBar(removed_details->first), removed_details->second);
-      break;
-    }
-
-    case chrome::NOTIFICATION_TAB_CONTENTS_INFOBAR_REPLACED: {
-      InfoBarReplacedDetails* replaced_details =
-          content::Details<InfoBarReplacedDetails>(details).ptr();
-      ReplaceInfoBar(replaced_details->first, replaced_details->second);
-      break;
-    }
-
-    default:
-      NOTREACHED();
-      break;
-  }
+void InfoBarContainer::OnInfoBarAdded(InfoBar* infobar) {
+  AddInfoBar(infobar, infobars_.size(), true, WANT_CALLBACK);
 }
 
-void InfoBarContainer::ReplaceInfoBar(InfoBarDelegate* old_delegate,
-                                      InfoBarDelegate* new_delegate) {
-  InfoBar* new_infobar = new_delegate->CreateInfoBar(infobar_service_);
-  InfoBar* old_infobar = FindInfoBar(old_delegate);
-#if defined(OS_ANDROID)
-  PlatformSpecificReplaceInfoBar(old_infobar, new_infobar);
-#endif
-  AddInfoBar(
-      new_infobar, HideInfoBar(old_infobar, false), false, WANT_CALLBACK);
-}
-
-InfoBar* InfoBarContainer::FindInfoBar(InfoBarDelegate* delegate) {
-  // Search for the infobar associated with |delegate|.  We cannot search for
-  // |delegate| in |tab_helper_|, because an InfoBar remains alive until its
-  // close animation completes, while the delegate is removed from the tab
-  // immediately.
-  for (InfoBars::iterator i(infobars_.begin()); i != infobars_.end(); ++i) {
-    InfoBar* infobar = *i;
-    if (infobar->delegate() == delegate)
-      return infobar;
-  }
-  NOTREACHED();
-  return NULL;
-}
-
-size_t InfoBarContainer::HideInfoBar(InfoBar* infobar, bool use_animation) {
-  InfoBars::iterator it =
-      std::find(infobars_.begin(), infobars_.end(), infobar);
-  DCHECK(it != infobars_.end());
-  size_t position = it - infobars_.begin();
-  // We merely need hide the infobar; it will call back to RemoveInfoBar()
-  // itself once it's hidden.
-  infobar->Hide(use_animation);
-  infobar->CloseSoon();
+void InfoBarContainer::OnInfoBarRemoved(InfoBar* infobar, bool animate) {
+  infobar->Hide(animate);
   UpdateInfoBarArrowTargetHeights();
-  return position;
 }
 
-void InfoBarContainer::HideAllInfoBars() {
-  registrar_.RemoveAll();
+void InfoBarContainer::OnInfoBarReplaced(InfoBar* old_infobar,
+                                         InfoBar* new_infobar) {
+  PlatformSpecificReplaceInfoBar(old_infobar, new_infobar);
+  InfoBars::const_iterator i(std::find(infobars_.begin(), infobars_.end(),
+                                       old_infobar));
+  DCHECK(i != infobars_.end());
+  size_t position = i - infobars_.begin();
+  old_infobar->Hide(false);
+  AddInfoBar(new_infobar, position, false, WANT_CALLBACK);
+}
 
-  while (!infobars_.empty()) {
-    InfoBar* infobar = infobars_.front();
-    // Inform the infobar that it's hidden.  If it was already closing, this
-    // closes its delegate.
-    infobar->Hide(false);
-  }
+void InfoBarContainer::OnServiceShuttingDown(InfoBarService* service) {
+  DCHECK_EQ(infobar_service_, service);
+  infobar_service_->RemoveObserver(this);
+  infobar_service_ = NULL;
 }
 
 void InfoBarContainer::AddInfoBar(InfoBar* infobar,

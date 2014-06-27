@@ -24,15 +24,15 @@
 #include "third_party/WebKit/public/web/WebTextAreaElement.h"
 #include "ui/base/l10n/l10n_util.h"
 
-using WebKit::WebDocument;
-using WebKit::WebFormControlElement;
-using WebKit::WebFormElement;
-using WebKit::WebFrame;
-using WebKit::WebInputElement;
-using WebKit::WebSelectElement;
-using WebKit::WebTextAreaElement;
-using WebKit::WebString;
-using WebKit::WebVector;
+using blink::WebDocument;
+using blink::WebFormControlElement;
+using blink::WebFormElement;
+using blink::WebFrame;
+using blink::WebInputElement;
+using blink::WebSelectElement;
+using blink::WebTextAreaElement;
+using blink::WebString;
+using blink::WebVector;
 
 namespace autofill {
 
@@ -179,7 +179,7 @@ void FormCache::ResetFrame(const WebFrame& frame) {
   RemoveOldElements(frame, &initial_checked_state_);
 }
 
-bool FormCache::ClearFormWithElement(const WebInputElement& element) {
+bool FormCache::ClearFormWithElement(const WebFormControlElement& element) {
   WebFormElement form_element = element.form();
   if (form_element.isNull())
     return false;
@@ -290,13 +290,15 @@ bool FormCache::ShowPredictions(const FormDataPredictions& form) {
     std::string placeholder = form.fields[i].overall_type;
     base::string16 title = l10n_util::GetStringFUTF16(
         IDS_AUTOFILL_SHOW_PREDICTIONS_TITLE,
-        UTF8ToUTF16(form.fields[i].heuristic_type),
-        UTF8ToUTF16(form.fields[i].server_type),
-        UTF8ToUTF16(form.fields[i].signature),
-        UTF8ToUTF16(form.signature),
-        UTF8ToUTF16(form.experiment_id));
-    if (!element->hasAttribute("placeholder"))
-      element->setAttribute("placeholder", WebString(UTF8ToUTF16(placeholder)));
+        base::UTF8ToUTF16(form.fields[i].heuristic_type),
+        base::UTF8ToUTF16(form.fields[i].server_type),
+        base::UTF8ToUTF16(form.fields[i].signature),
+        base::UTF8ToUTF16(form.signature),
+        base::UTF8ToUTF16(form.experiment_id));
+    if (!element->hasAttribute("placeholder")) {
+      element->setAttribute("placeholder",
+                            WebString(base::UTF8ToUTF16(placeholder)));
+    }
     element->setAttribute("title", WebString(title));
   }
 

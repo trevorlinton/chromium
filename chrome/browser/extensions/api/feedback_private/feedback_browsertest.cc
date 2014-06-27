@@ -2,25 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "apps/shell_window.h"
-#include "apps/shell_window_registry.h"
+#include "apps/app_window.h"
+#include "apps/app_window_registry.h"
 #include "base/bind.h"
 #include "chrome/browser/apps/app_browsertest_util.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/api/feedback_private/feedback_private_api.h"
 #include "chrome/browser/extensions/component_loader.h"
-#include "chrome/browser/extensions/event_router.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/extensions/api/feedback_private.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/common/content_switches.h"
+#include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_system.h"
 
-using apps::ShellWindow;
-using apps::ShellWindowRegistry;
+using apps::AppWindow;
+using apps::AppWindowRegistry;
 using extensions::Extension;
 
 namespace {
@@ -62,8 +62,8 @@ class FeedbackTest : public ExtensionBrowserTest {
   }
 
   void VerifyFeedbackAppLaunch() {
-    ShellWindow* window =
-        PlatformAppBrowserTest::GetFirstShellWindowForBrowser(browser());
+    AppWindow* window =
+        PlatformAppBrowserTest::GetFirstAppWindowForBrowser(browser());
     ASSERT_TRUE(window);
     const Extension* feedback_app = window->extension();
     ASSERT_TRUE(feedback_app);
@@ -73,7 +73,7 @@ class FeedbackTest : public ExtensionBrowserTest {
  private:
   void InvokeFeedbackUI() {
     extensions::FeedbackPrivateAPI* api =
-        extensions::FeedbackPrivateAPI::GetFactoryInstance()->GetForProfile(
+        extensions::FeedbackPrivateAPI::GetFactoryInstance()->Get(
             browser()->profile());
     api->RequestFeedback("Test description",
                          "Test tag",

@@ -24,6 +24,8 @@
 
 namespace chromeos {
 
+class FakeDBusThreadManager;
+
 // A helper class for tests mocking out session_manager's device settings
 // interface. The pattern is to initialize DeviceSettingsService with the helper
 // for the SessionManagerClient pointer. The helper records calls made by
@@ -69,7 +71,7 @@ class DeviceSettingsTestHelper : public SessionManagerClient {
     const std::map<std::string, PolicyState>::const_iterator entry =
         device_local_account_policy_.find(id);
     return entry == device_local_account_policy_.end() ?
-        EmptyString() : entry->second.policy_blob_;
+        base::EmptyString() : entry->second.policy_blob_;
   }
 
   void set_device_local_account_policy_blob(const std::string& id,
@@ -79,10 +81,11 @@ class DeviceSettingsTestHelper : public SessionManagerClient {
 
   // SessionManagerClient:
   virtual void Init(dbus::Bus* bus) OVERRIDE;
+  virtual void SetStubDelegate(SessionManagerClient::StubDelegate* delegate)
+      OVERRIDE;
   virtual void AddObserver(Observer* observer) OVERRIDE;
   virtual void RemoveObserver(Observer* observer) OVERRIDE;
   virtual bool HasObserver(Observer* observer) OVERRIDE;
-  virtual void EmitLoginPromptReady() OVERRIDE;
   virtual void EmitLoginPromptVisible() OVERRIDE;
   virtual void RestartJob(int pid, const std::string& command_line) OVERRIDE;
   virtual void StartSession(const std::string& user_email) OVERRIDE;
@@ -168,7 +171,7 @@ class DeviceSettingsTestBase : public testing::Test {
   // |device_settings_service_| and flushes the resulting load operation.
   void ReloadDeviceSettings();
 
-  base::MessageLoop loop_;
+  base::MessageLoopForUI loop_;
   content::TestBrowserThread ui_thread_;
   content::TestBrowserThread file_thread_;
 
@@ -179,6 +182,8 @@ class DeviceSettingsTestBase : public testing::Test {
   // Local DeviceSettingsService instance for tests. Avoid using in combination
   // with the global instance (DeviceSettingsService::Get()).
   DeviceSettingsService device_settings_service_;
+
+  chromeos::FakeDBusThreadManager* fake_dbus_thread_manager_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(DeviceSettingsTestBase);

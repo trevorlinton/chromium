@@ -10,7 +10,7 @@
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "ui/base/theme_provider.h"
-#include "ui/base/ui_export.h"
+#include "ui/base/ui_base_export.h"
 
 namespace ui {
 class ResourceBundle;
@@ -18,12 +18,13 @@ class ResourceBundle;
 
 namespace ui {
 
-class UI_EXPORT DefaultThemeProvider : public ThemeProvider {
+class UI_BASE_EXPORT DefaultThemeProvider : public ThemeProvider {
  public:
   DefaultThemeProvider();
   virtual ~DefaultThemeProvider();
 
   // Overridden from ui::ThemeProvider:
+  virtual bool UsingNativeTheme() const OVERRIDE;
   virtual gfx::ImageSkia* GetImageSkiaNamed(int id) const OVERRIDE;
   virtual SkColor GetColor(int id) const OVERRIDE;
   virtual int GetDisplayProperty(int id) const OVERRIDE;

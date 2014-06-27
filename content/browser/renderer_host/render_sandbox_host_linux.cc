@@ -25,24 +25,26 @@
 #include "base/posix/eintr_wrapper.h"
 #include "base/posix/unix_domain_socket_linux.h"
 #include "base/process/launch.h"
+#include "base/process/process_metrics.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
-#include "content/child/webkitplatformsupport_impl.h"
+#include "content/child/blink_platform_impl.h"
 #include "content/common/font_config_ipc_linux.h"
-#include "content/common/sandbox_linux.h"
+#include "content/common/sandbox_linux/sandbox_linux.h"
 #include "content/common/set_process_title.h"
 #include "content/public/common/content_switches.h"
+#include "ppapi/c/trusted/ppb_browser_font_trusted.h"
 #include "skia/ext/skia_utils_base.h"
+#include "third_party/WebKit/public/platform/linux/WebFontInfo.h"
 #include "third_party/WebKit/public/web/WebKit.h"
-#include "third_party/WebKit/public/web/linux/WebFontInfo.h"
 #include "third_party/npapi/bindings/npapi_extensions.h"
 #include "third_party/skia/include/ports/SkFontConfigInterface.h"
 #include "ui/gfx/font_render_params_linux.h"
 
-using WebKit::WebCString;
-using WebKit::WebFontInfo;
-using WebKit::WebUChar;
-using WebKit::WebUChar32;
+using blink::WebCString;
+using blink::WebFontInfo;
+using blink::WebUChar;
+using blink::WebUChar32;
 
 namespace content {
 
@@ -59,7 +61,7 @@ class SandboxIPCProcess  {
   // browser_socket: the browser's end of the sandbox IPC socketpair. From the
   //   point of view of the renderer, it's talking to the browser but this
   //   object actually services the requests.
-  // sandbox_cmd: the path of the sandbox executable
+  // sandbox_cmd: the path of the sandbox executable.
   SandboxIPCProcess(int lifeline_fd, int browser_socket,
                     std::string sandbox_cmd)
       : lifeline_fd_(lifeline_fd),
@@ -95,11 +97,13 @@ class SandboxIPCProcess  {
 
     int failed_polls = 0;
     for (;;) {
-      const int r = HANDLE_EINTR(poll(pfds, 2, -1));
-      if (r < 1) {
-        LOG(WARNING) << "poll errno:" << errno;
+      const int r = HANDLE_EINTR(poll(pfds, 2, -1 /* no timeout */));
+      // '0' is not a possible return value with no timeout.
+      DCHECK_NE(0, r);
+      if (r < 0) {
+        PLOG(WARNING) << "poll";
         if (failed_polls++ == 3) {
-          LOG(FATAL) << "poll failing. Sandbox host aborting.";
+          LOG(FATAL) << "poll(2) failing. RenderSandboxHostLinux aborting.";
           return;
         }
         continue;
@@ -240,7 +244,7 @@ class SandboxIPCProcess  {
     SendRendererReply(fds, reply, result_fd);
 
     if (result_fd >= 0) {
-      int err = HANDLE_EINTR(close(result_fd));
+      int err = IGNORE_EINTR(close(result_fd));
       DCHECK(!err);
     }
   }
@@ -260,7 +264,7 @@ class SandboxIPCProcess  {
     if (!pickle.ReadString(&iter, &preferred_locale))
       return;
 
-    WebKit::WebFontFamily family;
+    blink::WebFontFamily family;
     WebFontInfo::familyForChar(c, preferred_locale.c_str(), &family);
 
     Pickle reply;
@@ -286,7 +290,7 @@ class SandboxIPCProcess  {
     }
 
     EnsureWebKitInitialized();
-    WebKit::WebFontRenderStyle style;
+    blink::WebFontRenderStyle style;
     WebFontInfo::renderStyleForStrike(family.c_str(), sizeAndStyle, &style);
 
     Pickle reply;
@@ -391,22 +395,46 @@ class SandboxIPCProcess  {
 
     std::string face;
     bool is_bold, is_italic;
-    uint32 charset;
+    uint32 charset, fallback_family;
 
     if (!pickle.ReadString(&iter, &face) ||
         face.empty() ||
         !pickle.ReadBool(&iter, &is_bold) ||
         !pickle.ReadBool(&iter, &is_italic) ||
-        !pickle.ReadUInt32(&iter, &charset)) {
+        !pickle.ReadUInt32(&iter, &charset) ||
+        !pickle.ReadUInt32(&iter, &fallback_family)) {
       return;
     }
 
     FcLangSet* langset = FcLangSetCreate();
-    MSCharSetToFontconfig(langset, charset);
+    bool is_lgc = MSCharSetToFontconfig(langset, charset);
 
     FcPattern* pattern = FcPatternCreate();
-    // TODO(agl): FC_FAMILy needs to change
-    FcPatternAddString(pattern, FC_FAMILY, (FcChar8*) face.c_str());
+    FcPatternAddString(pattern, FC_FAMILY,
+                       reinterpret_cast<const FcChar8*>(face.c_str()));
+
+    // TODO(thestig) Check if we can access Chrome's per-script font preference
+    // here and select better default fonts for non-LGC case.
+    std::string generic_font_name;
+    if (is_lgc) {
+      switch (fallback_family) {
+        case PP_BROWSERFONT_TRUSTED_FAMILY_SERIF:
+          generic_font_name = "Times New Roman";
+          break;
+        case PP_BROWSERFONT_TRUSTED_FAMILY_SANSSERIF:
+          generic_font_name = "Arial";
+          break;
+        case PP_BROWSERFONT_TRUSTED_FAMILY_MONOSPACE:
+          generic_font_name = "Courier New";
+          break;
+      }
+    }
+    if (!generic_font_name.empty()) {
+      const FcChar8* fc_generic_font_name =
+          reinterpret_cast<const FcChar8*>(generic_font_name.c_str());
+      FcPatternAddString(pattern, FC_FAMILY, fc_generic_font_name);
+    }
+
     if (is_bold)
       FcPatternAddInteger(pattern, FC_WEIGHT, FC_WEIGHT_BOLD);
     if (is_italic)
@@ -515,14 +543,15 @@ class SandboxIPCProcess  {
     SendRendererReply(fds, reply, font_fd);
 
     if (font_fd >= 0) {
-      if (HANDLE_EINTR(close(font_fd)) < 0)
+      if (IGNORE_EINTR(close(font_fd)) < 0)
         PLOG(ERROR) << "close";
     }
   }
 
   // MSCharSetToFontconfig translates a Microsoft charset identifier to a
   // fontconfig language set by appending to |langset|.
-  static void MSCharSetToFontconfig(FcLangSet* langset, unsigned fdwCharSet) {
+  // Returns true if |langset| is Latin/Greek/Cyrillic.
+  static bool MSCharSetToFontconfig(FcLangSet* langset, unsigned fdwCharSet) {
     // We have need to translate raw fdwCharSet values into terms that
     // fontconfig can understand. (See the description of fdwCharSet in the MSDN
     // documentation for CreateFont:
@@ -541,6 +570,7 @@ class SandboxIPCProcess  {
     // So, for each of the documented fdwCharSet values I've had to take a
     // guess at the set of ISO 639-1 languages intended.
 
+    bool is_lgc = false;
     switch (fdwCharSet) {
       case NPCharsetAnsi:
       // These values I don't really know what to do with, so I'm going to map
@@ -549,23 +579,25 @@ class SandboxIPCProcess  {
       case NPCharsetMac:
       case NPCharsetOEM:
       case NPCharsetSymbol:
+        is_lgc = true;
         FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("en"));
         break;
       case NPCharsetBaltic:
         // The three baltic languages.
+        is_lgc = true;
         FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("et"));
         FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("lv"));
         FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("lt"));
         break;
-      // TODO(jungshik): Would we be better off mapping Big5 to zh-tw
-      // and GB2312 to zh-cn? Fontconfig has 4 separate orthography
-      // files (zh-{cn,tw,hk,mo}.
       case NPCharsetChineseBIG5:
+        FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("zh-tw"));
+        break;
       case NPCharsetGB2312:
-        FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("zh"));
+        FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("zh-cn"));
         break;
       case NPCharsetEastEurope:
         // A scattering of eastern European languages.
+        is_lgc = true;
         FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("pl"));
         FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("cs"));
         FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("sk"));
@@ -573,6 +605,7 @@ class SandboxIPCProcess  {
         FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("hr"));
         break;
       case NPCharsetGreek:
+        is_lgc = true;
         FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("el"));
         break;
       case NPCharsetHangul:
@@ -581,6 +614,7 @@ class SandboxIPCProcess  {
         FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("ko"));
         break;
       case NPCharsetRussian:
+        is_lgc = true;
         FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("ru"));
         break;
       case NPCharsetShiftJIS:
@@ -588,9 +622,11 @@ class SandboxIPCProcess  {
         FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("ja"));
         break;
       case NPCharsetTurkish:
+        is_lgc = true;
         FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("tr"));
         break;
       case NPCharsetVietnamese:
+        is_lgc = true;
         FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("vi"));
         break;
       case NPCharsetArabic:
@@ -606,6 +642,7 @@ class SandboxIPCProcess  {
       // Don't add any languages in that case that we don't recognise the
       // constant.
     }
+    return is_lgc;
   }
 
   void SendRendererReply(const std::vector<int>& fds, const Pickle& reply,
@@ -647,21 +684,21 @@ class SandboxIPCProcess  {
   const int lifeline_fd_;
   const int browser_socket_;
   std::vector<std::string> sandbox_cmd_;
-  scoped_ptr<WebKitPlatformSupportImpl> webkit_platform_support_;
+  scoped_ptr<BlinkPlatformImpl> webkit_platform_support_;
   SkTDArray<SkString*> paths_;
 };
 
 SandboxIPCProcess::~SandboxIPCProcess() {
   paths_.deleteAll();
   if (webkit_platform_support_)
-    WebKit::shutdownWithoutV8();
+    blink::shutdownWithoutV8();
 }
 
 void SandboxIPCProcess::EnsureWebKitInitialized() {
   if (webkit_platform_support_)
     return;
-  webkit_platform_support_.reset(new WebKitPlatformSupportImpl);
-  WebKit::initializeWithoutV8(webkit_platform_support_.get());
+  webkit_platform_support_.reset(new BlinkPlatformImpl);
+  blink::initializeWithoutV8(webkit_platform_support_.get());
 }
 
 // -----------------------------------------------------------------------------
@@ -707,11 +744,18 @@ void RenderSandboxHostLinux::Init(const std::string& sandbox_path) {
   const int child_lifeline_fd = pipefds[0];
   childs_lifeline_fd_ = pipefds[1];
 
+  // We need to be monothreaded before we fork().
+#if !defined(TOOLKIT_GTK) && !defined(THREAD_SANITIZER)
+  // Exclude gtk port as TestSuite in base/tests/test_suite.cc is calling
+  // gtk_init.
+  // TODO(oshima): Remove ifdef when above issues are resolved.
+  DCHECK_EQ(1, base::GetNumberOfThreads(base::GetCurrentProcessHandle()));
+#endif  // !defined(TOOLKIT_GTK) && !defined(THREAD_SANITIZER)
   pid_ = fork();
   if (pid_ == 0) {
-    if (HANDLE_EINTR(close(fds[0])) < 0)
+    if (IGNORE_EINTR(close(fds[0])) < 0)
       DPLOG(ERROR) << "close";
-    if (HANDLE_EINTR(close(pipefds[1])) < 0)
+    if (IGNORE_EINTR(close(pipefds[1])) < 0)
       DPLOG(ERROR) << "close";
 
     SandboxIPCProcess handler(child_lifeline_fd, browser_socket, sandbox_path);
@@ -722,9 +766,9 @@ void RenderSandboxHostLinux::Init(const std::string& sandbox_path) {
 
 RenderSandboxHostLinux::~RenderSandboxHostLinux() {
   if (initialized_) {
-    if (HANDLE_EINTR(close(renderer_socket_)) < 0)
+    if (IGNORE_EINTR(close(renderer_socket_)) < 0)
       PLOG(ERROR) << "close";
-    if (HANDLE_EINTR(close(childs_lifeline_fd_)) < 0)
+    if (IGNORE_EINTR(close(childs_lifeline_fd_)) < 0)
       PLOG(ERROR) << "close";
   }
 }

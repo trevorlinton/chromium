@@ -15,6 +15,8 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/image/image_skia.h"
 
+using base::ASCIIToUTF16;
+
 namespace {
 
 #if defined(OS_MACOSX)
@@ -30,10 +32,10 @@ class TestResource : public task_manager::Resource {
  public:
   TestResource() : refresh_called_(false) {}
 
-  virtual string16 GetTitle() const OVERRIDE {
+  virtual base::string16 GetTitle() const OVERRIDE {
     return ASCIIToUTF16("test title");
   }
-  virtual string16 GetProfileName() const OVERRIDE {
+  virtual base::string16 GetProfileName() const OVERRIDE {
     return ASCIIToUTF16("test profile");
   }
   virtual gfx::ImageSkia GetIcon() const OVERRIDE { return gfx::ImageSkia(); }

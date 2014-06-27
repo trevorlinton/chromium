@@ -7,40 +7,39 @@
 #include "chrome/browser/media/chrome_midi_permission_context.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
-#include "components/browser_context_keyed_service/browser_context_dependency_manager.h"
+#include "components/keyed_service/content/browser_context_dependency_manager.h"
 
 // static
-ChromeMIDIPermissionContext*
-ChromeMIDIPermissionContextFactory::GetForProfile(Profile* profile) {
-  return static_cast<ChromeMIDIPermissionContext*>(
+ChromeMidiPermissionContext*
+ChromeMidiPermissionContextFactory::GetForProfile(Profile* profile) {
+  return static_cast<ChromeMidiPermissionContext*>(
       GetInstance()->GetServiceForBrowserContext(profile, true));
 }
 
 // static
-ChromeMIDIPermissionContextFactory*
-ChromeMIDIPermissionContextFactory::GetInstance() {
-  return Singleton<ChromeMIDIPermissionContextFactory>::get();
+ChromeMidiPermissionContextFactory*
+ChromeMidiPermissionContextFactory::GetInstance() {
+  return Singleton<ChromeMidiPermissionContextFactory>::get();
 }
 
-ChromeMIDIPermissionContextFactory::
-ChromeMIDIPermissionContextFactory()
+ChromeMidiPermissionContextFactory::
+ChromeMidiPermissionContextFactory()
     : BrowserContextKeyedServiceFactory(
-          "ChromeMIDIPermissionContext",
+          "ChromeMidiPermissionContext",
           BrowserContextDependencyManager::GetInstance()) {
 }
 
-ChromeMIDIPermissionContextFactory::
-~ChromeMIDIPermissionContextFactory() {
+ChromeMidiPermissionContextFactory::
+~ChromeMidiPermissionContextFactory() {
 }
 
-BrowserContextKeyedService*
-ChromeMIDIPermissionContextFactory::BuildServiceInstanceFor(
+KeyedService* ChromeMidiPermissionContextFactory::BuildServiceInstanceFor(
     content::BrowserContext* profile) const {
-  return new ChromeMIDIPermissionContext(static_cast<Profile*>(profile));
+  return new ChromeMidiPermissionContext(static_cast<Profile*>(profile));
 }
 
 content::BrowserContext*
-ChromeMIDIPermissionContextFactory::GetBrowserContextToUse(
+ChromeMidiPermissionContextFactory::GetBrowserContextToUse(
     content::BrowserContext* context) const {
   return chrome::GetBrowserContextOwnInstanceInIncognito(context);
 }

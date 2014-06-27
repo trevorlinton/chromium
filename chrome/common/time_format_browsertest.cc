@@ -34,7 +34,9 @@ IN_PROC_BROWSER_TEST_F(TimeFormatBrowserTest, DecimalPointNotDot) {
   // This showed up on the browser on estimated download time, for example.
   // http://crbug.com/60476
 
-  string16 one_min =
-      ui::TimeFormat::TimeRemainingShort(TimeDelta::FromMinutes(1));
-  EXPECT_EQ(ASCIIToUTF16("1 min"), one_min);
+  base::string16 one_min =
+      ui::TimeFormat::Simple(ui::TimeFormat::FORMAT_DURATION,
+                             ui::TimeFormat::LENGTH_SHORT,
+                             TimeDelta::FromMinutes(1));
+  EXPECT_EQ(base::ASCIIToUTF16("1 min"), one_min);
 }

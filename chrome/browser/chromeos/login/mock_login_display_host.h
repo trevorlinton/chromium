@@ -8,6 +8,7 @@
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
 #include "chrome/browser/chromeos/login/login_display_host.h"
+#include "chrome/browser/ui/webui/chromeos/login/signin_screen_handler.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 namespace chromeos {
@@ -26,9 +27,7 @@ class MockLoginDisplayHost : public LoginDisplayHost {
   MOCK_METHOD0(OpenProxySettings, void(void));
   MOCK_METHOD1(SetStatusAreaVisible, void(bool));
   MOCK_METHOD0(ShowBackground, void(void));
-  MOCK_METHOD0(CheckForAutoEnrollment, void(void));
-  MOCK_METHOD1(GetAutoEnrollmentCheckResult, void(
-      const GetAutoEnrollmentCheckResultCallback& callback));
+  MOCK_METHOD0(GetAutoEnrollmentController, AutoEnrollmentController*(void));
   // GMock currently doesn't support move-only arguments, so we have
   // to use this hack here.
   MOCK_METHOD2(StartWizardPtr, void(const std::string&,
@@ -38,11 +37,12 @@ class MockLoginDisplayHost : public LoginDisplayHost {
   MOCK_METHOD0(GetWizardController, WizardController*(void));
   MOCK_METHOD0(GetAppLaunchController, AppLaunchController*(void));
   MOCK_METHOD1(StartUserAdding, void(const base::Closure&));
-  MOCK_METHOD0(StartSignInScreen, void(void));
+  MOCK_METHOD1(StartSignInScreen, void(const LoginScreenContext&));
   MOCK_METHOD0(ResumeSignInScreen, void(void));
   MOCK_METHOD0(OnPreferencesChanged, void(void));
   MOCK_METHOD0(PrewarmAuthentication, void(void));
-  MOCK_METHOD1(StartAppLaunch, void(const std::string&));
+  MOCK_METHOD2(StartAppLaunch, void(const std::string&, bool));
+  MOCK_METHOD0(StartDemoAppLaunch, void(void));
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockLoginDisplayHost);

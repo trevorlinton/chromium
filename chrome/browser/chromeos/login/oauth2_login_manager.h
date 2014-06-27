@@ -12,19 +12,21 @@
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/login/oauth2_login_verifier.h"
 #include "chrome/browser/chromeos/login/oauth2_token_fetcher.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service.h"
+#include "components/keyed_service/core/keyed_service.h"
+#include "google_apis/gaia/gaia_oauth_client.h"
 #include "google_apis/gaia/oauth2_token_service.h"
 #include "net/url_request/url_request_context_getter.h"
 
 class GoogleServiceAuthError;
 class Profile;
-class TokenService;
+class ProfileOAuth2TokenService;
 
 namespace chromeos {
 
 // This class is responsible for restoring authenticated web sessions out of
 // OAuth2 refresh tokens or pre-authenticated cookie jar.
-class OAuth2LoginManager : public BrowserContextKeyedService,
+class OAuth2LoginManager : public KeyedService,
+                           public gaia::GaiaOAuthClient::Delegate,
                            public OAuth2LoginVerifier::Delegate,
                            public OAuth2TokenFetcher::Delegate,
                            public OAuth2TokenService::Observer {
@@ -96,6 +98,9 @@ class OAuth2LoginManager : public BrowserContextKeyedService,
   // Continues session restore after transient network errors.
   void ContinueSessionRestore();
 
+  // Start resporting session from saved OAuth2 refresh token.
+  void RestoreSessionFromSavedTokens();
+
   // Stops all background authentication requests.
   void Stop();
 
@@ -110,27 +115,50 @@ class OAuth2LoginManager : public BrowserContextKeyedService,
 
  private:
   friend class MergeSessionLoadPageTest;
+  friend class OAuth2Test;
 
   // Session restore outcomes (for UMA).
-  enum {
+  enum SessionRestoreOutcome {
     SESSION_RESTORE_UNDEFINED = 0,
     SESSION_RESTORE_SUCCESS = 1,
     SESSION_RESTORE_TOKEN_FETCH_FAILED = 2,
     SESSION_RESTORE_NO_REFRESH_TOKEN_FAILED = 3,
     SESSION_RESTORE_OAUTHLOGIN_FAILED = 4,
     SESSION_RESTORE_MERGE_SESSION_FAILED = 5,
-    SESSION_RESTORE_COUNT = SESSION_RESTORE_MERGE_SESSION_FAILED,
+    SESSION_RESTORE_LISTACCOUNTS_FAILED = 6,
+    SESSION_RESTORE_NOT_NEEDED = 7,
+    SESSION_RESTORE_COUNT = 8,
   };
 
-  // BrowserContextKeyedService implementation.
+  // Outcomes of post-merge session verification.
+  // This enum is used for an UMA histogram, and hence new items should only be
+  // appended at the end.
+  enum MergeVerificationOutcome {
+    POST_MERGE_UNDEFINED  = 0,
+    POST_MERGE_SUCCESS = 1,
+    POST_MERGE_NO_ACCOUNTS = 2,
+    POST_MERGE_MISSING_PRIMARY_ACCOUNT = 3,
+    POST_MERGE_PRIMARY_NOT_FIRST_ACCOUNT = 4,
+    POST_MERGE_VERIFICATION_FAILED = 5,
+    POST_MERGE_CONNECTION_FAILED = 6,
+    POST_MERGE_COUNT = 7,
+  };
+
+  // KeyedService implementation.
   virtual void Shutdown() OVERRIDE;
 
+  // gaia::GaiaOAuthClient::Delegate overrides.
+  virtual void OnRefreshTokenResponse(const std::string& access_token,
+                                      int expires_in_seconds) OVERRIDE;
+  virtual void OnGetUserEmailResponse(const std::string& user_email) OVERRIDE;
+  virtual void OnOAuthError() OVERRIDE;
+  virtual void OnNetworkError(int response_code) OVERRIDE;
+
   // OAuth2LoginVerifier::Delegate overrides.
-  virtual void OnOAuthLoginSuccess(
-      const GaiaAuthConsumer::ClientLoginResult& gaia_credentials) OVERRIDE;
-  virtual void OnOAuthLoginFailure(bool connection_error) OVERRIDE;
   virtual void OnSessionMergeSuccess() OVERRIDE;
   virtual void OnSessionMergeFailure(bool connection_error) OVERRIDE;
+  virtual void OnListAccountsSuccess(const std::string& data) OVERRIDE;
+  virtual void OnListAccountsFailure(bool connection_error) OVERRIDE;
 
   // OAuth2TokenFetcher::Delegate overrides.
   virtual void OnOAuth2TokensAvailable(
@@ -141,20 +169,23 @@ class OAuth2LoginManager : public BrowserContextKeyedService,
   virtual void OnRefreshTokenAvailable(const std::string& account_id) OVERRIDE;
 
   // Signals delegate that authentication is completed, kicks off token fetching
-  // process in TokenService.
+  // process.
   void CompleteAuthentication();
 
-  // Retrieves TokenService for |user_profile_| and sets up notification
-  // observer events.
-  TokenService* SetupTokenService();
+  // Retrieves ProfileOAuth2TokenService for |user_profile_|.
+  ProfileOAuth2TokenService* GetTokenService();
 
-  // Records OAuth2 tokens fetched through cookies-to-token exchange into
-  // TokenService.
-  void StoreOAuth2Tokens(
-      const GaiaAuthConsumer::ClientOAuthResult& oauth2_tokens);
+  // Retrieves the primary account for |user_profile_|.
+  const std::string& GetPrimaryAccountId();
 
-  // Loads previously stored OAuth2 tokens and kicks off its validation.
-  void LoadAndVerifyOAuth2Tokens();
+  // Records |refresh_token_| to token service. The associated account id is
+  // assumed to be the primary account id of the user profile. If the primary
+  // account id is not present, GetAccountIdOfRefreshToken will be called to
+  // retrieve the associated account id.
+  void StoreOAuth2Token();
+
+  // Get the account id corresponding to the specified refresh token.
+  void GetAccountIdOfRefreshToken(const std::string& refresh_token);
 
   // Attempts to fetch OAuth2 tokens by using pre-authenticated cookie jar from
   // provided |auth_profile|.
@@ -163,6 +194,10 @@ class OAuth2LoginManager : public BrowserContextKeyedService,
   // Reports when all tokens are loaded.
   void ReportOAuth2TokensLoaded();
 
+  // Checks if primary account sessions cookies are stale and restores them
+  // if needed.
+  void VerifySessionCookies();
+
   // Issue GAIA cookie recovery (MergeSession) from |refresh_token_|.
   void RestoreSessionCookies();
 
@@ -170,30 +205,38 @@ class OAuth2LoginManager : public BrowserContextKeyedService,
   // re-attempted.
   bool RetryOnError(const GoogleServiceAuthError& error);
 
-  // On successfuly OAuthLogin, starts token service token fetching process.
-  void StartTokenService(
-      const GaiaAuthConsumer::ClientLoginResult& gaia_credentials);
-
   // Changes |state_|, if needed fires observers (OnSessionRestoreStateChanged).
   void SetSessionRestoreState(SessionRestoreState state);
 
   // Testing helper.
   void SetSessionRestoreStartForTesting(const base::Time& time);
 
+  // Records |outcome| of session restore process and sets new |state|.
+  void RecordSessionRestoreOutcome(SessionRestoreOutcome outcome,
+                                   SessionRestoreState state);
+
+  // Records |outcome| of merge verification check. |is_pre_merge| specifies
+  // if this is pre or post merge session verification.
+  static void RecordCookiesCheckOutcome(
+      bool is_pre_merge,
+      MergeVerificationOutcome outcome);
+
   // Keeps the track if we have already reported OAuth2 token being loaded
-  // by TokenService.
+  // by OAuth2TokenService.
   Profile* user_profile_;
   scoped_refptr<net::URLRequestContextGetter> auth_request_context_;
   SessionRestoreStrategy restore_strategy_;
   SessionRestoreState state_;
 
-  bool loading_reported_;
-
   scoped_ptr<OAuth2TokenFetcher> oauth2_token_fetcher_;
   scoped_ptr<OAuth2LoginVerifier> login_verifier_;
+  scoped_ptr<gaia::GaiaOAuthClient> account_id_fetcher_;
 
   // OAuth2 refresh token.
   std::string refresh_token_;
+
+  // OAuthLogin scoped access token.
+  std::string oauthlogin_access_token_;
 
   // Authorization code for fetching OAuth2 tokens.
   std::string auth_code_;

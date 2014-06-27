@@ -13,9 +13,9 @@
 #include "ui/app_list/search_result.h"
 #include "ui/app_list/test/app_list_test_model.h"
 #include "ui/base/models/simple_menu_model.h"
-#import "ui/base/test/ui_cocoa_test_helper.h"
+#import "ui/events/test/cocoa_test_event_utils.h"
 #include "ui/gfx/image/image_skia_util_mac.h"
-#import "ui/base/test/cocoa_test_event_utils.h"
+#import "ui/gfx/test/ui_cocoa_test_helper.h"
 
 @interface TestAppsSearchResultsDelegate : NSObject<AppsSearchResultsDelegate> {
  @private
@@ -26,6 +26,8 @@
 
 @property(readonly, nonatomic) app_list::SearchResult* lastOpenedResult;
 @property(readonly, nonatomic) int redoSearchCount;
+
+- (void)quitMessageLoop;
 
 @end
 
@@ -46,6 +48,10 @@
   ++redoSearchCount_;
 }
 
+- (void)quitMessageLoop {
+  base::MessageLoop::current()->QuitNow();
+}
+
 @end
 
 namespace app_list {
@@ -59,9 +65,9 @@ class SearchResultWithMenu : public SearchResult {
   SearchResultWithMenu(const std::string& title, const std::string& details)
       : menu_model_(NULL),
         menu_ready_(true) {
-    set_title(ASCIIToUTF16(title));
-    set_details(ASCIIToUTF16(details));
-    menu_model_.AddItem(0, UTF8ToUTF16("Menu For: " + title));
+    set_title(base::ASCIIToUTF16(title));
+    set_details(base::ASCIIToUTF16(details));
+    menu_model_.AddItem(0, base::UTF8ToUTF16("Menu For: " + title));
   }
 
   void SetMenuReadyForTesting(bool ready) {
@@ -140,7 +146,7 @@ void AppsSearchResultsControllerTest::ExpectConsistent() {
     SearchResult* result = ModelResultAt(i);
     base::string16 string_in_model = result->title();
     if (!result->details().empty())
-      string_in_model += ASCIIToUTF16("\n") + result->details();
+      string_in_model += base::ASCIIToUTF16("\n") + result->details();
     EXPECT_NSEQ(base::SysUTF16ToNSString(string_in_model),
                 [[ViewResultAt(i) attributedStringValue] string]);
   }
@@ -295,12 +301,13 @@ TEST_F(AppsSearchResultsControllerTest, ContextMenus) {
 }
 
 // Test that observing a search result item uninstall performs the search again.
-// Disabled due to failure on 10.6 http://crbug.com/308828 - 10.7 is OK.
-TEST_F(AppsSearchResultsControllerTest, DISABLED_UninstallRedperformsSearch) {
+TEST_F(AppsSearchResultsControllerTest, UninstallReperformsSearch) {
   base::MessageLoopForUI message_loop;
   EXPECT_EQ(0, [delegate_ redoSearchCount]);
   ModelResultAt(0)->NotifyItemUninstalled();
-  message_loop.PostTask(FROM_HERE, base::MessageLoop::QuitClosure());
+  [delegate_ performSelector:@selector(quitMessageLoop)
+                  withObject:nil
+                  afterDelay:0];
   message_loop.Run();
   EXPECT_EQ(1, [delegate_ redoSearchCount]);
 }

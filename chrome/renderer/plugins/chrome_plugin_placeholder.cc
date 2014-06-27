@@ -12,31 +12,33 @@
 #include "chrome/renderer/custom_menu_commands.h"
 #include "chrome/renderer/plugins/plugin_uma.h"
 #include "content/public/common/context_menu_params.h"
+#include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_thread.h"
-#include "content/public/renderer/render_view.h"
+#include "gin/handle.h"
+#include "gin/object_template_builder.h"
 #include "grit/generated_resources.h"
 #include "grit/renderer_resources.h"
 #include "grit/webkit_strings.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
 #include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "third_party/WebKit/public/web/WebKit.h"
 #include "third_party/WebKit/public/web/WebScriptSource.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/webui/jstemplate_builder.h"
 
+using base::UserMetricsAction;
+using blink::WebDocument;
+using blink::WebElement;
+using blink::WebFrame;
+using blink::WebMouseEvent;
+using blink::WebNode;
+using blink::WebPlugin;
+using blink::WebPluginContainer;
+using blink::WebPluginParams;
 using content::RenderThread;
 using content::RenderView;
-using WebKit::WebDocument;
-using WebKit::WebElement;
-using WebKit::WebFrame;
-using WebKit::WebMouseEvent;
-using WebKit::WebNode;
-using WebKit::WebPlugin;
-using WebKit::WebPluginContainer;
-using WebKit::WebPluginParams;
-using webkit_glue::CppArgumentList;
-using webkit_glue::CppVariant;
 
 namespace {
 const plugins::PluginPlaceholder* g_last_active_menu = NULL;
@@ -46,12 +48,12 @@ const char ChromePluginPlaceholder::kPluginPlaceholderDataURL[] =
     "chrome://pluginplaceholderdata/";
 
 ChromePluginPlaceholder::ChromePluginPlaceholder(
-    content::RenderView* render_view,
-    WebKit::WebFrame* frame,
-    const WebKit::WebPluginParams& params,
+    content::RenderFrame* render_frame,
+    blink::WebFrame* frame,
+    const blink::WebPluginParams& params,
     const std::string& html_data,
-    const string16& title)
-    : plugins::PluginPlaceholder(render_view,
+    const base::string16& title)
+    : plugins::PluginPlaceholder(render_frame,
                                  frame,
                                  params,
                                  html_data,
@@ -68,8 +70,8 @@ ChromePluginPlaceholder::ChromePluginPlaceholder(
 
 ChromePluginPlaceholder::~ChromePluginPlaceholder() {
   RenderThread::Get()->RemoveObserver(this);
-  if (context_menu_request_id_)
-    render_view()->CancelContextMenu(context_menu_request_id_);
+  if (context_menu_request_id_ && render_frame())
+    render_frame()->CancelContextMenu(context_menu_request_id_);
 
 #if defined(ENABLE_PLUGIN_INSTALLATION)
   if (placeholder_routing_id_ == MSG_ROUTING_NONE)
@@ -84,7 +86,7 @@ ChromePluginPlaceholder::~ChromePluginPlaceholder() {
 
 // static
 ChromePluginPlaceholder* ChromePluginPlaceholder::CreateMissingPlugin(
-    RenderView* render_view,
+    content::RenderFrame* render_frame,
     WebFrame* frame,
     const WebPluginParams& params) {
   const base::StringPiece template_html(
@@ -103,7 +105,7 @@ ChromePluginPlaceholder* ChromePluginPlaceholder::CreateMissingPlugin(
 
   // |missing_plugin| will destroy itself when its WebViewPlugin is going away.
   ChromePluginPlaceholder* missing_plugin = new ChromePluginPlaceholder(
-      render_view, frame, params, html_data, params.mimeType);
+      render_frame, frame, params, html_data, params.mimeType);
   missing_plugin->set_allow_loading(true);
 #if defined(ENABLE_PLUGIN_INSTALLATION)
   RenderThread::Get()->Send(
@@ -116,7 +118,7 @@ ChromePluginPlaceholder* ChromePluginPlaceholder::CreateMissingPlugin(
 
 // static
 ChromePluginPlaceholder* ChromePluginPlaceholder::CreateErrorPlugin(
-    RenderView* render_view,
+    content::RenderFrame* render_frame,
     const base::FilePath& file_path) {
   base::DictionaryValue values;
   values.SetString("message",
@@ -130,7 +132,7 @@ ChromePluginPlaceholder* ChromePluginPlaceholder::CreateErrorPlugin(
   WebPluginParams params;
   // |missing_plugin| will destroy itself when its WebViewPlugin is going away.
   ChromePluginPlaceholder* plugin = new ChromePluginPlaceholder(
-      render_view, NULL, params, html_data, params.mimeType);
+      render_frame, NULL, params, html_data, params.mimeType);
 
   RenderThread::Get()->Send(new ChromeViewHostMsg_CouldNotLoadPlugin(
       plugin->routing_id(), file_path));
@@ -139,14 +141,14 @@ ChromePluginPlaceholder* ChromePluginPlaceholder::CreateErrorPlugin(
 
 // static
 ChromePluginPlaceholder* ChromePluginPlaceholder::CreateBlockedPlugin(
-    RenderView* render_view,
+    content::RenderFrame* render_frame,
     WebFrame* frame,
     const WebPluginParams& params,
     const content::WebPluginInfo& plugin,
     const std::string& identifier,
-    const string16& name,
+    const base::string16& name,
     int template_id,
-    const string16& message) {
+    const base::string16& message) {
   base::DictionaryValue values;
   values.SetString("message", message);
   values.SetString("name", name);
@@ -160,8 +162,8 @@ ChromePluginPlaceholder* ChromePluginPlaceholder::CreateBlockedPlugin(
   std::string html_data = webui::GetI18nTemplateHtml(template_html, &values);
 
   // |blocked_plugin| will destroy itself when its WebViewPlugin is going away.
-  ChromePluginPlaceholder* blocked_plugin =
-      new ChromePluginPlaceholder(render_view, frame, params, html_data, name);
+  ChromePluginPlaceholder* blocked_plugin = new ChromePluginPlaceholder(
+      render_frame, frame, params, html_data, name);
   blocked_plugin->SetPluginInfo(plugin);
   blocked_plugin->SetIdentifier(identifier);
   return blocked_plugin;
@@ -184,29 +186,29 @@ bool ChromePluginPlaceholder::OnMessageReceived(const IPC::Message& message) {
 #if defined(ENABLE_PLUGIN_INSTALLATION)
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP(ChromePluginPlaceholder, message)
-  IPC_MESSAGE_HANDLER(ChromeViewMsg_FoundMissingPlugin, OnFoundMissingPlugin)
-  IPC_MESSAGE_HANDLER(ChromeViewMsg_DidNotFindMissingPlugin,
-                      OnDidNotFindMissingPlugin)
-  IPC_MESSAGE_HANDLER(ChromeViewMsg_StartedDownloadingPlugin,
-                      OnStartedDownloadingPlugin)
-  IPC_MESSAGE_HANDLER(ChromeViewMsg_FinishedDownloadingPlugin,
-                      OnFinishedDownloadingPlugin)
-  IPC_MESSAGE_HANDLER(ChromeViewMsg_ErrorDownloadingPlugin,
-                      OnErrorDownloadingPlugin)
-  IPC_MESSAGE_HANDLER(ChromeViewMsg_CancelledDownloadingPlugin,
-                      OnCancelledDownloadingPlugin)
-  IPC_MESSAGE_UNHANDLED(handled = false)
+    IPC_MESSAGE_HANDLER(ChromeViewMsg_FoundMissingPlugin, OnFoundMissingPlugin)
+    IPC_MESSAGE_HANDLER(ChromeViewMsg_DidNotFindMissingPlugin,
+                        OnDidNotFindMissingPlugin)
+    IPC_MESSAGE_HANDLER(ChromeViewMsg_StartedDownloadingPlugin,
+                        OnStartedDownloadingPlugin)
+    IPC_MESSAGE_HANDLER(ChromeViewMsg_FinishedDownloadingPlugin,
+                        OnFinishedDownloadingPlugin)
+    IPC_MESSAGE_HANDLER(ChromeViewMsg_ErrorDownloadingPlugin,
+                        OnErrorDownloadingPlugin)
+    IPC_MESSAGE_HANDLER(ChromeViewMsg_CancelledDownloadingPlugin,
+                        OnCancelledDownloadingPlugin)
+    IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
 
   if (handled)
     return true;
 #endif
 
-  // We don't swallow these messages because multiple blocked plugins have an
-  // interest in them.
+  // We don't swallow these messages because multiple blocked plugins and other
+  // objects have an interest in them.
   IPC_BEGIN_MESSAGE_MAP(ChromePluginPlaceholder, message)
-  IPC_MESSAGE_HANDLER(ChromeViewMsg_LoadBlockedPlugins, OnLoadBlockedPlugins)
-  IPC_MESSAGE_HANDLER(PrerenderMsg_SetIsPrerendering, OnSetIsPrerendering)
+    IPC_MESSAGE_HANDLER(PrerenderMsg_SetIsPrerendering, OnSetIsPrerendering)
+    IPC_MESSAGE_HANDLER(ChromeViewMsg_LoadBlockedPlugins, OnLoadBlockedPlugins)
   IPC_END_MESSAGE_MAP()
 
   return false;
@@ -217,9 +219,7 @@ void ChromePluginPlaceholder::OnLoadBlockedPlugins(
   plugins::PluginPlaceholder::OnLoadBlockedPlugins(identifier);
 }
 
-void ChromePluginPlaceholder::OpenAboutPluginsCallback(
-    const CppArgumentList& args,
-    CppVariant* result) {
+void ChromePluginPlaceholder::OpenAboutPluginsCallback() {
   RenderThread::Get()->Send(
       new ChromeViewHostMsg_OpenAboutPlugins(routing_id()));
 }
@@ -234,7 +234,7 @@ void ChromePluginPlaceholder::OnDidNotFindMissingPlugin() {
 }
 
 void ChromePluginPlaceholder::OnFoundMissingPlugin(
-    const string16& plugin_name) {
+    const base::string16& plugin_name) {
   if (status_->value == ChromeViewHostMsg_GetPluginInfo_Status::kNotFound)
     SetMessage(l10n_util::GetStringFUTF16(IDS_PLUGIN_FOUND, plugin_name));
   has_host_ = true;
@@ -256,7 +256,7 @@ void ChromePluginPlaceholder::OnFinishedDownloadingPlugin() {
 void ChromePluginPlaceholder::OnErrorDownloadingPlugin(
     const std::string& error) {
   SetMessage(l10n_util::GetStringFUTF16(IDS_PLUGIN_DOWNLOAD_ERROR,
-                                        UTF8ToUTF16(error)));
+                                        base::UTF8ToUTF16(error)));
 }
 
 void ChromePluginPlaceholder::OnCancelledDownloadingPlugin() {
@@ -266,7 +266,7 @@ void ChromePluginPlaceholder::OnCancelledDownloadingPlugin() {
 #endif  // defined(ENABLE_PLUGIN_INSTALLATION)
 
 void ChromePluginPlaceholder::PluginListChanged() {
-  if (!GetFrame())
+  if (!GetFrame() || !plugin())
     return;
   WebDocument document = GetFrame()->top()->document();
   if (document.isNull())
@@ -274,7 +274,7 @@ void ChromePluginPlaceholder::PluginListChanged() {
 
   ChromeViewHostMsg_GetPluginInfo_Output output;
   std::string mime_type(GetPluginParams().mimeType.utf8());
-  render_view()->Send(
+  render_frame()->Send(
       new ChromeViewHostMsg_GetPluginInfo(routing_id(),
                                           GURL(GetPluginParams().url),
                                           document.url(),
@@ -282,8 +282,8 @@ void ChromePluginPlaceholder::PluginListChanged() {
                                           &output));
   if (output.status.value == status_->value)
     return;
-  WebPlugin* new_plugin = chrome::ChromeContentRendererClient::CreatePlugin(
-      render_view(), GetFrame(), GetPluginParams(), output);
+  WebPlugin* new_plugin = ChromeContentRendererClient::CreatePlugin(
+      render_frame(),  GetFrame(), GetPluginParams(), output);
   ReplacePlugin(new_plugin);
   if (!new_plugin) {
     PluginUMAReporter::GetInstance()->ReportPluginMissing(
@@ -297,12 +297,12 @@ void ChromePluginPlaceholder::OnMenuAction(int request_id, unsigned action) {
     return;
   switch (action) {
     case chrome::MENU_COMMAND_PLUGIN_RUN: {
-      RenderThread::Get()->RecordUserMetrics("Plugin_Load_Menu");
+      RenderThread::Get()->RecordAction(UserMetricsAction("Plugin_Load_Menu"));
       LoadPlugin();
       break;
     }
     case chrome::MENU_COMMAND_PLUGIN_HIDE: {
-      RenderThread::Get()->RecordUserMetrics("Plugin_Hide_Menu");
+      RenderThread::Get()->RecordAction(UserMetricsAction("Plugin_Hide_Menu"));
       HidePlugin();
       break;
     }
@@ -317,6 +317,7 @@ void ChromePluginPlaceholder::OnMenuClosed(int request_id) {
 }
 
 void ChromePluginPlaceholder::ShowContextMenu(const WebMouseEvent& event) {
+#if !defined(OS_ANDROID)  // The context menu is not applicable on Android.
   if (context_menu_request_id_)
     return;  // Don't allow nested context menu requests.
 
@@ -348,13 +349,25 @@ void ChromePluginPlaceholder::ShowContextMenu(const WebMouseEvent& event) {
   params.x = event.windowX;
   params.y = event.windowY;
 
-  context_menu_request_id_ = render_view()->ShowContextMenu(this, params);
+  context_menu_request_id_ = render_frame()->ShowContextMenu(this, params);
   g_last_active_menu = this;
+#endif  // OS_ANDROID
 }
 
-void ChromePluginPlaceholder::BindWebFrame(WebKit::WebFrame* frame) {
-  plugins::PluginPlaceholder::BindWebFrame(frame);
-  BindCallback("openAboutPlugins",
-               base::Bind(&ChromePluginPlaceholder::OpenAboutPluginsCallback,
-                          base::Unretained(this)));
+void ChromePluginPlaceholder::BindWebFrame(blink::WebFrame* frame) {
+  v8::Isolate* isolate = blink::mainThreadIsolate();
+  v8::HandleScope handle_scope(isolate);
+  v8::Handle<v8::Context> context = frame->mainWorldScriptContext();
+  DCHECK(!context.IsEmpty());
+
+  v8::Context::Scope context_scope(context);
+  v8::Handle<v8::Object> global = context->Global();
+  global->Set(gin::StringToV8(isolate, "plugin"),
+              gin::CreateHandle(isolate, this).ToV8());
+}
+
+gin::ObjectTemplateBuilder ChromePluginPlaceholder::GetObjectTemplateBuilder(
+    v8::Isolate* isolate) {
+  return PluginPlaceholder::GetObjectTemplateBuilder(isolate).SetMethod(
+      "openAboutPlugins", &ChromePluginPlaceholder::OpenAboutPluginsCallback);
 }

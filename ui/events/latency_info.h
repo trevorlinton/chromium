@@ -5,12 +5,13 @@
 #ifndef UI_EVENTS_LATENCY_INFO_H_
 #define UI_EVENTS_LATENCY_INFO_H_
 
-#include <map>
 #include <utility>
+#include <vector>
 
 #include "base/basictypes.h"
+#include "base/containers/small_map.h"
 #include "base/time/time.h"
-#include "ui/events/events_export.h"
+#include "ui/events/events_base_export.h"
 
 namespace ui {
 
@@ -38,6 +39,9 @@ enum LatencyComponentType {
   INPUT_EVENT_LATENCY_RENDERING_SCHEDULED_COMPONENT,
   // Timestamp when the touch event is acked.
   INPUT_EVENT_LATENCY_ACKED_TOUCH_COMPONENT,
+  // Frame number when a window snapshot was requested. The snapshot
+  // is taken when the rendering results actually reach the screen.
+  WINDOW_SNAPSHOT_FRAME_NUMBER_COMPONENT,
   // ---------------------------TERMINAL COMPONENT-----------------------------
   // TERMINAL COMPONENT is when we show the latency end in chrome://tracing.
   // Timestamp when the mouse event is acked from renderer and it does not
@@ -52,12 +56,19 @@ enum LatencyComponentType {
   // Timestamp when the frame is swapped (i.e. when the rendering caused by
   // input event actually takes effect).
   INPUT_EVENT_LATENCY_TERMINATED_FRAME_SWAP_COMPONENT,
-  // Frame number when a window snapshot was requested. The snapshot
-  // is taken when the rendering results actually reach the screen.
-  WINDOW_SNAPSHOT_FRAME_NUMBER_COMPONENT
+  // This component indicates that the input causes a commit to be scheduled
+  // but the commit failed.
+  INPUT_EVENT_LATENCY_TERMINATED_COMMIT_FAILED_COMPONENT,
+  // This component indicates that the input causes a swap to be scheduled
+  // but the swap failed.
+  INPUT_EVENT_LATENCY_TERMINATED_SWAP_FAILED_COMPONENT,
+  // This component indicates that the cached LatencyInfo number exceeds the
+  // maximal allowed size.
+  LATENCY_INFO_LIST_TERMINATED_OVERFLOW_COMPONENT,
+  LATENCY_COMPONENT_TYPE_LAST = LATENCY_INFO_LIST_TERMINATED_OVERFLOW_COMPONENT
 };
 
-struct EVENTS_EXPORT LatencyInfo {
+struct EVENTS_BASE_EXPORT LatencyInfo {
   struct LatencyComponent {
     // Nondecreasing number that can be used to determine what events happened
     // in the component at the time this struct was sent on to the next
@@ -69,17 +80,31 @@ struct EVENTS_EXPORT LatencyInfo {
     uint32 event_count;
   };
 
+  // Empirically determined constant based on a typical scroll sequence.
+  enum { kTypicalMaxComponentsPerLatencyInfo = 6 };
+
   // Map a Latency Component (with a component-specific int64 id) to a
   // component info.
-  typedef std::map<std::pair<LatencyComponentType, int64>, LatencyComponent>
-      LatencyMap;
+  typedef base::SmallMap<
+      std::map<std::pair<LatencyComponentType, int64>, LatencyComponent>,
+      kTypicalMaxComponentsPerLatencyInfo> LatencyMap;
 
   LatencyInfo();
 
   ~LatencyInfo();
 
-  // Merges the contents of another LatencyInfo into this one.
-  void MergeWith(const LatencyInfo& other);
+  // Returns true if the vector |latency_info| is valid. Returns false
+  // if it is not valid and log the |referring_msg|.
+  // This function is mainly used to check the latency_info vector that
+  // is passed between processes using IPC message has reasonable size
+  // so that we are confident the IPC message is not corrupted/compromised.
+  // This check will go away once the IPC system has better built-in scheme
+  // for corruption/compromise detection.
+  static bool Verify(const std::vector<LatencyInfo>& latency_info,
+                     const char* referring_msg);
+
+  // Copy LatencyComponents with type |type| from |other| into |this|.
+  void CopyLatencyFrom(const LatencyInfo& other, LatencyComponentType type);
 
   // Add LatencyComponents that are in |other| but not in |this|.
   void AddNewLatencyFrom(const LatencyInfo& other);
@@ -92,13 +117,11 @@ struct EVENTS_EXPORT LatencyInfo {
 
   // Modifies the current sequence number and adds a certain number of events
   // for a specific component.
-  // TODO(miletus): Remove the |dump_to_trace| once we remove MergeWith().
   void AddLatencyNumberWithTimestamp(LatencyComponentType component,
                                      int64 id,
                                      int64 component_sequence_number,
                                      base::TimeTicks time,
-                                     uint32 event_count,
-                                     bool dump_to_trace);
+                                     uint32 event_count);
 
   // Returns true if the a component with |type| and |id| is found in
   // the latency_components and the component is stored to |output| if
@@ -107,7 +130,12 @@ struct EVENTS_EXPORT LatencyInfo {
                    int64 id,
                    LatencyComponent* output) const;
 
+  void RemoveLatency(LatencyComponentType type);
+
   void Clear();
+
+  // Records the |event_type| in trace buffer as TRACE_EVENT_ASYNC_STEP.
+  void TraceEventType(const char* event_type);
 
   LatencyMap latency_components;
   // The unique id for matching the ASYNC_BEGIN/END trace event.

@@ -25,6 +25,8 @@
 using content::BrowserThread;
 using content::GpuDataManager;
 
+namespace component_updater {
+
 namespace {
 
 // CRX hash. The extension id is: nhfgdggnnopgbfdlpeoalgcjdgfafocg.
@@ -91,8 +93,6 @@ void RegisterSwiftShaderWithChrome(const base::FilePath& path) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   GpuDataManager::GetInstance()->RegisterSwiftShaderPath(path);
 }
-
-}  // namespace
 
 class SwiftShaderComponentInstaller : public ComponentInstaller {
  public:
@@ -203,13 +203,15 @@ void UpdateChecker::OnGpuInfoUpdate() {
   }
 }
 
+#if defined(ENABLE_SWIFTSHADER)
+
 // Check if there already is a version of swiftshader installed,
 // and if so register it.
 void RegisterSwiftShaderPath(ComponentUpdateService* cus) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE));
   base::FilePath path = GetSwiftShaderBaseDirectory();
   if (!base::PathExists(path)) {
-    if (!file_util::CreateDirectory(path)) {
+    if (!base::CreateDirectory(path)) {
       NOTREACHED() << "Could not create SwiftShader directory.";
       return;
     }
@@ -234,6 +236,10 @@ void RegisterSwiftShaderPath(ComponentUpdateService* cus) {
   }
 }
 
+#endif  // ENABLE_SWIFTSHADER
+
+}  // namespace
+
 void RegisterSwiftShaderComponent(ComponentUpdateService* cus) {
 #if defined(ENABLE_SWIFTSHADER)
   base::CPU cpu;
@@ -244,3 +250,6 @@ void RegisterSwiftShaderComponent(ComponentUpdateService* cus) {
       base::Bind(&RegisterSwiftShaderPath, cus));
 #endif
 }
+
+}  // namespace component_updater
+

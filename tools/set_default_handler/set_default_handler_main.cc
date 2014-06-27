@@ -33,23 +33,21 @@ int wmain(int argc, wchar_t* argv[]) {
   base::AtExitManager exit_manager;
   logging::LoggingSettings settings;
   settings.logging_dest = logging::LOG_TO_SYSTEM_DEBUG_LOG;
-  settings.dcheck_state =
-      logging::ENABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS;
   logging::InitLogging(settings);
   logging::SetMinLogLevel(logging::LOG_VERBOSE);
 
   ui::win::CreateATLModuleIfNeeded();
 
   CommandLine* command_line = CommandLine::ForCurrentProcess();
-  string16 protocol(command_line->GetSwitchValueNative(kSwitchProtocol));
+  base::string16 protocol(command_line->GetSwitchValueNative(kSwitchProtocol));
   if (protocol.empty())
     protocol = kDefaultProtocol;
 
-  string16 program(command_line->GetSwitchValueNative(kSwitchProgram));
+  base::string16 program(command_line->GetSwitchValueNative(kSwitchProgram));
   if (program.empty())
     program = kDefaultProgram;
 
-  std::vector<string16> choices;
+  std::vector<base::string16> choices;
   HRESULT result = S_OK;
   win8::OpenWithDialogController controller;
   result = controller.RunSynchronously(NULL, protocol, program, &choices);

@@ -12,13 +12,13 @@
 
 #include "base/memory/shared_memory.h"
 #include "base/timer/timer.h"
-#include "chrome/common/extensions/extension_set.h"
 #include "chrome/renderer/extensions/chrome_v8_context.h"
 #include "chrome/renderer/extensions/chrome_v8_context_set.h"
 #include "chrome/renderer/extensions/v8_schema_registry.h"
 #include "chrome/renderer/resource_bundle_source_map.h"
 #include "content/public/renderer/render_process_observer.h"
 #include "extensions/common/event_filter.h"
+#include "extensions/common/extension_set.h"
 #include "extensions/common/extensions_client.h"
 #include "extensions/common/features/feature.h"
 #include "third_party/WebKit/public/platform/WebString.h"
@@ -31,8 +31,9 @@ class ModuleSystem;
 class URLPattern;
 struct ExtensionMsg_ExternalConnectionInfo;
 struct ExtensionMsg_Loaded_Params;
+struct ExtensionMsg_UpdatePermissions_Params;
 
-namespace WebKit {
+namespace blink {
 class WebFrame;
 class WebSecurityOrigin;
 }
@@ -50,6 +51,7 @@ namespace extensions {
 class ContentWatcher;
 class Extension;
 class FilteredEventRouter;
+class ManifestPermissionSet;
 class RequestSender;
 class UserScriptSlave;
 struct Message;
@@ -89,22 +91,22 @@ class Dispatcher : public content::RenderProcessObserver {
   // specified |frame| and isolated world. If |world_id| is zero, finds the
   // extension ID associated with the main world's JavaScript context. If the
   // JavaScript context isn't from an extension, returns empty string.
-  std::string GetExtensionID(const WebKit::WebFrame* frame, int world_id);
+  std::string GetExtensionID(const blink::WebFrame* frame, int world_id);
 
-  void DidCreateScriptContext(WebKit::WebFrame* frame,
+  void DidCreateScriptContext(blink::WebFrame* frame,
                               v8::Handle<v8::Context> context,
                               int extension_group,
                               int world_id);
-  void WillReleaseScriptContext(WebKit::WebFrame* frame,
+  void WillReleaseScriptContext(blink::WebFrame* frame,
                                 v8::Handle<v8::Context> context,
                                 int world_id);
 
-  void DidCreateDocumentElement(WebKit::WebFrame* frame);
+  void DidCreateDocumentElement(blink::WebFrame* frame);
 
   void DidMatchCSS(
-      WebKit::WebFrame* frame,
-      const WebKit::WebVector<WebKit::WebString>& newly_matching_selectors,
-      const WebKit::WebVector<WebKit::WebString>& stopped_matching_selectors);
+      blink::WebFrame* frame,
+      const blink::WebVector<blink::WebString>& newly_matching_selectors,
+      const blink::WebVector<blink::WebString>& stopped_matching_selectors);
 
   // TODO(mpcomplete): remove. http://crbug.com/100411
   bool IsAdblockWithWebRequestInstalled() const {
@@ -140,6 +142,8 @@ class Dispatcher : public content::RenderProcessObserver {
       const std::string& function_name,
       const base::ListValue& args,
       bool user_gesture);
+
+  void ClearPortData(int port_id);
 
  private:
   friend class ::ChromeRenderViewTest;
@@ -179,11 +183,7 @@ class Dispatcher : public content::RenderProcessObserver {
   void OnPageActionsUpdated(const std::string& extension_id,
       const std::vector<std::string>& page_actions);
   void OnActivateExtension(const std::string& extension_id);
-  void OnUpdatePermissions(int reason_id,
-                           const std::string& extension_id,
-                           const APIPermissionSet& apis,
-                           const URLPatternSet& explicit_hosts,
-                           const URLPatternSet& scriptable_hosts);
+  void OnUpdatePermissions(const ExtensionMsg_UpdatePermissions_Params& params);
   void OnUpdateTabSpecificPermissions(int page_id,
                                       int tab_id,
                                       const std::string& extension_id,
@@ -204,7 +204,8 @@ class Dispatcher : public content::RenderProcessObserver {
   void UpdateActiveExtensions();
 
   // Sets up the host permissions for |extension|.
-  void InitOriginPermissions(const Extension* extension);
+  void InitOriginPermissions(const Extension* extension,
+                             Feature::Context context_type);
   void AddOrRemoveOriginPermissions(
       UpdatedExtensionPermissionsInfo::Reason reason,
       const Extension* extension,
@@ -245,15 +246,16 @@ class Dispatcher : public content::RenderProcessObserver {
 
   // Returns the Feature::Context type of context for a JavaScript context.
   Feature::Context ClassifyJavaScriptContext(
-      const std::string& extension_id,
+      const Extension* extension,
       int extension_group,
       const GURL& url,
-      const WebKit::WebSecurityOrigin& origin);
+      const blink::WebSecurityOrigin& origin);
 
   // Gets |field| from |object| or creates it as an empty object if it doesn't
   // exist.
   v8::Handle<v8::Object> GetOrCreateObject(v8::Handle<v8::Object> object,
-                                           const std::string& field);
+                                           const std::string& field,
+                                           v8::Isolate* isolate);
 
   // True if this renderer is running extensions.
   bool is_extension_process_;
@@ -277,7 +279,7 @@ class Dispatcher : public content::RenderProcessObserver {
 
   // Same as above, but on a longer timer and will run even if the process is
   // not idle, to ensure that IdleHandle gets called eventually.
-  base::RepeatingTimer<content::RenderThread> forced_idle_timer_;
+  scoped_ptr<base::RepeatingTimer<content::RenderThread> > forced_idle_timer_;
 
   // All declared function names.
   std::set<std::string> function_names_;
@@ -309,6 +311,9 @@ class Dispatcher : public content::RenderProcessObserver {
   // The platforms system font family and size;
   std::string system_font_family_;
   std::string system_font_size_;
+
+  // Mapping of port IDs to tabs. If there is no tab, the value would be -1.
+  std::map<int, int> port_to_tab_id_map_;
 
   DISALLOW_COPY_AND_ASSIGN(Dispatcher);
 };

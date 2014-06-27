@@ -105,7 +105,7 @@ std::string GetServiceProcessScopedName(const std::string& append_str) {
   base::FilePath user_data_dir;
   PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
 #if defined(OS_WIN)
-  std::string user_data_dir_path = WideToUTF8(user_data_dir.value());
+  std::string user_data_dir_path = base::WideToUTF8(user_data_dir.value());
 #elif defined(OS_POSIX)
   std::string user_data_dir_path = user_data_dir.value();
 #endif  // defined(OS_WIN)
@@ -223,8 +223,9 @@ bool ServiceProcessState::CreateSharedData() {
     return false;
 
   uint32 alloc_size = sizeof(ServiceProcessSharedData);
-  if (!shared_mem_service_data->CreateNamed(GetServiceProcessSharedMemName(),
-                                            true, alloc_size))
+  // TODO(viettrungluu): Named shared memory is deprecated (crbug.com/345734).
+  if (!shared_mem_service_data->CreateNamedDeprecated
+          (GetServiceProcessSharedMemName(), true, alloc_size))
     return false;
 
   if (!shared_mem_service_data->Map(alloc_size))

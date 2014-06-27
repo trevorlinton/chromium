@@ -19,6 +19,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image.h"
+#include "ui/views/background.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/label_button.h"
@@ -31,8 +32,8 @@
 #include "ui/views/widget/widget.h"
 
 #if defined(USE_AURA)
-#include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_tree_host.h"
 #endif
 
 namespace {
@@ -175,8 +176,8 @@ TryChromeDialogView::Result TryChromeDialogView::ShowModal(
     return DIALOG_ERROR;
   }
   views::Label* label = new views::Label(
-      l10n_util::GetStringUTF16(experiment.heading));
-  label->SetFont(rb.GetFont(ui::ResourceBundle::MediumFont));
+      l10n_util::GetStringUTF16(experiment.heading),
+      rb.GetFontList(ui::ResourceBundle::MediumFont));
   label->SetMultiLine(true);
   label->SizeToFit(200);
   label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
@@ -223,7 +224,7 @@ TryChromeDialogView::Result TryChromeDialogView::ShowModal(
 
   views::LabelButton* accept_button = new views::LabelButton(
       this, l10n_util::GetStringUTF16(IDS_OK));
-  accept_button->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
+  accept_button->SetStyle(views::Button::STYLE_BUTTON);
   accept_button->set_tag(BT_OK_BUTTON);
 
   views::Separator* separator = NULL;
@@ -252,7 +253,7 @@ TryChromeDialogView::Result TryChromeDialogView::ShowModal(
       // this the button case.
       views::LabelButton* cancel_button = new views::LabelButton(
           this, l10n_util::GetStringUTF16(IDS_TRY_TOAST_CANCEL));
-      cancel_button->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
+      cancel_button->SetStyle(views::Button::STYLE_BUTTON);
       cancel_button->set_tag(BT_CLOSE_BUTTON);
       layout->AddView(cancel_button);
     }
@@ -282,8 +283,7 @@ TryChromeDialogView::Result TryChromeDialogView::ShowModal(
   // Carve the toast shape into the window.
   HWND toast_window;
 #if defined(USE_AURA)
-  toast_window =
-      popup_->GetNativeView()->GetDispatcher()->GetAcceleratedWidget();
+  toast_window = popup_->GetNativeView()->GetHost()->GetAcceleratedWidget();
 #else
   toast_window = popup_->GetNativeView();
 #endif

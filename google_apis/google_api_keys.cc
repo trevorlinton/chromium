@@ -12,6 +12,7 @@
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/strings/stringize_macros.h"
+#include "google_apis/gaia/gaia_switches.h"
 
 #if defined(GOOGLE_CHROME_BUILD) || defined(USE_OFFICIAL_GOOGLE_API_KEYS)
 #include "google_apis/internal/google_chrome_api_keys.h"
@@ -68,16 +69,6 @@
 #if !defined(GOOGLE_DEFAULT_CLIENT_SECRET)
 #define GOOGLE_DEFAULT_CLIENT_SECRET ""
 #endif
-
-namespace switches {
-
-// Specifies custom OAuth2 client id for testing purposes.
-const char kOAuth2ClientID[] = "oauth2-client-id";
-
-// Specifies custom OAuth2 client secret for testing purposes.
-const char kOAuth2ClientSecret[] = "oauth2-client-secret";
-
-}  // namespace switches
 
 namespace google_apis {
 
@@ -204,14 +195,14 @@ class APIKeyCache {
     std::string temp;
     if (environment->GetVar(environment_variable_name, &temp)) {
       key_value = temp;
-      LOG(INFO) << "Overriding API key " << environment_variable_name
-                << " with value " << key_value << " from environment variable.";
+      VLOG(1) << "Overriding API key " << environment_variable_name
+              << " with value " << key_value << " from environment variable.";
     }
 
     if (command_line_switch && command_line->HasSwitch(command_line_switch)) {
       key_value = command_line->GetSwitchValueASCII(command_line_switch);
-      LOG(INFO) << "Overriding API key " << environment_variable_name
-                << " with value " << key_value << " from command-line switch.";
+      VLOG(1) << "Overriding API key " << environment_variable_name
+              << " with value " << key_value << " from command-line switch.";
     }
 
     if (key_value == DUMMY_API_TOKEN) {
@@ -222,8 +213,8 @@ class APIKeyCache {
       CHECK(false);
 #endif
       if (default_if_unset.size() > 0) {
-        LOG(INFO) << "Using default value \"" << default_if_unset
-                  << "\" for API key " << environment_variable_name;
+        VLOG(1) << "Using default value \"" << default_if_unset
+                << "\" for API key " << environment_variable_name;
         key_value = default_if_unset;
       }
     }
@@ -267,6 +258,14 @@ std::string GetOAuth2ClientID(OAuth2Client client) {
 
 std::string GetOAuth2ClientSecret(OAuth2Client client) {
   return g_api_key_cache.Get().GetClientSecret(client);
+}
+
+bool IsGoogleChromeAPIKeyUsed() {
+#if defined(GOOGLE_CHROME_BUILD) || defined(USE_OFFICIAL_GOOGLE_API_KEYS)
+  return true;
+#else
+  return false;
+#endif
 }
 
 }  // namespace google_apis

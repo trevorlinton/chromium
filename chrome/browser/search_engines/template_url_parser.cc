@@ -166,7 +166,7 @@ class TemplateURLParsingContext {
   bool image_is_valid_for_favicon_;
 
   // Character content for the current element.
-  string16 string_;
+  base::string16 string_;
 
   TemplateURLParser::ParameterFilter* parameter_filter_;
 
@@ -245,8 +245,8 @@ void TemplateURLParsingContext::EndElementImpl(void* ctx, const xmlChar* name) {
       context->data_.short_name = context->string_;
       break;
     case TemplateURLParsingContext::IMAGE: {
-      GURL image_url(UTF16ToUTF8(context->string_));
-      if (image_url.SchemeIs(chrome::kDataScheme)) {
+      GURL image_url(base::UTF16ToUTF8(context->string_));
+      if (image_url.SchemeIs(content::kDataScheme)) {
         // TODO (jcampan): bug 1169256: when dealing with data URL, we need to
         // decode the data URL in the renderer. For now, we'll just point to the
         // favicon from the URL.
@@ -260,7 +260,7 @@ void TemplateURLParsingContext::EndElementImpl(void* ctx, const xmlChar* name) {
       break;
     }
     case TemplateURLParsingContext::INPUT_ENCODING: {
-      std::string input_encoding = UTF16ToASCII(context->string_);
+      std::string input_encoding = base::UTF16ToASCII(context->string_);
       if (IsValidEncodingString(input_encoding))
         context->data_.input_encodings.push_back(input_encoding);
       break;
@@ -280,7 +280,7 @@ void TemplateURLParsingContext::CharactersImpl(void* ctx,
                                                const xmlChar* ch,
                                                int len) {
   reinterpret_cast<TemplateURLParsingContext*>(ctx)->string_ +=
-      UTF8ToUTF16(std::string(reinterpret_cast<const char*>(ch), len));
+      base::UTF8ToUTF16(std::string(reinterpret_cast<const char*>(ch), len));
 }
 
 TemplateURL* TemplateURLParsingContext::GetTemplateURL(

@@ -4,8 +4,11 @@
 
 #include "ui/views/test/desktop_test_views_delegate.h"
 
-#include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 #include "ui/views/widget/native_widget_aura.h"
+
+#if !defined(OS_CHROMEOS)
+#include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
+#endif
 
 namespace views {
 
@@ -16,7 +19,7 @@ DesktopTestViewsDelegate::~DesktopTestViewsDelegate() {}
 void DesktopTestViewsDelegate::OnBeforeWidgetInit(
     Widget::InitParams* params,
     internal::NativeWidgetDelegate* delegate) {
-#if defined(USE_AURA) && !defined(OS_CHROMEOS)
+#if !defined(OS_CHROMEOS)
   // If we already have a native_widget, we don't have to try to come
   // up with one.
   if (params->native_widget)

@@ -66,6 +66,7 @@ WHITELISTED_LICENSES = [
     'LGPL (v2.1 or later)',
     'LGPL (v3 or later)',
     'MIT/X11 (BSD like)',
+    'MIT/X11 (BSD like) LGPL (v2.1 or later)',
     'MPL (v1.0) LGPL (v2 or later)',
     'MPL (v1.1)',
     'MPL (v1.1) BSD (3 clause) GPL (v2) LGPL (v2.1 or later)',
@@ -90,13 +91,12 @@ WHITELISTED_LICENSES = [
     'zlib/libpng',
     'SGI Free Software License B',
     'University of Illinois/NCSA Open Source License (BSD like)',
+    ('University of Illinois/NCSA Open Source License (BSD like) '
+     'MIT/X11 (BSD like)'),
 ]
 
 
 PATH_SPECIFIC_WHITELISTED_LICENSES = {
-    'base/hash.cc': [  # http://crbug.com/98100
-        'UNKNOWN',
-    ],
     'base/third_party/icu': [  # http://crbug.com/98087
         'UNKNOWN',
     ],
@@ -141,9 +141,6 @@ PATH_SPECIFIC_WHITELISTED_LICENSES = {
     'third_party/WebKit': [
         'UNKNOWN',
     ],
-    'third_party/active_doc': [  # http://crbug.com/98113
-        'UNKNOWN',
-    ],
 
     # http://code.google.com/p/angleproject/issues/detail?id=217
     'third_party/angle': [
@@ -153,6 +150,20 @@ PATH_SPECIFIC_WHITELISTED_LICENSES = {
     # http://crbug.com/222828
     # http://bugs.python.org/issue17514
     'third_party/chromite/third_party/argparse.py': [
+        'UNKNOWN',
+    ],
+
+    # http://crbug.com/326117
+    # https://bitbucket.org/chrisatlee/poster/issue/21
+    'third_party/chromite/third_party/poster': [
+        'UNKNOWN',
+    ],
+
+    # http://crbug.com/333508
+    'third_party/clang_format/script': [
+        'UNKNOWN',
+    ],
+    'third_party/clang_format/scripts': [
         'UNKNOWN',
     ],
 
@@ -176,6 +187,10 @@ PATH_SPECIFIC_WHITELISTED_LICENSES = {
         'GPL (v2)',
         'GPL (v2 or later)',
         'UNKNOWN',  # http://crbug.com/98123
+    ],
+    'third_party/fontconfig': [
+        # https://bugs.freedesktop.org/show_bug.cgi?id=73401
+        'UNKNOWN',
     ],
     'third_party/freetype2': [ # http://crbug.com/177319
         'UNKNOWN',
@@ -205,6 +220,18 @@ PATH_SPECIFIC_WHITELISTED_LICENSES = {
     ],
     'third_party/lcov/contrib/galaxy/genflat.pl': [
         'GPL (v2 or later)',
+    ],
+    'third_party/libc++/trunk/include/support/solaris': [
+        # http://llvm.org/bugs/show_bug.cgi?id=18291
+        'UNKNOWN',
+    ],
+    'third_party/libc++/trunk/src/support/solaris/xlocale.c': [
+        # http://llvm.org/bugs/show_bug.cgi?id=18291
+        'UNKNOWN',
+    ],
+    'third_party/libc++/trunk/test': [
+        # http://llvm.org/bugs/show_bug.cgi?id=18291
+        'UNKNOWN',
     ],
     'third_party/libevent': [  # http://crbug.com/98309
         'UNKNOWN',
@@ -309,6 +336,18 @@ PATH_SPECIFIC_WHITELISTED_LICENSES = {
         'UNKNOWN',
     ],
 
+    # http://crbug.com/334668
+    # MIT license.
+    'tools/swarming_client/third_party/httplib2': [
+        'UNKNOWN',
+    ],
+
+    # http://crbug.com/334668
+    # Apache v2.0.
+    'tools/swarming_client/third_party/oauth2client': [
+        'UNKNOWN',
+    ],
+
     # https://github.com/kennethreitz/requests/issues/1610
     'tools/swarming_client/third_party/requests': [
         'UNKNOWN',
@@ -330,6 +369,13 @@ PATH_SPECIFIC_WHITELISTED_LICENSES = {
     'third_party/webdriver': [  # http://crbug.com/98590
         'UNKNOWN',
     ],
+
+    # https://github.com/html5lib/html5lib-python/issues/125
+    # https://github.com/KhronosGroup/WebGL/issues/435
+    'third_party/webgl/src': [
+        'UNKNOWN',
+    ],
+
     'third_party/webrtc': [  # http://crbug.com/98592
         'UNKNOWN',
     ],
@@ -361,6 +407,10 @@ PATH_SPECIFIC_WHITELISTED_LICENSES = {
         'UNKNOWN',
     ],
     'tools/symsrc/pefile.py': [
+        'UNKNOWN',
+    ],
+    'tools/telemetry/third_party/pyserial': [
+        # https://sourceforge.net/p/pyserial/feature-requests/35/
         'UNKNOWN',
     ],
     'v8/test/cctest': [  # http://crbug.com/98597

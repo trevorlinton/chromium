@@ -21,7 +21,6 @@
 namespace gpu {
 
 class IdAllocatorInterface;
-class StreamTextureManager;
 class TransferBufferManagerInterface;
 
 namespace gles2 {
@@ -47,7 +46,7 @@ class GPU_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
       MailboxManager* mailbox_manager,
       ImageManager* image_manager,
       MemoryTracker* memory_tracker,
-      StreamTextureManager* stream_texture_manager,
+      FeatureInfo* feature_info,
       bool bind_generates_resource);
 
   // This should only be called by GLES2Decoder. This must be paired with a
@@ -70,10 +69,6 @@ class GPU_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
 
   MemoryTracker* memory_tracker() const {
     return memory_tracker_.get();
-  }
-
-  StreamTextureManager* stream_texture_manager() const {
-    return stream_texture_manager_;
   }
 
   bool bind_generates_resource() {
@@ -184,7 +179,6 @@ class GPU_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
   scoped_refptr<MailboxManager> mailbox_manager_;
   scoped_refptr<ImageManager> image_manager_;
   scoped_refptr<MemoryTracker> memory_tracker_;
-  StreamTextureManager* stream_texture_manager_;
   scoped_ptr<TransferBufferManagerInterface> transfer_buffer_manager_;
 
   bool enforce_gl_minimums_;

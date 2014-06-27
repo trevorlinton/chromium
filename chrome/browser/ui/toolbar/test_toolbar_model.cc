@@ -8,28 +8,37 @@
 
 TestToolbarModel::TestToolbarModel()
     : ToolbarModel(),
-      should_replace_url_(false),
+      omit_url_due_to_origin_chip_(false),
+      perform_search_term_replacement_(false),
       security_level_(NONE),
       icon_(IDR_LOCATION_BAR_HTTP),
       should_display_url_(true) {}
 
 TestToolbarModel::~TestToolbarModel() {}
 
-string16 TestToolbarModel::GetText(bool allow_search_term_replacement) const {
+base::string16 TestToolbarModel::GetText() const {
   return text_;
 }
 
-string16 TestToolbarModel::GetCorpusNameForMobile() const {
-  return string16();
+base::string16 TestToolbarModel::GetFormattedURL() const {
+  return text_;
+}
+
+base::string16 TestToolbarModel::GetCorpusNameForMobile() const {
+  return base::string16();
 }
 
 GURL TestToolbarModel::GetURL() const {
   return url_;
 }
 
+bool TestToolbarModel::WouldOmitURLDueToOriginChip() const {
+  return omit_url_due_to_origin_chip_;
+}
+
 bool TestToolbarModel::WouldPerformSearchTermReplacement(
     bool ignore_editing) const {
-  return should_replace_url_;
+  return perform_search_term_replacement_;
 }
 
 ToolbarModel::SecurityLevel TestToolbarModel::GetSecurityLevel(
@@ -41,7 +50,11 @@ int TestToolbarModel::GetIcon() const {
   return icon_;
 }
 
-string16 TestToolbarModel::GetEVCertName() const {
+int TestToolbarModel::GetIconForSecurityLevel(SecurityLevel level) const {
+  return icon_;
+}
+
+base::string16 TestToolbarModel::GetEVCertName() const {
   return ev_cert_name_;
 }
 

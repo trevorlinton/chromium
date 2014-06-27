@@ -22,14 +22,15 @@
 #include "printing/print_job_constants.h"
 #include "printing/print_settings_initializer_win.h"
 #include "printing/printed_document.h"
+#include "printing/printing_utils.h"
 #include "printing/units.h"
 #include "skia/ext/platform_device.h"
 #include "win8/util/win8_util.h"
 
 #if defined(USE_AURA)
-#include "ui/aura/remote_root_window_host_win.h"
-#include "ui/aura/root_window.h"
+#include "ui/aura/remote_window_tree_host_win.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #endif
 
 using base::Time;
@@ -40,7 +41,7 @@ HWND GetRootWindow(gfx::NativeView view) {
   HWND window = NULL;
 #if defined(USE_AURA)
   if (view)
-    window = view->GetDispatcher()->GetAcceleratedWidget();
+    window = view->GetHost()->GetAcceleratedWidget();
 #else
   if (view && IsWindow(view)) {
     window = GetAncestor(view, GA_ROOTOWNER);
@@ -164,11 +165,7 @@ PrintingContext* PrintingContext::Create(const std::string& app_locale) {
 }
 
 PrintingContextWin::PrintingContextWin(const std::string& app_locale)
-    : PrintingContext(app_locale),
-      context_(NULL),
-      dialog_box_(NULL),
-      print_dialog_func_(&PrintDlgEx) {
-}
+    : PrintingContext(app_locale), context_(NULL), dialog_box_(NULL) {}
 
 PrintingContextWin::~PrintingContextWin() {
   ReleaseContext();
@@ -178,7 +175,6 @@ void PrintingContextWin::AskUserForSettings(
     gfx::NativeView view, int max_pages, bool has_selection,
     const PrintSettingsCallback& callback) {
   DCHECK(!in_print_job_);
-  // TODO(scottmg): Possibly this has to move into the threaded runner too?
   if (win8::IsSingleWindowMetroMode()) {
     // The system dialog can not be opened while running in Metro.
     // But we can programatically launch the Metro print device charm though.
@@ -211,40 +207,39 @@ void PrintingContextWin::AskUserForSettings(
   // - Cancel, the settings are not changed, the previous setting, if it was
   //   initialized before, are kept. CANCEL is returned.
   // On failure, the settings are reset and FAILED is returned.
-  PRINTDLGEX* dialog_options =
-      reinterpret_cast<PRINTDLGEX*>(malloc(sizeof(PRINTDLGEX)));
-  ZeroMemory(dialog_options, sizeof(PRINTDLGEX));
-  dialog_options->lStructSize = sizeof(PRINTDLGEX);
-  dialog_options->hwndOwner = window;
+  PRINTDLGEX dialog_options = { sizeof(PRINTDLGEX) };
+  dialog_options.hwndOwner = window;
   // Disable options we don't support currently.
   // TODO(maruel):  Reuse the previously loaded settings!
-  dialog_options->Flags = PD_RETURNDC | PD_USEDEVMODECOPIESANDCOLLATE |
-                          PD_NOCURRENTPAGE | PD_HIDEPRINTTOFILE;
+  dialog_options.Flags = PD_RETURNDC | PD_USEDEVMODECOPIESANDCOLLATE  |
+                         PD_NOCURRENTPAGE | PD_HIDEPRINTTOFILE;
   if (!has_selection)
-    dialog_options->Flags |= PD_NOSELECTION;
+    dialog_options.Flags |= PD_NOSELECTION;
 
-  const size_t max_page_ranges = 32;
-  PRINTPAGERANGE* ranges = new PRINTPAGERANGE[max_page_ranges];
-  dialog_options->lpPageRanges = ranges;
-  dialog_options->nStartPage = START_PAGE_GENERAL;
+  PRINTPAGERANGE ranges[32];
+  dialog_options.nStartPage = START_PAGE_GENERAL;
   if (max_pages) {
     // Default initialize to print all the pages.
     memset(ranges, 0, sizeof(ranges));
     ranges[0].nFromPage = 1;
     ranges[0].nToPage = max_pages;
-    dialog_options->nPageRanges = 1;
-    dialog_options->nMaxPageRanges = max_page_ranges;
-    dialog_options->nMinPage = 1;
-    dialog_options->nMaxPage = max_pages;
+    dialog_options.nPageRanges = 1;
+    dialog_options.nMaxPageRanges = arraysize(ranges);
+    dialog_options.nMinPage = 1;
+    dialog_options.nMaxPage = max_pages;
+    dialog_options.lpPageRanges = ranges;
   } else {
     // No need to bother, we don't know how many pages are available.
-    dialog_options->Flags |= PD_NOPAGENUMS;
+    dialog_options.Flags |= PD_NOPAGENUMS;
   }
 
-  callback_ = callback;
-  print_settings_dialog_ = new ui::PrintSettingsDialogWin(this);
-  print_settings_dialog_->GetPrintSettings(
-      print_dialog_func_, window, dialog_options);
+  if (ShowPrintDialog(&dialog_options) != S_OK) {
+    ResetSettings();
+    callback.Run(FAILED);
+  }
+
+  // TODO(maruel):  Support PD_PRINTTOFILE.
+  callback.Run(ParseDialogResultEx(dialog_options));
 }
 
 PrintingContext::Result PrintingContextWin::UseDefaultSettings() {
@@ -261,7 +256,7 @@ PrintingContext::Result PrintingContextWin::UseDefaultSettings() {
   (void)::EnumPrinters(PRINTER_ENUM_LOCAL|PRINTER_ENUM_CONNECTIONS,
                        NULL, 2, NULL, 0, &bytes_needed, &count_returned);
   if (bytes_needed) {
-    DCHECK(bytes_needed >= count_returned * sizeof(PRINTER_INFO_2));
+    DCHECK_GE(bytes_needed, count_returned * sizeof(PRINTER_INFO_2));
     scoped_ptr<BYTE[]> printer_info_buffer(new BYTE[bytes_needed]);
     BOOL ret = ::EnumPrinters(PRINTER_ENUM_LOCAL|PRINTER_ENUM_CONNECTIONS,
                               NULL, 2, printer_info_buffer.get(),
@@ -269,17 +264,22 @@ PrintingContext::Result PrintingContextWin::UseDefaultSettings() {
                               &count_returned);
     if (ret && count_returned) {  // have printers
       // Open the first successfully found printer.
-      for (DWORD count = 0; count < count_returned; ++count) {
-        PRINTER_INFO_2* info_2 = reinterpret_cast<PRINTER_INFO_2*>(
-            printer_info_buffer.get() + count * sizeof(PRINTER_INFO_2));
-        std::wstring printer_name = info_2->pPrinterName;
-        if (info_2->pDevMode == NULL || printer_name.length() == 0)
+      const PRINTER_INFO_2* info_2 =
+          reinterpret_cast<PRINTER_INFO_2*>(printer_info_buffer.get());
+      const PRINTER_INFO_2* info_2_end = info_2 + count_returned;
+      for (; info_2 < info_2_end; ++info_2) {
+        ScopedPrinterHandle printer;
+        if (!printer.OpenPrinter(info_2->pPrinterName))
           continue;
-        if (!AllocateContext(printer_name, info_2->pDevMode, &context_))
-          break;
-        if (InitializeSettings(*info_2->pDevMode, printer_name,
-                               NULL, 0, false)) {
-          break;
+        scoped_ptr<DEVMODE, base::FreeDeleter> dev_mode =
+            CreateDevMode(printer, NULL);
+        if (!dev_mode || !AllocateContext(info_2->pPrinterName, dev_mode.get(),
+                                          &context_)) {
+          continue;
+        }
+        if (InitializeSettings(*dev_mode.get(), info_2->pPrinterName, NULL, 0,
+                               false)) {
+          return OK;
         }
         ReleaseContext();
       }
@@ -328,68 +328,60 @@ PrintingContext::Result PrintingContextWin::UpdatePrinterSettings(
   DCHECK(!external_preview) << "Not implemented";
 
   ScopedPrinterHandle printer;
-  LPWSTR device_name_wide =
-      const_cast<wchar_t*>(settings_.device_name().c_str());
-  if (!printer.OpenPrinter(device_name_wide))
+  if (!printer.OpenPrinter(settings_.device_name().c_str()))
     return OnError();
 
   // Make printer changes local to Chrome.
   // See MSDN documentation regarding DocumentProperties.
-  scoped_ptr<uint8[]> buffer;
-  DEVMODE* dev_mode = NULL;
-  LONG buffer_size = DocumentProperties(NULL, printer, device_name_wide,
-                                        NULL, NULL, 0);
-  if (buffer_size > 0) {
-    buffer.reset(new uint8[buffer_size]);
-    memset(buffer.get(), 0, buffer_size);
-    if (DocumentProperties(NULL, printer, device_name_wide,
-                           reinterpret_cast<PDEVMODE>(buffer.get()), NULL,
-                           DM_OUT_BUFFER) == IDOK) {
-      dev_mode = reinterpret_cast<PDEVMODE>(buffer.get());
-    }
-  }
-  if (dev_mode == NULL) {
-    buffer.reset();
+  scoped_ptr<DEVMODE, base::FreeDeleter> scoped_dev_mode =
+      CreateDevModeWithColor(printer, settings_.device_name(),
+                             settings_.color() != GRAY);
+  if (!scoped_dev_mode)
     return OnError();
-  }
 
-  if (settings_.color() == GRAY)
-    dev_mode->dmColor = DMCOLOR_MONOCHROME;
-  else
-    dev_mode->dmColor = DMCOLOR_COLOR;
+  {
+    DEVMODE* dev_mode = scoped_dev_mode.get();
+    dev_mode->dmCopies = std::max(settings_.copies(), 1);
+    if (dev_mode->dmCopies > 1) { // do not change unless multiple copies
+      dev_mode->dmFields |= DM_COPIES;
+      dev_mode->dmCollate = settings_.collate() ? DMCOLLATE_TRUE :
+                                                  DMCOLLATE_FALSE;
+    }
 
-  dev_mode->dmCopies = std::max(settings_.copies(), 1);
-  if (dev_mode->dmCopies > 1) { // do not change collate unless multiple copies
-    dev_mode->dmCollate = settings_.collate() ? DMCOLLATE_TRUE :
-                                                DMCOLLATE_FALSE;
+    switch (settings_.duplex_mode()) {
+      case LONG_EDGE:
+        dev_mode->dmFields |= DM_DUPLEX;
+        dev_mode->dmDuplex = DMDUP_VERTICAL;
+        break;
+      case SHORT_EDGE:
+        dev_mode->dmFields |= DM_DUPLEX;
+        dev_mode->dmDuplex = DMDUP_HORIZONTAL;
+        break;
+      case SIMPLEX:
+        dev_mode->dmFields |= DM_DUPLEX;
+        dev_mode->dmDuplex = DMDUP_SIMPLEX;
+        break;
+      default:  // UNKNOWN_DUPLEX_MODE
+        break;
+    }
+
+    dev_mode->dmFields |= DM_ORIENTATION;
+    dev_mode->dmOrientation = settings_.landscape() ? DMORIENT_LANDSCAPE :
+                                                      DMORIENT_PORTRAIT;
   }
-  switch (settings_.duplex_mode()) {
-    case LONG_EDGE:
-      dev_mode->dmDuplex = DMDUP_VERTICAL;
-      break;
-    case SHORT_EDGE:
-      dev_mode->dmDuplex = DMDUP_HORIZONTAL;
-      break;
-    case SIMPLEX:
-      dev_mode->dmDuplex = DMDUP_SIMPLEX;
-      break;
-    default:  // UNKNOWN_DUPLEX_MODE
-      break;
-  }
-  dev_mode->dmOrientation = settings_.landscape() ? DMORIENT_LANDSCAPE :
-                                                    DMORIENT_PORTRAIT;
 
   // Update data using DocumentProperties.
-  if (DocumentProperties(NULL, printer, device_name_wide, dev_mode, dev_mode,
-                         DM_IN_BUFFER | DM_OUT_BUFFER) != IDOK) {
+  scoped_dev_mode = CreateDevMode(printer, scoped_dev_mode.get());
+  if (!scoped_dev_mode)
     return OnError();
-  }
 
   // Set printer then refresh printer settings.
-  if (!AllocateContext(settings_.device_name(), dev_mode, &context_)) {
+  if (!AllocateContext(settings_.device_name(), scoped_dev_mode.get(),
+                       &context_)) {
     return OnError();
   }
-  PrintSettingsInitializerWin::InitPrintSettings(context_, *dev_mode,
+  PrintSettingsInitializerWin::InitPrintSettings(context_,
+                                                 *scoped_dev_mode.get(),
                                                  &settings_);
   return OK;
 }
@@ -431,9 +423,9 @@ PrintingContext::Result PrintingContextWin::NewDocument(
   if (SP_ERROR == SetAbortProc(context_, &AbortProc))
     return OnError();
 
-  DCHECK(PrintBackend::SimplifyDocumentTitle(document_name) == document_name);
+  DCHECK(SimplifyDocumentTitle(document_name) == document_name);
   DOCINFO di = { sizeof(DOCINFO) };
-  const std::wstring& document_name_wide = UTF16ToWide(document_name);
+  const std::wstring& document_name_wide = base::UTF16ToWide(document_name);
   di.lpszDocName = document_name_wide.c_str();
 
   // Is there a debug dump directory specified? If so, force to print to a file.
@@ -446,7 +438,7 @@ PrintingContext::Result PrintingContextWin::NewDocument(
     filename += L"_";
     filename += base::TimeFormatTimeOfDay(now);
     filename += L"_";
-    filename += UTF16ToWide(document_name);
+    filename += base::UTF16ToWide(document_name);
     filename += L"_";
     filename += L"buffer.prn";
     file_util::ReplaceIllegalCharactersInPath(&filename, '_');
@@ -526,20 +518,6 @@ gfx::NativeDrawingContext PrintingContextWin::context() const {
   return context_;
 }
 
-void PrintingContextWin::PrintSettingsConfirmed(PRINTDLGEX* dialog_options) {
-  // TODO(maruel):  Support PD_PRINTTOFILE.
-  callback_.Run(ParseDialogResultEx(*dialog_options));
-  delete [] dialog_options->lpPageRanges;
-  free(dialog_options);
-}
-
-void PrintingContextWin::PrintSettingsCancelled(PRINTDLGEX* dialog_options) {
-  ResetSettings();
-  callback_.Run(FAILED);
-  delete [] dialog_options->lpPageRanges;
-  free(dialog_options);
-}
-
 // static
 BOOL PrintingContextWin::AbortProc(HDC hdc, int nCode) {
   if (nCode) {
@@ -600,15 +578,15 @@ bool PrintingContextWin::GetPrinterSettings(HANDLE printer,
                                             const std::wstring& device_name) {
   DCHECK(!in_print_job_);
 
-  UserDefaultDevMode user_settings;
+  scoped_ptr<DEVMODE, base::FreeDeleter> dev_mode =
+      CreateDevMode(printer, NULL);
 
-  if (!user_settings.Init(printer) ||
-      !AllocateContext(device_name, user_settings.get(), &context_)) {
+  if (!dev_mode || !AllocateContext(device_name, dev_mode.get(), &context_)) {
     ResetSettings();
     return false;
   }
 
-  return InitializeSettings(*user_settings.get(), device_name, NULL, 0, false);
+  return InitializeSettings(*dev_mode.get(), device_name, NULL, 0, false);
 }
 
 // static
@@ -695,6 +673,19 @@ PrintingContext::Result PrintingContextWin::ParseDialogResultEx(
     default:
       return FAILED;
   }
+}
+
+HRESULT PrintingContextWin::ShowPrintDialog(PRINTDLGEX* options) {
+  // Note that this cannot use ui::BaseShellDialog as the print dialog is
+  // system modal: opening it from a background thread can cause Windows to
+  // get the wrong Z-order which will make the print dialog appear behind the
+  // browser frame (but still being modal) so neither the browser frame nor
+  // the print dialog will get any input. See http://crbug.com/342697
+  // http://crbug.com/180997 for details.
+  base::MessageLoop::ScopedNestableTaskAllower allow(
+      base::MessageLoop::current());
+
+  return PrintDlgEx(options);
 }
 
 PrintingContext::Result PrintingContextWin::ParseDialogResult(

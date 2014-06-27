@@ -30,9 +30,7 @@
 #include "chrome/browser/history/download_row.h"
 #include "chrome/browser/history/history_db_task.h"
 #include "chrome/browser/history/history_notifications.h"
-#include "chrome/browser/history/history_publisher.h"
 #include "chrome/browser/history/in_memory_history_backend.h"
-#include "chrome/browser/history/page_collector.h"
 #include "chrome/browser/history/page_usage_data.h"
 #include "chrome/browser/history/select_favicon_frames.h"
 #include "chrome/browser/history/top_sites.h"
@@ -165,11 +163,9 @@ class CommitLaterTask : public base::RefCounted<CommitLaterTask> {
 // HistoryBackend --------------------------------------------------------------
 
 HistoryBackend::HistoryBackend(const base::FilePath& history_dir,
-                               int id,
                                Delegate* delegate,
                                BookmarkService* bookmark_service)
     : delegate_(delegate),
-      id_(id),
       history_dir_(history_dir),
       scheduled_kill_db_(false),
       expirer_(this, bookmark_service),
@@ -205,7 +201,7 @@ HistoryBackend::~HistoryBackend() {
 void HistoryBackend::Init(const std::string& languages, bool force_fail) {
   if (!force_fail)
     InitImpl(languages);
-  delegate_->DBLoaded(id_);
+  delegate_->DBLoaded();
   typed_url_syncable_service_.reset(new TypedUrlSyncableService(this));
   memory_pressure_listener_.reset(new base::MemoryPressureListener(
       base::Bind(&HistoryBackend::OnMemoryPressure, base::Unretained(this))));
@@ -411,7 +407,7 @@ void HistoryBackend::AddPage(const HistoryAddPageArgs& request) {
         request.redirects[0] : request.url);
     if (origin_url.SchemeIs(content::kHttpScheme) ||
         origin_url.SchemeIs(content::kHttpsScheme) ||
-        origin_url.SchemeIs(chrome::kFtpScheme)) {
+        origin_url.SchemeIs(content::kFtpScheme)) {
       std::string host(origin_url.host());
       size_t registry_length =
           net::registry_controlled_domains::GetRegistryLength(
@@ -456,7 +452,7 @@ void HistoryBackend::AddPage(const HistoryAddPageArgs& request) {
         content::PAGE_TRANSITION_CHAIN_START;
 
     RedirectList redirects = request.redirects;
-    if (redirects[0].SchemeIs(chrome::kAboutScheme)) {
+    if (redirects[0].SchemeIs(content::kAboutScheme)) {
       // When the redirect source + referrer is "about" we skip it. This
       // happens when a page opens a new frame/window to about:blank and then
       // script sets the URL to somewhere else (used to hide the referrer). It
@@ -547,9 +543,6 @@ void HistoryBackend::AddPage(const HistoryAddPageArgs& request) {
                       last_ids.second);
   }
 
-  if (page_collector_)
-    page_collector_->AddPageURL(request.url, request.time);
-
   ScheduleCommit();
 }
 
@@ -591,7 +584,7 @@ void HistoryBackend::InitImpl(const std::string& languages) {
       if (kill_db)
         KillHistoryDatabase();
       UMA_HISTOGRAM_BOOLEAN("History.AttemptedToFixProfileError", kill_db);
-      delegate_->NotifyProfileError(id_, status);
+      delegate_->NotifyProfileError(status);
       db_.reset();
       return;
     }
@@ -601,31 +594,12 @@ void HistoryBackend::InitImpl(const std::string& languages) {
 
   // Fill the in-memory database and send it back to the history service on the
   // main thread.
-  InMemoryHistoryBackend* mem_backend = new InMemoryHistoryBackend;
-  if (mem_backend->Init(history_name, db_.get()))
-    delegate_->SetInMemoryBackend(id_, mem_backend);  // Takes ownership of
-                                                      // pointer.
-  else
-    delete mem_backend;  // Error case, run without the in-memory DB.
+  {
+    scoped_ptr<InMemoryHistoryBackend> mem_backend(new InMemoryHistoryBackend);
+    if (mem_backend->Init(history_name, db_.get()))
+      delegate_->SetInMemoryBackend(mem_backend.Pass());
+  }
   db_->BeginExclusiveMode();  // Must be after the mem backend read the data.
-
-  // Create the history publisher which needs to be passed on to the thumbnail
-  // database for publishing history.
-  // TODO(shess): HistoryPublisher is being deprecated.  I am still
-  // trying to track down who depends on it, meanwhile talk to me
-  // before removing interactions with it.  http://crbug.com/294306
-  history_publisher_.reset(new HistoryPublisher());
-  if (!history_publisher_->Init()) {
-    // The init may fail when there are no indexers wanting our history.
-    // Hence no need to log the failure.
-    history_publisher_.reset();
-  }
-
-  // Collects page data for history_publisher_.
-  if (history_publisher_.get()) {
-    page_collector_.reset(new PageCollector());
-    page_collector_->Init(history_publisher_.get());
-  }
 
   // Thumbnail database.
   // TODO(shess): "thumbnail database" these days only stores
@@ -805,13 +779,14 @@ std::pair<URLID, VisitID> HistoryBackend::AddPageVisit(
     if (typed_url_syncable_service_.get())
       typed_url_syncable_service_->OnUrlVisited(transition, &url_info);
 
-    URLVisitedDetails* details = new URLVisitedDetails;
+    scoped_ptr<URLVisitedDetails> details(new URLVisitedDetails);
     details->transition = transition;
     details->row = url_info;
     // TODO(meelapshah) Disabled due to potential PageCycler regression.
     // Re-enable this.
     // GetMostRecentRedirectsTo(url, &details->redirects);
-    BroadcastNotifications(chrome::NOTIFICATION_HISTORY_URL_VISITED, details);
+    BroadcastNotifications(chrome::NOTIFICATION_HISTORY_URL_VISITED,
+                           details.PassAs<HistoryDetails>());
   } else {
     VLOG(0) << "Failed to build visit insert statement:  "
             << "url_id = " << url_id;
@@ -859,12 +834,6 @@ void HistoryBackend::AddPagesWithDetails(const URLRows& urls,
       }
     }
 
-    // TODO(shess): I'm not sure this case needs to exist anymore.
-    if (page_collector_) {
-      page_collector_->AddPageData(i->url(), i->last_visit(),
-                                   i->title(), string16());
-    }
-
     // Sync code manages the visits itself.
     if (visit_source != SOURCE_SYNCED) {
       // Make up a visit to correspond to the last visit to the page.
@@ -893,7 +862,7 @@ void HistoryBackend::AddPagesWithDetails(const URLRows& urls,
   // TODO(brettw) bug 1140015: Add an "add page" notification so the history
   // views can keep in sync.
   BroadcastNotifications(chrome::NOTIFICATION_HISTORY_URLS_MODIFIED,
-                         modified.release());
+                         modified.PassAs<HistoryDetails>());
 
   ScheduleCommit();
 }
@@ -902,12 +871,10 @@ bool HistoryBackend::IsExpiredVisitTime(const base::Time& time) {
   return time < expirer_.GetCurrentArchiveTime();
 }
 
-void HistoryBackend::SetPageTitle(const GURL& url, const string16& title) {
+void HistoryBackend::SetPageTitle(const GURL& url,
+                                  const base::string16& title) {
   if (!db_)
     return;
-
-  if (page_collector_)
-    page_collector_->AddPageTitle(url, title);
 
   // Search for recent redirects which should get the same title. We make a
   // dummy list containing the exact URL visited if there are no redirects so
@@ -945,13 +912,13 @@ void HistoryBackend::SetPageTitle(const GURL& url, const string16& title) {
     if (typed_url_syncable_service_.get())
       typed_url_syncable_service_->OnUrlsModified(&details->changed_urls);
     BroadcastNotifications(chrome::NOTIFICATION_HISTORY_URLS_MODIFIED,
-                           details.release());
+                           details.PassAs<HistoryDetails>());
     ScheduleCommit();
   }
 }
 
 void HistoryBackend::AddPageNoVisitForBookmark(const GURL& url,
-                                               const string16& title) {
+                                               const base::string16& title) {
   if (!db_)
     return;
 
@@ -965,7 +932,7 @@ void HistoryBackend::AddPageNoVisitForBookmark(const GURL& url,
   if (!title.empty()) {
     url_info.set_title(title);
   } else {
-    url_info.set_title(UTF8ToUTF16(url.spec()));
+    url_info.set_title(base::UTF8ToUTF16(url.spec()));
   }
 
   url_info.set_last_visit(Time::Now());
@@ -1116,52 +1083,11 @@ void HistoryBackend::QuerySegmentUsage(
   request->ForwardResult(request->handle(), &request->value.get());
 }
 
-void HistoryBackend::IncreaseSegmentDuration(const GURL& url,
-                                             base::Time time,
-                                             base::TimeDelta delta) {
-  if (!db_)
-    return;
-
-  const std::string segment_name(VisitSegmentDatabase::ComputeSegmentName(url));
-  SegmentID segment_id = db_->GetSegmentNamed(segment_name);
-  if (!segment_id) {
-    URLID url_id = db_->GetRowForURL(url, NULL);
-    if (!url_id)
-      return;
-    segment_id = db_->CreateSegment(url_id, segment_name);
-    if (!segment_id)
-      return;
-  }
-  SegmentDurationID duration_id;
-  base::TimeDelta total_delta;
-  if (!db_->GetSegmentDuration(segment_id, time, &duration_id,
-                               &total_delta)) {
-    db_->CreateSegmentDuration(segment_id, time, delta);
-    return;
-  }
-  total_delta += delta;
-  db_->SetSegmentDuration(duration_id, total_delta);
-}
-
-void HistoryBackend::QuerySegmentDuration(
-    scoped_refptr<QuerySegmentUsageRequest> request,
-    const base::Time from_time,
-    int max_result_count) {
-  if (request->canceled())
-    return;
-
-  if (db_) {
-    db_->QuerySegmentDuration(from_time, max_result_count,
-                              &request->value.get());
-  }
-  request->ForwardResult(request->handle(), &request->value.get());
-}
-
 // Keyword visits --------------------------------------------------------------
 
 void HistoryBackend::SetKeywordSearchTermsForURL(const GURL& url,
                                                  TemplateURLID keyword_id,
-                                                 const string16& term) {
+                                                 const base::string16& term) {
   if (!db_)
     return;
 
@@ -1177,7 +1103,8 @@ void HistoryBackend::SetKeywordSearchTermsForURL(const GURL& url,
 
   BroadcastNotifications(
       chrome::NOTIFICATION_HISTORY_KEYWORD_SEARCH_TERM_UPDATED,
-      new KeywordSearchUpdatedDetails(url, keyword_id, term));
+      scoped_ptr<HistoryDetails>(
+          new KeywordSearchUpdatedDetails(url, keyword_id, term)));
   ScheduleCommit();
 }
 
@@ -1194,7 +1121,7 @@ void HistoryBackend::DeleteAllSearchTermsForKeyword(
 void HistoryBackend::GetMostRecentKeywordSearchTerms(
     scoped_refptr<GetMostRecentKeywordSearchTermsRequest> request,
     TemplateURLID keyword_id,
-    const string16& prefix,
+    const base::string16& prefix,
     int max_count) {
   if (request->canceled())
     return;
@@ -1217,15 +1144,32 @@ void HistoryBackend::DeleteKeywordSearchTermForURL(const GURL& url) {
 
   BroadcastNotifications(
       chrome::NOTIFICATION_HISTORY_KEYWORD_SEARCH_TERM_DELETED,
-      new KeywordSearchDeletedDetails(url));
+      scoped_ptr<HistoryDetails>(new KeywordSearchDeletedDetails(url)));
   ScheduleCommit();
+}
+
+void HistoryBackend::DeleteMatchingURLsForKeyword(TemplateURLID keyword_id,
+                                                  const base::string16& term) {
+  if (!db_)
+    return;
+
+  std::vector<KeywordSearchTermRow> rows;
+  if (db_->GetKeywordSearchTermRows(term, &rows)) {
+    std::vector<GURL> items_to_delete;
+    URLRow row;
+    for (std::vector<KeywordSearchTermRow>::iterator it = rows.begin();
+         it != rows.end(); ++it) {
+      if ((it->keyword_id == keyword_id) && db_->GetURLRow(it->url_id, &row))
+        items_to_delete.push_back(row.url());
+    }
+    DeleteURLs(items_to_delete);
+  }
 }
 
 // Downloads -------------------------------------------------------------------
 
-void HistoryBackend::GetNextDownloadId(uint32* next_id) {
-  if (db_)
-    db_->GetNextDownloadId(next_id);
+uint32 HistoryBackend::GetNextDownloadId() {
+  return db_ ? db_->GetNextDownloadId() : content::DownloadItem::kInvalidId;
 }
 
 // Get all the download entries from the database.
@@ -1242,12 +1186,12 @@ void HistoryBackend::UpdateDownload(const history::DownloadRow& data) {
   ScheduleCommit();
 }
 
-void HistoryBackend::CreateDownload(const history::DownloadRow& history_info,
-                                    bool* success) {
+bool HistoryBackend::CreateDownload(const history::DownloadRow& history_info) {
   if (!db_)
-    return;
-  *success = db_->CreateDownload(history_info);
+    return false;
+  bool success = db_->CreateDownload(history_info);
   ScheduleCommit();
+  return success;
 }
 
 void HistoryBackend::RemoveDownloads(const std::set<uint32>& ids) {
@@ -1285,7 +1229,7 @@ void HistoryBackend::RemoveDownloads(const std::set<uint32>& ids) {
 }
 
 void HistoryBackend::QueryHistory(scoped_refptr<QueryHistoryRequest> request,
-                                  const string16& text_query,
+                                  const base::string16& text_query,
                                   const QueryOptions& options) {
   if (request->canceled())
     return;
@@ -1380,7 +1324,7 @@ void HistoryBackend::QueryHistoryBasic(URLDatabase* url_db,
 // Text-based querying of history.
 void HistoryBackend::QueryHistoryText(URLDatabase* url_db,
                                       VisitDatabase* visit_db,
-                                      const string16& text_query,
+                                      const base::string16& text_query,
                                       const QueryOptions& options,
                                       QueryResults* result) {
   URLRows text_matches;
@@ -1688,12 +1632,6 @@ void HistoryBackend::DeleteFTSIndexDatabases() {
   }
   UMA_HISTOGRAM_COUNTS("History.DeleteFTSIndexDatabases",
                        num_databases_deleted);
-}
-
-void HistoryBackend::SetPageContents(const GURL& url,
-                                     const string16& contents) {
-  if (page_collector_)
-    page_collector_->AddPageContents(url, contents);
 }
 
 void HistoryBackend::GetFavicons(
@@ -2123,10 +2061,11 @@ void HistoryBackend::SetImportedFavicons(
 
   if (!favicons_changed.empty()) {
     // Send the notification about the changed favicon URLs.
-    FaviconChangedDetails* changed_details = new FaviconChangedDetails;
+    scoped_ptr<FaviconChangedDetails> changed_details(
+        new FaviconChangedDetails);
     changed_details->urls.swap(favicons_changed);
     BroadcastNotifications(chrome::NOTIFICATION_FAVICON_CHANGED,
-                           changed_details);
+                           changed_details.PassAs<HistoryDetails>());
   }
 }
 
@@ -2490,12 +2429,12 @@ void HistoryBackend::SendFaviconChangedNotificationForPageAndRedirects(
   history::RedirectList redirect_list;
   GetCachedRecentRedirects(page_url, &redirect_list);
 
-  FaviconChangedDetails* changed_details = new FaviconChangedDetails;
+  scoped_ptr<FaviconChangedDetails> changed_details(new FaviconChangedDetails);
   for (size_t i = 0; i < redirect_list.size(); ++i)
     changed_details->urls.insert(redirect_list[i]);
 
   BroadcastNotifications(chrome::NOTIFICATION_FAVICON_CHANGED,
-                         changed_details);
+                         changed_details.PassAs<HistoryDetails>());
 }
 
 void HistoryBackend::Commit() {
@@ -2782,13 +2721,11 @@ void HistoryBackend::ProcessDBTask(
 
 void HistoryBackend::BroadcastNotifications(
     int type,
-    HistoryDetails* details_deleted) {
+    scoped_ptr<HistoryDetails> details) {
   // |delegate_| may be NULL if |this| is in the process of closing (closed by
   // HistoryService -> HistoryBackend::Closing().
   if (delegate_)
-    delegate_->BroadcastNotifications(type, details_deleted);
-  else
-    delete details_deleted;
+    delegate_->BroadcastNotifications(type, details.Pass());
 }
 
 void HistoryBackend::NotifySyncURLsDeleted(bool all_history,
@@ -2869,10 +2806,11 @@ void HistoryBackend::DeleteAllHistory() {
 
   // Send out the notification that history is cleared. The in-memory database
   // will pick this up and clear itself.
-  URLsDeletedDetails* details = new URLsDeletedDetails;
+  scoped_ptr<URLsDeletedDetails> details(new URLsDeletedDetails);
   details->all_history = true;
   NotifySyncURLsDeleted(true, false, NULL);
-  BroadcastNotifications(chrome::NOTIFICATION_HISTORY_URLS_DELETED, details);
+  BroadcastNotifications(chrome::NOTIFICATION_HISTORY_URLS_DELETED,
+                         details.PassAs<HistoryDetails>());
 }
 
 bool HistoryBackend::ClearAllThumbnailHistory(const URLRows& kept_urls) {

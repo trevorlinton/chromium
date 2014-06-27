@@ -17,13 +17,19 @@
 #include "chrome/browser/extensions/api/declarative_webrequest/webrequest_constants.h"
 #include "chrome/browser/extensions/api/web_request/web_request_api_helpers.h"
 #include "chrome/common/extensions/extension_test_util.h"
+#include "components/url_matcher/url_matcher_constants.h"
 #include "content/public/test/test_browser_thread.h"
-#include "extensions/common/matcher/url_matcher_constants.h"
 #include "net/base/request_priority.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest-message.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using base::Value;
+using extension_test_util::LoadManifest;
+using extension_test_util::LoadManifestUnchecked;
+using testing::HasSubstr;
+using url_matcher::URLMatcher;
 
 namespace {
 const char kExtensionId[] = "ext1";
@@ -34,23 +40,19 @@ const char kRuleId3[] = "rule3";
 const char kRuleId4[] = "rule4";
 }  // namespace
 
-using extension_test_util::LoadManifest;
-using extension_test_util::LoadManifestUnchecked;
-
 namespace extensions {
-
-using base::Value;
-using testing::HasSubstr;
 
 namespace helpers = extension_web_request_api_helpers;
 namespace keys = declarative_webrequest_constants;
-namespace keys2 = url_matcher_constants;
+namespace keys2 = url_matcher::url_matcher_constants;
 
 class TestWebRequestRulesRegistry : public WebRequestRulesRegistry {
  public:
-  explicit TestWebRequestRulesRegistry(
-      scoped_refptr<ExtensionInfoMap> extension_info_map)
-      : WebRequestRulesRegistry(NULL /*profile*/, NULL /* cache_delegate */),
+  TestWebRequestRulesRegistry(
+      scoped_refptr<InfoMap> extension_info_map)
+      : WebRequestRulesRegistry(NULL /*profile*/,
+                                NULL /* cache_delegate */,
+                                WebViewKey(0, 0)),
         num_clear_cache_calls_(0) {
     SetExtensionInfoMapForTesting(extension_info_map);
   }
@@ -79,8 +81,7 @@ class TestWebRequestRulesRegistry : public WebRequestRulesRegistry {
 class WebRequestRulesRegistryTest : public testing::Test {
  public:
   WebRequestRulesRegistryTest()
-      : message_loop_(base::MessageLoop::TYPE_IO),
-        ui_(content::BrowserThread::UI, &message_loop_),
+      : ui_(content::BrowserThread::UI, &message_loop_),
         io_(content::BrowserThread::IO, &message_loop_) {}
 
   virtual ~WebRequestRulesRegistryTest() {}
@@ -221,7 +222,7 @@ class WebRequestRulesRegistryTest : public testing::Test {
   }
 
  protected:
-  base::MessageLoop message_loop_;
+  base::MessageLoopForIO message_loop_;
   content::TestBrowserThread ui_;
   content::TestBrowserThread io_;
   // Two extensions with host permissions for all URLs and the DWR permission.
@@ -229,7 +230,7 @@ class WebRequestRulesRegistryTest : public testing::Test {
   // |extension2_|.
   scoped_refptr<Extension> extension_;
   scoped_refptr<Extension> extension2_;
-  scoped_refptr<ExtensionInfoMap> extension_info_map_;
+  scoped_refptr<InfoMap> extension_info_map_;
 };
 
 void WebRequestRulesRegistryTest::SetUp() {
@@ -250,14 +251,16 @@ void WebRequestRulesRegistryTest::SetUp() {
                                       kExtensionId2,
                                       &error);
   ASSERT_TRUE(extension2_.get()) << error;
-  extension_info_map_ = new ExtensionInfoMap;
+  extension_info_map_ = new InfoMap;
   ASSERT_TRUE(extension_info_map_.get());
   extension_info_map_->AddExtension(extension_.get(),
                                     base::Time() + base::TimeDelta::FromDays(1),
-                                    false /*incognito_enabled*/);
+                                    false /*incognito_enabled*/,
+                                    false /*notifications_disabled*/);
   extension_info_map_->AddExtension(extension2_.get(),
                                     base::Time() + base::TimeDelta::FromDays(2),
-                                    false /*incognito_enabled*/);
+                                    false /*incognito_enabled*/,
+                                    false /*notifications_disabled*/);
 }
 
 
@@ -521,9 +524,9 @@ TEST_F(WebRequestRulesRegistryTest, IgnoreRulesByTag) {
       "  \"priority\": 300                                               \n"
       "}                                                                 ";
 
-  scoped_ptr<Value> value1(base::JSONReader::Read(kRule1));
+  scoped_ptr<base::Value> value1(base::JSONReader::Read(kRule1));
   ASSERT_TRUE(value1.get());
-  scoped_ptr<Value> value2(base::JSONReader::Read(kRule2));
+  scoped_ptr<base::Value> value2(base::JSONReader::Read(kRule2));
   ASSERT_TRUE(value2.get());
 
   std::vector<linked_ptr<RulesRegistry::Rule> > rules;
@@ -664,28 +667,30 @@ TEST_F(WebRequestRulesRegistryTest, GetMatchesDifferentUrls) {
 
 TEST(WebRequestRulesRegistrySimpleTest, StageChecker) {
   // The contentType condition can only be evaluated during ON_HEADERS_RECEIVED
-  // but the redirect action can only be executed during ON_BEFORE_REQUEST.
+  // but the SetRequestHeader action can only be executed during
+  // ON_BEFORE_SEND_HEADERS.
   // Therefore, this is an inconsistent rule that needs to be flagged.
   const char kRule[] =
-      "{                                                                 \n"
-      "  \"id\": \"rule1\",                                              \n"
-      "  \"conditions\": [                                               \n"
-      "    {                                                             \n"
-      "      \"instanceType\": \"declarativeWebRequest.RequestMatcher\", \n"
-      "      \"url\": {\"hostSuffix\": \"foo.com\"},                     \n"
-      "      \"contentType\": [\"image/jpeg\"]                           \n"
-      "    }                                                             \n"
-      "  ],                                                              \n"
-      "  \"actions\": [                                                  \n"
-      "    {                                                             \n"
-      "      \"instanceType\": \"declarativeWebRequest.RedirectRequest\",\n"
-      "      \"redirectUrl\": \"http://bar.com\"                         \n"
-      "    }                                                             \n"
-      "  ],                                                              \n"
-      "  \"priority\": 200                                               \n"
-      "}                                                                 ";
+      "{                                                                  \n"
+      "  \"id\": \"rule1\",                                               \n"
+      "  \"conditions\": [                                                \n"
+      "    {                                                              \n"
+      "      \"instanceType\": \"declarativeWebRequest.RequestMatcher\",  \n"
+      "      \"url\": {\"hostSuffix\": \"foo.com\"},                      \n"
+      "      \"contentType\": [\"image/jpeg\"]                            \n"
+      "    }                                                              \n"
+      "  ],                                                               \n"
+      "  \"actions\": [                                                   \n"
+      "    {                                                              \n"
+      "      \"instanceType\": \"declarativeWebRequest.SetRequestHeader\",\n"
+      "      \"name\": \"Content-Type\",                                  \n"
+      "      \"value\": \"text/plain\"                                    \n"
+      "    }                                                              \n"
+      "  ],                                                               \n"
+      "  \"priority\": 200                                                \n"
+      "}                                                                  ";
 
-  scoped_ptr<Value> value(base::JSONReader::Read(kRule));
+  scoped_ptr<base::Value> value(base::JSONReader::Read(kRule));
   ASSERT_TRUE(value);
 
   RulesRegistry::Rule rule;
@@ -718,7 +723,7 @@ TEST(WebRequestRulesRegistrySimpleTest, HostPermissionsChecker) {
       "  \"instanceType\": \"declarativeWebRequest.RedirectRequest\",\n"
       "  \"redirectUrl\": \"http://bar.com\"                         \n"
       "}                                                             ";
-  scoped_ptr<Value> action_value(base::JSONReader::Read(kAction));
+  scoped_ptr<base::Value> action_value(base::JSONReader::Read(kAction));
   ASSERT_TRUE(action_value);
 
   WebRequestActionSet::AnyVector actions;
@@ -774,7 +779,7 @@ TEST_F(WebRequestRulesRegistryTest, CheckOriginAndPathRegEx) {
       "  \"priority\": 200                                               \n"
       "}                                                                 ";
 
-  scoped_ptr<Value> value(base::JSONReader::Read(kRule));
+  scoped_ptr<base::Value> value(base::JSONReader::Read(kRule));
   ASSERT_TRUE(value.get());
 
   std::vector<linked_ptr<RulesRegistry::Rule> > rules;

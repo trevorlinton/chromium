@@ -28,8 +28,8 @@ class BubbleIconView : public views::ImageView {
   virtual void OnExecuting(ExecuteSource execute_source) = 0;
 
   // views::ImageView:
-  virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE;
-  virtual bool GetTooltipText(const gfx::Point& p, string16* tooltip)
+  virtual void GetAccessibleState(ui::AXViewState* state) OVERRIDE;
+  virtual bool GetTooltipText(const gfx::Point& p, base::string16* tooltip)
       const OVERRIDE;
   virtual bool OnMousePressed(const ui::MouseEvent& event) OVERRIDE;
   virtual void OnMouseReleased(const ui::MouseEvent& event) OVERRIDE;

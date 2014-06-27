@@ -119,7 +119,8 @@ class BookmarkEditorBaseControllerBridge : public BookmarkModelObserver {
         importing_(false)
   { }
 
-  virtual void Loaded(BookmarkModel* model, bool ids_reassigned) OVERRIDE {
+  virtual void BookmarkModelLoaded(BookmarkModel* model,
+                                   bool ids_reassigned) OVERRIDE {
     [controller_ modelChangedPreserveSelection:YES];
   }
 
@@ -194,14 +195,13 @@ class BookmarkEditorBaseControllerBridge : public BookmarkModelObserver {
 
 @synthesize initialName = initialName_;
 @synthesize displayName = displayName_;
-@synthesize okEnabled = okEnabled_;
 
 - (id)initWithParentWindow:(NSWindow*)parentWindow
                    nibName:(NSString*)nibName
                    profile:(Profile*)profile
                     parent:(const BookmarkNode*)parent
                        url:(const GURL&)url
-                     title:(const string16&)title
+                     title:(const base::string16&)title
              configuration:(BookmarkEditor::Configuration)configuration {
   NSString* nibpath = [base::mac::FrameworkBundle()
                         pathForResource:nibName
@@ -277,6 +277,8 @@ class BookmarkEditorBaseControllerBridge : public BookmarkModelObserver {
         contextInfo:nil];
 }
 
+// This constant has to match the name of the method after it.
+NSString* const kOkEnabledName = @"okEnabled";
 - (BOOL)okEnabled {
   return YES;
 }
@@ -339,7 +341,7 @@ class BookmarkEditorBaseControllerBridge : public BookmarkModelObserver {
   return url_;
 }
 
-- (const string16&)title{
+- (const base::string16&)title{
   return title_;
 }
 
@@ -453,9 +455,9 @@ class BookmarkEditorBaseControllerBridge : public BookmarkModelObserver {
 - (void)selectNodeInBrowser:(const BookmarkNode*)node {
   DCHECK(configuration_ == BookmarkEditor::SHOW_TREE);
   NSIndexPath* selectionPath = [self selectionPathForNode:node];
-  [self willChangeValueForKey:@"okEnabled"];
+  [self willChangeValueForKey:kOkEnabledName];
   [self setTableSelectionPath:selectionPath];
-  [self didChangeValueForKey:@"okEnabled"];
+  [self didChangeValueForKey:kOkEnabledName];
 }
 
 - (NSIndexPath*)selectionPathForNode:(const BookmarkNode*)desiredNode {

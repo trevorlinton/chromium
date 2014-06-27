@@ -1,11 +1,10 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 package org.chromium.media;
 
 import android.content.Context;
-import android.media.AudioFormat;
 import android.media.MediaCodec;
 import android.media.MediaCodec.BufferInfo;
 import android.media.MediaExtractor;
@@ -13,11 +12,11 @@ import android.media.MediaFormat;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
 
-import java.io.File;
-import java.nio.ByteBuffer;
-
 import org.chromium.base.CalledByNative;
 import org.chromium.base.JNINamespace;
+
+import java.io.File;
+import java.nio.ByteBuffer;
 
 @JNINamespace("media")
 class WebAudioMediaCodecBridge {
@@ -34,7 +33,7 @@ class WebAudioMediaCodecBridge {
 
     @CalledByNative
     private static boolean decodeAudioFile(Context ctx,
-                                           int nativeMediaCodecBridge,
+                                           long nativeMediaCodecBridge,
                                            int inputFD,
                                            long dataSize) {
 
@@ -80,11 +79,27 @@ class WebAudioMediaCodecBridge {
             }
         }
 
+        // If the duration is too long, set to 0 to force the caller
+        // not to preallocate space.  See crbug.com/326856.
+        // FIXME: What should be the limit? We're arbitrarily using
+        // about 2148 sec (35.8 min).
+        if (durationMicroseconds > 0x7fffffff) {
+            durationMicroseconds = 0;
+        }
+
         Log.d(LOG_TAG, "Initial: Tracks: " + extractor.getTrackCount() +
               " Format: " + format);
 
         // Create decoder
-        MediaCodec codec = MediaCodec.createDecoderByType(mime);
+        MediaCodec codec;
+        try {
+            codec = MediaCodec.createDecoderByType(mime);
+        } catch (Exception e) {
+            Log.w(LOG_TAG, "Failed to create MediaCodec for mime type: " + mime);
+            encodedFD.detachFd();
+            return false;
+        }
+
         codec.configure(format, null /* surface */, null /* crypto */, 0 /* flags */);
         codec.start();
 
@@ -183,11 +198,11 @@ class WebAudioMediaCodecBridge {
     }
 
     private static native void nativeOnChunkDecoded(
-        int nativeWebAudioMediaCodecBridge, ByteBuffer buf, int size,
+        long nativeWebAudioMediaCodecBridge, ByteBuffer buf, int size,
         int inputChannelCount, int outputChannelCount);
 
     private static native void nativeInitializeDestination(
-        int nativeWebAudioMediaCodecBridge,
+        long nativeWebAudioMediaCodecBridge,
         int inputChannelCount,
         int sampleRate,
         long durationMicroseconds);

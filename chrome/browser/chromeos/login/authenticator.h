@@ -58,7 +58,10 @@ class Authenticator : public base::RefCountedThreadSafe<Authenticator> {
 
   // Initiates login into kiosk mode account identified by |app_user_id|.
   // The |app_user_id| is a generated username for the account.
-  virtual void LoginAsKioskAccount(const std::string& app_user_id) = 0;
+  // |use_guest_mount| specifies whether to force the session to use a
+  // guest mount. If this is false, we use mount a public cryptohome.
+  virtual void LoginAsKioskAccount(const std::string& app_user_id,
+                                   bool use_guest_mount) = 0;
 
   // Completes retail mode login.
   virtual void OnRetailModeLoginSuccess() = 0;

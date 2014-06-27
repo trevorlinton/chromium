@@ -42,10 +42,10 @@ class DownloadDangerPromptImpl : public DownloadDangerPrompt,
   virtual void OnDownloadUpdated(content::DownloadItem* download) OVERRIDE;
 
   // TabModalConfirmDialogDelegate:
-  virtual string16 GetTitle() OVERRIDE;
-  virtual string16 GetMessage() OVERRIDE;
-  virtual string16 GetAcceptButtonTitle() OVERRIDE;
-  virtual string16 GetCancelButtonTitle() OVERRIDE;
+  virtual base::string16 GetTitle() OVERRIDE;
+  virtual base::string16 GetDialogMessage() OVERRIDE;
+  virtual base::string16 GetAcceptButtonTitle() OVERRIDE;
+  virtual base::string16 GetCancelButtonTitle() OVERRIDE;
   virtual void OnAccepted() OVERRIDE;
   virtual void OnCanceled() OVERRIDE;
   virtual void OnClosed() OVERRIDE;
@@ -101,7 +101,7 @@ void DownloadDangerPromptImpl::OnDownloadUpdated(
   }
 }
 
-string16 DownloadDangerPromptImpl::GetTitle() {
+base::string16 DownloadDangerPromptImpl::GetTitle() {
   if (show_context_)
     return l10n_util::GetStringUTF16(IDS_CONFIRM_KEEP_DANGEROUS_DOWNLOAD_TITLE);
   switch (download_->GetDangerType()) {
@@ -119,7 +119,7 @@ string16 DownloadDangerPromptImpl::GetTitle() {
   }
 }
 
-string16 DownloadDangerPromptImpl::GetMessage() {
+base::string16 DownloadDangerPromptImpl::GetDialogMessage() {
   if (show_context_) {
     switch (download_->GetDangerType()) {
       case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE: {
@@ -158,7 +158,7 @@ string16 DownloadDangerPromptImpl::GetMessage() {
       case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_HOST: {
         return l10n_util::GetStringUTF16(
             IDS_PROMPT_CONFIRM_KEEP_MALICIOUS_DOWNLOAD_LEAD) +
-            ASCIIToUTF16("\n\n") +
+            base::ASCIIToUTF16("\n\n") +
             l10n_util::GetStringUTF16(
                 IDS_PROMPT_CONFIRM_KEEP_MALICIOUS_DOWNLOAD_BODY);
       }
@@ -169,10 +169,10 @@ string16 DownloadDangerPromptImpl::GetMessage() {
     }
   }
   NOTREACHED();
-  return string16();
+  return base::string16();
 }
 
-string16 DownloadDangerPromptImpl::GetAcceptButtonTitle() {
+base::string16 DownloadDangerPromptImpl::GetAcceptButtonTitle() {
   if (show_context_)
     return l10n_util::GetStringUTF16(IDS_CONFIRM_DOWNLOAD);
   switch (download_->GetDangerType()) {
@@ -187,7 +187,7 @@ string16 DownloadDangerPromptImpl::GetAcceptButtonTitle() {
   }
 }
 
-string16 DownloadDangerPromptImpl::GetCancelButtonTitle() {
+base::string16 DownloadDangerPromptImpl::GetCancelButtonTitle() {
   if (show_context_)
     return l10n_util::GetStringUTF16(IDS_CANCEL);
   switch (download_->GetDangerType()) {

@@ -26,43 +26,58 @@ const wchar_t kNativeMessagingRegistryKey[] =
 namespace {
 
 // Reads path to the native messaging host manifest from the registry. Returns
-// empty string if the path isn't found.
-string16 GetManifestPath(const string16& native_host_name, DWORD flags) {
+// false if the path isn't found.
+bool GetManifestPathWithFlags(HKEY root_key,
+                              DWORD flags,
+                              const base::string16& host_name,
+                              base::string16* result) {
   base::win::RegKey key;
-  string16 result;
 
-  if (key.Open(HKEY_LOCAL_MACHINE, kNativeMessagingRegistryKey,
+  if (key.Open(root_key, kNativeMessagingRegistryKey,
                KEY_QUERY_VALUE | flags) != ERROR_SUCCESS ||
-      key.OpenKey(native_host_name.c_str(),
+      key.OpenKey(host_name.c_str(),
                   KEY_QUERY_VALUE | flags) != ERROR_SUCCESS ||
-      key.ReadValue(NULL, &result) != ERROR_SUCCESS) {
-    return string16();
+      key.ReadValue(NULL, result) != ERROR_SUCCESS) {
+    return false;
   }
 
-  return result;
+  return true;
+}
+
+bool GetManifestPath(HKEY root_key,
+                     const base::string16& host_name,
+                     base::string16* result) {
+  // First check 32-bit registry and then try 64-bit.
+  return GetManifestPathWithFlags(
+             root_key, KEY_WOW64_32KEY, host_name, result) ||
+         GetManifestPathWithFlags(
+             root_key, KEY_WOW64_64KEY, host_name, result);
 }
 
 }  // namespace
 
 // static
 base::FilePath NativeProcessLauncher::FindManifest(
-    const std::string& native_host_name,
+    const std::string& host_name,
+    bool allow_user_level_hosts,
     std::string* error_message) {
-  string16 native_host_name_wide = UTF8ToUTF16(native_host_name);
+  base::string16 host_name_wide = base::UTF8ToUTF16(host_name);
 
-  // First check 32-bit registry and then try 64-bit.
-  string16 manifest_path_str =
-      GetManifestPath(native_host_name_wide, KEY_WOW64_32KEY);
-  if (manifest_path_str.empty())
-    manifest_path_str = GetManifestPath(native_host_name_wide, KEY_WOW64_64KEY);
+  // Try to find the key in HKEY_LOCAL_MACHINE and then in HKEY_CURRENT_USER.
+  base::string16 path_str;
+  bool found = false;
+  if (allow_user_level_hosts)
+    found = GetManifestPath(HKEY_CURRENT_USER, host_name_wide, &path_str);
+  if (!found)
+    found = GetManifestPath(HKEY_LOCAL_MACHINE, host_name_wide, &path_str);
 
-  if (manifest_path_str.empty()) {
-    *error_message = "Native messaging host " + native_host_name +
-        " is not registered";
+  if (!found) {
+    *error_message =
+        "Native messaging host " + host_name + " is not registered.";
     return base::FilePath();
   }
 
-  base::FilePath manifest_path(manifest_path_str);
+  base::FilePath manifest_path(path_str);
   if (!manifest_path.IsAbsolute()) {
     *error_message = "Path to native messaging host manifest must be absolute.";
     return base::FilePath();
@@ -75,8 +90,8 @@ base::FilePath NativeProcessLauncher::FindManifest(
 bool NativeProcessLauncher::LaunchNativeProcess(
     const CommandLine& command_line,
     base::ProcessHandle* process_handle,
-    base::PlatformFile* read_file,
-    base::PlatformFile* write_file) {
+    base::File* read_file,
+    base::File* write_file) {
   // Timeout for the IO pipes.
   const DWORD kTimeoutMs = 5000;
 
@@ -91,9 +106,9 @@ bool NativeProcessLauncher::LaunchNativeProcess(
 
   uint64 pipe_name_token;
   crypto::RandBytes(&pipe_name_token, sizeof(pipe_name_token));
-  string16 out_pipe_name = base::StringPrintf(
+  base::string16 out_pipe_name = base::StringPrintf(
       L"\\\\.\\pipe\\chrome.nativeMessaging.out.%llx", pipe_name_token);
-  string16 in_pipe_name = base::StringPrintf(
+  base::string16 in_pipe_name = base::StringPrintf(
       L"\\\\.\\pipe\\chrome.nativeMessaging.in.%llx", pipe_name_token);
 
   // Create the pipes to read and write from.
@@ -127,16 +142,16 @@ bool NativeProcessLauncher::LaunchNativeProcess(
   scoped_ptr<wchar_t[]> comspec(new wchar_t[comspec_length]);
   ::GetEnvironmentVariable(L"COMSPEC", comspec.get(), comspec_length);
 
-  string16 command_line_string = command_line.GetCommandLineString();
+  base::string16 command_line_string = command_line.GetCommandLineString();
 
-  string16 command = base::StringPrintf(
+  base::string16 command = base::StringPrintf(
       L"%ls /c %ls < %ls > %ls",
       comspec.get(), command_line_string.c_str(),
       in_pipe_name.c_str(), out_pipe_name.c_str());
 
   base::LaunchOptions options;
   options.start_hidden = true;
-  base::ProcessHandle cmd_handle;
+  base::win::ScopedHandle cmd_handle;
   if (!base::LaunchProcess(command.c_str(), options, &cmd_handle)) {
     LOG(ERROR) << "Error launching process "
                << command_line.GetProgram().MaybeAsASCII();
@@ -148,16 +163,15 @@ bool NativeProcessLauncher::LaunchNativeProcess(
   bool stdin_connected = ConnectNamedPipe(stdin_pipe.Get(), NULL) ?
       TRUE : GetLastError() == ERROR_PIPE_CONNECTED;
   if (!stdout_connected || !stdin_connected) {
-    base::KillProcess(cmd_handle, 0, false);
-    base::CloseProcessHandle(cmd_handle);
+    base::KillProcess(cmd_handle.Get(), 0, false);
     LOG(ERROR) << "Failed to connect IO pipes when starting "
                << command_line.GetProgram().MaybeAsASCII();
     return false;
   }
 
-  *process_handle = cmd_handle;
-  *read_file = stdout_pipe.Take();
-  *write_file = stdin_pipe.Take();
+  *process_handle = cmd_handle.Take();
+  *read_file = base::File(stdout_pipe.Take());
+  *write_file = base::File(stdin_pipe.Take());
 
   return true;
 }

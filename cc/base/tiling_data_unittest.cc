@@ -4,6 +4,7 @@
 
 #include "cc/base/tiling_data.h"
 
+#include <algorithm>
 #include <vector>
 
 #include "cc/test/geometry_test_utils.h"
@@ -13,8 +14,8 @@ namespace cc {
 namespace {
 
 int NumTiles(
-    gfx::Size max_texture_size,
-    gfx::Size total_size,
+    const gfx::Size& max_texture_size,
+    const gfx::Size& total_size,
     bool has_border_texels) {
   TilingData tiling(max_texture_size, total_size, has_border_texels);
   int num_tiles = tiling.num_tiles_x() * tiling.num_tiles_y();
@@ -28,8 +29,8 @@ int NumTiles(
 }
 
 int XIndex(
-    gfx::Size max_texture_size,
-    gfx::Size total_size,
+    const gfx::Size& max_texture_size,
+    const gfx::Size& total_size,
     bool has_border_texels,
     int x_coord) {
   TilingData tiling(max_texture_size, total_size, has_border_texels);
@@ -37,8 +38,8 @@ int XIndex(
 }
 
 int YIndex(
-    gfx::Size max_texture_size,
-    gfx::Size total_size,
+    const gfx::Size& max_texture_size,
+    const gfx::Size& total_size,
     bool has_border_texels,
     int y_coord) {
   TilingData tiling(max_texture_size, total_size, has_border_texels);
@@ -46,8 +47,8 @@ int YIndex(
 }
 
 int MinBorderXIndex(
-    gfx::Size max_texture_size,
-    gfx::Size total_size,
+    const gfx::Size& max_texture_size,
+    const gfx::Size& total_size,
     bool has_border_texels,
     int x_coord) {
   TilingData tiling(max_texture_size, total_size, has_border_texels);
@@ -55,8 +56,8 @@ int MinBorderXIndex(
 }
 
 int MinBorderYIndex(
-    gfx::Size max_texture_size,
-    gfx::Size total_size,
+    const gfx::Size& max_texture_size,
+    const gfx::Size& total_size,
     bool has_border_texels,
     int y_coord) {
   TilingData tiling(max_texture_size, total_size, has_border_texels);
@@ -64,8 +65,8 @@ int MinBorderYIndex(
 }
 
 int MaxBorderXIndex(
-    gfx::Size max_texture_size,
-    gfx::Size total_size,
+    const gfx::Size& max_texture_size,
+    const gfx::Size& total_size,
     bool has_border_texels,
     int x_coord) {
   TilingData tiling(max_texture_size, total_size, has_border_texels);
@@ -73,8 +74,8 @@ int MaxBorderXIndex(
 }
 
 int MaxBorderYIndex(
-    gfx::Size max_texture_size,
-    gfx::Size total_size,
+    const gfx::Size& max_texture_size,
+    const gfx::Size& total_size,
     bool has_border_texels,
     int y_coord) {
   TilingData tiling(max_texture_size, total_size, has_border_texels);
@@ -82,8 +83,8 @@ int MaxBorderYIndex(
 }
 
 int PosX(
-    gfx::Size max_texture_size,
-    gfx::Size total_size,
+    const gfx::Size& max_texture_size,
+    const gfx::Size& total_size,
     bool has_border_texels,
     int x_index) {
   TilingData tiling(max_texture_size, total_size, has_border_texels);
@@ -91,8 +92,8 @@ int PosX(
 }
 
 int PosY(
-    gfx::Size max_texture_size,
-    gfx::Size total_size,
+    const gfx::Size& max_texture_size,
+    const gfx::Size& total_size,
     bool has_border_texels,
     int y_index) {
   TilingData tiling(max_texture_size, total_size, has_border_texels);
@@ -100,8 +101,8 @@ int PosY(
 }
 
 int SizeX(
-    gfx::Size max_texture_size,
-    gfx::Size total_size,
+    const gfx::Size& max_texture_size,
+    const gfx::Size& total_size,
     bool has_border_texels,
     int x_index) {
   TilingData tiling(max_texture_size, total_size, has_border_texels);
@@ -109,8 +110,8 @@ int SizeX(
 }
 
 int SizeY(
-    gfx::Size max_texture_size,
-    gfx::Size total_size,
+    const gfx::Size& max_texture_size,
+    const gfx::Size& total_size,
     bool has_border_texels,
     int y_index) {
   TilingData tiling(max_texture_size, total_size, has_border_texels);
@@ -912,14 +913,13 @@ TEST(TilingDataTest, LargeBorders) {
   EXPECT_EQ(4, data.LastBorderTileYIndexFromSrcCoord(144));
 }
 
-void TestIterate(
-    const TilingData& data,
-    gfx::Rect rect,
-    int expect_left,
-    int expect_top,
-    int expect_right,
-    int expect_bottom) {
-
+void TestIterate(const TilingData& data,
+                 gfx::Rect rect,
+                 int expect_left,
+                 int expect_top,
+                 int expect_right,
+                 int expect_bottom,
+                 bool include_borders) {
   EXPECT_GE(expect_left, 0);
   EXPECT_GE(expect_top, 0);
   EXPECT_LT(expect_right, data.num_tiles_x());
@@ -928,7 +928,11 @@ void TestIterate(
   std::vector<std::pair<int, int> > original_expected;
   for (int x = 0; x < data.num_tiles_x(); ++x) {
     for (int y = 0; y < data.num_tiles_y(); ++y) {
-      gfx::Rect bounds = data.TileBoundsWithBorder(x, y);
+      gfx::Rect bounds;
+      if (include_borders)
+        bounds = data.TileBoundsWithBorder(x, y);
+      else
+        bounds = data.TileBounds(x, y);
       if (x >= expect_left && x <= expect_right &&
           y >= expect_top && y <= expect_bottom) {
         EXPECT_TRUE(bounds.Intersects(rect));
@@ -942,7 +946,8 @@ void TestIterate(
   // Verify with vanilla iterator.
   {
     std::vector<std::pair<int, int> > expected = original_expected;
-    for (TilingData::Iterator iter(&data, rect); iter; ++iter) {
+    for (TilingData::Iterator iter(&data, rect, include_borders); iter;
+         ++iter) {
       bool found = false;
       for (size_t i = 0; i < expected.size(); ++i) {
         if (expected[i] == iter.index()) {
@@ -958,7 +963,8 @@ void TestIterate(
   }
 
   // Make sure this also works with a difference iterator and an empty ignore.
-  {
+  // The difference iterator always includes borders, so ignore it otherwise.
+  if (include_borders) {
     std::vector<std::pair<int, int> > expected = original_expected;
     for (TilingData::DifferenceIterator iter(&data, rect, gfx::Rect());
          iter; ++iter) {
@@ -977,74 +983,148 @@ void TestIterate(
   }
 }
 
+void TestIterateBorders(const TilingData& data,
+                        gfx::Rect rect,
+                        int expect_left,
+                        int expect_top,
+                        int expect_right,
+                        int expect_bottom) {
+  bool include_borders = true;
+  TestIterate(data,
+              rect,
+              expect_left,
+              expect_top,
+              expect_right,
+              expect_bottom,
+              include_borders);
+}
+
+void TestIterateNoBorders(const TilingData& data,
+                          gfx::Rect rect,
+                          int expect_left,
+                          int expect_top,
+                          int expect_right,
+                          int expect_bottom) {
+  bool include_borders = false;
+  TestIterate(data,
+              rect,
+              expect_left,
+              expect_top,
+              expect_right,
+              expect_bottom,
+              include_borders);
+}
+
+void TestIterateAll(const TilingData& data,
+                    gfx::Rect rect,
+                    int expect_left,
+                    int expect_top,
+                    int expect_right,
+                    int expect_bottom) {
+  TestIterateBorders(
+      data, rect, expect_left, expect_top, expect_right, expect_bottom);
+  TestIterateNoBorders(
+      data, rect, expect_left, expect_top, expect_right, expect_bottom);
+}
+
 TEST(TilingDataTest, IteratorNoBorderTexels) {
   TilingData data(gfx::Size(10, 10), gfx::Size(40, 25), false);
   // X border index by src coord: [0-10), [10-20), [20, 30), [30, 40)
   // Y border index by src coord: [0-10), [10-20), [20, 25)
-  TestIterate(data, gfx::Rect(0, 0, 40, 25), 0, 0, 3, 2);
-  TestIterate(data, gfx::Rect(15, 15, 8, 8), 1, 1, 2, 2);
+  TestIterateAll(data, gfx::Rect(0, 0, 40, 25), 0, 0, 3, 2);
+  TestIterateAll(data, gfx::Rect(15, 15, 8, 8), 1, 1, 2, 2);
 
   // Oversized.
-  TestIterate(data, gfx::Rect(-100, -100, 1000, 1000), 0, 0, 3, 2);
-  TestIterate(data, gfx::Rect(-100, 20, 1000, 1), 0, 2, 3, 2);
-  TestIterate(data, gfx::Rect(29, -100, 31, 1000), 2, 0, 3, 2);
+  TestIterateAll(data, gfx::Rect(-100, -100, 1000, 1000), 0, 0, 3, 2);
+  TestIterateAll(data, gfx::Rect(-100, 20, 1000, 1), 0, 2, 3, 2);
+  TestIterateAll(data, gfx::Rect(29, -100, 31, 1000), 2, 0, 3, 2);
   // Nonintersecting.
-  TestIterate(data, gfx::Rect(60, 80, 100, 100), 0, 0, -1, -1);
+  TestIterateAll(data, gfx::Rect(60, 80, 100, 100), 0, 0, -1, -1);
 }
 
-TEST(TilingDataTest, IteratorOneBorderTexel) {
+TEST(TilingDataTest, BordersIteratorOneBorderTexel) {
   TilingData data(gfx::Size(10, 20), gfx::Size(25, 45), true);
   // X border index by src coord: [0-10), [8-18), [16-25)
   // Y border index by src coord: [0-20), [18-38), [36-45)
-  TestIterate(data, gfx::Rect(0, 0, 25, 45), 0, 0, 2, 2);
-  TestIterate(data, gfx::Rect(18, 19, 3, 17), 2, 0, 2, 1);
-  TestIterate(data, gfx::Rect(10, 20, 6, 16), 1, 1, 1, 1);
-  TestIterate(data, gfx::Rect(9, 19, 8, 18), 0, 0, 2, 2);
-
+  TestIterateBorders(data, gfx::Rect(0, 0, 25, 45), 0, 0, 2, 2);
+  TestIterateBorders(data, gfx::Rect(18, 19, 3, 17), 2, 0, 2, 1);
+  TestIterateBorders(data, gfx::Rect(10, 20, 6, 16), 1, 1, 1, 1);
+  TestIterateBorders(data, gfx::Rect(9, 19, 8, 18), 0, 0, 2, 2);
   // Oversized.
-  TestIterate(data, gfx::Rect(-100, -100, 1000, 1000), 0, 0, 2, 2);
-  TestIterate(data, gfx::Rect(-100, 20, 1000, 1), 0, 1, 2, 1);
-  TestIterate(data, gfx::Rect(18, -100, 6, 1000), 2, 0, 2, 2);
+  TestIterateBorders(data, gfx::Rect(-100, -100, 1000, 1000), 0, 0, 2, 2);
+  TestIterateBorders(data, gfx::Rect(-100, 20, 1000, 1), 0, 1, 2, 1);
+  TestIterateBorders(data, gfx::Rect(18, -100, 6, 1000), 2, 0, 2, 2);
   // Nonintersecting.
-  TestIterate(data, gfx::Rect(60, 80, 100, 100), 0, 0, -1, -1);
+  TestIterateBorders(data, gfx::Rect(60, 80, 100, 100), 0, 0, -1, -1);
 }
 
-TEST(TilingDataTest, IteratorManyBorderTexels) {
+TEST(TilingDataTest, NoBordersIteratorOneBorderTexel) {
+  TilingData data(gfx::Size(10, 20), gfx::Size(25, 45), true);
+  // X index by src coord: [0-9), [9-17), [17-25)
+  // Y index by src coord: [0-19), [19-37), [37-45)
+  TestIterateNoBorders(data, gfx::Rect(0, 0, 25, 45), 0, 0, 2, 2);
+  TestIterateNoBorders(data, gfx::Rect(17, 19, 3, 18), 2, 1, 2, 1);
+  TestIterateNoBorders(data, gfx::Rect(17, 19, 3, 19), 2, 1, 2, 2);
+  TestIterateNoBorders(data, gfx::Rect(8, 18, 9, 19), 0, 0, 1, 1);
+  TestIterateNoBorders(data, gfx::Rect(9, 19, 9, 19), 1, 1, 2, 2);
+  // Oversized.
+  TestIterateNoBorders(data, gfx::Rect(-100, -100, 1000, 1000), 0, 0, 2, 2);
+  TestIterateNoBorders(data, gfx::Rect(-100, 20, 1000, 1), 0, 1, 2, 1);
+  TestIterateNoBorders(data, gfx::Rect(18, -100, 6, 1000), 2, 0, 2, 2);
+  // Nonintersecting.
+  TestIterateNoBorders(data, gfx::Rect(60, 80, 100, 100), 0, 0, -1, -1);
+}
+
+TEST(TilingDataTest, BordersIteratorManyBorderTexels) {
   TilingData data(gfx::Size(50, 60), gfx::Size(65, 110), 20);
   // X border index by src coord: [0-50), [10-60), [20-65)
   // Y border index by src coord: [0-60), [20-80), [40-100), [60-110)
-  TestIterate(data, gfx::Rect(0, 0, 65, 110), 0, 0, 2, 3);
-  TestIterate(data, gfx::Rect(50, 60, 15, 65), 1, 1, 2, 3);
-  TestIterate(data, gfx::Rect(60, 30, 2, 10), 2, 0, 2, 1);
-
+  TestIterateBorders(data, gfx::Rect(0, 0, 65, 110), 0, 0, 2, 3);
+  TestIterateBorders(data, gfx::Rect(50, 60, 15, 65), 1, 1, 2, 3);
+  TestIterateBorders(data, gfx::Rect(60, 30, 2, 10), 2, 0, 2, 1);
   // Oversized.
-  TestIterate(data, gfx::Rect(-100, -100, 1000, 1000), 0, 0, 2, 3);
-  TestIterate(data, gfx::Rect(-100, 10, 1000, 10), 0, 0, 2, 0);
-  TestIterate(data, gfx::Rect(10, -100, 10, 1000), 0, 0, 1, 3);
+  TestIterateBorders(data, gfx::Rect(-100, -100, 1000, 1000), 0, 0, 2, 3);
+  TestIterateBorders(data, gfx::Rect(-100, 10, 1000, 10), 0, 0, 2, 0);
+  TestIterateBorders(data, gfx::Rect(10, -100, 10, 1000), 0, 0, 1, 3);
   // Nonintersecting.
-  TestIterate(data, gfx::Rect(65, 110, 100, 100), 0, 0, -1, -1);
+  TestIterateBorders(data, gfx::Rect(65, 110, 100, 100), 0, 0, -1, -1);
+}
+
+TEST(TilingDataTest, NoBordersIteratorManyBorderTexels) {
+  TilingData data(gfx::Size(50, 60), gfx::Size(65, 110), 20);
+  // X index by src coord: [0-30), [30-40), [40, 65)
+  // Y index by src coord: [0-40), [40-60), [60, 80), [80-110)
+  TestIterateNoBorders(data, gfx::Rect(0, 0, 65, 110), 0, 0, 2, 3);
+  TestIterateNoBorders(data, gfx::Rect(30, 40, 15, 65), 1, 1, 2, 3);
+  TestIterateNoBorders(data, gfx::Rect(60, 20, 2, 21), 2, 0, 2, 1);
+  // Oversized.
+  TestIterateNoBorders(data, gfx::Rect(-100, -100, 1000, 1000), 0, 0, 2, 3);
+  TestIterateNoBorders(data, gfx::Rect(-100, 10, 1000, 10), 0, 0, 2, 0);
+  TestIterateNoBorders(data, gfx::Rect(10, -100, 10, 1000), 0, 0, 0, 3);
+  // Nonintersecting.
+  TestIterateNoBorders(data, gfx::Rect(65, 110, 100, 100), 0, 0, -1, -1);
 }
 
 TEST(TilingDataTest, IteratorOneTile) {
   TilingData no_border(gfx::Size(1000, 1000), gfx::Size(30, 40), false);
-  TestIterate(no_border, gfx::Rect(0, 0, 30, 40), 0, 0, 0, 0);
-  TestIterate(no_border, gfx::Rect(10, 10, 20, 20), 0, 0, 0, 0);
-  TestIterate(no_border, gfx::Rect(30, 40, 100, 100), 0, 0, -1, -1);
+  TestIterateAll(no_border, gfx::Rect(0, 0, 30, 40), 0, 0, 0, 0);
+  TestIterateAll(no_border, gfx::Rect(10, 10, 20, 20), 0, 0, 0, 0);
+  TestIterateAll(no_border, gfx::Rect(30, 40, 100, 100), 0, 0, -1, -1);
 
   TilingData one_border(gfx::Size(1000, 1000), gfx::Size(30, 40), true);
-  TestIterate(one_border, gfx::Rect(0, 0, 30, 40), 0, 0, 0, 0);
-  TestIterate(one_border, gfx::Rect(10, 10, 20, 20), 0, 0, 0, 0);
-  TestIterate(one_border, gfx::Rect(30, 40, 100, 100), 0, 0, -1, -1);
+  TestIterateAll(one_border, gfx::Rect(0, 0, 30, 40), 0, 0, 0, 0);
+  TestIterateAll(one_border, gfx::Rect(10, 10, 20, 20), 0, 0, 0, 0);
+  TestIterateAll(one_border, gfx::Rect(30, 40, 100, 100), 0, 0, -1, -1);
 
   TilingData big_border(gfx::Size(1000, 1000), gfx::Size(30, 40), 50);
-  TestIterate(big_border, gfx::Rect(0, 0, 30, 40), 0, 0, 0, 0);
-  TestIterate(big_border, gfx::Rect(10, 10, 20, 20), 0, 0, 0, 0);
-  TestIterate(big_border, gfx::Rect(30, 40, 100, 100), 0, 0, -1, -1);
+  TestIterateAll(big_border, gfx::Rect(0, 0, 30, 40), 0, 0, 0, 0);
+  TestIterateAll(big_border, gfx::Rect(10, 10, 20, 20), 0, 0, 0, 0);
+  TestIterateAll(big_border, gfx::Rect(30, 40, 100, 100), 0, 0, -1, -1);
 }
 
 TEST(TilingDataTest, IteratorNoTiles) {
   TilingData data(gfx::Size(100, 100), gfx::Size(), false);
-  TestIterate(data, gfx::Rect(0, 0, 100, 100), 0, 0, -1, -1);
+  TestIterateAll(data, gfx::Rect(0, 0, 100, 100), 0, 0, -1, -1);
 }
 
 void TestDiff(
@@ -1167,5 +1247,572 @@ TEST(TilingDataTest, DifferenceIteratorNoTiles) {
   TestDiff(data, gfx::Rect(0, 0, 100, 100), gfx::Rect(0, 0, 5, 5), 0);
 }
 
+void TestSpiralIterate(int source_line_number,
+                       const TilingData& tiling_data,
+                       const gfx::Rect& consider,
+                       const gfx::Rect& ignore,
+                       const gfx::Rect& center,
+                       const std::vector<std::pair<int, int> >& expected) {
+  std::vector<std::pair<int, int> > actual;
+  for (TilingData::SpiralDifferenceIterator it(
+           &tiling_data, consider, ignore, center);
+       it;
+       ++it) {
+    actual.push_back(it.index());
+  }
+
+  EXPECT_EQ(expected.size(), actual.size()) << "error from line "
+                                            << source_line_number;
+  for (size_t i = 0; i < std::min(expected.size(), actual.size()); ++i) {
+    EXPECT_EQ(expected[i].first, actual[i].first)
+        << "i: " << i << " error from line: " << source_line_number;
+    EXPECT_EQ(expected[i].second, actual[i].second)
+        << "i: " << i << " error from line: " << source_line_number;
+  }
+}
+
+TEST(TilingDataTest, SpiralDifferenceIteratorNoIgnoreFullConsider) {
+  TilingData tiling_data(gfx::Size(10, 10), gfx::Size(30, 30), false);
+  gfx::Rect consider(0, 0, 30, 30);
+  gfx::Rect ignore;
+  std::vector<std::pair<int, int> > expected;
+
+  // Center is in the center of the tiling.
+  gfx::Rect center(15, 15, 1, 1);
+
+  // Layout of the tiling data, and expected return order:
+  //   x 0 1 2
+  //  y.------
+  //  0| 4 3 2
+  //  1| 5 * 1
+  //  2| 6 7 8
+  expected.push_back(std::make_pair(2, 1));
+  expected.push_back(std::make_pair(2, 0));
+  expected.push_back(std::make_pair(1, 0));
+  expected.push_back(std::make_pair(0, 0));
+  expected.push_back(std::make_pair(0, 1));
+  expected.push_back(std::make_pair(0, 2));
+  expected.push_back(std::make_pair(1, 2));
+  expected.push_back(std::make_pair(2, 2));
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+
+  // Center is off to the right side of the tiling (and far away).
+  center = gfx::Rect(100, 15, 1, 1);
+
+  // Layout of the tiling data, and expected return order:
+  //   x 0 1 2
+  //  y.------
+  //  0| 7 4 1
+  //  1| 8 5 2 *
+  //  2| 9 6 3
+  expected.clear();
+  expected.push_back(std::make_pair(2, 0));
+  expected.push_back(std::make_pair(2, 1));
+  expected.push_back(std::make_pair(2, 2));
+  expected.push_back(std::make_pair(1, 0));
+  expected.push_back(std::make_pair(1, 1));
+  expected.push_back(std::make_pair(1, 2));
+  expected.push_back(std::make_pair(0, 0));
+  expected.push_back(std::make_pair(0, 1));
+  expected.push_back(std::make_pair(0, 2));
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+
+  // Center is the bottom right corner of the tiling.
+  center = gfx::Rect(25, 25, 1, 1);
+
+  // Layout of the tiling data, and expected return order:
+  //   x 0 1 2
+  //  y.------
+  //  0| 6 5 4
+  //  1| 7 2 1
+  //  2| 8 3 *
+  expected.clear();
+  expected.push_back(std::make_pair(2, 1));
+  expected.push_back(std::make_pair(1, 1));
+  expected.push_back(std::make_pair(1, 2));
+  expected.push_back(std::make_pair(2, 0));
+  expected.push_back(std::make_pair(1, 0));
+  expected.push_back(std::make_pair(0, 0));
+  expected.push_back(std::make_pair(0, 1));
+  expected.push_back(std::make_pair(0, 2));
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+
+  // Center is off the top left side of the tiling.
+  center = gfx::Rect(-60, -50, 1, 1);
+
+  // Layout of the tiling data, and expected return order:
+  // * x 0 1 2
+  //  y.------
+  //  0| 1 2 6
+  //  1| 3 4 5
+  //  2| 7 8 9
+  expected.clear();
+  expected.push_back(std::make_pair(0, 0));
+  expected.push_back(std::make_pair(1, 0));
+  expected.push_back(std::make_pair(0, 1));
+  expected.push_back(std::make_pair(1, 1));
+  expected.push_back(std::make_pair(2, 1));
+  expected.push_back(std::make_pair(2, 0));
+  expected.push_back(std::make_pair(0, 2));
+  expected.push_back(std::make_pair(1, 2));
+  expected.push_back(std::make_pair(2, 2));
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+
+  // Two tile center.
+  center = gfx::Rect(15, 15, 1, 10);
+
+  // Layout of the tiling data, and expected return order:
+  //   x 0 1 2
+  //  y.------
+  //  0| 5 4 3
+  //  1| 6 * 2
+  //  2| 7 * 1
+  expected.clear();
+  expected.push_back(std::make_pair(2, 2));
+  expected.push_back(std::make_pair(2, 1));
+  expected.push_back(std::make_pair(2, 0));
+  expected.push_back(std::make_pair(1, 0));
+  expected.push_back(std::make_pair(0, 0));
+  expected.push_back(std::make_pair(0, 1));
+  expected.push_back(std::make_pair(0, 2));
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+}
+
+TEST(TilingDataTest, SpiralDifferenceIteratorSmallConsider) {
+  TilingData tiling_data(gfx::Size(10, 10), gfx::Size(50, 50), false);
+  gfx::Rect ignore;
+  std::vector<std::pair<int, int> > expected;
+  gfx::Rect center(15, 15, 1, 1);
+
+  // Consider is one cell.
+  gfx::Rect consider(0, 0, 1, 1);
+
+  // Layout of the tiling data, and expected return order:
+  //   x 0 1 2 3 4
+  //  y.----------
+  //  0| 1
+  //  1|   *
+  //  2|
+  //  3|
+  //  4|
+  expected.push_back(std::make_pair(0, 0));
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+
+  // Consider is bottom right corner.
+  consider = gfx::Rect(25, 25, 10, 10);
+
+  // Layout of the tiling data, and expected return order:
+  //   x 0 1 2 3 4
+  //  y.----------
+  //  0|
+  //  1|   *
+  //  2|     1 2
+  //  3|     3 4
+  //  4|
+  expected.clear();
+  expected.push_back(std::make_pair(2, 2));
+  expected.push_back(std::make_pair(3, 2));
+  expected.push_back(std::make_pair(2, 3));
+  expected.push_back(std::make_pair(3, 3));
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+
+  // Consider is one column.
+  consider = gfx::Rect(11, 0, 1, 100);
+
+  // Layout of the tiling data, and expected return order:
+  //   x 0 1 2 3 4
+  //  y.----------
+  //  0|   2
+  //  1|   *
+  //  2|   3
+  //  3|   4
+  //  4|   5
+  expected.clear();
+  expected.push_back(std::make_pair(1, 0));
+  expected.push_back(std::make_pair(1, 2));
+  expected.push_back(std::make_pair(1, 3));
+  expected.push_back(std::make_pair(1, 4));
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+}
+
+TEST(TilingDataTest, SpiralDifferenceIteratorHasIgnore) {
+  TilingData tiling_data(gfx::Size(10, 10), gfx::Size(50, 50), false);
+  gfx::Rect consider(0, 0, 50, 50);
+  std::vector<std::pair<int, int> > expected;
+  gfx::Rect center(15, 15, 1, 1);
+
+  // Full ignore.
+  gfx::Rect ignore(0, 0, 50, 50);
+
+  // Layout of the tiling data, and expected return order:
+  //   x 0 1 2 3 4
+  //  y.----------
+  //  0| . . . . .
+  //  1| . * . . .
+  //  2| . . . . .
+  //  3| . . . . .
+  //  4| . . . . .
+  expected.clear();
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+
+  // 3 column ignore.
+  ignore = gfx::Rect(15, 0, 20, 100);
+
+  // Layout of the tiling data, and expected return order:
+  //   x 0 1 2 3 4
+  //  y.----------
+  //  0| 1 . . . 8
+  //  1| 2 * . . 7
+  //  2| 3 . . . 6
+  //  3| 4 . . . 5
+  //  4| 9 . . . 10
+  expected.clear();
+
+  expected.push_back(std::make_pair(0, 0));
+  expected.push_back(std::make_pair(0, 1));
+  expected.push_back(std::make_pair(0, 2));
+  expected.push_back(std::make_pair(0, 3));
+  expected.push_back(std::make_pair(4, 3));
+  expected.push_back(std::make_pair(4, 2));
+  expected.push_back(std::make_pair(4, 1));
+  expected.push_back(std::make_pair(4, 0));
+  expected.push_back(std::make_pair(0, 4));
+  expected.push_back(std::make_pair(4, 4));
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+
+  // Ignore covers the top half.
+  ignore = gfx::Rect(0, 0, 50, 25);
+
+  // Layout of the tiling data, and expected return order:
+  //   x 0 1 2 3 4
+  //  y.----------
+  //  0| . . . . .
+  //  1| . * . . .
+  //  2| . . . . .
+  //  3| 1 2 3 4 5
+  //  4| 6 7 8 9 10
+  expected.clear();
+
+  expected.push_back(std::make_pair(0, 3));
+  expected.push_back(std::make_pair(1, 3));
+  expected.push_back(std::make_pair(2, 3));
+  expected.push_back(std::make_pair(3, 3));
+  expected.push_back(std::make_pair(4, 3));
+  expected.push_back(std::make_pair(0, 4));
+  expected.push_back(std::make_pair(1, 4));
+  expected.push_back(std::make_pair(2, 4));
+  expected.push_back(std::make_pair(3, 4));
+  expected.push_back(std::make_pair(4, 4));
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+}
+
+TEST(TilingDataTest, SpiralDifferenceIteratorRectangleCenter) {
+  TilingData tiling_data(gfx::Size(10, 10), gfx::Size(50, 50), false);
+  gfx::Rect consider(0, 0, 50, 50);
+  std::vector<std::pair<int, int> > expected;
+  gfx::Rect ignore;
+
+  // Two cell center
+  gfx::Rect center(25, 25, 1, 10);
+
+  // Layout of the tiling data, and expected return order:
+  //   x 0 1 2 3 4
+  //  y.----------
+  //  0| J I H G F
+  //  1| K 5 4 3 E
+  //  2| L 6 * 2 D
+  //  3| M 7 * 1 C
+  //  4| N 8 9 A B
+  expected.clear();
+
+  expected.push_back(std::make_pair(3, 3));
+  expected.push_back(std::make_pair(3, 2));
+  expected.push_back(std::make_pair(3, 1));
+  expected.push_back(std::make_pair(2, 1));
+  expected.push_back(std::make_pair(1, 1));
+  expected.push_back(std::make_pair(1, 2));
+  expected.push_back(std::make_pair(1, 3));
+  expected.push_back(std::make_pair(1, 4));
+  expected.push_back(std::make_pair(2, 4));
+  expected.push_back(std::make_pair(3, 4));
+  expected.push_back(std::make_pair(4, 4));
+  expected.push_back(std::make_pair(4, 3));
+  expected.push_back(std::make_pair(4, 2));
+  expected.push_back(std::make_pair(4, 1));
+  expected.push_back(std::make_pair(4, 0));
+  expected.push_back(std::make_pair(3, 0));
+  expected.push_back(std::make_pair(2, 0));
+  expected.push_back(std::make_pair(1, 0));
+  expected.push_back(std::make_pair(0, 0));
+  expected.push_back(std::make_pair(0, 1));
+  expected.push_back(std::make_pair(0, 2));
+  expected.push_back(std::make_pair(0, 3));
+  expected.push_back(std::make_pair(0, 4));
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+
+  // Three by two center.
+  center = gfx::Rect(15, 25, 20, 10);
+
+  // Layout of the tiling data, and expected return order:
+  //   x 0 1 2 3 4
+  //  y.----------
+  //  0| J I H G F
+  //  1| 7 6 5 4 3
+  //  2| 8 * * * 2
+  //  3| 9 * * * 1
+  //  4| A B C D E
+  expected.clear();
+
+  expected.push_back(std::make_pair(4, 3));
+  expected.push_back(std::make_pair(4, 2));
+  expected.push_back(std::make_pair(4, 1));
+  expected.push_back(std::make_pair(3, 1));
+  expected.push_back(std::make_pair(2, 1));
+  expected.push_back(std::make_pair(1, 1));
+  expected.push_back(std::make_pair(0, 1));
+  expected.push_back(std::make_pair(0, 2));
+  expected.push_back(std::make_pair(0, 3));
+  expected.push_back(std::make_pair(0, 4));
+  expected.push_back(std::make_pair(1, 4));
+  expected.push_back(std::make_pair(2, 4));
+  expected.push_back(std::make_pair(3, 4));
+  expected.push_back(std::make_pair(4, 4));
+  expected.push_back(std::make_pair(4, 0));
+  expected.push_back(std::make_pair(3, 0));
+  expected.push_back(std::make_pair(2, 0));
+  expected.push_back(std::make_pair(1, 0));
+  expected.push_back(std::make_pair(0, 0));
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+
+  // Column center off the left side.
+  center = gfx::Rect(-50, 0, 30, 50);
+
+  // Layout of the tiling data, and expected return order:
+  //    x 0 1 2 3 4
+  //   y.----------
+  // * 0| 5 A F K P
+  // * 1| 4 9 E J O
+  // * 2| 3 8 D I N
+  // * 3| 2 7 C H M
+  // * 4| 1 6 B G L
+  expected.clear();
+
+  expected.push_back(std::make_pair(0, 4));
+  expected.push_back(std::make_pair(0, 3));
+  expected.push_back(std::make_pair(0, 2));
+  expected.push_back(std::make_pair(0, 1));
+  expected.push_back(std::make_pair(0, 0));
+  expected.push_back(std::make_pair(1, 4));
+  expected.push_back(std::make_pair(1, 3));
+  expected.push_back(std::make_pair(1, 2));
+  expected.push_back(std::make_pair(1, 1));
+  expected.push_back(std::make_pair(1, 0));
+  expected.push_back(std::make_pair(2, 4));
+  expected.push_back(std::make_pair(2, 3));
+  expected.push_back(std::make_pair(2, 2));
+  expected.push_back(std::make_pair(2, 1));
+  expected.push_back(std::make_pair(2, 0));
+  expected.push_back(std::make_pair(3, 4));
+  expected.push_back(std::make_pair(3, 3));
+  expected.push_back(std::make_pair(3, 2));
+  expected.push_back(std::make_pair(3, 1));
+  expected.push_back(std::make_pair(3, 0));
+  expected.push_back(std::make_pair(4, 4));
+  expected.push_back(std::make_pair(4, 3));
+  expected.push_back(std::make_pair(4, 2));
+  expected.push_back(std::make_pair(4, 1));
+  expected.push_back(std::make_pair(4, 0));
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+}
+
+TEST(TilingDataTest, SpiralDifferenceIteratorEdgeCases) {
+  TilingData tiling_data(gfx::Size(10, 10), gfx::Size(30, 30), false);
+  std::vector<std::pair<int, int> > expected;
+  gfx::Rect center;
+  gfx::Rect consider;
+  gfx::Rect ignore;
+
+  // Ignore contains, but is not equal to, consider and center.
+  ignore = gfx::Rect(15, 0, 20, 30);
+  consider = gfx::Rect(20, 10, 10, 20);
+  center = gfx::Rect(25, 0, 5, 5);
+
+  // Layout of the tiling data, and expected return order:
+  //   x 0 1 2
+  //  y.------
+  //  0|   . *
+  //  1|   . .
+  //  2|   . .
+  expected.clear();
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+
+  // Center intersects with consider.
+  ignore = gfx::Rect();
+  center = gfx::Rect(0, 15, 30, 15);
+  consider = gfx::Rect(0, 0, 15, 30);
+
+  // Layout of the tiling data, and expected return order:
+  //   x 0 1 2
+  //  y.------
+  //  0| 2 1
+  //  1| * * *
+  //  2| * * *
+  expected.clear();
+
+  expected.push_back(std::make_pair(1, 0));
+  expected.push_back(std::make_pair(0, 0));
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+
+  // Consider and ignore are non-intersecting.
+  ignore = gfx::Rect(0, 0, 5, 30);
+  consider = gfx::Rect(25, 0, 5, 30);
+  center = gfx::Rect(15, 0, 1, 1);
+
+  // Layout of the tiling data, and expected return order:
+  //   x 0 1 2
+  //  y.------
+  //  0| . * 1
+  //  1| .   2
+  //  2| .   3
+  expected.clear();
+
+  expected.push_back(std::make_pair(2, 0));
+  expected.push_back(std::make_pair(2, 1));
+  expected.push_back(std::make_pair(2, 2));
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+
+  // Center intersects with ignore.
+  consider = gfx::Rect(0, 0, 30, 30);
+  center = gfx::Rect(15, 0, 1, 30);
+  ignore = gfx::Rect(0, 15, 30, 1);
+
+  // Layout of the tiling data, and expected return order:
+  //   x 0 1 2
+  //  y.------
+  //  0| 3 * 2
+  //  1| . * .
+  //  2| 4 * 1
+  expected.clear();
+
+  expected.push_back(std::make_pair(2, 2));
+  expected.push_back(std::make_pair(2, 0));
+  expected.push_back(std::make_pair(0, 0));
+  expected.push_back(std::make_pair(0, 2));
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+
+  // Center and ignore are the same.
+  consider = gfx::Rect(0, 0, 30, 30);
+  center = gfx::Rect(15, 0, 1, 30);
+  ignore = center;
+
+  // Layout of the tiling data, and expected return order:
+  //   x 0 1 2
+  //  y.------
+  //  0| 4 * 3
+  //  1| 5 * 2
+  //  2| 6 * 1
+  expected.clear();
+
+  expected.push_back(std::make_pair(2, 2));
+  expected.push_back(std::make_pair(2, 1));
+  expected.push_back(std::make_pair(2, 0));
+  expected.push_back(std::make_pair(0, 0));
+  expected.push_back(std::make_pair(0, 1));
+  expected.push_back(std::make_pair(0, 2));
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+
+  // Empty tiling data.
+  TilingData empty_data(gfx::Size(0, 0), gfx::Size(0, 0), false);
+
+  expected.clear();
+  TestSpiralIterate(__LINE__, empty_data, consider, ignore, center, expected);
+
+  // Empty consider.
+  ignore = gfx::Rect();
+  center = gfx::Rect(1, 1, 1, 1);
+  consider = gfx::Rect();
+
+  expected.clear();
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+
+  // Empty center. Note: This arbitrarily puts the center to be off the top-left
+  // corner.
+  consider = gfx::Rect(0, 0, 30, 30);
+  ignore = gfx::Rect();
+  center = gfx::Rect();
+
+  // Layout of the tiling data, and expected return order:
+  // * x 0 1 2
+  //  y.------
+  //  0| 1 2 6
+  //  1| 3 4 5
+  //  2| 7 8 9
+  expected.clear();
+
+  expected.push_back(std::make_pair(0, 0));
+  expected.push_back(std::make_pair(1, 0));
+  expected.push_back(std::make_pair(0, 1));
+  expected.push_back(std::make_pair(1, 1));
+  expected.push_back(std::make_pair(2, 1));
+  expected.push_back(std::make_pair(2, 0));
+  expected.push_back(std::make_pair(0, 2));
+  expected.push_back(std::make_pair(1, 2));
+  expected.push_back(std::make_pair(2, 2));
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+
+  // Every rect is empty.
+  ignore = gfx::Rect();
+  center = gfx::Rect();
+  consider = gfx::Rect();
+
+  expected.clear();
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+
+  // Center is just to the left of cover, and off of the tiling's left side.
+  consider = gfx::Rect(0, 0, 30, 30);
+  ignore = gfx::Rect();
+  center = gfx::Rect(-20, 0, 19, 30);
+
+  // Layout of the tiling data, and expected return order:
+  //   x 0 1 2
+  //  y.------
+  // *0| 3 6 9
+  // *1| 2 5 8
+  // *2| 1 4 7
+  expected.clear();
+
+  expected.push_back(std::make_pair(0, 2));
+  expected.push_back(std::make_pair(0, 1));
+  expected.push_back(std::make_pair(0, 0));
+  expected.push_back(std::make_pair(1, 2));
+  expected.push_back(std::make_pair(1, 1));
+  expected.push_back(std::make_pair(1, 0));
+  expected.push_back(std::make_pair(2, 2));
+  expected.push_back(std::make_pair(2, 1));
+  expected.push_back(std::make_pair(2, 0));
+
+  TestSpiralIterate(__LINE__, tiling_data, consider, ignore, center, expected);
+}
 }  // namespace
+
 }  // namespace cc

@@ -9,16 +9,17 @@
 
 #include "base/bind.h"
 #include "base/message_loop/message_loop.h"
+#include "base/sequenced_task_runner.h"
 #include "base/values.h"
 #include "chrome/browser/drive/drive_api_util.h"
-#include "chrome/browser/google_apis/auth_service.h"
-#include "chrome/browser/google_apis/drive_api_parser.h"
-#include "chrome/browser/google_apis/gdata_errorcode.h"
-#include "chrome/browser/google_apis/gdata_wapi_parser.h"
-#include "chrome/browser/google_apis/gdata_wapi_requests.h"
-#include "chrome/browser/google_apis/gdata_wapi_url_generator.h"
-#include "chrome/browser/google_apis/request_sender.h"
 #include "content/public/browser/browser_thread.h"
+#include "google_apis/drive/auth_service.h"
+#include "google_apis/drive/drive_api_parser.h"
+#include "google_apis/drive/gdata_errorcode.h"
+#include "google_apis/drive/gdata_wapi_parser.h"
+#include "google_apis/drive/gdata_wapi_requests.h"
+#include "google_apis/drive/gdata_wapi_url_generator.h"
+#include "google_apis/drive/request_sender.h"
 #include "net/url_request/url_request_context_getter.h"
 
 using content::BrowserThread;
@@ -33,7 +34,6 @@ using google_apis::AuthStatusCallback;
 using google_apis::AuthorizeAppCallback;
 using google_apis::AuthorizeAppRequest;
 using google_apis::CancelCallback;
-using google_apis::CopyHostedDocumentRequest;
 using google_apis::CreateDirectoryRequest;
 using google_apis::DeleteResourceRequest;
 using google_apis::DownloadActionCallback;
@@ -128,7 +128,7 @@ void ConvertAppListAndRun(
 GDataWapiService::GDataWapiService(
     OAuth2TokenService* oauth2_token_service,
     net::URLRequestContextGetter* url_request_context_getter,
-    base::TaskRunner* blocking_task_runner,
+    base::SequencedTaskRunner* blocking_task_runner,
     const GURL& base_url,
     const GURL& base_download_url,
     const std::string& custom_user_agent)
@@ -376,17 +376,30 @@ CancelCallback GDataWapiService::DeleteResource(
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(!callback.is_null());
 
+  NOTIMPLEMENTED();
+  callback.Run(google_apis::GDATA_OTHER_ERROR);
+  return CancelCallback();
+}
+
+CancelCallback GDataWapiService::TrashResource(
+    const std::string& resource_id,
+    const EntryActionCallback& callback) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DCHECK(!callback.is_null());
+
+  const std::string empty_etag;
   return sender_->StartRequestWithRetry(
       new DeleteResourceRequest(sender_.get(),
                                 url_generator_,
                                 callback,
                                 resource_id,
-                                etag));
+                                empty_etag));
 }
 
 CancelCallback GDataWapiService::AddNewDirectory(
     const std::string& parent_resource_id,
     const std::string& directory_title,
+    const AddNewDirectoryOptions& options,
     const GetResourceEntryCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(!callback.is_null());
@@ -416,27 +429,12 @@ CancelCallback GDataWapiService::CopyResource(
   return CancelCallback();
 }
 
-CancelCallback GDataWapiService::CopyHostedDocument(
-    const std::string& resource_id,
-    const std::string& new_title,
-    const GetResourceEntryCallback& callback) {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  DCHECK(!callback.is_null());
-
-  return sender_->StartRequestWithRetry(
-      new CopyHostedDocumentRequest(sender_.get(),
-                                    url_generator_,
-                                    base::Bind(&ParseResourceEntryAndRun,
-                                               callback),
-                                    resource_id,
-                                    new_title));
-}
-
-CancelCallback GDataWapiService::MoveResource(
+CancelCallback GDataWapiService::UpdateResource(
     const std::string& resource_id,
     const std::string& parent_resource_id,
     const std::string& new_title,
     const base::Time& last_modified,
+    const base::Time& last_viewed_by_me,
     const google_apis::GetResourceEntryCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(!callback.is_null());
@@ -462,25 +460,6 @@ CancelCallback GDataWapiService::RenameResource(
                                 callback,
                                 resource_id,
                                 new_title));
-}
-
-CancelCallback GDataWapiService::TouchResource(
-    const std::string& resource_id,
-    const base::Time& modified_date,
-    const base::Time& last_viewed_by_me_date,
-    const GetResourceEntryCallback& callback) {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  DCHECK(!modified_date.is_null());
-  DCHECK(!last_viewed_by_me_date.is_null());
-  DCHECK(!callback.is_null());
-
-  // Unfortunately, there is no way to support this method on GData WAPI.
-  // So, this should always return an error.
-  base::MessageLoop::current()->PostTask(
-      FROM_HERE,
-      base::Bind(callback, HTTP_NOT_IMPLEMENTED,
-                 base::Passed(scoped_ptr<ResourceEntry>())));
-  return base::Bind(&base::DoNothing);
 }
 
 CancelCallback GDataWapiService::AddResourceToDirectory(
@@ -518,6 +497,7 @@ CancelCallback GDataWapiService::InitiateUploadNewFile(
     int64 content_length,
     const std::string& parent_resource_id,
     const std::string& title,
+    const InitiateUploadNewFileOptions& options,
     const InitiateUploadCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(!callback.is_null());
@@ -537,7 +517,7 @@ CancelCallback GDataWapiService::InitiateUploadExistingFile(
     const std::string& content_type,
     int64 content_length,
     const std::string& resource_id,
-    const std::string& etag,
+    const InitiateUploadExistingFileOptions& options,
     const InitiateUploadCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(!callback.is_null());
@@ -550,7 +530,7 @@ CancelCallback GDataWapiService::InitiateUploadExistingFile(
                                             content_type,
                                             content_length,
                                             resource_id,
-                                            etag));
+                                            options.etag));
 }
 
 CancelCallback GDataWapiService::ResumeUpload(
@@ -606,6 +586,18 @@ CancelCallback GDataWapiService::AuthorizeApp(
                               app_id));
 }
 
+CancelCallback GDataWapiService::UninstallApp(
+    const std::string& app_id,
+    const EntryActionCallback& callback) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DCHECK(!callback.is_null());
+
+  // GData WAPI doesn't support app uninstallation.
+  // This method should never be called if GData WAPI is enabled.
+  NOTREACHED();
+  return CancelCallback();
+}
+
 CancelCallback GDataWapiService::GetResourceListInDirectoryByWapi(
     const std::string& directory_resource_id,
     const google_apis::GetResourceListCallback& callback) {
@@ -627,6 +619,18 @@ CancelCallback GDataWapiService::GetRemainingResourceList(
                                  std::string(),  // empty search query
                                  std::string(),  // no directory resource id
                                  callback));
+}
+
+google_apis::CancelCallback GDataWapiService::AddPermission(
+    const std::string& resource_id,
+    const std::string& email,
+    google_apis::drive::PermissionRole role,
+    const google_apis::EntryActionCallback& callback) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  DCHECK(!callback.is_null());
+
+  NOTREACHED();
+  return CancelCallback();
 }
 
 bool GDataWapiService::HasAccessToken() const {

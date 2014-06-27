@@ -19,8 +19,19 @@
           # TODO(ncbray) move into chrome/test/data/nacl when all tests are
           # converted.
           '<(DEPTH)/ppapi/native_client/tests/ppapi_browser/progress_event_listener.js',
-          '<(DEPTH)/ppapi/native_client/tests/ppapi_browser/bad/ppapi_bad.js',
           '<(DEPTH)/ppapi/native_client/tools/browser_tester/browserdata/nacltest.js',
+          # Files that aren't assosiated with any particular executable.
+          'bad/ppapi_bad.html',
+          'bad/ppapi_bad.js',
+          'bad/ppapi_bad_native.html',
+          'bad/ppapi_bad_doesnotexist.nmf',
+          'bad/ppapi_bad_magic.nmf',
+          'bad/ppapi_bad_manifest_uses_nexes.nmf',
+          'bad/ppapi_bad_manifest_bad_files.nmf',
+          'bad/ppapi_bad_manifest_nexe_arch.nmf',
+          'crash/ppapi_crash.html',
+          'load_util.js',
+          'manifest_file/test_file.txt',
         ],
       },
     },
@@ -99,6 +110,27 @@
       ],
     },
     {
+      'target_name': 'nacl_ppapi_util',
+      'type': 'none',
+      'variables': {
+        'nlib_target': 'libnacl_ppapi_util.a',
+        'nso_target': 'libnacl_ppapi_util.so',
+        'build_newlib': 1,
+        'build_glibc': 1,
+        'build_pnacl_newlib': 1,
+        'nexe_destination_dir': 'nacl_test_data',
+        'sources': [
+          # TODO(ncbray) move these files once SCons no longer depends on them.
+          '../../../../ppapi/native_client/src/untrusted/nacl_ppapi_util/string_buffer.cc',
+          '../../../../ppapi/native_client/src/untrusted/nacl_ppapi_util/nacl_ppapi_util.cc',
+          '../../../../ppapi/native_client/src/untrusted/nacl_ppapi_util/ppapi_srpc_main.c',
+        ]
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+      ],
+    },
+    {
       'target_name': 'ppapi_progress_events',
       'type': 'none',
       'variables': {
@@ -125,9 +157,568 @@
         '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
         '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
         '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
-        '<(DEPTH)/ppapi/ppapi_untrusted.gyp:ppapi_cpp_lib',
+        '<(DEPTH)/ppapi/ppapi_nacl.gyp:ppapi_cpp_lib',
         'ppapi_test_lib',
       ],
+    },
+    {
+      'target_name': 'ppapi_bad_ppp_initialize',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'ppapi_bad_ppp_initialize',
+        'build_newlib': 1,
+        'build_glibc': 0,
+        'build_pnacl_newlib': 0,
+        'nexe_destination_dir': 'nacl_test_data',
+        'link_flags': [
+          '-lppapi',
+          '-lplatform',
+          '-lgio',
+        ],
+        'sources': [
+          'bad/ppapi_bad_ppp_initialize.cc',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+        '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
+        '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
+        '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
+      ],
+    },
+    {
+      'target_name': 'ppapi_bad_ppp_initialize_crash',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'ppapi_bad_ppp_initialize_crash',
+        'build_newlib': 1,
+        'build_glibc': 0,
+        'build_pnacl_newlib': 0,
+        'nexe_destination_dir': 'nacl_test_data',
+        'link_flags': [
+          '-lppapi',
+          '-lplatform',
+          '-lgio',
+        ],
+        'sources': [
+          'bad/ppapi_bad_ppp_initialize_crash.cc',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+        '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
+        '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
+        '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
+      ],
+    },
+    {
+      'target_name': 'ppapi_bad_no_ppp_instance',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'ppapi_bad_no_ppp_instance',
+        'build_newlib': 1,
+        'build_glibc': 0,
+        'build_pnacl_newlib': 0,
+        'nexe_destination_dir': 'nacl_test_data',
+        'link_flags': [
+          '-lppapi',
+          '-lplatform',
+          '-lgio',
+        ],
+        'sources': [
+          'bad/ppapi_bad_no_ppp_instance.cc',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+        '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
+        '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
+        '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
+      ],
+    },
+    {
+      'target_name': 'ppapi_bad_get_ppp_instance_crash',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'ppapi_bad_get_ppp_instance_crash',
+        'build_newlib': 1,
+        'build_glibc': 0,
+        'build_pnacl_newlib': 0,
+        'nexe_destination_dir': 'nacl_test_data',
+        'link_flags': [
+          '-lppapi',
+          '-lplatform',
+          '-lgio',
+        ],
+        'sources': [
+          'bad/ppapi_bad_get_ppp_instance_crash.cc',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+        '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
+        '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
+        '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
+      ],
+    },
+    {
+      'target_name': 'ppapi_bad_ppp_instance_didcreate',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'ppapi_bad_ppp_instance_didcreate',
+        'build_newlib': 1,
+        'build_glibc': 0,
+        'build_pnacl_newlib': 0,
+        'nexe_destination_dir': 'nacl_test_data',
+        'link_flags': [
+          '-lppapi',
+          '-lplatform',
+          '-lgio',
+        ],
+        'sources': [
+          'bad/ppapi_bad_ppp_instance_didcreate.cc',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+        '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
+        '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
+        '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
+      ],
+    },
+    {
+      'target_name': 'ppapi_bad_ppp_instance_didcreate_crash',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'ppapi_bad_ppp_instance_didcreate_crash',
+        'build_newlib': 1,
+        'build_glibc': 0,
+        'build_pnacl_newlib': 0,
+        'nexe_destination_dir': 'nacl_test_data',
+        'link_flags': [
+          '-lppapi',
+          '-lplatform',
+          '-lgio',
+        ],
+        'sources': [
+          'bad/ppapi_bad_ppp_instance_didcreate_crash.cc',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+        '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
+        '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
+        '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
+      ],
+    },
+    {
+      'target_name': 'ppapi_crash_via_check_failure',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'ppapi_crash_via_check_failure',
+        'build_newlib': 1,
+        'build_glibc': 1,
+        'build_pnacl_newlib': 1,
+        'nexe_destination_dir': 'nacl_test_data',
+        'link_flags': [
+          '-lppapi',
+          '-lppapi_test_lib',
+          '-lplatform',
+          '-lgio',
+        ],
+        'sources': [
+          'crash/ppapi_crash_via_check_failure.cc',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+        '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
+        '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
+        '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
+        '<(DEPTH)/ppapi/ppapi_nacl.gyp:ppapi_cpp_lib',
+        'ppapi_test_lib',
+      ],
+    },
+    {
+      'target_name': 'ppapi_crash_via_exit_call',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'ppapi_crash_via_exit_call',
+        'build_newlib': 1,
+        'build_glibc': 1,
+        'build_pnacl_newlib': 1,
+        'nexe_destination_dir': 'nacl_test_data',
+        'link_flags': [
+          '-lppapi',
+          '-lppapi_test_lib',
+          '-lplatform',
+          '-lgio',
+        ],
+        'sources': [
+          'crash/ppapi_crash_via_exit_call.cc',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+        '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
+        '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
+        '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
+        '<(DEPTH)/ppapi/ppapi_nacl.gyp:ppapi_cpp_lib',
+        'ppapi_test_lib',
+      ],
+    },
+    {
+      'target_name': 'ppapi_crash_in_callback',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'ppapi_crash_in_callback',
+        'build_newlib': 1,
+        'build_glibc': 1,
+        'build_pnacl_newlib': 1,
+        'nexe_destination_dir': 'nacl_test_data',
+        'link_flags': [
+          '-lppapi',
+          '-lppapi_test_lib',
+          '-lplatform',
+          '-lgio',
+        ],
+        'sources': [
+          'crash/ppapi_crash_in_callback.cc',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+        '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
+        '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
+        '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
+        '<(DEPTH)/ppapi/ppapi_nacl.gyp:ppapi_cpp_lib',
+        'ppapi_test_lib',
+      ],
+    },
+    {
+      'target_name': 'ppapi_crash_off_main_thread',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'ppapi_crash_off_main_thread',
+        'build_newlib': 1,
+        'build_glibc': 1,
+        'build_pnacl_newlib': 1,
+        'nexe_destination_dir': 'nacl_test_data',
+        'link_flags': [
+          '-lppapi',
+          '-lppapi_test_lib',
+          '-lplatform',
+          '-lgio',
+        ],
+        'sources': [
+          'crash/ppapi_crash_off_main_thread.cc',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+        '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
+        '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
+        '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
+        '<(DEPTH)/ppapi/ppapi_nacl.gyp:ppapi_cpp_lib',
+        'ppapi_test_lib',
+      ],
+    },
+    {
+      'target_name': 'ppapi_crash_ppapi_off_main_thread',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'ppapi_crash_ppapi_off_main_thread',
+        'build_newlib': 1,
+        'build_glibc': 1,
+        'build_pnacl_newlib': 1,
+        'nexe_destination_dir': 'nacl_test_data',
+        'link_flags': [
+          '-lppapi',
+          '-lppapi_test_lib',
+          '-lplatform',
+          '-lgio',
+        ],
+        'sources': [
+          'crash/ppapi_crash_ppapi_off_main_thread.cc',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+        '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
+        '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
+        '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
+        '<(DEPTH)/ppapi/ppapi_nacl.gyp:ppapi_cpp_lib',
+        'ppapi_test_lib',
+      ],
+    },
+    {
+      'target_name': 'pm_redir_test',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'pm_redir_test',
+        'build_newlib': 1,
+        'build_glibc': 1,
+        'build_pnacl_newlib': 1,
+        'nexe_destination_dir': 'nacl_test_data',
+        'link_flags': [
+          '-lppapi',
+          '-lplatform',
+          '-lgio',
+        ],
+        'sources': [
+          'postmessage_redir/pm_redir_test.cc',
+        ],
+        'test_files': [
+          'postmessage_redir/pm_redir_test.html',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+        '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
+        '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
+        '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
+        '<(DEPTH)/ppapi/ppapi_nacl.gyp:ppapi_cpp_lib',
+      ],
+    },
+    {
+      'target_name': 'pm_manifest_file',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'pm_manifest_file',
+        'build_newlib': 1,
+        'build_glibc': 1,
+        # TODO(ncbray) support file injection into PNaCl manifest.
+        'build_pnacl_newlib': 0,
+        'nexe_destination_dir': 'nacl_test_data',
+        'link_flags': [
+          '-lnacl_ppapi_util',
+          '-lppapi_cpp',
+          '-lppapi',
+          '-lsrpc',
+          '-lplatform',
+          '-lgio',
+          '-limc',
+          '-limc_syscalls',
+          '-lweak_ref',
+        ],
+        'sources': [
+          'manifest_file/pm_manifest_file_test.cc',
+        ],
+        'create_nmf_args_portable': [
+          '-xtest_file:test_file.txt',
+          '-xnmf says hello world:test_file.txt',
+        ],
+        'test_files': [
+          'manifest_file/pm_manifest_file_test.html',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+        '<(DEPTH)/ppapi/ppapi_nacl.gyp:ppapi_cpp_lib',
+        '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
+        '<(DEPTH)/native_client/src/shared/srpc/srpc.gyp:srpc_lib',
+        '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
+        '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
+        '<(DEPTH)/native_client/src/shared/imc/imc.gyp:imc_lib',
+        '<(DEPTH)/native_client/src/untrusted/nacl/nacl.gyp:imc_syscalls_lib',
+        '<(DEPTH)/native_client/src/trusted/weak_ref/weak_ref.gyp:weak_ref_lib',
+        'nacl_ppapi_util',
+      ],
+    },
+    {
+      'target_name': 'pm_pre_init_manifest_file',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'pm_pre_init_manifest_file',
+        'build_newlib': 1,
+        'build_glibc': 1,
+        # TODO(ncbray) support file injection into PNaCl manifest.
+        'build_pnacl_newlib': 0,
+        'nexe_destination_dir': 'nacl_test_data',
+        'link_flags': [
+          '-lnacl_ppapi_util',
+          '-lppapi_cpp',
+          '-lppapi',
+          '-lsrpc',
+          '-lplatform',
+          '-lgio',
+          '-limc',
+          '-limc_syscalls',
+          '-lweak_ref',
+        ],
+        'sources': [
+          'manifest_file/pm_pre_init_manifest_file_test.cc',
+        ],
+        'create_nmf_args_portable': [
+          '-xtest_file:test_file.txt',
+          '-xnmf says hello world:test_file.txt',
+        ],
+        'test_files': [
+          'manifest_file/pm_pre_init_manifest_file_test.html',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+        '<(DEPTH)/ppapi/ppapi_nacl.gyp:ppapi_cpp_lib',
+        '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
+        '<(DEPTH)/native_client/src/shared/srpc/srpc.gyp:srpc_lib',
+        '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
+        '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
+        '<(DEPTH)/native_client/src/shared/imc/imc.gyp:imc_lib',
+        '<(DEPTH)/native_client/src/untrusted/nacl/nacl.gyp:imc_syscalls_lib',
+        '<(DEPTH)/native_client/src/trusted/weak_ref/weak_ref.gyp:weak_ref_lib',
+        'nacl_ppapi_util',
+      ],
+    },
+    {
+      'target_name': 'irt_manifest_file',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'irt_manifest_file',
+        'build_newlib': 1,
+        # Linking problems - can't find __nacl_irt_query.
+        'build_glibc': 0,
+        # TODO(ncbray) support file injection into PNaCl manifest.
+        'build_pnacl_newlib': 0,
+        'nexe_destination_dir': 'nacl_test_data',
+        'link_flags': [
+          '-lnacl_ppapi_util',
+          '-lppapi_cpp',
+          '-lppapi',
+          '-lsrpc',
+          '-lplatform',
+          '-lgio',
+          '-limc',
+          '-limc_syscalls',
+          '-lweak_ref',
+          '-lnacl',
+        ],
+        'sources': [
+          'manifest_file/irt_manifest_file_test.cc',
+        ],
+        'create_nmf_args_portable': [
+          '-xtest_file:test_file.txt',
+          '-xnmf says hello world:test_file.txt',
+        ],
+        'test_files': [
+          'manifest_file/irt_manifest_file_test.html',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+        '<(DEPTH)/ppapi/ppapi_nacl.gyp:ppapi_cpp_lib',
+        '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
+        '<(DEPTH)/native_client/src/shared/srpc/srpc.gyp:srpc_lib',
+        '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
+        '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
+        '<(DEPTH)/native_client/src/shared/imc/imc.gyp:imc_lib',
+        '<(DEPTH)/native_client/src/untrusted/nacl/nacl.gyp:imc_syscalls_lib',
+        '<(DEPTH)/native_client/src/untrusted/nacl/nacl.gyp:nacl_lib',
+        '<(DEPTH)/native_client/src/trusted/weak_ref/weak_ref.gyp:weak_ref_lib',
+        'nacl_ppapi_util',
+      ],
+    },
+    {
+      'target_name': 'pm_nameservice_test',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'pm_nameservice_test',
+        'build_newlib': 1,
+        'build_glibc': 1,
+        'build_pnacl_newlib': 1,
+        'nexe_destination_dir': 'nacl_test_data',
+        'link_flags': [
+          '-lnacl_ppapi_util',
+          '-lppapi_cpp',
+          '-lppapi',
+          '-lsrpc',
+          '-lplatform',
+          '-lgio',
+          '-limc',
+          '-limc_syscalls',
+          '-lweak_ref',
+        ],
+        'sources': [
+          'nameservice/pm_nameservice_test.cc',
+        ],
+        'test_files': [
+          'nameservice/pm_nameservice_test.html',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+        '<(DEPTH)/ppapi/ppapi_nacl.gyp:ppapi_cpp_lib',
+        '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
+        '<(DEPTH)/native_client/src/shared/srpc/srpc.gyp:srpc_lib',
+        '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
+        '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
+        '<(DEPTH)/native_client/src/shared/imc/imc.gyp:imc_lib',
+        '<(DEPTH)/native_client/src/untrusted/nacl/nacl.gyp:imc_syscalls_lib',
+        '<(DEPTH)/native_client/src/trusted/weak_ref/weak_ref.gyp:weak_ref_lib',
+        'nacl_ppapi_util',
+      ],
+    },
+    {
+      'target_name': 'ppapi_extension_mime_handler',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'ppapi_extension_mime_handler',
+        'build_newlib': 1,
+        'build_glibc': 0,
+        'build_pnacl_newlib': 0,
+        'nexe_destination_dir': 'nacl_test_data',
+        'link_flags': [
+          '-lppapi',
+          '-lppapi_test_lib',
+          '-lplatform',
+          '-lgio',
+        ],
+        'sources': [
+          'extension_mime_handler/ppapi_extension_mime_handler.cc',
+        ],
+        'test_files': [
+          'extension_mime_handler/ppapi_extension_mime_handler.html',
+          'extension_mime_handler/mime_test_data.dat',
+          # For faking the file's MIME type.
+          'extension_mime_handler/mime_test_data.dat.mock-http-headers',
+          # Turns the test data directory into an extension.  Hackish.
+          # Note that the .nexe names are embedded in this file.
+          'extension_mime_handler/manifest.json',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+        '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
+        '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
+        '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
+        'ppapi_test_lib',
+      ],
+    },
+    {
+      'target_name': 'pnacl_debug_url_test',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'pnacl_debug_url',
+        'build_pnacl_newlib': 1,
+        'nexe_destination_dir': 'nacl_test_data',
+        # No need to translate these AOT, when we just need the pexe.
+        'enable_x86_32': 0,
+        'enable_x86_64': 0,
+        'enable_arm': 0,
+        'generate_nmf': 0,
+        'sources': [
+          'simple.cc',
+        ],
+        'test_files': [
+          'pnacl_debug_url/pnacl_debug_url.html',
+          'pnacl_debug_url/pnacl_has_debug.nmf',
+          'pnacl_debug_url/pnacl_has_debug_flag_off.nmf',
+          'pnacl_debug_url/pnacl_no_debug.nmf',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+      ]
     },
     {
       'target_name': 'pnacl_error_handling_test',
@@ -181,6 +772,7 @@
         'enable_x86_32': 0,
         'enable_x86_64': 0,
         'enable_arm': 0,
+        'generate_nmf': 0,
         'sources': [
           'simple.cc',
         ],
@@ -232,7 +824,7 @@
         '<(DEPTH)/native_client/src/untrusted/nacl/nacl.gyp:nacl_dyncode_private_lib',
         '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
         '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
-        '<(DEPTH)/ppapi/ppapi_untrusted.gyp:ppapi_cpp_lib',
+        '<(DEPTH)/ppapi/ppapi_nacl.gyp:ppapi_cpp_lib',
         'ppapi_test_lib',
       ],
     },
@@ -273,7 +865,7 @@
         '<(DEPTH)/native_client/src/untrusted/nacl/nacl.gyp:nacl_exception_private_lib',
         '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
         '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
-        '<(DEPTH)/ppapi/ppapi_untrusted.gyp:ppapi_cpp_lib',
+        '<(DEPTH)/ppapi/ppapi_nacl.gyp:ppapi_cpp_lib',
         'ppapi_test_lib',
       ],
     },
@@ -305,9 +897,201 @@
         '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
         '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
         '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
-        '<(DEPTH)/ppapi/ppapi_untrusted.gyp:ppapi_cpp_lib',
+        '<(DEPTH)/ppapi/ppapi_nacl.gyp:ppapi_cpp_lib',
         'ppapi_test_lib',
       ],
     },
+    {
+      'target_name': 'ppapi_ppb_instance',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'ppapi_ppb_instance',
+        'build_newlib': 1,
+        'build_glibc': 1,
+        'build_pnacl_newlib': 1,
+        'nexe_destination_dir': 'nacl_test_data',
+        'link_flags': [
+          '-lppapi',
+          '-lppapi_test_lib',
+          '-lplatform',
+          '-lgio',
+        ],
+        'sources': [
+          'ppapi/ppb_instance/ppapi_ppb_instance.cc',
+        ],
+        'test_files': [
+          'ppapi/ppb_instance/ppapi_ppb_instance.html',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+        '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
+        '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
+        '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
+        '<(DEPTH)/ppapi/ppapi_nacl.gyp:ppapi_cpp_lib',
+        'ppapi_test_lib',
+      ],
+    },
+    {
+      'target_name': 'ppapi_ppp_instance',
+      'type': 'none',
+      'variables': {
+        'nexe_target': 'ppapi_ppp_instance',
+        'build_newlib': 1,
+        'build_glibc': 1,
+        'build_pnacl_newlib': 1,
+        'nexe_destination_dir': 'nacl_test_data',
+        'link_flags': [
+          '-lppapi',
+          '-lppapi_test_lib',
+          '-lplatform',
+          '-lgio',
+        ],
+        'sources': [
+          'ppapi/ppp_instance/ppapi_ppp_instance.cc',
+        ],
+        'test_files': [
+          'ppapi/ppp_instance/ppapi_ppp_instance.html',
+          'ppapi/ppp_instance/ppapi_ppp_instance.js',
+        ],
+      },
+      'dependencies': [
+        '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+        '<(DEPTH)/native_client/src/shared/platform/platform.gyp:platform_lib',
+        '<(DEPTH)/native_client/src/shared/gio/gio.gyp:gio_lib',
+        '<(DEPTH)/ppapi/native_client/native_client.gyp:ppapi_lib',
+        '<(DEPTH)/ppapi/ppapi_nacl.gyp:ppapi_cpp_lib',
+        'ppapi_test_lib',
+      ],
+    },
+  ],
+  'conditions': [
+    ['target_arch!="arm"', {
+      # Source file does not have asm for ARM.
+      'targets': [
+        {
+          'target_name': 'partly_invalid',
+          'type': 'none',
+          'variables': {
+            'nexe_target': 'partly_invalid',
+            'build_newlib': 1,
+            'build_glibc': 0,
+            'build_pnacl_newlib': 0,
+            'nexe_destination_dir': 'nacl_test_data',
+            'sources': [
+              '<(DEPTH)/native_client/tests/stubout_mode/partly_invalid.c',
+            ],
+          },
+          'dependencies': [
+            '<(DEPTH)/native_client/tools.gyp:prep_toolchain',
+          ],
+        },
+      ],
+    }],
+
+    # Tests for non-SFI mode.
+    ['OS=="linux"', {
+      'targets': [
+        {
+          'target_name': 'nonsfi_libc_free_nexe',
+          'type': 'executable',
+          'product_name': '>(nexe_destination_dir)/libc_free_>(arch_suffix)',
+          'product_extension': 'nexe',
+          'variables': {
+            'arch_suffix': '<(target_arch)',
+            # This is needed, because NaCl's target_default rule is
+            # automatically applied to all the targets in this file, and it
+            # requires nexe_destination_dir, even if it is not important.
+            'nexe_destination_dir': 'nacl_test_data/libc-free',
+          },
+          'sources': [
+            'nonsfi/libc_free.c',
+          ],
+          # Here, we would like to link a relocatable, libc-free executable.
+          # -shared/-fPIC make this binary relocatable. -nostdlib ensures
+          # this is libc-free.
+          # The program does not apply any dynamic relocations at start up,
+          # so it cannot rely on relocations having been applied.
+          # In addition, -fvisibility=hidden avoids creating some types
+          # of relocation.
+          'cflags': [
+            '-fPIC',
+            '-fvisibility=hidden',
+
+            # Stack-Smashing protector does not work with libc-free context.
+            '-fno-stack-protector',
+          ],
+          'cflags!': [
+            # We filter these out because release_extra_cflags or another
+            # such thing might be adding them in, and those options wind up
+            # coming after the -fno-stack-protector we added above.
+            '-fstack-protector',
+            '-fstack-protector-all',
+            '-fprofile-generate',
+            '-finstrument-functions',
+          ],
+          'ldflags': [
+            '-nostdlib',
+            '-shared',
+          ],
+          'ldflags!': [
+            # Explicitly remove the -pthread flag to avoid a link time warning.
+            '-pthread',
+          ],
+          'defines': [
+            # The code depends on NaCl's headers. This is a macro for them.
+            'NACL_LINUX=1',
+          ],
+          # For native_client/src/include/...
+          'include_dirs': [
+            '../../../..',
+          ],
+          'conditions': [
+            # Overwrite suffix for x64 and ia32 to align NaCl's naming
+            # convention.
+            ['target_arch=="x64"', {
+              'variables': {
+                'arch_suffix': 'x86_64',
+              }
+            }],
+            ['target_arch=="ia32"', {
+              'variables': {
+                'arch_suffix': 'x86_32',
+              }
+            }],
+          ],
+        },
+        {
+          'target_name': 'nonsfi_libc_free',
+          'type': 'none',
+          'variables': {
+            'nexe_destination_dir': 'nacl_test_data',
+            'destination_dir': '<(PRODUCT_DIR)/>(nexe_destination_dir)/libc-free',
+            'test_files': [
+              # TODO(ncbray) move into chrome/test/data/nacl when all tests are
+              # converted.
+              '<(DEPTH)/ppapi/native_client/tools/browser_tester/browserdata/nacltest.js',
+              'nonsfi/libc_free.html',
+              'nonsfi/libc_free.nmf',
+            ],
+          },
+          'dependencies': [
+            'nonsfi_libc_free_nexe',
+          ],
+          # Because we are still under development for non-SFI mode, the
+          # toolchain is not yet ready, which means ppapi_nacl_common does not
+          # work well for non-SFI mode yet. Instead, we manually set up the
+          # testing environment here.
+          'copies': [
+            {
+              'destination': '>(destination_dir)',
+              'files': [
+                '>@(test_files)',
+              ],
+            },
+          ],
+        },
+      ],
+    }],
   ],
 }

@@ -6,7 +6,7 @@
 //
 // WHAT ARE FILE TASKS?
 //
-// File tasks are representatiosn of actions that can be performed over the
+// File tasks are representation of actions that can be performed over the
 // currently selected files from Files.app. A task can be either of:
 //
 // 1) Chrome extension or app, registered via "file_handlers" or
@@ -18,8 +18,8 @@
 // https://developer.chrome.com/extensions/fileBrowserHandler.html
 //
 // 2) Built-in handlers provided from Files.app. Files.app provides lots of
-// file_browser_handlers, such as "play", "watch", "mount-archive".  These
-// built-in handlers are often handled in special manners inside Files.app.
+// file_browser_handlers, such as "play", "mount-archive".  These built-in
+// handlers are often handled in special manners inside Files.app.
 // This information also comes from FileBrowserHandler::GetHandlers().
 //
 // See also:
@@ -59,7 +59,7 @@
 // WHAT ARE TASK IDS?
 //
 // You may have noticed that "taskId" fields in the above example look
-// awakard. Apparently "taskId" encodes three types of information delimited
+// awkward. Apparently "taskId" encodes three types of information delimited
 // by "|". This is a weird format for something called as an ID.
 //
 // 1) Why are the three types information encoded in this way?
@@ -70,13 +70,13 @@
 //
 // 2) OK, then what are the three types of information encoded here?
 //
-// The task ID encodes the folloing structure:
+// The task ID encodes the following structure:
 //
 //     <app-id>|<task-type>|<task-action-id>
 //
 // <app-id> is either of Chrome Extension/App ID or Drive App ID. For some
 // reason, Chrome Extension/App IDs and Drive App IDs look differently. As of
-// writing, the fomer looks like "hhaomjibdihmijegdhdafkllkbggdgoj"
+// writing, the former looks like "hhaomjibdihmijegdhdafkllkbggdgoj"
 // (Files.app) and the latter looks like "419782477519" (Pixlr Editor).
 //
 // <task-type> is either of
@@ -99,9 +99,9 @@
 // chrome.fileBrowserPrivate.executeTasks() is used to open a file with a
 // handler (Chrome Extension/App or Drive App).
 //
-// Some built-in handlers such as "play" and "watch" are handled internally
-// in Files.app. "mount-archive" is handled very differently. The task
-// execution business should be simplified: crbug.com/267313
+// Some built-in handlers such as "play" are handled internally in Files.app.
+// "mount-archive" is handled very differently. The task execution business
+// should be simplified: crbug.com/267313
 //
 // See also:
 // chrome/browser/resources/file_manager/js/file_tasks.js
@@ -117,6 +117,7 @@
 #include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "chrome/browser/extensions/api/file_handlers/app_file_handler_util.h"
+#include "chrome/common/extensions/api/file_browser_private.h"
 #include "url/gurl.h"
 
 class PrefService;
@@ -226,7 +227,8 @@ bool ParseTaskID(const std::string& task_id, TaskDescriptor* task);
 
 // The callback is used for ExecuteFileTask(). Will be called with true if
 // the file task execution is successful, or false if unsuccessful.
-typedef base::Callback<void(bool success)> FileTaskFinishedCallback;
+typedef base::Callback<void(extensions::api::file_browser_private::TaskResult
+                                result)> FileTaskFinishedCallback;
 
 // Executes file handler task for each element of |file_urls|.
 // Returns |false| if the execution cannot be initiated. Otherwise returns
@@ -235,10 +237,7 @@ typedef base::Callback<void(bool success)> FileTaskFinishedCallback;
 //
 // Parameters:
 // profile    - The profile used for making this function call.
-// app_id     - The ID of the app requesting the file task execution.
 // source_url - The source URL which originates this function call.
-// tab_id     - The ID of the tab which originates this function call.
-//              This can be 0 if no tab is associated.
 // task       - See the comment at TaskDescriptor struct.
 // file_urls  - URLs of the target files.
 // done       - The callback which will be called on completion.
@@ -246,8 +245,6 @@ typedef base::Callback<void(bool success)> FileTaskFinishedCallback;
 //              false.
 bool ExecuteFileTask(Profile* profile,
                      const GURL& source_url,
-                     const std::string& app_id,
-                     int32 tab_id,
                      const TaskDescriptor& task,
                      const std::vector<fileapi::FileSystemURL>& file_urls,
                      const FileTaskFinishedCallback& done);

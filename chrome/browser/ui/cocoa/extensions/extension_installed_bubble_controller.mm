@@ -35,16 +35,16 @@
 #include "chrome/common/extensions/api/commands/commands_handler.h"
 #include "chrome/common/extensions/api/extension_action/action_info.h"
 #include "chrome/common/extensions/api/omnibox/omnibox_handler.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/sync_helper.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_source.h"
+#include "extensions/common/extension.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
 #import "skia/ext/skia_utils_mac.h"
-#import "third_party/GTM/AppKit/GTMUILocalizerAndLayoutTweaker.h"
+#import "third_party/google_toolbox_for_mac/src/AppKit/GTMUILocalizerAndLayoutTweaker.h"
 #include "ui/base/l10n/l10n_util.h"
 
 using content::BrowserThread;
@@ -62,7 +62,7 @@ class ExtensionLoadedNotificationObserver
           : controller_(controller) {
     registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_LOADED,
         content::Source<Profile>(profile));
-    registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED,
+    registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
         content::Source<Profile>(profile));
   }
 
@@ -81,7 +81,7 @@ class ExtensionLoadedNotificationObserver
                                       withObject:controller_
                                    waitUntilDone:NO];
       }
-    } else if (type == chrome::NOTIFICATION_EXTENSION_UNLOADED) {
+    } else if (type == chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED) {
       const Extension* extension =
           content::Details<const UnloadedExtensionInfo>(details)->extension;
       if (extension == [controller_ extension]) {
@@ -440,9 +440,8 @@ class ExtensionLoadedNotificationObserver
     // First calculate the height of the sign-in promo.
     NSFont* font = [NSFont systemFontOfSize:[NSFont smallSystemFontSize]];
 
-    NSString* link(l10n_util::GetNSStringFWithFixup(
-        IDS_EXTENSION_INSTALLED_SIGNIN_PROMO_LINK,
-        l10n_util::GetStringUTF16(IDS_SHORT_PRODUCT_NAME)));
+    NSString* link(l10n_util::GetNSStringWithFixup(
+        IDS_EXTENSION_INSTALLED_SIGNIN_PROMO_LINK));
     NSString* message(l10n_util::GetNSStringWithFixup(
         IDS_EXTENSION_INSTALLED_SIGNIN_PROMO));
 
@@ -466,7 +465,7 @@ class ExtensionLoadedNotificationObserver
   }
 
   // First part of extension installed message, the heading.
-  string16 extension_name = UTF8ToUTF16(extension_->name().c_str());
+  base::string16 extension_name = base::UTF8ToUTF16(extension_->name().c_str());
   base::i18n::AdjustStringForLocaleDirection(&extension_name);
   [heading_ setStringValue:l10n_util::GetNSStringF(
       IDS_EXTENSION_INSTALLED_HEADING, extension_name)];
@@ -493,7 +492,7 @@ class ExtensionLoadedNotificationObserver
   if (type_ == extension_installed_bubble::kOmniboxKeyword) {
     [howToUse_ setStringValue:l10n_util::GetNSStringF(
         IDS_EXTENSION_INSTALLED_OMNIBOX_KEYWORD_INFO,
-        UTF8ToUTF16(extensions::OmniboxInfo::GetKeyword(extension_)))];
+        base::UTF8ToUTF16(extensions::OmniboxInfo::GetKeyword(extension_)))];
     [howToUse_ setHidden:NO];
     [[howToUse_ cell]
         setFont:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
@@ -548,7 +547,7 @@ class ExtensionLoadedNotificationObserver
 - (NSInteger)addExtensionList:(NSTextField*)headingMsg
                      itemsMsg:(NSTextField*)itemsMsg
                         state:(BundleInstaller::Item::State)state {
-  string16 heading = bundle_->GetHeadingTextFor(state);
+  base::string16 heading = bundle_->GetHeadingTextFor(state);
   bool hidden = heading.empty();
   [headingMsg setHidden:hidden];
   [itemsMsg setHidden:hidden];

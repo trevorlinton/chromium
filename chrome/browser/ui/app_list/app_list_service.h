@@ -8,17 +8,16 @@
 #include <string>
 
 #include "base/basictypes.h"
-#include "base/callback_forward.h"
 #include "base/compiler_specific.h"
 #include "chrome/browser/ui/host_desktop.h"
 #include "ui/gfx/native_widget_types.h"
 
 class AppListControllerDelegate;
-class CommandLine;
 class PrefRegistrySimple;
 class Profile;
 
 namespace base {
+class CommandLine;
 class FilePath;
 }
 
@@ -28,6 +27,21 @@ class ImageSkia;
 
 class AppListService {
  public:
+  // Source that triggers the app launcher being enabled. This is used for UMA
+  // to track discoverability of the app lancher shortcut after install. Also
+  // used to provide custom install behavior (e.g. "always" enable).
+  enum AppListEnableSource {
+    ENABLE_NOT_RECORDED,        // Indicates app launcher not recently enabled.
+    ENABLE_FOR_APP_INSTALL,     // Triggered by a webstore packaged app install.
+    ENABLE_VIA_WEBSTORE_LINK,   // Triggered by webstore explicitly via API.
+    ENABLE_VIA_COMMAND_LINE,    // Triggered by --enable-app-list.
+    ENABLE_ON_REINSTALL,        // Triggered by Chrome reinstall finding pref.
+    ENABLE_SHOWN_UNDISCOVERED,  // This overrides a prior ENABLE_FOR_APP_INSTALL
+                                // when the launcher is auto-shown without
+                                // being "discovered" beforehand.
+    ENABLE_NUM_ENABLE_SOURCES
+  };
+
   // Get the AppListService for the current platform and specified
   // |desktop_type|.
   static AppListService* Get(chrome::HostDesktopType desktop_type);
@@ -37,11 +51,11 @@ class AppListService {
 
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
-  static void RecordShowTimings(const CommandLine& command_line);
+  static void RecordShowTimings(const base::CommandLine& command_line);
 
   // Indicates that |callback| should be called next time the app list is
   // painted.
-  virtual void SetAppListNextPaintCallback(const base::Closure& callback) = 0;
+  virtual void SetAppListNextPaintCallback(void (*callback)()) = 0;
 
   // Perform Chrome first run logic. This is executed before Chrome's threads
   // have been created.
@@ -63,6 +77,12 @@ class AppListService {
   // profile to local prefs as the default app list profile.
   virtual void ShowForProfile(Profile* requested_profile) = 0;
 
+  // Show the app list due to a trigger which was not an explicit user action
+  // to show the app list. E.g. the auto-show when installing an app. This
+  // permits UMA to distinguish between a user discovering the app list shortcut
+  // themselves versus having it shown for them automatically.
+  virtual void AutoShowForProfile(Profile* requested_profile) = 0;
+
   // Dismiss the app list.
   virtual void DismissAppList() = 0;
 
@@ -74,13 +94,14 @@ class AppListService {
 
   // Enable the app list. What this does specifically will depend on the host
   // operating system and shell.
-  virtual void EnableAppList(Profile* initial_profile) = 0;
+  virtual void EnableAppList(Profile* initial_profile,
+                             AppListEnableSource enable_source) = 0;
 
   // Get the window the app list is in, or NULL if the app list isn't visible.
   virtual gfx::NativeWindow GetAppListWindow() = 0;
 
-  // Creates a platform specific AppListControllerDelegate.
-  virtual AppListControllerDelegate* CreateControllerDelegate() = 0;
+  // Returns a pointer to the platform specific AppListControllerDelegate.
+  virtual AppListControllerDelegate* GetControllerDelegate() = 0;
 
  protected:
   AppListService() {}

@@ -29,6 +29,7 @@
 #include "sync/internal_api/public/change_record.h"
 #include "sync/internal_api/public/engine/model_safe_worker.h"
 #include "sync/internal_api/public/engine/polling_constants.h"
+#include "sync/internal_api/public/events/protocol_event.h"
 #include "sync/internal_api/public/http_post_provider_factory.h"
 #include "sync/internal_api/public/http_post_provider_interface.h"
 #include "sync/internal_api/public/read_node.h"
@@ -66,6 +67,7 @@
 #include "sync/syncable/syncable_util.h"
 #include "sync/syncable/syncable_write_transaction.h"
 #include "sync/test/callback_counter.h"
+#include "sync/test/engine/fake_model_worker.h"
 #include "sync/test/engine/fake_sync_scheduler.h"
 #include "sync/test/engine/test_id_factory.h"
 #include "sync/test/fake_encryptor.h"
@@ -95,24 +97,6 @@ using syncable::SPECIFICS;
 using syncable::kEncryptedString;
 
 namespace {
-
-void ExpectInt64Value(int64 expected_value,
-                      const base::DictionaryValue& value,
-                      const std::string& key) {
-  std::string int64_str;
-  EXPECT_TRUE(value.GetString(key, &int64_str));
-  int64 val = 0;
-  EXPECT_TRUE(base::StringToInt64(int64_str, &val));
-  EXPECT_EQ(expected_value, val);
-}
-
-void ExpectTimeValue(const base::Time& expected_value,
-                     const base::DictionaryValue& value,
-                     const std::string& key) {
-  std::string time_str;
-  EXPECT_TRUE(value.GetString(key, &time_str));
-  EXPECT_EQ(GetTimeDebugString(expected_value), time_str);
-}
 
 // Makes a non-folder child of the root node.  Returns the id of the
 // newly-created node.
@@ -352,7 +336,7 @@ TEST_F(SyncApiTest, TestDeleteBehavior) {
         wnode.InitUniqueByCreation(BOOKMARKS, root_node, "testtag");
     EXPECT_EQ(WriteNode::INIT_SUCCESS, result);
     wnode.SetIsFolder(false);
-    wnode.SetTitle(UTF8ToWide(test_title));
+    wnode.SetTitle(base::UTF8ToWide(test_title));
 
     node_id = wnode.GetId();
   }
@@ -397,7 +381,7 @@ TEST_F(SyncApiTest, TestDeleteBehavior) {
     EXPECT_EQ(wnode.GetParentId(), folder_node.GetId());
     EXPECT_EQ(wnode.GetId(), node_id);
     EXPECT_NE(wnode.GetTitle(), test_title);  // Title should be cleared
-    wnode.SetTitle(UTF8ToWide(test_title));
+    wnode.SetTitle(base::UTF8ToWide(test_title));
   }
 
   // Now look up should work.
@@ -462,13 +446,13 @@ TEST_F(SyncApiTest, WriteEncryptedTitle) {
     WriteNode bookmark_node(&trans);
     ASSERT_TRUE(bookmark_node.InitBookmarkByCreation(root_node, NULL));
     bookmark_id = bookmark_node.GetId();
-    bookmark_node.SetTitle(UTF8ToWide("foo"));
+    bookmark_node.SetTitle(base::UTF8ToWide("foo"));
 
     WriteNode pref_node(&trans);
     WriteNode::InitUniqueByCreationResult result =
         pref_node.InitUniqueByCreation(PREFERENCES, root_node, "bar");
     ASSERT_EQ(WriteNode::INIT_SUCCESS, result);
-    pref_node.SetTitle(UTF8ToWide("bar"));
+    pref_node.SetTitle(base::UTF8ToWide("bar"));
   }
   {
     ReadTransaction trans(FROM_HERE, test_user_share_.user_share());
@@ -523,91 +507,6 @@ TEST_F(SyncApiTest, BaseNodeSetSpecificsPreservesUnknownFields) {
   entity_specifics.mutable_unknown_fields()->Clear();
   node.SetEntitySpecifics(entity_specifics);
   EXPECT_FALSE(node.GetEntitySpecifics().unknown_fields().empty());
-}
-
-namespace {
-
-void CheckNodeValue(const BaseNode& node, const base::DictionaryValue& value,
-                    bool is_detailed) {
-  size_t expected_field_count = 4;
-
-  ExpectInt64Value(node.GetId(), value, "id");
-  {
-    bool is_folder = false;
-    EXPECT_TRUE(value.GetBoolean("isFolder", &is_folder));
-    EXPECT_EQ(node.GetIsFolder(), is_folder);
-  }
-  ExpectDictStringValue(node.GetTitle(), value, "title");
-
-  ModelType expected_model_type = node.GetModelType();
-  std::string type_str;
-  EXPECT_TRUE(value.GetString("type", &type_str));
-  if (expected_model_type >= FIRST_REAL_MODEL_TYPE) {
-    ModelType model_type = ModelTypeFromString(type_str);
-    EXPECT_EQ(expected_model_type, model_type);
-  } else if (expected_model_type == TOP_LEVEL_FOLDER) {
-    EXPECT_EQ("Top-level folder", type_str);
-  } else if (expected_model_type == UNSPECIFIED) {
-    EXPECT_EQ("Unspecified", type_str);
-  } else {
-    ADD_FAILURE();
-  }
-
-  if (is_detailed) {
-    {
-      scoped_ptr<base::DictionaryValue> expected_entry(
-          node.GetEntry()->ToValue(NULL));
-      const base::Value* entry = NULL;
-      EXPECT_TRUE(value.Get("entry", &entry));
-      EXPECT_TRUE(base::Value::Equals(entry, expected_entry.get()));
-    }
-
-    ExpectInt64Value(node.GetParentId(), value, "parentId");
-    ExpectTimeValue(node.GetModificationTime(), value, "modificationTime");
-    ExpectInt64Value(node.GetExternalId(), value, "externalId");
-    expected_field_count += 4;
-
-    if (value.HasKey("predecessorId")) {
-      ExpectInt64Value(node.GetPredecessorId(), value, "predecessorId");
-      expected_field_count++;
-    }
-    if (value.HasKey("successorId")) {
-      ExpectInt64Value(node.GetSuccessorId(), value, "successorId");
-      expected_field_count++;
-    }
-    if (value.HasKey("firstChildId")) {
-      ExpectInt64Value(node.GetFirstChildId(), value, "firstChildId");
-      expected_field_count++;
-    }
-  }
-
-  EXPECT_EQ(expected_field_count, value.size());
-}
-
-}  // namespace
-
-TEST_F(SyncApiTest, BaseNodeGetSummaryAsValue) {
-  ReadTransaction trans(FROM_HERE, test_user_share_.user_share());
-  ReadNode node(&trans);
-  node.InitByRootLookup();
-  scoped_ptr<base::DictionaryValue> details(node.GetSummaryAsValue());
-  if (details) {
-    CheckNodeValue(node, *details, false);
-  } else {
-    ADD_FAILURE();
-  }
-}
-
-TEST_F(SyncApiTest, BaseNodeGetDetailsAsValue) {
-  ReadTransaction trans(FROM_HERE, test_user_share_.user_share());
-  ReadNode node(&trans);
-  node.InitByRootLookup();
-  scoped_ptr<base::DictionaryValue> details(node.GetDetailsAsValue());
-  if (details) {
-    CheckNodeValue(node, *details, true);
-  } else {
-    ADD_FAILURE();
-  }
 }
 
 TEST_F(SyncApiTest, EmptyTags) {
@@ -747,10 +646,10 @@ class SyncManagerObserverMock : public SyncManager::Observer {
                     bool,
                     syncer::ModelTypeSet));  // NOLINT
   MOCK_METHOD1(OnConnectionStatusChange, void(ConnectionStatus));  // NOLINT
-  MOCK_METHOD0(OnStopSyncingPermanently, void());  // NOLINT
   MOCK_METHOD1(OnUpdatedToken, void(const std::string&));  // NOLINT
-  MOCK_METHOD1(OnActionableError,
-               void(const SyncProtocolError&));  // NOLINT
+  MOCK_METHOD1(OnActionableError, void(const SyncProtocolError&));  // NOLINT
+  MOCK_METHOD1(OnMigrationRequested, void(syncer::ModelTypeSet));  // NOLINT
+  MOCK_METHOD1(OnProtocolEvent, void(const ProtocolEvent&));  // NOLINT
 };
 
 class SyncEncryptionHandlerObserverMock
@@ -807,13 +706,20 @@ class SyncManagerTest : public testing::Test,
 
     sync_manager_.AddObserver(&manager_observer_);
     EXPECT_CALL(manager_observer_, OnInitializationComplete(_, _, _, _)).
-        WillOnce(SaveArg<0>(&js_backend_));
+        WillOnce(DoAll(SaveArg<0>(&js_backend_),
+            SaveArg<2>(&initialization_succeeded_)));
 
     EXPECT_FALSE(js_backend_.IsInitialized());
 
-    std::vector<ModelSafeWorker*> workers;
+    std::vector<scoped_refptr<ModelSafeWorker> > workers;
     ModelSafeRoutingInfo routing_info;
     GetModelSafeRoutingInfo(&routing_info);
+
+    // This works only because all routing info types are GROUP_PASSIVE.
+    // If we had types in other groups, we would need additional workers
+    // to support them.
+    scoped_refptr<ModelSafeWorker> worker = new FakeModelWorker(GROUP_PASSIVE);
+    workers.push_back(worker);
 
     // Takes ownership of |fake_invalidator_|.
     sync_manager_.Init(
@@ -841,10 +747,12 @@ class SyncManagerTest : public testing::Test,
 
     EXPECT_TRUE(js_backend_.IsInitialized());
 
-    for (ModelSafeRoutingInfo::iterator i = routing_info.begin();
-         i != routing_info.end(); ++i) {
-      type_roots_[i->first] = MakeServerNodeForType(
-          sync_manager_.GetUserShare(), i->first);
+    if (initialization_succeeded_) {
+      for (ModelSafeRoutingInfo::iterator i = routing_info.begin();
+           i != routing_info.end(); ++i) {
+        type_roots_[i->first] = MakeServerNodeForType(
+            sync_manager_.GetUserShare(), i->first);
+      }
     }
     PumpLoop();
   }
@@ -865,6 +773,12 @@ class SyncManagerTest : public testing::Test,
     (*out)[PASSWORDS] = GROUP_PASSIVE;
     (*out)[PREFERENCES] = GROUP_PASSIVE;
     (*out)[PRIORITY_PREFERENCES] = GROUP_PASSIVE;
+  }
+
+  ModelTypeSet GetEnabledTypes() {
+    ModelSafeRoutingInfo routing_info;
+    GetModelSafeRoutingInfo(&routing_info);
+    return GetRoutingInfoTypes(routing_info);
   }
 
   virtual void OnChangesApplied(
@@ -1018,258 +932,11 @@ class SyncManagerTest : public testing::Test,
   SyncManagerImpl sync_manager_;
   CancelationSignal cancelation_signal_;
   WeakHandle<JsBackend> js_backend_;
+  bool initialization_succeeded_;
   StrictMock<SyncManagerObserverMock> manager_observer_;
   StrictMock<SyncEncryptionHandlerObserverMock> encryption_observer_;
   InternalComponentsFactory::Switches switches_;
 };
-
-TEST_F(SyncManagerTest, ProcessJsMessage) {
-  const JsArgList kNoArgs;
-
-  StrictMock<MockJsReplyHandler> reply_handler;
-
-  base::ListValue disabled_args;
-  disabled_args.Append(new base::StringValue("TRANSIENT_INVALIDATION_ERROR"));
-
-  EXPECT_CALL(reply_handler,
-              HandleJsReply("getNotificationState",
-                            HasArgsAsList(disabled_args)));
-
-  // This message should be dropped.
-  SendJsMessage("unknownMessage", kNoArgs, reply_handler.AsWeakHandle());
-
-  SendJsMessage("getNotificationState", kNoArgs, reply_handler.AsWeakHandle());
-}
-
-TEST_F(SyncManagerTest, ProcessJsMessageGetRootNodeDetails) {
-  const JsArgList kNoArgs;
-
-  StrictMock<MockJsReplyHandler> reply_handler;
-
-  JsArgList return_args;
-
-  EXPECT_CALL(reply_handler,
-              HandleJsReply("getRootNodeDetails", _))
-      .WillOnce(SaveArg<1>(&return_args));
-
-  SendJsMessage("getRootNodeDetails", kNoArgs, reply_handler.AsWeakHandle());
-
-  EXPECT_EQ(1u, return_args.Get().GetSize());
-  const base::DictionaryValue* node_info = NULL;
-  EXPECT_TRUE(return_args.Get().GetDictionary(0, &node_info));
-  if (node_info) {
-    ReadTransaction trans(FROM_HERE, sync_manager_.GetUserShare());
-    ReadNode node(&trans);
-    node.InitByRootLookup();
-    CheckNodeValue(node, *node_info, true);
-  } else {
-    ADD_FAILURE();
-  }
-}
-
-void CheckGetNodesByIdReturnArgs(SyncManager* sync_manager,
-                                 const JsArgList& return_args,
-                                 int64 id,
-                                 bool is_detailed) {
-  EXPECT_EQ(1u, return_args.Get().GetSize());
-  const base::ListValue* nodes = NULL;
-  ASSERT_TRUE(return_args.Get().GetList(0, &nodes));
-  ASSERT_TRUE(nodes);
-  EXPECT_EQ(1u, nodes->GetSize());
-  const base::DictionaryValue* node_info = NULL;
-  EXPECT_TRUE(nodes->GetDictionary(0, &node_info));
-  ASSERT_TRUE(node_info);
-  ReadTransaction trans(FROM_HERE, sync_manager->GetUserShare());
-  ReadNode node(&trans);
-  EXPECT_EQ(BaseNode::INIT_OK, node.InitByIdLookup(id));
-  CheckNodeValue(node, *node_info, is_detailed);
-}
-
-class SyncManagerGetNodesByIdTest : public SyncManagerTest {
- protected:
-  virtual ~SyncManagerGetNodesByIdTest() {}
-
-  void RunGetNodesByIdTest(const char* message_name, bool is_detailed) {
-    int64 root_id = kInvalidId;
-    {
-      ReadTransaction trans(FROM_HERE, sync_manager_.GetUserShare());
-      ReadNode root_node(&trans);
-      root_node.InitByRootLookup();
-      root_id = root_node.GetId();
-    }
-
-    int64 child_id =
-        MakeNode(sync_manager_.GetUserShare(), BOOKMARKS, "testtag");
-
-    StrictMock<MockJsReplyHandler> reply_handler;
-
-    JsArgList return_args;
-
-    const int64 ids[] = { root_id, child_id };
-
-    EXPECT_CALL(reply_handler,
-                HandleJsReply(message_name, _))
-        .Times(arraysize(ids)).WillRepeatedly(SaveArg<1>(&return_args));
-
-    for (size_t i = 0; i < arraysize(ids); ++i) {
-      base::ListValue args;
-      base::ListValue* id_values = new base::ListValue();
-      args.Append(id_values);
-      id_values->Append(new base::StringValue(base::Int64ToString(ids[i])));
-      SendJsMessage(message_name,
-                    JsArgList(&args), reply_handler.AsWeakHandle());
-
-      CheckGetNodesByIdReturnArgs(&sync_manager_, return_args,
-                                  ids[i], is_detailed);
-    }
-  }
-
-  void RunGetNodesByIdFailureTest(const char* message_name) {
-    StrictMock<MockJsReplyHandler> reply_handler;
-
-    base::ListValue empty_list_args;
-    empty_list_args.Append(new base::ListValue());
-
-    EXPECT_CALL(reply_handler,
-                HandleJsReply(message_name,
-                                    HasArgsAsList(empty_list_args)))
-        .Times(6);
-
-    {
-      base::ListValue args;
-      SendJsMessage(message_name,
-                    JsArgList(&args), reply_handler.AsWeakHandle());
-    }
-
-    {
-      base::ListValue args;
-      args.Append(new base::ListValue());
-      SendJsMessage(message_name,
-                    JsArgList(&args), reply_handler.AsWeakHandle());
-    }
-
-    {
-      base::ListValue args;
-      base::ListValue* ids = new base::ListValue();
-      args.Append(ids);
-      ids->Append(new base::StringValue(std::string()));
-      SendJsMessage(
-          message_name, JsArgList(&args), reply_handler.AsWeakHandle());
-    }
-
-    {
-      base::ListValue args;
-      base::ListValue* ids = new base::ListValue();
-      args.Append(ids);
-      ids->Append(new base::StringValue("nonsense"));
-      SendJsMessage(message_name,
-                    JsArgList(&args), reply_handler.AsWeakHandle());
-    }
-
-    {
-      base::ListValue args;
-      base::ListValue* ids = new base::ListValue();
-      args.Append(ids);
-      ids->Append(new base::StringValue("0"));
-      SendJsMessage(message_name,
-                    JsArgList(&args), reply_handler.AsWeakHandle());
-    }
-
-    {
-      base::ListValue args;
-      base::ListValue* ids = new base::ListValue();
-      args.Append(ids);
-      ids->Append(new base::StringValue("9999"));
-      SendJsMessage(message_name,
-                    JsArgList(&args), reply_handler.AsWeakHandle());
-    }
-  }
-};
-
-TEST_F(SyncManagerGetNodesByIdTest, GetNodeSummariesById) {
-  RunGetNodesByIdTest("getNodeSummariesById", false);
-}
-
-TEST_F(SyncManagerGetNodesByIdTest, GetNodeDetailsById) {
-  RunGetNodesByIdTest("getNodeDetailsById", true);
-}
-
-TEST_F(SyncManagerGetNodesByIdTest, GetNodeSummariesByIdFailure) {
-  RunGetNodesByIdFailureTest("getNodeSummariesById");
-}
-
-TEST_F(SyncManagerGetNodesByIdTest, GetNodeDetailsByIdFailure) {
-  RunGetNodesByIdFailureTest("getNodeDetailsById");
-}
-
-TEST_F(SyncManagerTest, GetChildNodeIds) {
-  StrictMock<MockJsReplyHandler> reply_handler;
-
-  JsArgList return_args;
-
-  EXPECT_CALL(reply_handler,
-              HandleJsReply("getChildNodeIds", _))
-      .Times(1).WillRepeatedly(SaveArg<1>(&return_args));
-
-  {
-    base::ListValue args;
-    args.Append(new base::StringValue("1"));
-    SendJsMessage("getChildNodeIds",
-                  JsArgList(&args), reply_handler.AsWeakHandle());
-  }
-
-  EXPECT_EQ(1u, return_args.Get().GetSize());
-  const base::ListValue* nodes = NULL;
-  ASSERT_TRUE(return_args.Get().GetList(0, &nodes));
-  ASSERT_TRUE(nodes);
-  EXPECT_EQ(9u, nodes->GetSize());
-}
-
-TEST_F(SyncManagerTest, GetChildNodeIdsFailure) {
-  StrictMock<MockJsReplyHandler> reply_handler;
-
-  base::ListValue empty_list_args;
-  empty_list_args.Append(new base::ListValue());
-
-  EXPECT_CALL(reply_handler,
-              HandleJsReply("getChildNodeIds",
-                                   HasArgsAsList(empty_list_args)))
-      .Times(5);
-
-  {
-    base::ListValue args;
-    SendJsMessage("getChildNodeIds",
-                   JsArgList(&args), reply_handler.AsWeakHandle());
-  }
-
-  {
-    base::ListValue args;
-    args.Append(new base::StringValue(std::string()));
-    SendJsMessage(
-        "getChildNodeIds", JsArgList(&args), reply_handler.AsWeakHandle());
-  }
-
-  {
-    base::ListValue args;
-    args.Append(new base::StringValue("nonsense"));
-    SendJsMessage("getChildNodeIds",
-                  JsArgList(&args), reply_handler.AsWeakHandle());
-  }
-
-  {
-    base::ListValue args;
-    args.Append(new base::StringValue("0"));
-    SendJsMessage("getChildNodeIds",
-                  JsArgList(&args), reply_handler.AsWeakHandle());
-  }
-
-  {
-    base::ListValue args;
-    args.Append(new base::StringValue("9999"));
-    SendJsMessage("getChildNodeIds",
-                  JsArgList(&args), reply_handler.AsWeakHandle());
-  }
-}
 
 TEST_F(SyncManagerTest, GetAllNodesTest) {
   StrictMock<MockJsReplyHandler> reply_handler;
@@ -1310,100 +977,6 @@ TEST_F(SyncManagerTest, GetAllNodesTest) {
   ASSERT_TRUE(node_list->GetDictionary(0, &first_result));
   EXPECT_TRUE(first_result->HasKey("ID"));
   EXPECT_TRUE(first_result->HasKey("NON_UNIQUE_NAME"));
-}
-
-// Simulate various invalidator state changes.  Those should propagate
-// JS events.
-TEST_F(SyncManagerTest, OnInvalidatorStateChangeJsEvents) {
-  StrictMock<MockJsEventHandler> event_handler;
-
-  base::DictionaryValue enabled_details;
-  enabled_details.SetString("state", "INVALIDATIONS_ENABLED");
-  base::DictionaryValue credentials_rejected_details;
-  credentials_rejected_details.SetString(
-      "state", "INVALIDATION_CREDENTIALS_REJECTED");
-  base::DictionaryValue transient_error_details;
-  transient_error_details.SetString("state", "TRANSIENT_INVALIDATION_ERROR");
-  base::DictionaryValue auth_error_details;
-  auth_error_details.SetString("status", "CONNECTION_AUTH_ERROR");
-
-  EXPECT_CALL(event_handler,
-              HandleJsEvent("onNotificationStateChange",
-                            HasDetailsAsDictionary(enabled_details)));
-
-  EXPECT_CALL(
-      event_handler,
-      HandleJsEvent("onNotificationStateChange",
-                    HasDetailsAsDictionary(credentials_rejected_details)))
-      .Times(2);
-
-  EXPECT_CALL(event_handler,
-              HandleJsEvent("onNotificationStateChange",
-                            HasDetailsAsDictionary(transient_error_details)));
-
-  // Test needs to simulate INVALIDATION_CREDENTIALS_REJECTED with event handler
-  // attached because this is the only time when CONNECTION_AUTH_ERROR
-  // notification will be generated, therefore the only chance to verify that
-  // "onConnectionStatusChange" event is delivered
-  SetJsEventHandler(event_handler.AsWeakHandle());
-  SimulateInvalidatorStateChangeForTest(INVALIDATION_CREDENTIALS_REJECTED);
-  SetJsEventHandler(WeakHandle<JsEventHandler>());
-
-  SimulateInvalidatorStateChangeForTest(INVALIDATIONS_ENABLED);
-  SimulateInvalidatorStateChangeForTest(INVALIDATION_CREDENTIALS_REJECTED);
-  SimulateInvalidatorStateChangeForTest(TRANSIENT_INVALIDATION_ERROR);
-
-  SetJsEventHandler(event_handler.AsWeakHandle());
-  SimulateInvalidatorStateChangeForTest(INVALIDATIONS_ENABLED);
-  SimulateInvalidatorStateChangeForTest(INVALIDATION_CREDENTIALS_REJECTED);
-  SimulateInvalidatorStateChangeForTest(TRANSIENT_INVALIDATION_ERROR);
-  SetJsEventHandler(WeakHandle<JsEventHandler>());
-
-  SimulateInvalidatorStateChangeForTest(INVALIDATIONS_ENABLED);
-  SimulateInvalidatorStateChangeForTest(INVALIDATION_CREDENTIALS_REJECTED);
-  SimulateInvalidatorStateChangeForTest(TRANSIENT_INVALIDATION_ERROR);
-
-  // Should trigger the replies.
-  PumpLoop();
-}
-
-TEST_F(SyncManagerTest, OnIncomingNotification) {
-  StrictMock<MockJsEventHandler> event_handler;
-
-  const ModelTypeSet empty_model_types;
-  const ModelTypeSet model_types(
-      BOOKMARKS, THEMES);
-
-  // Build expected_args to have a single argument with the string
-  // equivalents of model_types.
-  base::DictionaryValue expected_details;
-  {
-    base::ListValue* model_type_list = new base::ListValue();
-    expected_details.SetString("source", "REMOTE_INVALIDATION");
-    expected_details.Set("changedTypes", model_type_list);
-    for (ModelTypeSet::Iterator it = model_types.First();
-         it.Good(); it.Inc()) {
-      model_type_list->Append(
-          new base::StringValue(ModelTypeToString(it.Get())));
-    }
-  }
-
-  EXPECT_CALL(event_handler,
-              HandleJsEvent("onIncomingNotification",
-                            HasDetailsAsDictionary(expected_details)));
-
-  TriggerOnIncomingNotificationForTest(empty_model_types);
-  TriggerOnIncomingNotificationForTest(model_types);
-
-  SetJsEventHandler(event_handler.AsWeakHandle());
-  TriggerOnIncomingNotificationForTest(model_types);
-  SetJsEventHandler(WeakHandle<JsEventHandler>());
-
-  TriggerOnIncomingNotificationForTest(empty_model_types);
-  TriggerOnIncomingNotificationForTest(model_types);
-
-  // Should trigger the replies.
-  PumpLoop();
 }
 
 TEST_F(SyncManagerTest, RefreshEncryptionReady) {
@@ -2112,7 +1685,7 @@ TEST_F(SyncManagerTest, CreateLocalBookmark) {
     WriteNode node(&trans);
     ASSERT_TRUE(node.InitBookmarkByCreation(bookmark_root, NULL));
     node.SetIsFolder(false);
-    node.SetTitle(UTF8ToWide(title));
+    node.SetTitle(base::UTF8ToWide(title));
 
     sync_pb::BookmarkSpecifics bookmark_specifics(node.GetBookmarkSpecifics());
     bookmark_specifics.set_url(url);
@@ -2451,7 +2024,7 @@ TEST_F(SyncManagerTest, SetBookmarkTitle) {
     WriteNode node(&trans);
     EXPECT_EQ(BaseNode::INIT_OK,
               node.InitByClientTagLookup(BOOKMARKS, client_tag));
-    node.SetTitle(UTF8ToWide(client_tag));
+    node.SetTitle(base::UTF8ToWide(client_tag));
   }
   EXPECT_FALSE(ResetUnsyncedEntry(BOOKMARKS, client_tag));
 
@@ -2461,7 +2034,7 @@ TEST_F(SyncManagerTest, SetBookmarkTitle) {
     WriteNode node(&trans);
     EXPECT_EQ(BaseNode::INIT_OK,
               node.InitByClientTagLookup(BOOKMARKS, client_tag));
-    node.SetTitle(UTF8ToWide("title2"));
+    node.SetTitle(base::UTF8ToWide("title2"));
   }
   EXPECT_TRUE(ResetUnsyncedEntry(BOOKMARKS, client_tag));
 }
@@ -2500,7 +2073,7 @@ TEST_F(SyncManagerTest, SetBookmarkTitleWithEncryption) {
     WriteNode node(&trans);
     EXPECT_EQ(BaseNode::INIT_OK,
               node.InitByClientTagLookup(BOOKMARKS, client_tag));
-    node.SetTitle(UTF8ToWide(client_tag));
+    node.SetTitle(base::UTF8ToWide(client_tag));
     const syncable::Entry* node_entry = node.GetEntry();
     const sync_pb::EntitySpecifics& specifics = node_entry->GetSpecifics();
     EXPECT_TRUE(specifics.has_encrypted());
@@ -2515,7 +2088,7 @@ TEST_F(SyncManagerTest, SetBookmarkTitleWithEncryption) {
     WriteNode node(&trans);
     EXPECT_EQ(BaseNode::INIT_OK,
               node.InitByClientTagLookup(BOOKMARKS, client_tag));
-    node.SetTitle(UTF8ToWide("title2"));
+    node.SetTitle(base::UTF8ToWide("title2"));
     const syncable::Entry* node_entry = node.GetEntry();
     const sync_pb::EntitySpecifics& specifics = node_entry->GetSpecifics();
     EXPECT_TRUE(specifics.has_encrypted());
@@ -2546,7 +2119,7 @@ TEST_F(SyncManagerTest, SetNonBookmarkTitle) {
     WriteNode node(&trans);
     EXPECT_EQ(BaseNode::INIT_OK,
               node.InitByClientTagLookup(PREFERENCES, client_tag));
-    node.SetTitle(UTF8ToWide(client_tag));
+    node.SetTitle(base::UTF8ToWide(client_tag));
   }
   EXPECT_FALSE(ResetUnsyncedEntry(PREFERENCES, client_tag));
 
@@ -2556,7 +2129,7 @@ TEST_F(SyncManagerTest, SetNonBookmarkTitle) {
     WriteNode node(&trans);
     EXPECT_EQ(BaseNode::INIT_OK,
               node.InitByClientTagLookup(PREFERENCES, client_tag));
-    node.SetTitle(UTF8ToWide("title2"));
+    node.SetTitle(base::UTF8ToWide("title2"));
   }
   EXPECT_TRUE(ResetUnsyncedEntry(PREFERENCES, client_tag));
 }
@@ -2597,7 +2170,7 @@ TEST_F(SyncManagerTest, SetNonBookmarkTitleWithEncryption) {
     WriteNode node(&trans);
     EXPECT_EQ(BaseNode::INIT_OK,
               node.InitByClientTagLookup(PREFERENCES, client_tag));
-    node.SetTitle(UTF8ToWide(client_tag));
+    node.SetTitle(base::UTF8ToWide(client_tag));
     const syncable::Entry* node_entry = node.GetEntry();
     const sync_pb::EntitySpecifics& specifics = node_entry->GetSpecifics();
     EXPECT_TRUE(specifics.has_encrypted());
@@ -2612,7 +2185,7 @@ TEST_F(SyncManagerTest, SetNonBookmarkTitleWithEncryption) {
     WriteNode node(&trans);
     EXPECT_EQ(BaseNode::INIT_OK,
               node.InitByClientTagLookup(PREFERENCES, client_tag));
-    node.SetTitle(UTF8ToWide("title2"));
+    node.SetTitle(base::UTF8ToWide("title2"));
     const syncable::Entry* node_entry = node.GetEntry();
     const sync_pb::EntitySpecifics& specifics = node_entry->GetSpecifics();
     EXPECT_TRUE(specifics.has_encrypted());
@@ -2645,7 +2218,7 @@ TEST_F(SyncManagerTest, SetLongTitle) {
     WriteNode node(&trans);
     EXPECT_EQ(BaseNode::INIT_OK,
               node.InitByClientTagLookup(PREFERENCES, kClientTag));
-    node.SetTitle(UTF8ToWide(title));
+    node.SetTitle(base::UTF8ToWide(title));
     EXPECT_EQ(node.GetTitle(), title.substr(0, 255));
   }
   EXPECT_TRUE(ResetUnsyncedEntry(PREFERENCES, kClientTag));
@@ -2656,7 +2229,7 @@ TEST_F(SyncManagerTest, SetLongTitle) {
     WriteNode node(&trans);
     EXPECT_EQ(BaseNode::INIT_OK,
               node.InitByClientTagLookup(PREFERENCES, kClientTag));
-    node.SetTitle(UTF8ToWide(title));
+    node.SetTitle(base::UTF8ToWide(title));
     EXPECT_EQ(node.GetTitle(), title.substr(0, 255));
   }
   EXPECT_FALSE(ResetUnsyncedEntry(PREFERENCES, kClientTag));
@@ -2667,7 +2240,7 @@ TEST_F(SyncManagerTest, SetLongTitle) {
     WriteNode node(&trans);
     EXPECT_EQ(BaseNode::INIT_OK,
               node.InitByClientTagLookup(PREFERENCES, kClientTag));
-    node.SetTitle(UTF8ToWide("title2"));
+    node.SetTitle(base::UTF8ToWide("title2"));
   }
   EXPECT_TRUE(ResetUnsyncedEntry(PREFERENCES, kClientTag));
 }
@@ -2780,7 +2353,7 @@ class MockSyncScheduler : public FakeSyncScheduler {
   virtual ~MockSyncScheduler() {}
 
   MOCK_METHOD1(Start, void(SyncScheduler::Mode));
-  MOCK_METHOD1(ScheduleConfiguration, bool(const ConfigurationParams&));
+  MOCK_METHOD1(ScheduleConfiguration, void(const ConfigurationParams&));
 };
 
 class ComponentsFactory : public TestInternalComponentsFactory {
@@ -2838,7 +2411,7 @@ TEST_F(SyncManagerTestWithMockScheduler, BasicConfiguration) {
   ConfigurationParams params;
   EXPECT_CALL(*scheduler(), Start(SyncScheduler::CONFIGURATION_MODE));
   EXPECT_CALL(*scheduler(), ScheduleConfiguration(_)).
-      WillOnce(DoAll(SaveArg<0>(&params), Return(true)));
+      WillOnce(SaveArg<0>(&params));
 
   // Set data for all types.
   ModelTypeSet protocol_types = ProtocolTypes();
@@ -2890,7 +2463,7 @@ TEST_F(SyncManagerTestWithMockScheduler, ReConfiguration) {
   ConfigurationParams params;
   EXPECT_CALL(*scheduler(), Start(SyncScheduler::CONFIGURATION_MODE));
   EXPECT_CALL(*scheduler(), ScheduleConfiguration(_)).
-      WillOnce(DoAll(SaveArg<0>(&params), Return(true)));
+      WillOnce(SaveArg<0>(&params));
 
   // Set data for all types except those recently disabled (so we can verify
   // only those recently disabled are purged) .
@@ -2905,7 +2478,7 @@ TEST_F(SyncManagerTestWithMockScheduler, ReConfiguration) {
   }
 
   // Set the context to have the old routing info.
-  session_context()->set_routing_info(old_routing_info);
+  session_context()->SetRoutingInfo(old_routing_info);
 
   CallbackCounter ready_task_counter, retry_task_counter;
   sync_manager_.ConfigureSyncer(
@@ -2929,38 +2502,6 @@ TEST_F(SyncManagerTestWithMockScheduler, ReConfiguration) {
   // Verify only the recently disabled types were purged.
   EXPECT_TRUE(sync_manager_.GetTypesWithEmptyProgressMarkerToken(
       ProtocolTypes()).Equals(disabled_types));
-}
-
-// Test that the retry callback is invoked on configuration failure.
-TEST_F(SyncManagerTestWithMockScheduler, ConfigurationRetry) {
-  ConfigureReason reason = CONFIGURE_REASON_RECONFIGURATION;
-  ModelTypeSet types_to_download(BOOKMARKS, PREFERENCES);
-  ModelSafeRoutingInfo new_routing_info;
-  GetModelSafeRoutingInfo(&new_routing_info);
-
-  ConfigurationParams params;
-  EXPECT_CALL(*scheduler(), Start(SyncScheduler::CONFIGURATION_MODE));
-  EXPECT_CALL(*scheduler(), ScheduleConfiguration(_)).
-      WillOnce(DoAll(SaveArg<0>(&params), Return(false)));
-
-  CallbackCounter ready_task_counter, retry_task_counter;
-  sync_manager_.ConfigureSyncer(
-      reason,
-      types_to_download,
-      ModelTypeSet(),
-      ModelTypeSet(),
-      ModelTypeSet(),
-      new_routing_info,
-      base::Bind(&CallbackCounter::Callback,
-                 base::Unretained(&ready_task_counter)),
-      base::Bind(&CallbackCounter::Callback,
-                 base::Unretained(&retry_task_counter)));
-  EXPECT_EQ(0, ready_task_counter.times_called());
-  EXPECT_EQ(1, retry_task_counter.times_called());
-  EXPECT_EQ(sync_pb::GetUpdatesCallerInfo::RECONFIGURATION,
-            params.source);
-  EXPECT_TRUE(types_to_download.Equals(params.types_to_download));
-  EXPECT_EQ(new_routing_info, params.routing_info);
 }
 
 // Test that PurgePartiallySyncedTypes purges only those types that have not
@@ -3512,6 +3053,30 @@ TEST_F(SyncManagerChangeProcessingTest, DeletionsAndChanges) {
   // Deletes should appear before updates.
   EXPECT_LT(child_pos, folder_a_pos);
   EXPECT_LT(folder_b_pos, folder_a_pos);
+}
+
+// During initialization SyncManagerImpl loads sqlite database. If it fails to
+// do so it should fail initialization. This test verifies this behavior.
+// Test reuses SyncManagerImpl initialization from SyncManagerTest but overrides
+// InternalComponentsFactory to return DirectoryBackingStore that always fails
+// to load.
+class SyncManagerInitInvalidStorageTest : public SyncManagerTest {
+ public:
+  SyncManagerInitInvalidStorageTest() {
+  }
+
+  virtual InternalComponentsFactory* GetFactory() OVERRIDE {
+    return new TestInternalComponentsFactory(GetSwitches(), STORAGE_INVALID);
+  }
+};
+
+// SyncManagerInitInvalidStorageTest::GetFactory will return
+// DirectoryBackingStore that ensures that SyncManagerImpl::OpenDirectory fails.
+// SyncManagerImpl initialization is done in SyncManagerTest::SetUp. This test's
+// task is to ensure that SyncManagerImpl reported initialization failure in
+// OnInitializationComplete callback.
+TEST_F(SyncManagerInitInvalidStorageTest, FailToOpenDatabase) {
+  EXPECT_FALSE(initialization_succeeded_);
 }
 
 }  // namespace

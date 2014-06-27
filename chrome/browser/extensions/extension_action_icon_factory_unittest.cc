@@ -14,9 +14,9 @@
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/test/test_browser_thread.h"
+#include "extensions/common/extension.h"
 #include "grit/theme_resources.h"
 #include "skia/ext/image_operations.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -110,9 +110,9 @@ class ExtensionActionIconFactoryTest
     int error_code = 0;
     std::string error;
     JSONFileValueSerializer serializer(test_file.AppendASCII("manifest.json"));
-    scoped_ptr<DictionaryValue> valid_value(
-        static_cast<DictionaryValue*>(serializer.Deserialize(&error_code,
-                                                             &error)));
+    scoped_ptr<base::DictionaryValue> valid_value(
+        static_cast<base::DictionaryValue*>(serializer.Deserialize(&error_code,
+                                                                   &error)));
     EXPECT_EQ(0, error_code) << error;
     if (error_code != 0)
       return NULL;

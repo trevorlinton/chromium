@@ -45,7 +45,7 @@ static const base::FilePath::CharType kToolsPath[] =
     FILE_PATH_LITERAL("pyauto_private/media/tools");
 
 static const char kMainWebrtcTestHtmlPage[] =
-    "files/webrtc/webrtc_audio_quality_test.html";
+    "/webrtc/webrtc_audio_quality_test.html";
 
 static base::FilePath GetTestDataDir() {
   base::FilePath source_dir;
@@ -89,10 +89,13 @@ static base::FilePath GetTestDataDir() {
 //    50 / 100 in level. Also go into the playback tab, right-click Speakers,
 //    and set that level to 50 / 100. Otherwise you will get distortion in
 //    the recording.
-class WebrtcAudioQualityBrowserTest : public WebRtcTestBase {
+class WebRtcAudioQualityBrowserTest : public WebRtcTestBase,
+                                      public testing::WithParamInterface<bool> {
  public:
+  WebRtcAudioQualityBrowserTest() {}
   virtual void SetUpInProcessBrowserTestFixture() OVERRIDE {
     PeerConnectionServerRunner::KillAllPeerConnectionServersOnCurrentSystem();
+    DetectErrorsInJavaScript();  // Look for errors in our rather complex js.
   }
 
   virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE {
@@ -102,11 +105,14 @@ class WebrtcAudioQualityBrowserTest : public WebRtcTestBase {
         switches::kUseFakeDeviceForMediaStream));
     EXPECT_FALSE(command_line->HasSwitch(
         switches::kUseFakeUIForMediaStream));
+
+    bool enable_audio_track_processing = GetParam();
+    if (enable_audio_track_processing)
+      command_line->AppendSwitch(switches::kEnableAudioTrackProcessing);
   }
 
   bool HasAllRequiredResources() {
-    base::FilePath reference_file =
-        GetTestDataDir().Append(kReferenceFile);
+    base::FilePath reference_file = GetTestDataDir().Append(kReferenceFile);
     if (!base::PathExists(reference_file)) {
       LOG(ERROR) << "Cannot find the reference file to be used for audio "
           << "quality comparison: " << reference_file.value();
@@ -125,15 +131,6 @@ class WebrtcAudioQualityBrowserTest : public WebRtcTestBase {
     EXPECT_EQ("ok-playing", ExecuteJavascript("playAudioFile()", tab_contents));
   }
 
-  // Ensures we didn't get any errors asynchronously (e.g. while no javascript
-  // call from this test was outstanding).
-  // TODO(phoglund): this becomes obsolete when we switch to communicating with
-  // the DOM message queue.
-  void AssertNoAsynchronousErrors(content::WebContents* tab_contents) {
-    EXPECT_EQ("ok-no-errors",
-              ExecuteJavascript("getAnyTestFailures()", tab_contents));
-  }
-
   void EstablishCall(content::WebContents* from_tab,
                      content::WebContents* to_tab) {
     EXPECT_EQ("ok-negotiating",
@@ -146,18 +143,9 @@ class WebrtcAudioQualityBrowserTest : public WebRtcTestBase {
                                  "active", to_tab));
   }
 
-  void HangUp(content::WebContents* from_tab) {
-    EXPECT_EQ("ok-call-hung-up", ExecuteJavascript("hangUp()", from_tab));
-  }
-
-  void WaitUntilHangupVerified(content::WebContents* tab_contents) {
-    EXPECT_TRUE(PollingWaitUntil("getPeerConnectionReadyState()",
-                                 "no-peer-connection", tab_contents));
-  }
-
   base::FilePath CreateTemporaryWaveFile() {
     base::FilePath filename;
-    EXPECT_TRUE(file_util::CreateTemporaryFile(&filename));
+    EXPECT_TRUE(base::CreateTemporaryFile(&filename));
     base::FilePath wav_filename =
         filename.AddExtension(FILE_PATH_LITERAL(".wav"));
     EXPECT_TRUE(base::Move(filename, wav_filename));
@@ -223,7 +211,7 @@ class AudioRecorder {
     command_line.AppendArgPath(output_file);
 #endif
 
-    LOG(INFO) << "Running " << command_line.GetCommandLineString();
+    VLOG(0) << "Running " << command_line.GetCommandLineString();
     return base::LaunchProcess(command_line, base::LaunchOptions(),
                                &recording_application_);
   }
@@ -242,7 +230,7 @@ bool ForceMicrophoneVolumeTo100Percent() {
 #if defined(OS_WIN)
   CommandLine command_line(GetTestDataDir().Append(kToolsPath).Append(
       FILE_PATH_LITERAL("force_mic_volume_max.exe")));
-  LOG(INFO) << "Running " << command_line.GetCommandLineString();
+  VLOG(0) << "Running " << command_line.GetCommandLineString();
   std::string result;
   if (!base::GetAppOutput(command_line, &result)) {
     LOG(ERROR) << "Failed to set source volume: output was " << result;
@@ -259,7 +247,7 @@ bool ForceMicrophoneVolumeTo100Percent() {
     command_line.AppendArg("set-source-volume");
     command_line.AppendArg(base::StringPrintf("%d", device_index));
     command_line.AppendArg(kHundredPercentVolume);
-    LOG(INFO) << "Running " << command_line.GetCommandLineString();
+    VLOG(0) << "Running " << command_line.GetCommandLineString();
     if (!base::GetAppOutput(command_line, &result)) {
       LOG(ERROR) << "Failed to set source volume: output was " << result;
       return false;
@@ -306,10 +294,10 @@ bool RemoveSilence(const base::FilePath& input_file,
   command_line.AppendArg(kTreshold);
   command_line.AppendArg("reverse");
 
-  LOG(INFO) << "Running " << command_line.GetCommandLineString();
+  VLOG(0) << "Running " << command_line.GetCommandLineString();
   std::string result;
   bool ok = base::GetAppOutput(command_line, &result);
-  LOG(INFO) << "Output was:\n\n" << result;
+  VLOG(0) << "Output was:\n\n" << result;
   return ok;
 }
 
@@ -353,13 +341,13 @@ bool RunPesq(const base::FilePath& reference_file,
   command_line.AppendArgPath(reference_file);
   command_line.AppendArgPath(actual_file);
 
-  LOG(INFO) << "Running " << command_line.GetCommandLineString();
+  VLOG(0) << "Running " << command_line.GetCommandLineString();
   std::string result;
   if (!base::GetAppOutput(command_line, &result)) {
     LOG(ERROR) << "Failed to run PESQ.";
     return false;
   }
-  LOG(INFO) << "Output was:\n\n" << result;
+  VLOG(0) << "Output was:\n\n" << result;
 
   const std::string result_anchor = "Prediction (Raw MOS, MOS-LQO):  = ";
   std::size_t anchor_pos = result.find(result_anchor);
@@ -379,6 +367,11 @@ bool RunPesq(const base::FilePath& reference_file,
   return true;
 }
 
+static const bool kRunTestsWithFlag[] = { false, true };
+INSTANTIATE_TEST_CASE_P(WebRtcAudioQualityBrowserTests,
+                        WebRtcAudioQualityBrowserTest,
+                        testing::ValuesIn(kRunTestsWithFlag));
+
 #if defined(OS_LINUX) || defined(OS_WIN)
 // Only implemented on Linux and Windows for now.
 #define MAYBE_MANUAL_TestAudioQuality MANUAL_TestAudioQuality
@@ -386,7 +379,7 @@ bool RunPesq(const base::FilePath& reference_file,
 #define MAYBE_MANUAL_TestAudioQuality DISABLED_MANUAL_TestAudioQuality
 #endif
 
-IN_PROC_BROWSER_TEST_F(WebrtcAudioQualityBrowserTest,
+IN_PROC_BROWSER_TEST_P(WebRtcAudioQualityBrowserTest,
                        MAYBE_MANUAL_TestAudioQuality) {
 #if defined(OS_WIN)
   if (base::win::GetVersion() < base::win::VERSION_VISTA) {
@@ -396,23 +389,21 @@ IN_PROC_BROWSER_TEST_F(WebrtcAudioQualityBrowserTest,
   }
 #endif
   ASSERT_TRUE(HasAllRequiredResources());
-  // TODO(phoglund): make this use embedded_test_server when that test server
-  // can handle files > ~400Kb.
-  ASSERT_TRUE(test_server()->Start());
+  ASSERT_TRUE(embedded_test_server()->InitializeAndWaitUntilReady());
   ASSERT_TRUE(peerconnection_server_.Start());
 
   ASSERT_TRUE(ForceMicrophoneVolumeTo100Percent());
 
   ui_test_utils::NavigateToURL(
-      browser(), test_server()->GetURL(kMainWebrtcTestHtmlPage));
+      browser(), embedded_test_server()->GetURL(kMainWebrtcTestHtmlPage));
   content::WebContents* left_tab =
       browser()->tab_strip_model()->GetActiveWebContents();
 
-  chrome::AddBlankTabAt(browser(), -1, true);
+  chrome::AddTabAt(browser(), GURL(), -1, true);
   content::WebContents* right_tab =
       browser()->tab_strip_model()->GetActiveWebContents();
   ui_test_utils::NavigateToURL(
-      browser(), test_server()->GetURL(kMainWebrtcTestHtmlPage));
+      browser(), embedded_test_server()->GetURL(kMainWebrtcTestHtmlPage));
 
   ConnectToPeerConnectionServer("peer 1", left_tab);
   ConnectToPeerConnectionServer("peer 2", right_tab);
@@ -441,22 +432,16 @@ IN_PROC_BROWSER_TEST_F(WebrtcAudioQualityBrowserTest,
   PlayAudioFile(left_tab);
 
   ASSERT_TRUE(recorder.WaitForRecordingToEnd());
-  LOG(INFO) << "Done recording to " << recording.value() << std::endl;
-
-  AssertNoAsynchronousErrors(left_tab);
-  AssertNoAsynchronousErrors(right_tab);
+  VLOG(0) << "Done recording to " << recording.value() << std::endl;
 
   HangUp(left_tab);
   WaitUntilHangupVerified(left_tab);
   WaitUntilHangupVerified(right_tab);
 
-  AssertNoAsynchronousErrors(left_tab);
-  AssertNoAsynchronousErrors(right_tab);
-
   base::FilePath trimmed_recording = CreateTemporaryWaveFile();
 
   ASSERT_TRUE(RemoveSilence(recording, trimmed_recording));
-  LOG(INFO) << "Trimmed silence: " << trimmed_recording.value() << std::endl;
+  VLOG(0) << "Trimmed silence: " << trimmed_recording.value() << std::endl;
 
   std::string raw_mos;
   std::string mos_lqo;

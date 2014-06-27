@@ -1,37 +1,36 @@
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
+
 import os
 
 from telemetry.core import util
 from telemetry.page import page as page_module
 from telemetry.page.actions import scroll
 from telemetry.unittest import tab_test_case
+from telemetry.unittest import test
+
 
 class ScrollActionTest(tab_test_case.TabTestCase):
   def setUp(self):
-    self._extra_browser_args.append('--enable-gpu-benchmarking')
     super(ScrollActionTest, self).setUp()
 
   def CreateAndNavigateToPageFromUnittestDataDir(
-    self, filename, page_attributes):
+    self, filename):
     self._browser.SetHTTPServerDirectories(util.GetUnittestDataDir())
     page = page_module.Page(
       self._browser.http_server.UrlOf(filename),
-      None, # In this test, we don't need a page set.
-      attributes=page_attributes)
+      None) # In this test, we don't need a page set.
 
     self._tab.Navigate(page.url)
     self._tab.WaitForDocumentReadyStateToBeComplete()
 
     return page
 
+  @test.Disabled  # Disabled due to flakiness: crbug.com/330544
   def testScrollAction(self):
-    page = self.CreateAndNavigateToPageFromUnittestDataDir(
-        "blank.html",
-        page_attributes={"smoothness": {
-          "action": "scroll"
-          }})
+    page = self.CreateAndNavigateToPageFromUnittestDataDir("blank.html")
+    setattr(page, 'smoothness', {"action": "scroll"})
     # Make page bigger than window so it's scrollable.
     self._tab.ExecuteJavaScript("""document.body.style.height =
                               (2 * window.innerHeight + 1) + 'px';""")
@@ -50,7 +49,7 @@ class ScrollActionTest(tab_test_case.TabTestCase):
         window.__scrollAction.endMeasuringHook = function() {
             window.__didEndMeasuring = true;
         };""")
-    i.RunAction(page, self._tab, None)
+    i.RunAction(page, self._tab)
 
     self.assertTrue(self._tab.EvaluateJavaScript('window.__didBeginMeasuring'))
     self.assertTrue(self._tab.EvaluateJavaScript('window.__didEndMeasuring'))
@@ -66,8 +65,9 @@ class ScrollActionTest(tab_test_case.TabTestCase):
                             (scroll_position, scroll_height))
 
   def testBoundingClientRect(self):
-    self.CreateAndNavigateToPageFromUnittestDataDir('blank.html', {})
-    with open(os.path.join(os.path.dirname(__file__), 'scroll.js')) as f:
+    self.CreateAndNavigateToPageFromUnittestDataDir('blank.html')
+    with open(os.path.join(os.path.dirname(__file__),
+                           'gesture_common.js')) as f:
       js = f.read()
       self._tab.ExecuteJavaScript(js)
 
@@ -83,15 +83,15 @@ class ScrollActionTest(tab_test_case.TabTestCase):
                            (2 * window.innerHeight + 1) + 'px';""")
 
     rect_top = int(self._tab.EvaluateJavaScript(
-        '__ScrollAction_GetBoundingVisibleRect(document.body).top'))
+        '__GestureCommon_GetBoundingVisibleRect(document.body).top'))
     rect_height = int(self._tab.EvaluateJavaScript(
-        '__ScrollAction_GetBoundingVisibleRect(document.body).height'))
+        '__GestureCommon_GetBoundingVisibleRect(document.body).height'))
     rect_bottom = rect_top + rect_height
 
     rect_left = int(self._tab.EvaluateJavaScript(
-        '__ScrollAction_GetBoundingVisibleRect(document.body).left'))
+        '__GestureCommon_GetBoundingVisibleRect(document.body).left'))
     rect_width = int(self._tab.EvaluateJavaScript(
-        '__ScrollAction_GetBoundingVisibleRect(document.body).width'))
+        '__GestureCommon_GetBoundingVisibleRect(document.body).width'))
     rect_right = rect_left + rect_width
 
     viewport_height = int(self._tab.EvaluateJavaScript('window.innerHeight'))

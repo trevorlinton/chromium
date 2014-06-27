@@ -22,7 +22,10 @@
 #include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/notification_observer.h"
+#include "content/public/browser/notification_service.h"
 #include "content/public/browser/plugin_service.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
@@ -240,7 +243,7 @@ IN_PROC_BROWSER_TEST_F(ContentSettingsTest, RedirectLoopCookies) {
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
-  ASSERT_EQ(UTF8ToUTF16(test_url.spec() + " failed to load"),
+  ASSERT_EQ(base::UTF8ToUTF16(test_url.spec() + " failed to load"),
             web_contents->GetTitle());
 
   EXPECT_TRUE(TabSpecificContentSettings::FromWebContents(web_contents)->
@@ -257,7 +260,7 @@ IN_PROC_BROWSER_TEST_F(ContentSettingsTest, ContentSettingsBlockDataURLs) {
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
-  ASSERT_EQ(UTF8ToUTF16("Data URL"), web_contents->GetTitle());
+  ASSERT_EQ(base::UTF8ToUTF16("Data URL"), web_contents->GetTitle());
 
   EXPECT_TRUE(TabSpecificContentSettings::FromWebContents(web_contents)->
       IsContentBlocked(CONTENT_SETTINGS_TYPE_JAVASCRIPT));
@@ -288,7 +291,8 @@ IN_PROC_BROWSER_TEST_F(ContentSettingsTest, RedirectCrossOrigin) {
       IsContentBlocked(CONTENT_SETTINGS_TYPE_COOKIES));
 }
 
-#if !defined(USE_AURA)  // No NPAPI plugins with Aura.
+// On Aura NPAPI only works on Windows.
+#if !defined(USE_AURA) || defined(OS_WIN)
 
 class ClickToPlayPluginTest : public ContentSettingsTest {
  public:
@@ -314,20 +318,18 @@ IN_PROC_BROWSER_TEST_F(ClickToPlayPluginTest, Basic) {
       base::FilePath(), base::FilePath().AppendASCII("clicktoplay.html"));
   ui_test_utils::NavigateToURL(browser(), url);
 
-  string16 expected_title(ASCIIToUTF16("OK"));
+  base::string16 expected_title(base::ASCIIToUTF16("OK"));
   content::TitleWatcher title_watcher(
       browser()->tab_strip_model()->GetActiveWebContents(), expected_title);
 
-  content::RenderViewHost* host =
-      browser()->tab_strip_model()->GetActiveWebContents()->GetRenderViewHost();
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
   ChromePluginServiceFilter* filter = ChromePluginServiceFilter::GetInstance();
-  int process_id = host->GetProcess()->GetID();
+  int process_id = web_contents->GetMainFrame()->GetProcess()->GetID();
   base::FilePath path(FILE_PATH_LITERAL("blah"));
   EXPECT_FALSE(filter->CanLoadPlugin(process_id, path));
-  filter->AuthorizeAllPlugins(process_id);
+  filter->AuthorizeAllPlugins(web_contents, true, std::string());
   EXPECT_TRUE(filter->CanLoadPlugin(process_id, path));
-  host->Send(new ChromeViewMsg_LoadBlockedPlugins(
-      host->GetRoutingID(), std::string()));
 
   EXPECT_EQ(expected_title, title_watcher.WaitAndGetTitle());
 }
@@ -346,7 +348,7 @@ IN_PROC_BROWSER_TEST_F(ClickToPlayPluginTest, AllowException) {
                           std::string(),
                           CONTENT_SETTING_ALLOW);
 
-  string16 expected_title(ASCIIToUTF16("OK"));
+  base::string16 expected_title(base::ASCIIToUTF16("OK"));
   content::TitleWatcher title_watcher(
       browser()->tab_strip_model()->GetActiveWebContents(), expected_title);
   ui_test_utils::NavigateToURL(browser(), url);
@@ -365,7 +367,7 @@ IN_PROC_BROWSER_TEST_F(ClickToPlayPluginTest, BlockException) {
                           std::string(),
                           CONTENT_SETTING_BLOCK);
 
-  string16 expected_title(ASCIIToUTF16("Click To Play"));
+  base::string16 expected_title(base::ASCIIToUTF16("Click To Play"));
   content::TitleWatcher title_watcher(
       browser()->tab_strip_model()->GetActiveWebContents(), expected_title);
   ui_test_utils::NavigateToURL(browser(), url);
@@ -390,19 +392,16 @@ IN_PROC_BROWSER_TEST_F(ClickToPlayPluginTest, MAYBE_LoadAllBlockedPlugins) {
       base::FilePath().AppendASCII("load_all_blocked_plugins.html"));
   ui_test_utils::NavigateToURL(browser(), url);
 
-  string16 expected_title1(ASCIIToUTF16("1"));
+  base::string16 expected_title1(base::ASCIIToUTF16("1"));
   content::TitleWatcher title_watcher1(
       browser()->tab_strip_model()->GetActiveWebContents(), expected_title1);
 
-  content::RenderViewHost* host =
-      browser()->tab_strip_model()->GetActiveWebContents()->GetRenderViewHost();
   ChromePluginServiceFilter::GetInstance()->AuthorizeAllPlugins(
-      host->GetProcess()->GetID());
-  host->Send(new ChromeViewMsg_LoadBlockedPlugins(
-      host->GetRoutingID(), std::string()));
+      browser()->tab_strip_model()->GetActiveWebContents(), true,
+      std::string());
   EXPECT_EQ(expected_title1, title_watcher1.WaitAndGetTitle());
 
-  string16 expected_title2(ASCIIToUTF16("2"));
+  base::string16 expected_title2(base::ASCIIToUTF16("2"));
   content::TitleWatcher title_watcher2(
       browser()->tab_strip_model()->GetActiveWebContents(), expected_title2);
 
@@ -427,16 +426,13 @@ IN_PROC_BROWSER_TEST_F(ClickToPlayPluginTest, NoCallbackAtLoad) {
       browser()->tab_strip_model()->GetActiveWebContents(),
       "CallOnStartup = function() { document.title = \"OK\"; }"));
 
-  string16 expected_title(ASCIIToUTF16("OK"));
+  base::string16 expected_title(base::ASCIIToUTF16("OK"));
   content::TitleWatcher title_watcher(
       browser()->tab_strip_model()->GetActiveWebContents(), expected_title);
 
-  content::RenderViewHost* host =
-      browser()->tab_strip_model()->GetActiveWebContents()->GetRenderViewHost();
   ChromePluginServiceFilter::GetInstance()->AuthorizeAllPlugins(
-      host->GetProcess()->GetID());
-  host->Send(new ChromeViewMsg_LoadBlockedPlugins(
-      host->GetRoutingID(), std::string()));
+      browser()->tab_strip_model()->GetActiveWebContents(), true,
+      std::string());
 
   EXPECT_EQ(expected_title, title_watcher.WaitAndGetTitle());
 }
@@ -451,28 +447,21 @@ IN_PROC_BROWSER_TEST_F(ClickToPlayPluginTest, DeleteSelfAtLoad) {
       base::FilePath().AppendASCII("plugin_delete_self_at_load.html"));
   ui_test_utils::NavigateToURL(browser(), url);
 
-  string16 expected_title(ASCIIToUTF16("OK"));
+  base::string16 expected_title(base::ASCIIToUTF16("OK"));
   content::TitleWatcher title_watcher(
       browser()->tab_strip_model()->GetActiveWebContents(), expected_title);
 
-  content::RenderViewHost* host =
-      browser()->tab_strip_model()->GetActiveWebContents()->GetRenderViewHost();
   ChromePluginServiceFilter::GetInstance()->AuthorizeAllPlugins(
-      host->GetProcess()->GetID());
-  host->Send(new ChromeViewMsg_LoadBlockedPlugins(
-      host->GetRoutingID(), std::string()));
+      browser()->tab_strip_model()->GetActiveWebContents(), true,
+      std::string());
 
   EXPECT_EQ(expected_title, title_watcher.WaitAndGetTitle());
 }
 
-#endif  // !defined(USE_AURA)
+#endif  // !defined(USE_AURA) || defined(OS_WIN)
 
 #if defined(ENABLE_PLUGINS)
-
-class PepperContentSettingsTest : public ContentSettingsTest {
- public:
-  PepperContentSettingsTest() {}
-
+class PepperContentSettingsSpecialCasesTest : public ContentSettingsTest {
  protected:
   static const char* const kExternalClearKeyMimeType;
 
@@ -481,11 +470,8 @@ class PepperContentSettingsTest : public ContentSettingsTest {
 #if defined(ENABLE_PEPPER_CDMS)
     // Platform-specific filename relative to the chrome executable.
 #if defined(OS_WIN)
-    const std::wstring external_clear_key_mime_type =
-        ASCIIToWide(kExternalClearKeyMimeType);
     const char kLibraryName[] = "clearkeycdmadapter.dll";
 #else  // !defined(OS_WIN)
-    const char* external_clear_key_mime_type = kExternalClearKeyMimeType;
 #if defined(OS_MACOSX)
     const char kLibraryName[] = "clearkeycdmadapter.plugin";
 #elif defined(OS_POSIX)
@@ -494,16 +480,18 @@ class PepperContentSettingsTest : public ContentSettingsTest {
 #endif  // defined(OS_WIN)
 
     // Append the switch to register the External Clear Key CDM.
-    base::FilePath plugin_dir;
-    EXPECT_TRUE(PathService::Get(base::DIR_MODULE, &plugin_dir));
-    base::FilePath plugin_lib = plugin_dir.AppendASCII(kLibraryName);
-    EXPECT_TRUE(base::PathExists(plugin_lib));
-    base::FilePath::StringType pepper_plugin = plugin_lib.value();
-    pepper_plugin.append(FILE_PATH_LITERAL(
-        "#Clear Key CDM#Clear Key CDM 0.1.0.0#0.1.0.0;"));
-    pepper_plugin.append(external_clear_key_mime_type);
+    base::FilePath::StringType pepper_plugins = BuildPepperPluginRegistration(
+        kLibraryName, "Clear Key CDM", kExternalClearKeyMimeType);
+#if defined(WIDEVINE_CDM_AVAILABLE) && defined(WIDEVINE_CDM_IS_COMPONENT)
+    // The CDM must be registered when it is a component.
+    pepper_plugins.append(FILE_PATH_LITERAL(","));
+    pepper_plugins.append(
+        BuildPepperPluginRegistration(kWidevineCdmAdapterFileName,
+                                      kWidevineCdmDisplayName,
+                                      kWidevineCdmPluginMimeType));
+#endif  // defined(WIDEVINE_CDM_AVAILABLE) && defined(WIDEVINE_CDM_IS_COMPONENT)
     command_line->AppendSwitchNative(switches::kRegisterPepperPlugins,
-                                     pepper_plugin);
+                                     pepper_plugins);
 #endif  // defined(ENABLE_PEPPER_CDMS)
 
 #if !defined(DISABLE_NACL)
@@ -517,7 +505,7 @@ class PepperContentSettingsTest : public ContentSettingsTest {
     content::WebContents* web_contents =
         browser()->tab_strip_model()->GetActiveWebContents();
 
-    string16 expected_title(ASCIIToUTF16(expected_result));
+    base::string16 expected_title(base::ASCIIToUTF16(expected_result));
     content::TitleWatcher title_watcher(web_contents, expected_title);
 
     // GetTestUrl assumes paths, so we must append query parameters to result.
@@ -536,85 +524,209 @@ class PepperContentSettingsTest : public ContentSettingsTest {
 
   void RunJavaScriptBlockedTest(const char* html_file,
                                 bool expect_is_javascript_content_blocked) {
-    // Because JavaScript is disabled, <title> will be the only title set.
-    // Checking for it ensures that the page loaded.
+    // Because JavaScript is blocked, <title> will be the only title set.
+    // Checking for it ensures that the page loaded, though that is not always
+    // sufficient - see below.
     const char* const kExpectedTitle = "Initial Title";
     content::WebContents* web_contents =
         browser()->tab_strip_model()->GetActiveWebContents();
     TabSpecificContentSettings* tab_settings =
         TabSpecificContentSettings::FromWebContents(web_contents);
-    string16 expected_title(ASCIIToUTF16(kExpectedTitle));
+    base::string16 expected_title(base::ASCIIToUTF16(kExpectedTitle));
     content::TitleWatcher title_watcher(web_contents, expected_title);
+
+    // Because JavaScript is blocked, we cannot rely on JavaScript to set a
+    // title, telling us the test is complete.
+    // As a result, it is possible to reach the IsContentBlocked() checks below
+    // before the blocked content can be reported to the browser process.
+    // See http://crbug.com/306702.
+    // Therefore, when expecting blocked content, we must wait until it has been
+    // reported by checking IsContentBlocked() when notified that
+    // NOTIFICATION_WEB_CONTENT_SETTINGS_CHANGED. (It is not sufficient to wait
+    // for just the notification because the same notification is reported for
+    // other reasons and the notification contains no indication of what
+    // caused it.)
+    content::WindowedNotificationObserver javascript_content_blocked_observer(
+              chrome::NOTIFICATION_WEB_CONTENT_SETTINGS_CHANGED,
+              base::Bind(&TabSpecificContentSettings::IsContentBlocked,
+                                   base::Unretained(tab_settings),
+                                   CONTENT_SETTINGS_TYPE_JAVASCRIPT));
 
     GURL url = ui_test_utils::GetTestUrl(
         base::FilePath(), base::FilePath().AppendASCII(html_file));
     ui_test_utils::NavigateToURL(browser(), url);
 
+    // Always wait for the page to load.
     EXPECT_EQ(expected_title, title_watcher.WaitAndGetTitle());
+
+    if (expect_is_javascript_content_blocked) {
+      javascript_content_blocked_observer.Wait();
+    } else {
+      // Since there is no notification that content is not blocked and no
+      // content is blocked when |expect_is_javascript_content_blocked| is
+      // false, javascript_content_blocked_observer would never succeed.
+      // There is no way to ensure blocked content would not have been reported
+      // after the check below. For coverage of this scenario, we must rely on
+      // the TitleWatcher adding sufficient delay most of the time.
+    }
 
     EXPECT_EQ(expect_is_javascript_content_blocked,
               tab_settings->IsContentBlocked(CONTENT_SETTINGS_TYPE_JAVASCRIPT));
     EXPECT_FALSE(tab_settings->IsContentBlocked(CONTENT_SETTINGS_TYPE_PLUGINS));
   }
+
+ private:
+  // Builds the string to pass to kRegisterPepperPlugins for a single
+  // plugin using the provided parameters and a dummy version.
+  // Multiple results may be passed to kRegisterPepperPlugins, separated by ",".
+  base::FilePath::StringType BuildPepperPluginRegistration(
+      const char* library_name,
+      const char* display_name,
+      const char* mime_type) {
+    base::FilePath plugin_dir;
+    EXPECT_TRUE(PathService::Get(base::DIR_MODULE, &plugin_dir));
+
+    base::FilePath plugin_lib = plugin_dir.AppendASCII(library_name);
+    EXPECT_TRUE(base::PathExists(plugin_lib));
+
+    base::FilePath::StringType pepper_plugin = plugin_lib.value();
+    pepper_plugin.append(FILE_PATH_LITERAL("#"));
+#if defined(OS_WIN)
+    pepper_plugin.append(base::ASCIIToWide(display_name));
+#else
+    pepper_plugin.append(display_name);
+#endif
+    pepper_plugin.append(FILE_PATH_LITERAL("#A CDM#0.1.0.0;"));
+#if defined(OS_WIN)
+    pepper_plugin.append(base::ASCIIToWide(mime_type));
+#else
+    pepper_plugin.append(mime_type);
+#endif
+
+    return pepper_plugin;
+  }
 };
 
-const char* const PepperContentSettingsTest::kExternalClearKeyMimeType =
+const char* const
+PepperContentSettingsSpecialCasesTest::kExternalClearKeyMimeType =
     "application/x-ppapi-clearkey-cdm";
 
-// Tests Pepper plugins that use JavaScript instead of Plug-ins settings.
-IN_PROC_BROWSER_TEST_F(PepperContentSettingsTest, DISABLED_PluginSpecialCases) {
+class PepperContentSettingsSpecialCasesPluginsBlockedTest
+    : public PepperContentSettingsSpecialCasesTest {
+ public:
+  virtual void SetUpOnMainThread() OVERRIDE {
+    PepperContentSettingsSpecialCasesTest::SetUpOnMainThread();
+    browser()->profile()->GetHostContentSettingsMap()->SetDefaultContentSetting(
+        CONTENT_SETTINGS_TYPE_PLUGINS, CONTENT_SETTING_BLOCK);
+  }
+};
+
+class PepperContentSettingsSpecialCasesJavaScriptBlockedTest
+    : public PepperContentSettingsSpecialCasesTest {
+ public:
+  virtual void SetUpOnMainThread() OVERRIDE {
+    PepperContentSettingsSpecialCasesTest::SetUpOnMainThread();
+    browser()->profile()->GetHostContentSettingsMap()->SetDefaultContentSetting(
+        CONTENT_SETTINGS_TYPE_PLUGINS, CONTENT_SETTING_ALLOW);
+    browser()->profile()->GetHostContentSettingsMap()->SetDefaultContentSetting(
+        CONTENT_SETTINGS_TYPE_JAVASCRIPT, CONTENT_SETTING_BLOCK);
+  }
+};
+
+#if defined(ENABLE_PEPPER_CDMS)
+// A sanity check to verify that the plugin that is used as a baseline below
+// can be loaded.
+IN_PROC_BROWSER_TEST_F(PepperContentSettingsSpecialCasesTest, Baseline) {
 #if defined(OS_WIN) && defined(USE_ASH)
   // Disable this test in Metro+Ash for now (http://crbug.com/262796).
   if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kAshBrowserTests))
     return;
 #endif
-
-  HostContentSettingsMap* content_settings =
-      browser()->profile()->GetHostContentSettingsMap();
-
-  // First, verify that this plugin can be loaded.
-  content_settings->SetDefaultContentSetting(
+  browser()->profile()->GetHostContentSettingsMap()->SetDefaultContentSetting(
       CONTENT_SETTINGS_TYPE_PLUGINS, CONTENT_SETTING_ALLOW);
 
-#if defined(ENABLE_PEPPER_CDMS)
   RunLoadPepperPluginTest(kExternalClearKeyMimeType, true);
-#endif  // defined(ENABLE_PEPPER_CDMS)
-
-  // Next, test behavior when plug-ins are blocked.
-  content_settings->SetDefaultContentSetting(
-      CONTENT_SETTINGS_TYPE_PLUGINS, CONTENT_SETTING_BLOCK);
-
-#if defined(ENABLE_PEPPER_CDMS)
-  // The plugin we loaded above does not load now.
-  RunLoadPepperPluginTest(kExternalClearKeyMimeType, false);
-
-#if defined(WIDEVINE_CDM_AVAILABLE)
-  RunLoadPepperPluginTest(kWidevineCdmPluginMimeType, true);
-#endif  // defined(WIDEVINE_CDM_AVAILABLE)
-#endif  // defined(ENABLE_PEPPER_CDMS)
-
-#if !defined(DISABLE_NACL)
-  RunLoadPepperPluginTest("application/x-nacl", true);
-#endif  // !defined(DISABLE_NACL)
-
-  // Finally, test behavior when (just) JavaScript is blocked.
-  content_settings->SetDefaultContentSetting(
-      CONTENT_SETTINGS_TYPE_PLUGINS, CONTENT_SETTING_ALLOW);
-  content_settings->SetDefaultContentSetting(
-      CONTENT_SETTINGS_TYPE_JAVASCRIPT, CONTENT_SETTING_BLOCK);
-
-#if defined(ENABLE_PEPPER_CDMS)
-  // This plugin has no special behavior and does not require JavaScript.
-  RunJavaScriptBlockedTest("load_clearkey_no_js.html", false);
-
-#if defined(WIDEVINE_CDM_AVAILABLE)
-  RunJavaScriptBlockedTest("load_widevine_no_js.html", true);
-#endif  // defined(WIDEVINE_CDM_AVAILABLE)
-#endif  // defined(ENABLE_PEPPER_CDMS)
-
-#if !defined(DISABLE_NACL)
-  RunJavaScriptBlockedTest("load_nacl_no_js.html", true);
-#endif  // !defined(DISABLE_NACL)
 }
+#endif  // defined(ENABLE_PEPPER_CDMS)
+
+// The following tests verify that Pepper plugins that use JavaScript settings
+// instead of Plug-ins settings still work when Plug-ins are blocked.
+
+#if defined(ENABLE_PEPPER_CDMS)
+// The plugin successfully loaded above is blocked.
+IN_PROC_BROWSER_TEST_F(PepperContentSettingsSpecialCasesPluginsBlockedTest,
+                       Normal) {
+#if defined(OS_WIN) && defined(USE_ASH)
+  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
+  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kAshBrowserTests))
+    return;
+#endif
+  RunLoadPepperPluginTest(kExternalClearKeyMimeType, false);
+}
+
+#if defined(WIDEVINE_CDM_AVAILABLE)
+IN_PROC_BROWSER_TEST_F(PepperContentSettingsSpecialCasesPluginsBlockedTest,
+                       WidevineCdm) {
+#if defined(OS_WIN) && defined(USE_ASH)
+  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
+  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kAshBrowserTests))
+    return;
+#endif
+  RunLoadPepperPluginTest(kWidevineCdmPluginMimeType, true);
+}
+#endif  // defined(WIDEVINE_CDM_AVAILABLE)
+#endif  // defined(ENABLE_PEPPER_CDMS)
+
+#if !defined(DISABLE_NACL)
+IN_PROC_BROWSER_TEST_F(PepperContentSettingsSpecialCasesPluginsBlockedTest,
+                       NaCl) {
+#if defined(OS_WIN) && defined(USE_ASH)
+  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
+  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kAshBrowserTests))
+    return;
+#endif
+  RunLoadPepperPluginTest("application/x-nacl", true);
+}
+#endif  // !defined(DISABLE_NACL)
+
+// The following tests verify that those same Pepper plugins do not work when
+// JavaScript is blocked.
+
+#if defined(ENABLE_PEPPER_CDMS)
+// A plugin with no special behavior is not blocked when JavaScript is blocked.
+IN_PROC_BROWSER_TEST_F(PepperContentSettingsSpecialCasesJavaScriptBlockedTest,
+                       Normal) {
+#if defined(OS_WIN) && defined(USE_ASH)
+  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
+  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kAshBrowserTests))
+    return;
+#endif
+  RunJavaScriptBlockedTest("load_clearkey_no_js.html", false);
+}
+
+#if defined(WIDEVINE_CDM_AVAILABLE)
+IN_PROC_BROWSER_TEST_F(PepperContentSettingsSpecialCasesJavaScriptBlockedTest,
+                       WidevineCdm) {
+#if defined(OS_WIN) && defined(USE_ASH)
+  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
+  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kAshBrowserTests))
+    return;
+#endif
+  RunJavaScriptBlockedTest("load_widevine_no_js.html", true);
+}
+#endif  // defined(WIDEVINE_CDM_AVAILABLE)
+#endif  // defined(ENABLE_PEPPER_CDMS)
+
+#if !defined(DISABLE_NACL)
+IN_PROC_BROWSER_TEST_F(PepperContentSettingsSpecialCasesJavaScriptBlockedTest,
+                       NaCl) {
+#if defined(OS_WIN) && defined(USE_ASH)
+  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
+  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kAshBrowserTests))
+    return;
+#endif
+  RunJavaScriptBlockedTest("load_nacl_no_js.html", true);
+}
+#endif  // !defined(DISABLE_NACL)
 
 #endif  // defined(ENABLE_PLUGINS)

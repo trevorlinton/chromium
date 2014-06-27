@@ -43,7 +43,9 @@ TEST(FileManagerUrlUtilTest, GetFileManagerMainPageUrlWithParams_NoFileTypes) {
   const GURL url = GetFileManagerMainPageUrlWithParams(
       ui::SelectFileDialog::SELECT_OPEN_FILE,
       base::UTF8ToUTF16("some title"),
-      base::FilePath::FromUTF8Unsafe("foo.txt"),
+      GURL("filesystem:chrome-extension://abc/Downloads/"),
+      GURL("filesystem:chrome-extension://abc/Downloads/foo.txt"),
+      "foo.txt",
       NULL,  // No file types
       0,  // Hence no file type index.
       FILE_PATH_LITERAL("txt"));
@@ -55,9 +57,13 @@ TEST(FileManagerUrlUtilTest, GetFileManagerMainPageUrlWithParams_NoFileTypes) {
   EXPECT_TRUE(url.query().find("%20") != std::string::npos);
   // The escaped query is hard to read. Pretty print the escaped JSON.
   EXPECT_EQ("{\n"
+            "   \"currentDirectoryURL\": "
+            "\"filesystem:chrome-extension://abc/Downloads/\",\n"
             "   \"defaultExtension\": \"txt\",\n"
-            "   \"defaultPath\": \"foo.txt\",\n"
+            "   \"selectionURL\": "
+            "\"filesystem:chrome-extension://abc/Downloads/foo.txt\",\n"
             "   \"shouldReturnLocalPath\": true,\n"
+            "   \"targetName\": \"foo.txt\",\n"
             "   \"title\": \"some title\",\n"
             "   \"type\": \"open-file\"\n"
             "}\n",
@@ -85,7 +91,9 @@ TEST(FileManagerUrlUtilTest,
   const GURL url = GetFileManagerMainPageUrlWithParams(
       ui::SelectFileDialog::SELECT_OPEN_FILE,
       base::UTF8ToUTF16("some title"),
-      base::FilePath::FromUTF8Unsafe("foo.txt"),
+      GURL("filesystem:chrome-extension://abc/Downloads/"),
+      GURL("filesystem:chrome-extension://abc/Downloads/foo.txt"),
+      "foo.txt",
       &file_types,
       1,  // The file type index is 1-based.
       FILE_PATH_LITERAL("txt"));
@@ -97,10 +105,14 @@ TEST(FileManagerUrlUtilTest,
   EXPECT_TRUE(url.query().find("%20") != std::string::npos);
   // The escaped query is hard to read. Pretty print the escaped JSON.
   EXPECT_EQ("{\n"
+            "   \"currentDirectoryURL\": "
+            "\"filesystem:chrome-extension://abc/Downloads/\",\n"
             "   \"defaultExtension\": \"txt\",\n"
-            "   \"defaultPath\": \"foo.txt\",\n"
             "   \"includeAllFiles\": false,\n"
+            "   \"selectionURL\": "
+            "\"filesystem:chrome-extension://abc/Downloads/foo.txt\",\n"
             "   \"shouldReturnLocalPath\": false,\n"
+            "   \"targetName\": \"foo.txt\",\n"
             "   \"title\": \"some title\",\n"
             "   \"type\": \"open-file\",\n"
             "   \"typeList\": [ {\n"
@@ -114,20 +126,6 @@ TEST(FileManagerUrlUtilTest,
             "   } ]\n"
             "}\n",
             PrettyPrintEscapedJson(url.query()));
-}
-
-TEST(FileManagerUrlUtilTest, GetActionChoiceUrl_RegularMode) {
-  EXPECT_EQ("chrome-extension://hhaomjibdihmijegdhdafkllkbggdgoj/"
-            "action_choice.html#/foo.txt",
-            GetActionChoiceUrl(base::FilePath::FromUTF8Unsafe("foo.txt"),
-                               false).spec());
-}
-
-TEST(FileManagerUrlUtilTest, GetActionChoiceUrl_AdvancedMode) {
-  EXPECT_EQ("chrome-extension://hhaomjibdihmijegdhdafkllkbggdgoj/"
-            "action_choice.html?advanced-mode#/foo.txt",
-            GetActionChoiceUrl(base::FilePath::FromUTF8Unsafe("foo.txt"),
-                               true).spec());
 }
 
 }  // namespace

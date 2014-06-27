@@ -10,7 +10,7 @@
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
 #import "skia/ext/skia_utils_mac.h"
-#import "third_party/GTM/AppKit/GTMUILocalizerAndLayoutTweaker.h"
+#import "third_party/google_toolbox_for_mac/src/AppKit/GTMUILocalizerAndLayoutTweaker.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image.h"
@@ -175,7 +175,7 @@ const int kInstructionLabelMaxWidth = 150;
 }
 
 - (void)updateLayout:(SpeechRecognitionBubbleBase::DisplayMode)mode
-         messageText:(const string16&)messageText
+         messageText:(const base::string16&)messageText
            iconImage:(NSImage*)iconImage {
   // The very first time this method is called, the child views would still be
   // uninitialized and null. So we invoke [self window] first and that sets up

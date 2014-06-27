@@ -6,10 +6,15 @@
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/prefs/pref_service.h"
+#include "base/strings/string_number_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_dialogs.h"
+#include "chrome/common/pref_names.h"
+#include "chrome/common/url_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/user_metrics.h"
 
@@ -21,32 +26,41 @@
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #endif  // !defined (OS_IOS)
 
+using base::UserMetricsAction;
 using content::BrowserThread;
-using content::UserMetricsAction;
 
 namespace {
 
-// Handles running a callback when a new Browser has been completely created.
-class BrowserAddedObserver : public chrome::BrowserListObserver {
+// Handles running a callback when a new Browser for the given profile
+// has been completely created.
+class BrowserAddedForProfileObserver : public chrome::BrowserListObserver {
  public:
-  explicit BrowserAddedObserver(
-      profiles::ProfileSwitchingDoneCallback callback) : callback_(callback) {
+  BrowserAddedForProfileObserver(
+      Profile* profile,
+      profiles::ProfileSwitchingDoneCallback callback)
+      : profile_(profile),
+        callback_(callback) {
+    DCHECK(!callback_.is_null());
     BrowserList::AddObserver(this);
   }
-  virtual ~BrowserAddedObserver() {
-    BrowserList::RemoveObserver(this);
+  virtual ~BrowserAddedForProfileObserver() {
   }
 
  private:
   // Overridden from BrowserListObserver:
   virtual void OnBrowserAdded(Browser* browser) OVERRIDE {
-    DCHECK(!callback_.is_null());
-    callback_.Run();
+    if (browser->profile() == profile_) {
+      BrowserList::RemoveObserver(this);
+      callback_.Run();
+      base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+    }
   }
 
+  // Profile for which the browser should be opened.
+  Profile* profile_;
   profiles::ProfileSwitchingDoneCallback callback_;
 
-  DISALLOW_COPY_AND_ASSIGN(BrowserAddedObserver);
+  DISALLOW_COPY_AND_ASSIGN(BrowserAddedForProfileObserver);
 };
 
 void OpenBrowserWindowForProfile(
@@ -71,23 +85,71 @@ void OpenBrowserWindowForProfile(
     is_first_run = chrome::startup::IS_FIRST_RUN;
   }
 
-  // If we are not showing any browsers windows (we could be showing the
-  // desktop User Manager, for example), then this is a process startup browser.
-  if (BrowserList::GetInstance(desktop_type)->size() == 0)
-    is_process_startup = chrome::startup::IS_PROCESS_STARTUP;
+  // If |always_create| is false, and we have a |callback| to run, check
+  // whether a browser already exists so that we can run the callback. We don't
+  // want to rely on the observer listening to OnBrowserSetLastActive in this
+  // case, as you could manually activate an incorrect browser and trigger
+  // a false positive.
+  if (!always_create) {
+    Browser* browser = chrome::FindTabbedBrowser(profile, false, desktop_type);
+    if (browser) {
+      browser->window()->Activate();
+      if (!callback.is_null())
+        callback.Run();
+      return;
+    }
+  }
 
   // If there is a callback, create an observer to make sure it is only
-  // run when the browser has been completely created.
-  scoped_ptr<BrowserAddedObserver> browser_added_observer;
+  // run when the browser has been completely created. This observer will
+  // delete itself once that happens. This should not leak, because we are
+  // passing |always_create| = true to FindOrCreateNewWindow below, which ends
+  // up calling LaunchBrowser and opens a new window. If for whatever reason
+  // that fails, either something has crashed, or the observer will be cleaned
+  // up when a different browser for this profile is opened.
   if (!callback.is_null())
-    browser_added_observer.reset(new BrowserAddedObserver(callback));
+    new BrowserAddedForProfileObserver(profile, callback);
 
+  // We already dealt with the case when |always_create| was false and a browser
+  // existed, which means that here a browser definitely needs to be created.
+  // Passing true for |always_create| means we won't duplicate the code that
+  // tries to find a browser.
   profiles::FindOrCreateNewWindowForProfile(
       profile,
       is_process_startup,
       is_first_run,
       desktop_type,
-      always_create);
+      true);
+}
+
+// Called after a |guest_profile| is available to be used by the user manager.
+// Based on the value of |tutorial_mode| we determine a url to be displayed
+// by the webui and run the |callback|, if it exists.
+void OnUserManagerGuestProfileCreated(
+    const base::FilePath& profile_path_to_focus,
+    profiles::UserManagerTutorialMode tutorial_mode,
+    const base::Callback<void(Profile*, const std::string&)>& callback,
+    Profile* guest_profile,
+    Profile::CreateStatus status) {
+  if (status != Profile::CREATE_STATUS_INITIALIZED || callback.is_null())
+    return;
+
+  // Tell the webui which user should be focused.
+  std::string page = chrome::kChromeUIUserManagerURL;
+
+  if (tutorial_mode == profiles::USER_MANAGER_TUTORIAL_OVERVIEW) {
+    page += "#tutorial";
+  } else if (!profile_path_to_focus.empty()) {
+    const ProfileInfoCache& cache =
+        g_browser_process->profile_manager()->GetProfileInfoCache();
+    size_t index = cache.GetIndexOfProfileWithPath(profile_path_to_focus);
+    if (index != std::string::npos) {
+      page += "#";
+      page += base::IntToString(index);
+    }
+  }
+
+  callback.Run(guest_profile, page);
 }
 
 }  // namespace
@@ -122,11 +184,11 @@ void FindOrCreateNewWindowForProfile(
 #endif  // defined(OS_IOS)
 }
 
-void SwitchToProfile(
-    const base::FilePath& path,
-    chrome::HostDesktopType desktop_type,
-    bool always_create,
-    ProfileSwitchingDoneCallback callback) {
+void SwitchToProfile(const base::FilePath& path,
+                     chrome::HostDesktopType desktop_type,
+                     bool always_create,
+                     ProfileSwitchingDoneCallback callback,
+                     ProfileMetrics::ProfileOpen metric) {
   g_browser_process->profile_manager()->CreateProfileAsync(
       path,
       base::Bind(&OpenBrowserWindowForProfile,
@@ -134,9 +196,10 @@ void SwitchToProfile(
                  always_create,
                  false,
                  desktop_type),
-      string16(),
-      string16(),
+      base::string16(),
+      base::string16(),
       std::string());
+  ProfileMetrics::LogProfileSwitchUser(metric);
 }
 
 void SwitchToGuestProfile(chrome::HostDesktopType desktop_type,
@@ -148,22 +211,25 @@ void SwitchToGuestProfile(chrome::HostDesktopType desktop_type,
                  false,
                  false,
                  desktop_type),
-      string16(),
-      string16(),
+      base::string16(),
+      base::string16(),
       std::string());
+  ProfileMetrics::LogProfileSwitchUser(ProfileMetrics::SWITCH_PROFILE_GUEST);
 }
 
 void CreateAndSwitchToNewProfile(chrome::HostDesktopType desktop_type,
-                                 ProfileSwitchingDoneCallback callback) {
+                                 ProfileSwitchingDoneCallback callback,
+                                 ProfileMetrics::ProfileAdd metric) {
   ProfileManager::CreateMultiProfileAsync(
-      string16(),
-      string16(),
+      base::string16(),
+      base::string16(),
       base::Bind(&OpenBrowserWindowForProfile,
                  callback,
                  true,
                  true,
                  desktop_type),
       std::string());
+  ProfileMetrics::LogProfileAddNewUser(metric);
 }
 
 void CloseGuestProfileWindows() {
@@ -173,6 +239,54 @@ void CloseGuestProfileWindows() {
 
   if (profile) {
     BrowserList::CloseAllBrowsersWithProfile(profile);
+  }
+}
+
+void LockProfile(Profile* profile) {
+  DCHECK(profile);
+  ProfileInfoCache& cache =
+      g_browser_process->profile_manager()->GetProfileInfoCache();
+
+  size_t index = cache.GetIndexOfProfileWithPath(profile->GetPath());
+  cache.SetProfileSigninRequiredAtIndex(index, true);
+  chrome::ShowUserManager(profile->GetPath());
+  BrowserList::CloseAllBrowsersWithProfile(profile);
+}
+
+void CreateGuestProfileForUserManager(
+    const base::FilePath& profile_path_to_focus,
+    profiles::UserManagerTutorialMode tutorial_mode,
+    const base::Callback<void(Profile*, const std::string&)>& callback) {
+  // Create the guest profile, if necessary, and open the User Manager
+  // from the guest profile.
+  g_browser_process->profile_manager()->CreateProfileAsync(
+      ProfileManager::GetGuestProfilePath(),
+      base::Bind(&OnUserManagerGuestProfileCreated,
+                 profile_path_to_focus,
+                 tutorial_mode,
+                 callback),
+      base::string16(),
+      base::string16(),
+      std::string());
+}
+
+void ShowUserManagerMaybeWithTutorial(Profile* profile) {
+  if (!profile) {
+    chrome::ShowUserManager(base::FilePath());
+    return;
+  }
+  // Show the tutorial if the profile has not shown it before.
+  PrefService* pref_service = profile->GetPrefs();
+  bool tutorial_shown = pref_service->GetBoolean(
+      prefs::kProfileUserManagerTutorialShown);
+  if (!tutorial_shown)
+    pref_service->SetBoolean(prefs::kProfileUserManagerTutorialShown, true);
+
+  if (tutorial_shown) {
+    chrome::ShowUserManager(profile->GetPath());
+  } else {
+    chrome::ShowUserManagerWithTutorial(
+        profiles::USER_MANAGER_TUTORIAL_OVERVIEW);
   }
 }
 

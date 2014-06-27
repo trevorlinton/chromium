@@ -24,14 +24,18 @@
 class CommandUpdater;
 class ContentSettingDecoration;
 class EVBubbleDecoration;
+class GeneratedCreditCardDecoration;
 class KeywordHintDecoration;
 class LocationBarDecoration;
 class LocationIconDecoration;
 class MicSearchDecoration;
+class OriginChipDecoration;
 class PageActionDecoration;
 class Profile;
+class SearchButtonDecoration;
 class SelectedKeywordDecoration;
 class StarDecoration;
+class TranslateDecoration;
 class ZoomDecoration;
 class ZoomDecorationTest;
 
@@ -60,14 +64,15 @@ class LocationBarViewMac : public LocationBar,
   virtual void FocusLocation(bool select_all) OVERRIDE;
   virtual void FocusSearch() OVERRIDE;
   virtual void UpdateContentSettingsIcons() OVERRIDE;
+  virtual void UpdateManagePasswordsIconAndBubble() OVERRIDE {};
   virtual void UpdatePageActions() OVERRIDE;
   virtual void InvalidatePageActions() OVERRIDE;
   virtual void UpdateOpenPDFInReaderPrompt() OVERRIDE;
   virtual void UpdateGeneratedCreditCardView() OVERRIDE;
   virtual void SaveStateToContents(content::WebContents* contents) OVERRIDE;
   virtual void Revert() OVERRIDE;
-  virtual const OmniboxView* GetLocationEntry() const OVERRIDE;
-  virtual OmniboxView* GetLocationEntry() OVERRIDE;
+  virtual const OmniboxView* GetOmniboxView() const OVERRIDE;
+  virtual OmniboxView* GetOmniboxView() OVERRIDE;
   virtual LocationBarTesting* GetLocationBarForTesting() OVERRIDE;
 
   // Overridden from LocationBarTesting:
@@ -85,6 +90,9 @@ class LocationBarViewMac : public LocationBar,
   // Set the starred state of the bookmark star.
   void SetStarred(bool starred);
 
+  // Set whether or not the translate icon is lit.
+  void SetTranslateIconLit(bool on);
+
   // Happens when the zoom changes for the active tab. |can_show_bubble| is
   // false when the change in zoom for the active tab wasn't an explicit user
   // action (e.g. switching tabs, creating a new tab, creating a new browser).
@@ -92,17 +100,24 @@ class LocationBarViewMac : public LocationBar,
   // be obscured by other UI (wrench menu) or redundant (+/- from wrench).
   void ZoomChangedForActiveTab(bool can_show_bubble);
 
-  // Pops up a bubble for a content setting. This depends on the image having
-  // already been laid out, therefore it must be called after Layout().
-  void PopUpContentSettingIfNeeded();
+  // Checks if the bookmark star should be enabled or not.
+  bool IsStarEnabled() const;
 
   // Get the point in window coordinates on the star for the bookmark bubble to
-  // aim at.
+  // aim at. Only works if IsStarEnabled returns YES.
   NSPoint GetBookmarkBubblePoint() const;
+
+  // Get the point in window coordinates on the star for the Translate bubble to
+  // aim at.
+  NSPoint GetTranslateBubblePoint() const;
 
   // Get the point in window coordinates in the security icon at which the page
   // info bubble aims.
   NSPoint GetPageInfoBubblePoint() const;
+
+  // Get the point in window coordinates in the "generated cc" icon at which the
+  // corresponding info bubble aims.
+  NSPoint GetGeneratedCreditCardBubblePoint() const;
 
   // When any image decorations change, call this to ensure everything is
   // redrawn and laid out if necessary.
@@ -135,12 +150,13 @@ class LocationBarViewMac : public LocationBar,
   virtual void Update(const content::WebContents* contents) OVERRIDE;
   virtual void OnChanged() OVERRIDE;
   virtual void OnSetFocus() OVERRIDE;
+  virtual void ShowURL() OVERRIDE;
   virtual InstantController* GetInstant() OVERRIDE;
   virtual content::WebContents* GetWebContents() OVERRIDE;
   virtual ToolbarModel* GetToolbarModel() OVERRIDE;
   virtual const ToolbarModel* GetToolbarModel() const OVERRIDE;
 
-  NSImage* GetKeywordImage(const string16& keyword);
+  NSImage* GetKeywordImage(const base::string16& keyword);
 
   AutocompleteTextField* GetAutocompleteTextField() { return field_; }
 
@@ -155,6 +171,13 @@ class LocationBarViewMac : public LocationBar,
                             const SearchModel::State& new_state) OVERRIDE;
 
   Browser* browser() const { return browser_; }
+
+  // Activates the page action for the extension that has the given id.
+  void ActivatePageAction(const std::string& extension_id);
+
+ protected:
+  // OmniboxEditController:
+  virtual void HideURL() OVERRIDE;
 
  private:
   friend ZoomDecorationTest;
@@ -180,8 +203,9 @@ class LocationBarViewMac : public LocationBar,
 
   void ShowFirstRunBubbleInternal();
 
-  // Checks if the bookmark star should be enabled or not.
-  bool IsStarEnabled();
+  // Updates the translate decoration in the omnibox with the current translate
+  // state.
+  void UpdateTranslateDecoration();
 
   // Updates the zoom decoration in the omnibox with the current zoom level.
   void UpdateZoomDecoration();
@@ -210,6 +234,9 @@ class LocationBarViewMac : public LocationBar,
   // Bookmark star right of page actions.
   scoped_ptr<StarDecoration> star_decoration_;
 
+  // Translate icon at the end of the ominibox.
+  scoped_ptr<TranslateDecoration> translate_decoration_;
+
   // A zoom icon at the end of the omnibox, which shows at non-standard zoom
   // levels.
   scoped_ptr<ZoomDecoration> zoom_decoration_;
@@ -229,7 +256,14 @@ class LocationBarViewMac : public LocationBar,
   // The voice search icon.
   scoped_ptr<MicSearchDecoration> mic_search_decoration_;
 
-  Profile* profile_;
+  // Generated CC hint decoration.
+  scoped_ptr<GeneratedCreditCardDecoration> generated_credit_card_decoration_;
+
+  // The right-hand-side search button that is shown on search result pages.
+  scoped_ptr<SearchButtonDecoration> search_button_decoration_;
+
+  // The left-hand-side origin chip.
+  scoped_ptr<OriginChipDecoration> origin_chip_decoration_;
 
   Browser* browser_;
 

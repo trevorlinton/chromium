@@ -6,11 +6,10 @@
 
 #include "base/mac/foundation_util.h"
 #include "base/strings/stringprintf.h"
-#include "ui/app_list/app_list_item_model.h"
+#include "ui/app_list/app_list_item.h"
 #import "ui/app_list/cocoa/apps_grid_controller.h"
 #import "ui/app_list/cocoa/apps_grid_view_item.h"
-#include "ui/app_list/test/app_list_test_model.h"
-#import "ui/base/test/cocoa_test_event_utils.h"
+#import "ui/events/test/cocoa_test_event_utils.h"
 
 namespace app_list {
 namespace test {
@@ -28,7 +27,6 @@ void AppsGridControllerTestHelper::SetUpWithGridController(
     AppsGridController* grid_controller) {
   ui::CocoaTest::SetUp();
   apps_grid_controller_ = grid_controller;
-  ReplaceTestModel(0);
 }
 
 void AppsGridControllerTestHelper::SimulateClick(NSView* view) {
@@ -52,17 +50,6 @@ void AppsGridControllerTestHelper::SimulateMouseExitItemAt(size_t index) {
       cocoa_test_event_utils::EnterExitEventWithType(NSMouseExited)];
 }
 
-void AppsGridControllerTestHelper::ReplaceTestModel(int item_count) {
-  scoped_ptr<AppListTestModel> new_model(new AppListTestModel);
-  new_model->PopulateApps(item_count);
-  ResetModel(new_model.PassAs<AppListModel>());
-}
-
-void AppsGridControllerTestHelper::ResetModel(
-    scoped_ptr<AppListModel> new_model) {
-  [apps_grid_controller_ setModel:new_model.Pass()];
-}
-
 std::string AppsGridControllerTestHelper::GetViewContent() const {
   std::string s;
   for (size_t page_index = 0; page_index < [apps_grid_controller_ pageCount];
@@ -75,7 +62,7 @@ std::string AppsGridControllerTestHelper::GetViewContent() const {
           [page_view itemAtIndex:i]);
       if (i != 0)
         s += ',';
-      s += [item model]->title();
+      s += [item model]->id();
     }
     s += '|';
   }
@@ -92,7 +79,7 @@ size_t AppsGridControllerTestHelper::GetPageIndexForItem(int item_id) const {
     for (NSUInteger i = 0; i < [[page_view content] count]; ++i) {
       AppsGridViewItem* item = base::mac::ObjCCastStrict<AppsGridViewItem>(
           [page_view itemAtIndex:i]);
-      if ([item model]->title() == search) {
+      if ([item model]->id() == search) {
         if (found_at_page_index != NSNotFound)
           return NSNotFound;  // Duplicate.
         found_at_page_index = page_index;
@@ -126,10 +113,6 @@ NSCollectionView* AppsGridControllerTestHelper::GetPageAt(size_t index) {
 
 NSView* AppsGridControllerTestHelper::GetSelectedView() {
   return GetItemViewAt([apps_grid_controller_ selectedItemIndex]);
-}
-
-AppListTestModel* AppsGridControllerTestHelper::model() {
-  return static_cast<AppListTestModel*>([apps_grid_controller_ model]);
 }
 
 }  // namespace test

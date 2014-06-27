@@ -8,6 +8,8 @@
 // Keep this file in sync with the .proto files in this directory.
 
 #include "sync/base/sync_export.h"
+#include "sync/protocol/app_list_specifics.pb.h"
+#include "sync/protocol/app_specifics.pb.h"
 #include "sync/protocol/client_debug_info.pb.h"
 #include "sync/protocol/session_specifics.pb.h"
 #include "sync/protocol/sync.pb.h"
@@ -19,6 +21,9 @@ namespace syncer {
 
 // The returned strings (which don't have to be freed) are in ASCII.
 // The result of passing in an invalid enum value is undefined.
+
+SYNC_EXPORT_PRIVATE const char* GetAppListItemTypeString(
+    sync_pb::AppListSpecifics::AppListItemType item_type);
 
 SYNC_EXPORT_PRIVATE const char* GetBrowserTypeString(
     sync_pb::SessionWindow::BrowserType browser_type);
@@ -45,14 +50,18 @@ SYNC_EXPORT_PRIVATE const char* GetErrorTypeString(
 SYNC_EXPORT_PRIVATE const char* GetActionString(
     sync_pb::SyncEnums::Action action);
 
+SYNC_EXPORT_PRIVATE const char* GetLaunchTypeString(
+    sync_pb::AppSpecifics::LaunchType launch_type);
+
+
 const char* GetDeviceTypeString(sync_pb::SyncEnums::DeviceType device_type);
 
 const char* GetFaviconTypeString(sync_pb::SessionTab::FaviconType favicon_type);
 
 const char* PassphraseTypeString(sync_pb::NigoriSpecifics::PassphraseType type);
 
-const char* SingletonEventTypeString(
-    sync_pb::DebugEventInfo::SingletonEventType type);
+const char* SingletonDebugEventTypeString(
+    sync_pb::SyncEnums::SingletonDebugEventType type);
 
 const char* GetBlockedStateString(sync_pb::TabNavigation::BlockedState state);
 

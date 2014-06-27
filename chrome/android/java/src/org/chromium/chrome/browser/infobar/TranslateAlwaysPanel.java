@@ -4,14 +4,8 @@
 package org.chromium.chrome.browser.infobar;
 
 import android.content.Context;
-import android.view.View;
-import android.widget.Button;
-import android.widget.CheckBox;
-import android.widget.CompoundButton;
 import android.widget.TextView;
 
-import org.chromium.chrome.browser.infobar.InfoBar;
-import org.chromium.chrome.browser.infobar.InfoBarLayout;
 import org.chromium.chrome.R;
 
 /**
@@ -33,8 +27,10 @@ public class TranslateAlwaysPanel implements TranslateSubPanel {
         panelMessage.setText(context.getString(
                 R.string.translate_infobar_translation_done, mOptions.targetLanguage()));
 
-        TranslateCheckBox checkBox = new TranslateCheckBox(mOptions, mListener);
-        checkBox.createContent(context, layout);
+        if (!mOptions.triggeredFromMenu()) {
+            TranslateCheckBox checkBox = new TranslateCheckBox(mOptions, mListener);
+            checkBox.createContent(context, layout);
+        }
 
         layout.addButtons(context.getString(R.string.translate_button_done),
                 context.getString(R.string.translate_show_original));

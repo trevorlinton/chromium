@@ -5,15 +5,14 @@
 #include "ui/views/widget/desktop_aura/x11_desktop_window_move_client.h"
 
 #include <X11/Xlib.h>
-// Get rid of a macro from Xlib.h that conflicts with Aura's RootWindow class.
-#undef RootWindow
 
 #include "base/debug/stack_trace.h"
 #include "base/message_loop/message_loop.h"
 #include "base/message_loop/message_pump_x11.h"
 #include "base/run_loop.h"
 #include "ui/aura/env.h"
-#include "ui/aura/root_window.h"
+#include "ui/aura/window.h"
+#include "ui/aura/window_tree_host.h"
 #include "ui/base/x/x11_util.h"
 #include "ui/events/event.h"
 #include "ui/gfx/screen.h"
@@ -22,7 +21,7 @@ namespace views {
 
 X11DesktopWindowMoveClient::X11DesktopWindowMoveClient()
     : move_loop_(this),
-      root_window_(NULL) {
+      host_(NULL) {
 }
 
 X11DesktopWindowMoveClient::~X11DesktopWindowMoveClient() {}
@@ -30,8 +29,7 @@ X11DesktopWindowMoveClient::~X11DesktopWindowMoveClient() {}
 void X11DesktopWindowMoveClient::OnMouseMovement(XMotionEvent* event) {
   gfx::Point cursor_point(event->x_root, event->y_root);
   gfx::Point system_loc = cursor_point - window_offset_;
-  root_window_->SetHostBounds(gfx::Rect(
-      system_loc, root_window_->GetHostSize()));
+  host_->SetBounds(gfx::Rect(system_loc, host_->GetBounds().size()));
 }
 
 void X11DesktopWindowMoveClient::OnMouseReleased() {
@@ -39,20 +37,20 @@ void X11DesktopWindowMoveClient::OnMouseReleased() {
 }
 
 void X11DesktopWindowMoveClient::OnMoveLoopEnded() {
-  root_window_ = NULL;
+  host_ = NULL;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// DesktopRootWindowHostLinux, aura::client::WindowMoveClient implementation:
+// DesktopWindowTreeHostLinux, aura::client::WindowMoveClient implementation:
 
 aura::client::WindowMoveResult X11DesktopWindowMoveClient::RunMoveLoop(
     aura::Window* source,
     const gfx::Vector2d& drag_offset,
     aura::client::WindowMoveSource move_source) {
   window_offset_ = drag_offset;
-  root_window_ = source->GetDispatcher();
+  host_ = source->GetHost();
 
-  bool success = move_loop_.RunMoveLoop(source, root_window_->last_cursor());
+  bool success = move_loop_.RunMoveLoop(source, host_->last_cursor());
   return success ? aura::client::MOVE_SUCCESSFUL : aura::client::MOVE_CANCELED;
 }
 

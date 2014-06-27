@@ -11,25 +11,6 @@
 
 namespace IPC {
 
-void ParamTraits<net::IPEndPoint>::Write(Message* m, const param_type& p) {
-  WriteParam(m, p.address());
-  WriteParam(m, p.port());
-}
-
-bool ParamTraits<net::IPEndPoint>::Read(const Message* m, PickleIterator* iter,
-                                        param_type* p) {
-  net::IPAddressNumber address;
-  int port;
-  if (!ReadParam(m, iter, &address) || !ReadParam(m, iter, &port))
-    return false;
-  *p = net::IPEndPoint(address, port);
-  return true;
-}
-
-void ParamTraits<net::IPEndPoint>::Log(const param_type& p, std::string* l) {
-  LogParam("IPEndPoint:" + p.ToString(), l);
-}
-
 void ParamTraits<gfx::Range>::Write(Message* m, const gfx::Range& r) {
   m->WriteUInt64(r.start());
   m->WriteUInt64(r.end());
@@ -63,7 +44,7 @@ bool ParamTraits<WebInputEventPointer>::Read(const Message* m,
     NOTREACHED();
     return false;
   }
-  if (data_length < static_cast<int>(sizeof(WebKit::WebInputEvent))) {
+  if (data_length < static_cast<int>(sizeof(blink::WebInputEvent))) {
     NOTREACHED();
     return false;
   }

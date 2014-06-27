@@ -26,10 +26,12 @@ class OmniboxEditControllerMock : public OmniboxEditController {
   MOCK_METHOD1(Update, void(const content::WebContents* contents));
   MOCK_METHOD0(OnChanged, void());
   MOCK_METHOD0(OnSetFocus, void());
+  MOCK_METHOD0(ShowURL, void());
   MOCK_METHOD0(GetInstant, InstantController*());
   MOCK_METHOD0(GetWebContents, content::WebContents*());
   MOCK_METHOD0(GetToolbarModel, ToolbarModel*());
   MOCK_CONST_METHOD0(GetToolbarModel, ToolbarModel*());
+  MOCK_METHOD0(HideURL, void());
 };
 }  // namespace
 
@@ -74,7 +76,7 @@ TEST_F(OmniboxViewGtkTest, InsertText) {
   const std::string expected = input;
   gtk_text_buffer_get_iter_at_offset(text_buffer_, &i, 0);
   gtk_text_buffer_insert(text_buffer_, &i, input, strlen(input));
-  ASSERT_EQ(expected, UTF16ToUTF8(view_->GetText()));
+  ASSERT_EQ(expected, base::UTF16ToUTF8(view_->GetText()));
 }
 
 TEST_F(OmniboxViewGtkTest, PasteText) {
@@ -86,5 +88,5 @@ TEST_F(OmniboxViewGtkTest, PasteText) {
   gtk_text_buffer_get_iter_at_offset(text_buffer_, &i, 0);
   gtk_text_buffer_insert(text_buffer_, &i, input, strlen(input));
 
-  ASSERT_EQ(expected, UTF16ToUTF8(view_->GetText()));
+  ASSERT_EQ(expected, base::UTF16ToUTF8(view_->GetText()));
 }

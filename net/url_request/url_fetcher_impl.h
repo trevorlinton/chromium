@@ -50,11 +50,11 @@ class NET_EXPORT_PRIVATE URLFetcherImpl : public URLFetcher {
   virtual void SetLoadFlags(int load_flags) OVERRIDE;
   virtual int GetLoadFlags() const OVERRIDE;
   virtual void SetReferrer(const std::string& referrer) OVERRIDE;
+  virtual void SetReferrerPolicy(
+      URLRequest::ReferrerPolicy referrer_policy) OVERRIDE;
   virtual void SetExtraRequestHeaders(
       const std::string& extra_request_headers) OVERRIDE;
   virtual void AddExtraRequestHeader(const std::string& header_line) OVERRIDE;
-  virtual void GetExtraRequestHeaders(
-      HttpRequestHeaders* headers) const OVERRIDE;
   virtual void SetRequestContext(
       URLRequestContextGetter* request_context_getter) OVERRIDE;
   virtual void SetFirstPartyForCookies(
@@ -70,9 +70,9 @@ class NET_EXPORT_PRIVATE URLFetcherImpl : public URLFetcher {
   virtual void SetAutomaticallyRetryOnNetworkChanges(int max_retries) OVERRIDE;
   virtual void SaveResponseToFileAtPath(
       const base::FilePath& file_path,
-      scoped_refptr<base::TaskRunner> file_task_runner) OVERRIDE;
+      scoped_refptr<base::SequencedTaskRunner> file_task_runner) OVERRIDE;
   virtual void SaveResponseToTemporaryFile(
-      scoped_refptr<base::TaskRunner> file_task_runner) OVERRIDE;
+      scoped_refptr<base::SequencedTaskRunner> file_task_runner) OVERRIDE;
   virtual void SaveResponseWithWriter(
       scoped_ptr<URLFetcherResponseWriter> response_writer) OVERRIDE;
   virtual HttpResponseHeaders* GetResponseHeaders() const OVERRIDE;

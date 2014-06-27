@@ -17,7 +17,7 @@
 using ui::OSExchangeData;
 
 namespace gfx {
-class Font;
+class FontList;
 }
 
 namespace ui {
@@ -61,14 +61,21 @@ class VIEWS_EXPORT MenuDelegate {
 
   // The string shown for the menu item. This is only invoked when an item is
   // added with an empty label.
-  virtual string16 GetLabel(int id) const;
+  virtual base::string16 GetLabel(int id) const;
 
   // The font for the menu item label.
-  virtual const gfx::Font* GetLabelFont(int id) const;
+  virtual const gfx::FontList* GetLabelFontList(int id) const;
+
+  // Whether this item should be displayed with a bolder color when disabled.
+  virtual bool GetShouldUseDisabledEmphasizedForegroundColor(
+      int command_id) const;
 
   // Override the text color of a given menu item dependent on the
   // |command_id| and its |is_hovered| state. Returns true if it chooses to
   // override the color.
+  //
+  // TODO(erg): Remove this interface. Injecting raw colors into the menu
+  // circumvents the NativeTheme.
   virtual bool GetForegroundColor(int command_id,
                                   bool is_hovered,
                                   SkColor* override_color) const;
@@ -76,13 +83,17 @@ class VIEWS_EXPORT MenuDelegate {
   // Override the background color of a given menu item dependent on the
   // |command_id| and its |is_hovered| state. Returns true if it chooses to
   // override the color.
+  //
+  // TODO(erg): Remove this interface. Injecting raw colors into the menu
+  // circumvents the NativeTheme.
   virtual bool GetBackgroundColor(int command_id,
                                   bool is_hovered,
                                   SkColor* override_color) const;
 
   // The tooltip shown for the menu item. This is invoked when the user
   // hovers over the item, and no tooltip text has been set for that item.
-  virtual string16 GetTooltipText(int id, const gfx::Point& screen_loc) const;
+  virtual base::string16 GetTooltipText(int id,
+                                        const gfx::Point& screen_loc) const;
 
   // If there is an accelerator for the menu item with id |id| it is set in
   // |accelerator| and true is returned.
@@ -104,7 +115,7 @@ class VIEWS_EXPORT MenuDelegate {
   // Controller
   virtual bool SupportsCommand(int id) const;
   virtual bool IsCommandEnabled(int id) const;
-  virtual bool GetContextualLabel(int id, string16* out) const;
+  virtual bool GetContextualLabel(int id, base::string16* out) const;
   virtual void ExecuteCommand(int id) {
   }
 

@@ -14,7 +14,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/gtk/browser_window_gtk.h"
-#include "chrome/common/extensions/extension.h"
+#include "extensions/common/extension.h"
 #include "grit/generated_resources.h"
 #include "ui/base/gtk/gtk_hig_constants.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -87,9 +87,7 @@ void ExtensionUninstallDialogGtk::Show() {
   GtkWidget* right_column_area = gtk_vbox_new(FALSE, 0);
   gtk_box_pack_start(GTK_BOX(icon_hbox), right_column_area, TRUE, TRUE, 0);
 
-  std::string heading_text = l10n_util::GetStringFUTF8(
-      IDS_EXTENSION_UNINSTALL_PROMPT_HEADING, UTF8ToUTF16(extension_->name()));
-  GtkWidget* heading_label = gtk_label_new(heading_text.c_str());
+  GtkWidget* heading_label = gtk_label_new(GetHeadingText().c_str());
   gtk_misc_set_alignment(GTK_MISC(heading_label), 0.0, 0.5);
   gtk_box_pack_start(GTK_BOX(right_column_area), heading_label, TRUE, TRUE, 0);
 

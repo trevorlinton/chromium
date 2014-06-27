@@ -4,18 +4,25 @@
 
 #include "chrome/browser/extensions/api/webview/webview_api.h"
 
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/api/browsing_data/browsing_data_api.h"
+#include "chrome/browser/extensions/api/context_menus/context_menus_api.h"
+#include "chrome/browser/extensions/api/context_menus/context_menus_api_helpers.h"
 #include "chrome/browser/extensions/tab_helper.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/webview.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/storage_partition.h"
-#include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/stop_find_action.h"
 #include "extensions/common/error_utils.h"
+#include "third_party/WebKit/public/web/WebFindOptions.h"
 
+using content::WebContents;
 using extensions::api::tabs::InjectDetails;
 using extensions::api::webview::SetPermission::Params;
+namespace helpers = extensions::context_menus_api_helpers;
 namespace webview = extensions::api::webview;
 
 namespace extensions {
@@ -50,13 +57,116 @@ bool WebviewExtensionFunction::RunImpl() {
   return RunImplSafe(guest);
 }
 
-WebviewClearDataFunction::WebviewClearDataFunction()
-    : remove_mask_(0),
-      bad_message_(false) {
-};
+// TODO(lazyboy): Add checks similar to
+// WebviewExtensionFunction::RunImplSafe(WebViewGuest*).
+bool WebviewContextMenusCreateFunction::RunImpl() {
+  scoped_ptr<webview::ContextMenusCreate::Params> params(
+      webview::ContextMenusCreate::Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params.get());
 
-WebviewClearDataFunction::~WebviewClearDataFunction() {
-};
+  MenuItem::Id id(
+      Profile::FromBrowserContext(browser_context())->IsOffTheRecord(),
+      MenuItem::ExtensionKey(extension_id(), params->instance_id));
+
+  if (params->create_properties.id.get()) {
+    id.string_uid = *params->create_properties.id;
+  } else {
+    // The Generated Id is added by webview_custom_bindings.js.
+    base::DictionaryValue* properties = NULL;
+    EXTENSION_FUNCTION_VALIDATE(args_->GetDictionary(1, &properties));
+    EXTENSION_FUNCTION_VALIDATE(
+        properties->GetInteger(helpers::kGeneratedIdKey, &id.uid));
+  }
+
+  bool success = extensions::context_menus_api_helpers::CreateMenuItem(
+      params->create_properties,
+      Profile::FromBrowserContext(browser_context()),
+      GetExtension(),
+      id,
+      &error_);
+
+  SendResponse(success);
+  return success;
+}
+
+bool WebviewContextMenusUpdateFunction::RunImpl() {
+  scoped_ptr<webview::ContextMenusUpdate::Params> params(
+      webview::ContextMenusUpdate::Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params.get());
+
+  Profile* profile = Profile::FromBrowserContext(browser_context());
+  MenuItem::Id item_id(
+      profile->IsOffTheRecord(),
+      MenuItem::ExtensionKey(extension_id(), params->instance_id));
+
+  if (params->id.as_string)
+    item_id.string_uid = *params->id.as_string;
+  else if (params->id.as_integer)
+    item_id.uid = *params->id.as_integer;
+  else
+    NOTREACHED();
+
+  bool success = extensions::context_menus_api_helpers::UpdateMenuItem(
+      params->update_properties, profile, GetExtension(), item_id, &error_);
+  SendResponse(success);
+  return success;
+}
+
+bool WebviewContextMenusRemoveFunction::RunImpl() {
+  scoped_ptr<webview::ContextMenusRemove::Params> params(
+      webview::ContextMenusRemove::Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params.get());
+
+  MenuManager* menu_manager =
+      MenuManager::Get(Profile::FromBrowserContext(browser_context()));
+
+  MenuItem::Id id(
+      Profile::FromBrowserContext(browser_context())->IsOffTheRecord(),
+      MenuItem::ExtensionKey(extension_id(), params->instance_id));
+
+  if (params->menu_item_id.as_string) {
+    id.string_uid = *params->menu_item_id.as_string;
+  } else if (params->menu_item_id.as_integer) {
+    id.uid = *params->menu_item_id.as_integer;
+  } else {
+    NOTREACHED();
+  }
+
+  bool success = true;
+  MenuItem* item = menu_manager->GetItemById(id);
+  // Ensure one <webview> can't remove another's menu items.
+  if (!item || item->id().extension_key != id.extension_key) {
+    error_ = ErrorUtils::FormatErrorMessage(
+        context_menus_api_helpers::kCannotFindItemError,
+        context_menus_api_helpers::GetIDString(id));
+    success = false;
+  } else if (!menu_manager->RemoveContextMenuItem(id)) {
+    success = false;
+  }
+
+  SendResponse(success);
+  return success;
+}
+
+bool WebviewContextMenusRemoveAllFunction::RunImpl() {
+  scoped_ptr<webview::ContextMenusRemoveAll::Params> params(
+      webview::ContextMenusRemoveAll::Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params.get());
+
+  MenuManager* menu_manager =
+      MenuManager::Get(Profile::FromBrowserContext(browser_context()));
+
+  int webview_instance_id = params->instance_id;
+  menu_manager->RemoveAllContextItems(
+      MenuItem::ExtensionKey(GetExtension()->id(), webview_instance_id));
+  SendResponse(true);
+  return true;
+}
+
+WebviewClearDataFunction::WebviewClearDataFunction()
+    : remove_mask_(0), bad_message_(false) {}
+
+WebviewClearDataFunction::~WebviewClearDataFunction() {}
 
 // Parses the |dataToRemove| argument to generate the remove mask. Sets
 // |bad_message_| (like EXTENSION_FUNCTION_VALIDATE would if this were a bool
@@ -87,8 +197,6 @@ uint32 WebviewClearDataFunction::GetRemovalMask() {
 // TODO(lazyboy): Parameters in this extension function are similar (or a
 // sub-set) to BrowsingDataRemoverFunction. How can we share this code?
 bool WebviewClearDataFunction::RunImplSafe(WebViewGuest* guest) {
-  content::RecordAction(content::UserMetricsAction("WebView.ClearData"));
-
   // Grab the initial |options| parameter, and parse out the arguments.
   base::DictionaryValue* options;
   EXTENSION_FUNCTION_VALIDATE(args_->GetDictionary(1, &options));
@@ -195,7 +303,6 @@ void WebviewExecuteScriptFunction::OnExecuteCodeFinished(
     int32 on_page_id,
     const GURL& on_url,
     const base::ListValue& result) {
-  content::RecordAction(content::UserMetricsAction("WebView.ExecuteScript"));
   if (error.empty())
     SetResult(result.DeepCopy());
   WebviewExecuteCodeFunction::OnExecuteCodeFinished(error, on_page_id, on_url,
@@ -209,6 +316,122 @@ bool WebviewInsertCSSFunction::ShouldInsertCSS() const {
   return true;
 }
 
+WebviewCaptureVisibleRegionFunction::WebviewCaptureVisibleRegionFunction() {
+}
+
+WebviewCaptureVisibleRegionFunction::~WebviewCaptureVisibleRegionFunction() {
+}
+
+bool WebviewCaptureVisibleRegionFunction::IsScreenshotEnabled() {
+  return true;
+}
+
+WebContents* WebviewCaptureVisibleRegionFunction::GetWebContentsForID(
+    int instance_id) {
+  WebViewGuest* guest = WebViewGuest::From(
+      render_view_host()->GetProcess()->GetID(), instance_id);
+  return guest ? guest->guest_web_contents() : NULL;
+}
+
+void WebviewCaptureVisibleRegionFunction::OnCaptureFailure(
+    FailureReason reason) {
+  SendResponse(false);
+}
+
+WebviewSetZoomFunction::WebviewSetZoomFunction() {
+}
+
+WebviewSetZoomFunction::~WebviewSetZoomFunction() {
+}
+
+bool WebviewSetZoomFunction::RunImplSafe(WebViewGuest* guest) {
+  scoped_ptr<webview::SetZoom::Params> params(
+      webview::SetZoom::Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params.get());
+  guest->SetZoom(params->zoom_factor);
+
+  SendResponse(true);
+  return true;
+}
+
+WebviewGetZoomFunction::WebviewGetZoomFunction() {
+}
+
+WebviewGetZoomFunction::~WebviewGetZoomFunction() {
+}
+
+bool WebviewGetZoomFunction::RunImplSafe(WebViewGuest* guest) {
+  scoped_ptr<webview::GetZoom::Params> params(
+      webview::GetZoom::Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params.get());
+
+  double zoom_factor = guest->GetZoom();
+  SetResult(base::Value::CreateDoubleValue(zoom_factor));
+  SendResponse(true);
+  return true;
+}
+
+WebviewFindFunction::WebviewFindFunction() {
+}
+
+WebviewFindFunction::~WebviewFindFunction() {
+}
+
+bool WebviewFindFunction::RunImplSafe(WebViewGuest* guest) {
+  scoped_ptr<webview::Find::Params> params(
+      webview::Find::Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params.get());
+
+  // Convert the std::string search_text to string16.
+  base::string16 search_text;
+  base::UTF8ToUTF16(params->search_text.c_str(),
+                    params->search_text.length(),
+                    &search_text);
+
+  // Set the find options to their default values.
+  blink::WebFindOptions options;
+  if (params->options) {
+    options.forward =
+        params->options->backward ? !*params->options->backward : true;
+    options.matchCase =
+        params->options->match_case ? *params->options->match_case : false;
+  }
+
+  guest->Find(search_text, options, this);
+  return true;
+}
+
+WebviewStopFindingFunction::WebviewStopFindingFunction() {
+}
+
+WebviewStopFindingFunction::~WebviewStopFindingFunction() {
+}
+
+bool WebviewStopFindingFunction::RunImplSafe(WebViewGuest* guest) {
+  scoped_ptr<webview::StopFinding::Params> params(
+      webview::StopFinding::Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params.get());
+
+  // Set the StopFindAction.
+  content::StopFindAction action;
+  switch (params->action) {
+    case webview::StopFinding::Params::ACTION_CLEAR:
+      action = content::STOP_FIND_ACTION_CLEAR_SELECTION;
+      break;
+    case webview::StopFinding::Params::ACTION_KEEP:
+      action = content::STOP_FIND_ACTION_KEEP_SELECTION;
+      break;
+    case webview::StopFinding::Params::ACTION_ACTIVATE:
+      action = content::STOP_FIND_ACTION_ACTIVATE_SELECTION;
+      break;
+    default:
+      action = content::STOP_FIND_ACTION_KEEP_SELECTION;
+  }
+
+  guest->StopFinding(action);
+  return true;
+}
+
 WebviewGoFunction::WebviewGoFunction() {
 }
 
@@ -216,7 +439,6 @@ WebviewGoFunction::~WebviewGoFunction() {
 }
 
 bool WebviewGoFunction::RunImplSafe(WebViewGuest* guest) {
-  content::RecordAction(content::UserMetricsAction("WebView.Go"));
   scoped_ptr<webview::Go::Params> params(webview::Go::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -231,7 +453,6 @@ WebviewReloadFunction::~WebviewReloadFunction() {
 }
 
 bool WebviewReloadFunction::RunImplSafe(WebViewGuest* guest) {
-  content::RecordAction(content::UserMetricsAction("WebView.Reload"));
   guest->Reload();
   return true;
 }
@@ -298,7 +519,6 @@ WebviewStopFunction::~WebviewStopFunction() {
 }
 
 bool WebviewStopFunction::RunImplSafe(WebViewGuest* guest) {
-  content::RecordAction(content::UserMetricsAction("WebView.Stop"));
   guest->Stop();
   return true;
 }
@@ -310,7 +530,6 @@ WebviewTerminateFunction::~WebviewTerminateFunction() {
 }
 
 bool WebviewTerminateFunction::RunImplSafe(WebViewGuest* guest) {
-  content::RecordAction(content::UserMetricsAction("WebView.Terminate"));
   guest->Terminate();
   return true;
 }

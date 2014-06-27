@@ -16,6 +16,7 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/resource_controller.h"
 #include "content/public/browser/resource_throttle.h"
+#include "extensions/browser/extension_registry.h"
 #include "net/base/request_priority.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_filter.h"
@@ -78,11 +79,12 @@ class SimpleTestJob : public net::URLRequestTestJob {
 };
 
 // Yoinked from extension_manifest_unittest.cc.
-DictionaryValue* LoadManifestFile(const base::FilePath path,
-                                  std::string* error) {
+base::DictionaryValue* LoadManifestFile(const base::FilePath path,
+                                        std::string* error) {
   EXPECT_TRUE(base::PathExists(path));
   JSONFileValueSerializer serializer(path);
-  return static_cast<DictionaryValue*>(serializer.Deserialize(NULL, error));
+  return static_cast<base::DictionaryValue*>(
+      serializer.Deserialize(NULL, error));
 }
 
 scoped_refptr<Extension> LoadExtension(const std::string& filename,
@@ -93,7 +95,7 @@ scoped_refptr<Extension> LoadExtension(const std::string& filename,
       AppendASCII("extensions").
       AppendASCII("manifest_tests").
       AppendASCII(filename.c_str());
-  scoped_ptr<DictionaryValue> value(LoadManifestFile(path, error));
+  scoped_ptr<base::DictionaryValue> value(LoadManifestFile(path, error));
   if (!value)
     return NULL;
   return Extension::Create(path.DirName(), Manifest::UNPACKED, *value,
@@ -279,13 +281,15 @@ TEST_F(UserScriptListenerTest, MultiProfile) {
   LoadTestExtension();
   base::MessageLoop::current()->RunUntilIdle();
 
-  // Fire up a second profile and have it load and extension with a content
+  // Fire up a second profile and have it load an extension with a content
   // script.
   TestingProfile profile2;
   std::string error;
   scoped_refptr<Extension> extension = LoadExtension(
       "content_script_yahoo.json", &error);
   ASSERT_TRUE(extension.get());
+
+  extensions::ExtensionRegistry::Get(&profile2)->AddEnabled(extension);
 
   content::NotificationService::current()->Notify(
       chrome::NOTIFICATION_EXTENSION_LOADED,

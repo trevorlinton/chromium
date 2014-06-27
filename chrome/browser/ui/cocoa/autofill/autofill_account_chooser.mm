@@ -96,6 +96,8 @@ void AddMenuItem(NSMenu *menu, id target, SEL selector, NSString* title,
 }
 
 - (void)update {
+  [self setHidden:!delegate_->ShouldShowAccountChooser()];
+
   NSImage* iconImage = delegate_->AccountChooserImage().AsNSImage();
   [icon_ setImage:iconImage];
 
@@ -107,7 +109,6 @@ void AddMenuItem(NSMenu *menu, id target, SEL selector, NSString* title,
   NSString* linkTitle =
       base::SysUTF16ToNSString(delegate_->SignInLinkText());
   [link_ setTitle:linkTitle];
-  [link_ setEnabled:!delegate_->ShouldDisableSignInLink()];
 
   // populate menu
   NSMenu* accountMenu = [popup_ attachedMenu];

@@ -54,6 +54,7 @@ class BookmarkBubbleView : public views::BubbleDelegateView,
 
   // views::View method.
   virtual bool AcceleratorPressed(const ui::Accelerator& accelerator) OVERRIDE;
+  virtual void OnNativeThemeChanged(const ui::NativeTheme* theme) OVERRIDE;
 
  protected:
   // views::BubbleDelegateView method.
@@ -73,10 +74,11 @@ class BookmarkBubbleView : public views::BubbleDelegateView,
                      bool newly_bookmarked);
 
   // Returns the title to display.
-  string16 GetTitle();
+  base::string16 GetTitle();
 
   // Overridden from views::View:
   virtual gfx::Size GetMinimumSize() OVERRIDE;
+  virtual void GetAccessibleState(ui::AXViewState* state) OVERRIDE;
 
   // Overridden from views::ButtonListener:
   // Closes the bubble or opens the edit dialog.
@@ -84,7 +86,7 @@ class BookmarkBubbleView : public views::BubbleDelegateView,
                              const ui::Event& event) OVERRIDE;
 
   // Overridden from views::ComboboxListener:
-  virtual void OnSelectedIndexChanged(views::Combobox* combobox) OVERRIDE;
+  virtual void OnPerformAction(views::Combobox* combobox) OVERRIDE;
 
   // Handle the message when the user presses a button.
   void HandleButtonPressed(views::Button* sender);

@@ -31,7 +31,7 @@ const int kSubMenuBaseId = 200;
 //  virtual int GetItemCount() const = 0;
 //  virtual ItemType GetTypeAt(int index) const = 0;
 //  virtual int GetCommandIdAt(int index) const = 0;
-//  virtual string16 GetLabelAt(int index) const = 0;
+//  virtual base::string16 GetLabelAt(int index) const = 0;
 class CommonMenuModel : public ui::MenuModel {
  public:
   CommonMenuModel() {
@@ -128,8 +128,8 @@ class SubMenuModel : public CommonMenuModel {
     return index + kSubMenuBaseId;
   }
 
-  virtual string16 GetLabelAt(int index) const OVERRIDE {
-    return ASCIIToUTF16("Item");
+  virtual base::string16 GetLabelAt(int index) const OVERRIDE {
+    return base::ASCIIToUTF16("Item");
   }
 
   virtual void MenuWillShow() OVERRIDE {
@@ -172,8 +172,8 @@ class TopMenuModel : public CommonMenuModel {
     return index + kTopMenuBaseId;
   }
 
-  virtual string16 GetLabelAt(int index) const OVERRIDE {
-    return ASCIIToUTF16("submenu");
+  virtual base::string16 GetLabelAt(int index) const OVERRIDE {
+    return base::ASCIIToUTF16("submenu");
   }
 
   virtual MenuModel* GetSubmenuModelAt(int index) const OVERRIDE {
@@ -207,7 +207,7 @@ class MenuModelAdapterTest : public ViewEventTestBase,
 
   virtual void SetUp() OVERRIDE {
     button_ = new views::MenuButton(
-        NULL, ASCIIToUTF16("Menu Adapter Test"), this, true);
+        NULL, base::ASCIIToUTF16("Menu Adapter Test"), this, true);
 
     menu_ = menu_model_adapter_.CreateMenu();
     menu_runner_.reset(new views::MenuRunner(menu_));

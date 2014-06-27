@@ -13,11 +13,10 @@
 
 namespace app_list {
 
-AppListMenu::AppListMenu(AppListViewDelegate* delegate,
-                         const AppListModel::Users& users)
+AppListMenu::AppListMenu(AppListViewDelegate* delegate)
     : menu_model_(this),
       delegate_(delegate),
-      users_(users) {
+      users_(delegate->GetUsers()) {
   InitMenu();
 }
 
@@ -33,7 +32,7 @@ void AppListMenu::InitMenu() {
                                users_[i].email.empty() ? users_[i].name
                                                        : users_[i].email,
                                0 /* group_id */);
-#elif defined(OS_WIN)
+#elif defined(OS_WIN) || (defined(OS_LINUX) && !defined(OS_CHROMEOS))
       menu_model_.AddItem(SELECT_PROFILE + i, users_[i].name);
       int menu_index = menu_model_.GetIndexOfCommandId(SELECT_PROFILE + i);
       menu_model_.SetSublabel(menu_index, users_[i].email);
@@ -68,6 +67,10 @@ bool AppListMenu::IsCommandIdChecked(int command_id) const {
 }
 
 bool AppListMenu::IsCommandIdEnabled(int command_id) const {
+  if (command_id >= SELECT_PROFILE &&
+      command_id < SELECT_PROFILE + static_cast<int>(users_.size())) {
+    return !users_[command_id - SELECT_PROFILE].signin_required;
+  }
   return true;
 }
 

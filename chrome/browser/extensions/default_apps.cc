@@ -8,15 +8,15 @@
 #include <string>
 
 #include "base/command_line.h"
-#include "chrome/browser/browser_process.h"
-#include "components/user_prefs/pref_registry_syncable.h"
 #include "base/prefs/pref_service.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/chrome_version_info.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/pref_names.h"
+#include "components/user_prefs/pref_registry_syncable.h"
+#include "extensions/common/extension.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if !defined(OS_ANDROID)
@@ -161,7 +161,7 @@ void Provider::VisitRegisteredExtension() {
 void Provider::SetPrefs(base::DictionaryValue* prefs) {
   if (is_migration_) {
     std::set<std::string> new_default_apps;
-    for (DictionaryValue::Iterator i(*prefs); !i.IsAtEnd(); i.Advance()) {
+    for (base::DictionaryValue::Iterator i(*prefs); !i.IsAtEnd(); i.Advance()) {
       if (!IsOldDefaultApp(i.key()))
         new_default_apps.insert(i.key());
     }

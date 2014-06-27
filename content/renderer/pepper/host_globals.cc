@@ -29,14 +29,14 @@ using ppapi::CheckIdType;
 using ppapi::MakeTypedId;
 using ppapi::PPIdType;
 using ppapi::ResourceTracker;
-using WebKit::WebConsoleMessage;
-using WebKit::WebString;
+using blink::WebConsoleMessage;
+using blink::WebString;
 
 namespace content {
 
 namespace {
 
-typedef std::set<WebKit::WebPluginContainer*> ContainerSet;
+typedef std::set<blink::WebPluginContainer*> ContainerSet;
 
 // Adds all WebPluginContainers associated with the given module to the set.
 void GetAllContainersForModule(PluginModule* module,
@@ -70,7 +70,7 @@ WebConsoleMessage MakeLogMessage(PP_LogLevel level,
     result.append(": ");
   result.append(message);
   return WebConsoleMessage(LogLevelToWebLogLevel(level),
-                           WebString(UTF8ToUTF16(result)));
+                           WebString(base::UTF8ToUTF16(result)));
 }
 
 }  // namespace

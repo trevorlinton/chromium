@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,7 @@ import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.search_engines.TemplateUrlService.LoadListener;
 import org.chromium.chrome.browser.search_engines.TemplateUrlService.TemplateUrl;
-import org.chromium.chrome.testshell.ChromiumTestShellTestBase;
+import org.chromium.chrome.shell.ChromeShellTestBase;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 
@@ -22,13 +22,13 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Tests for Chrome on Android's usage of the TemplateUrlService API.
  */
-public class TemplateUrlServiceTest extends ChromiumTestShellTestBase {
+public class TemplateUrlServiceTest extends ChromeShellTestBase {
 
     @Override
     public void setUp() throws Exception {
         super.setUp();
         clearAppData();
-        launchChromiumTestShellWithBlankPage();
+        launchChromeShellWithBlankPage();
         assertTrue(waitForActiveShellToBeDoneLoading());
     }
 

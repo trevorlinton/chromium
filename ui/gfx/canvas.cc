@@ -11,7 +11,6 @@
 #include "base/logging.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/effects/SkGradientShader.h"
-#include "ui/gfx/canvas.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/size_conversions.h"
@@ -99,16 +98,6 @@ void Canvas::SizeStringInt(const base::string16& text,
 }
 
 // static
-void Canvas::SizeStringInt(const base::string16& text,
-                           const Font& font,
-                           int* width,
-                           int* height,
-                           int line_height,
-                           int flags) {
-  SizeStringInt(text, FontList(font), width, height, line_height, flags);
-}
-
-// static
 int Canvas::GetStringWidth(const base::string16& text,
                            const FontList& font_list) {
   int width = 0, height = 0;
@@ -125,39 +114,19 @@ float Canvas::GetStringWidthF(const base::string16& text,
 }
 
 // static
-int Canvas::GetStringWidth(const base::string16& text, const Font& font) {
-  int width = 0, height = 0;
-  SizeStringInt(text, FontList(font), &width, &height, 0, NO_ELLIPSIS);
-  return width;
-}
-
-// static
 int Canvas::DefaultCanvasTextAlignment() {
   return base::i18n::IsRTL() ? TEXT_ALIGN_RIGHT : TEXT_ALIGN_LEFT;
 }
 
-void Canvas::DrawStringWithHalo(const base::string16& text,
-                                const Font& font,
-                                SkColor text_color,
-                                SkColor halo_color_in,
-                                int x,
-                                int y,
-                                int w,
-                                int h,
-                                int flags) {
-  DrawStringRectWithHalo(text, FontList(font), text_color, halo_color_in,
-                         Rect(x, y, w, h), flags);
-}
-
 ImageSkiaRep Canvas::ExtractImageRep() const {
-  const SkBitmap& device_bitmap = canvas_->getDevice()->accessBitmap(false);
-
   // Make a bitmap to return, and a canvas to draw into it. We don't just want
   // to call extractSubset or the copy constructor, since we want an actual copy
   // of the bitmap.
+  const SkISize size = canvas_->getDeviceSize();
   SkBitmap result;
-  device_bitmap.copyTo(&result, SkBitmap::kARGB_8888_Config);
+  result.allocN32Pixels(size.width(), size.height());
 
+  canvas_->readPixels(&result, 0, 0);
   return ImageSkiaRep(result, image_scale_);
 }
 
@@ -175,8 +144,7 @@ void Canvas::DrawDashedRect(const Rect& rect, SkColor color) {
     delete dots;
     last_color = color;
     dots = new SkBitmap;
-    dots->setConfig(SkBitmap::kARGB_8888_Config, col_pixels, row_pixels);
-    dots->allocPixels();
+    dots->allocN32Pixels(col_pixels, row_pixels);
     dots->eraseARGB(0, 0, 0, 0);
 
     uint32_t* dot = dots->getAddr32(0, 0);
@@ -226,12 +194,16 @@ void Canvas::Restore() {
   canvas_->restore();
 }
 
-bool Canvas::ClipRect(const Rect& rect) {
-  return canvas_->clipRect(RectToSkRect(rect));
+void Canvas::ClipRect(const Rect& rect) {
+  canvas_->clipRect(RectToSkRect(rect));
 }
 
-bool Canvas::ClipPath(const SkPath& path) {
-  return canvas_->clipPath(path);
+void Canvas::ClipPath(const SkPath& path) {
+  canvas_->clipPath(path);
+}
+
+bool Canvas::IsClipEmpty() const {
+  return canvas_->isClipEmpty();
 }
 
 bool Canvas::GetClipBounds(Rect* bounds) {
@@ -330,6 +302,22 @@ void Canvas::DrawPath(const SkPath& path, const SkPaint& paint) {
 
 void Canvas::DrawFocusRect(const Rect& rect) {
   DrawDashedRect(rect, SK_ColorGRAY);
+}
+
+void Canvas::DrawSolidFocusRect(const Rect& rect, SkColor color) {
+  SkPaint paint;
+  paint.setColor(color);
+  paint.setStrokeWidth(SkIntToScalar(1));
+  // Note: We cannot use DrawRect since it would create a path and fill it which
+  // would cause problems near the edge of the canvas.
+  int x1 = std::min(rect.x(), rect.right());
+  int x2 = std::max(rect.x(), rect.right());
+  int y1 = std::min(rect.y(), rect.bottom());
+  int y2 = std::max(rect.y(), rect.bottom());
+  DrawLine(Point(x1, y1), Point(x2, y1), paint);
+  DrawLine(Point(x1, y2), Point(x2, y2), paint);
+  DrawLine(Point(x1, y1), Point(x1, y2), paint);
+  DrawLine(Point(x2, y1), Point(x2, y2 + 1), paint);
 }
 
 void Canvas::DrawImageInt(const ImageSkia& image, int x, int y) {
@@ -484,47 +472,6 @@ void Canvas::DrawStringRectWithFlags(const base::string16& text,
                                      int flags) {
   DrawStringRectWithShadows(text, font_list, color, display_rect, 0, flags,
                             ShadowValues());
-}
-
-void Canvas::DrawStringInt(const base::string16& text,
-                           const Font& font,
-                           SkColor color,
-                           int x,
-                           int y,
-                           int w,
-                           int h) {
-  DrawStringInt(text, font, color, x, y, w, h, DefaultCanvasTextAlignment());
-}
-
-void Canvas::DrawStringInt(const base::string16& text,
-                           const Font& font,
-                           SkColor color,
-                           const Rect& display_rect) {
-  DrawStringInt(text, font, color, display_rect.x(), display_rect.y(),
-                display_rect.width(), display_rect.height());
-}
-
-void Canvas::DrawStringInt(const base::string16& text,
-                           const Font& font,
-                           SkColor color,
-                           int x,
-                           int y,
-                           int w,
-                           int h,
-                           int flags) {
-  DrawStringWithShadows(text, font, color, Rect(x, y, w, h), 0, flags,
-                        ShadowValues());
-}
-
-void Canvas::DrawStringWithShadows(const base::string16& text,
-                                   const Font& font,
-                                   SkColor color,
-                                   const Rect& text_bounds,
-                                   int line_height,
-                                   int flags,
-                                   const ShadowValues& shadows) {
-  DrawStringRectWithShadows(text, FontList(font), color, text_bounds,
-                            line_height, flags, shadows);
 }
 
 void Canvas::TileImageInt(const ImageSkia& image,

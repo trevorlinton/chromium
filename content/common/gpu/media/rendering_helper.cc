@@ -10,13 +10,13 @@
 #include "base/strings/stringize_macros.h"
 #include "base/synchronization/waitable_event.h"
 #include "ui/gl/gl_context.h"
-#include "ui/gl/gl_context_stub.h"
+#include "ui/gl/gl_context_stub_with_extensions.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_surface.h"
 
 #ifdef GL_VARIANT_GLX
 typedef GLXWindow NativeWindowType;
-struct ScopedPtrXFree {
+struct XFreeDeleter {
   void operator()(void* x) const { ::XFree(x); }
 };
 #else  // EGL
@@ -42,42 +42,6 @@ static void CreateShader(GLuint program,
   glDeleteShader(shader);
   CHECK_EQ(static_cast<int>(glGetError()), GL_NO_ERROR);
 }
-
-namespace {
-
-// Lightweight GLContext stub implementation that returns a constructed
-// extensions string.  We use this to create a context that we can use to
-// initialize GL extensions with, without actually creating a platform context.
-class GLContextStubWithExtensions : public gfx::GLContextStub {
- public:
-  GLContextStubWithExtensions() {}
-  virtual std::string GetExtensions() OVERRIDE;
-
-  void AddExtensionsString(const char* extensions);
-
- protected:
-  virtual ~GLContextStubWithExtensions() {}
-
- private:
-  std::string extensions_;
-
-  DISALLOW_COPY_AND_ASSIGN(GLContextStubWithExtensions);
-};
-
-void GLContextStubWithExtensions::AddExtensionsString(const char* extensions) {
-  if (extensions == NULL)
-    return;
-
-  if (extensions_.size() != 0)
-    extensions_ += ' ';
-  extensions_ += extensions;
-}
-
-std::string GLContextStubWithExtensions::GetExtensions() {
-  return extensions_;
-}
-
-}  // anonymous
 
 namespace content {
 
@@ -135,9 +99,9 @@ void RenderingHelper::Initialize(const RenderingHelperParams& params,
     done.Wait();
   }
 
-  gfx::InitializeGLBindings(kGLImplementation);
-  scoped_refptr<GLContextStubWithExtensions> stub_context(
-      new GLContextStubWithExtensions());
+  gfx::InitializeStaticGLBindings(kGLImplementation);
+  scoped_refptr<gfx::GLContextStubWithExtensions> stub_context(
+      new gfx::GLContextStubWithExtensions());
 
   CHECK_GT(params.window_dimensions.size(), 0U);
   CHECK_EQ(params.frame_dimensions.size(), params.window_dimensions.size());
@@ -160,7 +124,7 @@ void RenderingHelper::Initialize(const RenderingHelperParams& params,
     GL_NONE,
   };
   int num_fbconfigs;
-  scoped_ptr_malloc<GLXFBConfig, ScopedPtrXFree> glx_fb_configs(
+  scoped_ptr<GLXFBConfig, XFreeDeleter> glx_fb_configs(
       glXChooseFBConfig(x_display_, DefaultScreen(x_display_), fbconfig_attr,
                         &num_fbconfigs));
   CHECK(glx_fb_configs.get());
@@ -171,6 +135,8 @@ void RenderingHelper::Initialize(const RenderingHelperParams& params,
   CHECK(gl_context_);
   stub_context->AddExtensionsString(
       reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS)));
+  stub_context->SetGLVersionString(
+      reinterpret_cast<const char*>(glGetString(GL_VERSION)));
 
 #else // EGL
   EGLNativeDisplayType native_display;
@@ -208,6 +174,8 @@ void RenderingHelper::Initialize(const RenderingHelperParams& params,
       reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS)));
   stub_context->AddExtensionsString(
       eglQueryString(gl_display_, EGL_EXTENSIONS));
+  stub_context->SetGLVersionString(
+      reinterpret_cast<const char*>(glGetString(GL_VERSION)));
 #endif
 
   // Per-window/surface X11 & EGL initialization.
@@ -263,7 +231,7 @@ void RenderingHelper::Initialize(const RenderingHelperParams& params,
   }
 
   // Must be done after a context is made current.
-  gfx::InitializeGLExtensionBindings(kGLImplementation, stub_context.get());
+  gfx::InitializeDynamicGLBindings(kGLImplementation, stub_context.get());
 
   if (render_as_thumbnails_) {
     CHECK_EQ(window_dimensions_.size(), 1U);
@@ -330,13 +298,21 @@ void RenderingHelper::Initialize(const RenderingHelperParams& params,
       });
 
 #if GL_VARIANT_EGL
-  static const char kFragmentShader[] = STRINGIZE(
-      precision mediump float;
-      varying vec2 interp_tc;
-      uniform sampler2D tex;
-      void main() {
-        gl_FragColor = texture2D(tex, interp_tc);
-      });
+  static const char kFragmentShader[] =
+      "#extension GL_OES_EGL_image_external : enable\n"
+      "precision mediump float;\n"
+      "varying vec2 interp_tc;\n"
+      "uniform sampler2D tex;\n"
+      "#ifdef GL_OES_EGL_image_external\n"
+      "uniform samplerExternalOES tex_external;\n"
+      "#endif\n"
+      "void main() {\n"
+      "  vec4 color = texture2D(tex, interp_tc);\n"
+      "#ifdef GL_OES_EGL_image_external\n"
+      "  color += texture2D(tex_external, interp_tc);\n"
+      "#endif\n"
+      "  gl_FragColor = color;\n"
+      "}\n";
 #else
   static const char kFragmentShader[] = STRINGIZE(
       varying vec2 interp_tc;
@@ -365,6 +341,10 @@ void RenderingHelper::Initialize(const RenderingHelperParams& params,
 
   glUniform1i(glGetUniformLocation(program_, "tex_flip"), 0);
   glUniform1i(glGetUniformLocation(program_, "tex"), 0);
+  GLint tex_external = glGetUniformLocation(program_, "tex_external");
+  if (tex_external != -1) {
+    glUniform1i(tex_external, 1);
+  }
   int pos_location = glGetAttribLocation(program_, "in_pos");
   glEnableVertexAttribArray(pos_location);
   glVertexAttribPointer(pos_location, 2, GL_FLOAT, GL_FALSE, 0, kVertices);
@@ -406,32 +386,33 @@ void RenderingHelper::CreateTexture(int window_id,
                    window_id, texture_target, texture_id, done));
     return;
   }
-  CHECK_EQ(static_cast<uint32>(GL_TEXTURE_2D), texture_target);
   MakeCurrent(window_id);
   glGenTextures(1, texture_id);
-  glBindTexture(GL_TEXTURE_2D, *texture_id);
+  glBindTexture(texture_target, *texture_id);
   int dimensions_id = window_id % frame_dimensions_.size();
-  glTexImage2D(GL_TEXTURE_2D,
-               0,
-               GL_RGBA,
-               frame_dimensions_[dimensions_id].width(),
-               frame_dimensions_[dimensions_id].height(),
-               0,
-               GL_RGBA,
-               GL_UNSIGNED_BYTE,
-               NULL);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  if (texture_target == GL_TEXTURE_2D) {
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,
+                 GL_RGBA,
+                 frame_dimensions_[dimensions_id].width(),
+                 frame_dimensions_[dimensions_id].height(),
+                 0,
+                 GL_RGBA,
+                 GL_UNSIGNED_BYTE,
+                 NULL);
+  }
+  glTexParameteri(texture_target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(texture_target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   // OpenGLES2.0.25 section 3.8.2 requires CLAMP_TO_EDGE for NPOT textures.
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(texture_target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(texture_target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   CHECK_EQ(static_cast<int>(glGetError()), GL_NO_ERROR);
   CHECK(texture_id_to_surface_index_.insert(
       std::make_pair(*texture_id, window_id)).second);
   done->Signal();
 }
 
-void RenderingHelper::RenderTexture(uint32 texture_id) {
+void RenderingHelper::RenderTexture(uint32 texture_target, uint32 texture_id) {
   CHECK_EQ(base::MessageLoop::current(), message_loop_);
   size_t window_id = texture_id_to_surface_index_[texture_id];
   MakeCurrent(window_id);
@@ -460,8 +441,19 @@ void RenderingHelper::RenderTexture(uint32 texture_id) {
     glUniform1i(glGetUniformLocation(program_, "tex_flip"), 1);
   }
 
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, texture_id);
+  // Unbound texture samplers default to (0, 0, 0, 1).  Use this fact to switch
+  // between GL_TEXTURE_2D and GL_TEXTURE_EXTERNAL_OES as appopriate.
+  if (texture_target == GL_TEXTURE_2D) {
+    glActiveTexture(GL_TEXTURE0 + 0);
+    glBindTexture(GL_TEXTURE_2D, texture_id);
+    glActiveTexture(GL_TEXTURE0 + 1);
+    glBindTexture(texture_target, 0);
+  } else if (texture_target == GL_TEXTURE_EXTERNAL_OES) {
+    glActiveTexture(GL_TEXTURE0 + 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE0 + 1);
+    glBindTexture(texture_target, texture_id);
+  }
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   CHECK_EQ(static_cast<int>(glGetError()), GL_NO_ERROR);
 
@@ -473,7 +465,10 @@ void RenderingHelper::RenderTexture(uint32 texture_id) {
     glBindFramebufferEXT(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, width, height);
     glScissor(0, 0, width, height);
+    glActiveTexture(GL_TEXTURE0 + 0);
     glBindTexture(GL_TEXTURE_2D, thumbnails_texture_id_);
+    glActiveTexture(GL_TEXTURE0 + 1);
+    glBindTexture(texture_target, 0);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   }
 
@@ -488,10 +483,6 @@ void RenderingHelper::RenderTexture(uint32 texture_id) {
 void RenderingHelper::DeleteTexture(uint32 texture_id) {
   glDeleteTextures(1, &texture_id);
   CHECK_EQ(static_cast<int>(glGetError()), GL_NO_ERROR);
-}
-
-void* RenderingHelper::GetGLContext() {
-  return gl_context_;
 }
 
 void* RenderingHelper::GetGLDisplay() {
@@ -552,6 +543,7 @@ void RenderingHelper::GetThumbnailsAsRGB(std::vector<unsigned char>* rgb,
                GL_RGBA,
                GL_UNSIGNED_BYTE,
                &rgba[0]);
+  glBindFramebufferEXT(GL_FRAMEBUFFER, 0);
   rgb->resize(num_pixels * 3);
   // Drop the alpha channel, but check as we go that it is all 0xff.
   bool solid = true;

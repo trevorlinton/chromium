@@ -23,6 +23,7 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "cc/base/switches.h"
+#include "content/browser/accessibility/browser_accessibility_manager.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/cross_site_request_manager.h"
 #include "content/browser/dom_storage/session_storage_namespace_impl.h"
@@ -34,13 +35,16 @@
 #include "content/browser/host_zoom_map_impl.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/browser/renderer_host/dip_util.h"
+#include "content/browser/renderer_host/input/timeout_monitor.h"
 #include "content/browser/renderer_host/media/audio_renderer_host.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_delegate.h"
 #include "content/common/accessibility_messages.h"
 #include "content/common/browser_plugin/browser_plugin_messages.h"
+#include "content/common/content_switches_internal.h"
 #include "content/common/desktop_notification_messages.h"
 #include "content/common/drag_messages.h"
+#include "content/common/frame_messages.h"
 #include "content/common/input_messages.h"
 #include "content/common/inter_process_time_ticks_converter.h"
 #include "content/common/speech_recognition_messages.h"
@@ -48,15 +52,16 @@
 #include "content/common/view_messages.h"
 #include "content/port/browser/render_view_host_delegate_view.h"
 #include "content/port/browser/render_widget_host_view_port.h"
+#include "content/public/browser/ax_event_notification_details.h"
 #include "content/public/browser/browser_accessibility_state.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_message_filter.h"
 #include "content/public/browser/content_browser_client.h"
-#include "content/public/browser/dom_operation_notification_details.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_widget_host_iterator.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/common/bindings_policy.h"
@@ -71,11 +76,13 @@
 #include "net/base/network_change_notifier.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "ui/accessibility/ax_tree.h"
 #include "ui/base/touch/touch_device.h"
 #include "ui/base/touch/touch_enabled.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/native_widget_types.h"
+#include "ui/native_theme/native_theme_switches.h"
 #include "ui/shell_dialogs/selected_file_info.h"
 #include "webkit/browser/fileapi/isolated_context.h"
 
@@ -88,28 +95,24 @@
 #endif
 
 using base::TimeDelta;
-using WebKit::WebConsoleMessage;
-using WebKit::WebDragOperation;
-using WebKit::WebDragOperationNone;
-using WebKit::WebDragOperationsMask;
-using WebKit::WebInputEvent;
-using WebKit::WebMediaPlayerAction;
-using WebKit::WebPluginAction;
+using blink::WebConsoleMessage;
+using blink::WebDragOperation;
+using blink::WebDragOperationNone;
+using blink::WebDragOperationsMask;
+using blink::WebInputEvent;
+using blink::WebMediaPlayerAction;
+using blink::WebPluginAction;
 
 namespace content {
 namespace {
 
-// Delay to wait on closing the WebContents for a beforeunload/unload handler to
-// fire.
-const int kUnloadTimeoutMS = 1000;
-
 // Translate a WebKit text direction into a base::i18n one.
 base::i18n::TextDirection WebTextDirectionToChromeTextDirection(
-    WebKit::WebTextDirection dir) {
+    blink::WebTextDirection dir) {
   switch (dir) {
-    case WebKit::WebTextDirectionLeftToRight:
+    case blink::WebTextDirectionLeftToRight:
       return base::i18n::LEFT_TO_RIGHT;
-    case WebKit::WebTextDirectionRightToLeft:
+    case blink::WebTextDirectionRightToLeft:
       return base::i18n::RIGHT_TO_LEFT;
     default:
       NOTREACHED();
@@ -117,10 +120,46 @@ base::i18n::TextDirection WebTextDirectionToChromeTextDirection(
   }
 }
 
+#if defined(OS_WIN)
+
+const int kVirtualKeyboardDisplayWaitTimeoutMs = 100;
+const int kMaxVirtualKeyboardDisplayRetries = 5;
+
+void DismissVirtualKeyboardTask() {
+  static int virtual_keyboard_display_retries = 0;
+  // If the virtual keyboard is not yet visible, then we execute the task again
+  // waiting for it to show up.
+  if (!base::win::DismissVirtualKeyboard()) {
+    if (virtual_keyboard_display_retries < kMaxVirtualKeyboardDisplayRetries) {
+      BrowserThread::PostDelayedTask(
+          BrowserThread::UI, FROM_HERE,
+          base::Bind(base::IgnoreResult(&DismissVirtualKeyboardTask)),
+          TimeDelta::FromMilliseconds(kVirtualKeyboardDisplayWaitTimeoutMs));
+      ++virtual_keyboard_display_retries;
+    } else {
+      virtual_keyboard_display_retries = 0;
+    }
+  }
+}
+#endif
+
 }  // namespace
+
+// static
+const int RenderViewHostImpl::kUnloadTimeoutMS = 1000;
 
 ///////////////////////////////////////////////////////////////////////////////
 // RenderViewHost, public:
+
+// static
+bool RenderViewHostImpl::IsRVHStateActive(RenderViewHostImplState rvh_state) {
+  if (rvh_state == STATE_DEFAULT ||
+      rvh_state == STATE_WAITING_FOR_UNLOAD_ACK ||
+      rvh_state == STATE_WAITING_FOR_COMMIT ||
+      rvh_state == STATE_WAITING_FOR_CLOSE)
+    return true;
+  return false;
+}
 
 // static
 RenderViewHost* RenderViewHost::FromID(int render_process_id,
@@ -132,14 +171,6 @@ RenderViewHost* RenderViewHost::FromID(int render_process_id,
 RenderViewHost* RenderViewHost::From(RenderWidgetHost* rwh) {
   DCHECK(rwh->IsRenderView());
   return static_cast<RenderViewHostImpl*>(RenderWidgetHostImpl::From(rwh));
-}
-
-// static
-void RenderViewHost::FilterURL(const RenderProcessHost* process,
-                               bool empty_allowed,
-                               GURL* url) {
-  RenderViewHostImpl::FilterURL(ChildProcessSecurityPolicyImpl::GetInstance(),
-                                process, empty_allowed, url);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -167,38 +198,34 @@ RenderViewHostImpl::RenderViewHostImpl(
                            instance->GetProcess(),
                            routing_id,
                            hidden),
+      frames_ref_count_(0),
       delegate_(delegate),
       instance_(static_cast<SiteInstanceImpl*>(instance)),
       waiting_for_drag_context_response_(false),
       enabled_bindings_(0),
       navigations_suspended_(false),
       has_accessed_initial_document_(false),
-      is_swapped_out_(swapped_out),
-      is_subframe_(false),
-      main_frame_id_(-1),
+      main_frame_routing_id_(main_frame_routing_id),
       run_modal_reply_msg_(NULL),
       run_modal_opener_id_(MSG_ROUTING_NONE),
       is_waiting_for_beforeunload_ack_(false),
-      is_waiting_for_unload_ack_(false),
-      has_timed_out_on_unload_(false),
       unload_ack_is_for_cross_site_transition_(false),
       are_javascript_messages_suppressed_(false),
       sudden_termination_allowed_(false),
-      render_view_termination_status_(base::TERMINATION_STATUS_STILL_RUNNING) {
+      render_view_termination_status_(base::TERMINATION_STATUS_STILL_RUNNING),
+      virtual_keyboard_requested_(false),
+      weak_factory_(this) {
   DCHECK(instance_.get());
   CHECK(delegate_);  // http://crbug.com/82827
 
-  if (main_frame_routing_id == MSG_ROUTING_NONE)
-    main_frame_routing_id = GetProcess()->GetNextRoutingID();
-
-  main_render_frame_host_.reset(
-      new RenderFrameHostImpl(this, delegate_->GetFrameTree(),
-                              main_frame_routing_id, is_swapped_out_));
-
   GetProcess()->EnableSendQueue();
 
-  if (!swapped_out)
+  if (swapped_out) {
+    rvh_state_ = STATE_SWAPPED_OUT;
+  } else {
+    rvh_state_ = STATE_DEFAULT;
     instance_->increment_active_view_count();
+  }
 
   if (ResourceDispatcherHostImpl::Get()) {
     BrowserThread::PostTask(
@@ -211,6 +238,9 @@ RenderViewHostImpl::RenderViewHostImpl(
 #if defined(OS_ANDROID)
   media_player_manager_.reset(BrowserMediaPlayerManager::Create(this));
 #endif
+
+  unload_event_monitor_timeout_.reset(new TimeoutMonitor(base::Bind(
+      &RenderViewHostImpl::OnSwappedOut, weak_factory_.GetWeakPtr(), true)));
 }
 
 RenderViewHostImpl::~RenderViewHostImpl() {
@@ -230,7 +260,7 @@ RenderViewHostImpl::~RenderViewHostImpl() {
 
   // If this was swapped out, it already decremented the active view
   // count of the SiteInstance it belongs to.
-  if (!is_swapped_out_)
+  if (IsRVHStateActive(rvh_state_))
     instance_->decrement_active_view_count();
 }
 
@@ -243,7 +273,7 @@ SiteInstance* RenderViewHostImpl::GetSiteInstance() const {
 }
 
 bool RenderViewHostImpl::CreateRenderView(
-    const string16& frame_name,
+    const base::string16& frame_name,
     int opener_route_id,
     int32 max_page_id,
     int nw_win_id) {
@@ -275,19 +305,18 @@ bool RenderViewHostImpl::CreateRenderView(
       delegate_->GetRendererPrefs(GetProcess()->GetBrowserContext());
   params.web_preferences = delegate_->GetWebkitPrefs();
   params.view_id = GetRoutingID();
-  params.main_frame_routing_id = main_render_frame_host()->routing_id();
+  params.main_frame_routing_id = main_frame_routing_id_;
   params.surface_id = surface_id();
   params.session_storage_namespace_id =
       delegate_->GetSessionStorageNamespace(instance_)->id();
   params.frame_name = frame_name;
   // Ensure the RenderView sets its opener correctly.
   params.opener_route_id = opener_route_id;
-  params.swapped_out = is_swapped_out_;
+  params.swapped_out = !IsRVHStateActive(rvh_state_);
   params.hidden = is_hidden();
   params.next_page_id = next_page_id;
   GetWebScreenInfo(&params.screen_info);
   params.accessibility_mode = accessibility_mode();
-  params.allow_partial_swap = !GetProcess()->IsGuest();
   params.nw_win_id = nw_win_id;
 
   Send(new ViewMsg_New(params));
@@ -305,10 +334,6 @@ bool RenderViewHostImpl::CreateRenderView(
 
 bool RenderViewHostImpl::IsRenderViewLive() const {
   return GetProcess()->HasConnection() && renderer_initialized_;
-}
-
-bool RenderViewHostImpl::IsSubframe() const {
-  return is_subframe_;
 }
 
 void RenderViewHostImpl::SyncRendererPrefs() {
@@ -345,13 +370,21 @@ WebPreferences RenderViewHostImpl::GetWebkitPrefs(const GURL& url) {
       !command_line.HasSwitch(switches::kDisableLocalStorage);
   prefs.databases_enabled =
       !command_line.HasSwitch(switches::kDisableDatabases);
+#if defined(OS_ANDROID) && defined(ARCH_CPU_X86)
+  prefs.webaudio_enabled =
+      command_line.HasSwitch(switches::kEnableWebAudio);
+#else
   prefs.webaudio_enabled =
       !command_line.HasSwitch(switches::kDisableWebAudio);
+#endif
 
   prefs.experimental_webgl_enabled =
       GpuProcessHost::gpu_enabled() &&
       !command_line.HasSwitch(switches::kDisable3DAPIs) &&
       !command_line.HasSwitch(switches::kDisableExperimentalWebGL);
+
+  prefs.pepper_3d_enabled =
+      !command_line.HasSwitch(switches::kDisablePepper3d);
 
   prefs.flash_3d_enabled =
       GpuProcessHost::gpu_enabled() &&
@@ -372,31 +405,11 @@ WebPreferences RenderViewHostImpl::GetWebkitPrefs(const GURL& url) {
   prefs.allow_file_access_from_file_urls =
       command_line.HasSwitch(switches::kAllowFileAccessFromFiles);
 
-  prefs.accelerated_compositing_for_overflow_scroll_enabled = false;
-  if (command_line.HasSwitch(switches::kEnableAcceleratedOverflowScroll))
-    prefs.accelerated_compositing_for_overflow_scroll_enabled = true;
-  if (command_line.HasSwitch(switches::kDisableAcceleratedOverflowScroll))
-    prefs.accelerated_compositing_for_overflow_scroll_enabled = false;
-
-  prefs.accelerated_compositing_for_scrollable_frames_enabled = false;
-  if (command_line.HasSwitch(switches::kEnableAcceleratedScrollableFrames))
-    prefs.accelerated_compositing_for_scrollable_frames_enabled = true;
-  if (command_line.HasSwitch(switches::kDisableAcceleratedScrollableFrames))
-    prefs.accelerated_compositing_for_scrollable_frames_enabled = false;
-
-  prefs.composited_scrolling_for_frames_enabled = false;
-  if (command_line.HasSwitch(switches::kEnableCompositedScrollingForFrames))
-    prefs.composited_scrolling_for_frames_enabled = true;
-  if (command_line.HasSwitch(switches::kDisableCompositedScrollingForFrames))
-    prefs.composited_scrolling_for_frames_enabled = false;
-
-  prefs.universal_accelerated_compositing_for_overflow_scroll_enabled = false;
-  if (command_line.HasSwitch(
-          switches::kEnableUniversalAcceleratedOverflowScroll))
-    prefs.universal_accelerated_compositing_for_overflow_scroll_enabled = true;
-  if (command_line.HasSwitch(
-          switches::kDisableUniversalAcceleratedOverflowScroll))
-    prefs.universal_accelerated_compositing_for_overflow_scroll_enabled = false;
+  prefs.layer_squashing_enabled = false;
+  if (command_line.HasSwitch(switches::kEnableLayerSquashing))
+      prefs.layer_squashing_enabled = true;
+  if (command_line.HasSwitch(switches::kDisableLayerSquashing))
+      prefs.layer_squashing_enabled = false;
 
   prefs.show_paint_rects =
       command_line.HasSwitch(switches::kShowPaintRects);
@@ -414,18 +427,14 @@ WebPreferences RenderViewHostImpl::GetWebkitPrefs(const GURL& url) {
   prefs.accelerated_2d_canvas_msaa_sample_count =
       atoi(command_line.GetSwitchValueASCII(
       switches::kAcceleratedCanvas2dMSAASampleCount).c_str());
-  prefs.accelerated_filters_enabled =
-      GpuProcessHost::gpu_enabled() &&
-      command_line.HasSwitch(switches::kEnableAcceleratedFilters);
+  prefs.deferred_filters_enabled =
+      command_line.HasSwitch(switches::kEnableDeferredFilters);
   prefs.accelerated_compositing_for_3d_transforms_enabled =
       prefs.accelerated_compositing_for_animation_enabled =
           !command_line.HasSwitch(switches::kDisableAcceleratedLayers);
-  prefs.accelerated_compositing_for_plugins_enabled =
-      !command_line.HasSwitch(switches::kDisableAcceleratedPlugins);
+  prefs.accelerated_compositing_for_plugins_enabled = true;
   prefs.accelerated_compositing_for_video_enabled =
       !command_line.HasSwitch(switches::kDisableAcceleratedVideo);
-  prefs.fullscreen_enabled =
-      !command_line.HasSwitch(switches::kDisableFullScreen);
   prefs.lazy_layout_enabled =
       command_line.HasSwitch(switches::kEnableExperimentalWebPlatformFeatures);
   prefs.region_based_columns_enabled =
@@ -438,8 +447,7 @@ WebPreferences RenderViewHostImpl::GetWebkitPrefs(const GURL& url) {
     prefs.pinch_virtual_viewport_enabled = true;
     prefs.pinch_overlay_scrollbar_thickness = 10;
   }
-  prefs.use_solid_color_scrollbars = command_line.HasSwitch(
-      switches::kEnableOverlayScrollbars);
+  prefs.use_solid_color_scrollbars = ui::IsOverlayScrollbarEnabled();
 
 #if defined(OS_ANDROID)
   prefs.user_gesture_required_for_media_playback = !command_line.HasSwitch(
@@ -460,7 +468,10 @@ WebPreferences RenderViewHostImpl::GetWebkitPrefs(const GURL& url) {
   prefs.touch_adjustment_enabled =
       !command_line.HasSwitch(switches::kDisableTouchAdjustment);
   prefs.compositor_touch_hit_testing =
-      !command_line.HasSwitch(cc::switches::kDisableCompositorTouchHitTesting);
+      !command_line.HasSwitch(
+           cc::switches::kDisableCompositorTouchHitTesting) &&
+      !command_line.HasSwitch(switches::kEnableBleedingEdgeRenderingFastPaths);
+
 
 #if defined(OS_MACOSX) || defined(OS_CHROMEOS)
   bool default_enable_scroll_animator = true;
@@ -487,36 +498,27 @@ WebPreferences RenderViewHostImpl::GetWebkitPrefs(const GURL& url) {
 
   prefs.is_online = !net::NetworkChangeNotifier::IsOffline();
 
-#if !defined(USE_AURA)
-  // Force accelerated compositing and 2d canvas off for chrome: and about:
-  // pages (unless it's specifically allowed).
-  if ((url.SchemeIs(chrome::kChromeUIScheme) ||
-      (url.SchemeIs(chrome::kAboutScheme) &&
-       url.spec() != kAboutBlankURL)) &&
-      !command_line.HasSwitch(switches::kAllowWebUICompositing)) {
-    prefs.accelerated_compositing_enabled = false;
-    prefs.accelerated_2d_canvas_enabled = false;
-  }
-#endif
-
   prefs.fixed_position_creates_stacking_context = !command_line.HasSwitch(
       switches::kDisableFixedPositionCreatesStackingContext);
 
-#if defined(OS_CHROMEOS)
   prefs.gesture_tap_highlight_enabled = !command_line.HasSwitch(
       switches::kDisableGestureTapHighlight);
-#else
-  prefs.gesture_tap_highlight_enabled = command_line.HasSwitch(
-      switches::kEnableGestureTapHighlight);
-#endif
 
   prefs.number_of_cpu_cores = base::SysInfo::NumberOfProcessors();
 
-  prefs.viewport_enabled = command_line.HasSwitch(switches::kEnableViewport);
+  prefs.viewport_meta_enabled =
+      command_line.HasSwitch(switches::kEnableViewportMeta);
+
+  prefs.viewport_enabled =
+      command_line.HasSwitch(switches::kEnableViewport) ||
+      prefs.viewport_meta_enabled;
+
+  prefs.main_frame_resizes_are_orientation_changes =
+      command_line.HasSwitch(switches::kMainFrameResizesAreOrientationChanges);
 
   prefs.deferred_image_decoding_enabled =
       command_line.HasSwitch(switches::kEnableDeferredImageDecoding) ||
-      cc::switches::IsImplSidePaintingEnabled();
+      content::IsImplSidePaintingEnabled();
 
   prefs.spatial_navigation_enabled = command_line.HasSwitch(
       switches::kEnableSpatialNavigation);
@@ -535,64 +537,13 @@ WebPreferences RenderViewHostImpl::GetWebkitPrefs(const GURL& url) {
   return prefs;
 }
 
-void RenderViewHostImpl::Navigate(const ViewMsg_Navigate_Params& params) {
+void RenderViewHostImpl::Navigate(const FrameMsg_Navigate_Params& params) {
   TRACE_EVENT0("renderer_host", "RenderViewHostImpl::Navigate");
-  // Browser plugin guests are not allowed to navigate outside web-safe schemes,
-  // so do not grant them the ability to request additional URLs.
-  if (!GetProcess()->IsGuest()) {
-    ChildProcessSecurityPolicyImpl::GetInstance()->GrantRequestURL(
-        GetProcess()->GetID(), params.url);
-    if (params.url.SchemeIs(chrome::kDataScheme) &&
-        params.base_url_for_data_url.SchemeIs(chrome::kFileScheme)) {
-      // If 'data:' is used, and we have a 'file:' base url, grant access to
-      // local files.
-      ChildProcessSecurityPolicyImpl::GetInstance()->GrantRequestURL(
-          GetProcess()->GetID(), params.base_url_for_data_url);
-    }
-  }
-
-  // Only send the message if we aren't suspended at the start of a cross-site
-  // request.
-  if (navigations_suspended_) {
-    // Shouldn't be possible to have a second navigation while suspended, since
-    // navigations will only be suspended during a cross-site request.  If a
-    // second navigation occurs, WebContentsImpl will cancel this pending RVH
-    // create a new pending RVH.
-    DCHECK(!suspended_nav_params_.get());
-    suspended_nav_params_.reset(new ViewMsg_Navigate_Params(params));
-  } else {
-    // Get back to a clean state, in case we start a new navigation without
-    // completing a RVH swap or unload handler.
-    SetSwappedOut(false);
-
-    Send(new ViewMsg_Navigate(GetRoutingID(), params));
-  }
-
-  // Force the throbber to start. We do this because WebKit's "started
-  // loading" message will be received asynchronously from the UI of the
-  // browser. But we want to keep the throbber in sync with what's happening
-  // in the UI. For example, we want to start throbbing immediately when the
-  // user naivgates even if the renderer is delayed. There is also an issue
-  // with the throbber starting because the WebUI (which controls whether the
-  // favicon is displayed) happens synchronously. If the start loading
-  // messages was asynchronous, then the default favicon would flash in.
-  //
-  // WebKit doesn't send throb notifications for JavaScript URLs, so we
-  // don't want to either.
-  if (!params.url.SchemeIs(kJavaScriptScheme))
-    delegate_->DidStartLoading(this);
+  delegate_->GetFrameTree()->GetMainFrame()->Navigate(params);
 }
 
 void RenderViewHostImpl::NavigateToURL(const GURL& url) {
-  ViewMsg_Navigate_Params params;
-  params.page_id = -1;
-  params.pending_history_list_offset = -1;
-  params.current_history_list_offset = -1;
-  params.current_history_list_length = 0;
-  params.url = url;
-  params.transition = PAGE_TRANSITION_LINK;
-  params.navigation_type = ViewMsg_Navigate_Type::NORMAL;
-  Navigate(params);
+  delegate_->GetFrameTree()->GetMainFrame()->NavigateToURL(url);
 }
 
 void RenderViewHostImpl::SetNavigationsSuspended(
@@ -606,11 +557,12 @@ void RenderViewHostImpl::SetNavigationsSuspended(
     // There's navigation message params waiting to be sent.  Now that we're not
     // suspended anymore, resume navigation by sending them.  If we were swapped
     // out, we should also stop filtering out the IPC messages now.
-    SetSwappedOut(false);
+    SetState(STATE_DEFAULT);
 
     DCHECK(!proceed_time.is_null());
     suspended_nav_params_->browser_navigation_start = proceed_time;
-    Send(new ViewMsg_Navigate(GetRoutingID(), *suspended_nav_params_.get()));
+    Send(new FrameMsg_Navigate(
+        main_frame_routing_id_, *suspended_nav_params_.get()));
     suspended_nav_params_.reset();
   }
 }
@@ -622,97 +574,16 @@ void RenderViewHostImpl::CancelSuspendedNavigations() {
   navigations_suspended_ = false;
 }
 
-void RenderViewHostImpl::FirePageBeforeUnload(bool for_cross_site_transition) {
-  if (!IsRenderViewLive()) {
-    // This RenderViewHostImpl doesn't have a live renderer, so just
-    // skip running the onbeforeunload handler.
-    is_waiting_for_beforeunload_ack_ = true;  // Checked by OnShouldCloseACK.
-    unload_ack_is_for_cross_site_transition_ = for_cross_site_transition;
-    base::TimeTicks now = base::TimeTicks::Now();
-    OnShouldCloseACK(true, now, now);
-    return;
-  }
-
-  // This may be called more than once (if the user clicks the tab close button
-  // several times, or if she clicks the tab close button then the browser close
-  // button), and we only send the message once.
-  if (is_waiting_for_beforeunload_ack_) {
-    // Some of our close messages could be for the tab, others for cross-site
-    // transitions. We always want to think it's for closing the tab if any
-    // of the messages were, since otherwise it might be impossible to close
-    // (if there was a cross-site "close" request pending when the user clicked
-    // the close button). We want to keep the "for cross site" flag only if
-    // both the old and the new ones are also for cross site.
-    unload_ack_is_for_cross_site_transition_ =
-        unload_ack_is_for_cross_site_transition_ && for_cross_site_transition;
-  } else {
-    // Start the hang monitor in case the renderer hangs in the beforeunload
-    // handler.
-    is_waiting_for_beforeunload_ack_ = true;
-    unload_ack_is_for_cross_site_transition_ = for_cross_site_transition;
-    // Increment the in-flight event count, to ensure that input events won't
-    // cancel the timeout timer.
-    increment_in_flight_event_count();
-    StartHangMonitorTimeout(TimeDelta::FromMilliseconds(kUnloadTimeoutMS));
-    send_should_close_start_time_ = base::TimeTicks::Now();
-    Send(new ViewMsg_ShouldClose(GetRoutingID()));
-  }
-}
-
-void RenderViewHostImpl::SwapOut() {
-  // This will be set back to false in OnSwapOutACK, just before we replace
-  // this RVH with the pending RVH.
-  is_waiting_for_unload_ack_ = true;
-  // Start the hang monitor in case the renderer hangs in the unload handler.
-  // Increment the in-flight event count, to ensure that input events won't
-  // cancel the timeout timer.
-  increment_in_flight_event_count();
-  StartHangMonitorTimeout(TimeDelta::FromMilliseconds(kUnloadTimeoutMS));
-
-  if (IsRenderViewLive()) {
-    Send(new ViewMsg_SwapOut(GetRoutingID()));
-  } else {
-    // This RenderViewHost doesn't have a live renderer, so just skip the unload
-    // event.
-    OnSwappedOut(true);
-  }
-}
-
-void RenderViewHostImpl::OnSwapOutACK() {
-  OnSwappedOut(false);
+void RenderViewHostImpl::SuppressDialogsUntilSwapOut() {
+  Send(new ViewMsg_SuppressDialogsUntilSwapOut(GetRoutingID()));
 }
 
 void RenderViewHostImpl::OnSwappedOut(bool timed_out) {
-  // Stop the hang monitor now that the unload handler has finished.
-  decrement_in_flight_event_count();
-  StopHangMonitorTimeout();
-  is_waiting_for_unload_ack_ = false;
-  has_timed_out_on_unload_ = timed_out;
-  delegate_->SwappedOut(this);
-}
-
-void RenderViewHostImpl::WasSwappedOut() {
-  // Don't bother reporting hung state anymore.
-  StopHangMonitorTimeout();
-
-  // If we have timed out on running the unload handler, we consider
-  // the process hung and we should terminate it if there are no other tabs
-  // using the process. If there are other views using this process, the
-  // unresponsive renderer timeout will catch it.
-  bool hung = has_timed_out_on_unload_;
-
-  // Now that we're no longer the active RVH in the tab, start filtering out
-  // most IPC messages.  Usually the renderer will have stopped sending
-  // messages as of OnSwapOutACK.  However, we may have timed out waiting
-  // for that message, and additional IPC messages may keep streaming in.
-  // We filter them out, as long as that won't cause problems (e.g., we
-  // still allow synchronous messages through).
-  SetSwappedOut(true);
-
-  // If we are not running the renderer in process and no other tab is using
-  // the hung process, consider it eligible to be killed, assuming it is a real
-  // process (unit tests don't have real processes).
-  if (hung) {
+  // Ignore spurious swap out ack.
+  if (!IsWaitingForUnloadACK())
+    return;
+  unload_event_monitor_timeout_->Stop();
+  if (timed_out) {
     base::ProcessHandle process_handle = GetProcess()->GetHandle();
     int views = 0;
 
@@ -749,13 +620,49 @@ void RenderViewHostImpl::WasSwappedOut() {
     }
   }
 
-  // Inform the renderer that it can exit if no one else is using it.
+  switch (rvh_state_) {
+    case STATE_WAITING_FOR_UNLOAD_ACK:
+      SetState(STATE_WAITING_FOR_COMMIT);
+      break;
+    case STATE_PENDING_SWAP_OUT:
+      SetState(STATE_SWAPPED_OUT);
+      break;
+    case STATE_PENDING_SHUTDOWN:
+      DCHECK(!pending_shutdown_on_swap_out_.is_null());
+      pending_shutdown_on_swap_out_.Run();
+      break;
+    default:
+      NOTREACHED();
+  }
+}
+
+void RenderViewHostImpl::WasSwappedOut(
+    const base::Closure& pending_delete_on_swap_out) {
   Send(new ViewMsg_WasSwappedOut(GetRoutingID()));
+  if (rvh_state_ == STATE_WAITING_FOR_UNLOAD_ACK) {
+    SetState(STATE_PENDING_SWAP_OUT);
+    if (!instance_->active_view_count())
+      SetPendingShutdown(pending_delete_on_swap_out);
+  } else if (rvh_state_ == STATE_WAITING_FOR_COMMIT) {
+    SetState(STATE_SWAPPED_OUT);
+  } else if (rvh_state_ == STATE_DEFAULT) {
+    // When the RenderView is not live, the RenderFrameHostManager will call
+    // CommitPending directly, without calling SwapOut on the old RVH. This will
+    // cause WasSwappedOut to be called directly on the live old RVH.
+    DCHECK(!IsRenderViewLive());
+    SetState(STATE_SWAPPED_OUT);
+  } else {
+    NOTREACHED();
+  }
+}
+
+void RenderViewHostImpl::SetPendingShutdown(const base::Closure& on_swap_out) {
+  pending_shutdown_on_swap_out_ = on_swap_out;
+  SetState(STATE_PENDING_SHUTDOWN);
 }
 
 void RenderViewHostImpl::ClosePage() {
-  // Start the hang monitor in case the renderer hangs in the unload handler.
-  is_waiting_for_unload_ack_ = true;
+  SetState(STATE_WAITING_FOR_CLOSE);
   StartHangMonitorTimeout(TimeDelta::FromMilliseconds(kUnloadTimeoutMS));
 
   if (IsRenderViewLive()) {
@@ -782,7 +689,6 @@ void RenderViewHostImpl::ClosePage() {
 void RenderViewHostImpl::ClosePageIgnoringUnloadEvents() {
   StopHangMonitorTimeout();
   is_waiting_for_beforeunload_ack_ = false;
-  is_waiting_for_unload_ack_ = false;
 
   sudden_termination_allowed_ = true;
   delegate_->Close(this);
@@ -816,6 +722,26 @@ void RenderViewHostImpl::DisableFullscreenEncryptedMediaPlayback() {
 }
 #endif
 
+#if defined(USE_MOJO)
+void RenderViewHostImpl::SetWebUIHandle(mojo::ScopedMessagePipeHandle handle) {
+  // Never grant any bindings to browser plugin guests.
+  if (GetProcess()->IsGuest()) {
+    NOTREACHED() << "Never grant bindings to a guest process.";
+    return;
+  }
+
+  if ((enabled_bindings_ & BINDINGS_POLICY_WEB_UI) == 0) {
+    NOTREACHED() << "You must grant bindings before setting the handle";
+    return;
+  }
+
+  DCHECK(renderer_initialized_);
+  RenderProcessHostImpl* process =
+      static_cast<RenderProcessHostImpl*>(GetProcess());
+  process->SetWebUIHandle(GetRoutingID(), handle.Pass());
+}
+#endif
+
 void RenderViewHostImpl::DragTargetDragEnter(
     const DropData& drop_data,
     const gfx::Point& client_pt,
@@ -829,33 +755,35 @@ void RenderViewHostImpl::DragTargetDragEnter(
   // The URL could have been cobbled together from any highlighted text string,
   // and can't be interpreted as a capability.
   DropData filtered_data(drop_data);
-  FilterURL(policy, GetProcess(), true, &filtered_data.url);
+  GetProcess()->FilterURL(true, &filtered_data.url);
+  if (drop_data.did_originate_from_renderer) {
+    filtered_data.filenames.clear();
+  }
 
   // The filenames vector, on the other hand, does represent a capability to
   // access the given files.
   fileapi::IsolatedContext::FileInfoSet files;
-  for (std::vector<DropData::FileInfo>::iterator iter(
+  for (std::vector<ui::FileInfo>::iterator iter(
            filtered_data.filenames.begin());
-       iter != filtered_data.filenames.end(); ++iter) {
+       iter != filtered_data.filenames.end();
+       ++iter) {
     // A dragged file may wind up as the value of an input element, or it
     // may be used as the target of a navigation instead.  We don't know
     // which will happen at this point, so generously grant both access
     // and request permissions to the specific file to cover both cases.
     // We do not give it the permission to request all file:// URLs.
-    base::FilePath path =
-        base::FilePath::FromUTF8Unsafe(UTF16ToUTF8(iter->path));
 
     // Make sure we have the same display_name as the one we register.
     if (iter->display_name.empty()) {
       std::string name;
-      files.AddPath(path, &name);
-      iter->display_name = UTF8ToUTF16(name);
+      files.AddPath(iter->path, &name);
+      iter->display_name = base::FilePath::FromUTF8Unsafe(name);
     } else {
-      files.AddPathWithName(path, UTF16ToUTF8(iter->display_name));
+      files.AddPathWithName(iter->path, iter->display_name.AsUTF8Unsafe());
     }
 
     policy->GrantRequestSpecificFileURL(renderer_id,
-                                        net::FilePathToFileURL(path));
+                                        net::FilePathToFileURL(iter->path));
 
     // If the renderer already has permission to read these paths, we don't need
     // to re-grant them. This prevents problems with DnD for files in the CrOS
@@ -863,8 +791,8 @@ void RenderViewHostImpl::DragTargetDragEnter(
     // directories, but dragging a file would cause the read/write access to be
     // overwritten with read-only access, making them impossible to delete or
     // rename until the renderer was killed.
-    if (!policy->CanReadFile(renderer_id, path))
-      policy->GrantReadFile(renderer_id, path);
+    if (!policy->CanReadFile(renderer_id, iter->path))
+      policy->GrantReadFile(renderer_id, iter->path);
   }
 
   fileapi::IsolatedContext* isolated_context =
@@ -876,7 +804,7 @@ void RenderViewHostImpl::DragTargetDragEnter(
     // Grant the permission iff the ID is valid.
     policy->GrantReadFileSystem(renderer_id, filesystem_id);
   }
-  filtered_data.filesystem_id = UTF8ToUTF16(filesystem_id);
+  filtered_data.filesystem_id = base::UTF8ToUTF16(filesystem_id);
 
   Send(new DragMsg_TargetDragEnter(GetRoutingID(), filtered_data, client_pt,
                                    screen_pt, operations_allowed,
@@ -915,8 +843,9 @@ void RenderViewHostImpl::DesktopNotificationPostDisplay(int callback_context) {
                                               callback_context));
 }
 
-void RenderViewHostImpl::DesktopNotificationPostError(int notification_id,
-                                                      const string16& message) {
+void RenderViewHostImpl::DesktopNotificationPostError(
+    int notification_id,
+    const base::string16& message) {
   Send(new DesktopNotificationMsg_PostError(
       GetRoutingID(), notification_id, message));
 }
@@ -932,15 +861,15 @@ void RenderViewHostImpl::DesktopNotificationPostClick(int notification_id) {
 }
 
 void RenderViewHostImpl::ExecuteJavascriptInWebFrame(
-    const string16& frame_xpath,
-    const string16& jscript) {
+    const base::string16& frame_xpath,
+    const base::string16& jscript) {
   Send(new ViewMsg_ScriptEvalRequest(GetRoutingID(), frame_xpath, jscript,
                                      0, false));
 }
 
 void RenderViewHostImpl::ExecuteJavascriptInWebFrameCallbackResult(
-     const string16& frame_xpath,
-     const string16& jscript,
+     const base::string16& frame_xpath,
+     const base::string16& jscript,
      const JavascriptResultCallback& callback) {
   static int next_id = 1;
   int key = next_id++;
@@ -949,12 +878,12 @@ void RenderViewHostImpl::ExecuteJavascriptInWebFrameCallbackResult(
   javascript_callbacks_.insert(std::make_pair(key, callback));
 }
 
-void RenderViewHostImpl::JavaScriptDialogClosed(IPC::Message* reply_msg,
-                                                bool success,
-                                                const string16& user_input) {
+void RenderViewHostImpl::JavaScriptDialogClosed(
+    IPC::Message* reply_msg,
+    bool success,
+    const base::string16& user_input) {
   GetProcess()->SetIgnoreInputEvents(false);
-  bool is_waiting =
-      is_waiting_for_beforeunload_ack_ || is_waiting_for_unload_ack_;
+  bool is_waiting = is_waiting_for_beforeunload_ack_ || IsWaitingForUnloadACK();
 
   // If we are executing as part of (before)unload event handling, we don't
   // want to use the regular hung_renderer_delay_ms_ if the user has agreed to
@@ -977,7 +906,7 @@ void RenderViewHostImpl::JavaScriptDialogClosed(IPC::Message* reply_msg,
   // correctly while waiting for a response.
   if (is_waiting && are_javascript_messages_suppressed_)
     delegate_->RendererUnresponsive(
-        this, is_waiting_for_beforeunload_ack_, is_waiting_for_unload_ack_);
+        this, is_waiting_for_beforeunload_ack_, IsWaitingForUnloadACK());
 }
 
 void RenderViewHostImpl::DragSourceEndedAt(
@@ -1001,6 +930,10 @@ void RenderViewHostImpl::DragSourceMovedTo(
 
 void RenderViewHostImpl::DragSourceSystemDragEnded() {
   Send(new DragMsg_SourceSystemDragEnded(GetRoutingID()));
+}
+
+RenderFrameHost* RenderViewHostImpl::GetMainFrame() {
+  return RenderFrameHost::FromID(GetProcess()->GetID(), main_frame_routing_id_);
 }
 
 void RenderViewHostImpl::AllowBindings(int bindings_flags) {
@@ -1047,7 +980,8 @@ void RenderViewHostImpl::SetWebUIProperty(const std::string& name,
   if (enabled_bindings_ & BINDINGS_POLICY_WEB_UI) {
     Send(new ViewMsg_SetWebUIProperty(GetRoutingID(), name, value));
   } else {
-    RecordAction(UserMetricsAction("BindingsMismatchTerminate_RVH_WebUI"));
+    RecordAction(
+        base::UserMetricsAction("BindingsMismatchTerminate_RVH_WebUI"));
     base::KillProcess(
         GetProcess()->GetHandle(), content::RESULT_CODE_KILLED, false);
   }
@@ -1128,7 +1062,7 @@ bool RenderViewHostImpl::OnMessageReceived(const IPC::Message& msg) {
 
   // Filter out most IPC messages if this renderer is swapped out.
   // We still want to handle certain ACKs to keep our state consistent.
-  if (is_swapped_out_) {
+  if (IsSwappedOut()) {
     if (!SwappedOutMessages::CanHandleWhileSwappedOut(msg)) {
       // If this is a synchronous message and we decided not to handle it,
       // we must send an error reply, or else the renderer will be stuck
@@ -1146,10 +1080,6 @@ bool RenderViewHostImpl::OnMessageReceived(const IPC::Message& msg) {
   if (delegate_->OnMessageReceived(this, msg))
     return true;
 
-  // TODO(jochen): Consider removing message handlers that only add a this
-  // pointer and forward the messages to the RenderViewHostDelegate. The
-  // respective delegates can handle the messages themselves in their
-  // OnMessageReceived implementation.
   bool handled = true;
   bool msg_is_ok = true;
   IPC_BEGIN_MESSAGE_MAP_EX(RenderViewHostImpl, msg, msg_is_ok)
@@ -1160,11 +1090,6 @@ bool RenderViewHostImpl::OnMessageReceived(const IPC::Message& msg) {
     IPC_MESSAGE_HANDLER_DELAY_REPLY(ViewHostMsg_RunModal, OnRunModal)
     IPC_MESSAGE_HANDLER(ViewHostMsg_RenderViewReady, OnRenderViewReady)
     IPC_MESSAGE_HANDLER(ViewHostMsg_RenderProcessGone, OnRenderProcessGone)
-    IPC_MESSAGE_HANDLER(ViewHostMsg_DidRedirectProvisionalLoad,
-                        OnDidRedirectProvisionalLoad)
-    IPC_MESSAGE_HANDLER(ViewHostMsg_DidFailProvisionalLoadWithError,
-                        OnDidFailProvisionalLoadWithError)
-    IPC_MESSAGE_HANDLER_GENERIC(ViewHostMsg_FrameNavigate, OnNavigate(msg))
     IPC_MESSAGE_HANDLER(ViewHostMsg_UpdateState, OnUpdateState)
     IPC_MESSAGE_HANDLER(ViewHostMsg_UpdateTitle, OnUpdateTitle)
     IPC_MESSAGE_HANDLER(ViewHostMsg_UpdateEncoding, OnUpdateEncoding)
@@ -1173,8 +1098,6 @@ bool RenderViewHostImpl::OnMessageReceived(const IPC::Message& msg) {
                         OnUpdateInspectorSetting)
     IPC_MESSAGE_HANDLER(ViewHostMsg_Close, OnClose)
     IPC_MESSAGE_HANDLER(ViewHostMsg_RequestMove, OnRequestMove)
-    IPC_MESSAGE_HANDLER(ViewHostMsg_DidStartLoading, OnDidStartLoading)
-    IPC_MESSAGE_HANDLER(ViewHostMsg_DidStopLoading, OnDidStopLoading)
     IPC_MESSAGE_HANDLER(ViewHostMsg_DidChangeLoadProgress,
                         OnDidChangeLoadProgress)
     IPC_MESSAGE_HANDLER(ViewHostMsg_DidDisownOpener, OnDidDisownOpener)
@@ -1182,9 +1105,7 @@ bool RenderViewHostImpl::OnMessageReceived(const IPC::Message& msg) {
                         OnDocumentAvailableInMainFrame)
     IPC_MESSAGE_HANDLER(ViewHostMsg_DocumentOnLoadCompletedInMainFrame,
                         OnDocumentOnLoadCompletedInMainFrame)
-    IPC_MESSAGE_HANDLER(ViewHostMsg_ContextMenu, OnContextMenu)
     IPC_MESSAGE_HANDLER(ViewHostMsg_ToggleFullscreen, OnToggleFullscreen)
-    IPC_MESSAGE_HANDLER(ViewHostMsg_OpenURL, OnOpenURL)
     IPC_MESSAGE_HANDLER(ViewHostMsg_DidContentsPreferredSizeChange,
                         OnDidContentsPreferredSizeChange)
     IPC_MESSAGE_HANDLER(ViewHostMsg_DidChangeScrollOffset,
@@ -1208,12 +1129,11 @@ bool RenderViewHostImpl::OnMessageReceived(const IPC::Message& msg) {
     IPC_MESSAGE_HANDLER(ViewHostMsg_TakeFocus, OnTakeFocus)
     IPC_MESSAGE_HANDLER(ViewHostMsg_FocusedNodeChanged, OnFocusedNodeChanged)
     IPC_MESSAGE_HANDLER(ViewHostMsg_AddMessageToConsole, OnAddMessageToConsole)
-    IPC_MESSAGE_HANDLER(ViewHostMsg_ShouldClose_ACK, OnShouldCloseACK)
     IPC_MESSAGE_HANDLER(ViewHostMsg_ClosePage_ACK, OnClosePageACK)
-    IPC_MESSAGE_HANDLER(ViewHostMsg_SwapOut_ACK, OnSwapOutACK)
-    IPC_MESSAGE_HANDLER(ViewHostMsg_SelectionChanged, OnSelectionChanged)
-    IPC_MESSAGE_HANDLER(ViewHostMsg_SelectionBoundsChanged,
-                        OnSelectionBoundsChanged)
+#if defined(OS_ANDROID)
+    IPC_MESSAGE_HANDLER(ViewHostMsg_SelectionRootBoundsChanged,
+                        OnSelectionRootBoundsChanged)
+#endif
     IPC_MESSAGE_HANDLER(ViewHostMsg_ScriptEvalResponse, OnScriptEvalResponse)
     IPC_MESSAGE_HANDLER(ViewHostMsg_DidZoomURL, OnDidZoomURL)
     IPC_MESSAGE_HANDLER(DesktopNotificationHostMsg_RequestPermission,
@@ -1224,13 +1144,14 @@ bool RenderViewHostImpl::OnMessageReceived(const IPC::Message& msg) {
                         OnCancelDesktopNotification)
 #if defined(OS_MACOSX) || defined(OS_ANDROID)
     IPC_MESSAGE_HANDLER(ViewHostMsg_ShowPopup, OnShowPopup)
+    IPC_MESSAGE_HANDLER(ViewHostMsg_HidePopup, OnHidePopup)
 #endif
     IPC_MESSAGE_HANDLER(ViewHostMsg_RunFileChooser, OnRunFileChooser)
     IPC_MESSAGE_HANDLER(ViewHostMsg_DidAccessInitialDocument,
                         OnDidAccessInitialDocument)
-    IPC_MESSAGE_HANDLER(ViewHostMsg_DomOperationResponse,
-                        OnDomOperationResponse)
     IPC_MESSAGE_HANDLER(AccessibilityHostMsg_Events, OnAccessibilityEvents)
+    IPC_MESSAGE_HANDLER(AccessibilityHostMsg_LocationChanges,
+                        OnAccessibilityLocationChanges)
     IPC_MESSAGE_HANDLER(ViewHostMsg_FocusedNodeTouched, OnFocusedNodeTouched)
     IPC_MESSAGE_HANDLER(ViewHostMsg_GrantUniversalPermissions, OnGrantUniversalPermissions)
     // Have the super handle all other messages.
@@ -1241,7 +1162,7 @@ bool RenderViewHostImpl::OnMessageReceived(const IPC::Message& msg) {
   if (!msg_is_ok) {
     // The message had a handler, but its de-serialization failed.
     // Kill the renderer.
-    RecordAction(UserMetricsAction("BadMessageTerminate_RVH"));
+    RecordAction(base::UserMetricsAction("BadMessageTerminate_RVH"));
     GetProcess()->ReceivedBadMessage();
   }
 
@@ -1250,7 +1171,6 @@ bool RenderViewHostImpl::OnMessageReceived(const IPC::Message& msg) {
 
 void RenderViewHostImpl::Init() {
   RenderWidgetHostImpl::Init();
-  main_render_frame_host()->Init();
 }
 
 void RenderViewHostImpl::Shutdown() {
@@ -1282,31 +1202,29 @@ void RenderViewHostImpl::CreateNewWindow(
     const ViewHostMsg_CreateWindow_Params& params,
     SessionStorageNamespace* session_storage_namespace) {
   ViewHostMsg_CreateWindow_Params validated_params(params);
-  ChildProcessSecurityPolicyImpl* policy =
-      ChildProcessSecurityPolicyImpl::GetInstance();
-  FilterURL(policy, GetProcess(), false, &validated_params.target_url);
-  FilterURL(policy, GetProcess(), false, &validated_params.opener_url);
-  FilterURL(policy, GetProcess(), true,
-            &validated_params.opener_security_origin);
+  GetProcess()->FilterURL(false, &validated_params.target_url);
+  GetProcess()->FilterURL(false, &validated_params.opener_url);
+  GetProcess()->FilterURL(true, &validated_params.opener_security_origin);
 
-  delegate_->CreateNewWindow(route_id, main_frame_route_id,
-                             validated_params, session_storage_namespace);
+  delegate_->CreateNewWindow(
+      GetProcess()->GetID(), route_id, main_frame_route_id, validated_params,
+      session_storage_namespace);
 }
 
 void RenderViewHostImpl::CreateNewWidget(int route_id,
-                                     WebKit::WebPopupType popup_type) {
-  delegate_->CreateNewWidget(route_id, popup_type);
+                                     blink::WebPopupType popup_type) {
+  delegate_->CreateNewWidget(GetProcess()->GetID(), route_id, popup_type);
 }
 
 void RenderViewHostImpl::CreateNewFullscreenWidget(int route_id) {
-  delegate_->CreateNewFullscreenWidget(route_id);
+  delegate_->CreateNewFullscreenWidget(GetProcess()->GetID(), route_id);
 }
 
 void RenderViewHostImpl::OnShowView(int route_id,
                                     WindowOpenDisposition disposition,
                                     const gfx::Rect& initial_pos,
                                     bool user_gesture) {
-  if (!is_swapped_out_) {
+  if (IsRVHStateActive(rvh_state_)) {
     delegate_->ShowCreatedWindow(
         route_id, disposition, initial_pos, user_gesture);
   }
@@ -1315,13 +1233,13 @@ void RenderViewHostImpl::OnShowView(int route_id,
 
 void RenderViewHostImpl::OnShowWidget(int route_id,
                                       const gfx::Rect& initial_pos) {
-  if (!is_swapped_out_)
+  if (IsRVHStateActive(rvh_state_))
     delegate_->ShowCreatedWidget(route_id, initial_pos);
   Send(new ViewMsg_Move_ACK(route_id));
 }
 
 void RenderViewHostImpl::OnShowFullscreenWidget(int route_id) {
-  if (!is_swapped_out_)
+  if (IsRVHStateActive(rvh_state_))
     delegate_->ShowCreatedFullscreenWidget(route_id);
   Send(new ViewMsg_Move_ACK(route_id));
 }
@@ -1331,7 +1249,7 @@ void RenderViewHostImpl::OnRunModal(int opener_id, IPC::Message* reply_msg) {
   run_modal_reply_msg_ = reply_msg;
   run_modal_opener_id_ = opener_id;
 
-  RecordAction(UserMetricsAction("ShowModalDialog"));
+  RecordAction(base::UserMetricsAction("ShowModalDialog"));
 
   RenderViewHostImpl* opener =
       RenderViewHostImpl::FromID(GetProcess()->GetID(), run_modal_opener_id_);
@@ -1359,8 +1277,10 @@ void RenderViewHostImpl::OnRenderProcessGone(int status, int exit_code) {
   render_view_termination_status_ =
       static_cast<base::TerminationStatus>(status);
 
-  // Reset state.
-  main_frame_id_ = -1;
+  // Reset frame tree state associated with this process.  This must happen
+  // before RenderViewTerminated because observers expect the subframes of any
+  // affected frames to be cleared first.
+  delegate_->GetFrameTree()->RenderProcessGone(this);
 
   // Our base class RenderWidgetHost needs to reset some stuff.
   RendererExited(render_view_termination_status_, exit_code);
@@ -1368,123 +1288,6 @@ void RenderViewHostImpl::OnRenderProcessGone(int status, int exit_code) {
   delegate_->RenderViewTerminated(this,
                                   static_cast<base::TerminationStatus>(status),
                                   exit_code);
-}
-
-void RenderViewHostImpl::OnDidStartProvisionalLoadForFrame(
-    int64 frame_id,
-    int64 parent_frame_id,
-    bool is_main_frame,
-    const GURL& url) {
-  delegate_->DidStartProvisionalLoadForFrame(
-      this, frame_id, parent_frame_id, is_main_frame, url);
-}
-
-void RenderViewHostImpl::OnDidRedirectProvisionalLoad(
-    int32 page_id,
-    const GURL& source_url,
-    const GURL& target_url) {
-  delegate_->DidRedirectProvisionalLoad(
-      this, page_id, source_url, target_url);
-}
-
-void RenderViewHostImpl::OnDidFailProvisionalLoadWithError(
-    const ViewHostMsg_DidFailProvisionalLoadWithError_Params& params) {
-  delegate_->DidFailProvisionalLoadWithError(this, params);
-}
-
-// Called when the renderer navigates.  For every frame loaded, we'll get this
-// notification containing parameters identifying the navigation.
-//
-// Subframes are identified by the page transition type.  For subframes loaded
-// as part of a wider page load, the page_id will be the same as for the top
-// level frame.  If the user explicitly requests a subframe navigation, we will
-// get a new page_id because we need to create a new navigation entry for that
-// action.
-void RenderViewHostImpl::OnNavigate(const IPC::Message& msg) {
-  // Read the parameters out of the IPC message directly to avoid making another
-  // copy when we filter the URLs.
-  PickleIterator iter(msg);
-  ViewHostMsg_FrameNavigate_Params validated_params;
-  if (!IPC::ParamTraits<ViewHostMsg_FrameNavigate_Params>::
-      Read(&msg, &iter, &validated_params))
-    return;
-
-  // If we're waiting for a cross-site beforeunload ack from this renderer and
-  // we receive a Navigate message from the main frame, then the renderer was
-  // navigating already and sent it before hearing the ViewMsg_Stop message.
-  // We do not want to cancel the pending navigation in this case, since the
-  // old page will soon be stopped.  Instead, treat this as a beforeunload ack
-  // to allow the pending navigation to continue.
-  if (is_waiting_for_beforeunload_ack_ &&
-      unload_ack_is_for_cross_site_transition_ &&
-      PageTransitionIsMainFrame(validated_params.transition)) {
-    OnShouldCloseACK(true, send_should_close_start_time_,
-                        base::TimeTicks::Now());
-    return;
-  }
-
-  // If we're waiting for an unload ack from this renderer and we receive a
-  // Navigate message, then the renderer was navigating before it received the
-  // unload request.  It will either respond to the unload request soon or our
-  // timer will expire.  Either way, we should ignore this message, because we
-  // have already committed to closing this renderer.
-  if (is_waiting_for_unload_ack_)
-    return;
-
-  // Cache the main frame id, so we can use it for creating the frame tree
-  // root node when needed.
-  if (PageTransitionIsMainFrame(validated_params.transition)) {
-    if (main_frame_id_ == -1) {
-      main_frame_id_ = validated_params.frame_id;
-    } else {
-      // TODO(nasko): We plan to remove the usage of frame_id in navigation
-      // and move to routing ids. This is in place to ensure that a
-      // renderer is not misbehaving and sending us incorrect data.
-      DCHECK_EQ(main_frame_id_, validated_params.frame_id);
-    }
-  }
-  RenderProcessHost* process = GetProcess();
-
-  // Attempts to commit certain off-limits URL should be caught more strictly
-  // than our FilterURL checks below.  If a renderer violates this policy, it
-  // should be killed.
-  if (!CanCommitURL(validated_params.url)) {
-    VLOG(1) << "Blocked URL " << validated_params.url.spec();
-    validated_params.url = GURL(kAboutBlankURL);
-    RecordAction(UserMetricsAction("CanCommitURL_BlockedAndKilled"));
-    // Kills the process.
-    process->ReceivedBadMessage();
-  }
-
-  // Now that something has committed, we don't need to track whether the
-  // initial page has been accessed.
-  has_accessed_initial_document_ = false;
-
-  ChildProcessSecurityPolicyImpl* policy =
-      ChildProcessSecurityPolicyImpl::GetInstance();
-  // Without this check, an evil renderer can trick the browser into creating
-  // a navigation entry for a banned URL.  If the user clicks the back button
-  // followed by the forward button (or clicks reload, or round-trips through
-  // session restore, etc), we'll think that the browser commanded the
-  // renderer to load the URL and grant the renderer the privileges to request
-  // the URL.  To prevent this attack, we block the renderer from inserting
-  // banned URLs into the navigation controller in the first place.
-  FilterURL(policy, process, false, &validated_params.url);
-  FilterURL(policy, process, true, &validated_params.referrer.url);
-  for (std::vector<GURL>::iterator it(validated_params.redirects.begin());
-      it != validated_params.redirects.end(); ++it) {
-    FilterURL(policy, process, false, &(*it));
-  }
-  FilterURL(policy, process, true, &validated_params.searchable_form_url);
-
-  // Without this check, the renderer can trick the browser into using
-  // filenames it can't access in a future session restore.
-  if (!CanAccessFilesOfPageState(validated_params.page_state)) {
-    GetProcess()->ReceivedBadMessage();
-    return;
-  }
-
-  delegate_->DidNavigate(this, validated_params);
 }
 
 void RenderViewHostImpl::OnUpdateState(int32 page_id, const PageState& state) {
@@ -1500,8 +1303,8 @@ void RenderViewHostImpl::OnUpdateState(int32 page_id, const PageState& state) {
 
 void RenderViewHostImpl::OnUpdateTitle(
     int32 page_id,
-    const string16& title,
-    WebKit::WebTextDirection title_direction) {
+    const base::string16& title,
+    blink::WebTextDirection title_direction) {
   if (title.length() > kMaxTitleChars) {
     NOTREACHED() << "Renderer sent too many characters in title.";
     return;
@@ -1517,7 +1320,7 @@ void RenderViewHostImpl::OnUpdateEncoding(const std::string& encoding_name) {
 }
 
 void RenderViewHostImpl::OnUpdateTargetURL(int32 page_id, const GURL& url) {
-  if (!is_swapped_out_)
+  if (IsRVHStateActive(rvh_state_))
     delegate_->UpdateTargetURL(page_id, url);
 
   // Send a notification back to the renderer that we are ready to
@@ -1538,17 +1341,9 @@ void RenderViewHostImpl::OnClose() {
 }
 
 void RenderViewHostImpl::OnRequestMove(const gfx::Rect& pos) {
-  if (!is_swapped_out_)
+  if (IsRVHStateActive(rvh_state_))
     delegate_->RequestMove(pos);
   Send(new ViewMsg_Move_ACK(GetRoutingID()));
-}
-
-void RenderViewHostImpl::OnDidStartLoading() {
-  delegate_->DidStartLoading(this);
-}
-
-void RenderViewHostImpl::OnDidStopLoading() {
-  delegate_->DidStopLoading(this);
 }
 
 void RenderViewHostImpl::OnDidChangeLoadProgress(double load_progress) {
@@ -1568,41 +1363,12 @@ void RenderViewHostImpl::OnDocumentOnLoadCompletedInMainFrame(
   delegate_->DocumentOnLoadCompletedInMainFrame(this, page_id);
 }
 
-void RenderViewHostImpl::OnContextMenu(const ContextMenuParams& params) {
-  // Validate the URLs in |params|.  If the renderer can't request the URLs
-  // directly, don't show them in the context menu.
-  ContextMenuParams validated_params(params);
-  RenderProcessHost* process = GetProcess();
-  ChildProcessSecurityPolicyImpl* policy =
-      ChildProcessSecurityPolicyImpl::GetInstance();
-
-  // We don't validate |unfiltered_link_url| so that this field can be used
-  // when users want to copy the original link URL.
-  FilterURL(policy, process, true, &validated_params.link_url);
-  FilterURL(policy, process, true, &validated_params.src_url);
-  FilterURL(policy, process, false, &validated_params.page_url);
-  FilterURL(policy, process, true, &validated_params.frame_url);
-
-  delegate_->ShowContextMenu(validated_params);
-}
-
 void RenderViewHostImpl::OnToggleFullscreen(bool enter_fullscreen) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   delegate_->ToggleFullscreenMode(enter_fullscreen);
   // We need to notify the contents that its fullscreen state has changed. This
   // is done as part of the resize message.
   WasResized();
-}
-
-void RenderViewHostImpl::OnOpenURL(
-    const ViewHostMsg_OpenURL_Params& params) {
-  GURL validated_url(params.url);
-  FilterURL(ChildProcessSecurityPolicyImpl::GetInstance(),
-            GetProcess(), false, &validated_url);
-
-  delegate_->RequestOpenURL(
-      this, validated_url, params.referrer, params.disposition, params.frame_id,
-      params.should_replace_current_entry, params.user_gesture);
 }
 
 void RenderViewHostImpl::OnDidContentsPreferredSizeChange(
@@ -1634,19 +1400,14 @@ void RenderViewHostImpl::OnDidChangeScrollOffsetPinningForMainFrame(
 void RenderViewHostImpl::OnDidChangeNumWheelEvents(int count) {
 }
 
-void RenderViewHostImpl::OnSelectionChanged(const string16& text,
-                                            size_t offset,
-                                            const gfx::Range& range) {
-  if (view_)
-    view_->SelectionChanged(text, offset, range);
-}
-
-void RenderViewHostImpl::OnSelectionBoundsChanged(
-    const ViewHostMsg_SelectionBounds_Params& params) {
+#if defined(OS_ANDROID)
+void RenderViewHostImpl::OnSelectionRootBoundsChanged(
+    const gfx::Rect& bounds) {
   if (view_) {
-    view_->SelectionBoundsChanged(params);
+    view_->SelectionRootBoundsChanged(bounds);
   }
 }
+#endif
 
 void RenderViewHostImpl::OnRouteCloseEvent() {
   // Have the delegate route this to the active RenderViewHost.
@@ -1660,8 +1421,8 @@ void RenderViewHostImpl::OnRouteMessageEvent(
 }
 
 void RenderViewHostImpl::OnRunJavaScriptMessage(
-    const string16& message,
-    const string16& default_prompt,
+    const base::string16& message,
+    const base::string16& default_prompt,
     const GURL& frame_url,
     JavaScriptMessageType type,
     IPC::Message* reply_msg) {
@@ -1675,7 +1436,7 @@ void RenderViewHostImpl::OnRunJavaScriptMessage(
 }
 
 void RenderViewHostImpl::OnRunBeforeUnloadConfirm(const GURL& frame_url,
-                                                  const string16& message,
+                                                  const base::string16& message,
                                                   bool is_reload,
                                                   IPC::Message* reply_msg) {
   // While a JS before unload dialog is showing, tabs in the same process
@@ -1702,8 +1463,8 @@ void RenderViewHostImpl::OnStartDragging(
 
   // Allow drag of Javascript URLs to enable bookmarklet drag to bookmark bar.
   if (!filtered_data.url.SchemeIs(kJavaScriptScheme))
-    FilterURL(policy, process, true, &filtered_data.url);
-  FilterURL(policy, process, false, &filtered_data.html_base_url);
+    process->FilterURL(true, &filtered_data.url);
+  process->FilterURL(false, &filtered_data.html_base_url);
   // Filter out any paths that the renderer didn't have access to. This prevents
   // the following attack on a malicious renderer:
   // 1. StartDragging IPC sent with renderer-specified filesystem paths that it
@@ -1713,11 +1474,11 @@ void RenderViewHostImpl::OnStartDragging(
   //    still fire though, which causes read permissions to be granted to the
   //    renderer for any file paths in the drop.
   filtered_data.filenames.clear();
-  for (std::vector<DropData::FileInfo>::const_iterator it =
+  for (std::vector<ui::FileInfo>::const_iterator it =
            drop_data.filenames.begin();
-       it != drop_data.filenames.end(); ++it) {
-    base::FilePath path(base::FilePath::FromUTF8Unsafe(UTF16ToUTF8(it->path)));
-    if (policy->CanReadFile(GetProcess()->GetID(), path))
+       it != drop_data.filenames.end();
+       ++it) {
+    if (policy->CanReadFile(GetProcess()->GetID(), it->path))
       filtered_data.filenames.push_back(*it);
   }
   float scale = ui::GetImageScale(GetScaleFactorForView(GetView()));
@@ -1746,6 +1507,17 @@ void RenderViewHostImpl::OnTakeFocus(bool reverse) {
 }
 
 void RenderViewHostImpl::OnFocusedNodeChanged(bool is_editable_node) {
+  if (view_)
+    view_->FocusedNodeChanged(is_editable_node);
+#if defined(OS_WIN)
+  if (!is_editable_node && virtual_keyboard_requested_) {
+    virtual_keyboard_requested_ = false;
+    BrowserThread::PostDelayedTask(
+        BrowserThread::UI, FROM_HERE,
+        base::Bind(base::IgnoreResult(&DismissVirtualKeyboardTask)),
+        TimeDelta::FromMilliseconds(kVirtualKeyboardDisplayWaitTimeoutMs));
+  }
+#endif
   NotificationService::current()->Notify(
       NOTIFICATION_FOCUS_CHANGED_IN_PAGE,
       Source<RenderViewHost>(this),
@@ -1754,9 +1526,9 @@ void RenderViewHostImpl::OnFocusedNodeChanged(bool is_editable_node) {
 
 void RenderViewHostImpl::OnAddMessageToConsole(
     int32 level,
-    const string16& message,
+    const base::string16& message,
     int32 line_no,
-    const string16& source_id) {
+    const base::string16& source_id) {
   if (delegate_->AddMessageToConsole(level, message, line_no, source_id))
     return;
 
@@ -1773,51 +1545,6 @@ void RenderViewHostImpl::OnUserGesture() {
   delegate_->OnUserGesture();
 }
 
-void RenderViewHostImpl::OnShouldCloseACK(
-    bool proceed,
-    const base::TimeTicks& renderer_before_unload_start_time,
-    const base::TimeTicks& renderer_before_unload_end_time) {
-  decrement_in_flight_event_count();
-  StopHangMonitorTimeout();
-  // If this renderer navigated while the beforeunload request was in flight, we
-  // may have cleared this state in OnNavigate, in which case we can ignore
-  // this message.
-  if (!is_waiting_for_beforeunload_ack_ || is_swapped_out_)
-    return;
-
-  is_waiting_for_beforeunload_ack_ = false;
-
-  RenderViewHostDelegate::RendererManagement* management_delegate =
-      delegate_->GetRendererManagementDelegate();
-  if (management_delegate) {
-    base::TimeTicks before_unload_end_time;
-    if (!send_should_close_start_time_.is_null() &&
-        !renderer_before_unload_start_time.is_null() &&
-        !renderer_before_unload_end_time.is_null()) {
-      // When passing TimeTicks across process boundaries, we need to compensate
-      // for any skew between the processes. Here we are converting the
-      // renderer's notion of before_unload_end_time to TimeTicks in the browser
-      // process. See comments in inter_process_time_ticks_converter.h for more.
-      InterProcessTimeTicksConverter converter(
-          LocalTimeTicks::FromTimeTicks(send_should_close_start_time_),
-          LocalTimeTicks::FromTimeTicks(base::TimeTicks::Now()),
-          RemoteTimeTicks::FromTimeTicks(renderer_before_unload_start_time),
-          RemoteTimeTicks::FromTimeTicks(renderer_before_unload_end_time));
-      LocalTimeTicks browser_before_unload_end_time =
-          converter.ToLocalTimeTicks(
-              RemoteTimeTicks::FromTimeTicks(renderer_before_unload_end_time));
-      before_unload_end_time = browser_before_unload_end_time.ToTimeTicks();
-    }
-    management_delegate->ShouldClosePage(
-        unload_ack_is_for_cross_site_transition_, proceed,
-        before_unload_end_time);
-  }
-
-  // If canceled, notify the delegate to cancel its pending navigation entry.
-  if (!proceed)
-    delegate_->DidCancelLoading();
-}
-
 void RenderViewHostImpl::OnClosePageACK() {
   decrement_in_flight_event_count();
   ClosePageIgnoringUnloadEvents();
@@ -1825,7 +1552,7 @@ void RenderViewHostImpl::OnClosePageACK() {
 
 void RenderViewHostImpl::NotifyRendererUnresponsive() {
   delegate_->RendererUnresponsive(
-      this, is_waiting_for_beforeunload_ack_, is_waiting_for_unload_ack_);
+      this, is_waiting_for_beforeunload_ack_, IsWaitingForUnloadACK());
 }
 
 void RenderViewHostImpl::NotifyRendererResponsive() {
@@ -1856,11 +1583,11 @@ gfx::Rect RenderViewHostImpl::GetRootWindowResizerRect() const {
 }
 
 void RenderViewHostImpl::ForwardMouseEvent(
-    const WebKit::WebMouseEvent& mouse_event) {
+    const blink::WebMouseEvent& mouse_event) {
 
   // We make a copy of the mouse event because
   // RenderWidgetHost::ForwardMouseEvent will delete |mouse_event|.
-  WebKit::WebMouseEvent event_copy(mouse_event);
+  blink::WebMouseEvent event_copy(mouse_event);
   RenderWidgetHostImpl::ForwardMouseEvent(event_copy);
 
   switch (event_copy.type) {
@@ -1930,61 +1657,11 @@ void RenderViewHostImpl::ToggleSpeechInput() {
   Send(new InputTagSpeechMsg_ToggleSpeechInput(GetRoutingID()));
 }
 
-bool RenderViewHostImpl::CanCommitURL(const GURL& url) {
-  // TODO(creis): We should also check for WebUI pages here.  Also, when the
-  // out-of-process iframes implementation is ready, we should check for
-  // cross-site URLs that are not allowed to commit in this process.
-
-  // Give the client a chance to disallow URLs from committing.
-  return GetContentClient()->browser()->CanCommitURL(GetProcess(), url);
-}
-
-void RenderViewHostImpl::FilterURL(ChildProcessSecurityPolicyImpl* policy,
-                                   const RenderProcessHost* process,
-                                   bool empty_allowed,
-                                   GURL* url) {
-  if (empty_allowed && url->is_empty())
-    return;
-
-  // The browser process should never hear the swappedout:// URL from any
-  // of the renderer's messages.  Check for this in debug builds, but don't
-  // let it crash a release browser.
-  DCHECK(GURL(kSwappedOutURL) != *url);
-
-  if (!url->is_valid()) {
-    // Have to use about:blank for the denied case, instead of an empty GURL.
-    // This is because the browser treats navigation to an empty GURL as a
-    // navigation to the home page. This is often a privileged page
-    // (chrome://newtab/) which is exactly what we don't want.
-    *url = GURL(kAboutBlankURL);
-    RecordAction(UserMetricsAction("FilterURLTermiate_Invalid"));
-    return;
-  }
-
-  if (url->SchemeIs(chrome::kAboutScheme)) {
-    // The renderer treats all URLs in the about: scheme as being about:blank.
-    // Canonicalize about: URLs to about:blank.
-    *url = GURL(kAboutBlankURL);
-    RecordAction(UserMetricsAction("FilterURLTermiate_About"));
-  }
-
-  // Do not allow browser plugin guests to navigate to non-web URLs, since they
-  // cannot swap processes or grant bindings.
-  bool non_web_url_in_guest = process->IsGuest() &&
-      !(url->is_valid() && policy->IsWebSafeScheme(url->scheme()));
-
-  if (non_web_url_in_guest || !policy->CanRequestURL(process->GetID(), *url)) {
-    // If this renderer is not permitted to request this URL, we invalidate the
-    // URL.  This prevents us from storing the blocked URL and becoming confused
-    // later.
-    VLOG(1) << "Blocked URL " << url->spec();
-    *url = GURL(kAboutBlankURL);
-    RecordAction(UserMetricsAction("FilterURLTermiate_Blocked"));
-  }
-}
-
-void RenderViewHostImpl::SetAltErrorPageURL(const GURL& url) {
-  Send(new ViewMsg_SetAltErrorPageURL(GetRoutingID(), url));
+bool RenderViewHostImpl::IsWaitingForUnloadACK() const {
+  return rvh_state_ == STATE_WAITING_FOR_UNLOAD_ACK ||
+         rvh_state_ == STATE_WAITING_FOR_CLOSE ||
+         rvh_state_ == STATE_PENDING_SHUTDOWN ||
+         rvh_state_ == STATE_PENDING_SWAP_OUT;
 }
 
 void RenderViewHostImpl::ExitFullscreen() {
@@ -1999,22 +1676,18 @@ WebPreferences RenderViewHostImpl::GetWebkitPreferences() {
 
 void RenderViewHostImpl::DisownOpener() {
   // This should only be called when swapped out.
-  DCHECK(is_swapped_out_);
+  DCHECK(IsSwappedOut());
 
   Send(new ViewMsg_DisownOpener(GetRoutingID()));
 }
 
 void RenderViewHostImpl::SetAccessibilityCallbackForTesting(
-    const base::Callback<void(WebKit::WebAXEvent)>& callback) {
+    const base::Callback<void(ui::AXEvent)>& callback) {
   accessibility_testing_callback_ = callback;
 }
 
 void RenderViewHostImpl::UpdateWebkitPreferences(const WebPreferences& prefs) {
   Send(new ViewMsg_UpdateWebPreferences(GetRoutingID(), prefs));
-}
-
-void RenderViewHostImpl::NotifyTimezoneChange() {
-  Send(new ViewMsg_TimezoneChange(GetRoutingID()));
 }
 
 void RenderViewHostImpl::GetAudioOutputControllers(
@@ -2024,12 +1697,8 @@ void RenderViewHostImpl::GetAudioOutputControllers(
   audio_host->GetOutputControllers(GetRoutingID(), callback);
 }
 
-void RenderViewHostImpl::ClearFocusedNode() {
-  Send(new ViewMsg_ClearFocusedNode(GetRoutingID()));
-}
-
-void RenderViewHostImpl::SetZoomLevel(double level) {
-  Send(new ViewMsg_SetZoomLevel(GetRoutingID(), level));
+void RenderViewHostImpl::ClearFocusedElement() {
+  Send(new ViewMsg_ClearFocusedElement(GetRoutingID()));
 }
 
 void RenderViewHostImpl::Zoom(PageZoom zoom) {
@@ -2038,17 +1707,6 @@ void RenderViewHostImpl::Zoom(PageZoom zoom) {
 
 void RenderViewHostImpl::ReloadFrame() {
   Send(new ViewMsg_ReloadFrame(GetRoutingID()));
-}
-
-void RenderViewHostImpl::Find(int request_id,
-                              const string16& search_text,
-                              const WebKit::WebFindOptions& options) {
-  Send(new ViewMsg_Find(GetRoutingID(), request_id, search_text, options));
-}
-
-void RenderViewHostImpl::InsertCSS(const string16& frame_xpath,
-                                   const std::string& css) {
-  Send(new ViewMsg_CSSInsertRequest(GetRoutingID(), frame_xpath, css));
 }
 
 void RenderViewHostImpl::DisableScrollbarsForThreshold(const gfx::Size& size) {
@@ -2070,27 +1728,17 @@ void RenderViewHostImpl::DisableAutoResize(const gfx::Size& new_size) {
   Send(new ViewMsg_DisableAutoResize(GetRoutingID(), new_size));
 }
 
-void RenderViewHostImpl::ExecuteCustomContextMenuCommand(
-    int action, const CustomContextMenuContext& context) {
-  Send(new ViewMsg_CustomContextMenuAction(GetRoutingID(), context, action));
-}
-
-void RenderViewHostImpl::NotifyContextMenuClosed(
-    const CustomContextMenuContext& context) {
-  Send(new ViewMsg_ContextMenuClosed(GetRoutingID(), context));
-}
-
 void RenderViewHostImpl::CopyImageAt(int x, int y) {
   Send(new ViewMsg_CopyImageAt(GetRoutingID(), x, y));
 }
 
 void RenderViewHostImpl::ExecuteMediaPlayerActionAtLocation(
-  const gfx::Point& location, const WebKit::WebMediaPlayerAction& action) {
+  const gfx::Point& location, const blink::WebMediaPlayerAction& action) {
   Send(new ViewMsg_MediaPlayerActionAt(GetRoutingID(), location, action));
 }
 
 void RenderViewHostImpl::ExecutePluginActionAtLocation(
-  const gfx::Point& location, const WebKit::WebPluginAction& action) {
+  const gfx::Point& location, const blink::WebPluginAction& action) {
   Send(new ViewMsg_PluginActionAt(GetRoutingID(), location, action));
 }
 
@@ -2098,14 +1746,28 @@ void RenderViewHostImpl::NotifyMoveOrResizeStarted() {
   Send(new ViewMsg_MoveOrResizeStarted(GetRoutingID()));
 }
 
-void RenderViewHostImpl::StopFinding(StopFindAction action) {
-  Send(new ViewMsg_StopFinding(GetRoutingID(), action));
-}
-
 void RenderViewHostImpl::OnAccessibilityEvents(
     const std::vector<AccessibilityHostMsg_EventParams>& params) {
-  if (view_ && !is_swapped_out_)
-    view_->OnAccessibilityEvents(params);
+  if ((accessibility_mode() != AccessibilityModeOff) && view_ &&
+      IsRVHStateActive(rvh_state_)) {
+    if (accessibility_mode() & AccessibilityModeFlagPlatform) {
+      view_->CreateBrowserAccessibilityManagerIfNeeded();
+      BrowserAccessibilityManager* manager =
+          view_->GetBrowserAccessibilityManager();
+      if (manager)
+        manager->OnAccessibilityEvents(params);
+    }
+
+    std::vector<AXEventNotificationDetails> details;
+    for (unsigned int i = 0; i < params.size(); ++i) {
+      const AccessibilityHostMsg_EventParams& param = params[i];
+      AXEventNotificationDetails detail(
+          param.nodes, param.event_type, param.id, GetRoutingID());
+      details.push_back(detail);
+    }
+
+    delegate_->AccessibilityEventReceived(details);
+  }
 
   // Always send an ACK or the renderer can be in a bad state.
   Send(new AccessibilityMsg_Events_ACK(GetRoutingID()));
@@ -2117,12 +1779,29 @@ void RenderViewHostImpl::OnAccessibilityEvents(
 
   for (unsigned i = 0; i < params.size(); i++) {
     const AccessibilityHostMsg_EventParams& param = params[i];
-    WebKit::WebAXEvent src_type = param.event_type;
-    if (src_type == WebKit::WebAXEventLayoutComplete ||
-        src_type == WebKit::WebAXEventLoadComplete) {
-      MakeAccessibilityNodeDataTree(param.nodes, &accessibility_tree_);
+    if (static_cast<int>(param.event_type) < 0)
+      continue;
+    ui::AXTreeUpdate update;
+    update.nodes = param.nodes;
+    if (!ax_tree_)
+      ax_tree_.reset(new ui::AXTree(update));
+    else
+      CHECK(ax_tree_->Unserialize(update)) << ax_tree_->error();
+    accessibility_testing_callback_.Run(param.event_type);
+  }
+}
+
+void RenderViewHostImpl::OnAccessibilityLocationChanges(
+    const std::vector<AccessibilityHostMsg_LocationChangeParams>& params) {
+  if (view_ && IsRVHStateActive(rvh_state_)) {
+    if (accessibility_mode() & AccessibilityModeFlagPlatform) {
+      view_->CreateBrowserAccessibilityManagerIfNeeded();
+      BrowserAccessibilityManager* manager =
+          view_->GetBrowserAccessibilityManager();
+      if (manager)
+        manager->OnLocationChanges(params);
     }
-    accessibility_testing_callback_.Run(src_type);
+    // TODO(aboxhall): send location change events to web contents observers too
   }
 }
 
@@ -2168,15 +1847,6 @@ void RenderViewHostImpl::OnRequestDesktopNotificationPermission(
 
 void RenderViewHostImpl::OnShowDesktopNotification(
     const ShowDesktopNotificationHostMsgParams& params) {
-  // Disallow HTML notifications from javascript: and file: schemes as this
-  // allows unwanted cross-domain access.
-  GURL url = params.contents_url;
-  if (params.is_html &&
-      (url.SchemeIs(kJavaScriptScheme) ||
-       url.SchemeIs(chrome::kFileScheme))) {
-    return;
-  }
-
   GetContentClient()->browser()->ShowDesktopNotification(
       params, GetProcess()->GetID(), GetRoutingID(), false);
 }
@@ -2195,20 +1865,12 @@ void RenderViewHostImpl::OnDidAccessInitialDocument() {
   delegate_->DidAccessInitialDocument();
 }
 
-void RenderViewHostImpl::OnDomOperationResponse(
-    const std::string& json_string, int automation_id) {
-  DomOperationNotificationDetails details(json_string, automation_id);
-  NotificationService::current()->Notify(
-      NOTIFICATION_DOM_OPERATION_RESPONSE,
-      Source<RenderViewHost>(this),
-      Details<DomOperationNotificationDetails>(&details));
-}
-
 void RenderViewHostImpl::OnFocusedNodeTouched(bool editable) {
-#if defined(OS_WIN) && defined(USE_AURA)
+#if defined(OS_WIN)
   if (editable) {
-    base::win::DisplayVirtualKeyboard();
+    virtual_keyboard_requested_ = base::win::DisplayVirtualKeyboard();
   } else {
+    virtual_keyboard_requested_ = false;
     base::win::DismissVirtualKeyboard();
   }
 #endif
@@ -2234,24 +1896,33 @@ void RenderViewHostImpl::OnShowPopup(
                         params.allow_multiple_selection);
   }
 }
+
+void RenderViewHostImpl::OnHidePopup() {
+  RenderViewHostDelegateView* view = delegate_->GetDelegateView();
+  if (view)
+    view->HidePopupMenu();
+}
 #endif
 
-void RenderViewHostImpl::SetSwappedOut(bool is_swapped_out) {
+void RenderViewHostImpl::SetState(RenderViewHostImplState rvh_state) {
   // We update the number of RenderViews in a SiteInstance when the
-  // swapped out status of this RenderView gets flipped.
-  if (is_swapped_out_ && !is_swapped_out)
+  // swapped out status of this RenderView gets flipped to/from live.
+  if (!IsRVHStateActive(rvh_state_) && IsRVHStateActive(rvh_state))
     instance_->increment_active_view_count();
-  else if (!is_swapped_out_ && is_swapped_out)
+  else if (IsRVHStateActive(rvh_state_) && !IsRVHStateActive(rvh_state))
     instance_->decrement_active_view_count();
 
-  is_swapped_out_ = is_swapped_out;
+  // Whenever we change the RVH state to and from live or swapped out state, we
+  // should not be waiting for beforeunload or unload acks.  We clear them here
+  // to be safe, since they can cause navigations to be ignored in OnNavigate.
+  if (rvh_state == STATE_DEFAULT ||
+      rvh_state == STATE_SWAPPED_OUT ||
+      rvh_state_ == STATE_DEFAULT ||
+      rvh_state_ == STATE_SWAPPED_OUT) {
+    is_waiting_for_beforeunload_ack_ = false;
+  }
+  rvh_state_ = rvh_state;
 
-  // Whenever we change swap out state, we should not be waiting for
-  // beforeunload or unload acks.  We clear them here to be safe, since they
-  // can cause navigations to be ignored in OnNavigate.
-  is_waiting_for_beforeunload_ack_ = false;
-  is_waiting_for_unload_ack_ = false;
-  has_timed_out_on_unload_ = false;
 }
 
 bool RenderViewHostImpl::CanAccessFilesOfPageState(
@@ -2271,10 +1942,7 @@ bool RenderViewHostImpl::CanAccessFilesOfPageState(
 void RenderViewHostImpl::AttachToFrameTree() {
   FrameTree* frame_tree = delegate_->GetFrameTree();
 
-  frame_tree->SwapMainFrame(main_render_frame_host_.get());
-  if (main_frame_id() != FrameTreeNode::kInvalidFrameId) {
-    frame_tree->OnFirstNavigationAfterSwap(main_frame_id());
-  }
+  frame_tree->ResetForMainFrameSwap();
 }
 
 }  // namespace content

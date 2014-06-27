@@ -11,7 +11,6 @@
 #include "base/callback.h"
 #include "chromeos/chromeos_export.h"
 #include "chromeos/dbus/dbus_client.h"
-#include "chromeos/dbus/dbus_client_implementation_type.h"
 #include "chromeos/dbus/shill_client_helper.h"
 
 namespace base {
@@ -38,6 +37,7 @@ class CHROMEOS_EXPORT ShillDeviceClient : public DBusClient {
  public:
   typedef ShillClientHelper::PropertyChangedHandler PropertyChangedHandler;
   typedef ShillClientHelper::DictionaryValueCallback DictionaryValueCallback;
+  typedef ShillClientHelper::StringCallback StringCallback;
   typedef ShillClientHelper::ErrorCallback ErrorCallback;
 
   // Interface for setting up devices for testing.
@@ -62,7 +62,7 @@ class CHROMEOS_EXPORT ShillDeviceClient : public DBusClient {
 
   // Factory function, creates a new instance which is owned by the caller.
   // For normal usage, access the singleton via DBusThreadManager::Get().
-  static ShillDeviceClient* Create(DBusClientImplementationType type);
+  static ShillDeviceClient* Create();
 
   // Adds a property changed |observer| for the device at |device_path|.
   virtual void AddPropertyChangedObserver(
@@ -152,8 +152,16 @@ class CHROMEOS_EXPORT ShillDeviceClient : public DBusClient {
   // Calls the Reset method.
   // |callback| is called after the method call finishes.
   virtual void Reset(const dbus::ObjectPath& device_path,
-                          const base::Closure& callback,
-                          const ErrorCallback& error_callback) = 0;
+                     const base::Closure& callback,
+                     const ErrorCallback& error_callback) = 0;
+
+  // Calls the PerformTDLSOperation method.
+  // |callback| is called after the method call finishes.
+  virtual void PerformTDLSOperation(const dbus::ObjectPath& device_path,
+                                    const std::string& operation,
+                                    const std::string& peer,
+                                    const StringCallback& callback,
+                                    const ErrorCallback& error_callback) = 0;
 
   // Returns an interface for testing (stub only), or returns NULL.
   virtual TestInterface* GetTestInterface() = 0;

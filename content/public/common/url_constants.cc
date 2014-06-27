@@ -4,7 +4,7 @@
 
 #include "content/public/common/url_constants.h"
 
-namespace chrome {
+namespace content {
 
 const char kAboutScheme[] = "about";
 const char kBlobScheme[] = "blob";
@@ -12,16 +12,11 @@ const char kBlobScheme[] = "blob";
 // Before adding new chrome schemes please check with security@chromium.org.
 // There are security implications associated with introducing new schemes.
 const char kChromeDevToolsScheme[] = "chrome-devtools";
-const char kChromeInternalScheme[] = "chrome-internal";
 const char kChromeUIScheme[] = "chrome";
 const char kDataScheme[] = "data";
 const char kFileScheme[] = "file";
 const char kFileSystemScheme[] = "filesystem";
 const char kFtpScheme[] = "ftp";
-}  // namespace chrome
-
-namespace content {
-
 const char kGuestScheme[] = "chrome-guest";
 const char kHttpScheme[] = "http";
 const char kHttpsScheme[] = "https";
@@ -44,6 +39,7 @@ const char kChromeUIHistogramHost[] = "histograms";
 const char kChromeUIMediaInternalsHost[] = "media-internals";
 const char kChromeUINetworkViewCacheHost[] = "view-http-cache";
 const char kChromeUIResourcesHost[] = "resources";
+const char kChromeUIServiceWorkerInternalsHost[] = "serviceworker-internals";
 const char kChromeUITcmallocHost[] = "tcmalloc";
 const char kChromeUITracingHost[] = "tracing";
 const char kChromeUIWebRTCInternalsHost[] = "webrtc-internals";

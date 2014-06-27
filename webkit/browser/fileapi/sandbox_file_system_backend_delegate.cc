@@ -4,6 +4,8 @@
 
 #include "webkit/browser/fileapi/sandbox_file_system_backend_delegate.h"
 
+#include <vector>
+
 #include "base/command_line.h"
 #include "base/file_util.h"
 #include "base/metrics/histogram.h"
@@ -17,10 +19,13 @@
 #include "webkit/browser/fileapi/file_system_url.h"
 #include "webkit/browser/fileapi/file_system_usage_cache.h"
 #include "webkit/browser/fileapi/obfuscated_file_util.h"
+#include "webkit/browser/fileapi/quota/quota_backend_impl.h"
+#include "webkit/browser/fileapi/quota/quota_reservation.h"
+#include "webkit/browser/fileapi/quota/quota_reservation_manager.h"
 #include "webkit/browser/fileapi/sandbox_file_stream_writer.h"
 #include "webkit/browser/fileapi/sandbox_file_system_backend.h"
 #include "webkit/browser/fileapi/sandbox_quota_observer.h"
-#include "webkit/browser/quota/quota_manager.h"
+#include "webkit/browser/quota/quota_manager_proxy.h"
 #include "webkit/common/fileapi/file_system_util.h"
 
 namespace fileapi {
@@ -102,18 +107,18 @@ class ObfuscatedOriginEnumerator
   scoped_ptr<ObfuscatedFileUtil::AbstractOriginEnumerator> enum_;
 };
 
-void OpenFileSystemOnFileThread(
+void OpenFileSystemOnFileTaskRunner(
     ObfuscatedFileUtil* file_util,
     const GURL& origin_url,
     FileSystemType type,
     OpenFileSystemMode mode,
-    base::PlatformFileError* error_ptr) {
+    base::File::Error* error_ptr) {
   DCHECK(error_ptr);
   const bool create = (mode == OPEN_FILE_SYSTEM_CREATE_IF_NONEXISTENT);
   file_util->GetDirectoryForOriginAndType(
       origin_url, SandboxFileSystemBackendDelegate::GetTypeString(type),
       create, error_ptr);
-  if (*error_ptr != base::PLATFORM_FILE_OK) {
+  if (*error_ptr != base::File::FILE_OK) {
     UMA_HISTOGRAM_ENUMERATION(kOpenFileSystemLabel,
                               kCreateDirectoryError,
                               kFileSystemErrorMax);
@@ -127,8 +132,8 @@ void OpenFileSystemOnFileThread(
 
 void DidOpenFileSystem(
     base::WeakPtr<SandboxFileSystemBackendDelegate> delegate,
-    const base::Callback<void(base::PlatformFileError error)>& callback,
-    base::PlatformFileError* error) {
+    const base::Callback<void(base::File::Error error)>& callback,
+    base::File::Error* error) {
   if (delegate.get())
     delegate.get()->CollectOpenFileSystemMetrics(*error);
   callback.Run(*error);
@@ -175,6 +180,7 @@ SandboxFileSystemBackendDelegate::SandboxFileSystemBackendDelegate(
           new ObfuscatedFileUtil(
               special_storage_policy,
               profile_path.Append(kFileSystemDirectory),
+              file_system_options.env_override(),
               file_task_runner,
               base::Bind(&GetTypeStringForURL),
               GetKnownTypeStrings(),
@@ -185,6 +191,12 @@ SandboxFileSystemBackendDelegate::SandboxFileSystemBackendDelegate(
           file_task_runner,
           obfuscated_file_util(),
           usage_cache())),
+      quota_reservation_manager_(new QuotaReservationManager(
+          scoped_ptr<QuotaReservationManager::QuotaBackend>(
+              new QuotaBackendImpl(file_task_runner_,
+                                   obfuscated_file_util(),
+                                   usage_cache(),
+                                   quota_manager_proxy)))),
       special_storage_policy_(special_storage_policy),
       file_system_options_(file_system_options),
       is_filesystem_opened_(false),
@@ -208,6 +220,7 @@ SandboxFileSystemBackendDelegate::~SandboxFileSystemBackendDelegate() {
   io_thread_checker_.DetachFromThread();
 
   if (!file_task_runner_->RunsTasksOnCurrentThread()) {
+    DeleteSoon(file_task_runner_.get(), quota_reservation_manager_.release());
     DeleteSoon(file_task_runner_.get(), sandbox_file_util_.release());
     DeleteSoon(file_task_runner_.get(), quota_observer_.release());
     DeleteSoon(file_task_runner_.get(), file_system_usage_cache_.release());
@@ -224,10 +237,10 @@ SandboxFileSystemBackendDelegate::GetBaseDirectoryForOriginAndType(
     const GURL& origin_url,
     FileSystemType type,
     bool create) {
-  base::PlatformFileError error = base::PLATFORM_FILE_OK;
+  base::File::Error error = base::File::FILE_OK;
   base::FilePath path = obfuscated_file_util()->GetDirectoryForOriginAndType(
       origin_url, GetTypeString(type), create, &error);
-  if (error != base::PLATFORM_FILE_OK)
+  if (error != base::File::FILE_OK)
     return base::FilePath();
   return path;
 }
@@ -239,16 +252,16 @@ void SandboxFileSystemBackendDelegate::OpenFileSystem(
     const OpenFileSystemCallback& callback,
     const GURL& root_url) {
   if (!IsAllowedScheme(origin_url)) {
-    callback.Run(GURL(), std::string(), base::PLATFORM_FILE_ERROR_SECURITY);
+    callback.Run(GURL(), std::string(), base::File::FILE_ERROR_SECURITY);
     return;
   }
 
   std::string name = GetFileSystemName(origin_url, type);
 
-  base::PlatformFileError* error_ptr = new base::PlatformFileError;
+  base::File::Error* error_ptr = new base::File::Error;
   file_task_runner_->PostTaskAndReply(
       FROM_HERE,
-      base::Bind(&OpenFileSystemOnFileThread,
+      base::Bind(&OpenFileSystemOnFileTaskRunner,
                  obfuscated_file_util(), origin_url, type, mode,
                  base::Unretained(error_ptr)),
       base::Bind(&DidOpenFileSystem,
@@ -264,9 +277,9 @@ scoped_ptr<FileSystemOperationContext>
 SandboxFileSystemBackendDelegate::CreateFileSystemOperationContext(
     const FileSystemURL& url,
     FileSystemContext* context,
-    base::PlatformFileError* error_code) const {
+    base::File::Error* error_code) const {
   if (!IsAccessValid(url)) {
-    *error_code = base::PLATFORM_FILE_ERROR_SECURITY;
+    *error_code = base::File::FILE_ERROR_SECURITY;
     return scoped_ptr<FileSystemOperationContext>();
   }
 
@@ -310,13 +323,14 @@ SandboxFileSystemBackendDelegate::CreateFileStreamWriter(
       new SandboxFileStreamWriter(context, url, offset, *observers));
 }
 
-base::PlatformFileError
-SandboxFileSystemBackendDelegate::DeleteOriginDataOnFileThread(
+base::File::Error
+SandboxFileSystemBackendDelegate::DeleteOriginDataOnFileTaskRunner(
     FileSystemContext* file_system_context,
     quota::QuotaManagerProxy* proxy,
     const GURL& origin_url,
     FileSystemType type) {
-  int64 usage = GetOriginUsageOnFileThread(
+  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+  int64 usage = GetOriginUsageOnFileTaskRunner(
       file_system_context, origin_url, type);
   usage_cache()->CloseCacheFiles();
   bool result = obfuscated_file_util()->DeleteDirectoryForOriginAndType(
@@ -330,12 +344,13 @@ SandboxFileSystemBackendDelegate::DeleteOriginDataOnFileThread(
   }
 
   if (result)
-    return base::PLATFORM_FILE_OK;
-  return base::PLATFORM_FILE_ERROR_FAILED;
+    return base::File::FILE_OK;
+  return base::File::FILE_ERROR_FAILED;
 }
 
-void SandboxFileSystemBackendDelegate::GetOriginsForTypeOnFileThread(
+void SandboxFileSystemBackendDelegate::GetOriginsForTypeOnFileTaskRunner(
     FileSystemType type, std::set<GURL>* origins) {
+  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
   DCHECK(origins);
   scoped_ptr<OriginEnumerator> enumerator(CreateOriginEnumerator());
   GURL origin;
@@ -355,9 +370,10 @@ void SandboxFileSystemBackendDelegate::GetOriginsForTypeOnFileThread(
   }
 }
 
-void SandboxFileSystemBackendDelegate::GetOriginsForHostOnFileThread(
+void SandboxFileSystemBackendDelegate::GetOriginsForHostOnFileTaskRunner(
     FileSystemType type, const std::string& host,
     std::set<GURL>* origins) {
+  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
   DCHECK(origins);
   scoped_ptr<OriginEnumerator> enumerator(CreateOriginEnumerator());
   GURL origin;
@@ -368,10 +384,12 @@ void SandboxFileSystemBackendDelegate::GetOriginsForHostOnFileThread(
   }
 }
 
-int64 SandboxFileSystemBackendDelegate::GetOriginUsageOnFileThread(
+int64 SandboxFileSystemBackendDelegate::GetOriginUsageOnFileTaskRunner(
     FileSystemContext* file_system_context,
     const GURL& origin_url,
     FileSystemType type) {
+  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+
   // Don't use usage cache and return recalculated usage for sticky invalidated
   // origins.
   if (ContainsKey(sticky_dirty_origins_, std::make_pair(origin_url, type)))
@@ -404,6 +422,15 @@ int64 SandboxFileSystemBackendDelegate::GetOriginUsageOnFileThread(
   // This clears the dirty flag too.
   usage_cache()->UpdateUsage(usage_file_path, usage);
   return usage;
+}
+
+scoped_refptr<QuotaReservation>
+SandboxFileSystemBackendDelegate::CreateQuotaReservationOnFileTaskRunner(
+    const GURL& origin,
+    FileSystemType type) {
+  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(quota_reservation_manager_);
+  return quota_reservation_manager_->CreateReservation(origin, type);
 }
 
 void SandboxFileSystemBackendDelegate::AddFileUpdateObserver(
@@ -468,10 +495,10 @@ void SandboxFileSystemBackendDelegate::RegisterQuotaUpdateObserver(
 void SandboxFileSystemBackendDelegate::InvalidateUsageCache(
     const GURL& origin,
     FileSystemType type) {
-  base::PlatformFileError error = base::PLATFORM_FILE_OK;
+  base::File::Error error = base::File::FILE_OK;
   base::FilePath usage_file_path = GetUsageCachePathForOriginAndType(
       obfuscated_file_util(), origin, type, &error);
-  if (error != base::PLATFORM_FILE_OK)
+  if (error != base::File::FILE_OK)
     return;
   usage_cache()->IncrementDirty(usage_file_path);
 }
@@ -542,10 +569,10 @@ base::FilePath
 SandboxFileSystemBackendDelegate::GetUsageCachePathForOriginAndType(
     const GURL& origin_url,
     FileSystemType type) {
-  base::PlatformFileError error;
+  base::File::Error error;
   base::FilePath path = GetUsageCachePathForOriginAndType(
       obfuscated_file_util(), origin_url, type, &error);
-  if (error != base::PLATFORM_FILE_OK)
+  if (error != base::File::FILE_OK)
     return base::FilePath();
   return path;
 }
@@ -556,12 +583,12 @@ SandboxFileSystemBackendDelegate::GetUsageCachePathForOriginAndType(
     ObfuscatedFileUtil* sandbox_file_util,
     const GURL& origin_url,
     FileSystemType type,
-    base::PlatformFileError* error_out) {
+    base::File::Error* error_out) {
   DCHECK(error_out);
-  *error_out = base::PLATFORM_FILE_OK;
+  *error_out = base::File::FILE_OK;
   base::FilePath base_path = sandbox_file_util->GetDirectoryForOriginAndType(
       origin_url, GetTypeString(type), false /* create */, error_out);
-  if (*error_out != base::PLATFORM_FILE_OK)
+  if (*error_out != base::File::FILE_OK)
     return base::FilePath();
   return base_path.Append(FileSystemUsageCache::kUsageFileName);
 }
@@ -589,7 +616,7 @@ int64 SandboxFileSystemBackendDelegate::RecalculateUsage(
 }
 
 void SandboxFileSystemBackendDelegate::CollectOpenFileSystemMetrics(
-    base::PlatformFileError error_code) {
+    base::File::Error error_code) {
   base::Time now = base::Time::Now();
   bool throttled = now < next_release_time_for_open_filesystem_stat_;
   if (!throttled) {
@@ -608,16 +635,16 @@ void SandboxFileSystemBackendDelegate::CollectOpenFileSystemMetrics(
   }
 
   switch (error_code) {
-    case base::PLATFORM_FILE_OK:
+    case base::File::FILE_OK:
       REPORT(kOK);
       break;
-    case base::PLATFORM_FILE_ERROR_INVALID_URL:
+    case base::File::FILE_ERROR_INVALID_URL:
       REPORT(kInvalidSchemeError);
       break;
-    case base::PLATFORM_FILE_ERROR_NOT_FOUND:
+    case base::File::FILE_ERROR_NOT_FOUND:
       REPORT(kNotFound);
       break;
-    case base::PLATFORM_FILE_ERROR_FAILED:
+    case base::File::FILE_ERROR_FAILED:
     default:
       REPORT(kUnknownError);
       break;
@@ -634,9 +661,11 @@ ObfuscatedFileUtil* SandboxFileSystemBackendDelegate::obfuscated_file_util() {
 ObfuscatedFileUtil* ObfuscatedFileUtil::CreateForTesting(
     quota::SpecialStoragePolicy* special_storage_policy,
     const base::FilePath& file_system_directory,
+    leveldb::Env* env_override,
     base::SequencedTaskRunner* file_task_runner) {
   return new ObfuscatedFileUtil(special_storage_policy,
                                 file_system_directory,
+                                env_override,
                                 file_task_runner,
                                 base::Bind(&GetTypeStringForURL),
                                 GetKnownTypeStrings(),

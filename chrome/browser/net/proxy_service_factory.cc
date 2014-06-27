@@ -11,6 +11,7 @@
 #include "chrome/browser/io_thread.h"
 #include "chrome/browser/net/pref_proxy_config_tracker_impl.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/pref_names.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/net_log.h"
 #include "net/proxy/dhcp_proxy_script_fetcher_factory.h"
@@ -90,7 +91,8 @@ net::ProxyService* ProxyServiceFactory::CreateProxyService(
     net::URLRequestContext* context,
     net::NetworkDelegate* network_delegate,
     net::ProxyConfigService* proxy_config_service,
-    const CommandLine& command_line) {
+    const CommandLine& command_line,
+    bool quick_check_enabled) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
 
 #if defined(OS_IOS)
@@ -138,8 +140,6 @@ net::ProxyService* ProxyServiceFactory::CreateProxyService(
         new chromeos::DhcpProxyScriptFetcherChromeos(context);
 #else
     net::DhcpProxyScriptFetcherFactory dhcp_factory;
-    if (command_line.HasSwitch(switches::kDisableDhcpWpad))
-      dhcp_factory.set_enabled(false);
     dhcp_proxy_script_fetcher = dhcp_factory.Create(context);
 #endif
 
@@ -157,6 +157,8 @@ net::ProxyService* ProxyServiceFactory::CreateProxyService(
         num_pac_threads,
         net_log);
   }
+
+  proxy_service->set_quick_check_enabled(quick_check_enabled);
 
   return proxy_service;
 }

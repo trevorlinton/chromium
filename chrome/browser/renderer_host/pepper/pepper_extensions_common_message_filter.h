@@ -12,7 +12,7 @@
 #include "base/files/file_path.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
-#include "chrome/browser/extensions/extension_function.h"
+#include "extensions/browser/extension_function.h"
 #include "ppapi/c/pp_instance.h"
 #include "ppapi/host/resource_message_filter.h"
 #include "url/gurl.h"
@@ -44,7 +44,7 @@ class PepperExtensionsCommonMessageFilter
 
  protected:
   PepperExtensionsCommonMessageFilter(int render_process_id,
-                                      int render_view_id,
+                                      int render_frame_id,
                                       const base::FilePath& profile_directory,
                                       const GURL& document_url);
   virtual ~PepperExtensionsCommonMessageFilter();
@@ -97,7 +97,7 @@ class PepperExtensionsCommonMessageFilter
   // All the members are initialized on the IO thread when the object is
   // constructed, and accessed only on the UI thread afterwards.
   int render_process_id_;
-  int render_view_id_;
+  int render_frame_id_;
   base::FilePath profile_directory_;
   GURL document_url_;
 

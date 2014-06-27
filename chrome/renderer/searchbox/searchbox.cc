@@ -150,8 +150,7 @@ SearchBox::SearchBox(content::RenderView* render_view)
     display_instant_results_(false),
     most_visited_items_cache_(kMaxInstantMostVisitedItemCacheSize),
     query_(),
-    start_margin_(0),
-    width_(0) {
+    start_margin_(0) {
 }
 
 SearchBox::~SearchBox() {
@@ -162,7 +161,21 @@ void SearchBox::LogEvent(NTPLoggingEventType event) {
       render_view()->GetRoutingID(), render_view()->GetPageId(), event));
 }
 
-void SearchBox::CheckIsUserSignedInToChromeAs(const string16& identity) {
+void SearchBox::LogMostVisitedImpression(int position,
+                                         const base::string16& provider) {
+  render_view()->Send(new ChromeViewHostMsg_LogMostVisitedImpression(
+      render_view()->GetRoutingID(), render_view()->GetPageId(), position,
+      provider));
+}
+
+void SearchBox::LogMostVisitedNavigation(int position,
+                                         const base::string16& provider) {
+  render_view()->Send(new ChromeViewHostMsg_LogMostVisitedNavigation(
+      render_view()->GetRoutingID(), render_view()->GetPageId(), position,
+      provider));
+}
+
+void SearchBox::CheckIsUserSignedInToChromeAs(const base::string16& identity) {
   render_view()->Send(new ChromeViewHostMsg_ChromeIdentityCheck(
       render_view()->GetRoutingID(), render_view()->GetPageId(), identity));
 }
@@ -240,7 +253,7 @@ void SearchBox::NavigateToURL(const GURL& url,
       disposition, is_most_visited_item_url));
 }
 
-void SearchBox::Paste(const string16& text) {
+void SearchBox::Paste(const base::string16& text) {
   render_view()->Send(new ChromeViewHostMsg_PasteAndOpenDropdown(
       render_view()->GetRoutingID(), render_view()->GetPageId(), text));
 }
@@ -304,7 +317,7 @@ bool SearchBox::OnMessageReceived(const IPC::Message& message) {
   return handled;
 }
 
-void SearchBox::OnChromeIdentityCheckResult(const string16& identity,
+void SearchBox::OnChromeIdentityCheckResult(const base::string16& identity,
                                             bool identity_match) {
   if (render_view()->GetWebView() && render_view()->GetWebView()->mainFrame()) {
     extensions_v8::SearchBoxExtension::DispatchChromeIdentityCheckResult(
@@ -355,9 +368,8 @@ void SearchBox::OnFocusChanged(OmniboxFocusState new_focus_state,
   }
 }
 
-void SearchBox::OnMarginChange(int margin, int width) {
+void SearchBox::OnMarginChange(int margin) {
   start_margin_ = margin;
-  width_ = width;
   if (render_view()->GetWebView() && render_view()->GetWebView()->mainFrame()) {
     extensions_v8::SearchBoxExtension::DispatchMarginChange(
         render_view()->GetWebView()->mainFrame());
@@ -413,7 +425,7 @@ void SearchBox::OnSetSuggestionToPrefetch(const InstantSuggestion& suggestion) {
   }
 }
 
-void SearchBox::OnSubmit(const string16& query) {
+void SearchBox::OnSubmit(const base::string16& query) {
   query_ = query;
   if (render_view()->GetWebView() && render_view()->GetWebView()->mainFrame()) {
     DVLOG(1) << render_view() << " OnSubmit";
@@ -452,7 +464,6 @@ void SearchBox::Reset() {
   query_.clear();
   suggestion_ = InstantSuggestion();
   start_margin_ = 0;
-  width_ = 0;
   is_focused_ = false;
   is_key_capture_enabled_ = false;
   theme_info_ = ThemeBackgroundInfo();

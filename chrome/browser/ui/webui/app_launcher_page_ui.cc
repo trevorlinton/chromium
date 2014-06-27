@@ -11,6 +11,7 @@
 #include "chrome/browser/ui/webui/ntp/app_launcher_handler.h"
 #include "chrome/browser/ui/webui/ntp/app_resource_cache_factory.h"
 #include "chrome/browser/ui/webui/ntp/core_app_launcher_handler.h"
+#include "chrome/browser/ui/webui/ntp/favicon_webui_handler.h"
 #include "chrome/browser/ui/webui/ntp/ntp_login_handler.h"
 #include "chrome/browser/ui/webui/ntp/ntp_resource_cache.h"
 #include "chrome/common/url_constants.h"
@@ -37,8 +38,6 @@ AppLauncherPageUI::AppLauncherPageUI(content::WebUI* web_ui)
     : content::WebUIController(web_ui) {
   web_ui->OverrideTitle(l10n_util::GetStringUTF16(IDS_APP_LAUNCHER_TAB_TITLE));
 
-#if !defined(OS_ANDROID)
-  // Android uses native UI for sync setup.
   if (NTPLoginHandler::ShouldShow(GetProfile()))
     web_ui->AddMessageHandler(new NTPLoginHandler());
 
@@ -48,9 +47,9 @@ AppLauncherPageUI::AppLauncherPageUI(content::WebUI* web_ui)
     DCHECK(service);
     web_ui->AddMessageHandler(new AppLauncherHandler(service));
     web_ui->AddMessageHandler(new CoreAppLauncherHandler());
+    web_ui->AddMessageHandler(new FaviconWebUIHandler());
     web_ui->AddMessageHandler(new MetricsHandler());
   }
-#endif
 
 #if defined(ENABLE_THEMES)
   // The theme handler can require some CPU, so do it after hooking up the most
@@ -93,7 +92,7 @@ std::string AppLauncherPageUI::HTMLSource::GetSource() const {
 void AppLauncherPageUI::HTMLSource::StartDataRequest(
     const std::string& path,
     int render_process_id,
-    int render_view_id,
+    int render_frame_id,
     const content::URLDataSource::GotDataCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 

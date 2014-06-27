@@ -10,9 +10,12 @@
       'target_name': 'android_tools',
       'type': 'none',
       'dependencies': [
+        'adb_reboot/adb_reboot.gyp:adb_reboot',
+        'file_poller/file_poller.gyp:file_poller',
         'forwarder2/forwarder.gyp:forwarder2',
         'md5sum/md5sum.gyp:md5sum',
-        'adb_reboot/adb_reboot.gyp:adb_reboot',
+        'purge_ashmem/purge_ashmem.gyp:purge_ashmem',
+        '../../tools/telemetry/telemetry.gyp:*#host',
       ],
     },
     {
@@ -27,6 +30,13 @@
       'type': 'none',
       'dependencies': [
         'memconsumer/memconsumer.gyp:memconsumer',
+      ],
+    },
+    {
+      'target_name': 'ps_ext',
+      'type': 'none',
+      'dependencies': [
+        'ps_ext/ps_ext.gyp:ps_ext',
       ],
     },
   ],

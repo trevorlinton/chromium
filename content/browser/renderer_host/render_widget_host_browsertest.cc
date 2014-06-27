@@ -7,9 +7,9 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_paths.h"
+#include "content/public/test/content_browser_test.h"
+#include "content/public/test/content_browser_test_utils.h"
 #include "content/shell/browser/shell.h"
-#include "content/test/content_browser_test.h"
-#include "content/test/content_browser_test_utils.h"
 #include "net/base/net_util.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
@@ -19,7 +19,7 @@ class RenderWidgetHostBrowserTest : public ContentBrowserTest {
  public:
   RenderWidgetHostBrowserTest() {}
 
-  virtual void SetUpInProcessBrowserTestFixture() OVERRIDE {
+  virtual void SetUpOnMainThread() OVERRIDE {
     ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &test_dir_));
   }
 
@@ -46,8 +46,9 @@ class RenderWidgetHostBrowserTest : public ContentBrowserTest {
   base::FilePath test_dir_;
 };
 
-// Disabled on Windows and CrOS because it is flaky: crbug.com/272379.
-#if defined(OS_WIN) || defined(OS_CHROMEOS)
+// Disabled on Ozone due to flake: crbug.com/315392.
+// Disabled on Aura since this is not possible with ubercomp.
+#if defined(USE_AURA) || defined(USE_OZONE)
 #define MAYBE_GetSnapshotFromRendererTest DISABLED_GetSnapshotFromRendererTest
 #else
 #define MAYBE_GetSnapshotFromRendererTest GetSnapshotFromRendererTest

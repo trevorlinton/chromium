@@ -4,12 +4,8 @@
 
 #include "media/audio/cras/cras_unified.h"
 
-#include <cras_client.h>
-
-#include "base/command_line.h"
 #include "base/logging.h"
 #include "media/audio/cras/audio_manager_cras.h"
-#include "media/audio/linux/alsa_util.h"
 
 namespace media {
 
@@ -116,7 +112,7 @@ bool CrasUnifiedStream::Open() {
     return false;
   }
 
-  if (alsa_util::BitsToFormat(params_.bits_per_sample()) ==
+  if (AudioManagerCras::BitsToFormat(params_.bits_per_sample()) ==
       SND_PCM_FORMAT_UNKNOWN) {
     LOG(WARNING) << "Unsupported pcm format";
     return false;
@@ -187,7 +183,7 @@ void CrasUnifiedStream::Start(AudioSourceCallback* callback) {
   // Prepare |audio_format| and |stream_params| for the stream we
   // will create.
   cras_audio_format* audio_format = cras_audio_format_create(
-      alsa_util::BitsToFormat(params_.bits_per_sample()),
+      AudioManagerCras::BitsToFormat(params_.bits_per_sample()),
       params_.sample_rate(),
       params_.channels());
   if (!audio_format) {

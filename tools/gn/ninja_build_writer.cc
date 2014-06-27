@@ -8,6 +8,7 @@
 
 #include "base/command_line.h"
 #include "base/file_util.h"
+#include "base/path_service.h"
 #include "base/process/process_handle.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -26,26 +27,12 @@
 namespace {
 
 std::string GetSelfInvocationCommand(const BuildSettings* build_settings) {
-#if defined(OS_WIN)
-  wchar_t module[MAX_PATH];
-  GetModuleFileName(NULL, module, MAX_PATH);
-  //result = "\"" + WideToUTF8(module) + "\"";
-  base::FilePath executable(module);
-#elif defined(OS_MACOSX)
-  // FIXME(brettw) write this on Mac!
-  base::FilePath executable("../Debug/gn");
-#else
-  base::FilePath executable =
-      base::GetProcessExecutablePath(base::GetCurrentProcessHandle());
-#endif
-
-/*
-  // Append the root path.
-  CommandLine* cmdline = CommandLine::ForCurrentProcess();
-  result += " --root=\"" + FilePathToUTF8(settings->root_path()) + "\"";
-*/
+  base::FilePath executable;
+  PathService::Get(base::FILE_EXE, &executable);
 
   CommandLine cmdline(executable);
+  cmdline.AppendArg("gen");
+  cmdline.AppendArg(build_settings->build_dir().value());
   cmdline.AppendSwitchPath("--root", build_settings->root_path());
   cmdline.AppendSwitch("-q");  // Don't write output.
 
@@ -70,7 +57,7 @@ std::string GetSelfInvocationCommand(const BuildSettings* build_settings) {
   }
 
 #if defined(OS_WIN)
-  return WideToUTF8(cmdline.GetCommandLineString());
+  return base::WideToUTF8(cmdline.GetCommandLineString());
 #else
   return cmdline.GetCommandLineString();
 #endif
@@ -111,7 +98,7 @@ bool NinjaBuildWriter::RunAndWriteFile(
 
   base::FilePath ninja_file(build_settings->GetFullPath(
       SourceFile(build_settings->build_dir().value() + "build.ninja")));
-  file_util::CreateDirectory(ninja_file.DirName());
+  base::CreateDirectory(ninja_file.DirName());
 
   std::ofstream file;
   file.open(FilePathToUTF8(ninja_file).c_str(),
@@ -136,8 +123,27 @@ void NinjaBuildWriter::WriteNinjaRules() {
   out_ << "  command = " << GetSelfInvocationCommand(build_settings_) << "\n";
   out_ << "  description = Regenerating ninja files\n\n";
 
+  // This rule will regenerate the ninja files when any input file has changed.
   out_ << "build build.ninja: gn\n"
+       << "  generator = 1\n"
        << "  depfile = build.ninja.d\n";
+
+  // Provide a way to force regenerating ninja files if the user is suspicious
+  // something is out-of-date. This will be "ninja refresh".
+  out_ << "\nbuild refresh: gn\n";
+
+  // Provide a way to see what flags are associated with this build:
+  // This will be "ninja show".
+  const CommandLine& our_cmdline = *CommandLine::ForCurrentProcess();
+  std::string args = our_cmdline.GetSwitchValueASCII("args");
+  out_ << "rule echo\n";
+  out_ << "  command = echo $text\n";
+  out_ << "  description = ECHO $desc\n";
+  out_ << "build show: echo\n";
+  out_ << "  desc = build arguments:\n";
+  out_ << "  text = "
+       << (args.empty() ? std::string("No build args, using defaults.") : args)
+       << "\n";
 
   // Input build files. These go in the ".d" file. If we write them as
   // dependencies in the .ninja file itself, ninja will expect the files to

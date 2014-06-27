@@ -8,11 +8,14 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/metrics/histogram.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/browser/signin/profile_oauth2_token_service.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
+#include "chrome/browser/signin/signin_manager.h"
+#include "chrome/browser/signin/signin_manager_factory.h"
+#include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "google_apis/gaia/oauth2_token_service.h"
@@ -66,7 +69,8 @@ class RequestImpl : public WebHistoryService::Request,
   RequestImpl(Profile* profile,
               const GURL& url,
               const CompletionCallback& callback)
-      : profile_(profile),
+      : OAuth2TokenService::Consumer("web_history"),
+        profile_(profile),
         url_(url),
         response_code_(0),
         auth_retry_count_(0),
@@ -81,8 +85,10 @@ class RequestImpl : public WebHistoryService::Request,
 
     ProfileOAuth2TokenService* token_service =
         ProfileOAuth2TokenServiceFactory::GetForProfile(profile_);
+    SigninManagerBase* signin_manager =
+        SigninManagerFactory::GetForProfile(profile_);
     token_request_ = token_service->StartRequest(
-        token_service->GetPrimaryAccountId(), oauth_scopes, this);
+        signin_manager->GetAuthenticatedAccountId(), oauth_scopes, this);
     is_pending_ = true;
   }
 
@@ -102,9 +108,12 @@ class RequestImpl : public WebHistoryService::Request,
       oauth_scopes.insert(kHistoryOAuthScope);
       ProfileOAuth2TokenService* token_service =
           ProfileOAuth2TokenServiceFactory::GetForProfile(profile_);
-      token_service->InvalidateToken(token_service->GetPrimaryAccountId(),
-                                     oauth_scopes,
-                                     access_token_);
+      SigninManagerBase* signin_manager =
+          SigninManagerFactory::GetForProfile(profile_);
+      token_service->InvalidateToken(
+          signin_manager->GetAuthenticatedAccountId(),
+          oauth_scopes,
+          access_token_);
 
       access_token_.clear();
       Start();
@@ -206,12 +215,12 @@ class RequestImpl : public WebHistoryService::Request,
 // Extracts a JSON-encoded HTTP response into a DictionaryValue.
 // If |request|'s HTTP response code indicates failure, or if the response
 // body is not JSON, a null pointer is returned.
-scoped_ptr<DictionaryValue> ReadResponse(RequestImpl* request) {
-  scoped_ptr<DictionaryValue> result;
+scoped_ptr<base::DictionaryValue> ReadResponse(RequestImpl* request) {
+  scoped_ptr<base::DictionaryValue> result;
   if (request->response_code() == net::HTTP_OK) {
-    Value* value = base::JSONReader::Read(request->response_body());
+    base::Value* value = base::JSONReader::Read(request->response_body());
     if (value && value->IsType(base::Value::TYPE_DICTIONARY))
-      result.reset(static_cast<DictionaryValue*>(value));
+      result.reset(static_cast<base::DictionaryValue*>(value));
     else
       DLOG(WARNING) << "Non-JSON response received from history server.";
   }
@@ -233,7 +242,7 @@ std::string ServerTimeString(base::Time time) {
 // |options|. |version_info|, if not empty, should be a token that was received
 // from the server in response to a write operation. It is used to help ensure
 // read consistency after a write.
-GURL GetQueryUrl(const string16& text_query,
+GURL GetQueryUrl(const base::string16& text_query,
                  const QueryOptions& options,
                  const std::string& version_info) {
   GURL url = GURL(kHistoryQueryHistoryUrl);
@@ -258,7 +267,7 @@ GURL GetQueryUrl(const string16& text_query,
   }
 
   if (!text_query.empty())
-    url = net::AppendQueryParameter(url, "q", UTF16ToUTF8(text_query));
+    url = net::AppendQueryParameter(url, "q", base::UTF16ToUTF8(text_query));
 
   if (!version_info.empty())
     url = net::AppendQueryParameter(url, "kvi", version_info);
@@ -269,11 +278,11 @@ GURL GetQueryUrl(const string16& text_query,
 // Creates a DictionaryValue to hold the parameters for a deletion.
 // Ownership is passed to the caller.
 // |url| may be empty, indicating a time-range deletion.
-DictionaryValue* CreateDeletion(
+base::DictionaryValue* CreateDeletion(
     const std::string& min_time,
     const std::string& max_time,
     const GURL& url) {
-  DictionaryValue* deletion = new DictionaryValue;
+  base::DictionaryValue* deletion = new base::DictionaryValue;
   deletion->SetString("type", "CHROME_HISTORY");
   if (url.is_valid())
     deletion->SetString("url", url.spec());
@@ -296,10 +305,11 @@ WebHistoryService::WebHistoryService(Profile* profile)
 }
 
 WebHistoryService::~WebHistoryService() {
+  STLDeleteElements(&pending_expire_requests_);
 }
 
 scoped_ptr<WebHistoryService::Request> WebHistoryService::QueryHistory(
-    const string16& text_query,
+    const base::string16& text_query,
     const QueryOptions& options,
     const WebHistoryService::QueryWebHistoryCallback& callback) {
   // Wrap the original callback into a generic completion callback.
@@ -313,11 +323,11 @@ scoped_ptr<WebHistoryService::Request> WebHistoryService::QueryHistory(
   return request.PassAs<Request>();
 }
 
-scoped_ptr<WebHistoryService::Request> WebHistoryService::ExpireHistory(
+void WebHistoryService::ExpireHistory(
     const std::vector<ExpireHistoryArgs>& expire_list,
     const ExpireWebHistoryCallback& callback) {
-  DictionaryValue delete_request;
-  scoped_ptr<ListValue> deletions(new ListValue);
+  base::DictionaryValue delete_request;
+  scoped_ptr<base::ListValue> deletions(new base::ListValue);
   base::Time now = base::Time::Now();
 
   for (std::vector<ExpireHistoryArgs>::const_iterator it = expire_list.begin();
@@ -360,10 +370,10 @@ scoped_ptr<WebHistoryService::Request> WebHistoryService::ExpireHistory(
       new RequestImpl(profile_, url, completion_callback));
   request->set_post_data(post_data);
   request->Start();
-  return request.PassAs<Request>();
+  pending_expire_requests_.insert(request.release());
 }
 
-scoped_ptr<WebHistoryService::Request> WebHistoryService::ExpireHistoryBetween(
+void WebHistoryService::ExpireHistoryBetween(
     const std::set<GURL>& restrict_urls,
     base::Time begin_time,
     base::Time end_time,
@@ -372,7 +382,7 @@ scoped_ptr<WebHistoryService::Request> WebHistoryService::ExpireHistoryBetween(
   expire_list.back().urls = restrict_urls;
   expire_list.back().begin_time = begin_time;
   expire_list.back().end_time = end_time;
-  return ExpireHistory(expire_list, callback);
+  ExpireHistory(expire_list, callback);
 }
 
 // static
@@ -380,7 +390,7 @@ void WebHistoryService::QueryHistoryCompletionCallback(
     const WebHistoryService::QueryWebHistoryCallback& callback,
     WebHistoryService::Request* request,
     bool success) {
-  scoped_ptr<DictionaryValue> response_value;
+  scoped_ptr<base::DictionaryValue> response_value;
   if (success)
     response_value = ReadResponse(static_cast<RequestImpl*>(request));
   callback.Run(request, response_value.get());
@@ -390,13 +400,16 @@ void WebHistoryService::ExpireHistoryCompletionCallback(
     const WebHistoryService::ExpireWebHistoryCallback& callback,
     WebHistoryService::Request* request,
     bool success) {
-  scoped_ptr<DictionaryValue> response_value;
+  scoped_ptr<base::DictionaryValue> response_value;
   if (success) {
     response_value = ReadResponse(static_cast<RequestImpl*>(request));
     if (response_value)
       response_value->GetString("version_info", &server_version_info_);
   }
-  callback.Run(request, response_value.get() && success);
+  callback.Run(response_value.get() && success);
+  // Clean up from pending requests.
+  pending_expire_requests_.erase(request);
+  delete request;
 }
 
 }  // namespace history

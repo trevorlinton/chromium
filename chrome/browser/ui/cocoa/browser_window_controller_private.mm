@@ -18,6 +18,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window_state.h"
 #import "chrome/browser/ui/cocoa/browser/avatar_button_controller.h"
+#import "chrome/browser/ui/cocoa/browser/avatar_icon_controller.h"
 #import "chrome/browser/ui/cocoa/dev_tools_controller.h"
 #import "chrome/browser/ui/cocoa/fast_resize_view.h"
 #import "chrome/browser/ui/cocoa/find_bar/find_bar_cocoa_controller.h"
@@ -55,6 +56,10 @@ const CGFloat kAvatarRightOffset = 4;
 // The amount by which to shrink the tab strip (on the right) when the
 // incognito badge is present.
 const CGFloat kAvatarTabStripShrink = 18;
+
+// Width of the full screen icon. Used to position the AvatarButton to the
+// left of the icon.
+const CGFloat kFullscreenIconWidth = 32;
 
 // Insets for the location bar, used when the full toolbar is hidden.
 // TODO(viettrungluu): We can argue about the "correct" insetting; I like the
@@ -123,7 +128,7 @@ const CGFloat kLocBarBottomInset = 1;
   DictionaryPrefUpdate update(
       prefs,
       chrome::GetWindowPlacementKey(browser_.get()).c_str());
-  DictionaryValue* windowPreferences = update.Get();
+  base::DictionaryValue* windowPreferences = update.Get();
   windowPreferences->SetInteger("left", bounds.x());
   windowPreferences->SetInteger("top", bounds.y());
   windowPreferences->SetInteger("right", bounds.right());
@@ -272,6 +277,20 @@ willPositionSheet:(NSWindow*)sheet
   // Normally, we don't need to tell the toolbar whether or not to show the
   // divider, but things break down during animation.
   [toolbarController_ setDividerOpacity:[self toolbarDividerOpacity]];
+
+  // Update the position of the active constrained window sheet.  We force this
+  // here because the |sheetParentView| may not have been resized (e.g., to
+  // prevent jank during a fullscreen mode transition), but constrained window
+  // sheets also compute their position based on the bookmark bar and toolbar.
+  content::WebContents* const activeWebContents =
+      browser_->tab_strip_model()->GetActiveWebContents();
+  NSView* const sheetParentView = activeWebContents ?
+      GetSheetParentViewForWebContents(activeWebContents) : nil;
+  if (sheetParentView) {
+    [[NSNotificationCenter defaultCenter]
+      postNotificationName:NSViewFrameDidChangeNotification
+                    object:sheetParentView];
+  }
 }
 
 - (CGFloat)floatingBarHeight {
@@ -314,16 +333,25 @@ willPositionSheet:(NSWindow*)sheet
 
   // Lay out the icognito/avatar badge because calculating the indentation on
   // the right depends on it.
+  NSView* avatarButton = [avatarButtonController_ view];
   if ([self shouldShowAvatar]) {
-    NSView* avatarButton = [avatarButtonController_ view];
-    CGFloat buttonHeight = std::min(
-        static_cast<CGFloat>(profiles::kAvatarIconHeight), tabStripHeight);
-    [avatarButton setFrameSize:NSMakeSize(NSWidth([avatarButton frame]),
-                                          buttonHeight)];
-
-    // Actually place the badge *above* |maxY|, by +2 to miss the divider.
     CGFloat badgeXOffset = -kAvatarRightOffset;
-    CGFloat badgeYOffset = 2 * [[avatarButton superview] cr_lineWidth];
+    CGFloat badgeYOffset = 0;
+    CGFloat buttonHeight = NSHeight([avatarButton frame]);
+
+    if ([self shouldUseNewAvatarButton]) {
+      // The fullscreen icon is displayed to the right of the avatar button.
+      if (![self isFullscreen])
+        badgeXOffset -= kFullscreenIconWidth;
+      // Center the button vertically on the tabstrip.
+      badgeYOffset = (tabStripHeight - buttonHeight) / 2;
+    } else {
+      // Actually place the badge *above* |maxY|, by +2 to miss the divider.
+      badgeYOffset = 2 * [[avatarButton superview] cr_lineWidth];
+    }
+
+    [avatarButton setFrameSize:NSMakeSize(NSWidth([avatarButton frame]),
+        std::min(buttonHeight, tabStripHeight))];
     NSPoint origin =
         NSMakePoint(width - NSWidth([avatarButton frame]) + badgeXOffset,
                     maxY + badgeYOffset);
@@ -341,11 +369,14 @@ willPositionSheet:(NSWindow*)sheet
     FramedBrowserWindow* window =
         static_cast<FramedBrowserWindow*>([self window]);
     rightIndent += -[window fullScreenButtonOriginAdjustment].x;
+
+    // The new avatar is wider than the default indentation, so we need to
+    // account for its width.
+    if ([self shouldUseNewAvatarButton])
+      rightIndent += NSWidth([avatarButton frame]) + kAvatarTabStripShrink;
   } else if ([self shouldShowAvatar]) {
-    rightIndent += kAvatarTabStripShrink;
-    NSButton* labelButton = [avatarButtonController_ labelButtonView];
-    if (labelButton)
-      rightIndent += NSWidth([labelButton frame]) + kAvatarRightOffset;
+    rightIndent += kAvatarTabStripShrink +
+        NSWidth([avatarButton frame]) + kAvatarRightOffset;
   }
   [tabStripController_ setRightIndentForControls:rightIndent];
 
@@ -509,16 +540,9 @@ willPositionSheet:(NSWindow*)sheet
 
 // Fullscreen and presentation mode methods
 
-- (BOOL)shouldShowPresentationModeToggle {
-  return chrome::mac::SupportsSystemFullscreen() && [self isFullscreen];
-}
-
-- (void)moveViewsForFullscreenForSnowLeopard:(BOOL)fullscreen
-    regularWindow:(NSWindow*)regularWindow
-    fullscreenWindow:(NSWindow*)fullscreenWindow {
-  // This method is only for systems without fullscreen support.
-  DCHECK(!chrome::mac::SupportsSystemFullscreen());
-
+- (void)moveViewsForImmersiveFullscreen:(BOOL)fullscreen
+                          regularWindow:(NSWindow*)regularWindow
+                       fullscreenWindow:(NSWindow*)fullscreenWindow {
   NSWindow* sourceWindow = fullscreen ? regularWindow : fullscreenWindow;
   NSWindow* destWindow = fullscreen ? fullscreenWindow : regularWindow;
 
@@ -564,10 +588,11 @@ willPositionSheet:(NSWindow*)sheet
 
   // Move the incognito badge if present.
   if ([self shouldShowAvatar]) {
-    [[avatarButtonController_ view] removeFromSuperview];
-    [[avatarButtonController_ view] setHidden:YES];  // Will be shown in layout.
-    [[[destWindow contentView] superview] addSubview:
-        [avatarButtonController_ view]];
+    NSView* avatarButtonView = [avatarButtonController_ view];
+
+    [avatarButtonView removeFromSuperview];
+    [avatarButtonView setHidden:YES];  // Will be shown in layout.
+    [[[destWindow contentView] superview] addSubview: avatarButtonView];
   }
 
   // Add the tab strip after setting the content view and moving the incognito
@@ -610,7 +635,7 @@ willPositionSheet:(NSWindow*)sheet
 
   if (presentationMode) {
     BOOL fullscreen_for_tab =
-        browser_->fullscreen_controller()->IsFullscreenForTabOrPending();
+        browser_->fullscreen_controller()->IsWindowFullscreenForTabOrPending();
     BOOL kiosk_mode =
         CommandLine::ForCurrentProcess()->HasSwitch(switches::kKioskMode);
     BOOL showDropdown = !fullscreen_for_tab &&
@@ -630,9 +655,10 @@ willPositionSheet:(NSWindow*)sheet
   [self layoutSubviews];
 }
 
-// TODO(rohitrao): This method is misnamed now, since there is a flag that
-// enables 10.6-style fullscreen on newer OSes.
-- (void)enterFullscreenForSnowLeopard {
+- (void)enterImmersiveFullscreen {
+  // |-isFullscreen:| will return YES from here onwards.
+  enteringFullscreen_ = YES;  // Set to NO by |-windowDidEnterFullScreen:|.
+
   // Fade to black.
   const CGDisplayReservationInterval kFadeDurationSeconds = 0.6;
   Boolean didFadeOut = NO;
@@ -644,15 +670,14 @@ willPositionSheet:(NSWindow*)sheet
         kCGDisplayBlendSolidColor, 0.0, 0.0, 0.0, /*synchronous=*/true);
   }
 
-  // Create the fullscreen window.  After this line, isFullscreen will return
-  // YES.
+  // Create the fullscreen window.
   fullscreenWindow_.reset([[self createFullscreenWindow] retain]);
   savedRegularWindow_ = [[self window] retain];
   savedRegularWindowFrame_ = [savedRegularWindow_ frame];
 
-  [self moveViewsForFullscreenForSnowLeopard:YES
-                               regularWindow:[self window]
-                            fullscreenWindow:fullscreenWindow_.get()];
+  [self moveViewsForImmersiveFullscreen:YES
+                          regularWindow:[self window]
+                       fullscreenWindow:fullscreenWindow_.get()];
 
   // When simplified fullscreen is enabled, do not enter presentation mode.
   const CommandLine* command_line = CommandLine::ForCurrentProcess();
@@ -675,11 +700,7 @@ willPositionSheet:(NSWindow*)sheet
   }
 }
 
-- (void)exitFullscreenForSnowLeopard {
-  // TODO(rohitrao): This method is misnamed now, since there is a flag that
-  // enables 10.6-style fullscreen on newer OSes.
-  DCHECK(!chrome::mac::SupportsSystemFullscreen());
-
+- (void)exitImmersiveFullscreen {
   // Fade to black.
   const CGDisplayReservationInterval kFadeDurationSeconds = 0.6;
   Boolean didFadeOut = NO;
@@ -700,9 +721,9 @@ willPositionSheet:(NSWindow*)sheet
 
   [self windowWillExitFullScreen:nil];
 
-  [self moveViewsForFullscreenForSnowLeopard:NO
-                                        regularWindow:savedRegularWindow_
-                                     fullscreenWindow:fullscreenWindow_.get()];
+  [self moveViewsForImmersiveFullscreen:NO
+                          regularWindow:savedRegularWindow_
+                       fullscreenWindow:fullscreenWindow_.get()];
 
   // When exiting fullscreen mode, we need to call layoutSubviews manually.
   [savedRegularWindow_ autorelease];
@@ -741,9 +762,10 @@ willPositionSheet:(NSWindow*)sheet
 
 - (void)showFullscreenExitBubbleIfNecessary {
   // This method is called in response to
-  // |-updateFullscreenExitBubbleURL:bubbleType:|. If on Lion the system is
-  // transitioning, do not show the bubble because it will cause visual jank
-  // <http://crbug.com/130649>. This will be called again as part of
+  // |-updateFullscreenExitBubbleURL:bubbleType:|. If we're in the middle of the
+  // transition into fullscreen (i.e., using the System Fullscreen API), do not
+  // show the bubble because it will cause visual jank
+  // (http://crbug.com/130649). This will be called again as part of
   // |-windowDidEnterFullScreen:|, so arrange to do that work then instead.
   if (enteringFullscreen_)
     return;
@@ -803,18 +825,19 @@ willPositionSheet:(NSWindow*)sheet
 }
 
 - (void)windowWillEnterFullScreen:(NSNotification*)notification {
-  [self registerForContentViewResizeNotifications];
+  if (notification)  // For System Fullscreen when non-nil.
+    [self registerForContentViewResizeNotifications];
 
   NSWindow* window = [self window];
   savedRegularWindowFrame_ = [window frame];
   BOOL mode = enteringPresentationMode_ ||
-       browser_->fullscreen_controller()->IsFullscreenForTabOrPending();
+       browser_->fullscreen_controller()->IsWindowFullscreenForTabOrPending();
   enteringFullscreen_ = YES;
   [self setPresentationModeInternal:mode forceDropdown:NO];
 }
 
 - (void)windowDidEnterFullScreen:(NSNotification*)notification {
-  if (chrome::mac::SupportsSystemFullscreen())
+  if (notification)  // For System Fullscreen when non-nil.
     [self deregisterForContentViewResizeNotifications];
   enteringFullscreen_ = NO;
   enteringPresentationMode_ = NO;
@@ -831,7 +854,7 @@ willPositionSheet:(NSWindow*)sheet
 }
 
 - (void)windowWillExitFullScreen:(NSNotification*)notification {
-  if (chrome::mac::SupportsSystemFullscreen())
+  if (notification)  // For System Fullscreen when non-nil.
     [self registerForContentViewResizeNotifications];
   fullscreenModeController_.reset();
   [self destroyFullscreenExitBubbleIfNecessary];
@@ -839,7 +862,7 @@ willPositionSheet:(NSWindow*)sheet
 }
 
 - (void)windowDidExitFullScreen:(NSNotification*)notification {
-  if (chrome::mac::SupportsSystemFullscreen())
+  if (notification)  // For System Fullscreen when non-nil.
     [self deregisterForContentViewResizeNotifications];
   browser_->WindowFullscreenStateChanged();
 }
@@ -976,14 +999,6 @@ willPositionSheet:(NSWindow*)sheet
   // transitioning between composited and non-composited mode.
   // http://crbug.com/279472
   allowOverlappingViews = YES;
-
-  if (allowOverlappingViews &&
-      [self coreAnimationStatus] ==
-          browser_window_controller::kCoreAnimationEnabledLazy) {
-    [[[self window] contentView] setWantsLayer:YES];
-    [[self tabStripView] setWantsLayer:YES];
-  }
-
   contents->GetView()->SetAllowOverlappingViews(allowOverlappingViews);
 
   DevToolsWindow* devToolsWindow =
@@ -998,23 +1013,6 @@ willPositionSheet:(NSWindow*)sheet
   // If there's no toolbar then hide the infobar tip.
   [infoBarContainerController_
       setShouldSuppressTopInfoBarTip:![self hasToolbar]];
-}
-
-- (browser_window_controller::CoreAnimationStatus)coreAnimationStatus {
-  // TODO(sail) Remove this.
-  if (!CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kUseCoreAnimation)) {
-    return browser_window_controller::kCoreAnimationDisabled;
-  }
-  if (CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-          switches::kUseCoreAnimation) == "lazy") {
-    return browser_window_controller::kCoreAnimationEnabledLazy;
-  }
-  if (CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-          switches::kUseCoreAnimation) == "disabled") {
-    return browser_window_controller::kCoreAnimationDisabled;
-  }
-  return browser_window_controller::kCoreAnimationEnabledAlways;
 }
 
 @end  // @implementation BrowserWindowController(Private)

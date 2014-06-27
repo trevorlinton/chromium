@@ -249,9 +249,10 @@ TEST_F(ProfileMenuControllerTest, ManagedProfile) {
   TestingProfile* managed_profile =
       manager->CreateTestingProfile("test1",
                                     scoped_ptr<PrefServiceSyncable>(),
-                                    ASCIIToUTF16("Supervised User"),
+                                    base::ASCIIToUTF16("Supervised User"),
                                     0,
-                                    "TEST_ID");
+                                    "TEST_ID",
+                                    TestingProfile::TestingFactories());
   BrowserList::SetLastActive(browser());
 
   NSMenu* menu = [controller() menu];

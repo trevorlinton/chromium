@@ -22,7 +22,7 @@
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
 #include "grit/ui_resources.h"
-#include "third_party/skia/include/effects/SkGradientShader.h"
+#include "third_party/skia/include/core/SkPaint.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/theme_provider.h"
@@ -30,39 +30,43 @@
 #include "ui/gfx/canvas.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/label.h"
-#include "ui/views/controls/textfield/textfield.h"
+#include "ui/views/painter.h"
 #include "ui/views/widget/widget.h"
 
+namespace {
+
 // The amount of whitespace to have before the find button.
-static const int kWhiteSpaceAfterMatchCountLabel = 1;
+const int kWhiteSpaceAfterMatchCountLabel = 1;
 
 // The margins around the search field and the close button.
-static const int kMarginLeftOfCloseButton = 3;
-static const int kMarginRightOfCloseButton = 7;
-static const int kMarginLeftOfFindTextfield = 12;
+const int kMarginLeftOfCloseButton = 3;
+const int kMarginRightOfCloseButton = 7;
+const int kMarginLeftOfFindTextfield = 12;
 
 // The margins around the match count label (We add extra space so that the
 // background highlight extends beyond just the text).
-static const int kMatchCountExtraWidth = 9;
+const int kMatchCountExtraWidth = 9;
 
 // Minimum width for the match count label.
-static const int kMatchCountMinWidth = 30;
+const int kMatchCountMinWidth = 30;
 
 // The text color for the match count label.
-static const SkColor kTextColorMatchCount = SkColorSetRGB(178, 178, 178);
+const SkColor kTextColorMatchCount = SkColorSetRGB(178, 178, 178);
 
 // The text color for the match count label when no matches are found.
-static const SkColor kTextColorNoMatch = SK_ColorBLACK;
+const SkColor kTextColorNoMatch = SK_ColorBLACK;
 
 // The background color of the match count label when results are found.
-static const SkColor kBackgroundColorMatch = SkColorSetARGB(0, 255, 255, 255);
+const SkColor kBackgroundColorMatch = SkColorSetARGB(0, 255, 255, 255);
 
 // The background color of the match count label when no results are found.
-static const SkColor kBackgroundColorNoMatch = SkColorSetRGB(255, 102, 102);
+const SkColor kBackgroundColorNoMatch = SkColorSetRGB(255, 102, 102);
 
 // The default number of average characters that the text box will be. This
 // number brings the width on a "regular fonts" system to about 300px.
-static const int kDefaultCharWidth = 43;
+const int kDefaultCharWidth = 43;
+
+}  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
 // FindBarView, public:
@@ -74,23 +78,20 @@ FindBarView::FindBarView(FindBarHost* host)
       focus_forwarder_view_(NULL),
       find_previous_button_(NULL),
       find_next_button_(NULL),
-      close_button_(NULL),
-      text_box_background_(NULL),
-      text_box_background_left_(NULL) {
+      close_button_(NULL) {
   set_id(VIEW_ID_FIND_IN_PAGE);
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
 
   find_text_ = new views::Textfield;
   find_text_->set_id(VIEW_ID_FIND_IN_PAGE_TEXT_FIELD);
-  find_text_->SetFont(rb.GetFont(ui::ResourceBundle::BaseFont));
   find_text_->set_default_width_in_chars(kDefaultCharWidth);
-  find_text_->SetController(this);
+  find_text_->set_controller(this);
   find_text_->SetAccessibleName(l10n_util::GetStringUTF16(IDS_ACCNAME_FIND));
-
+  // The find bar textfield has a background image instead of a border.
+  find_text_->SetBorder(views::Border::NullBorder());
   AddChildView(find_text_);
 
   match_count_text_ = new views::Label();
-  match_count_text_->SetFont(rb.GetFont(ui::ResourceBundle::BaseFont));
   AddChildView(match_count_text_);
 
   // Create a focus forwarder view which sends focus to find_text_.
@@ -99,7 +100,7 @@ FindBarView::FindBarView(FindBarHost* host)
 
   find_previous_button_ = new views::ImageButton(this);
   find_previous_button_->set_tag(FIND_PREVIOUS_TAG);
-  find_previous_button_->set_focusable(true);
+  find_previous_button_->SetFocusable(true);
   find_previous_button_->SetImage(views::CustomButton::STATE_NORMAL,
       rb.GetImageSkiaNamed(IDR_FINDINPAGE_PREV));
   find_previous_button_->SetImage(views::CustomButton::STATE_HOVERED,
@@ -116,7 +117,7 @@ FindBarView::FindBarView(FindBarHost* host)
 
   find_next_button_ = new views::ImageButton(this);
   find_next_button_->set_tag(FIND_NEXT_TAG);
-  find_next_button_->set_focusable(true);
+  find_next_button_->SetFocusable(true);
   find_next_button_->SetImage(views::CustomButton::STATE_NORMAL,
       rb.GetImageSkiaNamed(IDR_FINDINPAGE_NEXT));
   find_next_button_->SetImage(views::CustomButton::STATE_HOVERED,
@@ -133,7 +134,7 @@ FindBarView::FindBarView(FindBarHost* host)
 
   close_button_ = new views::ImageButton(this);
   close_button_->set_tag(CLOSE_TAG);
-  close_button_->set_focusable(true);
+  close_button_->SetFocusable(true);
   close_button_->SetImage(views::CustomButton::STATE_NORMAL,
                           rb.GetImageSkiaNamed(IDR_CLOSE_1));
   close_button_->SetImage(views::CustomButton::STATE_HOVERED,
@@ -150,15 +151,13 @@ FindBarView::FindBarView(FindBarHost* host)
   SetBackground(rb.GetImageSkiaNamed(IDR_FIND_DLG_LEFT_BACKGROUND),
                 rb.GetImageSkiaNamed(IDR_FIND_DLG_RIGHT_BACKGROUND));
 
-  SetBorder(IDR_FIND_DIALOG_LEFT, IDR_FIND_DIALOG_MIDDLE,
-            IDR_FIND_DIALOG_RIGHT);
+  SetBorderFromIds(
+      IDR_FIND_DIALOG_LEFT, IDR_FIND_DIALOG_MIDDLE, IDR_FIND_DIALOG_RIGHT);
 
   preferred_height_ = rb.GetImageSkiaNamed(IDR_FIND_DIALOG_MIDDLE)->height();
 
-  // Background images for the Find edit box.
-  text_box_background_ = rb.GetImageSkiaNamed(IDR_FIND_BOX_BACKGROUND);
-  text_box_background_left_ =
-      rb.GetImageSkiaNamed(IDR_FIND_BOX_BACKGROUND_LEFT);
+  static const int kImages[] = IMAGE_GRID(IDR_TEXTFIELD);
+  find_text_border_.reset(views::Painter::CreateImageGridPainter(kImages));
 
   EnableCanvasFlippingForRTLUI(true);
 }
@@ -167,13 +166,13 @@ FindBarView::~FindBarView() {
 }
 
 void FindBarView::SetFindTextAndSelectedRange(
-    const string16& find_text,
+    const base::string16& find_text,
     const gfx::Range& selected_range) {
   find_text_->SetText(find_text);
   find_text_->SelectRange(selected_range);
 }
 
-string16 FindBarView::GetFindText() const {
+base::string16 FindBarView::GetFindText() const {
   return find_text_->text();
 }
 
@@ -181,16 +180,16 @@ gfx::Range FindBarView::GetSelectedRange() const {
   return find_text_->GetSelectedRange();
 }
 
-string16 FindBarView::GetFindSelectedText() const {
+base::string16 FindBarView::GetFindSelectedText() const {
   return find_text_->GetSelectedText();
 }
 
-string16 FindBarView::GetMatchCountText() const {
+base::string16 FindBarView::GetMatchCountText() const {
   return match_count_text_->text();
 }
 
 void FindBarView::UpdateForResult(const FindNotificationDetails& result,
-                                  const string16& find_text) {
+                                  const base::string16& find_text) {
   bool have_valid_range =
       result.number_of_matches() != -1 && result.active_match_ordinal() != -1;
 
@@ -224,7 +223,7 @@ void FindBarView::UpdateForResult(const FindNotificationDetails& result,
 }
 
 void FindBarView::ClearMatchCount() {
-  match_count_text_->SetText(string16());
+  match_count_text_->SetText(base::string16());
   UpdateMatchCountAppearance(false);
   Layout();
   SchedulePaint();
@@ -243,23 +242,19 @@ void FindBarView::OnPaint(gfx::Canvas* canvas) {
   // Paint drop down bar border and background.
   DropdownBarView::OnPaint(canvas);
 
-  // Then we draw the background image for the Find Textfield. We start by
-  // calculating the position of background images for the Find text box.
-  int find_text_x = find_text_->x();
-  gfx::Point back_button_origin = find_previous_button_->bounds().origin();
-
-  // Draw the image to the left that creates a curved left edge for the box.
-  canvas->TileImageInt(*text_box_background_left_,
-      find_text_x - text_box_background_left_->width(),
-      back_button_origin.y(), text_box_background_left_->width(),
-      text_box_background_left_->height());
-
-  // Draw the top and bottom border for whole text box (encompasses both the
-  // find_text_ edit box and the match_count_text_ label).
-  canvas->TileImageInt(*text_box_background_, find_text_x,
-                       back_button_origin.y(),
-                       back_button_origin.x() - find_text_x,
-                       text_box_background_->height());
+  // Paint the background and border for the textfield.
+  const int find_text_x = kMarginLeftOfFindTextfield / 2;
+  const gfx::Rect text_bounds(find_text_x, find_next_button_->y(),
+                              find_next_button_->bounds().right() - find_text_x,
+                              find_next_button_->height());
+  const int kBorderCornerRadius = 2;
+  gfx::Rect background_bounds = text_bounds;
+  background_bounds.Inset(kBorderCornerRadius, kBorderCornerRadius);
+  SkPaint paint;
+  paint.setStyle(SkPaint::kFill_Style);
+  paint.setColor(find_text_->GetBackgroundColor());
+  canvas->DrawRoundRect(background_bounds, kBorderCornerRadius, paint);
+  views::Painter::PaintPainterAt(canvas, find_text_border_.get(), text_bounds);
 
   // Draw the background of the match text. We want to make sure the red
   // "no-match" background almost completely fills up the amount of vertical
@@ -341,14 +336,6 @@ void FindBarView::Layout() {
       find_previous_button_->height());
 }
 
-void FindBarView::ViewHierarchyChanged(
-    const ViewHierarchyChangedDetails& details) {
-  if (details.is_add && details.child == this) {
-    find_text_->SetHorizontalMargins(0, 2);  // Left and Right margins.
-    find_text_->RemoveBorder();  // We draw our own border (a background image).
-  }
-}
-
 gfx::Size FindBarView::GetPreferredSize() {
   gfx::Size prefsize = find_text_->GetPreferredSize();
   prefsize.set_height(preferred_height_);
@@ -401,16 +388,6 @@ void FindBarView::ButtonPressed(
 ////////////////////////////////////////////////////////////////////////////////
 // FindBarView, views::TextfieldController implementation:
 
-void FindBarView::ContentsChanged(views::Textfield* sender,
-                                  const string16& new_contents) {
-  // TextfieldController::OnAfterUserAction() is supported only by Views
-  // implementation, and NativeTextfieldWin doesn't call OnAfterUserAction().
-  // Call Find() here.
-  // TODO(yukishiino): Remove this code after the migration to Views.
-  if (!views::Textfield::IsViewsTextfieldEnabled())
-    Find(new_contents);
-}
-
 bool FindBarView::HandleKeyEvent(views::Textfield* sender,
                                  const ui::KeyEvent& key_event) {
   // If the dialog is not visible, there is no reason to process keyboard input.
@@ -422,7 +399,7 @@ bool FindBarView::HandleKeyEvent(views::Textfield* sender,
 
   if (key_event.key_code() == ui::VKEY_RETURN) {
     // Pressing Return/Enter starts the search (unless text box is empty).
-    string16 find_string = find_text_->text();
+    base::string16 find_string = find_text_->text();
     if (!find_string.empty()) {
       FindBarController* controller = find_bar_host()->GetFindBarController();
       FindTabHelper* find_tab_helper =
@@ -441,11 +418,7 @@ bool FindBarView::HandleKeyEvent(views::Textfield* sender,
 void FindBarView::OnAfterUserAction(views::Textfield* sender) {
   // The composition text wouldn't be what the user is really looking for.
   // We delay the search until the user commits the composition text.
-  if (sender->IsIMEComposing() || sender->text() == last_searched_text_)
-    return;
-
-  // TODO(yukishiino): Remove this condition check after the migration to Views.
-  if (views::Textfield::IsViewsTextfieldEnabled())
+  if (!sender->IsIMEComposing() && sender->text() != last_searched_text_)
     Find(sender->text());
 }
 
@@ -456,7 +429,7 @@ void FindBarView::OnAfterPaste() {
   last_searched_text_.clear();
 }
 
-void FindBarView::Find(const string16& search_text) {
+void FindBarView::Find(const base::string16& search_text) {
   FindBarController* controller = find_bar_host()->GetFindBarController();
   DCHECK(controller);
   content::WebContents* web_contents = controller->web_contents();
@@ -477,7 +450,7 @@ void FindBarView::Find(const string16& search_text) {
     find_tab_helper->StartFinding(search_text, true, false);
   } else {
     find_tab_helper->StopFinding(FindBarController::kClearSelectionOnPage);
-    UpdateForResult(find_tab_helper->find_result(), string16());
+    UpdateForResult(find_tab_helper->find_result(), base::string16());
     find_bar_host()->MoveWindowIfNecessary(gfx::Rect(), false);
 
     // Clearing the text box should clear the prepopulate state so that when
@@ -488,7 +461,7 @@ void FindBarView::Find(const string16& search_text) {
     Profile* profile =
         Profile::FromBrowserContext(web_contents->GetBrowserContext());
     FindBarState* find_bar_state = FindBarStateFactory::GetForProfile(profile);
-    find_bar_state->set_last_prepopulate_text(string16());
+    find_bar_state->set_last_prepopulate_text(base::string16());
   }
 }
 

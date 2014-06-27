@@ -13,6 +13,7 @@
 #include "cc/test/fake_picture_pile_impl.h"
 #include "cc/test/fake_tile_manager.h"
 #include "cc/test/fake_tile_manager_client.h"
+#include "cc/test/test_shared_bitmap_manager.h"
 #include "cc/test/test_tile_priorities.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -25,20 +26,17 @@ class BinComparator {
     const ManagedTileState& ams = a->managed_state();
     const ManagedTileState& bms = b->managed_state();
 
+    if (ams.priority_bin != bms.priority_bin)
+      return ams.priority_bin < bms.priority_bin;
+
     if (ams.required_for_activation != bms.required_for_activation)
       return ams.required_for_activation;
 
     if (ams.resolution != bms.resolution)
       return ams.resolution < bms.resolution;
 
-    if (ams.time_to_needed_in_seconds !=  bms.time_to_needed_in_seconds)
-      return ams.time_to_needed_in_seconds < bms.time_to_needed_in_seconds;
-
-    if (ams.distance_to_visible_in_pixels !=
-        bms.distance_to_visible_in_pixels) {
-      return ams.distance_to_visible_in_pixels <
-             bms.distance_to_visible_in_pixels;
-    }
+    if (ams.distance_to_visible != bms.distance_to_visible)
+      return ams.distance_to_visible < bms.distance_to_visible;
 
     gfx::Rect a_rect = a->content_rect();
     gfx::Rect b_rect = b->content_rect();
@@ -56,15 +54,14 @@ class PrioritizedTileSetTest : public testing::Test {
     output_surface_ = FakeOutputSurface::Create3d().Pass();
     CHECK(output_surface_->BindToClient(&output_surface_client_));
 
+    shared_bitmap_manager_.reset(new TestSharedBitmapManager());
     resource_provider_ =
-        ResourceProvider::Create(output_surface_.get(),
-                                 NULL,
-                                 0,
-                                 false,
-                                 1).Pass();
+        ResourceProvider::Create(
+            output_surface_.get(), shared_bitmap_manager_.get(), 0, false, 1)
+            .Pass();
     tile_manager_.reset(
         new FakeTileManager(&tile_manager_client_, resource_provider_.get()));
-    picture_pile_ = FakePicturePileImpl::CreatePile();
+    picture_pile_ = FakePicturePileImpl::CreateInfiniteFilledPile();
   }
 
   scoped_refptr<Tile> CreateTile() {
@@ -75,13 +72,14 @@ class PrioritizedTileSetTest : public testing::Test {
                                      1.0,
                                      0,
                                      0,
-                                     true);
+                                     Tile::USE_LCD_TEXT);
   }
 
  private:
   LayerTreeSettings settings_;
   FakeOutputSurfaceClient output_surface_client_;
   scoped_ptr<FakeOutputSurface> output_surface_;
+  scoped_ptr<SharedBitmapManager> shared_bitmap_manager_;
   scoped_ptr<ResourceProvider> resource_provider_;
   FakeTileManagerClient tile_manager_client_;
   scoped_ptr<FakeTileManager> tile_manager_;

@@ -68,11 +68,12 @@ class SimpleWebViewDialog : public views::ButtonListener,
       const content::OpenURLParams& params) OVERRIDE;
 
   // Implements content::WebContentsDelegate:
-  virtual void LoadingStateChanged(content::WebContents* source) OVERRIDE;
-
-  // Implements LocationBarView::Delegate:
   virtual void NavigationStateChanged(const content::WebContents* source,
                                       unsigned changed_flags) OVERRIDE;
+  virtual void LoadingStateChanged(content::WebContents* source,
+                                   bool to_different_document) OVERRIDE;
+
+  // Implements LocationBarView::Delegate:
   virtual content::WebContents* GetWebContents() OVERRIDE;
   virtual ToolbarModel* GetToolbarModel() OVERRIDE;
   virtual const ToolbarModel* GetToolbarModel() const OVERRIDE;
@@ -90,6 +91,7 @@ class SimpleWebViewDialog : public views::ButtonListener,
 
   // Implements ToolbarModelDelegate:
   virtual content::WebContents* GetActiveWebContents() const OVERRIDE;
+  virtual bool InTabbedBrowser() const OVERRIDE;
 
   // Implements CommandUpdaterDelegate:
   virtual void ExecuteCommandWithDisposition(
@@ -97,6 +99,8 @@ class SimpleWebViewDialog : public views::ButtonListener,
       WindowOpenDisposition) OVERRIDE;
 
  private:
+  friend class SimpleWebViewDialogTest;
+
   void LoadImages();
   void UpdateButtons();
   void UpdateReload(bool is_loading, bool force);

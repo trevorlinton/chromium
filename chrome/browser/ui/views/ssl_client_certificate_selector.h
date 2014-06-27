@@ -56,13 +56,11 @@ class SSLClientCertificateSelector : public SSLClientAuthObserver,
 
   // DialogDelegateView:
   virtual bool CanResize() const OVERRIDE;
-  virtual string16 GetWindowTitle() const OVERRIDE;
+  virtual base::string16 GetWindowTitle() const OVERRIDE;
   virtual void DeleteDelegate() OVERRIDE;
   virtual bool IsDialogButtonEnabled(ui::DialogButton button) const OVERRIDE;
   virtual bool Cancel() OVERRIDE;
   virtual bool Accept() OVERRIDE;
-  virtual views::NonClientFrameView* CreateNonClientFrameView(
-      views::Widget* widget) OVERRIDE;
   virtual views::View* GetInitiallyFocusedView() OVERRIDE;
   virtual views::View* CreateExtraView() OVERRIDE;
   virtual ui::ModalType GetModalType() const OVERRIDE;
@@ -77,6 +75,9 @@ class SSLClientCertificateSelector : public SSLClientAuthObserver,
 
  private:
   void CreateCertTable();
+
+  // Callback after unlocking certificate slot.
+  void Unlocked(net::X509Certificate* cert);
 
   scoped_ptr<CertificateSelectorTableModel> model_;
 

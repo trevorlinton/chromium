@@ -75,7 +75,7 @@ bool FindBarHost::MaybeForwardKeyEventToWebpage(
 
   // Make sure we don't have a text field element interfering with keyboard
   // input. Otherwise Up and Down arrow key strokes get eaten. "Nom Nom Nom".
-  render_view_host->ClearFocusedNode();
+  render_view_host->ClearFocusedElement();
   NativeWebKeyboardEvent event = GetKeyboardEvent(contents, key_event);
   render_view_host->ForwardKeyboardEvent(event);
   return true;
@@ -102,7 +102,7 @@ void FindBarHost::SetFocusAndSelection() {
 }
 
 void FindBarHost::ClearResults(const FindNotificationDetails& results) {
-  find_bar_view()->UpdateForResult(results, string16());
+  find_bar_view()->UpdateForResult(results, base::string16());
 }
 
 void FindBarHost::StopAnimation() {
@@ -131,12 +131,12 @@ void FindBarHost::MoveWindowIfNecessary(const gfx::Rect& selection_rect,
 }
 
 void FindBarHost::SetFindTextAndSelectedRange(
-    const string16& find_text,
+    const base::string16& find_text,
     const gfx::Range& selected_range) {
   find_bar_view()->SetFindTextAndSelectedRange(find_text, selected_range);
 }
 
-string16 FindBarHost::GetFindText() {
+base::string16 FindBarHost::GetFindText() {
   return find_bar_view()->GetFindText();
 }
 
@@ -145,7 +145,7 @@ gfx::Range FindBarHost::GetSelectedRange() {
 }
 
 void FindBarHost::UpdateUIForFindResult(const FindNotificationDetails& result,
-                                        const string16& find_text) {
+                                        const base::string16& find_text) {
   // Make sure match count is clear. It may get set again in UpdateForResult
   // if enough data is available.
   find_bar_view()->ClearMatchCount();
@@ -245,11 +245,11 @@ bool FindBarHost::GetFindBarWindowInfo(gfx::Point* position,
   return true;
 }
 
-string16 FindBarHost::GetFindSelectedText() {
+base::string16 FindBarHost::GetFindSelectedText() {
   return find_bar_view()->GetFindSelectedText();
 }
 
-string16 FindBarHost::GetMatchCountText() {
+base::string16 FindBarHost::GetMatchCountText() {
   return find_bar_view()->GetMatchCountText();
 }
 

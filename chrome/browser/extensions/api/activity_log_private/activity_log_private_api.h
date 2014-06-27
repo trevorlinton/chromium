@@ -12,29 +12,24 @@
 #include "base/synchronization/lock.h"
 #include "chrome/browser/extensions/activity_log/activity_actions.h"
 #include "chrome/browser/extensions/activity_log/activity_log.h"
-#include "chrome/browser/extensions/api/profile_keyed_api_factory.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
-#include "chrome/browser/extensions/event_router.h"
+#include "extensions/browser/browser_context_keyed_api_factory.h"
+#include "extensions/browser/event_router.h"
 
 namespace extensions {
 
 class ActivityLog;
 
-// The ID of the trusted/whitelisted ActivityLog extension.
-extern const char kActivityLogExtensionId[];
-extern const char kActivityLogTestExtensionId[];
-extern const char kActivityLogObsoleteExtensionId[];
-
 // Handles interactions between the Activity Log API and implementation.
-class ActivityLogAPI : public ProfileKeyedAPI,
+class ActivityLogAPI : public BrowserContextKeyedAPI,
                        public extensions::ActivityLog::Observer,
                        public EventRouter::Observer {
  public:
-  explicit ActivityLogAPI(Profile* profile);
+  explicit ActivityLogAPI(content::BrowserContext* context);
   virtual ~ActivityLogAPI();
 
-  // ProfileKeyedAPI implementation.
-  static ProfileKeyedAPIFactory<ActivityLogAPI>* GetFactoryInstance();
+  // BrowserContextKeyedAPI implementation.
+  static BrowserContextKeyedAPIFactory<ActivityLogAPI>* GetFactoryInstance();
 
   virtual void Shutdown() OVERRIDE;
 
@@ -42,7 +37,7 @@ class ActivityLogAPI : public ProfileKeyedAPI,
   static bool IsExtensionWhitelisted(const std::string& extension_id);
 
  private:
-  friend class ProfileKeyedAPIFactory<ActivityLogAPI>;
+  friend class BrowserContextKeyedAPIFactory<ActivityLogAPI>;
   static const char* service_name() { return "ActivityLogPrivateAPI"; }
 
   // ActivityLog::Observer
@@ -54,15 +49,16 @@ class ActivityLogAPI : public ProfileKeyedAPI,
   virtual void OnListenerAdded(const EventListenerInfo& details) OVERRIDE;
   virtual void OnListenerRemoved(const EventListenerInfo& details) OVERRIDE;
 
-  Profile* profile_;
+  content::BrowserContext* browser_context_;
   ActivityLog* activity_log_;
   bool initialized_;
 
   DISALLOW_COPY_AND_ASSIGN(ActivityLogAPI);
 };
 
-template<>
-void ProfileKeyedAPIFactory<ActivityLogAPI>::DeclareFactoryDependencies();
+template <>
+void
+    BrowserContextKeyedAPIFactory<ActivityLogAPI>::DeclareFactoryDependencies();
 
 // The implementation of activityLogPrivate.getExtensionActivities
 class ActivityLogPrivateGetExtensionActivitiesFunction
@@ -80,6 +76,20 @@ class ActivityLogPrivateGetExtensionActivitiesFunction
  private:
   void OnLookupCompleted(
       scoped_ptr<std::vector<scoped_refptr<Action> > > activities);
+};
+
+// The implementation of activityLogPrivate.deleteActivities
+class ActivityLogPrivateDeleteActivitiesFunction
+    : public ChromeAsyncExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("activityLogPrivate.deleteActivities",
+                             ACTIVITYLOGPRIVATE_DELETEACTIVITIES)
+
+ protected:
+  virtual ~ActivityLogPrivateDeleteActivitiesFunction() {}
+
+  // ExtensionFunction:
+  virtual bool RunImpl() OVERRIDE;
 };
 
 // The implementation of activityLogPrivate.deleteDatabase

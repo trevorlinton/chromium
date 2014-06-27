@@ -58,14 +58,8 @@ cr.define('options', function() {
         CreateProfileOverlay.cancelCreateProfile();
       };
 
-      $('create-profile-managed-container').hidden =
-          !loadTimeData.getBoolean('managedUsersEnabled');
-
-      $('import-existing-managed-user-link').hidden =
-          !loadTimeData.getBoolean('allowCreateExistingManagedUsers') ||
-          !loadTimeData.getBoolean('managedUsersEnabled');
-
       $('manage-profile-cancel').onclick =
+          $('disconnect-managed-profile-cancel').onclick =
           $('delete-profile-cancel').onclick = function(event) {
         OptionsPage.closeOverlay();
       };
@@ -74,6 +68,7 @@ cr.define('options', function() {
         if (BrowserOptions.getCurrentProfile().isManaged)
           return;
         chrome.send('deleteProfile', [self.profileInfo_.filePath]);
+        options.ManagedUserListData.resetPromise();
       };
       $('add-shortcut-button').onclick = function(event) {
         chrome.send('addProfileShortcut', [self.profileInfo_.filePath]);
@@ -81,6 +76,12 @@ cr.define('options', function() {
       $('remove-shortcut-button').onclick = function(event) {
         chrome.send('removeProfileShortcut', [self.profileInfo_.filePath]);
       };
+
+      $('disconnect-managed-profile-ok').onclick = function(event) {
+        OptionsPage.closeOverlay();
+        chrome.send('deleteProfile',
+                    [BrowserOptions.getCurrentProfile().filePath]);
+      }
 
       $('create-profile-managed-signed-in-learn-more-link').onclick =
           function(event) {
@@ -104,7 +105,6 @@ cr.define('options', function() {
       };
 
       $('import-existing-managed-user-link').onclick = function(event) {
-        OptionsPage.closeOverlay();
         OptionsPage.navigateToPage('managedUserImport');
       };
     },
@@ -128,14 +128,18 @@ cr.define('options', function() {
         chrome.send('requestHasProfileShortcuts', [profileInfo.filePath]);
       }
 
-      $('manage-profile-name').focus();
+      var manageNameField = $('manage-profile-name');
+      // Supervised users cannot edit their names.
+      if (manageNameField.disabled)
+        $('manage-profile-ok').focus();
+      else
+        manageNameField.focus();
     },
 
     /**
      * Registers event handlers that are common between create and manage modes.
-     * @param {string} mode A label that specifies the type of dialog
-     *     box which is currently being viewed (i.e. 'create' or
-     *     'manage').
+     * @param {string} mode A label that specifies the type of dialog box which
+     *     is currently being viewed (i.e. 'create' or 'manage').
      * @param {function()} submitFunction The function that should be called
      *     when the user chooses to submit (e.g. by clicking the OK button).
      * @private
@@ -146,7 +150,7 @@ cr.define('options', function() {
         self.onIconGridSelectionChanged_(mode);
       });
       $(mode + '-profile-name').oninput = function(event) {
-        self.onNameChanged_(event, mode);
+        self.onNameChanged_(mode);
       };
       $(mode + '-profile-ok').onclick = function(event) {
         OptionsPage.closeOverlay();
@@ -164,9 +168,8 @@ cr.define('options', function() {
      *       isCurrentProfile: false,
      *       isManaged: false
      *     };
-     * @param {string} mode A label that specifies the type of dialog
-     *     box which is currently being viewed (i.e. 'create' or
-     *     'manage').
+     * @param {string} mode A label that specifies the type of dialog box which
+     *     is currently being viewed (i.e. 'create' or 'manage').
      * @private
      */
     setProfileInfo_: function(profileInfo, mode) {
@@ -218,7 +221,17 @@ cr.define('options', function() {
       ManageProfileOverlay.setProfileInfo(profileInfo, 'create');
       $('create-profile-name-label').hidden = false;
       $('create-profile-name').hidden = false;
-      $('create-profile-name').focus();
+      // Trying to change the focus if this isn't the topmost overlay can
+      // instead cause the FocusManager to override another overlay's focus,
+      // e.g. if an overlay above this one is in the process of being reloaded.
+      // But the C++ handler calls this method directly on ManageProfileOverlay,
+      // so check the pageDiv to also include its subclasses (in particular
+      // CreateProfileOverlay, which has higher sub-overlays).
+      if (OptionsPage.getTopmostVisiblePage().pageDiv == this.pageDiv) {
+        // This will only have an effect if the 'create-profile-name' element
+        //  is visible, i.e. if the overlay is in create mode.
+        $('create-profile-name').focus();
+      }
       $('create-profile-ok').disabled = false;
     },
 
@@ -245,20 +258,19 @@ cr.define('options', function() {
     },
 
     /**
-     * Display the error bubble, with |errorText| in the bubble.
-     * @param {string} errorText The string to display as an error.
-     * @param {string} mode A label that specifies the type of dialog
-     *     box which is currently being viewed (i.e. 'create' or
-     *     'manage').
+     * Display the error bubble, with |errorHtml| in the bubble.
+     * @param {string} errorHtml The html string to display as an error.
+     * @param {string} mode A label that specifies the type of dialog box which
+     *     is currently being viewed (i.e. 'create' or 'manage').
      * @param {boolean} disableOKButton True if the dialog's OK button should be
      *     disabled when the error bubble is shown. It will be (re-)enabled when
      *     the error bubble is hidden.
      * @private
      */
-    showErrorBubble_: function(errorText, mode, disableOKButton) {
+    showErrorBubble_: function(errorHtml, mode, disableOKButton) {
       var nameErrorEl = $(mode + '-profile-error-bubble');
       nameErrorEl.hidden = false;
-      nameErrorEl.textContent = errorText;
+      nameErrorEl.innerHTML = errorHtml;
 
       if (disableOKButton)
         $(mode + '-profile-ok').disabled = true;
@@ -266,34 +278,114 @@ cr.define('options', function() {
 
     /**
      * Hide the error bubble.
-     * @param {string} mode A label that specifies the type of dialog
-     *     box which is currently being viewed (i.e. 'create' or
-     *     'manage').
+     * @param {string} mode A label that specifies the type of dialog box which
+     *     is currently being viewed (i.e. 'create' or 'manage').
      * @private
      */
     hideErrorBubble_: function(mode) {
+      $(mode + '-profile-error-bubble').innerHTML = '';
       $(mode + '-profile-error-bubble').hidden = true;
       $(mode + '-profile-ok').disabled = false;
     },
 
     /**
      * oninput callback for <input> field.
-     * @param {Event} event The event object.
-     * @param {string} mode A label that specifies the type of dialog
-     *     box which is currently being viewed (i.e. 'create' or
-     *     'manage').
+     * @param {string} mode A label that specifies the type of dialog box which
+     *     is currently being viewed (i.e. 'create' or 'manage').
      * @private
      */
-    onNameChanged_: function(event, mode) {
-      var newName = event.target.value;
+    onNameChanged_: function(mode) {
+      var newName = $(mode + '-profile-name').value;
       var oldName = this.profileInfo_.name;
 
-      if (newName == oldName) {
+      // In 'create' mode, the initial name can be the name of an already
+      // existing supervised user.
+      if (newName == oldName && mode == 'manage') {
         this.hideErrorBubble_(mode);
-      } else if (this.profileNames_[newName] != undefined) {
-        var errorText =
+      } else if (mode == 'create' &&
+                 !loadTimeData.getBoolean(
+                     'disableCreateExistingManagedUsers') &&
+                 $('create-profile-managed').checked) {
+        options.ManagedUserListData.requestExistingManagedUsers().then(
+            this.receiveExistingManagedUsers_.bind(this),
+            this.onSigninError_.bind(this));
+      } else {
+        this.updateOkButton_(mode);
+      }
+    },
+
+    /**
+     * Callback which receives the list of existing managed users. Checks if the
+     * currently entered name is the name of an already existing managed user.
+     * If yes, the user is prompted to import the existing managed user, and the
+     * create button is disabled.
+     * @param {Array.<Object>} The list of existing managed users.
+     * @private
+     */
+    receiveExistingManagedUsers_: function(managedUsers) {
+      var newName = $('create-profile-name').value;
+      var i;
+      for (i = 0; i < managedUsers.length; ++i) {
+        if (managedUsers[i].name == newName &&
+            !managedUsers[i].onCurrentDevice) {
+          var errorHtml = loadTimeData.getStringF(
+              'manageProfilesExistingSupervisedUser',
+              HTMLEscape(elide(newName, /* maxLength */ 50)));
+          this.showErrorBubble_(errorHtml, 'create', true);
+
+          // Check if another supervised user also exists with that name.
+          var nameIsUnique = true;
+          var j;
+          for (j = i + 1; j < managedUsers.length; ++j) {
+            if (managedUsers[j].name == newName) {
+              nameIsUnique = false;
+              break;
+            }
+          }
+          var self = this;
+          function getImportHandler(managedUser, nameIsUnique) {
+            return function() {
+              if (managedUser.needAvatar || !nameIsUnique) {
+                OptionsPage.navigateToPage('managedUserImport');
+              } else {
+                self.hideErrorBubble_('create');
+                chrome.send('createProfile',
+                    [managedUser.name, managedUser.iconURL, false, true,
+                        managedUser.id]);
+              }
+            }
+          };
+          $('supervised-user-import').onclick =
+              getImportHandler(managedUsers[i], nameIsUnique);
+          $('create-profile-ok').disabled = true;
+          return;
+        }
+      }
+      this.updateOkButton_('create');
+    },
+
+    /**
+     * Called in case the request for the list of managed users fails because of
+     * a signin error.
+     * @private
+     */
+    onSigninError_: function() {
+      this.updateImportExistingManagedUserLink_(false);
+    },
+
+    /**
+     * Called to update the state of the ok button depending if the name is
+     * already used or not.
+     * @param {string} mode A label that specifies the type of dialog box which
+     *     is currently being viewed (i.e. 'create' or 'manage').
+     * @private
+     */
+    updateOkButton_: function(mode) {
+      var newName = $(mode + '-profile-name').value;
+      if (this.profileNames_[newName] != undefined) {
+        var errorHtml =
             loadTimeData.getString('manageProfilesDuplicateNameError');
-        this.showErrorBubble_(errorText, mode, true);
+        this.showErrorBubble_(errorHtml, mode, true);
       } else {
         this.hideErrorBubble_(mode);
 
@@ -313,6 +405,8 @@ cr.define('options', function() {
 
       chrome.send('setProfileIconAndName',
                   [this.profileInfo_.filePath, iconURL, name]);
+      if (name != this.profileInfo_.name)
+        options.ManagedUserListData.resetPromise();
     },
 
     /**
@@ -345,9 +439,8 @@ cr.define('options', function() {
 
     /**
      * Called when the selected icon in the icon grid changes.
-     * @param {string} mode A label that specifies the type of dialog
-     *     box which is currently being viewed (i.e. 'create' or
-     *     'manage').
+     * @param {string} mode A label that specifies the type of dialog box which
+     *     is currently being viewed (i.e. 'create' or 'manage').
      * @private
      */
     onIconGridSelectionChanged_: function(mode) {
@@ -372,6 +465,7 @@ cr.define('options', function() {
       $('manage-profile-overlay-create').hidden = true;
       $('manage-profile-overlay-manage').hidden = false;
       $('manage-profile-overlay-delete').hidden = true;
+      $('manage-profile-overlay-disconnect-managed').hidden = true;
       $('manage-profile-name').disabled = profileInfo.isManaged;
       this.hideErrorBubble_('manage');
     },
@@ -398,11 +492,28 @@ cr.define('options', function() {
       $('manage-profile-overlay-create').hidden = true;
       $('manage-profile-overlay-manage').hidden = true;
       $('manage-profile-overlay-delete').hidden = false;
-      $('delete-profile-message').textContent =
-          loadTimeData.getStringF('deleteProfileMessage', profileInfo.name);
-      $('delete-profile-message').style.backgroundImage = 'url("' +
-          profileInfo.iconURL + '")';
+      $('manage-profile-overlay-disconnect-managed').hidden = true;
+      $('delete-profile-icon').style.content =
+          getProfileAvatarIcon(profileInfo.iconURL);
+      $('delete-profile-text').textContent =
+          loadTimeData.getStringF('deleteProfileMessage',
+                                  elide(profileInfo.name, /* maxLength */ 50));
       $('delete-managed-profile-addendum').hidden = !profileInfo.isManaged;
+
+      // Because this dialog isn't useful when refreshing or as part of the
+      // history, don't create a history entry for it when showing.
+      OptionsPage.showPageByName('manageProfile', false);
+    },
+
+    /**
+     * Display the "Disconnect Managed Profile" dialog.
+     * @private
+     */
+    showDisconnectManagedProfileDialog_: function() {
+      $('manage-profile-overlay-create').hidden = true;
+      $('manage-profile-overlay-manage').hidden = true;
+      $('manage-profile-overlay-delete').hidden = true;
+      $('manage-profile-overlay-disconnect-managed').hidden = false;
 
       // Because this dialog isn't useful when refreshing or as part of the
       // history, don't create a history entry for it when showing.
@@ -428,6 +539,7 @@ cr.define('options', function() {
     'setProfileName',
     'showManageDialog',
     'showDeleteDialog',
+    'showDisconnectManagedProfileDialog',
     'showCreateDialog',
   ].forEach(function(name) {
     ManageProfileOverlay[name] = function() {
@@ -469,6 +581,7 @@ cr.define('options', function() {
       $('manage-profile-overlay-create').hidden = false;
       $('manage-profile-overlay-manage').hidden = true;
       $('manage-profile-overlay-delete').hidden = true;
+      $('manage-profile-overlay-disconnect-managed').hidden = true;
       $('create-profile-instructions').textContent =
          loadTimeData.getStringF('createProfileInstructions');
       this.hideErrorBubble_();
@@ -483,6 +596,12 @@ cr.define('options', function() {
       $('create-profile-ok').disabled = true;
 
       $('create-profile-managed').checked = false;
+      $('import-existing-managed-user-link').hidden = true;
+      if (!loadTimeData.getBoolean('disableCreateExistingManagedUsers')) {
+        $('create-profile-managed').onchange = function() {
+          ManageProfileOverlay.getInstance().onNameChanged_('create');
+        };
+      }
       $('create-profile-managed-signed-in').disabled = true;
       $('create-profile-managed-signed-in').hidden = true;
       $('create-profile-managed-not-signed-in').hidden = true;
@@ -494,8 +613,8 @@ cr.define('options', function() {
     },
 
     /** @override */
-    showErrorBubble_: function(errorText) {
-      ManageProfileOverlay.getInstance().showErrorBubble_(errorText,
+    showErrorBubble_: function(errorHtml) {
+      ManageProfileOverlay.getInstance().showErrorBubble_(errorHtml,
                                                           'create',
                                                           false);
     },
@@ -574,6 +693,7 @@ cr.define('options', function() {
       this.updateCreateInProgress_(false);
       OptionsPage.closeOverlay();
       if (profileInfo.isManaged) {
+        options.ManagedUserListData.resetPromise();
         profileInfo.custodianEmail = this.signedInEmail_;
         ManagedUserCreateConfirmOverlay.setProfileInfo(profileInfo);
         OptionsPage.showPageByName('managedUserCreateConfirm', false);
@@ -626,7 +746,11 @@ cr.define('options', function() {
      * @private
      */
     updateImportExistingManagedUserLink_: function(enable) {
+      if (loadTimeData.getBoolean('disableCreateExistingManagedUsers'))
+        return;
+
       var importManagedUserElement = $('import-existing-managed-user-link');
+      importManagedUserElement.hidden = false;
       importManagedUserElement.disabled = !enable;
       importManagedUserElement.textContent = enable ?
           loadTimeData.getString('importExistingManagedUserLink') :

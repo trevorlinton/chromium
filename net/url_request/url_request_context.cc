@@ -27,6 +27,7 @@ URLRequestContext::URLRequestContext()
       network_delegate_(NULL),
       http_user_agent_settings_(NULL),
       transport_security_state_(NULL),
+      cert_transparency_verifier_(NULL),
       http_transaction_factory_(NULL),
       job_factory_(NULL),
       throttler_manager_(NULL),
@@ -51,6 +52,7 @@ void URLRequestContext::CopyFrom(const URLRequestContext* other) {
   set_http_server_properties(other->http_server_properties_);
   set_cookie_store(other->cookie_store_.get());
   set_transport_security_state(other->transport_security_state_);
+  set_cert_transparency_verifier(other->cert_transparency_verifier_);
   set_http_transaction_factory(other->http_transaction_factory_);
   set_job_factory(other->job_factory_);
   set_throttler_manager(other->throttler_manager_);
@@ -71,22 +73,14 @@ const HttpNetworkSession::Params* URLRequestContext::GetNetworkSessionParams(
 scoped_ptr<URLRequest> URLRequestContext::CreateRequest(
     const GURL& url,
     RequestPriority priority,
-    URLRequest::Delegate* delegate) const {
-  return scoped_ptr<URLRequest>(new URLRequest(url, priority, delegate, this));
+    URLRequest::Delegate* delegate,
+    CookieStore* cookie_store) const {
+  return scoped_ptr<URLRequest>(
+      new URLRequest(url, priority, delegate, this, cookie_store));
 }
 
 void URLRequestContext::set_cookie_store(CookieStore* cookie_store) {
   cookie_store_ = cookie_store;
-}
-
-std::string URLRequestContext::GetAcceptLanguage() const {
-  return http_user_agent_settings_ ?
-      http_user_agent_settings_->GetAcceptLanguage() : EmptyString();
-}
-
-std::string URLRequestContext::GetUserAgent(const GURL& url) const {
-  return http_user_agent_settings_ ?
-      http_user_agent_settings_->GetUserAgent(url) : EmptyString();
 }
 
 void URLRequestContext::AssertNoURLRequests() const {

@@ -21,6 +21,7 @@ to print |any_variable| without using any printers.
 
 import datetime
 import gdb
+import gdb.printing
 import webkit
 
 # When debugging this module, set the below variable to True, and then use
@@ -59,7 +60,7 @@ class String16Printer(StringPrinter):
         return webkit.ustring_to_string(self.val['_M_dataplus']['_M_p'])
 pp_set.add_printer(
     'string16',
-    '^string16|std::basic_string<(unsigned short|char16|base::char16).*>$',
+    '^string16|std::basic_string<(unsigned short|base::char16).*>$',
     String16Printer);
 
 

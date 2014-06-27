@@ -16,10 +16,10 @@ namespace media {
 
 class MEDIA_EXPORT AudioManagerPulse : public AudioManagerBase {
  public:
-  AudioManagerPulse();
+  AudioManagerPulse(AudioLogFactory* audio_log_factory);
   virtual ~AudioManagerPulse();
 
-  static AudioManager* Create();
+  static AudioManager* Create(AudioLogFactory* audio_log_factory);
 
   // Implementation of AudioManager.
   virtual bool HasAudioOutputDevices() OVERRIDE;
@@ -37,8 +37,7 @@ class MEDIA_EXPORT AudioManagerPulse : public AudioManagerBase {
       const AudioParameters& params) OVERRIDE;
   virtual AudioOutputStream* MakeLowLatencyOutputStream(
       const AudioParameters& params,
-      const std::string& device_id,
-      const std::string& input_device_id) OVERRIDE;
+      const std::string& device_id) OVERRIDE;
   virtual AudioInputStream* MakeLinearInputStream(
       const AudioParameters& params, const std::string& device_id) OVERRIDE;
   virtual AudioInputStream* MakeLowLatencyInputStream(
@@ -71,7 +70,7 @@ class MEDIA_EXPORT AudioManagerPulse : public AudioManagerBase {
 
   // Called by MakeLinearOutputStream and MakeLowLatencyOutputStream.
   AudioOutputStream* MakeOutputStream(const AudioParameters& params,
-                                      const std::string& input_device_id);
+                                      const std::string& device_id);
 
   // Called by MakeLinearInputStream and MakeLowLatencyInputStream.
   AudioInputStream* MakeInputStream(const AudioParameters& params,

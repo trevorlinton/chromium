@@ -4,9 +4,9 @@
 
 #include "base/files/file_path.h"
 #include "chrome/common/extensions/api/plugins/plugins_handler.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/sync_helper.h"
 #include "extensions/common/error_utils.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -62,8 +62,8 @@ class ExtensionSyncTypeTest : public testing::Test {
       }
     }
     if (has_plugin_permission) {
-      ListValue* plugins = new ListValue();
-      plugins->Set(0, new StringValue("plugin"));
+      base::ListValue* plugins = new base::ListValue();
+      plugins->Set(0, new base::StringValue("plugin"));
       source.Set(keys::kPermissions, plugins);
     }
 

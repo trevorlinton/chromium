@@ -7,9 +7,6 @@
 
 #include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
-#include "ui/aura/client/activation_change_observer.h"
-#include "ui/aura/client/activation_delegate.h"
-#include "ui/aura/client/drag_drop_delegate.h"
 #include "ui/aura/client/focus_change_observer.h"
 #include "ui/aura/window_delegate.h"
 #include "ui/base/cursor/cursor.h"
@@ -17,12 +14,15 @@
 #include "ui/views/ime/input_method_delegate.h"
 #include "ui/views/views_export.h"
 #include "ui/views/widget/native_widget_private.h"
+#include "ui/wm/public/activation_change_observer.h"
+#include "ui/wm/public/activation_delegate.h"
+#include "ui/wm/public/drag_drop_delegate.h"
 
 namespace aura {
 class Window;
 }
 namespace gfx {
-class Font;
+class FontList;
 }
 
 namespace views {
@@ -44,7 +44,7 @@ class VIEWS_EXPORT NativeWidgetAura
 
   // TODO(beng): Find a better place for this, and the similar method on
   //             NativeWidgetWin.
-  static gfx::Font GetWindowTitleFont();
+  static gfx::FontList GetWindowTitleFontList();
 
   // Called internally by NativeWidgetAura and DesktopNativeWidgetAura to
   // associate |native_widget| with |window|.
@@ -56,6 +56,7 @@ class VIEWS_EXPORT NativeWidgetAura
   virtual void InitNativeWidget(const Widget::InitParams& params) OVERRIDE;
   virtual NonClientFrameView* CreateNonClientFrameView() OVERRIDE;
   virtual bool ShouldUseNativeFrame() const OVERRIDE;
+  virtual bool ShouldWindowContentsBeTransparent() const OVERRIDE;
   virtual void FrameTypeChanged() OVERRIDE;
   virtual Widget* GetWidget() OVERRIDE;
   virtual const Widget* GetWidget() const OVERRIDE;
@@ -79,7 +80,7 @@ class VIEWS_EXPORT NativeWidgetAura
   virtual void GetWindowPlacement(
       gfx::Rect* bounds,
       ui::WindowShowState* maximized) const OVERRIDE;
-  virtual void SetWindowTitle(const string16& title) OVERRIDE;
+  virtual bool SetWindowTitle(const base::string16& title) OVERRIDE;
   virtual void SetWindowIcons(const gfx::ImageSkia& window_icon,
                               const gfx::ImageSkia& app_icon) OVERRIDE;
   virtual void InitModalType(ui::ModalType modal_type) OVERRIDE;
@@ -105,6 +106,7 @@ class VIEWS_EXPORT NativeWidgetAura
   virtual bool IsActive() const OVERRIDE;
   virtual void SetAlwaysOnTop(bool always_on_top) OVERRIDE;
   virtual bool IsAlwaysOnTop() const OVERRIDE;
+  virtual void SetVisibleOnAllWorkspaces(bool always_visible) OVERRIDE;
   virtual void Maximize() OVERRIDE;
   virtual void Minimize() OVERRIDE;
   virtual bool IsMaximized() const OVERRIDE;
@@ -151,13 +153,11 @@ class VIEWS_EXPORT NativeWidgetAura
   virtual void OnCaptureLost() OVERRIDE;
   virtual void OnPaint(gfx::Canvas* canvas) OVERRIDE;
   virtual void OnDeviceScaleFactorChanged(float device_scale_factor) OVERRIDE;
-  virtual void OnWindowDestroying() OVERRIDE;
-  virtual void OnWindowDestroyed() OVERRIDE;
+  virtual void OnWindowDestroying(aura::Window* window) OVERRIDE;
+  virtual void OnWindowDestroyed(aura::Window* window) OVERRIDE;
   virtual void OnWindowTargetVisibilityChanged(bool visible) OVERRIDE;
   virtual bool HasHitTestMask() const OVERRIDE;
   virtual void GetHitTestMask(gfx::Path* mask) const OVERRIDE;
-  virtual void DidRecreateLayer(ui::Layer* old_layer,
-                                ui::Layer* new_layer) OVERRIDE;
 
   // Overridden from ui::EventHandler:
   virtual void OnKeyEvent(ui::KeyEvent* event) OVERRIDE;
@@ -194,7 +194,7 @@ class VIEWS_EXPORT NativeWidgetAura
  private:
   class ActiveWindowObserver;
 
-  void SetInitialFocus();
+  void SetInitialFocus(ui::WindowShowState show_state);
 
   internal::NativeWidgetDelegate* delegate_;
 

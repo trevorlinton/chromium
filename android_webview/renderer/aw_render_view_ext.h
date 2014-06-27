@@ -9,24 +9,22 @@
 #include "base/compiler_specific.h"
 #include "base/timer/timer.h"
 #include "content/public/renderer/render_view_observer.h"
-#include "third_party/WebKit/public/web/WebPermissionClient.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/size.h"
 
-namespace WebKit {
+namespace blink {
 
 class WebNode;
 class WebURL;
 
-}  // namespace WebKit
+}  // namespace blink
 
 namespace android_webview {
 
 // Render process side of AwRenderViewHostExt, this provides cross-process
 // implementation of miscellaneous WebView functions that we need to poke
 // WebKit directly to implement (and that aren't needed in the chrome app).
-class AwRenderViewExt : public content::RenderViewObserver,
-                        public WebKit::WebPermissionClient {
+class AwRenderViewExt : public content::RenderViewObserver {
  public:
   static void RenderViewCreated(content::RenderView* render_view);
 
@@ -36,9 +34,9 @@ class AwRenderViewExt : public content::RenderViewObserver,
 
   // RenderView::Observer:
   virtual bool OnMessageReceived(const IPC::Message& message) OVERRIDE;
-  virtual void DidCommitProvisionalLoad(WebKit::WebFrame* frame,
+  virtual void DidCommitProvisionalLoad(blink::WebFrame* frame,
                                         bool is_new_navigation) OVERRIDE;
-  virtual void FocusedNodeChanged(const WebKit::WebNode& node) OVERRIDE;
+  virtual void FocusedNodeChanged(const blink::WebNode& node) OVERRIDE;
   virtual void DidCommitCompositorFrame() OVERRIDE;
   virtual void DidUpdateLayout() OVERRIDE;
   virtual void Navigate(const GURL& url) OVERRIDE;
@@ -60,18 +58,6 @@ class AwRenderViewExt : public content::RenderViewObserver,
   void UpdatePageScaleFactor();
 
   void CheckContentsSize();
-
-  // WebKit::WebPermissionClient implementation.
-  virtual bool allowDisplayingInsecureContent(
-      WebKit::WebFrame* frame,
-      bool enabled_per_settings,
-      const WebKit::WebSecurityOrigin& origin,
-      const WebKit::WebURL& url) OVERRIDE;
-  virtual bool allowRunningInsecureContent(
-      WebKit::WebFrame* frame,
-      bool enabled_per_settings,
-      const WebKit::WebSecurityOrigin& origin,
-      const WebKit::WebURL& url) OVERRIDE;
 
   bool capture_picture_enabled_;
 

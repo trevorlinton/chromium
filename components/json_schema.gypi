@@ -9,8 +9,7 @@
       'type': 'static_library',
       'dependencies': [
         '../base/base.gyp:base',
-        '../ui/gfx/gfx.gyp:gfx',
-        '../ui/ui.gyp:ui',
+        '../third_party/re2/re2.gyp:re2'
       ],
       'include_dirs': [
         '..',

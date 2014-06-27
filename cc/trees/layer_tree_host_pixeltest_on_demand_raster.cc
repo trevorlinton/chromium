@@ -63,8 +63,10 @@ class BlueYellowLayerClient : public ContentLayerClient {
 
   virtual void DidChangeLayerCanUseLCDText() OVERRIDE { }
 
+  virtual bool FillsBoundsCompletely() const OVERRIDE { return false; }
+
   virtual void PaintContents(SkCanvas* canvas,
-                             gfx::Rect clip,
+                             const gfx::Rect& clip,
                              gfx::RectF* opaque) OVERRIDE {
     *opaque = gfx::RectF(layer_rect_.width(), layer_rect_.height());
 

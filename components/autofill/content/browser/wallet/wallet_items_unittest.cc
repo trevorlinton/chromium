@@ -7,10 +7,14 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "components/autofill/content/browser/wallet/gaia_account.h"
 #include "components/autofill/content/browser/wallet/required_action.h"
 #include "components/autofill/content/browser/wallet/wallet_items.h"
+#include "components/autofill/content/browser/wallet/wallet_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
+
+using base::ASCIIToUTF16;
 
 namespace {
 
@@ -18,10 +22,6 @@ const char kMaskedInstrument[] =
     "{"
     "  \"descriptive_name\":\"descriptive_name\","
     "  \"type\":\"VISA\","
-    "  \"supported_currency\":"
-    "  ["
-    "    \"currency\""
-    "  ],"
     "  \"last_four_digits\":\"last_four_digits\","
     "  \"expiration_month\":12,"
     "  \"expiration_year\":2012,"
@@ -31,8 +31,10 @@ const char kMaskedInstrument[] =
     "    \"address1\":\"address1\","
     "    \"address2\":\"address2\","
     "    \"city\":\"city\","
+    "    \"dependent_locality_name\":\"burough\","
     "    \"state\":\"state\","
     "    \"postal_code\":\"postal_code\","
+    "    \"sorting_code\":\"sorting_code\","
     "    \"phone_number\":\"phone_number\","
     "    \"country_code\":\"US\","
     "    \"type\":\"FULL\""
@@ -45,10 +47,6 @@ const char kMaskedInstrumentMissingStatus[] =
     "{"
     "  \"descriptive_name\":\"descriptive_name\","
     "  \"type\":\"VISA\","
-    "  \"supported_currency\":"
-    "  ["
-    "    \"currency\""
-    "  ],"
     "  \"last_four_digits\":\"last_four_digits\","
     "  \"expiration_month\":12,"
     "  \"expiration_year\":2012,"
@@ -58,8 +56,10 @@ const char kMaskedInstrumentMissingStatus[] =
     "    \"address1\":\"address1\","
     "    \"address2\":\"address2\","
     "    \"city\":\"city\","
+    "    \"dependent_locality_name\":\"burough\","
     "    \"state\":\"state\","
     "    \"postal_code\":\"postal_code\","
+    "    \"sorting_code\":\"sorting_code\","
     "    \"phone_number\":\"phone_number\","
     "    \"country_code\":\"US\""
     "  },"
@@ -70,10 +70,6 @@ const char kMaskedInstrumentMissingStatus[] =
 const char kMaskedInstrumentMissingType[] =
     "{"
     "  \"descriptive_name\":\"descriptive_name\","
-    "  \"supported_currency\":"
-    "  ["
-    "    \"currency\""
-    "  ],"
     "  \"last_four_digits\":\"last_four_digits\","
     "  \"expiration_month\":12,"
     "  \"expiration_year\":2012,"
@@ -83,8 +79,10 @@ const char kMaskedInstrumentMissingType[] =
     "    \"address1\":\"address1\","
     "    \"address2\":\"address2\","
     "    \"city\":\"city\","
+    "    \"dependent_locality_name\":\"burough\","
     "    \"state\":\"state\","
     "    \"postal_code\":\"postal_code\","
+    "    \"sorting_code\":\"sorting_code\","
     "    \"phone_number\":\"phone_number\","
     "    \"country_code\":\"US\""
     "  },"
@@ -96,10 +94,6 @@ const char kMaskedInstrumentMissingLastFourDigits[] =
     "{"
     "  \"descriptive_name\":\"descriptive_name\","
     "  \"type\":\"VISA\","
-    "  \"supported_currency\":"
-    "  ["
-    "    \"currency\""
-    "  ],"
     "  \"expiration_month\":12,"
     "  \"expiration_year\":2012,"
     "  \"billing_address\":"
@@ -108,8 +102,10 @@ const char kMaskedInstrumentMissingLastFourDigits[] =
     "    \"address1\":\"address1\","
     "    \"address2\":\"address2\","
     "    \"city\":\"city\","
+    "    \"dependent_locality_name\":\"burough\","
     "    \"state\":\"state\","
     "    \"postal_code\":\"postal_code\","
+    "    \"sorting_code\":\"sorting_code\","
     "    \"phone_number\":\"phone_number\","
     "    \"country_code\":\"US\""
     "  },"
@@ -121,10 +117,6 @@ const char kMaskedInstrumentMissingAddress[] =
     "{"
     "  \"descriptive_name\":\"descriptive_name\","
     "  \"type\":\"VISA\","
-    "  \"supported_currency\":"
-    "  ["
-    "    \"currency\""
-    "  ],"
     "  \"last_four_digits\":\"last_four_digits\","
     "  \"expiration_month\":12,"
     "  \"expiration_year\":2012,"
@@ -136,10 +128,6 @@ const char kMaskedInstrumentMalformedAddress[] =
     "{"
     "  \"descriptive_name\":\"descriptive_name\","
     "  \"type\":\"VISA\","
-    "  \"supported_currency\":"
-    "  ["
-    "    \"currency\""
-    "  ],"
     "  \"last_four_digits\":\"last_four_digits\","
     "  \"expiration_month\":12,"
     "  \"expiration_year\":2012,"
@@ -148,6 +136,7 @@ const char kMaskedInstrumentMalformedAddress[] =
     "    \"address1\":\"address1\","
     "    \"address2\":\"address2\","
     "    \"city\":\"city\","
+    "    \"dependent_locality_name\":\"burough\","
     "    \"state\":\"state\","
     "    \"phone_number\":\"phone_number\","
     "    \"country_code\":\"US\""
@@ -160,10 +149,6 @@ const char kMaskedInstrumentMissingObjectId[] =
     "{"
     "  \"descriptive_name\":\"descriptive_name\","
     "  \"type\":\"VISA\","
-    "  \"supported_currency\":"
-    "  ["
-    "    \"currency\""
-    "  ],"
     "  \"last_four_digits\":\"last_four_digits\","
     "  \"expiration_month\":12,"
     "  \"expiration_year\":2012,"
@@ -173,6 +158,7 @@ const char kMaskedInstrumentMissingObjectId[] =
     "    \"address1\":\"address1\","
     "    \"address2\":\"address2\","
     "    \"city\":\"city\","
+    "    \"dependent_locality_name\":\"burough\","
     "    \"state\":\"state\","
     "    \"postal_code\":\"postal_code\","
     "    \"phone_number\":\"phone_number\","
@@ -199,7 +185,6 @@ const char kLegalDocumentMissingDisplayName[] =
 
 const char kWalletItemsWithRequiredActions[] =
     "{"
-    "  \"obfuscated_gaia_id\":\"\","
     "  \"required_action\":"
     "  ["
     "    \"  setup_wallet\","
@@ -215,7 +200,6 @@ const char kWalletItemsWithRequiredActions[] =
 
 const char kWalletItemsWithInvalidRequiredActions[] =
     "{"
-    "  \"obfuscated_gaia_id\":\"\","
     "  \"required_action\":"
     "  ["
     "    \"verify_CVV\","
@@ -234,10 +218,6 @@ const char kWalletItemsMissingGoogleTransactionId[] =
     "    {"
     "      \"descriptive_name\":\"descriptive_name\","
     "      \"type\":\"VISA\","
-    "      \"supported_currency\":"
-    "      ["
-    "        \"currency\""
-    "      ],"
     "      \"last_four_digits\":\"last_four_digits\","
     "      \"expiration_month\":12,"
     "      \"expiration_year\":2012,"
@@ -278,7 +258,6 @@ const char kWalletItemsMissingGoogleTransactionId[] =
     "    }"
     "  ],"
     "  \"default_address_id\":\"default_address_id\","
-    "  \"obfuscated_gaia_id\":\"obfuscated_gaia_id\","
     "  \"amex_disallowed\":true,"
     "  \"required_legal_document\":"
     "  ["
@@ -300,10 +279,6 @@ const char kWalletItems[] =
     "    {"
     "      \"descriptive_name\":\"descriptive_name\","
     "      \"type\":\"VISA\","
-    "      \"supported_currency\":"
-    "      ["
-    "        \"currency\""
-    "      ],"
     "      \"last_four_digits\":\"last_four_digits\","
     "      \"expiration_month\":12,"
     "      \"expiration_year\":2012,"
@@ -313,8 +288,10 @@ const char kWalletItems[] =
     "        \"address1\":\"address1\","
     "        \"address2\":\"address2\","
     "        \"city\":\"city\","
+    "        \"dependent_locality_name\":\"burough\","
     "        \"state\":\"state\","
     "        \"postal_code\":\"postal_code\","
+    "        \"sorting_code\":\"sorting_code\","
     "        \"phone_number\":\"phone_number\","
     "        \"country_code\":\"US\","
     "        \"type\":\"FULL\""
@@ -338,15 +315,42 @@ const char kWalletItems[] =
     "          \"address_line_2\""
     "        ],"
     "        \"locality_name\":\"locality_name\","
+    "        \"dependent_locality_name\":\"dependent_locality_name\","
     "        \"administrative_area_name\":\"administrative_area_name\","
     "        \"postal_code_number\":\"postal_code_number\","
+    "        \"sorting_code\":\"sorting_code\","
     "        \"country_name_code\":\"US\""
     "      }"
     "    }"
     "  ],"
     "  \"default_address_id\":\"default_address_id\","
-    "  \"obfuscated_gaia_id\":\"obfuscated_gaia_id\","
-    "  \"amex_disallowed\":true";
+    "  \"obfuscated_gaia_id\":\"ignore_this_value\","
+    "  \"amex_disallowed\":true,"
+    "  \"gaia_profile\":"
+    "  ["
+    "    {"
+    "      \"buyer_email\":\"user@chromium.org\","
+    "      \"gaia_index\":0,"
+    "      \"gaia_id\":\"123456789\","
+    "      \"buyer_name\":\"Joe Usecase\","
+    "      \"is_active\":true,"
+    "      \"avatar_url_27x27\":\"https://lh3.googleusercontent.com/27.jpg\","
+    "      \"avatar_url_54x54\":\"https://lh3.googleusercontent.com/54.jpg\","
+    "      \"avatar_url_48x48\":\"https://lh3.googleusercontent.com/48.jpg\","
+    "      \"avatar_url_96x96\":\"https://lh3.googleusercontent.com/96.jpg\""
+    "    },"
+    "    {"
+    "      \"buyer_email\":\"user2@chromium.org\","
+    "      \"gaia_index\":1,"
+    "      \"gaia_id\":\"obfuscated_gaia_id\","
+    "      \"buyer_name\":\"Jill Usecase\","
+    "      \"is_active\":false,"
+    "      \"avatar_url_27x27\":\"https://lh3.googleusercontent.com/27.jpg\","
+    "      \"avatar_url_54x54\":\"https://lh3.googleusercontent.com/54.jpg\","
+    "      \"avatar_url_48x48\":\"https://lh3.googleusercontent.com/48.jpg\","
+    "      \"avatar_url_96x96\":\"https://lh3.googleusercontent.com/96.jpg\""
+    "    }"
+    "  ]";
 
 const char kRequiredLegalDocument[] =
     "  ,"
@@ -370,12 +374,12 @@ class WalletItemsTest : public testing::Test {
   WalletItemsTest() {}
  protected:
   void SetUpDictionary(const std::string& json) {
-    scoped_ptr<Value> value(base::JSONReader::Read(json));
+    scoped_ptr<base::Value> value(base::JSONReader::Read(json));
     ASSERT_TRUE(value.get());
-    ASSERT_TRUE(value->IsType(Value::TYPE_DICTIONARY));
-    dict.reset(static_cast<DictionaryValue*>(value.release()));
+    ASSERT_TRUE(value->IsType(base::Value::TYPE_DICTIONARY));
+    dict.reset(static_cast<base::DictionaryValue*>(value.release()));
   }
-  scoped_ptr<DictionaryValue> dict;
+  scoped_ptr<base::DictionaryValue> dict;
 };
 
 TEST_F(WalletItemsTest, CreateMaskedInstrumentMissingStatus) {
@@ -416,21 +420,20 @@ TEST_F(WalletItemsTest, CreateMaskedInstrumentMissingObjectId) {
 
 TEST_F(WalletItemsTest, CreateMaskedInstrument) {
   SetUpDictionary(kMaskedInstrument);
-  scoped_ptr<Address> address(new Address("US",
-                                          ASCIIToUTF16("name"),
-                                          ASCIIToUTF16("address1"),
-                                          ASCIIToUTF16("address2"),
-                                          ASCIIToUTF16("city"),
-                                          ASCIIToUTF16("state"),
-                                          ASCIIToUTF16("postal_code"),
-                                          ASCIIToUTF16("phone_number"),
-                                          std::string()));
-  std::vector<base::string16> supported_currencies;
-  supported_currencies.push_back(ASCIIToUTF16("currency"));
+  scoped_ptr<Address> address(
+      new Address("US",
+                  ASCIIToUTF16("name"),
+                  StreetAddress("address1", "address2"),
+                  ASCIIToUTF16("city"),
+                  ASCIIToUTF16("burough"),
+                  ASCIIToUTF16("state"),
+                  ASCIIToUTF16("postal_code"),
+                  ASCIIToUTF16("sorting_code"),
+                  ASCIIToUTF16("phone_number"),
+                  std::string()));
   WalletItems::MaskedInstrument masked_instrument(
       ASCIIToUTF16("descriptive_name"),
       WalletItems::MaskedInstrument::VISA,
-      supported_currencies,
       ASCIIToUTF16("last_four_digits"),
       12,
       2012,
@@ -487,14 +490,12 @@ TEST_F(WalletItemsTest, CreateWalletItemsWithRequiredActions) {
                        std::string(),
                        std::string(),
                        std::string(),
-                       std::string(),
                        AMEX_DISALLOWED);
   EXPECT_EQ(expected, *WalletItems::CreateWalletItems(*dict));
 
   ASSERT_FALSE(required_actions.empty());
   required_actions.pop_back();
   WalletItems different_required_actions(required_actions,
-                                         std::string(),
                                          std::string(),
                                          std::string(),
                                          std::string(),
@@ -529,24 +530,36 @@ TEST_F(WalletItemsTest, CreateWalletItems) {
                        "google_transaction_id",
                        "default_instrument_id",
                        "default_address_id",
-                       "obfuscated_gaia_id",
                        AMEX_DISALLOWED);
 
-  scoped_ptr<Address> billing_address(new Address("US",
-                                                  ASCIIToUTF16("name"),
-                                                  ASCIIToUTF16("address1"),
-                                                  ASCIIToUTF16("address2"),
-                                                  ASCIIToUTF16("city"),
-                                                  ASCIIToUTF16("state"),
-                                                  ASCIIToUTF16("postal_code"),
-                                                  ASCIIToUTF16("phone_number"),
-                                                  std::string()));
-  std::vector<base::string16> supported_currencies;
-  supported_currencies.push_back(ASCIIToUTF16("currency"));
+  scoped_ptr<GaiaAccount> user1(GaiaAccount::CreateForTesting(
+      "user@chromium.org",
+      "123456789",
+      0,
+      true));
+  expected.AddAccount(user1.Pass());
+  scoped_ptr<GaiaAccount> user2(GaiaAccount::CreateForTesting(
+      "user2@chromium.org",
+      "obfuscated_gaia_id",
+      1,
+      false));
+  expected.AddAccount(user2.Pass());
+  EXPECT_EQ("123456789", expected.ObfuscatedGaiaId());
+
+  scoped_ptr<Address> billing_address(
+      new Address("US",
+                  ASCIIToUTF16("name"),
+                  StreetAddress("address1", "address2"),
+                  ASCIIToUTF16("city"),
+                  ASCIIToUTF16("burough"),
+                  ASCIIToUTF16("state"),
+                  ASCIIToUTF16("postal_code"),
+                  ASCIIToUTF16("sorting_code"),
+                  ASCIIToUTF16("phone_number"),
+                  std::string()));
   scoped_ptr<WalletItems::MaskedInstrument> masked_instrument(
       new WalletItems::MaskedInstrument(ASCIIToUTF16("descriptive_name"),
                                         WalletItems::MaskedInstrument::VISA,
-                                        supported_currencies,
                                         ASCIIToUTF16("last_four_digits"),
                                         12,
                                         2012,
@@ -558,11 +571,12 @@ TEST_F(WalletItemsTest, CreateWalletItems) {
   scoped_ptr<Address> shipping_address(
       new Address("US",
                   ASCIIToUTF16("recipient_name"),
-                  ASCIIToUTF16("address_line_1"),
-                  ASCIIToUTF16("address_line_2"),
+                  StreetAddress("address_line_1", "address_line_2"),
                   ASCIIToUTF16("locality_name"),
+                  ASCIIToUTF16("dependent_locality_name"),
                   ASCIIToUTF16("administrative_area_name"),
                   ASCIIToUTF16("postal_code_number"),
+                  ASCIIToUTF16("sorting_code"),
                   ASCIIToUTF16("phone_number"),
                   "id"));
   expected.AddAddress(shipping_address.Pass());

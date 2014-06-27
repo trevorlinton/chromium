@@ -8,6 +8,7 @@
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -16,24 +17,29 @@
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/policy/browser_policy_connector.h"
-#include "chrome/browser/policy/cloud/cloud_policy_client.h"
-#include "chrome/browser/policy/cloud/cloud_policy_constants.h"
-#include "chrome/browser/policy/cloud/cloud_policy_core.h"
-#include "chrome/browser/policy/cloud/cloud_policy_refresh_scheduler.h"
-#include "chrome/browser/policy/cloud/cloud_policy_store.h"
-#include "chrome/browser/policy/cloud/cloud_policy_validator.h"
-#include "chrome/browser/policy/cloud/message_util.h"
-#include "chrome/browser/policy/configuration_policy_handler_list.h"
-#include "chrome/browser/policy/policy_error_map.h"
-#include "chrome/browser/policy/policy_map.h"
-#include "chrome/browser/policy/policy_service.h"
-#include "chrome/browser/policy/policy_types.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
 #include "chrome/browser/policy/profile_policy_connector_factory.h"
-#include "chrome/browser/policy/proto/cloud/device_management_backend.pb.h"
+#include "chrome/browser/policy/schema_registry_service.h"
+#include "chrome/browser/policy/schema_registry_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/url_constants.h"
+#include "components/policy/core/browser/browser_policy_connector.h"
+#include "components/policy/core/browser/cloud/message_util.h"
+#include "components/policy/core/browser/configuration_policy_handler_list.h"
+#include "components/policy/core/browser/policy_error_map.h"
+#include "components/policy/core/common/cloud/cloud_policy_client.h"
+#include "components/policy/core/common/cloud/cloud_policy_constants.h"
+#include "components/policy/core/common/cloud/cloud_policy_core.h"
+#include "components/policy/core/common/cloud/cloud_policy_refresh_scheduler.h"
+#include "components/policy/core/common/cloud/cloud_policy_store.h"
+#include "components/policy/core/common/cloud/cloud_policy_validator.h"
+#include "components/policy/core/common/policy_map.h"
+#include "components/policy/core/common/policy_namespace.h"
+#include "components/policy/core/common/policy_service.h"
+#include "components/policy/core/common/policy_types.h"
+#include "components/policy/core/common/schema.h"
+#include "components/policy/core/common/schema_map.h"
+#include "components/policy/core/common/schema_registry.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_service.h"
@@ -42,29 +48,30 @@
 #include "content/public/browser/web_ui_message_handler.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "grit/browser_resources.h"
-#include "grit/generated_resources.h"
+#include "grit/component_strings.h"
 #include "policy/policy_constants.h"
+#include "policy/proto/device_management_backend.pb.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/time_format.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/login/user_manager.h"
+#include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/policy/device_cloud_policy_manager_chromeos.h"
 #include "chrome/browser/chromeos/policy/device_local_account_policy_service.h"
 #include "chrome/browser/chromeos/policy/user_cloud_policy_manager_chromeos.h"
 #include "chrome/browser/chromeos/policy/user_cloud_policy_manager_factory_chromeos.h"
 #else
-#include "chrome/browser/policy/cloud/user_cloud_policy_manager.h"
 #include "chrome/browser/policy/cloud/user_cloud_policy_manager_factory.h"
+#include "components/policy/core/common/cloud/user_cloud_policy_manager.h"
+#include "content/public/browser/web_contents.h"
 #endif
 
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
-#include "chrome/browser/policy/policy_domain_descriptor.h"
-#include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/extension_set.h"
-#include "components/policy/core/common/schema.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/extension_set.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_constants.h"
 #endif
@@ -124,6 +131,27 @@ content::WebUIDataSource* CreatePolicyUIHTMLSource() {
   return source;
 }
 
+// Formats the association state indicated by |data|. If |data| is NULL, the
+// state is considered to be UNMANAGED.
+base::string16 FormatAssociationState(const em::PolicyData* data) {
+  if (data) {
+    switch (data->state()) {
+      case em::PolicyData::ACTIVE:
+        return l10n_util::GetStringUTF16(IDS_POLICY_ASSOCIATION_STATE_ACTIVE);
+      case em::PolicyData::UNMANAGED:
+        return l10n_util::GetStringUTF16(
+            IDS_POLICY_ASSOCIATION_STATE_UNMANAGED);
+      case em::PolicyData::DEPROVISIONED:
+        return l10n_util::GetStringUTF16(
+            IDS_POLICY_ASSOCIATION_STATE_DEPROVISIONED);
+    }
+    NOTREACHED() << "Unknown state " << data->state();
+  }
+
+  // Default to UNMANAGED for the case of missing policy or bad state enum.
+  return l10n_util::GetStringUTF16(IDS_POLICY_ASSOCIATION_STATE_UNMANAGED);
+}
+
 void GetStatusFromCore(const policy::CloudPolicyCore* core,
                        base::DictionaryValue* dict) {
   const policy::CloudPolicyStore* store = core->store();
@@ -131,13 +159,18 @@ void GetStatusFromCore(const policy::CloudPolicyCore* core,
   const policy::CloudPolicyRefreshScheduler* refresh_scheduler =
         core->refresh_scheduler();
 
-  bool no_error = store->status() == policy::CloudPolicyStore::STATUS_OK &&
-                  client && client->status() == policy::DM_STATUS_SUCCESS;
-  string16 status = store->status() == policy::CloudPolicyStore::STATUS_OK &&
-                    client && client->status() != policy::DM_STATUS_SUCCESS ?
-                        policy::FormatDeviceManagementStatus(client->status()) :
-                        policy::FormatStoreStatus(store->status(),
-                                                  store->validation_status());
+  // CloudPolicyStore errors take precedence to show in the status message.
+  // Other errors (such as transient policy fetching problems) get displayed
+  // only if CloudPolicyStore is in STATUS_OK.
+  base::string16 status =
+      policy::FormatStoreStatus(store->status(), store->validation_status());
+  if (store->status() == policy::CloudPolicyStore::STATUS_OK) {
+    if (client && client->status() != policy::DM_STATUS_SUCCESS)
+      status = policy::FormatDeviceManagementStatus(client->status());
+    else if (!store->is_managed())
+      status = FormatAssociationState(store->policy());
+  }
+
   const em::PolicyData* policy = store->policy();
   std::string client_id = policy ? policy->device_id() : std::string();
   std::string username = policy ? policy->username() : std::string();
@@ -148,16 +181,22 @@ void GetStatusFromCore(const policy::CloudPolicyCore* core,
   base::Time last_refresh_time = refresh_scheduler ?
       refresh_scheduler->last_refresh() : base::Time();
 
+  bool no_error = store->status() == policy::CloudPolicyStore::STATUS_OK &&
+                  client && client->status() == policy::DM_STATUS_SUCCESS;
   dict->SetBoolean("error", !no_error);
   dict->SetString("status", status);
   dict->SetString("clientId", client_id);
   dict->SetString("username", username);
   dict->SetString("refreshInterval",
-                  ui::TimeFormat::TimeRemainingShort(refresh_interval));
+                  ui::TimeFormat::Simple(ui::TimeFormat::FORMAT_DURATION,
+                                         ui::TimeFormat::LENGTH_SHORT,
+                                         refresh_interval));
   dict->SetString("timeSinceLastRefresh", last_refresh_time.is_null() ?
       l10n_util::GetStringUTF16(IDS_POLICY_NEVER_FETCHED) :
-      ui::TimeFormat::TimeElapsed(base::Time::NowFromSystemTime() -
-                                  last_refresh_time));
+      ui::TimeFormat::Simple(ui::TimeFormat::FORMAT_ELAPSED,
+                             ui::TimeFormat::LENGTH_SHORT,
+                             base::Time::NowFromSystemTime() -
+                                 last_refresh_time));
 }
 
 void ExtractDomainFromUsername(base::DictionaryValue* dict) {
@@ -165,6 +204,35 @@ void ExtractDomainFromUsername(base::DictionaryValue* dict) {
   dict->GetString("username", &username);
   if (!username.empty())
     dict->SetString("domain", gaia::ExtractDomainName(username));
+}
+
+// Utility function that returns a JSON serialization of the given |dict|.
+scoped_ptr<base::StringValue> DictionaryToJSONString(
+    const base::DictionaryValue* dict) {
+  std::string json_string;
+  base::JSONWriter::WriteWithOptions(dict,
+                                     base::JSONWriter::OPTIONS_PRETTY_PRINT,
+                                     &json_string);
+  return make_scoped_ptr(new base::StringValue(json_string));
+}
+
+// Returns a copy of |value| with some values converted to a representation that
+// i18n_template.js will display in a nicer way.
+scoped_ptr<base::Value> CopyAndConvert(const base::Value* value) {
+  const base::DictionaryValue* dict = NULL;
+  if (value->GetAsDictionary(&dict))
+    return DictionaryToJSONString(dict).PassAs<base::Value>();
+
+  scoped_ptr<base::Value> copy(value->DeepCopy());
+  base::ListValue* list = NULL;
+  if (copy->GetAsList(&list)) {
+    for (size_t i = 0; i < list->GetSize(); ++i) {
+      if (list->GetDictionary(i, &dict))
+        list->Set(i, DictionaryToJSONString(dict).release());
+    }
+  }
+
+  return copy.Pass();
 }
 
 }  // namespace
@@ -230,7 +298,7 @@ class UserPolicyStatusProvider : public CloudPolicyCoreStatusProvider {
 class DevicePolicyStatusProvider : public CloudPolicyCoreStatusProvider {
  public:
   explicit DevicePolicyStatusProvider(
-      policy::BrowserPolicyConnector* connector);
+      policy::BrowserPolicyConnectorChromeOS* connector);
   virtual ~DevicePolicyStatusProvider();
 
   // CloudPolicyCoreStatusProvider implementation.
@@ -395,7 +463,7 @@ void UserPolicyStatusProvider::GetStatus(base::DictionaryValue* dict) {
 
 #if defined(OS_CHROMEOS)
 DevicePolicyStatusProvider::DevicePolicyStatusProvider(
-    policy::BrowserPolicyConnector* connector)
+    policy::BrowserPolicyConnectorChromeOS* connector)
       : CloudPolicyCoreStatusProvider(
             connector->GetDeviceCloudPolicyManager()->core()) {
   domain_ = connector->GetEnterpriseDomain();
@@ -463,8 +531,8 @@ PolicyUIHandler::~PolicyUIHandler() {
 
 void PolicyUIHandler::RegisterMessages() {
 #if defined(OS_CHROMEOS)
-  policy::BrowserPolicyConnector* connector =
-      g_browser_process->browser_policy_connector();
+  policy::BrowserPolicyConnectorChromeOS* connector =
+      g_browser_process->platform_part()->browser_policy_connector_chromeos();
   if (connector->IsEnterpriseManaged())
     device_status_provider_.reset(new DevicePolicyStatusProvider(connector));
 
@@ -488,8 +556,8 @@ void PolicyUIHandler::RegisterMessages() {
   }
 #else
   policy::UserCloudPolicyManager* user_cloud_policy_manager =
-      policy::UserCloudPolicyManagerFactory::GetForProfile(
-          Profile::FromWebUI(web_ui()));
+      policy::UserCloudPolicyManagerFactory::GetForBrowserContext(
+          web_ui()->GetWebContents()->GetBrowserContext());
   if (user_cloud_policy_manager) {
     user_status_provider_.reset(
         new UserPolicyStatusProvider(user_cloud_policy_manager->core()));
@@ -512,7 +580,7 @@ void PolicyUIHandler::RegisterMessages() {
                  chrome::NOTIFICATION_EXTENSION_LOADED,
                  content::NotificationService::AllSources());
   registrar_.Add(this,
-                 chrome::NOTIFICATION_EXTENSION_UNLOADED,
+                 chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
                  content::NotificationService::AllSources());
 
   web_ui()->RegisterMessageCallback(
@@ -528,7 +596,7 @@ void PolicyUIHandler::Observe(int type,
                               const content::NotificationSource& source,
                               const content::NotificationDetails& details) {
   DCHECK(type == chrome::NOTIFICATION_EXTENSION_LOADED ||
-         type == chrome::NOTIFICATION_EXTENSION_UNLOADED);
+         type == chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED);
   SendPolicyNames();
   SendPolicyValues();
 }
@@ -542,30 +610,32 @@ void PolicyUIHandler::OnPolicyUpdated(const policy::PolicyNamespace& ns,
 void PolicyUIHandler::SendPolicyNames() const {
   base::DictionaryValue names;
 
+  Profile* profile = Profile::FromWebUI(web_ui());
+  policy::SchemaRegistry* registry =
+      policy::SchemaRegistryServiceFactory::GetForContext(
+          profile->GetOriginalProfile());
+  scoped_refptr<policy::SchemaMap> schema_map = registry->schema_map();
+
   // Add Chrome policy names.
   base::DictionaryValue* chrome_policy_names = new base::DictionaryValue;
-  const policy::PolicyDefinitionList* list =
-      policy::GetChromePolicyDefinitionList();
-  for (const policy::PolicyDefinitionList::Entry* entry = list->begin;
-       entry != list->end; ++entry) {
-    chrome_policy_names->SetBoolean(entry->name, true);
+  policy::PolicyNamespace chrome_ns(policy::POLICY_DOMAIN_CHROME, "");
+  const policy::Schema* chrome_schema = schema_map->GetSchema(chrome_ns);
+  for (policy::Schema::Iterator it = chrome_schema->GetPropertiesIterator();
+       !it.IsAtEnd(); it.Advance()) {
+    chrome_policy_names->SetBoolean(it.key(), true);
   }
   names.Set("chromePolicyNames", chrome_policy_names);
 
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
   // Add extension policy names.
   base::DictionaryValue* extension_policy_names = new base::DictionaryValue;
-  extensions::ExtensionSystem* extension_system =
-      extensions::ExtensionSystem::Get(Profile::FromWebUI(web_ui()));
-  const ExtensionSet* extensions =
-      extension_system->extension_service()->extensions();
-  scoped_refptr<const policy::PolicyDomainDescriptor> policy_domain_descriptor;
-  policy_domain_descriptor = GetPolicyService()->
-      GetPolicyDomainDescriptor(policy::POLICY_DOMAIN_EXTENSIONS);
-  const policy::PolicyDomainDescriptor::SchemaMap& schema_map =
-      policy_domain_descriptor->components();
 
-  for (ExtensionSet::const_iterator it = extensions->begin();
+  extensions::ExtensionSystem* extension_system =
+      extensions::ExtensionSystem::Get(profile);
+  const extensions::ExtensionSet* extensions =
+      extension_system->extension_service()->extensions();
+
+  for (extensions::ExtensionSet::const_iterator it = extensions->begin();
        it != extensions->end(); ++it) {
     const extensions::Extension* extension = it->get();
     // Skip this extension if it's not an enterprise extension.
@@ -574,17 +644,16 @@ void PolicyUIHandler::SendPolicyNames() const {
       continue;
     base::DictionaryValue* extension_value = new base::DictionaryValue;
     extension_value->SetString("name", extension->name());
-    policy::PolicyDomainDescriptor::SchemaMap::const_iterator schema =
-        schema_map.find(extension->id());
+    const policy::Schema* schema =
+        schema_map->GetSchema(policy::PolicyNamespace(
+            policy::POLICY_DOMAIN_EXTENSIONS, extension->id()));
     base::DictionaryValue* policy_names = new base::DictionaryValue;
-    if (schema != schema_map.end()) {
+    if (schema && schema->valid()) {
       // Get policy names from the extension's policy schema.
       // Store in a map, not an array, for faster lookup on JS side.
-      policy::Schema policy_schema = schema->second;
-      for (policy::Schema::Iterator it_policies =
-               policy_schema.GetPropertiesIterator();
-           !it_policies.IsAtEnd(); it_policies.Advance()) {
-        policy_names->SetBoolean(it_policies.key(), true);
+      for (policy::Schema::Iterator prop = schema->GetPropertiesIterator();
+           !prop.IsAtEnd(); prop.Advance()) {
+        policy_names->SetBoolean(prop.key(), true);
       }
     }
     extension_value->Set("policyNames", policy_names);
@@ -608,11 +677,11 @@ void PolicyUIHandler::SendPolicyValues() const {
   // Add extension policy values.
   extensions::ExtensionSystem* extension_system =
       extensions::ExtensionSystem::Get(Profile::FromWebUI(web_ui()));
-  const ExtensionSet* extensions =
+  const extensions::ExtensionSet* extensions =
       extension_system->extension_service()->extensions();
   base::DictionaryValue* extension_values = new base::DictionaryValue;
 
-  for (ExtensionSet::const_iterator it = extensions->begin();
+  for (extensions::ExtensionSet::const_iterator it = extensions->begin();
        it != extensions->end(); ++it) {
     const extensions::Extension* extension = it->get();
     // Skip this extension if it's not an enterprise extension.
@@ -638,7 +707,7 @@ void PolicyUIHandler::GetPolicyValues(const policy::PolicyMap& map,
   for (policy::PolicyMap::const_iterator entry = map.begin();
        entry != map.end(); ++entry) {
     base::DictionaryValue* value = new base::DictionaryValue;
-    value->Set("value", entry->second.value->DeepCopy());
+    value->Set("value", CopyAndConvert(entry->second.value).release());
     if (entry->second.scope == policy::POLICY_SCOPE_USER)
       value->SetString("scope", "user");
     else
@@ -647,7 +716,7 @@ void PolicyUIHandler::GetPolicyValues(const policy::PolicyMap& map,
       value->SetString("level", "recommended");
     else
       value->SetString("level", "mandatory");
-    string16 error = errors->GetErrors(entry->first);
+    base::string16 error = errors->GetErrors(entry->first);
     if (!error.empty())
       value->SetString("error", error);
     values->Set(entry->first, value);

@@ -16,12 +16,12 @@
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_type.h"
 
-struct ViewHostMsg_FrameNavigate_Params;
+struct FrameHostMsg_DidCommitProvisionalLoad_Params;
 
 namespace content {
 class NavigationEntryImpl;
 class RenderViewHost;
-class WebContentsScreenshotManager;
+class NavigationEntryScreenshotManager;
 class SiteInstance;
 struct LoadCommittedDetails;
 
@@ -89,10 +89,10 @@ class CONTENT_EXPORT NavigationControllerImpl
                                  int index) OVERRIDE;
   virtual void CopyStateFrom(
       const NavigationController& source) OVERRIDE;
-  virtual void CopyStateFromAndPrune(
-      NavigationController* source) OVERRIDE;
-  virtual bool CanPruneAllButVisible() OVERRIDE;
-  virtual void PruneAllButVisible() OVERRIDE;
+  virtual void CopyStateFromAndPrune(NavigationController* source,
+                                     bool replace_entry) OVERRIDE;
+  virtual bool CanPruneAllButLastCommitted() OVERRIDE;
+  virtual void PruneAllButLastCommitted() OVERRIDE;
   virtual void ClearAllScreenshots() OVERRIDE;
 
   // The session storage namespace that all child RenderViews belonging to
@@ -135,8 +135,10 @@ class CONTENT_EXPORT NavigationControllerImpl
   //
   // In the case that nothing has changed, the details structure is undefined
   // and it will return false.
-  bool RendererDidNavigate(const ViewHostMsg_FrameNavigate_Params& params,
-                           LoadCommittedDetails* details);
+  bool RendererDidNavigate(
+      RenderFrameHost* rfh,
+      const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
+      LoadCommittedDetails* details);
 
   // Notifies us that we just became active. This is used by the WebContentsImpl
   // so that we know to load URLs that were pending as "lazy" loads.
@@ -201,7 +203,7 @@ class CONTENT_EXPORT NavigationControllerImpl
   // a new screenshot-manager is set, or when the controller is destroyed.
   // Setting a NULL manager recreates the default screenshot manager and uses
   // that.
-  void SetScreenshotManager(WebContentsScreenshotManager* manager);
+  void SetScreenshotManager(NavigationEntryScreenshotManager* manager);
 
   // Discards only the pending entry.
   void DiscardPendingEntry();
@@ -232,7 +234,8 @@ class CONTENT_EXPORT NavigationControllerImpl
 
   // Classifies the given renderer navigation (see the NavigationType enum).
   NavigationType ClassifyNavigation(
-      const ViewHostMsg_FrameNavigate_Params& params) const;
+      RenderFrameHost* rfh,
+      const FrameHostMsg_DidCommitProvisionalLoad_Params& params) const;
 
   // Causes the controller to load the specified entry. The function assumes
   // ownership of the pointer since it is put in the navigation list.
@@ -252,17 +255,25 @@ class CONTENT_EXPORT NavigationControllerImpl
   // whether the last entry has been replaced or not.
   // See LoadCommittedDetails.did_replace_entry.
   void RendererDidNavigateToNewPage(
-      const ViewHostMsg_FrameNavigate_Params& params, bool replace_entry);
+      RenderFrameHost* rfh,
+      const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
+      bool replace_entry);
   void RendererDidNavigateToExistingPage(
-      const ViewHostMsg_FrameNavigate_Params& params);
+      RenderFrameHost* rfh,
+      const FrameHostMsg_DidCommitProvisionalLoad_Params& params);
   void RendererDidNavigateToSamePage(
-      const ViewHostMsg_FrameNavigate_Params& params);
+      RenderFrameHost* rfh,
+      const FrameHostMsg_DidCommitProvisionalLoad_Params& params);
   void RendererDidNavigateInPage(
-      const ViewHostMsg_FrameNavigate_Params& params, bool* did_replace_entry);
+      RenderFrameHost* rfh,
+      const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
+      bool* did_replace_entry);
   void RendererDidNavigateNewSubframe(
-      const ViewHostMsg_FrameNavigate_Params& params);
+      RenderFrameHost* rfh,
+      const FrameHostMsg_DidCommitProvisionalLoad_Params& params);
   bool RendererDidNavigateAutoSubframe(
-      const ViewHostMsg_FrameNavigate_Params& params);
+      RenderFrameHost* rfh,
+      const FrameHostMsg_DidCommitProvisionalLoad_Params& params);
 
   // Helper function for code shared between Reload() and ReloadIgnoringCache().
   void ReloadInternal(bool check_for_repost, ReloadType reload_type,
@@ -303,13 +314,11 @@ class CONTENT_EXPORT NavigationControllerImpl
   void PruneOldestEntryIfFull();
 
   // Removes all entries except the last committed entry.  If there is a new
-  // pending navigation it is preserved. In contrast to PruneAllButVisible()
-  // this does not update the session history of the RenderView.  Callers
-  // must ensure that |CanPruneAllButVisible| returns true before calling this.
-  void PruneAllButVisibleInternal();
-
-  // Returns true if the navigation is redirect.
-  bool IsRedirect(const ViewHostMsg_FrameNavigate_Params& params);
+  // pending navigation it is preserved. In contrast to
+  // PruneAllButLastCommitted() this does not update the session history of the
+  // RenderView.  Callers must ensure that |CanPruneAllButLastCommitted| returns
+  // true before calling this.
+  void PruneAllButLastCommittedInternal();
 
   // Returns true if the navigation is likley to be automatic rather than
   // user-initiated.
@@ -376,6 +385,9 @@ class CONTENT_EXPORT NavigationControllerImpl
   // Becomes false when initial navigation commits.
   bool is_initial_navigation_;
 
+  // Prevent unsafe re-entrant calls to NavigateToPendingEntry.
+  bool in_navigate_to_pending_entry_;
+
   // Used to find the appropriate SessionStorageNamespace for the storage
   // partition of a NavigationEntry.
   //
@@ -402,7 +414,7 @@ class CONTENT_EXPORT NavigationControllerImpl
   // the wrong order in the history view.
   TimeSmoother time_smoother_;
 
-  scoped_ptr<WebContentsScreenshotManager> screenshot_manager_;
+  scoped_ptr<NavigationEntryScreenshotManager> screenshot_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(NavigationControllerImpl);
 };

@@ -15,7 +15,6 @@ namespace net {
 typedef uint64 QuicByteCount;
 
 class NET_EXPORT_PRIVATE QuicBandwidth {
-
  public:
   // Creates a new QuicBandwidth with an internal value of 0.
   static QuicBandwidth Zero();
@@ -55,6 +54,8 @@ class NET_EXPORT_PRIVATE QuicBandwidth {
   QuicBandwidth Subtract(const QuicBandwidth& delta) const;
 
   QuicBandwidth Scale(float scale_factor) const;
+
+  QuicTime::Delta TransferTime(QuicByteCount bytes) const;
 
  private:
   explicit QuicBandwidth(int64 bits_per_second);

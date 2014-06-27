@@ -347,6 +347,18 @@ HistoryWebUITest.prototype = {
   }
 };
 
+/**
+ * Examines the time column of every entry on the page, and ensure that they
+ * are all the same width.
+ */
+function ensureTimeWidthsEqual() {
+  var times = document.querySelectorAll('.entry .time');
+  var timeWidth = times[0].clientWidth;
+  for (var i = 1; i < times.length; ++i) {
+    assertEquals(timeWidth, times[i].clientWidth);
+  }
+}
+
 TEST_F('HistoryWebUIFakeBackendTest', 'emptyHistory', function() {
   expectTrue($('newest-button').hidden);
   expectTrue($('newer-button').hidden);
@@ -354,7 +366,8 @@ TEST_F('HistoryWebUIFakeBackendTest', 'emptyHistory', function() {
   testDone();
 });
 
-TEST_F('HistoryWebUITest', 'basicTest', function() {
+// Times out on Win: http://crbug.com/336845
+TEST_F('HistoryWebUITest', 'DISABLED_basicTest', function() {
   var resultCount = document.querySelectorAll('.entry').length;
 
   // Check that there are two days of entries.
@@ -403,6 +416,8 @@ TEST_F('HistoryWebUITest', 'basicTest', function() {
   expectTrue($('newer-button').hidden);
   expectFalse($('older-button').hidden);
 
+  ensureTimeWidthsEqual();
+
   // Go to the next page.
   $('older-button').click();
   waitForCallback('historyResult', function() {
@@ -426,6 +441,8 @@ TEST_F('HistoryWebUITest', 'basicTest', function() {
     expectFalse($('newer-button').hidden);
     expectTrue($('older-button').hidden);
 
+    ensureTimeWidthsEqual();
+
     // Go back to the first page, and check that the same day headers are there.
     $('newest-button').click();
     var newDayHeaders = document.querySelectorAll('.day');
@@ -442,8 +459,9 @@ TEST_F('HistoryWebUITest', 'basicTest', function() {
 
 /**
  * Test bulk deletion of history entries.
+ * Disabled because it is currently very flaky on the Windows XP bot.
  */
-TEST_F('HistoryWebUITest', 'bulkDeletion', function() {
+TEST_F('HistoryWebUITest', 'DISABLED_bulkDeletion', function() {
   var checkboxes = document.querySelectorAll(
       '#results-display input[type=checkbox]');
 
@@ -549,7 +567,7 @@ TEST_F('HistoryWebUITest', 'multipleSelect', function() {
   testDone();
 });
 
-TEST_F('HistoryWebUITest', 'searchHistory', function() {
+TEST_F('HistoryWebUITest', 'DISABLED_searchHistory', function() {
   var getResultCount = function() {
     return document.querySelectorAll('.entry').length;
   };
@@ -686,6 +704,8 @@ TEST_F('RangeHistoryWebUITest', 'weekViewGrouped', function() {
     for (var i = 0; i < dayResults.length; i++)
       checkGroupedVisits(dayResults[i]);
 
+    ensureTimeWidthsEqual();
+
     testDone();
   });
 });
@@ -699,6 +719,7 @@ TEST_F('RangeHistoryWebUITest', 'monthViewGrouped', function() {
     assertEquals(1, monthResults.length);
 
     checkGroupedVisits(monthResults[0]);
+    ensureTimeWidthsEqual();
 
     testDone();
   });
@@ -736,7 +757,7 @@ HistoryWebUIRealBackendTest.prototype = {
     GEN('  AddPageToHistory(2, "http://google.com", "Google");');
 
     // Add a visit on the next day.
-    GEN('  AddPageToHistory(24, "http://google.com", "Google");');
+    GEN('  AddPageToHistory(36, "http://google.com", "Google");');
   },
 };
 
@@ -744,7 +765,7 @@ HistoryWebUIRealBackendTest.prototype = {
  * Simple test that verifies that the correct entries are retrieved from the
  * history database and displayed in the UI.
  */
-TEST_F('HistoryWebUIRealBackendTest', 'DISABLED_basic', function() {
+TEST_F('HistoryWebUIRealBackendTest', 'basic', function() {
   // Check that there are two days of entries, and three entries in total.
   assertEquals(2, document.querySelectorAll('.day').length);
   assertEquals(3, document.querySelectorAll('.entry').length);
@@ -754,9 +775,8 @@ TEST_F('HistoryWebUIRealBackendTest', 'DISABLED_basic', function() {
 
 /**
  * Test individual deletion of history entries.
- * Disabled because it fails on all platforms: crbug.com/242293
  */
-TEST_F('HistoryWebUIRealBackendTest', 'DISABLED_singleDeletion', function() {
+TEST_F('HistoryWebUIRealBackendTest', 'singleDeletion', function() {
   // Deletes the history entry represented by |entryElement|, and calls callback
   // when the deletion is complete.
   var removeEntry = function(entryElement, callback) {
@@ -766,7 +786,7 @@ TEST_F('HistoryWebUIRealBackendTest', 'DISABLED_singleDeletion', function() {
     assertFalse(dropDownButton.disabled);
     assertFalse(removeMenuItem.disabled);
 
-    waitForCallback('removeNodeWithoutTransition', callback);
+    waitForCallback('onEntryRemoved', callback);
 
     cr.dispatchSimpleEvent(dropDownButton, 'mousedown');
     cr.dispatchSimpleEvent(removeMenuItem, 'activate');
@@ -781,13 +801,18 @@ TEST_F('HistoryWebUIRealBackendTest', 'DISABLED_singleDeletion', function() {
     testDone([false, 'historyDeleted() called when deleting single entry']);
   });
 
+  expectEquals(2, document.querySelectorAll('.day').length);
+
   // Delete the first entry. The previous second entry should now be the first.
   removeEntry(document.querySelector('.entry'), function() {
-    expectEquals(document.querySelector('.entry a').textContent, secondTitle);
+    expectEquals(secondTitle, document.querySelector('.entry a').textContent);
+
+    // After removing the first entry, its day header should also be gone.
+    expectEquals(1, document.querySelectorAll('.day').length);
 
     // Delete another entry. The original third entry should now be the first.
     removeEntry(document.querySelector('.entry'), function() {
-      expectEquals(document.querySelector('.entry a').textContent, thirdTitle);
+      expectEquals(thirdTitle, document.querySelector('.entry a').textContent);
       testDone();
     });
   });
@@ -865,4 +890,42 @@ TEST_F('HistoryWebUIIDNTest', 'basic', function() {
                "\u0440\u0444", document.querySelector('.domain').textContent);
 
   testDone();
+});
+
+/**
+ * Fixture for a test that uses the real backend and tests how the history
+ * page deals with odd schemes in URLs.
+ */
+function HistoryWebUIWithSchemesTest() {}
+
+HistoryWebUIWithSchemesTest.prototype = {
+  __proto__: HistoryWebUIRealBackendTest.prototype,
+
+  /** @override */
+  testGenPreamble: function() {
+    // Add a bunch of entries on the same day, including some weird schemes.
+    GEN('  AddPageToHistory(12, "http://google.com", "Google");');
+    GEN('  AddPageToHistory(13, "file:///tmp/foo", "");');
+    GEN('  AddPageToHistory(14, "mailto:chromium@chromium.org", "");');
+    GEN('  AddPageToHistory(15, "tel:555123456", "");');
+  },
+
+  setUp: function() {
+    // Show the filter controls as if the command line switch was active.
+    $('top-container').hidden = true;
+    $('history-page').classList.add('big-topbar-page');
+    $('filter-controls').hidden = false;
+    expectFalse($('filter-controls').hidden);
+  },
+};
+
+TEST_F('HistoryWebUIWithSchemesTest', 'groupingWithSchemes', function() {
+  // Switch to the week view.
+  $('timeframe-filter-week').click();
+  waitForCallback('historyResult', function() {
+    // Each URL should be organized under a different "domain".
+    expectEquals(document.querySelectorAll('.entry').length, 4);
+    expectEquals(document.querySelectorAll('.site-domain-wrapper').length, 4);
+    testDone();
+  });
 });

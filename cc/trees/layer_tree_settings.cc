@@ -17,15 +17,16 @@ LayerTreeSettings::LayerTreeSettings()
       allow_antialiasing(true),
       throttle_frame_production(true),
       begin_impl_frame_scheduling_enabled(false),
-      deadline_scheduling_enabled(true),
+      main_frame_before_draw_enabled(true),
+      main_frame_before_activation_enabled(false),
       using_synchronous_renderer_compositor(false),
       per_tile_painting_enabled(false),
       partial_swap_enabled(false),
       accelerated_animation_enabled(true),
-      background_color_instead_of_checkerboard(false),
-      show_overdraw_in_tracing(false),
       can_use_lcd_text(true),
       should_clear_root_render_pass(true),
+      rasterization_site(CpuRasterization),
+      create_low_res_tiling(true),
       scrollbar_animator(NoAnimator),
       scrollbar_linear_fade_delay_ms(300),
       scrollbar_linear_fade_length_ms(300),
@@ -42,7 +43,6 @@ LayerTreeSettings::LayerTreeSettings()
       top_controls_hide_threshold(0.5f),
       refresh_rate(60.0),
       max_partial_texture_updates(std::numeric_limits<size_t>::max()),
-      num_raster_threads(1),
       default_tile_size(gfx::Size(256, 256)),
       max_untiled_layer_size(gfx::Size(512, 512)),
       minimum_occlusion_tracking_size(gfx::Size(160, 160)),
@@ -50,17 +50,17 @@ LayerTreeSettings::LayerTreeSettings()
       use_pinch_virtual_viewport(false),
       // At 256x256 tiles, 128 tiles cover an area of 2048x4096 pixels.
       max_tiles_for_interest_area(128),
+      skewport_target_time_in_seconds(1.0f),
+      skewport_extrapolation_limit_in_content_pixels(2000),
       max_unused_resource_memory_percentage(100),
+      max_memory_for_prepaint_percentage(100),
       highp_threshold_min(0),
-      force_direct_layer_drawing(false),
       strict_layer_property_change_checking(false),
       use_map_image(false),
       ignore_root_layer_flings(false),
       use_rgba_4444_textures(false),
-      always_overscroll(false),
       touch_hit_testing(true),
-      texture_id_allocation_chunk_size(64) {
-}
+      texture_id_allocation_chunk_size(64) {}
 
 LayerTreeSettings::~LayerTreeSettings() {}
 

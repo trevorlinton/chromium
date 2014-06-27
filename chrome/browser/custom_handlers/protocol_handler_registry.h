@@ -17,7 +17,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/common/custom_handlers/protocol_handler.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service.h"
+#include "components/keyed_service/core/keyed_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "net/url_request/url_request.h"
@@ -33,7 +33,7 @@ class PrefRegistrySyncable;
 // instance of this class, which is initialized on browser start through
 // Profile::InitRegisteredProtocolHandlers(), and they should be the only
 // instances of this class.
-class ProtocolHandlerRegistry : public BrowserContextKeyedService {
+class ProtocolHandlerRegistry : public KeyedService {
 
  public:
   // Provides notification of when the OS level user agent settings
@@ -277,11 +277,11 @@ class ProtocolHandlerRegistry : public BrowserContextKeyedService {
 
   // Returns a JSON list of protocol handlers. The caller is responsible for
   // deleting this Value.
-  Value* EncodeRegisteredHandlers();
+  base::Value* EncodeRegisteredHandlers();
 
   // Returns a JSON list of ignored protocol handlers. The caller is
   // responsible for deleting this Value.
-  Value* EncodeIgnoredHandlers();
+  base::Value* EncodeIgnoredHandlers();
 
   // Sends a notification of the given type to the NotificationService.
   void NotifyChanged();
@@ -291,7 +291,7 @@ class ProtocolHandlerRegistry : public BrowserContextKeyedService {
 
   // Get the DictionaryValues stored under the given pref name that are valid
   // ProtocolHandler values.
-  std::vector<const DictionaryValue*> GetHandlersFromPref(
+  std::vector<const base::DictionaryValue*> GetHandlersFromPref(
       const char* pref_name) const;
 
   // Ignores future requests to register the given protocol handler.

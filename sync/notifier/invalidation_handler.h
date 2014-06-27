@@ -7,9 +7,10 @@
 
 #include "sync/base/sync_export.h"
 #include "sync/notifier/invalidator_state.h"
-#include "sync/notifier/object_id_invalidation_map.h"
 
 namespace syncer {
+
+class ObjectIdInvalidationMap;
 
 class SYNC_EXPORT InvalidationHandler {
  public:
@@ -21,6 +22,8 @@ class SYNC_EXPORT InvalidationHandler {
   // called regardless of the current invalidator state.
   virtual void OnIncomingInvalidation(
       const ObjectIdInvalidationMap& invalidation_map) = 0;
+
+  virtual std::string GetOwnerName() const = 0;
 
  protected:
   virtual ~InvalidationHandler() {}

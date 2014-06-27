@@ -5,7 +5,6 @@
 #ifndef CHROME_BROWSER_CONTENT_SETTINGS_TAB_SPECIFIC_CONTENT_SETTINGS_H_
 #define CHROME_BROWSER_CONTENT_SETTINGS_TAB_SPECIFIC_CONTENT_SETTINGS_H_
 
-#include <set>
 #include <string>
 
 #include "base/basictypes.h"
@@ -15,7 +14,6 @@
 #include "chrome/browser/content_settings/content_settings_usages_state.h"
 #include "chrome/browser/content_settings/local_shared_objects_container.h"
 #include "chrome/browser/media/media_stream_devices_controller.h"
-#include "chrome/browser/password_manager/password_form_manager.h"
 #include "chrome/common/content_settings.h"
 #include "chrome/common/content_settings_types.h"
 #include "chrome/common/custom_handlers/protocol_handler.h"
@@ -56,11 +54,6 @@ class TabSpecificContentSettings
     MICROPHONE_CAMERA_BLOCKED,
   };
 
-  enum PasswordSavingState {
-    NO_PASSWORD_TO_BE_SAVED = 0,
-    PASSWORD_TO_BE_SAVED,
-  };
-
   // Classes that want to be notified about site data events must implement
   // this abstract class and add themselves as observer to the
   // |TabSpecificContentSettings|.
@@ -93,24 +86,33 @@ class TabSpecificContentSettings
   static TabSpecificContentSettings* Get(int render_process_id,
                                          int render_view_id);
 
+  // Returns the object given a render frame's id.
+  static TabSpecificContentSettings* GetForFrame(int render_process_id,
+                                                 int render_view_id);
+
   // Static methods called on the UI threads.
   // Called when cookies for the given URL were read either from within the
   // current page or while loading it. |blocked_by_policy| should be true, if
   // reading cookies was blocked due to the user's content settings. In that
   // case, this function should invoke OnContentBlocked.
+  // |is_for_blocking_resource| indicates whether the cookies read were for a
+  // blocking resource (eg script, css). It is only temporarily added for
+  // diagnostic purposes, per bug 353678. Will be removed again once data
+  // collection is finished.
   static void CookiesRead(int render_process_id,
-                          int render_view_id,
+                          int render_frame_id,
                           const GURL& url,
                           const GURL& first_party_url,
                           const net::CookieList& cookie_list,
-                          bool blocked_by_policy);
+                          bool blocked_by_policy,
+                          bool is_for_blocking_resource);
 
   // Called when a specific cookie in the current page was changed.
   // |blocked_by_policy| should be true, if the cookie was blocked due to the
   // user's content settings. In that case, this function should invoke
   // OnContentBlocked.
   static void CookieChanged(int render_process_id,
-                            int render_view_id,
+                            int render_frame_id,
                             const GURL& url,
                             const GURL& first_party_url,
                             const std::string& cookie_line,
@@ -122,10 +124,10 @@ class TabSpecificContentSettings
   // |blocked_by_policy| should be true, and this function should invoke
   // OnContentBlocked.
   static void WebDatabaseAccessed(int render_process_id,
-                                  int render_view_id,
+                                  int render_frame_id,
                                   const GURL& url,
-                                  const string16& name,
-                                  const string16& display_name,
+                                  const base::string16& name,
+                                  const base::string16& display_name,
                                   bool blocked_by_policy);
 
   // Called when a specific DOM storage area in the current page was
@@ -133,7 +135,7 @@ class TabSpecificContentSettings
   // |blocked_by_policy| should be true, and this function should invoke
   // OnContentBlocked.
   static void DOMStorageAccessed(int render_process_id,
-                                 int render_view_id,
+                                 int render_frame_id,
                                  const GURL& url,
                                  bool local,
                                  bool blocked_by_policy);
@@ -143,9 +145,9 @@ class TabSpecificContentSettings
   // |blocked_by_policy| should be true, and this function should invoke
   // OnContentBlocked.
   static void IndexedDBAccessed(int render_process_id,
-                                int render_view_id,
+                                int render_frame_id,
                                 const GURL& url,
-                                const string16& description,
+                                const base::string16& description,
                                 bool blocked_by_policy);
 
   // Called when a specific file system in the current page was accessed.
@@ -153,7 +155,7 @@ class TabSpecificContentSettings
   // |blocked_by_policy| should be true, and this function should invoke
   // OnContentBlocked.
   static void FileSystemAccessed(int render_process_id,
-                                 int render_view_id,
+                                 int render_frame_id,
                                  const GURL& url,
                                  bool blocked_by_policy);
 
@@ -168,7 +170,7 @@ class TabSpecificContentSettings
   void ClearGeolocationContentSettings();
 
   // Clears the MIDI settings.
-  void ClearMIDIContentSettings();
+  void ClearMidiContentSettings();
 
   // Changes the |content_blocked_| entry for popups.
   void SetPopupsBlocked(bool blocked);
@@ -181,7 +183,7 @@ class TabSpecificContentSettings
       const content::LoadCommittedDetails& details);
 
   // Updates MIDI settings on navigation.
-  void MIDIDidNavigate(const content::LoadCommittedDetails& details);
+  void MidiDidNavigate(const content::LoadCommittedDetails& details);
 
   // Returns whether a particular kind of content has been blocked for this
   // page.
@@ -210,13 +212,6 @@ class TabSpecificContentSettings
 
   // Returns the state of the camera and microphone usage.
   MicrophoneCameraState GetMicrophoneCameraState() const;
-
-  // TODO(npentrel): Change to bool if not needed once feature is implemented.
-  // Returns the state of whether there is a password to be saved or not.
-  PasswordSavingState GetPasswordSavingState() const;
-
-  const std::set<std::string>& BlockedResourcesForType(
-      ContentSettingsType content_type) const;
 
   // Returns the ContentSettingsUsagesState that controls the
   // geolocation API usage on this page.
@@ -286,8 +281,8 @@ class TabSpecificContentSettings
   void SetPepperBrokerAllowed(bool allowed);
 
   // content::WebContentsObserver overrides.
-  virtual void RenderViewForInterstitialPageCreated(
-      content::RenderViewHost* render_view_host) OVERRIDE;
+  virtual void RenderFrameForInterstitialPageCreated(
+      content::RenderFrameHost* render_frame_host) OVERRIDE;
   virtual bool OnMessageReceived(const IPC::Message& message) OVERRIDE;
   virtual void DidNavigateMainFrame(
       const content::LoadCommittedDetails& details,
@@ -303,21 +298,8 @@ class TabSpecificContentSettings
   virtual void AppCacheAccessed(const GURL& manifest_url,
                                 bool blocked_by_policy) OVERRIDE;
 
-  // Called when the user chooses to save or blacklist a password. Instructs
-  // |form_manager_| to perfom the chosen action when the next navigation
-  // occurs or when the tab is closed. The change isn't applied immediately
-  // because the user can still recall the UI and change the desired action,
-  // until the next navigation, and undoing a blacklist operation is
-  // nontrivial.
-  void set_password_action(
-      PasswordFormManager::PasswordAction password_action) {
-    DCHECK(form_manager_.get());
-    form_manager_->set_password_action(password_action);
-  }
-
   // Message handlers. Public for testing.
-  void OnContentBlocked(ContentSettingsType type,
-                        const std::string& resource_identifier);
+  void OnContentBlocked(ContentSettingsType type);
   void OnContentAllowed(ContentSettingsType type);
 
   // These methods are invoked on the UI thread by the static functions above.
@@ -334,14 +316,14 @@ class TabSpecificContentSettings
   void OnFileSystemAccessed(const GURL& url,
                             bool blocked_by_policy);
   void OnIndexedDBAccessed(const GURL& url,
-                           const string16& description,
+                           const base::string16& description,
                            bool blocked_by_policy);
   void OnLocalStorageAccessed(const GURL& url,
                               bool local,
                               bool blocked_by_policy);
   void OnWebDatabaseAccessed(const GURL& url,
-                             const string16& name,
-                             const string16& display_name,
+                             const base::string16& name,
+                             const base::string16& display_name,
                              bool blocked_by_policy);
   void OnGeolocationPermissionSet(const GURL& requesting_frame,
                                   bool allowed);
@@ -358,15 +340,9 @@ class TabSpecificContentSettings
       const MediaStreamDevicesController::MediaStreamTypeSettingsMap&
           request_permissions);
 
-  // Called when the user submits a form containing login information, so we
-  // can handle later requests to save or blacklist that login information.
-  // This stores the provided object in form_manager_ and triggers the UI to
-  // prompt the user about whether they would like to save the password.
-  void OnPasswordSubmitted(PasswordFormManager* form_manager);
-
   // There methods are called to update the status about MIDI access.
-  void OnMIDISysExAccessed(const GURL& reqesting_origin);
-  void OnMIDISysExAccessBlocked(const GURL& requesting_origin);
+  void OnMidiSysExAccessed(const GURL& reqesting_origin);
+  void OnMidiSysExAccessBlocked(const GURL& requesting_origin);
 
   // Adds the given |SiteDataObserver|. The |observer| is notified when a
   // locale shared object, like for example a cookie, is accessed.
@@ -378,9 +354,6 @@ class TabSpecificContentSettings
  private:
   explicit TabSpecificContentSettings(content::WebContents* tab);
   friend class content::WebContentsUserData<TabSpecificContentSettings>;
-
-  void AddBlockedResource(ContentSettingsType content_type,
-                          const std::string& resource_identifier);
 
   // content::NotificationObserver implementation.
   virtual void Observe(int type,
@@ -401,11 +374,6 @@ class TabSpecificContentSettings
 
   // Stores which content setting types actually were allowed.
   bool content_allowed_[CONTENT_SETTINGS_NUM_TYPES];
-
-  // Stores the blocked resources for each content type.
-  // Currently only used for plugins.
-  scoped_ptr<std::set<std::string> >
-      blocked_resources_[CONTENT_SETTINGS_NUM_TYPES];
 
   // The profile of the tab.
   Profile* profile_;
@@ -449,12 +417,6 @@ class TabSpecificContentSettings
   // request is requesting certain specific devices.
   std::string media_stream_requested_audio_device_;
   std::string media_stream_requested_video_device_;
-
-  // Set by OnPasswordSubmitted() when the user submits a form containing login
-  // information.  If the user responds to a subsequent "Do you want to save
-  // this password?" prompt, we ask this object to save or blacklist the
-  // associated login information in Chrome's password store.
-  scoped_ptr<PasswordFormManager> form_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(TabSpecificContentSettings);
 };

@@ -7,16 +7,20 @@
 #include "android_webview/browser/aw_browser_context.h"
 #include "android_webview/browser/aw_browser_main_parts.h"
 #include "android_webview/browser/aw_contents_client_bridge_base.h"
+#include "android_webview/browser/aw_contents_io_thread_client.h"
 #include "android_webview/browser/aw_cookie_access_policy.h"
 #include "android_webview/browser/aw_quota_permission_context.h"
 #include "android_webview/browser/aw_web_preferences_populater.h"
 #include "android_webview/browser/jni_dependency_factory.h"
 #include "android_webview/browser/net_disk_cache_remover.h"
 #include "android_webview/browser/renderer_host/aw_resource_dispatcher_host_delegate.h"
+#include "android_webview/common/render_view_messages.h"
 #include "android_webview/common/url_constants.h"
 #include "base/base_paths_android.h"
 #include "base/path_service.h"
 #include "content/public/browser/access_token_store.h"
+#include "content/public/browser/browser_message_filter.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -30,8 +34,87 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "webkit/common/webpreferences.h"
 
+using content::BrowserThread;
+
 namespace android_webview {
 namespace {
+
+// TODO(sgurun) move this to its own file.
+// This class filters out incoming aw_contents related IPC messages for the
+// renderer process on the IPC thread.
+class AwContentsMessageFilter : public content::BrowserMessageFilter {
+public:
+  explicit AwContentsMessageFilter(int process_id);
+
+  // BrowserMessageFilter methods.
+  virtual void OverrideThreadForMessage(
+      const IPC::Message& message,
+      BrowserThread::ID* thread) OVERRIDE;
+  virtual bool OnMessageReceived(
+      const IPC::Message& message,
+      bool* message_was_ok) OVERRIDE;
+
+  void OnShouldOverrideUrlLoading(int routing_id,
+                                  const base::string16& url,
+                                  bool* ignore_navigation);
+  void OnSubFrameCreated(int parent_render_frame_id, int child_render_frame_id);
+
+private:
+  virtual ~AwContentsMessageFilter();
+
+  int process_id_;
+
+  DISALLOW_COPY_AND_ASSIGN(AwContentsMessageFilter);
+};
+
+AwContentsMessageFilter::AwContentsMessageFilter(int process_id)
+    : BrowserMessageFilter(AndroidWebViewMsgStart),
+      process_id_(process_id) {
+}
+
+AwContentsMessageFilter::~AwContentsMessageFilter() {
+}
+
+void AwContentsMessageFilter::OverrideThreadForMessage(
+    const IPC::Message& message, BrowserThread::ID* thread) {
+  if (message.type() == AwViewHostMsg_ShouldOverrideUrlLoading::ID) {
+    *thread = BrowserThread::UI;
+  }
+}
+
+bool AwContentsMessageFilter::OnMessageReceived(const IPC::Message& message,
+                                                bool* message_was_ok) {
+  bool handled = true;
+  IPC_BEGIN_MESSAGE_MAP_EX(AwContentsMessageFilter, message, *message_was_ok)
+      IPC_MESSAGE_HANDLER(AwViewHostMsg_ShouldOverrideUrlLoading,
+                          OnShouldOverrideUrlLoading)
+      IPC_MESSAGE_HANDLER(AwViewHostMsg_SubFrameCreated, OnSubFrameCreated)
+      IPC_MESSAGE_UNHANDLED(handled = false)
+  IPC_END_MESSAGE_MAP()
+  return handled;
+}
+
+void AwContentsMessageFilter::OnShouldOverrideUrlLoading(
+    int render_frame_id,
+    const base::string16& url,
+    bool* ignore_navigation) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  *ignore_navigation = false;
+  AwContentsClientBridgeBase* client =
+      AwContentsClientBridgeBase::FromID(process_id_, render_frame_id);
+  if (client) {
+    *ignore_navigation = client->ShouldOverrideUrlLoading(url);
+  } else {
+    LOG(WARNING) << "Failed to find the associated render view host for url: "
+                 << url;
+  }
+}
+
+void AwContentsMessageFilter::OnSubFrameCreated(int parent_render_frame_id,
+                                                int child_render_frame_id) {
+  AwContentsIoThreadClient::SubFrameCreated(
+      process_id_, parent_render_frame_id, child_render_frame_id);
+}
 
 class AwAccessTokenStore : public content::AccessTokenStore {
  public:
@@ -46,7 +129,7 @@ class AwAccessTokenStore : public content::AccessTokenStore {
     request.Run(access_token_set, NULL);
   }
   virtual void SaveAccessToken(const GURL& server_url,
-                               const string16& access_token) OVERRIDE { }
+                               const base::string16& access_token) OVERRIDE { }
 
  private:
   virtual ~AwAccessTokenStore() { }
@@ -107,7 +190,7 @@ AwContentBrowserClient::GetWebContentsViewDelegate(
   return native_factory_->CreateViewDelegate(web_contents);
 }
 
-void AwContentBrowserClient::RenderProcessHostCreated(
+void AwContentBrowserClient::RenderProcessWillLaunch(
     content::RenderProcessHost* host) {
   // If WebView becomes multi-process capable, this may be insecure.
   // More benefit can be derived from the ChildProcessSecurotyPolicy by
@@ -121,14 +204,18 @@ void AwContentBrowserClient::RenderProcessHostCreated(
   content::ChildProcessSecurityPolicy::GetInstance()->GrantScheme(
       host->GetID(), android_webview::kContentScheme);
   content::ChildProcessSecurityPolicy::GetInstance()->GrantScheme(
-      host->GetID(), chrome::kFileScheme);
+      host->GetID(), content::kFileScheme);
+
+  host->AddFilter(new AwContentsMessageFilter(host->GetID()));
 }
 
-net::URLRequestContextGetter*
-AwContentBrowserClient::CreateRequestContext(
+net::URLRequestContextGetter* AwContentBrowserClient::CreateRequestContext(
     content::BrowserContext* browser_context,
-    content::ProtocolHandlerMap* protocol_handlers) {
+    content::ProtocolHandlerMap* protocol_handlers,
+    content::ProtocolHandlerScopedVector protocol_interceptors) {
   DCHECK(browser_context_.get() == browser_context);
+  // TODO(mkosiba,kinuko): protocol_interceptors should be hooked up in the
+  // downstream. (crbug.com/350286)
   return browser_context_->CreateRequestContext(protocol_handlers);
 }
 
@@ -137,7 +224,8 @@ AwContentBrowserClient::CreateRequestContextForStoragePartition(
     content::BrowserContext* browser_context,
     const base::FilePath& partition_path,
     bool in_memory,
-    content::ProtocolHandlerMap* protocol_handlers) {
+    content::ProtocolHandlerMap* protocol_handlers,
+    content::ProtocolHandlerScopedVector protocol_interceptors) {
   DCHECK(browser_context_.get() == browser_context);
   return browser_context_->CreateRequestContextForStoragePartition(
       partition_path, in_memory, protocol_handlers);
@@ -149,7 +237,7 @@ std::string AwContentBrowserClient::GetCanonicalEncodingNameByAliasName(
 }
 
 void AwContentBrowserClient::AppendExtraCommandLineSwitches(
-    CommandLine* command_line,
+    base::CommandLine* command_line,
     int child_process_id) {
   NOTREACHED() << "Android WebView does not support multi-process yet";
 }
@@ -183,13 +271,13 @@ bool AwContentBrowserClient::AllowGetCookie(const GURL& url,
                                             const net::CookieList& cookie_list,
                                             content::ResourceContext* context,
                                             int render_process_id,
-                                            int render_view_id) {
+                                            int render_frame_id) {
   return AwCookieAccessPolicy::GetInstance()->AllowGetCookie(url,
                                                              first_party,
                                                              cookie_list,
                                                              context,
                                                              render_process_id,
-                                                             render_view_id);
+                                                             render_frame_id);
 }
 
 bool AwContentBrowserClient::AllowSetCookie(const GURL& url,
@@ -197,24 +285,24 @@ bool AwContentBrowserClient::AllowSetCookie(const GURL& url,
                                             const std::string& cookie_line,
                                             content::ResourceContext* context,
                                             int render_process_id,
-                                            int render_view_id,
+                                            int render_frame_id,
                                             net::CookieOptions* options) {
   return AwCookieAccessPolicy::GetInstance()->AllowSetCookie(url,
                                                              first_party,
                                                              cookie_line,
                                                              context,
                                                              render_process_id,
-                                                             render_view_id,
+                                                             render_frame_id,
                                                              options);
 }
 
 bool AwContentBrowserClient::AllowWorkerDatabase(
     const GURL& url,
-    const string16& name,
-    const string16& display_name,
+    const base::string16& name,
+    const base::string16& display_name,
     unsigned long estimated_size,
     content::ResourceContext* context,
-    const std::vector<std::pair<int, int> >& render_views) {
+    const std::vector<std::pair<int, int> >& render_frames) {
   // Android WebView does not yet support web workers.
   return false;
 }
@@ -222,16 +310,16 @@ bool AwContentBrowserClient::AllowWorkerDatabase(
 bool AwContentBrowserClient::AllowWorkerFileSystem(
     const GURL& url,
     content::ResourceContext* context,
-    const std::vector<std::pair<int, int> >& render_views) {
+    const std::vector<std::pair<int, int> >& render_frames) {
   // Android WebView does not yet support web workers.
   return false;
 }
 
 bool AwContentBrowserClient::AllowWorkerIndexedDB(
     const GURL& url,
-    const string16& name,
+    const base::string16& name,
     content::ResourceContext* context,
-    const std::vector<std::pair<int, int> >& render_views) {
+    const std::vector<std::pair<int, int> >& render_frames) {
   // Android WebView does not yet support web workers.
   return false;
 }
@@ -243,7 +331,7 @@ AwContentBrowserClient::CreateQuotaPermissionContext() {
 
 void AwContentBrowserClient::AllowCertificateError(
     int render_process_id,
-    int render_view_id,
+    int render_frame_id,
     int cert_error,
     const net::SSLInfo& ssl_info,
     const GURL& request_url,
@@ -252,9 +340,8 @@ void AwContentBrowserClient::AllowCertificateError(
     bool strict_enforcement,
     const base::Callback<void(bool)>& callback,
     content::CertificateRequestResultType* result) {
-
   AwContentsClientBridgeBase* client =
-      AwContentsClientBridgeBase::FromID(render_process_id, render_view_id);
+      AwContentsClientBridgeBase::FromID(render_process_id, render_frame_id);
   bool cancel_request = true;
   if (client)
     client->AllowCertificateError(cert_error,
@@ -268,23 +355,23 @@ void AwContentBrowserClient::AllowCertificateError(
 
 void AwContentBrowserClient::SelectClientCertificate(
       int render_process_id,
-      int render_view_id,
+      int render_frame_id,
       const net::HttpNetworkSession* network_session,
       net::SSLCertRequestInfo* cert_request_info,
       const base::Callback<void(net::X509Certificate*)>& callback) {
-  LOG(INFO) << "Client certificate request from "
-        << cert_request_info->host_and_port
+  LOG(WARNING) << "Client certificate request from "
+        << cert_request_info->host_and_port.ToString()
         << " rejected. (Client certificates not supported in WebView)";
   callback.Run(NULL);
 }
 
-WebKit::WebNotificationPresenter::Permission
+blink::WebNotificationPresenter::Permission
     AwContentBrowserClient::CheckDesktopNotificationPermission(
         const GURL& source_url,
         content::ResourceContext* context,
         int render_process_id) {
   // Android WebView does not support notifications, so return Denied here.
-  return WebKit::WebNotificationPresenter::PermissionDenied;
+  return blink::WebNotificationPresenter::PermissionDenied;
 }
 
 void AwContentBrowserClient::ShowDesktopNotification(
@@ -310,7 +397,7 @@ bool AwContentBrowserClient::CanCreateWindow(
     const GURL& target_url,
     const content::Referrer& referrer,
     WindowOpenDisposition disposition,
-    const WebKit::WebWindowFeatures& features,
+    const blink::WebWindowFeatures& features,
     bool user_gesture,
     bool opener_suppressed,
     content::ResourceContext* context,

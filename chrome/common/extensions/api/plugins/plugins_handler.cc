@@ -8,12 +8,12 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/common/extensions/permissions/permissions_data.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/api_permission_set.h"
+#include "extensions/common/permissions/permissions_data.h"
 #include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -66,10 +66,10 @@ const std::vector<std::string> PluginsHandler::Keys() const {
   return SingleKey(keys::kPlugins);
 }
 
-bool PluginsHandler::Parse(Extension* extension, string16* error) {
+bool PluginsHandler::Parse(Extension* extension, base::string16* error) {
   const base::ListValue* list_value = NULL;
   if (!extension->manifest()->GetList(keys::kPlugins, &list_value)) {
-    *error = ASCIIToUTF16(manifest_errors::kInvalidPlugins);
+    *error = base::ASCIIToUTF16(manifest_errors::kInvalidPlugins);
     return false;
   }
 
@@ -78,7 +78,7 @@ bool PluginsHandler::Parse(Extension* extension, string16* error) {
   for (size_t i = 0; i < list_value->GetSize(); ++i) {
     const base::DictionaryValue* plugin_value = NULL;
     if (!list_value->GetDictionary(i, &plugin_value)) {
-      *error = ASCIIToUTF16(manifest_errors::kInvalidPlugins);
+      *error = base::ASCIIToUTF16(manifest_errors::kInvalidPlugins);
       return false;
     }
     // Get plugins[i].path.

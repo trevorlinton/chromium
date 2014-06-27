@@ -98,8 +98,11 @@ const char* GetAccessPointName(AccessPoint point) {
   case CHROMEOS_OMNIBOX:              return "CA";
   case CHROMEOS_HOME_PAGE:            return "CB";
   case CHROMEOS_RESERVED:             return "CC";
-  case CHROME_IOS_OMNIBOX:            return "RM";
-  case CHROME_IOS_HOME_PAGE:          return "RN";
+  case CHROME_IOS_OMNIBOX:            return "C9";
+  // Returns an invalid access point value here as this value does not
+  // correspond to a defined access point, but need to be defined for
+  // code that iterates over all values of rlz_lib::AccessPoint.
+  case CHROME_IOS_RESERVED:           return "__";
   case UNDEFINED_AP_O:                return "RO";
   case UNDEFINED_AP_P:                return "RP";
   case UNDEFINED_AP_Q:                return "RQ";

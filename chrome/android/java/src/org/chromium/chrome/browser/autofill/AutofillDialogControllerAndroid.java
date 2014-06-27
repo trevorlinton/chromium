@@ -8,7 +8,7 @@ import com.google.common.annotations.VisibleForTesting;
 
 import org.chromium.base.CalledByNative;
 import org.chromium.base.JNINamespace;
-import org.chromium.ui.WindowAndroid;
+import org.chromium.ui.base.WindowAndroid;
 
 /**
  * Java-side AutofillDialog and AutofillDialogFactory interfaces, and
@@ -17,9 +17,8 @@ import org.chromium.ui.WindowAndroid;
 @JNINamespace("autofill")
 public class AutofillDialogControllerAndroid {
     private static AutofillDialogFactory sDialogFactory;
-    private static boolean sAllowInsecureDialogsForTesting = false;
 
-    private int mNativeDelegate;  // could be 0 after onDestroy().
+    private long mNativeDelegate;  // could be 0 after onDestroy().
     private AutofillDialog mDialog;
 
     /**
@@ -103,12 +102,8 @@ public class AutofillDialogControllerAndroid {
     }
 
     @VisibleForTesting
-    public static void allowInsecureDialogsForTesting() {
-        sAllowInsecureDialogsForTesting = true;
-    }
-
     private AutofillDialogControllerAndroid(
-            final int nativeAutofillDialogControllerAndroid,
+            final long nativeAutofillDialogControllerAndroid,
             final WindowAndroid windowAndroid,
             final boolean requestFullBillingAddress, final boolean requestShippingAddress,
             final boolean requestPhoneNumbers,
@@ -159,7 +154,7 @@ public class AutofillDialogControllerAndroid {
 
     @CalledByNative
     private static AutofillDialogControllerAndroid create(
-            final int nativeAutofillDialogControllerAndroid,
+            final long nativeAutofillDialogControllerAndroid,
             final WindowAndroid windowAndroid,
             final boolean requestFullBillingAddress, final boolean requestShippingAddress,
             final boolean requestPhoneNumbers,
@@ -179,11 +174,10 @@ public class AutofillDialogControllerAndroid {
     }
 
     @CalledByNative
-    private static boolean isDialogAllowed(boolean requestsCreditCardInformation,
-            boolean isTransmissionSecure, boolean isInvokedFromTheSameOrigin) {
-        if (!requestsCreditCardInformation) return true;
-        if (isTransmissionSecure && isInvokedFromTheSameOrigin) return true;
-        return sAllowInsecureDialogsForTesting;
+    private static boolean isDialogAllowed(boolean isInvokedFromTheSameOrigin) {
+        // TODO(aruslan): cross-origin invocations should be allowed with a
+        // warning messge.
+        return isInvokedFromTheSameOrigin;
     }
 
     @CalledByNative
@@ -198,8 +192,8 @@ public class AutofillDialogControllerAndroid {
 
     // Calls from Java to C++ AutofillDialogControllerAndroid:
 
-    private native void nativeDialogCancel(int nativeAutofillDialogControllerAndroid);
-    private native void nativeDialogContinue(int nativeAutofillDialogControllerAndroid,
+    private native void nativeDialogCancel(long nativeAutofillDialogControllerAndroid);
+    private native void nativeDialogContinue(long nativeAutofillDialogControllerAndroid,
             Object fullWallet,
             boolean lastUsedChoiceIsAutofill, String lastUsedAccountName,
             String guidLastUsedBilling, String guidLastUsedShipping, String guidLastUsedCard);

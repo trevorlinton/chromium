@@ -14,7 +14,7 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "ui/base/accessibility/accessible_view_state.h"
+#include "ui/accessibility/ax_view_state.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_utils.h"
@@ -27,14 +27,7 @@
 
 namespace {
 
-// The padding for the focus border when rendering focused text.
-const int kFocusBorderPadding = 1;
 const int kCachedSizeLimit = 10;
-
-gfx::FontList GetDefaultFontList() {
-  return ui::ResourceBundle::GetSharedInstance().GetFontList(
-      ui::ResourceBundle::BaseFont);
-}
 
 }  // namespace
 
@@ -42,21 +35,18 @@ namespace views {
 
 // static
 const char Label::kViewClassName[] = "Label";
+const int Label::kFocusBorderPadding = 1;
 
 Label::Label() {
-  Init(string16(), GetDefaultFontList());
+  Init(base::string16(), gfx::FontList());
 }
 
-Label::Label(const string16& text) {
-  Init(text, GetDefaultFontList());
+Label::Label(const base::string16& text) {
+  Init(text, gfx::FontList());
 }
 
-Label::Label(const string16& text, const gfx::FontList& font_list) {
+Label::Label(const base::string16& text, const gfx::FontList& font_list) {
   Init(text, font_list);
-}
-
-Label::Label(const string16& text, const gfx::Font& font) {
-  Init(text, gfx::FontList(font));
 }
 
 Label::~Label() {
@@ -69,15 +59,7 @@ void Label::SetFontList(const gfx::FontList& font_list) {
   SchedulePaint();
 }
 
-const gfx::Font& Label::font() const {
-  return font_list_.GetPrimaryFont();
-}
-
-void Label::SetFont(const gfx::Font& font) {
-  SetFontList(gfx::FontList(font));
-}
-
-void Label::SetText(const string16& text) {
+void Label::SetText(const base::string16& text) {
   if (text == text_)
     return;
   text_ = text;
@@ -148,7 +130,8 @@ void Label::SetLineHeight(int height) {
 }
 
 void Label::SetMultiLine(bool multi_line) {
-  DCHECK(!multi_line || elide_behavior_ != ELIDE_IN_MIDDLE);
+  DCHECK(!multi_line || (elide_behavior_ != ELIDE_IN_MIDDLE &&
+      elide_behavior_ != ELIDE_AT_BEGINNING));
   if (multi_line != is_multi_line_) {
     is_multi_line_ = multi_line;
     ResetCachedSize();
@@ -176,18 +159,18 @@ void Label::SetElideBehavior(ElideBehavior elide_behavior) {
   }
 }
 
-void Label::SetTooltipText(const string16& tooltip_text) {
+void Label::SetTooltipText(const base::string16& tooltip_text) {
   tooltip_text_ = tooltip_text;
 }
 
 void Label::SizeToFit(int max_width) {
   DCHECK(is_multi_line_);
 
-  std::vector<string16> lines;
+  std::vector<base::string16> lines;
   base::SplitString(text_, '\n', &lines);
 
   int label_width = 0;
-  for (std::vector<string16>::const_iterator iter = lines.begin();
+  for (std::vector<base::string16>::const_iterator iter = lines.begin();
        iter != lines.end(); ++iter) {
     label_width = std::max(label_width, gfx::GetStringWidth(*iter, font_list_));
   }
@@ -201,17 +184,9 @@ void Label::SizeToFit(int max_width) {
   SizeToPreferredSize();
 }
 
-void Label::SetHasFocusBorder(bool has_focus_border) {
-  has_focus_border_ = has_focus_border;
-  if (is_multi_line_) {
-    ResetCachedSize();
-    PreferredSizeChanged();
-  }
-}
-
 gfx::Insets Label::GetInsets() const {
   gfx::Insets insets = View::GetInsets();
-  if (focusable() || has_focus_border_) {
+  if (focusable()) {
     insets += gfx::Insets(kFocusBorderPadding, kFocusBorderPadding,
                           kFocusBorderPadding, kFocusBorderPadding);
   }
@@ -231,10 +206,24 @@ gfx::Size Label::GetPreferredSize() {
   if (!visible() && collapse_when_hidden_)
     return gfx::Size();
 
-  gfx::Size prefsize(GetTextSize());
+  gfx::Size size(GetTextSize());
   gfx::Insets insets = GetInsets();
-  prefsize.Enlarge(insets.width(), insets.height());
-  return prefsize;
+  size.Enlarge(insets.width(), insets.height());
+  return size;
+}
+
+gfx::Size Label::GetMinimumSize() {
+  gfx::Size text_size(GetTextSize());
+  if ((!visible() && collapse_when_hidden_) || text_size.IsEmpty())
+    return gfx::Size();
+
+  gfx::Size size(gfx::GetStringWidth(base::string16(gfx::kEllipsisUTF16),
+                                     font_list_),
+                 font_list_.GetHeight());
+  size.SetToMin(text_size);  // The actual text may be shorter than an ellipsis.
+  gfx::Insets insets = GetInsets();
+  size.Enlarge(insets.width(), insets.height());
+  return size;
 }
 
 int Label::GetHeightForWidth(int w) {
@@ -282,7 +271,7 @@ bool Label::HitTestRect(const gfx::Rect& rect) const {
   return false;
 }
 
-bool Label::GetTooltipText(const gfx::Point& p, string16* tooltip) const {
+bool Label::GetTooltipText(const gfx::Point& p, base::string16* tooltip) const {
   DCHECK(tooltip);
 
   // If a tooltip has been explicitly set, use it.
@@ -300,14 +289,14 @@ bool Label::GetTooltipText(const gfx::Point& p, string16* tooltip) const {
   return false;
 }
 
-void Label::GetAccessibleState(ui::AccessibleViewState* state) {
-  state->role = ui::AccessibilityTypes::ROLE_STATICTEXT;
-  state->state = ui::AccessibilityTypes::STATE_READONLY;
+void Label::GetAccessibleState(ui::AXViewState* state) {
+  state->role = ui::AX_ROLE_STATIC_TEXT;
+  state->AddStateFlag(ui::AX_STATE_READ_ONLY);
   state->name = text_;
 }
 
 void Label::PaintText(gfx::Canvas* canvas,
-                      const string16& text,
+                      const base::string16& text,
                       const gfx::Rect& text_bounds,
                       int flags) {
   gfx::ShadowValues shadows;
@@ -358,7 +347,7 @@ void Label::OnPaint(gfx::Canvas* canvas) {
   // interfere with that.
   OnPaintBorder(canvas);
 
-  string16 paint_text;
+  base::string16 paint_text;
   gfx::Rect text_bounds;
   int flags = 0;
   CalculateDrawStringParams(&paint_text, &text_bounds, &flags);
@@ -369,7 +358,7 @@ void Label::OnNativeThemeChanged(const ui::NativeTheme* theme) {
   UpdateColorsFromTheme(theme);
 }
 
-void Label::Init(const string16& text, const gfx::FontList& font_list) {
+void Label::Init(const base::string16& text, const gfx::FontList& font_list) {
   font_list_ = font_list;
   enabled_color_set_ = disabled_color_set_ = background_color_set_ = false;
   auto_color_readability_ = true;
@@ -381,7 +370,6 @@ void Label::Init(const string16& text, const gfx::FontList& font_list) {
   elide_behavior_ = ELIDE_AT_END;
   collapse_when_hidden_ = false;
   directionality_mode_ = USE_UI_DIRECTIONALITY;
-  has_focus_border_ = false;
   enabled_shadow_color_ = 0;
   disabled_shadow_color_ = 0;
   shadow_offset_.SetPoint(1, 1);
@@ -485,7 +473,7 @@ gfx::Rect Label::GetAvailableRect() const {
   return bounds;
 }
 
-void Label::CalculateDrawStringParams(string16* paint_text,
+void Label::CalculateDrawStringParams(base::string16* paint_text,
                                       gfx::Rect* text_bounds,
                                       int* flags) const {
   DCHECK(paint_text && text_bounds && flags);
@@ -494,6 +482,9 @@ void Label::CalculateDrawStringParams(string16* paint_text,
   // this is done, we can set NO_ELLIPSIS unconditionally at the bottom.
   if (is_multi_line_ || (elide_behavior_ == NO_ELIDE)) {
     *paint_text = text_;
+  } else if (elide_behavior_ == ELIDE_AT_BEGINNING) {
+    *paint_text = gfx::ElideText(text_, font_list_, GetAvailableRect().width(),
+                                 gfx::ELIDE_AT_BEGINNING);
   } else if (elide_behavior_ == ELIDE_IN_MIDDLE) {
     *paint_text = gfx::ElideText(text_, font_list_, GetAvailableRect().width(),
                                  gfx::ELIDE_IN_MIDDLE);

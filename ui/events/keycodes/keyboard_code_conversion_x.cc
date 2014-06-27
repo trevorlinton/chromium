@@ -14,6 +14,7 @@
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "ui/events/keycodes/dom4/keycode_converter.h"
 
 namespace ui {
 
@@ -284,6 +285,8 @@ KeyboardCode KeyboardCodeFromXKeysym(unsigned int keysym) {
       return VKEY_MENU;
     case XK_ISO_Level3_Shift:
       return VKEY_ALTGR;
+    case XK_Multi_key:
+      return VKEY_COMPOSE;
     case XK_Pause:
       return VKEY_PAUSE;
     case XK_Caps_Lock:
@@ -437,13 +440,18 @@ KeyboardCode KeyboardCodeFromXKeysym(unsigned int keysym) {
   return VKEY_UNKNOWN;
 }
 
+const char* CodeFromXEvent(XEvent* xev) {
+  return KeycodeConverter::GetInstance()->NativeKeycodeToCode(
+      xev->xkey.keycode);
+}
+
 uint16 GetCharacterFromXEvent(XEvent* xev) {
   char buf[6];
   int bytes_written = XLookupString(&xev->xkey, buf, 6, NULL, NULL);
   DCHECK_LE(bytes_written, 6);
 
-  string16 result;
-  return (bytes_written > 0 && UTF8ToUTF16(buf, bytes_written, &result) &&
+  base::string16 result;
+  return (bytes_written > 0 && base::UTF8ToUTF16(buf, bytes_written, &result) &&
           result.length() == 1) ? result[0] : 0;
 }
 
@@ -530,8 +538,21 @@ unsigned int DefaultXKeysymFromHardwareKeycode(unsigned int hardware_code) {
     XK_Scroll_Lock,   // 0x4E: XK_Scroll_Lock
   };
 
-  return hardware_code < arraysize(kHardwareKeycodeMap) ?
-      kHardwareKeycodeMap[hardware_code] : 0;
+  if (hardware_code >= arraysize(kHardwareKeycodeMap)) {
+    // Checks for arrow keys.
+    switch (hardware_code) {
+      case 0x6f:
+        return XK_Up;
+      case 0x71:
+        return XK_Left;
+      case 0x72:
+        return XK_Right;
+      case 0x74:
+        return XK_Down;
+    }
+    return 0;
+  }
+  return kHardwareKeycodeMap[hardware_code];
 }
 
 // TODO(jcampan): this method might be incomplete.
@@ -586,6 +607,8 @@ int XKeysymForWindowsKeyCode(KeyboardCode keycode, bool shift) {
       return XK_Menu;
     case VKEY_ALTGR:
       return XK_ISO_Level3_Shift;
+    case VKEY_COMPOSE:
+      return XK_Multi_key;
 
     case VKEY_PAUSE:
       return XK_Pause;

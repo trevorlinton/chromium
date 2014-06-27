@@ -12,7 +12,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/media_galleries/media_galleries_preferences.h"
-#include "chrome/browser/storage_monitor/removable_storage_observer.h"
+#include "components/storage_monitor/removable_storage_observer.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 
@@ -28,8 +28,9 @@ namespace ui {
 class MenuModel;
 }
 
-class GalleryContextMenuModel;
 class MediaGalleriesDialogController;
+class MediaGalleryContextMenu;
+class Profile;
 
 // The view.
 class MediaGalleriesDialog {
@@ -49,7 +50,7 @@ class MediaGalleriesDialog {
 // the dialog and owns itself.
 class MediaGalleriesDialogController
     : public ui::SelectFileDialog::Listener,
-      public RemovableStorageObserver,
+      public storage_monitor::RemovableStorageObserver,
       public MediaGalleriesPreferences::GalleryChangeObserver {
  public:
   struct GalleryPermission {
@@ -69,13 +70,13 @@ class MediaGalleriesDialogController
                                  const base::Closure& on_finish);
 
   // The title of the dialog view.
-  string16 GetHeader() const;
+  base::string16 GetHeader() const;
 
   // Explanatory text directly below the title.
-  string16 GetSubtext() const;
+  base::string16 GetSubtext() const;
 
   // Header for unattached devices part of the dialog.
-  string16 GetUnattachedLocationsHeader() const;
+  base::string16 GetUnattachedLocationsHeader() const;
 
   // Initial state of whether the dialog's confirmation button will be enabled.
   bool HasPermittedGalleries() const;
@@ -104,12 +105,20 @@ class MediaGalleriesDialogController
 
   virtual content::WebContents* web_contents();
 
-  ui::MenuModel* GetContextMenuModel(MediaGalleryPrefId id);
+  ui::MenuModel* GetContextMenu(MediaGalleryPrefId id);
 
  protected:
+  friend class MediaGalleriesDialogControllerTest;
+
+  typedef base::Callback<MediaGalleriesDialog* (
+      MediaGalleriesDialogController*)> CreateDialogCallback;
+
   // For use with tests.
-  explicit MediaGalleriesDialogController(
-      const extensions::Extension& extension);
+  MediaGalleriesDialogController(
+      const extensions::Extension& extension,
+      MediaGalleriesPreferences* preferences,
+      const CreateDialogCallback& create_dialog_callback,
+      const base::Closure& on_finish);
 
   virtual ~MediaGalleriesDialogController();
 
@@ -128,8 +137,10 @@ class MediaGalleriesDialogController
 
   // RemovableStorageObserver implementation.
   // Used to keep dialog in sync with removable device status.
-  virtual void OnRemovableStorageAttached(const StorageInfo& info) OVERRIDE;
-  virtual void OnRemovableStorageDetached(const StorageInfo& info) OVERRIDE;
+  virtual void OnRemovableStorageAttached(
+      const storage_monitor::StorageInfo& info) OVERRIDE;
+  virtual void OnRemovableStorageDetached(
+      const storage_monitor::StorageInfo& info) OVERRIDE;
 
   // MediaGalleriesPreferences::GalleryChangeObserver implementations.
   // Used to keep the dialog in sync when the preferences change.
@@ -151,7 +162,18 @@ class MediaGalleriesDialogController
   // galleries.
   void InitializePermissions();
 
-  // Saves state of |known_galleries_| and |new_galleries_| to model.
+  // Saves state of |known_galleries_|, |new_galleries_| and
+  // |forgotten_gallery_ids_| to model.
+  //
+  // NOTE: possible states for a gallery:
+  //   K   N   F   (K = Known, N = New, F = Forgotten)
+  // +---+---+---+
+  // | Y | N | N |
+  // +---+---+---+
+  // | N | Y | N |
+  // +---+---+---+
+  // | Y | N | Y |
+  // +---+---+---+
   void SavePermissions();
 
   // Updates the model and view when |preferences_| changes. Some of the
@@ -166,6 +188,8 @@ class MediaGalleriesDialogController
   // gallery permissions.
   void FillPermissions(bool attached,
                        GalleryPermissionsVector* permissions) const;
+
+  Profile* GetProfile();
 
   // The web contents from which the request originated.
   content::WebContents* web_contents_;
@@ -185,6 +209,9 @@ class MediaGalleriesDialogController
   // never overlap with |known_galleries_|.
   GalleryPermissionsVector new_galleries_;
 
+  // Galleries in |known_galleries_| that the user has forgotten.
+  MediaGalleryPrefIdSet forgotten_gallery_ids_;
+
   // Callback to run when the dialog closes.
   base::Closure on_finish_;
 
@@ -197,8 +224,10 @@ class MediaGalleriesDialogController
 
   scoped_refptr<ui::SelectFileDialog> select_folder_dialog_;
 
-  scoped_ptr<ui::MenuModel> context_menu_model_;
-  scoped_ptr<GalleryContextMenuModel> gallery_menu_model_;
+  scoped_ptr<MediaGalleryContextMenu> context_menu_;
+
+  // Creates the dialog. Only changed for unit tests.
+  CreateDialogCallback create_dialog_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaGalleriesDialogController);
 };

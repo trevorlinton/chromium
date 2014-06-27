@@ -13,11 +13,6 @@
 #include "base/pickle.h"
 #include "base/strings/stringprintf.h"
 #include "base/timer/elapsed_timer.h"
-#include "chrome/common/extensions/csp_handler.h"
-#include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/extension_messages.h"
-#include "chrome/common/extensions/extension_set.h"
-#include "chrome/common/extensions/permissions/permissions_data.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/renderer/chrome_render_process_observer.h"
 #include "chrome/renderer/extensions/dom_activity_logger.h"
@@ -25,6 +20,11 @@
 #include "chrome/renderer/isolated_world_ids.h"
 #include "content/public/renderer/render_thread.h"
 #include "content/public/renderer/render_view.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/extension_messages.h"
+#include "extensions/common/extension_set.h"
+#include "extensions/common/manifest_handlers/csp_info.h"
+#include "extensions/common/permissions/permissions_data.h"
 #include "grit/renderer_resources.h"
 #include "third_party/WebKit/public/platform/WebURLRequest.h"
 #include "third_party/WebKit/public/platform/WebVector.h"
@@ -37,12 +37,12 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "url/gurl.h"
 
-using WebKit::WebFrame;
-using WebKit::WebSecurityOrigin;
-using WebKit::WebSecurityPolicy;
-using WebKit::WebString;
-using WebKit::WebVector;
-using WebKit::WebView;
+using blink::WebFrame;
+using blink::WebSecurityOrigin;
+using blink::WebSecurityPolicy;
+using blink::WebString;
+using blink::WebVector;
+using blink::WebView;
 using content::RenderThread;
 
 namespace extensions {
@@ -76,7 +76,6 @@ int UserScriptSlave::GetIsolatedWorldIdForExtension(const Extension* extension,
   // This map will tend to pile up over time, but realistically, you're never
   // going to have enough extensions for it to matter.
   isolated_world_ids_[extension->id()] = new_id;
-  InitializeIsolatedWorld(new_id, extension);
   frame->setIsolatedWorldSecurityOrigin(
       new_id,
       WebSecurityOrigin::create(extension->url()));
@@ -94,31 +93,6 @@ std::string UserScriptSlave::GetExtensionIdForIsolatedWorld(
       return iter->first;
   }
   return std::string();
-}
-
-// static
-void UserScriptSlave::InitializeIsolatedWorld(int isolated_world_id,
-                                              const Extension* extension) {
-  const URLPatternSet& permissions =
-      PermissionsData::GetEffectiveHostPermissions(extension);
-  for (URLPatternSet::const_iterator i = permissions.begin();
-       i != permissions.end(); ++i) {
-    const char* schemes[] = {
-      content::kHttpScheme,
-      content::kHttpsScheme,
-      chrome::kFileScheme,
-      chrome::kChromeUIScheme,
-    };
-    for (size_t j = 0; j < arraysize(schemes); ++j) {
-      if (i->MatchesScheme(schemes[j])) {
-        WebSecurityPolicy::addOriginAccessWhitelistEntry(
-            extension->url(),
-            WebString::fromUTF8(schemes[j]),
-            WebString::fromUTF8(i->host()),
-            i->match_subdomains());
-      }
-    }
-  }
 }
 
 void UserScriptSlave::RemoveIsolatedWorld(const std::string& extension_id) {
@@ -248,7 +222,7 @@ GURL UserScriptSlave::GetDataSourceURLForFrame(const WebFrame* frame) {
   // changes to match the parent document after Gmail document.writes into
   // it to create the editor.
   // http://code.google.com/p/chromium/issues/detail?id=86742
-  WebKit::WebDataSource* data_source = frame->provisionalDataSource() ?
+  blink::WebDataSource* data_source = frame->provisionalDataSource() ?
       frame->provisionalDataSource() : frame->dataSource();
   CHECK(data_source);
   return GURL(data_source->request().url());
@@ -349,7 +323,7 @@ void UserScriptSlave::InjectScripts(WebFrame* frame,
 
   // Notify the browser if any extensions are now executing scripts.
   if (!extensions_executing_scripts.empty()) {
-    WebKit::WebFrame* top_frame = frame->top();
+    blink::WebFrame* top_frame = frame->top();
     content::RenderView* render_view =
         content::RenderView::FromWebView(top_frame->view());
     render_view->Send(new ExtensionHostMsg_ContentScriptsExecuting(

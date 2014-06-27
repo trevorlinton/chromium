@@ -5,6 +5,7 @@
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -221,33 +222,59 @@ class CrOSInterface(object):
       f.flush()
       self.PushFile(f.name, remote_filename)
 
+  def GetFile(self, filename, destfile=None):
+    """Copies a local file |filename| to |destfile| on the device.
+
+    Args:
+      filename: The name of the local source file.
+      destfile: The name of the file to copy to, and if it is not specified
+        then it is the basename of the source file.
+
+    """
+    logging.debug("GetFile(%s, %s)" % (filename, destfile))
+    if self.local:
+      if destfile is not None and destfile != filename:
+        shutil.copyfile(filename, destfile)
+      return
+
+    if destfile is None:
+      destfile = os.path.basename(filename)
+    args = ['scp'] + self._ssh_args
+    if self._ssh_identity:
+      args.extend(['-i', self._ssh_identity])
+
+    args.extend(['root@%s:%s' % (self._hostname, filename),
+                 os.path.abspath(destfile)])
+    stdout, stderr = GetAllCmdOutput(args, quiet=True)
+    stderr = self._RemoveSSHWarnings(stderr)
+    if stderr != '':
+      raise OSError('No such file or directory %s' % stderr)
+
   def GetFileContents(self, filename):
+    """Get the contents of a file on the device.
+
+    Args:
+      filename: The name of the file on the device.
+
+    Returns:
+      A string containing the contents of the file.
+    """
+    # TODO: handle the self.local case
     assert not self.local
-    with tempfile.NamedTemporaryFile() as f:
-      args = ['scp'] + self._ssh_args
-      if self._ssh_identity:
-        args.extend(['-i', self._ssh_identity])
-
-      args.extend(['root@%s:%s' % (self._hostname, filename),
-                   os.path.abspath(f.name)])
-
-      stdout, stderr = GetAllCmdOutput(args, quiet=True)
-      stderr = self._RemoveSSHWarnings(stderr)
-
-      if stderr != '':
-        raise OSError('No such file or directory %s' % stderr)
-
-      with open(f.name, 'r') as f2:
-        res = f2.read()
-        logging.debug("GetFileContents(%s)->%s" % (filename, res))
-        return res
+    t = tempfile.NamedTemporaryFile()
+    self.GetFile(filename, t.name)
+    with open(t.name, 'r') as f2:
+      res = f2.read()
+      logging.debug("GetFileContents(%s)->%s" % (filename, res))
+      f2.close()
+      return res
 
   def ListProcesses(self):
     """Returns (pid, cmd, ppid, state) of all processes on the device."""
     stdout, stderr = self.RunCmdOnDevice([
         '/bin/ps', '--no-headers',
         '-A',
-        '-o', 'pid,ppid,args,state'], quiet=True)
+        '-o', 'pid,ppid,args:4096,state'], quiet=True)
     assert stderr == '', stderr
     procs = []
     for l in stdout.split('\n'): # pylint: disable=E1103
@@ -255,13 +282,17 @@ class CrOSInterface(object):
         continue
       m = re.match('^\s*(\d+)\s+(\d+)\s+(.+)\s+(.+)', l, re.DOTALL)
       assert m
-      procs.append((int(m.group(1)), m.group(3), int(m.group(2)), m.group(4)))
+      procs.append((int(m.group(1)), m.group(3).rstrip(),
+                    int(m.group(2)), m.group(4)))
     logging.debug("ListProcesses(<predicate>)->[%i processes]" % len(procs))
     return procs
 
   def RmRF(self, filename):
     logging.debug("rm -rf %s" % filename)
     self.RunCmdOnDevice(['rm', '-rf', filename], quiet=True)
+
+  def Chown(self, filename):
+    self.RunCmdOnDevice(['chown', '-R', 'chronos:chronos', filename])
 
   def KillAllMatching(self, predicate):
     kills = ['kill', '-KILL']
@@ -320,6 +351,18 @@ class CrOSInterface(object):
       if line_ary:
         return line_ary[0]
     return None
+
+  def CryptohomePath(self, user):
+    """Returns the cryptohome mount point for |user|."""
+    return self.RunCmdOnDevice(
+        ['cryptohome-path', 'user', "'%s'" % user])[0].strip()
+
+  def IsCryptohomeMounted(self, username):
+    """Returns True iff |user|'s cryptohome is mounted."""
+    profile_path = self.CryptohomePath(username)
+    mount = self.FilesystemMountedAt(profile_path)
+    mount_prefix = 'guestfs' if username == '$guest' else '/home/.shadow/'
+    return mount and mount.startswith(mount_prefix)
 
   def TakeScreenShot(self, screenshot_prefix):
     """Takes a screenshot, useful for debugging failures."""

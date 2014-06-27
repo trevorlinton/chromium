@@ -8,11 +8,15 @@
 #include "android_webview/browser/aw_result_codes.h"
 #include "base/android/build_info.h"
 #include "base/android/memory_pressure_listener_android.h"
+#include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/path_service.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/content_client.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/common/result_codes.h"
+#include "content/public/common/url_utils.h"
+#include "gpu/command_buffer/service/mailbox_synchronizer.h"
 #include "net/android/network_change_notifier_factory_android.h"
 #include "net/base/network_change_notifier.h"
 #include "ui/base/l10n/l10n_util_android.h"
@@ -36,7 +40,7 @@ void AwBrowserMainParts::PreEarlyInitialization() {
   // Android WebView does not use default MessageLoop. It has its own
   // Android specific MessageLoop. Also see MainMessageLoopRun.
   DCHECK(!main_message_loop_.get());
-  main_message_loop_.reset(new base::MessageLoop(base::MessageLoop::TYPE_UI));
+  main_message_loop_.reset(new base::MessageLoopForUI);
   base::MessageLoopForUI::current()->Start();
 }
 
@@ -58,7 +62,15 @@ int AwBrowserMainParts::PreCreateThreads() {
 }
 
 void AwBrowserMainParts::PreMainMessageLoopRun() {
+  if (!gpu::gles2::MailboxSynchronizer::Initialize()) {
+    CommandLine::ForCurrentProcess()->AppendSwitch(
+        switches::kDisableAccelerated2dCanvas);
+  }
+
   browser_context_->PreMainMessageLoopRun();
+  // This is needed for WebView Classic backwards compatibility
+  // See crbug.com/298495
+  content::SetMaxURLChars(20 * 1024 * 1024);
 }
 
 bool AwBrowserMainParts::MainMessageLoopRun(int* result_code) {

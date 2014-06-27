@@ -9,8 +9,13 @@
 #include "base/command_line.h"
 #include "base/format_macros.h"
 #include "base/metrics/field_trial.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/common/autofill_switches.h"
+#include "content/public/common/content_switches.h"
+#include "content/public/common/url_constants.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "net/base/url_util.h"
 #include "url/gurl.h"
@@ -20,24 +25,34 @@ namespace {
 
 const char kProdWalletServiceUrl[] = "https://wallet.google.com/";
 
-// TODO(ahutter): Remove this once production is ready.
 const char kSandboxWalletServiceUrl[] =
     "https://wallet-web.sandbox.google.com/";
 
-// TODO(ahutter): Remove this once production is ready.
 const char kSandboxWalletSecureServiceUrl[] =
     "https://wallet-web.sandbox.google.com/";
 
 bool IsWalletProductionEnabled() {
+  // If the command line flag exists, it takes precedence.
   const CommandLine* command_line = CommandLine::ForCurrentProcess();
   std::string sandbox_enabled(
       command_line->GetSwitchValueASCII(switches::kWalletServiceUseSandbox));
   if (!sandbox_enabled.empty())
     return sandbox_enabled != "1";
-#if defined(OS_MACOSX)
-  return false;
-#else
+
+  // Default to sandbox when --reduce-security-for-testing is passed to allow
+  // rAc on http:// pages.
+  if (command_line->HasSwitch(::switches::kReduceSecurityForTesting))
+    return false;
+
+  // TODO(estade): add a build-time flag for Chromium distros to enable this
+  // rather than checking for an official build. http://crbug.com/334088
+#if defined(GOOGLE_CHROME_BUILD)
+  // Default to prod for official builds.
   return true;
+#else
+  // Unofficial builds don't have the proper API keys for production Wallet
+  // servers.
+  return false;
 #endif
 }
 
@@ -74,7 +89,6 @@ GURL GetBaseSecureUrl() {
 
 GURL GetBaseEncryptedFrontendUrl(size_t user_index) {
   const CommandLine& command_line = *CommandLine::ForCurrentProcess();
-  // TODO(ahutter): Stop checking these switches once we switch over to prod.
   GURL base_url = IsWalletProductionEnabled() ||
       command_line.HasSwitch(switches::kWalletServiceUrl) ?
           GetWalletHostUrl() : GetBaseSecureUrl();
@@ -131,13 +145,13 @@ GURL GetSaveToWalletUrl(size_t user_index) {
       .Resolve("saveToWallet?s7e=card_number%3Bcvn");
 }
 
-GURL GetPassiveAuthUrl() {
-  return GetBaseWalletUrl(0).Resolve("passiveauth?isChromePayments=true");
+GURL GetPassiveAuthUrl(size_t user_index) {
+  return GetBaseWalletUrl(user_index)
+      .Resolve("passiveauth?isChromePayments=true");
 }
 
 GURL GetSignInUrl() {
-  GURL url(GaiaUrls::GetInstance()->service_login_url());
-  url = net::AppendQueryParameter(url, "service", "toolbar");
+  GURL url(GaiaUrls::GetInstance()->add_account_url());
   url = net::AppendQueryParameter(url, "nui", "1");
   // Prevents promos from showing (see http://crbug.com/235227).
   url = net::AppendQueryParameter(url, "sarp", "1");
@@ -147,16 +161,47 @@ GURL GetSignInUrl() {
   return url;
 }
 
-// The continue url portion of the sign-in URL.
+// The continue url portion of the sign-in URL. This URL is used as a milestone
+// to determine that the sign-in process is finished. It has to be a Google
+// domain, use https://, and do almost nothing, but otherwise it's not too
+// important what the URL actually is: it's not important that this URL has the
+// ability to generate a gdToken.
 GURL GetSignInContinueUrl() {
-  return GetPassiveAuthUrl();
+  return GetPassiveAuthUrl(0);
 }
 
-bool IsSignInContinueUrl(const GURL& url) {
-  GURL final_url = wallet::GetSignInContinueUrl();
-  return url.SchemeIsSecure() &&
-         url.host() == final_url.host() &&
-         url.path() == final_url.path();
+bool IsSignInContinueUrl(const GURL& url, size_t* user_index) {
+  GURL final_url = GetSignInContinueUrl();
+  if (url.scheme() != final_url.scheme() ||
+      url.host() != final_url.host() ||
+      url.path() != final_url.path()) {
+    return false;
+  }
+
+  *user_index = 0;
+  std::string query_str = url.query();
+  url_parse::Component query(0, query_str.length());
+  url_parse::Component key, value;
+  const char kUserIndexKey[] = "authuser";
+  while (url_parse::ExtractQueryKeyValue(query_str.c_str(), &query, &key,
+                                         &value)) {
+    if (key.is_nonempty() &&
+        query_str.substr(key.begin, key.len) == kUserIndexKey) {
+      base::StringToSizeT(query_str.substr(value.begin, value.len), user_index);
+      break;
+    }
+  }
+
+  return true;
+}
+
+bool IsSignInRelatedUrl(const GURL& url) {
+  size_t unused;
+  return url.GetOrigin() == GetSignInUrl().GetOrigin() ||
+      StartsWith(base::UTF8ToUTF16(url.GetOrigin().host()),
+                 base::ASCIIToUTF16("accounts."),
+                 false) ||
+      IsSignInContinueUrl(url, &unused);
 }
 
 bool IsUsingProd() {

@@ -1,15 +1,18 @@
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
+
 import logging
 import unittest
 
+from telemetry import test
 from telemetry.core import browser_finder
 from telemetry.core import gpu_device
 from telemetry.core import gpu_info
 from telemetry.core import system_info
 from telemetry.core import util
 from telemetry.unittest import options_for_unittests
+
 
 class BrowserTest(unittest.TestCase):
   def setUp(self):
@@ -105,6 +108,8 @@ class BrowserTest(unittest.TestCase):
     tab.Navigate(b.http_server.UrlOf('blank.html'))
     b.tabs[0].WaitForDocumentReadyStateToBeInteractiveOrBetter()
 
+  # Test flaky on windows: http://crbug.com/321527
+  @test.Disabled('win')
   def testCloseReferencedTab(self):
     b = self.CreateBrowser()
     if not b.supports_tab_control:
@@ -115,6 +120,25 @@ class BrowserTest(unittest.TestCase):
     tab.Navigate(b.http_server.UrlOf('blank.html'))
     tab.Close()
     self.assertEquals(1, len(b.tabs))
+
+  def testForegroundTab(self):
+    b = self.CreateBrowser()
+    if not b.supports_tab_control:
+      logging.warning('Browser does not support tab control, skipping test.')
+      return
+    # Should be only one tab at this stage, so that must be the foreground tab
+    original_tab = b.tabs[0]
+    self.assertEqual(b.foreground_tab, original_tab)
+    new_tab = b.tabs.New()
+    # New tab shouls be foreground tab
+    self.assertEqual(b.foreground_tab, new_tab)
+    # Make sure that activating the background tab makes it the foreground tab
+    original_tab.Activate()
+    self.assertEqual(b.foreground_tab, original_tab)
+    # Closing the current foreground tab should switch the foreground tab to the
+    # other tab
+    original_tab.Close()
+    self.assertEqual(b.foreground_tab, new_tab)
 
   def testDirtyProfileCreation(self):
     b = self.CreateBrowser(profile_type = 'small_profile')
@@ -143,3 +167,16 @@ class BrowserTest(unittest.TestCase):
     for g in info.gpu.devices:
       self.assertTrue(isinstance(g, gpu_device.GPUDevice))
 
+  def testGetSystemTotalMemory(self):
+    b = self.CreateBrowser()
+    self.assertTrue(b.memory_stats['SystemTotalPhysicalMemory'] > 0)
+
+  def testIsTracingRunning(self):
+    b = self.CreateBrowser()
+    if not b.supports_tracing:
+      return
+    self.assertFalse(b.is_tracing_running)
+    b.StartTracing()
+    self.assertTrue(b.is_tracing_running)
+    b.StopTracing()
+    self.assertFalse(b.is_tracing_running)

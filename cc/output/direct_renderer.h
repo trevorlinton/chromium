@@ -9,9 +9,11 @@
 #include "base/callback.h"
 #include "base/containers/scoped_ptr_hash_map.h"
 #include "cc/base/cc_export.h"
+#include "cc/output/overlay_processor.h"
 #include "cc/output/renderer.h"
 #include "cc/resources/resource_provider.h"
 #include "cc/resources/scoped_resource.h"
+#include "cc/resources/task_graph_runner.h"
 
 namespace cc {
 
@@ -34,7 +36,8 @@ class CC_EXPORT DirectRenderer : public Renderer {
   virtual void DrawFrame(RenderPassList* render_passes_in_draw_order,
                          ContextProvider* offscreen_context_provider,
                          float device_scale_factor,
-                         bool allow_partial_swap,
+                         const gfx::Rect& device_viewport_rect,
+                         const gfx::Rect& device_clip_rect,
                          bool disable_picture_quad_image_filtering) OVERRIDE;
 
   struct CC_EXPORT DrawingFrame {
@@ -46,6 +49,8 @@ class CC_EXPORT DirectRenderer : public Renderer {
     const ScopedResource* current_texture;
 
     gfx::RectF root_damage_rect;
+    gfx::Rect device_viewport_rect;
+    gfx::Rect device_clip_rect;
 
     gfx::Transform projection_matrix;
     gfx::Transform window_matrix;
@@ -53,9 +58,11 @@ class CC_EXPORT DirectRenderer : public Renderer {
     ContextProvider* offscreen_context_provider;
 
     bool disable_picture_quad_image_filtering;
+
+    OverlayCandidateList overlay_list;
   };
 
-  void SetEnlargePassTextureAmountForTesting(gfx::Vector2d amount);
+  void SetEnlargePassTextureAmountForTesting(const gfx::Vector2d& amount);
 
  protected:
   DirectRenderer(RendererClient* client,
@@ -68,13 +75,13 @@ class CC_EXPORT DirectRenderer : public Renderer {
                                 const gfx::Transform& quad_transform,
                                 const gfx::RectF& quad_rect);
   void InitializeViewport(DrawingFrame* frame,
-                          gfx::Rect draw_rect,
-                          gfx::Rect viewport_rect,
-                          gfx::Size surface_size);
+                          const gfx::Rect& draw_rect,
+                          const gfx::Rect& viewport_rect,
+                          const gfx::Size& surface_size);
   gfx::Rect MoveFromDrawToWindowSpace(const gfx::RectF& draw_rect) const;
 
   bool NeedDeviceClip(const DrawingFrame* frame) const;
-  gfx::Rect DeviceClipRect(const DrawingFrame* frame) const;
+  gfx::Rect DeviceClipRectInWindowSpace(const DrawingFrame* frame) const;
   static gfx::RectF ComputeScissorRectForRenderPass(const DrawingFrame* frame);
   void SetScissorStateForQuad(const DrawingFrame* frame, const DrawQuad& quad);
   void SetScissorStateForQuadWithRenderPassScissor(
@@ -83,21 +90,21 @@ class CC_EXPORT DirectRenderer : public Renderer {
       const gfx::RectF& render_pass_scissor,
       bool* should_skip_quad);
   void SetScissorTestRectInDrawSpace(const DrawingFrame* frame,
-                                     gfx::RectF draw_space_rect);
+                                     const gfx::RectF& draw_space_rect);
 
   static gfx::Size RenderPassTextureSize(const RenderPass* render_pass);
 
-  void DrawRenderPass(DrawingFrame* frame,
-                      const RenderPass* render_pass,
-                      bool allow_partial_swap);
+  void DrawRenderPass(DrawingFrame* frame, const RenderPass* render_pass);
   bool UseRenderPass(DrawingFrame* frame, const RenderPass* render_pass);
+
+  void RunOnDemandRasterTask(internal::Task* on_demand_raster_task);
 
   virtual void BindFramebufferToOutputSurface(DrawingFrame* frame) = 0;
   virtual bool BindFramebufferToTexture(DrawingFrame* frame,
                                         const ScopedResource* resource,
-                                        gfx::Rect target_rect) = 0;
-  virtual void SetDrawViewport(gfx::Rect window_space_viewport) = 0;
-  virtual void SetScissorTestRect(gfx::Rect scissor_rect) = 0;
+                                        const gfx::Rect& target_rect) = 0;
+  virtual void SetDrawViewport(const gfx::Rect& window_space_viewport) = 0;
+  virtual void SetScissorTestRect(const gfx::Rect& scissor_rect) = 0;
   virtual void DiscardPixels(bool has_external_stencil_test,
                              bool draw_rect_covers_full_surface) = 0;
   virtual void ClearFramebuffer(DrawingFrame* frame,
@@ -119,6 +126,7 @@ class CC_EXPORT DirectRenderer : public Renderer {
   base::ScopedPtrHashMap<RenderPass::Id, ScopedResource> render_pass_textures_;
   OutputSurface* output_surface_;
   ResourceProvider* resource_provider_;
+  scoped_ptr<OverlayProcessor> overlay_processor_;
 
   // For use in coordinate conversion, this stores the output rect, viewport
   // rect (= unflipped version of glViewport rect), and the size of target
@@ -131,6 +139,8 @@ class CC_EXPORT DirectRenderer : public Renderer {
 
  private:
   gfx::Vector2d enlarge_pass_texture_amount_;
+
+  internal::NamespaceToken on_demand_task_namespace_;
 
   DISALLOW_COPY_AND_ASSIGN(DirectRenderer);
 };

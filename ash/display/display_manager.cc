@@ -11,11 +11,13 @@
 
 #include "ash/ash_switches.h"
 #include "ash/display/display_layout_store.h"
-#include "ash/screen_ash.h"
+#include "ash/display/screen_ash.h"
+#include "ash/screen_util.h"
 #include "ash/shell.h"
 #include "base/auto_reset.h"
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/metrics/histogram.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
@@ -34,7 +36,6 @@
 #if defined(OS_CHROMEOS)
 #include "ash/display/output_configurator_animation.h"
 #include "base/sys_info.h"
-#include "chromeos/display/output_configurator.h"
 #endif
 
 #if defined(OS_WIN)
@@ -48,6 +49,10 @@ typedef std::vector<DisplayInfo> DisplayInfoList;
 
 namespace {
 
+// We need to keep this in order for unittests to tell if
+// the object in gfx::Screen::GetScreenByType is for shutdown.
+gfx::Screen* screen_for_shutdown = NULL;
+
 // The number of pixels to overlap between the primary and secondary displays,
 // in case that the offset value is too large.
 const int kMinimumOverlapForInvalidOffset = 100;
@@ -56,7 +61,8 @@ const int kMinimumOverlapForInvalidOffset = 100;
 // 800, 1024, 1280, 1440, 1600 and 1920 pixel width respectively on
 // 2560 pixel width 2x density display. Please see crbug.com/233375
 // for the full list of resolutions.
-const float kUIScalesFor2x[] = {0.5f, 0.625f, 0.8f, 1.0f, 1.125f, 1.25f, 1.5f};
+const float kUIScalesFor2x[] =
+    {0.5f, 0.625f, 0.8f, 1.0f, 1.125f, 1.25f, 1.5f, 2.0f};
 const float kUIScalesFor1280[] = {0.5f, 0.625f, 0.8f, 1.0f, 1.125f };
 const float kUIScalesFor1366[] = {0.5f, 0.6f, 0.75f, 1.0f, 1.125f };
 
@@ -72,16 +78,14 @@ struct DisplayInfoSortFunctor {
   }
 };
 
-struct ResolutionMatcher {
-  ResolutionMatcher(const gfx::Size& size) : size(size) {}
-  bool operator()(const Resolution& resolution) {
-    return resolution.size == size;
-  }
+struct DisplayModeMatcher {
+  DisplayModeMatcher(const gfx::Size& size) : size(size) {}
+  bool operator()(const DisplayMode& mode) { return mode.size == size; }
   gfx::Size size;
 };
 
 struct ScaleComparator {
-  ScaleComparator(float s) : scale(s) {}
+  explicit ScaleComparator(float s) : scale(s) {}
 
   bool operator()(float s) const {
     const float kEpsilon = 0.0001f;
@@ -142,6 +146,8 @@ using std::vector;
 
 DisplayManager::DisplayManager()
     : delegate_(NULL),
+      screen_ash_(new ScreenAsh),
+      screen_(screen_ash_.get()),
       layout_store_(new DisplayLayoutStore),
       first_display_id_(gfx::Display::kInvalidDisplayID),
       num_connected_displays_(0),
@@ -152,6 +158,17 @@ DisplayManager::DisplayManager()
 #if defined(OS_CHROMEOS)
   change_display_upon_host_resize_ = !base::SysInfo::IsRunningOnChromeOS();
 #endif
+  gfx::Screen::SetScreenInstance(gfx::SCREEN_TYPE_ALTERNATE,
+                                 screen_ash_.get());
+  gfx::Screen* current_native =
+      gfx::Screen::GetScreenByType(gfx::SCREEN_TYPE_NATIVE);
+  // If there is no native, or the native was for shutdown,
+  // use ash's screen.
+  if (!current_native ||
+      current_native == screen_for_shutdown) {
+    gfx::Screen::SetScreenInstance(gfx::SCREEN_TYPE_NATIVE,
+                                   screen_ash_.get());
+  }
 }
 
 DisplayManager::~DisplayManager() {
@@ -187,7 +204,7 @@ std::vector<float> DisplayManager::GetScalesForDisplay(
 
 // static
 float DisplayManager::GetNextUIScale(const DisplayInfo& info, bool up) {
-  float scale = info.ui_scale();
+  float scale = info.configured_ui_scale();
   std::vector<float> scales = GetScalesForDisplay(info);
   for (size_t i = 0; i < scales.size(); ++i) {
     if (ScaleComparator(scales[i])(scale)) {
@@ -277,7 +294,12 @@ DisplayLayout DisplayManager::GetCurrentDisplayLayout() {
 
 DisplayIdPair DisplayManager::GetCurrentDisplayIdPair() const {
   if (IsMirrored()) {
-    DCHECK_LE(2u, num_connected_displays());
+    if (software_mirroring_enabled()) {
+      CHECK_EQ(2u, num_connected_displays());
+      // This comment is to make it easy to distinguish the crash
+      // between two checks.
+      CHECK_EQ(1u, displays_.size());
+    }
     return std::make_pair(displays_[0].id(), mirrored_display_id_);
   } else {
     CHECK_GE(2u, displays_.size());
@@ -296,7 +318,7 @@ void DisplayManager::SetLayoutForCurrentDisplays(
   DCHECK_EQ(2U, GetNumDisplays());
   if (GetNumDisplays() < 2)
     return;
-  const gfx::Display& primary = Shell::GetScreen()->GetPrimaryDisplay();
+  const gfx::Display& primary = screen_->GetPrimaryDisplay();
   const DisplayIdPair pair = GetCurrentDisplayIdPair();
   // Invert if the primary was swapped.
   DisplayLayout to_set = pair.first == primary.id() ?
@@ -316,13 +338,12 @@ void DisplayManager::SetLayoutForCurrentDisplays(
     const DisplayLayout layout = GetCurrentDisplayLayout();
     UpdateDisplayBoundsForLayoutById(
         layout, primary,
-        ScreenAsh::GetSecondaryDisplay().id());
+        ScreenUtil::GetSecondaryDisplay().id());
 
-    //UpdateCurrentDisplayBoundsForLayout();
     // Primary's bounds stay the same. Just notify bounds change
     // on the secondary.
-    Shell::GetInstance()->screen()->NotifyBoundsChanged(
-        ScreenAsh::GetSecondaryDisplay());
+    screen_ash_->NotifyBoundsChanged(
+        ScreenUtil::GetSecondaryDisplay());
     if (delegate_)
       delegate_->PostDisplayConfigurationChange();
   }
@@ -380,6 +401,12 @@ void DisplayManager::SetDisplayRotation(int64 display_id,
     display_info_list.push_back(info);
   }
   AddMirrorDisplayInfoIfAny(&display_info_list);
+  if (virtual_keyboard_root_window_enabled() &&
+      display_id == non_desktop_display_.id()) {
+    DisplayInfo info = GetDisplayInfo(display_id);
+    info.set_rotation(rotation);
+    display_info_list.push_back(info);
+  }
   UpdateDisplays(display_info_list);
 }
 
@@ -395,7 +422,7 @@ void DisplayManager::SetDisplayUIScale(int64 display_id,
        iter != displays_.end(); ++iter) {
     DisplayInfo info = GetDisplayInfo(iter->id());
     if (info.id() == display_id) {
-      if (info.ui_scale() == ui_scale)
+      if (info.configured_ui_scale() == ui_scale)
         return;
       std::vector<float> scales = GetScalesForDisplay(info);
       ScaleComparator comparator(ui_scale);
@@ -403,7 +430,7 @@ void DisplayManager::SetDisplayUIScale(int64 display_id,
           scales.end()) {
         return;
       }
-      info.set_ui_scale(ui_scale);
+      info.set_configured_ui_scale(ui_scale);
     }
     display_info_list.push_back(info);
   }
@@ -417,25 +444,19 @@ void DisplayManager::SetDisplayResolution(int64 display_id,
   if (gfx::Display::InternalDisplayId() == display_id)
     return;
   const DisplayInfo& display_info = GetDisplayInfo(display_id);
-  const std::vector<Resolution>& resolutions = display_info.resolutions();
-  DCHECK_NE(0u, resolutions.size());
-  std::vector<Resolution>::const_iterator iter =
-      std::find_if(resolutions.begin(),
-                   resolutions.end(),
-                   ResolutionMatcher(resolution));
-  if (iter == resolutions.end()) {
+  const std::vector<DisplayMode>& modes = display_info.display_modes();
+  DCHECK_NE(0u, modes.size());
+  std::vector<DisplayMode>::const_iterator iter =
+      std::find_if(modes.begin(), modes.end(), DisplayModeMatcher(resolution));
+  if (iter == modes.end()) {
     LOG(WARNING) << "Unsupported resolution was requested:"
                  << resolution.ToString();
     return;
-  } else if (iter == resolutions.begin()) {
-    // The best resolution was set, so forget it.
-    resolutions_.erase(display_id);
-  } else {
-    resolutions_[display_id] = resolution;
   }
+  display_modes_[display_id] = *iter;
 #if defined(OS_CHROMEOS) && defined(USE_X11)
   if (base::SysInfo::IsRunningOnChromeOS())
-    Shell::GetInstance()->output_configurator()->ScheduleConfigureOutputs();
+    Shell::GetInstance()->output_configurator()->OnConfigurationChanged();
 #endif
 }
 
@@ -444,30 +465,32 @@ void DisplayManager::RegisterDisplayProperty(
     gfx::Display::Rotation rotation,
     float ui_scale,
     const gfx::Insets* overscan_insets,
-    const gfx::Size& resolution_in_pixels) {
-  if (display_info_.find(display_id) == display_info_.end()) {
-    display_info_[display_id] =
-        DisplayInfo(display_id, std::string(""), false);
-  }
+    const gfx::Size& resolution_in_pixels,
+    ui::ColorCalibrationProfile color_profile) {
+  if (display_info_.find(display_id) == display_info_.end())
+    display_info_[display_id] = DisplayInfo(display_id, std::string(), false);
 
   display_info_[display_id].set_rotation(rotation);
+  display_info_[display_id].SetColorProfile(color_profile);
   // Just in case the preference file was corrupted.
   if (0.5f <= ui_scale && ui_scale <= 2.0f)
-    display_info_[display_id].set_ui_scale(ui_scale);
+    display_info_[display_id].set_configured_ui_scale(ui_scale);
   if (overscan_insets)
     display_info_[display_id].SetOverscanInsets(*overscan_insets);
-  if (!resolution_in_pixels.IsEmpty())
-    resolutions_[display_id] = resolution_in_pixels;
+  if (!resolution_in_pixels.IsEmpty()) {
+    // Default refresh rate, until OnNativeDisplaysChanged() updates us with the
+    // actual display info, is 60 Hz.
+    display_modes_[display_id] =
+        DisplayMode(resolution_in_pixels, 60.0f, false, false);
+  }
 }
 
-bool DisplayManager::GetSelectedResolutionForDisplayId(
-    int64 id,
-    gfx::Size* resolution_out) const {
-  std::map<int64, gfx::Size>::const_iterator iter =
-      resolutions_.find(id);
-  if (iter == resolutions_.end())
+bool DisplayManager::GetSelectedModeForDisplayId(int64 id,
+                                                 DisplayMode* mode_out) const {
+  std::map<int64, DisplayMode>::const_iterator iter = display_modes_.find(id);
+  if (iter == display_modes_.end())
     return false;
-  *resolution_out = iter->second;
+  *mode_out = iter->second;
   return true;
 }
 
@@ -482,9 +505,31 @@ gfx::Insets DisplayManager::GetOverscanInsets(int64 display_id) const {
       it->second.overscan_insets_in_dip() : gfx::Insets();
 }
 
+void DisplayManager::SetColorCalibrationProfile(
+    int64 display_id,
+    ui::ColorCalibrationProfile profile) {
+#if defined(OS_CHROMEOS)
+  if (!display_info_[display_id].IsColorProfileAvailable(profile))
+    return;
+
+  if (delegate_)
+    delegate_->PreDisplayConfigurationChange(false);
+  if (Shell::GetInstance()->output_configurator()->SetColorCalibrationProfile(
+          display_id, profile)) {
+    display_info_[display_id].SetColorProfile(profile);
+    UMA_HISTOGRAM_ENUMERATION(
+        "ChromeOS.Display.ColorProfile", profile, ui::NUM_COLOR_PROFILES);
+  }
+  if (delegate_)
+    delegate_->PostDisplayConfigurationChange();
+#endif
+}
+
 void DisplayManager::OnNativeDisplaysChanged(
     const std::vector<DisplayInfo>& updated_displays) {
   if (updated_displays.empty()) {
+    VLOG(1) << "OnNativeDisplayChanged(0): # of current displays="
+            << displays_.size();
     // If the device is booted without display, or chrome is started
     // without --ash-host-window-bounds on linux desktop, use the
     // default display.
@@ -537,6 +582,21 @@ void DisplayManager::OnNativeDisplaysChanged(
       origins.insert(origin);
       new_display_info_list.push_back(*iter);
     }
+
+    const gfx::Size& resolution = iter->bounds_in_native().size();
+    const std::vector<DisplayMode>& display_modes = iter->display_modes();
+    // This is empty the displays are initialized from InitFromCommandLine.
+    if (!display_modes.size())
+      continue;
+    std::vector<DisplayMode>::const_iterator display_modes_iter =
+        std::find_if(display_modes.begin(),
+                     display_modes.end(),
+                     DisplayModeMatcher(resolution));
+    // Update the actual resolution selected as the resolution request may fail.
+    if (display_modes_iter == display_modes.end())
+      display_modes_.erase(iter->id());
+    else if (display_modes_.find(iter->id()) != display_modes_.end())
+      display_modes_[iter->id()] = *display_modes_iter;
   }
   if (HasInternalDisplay() &&
       !internal_display_connected &&
@@ -617,7 +677,7 @@ void DisplayManager::UpdateDisplays(
       non_desktop_display_ =
           CreateDisplayFromDisplayInfoById(non_desktop_display_id);
       ++new_info_iter;
-      // Remove existing external dispaly if it is going to be used as
+      // Remove existing external display if it is going to be used as
       // non desktop.
       if (curr_iter != displays_.end() &&
           curr_iter->id() == non_desktop_display_id) {
@@ -659,7 +719,6 @@ void DisplayManager::UpdateDisplays(
           (current_display_info.size_in_pixel() !=
            new_display.GetSizeInPixel()) ||
           (current_display.rotation() != new_display.rotation())) {
-
         changed_display_indices.push_back(new_displays.size());
       }
 
@@ -691,8 +750,14 @@ void DisplayManager::UpdateDisplays(
       removed_displays.empty()) {
     return;
   }
+  // Clear focus if the display has been removed, but don't clear focus if
+  // the destkop has been moved from one display to another
+  // (mirror -> docked, docked -> single internal).
+  bool clear_focus =
+      !removed_displays.empty() &&
+      !(removed_displays.size() == 1 && added_display_indices.size() == 1);
   if (delegate_)
-    delegate_->PreDisplayConfigurationChange(!removed_displays.empty());
+    delegate_->PreDisplayConfigurationChange(clear_focus);
 
   size_t updated_index;
   if (UpdateSecondaryDisplayBoundsForLayout(&new_displays, &updated_index) &&
@@ -716,7 +781,7 @@ void DisplayManager::UpdateDisplays(
 
   for (DisplayList::const_reverse_iterator iter = removed_displays.rbegin();
        iter != removed_displays.rend(); ++iter) {
-    Shell::GetInstance()->screen()->NotifyDisplayRemoved(displays_.back());
+    screen_ash_->NotifyDisplayRemoved(displays_.back());
     displays_.pop_back();
   }
   // Close the non desktop window here to avoid creating two compositor on
@@ -725,7 +790,7 @@ void DisplayManager::UpdateDisplays(
     non_desktop_display_updater.reset();
   for (std::vector<size_t>::iterator iter = added_display_indices.begin();
        iter != added_display_indices.end(); ++iter) {
-    Shell::GetInstance()->screen()->NotifyDisplayAdded(displays_[*iter]);
+    screen_ash_->NotifyDisplayAdded(displays_[*iter]);
   }
   // Create the non destkop window after all displays are added so that
   // it can mirror the display newly added. This can happen when switching
@@ -733,7 +798,7 @@ void DisplayManager::UpdateDisplays(
   non_desktop_display_updater.reset();
   for (std::vector<size_t>::iterator iter = changed_display_indices.begin();
        iter != changed_display_indices.end(); ++iter) {
-    Shell::GetInstance()->screen()->NotifyBoundsChanged(displays_[*iter]);
+    screen_ash_->NotifyBoundsChanged(displays_[*iter]);
   }
   if (delegate_)
     delegate_->PostDisplayConfigurationChange();
@@ -798,8 +863,8 @@ void DisplayManager::SetMirrorMode(bool mirrored) {
 
 #if defined(OS_CHROMEOS)
   if (base::SysInfo::IsRunningOnChromeOS()) {
-    chromeos::OutputState new_state = mirrored ?
-        chromeos::STATE_DUAL_MIRROR : chromeos::STATE_DUAL_EXTENDED;
+    ui::OutputState new_state = mirrored ? ui::OUTPUT_STATE_DUAL_MIRROR :
+                                           ui::OUTPUT_STATE_DUAL_EXTENDED;
     Shell::GetInstance()->output_configurator()->SetDisplayMode(new_state);
     return;
   }
@@ -837,6 +902,7 @@ void DisplayManager::AddRemoveDisplay() {
   }
   num_connected_displays_ = new_display_info_list.size();
   mirrored_display_id_ = gfx::Display::kInvalidDisplayID;
+  non_desktop_display_ = gfx::Display();
   UpdateDisplays(new_display_info_list);
 }
 
@@ -879,7 +945,7 @@ bool DisplayManager::UpdateDisplayBounds(int64 display_id,
       return false;
     gfx::Display* display = FindDisplayForId(display_id);
     display->SetSize(display_info_[display_id].size_in_pixel());
-    Shell::GetInstance()->screen()->NotifyBoundsChanged(*display);
+    screen_ash_->NotifyBoundsChanged(*display);
     return true;
   }
   return false;
@@ -887,6 +953,20 @@ bool DisplayManager::UpdateDisplayBounds(int64 display_id,
 
 void DisplayManager::CreateMirrorWindowIfAny() {
   NonDesktopDisplayUpdater updater(this, delegate_);
+}
+
+void DisplayManager::CreateScreenForShutdown() const {
+  bool native_is_ash =
+      gfx::Screen::GetScreenByType(gfx::SCREEN_TYPE_NATIVE) ==
+      screen_ash_.get();
+  delete screen_for_shutdown;
+  screen_for_shutdown = screen_ash_->CloneForShutdown();
+  gfx::Screen::SetScreenInstance(gfx::SCREEN_TYPE_ALTERNATE,
+                                 screen_for_shutdown);
+  if (native_is_ash) {
+    gfx::Screen::SetScreenInstance(gfx::SCREEN_TYPE_NATIVE,
+                                   screen_for_shutdown);
+  }
 }
 
 gfx::Display* DisplayManager::FindDisplayForId(int64 id) {
@@ -908,13 +988,25 @@ void DisplayManager::AddMirrorDisplayInfoIfAny(
 void DisplayManager::InsertAndUpdateDisplayInfo(const DisplayInfo& new_info) {
   std::map<int64, DisplayInfo>::iterator info =
       display_info_.find(new_info.id());
-  if (info != display_info_.end())
+  if (info != display_info_.end()) {
     info->second.Copy(new_info);
-  else {
+  } else {
     display_info_[new_info.id()] = new_info;
     display_info_[new_info.id()].set_native(false);
   }
   display_info_[new_info.id()].UpdateDisplaySize();
+
+  OnDisplayInfoUpdated(display_info_[new_info.id()]);
+}
+
+void DisplayManager::OnDisplayInfoUpdated(const DisplayInfo& display_info) {
+#if defined(OS_CHROMEOS)
+  ui::ColorCalibrationProfile color_profile = display_info.color_profile();
+  if (color_profile != ui::COLOR_PROFILE_STANDARD) {
+    Shell::GetInstance()->output_configurator()->SetColorCalibrationProfile(
+        display_info.id(), color_profile);
+  }
+#endif
 }
 
 gfx::Display DisplayManager::CreateDisplayFromDisplayInfoById(int64 id) {
@@ -923,12 +1015,15 @@ gfx::Display DisplayManager::CreateDisplayFromDisplayInfoById(int64 id) {
 
   gfx::Display new_display(display_info.id());
   gfx::Rect bounds_in_native(display_info.size_in_pixel());
+  float device_scale_factor = display_info.device_scale_factor();
+  if (device_scale_factor == 2.0f && display_info.configured_ui_scale() == 2.0f)
+    device_scale_factor = 1.0f;
 
   // Simply set the origin to (0,0).  The primary display's origin is
   // always (0,0) and the secondary display's bounds will be updated
   // in |UpdateSecondaryDisplayBoundsForLayout| called in |UpdateDisplay|.
   new_display.SetScaleAndBounds(
-      display_info.device_scale_factor(), gfx::Rect(bounds_in_native.size()));
+      device_scale_factor, gfx::Rect(bounds_in_native.size()));
   new_display.set_rotation(display_info.rotation());
   new_display.set_touch_support(display_info.touch_support());
   return new_display;
@@ -945,7 +1040,7 @@ bool DisplayManager::UpdateSecondaryDisplayBoundsForLayout(
       (id_at_zero == first_display_id_ ||
        id_at_zero == gfx::Display::InternalDisplayId()) ?
       std::make_pair(id_at_zero, displays->at(1).id()) :
-      std::make_pair(displays->at(1).id(), id_at_zero) ;
+      std::make_pair(displays->at(1).id(), id_at_zero);
   DisplayLayout layout =
       layout_store_->ComputeDisplayLayoutForDisplayIdPair(pair);
 

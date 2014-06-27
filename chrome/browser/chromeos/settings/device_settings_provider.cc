@@ -7,32 +7,22 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
-#include "base/command_line.h"
-#include "base/location.h"
 #include "base/logging.h"
 #include "base/metrics/histogram.h"
 #include "base/prefs/pref_service.h"
-#include "base/strings/string_util.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/policy/device_local_account.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/device_settings_cache.h"
-#include "chrome/browser/policy/browser_policy_connector.h"
-#include "chrome/browser/policy/cloud/cloud_policy_constants.h"
-#include "chrome/browser/policy/proto/cloud/device_management_backend.pb.h"
 #include "chrome/browser/ui/options/options_util.h"
 #include "chrome/installer/util/google_update_settings.h"
 #include "chromeos/chromeos_switches.h"
-#include "chromeos/network/device_state.h"
-#include "chromeos/network/network_device_handler.h"
-#include "chromeos/network/network_event_log.h"
-#include "chromeos/network/network_handler.h"
-#include "chromeos/network/network_state_handler.h"
-#include "chromeos/network/shill_property_util.h"
 #include "chromeos/settings/cros_settings_names.h"
-#include "third_party/cros_system_api/dbus/service_constants.h"
+#include "components/policy/core/common/cloud/cloud_policy_constants.h"
+#include "policy/proto/device_management_backend.pb.h"
 
 using google::protobuf::RepeatedField;
 using google::protobuf::RepeatedPtrField;
@@ -51,6 +41,7 @@ const char* kKnownSettings[] = {
   kAccountsPrefDeviceLocalAccountAutoLoginBailoutEnabled,
   kAccountsPrefDeviceLocalAccountAutoLoginDelay,
   kAccountsPrefDeviceLocalAccountAutoLoginId,
+  kAccountsPrefDeviceLocalAccountPromptForNetworkWhenOffline,
   kAccountsPrefEphemeralUsersEnabled,
   kAccountsPrefShowUserNamesOnSignIn,
   kAccountsPrefSupervisedUsersEnabled,
@@ -74,6 +65,7 @@ const char* kKnownSettings[] = {
   kReportDeviceVersionInfo,
   kScreenSaverExtensionId,
   kScreenSaverTimeout,
+  kServiceAccountIdentity,
   kSignedDataRoamingEnabled,
   kStartUpFlags,
   kStartUpUrls,
@@ -93,12 +85,6 @@ bool HasOldMetricsFile() {
   return GoogleUpdateSettings::GetCollectStatsConsent();
 }
 
-void LogShillError(
-    const std::string& name,
-    scoped_ptr<base::DictionaryValue> error_data) {
-  NET_LOG_ERROR("Shill error: " + name, "Network operation failed.");
-}
-
 }  // namespace
 
 DeviceSettingsProvider::DeviceSettingsProvider(
@@ -110,11 +96,6 @@ DeviceSettingsProvider::DeviceSettingsProvider(
       ownership_status_(device_settings_service_->GetOwnershipStatus()),
       store_callback_factory_(this) {
   device_settings_service_->AddObserver(this);
-  if (NetworkHandler::IsInitialized()) {
-    NetworkHandler::Get()->network_state_handler()->AddObserver(this,
-                                                                FROM_HERE);
-  }
-
   if (!UpdateFromService()) {
     // Make sure we have at least the cache data immediately.
     RetrieveCachedData();
@@ -123,10 +104,6 @@ DeviceSettingsProvider::DeviceSettingsProvider(
 
 DeviceSettingsProvider::~DeviceSettingsProvider() {
   device_settings_service_->RemoveObserver(this);
-  if (NetworkHandler::IsInitialized()) {
-    NetworkHandler::Get()->network_state_handler()->RemoveObserver(this,
-                                                                   FROM_HERE);
-  }
 }
 
 // static
@@ -307,6 +284,15 @@ void DeviceSettingsProvider::SetInPolicy() {
       device_local_accounts->set_enable_auto_login_bailout(enabled);
     else
       NOTREACHED();
+  } else if (prop ==
+             kAccountsPrefDeviceLocalAccountPromptForNetworkWhenOffline) {
+    em::DeviceLocalAccountsProto* device_local_accounts =
+        device_settings_.mutable_device_local_accounts();
+    bool should_prompt;
+    if (value->GetAsBoolean(&should_prompt))
+      device_local_accounts->set_prompt_for_network_when_offline(should_prompt);
+    else
+      NOTREACHED();
   } else if (prop == kSignedDataRoamingEnabled) {
     em::DataRoamingEnabledProto* roam =
         device_settings_.mutable_data_roaming_enabled();
@@ -315,7 +301,6 @@ void DeviceSettingsProvider::SetInPolicy() {
       roam->set_data_roaming_enabled(roaming_value);
     else
       NOTREACHED();
-    ApplyRoamingSetting(roaming_value);
   } else if (prop == kReleaseChannel) {
     em::ReleaseChannelProto* release_channel =
         device_settings_.mutable_release_channel();
@@ -416,6 +401,7 @@ void DeviceSettingsProvider::SetInPolicy() {
     //   kReportDeviceUsers
     //   kScreenSaverExtensionId
     //   kScreenSaverTimeout
+    //   kServiceAccountIdentity
     //   kStartUpUrls
     //   kSystemTimezonePolicy
     //   kVariationsRestrictParameter
@@ -449,7 +435,6 @@ void DeviceSettingsProvider::DecodeLoginPolicies(
   // For all our boolean settings the following is applicable:
   // true is default permissive value and false is safe prohibitive value.
   // Exceptions:
-  //   kSignedDataRoamingEnabled has a default value of false.
   //   kAccountsPrefEphemeralUsersEnabled has a default value of false.
   if (policy.has_allow_new_users() &&
       policy.allow_new_users().has_allow_new_users()) {
@@ -502,38 +487,35 @@ void DeviceSettingsProvider::DecodeLoginPolicies(
   new_values_cache->SetValue(kAccountsPrefUsers, list);
 
   scoped_ptr<base::ListValue> account_list(new base::ListValue());
-  CommandLine* command_line = CommandLine::ForCurrentProcess();
-  if (!command_line->HasSwitch(switches::kDisableLocalAccounts)) {
-    const em::DeviceLocalAccountsProto device_local_accounts_proto =
-        policy.device_local_accounts();
-    const RepeatedPtrField<em::DeviceLocalAccountInfoProto>& accounts =
-        device_local_accounts_proto.account();
-    RepeatedPtrField<em::DeviceLocalAccountInfoProto>::const_iterator entry;
-    for (entry = accounts.begin(); entry != accounts.end(); ++entry) {
-      scoped_ptr<base::DictionaryValue> entry_dict(new base::DictionaryValue());
-      if (entry->has_type()) {
-        if (entry->has_account_id()) {
-          entry_dict->SetStringWithoutPathExpansion(
-              kAccountsPrefDeviceLocalAccountsKeyId, entry->account_id());
-        }
-        entry_dict->SetIntegerWithoutPathExpansion(
-            kAccountsPrefDeviceLocalAccountsKeyType, entry->type());
-        if (entry->kiosk_app().has_app_id()) {
-          entry_dict->SetStringWithoutPathExpansion(
-              kAccountsPrefDeviceLocalAccountsKeyKioskAppId,
-              entry->kiosk_app().app_id());
-        }
-      } else if (entry->has_deprecated_public_session_id()) {
-        // Deprecated public session specification.
+  const em::DeviceLocalAccountsProto device_local_accounts_proto =
+      policy.device_local_accounts();
+  const RepeatedPtrField<em::DeviceLocalAccountInfoProto>& accounts =
+      device_local_accounts_proto.account();
+  RepeatedPtrField<em::DeviceLocalAccountInfoProto>::const_iterator entry;
+  for (entry = accounts.begin(); entry != accounts.end(); ++entry) {
+    scoped_ptr<base::DictionaryValue> entry_dict(new base::DictionaryValue());
+    if (entry->has_type()) {
+      if (entry->has_account_id()) {
         entry_dict->SetStringWithoutPathExpansion(
-            kAccountsPrefDeviceLocalAccountsKeyId,
-            entry->deprecated_public_session_id());
-        entry_dict->SetIntegerWithoutPathExpansion(
-            kAccountsPrefDeviceLocalAccountsKeyType,
-            policy::DeviceLocalAccount::TYPE_PUBLIC_SESSION);
+            kAccountsPrefDeviceLocalAccountsKeyId, entry->account_id());
       }
-      account_list->Append(entry_dict.release());
+      entry_dict->SetIntegerWithoutPathExpansion(
+          kAccountsPrefDeviceLocalAccountsKeyType, entry->type());
+      if (entry->kiosk_app().has_app_id()) {
+        entry_dict->SetStringWithoutPathExpansion(
+            kAccountsPrefDeviceLocalAccountsKeyKioskAppId,
+            entry->kiosk_app().app_id());
+      }
+    } else if (entry->has_deprecated_public_session_id()) {
+      // Deprecated public session specification.
+      entry_dict->SetStringWithoutPathExpansion(
+          kAccountsPrefDeviceLocalAccountsKeyId,
+          entry->deprecated_public_session_id());
+      entry_dict->SetIntegerWithoutPathExpansion(
+          kAccountsPrefDeviceLocalAccountsKeyType,
+          policy::DeviceLocalAccount::TYPE_PUBLIC_SESSION);
     }
+    account_list->Append(entry_dict.release());
   }
   new_values_cache->SetValue(kAccountsPrefDeviceLocalAccounts,
                              account_list.release());
@@ -554,6 +536,9 @@ void DeviceSettingsProvider::DecodeLoginPolicies(
   new_values_cache->SetBoolean(
       kAccountsPrefDeviceLocalAccountAutoLoginBailoutEnabled,
       policy.device_local_accounts().enable_auto_login_bailout());
+  new_values_cache->SetBoolean(
+      kAccountsPrefDeviceLocalAccountPromptForNetworkWhenOffline,
+      policy.device_local_accounts().prompt_for_network_when_offline());
 
   if (policy.has_start_up_flags()) {
     base::ListValue* list = new base::ListValue();
@@ -633,6 +618,7 @@ void DeviceSettingsProvider::DecodeKioskPolicies(
 void DeviceSettingsProvider::DecodeNetworkPolicies(
     const em::ChromeDeviceSettingsProto& policy,
     PrefValueMap* new_values_cache) const {
+  // kSignedDataRoamingEnabled has a default value of false.
   new_values_cache->SetBoolean(
       kSignedDataRoamingEnabled,
       policy.has_data_roaming_enabled() &&
@@ -774,6 +760,11 @@ void DeviceSettingsProvider::UpdateValuesCache(
   if (policy_data.has_username() && !policy_data.has_request_token())
     new_values_cache.SetString(kDeviceOwner, policy_data.username());
 
+  if (policy_data.has_service_account_identity()) {
+    new_values_cache.SetString(kServiceAccountIdentity,
+                               policy_data.service_account_identity());
+  }
+
   DecodeLoginPolicies(settings, &new_values_cache);
   DecodeKioskPolicies(settings, &new_values_cache);
   DecodeNetworkPolicies(settings, &new_values_cache);
@@ -816,9 +807,9 @@ void DeviceSettingsProvider::ApplyMetricsSetting(bool use_file,
     migration_values_.SetValue(kStatsReportingPref,
                                base::Value::CreateBooleanValue(new_value));
     AttemptMigration();
-    LOG(INFO) << "No metrics policy set will revert to checking "
-              << "consent file which is "
-              << (new_value ? "on." : "off.");
+    VLOG(1) << "No metrics policy set will revert to checking "
+            << "consent file which is "
+            << (new_value ? "on." : "off.");
     UMA_HISTOGRAM_COUNTS("DeviceSettings.MetricsMigrated", 1);
   }
   VLOG(1) << "Metrics policy is being set to : " << new_value
@@ -828,49 +819,6 @@ void DeviceSettingsProvider::ApplyMetricsSetting(bool use_file,
   OptionsUtil::ResolveMetricsReportingEnabled(new_value);
 }
 
-void DeviceSettingsProvider::ApplyRoamingSetting(bool new_value) {
-  // TODO(pneubeck): Move this application of the roaming policy to
-  // NetworkConfigurationUpdater and ManagedNetworkConfigurationHandler. See
-  // http://crbug.com/323537 .
-  // TODO(armansito): Look up the device by explicitly using the device path.
-  const DeviceState* cellular =
-      NetworkHandler::Get()->network_state_handler()->GetDeviceStateByType(
-          NetworkTypePattern::Cellular());
-  if (!cellular) {
-    NET_LOG_DEBUG("No cellular device is available",
-                  "Roaming is only supported by cellular devices.");
-    return;
-  }
-  bool current_value;
-  if (!cellular->properties().GetBooleanWithoutPathExpansion(
-          shill::kCellularAllowRoamingProperty, &current_value)) {
-    NET_LOG_ERROR("Could not get \"allow roaming\" property from cellular "
-                  "device.", cellular->path());
-    return;
-  }
-
-  // Only set the value if the current value is different from |new_value|.
-  // If roaming is required by the provider, always try to set to true.
-  new_value = (cellular->provider_requires_roaming() ? true : new_value);
-  if (new_value == current_value)
-    return;
-
-  NetworkHandler::Get()->network_device_handler()->SetDeviceProperty(
-      cellular->path(),
-      shill::kCellularAllowRoamingProperty,
-      base::FundamentalValue(new_value),
-      base::Bind(&base::DoNothing),
-      base::Bind(&LogShillError));
-}
-
-void DeviceSettingsProvider::ApplyRoamingSettingFromProto(
-    const em::ChromeDeviceSettingsProto& settings) {
-  ApplyRoamingSetting(
-      settings.has_data_roaming_enabled() ?
-          settings.data_roaming_enabled().data_roaming_enabled() :
-          false);
-}
-
 void DeviceSettingsProvider::ApplySideEffects(
     const em::ChromeDeviceSettingsProto& settings) {
   // First migrate metrics settings as needed.
@@ -878,18 +826,15 @@ void DeviceSettingsProvider::ApplySideEffects(
     ApplyMetricsSetting(false, settings.metrics_enabled().metrics_enabled());
   else
     ApplyMetricsSetting(true, false);
-
-  // Next set the roaming setting as needed.
-  ApplyRoamingSettingFromProto(settings);
 }
 
 bool DeviceSettingsProvider::MitigateMissingPolicy() {
   // First check if the device has been owned already and if not exit
   // immediately.
-  if (g_browser_process->browser_policy_connector()->GetDeviceMode() !=
-          policy::DEVICE_MODE_CONSUMER) {
+  policy::BrowserPolicyConnectorChromeOS* connector =
+      g_browser_process->platform_part()->browser_policy_connector_chromeos();
+  if (connector->GetDeviceMode() != policy::DEVICE_MODE_CONSUMER)
     return false;
-  }
 
   // If we are here the policy file were corrupted or missing. This can happen
   // because we are migrating Pre R11 device to the new secure policies or there
@@ -933,10 +878,6 @@ DeviceSettingsProvider::TrustedStatus
 
 bool DeviceSettingsProvider::HandlesSetting(const std::string& path) const {
   return IsDeviceSetting(path);
-}
-
-void DeviceSettingsProvider::DeviceListChanged() {
-  ApplyRoamingSettingFromProto(device_settings_);
 }
 
 DeviceSettingsProvider::TrustedStatus

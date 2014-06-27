@@ -45,7 +45,8 @@ int AwNetworkDelegate::OnHeadersReceived(
     net::URLRequest* request,
     const net::CompletionCallback& callback,
     const net::HttpResponseHeaders* original_response_headers,
-    scoped_refptr<net::HttpResponseHeaders>* override_response_headers) {
+    scoped_refptr<net::HttpResponseHeaders>* override_response_headers,
+    GURL* allowed_unsafe_redirect_url) {
   return net::OK;
 }
 
@@ -67,7 +68,7 @@ void AwNetworkDelegate::OnURLRequestDestroyed(net::URLRequest* request) {
 }
 
 void AwNetworkDelegate::OnPACScriptError(int line_number,
-                                         const string16& error) {
+                                         const base::string16& error) {
 }
 
 net::NetworkDelegate::AuthRequiredResponse AwNetworkDelegate::OnAuthRequired(
@@ -106,10 +107,6 @@ int AwNetworkDelegate::OnBeforeSocketStreamConnect(
     net::SocketStream* stream,
     const net::CompletionCallback& callback) {
   return net::OK;
-}
-
-void AwNetworkDelegate::OnRequestWaitStateChange(const net::URLRequest& request,
-                                                 RequestWaitState state) {
 }
 
 }  // namespace android_webview

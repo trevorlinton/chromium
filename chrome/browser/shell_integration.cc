@@ -22,6 +22,12 @@
 #include "chromeos/chromeos_switches.h"
 #endif
 
+#if !defined(OS_WIN)
+#include "chrome/common/chrome_version_info.h"
+#include "grit/chromium_strings.h"
+#include "ui/base/l10n/l10n_util.h"
+#endif
+
 using content::BrowserThread;
 
 ShellIntegration::DefaultWebClientSetPermission
@@ -39,9 +45,12 @@ ShellIntegration::ShortcutInfo::~ShortcutInfo() {}
 
 ShellIntegration::ShortcutLocations::ShortcutLocations()
     : on_desktop(false),
-      in_applications_menu(false),
-      in_quick_launch_bar(false),
-      hidden(false) {
+      applications_menu_location(APP_MENU_LOCATION_NONE),
+      in_quick_launch_bar(false)
+#if defined(OS_POSIX)
+      , hidden(false)
+#endif
+      {
 }
 
 static const struct ShellIntegration::AppModeInfo* gAppModeInfo = NULL;
@@ -67,32 +76,11 @@ CommandLine ShellIntegration::CommandLineArgsForLauncher(
     const std::string& extension_app_id,
     const base::FilePath& profile_path) {
   base::ThreadRestrictions::AssertIOAllowed();
-  const CommandLine& cmd_line = *CommandLine::ForCurrentProcess();
   CommandLine new_cmd_line(CommandLine::NO_PROGRAM);
 
-  // Use the same UserDataDir for new launches that we currently have set.
-  base::FilePath user_data_dir =
-      cmd_line.GetSwitchValuePath(switches::kUserDataDir);
-#if defined(OS_MACOSX) || defined(OS_WIN)
-  policy::path_parser::CheckUserDataDirPolicy(&user_data_dir);
-#endif
-  if (!user_data_dir.empty()) {
-    // Make sure user_data_dir is an absolute path.
-    user_data_dir = base::MakeAbsoluteFilePath(user_data_dir);
-    if (!user_data_dir.empty() && base::PathExists(user_data_dir))
-      new_cmd_line.AppendSwitchPath(switches::kUserDataDir, user_data_dir);
-  }
-
-#if defined(OS_CHROMEOS)
-  base::FilePath profile = cmd_line.GetSwitchValuePath(
-      chromeos::switches::kLoginProfile);
-  if (!profile.empty())
-    new_cmd_line.AppendSwitchPath(chromeos::switches::kLoginProfile, profile);
-#else
-  if (!profile_path.empty() && !extension_app_id.empty())
-    new_cmd_line.AppendSwitchPath(switches::kProfileDirectory,
-                                  profile_path.BaseName());
-#endif
+  AppendProfileArgs(
+      extension_app_id.empty() ? base::FilePath() : profile_path,
+      &new_cmd_line);
 
   // If |extension_app_id| is present, we use the kAppId switch rather than
   // the kApp switch (the launch url will be read from the extension app
@@ -108,7 +96,46 @@ CommandLine ShellIntegration::CommandLineArgsForLauncher(
   return new_cmd_line;
 }
 
+// static
+void ShellIntegration::AppendProfileArgs(
+    const base::FilePath& profile_path,
+    CommandLine* command_line) {
+  DCHECK(command_line);
+  const CommandLine& cmd_line = *CommandLine::ForCurrentProcess();
+
+  // Use the same UserDataDir for new launches that we currently have set.
+  base::FilePath user_data_dir =
+      cmd_line.GetSwitchValuePath(switches::kUserDataDir);
+#if defined(OS_MACOSX) || defined(OS_WIN)
+  policy::path_parser::CheckUserDataDirPolicy(&user_data_dir);
+#endif
+  if (!user_data_dir.empty()) {
+    // Make sure user_data_dir is an absolute path.
+    user_data_dir = base::MakeAbsoluteFilePath(user_data_dir);
+    if (!user_data_dir.empty() && base::PathExists(user_data_dir))
+      command_line->AppendSwitchPath(switches::kUserDataDir, user_data_dir);
+  }
+
+#if defined(OS_CHROMEOS)
+  base::FilePath profile = cmd_line.GetSwitchValuePath(
+      chromeos::switches::kLoginProfile);
+  if (!profile.empty())
+    command_line->AppendSwitchPath(chromeos::switches::kLoginProfile, profile);
+#else
+  if (!profile_path.empty())
+    command_line->AppendSwitchPath(switches::kProfileDirectory,
+                                   profile_path.BaseName());
+#endif
+}
+
 #if !defined(OS_WIN)
+
+base::string16 ShellIntegration::GetAppShortcutsSubdirName() {
+  if (chrome::VersionInfo::GetChannel() == chrome::VersionInfo::CHANNEL_CANARY)
+    return l10n_util::GetStringUTF16(IDS_APP_SHORTCUTS_SUBDIR_NAME_CANARY);
+  return l10n_util::GetStringUTF16(IDS_APP_SHORTCUTS_SUBDIR_NAME);
+}
+
 // static
 bool ShellIntegration::SetAsDefaultBrowserInteractive() {
   return false;

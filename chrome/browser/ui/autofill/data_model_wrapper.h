@@ -5,14 +5,23 @@
 #ifndef CHROME_BROWSER_UI_AUTOFILL_DATA_MODEL_WRAPPER_H_
 #define CHROME_BROWSER_UI_AUTOFILL_DATA_MODEL_WRAPPER_H_
 
+#include <vector>
+
 #include "base/compiler_specific.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/ui/autofill/autofill_dialog_types.h"
 #include "components/autofill/content/browser/wallet/wallet_items.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/form_structure.h"
 
 namespace gfx {
 class Image;
+}
+
+namespace i18n {
+namespace addressinput {
+struct AddressData;
+}
 }
 
 namespace autofill {
@@ -65,32 +74,15 @@ class DataModelWrapper {
   // FormStructure should be filled in or left alone. Returns whether any fields
   // in |form_structure| were found to be matching.
   bool FillFormStructure(
-      const DetailInputs& inputs,
-      const InputFieldComparator& compare,
+      const std::vector<ServerFieldType>& types,
+      const FormStructure::InputFieldComparator& compare,
       FormStructure* form_structure) const;
 
  protected:
   DataModelWrapper();
 
  private:
-  // Formats address data into a single string using |separator| between
-  // fields.
-  base::string16 GetAddressDisplayText(const base::string16& separator);
-
   DISALLOW_COPY_AND_ASSIGN(DataModelWrapper);
-};
-
-// A DataModelWrapper that does not hold data and does nothing when told to
-// fill in a form.
-class EmptyDataModelWrapper : public DataModelWrapper {
- public:
-  EmptyDataModelWrapper();
-  virtual ~EmptyDataModelWrapper();
-
-  virtual base::string16 GetInfo(const AutofillType& type) const OVERRIDE;
-
- protected:
-  DISALLOW_COPY_AND_ASSIGN(EmptyDataModelWrapper);
 };
 
 // A DataModelWrapper for Autofill profiles.
@@ -219,18 +211,19 @@ class FullWalletShippingWrapper : public DataModelWrapper {
   DISALLOW_COPY_AND_ASSIGN(FullWalletShippingWrapper);
 };
 
-// A DataModelWrapper to copy the output of one section to the input of another.
-class DetailOutputWrapper : public DataModelWrapper {
+// A DataModelWrapper for ::i18n::addressinput::AddressData objects.
+class I18nAddressDataWrapper : public DataModelWrapper {
  public:
-  explicit DetailOutputWrapper(const DetailOutputMap& outputs);
-  virtual ~DetailOutputWrapper();
+  explicit I18nAddressDataWrapper(
+      const ::i18n::addressinput::AddressData* address);
+  virtual ~I18nAddressDataWrapper();
 
   virtual base::string16 GetInfo(const AutofillType& type) const OVERRIDE;
 
  private:
-  const DetailOutputMap& outputs_;
+  const ::i18n::addressinput::AddressData* address_;
 
-  DISALLOW_COPY_AND_ASSIGN(DetailOutputWrapper);
+  DISALLOW_COPY_AND_ASSIGN(I18nAddressDataWrapper);
 };
 
 }  // namespace autofill

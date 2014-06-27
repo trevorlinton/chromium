@@ -1,12 +1,16 @@
 {
   "host-permissions": {
-    "anchor": "match-pattern",
+    "channel": "stable",
+    "anchor": "host-permissions",
     "name": "[scheme]:[host]/*",
     "partial": "permissions/host_permissions.html",
-    "platforms": ["app", "extension"]
+    "extension_types": ["legacy_packaged_app", "extension", "platform_app"]
   },
   "activeTab": {
     "partial": "permissions/active_tab.html"
+  },
+  "alwaysOnTopWindows": {
+    "partial": "permissions/always_on_top_windows.html"
   },
   "audioCapture": {
     "partial": "permissions/audio_capture.html"
@@ -16,9 +20,9 @@
   },
   "chrome://favicon/": {
     "anchor": "favicon",
+    "extension_types": ["extension"],
     "name": "chrome://favicon/",
-    "partial": "permissions/favicon.html",
-    "platforms": ["extension"]
+    "partial": "permissions/favicon.html"
   },
   "clipboardRead": {
     "partial": "permissions/clipboard_read.html"

@@ -122,7 +122,7 @@ ScopedPath::ScopedPath(const base::FilePath& path_to_add)
   if (!new_value.empty())
     new_value += ";";
 
-  new_value += WideToUTF8(path_to_add.value());
+  new_value += base::WideToUTF8(path_to_add.value());
 
   path_modified_ = environment_->SetVar("PATH", new_value);
 }
@@ -141,7 +141,7 @@ ScopedPath::~ScopedPath() {
 namespace net {
 
 bool LocalTestServer::LaunchPython(const base::FilePath& testserver_path) {
-  CommandLine python_command(CommandLine::NO_PROGRAM);
+  base::CommandLine python_command(base::CommandLine::NO_PROGRAM);
   if (!GetPythonCommand(&python_command))
     return false;
 
@@ -190,15 +190,6 @@ bool LocalTestServer::LaunchPython(const base::FilePath& testserver_path) {
     return false;
   }
 
-  // Add our internal python to the path so it can be used if there is
-  // no system python.
-  base::FilePath python_dir;
-  if (!PathService::Get(base::DIR_SOURCE_ROOT, &python_dir)) {
-    LOG(ERROR) << "Could not locate source root directory.";
-    return false;
-  }
-  python_dir = python_dir.AppendASCII("third_party").AppendASCII("python_26");
-  ScopedPath python_path(python_dir);
   base::LaunchOptions launch_options;
   launch_options.inherit_handles = true;
   launch_options.job_handle = job_handle_.Get();

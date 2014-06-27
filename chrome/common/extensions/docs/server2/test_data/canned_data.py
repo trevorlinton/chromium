@@ -3,7 +3,10 @@
 # found in the LICENSE file.
 
 import json
+
+from extensions_paths import CHROME_EXTENSIONS
 from third_party.json_schema_compiler.json_parse import OrderedDict
+from test_file_system import MoveAllTo, MoveTo
 
 
 CANNED_CHANNELS = OrderedDict([
@@ -43,23 +46,24 @@ CANNED_BRANCHES = OrderedDict([
 ])
 
 
-CANNED_TEST_FILE_SYSTEM_DATA = {
+CANNED_TEST_FILE_SYSTEM_DATA = MoveTo(CHROME_EXTENSIONS, {
   'api': {
     '_api_features.json': json.dumps({
       'ref_test': { 'dependencies': ['permission:ref_test'] },
       'tester': { 'dependencies': ['permission:tester', 'manifest:tester'] }
     }),
-    '_manifest_features.json': json.dumps({
-      'manifest': 'features'
-    }),
-    '_permission_features.json': json.dumps({
-      'permission': 'features'
-    })
+    '_manifest_features.json': '{}',
+    '_permission_features.json': '{}'
   },
   'docs': {
     'templates': {
+      'articles': {
+        'test_article.html':
+            '<h1>hi</h1>you<h2>first</h2><h3>inner</h3><h2>second</h2>'
+      },
       'intros': {
-        'test.html': '<h1>hi</h1>you<h2>first</h2><h3>inner</h3><h2>second</h2>'
+        'test_intro.html':
+            'you<h2>first</h2><h3>inner</h3><h2>second</h2>'
       },
       'json': {
         'api_availabilities.json': json.dumps({
@@ -95,22 +99,53 @@ CANNED_TEST_FILE_SYSTEM_DATA = {
               }
             ]
           }
-        })
+        }),
+        'manifest.json': '{}',
+        'permissions.json': '{}'
       },
       'private': {
         'intro_tables': {
           'trunk_message.html': 'available on trunk'
-        }
+        },
+        'table_of_contents.html': '<table-of-contents>',
       }
     }
+  }
+})
+
+
+_TEST_WHATS_NEW_JSON = {
+  "backgroundpages.to-be-non-persistent": {
+    "type": "additionsToExistingApis",
+    "description": "backgrounds to be non persistent",
+    "version": 22
+  },
+  "chromeSetting.set-regular-only-scope": {
+    "type": "additionsToExistingApis",
+    "description": "ChromeSetting.set now has a regular_only scope.",
+    "version": 21
+  },
+  "manifest-v1-deprecated": {
+    "type": "manifestChanges",
+    "description": "Manifest version 1 was deprecated in Chrome 18",
+    "version": 20
   }
 }
 
 
-CANNED_API_FILE_SYSTEM_DATA = {
+CANNED_API_FILE_SYSTEM_DATA = MoveAllTo(CHROME_EXTENSIONS, {
   'trunk': {
     'api': {
       '_api_features.json': json.dumps({
+        'alarm': {
+          'channel': 'stable'
+        },
+        'app.window': {
+          'channel': 'stable'
+        },
+        'browserAction': {
+          'channel': 'stable'
+        },
         'contextMenus': {
           'channel': 'stable'
         },
@@ -167,9 +202,13 @@ CANNED_API_FILE_SYSTEM_DATA = {
           'channel': 'trunk'
         },
         'declarativeWebRequest': [
-          { 'channel': 'beta' },
-          # whitelist
-          { 'channel': 'stable'}
+          { 'channel': 'beta',
+            'extension_types': ['extension']
+          },
+          { 'channel': 'stable',
+            'extension_types': ['extension'],
+            'whitelist': ['aaa']
+          },
         ],
         'falseBetaAPI': {
           'channel': 'beta'
@@ -181,25 +220,59 @@ CANNED_API_FILE_SYSTEM_DATA = {
           'channel': 'trunk'
         }
       }),
-      'idle.json': '{}',
-      'input_ime.json': '{}',
-      'menus.json': '{}',
-      'tabs.json': '{}',
-      'windows.json': '{}'
+      'alarm.json': json.dumps([{
+        'namespace': 'alarm',
+        'description': '<code>alarm</code>'
+      }]),
+      'app_window.json': json.dumps([{
+        'namespace': 'app.window',
+        'description': '<code>app.window</code>'
+      }]),
+      'browser_action.json': json.dumps([{
+        'namespace': 'browserAction',
+        'description': '<code>browserAction</code>'
+      }]),
+      'bluetooth.idl': '\n'.join(('//Copyleft Schmopyright',
+                                  '',
+                                  '//An IDL description, oh my!',
+                                  'namespace bluetooth {',
+                                  '  dictionary Socket {',
+                                  '    long id;',
+                                  '  };',
+                                  '};')),
+      'context_menus.json': json.dumps([{
+        'namespace': 'contextMenus',
+        'description': ''
+      }]),
+      'json_stable_api.json': json.dumps([{
+        'namespace': 'jsonStableAPI',
+        'description': 'An API with a predetermined availability.'
+      }]),
+      'idle.json': json.dumps([{'namespace': 'idle', 'description': ''}]),
+      'input_ime.json': json.dumps([{
+        'namespace': 'input.ime',
+        'description': 'An API that has the potential to cause some trouble.'
+      }]),
+      'menus.json': json.dumps([{'namespace': 'menus', 'description': ''}]),
+      'tabs.json': json.dumps([{'namespace': 'tabs', 'description': ''}]),
+      'windows.json': json.dumps([{'namespace': 'windows', 'description': ''}])
     },
     'docs': {
       'templates': {
         'json': {
           'api_availabilities.json': json.dumps({
-            'jsonAPI1': {
-              'channel': 'stable',
-              'version': 10
-            },
-            'jsonAPI2': {
+            'jsonTrunkAPI': {
               'channel': 'trunk'
             },
-            'jsonAPI3': {
+            'jsonDevAPI': {
               'channel': 'dev'
+            },
+            'jsonBetaAPI': {
+              'channel': 'beta'
+            },
+            'jsonStableAPI': {
+              'channel': 'stable',
+              'version': 20
             }
           }),
           'intro_tables.json': json.dumps({
@@ -208,7 +281,22 @@ CANNED_API_FILE_SYSTEM_DATA = {
                 'Permissions': 'probably none'
               }
             ]
-          })
+          }),
+          'manifest.json': '{}',
+          'permissions.json': '{}',
+          'whats_new.json': json.dumps(_TEST_WHATS_NEW_JSON)
+        },
+        'public': {
+          'apps': {
+            'alarm.html': 'alarm.html',
+            'app_window.html': 'app_window.html',
+            'contextMenus.html': 'contextMenus.html',
+          },
+          'extensions': {
+            'alarm.html': 'alarm.html',
+            'browserAction.html': 'browserAction.html',
+            'contextMenus.html': 'contextMenus.html',
+          }
         }
       }
     }
@@ -216,6 +304,15 @@ CANNED_API_FILE_SYSTEM_DATA = {
   '1500': {
     'api': {
       '_api_features.json': json.dumps({
+        'alarm': {
+          'channel': 'stable'
+        },
+        'app.window': {
+          'channel': 'stable'
+        },
+        'browserAction': {
+          'channel': 'stable'
+        },
         'events': {
           'channel': 'trunk'
         },
@@ -273,23 +370,84 @@ CANNED_API_FILE_SYSTEM_DATA = {
         },
         'declarativeWebRequest': [
           { 'channel': 'beta' },
-          # whitelist
-          { 'channel': 'stable'}
+          { 'channel': 'stable', 'whitelist': ['aaa'] }
         ],
         'downloads': {
           'channel': 'beta'
         }
       }),
-      'idle.json': '{}',
-      'input_ime.json': '{}',
-      'menus.json': '{}',
-      'tabs.json': '{}',
-      'windows.json': '{}'
+      'alarm.json': json.dumps([{
+        'namespace': 'alarm',
+        'description': '<code>alarm</code>'
+      }]),
+      'app_window.json': json.dumps([{
+        'namespace': 'app.window',
+        'description': '<code>app.window</code>'
+      }]),
+      'browser_action.json': json.dumps([{
+        'namespace': 'browserAction',
+        'description': '<code>browserAction</code>'
+      }]),
+      'idle.json': json.dumps([{'namespace': 'idle'}]),
+      'input_ime.json': json.dumps([{'namespace': 'input.ime'}]),
+      'menus.json': json.dumps([{'namespace': 'menus'}]),
+      'tabs.json': json.dumps([{'namespace': 'tabs'}]),
+      'windows.json': json.dumps([{'namespace': 'windows'}])
+    },
+    'docs': {
+      'templates': {
+        'json': {
+          'api_availabilities.json': json.dumps({
+            'jsonTrunkAPI': {
+              'channel': 'trunk'
+            },
+            'jsonDevAPI': {
+              'channel': 'dev'
+            },
+            'jsonBetaAPI': {
+              'channel': 'beta'
+            },
+            'jsonStableAPI': {
+              'channel': 'stable',
+              'version': 20
+            }
+          }),
+          'intro_tables.json': json.dumps({
+            'test': [
+              {
+                'Permissions': 'probably none'
+              }
+            ]
+          }),
+          'manifest.json': '{}',
+          'permissions.json': '{}',
+          'whats_new.json': json.dumps(_TEST_WHATS_NEW_JSON)
+        },
+        'public': {
+          'apps': {
+            'alarm.html': 'alarm.html',
+            'app_window.html': 'app_window.html',
+          },
+          'extensions': {
+            'alarm.html': 'alarm.html',
+            'browserAction.html': 'browserAction.html',
+          }
+        }
+      }
     }
   },
   '1453': {
     'api': {
       '_api_features.json': json.dumps({
+        'alarm': {
+          'channel': 'stable'
+        },
+        'app.window': {
+          'channel': 'stable'
+        },
+        'browserAction': {
+          'channel': 'stable'
+        },
         'events': {
           'channel': 'dev'
         },
@@ -341,23 +499,85 @@ CANNED_API_FILE_SYSTEM_DATA = {
         },
         'declarativeWebRequest': [
           { 'channel': 'beta' },
-          # whitelist
-          { 'channel': 'stable'}
+          { 'channel': 'stable', 'whitelist': ['aaa'] }
         ],
         'downloads': {
           'channel': 'dev'
         }
       }),
-      'idle.json': '{}',
-      'input_ime.json': '{}',
-      'menus.json': '{}',
-      'tabs.json': '{}',
-      'windows.json': '{}'
+      'alarm.json': json.dumps([{
+        'namespace': 'alarm',
+        'description': '<code>alarm</code>'
+      }]),
+      'app_window.json': json.dumps([{
+        'namespace': 'app.window',
+        'description': '<code>app.window</code>'
+      }]),
+      'browser_action.json': json.dumps([{
+        'namespace': 'browserAction',
+        'description': '<code>browserAction</code>'
+      }]),
+      'idle.json': json.dumps([{'namespace': 'idle'}]),
+      'input_ime.json': json.dumps([{'namespace': 'input.ime'}]),
+      'menus.json': json.dumps([{'namespace': 'menus'}]),
+      'tabs.json': json.dumps([{'namespace': 'tabs'}]),
+      'windows.json': json.dumps([{'namespace': 'windows'}])
+    },
+    'docs': {
+      'templates': {
+        'json': {
+          'api_availabilities.json': json.dumps({
+            'jsonTrunkAPI': {
+              'channel': 'trunk'
+            },
+            'jsonDevAPI': {
+              'channel': 'dev'
+            },
+            'jsonBetaAPI': {
+              'channel': 'beta'
+            },
+            'jsonStableAPI': {
+              'channel': 'stable',
+              'version': 20
+            }
+          }),
+          'intro_tables.json': json.dumps({
+            'test': [
+              {
+                'Permissions': 'probably none'
+              }
+            ]
+          }),
+          'manifest.json': '{}',
+          'permissions.json': '{}',
+          'whats_new.json': json.dumps(_TEST_WHATS_NEW_JSON)
+        },
+        'public': {
+          'apps': {
+            'alarm.html': 'alarm.html',
+            'app_window.html': 'app_window.html',
+          },
+          'extensions': {
+            'alarm.html': 'alarm.html',
+            'browserAction.html': 'browserAction.html',
+          }
+
+        }
+      }
     }
   },
   '1410': {
     'api': {
       '_manifest_features.json': json.dumps({
+        'alarm': {
+          'channel': 'stable'
+        },
+        'app.window': {
+          'channel': 'stable'
+        },
+        'browserAction': {
+          'channel': 'stable'
+        },
         'events': {
           'channel': 'beta'
         },
@@ -392,18 +612,29 @@ CANNED_API_FILE_SYSTEM_DATA = {
         },
         'declarativeWebRequest': [
           { 'channel': 'beta' },
-          # whitelist
-          { 'channel': 'stable'}
+          { 'channel': 'stable', 'whitelist': ['aaa'] }
         ],
         'systemInfo.display': {
           'channel': 'stable'
         }
       }),
-      'idle.json': '{}',
-      'input_ime.json': '{}',
-      'menus.json': '{}',
-      'tabs.json': '{}',
-      'windows.json': '{}'
+      'alarm.json': json.dumps([{
+        'namespace': 'alarm',
+        'description': '<code>alarm</code>'
+      }]),
+      'app_window.json': json.dumps([{
+        'namespace': 'app.window',
+        'description': '<code>app.window</code>'
+      }]),
+      'browser_action.json': json.dumps([{
+        'namespace': 'browserAction',
+        'description': '<code>browserAction</code>'
+      }]),
+      'idle.json': json.dumps([{'namespace': 'idle'}]),
+      'input_ime.json': json.dumps([{'namespace': 'input.ime'}]),
+      'menus.json': json.dumps([{'namespace': 'menus'}]),
+      'tabs.json': json.dumps([{'namespace': 'tabs'}]),
+      'windows.json': json.dumps([{'namespace': 'windows'}])
     }
   },
   '1364': {
@@ -430,11 +661,11 @@ CANNED_API_FILE_SYSTEM_DATA = {
           'channel': 'stable'
         }
       }),
-      'idle.json': '{}',
-      'input_ime.json': '{}',
-      'menus.json': '{}',
-      'tabs.json': '{}',
-      'windows.json': '{}'
+      'idle.json': json.dumps([{'namespace': 'idle'}]),
+      'input_ime.json': json.dumps([{'namespace': 'input.ime'}]),
+      'menus.json': json.dumps([{'namespace': 'menus'}]),
+      'tabs.json': json.dumps([{'namespace': 'tabs'}]),
+      'windows.json': json.dumps([{'namespace': 'windows'}])
     }
   },
   '1312': {
@@ -461,11 +692,11 @@ CANNED_API_FILE_SYSTEM_DATA = {
           'channel': 'stable'
         }
       }),
-      'idle.json': '{}',
-      'input_ime.json': '{}',
-      'menus.json': '{}',
-      'tabs.json': '{}',
-      'windows.json': '{}'
+      'idle.json': json.dumps([{'namespace': 'idle'}]),
+      'input_ime.json': json.dumps([{'namespace': 'input.ime'}]),
+      'menus.json': json.dumps([{'namespace': 'menus'}]),
+      'tabs.json': json.dumps([{'namespace': 'tabs'}]),
+      'windows.json': json.dumps([{'namespace': 'windows'}])
     }
   },
   '1271': {
@@ -492,12 +723,12 @@ CANNED_API_FILE_SYSTEM_DATA = {
           'channel': 'stable'
         }
       }),
-      'alarms.idl': '{}',
-      'idle.json': '{}',
-      'input_ime.json': '{}',
-      'menus.json': '{}',
-      'tabs.json': '{}',
-      'windows.json': '{}'
+      'alarms.idl': '//copy\n\n//desc\nnamespace alarms {}',
+      'idle.json': json.dumps([{'namespace': 'idle'}]),
+      'input_ime.json': json.dumps([{'namespace': 'input.ime'}]),
+      'menus.json': json.dumps([{'namespace': 'menus'}]),
+      'tabs.json': json.dumps([{'namespace': 'tabs'}]),
+      'windows.json': json.dumps([{'namespace': 'windows'}])
     }
   },
   '1229': {
@@ -521,12 +752,11 @@ CANNED_API_FILE_SYSTEM_DATA = {
           'channel': 'beta'
         }
       }),
-      'alarms.idl': '{}',
-      'idle.json': '{}',
-      'input_ime.json': '{}',
-      'menus.json': '{}',
-      'system_info_display.idl': '{}',
-      'tabs.json': '{}'
+      'alarms.idl': '//copy\n\n//desc\nnamespace alarms {}',
+      'idle.json': json.dumps([{'namespace': 'idle'}]),
+      'input_ime.json': json.dumps([{'namespace': 'input.ime'}]),
+      'menus.json': json.dumps([{'namespace': 'menus'}]),
+      'tabs.json': json.dumps([{'namespace': 'tabs'}]),
     }
   },
   '1180': {
@@ -547,11 +777,11 @@ CANNED_API_FILE_SYSTEM_DATA = {
           'channel': 'stable'
         }
       }),
-      'bookmarks.json': '{}',
-      'idle.json': '{}',
-      'input_ime.json': '{}',
-      'menus.json': '{}',
-      'tabs.json': '{}'
+      'bookmarks.json': json.dumps([{'namespace': 'bookmarks'}]),
+      'idle.json': json.dumps([{'namespace': 'idle'}]),
+      'input_ime.json': json.dumps([{'namespace': 'input.ime'}]),
+      'menus.json': json.dumps([{'namespace': 'menus'}]),
+      'tabs.json': json.dumps([{'namespace': 'tabs'}]),
     }
   },
   '1132': {
@@ -569,11 +799,11 @@ CANNED_API_FILE_SYSTEM_DATA = {
           'channel': 'stable'
         }
       }),
-      'bookmarks.json': '{}',
-      'idle.json': '{}',
-      'input.ime.json': '{}',
-      'menus.json': '{}',
-      'tabs.json': '{}'
+      'bookmarks.json': json.dumps([{'namespace': 'bookmarks'}]),
+      'idle.json': json.dumps([{'namespace': 'idle'}]),
+      'input.ime.json': json.dumps([{'namespace': 'input.ime'}]),
+      'menus.json': json.dumps([{'namespace': 'menus'}]),
+      'tabs.json': json.dumps([{'namespace': 'tabs'}]),
     }
   },
   '1084': {
@@ -581,22 +811,24 @@ CANNED_API_FILE_SYSTEM_DATA = {
       '_manifest_features.json': json.dumps({
         'contents': 'nothing of interest here,really'
       }),
-      'idle.json': '{}',
-      'input.ime.json': '{}',
-      'menus.json': '{}',
-      'pageAction.json': '{}',
-      'tabs.json': '{}',
-      'webRequest.json': '{}'
+      'bookmarks.json': json.dumps([{'namespace': 'bookmarks'}]),
+      'idle.json': json.dumps([{'namespace': 'idle'}]),
+      'input.ime.json': json.dumps([{'namespace': 'input.ime'}]),
+      'menus.json': json.dumps([{'namespace': 'menus'}]),
+      'tabs.json': json.dumps([{'namespace': 'tabs'}]),
+      'pageAction.json': json.dumps([{'namespace': 'pageAction'}]),
+      'webRequest.json': json.dumps([{'namespace': 'webRequest'}])
     }
   },
   '1025': {
     'api': {
-      'idle.json': '{}',
-      'input.ime.json': '{}',
-      'menus.json': '{}',
-      'pageAction.json': '{}',
-      'tabs.json': '{}',
-      'webRequest.json': '{}'
+      'bookmarks.json': json.dumps([{'namespace': 'bookmarks'}]),
+      'idle.json': json.dumps([{'namespace': 'idle'}]),
+      'input.ime.json': json.dumps([{'namespace': 'input.ime'}]),
+      'menus.json': json.dumps([{'namespace': 'menus'}]),
+      'tabs.json': json.dumps([{'namespace': 'tabs'}]),
+      'pageAction.json': json.dumps([{'namespace': 'pageAction'}]),
+      'webRequest.json': json.dumps([{'namespace': 'webRequest'}])
     }
   },
   '963': {
@@ -791,4 +1023,4 @@ CANNED_API_FILE_SYSTEM_DATA = {
       ])
     }
   }
-}
+})

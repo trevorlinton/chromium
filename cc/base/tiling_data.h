@@ -23,19 +23,19 @@ class CC_EXPORT TilingData {
  public:
   TilingData();
   TilingData(
-      gfx::Size max_texture_size,
-      gfx::Size total_size,
+      const gfx::Size& max_texture_size,
+      const gfx::Size& total_size,
       bool has_border_texels);
   TilingData(
-      gfx::Size max_texture_size,
-      gfx::Size total_size,
+      const gfx::Size& max_texture_size,
+      const gfx::Size& total_size,
       int border_texels);
 
   gfx::Size total_size() const { return total_size_; }
-  void SetTotalSize(const gfx::Size total_size);
+  void SetTotalSize(const gfx::Size& total_size);
 
   gfx::Size max_texture_size() const { return max_texture_size_; }
-  void SetMaxTextureSize(gfx::Size max_texture_size);
+  void SetMaxTextureSize(const gfx::Size& max_texture_size);
 
   int border_texels() const { return border_texels_; }
   void SetHasBorderTexels(bool has_border_texels);
@@ -53,6 +53,8 @@ class CC_EXPORT TilingData {
   // Return the highest tile index whose border texels include src_position.
   int LastBorderTileXIndexFromSrcCoord(int src_position) const;
   int LastBorderTileYIndexFromSrcCoord(int src_position) const;
+
+  gfx::Rect ExpandRectToTileBoundsWithBorders(const gfx::Rect rect) const;
 
   gfx::Rect TileBounds(int i, int j) const;
   gfx::Rect TileBoundsWithBorder(int i, int j) const;
@@ -86,10 +88,13 @@ class CC_EXPORT TilingData {
     int index_y_;
   };
 
-  // Iterate through all indices whose bounds + border intersect with |rect|.
+  // Iterate through tiles whose bounds + optional border intersect with |rect|.
   class CC_EXPORT Iterator : public BaseIterator {
    public:
-    Iterator(const TilingData* tiling_data, gfx::Rect rect);
+    Iterator();
+    Iterator(const TilingData* tiling_data,
+             const gfx::Rect& tiling_rect,
+             bool include_borders);
     Iterator& operator++();
 
    private:
@@ -104,8 +109,8 @@ class CC_EXPORT TilingData {
    public:
     DifferenceIterator(
       const TilingData* tiling_data,
-      gfx::Rect consider,
-      gfx::Rect ignore);
+      const gfx::Rect& consider_rect,
+      const gfx::Rect& ignore_rect);
     DifferenceIterator& operator++();
 
    private:
@@ -122,6 +127,61 @@ class CC_EXPORT TilingData {
     int ignore_top_;
     int ignore_right_;
     int ignore_bottom_;
+  };
+
+  // Iterate through all indices whose bounds + border intersect with
+  // |consider| but which also do not intersect with |ignore|. The iterator
+  // order is a counterclockwise spiral around the given center.
+  class CC_EXPORT SpiralDifferenceIterator : public BaseIterator {
+   public:
+    SpiralDifferenceIterator();
+    SpiralDifferenceIterator(const TilingData* tiling_data,
+                             const gfx::Rect& consider_rect,
+                             const gfx::Rect& ignore_rect,
+                             const gfx::Rect& center_rect);
+    SpiralDifferenceIterator& operator++();
+
+   private:
+    bool in_consider_rect() const {
+      return index_x_ >= consider_left_ && index_x_ <= consider_right_ &&
+             index_y_ >= consider_top_ && index_y_ <= consider_bottom_;
+    }
+    bool in_ignore_rect() const {
+      return index_x_ >= ignore_left_ && index_x_ <= ignore_right_ &&
+             index_y_ >= ignore_top_ && index_y_ <= ignore_bottom_;
+    }
+    bool valid_column() const {
+      return index_x_ >= consider_left_ && index_x_ <= consider_right_;
+    }
+    bool valid_row() const {
+      return index_y_ >= consider_top_ && index_y_ <= consider_bottom_;
+    }
+
+    int current_step_count() const {
+      return (direction_ == UP || direction_ == DOWN) ? vertical_step_count_
+                                                      : horizontal_step_count_;
+    }
+
+    bool needs_direction_switch() const;
+    void switch_direction();
+
+    int consider_left_;
+    int consider_top_;
+    int consider_right_;
+    int consider_bottom_;
+    int ignore_left_;
+    int ignore_top_;
+    int ignore_right_;
+    int ignore_bottom_;
+
+    enum Direction { UP, LEFT, DOWN, RIGHT };
+
+    Direction direction_;
+    int delta_x_;
+    int delta_y_;
+    int current_step_;
+    int horizontal_step_count_;
+    int vertical_step_count_;
   };
 
  private:

@@ -10,7 +10,7 @@
 #import "chrome/browser/ui/cocoa/media_picker/desktop_media_picker_item.h"
 #include "content/public/browser/browser_thread.h"
 #include "grit/generated_resources.h"
-#import "third_party/GTM/AppKit/GTMUILocalizerAndLayoutTweaker.h"
+#import "third_party/google_toolbox_for_mac/src/AppKit/GTMUILocalizerAndLayoutTweaker.h"
 #import "ui/base/cocoa/flipped_view.h"
 #import "ui/base/cocoa/window_size_constants.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -32,7 +32,7 @@ const int kExcessButtonPadding = 6;
 @interface DesktopMediaPickerController (Private)
 
 // Populate the window with controls and views.
-- (void)initializeContentsWithAppName:(const string16&)appName;
+- (void)initializeContentsWithAppName:(const base::string16&)appName;
 
 // Create a |NSTextField| with label traits given |width|. Frame height is
 // automatically adjusted to fit.
@@ -47,16 +47,18 @@ const int kExcessButtonPadding = 6;
 - (void)reportResult:(content::DesktopMediaID)sourceID;
 
 // Action handlers.
-- (void)okPressed:(id)sender;
+- (void)sharePressed:(id)sender;
 - (void)cancelPressed:(id)sender;
 
 @end
 
 @implementation DesktopMediaPickerController
 
-- (id)initWithModel:(scoped_ptr<DesktopMediaPickerModel>)model
-           callback:(const DesktopMediaPicker::DoneCallback&)callback
-            appName:(const string16&)appName {
+- (id)initWithMediaList:(scoped_ptr<DesktopMediaList>)media_list
+                 parent:(NSWindow*)parent
+               callback:(const DesktopMediaPicker::DoneCallback&)callback
+                appName:(const base::string16&)appName
+             targetName:(const base::string16&)targetName {
   const NSUInteger kStyleMask =
       NSTitledWindowMask | NSClosableWindowMask | NSResizableWindowMask;
   base::scoped_nsobject<NSWindow> window(
@@ -66,10 +68,11 @@ const int kExcessButtonPadding = 6;
                                       defer:NO]);
 
   if ((self = [super initWithWindow:window])) {
+    [parent addChildWindow:window ordered:NSWindowAbove];
     [window setDelegate:self];
-    [self initializeContentsWithAppName:appName];
-    model_ = model.Pass();
-    model_->SetViewDialogWindowId([window windowNumber]);
+    [self initializeContentsWithAppName:appName targetName:targetName];
+    media_list_ = media_list.Pass();
+    media_list_->SetViewDialogWindowId([window windowNumber]);
     doneCallback_ = callback;
     items_.reset([[NSMutableArray alloc] init]);
     bridge_.reset(new DesktopMediaPickerBridge(self));
@@ -83,7 +86,8 @@ const int kExcessButtonPadding = 6;
   [super dealloc];
 }
 
-- (void)initializeContentsWithAppName:(const string16&)appName {
+- (void)initializeContentsWithAppName:(const base::string16&)appName
+                           targetName:(const base::string16&)targetName {
   // Use flipped coordinates to facilitate manual layout.
   const CGFloat kPaddedWidth = kInitialContentWidth - (kFramePadding * 2);
   base::scoped_nsobject<FlippedView> content(
@@ -97,8 +101,14 @@ const int kExcessButtonPadding = 6;
   [[self window] setTitle:titleText];
 
   // Set the dialog's description.
-  NSString* descriptionText = l10n_util::GetNSStringF(
-      IDS_DESKTOP_MEDIA_PICKER_TEXT, appName);
+  NSString* descriptionText;
+  if (appName == targetName) {
+    descriptionText = l10n_util::GetNSStringF(
+        IDS_DESKTOP_MEDIA_PICKER_TEXT, appName);
+  } else {
+    descriptionText = l10n_util::GetNSStringF(
+        IDS_DESKTOP_MEDIA_PICKER_TEXT_DELEGATED, appName, targetName);
+  }
   NSTextField* description = [self createTextFieldWithText:descriptionText
                                                 frameWidth:kPaddedWidth];
   [description setFrameOrigin:origin];
@@ -126,29 +136,30 @@ const int kExcessButtonPadding = 6;
   [content addSubview:imageBrowserScroll];
   origin.y += NSHeight(imageBrowserScrollFrame) + kControlSpacing;
 
+  // Create the share button.
+  shareButton_ = [self createButtonWithTitle:l10n_util::GetNSString(
+      IDS_DESKTOP_MEDIA_PICKER_SHARE)];
+  origin.x = kInitialContentWidth - kFramePadding -
+      (NSWidth([shareButton_ frame]) - kExcessButtonPadding);
+  [shareButton_ setEnabled:NO];
+  [shareButton_ setFrameOrigin:origin];
+  [shareButton_ setAutoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
+  [shareButton_ setTarget:self];
+  [shareButton_ setAction:@selector(sharePressed:)];
+  [content addSubview:shareButton_];
+
   // Create the cancel button.
   cancelButton_ =
       [self createButtonWithTitle:l10n_util::GetNSString(IDS_CANCEL)];
-  origin.x = kInitialContentWidth - kFramePadding -
-      (NSWidth([cancelButton_ frame]) - kExcessButtonPadding);
+  origin.x -= kControlSpacing +
+      (NSWidth([cancelButton_ frame]) - (kExcessButtonPadding * 2));
   [cancelButton_ setFrameOrigin:origin];
   [cancelButton_ setAutoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
   [cancelButton_ setTarget:self];
   [cancelButton_ setAction:@selector(cancelPressed:)];
   [content addSubview:cancelButton_];
-
-  // Create the OK button.
-  okButton_ = [self createButtonWithTitle:l10n_util::GetNSString(IDS_OK)];
-  origin.x -= kControlSpacing +
-      (NSWidth([okButton_ frame]) - (kExcessButtonPadding * 2));
-  [okButton_ setEnabled:NO];
-  [okButton_ setFrameOrigin:origin];
-  [okButton_ setAutoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
-  [okButton_ setTarget:self];
-  [okButton_ setAction:@selector(okPressed:)];
-  [content addSubview:okButton_];
   origin.y += kFramePadding +
-      (NSHeight([okButton_ frame]) - kExcessButtonPadding);
+      (NSHeight([cancelButton_ frame]) - kExcessButtonPadding);
 
   // Resize window to fit.
   [[[self window] contentView] setAutoresizesSubviews:NO];
@@ -159,10 +170,10 @@ const int kExcessButtonPadding = 6;
 }
 
 - (void)showWindow:(id)sender {
-  // Signal the model to start sending thumbnails. |bridge_| is used as the
+  // Signal the media_list to start sending thumbnails. |bridge_| is used as the
   // observer, and will forward notifications to this object.
-  model_->SetThumbnailSize(gfx::Size(kThumbnailWidth, kThumbnailHeight));
-  model_->StartUpdating(bridge_.get());
+  media_list_->SetThumbnailSize(gfx::Size(kThumbnailWidth, kThumbnailHeight));
+  media_list_->StartUpdating(bridge_.get());
 
   [self.window center];
   [super showWindow:sender];
@@ -181,7 +192,7 @@ const int kExcessButtonPadding = 6;
   doneCallback_.Reset();
 }
 
-- (void)okPressed:(id)sender {
+- (void)sharePressed:(id)sender {
   NSIndexSet* indexes = [sourceBrowser_ selectionIndexes];
   NSUInteger selectedIndex = [indexes firstIndex];
   DesktopMediaPickerItem* item =
@@ -227,6 +238,10 @@ const int kExcessButtonPadding = 6;
   // Report the result if it hasn't been reported yet. |reportResult:| ensures
   // that the result is only reported once.
   [self reportResult:content::DesktopMediaID()];
+
+  // Remove self from the parent.
+  NSWindow* window = [self window];
+  [[window parentWindow] removeChildWindow:window];
 }
 
 #pragma mark IKImageBrowserDataSource
@@ -251,13 +266,13 @@ const int kExcessButtonPadding = 6;
 
 - (void)imageBrowserSelectionDidChange:(IKImageBrowserView*) aBrowser {
   // Enable or disable the OK button based on whether we have a selection.
-  [okButton_ setEnabled:([[sourceBrowser_ selectionIndexes] count] > 0)];
+  [shareButton_ setEnabled:([[sourceBrowser_ selectionIndexes] count] > 0)];
 }
 
 #pragma mark DesktopMediaPickerObserver
 
 - (void)sourceAddedAtIndex:(int)index {
-  const DesktopMediaPickerModel::Source& source = model_->source(index);
+  const DesktopMediaList::Source& source = media_list_->GetSource(index);
   NSString* imageTitle = base::SysUTF16ToNSString(source.name);
   base::scoped_nsobject<DesktopMediaPickerItem> item(
       [[DesktopMediaPickerItem alloc] initWithSourceId:source.id
@@ -277,15 +292,23 @@ const int kExcessButtonPadding = 6;
   [sourceBrowser_ reloadData];
 }
 
+- (void)sourceMovedFrom:(int)oldIndex to:(int)newIndex {
+  base::scoped_nsobject<DesktopMediaPickerItem> item(
+      [[items_ objectAtIndex:oldIndex] retain]);
+  [items_ removeObjectAtIndex:oldIndex];
+  [items_ insertObject:item atIndex:newIndex];
+  [sourceBrowser_ reloadData];
+}
+
 - (void)sourceNameChangedAtIndex:(int)index {
   DesktopMediaPickerItem* item = [items_ objectAtIndex:index];
-  const DesktopMediaPickerModel::Source& source = model_->source(index);
+  const DesktopMediaList::Source& source = media_list_->GetSource(index);
   [item setImageTitle:base::SysUTF16ToNSString(source.name)];
   [sourceBrowser_ reloadData];
 }
 
 - (void)sourceThumbnailChangedAtIndex:(int)index {
-  const DesktopMediaPickerModel::Source& source = model_->source(index);
+  const DesktopMediaList::Source& source = media_list_->GetSource(index);
   NSImage* image = gfx::NSImageFromImageSkia(source.thumbnail);
 
   DesktopMediaPickerItem* item = [items_ objectAtIndex:index];

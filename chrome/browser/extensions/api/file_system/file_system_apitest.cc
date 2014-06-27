@@ -9,10 +9,11 @@
 #include "chrome/browser/apps/app_browsertest_util.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/file_system/file_system_api.h"
-#include "chrome/browser/extensions/extension_prefs.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_paths.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_service.h"
+#include "extensions/browser/extension_prefs.h"
 
 namespace extensions {
 
@@ -56,13 +57,7 @@ void AddSavedEntry(const base::FilePath& path_to_save,
       extension->id(), "magic id", path_to_save, is_directory);
 }
 
-#if defined(OS_WIN) || defined(OS_POSIX)
-#if defined(OS_WIN)
-  const int kGraylistedPath = base::DIR_PROFILE;
-#elif defined(OS_POSIX)
-  const int kGraylistedPath = base::DIR_HOME;
-#endif
-#endif
+const int kGraylistedPath = base::DIR_HOME;
 
 }  // namespace
 
@@ -156,12 +151,7 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTest, FileSystemApiGetDisplayPath) {
 
 #if defined(OS_WIN) || defined(OS_POSIX)
 IN_PROC_BROWSER_TEST_F(FileSystemApiTest, FileSystemApiGetDisplayPathPrettify) {
-#if defined(OS_WIN)
-  int override = base::DIR_PROFILE;
-#elif defined(OS_POSIX)
-  int override = base::DIR_HOME;
-#endif
-  ASSERT_TRUE(PathService::OverrideAndCreateIfNeeded(override,
+  ASSERT_TRUE(PathService::OverrideAndCreateIfNeeded(base::DIR_HOME,
       test_root_folder_, false));
 
   base::FilePath test_file = test_root_folder_.AppendASCII("gold.txt");
@@ -177,7 +167,7 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTest,
     FileSystemApiGetDisplayPathPrettifyMac) {
   // On Mac, "test.localized" will be localized into just "test".
   base::FilePath test_path = TempFilePath("test.localized", false);
-  ASSERT_TRUE(file_util::CreateDirectory(test_path));
+  ASSERT_TRUE(base::CreateDirectory(test_path));
 
   base::FilePath test_file = test_path.AppendASCII("gold.txt");
   base::FilePath source = test_root_folder_.AppendASCII("gold.txt");
@@ -550,6 +540,16 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTest,
       &test_file);
   ASSERT_TRUE(RunPlatformAppTest(
       "api_test/file_system/get_writable_file_entry_with_write")) << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(FileSystemApiTest,
+                       FileSystemApiGetWritableRootEntryTest) {
+  base::FilePath test_file = TempFilePath("writable.txt", true);
+  ASSERT_FALSE(test_file.empty());
+  FileSystemChooseEntryFunction::SkipPickerAndAlwaysSelectPathForTest(
+      &test_file);
+  ASSERT_TRUE(RunPlatformAppTest(
+      "api_test/file_system/get_writable_root_entry")) << message_;
 }
 
 IN_PROC_BROWSER_TEST_F(FileSystemApiTest, FileSystemApiIsWritableTest) {

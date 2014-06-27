@@ -23,13 +23,14 @@ class RendererResource : public Resource {
   virtual ~RendererResource();
 
   // Resource methods:
+  virtual base::string16 GetProfileName() const OVERRIDE;
   virtual base::ProcessHandle GetProcess() const OVERRIDE;
   virtual int GetUniqueChildProcessId() const OVERRIDE;
   virtual Type GetType() const OVERRIDE;
   virtual int GetRoutingID() const OVERRIDE;
 
   virtual bool ReportsCacheStats() const OVERRIDE;
-  virtual WebKit::WebCache::ResourceTypeStats GetWebCoreCacheStats() const
+  virtual blink::WebCache::ResourceTypeStats GetWebCoreCacheStats() const
       OVERRIDE;
   virtual bool ReportsFPS() const OVERRIDE;
   virtual float GetFPS() const OVERRIDE;
@@ -48,7 +49,7 @@ class RendererResource : public Resource {
   virtual void Refresh() OVERRIDE;
 
   virtual void NotifyResourceTypeStats(
-      const WebKit::WebCache::ResourceTypeStats& stats) OVERRIDE;
+      const blink::WebCache::ResourceTypeStats& stats) OVERRIDE;
 
   virtual void NotifyFPS(float fps) OVERRIDE;
 
@@ -68,7 +69,7 @@ class RendererResource : public Resource {
   content::RenderViewHost* render_view_host_;
   // The stats_ field holds information about resource usage in the renderer
   // process and so it is updated asynchronously by the Refresh() call.
-  WebKit::WebCache::ResourceTypeStats stats_;
+  blink::WebCache::ResourceTypeStats stats_;
   // This flag is true if we are waiting for the renderer to report its stats.
   bool pending_stats_update_;
 

@@ -13,11 +13,6 @@
 
 namespace content {
 
-typedef AccessibilityNodeData::BoolAttribute BoolAttribute;
-typedef AccessibilityNodeData::FloatAttribute FloatAttribute;
-typedef AccessibilityNodeData::IntAttribute IntAttribute;
-typedef AccessibilityNodeData::StringAttribute StringAttribute;
-
 #if !defined(OS_MACOSX) && \
     !defined(OS_WIN) && \
     !defined(TOOLKIT_GTK) && \
@@ -43,10 +38,33 @@ BrowserAccessibility::BrowserAccessibility()
 BrowserAccessibility::~BrowserAccessibility() {
 }
 
+bool BrowserAccessibility::PlatformIsLeaf() const {
+  if (child_count() == 0)
+    return true;
+
+  // All of these roles may have children that we use as internal
+  // implementation details, but we want to expose them as leaves
+  // to platform accessibility APIs.
+  switch (role_) {
+    case ui::AX_ROLE_EDITABLE_TEXT:
+    case ui::AX_ROLE_SLIDER:
+    case ui::AX_ROLE_STATIC_TEXT:
+    case ui::AX_ROLE_TEXT_AREA:
+    case ui::AX_ROLE_TEXT_FIELD:
+      return true;
+    default:
+      return false;
+  }
+}
+
+uint32 BrowserAccessibility::PlatformChildCount() const {
+  return PlatformIsLeaf() ? 0 : children_.size();
+}
+
 void BrowserAccessibility::DetachTree(
     std::vector<BrowserAccessibility*>* nodes) {
   nodes->push_back(this);
-  for (size_t i = 0; i < children_.size(); i++)
+  for (size_t i = 0; i < children_.size(); ++i)
     children_[i]->DetachTree(nodes);
   children_.clear();
   parent_ = NULL;
@@ -63,7 +81,7 @@ void BrowserAccessibility::InitializeTreeStructure(
   index_in_parent_ = index_in_parent;
 }
 
-void BrowserAccessibility::InitializeData(const AccessibilityNodeData& src) {
+void BrowserAccessibility::InitializeData(const ui::AXNodeData& src) {
   DCHECK_EQ(renderer_id_, src.id);
   role_ = src.role;
   state_ = src.state;
@@ -76,8 +94,8 @@ void BrowserAccessibility::InitializeData(const AccessibilityNodeData& src) {
   location_ = src.location;
   instance_active_ = true;
 
-  GetStringAttribute(AccessibilityNodeData::ATTR_NAME, &name_);
-  GetStringAttribute(AccessibilityNodeData::ATTR_VALUE, &value_);
+  GetStringAttribute(ui::AX_ATTR_NAME, &name_);
+  GetStringAttribute(ui::AX_ATTR_VALUE, &value_);
 
   PreInitialize();
 }
@@ -112,7 +130,8 @@ bool BrowserAccessibility::IsDescendantOf(
   return false;
 }
 
-BrowserAccessibility* BrowserAccessibility::GetChild(uint32 child_index) const {
+BrowserAccessibility* BrowserAccessibility::PlatformGetChild(
+    uint32 child_index) const {
   DCHECK(child_index < children_.size());
   return children_[child_index];
 }
@@ -142,8 +161,8 @@ gfx::Rect BrowserAccessibility::GetLocalBoundsRect() const {
   // nested web area.
   BrowserAccessibility* parent = parent_;
   bool need_to_offset_web_area =
-      (role_ == WebKit::WebAXRoleWebArea ||
-       role_ == WebKit::WebAXRoleRootWebArea);
+      (role_ == ui::AX_ROLE_WEB_AREA ||
+       role_ == ui::AX_ROLE_ROOT_WEB_AREA);
   while (parent) {
     if (need_to_offset_web_area &&
         parent->location().width() > 0 &&
@@ -154,17 +173,17 @@ gfx::Rect BrowserAccessibility::GetLocalBoundsRect() const {
 
     // On some platforms, we don't want to take the root scroll offsets
     // into account.
-    if (parent->role() == WebKit::WebAXRoleRootWebArea &&
+    if (parent->role() == ui::AX_ROLE_ROOT_WEB_AREA &&
         !manager()->UseRootScrollOffsetsWhenComputingBounds()) {
       break;
     }
 
-    if (parent->role() == WebKit::WebAXRoleWebArea ||
-        parent->role() == WebKit::WebAXRoleRootWebArea) {
+    if (parent->role() == ui::AX_ROLE_WEB_AREA ||
+        parent->role() == ui::AX_ROLE_ROOT_WEB_AREA) {
       int sx = 0;
       int sy = 0;
-      if (parent->GetIntAttribute(AccessibilityNodeData::ATTR_SCROLL_X, &sx) &&
-          parent->GetIntAttribute(AccessibilityNodeData::ATTR_SCROLL_Y, &sy)) {
+      if (parent->GetIntAttribute(ui::AX_ATTR_SCROLL_X, &sx) &&
+          parent->GetIntAttribute(ui::AX_ATTR_SCROLL_Y, &sy)) {
         bounds.Offset(-sx, -sy);
       }
       need_to_offset_web_area = true;
@@ -185,15 +204,156 @@ gfx::Rect BrowserAccessibility::GetGlobalBoundsRect() const {
   return bounds;
 }
 
+gfx::Rect BrowserAccessibility::GetLocalBoundsForRange(int start, int len)
+    const {
+  if (role() != ui::AX_ROLE_STATIC_TEXT) {
+    // Apply recursively to all static text descendants. For example, if
+    // you call it on a div with two text node children, it just calls
+    // GetLocalBoundsForRange on each of the two children (adjusting
+    // |start| for each one) and unions the resulting rects.
+    gfx::Rect bounds;
+    for (size_t i = 0; i < children_.size(); ++i) {
+      BrowserAccessibility* child = children_[i];
+      int child_len = child->GetStaticTextLenRecursive();
+      if (start < child_len && start + len > 0) {
+        gfx::Rect child_rect = child->GetLocalBoundsForRange(start, len);
+        bounds.Union(child_rect);
+      }
+      start -= child_len;
+    }
+    return bounds;
+  }
+
+  int end = start + len;
+  int child_start = 0;
+  int child_end = 0;
+
+  gfx::Rect bounds;
+  for (size_t i = 0; i < children_.size() && child_end < start + len; ++i) {
+    BrowserAccessibility* child = children_[i];
+    DCHECK_EQ(child->role(), ui::AX_ROLE_INLINE_TEXT_BOX);
+    std::string child_text;
+    child->GetStringAttribute(ui::AX_ATTR_VALUE, &child_text);
+    int child_len = static_cast<int>(child_text.size());
+    child_start = child_end;
+    child_end += child_len;
+
+    if (child_end < start)
+      continue;
+
+    int overlap_start = std::max(start, child_start);
+    int overlap_end = std::min(end, child_end);
+
+    int local_start = overlap_start - child_start;
+    int local_end = overlap_end - child_start;
+
+    gfx::Rect child_rect = child->location();
+    int text_direction = child->GetIntAttribute(
+        ui::AX_ATTR_TEXT_DIRECTION);
+    const std::vector<int32>& character_offsets = child->GetIntListAttribute(
+        ui::AX_ATTR_CHARACTER_OFFSETS);
+    int start_pixel_offset =
+        local_start > 0 ? character_offsets[local_start - 1] : 0;
+    int end_pixel_offset =
+        local_end > 0 ? character_offsets[local_end - 1] : 0;
+
+    gfx::Rect child_overlap_rect;
+    switch (text_direction) {
+      case ui::AX_TEXT_DIRECTION_NONE:
+      case ui::AX_TEXT_DIRECTION_LR: {
+        int left = child_rect.x() + start_pixel_offset;
+        int right = child_rect.x() + end_pixel_offset;
+        child_overlap_rect = gfx::Rect(left, child_rect.y(),
+                                       right - left, child_rect.height());
+        break;
+      }
+      case ui::AX_TEXT_DIRECTION_RL: {
+        int right = child_rect.right() - start_pixel_offset;
+        int left = child_rect.right() - end_pixel_offset;
+        child_overlap_rect = gfx::Rect(left, child_rect.y(),
+                                       right - left, child_rect.height());
+        break;
+      }
+      case ui::AX_TEXT_DIRECTION_TB: {
+        int top = child_rect.y() + start_pixel_offset;
+        int bottom = child_rect.y() + end_pixel_offset;
+        child_overlap_rect = gfx::Rect(child_rect.x(), top,
+                                       child_rect.width(), bottom - top);
+        break;
+      }
+      case ui::AX_TEXT_DIRECTION_BT: {
+        int bottom = child_rect.bottom() - start_pixel_offset;
+        int top = child_rect.bottom() - end_pixel_offset;
+        child_overlap_rect = gfx::Rect(child_rect.x(), top,
+                                       child_rect.width(), bottom - top);
+        break;
+      }
+      default:
+        NOTREACHED();
+    }
+
+    if (bounds.width() == 0 && bounds.height() == 0)
+      bounds = child_overlap_rect;
+    else
+      bounds.Union(child_overlap_rect);
+  }
+
+  return bounds;
+}
+
+gfx::Rect BrowserAccessibility::GetGlobalBoundsForRange(int start, int len)
+    const {
+  gfx::Rect bounds = GetLocalBoundsForRange(start, len);
+
+  // Adjust the bounds by the top left corner of the containing view's bounds
+  // in screen coordinates.
+  bounds.Offset(manager_->GetViewBounds().OffsetFromOrigin());
+
+  return bounds;
+}
+
 BrowserAccessibility* BrowserAccessibility::BrowserAccessibilityForPoint(
     const gfx::Point& point) {
+  // The best result found that's a child of this object.
+  BrowserAccessibility* child_result = NULL;
+  // The best result that's an indirect descendant like grandchild, etc.
+  BrowserAccessibility* descendant_result = NULL;
+
   // Walk the children recursively looking for the BrowserAccessibility that
-  // most tightly encloses the specified point.
-  for (int i = children_.size() - 1; i >= 0; --i) {
-    BrowserAccessibility* child = children_[i];
-    if (child->GetGlobalBoundsRect().Contains(point))
-      return child->BrowserAccessibilityForPoint(point);
+  // most tightly encloses the specified point. Walk backwards so that in
+  // the absence of any other information, we assume the object that occurs
+  // later in the tree is on top of one that comes before it.
+  for (int i = static_cast<int>(PlatformChildCount()) - 1; i >= 0; --i) {
+    BrowserAccessibility* child = PlatformGetChild(i);
+
+    // Skip table columns because cells are only contained in rows,
+    // not columns.
+    if (child->role() == ui::AX_ROLE_COLUMN)
+      continue;
+
+    if (child->GetGlobalBoundsRect().Contains(point)) {
+      BrowserAccessibility* result = child->BrowserAccessibilityForPoint(point);
+      if (result == child && !child_result)
+        child_result = result;
+      if (result != child && !descendant_result)
+        descendant_result = result;
+    }
+
+    if (child_result && descendant_result)
+      break;
   }
+
+  // Explanation of logic: it's possible that this point overlaps more than
+  // one child of this object. If so, as a heuristic we prefer if the point
+  // overlaps a descendant of one of the two children and not the other.
+  // As an example, suppose you have two rows of buttons - the buttons don't
+  // overlap, but the rows do. Without this heuristic, we'd greedily only
+  // consider one of the containers.
+  if (descendant_result)
+    return descendant_result;
+  if (child_result)
+    return child_result;
+
   return this;
 }
 
@@ -210,8 +370,7 @@ void BrowserAccessibility::Destroy() {
   value_.clear();
   PostInitialize();
 
-  manager_->NotifyAccessibilityEvent(
-      WebKit::WebAXEventHide, this);
+  manager_->NotifyAccessibilityEvent(ui::AX_EVENT_HIDE, this);
 
   instance_active_ = false;
   manager_->RemoveNode(this);
@@ -222,7 +381,8 @@ void BrowserAccessibility::NativeReleaseReference() {
   delete this;
 }
 
-bool BrowserAccessibility::HasBoolAttribute(BoolAttribute attribute) const {
+bool BrowserAccessibility::HasBoolAttribute(
+    ui::AXBoolAttribute attribute) const {
   for (size_t i = 0; i < bool_attributes_.size(); ++i) {
     if (bool_attributes_[i].first == attribute)
       return true;
@@ -232,7 +392,8 @@ bool BrowserAccessibility::HasBoolAttribute(BoolAttribute attribute) const {
 }
 
 
-bool BrowserAccessibility::GetBoolAttribute(BoolAttribute attribute) const {
+bool BrowserAccessibility::GetBoolAttribute(
+    ui::AXBoolAttribute attribute) const {
   for (size_t i = 0; i < bool_attributes_.size(); ++i) {
     if (bool_attributes_[i].first == attribute)
       return bool_attributes_[i].second;
@@ -242,7 +403,7 @@ bool BrowserAccessibility::GetBoolAttribute(BoolAttribute attribute) const {
 }
 
 bool BrowserAccessibility::GetBoolAttribute(
-    BoolAttribute attribute, bool* value) const {
+    ui::AXBoolAttribute attribute, bool* value) const {
   for (size_t i = 0; i < bool_attributes_.size(); ++i) {
     if (bool_attributes_[i].first == attribute) {
       *value = bool_attributes_[i].second;
@@ -253,7 +414,8 @@ bool BrowserAccessibility::GetBoolAttribute(
   return false;
 }
 
-bool BrowserAccessibility::HasFloatAttribute(FloatAttribute attribute) const {
+bool BrowserAccessibility::HasFloatAttribute(
+    ui::AXFloatAttribute attribute) const {
   for (size_t i = 0; i < float_attributes_.size(); ++i) {
     if (float_attributes_[i].first == attribute)
       return true;
@@ -262,7 +424,8 @@ bool BrowserAccessibility::HasFloatAttribute(FloatAttribute attribute) const {
   return false;
 }
 
-float BrowserAccessibility::GetFloatAttribute(FloatAttribute attribute) const {
+float BrowserAccessibility::GetFloatAttribute(
+    ui::AXFloatAttribute attribute) const {
   for (size_t i = 0; i < float_attributes_.size(); ++i) {
     if (float_attributes_[i].first == attribute)
       return float_attributes_[i].second;
@@ -272,7 +435,7 @@ float BrowserAccessibility::GetFloatAttribute(FloatAttribute attribute) const {
 }
 
 bool BrowserAccessibility::GetFloatAttribute(
-    FloatAttribute attribute, float* value) const {
+    ui::AXFloatAttribute attribute, float* value) const {
   for (size_t i = 0; i < float_attributes_.size(); ++i) {
     if (float_attributes_[i].first == attribute) {
       *value = float_attributes_[i].second;
@@ -283,7 +446,8 @@ bool BrowserAccessibility::GetFloatAttribute(
   return false;
 }
 
-bool BrowserAccessibility::HasIntAttribute(IntAttribute attribute) const {
+bool BrowserAccessibility::HasIntAttribute(
+    ui::AXIntAttribute attribute) const {
   for (size_t i = 0; i < int_attributes_.size(); ++i) {
     if (int_attributes_[i].first == attribute)
       return true;
@@ -292,7 +456,7 @@ bool BrowserAccessibility::HasIntAttribute(IntAttribute attribute) const {
   return false;
 }
 
-int BrowserAccessibility::GetIntAttribute(IntAttribute attribute) const {
+int BrowserAccessibility::GetIntAttribute(ui::AXIntAttribute attribute) const {
   for (size_t i = 0; i < int_attributes_.size(); ++i) {
     if (int_attributes_[i].first == attribute)
       return int_attributes_[i].second;
@@ -302,7 +466,7 @@ int BrowserAccessibility::GetIntAttribute(IntAttribute attribute) const {
 }
 
 bool BrowserAccessibility::GetIntAttribute(
-    IntAttribute attribute, int* value) const {
+    ui::AXIntAttribute attribute, int* value) const {
   for (size_t i = 0; i < int_attributes_.size(); ++i) {
     if (int_attributes_[i].first == attribute) {
       *value = int_attributes_[i].second;
@@ -313,7 +477,8 @@ bool BrowserAccessibility::GetIntAttribute(
   return false;
 }
 
-bool BrowserAccessibility::HasStringAttribute(StringAttribute attribute) const {
+bool BrowserAccessibility::HasStringAttribute(
+    ui::AXStringAttribute attribute) const {
   for (size_t i = 0; i < string_attributes_.size(); ++i) {
     if (string_attributes_[i].first == attribute)
       return true;
@@ -323,7 +488,7 @@ bool BrowserAccessibility::HasStringAttribute(StringAttribute attribute) const {
 }
 
 const std::string& BrowserAccessibility::GetStringAttribute(
-    StringAttribute attribute) const {
+    ui::AXStringAttribute attribute) const {
   CR_DEFINE_STATIC_LOCAL(std::string, empty_string, ());
   for (size_t i = 0; i < string_attributes_.size(); ++i) {
     if (string_attributes_[i].first == attribute)
@@ -334,7 +499,7 @@ const std::string& BrowserAccessibility::GetStringAttribute(
 }
 
 bool BrowserAccessibility::GetStringAttribute(
-    StringAttribute attribute, std::string* value) const {
+    ui::AXStringAttribute attribute, std::string* value) const {
   for (size_t i = 0; i < string_attributes_.size(); ++i) {
     if (string_attributes_[i].first == attribute) {
       *value = string_attributes_[i].second;
@@ -345,26 +510,26 @@ bool BrowserAccessibility::GetStringAttribute(
   return false;
 }
 
-string16 BrowserAccessibility::GetString16Attribute(
-    StringAttribute attribute) const {
+base::string16 BrowserAccessibility::GetString16Attribute(
+    ui::AXStringAttribute attribute) const {
   std::string value_utf8;
   if (!GetStringAttribute(attribute, &value_utf8))
-    return string16();
-  return UTF8ToUTF16(value_utf8);
+    return base::string16();
+  return base::UTF8ToUTF16(value_utf8);
 }
 
 bool BrowserAccessibility::GetString16Attribute(
-    StringAttribute attribute,
-    string16* value) const {
+    ui::AXStringAttribute attribute,
+    base::string16* value) const {
   std::string value_utf8;
   if (!GetStringAttribute(attribute, &value_utf8))
     return false;
-  *value = UTF8ToUTF16(value_utf8);
+  *value = base::UTF8ToUTF16(value_utf8);
   return true;
 }
 
 void BrowserAccessibility::SetStringAttribute(
-    StringAttribute attribute, const std::string& value) {
+    ui::AXStringAttribute attribute, const std::string& value) {
   for (size_t i = 0; i < string_attributes_.size(); ++i) {
     if (string_attributes_[i].first == attribute) {
       string_attributes_[i].second = value;
@@ -376,7 +541,7 @@ void BrowserAccessibility::SetStringAttribute(
 }
 
 bool BrowserAccessibility::HasIntListAttribute(
-    AccessibilityNodeData::IntListAttribute attribute) const {
+    ui::AXIntListAttribute attribute) const {
   for (size_t i = 0; i < intlist_attributes_.size(); ++i) {
     if (intlist_attributes_[i].first == attribute)
       return true;
@@ -386,7 +551,7 @@ bool BrowserAccessibility::HasIntListAttribute(
 }
 
 const std::vector<int32>& BrowserAccessibility::GetIntListAttribute(
-    AccessibilityNodeData::IntListAttribute attribute) const {
+    ui::AXIntListAttribute attribute) const {
   CR_DEFINE_STATIC_LOCAL(std::vector<int32>, empty_vector, ());
   for (size_t i = 0; i < intlist_attributes_.size(); ++i) {
     if (intlist_attributes_[i].first == attribute)
@@ -397,7 +562,7 @@ const std::vector<int32>& BrowserAccessibility::GetIntListAttribute(
 }
 
 bool BrowserAccessibility::GetIntListAttribute(
-    AccessibilityNodeData::IntListAttribute attribute,
+    ui::AXIntListAttribute attribute,
     std::vector<int32>* value) const {
   for (size_t i = 0; i < intlist_attributes_.size(); ++i) {
     if (intlist_attributes_[i].first == attribute) {
@@ -411,7 +576,7 @@ bool BrowserAccessibility::GetIntListAttribute(
 
 bool BrowserAccessibility::GetHtmlAttribute(
     const char* html_attr, std::string* value) const {
-  for (size_t i = 0; i < html_attributes_.size(); i++) {
+  for (size_t i = 0; i < html_attributes_.size(); ++i) {
     const std::string& attr = html_attributes_[i].first;
     if (LowerCaseEqualsASCII(attr, html_attr)) {
       *value = html_attributes_[i].second;
@@ -423,11 +588,11 @@ bool BrowserAccessibility::GetHtmlAttribute(
 }
 
 bool BrowserAccessibility::GetHtmlAttribute(
-    const char* html_attr, string16* value) const {
+    const char* html_attr, base::string16* value) const {
   std::string value_utf8;
   if (!GetHtmlAttribute(html_attr, &value_utf8))
     return false;
-  *value = UTF8ToUTF16(value_utf8);
+  *value = base::UTF8ToUTF16(value_utf8);
   return true;
 }
 
@@ -438,7 +603,7 @@ bool BrowserAccessibility::GetAriaTristate(
   *is_defined = false;
   *is_mixed = false;
 
-  string16 value;
+  base::string16 value;
   if (!GetHtmlAttribute(html_attr, &value) ||
       value.empty() ||
       EqualsASCII(value, "undefined")) {
@@ -456,24 +621,24 @@ bool BrowserAccessibility::GetAriaTristate(
   return false;  // Not set
 }
 
-bool BrowserAccessibility::HasState(WebKit::WebAXState state_enum) const {
+bool BrowserAccessibility::HasState(ui::AXState state_enum) const {
   return (state_ >> state_enum) & 1;
 }
 
 bool BrowserAccessibility::IsEditableText() const {
   // These roles don't have readonly set, but they're not editable text.
-  if (role_ == WebKit::WebAXRoleScrollArea ||
-      role_ == WebKit::WebAXRoleColumn ||
-      role_ == WebKit::WebAXRoleTableHeaderContainer) {
+  if (role_ == ui::AX_ROLE_SCROLL_AREA ||
+      role_ == ui::AX_ROLE_COLUMN ||
+      role_ == ui::AX_ROLE_TABLE_HEADER_CONTAINER) {
     return false;
   }
 
   // Note: WebAXStateReadonly being false means it's either a text control,
   // or contenteditable. We also check for editable text roles to cover
   // another element that has role=textbox set on it.
-  return (!HasState(WebKit::WebAXStateReadonly) ||
-          role_ == WebKit::WebAXRoleTextField ||
-          role_ == WebKit::WebAXRoleTextArea);
+  return (!HasState(ui::AX_STATE_READ_ONLY) ||
+          role_ == ui::AX_ROLE_TEXT_FIELD ||
+          role_ == ui::AX_ROLE_TEXT_AREA);
 }
 
 std::string BrowserAccessibility::GetTextRecursive() const {
@@ -482,9 +647,19 @@ std::string BrowserAccessibility::GetTextRecursive() const {
   }
 
   std::string result;
-  for (size_t i = 0; i < children_.size(); ++i)
-    result += children_[i]->GetTextRecursive();
+  for (uint32 i = 0; i < PlatformChildCount(); ++i)
+    result += PlatformGetChild(i)->GetTextRecursive();
   return result;
+}
+
+int BrowserAccessibility::GetStaticTextLenRecursive() const {
+  if (role_ == ui::AX_ROLE_STATIC_TEXT)
+    return static_cast<int>(GetStringAttribute(ui::AX_ATTR_VALUE).size());
+
+  int len = 0;
+  for (size_t i = 0; i < children_.size(); ++i)
+    len += children_[i]->GetStaticTextLenRecursive();
+  return len;
 }
 
 }  // namespace content

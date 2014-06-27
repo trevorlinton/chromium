@@ -359,7 +359,7 @@ static void MaybeDumpProfileLocked() {
     } else if (FLAGS_heap_profile_time_interval > 0 &&
                current_time - last_dump_time >=
                FLAGS_heap_profile_time_interval) {
-      snprintf(buf, sizeof(buf), "%d sec since the last dump",
+      snprintf(buf, sizeof(buf), "%" PRId64 " sec since the last dump",
                current_time - last_dump_time);
       need_to_dump = true;
       last_dump_time = current_time;
@@ -671,7 +671,7 @@ static void HeapProfilerInit() {
     return;
   }
   // We do a uid check so we don't write out files in a setuid executable.
-#if !defined(__ANDROID__) && defined(HAVE_GETEUID)
+#ifdef HAVE_GETEUID
   if (getuid() != geteuid()) {
     RAW_LOG(WARNING, ("HeapProfiler: ignoring " HEAPPROFILE " because "
                       "program seems to be setuid\n"));

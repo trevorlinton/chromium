@@ -3,14 +3,14 @@
 # found in the LICENSE file.
 
 """Thread and ThreadGroup that reraise exceptions on the main thread."""
+# pylint: disable=W0212
 
 import logging
 import sys
 import threading
-import time
 import traceback
 
-import watchdog_timer
+from pylib.utils import watchdog_timer
 
 
 class TimeoutError(Exception):
@@ -18,10 +18,27 @@ class TimeoutError(Exception):
   pass
 
 
+def LogThreadStack(thread):
+  """Log the stack for the given thread.
+
+  Args:
+    thread: a threading.Thread instance.
+  """
+  stack = sys._current_frames()[thread.ident]
+  logging.critical('*' * 80)
+  logging.critical('Stack dump for thread \'%s\'', thread.name)
+  logging.critical('*' * 80)
+  for filename, lineno, name, line in traceback.extract_stack(stack):
+    logging.critical('File: "%s", line %d, in %s', filename, lineno, name)
+    if line:
+      logging.critical('  %s', line.strip())
+  logging.critical('*' * 80)
+
+
 class ReraiserThread(threading.Thread):
   """Thread class that can reraise exceptions."""
 
-  def __init__(self, func, args=[], kwargs={}, name=None):
+  def __init__(self, func, args=None, kwargs=None, name=None):
     """Initialize thread.
 
     Args:
@@ -31,6 +48,10 @@ class ReraiserThread(threading.Thread):
       name: thread name, defaults to Thread-N.
     """
     super(ReraiserThread, self).__init__(name=name)
+    if not args:
+      args = []
+    if not kwargs:
+      kwargs = {}
     self.daemon = True
     self._func = func
     self._args = args
@@ -55,12 +76,14 @@ class ReraiserThread(threading.Thread):
 class ReraiserThreadGroup(object):
   """A group of ReraiserThread objects."""
 
-  def __init__(self, threads=[]):
+  def __init__(self, threads=None):
     """Initialize thread group.
 
     Args:
       threads: a list of ReraiserThread objects; defaults to empty.
     """
+    if not threads:
+      threads = []
     self._threads = threads
 
   def Add(self, thread):
@@ -113,13 +136,5 @@ class ReraiserThreadGroup(object):
       self._JoinAll(watcher)
     except TimeoutError:
       for thread in (t for t in self._threads if t.isAlive()):
-        stack = sys._current_frames()[thread.ident]
-        logging.critical('*' * 80)
-        logging.critical('Stack dump for timed out thread \'%s\'', thread.name)
-        logging.critical('*' * 80)
-        for filename, lineno, name, line in traceback.extract_stack(stack):
-          logging.critical('File: "%s", line %d, in %s', filename, lineno, name)
-          if line:
-            logging.critical('  %s', line.strip())
-        logging.critical('*' * 80)
+        LogThreadStack(thread)
       raise

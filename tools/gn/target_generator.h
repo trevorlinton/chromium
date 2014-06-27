@@ -15,9 +15,9 @@
 
 class BuildSettings;
 class Err;
+class FunctionCallNode;
 class Location;
 class Scope;
-class Token;
 class Value;
 
 // Fills the variables in a Target object from a Scope (the result of a script
@@ -28,16 +28,16 @@ class TargetGenerator {
  public:
   TargetGenerator(Target* target,
                   Scope* scope,
-                  const Token& function_token,
+                  const FunctionCallNode* function_call,
                   Err* err);
   ~TargetGenerator();
 
   void Run();
 
-  // The function token is the token of the function name of the generator for
-  // this target. err() will be set on failure.
+  // The function call is the parse tree node that invoked the target.
+  // err() will be set on failure.
   static void GenerateTarget(Scope* scope,
-                             const Token& function_token,
+                             const FunctionCallNode* function_call,
                              const std::vector<Value>& args,
                              const std::string& output_type,
                              Err* err);
@@ -51,23 +51,17 @@ class TargetGenerator {
   void FillSources();
   void FillSourcePrereqs();
   void FillConfigs();
-  void FillExternal();
   void FillOutputs();
-
-  // Sets the current toolchain as a dependecy of this target. All targets with
-  // a dependency on the toolchain should call this function.
-  void SetToolchainDependency();
 
   Target* target_;
   Scope* scope_;
-  const Token& function_token_;
+  const FunctionCallNode* function_call_;
   Err* err_;
 
  private:
   void FillDependentConfigs();  // Includes all types of dependent configs.
   void FillData();
   void FillDependencies();  // Includes data dependencies.
-  void FillGypFile();
   void FillHardDep();
 
   // Reads configs/deps from the given var name, and uses the given setting on

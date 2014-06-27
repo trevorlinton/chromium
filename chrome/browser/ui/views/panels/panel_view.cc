@@ -15,6 +15,7 @@
 #include "chrome/browser/ui/panels/panel_bounds_animation.h"
 #include "chrome/browser/ui/panels/panel_manager.h"
 #include "chrome/browser/ui/panels/stacked_panel_collection.h"
+#include "chrome/browser/ui/views/auto_keep_alive.h"
 #include "chrome/browser/ui/views/panels/panel_frame_view.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -276,16 +277,18 @@ PanelView::PanelView(Panel* panel, const gfx::Rect& bounds, bool always_on_top)
   params.delegate = this;
   params.remove_standard_frame = true;
   params.keep_on_top = always_on_top;
+  params.visible_on_all_workspaces = always_on_top;
   params.bounds = bounds;
   window_->Init(params);
   window_->set_frame_type(views::Widget::FRAME_TYPE_FORCE_CUSTOM);
   window_->set_focus_on_creation(false);
   window_->AddObserver(this);
 
+  // Prevent the browser process from shutting down while this window is open.
+  keep_alive_.reset(new AutoKeepAlive(GetNativePanelWindow()));
+
   web_view_ = new views::WebView(NULL);
   AddChildView(web_view_);
-
-  OnViewWasResized();
 
   // Register accelarators supported by panels.
   views::FocusManager* focus_manager = GetFocusManager();
@@ -300,8 +303,8 @@ PanelView::PanelView(Panel* panel, const gfx::Rect& bounds, bool always_on_top)
 
 #if defined(OS_WIN)
   ui::win::SetAppIdForWindow(
-      ShellIntegration::GetAppModelIdForProfile(UTF8ToWide(panel->app_name()),
-                                                panel->profile()->GetPath()),
+      ShellIntegration::GetAppModelIdForProfile(
+          base::UTF8ToWide(panel->app_name()), panel->profile()->GetPath()),
       views::HWNDForWidget(window_));
   ui::win::PreventWindowFromPinning(views::HWNDForWidget(window_));
 #endif
@@ -573,7 +576,7 @@ void PanelView::HandlePanelKeyboardEvent(
   ui::Accelerator accelerator(
       static_cast<ui::KeyboardCode>(event.windowsKeyCode),
       content::GetModifiersFromNativeWebKeyboardEvent(event));
-  if (event.type == WebKit::WebInputEvent::KeyUp)
+  if (event.type == blink::WebInputEvent::KeyUp)
     accelerator.set_type(ui::ET_KEY_RELEASED);
   focus_manager->ProcessAccelerator(accelerator);
 }
@@ -609,6 +612,7 @@ void PanelView::SetPanelAlwaysOnTop(bool on_top) {
   always_on_top_ = on_top;
 
   window_->SetAlwaysOnTop(on_top);
+  window_->SetVisibleOnAllWorkspaces(on_top);
   window_->non_client_view()->Layout();
   window_->client_view()->Layout();
 }
@@ -757,7 +761,7 @@ bool PanelView::CanMaximize() const {
   return false;
 }
 
-string16 PanelView::GetWindowTitle() const {
+base::string16 PanelView::GetWindowTitle() const {
   return panel_->GetWindowTitle();
 }
 
@@ -897,7 +901,6 @@ void PanelView::Layout() {
   // |web_view_| might not be created yet when the window is first created.
   if (web_view_)
     web_view_->SetBounds(0, 0, width(), height());
-  OnViewWasResized();
 }
 
 gfx::Size PanelView::GetMinimumSize() {
@@ -1130,29 +1133,3 @@ void PanelView::UpdateWindowAttribute(int attribute_index,
   }
 }
 #endif
-
-void PanelView::OnViewWasResized() {
-#if defined(OS_WIN) && !defined(USE_AURA)
-  content::WebContents* web_contents = panel_->GetWebContents();
-  if (!web_view_ || !web_contents)
-    return;
-
-  // When the panel is frameless or has thin frame, the mouse resizing should
-  // also be triggered from the part of client area that is close to the window
-  // frame.
-  int width = web_view_->size().width();
-  int height = web_view_->size().height();
-  // Compute the thickness of the client area that needs to be counted towards
-  // mouse resizing.
-  int thickness_for_mouse_resizing =
-      kResizeInsideBoundsSize - GetFrameView()->BorderThickness();
-  DCHECK(thickness_for_mouse_resizing > 0);
-  SkRegion* region = new SkRegion;
-  region->op(0, 0, thickness_for_mouse_resizing, height, SkRegion::kUnion_Op);
-  region->op(width - thickness_for_mouse_resizing, 0, width, height,
-      SkRegion::kUnion_Op);
-  region->op(0, height - thickness_for_mouse_resizing, width, height,
-      SkRegion::kUnion_Op);
-  web_contents->GetRenderViewHost()->GetView()->SetClickthroughRegion(region);
-#endif
-}

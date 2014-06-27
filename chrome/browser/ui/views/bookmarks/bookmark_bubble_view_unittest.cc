@@ -34,7 +34,7 @@ class BookmarkBubbleViewTest : public BrowserWithTestWindowTest {
     bookmark_utils::AddIfNotBookmarked(
         BookmarkModelFactory::GetForProfile(profile()),
         GURL(kTestBookmarkURL),
-        string16());
+        base::string16());
   }
 
   virtual void TearDown() OVERRIDE {
@@ -42,6 +42,14 @@ class BookmarkBubbleViewTest : public BrowserWithTestWindowTest {
     bubble_.reset();
 
     BrowserWithTestWindowTest::TearDown();
+  }
+
+  // BrowserWithTestWindowTest:
+  virtual TestingProfile* CreateProfile() OVERRIDE {
+    TestingProfile::Builder builder;
+    builder.AddTestingFactory(SigninManagerFactory::GetInstance(),
+                              FakeSigninManagerBase::Build);
+    return builder.Build().release();
   }
 
  protected:
@@ -56,38 +64,24 @@ class BookmarkBubbleViewTest : public BrowserWithTestWindowTest {
                                          true));
   }
 
-  void CreateSigninManager(const std::string& username) {
-    SigninManagerBase* signin_manager =
-        static_cast<SigninManagerBase*>(
-            SigninManagerFactory::GetInstance()->SetTestingFactoryAndUse(
-                profile(),
-                &BookmarkBubbleViewTest::BuildFakeSignInManager));
-    signin_manager->Initialize(profile(), NULL);
-
-    if (!username.empty()) {
-      ASSERT_TRUE(signin_manager);
-      signin_manager->SetAuthenticatedUsername(username);
-    }
+  void SetUpSigninManager(const std::string& username) {
+    if (username.empty())
+      return;
+    SigninManagerBase* signin_manager = static_cast<SigninManagerBase*>(
+        SigninManagerFactory::GetForProfile(profile()));
+    ASSERT_TRUE(signin_manager);
+    signin_manager->SetAuthenticatedUsername(username);
   }
 
   scoped_ptr<BookmarkBubbleView> bubble_;
 
  private:
-  static BrowserContextKeyedService* BuildFakeSignInManager(
-      content::BrowserContext* profile) {
-#if defined(OS_CHROMEOS)
-    return new FakeSigninManagerBase();
-#else  // !defined(OS_CHROMEOS)
-    return new FakeSigninManager(static_cast<Profile*>(profile));
-#endif
-  }
-
   DISALLOW_COPY_AND_ASSIGN(BookmarkBubbleViewTest);
 };
 
 // Verifies that the sync promo is not displayed for a signed in user.
 TEST_F(BookmarkBubbleViewTest, SyncPromoSignedIn) {
-  CreateSigninManager("fake_username");
+  SetUpSigninManager("fake_username");
   CreateBubbleView();
   bubble_->Init();
   EXPECT_FALSE(bubble_->sync_promo_view_);

@@ -15,25 +15,28 @@
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
-#include "net/disk_cache/backend_impl.h"
+#include "net/disk_cache/blockfile/backend_impl.h"
+#include "net/disk_cache/blockfile/entry_impl.h"
+#include "net/disk_cache/blockfile/experiments.h"
+#include "net/disk_cache/blockfile/histogram_macros.h"
+#include "net/disk_cache/blockfile/mapped_file.h"
 #include "net/disk_cache/cache_util.h"
 #include "net/disk_cache/disk_cache_test_base.h"
 #include "net/disk_cache/disk_cache_test_util.h"
-#include "net/disk_cache/entry_impl.h"
-#include "net/disk_cache/experiments.h"
-#include "net/disk_cache/histogram_macros.h"
-#include "net/disk_cache/mapped_file.h"
-#include "net/disk_cache/mem_backend_impl.h"
+#include "net/disk_cache/memory/mem_backend_impl.h"
 #include "net/disk_cache/simple/simple_backend_impl.h"
 #include "net/disk_cache/simple/simple_entry_format.h"
 #include "net/disk_cache/simple/simple_test_util.h"
 #include "net/disk_cache/simple/simple_util.h"
-#include "net/disk_cache/tracing_cache_backend.h"
+#include "net/disk_cache/tracing/tracing_cache_backend.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_WIN)
 #include "base/win/scoped_handle.h"
 #endif
+
+// Provide a BackendImpl object to macros from histogram_macros.h.
+#define CACHE_UMA_BACKEND_IMPL_OBJ backend_
 
 using base::Time;
 
@@ -479,7 +482,7 @@ TEST_F(DiskCacheBackendTest, ExternalFiles) {
   const int kSize = 50;
   scoped_refptr<net::IOBuffer> buffer1(new net::IOBuffer(kSize));
   CacheTestFillBuffer(buffer1->data(), kSize, false);
-  ASSERT_EQ(kSize, file_util::WriteFile(filename, buffer1->data(), kSize));
+  ASSERT_EQ(kSize, base::WriteFile(filename, buffer1->data(), kSize));
 
   // Now let's create a file with the cache.
   disk_cache::Entry* entry;
@@ -489,7 +492,7 @@ TEST_F(DiskCacheBackendTest, ExternalFiles) {
 
   // And verify that the first file is still there.
   scoped_refptr<net::IOBuffer> buffer2(new net::IOBuffer(kSize));
-  ASSERT_EQ(kSize, file_util::ReadFile(filename, buffer2->data(), kSize));
+  ASSERT_EQ(kSize, base::ReadFile(filename, buffer2->data(), kSize));
   EXPECT_EQ(0, memcmp(buffer1->data(), buffer2->data(), kSize));
 }
 
@@ -518,9 +521,13 @@ void DiskCacheBackendTest::BackendShutdownWithPendingFileIO(bool fast) {
 
   base::MessageLoop::current()->RunUntilIdle();
 
+#if !defined(OS_IOS)
   // Wait for the actual operation to complete, or we'll keep a file handle that
-  // may cause issues later.
+  // may cause issues later. Note that on iOS systems even though this test
+  // uses a single thread, the actual IO is posted to a worker thread and the
+  // cache destructor breaks the link to reach cb when the operation completes.
   rv = cb.GetResult(rv);
+#endif
 }
 
 TEST_F(DiskCacheBackendTest, ShutdownWithPendingFileIO) {
@@ -529,10 +536,9 @@ TEST_F(DiskCacheBackendTest, ShutdownWithPendingFileIO) {
 
 // Here and below, tests that simulate crashes are not compiled in LeakSanitizer
 // builds because they contain a lot of intentional memory leaks.
-// The wrapper scripts used to run tests under Valgrind Memcheck and
-// Heapchecker will also disable these tests under those tools. See:
+// The wrapper scripts used to run tests under Valgrind Memcheck will also
+// disable these tests. See:
 // tools/valgrind/gtest_exclude/net_unittests.gtest-memcheck.txt
-// tools/heapcheck/net_unittests.gtest-heapcheck.txt
 #if !defined(LEAK_SANITIZER)
 // We'll be leaking from this test.
 TEST_F(DiskCacheBackendTest, ShutdownWithPendingFileIO_Fast) {
@@ -543,6 +549,8 @@ TEST_F(DiskCacheBackendTest, ShutdownWithPendingFileIO_Fast) {
 }
 #endif
 
+// See crbug.com/330074
+#if !defined(OS_IOS)
 // Tests that one cache instance is not affected by another one going away.
 TEST_F(DiskCacheBackendTest, MultipleInstancesWithPendingFileIO) {
   base::ScopedTempDir store;
@@ -576,6 +584,7 @@ TEST_F(DiskCacheBackendTest, MultipleInstancesWithPendingFileIO) {
   // may cause issues later.
   rv = cb.GetResult(rv);
 }
+#endif
 
 // Tests that we deal with background-thread pending operations.
 void DiskCacheBackendTest::BackendShutdownWithPendingIO(bool fast) {
@@ -659,10 +668,13 @@ TEST_F(DiskCacheBackendTest, ShutdownWithPendingCreate_Fast) {
 }
 #endif
 
+// Disabled on android since this test requires cache creator to create
+// blockfile caches.
+#if !defined(OS_ANDROID)
 TEST_F(DiskCacheTest, TruncatedIndex) {
   ASSERT_TRUE(CleanupCacheDir());
   base::FilePath index = cache_path_.AppendASCII("index");
-  ASSERT_EQ(5, file_util::WriteFile(index, "hello", 5));
+  ASSERT_EQ(5, base::WriteFile(index, "hello", 5));
 
   base::Thread cache_thread("CacheThread");
   ASSERT_TRUE(cache_thread.StartWithOptions(
@@ -684,6 +696,7 @@ TEST_F(DiskCacheTest, TruncatedIndex) {
 
   ASSERT_FALSE(backend);
 }
+#endif
 
 void DiskCacheBackendTest::BackendSetSize() {
   const int cache_size = 0x10000;  // 64 kB
@@ -1828,6 +1841,9 @@ class BadEntropyProvider : public base::FieldTrial::EntropyProvider {
 
 // Tests that the disk cache successfully joins the control group, dropping the
 // existing cache in favour of a new empty cache.
+// Disabled on android since this test requires cache creator to create
+// blockfile caches.
+#if !defined(OS_ANDROID)
 TEST_F(DiskCacheTest, SimpleCacheControlJoin) {
   base::Thread cache_thread("CacheThread");
   ASSERT_TRUE(cache_thread.StartWithOptions(
@@ -1858,6 +1874,7 @@ TEST_F(DiskCacheTest, SimpleCacheControlJoin) {
   ASSERT_EQ(net::OK, cb.GetResult(rv));
   EXPECT_EQ(0, base_cache->GetEntryCount());
 }
+#endif
 
 // Tests that the disk cache can restart in the control group preserving
 // existing entries.
@@ -1936,6 +1953,9 @@ TEST_F(DiskCacheTest, SimpleCacheControlLeave) {
 }
 
 // Tests that the cache is properly restarted on recovery error.
+// Disabled on android since this test requires cache creator to create
+// blockfile caches.
+#if !defined(OS_ANDROID)
 TEST_F(DiskCacheBackendTest, DeleteOld) {
   ASSERT_TRUE(CopyTestCache("wrong_version"));
   SetNewEviction();
@@ -1962,6 +1982,7 @@ TEST_F(DiskCacheBackendTest, DeleteOld) {
   cache_.reset();
   EXPECT_TRUE(CheckCacheIntegrity(cache_path_, new_eviction_, mask_));
 }
+#endif
 
 // We want to be able to deal with messed up entries on disk.
 void DiskCacheBackendTest::BackendInvalidEntry2() {
@@ -2721,6 +2742,21 @@ TEST_F(DiskCacheTest, Backend_UsageStatsTimer) {
   helper.WaitUntilCacheIoFinished(1);
 }
 
+TEST_F(DiskCacheBackendTest, TimerNotCreated) {
+  ASSERT_TRUE(CopyTestCache("wrong_version"));
+
+  scoped_ptr<disk_cache::BackendImpl> cache;
+  cache.reset(new disk_cache::BackendImpl(
+      cache_path_, base::MessageLoopProxy::current().get(), NULL));
+  ASSERT_TRUE(NULL != cache.get());
+  cache->SetUnitTestMode();
+  ASSERT_NE(net::OK, cache->SyncInit());
+
+  ASSERT_TRUE(NULL == cache->GetTimerForTest());
+
+  DisableIntegrityCheck();
+}
+
 TEST_F(DiskCacheBackendTest, Backend_UsageStats) {
   InitCache();
   disk_cache::Entry* entry;
@@ -2898,51 +2934,51 @@ TEST_F(DiskCacheTest, MultipleInstances) {
 
 // Test the six regions of the curve that determines the max cache size.
 TEST_F(DiskCacheTest, AutomaticMaxSize) {
-  const int kDefaultSize = 80 * 1024 * 1024;
-  int64 large_size = kDefaultSize;
-  int64 largest_size = kint32max;
+  using disk_cache::kDefaultCacheSize;
+  int64 large_size = kDefaultCacheSize;
 
   // Region 1: expected = available * 0.8
-  EXPECT_EQ((kDefaultSize - 1) * 8 / 10,
-            disk_cache::PreferedCacheSize(large_size - 1));
-  EXPECT_EQ(kDefaultSize * 8 / 10,
-            disk_cache::PreferedCacheSize(large_size));
-  EXPECT_EQ(kDefaultSize - 1,
-            disk_cache::PreferedCacheSize(large_size * 10 / 8 - 1));
+  EXPECT_EQ((kDefaultCacheSize - 1) * 8 / 10,
+            disk_cache::PreferredCacheSize(large_size - 1));
+  EXPECT_EQ(kDefaultCacheSize * 8 / 10,
+            disk_cache::PreferredCacheSize(large_size));
+  EXPECT_EQ(kDefaultCacheSize - 1,
+            disk_cache::PreferredCacheSize(large_size * 10 / 8 - 1));
 
   // Region 2: expected = default_size
-  EXPECT_EQ(kDefaultSize,
-            disk_cache::PreferedCacheSize(large_size * 10 / 8));
-  EXPECT_EQ(kDefaultSize,
-            disk_cache::PreferedCacheSize(large_size * 10 - 1));
+  EXPECT_EQ(kDefaultCacheSize,
+            disk_cache::PreferredCacheSize(large_size * 10 / 8));
+  EXPECT_EQ(kDefaultCacheSize,
+            disk_cache::PreferredCacheSize(large_size * 10 - 1));
 
   // Region 3: expected = available * 0.1
-  EXPECT_EQ(kDefaultSize,
-            disk_cache::PreferedCacheSize(large_size * 10));
-  EXPECT_EQ((kDefaultSize * 25 - 1) / 10,
-            disk_cache::PreferedCacheSize(large_size * 25 - 1));
+  EXPECT_EQ(kDefaultCacheSize,
+            disk_cache::PreferredCacheSize(large_size * 10));
+  EXPECT_EQ((kDefaultCacheSize * 25 - 1) / 10,
+            disk_cache::PreferredCacheSize(large_size * 25 - 1));
 
   // Region 4: expected = default_size * 2.5
-  EXPECT_EQ(kDefaultSize * 25 / 10,
-            disk_cache::PreferedCacheSize(large_size * 25));
-  EXPECT_EQ(kDefaultSize * 25 / 10,
-            disk_cache::PreferedCacheSize(large_size * 100 - 1));
-  EXPECT_EQ(kDefaultSize * 25 / 10,
-            disk_cache::PreferedCacheSize(large_size * 100));
-  EXPECT_EQ(kDefaultSize * 25 / 10,
-            disk_cache::PreferedCacheSize(large_size * 250 - 1));
+  EXPECT_EQ(kDefaultCacheSize * 25 / 10,
+            disk_cache::PreferredCacheSize(large_size * 25));
+  EXPECT_EQ(kDefaultCacheSize * 25 / 10,
+            disk_cache::PreferredCacheSize(large_size * 100 - 1));
+  EXPECT_EQ(kDefaultCacheSize * 25 / 10,
+            disk_cache::PreferredCacheSize(large_size * 100));
+  EXPECT_EQ(kDefaultCacheSize * 25 / 10,
+            disk_cache::PreferredCacheSize(large_size * 250 - 1));
 
   // Region 5: expected = available * 0.1
-  EXPECT_EQ(kDefaultSize * 25 / 10,
-            disk_cache::PreferedCacheSize(large_size * 250));
-  EXPECT_EQ(kint32max - 1,
-            disk_cache::PreferedCacheSize(largest_size * 100 - 1));
+  int64 largest_size = kDefaultCacheSize * 4;
+  EXPECT_EQ(kDefaultCacheSize * 25 / 10,
+            disk_cache::PreferredCacheSize(large_size * 250));
+  EXPECT_EQ(largest_size - 1,
+            disk_cache::PreferredCacheSize(largest_size * 100 - 1));
 
-  // Region 6: expected = kint32max
-  EXPECT_EQ(kint32max,
-            disk_cache::PreferedCacheSize(largest_size * 100));
-  EXPECT_EQ(kint32max,
-            disk_cache::PreferedCacheSize(largest_size * 10000));
+  // Region 6: expected = largest possible size
+  EXPECT_EQ(largest_size,
+            disk_cache::PreferredCacheSize(largest_size * 100));
+  EXPECT_EQ(largest_size,
+            disk_cache::PreferredCacheSize(largest_size * 10000));
 }
 
 // Tests that we can "migrate" a running instance from one experiment group to
@@ -3293,7 +3329,7 @@ TEST_F(DiskCacheBackendTest, SimpleCacheOpenBadFile) {
   header.initial_magic_number = GG_UINT64_C(0xbadf00d);
   EXPECT_EQ(
       implicit_cast<int>(sizeof(header)),
-      file_util::WriteFile(entry_file1_path, reinterpret_cast<char*>(&header),
+      base::WriteFile(entry_file1_path, reinterpret_cast<char*>(&header),
                            sizeof(header)));
   ASSERT_EQ(net::ERR_FAILED, OpenEntry(key, &entry));
 }

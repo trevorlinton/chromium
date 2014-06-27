@@ -44,7 +44,6 @@ typedef std::vector<GURL> RedirectList;
 
 typedef int64 FaviconBitmapID; // Identifier for a bitmap in a favicon.
 typedef int64 SegmentID;  // URL segments for the most visited view.
-typedef int64 SegmentDurationID;  // Unique identifier for segment_duration.
 typedef int64 IconMappingID; // For page url and icon mapping.
 
 // URLRow ---------------------------------------------------------------------
@@ -86,10 +85,10 @@ class URLRow {
 
   const GURL& url() const { return url_; }
 
-  const string16& title() const {
+  const base::string16& title() const {
     return title_;
   }
-  void set_title(const string16& title) {
+  void set_title(const base::string16& title) {
     // The title is frequently set to the same thing, so we don't bother
     // updating unless the string has changed.
     if (title != title_) {
@@ -173,7 +172,7 @@ class URLRow {
   // the constructor to make a new one.
   GURL url_;
 
-  string16 title_;
+  base::string16 title_;
 
   // Total number of times this URL has been visited.
   int visit_count_;
@@ -486,7 +485,7 @@ struct KeywordSearchTermVisit {
   KeywordSearchTermVisit();
   ~KeywordSearchTermVisit();
 
-  string16 term;    // The search term that was used.
+  base::string16 term;    // The search term that was used.
   int visits;       // The visit count.
   base::Time time;  // The time of the most recent visit.
 };
@@ -500,7 +499,7 @@ struct KeywordSearchTermRow {
 
   TemplateURLID keyword_id;  // ID of the keyword.
   URLID url_id;              // ID of the url.
-  string16 term;             // The search term that was used.
+  base::string16 term;             // The search term that was used.
 };
 
 // MostVisitedURL --------------------------------------------------------------
@@ -508,14 +507,14 @@ struct KeywordSearchTermRow {
 // Holds the per-URL information of the most visited query.
 struct MostVisitedURL {
   MostVisitedURL();
-  MostVisitedURL(const GURL& url, const string16& title);
+  MostVisitedURL(const GURL& url, const base::string16& title);
   MostVisitedURL(const GURL& url,
-                 const string16& title,
+                 const base::string16& title,
                  const base::Time& last_forced_time);
   ~MostVisitedURL();
 
   GURL url;
-  string16 title;
+  base::string16 title;
 
   // If this is a URL for which we want to force a thumbnail, records the last
   // time it was forced so we can evict it when more recent URLs are requested.
@@ -550,7 +549,7 @@ struct FilteredURL {
   ~FilteredURL();
 
   GURL url;
-  string16 title;
+  base::string16 title;
   double score;
   ExtendedInfo extended_info;
 };

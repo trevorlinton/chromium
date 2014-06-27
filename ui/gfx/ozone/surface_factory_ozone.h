@@ -6,16 +6,21 @@
 #define UI_GFX_OZONE_SURFACE_LNUX_FACTORY_OZONE_H_
 
 #include "base/callback.h"
+#include "base/memory/scoped_ptr.h"
 #include "base/native_library.h"
+#include "ui/gfx/geometry/point.h"
+#include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/gfx_export.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/rect.h"
 
+class SkBitmap;
 class SkCanvas;
 
 namespace gfx {
-class Screen;
 class VSyncProvider;
+class OverlayCandidatesOzone;
+typedef intptr_t NativeBufferOzone;
 
 // The Ozone interface allows external implementations to hook into Chromium to
 // provide a system specific implementation. The Ozone interface supports two
@@ -53,6 +58,26 @@ class GFX_EXPORT SurfaceFactoryOzone {
     FAILED,
   };
 
+  // Describes overlay buffer format.
+  // TODO: this is a placeholder for now and will be populated with more
+  // formats once we know what sorts of content, video, etc. we can support.
+  enum BufferFormat {
+    UNKNOWN,
+    RGBA_8888,
+    RGB_888,
+  };
+
+  // Describes transformation to be applied to the buffer before presenting
+  // to screen.
+  enum OverlayTransform {
+    NONE,
+    FLIP_HORIZONTAL,
+    FLIP_VERTICAL,
+    ROTATE_90,
+    ROTATE_180,
+    ROTATE_270,
+  };
+
   typedef void*(*GLGetProcAddressProc)(const char* name);
   typedef base::Callback<void(base::NativeLibrary)> AddGLLibraryCallback;
   typedef base::Callback<void(GLGetProcAddressProc)>
@@ -64,16 +89,8 @@ class GFX_EXPORT SurfaceFactoryOzone {
   // Returns the instance
   static SurfaceFactoryOzone* GetInstance();
 
-  // Returns a display spec as in |CreateDisplayFromSpec| for the default
-  // native surface.
-  virtual const char* DefaultDisplaySpec();
-
   // Sets the implementation delegate. Ownership is retained by the caller.
   static void SetInstance(SurfaceFactoryOzone* impl);
-
-  // TODO(rjkroege): decide how to separate screen/display stuff from SFOz
-  // This method implements gfx::Screen, particularly useful in Desktop Aura.
-  virtual gfx::Screen* CreateDesktopScreen();
 
   // Configures the display hardware. Must be called from within the GPU
   // process before the sandbox has been activated.
@@ -125,8 +142,9 @@ class GFX_EXPORT SurfaceFactoryOzone {
   // that this may be called after we have entered the sandbox so if there are
   // operations (e.g. opening a file descriptor providing vsync events) that
   // must be done outside of the sandbox, they must have been completed
-  // in InitializeHardware. Returns NULL on error.
-  virtual gfx::VSyncProvider* GetVSyncProvider(gfx::AcceleratedWidget w) = 0;
+  // in InitializeHardware. Returns an empty scoped_ptr on error.
+  virtual scoped_ptr<gfx::VSyncProvider> CreateVSyncProvider(
+      gfx::AcceleratedWidget w) = 0;
 
   // Returns an array of EGL properties, which can be used in any EGL function
   // used to select a display configuration. Note that all properties should be
@@ -135,8 +153,29 @@ class GFX_EXPORT SurfaceFactoryOzone {
   // caller. desired_list contains list of desired EGL properties and values.
   virtual const int32* GetEGLSurfaceProperties(const int32* desired_list);
 
-  // Create a default SufaceFactoryOzone implementation useful for tests.
-  static SurfaceFactoryOzone* CreateTestHelper();
+  // Get the hal struct to check for overlay support.
+  virtual gfx::OverlayCandidatesOzone* GetOverlayCandidates(
+      gfx::AcceleratedWidget w);
+
+  // Sets the overlay plane to switch to at the next page flip.
+  // |plane_z_order| specifies the stacking order of the plane relative to the
+  // main framebuffer located at index 0.
+  // |plane_transform| specifies how the buffer is to be transformed during.
+  // composition.
+  // |buffer| to be presented by the overlay.
+  // |display_bounds| specify where it is supposed to be on the screen.
+  // |crop_rect| specifies the region within the buffer to be placed inside
+  // |display_bounds|.
+  virtual void ScheduleOverlayPlane(gfx::AcceleratedWidget w,
+                                    int plane_z_order,
+                                    OverlayTransform plane_transform,
+                                    gfx::NativeBufferOzone buffer,
+                                    const gfx::Rect& display_bounds,
+                                    gfx::RectF crop_rect);
+
+  // Cleate a single native buffer to be used for overlay planes.
+  virtual gfx::NativeBufferOzone CreateNativeBuffer(gfx::Size size,
+                                                    BufferFormat format);
 
  private:
   static SurfaceFactoryOzone* impl_; // not owned

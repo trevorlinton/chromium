@@ -10,8 +10,8 @@
 #include "chrome/browser/chromeos/attestation/platform_verification_flow.h"
 #include "chrome/browser/chromeos/policy/device_policy_builder.h"
 #include "chrome/browser/chromeos/policy/device_policy_cros_browser_test.h"
+#include "chrome/browser/chromeos/policy/proto/chrome_device_policy.pb.h"
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
-#include "chrome/browser/policy/proto/chromeos/chrome_device_policy.pb.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chromeos/dbus/fake_cryptohome_client.h"
@@ -75,7 +75,7 @@ class AttestationDevicePolicyTest
   // to verify a Chrome OS platform.
   PlatformVerificationFlow::Result SyncContentProtectionAttestation() {
     scoped_refptr<PlatformVerificationFlow> verifier(
-        new PlatformVerificationFlow(NULL, NULL, &fake_cryptohome_client_, NULL,
+        new PlatformVerificationFlow(NULL, NULL, &fake_cryptohome_client_,
                                      NULL));
     verifier->ChallengePlatformKey(
       browser()->tab_strip_model()->GetActiveWebContents(),

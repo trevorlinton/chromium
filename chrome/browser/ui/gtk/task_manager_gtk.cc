@@ -12,14 +12,12 @@
 #include <vector>
 
 #include "base/auto_reset.h"
-#include "base/command_line.h"
 #include "base/logging.h"
 #include "base/prefs/pref_service.h"
 #include "base/prefs/scoped_user_pref_update.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/defaults.h"
-#include "chrome/browser/memory_purger.h"
 #include "chrome/browser/ui/gtk/gtk_chrome_link_button.h"
 #include "chrome/browser/ui/gtk/gtk_theme_service.h"
 #include "chrome/browser/ui/gtk/gtk_theme_service.h"
@@ -27,7 +25,6 @@
 #include "chrome/browser/ui/gtk/gtk_util.h"
 #include "chrome/browser/ui/gtk/menu_gtk.h"
 #include "chrome/browser/ui/host_desktop.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "grit/chromium_strings.h"
 #include "grit/ui_resources.h"
@@ -51,9 +48,6 @@ const gint kTaskManagerResponseKill = 1;
 // The resource id for the 'Stats for nerds' link button.
 const gint kTaskManagerAboutMemoryLink = 2;
 
-// The resource id for the 'Purge Memory' button
-const gint kTaskManagerPurgeMemory = 3;
-
 enum TaskManagerColumn {
   kTaskManagerIcon,
   kTaskManagerTask,
@@ -70,6 +64,7 @@ enum TaskManagerColumn {
   kTaskManagerVideoMemory,
   kTaskManagerFPS,
   kTaskManagerSqliteMemoryUsed,
+  kTaskManagerNaClDebugStubPort,
   kTaskManagerGoatsTeleported,
   kTaskManagerColumnCount,
 };
@@ -107,6 +102,8 @@ TaskManagerColumn TaskManagerResourceIDToColumnID(int id) {
       return kTaskManagerFPS;
     case IDS_TASK_MANAGER_SQLITE_MEMORY_USED_COLUMN:
       return kTaskManagerSqliteMemoryUsed;
+    case IDS_TASK_MANAGER_NACL_DEBUG_STUB_PORT_COLUMN:
+      return kTaskManagerNaClDebugStubPort;
     case IDS_TASK_MANAGER_GOATS_TELEPORTED_COLUMN:
       return kTaskManagerGoatsTeleported;
     default:
@@ -145,6 +142,8 @@ int TaskManagerColumnIDToResourceID(int id) {
       return IDS_TASK_MANAGER_FPS_COLUMN;
     case kTaskManagerSqliteMemoryUsed:
       return IDS_TASK_MANAGER_SQLITE_MEMORY_USED_COLUMN;
+    case kTaskManagerNaClDebugStubPort:
+      return IDS_TASK_MANAGER_NACL_DEBUG_STUB_PORT_COLUMN;
     case kTaskManagerGoatsTeleported:
       return IDS_TASK_MANAGER_GOATS_TELEPORTED_COLUMN;
     default:
@@ -440,13 +439,6 @@ void TaskManagerGtk::Init() {
   // metacity.
   gtk_window_set_type_hint(GTK_WINDOW(dialog_), GDK_WINDOW_TYPE_HINT_NORMAL);
 
-  if (CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kPurgeMemoryButton)) {
-    gtk_dialog_add_button(GTK_DIALOG(dialog_),
-        l10n_util::GetStringUTF8(IDS_TASK_MANAGER_PURGE_MEMORY).c_str(),
-        kTaskManagerPurgeMemory);
-  }
-
   if (browser_defaults::kShowCancelButtonInTaskManager) {
     gtk_dialog_add_button(GTK_DIALOG(dialog_),
         l10n_util::GetStringUTF8(IDS_CLOSE).c_str(),
@@ -528,7 +520,7 @@ void TaskManagerGtk::SetInitialDialogSize() {
                    G_CALLBACK(OnTreeViewRealizeThunk), this);
   // If we previously saved the dialog's bounds, use them.
   if (g_browser_process->local_state()) {
-    const DictionaryValue* placement_pref =
+    const base::DictionaryValue* placement_pref =
         g_browser_process->local_state()->GetDictionary(
             prefs::kTaskManagerWindowPlacement);
     int top = 0, left = 0, bottom = 1, right = 1;
@@ -565,7 +557,7 @@ void TaskManagerGtk::CreateTaskManagerTreeview() {
       GDK_TYPE_PIXBUF, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
       G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
       G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
-      G_TYPE_STRING, G_TYPE_STRING);
+      G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
 
   // Support sorting on all columns.
   process_list_sort_ = gtk_tree_model_sort_new_with_model(
@@ -613,6 +605,9 @@ void TaskManagerGtk::CreateTaskManagerTreeview() {
                                   kTaskManagerSqliteMemoryUsed,
                                   CompareSqliteMemoryUsed, this, NULL);
   gtk_tree_sortable_set_sort_func(GTK_TREE_SORTABLE(process_list_sort_),
+                                  kTaskManagerNaClDebugStubPort,
+                                  CompareNaClDebugStubPort, this, NULL);
+  gtk_tree_sortable_set_sort_func(GTK_TREE_SORTABLE(process_list_sort_),
                                   kTaskManagerGoatsTeleported,
                                   CompareGoatsTeleported, this, NULL);
   treeview_ = gtk_tree_view_new_with_model(process_list_sort_);
@@ -634,6 +629,7 @@ void TaskManagerGtk::CreateTaskManagerTreeview() {
   TreeViewInsertColumn(treeview_, IDS_TASK_MANAGER_VIDEO_MEMORY_COLUMN);
   TreeViewInsertColumn(treeview_, IDS_TASK_MANAGER_FPS_COLUMN);
   TreeViewInsertColumn(treeview_, IDS_TASK_MANAGER_SQLITE_MEMORY_USED_COLUMN);
+  TreeViewInsertColumn(treeview_, IDS_TASK_MANAGER_NACL_DEBUG_STUB_PORT_COLUMN);
   TreeViewInsertColumn(treeview_, IDS_TASK_MANAGER_GOATS_TELEPORTED_COLUMN);
 
   // Hide some columns by default.
@@ -645,6 +641,7 @@ void TaskManagerGtk::CreateTaskManagerTreeview() {
   TreeViewColumnSetVisible(treeview_, kTaskManagerWebCoreCssCache, false);
   TreeViewColumnSetVisible(treeview_, kTaskManagerVideoMemory, false);
   TreeViewColumnSetVisible(treeview_, kTaskManagerSqliteMemoryUsed, false);
+  TreeViewColumnSetVisible(treeview_, kTaskManagerNaClDebugStubPort, false);
   TreeViewColumnSetVisible(treeview_, kTaskManagerGoatsTeleported, false);
 
   g_object_unref(process_list_);
@@ -652,7 +649,7 @@ void TaskManagerGtk::CreateTaskManagerTreeview() {
 }
 
 std::string TaskManagerGtk::GetModelText(int row, int col_id) {
-  return UTF16ToUTF8(model_->GetResourceById(row, col_id));
+  return base::UTF16ToUTF8(model_->GetResourceById(row, col_id));
 }
 
 GdkPixbuf* TaskManagerGtk::GetModelIcon(int row) {
@@ -713,6 +710,11 @@ void TaskManagerGtk::SetRowDataFromModel(int row, GtkTreeIter* iter) {
     sqlite_memory =
         GetModelText(row, IDS_TASK_MANAGER_SQLITE_MEMORY_USED_COLUMN);
   }
+  std::string nacl_debug_stub_port;
+  if (TreeViewColumnIsVisible(treeview_, kTaskManagerNaClDebugStubPort)) {
+    nacl_debug_stub_port =
+        GetModelText(row, IDS_TASK_MANAGER_NACL_DEBUG_STUB_PORT_COLUMN);
+  }
 
   std::string goats =
       GetModelText(row, IDS_TASK_MANAGER_GOATS_TELEPORTED_COLUMN);
@@ -733,6 +735,8 @@ void TaskManagerGtk::SetRowDataFromModel(int row, GtkTreeIter* iter) {
                      kTaskManagerVideoMemory, video_memory.c_str(),
                      kTaskManagerFPS, fps.c_str(),
                      kTaskManagerSqliteMemoryUsed, sqlite_memory.c_str(),
+                     kTaskManagerNaClDebugStubPort,
+                     nacl_debug_stub_port.c_str(),
                      kTaskManagerGoatsTeleported, goats.c_str(),
                      -1);
   g_object_unref(icon);
@@ -813,7 +817,7 @@ void TaskManagerGtk::OnResponse(GtkWidget* dialog, int response_id) {
 
       DictionaryPrefUpdate update(g_browser_process->local_state(),
                                   prefs::kTaskManagerWindowPlacement);
-      DictionaryValue* placement_pref = update.Get();
+      base::DictionaryValue* placement_pref = update.Get();
       // Note that we store left/top for consistency with Windows, but that we
       // *don't* restore them.
       placement_pref->SetInteger("left", dialog_bounds.x());
@@ -829,8 +833,6 @@ void TaskManagerGtk::OnResponse(GtkWidget* dialog, int response_id) {
     KillSelectedProcesses();
   } else if (response_id == kTaskManagerAboutMemoryLink) {
     OnLinkActivated();
-  } else if (response_id == kTaskManagerPurgeMemory) {
-    MemoryPurger::PurgeAll();
   }
 }
 

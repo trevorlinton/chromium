@@ -5,7 +5,7 @@
 #include "chrome/browser/ui/app_list/search/app_result.h"
 
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system_factory.h"
+#include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/install_tracker.h"
 #include "chrome/browser/extensions/install_tracker_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -15,10 +15,13 @@
 #include "chrome/browser/ui/app_list/search/tokenized_string_match.h"
 #include "chrome/browser/ui/extensions/extension_enable_flow.h"
 #include "chrome/browser/ui/webui/ntp/core_app_launcher_handler.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_icon_set.h"
 #include "chrome/common/extensions/manifest_handlers/icons_handler.h"
 #include "content/public/browser/user_metrics.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/extension_system_provider.h"
+#include "extensions/browser/extensions_browser_client.h"
+#include "extensions/common/extension.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/image/image_skia_operations.h"
 
@@ -82,7 +85,7 @@ void AppResult::Open(int event_flags) {
 
   CoreAppLauncherHandler::RecordAppListSearchLaunch(extension);
   content::RecordAction(
-      content::UserMetricsAction("AppList_ClickOnAppFromSearch"));
+      base::UserMetricsAction("AppList_ClickOnAppFromSearch"));
 
   controller_->ActivateApp(
       profile_,
@@ -109,7 +112,9 @@ ChromeSearchResultType AppResult::GetType() {
 ui::MenuModel* AppResult::GetContextMenuModel() {
   if (!context_menu_) {
     context_menu_.reset(new AppContextMenu(
-        this, profile_, app_id_, controller_, is_platform_app_, true));
+        this, profile_, app_id_, controller_));
+    context_menu_->set_is_platform_app(is_platform_app_);
+    context_menu_->set_is_search_result(true);
   }
 
   return context_menu_->GetMenuModel();
@@ -130,9 +135,7 @@ void AppResult::StopObservingInstall() {
 }
 
 bool AppResult::RunExtensionEnableFlow() {
-  const ExtensionService* service =
-      extensions::ExtensionSystem::Get(profile_)->extension_service();
-  if (service->IsExtensionEnabledForLauncher(app_id_))
+  if (extensions::util::IsAppLaunchableWithoutEnabling(app_id_, profile_))
     return false;
 
   if (!extension_enable_flow_) {
@@ -149,10 +152,7 @@ bool AppResult::RunExtensionEnableFlow() {
 void AppResult::UpdateIcon() {
   gfx::ImageSkia icon = icon_->image_skia();
 
-  const ExtensionService* service =
-      extensions::ExtensionSystem::Get(profile_)->extension_service();
-  const bool enabled = service->IsExtensionEnabledForLauncher(app_id_);
-  if (!enabled) {
+  if (!extensions::util::IsAppLaunchable(app_id_, profile_)) {
     const color_utils::HSL shift = {-1, 0, 0.6};
     icon = gfx::ImageSkiaOperations::CreateHSLShiftedImage(icon, shift);
   }
@@ -182,24 +182,9 @@ void AppResult::ExtensionEnableFlowAborted(bool user_initiated) {
   controller_->OnCloseExtensionPrompt();
 }
 
-void AppResult::OnBeginExtensionInstall(const std::string& extension_id,
-                                        const std::string& extension_name,
-                                        const gfx::ImageSkia& installing_icon,
-                                        bool is_app,
-                                        bool is_platform_app) {}
-
-void AppResult::OnDownloadProgress(const std::string& extension_id,
-                                   int percent_downloaded) {}
-
-void AppResult::OnInstallFailure(const std::string& extension_id) {}
-
-void AppResult::OnExtensionInstalled(const extensions::Extension* extension) {}
-
 void AppResult::OnExtensionLoaded(const extensions::Extension* extension) {
   UpdateIcon();
 }
-
-void AppResult::OnExtensionUnloaded(const extensions::Extension* extension) {}
 
 void AppResult::OnExtensionUninstalled(const extensions::Extension* extension) {
   if (extension->id() != app_id_)
@@ -207,10 +192,6 @@ void AppResult::OnExtensionUninstalled(const extensions::Extension* extension) {
 
   NotifyItemUninstalled();
 }
-
-void AppResult::OnAppsReordered() {}
-
-void AppResult::OnAppInstalledToAppList(const std::string& extension_id) {}
 
 void AppResult::OnShutdown() { StopObservingInstall(); }
 

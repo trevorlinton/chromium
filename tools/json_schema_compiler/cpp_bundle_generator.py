@@ -12,8 +12,6 @@ import json
 import os
 import re
 
-# TODO(miket/asargent) - parameterize this.
-SOURCE_BASE_PATH = 'chrome/common/extensions/api'
 
 def _RemoveDescriptions(node):
   """Returns a copy of |schema| with "description" fields removed.
@@ -36,12 +34,21 @@ class CppBundleGenerator(object):
   """This class contains methods to generate code based on multiple schemas.
   """
 
-  def __init__(self, root, model, api_defs, cpp_type_generator, cpp_namespace):
+  def __init__(self,
+               root,
+               model,
+               api_defs,
+               cpp_type_generator,
+               cpp_namespace,
+               source_file_dir,
+               impl_dir):
     self._root = root
     self._model = model
     self._api_defs = api_defs
     self._cpp_type_generator = cpp_type_generator
     self._cpp_namespace = cpp_namespace
+    self._source_file_dir = source_file_dir
+    self._impl_dir = impl_dir
 
     self.api_cc_generator = _APICCGenerator(self)
     self.api_h_generator = _APIHGenerator(self)
@@ -57,8 +64,8 @@ class CppBundleGenerator(object):
     c = code.Code()
     c.Append(cpp_util.CHROMIUM_LICENSE)
     c.Append()
-    c.Append(cpp_util.GENERATED_BUNDLE_FILE_MESSAGE % SOURCE_BASE_PATH)
-    ifndef_name = cpp_util.GenerateIfndefName(SOURCE_BASE_PATH, file_base)
+    c.Append(cpp_util.GENERATED_BUNDLE_FILE_MESSAGE % self._source_file_dir)
+    ifndef_name = cpp_util.GenerateIfndefName(self._source_file_dir, file_base)
     c.Append()
     c.Append('#ifndef %s' % ifndef_name)
     c.Append('#define %s' % ifndef_name)
@@ -79,9 +86,15 @@ class CppBundleGenerator(object):
     for platform in model_object.platforms:
       if platform == Platforms.CHROMEOS:
         ifdefs.append('defined(OS_CHROMEOS)')
+      elif platform == Platforms.LINUX:
+        ifdefs.append('defined(OS_LINUX)')
+      elif platform == Platforms.MAC:
+        ifdefs.append('defined(OS_MACOSX)')
+      elif platform == Platforms.WIN:
+        ifdefs.append('defined(OS_WIN)')
       else:
         raise ValueError("Unsupported platform ifdef: %s" % platform.name)
-    return ' and '.join(ifdefs)
+    return ' || '.join(ifdefs)
 
   def _GenerateRegisterFunctions(self, namespace_name, function):
     c = code.Code()
@@ -165,15 +178,16 @@ class _APICCGenerator(object):
     c = code.Code()
     c.Append(cpp_util.CHROMIUM_LICENSE)
     c.Append()
-    c.Append('#include "%s"' % (os.path.join(SOURCE_BASE_PATH,
+    c.Append('#include "%s"' % (os.path.join(self._bundle._source_file_dir,
                                              'generated_api.h')))
     c.Append()
     for namespace in self._bundle._model.namespaces.values():
       namespace_name = namespace.unix_name.replace("experimental_", "")
       implementation_header = namespace.compiler_options.get(
           "implemented_in",
-          "chrome/browser/extensions/api/%s/%s_api.h" % (namespace_name,
-                                                         namespace_name))
+          "%s/%s/%s_api.h" % (self._bundle._impl_dir,
+                              namespace_name,
+                              namespace_name))
       if not os.path.exists(
           os.path.join(self._bundle._root,
                        os.path.normpath(implementation_header))):
@@ -192,7 +206,7 @@ class _APICCGenerator(object):
         c.Append("#endif  // %s" % ifdefs, indent_level=0)
     c.Append()
     c.Append('#include '
-                 '"chrome/browser/extensions/extension_function_registry.h"')
+                 '"extensions/browser/extension_function_registry.h"')
     c.Append()
     c.Concat(cpp_util.OpenNamespace(self._bundle._cpp_namespace))
     c.Append()
@@ -248,7 +262,7 @@ class _SchemasCCGenerator(object):
     c = code.Code()
     c.Append(cpp_util.CHROMIUM_LICENSE)
     c.Append()
-    c.Append('#include "%s"' % (os.path.join(SOURCE_BASE_PATH,
+    c.Append('#include "%s"' % (os.path.join(self._bundle._source_file_dir,
                                              'generated_schemas.h')))
     c.Append()
     c.Append('#include "base/lazy_instance.h"')

@@ -21,6 +21,7 @@ class Vector2d;
 }
 
 namespace content {
+class RenderFrameHost;
 struct ContextMenuParams;
 struct DropData;
 struct MenuItem;
@@ -32,7 +33,8 @@ class CONTENT_EXPORT RenderViewHostDelegateView {
  public:
   // A context menu should be shown, to be built using the context information
   // provided in the supplied params.
-  virtual void ShowContextMenu(const ContextMenuParams& params) {}
+  virtual void ShowContextMenu(RenderFrameHost* render_frame_host,
+                               const ContextMenuParams& params) {}
 
   // Shows a popup menu with the specified items.
   // This method should call RenderViewHost::DidSelectPopupMenuItem[s]() or
@@ -43,7 +45,10 @@ class CONTENT_EXPORT RenderViewHostDelegateView {
                              int selected_item,
                              const std::vector<MenuItem>& items,
                              bool right_aligned,
-                             bool allow_multiple_selection) = 0;
+                             bool allow_multiple_selection) {};
+
+  // Hides a popup menu opened by ShowPopupMenu().
+  virtual void HidePopupMenu() {};
 
   // The user started dragging content of the specified type within the
   // RenderView. Contextual information about the dragged content is supplied
@@ -51,14 +56,14 @@ class CONTENT_EXPORT RenderViewHostDelegateView {
   // reason, it must inform the renderer that the drag has ended; otherwise,
   // this results in bugs like http://crbug.com/157134.
   virtual void StartDragging(const DropData& drop_data,
-                             WebKit::WebDragOperationsMask allowed_ops,
+                             blink::WebDragOperationsMask allowed_ops,
                              const gfx::ImageSkia& image,
                              const gfx::Vector2d& image_offset,
                              const DragEventSourceInfo& event_info) {}
 
   // The page wants to update the mouse cursor during a drag & drop operation.
   // |operation| describes the current operation (none, move, copy, link.)
-  virtual void UpdateDragCursor(WebKit::WebDragOperation operation) {}
+  virtual void UpdateDragCursor(blink::WebDragOperation operation) {}
 
   // Notification that view for this delegate got the focus.
   virtual void GotFocus() {}

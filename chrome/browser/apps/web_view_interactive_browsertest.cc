@@ -2,13 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "apps/shell_window.h"
-#include "apps/shell_window_registry.h"
+#include "apps/app_window.h"
+#include "apps/app_window_registry.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/apps/app_browsertest_util.h"
 #include "chrome/browser/extensions/extension_test_message_listener.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/renderer_context_menu/render_view_context_menu_browsertest_util.h"
+#include "chrome/browser/renderer_context_menu/render_view_context_menu_test_util.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/test_launcher_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -24,7 +27,7 @@
 #include "ui/base/test/ui_controls.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 
-using apps::ShellWindow;
+using apps::AppWindow;
 
 class WebViewInteractiveTest
     : public extensions::PlatformAppBrowserTest {
@@ -33,13 +36,6 @@ class WebViewInteractiveTest
       : corner_(gfx::Point()),
         mouse_click_result_(false),
         first_click_(true) {}
-
-  virtual void SetUp() OVERRIDE {
-    // We need real contexts, otherwise the embedder doesn't composite, but the
-    // guest does, and that isn't an expected configuration.
-    UseRealGLContexts();
-    extensions::PlatformAppBrowserTest::SetUp();
-  }
 
   void MoveMouseInsideWindowWithListener(gfx::Point point,
                                          const std::string& message) {
@@ -67,20 +63,19 @@ class WebViewInteractiveTest
   }
 
   gfx::NativeWindow GetPlatformAppWindow() {
-    const apps::ShellWindowRegistry::ShellWindowList& shell_windows =
-        apps::ShellWindowRegistry::Get(
-            browser()->profile())->shell_windows();
-    return (*shell_windows.begin())->GetNativeWindow();
+    const apps::AppWindowRegistry::AppWindowList& app_windows =
+        apps::AppWindowRegistry::Get(browser()->profile())->app_windows();
+    return (*app_windows.begin())->GetNativeWindow();
   }
 
   void SendKeyPressToPlatformApp(ui::KeyboardCode key) {
-    ASSERT_EQ(1U, GetShellWindowCount());
+    ASSERT_EQ(1U, GetAppWindowCount());
     ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(
         GetPlatformAppWindow(), key, false, false, false, false));
   }
 
   void SendCopyKeyPressToPlatformApp() {
-    ASSERT_EQ(1U, GetShellWindowCount());
+    ASSERT_EQ(1U, GetAppWindowCount());
 #if defined(OS_MACOSX)
     // Send Cmd+C on MacOSX.
     ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(
@@ -173,11 +168,11 @@ class WebViewInteractiveTest
     // Flush any pending events to make sure we start with a clean slate.
     content::RunAllPendingInMessageLoop();
 
-    *embedder_web_contents = GetFirstShellWindowWebContents();
+    *embedder_web_contents = GetFirstAppWindowWebContents();
 
     scoped_ptr<ExtensionTestMessageListener> done_listener(
         new ExtensionTestMessageListener("TEST_PASSED", false));
-    done_listener->AlsoListenForFailureMessage("TEST_FAILED");
+    done_listener->set_failure_message("TEST_FAILED");
     if (!content::ExecuteScript(
             *embedder_web_contents,
             base::StringPrintf("runTest('%s')", test_name.c_str()))) {
@@ -257,28 +252,28 @@ class WebViewInteractiveTest
     return corner_;
   }
 
-  void SimulateRWHMouseClick(content::RenderWidgetHost* rwh, int x, int y) {
-    WebKit::WebMouseEvent mouse_event;
-    mouse_event.button = WebKit::WebMouseEvent::ButtonLeft;
+  void SimulateRWHMouseClick(content::RenderWidgetHost* rwh,
+                             blink::WebMouseEvent::Button button,
+                             int x,
+                             int y) {
+    blink::WebMouseEvent mouse_event;
+    mouse_event.button = button;
     mouse_event.x = mouse_event.windowX = x;
     mouse_event.y = mouse_event.windowY = y;
     mouse_event.modifiers = 0;
 
-    mouse_event.type = WebKit::WebInputEvent::MouseDown;
+    mouse_event.type = blink::WebInputEvent::MouseDown;
     rwh->ForwardMouseEvent(mouse_event);
-    mouse_event.type = WebKit::WebInputEvent::MouseUp;
+    mouse_event.type = blink::WebInputEvent::MouseUp;
     rwh->ForwardMouseEvent(mouse_event);
   }
 
+  // TODO(lazyboy): implement
   class PopupCreatedObserver {
    public:
     PopupCreatedObserver() : created_(false), last_render_widget_host_(NULL) {
-      created_callback_ = base::Bind(
-          &PopupCreatedObserver::CreatedCallback, base::Unretained(this));
-      content::RenderWidgetHost::AddCreatedCallback(created_callback_);
     }
     virtual ~PopupCreatedObserver() {
-      content::RenderWidgetHost::RemoveCreatedCallback(created_callback_);
     }
     void Reset() {
       created_ = false;
@@ -294,22 +289,14 @@ class WebViewInteractiveTest
     }
 
    private:
-    void CreatedCallback(content::RenderWidgetHost* rwh) {
-      last_render_widget_host_ = rwh;
-      if (message_loop_.get())
-        message_loop_->Quit();
-      else
-        created_ = true;
-    }
-    content::RenderWidgetHost::CreatedCallback created_callback_;
     scoped_refptr<content::MessageLoopRunner> message_loop_;
     bool created_;
     content::RenderWidgetHost* last_render_widget_host_;
   };
 
   void WaitForTitle(const char* title) {
-    string16 expected_title(ASCIIToUTF16(title));
-    string16 error_title(ASCIIToUTF16("FAILED"));
+    base::string16 expected_title(base::ASCIIToUTF16(title));
+    base::string16 error_title(base::ASCIIToUTF16("FAILED"));
     content::TitleWatcher title_watcher(guest_web_contents(), expected_title);
     title_watcher.AlsoWaitForTitle(error_title);
     ASSERT_EQ(expected_title, title_watcher.WaitAndGetTitle());
@@ -335,8 +322,8 @@ class WebViewInteractiveTest
     ASSERT_TRUE(!popup_rwh->IsRenderView());
     ASSERT_TRUE(popup_rwh->GetView());
 
-    string16 expected_title = ASCIIToUTF16("PASSED2");
-    string16 error_title = ASCIIToUTF16("FAILED");
+    base::string16 expected_title = base::ASCIIToUTF16("PASSED2");
+    base::string16 error_title = base::ASCIIToUTF16("FAILED");
     content::TitleWatcher title_watcher(guest_web_contents(), expected_title);
     title_watcher.AlsoWaitForTitle(error_title);
     EXPECT_TRUE(content::ExecuteScript(guest_web_contents(),
@@ -345,10 +332,10 @@ class WebViewInteractiveTest
 
     gfx::Rect popup_bounds = popup_rwh->GetView()->GetViewBounds();
     // (2, 2) is expected to lie on the first datalist element.
-    SimulateRWHMouseClick(popup_rwh, 2, 2);
+    SimulateRWHMouseClick(popup_rwh, blink::WebMouseEvent::ButtonLeft, 2, 2);
 
     content::RenderViewHost* embedder_rvh =
-        GetFirstShellWindowWebContents()->GetRenderViewHost();
+        GetFirstAppWindowWebContents()->GetRenderViewHost();
     gfx::Rect embedder_bounds = embedder_rvh->GetView()->GetViewBounds();
     gfx::Vector2d diff = popup_bounds.origin() - embedder_bounds.origin();
     LOG(INFO) << "DIFF: x = " << diff.x() << ", y = " << diff.y();
@@ -404,7 +391,7 @@ class WebViewInteractiveTest
     // MessageLoop) in it.
 
     // Now check if we got a drop and read the drop data.
-    embedder_web_contents_ = GetFirstShellWindowWebContents();
+    embedder_web_contents_ = GetFirstAppWindowWebContents();
     ExtensionTestMessageListener drop_listener("guest-got-drop", false);
     EXPECT_TRUE(content::ExecuteScript(embedder_web_contents_,
                                        "window.checkIfGuestGotDrop()"));
@@ -435,7 +422,10 @@ class WebViewInteractiveTest
 // is for Windows and Linux only. As of Sept 17th, 2013 this test is disabled
 // on Windows due to flakines, see http://crbug.com/293445.
 
-#if defined(OS_LINUX)
+// Disabled on Linux Aura because pointer lock does not work on Linux Aura.
+// crbug.com/341876
+
+#if defined(OS_LINUX) && !defined(USE_AURA)
 
 IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, PointerLock) {
   SetupTest("web_view/pointer_lock",
@@ -461,7 +451,7 @@ IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, PointerLock) {
       gfx::Point(corner().x() + 74, corner().y() + 74)));
   MoveMouseInsideWindowWithListener(gfx::Point(75, 75), "mouse-move");
 
-#if (defined(OS_WIN) && defined(USE_AURA))
+#if defined(OS_WIN)
   // When the mouse is unlocked on win aura, sending a test mouse click clicks
   // where the mouse moved to while locked. I was unable to figure out why, and
   // since the issue only occurs with the test mouse events, just fix it with
@@ -483,7 +473,7 @@ IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, PointerLock) {
   // div. We then move the mouse over that div to ensure the mouse was properly
   // unlocked and that the div receieves the message.
   ExtensionTestMessageListener move_captured_listener("move-captured", false);
-  move_captured_listener.AlsoListenForFailureMessage("timeout");
+  move_captured_listener.set_failure_message("timeout");
 
   // Mouse should already be over lock button (since we just unlocked), so send
   // click to re-lock the mouse.
@@ -509,7 +499,7 @@ IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, PointerLock) {
   }
 }
 
-#endif  // (defined(OS_WIN) || defined(OS_LINUX))
+#endif  // defined(OS_LINUX) && !defined(USE_AURA)
 
 // Tests that setting focus on the <webview> sets focus on the guest.
 IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, Focus_FocusEvent) {
@@ -594,6 +584,13 @@ IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, NewWindow_Close) {
 
 IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, NewWindow_ExecuteScript) {
   TestHelper("testNewWindowExecuteScript",
+             "web_view/newwindow",
+             NEEDS_TEST_SERVER);
+}
+
+IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest,
+                       NewWindow_DeclarativeWebRequest) {
+  TestHelper("testNewWindowDeclarativeWebRequest",
              "web_view/newwindow",
              NEEDS_TEST_SERVER);
 }
@@ -685,8 +682,7 @@ IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, DISABLED_PopupPositioningMoved) {
 // but the tests don't work on anything except chromeos for now. This is because
 // of simulating mouse drag code's dependency on platforms.
 #if defined(OS_CHROMEOS)
-// This test is flaky. See crbug.com/309032
-IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, DISABLED_DragDropWithinWebView) {
+IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, DragDropWithinWebView) {
   ExtensionTestMessageListener guest_connected_listener("connected", false);
   LoadAndLaunchPlatformApp("web_view/dnd_within_webview");
   ASSERT_TRUE(guest_connected_listener.WaitUntilSatisfied());
@@ -694,7 +690,7 @@ IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, DISABLED_DragDropWithinWebView) {
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(GetPlatformAppWindow()));
 
   gfx::Rect offset;
-  embedder_web_contents_ = GetFirstShellWindowWebContents();
+  embedder_web_contents_ = GetFirstAppWindowWebContents();
   embedder_web_contents_->GetView()->GetContainerBounds(&offset);
   corner_ = gfx::Point(offset.x(), offset.y());
 
@@ -743,13 +739,12 @@ IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, Navigation_BackForwardKeys) {
   // Flush any pending events to make sure we start with a clean slate.
   content::RunAllPendingInMessageLoop();
 
-  content::WebContents* embedder_web_contents =
-      GetFirstShellWindowWebContents();
+  content::WebContents* embedder_web_contents = GetFirstAppWindowWebContents();
   ASSERT_TRUE(embedder_web_contents);
 
   ExtensionTestMessageListener done_listener(
       "TEST_PASSED", false);
-  done_listener.AlsoListenForFailureMessage("TEST_FAILED");
+  done_listener.set_failure_message("TEST_FAILED");
   ExtensionTestMessageListener ready_back_key_listener(
       "ReadyForBackKey", false);
   ExtensionTestMessageListener ready_forward_key_listener(
@@ -774,3 +769,28 @@ IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest,
              "web_view/pointerlock",
              NO_TEST_SERVER);
 }
+
+#if defined(OS_MACOSX)
+IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, TextSelection) {
+  SetupTest("web_view/text_selection",
+            "/extensions/platform_apps/web_view/text_selection/guest.html");
+  ASSERT_TRUE(guest_web_contents());
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(
+      GetPlatformAppWindow()));
+
+  // Wait until guest sees a context menu, select an arbitrary item (copy).
+  ExtensionTestMessageListener ctx_listener("MSG_CONTEXTMENU", false);
+  ContextMenuNotificationObserver menu_observer(IDC_CONTENT_CONTEXT_COPY);
+  SimulateRWHMouseClick(guest_web_contents()->GetRenderViewHost(),
+                        blink::WebMouseEvent::ButtonRight, 20, 20);
+  ASSERT_TRUE(ctx_listener.WaitUntilSatisfied());
+
+  // Now verify that the selection text propagates properly to RWHV.
+  content::RenderWidgetHostView* guest_rwhv =
+      guest_web_contents()->GetRenderWidgetHostView();
+  ASSERT_TRUE(guest_rwhv);
+  std::string selected_text = base::UTF16ToUTF8(guest_rwhv->GetSelectedText());
+  ASSERT_TRUE(selected_text.size() >= 10u);
+  ASSERT_EQ("AAAAAAAAAA", selected_text.substr(0, 10));
+}
+#endif

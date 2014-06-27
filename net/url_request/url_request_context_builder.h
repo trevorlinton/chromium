@@ -26,6 +26,7 @@
 namespace net {
 
 class FtpTransactionFactory;
+class HostResolver;
 class HostMappingRules;
 class ProxyConfigService;
 class URLRequestContext;
@@ -69,9 +70,7 @@ class NET_EXPORT URLRequestContextBuilder {
   URLRequestContextBuilder();
   ~URLRequestContextBuilder();
 
-#if defined(OS_LINUX) || defined(OS_ANDROID)
   void set_proxy_config_service(ProxyConfigService* proxy_config_service);
-#endif  // defined(OS_LINUX) || defined(OS_ANDROID)
 
   // Call these functions to specify hard-coded Accept-Language
   // or User-Agent header values for all requests that don't
@@ -100,6 +99,11 @@ class NET_EXPORT URLRequestContextBuilder {
   }
 #endif
 
+  // By default host_resolver is constructed with CreateDefaultResolver.
+  void set_host_resolver(HostResolver* host_resolver) {
+    host_resolver_.reset(host_resolver);
+  }
+
   // Uses BasicNetworkDelegate by default. Note that calling Build will unset
   // any custom delegate in builder, so this must be called each time before
   // Build is called.
@@ -109,10 +113,12 @@ class NET_EXPORT URLRequestContextBuilder {
 
   // By default HttpCache is enabled with a default constructed HttpCacheParams.
   void EnableHttpCache(const HttpCacheParams& params) {
+    http_cache_enabled_ = true;
     http_cache_params_ = params;
   }
 
   void DisableHttpCache() {
+    http_cache_enabled_ = false;
     http_cache_params_ = HttpCacheParams();
   }
 
@@ -138,9 +144,8 @@ class NET_EXPORT URLRequestContextBuilder {
   bool http_cache_enabled_;
   HttpCacheParams http_cache_params_;
   HttpNetworkSessionParams http_network_session_params_;
-#if defined(OS_LINUX) || defined(OS_ANDROID)
+  scoped_ptr<HostResolver> host_resolver_;
   scoped_ptr<ProxyConfigService> proxy_config_service_;
-#endif  // defined(OS_LINUX) || defined(OS_ANDROID)
   scoped_ptr<NetworkDelegate> network_delegate_;
   scoped_ptr<FtpTransactionFactory> ftp_transaction_factory_;
 

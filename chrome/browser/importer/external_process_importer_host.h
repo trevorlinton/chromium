@@ -80,7 +80,8 @@ class ExternalProcessImporterHost : public BaseBookmarkModelObserver {
   virtual void LaunchImportIfReady();
 
   // BaseBookmarkModelObserver:
-  virtual void Loaded(BookmarkModel* model, bool ids_reassigned) OVERRIDE;
+  virtual void BookmarkModelLoaded(BookmarkModel* model,
+                                   bool ids_reassigned) OVERRIDE;
   virtual void BookmarkModelBeingDeleted(BookmarkModel* model) OVERRIDE;
   virtual void BookmarkModelChanged() OVERRIDE;
 
@@ -152,10 +153,6 @@ class ExternalProcessImporterHost : public BaseBookmarkModelObserver {
 
   // True if the import process has been cancelled.
   bool cancelled_;
-
-  // True if the import process has been launched. This prevents race
-  // conditions on import cancel.
-  bool import_process_launched_;
 
   // Vends weak pointers for the importer to call us back.
   base::WeakPtrFactory<ExternalProcessImporterHost> weak_ptr_factory_;

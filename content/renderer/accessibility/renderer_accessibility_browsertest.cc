@@ -3,8 +3,8 @@
 // found in the LICENSE file.
 
 #include "base/strings/utf_string_conversions.h"
-#include "content/common/accessibility_node_data.h"
-#include "content/common/view_messages.h"
+#include "content/common/frame_messages.h"
+#include "content/common/view_message_enums.h"
 #include "content/public/test/render_view_test.h"
 #include "content/renderer/accessibility/renderer_accessibility_complete.h"
 #include "content/renderer/render_view_impl.h"
@@ -13,9 +13,10 @@
 #include "third_party/WebKit/public/web/WebAXObject.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebView.h"
+#include "ui/accessibility/ax_node_data.h"
 
-using WebKit::WebAXObject;
-using WebKit::WebDocument;
+using blink::WebAXObject;
+using blink::WebDocument;
 
 namespace content {
 
@@ -62,6 +63,10 @@ class RendererAccessibilityTest : public RenderViewTest {
     return static_cast<RenderViewImpl*>(view_);
   }
 
+  RenderFrameImpl* frame() {
+    return static_cast<RenderFrameImpl*>(view()->GetMainRenderFrame());
+  }
+
   virtual void SetUp() {
     RenderViewTest::SetUp();
     sink_ = &render_thread_->sink();
@@ -92,6 +97,7 @@ class RendererAccessibilityTest : public RenderViewTest {
   IPC::TestSink* sink_;
 
   DISALLOW_COPY_AND_ASSIGN(RendererAccessibilityTest);
+
 };
 
 TEST_F(RendererAccessibilityTest, EditableTextModeFocusEvents) {
@@ -102,7 +108,7 @@ TEST_F(RendererAccessibilityTest, EditableTextModeFocusEvents) {
   SetMode(AccessibilityModeEditableTextOnly);
 
   // Set a minimum size and give focus so simulated events work.
-  view()->webwidget()->resize(WebKit::WebSize(500, 500));
+  view()->webwidget()->resize(blink::WebSize(500, 500));
   view()->webwidget()->setFocus(true);
 
   std::string html =
@@ -125,16 +131,16 @@ TEST_F(RendererAccessibilityTest, EditableTextModeFocusEvents) {
     AccessibilityHostMsg_EventParams event;
     GetLastAccEvent(&event);
     EXPECT_EQ(event.event_type,
-              WebKit::WebAXEventLayoutComplete);
+              ui::AX_EVENT_LAYOUT_COMPLETE);
     EXPECT_EQ(event.id, 1);
     EXPECT_EQ(event.nodes.size(), 2U);
     EXPECT_EQ(event.nodes[0].id, 1);
     EXPECT_EQ(event.nodes[0].role,
-              WebKit::WebAXRoleRootWebArea);
+              ui::AX_ROLE_ROOT_WEB_AREA);
     EXPECT_EQ(event.nodes[0].state,
-              (1U << WebKit::WebAXStateReadonly) |
-              (1U << WebKit::WebAXStateFocusable) |
-              (1U << WebKit::WebAXStateFocused));
+              (1U << ui::AX_STATE_READ_ONLY) |
+              (1U << ui::AX_STATE_FOCUSABLE) |
+              (1U << ui::AX_STATE_FOCUSED));
     EXPECT_EQ(event.nodes[0].child_ids.size(), 1U);
   }
 
@@ -146,21 +152,21 @@ TEST_F(RendererAccessibilityTest, EditableTextModeFocusEvents) {
     AccessibilityHostMsg_EventParams event;
     GetLastAccEvent(&event);
     EXPECT_EQ(event.event_type,
-              WebKit::WebAXEventFocus);
+              ui::AX_EVENT_FOCUS);
     EXPECT_EQ(event.id, 3);
     EXPECT_EQ(event.nodes[0].id, 1);
     EXPECT_EQ(event.nodes[0].role,
-              WebKit::WebAXRoleRootWebArea);
+              ui::AX_ROLE_ROOT_WEB_AREA);
     EXPECT_EQ(event.nodes[0].state,
-              (1U << WebKit::WebAXStateReadonly) |
-              (1U << WebKit::WebAXStateFocusable));
+              (1U << ui::AX_STATE_READ_ONLY) |
+              (1U << ui::AX_STATE_FOCUSABLE));
     EXPECT_EQ(event.nodes[0].child_ids.size(), 1U);
     EXPECT_EQ(event.nodes[1].id, 3);
     EXPECT_EQ(event.nodes[1].role,
-              WebKit::WebAXRoleGroup);
+              ui::AX_ROLE_GROUP);
     EXPECT_EQ(event.nodes[1].state,
-              (1U << WebKit::WebAXStateFocusable) |
-              (1U << WebKit::WebAXStateFocused));
+              (1U << ui::AX_STATE_FOCUSABLE) |
+              (1U << ui::AX_STATE_FOCUSED));
   }
 
   // Check other editable text nodes.
@@ -172,8 +178,8 @@ TEST_F(RendererAccessibilityTest, EditableTextModeFocusEvents) {
     GetLastAccEvent(&event);
     EXPECT_EQ(event.id, 4);
     EXPECT_EQ(event.nodes[1].state,
-              (1U << WebKit::WebAXStateFocusable) |
-              (1U << WebKit::WebAXStateFocused));
+              (1U << ui::AX_STATE_FOCUSABLE) |
+              (1U << ui::AX_STATE_FOCUSED));
   }
 
   {
@@ -184,8 +190,8 @@ TEST_F(RendererAccessibilityTest, EditableTextModeFocusEvents) {
     GetLastAccEvent(&event);
     EXPECT_EQ(event.id, 5);
     EXPECT_EQ(event.nodes[1].state,
-              (1U << WebKit::WebAXStateFocusable) |
-              (1U << WebKit::WebAXStateFocused));
+              (1U << ui::AX_STATE_FOCUSABLE) |
+              (1U << ui::AX_STATE_FOCUSED));
   }
 
   {
@@ -196,8 +202,8 @@ TEST_F(RendererAccessibilityTest, EditableTextModeFocusEvents) {
     GetLastAccEvent(&event);
     EXPECT_EQ(event.id, 6);
     EXPECT_EQ(event.nodes[1].state,
-              (1U << WebKit::WebAXStateFocusable) |
-              (1U << WebKit::WebAXStateFocused));
+              (1U << ui::AX_STATE_FOCUSABLE) |
+              (1U << ui::AX_STATE_FOCUSED));
   }
 
   // Try focusing things that aren't editable text.
@@ -209,9 +215,9 @@ TEST_F(RendererAccessibilityTest, EditableTextModeFocusEvents) {
     GetLastAccEvent(&event);
     EXPECT_EQ(event.id, 7);
     EXPECT_EQ(event.nodes[1].state,
-              (1U << WebKit::WebAXStateFocusable) |
-              (1U << WebKit::WebAXStateFocused) |
-              (1U << WebKit::WebAXStateReadonly));
+              (1U << ui::AX_STATE_FOCUSABLE) |
+              (1U << ui::AX_STATE_FOCUSED) |
+              (1U << ui::AX_STATE_READ_ONLY));
   }
 
   {
@@ -222,9 +228,9 @@ TEST_F(RendererAccessibilityTest, EditableTextModeFocusEvents) {
     GetLastAccEvent(&event);
     EXPECT_EQ(event.id, 8);
     EXPECT_EQ(event.nodes[1].state,
-              (1U << WebKit::WebAXStateFocusable) |
-              (1U << WebKit::WebAXStateFocused) |
-              (1U << WebKit::WebAXStateReadonly));
+              (1U << ui::AX_STATE_FOCUSABLE) |
+              (1U << ui::AX_STATE_FOCUSED) |
+              (1U << ui::AX_STATE_READ_ONLY));
   }
 
   // Clear focus.
@@ -267,9 +273,9 @@ TEST_F(RendererAccessibilityTest, SendFullAccessibilityTreeOnReload) {
   sink_->ClearMessages();
   WebDocument document = view()->GetWebView()->mainFrame()->document();
   WebAXObject root_obj = document.accessibilityObject();
-  accessibility->HandleWebAccessibilityEvent(
+  accessibility->HandleAXEvent(
       root_obj,
-      WebKit::WebAXEventLayoutComplete);
+      ui::AX_EVENT_LAYOUT_COMPLETE);
   accessibility->SendPendingAccessibilityEvents();
   EXPECT_EQ(4, accessibility->browser_tree_node_count());
   EXPECT_EQ(1, CountAccessibilityNodesSentToBrowser());
@@ -287,9 +293,9 @@ TEST_F(RendererAccessibilityTest, SendFullAccessibilityTreeOnReload) {
   document = view()->GetWebView()->mainFrame()->document();
   root_obj = document.accessibilityObject();
   sink_->ClearMessages();
-  accessibility->HandleWebAccessibilityEvent(
+  accessibility->HandleAXEvent(
       root_obj,
-      WebKit::WebAXEventLayoutComplete);
+      ui::AX_EVENT_LAYOUT_COMPLETE);
   accessibility->SendPendingAccessibilityEvents();
   EXPECT_EQ(4, accessibility->browser_tree_node_count());
   EXPECT_EQ(4, CountAccessibilityNodesSentToBrowser());
@@ -302,9 +308,9 @@ TEST_F(RendererAccessibilityTest, SendFullAccessibilityTreeOnReload) {
   root_obj = document.accessibilityObject();
   sink_->ClearMessages();
   const WebAXObject& first_child = root_obj.childAt(0);
-  accessibility->HandleWebAccessibilityEvent(
+  accessibility->HandleAXEvent(
       first_child,
-      WebKit::WebAXEventLiveRegionChanged);
+      ui::AX_EVENT_LIVE_REGION_CHANGED);
   accessibility->SendPendingAccessibilityEvents();
   EXPECT_EQ(4, accessibility->browser_tree_node_count());
   EXPECT_EQ(4, CountAccessibilityNodesSentToBrowser());
@@ -332,8 +338,8 @@ TEST_F(RendererAccessibilityTest,
   scoped_ptr<TestRendererAccessibilityComplete> accessibility(
       new TestRendererAccessibilityComplete(view()));
   accessibility->SendPendingAccessibilityEvents();
-  EXPECT_EQ(3, accessibility->browser_tree_node_count());
-  EXPECT_EQ(3, CountAccessibilityNodesSentToBrowser());
+  EXPECT_EQ(5, accessibility->browser_tree_node_count());
+  EXPECT_EQ(5, CountAccessibilityNodesSentToBrowser());
 
   // Post a "value changed" event, but then swap out
   // before sending it. It shouldn't send the event while
@@ -341,10 +347,10 @@ TEST_F(RendererAccessibilityTest,
   sink_->ClearMessages();
   WebDocument document = view()->GetWebView()->mainFrame()->document();
   WebAXObject root_obj = document.accessibilityObject();
-  accessibility->HandleWebAccessibilityEvent(
+  accessibility->HandleAXEvent(
       root_obj,
-      WebKit::WebAXEventValueChanged);
-  view()->OnSwapOut();
+      ui::AX_EVENT_VALUE_CHANGED);
+  view()->main_render_frame()->OnSwapOut();
   accessibility->SendPendingAccessibilityEvents();
   EXPECT_FALSE(sink_->GetUniqueMessageMatching(
       AccessibilityHostMsg_Events::ID));
@@ -354,15 +360,15 @@ TEST_F(RendererAccessibilityTest,
   // message that was queued up before will be quickly discarded
   // because the element it was referring to no longer exists,
   // so the event here is from loading this new page.
-  ViewMsg_Navigate_Params nav_params;
+  FrameMsg_Navigate_Params nav_params;
   nav_params.url = GURL("data:text/html,<p>Hello, again.</p>");
-  nav_params.navigation_type = ViewMsg_Navigate_Type::NORMAL;
+  nav_params.navigation_type = FrameMsg_Navigate_Type::NORMAL;
   nav_params.transition = PAGE_TRANSITION_TYPED;
   nav_params.current_history_list_length = 1;
   nav_params.current_history_list_offset = 0;
   nav_params.pending_history_list_offset = 1;
   nav_params.page_id = -1;
-  view()->OnNavigate(nav_params);
+  frame()->OnNavigate(nav_params);
   accessibility->SendPendingAccessibilityEvents();
   EXPECT_TRUE(sink_->GetUniqueMessageMatching(
       AccessibilityHostMsg_Events::ID));
@@ -403,9 +409,9 @@ TEST_F(RendererAccessibilityTest, HideAccessibilityObject) {
 
   // Send a childrenChanged on 'A'.
   sink_->ClearMessages();
-  accessibility->HandleWebAccessibilityEvent(
+  accessibility->HandleAXEvent(
       node_a,
-      WebKit::WebAXEventChildrenChanged);
+      ui::AX_EVENT_CHILDREN_CHANGED);
 
   accessibility->SendPendingAccessibilityEvents();
   EXPECT_EQ(3, accessibility->browser_tree_node_count());
@@ -453,9 +459,9 @@ TEST_F(RendererAccessibilityTest, ShowAccessibilityObject) {
   WebDocument document = view()->GetWebView()->mainFrame()->document();
   WebAXObject root_obj = document.accessibilityObject();
   WebAXObject node_a = root_obj.childAt(0);
-  accessibility->HandleWebAccessibilityEvent(
+  accessibility->HandleAXEvent(
       node_a,
-      WebKit::WebAXEventChildrenChanged);
+      ui::AX_EVENT_CHILDREN_CHANGED);
 
   accessibility->SendPendingAccessibilityEvents();
   EXPECT_EQ(4, accessibility->browser_tree_node_count());
@@ -479,8 +485,8 @@ TEST_F(RendererAccessibilityTest, DetachAccessibilityObject) {
   scoped_ptr<TestRendererAccessibilityComplete> accessibility(
       new TestRendererAccessibilityComplete(view()));
   accessibility->SendPendingAccessibilityEvents();
-  EXPECT_EQ(5, accessibility->browser_tree_node_count());
-  EXPECT_EQ(5, CountAccessibilityNodesSentToBrowser());
+  EXPECT_EQ(7, accessibility->browser_tree_node_count());
+  EXPECT_EQ(7, CountAccessibilityNodesSentToBrowser());
 
   // Initially, the accessibility tree looks like this:
   //
@@ -488,7 +494,9 @@ TEST_F(RendererAccessibilityTest, DetachAccessibilityObject) {
   //   +--Body
   //      +--Anonymous Block
   //         +--Static Text "1"
+  //            +--Inline Text Box "1"
   //      +--Static Text "2"
+  //         +--Inline Text Box "2"
   WebDocument document = view()->GetWebView()->mainFrame()->document();
   WebAXObject root_obj = document.accessibilityObject();
   WebAXObject body = root_obj.childAt(0);
@@ -505,9 +513,9 @@ TEST_F(RendererAccessibilityTest, DetachAccessibilityObject) {
 
   // Send a childrenChanged on the body.
   sink_->ClearMessages();
-  accessibility->HandleWebAccessibilityEvent(
+  accessibility->HandleAXEvent(
       body,
-      WebKit::WebAXEventChildrenChanged);
+      ui::AX_EVENT_CHILDREN_CHANGED);
 
   accessibility->SendPendingAccessibilityEvents();
 
@@ -516,17 +524,19 @@ TEST_F(RendererAccessibilityTest, DetachAccessibilityObject) {
   //   Document
   //   +--Body
   //      +--Static Text "1"
+  //         +--Inline Text Box "1"
   //      +--Static Text "2"
+  //         +--Inline Text Box "2"
   //
   // We just assert that there are now four nodes in the
   // accessibility tree and that only three nodes needed
   // to be updated (the body, the static text 1, and
   // the static text 2).
-  EXPECT_EQ(4, accessibility->browser_tree_node_count());
+  EXPECT_EQ(6, accessibility->browser_tree_node_count());
 
   AccessibilityHostMsg_EventParams event;
   GetLastAccEvent(&event);
-  ASSERT_EQ(3U, event.nodes.size());
+  ASSERT_EQ(5U, event.nodes.size());
 
   EXPECT_EQ(body.axID(), event.nodes[0].id);
   EXPECT_EQ(text_1.axID(), event.nodes[1].id);

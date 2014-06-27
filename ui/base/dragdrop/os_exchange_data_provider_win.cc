@@ -18,10 +18,19 @@
 #include "net/base/net_util.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/clipboard/clipboard_util_win.h"
+#include "ui/base/dragdrop/file_info.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
 namespace ui {
+
+static const OSExchangeData::CustomFormat& GetRendererTaintCustomType() {
+  CR_DEFINE_STATIC_LOCAL(
+      ui::OSExchangeData::CustomFormat,
+      format,
+      (ui::Clipboard::GetFormatType("chromium/x-renderer-taint")));
+  return format;
+}
 
 // Creates a new STGMEDIUM object to hold the specified text. The caller
 // owns the resulting object. The "Bytes" version does not NULL terminate, the
@@ -269,13 +278,23 @@ OSExchangeData::Provider* OSExchangeDataProviderWin::Clone() const {
   return new OSExchangeDataProviderWin(data_object());
 }
 
+void OSExchangeDataProviderWin::MarkOriginatedFromRenderer() {
+  STGMEDIUM* storage = GetStorageForString(std::string());
+  data_->contents_.push_back(new DataObjectImpl::StoredDataInfo(
+      GetRendererTaintCustomType().ToFormatEtc(), storage));
+}
+
+bool OSExchangeDataProviderWin::DidOriginateFromRenderer() const {
+  return HasCustomFormat(GetRendererTaintCustomType());
+}
+
 void OSExchangeDataProviderWin::SetString(const base::string16& data) {
   STGMEDIUM* storage = GetStorageForString(data);
   data_->contents_.push_back(new DataObjectImpl::StoredDataInfo(
       Clipboard::GetPlainTextWFormatType().ToFormatEtc(), storage));
 
   // Also add the UTF8-encoded version.
-  storage = GetStorageForString(UTF16ToUTF8(data));
+  storage = GetStorageForString(base::UTF16ToUTF8(data));
   data_->contents_.push_back(new DataObjectImpl::StoredDataInfo(
       Clipboard::GetPlainTextFormatType().ToFormatEtc(), storage));
 }
@@ -289,7 +308,7 @@ void OSExchangeDataProviderWin::SetURL(const GURL& url,
   // will fail! It assumes an insertion order.
 
   // Add text/x-moz-url for drags from Firefox
-  base::string16 x_moz_url_str = UTF8ToUTF16(url.spec());
+  base::string16 x_moz_url_str = base::UTF8ToUTF16(url.spec());
   x_moz_url_str += '\n';
   x_moz_url_str += title;
   STGMEDIUM* storage = GetStorageForString(x_moz_url_str);
@@ -304,7 +323,7 @@ void OSExchangeDataProviderWin::SetURL(const GURL& url,
   SetFileContents(base::FilePath(valid_file_name), shortcut_url_file_contents);
 
   // Add a UniformResourceLocator link for apps like IE and Word.
-  storage = GetStorageForString(UTF8ToUTF16(url.spec()));
+  storage = GetStorageForString(base::UTF8ToUTF16(url.spec()));
   data_->contents_.push_back(new DataObjectImpl::StoredDataInfo(
       Clipboard::GetUrlWFormatType().ToFormatEtc(), storage));
   storage = GetStorageForString(url.spec());
@@ -316,7 +335,7 @@ void OSExchangeDataProviderWin::SetURL(const GURL& url,
 
   // Also add text representations (these should be last since they're the
   // least preferable).
-  SetString(UTF8ToUTF16(url.spec()));
+  SetString(base::UTF8ToUTF16(url.spec()));
 }
 
 void OSExchangeDataProviderWin::SetFilename(const base::FilePath& path) {
@@ -334,7 +353,7 @@ void OSExchangeDataProviderWin::SetFilename(const base::FilePath& path) {
 }
 
 void OSExchangeDataProviderWin::SetFilenames(
-    const std::vector<OSExchangeData::FileInfo>& filenames) {
+    const std::vector<FileInfo>& filenames) {
   for (size_t i = 0; i < filenames.size(); ++i) {
     STGMEDIUM* storage = GetStorageForFileName(filenames[i].path);
     DataObjectImpl::StoredDataInfo* info = new DataObjectImpl::StoredDataInfo(
@@ -368,7 +387,7 @@ void OSExchangeDataProviderWin::SetFileContents(
 void OSExchangeDataProviderWin::SetHtml(const base::string16& html,
                                         const GURL& base_url) {
   // Add both MS CF_HTML and text/html format.  CF_HTML should be in utf-8.
-  std::string utf8_html = UTF16ToUTF8(html);
+  std::string utf8_html = base::UTF16ToUTF8(html);
   std::string url = base_url.is_valid() ? base_url.spec() : std::string();
 
   std::string cf_html = ClipboardUtil::HtmlToCFHtml(utf8_html, url);
@@ -386,10 +405,16 @@ bool OSExchangeDataProviderWin::GetString(base::string16* data) const {
   return ClipboardUtil::GetPlainText(source_object_, data);
 }
 
-bool OSExchangeDataProviderWin::GetURLAndTitle(GURL* url,
-                                               base::string16* title) const {
+bool OSExchangeDataProviderWin::GetURLAndTitle(
+    OSExchangeData::FilenameToURLPolicy policy,
+    GURL* url,
+    base::string16* title) const {
   base::string16 url_str;
-  bool success = ClipboardUtil::GetUrl(source_object_, &url_str, title, true);
+  bool success = ClipboardUtil::GetUrl(
+      source_object_,
+      &url_str,
+      title,
+      policy == OSExchangeData::CONVERT_FILENAMES ? true : false);
   if (success) {
     GURL test_url(url_str);
     if (test_url.is_valid()) {
@@ -415,14 +440,13 @@ bool OSExchangeDataProviderWin::GetFilename(base::FilePath* path) const {
 }
 
 bool OSExchangeDataProviderWin::GetFilenames(
-    std::vector<OSExchangeData::FileInfo>* filenames) const {
+    std::vector<FileInfo>* filenames) const {
   std::vector<base::string16> filenames_local;
   bool success = ClipboardUtil::GetFilenames(source_object_, &filenames_local);
   if (success) {
     for (size_t i = 0; i < filenames_local.size(); ++i)
       filenames->push_back(
-          OSExchangeData::FileInfo(base::FilePath(filenames_local[i]),
-                                   base::FilePath()));
+          FileInfo(base::FilePath(filenames_local[i]), base::FilePath()));
   }
   return success;
 }
@@ -471,8 +495,11 @@ bool OSExchangeDataProviderWin::HasString() const {
   return ClipboardUtil::HasPlainText(source_object_);
 }
 
-bool OSExchangeDataProviderWin::HasURL() const {
-  return (ClipboardUtil::HasUrl(source_object_) ||
+bool OSExchangeDataProviderWin::HasURL(
+    OSExchangeData::FilenameToURLPolicy policy) const {
+  return (ClipboardUtil::HasUrl(
+              source_object_,
+              policy == OSExchangeData::CONVERT_FILENAMES ? true : false) ||
           HasPlainTextURL(source_object_));
 }
 
@@ -510,11 +537,6 @@ void OSExchangeDataProviderWin::SetDownloadFileInfo(
   info->downloader = download.downloader;
   data_->contents_.push_back(info);
 }
-
-void OSExchangeDataProviderWin::SetInDragLoop(bool in_drag_loop) {
-  data_->set_in_drag_loop(in_drag_loop);
-}
-
 #if defined(USE_AURA)
 
 void OSExchangeDataProviderWin::SetDragImage(

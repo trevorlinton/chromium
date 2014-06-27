@@ -20,6 +20,7 @@
 #include "sync/internal_api/public/configure_reason.h"
 #include "sync/internal_api/public/engine/model_safe_worker.h"
 #include "sync/internal_api/public/engine/sync_status.h"
+#include "sync/internal_api/public/events/protocol_event.h"
 #include "sync/internal_api/public/sync_encryption_handler.h"
 #include "sync/internal_api/public/util/report_unrecoverable_error_function.h"
 #include "sync/internal_api/public/util/unrecoverable_error_handler.h"
@@ -34,18 +35,20 @@ class EncryptedData;
 namespace syncer {
 
 class BaseTransaction;
+class CancelationSignal;
 class DataTypeDebugInfoListener;
 class Encryptor;
-struct Experiments;
 class ExtensionsActivity;
 class HttpPostProviderFactory;
 class InternalComponentsFactory;
 class JsBackend;
 class JsEventHandler;
+class SyncCore;
 class SyncEncryptionHandler;
+class ProtocolEvent;
 class SyncScheduler;
+struct Experiments;
 struct UserShare;
-class CancelationSignal;
 
 namespace sessions {
 class SyncSessionSnapshot;
@@ -53,6 +56,7 @@ class SyncSessionSnapshot;
 
 // Used by SyncManager::OnConnectionStatusChange().
 enum ConnectionStatus {
+  CONNECTION_NOT_ATTEMPTED,
   CONNECTION_OK,
   CONNECTION_AUTH_ERROR,
   CONNECTION_SERVER_ERROR
@@ -183,75 +187,6 @@ class SYNC_EXPORT SyncManager : public syncer::InvalidationHandler {
     // notification is illegal!
     // WARNING: Calling methods on the SyncManager before receiving this
     // message, unless otherwise specified, produces undefined behavior.
-    //
-    // |js_backend| is what about:sync interacts with.  It can emit
-    // the following events:
-
-    /**
-     * @param {{ enabled: boolean }} details A dictionary containing:
-     *     - enabled: whether or not notifications are enabled.
-     */
-    // function onNotificationStateChange(details);
-
-    /**
-     * @param {{ changedTypes: Array.<string> }} details A dictionary
-     *     containing:
-     *     - changedTypes: a list of types (as strings) for which there
-             are new updates.
-     */
-    // function onIncomingNotification(details);
-
-    // Also, it responds to the following messages (all other messages
-    // are ignored):
-
-    /**
-     * Gets the current notification state.
-     *
-     * @param {function(boolean)} callback Called with whether or not
-     *     notifications are enabled.
-     */
-    // function getNotificationState(callback);
-
-    /**
-     * Gets details about the root node.
-     *
-     * @param {function(!Object)} callback Called with details about the
-     *     root node.
-     */
-    // TODO(akalin): Change this to getRootNodeId or eliminate it
-    // entirely.
-    // function getRootNodeDetails(callback);
-
-    /**
-     * Gets summary information for a list of ids.
-     *
-     * @param {Array.<string>} idList List of 64-bit ids in decimal
-     *     string form.
-     * @param {Array.<{id: string, title: string, isFolder: boolean}>}
-     * callback Called with summaries for the nodes in idList that
-     *     exist.
-     */
-    // function getNodeSummariesById(idList, callback);
-
-    /**
-     * Gets detailed information for a list of ids.
-     *
-     * @param {Array.<string>} idList List of 64-bit ids in decimal
-     *     string form.
-     * @param {Array.<!Object>} callback Called with detailed
-     *     information for the nodes in idList that exist.
-     */
-    // function getNodeDetailsById(idList, callback);
-
-    /**
-     * Gets child ids for a given id.
-     *
-     * @param {string} id 64-bit id in decimal string form of the parent
-     *     node.
-     * @param {Array.<string>} callback Called with the (possibly empty)
-     *     list of child ids.
-     */
-    // function getChildNodeIds(id);
 
     virtual void OnInitializationComplete(
         const WeakHandle<JsBackend>& js_backend,
@@ -259,14 +194,12 @@ class SYNC_EXPORT SyncManager : public syncer::InvalidationHandler {
         bool success,
         ModelTypeSet restored_types) = 0;
 
-    // We are no longer permitted to communicate with the server. Sync should
-    // be disabled and state cleaned up at once.  This can happen for a number
-    // of reasons, e.g. swapping from a test instance to production, or a
-    // global stop syncing operation has wiped the store.
-    virtual void OnStopSyncingPermanently() = 0;
-
     virtual void OnActionableError(
         const SyncProtocolError& sync_protocol_error) = 0;
+
+    virtual void OnMigrationRequested(ModelTypeSet types) = 0;
+
+    virtual void OnProtocolEvent(const ProtocolEvent& event) = 0;
 
    protected:
     virtual ~Observer();
@@ -310,7 +243,7 @@ class SYNC_EXPORT SyncManager : public syncer::InvalidationHandler {
       int sync_server_port,
       bool use_ssl,
       scoped_ptr<HttpPostProviderFactory> post_factory,
-      const std::vector<ModelSafeWorker*>& workers,
+      const std::vector<scoped_refptr<ModelSafeWorker> >& workers,
       ExtensionsActivity* extensions_activity,
       ChangeDelegate* change_delegate,
       const SyncCredentials& credentials,
@@ -398,6 +331,9 @@ class SYNC_EXPORT SyncManager : public syncer::InvalidationHandler {
 
   // May be called from any thread.
   virtual UserShare* GetUserShare() = 0;
+
+  // Returns an instance of the main interface for non-blocking sync types.
+  virtual syncer::SyncCore* GetSyncCore() = 0;
 
   // Returns the cache_guid of the currently open database.
   // Requires that the SyncManager be initialized.

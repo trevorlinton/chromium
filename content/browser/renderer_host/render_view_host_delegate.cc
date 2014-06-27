@@ -13,19 +13,14 @@ RenderViewHostDelegateView* RenderViewHostDelegate::GetDelegateView() {
   return NULL;
 }
 
-RenderViewHostDelegate::RendererManagement*
-RenderViewHostDelegate::GetRendererManagementDelegate() {
-  return NULL;
-}
-
 bool RenderViewHostDelegate::OnMessageReceived(RenderViewHost* render_view_host,
                                                const IPC::Message& message) {
   return false;
 }
 
 bool RenderViewHostDelegate::AddMessageToConsole(
-    int32 level, const string16& message, int32 line_no,
-    const string16& source_id) {
+    int32 level, const base::string16& message, int32 line_no,
+    const base::string16& source_id) {
   return false;
 }
 

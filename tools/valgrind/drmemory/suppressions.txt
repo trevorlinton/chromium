@@ -123,7 +123,6 @@ WARNING
 name=http://crbug.com/223255 - prefetches in vp8
 instruction=prefetch*
 ffmpegsumo.dll!ff_prefetch_mmxext
-ffmpegsumo.dll!vp8_decode_mb_row_no_filter
 
 ############################
 # Intentional errors in Chromium tests (ToolsSanityTests)
@@ -202,12 +201,14 @@ base_unittests.exe!base::ToolsSanityTest_SingleElementDeletedWithBraces_Test::Te
 UNINITIALIZED READ
 name=sanity test 14 (malloc/read uninit)
 base_unittests.exe!*ReadUninitializedValue
+...
 base_unittests.exe!*MakeSomeErrors
 base_unittests.exe!base::ToolsSanityTest_AccessesToMallocMemory_Test::TestBody
 
 UNINITIALIZED READ
 name=sanity test 15 (new/read uninit)
 base_unittests.exe!*ReadUninitializedValue
+...
 base_unittests.exe!*MakeSomeErrors
 base_unittests.exe!base::ToolsSanityTest_AccessesToNewMemory_Test::TestBody
 
@@ -215,12 +216,6 @@ UNADDRESSABLE ACCESS
 name=AboutHandler::AboutCrash deliberate crash
 # TODO(bruening): switch to annotation once have support for that
 chrome.dll!AboutHandler::AboutCrash
-
-UNADDRESSABLE ACCESS
-name=RendererCrashTest.Crash deliberate crash
-# function is small, little risk for false negative in rest of it
-# TODO(bruening): switch to annotation once have support for that
-chrome.dll!HandleRendererErrorTestParameters
 
 UNADDRESSABLE ACCESS
 name=NPAPITesterBase.NoHangIfInitCrashes deliberate crash
@@ -236,6 +231,13 @@ name=CrashingChildProcess deliberate crash
 UNADDRESSABLE ACCESS
 name=::Crasher::Run deliberate crash
 *!base::`anonymous namespace'::Crasher::Run
+
+UNADDRESSABLE ACCESS
+name=intentional OOM in layout test: fast/js/string-replacement-outofmemory.html
+*!WebCore::reportFatalErrorInMainThread
+*!v8::internal::V8::FatalProcessOutOfMemory
+...
+*!WebCore::HTMLScriptRunner::executePendingScriptAndDispatchEvent
 
 ############################
 # Benign issues in Chromium
@@ -262,12 +264,8 @@ instruction=mov    0xfffffffc(%esp) -> %eax
 chrome.dll!WebCore::RenderStyle::resetBorder*
 
 INVALID HEAP ARGUMENT
-name=http://crbug.com/101537
-*!scoped_ptr<_TOKEN_USER>*
-
-INVALID HEAP ARGUMENT
-name=http://crbug.com/101717 (1)
-*!scoped_ptr<_TOKEN_DEFAULT_DACL>*
+name=http://crbug.com/101537, http://crbug.com/101717 (1)
+*!scoped_ptr<>*
 
 INVALID HEAP ARGUMENT
 name=http://crbug.com/101717 (2)
@@ -275,12 +273,12 @@ name=http://crbug.com/101717 (2)
 
 INVALID HEAP ARGUMENT
 name=http://crbug.com/101717 (3)
-*!scoped_ptr<_UNICODE_STRING>::~scoped_ptr<_UNICODE_STRING>
+*!scoped_ptr<>::~scoped_ptr<>
 *!sandbox::GetHandleName
 
 INVALID HEAP ARGUMENT
 name=http://crbug.com/101717 (4)
-*!scoped_ptr<_OBJECT_NAME_INFORMATION>::~scoped_ptr<_OBJECT_NAME_INFORMATION>
+*!scoped_ptr<>::~scoped_ptr<>
 *!sandbox::GetPathFromHandle
 
 GDI USAGE ERROR
@@ -308,23 +306,6 @@ UNADDRESSABLE ACCESS
 name=http://crbug.com/106522
 npapi_test_plugin.dll!NPAPIClient::PluginTest::id
 npapi_test_plugin.dll!NPAPIClient::ExecuteGetJavascriptUrlTest::TimerProc
-
-# Bad GDI teardown sequence.
-GDI USAGE ERROR
-name=http://crbug.com/109963 a
-system call NtGdiDeleteObjectApp
-# usually one or two GDI32.dll frames here but sometimes in light mode
-# there are zero.  still pretty narrow b/c of frames on either side.
-...
-*!skia::BitmapPlatformDevice::BitmapPlatformDeviceData::~BitmapPlatformDeviceData
-
-GDI USAGE ERROR
-name=http://crbug.com/109963 b
-system call NtGdiDeleteObjectApp
-# usually one or two GDI32.dll frames here but sometimes in light mode
-# there are zero.  still pretty narrow b/c of frames on either side.
-...
-*!skia::BitmapPlatformDevice::BitmapPlatformDeviceData::ReleaseBitmapDC
 
 GDI USAGE ERROR
 name=http://crbug.com/109963 c
@@ -382,7 +363,7 @@ name=http://crbug.com/158090
 ...
 content.dll!content::*::FontCache::PreCacheFont
 content.dll!content::FontCacheDispatcher::OnPreCacheFont
-content.dll!DispatchToMethod<content::FontCacheDispatcher*
+content.dll!DispatchToMethod<>
 
 GDI USAGE ERROR
 name=http://crbug.com/158090 c#4
@@ -421,13 +402,13 @@ MSVCR100D.dll!operator new
 *!operator new
 *!operator new[]
 *!`anonymous namespace'::SecurityTest_NewOverflow_Test::TestBody
-*!testing::internal::HandleExceptionsInMethodIfSupported<testing::Test,void>
+*!testing::internal::HandleExceptionsInMethodIfSupported<>
 
 WARNING
 name=Security test (calloc overflow)
 *!`anonymous namespace'::CallocReturnsNull
 *!`anonymous namespace'::SecurityTest_CallocOverflow_Test::TestBody
-*!testing::internal::HandleExceptionsInMethodIfSupported<testing::Test,void>
+*!testing::internal::HandleExceptionsInMethodIfSupported<>
 
 GDI USAGE ERROR
 name=http://crbug.com/234484
@@ -451,3 +432,24 @@ skia.dll!SkScalerContext::getImage
 skia.dll!SkGlyphCache::findImage
 skia.dll!D1G_NoBounder_RectClip
 skia.dll!SkDraw::drawText
+
+HANDLE LEAK
+name=http://crbug.com/346842
+system call NtGdiCreateDIBSection
+GDI32.dll!CreateDIBSection
+skia.dll!HDCOffscreen::draw
+skia.dll!SkScalerContext_GDI::generateImage
+skia.dll!SkScalerContext::getImage
+skia.dll!SkGlyphCache::findImage
+skia.dll!D1G_NoBounder_RectClip
+skia.dll!SkDraw::drawPosText
+skia.dll!SkBitmapDevice::drawPosText
+skia.dll!SkCanvas::drawPosText
+
+HANDLE LEAK
+name=http://crbug.com/346993
+system call NtDuplicateObject
+KERNELBASE.dll!DuplicateHandle
+KERNEL32.dll!DuplicateHandle*
+base.dll!base::`anonymous namespace'::ThreadFunc
+KERNEL32.dll!BaseThreadInitThunk

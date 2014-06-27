@@ -73,31 +73,24 @@ class FileSystemDispatcher::CallbackDispatcher {
     dispatcher->error_callback_ = error_callback;
     return dispatcher;
   }
-  static CallbackDispatcher* Create(const OpenFileCallback& callback,
-                                    const StatusCallback& error_callback) {
-    CallbackDispatcher* dispatcher = new CallbackDispatcher;
-    dispatcher->open_callback_ = callback;
-    dispatcher->error_callback_ = error_callback;
-    return dispatcher;
-  }
 
   ~CallbackDispatcher() {}
 
   void DidSucceed() {
-    status_callback_.Run(base::PLATFORM_FILE_OK);
+    status_callback_.Run(base::File::FILE_OK);
   }
 
-  void DidFail(base::PlatformFileError error_code) {
+  void DidFail(base::File::Error error_code) {
     error_callback_.Run(error_code);
   }
 
   void DidReadMetadata(
-      const base::PlatformFileInfo& file_info) {
+      const base::File::Info& file_info) {
     metadata_callback_.Run(file_info);
   }
 
   void DidCreateSnapshotFile(
-      const base::PlatformFileInfo& file_info,
+      const base::File::Info& file_info,
       const base::FilePath& platform_path,
       int request_id) {
     snapshot_callback_.Run(file_info, platform_path, request_id);
@@ -157,7 +150,7 @@ FileSystemDispatcher::~FileSystemDispatcher() {
     int request_id = iter.GetCurrentKey();
     CallbackDispatcher* dispatcher = iter.GetCurrentValue();
     DCHECK(dispatcher);
-    dispatcher->DidFail(base::PLATFORM_FILE_ERROR_ABORT);
+    dispatcher->DidFail(base::File::FILE_ERROR_ABORT);
     dispatchers_.Remove(request_id);
   }
 }
@@ -299,23 +292,6 @@ void FileSystemDispatcher::Truncate(
     *request_id_out = request_id;
 }
 
-void FileSystemDispatcher::WriteDeprecated(
-    const GURL& path,
-    const GURL& blob_url,
-    int64 offset,
-    int* request_id_out,
-    const WriteCallback& success_callback,
-    const StatusCallback& error_callback) {
-  int request_id = dispatchers_.Add(
-      CallbackDispatcher::Create(success_callback, error_callback));
-  ChildThread::current()->Send(
-      new FileSystemHostMsg_WriteDeprecated(request_id, path,
-                                            blob_url, offset));
-
-  if (request_id_out)
-    *request_id_out = request_id;
-}
-
 void FileSystemDispatcher::Write(
     const GURL& path,
     const std::string& blob_id,
@@ -349,23 +325,6 @@ void FileSystemDispatcher::TouchFile(
   ChildThread::current()->Send(
       new FileSystemHostMsg_TouchFile(
           request_id, path, last_access_time, last_modified_time));
-}
-
-void FileSystemDispatcher::OpenPepperFile(
-    const GURL& file_path,
-    int pp_open_flags,
-    const OpenFileCallback& success_callback,
-    const StatusCallback& error_callback) {
-  int request_id = dispatchers_.Add(
-      CallbackDispatcher::Create(success_callback, error_callback));
-  ChildThread::current()->Send(
-      new FileSystemHostMsg_OpenPepperFile(
-          request_id, file_path, pp_open_flags));
-}
-
-void FileSystemDispatcher::NotifyCloseFile(int file_open_id) {
-  ChildThread::current()->Send(
-      new FileSystemHostMsg_NotifyCloseFile(file_open_id));
 }
 
 void FileSystemDispatcher::CreateSnapshotFile(
@@ -408,7 +367,7 @@ void FileSystemDispatcher::OnDidSucceed(int request_id) {
 }
 
 void FileSystemDispatcher::OnDidReadMetadata(
-    int request_id, const base::PlatformFileInfo& file_info) {
+    int request_id, const base::File::Info& file_info) {
   CallbackDispatcher* dispatcher = dispatchers_.Lookup(request_id);
   DCHECK(dispatcher);
   dispatcher->DidReadMetadata(file_info);
@@ -416,7 +375,7 @@ void FileSystemDispatcher::OnDidReadMetadata(
 }
 
 void FileSystemDispatcher::OnDidCreateSnapshotFile(
-    int request_id, const base::PlatformFileInfo& file_info,
+    int request_id, const base::File::Info& file_info,
     const base::FilePath& platform_path) {
   CallbackDispatcher* dispatcher = dispatchers_.Lookup(request_id);
   DCHECK(dispatcher);
@@ -431,11 +390,12 @@ void FileSystemDispatcher::OnDidReadDirectory(
   CallbackDispatcher* dispatcher = dispatchers_.Lookup(request_id);
   DCHECK(dispatcher);
   dispatcher->DidReadDirectory(entries, has_more);
-  dispatchers_.Remove(request_id);
+  if (!has_more)
+    dispatchers_.Remove(request_id);
 }
 
 void FileSystemDispatcher::OnDidFail(
-    int request_id, base::PlatformFileError error_code) {
+    int request_id, base::File::Error error_code) {
   CallbackDispatcher* dispatcher = dispatchers_.Lookup(request_id);
   DCHECK(dispatcher);
   dispatcher->DidFail(error_code);

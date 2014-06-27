@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/macros.h"
+
 #include "cc/debug/debug_colors.h"
 
 #include "cc/trees/layer_tree_impl.h"
@@ -51,6 +53,14 @@ SkColor DebugColors::ContainerLayerBorderColor() {
   return SkColorSetARGB(192, 255, 255, 0);
 }
 int DebugColors::ContainerLayerBorderWidth(const LayerTreeImpl* tree_impl) {
+  return Scale(2, tree_impl);
+}
+
+// Surface layers are a blue-ish green.
+SkColor DebugColors::SurfaceLayerBorderColor() {
+  return SkColorSetARGB(128, 0, 255, 136);
+}
+int DebugColors::SurfaceLayerBorderWidth(const LayerTreeImpl* tree_impl) {
   return Scale(2, tree_impl);
 }
 
@@ -112,14 +122,6 @@ int DebugColors::MissingTileBorderWidth(const LayerTreeImpl* tree_impl) {
   return Scale(1, tree_impl);
 }
 
-// Culled tile borders are brown.
-SkColor DebugColors::CulledTileBorderColor() {
-  return SkColorSetARGB(120, 160, 100, 0);
-}
-int DebugColors::CulledTileBorderWidth(const LayerTreeImpl* tree_impl) {
-  return Scale(1, tree_impl);
-}
-
 // Solid color tile borders are grey.
 SkColor DebugColors::SolidColorTileBorderColor() {
   return SkColorSetARGB(128, 128, 128, 128);
@@ -163,13 +165,19 @@ SkColor DebugColors::EvictedTileCheckerboardColor() {
 
 // ======= Debug rect colors =======
 
-// Paint rects in red.
-SkColor DebugColors::PaintRectBorderColor() {
-  return SkColorSetARGB(255, 255, 0, 0);
+static SkColor FadedGreen(int initial_value, int step) {
+  DCHECK_GE(step, 0);
+  DCHECK_LE(step, DebugColors::kFadeSteps);
+  int value = step * initial_value / DebugColors::kFadeSteps;
+  return SkColorSetARGB(value, 0, 195, 0);
+}
+// Paint rects in green.
+SkColor DebugColors::PaintRectBorderColor(int step) {
+  return FadedGreen(255, step);
 }
 int DebugColors::PaintRectBorderWidth() { return 2; }
-SkColor DebugColors::PaintRectFillColor() {
-  return SkColorSetARGB(30, 255, 0, 0);
+SkColor DebugColors::PaintRectFillColor(int step) {
+  return FadedGreen(60, step);
 }
 
 // Property-changed rects in blue.
@@ -251,6 +259,15 @@ SkColor DebugColors::NonFastScrollableRectBorderColor() {
 int DebugColors::NonFastScrollableRectBorderWidth() { return 2; }
 SkColor DebugColors::NonFastScrollableRectFillColor() {
   return SkColorSetARGB(30, 238, 163, 59);
+}
+
+// Animation bounds are lime-green.
+SkColor DebugColors::LayerAnimationBoundsBorderColor() {
+  return SkColorSetARGB(255, 112, 229, 0);
+}
+int DebugColors::LayerAnimationBoundsBorderWidth() { return 2; }
+SkColor DebugColors::LayerAnimationBoundsFillColor() {
+  return SkColorSetARGB(30, 112, 229, 0);
 }
 
 // Non-Painted rects in cyan.

@@ -62,10 +62,13 @@ class PowerPrefsTest : public testing::Test {
 
 PowerPrefsTest::PowerPrefsTest()
     : profile_manager_(TestingBrowserProcess::GetGlobal()),
-      power_policy_controller_(
-          fake_dbus_thread_manager_.GetPowerPolicyController()),
-      fake_power_manager_client_(
-          fake_dbus_thread_manager_.fake_power_manager_client()) {
+      power_policy_controller_(new PowerPolicyController),
+      fake_power_manager_client_(new FakePowerManagerClient) {
+  fake_dbus_thread_manager_.SetPowerManagerClient(
+      scoped_ptr<PowerManagerClient>(fake_power_manager_client_));
+  fake_dbus_thread_manager_.SetPowerPolicyController(
+      scoped_ptr<PowerPolicyController>(power_policy_controller_));
+  power_policy_controller_->Init(&fake_dbus_thread_manager_);
 }
 
 void PowerPrefsTest::SetUp() {
@@ -137,7 +140,7 @@ std::string PowerPrefsTest::GetExpectedPowerPolicyForProfile(
 
 std::string PowerPrefsTest::GetCurrentPowerPolicy() const {
   return PowerPolicyController::GetPolicyDebugString(
-      fake_power_manager_client_->get_policy());
+      fake_power_manager_client_->policy());
 }
 
 bool PowerPrefsTest::GetCurrentAllowScreenWakeLocks() const {
@@ -199,9 +202,9 @@ TEST_F(PowerPrefsTest, LoginScreen) {
                         content::Source<Profile>(login_profile),
                         content::NotificationService::NoDetails());
 
+  // The login profile's prefs should still be used.
   EXPECT_FALSE(GetProfile());
-  EXPECT_EQ(PowerPolicyController::GetPolicyDebugString(
-                power_manager::PowerManagementPolicy()),
+  EXPECT_EQ(GetExpectedPowerPolicyForProfile(login_profile),
             GetCurrentPowerPolicy());
 }
 
@@ -211,7 +214,6 @@ TEST_F(PowerPrefsTest, UserSession) {
   CommandLine::ForCurrentProcess()->AppendSwitchASCII(switches::kLoginProfile,
                                                       "user");
   profile_manager_.SetLoggedIn(true);
-  ProfileManager::AllowGetDefaultProfile();
 
   // Inform power_prefs_ that a session has started.
   power_prefs_->Observe(chrome::NOTIFICATION_SESSION_STARTED,
@@ -257,9 +259,9 @@ TEST_F(PowerPrefsTest, UserSession) {
                         content::Source<Profile>(user_profile),
                         content::NotificationService::NoDetails());
 
+  // The user profile's prefs should still be used.
   EXPECT_FALSE(GetProfile());
-  EXPECT_EQ(PowerPolicyController::GetPolicyDebugString(
-                power_manager::PowerManagementPolicy()),
+  EXPECT_EQ(GetExpectedPowerPolicyForProfile(user_profile),
             GetCurrentPowerPolicy());
 }
 

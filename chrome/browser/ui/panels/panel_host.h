@@ -7,10 +7,10 @@
 
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "chrome/browser/extensions/extension_function_dispatcher.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/page_zoom.h"
+#include "extensions/browser/extension_function_dispatcher.h"
 
 class FaviconTabHelper;
 class GURL;
@@ -61,7 +61,8 @@ class PanelHost : public content::WebContentsDelegate,
                               bool* was_blocked) OVERRIDE;
   virtual void ActivateContents(content::WebContents* contents) OVERRIDE;
   virtual void DeactivateContents(content::WebContents* contents) OVERRIDE;
-  virtual void LoadingStateChanged(content::WebContents* source) OVERRIDE;
+  virtual void LoadingStateChanged(content::WebContents* source,
+                                   bool to_different_document) OVERRIDE;
   virtual void CloseContents(content::WebContents* source) OVERRIDE;
   virtual void MoveContents(content::WebContents* source,
                             const gfx::Rect& pos) OVERRIDE;

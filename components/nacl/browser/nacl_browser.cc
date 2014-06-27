@@ -61,9 +61,6 @@ const base::FilePath::StringType NaClIrtName() {
     irt_name.append(FILE_PATH_LITERAL("x86_32"));
 
 #elif defined(ARCH_CPU_ARMEL)
-  // TODO(mcgrathr): Eventually we'll need to distinguish arm32 vs thumb2.
-  // That may need to be based on the actual nexe rather than a static
-  // choice, which would require substantial refactoring.
   irt_name.append(FILE_PATH_LITERAL("arm"));
 #elif defined(ARCH_CPU_MIPSEL)
   irt_name.append(FILE_PATH_LITERAL("mips32"));
@@ -91,7 +88,7 @@ void ReadCache(const base::FilePath& filename, std::string* data) {
 }
 
 void WriteCache(const base::FilePath& filename, const Pickle* pickle) {
-  file_util::WriteFile(filename, static_cast<const char*>(pickle->data()),
+  base::WriteFile(filename, static_cast<const char*>(pickle->data()),
                        pickle->size());
 }
 
@@ -119,34 +116,26 @@ const int64 kCrashesIntervalInSeconds = 120;
 
 namespace nacl {
 
-void OpenNaClExecutableImpl(const base::FilePath& file_path,
-                            base::PlatformFile* file) {
+base::File OpenNaClExecutableImpl(const base::FilePath& file_path) {
   // Get a file descriptor. On Windows, we need 'GENERIC_EXECUTE' in order to
   // memory map the executable.
   // IMPORTANT: This file descriptor must not have write access - that could
   // allow a NaCl inner sandbox escape.
-  base::PlatformFileError error_code;
-  *file = base::CreatePlatformFile(
-      file_path,
-      (base::PLATFORM_FILE_OPEN |
-       base::PLATFORM_FILE_READ |
-       base::PLATFORM_FILE_EXECUTE),  // Windows only flag.
-      NULL,
-      &error_code);
-  if (error_code != base::PLATFORM_FILE_OK) {
-    *file = base::kInvalidPlatformFileValue;
-    return;
-  }
+  base::File file(file_path,
+                  (base::File::FLAG_OPEN |
+                   base::File::FLAG_READ |
+                   base::File::FLAG_EXECUTE));  // Windows only flag.
+  if (!file.IsValid())
+    return file.Pass();
+
   // Check that the file does not reference a directory. Returning a descriptor
   // to an extension directory could allow an outer sandbox escape. openat(...)
   // could be used to traverse into the file system.
-  base::PlatformFileInfo file_info;
-  if (!base::GetPlatformFileInfo(*file, &file_info) ||
-      file_info.is_directory) {
-    base::ClosePlatformFile(*file);
-    *file = base::kInvalidPlatformFileValue;
-    return;
-  }
+  base::File::Info file_info;
+  if (!file.GetInfo(&file_info) || file_info.is_directory)
+    return base::File();
+
+  return file.Pass();
 }
 
 NaClBrowser::NaClBrowser()
@@ -268,13 +257,13 @@ void NaClBrowser::EnsureIrtAvailable() {
   }
 }
 
-void NaClBrowser::OnIrtOpened(base::PlatformFileError error_code,
+void NaClBrowser::OnIrtOpened(base::File::Error error_code,
                               base::PassPlatformFile file,
                               bool created) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::IO));
   DCHECK_EQ(irt_state_, NaClResourceRequested);
   DCHECK(!created);
-  if (error_code == base::PLATFORM_FILE_OK) {
+  if (error_code == base::File::FILE_OK) {
     irt_platform_file_ = file.ReleaseValue();
   } else {
     LOG(ERROR) << "Failed to open NaCl IRT file \""

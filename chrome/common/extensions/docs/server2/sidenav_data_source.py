@@ -4,12 +4,13 @@
 
 import copy
 import logging
+import posixpath
 
-from compiled_file_system import SingleFile
+from compiled_file_system import SingleFile, Unicode
 from data_source import DataSource
-from future import Gettable, Future
+from extensions_paths import JSON_TEMPLATES
+from future import Future
 from third_party.json_schema_compiler.json_parse import Parse
-from svn_constants import JSON_PATH
 
 
 def _AddLevels(items, level):
@@ -22,19 +23,32 @@ def _AddLevels(items, level):
       _AddLevels(item['items'], level + 1)
 
 
-def _AddSelected(items, path):
-  '''Add 'selected' and 'child_selected' properties to |items| so that the
-  sidenav can be expanded to show which menu item has been selected. Returns
-  True if an item was marked 'selected'.
+def _AddAnnotations(items, path, parent=None):
+  '''Add 'selected', 'child_selected' and 'related' properties to 
+  |items| so that the sidenav can be expanded to show which menu item has 
+  been selected and the related pages section can be drawn. 'related'
+  is added to all items with the same parent as the selected item.
+  If more than one item exactly matches the path, the deepest one is considered 
+  'selected'. A 'parent' property is added to the selected path.
+  
+  Returns True if an item was marked 'selected'.
   '''
   for item in items:
-    if item.get('href', '') == path:
-      item['selected'] = True
-      return True
     if 'items' in item:
-      if _AddSelected(item['items'], path):
+      if _AddAnnotations(item['items'], path, item):
         item['child_selected'] = True
         return True
+
+    if item.get('href', '') == path:
+      item['selected'] = True
+      if parent:
+        item['parent'] = { 'title': parent.get('title', None), 
+                          'href': parent.get('href', None) }
+      
+      for sibling in items:
+        sibling['related'] = True
+        
+      return True
 
   return False
 
@@ -52,6 +66,7 @@ class SidenavDataSource(DataSource):
     self._request = request
 
   @SingleFile
+  @Unicode
   def _CreateSidenavDict(self, _, content):
     items = Parse(content)
     # Start at level 2, the top <ul> element is level 1.
@@ -77,14 +92,15 @@ class SidenavDataSource(DataSource):
         item['href'] = self._server_instance.base_path + href
 
   def Cron(self):
-    futures = [
-        self._cache.GetFromFile('%s/%s_sidenav.json' % (JSON_PATH, platform))
-        for platform in ('apps', 'extensions')]
-    for future in futures:
-      future.Get()
+    return self._cache.GetFromFile(
+        posixpath.join(JSON_TEMPLATES, 'chrome_sidenav.json'))
 
   def get(self, key):
-    sidenav = copy.deepcopy(self._cache.GetFromFile(
-        '%s/%s_sidenav.json' % (JSON_PATH, key)).Get())
-    _AddSelected(sidenav, self._server_instance.base_path + self._request.path)
+    # TODO(mangini/kalman): Use |key| to decide which sidenav to use,
+    # which will require a more complex Cron method.
+    sidenav = self._cache.GetFromFile(
+        posixpath.join(JSON_TEMPLATES, 'chrome_sidenav.json')).Get()
+    sidenav = copy.deepcopy(sidenav)
+    _AddAnnotations(sidenav,
+                    self._server_instance.base_path + self._request.path)
     return sidenav

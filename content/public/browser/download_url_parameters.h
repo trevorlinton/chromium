@@ -10,9 +10,9 @@
 
 #include "base/basictypes.h"
 #include "base/callback.h"
+#include "content/public/browser/download_interrupt_reasons.h"
 #include "content/public/browser/download_save_info.h"
 #include "content/public/common/referrer.h"
-#include "net/base/net_errors.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -39,7 +39,8 @@ class WebContents;
 class CONTENT_EXPORT DownloadUrlParameters {
  public:
   // If there is an error, then |item| will be NULL.
-  typedef base::Callback<void(DownloadItem*, net::Error)> OnStartedCallback;
+  typedef base::Callback<void(DownloadItem*, DownloadInterruptReason)>
+      OnStartedCallback;
 
   typedef std::pair<std::string, std::string> RequestHeadersNameValuePair;
   typedef std::vector<RequestHeadersNameValuePair> RequestHeadersType;
@@ -89,7 +90,7 @@ class CONTENT_EXPORT DownloadUrlParameters {
   void set_file_path(const base::FilePath& file_path) {
     save_info_.file_path = file_path;
   }
-  void set_suggested_name(const string16& suggested_name) {
+  void set_suggested_name(const base::string16& suggested_name) {
     save_info_.suggested_name = suggested_name;
   }
   void set_offset(int64 offset) { save_info_.offset = offset; }
@@ -104,8 +105,8 @@ class CONTENT_EXPORT DownloadUrlParameters {
   const OnStartedCallback& callback() const { return callback_; }
   bool content_initiated() const { return content_initiated_; }
   int load_flags() const { return load_flags_; }
-  const std::string& last_modified() { return last_modified_; }
-  const std::string& etag() { return etag_; }
+  const std::string& last_modified() const { return last_modified_; }
+  const std::string& etag() const { return etag_; }
   const std::string& method() const { return method_; }
   const std::string& post_body() const { return post_body_; }
   int64 post_id() const { return post_id_; }
@@ -126,7 +127,9 @@ class CONTENT_EXPORT DownloadUrlParameters {
     return resource_context_;
   }
   const base::FilePath& file_path() const { return save_info_.file_path; }
-  const string16& suggested_name() const { return save_info_.suggested_name; }
+  const base::string16& suggested_name() const {
+    return save_info_.suggested_name;
+  }
   int64 offset() const { return save_info_.offset; }
   const std::string& hash_state() const { return save_info_.hash_state; }
   bool prompt() const { return save_info_.prompt_for_save_location; }

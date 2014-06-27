@@ -22,6 +22,7 @@
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/signin/signin_ui_util.h"
 #include "chrome/browser/task_manager/task_manager.h"
+#include "chrome/browser/ui/bookmarks/bookmark_utils.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -65,7 +66,6 @@
 #include "chrome/browser/enumerate_modules_model_win.h"
 #include "chrome/browser/ui/metro_pin_tab_helper_win.h"
 #include "content/public/browser/gpu_data_manager.h"
-#include "ui/gfx/win/dpi.h"
 #include "win8/util/win8_util.h"
 #endif
 
@@ -73,18 +73,17 @@
 #include "ash/shell.h"
 #endif
 
+using base::UserMetricsAction;
 using content::HostZoomMap;
-using content::UserMetricsAction;
 using content::WebContents;
 
 namespace {
 // Conditionally return the update app menu item title based on upgrade detector
 // state.
-string16 GetUpgradeDialogMenuItemName() {
-  if (UpgradeDetector::GetInstance()->is_outdated_install()) {
-    return l10n_util::GetStringFUTF16(
-        IDS_UPGRADE_BUBBLE_MENU_ITEM,
-        l10n_util::GetStringUTF16(IDS_SHORT_PRODUCT_NAME));
+base::string16 GetUpgradeDialogMenuItemName() {
+  if (UpgradeDetector::GetInstance()->is_outdated_install() ||
+      UpgradeDetector::GetInstance()->is_outdated_install_no_au()) {
+    return l10n_util::GetStringUTF16(IDS_UPGRADE_BUBBLE_MENU_ITEM);
   } else {
     return l10n_util::GetStringUTF16(IDS_UPDATE_NOW);
   }
@@ -115,7 +114,7 @@ void EncodingMenuModel::Build() {
       encoding_menu_items.begin();
   for (; it != encoding_menu_items.end(); ++it) {
     int id = it->first;
-    string16& label = it->second;
+    base::string16& label = it->second;
     if (id == 0) {
       AddSeparator(ui::NORMAL_SEPARATOR);
     } else {
@@ -198,7 +197,12 @@ void ToolsMenuModel::Build(Browser* browser) {
   if (browser->host_desktop_type() == chrome::HOST_DESKTOP_TYPE_ASH)
     show_create_shortcuts = false;
 #endif
-  if (show_create_shortcuts) {
+
+  if (CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kEnableStreamlinedHostedApps)) {
+    AddItemWithStringId(IDC_CREATE_HOSTED_APP, IDS_CREATE_HOSTED_APP);
+    AddSeparator(ui::NORMAL_SEPARATOR);
+  } else if (show_create_shortcuts) {
     AddItemWithStringId(IDC_CREATE_SHORTCUTS, IDS_CREATE_SHORTCUTS);
     AddSeparator(ui::NORMAL_SEPARATOR);
   }
@@ -278,7 +282,7 @@ bool WrenchMenuModel::IsItemForCommandIdDynamic(int command_id) const {
          command_id == IDC_SHOW_SIGNIN;
 }
 
-string16 WrenchMenuModel::GetLabelForCommandId(int command_id) const {
+base::string16 WrenchMenuModel::GetLabelForCommandId(int command_id) const {
   switch (command_id) {
     case IDC_ZOOM_PERCENT_DISPLAY:
       return zoom_label_;
@@ -310,7 +314,7 @@ string16 WrenchMenuModel::GetLabelForCommandId(int command_id) const {
           browser_->profile()->GetOriginalProfile());
     default:
       NOTREACHED();
-      return string16();
+      return base::string16();
   }
 }
 
@@ -398,27 +402,36 @@ bool WrenchMenuModel::IsCommandIdEnabled(int command_id) const {
 }
 
 bool WrenchMenuModel::IsCommandIdVisible(int command_id) const {
+  switch (command_id) {
 #if defined(OS_WIN)
-  if (command_id == IDC_VIEW_INCOMPATIBILITIES) {
-    EnumerateModulesModel* loaded_modules =
-        EnumerateModulesModel::GetInstance();
-    if (loaded_modules->confirmed_bad_modules_detected() <= 0)
-      return false;
-    // We'll leave the wrench adornment on until the user clicks the link.
-    if (loaded_modules->modules_to_notify_about() <= 0)
-      loaded_modules->AcknowledgeConflictNotification();
-    return true;
-  } else if (command_id == IDC_PIN_TO_START_SCREEN) {
-    return base::win::IsMetroProcess();
+    case IDC_VIEW_INCOMPATIBILITIES: {
+      EnumerateModulesModel* loaded_modules =
+          EnumerateModulesModel::GetInstance();
+      if (loaded_modules->confirmed_bad_modules_detected() <= 0)
+        return false;
+      // We'll leave the wrench adornment on until the user clicks the link.
+      if (loaded_modules->modules_to_notify_about() <= 0)
+        loaded_modules->AcknowledgeConflictNotification();
+      return true;
+    }
+    case IDC_PIN_TO_START_SCREEN:
+      return base::win::IsMetroProcess();
 #else
-  if (command_id == IDC_VIEW_INCOMPATIBILITIES ||
-      command_id == IDC_PIN_TO_START_SCREEN) {
-    return false;
+    case IDC_VIEW_INCOMPATIBILITIES:
+    case IDC_PIN_TO_START_SCREEN:
+      return false;
 #endif
-  } else if (command_id == IDC_UPGRADE_DIALOG) {
-    return UpgradeDetector::GetInstance()->notify_upgrade();
+    case IDC_UPGRADE_DIALOG:
+      return UpgradeDetector::GetInstance()->notify_upgrade();
+#if !defined(OS_LINUX) || defined(USE_AURA)
+    case IDC_BOOKMARK_PAGE:
+      return !chrome::ShouldRemoveBookmarkThisPageUI(browser_->profile());
+    case IDC_BOOKMARK_ALL_TABS:
+      return !chrome::ShouldRemoveBookmarkOpenPagesUI(browser_->profile());
+#endif
+    default:
+      return true;
   }
-  return true;
 }
 
 bool WrenchMenuModel::GetAcceleratorForCommandId(
@@ -476,14 +489,7 @@ bool WrenchMenuModel::ShouldShowNewIncognitoWindowMenuItem() {
   }
 #endif
 
-#if defined(OS_CHROMEOS)
-  if (CommandLine::ForCurrentProcess()->HasSwitch(
-      chromeos::switches::kGuestSession)) {
-    return false;
-  }
-#endif
-
-  return true;
+  return !browser_->profile()->IsGuestSession();
 }
 
 bool WrenchMenuModel::ShouldShowNewWindowMenuItem() {
@@ -546,10 +552,7 @@ void WrenchMenuModel::Build(bool is_new_menu) {
 
 #if defined(USE_AURA)
  if (base::win::GetVersion() >= base::win::VERSION_WIN8 &&
-     content::GpuDataManager::GetInstance()->CanUseGpuBrowserCompositor() &&
-     gfx::win::GetUndocumentedDPIScale() == 1.0f &&
-     gfx::GetDPIScale() == 1.0 &&
-     gfx::GetModernUIScale() == 1.0f) {
+     content::GpuDataManager::GetInstance()->CanUseGpuBrowserCompositor()) {
     if (browser_->host_desktop_type() == chrome::HOST_DESKTOP_TYPE_ASH) {
       // Metro mode, add the 'Relaunch Chrome in desktop mode'.
       AddSeparator(ui::NORMAL_SEPARATOR);
@@ -606,7 +609,7 @@ void WrenchMenuModel::Build(bool is_new_menu) {
   SigninManager* signin = SigninManagerFactory::GetForProfile(
       browser_->profile()->GetOriginalProfile());
   if (signin && signin->IsSigninAllowed()) {
-    const string16 short_product_name =
+    const base::string16 short_product_name =
         l10n_util::GetStringUTF16(IDS_SHORT_PRODUCT_NAME);
     AddItem(IDC_SHOW_SYNC_SETUP, l10n_util::GetStringFUTF16(
         IDS_SYNC_MENU_PRE_SYNCED_LABEL, short_product_name));
@@ -664,7 +667,7 @@ void WrenchMenuModel::Build(bool is_new_menu) {
   }
 
   bool show_exit_menu = browser_defaults::kShowExitMenuItem;
-#if defined(OS_WIN) && defined(USE_AURA)
+#if defined(OS_WIN)
   if (browser_->host_desktop_type() == chrome::HOST_DESKTOP_TYPE_ASH)
     show_exit_menu = false;
 #endif

@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/file_util.h"
+#include "base/files/scoped_file.h"
 #include "base/pickle.h"
 #include "base/posix/unix_domain_socket_linux.h"
 #include "base/synchronization/waitable_event.h"
@@ -25,8 +26,8 @@ TEST(UnixDomainSocketTest, SendRecvMsgAbortOnReplyFDClose) {
 
   int fds[2];
   ASSERT_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, fds));
-  file_util::ScopedFD scoped_fd0(&fds[0]);
-  file_util::ScopedFD scoped_fd1(&fds[1]);
+  ScopedFD scoped_fd0(fds[0]);
+  ScopedFD scoped_fd1(fds[1]);
 
   // Have the thread send a synchronous message via the socket.
   Pickle request;
@@ -45,7 +46,7 @@ TEST(UnixDomainSocketTest, SendRecvMsgAbortOnReplyFDClose) {
   ASSERT_EQ(1U, message_fds.size());
 
   // Close the reply FD.
-  ASSERT_EQ(0, HANDLE_EINTR(close(message_fds.front())));
+  ASSERT_EQ(0, IGNORE_EINTR(close(message_fds.front())));
 
   // Check that the thread didn't get blocked.
   WaitableEvent event(false, false);
@@ -62,8 +63,8 @@ TEST(UnixDomainSocketTest, SendRecvMsgAvoidsSIGPIPE) {
   ASSERT_EQ(0, sigaction(SIGPIPE, &act, &oldact));
   int fds[2];
   ASSERT_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, fds));
-  file_util::ScopedFD scoped_fd1(&fds[1]);
-  ASSERT_EQ(0, HANDLE_EINTR(close(fds[0])));
+  ScopedFD scoped_fd1(fds[1]);
+  ASSERT_EQ(0, IGNORE_EINTR(close(fds[0])));
 
   // Have the thread send a synchronous message via the socket. Unless the
   // message is sent with MSG_NOSIGNAL, this shall result in SIGPIPE.

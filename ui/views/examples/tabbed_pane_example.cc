@@ -9,6 +9,8 @@
 #include "ui/views/controls/tabbed_pane/tabbed_pane.h"
 #include "ui/views/layout/grid_layout.h"
 
+using base::ASCIIToUTF16;
+
 namespace views {
 namespace examples {
 
@@ -19,7 +21,7 @@ TabbedPaneExample::~TabbedPaneExample() {
 }
 
 void TabbedPaneExample::CreateExampleView(View* container) {
-  tabbed_pane_ = new TabbedPane(false);
+  tabbed_pane_ = new TabbedPane();
   tabbed_pane_->set_listener(this);
   add_ = new LabelButton(this, ASCIIToUTF16("Add"));
   add_at_ = new LabelButton(this, ASCIIToUTF16("Add At 1"));
@@ -57,7 +59,7 @@ void TabbedPaneExample::ButtonPressed(Button* sender, const ui::Event& event) {
   if (sender == add_) {
     AddButton("Added");
   } else if (sender == add_at_) {
-    const string16 label = ASCIIToUTF16("Added at 1");
+    const base::string16 label = ASCIIToUTF16("Added at 1");
     tabbed_pane_->AddTabAtIndex(1, label, new LabelButton(NULL, label));
   } else if (sender == select_at_) {
     if (tabbed_pane_->GetTabCount() > 1)

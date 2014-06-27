@@ -225,7 +225,7 @@ static bool MakeTempFile(const base::FilePath& dir,
                          const base::FilePath& file_name,
                          base::FilePath* full_path) {
   *full_path = dir.Append(file_name);
-  return file_util::WriteFile(*full_path, "", 0) == 0;
+  return base::WriteFile(*full_path, "", 0) == 0;
 }
 
 // Returns true if the given URL is a file: URL that matches the given file
@@ -379,7 +379,7 @@ TEST(URLFixerUpperTest, FixupFile) {
 
   // c:\foo\bar.txt -> file:///c:/foo/bar.txt (basic)
 #if defined(OS_WIN)
-  GURL fixedup(URLFixerUpper::FixupURL(WideToUTF8(original.value()),
+  GURL fixedup(URLFixerUpper::FixupURL(base::WideToUTF8(original.value()),
                                        std::string()));
 #elif defined(OS_POSIX)
   GURL fixedup(URLFixerUpper::FixupURL(original.value(), std::string()));
@@ -389,7 +389,7 @@ TEST(URLFixerUpperTest, FixupFile) {
   // TODO(port): Make some equivalent tests for posix.
 #if defined(OS_WIN)
   // c|/foo\bar.txt -> file:///c:/foo/bar.txt (pipe allowed instead of colon)
-  std::string cur(WideToUTF8(original.value()));
+  std::string cur(base::WideToUTF8(original.value()));
   EXPECT_EQ(':', cur[1]);
   cur[1] = '|';
   EXPECT_EQ(golden, URLFixerUpper::FixupURL(cur, std::string()));
@@ -501,7 +501,7 @@ TEST(URLFixerUpperTest, FixupRelativeFile) {
   base::FilePath sub_file(
       FILE_PATH_LITERAL("url fixer-upper existing file.txt"));
   base::FilePath new_dir = dir.Append(sub_dir);
-  file_util::CreateDirectory(new_dir);
+  base::CreateDirectory(new_dir);
   ASSERT_TRUE(MakeTempFile(new_dir, sub_file, &full_path));
   full_path = base::MakeAbsoluteFilePath(full_path);
   ASSERT_FALSE(full_path.empty());

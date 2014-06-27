@@ -9,13 +9,14 @@
 
 #include "base/memory/scoped_ptr.h"
 #include "chrome/browser/drive/drive_service_interface.h"
-#include "chrome/browser/google_apis/drive_common_callbacks.h"
-#include "chrome/browser/google_apis/drive_entry_kinds.h"
-#include "chrome/browser/google_apis/gdata_errorcode.h"
+#include "google_apis/drive/drive_common_callbacks.h"
+#include "google_apis/drive/drive_entry_kinds.h"
+#include "google_apis/drive/gdata_errorcode.h"
 
 class GURL;
 
 namespace base {
+class FilePath;
 class Value;
 }  // namespace base
 
@@ -36,9 +37,6 @@ class ResourceList;
 
 namespace drive {
 namespace util {
-
-// Returns true if Drive v2 API is enabled via commandline switch.
-bool IsDriveV2ApiEnabled();
 
 // Escapes ' to \' in the |str|. This is designed to use for string value of
 // search parameter on Drive API v2.
@@ -120,6 +118,10 @@ ConvertFileListToResourceList(const google_apis::FileList& file_list);
 // Converts ChangeList to ResourceList.
 scoped_ptr<google_apis::ResourceList>
 ConvertChangeListToResourceList(const google_apis::ChangeList& change_list);
+
+// Returns the (base-16 encoded) MD5 digest of the file content at |file_path|,
+// or an empty string if an error is found.
+std::string GetMd5Digest(const base::FilePath& file_path);
 
 // The resource ID for the root directory for WAPI is defined in the spec:
 // https://developers.google.com/google-apps/documents-list/

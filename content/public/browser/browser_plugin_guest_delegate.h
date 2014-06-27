@@ -11,6 +11,7 @@
 #include "base/values.h"
 #include "content/common/content_export.h"
 #include "content/public/common/browser_plugin_permission_type.h"
+#include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/size.h"
 #include "url/gurl.h"
 
@@ -26,13 +27,16 @@ class CONTENT_EXPORT BrowserPluginGuestDelegate {
 
   // Add a message to the console.
   virtual void AddMessageToConsole(int32 level,
-                                   const string16& message,
+                                   const base::string16& message,
                                    int32 line_no,
-                                   const string16& source_id) {}
+                                   const base::string16& source_id) {}
 
   // Request the delegate to close this guest, and do whatever cleanup it needs
   // to do.
   virtual void Close() {}
+
+  // Notification that the embedder has completed attachment.
+  virtual void DidAttach() {}
 
   // Informs the delegate that the guest render process is gone. |status|
   // indicates whether the guest was killed, crashed, or was terminated
@@ -42,7 +46,18 @@ class CONTENT_EXPORT BrowserPluginGuestDelegate {
   // Informs the delegate that the embedder has been destroyed.
   virtual void EmbedderDestroyed() {}
 
+  // Informs the delegate of a reply to the find request specified by
+  // |request_id|.
+  virtual void FindReply(int request_id,
+                         int number_of_matches,
+                         const gfx::Rect& selection_rect,
+                         int active_match_ordinal,
+                         bool final_update) {}
+
   virtual bool HandleKeyboardEvent(const NativeWebKeyboardEvent& event);
+
+  // Requests setting the zoom level to the provided |zoom_level|.
+  virtual void SetZoom(double zoom_factor) {}
 
   virtual bool IsDragAndDropEnabled();
 

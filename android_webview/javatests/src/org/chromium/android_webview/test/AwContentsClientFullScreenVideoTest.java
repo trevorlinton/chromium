@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,6 @@ import android.test.suitebuilder.annotation.SmallTest;
 import android.view.KeyEvent;
 
 import org.chromium.android_webview.test.util.VideoTestWebServer;
-import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.content.browser.test.util.TouchCommon;
 
@@ -17,13 +16,8 @@ import org.chromium.content.browser.test.util.TouchCommon;
  */
 public class AwContentsClientFullScreenVideoTest extends AwTestBase {
 
-    /**
-     * @Feature({"AndroidWebView"})
-     * @SmallTest
-     *
-     * http://crbug.com/238735
-     */
-    @DisabledTest
+    @Feature({"AndroidWebView"})
+    @SmallTest
     public void testOnShowAndHideCustomView() throws Throwable {
         FullScreenVideoTestAwContentsClient contentsClient =
                 new FullScreenVideoTestAwContentsClient(getActivity());
@@ -42,8 +36,7 @@ public class AwContentsClientFullScreenVideoTest extends AwTestBase {
             contentsClient.waitForCustomViewShown();
             getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
             contentsClient.waitForCustomViewHidden();
-        }
-        finally {
+        } finally {
             if (webServer != null) webServer.getTestWebServer().shutdown();
         }
     }

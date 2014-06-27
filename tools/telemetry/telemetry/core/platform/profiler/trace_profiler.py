@@ -9,11 +9,16 @@ from telemetry.core.platform import profiler
 
 class TraceProfiler(profiler.Profiler):
 
-  def __init__(self, browser_backend, platform_backend, output_path, state):
+  def __init__(self, browser_backend, platform_backend, output_path, state,
+               categories=None):
     super(TraceProfiler, self).__init__(
         browser_backend, platform_backend, output_path, state)
     assert self._browser_backend.supports_tracing
-    self._browser_backend.StartTracing(None, timeout=10)
+    # We always want flow events when tracing via telemetry.
+    categories_with_flow = 'disabled-by-default-toplevel.flow'
+    if categories:
+      categories_with_flow = ',%s' % categories
+    self._browser_backend.StartTracing(categories_with_flow, timeout=10)
 
   @classmethod
   def name(cls):
@@ -37,3 +42,27 @@ class TraceProfiler(profiler.Profiler):
     print 'To view, open in chrome://tracing'
 
     return [trace_file]
+
+
+class TraceDetailedProfiler(TraceProfiler):
+
+  def __init__(self, browser_backend, platform_backend, output_path, state):
+    super(TraceDetailedProfiler, self).__init__(
+        browser_backend, platform_backend, output_path, state,
+        categories='disabled-by-default-cc.debug*')
+
+  @classmethod
+  def name(cls):
+    return 'trace-detailed'
+
+
+class TraceAllProfiler(TraceProfiler):
+
+  def __init__(self, browser_backend, platform_backend, output_path, state):
+    super(TraceAllProfiler, self).__init__(
+        browser_backend, platform_backend, output_path, state,
+        categories='disabled-by-default-*')
+
+  @classmethod
+  def name(cls):
+    return 'trace-all'

@@ -2,17 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/file_util.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
+#include "content/public/test/async_file_test_helper.h"
 #include "content/public/test/test_file_system_context.h"
 #include "net/base/io_buffer.h"
 #include "net/base/request_priority.h"
+#include "net/http/http_byte_range.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/url_request/url_request.h"
@@ -20,13 +24,15 @@
 #include "net/url_request/url_request_job_factory_impl.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "webkit/browser/blob/blob_url_request_job.h"
-#include "webkit/browser/fileapi/async_file_test_helper.h"
 #include "webkit/browser/fileapi/file_system_context.h"
 #include "webkit/browser/fileapi/file_system_operation_context.h"
 #include "webkit/browser/fileapi/file_system_url.h"
 #include "webkit/common/blob/blob_data.h"
 
-namespace webkit_blob {
+using webkit_blob::BlobData;
+using webkit_blob::BlobURLRequestJob;
+
+namespace content {
 
 namespace {
 
@@ -142,18 +148,18 @@ class BlobURLRequestJobTest : public testing::Test {
 
     temp_file1_ = temp_dir_.path().AppendASCII("BlobFile1.dat");
     ASSERT_EQ(static_cast<int>(arraysize(kTestFileData1) - 1),
-              file_util::WriteFile(temp_file1_, kTestFileData1,
+              base::WriteFile(temp_file1_, kTestFileData1,
                                    arraysize(kTestFileData1) - 1));
-    base::PlatformFileInfo file_info1;
-    file_util::GetFileInfo(temp_file1_, &file_info1);
+    base::File::Info file_info1;
+    base::GetFileInfo(temp_file1_, &file_info1);
     temp_file_modification_time1_ = file_info1.last_modified;
 
     temp_file2_ = temp_dir_.path().AppendASCII("BlobFile2.dat");
     ASSERT_EQ(static_cast<int>(arraysize(kTestFileData2) - 1),
-              file_util::WriteFile(temp_file2_, kTestFileData2,
+              base::WriteFile(temp_file2_, kTestFileData2,
                                    arraysize(kTestFileData2) - 1));
-    base::PlatformFileInfo file_info2;
-    file_util::GetFileInfo(temp_file2_, &file_info2);
+    base::File::Info file_info2;
+    base::GetFileInfo(temp_file2_, &file_info2);
     temp_file_modification_time2_ = file_info2.last_modified;
 
     url_request_job_factory_.SetProtocolHandler("blob",
@@ -166,7 +172,7 @@ class BlobURLRequestJobTest : public testing::Test {
 
   void SetUpFileSystem() {
     // Prepare file system.
-    file_system_context_ = fileapi::CreateFileSystemContextForTesting(
+    file_system_context_ = CreateFileSystemContextForTesting(
         NULL, temp_dir_.path());
 
     file_system_context_->OpenFileSystem(
@@ -204,13 +210,13 @@ class BlobURLRequestJobTest : public testing::Test {
             kFileSystemType,
             base::FilePath().AppendASCII(filename));
 
-    ASSERT_EQ(base::PLATFORM_FILE_OK,
-              fileapi::AsyncFileTestHelper::CreateFileWithData(
+    ASSERT_EQ(base::File::FILE_OK,
+              content::AsyncFileTestHelper::CreateFileWithData(
                   file_system_context_, url, buf, buf_size));
 
-    base::PlatformFileInfo file_info;
-    ASSERT_EQ(base::PLATFORM_FILE_OK,
-              fileapi::AsyncFileTestHelper::GetMetadata(
+    base::File::Info file_info;
+    ASSERT_EQ(base::File::FILE_OK,
+              content::AsyncFileTestHelper::GetMetadata(
                   file_system_context_, url, &file_info));
     if (modification_time)
       *modification_time = file_info.last_modified;
@@ -218,16 +224,19 @@ class BlobURLRequestJobTest : public testing::Test {
 
   void OnValidateFileSystem(const GURL& root,
                             const std::string& name,
-                            base::PlatformFileError result) {
-    ASSERT_EQ(base::PLATFORM_FILE_OK, result);
+                            base::File::Error result) {
+    ASSERT_EQ(base::File::FILE_OK, result);
     ASSERT_TRUE(root.is_valid());
     file_system_root_url_ = root;
   }
 
-  void TestSuccessRequest(const std::string& expected_response) {
+  void TestSuccessNonrangeRequest(const std::string& expected_response,
+                                  int64 expected_content_length) {
     expected_status_code_ = 200;
     expected_response_ = expected_response;
     TestRequest("GET", net::HttpRequestHeaders());
+    EXPECT_EQ(expected_content_length,
+              request_->response_headers()->GetContentLength());
   }
 
   void TestErrorRequest(int expected_status_code) {
@@ -239,7 +248,7 @@ class BlobURLRequestJobTest : public testing::Test {
   void TestRequest(const std::string& method,
                    const net::HttpRequestHeaders& extra_headers) {
     request_ = url_request_context_.CreateRequest(
-        GURL("blob:blah"), net::DEFAULT_PRIORITY, &url_request_delegate_);
+        GURL("blob:blah"), net::DEFAULT_PRIORITY, &url_request_delegate_, NULL);
     request_->set_method(method);
     if (!extra_headers.IsEmpty())
       request_->SetExtraRequestHeaders(extra_headers);
@@ -271,6 +280,20 @@ class BlobURLRequestJobTest : public testing::Test {
     *expected_result += std::string(kTestFileSystemFileData2 + 6, 7);
   }
 
+  // This only works if all the Blob items have a definite pre-computed length.
+  // Otherwise, this will fail a CHECK.
+  int64 GetTotalBlobLength() const {
+    int64 total = 0;
+    const std::vector<BlobData::Item>& items = blob_data_->items();
+    for (std::vector<BlobData::Item>::const_iterator it = items.begin();
+         it != items.end(); ++it) {
+      int64 length = base::checked_cast<int64>(it->length());
+      CHECK(length <= kint64max - total);
+      total += length;
+    }
+    return total;
+  }
+
  protected:
   base::ScopedTempDir temp_dir_;
   base::FilePath temp_file1_;
@@ -297,12 +320,12 @@ class BlobURLRequestJobTest : public testing::Test {
 
 TEST_F(BlobURLRequestJobTest, TestGetSimpleDataRequest) {
   blob_data_->AppendData(kTestData1);
-  TestSuccessRequest(kTestData1);
+  TestSuccessNonrangeRequest(kTestData1, arraysize(kTestData1) - 1);
 }
 
 TEST_F(BlobURLRequestJobTest, TestGetSimpleFileRequest) {
   blob_data_->AppendFile(temp_file1_, 0, -1, base::Time());
-  TestSuccessRequest(kTestFileData1);
+  TestSuccessNonrangeRequest(kTestFileData1, arraysize(kTestFileData1) - 1);
 }
 
 TEST_F(BlobURLRequestJobTest, TestGetLargeFileRequest) {
@@ -313,10 +336,10 @@ TEST_F(BlobURLRequestJobTest, TestGetLargeFileRequest) {
   for (int i = 0; i < kBufferSize * 5; ++i)
     large_data.append(1, static_cast<char>(i % 256));
   ASSERT_EQ(static_cast<int>(large_data.size()),
-            file_util::WriteFile(large_temp_file, large_data.data(),
+            base::WriteFile(large_temp_file, large_data.data(),
                                  large_data.size()));
   blob_data_->AppendFile(large_temp_file, 0, -1, base::Time());
-  TestSuccessRequest(large_data);
+  TestSuccessNonrangeRequest(large_data, large_data.size());
 }
 
 TEST_F(BlobURLRequestJobTest, TestGetNonExistentFileRequest) {
@@ -336,14 +359,15 @@ TEST_F(BlobURLRequestJobTest, TestGetChangedFileRequest) {
 TEST_F(BlobURLRequestJobTest, TestGetSlicedFileRequest) {
   blob_data_->AppendFile(temp_file1_, 2, 4, temp_file_modification_time1_);
   std::string result(kTestFileData1 + 2, 4);
-  TestSuccessRequest(result);
+  TestSuccessNonrangeRequest(result, 4);
 }
 
 TEST_F(BlobURLRequestJobTest, TestGetSimpleFileSystemFileRequest) {
   SetUpFileSystem();
   blob_data_->AppendFileSystemFile(temp_file_system_file1_, 0, -1,
-                                  base::Time());
-  TestSuccessRequest(kTestFileSystemFileData1);
+                                   base::Time());
+  TestSuccessNonrangeRequest(kTestFileSystemFileData1,
+                             arraysize(kTestFileSystemFileData1) - 1);
 }
 
 TEST_F(BlobURLRequestJobTest, TestGetLargeFileSystemFileRequest) {
@@ -356,9 +380,9 @@ TEST_F(BlobURLRequestJobTest, TestGetLargeFileSystemFileRequest) {
   const char kFilename[] = "LargeBlob.dat";
   WriteFileSystemFile(kFilename, large_data.data(), large_data.size(), NULL);
 
-  blob_data_->AppendFileSystemFile(GetFileSystemURL(kFilename),
-                                   0, -1, base::Time());
-  TestSuccessRequest(large_data);
+  blob_data_->AppendFileSystemFile(GetFileSystemURL(kFilename), 0, -1,
+                                   base::Time());
+  TestSuccessNonrangeRequest(large_data, large_data.size());
 }
 
 TEST_F(BlobURLRequestJobTest, TestGetNonExistentFileSystemFileRequest) {
@@ -382,14 +406,14 @@ TEST_F(BlobURLRequestJobTest, TestGetSlicedFileSystemFileRequest) {
   blob_data_->AppendFileSystemFile(temp_file_system_file1_, 2, 4,
                                   temp_file_system_file_modification_time1_);
   std::string result(kTestFileSystemFileData1 + 2, 4);
-  TestSuccessRequest(result);
+  TestSuccessNonrangeRequest(result, 4);
 }
 
 TEST_F(BlobURLRequestJobTest, TestGetComplicatedDataAndFileRequest) {
   SetUpFileSystem();
   std::string result;
   BuildComplicatedData(&result);
-  TestSuccessRequest(result);
+  TestSuccessNonrangeRequest(result, GetTotalBlobLength());
 }
 
 TEST_F(BlobURLRequestJobTest, TestGetRangeRequest1) {
@@ -397,10 +421,20 @@ TEST_F(BlobURLRequestJobTest, TestGetRangeRequest1) {
   std::string result;
   BuildComplicatedData(&result);
   net::HttpRequestHeaders extra_headers;
-  extra_headers.SetHeader(net::HttpRequestHeaders::kRange, "bytes=5-10");
+  extra_headers.SetHeader(net::HttpRequestHeaders::kRange,
+                          net::HttpByteRange::Bounded(5, 10).GetHeaderValue());
   expected_status_code_ = 206;
   expected_response_ = result.substr(5, 10 - 5 + 1);
   TestRequest("GET", extra_headers);
+
+  EXPECT_EQ(6, request_->response_headers()->GetContentLength());
+
+  int64 first = 0, last = 0, length = 0;
+  EXPECT_TRUE(
+      request_->response_headers()->GetContentRange(&first, &last, &length));
+  EXPECT_EQ(5, first);
+  EXPECT_EQ(10, last);
+  EXPECT_EQ(GetTotalBlobLength(), length);
 }
 
 TEST_F(BlobURLRequestJobTest, TestGetRangeRequest2) {
@@ -408,10 +442,21 @@ TEST_F(BlobURLRequestJobTest, TestGetRangeRequest2) {
   std::string result;
   BuildComplicatedData(&result);
   net::HttpRequestHeaders extra_headers;
-  extra_headers.SetHeader(net::HttpRequestHeaders::kRange, "bytes=-10");
+  extra_headers.SetHeader(net::HttpRequestHeaders::kRange,
+                          net::HttpByteRange::Suffix(10).GetHeaderValue());
   expected_status_code_ = 206;
   expected_response_ = result.substr(result.length() - 10);
   TestRequest("GET", extra_headers);
+
+  EXPECT_EQ(10, request_->response_headers()->GetContentLength());
+
+  int64 total = GetTotalBlobLength();
+  int64 first = 0, last = 0, length = 0;
+  EXPECT_TRUE(
+      request_->response_headers()->GetContentRange(&first, &last, &length));
+  EXPECT_EQ(total - 10, first);
+  EXPECT_EQ(total - 1, last);
+  EXPECT_EQ(total, length);
 }
 
 TEST_F(BlobURLRequestJobTest, TestExtraHeaders) {
@@ -432,4 +477,4 @@ TEST_F(BlobURLRequestJobTest, TestExtraHeaders) {
   EXPECT_EQ(kTestContentDisposition, content_disposition);
 }
 
-}  // namespace webkit_blob
+}  // namespace content

@@ -3,12 +3,12 @@
 // found in the LICENSE file.
 
 #include "chrome/common/extensions/api/extension_action/action_info.h"
-#include "chrome/common/extensions/extension_builder.h"
 #include "chrome/common/extensions/extension_icon_set.h"
 #include "chrome/common/extensions/manifest_tests/extension_manifest_test.h"
-#include "chrome/common/extensions/value_builder.h"
 #include "extensions/common/error_utils.h"
+#include "extensions/common/extension_builder.h"
 #include "extensions/common/manifest_constants.h"
+#include "extensions/common/value_builder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace extensions {
@@ -103,7 +103,7 @@ TEST_F(BrowserActionManifestTest,
                DictionaryBuilder().Set("19", std::string())  // Invalid value.
                    .Set("24", "icon24.png").Set("38", "icon38.png"))).Build();
 
-  string16 error = ErrorUtils::FormatErrorMessageUTF16(
+  base::string16 error = ErrorUtils::FormatErrorMessageUTF16(
       errors::kInvalidIconPath, "19");
   LoadAndExpectError(Manifest(manifest_value.get(), "Invalid default icon"),
                      errors::kInvalidIconPath);

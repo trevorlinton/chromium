@@ -211,6 +211,7 @@ void ResourceMetadataStorage::Iterator::Advance() {
   for (it_->Next() ; it_->Valid(); it_->Next()) {
     if (!IsChildEntryKey(it_->key()) &&
         !IsCacheEntryKey(it_->key()) &&
+        !IsIdEntryKey(it_->key()) &&
         entry_.ParseFromArray(it_->value().data(), it_->value().size()))
       break;
   }
@@ -283,7 +284,7 @@ bool ResourceMetadataStorage::UpgradeOldDB(
     const ResourceIdCanonicalizer& id_canonicalizer) {
   base::ThreadRestrictions::AssertIOAllowed();
   COMPILE_ASSERT(
-      kDBVersion == 11,
+      kDBVersion == 12,
       db_version_and_this_function_should_be_updated_at_the_same_time);
 
   const base::FilePath resource_map_path =
@@ -298,6 +299,9 @@ bool ResourceMetadataStorage::UpgradeOldDB(
         !base::Move(preserved_resource_map_path, resource_map_path))
       return false;
   }
+
+  if (!base::PathExists(resource_map_path))
+    return false;
 
   // Open DB.
   leveldb::DB* db = NULL;
@@ -356,7 +360,28 @@ bool ResourceMetadataStorage::UpgradeOldDB(
     batch.Put(GetHeaderDBKey(), serialized_header);
 
     return resource_map->Write(leveldb::WriteOptions(), &batch).ok();
+  } else if (header.version() < 12) {  // Cache and ID map entries are reusable.
+    leveldb::ReadOptions options;
+    options.verify_checksums = true;
+    scoped_ptr<leveldb::Iterator> it(resource_map->NewIterator(options));
+
+    leveldb::WriteBatch batch;
+    for (it->SeekToFirst(); it->Valid(); it->Next()) {
+      if (!IsCacheEntryKey(it->key()) && !IsIdEntryKey(it->key()))
+        batch.Delete(it->key());
+    }
+    if (!it->status().ok())
+      return false;
+
+    // Put header with the latest version number.
+    std::string serialized_header;
+    if (!GetDefaultHeaderEntry().SerializeToString(&serialized_header))
+      return false;
+    batch.Put(GetHeaderDBKey(), serialized_header);
+
+    return resource_map->Write(leveldb::WriteOptions(), &batch).ok();
   }
+
   LOG(WARNING) << "Unexpected DB version: " << header.version();
   return false;
 }
@@ -420,7 +445,7 @@ bool ResourceMetadataStorage::Initialize() {
     bool should_discard_db = true;
     if (db_version != kDBVersion) {
       open_existing_result = DB_INIT_INCOMPATIBLE;
-      LOG(INFO) << "Reject incompatible DB.";
+      DVLOG(1) << "Reject incompatible DB.";
     } else if (!CheckValidity()) {
       open_existing_result = DB_INIT_BROKEN;
       LOG(ERROR) << "Reject invalid DB.";

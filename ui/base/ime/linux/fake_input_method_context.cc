@@ -11,16 +11,11 @@ FakeInputMethodContext::FakeInputMethodContext() {}
 // Overriden from ui::LinuxInputMethodContext
 
 bool FakeInputMethodContext::DispatchKeyEvent(
-    const base::NativeEvent& /* native_key_event */) {
+    const ui::KeyEvent& /* key_event */) {
   return false;
 }
 
 void FakeInputMethodContext::Reset() {
-}
-
-base::i18n::TextDirection FakeInputMethodContext::GetInputTextDirection()
-    const {
-  return base::i18n::UNKNOWN_DIRECTION;
 }
 
 void FakeInputMethodContext::OnTextInputTypeChanged(

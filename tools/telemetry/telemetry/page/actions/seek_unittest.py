@@ -6,6 +6,7 @@ from telemetry.core import util
 from telemetry.page.actions import seek
 from telemetry.unittest import tab_test_case
 
+
 AUDIO_1_SEEKED_CHECK = 'window.__hasEventCompleted("#audio_1", "seeked");'
 VIDEO_1_SEEKED_CHECK = 'window.__hasEventCompleted("#video_1", "seeked");'
 
@@ -14,16 +15,14 @@ class SeekActionTest(tab_test_case.TabTestCase):
 
   def setUp(self):
     tab_test_case.TabTestCase.setUp(self)
-    self._browser.SetHTTPServerDirectories(util.GetUnittestDataDir())
-    self._tab.Navigate(self._browser.http_server.UrlOf('video_test.html'))
-    self._tab.WaitForDocumentReadyStateToBeComplete()
+    self.Navigate('video_test.html')
 
   def testSeekWithNoSelector(self):
     """Tests that with no selector Seek  action seeks first media element."""
     data = {'wait_for_seeked': True, 'seek_time': 1}
     action = seek.SeekAction(data)
     action.WillRunAction(None, self._tab)
-    action.RunAction(None, self._tab, None)
+    action.RunAction(None, self._tab)
     # Assert only first video has played.
     self.assertTrue(self._tab.EvaluateJavaScript(VIDEO_1_SEEKED_CHECK))
     self.assertFalse(self._tab.EvaluateJavaScript(AUDIO_1_SEEKED_CHECK))
@@ -36,7 +35,7 @@ class SeekActionTest(tab_test_case.TabTestCase):
     # Both videos not playing before running action.
     self.assertFalse(self._tab.EvaluateJavaScript(VIDEO_1_SEEKED_CHECK))
     self.assertFalse(self._tab.EvaluateJavaScript(AUDIO_1_SEEKED_CHECK))
-    action.RunAction(None, self._tab, None)
+    action.RunAction(None, self._tab)
     # Assert only video matching selector has played.
     self.assertTrue(self._tab.EvaluateJavaScript(VIDEO_1_SEEKED_CHECK))
     self.assertFalse(self._tab.EvaluateJavaScript(AUDIO_1_SEEKED_CHECK))
@@ -49,12 +48,11 @@ class SeekActionTest(tab_test_case.TabTestCase):
     # Both videos not playing before running action.
     self.assertFalse(self._tab.EvaluateJavaScript(VIDEO_1_SEEKED_CHECK))
     self.assertFalse(self._tab.EvaluateJavaScript(AUDIO_1_SEEKED_CHECK))
-    action.RunAction(None, self._tab, None)
+    action.RunAction(None, self._tab)
     # Assert all media elements played.
     self.assertTrue(self._tab.EvaluateJavaScript(VIDEO_1_SEEKED_CHECK))
     self.assertTrue(self._tab.EvaluateJavaScript(AUDIO_1_SEEKED_CHECK))
 
-  # http://crbug.com/273887
   def testSeekWaitForSeekTimeout(self):
     """Tests that wait_for_seeked timeouts if video does not seek."""
     data = {'selector': '#video_1',
@@ -65,13 +63,11 @@ class SeekActionTest(tab_test_case.TabTestCase):
     action.WillRunAction(None, self._tab)
     self._tab.EvaluateJavaScript('document.getElementById("video_1").src = ""')
     self.assertFalse(self._tab.EvaluateJavaScript(VIDEO_1_SEEKED_CHECK))
-    self.assertRaises(util.TimeoutException, action.RunAction, None, self._tab,
-                      None)
+    self.assertRaises(util.TimeoutException, action.RunAction, None, self._tab)
 
   def testSeekWithoutSeekTime(self):
     """Tests that seek action fails with no seek time."""
     data = {'wait_for_seeked': True}
     action = seek.SeekAction(data)
     action.WillRunAction(None, self._tab)
-    self.assertRaises(AssertionError, action.RunAction, None, self._tab,
-                      None)
+    self.assertRaises(AssertionError, action.RunAction, None, self._tab)

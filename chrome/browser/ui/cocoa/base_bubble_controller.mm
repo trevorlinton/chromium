@@ -21,6 +21,7 @@
                previousContents:(content::WebContents*)oldContents
                         atIndex:(NSInteger)index
                          reason:(int)reason;
+- (void)closeCleanup;
 @end
 
 @implementation BaseBubbleController
@@ -29,6 +30,7 @@
 @synthesize anchorPoint = anchor_;
 @synthesize bubble = bubble_;
 @synthesize shouldOpenAsKeyWindow = shouldOpenAsKeyWindow_;
+@synthesize shouldCloseOnResignKey = shouldCloseOnResignKey_;
 
 - (id)initWithWindowNibPath:(NSString*)nibPath
                parentWindow:(NSWindow*)parentWindow
@@ -39,6 +41,7 @@
     parentWindow_ = parentWindow;
     anchor_ = anchoredAt;
     shouldOpenAsKeyWindow_ = YES;
+    shouldCloseOnResignKey_ = YES;
 
     // Watch to see if the parent window closes, and if so, close this one.
     NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
@@ -72,6 +75,7 @@
     parentWindow_ = parentWindow;
     anchor_ = anchoredAt;
     shouldOpenAsKeyWindow_ = YES;
+    shouldCloseOnResignKey_ = YES;
 
     DCHECK(![[self window] delegate]);
     [theWindow setDelegate:self];
@@ -135,8 +139,27 @@
   [self close];
 }
 
+- (void)closeCleanup {
+  if (eventTap_) {
+    [NSEvent removeMonitor:eventTap_];
+    eventTap_ = nil;
+  }
+  if (resignationObserver_) {
+    [[NSNotificationCenter defaultCenter]
+        removeObserver:resignationObserver_
+                  name:NSWindowDidResignKeyNotification
+                object:nil];
+    resignationObserver_ = nil;
+  }
+
+  tabStripObserverBridge_.reset();
+
+  NSWindow* window = [self window];
+  [[window parentWindow] removeChildWindow:window];
+}
+
 - (void)windowWillClose:(NSNotification*)notification {
-  // We caught a close so we don't need to watch for the parent closing.
+  [self closeCleanup];
   [[NSNotificationCenter defaultCenter] removeObserver:self];
   [self autorelease];
 }
@@ -159,22 +182,7 @@
 }
 
 - (void)close {
-  // The bubble will be closing, so remove the event taps.
-  if (eventTap_) {
-    [NSEvent removeMonitor:eventTap_];
-    eventTap_ = nil;
-  }
-  if (resignationObserver_) {
-    [[NSNotificationCenter defaultCenter]
-        removeObserver:resignationObserver_
-                  name:NSWindowDidResignKeyNotification
-                object:nil];
-    resignationObserver_ = nil;
-  }
-
-  tabStripObserverBridge_.reset();
-
-  [[[self window] parentWindow] removeChildWindow:[self window]];
+  [self closeCleanup];
   [super close];
 }
 
@@ -184,7 +192,7 @@
 - (void)windowDidResignKey:(NSNotification*)notification {
   NSWindow* window = [self window];
   DCHECK_EQ([notification object], window);
-  if ([window isVisible]) {
+  if ([window isVisible] && [self shouldCloseOnResignKey]) {
     // If the window isn't visible, it is already closed, and this notification
     // has been sent as part of the closing operation, so no need to close.
     [self close];
@@ -248,10 +256,19 @@
       NSSize offsets = NSMakeSize(info_bubble::kBubbleArrowXOffset +
                                   info_bubble::kBubbleArrowWidth / 2.0, 0);
       offsets = [[parentWindow_ contentView] convertSize:offsets toView:nil];
-      if ([bubble_ arrowLocation] == info_bubble::kTopRight) {
-        origin.x -= NSWidth([window frame]) - offsets.width;
-      } else {
-        origin.x -= offsets.width;
+      switch ([bubble_ arrowLocation]) {
+        case info_bubble::kTopRight:
+          origin.x -= NSWidth([window frame]) - offsets.width;
+          break;
+        case info_bubble::kTopLeft:
+          origin.x -= offsets.width;
+          break;
+        case info_bubble::kTopCenter:
+          origin.x -= NSWidth([window frame]) / 2.0;
+          break;
+        case info_bubble::kNoArrow:
+          NOTREACHED();
+          break;
       }
       break;
     }

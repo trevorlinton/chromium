@@ -6,10 +6,10 @@
 #define CHROME_BROWSER_SYNC_PROFILE_SYNC_COMPONENTS_FACTORY_MOCK_H__
 
 #include "base/memory/scoped_ptr.h"
-#include "chrome/browser/sync/glue/data_type_controller.h"
-#include "chrome/browser/sync/glue/data_type_error_handler.h"
 #include "chrome/browser/sync/profile_sync_components_factory.h"
 #include "chrome/browser/sync/profile_sync_service.h"
+#include "components/sync_driver/data_type_controller.h"
+#include "components/sync_driver/data_type_error_handler.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 namespace browser_sync {
@@ -37,6 +37,11 @@ class ProfileSyncComponentsFactoryMock : public ProfileSyncComponentsFactory {
                    browser_sync::DataTypeManagerObserver* observer,
                    browser_sync::FailedDataTypesHandler*
                        failed_datatypes_handler));
+  MOCK_METHOD3(CreateSyncBackendHost,
+               browser_sync::SyncBackendHost*(
+                   const std::string& name,
+                   Profile* profile,
+                   const base::WeakPtr<sync_driver::SyncPrefs>& sync_prefs));
   MOCK_METHOD4(CreateGenericChangeProcessor,
       browser_sync::GenericChangeProcessor*(
           ProfileSyncService* profile_sync_service,
@@ -50,11 +55,6 @@ class ProfileSyncComponentsFactoryMock : public ProfileSyncComponentsFactory {
   MOCK_METHOD2(CreateBookmarkSyncComponents,
       SyncComponents(ProfileSyncService* profile_sync_service,
                      browser_sync::DataTypeErrorHandler* error_handler));
-  MOCK_METHOD3(CreatePasswordSyncComponents,
-               SyncComponents(
-                   ProfileSyncService* profile_sync_service,
-                   PasswordStore* password_store,
-                   browser_sync::DataTypeErrorHandler* error_handler));
   MOCK_METHOD2(CreateSessionSyncComponents,
       SyncComponents(ProfileSyncService* profile_sync_service,
                      browser_sync::DataTypeErrorHandler* error_handler));

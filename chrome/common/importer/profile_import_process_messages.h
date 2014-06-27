@@ -14,7 +14,7 @@
 #include "chrome/common/importer/imported_favicon_usage.h"
 #include "chrome/common/importer/importer_data_types.h"
 #include "chrome/common/importer/importer_url_row.h"
-#include "components/autofill/core/common/autofill_param_traits_macros.h"
+#include "components/autofill/content/common/autofill_param_traits_macros.h"
 #include "components/autofill/core/common/password_form.h"
 #include "content/public/common/common_param_traits.h"
 #include "ipc/ipc_message_macros.h"
@@ -92,7 +92,7 @@ struct ParamTraits<ImporterURLRow> {
   }
   static bool Read(const Message* m, PickleIterator* iter, param_type* p) {
     GURL url;
-    string16 title;
+    base::string16 title;
     int visit_count, typed_count;
     base::Time last_visit;
     bool hidden;
@@ -262,7 +262,7 @@ struct ParamTraits<importer::ImporterIE7PasswordInfo> {
 IPC_MESSAGE_CONTROL3(ProfileImportProcessMsg_StartImport,
                      importer::SourceProfile,
                      int                     /* Bitmask of items to import. */,
-                     DictionaryValue         /* Localized strings. */)
+                     base::DictionaryValue   /* Localized strings. */)
 
 IPC_MESSAGE_CONTROL0(ProfileImportProcessMsg_CancelImport)
 
@@ -300,8 +300,8 @@ IPC_MESSAGE_CONTROL1(ProfileImportProcessHostMsg_NotifyHomePageImportReady,
                      GURL  /* GURL of home page */)
 
 IPC_MESSAGE_CONTROL2(ProfileImportProcessHostMsg_NotifyBookmarksImportStart,
-                     string16  /* first folder name */,
-                     int       /* total number of bookmarks */)
+                     base::string16  /* first folder name */,
+                     int             /* total number of bookmarks */)
 
 IPC_MESSAGE_CONTROL1(ProfileImportProcessHostMsg_NotifyBookmarksImportGroup,
                      std::vector<ImportedBookmarkEntry>)

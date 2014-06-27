@@ -95,35 +95,35 @@ struct PasswordForm {
   // possible.
   //
   // When parsing an HTML form, this must always be set.
-  string16 submit_element;
+  base::string16 submit_element;
 
   // The name of the username input element. Optional (improves scoring).
   //
   // When parsing an HTML form, this must always be set.
-  string16 username_element;
+  base::string16 username_element;
 
   // The username. Optional.
   //
   // When parsing an HTML form, this is typically empty unless the site
   // has implemented some form of autofill.
-  string16 username_value;
+  base::string16 username_value;
 
   // This member is populated in cases where we there are multiple input
   // elements that could possibly be the username. Used when our heuristics for
   // determining the username are incorrect. Optional.
   //
   // When parsing an HTML form, this is typically empty.
-  std::vector<string16> other_possible_usernames;
+  std::vector<base::string16> other_possible_usernames;
 
   // The name of the password input element, Optional (improves scoring).
   //
   // When parsing an HTML form, this must always be set.
-  string16 password_element;
+  base::string16 password_element;
 
   // The password. Required.
   //
   // When parsing an HTML form, this is typically empty.
-  string16 password_value;
+  base::string16 password_value;
 
   // False if autocomplete is set to "off" for the password input element;
   // True otherwise.
@@ -131,10 +131,10 @@ struct PasswordForm {
 
   // If the form was a change password form, the name of the
   // 'old password' input element. Optional.
-  string16 old_password_element;
+  base::string16 old_password_element;
 
   // The old password. Optional.
-  string16 old_password_value;
+  base::string16 old_password_value;
 
   // Whether or not this login was saved under an HTTPS session with a valid
   // SSL cert. We will never match or autofill a PasswordForm where
@@ -170,6 +170,7 @@ struct PasswordForm {
   enum Type {
     TYPE_MANUAL,
     TYPE_GENERATED,
+    TYPE_LAST = TYPE_GENERATED
   };
 
   // The form type. Not used yet. Please see http://crbug.com/152422
@@ -180,6 +181,12 @@ struct PasswordForm {
   //
   // When parsing an HTML form, this is not used.
   int times_used;
+
+  // True if additional system level authentication should be used
+  // (if available) before using this password for autofill.
+  //
+  // Default to false.
+  bool use_additional_authentication;
 
   // Autofill representation of this form. Used to communicate with the
   // Autofill servers if necessary. Currently this is only used to help
@@ -200,7 +207,7 @@ struct PasswordForm {
 };
 
 // Map username to PasswordForm* for convenience. See password_form_manager.h.
-typedef std::map<string16, PasswordForm*> PasswordFormMap;
+typedef std::map<base::string16, PasswordForm*> PasswordFormMap;
 
 // For testing.
 std::ostream& operator<<(std::ostream& os,

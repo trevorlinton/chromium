@@ -44,7 +44,7 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/autofill/core/common/password_form.h"
-#include "components/webdata/encryptor/ie7_password_win.h"
+#include "components/os_crypt/ie7_password_win.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -83,12 +83,12 @@ const BookmarkInfo kIESortedBookmarks[] = {
   {false, 0, {}, L"c", "http://www.google.com/3"},
 };
 
-const char16 kIEIdentifyUrl[] =
+const base::char16 kIEIdentifyUrl[] =
     L"http://A79029D6-753E-4e27-B807-3D46AB1545DF.com:8080/path?key=value";
-const char16 kIEIdentifyTitle[] =
+const base::char16 kIEIdentifyTitle[] =
     L"Unittest GUID";
 
-const char16 kFaviconStreamSuffix[] = L"url:favicon:$DATA";
+const base::char16 kFaviconStreamSuffix[] = L"url:favicon:$DATA";
 const char kDummyFaviconImageData[] =
     "\x42\x4D"          // Magic signature 'BM'
     "\x1E\x00\x00\x00"  // File size
@@ -101,8 +101,8 @@ const char kDummyFaviconImageData[] =
     "\x00\xFF\x00\x00"; // The pixel
 
 struct FaviconGroup {
-  const char16* favicon_url;
-  const char16* site_url[2];
+  const base::char16* favicon_url;
+  const base::char16* site_url[2];
 };
 
 const FaviconGroup kIEFaviconGroup[2] = {
@@ -115,8 +115,8 @@ const FaviconGroup kIEFaviconGroup[2] = {
 };
 
 bool CreateOrderBlob(const base::FilePath& favorites_folder,
-                     const string16& path,
-                     const std::vector<string16>& entries) {
+                     const base::string16& path,
+                     const std::vector<base::string16>& entries) {
   if (entries.size() > 255)
     return false;
 
@@ -160,8 +160,8 @@ bool CreateOrderBlob(const base::FilePath& favorites_folder,
 }
 
 bool CreateUrlFileWithFavicon(const base::FilePath& file,
-                              const string16& url,
-                              const string16& favicon_url) {
+                              const base::string16& url,
+                              const base::string16& favicon_url) {
   base::win::ScopedComPtr<IUniformResourceLocator> locator;
   HRESULT result = locator.CreateInstance(CLSID_InternetShortcut, NULL,
                                           CLSCTX_INPROC_SERVER);
@@ -203,20 +203,20 @@ bool CreateUrlFileWithFavicon(const base::FilePath& file,
     return false;
 
   // Write dummy favicon image data in NTFS alternate data stream.
-  return favicon_url.empty() || (file_util::WriteFile(
+  return favicon_url.empty() || (base::WriteFile(
       file.ReplaceExtension(kFaviconStreamSuffix), kDummyFaviconImageData,
       sizeof kDummyFaviconImageData) != -1);
 }
 
-bool CreateUrlFile(const base::FilePath& file, const string16& url) {
-  return CreateUrlFileWithFavicon(file, url, string16());
+bool CreateUrlFile(const base::FilePath& file, const base::string16& url) {
+  return CreateUrlFileWithFavicon(file, url, base::string16());
 }
 
 void ClearPStoreType(IPStore* pstore, const GUID* type, const GUID* subtype) {
   base::win::ScopedComPtr<IEnumPStoreItems, NULL> item;
   HRESULT result = pstore->EnumItems(0, type, subtype, 0, item.Receive());
   if (result == PST_E_OK) {
-    char16* item_name;
+    base::char16* item_name;
     while (SUCCEEDED(item->Next(1, &item_name, 0))) {
       pstore->DeleteItem(0, type, subtype, item_name, NULL, 0);
       CoTaskMemFree(item_name);
@@ -228,7 +228,7 @@ void ClearPStoreType(IPStore* pstore, const GUID* type, const GUID* subtype) {
 
 void WritePStore(IPStore* pstore, const GUID* type, const GUID* subtype) {
   struct PStoreItem {
-    char16* name;
+    base::char16* name;
     int data_size;
     char* data;
   } items[] = {
@@ -325,8 +325,9 @@ class TestObserver : public ProfileWriter,
     EXPECT_EQ(history::SOURCE_IE_IMPORTED, visit_source);
   }
 
-  virtual void AddBookmarks(const std::vector<ImportedBookmarkEntry>& bookmarks,
-                            const string16& top_level_folder_name) OVERRIDE {
+  virtual void AddBookmarks(
+      const std::vector<ImportedBookmarkEntry>& bookmarks,
+      const base::string16& top_level_folder_name) OVERRIDE {
     ASSERT_LE(bookmark_count_ + bookmarks.size(), arraysize(kIEBookmarks));
     // Importer should import the IE Favorites folder the same as the list,
     // in the same order.
@@ -424,8 +425,9 @@ class MalformedFavoritesRegistryTestObserver
                               history::VisitSource visit_source) {}
   virtual void AddKeyword(std::vector<TemplateURL*> template_url,
                           int default_keyword_index) {}
-  virtual void AddBookmarks(const std::vector<ImportedBookmarkEntry>& bookmarks,
-                            const string16& top_level_folder_name) OVERRIDE {
+  virtual void AddBookmarks(
+      const std::vector<ImportedBookmarkEntry>& bookmarks,
+      const base::string16& top_level_folder_name) OVERRIDE {
     ASSERT_LE(bookmark_count_ + bookmarks.size(),
               arraysize(kIESortedBookmarks));
     for (size_t i = 0; i < bookmarks.size(); ++i) {
@@ -496,10 +498,10 @@ IN_PROC_BROWSER_TEST_F(IEImporterBrowserTest, IEImporter) {
       L"http://www.links-sublink.com/"));
   ASSERT_TRUE(CreateUrlFile(path.AppendASCII("IEDefaultLink.url"),
                             L"http://go.microsoft.com/fwlink/?linkid=140813"));
-  file_util::WriteFile(path.AppendASCII("InvalidUrlFile.url"), "x", 1);
-  file_util::WriteFile(path.AppendASCII("PlainTextFile.txt"), "x", 1);
+  base::WriteFile(path.AppendASCII("InvalidUrlFile.url"), "x", 1);
+  base::WriteFile(path.AppendASCII("PlainTextFile.txt"), "x", 1);
 
-  const char16* root_links[] = {
+  const base::char16* root_links[] = {
     L"Links",
     L"Google Home Page.url",
     L"TheLink.url",
@@ -510,7 +512,8 @@ IN_PROC_BROWSER_TEST_F(IEImporterBrowserTest, IEImporter) {
   };
   ASSERT_TRUE(CreateOrderBlob(
       base::FilePath(path), L"",
-      std::vector<string16>(root_links, root_links + arraysize(root_links))));
+      std::vector<base::string16>(root_links,
+                                  root_links + arraysize(root_links))));
 
   HRESULT res;
 

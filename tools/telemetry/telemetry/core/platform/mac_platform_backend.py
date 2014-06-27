@@ -4,20 +4,31 @@
 
 import ctypes
 import os
-import subprocess
 import time
 try:
   import resource  # pylint: disable=F0401
 except ImportError:
   resource = None  # Not available on all platforms
 
-from ctypes import util
+from telemetry import decorators
+from telemetry.core.platform import platform_backend
 from telemetry.core.platform import posix_platform_backend
+from telemetry.core.platform.power_monitor import powermetrics_power_monitor
+
+
+LEOPARD =      platform_backend.OSVersion('leopard',      10.5)
+SNOWLEOPARD =  platform_backend.OSVersion('snowleopard',  10.6)
+LION =         platform_backend.OSVersion('lion',         10.7)
+MOUNTAINLION = platform_backend.OSVersion('mountainlion', 10.8)
+MAVERICKS =    platform_backend.OSVersion('mavericks',    10.9)
+
 
 class MacPlatformBackend(posix_platform_backend.PosixPlatformBackend):
   def __init__(self):
     super(MacPlatformBackend, self).__init__()
     self.libproc = None
+    self.power_monitor_ = powermetrics_power_monitor.PowerMetricsPowerMonitor(
+        self)
 
   def StartRawDisplayFrameRateMeasurement(self):
     raise NotImplementedError()
@@ -33,6 +44,17 @@ class MacPlatformBackend(posix_platform_backend.PosixPlatformBackend):
 
   def HasBeenThermallyThrottled(self):
     raise NotImplementedError()
+
+  def _GetIdleWakeupCount(self, pid):
+    top_output = self._GetTopOutput(pid, ['idlew'])
+
+    # Sometimes top won't return anything here, just ignore such cases -
+    # crbug.com/354812 .
+    if top_output[-2] != 'IDLEW':
+      return 0
+    # Numbers reported by top may have a '+' appended.
+    wakeup_count = int(top_output[-1].strip('+ '))
+    return wakeup_count
 
   def GetCpuStats(self, pid):
     """Return current cpu processing time of pid in seconds."""
@@ -63,14 +85,20 @@ class MacPlatformBackend(posix_platform_backend.PosixPlatformBackend):
 
     proc_info = ProcTaskInfo()
     if not self.libproc:
-      self.libproc = ctypes.CDLL(util.find_library('libproc'))
+      self.libproc = ctypes.CDLL(ctypes.util.find_library('libproc'))
     self.libproc.proc_pidinfo(pid, proc_info.PROC_PIDTASKINFO, 0,
                               ctypes.byref(proc_info), proc_info.size)
 
-    # Convert nanoseconds to seconds
+    # Convert nanoseconds to seconds.
     cpu_time = (proc_info.pti_total_user / 1000000000.0 +
                 proc_info.pti_total_system / 1000000000.0)
-    return {'CpuProcessTime': cpu_time}
+    results = {'CpuProcessTime': cpu_time,
+               'ContextSwitches': proc_info.pti_csw}
+
+    # top only reports idle wakeup count starting from OS X 10.9.
+    if self.GetOSVersionName() >= MAVERICKS:
+      results.update({'IdleWakeupCount': self._GetIdleWakeupCount(pid)})
+    return results
 
   def GetCpuTimestamp(self):
     """Return current timestamp in seconds."""
@@ -85,6 +113,14 @@ class MacPlatformBackend(posix_platform_backend.PosixPlatformBackend):
         return pages_active * resource.getpagesize() / 1024
     return 0
 
+  @decorators.Cache
+  def GetSystemTotalPhysicalMemory(self):
+    return int(self._RunCommand(['sysctl', '-n', 'hw.memsize']))
+
+  def PurgeUnpinnedMemory(self):
+    # TODO(pliard): Implement this.
+    pass
+
   def GetMemoryStats(self, pid):
     rss_vsz = self._GetPsOutput(['rss', 'vsz'], pid)
     if rss_vsz:
@@ -96,24 +132,37 @@ class MacPlatformBackend(posix_platform_backend.PosixPlatformBackend):
   def GetOSName(self):
     return 'mac'
 
+  @decorators.Cache
   def GetOSVersionName(self):
     os_version = os.uname()[2]
 
     if os_version.startswith('9.'):
-      return 'leopard'
+      return LEOPARD
     if os_version.startswith('10.'):
-      return 'snowleopard'
+      return SNOWLEOPARD
     if os_version.startswith('11.'):
-      return 'lion'
+      return LION
     if os_version.startswith('12.'):
-      return 'mountainlion'
-    #if os_version.startswith('13.'):
-    #  return 'mavericks'
+      return MOUNTAINLION
+    if os_version.startswith('13.'):
+      return MAVERICKS
+
+    raise NotImplementedError('Unknown mac version %s.' % os_version)
 
   def CanFlushIndividualFilesFromSystemCache(self):
     return False
 
   def FlushEntireSystemCache(self):
-    p = subprocess.Popen(['purge'])
-    p.wait()
+    mavericks_or_later = self.GetOSVersionName() >= MAVERICKS
+    p = self.LaunchApplication('purge', elevate_privilege=mavericks_or_later)
+    p.communicate()
     assert p.returncode == 0, 'Failed to flush system cache'
+
+  def CanMonitorPowerAsync(self):
+    return self.power_monitor_.CanMonitorPowerAsync()
+
+  def StartMonitoringPowerAsync(self):
+    self.power_monitor_.StartMonitoringPowerAsync()
+
+  def StopMonitoringPowerAsync(self):
+    return self.power_monitor_.StopMonitoringPowerAsync()

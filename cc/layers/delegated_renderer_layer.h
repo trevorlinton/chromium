@@ -16,26 +16,24 @@
 
 namespace cc {
 class BlockingTaskRunner;
-class DelegatedRendererLayerClient;
 
 class CC_EXPORT DelegatedRendererLayer : public Layer {
  public:
   static scoped_refptr<DelegatedRendererLayer> Create(
-      DelegatedRendererLayerClient* client,
       const scoped_refptr<DelegatedFrameProvider>& frame_provider);
 
   virtual scoped_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl)
       OVERRIDE;
   virtual void SetLayerTreeHost(LayerTreeHost* host) OVERRIDE;
   virtual bool Update(ResourceUpdateQueue* queue,
-                      const OcclusionTracker* occlusion) OVERRIDE;
+                      const OcclusionTracker<Layer>* occlusion) OVERRIDE;
   virtual void PushPropertiesTo(LayerImpl* impl) OVERRIDE;
 
   // Set the size at which the frame should be displayed, with the origin at the
   // layer's origin. This must always contain at least the layer's bounds. A
   // value of (0, 0) implies that the frame should be displayed to fit exactly
   // in the layer's bounds.
-  void SetDisplaySize(gfx::Size size);
+  void SetDisplaySize(const gfx::Size& size);
 
   // Called by the DelegatedFrameProvider when a new frame is available to be
   // picked up.
@@ -43,12 +41,10 @@ class CC_EXPORT DelegatedRendererLayer : public Layer {
 
  protected:
   DelegatedRendererLayer(
-      DelegatedRendererLayerClient* client,
       const scoped_refptr<DelegatedFrameProvider>& frame_provider);
   virtual ~DelegatedRendererLayer();
 
  private:
-  DelegatedRendererLayerClient* client_;
   scoped_refptr<DelegatedFrameProvider> frame_provider_;
 
   bool should_collect_new_frame_;

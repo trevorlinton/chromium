@@ -4,7 +4,7 @@
 
 #include "android_webview/native/aw_dev_tools_server.h"
 
-#include "android_webview/browser/in_process_view_renderer.h"
+#include "android_webview/native/aw_contents.h"
 #include "base/bind.h"
 #include "base/json/json_writer.h"
 #include "base/strings/stringprintf.h"
@@ -16,9 +16,9 @@
 #include "content/public/browser/devtools_http_handler_delegate.h"
 #include "content/public/browser/devtools_target.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/user_agent.h"
 #include "jni/AwDevToolsServer_jni.h"
 #include "net/socket/unix_domain_socket_posix.h"
-#include "webkit/common/user_agent/user_agent_util.h"
 
 using content::DevToolsAgentHost;
 using content::RenderViewHost;
@@ -70,9 +70,9 @@ Target::Target(WebContents* web_contents) {
       DevToolsAgentHost::GetOrCreateFor(web_contents->GetRenderViewHost());
   id_ = agent_host_->GetId();
   description_ = GetViewDescription(web_contents);
-  title_ = UTF16ToUTF8(web_contents->GetTitle());
+  title_ = base::UTF16ToUTF8(web_contents->GetTitle());
   url_ = web_contents->GetURL();
-  last_activity_time_ = web_contents->GetLastSelectedTime();
+  last_activity_time_ = web_contents->GetLastActiveTime();
 }
 
 // Delegate implementation for the devtools http handler for WebView. A new
@@ -137,8 +137,9 @@ std::string AwDevToolsServerDelegate::GetDiscoveryPageHTML() {
 }
 
 std::string GetViewDescription(WebContents* web_contents) {
-  android_webview::BrowserViewRenderer* bvr
-      = android_webview::InProcessViewRenderer::FromWebContents(web_contents);
+  const android_webview::BrowserViewRenderer* bvr =
+      android_webview::AwContents::FromWebContents(web_contents)
+          ->GetBrowserViewRenderer();
   if (!bvr) return "";
   base::DictionaryValue description;
   description.SetBoolean("attached", bvr->IsAttachedToWindow());
@@ -177,8 +178,7 @@ void AwDevToolsServer::Start() {
           base::StringPrintf(kSocketNameFormat, getpid()),
           "",
           base::Bind(&content::CanUserConnectToDevTools)),
-      base::StringPrintf(kFrontEndURL,
-                         webkit_glue::GetWebKitRevision().c_str()),
+      base::StringPrintf(kFrontEndURL, content::GetWebKitRevision().c_str()),
       new AwDevToolsServerDelegate());
 }
 
@@ -199,19 +199,19 @@ bool RegisterAwDevToolsServer(JNIEnv* env) {
   return RegisterNativesImpl(env);
 }
 
-static jint InitRemoteDebugging(JNIEnv* env,
+static jlong InitRemoteDebugging(JNIEnv* env,
                                 jobject obj) {
   AwDevToolsServer* server = new AwDevToolsServer();
-  return reinterpret_cast<jint>(server);
+  return reinterpret_cast<intptr_t>(server);
 }
 
-static void DestroyRemoteDebugging(JNIEnv* env, jobject obj, jint server) {
+static void DestroyRemoteDebugging(JNIEnv* env, jobject obj, jlong server) {
   delete reinterpret_cast<AwDevToolsServer*>(server);
 }
 
 static void SetRemoteDebuggingEnabled(JNIEnv* env,
                                       jobject obj,
-                                      jint server,
+                                      jlong server,
                                       jboolean enabled) {
   AwDevToolsServer* devtools_server =
       reinterpret_cast<AwDevToolsServer*>(server);

@@ -8,13 +8,18 @@
 #include <string>
 
 #include "base/basictypes.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
+#include "content/browser/frame_host/render_frame_host_impl.h"
+#include "content/browser/frame_host/render_frame_host_manager.h"
 #include "content/common/content_export.h"
 #include "url/gurl.h"
 
 namespace content {
 
+class FrameTree;
+class Navigator;
 class RenderFrameHostImpl;
 
 // When a page contains iframes, its renderer process maintains a tree structure
@@ -23,32 +28,39 @@ class RenderFrameHostImpl;
 // are frame-specific (as opposed to page-specific).
 class CONTENT_EXPORT FrameTreeNode {
  public:
-  static const int64 kInvalidFrameId;
 
-  FrameTreeNode(int64 frame_id, const std::string& name,
-                scoped_ptr<RenderFrameHostImpl> render_frame_host);
+  FrameTreeNode(FrameTree* frame_tree,
+                Navigator* navigator,
+                RenderFrameHostDelegate* render_frame_delegate,
+                RenderViewHostDelegate* render_view_delegate,
+                RenderWidgetHostDelegate* render_widget_delegate,
+                RenderFrameHostManager::Delegate* manager_delegate,
+                const std::string& name);
+
   ~FrameTreeNode();
 
-  void AddChild(scoped_ptr<FrameTreeNode> child);
-  void RemoveChild(int64 child_id);
+  bool IsMainFrame() const;
 
-  // Transitional API allowing the RenderFrameHost of a FrameTreeNode
-  // representing the main frame to be provided by someone else. After
-  // this is called, the FrameTreeNode no longer owns its RenderFrameHost.
-  //
-  // This should only be used for the main frame (aka root) in a frame tree.
-  //
-  // TODO(ajwong): Remove this method once the main frame RenderFrameHostImpl is
-  // no longer owned by the RenderViewHostImpl.
-  void ResetForMainFrame(RenderFrameHostImpl* new_render_frame_host);
+  void AddChild(scoped_ptr<FrameTreeNode> child, int frame_routing_id);
+  void RemoveChild(FrameTreeNode* child);
 
-  void set_frame_id(int64 frame_id) {
-    DCHECK_EQ(frame_id_, kInvalidFrameId);
-    frame_id_ = frame_id;
+  // Clears process specific-state in this node to prepare for a new process.
+  void ResetForNewProcess();
+
+  FrameTree* frame_tree() const {
+    return frame_tree_;
   }
 
-  int64 frame_id() const {
-    return frame_id_;
+  Navigator* navigator() {
+    return navigator_.get();
+  }
+
+  RenderFrameHostManager* render_manager() {
+    return &render_manager_;
+  }
+
+  int64 frame_tree_node_id() const {
+    return frame_tree_node_id_;
   }
 
   const std::string& frame_name() const {
@@ -58,6 +70,8 @@ class CONTENT_EXPORT FrameTreeNode {
   size_t child_count() const {
     return children_.size();
   }
+
+  FrameTreeNode* parent() const { return parent_; }
 
   FrameTreeNode* child_at(size_t index) const {
     return children_[index];
@@ -71,36 +85,43 @@ class CONTENT_EXPORT FrameTreeNode {
     current_url_ = url;
   }
 
-  RenderFrameHostImpl* render_frame_host() const {
-    return render_frame_host_;
+  RenderFrameHostImpl* current_frame_host() const {
+    return render_manager_.current_frame_host();
   }
 
  private:
-  // The unique identifier for the frame in the page.
-  int64 frame_id_;
+  void set_parent(FrameTreeNode* parent) { parent_ = parent; }
+
+  // The next available browser-global FrameTreeNode ID.
+  static int64 next_frame_tree_node_id_;
+
+  // The FrameTree that owns us.
+  FrameTree* frame_tree_;  // not owned.
+
+  // The Navigator object responsible for managing navigations at this node
+  // of the frame tree.
+  scoped_refptr<Navigator> navigator_;
+
+  // Manages creation and swapping of RenderFrameHosts for this frame.  This
+  // must be declared before |children_| so that it gets deleted after them.
+  //  That's currently necessary so that RenderFrameHostImpl's destructor can
+  // call GetProcess.
+  RenderFrameHostManager render_manager_;
+
+  // A browser-global identifier for the frame in the page, which stays stable
+  // even if the frame does a cross-process navigation.
+  const int64 frame_tree_node_id_;
 
   // The assigned name of the frame. This name can be empty, unlike the unique
   // name generated internally in the DOM tree.
   std::string frame_name_;
 
+  // The parent node of this frame. NULL if this node is the root or if it has
+  // not yet been attached to the frame tree.
+  FrameTreeNode* parent_;
+
   // The immediate children of this specific frame.
   ScopedVector<FrameTreeNode> children_;
-
-  // When ResetForMainFrame() is called, this is set to false and the
-  // |render_frame_host_| below is not deleted on destruction.
-  //
-  // For the mainframe, the FrameTree does not own the |render_frame_host_|.
-  // This is a transitional wart because RenderViewHostManager does not yet
-  // have the bookkeeping logic to handle creating a pending RenderFrameHost
-  // along with a pending RenderViewHost. Thus, for the main frame, the
-  // RenderViewHost currently retains ownership and the FrameTreeNode should
-  // not delete it on destruction.
-  bool owns_render_frame_host_;
-
-  // The active RenderFrameHost for this frame. The FrameTreeNode does not
-  // always own this pointer.  See comments above |owns_render_frame_host_|.
-  // TODO(ajwong): Replace with RenderFrameHostManager.
-  RenderFrameHostImpl* render_frame_host_;
 
   // Track the current frame's last committed URL, so we can estimate the
   // process impact of out-of-process iframes.

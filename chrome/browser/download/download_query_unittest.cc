@@ -100,40 +100,37 @@ class DownloadQueryTest : public testing::Test {
 
 template<> void DownloadQueryTest::AddFilter(
     DownloadQuery::FilterType name, bool cpp_value) {
-  scoped_ptr<base::Value> value(Value::CreateBooleanValue(cpp_value));
+  scoped_ptr<base::Value> value(base::Value::CreateBooleanValue(cpp_value));
   CHECK(query_.AddFilter(name, *value.get()));
 }
 
 template<> void DownloadQueryTest::AddFilter(
     DownloadQuery::FilterType name, int cpp_value) {
-  scoped_ptr<base::Value> value(Value::CreateIntegerValue(cpp_value));
+  scoped_ptr<base::Value> value(base::Value::CreateIntegerValue(cpp_value));
   CHECK(query_.AddFilter(name, *value.get()));
 }
 
 template<> void DownloadQueryTest::AddFilter(
     DownloadQuery::FilterType name, const char* cpp_value) {
-  scoped_ptr<base::Value> value(Value::CreateStringValue(cpp_value));
-  CHECK(query_.AddFilter(name, *value.get()));
+  CHECK(query_.AddFilter(name, base::StringValue(cpp_value)));
 }
 
 template<> void DownloadQueryTest::AddFilter(
     DownloadQuery::FilterType name, std::string cpp_value) {
-  scoped_ptr<base::Value> value(Value::CreateStringValue(cpp_value));
-  CHECK(query_.AddFilter(name, *value.get()));
+  CHECK(query_.AddFilter(name, base::StringValue(cpp_value)));
 }
 
 template<> void DownloadQueryTest::AddFilter(
-    DownloadQuery::FilterType name, const char16* cpp_value) {
-  scoped_ptr<base::Value> value(Value::CreateStringValue(string16(cpp_value)));
-  CHECK(query_.AddFilter(name, *value.get()));
+    DownloadQuery::FilterType name, const base::char16* cpp_value) {
+  CHECK(query_.AddFilter(name, base::StringValue(cpp_value)));
 }
 
 template<> void DownloadQueryTest::AddFilter(
-    DownloadQuery::FilterType name, std::vector<string16> cpp_value) {
+    DownloadQuery::FilterType name, std::vector<base::string16> cpp_value) {
   scoped_ptr<base::ListValue> list(new base::ListValue());
-  for (std::vector<string16>::const_iterator it = cpp_value.begin();
+  for (std::vector<base::string16>::const_iterator it = cpp_value.begin();
        it != cpp_value.end(); ++it) {
-    list->Append(Value::CreateStringValue(*it));
+    list->Append(new base::StringValue(*it));
   }
   CHECK(query_.AddFilter(name, *list.get()));
 }
@@ -143,7 +140,7 @@ template<> void DownloadQueryTest::AddFilter(
   scoped_ptr<base::ListValue> list(new base::ListValue());
   for (std::vector<std::string>::const_iterator it = cpp_value.begin();
        it != cpp_value.end(); ++it) {
-    list->Append(Value::CreateStringValue(*it));
+    list->Append(new base::StringValue(*it));
   }
   CHECK(query_.AddFilter(name, *list.get()));
 }
@@ -151,8 +148,7 @@ template<> void DownloadQueryTest::AddFilter(
 #if defined(OS_WIN)
 template<> void DownloadQueryTest::AddFilter(
     DownloadQuery::FilterType name, std::wstring cpp_value) {
-  scoped_ptr<base::Value> value(Value::CreateStringValue(cpp_value));
-  CHECK(query_.AddFilter(name, *value.get()));
+  CHECK(query_.AddFilter(name, base::StringValue(cpp_value)));
 }
 #endif
 
@@ -162,7 +158,7 @@ TEST_F(DownloadQueryTest, DownloadQueryTest_ZeroItems) {
 }
 
 TEST_F(DownloadQueryTest, DownloadQueryTest_InvalidFilter) {
-  scoped_ptr<base::Value> value(Value::CreateIntegerValue(0));
+  scoped_ptr<base::Value> value(base::Value::CreateIntegerValue(0));
   EXPECT_FALSE(query()->AddFilter(
       static_cast<DownloadQuery::FilterType>(kint32max),
       *value.get()));

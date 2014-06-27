@@ -11,9 +11,11 @@
 
 #include "base/command_line.h"
 #include "base/environment.h"
+#include "base/file_util.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/path_service.h"
 #include "base/process/kill.h"
 #include "base/process/launch.h"
 #include "base/strings/string16.h"
@@ -21,9 +23,15 @@
 #include "base/time/time.h"
 #include "base/win/registry.h"
 #include "base/win/scoped_handle.h"
+#include "base/win/win_util.h"
+#include "base/win/windows_version.h"
 #include "chrome/installer/launcher_support/chrome_launcher_support.h"
+#include "chrome/installer/util/browser_distribution.h"
 #include "chrome/installer/util/google_update_constants.h"
 #include "chrome/installer/util/google_update_settings.h"
+#include "chrome/installer/util/install_util.h"
+#include "chrome/installer/util/installation_state.h"
+#include "chrome/installer/util/product.h"
 
 using base::win::RegKey;
 
@@ -34,7 +42,7 @@ namespace {
 const int kGoogleUpdateTimeoutMs = 20 * 1000;
 
 const char kEnvVariableUntrustedData[] = "GoogleUpdateUntrustedData";
-const int kEnvVariableUntrustedDataMaxLength = 4096;
+const int kUntrustedDataMaxLength = 4096;
 
 // Returns true if Google Update is present at the given level.
 bool IsGoogleUpdatePresent(bool system_install) {
@@ -50,8 +58,8 @@ base::FilePath GetGoogleUpdateSetupExe(bool system_install) {
 
   if (update_key.Open(root_key, kRegPathGoogleUpdate, KEY_QUERY_VALUE) ==
           ERROR_SUCCESS) {
-    string16 path_str;
-    string16 version_str;
+    base::string16 path_str;
+    base::string16 version_str;
     if ((update_key.ReadValue(kRegPathField, &path_str) == ERROR_SUCCESS) &&
         (update_key.ReadValue(kRegGoogleUpdateVersion, &version_str) ==
              ERROR_SUCCESS)) {
@@ -65,7 +73,7 @@ base::FilePath GetGoogleUpdateSetupExe(bool system_install) {
 // If Google Update is present at system-level, sets |cmd_string| to the command
 // line to install Google Update at user-level and returns true.
 // Otherwise, clears |cmd_string| and returns false.
-bool GetUserLevelGoogleUpdateInstallCommandLine(string16* cmd_string) {
+bool GetUserLevelGoogleUpdateInstallCommandLine(base::string16* cmd_string) {
   cmd_string->clear();
   base::FilePath google_update_setup(
       GetGoogleUpdateSetupExe(true));  // system-level.
@@ -90,14 +98,14 @@ bool GetUserLevelGoogleUpdateInstallCommandLine(string16* cmd_string) {
 // |timeout| to be base::TimeDelta::FromMilliseconds(INFINITE).
 // Returns true if this executes successfully.
 // Returns false if command execution fails to execute, or times out.
-bool LaunchProcessAndWaitWithTimeout(const string16& cmd_string,
+bool LaunchProcessAndWaitWithTimeout(const base::string16& cmd_string,
                                      base::TimeDelta timeout) {
   bool success = false;
   base::win::ScopedHandle process;
   int exit_code = 0;
-  LOG(INFO) << "Launching: " << cmd_string;
+  VLOG(0) << "Launching: " << cmd_string;
   if (!base::LaunchProcess(cmd_string, base::LaunchOptions(),
-                           process.Receive())) {
+                           &process)) {
     PLOG(ERROR) << "Failed to launch (" << cmd_string << ")";
   } else if (!base::WaitForExitCodeWithTimeout(process, &exit_code, timeout)) {
     // The GetExitCodeProcess failed or timed-out.
@@ -132,24 +140,19 @@ bool IsUntrustedDataKeyValid(const std::string& key) {
       == key.end();
 }
 
-// Reads and parses untrusted data passed from Google Update as key-value
-// pairs, then overwrites |untrusted_data_map| with the result.
-// Returns true if data are successfully read.
-bool GetGoogleUpdateUntrustedData(
+// Parses |data_string| as key-value pairs and overwrites |untrusted_data| with
+// the result. Returns true if the data could be parsed.
+bool ParseUntrustedData(
+    const std::string& data_string,
     std::map<std::string, std::string>* untrusted_data) {
   DCHECK(untrusted_data);
-  scoped_ptr<base::Environment> env(base::Environment::Create());
-  std::string data_string;
-  if (env == NULL || !env->GetVar(kEnvVariableUntrustedData, &data_string))
-    return false;
-
-  if (data_string.length() > kEnvVariableUntrustedDataMaxLength ||
+  if (data_string.length() > kUntrustedDataMaxLength ||
       !IsStringPrintable(data_string)) {
-    LOG(ERROR) << "Invalid value in " << kEnvVariableUntrustedData;
+    LOG(ERROR) << "Invalid value in untrusted data string.";
     return false;
   }
 
-  VLOG(1) << kEnvVariableUntrustedData << ": " << data_string;
+  VLOG(1) << "Untrusted data string: " << data_string;
 
   std::vector<std::pair<std::string, std::string> > kv_pairs;
   if (!base::SplitStringIntoKeyValuePairs(data_string, '=', '&', &kv_pairs)) {
@@ -171,16 +174,29 @@ bool GetGoogleUpdateUntrustedData(
   return true;
 }
 
+// Reads and parses untrusted data passed from Google Update as key-value
+// pairs, then overwrites |untrusted_data_map| with the result.
+// Returns true if data are successfully read.
+bool GetGoogleUpdateUntrustedData(
+    std::map<std::string, std::string>* untrusted_data) {
+  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::string data_string;
+  if (!env || !env->GetVar(kEnvVariableUntrustedData, &data_string))
+    return false;
+
+  return ParseUntrustedData(data_string, untrusted_data);
+}
+
 }  // namespace
 
 bool EnsureUserLevelGoogleUpdatePresent() {
-  LOG(INFO) << "Ensuring Google Update is present at user-level.";
+  VLOG(0) << "Ensuring Google Update is present at user-level.";
 
   bool success = false;
   if (IsGoogleUpdatePresent(false)) {
     success = true;
   } else {
-    string16 cmd_string;
+    base::string16 cmd_string;
     if (!GetUserLevelGoogleUpdateInstallCommandLine(&cmd_string)) {
       LOG(ERROR) << "Cannot find Google Update at system-level.";
       // Ideally we should return false. However, this case should not be
@@ -198,7 +214,7 @@ bool EnsureUserLevelGoogleUpdatePresent() {
 
 bool UninstallGoogleUpdate(bool system_install) {
   bool success = false;
-  string16 cmd_string(
+  base::string16 cmd_string(
       GoogleUpdateSettings::GetUninstallCommandLine(system_install));
   if (cmd_string.empty()) {
     success = true;  // Nothing to; vacuous success.
@@ -209,6 +225,47 @@ bool UninstallGoogleUpdate(bool system_install) {
   return success;
 }
 
+void ElevateIfNeededToReenableUpdates() {
+  base::FilePath chrome_exe;
+  if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
+    NOTREACHED();
+    return;
+  }
+  installer::ProductState product_state;
+  BrowserDistribution* dist = BrowserDistribution::GetDistribution();
+  const bool system_install = !InstallUtil::IsPerUserInstall(
+      chrome_exe.value().c_str());
+  if (!product_state.Initialize(system_install, dist))
+    return;
+  base::FilePath exe_path(product_state.GetSetupPath());
+  if (exe_path.empty() || !base::PathExists(exe_path)) {
+    LOG(ERROR) << "Could not find setup.exe to reenable updates.";
+    return;
+  }
+
+  CommandLine cmd(exe_path);
+  cmd.AppendSwitch(installer::switches::kReenableAutoupdates);
+  installer::Product product(dist);
+  product.InitializeFromUninstallCommand(product_state.uninstall_command());
+  product.AppendProductFlags(&cmd);
+  if (system_install)
+    cmd.AppendSwitch(installer::switches::kSystemLevel);
+  if (product_state.uninstall_command().HasSwitch(
+          installer::switches::kVerboseLogging)) {
+    cmd.AppendSwitch(installer::switches::kVerboseLogging);
+  }
+
+  base::LaunchOptions launch_options;
+  launch_options.force_breakaway_from_job_ = true;
+
+  if (base::win::GetVersion() >= base::win::VERSION_VISTA &&
+      base::win::UserAccountControlIsEnabled()) {
+    base::LaunchElevatedProcess(cmd, launch_options, NULL);
+  } else {
+    base::LaunchProcess(cmd, launch_options, NULL);
+  }
+}
+
 std::string GetUntrustedDataValue(const std::string& key) {
   std::map<std::string, std::string> untrusted_data;
   if (GetGoogleUpdateUntrustedData(&untrusted_data)) {
@@ -217,6 +274,15 @@ std::string GetUntrustedDataValue(const std::string& key) {
     if (data_it != untrusted_data.end())
       return data_it->second;
   }
+
+  return std::string();
+}
+
+std::string GetUntrustedDataValueFromTag(const std::string& tag,
+                                         const std::string& key) {
+  std::map<std::string, std::string> untrusted_data;
+  if (ParseUntrustedData(tag, &untrusted_data))
+    return untrusted_data[key];
 
   return std::string();
 }

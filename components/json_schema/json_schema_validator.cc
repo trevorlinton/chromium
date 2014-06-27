@@ -7,14 +7,17 @@
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <vector>
 
 #include "base/json/json_reader.h"
+#include "base/logging.h"
+#include "base/memory/scoped_vector.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "components/json_schema/json_schema_constants.h"
-#include "ui/base/l10n/l10n_util.h"
+#include "third_party/re2/re2/re2.h"
 
 namespace schema = json_schema_constants;
 
@@ -65,7 +68,9 @@ const base::Value* ExtractNameFromDictionary(const base::Value* value) {
   return value;
 }
 
-bool IsValidSchema(const base::DictionaryValue* dict, std::string* error) {
+bool IsValidSchema(const base::DictionaryValue* dict,
+                   int options,
+                   std::string* error) {
   // This array must be sorted, so that std::lower_bound can perform a
   // binary search.
   static const ExpectedType kExpectedTypes[] = {
@@ -85,11 +90,13 @@ bool IsValidSchema(const base::DictionaryValue* dict, std::string* error) {
     { schema::kMinLength,               base::Value::TYPE_INTEGER     },
     { schema::kMinimum,                 base::Value::TYPE_DOUBLE      },
     { schema::kOptional,                base::Value::TYPE_BOOLEAN     },
+    { schema::kPattern,                 base::Value::TYPE_STRING      },
+    { schema::kPatternProperties,       base::Value::TYPE_DICTIONARY  },
     { schema::kProperties,              base::Value::TYPE_DICTIONARY  },
     { schema::kTitle,                   base::Value::TYPE_STRING      },
   };
 
-  bool has_type = false;
+  bool has_type_or_ref = false;
   const base::ListValue* list_value = NULL;
   const base::DictionaryValue* dictionary_value = NULL;
   std::string string_value;
@@ -119,14 +126,14 @@ bool IsValidSchema(const base::DictionaryValue* dict, std::string* error) {
           *error = "Invalid value for type attribute";
           return false;
       }
-      has_type = true;
+      has_type_or_ref = true;
       continue;
     }
 
     // Validate the "items" attribute, which is a schema or a list of schemas.
     if (it.key() == schema::kItems) {
       if (it.value().GetAsDictionary(&dictionary_value)) {
-        if (!IsValidSchema(dictionary_value, error)) {
+        if (!IsValidSchema(dictionary_value, options, error)) {
           DCHECK(!error->empty());
           return false;
         }
@@ -138,7 +145,7 @@ bool IsValidSchema(const base::DictionaryValue* dict, std::string* error) {
                 static_cast<int>(i));
             return false;
           }
-          if (!IsValidSchema(dictionary_value, error)) {
+          if (!IsValidSchema(dictionary_value, options, error)) {
             DCHECK(!error->empty());
             return false;
           }
@@ -155,10 +162,16 @@ bool IsValidSchema(const base::DictionaryValue* dict, std::string* error) {
     const ExpectedType* entry = std::lower_bound(
         kExpectedTypes, end, it.key(), CompareToString);
     if (entry == end || entry->key != it.key()) {
+      if (options & JSONSchemaValidator::OPTIONS_IGNORE_UNKNOWN_ATTRIBUTES)
+        continue;
       *error = base::StringPrintf("Invalid attribute %s", it.key().c_str());
       return false;
     }
-    if (!it.value().IsType(entry->type)) {
+
+    // Integer can be converted to double.
+    if (!(it.value().IsType(entry->type) ||
+          (it.value().IsType(base::Value::TYPE_INTEGER) &&
+           entry->type == base::Value::TYPE_DOUBLE))) {
       *error = base::StringPrintf("Invalid value for %s attribute",
                                   it.key().c_str());
       return false;
@@ -179,13 +192,32 @@ bool IsValidSchema(const base::DictionaryValue* dict, std::string* error) {
     // Validate the "properties" attribute. Each entry maps a key to a schema.
     if (it.key() == schema::kProperties) {
       it.value().GetAsDictionary(&dictionary_value);
-      for (base::DictionaryValue::Iterator it(*dictionary_value);
-           !it.IsAtEnd(); it.Advance()) {
-        if (!it.value().GetAsDictionary(&dictionary_value)) {
-          *error = "Invalid value for properties attribute";
+      for (base::DictionaryValue::Iterator iter(*dictionary_value);
+           !iter.IsAtEnd(); iter.Advance()) {
+        if (!iter.value().GetAsDictionary(&dictionary_value)) {
+          *error = "properties must be a dictionary";
           return false;
         }
-        if (!IsValidSchema(dictionary_value, error)) {
+        if (!IsValidSchema(dictionary_value, options, error)) {
+          DCHECK(!error->empty());
+          return false;
+        }
+      }
+    }
+
+    // Validate the "patternProperties" attribute. Each entry maps a regular
+    // expression to a schema. The validity of the regular expression expression
+    // won't be checked here for performance reasons. Instead, invalid regular
+    // expressions will be caught as validation errors in Validate().
+    if (it.key() == schema::kPatternProperties) {
+      it.value().GetAsDictionary(&dictionary_value);
+      for (base::DictionaryValue::Iterator iter(*dictionary_value);
+           !iter.IsAtEnd(); iter.Advance()) {
+        if (!iter.value().GetAsDictionary(&dictionary_value)) {
+          *error = "patternProperties must be a dictionary";
+          return false;
+        }
+        if (!IsValidSchema(dictionary_value, options, error)) {
           DCHECK(!error->empty());
           return false;
         }
@@ -195,7 +227,7 @@ bool IsValidSchema(const base::DictionaryValue* dict, std::string* error) {
     // Validate "additionalProperties" attribute, which is a schema.
     if (it.key() == schema::kAdditionalProperties) {
       it.value().GetAsDictionary(&dictionary_value);
-      if (!IsValidSchema(dictionary_value, error)) {
+      if (!IsValidSchema(dictionary_value, options, error)) {
         DCHECK(!error->empty());
         return false;
       }
@@ -236,16 +268,19 @@ bool IsValidSchema(const base::DictionaryValue* dict, std::string* error) {
           *error = "Invalid choices attribute";
           return false;
         }
-        if (!IsValidSchema(dictionary_value, error)) {
+        if (!IsValidSchema(dictionary_value, options, error)) {
           DCHECK(!error->empty());
           return false;
         }
       }
     }
+
+    if (it.key() == schema::kRef)
+      has_type_or_ref = true;
   }
 
-  if (!has_type) {
-    *error = "Schema must have a type attribute";
+  if (!has_type_or_ref) {
+    *error = "Schema must have a type or a $ref attribute";
     return false;
   }
 
@@ -298,6 +333,8 @@ const char JSONSchemaValidator::kInvalidType[] =
     "Expected '*' but got '*'.";
 const char JSONSchemaValidator::kInvalidTypeIntegerNumber[] =
     "Expected 'integer' but got 'number', consider using Math.round().";
+const char JSONSchemaValidator::kInvalidRegex[] =
+    "Regular expression /*/ is invalid: *";
 
 
 // static
@@ -353,9 +390,17 @@ std::string JSONSchemaValidator::FormatErrorMessage(const std::string& format,
 scoped_ptr<base::DictionaryValue> JSONSchemaValidator::IsValidSchema(
     const std::string& schema,
     std::string* error) {
-  base::JSONParserOptions options = base::JSON_PARSE_RFC;
+  return JSONSchemaValidator::IsValidSchema(schema, 0, error);
+}
+
+// static
+scoped_ptr<base::DictionaryValue> JSONSchemaValidator::IsValidSchema(
+    const std::string& schema,
+    int validator_options,
+    std::string* error) {
+  base::JSONParserOptions json_options = base::JSON_PARSE_RFC;
   scoped_ptr<base::Value> json(
-      base::JSONReader::ReadAndReturnError(schema, options, NULL, error));
+      base::JSONReader::ReadAndReturnError(schema, json_options, NULL, error));
   if (!json)
     return scoped_ptr<base::DictionaryValue>();
   base::DictionaryValue* dict = NULL;
@@ -363,7 +408,7 @@ scoped_ptr<base::DictionaryValue> JSONSchemaValidator::IsValidSchema(
     *error = "Schema must be a JSON object";
     return scoped_ptr<base::DictionaryValue>();
   }
-  if (!::IsValidSchema(dict, error))
+  if (!::IsValidSchema(dict, validator_options, error))
     return scoped_ptr<base::DictionaryValue>();
   ignore_result(json.release());
   return make_scoped_ptr(dict);
@@ -533,8 +578,7 @@ void JSONSchemaValidator::ValidateObject(const base::DictionaryValue* instance,
                                          const base::DictionaryValue* schema,
                                          const std::string& path) {
   const base::DictionaryValue* properties = NULL;
-  schema->GetDictionary(schema::kProperties, &properties);
-  if (properties) {
+  if (schema->GetDictionary(schema::kProperties, &properties)) {
     for (base::DictionaryValue::Iterator it(*properties); !it.IsAtEnd();
          it.Advance()) {
       std::string prop_path = path.empty() ? it.key() : (path + "." + it.key());
@@ -557,16 +601,52 @@ void JSONSchemaValidator::ValidateObject(const base::DictionaryValue* instance,
   }
 
   const base::DictionaryValue* additional_properties_schema = NULL;
-  if (SchemaAllowsAnyAdditionalItems(schema, &additional_properties_schema))
-    return;
+  bool allow_any_additional_properties =
+      SchemaAllowsAnyAdditionalItems(schema, &additional_properties_schema);
 
-  // Validate additional properties.
+  const base::DictionaryValue* pattern_properties = NULL;
+  ScopedVector<re2::RE2> pattern_properties_pattern;
+  std::vector<const base::DictionaryValue*> pattern_properties_schema;
+
+  if (schema->GetDictionary(schema::kPatternProperties, &pattern_properties)) {
+    for (base::DictionaryValue::Iterator it(*pattern_properties); !it.IsAtEnd();
+         it.Advance()) {
+      re2::RE2* prop_pattern = new re2::RE2(it.key());
+      if (!prop_pattern->ok()) {
+        LOG(WARNING) << "Regular expression /" << it.key()
+                     << "/ is invalid: " << prop_pattern->error() << ".";
+        errors_.push_back(
+            Error(path,
+                  FormatErrorMessage(
+                      kInvalidRegex, it.key(), prop_pattern->error())));
+        continue;
+      }
+      const base::DictionaryValue* prop_schema = NULL;
+      CHECK(it.value().GetAsDictionary(&prop_schema));
+      pattern_properties_pattern.push_back(prop_pattern);
+      pattern_properties_schema.push_back(prop_schema);
+    }
+  }
+
+  // Validate pattern properties and additional properties.
   for (base::DictionaryValue::Iterator it(*instance); !it.IsAtEnd();
        it.Advance()) {
-    if (properties && properties->HasKey(it.key()))
+    std::string prop_path = path.empty() ? it.key() : path + "." + it.key();
+
+    bool found_matching_pattern = false;
+    for (size_t index = 0; index < pattern_properties_pattern.size(); ++index) {
+      if (re2::RE2::PartialMatch(it.key(),
+                                 *pattern_properties_pattern[index])) {
+        found_matching_pattern = true;
+        Validate(&it.value(), pattern_properties_schema[index], prop_path);
+        break;
+      }
+    }
+
+    if (found_matching_pattern || allow_any_additional_properties ||
+        (properties && properties->HasKey(it.key())))
       continue;
 
-    std::string prop_path = path.empty() ? it.key() : path + "." + it.key();
     if (!additional_properties_schema) {
       errors_.push_back(Error(prop_path, kUnexpectedProperty));
     } else {
@@ -689,7 +769,20 @@ void JSONSchemaValidator::ValidateString(const base::Value* instance,
     }
   }
 
-  CHECK(!schema->HasKey(schema::kPattern)) << "Pattern is not supported.";
+  std::string pattern;
+  if (schema->GetString(schema::kPattern, &pattern)) {
+    re2::RE2 compiled_regex(pattern);
+    if (!compiled_regex.ok()) {
+      LOG(WARNING) << "Regular expression /" << pattern
+                   << "/ is invalid: " << compiled_regex.error() << ".";
+      errors_.push_back(Error(
+          path,
+          FormatErrorMessage(kInvalidRegex, pattern, compiled_regex.error())));
+    } else if (!re2::RE2::PartialMatch(value, compiled_regex)) {
+      errors_.push_back(
+          Error(path, FormatErrorMessage(kStringPattern, pattern)));
+    }
+  }
 }
 
 void JSONSchemaValidator::ValidateNumber(const base::Value* instance,

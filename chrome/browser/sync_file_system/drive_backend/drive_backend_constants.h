@@ -11,6 +11,9 @@ namespace sync_file_system {
 namespace drive_backend {
 
 extern const char kSyncRootFolderTitle[];
+extern const char kSyncRootFolderTitleDev[];
+extern const char kMimeTypeOctetStream[];
+
 extern const base::FilePath::CharType kDatabaseName[];
 
 extern const char kDatabaseVersionKey[];
@@ -21,6 +24,8 @@ extern const char kFileTrackerKeyPrefix[];
 
 extern const int kMaxRetry;
 extern const int64 kListChangesRetryDelaySeconds;
+
+extern const int64 kInvalidTrackerID;
 
 }  // namespace drive_backend
 }  // namespace sync_file_system

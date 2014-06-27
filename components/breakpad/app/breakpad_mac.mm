@@ -12,6 +12,7 @@
 #import "base/basictypes.h"
 #include "base/command_line.h"
 #include "base/debug/crash_logging.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/file_util.h"
 #include "base/files/file_path.h"
 #import "base/logging.h"
@@ -24,7 +25,6 @@
 #include "base/threading/thread_restrictions.h"
 #import "breakpad/src/client/mac/Framework/Breakpad.h"
 #include "components/breakpad/app/breakpad_client.h"
-#include "content/public/common/content_switches.h"
 
 namespace breakpad {
 
@@ -147,7 +147,7 @@ bool IsCrashReporterEnabled() {
 }
 
 // Only called for a branded build of Chrome.app.
-void InitCrashReporter() {
+void InitCrashReporter(const std::string& process_type) {
   DCHECK(!gBreakpadRef);
   base::mac::ScopedNSAutoreleasePool autorelease_pool;
 
@@ -244,8 +244,7 @@ void InitCrashReporter() {
   }
 
   logging::SetLogMessageHandler(&FatalMessageHandler);
-  GetBreakpadClient()->SetDumpWithoutCrashingFunction(
-      &DumpHelper::DumpWithoutCrashing);
+  base::debug::SetDumpWithoutCrashingFunction(&DumpHelper::DumpWithoutCrashing);
 
   // abort() sends SIGABRT, which breakpad does not intercept.
   // Register a signal handler to crash in a way breakpad will
@@ -256,16 +255,13 @@ void InitCrashReporter() {
   CHECK(0 == sigaction(SIGABRT, &sigact, NULL));
 }
 
-void InitCrashProcessInfo() {
+void InitCrashProcessInfo(const std::string& process_type_switch) {
   if (gBreakpadRef == NULL) {
     return;
   }
 
   // Determine the process type.
   NSString* process_type = @"browser";
-  std::string process_type_switch =
-      CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-          switches::kProcessType);
   if (!process_type_switch.empty()) {
     process_type = base::SysUTF8ToNSString(process_type_switch);
   }
@@ -274,6 +270,10 @@ void InitCrashProcessInfo() {
 
   // Store process type in crash dump.
   SetCrashKeyValue(@"ptype", process_type);
+
+  NSString* pid_value =
+      [NSString stringWithFormat:@"%d", static_cast<unsigned int>(getpid())];
+  SetCrashKeyValue(@"pid", pid_value);
 }
 
 }  // namespace breakpad

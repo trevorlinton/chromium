@@ -7,7 +7,6 @@
 #include "chrome/browser/extensions/api/web_request/web_request_api.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_test_message_listener.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -19,6 +18,7 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
+#include "extensions/browser/extension_system.h"
 #include "extensions/common/features/feature.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -142,14 +142,14 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest, MAYBE_WebRequestNewTab) {
 
   // There's a link on a.html with target=_blank. Click on it to open it in a
   // new tab.
-  WebKit::WebMouseEvent mouse_event;
-  mouse_event.type = WebKit::WebInputEvent::MouseDown;
-  mouse_event.button = WebKit::WebMouseEvent::ButtonLeft;
+  blink::WebMouseEvent mouse_event;
+  mouse_event.type = blink::WebInputEvent::MouseDown;
+  mouse_event.button = blink::WebMouseEvent::ButtonLeft;
   mouse_event.x = 7;
   mouse_event.y = 7;
   mouse_event.clickCount = 1;
   tab->GetRenderViewHost()->ForwardMouseEvent(mouse_event);
-  mouse_event.type = WebKit::WebInputEvent::MouseUp;
+  mouse_event.type = blink::WebInputEvent::MouseUp;
   tab->GetRenderViewHost()->ForwardMouseEvent(mouse_event);
 
   ASSERT_TRUE(catcher.GetNextResult()) << catcher.message();

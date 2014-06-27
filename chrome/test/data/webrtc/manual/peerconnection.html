@@ -4,10 +4,6 @@
   <title>WebRTC PeerConnection Manual Test</title>
   <!-- Load the polyfill to switch-hit between Chrome and Firefox -->
   <script src="../adapter.js"></script>
-  <script src="../test_functions.js"></script>
-  <script src="../message_handling.js"></script>
-  <script src="../getusermedia.js"></script>
-  <script src="../jsep01_call.js"></script>
   <script src="peerconnection.js"></script>
   <link rel="StyleSheet" href="stylesheet.css">
   <meta charset="utf-8">
@@ -30,10 +26,14 @@
         onchange="updateGetUserMediaConstraints();"></select>
     Video source <select class="drop-down" id="videosrc"
         onchange="updateGetUserMediaConstraints();"></select>
-    <button id="refresh-devices" onclick="getDevices();">
-        Refresh devices</button>
-    Use <a href="constraints.html">constraints.html</a> to create more
-        advanced constraints (then paste them into the Constraints box above).
+    Optional min size<input type="text" id="video-width" value="1280" size="5px"
+        onblur="updateGetUserMediaConstraints();">x<input type="text"
+        id="video-height" value="720" size="5px"
+        onblur="updateGetUserMediaConstraints();">
+    <button id="get-devices" onclick="getDevices();">
+        Get devices</button>
+    Onload<input type="checkbox" id="get-devices-onload">
+    You can also use <a href="constraints.html">constraints.html</a>&nbsp;&nbsp;
     <a href="peerconnection-help.html" target="_blank">Help</a>
     <br/>
   </div>
@@ -45,7 +45,7 @@
         <div>
           <h2>Local Preview</h2>
           <video width="320" height="240" id="local-view" autoplay="autoplay"
-              class="video-area"</video><br/>
+              class="video-area"></video><br/>
         </div>
 
         <div>
@@ -55,11 +55,11 @@
                 size: N/A)</div><br/>
           </div>
           <div>
-            Resize: <button onclick="updateVideoTagSize_('local-view')"> To
+            Resize: <button onclick="updateVideoTagSize('local-view')"> To
                 stream size</button>
-            <button onclick="updateVideoTagSize_('local-view', 320, 240);">
+            <button onclick="updateVideoTagSize('local-view', 320, 240);">
                 320x240</button>
-            <button onclick="updateVideoTagSize_('local-view', 640, 480);">
+            <button onclick="updateVideoTagSize('local-view', 640, 480);">
                 640x480</button>
           </div>
         </div>
@@ -70,16 +70,19 @@
 
       <h2>Settings</h2>
       Server [<a href="" onclick="showServerHelp();">?</a>]:
-      <input type="text" id="server" size="30" value="http://localhost:8888" />
+      <input type="text" id="pc-server" size="30"
+          value="http://localhost:8888"/>
       Peer ID: <input type="text" id="peer-id" size="10" />
       <button id="connect" onclick="connectFromHere();">Connect</button><br/>
       PeerConnection <a href="http://goo.gl/xVi12">createOffer MediaConstraints:
           </a><br/>
-      <input type="text" id="pc-createoffer-constraints" rows="7" cols="40"/>
+      <input type="text" id="pc-createoffer-constraints" rows="7" cols="40"
+          value="{}"/>
       <br/>
       PeerConnection <a href="http://goo.gl/0TjfX">createAnswer
           MediaConstraints:</a><br/>
-      <input type="text" id="pc-createanswer-constraints" rows="7" cols="40"/>
+      <input type="text" id="pc-createanswer-constraints" rows="7" cols="40"
+          value="{}"/>
       <br/>
       Call:
       <button onclick="negotiateCallFromHere();">Negotiate</button>
@@ -95,8 +98,7 @@
       <button onclick="toggleRemoteAudioFromHere();">Toggle Audio</button><br/>
       Data Channel:
       <button onclick="createDataChannelFromHere();">Create</button>
-      RTP <input type="checkbox" id="data-channel-type-rtp"
-          onclick="setPcDataChannelType();"/>
+      RTP <input type="checkbox" id="data-channel-type-rtp"/>
       <button onclick="closeDataChannelFromHere();">Close</button>
       status:
       <input type="text" id="data-channel-status" size="10" value="not created"
@@ -134,11 +136,11 @@
               :N/A)</div><br/>
         </div>
         <div>
-          Resize: <button onclick="updateVideoTagSize_('remote-view')"> To
+          Resize: <button onclick="updateVideoTagSize('remote-view')"> To
               stream size</button>
-          <button onclick="updateVideoTagSize_('remote-view', 320, 240);">
+          <button onclick="updateVideoTagSize('remote-view', 320, 240);">
               320x240</button>
-          <button onclick="updateVideoTagSize_('remote-view', 640, 480);">
+          <button onclick="updateVideoTagSize('remote-view', 640, 480);">
               640x480</button>
         </div>
       </div>

@@ -13,23 +13,23 @@
 #include "third_party/WebKit/public/platform/WebVector.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebElement.h"
+#include "third_party/WebKit/public/web/WebElementCollection.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
 #include "third_party/WebKit/public/web/WebInputElement.h"
 #include "third_party/WebKit/public/web/WebNode.h"
-#include "third_party/WebKit/public/web/WebNodeCollection.h"
 #include "third_party/WebKit/public/web/WebNodeList.h"
 #include "third_party/WebKit/public/web/WebView.h"
 
-using WebKit::WebDocument;
-using WebKit::WebElement;
-using WebKit::WebFrame;
-using WebKit::WebInputElement;
-using WebKit::WebNode;
-using WebKit::WebNodeCollection;
-using WebKit::WebNodeList;
-using WebKit::WebString;
-using WebKit::WebVector;
-using WebKit::WebView;
+using blink::WebDocument;
+using blink::WebElement;
+using blink::WebElementCollection;
+using blink::WebFrame;
+using blink::WebInputElement;
+using blink::WebNode;
+using blink::WebNodeList;
+using blink::WebString;
+using blink::WebVector;
+using blink::WebView;
 
 namespace content {
 namespace {
@@ -97,7 +97,7 @@ void GetSavableResourceLinkForElement(
   result->resources_list->push_back(u);
   // Insert referrer for above new resource link.
   result->referrer_urls_list->push_back(GURL());
-  result->referrer_policies_list->push_back(WebKit::WebReferrerPolicyDefault);
+  result->referrer_policies_list->push_back(blink::WebReferrerPolicyDefault);
 }
 
 // Get all savable resource links from current WebFrameImpl object pointer.
@@ -130,14 +130,10 @@ void GetAllSavableResourceLinksForFrame(WebFrame* current_frame,
   // Get current using document.
   WebDocument current_doc = current_frame->document();
   // Go through all descent nodes.
-  WebNodeCollection all = current_doc.all();
-  // Go through all node in this frame.
-  for (WebNode node = all.firstItem(); !node.isNull();
-       node = all.nextItem()) {
-    // We only save HTML resources.
-    if (!node.isElementNode())
-      continue;
-    WebElement element = node.to<WebElement>();
+  WebElementCollection all = current_doc.all();
+  // Go through all elements in this frame.
+  for (WebElement element = all.firstItem(); !element.isNull();
+       element = all.nextItem()) {
     GetSavableResourceLinkForElement(element,
                                      current_doc,
                                      unique_check,

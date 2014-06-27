@@ -6,6 +6,7 @@
 
 import os
 
+from metrics import power
 from telemetry import test
 from telemetry.page import page_measurement
 from telemetry.page import page_set
@@ -16,10 +17,23 @@ def _Mean(l):
 
 
 class _KrakenMeasurement(page_measurement.PageMeasurement):
-  def MeasurePage(self, _, tab, results):
+  def __init__(self):
+    super(_KrakenMeasurement, self).__init__()
+    self._power_metric = power.PowerMetric()
+
+  def CustomizeBrowserOptions(self, options):
+    power.PowerMetric.CustomizeBrowserOptions(options)
+
+  def DidNavigateToPage(self, page, tab):
+    self._power_metric.Start(page, tab)
+
+  def MeasurePage(self, page, tab, results):
     tab.WaitForDocumentReadyStateToBeComplete()
     tab.WaitForJavaScriptExpression(
-        'document.title.indexOf("Results") != -1', 500)
+        'document.title.indexOf("Results") != -1', 700)
+
+    self._power_metric.Stop(page, tab)
+    self._power_metric.AddResults(tab, results)
 
     js_get_results = """
 var formElement = document.getElementsByTagName("input")[0];
@@ -41,7 +55,7 @@ class Kraken(test.Test):
 
   def CreatePageSet(self, options):
     return page_set.PageSet.FromDict({
-        'archive_data_file': '../data/kraken.json',
+        'archive_data_file': '../page_sets/data/kraken.json',
         'pages': [
           { 'url': 'http://krakenbenchmark.mozilla.org/kraken-1.1/driver.html' }
           ]

@@ -14,16 +14,16 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
-#include "mount_mock.h"
-#include "mount_node_mock.h"
+#include "mock_fs.h"
+#include "mock_node.h"
 
+#include "nacl_io/filesystem.h"
 #include "nacl_io/kernel_intercept.h"
 #include "nacl_io/kernel_proxy.h"
-#include "nacl_io/mount.h"
-#include "nacl_io/mount_mem.h"
+#include "nacl_io/memfs/mem_fs.h"
 #include "nacl_io/osmman.h"
 #include "nacl_io/path.h"
-#include "nacl_io/typed_mount_factory.h"
+#include "nacl_io/typed_fs_factory.h"
 
 using namespace nacl_io;
 using namespace sdk_util;
@@ -39,14 +39,14 @@ using ::testing::WithArgs;
 
 namespace {
 
-class KernelProxyFriend : public KernelProxy {
+class KernelProxyTest_KernelProxy : public KernelProxy {
  public:
-  Mount* RootMount() {
-    ScopedMount mnt;
+  Filesystem* RootFs() {
+    ScopedFilesystem fs;
     Path path;
 
-    AcquireMountAndRelPath("/", &mnt, &path);
-    return mnt.get();
+    AcquireFsAndRelPath("/", &fs, &path);
+    return fs.get();
   }
 };
 
@@ -55,18 +55,17 @@ class KernelProxyTest : public ::testing::Test {
   KernelProxyTest() {}
 
   void SetUp() {
-    ki_init(&kp_);
+    ASSERT_EQ(0, ki_push_state_for_testing());
+    ASSERT_EQ(0, ki_init(&kp_));
     // Unmount the passthrough FS and mount a memfs.
     EXPECT_EQ(0, kp_.umount("/"));
     EXPECT_EQ(0, kp_.mount("", "/", "memfs", 0, NULL));
   }
 
-  void TearDown() {
-    ki_uninit();
-  }
+  void TearDown() { ki_uninit(); }
 
  protected:
-  KernelProxyFriend kp_;
+  KernelProxyTest_KernelProxy kp_;
 };
 
 }  // namespace
@@ -83,7 +82,7 @@ static int ki_fcntl_wrapper(int fd, int request, ...) {
  * Test for fcntl commands F_SETFD and F_GETFD.  This
  * is tested here rather than in the mount_node tests
  * since the fd flags are not stored in the kernel_handle
- * or the mount node but directly in the FD mapping.
+ * or the filesystem node but directly in the FD mapping.
  */
 TEST_F(KernelProxyTest, Fcntl_GETFD) {
   int fd = ki_open("/test", O_RDWR | O_CREAT);
@@ -95,7 +94,7 @@ TEST_F(KernelProxyTest, Fcntl_GETFD) {
   // Check that setting FD_CLOEXEC works
   int flags = FD_CLOEXEC;
   ASSERT_EQ(0, ki_fcntl_wrapper(fd, F_SETFD, flags))
-    << "fcntl failed with: " << strerror(errno);
+      << "fcntl failed with: " << strerror(errno);
   ASSERT_EQ(FD_CLOEXEC, ki_fcntl_wrapper(fd, F_GETFD));
 
   // Check that setting invalid flag causes EINVAL
@@ -109,22 +108,141 @@ TEST_F(KernelProxyTest, FileLeak) {
   char filename[128];
   int garbage[buffer_size];
 
-  MountMem* mount = (MountMem*)kp_.RootMount();
-  ScopedMountNode root;
+  MemFs* filesystem = (MemFs*)kp_.RootFs();
+  ScopedNode root;
 
-  ASSERT_EQ(0, mount->Open(Path("/"), O_RDONLY, &root));
+  ASSERT_EQ(0, filesystem->Open(Path("/"), O_RDONLY, &root));
   ASSERT_EQ(0, root->ChildCount());
 
   for (int file_num = 0; file_num < 4096; file_num++) {
     sprintf(filename, "/foo%i.tmp", file_num++);
-    FILE* f = fopen(filename, "w");
-    ASSERT_NE((FILE*)NULL, f);
+    int fd = ki_open(filename, O_WRONLY | O_CREAT);
+    ASSERT_GT(fd, -1);
     ASSERT_EQ(1, root->ChildCount());
-    ASSERT_EQ(buffer_size, fwrite(garbage, 1, buffer_size, f));
-    fclose(f);
-    ASSERT_EQ(0, remove(filename));
+    ASSERT_EQ(buffer_size, ki_write(fd, garbage, buffer_size));
+    ki_close(fd);
+    ASSERT_EQ(0, ki_remove(filename));
   }
   ASSERT_EQ(0, root->ChildCount());
+}
+
+static bool g_handler_called = false;
+static void sighandler(int) { g_handler_called = true; }
+
+TEST_F(KernelProxyTest, Sigaction) {
+  struct sigaction action;
+  struct sigaction oaction;
+  memset(&action, 0, sizeof(action));
+
+  // Invalid signum
+  ASSERT_EQ(-1, ki_sigaction(-1, NULL, &oaction));
+  ASSERT_EQ(-1, ki_sigaction(SIGSTOP, NULL, &oaction));
+  ASSERT_EQ(EINVAL, errno);
+
+  // Get existing handler
+  memset(&oaction, 0, sizeof(oaction));
+  ASSERT_EQ(0, ki_sigaction(SIGINT, NULL, &oaction));
+  ASSERT_EQ(SIG_DFL, oaction.sa_handler);
+
+  // Attempt to set handler for unsupported signum
+  action.sa_handler = sighandler;
+  ASSERT_EQ(-1, ki_sigaction(SIGINT, &action, NULL));
+  ASSERT_EQ(EINVAL, errno);
+
+  // Attempt to set handler for supported signum
+  action.sa_handler = sighandler;
+  ASSERT_EQ(0, ki_sigaction(SIGWINCH, &action, NULL));
+
+  memset(&oaction, 0, sizeof(oaction));
+  ASSERT_EQ(0, ki_sigaction(SIGWINCH, NULL, &oaction));
+  ASSERT_EQ((sighandler_t*)sighandler, (sighandler_t*)oaction.sa_handler);
+}
+
+TEST_F(KernelProxyTest, KillSignals) {
+  // SIGSEGV can't be sent via kill(2)
+  ASSERT_EQ(-1, ki_kill(0, SIGSEGV)) << "kill(SEGV) failed to return an error";
+  ASSERT_EQ(EINVAL, errno) << "kill(SEGV) failed to set errno to EINVAL";
+
+  // Our implemenation should understand SIGWINCH
+  ASSERT_EQ(0, ki_kill(0, SIGWINCH)) << "kill(SIGWINCH) failed: " << errno;
+
+  // And USR1/USR2
+  ASSERT_EQ(0, ki_kill(0, SIGUSR1)) << "kill(SIGUSR1) failed: " << errno;
+  ASSERT_EQ(0, ki_kill(0, SIGUSR2)) << "kill(SIGUSR2) failed: " << errno;
+}
+
+TEST_F(KernelProxyTest, KillPIDValues) {
+  // Any PID other than 0, -1 and getpid() should yield ESRCH
+  // since there is only one valid process under NaCl
+  int mypid = getpid();
+  ASSERT_EQ(0, ki_kill(0, SIGWINCH));
+  ASSERT_EQ(0, ki_kill(-1, SIGWINCH));
+  ASSERT_EQ(0, ki_kill(mypid, SIGWINCH));
+
+  // Don't use mypid + 1 since getpid() actually returns -1
+  // when the IRT interface is missing (e.g. within chrome),
+  // and 0 is always a valid PID when calling kill().
+  int invalid_pid = mypid + 10;
+  ASSERT_EQ(-1, ki_kill(invalid_pid, SIGWINCH));
+  ASSERT_EQ(ESRCH, errno);
+}
+
+TEST_F(KernelProxyTest, SignalValues) {
+  ASSERT_EQ(ki_signal(SIGSEGV, sighandler), SIG_ERR)
+      << "registering SEGV handler didn't fail";
+  ASSERT_EQ(errno, EINVAL) << "signal(SEGV) failed to set errno to EINVAL";
+
+  ASSERT_EQ(ki_signal(-1, sighandler), SIG_ERR)
+      << "registering handler for invalid signal didn't fail";
+  ASSERT_EQ(errno, EINVAL) << "signal(-1) failed to set errno to EINVAL";
+}
+
+TEST_F(KernelProxyTest, SignalHandlerValues) {
+  // Unsupported signal.
+  ASSERT_NE(SIG_ERR, ki_signal(SIGSEGV, SIG_DFL));
+  ASSERT_EQ(SIG_ERR, ki_signal(SIGSEGV, SIG_IGN));
+  ASSERT_EQ(SIG_ERR, ki_signal(SIGSEGV, sighandler));
+
+  // Supported signal.
+  ASSERT_NE(SIG_ERR, ki_signal(SIGWINCH, SIG_DFL));
+  ASSERT_NE(SIG_ERR, ki_signal(SIGWINCH, SIG_IGN));
+  ASSERT_NE(SIG_ERR, ki_signal(SIGWINCH, sighandler));
+}
+
+TEST_F(KernelProxyTest, SignalSigwinch) {
+  g_handler_called = false;
+
+  // Register WINCH handler
+  sighandler_t newsig = sighandler;
+  sighandler_t oldsig = ki_signal(SIGWINCH, newsig);
+  ASSERT_NE(oldsig, SIG_ERR);
+
+  // Send signal.
+  ki_kill(0, SIGWINCH);
+
+  // Verify that handler was called
+  EXPECT_TRUE(g_handler_called);
+
+  // Restore existing handler
+  oldsig = ki_signal(SIGWINCH, oldsig);
+
+  // Verify the our newsig was returned as previous handler
+  ASSERT_EQ(oldsig, newsig);
+}
+
+TEST_F(KernelProxyTest, Rename) {
+  // Create a dummy file
+  int file1 = ki_open("/test1.txt", O_RDWR | O_CREAT);
+  ASSERT_GT(file1, -1);
+  ASSERT_EQ(0, ki_close(file1));
+
+  // Test the renaming works
+  ASSERT_EQ(0, ki_rename("/test1.txt", "/test2.txt"));
+
+  // Test that renaming across mount points fails
+  ASSERT_EQ(0, ki_mount("", "/foo", "memfs", 0, ""));
+  ASSERT_EQ(-1, ki_rename("/test2.txt", "/foo/test2.txt"));
+  ASSERT_EQ(EXDEV, errno);
 }
 
 TEST_F(KernelProxyTest, WorkingDirectory) {
@@ -163,6 +281,62 @@ TEST_F(KernelProxyTest, WorkingDirectory) {
   EXPECT_EQ(0, ki_chdir("/foo"));
   EXPECT_EQ(text, ki_getcwd(text, sizeof(text)));
   EXPECT_STREQ("/foo", text);
+}
+
+TEST_F(KernelProxyTest, FDPathMapping) {
+  char text[1024];
+
+  int fd1, fd2, fd3, fd4, fd5;
+
+  EXPECT_EQ(0, ki_mkdir("/foo", S_IREAD | S_IWRITE));
+  EXPECT_EQ(0, ki_mkdir("/foo/bar", S_IREAD | S_IWRITE));
+  EXPECT_EQ(0, ki_mkdir("/example", S_IREAD | S_IWRITE));
+  ki_chdir("/foo");
+
+  fd1 = ki_open("/example", O_RDONLY);
+  EXPECT_NE(-1, fd1);
+  EXPECT_EQ(ki_fchdir(fd1), 0);
+  EXPECT_EQ(text, ki_getcwd(text, sizeof(text)));
+  EXPECT_STREQ("/example", text);
+
+  EXPECT_EQ(0, ki_chdir("/foo"));
+  fd2 = ki_open("../example", O_RDONLY);
+  EXPECT_NE(-1, fd2);
+  EXPECT_EQ(0, ki_fchdir(fd2));
+  EXPECT_EQ(text, ki_getcwd(text, sizeof(text)));
+  EXPECT_STREQ("/example", text);
+
+  EXPECT_EQ(0, ki_chdir("/foo"));
+  fd3 = ki_open("../test", O_CREAT | O_RDWR);
+  EXPECT_NE(-1, fd3);
+  EXPECT_EQ(-1, ki_fchdir(fd3));
+  EXPECT_EQ(ENOTDIR, errno);
+
+  EXPECT_EQ(0, ki_chdir("/foo"));
+  fd4 = ki_open("bar", O_RDONLY);
+  EXPECT_EQ(0, ki_fchdir(fd4));
+  EXPECT_EQ(text, ki_getcwd(text, sizeof(text)));
+  EXPECT_STREQ("/foo/bar", text);
+  EXPECT_EQ(0, ki_chdir("/example"));
+  EXPECT_EQ(0, ki_fchdir(fd4));
+  EXPECT_EQ(text, ki_getcwd(text, sizeof(text)));
+  EXPECT_STREQ("/foo/bar", text);
+
+  EXPECT_EQ(0, ki_chdir("/example"));
+  fd5 = ki_dup(fd4);
+  ASSERT_GT(fd5, -1);
+  ASSERT_NE(fd4, fd5);
+  EXPECT_EQ(0, ki_fchdir(fd5));
+  EXPECT_EQ(text, ki_getcwd(text, sizeof(text)));
+  EXPECT_STREQ("/foo/bar", text);
+
+  fd5 = 123;
+
+  EXPECT_EQ(0, ki_chdir("/example"));
+  EXPECT_EQ(fd5, ki_dup2(fd4, fd5));
+  EXPECT_EQ(0, ki_fchdir(fd5));
+  EXPECT_EQ(text, ki_getcwd(text, sizeof(text)));
+  EXPECT_STREQ("/foo/bar", text);
 }
 
 TEST_F(KernelProxyTest, MemMountIO) {
@@ -234,24 +408,63 @@ TEST_F(KernelProxyTest, MemMountIO) {
   EXPECT_STREQ("HELLOWORLD", text);
 }
 
+TEST_F(KernelProxyTest, MemMountFTruncate) {
+  char text[1024];
+  int fd1, fd2;
+
+  // Open a file write only, write some text, then test that using a
+  // separate file descriptor pointing to it that it is correctly
+  // truncated at a specified number of bytes (2).
+  fd1 = ki_open("/trunc", O_WRONLY | O_CREAT);
+  ASSERT_NE(-1, fd1);
+  fd2 = ki_open("/trunc", O_RDONLY);
+  ASSERT_NE(-1, fd2);
+  EXPECT_EQ(5, ki_write(fd1, "HELLO", 5));
+  EXPECT_EQ(0, ki_ftruncate(fd1, 2));
+  // Verify the remaining file (using fd2, opened pre-truncation) is
+  // only 2 bytes in length.
+  EXPECT_EQ(2, ki_read(fd2, text, sizeof(text)));
+  EXPECT_EQ(0, ki_close(fd1));
+  EXPECT_EQ(0, ki_close(fd2));
+}
+
+TEST_F(KernelProxyTest, MemMountTruncate) {
+  char text[1024];
+  int fd1;
+
+  // Open a file write only, write some text, then test that by
+  // referring to it by its path and truncating it we correctly truncate
+  // it at a specified number of bytes (2).
+  fd1 = ki_open("/trunc", O_WRONLY | O_CREAT);
+  ASSERT_NE(-1, fd1);
+  EXPECT_EQ(5, ki_write(fd1, "HELLO", 5));
+  EXPECT_EQ(0, ki_close(fd1));
+  EXPECT_EQ(0, ki_truncate("/trunc", 2));
+  // Verify the text is only 2 bytes long with new file descriptor.
+  fd1 = ki_open("/trunc", O_RDONLY);
+  ASSERT_NE(-1, fd1);
+  EXPECT_EQ(2, ki_read(fd1, text, sizeof(text)));
+  EXPECT_EQ(0, ki_close(fd1));
+}
+
 TEST_F(KernelProxyTest, MemMountLseek) {
   int fd = ki_open("/foo", O_CREAT | O_RDWR);
   ASSERT_GT(fd, -1);
-  EXPECT_EQ(9, ki_write(fd, "Some text", 9));
+  ASSERT_EQ(9, ki_write(fd, "Some text", 9));
 
-  EXPECT_EQ(9, ki_lseek(fd, 0, SEEK_CUR));
-  EXPECT_EQ(9, ki_lseek(fd, 0, SEEK_END));
-  EXPECT_EQ(-1, ki_lseek(fd, -1, SEEK_SET));
-  EXPECT_EQ(EINVAL, errno);
+  ASSERT_EQ(9, ki_lseek(fd, 0, SEEK_CUR));
+  ASSERT_EQ(9, ki_lseek(fd, 0, SEEK_END));
+  ASSERT_EQ(-1, ki_lseek(fd, -1, SEEK_SET));
+  ASSERT_EQ(EINVAL, errno);
 
   // Seek past end of file.
-  EXPECT_EQ(13, ki_lseek(fd, 13, SEEK_SET));
+  ASSERT_EQ(13, ki_lseek(fd, 13, SEEK_SET));
   char buffer[4];
   memset(&buffer[0], 0xfe, 4);
-  EXPECT_EQ(9, ki_lseek(fd, -4, SEEK_END));
-  EXPECT_EQ(9, ki_lseek(fd, 0, SEEK_CUR));
-  EXPECT_EQ(4, ki_read(fd, &buffer[0], 4));
-  EXPECT_EQ(0, memcmp("\0\0\0\0", buffer, 4));
+  ASSERT_EQ(9, ki_lseek(fd, -4, SEEK_END));
+  ASSERT_EQ(9, ki_lseek(fd, 0, SEEK_CUR));
+  ASSERT_EQ(4, ki_read(fd, &buffer[0], 4));
+  ASSERT_EQ(0, memcmp("\0\0\0\0", buffer, 4));
 }
 
 TEST_F(KernelProxyTest, CloseTwice) {
@@ -299,26 +512,46 @@ TEST_F(KernelProxyTest, MemMountDup) {
   // fd, new_fd, dup_fd -> "/bar"
 }
 
+TEST_F(KernelProxyTest, Lstat) {
+  int fd = ki_open("/foo", O_CREAT | O_RDWR);
+  ASSERT_GT(fd, -1);
+  ASSERT_EQ(0, ki_mkdir("/bar", S_IREAD | S_IWRITE));
+
+  struct stat buf;
+  EXPECT_EQ(0, ki_lstat("/foo", &buf));
+  EXPECT_EQ(0, buf.st_size);
+  EXPECT_TRUE(S_ISREG(buf.st_mode));
+
+  EXPECT_EQ(0, ki_lstat("/bar", &buf));
+  EXPECT_EQ(0, buf.st_size);
+  EXPECT_TRUE(S_ISDIR(buf.st_mode));
+
+  EXPECT_EQ(-1, ki_lstat("/no-such-file", &buf));
+  EXPECT_EQ(ENOENT, errno);
+}
+
 namespace {
 
-StringMap_t g_StringMap;
+StringMap_t g_string_map;
 
-class MountMockInit : public MountMem {
+class KernelProxyMountTest_Filesystem : public MemFs {
  public:
-  virtual Error Init(int dev, StringMap_t& args, PepperInterface* ppapi) {
-    g_StringMap = args;
-    if (args.find("false") != args.end())
+  using MemFs::Init;
+
+  virtual Error Init(const FsInitArgs& args) {
+    g_string_map = args.string_map;
+    if (g_string_map.find("false") != g_string_map.end())
       return EINVAL;
     return 0;
   }
 
-  friend class TypedMountFactory<MountMockInit>;
+  friend class TypedFsFactory<KernelProxyMountTest_Filesystem>;
 };
 
-class KernelProxyMountMock : public KernelProxy {
+class KernelProxyMountTest_KernelProxy : public KernelProxy {
   virtual Error Init(PepperInterface* ppapi) {
     KernelProxy::Init(NULL);
-    factories_["initfs"] = new TypedMountFactory<MountMockInit>;
+    factories_["initfs"] = new TypedFsFactory<KernelProxyMountTest_Filesystem>;
     return 0;
   }
 };
@@ -328,15 +561,14 @@ class KernelProxyMountTest : public ::testing::Test {
   KernelProxyMountTest() {}
 
   void SetUp() {
-    ki_init(&kp_);
+    ASSERT_EQ(0, ki_push_state_for_testing());
+    ASSERT_EQ(0, ki_init(&kp_));
   }
 
-  void TearDown() {
-    ki_uninit();
-  }
+  void TearDown() { ki_uninit(); }
 
  private:
-  KernelProxyMountMock kp_;
+  KernelProxyMountTest_KernelProxy kp_;
 };
 
 }  // namespace
@@ -344,22 +576,23 @@ class KernelProxyMountTest : public ::testing::Test {
 TEST_F(KernelProxyMountTest, MountInit) {
   int res1 = ki_mount("/", "/mnt1", "initfs", 0, "false,foo=bar");
 
-  EXPECT_EQ("bar", g_StringMap["foo"]);
+  EXPECT_EQ("bar", g_string_map["foo"]);
   EXPECT_EQ(-1, res1);
   EXPECT_EQ(EINVAL, errno);
 
   int res2 = ki_mount("/", "/mnt2", "initfs", 0, "true,bar=foo,x=y");
   EXPECT_NE(-1, res2);
-  EXPECT_EQ("y", g_StringMap["x"]);
+  EXPECT_EQ("y", g_string_map["x"]);
 }
 
 namespace {
 
 int g_MMapCount = 0;
 
-class MountNodeMockMMap : public MountNode {
+class KernelProxyMMapTest_Node : public Node {
  public:
-  MountNodeMockMMap(Mount* mount) : MountNode(mount), node_mmap_count_(0) {
+  KernelProxyMMapTest_Node(Filesystem* filesystem)
+      : Node(filesystem), node_mmap_count_(0) {
     EXPECT_EQ(0, Init(0));
   }
 
@@ -391,15 +624,15 @@ class MountNodeMockMMap : public MountNode {
   int node_mmap_count_;
 };
 
-class MountMockMMap : public Mount {
+class KernelProxyMMapTest_Filesystem : public Filesystem {
  public:
   virtual Error Access(const Path& path, int a_mode) { return 0; }
-  virtual Error Open(const Path& path, int mode, ScopedMountNode* out_node) {
-    out_node->reset(new MountNodeMockMMap(this));
+  virtual Error Open(const Path& path, int mode, ScopedNode* out_node) {
+    out_node->reset(new KernelProxyMMapTest_Node(this));
     return 0;
   }
 
-  virtual Error OpenResource(const Path& path, ScopedMountNode* out_node) {
+  virtual Error OpenResource(const Path& path, ScopedNode* out_node) {
     out_node->reset(NULL);
     return ENOSYS;
   }
@@ -407,14 +640,15 @@ class MountMockMMap : public Mount {
   virtual Error Mkdir(const Path& path, int permissions) { return ENOSYS; }
   virtual Error Rmdir(const Path& path) { return ENOSYS; }
   virtual Error Remove(const Path& path) { return ENOSYS; }
+  virtual Error Rename(const Path& path, const Path& newpath) { return ENOSYS; }
 
-  friend class TypedMountFactory<MountMockMMap>;
+  friend class TypedFsFactory<KernelProxyMMapTest_Filesystem>;
 };
 
-class KernelProxyMockMMap : public KernelProxy {
+class KernelProxyMMapTest_KernelProxy : public KernelProxy {
   virtual Error Init(PepperInterface* ppapi) {
     KernelProxy::Init(NULL);
-    factories_["mmapfs"] = new TypedMountFactory<MountMockMMap>;
+    factories_["mmapfs"] = new TypedFsFactory<KernelProxyMMapTest_Filesystem>;
     return 0;
   }
 };
@@ -424,15 +658,14 @@ class KernelProxyMMapTest : public ::testing::Test {
   KernelProxyMMapTest() {}
 
   void SetUp() {
-    ki_init(&kp_);
+    ASSERT_EQ(0, ki_push_state_for_testing());
+    ASSERT_EQ(0, ki_init(&kp_));
   }
 
-  void TearDown() {
-    ki_uninit();
-  }
+  void TearDown() { ki_uninit(); }
 
  private:
-  KernelProxyMockMMap kp_;
+  KernelProxyMMapTest_KernelProxy kp_;
 };
 
 }  // namespace
@@ -465,38 +698,36 @@ TEST_F(KernelProxyMMapTest, MMap) {
 
 namespace {
 
-class SingletonMountFactory : public MountFactory {
+class SingletonFsFactory : public FsFactory {
  public:
-  SingletonMountFactory(const ScopedMount& mount) : mount_(mount) {}
+  SingletonFsFactory(const ScopedFilesystem& filesystem) : mount_(filesystem) {}
 
-  virtual Error CreateMount(int dev,
-                            StringMap_t& args,
-                            PepperInterface* ppapi,
-                            ScopedMount* out_mount) {
-    *out_mount = mount_;
+  virtual Error CreateFilesystem(const FsInitArgs& args,
+                                 ScopedFilesystem* out_fs) {
+    *out_fs = mount_;
     return 0;
   }
 
  private:
-  ScopedMount mount_;
+  ScopedFilesystem mount_;
 };
 
-class KernelProxyError : public KernelProxy {
+class KernelProxyErrorTest_KernelProxy : public KernelProxy {
  public:
-  KernelProxyError() : mnt_(new MountMock) {}
+  KernelProxyErrorTest_KernelProxy() : fs_(new MockFs) {}
 
   virtual Error Init(PepperInterface* ppapi) {
     KernelProxy::Init(ppapi);
-    factories_["testfs"] = new SingletonMountFactory(mnt_);
+    factories_["testfs"] = new SingletonFsFactory(fs_);
 
-    EXPECT_CALL(*mnt_, Destroy()).Times(1);
+    EXPECT_CALL(*fs_, Destroy()).Times(1);
     return 0;
   }
 
-  ScopedRef<MountMock> mnt() { return mnt_; }
+  ScopedRef<MockFs> fs() { return fs_; }
 
  private:
-  ScopedRef<MountMock> mnt_;
+  ScopedRef<MockFs> fs_;
 };
 
 class KernelProxyErrorTest : public ::testing::Test {
@@ -504,28 +735,27 @@ class KernelProxyErrorTest : public ::testing::Test {
   KernelProxyErrorTest() {}
 
   void SetUp() {
-    ki_init(&kp_);
+    ASSERT_EQ(0, ki_push_state_for_testing());
+    ASSERT_EQ(0, ki_init(&kp_));
     // Unmount the passthrough FS and mount a testfs.
     EXPECT_EQ(0, kp_.umount("/"));
     EXPECT_EQ(0, kp_.mount("", "/", "testfs", 0, NULL));
   }
 
-  void TearDown() {
-    ki_uninit();
-  }
+  void TearDown() { ki_uninit(); }
 
-  ScopedRef<MountMock> mnt() { return kp_.mnt(); }
+  ScopedRef<MockFs> fs() { return kp_.fs(); }
 
  private:
-  KernelProxyError kp_;
+  KernelProxyErrorTest_KernelProxy kp_;
 };
 
 }  // namespace
 
 TEST_F(KernelProxyErrorTest, WriteError) {
-  ScopedRef<MountMock> mock_mnt(mnt());
-  ScopedRef<MountNodeMock> mock_node(new MountNodeMock(&*mock_mnt));
-  EXPECT_CALL(*mock_mnt, Open(_, _, _))
+  ScopedRef<MockFs> mock_fs(fs());
+  ScopedRef<MockNode> mock_node(new MockNode(&*mock_fs));
+  EXPECT_CALL(*mock_fs, Open(_, _, _))
       .WillOnce(DoAll(SetArgPointee<2>(mock_node), Return(0)));
 
   EXPECT_CALL(*mock_node, Write(_, _, _, _))
@@ -539,15 +769,15 @@ TEST_F(KernelProxyErrorTest, WriteError) {
 
   char buf[20];
   EXPECT_EQ(-1, ki_write(fd, &buf[0], 20));
-  // The Mount should be able to return whatever error it wants and have it
+  // The Filesystem should be able to return whatever error it wants and have it
   // propagate through.
   EXPECT_EQ(1234, errno);
 }
 
 TEST_F(KernelProxyErrorTest, ReadError) {
-  ScopedRef<MountMock> mock_mnt(mnt());
-  ScopedRef<MountNodeMock> mock_node(new MountNodeMock(&*mock_mnt));
-  EXPECT_CALL(*mock_mnt, Open(_, _, _))
+  ScopedRef<MockFs> mock_fs(fs());
+  ScopedRef<MockNode> mock_node(new MockNode(&*mock_fs));
+  EXPECT_CALL(*mock_fs, Open(_, _, _))
       .WillOnce(DoAll(SetArgPointee<2>(mock_node), Return(0)));
 
   EXPECT_CALL(*mock_node, Read(_, _, _, _))
@@ -561,8 +791,7 @@ TEST_F(KernelProxyErrorTest, ReadError) {
 
   char buf[20];
   EXPECT_EQ(-1, ki_read(fd, &buf[0], 20));
-  // The Mount should be able to return whatever error it wants and have it
+  // The Filesystem should be able to return whatever error it wants and have it
   // propagate through.
   EXPECT_EQ(1234, errno);
 }
-

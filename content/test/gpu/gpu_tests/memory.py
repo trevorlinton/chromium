@@ -3,6 +3,8 @@
 # found in the LICENSE file.
 from telemetry import test
 from telemetry.page import page_test
+from telemetry.core.timeline import counter
+from telemetry.core.timeline import model
 
 MEMORY_LIMIT_MB = 256
 SINGLE_TAB_LIMIT_MB = 128
@@ -49,12 +51,17 @@ test_harness_script = r"""
   }, false);
 """ % MEMORY_LIMIT_MB
 
-class MemoryValidator(page_test.PageTest):
+class _MemoryValidator(page_test.PageTest):
   def __init__(self):
-    super(MemoryValidator, self).__init__('ValidatePage')
+    super(_MemoryValidator, self).__init__('ValidatePage')
 
   def ValidatePage(self, page, tab, results):
-    mb_used = MemoryValidator.GpuMemoryUsageMbytes(tab)
+    timeline_data = tab.browser.StopTracing()
+    timeline_model = model.TimelineModel(timeline_data)
+    for process in timeline_model.GetAllProcesses():
+      if 'gpu.GpuMemoryUsage' in process.counters:
+        counter = process.GetCounter('gpu', 'GpuMemoryUsage')
+        mb_used = counter.samples[-1] / 1048576
 
     if mb_used + WIGGLE_ROOM_MB < SINGLE_TAB_LIMIT_MB:
       raise page_test.Failure('Memory allocation too low')
@@ -62,21 +69,18 @@ class MemoryValidator(page_test.PageTest):
     if mb_used - WIGGLE_ROOM_MB > MEMORY_LIMIT_MB:
       raise page_test.Failure('Memory allocation too high')
 
-  @staticmethod
-  def GpuMemoryUsageMbytes(tab):
-    gpu_rendering_stats_js = 'chrome.gpuBenchmarking.gpuRenderingStats()'
-    gpu_rendering_stats = tab.EvaluateJavaScript(gpu_rendering_stats_js)
-    return gpu_rendering_stats['globalVideoMemoryBytesAllocated'] / 1048576
-
   def CustomizeBrowserOptions(self, options):
     options.AppendExtraBrowserArgs('--enable-logging')
     options.AppendExtraBrowserArgs(
         '--force-gpu-mem-available-mb=%s' % MEMORY_LIMIT_MB)
-    options.AppendExtraBrowserArgs('--enable-gpu-benchmarking')
+
+  def WillNavigateToPage(self, page, tab):
+    custom_categories = ['webkit.console', 'gpu']
+    tab.browser.StartTracing(','.join(custom_categories), 60)
 
 class Memory(test.Test):
   """Tests GPU memory limits"""
-  test = MemoryValidator
+  test = _MemoryValidator
   page_set = 'page_sets/memory_tests.json'
 
   def CreatePageSet(self, options):

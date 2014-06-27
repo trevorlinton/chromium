@@ -6,7 +6,7 @@
 #define CHROME_BROWSER_THUMBNAILS_THUMBNAIL_SERVICE_H_
 
 #include "chrome/common/thumbnail_score.h"
-#include "components/browser_context_keyed_service/refcounted_browser_context_keyed_service.h"
+#include "components/keyed_service/content/refcounted_browser_context_keyed_service.h"
 #include "ui/gfx/image/image.h"
 
 class GURL;
@@ -49,6 +49,10 @@ class ThumbnailService : public RefcountedBrowserContextKeyedService {
       const GURL& url,
       bool prefix_match,
       scoped_refptr<base::RefCountedMemory>* bytes) = 0;
+
+  // Add or updates a |url| for which we should force the capture of a thumbnail
+  // next time it's visited.
+  virtual void AddForcedURL(const GURL& url) = 0;
 
   // Returns true if the page thumbnail should be updated.
   virtual bool ShouldAcquirePageThumbnail(const GURL& url) = 0;

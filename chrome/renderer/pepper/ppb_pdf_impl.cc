@@ -6,7 +6,7 @@
 
 #include "base/command_line.h"
 #include "base/metrics/histogram.h"
-#include "base/safe_numerics.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/common/chrome_switches.h"
@@ -26,20 +26,20 @@
 #include "ppapi/shared_impl/resource.h"
 #include "ppapi/shared_impl/resource_tracker.h"
 #include "ppapi/shared_impl/var.h"
-#include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebElement.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
 #include "third_party/WebKit/public/web/WebPluginContainer.h"
 #include "third_party/WebKit/public/web/WebView.h"
 #include "third_party/icu/source/i18n/unicode/usearch.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/layout.h"
 #include "ui/base/resource/resource_bundle.h"
 
 using ppapi::PpapiGlobals;
-using WebKit::WebElement;
-using WebKit::WebView;
+using blink::WebElement;
+using blink::WebView;
 using content::RenderThread;
 
 namespace {
@@ -58,7 +58,7 @@ class PrivateFontFile : public ppapi::Resource {
     size_t temp_size = static_cast<size_t>(*output_length);
     bool rv = content::GetFontTable(
         fd_, table, 0 /* offset */, static_cast<uint8_t*>(output), &temp_size);
-    *output_length = base::checked_numeric_cast<uint32_t>(temp_size);
+    *output_length = base::checked_cast<uint32_t>(temp_size);
     return rv;
   }
 
@@ -132,25 +132,25 @@ static const ResourceImageInfo kResourceImageMap[] = {
 
 #if defined(ENABLE_FULL_PRINTING)
 
-WebKit::WebElement GetWebElement(PP_Instance instance_id) {
+blink::WebElement GetWebElement(PP_Instance instance_id) {
   content::PepperPluginInstance* instance =
       content::PepperPluginInstance::Get(instance_id);
   if (!instance)
-    return WebKit::WebElement();
+    return blink::WebElement();
   return instance->GetContainer()->element();
 }
 
 printing::PrintWebViewHelper* GetPrintWebViewHelper(
-    const WebKit::WebElement& element) {
+    const blink::WebElement& element) {
   if (element.isNull())
     return NULL;
-  WebKit::WebView* view = element.document().frame()->view();
+  blink::WebView* view = element.document().frame()->view();
   content::RenderView* render_view = content::RenderView::FromWebView(view);
   return printing::PrintWebViewHelper::Get(render_view);
 }
 
 bool IsPrintingEnabled(PP_Instance instance_id) {
-  WebKit::WebElement element = GetWebElement(instance_id);
+  blink::WebElement element = GetWebElement(instance_id);
   printing::PrintWebViewHelper* helper = GetPrintWebViewHelper(element);
   return helper && helper->IsPrintingEnabled();
 }
@@ -174,13 +174,13 @@ PP_Var GetLocalizedString(PP_Instance instance_id,
 
   std::string rv;
   if (string_id == PP_RESOURCESTRING_PDFGETPASSWORD) {
-    rv = UTF16ToUTF8(l10n_util::GetStringUTF16(IDS_PDF_NEED_PASSWORD));
+    rv = base::UTF16ToUTF8(l10n_util::GetStringUTF16(IDS_PDF_NEED_PASSWORD));
   } else if (string_id == PP_RESOURCESTRING_PDFLOADING) {
-    rv = UTF16ToUTF8(l10n_util::GetStringUTF16(IDS_PDF_PAGE_LOADING));
+    rv = base::UTF16ToUTF8(l10n_util::GetStringUTF16(IDS_PDF_PAGE_LOADING));
   } else if (string_id == PP_RESOURCESTRING_PDFLOAD_FAILED) {
-    rv = UTF16ToUTF8(l10n_util::GetStringUTF16(IDS_PDF_PAGE_LOAD_FAILED));
+    rv = base::UTF16ToUTF8(l10n_util::GetStringUTF16(IDS_PDF_PAGE_LOAD_FAILED));
   } else if (string_id == PP_RESOURCESTRING_PDFPROGRESSLOADING) {
-    rv = UTF16ToUTF8(l10n_util::GetStringUTF16(IDS_PDF_PROGRESS_LOADING));
+    rv = base::UTF16ToUTF8(l10n_util::GetStringUTF16(IDS_PDF_PROGRESS_LOADING));
   } else {
     NOTREACHED();
   }
@@ -206,7 +206,8 @@ PP_Resource GetFontFileWithFallback(
       face_name->value().c_str(),
       description->weight >= PP_BROWSERFONT_TRUSTED_WEIGHT_BOLD,
       description->italic,
-      charset);
+      charset,
+      description->family);
   if (fd == -1)
     return 0;
 
@@ -243,8 +244,10 @@ void SearchString(PP_Instance instance,
                   bool case_sensitive,
                   PP_PrivateFindResult** results,
                   int* count) {
-  const char16* string = reinterpret_cast<const char16*>(input_string);
-  const char16* term = reinterpret_cast<const char16*>(input_term);
+  const base::char16* string =
+      reinterpret_cast<const base::char16*>(input_string);
+  const base::char16* term =
+      reinterpret_cast<const base::char16*>(input_term);
 
   UErrorCode status = U_ZERO_ERROR;
   UStringSearch* searcher = usearch_open(
@@ -321,7 +324,7 @@ void UserMetricsRecordAction(PP_Instance instance, PP_Var action) {
   scoped_refptr<ppapi::StringVar> action_str(
       ppapi::StringVar::FromPPVar(action));
   if (action_str.get())
-    RenderThread::Get()->RecordUserMetrics(action_str->value());
+    RenderThread::Get()->RecordComputedAction(action_str->value());
 }
 
 void HasUnsupportedFeature(PP_Instance instance_id) {
@@ -334,7 +337,8 @@ void HasUnsupportedFeature(PP_Instance instance_id) {
   if (!instance->IsFullPagePlugin())
     return;
 
-  WebView* view = instance->GetContainer()->element().document().frame()->view();
+  WebView* view =
+      instance->GetContainer()->element().document().frame()->view();
   content::RenderView* render_view = content::RenderView::FromWebView(view);
   render_view->Send(new ChromeViewHostMsg_PDFHasUnsupportedFeature(
       render_view->GetRoutingID()));
@@ -348,7 +352,7 @@ void SaveAs(PP_Instance instance_id) {
   GURL url = instance->GetPluginURL();
 
   content::RenderView* render_view = instance->GetRenderView();
-  WebKit::WebFrame* frame = render_view->GetWebView()->mainFrame();
+  blink::WebFrame* frame = render_view->GetWebView()->mainFrame();
   content::Referrer referrer(frame->document().url(),
                              frame->document().referrerPolicy());
   render_view->Send(new ChromeViewHostMsg_PDFSaveURLAs(
@@ -368,6 +372,10 @@ PP_Bool IsFeatureEnabled(PP_Instance instance, PP_PDFFeature feature) {
 PP_Resource GetResourceImageForScale(PP_Instance instance_id,
                                      PP_ResourceImage image_id,
                                      float scale) {
+  ui::ScaleFactor supported_scale_factor = ui::GetSupportedScaleFactor(scale);
+  DCHECK(supported_scale_factor != ui::SCALE_FACTOR_NONE);
+  float supported_scale = ui::GetImageScale(supported_scale_factor);
+
   int res_id = 0;
   for (size_t i = 0; i < arraysize(kResourceImageMap); ++i) {
     if (kResourceImageMap[i].pp_id == image_id) {
@@ -390,7 +398,7 @@ PP_Resource GetResourceImageForScale(PP_Instance instance_id,
   if (!res_image_skia)
     return 0;
 
-  return instance->CreateImage(res_image_skia, scale);
+  return instance->CreateImage(res_image_skia, supported_scale);
 }
 
 PP_Resource GetResourceImage(PP_Instance instance_id,
@@ -419,6 +427,23 @@ PP_Var ModalPromptForPassword(PP_Instance instance_id,
   return ppapi::StringVar::StringToPPVar(actual_value);
 }
 
+PP_Bool IsOutOfProcess(PP_Instance instance_id) {
+  return PP_FALSE;
+}
+
+void SetSelectedText(PP_Instance instance_id, const char* selected_text) {
+  // This function is intended for out of process PDF plugin.
+  NOTIMPLEMENTED();
+}
+
+void SetLinkUnderCursor(PP_Instance instance_id, const char* url) {
+  content::PepperPluginInstance* instance =
+      content::PepperPluginInstance::Get(instance_id);
+  if (!instance)
+    return;
+  instance->SetLinkUnderCursor(url);
+}
+
 const PPB_PDF ppb_pdf = {
   &GetLocalizedString,
   &GetResourceImage,
@@ -436,6 +461,9 @@ const PPB_PDF ppb_pdf = {
   &IsFeatureEnabled,
   &GetResourceImageForScale,
   &ModalPromptForPassword,
+  &IsOutOfProcess,
+  &SetSelectedText,
+  &SetLinkUnderCursor,
 };
 
 }  // namespace
@@ -448,7 +476,7 @@ const PPB_PDF* PPB_PDF_Impl::GetInterface() {
 // static
 void PPB_PDF_Impl::InvokePrintingForInstance(PP_Instance instance_id) {
 #if defined(ENABLE_FULL_PRINTING)
-  WebKit::WebElement element = GetWebElement(instance_id);
+  blink::WebElement element = GetWebElement(instance_id);
   printing::PrintWebViewHelper* helper = GetPrintWebViewHelper(element);
   if (helper)
     helper->PrintNode(element);

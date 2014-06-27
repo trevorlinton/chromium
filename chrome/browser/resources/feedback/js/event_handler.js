@@ -11,7 +11,7 @@ var FEEDBACK_WIDTH = 500;
  * @type {number}
  * @const
  */
-var FEEDBACK_HEIGHT = 625;
+var FEEDBACK_HEIGHT = 585;
 
 var initialFeedbackInfo = null;
 
@@ -20,11 +20,17 @@ var whitelistedExtensionIds = [
   'ehibbfinohgbchlgdbfpikodjaojhccn', // QuickOffice
   'gbkeegbaiigmenfmjfclcdgdpimamgkj', // QuickOffice
   'efjnaogkjbogokcnohkmnjdojkikgobo', // G+ Photos
-  'ebpbnabdhheoknfklmpddcdijjkmklkp', // G+ Photoes
+  'ebpbnabdhheoknfklmpddcdijjkmklkp', // G+ Photos
   'endkpmfloggdajndjpoekmkjnkolfdbf', // Feedback Extension
   'mlocfejafidcakdddnndjdngfmncfbeg', // Connectivity Diagnostics
   'ganomidahfnpdchomfgdoppjmmedlhia', // Connectivity Diagnostics
-  'eemlkeanncmjljgehlbplemhmdmalhdc'  // Connectivity Diagnostics
+  'eemlkeanncmjljgehlbplemhmdmalhdc', // Connectivity Diagnostics
+  'kodldpbjkkmmnilagfdheibampofhaom', // Connectivity Diagnostics
+  'kkebgepbbgbcmghedmmdfcbdcodlkngh', // Chrome OS Recovery Tool
+  'jndclpdbaamdhonoechobihbbiimdgai', // Chrome OS Recovery Tool
+  'ljoammodoonkhnehlncldjelhidljdpi', // GetHelp app.
+  'ljacajndfccfgnfohlgkdphmbnpkjflk', // Chrome Remote Desktop Dev
+  'gbchcmhmhahfdphkhkmpfmihenigjmpp', // Chrome Remote Desktop Stable
 ];
 
 /**
@@ -79,8 +85,7 @@ function startFeedbackUI(feedbackInfo) {
       width: FEEDBACK_WIDTH,
       height: FEEDBACK_HEIGHT,
       hidden: true,
-      resizable: false,
-      singleton: true },
+      resizable: false },
       function(appWindow) {});
 }
 

@@ -9,9 +9,10 @@
 namespace chromeos {
 
 PassphraseTextfield::PassphraseTextfield()
-    : Textfield(views::Textfield::STYLE_OBSCURED),
+    : Textfield(),
       show_fake_(false),
       changed_(true) {
+  SetTextInputType(ui::TEXT_INPUT_TYPE_PASSWORD);
 }
 
 void PassphraseTextfield::SetShowFake(bool show_fake) {
@@ -37,17 +38,18 @@ void PassphraseTextfield::OnBlur() {
 }
 
 std::string PassphraseTextfield::GetPassphrase() {
-  return changed_ ? UTF16ToUTF8(text()) : std::string();
+  return changed_ ? base::UTF16ToUTF8(text()) : std::string();
 }
 
 void PassphraseTextfield::SetFakePassphrase() {
-  CR_DEFINE_STATIC_LOCAL(string16, fake_passphrase, (ASCIIToUTF16("********")));
+  CR_DEFINE_STATIC_LOCAL(base::string16, fake_passphrase,
+      (base::ASCIIToUTF16("********")));
   SetText(fake_passphrase);
   changed_ = false;
 }
 
 void PassphraseTextfield::ClearFakePassphrase() {
-  SetText(string16());
+  SetText(base::string16());
   changed_ = true;
 }
 

@@ -86,28 +86,12 @@ int CompareLexicalNumberStrings(
   return 0;
 }
 
-bool GpuUnmatched(uint32 vendor_id, const std::vector<uint32>& device_id_list,
-                  const GPUInfo::GPUDevice& gpu) {
-  if (vendor_id == 0)
-    return false;
-  if (vendor_id != gpu.vendor_id)
-    return true;
-  bool device_specified = false;
-  for (size_t i = 0; i < device_id_list.size(); ++i) {
-    if (device_id_list[i] == 0)
-      continue;
-    if (device_id_list[i] == gpu.device_id)
-      return false;
-    device_specified = true;
-  }
-  return device_specified;
-}
-
 const char kMultiGpuStyleStringAMDSwitchable[] = "amd_switchable";
 const char kMultiGpuStyleStringOptimus[] = "optimus";
 
 const char kMultiGpuCategoryStringPrimary[] = "primary";
 const char kMultiGpuCategoryStringSecondary[] = "secondary";
+const char kMultiGpuCategoryStringActive[] = "active";
 const char kMultiGpuCategoryStringAny[] = "any";
 
 const char kVersionStyleStringNumerical[] = "numerical";
@@ -412,6 +396,12 @@ bool GpuControlList::IntInfo::Contains(int value) const {
 
 bool GpuControlList::IntInfo::IsValid() const {
   return op_ != kUnknown;
+}
+
+GpuControlList::BoolInfo::BoolInfo(bool value) : value_(value) {}
+
+bool GpuControlList::BoolInfo::Contains(bool value) const {
+  return value_ == value;
 }
 
 // static
@@ -744,6 +734,12 @@ GpuControlList::GpuControlListEntry::GetEntryFromValue(
     dictionary_entry_count++;
   }
 
+  bool direct_rendering;
+  if (value->GetBoolean("direct_rendering", &direct_rendering)) {
+    entry->SetDirectRenderingInfo(direct_rendering);
+    dictionary_entry_count++;
+  }
+
   if (top_level) {
     const base::ListValue* feature_value = NULL;
     if (value->GetList("features", &feature_value)) {
@@ -789,11 +785,6 @@ GpuControlList::GpuControlListEntry::GetEntryFromValue(
       }
       dictionary_entry_count++;
     }
-
-    const base::DictionaryValue* browser_version_value = NULL;
-    // browser_version is processed in LoadGpuControlList().
-    if (value->GetDictionary("browser_version", &browser_version_value))
-      dictionary_entry_count++;
   }
 
   if (value->size() != dictionary_entry_count) {
@@ -837,13 +828,14 @@ bool GpuControlList::GpuControlListEntry::SetOsInfo(
 bool GpuControlList::GpuControlListEntry::SetVendorId(
     const std::string& vendor_id_string) {
   vendor_id_ = 0;
-  return base::HexStringToUInt(vendor_id_string, &vendor_id_);
+  return base::HexStringToUInt(vendor_id_string, &vendor_id_) &&
+      vendor_id_ != 0;
 }
 
 bool GpuControlList::GpuControlListEntry::AddDeviceId(
     const std::string& device_id_string) {
   uint32 device_id = 0;
-  if (base::HexStringToUInt(device_id_string, &device_id)) {
+  if (base::HexStringToUInt(device_id_string, &device_id) && device_id != 0) {
     device_id_list_.push_back(device_id);
     return true;
   }
@@ -975,6 +967,10 @@ bool GpuControlList::GpuControlListEntry::SetGpuCountInfo(
   return gpu_count_info_->IsValid();
 }
 
+void GpuControlList::GpuControlListEntry::SetDirectRenderingInfo(bool value) {
+  direct_rendering_info_.reset(new BoolInfo(value));
+}
+
 bool GpuControlList::GpuControlListEntry::SetFeatures(
     const std::vector<std::string>& feature_strings,
     const FeatureMap& feature_map,
@@ -1024,6 +1020,8 @@ GpuControlList::GpuControlListEntry::StringToMultiGpuCategory(
     return kMultiGpuCategoryPrimary;
   if (category == kMultiGpuCategoryStringSecondary)
     return kMultiGpuCategorySecondary;
+  if (category == kMultiGpuCategoryStringActive)
+    return kMultiGpuCategoryActive;
   if (category == kMultiGpuCategoryStringAny)
     return kMultiGpuCategoryAny;
   return kMultiGpuCategoryNone;
@@ -1043,28 +1041,54 @@ bool GpuControlList::GpuControlListEntry::Contains(
   DCHECK(os_type != kOsAny);
   if (os_info_.get() != NULL && !os_info_->Contains(os_type, os_version))
     return false;
-  bool is_not_primary_gpu =
-      GpuUnmatched(vendor_id_, device_id_list_, gpu_info.gpu);
-  bool is_not_secondary_gpu = true;
-  for (size_t i = 0; i < gpu_info.secondary_gpus.size(); ++i) {
-    is_not_secondary_gpu = is_not_secondary_gpu &&
-        GpuUnmatched(vendor_id_, device_id_list_, gpu_info.secondary_gpus[i]);
-  }
-  switch (multi_gpu_category_) {
-    case kMultiGpuCategoryPrimary:
-      if (is_not_primary_gpu)
-        return false;
-      break;
-    case kMultiGpuCategorySecondary:
-      if (is_not_secondary_gpu)
-        return false;
-      break;
-    case kMultiGpuCategoryAny:
-      if (is_not_primary_gpu && is_not_secondary_gpu)
-        return false;
-      break;
-    case kMultiGpuCategoryNone:
-      break;
+  if (vendor_id_ != 0) {
+    std::vector<GPUInfo::GPUDevice> candidates;
+    switch (multi_gpu_category_) {
+      case kMultiGpuCategoryPrimary:
+        candidates.push_back(gpu_info.gpu);
+        break;
+      case kMultiGpuCategorySecondary:
+        candidates = gpu_info.secondary_gpus;
+        break;
+      case kMultiGpuCategoryAny:
+        candidates = gpu_info.secondary_gpus;
+        candidates.push_back(gpu_info.gpu);
+        break;
+      case kMultiGpuCategoryActive:
+        if (gpu_info.gpu.active)
+          candidates.push_back(gpu_info.gpu);
+        for (size_t ii = 0; ii < gpu_info.secondary_gpus.size(); ++ii) {
+          if (gpu_info.secondary_gpus[ii].active)
+            candidates.push_back(gpu_info.secondary_gpus[ii]);
+        }
+      default:
+        break;
+    }
+
+    GPUInfo::GPUDevice gpu;
+    gpu.vendor_id = vendor_id_;
+    bool found = false;
+    if (device_id_list_.empty()) {
+      for (size_t ii = 0; ii < candidates.size(); ++ii) {
+        if (gpu.vendor_id == candidates[ii].vendor_id) {
+          found = true;
+          break;
+        }
+      }
+    } else {
+      for (size_t ii = 0; ii < device_id_list_.size(); ++ii) {
+        gpu.device_id = device_id_list_[ii];
+        for (size_t jj = 0; jj < candidates.size(); ++jj) {
+          if (gpu.vendor_id == candidates[jj].vendor_id &&
+              gpu.device_id == candidates[jj].device_id) {
+            found = true;
+            break;
+          }
+        }
+      }
+    }
+    if (!found)
+      return false;
   }
   switch (multi_gpu_style_) {
     case kMultiGpuStyleOptimus:
@@ -1124,6 +1148,9 @@ bool GpuControlList::GpuControlListEntry::Contains(
   if (gpu_count_info_.get() != NULL &&
       !gpu_count_info_->Contains(gpu_info.secondary_gpus.size() + 1))
     return false;
+  if (direct_rendering_info_.get() != NULL &&
+      !direct_rendering_info_->Contains(gpu_info.direct_rendering))
+    return false;
   if (cpu_brand_.get() != NULL) {
     base::CPU cpu_info;
     if (!cpu_brand_->Contains(cpu_info.cpu_brand()))
@@ -1177,6 +1204,22 @@ const std::set<int>& GpuControlList::GpuControlListEntry::features() const {
   return features_;
 }
 
+void GpuControlList::GpuControlListEntry::GetFeatureNames(
+    base::ListValue* feature_names,
+    const FeatureMap& feature_map,
+    bool supports_feature_type_all) const {
+  DCHECK(feature_names);
+  if (supports_feature_type_all && features_.size() == feature_map.size()) {
+    feature_names->AppendString("all");
+    return;
+  }
+  for (FeatureMap::const_iterator iter = feature_map.begin();
+       iter != feature_map.end(); ++iter) {
+    if (features_.count(iter->second) > 0)
+      feature_names->AppendString(iter->first);
+  }
+}
+
 // static
 bool GpuControlList::GpuControlListEntry::StringToFeature(
     const std::string& feature_name, int* feature_id,
@@ -1201,20 +1244,8 @@ GpuControlList::~GpuControlList() {
 }
 
 bool GpuControlList::LoadList(
-    const std::string& json_context, GpuControlList::OsFilter os_filter) {
-  const std::string browser_version_string = "0";
-  return LoadList(browser_version_string, json_context, os_filter);
-}
-
-bool GpuControlList::LoadList(
-    const std::string& browser_version_string,
     const std::string& json_context,
     GpuControlList::OsFilter os_filter) {
-  std::vector<std::string> pieces;
-  if (!ProcessVersionString(browser_version_string, '.', &pieces))
-    return false;
-  browser_version_ = browser_version_string;
-
   scoped_ptr<base::Value> root;
   root.reset(base::JSONReader::Read(json_context));
   if (root.get() == NULL || !root->IsType(base::Value::TYPE_DICTIONARY))
@@ -1245,15 +1276,6 @@ bool GpuControlList::LoadList(const base::DictionaryValue& parsed_json,
     bool valid = list->GetDictionary(i, &list_item);
     if (!valid || list_item == NULL)
       return false;
-    // Check browser version compatibility: if the entry is not for the
-    // current browser version, don't process it.
-    BrowserVersionSupport browser_version_support =
-        IsEntrySupportedByCurrentBrowserVersion(list_item);
-    if (browser_version_support == kMalformed)
-      return false;
-    if (browser_version_support == kUnsupported)
-      continue;
-    DCHECK(browser_version_support == kSupported);
     ScopedGpuControlListEntry entry(GpuControlListEntry::GetEntryFromValue(
         list_item, true, feature_map_, supports_feature_type_all_));
     if (entry.get() == NULL)
@@ -1326,7 +1348,8 @@ void GpuControlList::GetDecisionEntries(
   }
 }
 
-void GpuControlList::GetReasons(base::ListValue* problem_list) const {
+void GpuControlList::GetReasons(base::ListValue* problem_list,
+                                const std::string& tag) const {
   DCHECK(problem_list);
   for (size_t i = 0; i < active_entries_.size(); ++i) {
     GpuControlListEntry* entry = active_entries_[i].get();
@@ -1346,6 +1369,13 @@ void GpuControlList::GetReasons(base::ListValue* problem_list) const {
       webkit_bugs->Append(new base::FundamentalValue(entry->webkit_bugs()[j]));
     }
     problem->Set("webkitBugs", webkit_bugs);
+
+    base::ListValue* features = new base::ListValue();
+    entry->GetFeatureNames(features, feature_map_, supports_feature_type_all_);
+    problem->Set("affectedGpuSettings", features);
+
+    DCHECK(tag == "workarounds" || tag == "disabledFeatures");
+    problem->SetString("tag", tag);
 
     problem_list->Append(problem);
   }
@@ -1383,30 +1413,6 @@ void GpuControlList::Clear() {
   entries_.clear();
   active_entries_.clear();
   max_entry_id_ = 0;
-}
-
-GpuControlList::BrowserVersionSupport
-GpuControlList::IsEntrySupportedByCurrentBrowserVersion(
-    const base::DictionaryValue* value) {
-  DCHECK(value);
-  const base::DictionaryValue* browser_version_value = NULL;
-  if (value->GetDictionary("browser_version", &browser_version_value)) {
-    std::string version_op = "any";
-    std::string version_string;
-    std::string version_string2;
-    browser_version_value->GetString(kOp, &version_op);
-    browser_version_value->GetString("value", &version_string);
-    browser_version_value->GetString("value2", &version_string2);
-    scoped_ptr<VersionInfo> browser_version_info;
-    browser_version_info.reset(new VersionInfo(
-        version_op, std::string(), version_string, version_string2));
-    if (!browser_version_info->IsValid())
-      return kMalformed;
-    if (browser_version_info->Contains(browser_version_))
-      return kSupported;
-    return kUnsupported;
-  }
-  return kSupported;
 }
 
 // static

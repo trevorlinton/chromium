@@ -195,6 +195,7 @@
 #include "base/debug/trace_event_impl.h"
 #include "base/debug/trace_event_memory.h"
 #include "base/debug/trace_event_system_stats_monitor.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 
 // By default, const char* argument values are assumed to have long-lived scope
@@ -725,12 +726,16 @@
     INTERNAL_TRACE_EVENT_ADD_WITH_ID(TRACE_EVENT_PHASE_DELETE_OBJECT, \
         category_group, name, TRACE_ID_DONT_MANGLE(id), TRACE_EVENT_FLAG_NONE)
 
+#define INTERNAL_TRACE_EVENT_CATEGORY_GROUP_ENABLED_FOR_RECORDING_MODE() \
+    UNLIKELY(*INTERNAL_TRACE_EVENT_UID(category_group_enabled) & \
+        (base::debug::TraceLog::ENABLED_FOR_RECORDING | \
+         base::debug::TraceLog::ENABLED_FOR_EVENT_CALLBACK))
 
 // Macro to efficiently determine if a given category group is enabled.
 #define TRACE_EVENT_CATEGORY_GROUP_ENABLED(category_group, ret) \
     do { \
       INTERNAL_TRACE_EVENT_GET_CATEGORY_INFO(category_group); \
-      if (*INTERNAL_TRACE_EVENT_UID(category_group_enabled)) { \
+      if (INTERNAL_TRACE_EVENT_CATEGORY_GROUP_ENABLED_FOR_RECORDING_MODE()) { \
         *ret = true; \
       } else { \
         *ret = false; \
@@ -807,6 +812,8 @@
 
 // Set the duration field of a COMPLETE trace event.
 // void TRACE_EVENT_API_UPDATE_TRACE_EVENT_DURATION(
+//     const unsigned char* category_group_enabled,
+//     const char* name,
 //     base::debug::TraceEventHandle id)
 #define TRACE_EVENT_API_UPDATE_TRACE_EVENT_DURATION \
     base::debug::TraceLog::GetInstance()->UpdateTraceEventDuration
@@ -848,7 +855,7 @@ TRACE_EVENT_API_CLASS_EXPORT extern \
     category_group_enabled = \
         reinterpret_cast<const unsigned char*>(TRACE_EVENT_API_ATOMIC_LOAD( \
             atomic)); \
-    if (!category_group_enabled) { \
+    if (UNLIKELY(!category_group_enabled)) { \
       category_group_enabled = \
           TRACE_EVENT_API_GET_CATEGORY_GROUP_ENABLED(category_group); \
       TRACE_EVENT_API_ATOMIC_STORE(atomic, \
@@ -868,7 +875,7 @@ TRACE_EVENT_API_CLASS_EXPORT extern \
 #define INTERNAL_TRACE_EVENT_ADD(phase, category_group, name, flags, ...) \
     do { \
       INTERNAL_TRACE_EVENT_GET_CATEGORY_INFO(category_group); \
-      if (*INTERNAL_TRACE_EVENT_UID(category_group_enabled)) { \
+      if (INTERNAL_TRACE_EVENT_CATEGORY_GROUP_ENABLED_FOR_RECORDING_MODE()) { \
         trace_event_internal::AddTraceEvent( \
             phase, INTERNAL_TRACE_EVENT_UID(category_group_enabled), name, \
             trace_event_internal::kNoEventId, flags, ##__VA_ARGS__); \
@@ -881,14 +888,14 @@ TRACE_EVENT_API_CLASS_EXPORT extern \
 #define INTERNAL_TRACE_EVENT_ADD_SCOPED(category_group, name, ...) \
     INTERNAL_TRACE_EVENT_GET_CATEGORY_INFO(category_group); \
     trace_event_internal::ScopedTracer INTERNAL_TRACE_EVENT_UID(tracer); \
-    if (*INTERNAL_TRACE_EVENT_UID(category_group_enabled)) { \
+    if (INTERNAL_TRACE_EVENT_CATEGORY_GROUP_ENABLED_FOR_RECORDING_MODE()) { \
       base::debug::TraceEventHandle h = trace_event_internal::AddTraceEvent( \
           TRACE_EVENT_PHASE_COMPLETE, \
           INTERNAL_TRACE_EVENT_UID(category_group_enabled), \
           name, trace_event_internal::kNoEventId, \
           TRACE_EVENT_FLAG_NONE, ##__VA_ARGS__); \
       INTERNAL_TRACE_EVENT_UID(tracer).Initialize( \
-          INTERNAL_TRACE_EVENT_UID(category_group_enabled), h); \
+          INTERNAL_TRACE_EVENT_UID(category_group_enabled), name, h); \
     }
 
 // Implementation detail: internal macro to create static category and add
@@ -897,7 +904,7 @@ TRACE_EVENT_API_CLASS_EXPORT extern \
                                          flags, ...) \
     do { \
       INTERNAL_TRACE_EVENT_GET_CATEGORY_INFO(category_group); \
-      if (*INTERNAL_TRACE_EVENT_UID(category_group_enabled)) { \
+      if (INTERNAL_TRACE_EVENT_CATEGORY_GROUP_ENABLED_FOR_RECORDING_MODE()) { \
         unsigned char trace_event_flags = flags | TRACE_EVENT_FLAG_HAS_ID; \
         trace_event_internal::TraceID trace_event_trace_id( \
             id, &trace_event_flags); \
@@ -914,7 +921,7 @@ TRACE_EVENT_API_CLASS_EXPORT extern \
         category_group, name, id, thread_id, timestamp, flags, ...) \
     do { \
       INTERNAL_TRACE_EVENT_GET_CATEGORY_INFO(category_group); \
-      if (*INTERNAL_TRACE_EVENT_UID(category_group_enabled)) { \
+      if (INTERNAL_TRACE_EVENT_CATEGORY_GROUP_ENABLED_FOR_RECORDING_MODE()) { \
         unsigned char trace_event_flags = flags | TRACE_EVENT_FLAG_HAS_ID; \
         trace_event_internal::TraceID trace_event_trace_id( \
             id, &trace_event_flags); \
@@ -1153,6 +1160,22 @@ static inline void SetTraceValue(const std::string& arg,
   *value = type_value.as_uint;
 }
 
+// base::Time and base::TimeTicks version of SetTraceValue to make it easier to
+// trace these types.
+static inline void SetTraceValue(const base::Time arg,
+                                 unsigned char* type,
+                                 unsigned long long* value) {
+  *type = TRACE_VALUE_TYPE_INT;
+  *value = arg.ToInternalValue();
+}
+
+static inline void SetTraceValue(const base::TimeTicks arg,
+                                 unsigned char* type,
+                                 unsigned long long* value) {
+  *type = TRACE_VALUE_TYPE_INT;
+  *value = arg.ToInternalValue();
+}
+
 // These AddTraceEvent and AddTraceEventWithThreadIdAndTimestamp template
 // functions are defined here instead of in the macro, because the arg_values
 // could be temporary objects, such as std::string. In order to store
@@ -1378,12 +1401,15 @@ class TRACE_EVENT_API_CLASS_EXPORT ScopedTracer {
 
   ~ScopedTracer() {
     if (p_data_ && *data_.category_group_enabled)
-      TRACE_EVENT_API_UPDATE_TRACE_EVENT_DURATION(data_.event_handle);
+      TRACE_EVENT_API_UPDATE_TRACE_EVENT_DURATION(
+          data_.category_group_enabled, data_.name, data_.event_handle);
   }
 
   void Initialize(const unsigned char* category_group_enabled,
+                  const char* name,
                   base::debug::TraceEventHandle event_handle) {
     data_.category_group_enabled = category_group_enabled;
+    data_.name = name;
     data_.event_handle = event_handle;
     p_data_ = &data_;
   }
@@ -1396,6 +1422,7 @@ class TRACE_EVENT_API_CLASS_EXPORT ScopedTracer {
   // uninitialized accesses.
   struct Data {
     const unsigned char* category_group_enabled;
+    const char* name;
     base::debug::TraceEventHandle event_handle;
   };
   Data* p_data_;
@@ -1410,6 +1437,7 @@ class TRACE_EVENT_API_CLASS_EXPORT ScopedTraceBinaryEfficient {
 
  private:
   const unsigned char* category_group_enabled_;
+  const char* name_;
   base::debug::TraceEventHandle event_handle_;
 };
 

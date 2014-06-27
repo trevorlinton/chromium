@@ -55,14 +55,14 @@
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
 #include "grit/ui_resources.h"
-#import "ui/base/cocoa/cocoa_event_utils.h"
+#import "ui/base/cocoa/cocoa_base_utils.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image.h"
 
+using base::UserMetricsAction;
 using content::OpenURLParams;
 using content::Referrer;
-using content::UserMetricsAction;
 using content::WebContents;
 
 // Bookmark bar state changing and animations
@@ -129,6 +129,7 @@ namespace {
 
 // Duration of the bookmark bar animations.
 const NSTimeInterval kBookmarkBarAnimationDuration = 0.12;
+const NSTimeInterval kDragAndDropAnimationDuration = 0.25;
 
 void RecordAppLaunch(Profile* profile, GURL url) {
   DCHECK(profile->GetExtensionService());
@@ -251,7 +252,9 @@ void RecordAppLaunch(Profile* profile, GURL url) {
     buttons_.reset([[NSMutableArray alloc] init]);
     delegate_ = delegate;
     resizeDelegate_ = resizeDelegate;
-    folderTarget_.reset([[BookmarkFolderTarget alloc] initWithController:self]);
+    folderTarget_.reset(
+        [[BookmarkFolderTarget alloc] initWithController:self
+                                                 profile:browser_->profile()]);
 
     ResourceBundle& rb = ResourceBundle::GetSharedInstance();
     folderImage_.reset(
@@ -481,6 +484,10 @@ void RecordAppLaunch(Profile* profile, GURL url) {
   if ([self isAnimationRunning]) {
     for (NSButton* button in buttons_.get())
       [button setNeedsDisplay:YES];
+    // Update the apps and other buttons explicitly, since they are not in the
+    // buttons_ array.
+    [appsPageShortcutButton_ setNeedsDisplay:YES];
+    [otherBookmarksButton_ setNeedsDisplay:YES];
   }
 }
 
@@ -760,13 +767,6 @@ void RecordAppLaunch(Profile* profile, GURL url) {
 // Configure the off-the-side button (e.g. specify the node range,
 // check if we should enable or disable it, etc).
 - (void)configureOffTheSideButtonContentsAndVisibility {
-  // If deleting a button while off-the-side is open, buttons may be
-  // promoted from off-the-side to the bar.  Accomodate.
-  if (folderController_ &&
-      ([folderController_ parentButton] == offTheSideButton_)) {
-    [folderController_ reconfigureMenu];
-  }
-
   [[offTheSideButton_ cell] setStartingChildIndex:displayedButtonCount_];
   [[offTheSideButton_ cell]
    setBookmarkNode:bookmarkModel_->bookmark_bar_node()];
@@ -1944,6 +1944,9 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
     }
     // Put all the buttons where they belong, with all buttons to the right
     // of the insertion point shuffling right to make space for it.
+    [NSAnimationContext beginGrouping];
+    [[NSAnimationContext currentContext]
+        setDuration:kDragAndDropAnimationDuration];
     for (NSButton* button in buttons_.get()) {
       // Hidden buttons get no space.
       if ([button isHidden])
@@ -1960,6 +1963,7 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
       else
         [button setFrame:buttonFrame];
     }
+    [NSAnimationContext endGrouping];
   }
 }
 

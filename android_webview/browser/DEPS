@@ -5,6 +5,7 @@ include_rules = [
   "+android_webview/public/browser",
 
   "+cc",
+  "-cc/surfaces",
 
   "+components/auto_login_parser",
   "+components/autofill/content/browser",
@@ -17,6 +18,8 @@ include_rules = [
 
   "+content/public/browser",
   "+content/public/test",
+
+  "+printing",
 
   "+ui/gfx",
   "+ui/gl",

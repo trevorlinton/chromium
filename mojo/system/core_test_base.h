@@ -8,7 +8,7 @@
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/synchronization/lock.h"
-#include "mojo/public/system/core.h"
+#include "mojo/public/c/system/core.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace mojo {
@@ -52,6 +52,12 @@ class CoreTestBase_MockHandleInfo {
   unsigned GetCloseCallCount() const;
   unsigned GetWriteMessageCallCount() const;
   unsigned GetReadMessageCallCount() const;
+  unsigned GetWriteDataCallCount() const;
+  unsigned GetBeginWriteDataCallCount() const;
+  unsigned GetEndWriteDataCallCount() const;
+  unsigned GetReadDataCallCount() const;
+  unsigned GetBeginReadDataCallCount() const;
+  unsigned GetEndReadDataCallCount() const;
   unsigned GetAddWaiterCallCount() const;
   unsigned GetRemoveWaiterCallCount() const;
   unsigned GetCancelAllWaitersCallCount() const;
@@ -62,6 +68,12 @@ class CoreTestBase_MockHandleInfo {
   void IncrementCloseCallCount();
   void IncrementWriteMessageCallCount();
   void IncrementReadMessageCallCount();
+  void IncrementWriteDataCallCount();
+  void IncrementBeginWriteDataCallCount();
+  void IncrementEndWriteDataCallCount();
+  void IncrementReadDataCallCount();
+  void IncrementBeginReadDataCallCount();
+  void IncrementEndReadDataCallCount();
   void IncrementAddWaiterCallCount();
   void IncrementRemoveWaiterCallCount();
   void IncrementCancelAllWaitersCallCount();
@@ -73,6 +85,12 @@ class CoreTestBase_MockHandleInfo {
   unsigned close_call_count_;
   unsigned write_message_call_count_;
   unsigned read_message_call_count_;
+  unsigned write_data_call_count_;
+  unsigned begin_write_data_call_count_;
+  unsigned end_write_data_call_count_;
+  unsigned read_data_call_count_;
+  unsigned begin_read_data_call_count_;
+  unsigned end_read_data_call_count_;
   unsigned add_waiter_call_count_;
   unsigned remove_waiter_call_count_;
   unsigned cancel_all_waiters_call_count_;

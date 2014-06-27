@@ -7,6 +7,7 @@
 #include "android_webview/browser/aw_javascript_dialog_manager.h"
 #include "android_webview/browser/find_helper.h"
 #include "android_webview/native/aw_contents.h"
+#include "android_webview/native/aw_contents_io_thread_client_impl.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
@@ -158,6 +159,17 @@ void AwWebContentsDelegate::AddNewContents(WebContents* source,
   }
 }
 
+// Notifies the delegate about the creation of a new WebContents. This
+// typically happens when popups are created.
+void AwWebContentsDelegate::WebContentsCreated(
+    WebContents* source_contents,
+    int opener_render_frame_id,
+    const base::string16& frame_name,
+    const GURL& target_url,
+    content::WebContents* new_contents) {
+  AwContentsIoThreadClientImpl::RegisterPendingContents(new_contents);
+}
+
 void AwWebContentsDelegate::CloseContents(WebContents* source) {
   JNIEnv* env = AttachCurrentThread();
 
@@ -176,13 +188,6 @@ void AwWebContentsDelegate::ActivateContents(WebContents* contents) {
   }
 }
 
-void AwWebContentsDelegate::RequestProtectedMediaIdentifierPermission(
-    const content::WebContents* web_contents,
-    const GURL& frame_url,
-    const base::Callback<void(bool)>& callback) {
-  NOTIMPLEMENTED();
-}
-
 static void FilesSelectedInChooser(
     JNIEnv* env, jclass clazz,
     jint process_id, jint render_id, jint mode_flags,
@@ -199,8 +204,11 @@ static void FilesSelectedInChooser(
   std::vector<ui::SelectedFileInfo> files;
   files.reserve(file_path_str.size());
   for (size_t i = 0; i < file_path_str.size(); ++i) {
-    files.push_back(ui::SelectedFileInfo(base::FilePath(file_path_str[i]),
-                                         base::FilePath()));
+    GURL url(file_path_str[i]);
+    if (!url.is_valid())
+      continue;
+    base::FilePath path(url.SchemeIsFile() ? url.path() : file_path_str[i]);
+    files.push_back(ui::SelectedFileInfo(path, base::FilePath()));
   }
   FileChooserParams::Mode mode;
   if (mode_flags & kFileChooserModeOpenFolder) {
@@ -210,8 +218,8 @@ static void FilesSelectedInChooser(
   } else {
     mode = FileChooserParams::Open;
   }
-  LOG(INFO) << "File Chooser result: mode = " << mode
-            << ", file paths = " << JoinString(file_path_str, ":");
+  DVLOG(0) << "File Chooser result: mode = " << mode
+           << ", file paths = " << JoinString(file_path_str, ":");
   rvh->FilesSelectedInChooser(files, mode);
 }
 

@@ -4,21 +4,25 @@
 
 #include "chrome/browser/ui/autofill/data_model_wrapper.h"
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/ui/autofill/autofill_dialog_common.h"
+#include "chrome/browser/ui/autofill/autofill_dialog_i18n_input.h"
 #include "chrome/browser/ui/autofill/autofill_dialog_models.h"
 #include "components/autofill/content/browser/wallet/full_wallet.h"
 #include "components/autofill/content/browser/wallet/wallet_address.h"
 #include "components/autofill/content/browser/wallet/wallet_items.h"
+#include "components/autofill/core/browser/autofill_country.h"
 #include "components/autofill/core/browser/autofill_data_model.h"
 #include "components/autofill/core/browser/autofill_field.h"
 #include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/credit_card.h"
 #include "components/autofill/core/browser/form_structure.h"
+#include "third_party/libaddressinput/chromium/cpp/include/libaddressinput/address_data.h"
+#include "third_party/libaddressinput/chromium/cpp/include/libaddressinput/address_ui.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image.h"
 
@@ -28,10 +32,7 @@ DataModelWrapper::~DataModelWrapper() {}
 
 void DataModelWrapper::FillInputs(DetailInputs* inputs) {
   for (size_t i = 0; i < inputs->size(); ++i) {
-    DetailInput* input = &(*inputs)[i];
-    input->initial_value = common::GetHardcodedValueForType(input->type);
-    if (input->initial_value.empty())
-      input->initial_value = GetInfo(AutofillType(input->type));
+    (*inputs)[i].initial_value = GetInfo(AutofillType((*inputs)[i].type));
   }
 }
 
@@ -47,67 +48,52 @@ gfx::Image DataModelWrapper::GetIcon() {
 bool DataModelWrapper::GetDisplayText(
     base::string16* vertically_compact,
     base::string16* horizontally_compact) {
-  base::string16 comma = ASCIIToUTF16(", ");
-  base::string16 newline = ASCIIToUTF16("\n");
+  base::string16 phone =
+      GetInfoForDisplay(AutofillType(PHONE_HOME_WHOLE_NUMBER));
+  if (phone.empty())
+    return false;
 
-  *vertically_compact = GetAddressDisplayText(comma);
-  *horizontally_compact = GetAddressDisplayText(newline);
+  // Format the address.
+  ::i18n::addressinput::AddressData address_data;
+  i18ninput::CreateAddressData(
+      base::Bind(&DataModelWrapper::GetInfo, base::Unretained(this)),
+      &address_data);
+  std::vector<std::string> lines;
+  address_data.FormatForDisplay(&lines);
+
+  // Email and phone number aren't part of address formatting.
+  base::string16 non_address_info;
+  base::string16 email = GetInfoForDisplay(AutofillType(EMAIL_ADDRESS));
+  if (!email.empty())
+    non_address_info += base::ASCIIToUTF16("\n") + email;
+
+  non_address_info += base::ASCIIToUTF16("\n") + phone;
+
+  // The separator is locale-specific.
+  std::string compact_separator =
+      ::i18n::addressinput::GetCompactAddressLinesSeparator(
+          g_browser_process->GetApplicationLocale());
+  *vertically_compact =
+      base::UTF8ToUTF16(JoinString(lines, compact_separator)) +
+          non_address_info;
+  *horizontally_compact = base::UTF8ToUTF16(JoinString(lines, "\n")) +
+      non_address_info;
+
   return true;
 }
 
 bool DataModelWrapper::FillFormStructure(
-    const DetailInputs& inputs,
-    const InputFieldComparator& compare,
+    const std::vector<ServerFieldType>& types,
+    const FormStructure::InputFieldComparator& compare,
     FormStructure* form_structure) const {
-  bool filled_something = false;
-  for (size_t i = 0; i < form_structure->field_count(); ++i) {
-    AutofillField* field = form_structure->field(i);
-    for (size_t j = 0; j < inputs.size(); ++j) {
-      if (compare.Run(inputs[j], *field)) {
-        AutofillField::FillFormField(*field, GetInfo(field->Type()),
-                                     g_browser_process->GetApplicationLocale(),
-                                     field);
-        filled_something = true;
-        break;
-      }
-    }
-  }
-  return filled_something;
+  return form_structure->FillFields(
+      types,
+      compare,
+      base::Bind(&DataModelWrapper::GetInfo, base::Unretained(this)),
+      g_browser_process->GetApplicationLocale());
 }
 
 DataModelWrapper::DataModelWrapper() {}
-
-base::string16 DataModelWrapper::GetAddressDisplayText(
-    const base::string16& separator) {
-  base::string16 address = GetInfoForDisplay(AutofillType(NAME_FULL)) +
-      separator + GetInfoForDisplay(AutofillType(ADDRESS_HOME_LINE1));
-  base::string16 address2 = GetInfoForDisplay(AutofillType(ADDRESS_HOME_LINE2));
-  if (!address2.empty())
-    address += separator + address2;
-
-  base::string16 comma = ASCIIToUTF16(", ");
-  base::string16 newline = ASCIIToUTF16("\n");
-  address += separator +
-      GetInfoForDisplay(AutofillType(ADDRESS_HOME_CITY)) + comma +
-      GetInfoForDisplay(AutofillType(ADDRESS_HOME_STATE)) + ASCIIToUTF16(" ") +
-      GetInfoForDisplay(AutofillType(ADDRESS_HOME_ZIP));
-
-  base::string16 email = GetInfoForDisplay(AutofillType(EMAIL_ADDRESS));
-  if (!email.empty())
-    address += newline + email;
-  address += newline + GetInfoForDisplay(AutofillType(PHONE_HOME_WHOLE_NUMBER));
-
-  return address;
-}
-
-// EmptyDataModelWrapper
-
-EmptyDataModelWrapper::EmptyDataModelWrapper() {}
-EmptyDataModelWrapper::~EmptyDataModelWrapper() {}
-
-base::string16 EmptyDataModelWrapper::GetInfo(const AutofillType& type) const {
-  return base::string16();
-}
 
 // AutofillProfileWrapper
 
@@ -149,8 +135,9 @@ base::string16 AutofillProfileWrapper::GetInfoForDisplay(
 
     // If there is no user-defined formatting at all, add some standard
     // formatting.
-    if (ContainsOnlyChars(phone_number, ASCIIToUTF16("0123456789"))) {
-      std::string region = UTF16ToASCII(
+    if (base::ContainsOnlyChars(phone_number,
+                                base::ASCIIToUTF16("0123456789"))) {
+      std::string region = base::UTF16ToASCII(
           GetInfo(AutofillType(HTML_TYPE_COUNTRY_CODE, HTML_MODE_NONE)));
       i18n::PhoneObject phone(phone_number, region);
       return phone.GetFormattedNumber();
@@ -246,10 +233,8 @@ base::string16 WalletAddressWrapper::GetInfoForDisplay(const AutofillType& type)
 bool WalletAddressWrapper::GetDisplayText(
     base::string16* vertically_compact,
     base::string16* horizontally_compact) {
-  if (!address_->is_complete_address() ||
-      GetInfo(AutofillType(PHONE_HOME_WHOLE_NUMBER)).empty()) {
+  if (!address_->is_complete_address())
     return false;
-  }
 
   return DataModelWrapper::GetDisplayText(vertically_compact,
                                           horizontally_compact);
@@ -292,15 +277,19 @@ bool WalletInstrumentWrapper::GetDisplayText(
     base::string16* horizontally_compact) {
   // TODO(dbeam): handle other instrument statuses? http://crbug.com/233048
   if (instrument_->status() == wallet::WalletItems::MaskedInstrument::EXPIRED ||
-      !instrument_->address().is_complete_address() ||
-      GetInfo(AutofillType(PHONE_HOME_WHOLE_NUMBER)).empty()) {
+      !instrument_->address().is_complete_address()) {
     return false;
   }
 
-  DataModelWrapper::GetDisplayText(vertically_compact, horizontally_compact);
+  if (!DataModelWrapper::GetDisplayText(vertically_compact,
+                                        horizontally_compact)) {
+    return false;
+  }
+
   // TODO(estade): descriptive_name() is user-provided. Should we use it or
   // just type + last 4 digits?
-  base::string16 line1 = instrument_->descriptive_name() + ASCIIToUTF16("\n");
+  base::string16 line1 =
+      instrument_->descriptive_name() + base::ASCIIToUTF16("\n");
   *vertically_compact = line1 + *vertically_compact;
   *horizontally_compact = line1 + *horizontally_compact;
   return true;
@@ -318,14 +307,10 @@ FullWalletBillingWrapper::~FullWalletBillingWrapper() {}
 
 base::string16 FullWalletBillingWrapper::GetInfo(const AutofillType& type)
     const {
-  if (type.GetStorableType() == CREDIT_CARD_EXP_MONTH)
-    return MonthComboboxModel::FormatMonth(full_wallet_->expiration_month());
-
-  if (type.group() == CREDIT_CARD)
-    return full_wallet_->GetInfo(type);
-
-  return full_wallet_->billing_address()->GetInfo(
-      type, g_browser_process->GetApplicationLocale());
+  return full_wallet_->GetInfo(
+      g_browser_process->GetApplicationLocale(),
+      AutofillType(AutofillType::GetEquivalentBillingFieldType(
+          type.GetStorableType())));
 }
 
 bool FullWalletBillingWrapper::GetDisplayText(
@@ -355,19 +340,26 @@ base::string16 FullWalletShippingWrapper::GetInfo(
       type, g_browser_process->GetApplicationLocale());
 }
 
-DetailOutputWrapper::DetailOutputWrapper(const DetailOutputMap& outputs)
-    : outputs_(outputs) {}
+I18nAddressDataWrapper::I18nAddressDataWrapper(
+    const ::i18n::addressinput::AddressData* address)
+    : address_(address) {}
 
-DetailOutputWrapper::~DetailOutputWrapper() {}
+I18nAddressDataWrapper::~I18nAddressDataWrapper() {}
 
-base::string16 DetailOutputWrapper::GetInfo(const AutofillType& type) const {
-  ServerFieldType storable_type = type.GetStorableType();
-  for (DetailOutputMap::const_iterator it = outputs_.begin();
-       it != outputs_.end(); ++it) {
-    if (storable_type == AutofillType(it->first->type).GetStorableType())
-      return it->second;
+base::string16 I18nAddressDataWrapper::GetInfo(const AutofillType& type) const {
+  ::i18n::addressinput::AddressField field;
+  if (!i18ninput::FieldForType(type.GetStorableType(), &field))
+    return base::string16();
+
+  if (field == ::i18n::addressinput::STREET_ADDRESS)
+    return base::string16();
+
+  if (field == ::i18n::addressinput::COUNTRY) {
+    return AutofillCountry(address_->country_code,
+                           g_browser_process->GetApplicationLocale()).name();
   }
-  return base::string16();
+
+  return base::UTF8ToUTF16(address_->GetFieldValue(field));
 }
 
 }  // namespace autofill

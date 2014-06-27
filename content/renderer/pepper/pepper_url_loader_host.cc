@@ -27,14 +27,14 @@
 #include "third_party/WebKit/public/web/WebSecurityOrigin.h"
 #include "third_party/WebKit/public/web/WebURLLoaderOptions.h"
 
-using WebKit::WebFrame;
-using WebKit::WebString;
-using WebKit::WebURL;
-using WebKit::WebURLError;
-using WebKit::WebURLLoader;
-using WebKit::WebURLLoaderOptions;
-using WebKit::WebURLRequest;
-using WebKit::WebURLResponse;
+using blink::WebFrame;
+using blink::WebString;
+using blink::WebURL;
+using blink::WebURLError;
+using blink::WebURLLoader;
+using blink::WebURLLoaderOptions;
+using blink::WebURLRequest;
+using blink::WebURLResponse;
 
 #ifdef _MSC_VER
 // Do not warn about use of std::copy with raw pointers.
@@ -98,7 +98,7 @@ PepperURLLoaderHost::~PepperURLLoaderHost() {
   // re-entering the scoped_ptr destructor with the same scoped_ptr object
   // via loader_.reset(). Be sure that loader_ is first NULL then destroy
   // the scoped_ptr. See http://crbug.com/159429.
-  scoped_ptr<WebKit::WebURLLoader> for_destruction_only(loader_.release());
+  scoped_ptr<blink::WebURLLoader> for_destruction_only(loader_.release());
 }
 
 int32_t PepperURLLoaderHost::OnResourceMessageReceived(
@@ -173,7 +173,8 @@ void PepperURLLoaderHost::didReceiveData(WebURLLoader* loader,
 }
 
 void PepperURLLoaderHost::didFinishLoading(WebURLLoader* loader,
-                                           double finish_time) {
+                                           double finish_time,
+                                           int64_t total_encoded_data_length) {
   // Note that |loader| will be NULL for document loads.
   SendUpdateToPlugin(new PpapiPluginMsg_URLLoader_FinishedLoading(PP_OK));
 }
@@ -367,7 +368,7 @@ void PepperURLLoaderHost::Close() {
     GetFrame()->stopLoading();
 }
 
-WebKit::WebFrame* PepperURLLoaderHost::GetFrame() {
+blink::WebFrame* PepperURLLoaderHost::GetFrame() {
   PepperPluginInstance* instance_object =
       renderer_ppapi_host_->GetPluginInstance(pp_instance());
   if (!instance_object)

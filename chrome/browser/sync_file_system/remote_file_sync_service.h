@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_SYNC_FILE_SYSTEM_REMOTE_FILE_SYNC_SERVICE_H_
 
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -15,10 +16,15 @@
 #include "chrome/browser/sync_file_system/sync_file_metadata.h"
 #include "webkit/browser/fileapi/file_system_url.h"
 
+class BrowserContextKeyedServiceFactory;
 class GURL;
 
 namespace base {
 class ListValue;
+}
+
+namespace content {
+class BrowserContext;
 }
 
 namespace webkit_blob {
@@ -35,7 +41,7 @@ enum RemoteServiceState {
   // Remote service is up and running, or has not seen any errors yet.
   // The consumer of this service can make new requests while the
   // service is in this state.
-  REMOTE_SERVICE_OK,
+  REMOTE_SERVICE_OK = 0,
 
   // Remote service is temporarily unavailable due to network,
   // authentication or some other temporary failure.
@@ -57,6 +63,8 @@ enum RemoteServiceState {
   // Any new requests will immediately fail when the service is in
   // this state.
   REMOTE_SERVICE_DISABLED,
+
+  REMOTE_SERVICE_STATE_MAX,
 };
 
 // This class represents a backing service of the sync filesystem.
@@ -65,6 +73,11 @@ enum RemoteServiceState {
 // Owned by SyncFileSystemService.
 class RemoteFileSyncService {
  public:
+  enum BackendVersion {
+    V1,
+    V2,
+  };
+
   class Observer {
    public:
     Observer() {}
@@ -106,6 +119,18 @@ class RemoteFileSyncService {
   typedef base::Callback<void(SyncStatusCode status,
                               webkit_blob::ScopedFile downloaded)>
       DownloadVersionCallback;
+
+  // Creates an initialized RemoteFileSyncService for backend |version|
+  // for |context|.
+  static scoped_ptr<RemoteFileSyncService> CreateForBrowserContext(
+      BackendVersion version,
+      content::BrowserContext* context);
+
+  // Returns BrowserContextKeyedServiceFactory's an instance of
+  // RemoteFileSyncService for backend |version| depends on.
+  static void AppendDependsOnFactories(
+      BackendVersion version,
+      std::set<BrowserContextKeyedServiceFactory*>* factories);
 
   RemoteFileSyncService() {}
   virtual ~RemoteFileSyncService() {}
@@ -169,6 +194,9 @@ class RemoteFileSyncService {
   // Returns file metadata for |origin|.
   virtual scoped_ptr<base::ListValue> DumpFiles(const GURL& origin) = 0;
 
+  // Returns the dump of internal database.
+  virtual scoped_ptr<base::ListValue> DumpDatabase() = 0;
+
   // Enables or disables the background sync.
   // Setting this to false should disable the synchronization (and make
   // the service state to REMOTE_SERVICE_DISABLED), while setting this to
@@ -180,11 +208,17 @@ class RemoteFileSyncService {
   // Sets the conflict resolution policy. Returns SYNC_STATUS_OK on success,
   // or returns an error code if the given policy is not supported or had
   // an error.
+  virtual SyncStatusCode SetDefaultConflictResolutionPolicy(
+      ConflictResolutionPolicy policy) = 0;
   virtual SyncStatusCode SetConflictResolutionPolicy(
+      const GURL& origin,
       ConflictResolutionPolicy policy) = 0;
 
   // Gets the conflict resolution policy.
-  virtual ConflictResolutionPolicy GetConflictResolutionPolicy() const = 0;
+  virtual ConflictResolutionPolicy GetDefaultConflictResolutionPolicy()
+      const = 0;
+  virtual ConflictResolutionPolicy GetConflictResolutionPolicy(
+      const GURL& origin) const = 0;
 
   // Returns a list of remote versions with their metadata.
   // This method is typically called for a file which is in conflicting state.
@@ -198,6 +232,8 @@ class RemoteFileSyncService {
       const fileapi::FileSystemURL& url,
       const std::string& id,
       const DownloadVersionCallback& callback) = 0;
+
+  virtual void PromoteDemotedChanges() = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(RemoteFileSyncService);

@@ -33,7 +33,7 @@ namespace {
 class MockDelegate : public WebDialogDelegate {
 public:
   MOCK_CONST_METHOD0(GetDialogModalType, ui::ModalType());
-  MOCK_CONST_METHOD0(GetDialogTitle, string16());
+  MOCK_CONST_METHOD0(GetDialogTitle, base::string16());
   MOCK_CONST_METHOD0(GetDialogContentURL, GURL());
   MOCK_CONST_METHOD1(GetWebUIMessageHandlers,
                      void(std::vector<WebUIMessageHandler*>*));
@@ -50,13 +50,13 @@ class WebDialogWindowControllerTest : public BrowserWithTestWindowTest {
   virtual void SetUp() {
     BrowserWithTestWindowTest::SetUp();
     CocoaTest::BootstrapCocoa();
-    title_ = ASCIIToUTF16("Mock Title");
+    title_ = base::ASCIIToUTF16("Mock Title");
     size_ = gfx::Size(50, 100);
     gurl_ = GURL("");
   }
 
  protected:
-  string16 title_;
+  base::string16 title_;
   gfx::Size size_;
   GURL gurl_;
 

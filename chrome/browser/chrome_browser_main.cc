@@ -8,6 +8,7 @@
 #include <gtk/gtk.h>
 #endif
 
+#include <set>
 #include <string>
 #include <vector>
 
@@ -54,15 +55,14 @@
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/extensions/extension_protocols.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/startup_helper.h"
+#include "chrome/browser/feedback/feedback_profile_observer.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/first_run/upgrade_util.h"
 #include "chrome/browser/google/google_search_counter.h"
 #include "chrome/browser/google/google_util.h"
 #include "chrome/browser/gpu/gl_string_manager.h"
 #include "chrome/browser/jankometer.h"
-#include "chrome/browser/language_usage_metrics.h"
 #include "chrome/browser/media/media_capture_devices_dispatcher.h"
 #include "chrome/browser/metrics/field_trial_synchronizer.h"
 #include "chrome/browser/metrics/metrics_log.h"
@@ -72,7 +72,6 @@
 #include "chrome/browser/metrics/variations/variations_http_header_provider.h"
 #include "chrome/browser/metrics/variations/variations_service.h"
 #include "chrome/browser/nacl_host/nacl_browser_delegate_impl.h"
-#include "chrome/browser/nacl_host/nacl_process_host.h"
 #include "chrome/browser/net/chrome_net_log.h"
 #include "chrome/browser/net/crl_set_fetcher.h"
 #include "chrome/browser/notifications/desktop_notification_service.h"
@@ -90,20 +89,18 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profiles_state.h"
-#include "chrome/browser/service/service_process_control.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/three_d_api_observer.h"
-#include "chrome/browser/translate/translate_manager.h"
+#include "chrome/browser/translate/translate_service.h"
 #include "chrome/browser/ui/app_list/app_list_service.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/host_desktop.h"
+#include "chrome/browser/ui/startup/bad_flags_prompt.h"
 #include "chrome/browser/ui/startup/default_browser_prompt.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/browser/ui/uma_browsing_activity_observer.h"
-#include "chrome/browser/ui/user_data_dir_dialog.h"
 #include "chrome/browser/ui/webui/chrome_web_ui_controller_factory.h"
-#include "chrome/browser/user_data_dir_extractor.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_result_codes.h"
@@ -113,10 +110,15 @@
 #include "chrome/common/logging_chrome.h"
 #include "chrome/common/net/net_resource_provider.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/profile_management_switches.h"
 #include "chrome/common/profiling.h"
 #include "chrome/installer/util/google_update_settings.h"
+#include "components/language_usage_metrics/language_usage_metrics.h"
 #include "components/nacl/browser/nacl_browser.h"
+#include "components/nacl/browser/nacl_process_host.h"
+#include "components/rappor/rappor_service.h"
 #include "components/startup_metric_utils/startup_metric_utils.h"
+#include "components/translate/core/browser/translate_download_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -126,6 +128,7 @@
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/main_function_params.h"
+#include "extensions/browser/extension_system.h"
 #include "grit/app_locale_settings.h"
 #include "grit/browser_resources.h"
 #include "grit/chromium_strings.h"
@@ -140,10 +143,6 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/layout.h"
 #include "ui/base/resource/resource_bundle.h"
-
-#if !defined(OS_ANDROID)
-#include "chrome/browser/ui/active_tab_tracker.h"
-#endif
 
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
 #include "chrome/browser/first_run/upgrade_util_linux.h"
@@ -174,7 +173,6 @@
 #include "chrome/installer/util/install_util.h"
 #include "chrome/installer/util/shell_util.h"
 #include "net/base/net_util.h"
-#include "printing/printed_document.h"
 #include "ui/base/l10n/l10n_util_win.h"
 #include "ui/gfx/win/dpi.h"
 #endif  // defined(OS_WIN)
@@ -186,12 +184,16 @@
 #include "chrome/browser/mac/keystone_glue.h"
 #endif
 
+#if defined(ENABLE_FULL_PRINTING) && !defined(OFFICIAL_BUILD)
+#include "printing/printed_document.h"
+#endif
+
 #if defined(ENABLE_RLZ)
 #include "chrome/browser/rlz/rlz.h"
 #endif
 
-#if defined(TOOLKIT_VIEWS)
-#include "ui/views/focus/accelerator_handler.h"
+#if defined(ENABLE_WEBRTC)
+#include "chrome/browser/media/webrtc_log_util.h"
 #endif
 
 #if defined(USE_AURA)
@@ -217,6 +219,7 @@ void HandleTestParameters(const CommandLine& command_line) {
   }
 }
 
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
 void AddFirstRunNewTabs(StartupBrowserCreator* browser_creator,
                         const std::vector<GURL>& new_tabs) {
   for (std::vector<GURL>::const_iterator it = new_tabs.begin();
@@ -225,6 +228,7 @@ void AddFirstRunNewTabs(StartupBrowserCreator* browser_creator,
       browser_creator->AddFirstRunTab(*it);
   }
 }
+#endif  // !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
 
 // Returns the new local state object, guaranteed non-NULL.
 // |local_state_task_runner| must be a shutdown-blocking task runner.
@@ -247,10 +251,10 @@ PrefService* InitializeLocalState(
     // language the user selected when downloading the installer. This
     // becomes our default language in the prefs.
     // Other platforms obey the system locale.
-    std::wstring install_lang;
+    base::string16 install_lang;
     if (GoogleUpdateSettings::GetLanguage(&install_lang)) {
       local_state->SetString(prefs::kApplicationLocale,
-                             WideToASCII(install_lang));
+                             base::UTF16ToASCII(install_lang));
     }
   }
 #endif  // defined(OS_WIN)
@@ -302,33 +306,14 @@ PrefService* InitializeLocalState(
   return local_state;
 }
 
-// Returns the path that contains the profile that should be loaded
-// on process startup.
-base::FilePath GetStartupProfilePath(const base::FilePath& user_data_dir,
-                                     const CommandLine& command_line) {
-  if (command_line.HasSwitch(switches::kProfileDirectory)) {
-    return user_data_dir.Append(
-        command_line.GetSwitchValuePath(switches::kProfileDirectory));
-  }
-
-  // If we are showing the app list then chrome isn't shown so load the app
-  // list's profile rather than chrome's.
-  if (command_line.HasSwitch(switches::kShowAppList)) {
-    return AppListService::Get(chrome::HOST_DESKTOP_TYPE_NATIVE)->
-        GetProfilePath(user_data_dir);
-  }
-
-  return g_browser_process->profile_manager()->GetLastUsedProfileDir(
-      user_data_dir);
-}
-
-// Initializes the profile, possibly doing some user prompting to pick a
-// fallback profile. Returns the newly created profile, or NULL if startup
+// Initializes the primary profile, possibly doing some user prompting to pick
+// a fallback profile. Returns the newly created profile, or NULL if startup
 // should not continue.
-Profile* CreateProfile(const content::MainFunctionParams& parameters,
-                       const base::FilePath& user_data_dir,
-                       const CommandLine& parsed_command_line) {
+Profile* CreatePrimaryProfile(const content::MainFunctionParams& parameters,
+                              const base::FilePath& user_data_dir,
+                              const CommandLine& parsed_command_line) {
   TRACE_EVENT0("startup", "ChromeBrowserMainParts::CreateProfile")
+  base::Time start = base::Time::Now();
   if (profiles::IsMultipleProfilesEnabled() &&
       parsed_command_line.HasSwitch(switches::kProfileDirectory)) {
     g_browser_process->local_state()->SetString(prefs::kProfileLastUsed,
@@ -337,23 +322,43 @@ Profile* CreateProfile(const content::MainFunctionParams& parameters,
     // profile.
     ListPrefUpdate update(g_browser_process->local_state(),
                           prefs::kProfilesLastActive);
-    ListValue* profile_list = update.Get();
+    base::ListValue* profile_list = update.Get();
     profile_list->Clear();
   }
 
   Profile* profile = NULL;
-#if defined(OS_CHROMEOS)
-  // TODO(ivankr): http://crbug.com/83792
-  profile = g_browser_process->profile_manager()->GetDefaultProfile(
-      user_data_dir);
+#if defined(OS_CHROMEOS) || defined(OS_ANDROID)
+  // On ChromeOS and Android the ProfileManager will use the same path as the
+  // one we got passed. GetActiveUserProfile will therefore use the correct path
+  // automatically.
+  DCHECK_EQ(user_data_dir.value(),
+            g_browser_process->profile_manager()->user_data_dir().value());
+  profile = ProfileManager::GetActiveUserProfile();
 #else
   base::FilePath profile_path =
       GetStartupProfilePath(user_data_dir, parsed_command_line);
   profile = g_browser_process->profile_manager()->GetProfile(
       profile_path);
+
+  // If we're using the --new-profile-management flag and this profile is
+  // signed out, then we should show the user manager instead. By switching
+  // the active profile to the guest profile we ensure that no
+  // browser windows will be opened for the guest profile.
+  if (switches::IsNewProfileManagement() && !profile->IsGuestSession()) {
+    ProfileInfoCache& cache =
+        g_browser_process->profile_manager()->GetProfileInfoCache();
+    size_t profile_index = cache.GetIndexOfProfileWithPath(profile_path);
+
+    if (cache.ProfileIsSigninRequiredAtIndex(profile_index))
+      profile = g_browser_process->profile_manager()->GetProfile(
+          ProfileManager::GetGuestProfilePath());
+  }
 #endif
-  if (profile)
+  if (profile) {
+    UMA_HISTOGRAM_LONG_TIMES(
+        "Startup.CreateFirstProfile", base::Time::Now() - start);
     return profile;
+  }
 
 #if !defined(OS_WIN)
   // TODO(port): fix this.  See comments near the definition of
@@ -373,23 +378,28 @@ OSStatus KeychainCallback(SecKeychainEvent keychain_event,
 #endif
 
 void RegisterComponentsForUpdate(const CommandLine& command_line) {
-  ComponentUpdateService* cus = g_browser_process->component_updater();
+  component_updater::ComponentUpdateService* cus =
+      g_browser_process->component_updater();
 
   // Registration can be before or after cus->Start() so it is ok to post
   // a task to the UI thread to do registration once you done the necessary
   // file IO to know you existing component version.
-#if !defined(OS_CHROMEOS)
+#if !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
   RegisterRecoveryComponent(cus, g_browser_process->local_state());
   RegisterPepperFlashComponent(cus);
   RegisterSwiftShaderComponent(cus);
 #endif
 
+#if !defined(OS_ANDROID)
   g_browser_process->pnacl_component_installer()->RegisterPnaclComponent(
       cus, command_line);
+#endif
+
+#if !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
+  RegisterWidevineCdmComponent(cus);
+#endif
 
 #if !defined(OS_CHROMEOS)
-  RegisterWidevineCdmComponent(cus);
-
   // CRLSetFetcher attempts to load a CRL set from either the local disk or
   // network.
   if (!command_line.HasSwitch(switches::kDisableCRLSets))
@@ -399,6 +409,7 @@ void RegisterComponentsForUpdate(const CommandLine& command_line) {
   cus->Start();
 }
 
+#if !defined(OS_ANDROID)
 bool ProcessSingletonNotificationCallback(
     const CommandLine& command_line,
     const base::FilePath& current_directory) {
@@ -456,6 +467,7 @@ bool ProcessSingletonNotificationCallback(
       command_line, current_directory, startup_profile_dir);
   return true;
 }
+#endif  // !defined(OS_ANDROID)
 
 void LaunchDevToolsHandlerIfNeeded(const CommandLine& command_line) {
   if (command_line.HasSwitch(::switches::kRemoteDebuggingPort)) {
@@ -463,16 +475,10 @@ void LaunchDevToolsHandlerIfNeeded(const CommandLine& command_line) {
         command_line.GetSwitchValueASCII(::switches::kRemoteDebuggingPort);
     int port;
     if (base::StringToInt(port_str, &port) && port > 0 && port < 65535) {
-      std::string frontend_str;
-      if (command_line.HasSwitch(::switches::kRemoteDebuggingFrontend)) {
-        frontend_str = command_line.GetSwitchValueASCII(
-            ::switches::kRemoteDebuggingFrontend);
-      }
       g_browser_process->CreateDevToolsHttpProtocolHandler(
           chrome::HOST_DESKTOP_TYPE_NATIVE,
           "127.0.0.1",
-          port,
-          frontend_str);
+          port);
     } else {
       DLOG(WARNING) << "Invalid http debugger port number " << port;
     }
@@ -507,11 +513,19 @@ class LoadCompleteListener : public content::NotificationObserver {
 }  // namespace
 
 namespace chrome_browser {
+
 // This error message is not localized because we failed to load the
 // localization data files.
+#if defined(OS_WIN)
 const char kMissingLocaleDataTitle[] = "Missing File Error";
+#endif
+
+#if defined(OS_WIN) || defined(TOOLKIT_GTK)
+// TODO(port) This should be used on Linux Aura as well. http://crbug.com/338969
 const char kMissingLocaleDataMessage[] =
     "Unable to find locale data files. Please reinstall.";
+#endif
+
 }  // namespace chrome_browser
 
 // BrowserMainParts ------------------------------------------------------------
@@ -529,7 +543,6 @@ ChromeBrowserMainParts::ChromeBrowserMainParts(
       shutdown_watcher_(new ShutdownWatcherHelper()),
       startup_timer_(new performance_monitor::StartupTimer()),
       browser_field_trials_(parameters.command_line),
-      translate_manager_(NULL),
       profile_(NULL),
       run_message_loop_(true),
       notify_result_(ProcessSingleton::PROCESS_NONE),
@@ -558,22 +571,21 @@ void ChromeBrowserMainParts::SetupMetricsAndFieldTrials() {
   // Must initialize metrics after labs have been converted into switches,
   // but before field trials are set up (so that client ID is available for
   // one-time randomized field trials).
-#if defined(OS_WIN)
-  if (parsed_command_line_.HasSwitch(switches::kChromeFrame))
-    MetricsLog::set_version_extension("-F");
-#elif defined(ARCH_CPU_64_BITS)
+#if defined(ARCH_CPU_64_BITS)
   MetricsLog::set_version_extension("-64");
-#endif  // defined(OS_WIN)
+#endif  // defined(ARCH_CPU_64_BITS)
 
   // Initialize FieldTrialList to support FieldTrials that use one-time
   // randomization.
   MetricsService* metrics = browser_process_->metrics_service();
-  bool metrics_reporting_enabled = IsMetricsReportingEnabled();
-  if (metrics_reporting_enabled)
+  MetricsService::ReportingState reporting_state =
+      IsMetricsReportingEnabled() ? MetricsService::REPORTING_ENABLED :
+                                    MetricsService::REPORTING_DISABLED;
+  if (reporting_state == MetricsService::REPORTING_ENABLED)
     metrics->ForceClientIdCreation();  // Needed below.
   field_trial_list_.reset(
       new base::FieldTrialList(
-          metrics->CreateEntropyProvider(metrics_reporting_enabled).release()));
+          metrics->CreateEntropyProvider(reporting_state).release()));
 
   const CommandLine* command_line = CommandLine::ForCurrentProcess();
   if (command_line->HasSwitch(switches::kEnableBenchmarking))
@@ -582,17 +594,23 @@ void ChromeBrowserMainParts::SetupMetricsAndFieldTrials() {
   // Ensure any field trials specified on the command line are initialized.
   // Also stop the metrics service so that we don't pollute UMA.
   if (command_line->HasSwitch(switches::kForceFieldTrials)) {
+    std::set<std::string> unforceable_field_trials;
+#if defined(OFFICIAL_BUILD)
+    unforceable_field_trials.insert("SettingsEnforcement");
+#endif  // defined(OFFICIAL_BUILD)
+
     // Create field trials without activating them, so that this behaves in a
     // consistent manner with field trials created from the server.
     bool result = base::FieldTrialList::CreateTrialsFromString(
         command_line->GetSwitchValueASCII(switches::kForceFieldTrials),
-        base::FieldTrialList::DONT_ACTIVATE_TRIALS);
+        base::FieldTrialList::DONT_ACTIVATE_TRIALS,
+        unforceable_field_trials);
     CHECK(result) << "Invalid --" << switches::kForceFieldTrials
                   << " list specified.";
   }
   if (command_line->HasSwitch(switches::kForceVariationIds)) {
     // Create default variation ids which will always be included in the
-    // X-Chrome-Variations request header.
+    // X-Client-Data request header.
     chrome_variations::VariationsHttpHeaderProvider* provider =
         chrome_variations::VariationsHttpHeaderProvider::GetInstance();
     bool result = provider->SetDefaultVariationIds(
@@ -608,13 +626,14 @@ void ChromeBrowserMainParts::SetupMetricsAndFieldTrials() {
   // This must be called after the local state is initialized.
   browser_field_trials_.SetupFieldTrials(local_state_);
 
-  SetupPlatformFieldTrials();
-
   // Initialize FieldTrialSynchronizer system. This is a singleton and is used
   // for posting tasks via base::Bind. Its deleted when it goes out of scope.
   // Even though base::Bind does AddRef and Release, the object will not be
   // deleted after the Task is executed.
   field_trial_synchronizer_ = new FieldTrialSynchronizer();
+
+  // Now that field trials have been created, initializes metrics recording.
+  metrics->InitializeMetricsRecordingState(reporting_state);
 }
 
 // ChromeBrowserMainParts: |SetupMetricsAndFieldTrials()| related --------------
@@ -623,22 +642,17 @@ void ChromeBrowserMainParts::StartMetricsRecording() {
   TRACE_EVENT0("startup", "ChromeBrowserMainParts::StartMetricsRecording");
   MetricsService* metrics = g_browser_process->metrics_service();
 
-  // TODO(miu): Metrics reporting is disabled in DEBUG builds until ill-fired
-  // DCHECKs are fixed, and/or we reconsider whether metrics reporting should
-  // really ever be enabled for debug builds.  http://crbug.com/156979
-#if defined(NDEBUG)
   const bool only_do_metrics_recording =
       parsed_command_line_.HasSwitch(switches::kMetricsRecordingOnly) ||
       parsed_command_line_.HasSwitch(switches::kEnableBenchmarking);
-#else
-  const bool only_do_metrics_recording = true;
-#endif
   if (only_do_metrics_recording) {
     // If we're testing then we don't care what the user preference is, we turn
     // on recording, but not reporting, otherwise tests fail.
     metrics->StartRecordingForTests();
     return;
   }
+
+  metrics->CheckForClonedInstall();
 
   if (IsMetricsReportingEnabled())
     metrics->Start();
@@ -758,13 +772,13 @@ void ChromeBrowserMainParts::PostMainMessageLoopStart() {
 int ChromeBrowserMainParts::PreCreateThreads() {
   TRACE_EVENT0("startup", "ChromeBrowserMainParts::PreCreateThreads");
   result_code_ = PreCreateThreadsImpl();
-  // These members must be initialized before returning from this function.
-#if !defined(OS_ANDROID)
-  DCHECK(master_prefs_.get());
-  DCHECK(browser_creator_.get());
-#endif
 
-  if (result_code_ == 0) {
+  if (result_code_ == content::RESULT_CODE_NORMAL_EXIT) {
+#if !defined(OS_ANDROID)
+    // These members must be initialized before exiting this function normally.
+    DCHECK(master_prefs_.get());
+    DCHECK(browser_creator_.get());
+#endif
     for (size_t i = 0; i < chrome_extra_parts_.size(); ++i)
       chrome_extra_parts_[i]->PreCreateThreads();
   }
@@ -775,11 +789,11 @@ int ChromeBrowserMainParts::PreCreateThreads() {
 int ChromeBrowserMainParts::PreCreateThreadsImpl() {
   TRACE_EVENT0("startup", "ChromeBrowserMainParts::PreCreateThreadsImpl")
   run_message_loop_ = false;
-  {
-    TRACE_EVENT0("startup",
-      "ChromeBrowserMainParts::PreCreateThreadsImpl:GetUserDataDir");
-    user_data_dir_ = chrome::GetUserDataDir(parameters());
-  }
+#if !defined(OS_ANDROID)
+  chrome::MaybeShowInvalidUserDataDirWarningDialog();
+#endif
+  if (!PathService::Get(chrome::DIR_USER_DATA, &user_data_dir_))
+    return chrome::RESULT_CODE_MISSING_DATA;
 
   // Force MediaCaptureDevicesDispatcher to be created on UI thread.
   MediaCaptureDevicesDispatcher::GetInstance();
@@ -863,53 +877,44 @@ int ChromeBrowserMainParts::PreCreateThreadsImpl() {
   // just changed it to include experiments.
   crash_keys::SetSwitchesFromCommandLine(CommandLine::ForCurrentProcess());
 
-  // If we're running tests (ui_task is non-null), then the ResourceBundle
-  // has already been initialized.
-  if (parameters().ui_task &&
-      !local_state_->IsManagedPreference(prefs::kApplicationLocale)) {
-    browser_process_->SetApplicationLocale("en-US");
-  } else {
-    // Mac starts it earlier in |PreMainMessageLoopStart()| (because it is
-    // needed when loading the MainMenu.nib and the language doesn't depend on
-    // anything since it comes from Cocoa.
+  // Mac starts it earlier in |PreMainMessageLoopStart()| (because it is
+  // needed when loading the MainMenu.nib and the language doesn't depend on
+  // anything since it comes from Cocoa.
 #if defined(OS_MACOSX)
-    browser_process_->SetApplicationLocale(l10n_util::GetLocaleOverride());
+  std::string locale =
+      parameters().ui_task ? "en-US" : l10n_util::GetLocaleOverride();
+  browser_process_->SetApplicationLocale(locale);
 #else
-    const std::string locale =
-        local_state_->GetString(prefs::kApplicationLocale);
+  const std::string locale =
+      local_state_->GetString(prefs::kApplicationLocale);
 
-#if defined(OS_WIN)
-    gfx::EnableHighDPISupport();
-#endif
+  // On a POSIX OS other than ChromeOS, the parameter that is passed to the
+  // method InitSharedInstance is ignored.
 
-    // On a POSIX OS other than ChromeOS, the parameter that is passed to the
-    // method InitSharedInstance is ignored.
+  TRACE_EVENT_BEGIN0("startup",
+      "ChromeBrowserMainParts::PreCreateThreadsImpl:InitResourceBundle");
+  const std::string loaded_locale =
+      ResourceBundle::InitSharedInstanceWithLocale(locale, NULL);
+  TRACE_EVENT_END0("startup",
+      "ChromeBrowserMainParts::PreCreateThreadsImpl:InitResourceBundle");
 
-    TRACE_EVENT_BEGIN0("startup",
-        "ChromeBrowserMainParts::PreCreateThreadsImpl:InitResourceBundle");
-    const std::string loaded_locale =
-        ResourceBundle::InitSharedInstanceWithLocale(locale, NULL);
-    TRACE_EVENT_END0("startup",
-        "ChromeBrowserMainParts::PreCreateThreadsImpl:InitResourceBundle");
-
-    if (loaded_locale.empty() &&
-        !parsed_command_line().HasSwitch(switches::kNoErrorDialogs)) {
-      ShowMissingLocaleMessageBox();
-      return chrome::RESULT_CODE_MISSING_DATA;
-    }
-    CHECK(!loaded_locale.empty()) << "Locale could not be found for " << locale;
-    browser_process_->SetApplicationLocale(loaded_locale);
-
-    base::FilePath resources_pack_path;
-    PathService::Get(chrome::FILE_RESOURCES_PACK, &resources_pack_path);
-    {
-      TRACE_EVENT0("startup",
-          "ChromeBrowserMainParts::PreCreateThreadsImpl:AddDataPack");
-      ResourceBundle::GetSharedInstance().AddDataPackFromPath(
-          resources_pack_path, ui::SCALE_FACTOR_NONE);
-    }
-#endif  // defined(OS_MACOSX)
+  if (loaded_locale.empty() &&
+      !parsed_command_line().HasSwitch(switches::kNoErrorDialogs)) {
+    ShowMissingLocaleMessageBox();
+    return chrome::RESULT_CODE_MISSING_DATA;
   }
+  CHECK(!loaded_locale.empty()) << "Locale could not be found for " << locale;
+  browser_process_->SetApplicationLocale(loaded_locale);
+
+  base::FilePath resources_pack_path;
+  PathService::Get(chrome::FILE_RESOURCES_PACK, &resources_pack_path);
+  {
+    TRACE_EVENT0("startup",
+        "ChromeBrowserMainParts::PreCreateThreadsImpl:AddDataPack");
+    ResourceBundle::GetSharedInstance().AddDataPackFromPath(
+        resources_pack_path, ui::SCALE_FACTOR_NONE);
+  }
+#endif  // defined(OS_MACOSX)
 
 #if defined(TOOLKIT_GTK)
   g_set_application_name(l10n_util::GetStringUTF8(IDS_PRODUCT_NAME).c_str());
@@ -945,6 +950,10 @@ int ChromeBrowserMainParts::PreCreateThreadsImpl() {
     if (!master_prefs_->variations_seed.empty()) {
       local_state_->SetString(prefs::kVariationsSeed,
                               master_prefs_->variations_seed);
+      if (!master_prefs_->variations_seed_signature.empty()) {
+        local_state_->SetString(prefs::kVariationsSeedSignature,
+                                master_prefs_->variations_seed_signature);
+      }
       // Set the variation seed date to the current system time. If the user's
       // clock is incorrect, this may cause some field trial expiry checks to
       // not do the right thing until the next seed update from the server,
@@ -1028,6 +1037,13 @@ void ChromeBrowserMainParts::PreMainMessageLoopRun() {
 void ChromeBrowserMainParts::PreProfileInit() {
   TRACE_EVENT0("startup", "ChromeBrowserMainParts::PreProfileInit");
 
+  // Initialize the feedback uploader so it can setup notifications for profile
+  // creation.
+  feedback::FeedbackProfileObserver::Initialize();
+
+  for (size_t i = 0; i < chrome_extra_parts_.size(); ++i)
+    chrome_extra_parts_[i]->PreProfileInit();
+
 #if !defined(OS_ANDROID)
   ProfileManager* profile_manager = g_browser_process->profile_manager();
 
@@ -1041,14 +1057,18 @@ void ChromeBrowserMainParts::PreProfileInit() {
     if (profile_cache.ProfileIsEphemeralAtIndex(i))
       profiles_to_delete.push_back(profile_cache.GetPathOfProfileAtIndex(i));
   }
-  for (size_t i = 0;i < profiles_to_delete.size(); ++i) {
-    profile_manager->ScheduleProfileForDeletion(
-        profiles_to_delete[i], ProfileManager::CreateCallback());
+
+  if (profiles_to_delete.size()) {
+    for (size_t i = 0;i < profiles_to_delete.size(); ++i) {
+      profile_manager->ScheduleProfileForDeletion(
+          profiles_to_delete[i], ProfileManager::CreateCallback());
+    }
+    // Clean up stale profiles immediately after browser start.
+    BrowserThread::PostTask(
+        BrowserThread::FILE, FROM_HERE,
+        base::Bind(&ProfileManager::CleanUpStaleProfiles, profiles_to_delete));
   }
 #endif  // OS_ANDROID
-
-  for (size_t i = 0; i < chrome_extra_parts_.size(); ++i)
-    chrome_extra_parts_[i]->PreProfileInit();
 }
 
 void ChromeBrowserMainParts::PostProfileInit() {
@@ -1074,31 +1094,31 @@ void ChromeBrowserMainParts::PostBrowserStart() {
   // Allow ProcessSingleton to process messages.
   process_singleton_->Unlock();
 #endif
-}
-
-void ChromeBrowserMainParts::SetupPlatformFieldTrials() {
-  // Base class implementation of this does nothing.
+#if defined(ENABLE_WEBRTC)
+  // Set up a task to delete old WebRTC log files for all profiles. Use a delay
+  // to reduce the impact on startup time.
+  BrowserThread::PostDelayedTask(
+      BrowserThread::UI,
+      FROM_HERE,
+      base::Bind(&WebRtcLogUtil::DeleteOldWebRtcLogFilesForAllProfiles),
+      base::TimeDelta::FromMinutes(1));
+#endif
 }
 
 int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
   TRACE_EVENT0("startup", "ChromeBrowserMainParts::PreMainMessageLoopRunImpl");
-#if !defined(OS_ANDROID)
-  if (CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kTrackActiveVisitTime)) {
-    active_tab_tracker_.reset(new ActiveTabTracker());
-    // TODO(sky): nuke this when all ports support ActiveTabTracker.
-    if (!active_tab_tracker_->is_valid())
-      active_tab_tracker_.reset();
-  }
-#endif
-
   // Android updates the metrics service dynamically depending on whether the
   // application is in the foreground or not. Do not start here.
 #if !defined(OS_ANDROID)
   // Now that the file thread has been started, start recording.
-  MetricsService::SetExecutionPhase(MetricsService::START_METRICS_RECORDING);
   StartMetricsRecording();
 #endif
+
+  if (IsMetricsReportingEnabled()) {
+    browser_process_->rappor_service()->Start(
+        browser_process_->local_state(),
+        browser_process_->system_request_context());
+  }
 
   // Create watchdog thread after creating all other threads because it will
   // watch the other threads and they must be running.
@@ -1136,6 +1156,12 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
         static_cast<int>(chrome::RESULT_CODE_SHELL_INTEGRATION_FAILED);
   }
 
+#if defined(USE_AURA)
+  // Env creates the compositor. Aura widgets need the compositor to be created
+  // before they can be initialized by the browser.
+  aura::Env::CreateInstance();
+#endif
+
   // Android doesn't support extensions and doesn't implement ProcessSingleton.
 #if !defined(OS_ANDROID)
   // If the command line specifies --pack-extension, attempt the pack extension
@@ -1158,9 +1184,6 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
     // 20 seconds to respond. Note that this needs to be done before we attempt
     // to read the profile.
     notify_result_ = process_singleton_->NotifyOtherProcessOrCreate();
-    UMA_HISTOGRAM_ENUMERATION("NotifyOtherProcessOrCreate.Result",
-                               notify_result_,
-                               ProcessSingleton::NUM_NOTIFY_RESULTS);
     switch (notify_result_) {
       case ProcessSingleton::PROCESS_NONE:
         // No process already running, fall through to starting a new one.
@@ -1168,7 +1191,7 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
 
       case ProcessSingleton::PROCESS_NOTIFIED:
 #if defined(OS_POSIX) && !defined(OS_MACOSX)
-        printf("%s\n", base::SysWideToNativeMB(UTF16ToWide(
+        printf("%s\n", base::SysWideToNativeMB(base::UTF16ToWide(
             l10n_util::GetStringUTF16(IDS_USED_EXISTING_BROWSER))).c_str());
 #endif
         // Having a differentiated return type for testing allows for tests to
@@ -1194,17 +1217,10 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
         NOTREACHED();
     }
   }
-
-#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
-  if (sxs_linux::ShouldMigrateUserDataDir())
-    return sxs_linux::MigrateUserDataDir();
-#endif  // defined(OS_LINUX) && !defined(OS_CHROMEOS)
-
-  first_run::CreateSentinelIfNeeded();
 #endif  // !defined(OS_ANDROID)
 
-  // Desktop construction occurs here, (required before profile creation).
-  PreProfileInit();
+  // Handle special early return paths (which couldn't be processed even earlier
+  // as they require the process singleton to be held) first.
 
   std::string try_chrome =
       parsed_command_line().GetSwitchValueASCII(switches::kTryChromeAgain);
@@ -1237,24 +1253,6 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
 #endif  // defined(OS_WIN)
   }
 
-  // Profile creation ----------------------------------------------------------
-
-  // Called before CreateProfile because creating the profile can trigger
-  // calls to GetDefaultProfile().
-  ProfileManager::AllowGetDefaultProfile();
-
-  MetricsService::SetExecutionPhase(MetricsService::CREATE_PROFILE);
-  profile_ = CreateProfile(parameters(), user_data_dir_, parsed_command_line());
-  if (!profile_)
-    return content::RESULT_CODE_NORMAL_EXIT;
-
-#if defined(ENABLE_BACKGROUND)
-  // Autoload any profiles which are running background apps.
-  // TODO(rlp): Do this on a separate thread. See http://crbug.com/99075.
-  browser_process_->profile_manager()->AutoloadProfiles();
-#endif
-  // Post-profile init ---------------------------------------------------------
-
 #if defined(OS_WIN)
   // Do the tasks if chrome has been upgraded while it was last running.
   if (!already_running && upgrade_util::DoUpgradeTasks(parsed_command_line()))
@@ -1264,19 +1262,43 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
   // machine. If yes and the current Chrome process is user level, we do not
   // allow the user level Chrome to run. So we notify the user and uninstall
   // user level Chrome.
-  // Note this check should only happen here, after all the checks above
-  // (uninstall, resource bundle initialization, other chrome browser
-  // processes etc).
-  // Do not allow this to occur for Chrome Frame user-to-system handoffs.
-  if (!parsed_command_line().HasSwitch(switches::kChromeFrame) &&
-      ChromeBrowserMainPartsWin::CheckMachineLevelInstall()) {
+  // Note this check needs to happen here (after the process singleton was
+  // obtained but before potentially creating the first run sentinel).
+  if (ChromeBrowserMainPartsWin::CheckMachineLevelInstall())
     return chrome::RESULT_CODE_MACHINE_LEVEL_INSTALL_EXISTS;
-  }
-#endif
+#endif  // defined(OS_WIN)
 
-  // Create the TranslateManager singleton.
-  translate_manager_ = TranslateManager::GetInstance();
-  DCHECK(translate_manager_ != NULL);
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+  if (sxs_linux::ShouldMigrateUserDataDir())
+    return sxs_linux::MigrateUserDataDir();
+#endif  // defined(OS_LINUX) && !defined(OS_CHROMEOS)
+
+  // Desktop construction occurs here, (required before profile creation).
+  PreProfileInit();
+
+  // Profile creation ----------------------------------------------------------
+
+  MetricsService::SetExecutionPhase(MetricsService::CREATE_PROFILE);
+  profile_ = CreatePrimaryProfile(parameters(),
+                                  user_data_dir_,
+                                  parsed_command_line());
+  if (!profile_)
+    return content::RESULT_CODE_NORMAL_EXIT;
+
+#if !defined(OS_ANDROID)
+  // The first run sentinel must be created after the process singleton was
+  // grabbed and no early return paths were otherwise hit above.
+  first_run::CreateSentinelIfNeeded();
+#endif  // !defined(OS_ANDROID)
+
+#if defined(ENABLE_BACKGROUND)
+  // Autoload any profiles which are running background apps.
+  // TODO(rlp): Do this on a separate thread. See http://crbug.com/99075.
+  browser_process_->profile_manager()->AutoloadProfiles();
+#endif
+  // Post-profile init ---------------------------------------------------------
+
+  TranslateService::Initialize();
 
   // Needs to be done before PostProfileInit, since login manager on CrOS is
   // called inside PostProfileInit.
@@ -1317,7 +1339,8 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
                           master_prefs_->import_bookmarks_path);
 
     // Note: this can pop the first run consent dialog on linux.
-    first_run::DoPostImportTasks(profile_, master_prefs_->make_chrome_default);
+    first_run::DoPostImportTasks(profile_,
+                                 master_prefs_->make_chrome_default_for_user);
 
     if (!master_prefs_->suppress_first_run_default_browser_prompt) {
       browser_creator_->set_show_main_browser_window(
@@ -1385,19 +1408,14 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
   browser_process_->intranet_redirect_detector();
   GoogleSearchCounter::RegisterForNotifications();
 
-  // Disable SDCH filtering if switches::kEnableSdch is 0.
-  int sdch_enabled = 1;
-  if (parsed_command_line().HasSwitch(switches::kEnableSdch)) {
-    base::StringToInt(parsed_command_line().GetSwitchValueASCII(
-        switches::kEnableSdch), &sdch_enabled);
-    if (!sdch_enabled)
-      net::SdchManager::EnableSdchSupport(false);
+  if (parsed_command_line().HasSwitch(switches::kEnableSdchOverHttps)) {
+    net::SdchManager::EnableSecureSchemeSupport(true);
   }
 
   if (parsed_command_line().HasSwitch(switches::kEnableWatchdog))
     InstallJankometer(parsed_command_line());
 
-#if defined(OS_WIN) && !defined(GOOGLE_CHROME_BUILD)
+#if defined(ENABLE_FULL_PRINTING) && !defined(OFFICIAL_BUILD)
   if (parsed_command_line().HasSwitch(switches::kDebugPrint)) {
     base::FilePath path =
         parsed_command_line().GetSwitchValuePath(switches::kDebugPrint);
@@ -1409,9 +1427,9 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
   browser_process_->metrics_service()->RecordBreakpadHasDebugger(
       base::debug::BeingDebugged());
 
-  LanguageUsageMetrics::RecordAcceptLanguages(
+  language_usage_metrics::LanguageUsageMetrics::RecordAcceptLanguages(
       profile_->GetPrefs()->GetString(prefs::kAcceptLanguages));
-  LanguageUsageMetrics::RecordApplicationLanguage(
+  language_usage_metrics::LanguageUsageMetrics::RecordApplicationLanguage(
       browser_process_->GetApplicationLocale());
 
   // The extension service may be available at this point. If the command line
@@ -1454,16 +1472,10 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
   ThreadWatcherList::StartWatchingAll(parsed_command_line());
 
 #if !defined(DISABLE_NACL)
-  if (parsed_command_line().HasSwitch(switches::kPnaclDir)) {
-    PathService::Override(chrome::DIR_PNACL_BASE,
-                          parsed_command_line().GetSwitchValuePath(
-                              switches::kPnaclDir));
-  }
-
   content::BrowserThread::PostTask(
       content::BrowserThread::IO,
       FROM_HERE,
-      base::Bind(NaClProcessHost::EarlyStartup));
+      base::Bind(nacl::NaClProcessHost::EarlyStartup));
 #endif
 
   // Make sure initial prefs are recorded
@@ -1477,11 +1489,18 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
   // http://crbug.com/105065.
   browser_process_->notification_ui_manager();
 
+  if (!parsed_command_line().HasSwitch(switches::kDisableComponentUpdate))
+    RegisterComponentsForUpdate(parsed_command_line());
+
 #if defined(OS_ANDROID)
   chrome_variations::VariationsService* variations_service =
       browser_process_->variations_service();
-  if (variations_service)
+  if (variations_service) {
+    variations_service->set_policy_pref_service(profile_->GetPrefs());
     variations_service->StartRepeatedVariationsSeedFetch();
+  }
+  TranslateDownloadManager::RequestLanguageList(profile_->GetPrefs());
+
 #else
   // Most general initialization is behind us, but opening a
   // tab and/or session restore and such is still to be done.
@@ -1498,15 +1517,6 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
 #else
   std::vector<Profile*> last_opened_profiles =
       g_browser_process->profile_manager()->GetLastOpenedProfiles();
-#endif
-
-  if (!parsed_command_line().HasSwitch(switches::kDisableComponentUpdate))
-    RegisterComponentsForUpdate(parsed_command_line());
-
-#if defined(USE_AURA)
-  // Env creates the compositor. Aura widgets need the compositor to be created
-  // before they can be initialized by the browser.
-  aura::Env::CreateInstance();
 #endif
 
   if (browser_creator_->Start(parsed_command_line(), base::FilePath(),
@@ -1541,8 +1551,8 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
     UMA_HISTOGRAM_LONG_TIMES_100("Startup.BrowserOpenTabs", delay);
 
     // If we're running tests (ui_task is non-null), then we don't want to
-    // call FetchLanguageListFromTranslateServer or
-    // StartRepeatedVariationsSeedFetch.
+    // call RequestLanguageList or StartRepeatedVariationsSeedFetch or
+    // RequestLanguageList
     if (parameters().ui_task == NULL) {
       // Request new variations seed information from server.
       chrome_variations::VariationsService* variations_service =
@@ -1555,10 +1565,7 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
 #endif
       }
 
-      if (translate_manager_ != NULL) {
-        translate_manager_->FetchLanguageListFromTranslateServer(
-            profile_->GetPrefs());
-      }
+      TranslateDownloadManager::RequestLanguageList(profile_->GetPrefs());
     }
 
     run_message_loop_ = true;
@@ -1571,6 +1578,8 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
   performance_monitor::PerformanceMonitor::GetInstance()->Initialize();
 
   PostBrowserStart();
+
+  chrome_prefs::SchedulePrefHashStoresUpdateCheck(profile_->GetPath());
 
   if (parameters().ui_task) {
     // We end the startup timer here if we have parameters to run, because we
@@ -1612,13 +1621,8 @@ bool ChromeBrowserMainParts::MainMessageLoopRun(int* result_code) {
   startup_timer_->SignalStartupComplete(
       performance_monitor::StartupTimer::STARTUP_NORMAL);
 
-  DCHECK_EQ(base::MessageLoop::TYPE_UI, base::MessageLoop::current()->type());
-#if !defined(USE_AURA) && defined(TOOLKIT_VIEWS)
-  views::AcceleratorHandler accelerator_handler;
-  base::RunLoop run_loop(&accelerator_handler);
-#else
+  DCHECK(base::MessageLoopForUI::IsCurrent());
   base::RunLoop run_loop;
-#endif
 
   performance_monitor::PerformanceMonitor::GetInstance()->StartGatherCycle();
 
@@ -1651,8 +1655,7 @@ void ChromeBrowserMainParts::PostMainMessageLoopRun() {
   // Some tests don't set parameters.ui_task, so they started translate
   // language fetch that was never completed so we need to cleanup here
   // otherwise it will be done by the destructor in a wrong thread.
-  if (parameters().ui_task == NULL && translate_manager_ != NULL)
-    translate_manager_->CleanupPendingUlrFetcher();
+  TranslateService::Shutdown(parameters().ui_task == NULL);
 
   if (notify_result_ == ProcessSingleton::PROCESS_NONE)
     process_singleton_->Cleanup();

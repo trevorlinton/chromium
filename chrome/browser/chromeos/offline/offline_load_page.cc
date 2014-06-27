@@ -18,11 +18,9 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/renderer_preferences_util.h"
 #include "chrome/browser/tab_contents/tab_util.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_icon_set.h"
 #include "chrome/common/extensions/manifest_handlers/icons_handler.h"
@@ -33,6 +31,8 @@
 #include "content/public/browser/interstitial_page.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
 #include "grit/browser_resources.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
@@ -48,15 +48,6 @@
 using content::BrowserThread;
 using content::InterstitialPage;
 using content::WebContents;
-
-namespace {
-
-// A utility function to set the dictionary's value given by |resource_id|.
-void SetString(DictionaryValue* strings, const char* name, int resource_id) {
-  strings->SetString(name, l10n_util::GetStringUTF16(resource_id));
-}
-
-}  // namespace
 
 namespace chromeos {
 
@@ -105,7 +96,7 @@ std::string OfflineLoadPage::GetHTMLContents() {
     const std::string accept_languages =
         profile->GetPrefs()->GetString(prefs::kAcceptLanguages);
     LocalizedError::GetStrings(net::ERR_INTERNET_DISCONNECTED,
-                               net::kErrorDomain, url_, false, locale,
+                               net::kErrorDomain, url_, false, false, locale,
                                accept_languages, &error_strings);
     resource_id = IDR_OFFLINE_NET_LOAD_HTML;
   }

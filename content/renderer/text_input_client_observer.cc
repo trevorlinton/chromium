@@ -6,6 +6,7 @@
 
 #include "base/memory/scoped_ptr.h"
 #include "content/common/text_input_client_messages.h"
+#include "content/renderer/pepper/pepper_plugin_instance_impl.h"
 #include "content/renderer/render_view_impl.h"
 #include "third_party/WebKit/public/platform/WebPoint.h"
 #include "third_party/WebKit/public/platform/WebRect.h"
@@ -28,6 +29,8 @@ TextInputClientObserver::~TextInputClientObserver() {
 bool TextInputClientObserver::OnMessageReceived(const IPC::Message& message) {
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP(TextInputClientObserver, message)
+    IPC_MESSAGE_HANDLER(TextInputClientMsg_StringAtPoint,
+                        OnStringAtPoint)
     IPC_MESSAGE_HANDLER(TextInputClientMsg_CharacterIndexForPoint,
                         OnCharacterIndexForPoint)
     IPC_MESSAGE_HANDLER(TextInputClientMsg_FirstRectForCharacterRange,
@@ -38,12 +41,27 @@ bool TextInputClientObserver::OnMessageReceived(const IPC::Message& message) {
   return handled;
 }
 
-WebKit::WebView* TextInputClientObserver::webview() {
+blink::WebView* TextInputClientObserver::webview() {
   return render_view()->GetWebView();
 }
 
+void TextInputClientObserver::OnStringAtPoint(gfx::Point point) {
+#if defined(OS_MACOSX)
+  blink::WebPoint baselinePoint;
+  NSAttributedString* string = blink::WebSubstringUtil::attributedWordAtPoint(
+      webview(), point, baselinePoint);
+
+  scoped_ptr<const mac::AttributedStringCoder::EncodedString> encoded(
+      mac::AttributedStringCoder::Encode(string));
+  Send(new TextInputClientReplyMsg_GotStringAtPoint(
+      routing_id(), *encoded.get(), baselinePoint));
+#else
+  NOTIMPLEMENTED();
+#endif
+}
+
 void TextInputClientObserver::OnCharacterIndexForPoint(gfx::Point point) {
-  WebKit::WebPoint web_point(point);
+  blink::WebPoint web_point(point);
   size_t index = webview()->focusedFrame()->characterIndexForPoint(web_point);
   Send(new TextInputClientReplyMsg_GotCharacterIndexForPoint(routing_id(),
       index));
@@ -52,12 +70,14 @@ void TextInputClientObserver::OnCharacterIndexForPoint(gfx::Point point) {
 void TextInputClientObserver::OnFirstRectForCharacterRange(gfx::Range range) {
   gfx::Rect rect;
 #if defined(ENABLE_PLUGINS)
-  if (!render_view_impl_->GetPepperCaretBounds(&rect))
+  if (render_view_impl_->focused_pepper_plugin()) {
+    rect = render_view_impl_->focused_pepper_plugin()->GetCaretBounds();
+  } else
 #endif
   {
-    WebKit::WebFrame* frame = webview()->focusedFrame();
+    blink::WebFrame* frame = webview()->focusedFrame();
     if (frame) {
-      WebKit::WebRect web_rect;
+      blink::WebRect web_rect;
       frame->firstRectForCharacterRange(range.start(), range.length(),
                                         web_rect);
       rect = web_rect;
@@ -69,9 +89,9 @@ void TextInputClientObserver::OnFirstRectForCharacterRange(gfx::Range range) {
 void TextInputClientObserver::OnStringForRange(gfx::Range range) {
 #if defined(OS_MACOSX)
   NSAttributedString* string = nil;
-  WebKit::WebFrame* frame = webview()->focusedFrame();
+  blink::WebFrame* frame = webview()->focusedFrame();
   if (frame) {
-    string = WebKit::WebSubstringUtil::attributedSubstringInRange(
+    string = blink::WebSubstringUtil::attributedSubstringInRange(
         frame, range.start(), range.length());
   }
   scoped_ptr<const mac::AttributedStringCoder::EncodedString> encoded(

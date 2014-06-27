@@ -7,8 +7,7 @@
 #include <math.h>
 #include <stdarg.h>
 
-#include <limits>
-#include <sstream>
+#include <algorithm>
 
 #include "base/basictypes.h"
 #include "base/strings/string16.h"
@@ -284,7 +283,8 @@ static const struct collapse_case {
 TEST(StringUtilTest, CollapseWhitespace) {
   for (size_t i = 0; i < arraysize(collapse_cases); ++i) {
     const collapse_case& value = collapse_cases[i];
-    EXPECT_EQ(value.output, CollapseWhitespace(value.input, value.trim));
+    EXPECT_EQ(WideToUTF16(value.output),
+              CollapseWhitespace(WideToUTF16(value.input), value.trim));
   }
 }
 
@@ -317,24 +317,6 @@ TEST(StringUtilTest, CollapseWhitespaceASCII) {
     const collapse_case_ascii& value = collapse_cases_ascii[i];
     EXPECT_EQ(value.output, CollapseWhitespaceASCII(value.input, value.trim));
   }
-}
-
-TEST(StringUtilTest, ContainsOnlyWhitespaceASCII) {
-  EXPECT_TRUE(ContainsOnlyWhitespaceASCII(std::string()));
-  EXPECT_TRUE(ContainsOnlyWhitespaceASCII(" "));
-  EXPECT_TRUE(ContainsOnlyWhitespaceASCII("\t"));
-  EXPECT_TRUE(ContainsOnlyWhitespaceASCII("\t \r \n  "));
-  EXPECT_FALSE(ContainsOnlyWhitespaceASCII("a"));
-  EXPECT_FALSE(ContainsOnlyWhitespaceASCII("\thello\r \n  "));
-}
-
-TEST(StringUtilTest, ContainsOnlyWhitespace) {
-  EXPECT_TRUE(ContainsOnlyWhitespace(string16()));
-  EXPECT_TRUE(ContainsOnlyWhitespace(ASCIIToUTF16(" ")));
-  EXPECT_TRUE(ContainsOnlyWhitespace(ASCIIToUTF16("\t")));
-  EXPECT_TRUE(ContainsOnlyWhitespace(ASCIIToUTF16("\t \r \n  ")));
-  EXPECT_FALSE(ContainsOnlyWhitespace(ASCIIToUTF16("a")));
-  EXPECT_FALSE(ContainsOnlyWhitespace(ASCIIToUTF16("\thello\r \n  ")));
 }
 
 TEST(StringUtilTest, IsStringUTF8) {
@@ -418,22 +400,20 @@ TEST(StringUtilTest, ConvertASCII) {
 
   for (size_t i = 0; i < arraysize(char_cases); ++i) {
     EXPECT_TRUE(IsStringASCII(char_cases[i]));
-    std::wstring wide = ASCIIToWide(char_cases[i]);
-    EXPECT_EQ(wchar_cases[i], wide);
+    string16 utf16 = ASCIIToUTF16(char_cases[i]);
+    EXPECT_EQ(WideToUTF16(wchar_cases[i]), utf16);
 
-    EXPECT_TRUE(IsStringASCII(wchar_cases[i]));
-    std::string ascii = WideToASCII(wchar_cases[i]);
+    std::string ascii = UTF16ToASCII(WideToUTF16(wchar_cases[i]));
     EXPECT_EQ(char_cases[i], ascii);
   }
 
   EXPECT_FALSE(IsStringASCII("Google \x80Video"));
-  EXPECT_FALSE(IsStringASCII(L"Google \x80Video"));
 
   // Convert empty strings.
-  std::wstring wempty;
+  string16 empty16;
   std::string empty;
-  EXPECT_EQ(empty, WideToASCII(wempty));
-  EXPECT_EQ(wempty, ASCIIToWide(empty));
+  EXPECT_EQ(empty, UTF16ToASCII(empty16));
+  EXPECT_EQ(empty16, ASCIIToUTF16(empty));
 
   // Convert strings with an embedded NUL character.
   const char chars_with_nul[] = "test\0string";
@@ -442,7 +422,7 @@ TEST(StringUtilTest, ConvertASCII) {
   std::wstring wide_with_nul = ASCIIToWide(string_with_nul);
   EXPECT_EQ(static_cast<std::wstring::size_type>(length_with_nul),
             wide_with_nul.length());
-  std::string narrow_with_nul = WideToASCII(wide_with_nul);
+  std::string narrow_with_nul = UTF16ToASCII(WideToUTF16(wide_with_nul));
   EXPECT_EQ(static_cast<std::string::size_type>(length_with_nul),
             narrow_with_nul.length());
   EXPECT_EQ(0, string_with_nul.compare(narrow_with_nul));
@@ -476,17 +456,16 @@ TEST(StringUtilTest, ToUpperASCII) {
 
 TEST(StringUtilTest, LowerCaseEqualsASCII) {
   static const struct {
-    const wchar_t* src_w;
     const char*    src_a;
     const char*    dst;
   } lowercase_cases[] = {
-    { L"FoO", "FoO", "foo" },
-    { L"foo", "foo", "foo" },
-    { L"FOO", "FOO", "foo" },
+    { "FoO", "foo" },
+    { "foo", "foo" },
+    { "FOO", "foo" },
   };
 
   for (size_t i = 0; i < ARRAYSIZE_UNSAFE(lowercase_cases); ++i) {
-    EXPECT_TRUE(LowerCaseEqualsASCII(lowercase_cases[i].src_w,
+    EXPECT_TRUE(LowerCaseEqualsASCII(ASCIIToUTF16(lowercase_cases[i].src_a),
                                      lowercase_cases[i].dst));
     EXPECT_TRUE(LowerCaseEqualsASCII(lowercase_cases[i].src_a,
                                      lowercase_cases[i].dst));
@@ -818,35 +797,48 @@ TEST(StringUtilTest, StartsWith) {
   EXPECT_TRUE(StartsWithASCII("java", std::string(), false));
   EXPECT_TRUE(StartsWithASCII("java", std::string(), true));
 
-  EXPECT_TRUE(StartsWith(L"javascript:url", L"javascript", true));
-  EXPECT_FALSE(StartsWith(L"JavaScript:url", L"javascript", true));
-  EXPECT_TRUE(StartsWith(L"javascript:url", L"javascript", false));
-  EXPECT_TRUE(StartsWith(L"JavaScript:url", L"javascript", false));
-  EXPECT_FALSE(StartsWith(L"java", L"javascript", true));
-  EXPECT_FALSE(StartsWith(L"java", L"javascript", false));
-  EXPECT_FALSE(StartsWith(std::wstring(), L"javascript", false));
-  EXPECT_FALSE(StartsWith(std::wstring(), L"javascript", true));
-  EXPECT_TRUE(StartsWith(L"java", std::wstring(), false));
-  EXPECT_TRUE(StartsWith(L"java", std::wstring(), true));
+  EXPECT_TRUE(StartsWith(ASCIIToUTF16("javascript:url"),
+                         ASCIIToUTF16("javascript"), true));
+  EXPECT_FALSE(StartsWith(ASCIIToUTF16("JavaScript:url"),
+                          ASCIIToUTF16("javascript"), true));
+  EXPECT_TRUE(StartsWith(ASCIIToUTF16("javascript:url"),
+                         ASCIIToUTF16("javascript"), false));
+  EXPECT_TRUE(StartsWith(ASCIIToUTF16("JavaScript:url"),
+                         ASCIIToUTF16("javascript"), false));
+  EXPECT_FALSE(StartsWith(ASCIIToUTF16("java"),
+                          ASCIIToUTF16("javascript"), true));
+  EXPECT_FALSE(StartsWith(ASCIIToUTF16("java"),
+                          ASCIIToUTF16("javascript"), false));
+  EXPECT_FALSE(StartsWith(string16(), ASCIIToUTF16("javascript"), false));
+  EXPECT_FALSE(StartsWith(string16(), ASCIIToUTF16("javascript"), true));
+  EXPECT_TRUE(StartsWith(ASCIIToUTF16("java"), string16(), false));
+  EXPECT_TRUE(StartsWith(ASCIIToUTF16("java"), string16(), true));
 }
 
 TEST(StringUtilTest, EndsWith) {
-  EXPECT_TRUE(EndsWith(L"Foo.plugin", L".plugin", true));
-  EXPECT_FALSE(EndsWith(L"Foo.Plugin", L".plugin", true));
-  EXPECT_TRUE(EndsWith(L"Foo.plugin", L".plugin", false));
-  EXPECT_TRUE(EndsWith(L"Foo.Plugin", L".plugin", false));
-  EXPECT_FALSE(EndsWith(L".plug", L".plugin", true));
-  EXPECT_FALSE(EndsWith(L".plug", L".plugin", false));
-  EXPECT_FALSE(EndsWith(L"Foo.plugin Bar", L".plugin", true));
-  EXPECT_FALSE(EndsWith(L"Foo.plugin Bar", L".plugin", false));
-  EXPECT_FALSE(EndsWith(std::wstring(), L".plugin", false));
-  EXPECT_FALSE(EndsWith(std::wstring(), L".plugin", true));
-  EXPECT_TRUE(EndsWith(L"Foo.plugin", std::wstring(), false));
-  EXPECT_TRUE(EndsWith(L"Foo.plugin", std::wstring(), true));
-  EXPECT_TRUE(EndsWith(L".plugin", L".plugin", false));
-  EXPECT_TRUE(EndsWith(L".plugin", L".plugin", true));
-  EXPECT_TRUE(EndsWith(std::wstring(), std::wstring(), false));
-  EXPECT_TRUE(EndsWith(std::wstring(), std::wstring(), true));
+  EXPECT_TRUE(EndsWith(ASCIIToUTF16("Foo.plugin"),
+                       ASCIIToUTF16(".plugin"), true));
+  EXPECT_FALSE(EndsWith(ASCIIToUTF16("Foo.Plugin"),
+                        ASCIIToUTF16(".plugin"), true));
+  EXPECT_TRUE(EndsWith(ASCIIToUTF16("Foo.plugin"),
+                       ASCIIToUTF16(".plugin"), false));
+  EXPECT_TRUE(EndsWith(ASCIIToUTF16("Foo.Plugin"),
+                       ASCIIToUTF16(".plugin"), false));
+  EXPECT_FALSE(EndsWith(ASCIIToUTF16(".plug"), ASCIIToUTF16(".plugin"), true));
+  EXPECT_FALSE(EndsWith(ASCIIToUTF16(".plug"), ASCIIToUTF16(".plugin"), false));
+  EXPECT_FALSE(EndsWith(ASCIIToUTF16("Foo.plugin Bar"),
+                        ASCIIToUTF16(".plugin"), true));
+  EXPECT_FALSE(EndsWith(ASCIIToUTF16("Foo.plugin Bar"),
+                        ASCIIToUTF16(".plugin"), false));
+  EXPECT_FALSE(EndsWith(string16(), ASCIIToUTF16(".plugin"), false));
+  EXPECT_FALSE(EndsWith(string16(), ASCIIToUTF16(".plugin"), true));
+  EXPECT_TRUE(EndsWith(ASCIIToUTF16("Foo.plugin"), string16(), false));
+  EXPECT_TRUE(EndsWith(ASCIIToUTF16("Foo.plugin"), string16(), true));
+  EXPECT_TRUE(EndsWith(ASCIIToUTF16(".plugin"),
+                       ASCIIToUTF16(".plugin"), false));
+  EXPECT_TRUE(EndsWith(ASCIIToUTF16(".plugin"), ASCIIToUTF16(".plugin"), true));
+  EXPECT_TRUE(EndsWith(string16(), string16(), false));
+  EXPECT_TRUE(EndsWith(string16(), string16(), true));
 }
 
 TEST(StringUtilTest, GetStringFWithOffsets) {
@@ -1151,6 +1143,21 @@ TEST(StringUtilTest, ContainsOnlyChars) {
   EXPECT_TRUE(ContainsOnlyChars("1", "4321"));
   EXPECT_TRUE(ContainsOnlyChars("123", "4321"));
   EXPECT_FALSE(ContainsOnlyChars("123a", "4321"));
+
+  EXPECT_TRUE(ContainsOnlyChars(std::string(), kWhitespaceASCII));
+  EXPECT_TRUE(ContainsOnlyChars(" ", kWhitespaceASCII));
+  EXPECT_TRUE(ContainsOnlyChars("\t", kWhitespaceASCII));
+  EXPECT_TRUE(ContainsOnlyChars("\t \r \n  ", kWhitespaceASCII));
+  EXPECT_FALSE(ContainsOnlyChars("a", kWhitespaceASCII));
+  EXPECT_FALSE(ContainsOnlyChars("\thello\r \n  ", kWhitespaceASCII));
+
+  EXPECT_TRUE(ContainsOnlyChars(string16(), kWhitespaceUTF16));
+  EXPECT_TRUE(ContainsOnlyChars(ASCIIToUTF16(" "), kWhitespaceUTF16));
+  EXPECT_TRUE(ContainsOnlyChars(ASCIIToUTF16("\t"), kWhitespaceUTF16));
+  EXPECT_TRUE(ContainsOnlyChars(ASCIIToUTF16("\t \r \n  "), kWhitespaceUTF16));
+  EXPECT_FALSE(ContainsOnlyChars(ASCIIToUTF16("a"), kWhitespaceUTF16));
+  EXPECT_FALSE(ContainsOnlyChars(ASCIIToUTF16("\thello\r \n  "),
+                                  kWhitespaceUTF16));
 }
 
 class WriteIntoTest : public testing::Test {

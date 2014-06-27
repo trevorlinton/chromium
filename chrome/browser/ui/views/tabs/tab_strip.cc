@@ -18,6 +18,7 @@
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/defaults.h"
+#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/tabs/stacked_tab_strip_layout.h"
@@ -29,7 +30,7 @@
 #include "content/public/browser/user_metrics.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
-#include "ui/base/accessibility/accessible_view_state.h"
+#include "ui/accessibility/ax_view_state.h"
 #include "ui/base/default_theme_provider.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -43,10 +44,12 @@
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/path.h"
+#include "ui/gfx/rect_conversions.h"
 #include "ui/gfx/screen.h"
 #include "ui/gfx/size.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/mouse_watcher_view_host.h"
+#include "ui/views/rect_based_targeting_utils.h"
 #include "ui/views/view_model_utils.h"
 #include "ui/views/widget/root_view.h"
 #include "ui/views/widget/widget.h"
@@ -59,17 +62,17 @@
 #include "win8/util/win8_util.h"
 #endif
 
-using content::UserMetricsAction;
+using base::UserMetricsAction;
 using ui::DropTargetEvent;
 
 namespace {
 
 static const int kTabStripAnimationVSlop = 40;
 // Inactive tabs in a native frame are slightly transparent.
-static const int kNativeFrameInactiveTabAlpha = 200;
+static const int kGlassFrameInactiveTabAlpha = 200;
 // If there are multiple tabs selected then make non-selected inactive tabs
 // even more transparent.
-static const int kNativeFrameInactiveTabAlphaMultiSelection = 150;
+static const int kGlassFrameInactiveTabAlphaMultiSelection = 150;
 
 // Alpha applied to all elements save the selected tabs.
 static const int kInactiveTabAndNewTabButtonAlphaAsh = 230;
@@ -236,6 +239,16 @@ int stacked_tab_right_clip() {
   return value;
 }
 
+base::string16 GetClipboardText() {
+  if (!ui::Clipboard::IsSupportedClipboardType(ui::CLIPBOARD_TYPE_SELECTION))
+    return base::string16();
+  ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
+  CHECK(clipboard);
+  base::string16 clipboard_text;
+  clipboard->ReadText(ui::CLIPBOARD_TYPE_SELECTION, &clipboard_text);
+  return clipboard_text;
+}
+
 // Animation delegate used when a dragged tab is released. When done sets the
 // dragging state to false.
 class ResetDraggingStateDelegate
@@ -320,7 +333,7 @@ class NewTabButton : public views::ImageButton {
   virtual void OnGestureEvent(ui::GestureEvent* event) OVERRIDE;
 
  private:
-  bool ShouldUseNativeFrame() const;
+  bool ShouldWindowContentsBeTransparent() const;
   gfx::ImageSkia GetBackgroundImage(views::CustomButton::ButtonState state,
                                     ui::ScaleFactor scale_factor) const;
   gfx::ImageSkia GetImageForState(views::CustomButton::ButtonState state,
@@ -343,6 +356,10 @@ NewTabButton::NewTabButton(TabStrip* tab_strip, views::ButtonListener* listener)
     : views::ImageButton(listener),
       tab_strip_(tab_strip),
       destroyed_(NULL) {
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+  set_triggerable_event_flags(triggerable_event_flags() |
+                              ui::EF_MIDDLE_MOUSE_BUTTON);
+#endif
 }
 
 NewTabButton::~NewTabButton() {
@@ -410,16 +427,16 @@ void NewTabButton::OnGestureEvent(ui::GestureEvent* event) {
   event->SetHandled();
 }
 
-bool NewTabButton::ShouldUseNativeFrame() const {
+bool NewTabButton::ShouldWindowContentsBeTransparent() const {
   return GetWidget() &&
-    GetWidget()->GetTopLevelWidget()->ShouldUseNativeFrame();
+         GetWidget()->GetTopLevelWidget()->ShouldWindowContentsBeTransparent();
 }
 
 gfx::ImageSkia NewTabButton::GetBackgroundImage(
     views::CustomButton::ButtonState state,
     ui::ScaleFactor scale_factor) const {
   int background_id = 0;
-  if (ShouldUseNativeFrame()) {
+  if (ShouldWindowContentsBeTransparent()) {
     background_id = IDR_THEME_TAB_BACKGROUND_V;
   } else if (tab_strip_->controller()->IsIncognito()) {
     background_id = IDR_THEME_TAB_BACKGROUND_INCOGNITO;
@@ -435,7 +452,8 @@ gfx::ImageSkia NewTabButton::GetBackgroundImage(
   switch (state) {
     case views::CustomButton::STATE_NORMAL:
     case views::CustomButton::STATE_HOVERED:
-      alpha = ShouldUseNativeFrame() ? kNativeFrameInactiveTabAlpha : 255;
+      alpha = ShouldWindowContentsBeTransparent() ? kGlassFrameInactiveTabAlpha
+                                                  : 255;
       break;
     case views::CustomButton::STATE_PRESSED:
       alpha = 145;
@@ -506,10 +524,10 @@ gfx::ImageSkia NewTabButton::GetImageForState(
   canvas.DrawImageInt(GetBackgroundImage(state, scale_factor), 0, 0);
 
   // Draw the button border with a slight alpha.
-  const int kNativeFrameOverlayAlpha = 178;
+  const int kGlassFrameOverlayAlpha = 178;
   const int kOpaqueFrameOverlayAlpha = 230;
-  uint8 alpha = ShouldUseNativeFrame() ?
-      kNativeFrameOverlayAlpha : kOpaqueFrameOverlayAlpha;
+  uint8 alpha = ShouldWindowContentsBeTransparent() ?
+      kGlassFrameOverlayAlpha : kOpaqueFrameOverlayAlpha;
   canvas.DrawImageInt(*overlay, 0, 0, alpha);
 
   return gfx::ImageSkia(canvas.ExtractImageRep());
@@ -881,14 +899,6 @@ bool TabStrip::IsValidModelIndex(int model_index) const {
   return controller_->IsValidIndex(model_index);
 }
 
-Tab* TabStrip::CreateTabForDragging() {
-  Tab* tab = new Tab(NULL);
-  // Make sure the dragged tab shares our theme provider. We need to explicitly
-  // do this as during dragging there isn't a theme provider.
-  tab->set_theme_provider(GetThemeProvider());
-  return tab;
-}
-
 bool TabStrip::IsDragSessionActive() const {
   return drag_controller_.get() != NULL;
 }
@@ -915,22 +925,27 @@ void TabStrip::UpdateLoadingAnimations() {
 }
 
 bool TabStrip::IsPositionInWindowCaption(const gfx::Point& point) {
-  views::View* v = GetEventHandlerForPoint(point);
+  return IsRectInWindowCaption(gfx::Rect(point, gfx::Size(1, 1)));
+}
+
+bool TabStrip::IsRectInWindowCaption(const gfx::Rect& rect) {
+  views::View* v = GetEventHandlerForRect(rect);
 
   // If there is no control at this location, claim the hit was in the title
   // bar to get a move action.
   if (v == this)
     return true;
 
-  // Check to see if the point is within the non-button parts of the new tab
+  // Check to see if the rect intersects the non-button parts of the new tab
   // button. The button has a non-rectangular shape, so if it's not in the
   // visual portions of the button we treat it as a click to the caption.
-  gfx::Point point_in_newtab_coords(point);
-  View::ConvertPointToTarget(this, newtab_button_, &point_in_newtab_coords);
-  if (newtab_button_->GetLocalBounds().Contains(point_in_newtab_coords) &&
-      !newtab_button_->HitTestPoint(point_in_newtab_coords)) {
+  gfx::RectF rect_in_newtab_coords_f(rect);
+  View::ConvertRectToTarget(this, newtab_button_, &rect_in_newtab_coords_f);
+  gfx::Rect rect_in_newtab_coords = gfx::ToEnclosingRect(
+      rect_in_newtab_coords_f);
+  if (newtab_button_->GetLocalBounds().Intersects(rect_in_newtab_coords) &&
+      !newtab_button_->HitTestRect(rect_in_newtab_coords))
     return true;
-  }
 
   // All other regions, including the new Tab button, should be considered part
   // of the containing Window's client area so that regular events can be
@@ -966,6 +981,11 @@ void TabStrip::StopAnimating(bool layout) {
 
   if (layout)
     DoLayout();
+}
+
+void TabStrip::FileSupported(const GURL& url, bool supported) {
+  if (drop_info_.get() && drop_info_->url == url)
+    drop_info_->file_supported = supported;
 }
 
 const ui::ListSelectionModel& TabStrip::GetSelectionModel() {
@@ -1121,29 +1141,11 @@ void TabStrip::MaybeStartDrag(
     move_behavior = TabDragController::MOVE_VISIBILE_TABS;
   }
 
-  views::Widget* widget = GetWidget();
-
-  // Don't allow detaching from maximized or fullscreen windows (in ash) when
-  // all the tabs are selected and there is only one display. Since the window
-  // is maximized or fullscreen, we know there are no other tabbed browsers the
-  // user can drag to.
-  const chrome::HostDesktopType host_desktop_type =
-      chrome::GetHostDesktopTypeForNativeView(widget->GetNativeView());
-  if (host_desktop_type == chrome::HOST_DESKTOP_TYPE_ASH &&
-      (widget->IsMaximized() || widget->IsFullscreen()) &&
-      static_cast<int>(tabs.size()) == tab_count() &&
-      gfx::Screen::GetScreenFor(widget->GetNativeView())->GetNumDisplays() == 1)
-    detach_behavior = TabDragController::NOT_DETACHABLE;
-
 #if defined(OS_WIN)
   // It doesn't make sense to drag tabs out on Win8's single window Metro mode.
   if (win8::IsSingleWindowMetroMode())
     detach_behavior = TabDragController::NOT_DETACHABLE;
 #endif
-  // Gestures don't automatically do a capture. We don't allow multiple drags at
-  // the same time, so we explicitly capture.
-  if (event.type() == ui::ET_GESTURE_BEGIN)
-    widget->SetCapture(this);
   drag_controller_.reset(new TabDragController);
   drag_controller_->Init(
       this, tab, tabs, gfx::Point(x, y), event.x(), selection_model,
@@ -1323,14 +1325,14 @@ void TabStrip::PaintChildren(gfx::Canvas* canvas) {
   if (inactive_tab_alpha < 255)
     canvas->Restore();
 
-  if (GetWidget()->ShouldUseNativeFrame()) {
+  if (GetWidget()->ShouldWindowContentsBeTransparent()) {
     // Make sure non-active tabs are somewhat transparent.
     SkPaint paint;
     // If there are multiple tabs selected, fade non-selected tabs more to make
     // the selected tabs more noticable.
     int alpha = selected_tab_count > 1 ?
-        kNativeFrameInactiveTabAlphaMultiSelection :
-        kNativeFrameInactiveTabAlpha;
+        kGlassFrameInactiveTabAlphaMultiSelection :
+        kGlassFrameInactiveTabAlpha;
     paint.setColor(SkColorSetARGB(alpha, 255, 255, 255));
     paint.setXfermodeMode(SkXfermode::kDstIn_Mode);
     paint.setStyle(SkPaint::kFill_Style);
@@ -1391,10 +1393,30 @@ void TabStrip::OnDragEntered(const DropTargetEvent& event) {
   StopAnimating(true);
 
   UpdateDropIndex(event);
+
+  GURL url;
+  base::string16 title;
+
+  // Check whether the event data includes supported drop data.
+  if (event.data().GetURLAndTitle(
+          ui::OSExchangeData::CONVERT_FILENAMES, &url, &title) &&
+      url.is_valid()) {
+    drop_info_->url = url;
+
+    // For file:// URLs, kick off a MIME type request in case they're dropped.
+    if (url.SchemeIsFile())
+      controller()->CheckFileSupported(url);
+  }
 }
 
 int TabStrip::OnDragUpdated(const DropTargetEvent& event) {
+  // Update the drop index even if the file is unsupported, to allow
+  // dragging a file to the contents of another tab.
   UpdateDropIndex(event);
+
+  if (!drop_info_->file_supported)
+    return ui::DragDropTypes::DRAG_NONE;
+
   return GetDropEffect(event);
 }
 
@@ -1408,13 +1430,19 @@ int TabStrip::OnPerformDrop(const DropTargetEvent& event) {
 
   const int drop_index = drop_info_->drop_index;
   const bool drop_before = drop_info_->drop_before;
+  const bool file_supported = drop_info_->file_supported;
 
   // Hide the drop indicator.
   SetDropIndex(-1, false);
 
+  // Do nothing if the file was unsupported or the URL is invalid. The URL may
+  // have been changed after |drop_info_| was created.
   GURL url;
-  string16 title;
-  if (!event.data().GetURLAndTitle(&url, &title) || !url.is_valid())
+  base::string16 title;
+  if (!file_supported ||
+      !event.data().GetURLAndTitle(
+           ui::OSExchangeData::CONVERT_FILENAMES, &url, &title) ||
+      !url.is_valid())
     return ui::DragDropTypes::DRAG_NONE;
 
   controller()->PerformDrop(drop_before, drop_index, url);
@@ -1422,15 +1450,19 @@ int TabStrip::OnPerformDrop(const DropTargetEvent& event) {
   return GetDropEffect(event);
 }
 
-void TabStrip::GetAccessibleState(ui::AccessibleViewState* state) {
-  state->role = ui::AccessibilityTypes::ROLE_PAGETABLIST;
+void TabStrip::GetAccessibleState(ui::AXViewState* state) {
+  state->role = ui::AX_ROLE_TAB_LIST;
 }
 
-views::View* TabStrip::GetEventHandlerForPoint(const gfx::Point& point) {
+views::View* TabStrip::GetEventHandlerForRect(const gfx::Rect& rect) {
+  if (!views::UsePointBasedTargeting(rect))
+    return View::GetEventHandlerForRect(rect);
+  const gfx::Point point(rect.CenterPoint());
+
   if (!touch_layout_.get()) {
     // Return any view that isn't a Tab or this TabStrip immediately. We don't
     // want to interfere.
-    views::View* v = View::GetEventHandlerForPoint(point);
+    views::View* v = View::GetEventHandlerForRect(rect);
     if (v && v != this && strcmp(v->GetClassName(), Tab::kViewClassName))
       return v;
 
@@ -1499,6 +1531,16 @@ void TabStrip::ButtonPressed(views::Button* sender, const ui::Event& event) {
     content::RecordAction(UserMetricsAction("NewTab_Button"));
     UMA_HISTOGRAM_ENUMERATION("Tab.NewTab", TabStripModel::NEW_TAB_BUTTON,
                               TabStripModel::NEW_TAB_ENUM_COUNT);
+    if (event.IsMouseEvent()) {
+      const ui::MouseEvent& mouse = static_cast<const ui::MouseEvent&>(event);
+      if (mouse.IsOnlyMiddleMouseButton()) {
+        base::string16 clipboard_text = GetClipboardText();
+        if (!clipboard_text.empty())
+          controller()->CreateNewTabWithLocation(clipboard_text);
+        return;
+      }
+    }
+
     controller()->CreateNewTab();
     if (event.type() == ui::ET_GESTURE_TAP)
       TouchUMA::RecordGestureAction(TouchUMA::GESTURE_NEWTAB_TAP);
@@ -2270,6 +2312,9 @@ void TabStrip::SetTabBoundsForDrag(const std::vector<gfx::Rect>& tab_bounds) {
   DCHECK_EQ(tab_count(), static_cast<int>(tab_bounds.size()));
   for (int i = 0; i < tab_count(); ++i)
     tab_at(i)->SetBoundsRect(tab_bounds[i]);
+  // Reset the layout size as we've effectively layed out a different size.
+  // This ensures a layout happens after the drag is done.
+  last_layout_size_ = gfx::Size();
 }
 
 void TabStrip::AddMessageLoopObserver() {
@@ -2409,7 +2454,8 @@ TabStrip::DropInfo::DropInfo(int drop_index,
                              views::Widget* context)
     : drop_index(drop_index),
       drop_before(drop_before),
-      point_down(point_down) {
+      point_down(point_down),
+      file_supported(true) {
   arrow_view = new views::ImageView;
   arrow_view->SetImage(GetDropArrowImage(point_down));
 
@@ -2717,10 +2763,10 @@ bool TabStrip::GetAdjustLayout() const {
   if (!adjust_layout_)
     return false;
 
-#if !defined(OS_CHROMEOS)
-  if (ui::GetDisplayLayout() != ui::LAYOUT_TOUCH)
-    return false;
+#if defined(USE_AURA)
+  return chrome::GetHostDesktopTypeForNativeView(
+      GetWidget()->GetNativeView()) == chrome::HOST_DESKTOP_TYPE_ASH;
+#else
+  return ui::GetDisplayLayout() == ui::LAYOUT_TOUCH;
 #endif
-
-  return true;
 }

@@ -6,8 +6,8 @@
 
 #include "chrome/browser/extensions/extension_action.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_icon_set.h"
+#include "extensions/common/extension.h"
 #include "grit/theme_resources.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image_skia.h"
@@ -53,7 +53,7 @@ void ExtensionActionIconFactory::OnExtensionIconImageChanged(IconImage* image) {
 
 gfx::Image ExtensionActionIconFactory::GetIcon(int tab_id) {
   gfx::ImageSkia base_icon = GetBaseIconFromAction(tab_id);
-  return action_->ApplyAttentionAndAnimation(base_icon, tab_id);
+  return gfx::Image(base_icon);
 }
 
 gfx::ImageSkia ExtensionActionIconFactory::GetBaseIconFromAction(int tab_id) {

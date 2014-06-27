@@ -6,19 +6,19 @@
 
 #include "base/logging.h"
 #include "chrome/common/extensions/dom_action_types.h"
-#include "chrome/common/extensions/extension_messages.h"
 #include "chrome/renderer/chrome_render_process_observer.h"
 #include "chrome/renderer/extensions/activity_log_converter_strategy.h"
 #include "content/public/renderer/render_thread.h"
 #include "content/public/renderer/v8_value_converter.h"
+#include "extensions/common/extension_messages.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
 #include "third_party/WebKit/public/web/WebDOMActivityLogger.h"
 #include "v8/include/v8.h"
 
 using content::V8ValueConverter;
-using WebKit::WebString;
-using WebKit::WebURL;
+using blink::WebString;
+using blink::WebURL;
 
 namespace extensions {
 
@@ -36,10 +36,12 @@ void DOMActivityLogger::log(
   ActivityLogConverterStrategy strategy;
   converter->SetFunctionAllowed(true);
   converter->SetStrategy(&strategy);
-  scoped_ptr<ListValue> argv_list_value(new ListValue());
+  scoped_ptr<base::ListValue> argv_list_value(new base::ListValue());
   for (int i =0; i < argc; i++) {
     argv_list_value->Set(
-        i, converter->FromV8Value(argv[i], v8::Context::GetCurrent()));
+        i,
+        converter->FromV8Value(argv[i],
+                               v8::Isolate::GetCurrent()->GetCurrentContext()));
   }
   ExtensionHostMsg_DOMAction_Params params;
   params.url = url;
@@ -63,9 +65,9 @@ void DOMActivityLogger::AttachToWorld(int world_id,
 #if defined(ENABLE_EXTENSIONS)
   // If there is no logger registered for world_id, construct a new logger
   // and register it with world_id.
-  if (!WebKit::hasDOMActivityLogger(world_id)) {
+  if (!blink::hasDOMActivityLogger(world_id)) {
     DOMActivityLogger* logger = new DOMActivityLogger(extension_id);
-    WebKit::setDOMActivityLogger(world_id, logger);
+    blink::setDOMActivityLogger(world_id, logger);
   }
 #endif
 }

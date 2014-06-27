@@ -3,7 +3,9 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
+#include "base/debug/trace_event.h"
 #include "base/logging.h"
+#include "ui/base/cursor/ozone/cursor_factory_ozone.h"
 #include "ui/ozone/ozone_platform.h"
 #include "ui/ozone/ozone_platform_list.h"
 #include "ui/ozone/ozone_switches.h"
@@ -14,11 +16,7 @@ namespace {
 
 // Helper to construct an OzonePlatform by name using the platform list.
 OzonePlatform* CreatePlatform(const std::string& platform_name) {
-  // The first platform is the defualt.
-  if (platform_name == "default" && kOzonePlatformCount > 0)
-    return kOzonePlatforms[0].constructor();
-
-  // Otherwise, search for a matching platform in the list.
+  // Search for a matching platform in the list.
   for (int i = 0; i < kOzonePlatformCount; ++i)
     if (platform_name == kOzonePlatforms[i].name)
       return kOzonePlatforms[i].constructor();
@@ -28,9 +26,11 @@ OzonePlatform* CreatePlatform(const std::string& platform_name) {
 }
 
 // Returns the name of the platform to use (value of --ozone-platform flag).
-std::string GetRequestedPlatform() {
-  if (!CommandLine::ForCurrentProcess()->HasSwitch(switches::kOzonePlatform))
-    return "default";
+std::string GetPlatformName() {
+  // The first platform is the default.
+  if (!CommandLine::ForCurrentProcess()->HasSwitch(switches::kOzonePlatform) &&
+      kOzonePlatformCount > 0)
+    return kOzonePlatforms[0].name;
   return CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
       switches::kOzonePlatform);
 }
@@ -42,6 +42,7 @@ OzonePlatform::OzonePlatform() {}
 OzonePlatform::~OzonePlatform() {
   gfx::SurfaceFactoryOzone::SetInstance(NULL);
   ui::EventFactoryOzone::SetInstance(NULL);
+  ui::CursorFactoryOzone::SetInstance(NULL);
 }
 
 // static
@@ -49,11 +50,18 @@ void OzonePlatform::Initialize() {
   if (instance_)
     return;
 
-  instance_ = CreatePlatform(GetRequestedPlatform());
+  std::string platform = GetPlatformName();
+
+  TRACE_EVENT1("ozone", "OzonePlatform::Initialize", "platform", platform);
+
+  instance_ = CreatePlatform(platform);
 
   // Inject ozone interfaces.
   gfx::SurfaceFactoryOzone::SetInstance(instance_->GetSurfaceFactoryOzone());
   ui::EventFactoryOzone::SetInstance(instance_->GetEventFactoryOzone());
+  ui::InputMethodContextFactoryOzone::SetInstance(
+      instance_->GetInputMethodContextFactoryOzone());
+  ui::CursorFactoryOzone::SetInstance(instance_->GetCursorFactoryOzone());
 }
 
 // static

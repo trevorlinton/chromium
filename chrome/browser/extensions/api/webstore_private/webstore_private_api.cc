@@ -8,6 +8,7 @@
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
 #include "base/memory/scoped_vector.h"
+#include "base/metrics/histogram.h"
 #include "base/prefs/pref_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -16,10 +17,8 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/crx_installer.h"
-#include "chrome/browser/extensions/extension_function_dispatcher.h"
-#include "chrome/browser/extensions/extension_prefs.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
+#include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/webstore_installer.h"
 #include "chrome/browser/gpu/gpu_feature_checker.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -30,7 +29,6 @@
 #include "chrome/browser/ui/app_list/app_list_service.h"
 #include "chrome/browser/ui/app_list/app_list_util.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_l10n_util.h"
 #include "chrome/common/pref_names.h"
@@ -38,7 +36,11 @@
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/extension_function_dispatcher.h"
+#include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_system.h"
 #include "extensions/common/error_utils.h"
+#include "extensions/common/extension.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -183,6 +185,10 @@ void SetWebstoreLogin(Profile* profile, const std::string& login) {
   profile->GetPrefs()->SetString(kWebstoreLogin, login);
 }
 
+void RecordWebstoreExtensionInstallResult(bool success) {
+  UMA_HISTOGRAM_BOOLEAN("Webstore.ExtensionInstallResult", success);
+}
+
 }  // namespace
 
 // static
@@ -234,7 +240,7 @@ bool WebstorePrivateInstallBundleFunction::
 
 void WebstorePrivateInstallBundleFunction::OnBundleInstallApproved() {
   bundle_->CompleteInstall(
-      &(dispatcher()->delegate()->GetAssociatedWebContents()->GetController()),
+      dispatcher()->delegate()->GetAssociatedWebContents(),
       this);
 }
 
@@ -292,11 +298,9 @@ bool WebstorePrivateBeginInstallWithManifest3Function::RunImpl() {
   std::string icon_data = params_->details.icon_data ?
       *params_->details.icon_data : std::string();
 
-  ExtensionService* service =
-      extensions::ExtensionSystem::Get(GetProfile())->extension_service();
-  if (service->GetInstalledExtension(params_->details.id) ||
-      !g_pending_installs.Get().InsertInstall(GetProfile(),
-                                              params_->details.id)) {
+  Profile* profile = GetProfile();
+  if (util::IsExtensionInstalledPermanently(params_->details.id, profile) ||
+      !g_pending_installs.Get().InsertInstall(profile, params_->details.id)) {
     SetResultCode(ALREADY_INSTALLED);
     error_ = kAlreadyInstalledError;
     return false;
@@ -444,6 +448,13 @@ void WebstorePrivateBeginInstallWithManifest3Function::SigninSuccess() {
   SigninCompletedOrNotNeeded();
 }
 
+void WebstorePrivateBeginInstallWithManifest3Function::MergeSessionComplete(
+    const GoogleServiceAuthError& error) {
+  // TODO(rogerta): once the embeded inline flow is enabled, the code in
+  // WebstorePrivateBeginInstallWithManifest3Function::SigninSuccess()
+  // should move to here.
+}
+
 void WebstorePrivateBeginInstallWithManifest3Function::
     SigninCompletedOrNotNeeded() {
   content::WebContents* web_contents = GetAssociatedWebContents();
@@ -542,8 +553,10 @@ bool WebstorePrivateCompleteInstallFunction::RunImpl() {
   AppListService* app_list_service =
       AppListService::Get(GetCurrentBrowser()->host_desktop_type());
 
-  if (approval_->enable_launcher)
-    app_list_service->EnableAppList(GetProfile());
+  if (approval_->enable_launcher) {
+    app_list_service->EnableAppList(GetProfile(),
+                                    AppListService::ENABLE_FOR_APP_INSTALL);
+  }
 
   if (IsAppLauncherEnabled() && approval_->manifest->is_app()) {
     // Show the app list to show download is progressing. Don't show the app
@@ -551,7 +564,7 @@ bool WebstorePrivateCompleteInstallFunction::RunImpl() {
     if (approval_->enable_launcher)
       app_list_service->CreateForProfile(GetProfile());
     else
-      app_list_service->ShowForProfile(GetProfile());
+      app_list_service->AutoShowForProfile(GetProfile());
   }
 
   // The extension will install through the normal extension install flow, but
@@ -559,7 +572,7 @@ bool WebstorePrivateCompleteInstallFunction::RunImpl() {
   scoped_refptr<WebstoreInstaller> installer = new WebstoreInstaller(
       GetProfile(),
       this,
-      &(dispatcher()->delegate()->GetAssociatedWebContents()->GetController()),
+      dispatcher()->delegate()->GetAssociatedWebContents(),
       params->expected_id,
       approval_.Pass(),
       WebstoreInstaller::INSTALL_SOURCE_OTHER);
@@ -573,9 +586,11 @@ void WebstorePrivateCompleteInstallFunction::OnExtensionInstallSuccess(
   if (test_webstore_installer_delegate)
     test_webstore_installer_delegate->OnExtensionInstallSuccess(id);
 
-  LOG(INFO) << "Install success, sending response";
+  VLOG(1) << "Install success, sending response";
   g_pending_installs.Get().EraseInstall(GetProfile(), id);
   SendResponse(true);
+
+  RecordWebstoreExtensionInstallResult(true);
 
   // Matches the AddRef in RunImpl().
   Release();
@@ -591,9 +606,11 @@ void WebstorePrivateCompleteInstallFunction::OnExtensionInstallFailure(
   }
 
   error_ = error;
-  LOG(INFO) << "Install failed, sending response";
+  VLOG(1) << "Install failed, sending response";
   g_pending_installs.Get().EraseInstall(GetProfile(), id);
   SendResponse(false);
+
+  RecordWebstoreExtensionInstallResult(false);
 
   // Matches the AddRef in RunImpl().
   Release();
@@ -606,8 +623,8 @@ WebstorePrivateEnableAppLauncherFunction::
     ~WebstorePrivateEnableAppLauncherFunction() {}
 
 bool WebstorePrivateEnableAppLauncherFunction::RunImpl() {
-  AppListService::Get(GetCurrentBrowser()->host_desktop_type())->
-      EnableAppList(GetProfile());
+  AppListService::Get(GetCurrentBrowser()->host_desktop_type())
+      ->EnableAppList(GetProfile(), AppListService::ENABLE_VIA_WEBSTORE_LINK);
   return true;
 }
 

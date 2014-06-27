@@ -47,6 +47,7 @@ namespace ui {
 
 class Compositor;
 class LayerAnimator;
+class LayerOwner;
 class Texture;
 
 // Layer manages a texture, transform and a set of child Layers. Any View that
@@ -56,8 +57,8 @@ class Texture;
 // Coordinate system used in layers is DIP (Density Independent Pixel)
 // coordinates unless explicitly mentioned as pixel coordinates.
 //
-// NOTE: unlike Views, each Layer does *not* own its children views. If you
-// delete a Layer and it has children, the parent of each child layer is set to
+// NOTE: Unlike Views, each Layer does *not* own its child Layers. If you
+// delete a Layer and it has children, the parent of each child Layer is set to
 // NULL, but the children are not deleted.
 class COMPOSITOR_EXPORT Layer
     : public LayerAnimationDelegate,
@@ -70,6 +71,8 @@ class COMPOSITOR_EXPORT Layer
   explicit Layer(LayerType type);
   virtual ~Layer();
 
+  static bool UsingPictureLayer();
+
   // Retrieves the Layer's compositor. The Layer will walk up its parent chain
   // to locate it. Returns NULL if the Layer is not attached to a compositor.
   Compositor* GetCompositor();
@@ -80,6 +83,8 @@ class COMPOSITOR_EXPORT Layer
 
   LayerDelegate* delegate() { return delegate_; }
   void set_delegate(LayerDelegate* delegate) { delegate_ = delegate; }
+
+  LayerOwner* owner() { return owner_; }
 
   // Adds a new Layer to this Layer.
   void Add(Layer* child);
@@ -244,6 +249,10 @@ class COMPOSITOR_EXPORT Layer
   void SetFillsBoundsOpaquely(bool fills_bounds_opaquely);
   bool fills_bounds_opaquely() const { return fills_bounds_opaquely_; }
 
+  // Set to true if this layer always paints completely within its bounds. If so
+  // we can omit an unnecessary clear, even if the layer is transparent.
+  void SetFillsBoundsCompletely(bool fills_bounds_completely);
+
   const std::string& name() const { return name_; }
   void set_name(const std::string& name) { name_ = name; }
 
@@ -283,12 +292,13 @@ class COMPOSITOR_EXPORT Layer
   // SchedulePaint() for that.
   void ScheduleDraw();
 
-  // Sends damaged rectangles recorded in |damaged_region_| to
-  // |compostior_| to repaint the content.
+  // Uses damaged rectangles recorded in |damaged_region_| to invalidate the
+  // |cc_layer_|.
   void SendDamagedRects();
 
-  // Suppresses painting the content by disgarding damaged region and ignoring
-  // new paint requests.
+  const SkRegion& damaged_region() const { return damaged_region_; }
+
+  // Suppresses painting the content by disconnecting |delegate_|.
   void SuppressPaint();
 
   // Notifies the layer that the device scale factor has changed.
@@ -296,7 +306,7 @@ class COMPOSITOR_EXPORT Layer
 
   // Sets whether the layer should scale its content. If true, the canvas will
   // be scaled in software rendering mode before it is passed to
-  // |LayerDelegate::OnPaint|.
+  // |LayerDelegate::OnPaintLayer|.
   // Set to false if the delegate handles scaling.
   // NOTE: if this is called during |LayerDelegate::OnPaint|, the new value will
   // not apply to the canvas passed to the pending draw.
@@ -305,23 +315,19 @@ class COMPOSITOR_EXPORT Layer
   // Returns true if the layer scales its content.
   bool scale_content() const { return scale_content_; }
 
-  // Sometimes the Layer is being updated by something other than SetCanvas
-  // (e.g. the GPU process on UI_COMPOSITOR_IMAGE_TRANSPORT).
-  bool layer_updated_externally() const { return layer_updated_externally_; }
-
   // Requets a copy of the layer's output as a texture or bitmap.
   void RequestCopyOfOutput(scoped_ptr<cc::CopyOutputRequest> request);
 
   // ContentLayerClient
   virtual void PaintContents(
-      SkCanvas* canvas, gfx::Rect clip, gfx::RectF* opaque) OVERRIDE;
+      SkCanvas* canvas, const gfx::Rect& clip, gfx::RectF* opaque) OVERRIDE;
   virtual void DidChangeLayerCanUseLCDText() OVERRIDE {}
+  virtual bool FillsBoundsCompletely() const OVERRIDE;
 
   cc::Layer* cc_layer() { return cc_layer_; }
 
   // TextureLayerClient
   virtual unsigned PrepareTexture() OVERRIDE;
-  virtual WebKit::WebGraphicsContext3D* Context3d() OVERRIDE;
   virtual bool PrepareTextureMailbox(
       cc::TextureMailbox* mailbox,
       scoped_ptr<cc::SingleReleaseCallback>* release_callback,
@@ -335,7 +341,8 @@ class COMPOSITOR_EXPORT Layer
   bool force_render_surface() const { return force_render_surface_; }
 
   // LayerClient
-  virtual std::string DebugName() OVERRIDE;
+  virtual scoped_refptr<base::debug::ConvertableToTraceFormat>
+      TakeDebugInfo() OVERRIDE;
 
   // LayerAnimationEventObserver
   virtual void OnAnimationStarted(const cc::AnimationEvent& event) OVERRIDE;
@@ -349,22 +356,14 @@ class COMPOSITOR_EXPORT Layer
   void SwitchCCLayerForTest();
 
  private:
+  friend class LayerOwner;
+
   // Stacks |child| above or below |other|.  Helper method for StackAbove() and
   // StackBelow().
   void StackRelativeTo(Layer* child, Layer* other, bool above);
 
   bool ConvertPointForAncestor(const Layer* ancestor, gfx::Point* point) const;
   bool ConvertPointFromAncestor(const Layer* ancestor, gfx::Point* point) const;
-
-  // Following are invoked from the animation or if no animation exists to
-  // update the values immediately.
-  void SetBoundsImmediately(const gfx::Rect& bounds);
-  void SetTransformImmediately(const gfx::Transform& transform);
-  void SetOpacityImmediately(float opacity);
-  void SetVisibilityImmediately(bool visibility);
-  void SetBrightnessImmediately(float brightness);
-  void SetGrayscaleImmediately(float grayscale);
-  void SetColorImmediately(SkColor color);
 
   // Implementation of LayerAnimatorDelegate
   virtual void SetBoundsFromAnimation(const gfx::Rect& bounds) OVERRIDE;
@@ -388,7 +387,10 @@ class COMPOSITOR_EXPORT Layer
       scoped_ptr<cc::Animation> animation) OVERRIDE;
   virtual void RemoveThreadedAnimation(int animation_id) OVERRIDE;
 
+  // Creates a corresponding composited layer for |type_|.
   void CreateWebLayer();
+
+  // Recomputes and sets to |cc_layer_|.
   void RecomputeCCTransformFromTransform(const gfx::Transform& transform);
   void RecomputeDrawsContentAndUVRect();
   void RecomputePosition();
@@ -399,8 +401,7 @@ class COMPOSITOR_EXPORT Layer
   // Set all filters which got applied to the layer background.
   void SetLayerBackgroundFilters();
 
-  void UpdateIsDrawn();
-
+  // Cleanup |cc_layer_| and replaces it with |new_layer|.
   void SwitchToLayer(scoped_refptr<cc::Layer> new_layer);
 
   // We cannot send animations to our cc_layer_ until we have been added to a
@@ -428,9 +429,7 @@ class COMPOSITOR_EXPORT Layer
   bool force_render_surface_;
 
   bool fills_bounds_opaquely_;
-
-  // If true the layer is always up to date.
-  bool layer_updated_externally_;
+  bool fills_bounds_completely_;
 
   // Union of damaged rects, in pixel coordinates, to be used when
   // compositor is ready to paint the content.
@@ -463,6 +462,8 @@ class COMPOSITOR_EXPORT Layer
 
   LayerDelegate* delegate_;
 
+  LayerOwner* owner_;
+
   scoped_refptr<LayerAnimator> animator_;
 
   // Animations that are passed to AddThreadedAnimation before this layer is
@@ -471,7 +472,7 @@ class COMPOSITOR_EXPORT Layer
 
   // Ownership of the layer is held through one of the strongly typed layer
   // pointers, depending on which sort of layer this is.
-  scoped_refptr<cc::ContentLayer> content_layer_;
+  scoped_refptr<cc::Layer> content_layer_;
   scoped_refptr<cc::TextureLayer> texture_layer_;
   scoped_refptr<cc::SolidColorLayer> solid_color_layer_;
   scoped_refptr<cc::DelegatedRendererLayer> delegated_renderer_layer_;

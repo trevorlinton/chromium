@@ -22,7 +22,9 @@
 #include "base/win/windows_version.h"
 #include "base/win/wrapped_window_proc.h"
 #include "chrome/browser/browser_util_win.h"
-#include "chrome/browser/install_module_verifier_win.h"
+#include "chrome/browser/chrome_elf_init_win.h"
+#include "chrome/browser/first_run/first_run.h"
+#include "chrome/browser/install_verification/win/install_verification.h"
 #include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_shortcut_manager.h"
 #include "chrome/browser/shell_integration.h"
@@ -84,7 +86,7 @@ int GetMinimumFontSize() {
 
 class TranslationDelegate : public installer::TranslationDelegate {
  public:
-  virtual string16 GetLocalizedString(int installer_string_id) OVERRIDE;
+  virtual base::string16 GetLocalizedString(int installer_string_id) OVERRIDE;
 };
 
 bool IsSafeModeStart() {
@@ -124,15 +126,16 @@ int DoUninstallTasks(bool chrome_still_running) {
 
   if (result != chrome::RESULT_CODE_UNINSTALL_USER_CANCEL) {
     // The following actions are just best effort.
+    // TODO(gab): Look into removing this code which is now redundant with the
+    // work done by setup.exe on uninstall.
     VLOG(1) << "Executing uninstall actions";
-    if (!first_run::RemoveSentinel())
-      VLOG(1) << "Failed to delete sentinel file.";
     base::FilePath chrome_exe;
     if (PathService::Get(base::FILE_EXE, &chrome_exe)) {
       ShellUtil::ShortcutLocation user_shortcut_locations[] = {
         ShellUtil::SHORTCUT_LOCATION_DESKTOP,
         ShellUtil::SHORTCUT_LOCATION_QUICK_LAUNCH,
-        ShellUtil::SHORTCUT_LOCATION_START_MENU,
+        ShellUtil::SHORTCUT_LOCATION_START_MENU_CHROME_DIR,
+        ShellUtil::SHORTCUT_LOCATION_START_MENU_CHROME_APPS_DIR,
       };
       BrowserDistribution* dist = BrowserDistribution::GetDistribution();
       for (size_t i = 0; i < arraysize(user_shortcut_locations); ++i) {
@@ -175,7 +178,7 @@ ChromeBrowserMainPartsWin::ChromeBrowserMainPartsWin(
         GetProcAddress(base::win::GetMetroModule(),
                        "GetMetroCommandLineSwitches"));
     if (metro_switches_proc) {
-      string16 metro_switches = (*metro_switches_proc)();
+      base::string16 metro_switches = (*metro_switches_proc)();
       if (!metro_switches.empty()) {
         CommandLine extra_switches(CommandLine::NO_PROGRAM);
         extra_switches.ParseFromString(metro_switches);
@@ -233,8 +236,9 @@ int ChromeBrowserMainPartsWin::PreCreateThreads() {
 }
 
 void ChromeBrowserMainPartsWin::ShowMissingLocaleMessageBox() {
-  ui::MessageBox(NULL, ASCIIToUTF16(chrome_browser::kMissingLocaleDataMessage),
-                 ASCIIToUTF16(chrome_browser::kMissingLocaleDataTitle),
+  ui::MessageBox(NULL,
+                 base::ASCIIToUTF16(chrome_browser::kMissingLocaleDataMessage),
+                 base::ASCIIToUTF16(chrome_browser::kMissingLocaleDataTitle),
                  MB_OK | MB_ICONERROR | MB_TOPMOST);
 }
 
@@ -246,8 +250,10 @@ void ChromeBrowserMainPartsWin::PostBrowserStart() {
   content::BrowserThread::GetMessageLoopProxyForThread(
       content::BrowserThread::UI)->PostDelayedTask(
           FROM_HERE,
-          base::Bind(&BeginModuleVerification),
+          base::Bind(&VerifyInstallation),
           base::TimeDelta::FromSeconds(45));
+
+  InitializeChromeElf();
 }
 
 // static
@@ -271,17 +277,17 @@ void ChromeBrowserMainPartsWin::PrepareRestartOnCrashEnviroment(
   // The encoding we use for the info is "title|context|direction" where
   // direction is either env_vars::kRtlLocale or env_vars::kLtrLocale depending
   // on the current locale.
-  string16 dlg_strings(l10n_util::GetStringUTF16(IDS_CRASH_RECOVERY_TITLE));
+  base::string16 dlg_strings(l10n_util::GetStringUTF16(IDS_CRASH_RECOVERY_TITLE));
   dlg_strings.push_back('|');
-  string16 adjusted_string(
+  base::string16 adjusted_string(
       l10n_util::GetStringUTF16(IDS_CRASH_RECOVERY_CONTENT));
   base::i18n::AdjustStringForLocaleDirection(&adjusted_string);
   dlg_strings.append(adjusted_string);
   dlg_strings.push_back('|');
-  dlg_strings.append(ASCIIToUTF16(
+  dlg_strings.append(base::ASCIIToUTF16(
       base::i18n::IsRTL() ? env_vars::kRtlLocale : env_vars::kLtrLocale));
 
-  env->SetVar(env_vars::kRestartInfo, UTF16ToUTF8(dlg_strings));
+  env->SetVar(env_vars::kRestartInfo, base::UTF16ToUTF8(dlg_strings));
 }
 
 // static
@@ -323,7 +329,7 @@ void ChromeBrowserMainPartsWin::RegisterApplicationRestart(
 int ChromeBrowserMainPartsWin::HandleIconsCommands(
     const CommandLine& parsed_command_line) {
   if (parsed_command_line.HasSwitch(switches::kHideIcons)) {
-    string16 cp_applet;
+    base::string16 cp_applet;
     base::win::Version version = base::win::GetVersion();
     if (version >= base::win::VERSION_VISTA) {
       cp_applet.assign(L"Programs and Features");  // Windows Vista and later.
@@ -333,9 +339,9 @@ int ChromeBrowserMainPartsWin::HandleIconsCommands(
       return chrome::RESULT_CODE_UNSUPPORTED_PARAM;  // Not supported
     }
 
-    const string16 msg =
+    const base::string16 msg =
         l10n_util::GetStringFUTF16(IDS_HIDE_ICONS_NOT_SUPPORTED, cp_applet);
-    const string16 caption = l10n_util::GetStringUTF16(IDS_PRODUCT_NAME);
+    const base::string16 caption = l10n_util::GetStringUTF16(IDS_PRODUCT_NAME);
     const UINT flags = MB_OKCANCEL | MB_ICONWARNING | MB_TOPMOST;
     if (IDOK == ui::MessageBox(NULL, msg, caption, flags))
       ShellExecute(NULL, NULL, L"appwiz.cpl", NULL, NULL, SW_SHOWNORMAL);
@@ -366,9 +372,9 @@ bool ChromeBrowserMainPartsWin::CheckMachineLevelInstall() {
         // an invisible dialog.
         // TODO (gab): Get rid of this dialog altogether and auto-launch
         // system-level Chrome instead.
-        const string16 text =
+        const base::string16 text =
             l10n_util::GetStringUTF16(IDS_MACHINE_LEVEL_INSTALL_CONFLICT);
-        const string16 caption = l10n_util::GetStringUTF16(IDS_PRODUCT_NAME);
+        const base::string16 caption = l10n_util::GetStringUTF16(IDS_PRODUCT_NAME);
         const UINT flags = MB_OK | MB_ICONERROR | MB_TOPMOST;
         ui::MessageBox(NULL, text, caption, flags);
       }
@@ -380,8 +386,18 @@ bool ChromeBrowserMainPartsWin::CheckMachineLevelInstall() {
         uninstall_cmd.AppendSwitch(
             installer::switches::kDoNotRemoveSharedItems);
 
+        // Trigger Active Setup for the system-level Chrome to make sure
+        // per-user shortcuts to the system-level Chrome are created. Skip this
+        // if the system-level Chrome will undergo first run anyway, as Active
+        // Setup is triggered on system-level Chrome's first run.
+        // TODO(gab): Instead of having callers of Active Setup think about
+        // other callers, have Active Setup itself register when it ran and
+        // no-op otherwise (http://crbug.com/346843).
+        if (!first_run::IsChromeFirstRun())
+          uninstall_cmd.AppendSwitch(installer::switches::kTriggerActiveSetup);
+
         const base::FilePath setup_exe(uninstall_cmd.GetProgram());
-        const string16 params(uninstall_cmd.GetArgumentsString());
+        const base::string16 params(uninstall_cmd.GetArgumentsString());
 
         SHELLEXECUTEINFO sei = { sizeof(sei) };
         sei.fMask = SEE_MASK_NOASYNC;
@@ -402,7 +418,8 @@ bool ChromeBrowserMainPartsWin::CheckMachineLevelInstall() {
   return false;
 }
 
-string16 TranslationDelegate::GetLocalizedString(int installer_string_id) {
+base::string16 TranslationDelegate::GetLocalizedString(
+    int installer_string_id) {
   int resource_id = 0;
   switch (installer_string_id) {
   // HANDLE_STRING is used by the DO_INSTALLER_STRING_MAPPING macro which is in
@@ -418,7 +435,7 @@ string16 TranslationDelegate::GetLocalizedString(int installer_string_id) {
   }
   if (resource_id)
     return l10n_util::GetStringUTF16(resource_id);
-  return string16();
+  return base::string16();
 }
 
 // static

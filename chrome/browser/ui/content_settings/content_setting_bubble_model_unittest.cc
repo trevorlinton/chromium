@@ -56,8 +56,7 @@ class ContentSettingBubbleModelTest : public ChromeRenderViewHostTestHarness {
 TEST_F(ContentSettingBubbleModelTest, ImageRadios) {
   TabSpecificContentSettings* content_settings =
       TabSpecificContentSettings::FromWebContents(web_contents());
-  content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_IMAGES,
-                                     std::string());
+  content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_IMAGES);
 
   scoped_ptr<ContentSettingBubbleModel> content_setting_bubble_model(
       ContentSettingBubbleModel::CreateContentSettingBubbleModel(
@@ -75,8 +74,7 @@ TEST_F(ContentSettingBubbleModelTest, ImageRadios) {
 TEST_F(ContentSettingBubbleModelTest, Cookies) {
   TabSpecificContentSettings* content_settings =
       TabSpecificContentSettings::FromWebContents(web_contents());
-  content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_COOKIES,
-                                     std::string());
+  content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_COOKIES);
 
   scoped_ptr<ContentSettingBubbleModel> content_setting_bubble_model(
       ContentSettingBubbleModel::CreateContentSettingBubbleModel(
@@ -141,7 +139,7 @@ TEST_F(ContentSettingBubbleModelTest, MediastreamMicAndCamera) {
   EXPECT_EQ(bubble_content.radio_group.radio_items[0],
             l10n_util::GetStringFUTF8(
                 IDS_ALLOWED_MEDIASTREAM_MIC_AND_CAMERA_NO_ACTION,
-                UTF8ToUTF16(request_host)));
+                base::UTF8ToUTF16(request_host)));
   EXPECT_EQ(bubble_content.radio_group.radio_items[1],
             l10n_util::GetStringUTF8(
                 IDS_ALLOWED_MEDIASTREAM_MIC_AND_CAMERA_BLOCK));
@@ -236,13 +234,9 @@ TEST_F(ContentSettingBubbleModelTest, BlockedMediastreamMicAndCamera) {
                 CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA,
                 std::string()));
 
-  // Removing an |InfoBarDelegate| from the |InfoBarService| does not delete
-  // it. Hence the |delegate| must be cleaned up after it was removed from the
-  // |infobar_service|.
   InfoBarService* infobar_service =
       InfoBarService::FromWebContents(web_contents());
-  scoped_ptr<InfoBarDelegate> delegate(infobar_service->infobar_at(0));
-  infobar_service->RemoveInfoBar(delegate.get());
+  infobar_service->RemoveInfoBar(infobar_service->infobar_at(0));
 }
 
 TEST_F(ContentSettingBubbleModelTest, MediastreamMic) {
@@ -273,7 +267,7 @@ TEST_F(ContentSettingBubbleModelTest, MediastreamMic) {
   EXPECT_EQ(bubble_content.radio_group.radio_items[0],
             l10n_util::GetStringFUTF8(
                 IDS_ALLOWED_MEDIASTREAM_MIC_NO_ACTION,
-                UTF8ToUTF16(request_host)));
+                base::UTF8ToUTF16(request_host)));
   EXPECT_EQ(bubble_content.radio_group.radio_items[1],
             l10n_util::GetStringUTF8(
                 IDS_ALLOWED_MEDIASTREAM_MIC_BLOCK));
@@ -302,7 +296,7 @@ TEST_F(ContentSettingBubbleModelTest, MediastreamMic) {
   EXPECT_EQ(new_bubble_content.radio_group.radio_items[0],
             l10n_util::GetStringFUTF8(
                 IDS_BLOCKED_MEDIASTREAM_MIC_ASK,
-                UTF8ToUTF16(request_host)));
+                base::UTF8ToUTF16(request_host)));
   EXPECT_EQ(new_bubble_content.radio_group.radio_items[1],
             l10n_util::GetStringUTF8(
                 IDS_BLOCKED_MEDIASTREAM_MIC_NO_ACTION));
@@ -343,7 +337,7 @@ TEST_F(ContentSettingBubbleModelTest, MediastreamCamera) {
   EXPECT_EQ(bubble_content.radio_group.radio_items[0],
             l10n_util::GetStringFUTF8(
                 IDS_ALLOWED_MEDIASTREAM_CAMERA_NO_ACTION,
-                UTF8ToUTF16(request_host)));
+                base::UTF8ToUTF16(request_host)));
   EXPECT_EQ(bubble_content.radio_group.radio_items[1],
             l10n_util::GetStringUTF8(
                 IDS_ALLOWED_MEDIASTREAM_CAMERA_BLOCK));
@@ -372,7 +366,7 @@ TEST_F(ContentSettingBubbleModelTest, MediastreamCamera) {
   EXPECT_EQ(new_bubble_content.radio_group.radio_items[0],
             l10n_util::GetStringFUTF8(
                 IDS_BLOCKED_MEDIASTREAM_CAMERA_ASK,
-                UTF8ToUTF16(request_host)));
+                base::UTF8ToUTF16(request_host)));
   EXPECT_EQ(new_bubble_content.radio_group.radio_items[1],
             l10n_util::GetStringUTF8(
                 IDS_BLOCKED_MEDIASTREAM_CAMERA_NO_ACTION));
@@ -415,7 +409,7 @@ TEST_F(ContentSettingBubbleModelTest, AccumulateMediastreamMicAndCamera) {
   EXPECT_EQ(bubble_content.radio_group.radio_items[0],
             l10n_util::GetStringFUTF8(
                 IDS_ALLOWED_MEDIASTREAM_MIC_NO_ACTION,
-                UTF8ToUTF16(request_host)));
+                base::UTF8ToUTF16(request_host)));
   EXPECT_EQ(bubble_content.radio_group.radio_items[1],
             l10n_util::GetStringUTF8(
                 IDS_ALLOWED_MEDIASTREAM_MIC_BLOCK));
@@ -442,7 +436,7 @@ TEST_F(ContentSettingBubbleModelTest, AccumulateMediastreamMicAndCamera) {
   EXPECT_EQ(new_bubble_content.radio_group.radio_items[0],
             l10n_util::GetStringFUTF8(
                 IDS_ALLOWED_MEDIASTREAM_MIC_AND_CAMERA_NO_ACTION,
-                UTF8ToUTF16(request_host)));
+                base::UTF8ToUTF16(request_host)));
   EXPECT_EQ(new_bubble_content.radio_group.radio_items[1],
             l10n_util::GetStringUTF8(
                 IDS_ALLOWED_MEDIASTREAM_MIC_AND_CAMERA_BLOCK));
@@ -453,8 +447,7 @@ TEST_F(ContentSettingBubbleModelTest, AccumulateMediastreamMicAndCamera) {
 TEST_F(ContentSettingBubbleModelTest, Plugins) {
   TabSpecificContentSettings* content_settings =
       TabSpecificContentSettings::FromWebContents(web_contents());
-  content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_PLUGINS,
-                                     std::string());
+  content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_PLUGINS);
 
   scoped_ptr<ContentSettingBubbleModel> content_setting_bubble_model(
       ContentSettingBubbleModel::CreateContentSettingBubbleModel(
@@ -469,79 +462,10 @@ TEST_F(ContentSettingBubbleModelTest, Plugins) {
   EXPECT_FALSE(bubble_content.manage_link.empty());
 }
 
-TEST_F(ContentSettingBubbleModelTest, MultiplePlugins) {
-  CommandLine* cmd = CommandLine::ForCurrentProcess();
-  base::AutoReset<CommandLine> auto_reset(cmd, *cmd);
-  cmd->AppendSwitch(switches::kEnableResourceContentSettings);
-
-  HostContentSettingsMap* map = profile()->GetHostContentSettingsMap();
-  std::string fooPlugin = "foo";
-  std::string barPlugin = "bar";
-
-  // Navigating to some sample url prevents the GetURL method from returning an
-  // invalid empty URL.
-  WebContentsTester::For(web_contents())->
-      NavigateAndCommit(GURL("http://www.example.com"));
-  GURL url = web_contents()->GetURL();
-  map->AddExceptionForURL(url,
-                          url,
-                          CONTENT_SETTINGS_TYPE_PLUGINS,
-                          fooPlugin,
-                          CONTENT_SETTING_ALLOW);
-  map->AddExceptionForURL(url,
-                          url,
-                          CONTENT_SETTINGS_TYPE_PLUGINS,
-                          barPlugin,
-                          CONTENT_SETTING_ASK);
-
-  TabSpecificContentSettings* content_settings =
-      TabSpecificContentSettings::FromWebContents(web_contents());
-  content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_PLUGINS,
-                                     fooPlugin);
-  content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_PLUGINS,
-                                     barPlugin);
-
-  scoped_ptr<ContentSettingBubbleModel> content_setting_bubble_model(
-      ContentSettingBubbleModel::CreateContentSettingBubbleModel(
-          NULL, web_contents(), profile(),
-          CONTENT_SETTINGS_TYPE_PLUGINS));
-  const ContentSettingBubbleModel::BubbleContent& bubble_content =
-      content_setting_bubble_model->bubble_content();
-  EXPECT_EQ(2U, bubble_content.radio_group.radio_items.size());
-  EXPECT_EQ(1, bubble_content.radio_group.default_item);
-
-  content_setting_bubble_model->OnRadioClicked(0);
-  // Nothing should have changed.
-  EXPECT_EQ(CONTENT_SETTING_ALLOW,
-            map->GetContentSetting(url,
-                                   url,
-                                   CONTENT_SETTINGS_TYPE_PLUGINS,
-                                   fooPlugin));
-  EXPECT_EQ(CONTENT_SETTING_ASK,
-            map->GetContentSetting(url,
-                                   url,
-                                   CONTENT_SETTINGS_TYPE_PLUGINS,
-                                   barPlugin));
-
-  content_setting_bubble_model.reset();
-  // Both plug-ins should be click-to-play now.
-  EXPECT_EQ(CONTENT_SETTING_ALLOW,
-            map->GetContentSetting(url,
-                                   url,
-                                   CONTENT_SETTINGS_TYPE_PLUGINS,
-                                   fooPlugin));
-  EXPECT_EQ(CONTENT_SETTING_ALLOW,
-            map->GetContentSetting(url,
-                                   url,
-                                   CONTENT_SETTINGS_TYPE_PLUGINS,
-                                   barPlugin));
-}
-
 TEST_F(ContentSettingBubbleModelTest, PepperBroker) {
   TabSpecificContentSettings* content_settings =
       TabSpecificContentSettings::FromWebContents(web_contents());
-  content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_PPAPI_BROKER,
-                                     std::string());
+  content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_PPAPI_BROKER);
 
   scoped_ptr<ContentSettingBubbleModel> content_setting_bubble_model(
       ContentSettingBubbleModel::CreateContentSettingBubbleModel(
@@ -619,7 +543,7 @@ TEST_F(ContentSettingBubbleModelTest, FileURL) {
   std::string file_url("file:///tmp/test.html");
   NavigateAndCommit(GURL(file_url));
   TabSpecificContentSettings::FromWebContents(web_contents())->OnContentBlocked(
-      CONTENT_SETTINGS_TYPE_IMAGES, std::string());
+      CONTENT_SETTINGS_TYPE_IMAGES);
   scoped_ptr<ContentSettingBubbleModel> content_setting_bubble_model(
       ContentSettingBubbleModel::CreateContentSettingBubbleModel(
           NULL, web_contents(), profile(),
@@ -636,7 +560,7 @@ TEST_F(ContentSettingBubbleModelTest, RegisterProtocolHandler) {
       TabSpecificContentSettings::FromWebContents(web_contents());
   content_settings->set_pending_protocol_handler(
       ProtocolHandler::CreateProtocolHandler("mailto",
-          GURL("http://www.toplevel.example/"), ASCIIToUTF16("Handler")));
+          GURL("http://www.toplevel.example/"), base::ASCIIToUTF16("Handler")));
 
   ContentSettingRPHBubbleModel content_setting_bubble_model(
           NULL, web_contents(), profile(), NULL,
@@ -690,7 +614,7 @@ TEST_F(ContentSettingBubbleModelTest, RPHAllow) {
       TabSpecificContentSettings::FromWebContents(web_contents());
   ProtocolHandler test_handler = ProtocolHandler::CreateProtocolHandler(
       "mailto", GURL("http://www.toplevel.example/"),
-      ASCIIToUTF16("Handler"));
+      base::ASCIIToUTF16("Handler"));
   content_settings->set_pending_protocol_handler(test_handler);
 
   ContentSettingRPHBubbleModel content_setting_bubble_model(
@@ -709,7 +633,7 @@ TEST_F(ContentSettingBubbleModelTest, RPHAllow) {
   {
     ProtocolHandler handler = registry.GetHandlerFor("mailto");
     ASSERT_FALSE(handler.IsEmpty());
-    EXPECT_EQ(ASCIIToUTF16("Handler"), handler.title());
+    EXPECT_EQ(base::ASCIIToUTF16("Handler"), handler.title());
     EXPECT_EQ(CONTENT_SETTING_ALLOW,
               content_settings->pending_protocol_handler_setting());
   }
@@ -738,7 +662,7 @@ TEST_F(ContentSettingBubbleModelTest, RPHAllow) {
   {
     ProtocolHandler handler = registry.GetHandlerFor("mailto");
     ASSERT_FALSE(handler.IsEmpty());
-    EXPECT_EQ(ASCIIToUTF16("Handler"), handler.title());
+    EXPECT_EQ(base::ASCIIToUTF16("Handler"), handler.title());
     EXPECT_EQ(CONTENT_SETTING_ALLOW,
               content_settings->pending_protocol_handler_setting());
     EXPECT_FALSE(registry.IsIgnored(test_handler));

@@ -8,7 +8,7 @@
 
 #include "base/win/wrapped_window_proc.h"
 #include "chrome/browser/ui/views/status_icons/status_icon_win.h"
-//#include "chrome/common/chrome_constants.h"
+#include "chrome/common/chrome_constants.h"
 #include "ui/gfx/screen.h"
 #include "ui/gfx/win/hwnd_util.h"
 #include "win8/util/win8_util.h"
@@ -32,7 +32,7 @@ StatusTrayWin::StatusTrayWin()
   // Register our window class
   WNDCLASSEX window_class;
   base::win::InitializeWindowClass(
-      L"Chrome_StatusTrayWindow",
+      chrome::kStatusTrayWindowClass,
       &base::win::WrappedWindowProc<StatusTrayWin::WndProcStatic>,
       0, 0, 0, NULL, NULL, NULL, NULL, NULL,
       &window_class);
@@ -128,7 +128,7 @@ StatusTrayWin::~StatusTrayWin() {
 StatusIcon* StatusTrayWin::CreatePlatformStatusIcon(
     StatusTray::StatusIconType type,
     const gfx::ImageSkia& image,
-    const string16& tool_tip) {
+    const base::string16& tool_tip) {
   UINT next_icon_id;
   if (type == StatusTray::OTHER_ICON)
     next_icon_id = NextIconId();

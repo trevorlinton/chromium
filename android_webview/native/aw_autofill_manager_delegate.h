@@ -12,7 +12,7 @@
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service_builder.h"
+#include "base/prefs/pref_service_factory.h"
 #include "components/autofill/core/browser/autofill_manager_delegate.h"
 #include "content/public/browser/web_contents_user_data.h"
 
@@ -58,12 +58,13 @@ class AwAutofillManagerDelegate
 
   // AutofillManagerDelegate implementation.
   virtual autofill::PersonalDataManager* GetPersonalDataManager() OVERRIDE;
+  virtual scoped_refptr<autofill::AutofillWebDataService>
+      GetDatabase() OVERRIDE;
   virtual PrefService* GetPrefs() OVERRIDE;
   virtual void HideRequestAutocompleteDialog() OVERRIDE;
   virtual void ShowAutofillSettings() OVERRIDE;
   virtual void ConfirmSaveCreditCard(
       const autofill::AutofillMetrics& metric_logger,
-      const autofill::CreditCard& credit_card,
       const base::Closure& save_card_callback) OVERRIDE;
   virtual void ShowRequestAutocompleteDialog(
       const autofill::FormData& form,
@@ -73,9 +74,9 @@ class AwAutofillManagerDelegate
   virtual void ShowAutofillPopup(
       const gfx::RectF& element_bounds,
       base::i18n::TextDirection text_direction,
-      const std::vector<string16>& values,
-      const std::vector<string16>& labels,
-      const std::vector<string16>& icons,
+      const std::vector<base::string16>& values,
+      const std::vector<base::string16>& labels,
+      const std::vector<base::string16>& icons,
       const std::vector<int>& identifiers,
       base::WeakPtr<autofill::AutofillPopupDelegate> delegate) OVERRIDE;
   virtual void UpdateAutofillPopupDataListValues(
@@ -85,6 +86,9 @@ class AwAutofillManagerDelegate
   virtual bool IsAutocompleteEnabled() OVERRIDE;
   virtual void DetectAccountCreationForms(
       const std::vector<autofill::FormStructure*>& forms) OVERRIDE;
+  virtual void DidFillOrPreviewField(
+      const base::string16& autofilled_value,
+      const base::string16& profile_full_name) OVERRIDE;
 
   void SuggestionSelected(JNIEnv* env,
                           jobject obj,
@@ -94,8 +98,8 @@ class AwAutofillManagerDelegate
   friend class content::WebContentsUserData<AwAutofillManagerDelegate>;
 
   void ShowAutofillPopupImpl(const gfx::RectF& element_bounds,
-                             const std::vector<string16>& values,
-                             const std::vector<string16>& labels,
+                             const std::vector<base::string16>& values,
+                             const std::vector<base::string16>& labels,
                              const std::vector<int>& identifiers);
 
   // The web_contents associated with this delegate.
@@ -104,7 +108,7 @@ class AwAutofillManagerDelegate
   JavaObjectWeakGlobalRef java_ref_;
 
   // The current Autofill query values.
-  std::vector<string16> values_;
+  std::vector<base::string16> values_;
   std::vector<int> identifiers_;
   base::WeakPtr<autofill::AutofillPopupDelegate> delegate_;
 

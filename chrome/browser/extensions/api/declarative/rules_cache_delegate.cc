@@ -6,14 +6,14 @@
 
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/declarative/rules_registry.h"
-#include "chrome/browser/extensions/extension_info_map.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/state_store.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/info_map.h"
 
 namespace {
 
@@ -79,10 +79,6 @@ void RulesCacheDelegate::Init(RulesRegistry* registry) {
   if (store)
     store->RegisterKey(storage_key_);
 
-  registrar_.Add(this,
-                 chrome::NOTIFICATION_EXTENSION_LOADED,
-                 content::Source<Profile>(profile_->GetOriginalProfile()));
-
   if (profile_->IsOffTheRecord())
     log_storage_init_delay_ = false;
 
@@ -112,30 +108,6 @@ void RulesCacheDelegate::WriteToStorage(const std::string& extension_id,
   StateStore* store = ExtensionSystem::Get(profile_)->rules_store();
   if (store)
     store->SetExtensionValue(extension_id, storage_key_, value.Pass());
-}
-
-void RulesCacheDelegate::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
-  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-  DCHECK(type == chrome::NOTIFICATION_EXTENSION_LOADED);
-
-  const extensions::Extension* extension =
-      content::Details<const extensions::Extension>(details).ptr();
-  // TODO(mpcomplete): This API check should generalize to any use of
-  // declarative rules, not just webRequest.
-  if (extension->HasAPIPermission(APIPermission::kDeclarativeContent) ||
-      extension->HasAPIPermission(APIPermission::kDeclarativeWebRequest)) {
-    ExtensionInfoMap* extension_info_map =
-        ExtensionSystem::Get(profile_)->info_map();
-    if (profile_->IsOffTheRecord() &&
-        !extension_info_map->IsIncognitoEnabled(extension->id())) {
-      // Ignore this extension.
-    } else {
-      ReadFromStorage(extension->id());
-    }
-  }
 }
 
 void RulesCacheDelegate::CheckIfReady() {
@@ -168,7 +140,7 @@ void RulesCacheDelegate::ReadRulesForInstalledExtensions() {
           (*i)->HasAPIPermission(APIPermission::kDeclarativeWebRequest);
       bool respects_off_the_record =
           !(profile_->IsOffTheRecord()) ||
-          extension_util::IsIncognitoEnabled((*i)->id(), extension_service);
+          util::IsIncognitoEnabled((*i)->id(), profile_);
       if (needs_apis_storing_rules && respects_off_the_record)
         ReadFromStorage((*i)->id());
     }
@@ -241,6 +213,10 @@ void RulesCacheDelegate::SetDeclarativeRulesStored(
     const std::string& extension_id,
     bool rules_stored) {
   CHECK(profile_);
+  ExtensionSystem& system = *ExtensionSystem::Get(profile_);
+  ExtensionService* extension_service = system.extension_service();
+  DCHECK(extension_service);
+  DCHECK(extension_service->GetInstalledExtension(extension_id));
   ExtensionScopedPrefs* extension_prefs = ExtensionPrefs::Get(profile_);
   extension_prefs->UpdateExtensionPref(
       extension_id,

@@ -5,13 +5,14 @@
 #include "remoting/client/plugin/pepper_input_handler.h"
 
 #include "base/logging.h"
-#include "ppapi/c/dev/ppb_keyboard_input_event_dev.h"
 #include "ppapi/cpp/image_data.h"
 #include "ppapi/cpp/input_event.h"
 #include "ppapi/cpp/module_impl.h"
 #include "ppapi/cpp/mouse_cursor.h"
 #include "ppapi/cpp/point.h"
+#include "ppapi/cpp/var.h"
 #include "remoting/proto/event.pb.h"
+#include "ui/events/keycodes/dom4/keycode_converter.h"
 
 namespace remoting {
 
@@ -35,13 +36,12 @@ PepperInputHandler::~PepperInputHandler() {
 
 // Helper function to get the USB key code using the Dev InputEvent interface.
 uint32_t GetUsbKeyCode(pp::KeyboardInputEvent pp_key_event) {
-  const PPB_KeyboardInputEvent_Dev* key_event_interface =
-      reinterpret_cast<const PPB_KeyboardInputEvent_Dev*>(
-          pp::Module::Get()->GetBrowserInterface(
-              PPB_KEYBOARD_INPUT_EVENT_DEV_INTERFACE));
-  if (!key_event_interface)
-    return 0;
-  return key_event_interface->GetUsbKeyCode(pp_key_event.pp_resource());
+  // Get the DOM3 |code| as a string.
+  std::string codestr = pp_key_event.GetCode().AsString();
+
+  // Convert the |code| string into a USB keycode.
+  ui::KeycodeConverter* key_converter = ui::KeycodeConverter::GetInstance();
+  return key_converter->CodeToUsbKeycode(codestr.c_str());
 }
 
 bool PepperInputHandler::HandleInputEvent(const pp::InputEvent& event) {
@@ -176,7 +176,7 @@ bool PepperInputHandler::HandleInputEvent(const pp::InputEvent& event) {
       return true;
 
     default: {
-      LOG(INFO) << "Unhandled input event: " << event.GetType();
+      VLOG(0) << "Unhandled input event: " << event.GetType();
       break;
     }
   }

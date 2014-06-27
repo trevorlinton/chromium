@@ -13,7 +13,7 @@
 #include "base/values.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "ui/aura/root_window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/screen.h"
 #include "ui/views/controls/webview/web_dialog_view.h"
@@ -40,7 +40,7 @@ class PaintMessageHandler
   virtual void RegisterMessages() OVERRIDE;
 
  private:
-  void DidPaint(const ListValue* args);
+  void DidPaint(const base::ListValue* args);
 
   views::Widget* widget_;
 
@@ -53,7 +53,7 @@ void PaintMessageHandler::RegisterMessages() {
       base::Bind(&PaintMessageHandler::DidPaint, base::Unretained(this)));
 }
 
-void PaintMessageHandler::DidPaint(const ListValue* args) {
+void PaintMessageHandler::DidPaint(const base::ListValue* args) {
   // Show the widget after the web content has been painted.
   widget_->Show();
 }

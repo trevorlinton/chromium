@@ -4,8 +4,6 @@
 
 #include "webkit/renderer/compositor_bindings/web_content_layer_impl.h"
 
-#include "base/command_line.h"
-#include "cc/base/switches.h"
 #include "cc/layers/content_layer.h"
 #include "cc/layers/picture_layer.h"
 #include "third_party/WebKit/public/platform/WebContentLayerClient.h"
@@ -20,14 +18,10 @@ using cc::PictureLayer;
 
 namespace webkit {
 
-static bool usingPictureLayer() {
-  return cc::switches::IsImplSidePaintingEnabled();
-}
-
-WebContentLayerImpl::WebContentLayerImpl(WebKit::WebContentLayerClient* client)
+WebContentLayerImpl::WebContentLayerImpl(blink::WebContentLayerClient* client)
     : client_(client),
       ignore_lcd_text_change_(false) {
-  if (usingPictureLayer())
+  if (WebLayerImpl::UsingPictureLayer())
     layer_ = make_scoped_ptr(new WebLayerImpl(PictureLayer::Create(this)));
   else
     layer_ = make_scoped_ptr(new WebLayerImpl(ContentLayer::Create(this)));
@@ -36,13 +30,13 @@ WebContentLayerImpl::WebContentLayerImpl(WebKit::WebContentLayerClient* client)
 }
 
 WebContentLayerImpl::~WebContentLayerImpl() {
-  if (usingPictureLayer())
+  if (WebLayerImpl::UsingPictureLayer())
     static_cast<PictureLayer*>(layer_->layer())->ClearClient();
   else
     static_cast<ContentLayer*>(layer_->layer())->ClearClient();
 }
 
-WebKit::WebLayer* WebContentLayerImpl::layer() { return layer_.get(); }
+blink::WebLayer* WebContentLayerImpl::layer() { return layer_.get(); }
 
 void WebContentLayerImpl::setDoubleSided(bool double_sided) {
   layer_->layer()->SetDoubleSided(double_sided);
@@ -52,16 +46,23 @@ void WebContentLayerImpl::setDrawCheckerboardForMissingTiles(bool enable) {
   layer_->layer()->SetDrawCheckerboardForMissingTiles(enable);
 }
 
+void WebContentLayerImpl::setHasGpuRasterizationHint(bool has_hint) {
+  if (WebLayerImpl::UsingPictureLayer()) {
+    static_cast<PictureLayer*>(layer_->layer())
+        ->SetHasGpuRasterizationHint(has_hint);
+  }
+}
+
 void WebContentLayerImpl::PaintContents(SkCanvas* canvas,
-                                        gfx::Rect clip,
+                                        const gfx::Rect& clip,
                                         gfx::RectF* opaque) {
   if (!client_)
     return;
 
-  WebKit::WebFloatRect web_opaque;
+  blink::WebFloatRect web_opaque;
   // For picture layers, always record with LCD text.  PictureLayerImpl
   // will turn this off later during rasterization.
-  bool use_lcd_text = usingPictureLayer() || can_use_lcd_text_;
+  bool use_lcd_text = WebLayerImpl::UsingPictureLayer() || can_use_lcd_text_;
   client_->paintContents(canvas, clip, use_lcd_text, web_opaque);
   *opaque = web_opaque;
 }
@@ -80,5 +81,7 @@ void WebContentLayerImpl::DidChangeLayerCanUseLCDText() {
   ignore_lcd_text_change_ = true;
   layer_->invalidate();
 }
+
+bool WebContentLayerImpl::FillsBoundsCompletely() const { return false; }
 
 }  // namespace webkit

@@ -9,8 +9,9 @@ import subprocess
 import sys
 import time
 
-import buildbot_common
+import build_projects
 import build_version
+import buildbot_common
 import parse_dsc
 
 from build_paths import OUT_DIR, SRC_DIR, SDK_SRC_DIR, SCRIPT_DIR
@@ -56,9 +57,13 @@ ALL_TOOLCHAINS = ['newlib', 'glibc', 'pnacl', 'win', 'linux', 'mac']
 #   input_event.glibc_debug_test
 #   input_event.glibc_release_test
 DISABLED_TESTS = [
-    # TODO(binji): Disable 3D examples on linux/win. See
+    # TODO(binji): Disable 3D examples on linux/win/mac. See
     # http://crbug.com/262379.
-    {'name': 'graphics_3d', 'platform': ('win', 'linux')},
+    {'name': 'graphics_3d', 'platform': ('win', 'linux', 'mac')},
+    # media_stream_audio uses audio input devices which are not supported.
+    {'name': 'media_stream_audio', 'platform': ('win', 'linux', 'mac')},
+    # media_stream_video uses 3D and webcam which are not supported.
+    {'name': 'media_stream_video', 'platform': ('win', 'linux', 'mac')},
     # TODO(binji): These tests timeout on the trybots because the NEXEs take
     # more than 40 seconds to load (!). See http://crbug.com/280753
     {'name': 'nacl_io_test', 'platform': 'win', 'toolchain': 'glibc'},
@@ -67,10 +72,6 @@ DISABLED_TESTS = [
     # TODO(binji): figure out a way to inject the testing code without
     # modifying the example; maybe an extension?
     {'name': 'part1'},
-    # TODO(binji): loading nacl_io_test.pexe on win/linux is > 40 seconds.
-    # See http://crbug.com/315253
-    {'name': 'nacl_io_test', 'platform': ('win', 'linux'),
-     'toolchain': 'pnacl', 'config': 'Release'},
 ]
 
 def ValidateToolchains(toolchains):
@@ -108,6 +109,8 @@ def GetBrowserTesterCommand(desc, toolchain, config):
     # Prevent the infobar that shows up when requesting filesystem quota.
     '--browser_flag', '--unlimited-storage',
     '--enable_sockets',
+    # Prevent installing a new copy of PNaCl.
+    '--browser_flag', '--disable-component-update',
   ]
 
   args.extend(['--serving_dir', GetServingDirForProject(desc)])
@@ -281,6 +284,19 @@ def RunAllTestsInTree(tree, toolchains, configs, retry_on_failure_times):
   return success
 
 
+def BuildAllTestsInTree(tree, toolchains, configs):
+  for branch, desc in parse_dsc.GenerateProjects(tree):
+    desc_configs = desc.get('CONFIGS', ALL_CONFIGS)
+    valid_toolchains = set(toolchains) & set(desc['TOOLS'])
+    valid_configs = set(configs) & set(desc_configs)
+    for toolchain in sorted(valid_toolchains):
+      for config in sorted(valid_configs):
+        name = '%s/%s' % (branch, desc['NAME'])
+        build_projects.BuildProjectsBranch(pepperdir, name, deps=False,
+                                           clean=False, config=config,
+                                           args=['TOOLCHAIN=%s' % toolchain])
+
+
 def GetProjectTree(include):
   # Everything in src is a library, and cannot be run.
   exclude = {'DEST': 'src'}
@@ -304,17 +320,13 @@ def main(args):
   parser.add_option('-d', '--dest',
       help='Select which destinations (project types) are valid.',
       action='append')
-  parser.add_option('-p', '--project',
-      help='Select which projects are valid.',
-      action='append')
+  parser.add_option('-b', '--build',
+      help='Build each project before testing.', action='store_true')
   parser.add_option('--retry-times',
       help='Number of types to retry on failure (Default: %default)',
           type='int', default=1)
 
   options, args = parser.parse_args(args[1:])
-  if options.project:
-    parser.error('The -p/--project option is deprecated.\n'
-                 'Just use positional paramaters instead.')
 
   if not options.toolchain:
     options.toolchain = ['newlib', 'glibc', 'pnacl', 'host']
@@ -342,6 +354,9 @@ def main(args):
     options.config = ALL_CONFIGS
 
   project_tree = GetProjectTree(include)
+  if options.build:
+    BuildAllTestsInTree(project_tree, options.toolchain, options.config)
+
   return RunAllTestsInTree(project_tree, options.toolchain, options.config,
                            options.retry_times)
 

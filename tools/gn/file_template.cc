@@ -9,6 +9,8 @@
 
 #include "tools/gn/escape.h"
 #include "tools/gn/filesystem_utils.h"
+#include "tools/gn/string_utils.h"
+#include "tools/gn/target.h"
 
 const char FileTemplate::kSource[] = "{{source}}";
 const char FileTemplate::kSourceNamePart[] = "{{source_name_part}}";
@@ -17,7 +19,7 @@ const char FileTemplate::kSourceFilePart[] = "{{source_file_part}}";
 const char kSourceExpansion_Help[] =
     "How Source Expansion Works\n"
     "\n"
-    "  Source expansion is used for the custom script and copy target types\n"
+    "  Source expansion is used for the action_foreach and copy target types\n"
     "  to map source file names to output file names or arguments.\n"
     "\n"
     "  To perform source expansion in the outputs, GN maps every entry in the\n"
@@ -32,8 +34,8 @@ const char kSourceExpansion_Help[] =
     "  as a static list of literal file names that do not depend on the\n"
     "  sources.\n"
     "\n"
-    "  See \"gn help copy\" and \"gn help custom\" for more on how this is\n"
-    "  applied.\n"
+    "  See \"gn help copy\" and \"gn help action_foreach\" for more on how\n"
+    "  this is applied.\n"
     "\n"
     "Placeholders\n"
     "\n"
@@ -57,7 +59,7 @@ const char kSourceExpansion_Help[] =
     "Examples\n"
     "\n"
     "  Non-varying outputs:\n"
-    "    script(\"hardcoded_outputs\") {\n"
+    "    action(\"hardcoded_outputs\") {\n"
     "      sources = [ \"input1.idl\", \"input2.idl\" ]\n"
     "      outputs = [ \"$target_out_dir/output1.dat\",\n"
     "                  \"$target_out_dir/output2.dat\" ]\n"
@@ -65,7 +67,7 @@ const char kSourceExpansion_Help[] =
     "  The outputs in this case will be the two literal files given.\n"
     "\n"
     "  Varying outputs:\n"
-    "    script(\"varying_outputs\") {\n"
+    "    action_foreach(\"varying_outputs\") {\n"
     "      sources = [ \"input1.idl\", \"input2.idl\" ]\n"
     "      outputs = [ \"$target_out_dir/{{source_name_part}}.h\",\n"
     "                  \"$target_out_dir/{{source_name_part}}.cc\" ]\n"
@@ -92,6 +94,15 @@ FileTemplate::FileTemplate(const std::vector<std::string>& t)
 FileTemplate::~FileTemplate() {
 }
 
+// static
+FileTemplate FileTemplate::GetForTargetOutputs(const Target* target) {
+  const Target::FileList& outputs = target->action_values().outputs();
+  std::vector<std::string> output_template_args;
+  for (size_t i = 0; i < outputs.size(); i++)
+    output_template_args.push_back(outputs[i].value());
+  return FileTemplate(output_template_args);
+}
+
 bool FileTemplate::IsTypeUsed(Subrange::Type type) const {
   DCHECK(type > Subrange::LITERAL && type < Subrange::NUM_TYPES);
   return types_required_[type];
@@ -115,7 +126,7 @@ void FileTemplate::Apply(const Value& sources,
 
     ApplyString(sources_list[i].string_value(), &string_output);
     for (size_t out_i = 0; out_i < string_output.size(); out_i++)
-      dest->push_back(Value(origin, string_output[i]));
+      dest->push_back(Value(origin, string_output[out_i]));
   }
 }
 

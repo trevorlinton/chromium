@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,11 +18,13 @@ import android.view.Surface;
 
 import org.chromium.base.CalledByNative;
 import org.chromium.base.JNINamespace;
+import org.chromium.base.library_loader.LibraryLoader;
+import org.chromium.base.library_loader.Linker;
+import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.content.browser.ChildProcessConnection;
+import org.chromium.content.browser.ChildProcessLauncher;
 import org.chromium.content.common.IChildProcessCallback;
 import org.chromium.content.common.IChildProcessService;
-import org.chromium.content.browser.ChildProcessLauncher;
-import org.chromium.content.common.ProcessInitException;
 
 import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicReference;
@@ -53,7 +55,7 @@ public class ChildProcessService extends Service {
     private ArrayList<Integer> mFileIds;
     private ArrayList<ParcelFileDescriptor> mFileFds;
     // Linker-specific parameters for this child process service.
-    private LinkerParams mLinkerParams;
+    private ChromiumLinkerParams mLinkerParams;
 
     private static AtomicReference<Context> sContext = new AtomicReference<Context>(null);
     private boolean mLibraryInitialized = false;
@@ -125,8 +127,9 @@ public class ChildProcessService extends Service {
 
                     if (useLinker) {
                         synchronized (mMainThread) {
-                            while (!mIsBound)
+                            while (!mIsBound) {
                                 mMainThread.wait();
+                            }
                         }
                         if (mLinkerParams != null) {
                             if (mLinkerParams.mWaitForSharedRelro)
@@ -138,10 +141,10 @@ public class ChildProcessService extends Service {
                         }
                     }
                     try {
-                        LibraryLoader.loadNow();
+                        LibraryLoader.loadNow(getApplicationContext());
                     } catch (ProcessInitException e) {
                         Log.e(TAG, "Failed to load native library, exiting child process", e);
-                        return;
+                        System.exit(-1);
                     }
                     synchronized (mMainThread) {
                         while (mCommandLineParams == null) {
@@ -195,6 +198,7 @@ public class ChildProcessService extends Service {
                     mMainThread.wait();
                 }
             } catch (InterruptedException e) {
+                // Ignore
             }
         }
         // Try to shutdown the MainThread gracefully, but it might not
@@ -215,7 +219,7 @@ public class ChildProcessService extends Service {
                     ChildProcessConnection.EXTRA_COMMAND_LINE);
             mLinkerParams = null;
             if (Linker.isUsed())
-                mLinkerParams = new LinkerParams(intent);
+                mLinkerParams = new ChromiumLinkerParams(intent);
             mIsBound = true;
             mMainThread.notifyAll();
         }
@@ -245,9 +249,9 @@ public class ChildProcessService extends Service {
         Surface surface = null;
         boolean needRelease = false;
         if (surfaceObject instanceof Surface) {
-            surface = (Surface)surfaceObject;
+            surface = (Surface) surfaceObject;
         } else if (surfaceObject instanceof SurfaceTexture) {
-            surface = new Surface((SurfaceTexture)surfaceObject);
+            surface = new Surface((SurfaceTexture) surfaceObject);
             needRelease = true;
         } else {
             Log.e(TAG, "Not a valid surfaceObject: " + surfaceObject);

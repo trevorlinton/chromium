@@ -5,10 +5,11 @@
 #include "chrome/browser/ui/views/tab_contents/chrome_web_contents_view_delegate_views.h"
 
 #include "chrome/browser/browser_shutdown.h"
+#include "chrome/browser/ui/aura/tab_contents/web_drag_bookmark_handler_aura.h"
 #include "chrome/browser/ui/sad_tab_helper.h"
 #include "chrome/browser/ui/tab_contents/chrome_web_contents_view_delegate.h"
+#include "chrome/browser/ui/views/renderer_context_menu/render_view_context_menu_views.h"
 #include "chrome/browser/ui/views/sad_tab_view.h"
-#include "chrome/browser/ui/views/tab_contents/render_view_context_menu_views.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "content/public/browser/render_process_host.h"
@@ -17,17 +18,11 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_view.h"
+#include "ui/aura/client/screen_position_client.h"
+#include "ui/aura/window.h"
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/focus/view_storage.h"
 #include "ui/views/widget/widget.h"
-
-#if defined(USE_AURA)
-#include "chrome/browser/ui/aura/tab_contents/web_drag_bookmark_handler_aura.h"
-#include "ui/aura/client/screen_position_client.h"
-#include "ui/aura/window.h"
-#else
-#include "chrome/browser/ui/views/tab_contents/web_drag_bookmark_handler_win.h"
-#endif
 
 using web_modal::WebContentsModalDialogManager;
 
@@ -52,11 +47,7 @@ content::WebDragDestDelegate*
     ChromeWebContentsViewDelegateViews::GetDragDestDelegate() {
   // We install a chrome specific handler to intercept bookmark drags for the
   // bookmark manager/extension API.
-#if defined(USE_AURA)
   bookmark_handler_.reset(new WebDragBookmarkHandlerAura);
-#else
-  bookmark_handler_.reset(new WebDragBookmarkHandlerWin);
-#endif
   return bookmark_handler_.get();
 }
 
@@ -128,6 +119,7 @@ void ChromeWebContentsViewDelegateViews::RestoreFocus() {
 }
 
 void ChromeWebContentsViewDelegateViews::ShowContextMenu(
+    content::RenderFrameHost* render_frame_host,
     const content::ContextMenuParams& params) {
   // Menus need a Widget to work. If we're not the active tab we won't
   // necessarily be in a widget.
@@ -136,7 +128,7 @@ void ChromeWebContentsViewDelegateViews::ShowContextMenu(
     return;
 
   context_menu_.reset(
-      RenderViewContextMenuViews::Create(web_contents_, params));
+      RenderViewContextMenuViews::Create(render_frame_host, params));
   context_menu_->Init();
 
   // Don't show empty menus.
@@ -145,23 +137,15 @@ void ChromeWebContentsViewDelegateViews::ShowContextMenu(
 
   gfx::Point screen_point(params.x, params.y);
 
-#if defined(USE_AURA)
-  // Convert from content coordinates to window coordinates.
-  aura::Window* web_contents_window =
-      web_contents_->GetView()->GetNativeView();
-  aura::Window* root_window = web_contents_window->GetRootWindow();
+  // Convert from target window coordinates to root window coordinates.
+  aura::Window* target_window = GetActiveNativeView();
+  aura::Window* root_window = target_window->GetRootWindow();
   aura::client::ScreenPositionClient* screen_position_client =
       aura::client::GetScreenPositionClient(root_window);
   if (screen_position_client) {
-    screen_position_client->ConvertPointToScreen(web_contents_window,
+    screen_position_client->ConvertPointToScreen(target_window,
                                                  &screen_point);
   }
-#else
-  POINT temp = screen_point.ToPOINT();
-  ClientToScreen(web_contents_->GetView()->GetNativeView(), &temp);
-  screen_point = temp;
-#endif
-
   // Enable recursive tasks on the message loop so we can get updates while
   // the context menu is being displayed.
   base::MessageLoop::ScopedNestableTaskAllower allow(
@@ -178,9 +162,14 @@ void ChromeWebContentsViewDelegateViews::SizeChanged(const gfx::Size& size) {
     sad_tab->GetWidget()->SetBounds(gfx::Rect(size));
 }
 
+aura::Window* ChromeWebContentsViewDelegateViews::GetActiveNativeView() {
+  return web_contents_->GetFullscreenRenderWidgetHostView() ?
+      web_contents_->GetFullscreenRenderWidgetHostView()->GetNativeView() :
+      web_contents_->GetView()->GetNativeView();
+}
+
 views::Widget* ChromeWebContentsViewDelegateViews::GetTopLevelWidget() {
-  return views::Widget::GetTopLevelWidgetForNativeView(
-      web_contents_->GetView()->GetNativeView());
+  return views::Widget::GetTopLevelWidgetForNativeView(GetActiveNativeView());
 }
 
 views::FocusManager*

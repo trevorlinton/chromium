@@ -6,42 +6,36 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/memory/singleton.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram.h"
 #include "base/prefs/pref_service.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
-#include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/infobars/infobar_service.h"
-#include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/tab_contents/language_state.h"
-#include "chrome/browser/tab_contents/tab_util.h"
-#include "chrome/browser/translate/page_translated_details.h"
-#include "chrome/browser/translate/translate_accept_languages.h"
-#include "chrome/browser/translate/translate_browser_metrics.h"
-#include "chrome/browser/translate/translate_error_details.h"
-#include "chrome/browser/translate/translate_event_details.h"
-#include "chrome/browser/translate/translate_infobar_delegate.h"
-#include "chrome/browser/translate/translate_language_list.h"
-#include "chrome/browser/translate/translate_prefs.h"
-#include "chrome/browser/translate/translate_script.h"
 #include "chrome/browser/translate/translate_tab_helper.h"
-#include "chrome/browser/translate/translate_url_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
-#include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/browser/ui/translate/translate_bubble_factory.h"
-#include "chrome/common/chrome_switches.h"
-#include "chrome/common/pref_names.h"
 #include "chrome/common/render_messages.h"
-#include "chrome/common/translate/language_detection_details.h"
 #include "chrome/common/url_constants.h"
-#include "components/translate/common/translate_constants.h"
+#include "components/translate/core/browser/language_state.h"
+#include "components/translate/core/browser/page_translated_details.h"
+#include "components/translate/core/browser/translate_accept_languages.h"
+#include "components/translate/core/browser/translate_browser_metrics.h"
+#include "components/translate/core/browser/translate_client.h"
+#include "components/translate/core/browser/translate_download_manager.h"
+#include "components/translate/core/browser/translate_driver.h"
+#include "components/translate/core/browser/translate_error_details.h"
+#include "components/translate/core/browser/translate_language_list.h"
+#include "components/translate/core/browser/translate_prefs.h"
+#include "components/translate/core/browser/translate_script.h"
+#include "components/translate/core/browser/translate_url_util.h"
+#include "components/translate/core/common/language_detection_details.h"
+#include "components/translate/core/common/translate_constants.h"
+#include "components/translate/core/common/translate_pref_names.h"
+#include "components/translate/core/common/translate_switches.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
@@ -55,7 +49,7 @@
 #include "net/base/url_util.h"
 #include "net/http/http_status_code.h"
 
-#ifdef FILE_MANAGER_EXTENSION
+#if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/file_manager/app_id.h"
 #include "extensions/common/constants.h"
 #endif
@@ -65,6 +59,9 @@ using content::NavigationEntry;
 using content::WebContents;
 
 namespace {
+
+// Callbacks for translate errors.
+TranslateManager::TranslateErrorCallbackList* g_callback_list_ = NULL;
 
 const char kReportLanguageDetectionErrorURL[] =
     "https://translate.google.com/translate_error?client=cr&action=langidc";
@@ -80,29 +77,17 @@ const char kUrlQueryName[] = "u";
 // loading before giving up the translation
 const int kMaxTranslateLoadCheckAttempts = 20;
 
-// The field trial name to compare Translate infobar and bubble.
-const char kFieldTrialNameForUX[] = "TranslateInfobarVsBubble";
+// Notifies |g_callback_list_| of translate errors.
+void NotifyTranslateError(const TranslateErrorDetails& details) {
+  if (!g_callback_list_)
+    return;
 
-bool IsEnabledTranslateNewUX() {
-  if (CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableTranslateNewUX)) {
-    return true;
-  }
-
-  std::string group_name = base::FieldTrialList::FindFullName(
-      kFieldTrialNameForUX);
-  return group_name == "Bubble";
+  g_callback_list_->Notify(details);
 }
 
 }  // namespace
 
-TranslateManager::~TranslateManager() {
-}
-
-// static
-TranslateManager* TranslateManager::GetInstance() {
-  return Singleton<TranslateManager>::get();
-}
+TranslateManager::~TranslateManager() {}
 
 // static
 bool TranslateManager::IsTranslatableURL(const GURL& url) {
@@ -114,76 +99,13 @@ bool TranslateManager::IsTranslatableURL(const GURL& url) {
   // - an FTP page (as FTP pages tend to have long lists of filenames that may
   //   confuse the CLD)
   return !url.is_empty() &&
-         !url.SchemeIs(chrome::kChromeUIScheme) &&
-         !url.SchemeIs(chrome::kChromeDevToolsScheme) &&
-#ifdef FILE_MANAGER_EXTENSION
+         !url.SchemeIs(content::kChromeUIScheme) &&
+         !url.SchemeIs(content::kChromeDevToolsScheme) &&
+#if defined(OS_CHROMEOS)
          !(url.SchemeIs(extensions::kExtensionScheme) &&
            url.DomainIs(file_manager::kFileManagerAppId)) &&
 #endif
-         !url.SchemeIs(chrome::kFtpScheme);
-}
-
-// static
-void TranslateManager::GetSupportedLanguages(
-    std::vector<std::string>* languages) {
-  if (GetInstance()->language_list_.get()) {
-    GetInstance()->language_list_->GetSupportedLanguages(languages);
-    return;
-  }
-  NOTREACHED();
-}
-
-// static
-base::Time TranslateManager::GetSupportedLanguagesLastUpdated() {
-  if (GetInstance()->language_list_.get()) {
-    return GetInstance()->language_list_->last_updated();
-  }
-  NOTREACHED();
-  return base::Time();
-}
-
-// static
-std::string TranslateManager::GetLanguageCode(
-    const std::string& chrome_locale) {
-  if (GetInstance()->language_list_.get())
-    return GetInstance()->language_list_->GetLanguageCode(chrome_locale);
-  NOTREACHED();
-  return chrome_locale;
-}
-
-// static
-bool TranslateManager::IsSupportedLanguage(const std::string& language) {
-  if (GetInstance()->language_list_.get())
-    return GetInstance()->language_list_->IsSupportedLanguage(language);
-  NOTREACHED();
-  return false;
-}
-
-// static
-bool TranslateManager::IsAlphaLanguage(const std::string& language) {
-  if (GetInstance()->language_list_.get())
-    return GetInstance()->language_list_->IsAlphaLanguage(language);
-  NOTREACHED();
-  return false;
-}
-
-// static
-bool TranslateManager::IsAcceptLanguage(Profile* profile,
-                                        const std::string& language) {
-  if (GetInstance()->accept_languages_.get()) {
-    return GetInstance()->accept_languages_->IsAcceptLanguage(
-        profile, language);
-  }
-  NOTREACHED();
-  return false;
-}
-
-void TranslateManager::SetTranslateScriptExpirationDelay(int delay_ms) {
-  if (script_.get() == NULL) {
-    NOTREACHED();
-    return;
-  }
-  script_->set_expiration_delay(delay_ms);
+         !url.SchemeIs(content::kFtpScheme);
 }
 
 void TranslateManager::Observe(int type,
@@ -193,6 +115,8 @@ void TranslateManager::Observe(int type,
     case content::NOTIFICATION_NAV_ENTRY_COMMITTED: {
       NavigationController* controller =
           content::Source<NavigationController>(source).ptr();
+      DCHECK_EQ(&translate_tab_helper_->GetWebContents()->GetController(),
+                controller);
       content::LoadCommittedDetails* load_details =
           content::Details<content::LoadCommittedDetails>(details).ptr();
       NavigationEntry* entry = controller->GetActiveEntry();
@@ -201,9 +125,7 @@ void TranslateManager::Observe(int type,
         return;
       }
 
-      TranslateTabHelper* translate_tab_helper =
-          TranslateTabHelper::FromWebContents(controller->GetWebContents());
-      if (!translate_tab_helper)
+      if (!translate_tab_helper_->GetWebContents())
         return;
 
       // If the navigation happened while offline don't show the translate
@@ -214,7 +136,7 @@ void TranslateManager::Observe(int type,
       }
 
       if (!load_details->is_main_frame &&
-          translate_tab_helper->language_state().translation_declined()) {
+          translate_driver_->GetLanguageState().translation_declined()) {
         // Some sites (such as Google map) may trigger sub-frame navigations
         // when the user interacts with the page.  We don't want to show a new
         // infobar if the user already dismissed one in that case.
@@ -228,19 +150,19 @@ void TranslateManager::Observe(int type,
       // When doing a page reload, TAB_LANGUAGE_DETERMINED is not sent,
       // so the translation needs to be explicitly initiated, but only when the
       // page needs translation.
-      if (!translate_tab_helper->language_state().page_needs_translation())
+      if (!translate_driver_->GetLanguageState().page_needs_translation())
         return;
       // Note that we delay it as the TranslateManager gets this notification
       // before the WebContents and the WebContents processing might remove the
       // current infobars.  Since InitTranslation might add an infobar, it must
       // be done after that.
-      base::MessageLoop::current()->PostTask(FROM_HERE,
+      base::MessageLoop::current()->PostTask(
+          FROM_HERE,
           base::Bind(
               &TranslateManager::InitiateTranslationPosted,
               weak_method_factory_.GetWeakPtr(),
-              controller->GetWebContents()->GetRenderProcessHost()->GetID(),
-              controller->GetWebContents()->GetRenderViewHost()->GetRoutingID(),
-              translate_tab_helper->language_state().original_language(), 0));
+              translate_driver_->GetLanguageState().original_language(),
+              0));
       break;
     }
     case chrome::NOTIFICATION_TAB_LANGUAGE_DETERMINED: {
@@ -248,23 +170,20 @@ void TranslateManager::Observe(int type,
           content::Details<const LanguageDetectionDetails>(details).ptr();
 
       WebContents* tab = content::Source<WebContents>(source).ptr();
-      if (!tab->GetBrowserContext()->IsOffTheRecord())
-        NotifyLanguageDetection(*lang_det_details);
+      DCHECK_EQ(translate_tab_helper_->GetWebContents(), tab);
+
+      if (!translate_tab_helper_->GetWebContents())
+        return;
 
       // We may get this notifications multiple times.  Make sure to translate
       // only once.
-      TranslateTabHelper* translate_tab_helper =
-          TranslateTabHelper::FromWebContents(tab);
-      if (!translate_tab_helper)
-        return;
-
-      LanguageState& language_state = translate_tab_helper->language_state();
+      LanguageState& language_state = translate_driver_->GetLanguageState();
       if (language_state.page_needs_translation() &&
           !language_state.translation_pending() &&
           !language_state.translation_declined() &&
           !language_state.IsPageTranslated()) {
         std::string language = lang_det_details->adopted_language;
-        InitiateTranslation(tab, language);
+        InitiateTranslation(language);
       }
       break;
     }
@@ -272,10 +191,9 @@ void TranslateManager::Observe(int type,
       // Only add translate infobar if it doesn't exist; if it already exists,
       // just update the state, the actual infobar would have received the same
       //  notification and update the visual display accordingly.
-      WebContents* tab = content::Source<WebContents>(source).ptr();
       PageTranslatedDetails* page_translated_details =
           content::Details<PageTranslatedDetails>(details).ptr();
-      PageTranslated(tab, page_translated_details);
+      PageTranslated(page_translated_details);
       break;
     }
     default:
@@ -283,59 +201,45 @@ void TranslateManager::Observe(int type,
   }
 }
 
-void TranslateManager::AddObserver(Observer* obs) {
-  observer_list_.AddObserver(obs);
+// static
+scoped_ptr<TranslateManager::TranslateErrorCallbackList::Subscription>
+TranslateManager::RegisterTranslateErrorCallback(
+    const TranslateManager::TranslateErrorCallback& callback) {
+  if (!g_callback_list_)
+    g_callback_list_ = new TranslateErrorCallbackList;
+  return g_callback_list_->Add(callback);
 }
 
-void TranslateManager::RemoveObserver(Observer* obs) {
-  observer_list_.RemoveObserver(obs);
-}
+TranslateManager::TranslateManager(
+    TranslateTabHelper* helper,
+    const std::string& accept_languages_pref_name)
+    : max_reload_check_attempts_(kMaxTranslateLoadCheckAttempts),
+      accept_languages_pref_name_(accept_languages_pref_name),
+      translate_tab_helper_(helper),
+      translate_client_(helper),
+      translate_driver_(translate_client_->GetTranslateDriver()),
+      weak_method_factory_(this) {
 
-void TranslateManager::NotifyTranslateEvent(
-    const TranslateEventDetails& details) {
-  FOR_EACH_OBSERVER(Observer, observer_list_, OnTranslateEvent(details));
-}
+  WebContents* web_contents = translate_tab_helper_->GetWebContents();
 
-void TranslateManager::NotifyLanguageDetection(
-    const LanguageDetectionDetails& details) {
-  FOR_EACH_OBSERVER(Observer, observer_list_, OnLanguageDetection(details));
-}
-
-void TranslateManager::NotifyTranslateError(
-    const TranslateErrorDetails& details) {
-  FOR_EACH_OBSERVER(Observer, observer_list_, OnTranslateError(details));
-}
-
-TranslateManager::TranslateManager()
-  : max_reload_check_attempts_(kMaxTranslateLoadCheckAttempts),
-    weak_method_factory_(this) {
-  notification_registrar_.Add(this, content::NOTIFICATION_NAV_ENTRY_COMMITTED,
-                              content::NotificationService::AllSources());
+  notification_registrar_.Add(
+      this, content::NOTIFICATION_NAV_ENTRY_COMMITTED,
+      content::Source<NavigationController>(&web_contents->GetController()));
   notification_registrar_.Add(this,
                               chrome::NOTIFICATION_TAB_LANGUAGE_DETERMINED,
-                              content::NotificationService::AllSources());
-  notification_registrar_.Add(this, chrome::NOTIFICATION_PAGE_TRANSLATED,
-                              content::NotificationService::AllSources());
-  language_list_.reset(new TranslateLanguageList);
-  accept_languages_.reset(new TranslateAcceptLanguages);
-  script_.reset(new TranslateScript);
+                              content::Source<WebContents>(web_contents));
+  notification_registrar_.Add(this,
+                              chrome::NOTIFICATION_PAGE_TRANSLATED,
+                              content::Source<WebContents>(web_contents));
 }
 
-void TranslateManager::InitiateTranslation(WebContents* web_contents,
-                                           const std::string& page_lang) {
-  TranslateTabHelper* translate_tab_helper =
-      TranslateTabHelper::FromWebContents(web_contents);
-  if (!translate_tab_helper)
-    return;
-
-  Profile* profile =
-      Profile::FromBrowserContext(web_contents->GetBrowserContext());
-  Profile* original_profile = profile->GetOriginalProfile();
-  PrefService* prefs = original_profile->GetPrefs();
+void TranslateManager::InitiateTranslation(const std::string& page_lang) {
+  PrefService* prefs = translate_client_->GetPrefs();
   if (!prefs->GetBoolean(prefs::kEnableTranslate)) {
     TranslateBrowserMetrics::ReportInitiationStatus(
         TranslateBrowserMetrics::INITIATION_STATUS_DISABLED_BY_PREFS);
-    const std::string& locale = g_browser_process->GetApplicationLocale();
+    const std::string& locale =
+        TranslateDownloadManager::GetInstance()->application_locale();
     TranslateBrowserMetrics::ReportLocalesOnDisabledByPrefs(locale);
     return;
   }
@@ -343,7 +247,7 @@ void TranslateManager::InitiateTranslation(WebContents* web_contents,
   // Allow disabling of translate from the command line to assist with
   // automated browser testing.
   if (CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kDisableTranslate)) {
+          translate::switches::kDisableTranslate)) {
     TranslateBrowserMetrics::ReportInitiationStatus(
         TranslateBrowserMetrics::INITIATION_STATUS_DISABLED_BY_SWITCH);
     return;
@@ -351,6 +255,7 @@ void TranslateManager::InitiateTranslation(WebContents* web_contents,
 
   // MHTML pages currently cannot be translated.
   // See bug: 217945.
+  WebContents* web_contents = translate_tab_helper_->GetWebContents();
   if (web_contents->GetContentsMimeType() == "multipart/related") {
     TranslateBrowserMetrics::ReportInitiationStatus(
         TranslateBrowserMetrics::INITIATION_STATUS_MIME_TYPE_IS_NOT_SUPPORTED);
@@ -366,8 +271,14 @@ void TranslateManager::InitiateTranslation(WebContents* web_contents,
     return;
   }
 
-  std::string target_lang = GetTargetLanguage(prefs);
-  std::string language_code = GetLanguageCode(page_lang);
+  // Get the accepted languages list.
+  std::vector<std::string> accept_languages_list;
+  base::SplitString(prefs->GetString(accept_languages_pref_name_.c_str()), ',',
+                    &accept_languages_list);
+
+  std::string target_lang = GetTargetLanguage(accept_languages_list);
+  std::string language_code =
+      TranslateDownloadManager::GetLanguageCode(page_lang);
 
   // Don't translate similar languages (ex: en-US to en).
   if (language_code == target_lang) {
@@ -378,7 +289,8 @@ void TranslateManager::InitiateTranslation(WebContents* web_contents,
 
   // Nothing to do if either the language Chrome is in or the language of the
   // page is not supported by the translation server.
-  if (target_lang.empty() || !IsSupportedLanguage(language_code)) {
+  if (target_lang.empty() ||
+      !TranslateDownloadManager::IsSupportedLanguage(language_code)) {
     TranslateBrowserMetrics::ReportInitiationStatus(
         TranslateBrowserMetrics::INITIATION_STATUS_LANGUAGE_IS_NOT_SUPPORTED);
     TranslateBrowserMetrics::ReportUnsupportedLanguageAtInitiation(
@@ -386,17 +298,21 @@ void TranslateManager::InitiateTranslation(WebContents* web_contents,
     return;
   }
 
-  TranslatePrefs translate_prefs(prefs);
+  scoped_ptr<TranslatePrefs> translate_prefs(
+      translate_client_->GetTranslatePrefs());
 
+  TranslateAcceptLanguages* accept_languages =
+      translate_client_->GetTranslateAcceptLanguages();
   // Don't translate any user black-listed languages.
-  if (!TranslatePrefs::CanTranslateLanguage(profile, language_code)) {
+  if (!translate_prefs->CanTranslateLanguage(accept_languages,
+                                             language_code)) {
     TranslateBrowserMetrics::ReportInitiationStatus(
         TranslateBrowserMetrics::INITIATION_STATUS_DISABLED_BY_CONFIG);
     return;
   }
 
   // Don't translate any user black-listed URLs.
-  if (translate_prefs.IsSiteBlacklisted(page_url.HostNoBrackets())) {
+  if (translate_prefs->IsSiteBlacklisted(page_url.HostNoBrackets())) {
     TranslateBrowserMetrics::ReportInitiationStatus(
         TranslateBrowserMetrics::INITIATION_STATUS_DISABLED_BY_CONFIG);
     return;
@@ -406,61 +322,43 @@ void TranslateManager::InitiateTranslation(WebContents* web_contents,
   // automatically translate.  Note that in incognito mode we disable that
   // feature; the user will get an infobar, so they can control whether the
   // page's text is sent to the translate server.
-  std::string auto_target_lang;
-  if (!web_contents->GetBrowserContext()->IsOffTheRecord() &&
-      TranslatePrefs::ShouldAutoTranslate(prefs, language_code,
-          &auto_target_lang)) {
-    // We need to confirm that the saved target language is still supported.
-    // Also, GetLanguageCode will take care of removing country code if any.
-    auto_target_lang = GetLanguageCode(auto_target_lang);
-    if (IsSupportedLanguage(auto_target_lang)) {
+  if (!web_contents->GetBrowserContext()->IsOffTheRecord()) {
+    std::string auto_target_lang = GetAutoTargetLanguage(language_code, prefs);
+    if (!auto_target_lang.empty()) {
       TranslateBrowserMetrics::ReportInitiationStatus(
           TranslateBrowserMetrics::INITIATION_STATUS_AUTO_BY_CONFIG);
-      TranslatePage(web_contents, language_code, auto_target_lang);
+      TranslatePage(language_code, auto_target_lang, false);
       return;
     }
   }
 
-  LanguageState& language_state = translate_tab_helper->language_state();
+  LanguageState& language_state = translate_driver_->GetLanguageState();
   std::string auto_translate_to = language_state.AutoTranslateTo();
   if (!auto_translate_to.empty()) {
     // This page was navigated through a click from a translated page.
     TranslateBrowserMetrics::ReportInitiationStatus(
         TranslateBrowserMetrics::INITIATION_STATUS_AUTO_BY_LINK);
-    TranslatePage(web_contents, language_code, auto_translate_to);
+    TranslatePage(language_code, auto_translate_to, false);
     return;
   }
 
   TranslateBrowserMetrics::ReportInitiationStatus(
       TranslateBrowserMetrics::INITIATION_STATUS_SHOW_INFOBAR);
 
-  if (IsEnabledTranslateNewUX()) {
-    language_state.SetTranslateEnabled(true);
-    if (language_state.HasLanguageChanged())
-      ShowBubble(web_contents,
-                 TranslateBubbleModel::VIEW_STATE_BEFORE_TRANSLATE);
-  } else {
-    // Prompts the user if he/she wants the page translated.
-    TranslateInfoBarDelegate::Create(
-        false, InfoBarService::FromWebContents(web_contents),
-        TranslateInfoBarDelegate::BEFORE_TRANSLATE, language_code, target_lang,
-        TranslateErrors::NONE, profile->GetPrefs(), ShortcutConfig());
-  }
+  // Prompts the user if he/she wants the page translated.
+  translate_tab_helper_->ShowTranslateUI(TranslateTabHelper::BEFORE_TRANSLATE,
+                                         language_code,
+                                         target_lang,
+                                         TranslateErrors::NONE,
+                                         false);
 }
 
-void TranslateManager::InitiateTranslationPosted(int process_id,
-                                                 int render_id,
-                                                 const std::string& page_lang,
+void TranslateManager::InitiateTranslationPosted(const std::string& page_lang,
                                                  int attempt) {
-  // The tab might have been closed.
-  WebContents* web_contents =
-      tab_util::GetWebContentsByID(process_id, render_id);
-  if (!web_contents)
-    return;
+  WebContents* web_contents = translate_tab_helper_->GetWebContents();
+  DCHECK(web_contents);
 
-  TranslateTabHelper* translate_tab_helper =
-      TranslateTabHelper::FromWebContents(web_contents);
-  if (translate_tab_helper->language_state().translation_pending())
+  if (translate_driver_->GetLanguageState().translation_pending())
     return;
 
   // During a reload we need web content to be available before the
@@ -471,18 +369,20 @@ void TranslateManager::InitiateTranslationPosted(int process_id,
     int backoff = attempt * max_reload_check_attempts_;
     base::MessageLoop::current()->PostDelayedTask(
         FROM_HERE, base::Bind(&TranslateManager::InitiateTranslationPosted,
-                              weak_method_factory_.GetWeakPtr(), process_id,
-                              render_id, page_lang, ++attempt),
+                              weak_method_factory_.GetWeakPtr(),
+                              page_lang, ++attempt),
         base::TimeDelta::FromMilliseconds(backoff));
     return;
   }
 
-  InitiateTranslation(web_contents, GetLanguageCode(page_lang));
+  InitiateTranslation(TranslateDownloadManager::GetLanguageCode(page_lang));
 }
 
-void TranslateManager::TranslatePage(WebContents* web_contents,
-                                     const std::string& original_source_lang,
-                                     const std::string& target_lang) {
+void TranslateManager::TranslatePage(const std::string& original_source_lang,
+                                     const std::string& target_lang,
+                                     bool triggered_from_menu) {
+  WebContents* web_contents = translate_tab_helper_->GetWebContents();
+  DCHECK(web_contents);
   NavigationEntry* entry = web_contents->GetController().GetActiveEntry();
   if (!entry) {
     NOTREACHED();
@@ -494,48 +394,38 @@ void TranslateManager::TranslatePage(WebContents* web_contents,
   // kUnknownLanguageCode in order to send a translation request with enabling
   // server side auto language detection.
   std::string source_lang(original_source_lang);
-  if (!IsSupportedLanguage(source_lang))
+  if (!TranslateDownloadManager::IsSupportedLanguage(source_lang))
     source_lang = std::string(translate::kUnknownLanguageCode);
 
-  if (IsEnabledTranslateNewUX()) {
-    ShowBubble(web_contents, TranslateBubbleModel::VIEW_STATE_TRANSLATING);
-  } else {
-    Profile* profile =
-        Profile::FromBrowserContext(web_contents->GetBrowserContext());
-    TranslateInfoBarDelegate::Create(
-        true, InfoBarService::FromWebContents(web_contents),
-        TranslateInfoBarDelegate::TRANSLATING, source_lang, target_lang,
-        TranslateErrors::NONE, profile->GetPrefs(), ShortcutConfig());
-  }
+  translate_tab_helper_->ShowTranslateUI(TranslateTabHelper::TRANSLATING,
+                                         source_lang,
+                                         target_lang,
+                                         TranslateErrors::NONE,
+                                         triggered_from_menu);
 
-  DCHECK(script_.get() != NULL);
+  TranslateScript* script = TranslateDownloadManager::GetInstance()->script();
+  DCHECK(script != NULL);
 
-  const std::string& translate_script = script_->data();
-  if (!translate_script.empty()) {
-    DoTranslatePage(web_contents, translate_script, source_lang, target_lang);
+  const std::string& script_data = script->data();
+  if (!script_data.empty()) {
+    DoTranslatePage(script_data, source_lang, target_lang);
     return;
   }
 
   // The script is not available yet.  Queue that request and query for the
   // script.  Once it is downloaded we'll do the translate.
-  content::RenderViewHost* rvh = web_contents->GetRenderViewHost();
-  PendingRequest request;
-  request.render_process_id = rvh->GetProcess()->GetID();
-  request.render_view_id = rvh->GetRoutingID();
-  request.page_id = entry->GetPageID();
-  request.source_lang = source_lang;
-  request.target_lang = target_lang;
-  pending_requests_.push_back(request);
-
-  if (script_->HasPendingRequest())
-    return;
-
-  script_->Request(
+  TranslateScript::RequestCallback callback =
       base::Bind(&TranslateManager::OnTranslateScriptFetchComplete,
-                 base::Unretained(this)));
+                 weak_method_factory_.GetWeakPtr(),
+                 entry->GetPageID(),
+                 source_lang,
+                 target_lang);
+
+  script->Request(callback);
 }
 
-void TranslateManager::RevertTranslation(WebContents* web_contents) {
+void TranslateManager::RevertTranslation() {
+  WebContents* web_contents = translate_tab_helper_->GetWebContents();
   NavigationEntry* entry = web_contents->GetController().GetActiveEntry();
   if (!entry) {
     NOTREACHED();
@@ -544,15 +434,14 @@ void TranslateManager::RevertTranslation(WebContents* web_contents) {
   web_contents->GetRenderViewHost()->Send(new ChromeViewMsg_RevertTranslation(
       web_contents->GetRenderViewHost()->GetRoutingID(), entry->GetPageID()));
 
-  TranslateTabHelper* translate_tab_helper =
-      TranslateTabHelper::FromWebContents(web_contents);
-  translate_tab_helper->language_state().set_current_language(
-      translate_tab_helper->language_state().original_language());
+  translate_driver_->GetLanguageState().SetCurrentLanguage(
+      translate_driver_->GetLanguageState().original_language());
 }
 
-void TranslateManager::ReportLanguageDetectionError(WebContents* web_contents) {
+void TranslateManager::ReportLanguageDetectionError() {
   TranslateBrowserMetrics::ReportLanguageDetectionError();
   // We'll open the URL in a new tab so that the user can tell us more.
+  WebContents* web_contents = translate_tab_helper_->GetWebContents();
   Browser* browser = chrome::FindBrowserWithWebContents(web_contents);
   if (!browser) {
     NOTREACHED();
@@ -567,12 +456,10 @@ void TranslateManager::ReportLanguageDetectionError(WebContents* web_contents) {
       kUrlQueryName,
       page_url.spec());
 
-  TranslateTabHelper* translate_tab_helper =
-      TranslateTabHelper::FromWebContents(web_contents);
   report_error_url = net::AppendQueryParameter(
       report_error_url,
       kSourceLanguageQueryName,
-      translate_tab_helper->language_state().original_language());
+      translate_driver_->GetLanguageState().original_language());
 
   report_error_url = TranslateURLUtil::AddHostLocaleToUrl(report_error_url);
   report_error_url = TranslateURLUtil::AddApiKeyToUrl(report_error_url);
@@ -581,61 +468,40 @@ void TranslateManager::ReportLanguageDetectionError(WebContents* web_contents) {
                                 content::PAGE_TRANSITION_AUTO_BOOKMARK);
 }
 
-void TranslateManager::ClearTranslateScript() {
-  if (script_.get() == NULL) {
-    NOTREACHED();
-    return;
-  }
-  script_->Clear();
-}
-
-void TranslateManager::DoTranslatePage(WebContents* web_contents,
-                                       const std::string& translate_script,
+void TranslateManager::DoTranslatePage(const std::string& translate_script,
                                        const std::string& source_lang,
                                        const std::string& target_lang) {
+  WebContents* web_contents = translate_tab_helper_->GetWebContents();
+  DCHECK(web_contents);
   NavigationEntry* entry = web_contents->GetController().GetActiveEntry();
   if (!entry) {
     NOTREACHED();
     return;
   }
 
-  TranslateTabHelper* translate_tab_helper =
-      TranslateTabHelper::FromWebContents(web_contents);
-  if (!translate_tab_helper)
-    return;
-
-  translate_tab_helper->language_state().set_translation_pending(true);
+  translate_driver_->GetLanguageState().set_translation_pending(true);
   web_contents->GetRenderViewHost()->Send(new ChromeViewMsg_TranslatePage(
       web_contents->GetRenderViewHost()->GetRoutingID(), entry->GetPageID(),
       translate_script, source_lang, target_lang));
 }
 
-void TranslateManager::PageTranslated(WebContents* web_contents,
-                                      PageTranslatedDetails* details) {
+void TranslateManager::PageTranslated(PageTranslatedDetails* details) {
   if ((details->error_type == TranslateErrors::NONE) &&
       details->source_language != translate::kUnknownLanguageCode &&
-      !IsSupportedLanguage(details->source_language)) {
+      !TranslateDownloadManager::IsSupportedLanguage(
+           details->source_language)) {
     details->error_type = TranslateErrors::UNSUPPORTED_LANGUAGE;
   }
 
-  if (IsEnabledTranslateNewUX()) {
-    TranslateBubbleModel::ViewState view_state =
-        (details->error_type == TranslateErrors::NONE) ?
-        TranslateBubbleModel::VIEW_STATE_AFTER_TRANSLATE :
-        TranslateBubbleModel::VIEW_STATE_ERROR;
-    ShowBubble(web_contents, view_state);
-  } else {
-    PrefService* prefs = Profile::FromBrowserContext(
-        web_contents->GetBrowserContext())->GetPrefs();
-    TranslateInfoBarDelegate::Create(
-        true, InfoBarService::FromWebContents(web_contents),
-        (details->error_type == TranslateErrors::NONE) ?
-        TranslateInfoBarDelegate::AFTER_TRANSLATE :
-        TranslateInfoBarDelegate::TRANSLATION_ERROR,
-        details->source_language, details->target_language, details->error_type,
-        prefs, ShortcutConfig());
-  }
+  DCHECK(translate_tab_helper_->GetWebContents());
 
+  translate_tab_helper_->ShowTranslateUI(TranslateTabHelper::AFTER_TRANSLATE,
+                                         details->source_language,
+                                         details->target_language,
+                                         details->error_type,
+                                         false);
+
+  WebContents* web_contents = translate_tab_helper_->GetWebContents();
   if (details->error_type != TranslateErrors::NONE &&
       !web_contents->GetBrowserContext()->IsOffTheRecord()) {
     TranslateErrorDetails error_details;
@@ -646,125 +512,79 @@ void TranslateManager::PageTranslated(WebContents* web_contents,
   }
 }
 
-void TranslateManager::FetchLanguageListFromTranslateServer(
-    PrefService* prefs) {
-  // We don't want to do this when translate is disabled.
-  DCHECK(prefs != NULL);
-  if (CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kDisableTranslate) ||
-      (prefs != NULL && !prefs->GetBoolean(prefs::kEnableTranslate))) {
+void TranslateManager::OnTranslateScriptFetchComplete(
+    int page_id,
+    const std::string& source_lang,
+    const std::string& target_lang,
+    bool success,
+    const std::string& data) {
+  WebContents* web_contents = translate_tab_helper_->GetWebContents();
+  DCHECK(web_contents);
+  NavigationEntry* entry = web_contents->GetController().GetActiveEntry();
+  if (!entry || entry->GetPageID() != page_id) {
+    // We navigated away from the page the translation was triggered on.
     return;
   }
 
-  if (language_list_.get())
-    language_list_->RequestLanguageList();
-  else
-    NOTREACHED();
-}
-
-void TranslateManager::CleanupPendingUlrFetcher() {
-  language_list_.reset();
-  script_.reset();
-}
-
-void TranslateManager::OnTranslateScriptFetchComplete(
-    bool success, const std::string& data) {
-  std::vector<PendingRequest>::const_iterator iter;
-  for (iter = pending_requests_.begin(); iter != pending_requests_.end();
-       ++iter) {
-    const PendingRequest& request = *iter;
-    WebContents* web_contents =
-        tab_util::GetWebContentsByID(request.render_process_id,
-                                     request.render_view_id);
-    if (!web_contents) {
-      // The tab went away while we were retrieving the script.
-      continue;
-    }
-    NavigationEntry* entry = web_contents->GetController().GetActiveEntry();
-    if (!entry || entry->GetPageID() != request.page_id) {
-      // We navigated away from the page the translation was triggered on.
-      continue;
-    }
-
-    if (success) {
-      // Translate the page.
-      const std::string& translate_script = script_->data();
-      DoTranslatePage(web_contents, translate_script,
-                      request.source_lang, request.target_lang);
-    } else {
-      if (IsEnabledTranslateNewUX()) {
-        ShowBubble(web_contents, TranslateBubbleModel::VIEW_STATE_ERROR);
-      } else {
-        Profile* profile =
-            Profile::FromBrowserContext(web_contents->GetBrowserContext());
-        TranslateInfoBarDelegate::Create(
-            true, InfoBarService::FromWebContents(web_contents),
-            TranslateInfoBarDelegate::TRANSLATION_ERROR, request.source_lang,
-            request.target_lang, TranslateErrors::NETWORK, profile->GetPrefs(),
-            ShortcutConfig());
-      }
-
-      if (!web_contents->GetBrowserContext()->IsOffTheRecord()) {
-        TranslateErrorDetails error_details;
-        error_details.time = base::Time::Now();
-        error_details.url = entry->GetURL();
-        error_details.error = TranslateErrors::NETWORK;
-        NotifyTranslateError(error_details);
-      }
+  if (success) {
+    // Translate the page.
+    TranslateScript* translate_script =
+        TranslateDownloadManager::GetInstance()->script();
+    DCHECK(translate_script);
+    DoTranslatePage(translate_script->data(), source_lang, target_lang);
+  } else {
+    translate_tab_helper_->ShowTranslateUI(TranslateTabHelper::TRANSLATE_ERROR,
+                                           source_lang,
+                                           target_lang,
+                                           TranslateErrors::NETWORK,
+                                           false);
+    if (!web_contents->GetBrowserContext()->IsOffTheRecord()) {
+      TranslateErrorDetails error_details;
+      error_details.time = base::Time::Now();
+      error_details.url = entry->GetURL();
+      error_details.error = TranslateErrors::NETWORK;
+      NotifyTranslateError(error_details);
     }
   }
-  pending_requests_.clear();
-}
-
-void TranslateManager::ShowBubble(WebContents* web_contents,
-                                  TranslateBubbleModel::ViewState view_state) {
-  // The bubble is implemented only on the desktop platforms.
-#if !defined(OS_ANDROID) && !defined(OS_IOS)
-  Browser* browser = chrome::FindBrowserWithWebContents(web_contents);
-  BrowserWindow* window = browser ? browser->window() : NULL;
-  TranslateBubbleFactory::Show(window, web_contents, view_state);
-#else
-  NOTREACHED();
-#endif
 }
 
 // static
-std::string TranslateManager::GetTargetLanguage(PrefService* prefs) {
-  std::string ui_lang =
-      GetLanguageCode(g_browser_process->GetApplicationLocale());
-  if (IsSupportedLanguage(ui_lang))
+std::string TranslateManager::GetTargetLanguage(
+    const std::vector<std::string>& accept_languages_list) {
+  std::string ui_lang = TranslatePrefs::ConvertLangCodeForTranslation(
+      TranslateDownloadManager::GetLanguageCode(
+          TranslateDownloadManager::GetInstance()->application_locale()));
+
+  if (TranslateDownloadManager::IsSupportedLanguage(ui_lang))
     return ui_lang;
-
-  // Getting the accepted languages list
-  std::string accept_langs_str = prefs->GetString(prefs::kAcceptLanguages);
-
-  std::vector<std::string> accept_langs_list;
-  base::SplitString(accept_langs_str, ',', &accept_langs_list);
 
   // Will translate to the first supported language on the Accepted Language
   // list or not at all if no such candidate exists
-  std::vector<std::string>::iterator iter;
-  for (iter = accept_langs_list.begin();
-       iter != accept_langs_list.end(); ++iter) {
-    std::string lang_code = GetLanguageCode(*iter);
-    if (IsSupportedLanguage(lang_code))
+  std::vector<std::string>::const_iterator iter;
+  for (iter = accept_languages_list.begin();
+       iter != accept_languages_list.end(); ++iter) {
+    std::string lang_code = TranslateDownloadManager::GetLanguageCode(*iter);
+    if (TranslateDownloadManager::IsSupportedLanguage(lang_code))
       return lang_code;
   }
   return std::string();
 }
 
 // static
-ShortcutConfiguration TranslateManager::ShortcutConfig() {
-  ShortcutConfiguration config;
-
-  // The android implementation does not offer a drop down (for space reasons),
-  // so we are more aggressive about showing the shortcut to never translate.
-  #if defined(OS_ANDROID)
-  config.never_translate_min_count = 1;
-  #else
-  config.never_translate_min_count = 3;
-  #endif  // defined(OS_ANDROID)
-
-  config.always_translate_min_count = 3;
-  return config;
+std::string TranslateManager::GetAutoTargetLanguage(
+    const std::string& original_language,
+    PrefService* prefs) {
+  std::string auto_target_lang;
+  scoped_ptr<TranslatePrefs> translate_prefs(
+      TranslateTabHelper::CreateTranslatePrefs(prefs));
+  if (translate_prefs->ShouldAutoTranslate(original_language,
+                                           &auto_target_lang)) {
+    // We need to confirm that the saved target language is still supported.
+    // Also, GetLanguageCode will take care of removing country code if any.
+    auto_target_lang =
+        TranslateDownloadManager::GetLanguageCode(auto_target_lang);
+    if (TranslateDownloadManager::IsSupportedLanguage(auto_target_lang))
+      return auto_target_lang;
+  }
+  return std::string();
 }

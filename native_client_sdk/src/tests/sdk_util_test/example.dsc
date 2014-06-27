@@ -13,10 +13,8 @@
       'DEPS': ['ppapi_simple', 'sdk_util', 'nacl_io'],
       # Order matters here: gtest has a "main" function that will be used if
       # referenced before ppapi.
-      'LIBS': ['gmock', 'ppapi_cpp', 'ppapi', 'gtest', 'pthread'],
-      'INCLUDES': ['$(NACL_SDK_ROOT)/include/gtest/internal'],
-      'CXXFLAGS': ['-Wno-sign-compare', '-Wno-unused-private-field'],
-      'CFLAGS_GCC': ['-Wno-unused-local-typedefs'],
+      'LIBS': ['ppapi_simple', 'sdk_util', 'nacl_io', 'gmock', 'ppapi_cpp', 'ppapi', 'gtest', 'pthread'],
+      'CXXFLAGS': ['-Wno-sign-compare']
     }
   ],
   'DATA': [

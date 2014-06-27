@@ -30,9 +30,9 @@ class MessagePumpLibeventTest : public testing::Test {
   }
 
   virtual void TearDown() OVERRIDE {
-    if (HANDLE_EINTR(close(pipefds_[0])) < 0)
+    if (IGNORE_EINTR(close(pipefds_[0])) < 0)
       PLOG(ERROR) << "close";
-    if (HANDLE_EINTR(close(pipefds_[1])) < 0)
+    if (IGNORE_EINTR(close(pipefds_[1])) < 0)
       PLOG(ERROR) << "close";
   }
 
@@ -78,7 +78,7 @@ TEST_F(MessagePumpLibeventTest, TestWatchingFromBadThread) {
   ASSERT_DEATH(io_loop()->WatchFileDescriptor(
       STDOUT_FILENO, false, MessageLoopForIO::WATCH_READ, &watcher, &delegate),
       "Check failed: "
-      "watch_file_descriptor_caller_checker_.CalledOnValidThread()");
+      "watch_file_descriptor_caller_checker_.CalledOnValidThread\\(\\)");
 }
 
 #endif  // GTEST_HAS_DEATH_TEST && !defined(NDEBUG)

@@ -8,11 +8,18 @@
 #include "base/observer_list.h"
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/guestview/guestview.h"
+#include "chrome/browser/guestview/webview/webview_find_helper.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "third_party/WebKit/public/web/WebFindOptions.h"
+
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
+#endif
 
 namespace extensions {
 class ScriptExecutor;
+class WebviewFindFunction;
 }  // namespace extensions
 
 // A WebViewGuest is a WebContentsObserver on the guest WebContents of a
@@ -27,10 +34,13 @@ class WebViewGuest : public GuestView,
                      public content::WebContentsObserver {
  public:
   WebViewGuest(content::WebContents* guest_web_contents,
-               const std::string& extension_id);
+               const std::string& embedder_extension_id);
 
   static WebViewGuest* From(int embedder_process_id, int instance_id);
   static WebViewGuest* FromWebContents(content::WebContents* contents);
+  // Returns guestview::kInstanceIDNone if |contents| does not correspond to a
+  // WebViewGuest.
+  static int GetViewInstanceId(content::WebContents* contents);
 
   // GuestView implementation.
   virtual void Attach(content::WebContents* embedder_web_contents,
@@ -41,12 +51,18 @@ class WebViewGuest : public GuestView,
 
   // GuestDelegate implementation.
   virtual void AddMessageToConsole(int32 level,
-                                   const string16& message,
+                                   const base::string16& message,
                                    int32 line_no,
-                                   const string16& source_id) OVERRIDE;
+                                   const base::string16& source_id) OVERRIDE;
   virtual void LoadProgressed(double progress) OVERRIDE;
   virtual void Close() OVERRIDE;
+  virtual void DidAttach() OVERRIDE;
   virtual void EmbedderDestroyed() OVERRIDE;
+  virtual void FindReply(int request_id,
+                         int number_of_matches,
+                         const gfx::Rect& selection_rect,
+                         int active_match_ordinal,
+                         bool final_update) OVERRIDE;
   virtual void GuestProcessGone(base::TerminationStatus status) OVERRIDE;
   virtual bool HandleKeyboardEvent(
       const content::NativeWebKeyboardEvent& event) OVERRIDE;
@@ -70,6 +86,20 @@ class WebViewGuest : public GuestView,
   virtual void Observe(int type,
                        const content::NotificationSource& source,
                        const content::NotificationDetails& details) OVERRIDE;
+
+  // Set the zoom factor.
+  virtual void SetZoom(double zoom_factor) OVERRIDE;
+
+  // Returns the current zoom factor.
+  double GetZoom();
+
+  // Begin or continue a find request.
+  void Find(const base::string16& search_text,
+            const blink::WebFindOptions& options,
+            scoped_refptr<extensions::WebviewFindFunction> find_function);
+
+  // Conclude a find request to clear highlighting.
+  void StopFinding(content::StopFindAction);
 
   // If possible, navigate the guest to |relative_index| entries away from the
   // current navigation entry.
@@ -122,21 +152,35 @@ class WebViewGuest : public GuestView,
  private:
   virtual ~WebViewGuest();
 
+  // A map to store the callback for a request keyed by the request's id.
+  struct PermissionResponseInfo {
+    PermissionResponseCallback callback;
+    BrowserPluginPermissionType permission_type;
+    bool allowed_by_default;
+    PermissionResponseInfo();
+    PermissionResponseInfo(const PermissionResponseCallback& callback,
+                           BrowserPluginPermissionType permission_type,
+                           bool allowed_by_default);
+    ~PermissionResponseInfo();
+  };
+
+  static void RecordUserInitiatedUMA(const PermissionResponseInfo& info,
+                                     bool allow);
   // WebContentsObserver implementation.
   virtual void DidCommitProvisionalLoadForFrame(
       int64 frame_id,
-      const string16& frame_unique_name,
+      const base::string16& frame_unique_name,
       bool is_main_frame,
       const GURL& url,
       content::PageTransition transition_type,
       content::RenderViewHost* render_view_host) OVERRIDE;
   virtual void DidFailProvisionalLoad(
       int64 frame_id,
-      const string16& frame_unique_name,
+      const base::string16& frame_unique_name,
       bool is_main_frame,
       const GURL& validated_url,
       int error_code,
-      const string16& error_description,
+      const base::string16& error_description,
       content::RenderViewHost* render_view_host) OVERRIDE;
   virtual void DidStartProvisionalLoadForFrame(
       int64 frame_id,
@@ -146,10 +190,14 @@ class WebViewGuest : public GuestView,
       bool is_error_page,
       bool is_iframe_srcdoc,
       content::RenderViewHost* render_view_host) OVERRIDE;
+  virtual void DocumentLoadedInFrame(
+      int64 frame_id,
+      content::RenderViewHost* render_view_host) OVERRIDE;
   virtual void DidStopLoading(
       content::RenderViewHost* render_view_host) OVERRIDE;
   virtual void WebContentsDestroyed(
       content::WebContents* web_contents) OVERRIDE;
+  virtual void UserAgentOverrideSet(const std::string& user_agent) OVERRIDE;
 
   // Called after the load handler is called in the guest's main frame.
   void LoadHandlerCalled();
@@ -159,11 +207,17 @@ class WebViewGuest : public GuestView,
                     const GURL& new_url,
                     bool is_top_level);
 
-  static bool AllowChromeExtensionURLs();
-
   void AddWebViewToExtensionRendererState();
   static void RemoveWebViewFromExtensionRendererState(
       content::WebContents* web_contents);
+
+#if defined(OS_CHROMEOS)
+  // Notification of a change in the state of an accessibility setting.
+  void OnAccessibilityStatusChanged(
+    const chromeos::AccessibilityStatusEventDetails& details);
+#endif
+
+  void InjectChromeVoxIfNeeded(content::RenderViewHost* render_view_host);
 
   ObserverList<extensions::TabHelper::ScriptExecutionObserver>
       script_observers_;
@@ -175,20 +229,36 @@ class WebViewGuest : public GuestView,
   // We only need the ids to be unique for a given WebViewGuest.
   int next_permission_request_id_;
 
-  // A map to store the callback for a request keyed by the request's id.
-  struct PermissionResponseInfo {
-    PermissionResponseCallback callback;
-    bool allowed_by_default;
-    PermissionResponseInfo();
-    PermissionResponseInfo(const PermissionResponseCallback& callback,
-                           bool allowed_by_default);
-    ~PermissionResponseInfo();
-  };
   typedef std::map<int, PermissionResponseInfo> RequestMap;
   RequestMap pending_permission_requests_;
 
   // True if the user agent is overridden.
   bool is_overriding_user_agent_;
+
+  // Indicates that the page needs to be reloaded once it has been attached to
+  // an embedder.
+  bool pending_reload_on_attachment_;
+
+  // Main frame ID of last committed page.
+  int64 main_frame_id_;
+
+  // Set to |true| if ChromeVox was already injected in main frame.
+  bool chromevox_injected_;
+
+  // Stores the current zoom factor.
+  double current_zoom_factor_;
+
+  // Handles find requests and replies for the webview find API.
+  WebviewFindHelper find_helper_;
+
+  friend void WebviewFindHelper::DispatchFindUpdateEvent(bool canceled,
+                                                         bool final_update);
+
+#if defined(OS_CHROMEOS)
+  // Subscription to receive notifications on changes to a11y settings.
+  scoped_ptr<chromeos::AccessibilityStatusSubscription>
+      accessibility_subscription_;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(WebViewGuest);
 };

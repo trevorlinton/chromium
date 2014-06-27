@@ -4,9 +4,11 @@
 
 #include "ash/wm/gestures/overview_gesture_handler.h"
 
+#include "ash/metrics/user_metrics_recorder.h"
 #include "ash/shell.h"
-#include "ash/shell_delegate.h"
+#include "ash/wm/coordinate_conversion.h"
 #include "ash/wm/overview/window_selector_controller.h"
+#include "ui/aura/window.h"
 #include "ui/events/event.h"
 #include "ui/events/event_constants.h"
 #include "ui/gfx/rect.h"
@@ -72,7 +74,7 @@ bool OverviewGestureHandler::ProcessScrollEvent(const ui::ScrollEvent& event) {
 
   // Reset scroll amount on toggling.
   scroll_x_ = scroll_y_ = 0;
-  shell->delegate()->RecordUserMetricsAction(UMA_TOUCHPAD_GESTURE_OVERVIEW);
+  shell->metrics()->RecordUserMetricsAction(UMA_TOUCHPAD_GESTURE_OVERVIEW);
   shell->window_selector_controller()->ToggleOverview();
   return true;
 }
@@ -82,9 +84,12 @@ bool OverviewGestureHandler::ProcessGestureEvent(
   // Detect at the beginning of any gesture whether it begins on the top bezel.
   if (event.type() == ui::ET_GESTURE_BEGIN &&
       event.details().touch_points() == 1) {
+    gfx::Point point_in_screen(event.location());
+    aura::Window* target = static_cast<aura::Window*>(event.target());
+    wm::ConvertPointToScreen(target, &point_in_screen);
     in_top_bezel_gesture_ = !Shell::GetScreen()->GetDisplayNearestPoint(
-        event.location()).bounds().y() + kTopBezelExtraPixels >
-            event.location().y();
+        point_in_screen).bounds().y() + kTopBezelExtraPixels >
+            point_in_screen.y();
     return false;
   }
 
@@ -96,7 +101,7 @@ bool OverviewGestureHandler::ProcessGestureEvent(
   }
 
   Shell* shell = Shell::GetInstance();
-  shell->delegate()->RecordUserMetricsAction(UMA_GESTURE_OVERVIEW);
+  shell->metrics()->RecordUserMetricsAction(UMA_GESTURE_OVERVIEW);
   shell->window_selector_controller()->ToggleOverview();
   return true;
 }

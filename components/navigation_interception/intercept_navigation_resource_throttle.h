@@ -14,7 +14,7 @@
 class GURL;
 
 namespace content {
-class RenderViewHost;
+class WebContents;
 }
 
 namespace net {
@@ -30,7 +30,7 @@ class NavigationParams;
 class InterceptNavigationResourceThrottle : public content::ResourceThrottle {
  public:
   typedef base::Callback<bool(
-          content::RenderViewHost* /* source */,
+          content::WebContents* /* source */,
           const NavigationParams& /* navigation_params */)>
       CheckOnUIThreadCallback;
 
@@ -42,6 +42,7 @@ class InterceptNavigationResourceThrottle : public content::ResourceThrottle {
   // content::ResourceThrottle implementation:
   virtual void WillStartRequest(bool* defer) OVERRIDE;
   virtual void WillRedirectRequest(const GURL& new_url, bool* defer) OVERRIDE;
+  virtual const char* GetNameForLogging() const OVERRIDE;
 
  private:
   std::string GetMethodAfterRedirect();

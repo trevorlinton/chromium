@@ -6,8 +6,12 @@
 
 #include "base/command_line.h"
 #include "base/path_service.h"
+#include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "content/public/browser/devtools_http_handler.h"
 #include "content/public/browser/devtools_manager.h"
+#include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
 #include "content/public/common/content_client.h"
@@ -22,7 +26,7 @@
 namespace content {
 
 // DevTools frontend path for inspector LayoutTests.
-GURL GetDevToolsPathAsURL() {
+GURL GetDevToolsPathAsURL(const std::string& settings) {
   base::FilePath dir_exe;
   if (!PathService::Get(base::DIR_EXE, &dir_exe)) {
     NOTREACHED();
@@ -36,12 +40,28 @@ GURL GetDevToolsPathAsURL() {
 #endif
   base::FilePath dev_tools_path = dir_exe.AppendASCII(
       "resources/inspector/devtools.html");
-  return net::FilePathToFileURL(dev_tools_path);
+
+  GURL result = net::FilePathToFileURL(dev_tools_path);
+  if (!settings.empty())
+      result = GURL(base::StringPrintf("%s?settings=%s",
+                                       result.spec().c_str(),
+                                       settings.c_str()));
+  return result;
 }
 
 // static
 ShellDevToolsFrontend* ShellDevToolsFrontend::Show(
     WebContents* inspected_contents) {
+  return ShellDevToolsFrontend::Show(inspected_contents, "");
+}
+
+// static
+ShellDevToolsFrontend* ShellDevToolsFrontend::Show(
+    WebContents* inspected_contents,
+    const std::string& settings) {
+  scoped_refptr<DevToolsAgentHost> agent(
+      DevToolsAgentHost::GetOrCreateFor(
+          inspected_contents->GetRenderViewHost()));
   Shell* shell = Shell::CreateNewWindow(inspected_contents->GetBrowserContext(),
                                         GURL(),
                                         NULL,
@@ -49,18 +69,14 @@ ShellDevToolsFrontend* ShellDevToolsFrontend::Show(
                                         gfx::Size());
   ShellDevToolsFrontend* devtools_frontend = new ShellDevToolsFrontend(
       shell,
-      DevToolsAgentHost::GetOrCreateFor(inspected_contents->GetRenderViewHost())
-          .get());
+      agent.get());
 
   ShellDevToolsDelegate* delegate = ShellContentBrowserClient::Get()->
       shell_browser_main_parts()->devtools_delegate();
   if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kDumpRenderTree))
-    shell->LoadURL(GetDevToolsPathAsURL());
+    shell->LoadURL(GetDevToolsPathAsURL(settings));
   else
     shell->LoadURL(delegate->devtools_http_handler()->GetFrontendURL());
-
-  devtools_frontend->Activate();
-  devtools_frontend->Focus();
 
   return devtools_frontend;
 }
@@ -71,6 +87,10 @@ void ShellDevToolsFrontend::Activate() {
 
 void ShellDevToolsFrontend::Focus() {
   web_contents()->GetView()->Focus();
+}
+
+void ShellDevToolsFrontend::InspectElementAt(int x, int y) {
+  agent_host_->InspectElement(x, y);
 }
 
 void ShellDevToolsFrontend::Close() {
@@ -96,6 +116,11 @@ void ShellDevToolsFrontend::RenderViewCreated(
   DevToolsManager* manager = DevToolsManager::GetInstance();
   manager->RegisterDevToolsClientHostFor(agent_host_.get(),
                                          frontend_host_.get());
+}
+
+void ShellDevToolsFrontend::DocumentOnLoadCompletedInMainFrame(int32 page_id) {
+  web_contents()->GetMainFrame()->ExecuteJavaScript(
+      base::ASCIIToUTF16("InspectorFrontendAPI.setUseSoftMenu(true);"));
 }
 
 void ShellDevToolsFrontend::WebContentsDestroyed(WebContents* web_contents) {

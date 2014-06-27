@@ -96,15 +96,15 @@ void PDFTabHelper::OnUpdateContentRestrictions(int content_restrictions) {
 void PDFTabHelper::OnModalPromptForPasswordClosed(
     IPC::Message* reply_message,
     bool success,
-    const string16& actual_value) {
+    const base::string16& actual_value) {
   ChromeViewHostMsg_PDFModalPromptForPassword::WriteReplyParams(
-      reply_message, UTF16ToUTF8(actual_value));
+      reply_message, base::UTF16ToUTF8(actual_value));
   Send(reply_message);
 }
 
 void PDFTabHelper::OnModalPromptForPassword(const std::string& prompt,
                                             IPC::Message* reply_message) {
-  base::Callback<void(bool, const string16&)> callback =
+  base::Callback<void(bool, const base::string16&)> callback =
       base::Bind(&PDFTabHelper::OnModalPromptForPasswordClosed,
                  base::Unretained(this), reply_message);
 #if !defined(TOOLKIT_GTK)

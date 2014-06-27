@@ -16,11 +16,12 @@
 #include "base/mac/launch_services_util.h"
 #include "base/mac/mac_util.h"
 #include "base/mac/scoped_cftyperef.h"
+#include "base/mac/scoped_nsobject.h"
 #include "base/path_service.h"
 #include "base/process/process_handle.h"
+#include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
-#include "base/strings/string16.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #import "chrome/browser/mac/dock.h"
@@ -30,15 +31,17 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/chrome_version_info.h"
-#include "chrome/common/extensions/extension.h"
 #import "chrome/common/mac/app_mode_common.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/common/extension.h"
+#include "grit/chrome_unscaled_resources.h"
 #include "grit/chromium_strings.h"
 #import "skia/ext/skia_utils_mac.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/l10n/l10n_util.h"
 #import "ui/base/l10n/l10n_util_mac.h"
+#include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image_family.h"
 
 namespace {
@@ -137,12 +140,12 @@ base::FilePath GetWritableApplicationsDirectory() {
   base::FilePath path;
   if (base::mac::GetUserDirectory(NSApplicationDirectory, &path)) {
     if (!base::DirectoryExists(path)) {
-      if (!file_util::CreateDirectory(path))
+      if (!base::CreateDirectory(path))
         return base::FilePath();
 
       // Create a zero-byte ".localized" file to inherit localizations from OSX
       // for folders that have special meaning.
-      file_util::WriteFile(path.Append(".localized"), NULL, 0);
+      base::WriteFile(path.Append(".localized"), NULL, 0);
     }
     return base::PathIsWritable(path) ? path : base::FilePath();
   }
@@ -249,6 +252,51 @@ base::FilePath GetLocalizableAppShortcutsSubdirName() {
   }
 }
 
+// Creates a canvas the same size as |overlay|, copies the appropriate
+// representation from |backgound| into it (according to Cocoa), then draws
+// |overlay| over it using NSCompositeSourceOver.
+NSImageRep* OverlayImageRep(NSImage* background, NSImageRep* overlay) {
+  DCHECK(background);
+  NSInteger dimension = [overlay pixelsWide];
+  DCHECK_EQ(dimension, [overlay pixelsHigh]);
+  base::scoped_nsobject<NSBitmapImageRep> canvas([[NSBitmapImageRep alloc]
+      initWithBitmapDataPlanes:NULL
+                    pixelsWide:dimension
+                    pixelsHigh:dimension
+                 bitsPerSample:8
+               samplesPerPixel:4
+                      hasAlpha:YES
+                      isPlanar:NO
+                colorSpaceName:NSCalibratedRGBColorSpace
+                   bytesPerRow:0
+                  bitsPerPixel:0]);
+
+  // There isn't a colorspace name constant for sRGB, so retag.
+  NSBitmapImageRep* srgb_canvas = [canvas
+      bitmapImageRepByRetaggingWithColorSpace:[NSColorSpace sRGBColorSpace]];
+  canvas.reset([srgb_canvas retain]);
+
+  // Communicate the DIP scale (1.0). TODO(tapted): Investigate HiDPI.
+  [canvas setSize:NSMakeSize(dimension, dimension)];
+
+  NSGraphicsContext* drawing_context =
+      [NSGraphicsContext graphicsContextWithBitmapImageRep:canvas];
+  [NSGraphicsContext saveGraphicsState];
+  [NSGraphicsContext setCurrentContext:drawing_context];
+  [background drawInRect:NSMakeRect(0, 0, dimension, dimension)
+                fromRect:NSZeroRect
+               operation:NSCompositeCopy
+                fraction:1.0];
+  [overlay drawInRect:NSMakeRect(0, 0, dimension, dimension)
+             fromRect:NSZeroRect
+            operation:NSCompositeSourceOver
+             fraction:1.0
+       respectFlipped:NO
+                hints:0];
+  [NSGraphicsContext restoreGraphicsState];
+  return canvas.autorelease();
+}
+
 // Adds a localized strings file for the Chrome Apps directory using the current
 // locale. OSX will use this for the display name.
 // + Chrome Apps.localized (|apps_directory|)
@@ -258,11 +306,11 @@ base::FilePath GetLocalizableAppShortcutsSubdirName() {
 void UpdateAppShortcutsSubdirLocalizedName(
     const base::FilePath& apps_directory) {
   base::FilePath localized = apps_directory.Append(".localized");
-  if (!file_util::CreateDirectory(localized))
+  if (!base::CreateDirectory(localized))
     return;
 
   base::FilePath directory_name = apps_directory.BaseName().RemoveExtension();
-  string16 localized_name = web_app::GetAppShortcutsSubdirName();
+  base::string16 localized_name = ShellIntegration::GetAppShortcutsSubdirName();
   NSDictionary* strings_dict = @{
       base::mac::FilePathToNSString(directory_name) :
           base::SysUTF16ToNSString(localized_name)
@@ -275,13 +323,38 @@ void UpdateAppShortcutsSubdirLocalizedName(
       localized.Append(locale + ".strings"));
   [strings_dict writeToFile:strings_path
                  atomically:YES];
+
+  // Brand the folder with an embossed app launcher logo.
+  const int kBrandResourceIds[] = {
+    IDR_APPS_FOLDER_OVERLAY_16,
+    IDR_APPS_FOLDER_OVERLAY_32,
+    IDR_APPS_FOLDER_OVERLAY_128,
+    IDR_APPS_FOLDER_OVERLAY_512,
+  };
+  ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+  NSImage* base_image = [NSImage imageNamed:NSImageNameFolder];
+  base::scoped_nsobject<NSImage> folder_icon_image([[NSImage alloc] init]);
+  for (size_t i = 0; i < arraysize(kBrandResourceIds); ++i) {
+    gfx::Image& image_rep = rb.GetNativeImageNamed(kBrandResourceIds[i]);
+    NSArray* image_reps = [image_rep.AsNSImage() representations];
+    DCHECK_EQ(1u, [image_reps count]);
+    NSImageRep* with_overlay = OverlayImageRep(base_image,
+                                               [image_reps objectAtIndex:0]);
+    DCHECK(with_overlay);
+    if (with_overlay)
+      [folder_icon_image addRepresentation:with_overlay];
+  }
+  [[NSWorkspace sharedWorkspace]
+      setIcon:folder_icon_image
+      forFile:base::mac::FilePathToNSString(apps_directory)
+      options:0];
 }
 
 void DeletePathAndParentIfEmpty(const base::FilePath& app_path) {
   DCHECK(!app_path.empty());
   base::DeleteFile(app_path, true);
   base::FilePath apps_folder = app_path.DirName();
-  if (file_util::IsDirectoryEmpty(apps_folder))
+  if (base::IsDirectoryEmpty(apps_folder))
     base::DeleteFile(apps_folder, false);
 }
 
@@ -367,7 +440,7 @@ void ShowCreateChromeAppShortcutsDialog(gfx::NativeWindow /*parent_window*/,
   // Normally we would show a dialog, but since we always create the app
   // shortcut in /Applications there are no options for the user to choose.
   web_app::UpdateShortcutInfoAndIconForApp(
-      *app, profile,
+      app, profile,
       base::Bind(&CreateShortcutsAndRunCallback, close_callback));
 }
 
@@ -437,7 +510,7 @@ size_t WebAppShortcutCreator::CreateShortcutsIn(
   for (std::vector<base::FilePath>::const_iterator it = folders.begin();
        it != folders.end(); ++it) {
     const base::FilePath& dst_path = *it;
-    if (!file_util::CreateDirectory(dst_path)) {
+    if (!base::CreateDirectory(dst_path)) {
       LOG(ERROR) << "Creating directory " << dst_path.value() << " failed.";
       return succeeded;
     }
@@ -623,7 +696,7 @@ bool WebAppShortcutCreator::UpdateDisplayName(
   // OSX searches for the best language in the order of preferred languages.
   // Since we only have one localization directory, it will choose this one.
   base::FilePath localized_dir = GetResourcesPath(app_path).Append("en.lproj");
-  if (!file_util::CreateDirectory(localized_dir))
+  if (!base::CreateDirectory(localized_dir))
     return false;
 
   NSString* bundle_name = base::SysUTF16ToNSString(info_.title);
@@ -670,7 +743,7 @@ bool WebAppShortcutCreator::UpdateIcon(const base::FilePath& app_path) const {
     return false;
 
   base::FilePath resources_path = GetResourcesPath(app_path);
-  if (!file_util::CreateDirectory(resources_path))
+  if (!base::CreateDirectory(resources_path))
     return false;
 
   return icon_family.WriteDataToFile(resources_path.Append("app.icns"));
@@ -704,8 +777,8 @@ base::FilePath WebAppShortcutCreator::GetAppBundleById(
 std::string WebAppShortcutCreator::GetBundleIdentifier() const {
   // Replace spaces in the profile path with hyphen.
   std::string normalized_profile_path;
-  ReplaceChars(info_.profile_path.BaseName().value(),
-               " ", "-", &normalized_profile_path);
+  base::ReplaceChars(info_.profile_path.BaseName().value(),
+                     " ", "-", &normalized_profile_path);
 
   // This matches APP_MODE_APP_BUNDLE_ID in chrome/chrome.gyp.
   std::string bundle_id =
@@ -766,7 +839,7 @@ void DeletePlatformShortcuts(
 
 void UpdatePlatformShortcuts(
     const base::FilePath& app_data_path,
-    const string16& old_app_title,
+    const base::string16& old_app_title,
     const ShellIntegration::ShortcutInfo& shortcut_info) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::FILE));
   WebAppShortcutCreator shortcut_creator(app_data_path, shortcut_info);

@@ -449,7 +449,7 @@ void FaviconHandler::UpdateFaviconMappingAndFetch(
     const GURL& icon_url,
     chrome::IconType icon_type,
     const FaviconService::FaviconResultsCallback& callback,
-    CancelableTaskTracker* tracker) {
+    base::CancelableTaskTracker* tracker) {
   // TODO(pkotwicz): pass in all of |image_urls_| to
   // UpdateFaviconMappingsAndFetch().
   std::vector<GURL> icon_urls;
@@ -462,7 +462,7 @@ void FaviconHandler::GetFavicon(
     const GURL& icon_url,
     chrome::IconType icon_type,
     const FaviconService::FaviconResultsCallback& callback,
-    CancelableTaskTracker* tracker) {
+    base::CancelableTaskTracker* tracker) {
   GetFaviconService()->GetFavicon(
       icon_url, icon_type, preferred_icon_size(), callback, tracker);
 }
@@ -471,10 +471,10 @@ void FaviconHandler::GetFaviconForURL(
     const GURL& page_url,
     int icon_types,
     const FaviconService::FaviconResultsCallback& callback,
-    CancelableTaskTracker* tracker) {
+    base::CancelableTaskTracker* tracker) {
   GetFaviconService()->GetFaviconForURL(
-      FaviconService::FaviconForURLParams(
-          profile_, page_url, icon_types, preferred_icon_size()),
+      FaviconService::FaviconForURLParams(page_url, icon_types,
+                                          preferred_icon_size()),
       callback,
       tracker);
 }

@@ -22,18 +22,19 @@ class LocalNTPTest : public InProcessBrowserTest,
 
  protected:
   virtual void SetUpInProcessBrowserTestFixture() OVERRIDE {
-    chrome::EnableInstantExtendedAPIForTesting();
     ASSERT_TRUE(https_test_server().Start());
     GURL instant_url = https_test_server().GetURL(
+        "files/instant_extended.html?strk=1&");
+    GURL ntp_url = https_test_server().GetURL(
         "files/local_ntp_browsertest.html?strk=1&");
-    InstantTestBase::Init(instant_url, false);
+    InstantTestBase::Init(instant_url, ntp_url, false);
   }
 };
 
 // Flaky: crbug.com/267117
 IN_PROC_BROWSER_TEST_F(LocalNTPTest, DISABLED_LocalNTPJavascriptTest) {
   ASSERT_NO_FATAL_FAILURE(SetupInstant(browser()));
-  FocusOmniboxAndWaitForInstantNTPSupport();
+  FocusOmnibox();
 
   ui_test_utils::NavigateToURLWithDisposition(
       browser(),
@@ -49,13 +50,9 @@ IN_PROC_BROWSER_TEST_F(LocalNTPTest, DISABLED_LocalNTPJavascriptTest) {
   EXPECT_TRUE(success);
 }
 
-// Flaky on Linux Tests bot.
-#if defined(OS_LINUX)
-#define MAYBE_NTPRespectsBrowserLanguageSetting DISABLED_NTPRespectsBrowserLanguageSetting
-#else
-#define MAYBE_NTPRespectsBrowserLanguageSetting NTPRespectsBrowserLanguageSetting
-#endif
-IN_PROC_BROWSER_TEST_F(LocalNTPTest, MAYBE_NTPRespectsBrowserLanguageSetting) {
+// Flaky.
+IN_PROC_BROWSER_TEST_F(LocalNTPTest,
+                       DISABLED_NTPRespectsBrowserLanguageSetting) {
   // Make sure the default language is not French.
   std::string default_locale = g_browser_process->GetApplicationLocale();
   EXPECT_NE("fr", default_locale);
@@ -70,7 +67,7 @@ IN_PROC_BROWSER_TEST_F(LocalNTPTest, MAYBE_NTPRespectsBrowserLanguageSetting) {
 
   // Setup Instant.
   ASSERT_NO_FATAL_FAILURE(SetupInstant(browser()));
-  FocusOmniboxAndWaitForInstantNTPSupport();
+  FocusOmnibox();
 
   // Open a new tab.
   ui_test_utils::NavigateToURLWithDisposition(
@@ -83,5 +80,5 @@ IN_PROC_BROWSER_TEST_F(LocalNTPTest, MAYBE_NTPRespectsBrowserLanguageSetting) {
   // Verify that the NTP is in French.
   content::WebContents* active_tab =
       browser()->tab_strip_model()->GetActiveWebContents();
-  EXPECT_EQ(ASCIIToUTF16("Nouvel onglet"), active_tab->GetTitle());
+  EXPECT_EQ(base::ASCIIToUTF16("Nouvel onglet"), active_tab->GetTitle());
 }

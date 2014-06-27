@@ -34,9 +34,6 @@ class PowerButtonObserver : public content::NotificationObserver,
   virtual void PowerButtonEventReceived(
       bool down, const base::TimeTicks& timestamp) OVERRIDE;
 
-  // SessionManagerClient::Observer implementation:
-  virtual void LockScreen() OVERRIDE;
-
   content::NotificationRegistrar registrar_;
 
   DISALLOW_COPY_AND_ASSIGN(PowerButtonObserver);

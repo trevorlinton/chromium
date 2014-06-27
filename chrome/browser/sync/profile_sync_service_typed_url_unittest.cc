@@ -22,12 +22,14 @@
 #include "chrome/browser/history/history_service.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/history/history_types.h"
+#include "chrome/browser/invalidation/fake_invalidation_service.h"
 #include "chrome/browser/invalidation/invalidation_service_factory.h"
+#include "chrome/browser/signin/fake_profile_oauth2_token_service.h"
+#include "chrome/browser/signin/fake_profile_oauth2_token_service_builder.h"
+#include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_manager.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
-#include "chrome/browser/signin/token_service_factory.h"
 #include "chrome/browser/sync/abstract_profile_sync_service_test.h"
-#include "chrome/browser/sync/glue/data_type_error_handler_mock.h"
 #include "chrome/browser/sync/glue/sync_backend_host.h"
 #include "chrome/browser/sync/glue/typed_url_change_processor.h"
 #include "chrome/browser/sync/glue/typed_url_data_type_controller.h"
@@ -39,7 +41,8 @@
 #include "chrome/browser/sync/profile_sync_test_util.h"
 #include "chrome/browser/sync/test_profile_sync_service.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/browser_context_keyed_service/refcounted_browser_context_keyed_service.h"
+#include "components/keyed_service/content/refcounted_browser_context_keyed_service.h"
+#include "components/sync_driver/data_type_error_handler_mock.h"
 #include "content/public/browser/notification_service.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "sync/internal_api/public/read_node.h"
@@ -50,8 +53,8 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "url/gurl.h"
 
-using base::Time;
 using base::Thread;
+using base::Time;
 using browser_sync::TypedUrlChangeProcessor;
 using browser_sync::TypedUrlDataTypeController;
 using browser_sync::TypedUrlModelAssociator;
@@ -59,10 +62,10 @@ using history::HistoryBackend;
 using history::URLID;
 using history::URLRow;
 using syncer::syncable::WriteTransaction;
-using testing::_;
 using testing::DoAll;
 using testing::Return;
 using testing::SetArgumentPointee;
+using testing::_;
 
 namespace {
 // Visits with this timestamp are treated as expired.
@@ -70,7 +73,7 @@ static const int EXPIRED_VISIT = -1;
 
 class HistoryBackendMock : public HistoryBackend {
  public:
-  HistoryBackendMock() : HistoryBackend(base::FilePath(), 0, NULL, NULL) {}
+  HistoryBackendMock() : HistoryBackend(base::FilePath(), NULL, NULL) {}
   virtual bool IsExpiredVisitTime(const base::Time& time) OVERRIDE {
     return time.ToInternalValue() == EXPIRED_VISIT;
   }
@@ -84,7 +87,8 @@ class HistoryBackendMock : public HistoryBackend {
                                history::VisitSource visit_source));
   MOCK_METHOD1(RemoveVisits, bool(const history::VisitVector& visits));
   MOCK_METHOD2(GetURL, bool(const GURL& url_id, history::URLRow* url_row));
-  MOCK_METHOD2(SetPageTitle, void(const GURL& url, const string16& title));
+  MOCK_METHOD2(SetPageTitle, void(const GURL& url,
+                                  const base::string16& title));
   MOCK_METHOD1(DeleteURL, void(const GURL& url));
 
  private:
@@ -106,8 +110,7 @@ class HistoryServiceMock : public HistoryService {
   virtual ~HistoryServiceMock() {}
 };
 
-BrowserContextKeyedService* BuildHistoryService(
-    content::BrowserContext* profile) {
+KeyedService* BuildHistoryService(content::BrowserContext* profile) {
   return new HistoryServiceMock(static_cast<Profile*>(profile));
 }
 
@@ -185,10 +188,10 @@ class ProfileSyncServiceTypedUrlTest : public AbstractProfileSyncServiceTest {
     AbstractProfileSyncServiceTest::SetUp();
     TestingProfile::Builder builder;
     builder.AddTestingFactory(ProfileOAuth2TokenServiceFactory::GetInstance(),
-                              FakeOAuth2TokenService::BuildTokenService);
+                              BuildAutoIssuingFakeProfileOAuth2TokenService);
     profile_ = builder.Build().Pass();
-    invalidation::InvalidationServiceFactory::GetInstance()->
-        SetBuildOnlyFakeInvalidatorsForTest(true);
+    invalidation::InvalidationServiceFactory::GetInstance()->SetTestingFactory(
+        profile_.get(), invalidation::FakeInvalidationService::Build);
     history_backend_ = new HistoryBackendMock();
     history_service_ = static_cast<HistoryServiceMock*>(
         HistoryServiceFactory::GetInstance()->SetTestingFactoryAndUse(
@@ -213,14 +216,8 @@ class ProfileSyncServiceTypedUrlTest : public AbstractProfileSyncServiceTest {
       SigninManagerBase* signin =
           SigninManagerFactory::GetForProfile(profile_.get());
       signin->SetAuthenticatedUsername("test");
-      token_service_ = static_cast<TokenService*>(
-          TokenServiceFactory::GetInstance()->SetTestingFactoryAndUse(
-              profile_.get(), BuildTokenService));
-      sync_service_ = static_cast<TestProfileSyncService*>(
-          ProfileSyncServiceFactory::GetInstance()->SetTestingFactoryAndUse(
-              profile_.get(),
-              &TestProfileSyncService::BuildAutoStartAsyncInit));
-      sync_service_->set_backend_init_callback(callback);
+      sync_service_ = TestProfileSyncService::BuildAutoStartAsyncInit(
+          profile_.get(), callback);
       ProfileSyncComponentsFactoryMock* components =
           sync_service_->components_factory_mock();
       TypedUrlDataTypeController* data_type_controller =
@@ -268,7 +265,7 @@ class ProfileSyncServiceTypedUrlTest : public AbstractProfileSyncServiceTest {
           child_node.GetTypedUrlSpecifics());
       history::URLRow new_url(GURL(typed_url.url()));
 
-      new_url.set_title(UTF8ToUTF16(typed_url.title()));
+      new_url.set_title(base::UTF8ToUTF16(typed_url.title()));
       DCHECK(typed_url.visits_size());
       DCHECK_EQ(typed_url.visits_size(), typed_url.visit_transitions_size());
       new_url.set_last_visit(base::Time::FromInternalValue(
@@ -307,7 +304,7 @@ class ProfileSyncServiceTypedUrlTest : public AbstractProfileSyncServiceTest {
     static int unique_url_id = 0;
     GURL gurl(url);
     URLRow history_url(gurl, ++unique_url_id);
-    history_url.set_title(UTF8ToUTF16(title));
+    history_url.set_title(base::UTF8ToUTF16(title));
     history_url.set_typed_count(typed_count);
     history_url.set_last_visit(
         base::Time::FromInternalValue(last_visit));

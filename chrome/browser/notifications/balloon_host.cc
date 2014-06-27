@@ -5,7 +5,7 @@
 #include "chrome/browser/notifications/balloon_host.h"
 
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/extensions/extension_web_contents_observer.h"
+#include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
 #include "chrome/browser/notifications/balloon.h"
 #include "chrome/browser/notifications/balloon_collection_impl.h"
 #include "chrome/browser/notifications/notification.h"
@@ -16,7 +16,6 @@
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/webui/chrome_web_ui_controller_factory.h"
-#include "chrome/common/extensions/extension_messages.h"
 #include "chrome/common/render_messages.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/navigation_controller.h"
@@ -29,6 +28,7 @@
 #include "content/public/common/bindings_policy.h"
 #include "content/public/common/renderer_preferences.h"
 #include "extensions/browser/view_type_utils.h"
+#include "extensions/common/extension_messages.h"
 #include "ipc/ipc_message.h"
 
 using content::SiteInstance;
@@ -61,7 +61,7 @@ content::WebContents* BalloonHost::GetAssociatedWebContents() const {
   return NULL;
 }
 
-const string16& BalloonHost::GetSource() const {
+const base::string16& BalloonHost::GetSource() const {
   return balloon_->notification().display_source();
 }
 
@@ -142,7 +142,7 @@ void BalloonHost::Init() {
   extensions::SetViewType(
       web_contents_.get(), extensions::VIEW_TYPE_NOTIFICATION);
   web_contents_->SetDelegate(this);
-  extensions::ExtensionWebContentsObserver::CreateForWebContents(
+  extensions::ChromeExtensionWebContentsObserver::CreateForWebContents(
       web_contents_.get());
   Observe(web_contents_.get());
   renderer_preferences_util::UpdateFromSystemSettings(
@@ -178,15 +178,4 @@ void BalloonHost::NotifyDisconnect() {
 
 bool BalloonHost::IsRenderViewReady() const {
   return should_notify_on_disconnect_;
-}
-
-bool BalloonHost::CanLoadDataURLsInWebUI() const {
-#if defined(OS_CHROMEOS)
-  // Chrome OS uses data URLs in WebUI BalloonHosts.  We normally do not allow
-  // data URLs in WebUI renderers, but normal pages cannot target BalloonHosts,
-  // so this should be safe.
-  return true;
-#else
-  return false;
-#endif
 }

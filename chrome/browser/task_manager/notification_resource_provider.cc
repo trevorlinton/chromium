@@ -28,8 +28,8 @@ class NotificationResource : public Resource {
   virtual ~NotificationResource();
 
   // Resource interface
-  virtual string16 GetTitle() const OVERRIDE;
-  virtual string16 GetProfileName() const OVERRIDE;
+  virtual base::string16 GetTitle() const OVERRIDE;
+  virtual base::string16 GetProfileName() const OVERRIDE;
   virtual gfx::ImageSkia GetIcon() const OVERRIDE;
   virtual base::ProcessHandle GetProcess() const OVERRIDE;
   virtual int GetUniqueChildProcessId() const OVERRIDE;
@@ -50,7 +50,7 @@ class NotificationResource : public Resource {
   base::ProcessHandle process_handle_;
   int pid_;
   int unique_process_id_;
-  string16 title_;
+  base::string16 title_;
 
   DISALLOW_COPY_AND_ASSIGN(NotificationResource);
 };
@@ -75,12 +75,12 @@ NotificationResource::NotificationResource(BalloonHost* balloon_host)
 NotificationResource::~NotificationResource() {
 }
 
-string16 NotificationResource::GetTitle() const {
+base::string16 NotificationResource::GetTitle() const {
   return title_;
 }
 
-string16 NotificationResource::GetProfileName() const {
-  return string16();
+base::string16 NotificationResource::GetProfileName() const {
+  return base::string16();
 }
 
 gfx::ImageSkia NotificationResource::GetIcon() const {
@@ -133,8 +133,8 @@ NotificationResourceProvider::~NotificationResourceProvider() {
 
 Resource* NotificationResourceProvider::GetResource(
     int origin_pid,
-    int render_process_host_id,
-    int routing_id) {
+    int child_id,
+    int route_id) {
   // TODO(johnnyg): provide resources by pid if necessary.
   return NULL;
 }
@@ -205,8 +205,11 @@ void NotificationResourceProvider::Observe(
 
 void NotificationResourceProvider::AddToTaskManager(
     BalloonHost* balloon_host) {
+  // The resource may already be tracked, if the task manager was opened
+  // while the BalloonHost was waiting to connect.
+  if (resources_.count(balloon_host))
+    return;
   NotificationResource* resource = new NotificationResource(balloon_host);
-  DCHECK(resources_.find(balloon_host) == resources_.end());
   resources_[balloon_host] = resource;
   task_manager_->AddResource(resource);
 }

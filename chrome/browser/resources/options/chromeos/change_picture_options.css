@@ -61,6 +61,10 @@
 
 #user-image-preview .perspective-box {
   -webkit-perspective: 600px;
+  border: solid 1px #cacaca;
+  border-radius: 4px;
+  padding: 2px;
+  width: 220px;
 }
 
 #user-image-preview-img {
@@ -148,6 +152,11 @@
   width: 32px;
 }
 
+/* TODO(merkulova): remove when webkit crbug.com/126479 is fixed. */
+.flip-trick {
+  -webkit-transform: translateZ(1px);
+}
+
 html[dir=rtl] #flip-photo {
   left: 8px;
   right: auto;
@@ -170,7 +179,7 @@ html[dir=rtl] #flip-photo {
 
 .camera:not(.live) #discard-photo {
   background: url('chrome://theme/IDR_USER_IMAGE_RECYCLE')
-      no-repeat center 0;
+      no-repeat center center;
   display: block;
 }
 

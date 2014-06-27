@@ -143,7 +143,7 @@ bool RelaunchChromeHelper(const CommandLine& command_line,
   // wait is satisfied.
   // The format of the named mutex is important. See DelegateExecuteOperation
   // for more details.
-  string16 mutex_name =
+  base::string16 mutex_name =
       base::StringPrintf(L"chrome.relaunch.%d", ::GetCurrentProcessId());
   HANDLE mutex = ::CreateMutexW(NULL, TRUE, mutex_name.c_str());
   // The |mutex| handle needs to be leaked. See comment above.
@@ -166,8 +166,8 @@ bool RelaunchChromeHelper(const CommandLine& command_line,
         switches::kForceImmersive : switches::kForceDesktop);
   }
 
-  string16 params(relaunch_cmd.GetCommandLineString());
-  string16 path(GetMetroRelauncherPath(chrome_exe, version_str).value());
+  base::string16 params(relaunch_cmd.GetCommandLineString());
+  base::string16 path(GetMetroRelauncherPath(chrome_exe, version_str).value());
 
   SHELLEXECUTEINFO sei = { sizeof(sei) };
   sei.fMask = SEE_MASK_FLAG_LOG_USAGE | SEE_MASK_NOCLOSEPROCESS;
@@ -225,41 +225,17 @@ bool SwapNewChromeExeIfPresent() {
   base::win::RegKey key;
   if (key.Open(reg_root, dist->GetVersionKey().c_str(),
                KEY_QUERY_VALUE) == ERROR_SUCCESS) {
-
-    // Having just ascertained that we can swap, now check that we should: if
-    // we are given an explicit --chrome-version flag, don't rename unless the
-    // specified version matches the "pv" value. In practice, this is used to
-    // defer Chrome Frame updates until the current version of the Chrome Frame
-    // DLL component is loaded.
-    const CommandLine& cmd_line = *CommandLine::ForCurrentProcess();
-    if (cmd_line.HasSwitch(switches::kChromeVersion)) {
-      std::string version_string =
-          cmd_line.GetSwitchValueASCII(switches::kChromeVersion);
-      Version cmd_version(version_string);
-
-      std::wstring pv_value;
-      if (key.ReadValue(google_update::kRegVersionField,
-                        &pv_value) == ERROR_SUCCESS) {
-        Version pv_version(WideToASCII(pv_value));
-        if (cmd_version.IsValid() && pv_version.IsValid() &&
-            !cmd_version.Equals(pv_version)) {
-          return false;
-        }
-      }
-    }
-
     // First try to rename exe by launching rename command ourselves.
     std::wstring rename_cmd;
     if (key.ReadValue(google_update::kRegRenameCmdField,
                       &rename_cmd) == ERROR_SUCCESS) {
-      base::ProcessHandle handle;
+      base::win::ScopedHandle handle;
       base::LaunchOptions options;
       options.wait = true;
       options.start_hidden = true;
       if (base::LaunchProcess(rename_cmd, options, &handle)) {
         DWORD exit_code;
         ::GetExitCodeProcess(handle, &exit_code);
-        ::CloseHandle(handle);
         if (exit_code == installer::RENAME_SUCCESSFUL)
           return true;
       }

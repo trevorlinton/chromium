@@ -29,6 +29,9 @@ class DebugColors {
   static SkColor ContainerLayerBorderColor();
   static int ContainerLayerBorderWidth(const LayerTreeImpl* tree_impl);
 
+  static SkColor SurfaceLayerBorderColor();
+  static int SurfaceLayerBorderWidth(const LayerTreeImpl* tree_impl);
+
   static SkColor SurfaceBorderColor();
   static int SurfaceBorderWidth(const LayerTreeImpl* tree_impl);
 
@@ -50,9 +53,6 @@ class DebugColors {
   static SkColor MissingTileBorderColor();
   static int MissingTileBorderWidth(const LayerTreeImpl* tree_impl);
 
-  static SkColor CulledTileBorderColor();
-  static int CulledTileBorderWidth(const LayerTreeImpl* tree_impl);
-
   static SkColor SolidColorTileBorderColor();
   static int SolidColorTileBorderWidth(const LayerTreeImpl* tree_impl);
 
@@ -66,9 +66,10 @@ class DebugColors {
   static SkColor EvictedTileCheckerboardColor();
   static SkColor InvalidatedTileCheckerboardColor();
 
-  static SkColor PaintRectBorderColor();
+  static const int kFadeSteps = 50;
+  static SkColor PaintRectBorderColor(int step);
   static int PaintRectBorderWidth();
-  static SkColor PaintRectFillColor();
+  static SkColor PaintRectFillColor(int step);
 
   static SkColor PropertyChangedRectBorderColor();
   static int PropertyChangedRectBorderWidth();
@@ -105,6 +106,10 @@ class DebugColors {
   static SkColor NonFastScrollableRectBorderColor();
   static int NonFastScrollableRectBorderWidth();
   static SkColor NonFastScrollableRectFillColor();
+
+  static SkColor LayerAnimationBoundsBorderColor();
+  static int LayerAnimationBoundsBorderWidth();
+  static SkColor LayerAnimationBoundsFillColor();
 
   static SkColor NonPaintedFillColor();
   static SkColor MissingPictureFillColor();

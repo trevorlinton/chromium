@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,23 +8,23 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/devtools/devtools_window.h"
-#include "chrome/browser/extensions/extension_host.h"
-#include "chrome/browser/extensions/extension_process_manager.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/task_manager/renderer_resource.h"
 #include "chrome/browser/task_manager/resource_provider.h"
 #include "chrome/browser/task_manager/task_manager.h"
 #include "chrome/browser/task_manager/task_manager_util.h"
-#include "chrome/common/extensions/extension.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
-#include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/extension_host.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/process_manager.h"
 #include "extensions/browser/view_type_utils.h"
+#include "extensions/common/extension.h"
 #include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -35,42 +35,27 @@ using extensions::Extension;
 
 namespace task_manager {
 
-class ExtensionProcessResource : public Resource {
+class ExtensionProcessResource : public RendererResource {
  public:
-  explicit ExtensionProcessResource(
-      content::RenderViewHost* render_view_host);
+  explicit ExtensionProcessResource(content::RenderViewHost* render_view_host);
   virtual ~ExtensionProcessResource();
 
   // Resource methods:
-  virtual string16 GetTitle() const OVERRIDE;
-  virtual string16 GetProfileName() const OVERRIDE;
+  virtual base::string16 GetTitle() const OVERRIDE;
   virtual gfx::ImageSkia GetIcon() const OVERRIDE;
-  virtual base::ProcessHandle GetProcess() const OVERRIDE;
-  virtual int GetUniqueChildProcessId() const OVERRIDE;
   virtual Type GetType() const OVERRIDE;
-  virtual bool CanInspect() const OVERRIDE;
-  virtual void Inspect() const OVERRIDE;
-  virtual bool SupportNetworkUsage() const OVERRIDE;
-  virtual void SetSupportNetworkUsage() OVERRIDE;
-  virtual const extensions::Extension* GetExtension() const OVERRIDE;
-
-  // Returns the pid of the extension process.
-  int process_id() const { return pid_; }
-
-  // Returns true if the associated extension has a background page.
-  virtual bool IsBackground() const OVERRIDE;
 
  private:
+  const extensions::Extension* GetExtension() const;
+
+  // Returns true if the associated extension has a background page.
+  bool IsBackground() const;
+
   // The icon painted for the extension process.
   static gfx::ImageSkia* default_icon_;
 
-  content::RenderViewHost* render_view_host_;
-
   // Cached data about the extension.
-  base::ProcessHandle process_handle_;
-  int pid_;
-  int unique_process_id_;
-  string16 title_;
+  base::string16 title_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionProcessResource);
 };
@@ -79,85 +64,51 @@ gfx::ImageSkia* ExtensionProcessResource::default_icon_ = NULL;
 
 ExtensionProcessResource::ExtensionProcessResource(
     content::RenderViewHost* render_view_host)
-    : render_view_host_(render_view_host) {
+    : RendererResource(render_view_host->GetProcess()->GetHandle(),
+                       render_view_host) {
   if (!default_icon_) {
     ResourceBundle& rb = ResourceBundle::GetSharedInstance();
     default_icon_ = rb.GetImageSkiaNamed(IDR_PLUGINS_FAVICON);
   }
-  process_handle_ = render_view_host_->GetProcess()->GetHandle();
-  unique_process_id_ = render_view_host->GetProcess()->GetID();
-  pid_ = base::GetProcId(process_handle_);
-  string16 extension_name = UTF8ToUTF16(GetExtension()->name());
+  base::string16 extension_name = base::UTF8ToUTF16(GetExtension()->name());
   DCHECK(!extension_name.empty());
 
   Profile* profile = Profile::FromBrowserContext(
       render_view_host->GetProcess()->GetBrowserContext());
-  int message_id = util::GetMessagePrefixID(
-      GetExtension()->is_app(),
-      true,  // is_extension
-      profile->IsOffTheRecord(),
-      false,  // is_prerender
-      false,  // is_instant_overlay
-      IsBackground());
+  int message_id = util::GetMessagePrefixID(GetExtension()->is_app(),
+                                            true,  // is_extension
+                                            profile->IsOffTheRecord(),
+                                            false,  // is_prerender
+                                            IsBackground());
   title_ = l10n_util::GetStringFUTF16(message_id, extension_name);
 }
 
 ExtensionProcessResource::~ExtensionProcessResource() {
 }
 
-string16 ExtensionProcessResource::GetTitle() const {
+base::string16 ExtensionProcessResource::GetTitle() const {
   return title_;
-}
-
-string16 ExtensionProcessResource::GetProfileName() const {
-  return util::GetProfileNameFromInfoCache(
-      Profile::FromBrowserContext(
-          render_view_host_->GetProcess()->GetBrowserContext()));
 }
 
 gfx::ImageSkia ExtensionProcessResource::GetIcon() const {
   return *default_icon_;
 }
 
-base::ProcessHandle ExtensionProcessResource::GetProcess() const {
-  return process_handle_;
-}
-
-int ExtensionProcessResource::GetUniqueChildProcessId() const {
-  return unique_process_id_;
-}
-
 Resource::Type ExtensionProcessResource::GetType() const {
   return EXTENSION;
 }
 
-bool ExtensionProcessResource::CanInspect() const {
-  return true;
-}
-
-void ExtensionProcessResource::Inspect() const {
-  DevToolsWindow::OpenDevToolsWindow(render_view_host_);
-}
-
-bool ExtensionProcessResource::SupportNetworkUsage() const {
-  return true;
-}
-
-void ExtensionProcessResource::SetSupportNetworkUsage() {
-  NOTREACHED();
-}
-
 const Extension* ExtensionProcessResource::GetExtension() const {
   Profile* profile = Profile::FromBrowserContext(
-      render_view_host_->GetProcess()->GetBrowserContext());
-  ExtensionProcessManager* process_manager =
+      render_view_host()->GetProcess()->GetBrowserContext());
+  extensions::ProcessManager* process_manager =
       extensions::ExtensionSystem::Get(profile)->process_manager();
-  return process_manager->GetExtensionForRenderViewHost(render_view_host_);
+  return process_manager->GetExtensionForRenderViewHost(render_view_host());
 }
 
 bool ExtensionProcessResource::IsBackground() const {
   WebContents* web_contents =
-      WebContents::FromRenderViewHost(render_view_host_);
+      WebContents::FromRenderViewHost(render_view_host());
   extensions::ViewType view_type = extensions::GetViewType(web_contents);
   return view_type == extensions::VIEW_TYPE_EXTENSION_BACKGROUND_PAGE;
 }
@@ -177,18 +128,23 @@ ExtensionProcessResourceProvider::~ExtensionProcessResourceProvider() {
 
 Resource* ExtensionProcessResourceProvider::GetResource(
     int origin_pid,
-    int render_process_host_id,
-    int routing_id) {
+    int child_id,
+    int route_id) {
   // If an origin PID was specified, the request is from a plugin, not the
   // render view host process
   if (origin_pid)
     return NULL;
 
+  content::RenderFrameHost* rfh =
+      content::RenderFrameHost::FromID(child_id, route_id);
+  content::WebContents* web_contents =
+      content::WebContents::FromRenderFrameHost(rfh);
+
   for (ExtensionRenderViewHostMap::iterator i = resources_.begin();
        i != resources_.end(); i++) {
-    if (i->first->GetSiteInstance()->GetProcess()->GetID() ==
-            render_process_host_id &&
-        i->first->GetRoutingID() == routing_id)
+    content::WebContents* view_contents =
+        content::WebContents::FromRenderViewHost(i->first);
+    if (web_contents == view_contents)
       return i->second;
   }
 
@@ -213,12 +169,13 @@ void ExtensionProcessResourceProvider::StartUpdating() {
   }
 
   for (size_t i = 0; i < profiles.size(); ++i) {
-    ExtensionProcessManager* process_manager =
+    extensions::ProcessManager* process_manager =
         extensions::ExtensionSystem::Get(profiles[i])->process_manager();
     if (process_manager) {
-      const ExtensionProcessManager::ViewSet all_views =
+      const extensions::ProcessManager::ViewSet all_views =
           process_manager->GetAllViews();
-      ExtensionProcessManager::ViewSet::const_iterator jt = all_views.begin();
+      extensions::ProcessManager::ViewSet::const_iterator jt =
+          all_views.begin();
       for (; jt != all_views.end(); ++jt) {
         content::RenderViewHost* rvh = *jt;
         // Don't add dead extension processes.
@@ -288,23 +245,16 @@ bool ExtensionProcessResourceProvider::
     IsHandledByThisProvider(content::RenderViewHost* render_view_host) {
   WebContents* web_contents = WebContents::FromRenderViewHost(render_view_host);
   // Don't add WebContents that belong to a guest (those are handled by
-  // GuestResourceProvider). Otherwise they will be added twice, and
-  // in this case they will have the app's name as a title (due to the
-  // ExtensionProcessResource constructor).
+  // GuestInformation). Otherwise they will be added twice.
   if (web_contents->GetRenderProcessHost()->IsGuest())
     return false;
   extensions::ViewType view_type = extensions::GetViewType(web_contents);
-  // Don't add WebContents (those are handled by
-  // TabContentsResourceProvider) or background contents (handled
-  // by BackgroundResourceProvider).
-#if defined(USE_ASH)
-  return (view_type != extensions::VIEW_TYPE_TAB_CONTENTS &&
-          view_type != extensions::VIEW_TYPE_BACKGROUND_CONTENTS);
-#else
+  // Don't add tab contents (those are handled by TabContentsResourceProvider)
+  // or background contents (handled by BackgroundInformation) or panels
+  // (handled by PanelInformation)
   return (view_type != extensions::VIEW_TYPE_TAB_CONTENTS &&
           view_type != extensions::VIEW_TYPE_BACKGROUND_CONTENTS &&
           view_type != extensions::VIEW_TYPE_PANEL);
-#endif  // USE_ASH
 }
 
 void ExtensionProcessResourceProvider::AddToTaskManager(
@@ -312,9 +262,10 @@ void ExtensionProcessResourceProvider::AddToTaskManager(
   if (!IsHandledByThisProvider(render_view_host))
     return;
 
+  if (resources_.count(render_view_host))
+    return;
   ExtensionProcessResource* resource =
       new ExtensionProcessResource(render_view_host);
-  DCHECK(resources_.find(render_view_host) == resources_.end());
   resources_[render_view_host] = resource;
   task_manager_->AddResource(resource);
 }

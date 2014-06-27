@@ -32,7 +32,7 @@ namespace {
 const int kShutdownTimeoutMs = 30 * 1000;
 const int kUsageUpdateTimeoutMs = 6 * 3600 * 1000;  // 6 hours.
 
-static const char16 kAutoRunKeyPath[] =
+static const base::char16 kAutoRunKeyPath[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
 // Terminates any process.
@@ -67,22 +67,23 @@ void CloseChrome(HANDLE process, DWORD thread_id) {
 }
 
 bool LaunchProcess(const CommandLine& cmdline,
-                   base::ProcessHandle* process_handle,
+                   base::win::ScopedHandle* process_handle,
                    DWORD* thread_id) {
   STARTUPINFO startup_info = {};
   startup_info.cb = sizeof(startup_info);
   startup_info.dwFlags = STARTF_USESHOWWINDOW;
   startup_info.wShowWindow = SW_SHOW;
 
-  base::win::ScopedProcessInformation process_info;
+  PROCESS_INFORMATION temp_process_info = {};
   if (!CreateProcess(NULL,
       const_cast<wchar_t*>(cmdline.GetCommandLineString().c_str()), NULL, NULL,
-      FALSE, 0, NULL, NULL, &startup_info, process_info.Receive())) {
+      FALSE, 0, NULL, NULL, &startup_info, &temp_process_info)) {
     return false;
   }
+  base::win::ScopedProcessInformation process_info(temp_process_info);
 
   if (process_handle)
-    *process_handle = process_info.TakeProcessHandle();
+    process_handle->Set(process_info.TakeProcessHandle());
 
   if (thread_id)
     *thread_id = process_info.thread_id();
@@ -158,7 +159,7 @@ void DeleteAutorunKeys(const base::FilePath& user_data_dir) {
   base::win::RegKey key(HKEY_CURRENT_USER, kAutoRunKeyPath, KEY_SET_VALUE);
   if (!key.Valid())
     return;
-  std::vector<string16> to_delete;
+  std::vector<base::string16> to_delete;
 
   base::FilePath abs_user_data_dir = base::MakeAbsoluteFilePath(user_data_dir);
 
@@ -240,7 +241,7 @@ void ChromeLauncher::Run() {
       base::win::ScopedHandle chrome_handle;
       base::Time started = base::Time::Now();
       DWORD thread_id = 0;
-      LaunchProcess(cmd, chrome_handle.Receive(), &thread_id);
+      LaunchProcess(cmd, &chrome_handle, &thread_id);
 
       HANDLE handles[] = {stop_event_.handle(), chrome_handle};
       DWORD wait_result = WAIT_TIMEOUT;
@@ -270,19 +271,16 @@ void ChromeLauncher::Run() {
 std::string ChromeLauncher::CreateServiceStateFile(
     const std::string& proxy_id,
     const std::vector<std::string>& printers) {
-  std::string result;
-
   base::ScopedTempDir temp_user_data;
   if (!temp_user_data.CreateUniqueTempDir()) {
     LOG(ERROR) << "Can't create temp dir.";
-    return result;
+    return std::string();
   }
 
   base::FilePath chrome_path = chrome_launcher_support::GetAnyChromePath();
-
   if (chrome_path.empty()) {
     LOG(ERROR) << "Can't find Chrome.";
-    return result;
+    return std::string();
   }
 
   base::FilePath printers_file = temp_user_data.path().Append(L"printers.json");
@@ -291,12 +289,12 @@ std::string ChromeLauncher::CreateServiceStateFile(
   printer_list.AppendStrings(printers);
   std::string printers_json;
   base::JSONWriter::Write(&printer_list, &printers_json);
-  size_t written = file_util::WriteFile(printers_file,
-                                        printers_json.c_str(),
-                                        printers_json.size());
+  size_t written = base::WriteFile(printers_file,
+                                   printers_json.c_str(),
+                                   printers_json.size());
   if (written != printers_json.size()) {
     LOG(ERROR) << "Can't write file.";
-    return result;
+    return std::string();
   }
 
   CommandLine cmd(chrome_path);
@@ -317,9 +315,9 @@ std::string ChromeLauncher::CreateServiceStateFile(
 
   base::win::ScopedHandle chrome_handle;
   DWORD thread_id = 0;
-  if (!LaunchProcess(cmd, chrome_handle.Receive(), &thread_id)) {
+  if (!LaunchProcess(cmd, &chrome_handle, &thread_id)) {
     LOG(ERROR) << "Unable to launch Chrome.";
-    return result;
+    return std::string();
   }
 
   for (;;) {
@@ -329,18 +327,16 @@ std::string ChromeLauncher::CreateServiceStateFile(
     if (wait_result == WAIT_OBJECT_0) {
       // Return what we have because browser is closed.
       return json;
-    } else if (wait_result == WAIT_TIMEOUT) {
-      if (!json.empty()) {
-        // Close chrome because Service State is ready.
-        CloseChrome(chrome_handle, thread_id);
-        return json;
-      }
-    } else {
+    }
+    if (wait_result != WAIT_TIMEOUT) {
       LOG(ERROR) << "Chrome launch failed.";
-      return result;
+      return std::string();
+    }
+    if (!json.empty()) {
+      // Close chrome because Service State is ready.
+      CloseChrome(chrome_handle, thread_id);
+      return json;
     }
   }
-  NOTREACHED();
-  return std::string();
 }
 

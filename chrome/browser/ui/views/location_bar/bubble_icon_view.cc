@@ -6,27 +6,27 @@
 
 #include "chrome/browser/command_updater.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
-#include "ui/base/accessibility/accessible_view_state.h"
+#include "ui/accessibility/ax_view_state.h"
 #include "ui/events/event.h"
 
 BubbleIconView::BubbleIconView(CommandUpdater* command_updater, int command_id)
     : command_updater_(command_updater),
       command_id_(command_id),
       suppress_mouse_released_action_(false) {
-  set_accessibility_focusable(true);
+  SetAccessibilityFocusable(true);
   LocationBarView::InitTouchableLocationBarChildView(this);
 }
 
 BubbleIconView::~BubbleIconView() {
 }
 
-void BubbleIconView::GetAccessibleState(ui::AccessibleViewState* state) {
+void BubbleIconView::GetAccessibleState(ui::AXViewState* state) {
   views::ImageView::GetAccessibleState(state);
-  state->role = ui::AccessibilityTypes::ROLE_PUSHBUTTON;
+  state->role = ui::AX_ROLE_BUTTON;
 }
 
 bool BubbleIconView::GetTooltipText(const gfx::Point& p,
-                                    string16* tooltip) const {
+                                    base::string16* tooltip) const {
   if (IsBubbleShowing())
     return false;
 

@@ -23,10 +23,12 @@ class ButtonMenuItemModel;
 // items. This makes it easy to construct fixed menus. Menus populated by
 // dynamic data sources may be better off implementing MenuModel directly.
 // The breadth of MenuModel is not exposed through this API.
-class UI_EXPORT SimpleMenuModel : public MenuModel {
+class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
  public:
-  class UI_EXPORT Delegate {
+  class UI_BASE_EXPORT Delegate {
    public:
+    virtual ~Delegate() {}
+
     // Methods for determining the state of specific command ids.
     virtual bool IsCommandIdChecked(int command_id) const = 0;
     virtual bool IsCommandIdEnabled(int command_id) const = 0;
@@ -64,11 +66,7 @@ class UI_EXPORT SimpleMenuModel : public MenuModel {
     // Notifies the delegate that the menu has closed.
     virtual void MenuClosed(SimpleMenuModel* source);
 
-    // Get whether this item has an icon.
     virtual bool HasIcon(int command_id);
-
-   protected:
-    virtual ~Delegate() {}
   };
 
   // The Delegate can be NULL, though if it is items can't be checked or
@@ -135,9 +133,6 @@ class UI_EXPORT SimpleMenuModel : public MenuModel {
 
   // Sets the minor text for the item at |index|.
   void SetMinorText(int index, const base::string16& minor_text);
-
-  // Remove item from index.
-  void RemoveAt(int index);
 
   // Clears all items. Note that it does not free MenuModel of submenu.
   void Clear();

@@ -17,23 +17,26 @@
 namespace {
 
 // Draws an NSImage or an NSImageRep with a given size into a SkBitmap.
-SkBitmap NSImageOrNSImageRepToSkBitmap(
+SkBitmap NSImageOrNSImageRepToSkBitmapWithColorSpace(
     NSImage* image,
     NSImageRep* image_rep,
     NSSize size,
-    bool is_opaque) {
+    bool is_opaque,
+    CGColorSpaceRef color_space) {
   // Only image or image_rep should be provided, not both.
   DCHECK((image != 0) ^ (image_rep != 0));
 
   SkBitmap bitmap;
-  bitmap.setConfig(SkBitmap::kARGB_8888_Config, size.width, size.height);
+  bitmap.setConfig(SkBitmap::kARGB_8888_Config,
+                   size.width,
+                   size.height,
+                   0,
+                   is_opaque ? kOpaque_SkAlphaType : kPremul_SkAlphaType);
+
   if (!bitmap.allocPixels())
     return bitmap;  // Return |bitmap| which should respond true to isNull().
 
-  bitmap.setIsOpaque(is_opaque);
 
-  base::ScopedCFTypeRef<CGColorSpaceRef> color_space(
-      CGColorSpaceCreateWithName(kCGColorSpaceGenericRGB));
   void* data = bitmap.getPixels();
 
   // Allocate a bitmap context with 4 components per pixel (BGRA). Apple
@@ -131,10 +134,10 @@ CGRect SkRectToCGRect(const SkRect& rect) {
 SkColor CGColorRefToSkColor(CGColorRef color) {
   DCHECK(CGColorGetNumberOfComponents(color) == 4);
   const CGFloat* components = CGColorGetComponents(color);
-  return SkColorSetARGB(SkScalarRound(255.0 * components[3]), // alpha
-                        SkScalarRound(255.0 * components[0]), // red
-                        SkScalarRound(255.0 * components[1]), // green
-                        SkScalarRound(255.0 * components[2])); // blue
+  return SkColorSetARGB(SkScalarRoundToInt(255.0 * components[3]), // alpha
+                        SkScalarRoundToInt(255.0 * components[0]), // red
+                        SkScalarRoundToInt(255.0 * components[1]), // green
+                        SkScalarRoundToInt(255.0 * components[2])); // blue
 }
 
 // Converts ARGB to CGColorRef.
@@ -152,10 +155,10 @@ SkColor NSDeviceColorToSkColor(NSColor* color) {
   CGFloat red, green, blue, alpha;
   color = [color colorUsingColorSpace:[NSColorSpace deviceRGBColorSpace]];
   [color getRed:&red green:&green blue:&blue alpha:&alpha];
-  return SkColorSetARGB(SkScalarRound(255.0 * alpha),
-                        SkScalarRound(255.0 * red),
-                        SkScalarRound(255.0 * green),
-                        SkScalarRound(255.0 * blue));
+  return SkColorSetARGB(SkScalarRoundToInt(255.0 * alpha),
+                        SkScalarRoundToInt(255.0 * red),
+                        SkScalarRoundToInt(255.0 * green),
+                        SkScalarRoundToInt(255.0 * blue));
 }
 
 // Converts ARGB to NSColor.
@@ -217,13 +220,18 @@ SkBitmap CGImageToSkBitmap(CGImageRef image) {
   return bitmap;
 }
 
-SkBitmap NSImageToSkBitmap(NSImage* image, NSSize size, bool is_opaque) {
-  return NSImageOrNSImageRepToSkBitmap(image, nil, size, is_opaque);
+SkBitmap NSImageToSkBitmapWithColorSpace(
+    NSImage* image, bool is_opaque, CGColorSpaceRef color_space) {
+  return NSImageOrNSImageRepToSkBitmapWithColorSpace(
+      image, nil, [image size], is_opaque, color_space);
 }
 
-SkBitmap NSImageRepToSkBitmap(
-    NSImageRep* image_rep, NSSize size, bool is_opaque) {
-  return NSImageOrNSImageRepToSkBitmap(nil, image_rep, size, is_opaque);
+SkBitmap NSImageRepToSkBitmapWithColorSpace(NSImageRep* image_rep,
+                                            NSSize size,
+                                            bool is_opaque,
+                                            CGColorSpaceRef color_space) {
+  return NSImageOrNSImageRepToSkBitmapWithColorSpace(
+      nil, image_rep, size, is_opaque, color_space);
 }
 
 NSBitmapImageRep* SkBitmapToNSBitmapImageRep(const SkBitmap& skiaBitmap) {

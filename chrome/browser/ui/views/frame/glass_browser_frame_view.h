@@ -6,7 +6,6 @@
 #define CHROME_BROWSER_UI_VIEWS_FRAME_GLASS_BROWSER_FRAME_VIEW_H_
 
 #include "base/compiler_specific.h"
-#include "chrome/browser/ui/views/frame/browser_frame_win.h"
 #include "chrome/browser/ui/views/frame/browser_non_client_frame_view.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -25,7 +24,7 @@ class GlassBrowserFrameView : public BrowserNonClientFrameView,
 
   // Overridden from BrowserNonClientFrameView:
   virtual gfx::Rect GetBoundsForTabStrip(views::View* tabstrip) const OVERRIDE;
-  virtual TabStripInsets GetTabStripInsets(bool restored) const OVERRIDE;
+  virtual int GetTopInset() const OVERRIDE;
   virtual int GetThemeBackgroundXInset() const OVERRIDE;
   virtual void UpdateThrobber(bool running) OVERRIDE;
   virtual gfx::Size GetMinimumSize() OVERRIDE;
@@ -61,9 +60,8 @@ class GlassBrowserFrameView : public BrowserNonClientFrameView,
   int NonClientBorderThickness() const;
 
   // Returns the height of the entire nonclient top border, including the window
-  // frame, any title area, and any connected client edge.  If |restored| is
-  // true, acts as if the window is restored regardless of the real mode.
-  int NonClientTopBorderHeight(bool restored) const;
+  // frame, any title area, and any connected client edge.
+  int NonClientTopBorderHeight() const;
 
   // Paint various sub-components of this view.
   void PaintToolbarBackground(gfx::Canvas* canvas);

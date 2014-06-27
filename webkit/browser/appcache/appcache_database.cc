@@ -5,11 +5,13 @@
 #include "webkit/browser/appcache/appcache_database.h"
 
 #include "base/auto_reset.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/file_util.h"
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
 #include "sql/connection.h"
+#include "sql/error_delegate_util.h"
 #include "sql/meta_table.h"
 #include "sql/statement.h"
 #include "sql/transaction.h"
@@ -200,17 +202,13 @@ AppCacheDatabase::NamespaceRecord::~NamespaceRecord() {
 
 
 AppCacheDatabase::AppCacheDatabase(const base::FilePath& path)
-    : db_file_path_(path), is_disabled_(false), is_recreating_(false) {
+    : db_file_path_(path),
+      is_disabled_(false),
+      is_recreating_(false),
+      was_corruption_detected_(false) {
 }
 
 AppCacheDatabase::~AppCacheDatabase() {
-}
-
-void AppCacheDatabase::CloseConnection() {
-  // We can't close the connection for an in-memory database w/o
-  // losing all of the data, so we don't do that.
-  if (!db_file_path_.empty())
-    ResetConnectionAndTables();
 }
 
 void AppCacheDatabase::Disable() {
@@ -1011,7 +1009,7 @@ bool AppCacheDatabase::LazyOpen(bool create_if_needed) {
   bool opened = false;
   if (use_in_memory_db) {
     opened = db_->OpenInMemory();
-  } else if (!file_util::CreateDirectory(db_file_path_.DirName())) {
+  } else if (!base::CreateDirectory(db_file_path_.DirName())) {
     LOG(ERROR) << "Failed to create appcache directory.";
   } else {
     opened = db_->Open(db_file_path_);
@@ -1019,7 +1017,7 @@ bool AppCacheDatabase::LazyOpen(bool create_if_needed) {
       db_->Preload();
   }
 
-  if (!opened || !EnsureDatabaseVersion()) {
+  if (!opened || !db_->QuickIntegrityCheck() || !EnsureDatabaseVersion()) {
     LOG(ERROR) << "Failed to open the appcache database.";
     AppCacheHistograms::CountInitResult(
         AppCacheHistograms::SQL_DATABASE_ERROR);
@@ -1036,6 +1034,9 @@ bool AppCacheDatabase::LazyOpen(bool create_if_needed) {
   }
 
   AppCacheHistograms::CountInitResult(AppCacheHistograms::INIT_OK);
+  was_corruption_detected_ = false;
+  db_->set_error_callback(
+      base::Bind(&AppCacheDatabase::OnDatabaseError, base::Unretained(this)));
   return true;
 }
 
@@ -1195,13 +1196,14 @@ bool AppCacheDatabase::DeleteExistingAndCreateNewDatabase() {
 
   // This also deletes the disk cache data.
   base::FilePath directory = db_file_path_.DirName();
-  if (!base::DeleteFile(directory, true) ||
-      !file_util::CreateDirectory(directory)) {
+  if (!base::DeleteFile(directory, true))
     return false;
-  }
 
   // Make sure the steps above actually deleted things.
-  if (base::PathExists(db_file_path_))
+  if (base::PathExists(directory))
+    return false;
+
+  if (!base::CreateDirectory(directory))
     return false;
 
   // So we can't go recursive.
@@ -1210,6 +1212,13 @@ bool AppCacheDatabase::DeleteExistingAndCreateNewDatabase() {
 
   base::AutoReset<bool> auto_reset(&is_recreating_, true);
   return LazyOpen(true);
+}
+
+void AppCacheDatabase::OnDatabaseError(int err, sql::Statement* stmt) {
+  was_corruption_detected_ |= sql::IsErrorCatastrophic(err);
+  if (!db_->ShouldIgnoreSqliteError(err))
+    DLOG(ERROR) << db_->GetErrorMessage();
+  // TODO: Maybe use non-catostrophic errors to trigger a full integrity check?
 }
 
 }  // namespace appcache

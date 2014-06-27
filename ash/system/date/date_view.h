@@ -51,7 +51,7 @@ class ASH_EXPORT BaseDateTimeView : public ActionableView {
 };
 
 // Popup view used to display the date and day of week.
-class DateView : public BaseDateTimeView {
+class ASH_EXPORT DateView : public BaseDateTimeView {
  public:
   DateView();
   virtual ~DateView();
@@ -60,6 +60,11 @@ class DateView : public BaseDateTimeView {
   // feedback on hover, can be focused by keyboard, and clicking/pressing space
   // or enter on the view shows date-related settings.
   void SetActionable(bool actionable);
+
+  // Updates the format of the displayed time.
+  void UpdateTimeFormat();
+
+  base::HourClockType GetHourTypeForTesting() const;
 
  private:
   // Overridden from BaseDateTimeView.
@@ -73,6 +78,9 @@ class DateView : public BaseDateTimeView {
   virtual void OnMouseExited(const ui::MouseEvent& event) OVERRIDE;
 
   views::Label* date_label_;
+
+  // Time format (12/24hr) used for accessibility string.
+  base::HourClockType hour_type_;
 
   bool actionable_;
 
@@ -92,6 +100,8 @@ class ASH_EXPORT TimeView : public BaseDateTimeView {
   // Updates clock layout.
   void UpdateClockLayout(TrayDate::ClockLayout clock_layout);
 
+  base::HourClockType GetHourTypeForTesting() const;
+
  private:
   friend class TimeViewTest;
 
@@ -104,7 +114,7 @@ class ASH_EXPORT TimeView : public BaseDateTimeView {
   // Overridden from views::View.
   virtual bool OnMousePressed(const ui::MouseEvent& event) OVERRIDE;
 
-  void SetBorder(TrayDate::ClockLayout clock_layout);
+  void SetBorderFromLayout(TrayDate::ClockLayout clock_layout);
   void SetupLabels();
   void SetupLabel(views::Label* label);
 

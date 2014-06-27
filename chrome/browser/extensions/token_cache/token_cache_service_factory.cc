@@ -4,10 +4,10 @@
 
 #include "chrome/browser/extensions/token_cache/token_cache_service_factory.h"
 
-#include "chrome/browser/extensions/extension_system_factory.h"
 #include "chrome/browser/extensions/token_cache/token_cache_service.h"
 #include "chrome/browser/profiles/profile.h"
-#include "components/browser_context_keyed_service/browser_context_dependency_manager.h"
+#include "chrome/browser/signin/signin_manager_factory.h"
+#include "components/keyed_service/content/browser_context_dependency_manager.h"
 
 // static
 extensions::TokenCacheService*
@@ -25,12 +25,13 @@ TokenCacheServiceFactory::TokenCacheServiceFactory()
     : BrowserContextKeyedServiceFactory(
         "TokenCacheService",
         BrowserContextDependencyManager::GetInstance()) {
+  DependsOn(SigninManagerFactory::GetInstance());
 }
 
 TokenCacheServiceFactory::~TokenCacheServiceFactory() {
 }
 
-BrowserContextKeyedService* TokenCacheServiceFactory::BuildServiceInstanceFor(
+KeyedService* TokenCacheServiceFactory::BuildServiceInstanceFor(
     content::BrowserContext* profile) const {
   return new extensions::TokenCacheService(static_cast<Profile*>(profile));
 }

@@ -5,10 +5,10 @@
 #include "content/renderer/cursor_utils.h"
 
 #include "build/build_config.h"
-#include "third_party/WebKit/public/web/WebCursorInfo.h"
-#include "webkit/common/cursors/webcursor.h"
+#include "content/common/cursors/webcursor.h"
+#include "third_party/WebKit/public/platform/WebCursorInfo.h"
 
-using WebKit::WebCursorInfo;
+using blink::WebCursorInfo;
 
 namespace content {
 

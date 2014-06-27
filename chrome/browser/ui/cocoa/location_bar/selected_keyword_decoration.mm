@@ -40,22 +40,13 @@ CGFloat SelectedKeywordDecoration::GetWidthForSpace(CGFloat width) {
 }
 
 ui::NinePartImageIds SelectedKeywordDecoration::GetBubbleImageIds() {
-  return {
-    IDR_OMNIBOX_SELECTED_KEYWORD_BUBBLE_TOP_LEFT,
-    IDR_OMNIBOX_SELECTED_KEYWORD_BUBBLE_TOP,
-    IDR_OMNIBOX_SELECTED_KEYWORD_BUBBLE_TOP_RIGHT,
-    IDR_OMNIBOX_SELECTED_KEYWORD_BUBBLE_LEFT,
-    IDR_OMNIBOX_SELECTED_KEYWORD_BUBBLE_CENTER,
-    IDR_OMNIBOX_SELECTED_KEYWORD_BUBBLE_RIGHT,
-    IDR_OMNIBOX_SELECTED_KEYWORD_BUBBLE_BOTTOM_LEFT,
-    IDR_OMNIBOX_SELECTED_KEYWORD_BUBBLE_BOTTOM,
-    IDR_OMNIBOX_SELECTED_KEYWORD_BUBBLE_BOTTOM_RIGHT
-  };
+  return IMAGE_GRID(IDR_OMNIBOX_SELECTED_KEYWORD_BUBBLE);
 }
 
-void SelectedKeywordDecoration::SetKeyword(const string16& short_name,
+void SelectedKeywordDecoration::SetKeyword(const base::string16& short_name,
                                            bool is_extension_keyword) {
-  const string16 min_name(location_bar_util::CalculateMinString(short_name));
+  const base::string16 min_name(
+      location_bar_util::CalculateMinString(short_name));
   NSString* full_string = is_extension_keyword ?
       base::SysUTF16ToNSString(short_name) :
       l10n_util::GetNSStringF(IDS_OMNIBOX_KEYWORD_TEXT, short_name);

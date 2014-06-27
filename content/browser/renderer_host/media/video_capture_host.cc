@@ -14,19 +14,26 @@
 namespace content {
 
 VideoCaptureHost::VideoCaptureHost(MediaStreamManager* media_stream_manager)
-    : media_stream_manager_(media_stream_manager) {
+    : BrowserMessageFilter(VideoCaptureMsgStart),
+      media_stream_manager_(media_stream_manager) {
 }
 
 VideoCaptureHost::~VideoCaptureHost() {}
 
 void VideoCaptureHost::OnChannelClosing() {
   // Since the IPC channel is gone, close all requested VideoCaptureDevices.
-  for (EntryMap::iterator it = entries_.begin(); it != entries_.end(); it++) {
+  for (EntryMap::iterator it = entries_.begin(); it != entries_.end(); ) {
     const base::WeakPtr<VideoCaptureController>& controller = it->second;
     if (controller) {
       VideoCaptureControllerID controller_id(it->first);
       media_stream_manager_->video_capture_manager()->StopCaptureForClient(
           controller.get(), controller_id, this);
+      ++it;
+    } else {
+      // Remove the entry for this controller_id so that when the controller
+      // is added, the controller will be notified to stop for this client
+      // in DoControllerAddedOnIOThread.
+      entries_.erase(it++);
     }
   }
 }
@@ -69,13 +76,35 @@ void VideoCaptureHost::OnBufferDestroyed(
 void VideoCaptureHost::OnBufferReady(
     const VideoCaptureControllerID& controller_id,
     int buffer_id,
-    base::Time timestamp,
-    const media::VideoCaptureFormat& frame_format) {
+    const media::VideoCaptureFormat& frame_format,
+    base::TimeTicks timestamp) {
   BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
+      BrowserThread::IO,
+      FROM_HERE,
       base::Bind(&VideoCaptureHost::DoSendFilledBufferOnIOThread,
-                 this, controller_id, buffer_id, timestamp,
-                 frame_format));
+                 this,
+                 controller_id,
+                 buffer_id,
+                 frame_format,
+                 timestamp));
+}
+
+void VideoCaptureHost::OnMailboxBufferReady(
+    const VideoCaptureControllerID& controller_id,
+    int buffer_id,
+    const gpu::MailboxHolder& mailbox_holder,
+    const media::VideoCaptureFormat& frame_format,
+    base::TimeTicks timestamp) {
+  BrowserThread::PostTask(
+      BrowserThread::IO,
+      FROM_HERE,
+      base::Bind(&VideoCaptureHost::DoSendFilledMailboxBufferOnIOThread,
+                 this,
+                 controller_id,
+                 buffer_id,
+                 mailbox_holder,
+                 frame_format,
+                 timestamp));
 }
 
 void VideoCaptureHost::OnEnded(const VideoCaptureControllerID& controller_id) {
@@ -112,15 +141,31 @@ void VideoCaptureHost::DoSendFreeBufferOnIOThread(
 
 void VideoCaptureHost::DoSendFilledBufferOnIOThread(
     const VideoCaptureControllerID& controller_id,
-    int buffer_id, base::Time timestamp,
-    const media::VideoCaptureFormat& format) {
+    int buffer_id,
+    const media::VideoCaptureFormat& format,
+    base::TimeTicks timestamp) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
 
   if (entries_.find(controller_id) == entries_.end())
     return;
 
-  Send(new VideoCaptureMsg_BufferReady(controller_id.device_id, buffer_id,
-                                       timestamp, format));
+  Send(new VideoCaptureMsg_BufferReady(
+      controller_id.device_id, buffer_id, format, timestamp));
+}
+
+void VideoCaptureHost::DoSendFilledMailboxBufferOnIOThread(
+    const VideoCaptureControllerID& controller_id,
+    int buffer_id,
+    const gpu::MailboxHolder& mailbox_holder,
+    const media::VideoCaptureFormat& format,
+    base::TimeTicks timestamp) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
+
+  if (entries_.find(controller_id) == entries_.end())
+    return;
+
+  Send(new VideoCaptureMsg_MailboxBufferReady(
+      controller_id.device_id, buffer_id, mailbox_holder, format, timestamp));
 }
 
 void VideoCaptureHost::DoHandleErrorOnIOThread(
@@ -157,6 +202,10 @@ bool VideoCaptureHost::OnMessageReceived(const IPC::Message& message,
     IPC_MESSAGE_HANDLER(VideoCaptureHostMsg_Pause, OnPauseCapture)
     IPC_MESSAGE_HANDLER(VideoCaptureHostMsg_Stop, OnStopCapture)
     IPC_MESSAGE_HANDLER(VideoCaptureHostMsg_BufferReady, OnReceiveEmptyBuffer)
+    IPC_MESSAGE_HANDLER(VideoCaptureHostMsg_GetDeviceSupportedFormats,
+                        OnGetDeviceSupportedFormats)
+    IPC_MESSAGE_HANDLER(VideoCaptureHostMsg_GetDeviceFormatsInUse,
+                        OnGetDeviceFormatsInUse)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP_EX()
 
@@ -164,36 +213,47 @@ bool VideoCaptureHost::OnMessageReceived(const IPC::Message& message,
 }
 
 void VideoCaptureHost::OnStartCapture(int device_id,
+                                      media::VideoCaptureSessionId session_id,
                                       const media::VideoCaptureParams& params) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
-  DVLOG(1) << "VideoCaptureHost::OnStartCapture, device_id " << device_id
-           << ", (" << params.requested_format.width
-           << ", " << params.requested_format.height
-           << ", " << params.requested_format.frame_rate
-           << ", " << params.session_id << ", variable resolution device:"
-           << ((params.requested_format.frame_size_type ==
-               media::VariableResolutionVideoCaptureDevice) ? "yes" : "no")
+  DVLOG(1) << "VideoCaptureHost::OnStartCapture:"
+           << " session_id=" << session_id
+           << ", device_id=" << device_id
+           << ", format=" << params.requested_format.frame_size.ToString()
+           << "@" << params.requested_format.frame_rate
+           << " (" << (params.allow_resolution_change ? "variable" : "constant")
            << ")";
   VideoCaptureControllerID controller_id(device_id);
-  DCHECK(entries_.find(controller_id) == entries_.end());
+  if (entries_.find(controller_id) != entries_.end()) {
+    Send(new VideoCaptureMsg_StateChanged(device_id,
+                                          VIDEO_CAPTURE_STATE_ERROR));
+    return;
+  }
 
   entries_[controller_id] = base::WeakPtr<VideoCaptureController>();
   media_stream_manager_->video_capture_manager()->StartCaptureForClient(
-      params, PeerHandle(), controller_id, this, base::Bind(
-          &VideoCaptureHost::OnControllerAdded, this, device_id, params));
+      session_id,
+      params,
+      PeerHandle(),
+      controller_id,
+      this,
+      base::Bind(&VideoCaptureHost::OnControllerAdded, this, device_id));
 }
 
 void VideoCaptureHost::OnControllerAdded(
-    int device_id, const media::VideoCaptureParams& params,
+    int device_id,
     const base::WeakPtr<VideoCaptureController>& controller) {
   BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
+      BrowserThread::IO,
+      FROM_HERE,
       base::Bind(&VideoCaptureHost::DoControllerAddedOnIOThread,
-                 this, device_id, params, controller));
+                 this,
+                 device_id,
+                 controller));
 }
 
 void VideoCaptureHost::DoControllerAddedOnIOThread(
-    int device_id, const media::VideoCaptureParams& params,
+    int device_id,
     const base::WeakPtr<VideoCaptureController>& controller) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   VideoCaptureControllerID controller_id(device_id);
@@ -235,7 +295,9 @@ void VideoCaptureHost::OnPauseCapture(int device_id) {
   Send(new VideoCaptureMsg_StateChanged(device_id, VIDEO_CAPTURE_STATE_ERROR));
 }
 
-void VideoCaptureHost::OnReceiveEmptyBuffer(int device_id, int buffer_id) {
+void VideoCaptureHost::OnReceiveEmptyBuffer(int device_id,
+                                            int buffer_id,
+                                            uint32 sync_point) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
 
   VideoCaptureControllerID controller_id(device_id);
@@ -243,8 +305,42 @@ void VideoCaptureHost::OnReceiveEmptyBuffer(int device_id, int buffer_id) {
   if (it != entries_.end()) {
     const base::WeakPtr<VideoCaptureController>& controller = it->second;
     if (controller)
-      controller->ReturnBuffer(controller_id, this, buffer_id);
+      controller->ReturnBuffer(controller_id, this, buffer_id, sync_point);
   }
+}
+
+void VideoCaptureHost::OnGetDeviceSupportedFormats(
+    int device_id,
+    media::VideoCaptureSessionId capture_session_id) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
+  DVLOG(1) << "VideoCaptureHost::OnGetDeviceFormats, capture_session_id "
+           << capture_session_id;
+  media::VideoCaptureFormats device_supported_formats;
+  if (!media_stream_manager_->video_capture_manager()
+           ->GetDeviceSupportedFormats(capture_session_id,
+                                       &device_supported_formats)) {
+    DLOG(WARNING)
+        << "Could not retrieve device supported formats for device_id="
+        << device_id << " capture_session_id=" << capture_session_id;
+  }
+  Send(new VideoCaptureMsg_DeviceSupportedFormatsEnumerated(
+      device_id, device_supported_formats));
+}
+
+void VideoCaptureHost::OnGetDeviceFormatsInUse(
+    int device_id,
+    media::VideoCaptureSessionId capture_session_id) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
+  DVLOG(1) << "VideoCaptureHost::OnGetDeviceFormatsInUse, capture_session_id "
+           << capture_session_id;
+  media::VideoCaptureFormats formats_in_use;
+  if (!media_stream_manager_->video_capture_manager()->GetDeviceFormatsInUse(
+           capture_session_id, &formats_in_use)) {
+    DVLOG(1) << "Could not retrieve device format(s) in use for device_id="
+             << device_id << " capture_session_id=" << capture_session_id;
+  }
+  Send(new VideoCaptureMsg_DeviceFormatsInUseReceived(device_id,
+                                                      formats_in_use));
 }
 
 void VideoCaptureHost::DeleteVideoCaptureControllerOnIOThread(

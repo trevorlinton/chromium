@@ -14,11 +14,11 @@
 #include "base/logging.h"
 #include "base/strings/string_piece.h"
 #include "base/synchronization/lock.h"
+#include "tools/gn/action_values.h"
 #include "tools/gn/config_values.h"
 #include "tools/gn/item.h"
 #include "tools/gn/label_ptr.h"
 #include "tools/gn/ordered_set.h"
-#include "tools/gn/script_values.h"
 #include "tools/gn/source_file.h"
 
 class InputFile;
@@ -35,7 +35,8 @@ class Target : public Item {
     STATIC_LIBRARY,
     SOURCE_SET,
     COPY_FILES,
-    CUSTOM,
+    ACTION,
+    ACTION_FOREACH,
   };
   typedef std::vector<SourceFile> FileList;
   typedef std::vector<std::string> StringVector;
@@ -51,13 +52,6 @@ class Target : public Item {
   virtual const Target* AsTarget() const OVERRIDE;
   virtual void OnResolved() OVERRIDE;
 
-  // This flag indicates if we've run the TargetGenerator for this target to
-  // fill out the rest of the values. Once we've done this, we save the
-  // location of the function that started the generating so that we can detect
-  // duplicate declarations.
-  bool HasBeenGenerated() const;
-  void SetGenerated(const Token* token);
-
   OutputType output_type() const { return output_type_; }
   void set_output_type(OutputType t) { output_type_ = t; }
 
@@ -66,6 +60,11 @@ class Target : public Item {
   // Will be the empty string to use the target label as the output name.
   const std::string& output_name() const { return output_name_; }
   void set_output_name(const std::string& name) { output_name_ = name; }
+
+  const std::string& output_extension() const { return output_extension_; }
+  void set_output_extension(const std::string& extension) {
+    output_extension_ = extension;
+  }
 
   const FileList& sources() const { return sources_; }
   FileList& sources() { return sources_; }
@@ -122,9 +121,6 @@ class Target : public Item {
     return forward_dependent_configs_;
   }
 
-  bool external() const { return external_; }
-  void set_external(bool e) { external_ = e; }
-
   const std::set<const Target*>& inherited_libraries() const {
     return inherited_libraries_;
   }
@@ -133,14 +129,11 @@ class Target : public Item {
   ConfigValues& config_values() { return config_values_; }
   const ConfigValues& config_values() const { return config_values_; }
 
-  ScriptValues& script_values() { return script_values_; }
-  const ScriptValues& script_values() const { return script_values_; }
+  ActionValues& action_values() { return action_values_; }
+  const ActionValues& action_values() const { return action_values_; }
 
   const OrderedSet<SourceDir>& all_lib_dirs() const { return all_lib_dirs_; }
   const OrderedSet<std::string>& all_libs() const { return all_libs_; }
-
-  const SourceFile& gyp_file() const { return gyp_file_; }
-  void set_gyp_file(const SourceFile& gf) { gyp_file_ = gf; }
 
  private:
   // Pulls necessary information from dependents to this one when all
@@ -149,6 +142,7 @@ class Target : public Item {
 
   OutputType output_type_;
   std::string output_name_;
+  std::string output_extension_;
 
   FileList sources_;
   FileList source_prereqs_;
@@ -188,12 +182,7 @@ class Target : public Item {
   OrderedSet<std::string> all_libs_;
 
   ConfigValues config_values_;  // Used for all binary targets.
-  ScriptValues script_values_;  // Used for script (CUSTOM) targets.
-
-  SourceFile gyp_file_;
-
-  bool generated_;
-  const Token* generator_function_;  // Who generated this: for error messages.
+  ActionValues action_values_;  // Used for action[_foreach] targets.
 
   DISALLOW_COPY_AND_ASSIGN(Target);
 };

@@ -37,6 +37,7 @@ class CC_EXPORT FilterOperation {
     ZOOM,
     REFERENCE,
     SATURATING_BRIGHTNESS,  // Not used in CSS/SVG.
+    FILTER_TYPE_LAST = SATURATING_BRIGHTNESS
   };
 
   FilterOperation(const FilterOperation& other);
@@ -112,7 +113,7 @@ class CC_EXPORT FilterOperation {
     return FilterOperation(BLUR, amount);
   }
 
-  static FilterOperation CreateDropShadowFilter(gfx::Point offset,
+  static FilterOperation CreateDropShadowFilter(const gfx::Point& offset,
                                                 float std_deviation,
                                                 SkColor color) {
     return FilterOperation(DROP_SHADOW, offset, std_deviation, color);
@@ -154,7 +155,7 @@ class CC_EXPORT FilterOperation {
     amount_ = amount;
   }
 
-  void set_drop_shadow_offset(gfx::Point offset) {
+  void set_drop_shadow_offset(const gfx::Point& offset) {
     DCHECK_EQ(type_, DROP_SHADOW);
     drop_shadow_offset_ = offset;
   }
@@ -196,7 +197,7 @@ class CC_EXPORT FilterOperation {
   FilterOperation(FilterType type, float amount);
 
   FilterOperation(FilterType type,
-                  gfx::Point offset,
+                  const gfx::Point& offset,
                   float stdDeviation,
                   SkColor color);
 

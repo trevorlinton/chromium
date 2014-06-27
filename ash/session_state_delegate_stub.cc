@@ -6,6 +6,7 @@
 
 #include "ash/shell.h"
 #include "ash/shell/example_factory.h"
+#include "ash/shell_delegate.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 
@@ -15,6 +16,18 @@ SessionStateDelegateStub::SessionStateDelegateStub() : screen_locked_(false) {
 }
 
 SessionStateDelegateStub::~SessionStateDelegateStub() {
+}
+
+content::BrowserContext*
+SessionStateDelegateStub::GetBrowserContextByIndex(
+    MultiProfileIndex index) {
+  return Shell::GetInstance()->delegate()->GetActiveBrowserContext();
+}
+
+content::BrowserContext*
+SessionStateDelegateStub::GetBrowserContextForWindow(
+    aura::Window* window) {
+  return Shell::GetInstance()->delegate()->GetActiveBrowserContext();
 }
 
 int SessionStateDelegateStub::GetMaximumNumberOfLoggedInUsers() const {
@@ -58,7 +71,7 @@ bool SessionStateDelegateStub::IsUserSessionBlocked() const  {
 
 const base::string16 SessionStateDelegateStub::GetUserDisplayName(
     MultiProfileIndex index) const {
-  return UTF8ToUTF16("stub-user");
+  return base::UTF8ToUTF16("stub-user");
 }
 
 const std::string SessionStateDelegateStub::GetUserEmail(
@@ -72,17 +85,18 @@ const std::string SessionStateDelegateStub::GetUserID(
 }
 
 const gfx::ImageSkia& SessionStateDelegateStub::GetUserImage(
-    MultiProfileIndex index) const {
-  return null_image_;
+    content::BrowserContext* context) const {
+  return user_image_;
 }
 
-void SessionStateDelegateStub::GetLoggedInUsers(UserIdList* users) {
+bool SessionStateDelegateStub::ShouldShowAvatar(aura::Window* window) {
+  return !user_image_.isNull();
 }
 
 void SessionStateDelegateStub::SwitchActiveUser(const std::string& user_id) {
 }
 
-void SessionStateDelegateStub::SwitchActiveUserToNext() {
+void SessionStateDelegateStub::CycleActiveUser(CycleUser cycle_user) {
 }
 
 void SessionStateDelegateStub::AddSessionStateObserver(
@@ -91,12 +105,6 @@ void SessionStateDelegateStub::AddSessionStateObserver(
 
 void SessionStateDelegateStub::RemoveSessionStateObserver(
     ash::SessionStateObserver* observer) {
-}
-
-bool SessionStateDelegateStub::TransferWindowToDesktopOfUser(
-    aura::Window* window,
-    ash::MultiProfileIndex index) {
-  return false;
 }
 
 }  // namespace ash

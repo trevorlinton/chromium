@@ -5,16 +5,18 @@
 #ifndef CHROME_BROWSER_INVALIDATION_INVALIDATION_SERVICE_H_
 #define CHROME_BROWSER_INVALIDATION_INVALIDATION_SERVICE_H_
 
-#include "components/browser_context_keyed_service/browser_context_keyed_service.h"
+#include "base/callback_forward.h"
+#include "components/keyed_service/core/keyed_service.h"
 #include "sync/notifier/invalidation_util.h"
 #include "sync/notifier/invalidator_state.h"
 
 namespace syncer {
 class InvalidationHandler;
-class AckHandle;
 }  // namespace syncer
 
 namespace invalidation {
+class InvalidationAuthProvider;
+class InvalidationLogger;
 
 // Interface for classes that handle invalidation registrations and send out
 // invalidations to register handlers.
@@ -65,7 +67,7 @@ namespace invalidation {
 // This class inherits from ProfileKeyedService to make it possible to correctly
 // cast from various InvalidationService implementations to ProfileKeyedService
 // in InvalidationServiceFactory.
-class InvalidationService : public BrowserContextKeyedService {
+class InvalidationService : public KeyedService {
  public:
   // Starts sending notifications to |handler|.  |handler| must not be NULL,
   // and it must not already be registered.
@@ -91,11 +93,6 @@ class InvalidationService : public BrowserContextKeyedService {
   virtual void UnregisterInvalidationHandler(
       syncer::InvalidationHandler* handler) = 0;
 
-  // Sends an acknowledgement that an invalidation for |id| was successfully
-  // handled.
-  virtual void AcknowledgeInvalidation(const invalidation::ObjectId& id,
-                                       const syncer::AckHandle& ack_handle) = 0;
-
   // Returns the current invalidator state.  When called from within
   // InvalidationHandler::OnInvalidatorStateChange(), this must return
   // the updated state.
@@ -104,6 +101,16 @@ class InvalidationService : public BrowserContextKeyedService {
   // Returns the ID belonging to this invalidation client.  Can be used to
   // prevent the receipt of notifications of our own changes.
   virtual std::string GetInvalidatorClientId() const = 0;
+
+  // Return the logger used to debug invalidations
+  virtual InvalidationLogger* GetInvalidationLogger() = 0;
+
+  // Triggers requests of internal status.
+  virtual void RequestDetailedStatus(
+      base::Callback<void(const base::DictionaryValue&)> post_caller) const = 0;
+
+  // Returns the authentication provider.
+  virtual InvalidationAuthProvider* GetInvalidationAuthProvider() = 0;
 
  protected:
   virtual ~InvalidationService() { }

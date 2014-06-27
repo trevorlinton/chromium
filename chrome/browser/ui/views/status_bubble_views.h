@@ -39,22 +39,22 @@ class StatusBubbleViews : public StatusBubble {
 
   views::View* base_view() { return base_view_; }
 
-  // Reposition the bubble - as we are using a WS_POPUP for the bubble,
+  // Reposition the bubble's popup - as we are using a WS_POPUP for the bubble,
   // we have to manually position it when the browser window moves.
-  virtual void Reposition();
+  void RepositionPopup();
 
   // The bubble only has a preferred height: the sum of the height of
   // the font and kTotalVerticalPadding.
   gfx::Size GetPreferredSize();
 
-  // Set the bounds of the bubble relative to |base_view_|.
-  void SetBounds(int x, int y, int w, int h);
+  // Calculate and set new position for status bubble.
+  void Reposition();
 
   // Set bubble to new width.
   void SetBubbleWidth(int width);
 
   // Overridden from StatusBubble:
-  virtual void SetStatus(const string16& status) OVERRIDE;
+  virtual void SetStatus(const base::string16& status) OVERRIDE;
   virtual void SetURL(const GURL& url, const std::string& languages) OVERRIDE;
   virtual void Hide() OVERRIDE;
   virtual void MouseMoved(const gfx::Point& location,
@@ -68,6 +68,7 @@ class StatusBubbleViews : public StatusBubble {
 
  private:
   class StatusView;
+  class StatusViewAnimation;
   class StatusViewExpander;
 
   // Initializes the popup and view.
@@ -79,6 +80,9 @@ class StatusBubbleViews : public StatusBubble {
 
   // Returns true if the base_view_'s widget is visible and not minimized.
   bool IsFrameVisible();
+
+  // Returns true if the base_view_'s widget is maximized.
+  bool IsFrameMaximized();
 
   // Expand bubble size to accommodate a long URL.
   void ExpandBubble();
@@ -93,11 +97,14 @@ class StatusBubbleViews : public StatusBubble {
   // size.
   int GetMaxStatusBubbleWidth();
 
+  // Set the bounds of the bubble relative to |base_view_|.
+  void SetBounds(int x, int y, int w, int h);
+
   // The status text we want to display when there are no URLs to display.
-  string16 status_text_;
+  base::string16 status_text_;
 
   // The url we want to display when there is no status text to display.
-  string16 url_text_;
+  base::string16 url_text_;
 
   // The original, non-elided URL.
   GURL url_;

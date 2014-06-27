@@ -71,7 +71,6 @@ bool GLContextEGL::Initialize(
   if (!context_) {
     LOG(ERROR) << "eglCreateContext failed with error "
                << GetLastEGLErrorString();
-    Destroy();
     return false;
   }
 
@@ -116,7 +115,7 @@ bool GLContextEGL::MakeCurrent(GLSurface* surface) {
   SetRealGLApi();
 
   SetCurrent(surface);
-  if (!InitializeExtensionBindings()) {
+  if (!InitializeDynamicBindings()) {
     ReleaseCurrent(surface);
     return false;
   }

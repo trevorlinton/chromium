@@ -43,28 +43,40 @@ class ShellBrowserContext : public BrowserContext {
       GetMediaRequestContextForStoragePartition(
           const base::FilePath& partition_path,
           bool in_memory) OVERRIDE;
-  virtual void RequestMIDISysExPermission(
+  virtual void RequestMidiSysExPermission(
       int render_process_id,
       int render_view_id,
       int bridge_id,
       const GURL& requesting_frame,
-      const MIDISysExPermissionCallback& callback) OVERRIDE;
-  virtual void CancelMIDISysExPermissionRequest(
+      bool user_gesture,
+      const MidiSysExPermissionCallback& callback) OVERRIDE;
+  virtual void CancelMidiSysExPermissionRequest(
       int render_process_id,
       int render_view_id,
       int bridge_id,
       const GURL& requesting_frame) OVERRIDE;
+  virtual void RequestProtectedMediaIdentifierPermission(
+      int render_process_id,
+      int render_view_id,
+      int bridge_id,
+      int group_id,
+      const GURL& requesting_frame,
+      const ProtectedMediaIdentifierPermissionCallback& callback) OVERRIDE;
+  virtual void CancelProtectedMediaIdentifierPermissionRequests(
+      int group_id) OVERRIDE;
   virtual ResourceContext* GetResourceContext() OVERRIDE;
   virtual GeolocationPermissionContext*
       GetGeolocationPermissionContext() OVERRIDE;
   virtual quota::SpecialStoragePolicy* GetSpecialStoragePolicy() OVERRIDE;
 
   net::URLRequestContextGetter* CreateRequestContext(
-      ProtocolHandlerMap* protocol_handlers);
+      ProtocolHandlerMap* protocol_handlers,
+      ProtocolHandlerScopedVector protocol_interceptors);
   net::URLRequestContextGetter* CreateRequestContextForStoragePartition(
       const base::FilePath& partition_path,
       bool in_memory,
-      ProtocolHandlerMap* protocol_handlers);
+      ProtocolHandlerMap* protocol_handlers,
+      ProtocolHandlerScopedVector protocol_interceptors);
 
  private:
   class ShellResourceContext;
@@ -78,7 +90,7 @@ class ShellBrowserContext : public BrowserContext {
   bool ignore_certificate_errors_;
   base::FilePath path_;
   scoped_ptr<ShellResourceContext> resource_context_;
-  scoped_refptr<ShellDownloadManagerDelegate> download_manager_delegate_;
+  scoped_ptr<ShellDownloadManagerDelegate> download_manager_delegate_;
   scoped_refptr<ShellURLRequestContextGetter> url_request_getter_;
 
   DISALLOW_COPY_AND_ASSIGN(ShellBrowserContext);

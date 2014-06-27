@@ -23,12 +23,36 @@ class SearchBoxModelObserver;
 // text, cursor position and selected text in edit control.
 class APP_LIST_EXPORT SearchBoxModel {
  public:
+  // The properties of the speech button.
+  struct APP_LIST_EXPORT SpeechButtonProperty {
+    SpeechButtonProperty(const gfx::ImageSkia& on_icon,
+                         const base::string16& on_tooltip,
+                         const gfx::ImageSkia& off_icon,
+                         const base::string16& off_tooltip);
+    ~SpeechButtonProperty();
+
+    // The icon/tooltip when the hotword is on.
+    gfx::ImageSkia on_icon;
+    base::string16 on_tooltip;
+
+    // The icon/tooltip when the hotword is off.
+    gfx::ImageSkia off_icon;
+    base::string16 off_tooltip;
+  };
+
   SearchBoxModel();
   ~SearchBoxModel();
 
-  // Sets/gets the icon on side of edit box.
+  // Sets/gets the icon on the left side of edit box.
   void SetIcon(const gfx::ImageSkia& icon);
   const gfx::ImageSkia& icon() const { return icon_; }
+
+  // Sets/gets the properties for the button of speech recognition.
+  void SetSpeechRecognitionButton(
+      scoped_ptr<SpeechButtonProperty> speech_button);
+  const SpeechButtonProperty* speech_button() const {
+    return speech_button_.get();
+  }
 
   // Sets/gets the hint text to display when there is in input.
   void SetHintText(const base::string16& hint_text);
@@ -49,6 +73,7 @@ class APP_LIST_EXPORT SearchBoxModel {
 
  private:
   gfx::ImageSkia icon_;
+  scoped_ptr<SpeechButtonProperty> speech_button_;
   base::string16 hint_text_;
   gfx::SelectionModel selection_model_;
   base::string16 text_;

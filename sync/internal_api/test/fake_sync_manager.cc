@@ -80,7 +80,7 @@ void FakeSyncManager::Init(
     int sync_server_port,
     bool use_ssl,
     scoped_ptr<HttpPostProviderFactory> post_factory,
-    const std::vector<ModelSafeWorker*>& workers,
+    const std::vector<scoped_refptr<ModelSafeWorker> >& workers,
     ExtensionsActivity* extensions_activity,
     ChangeDelegate* change_delegate,
     const SyncCredentials& credentials,
@@ -218,6 +218,10 @@ UserShare* FakeSyncManager::GetUserShare() {
   return test_user_share_.user_share();
 }
 
+syncer::SyncCore* FakeSyncManager::GetSyncCore() {
+  return NULL;
+}
+
 const std::string FakeSyncManager::cache_guid() {
   return test_user_share_.user_share()->directory->cache_guid();
 }
@@ -251,5 +255,7 @@ ModelTypeSet FakeSyncManager::GetLastRefreshRequestTypes() {
 void FakeSyncManager::OnInvalidatorStateChange(InvalidatorState state) {
   // Do nothing.
 }
+
+std::string FakeSyncManager::GetOwnerName() const { return "FakeSyncManager"; }
 
 }  // namespace syncer

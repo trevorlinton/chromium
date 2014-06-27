@@ -52,11 +52,7 @@ PageActionDecoration::PageActionDecoration(
       browser_(browser),
       page_action_(page_action),
       current_tab_id_(-1),
-      preview_enabled_(false),
-      scoped_icon_animation_observer_(
-          page_action->GetIconAnimation(
-              SessionID::IdForTab(owner->GetWebContents())),
-          this) {
+      preview_enabled_(false) {
   const Extension* extension = browser->profile()->GetExtensionService()->
       GetExtensionById(page_action->extension_id(), false);
   DCHECK(extension);
@@ -67,8 +63,6 @@ PageActionDecoration::PageActionDecoration(
   registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_HOST_VIEW_SHOULD_CLOSE,
       content::Source<Profile>(browser_->profile()));
   registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_COMMAND_PAGE_ACTION_MAC,
-      content::Source<Profile>(browser_->profile()));
-  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_COMMAND_SCRIPT_BADGE_MAC,
       content::Source<Profile>(browser_->profile()));
 
   // We set the owner last of all so that we can determine whether we are in
@@ -84,26 +78,6 @@ CGFloat PageActionDecoration::GetWidthForSpace(CGFloat width) {
   return extensions::IconsInfo::kPageActionIconMaxSize;
 }
 
-void PageActionDecoration::DrawWithBackgroundInFrame(NSRect background_frame,
-                                                     NSRect frame,
-                                                     NSView* control_view) {
-  {
-    gfx::Rect bounds(NSRectToCGRect(background_frame));
-    gfx::CanvasSkiaPaint canvas(background_frame, /*opaque=*/false);
-    // set_composite_alpha(true) makes the extension action paint on top of the
-    // location bar instead of whatever's behind the Chrome window.
-    canvas.set_composite_alpha(true);
-    location_bar_util::PaintExtensionActionBackground(
-        *page_action_, current_tab_id_,
-        &canvas, bounds,
-        SK_ColorBLACK, SK_ColorWHITE);
-    // Destroying |canvas| draws the background.
-  }
-
-  ImageDecoration::DrawWithBackgroundInFrame(
-      background_frame, frame, control_view);
-}
-
 bool PageActionDecoration::AcceptsMousePress() {
   return true;
 }
@@ -112,6 +86,10 @@ bool PageActionDecoration::AcceptsMousePress() {
 // Action.
 bool PageActionDecoration::OnMousePressed(NSRect frame) {
   return ActivatePageAction(frame);
+}
+
+void PageActionDecoration::ActivatePageAction() {
+  ActivatePageAction(owner_->GetPageActionFrame(page_action_));
 }
 
 bool PageActionDecoration::ActivatePageAction(NSRect frame) {
@@ -142,12 +120,6 @@ bool PageActionDecoration::ActivatePageAction(NSRect frame) {
       // mouse button through to the LocationBarController.
       NOTREACHED();
       break;
-
-    case LocationBarController::ACTION_SHOW_SCRIPT_POPUP:
-      ShowPopup(
-          frame,
-          extensions::ExtensionInfoUI::GetURL(page_action_->extension_id()));
-      break;
   }
 
   return true;
@@ -166,7 +138,8 @@ void PageActionDecoration::UpdateVisibility(WebContents* contents,
                                             const GURL& url) {
   // Save this off so we can pass it back to the extension when the action gets
   // executed. See PageActionDecoration::OnMousePressed.
-  current_tab_id_ = contents ? ExtensionTabUtil::GetTabId(contents) : -1;
+  current_tab_id_ =
+      contents ? extensions::ExtensionTabUtil::GetTabId(contents) : -1;
   current_url_ = url;
 
   bool visible = contents &&
@@ -257,11 +230,6 @@ void PageActionDecoration::ShowPopup(const NSRect& frame,
                             devMode:NO];
 }
 
-void PageActionDecoration::OnIconChanged() {
-  UpdateVisibility(owner_->GetWebContents(), current_url_);
-  owner_->RedrawDecoration(this);
-}
-
 void PageActionDecoration::Observe(
     int type,
     const content::NotificationSource& source,
@@ -274,8 +242,7 @@ void PageActionDecoration::Observe(
 
       break;
     }
-    case chrome::NOTIFICATION_EXTENSION_COMMAND_PAGE_ACTION_MAC:
-    case chrome::NOTIFICATION_EXTENSION_COMMAND_SCRIPT_BADGE_MAC: {
+    case chrome::NOTIFICATION_EXTENSION_COMMAND_PAGE_ACTION_MAC: {
       std::pair<const std::string, gfx::NativeWindow>* payload =
       content::Details<std::pair<const std::string, gfx::NativeWindow> >(
           details).ptr();
@@ -286,7 +253,7 @@ void PageActionDecoration::Observe(
       if (extension_id != page_action_->extension_id())
         break;
       if (IsVisible())
-        ActivatePageAction(owner_->GetPageActionFrame(page_action_));
+        ActivatePageAction();
       break;
     }
 

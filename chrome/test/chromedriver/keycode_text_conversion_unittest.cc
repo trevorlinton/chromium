@@ -14,24 +14,35 @@
 
 namespace {
 
-void CheckCharToKeyCode(char character, ui::KeyboardCode key_code,
-                        int modifiers) {
-  std::string character_string;
-  character_string.push_back(character);
-  char16 character_utf16 = UTF8ToUTF16(character_string)[0];
+void CheckCharToKeyCode16(base::char16 character, ui::KeyboardCode key_code,
+                          int modifiers) {
   ui::KeyboardCode actual_key_code = ui::VKEY_UNKNOWN;
   int actual_modifiers = 0;
   std::string error_msg;
   EXPECT_TRUE(ConvertCharToKeyCode(
-      character_utf16, &actual_key_code, &actual_modifiers, &error_msg));
+      character, &actual_key_code, &actual_modifiers, &error_msg));
   EXPECT_EQ(key_code, actual_key_code) << "Char: " << character;
   EXPECT_EQ(modifiers, actual_modifiers) << "Char: " << character;
 }
 
+void CheckCharToKeyCode(char character, ui::KeyboardCode key_code,
+                        int modifiers) {
+  CheckCharToKeyCode16(base::UTF8ToUTF16(std::string(1, character))[0],
+                       key_code, modifiers);
+}
+
+#if defined(OS_WIN)
+void CheckCharToKeyCode(wchar_t character, ui::KeyboardCode key_code,
+                        int modifiers) {
+  CheckCharToKeyCode16(base::WideToUTF16(std::wstring(1, character))[0],
+                       key_code, modifiers);
+}
+#endif
+
 void CheckCantConvertChar(wchar_t character) {
   std::wstring character_string;
   character_string.push_back(character);
-  char16 character_utf16 = WideToUTF16(character_string)[0];
+  base::char16 character_utf16 = base::WideToUTF16(character_string)[0];
   ui::KeyboardCode actual_key_code = ui::VKEY_UNKNOWN;
   int actual_modifiers = 0;
   std::string error_msg;
@@ -142,6 +153,11 @@ TEST(KeycodeTextConversionTest, MAYBE_NonEnglish) {
   ASSERT_TRUE(SwitchKeyboardLayout("00000408"));  // greek
   CheckCharToKeyCode(';', ui::VKEY_Q, 0);
   EXPECT_EQ(";", ConvertKeyCodeToTextNoError(ui::VKEY_Q, 0));
+  // Regression test for chromedriver bug #405.
+  ASSERT_TRUE(SwitchKeyboardLayout("00000419"));  // russian
+  CheckCharToKeyCode(L'\u0438', ui::VKEY_B, 0);
+  EXPECT_EQ(base::UTF16ToUTF8(L"\u0438"),
+            ConvertKeyCodeToTextNoError(ui::VKEY_B, 0));
 #elif defined(OS_MACOSX)
   ASSERT_TRUE(SwitchKeyboardLayout("com.apple.keylayout.German"));
   CheckCharToKeyCode('z', ui::VKEY_Y, 0);

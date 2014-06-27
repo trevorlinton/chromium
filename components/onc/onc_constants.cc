@@ -140,6 +140,7 @@ const char kWEP_8021X[] = "WEP-8021X";
 const char kWEP_PSK[] = "WEP-PSK";
 const char kWPA_EAP[] = "WPA-EAP";
 const char kWPA_PSK[] = "WPA-PSK";
+const char kWPA2_PSK[] = "WPA2-PSK";
 }  // namespace wifi
 
 namespace certificate {
@@ -204,6 +205,7 @@ const char kPassword[] = "Password";
 const char kSaveCredentials[] = "SaveCredentials";
 const char kServerCAPEMs[] = "ServerCAPEMs";
 const char kServerCARef[] = "ServerCARef";
+const char kServerCARefs[] = "ServerCARefs";
 const char kUseSystemCAs[] = "UseSystemCAs";
 }  // namespace eap
 
@@ -230,8 +232,9 @@ const char kEAP[] = "EAP";
 const char kGroup[] = "Group";
 const char kIKEVersion[] = "IKEVersion";
 const char kPSK[] = "PSK";
-const char kServerCARef[] = "ServerCARef";
 const char kServerCAPEMs[] = "ServerCAPEMs";
+const char kServerCARef[] = "ServerCARef";
+const char kServerCARefs[] = "ServerCARefs";
 const char kXAUTH[] = "XAUTH";
 }  // namespace ipsec
 
@@ -254,8 +257,9 @@ const char kRemoteCertEKU[] = "RemoteCertEKU";
 const char kRemoteCertKU[] = "RemoteCertKU";
 const char kRemoteCertTLS[] = "RemoteCertTLS";
 const char kRenegSec[] = "RenegSec";
-const char kServerCARef[] = "ServerCARef";
 const char kServerCAPEMs[] = "ServerCAPEMs";
+const char kServerCARef[] = "ServerCARef";
+const char kServerCARefs[] = "ServerCARefs";
 const char kServerCertPEM[] = "ServerCertPEM";
 const char kServerCertRef[] = "ServerCertRef";
 const char kServerPollTimeout[] = "ServerPollTimeout";
@@ -265,7 +269,20 @@ const char kStaticChallenge[] = "StaticChallenge";
 const char kTLSAuthContents[] = "TLSAuthContents";
 const char kTLSRemote[] = "TLSRemote";
 const char kVerb[] = "Verb";
+const char kVerifyHash[] = "VerifyHash";
+const char kVerifyX509[] = "VerifyX509";
 }  // namespace openvpn
+
+namespace verify_x509 {
+const char kName[] = "Name";
+const char kType[] = "Type";
+
+namespace types {
+const char kName[] = "name";
+const char kNamePrefix[] = "name-prefix";
+const char kSubject[] = "subject";
+}  // namespace types
+}  // namespace verify_x509
 
 namespace proxy {
 const char kDirect[] = "Direct";

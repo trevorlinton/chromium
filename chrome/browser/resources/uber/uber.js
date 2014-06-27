@@ -126,24 +126,27 @@ cr.define('uber', function() {
    * @param {Event} e The posted object.
    */
   function handleWindowMessage(e) {
-    if (e.data.method === 'beginInterceptingEvents')
+    if (e.data.method === 'beginInterceptingEvents') {
       backgroundNavigation();
-    else if (e.data.method === 'stopInterceptingEvents')
+    } else if (e.data.method === 'stopInterceptingEvents') {
       foregroundNavigation();
-    else if (e.data.method === 'setPath')
+    } else if (e.data.method === 'setPath') {
       setPath(e.origin, e.data.params.path);
-    else if (e.data.method === 'setTitle')
+    } else if (e.data.method === 'setTitle') {
       setTitle(e.origin, e.data.params.title);
-    else if (e.data.method === 'showPage')
-      showPage(e.data.params.pageId, HISTORY_STATE_OPTION.PUSH);
-    else if (e.data.method === 'navigationControlsLoaded')
+    } else if (e.data.method === 'showPage') {
+      showPage(e.data.params.pageId,
+               HISTORY_STATE_OPTION.PUSH,
+               e.data.params.path);
+    } else if (e.data.method === 'navigationControlsLoaded') {
       onNavigationControlsLoaded();
-    else if (e.data.method === 'adjustToScroll')
+    } else if (e.data.method === 'adjustToScroll') {
       adjustToScroll(e.data.params);
-    else if (e.data.method === 'mouseWheel')
+    } else if (e.data.method === 'mouseWheel') {
       forwardMouseWheel(e.data.params);
-    else
+    } else {
       console.error('Received unexpected message', e.data);
+    }
   }
 
   /**
@@ -242,7 +245,7 @@ cr.define('uber', function() {
 
   /**
    * Selects a subpage. This is called from uber-frame.
-   * @param {string} pageId Should matche an id of one of the iframe containers.
+   * @param {string} pageId Should match an id of one of the iframe containers.
    * @param {integer} historyOption Indicates whether we should push or replace
    *     browser history.
    * @param {string} path A sub-page path.
@@ -256,6 +259,7 @@ cr.define('uber', function() {
     var frame = container.querySelector('iframe');
     if (!frame) {
       frame = container.ownerDocument.createElement('iframe');
+      frame.name = pageId;
       container.appendChild(frame);
       frame.src = sourceUrl;
     } else {

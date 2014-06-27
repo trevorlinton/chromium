@@ -18,41 +18,59 @@ static const size_t kHeaderBufInitialSize = 4096;
 
 QuicSpdyClientStream::QuicSpdyClientStream(QuicStreamId id,
                                            QuicClientSession* session)
-    : QuicReliableClientStream(id, session),
+    : QuicDataStream(id, session),
       read_buf_(new GrowableIOBuffer()),
-      response_headers_received_(false) {
+      response_headers_received_(false),
+      header_bytes_read_(0),
+      header_bytes_written_(0) {
 }
 
 QuicSpdyClientStream::~QuicSpdyClientStream() {
 }
 
-uint32 QuicSpdyClientStream::ProcessData(const char* data, uint32 length) {
-  uint32 total_bytes_processed = 0;
+bool QuicSpdyClientStream::OnStreamFrame(const QuicStreamFrame& frame) {
+  if (!write_side_closed()) {
+    DVLOG(1) << "Got a response before the request was complete.  "
+             << "Aborting request.";
+    CloseWriteSide();
+  }
+  return QuicDataStream::OnStreamFrame(frame);
+}
+
+void QuicSpdyClientStream::OnStreamHeadersComplete(bool fin,
+                                                   size_t frame_len) {
+  header_bytes_read_ = frame_len;
+  QuicDataStream::OnStreamHeadersComplete(fin, frame_len);
+}
+
+uint32 QuicSpdyClientStream::ProcessData(const char* data,
+                                         uint32 data_len) {
+  int total_bytes_processed = 0;
 
   // Are we still reading the response headers.
   if (!response_headers_received_) {
     // Grow the read buffer if necessary.
-    if (read_buf_->RemainingCapacity() < (int)length) {
+    if (read_buf_->RemainingCapacity() < (int)data_len) {
       read_buf_->SetCapacity(read_buf_->capacity() + kHeaderBufInitialSize);
     }
-    memcpy(read_buf_->data(), data, length);
-    read_buf_->set_offset(read_buf_->offset() + length);
+    memcpy(read_buf_->data(), data, data_len);
+    read_buf_->set_offset(read_buf_->offset() + data_len);
     ParseResponseHeaders();
   } else {
-    mutable_data()->append(data + total_bytes_processed,
-                           length - total_bytes_processed);
+    data_.append(data + total_bytes_processed,
+                 data_len - total_bytes_processed);
   }
-  return length;
+  return data_len;
 }
 
-void QuicSpdyClientStream::TerminateFromPeer(bool half_close) {
-  ReliableQuicStream::TerminateFromPeer(half_close);
+void QuicSpdyClientStream::OnFinRead() {
+  ReliableQuicStream::OnFinRead();
   if (!response_headers_received_) {
-    Close(QUIC_BAD_APPLICATION_PAYLOAD);
+    Reset(QUIC_BAD_APPLICATION_PAYLOAD);
   } else if ((headers().content_length_status() ==
              BalsaHeadersEnums::VALID_CONTENT_LENGTH) &&
-             mutable_data()->size() != headers().content_length()) {
-    Close(QUIC_BAD_APPLICATION_PAYLOAD);
+             data_.size() != headers().content_length()) {
+    Reset(QUIC_BAD_APPLICATION_PAYLOAD);
   }
 }
 
@@ -62,18 +80,17 @@ ssize_t QuicSpdyClientStream::SendRequest(const BalsaHeaders& headers,
   SpdyHeaderBlock header_block =
       SpdyUtils::RequestHeadersToSpdyHeaders(headers);
 
-  string headers_string = session()->compressor()->CompressHeadersWithPriority(
-      priority(), header_block);
+  bool send_fin_with_headers = fin && body.empty();
+  size_t bytes_sent = body.size();
+  header_bytes_written_ = WriteHeaders(
+      header_block, send_fin_with_headers, NULL);
+  bytes_sent += header_bytes_written_;
 
-  bool has_body = !body.empty();
-
-  WriteData(headers_string, fin && !has_body);  // last_data
-
-  if (has_body) {
-    WriteData(body, fin);
+  if (!body.empty()) {
+    WriteOrBufferData(body, fin, NULL);
   }
 
-  return headers_string.size() + body.size();
+  return bytes_sent;
 }
 
 int QuicSpdyClientStream::ParseResponseHeaders() {
@@ -87,18 +104,23 @@ int QuicSpdyClientStream::ParseResponseHeaders() {
     return -1;
   }
 
-  if (!SpdyUtils::FillBalsaResponseHeaders(headers, mutable_headers())) {
-    Close(QUIC_BAD_APPLICATION_PAYLOAD);
+  if (!SpdyUtils::FillBalsaResponseHeaders(headers, &headers_)) {
+    Reset(QUIC_BAD_APPLICATION_PAYLOAD);
     return -1;
   }
   response_headers_received_ = true;
 
   size_t delta = read_buf_len - len;
   if (delta > 0) {
-    mutable_data()->append(data + len, delta);
+    data_.append(data + len, delta);
   }
 
   return len;
+}
+
+// Sends body data to the server and returns the number of bytes sent.
+void QuicSpdyClientStream::SendBody(const string& data, bool fin) {
+  WriteOrBufferData(data, fin, NULL);
 }
 
 }  // namespace tools

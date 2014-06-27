@@ -16,8 +16,13 @@
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_contents_observer.h"
 
+namespace cc {
+class CompositorFrameMetadata;
+}
+
 namespace content {
 
+class DevToolsPowerHandler;
 class DevToolsTracingHandler;
 class RendererOverridesHandler;
 class RenderViewHost;
@@ -34,9 +39,15 @@ class CONTENT_EXPORT RenderViewDevToolsAgentHost
   static void OnCancelPendingNavigation(RenderViewHost* pending,
                                         RenderViewHost* current);
 
+  static bool DispatchIPCMessage(RenderViewHost* source,
+                                 const IPC::Message& message);
+
   RenderViewDevToolsAgentHost(RenderViewHost*);
 
   RenderViewHost* render_view_host() { return render_view_host_; }
+
+  void SynchronousSwapCompositorFrame(
+      const cc::CompositorFrameMetadata& frame_metadata);
 
  private:
   friend class DevToolsAgentHost;
@@ -56,15 +67,18 @@ class CONTENT_EXPORT RenderViewDevToolsAgentHost
 
   // WebContentsObserver overrides.
   virtual void AboutToNavigateRenderView(RenderViewHost* dest_rvh) OVERRIDE;
+  virtual void RenderViewHostChanged(RenderViewHost* old_host,
+                                     RenderViewHost* new_host) OVERRIDE;
   virtual void RenderViewDeleted(RenderViewHost* rvh) OVERRIDE;
   virtual void RenderProcessGone(base::TerminationStatus status) OVERRIDE;
   virtual void DidAttachInterstitialPage() OVERRIDE;
-  virtual bool OnMessageReceived(const IPC::Message& message) OVERRIDE;
 
   // NotificationObserver overrides:
   virtual void Observe(int type,
                        const NotificationSource& source,
                        const NotificationDetails& details) OVERRIDE;
+
+  bool DispatchIPCMessage(const IPC::Message& message);
 
   void SetRenderViewHost(RenderViewHost* rvh);
   void ClearRenderViewHost();
@@ -82,6 +96,7 @@ class CONTENT_EXPORT RenderViewDevToolsAgentHost
   RenderViewHost* render_view_host_;
   scoped_ptr<RendererOverridesHandler> overrides_handler_;
   scoped_ptr<DevToolsTracingHandler> tracing_handler_;
+  scoped_ptr<DevToolsPowerHandler> power_handler_;
 #if defined(OS_ANDROID)
   scoped_ptr<PowerSaveBlockerImpl> power_save_blocker_;
 #endif

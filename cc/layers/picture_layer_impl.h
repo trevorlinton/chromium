@@ -21,11 +21,40 @@ namespace cc {
 
 struct AppendQuadsData;
 class QuadSink;
+class MicroBenchmarkImpl;
+class Tile;
 
 class CC_EXPORT PictureLayerImpl
     : public LayerImpl,
       NON_EXPORTED_BASE(public PictureLayerTilingClient) {
  public:
+  class CC_EXPORT LayerRasterTileIterator {
+   public:
+    LayerRasterTileIterator();
+    LayerRasterTileIterator(PictureLayerImpl* layer, bool prioritize_low_res);
+    ~LayerRasterTileIterator();
+
+    Tile* operator*();
+    LayerRasterTileIterator& operator++();
+    operator bool() const;
+
+   private:
+    enum IteratorType { LOW_RES, HIGH_RES, NUM_ITERATORS };
+
+    PictureLayerImpl* layer_;
+
+    struct IterationStage {
+      IteratorType iterator_type;
+      PictureLayerTiling::TilingRasterTileIterator::Type tile_type;
+    };
+
+    int current_stage_;
+
+    // One low res stage, and three high res stages.
+    IterationStage stages_[4];
+    PictureLayerTiling::TilingRasterTileIterator iterators_[NUM_ITERATORS];
+  };
+
   static scoped_ptr<PictureLayerImpl> Create(LayerTreeImpl* tree_impl, int id) {
     return make_scoped_ptr(new PictureLayerImpl(tree_impl, id));
   }
@@ -41,7 +70,7 @@ class CC_EXPORT PictureLayerImpl
   virtual void UpdateTilePriorities() OVERRIDE;
   virtual void DidBecomeActive() OVERRIDE;
   virtual void DidBeginTracing() OVERRIDE;
-  virtual void DidLoseOutputSurface() OVERRIDE;
+  virtual void ReleaseResources() OVERRIDE;
   virtual void CalculateContentsScale(float ideal_contents_scale,
                                       float device_scale_factor,
                                       float page_scale_factor,
@@ -52,14 +81,18 @@ class CC_EXPORT PictureLayerImpl
   virtual skia::RefPtr<SkPicture> GetPicture() OVERRIDE;
 
   // PictureLayerTilingClient overrides.
-  virtual scoped_refptr<Tile> CreateTile(PictureLayerTiling* tiling,
-                                         gfx::Rect content_rect) OVERRIDE;
+  virtual scoped_refptr<Tile> CreateTile(
+    PictureLayerTiling* tiling,
+    const gfx::Rect& content_rect) OVERRIDE;
   virtual void UpdatePile(Tile* tile) OVERRIDE;
   virtual gfx::Size CalculateTileSize(
-      gfx::Size content_bounds) const OVERRIDE;
+      const gfx::Size& content_bounds) const OVERRIDE;
   virtual const Region* GetInvalidation() OVERRIDE;
   virtual const PictureLayerTiling* GetTwinTiling(
-      const PictureLayerTiling* tiling) OVERRIDE;
+      const PictureLayerTiling* tiling) const OVERRIDE;
+  virtual size_t GetMaxTilesForInterestArea() const OVERRIDE;
+  virtual float GetSkewportTargetTimeInSeconds() const OVERRIDE;
+  virtual int GetSkewportExtrapolationLimitInContentPixels() const OVERRIDE;
 
   // PushPropertiesTo active tree => pending tree.
   void SyncTiling(const PictureLayerTiling* tiling);
@@ -70,24 +103,47 @@ class CC_EXPORT PictureLayerImpl
 
   virtual size_t GPUMemoryUsageInBytes() const OVERRIDE;
 
+  virtual void RunMicroBenchmark(MicroBenchmarkImpl* benchmark) OVERRIDE;
+
+  void SetHasGpuRasterizationHint(bool has_hint);
+  bool ShouldUseGpuRasterization() const;
+
+  // Functions used by tile manager.
+  void DidUnregisterLayer();
+  PictureLayerImpl* GetTwinLayer() { return twin_layer_; }
+  WhichTree GetTree() const;
+  bool IsOnActiveOrPendingTree() const;
+
  protected:
+  friend class LayerRasterTileIterator;
+
   PictureLayerImpl(LayerTreeImpl* tree_impl, int id);
   PictureLayerTiling* AddTiling(float contents_scale);
   void RemoveTiling(float contents_scale);
+  void RemoveAllTilings();
   void SyncFromActiveLayer(const PictureLayerImpl* other);
   void ManageTilings(bool animating_transform_to_screen);
+  bool ShouldHaveLowResTiling() const {
+    return should_use_low_res_tiling_ && !ShouldUseGpuRasterization();
+  }
   virtual bool ShouldAdjustRasterScale(
       bool animating_transform_to_screen) const;
-  virtual void CalculateRasterContentsScale(
-      bool animating_transform_to_screen,
-      float* raster_contents_scale,
-      float* low_res_raster_contents_scale) const;
+  virtual void RecalculateRasterScales(
+      bool animating_transform_to_screen);
   void CleanUpTilingsOnActiveLayer(
       std::vector<PictureLayerTiling*> used_tilings);
   float MinimumContentsScale() const;
+  float SnappedContentsScale(float new_contents_scale);
   void UpdateLCDTextStatus(bool new_status);
   void ResetRasterScale();
   void MarkVisibleResourcesAsRequired() const;
+  bool MarkVisibleTilesAsRequired(
+      PictureLayerTiling* tiling,
+      const PictureLayerTiling* optional_twin_tiling,
+      float contents_scale,
+      const gfx::Rect& rect,
+      const Region& missing_region) const;
+
   void DoPostCommitInitializationIfNeeded() {
     if (needs_post_commit_initialization_)
       DoPostCommitInitialization();
@@ -108,9 +164,6 @@ class CC_EXPORT PictureLayerImpl
   scoped_refptr<PicturePileImpl> pile_;
   Region invalidation_;
 
-  gfx::Transform last_screen_space_transform_;
-  gfx::Size last_bounds_;
-  float last_content_scale_;
   bool is_mask_;
 
   float ideal_page_scale_;
@@ -130,6 +183,10 @@ class CC_EXPORT PictureLayerImpl
   // A sanity state check to make sure UpdateTilePriorities only gets called
   // after a CalculateContentsScale/ManageTilings.
   bool should_update_tile_priorities_;
+  bool has_gpu_rasterization_hint_;
+  bool should_use_low_res_tiling_;
+
+  bool layer_needs_to_register_itself_;
 
   friend class PictureLayer;
   DISALLOW_COPY_AND_ASSIGN(PictureLayerImpl);

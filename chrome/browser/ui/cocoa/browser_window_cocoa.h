@@ -22,6 +22,7 @@ class Browser;
 
 namespace extensions {
 class ActiveTabPermissionGranter;
+class Command;
 class Extension;
 }
 
@@ -59,6 +60,7 @@ class BrowserWindowCocoa :
   virtual void UpdateDevTools() OVERRIDE;
   virtual void UpdateLoadingAnimations(bool should_animate) OVERRIDE;
   virtual void SetStarredState(bool is_starred) OVERRIDE;
+  virtual void SetTranslateIconToggled(bool is_lit) OVERRIDE;
   virtual void OnActiveTabChanged(content::WebContents* old_contents,
                                   content::WebContents* new_contents,
                                   int index,
@@ -100,14 +102,17 @@ class BrowserWindowCocoa :
   virtual void ShowUpdateChromeDialog() OVERRIDE;
   virtual void ShowBookmarkBubble(const GURL& url,
                                   bool already_bookmarked) OVERRIDE;
-  virtual void ShowTranslateBubble(
-      content::WebContents* contents,
-      TranslateBubbleModel::ViewState view_state) OVERRIDE;
+  virtual void ShowBookmarkAppBubble(
+      const WebApplicationInfo& web_app_info,
+      const std::string& extension_id) OVERRIDE;
+  virtual void ShowTranslateBubble(content::WebContents* contents,
+                                   TranslateTabHelper::TranslateStep step,
+                                   TranslateErrors::Type error_type) OVERRIDE;
 #if defined(ENABLE_ONE_CLICK_SIGNIN)
   virtual void ShowOneClickSigninBubble(
       OneClickSigninBubbleType type,
-      const string16& email,
-      const string16& error_message,
+      const base::string16& email,
+      const base::string16& error_message,
       const StartSyncCallback& start_sync_callback) OVERRIDE;
 #endif
   virtual bool IsDownloadShelfVisible() const OVERRIDE;
@@ -133,7 +138,6 @@ class BrowserWindowCocoa :
   virtual void Cut() OVERRIDE;
   virtual void Copy() OVERRIDE;
   virtual void Paste() OVERRIDE;
-  virtual void OpenTabpose() OVERRIDE;
   virtual void EnterFullscreenWithChrome() OVERRIDE;
   virtual bool IsFullscreenWithChrome() OVERRIDE;
   virtual bool IsFullscreenWithoutChrome() OVERRIDE;
@@ -144,12 +148,19 @@ class BrowserWindowCocoa :
       GetWebContentsModalDialogHost() OVERRIDE;
   virtual void ShowAvatarBubble(content::WebContents* web_contents,
                                 const gfx::Rect& rect) OVERRIDE;
-  virtual void ShowAvatarBubbleFromAvatarButton() OVERRIDE;
+  virtual void ShowAvatarBubbleFromAvatarButton(AvatarBubbleMode mode) OVERRIDE;
   virtual void ShowPasswordGenerationBubble(
       const gfx::Rect& rect,
       const autofill::PasswordForm& form,
       autofill::PasswordGenerator* password_generator) OVERRIDE;
   virtual int GetRenderViewHeightInsetWithDetachedBookmarkBar() OVERRIDE;
+  virtual void ExecuteExtensionCommand(
+      const extensions::Extension* extension,
+      const extensions::Command& command) OVERRIDE;
+  virtual void ShowPageActionPopup(
+      const extensions::Extension* extension) OVERRIDE;
+  virtual void ShowBrowserActionPopup(
+      const extensions::Extension* extension) OVERRIDE;
 
   // Overridden from ExtensionKeybindingRegistry::Delegate:
   virtual extensions::ActiveTabPermissionGranter*

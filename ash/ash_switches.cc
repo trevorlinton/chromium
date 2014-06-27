@@ -29,9 +29,10 @@ const char kAshCopyHostBackgroundAtBoot[] = "ash-copy-host-background-at-boot";
 // Enable keyboard shortcuts useful for debugging.
 const char kAshDebugShortcuts[] = "ash-debug-shortcuts";
 
-// UI to show preferred networks in the status area (for testing).
-const char kAshDebugShowPreferredNetworks[] =
-    "ash-debug-show-preferred-networks";
+// Indicates that the wallpaper images specified by
+// kAshDefaultWallpaper{Large,Small} are OEM-specific (i.e. they are not
+// downloadable from Google).
+const char kAshDefaultWallpaperIsOem[] = "ash-default-wallpaper-is-oem";
 
 // Default wallpaper to use (as paths to trusted, non-user-writable JPEG files).
 const char kAshDefaultWallpaperLarge[] = "ash-default-wallpaper-large";
@@ -46,81 +47,34 @@ const char kAshDisableAlternateFrameCaptionButtonStyle[] =
 const char kAshDisableAlternateShelfLayout[] =
     "ash-disable-alternate-shelf-layout";
 
-#if defined(OS_CHROMEOS)
-// Disable the status tray volume menu for allowing the user to choose an audio
-// input and output device.
-const char kAshDisableAudioDeviceMenu[] =
-    "ash-disable-audio-device-menu";
-#endif
-
-// Disable auto window maximization logic.
-const char kAshDisableAutoMaximizing[] = "ash-disable-auto-maximizing";
-
-// Disables the limitter to throttle how quickly a user
-// can change display settings.
-const char kAshDisableDisplayChangeLimiter[] =
-    "ash-disable-display-change-limiter";
-
-#if defined(OS_CHROMEOS)
-// Disable the notification when a low-power USB charger is connected.
-const char kAshDisableUsbChargerNotification[] =
-    "ash-disable-usb-charger-notification";
-
-// TODO(jamescook): Remove this unused flag. It exists only to allow the
-// "Enable audio device menu" about:flags item to have the tri-state
-// default/enabled/disabled UI.
-const char kAshEnableAudioDeviceMenu[] = "ash-enable-audio-device-menu";
-#endif  // defined(OS_CHROMEOS)
-
-// Enable advanced gestures (e.g. for window management).
-const char kAshEnableAdvancedGestures[] = "ash-enable-advanced-gestures";
+// Disable ability to dock windows at the desktop edge.
+const char kAshDisableDockedWindows[] = "ash-disable-docked-windows";
 
 // Use alternate visual style for the caption buttons (minimize, maximize,
 // restore, close). The alternate style:
 // - Adds a dedicated button for minimize.
-// - Increases the height of the maximized header.
 // - Removes the maximize button's help bubble.
-// - Switches snapping a window left/right to be always 50%.
 const char kAshEnableAlternateFrameCaptionButtonStyle[] =
     "ash-enable-alternate-caption-button";
 
-// Always enable brightness control. Used by machines that don't report their
-// main monitor as internal.
-const char kAshEnableBrightnessControl[] = "ash-enable-brightness-control";
-
-// Enable the dock area on a desktop.
-const char kAshEnableDockedWindows[] = "ash-enable-docked-windows";
-
-// Disable dragging items off the shelf to unpin them.
-const char kAshDisableDragOffShelf[] = "ash-disable-drag-off-shelf";
-
 #if defined(OS_CHROMEOS)
-// Enables the "full multi profile mode" - as it was in M-31.
-const char kAshEnableFullMultiProfileMode[] =
-    "ash-enable-full-multi-profile-mode";
+// Enables key bindings to scroll magnified screen.
+const char kAshEnableMagnifierKeyScroller[] =
+    "ash-enable-magnifier-key-scroller";
 #endif
-
-#if defined(OS_LINUX)
-// Enable memory monitoring.
-const char kAshEnableMemoryMonitor[] = "ash-enable-memory-monitor";
-#endif
-// Enables the Oak tree viewer.
-const char kAshEnableOak[] = "ash-enable-oak";
-
-// Disables overview mode for window switching.
-const char kAshDisableOverviewMode[] = "ash-disable-overview-mode";
 
 // Enables software based mirroring.
 const char kAshEnableSoftwareMirroring[] = "ash-enable-software-mirroring";
 
-// Enables "sticky" edges instead of "snap-to-edge"
-const char kAshEnableStickyEdges[] = "ash-enable-sticky-edges";
+// Enables touch view testing.
+const char kAshEnableTouchViewTesting[] = "ash-enable-touch-view-testing";
+
+// When this flag is set, system sounds will be played whether the
+// ChromeVox is enabled or not.
+const char kAshEnableSystemSounds[] = "ash-enable-system-sounds";
 
 // Enables showing the tray bubble by dragging on the shelf.
 const char kAshEnableTrayDragging[] = "ash-enable-tray-dragging";
-
-// Forces chrome to use mirror mode when an external display is connected.
-const char kAshForceMirrorMode[] = "ash-force-mirror-mode";
 
 // Wallpaper to use in guest mode (as paths to trusted, non-user-writable JPEG
 // files).
@@ -138,14 +92,6 @@ const char kAshHideNotificationsForFactory[] =
 // "1024x768*2" sets the scale factor to 2 for a high DPI display.
 const char kAshHostWindowBounds[] = "ash-host-window-bounds";
 
-// OEM-supplied wallpaper (as paths to trusted, non-user-writable JPEG files).
-const char kAshOemWallpaperLarge[] = "ash-oem-wallpaper-large";
-const char kAshOemWallpaperSmall[] = "ash-oem-wallpaper-small";
-
-// Specifies the delay in milliseconds before beginning overview mode after
-// getting an alt tab keypress.
-const char kAshOverviewDelayOnAltTab[] = "ash-overview-delay-on-alt-tab";
-
 // Specifies the layout mode and offsets for the secondary display for
 // testing. The format is "<t|r|b|l>,<offset>" where t=TOP, r=RIGHT,
 // b=BOTTOM and L=LEFT. For example, 'r,-100' means the secondary display
@@ -162,10 +108,6 @@ const char kAshTouchHud[] = "ash-touch-hud";
 // more visible state indication for background on status area.
 // crbug's [244983, 244990, 244994, 245005, 245012]
 const char kAshUseAlternateShelfLayout[] = "ash-use-alternate-shelf";
-
-// Flags explicitly show or hide the shelf alignment menu.
-const char kShowShelfAlignmentMenu[] = "show-launcher-alignment-menu";
-const char kHideShelfAlignmentMenu[] = "hide-launcher-alignment-menu";
 
 // Uses the 1st display in --ash-host-window-bounds as internal display.
 // This is for debugging on linux desktop.
@@ -185,13 +127,9 @@ const char kForceAshToDesktop[] = "ash-force-desktop";
 
 #endif
 
-// Disallow items to be dragged from the app launcher list into the launcher.
-const char kAshDisableDragAndDropAppListToLauncher[] =
-    "ash-disable-drag-and-drop-applist-to-launcher";
-
 bool UseAlternateFrameCaptionButtonStyle() {
-  return CommandLine::ForCurrentProcess()->
-      HasSwitch(kAshEnableAlternateFrameCaptionButtonStyle);
+  return !CommandLine::ForCurrentProcess()->
+      HasSwitch(kAshDisableAlternateFrameCaptionButtonStyle);
 }
 
 bool UseAlternateShelfLayout() {
@@ -199,41 +137,9 @@ bool UseAlternateShelfLayout() {
       HasSwitch(kAshDisableAlternateShelfLayout);
 }
 
-bool UseDragOffShelf() {
-  return !CommandLine::ForCurrentProcess()->
-      HasSwitch(kAshDisableDragOffShelf);
+bool UseDockedWindows() {
+  return !CommandLine::ForCurrentProcess()->HasSwitch(kAshDisableDockedWindows);
 }
-
-bool ShowShelfAlignmentMenu() {
-  return !CommandLine::ForCurrentProcess()->
-      HasSwitch(kHideShelfAlignmentMenu);
-}
-
-// Returns true if the full multi profile mode (M-31 version) is active.
-bool UseFullMultiProfileMode() {
-#if defined(OS_CHROMEOS)
-  return CommandLine::ForCurrentProcess()->
-      HasSwitch(kAshEnableFullMultiProfileMode);
-#else
-  return false;
-#endif
-}
-
-bool UseOverviewMode() {
-  return !CommandLine::ForCurrentProcess()->HasSwitch(kAshDisableOverviewMode);
-}
-
-#if defined(OS_CHROMEOS)
-bool ShowAudioDeviceMenu() {
-  return !CommandLine::ForCurrentProcess()->
-      HasSwitch(kAshDisableAudioDeviceMenu);
-}
-
-bool UseUsbChargerNotification() {
-  return !CommandLine::ForCurrentProcess()->
-      HasSwitch(kAshDisableUsbChargerNotification);
-}
-#endif
 
 }  // namespace switches
 }  // namespace ash

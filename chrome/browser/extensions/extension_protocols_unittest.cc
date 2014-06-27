@@ -9,15 +9,15 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
-#include "chrome/browser/extensions/extension_info_map.h"
 #include "chrome/browser/extensions/extension_protocols.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/resource_request_info.h"
 #include "content/public/test/mock_resource_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "extensions/browser/info_map.h"
 #include "extensions/common/constants.h"
+#include "extensions/common/extension.h"
 #include "net/base/request_priority.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_job_factory_impl.h"
@@ -29,7 +29,7 @@ namespace extensions {
 
 scoped_refptr<Extension> CreateTestExtension(const std::string& name,
                                              bool incognito_split_mode) {
-  DictionaryValue manifest;
+  base::DictionaryValue manifest;
   manifest.SetString("name", name);
   manifest.SetString("version", "1");
   manifest.SetInteger("manifest_version", 2);
@@ -48,7 +48,7 @@ scoped_refptr<Extension> CreateTestExtension(const std::string& name,
 }
 
 scoped_refptr<Extension> CreateWebStoreExtension() {
-  DictionaryValue manifest;
+  base::DictionaryValue manifest;
   manifest.SetString("name", "WebStore");
   manifest.SetString("version", "1");
   manifest.SetString("icons.16", "webstore_icon_16.png");
@@ -66,7 +66,7 @@ scoped_refptr<Extension> CreateWebStoreExtension() {
 }
 
 scoped_refptr<Extension> CreateTestResponseHeaderExtension() {
-  DictionaryValue manifest;
+  base::DictionaryValue manifest;
   manifest.SetString("name", "An extension with web-accessible resources");
   manifest.SetString("version", "2");
 
@@ -94,7 +94,7 @@ class ExtensionProtocolTest : public testing::Test {
 
   virtual void SetUp() OVERRIDE {
     testing::Test::SetUp();
-    extension_info_map_ = new ExtensionInfoMap();
+    extension_info_map_ = new InfoMap();
     net::URLRequestContext* request_context =
         resource_context_.GetRequestContext();
     old_factory_ = request_context->job_factory();
@@ -106,12 +106,13 @@ class ExtensionProtocolTest : public testing::Test {
     request_context->set_job_factory(old_factory_);
   }
 
-  void SetProtocolHandler(bool incognito) {
+  void SetProtocolHandler(Profile::ProfileType profile_type) {
     net::URLRequestContext* request_context =
         resource_context_.GetRequestContext();
     job_factory_.SetProtocolHandler(
         kExtensionScheme,
-        CreateExtensionProtocolHandler(incognito, extension_info_map_.get()));
+        CreateExtensionProtocolHandler(profile_type,
+                                       extension_info_map_.get()));
     request_context->set_job_factory(&job_factory_);
   }
 
@@ -122,6 +123,7 @@ class ExtensionProtocolTest : public testing::Test {
                                                      &resource_context_,
                                                      -1,
                                                      -1,
+                                                     -1,
                                                      false);
     request->Start();
     base::MessageLoop::current()->Run();
@@ -129,7 +131,7 @@ class ExtensionProtocolTest : public testing::Test {
 
  protected:
   content::TestBrowserThreadBundle thread_bundle_;
-  scoped_refptr<ExtensionInfoMap> extension_info_map_;
+  scoped_refptr<InfoMap> extension_info_map_;
   net::URLRequestJobFactoryImpl job_factory_;
   const net::URLRequestJobFactory* old_factory_;
   net::TestDelegate test_delegate_;
@@ -143,7 +145,7 @@ class ExtensionProtocolTest : public testing::Test {
 // extension).
 TEST_F(ExtensionProtocolTest, IncognitoRequest) {
   // Register an incognito extension protocol handler.
-  SetProtocolHandler(true);
+  SetProtocolHandler(Profile::INCOGNITO_PROFILE);
 
   struct TestCase {
     // Inputs.
@@ -165,7 +167,7 @@ TEST_F(ExtensionProtocolTest, IncognitoRequest) {
     scoped_refptr<Extension> extension =
         CreateTestExtension(cases[i].name, cases[i].incognito_split_mode);
     extension_info_map_->AddExtension(
-        extension.get(), base::Time::Now(), cases[i].incognito_enabled);
+        extension.get(), base::Time::Now(), cases[i].incognito_enabled, false);
 
     // First test a main frame request.
     {
@@ -222,10 +224,13 @@ void CheckForContentLengthHeader(net::URLRequest* request) {
 // the extension is enabled and when it is disabled.
 TEST_F(ExtensionProtocolTest, ComponentResourceRequest) {
   // Register a non-incognito extension protocol handler.
-  SetProtocolHandler(false);
+  SetProtocolHandler(Profile::REGULAR_PROFILE);
 
   scoped_refptr<Extension> extension = CreateWebStoreExtension();
-  extension_info_map_->AddExtension(extension.get(), base::Time::Now(), false);
+  extension_info_map_->AddExtension(extension.get(),
+                                    base::Time::Now(),
+                                    false,
+                                    false);
 
   // First test it with the extension enabled.
   {
@@ -256,10 +261,13 @@ TEST_F(ExtensionProtocolTest, ComponentResourceRequest) {
 // expected response headers.
 TEST_F(ExtensionProtocolTest, ResourceRequestResponseHeaders) {
   // Register a non-incognito extension protocol handler.
-  SetProtocolHandler(false);
+  SetProtocolHandler(Profile::REGULAR_PROFILE);
 
   scoped_refptr<Extension> extension = CreateTestResponseHeaderExtension();
-  extension_info_map_->AddExtension(extension.get(), base::Time::Now(), false);
+  extension_info_map_->AddExtension(extension.get(),
+                                    base::Time::Now(),
+                                    false,
+                                    false);
 
   {
     net::URLRequest request(extension->GetResourceURL("test.dat"),
@@ -291,10 +299,13 @@ TEST_F(ExtensionProtocolTest, ResourceRequestResponseHeaders) {
 // succeeds, but subresources fail. See http://crbug.com/312269.
 TEST_F(ExtensionProtocolTest, AllowFrameRequests) {
   // Register a non-incognito extension protocol handler.
-  SetProtocolHandler(false);
+  SetProtocolHandler(Profile::REGULAR_PROFILE);
 
   scoped_refptr<Extension> extension = CreateTestExtension("foo", false);
-  extension_info_map_->AddExtension(extension.get(), base::Time::Now(), false);
+  extension_info_map_->AddExtension(extension.get(),
+                                    base::Time::Now(),
+                                    false,
+                                    false);
 
   // All MAIN_FRAME and SUB_FRAME requests should succeed.
   {

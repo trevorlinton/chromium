@@ -12,8 +12,11 @@
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/common/file_chooser_params.h"
 #include "content/public/common/page_zoom.h"
-#include "content/public/common/stop_find_action.h"
 #include "third_party/WebKit/public/web/WebDragOperation.h"
+
+#if defined(USE_MOJO)
+#include "mojo/public/cpp/system/core.h"
+#endif
 
 class GURL;
 struct WebPreferences;
@@ -35,8 +38,7 @@ namespace ui {
 struct SelectedFileInfo;
 }
 
-namespace WebKit {
-struct WebFindOptions;
+namespace blink {
 struct WebMediaPlayerAction;
 struct WebPluginAction;
 }
@@ -44,11 +46,10 @@ struct WebPluginAction;
 namespace content {
 
 class ChildProcessSecurityPolicy;
-class RenderProcessHost;
+class RenderFrameHost;
 class RenderViewHostDelegate;
 class SessionStorageNamespace;
 class SiteInstance;
-struct CustomContextMenuContext;
 struct DropData;
 
 // A RenderViewHost is responsible for creating and talking to a RenderView
@@ -72,21 +73,17 @@ class CONTENT_EXPORT RenderViewHost : virtual public RenderWidgetHost {
   // because RenderWidgetHost is a virtual base class.
   static RenderViewHost* From(RenderWidgetHost* rwh);
 
-  // Checks that the given renderer can request |url|, if not it sets it to
-  // about:blank.
-  // |empty_allowed| must be set to false for navigations for security reasons.
-  static void FilterURL(const RenderProcessHost* process,
-                        bool empty_allowed,
-                        GURL* url);
-
   virtual ~RenderViewHost() {}
+
+  // Returns the main frame for this render view.
+  virtual RenderFrameHost* GetMainFrame() = 0;
 
   // Tell the render view to enable a set of javascript bindings. The argument
   // should be a combination of values from BindingsPolicy.
   virtual void AllowBindings(int binding_flags) = 0;
 
-  // Tells the renderer to clear the focused node (if any).
-  virtual void ClearFocusedNode() = 0;
+  // Tells the renderer to clear the focused element (if any).
+  virtual void ClearFocusedElement() = 0;
 
   // Causes the renderer to close the current page, including running its
   // onunload event handler.  A ClosePage_ACK message will be sent to the
@@ -102,7 +99,7 @@ class CONTENT_EXPORT RenderViewHost : virtual public RenderWidgetHost {
       int callback_context) = 0;
   virtual void DesktopNotificationPostDisplay(int callback_context) = 0;
   virtual void DesktopNotificationPostError(int notification_id,
-                                    const string16& message) = 0;
+                                    const base::string16& message) = 0;
   virtual void DesktopNotificationPostClose(int notification_id,
                                             bool by_user) = 0;
   virtual void DesktopNotificationPostClick(int notification_id) = 0;
@@ -120,7 +117,7 @@ class CONTENT_EXPORT RenderViewHost : virtual public RenderWidgetHost {
   // either in a drop or by being cancelled.
   virtual void DragSourceEndedAt(
       int client_x, int client_y, int screen_x, int screen_y,
-      WebKit::WebDragOperation operation) = 0;
+      blink::WebDragOperation operation) = 0;
 
   // Notifies the renderer that a drag and drop operation is in progress, with
   // droppable items positioned over the renderer's view.
@@ -136,12 +133,12 @@ class CONTENT_EXPORT RenderViewHost : virtual public RenderWidgetHost {
       const DropData& drop_data,
       const gfx::Point& client_pt,
       const gfx::Point& screen_pt,
-      WebKit::WebDragOperationsMask operations_allowed,
+      blink::WebDragOperationsMask operations_allowed,
       int key_modifiers) = 0;
   virtual void DragTargetDragOver(
       const gfx::Point& client_pt,
       const gfx::Point& screen_pt,
-      WebKit::WebDragOperationsMask operations_allowed,
+      blink::WebDragOperationsMask operations_allowed,
       int key_modifiers) = 0;
   virtual void DragTargetDragLeave() = 0;
   virtual void DragTargetDrop(const gfx::Point& client_pt,
@@ -159,52 +156,33 @@ class CONTENT_EXPORT RenderViewHost : virtual public RenderWidgetHost {
   // Instructs the RenderView to send back updates to the preferred size.
   virtual void EnablePreferredSizeMode() = 0;
 
-  // Executes custom context menu action that was provided from WebKit.
-  virtual void ExecuteCustomContextMenuCommand(
-      int action, const CustomContextMenuContext& context) = 0;
-
   // Tells the renderer to perform the given action on the media player
   // located at the given point.
   virtual void ExecuteMediaPlayerActionAtLocation(
       const gfx::Point& location,
-      const WebKit::WebMediaPlayerAction& action) = 0;
+      const blink::WebMediaPlayerAction& action) = 0;
 
   // Runs some javascript within the context of a frame in the page.
-  virtual void ExecuteJavascriptInWebFrame(const string16& frame_xpath,
-                                           const string16& jscript) = 0;
+  // OBSOLETE; DO NOT USE! Use RenderFrameHost::ExecuteJavaScript instead.
+  virtual void ExecuteJavascriptInWebFrame(const base::string16& frame_xpath,
+                                           const base::string16& jscript) = 0;
 
   // Runs some javascript within the context of a frame in the page. The result
   // is sent back via the provided callback.
+  // OBSOLETE; DO NOT USE! Use RenderFrameHost::ExecuteJavaScript instead.
   typedef base::Callback<void(const base::Value*)> JavascriptResultCallback;
   virtual void ExecuteJavascriptInWebFrameCallbackResult(
-      const string16& frame_xpath,
-      const string16& jscript,
+      const base::string16& frame_xpath,
+      const base::string16& jscript,
       const JavascriptResultCallback& callback) = 0;
 
   // Tells the renderer to perform the given action on the plugin located at
   // the given point.
   virtual void ExecutePluginActionAtLocation(
-      const gfx::Point& location, const WebKit::WebPluginAction& action) = 0;
+      const gfx::Point& location, const blink::WebPluginAction& action) = 0;
 
   // Asks the renderer to exit fullscreen
   virtual void ExitFullscreen() = 0;
-
-  // Finds text on a page.
-  virtual void Find(int request_id, const string16& search_text,
-                    const WebKit::WebFindOptions& options) = 0;
-
-  // Notifies the renderer that the user has closed the FindInPage window
-  // (and what action to take regarding the selection).
-  virtual void StopFinding(StopFindAction action) = 0;
-
-  // Causes the renderer to invoke the onbeforeunload event handler.  The
-  // result will be returned via ViewMsg_ShouldClose. See also ClosePage and
-  // SwapOut, which fire the PageUnload event.
-  //
-  // Set bool for_cross_site_transition when this close is just for the current
-  // RenderView in the case of a cross-site transition. False means we're
-  // closing the entire tab.
-  virtual void FirePageBeforeUnload(bool for_cross_site_transition) = 0;
 
   // Notifies the Listener that one or more files have been chosen by the user
   // from a file chooser dialog for the form. |permissions| is the file
@@ -221,22 +199,9 @@ class CONTENT_EXPORT RenderViewHost : virtual public RenderWidgetHost {
 
   virtual SiteInstance* GetSiteInstance() const = 0;
 
-  // Requests the renderer to evaluate an xpath to a frame and insert css
-  // into that frame's document.
-  virtual void InsertCSS(const string16& frame_xpath,
-                         const std::string& css) = 0;
-
   // Returns true if the RenderView is active and has not crashed. Virtual
   // because it is overridden by TestRenderViewHost.
   virtual bool IsRenderViewLive() const = 0;
-
-  // Returns true if the RenderView is responsible for displaying a subframe
-  // in a different process from its parent page.
-  virtual bool IsSubframe() const = 0;
-
-  // Let the renderer know that the menu has been closed.
-  virtual void NotifyContextMenuClosed(
-      const CustomContextMenuContext& context) = 0;
 
   // Notification that a move or resize renderer's containing window has
   // started.
@@ -245,16 +210,10 @@ class CONTENT_EXPORT RenderViewHost : virtual public RenderWidgetHost {
   // Reloads the current focused frame.
   virtual void ReloadFrame() = 0;
 
-  // Sets the alternate error page URL (link doctor) for the renderer process.
-  virtual void SetAltErrorPageURL(const GURL& url) = 0;
-
   // Sets a property with the given name and value on the Web UI binding object.
   // Must call AllowWebUIBindings() on this renderer first.
   virtual void SetWebUIProperty(const std::string& name,
                                 const std::string& value) = 0;
-
-  // Set the zoom level for the current main frame
-  virtual void SetZoomLevel(double level) = 0;
 
   // Changes the zoom level for the current main frame.
   virtual void Zoom(PageZoom zoom) = 0;
@@ -270,9 +229,6 @@ class CONTENT_EXPORT RenderViewHost : virtual public RenderWidgetHost {
 
   // Passes a list of Webkit preferences to the renderer.
   virtual void UpdateWebkitPreferences(const WebPreferences& prefs) = 0;
-
-  // Informs the renderer process of a change in timezone.
-  virtual void NotifyTimezoneChange() = 0;
 
   // Retrieves the list of AudioOutputController objects associated
   // with this object and passes it to the callback you specify, on
@@ -294,6 +250,11 @@ class CONTENT_EXPORT RenderViewHost : virtual public RenderWidgetHost {
 
   // Disables fullscreen media playback for encrypted video.
   virtual void DisableFullscreenEncryptedMediaPlayback() = 0;
+#endif
+
+#if defined(USE_MOJO)
+  // Sets the mojo handle for WebUI pages.
+  virtual void SetWebUIHandle(mojo::ScopedMessagePipeHandle handle) = 0;
 #endif
 
  private:

@@ -4,287 +4,101 @@
  found in the LICENSE file.
 */
 
-body {
-  -webkit-box-pack: center;
-  -webkit-user-select: none;
-  background-color: #0b0b0b;
-  display: -webkit-box;
-  margin: 0;
-  overflow: hidden;
-  padding: 0;
+@font-face {
+  font-family: roboto-bold;
+  src: url(roboto_bold.ttf);
 }
 
-kb-keyboard {
-  -webkit-box-orient: vertical;
-  display: -webkit-box;
-  max-width: 1280px;
-  width: 1280px;
-}
-
-kb-abc-key,
-kb-shift-key,
-kb-modifier-key,
-kb-hide-keyboard-key,
-kb-layout-selector,
-kb-key {
-  background-color: #3b3b3e;
-  background-position: center center;
-  background-repeat: no-repeat;
-  background-size: contain;
-  border-top: 2px solid #4b4b4e;
-  border-radius: 2px;
-  color: #ffffff;
-  display: -webkit-box;
-  font-family: 'Open Sans', 'Noto Sans UI', sans-serif;
-  font-weight: 300;
-  margin-left: 0.25em;
-  position: relative;
-}
-
-kb-abc-key::x-key,
-kb-modifier-key::x-key,
-kb-shift-key::x-key,
-kb-layout-selector::x-key,
-kb-key::x-key {
-  bottom: 0;
-  height: 1.2em;
-  left: 0;
-  margin: auto;
-  padding-left: 0.7em;
-  padding-right: 0.7em;
-  position: absolute;
-  right: 0;
-  top: 0;
-}
-
-kb-key::x-hinttext {
-  color: #7c7c7c;
-  font-size: 70%;
-  position: absolute;
-  right: 7%;
-  top: 5%;
-}
-
-kb-key::x-key[inverted] {
-  color: #7c7c7c;
-}
-
-kb-key::x-hinttext[inverted] {
-  color: #ffffff;
-}
-
+/**
+ * TODO(rsadam@): Remove all these rules once we switch to native
+ * shadow dom.
+ */
 kb-keyboard.ctrl-active kb-modifier-key[char=Ctrl],
 kb-keyboard.alt-active kb-modifier-key[char=Alt] {
   color: lightblue;
 }
 
+kb-keyboard[keyset="upper"] kb-shift-key.dark /deep/ .key {
+  background-image: url('images/shift-filled.svg');
+}
+
+kb-keyboard[keyset="lower"] kb-shift-key /deep/ .key{
+  background-image: url('images/shift.svg');
+}
+
 /**
 * Controls whether the shift key should be highlighted or not.
-* Only highlights if we are in the upper keyset, but not capslocked.
 */
-kb-keyboard:not(.caps-locked)[keyset=upper] kb-shift-key {
+kb-keyboard.caps-locked kb-shift-key.dark /deep/
+    .shift-light {
+  -webkit-box-shadow: 0 1px 1px rgba(213, 213, 213, 0.5),
+    0 -1px 1px rgba(213, 213, 213, 0.5);
+  background-image: -webkit-linear-gradient(#d5d5d5, #d5d5d5);
+  border: none;
+  height: 0.2em;
+}
+kb-keyboard.caps-locked kb-shift-key.dark /deep/
+    .shift-light-wrapper {
+  bottom: 2px;
+}
+
+kb-keyboard.ctrl-active kb-modifier-key[char=Ctrl],
+kb-keyboard.ctrl-active kb-modifier-key[char=Ctrl]  {
   color: lightblue;
 }
 
-*.dark {
-  background-color: #2a2a2c;
-  border-top: 2px solid #3a3a3c;
+/** TODO(rsadam@): Move these rules to kb-row once we uprev to latest Polymer.*/
+kb-row:nth-child(2) kb-key:not(.dark):not(.active){
+  -webkit-box-shadow: inset 0px 1px #666666, inset 0px -1px #4c4c4c;
+  background-image: -webkit-linear-gradient(#5a5a5a, #515151);
+  background-size: cover;
+  border-bottom-color: #414141;
+  border-top-color: #7f7f7f;
 }
 
-/* TODO(stevet): We can probably share most of this with kb-key::x-key. */
-kb-altkey::x-key {
-  bottom: 0;
-  height: 1.2em;
-  left: 0;
-  margin: auto;
-  position: absolute;
-  right: 0;
-  top: 0;
-  text-align: center;
+kb-row:nth-child(3) kb-key:not(.dark):not(.active){
+  -webkit-box-shadow: inset 0px 1px #5d5d5d, inset 0px -1px #444444;
+  background-image: -webkit-linear-gradient(#505050, #494949);
+  background-size: cover;
+  border-bottom-color: #3a3a3a;
+  border-top-color: #787878;
 }
 
-.caps-locked kb-shift-key,
-.active {
-  background-color: #848490 !important;
-  border-top: 2px solid #A9A9AF !important;
-  /* Do not use box shadow until performance improves
-   * http://code.google.com/p/chromium/issues/detail?id=99045
-  box-shadow: 0px 0px 15px #fff;
-  */
+kb-row:nth-child(n+3) kb-key:not(.dark):not(.active){
+  -webkit-box-shadow: inset 0px 1px #565656, inset 0px -1px #434343;
+  background-image: -webkit-linear-gradient(#484848, #474747);
+  background-size: cover;
+  border-bottom-color: #393939;
+  border-top-color: #717171;
 }
 
-/**
- * TODO(kevers): Use weight attribute for kb-key rather than CSS rules to
- * enable special keys to be used for multiple layouts when the weights
- * need to vary.
- */
-.at,
-.com,
-.comma,
-.period,
-.tab {
-  -webkit-box-flex: 1.3 !important;
+kb-row:nth-child(2) kb-key:not([invert]) /deep/ .hint {
+  color: #2C2C2C;
 }
 
-.return {
-  -webkit-box-flex: 2.1 !important;
+kb-row:nth-child(3) kb-key:not([invert]) /deep/ .hint {
+  color: #272727;
 }
 
-.microphone {
-  -webkit-box-flex: 1.5 !important;
+kb-row:nth-child(n+3) kb-key:not([invert]) /deep/ .hint {
+  color: #232323;
 }
 
-.symbol {
-  -webkit-box-flex: 1.25 !important;
-}
-
-.backspace {
-  -webkit-box-flex: 1.7 !important;
-}
-
-.left-more {
-  -webkit-box-flex: 1.8 !important;
-}
-
-.right-more {
-  -webkit-box-flex: 1.8 !important;
-}
-
-.bar {
-  -webkit-box-flex: 0.6 !important;
-}
-
-kb-key.esc,
-kb-shift-key.shift,
-kb-modifier-key,
-kb-abc-key,
-kb-key:-webkit-any(.backspace,
-                   .dotcom,
-                   .left-more,
-                   .return,
-                   .right-more,
-                   .symbol,
-                   .tab) {
+.dark {
   font-size: 70%;
-  /* Adjust margin for consistent spacing with the smaller font size. */
-  margin-left: 0.35em;
 }
 
-/**
- * Images for keys.
- */
-.arrow-down {
- background-image: url('images/down.svg');
+.dark:not(.active) {
+  -webkit-box-shadow: inset 0px 1px #313131, inset 0px -1px #202020;
+  background-color: #222222;
+  border-bottom-color: #1c1c1c;
+  border-top-color: #4f4f4f;
 }
 
-.arrow-left {
- background-image: url('images/left.svg');
-}
-
-.arrow-right {
- background-image: url('images/right.svg');
-}
-
-.arrow-up {
- background-image: url('images/up.svg');
-}
-
-.back {
-  background-image: url('images/back.svg');
-}
-
-.brightness-down {
-  background-image: url('images/brightness-down.svg');
-}
-
-.brightness-up {
-  background-image: url('images/brightness-up.svg');
-}
-
-.change-window {
-  background-image: url('images/change-window.svg');
-}
-
-.down {
-  background-image: url('images/down.svg');
-}
-
-.forward {
-  background-image: url('images/forward.svg');
-}
-
-.fullscreen {
-  background-image: url('images/fullscreen.svg');
-}
-
-.keyboard {
-  background-image: url('images/keyboard.svg');
-}
-
-.hide-keyboard,
-.layout-selector {
-  background-image: url('images/keyboard.svg');
-}
-
-.left {
-  background-image: url('images/left.svg');
-}
-
-.microphone {
-  background-image: url('images/microphone.svg');
-  background-position: 4%;
-  background-size: 25%;
-}
-
-.audio .microphone {
-  background-image: url('images/microphone-green.svg');
-}
-
-.mute {
-  background-image: url('images/mute.svg');
-}
-
-.reload {
-  background-image: url('images/reload.svg');
-}
-
-.right {
-  background-image: url('images/right.svg');
-}
-
-.shutdown {
-  background-image: url('images/shutdown.svg');
-}
-
-.up {
-  background-image: url('images/up.svg');
-}
-
-.volume-down {
-  background-image: url('images/volume-down.svg');
-}
-
-.volume-up {
-  background-image: url('images/volume-up.svg');
-}
-
-/**
- * Background size for all images should be the same.
- */
-.back,
-.brightness-down,
-.brightness-up,
-.change-window,
-.down,
-.forward,
-.fullscreen,
-.left,
-.mute,
-.reload,
-.right,
-.shutdown,
-.up,
-.volume-down,
-.volume-up {
-  background-size:50%;
+:not(kb-altkey-set) > .active {
+  -webkit-box-shadow: inset 0px 1px #969696, inset 0px -1px #6f6f6f;
+  background-image: -webkit-linear-gradient(#8b8b8b, #7d7d7d);
+  background-size: cover;
+  border-bottom-color: #5b5b5b;
+  border-top-color: #a4a4a4;
 }

@@ -11,10 +11,9 @@
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/web/WebInputElement.h"
 #include "url/gurl.h"
 
-using WebKit::WebInputElement;
+using base::ASCIIToUTF16;
 
 namespace autofill {
 namespace {
@@ -34,9 +33,9 @@ class TestAutofillMetrics : public AutofillMetrics {
 namespace content {
 
 std::ostream& operator<<(std::ostream& os, const FormData& form) {
-  os << UTF16ToUTF8(form.name)
+  os << base::UTF16ToUTF8(form.name)
      << " "
-     << UTF16ToUTF8(form.method)
+     << base::UTF16ToUTF8(form.method)
      << " "
      << form.origin.spec()
      << " "
@@ -126,7 +125,8 @@ TEST(FormStructureTest, AutofillCount) {
   form_structure->DetermineHeuristicTypes(TestAutofillMetrics());
   EXPECT_EQ(1U, form_structure->autofill_count());
 
-  // Add a field with should_autocomplete=false.
+  // Add a field with should_autocomplete=false. This should not be considered a
+  // fillable field.
   field.label = ASCIIToUTF16("address1");
   field.name = ASCIIToUTF16("address1");
   field.form_control_type = "text";
@@ -135,11 +135,7 @@ TEST(FormStructureTest, AutofillCount) {
 
   form_structure.reset(new FormStructure(form));
   form_structure->DetermineHeuristicTypes(TestAutofillMetrics());
-  // DetermineHeuristicTypes also assign field type for fields with
-  // autocomplete=off thus autofill_count includes them. This is a bug,
-  // and they should not be counted. See http://crbug.com/176432 for details.
-  // TODO(benquan): change it to EXPECT_EQ(1U, ... when the bug is fixed.
-  EXPECT_EQ(2U, form_structure->autofill_count());
+  EXPECT_EQ(1U, form_structure->autofill_count());
 }
 
 TEST(FormStructureTest, SourceURL) {
@@ -750,18 +746,17 @@ TEST(FormStructureTest, HeuristicsSample8) {
   // Last name.
   EXPECT_EQ(NAME_LAST, form_structure->field(1)->heuristic_type());
   // Address.
-  EXPECT_EQ(ADDRESS_BILLING_LINE1, form_structure->field(2)->heuristic_type());
+  EXPECT_EQ(ADDRESS_HOME_LINE1, form_structure->field(2)->heuristic_type());
   // Address.
-  EXPECT_EQ(ADDRESS_BILLING_LINE2, form_structure->field(3)->heuristic_type());
+  EXPECT_EQ(ADDRESS_HOME_LINE2, form_structure->field(3)->heuristic_type());
   // City.
-  EXPECT_EQ(ADDRESS_BILLING_CITY, form_structure->field(4)->heuristic_type());
+  EXPECT_EQ(ADDRESS_HOME_CITY, form_structure->field(4)->heuristic_type());
   // State.
-  EXPECT_EQ(ADDRESS_BILLING_STATE, form_structure->field(5)->heuristic_type());
+  EXPECT_EQ(ADDRESS_HOME_STATE, form_structure->field(5)->heuristic_type());
   // Zip.
-  EXPECT_EQ(ADDRESS_BILLING_ZIP, form_structure->field(6)->heuristic_type());
+  EXPECT_EQ(ADDRESS_HOME_ZIP, form_structure->field(6)->heuristic_type());
   // Country.
-  EXPECT_EQ(ADDRESS_BILLING_COUNTRY,
-      form_structure->field(7)->heuristic_type());
+  EXPECT_EQ(ADDRESS_HOME_COUNTRY, form_structure->field(7)->heuristic_type());
   // Phone.
   EXPECT_EQ(PHONE_HOME_WHOLE_NUMBER,
       form_structure->field(8)->heuristic_type());
@@ -1056,48 +1051,6 @@ TEST(FormStructureTest, ThreeAddressLines) {
   EXPECT_EQ(ADDRESS_HOME_CITY, form_structure->field(3)->heuristic_type());
 }
 
-// This test verifies that "addressLine1" and "addressLine2" matches heuristics.
-// This occured in https://www.gorillaclothing.com/.  http://crbug.com/52126.
-TEST(FormStructureTest, BillingAndShippingAddresses) {
-  scoped_ptr<FormStructure> form_structure;
-  FormData form;
-  form.method = ASCIIToUTF16("post");
-
-  FormFieldData field;
-  field.form_control_type = "text";
-
-  field.label = ASCIIToUTF16("Address Line1");
-  field.name = ASCIIToUTF16("shipping.address.addressLine1");
-  form.fields.push_back(field);
-
-  field.label = ASCIIToUTF16("Address Line2");
-  field.name = ASCIIToUTF16("shipping.address.addressLine2");
-  form.fields.push_back(field);
-
-  field.label = ASCIIToUTF16("Address Line1");
-  field.name = ASCIIToUTF16("billing.address.addressLine1");
-  form.fields.push_back(field);
-
-  field.label = ASCIIToUTF16("Address Line2");
-  field.name = ASCIIToUTF16("billing.address.addressLine2");
-  form.fields.push_back(field);
-
-  form_structure.reset(new FormStructure(form));
-  form_structure->DetermineHeuristicTypes(TestAutofillMetrics());
-  EXPECT_TRUE(form_structure->IsAutofillable(true));
-  ASSERT_EQ(4U, form_structure->field_count());
-  ASSERT_EQ(4U, form_structure->autofill_count());
-
-  // Address Line 1.
-  EXPECT_EQ(ADDRESS_HOME_LINE1, form_structure->field(0)->heuristic_type());
-  // Address Line 2.
-  EXPECT_EQ(ADDRESS_HOME_LINE2, form_structure->field(1)->heuristic_type());
-  // Address Line 1.
-  EXPECT_EQ(ADDRESS_BILLING_LINE1, form_structure->field(2)->heuristic_type());
-  // Address Line 2.
-  EXPECT_EQ(ADDRESS_BILLING_LINE2, form_structure->field(3)->heuristic_type());
-}
-
 // Numbered address lines after line two are ignored.
 TEST(FormStructureTest, SurplusAddressLinesIgnored) {
   scoped_ptr<FormStructure> form_structure;
@@ -1316,13 +1269,12 @@ TEST(FormStructureTest, HeuristicsWithBilling) {
   EXPECT_EQ(NAME_FIRST, form_structure->field(0)->heuristic_type());
   EXPECT_EQ(NAME_LAST, form_structure->field(1)->heuristic_type());
   EXPECT_EQ(COMPANY_NAME, form_structure->field(2)->heuristic_type());
-  EXPECT_EQ(ADDRESS_BILLING_LINE1, form_structure->field(3)->heuristic_type());
-  EXPECT_EQ(ADDRESS_BILLING_LINE2, form_structure->field(4)->heuristic_type());
-  EXPECT_EQ(ADDRESS_BILLING_CITY, form_structure->field(5)->heuristic_type());
-  EXPECT_EQ(ADDRESS_BILLING_STATE, form_structure->field(6)->heuristic_type());
-  EXPECT_EQ(ADDRESS_BILLING_COUNTRY,
-            form_structure->field(7)->heuristic_type());
-  EXPECT_EQ(ADDRESS_BILLING_ZIP, form_structure->field(8)->heuristic_type());
+  EXPECT_EQ(ADDRESS_HOME_LINE1, form_structure->field(3)->heuristic_type());
+  EXPECT_EQ(ADDRESS_HOME_LINE2, form_structure->field(4)->heuristic_type());
+  EXPECT_EQ(ADDRESS_HOME_CITY, form_structure->field(5)->heuristic_type());
+  EXPECT_EQ(ADDRESS_HOME_STATE, form_structure->field(6)->heuristic_type());
+  EXPECT_EQ(ADDRESS_HOME_COUNTRY, form_structure->field(7)->heuristic_type());
+  EXPECT_EQ(ADDRESS_HOME_ZIP, form_structure->field(8)->heuristic_type());
   EXPECT_EQ(PHONE_HOME_WHOLE_NUMBER,
             form_structure->field(9)->heuristic_type());
   EXPECT_EQ(EMAIL_ADDRESS, form_structure->field(10)->heuristic_type());
@@ -1415,7 +1367,7 @@ TEST(FormStructureTest, HeuristicsInfernoCC) {
   // Name on Card.
   EXPECT_EQ(CREDIT_CARD_NAME, form_structure->field(0)->heuristic_type());
   // Address.
-  EXPECT_EQ(ADDRESS_BILLING_LINE1, form_structure->field(1)->heuristic_type());
+  EXPECT_EQ(ADDRESS_HOME_LINE1, form_structure->field(1)->heuristic_type());
   // Card Number.
   EXPECT_EQ(CREDIT_CARD_NUMBER, form_structure->field(2)->heuristic_type());
   // Expiration Date.
@@ -1519,13 +1471,17 @@ TEST(FormStructureTest, EncodeQueryRequest) {
   forms.push_back(new FormStructure(form));
   std::vector<std::string> encoded_signatures;
   std::string encoded_xml;
-  const char * const kSignature1 = "11337937696949187602";
-  const char * const kResponse1 =
-      "<\?xml version=\"1.0\" encoding=\"UTF-8\"\?><autofillquery "
-      "clientversion=\"6.1.1715.1442/en (GGLL)\" accepts=\"e\"><form "
-      "signature=\"11337937696949187602\"><field signature=\"412125936\"/>"
-      "<field signature=\"1917667676\"/><field signature=\"2226358947\"/>"
-      "<field signature=\"747221617\"/><field signature=\"4108155786\"/></form>"
+  const char kSignature1[] = "11337937696949187602";
+  const char kResponse1[] =
+      "<\?xml version=\"1.0\" encoding=\"UTF-8\"\?>"
+      "<autofillquery clientversion=\"6.1.1715.1442/en (GGLL)\">"
+      "<form signature=\"11337937696949187602\">"
+      "<field signature=\"412125936\"/>"
+      "<field signature=\"1917667676\"/>"
+      "<field signature=\"2226358947\"/>"
+      "<field signature=\"747221617\"/>"
+      "<field signature=\"4108155786\"/>"
+      "</form>"
       "</autofillquery>";
   ASSERT_TRUE(FormStructure::EncodeQueryRequest(forms.get(),
                                                 &encoded_signatures,
@@ -1556,20 +1512,31 @@ TEST(FormStructureTest, EncodeQueryRequest) {
                                                 &encoded_xml));
   ASSERT_EQ(2U, encoded_signatures.size());
   EXPECT_EQ(kSignature1, encoded_signatures[0]);
-  const char * const kSignature2 = "8308881815906226214";
+  const char kSignature2[] = "8308881815906226214";
   EXPECT_EQ(kSignature2, encoded_signatures[1]);
-  const char * const kResponse2 =
-      "<\?xml version=\"1.0\" encoding=\"UTF-8\"\?><autofillquery "
-      "clientversion=\"6.1.1715.1442/en (GGLL)\" accepts=\"e\"><form "
-      "signature=\"11337937696949187602\"><field signature=\"412125936\"/>"
-      "<field signature=\"1917667676\"/><field signature=\"2226358947\"/>"
-      "<field signature=\"747221617\"/><field signature=\"4108155786\"/></form>"
-      "<form signature=\"8308881815906226214\"><field signature=\"412125936\"/>"
-      "<field signature=\"1917667676\"/><field signature=\"2226358947\"/>"
-      "<field signature=\"747221617\"/><field signature=\"4108155786\"/><field "
-      "signature=\"509334676\"/><field signature=\"509334676\"/><field "
-      "signature=\"509334676\"/><field signature=\"509334676\"/><field "
-      "signature=\"509334676\"/></form></autofillquery>";
+  const char kResponse2[] =
+      "<\?xml version=\"1.0\" encoding=\"UTF-8\"\?>"
+      "<autofillquery clientversion=\"6.1.1715.1442/en (GGLL)\">"
+      "<form signature=\"11337937696949187602\">"
+      "<field signature=\"412125936\"/>"
+      "<field signature=\"1917667676\"/>"
+      "<field signature=\"2226358947\"/>"
+      "<field signature=\"747221617\"/>"
+      "<field signature=\"4108155786\"/>"
+      "</form>"
+      "<form signature=\"8308881815906226214\">"
+      "<field signature=\"412125936\"/>"
+      "<field signature=\"1917667676\"/>"
+      "<field signature=\"2226358947\"/>"
+      "<field signature=\"747221617\"/>"
+      "<field signature=\"4108155786\"/>"
+      "<field signature=\"509334676\"/>"
+      "<field signature=\"509334676\"/>"
+      "<field signature=\"509334676\"/>"
+      "<field signature=\"509334676\"/>"
+      "<field signature=\"509334676\"/>"
+      "</form>"
+      "</autofillquery>";
   EXPECT_EQ(kResponse2, encoded_xml);
 
   FormData malformed_form(form);
@@ -2375,18 +2342,61 @@ TEST(FormStructureTest, SkipFieldTest) {
   std::vector<std::string> encoded_signatures;
   std::string encoded_xml;
 
-  const char * const kSignature = "18006745212084723782";
-  const char * const kResponse =
-      "<\?xml version=\"1.0\" encoding=\"UTF-8\"?><autofillquery "
-      "clientversion=\"6.1.1715.1442/en (GGLL)\" accepts=\"e\"><form "
-      "signature=\"18006745212084723782\"><field signature=\"239111655\"/>"
-      "<field signature=\"420638584\"/></form></autofillquery>";
+  const char kSignature[] = "18006745212084723782";
+  const char kResponse[] =
+      "<\?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+      "<autofillquery clientversion=\"6.1.1715.1442/en (GGLL)\">"
+      "<form signature=\"18006745212084723782\">"
+      "<field signature=\"239111655\"/>"
+      "<field signature=\"420638584\"/>"
+      "</form>"
+      "</autofillquery>";
   ASSERT_TRUE(FormStructure::EncodeQueryRequest(forms.get(),
                                                 &encoded_signatures,
                                                 &encoded_xml));
   ASSERT_EQ(1U, encoded_signatures.size());
   EXPECT_EQ(kSignature, encoded_signatures[0]);
   EXPECT_EQ(kResponse, encoded_xml);
+}
+
+TEST(FormStructureTest, PossibleValues) {
+  FormData form_data;
+  FormFieldData field;
+  field.autocomplete_attribute = "billing country";
+  field.option_contents.push_back(ASCIIToUTF16("Down Under"));
+  field.option_values.push_back(ASCIIToUTF16("AU"));
+  field.option_contents.push_back(ASCIIToUTF16("Fr"));
+  field.option_values.push_back(ASCIIToUTF16(""));
+  field.option_contents.push_back(ASCIIToUTF16("Germany"));
+  field.option_values.push_back(ASCIIToUTF16("GRMNY"));
+  form_data.fields.push_back(field);
+  FormStructure form_structure(form_data);
+
+  bool unused;
+  form_structure.ParseFieldTypesFromAutocompleteAttributes(&unused, &unused);
+
+  // All values in <option> value= or contents are returned, set to upper case.
+  std::set<base::string16> possible_values =
+      form_structure.PossibleValues(ADDRESS_BILLING_COUNTRY);
+  EXPECT_EQ(5U, possible_values.size());
+  EXPECT_EQ(1U, possible_values.count(ASCIIToUTF16("AU")));
+  EXPECT_EQ(1U, possible_values.count(ASCIIToUTF16("FR")));
+  EXPECT_EQ(1U, possible_values.count(ASCIIToUTF16("DOWN UNDER")));
+  EXPECT_EQ(1U, possible_values.count(ASCIIToUTF16("GERMANY")));
+  EXPECT_EQ(1U, possible_values.count(ASCIIToUTF16("GRMNY")));
+  EXPECT_EQ(0U, possible_values.count(ASCIIToUTF16("Fr")));
+  EXPECT_EQ(0U, possible_values.count(ASCIIToUTF16("DE")));
+
+  // No field for the given type; empty value set.
+  EXPECT_EQ(0U, form_structure.PossibleValues(ADDRESS_HOME_COUNTRY).size());
+
+  // A freeform input (<input>) allows any value (overriding other <select>s).
+  FormFieldData freeform_field;
+  freeform_field.autocomplete_attribute = "billing country";
+  form_data.fields.push_back(freeform_field);
+  FormStructure form_structure2(form_data);
+  form_structure2.ParseFieldTypesFromAutocompleteAttributes(&unused, &unused);
+  EXPECT_EQ(0U, form_structure2.PossibleValues(ADDRESS_BILLING_COUNTRY).size());
 }
 
 }  // namespace autofill

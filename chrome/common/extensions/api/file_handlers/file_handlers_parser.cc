@@ -17,6 +17,8 @@ namespace extensions {
 namespace keys = manifest_keys;
 namespace errors = manifest_errors;
 
+const int kMaxTypeAndExtensionHandlers = 200;
+
 FileHandlerInfo::FileHandlerInfo() {}
 FileHandlerInfo::~FileHandlerInfo() {}
 
@@ -40,7 +42,7 @@ FileHandlersParser::~FileHandlersParser() {
 bool LoadFileHandler(const std::string& handler_id,
                      const base::DictionaryValue& handler_info,
                      std::vector<FileHandlerInfo>* file_handlers,
-                     string16* error) {
+                     base::string16* error) {
   DCHECK(error);
   FileHandlerInfo handler;
 
@@ -72,7 +74,7 @@ bool LoadFileHandler(const std::string& handler_id,
 
   if (handler_info.HasKey(keys::kFileHandlerTitle) &&
       !handler_info.GetString(keys::kFileHandlerTitle, &handler.title)) {
-    *error = ASCIIToUTF16(errors::kInvalidFileHandlerTitle);
+    *error = base::ASCIIToUTF16(errors::kInvalidFileHandlerTitle);
     return false;
   }
 
@@ -108,12 +110,12 @@ bool LoadFileHandler(const std::string& handler_id,
   return true;
 }
 
-bool FileHandlersParser::Parse(Extension* extension, string16* error) {
+bool FileHandlersParser::Parse(Extension* extension, base::string16* error) {
   scoped_ptr<FileHandlers> info(new FileHandlers);
   const base::DictionaryValue* all_handlers = NULL;
   if (!extension->manifest()->GetDictionary(keys::kFileHandlers,
                                             &all_handlers)) {
-    *error = ASCIIToUTF16(errors::kInvalidFileHandlers);
+    *error = base::ASCIIToUTF16(errors::kInvalidFileHandlers);
     return false;
   }
 
@@ -127,9 +129,24 @@ bool FileHandlersParser::Parse(Extension* extension, string16* error) {
       if (!LoadFileHandler(iter.key(), *handler, &info->file_handlers, error))
         return false;
     } else {
-      *error = ASCIIToUTF16(errors::kInvalidFileHandlers);
+      *error = base::ASCIIToUTF16(errors::kInvalidFileHandlers);
       return false;
     }
+  }
+
+  int filterCount = 0;
+  for (std::vector<FileHandlerInfo>::iterator iter =
+           info->file_handlers.begin();
+       iter < info->file_handlers.end();
+       iter++) {
+    filterCount += iter->types.size();
+    filterCount += iter->extensions.size();
+  }
+
+  if (filterCount > kMaxTypeAndExtensionHandlers) {
+    *error = base::ASCIIToUTF16(
+        errors::kInvalidFileHandlersTooManyTypesAndExtensions);
+    return false;
   }
 
   extension->SetManifestData(keys::kFileHandlers, info.release());

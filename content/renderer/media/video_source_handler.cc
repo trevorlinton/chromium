@@ -7,13 +7,16 @@
 #include <string>
 
 #include "base/logging.h"
+#include "content/renderer/media/media_stream.h"
 #include "content/renderer/media/media_stream_dependency_factory.h"
 #include "content/renderer/media/media_stream_registry_interface.h"
 #include "content/renderer/render_thread_impl.h"
 #include "third_party/WebKit/public/platform/WebMediaStream.h"
+#include "third_party/WebKit/public/platform/WebURL.h"
 #include "third_party/WebKit/public/web/WebMediaStreamRegistry.h"
 #include "third_party/libjingle/source/talk/media/base/videoframe.h"
 #include "third_party/libjingle/source/talk/media/base/videorenderer.h"
+#include "url/gurl.h"
 
 using cricket::VideoFrame;
 using cricket::VideoRenderer;
@@ -36,9 +39,11 @@ class PpFrameReceiver : public cricket::VideoRenderer {
   virtual bool RenderFrame(const cricket::VideoFrame* frame) OVERRIDE {
     base::AutoLock auto_lock(lock_);
     if (reader_) {
-      // Make a shallow copy of the frame as the |reader_| may need to queue it.
-      // Both frames will share a single reference-counted frame buffer.
-      reader_->GotFrame(frame->Copy());
+      // |frame| will be invalid after this function is returned. So keep a copy
+      // before return.
+      cricket::VideoFrame* copied_frame = frame->Copy();
+      copied_frame->MakeExclusive();
+      reader_->GotFrame(copied_frame);
     }
     return true;
   }
@@ -61,8 +66,11 @@ VideoSourceHandler::VideoSourceHandler(
 }
 
 VideoSourceHandler::~VideoSourceHandler() {
-  // All the opened readers should have been closed by now.
-  DCHECK(reader_to_receiver_.empty());
+  for (SourceInfoMap::iterator it = reader_to_receiver_.begin();
+       it != reader_to_receiver_.end();
+       ++it) {
+    delete it->second;
+  }
 }
 
 bool VideoSourceHandler::Open(const std::string& url,
@@ -71,44 +79,29 @@ bool VideoSourceHandler::Open(const std::string& url,
   if (!source.get()) {
     return false;
   }
-  PpFrameReceiver* receiver = new PpFrameReceiver();
-  receiver->SetReader(reader);
-  source->AddSink(receiver);
-  reader_to_receiver_[reader] = receiver;
+  reader_to_receiver_[reader] = new SourceInfo(source, reader);
   return true;
 }
 
-bool VideoSourceHandler::Close(const std::string& url,
-                               FrameReaderInterface* reader) {
-  scoped_refptr<webrtc::VideoSourceInterface> source = GetFirstVideoSource(url);
-  if (!source.get()) {
-    LOG(ERROR) << "VideoSourceHandler::Close - Failed to get the video source "
-               << "from MediaStream with url: " << url;
+bool VideoSourceHandler::Close(FrameReaderInterface* reader) {
+  SourceInfoMap::iterator it = reader_to_receiver_.find(reader);
+  if (it == reader_to_receiver_.end()) {
     return false;
   }
-  PpFrameReceiver* receiver =
-      static_cast<PpFrameReceiver*>(GetReceiver(reader));
-  if (!receiver) {
-    LOG(ERROR) << "VideoSourceHandler::Close - Failed to find receiver that "
-               << "is associated with the given reader.";
-    return false;
-  }
-  receiver->SetReader(NULL);
-  source->RemoveSink(receiver);
-  reader_to_receiver_.erase(reader);
-  delete receiver;
+  delete it->second;
+  reader_to_receiver_.erase(it);
   return true;
 }
 
 scoped_refptr<VideoSourceInterface> VideoSourceHandler::GetFirstVideoSource(
     const std::string& url) {
   scoped_refptr<webrtc::VideoSourceInterface> source;
-  WebKit::WebMediaStream stream;
+  blink::WebMediaStream stream;
   if (registry_) {
     stream = registry_->GetMediaStream(url);
   } else {
     stream =
-        WebKit::WebMediaStreamRegistry::lookupMediaStreamDescriptor(GURL(url));
+        blink::WebMediaStreamRegistry::lookupMediaStreamDescriptor(GURL(url));
   }
   if (stream.isNull() || !stream.extraData()) {
     LOG(ERROR) << "GetFirstVideoSource - invalid url: " << url;
@@ -116,17 +109,7 @@ scoped_refptr<VideoSourceInterface> VideoSourceHandler::GetFirstVideoSource(
   }
 
   // Get the first video track from the stream.
-  MediaStreamExtraData* extra_data =
-      static_cast<MediaStreamExtraData*>(stream.extraData());
-  if (!extra_data) {
-    LOG(ERROR) << "GetFirstVideoSource - MediaStreamExtraData is NULL.";
-    return source;
-  }
-  webrtc::MediaStreamInterface* native_stream = extra_data->stream().get();
-  if (!native_stream) {
-    LOG(ERROR) << "GetFirstVideoSource - native stream is NULL.";
-    return source;
-  }
+  webrtc::MediaStreamInterface* native_stream = MediaStream::GetAdapter(stream);
   webrtc::VideoTrackVector native_video_tracks =
       native_stream->GetVideoTracks();
   if (native_video_tracks.empty()) {
@@ -139,12 +122,25 @@ scoped_refptr<VideoSourceInterface> VideoSourceHandler::GetFirstVideoSource(
 
 VideoRenderer* VideoSourceHandler::GetReceiver(
     FrameReaderInterface* reader) {
-  std::map<FrameReaderInterface*, VideoRenderer*>::iterator it;
-  it = reader_to_receiver_.find(reader);
+  SourceInfoMap::iterator it = reader_to_receiver_.find(reader);
   if (it == reader_to_receiver_.end()) {
     return NULL;
   }
-  return it->second;
+  return it->second->receiver_.get();
+}
+
+VideoSourceHandler::SourceInfo::SourceInfo(
+    scoped_refptr<webrtc::VideoSourceInterface> source,
+    FrameReaderInterface* reader)
+    : receiver_(new PpFrameReceiver()),
+      source_(source) {
+  source_->AddSink(receiver_.get());
+  receiver_->SetReader(reader);
+}
+
+VideoSourceHandler::SourceInfo::~SourceInfo() {
+  source_->RemoveSink(receiver_.get());
+  receiver_->SetReader(NULL);
 }
 
 }  // namespace content

@@ -14,6 +14,7 @@
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "ui/views/controls/button/button.h"
+#include "ui/views/controls/button/menu_button_listener.h"
 #include "ui/views/window/non_client_view.h"
 
 class BrowserView;
@@ -31,6 +32,7 @@ class Label;
 class OpaqueBrowserFrameView : public BrowserNonClientFrameView,
                                public content::NotificationObserver,
                                public views::ButtonListener,
+                               public views::MenuButtonListener,
                                public chrome::TabIconViewModel,
                                public OpaqueBrowserFrameViewLayoutDelegate {
  public:
@@ -40,16 +42,10 @@ class OpaqueBrowserFrameView : public BrowserNonClientFrameView,
 
   // Overridden from BrowserNonClientFrameView:
   virtual gfx::Rect GetBoundsForTabStrip(views::View* tabstrip) const OVERRIDE;
-  virtual TabStripInsets GetTabStripInsets(bool restored) const OVERRIDE;
+  virtual int GetTopInset() const OVERRIDE;
   virtual int GetThemeBackgroundXInset() const OVERRIDE;
   virtual void UpdateThrobber(bool running) OVERRIDE;
   virtual gfx::Size GetMinimumSize() OVERRIDE;
-
- protected:
-  views::ImageButton* minimize_button() const { return minimize_button_; }
-  views::ImageButton* maximize_button() const { return maximize_button_; }
-  views::ImageButton* restore_button() const { return restore_button_; }
-  views::ImageButton* close_button() const { return close_button_; }
 
   // Overridden from views::NonClientFrameView:
   virtual gfx::Rect GetBoundsForClientView() const OVERRIDE;
@@ -63,12 +59,15 @@ class OpaqueBrowserFrameView : public BrowserNonClientFrameView,
   virtual void UpdateWindowTitle() OVERRIDE;
 
   // Overridden from views::View:
-  virtual void OnPaint(gfx::Canvas* canvas) OVERRIDE;
   virtual bool HitTestRect(const gfx::Rect& rect) const OVERRIDE;
-  virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE;
+  virtual void GetAccessibleState(ui::AXViewState* state) OVERRIDE;
 
   // Overridden from views::ButtonListener:
   virtual void ButtonPressed(views::Button* sender, const ui::Event& event)
+      OVERRIDE;
+
+  // Overridden from views::MenuButtonListener:
+  virtual void OnMenuButtonClicked(views::View* source, const gfx::Point& point)
       OVERRIDE;
 
   // Overridden from chrome::TabIconViewModel:
@@ -83,10 +82,11 @@ class OpaqueBrowserFrameView : public BrowserNonClientFrameView,
   // OpaqueBrowserFrameViewLayoutDelegate implementation:
   virtual bool ShouldShowWindowIcon() const OVERRIDE;
   virtual bool ShouldShowWindowTitle() const OVERRIDE;
-  virtual string16 GetWindowTitle() const OVERRIDE;
+  virtual base::string16 GetWindowTitle() const OVERRIDE;
   virtual int GetIconSize() const OVERRIDE;
   virtual bool ShouldLeaveOffsetNearTopBorder() const OVERRIDE;
   virtual gfx::Size GetBrowserViewMinimumSize() const OVERRIDE;
+  virtual bool ShouldShowCaptionButtons() const OVERRIDE;
   virtual bool ShouldShowAvatar() const OVERRIDE;
   virtual bool IsRegularOrGuestSession() const OVERRIDE;
   virtual gfx::ImageSkia GetOTRAvatarIcon() const OVERRIDE;
@@ -97,6 +97,15 @@ class OpaqueBrowserFrameView : public BrowserNonClientFrameView,
   virtual int GetTabStripHeight() const OVERRIDE;
   virtual int GetAdditionalReservedSpaceInTabStrip() const OVERRIDE;
   virtual gfx::Size GetTabstripPreferredSize() const OVERRIDE;
+
+ protected:
+  views::ImageButton* minimize_button() const { return minimize_button_; }
+  views::ImageButton* maximize_button() const { return maximize_button_; }
+  views::ImageButton* restore_button() const { return restore_button_; }
+  views::ImageButton* close_button() const { return close_button_; }
+
+  // Overridden from views::View:
+  virtual void OnPaint(gfx::Canvas* canvas) OVERRIDE;
 
  private:
   // Creates, adds and returns a new image button with |this| as its listener.
@@ -124,6 +133,9 @@ class OpaqueBrowserFrameView : public BrowserNonClientFrameView,
   // Returns the bounds of the titlebar icon (or where the icon would be if
   // there was one).
   gfx::Rect IconBounds() const;
+
+  // Returns true if the view should draw its own custom title bar.
+  bool ShouldShowWindowTitleBar() const;
 
   // Paint various sub-components of this view.  The *FrameBorder() functions
   // also paint the background of the titlebar area, since the top frame border

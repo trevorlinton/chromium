@@ -24,21 +24,52 @@ class ServerThread : public base::SimpleThread {
 
   virtual ~ServerThread();
 
+  // Prepares the server, but does not start accepting connections. Useful for
+  // injecting mocks.
+  void Initialize();
+
+  // Runs the event loop. Will initialize if necessary.
   virtual void Run() OVERRIDE;
 
-  int GetPort();
+  // Waits for the handshake to be confirmed for the first session created.
+  void WaitForCryptoHandshakeConfirmed();
 
-  base::WaitableEvent* listening() { return &listening_; }
-  base::WaitableEvent* quit() { return &quit_; }
+  // Pauses execution of the server until Resume() is called.  May only be
+  // called once.
+  void Pause();
+
+  // Resumes execution of the server after Pause() has been called.  May only
+  // be called once.
+  void Resume();
+
+  // Stops the server from executing and shuts it down, destroying all
+  // server objects.
+  void Quit();
+
+  // Returns the underlying server.  Care must be taken to avoid data races
+  // when accessing the server.  It is always safe to access the server
+  // after calling Pause() and before calling Resume().
   QuicServer* server() { return &server_; }
 
+  // Returns the port that the server is listening on.
+  int GetPort();
+
  private:
-  base::WaitableEvent listening_;
-  base::WaitableEvent quit_;
-  base::Lock port_lock_;
+  void MaybeNotifyOfHandshakeConfirmation();
+
+  base::WaitableEvent confirmed_;  // Notified when the first handshake is
+                                   // confirmed.
+  base::WaitableEvent pause_;      // Notified when the server should pause.
+  base::WaitableEvent paused_;     // Notitied when the server has paused
+  base::WaitableEvent resume_;     // Notified when the server should resume.
+  base::WaitableEvent quit_;       // Notified when the server should quit.
+
   tools::QuicServer server_;
   IPEndPoint address_;
+  base::Lock port_lock_;
   int port_;
+
+  bool initialized_;
 
   DISALLOW_COPY_AND_ASSIGN(ServerThread);
 };

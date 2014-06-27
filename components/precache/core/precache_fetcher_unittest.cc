@@ -19,6 +19,7 @@
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "net/url_request/test_url_fetcher_factory.h"
+#include "net/url_request/url_request_status.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -30,9 +31,10 @@ class TestURLFetcherCallback {
  public:
   scoped_ptr<net::FakeURLFetcher> CreateURLFetcher(
       const GURL& url, net::URLFetcherDelegate* delegate,
-      const std::string& response_data, net::HttpStatusCode response_code) {
-    scoped_ptr<net::FakeURLFetcher> fetcher(
-        new net::FakeURLFetcher(url, delegate, response_data, response_code));
+      const std::string& response_data, net::HttpStatusCode response_code,
+      net::URLRequestStatus::Status status) {
+    scoped_ptr<net::FakeURLFetcher> fetcher(new net::FakeURLFetcher(
+        url, delegate, response_data, response_code, status));
 
     if (response_code == net::HTTP_OK) {
       scoped_refptr<net::HttpResponseHeaders> download_headers =
@@ -97,6 +99,9 @@ const char kGoodManifestURL[] =
     "http://manifest-url-prefix.com/http%253A%252F%252Fgood-manifest.com%252F";
 const char kResourceFetchFailureURL[] = "http://resource-fetch-failure.com";
 const char kGoodResourceURL[] = "http://good-resource.com";
+const char kForcedStartingURLManifestURL[] =
+    "http://manifest-url-prefix.com/"
+    "http%253A%252F%252Fforced-starting-url.com%252F";
 
 TEST_F(PrecacheFetcherTest, FullPrecache) {
   CommandLine::ForCurrentProcess()->AppendSwitchASCII(
@@ -105,38 +110,40 @@ TEST_F(PrecacheFetcherTest, FullPrecache) {
       switches::kPrecacheManifestURLPrefix, kManfiestURLPrefix);
 
   std::list<GURL> starting_urls;
-  starting_urls.push_back(GURL("http://not-whitelisted.com"));
   starting_urls.push_back(GURL("http://manifest-fetch-failure.com"));
   starting_urls.push_back(GURL("http://bad-manifest.com"));
   starting_urls.push_back(GURL("http://good-manifest.com"));
-  starting_urls.push_back(GURL("http://not-in-top-4.com"));
+  starting_urls.push_back(GURL("http://not-in-top-3.com"));
 
   PrecacheConfigurationSettings config;
-  config.add_whitelisted_starting_url("http://whitelisted-unused.com");
-  config.add_whitelisted_starting_url("http://manifest-fetch-failure.com");
-  config.add_whitelisted_starting_url("http://bad-manifest.com");
-  config.add_whitelisted_starting_url("http://good-manifest.com");
-  config.add_whitelisted_starting_url("http://not-in-top-4.com");
-  config.set_maximum_rank_starting_url(4);
+  config.set_top_sites_count(3);
+  config.add_forced_starting_url("http://forced-starting-url.com");
+  // Duplicate starting URL, the manifest for this should only be fetched once.
+  config.add_forced_starting_url("http://good-manifest.com");
 
   PrecacheManifest good_manifest;
   good_manifest.add_resource()->set_url(kResourceFetchFailureURL);
   good_manifest.add_resource();  // Resource with no URL, should not be fetched.
   good_manifest.add_resource()->set_url(kGoodResourceURL);
 
-  factory_.SetFakeResponse(GURL(kConfigURL),
-                           config.SerializeAsString(),
-                           net::HTTP_OK);
-  factory_.SetFakeResponse(GURL(kManifestFetchFailureURL),
-                           "",
-                           net::HTTP_INTERNAL_SERVER_ERROR);
-  factory_.SetFakeResponse(GURL(kBadManifestURL), "bad protobuf", net::HTTP_OK);
+  factory_.SetFakeResponse(GURL(kConfigURL), config.SerializeAsString(),
+                           net::HTTP_OK, net::URLRequestStatus::SUCCESS);
+  factory_.SetFakeResponse(GURL(kManifestFetchFailureURL), "",
+                           net::HTTP_INTERNAL_SERVER_ERROR,
+                           net::URLRequestStatus::FAILED);
+  factory_.SetFakeResponse(GURL(kBadManifestURL), "bad protobuf", net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
   factory_.SetFakeResponse(GURL(kGoodManifestURL),
-                           good_manifest.SerializeAsString(), net::HTTP_OK);
+                           good_manifest.SerializeAsString(), net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
   factory_.SetFakeResponse(GURL(kResourceFetchFailureURL),
-                           "",
-                           net::HTTP_INTERNAL_SERVER_ERROR);
-  factory_.SetFakeResponse(GURL(kGoodResourceURL), "good", net::HTTP_OK);
+                           "", net::HTTP_INTERNAL_SERVER_ERROR,
+                           net::URLRequestStatus::FAILED);
+  factory_.SetFakeResponse(GURL(kGoodResourceURL), "good", net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
+  factory_.SetFakeResponse(GURL(kForcedStartingURLManifestURL),
+                           PrecacheManifest().SerializeAsString(), net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
 
   PrecacheFetcher precache_fetcher(starting_urls, request_context_.get(),
                                    &precache_delegate_);
@@ -151,6 +158,7 @@ TEST_F(PrecacheFetcherTest, FullPrecache) {
   expected_requested_urls.insert(GURL(kGoodManifestURL));
   expected_requested_urls.insert(GURL(kResourceFetchFailureURL));
   expected_requested_urls.insert(GURL(kGoodResourceURL));
+  expected_requested_urls.insert(GURL(kForcedStartingURLManifestURL));
 
   EXPECT_EQ(expected_requested_urls, url_callback_.requested_urls());
 
@@ -163,9 +171,9 @@ TEST_F(PrecacheFetcherTest, ConfigFetchFailure) {
 
   std::list<GURL> starting_urls(1, GURL("http://starting-url.com"));
 
-  factory_.SetFakeResponse(GURL(kConfigURL),
-                           "",
-                           net::HTTP_INTERNAL_SERVER_ERROR);
+  factory_.SetFakeResponse(GURL(kConfigURL), "",
+                           net::HTTP_INTERNAL_SERVER_ERROR,
+                           net::URLRequestStatus::FAILED);
 
   PrecacheFetcher precache_fetcher(starting_urls, request_context_.get(),
                                    &precache_delegate_);
@@ -186,7 +194,8 @@ TEST_F(PrecacheFetcherTest, BadConfig) {
 
   std::list<GURL> starting_urls(1, GURL("http://starting-url.com"));
 
-  factory_.SetFakeResponse(GURL(kConfigURL), "bad protobuf", net::HTTP_OK);
+  factory_.SetFakeResponse(GURL(kConfigURL), "bad protobuf", net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
 
   PrecacheFetcher precache_fetcher(starting_urls, request_context_.get(),
                                    &precache_delegate_);
@@ -208,12 +217,10 @@ TEST_F(PrecacheFetcherTest, Cancel) {
   std::list<GURL> starting_urls(1, GURL("http://starting-url.com"));
 
   PrecacheConfigurationSettings config;
-  config.add_whitelisted_starting_url("http://starting-url.com");
-  config.set_maximum_rank_starting_url(1);
+  config.set_top_sites_count(1);
 
-  factory_.SetFakeResponse(GURL(kConfigURL),
-                           config.SerializeAsString(),
-                           net::HTTP_OK);
+  factory_.SetFakeResponse(GURL(kConfigURL), config.SerializeAsString(),
+                           net::HTTP_OK, net::URLRequestStatus::SUCCESS);
 
   scoped_ptr<PrecacheFetcher> precache_fetcher(new PrecacheFetcher(
       starting_urls, request_context_.get(), &precache_delegate_));
@@ -239,9 +246,12 @@ TEST_F(PrecacheFetcherTest, Cancel) {
 TEST_F(PrecacheFetcherTest, PrecacheUsingDefaultConfigSettingsURL) {
   std::list<GURL> starting_urls(1, GURL("http://starting-url.com"));
 
+  PrecacheConfigurationSettings config;
+  config.set_top_sites_count(0);
+
   factory_.SetFakeResponse(GURL(PRECACHE_CONFIG_SETTINGS_URL),
-                           PrecacheConfigurationSettings().SerializeAsString(),
-                           net::HTTP_OK);
+                           config.SerializeAsString(), net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
 
   PrecacheFetcher precache_fetcher(starting_urls, request_context_.get(),
                                    &precache_delegate_);
@@ -269,18 +279,15 @@ TEST_F(PrecacheFetcherTest, PrecacheUsingDefaultManifestURLPrefix) {
   std::list<GURL> starting_urls(1, GURL("http://starting-url.com"));
 
   PrecacheConfigurationSettings config;
-  config.add_whitelisted_starting_url("http://starting-url.com");
-  config.set_maximum_rank_starting_url(1);
+  config.set_top_sites_count(1);
 
   GURL manifest_url(PRECACHE_MANIFEST_URL_PREFIX
                     "http%253A%252F%252Fstarting-url.com%252F");
 
-  factory_.SetFakeResponse(GURL(kConfigURL),
-                           config.SerializeAsString(),
-                           net::HTTP_OK);
-  factory_.SetFakeResponse(manifest_url,
-                           PrecacheManifest().SerializeAsString(),
-                           net::HTTP_OK);
+  factory_.SetFakeResponse(GURL(kConfigURL), config.SerializeAsString(),
+                           net::HTTP_OK, net::URLRequestStatus::SUCCESS);
+  factory_.SetFakeResponse(manifest_url, PrecacheManifest().SerializeAsString(),
+                           net::HTTP_OK, net::URLRequestStatus::SUCCESS);
 
   PrecacheFetcher precache_fetcher(starting_urls, request_context_.get(),
                                    &precache_delegate_);

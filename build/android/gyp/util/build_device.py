@@ -11,14 +11,14 @@ import os
 import re
 import sys
 
-import build_utils
+from util import build_utils
 
 BUILD_ANDROID_DIR = os.path.join(os.path.dirname(__file__), '..', '..')
 sys.path.append(BUILD_ANDROID_DIR)
 
 from pylib import android_commands
 
-from pylib.android_commands import GetAttachedDevices
+GetAttachedDevices = android_commands.GetAttachedDevices
 
 
 class BuildDevice(object):
@@ -44,16 +44,16 @@ class BuildDevice(object):
     """Gets the metadata on the device for the apk_package apk."""
     # Matches lines like:
     # -rw-r--r-- system   system    7376582 2013-04-19 16:34 \
-    #   org.chromium.chrome.testshell.apk
+    #   org.chromium.chrome.shell.apk
     # -rw-r--r-- system   system    7376582 2013-04-19 16:34 \
-    #   org.chromium.chrome.testshell-1.apk
+    #   org.chromium.chrome.shell-1.apk
     apk_matcher = lambda s: re.match('.*%s(-[0-9]*)?.apk$' % apk_package, s)
     matches = filter(apk_matcher, self.install_metadata)
     return matches[0] if matches else None
 
 
-def GetConfigurationForDevice(id):
-  adb = android_commands.AndroidCommands(id)
+def GetConfigurationForDevice(device_id):
+  adb = android_commands.AndroidCommands(device_id)
   configuration = None
   has_root = False
   is_online = adb.IsOnline()
@@ -69,7 +69,7 @@ def GetConfigurationForDevice(id):
       cmd_output = adb.RunShellCommand(cmd)
 
     configuration = {
-        'id': id,
+        'id': device_id,
         'description': cmd_output[-1],
         'install_metadata': cmd_output[:-1],
       }

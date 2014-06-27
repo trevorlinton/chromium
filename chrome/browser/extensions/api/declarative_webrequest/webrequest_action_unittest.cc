@@ -17,12 +17,12 @@
 #include "chrome/browser/extensions/api/declarative_webrequest/webrequest_condition.h"
 #include "chrome/browser/extensions/api/declarative_webrequest/webrequest_constants.h"
 #include "chrome/browser/extensions/api/web_request/web_request_api_helpers.h"
-#include "chrome/browser/extensions/extension_info_map.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_test_util.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "extensions/browser/info_map.h"
+#include "extensions/common/extension.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_response_headers.h"
 #include "net/url_request/url_request_test_util.h"
@@ -41,15 +41,15 @@ namespace {
 const char kUnknownActionType[] = "unknownType";
 
 scoped_ptr<WebRequestActionSet> CreateSetOfActions(const char* json) {
-  scoped_ptr<Value> parsed_value(base::test::ParseJson(json));
-  const ListValue* parsed_list;
+  scoped_ptr<base::Value> parsed_value(base::test::ParseJson(json));
+  const base::ListValue* parsed_list;
   CHECK(parsed_value->GetAsList(&parsed_list));
 
   WebRequestActionSet::AnyVector actions;
-  for (ListValue::const_iterator it = parsed_list->begin();
+  for (base::ListValue::const_iterator it = parsed_list->begin();
        it != parsed_list->end();
        ++it) {
-    const DictionaryValue* dict;
+    const base::DictionaryValue* dict;
     CHECK((*it)->GetAsDictionary(&dict));
     actions.push_back(linked_ptr<base::Value>(dict->DeepCopy()));
   }
@@ -97,7 +97,7 @@ class WebRequestActionWithThreadsTest : public testing::Test {
   scoped_refptr<Extension> extension_;
   // An extension with host permissions for all URLs and the DWR permission.
   scoped_refptr<Extension> extension_all_urls_;
-  scoped_refptr<ExtensionInfoMap> extension_info_map_;
+  scoped_refptr<InfoMap> extension_info_map_;
 
  private:
   content::TestBrowserThreadBundle thread_bundle_;
@@ -122,13 +122,17 @@ void WebRequestActionWithThreadsTest::SetUp() {
                             "ext_id_2",
                             &error);
   ASSERT_TRUE(extension_all_urls_.get()) << error;
-  extension_info_map_ = new ExtensionInfoMap;
+  extension_info_map_ = new InfoMap;
   ASSERT_TRUE(extension_info_map_.get());
   extension_info_map_->AddExtension(
-      extension_.get(), base::Time::Now(), false /*incognito_enabled*/);
+      extension_.get(),
+      base::Time::Now(),
+      false /*incognito_enabled*/,
+      false /*notifications_disabled*/);
   extension_info_map_->AddExtension(extension_all_urls_.get(),
                                     base::Time::Now(),
-                                    false /*incognito_enabled*/);
+                                    false /*incognito_enabled*/,
+                                    false /*notifications_disabled*/);
 }
 
 bool WebRequestActionWithThreadsTest::ActionWorksOnRequest(
@@ -226,10 +230,10 @@ TEST(WebRequestActionTest, CreateActionSet) {
   EXPECT_TRUE(result->actions().empty());
   EXPECT_EQ(std::numeric_limits<int>::min(), result->GetMinimumPriority());
 
-  DictionaryValue correct_action;
+  base::DictionaryValue correct_action;
   correct_action.SetString(keys::kInstanceTypeKey, keys::kIgnoreRulesType);
   correct_action.SetInteger(keys::kLowerPriorityThanKey, 10);
-  DictionaryValue incorrect_action;
+  base::DictionaryValue incorrect_action;
   incorrect_action.SetString(keys::kInstanceTypeKey, kUnknownActionType);
 
   // Test success.
@@ -275,6 +279,7 @@ TEST_F(WebRequestActionWithThreadsTest, PermissionsToRedirect) {
       " \"redirectUrl\": \"http://www.foobar.com\""
       "}]";
   CheckActionNeedsAllUrls(kAction, ON_BEFORE_REQUEST);
+  CheckActionNeedsAllUrls(kAction, ON_HEADERS_RECEIVED);
 }
 
 TEST_F(WebRequestActionWithThreadsTest, PermissionsToRedirectByRegEx) {
@@ -438,6 +443,10 @@ TEST_F(WebRequestActionWithThreadsTest,
                                    extension_->id(),
                                    action_set.get(),
                                    ON_BEFORE_REQUEST));
+  EXPECT_TRUE(ActionWorksOnRequest("http://test.org",
+                                   extension_->id(),
+                                   action_set.get(),
+                                   ON_HEADERS_RECEIVED));
 }
 
 TEST_F(WebRequestActionWithThreadsTest, PermissionsToRedirectToEmptyDocument) {
@@ -452,6 +461,10 @@ TEST_F(WebRequestActionWithThreadsTest, PermissionsToRedirectToEmptyDocument) {
                                    extension_->id(),
                                    action_set.get(),
                                    ON_BEFORE_REQUEST));
+  EXPECT_TRUE(ActionWorksOnRequest("http://test.org",
+                                   extension_->id(),
+                                   action_set.get(),
+                                   ON_HEADERS_RECEIVED));
 }
 
 TEST_F(WebRequestActionWithThreadsTest, PermissionsToIgnore) {

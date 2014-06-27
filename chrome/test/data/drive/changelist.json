@@ -61,8 +61,10 @@
     ],
     "lastModifyingUserName": "Test User",
     "editable": true,
+    "shared": false,
     "writersCanShare": true
-   }
+   },
+   "modificationDate": "2012-07-27T04:54:11.030Z"
   },
   {
    "kind": "drive#change",
@@ -118,8 +120,10 @@
     ],
     "lastModifyingUserName": "Takayoshi Kochi",
     "editable": true,
+    "shared": true,
     "writersCanShare": true
-   }
+   },
+   "modificationDate": "2012-07-27T05:43:20.269Z"
   },
   {
    "kind": "drive#change",
@@ -169,15 +173,18 @@
     ],
     "lastModifyingUserName": "Test User",
     "editable": true,
+    "shared": false,
     "writersCanShare": true
-   }
+   },
+   "modificationDate": "2012-07-27T04:43:18.507Z"
   },
   {
     "kind": "drive#change",
     "id": "8430",
     "fileId": "ABCv7G8yEYAWHc3Y5X0hMSkJYXYZ",
     "selfLink": "https://www.googleapis.com/drive/v2/changes/16429",
-    "deleted": true
+    "deleted": true,
+    "modificationDate": "2012-07-27T12:34:56.789Z"
   }
  ]
 }

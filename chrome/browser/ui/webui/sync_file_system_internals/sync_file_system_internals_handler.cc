@@ -10,7 +10,6 @@
 #include "chrome/browser/drive/drive_notification_manager.h"
 #include "chrome/browser/drive/drive_notification_manager_factory.h"
 #include "chrome/browser/extensions/api/sync_file_system/sync_file_system_api_helpers.h"
-#include "chrome/browser/google_apis/time_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync_file_system/logger.h"
 #include "chrome/browser/sync_file_system/sync_file_system_service.h"
@@ -19,6 +18,7 @@
 #include "chrome/common/extensions/api/sync_file_system.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_ui.h"
+#include "google_apis/drive/time_util.h"
 
 using drive::EventLogger;
 using sync_file_system::SyncFileSystemServiceFactory;
@@ -30,14 +30,14 @@ SyncFileSystemInternalsHandler::SyncFileSystemInternalsHandler(Profile* profile)
     : profile_(profile) {
   sync_file_system::SyncFileSystemService* sync_service =
       SyncFileSystemServiceFactory::GetForProfile(profile);
-  DCHECK(sync_service);
-  sync_service->AddSyncEventObserver(this);
+  if (sync_service)
+    sync_service->AddSyncEventObserver(this);
 }
 
 SyncFileSystemInternalsHandler::~SyncFileSystemInternalsHandler() {
   sync_file_system::SyncFileSystemService* sync_service =
       SyncFileSystemServiceFactory::GetForProfile(profile_);
-  if (sync_service != NULL)
+  if (sync_service)
     sync_service->RemoveSyncEventObserver(this);
 }
 
@@ -49,6 +49,10 @@ void SyncFileSystemInternalsHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       "getLog",
       base::Bind(&SyncFileSystemInternalsHandler::GetLog,
+                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "clearLogs",
+      base::Bind(&SyncFileSystemInternalsHandler::ClearLogs,
                  base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "getNotificationSource",
@@ -79,9 +83,12 @@ void SyncFileSystemInternalsHandler::OnFileSynced(
 
 void SyncFileSystemInternalsHandler::GetServiceStatus(
     const base::ListValue* args) {
-  SyncServiceState state_enum = SyncFileSystemServiceFactory::GetForProfile(
-      profile_)->GetSyncServiceState();
-  std::string state_string = extensions::api::sync_file_system::ToString(
+  SyncServiceState state_enum = sync_file_system::SYNC_SERVICE_DISABLED;
+  sync_file_system::SyncFileSystemService* sync_service =
+      SyncFileSystemServiceFactory::GetForProfile(profile_);
+  if (sync_service)
+    state_enum = sync_service->GetSyncServiceState();
+  const std::string state_string = extensions::api::sync_file_system::ToString(
       extensions::SyncServiceStateToExtensionEnum(state_enum));
   web_ui()->CallJavascriptFunction("SyncService.onGetServiceStatus",
                                    base::StringValue(state_string));
@@ -91,6 +98,8 @@ void SyncFileSystemInternalsHandler::GetNotificationSource(
     const base::ListValue* args) {
   drive::DriveNotificationManager* drive_notification_manager =
       drive::DriveNotificationManagerFactory::GetForBrowserContext(profile_);
+  if (!drive_notification_manager)
+    return;
   bool xmpp_enabled = drive_notification_manager->push_notification_enabled();
   std::string notification_source = xmpp_enabled ? "XMPP" : "Polling";
   web_ui()->CallJavascriptFunction("SyncService.onGetNotificationSource",
@@ -114,7 +123,7 @@ void SyncFileSystemInternalsHandler::GetLog(
     if (log_entry->id <= last_log_id_sent)
       continue;
 
-    base::DictionaryValue* dict = new DictionaryValue;
+    base::DictionaryValue* dict = new base::DictionaryValue;
     dict->SetInteger("id", log_entry->id);
     dict->SetString("time",
         google_apis::util::FormatTimeAsStringLocaltime(log_entry->when));
@@ -126,6 +135,10 @@ void SyncFileSystemInternalsHandler::GetLog(
     return;
 
   web_ui()->CallJavascriptFunction("SyncService.onGetLog", list);
+}
+
+void SyncFileSystemInternalsHandler::ClearLogs(const base::ListValue* args) {
+  sync_file_system::util::ClearLog();
 }
 
 }  // namespace syncfs_internals

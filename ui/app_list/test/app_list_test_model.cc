@@ -4,50 +4,80 @@
 
 #include "ui/app_list/test/app_list_test_model.h"
 
+#include "base/memory/scoped_ptr.h"
 #include "base/strings/stringprintf.h"
-#include "ui/app_list/app_list_item_model.h"
 
 namespace app_list {
 namespace test {
 
 // static
-const char AppListTestModel::kAppType[] = "FolderItem";
+const char AppListTestModel::kItemType[] = "TestItem";
 
-class AppListTestModel::AppListTestItemModel : public AppListItemModel {
- public:
-  AppListTestItemModel(const std::string& id, AppListTestModel* model)
-      : AppListItemModel(id),
-        model_(model) {
-  }
-  virtual ~AppListTestItemModel() {}
+// AppListTestModel::AppListTestItem
 
-  virtual void Activate(int event_flags) OVERRIDE {
-    model_->ItemActivated(this);
-  }
+AppListTestModel::AppListTestItem::AppListTestItem(
+    const std::string& id,
+    AppListTestModel* model)
+    : AppListItem(id),
+      model_(model) {
+}
+AppListTestModel::AppListTestItem::~AppListTestItem() {
+}
 
-  virtual const char* GetAppType() const OVERRIDE {
-    return AppListTestModel::kAppType;
-  }
+void AppListTestModel::AppListTestItem::Activate(int event_flags) {
+  model_->ItemActivated(this);
+}
 
- private:
-  AppListTestModel* model_;
-  DISALLOW_COPY_AND_ASSIGN(AppListTestItemModel);
-};
+const char* AppListTestModel::AppListTestItem::GetItemType() const {
+  return AppListTestModel::kItemType;
+}
+
+void AppListTestModel::AppListTestItem::SetPosition(
+    const syncer::StringOrdinal& new_position) {
+  set_position(new_position);
+}
+
+// AppListTestModel
 
 AppListTestModel::AppListTestModel()
     : activate_count_(0),
       last_activated_(NULL) {
-  SetSignedIn(true);
 }
+
+AppListItem* AppListTestModel::AddItem(AppListItem* item) {
+  return AppListModel::AddItem(make_scoped_ptr(item));
+}
+
+AppListItem* AppListTestModel::AddItemToFolder(AppListItem* item,
+                                               const std::string& folder_id) {
+  return AppListModel::AddItemToFolder(make_scoped_ptr(item), folder_id);
+}
+
+void AppListTestModel::MoveItemToFolder(AppListItem* item,
+                                          const std::string& folder_id) {
+  AppListModel::MoveItemToFolder(item, folder_id);
+}
+
 
 std::string AppListTestModel::GetItemName(int id) {
   return base::StringPrintf("Item %d", id);
 }
 
 void AppListTestModel::PopulateApps(int n) {
-  int start_index = item_list()->item_count();
+  int start_index = static_cast<int>(top_level_item_list()->item_count());
   for (int i = 0; i < n; ++i)
     CreateAndAddItem(GetItemName(start_index + i));
+}
+
+void AppListTestModel::CreateAndPopulateFolderWithApps(int n) {
+  DCHECK_GT(n, 1);
+  int start_index = static_cast<int>(top_level_item_list()->item_count());
+  AppListTestItem* item = CreateAndAddItem(GetItemName(start_index));
+  std::string merged_item_id = item->id();
+  for (int i = 1; i < n; ++i) {
+    AppListTestItem* new_item = CreateAndAddItem(GetItemName(start_index + i));
+    merged_item_id = AppListModel::MergeItems(merged_item_id, new_item->id());
+  }
 }
 
 void AppListTestModel::PopulateAppWithId(int id) {
@@ -56,43 +86,42 @@ void AppListTestModel::PopulateAppWithId(int id) {
 
 std::string AppListTestModel::GetModelContent() {
   std::string content;
-  for (size_t i = 0; i < item_list()->item_count(); ++i) {
+  for (size_t i = 0; i < top_level_item_list()->item_count(); ++i) {
     if (i > 0)
       content += ',';
-    content += item_list()->item_at(i)->title();
+    content += top_level_item_list()->item_at(i)->id();
   }
   return content;
 }
 
-AppListItemModel* AppListTestModel::CreateItem(const std::string& title,
-                                               const std::string& full_name) {
-  AppListItemModel* item = new AppListTestItemModel(title, this);
-  size_t nitems = item_list()->item_count();
+AppListTestModel::AppListTestItem* AppListTestModel::CreateItem(
+    const std::string& id) {
+  AppListTestItem* item = new AppListTestItem(id, this);
+  size_t nitems = top_level_item_list()->item_count();
   syncer::StringOrdinal position;
-  if (nitems == 0)
+  if (nitems == 0) {
     position = syncer::StringOrdinal::CreateInitialOrdinal();
-  else
-    position = item_list()->item_at(nitems - 1)->position().CreateAfter();
-  item->set_position(position);
-  item->SetTitleAndFullName(title, full_name);
+  } else {
+    position =
+        top_level_item_list()->item_at(nitems - 1)->position().CreateAfter();
+  }
+  item->SetPosition(position);
+  SetItemName(item, id);
   return item;
 }
 
-void AppListTestModel::CreateAndAddItem(const std::string& title,
-                                        const std::string& full_name) {
-  item_list()->AddItem(CreateItem(title, full_name));
+AppListTestModel::AppListTestItem* AppListTestModel::CreateAndAddItem(
+    const std::string& id) {
+  scoped_ptr<AppListTestItem> test_item(CreateItem(id));
+  AppListItem* item = AppListModel::AddItem(test_item.PassAs<AppListItem>());
+  return static_cast<AppListTestItem*>(item);
 }
-
-void AppListTestModel::CreateAndAddItem(const std::string& title) {
-  CreateAndAddItem(title, title);
-}
-
 void AppListTestModel::HighlightItemAt(int index) {
-  AppListItemModel* item = item_list()->item_at(index);
+  AppListItem* item = top_level_item_list()->item_at(index);
   item->SetHighlighted(true);
 }
 
-void AppListTestModel::ItemActivated(AppListTestItemModel* item) {
+void AppListTestModel::ItemActivated(AppListTestItem* item) {
   last_activated_ = item;
   ++activate_count_;
 }

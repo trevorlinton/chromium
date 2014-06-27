@@ -8,12 +8,12 @@
 #include "content/child/plugin_param_traits.h"
 #include "content/common/content_export.h"
 #include "content/common/content_param_traits.h"
+#include "content/common/cursors/webcursor.h"
 #include "content/public/common/common_param_traits.h"
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_message_macros.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/rect.h"
-#include "webkit/common/cursors/webcursor.h"
 
 #if defined(OS_POSIX)
 #include "base/file_descriptor_posix.h"
@@ -62,7 +62,7 @@ IPC_STRUCT_BEGIN(PluginMsg_FetchURL_Params)
   IPC_STRUCT_MEMBER(GURL, referrer)
   IPC_STRUCT_MEMBER(bool, notify_redirect)
   IPC_STRUCT_MEMBER(bool, is_plugin_src_load)
-  IPC_STRUCT_MEMBER(int, render_view_id)
+  IPC_STRUCT_MEMBER(int, render_frame_id)
 IPC_STRUCT_END()
 
 IPC_STRUCT_BEGIN(PluginMsg_UpdateGeometry_Param)
@@ -111,7 +111,7 @@ IPC_SYNC_MESSAGE_ROUTED0_1(PluginMsg_GetPluginScriptableObject,
 
 // Gets the form value of the plugin instance synchronously.
 IPC_SYNC_MESSAGE_ROUTED0_2(PluginMsg_GetFormValue,
-                           string16 /* value */,
+                           base::string16 /* value */,
                            bool /* success */)
 
 IPC_MESSAGE_ROUTED3(PluginMsg_DidFinishLoadWithReason,
@@ -133,7 +133,7 @@ IPC_SYNC_MESSAGE_ROUTED1_0(PluginMsg_SetFocus,
 IPC_SYNC_MESSAGE_ROUTED1_2(PluginMsg_HandleInputEvent,
                            IPC::WebInputEventPointer /* event */,
                            bool /* handled */,
-                           WebCursor /* cursor type*/)
+                           content::WebCursor /* cursor type*/)
 
 IPC_MESSAGE_ROUTED1(PluginMsg_SetContentAreaFocus,
                     bool /* has_focus */)
@@ -197,13 +197,13 @@ IPC_MESSAGE_CONTROL1(PluginHostMsg_DidAbortLoading,
 
 #if defined(OS_WIN)
 IPC_MESSAGE_ROUTED4(PluginMsg_ImeCompositionUpdated,
-                    string16 /* text */,
+                    base::string16 /* text */,
                     std::vector<int> /* clauses */,
                     std::vector<int>, /* target */
                     int /* cursor_position */)
 
 IPC_MESSAGE_ROUTED1(PluginMsg_ImeCompositionCompleted,
-                    string16 /* text */)
+                    base::string16 /* text */)
 #endif
 
 #if defined(OS_MACOSX)
@@ -222,13 +222,7 @@ IPC_MESSAGE_ROUTED2(PluginMsg_WindowFrameChanged,
                     gfx::Rect /* view_frame */)
 
 IPC_MESSAGE_ROUTED1(PluginMsg_ImeCompositionCompleted,
-                    string16 /* text */)
-
-// This message, used only on 10.6 and later, transmits the "fake"
-// window handle allocated by the browser on behalf of the renderer
-// to the GPU plugin.
-IPC_MESSAGE_ROUTED1(PluginMsg_SetFakeAcceleratedSurfaceWindowHandle,
-                    gfx::PluginWindowHandle /* window */)
+                    base::string16 /* text */)
 #endif
 
 //-----------------------------------------------------------------------------

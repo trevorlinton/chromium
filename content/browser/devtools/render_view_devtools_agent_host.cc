@@ -8,6 +8,7 @@
 #include "base/lazy_instance.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/devtools/devtools_manager_impl.h"
+#include "content/browser/devtools/devtools_power_handler.h"
 #include "content/browser/devtools/devtools_protocol.h"
 #include "content/browser/devtools/devtools_protocol_constants.h"
 #include "content/browser/devtools/devtools_tracing_handler.h"
@@ -35,6 +36,22 @@ typedef std::vector<RenderViewDevToolsAgentHost*> Instances;
 namespace {
 base::LazyInstance<Instances>::Leaky g_instances = LAZY_INSTANCE_INITIALIZER;
 
+//Returns RenderViewDevToolsAgentHost attached to any of RenderViewHost
+//instances associated with |web_contents|
+static RenderViewDevToolsAgentHost* FindAgentHost(WebContents* web_contents) {
+  if (g_instances == NULL)
+    return NULL;
+  RenderViewHostDelegate* delegate =
+      static_cast<WebContentsImpl*>(web_contents);
+  for (Instances::iterator it = g_instances.Get().begin();
+       it != g_instances.Get().end(); ++it) {
+    RenderViewHost* rvh = (*it)->render_view_host();
+    if (rvh && rvh->GetDelegate() == delegate)
+      return *it;
+  }
+  return NULL;
+}
+
 static RenderViewDevToolsAgentHost* FindAgentHost(RenderViewHost* rvh) {
   if (g_instances == NULL)
     return NULL;
@@ -47,6 +64,14 @@ static RenderViewDevToolsAgentHost* FindAgentHost(RenderViewHost* rvh) {
 }
 
 }  // namespace
+
+scoped_refptr<DevToolsAgentHost>
+DevToolsAgentHost::GetOrCreateFor(WebContents* web_contents) {
+  RenderViewDevToolsAgentHost* result = FindAgentHost(web_contents);
+  if (!result)
+    result = new RenderViewDevToolsAgentHost(web_contents->GetRenderViewHost());
+  return result;
+}
 
 // static
 scoped_refptr<DevToolsAgentHost>
@@ -96,10 +121,20 @@ std::vector<RenderViewHost*> DevToolsAgentHost::GetValidRenderViewHosts() {
 
     RenderViewHost* rvh = RenderViewHost::From(widget);
     WebContents* web_contents = WebContents::FromRenderViewHost(rvh);
-    // Don't report a RenderViewHost if it is not the current RenderViewHost
-    // for some WebContents.
-    if (!web_contents || rvh != web_contents->GetRenderViewHost())
+    if (!web_contents)
       continue;
+
+    // Don't report a RenderViewHost if it is not the current RenderViewHost
+    // for some WebContents (this filters out pre-render RVHs and similar).
+    // However report a RenderViewHost created for an out of process iframe.
+    // TODO (kaznacheev): Revisit this when it is clear how OOP iframes
+    // interact with pre-rendering.
+    // TODO (kaznacheev): GetMainFrame() call is a temporary hack. Iterate over
+    // all RenderFrameHost instances when multiple OOP frames are supported.
+    if (rvh != web_contents->GetRenderViewHost() &&
+        !rvh->GetMainFrame()->IsCrossProcessSubframe()) {
+      continue;
+    }
 
     result.push_back(rvh);
   }
@@ -117,11 +152,20 @@ void RenderViewDevToolsAgentHost::OnCancelPendingNavigation(
   agent_host->ConnectRenderViewHost(current);
 }
 
+// static
+bool RenderViewDevToolsAgentHost::DispatchIPCMessage(
+    RenderViewHost* source,
+    const IPC::Message& message) {
+  RenderViewDevToolsAgentHost* agent_host = FindAgentHost(source);
+  return agent_host && agent_host->DispatchIPCMessage(message);
+}
+
 RenderViewDevToolsAgentHost::RenderViewDevToolsAgentHost(
     RenderViewHost* rvh)
     : render_view_host_(NULL),
       overrides_handler_(new RendererOverridesHandler(this)),
-      tracing_handler_(new DevToolsTracingHandler())
+      tracing_handler_(new DevToolsTracingHandler()),
+      power_handler_(new DevToolsPowerHandler())
  {
   SetRenderViewHost(rvh);
   DevToolsProtocol::Notifier notifier(base::Bind(
@@ -129,6 +173,7 @@ RenderViewDevToolsAgentHost::RenderViewDevToolsAgentHost(
       base::Unretained(this)));
   overrides_handler_->SetNotifier(notifier);
   tracing_handler_->SetNotifier(notifier);
+  power_handler_->SetNotifier(notifier);
   g_instances.Get().push_back(this);
   AddRef();  // Balanced in RenderViewHostDestroyed.
 }
@@ -148,6 +193,8 @@ void RenderViewDevToolsAgentHost::DispatchOnInspectorBackend(
         overrides_handler_->HandleCommand(command);
     if (!overridden_response)
       overridden_response = tracing_handler_->HandleCommand(command);
+    if (!overridden_response)
+      overridden_response = power_handler_->HandleCommand(command);
     if (overridden_response) {
       if (!overridden_response->is_async_promise())
         OnDispatchOnInspectorFrontend(overridden_response->Serialize());
@@ -173,7 +220,7 @@ void RenderViewDevToolsAgentHost::OnClientAttached() {
       render_view_host_->GetProcess()->GetID());
 
   // TODO(kaznacheev): Move this call back to DevToolsManagerImpl when
-  // ExtensionProcessManager no longer relies on this notification.
+  // extensions::ProcessManager no longer relies on this notification.
   DevToolsManagerImpl::GetInstance()->NotifyObservers(this, true);
 
 #if defined(OS_ANDROID)
@@ -219,7 +266,7 @@ void RenderViewDevToolsAgentHost::ClientDetachedFromRenderer() {
   }
 
   // TODO(kaznacheev): Move this call back to DevToolsManagerImpl when
-  // ExtensionProcessManager no longer relies on this notification.
+  // extensions::ProcessManager no longer relies on this notification.
   DevToolsManagerImpl::GetInstance()->NotifyObservers(this, false);
 }
 
@@ -244,6 +291,17 @@ void RenderViewDevToolsAgentHost::AboutToNavigateRenderView(
   ConnectRenderViewHost(dest_rvh);
 }
 
+void RenderViewDevToolsAgentHost::RenderViewHostChanged(
+    RenderViewHost* old_host,
+    RenderViewHost* new_host) {
+  if (new_host != render_view_host_) {
+    // AboutToNavigateRenderView was not called for renderer-initiated
+    // navigation.
+    DisconnectRenderViewHost();
+    ConnectRenderViewHost(new_host);
+  }
+}
+
 void RenderViewDevToolsAgentHost::RenderViewDeleted(RenderViewHost* rvh) {
   if (rvh != render_view_host_)
     return;
@@ -261,6 +319,9 @@ void RenderViewDevToolsAgentHost::RenderProcessGone(
     case base::TERMINATION_STATUS_ABNORMAL_TERMINATION:
     case base::TERMINATION_STATUS_PROCESS_WAS_KILLED:
     case base::TERMINATION_STATUS_PROCESS_CRASHED:
+#if defined(OS_ANDROID)
+    case base::TERMINATION_STATUS_OOM_PROTECTED:
+#endif
       RenderViewCrashed();
       break;
     default:
@@ -330,7 +391,7 @@ void RenderViewDevToolsAgentHost::RenderViewCrashed() {
       DispatchOnInspectorFrontend(this, notification->Serialize());
 }
 
-bool RenderViewDevToolsAgentHost::OnMessageReceived(
+bool RenderViewDevToolsAgentHost::DispatchIPCMessage(
     const IPC::Message& msg) {
   if (!render_view_host_)
     return false;
@@ -353,7 +414,17 @@ bool RenderViewDevToolsAgentHost::OnMessageReceived(
 
 void RenderViewDevToolsAgentHost::OnSwapCompositorFrame(
     const IPC::Message& message) {
-  overrides_handler_->OnSwapCompositorFrame(message);
+  ViewHostMsg_SwapCompositorFrame::Param param;
+  if (!ViewHostMsg_SwapCompositorFrame::Read(&message, &param))
+    return;
+  overrides_handler_->OnSwapCompositorFrame(param.b.metadata);
+}
+
+void RenderViewDevToolsAgentHost::SynchronousSwapCompositorFrame(
+    const cc::CompositorFrameMetadata& frame_metadata) {
+  if (!render_view_host_)
+    return;
+  overrides_handler_->OnSwapCompositorFrame(frame_metadata);
 }
 
 void RenderViewDevToolsAgentHost::OnSaveAgentRuntimeState(

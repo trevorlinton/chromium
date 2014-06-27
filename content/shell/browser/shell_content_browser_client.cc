@@ -7,9 +7,8 @@
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/file_util.h"
+#include "base/files/file.h"
 #include "base/path_service.h"
-#include "content/public/browser/notification_service.h"
-#include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/resource_dispatcher_host.h"
 #include "content/public/browser/storage_partition.h"
@@ -55,7 +54,7 @@ namespace {
 ShellContentBrowserClient* g_browser_client;
 bool g_swap_processes_for_redirect = false;
 
-#if defined(OS_POSIX) && !defined(OS_MACOSX)
+#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
 breakpad::CrashHandlerHostLinux* CreateCrashHandlerHost(
     const std::string& process_type) {
   base::FilePath dumps_path =
@@ -108,7 +107,7 @@ int GetCrashSignalFD(const CommandLine& command_line) {
 
   return -1;
 }
-#endif  // defined(OS_POSIX) && !defined(OS_MACOSX)
+#endif  // defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
 
 }  // namespace
 
@@ -139,7 +138,7 @@ BrowserMainParts* ShellContentBrowserClient::CreateBrowserMainParts(
   return shell_browser_main_parts_;
 }
 
-void ShellContentBrowserClient::RenderProcessHostCreated(
+void ShellContentBrowserClient::RenderProcessWillLaunch(
     RenderProcessHost* host) {
   if (!CommandLine::ForCurrentProcess()->HasSwitch(switches::kDumpRenderTree))
     return;
@@ -152,20 +151,16 @@ void ShellContentBrowserClient::RenderProcessHostCreated(
       BrowserContext::GetDefaultStoragePartition(browser_context())
           ->GetURLRequestContext()));
   host->Send(new ShellViewMsg_SetWebKitSourceDir(webkit_source_dir_));
-  registrar_.Add(this,
-                 NOTIFICATION_RENDERER_PROCESS_CREATED,
-                 Source<RenderProcessHost>(host));
-  registrar_.Add(this,
-                 NOTIFICATION_RENDERER_PROCESS_TERMINATED,
-                 Source<RenderProcessHost>(host));
 }
 
 net::URLRequestContextGetter* ShellContentBrowserClient::CreateRequestContext(
     BrowserContext* content_browser_context,
-    ProtocolHandlerMap* protocol_handlers) {
+    ProtocolHandlerMap* protocol_handlers,
+    ProtocolHandlerScopedVector protocol_interceptors) {
   ShellBrowserContext* shell_browser_context =
       ShellBrowserContextForBrowserContext(content_browser_context);
-  return shell_browser_context->CreateRequestContext(protocol_handlers);
+  return shell_browser_context->CreateRequestContext(
+      protocol_handlers, protocol_interceptors.Pass());
 }
 
 net::URLRequestContextGetter*
@@ -173,11 +168,15 @@ ShellContentBrowserClient::CreateRequestContextForStoragePartition(
     BrowserContext* content_browser_context,
     const base::FilePath& partition_path,
     bool in_memory,
-    ProtocolHandlerMap* protocol_handlers) {
+    ProtocolHandlerMap* protocol_handlers,
+    ProtocolHandlerScopedVector protocol_interceptors) {
   ShellBrowserContext* shell_browser_context =
       ShellBrowserContextForBrowserContext(content_browser_context);
   return shell_browser_context->CreateRequestContextForStoragePartition(
-      partition_path, in_memory, protocol_handlers);
+      partition_path,
+      in_memory,
+      protocol_handlers,
+      protocol_interceptors.Pass());
 }
 
 bool ShellContentBrowserClient::IsHandledURL(const GURL& url) {
@@ -187,12 +186,12 @@ bool ShellContentBrowserClient::IsHandledURL(const GURL& url) {
   // Keep in sync with ProtocolHandlers added by
   // ShellURLRequestContextGetter::GetURLRequestContext().
   static const char* const kProtocolList[] = {
-      chrome::kBlobScheme,
-      chrome::kFileSystemScheme,
-      chrome::kChromeUIScheme,
-      chrome::kChromeDevToolsScheme,
-      chrome::kDataScheme,
-      chrome::kFileScheme,
+      kBlobScheme,
+      kFileSystemScheme,
+      kChromeUIScheme,
+      kChromeDevToolsScheme,
+      kDataScheme,
+      kFileScheme,
   };
   for (size_t i = 0; i < arraysize(kProtocolList); ++i) {
     if (url.scheme() == kProtocolList[i])
@@ -220,6 +219,9 @@ void ShellContentBrowserClient::AppendExtraCommandLineSwitches(
         CommandLine::ForCurrentProcess()->GetSwitchValuePath(
             switches::kCrashDumpsDir));
   }
+  if (CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kEnableLeakDetection))
+    command_line->AppendSwitch(switches::kEnableLeakDetection);
 }
 
 void ShellContentBrowserClient::OverrideWebkitPrefs(
@@ -291,25 +293,25 @@ void ShellContentBrowserClient::GetAdditionalMappedFilesForChildProcess(
   pak_file = pak_file.Append(FILE_PATH_LITERAL("paks"));
   pak_file = pak_file.Append(FILE_PATH_LITERAL("content_shell.pak"));
 
-  base::PlatformFile f =
-      base::CreatePlatformFile(pak_file, flags, NULL, NULL);
-  if (f == base::kInvalidPlatformFileValue) {
+  base::File f(pak_file, flags);
+  if (!f.IsValid()) {
     NOTREACHED() << "Failed to open file when creating renderer process: "
                  << "content_shell.pak";
   }
   mappings->push_back(
       content::FileDescriptorInfo(kShellPakDescriptor,
-                                  base::FileDescriptor(f, true)));
+                                  base::FileDescriptor(f.Pass())));
 
   if (breakpad::IsCrashReporterEnabled()) {
     f = breakpad::CrashDumpManager::GetInstance()->CreateMinidumpFile(
         child_process_id);
-    if (f == base::kInvalidPlatformFileValue) {
+    if (!f.IsValid()) {
       LOG(ERROR) << "Failed to create file for minidump, crash reporting will "
                  << "be disabled for this process.";
     } else {
-      mappings->push_back(FileDescriptorInfo(kAndroidMinidumpDescriptor,
-                                             base::FileDescriptor(f, true)));
+      mappings->push_back(
+          FileDescriptorInfo(kAndroidMinidumpDescriptor,
+                             base::FileDescriptor(f.Pass())));
     }
   }
 #else  // !defined(OS_ANDROID)
@@ -321,35 +323,6 @@ void ShellContentBrowserClient::GetAdditionalMappedFilesForChildProcess(
 #endif  // defined(OS_ANDROID)
 }
 #endif  // defined(OS_POSIX) && !defined(OS_MACOSX)
-
-void ShellContentBrowserClient::Observe(int type,
-                                        const NotificationSource& source,
-                                        const NotificationDetails& details) {
-  switch (type) {
-    case NOTIFICATION_RENDERER_PROCESS_CREATED: {
-      registrar_.Remove(this,
-                        NOTIFICATION_RENDERER_PROCESS_CREATED,
-                        source);
-      registrar_.Remove(this,
-                        NOTIFICATION_RENDERER_PROCESS_TERMINATED,
-                        source);
-      break;
-    }
-
-    case NOTIFICATION_RENDERER_PROCESS_TERMINATED: {
-      registrar_.Remove(this,
-                        NOTIFICATION_RENDERER_PROCESS_CREATED,
-                        source);
-      registrar_.Remove(this,
-                        NOTIFICATION_RENDERER_PROCESS_TERMINATED,
-                        source);
-      break;
-    }
-
-    default:
-      NOTREACHED();
-  }
-}
 
 ShellBrowserContext* ShellContentBrowserClient::browser_context() {
   return shell_browser_main_parts_->browser_context();

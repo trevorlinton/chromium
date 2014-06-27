@@ -21,30 +21,33 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/management/management_api_constants.h"
-#include "chrome/browser/extensions/event_router.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_uninstall_dialog.h"
-#include "chrome/browser/extensions/management_policy.h"
+#include "chrome/browser/extensions/launch_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
 #include "chrome/browser/ui/webui/extensions/extension_icon_source.h"
 #include "chrome/common/chrome_utility_messages.h"
 #include "chrome/common/extensions/api/management.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_icon_set.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
 #include "chrome/common/extensions/manifest_handlers/icons_handler.h"
-#include "chrome/common/extensions/manifest_handlers/offline_enabled_info.h"
 #include "chrome/common/extensions/manifest_url_handler.h"
-#include "chrome/common/extensions/permissions/permissions_data.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/utility_process_host.h"
 #include "content/public/browser/utility_process_host_client.h"
+#include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_registry.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/management_policy.h"
+#include "extensions/common/constants.h"
 #include "extensions/common/error_utils.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/manifest_handlers/offline_enabled_info.h"
 #include "extensions/common/permissions/permission_set.h"
+#include "extensions/common/permissions/permissions_data.h"
 #include "extensions/common/url_pattern.h"
 
 #if !defined(OS_ANDROID)
@@ -81,7 +84,7 @@ std::vector<std::string> CreateWarningsList(const Extension* extension) {
       PermissionsData::GetPermissionMessages(extension);
   for (PermissionMessages::const_iterator iter = warnings.begin();
        iter != warnings.end(); ++iter) {
-    warnings_list.push_back(UTF16ToUTF8(iter->message()));
+    warnings_list.push_back(base::UTF16ToUTF8(iter->message()));
   }
 
   return warnings_list;
@@ -122,7 +125,7 @@ scoped_ptr<management::ExtensionInfo> CreateExtensionInfo(
   if (info->enabled) {
     info->disabled_reason = management::ExtensionInfo::DISABLED_REASON_NONE;
   } else {
-    ExtensionPrefs* prefs = service->extension_prefs();
+    ExtensionPrefs* prefs = ExtensionPrefs::Get(service->profile());
     if (prefs->DidExtensionEscalatePermissions(extension.id())) {
       info->disabled_reason =
           management::ExtensionInfo::DISABLED_REASON_PERMISSIONS_INCREASE;
@@ -234,11 +237,12 @@ ExtensionService* AsyncManagementFunction::service() {
 
 bool ManagementGetAllFunction::RunImpl() {
   ExtensionInfoList extensions;
+  ExtensionRegistry* registry = ExtensionRegistry::Get(GetProfile());
   ExtensionSystem* system = ExtensionSystem::Get(GetProfile());
 
-  AddExtensionInfo(*service()->extensions(), system, &extensions);
-  AddExtensionInfo(*service()->disabled_extensions(), system, &extensions);
-  AddExtensionInfo(*service()->terminated_extensions(), system, &extensions);
+  AddExtensionInfo(registry->enabled_extensions(), system, &extensions);
+  AddExtensionInfo(registry->disabled_extensions(), system, &extensions);
+  AddExtensionInfo(registry->terminated_extensions(), system, &extensions);
 
   results_ = management::GetAll::Results::Create(extensions);
   return true;
@@ -304,7 +308,6 @@ class SafeManifestJSONParser : public UtilityProcessHostClient {
     CHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
     UtilityProcessHost* host = UtilityProcessHost::Create(
         this, base::MessageLoopProxy::current().get());
-    host->EnableZygote();
     host->Send(new ChromeUtilityMsg_ParseJSON(manifest_));
   }
 
@@ -322,9 +325,9 @@ class SafeManifestJSONParser : public UtilityProcessHostClient {
 
   void OnJSONParseSucceeded(const base::ListValue& wrapper) {
     CHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
-    const Value* value = NULL;
+    const base::Value* value = NULL;
     CHECK(wrapper.Get(0, &value));
-    if (value->IsType(Value::TYPE_DICTIONARY))
+    if (value->IsType(base::Value::TYPE_DICTIONARY))
       parsed_manifest_.reset(
           static_cast<const base::DictionaryValue*>(value)->DeepCopy());
     else
@@ -433,11 +436,10 @@ bool ManagementLaunchAppFunction::RunImpl() {
   }
 
   // Look at prefs to find the right launch container.
-  // |default_pref_value| is set to LAUNCH_DEFAULT so that if
-  // the user has not set a preference, we open the app in a tab.
-  extension_misc::LaunchContainer launch_container =
-      service()->extension_prefs()->GetLaunchContainer(
-          extension, ExtensionPrefs::LAUNCH_DEFAULT);
+  // If the user has not set a preference, the default launch value will be
+  // returned.
+  LaunchContainer launch_container =
+      GetLaunchContainer(ExtensionPrefs::Get(GetProfile()), extension);
   OpenApplication(AppLaunchParams(
       GetProfile(), extension, launch_container, NEW_FOREGROUND_TAB));
 #if !defined(OS_ANDROID)
@@ -482,7 +484,7 @@ bool ManagementSetEnabledFunction::RunImpl() {
   bool currently_enabled = service()->IsExtensionEnabled(extension_id_);
 
   if (!currently_enabled && params->enabled) {
-    ExtensionPrefs* prefs = service()->extension_prefs();
+    ExtensionPrefs* prefs = ExtensionPrefs::Get(GetProfile());
     if (prefs->DidExtensionEscalatePermissions(extension_id_)) {
       if (!user_gesture()) {
         error_ = keys::kGestureNeededForEscalationError;
@@ -526,11 +528,12 @@ ManagementUninstallFunctionBase::~ManagementUninstallFunctionBase() {
 }
 
 bool ManagementUninstallFunctionBase::Uninstall(
-    const std::string& extension_id,
+    const std::string& target_extension_id,
     bool show_confirm_dialog) {
-  extension_id_ = extension_id;
-  const Extension* extension = service()->GetExtensionById(extension_id_, true);
-  if (!extension || extension->ShouldNotBeVisible()) {
+  extension_id_ = target_extension_id;
+  const Extension* target_extension =
+      service()->GetExtensionById(extension_id_, true);
+  if (!target_extension || target_extension->ShouldNotBeVisible()) {
     error_ = ErrorUtils::FormatErrorMessage(
         keys::kNoExtensionError, extension_id_);
     return false;
@@ -538,7 +541,7 @@ bool ManagementUninstallFunctionBase::Uninstall(
 
   if (!ExtensionSystem::Get(GetProfile())
            ->management_policy()
-           ->UserMayModifySettings(extension, NULL)) {
+           ->UserMayModifySettings(target_extension, NULL)) {
     error_ = ErrorUtils::FormatErrorMessage(
         keys::kUserCantModifyError, extension_id_);
     return false;
@@ -549,7 +552,13 @@ bool ManagementUninstallFunctionBase::Uninstall(
       AddRef(); // Balanced in ExtensionUninstallAccepted/Canceled
       extension_uninstall_dialog_.reset(ExtensionUninstallDialog::Create(
           GetProfile(), GetCurrentBrowser(), this));
-      extension_uninstall_dialog_->ConfirmUninstall(extension);
+      if (extension_id() != target_extension_id) {
+        extension_uninstall_dialog_->ConfirmProgrammaticUninstall(
+            target_extension, GetExtension());
+      } else {
+        // If this is a self uninstall, show the generic uninstall dialog.
+        extension_uninstall_dialog_->ConfirmUninstall(target_extension);
+      }
     } else {
       Finish(true);
     }
@@ -602,12 +611,21 @@ ManagementUninstallFunction::~ManagementUninstallFunction() {
 bool ManagementUninstallFunction::RunImpl() {
   scoped_ptr<management::Uninstall::Params> params(
       management::Uninstall::Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(extension_);
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
-  bool show_confirm_dialog = false;
-  if (params->options.get() && params->options->show_confirm_dialog.get())
-    show_confirm_dialog = *params->options->show_confirm_dialog;
-
+  bool show_confirm_dialog = true;
+  // By default confirmation dialog isn't shown when uninstalling self, but this
+  // can be overridden with showConfirmDialog.
+  if (params->id == extension_->id()) {
+    show_confirm_dialog = params->options.get() &&
+                          params->options->show_confirm_dialog.get() &&
+                          *params->options->show_confirm_dialog;
+  }
+  if (show_confirm_dialog && !user_gesture()) {
+    error_ = keys::kGestureNeededForUninstallError;
+    return false;
+  }
   return Uninstall(params->id, show_confirm_dialog);
 }
 
@@ -634,7 +652,7 @@ ManagementEventRouter::ManagementEventRouter(Profile* profile)
     chrome::NOTIFICATION_EXTENSION_INSTALLED,
     chrome::NOTIFICATION_EXTENSION_UNINSTALLED,
     chrome::NOTIFICATION_EXTENSION_LOADED,
-    chrome::NOTIFICATION_EXTENSION_UNLOADED
+    chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED
   };
 
   CHECK(registrar_.IsEmpty());
@@ -671,7 +689,7 @@ void ManagementEventRouter::Observe(
       event_name = management::OnEnabled::kEventName;
       extension = content::Details<const Extension>(details).ptr();
       break;
-    case chrome::NOTIFICATION_EXTENSION_UNLOADED:
+    case chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED:
       event_name = management::OnDisabled::kEventName;
       extension =
           content::Details<const UnloadedExtensionInfo>(details)->extension;
@@ -699,36 +717,38 @@ void ManagementEventRouter::Observe(
   ExtensionSystem::Get(profile)->event_router()->BroadcastEvent(event.Pass());
 }
 
-ManagementAPI::ManagementAPI(Profile* profile)
-    : profile_(profile) {
-  ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
-      this, management::OnInstalled::kEventName);
-  ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
-      this, management::OnUninstalled::kEventName);
-  ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
-      this, management::OnEnabled::kEventName);
-  ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
-      this, management::OnDisabled::kEventName);
+ManagementAPI::ManagementAPI(content::BrowserContext* context)
+    : browser_context_(context) {
+  EventRouter* event_router =
+      ExtensionSystem::Get(browser_context_)->event_router();
+  event_router->RegisterObserver(this, management::OnInstalled::kEventName);
+  event_router->RegisterObserver(this, management::OnUninstalled::kEventName);
+  event_router->RegisterObserver(this, management::OnEnabled::kEventName);
+  event_router->RegisterObserver(this, management::OnDisabled::kEventName);
 }
 
 ManagementAPI::~ManagementAPI() {
 }
 
 void ManagementAPI::Shutdown() {
-  ExtensionSystem::Get(profile_)->event_router()->UnregisterObserver(this);
+  ExtensionSystem::Get(browser_context_)->event_router()->UnregisterObserver(
+      this);
 }
 
-static base::LazyInstance<ProfileKeyedAPIFactory<ManagementAPI> >
-g_factory = LAZY_INSTANCE_INITIALIZER;
+static base::LazyInstance<BrowserContextKeyedAPIFactory<ManagementAPI> >
+    g_factory = LAZY_INSTANCE_INITIALIZER;
 
 // static
-ProfileKeyedAPIFactory<ManagementAPI>* ManagementAPI::GetFactoryInstance() {
-  return &g_factory.Get();
+BrowserContextKeyedAPIFactory<ManagementAPI>*
+ManagementAPI::GetFactoryInstance() {
+  return g_factory.Pointer();
 }
 
 void ManagementAPI::OnListenerAdded(const EventListenerInfo& details) {
-  management_event_router_.reset(new ManagementEventRouter(profile_));
-  ExtensionSystem::Get(profile_)->event_router()->UnregisterObserver(this);
+  management_event_router_.reset(
+      new ManagementEventRouter(Profile::FromBrowserContext(browser_context_)));
+  ExtensionSystem::Get(browser_context_)->event_router()->UnregisterObserver(
+      this);
 }
 
 }  // namespace extensions

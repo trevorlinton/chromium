@@ -6,41 +6,52 @@
 
 #include "base/command_line.h"
 #include "base/file_util.h"
+#include "base/files/scoped_file.h"
 #include "base/logging.h"
+#include "base/path_service.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/process/launch.h"
+#include "chrome/common/chrome_paths.h"
 
 namespace extensions {
 
 namespace {
 
-const char kNativeMessagingDirectory[] =
-#if defined(OFFICIAL_BUILD) && defined(OS_MACOSX)
-    "/Library/Google/Chrome/NativeMessagingHosts";
-#elif defined(OFFICIAL_BUILD) && !defined(OS_MACOSX)
-    "/etc/opt/chrome/native-messaging-hosts";
-#elif !defined(OFFICIAL_BUILD) && defined(OS_MACOSX)
-    "/Library/Application Support/Chromium/NativeMessagingHosts";
-#else
-    "/etc/chromium/native-messaging-hosts";
-#endif
+base::FilePath FindManifestInDir(int dir_key, const std::string& host_name) {
+  base::FilePath base_path;
+  if (PathService::Get(dir_key, &base_path)) {
+    base::FilePath path = base_path.Append(host_name + ".json");
+    if (base::PathExists(path))
+      return path;
+  }
+  return base::FilePath();
+}
 
 }  // namespace
 
 // static
 base::FilePath NativeProcessLauncher::FindManifest(
-    const std::string& native_host_name,
+    const std::string& host_name,
+    bool allow_user_level_hosts,
     std::string* error_message) {
-  return base::FilePath(kNativeMessagingDirectory).Append(
-      native_host_name + ".json");
+  base::FilePath result;
+  if (allow_user_level_hosts)
+    result = FindManifestInDir(chrome::DIR_USER_NATIVE_MESSAGING, host_name);
+  if (result.empty())
+    result = FindManifestInDir(chrome::DIR_NATIVE_MESSAGING, host_name);
+
+  if (result.empty())
+    *error_message = "Can't find native messaging host " + host_name;
+
+  return result;
 }
 
 // static
 bool NativeProcessLauncher::LaunchNativeProcess(
     const CommandLine& command_line,
     base::ProcessHandle* process_handle,
-    base::PlatformFile* read_file,
-    base::PlatformFile* write_file) {
+    base::File* read_file,
+    base::File* write_file) {
   base::FileHandleMappingVector fd_map;
 
   int read_pipe_fds[2] = {0};
@@ -48,18 +59,18 @@ bool NativeProcessLauncher::LaunchNativeProcess(
     LOG(ERROR) << "Bad read pipe";
     return false;
   }
-  file_util::ScopedFD read_pipe_read_fd(&read_pipe_fds[0]);
-  file_util::ScopedFD read_pipe_write_fd(&read_pipe_fds[1]);
-  fd_map.push_back(std::make_pair(*read_pipe_write_fd, STDOUT_FILENO));
+  base::ScopedFD read_pipe_read_fd(read_pipe_fds[0]);
+  base::ScopedFD read_pipe_write_fd(read_pipe_fds[1]);
+  fd_map.push_back(std::make_pair(read_pipe_write_fd.get(), STDOUT_FILENO));
 
   int write_pipe_fds[2] = {0};
   if (HANDLE_EINTR(pipe(write_pipe_fds)) != 0) {
     LOG(ERROR) << "Bad write pipe";
     return false;
   }
-  file_util::ScopedFD write_pipe_read_fd(&write_pipe_fds[0]);
-  file_util::ScopedFD write_pipe_write_fd(&write_pipe_fds[1]);
-  fd_map.push_back(std::make_pair(*write_pipe_read_fd, STDIN_FILENO));
+  base::ScopedFD write_pipe_read_fd(write_pipe_fds[0]);
+  base::ScopedFD write_pipe_write_fd(write_pipe_fds[1]);
+  fd_map.push_back(std::make_pair(write_pipe_read_fd.get(), STDIN_FILENO));
 
   base::LaunchOptions options;
   options.fds_to_remap = &fd_map;
@@ -72,8 +83,8 @@ bool NativeProcessLauncher::LaunchNativeProcess(
   write_pipe_read_fd.reset();
   read_pipe_write_fd.reset();
 
-  *read_file = *read_pipe_read_fd.release();
-  *write_file = *write_pipe_write_fd.release();
+  *read_file = base::File(read_pipe_read_fd.release());
+  *write_file = base::File(write_pipe_write_fd.release());
 
   return true;
 }

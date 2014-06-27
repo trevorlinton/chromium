@@ -24,6 +24,7 @@ function WallpaperManager(dialogDom) {
   this.currentWallpaper_ = null;
   this.wallpaperRequest_ = null;
   this.wallpaperDirs_ = WallpaperDirectories.getInstance();
+  this.preManifestDomInit_();
   this.fetchManifest_();
 }
 
@@ -88,7 +89,7 @@ function WallpaperManager(dialogDom) {
   WallpaperManager.prototype.fetchManifest_ = function() {
     var locale = navigator.language;
     if (!this.enableOnlineWallpaper_) {
-      this.initDom_();
+      this.postManifestDomInit_();
       return;
     }
 
@@ -173,7 +174,7 @@ function WallpaperManager(dialogDom) {
   WallpaperManager.prototype.onLoadManifestSuccess_ = function(manifest) {
     this.manifest_ = manifest;
     WallpaperUtil.saveToStorage(Constants.AccessManifestKey, manifest, false);
-    this.initDom_();
+    this.postManifestDomInit_();
   };
 
   // Sets manifest to previously saved object if any and shows connection error.
@@ -184,7 +185,7 @@ function WallpaperManager(dialogDom) {
     Constants.WallpaperLocalStorage.get(accessManifestKey, function(items) {
       self.manifest_ = items[accessManifestKey] ? items[accessManifestKey] : {};
       self.showError_(str('connectionFailed'));
-      self.initDom_();
+      self.postManifestDomInit_();
       $('wallpaper-grid').classList.add('image-picker-offline');
     });
   };
@@ -198,7 +199,7 @@ function WallpaperManager(dialogDom) {
     var checkbox = $('surprise-me').querySelector('#checkbox');
     var shouldEnable = !checkbox.classList.contains('checked');
     WallpaperUtil.saveToStorage(Constants.AccessSurpriseMeEnabledKey,
-                                shouldEnable, false, function() {
+                                shouldEnable, true, function() {
       if (chrome.runtime.lastError == null) {
           if (shouldEnable) {
             checkbox.classList.add('checked');
@@ -215,9 +216,33 @@ function WallpaperManager(dialogDom) {
   };
 
   /**
-   * One-time initialization of various DOM nodes.
+   * One-time initialization of various DOM nodes. Fetching manifest may take a
+   * long time due to slow connection. Dom nodes that do not depend on manifest
+   * should be initialized here to unblock from manifest fetching.
    */
-  WallpaperManager.prototype.initDom_ = function() {
+  WallpaperManager.prototype.preManifestDomInit_ = function() {
+    $('window-close-button').addEventListener('click', function() {
+      window.close();
+    });
+    this.document_.defaultView.addEventListener(
+        'resize', this.onResize_.bind(this));
+    this.document_.defaultView.addEventListener(
+        'keydown', this.onKeyDown_.bind(this));
+    $('learn-more').href = LearnMoreURL;
+    $('close-error').addEventListener('click', function() {
+      $('error-container').hidden = true;
+    });
+    $('close-wallpaper-selection').addEventListener('click', function() {
+      $('wallpaper-selection-container').hidden = true;
+      $('set-wallpaper-layout').disabled = true;
+    });
+  };
+
+  /**
+   * One-time initialization of various DOM nodes. Dom nodes that do depend on
+   * manifest should be initialized here.
+   */
+  WallpaperManager.prototype.postManifestDomInit_ = function() {
     i18nTemplate.process(this.document_, loadTimeData);
     this.initCategoriesList_();
     this.initThumbnailsGrid_();
@@ -233,9 +258,26 @@ function WallpaperManager(dialogDom) {
       $('surprise-me').hidden = false;
       $('surprise-me').addEventListener('click',
                                         this.toggleSurpriseMe_.bind(this));
-      Constants.WallpaperLocalStorage.get(Constants.AccessSurpriseMeEnabledKey,
+      Constants.WallpaperSyncStorage.get(Constants.AccessSurpriseMeEnabledKey,
                                           function(items) {
-        if (items[Constants.AccessSurpriseMeEnabledKey]) {
+        // Surprise me has been moved from local to sync storage, prefer
+        // values from sync, but if unset check local and update synced pref
+        // if applicable.
+        if (!items.hasOwnProperty(Constants.AccessSurpriseMeEnabledKey)) {
+          Constants.WallpaperLocalStorage.get(
+              Constants.AccessSurpriseMeEnabledKey, function(values) {
+            if (values.hasOwnProperty(Constants.AccessSurpriseMeEnabledKey)) {
+              WallpaperUtil.saveToStorage(Constants.AccessSurpriseMeEnabledKey,
+                  values[Constants.AccessSurpriseMeEnabledKey], true);
+            }
+            if (values[Constants.AccessSurpriseMeEnabledKey]) {
+                $('surprise-me').querySelector('#checkbox').classList.add(
+                    'checked');
+                $('categories-list').disabled = true;
+                $('wallpaper-grid').disabled = true;
+            }
+          });
+        } else if (items[Constants.AccessSurpriseMeEnabledKey]) {
           $('surprise-me').querySelector('#checkbox').classList.add('checked');
           $('categories-list').disabled = true;
           $('wallpaper-grid').disabled = true;
@@ -268,21 +310,6 @@ function WallpaperManager(dialogDom) {
         $('wallpaper-grid').classList.remove('image-picker-offline');
       });
     }
-    $('window-close-button').addEventListener('click', function() {
-      window.close();
-    });
-    this.document_.defaultView.addEventListener(
-        'resize', this.onResize_.bind(this));
-    this.document_.defaultView.addEventListener(
-        'keydown', this.onKeyDown_.bind(this));
-    $('learn-more').href = LearnMoreURL;
-    $('close-error').addEventListener('click', function() {
-      $('error-container').hidden = true;
-    });
-    $('close-wallpaper-selection').addEventListener('click', function() {
-      $('wallpaper-selection-container').hidden = true;
-      $('set-wallpaper-layout').disabled = true;
-    });
 
     this.onResize_();
     this.initContextMenuAndCommand_();

@@ -21,12 +21,12 @@
 #include "base/time/time.h"
 #include "components/autofill/core/browser/autocomplete_history_manager.h"
 #include "components/autofill/core/browser/autofill_download.h"
+#include "components/autofill/core/browser/autofill_driver.h"
 #include "components/autofill/core/browser/autofill_manager_delegate.h"
 #include "components/autofill/core/browser/form_structure.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/forms_seen_state.h"
-#include "third_party/WebKit/public/web/WebFormElement.h"
 
 class GURL;
 
@@ -46,7 +46,6 @@ class PrefRegistrySyncable;
 
 namespace autofill {
 
-class AutofillDriver;
 class AutofillDataModel;
 class AutofillDownloadManager;
 class AutofillExternalDelegate;
@@ -84,14 +83,16 @@ class AutofillManager : public AutofillDownloadManager::Observer {
   // Sets an external delegate.
   void SetExternalDelegate(AutofillExternalDelegate* delegate);
 
+  void ShowAutofillSettings();
+
   // Called from our external delegate so they cannot be private.
-  virtual void OnFillAutofillFormData(int query_id,
-                                      const FormData& form,
-                                      const FormFieldData& field,
-                                      int unique_id);
-  void OnDidShowAutofillSuggestions(bool is_new_popup);
+  virtual void FillOrPreviewForm(AutofillDriver::RendererFormDataAction action,
+                                 int query_id,
+                                 const FormData& form,
+                                 const FormFieldData& field,
+                                 int unique_id);
+  void DidShowSuggestions(bool is_new_popup);
   void OnDidFillAutofillFormData(const base::TimeTicks& timestamp);
-  void OnShowAutofillDialog();
   void OnDidPreviewAutofillFormData();
 
   // Remove the credit card or Autofill profile that matches |unique_id|
@@ -138,9 +139,9 @@ class AutofillManager : public AutofillDownloadManager::Observer {
                                 const gfx::RectF& bounding_box,
                                 bool display_warning);
   void OnDidEndTextFieldEditing();
-  void OnHideAutofillUI();
+  void OnHidePopup();
   void OnAddPasswordFormMapping(
-      const FormFieldData& form,
+      const FormFieldData& username_field,
       const PasswordFormFillData& fill_data);
   void OnShowPasswordSuggestions(
       const FormFieldData& field,
@@ -149,10 +150,6 @@ class AutofillManager : public AutofillDownloadManager::Observer {
       const std::vector<base::string16>& realms);
   void OnSetDataList(const std::vector<base::string16>& values,
                      const std::vector<base::string16>& labels);
-
-  // Requests an interactive autocomplete UI be shown.
-  void OnRequestAutocomplete(const FormData& form,
-                             const GURL& frame_url);
 
   // Try and upload |form|. This differs from OnFormSubmitted() in a few ways.
   //   - This function will only label the first <input type="password"> field
@@ -167,14 +164,14 @@ class AutofillManager : public AutofillDownloadManager::Observer {
   // Resets cache.
   virtual void Reset();
 
+  // Returns the value of the AutofillEnabled pref.
+  virtual bool IsAutofillEnabled() const;
+
  protected:
   // Test code should prefer to use this constructor.
   AutofillManager(AutofillDriver* driver,
                   autofill::AutofillManagerDelegate* delegate,
                   PersonalDataManager* personal_data);
-
-  // Returns the value of the AutofillEnabled pref.
-  virtual bool IsAutofillEnabled() const;
 
   // Uploads the form data to the Autofill server.
   virtual void UploadFormData(const FormStructure& submitted_form);
@@ -210,35 +207,23 @@ class AutofillManager : public AutofillDownloadManager::Observer {
     return external_delegate_;
   }
 
-  // Causes the dialog for request autocomplete feature to be shown.
-  virtual void ShowRequestAutocompleteDialog(
-      const FormData& form,
-      const GURL& source_url,
-      const base::Callback<void(const FormStructure*)>& callback);
-
-  // Tell the renderer the current interactive autocomplete finished.
-  virtual void ReturnAutocompleteResult(
-      WebKit::WebFormElement::AutocompleteResult result,
-      const FormData& form_data);
-
  private:
   // AutofillDownloadManager::Observer:
   virtual void OnLoadedServerPredictions(
       const std::string& response_xml) OVERRIDE;
 
-  // Passes return data for an OnRequestAutocomplete call back to the page.
-  void ReturnAutocompleteData(const FormStructure* result);
-
-  // Fills |host| with the RenderViewHost for this tab.
-  // Returns false if Autofill is disabled or if the host is unavailable.
-  bool GetHost(content::RenderViewHost** host) const WARN_UNUSED_RESULT;
+  // Returns false if Autofill is disabled or if no Autofill data is available.
+  bool RefreshDataModels() const;
 
   // Unpacks |unique_id| and fills |form_group| and |variant| with the
-  // appropriate data source and variant index.  Returns false if the unpacked
-  // id cannot be found.
+  // appropriate data source and variant index. Sets |is_credit_card| to true
+  // if |data_model| points to a CreditCard data model, false if it's a
+  // profile data model.
+  // Returns false if the unpacked id cannot be found.
   bool GetProfileOrCreditCard(int unique_id,
                               const AutofillDataModel** data_model,
-                              size_t* variant) const WARN_UNUSED_RESULT;
+                              size_t* variant,
+                              bool* is_credit_card) const WARN_UNUSED_RESULT;
 
   // Fills |form_structure| cached element corresponding to |form|.
   // Returns false if the cached element was not found.

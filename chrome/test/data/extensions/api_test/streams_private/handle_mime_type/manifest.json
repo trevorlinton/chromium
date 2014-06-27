@@ -8,7 +8,8 @@
   },
   "mime_types": [
     "application/msword",
-    "plain/text"
+    "application/msexcel",
+    "text/plain"
   ],
   "permissions": [
     "streamsPrivate"

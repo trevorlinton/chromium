@@ -105,8 +105,8 @@ void PrintViewManagerBase::RenderProcessGone(base::TerminationStatus status) {
   }
 }
 
-string16 PrintViewManagerBase::RenderSourceName() {
-  string16 name(web_contents()->GetTitle());
+base::string16 PrintViewManagerBase::RenderSourceName() {
+  base::string16 name(web_contents()->GetTitle());
   if (name.empty())
     name = l10n_util::GetStringUTF16(IDS_DEFAULT_PRINT_DOCUMENT_TITLE);
   return name;
@@ -163,10 +163,9 @@ void PrintViewManagerBase::OnDidPrintPage(
 
 #if defined(OS_WIN)
   bool big_emf = (params.data_size && params.data_size >= kMetafileMaxSize);
-  const CommandLine* cmdline = CommandLine::ForCurrentProcess();
   int raster_size = std::min(params.page_size.GetArea(),
                              kMaxRasterSizeInPixels);
-  if (big_emf || (cmdline && cmdline->HasSwitch(switches::kPrintRaster))) {
+  if (big_emf) {
     scoped_ptr<NativeMetafile> raster_metafile(
         metafile->RasterizeMetafile(raster_size));
     if (raster_metafile.get()) {
@@ -198,8 +197,7 @@ void PrintViewManagerBase::OnPrintingFailed(int cookie) {
   }
 
 #if defined(ENABLE_FULL_PRINTING)
-  chrome::ShowPrintErrorDialog(
-      web_contents()->GetView()->GetTopLevelNativeWindow());
+  chrome::ShowPrintErrorDialog();
 #endif
 
   ReleasePrinterQuery();

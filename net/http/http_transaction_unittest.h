@@ -162,6 +162,7 @@ class MockNetworkLayer;
 class MockNetworkTransaction
     : public net::HttpTransaction,
       public base::SupportsWeakPtr<MockNetworkTransaction> {
+  typedef net::WebSocketHandshakeStreamBase::CreateHelper CreateHelper;
  public:
   MockNetworkTransaction(net::RequestPriority priority,
                          MockNetworkLayer* factory);
@@ -192,6 +193,8 @@ class MockNetworkTransaction
   virtual bool GetFullRequestHeaders(
       net::HttpRequestHeaders* headers) const OVERRIDE;
 
+  virtual int64 GetTotalReceivedBytes() const OVERRIDE;
+
   virtual void DoneReading() OVERRIDE;
 
   virtual const net::HttpResponseInfo* GetResponseInfo() const OVERRIDE;
@@ -200,24 +203,44 @@ class MockNetworkTransaction
 
   virtual net::UploadProgress GetUploadProgress() const OVERRIDE;
 
+  virtual void SetQuicServerInfo(
+      net::QuicServerInfo* quic_server_info) OVERRIDE;
+
   virtual bool GetLoadTimingInfo(
       net::LoadTimingInfo* load_timing_info) const OVERRIDE;
 
   virtual void SetPriority(net::RequestPriority priority) OVERRIDE;
 
+  virtual void SetWebSocketHandshakeStreamCreateHelper(
+      CreateHelper* create_helper) OVERRIDE;
+
+  virtual void SetBeforeNetworkStartCallback(
+      const BeforeNetworkStartCallback& callback) OVERRIDE;
+
+  virtual int ResumeNetworkStart() OVERRIDE;
+
+  CreateHelper* websocket_handshake_stream_create_helper() {
+    return websocket_handshake_stream_create_helper_;
+  }
   net::RequestPriority priority() const { return priority_; }
 
  private:
+  int StartInternal(const net::HttpRequestInfo* request,
+                    const net::CompletionCallback& callback,
+                    const net::BoundNetLog& net_log);
   void CallbackLater(const net::CompletionCallback& callback, int result);
   void RunCallback(const net::CompletionCallback& callback, int result);
 
   base::WeakPtrFactory<MockNetworkTransaction> weak_factory_;
+  const net::HttpRequestInfo* request_;
   net::HttpResponseInfo response_;
   std::string data_;
   int data_cursor_;
   int test_mode_;
   net::RequestPriority priority_;
+  CreateHelper* websocket_handshake_stream_create_helper_;
   base::WeakPtr<MockNetworkLayer> transaction_factory_;
+  int64 received_bytes_;
 
   // NetLog ID of the fake / non-existent underlying socket used by the
   // connection. Requires Start() be passed a BoundNetLog with a real NetLog to
@@ -233,7 +256,9 @@ class MockNetworkLayer : public net::HttpTransactionFactory,
 
   int transaction_count() const { return transaction_count_; }
   bool done_reading_called() const { return done_reading_called_; }
+  bool stop_caching_called() const { return stop_caching_called_; }
   void TransactionDoneReading();
+  void TransactionStopCaching();
 
   // Returns the last priority passed to CreateTransaction, or
   // DEFAULT_PRIORITY if it hasn't been called yet.
@@ -259,14 +284,14 @@ class MockNetworkLayer : public net::HttpTransactionFactory,
   // net::HttpTransactionFactory:
   virtual int CreateTransaction(
       net::RequestPriority priority,
-      scoped_ptr<net::HttpTransaction>* trans,
-      net::HttpTransactionDelegate* delegate) OVERRIDE;
+      scoped_ptr<net::HttpTransaction>* trans) OVERRIDE;
   virtual net::HttpCache* GetCache() OVERRIDE;
   virtual net::HttpNetworkSession* GetSession() OVERRIDE;
 
  private:
   int transaction_count_;
   bool done_reading_called_;
+  bool stop_caching_called_;
   net::RequestPriority last_create_transaction_priority_;
   base::WeakPtr<MockNetworkTransaction> last_transaction_;
 };

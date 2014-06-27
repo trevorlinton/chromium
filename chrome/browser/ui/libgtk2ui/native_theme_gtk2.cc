@@ -6,6 +6,7 @@
 
 #include <gtk/gtk.h>
 
+#include "chrome/browser/ui/libgtk2ui/chrome_gtk_menu_subclasses.h"
 #include "chrome/browser/ui/libgtk2ui/skia_utils_gtk2.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/path.h"
@@ -18,18 +19,6 @@ namespace {
 
 // Theme colors returned by GetSystemColor().
 const SkColor kInvalidColorIdColor = SkColorSetRGB(255, 0, 128);
-// Tree
-const SkColor kTreeBackground = SK_ColorWHITE;
-const SkColor kTreeTextColor = SK_ColorBLACK;
-const SkColor kTreeSelectedTextColor = SK_ColorBLACK;
-const SkColor kTreeSelectionBackgroundColor = SkColorSetRGB(0xEE, 0xEE, 0xEE);
-const SkColor kTreeArrowColor = SkColorSetRGB(0x7A, 0x7A, 0x7A);
-// Table
-const SkColor kTableBackground = SK_ColorWHITE;
-const SkColor kTableTextColor = SK_ColorBLACK;
-const SkColor kTableSelectedTextColor = SK_ColorBLACK;
-const SkColor kTableSelectionBackgroundColor = SkColorSetRGB(0xEE, 0xEE, 0xEE);
-const SkColor kTableGroupingIndicatorColor = SkColorSetRGB(0xCC, 0xCC, 0xCC);
 
 }  // namespace
 
@@ -53,46 +42,11 @@ NativeThemeGtk2::~NativeThemeGtk2() {
   fake_entry_.Destroy();
   fake_label_.Destroy();
   fake_button_.Destroy();
+  fake_tree_.Destroy();
   fake_menu_.Destroy();
 }
 
 SkColor NativeThemeGtk2::GetSystemColor(ColorId color_id) const {
-  switch (color_id) {
-    // TODO(erg): Still need to fish the colors out of trees and tables.
-
-    // Tree
-    case kColorId_TreeBackground:
-      return kTreeBackground;
-    case kColorId_TreeText:
-      return kTreeTextColor;
-    case kColorId_TreeSelectedText:
-    case kColorId_TreeSelectedTextUnfocused:
-      return kTreeSelectedTextColor;
-    case kColorId_TreeSelectionBackgroundFocused:
-    case kColorId_TreeSelectionBackgroundUnfocused:
-      return kTreeSelectionBackgroundColor;
-    case kColorId_TreeArrow:
-      return kTreeArrowColor;
-
-    // Table
-    case kColorId_TableBackground:
-      return kTableBackground;
-    case kColorId_TableText:
-      return kTableTextColor;
-    case kColorId_TableSelectedText:
-    case kColorId_TableSelectedTextUnfocused:
-      return kTableSelectedTextColor;
-    case kColorId_TableSelectionBackgroundFocused:
-    case kColorId_TableSelectionBackgroundUnfocused:
-      return kTableSelectionBackgroundColor;
-    case kColorId_TableGroupingIndicatorColor:
-      return kTableGroupingIndicatorColor;
-
-    default:
-      // Fall through.
-      break;
-  }
-
   return GdkColorToSkColor(GetSystemGdkColor(color_id));
 }
 
@@ -164,6 +118,7 @@ GdkColor NativeThemeGtk2::GetSystemGdkColor(ColorId color_id) const {
 
     // MenuItem
     case kColorId_EnabledMenuItemForegroundColor:
+    case kColorId_DisabledEmphasizedMenuItemForegroundColor:
       return GetMenuItemStyle()->text[GTK_STATE_NORMAL];
     case kColorId_DisabledMenuItemForegroundColor:
       return GetMenuItemStyle()->text[GTK_STATE_INSENSITIVE];
@@ -219,8 +174,27 @@ GdkColor NativeThemeGtk2::GetSystemGdkColor(ColorId color_id) const {
     case kColorId_TextfieldSelectionBackgroundFocused:
       return GetEntryStyle()->base[GTK_STATE_SELECTED];
 
-    // Tree
-    // Table
+    // Trees and Tables (implemented on GTK using the same class)
+    case kColorId_TableBackground:
+    case kColorId_TreeBackground:
+      return GetTreeStyle()->bg[GTK_STATE_NORMAL];
+    case kColorId_TableText:
+    case kColorId_TreeText:
+      return GetTreeStyle()->text[GTK_STATE_NORMAL];
+    case kColorId_TableSelectedText:
+    case kColorId_TableSelectedTextUnfocused:
+    case kColorId_TreeSelectedText:
+    case kColorId_TreeSelectedTextUnfocused:
+      return GetTreeStyle()->text[GTK_STATE_SELECTED];
+    case kColorId_TableSelectionBackgroundFocused:
+    case kColorId_TableSelectionBackgroundUnfocused:
+    case kColorId_TreeSelectionBackgroundFocused:
+    case kColorId_TreeSelectionBackgroundUnfocused:
+      return GetTreeStyle()->bg[GTK_STATE_SELECTED];
+    case kColorId_TreeArrow:
+      return GetTreeStyle()->fg[GTK_STATE_NORMAL];
+    case kColorId_TableGroupingIndicatorColor:
+      return GetTreeStyle()->text_aa[GTK_STATE_NORMAL];
 
     default:
       // Fall through
@@ -269,6 +243,13 @@ GtkStyle* NativeThemeGtk2::GetButtonStyle() const {
   return gtk_rc_get_style(fake_button_.get());
 }
 
+GtkStyle* NativeThemeGtk2::GetTreeStyle() const {
+  if (!fake_tree_.get())
+    fake_tree_.Own(gtk_tree_view_new());
+
+  return gtk_rc_get_style(fake_tree_.get());
+}
+
 GtkStyle* NativeThemeGtk2::GetMenuStyle() const {
   if (!fake_menu_.get())
     fake_menu_.Own(gtk_menu_new());
@@ -278,9 +259,9 @@ GtkStyle* NativeThemeGtk2::GetMenuStyle() const {
 GtkStyle* NativeThemeGtk2::GetMenuItemStyle() const {
   if (!fake_menu_item_) {
     if (!fake_menu_.get())
-      fake_menu_.Own(gtk_menu_new());
+      fake_menu_.Own(gtk_custom_menu_new());
 
-    fake_menu_item_ = gtk_menu_item_new();
+    fake_menu_item_ = gtk_custom_menu_item_new();
     gtk_menu_shell_append(GTK_MENU_SHELL(fake_menu_.get()), fake_menu_item_);
   }
 

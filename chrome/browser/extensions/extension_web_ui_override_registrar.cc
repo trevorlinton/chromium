@@ -14,11 +14,14 @@
 namespace extensions {
 
 ExtensionWebUIOverrideRegistrar::ExtensionWebUIOverrideRegistrar(
-    Profile* profile) : profile_(profile) {
-  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_LOADED,
-                 content::Source<Profile>(profile));
-  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED,
-                 content::Source<Profile>(profile));
+    content::BrowserContext* context)
+    : profile_(Profile::FromBrowserContext(context)) {
+  registrar_.Add(this,
+                 chrome::NOTIFICATION_EXTENSION_LOADED,
+                 content::Source<Profile>(profile_));
+  registrar_.Add(this,
+                 chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
+                 content::Source<Profile>(profile_));
 }
 
 ExtensionWebUIOverrideRegistrar::~ExtensionWebUIOverrideRegistrar() {
@@ -34,7 +37,7 @@ void ExtensionWebUIOverrideRegistrar::Observe(
     ExtensionWebUI::RegisterChromeURLOverrides(
         profile_, URLOverrides::GetChromeURLOverrides(extension));
 
-  } else if (type == chrome::NOTIFICATION_EXTENSION_UNLOADED) {
+  } else if (type == chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED) {
     const Extension* extension =
         content::Details<UnloadedExtensionInfo>(details)->extension;
     ExtensionWebUI::UnregisterChromeURLOverrides(
@@ -43,13 +46,13 @@ void ExtensionWebUIOverrideRegistrar::Observe(
 }
 
 static base::LazyInstance<
-  ProfileKeyedAPIFactory<ExtensionWebUIOverrideRegistrar> >
-    g_factory = LAZY_INSTANCE_INITIALIZER;
+    BrowserContextKeyedAPIFactory<ExtensionWebUIOverrideRegistrar> > g_factory =
+    LAZY_INSTANCE_INITIALIZER;
 
 // static
-ProfileKeyedAPIFactory<ExtensionWebUIOverrideRegistrar>*
+BrowserContextKeyedAPIFactory<ExtensionWebUIOverrideRegistrar>*
 ExtensionWebUIOverrideRegistrar::GetFactoryInstance() {
-  return &g_factory.Get();
+  return g_factory.Pointer();
 }
 
 }  // namespace extensions

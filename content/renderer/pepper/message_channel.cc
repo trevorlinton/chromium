@@ -32,12 +32,12 @@
 using ppapi::ArrayBufferVar;
 using ppapi::PpapiGlobals;
 using ppapi::StringVar;
-using WebKit::WebBindings;
-using WebKit::WebElement;
-using WebKit::WebDOMEvent;
-using WebKit::WebDOMMessageEvent;
-using WebKit::WebPluginContainer;
-using WebKit::WebSerializedScriptValue;
+using blink::WebBindings;
+using blink::WebElement;
+using blink::WebDOMEvent;
+using blink::WebDOMMessageEvent;
+using blink::WebPluginContainer;
+using blink::WebSerializedScriptValue;
 
 namespace content {
 
@@ -105,8 +105,9 @@ PP_Var CopyPPVar(const PP_Var& var) {
     case PP_VARTYPE_ARRAY:
     case PP_VARTYPE_DICTIONARY:
     case PP_VARTYPE_RESOURCE:
-      // These types are not supported by PostMessage in-process.
-      NOTREACHED();
+      // These types are not supported by PostMessage in-process. In some rare
+      // cases with the NaCl plugin, they may be sent but they will be dropped
+      // anyway (see crbug.com/318837 for details).
       return PP_MakeUndefined();
   }
   NOTREACHED();
@@ -189,6 +190,12 @@ bool MessageChannelHasProperty(NPObject* np_obj, NPIdentifier name) {
   if (!np_obj)
     return false;
 
+  MessageChannel* message_channel = ToMessageChannel(np_obj);
+  if (message_channel) {
+    if (message_channel->GetReadOnlyProperty(name, NULL))
+      return true;
+  }
+
   // Invoke on the passthrough object, if we have one.
   NPObject* passthrough = ToPassThroughObject(np_obj);
   if (passthrough)
@@ -204,6 +211,12 @@ bool MessageChannelGetProperty(NPObject* np_obj, NPIdentifier name,
   // Don't allow getting the postMessage function.
   if (IdentifierIsPostMessage(name))
     return false;
+
+  MessageChannel* message_channel = ToMessageChannel(np_obj);
+  if (message_channel) {
+    if (message_channel->GetReadOnlyProperty(name, result))
+      return true;
+  }
 
   // Invoke on the passthrough object, if we have one.
   NPObject* passthrough = ToPassThroughObject(np_obj);
@@ -356,7 +369,7 @@ void MessageChannel::NPVariantToPPVar(const NPVariant* variant) {
       // shouldn't result in a deep copy.
       v8::Handle<v8::Value> v8_value = WebBindings::toV8Value(variant);
       V8VarConverter(instance_->pp_instance()).FromV8Value(
-          v8_value, v8::Context::GetCurrent(),
+          v8_value, v8::Isolate::GetCurrent()->GetCurrentContext(),
           base::Bind(&MessageChannel::NPVariantToPPVarComplete,
                      weak_ptr_factory_.GetWeakPtr(), result_iterator));
       return;
@@ -391,17 +404,6 @@ void MessageChannel::PostMessageToJavaScript(PP_Var message_data) {
         PP_LOGLEVEL_ERROR, std::string(), kVarToV8ConversionError);
     return;
   }
-
-  // This is for backward compatibility. It usually makes sense for us to return
-  // a string object rather than a string primitive because it allows multiple
-  // references to the same string (as with PP_Var strings). However, prior to
-  // implementing dictionary and array, vars we would return a string primitive
-  // here. Changing it to an object now will break existing code that uses
-  // strict comparisons for strings returned from PostMessage. e.g. x === "123"
-  // will no longer return true. So if the only value to return is a string
-  // object, just return the string primitive.
-  if (v8_val->IsStringObject())
-    v8_val = v8_val->ToString();
 
   WebSerializedScriptValue serialized_val =
       WebSerializedScriptValue::serialize(v8_val);
@@ -556,6 +558,22 @@ void MessageChannel::SetPassthroughObject(NPObject* passthrough) {
     WebBindings::releaseObject(passthrough_object_);
 
   passthrough_object_ = passthrough;
+}
+
+bool MessageChannel::GetReadOnlyProperty(NPIdentifier key,
+                                         NPVariant *value) const {
+  std::map<NPIdentifier, ppapi::ScopedPPVar>::const_iterator it =
+      internal_properties_.find(key);
+  if (it != internal_properties_.end()) {
+    if (value)
+      return PPVarToNPVariant(it->second.get(), value);
+    return true;
+  }
+  return false;
+}
+
+void MessageChannel::SetReadOnlyProperty(PP_Var key, PP_Var value) {
+  internal_properties_[PPVarToNPIdentifier(key)] = ppapi::ScopedPPVar(value);
 }
 
 }  // namespace content

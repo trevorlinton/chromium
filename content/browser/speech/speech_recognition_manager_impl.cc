@@ -147,7 +147,8 @@ int SpeechRecognitionManagerImpl::CreateSession(
   session->recognizer = new SpeechRecognizerImpl(
       this,
       session_id,
-      !config.continuous,
+      config.continuous,
+      config.interim_results,
       google_remote_engine);
 #else
   session->recognizer = new SpeechRecognizerImplAndroid(this, session_id);
@@ -197,7 +198,7 @@ void SpeechRecognitionManagerImpl::RecognitionAllowedCallback(int session_id,
         context.render_process_id,
         context.render_view_id,
         context.request_id,
-        StreamOptions(MEDIA_DEVICE_AUDIO_CAPTURE, MEDIA_NO_SERVICE),
+        StreamOptions(true, false),
         GURL(context.context_name),
         base::Bind(
             &SpeechRecognitionManagerImpl::MediaRequestPermissionCallback,
@@ -300,7 +301,8 @@ void SpeechRecognitionManagerImpl::OnRecognitionStart(int session_id) {
   SessionsTable::iterator iter = sessions_.find(session_id);
   if (iter->second->ui) {
     // Notify the UI that the devices are being used.
-    iter->second->ui->OnStarted(base::Closure());
+    iter->second->ui->OnStarted(base::Closure(),
+                                MediaStreamUIProxy::WindowIdCallback());
   }
 
   DCHECK_EQ(primary_session_id_, session_id);
@@ -449,8 +451,8 @@ SpeechRecognitionManagerImpl::GetSessionContext(int session_id) const {
   return GetSession(session_id)->context;
 }
 
-void SpeechRecognitionManagerImpl::AbortAllSessionsForListener(
-    SpeechRecognitionEventListener* listener) {
+void SpeechRecognitionManagerImpl::AbortAllSessionsForRenderProcess(
+    int render_process_id) {
   // This method gracefully destroys sessions for the listener. However, since
   // the listener itself is likely to be destroyed after this call, we avoid
   // dispatching further events to it, marking the |listener_is_active| flag.
@@ -458,7 +460,7 @@ void SpeechRecognitionManagerImpl::AbortAllSessionsForListener(
   for (SessionsTable::iterator it = sessions_.begin(); it != sessions_.end();
        ++it) {
     Session* session = it->second;
-    if (session->config.event_listener == listener) {
+    if (session->context.render_process_id == render_process_id) {
       AbortSession(session->id);
       session->listener_is_active = false;
     }
@@ -655,7 +657,9 @@ SpeechRecognitionManagerImpl::GetSession(int session_id) const {
 SpeechRecognitionEventListener* SpeechRecognitionManagerImpl::GetListener(
     int session_id) const {
   Session* session = GetSession(session_id);
-  return session->listener_is_active ? session->config.event_listener : NULL;
+  if (session->listener_is_active && session->config.event_listener)
+    return session->config.event_listener.get();
+  return NULL;
 }
 
 SpeechRecognitionEventListener*
@@ -672,7 +676,7 @@ bool SpeechRecognitionManagerImpl::HasAudioInputDevices() {
   return audio_manager_->HasAudioInputDevices();
 }
 
-string16 SpeechRecognitionManagerImpl::GetAudioInputDeviceModel() {
+base::string16 SpeechRecognitionManagerImpl::GetAudioInputDeviceModel() {
   return audio_manager_->GetAudioInputDeviceModel();
 }
 

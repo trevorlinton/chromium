@@ -42,7 +42,8 @@ class ModuleSystem : public ObjectBackedNativeHandler {
   class SourceMap {
    public:
     virtual ~SourceMap() {}
-    virtual v8::Handle<v8::Value> GetSource(const std::string& name) = 0;
+    virtual v8::Handle<v8::Value> GetSource(v8::Isolate* isolate,
+                                            const std::string& name) = 0;
     virtual bool Contains(const std::string& name) = 0;
   };
 
@@ -75,6 +76,11 @@ class ModuleSystem : public ObjectBackedNativeHandler {
   // require('module_name') from the loaded JS files.
   v8::Handle<v8::Value> Require(const std::string& module_name);
   void Require(const v8::FunctionCallbackInfo<v8::Value>& args);
+
+  // Run |code| in the current context with the name |name| used for stack
+  // traces.
+  v8::Handle<v8::Value> RunString(v8::Handle<v8::String> code,
+                                  v8::Handle<v8::String> name);
 
   // Calls the specified method exported by the specified module. This is
   // equivalent to calling require('module_name').method_name() from JS.
@@ -134,8 +140,6 @@ class ModuleSystem : public ObjectBackedNativeHandler {
     exception_handler_ = handler.Pass();
   }
 
-  v8::Isolate* GetIsolate() const;
-
  protected:
   friend class ChromeV8Context;
   virtual void Invalidate() OVERRIDE;
@@ -158,13 +162,8 @@ class ModuleSystem : public ObjectBackedNativeHandler {
   // Ensure that require_ has been evaluated from require.js.
   void EnsureRequireLoaded();
 
-  // Run |code| in the current context with the name |name| used for stack
-  // traces.
-  v8::Handle<v8::Value> RunString(v8::Handle<v8::String> code,
-                                  v8::Handle<v8::String> name);
-
   void RequireForJs(const v8::FunctionCallbackInfo<v8::Value>& args);
-  v8::Handle<v8::Value> RequireForJsInner(v8::Handle<v8::String> module_name);
+  v8::Local<v8::Value> RequireForJsInner(v8::Handle<v8::String> module_name);
 
   typedef v8::Handle<v8::Value> (ModuleSystem::*RequireFunction)(
       const std::string&);
@@ -187,6 +186,13 @@ class ModuleSystem : public ObjectBackedNativeHandler {
 
   // Wraps |source| in a (function(require, requireNative, exports) {...}).
   v8::Handle<v8::String> WrapSource(v8::Handle<v8::String> source);
+
+  // NativeHandler implementation which returns the private area of an Object.
+  void Private(const v8::FunctionCallbackInfo<v8::Value>& args);
+
+  // NativeHandler implementation which returns a function wrapper for a
+  // provided function.
+  void CreateFunctionWrapper(const v8::FunctionCallbackInfo<v8::Value>& args);
 
   ChromeV8Context* context_;
 

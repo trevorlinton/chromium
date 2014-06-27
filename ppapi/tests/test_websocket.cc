@@ -12,7 +12,6 @@
 #include <string>
 #include <vector>
 
-#include "ppapi/c/dev/ppb_testing_dev.h"
 #include "ppapi/c/pp_bool.h"
 #include "ppapi/c/pp_completion_callback.h"
 #include "ppapi/c/pp_errors.h"
@@ -23,6 +22,7 @@
 #include "ppapi/c/ppb_var.h"
 #include "ppapi/c/ppb_var_array_buffer.h"
 #include "ppapi/c/ppb_websocket.h"
+#include "ppapi/c/private/ppb_testing_private.h"
 #include "ppapi/cpp/instance.h"
 #include "ppapi/cpp/module.h"
 #include "ppapi/cpp/var_array_buffer.h"
@@ -1164,7 +1164,7 @@ std::string TestWebSocket::TestCcInterfaces() {
   ASSERT_EQ(0, ws.GetBufferedAmount());
   ASSERT_EQ(0, ws.GetCloseCode());
   ASSERT_TRUE(AreEqualWithString(ws.GetCloseReason().pp_var(), std::string()));
-  ASSERT_EQ(false, ws.GetCloseWasClean());
+  ASSERT_FALSE(ws.GetCloseWasClean());
   ASSERT_TRUE(AreEqualWithString(ws.GetExtensions().pp_var(), std::string()));
   ASSERT_TRUE(AreEqualWithString(ws.GetProtocol().pp_var(), std::string()));
   ASSERT_EQ(PP_WEBSOCKETREADYSTATE_INVALID, ws.GetReadyState());

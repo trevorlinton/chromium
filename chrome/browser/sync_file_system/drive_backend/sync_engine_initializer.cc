@@ -9,11 +9,15 @@
 #include "base/logging.h"
 #include "chrome/browser/drive/drive_api_service.h"
 #include "chrome/browser/drive/drive_api_util.h"
-#include "chrome/browser/google_apis/drive_api_parser.h"
-#include "chrome/browser/google_apis/gdata_wapi_parser.h"
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_constants.h"
+#include "chrome/browser/sync_file_system/drive_backend/drive_backend_util.h"
 #include "chrome/browser/sync_file_system/drive_backend/metadata_database.h"
-#include "chrome/browser/sync_file_system/drive_backend_v1/drive_file_sync_util.h"
+#include "chrome/browser/sync_file_system/drive_backend/sync_engine_context.h"
+#include "chrome/browser/sync_file_system/drive_backend/sync_task_manager.h"
+#include "chrome/browser/sync_file_system/drive_backend/sync_task_token.h"
+#include "chrome/browser/sync_file_system/logger.h"
+#include "google_apis/drive/drive_api_parser.h"
+#include "google_apis/drive/gdata_wapi_parser.h"
 
 namespace sync_file_system {
 namespace drive_backend {
@@ -22,10 +26,6 @@ namespace {
 
 ////////////////////////////////////////////////////////////////////////////////
 // Functions below are for wrapping the access to legacy GData WAPI classes.
-
-bool IsDeleted(const google_apis::ResourceEntry& entry) {
-  return entry.deleted();
-}
 
 bool HasNoParents(const google_apis::ResourceEntry& entry) {
   return !entry.GetLinkByType(google_apis::Link::LINK_PARENT);
@@ -50,24 +50,10 @@ bool LessOnCreationTime(const google_apis::ResourceEntry& left,
   return left.published_time() < right.published_time();
 }
 
-// Posts a request to continue listing.  Returns false if the list doesn't need
-// listing anymore.
-bool GetRemainingFileList(
-    google_apis::CancelCallback* cancel_callback,
-    drive::DriveServiceInterface* api_service,
-    const google_apis::ResourceList& resource_list,
-    const google_apis::GetResourceListCallback& callback) {
-  GURL next_url;
-  if (!resource_list.GetNextFeedURL(&next_url))
-    return false;
-
-  *cancel_callback = api_service->GetRemainingFileList(next_url, callback);
-  return true;
-}
-
-std::string GetID(const google_apis::ResourceEntry& entry) {
-  return entry.resource_id();
-}
+typedef base::Callback<void(scoped_ptr<SyncTaskToken> token,
+                            google_apis::GDataErrorCode error,
+                            scoped_ptr<google_apis::ResourceList> resources)>
+    TokenAndResourceListCallback;
 
 ScopedVector<google_apis::FileResource> ConvertResourceEntriesToFileResources(
     const ScopedVector<google_apis::ResourceEntry>& entries) {
@@ -89,10 +75,14 @@ ScopedVector<google_apis::FileResource> ConvertResourceEntriesToFileResources(
 }  // namespace
 
 SyncEngineInitializer::SyncEngineInitializer(
+    SyncEngineContext* sync_context,
     base::SequencedTaskRunner* task_runner,
     drive::DriveServiceInterface* drive_service,
-    const base::FilePath& database_path)
-    : task_runner_(task_runner),
+    const base::FilePath& database_path,
+    leveldb::Env* env_override)
+    : sync_context_(sync_context),
+      env_override_(env_override),
+      task_runner_(task_runner),
       drive_service_(drive_service),
       database_path_(database_path),
       find_sync_root_retry_count_(0),
@@ -107,11 +97,21 @@ SyncEngineInitializer::~SyncEngineInitializer() {
     cancel_callback_.Run();
 }
 
-void SyncEngineInitializer::Run(const SyncStatusCallback& callback) {
+void SyncEngineInitializer::Run(scoped_ptr<SyncTaskToken> token) {
+  util::Log(logging::LOG_VERBOSE, FROM_HERE, "[Initialize] Start.");
+
+  // The metadata seems to have been already initialized. Just return with OK.
+  if (sync_context_ && sync_context_->GetMetadataDatabase()) {
+    util::Log(logging::LOG_VERBOSE, FROM_HERE,
+              "[Initialize] Already initialized.");
+    SyncTaskManager::NotifyTaskDone(token.Pass(), SYNC_STATUS_OK);
+    return;
+  }
+
   MetadataDatabase::Create(
-      task_runner_.get(), database_path_,
+      task_runner_.get(), database_path_, env_override_,
       base::Bind(&SyncEngineInitializer::DidCreateMetadataDatabase,
-                 weak_ptr_factory_.GetWeakPtr(), callback));
+                 weak_ptr_factory_.GetWeakPtr(), base::Passed(&token)));
 }
 
 scoped_ptr<MetadataDatabase> SyncEngineInitializer::PassMetadataDatabase() {
@@ -119,38 +119,47 @@ scoped_ptr<MetadataDatabase> SyncEngineInitializer::PassMetadataDatabase() {
 }
 
 void SyncEngineInitializer::DidCreateMetadataDatabase(
-    const SyncStatusCallback& callback,
+    scoped_ptr<SyncTaskToken> token,
     SyncStatusCode status,
     scoped_ptr<MetadataDatabase> instance) {
   if (status != SYNC_STATUS_OK) {
-    callback.Run(status);
+    util::Log(logging::LOG_VERBOSE, FROM_HERE,
+              "[Initialize] Failed to initialize MetadataDatabase.");
+    SyncTaskManager::NotifyTaskDone(token.Pass(), status);
     return;
   }
 
   DCHECK(instance);
   metadata_database_ = instance.Pass();
   if (metadata_database_->HasSyncRoot()) {
-    callback.Run(SYNC_STATUS_OK);
+    util::Log(logging::LOG_VERBOSE, FROM_HERE,
+              "[Initialize] Found local cache of sync-root.");
+    SyncTaskManager::NotifyTaskDone(token.Pass(), SYNC_STATUS_OK);
     return;
   }
 
-  GetAboutResource(callback);
+  GetAboutResource(token.Pass());
 }
 
 void SyncEngineInitializer::GetAboutResource(
-    const SyncStatusCallback& callback) {
+    scoped_ptr<SyncTaskToken> token) {
+  set_used_network(true);
   drive_service_->GetAboutResource(
       base::Bind(&SyncEngineInitializer::DidGetAboutResource,
-                 weak_ptr_factory_.GetWeakPtr(), callback));
+                 weak_ptr_factory_.GetWeakPtr(), base::Passed(&token)));
 }
 
 void SyncEngineInitializer::DidGetAboutResource(
-    const SyncStatusCallback& callback,
+    scoped_ptr<SyncTaskToken> token,
     google_apis::GDataErrorCode error,
     scoped_ptr<google_apis::AboutResource> about_resource) {
   cancel_callback_.Reset();
-  if (error != google_apis::HTTP_SUCCESS) {
-    callback.Run(GDataErrorCodeToSyncStatusCode(error));
+
+  SyncStatusCode status = GDataErrorCodeToSyncStatusCode(error);
+  if (status != SYNC_STATUS_OK) {
+    util::Log(logging::LOG_VERBOSE, FROM_HERE,
+              "[Initialize] Failed to get AboutResource.");
+    SyncTaskManager::NotifyTaskDone(token.Pass(), status);
     return;
   }
 
@@ -159,30 +168,45 @@ void SyncEngineInitializer::DidGetAboutResource(
   largest_change_id_ = about_resource->largest_change_id();
 
   DCHECK(!root_folder_id_.empty());
-  FindSyncRoot(callback);
+  FindSyncRoot(token.Pass());
 }
 
-void SyncEngineInitializer::FindSyncRoot(const SyncStatusCallback& callback) {
+void SyncEngineInitializer::FindSyncRoot(scoped_ptr<SyncTaskToken> token) {
   if (find_sync_root_retry_count_++ >= kMaxRetry) {
-    callback.Run(SYNC_STATUS_FAILED);
+    util::Log(logging::LOG_VERBOSE, FROM_HERE,
+              "[Initialize] Reached max retry count.");
+    SyncTaskManager::NotifyTaskDone(token.Pass(), SYNC_STATUS_FAILED);
     return;
   }
 
+  set_used_network(true);
   cancel_callback_ = drive_service_->SearchByTitle(
       kSyncRootFolderTitle,
-      std::string(), // parent_folder_id
+      std::string(),  // parent_folder_id
       base::Bind(&SyncEngineInitializer::DidFindSyncRoot,
                  weak_ptr_factory_.GetWeakPtr(),
-                 callback));
+                 base::Passed(&token)));
 }
 
 void SyncEngineInitializer::DidFindSyncRoot(
-    const SyncStatusCallback& callback,
+    scoped_ptr<SyncTaskToken> token,
     google_apis::GDataErrorCode error,
     scoped_ptr<google_apis::ResourceList> resource_list) {
   cancel_callback_.Reset();
-  if (error != google_apis::HTTP_SUCCESS) {
-    callback.Run(GDataErrorCodeToSyncStatusCode(error));
+
+  SyncStatusCode status = GDataErrorCodeToSyncStatusCode(error);
+  if (status != SYNC_STATUS_OK) {
+    util::Log(logging::LOG_VERBOSE, FROM_HERE,
+              "[Initialize] Failed to find sync root.");
+    SyncTaskManager::NotifyTaskDone(token.Pass(), status);
+    return;
+  }
+
+  if (!resource_list) {
+    NOTREACHED();
+    util::Log(logging::LOG_VERBOSE, FROM_HERE,
+              "[Initialize] Got invalid resource list.");
+    SyncTaskManager::NotifyTaskDone(token.Pass(), SYNC_STATUS_FAILED);
     return;
   }
 
@@ -194,7 +218,7 @@ void SyncEngineInitializer::DidFindSyncRoot(
     google_apis::ResourceEntry* entry = *itr;
 
     // Ignore deleted folder.
-    if (IsDeleted(*entry))
+    if (entry->deleted())
       continue;
 
     // Pick an orphaned folder or a direct child of the root folder and
@@ -209,89 +233,116 @@ void SyncEngineInitializer::DidFindSyncRoot(
     }
   }
 
+  set_used_network(true);
   // If there are more results, retrieve them.
-  if (GetRemainingFileList(
-          &cancel_callback_,
-          drive_service_, *resource_list,
-          base::Bind(&SyncEngineInitializer::DidFindSyncRoot,
-                     weak_ptr_factory_.GetWeakPtr(),
-                     callback)))
+  GURL next_url;
+  if (resource_list->GetNextFeedURL(&next_url)) {
+    cancel_callback_ = drive_service_->GetRemainingFileList(
+        next_url,
+        base::Bind(&SyncEngineInitializer::DidFindSyncRoot,
+                   weak_ptr_factory_.GetWeakPtr(),
+                   base::Passed(&token)));
     return;
+  }
 
   if (!sync_root_folder_) {
-    CreateSyncRoot(callback);
+    CreateSyncRoot(token.Pass());
     return;
   }
 
   if (!HasNoParents(*sync_root_folder_)) {
-    DetachSyncRoot(callback);
+    DetachSyncRoot(token.Pass());
     return;
   }
 
-  ListAppRootFolders(callback);
+  ListAppRootFolders(token.Pass());
 }
 
-void SyncEngineInitializer::CreateSyncRoot(const SyncStatusCallback& callback) {
+void SyncEngineInitializer::CreateSyncRoot(scoped_ptr<SyncTaskToken> token) {
   DCHECK(!sync_root_folder_);
+  set_used_network(true);
   cancel_callback_ = drive_service_->AddNewDirectory(
       root_folder_id_, kSyncRootFolderTitle,
+      drive::DriveServiceInterface::AddNewDirectoryOptions(),
       base::Bind(&SyncEngineInitializer::DidCreateSyncRoot,
                  weak_ptr_factory_.GetWeakPtr(),
-                 callback));
+                 base::Passed(&token)));
 }
 
 void SyncEngineInitializer::DidCreateSyncRoot(
-    const SyncStatusCallback& callback,
+    scoped_ptr<SyncTaskToken> token,
     google_apis::GDataErrorCode error,
     scoped_ptr<google_apis::ResourceEntry> entry) {
   DCHECK(!sync_root_folder_);
   cancel_callback_.Reset();
-  if (error != google_apis::HTTP_SUCCESS &&
-      error != google_apis::HTTP_CREATED) {
-    callback.Run(GDataErrorCodeToSyncStatusCode(error));
+
+  SyncStatusCode status = GDataErrorCodeToSyncStatusCode(error);
+  if (status != SYNC_STATUS_OK) {
+    util::Log(logging::LOG_VERBOSE, FROM_HERE,
+              "[Initialize] Failed to create sync root.");
+    SyncTaskManager::NotifyTaskDone(token.Pass(), status);
     return;
   }
 
-  FindSyncRoot(callback);
+  FindSyncRoot(token.Pass());
 }
 
-void SyncEngineInitializer::DetachSyncRoot(const SyncStatusCallback& callback) {
+void SyncEngineInitializer::DetachSyncRoot(scoped_ptr<SyncTaskToken> token) {
   DCHECK(sync_root_folder_);
+  set_used_network(true);
   cancel_callback_ = drive_service_->RemoveResourceFromDirectory(
-      root_folder_id_, GetID(*sync_root_folder_),
+      root_folder_id_, sync_root_folder_->resource_id(),
       base::Bind(&SyncEngineInitializer::DidDetachSyncRoot,
                  weak_ptr_factory_.GetWeakPtr(),
-                 callback));
+                 base::Passed(&token)));
 }
 
 void SyncEngineInitializer::DidDetachSyncRoot(
-    const SyncStatusCallback& callback,
+    scoped_ptr<SyncTaskToken> token,
     google_apis::GDataErrorCode error) {
   cancel_callback_.Reset();
-  if (error != google_apis::HTTP_SUCCESS) {
-    callback.Run(GDataErrorCodeToSyncStatusCode(error));
+
+  SyncStatusCode status = GDataErrorCodeToSyncStatusCode(error);
+  if (status != SYNC_STATUS_OK) {
+    util::Log(logging::LOG_VERBOSE, FROM_HERE,
+              "[Initialize] Failed to detach sync root.");
+    SyncTaskManager::NotifyTaskDone(token.Pass(), status);
     return;
   }
-  ListAppRootFolders(callback);
+
+  ListAppRootFolders(token.Pass());
 }
 
 void SyncEngineInitializer::ListAppRootFolders(
-    const SyncStatusCallback& callback) {
+    scoped_ptr<SyncTaskToken> token) {
   DCHECK(sync_root_folder_);
+  set_used_network(true);
   cancel_callback_ = drive_service_->GetResourceListInDirectory(
-      GetID(*sync_root_folder_),
+      sync_root_folder_->resource_id(),
       base::Bind(&SyncEngineInitializer::DidListAppRootFolders,
                  weak_ptr_factory_.GetWeakPtr(),
-                 callback));
+                 base::Passed(&token)));
 }
 
 void SyncEngineInitializer::DidListAppRootFolders(
-    const SyncStatusCallback& callback,
+    scoped_ptr<SyncTaskToken> token,
     google_apis::GDataErrorCode error,
     scoped_ptr<google_apis::ResourceList> resource_list) {
   cancel_callback_.Reset();
-  if (error != google_apis::HTTP_SUCCESS) {
-    callback.Run(GDataErrorCodeToSyncStatusCode(error));
+
+  SyncStatusCode status = GDataErrorCodeToSyncStatusCode(error);
+  if (status != SYNC_STATUS_OK) {
+    util::Log(logging::LOG_VERBOSE, FROM_HERE,
+              "[Initialize] Failed to get initial app-root folders.");
+    SyncTaskManager::NotifyTaskDone(token.Pass(), status);
+    return;
+  }
+
+  if (!resource_list) {
+    NOTREACHED();
+    util::Log(logging::LOG_VERBOSE, FROM_HERE,
+              "[Initialize] Got invalid initial app-root list.");
+    SyncTaskManager::NotifyTaskDone(token.Pass(), SYNC_STATUS_FAILED);
     return;
   }
 
@@ -301,19 +352,21 @@ void SyncEngineInitializer::DidListAppRootFolders(
                            new_entries->begin(), new_entries->end());
   new_entries->weak_clear();
 
-  if (GetRemainingFileList(
-          &cancel_callback_,
-          drive_service_,
-          *resource_list,
-          base::Bind(&SyncEngineInitializer::DidListAppRootFolders,
-                     weak_ptr_factory_.GetWeakPtr(), callback)))
+  set_used_network(true);
+  GURL next_url;
+  if (resource_list->GetNextFeedURL(&next_url)) {
+    cancel_callback_ = drive_service_->GetRemainingFileList(
+        next_url,
+        base::Bind(&SyncEngineInitializer::DidListAppRootFolders,
+                   weak_ptr_factory_.GetWeakPtr(), base::Passed(&token)));
     return;
+  }
 
-  PopulateDatabase(callback);
+  PopulateDatabase(token.Pass());
 }
 
 void SyncEngineInitializer::PopulateDatabase(
-    const SyncStatusCallback& callback) {
+    scoped_ptr<SyncTaskToken> token) {
   DCHECK(sync_root_folder_);
   metadata_database_->PopulateInitialData(
       largest_change_id_,
@@ -321,19 +374,23 @@ void SyncEngineInitializer::PopulateDatabase(
           *sync_root_folder_),
       ConvertResourceEntriesToFileResources(app_root_folders_),
       base::Bind(&SyncEngineInitializer::DidPopulateDatabase,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 callback));
+                 weak_ptr_factory_.GetWeakPtr(), base::Passed(&token)));
 }
 
 void SyncEngineInitializer::DidPopulateDatabase(
-    const SyncStatusCallback& callback,
+    scoped_ptr<SyncTaskToken> token,
     SyncStatusCode status) {
   if (status != SYNC_STATUS_OK) {
-    callback.Run(status);
+    util::Log(logging::LOG_VERBOSE, FROM_HERE,
+              "[Initialize] Failed to populate initial data"
+              " to MetadataDatabase.");
+    SyncTaskManager::NotifyTaskDone(token.Pass(), status);
     return;
   }
 
-  callback.Run(SYNC_STATUS_OK);
+  util::Log(logging::LOG_VERBOSE, FROM_HERE,
+            "[Initialize] Completed successfully.");
+  SyncTaskManager::NotifyTaskDone(token.Pass(), SYNC_STATUS_OK);
 }
 
 }  // namespace drive_backend

@@ -25,6 +25,7 @@
 #include "remoting/proto/event.pb.h"
 #include "remoting/protocol/clipboard_stub.h"
 #include "remoting/protocol/input_event_tracker.h"
+#include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_frame.h"
 #include "third_party/webrtc/modules/desktop_capture/shared_memory.h"
 
@@ -138,6 +139,8 @@ bool DesktopSessionAgent::OnMessageReceived(const IPC::Message& message) {
                           OnInjectClipboardEvent)
       IPC_MESSAGE_HANDLER(ChromotingNetworkDesktopMsg_InjectKeyEvent,
                           OnInjectKeyEvent)
+      IPC_MESSAGE_HANDLER(ChromotingNetworkDesktopMsg_InjectTextEvent,
+                          OnInjectTextEvent)
       IPC_MESSAGE_HANDLER(ChromotingNetworkDesktopMsg_InjectMouseEvent,
                           OnInjectMouseEvent)
       IPC_MESSAGE_HANDLER(ChromotingNetworkDesktopMsg_SetScreenResolution,
@@ -225,7 +228,8 @@ void DesktopSessionAgent::DisconnectSession() {
   SendToNetwork(new ChromotingDesktopNetworkMsg_DisconnectSession());
 }
 
-void DesktopSessionAgent::OnLocalMouseMoved(const SkIPoint& new_pos) {
+void DesktopSessionAgent::OnLocalMouseMoved(
+    const webrtc::DesktopVector& new_pos) {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
 
   remote_input_filter_->LocalMouseMoved(new_pos);
@@ -455,6 +459,26 @@ void DesktopSessionAgent::OnInjectKeyEvent(
   }
 
   remote_input_filter_->InjectKeyEvent(event);
+}
+
+void DesktopSessionAgent::OnInjectTextEvent(
+    const std::string& serialized_event) {
+  DCHECK(caller_task_runner_->BelongsToCurrentThread());
+
+  protocol::TextEvent event;
+  if (!event.ParseFromString(serialized_event)) {
+    LOG(ERROR) << "Failed to parse protocol::TextEvent.";
+    return;
+  }
+
+  // InputStub implementations must verify events themselves, so we need only
+  // basic verification here. This matches HostEventDispatcher.
+  if (!event.has_text()) {
+    LOG(ERROR) << "Received invalid TextEvent.";
+    return;
+  }
+
+  remote_input_filter_->InjectTextEvent(event);
 }
 
 void DesktopSessionAgent::OnInjectMouseEvent(

@@ -5,13 +5,11 @@
 #include "chrome/browser/ui/webui/constrained_web_dialog_delegate_base.h"
 
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/ui/views/constrained_window_views.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/browser/web_contents_view.h"
 #include "ui/gfx/size.h"
 #include "ui/views/controls/webview/unhandled_keyboard_event_handler.h"
 #include "ui/views/controls/webview/webview.h"
@@ -34,11 +32,10 @@ namespace {
 class ConstrainedWebDialogDelegateViews
     : public ConstrainedWebDialogDelegateBase {
  public:
-  ConstrainedWebDialogDelegateViews(
-      content::BrowserContext* browser_context,
-      WebDialogDelegate* delegate,
-      WebDialogWebContentsDelegate* tab_delegate,
-      views::WebView* view)
+  ConstrainedWebDialogDelegateViews(content::BrowserContext* browser_context,
+                                    WebDialogDelegate* delegate,
+                                    WebDialogWebContentsDelegate* tab_delegate,
+                                    views::WebView* view)
       : ConstrainedWebDialogDelegateBase(
             browser_context, delegate, tab_delegate),
         view_(view),
@@ -91,8 +88,7 @@ class ConstrainedWebDialogDelegateViewViews
   virtual ~ConstrainedWebDialogDelegateViewViews();
 
   // ConstrainedWebDialogDelegate interface
-  virtual const WebDialogDelegate*
-      GetWebDialogDelegate() const OVERRIDE {
+  virtual const WebDialogDelegate* GetWebDialogDelegate() const OVERRIDE {
     return impl_->GetWebDialogDelegate();
   }
   virtual WebDialogDelegate* GetWebDialogDelegate() OVERRIDE {
@@ -125,20 +121,16 @@ class ConstrainedWebDialogDelegateViewViews
   virtual const views::Widget* GetWidget() const OVERRIDE {
     return View::GetWidget();
   }
-  virtual string16 GetWindowTitle() const OVERRIDE {
-    return impl_->closed_via_webui() ? string16() :
+  virtual base::string16 GetWindowTitle() const OVERRIDE {
+    return impl_->closed_via_webui() ? base::string16() :
         GetWebDialogDelegate()->GetDialogTitle();
   }
   virtual views::View* GetContentsView() OVERRIDE {
     return this;
   }
-  // TODO(wittman): Remove this override once we move to the new style frame
-  // view on all dialogs.
   virtual views::NonClientFrameView* CreateNonClientFrameView(
       views::Widget* widget) OVERRIDE {
-    return CreateConstrainedStyleNonClientFrameView(
-        widget,
-        GetWebContents()->GetBrowserContext());
+    return views::DialogDelegate::CreateDialogFrameView(widget);
   }
   virtual bool ShouldShowCloseButton() const OVERRIDE {
     // No close button if the dialog doesn't want a title bar.
@@ -151,19 +143,6 @@ class ConstrainedWebDialogDelegateViewViews
 #else
     return views::WidgetDelegate::GetModalType();
 #endif
-  }
-
-  virtual void OnWidgetMove() OVERRIDE {
-    // We need to check the existence of the widget because when running on
-    // WinXP this could get executed before the widget is entirely created.
-    if (!GetWidget())
-      return;
-
-    if (!views::DialogDelegate::UseNewStyle()) {
-      GetWidget()->CenterWindow(
-          GetWidget()->non_client_view()->GetPreferredSize());
-    }
-    views::WidgetDelegate::OnWidgetMove();
   }
 
   // views::WebView overrides.
@@ -214,7 +193,8 @@ ConstrainedWebDialogDelegateViewViews::ConstrainedWebDialogDelegateViewViews(
   AddAccelerator(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
 }
 
-ConstrainedWebDialogDelegateViewViews::~ConstrainedWebDialogDelegateViewViews() {
+ConstrainedWebDialogDelegateViewViews::
+~ConstrainedWebDialogDelegateViewViews() {
 }
 
 ConstrainedWebDialogDelegate* CreateConstrainedWebDialog(
@@ -232,7 +212,6 @@ ConstrainedWebDialogDelegate* CreateConstrainedWebDialog(
   DCHECK(modal_delegate);
   views::Widget* window = views::Widget::CreateWindowAsFramelessChild(
       constrained_delegate,
-      web_contents->GetView()->GetNativeView(),
       modal_delegate->GetWebContentsModalDialogHost()->GetHostView());
   web_contents_modal_dialog_manager->ShowDialog(window->GetNativeView());
   constrained_delegate->SetWindow(window);

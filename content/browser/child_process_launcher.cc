@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/file_util.h"
+#include "base/files/scoped_file.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/metrics/histogram.h"
@@ -20,12 +21,12 @@
 #include "content/public/common/content_descriptors.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/result_codes.h"
+#include "content/public/common/sandboxed_process_launcher_delegate.h"
 
 #if defined(OS_WIN)
 #include "base/files/file_path.h"
 #include "content/common/sandbox_win.h"
 #include "content/public/common/sandbox_init.h"
-#include "content/public/common/sandboxed_process_launcher_delegate.h"
 #elif defined(OS_MACOSX)
 #include "content/browser/mach_broker_mac.h"
 #elif defined(OS_ANDROID)
@@ -71,15 +72,7 @@ class ChildProcessLauncher::Context
   }
 
   void Launch(
-#if defined(OS_WIN)
       SandboxedProcessLauncherDelegate* delegate,
-#elif defined(OS_ANDROID)
-      int ipcfd,
-#elif defined(OS_POSIX)
-      bool use_zygote,
-      const base::EnvironmentMap& environ,
-      int ipcfd,
-#endif
       CommandLine* cmd_line,
       int child_process_id,
       Client* client) {
@@ -91,7 +84,7 @@ class ChildProcessLauncher::Context
     // We need to close the client end of the IPC channel to reliably detect
     // child termination. We will close this fd after we create the child
     // process which is asynchronous on Android.
-    ipcfd_ = ipcfd;
+    ipcfd_ = delegate->GetIpcFd();
 #endif
     BrowserThread::PostTask(
         BrowserThread::PROCESS_LAUNCHER, FROM_HERE,
@@ -100,15 +93,7 @@ class ChildProcessLauncher::Context
             make_scoped_refptr(this),
             client_thread_id_,
             child_process_id,
-#if defined(OS_WIN)
             delegate,
-#elif defined(OS_ANDROID)
-            ipcfd,
-#elif defined(OS_POSIX)
-            use_zygote,
-            environ,
-            ipcfd,
-#endif
             cmd_line));
   }
 
@@ -183,22 +168,33 @@ class ChildProcessLauncher::Context
       scoped_refptr<Context> this_object,
       BrowserThread::ID client_thread_id,
       int child_process_id,
-#if defined(OS_WIN)
       SandboxedProcessLauncherDelegate* delegate,
-#elif defined(OS_ANDROID)
-      int ipcfd,
-#elif defined(OS_POSIX)
-      bool use_zygote,
-      const base::EnvironmentMap& env,
-      int ipcfd,
-#endif
       CommandLine* cmd_line) {
+    scoped_ptr<SandboxedProcessLauncherDelegate> delegate_deleter(delegate);
+#if defined(OS_WIN)
+    bool launch_elevated = delegate->ShouldLaunchElevated();
+#elif defined(OS_ANDROID)
+    int ipcfd = delegate->GetIpcFd();
+#elif defined(OS_MACOSX)
+    base::EnvironmentMap env = delegate->GetEnvironment();
+    int ipcfd = delegate->GetIpcFd();
+#elif defined(OS_POSIX)
+    bool use_zygote = delegate->ShouldUseZygote();
+    base::EnvironmentMap env = delegate->GetEnvironment();
+    int ipcfd = delegate->GetIpcFd();
+#endif
     scoped_ptr<CommandLine> cmd_line_deleter(cmd_line);
     base::TimeTicks begin_launch_time = base::TimeTicks::Now();
 
 #if defined(OS_WIN)
-    scoped_ptr<SandboxedProcessLauncherDelegate> delegate_deleter(delegate);
-    base::ProcessHandle handle = StartSandboxedProcess(delegate, cmd_line);
+    base::ProcessHandle handle = base::kNullProcessHandle;
+    if (launch_elevated) {
+      base::LaunchOptions options;
+      options.start_hidden = true;
+      base::LaunchElevatedProcess(*cmd_line, options, &handle);
+    } else {
+      handle = StartSandboxedProcess(delegate, cmd_line);
+    }
 #elif defined(OS_POSIX)
     std::string process_type =
         cmd_line->GetSwitchValueASCII(switches::kProcessType);
@@ -233,7 +229,7 @@ class ChildProcessLauncher::Context
     base::ProcessHandle handle = base::kNullProcessHandle;
     // We need to close the client end of the IPC channel to reliably detect
     // child termination.
-    file_util::ScopedFD ipcfd_closer(&ipcfd);
+    base::ScopedFD ipcfd_closer(ipcfd);
 
 #if !defined(OS_MACOSX)
     GetContentClient()->browser()->
@@ -324,7 +320,7 @@ class ChildProcessLauncher::Context
       base::ProcessHandle handle) {
 #if defined(OS_ANDROID)
     // Finally close the ipcfd
-    file_util::ScopedFD ipcfd_closer(&ipcfd_);
+    base::ScopedFD ipcfd_closer(ipcfd_);
 #endif
     starting_ = false;
     process_.set_handle(handle);
@@ -335,7 +331,11 @@ class ChildProcessLauncher::Context
     zygote_ = zygote;
 #endif
     if (client_) {
-      client_->OnProcessLaunched();
+      if (handle) {
+        client_->OnProcessLaunched();
+      } else {
+        client_->OnProcessLaunchFailed();
+      }
     } else {
       Terminate();
     }
@@ -373,7 +373,7 @@ class ChildProcessLauncher::Context
 #endif
       base::ProcessHandle handle) {
 #if defined(OS_ANDROID)
-    LOG(INFO) << "ChromeProcess: Stopping process with handle " << handle;
+    VLOG(0) << "ChromeProcess: Stopping process with handle " << handle;
     StopChildProcess(handle);
 #else
     base::Process process(handle);
@@ -416,27 +416,13 @@ class ChildProcessLauncher::Context
 
 
 ChildProcessLauncher::ChildProcessLauncher(
-#if defined(OS_WIN)
     SandboxedProcessLauncherDelegate* delegate,
-#elif defined(OS_POSIX)
-    bool use_zygote,
-    const base::EnvironmentMap& environ,
-    int ipcfd,
-#endif
     CommandLine* cmd_line,
     int child_process_id,
     Client* client) {
   context_ = new Context();
   context_->Launch(
-#if defined(OS_WIN)
       delegate,
-#elif defined(OS_ANDROID)
-      ipcfd,
-#elif defined(OS_POSIX)
-      use_zygote,
-      environ,
-      ipcfd,
-#endif
       cmd_line,
       child_process_id,
       client);
@@ -469,14 +455,22 @@ base::TerminationStatus ChildProcessLauncher::GetChildTerminationStatus(
   if (context_->zygote_) {
     context_->termination_status_ = ZygoteHostImpl::GetInstance()->
         GetTerminationStatus(handle, known_dead, &context_->exit_code_);
-  } else
+  } else if (known_dead) {
+    context_->termination_status_ =
+        base::GetKnownDeadTerminationStatus(handle, &context_->exit_code_);
+  } else {
 #elif defined(OS_MACOSX)
   if (known_dead) {
     context_->termination_status_ =
         base::GetKnownDeadTerminationStatus(handle, &context_->exit_code_);
-  } else
-#endif
+  } else {
+#elif defined(OS_ANDROID)
+  if (IsChildProcessOomProtected(handle)) {
+      context_->termination_status_ = base::TERMINATION_STATUS_OOM_PROTECTED;
+  } else {
+#else
   {
+#endif
     context_->termination_status_ =
         base::GetTerminationStatus(handle, &context_->exit_code_);
   }

@@ -23,8 +23,7 @@ class BrowserPluginManagerImpl : public BrowserPluginManager {
   // BrowserPluginManager implementation.
   virtual BrowserPlugin* CreateBrowserPlugin(
       RenderViewImpl* render_view,
-      WebKit::WebFrame* frame,
-      const WebKit::WebPluginParams& params) OVERRIDE;
+      blink::WebFrame* frame) OVERRIDE;
   virtual void AllocateInstanceID(
       const base::WeakPtr<BrowserPlugin>& browser_plugin) OVERRIDE;
 
@@ -41,9 +40,6 @@ class BrowserPluginManagerImpl : public BrowserPluginManager {
   void OnAllocateInstanceIDACK(const IPC::Message& message,
                                int request_id,
                                int guest_instance_id);
-  void OnPluginAtPositionRequest(const IPC::Message& message,
-                                 int request_id,
-                                 const gfx::Point& position);
 
   int request_id_counter_;
   typedef std::map<int, const base::WeakPtr<BrowserPlugin> > InstanceIDMap;

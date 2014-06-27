@@ -5,7 +5,9 @@
 #ifndef CHROME_BROWSER_UI_TRANSLATE_TRANSLATE_BUBBLE_FACTORY_H_
 #define CHROME_BROWSER_UI_TRANSLATE_TRANSLATE_BUBBLE_FACTORY_H_
 
+#include "chrome/browser/translate/translate_tab_helper.h"
 #include "chrome/browser/ui/translate/translate_bubble_model.h"
+#include "components/translate/core/common/translate_errors.h"
 
 class BrowserWindow;
 
@@ -22,7 +24,8 @@ class TranslateBubbleFactory {
   // implementation.
   static void Show(BrowserWindow* window,
                    content::WebContents* web_contents,
-                   TranslateBubbleModel::ViewState view_state);
+                   TranslateTabHelper::TranslateStep step,
+                   TranslateErrors::Type error_type);
 
   // Sets the factory to change the behavior how to show the bubble.
   // TranslateBubbleFactory doesn't take the ownership of |factory|.
@@ -30,10 +33,10 @@ class TranslateBubbleFactory {
 
  protected:
   // Shows the translate bubble.
-  virtual void ShowImplementation(
-      BrowserWindow* window,
-      content::WebContents* web_contents,
-      TranslateBubbleModel::ViewState view_state) = 0;
+  virtual void ShowImplementation(BrowserWindow* window,
+                                  content::WebContents* web_contents,
+                                  TranslateTabHelper::TranslateStep step,
+                                  TranslateErrors::Type error_type) = 0;
 
  private:
   static TranslateBubbleFactory* current_factory_;

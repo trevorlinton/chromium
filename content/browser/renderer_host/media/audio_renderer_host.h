@@ -49,6 +49,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_view_host.h"
 #include "media/audio/audio_io.h"
+#include "media/audio/audio_logging.h"
 #include "media/audio/audio_output_controller.h"
 #include "media/audio/simple_sources.h"
 
@@ -111,6 +112,7 @@ class CONTENT_EXPORT AudioRendererHost : public BrowserMessageFilter {
   // message.
   void OnCreateStream(int stream_id,
                       int render_view_id,
+                      int render_frame_id,
                       int session_id,
                       const media::AudioParameters& params);
 
@@ -131,11 +133,11 @@ class CONTENT_EXPORT AudioRendererHost : public BrowserMessageFilter {
   // NotifyStreamCreated message to the peer.
   void DoCompleteCreation(int stream_id);
 
+  // Send playing/paused status to the renderer.
+  void DoNotifyStreamStateChanged(int stream_id, bool is_playing);
+
   RenderViewHost::AudioOutputControllerList DoGetOutputControllers(
       int render_view_id) const;
-
-  // Propagate measured power level of the audio signal to MediaObserver.
-  void DoNotifyAudioPowerLevel(int stream_id, float power_dbfs, bool clipped);
 
   // Send an error message to the renderer.
   void SendErrorMessage(int stream_id);
@@ -156,7 +158,7 @@ class CONTENT_EXPORT AudioRendererHost : public BrowserMessageFilter {
 
   media::AudioManager* const audio_manager_;
   AudioMirroringManager* const mirroring_manager_;
-  MediaInternals* const media_internals_;
+  scoped_ptr<media::AudioLog> audio_log_;
 
   // Used to access to AudioInputDeviceManager.
   MediaStreamManager* media_stream_manager_;

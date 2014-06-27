@@ -7,17 +7,20 @@
 #include "base/command_line.h"
 #include "base/environment.h"
 #include "base/prefs/pref_service.h"
-#include "chrome/browser/password_manager/login_database.h"
-#include "chrome/browser/password_manager/password_store.h"
-#include "chrome/browser/password_manager/password_store_default.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
+#include "chrome/browser/sync/glue/sync_start_util.h"
 #include "chrome/browser/webdata/web_data_service.h"
 #include "chrome/browser/webdata/web_data_service_factory.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/pref_names.h"
-#include "components/browser_context_keyed_service/browser_context_dependency_manager.h"
+#include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/os_crypt/os_crypt_switches.h"
+#include "components/password_manager/core/browser/login_database.h"
+#include "components/password_manager/core/browser/password_store.h"
+#include "components/password_manager/core/browser/password_store_default.h"
+#include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/user_prefs/pref_registry_syncable.h"
+#include "content/public/browser/browser_thread.h"
 
 #if defined(OS_WIN)
 #include "chrome/browser/password_manager/password_store_win.h"
@@ -45,6 +48,22 @@ const LocalProfileId kInvalidLocalProfileId =
 }  // namespace
 #endif
 
+PasswordStoreService::PasswordStoreService(
+    scoped_refptr<PasswordStore> password_store)
+    : password_store_(password_store) {}
+
+PasswordStoreService::~PasswordStoreService() {}
+
+scoped_refptr<PasswordStore> PasswordStoreService::GetPasswordStore() {
+  return password_store_;
+}
+
+void PasswordStoreService::Shutdown() {
+  if (password_store_)
+    password_store_->Shutdown();
+}
+
+// static
 scoped_refptr<PasswordStore> PasswordStoreFactory::GetForProfile(
     Profile* profile,
     Profile::ServiceAccessType sat) {
@@ -53,8 +72,12 @@ scoped_refptr<PasswordStore> PasswordStoreFactory::GetForProfile(
     return NULL;
   }
 
-  return static_cast<PasswordStore*>(
-      GetInstance()->GetServiceForBrowserContext(profile, true).get());
+  PasswordStoreFactory* factory = GetInstance();
+  PasswordStoreService* service = static_cast<PasswordStoreService*>(
+      factory->GetServiceForBrowserContext(profile, true));
+  if (!service)
+    return NULL;
+  return service->GetPasswordStore();
 }
 
 // static
@@ -63,7 +86,7 @@ PasswordStoreFactory* PasswordStoreFactory::GetInstance() {
 }
 
 PasswordStoreFactory::PasswordStoreFactory()
-    : RefcountedBrowserContextKeyedServiceFactory(
+    : BrowserContextKeyedServiceFactory(
         "PasswordStore",
         BrowserContextDependencyManager::GetInstance()) {
   DependsOn(WebDataServiceFactory::GetInstance());
@@ -93,39 +116,47 @@ LocalProfileId PasswordStoreFactory::GetLocalProfileId(
 }
 #endif
 
-scoped_refptr<RefcountedBrowserContextKeyedService>
-PasswordStoreFactory::BuildServiceInstanceFor(
+KeyedService* PasswordStoreFactory::BuildServiceInstanceFor(
     content::BrowserContext* context) const {
   Profile* profile = static_cast<Profile*>(context);
 
-  scoped_refptr<PasswordStore> ps;
   base::FilePath login_db_file_path = profile->GetPath();
   login_db_file_path = login_db_file_path.Append(chrome::kLoginDataFileName);
-  LoginDatabase* login_db = new LoginDatabase();
+  scoped_ptr<LoginDatabase> login_db(new LoginDatabase());
   {
     // TODO(paivanof@gmail.com): execution of login_db->Init() should go
     // to DB thread. http://crbug.com/138903
     base::ThreadRestrictions::ScopedAllowIO allow_io;
     if (!login_db->Init(login_db_file_path)) {
       LOG(ERROR) << "Could not initialize login database.";
-      delete login_db;
       return NULL;
     }
   }
+
+  scoped_refptr<base::SingleThreadTaskRunner> main_thread_runner(
+      base::MessageLoopProxy::current());
+  scoped_refptr<base::SingleThreadTaskRunner> db_thread_runner(
+      content::BrowserThread::GetMessageLoopProxyForThread(
+          content::BrowserThread::DB));
+
+  scoped_refptr<PasswordStore> ps;
 #if defined(OS_WIN)
-  ps = new PasswordStoreWin(
-      login_db, profile,
-      WebDataService::FromBrowserContext(profile));
+  ps = new PasswordStoreWin(main_thread_runner,
+                            db_thread_runner,
+                            login_db.release(),
+                            WebDataService::FromBrowserContext(profile));
 #elif defined(OS_MACOSX)
-  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kUseMockKeychain)) {
-    ps = new PasswordStoreMac(new crypto::MockAppleKeychain(), login_db);
-  } else {
-    ps = new PasswordStoreMac(new crypto::AppleKeychain(), login_db);
-  }
+  crypto::AppleKeychain* keychain =
+      CommandLine::ForCurrentProcess()->HasSwitch(
+          os_crypt::switches::kUseMockKeychain) ?
+          new crypto::MockAppleKeychain() : new crypto::AppleKeychain();
+  ps = new PasswordStoreMac(
+      main_thread_runner, db_thread_runner, keychain, login_db.release());
 #elif defined(OS_CHROMEOS) || defined(OS_ANDROID)
   // For now, we use PasswordStoreDefault. We might want to make a native
   // backend for PasswordStoreX (see below) in the future though.
-  ps = new PasswordStoreDefault(login_db, profile);
+  ps = new PasswordStoreDefault(
+      main_thread_runner, db_thread_runner, login_db.release());
 #elif defined(USE_X11)
   // On POSIX systems, we try to use the "native" password management system of
   // the desktop environment currently running, allowing GNOME Keyring in XFCE.
@@ -180,19 +211,23 @@ PasswordStoreFactory::BuildServiceInstanceFor(
         "more information about password storage options.";
   }
 
-  ps = new PasswordStoreX(login_db, profile, backend.release());
+  ps = new PasswordStoreX(main_thread_runner,
+                          db_thread_runner,
+                          login_db.release(),
+                          backend.release());
+#elif defined(USE_OZONE)
+  ps = new PasswordStoreDefault(
+      main_thread_runner, db_thread_runner, login_db.release());
 #else
   NOTIMPLEMENTED();
 #endif
-  if (!ps.get())
-    delete login_db;
-
-  if (!ps.get() || !ps->Init()) {
+  if (!ps || !ps->Init(
+          sync_start_util::GetFlareForSyncableService(profile->GetPath()))) {
     NOTREACHED() << "Could not initialize password manager.";
     return NULL;
   }
 
-  return ps;
+  return new PasswordStoreService(ps);
 }
 
 void PasswordStoreFactory::RegisterProfilePrefs(

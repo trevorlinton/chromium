@@ -4,17 +4,18 @@
 
 #include "ash/display/mouse_cursor_event_filter.h"
 
+#include "ash/display/cursor_window_controller.h"
 #include "ash/display/display_controller.h"
 #include "ash/display/display_manager.h"
-#include "ash/display/mirror_window_controller.h"
 #include "ash/display/shared_display_edge_indicator.h"
-#include "ash/screen_ash.h"
+#include "ash/root_window_controller.h"
+#include "ash/screen_util.h"
 #include "ash/shell.h"
 #include "ash/wm/coordinate_conversion.h"
 #include "ash/wm/window_util.h"
 #include "ui/aura/env.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/layout.h"
 #include "ui/compositor/dip_util.h"
 #include "ui/events/event.h"
@@ -75,8 +76,16 @@ void MouseCursorEventFilter::HideSharedEdgeIndicator() {
 }
 
 void MouseCursorEventFilter::OnMouseEvent(ui::MouseEvent* event) {
+  aura::Window* target = static_cast<aura::Window*>(event->target());
+  RootWindowController* rwc = GetRootWindowController(target->GetRootWindow());
+  // The root window controller is removed during the shutting down
+  // RootWindow, so don't process events futher.
+  if (!rwc) {
+    event->StopPropagation();
+    return;
+  }
+
   if (event->type() == ui::ET_MOUSE_PRESSED) {
-    aura::Window* target = static_cast<aura::Window*>(event->target());
     scale_when_drag_started_ = ui::GetDeviceScaleFactor(target->layer());
   } else if (event->type() == ui::ET_MOUSE_RELEASED) {
     scale_when_drag_started_ = 1.0f;
@@ -89,11 +98,13 @@ void MouseCursorEventFilter::OnMouseEvent(ui::MouseEvent* event) {
       event->type() != ui::ET_MOUSE_DRAGGED) {
       return;
   }
-  Shell::GetInstance()->display_controller()->
-      mirror_window_controller()->UpdateCursorLocation();
+
+  if (!(event->flags() & ui::EF_IS_SYNTHESIZED)) {
+    Shell::GetInstance()->display_controller()->
+        cursor_window_controller()->UpdateLocation();
+  }
 
   gfx::Point point_in_screen(event->location());
-  aura::Window* target = static_cast<aura::Window*>(event->target());
   wm::ConvertPointToScreen(target, &point_in_screen);
   if (WarpMouseCursorIfNecessary(target->GetRootWindow(), point_in_screen))
     event->StopPropagation();
@@ -176,7 +187,7 @@ void MouseCursorEventFilter::UpdateHorizontalIndicatorWindowBounds() {
   // instead of using reference.
   const gfx::Rect primary_bounds =
       Shell::GetScreen()->GetPrimaryDisplay().bounds();
-  const gfx::Rect secondary_bounds = ScreenAsh::GetSecondaryDisplay().bounds();
+  const gfx::Rect secondary_bounds = ScreenUtil::GetSecondaryDisplay().bounds();
   DisplayLayout::Position position = Shell::GetInstance()->
       display_manager()->GetCurrentDisplayLayout().position;
 
@@ -205,7 +216,7 @@ void MouseCursorEventFilter::UpdateVerticalIndicatorWindowBounds() {
   // instead of using reference.
   const gfx::Rect primary_bounds =
       Shell::GetScreen()->GetPrimaryDisplay().bounds();
-  const gfx::Rect secondary_bounds = ScreenAsh::GetSecondaryDisplay().bounds();
+  const gfx::Rect secondary_bounds = ScreenUtil::GetSecondaryDisplay().bounds();
   DisplayLayout::Position position = Shell::GetInstance()->
       display_manager()->GetCurrentDisplayLayout().position;
 

@@ -8,7 +8,6 @@
 #include "base/threading/sequenced_worker_pool.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
-#include "chrome/browser/extensions/extension_prefs.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_sync_service.h"
 #include "chrome/browser/extensions/updater/extension_updater.h"
@@ -18,13 +17,17 @@
 #include "chrome/browser/ui/global_error/global_error_service.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/extensions/extension.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_utils.h"
 #include "content/test/net/url_request_prepackaged_interceptor.h"
+#include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registry.h"
+#include "extensions/common/extension.h"
 #include "net/url_request/url_fetcher.h"
 
 using extensions::Extension;
+using extensions::ExtensionRegistry;
+using extensions::ExtensionPrefs;
 
 class ExtensionDisabledGlobalErrorTest : public ExtensionBrowserTest {
  protected:
@@ -37,6 +40,7 @@ class ExtensionDisabledGlobalErrorTest : public ExtensionBrowserTest {
   virtual void SetUpOnMainThread() OVERRIDE {
     EXPECT_TRUE(scoped_temp_dir_.CreateUniqueTempDir());
     service_ = browser()->profile()->GetExtensionService();
+    registry_ = ExtensionRegistry::Get(browser()->profile());
     base::FilePath pem_path = test_data_dir_.
         AppendASCII("permissions_increase").AppendASCII("permissions.pem");
     path_v1_ = PackExtensionWithOptions(
@@ -65,11 +69,11 @@ class ExtensionDisabledGlobalErrorTest : public ExtensionBrowserTest {
 
   // Install the initial version, which should happen just fine.
   const Extension* InstallIncreasingPermissionExtensionV1() {
-    size_t size_before = service_->extensions()->size();
+    size_t size_before = registry_->enabled_extensions().size();
     const Extension* extension = InstallExtension(path_v1_, 1);
     if (!extension)
       return NULL;
-    if (service_->extensions()->size() != size_before + 1)
+    if (registry_->enabled_extensions().size() != size_before + 1)
       return NULL;
     return extension;
   }
@@ -80,16 +84,17 @@ class ExtensionDisabledGlobalErrorTest : public ExtensionBrowserTest {
       const Extension* extension,
       const base::FilePath& crx_path,
       int expected_change) {
-    size_t size_before = service_->extensions()->size();
+    size_t size_before = registry_->enabled_extensions().size();
     if (UpdateExtension(extension->id(), crx_path, expected_change))
       return NULL;
     content::BrowserThread::GetBlockingPool()->FlushForTesting();
     base::RunLoop().RunUntilIdle();
-    EXPECT_EQ(size_before + expected_change, service_->extensions()->size());
-    if (service_->disabled_extensions()->size() != 1u)
+    EXPECT_EQ(size_before + expected_change,
+              registry_->enabled_extensions().size());
+    if (registry_->disabled_extensions().size() != 1u)
       return NULL;
 
-    return service_->disabled_extensions()->begin()->get();
+    return registry_->disabled_extensions().begin()->get();
   }
 
   // Helper function to install an extension and upgrade it to a version
@@ -101,6 +106,7 @@ class ExtensionDisabledGlobalErrorTest : public ExtensionBrowserTest {
   }
 
   ExtensionService* service_;
+  ExtensionRegistry* registry_;
   base::ScopedTempDir scoped_temp_dir_;
   base::FilePath path_v1_;
   base::FilePath path_v2_;
@@ -113,11 +119,11 @@ IN_PROC_BROWSER_TEST_F(ExtensionDisabledGlobalErrorTest, AcceptPermissions) {
   const Extension* extension = InstallAndUpdateIncreasingPermissionsExtension();
   ASSERT_TRUE(extension);
   ASSERT_TRUE(GetExtensionDisabledGlobalError());
-  const size_t size_before = service_->extensions()->size();
+  const size_t size_before = registry_->enabled_extensions().size();
 
   service_->GrantPermissionsAndEnableExtension(extension);
-  EXPECT_EQ(size_before + 1, service_->extensions()->size());
-  EXPECT_EQ(0u, service_->disabled_extensions()->size());
+  EXPECT_EQ(size_before + 1, registry_->enabled_extensions().size());
+  EXPECT_EQ(0u, registry_->disabled_extensions().size());
   ASSERT_FALSE(GetExtensionDisabledGlobalError());
 }
 
@@ -126,11 +132,11 @@ IN_PROC_BROWSER_TEST_F(ExtensionDisabledGlobalErrorTest, Uninstall) {
   const Extension* extension = InstallAndUpdateIncreasingPermissionsExtension();
   ASSERT_TRUE(extension);
   ASSERT_TRUE(GetExtensionDisabledGlobalError());
-  const size_t size_before = service_->extensions()->size();
+  const size_t size_before = registry_->enabled_extensions().size();
 
   UninstallExtension(extension->id());
-  EXPECT_EQ(size_before, service_->extensions()->size());
-  EXPECT_EQ(0u, service_->disabled_extensions()->size());
+  EXPECT_EQ(size_before, registry_->enabled_extensions().size());
+  EXPECT_EQ(0u, registry_->disabled_extensions().size());
   ASSERT_FALSE(GetExtensionDisabledGlobalError());
 }
 
@@ -149,7 +155,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionDisabledGlobalErrorTest,
   const Extension* extension = InstallIncreasingPermissionExtensionV1();
   DisableExtension(extension->id());
   // Clear disable reason to simulate legacy disables.
-  service_->extension_prefs()->ClearDisableReasons(extension->id());
+  ExtensionPrefs::Get(browser()->profile())
+      ->ClearDisableReasons(extension->id());
   // Upgrade to version 2. Infer from version 1 having the same permissions
   // granted by the user that it was disabled by the user.
   extension = UpdateIncreasingPermissionExtension(extension, path_v2_, 0);
@@ -163,7 +170,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionDisabledGlobalErrorTest,
                        UnknownReasonHigherPermissions) {
   const Extension* extension = InstallAndUpdateIncreasingPermissionsExtension();
   // Clear disable reason to simulate legacy disables.
-  service_->extension_prefs()->ClearDisableReasons(extension->id());
+  ExtensionPrefs::Get(service_->profile())
+      ->ClearDisableReasons(extension->id());
   // We now have version 2 but only accepted permissions for version 1.
   GlobalError* error = GetExtensionDisabledGlobalError();
   ASSERT_TRUE(error);
@@ -220,8 +228,9 @@ IN_PROC_BROWSER_TEST_F(ExtensionDisabledGlobalErrorTest,
   extension = service_->GetExtensionById(extension_id, true);
   ASSERT_TRUE(extension);
   EXPECT_EQ("2", extension->VersionString());
-  EXPECT_EQ(1u, service_->disabled_extensions()->size());
+  EXPECT_EQ(1u, registry_->disabled_extensions().size());
   EXPECT_EQ(Extension::DISABLE_PERMISSIONS_INCREASE,
-            service_->extension_prefs()->GetDisableReasons(extension_id));
+            ExtensionPrefs::Get(service_->profile())
+                ->GetDisableReasons(extension_id));
   EXPECT_TRUE(GetExtensionDisabledGlobalError());
 }

@@ -2,10 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/extensions/api/storage/settings_namespace.h"
 #include "chrome/browser/extensions/api/storage/settings_sync_processor.h"
 #include "chrome/browser/extensions/api/storage/settings_sync_util.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/browser/api/storage/settings_namespace.h"
 #include "sync/api/sync_change_processor.h"
 #include "sync/api/sync_data.h"
 #include "sync/protocol/extension_setting_specifics.pb.h"
@@ -54,7 +54,7 @@ syncer::SyncError SettingsSyncProcessor::SendChanges(
   for (ValueStoreChangeList::const_iterator i = changes.begin();
       i != changes.end(); ++i) {
     const std::string& key = i->key();
-    const Value* value = i->new_value();
+    const base::Value* value = i->new_value();
     if (value) {
       if (synced_keys_.count(key)) {
         // New value, key is synced; send ACTION_UPDATE.

@@ -15,11 +15,14 @@
 #include "net/quic/quic_crypto_client_stream.h"
 #include "net/quic/quic_crypto_server_stream.h"
 #include "net/quic/quic_crypto_stream.h"
+#include "net/quic/quic_session_key.h"
 #include "net/quic/test_tools/quic_connection_peer.h"
 #include "net/quic/test_tools/quic_test_utils.h"
 #include "net/quic/test_tools/simple_quic_framer.h"
 
 using base::StringPiece;
+using std::make_pair;
+using std::pair;
 using std::string;
 using std::vector;
 
@@ -27,6 +30,9 @@ namespace net {
 namespace test {
 
 namespace {
+
+const char kServerHostname[] = "test.example.com";
+const uint16 kServerPort = 80;
 
 // CryptoFramerVisitor is a framer visitor that records handshake messages.
 class CryptoFramerVisitor : public CryptoFramerVisitorInterface {
@@ -65,7 +71,7 @@ void MovePackets(PacketSavingConnection* source_conn,
                  size_t *inout_packet_index,
                  QuicCryptoStream* dest_stream,
                  PacketSavingConnection* dest_conn) {
-  SimpleQuicFramer framer;
+  SimpleQuicFramer framer(source_conn->supported_versions());
   CryptoFramer crypto_framer;
   CryptoFramerVisitor crypto_visitor;
 
@@ -84,7 +90,8 @@ void MovePackets(PacketSavingConnection* source_conn,
     for (vector<QuicStreamFrame>::const_iterator
          i =  framer.stream_frames().begin();
          i != framer.stream_frames().end(); ++i) {
-      ASSERT_TRUE(crypto_framer.ProcessInput(i->data));
+      scoped_ptr<string> frame_data(i->GetDataAsString());
+      ASSERT_TRUE(crypto_framer.ProcessInput(*frame_data));
       ASSERT_FALSE(crypto_visitor.error());
     }
   }
@@ -130,13 +137,9 @@ CryptoTestUtils::FakeClientOptions::FakeClientOptions()
 int CryptoTestUtils::HandshakeWithFakeServer(
     PacketSavingConnection* client_conn,
     QuicCryptoClientStream* client) {
-  QuicGuid guid(1);
-  IPAddressNumber ip;
-  CHECK(ParseIPLiteralToNumber("192.0.2.33", &ip));
-  IPEndPoint addr = IPEndPoint(ip, 1);
   PacketSavingConnection* server_conn =
-      new PacketSavingConnection(guid, addr, true);
-  TestSession server_session(server_conn, DefaultQuicConfig(), true);
+      new PacketSavingConnection(true, client_conn->supported_versions());
+  TestSession server_session(server_conn, DefaultQuicConfig());
 
   QuicCryptoServerConfig crypto_config(QuicCryptoServerConfig::TESTING,
                                        QuicRandom::GetInstance());
@@ -163,13 +166,8 @@ int CryptoTestUtils::HandshakeWithFakeClient(
     PacketSavingConnection* server_conn,
     QuicCryptoServerStream* server,
     const FakeClientOptions& options) {
-  QuicGuid guid(1);
-  IPAddressNumber ip;
-  CHECK(ParseIPLiteralToNumber("192.0.2.33", &ip));
-  IPEndPoint addr = IPEndPoint(ip, 1);
-  PacketSavingConnection* client_conn =
-      new PacketSavingConnection(guid, addr, false);
-  TestSession client_session(client_conn, DefaultQuicConfig(), false);
+  PacketSavingConnection* client_conn = new PacketSavingConnection(false);
+  TestClientSession client_session(client_conn, DefaultQuicConfig());
   QuicCryptoClientConfig crypto_config;
 
   client_session.config()->SetDefaults();
@@ -181,7 +179,9 @@ int CryptoTestUtils::HandshakeWithFakeClient(
   if (options.channel_id_enabled) {
     crypto_config.SetChannelIDSigner(ChannelIDSignerForTesting());
   }
-  QuicCryptoClientStream client("test.example.com", &client_session,
+  QuicSessionKey server_key(kServerHostname, kServerPort, false,
+                            kPrivacyModeDisabled);
+  QuicCryptoClientStream client(server_key, &client_session, NULL,
                                 &crypto_config);
   client_session.SetCryptoStream(&client);
 
@@ -194,7 +194,7 @@ int CryptoTestUtils::HandshakeWithFakeClient(
 
   if (options.channel_id_enabled) {
     EXPECT_EQ(crypto_config.channel_id_signer()->GetKeyForHostname(
-                  "test.example.com"),
+                  kServerHostname),
               server->crypto_negotiated_params().channel_id);
   }
 
@@ -235,6 +235,28 @@ void CryptoTestUtils::CommunicateHandshakeMessages(
     }
     MovePackets(b_conn, &b_i, a, a_conn);
   }
+}
+
+// static
+pair<size_t, size_t> CryptoTestUtils::AdvanceHandshake(
+    PacketSavingConnection* a_conn,
+    QuicCryptoStream* a,
+    size_t a_i,
+    PacketSavingConnection* b_conn,
+    QuicCryptoStream* b,
+    size_t b_i) {
+  LOG(INFO) << "Processing " << a_conn->packets_.size() - a_i
+            << " packets a->b";
+  MovePackets(a_conn, &a_i, b, b_conn);
+
+  LOG(INFO) << "Processing " << b_conn->packets_.size() - b_i
+            << " packets b->a";
+  if (b_conn->packets_.size() - b_i == 2) {
+    LOG(INFO) << "here";
+  }
+  MovePackets(b_conn, &b_i, a, a_conn);
+
+  return make_pair(a_i, b_i);
 }
 
 // static

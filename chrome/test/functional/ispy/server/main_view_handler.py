@@ -11,8 +11,9 @@ import re
 import sys
 import webapp2
 
-from ..common import constants
-from ..common import ispy_utils
+import ispy_api
+from common import constants
+from common import ispy_utils
 
 import gs_bucket
 import views
@@ -45,7 +46,7 @@ class MainViewHandler(webapp2.RequestHandler):
     """Renders a list view of all of the test_runs available in GS.
 
     Args:
-      ispy: An instance of ispy_utils.ISpyUtils.
+      ispy: An instance of ispy_api.ISpyApi.
     """
     template = JINJA.get_template('list_view.html')
     data = {}
@@ -63,23 +64,23 @@ class MainViewHandler(webapp2.RequestHandler):
 
     Args:
       test_run: The name of the test_run to render failure rows from.
-      ispy: An instance of ispy_utils.ISpyUtils.
+      ispy: An instance of ispy_api.ISpyApi.
     """
     paths = set([path for path in ispy.GetAllPaths('failures/' + test_run)
                  if path.endswith('actual.png')])
+    can_rebaseline = ispy_api.ISpyApi(
+        ispy.cloud_bucket).CanRebaselineToTestRun(test_run)
     rows = [self._CreateRow(test_run, path, ispy) for path in paths]
-    if rows:
-      # Function that sorts by the different_pixels field in the failure-info.
-      def _Sorter(a, b):
-        return cmp(b['percent_different'],
-                   a['percent_different'])
-      template = JINJA.get_template('main_view.html')
-      self.response.write(
-          template.render({'comparisons': sorted(rows, _Sorter),
-                           'test_run': test_run}))
-    else:
-      template = JINJA.get_template('empty_view.html')
-      self.response.write(template.render())
+
+    # Function that sorts by the different_pixels field in the failure-info.
+    def _Sorter(a, b):
+      return cmp(b['percent_different'],
+                 a['percent_different'])
+    template = JINJA.get_template('main_view.html')
+    self.response.write(
+        template.render({'comparisons': sorted(rows, _Sorter),
+                         'test_run': test_run,
+                         'can_rebaseline': can_rebaseline}))
 
   def _CreateRow(self, test_run, path, ispy):
     """Creates one failure-row.
@@ -90,7 +91,7 @@ class MainViewHandler(webapp2.RequestHandler):
     Args:
       test_run: The name of the test_run the failure is in.
       path: A path to the failure's actual.png file.
-      ispy: An instance of ispy_utils.ISpyUtils.
+      ispy: An instance of ispy_api.ISpyApi.
 
     Returns:
       A dictionary with fields necessary to render a failure-row

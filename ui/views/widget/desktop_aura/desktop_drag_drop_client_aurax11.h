@@ -9,9 +9,9 @@
 #include <X11/Xlib.h>
 
 #include "base/compiler_specific.h"
-#include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
-#include "ui/aura/client/drag_drop_client.h"
+#include "base/memory/weak_ptr.h"
+#include "base/timer/timer.h"
 #include "ui/aura/window_observer.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/gfx/point.h"
@@ -19,6 +19,7 @@
 #include "ui/views/views_export.h"
 #include "ui/views/widget/desktop_aura/x11_whole_screen_move_loop.h"
 #include "ui/views/widget/desktop_aura/x11_whole_screen_move_loop_delegate.h"
+#include "ui/wm/public/drag_drop_client.h"
 
 namespace aura {
 namespace client {
@@ -42,7 +43,7 @@ namespace views {
 class DesktopNativeCursorManager;
 
 // Implements drag and drop on X11 for aura. On one side, this class takes raw
-// X11 events forwarded from DesktopRootWindowHostLinux, while on the other, it
+// X11 events forwarded from DesktopWindowTreeHostLinux, while on the other, it
 // handles the views drag events.
 class VIEWS_EXPORT DesktopDragDropClientAuraX11
     : public aura::client::DragDropClient,
@@ -96,6 +97,28 @@ class VIEWS_EXPORT DesktopDragDropClientAuraX11
   virtual void OnMoveLoopEnded() OVERRIDE;
 
  private:
+  enum SourceState {
+    // |source_current_window_| will receive a drop once we receive an
+    // XdndStatus from it.
+    SOURCE_STATE_PENDING_DROP,
+
+    // The move looped will be ended once we receive XdndFinished from
+    // |source_current_window_|. We should not send XdndPosition to
+    // |source_current_window_| while in this state.
+    SOURCE_STATE_DROPPED,
+
+    // There is no drag in progress or there is a drag in progress and the
+    // user has not yet released the mouse.
+    SOURCE_STATE_OTHER,
+  };
+
+  // Start timer to end the move loop if the target is too slow to respond after
+  // the mouse is released.
+  void StartEndMoveLoopTimer();
+
+  // Ends the move loop.
+  void EndMoveLoop();
+
   typedef std::map< ::Window, std::pair<gfx::Point, unsigned long> >
       NextPositionMap;
 
@@ -184,8 +207,12 @@ class VIEWS_EXPORT DesktopDragDropClientAuraX11
   // Source side information.
   ui::OSExchangeDataProviderAuraX11 const* source_provider_;
   ::Window source_current_window_;
+  SourceState source_state_;
 
-  bool drag_drop_in_progress_;
+  // The current drag-drop client that has an active operation. Since we have
+  // multiple root windows and multiple DesktopDragDropClientAuraX11 instances
+  // it is important to maintain only one drag and drop operation at any time.
+  static DesktopDragDropClientAuraX11* g_current_drag_drop_client;
 
   // The operation bitfield as requested by StartDragAndDrop.
   int drag_operation_;
@@ -194,10 +221,6 @@ class VIEWS_EXPORT DesktopDragDropClientAuraX11
   // StartDragAndDrop(), and is set only during the asynchronous XdndFinished
   // message.
   int resulting_operation_;
-
-  // This window will be receiving a drop as soon as we receive an XdndStatus
-  // from it.
-  std::set< ::Window> pending_drop_;
 
   // We offer the other window a list of possible operations,
   // XdndActionsList. This is the requested action from the other window. This
@@ -210,12 +233,16 @@ class VIEWS_EXPORT DesktopDragDropClientAuraX11
   // window responds to an XdndStatus.
   std::map< ::Window, ::Atom> negotiated_operation_;
 
+  // Ends the move loop if the target is too slow to respond after the mouse is
+  // released.
+  base::OneShotTimer<DesktopDragDropClientAuraX11> end_move_loop_timer_;
+
   // We use these cursors while dragging.
   gfx::NativeCursor grab_cursor_;
   gfx::NativeCursor copy_grab_cursor_;
   gfx::NativeCursor move_grab_cursor_;
 
-  static std::map< ::Window, DesktopDragDropClientAuraX11*> g_live_client_map;
+  base::WeakPtrFactory<DesktopDragDropClientAuraX11> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(DesktopDragDropClientAuraX11);
 };

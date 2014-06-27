@@ -14,8 +14,11 @@
 #include "base/observer_list.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
 #include "chrome/browser/chromeos/login/screens/screen_observer.h"
 #include "chrome/browser/chromeos/login/screens/wizard_screen.h"
+#include "chrome/browser/chromeos/policy/auto_enrollment_client.h"
+#include "content/public/common/geoposition.h"
 #include "ui/gfx/rect.h"
 #include "url/gurl.h"
 
@@ -26,8 +29,13 @@ namespace base {
 class DictionaryValue;
 }
 
+namespace content {
+struct Geoposition;
+}
+
 namespace chromeos {
 
+class AutoEnrollmentCheckStep;
 class EnrollmentScreen;
 class ErrorScreen;
 class EulaScreen;
@@ -35,10 +43,13 @@ class KioskAutolaunchScreen;
 class KioskEnableScreen;
 class LocallyManagedUserCreationScreen;
 class LoginDisplayHost;
+class LoginScreenContext;
 class NetworkScreen;
 class OobeDisplay;
 class ResetScreen;
 class TermsOfServiceScreen;
+class TimeZoneProvider;
+struct TimeZoneResponseData;
 class UpdateScreen;
 class UserImageScreen;
 class WizardScreen;
@@ -99,7 +110,7 @@ class WizardController : public ScreenObserver {
                                  base::DictionaryValue* screen_parameters);
 
   // Advances to login screen. Should be used in for testing only.
-  void SkipToLoginForTesting();
+  void SkipToLoginForTesting(const LoginScreenContext& context);
 
   // Adds and removes an observer.
   void AddObserver(Observer* observer);
@@ -152,6 +163,13 @@ class WizardController : public ScreenObserver {
   static const char kLocallyManagedUserCreationScreenName[];
   static const char kAppLaunchSplashScreenName[];
 
+  // Volume percent at which spoken feedback is still audible.
+  static const int kMinAudibleOutputVolumePercent;
+
+  // Called from LoginLocationMonitor when location is resolved.
+  static void OnLocationUpdated(const content::Geoposition& position,
+                                base::TimeDelta elapsed);
+
  private:
   // Show specific screen.
   void ShowNetworkScreen();
@@ -167,7 +185,7 @@ class WizardController : public ScreenObserver {
   void ShowLocallyManagedUserCreationScreen();
 
   // Shows images login screen.
-  void ShowLoginScreen();
+  void ShowLoginScreen(const LoginScreenContext& context);
 
   // Resumes a pending login screen.
   void ResumeLoginScreen();
@@ -207,7 +225,7 @@ class WizardController : public ScreenObserver {
   void PerformPostEulaActions();
 
   // Actions that should be done right after update stage is finished.
-  void PerformPostUpdateActions();
+  void PerformOOBECompletedActions();
 
   // Overridden from ScreenObserver:
   virtual void OnExit(ExitCodes exit_code) OVERRIDE;
@@ -219,6 +237,10 @@ class WizardController : public ScreenObserver {
   virtual ErrorScreen* GetErrorScreen() OVERRIDE;
   virtual void ShowErrorScreen() OVERRIDE;
   virtual void HideErrorScreen(WizardScreen* parent_screen) OVERRIDE;
+
+  // Notification of a change in the state of an accessibility setting.
+  void OnAccessibilityStatusChanged(
+      const AccessibilityStatusEventDetails& details);
 
   // Switches from one screen to another.
   void SetCurrentScreen(WizardScreen* screen);
@@ -237,10 +259,17 @@ class WizardController : public ScreenObserver {
   void AutoLaunchKioskApp();
 
   // Checks whether the user is allowed to exit enrollment.
-  bool CanExitEnrollment() const;
+  static bool CanExitEnrollment();
+
+  // Gets the management domain.
+  static std::string GetForcedEnrollmentDomain();
 
   // Called when LocalState is initialized.
   void OnLocalStateInitialized(bool /* succeeded */);
+
+  // Kicks off the auto-enrollment check step. Once it finishes, it'll call
+  // back via ScreenObserver::OnExit().
+  void StartAutoEnrollmentCheck();
 
   // Returns local state.
   PrefService* GetLocalState();
@@ -248,6 +277,16 @@ class WizardController : public ScreenObserver {
   static void set_local_state_for_testing(PrefService* local_state) {
     local_state_for_testing_ = local_state;
   }
+
+  // Called when network is UP.
+  void StartTimezoneResolve() const;
+
+  // Creates provider on demand.
+  TimeZoneProvider* GetTimezoneProvider();
+
+  // TimeZoneRequest::TimeZoneResponseCallback implementation.
+  void OnTimezoneResolved(scoped_ptr<TimeZoneResponseData> timezone,
+                          bool server_error);
 
   // Whether to skip any screens that may normally be shown after login
   // (registration, Terms of Service, user image selection).
@@ -294,6 +333,9 @@ class WizardController : public ScreenObserver {
   // Default WizardController.
   static WizardController* default_controller_;
 
+  // The auto-enrollment check step, currently active.
+  scoped_ptr<AutoEnrollmentCheckStep> auto_enrollment_check_step_;
+
   // Parameters for the first screen. May be NULL.
   scoped_ptr<base::DictionaryValue> screen_parameters_;
 
@@ -330,7 +372,11 @@ class WizardController : public ScreenObserver {
   friend class WizardInProcessBrowserTest;
   friend class WizardControllerBrokenLocalStateTest;
 
+  scoped_ptr<AccessibilityStatusSubscription> accessibility_subscription_;
+
   base::WeakPtrFactory<WizardController> weak_factory_;
+
+  scoped_ptr<TimeZoneProvider> timezone_provider_;
 
   DISALLOW_COPY_AND_ASSIGN(WizardController);
 };

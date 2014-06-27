@@ -5,7 +5,9 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_WEBVIEW_WEBVIEW_API_H_
 #define CHROME_BROWSER_EXTENSIONS_API_WEBVIEW_WEBVIEW_API_H_
 
+#include "chrome/browser/extensions/api/capture_web_contents_function.h"
 #include "chrome/browser/extensions/api/execute_code_function.h"
+#include "chrome/browser/guestview/webview/webview_find_helper.h"
 #include "chrome/browser/guestview/webview/webview_guest.h"
 
 // WARNING: Webview could be loaded in an unblessed context, thus any new
@@ -30,6 +32,70 @@ class WebviewExtensionFunction : public AsyncExtensionFunction {
 
  private:
   virtual bool RunImplSafe(WebViewGuest* guest) = 0;
+};
+
+class WebviewContextMenusCreateFunction : public AsyncExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webview.contextMenusCreate",
+                             WEBVIEW_CONTEXTMENUSCREATE);
+  WebviewContextMenusCreateFunction() {}
+
+ protected:
+  virtual ~WebviewContextMenusCreateFunction() {}
+
+  // ExtensionFunction implementation.
+  virtual bool RunImpl() OVERRIDE;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(WebviewContextMenusCreateFunction);
+};
+
+class WebviewContextMenusUpdateFunction : public AsyncExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webview.contextMenusUpdate",
+                             WEBVIEW_CONTEXTMENUSUPDATE);
+  WebviewContextMenusUpdateFunction() {}
+
+ protected:
+  virtual ~WebviewContextMenusUpdateFunction() {}
+
+  // ExtensionFunction implementation.
+  virtual bool RunImpl() OVERRIDE;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(WebviewContextMenusUpdateFunction);
+};
+
+class WebviewContextMenusRemoveFunction : public AsyncExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webview.contextMenusRemove",
+                             WEBVIEW_CONTEXTMENUSREMOVE);
+  WebviewContextMenusRemoveFunction() {}
+
+ protected:
+  virtual ~WebviewContextMenusRemoveFunction() {}
+
+  // ExtensionFunction implementation.
+  virtual bool RunImpl() OVERRIDE;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(WebviewContextMenusRemoveFunction);
+};
+
+class WebviewContextMenusRemoveAllFunction : public AsyncExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webview.contextMenusRemoveAll",
+                             WEBVIEW_CONTEXTMENUSREMOVEALL);
+  WebviewContextMenusRemoveAllFunction() {}
+
+ protected:
+  virtual ~WebviewContextMenusRemoveAllFunction() {}
+
+  // ExtensionFunction implementation.
+  virtual bool RunImpl() OVERRIDE;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(WebviewContextMenusRemoveAllFunction);
 };
 
 class WebviewClearDataFunction : public WebviewExtensionFunction {
@@ -114,6 +180,90 @@ class WebviewInsertCSSFunction : public WebviewExecuteCodeFunction {
 
  private:
   DISALLOW_COPY_AND_ASSIGN(WebviewInsertCSSFunction);
+};
+
+class WebviewCaptureVisibleRegionFunction
+    : public extensions::CaptureWebContentsFunction {
+  DECLARE_EXTENSION_FUNCTION("webview.captureVisibleRegion",
+                             WEBVIEW_CAPTUREVISIBLEREGION);
+
+  WebviewCaptureVisibleRegionFunction();
+
+ protected:
+  virtual ~WebviewCaptureVisibleRegionFunction();
+
+ private:
+  // extensions::CaptureWebContentsFunction implementation.
+  virtual bool IsScreenshotEnabled() OVERRIDE;
+  virtual content::WebContents* GetWebContentsForID(int id) OVERRIDE;
+  virtual void OnCaptureFailure(FailureReason reason) OVERRIDE;
+
+  DISALLOW_COPY_AND_ASSIGN(WebviewCaptureVisibleRegionFunction);
+};
+
+class WebviewSetZoomFunction : public WebviewExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webview.setZoom", WEBVIEW_SETZOOM);
+
+  WebviewSetZoomFunction();
+
+ protected:
+  virtual ~WebviewSetZoomFunction();
+
+ private:
+  virtual bool RunImplSafe(WebViewGuest* guest) OVERRIDE;
+
+  DISALLOW_COPY_AND_ASSIGN(WebviewSetZoomFunction);
+};
+
+class WebviewGetZoomFunction : public WebviewExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webview.getZoom", WEBVIEW_GETZOOM);
+
+  WebviewGetZoomFunction();
+
+ protected:
+  virtual ~WebviewGetZoomFunction();
+
+ private:
+  virtual bool RunImplSafe(WebViewGuest* guest) OVERRIDE;
+
+  DISALLOW_COPY_AND_ASSIGN(WebviewGetZoomFunction);
+};
+
+class WebviewFindFunction : public WebviewExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webview.find", WEBVIEW_FIND);
+
+  WebviewFindFunction();
+
+  // Exposes SendResponse() for use by WebviewFindHelper.
+  using WebviewExtensionFunction::SendResponse;
+
+ protected:
+  virtual ~WebviewFindFunction();
+
+ private:
+  // WebviewExtensionFunction implementation.
+  virtual bool RunImplSafe(WebViewGuest* guest) OVERRIDE;
+
+  DISALLOW_COPY_AND_ASSIGN(WebviewFindFunction);
+};
+
+class WebviewStopFindingFunction : public WebviewExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webview.stopFinding", WEBVIEW_STOPFINDING);
+
+  WebviewStopFindingFunction();
+
+ protected:
+  virtual ~WebviewStopFindingFunction();
+
+ private:
+  // WebviewExtensionFunction implementation.
+  virtual bool RunImplSafe(WebViewGuest* guest) OVERRIDE;
+
+  DISALLOW_COPY_AND_ASSIGN(WebviewStopFindingFunction);
 };
 
 class WebviewGoFunction : public WebviewExtensionFunction {

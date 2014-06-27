@@ -74,6 +74,9 @@
 #define GL_UNPACK_PREMULTIPLY_ALPHA_CHROMIUM             0x9241
 #define GL_UNPACK_UNPREMULTIPLY_ALPHA_CHROMIUM           0x9242
 #define GL_UNPACK_COLORSPACE_CONVERSION_CHROMIUM         0x9243
+#if defined(OS_CHROMEOS)
+#define GL_BIND_GENERATES_RESOURCE_CHROMIUM              0x9244
+#endif
 
 // GL_CHROMIUM_gpu_memory_manager
 #define GL_TEXTURE_POOL_CHROMIUM                         0x6000
@@ -225,28 +228,30 @@ typedef uint64 EGLuint64CHROMIUM;
 namespace gfx {
 
 struct GL_EXPORT DriverGL {
-  void Initialize();
-  void InitializeExtensions(GLContext* context);
+  void InitializeStaticBindings();
+  void InitializeCustomDynamicBindings(GLContext* context);
   void InitializeDebugBindings();
+  void InitializeNullDrawBindings();
+  // TODO(danakj): Remove this when all test suites are using null-draw.
+  bool HasInitializedNullDrawBindings();
+  bool SetNullDrawBindingsEnabled(bool enabled);
   void ClearBindings();
-  void UpdateDebugExtensionBindings();
 
   ProcsGL fn;
   ProcsGL orig_fn;
   ProcsGL debug_fn;
   ExtensionsGL ext;
+  bool null_draw_bindings_enabled;
 
  private:
-  void InitializeBindings();
-  void InitializeExtensionBindings(GLContext* context);
+  void InitializeDynamicBindings(GLContext* context);
 };
 
 struct GL_EXPORT DriverOSMESA {
-  void InitializeBindings();
-  void InitializeExtensionBindings(GLContext* context);
+  void InitializeStaticBindings();
+  void InitializeDynamicBindings(GLContext* context);
   void InitializeDebugBindings();
   void ClearBindings();
-  void UpdateDebugExtensionBindings();
 
   ProcsOSMESA fn;
   ProcsOSMESA debug_fn;
@@ -255,11 +260,10 @@ struct GL_EXPORT DriverOSMESA {
 
 #if defined(OS_WIN)
 struct GL_EXPORT DriverWGL {
-  void InitializeBindings();
-  void InitializeExtensionBindings(GLContext* context);
+  void InitializeStaticBindings();
+  void InitializeDynamicBindings(GLContext* context);
   void InitializeDebugBindings();
   void ClearBindings();
-  void UpdateDebugExtensionBindings();
 
   ProcsWGL fn;
   ProcsWGL debug_fn;
@@ -269,11 +273,10 @@ struct GL_EXPORT DriverWGL {
 
 #if defined(OS_WIN) || defined(USE_X11) || defined(OS_ANDROID) || defined(USE_OZONE)
 struct GL_EXPORT DriverEGL {
-  void InitializeBindings();
-  void InitializeExtensionBindings(GLContext* context);
+  void InitializeStaticBindings();
+  void InitializeDynamicBindings(GLContext* context);
   void InitializeDebugBindings();
   void ClearBindings();
-  void UpdateDebugExtensionBindings();
 
   ProcsEGL fn;
   ProcsEGL debug_fn;
@@ -283,11 +286,10 @@ struct GL_EXPORT DriverEGL {
 
 #if defined(USE_X11)
 struct GL_EXPORT DriverGLX {
-  void InitializeBindings();
-  void InitializeExtensionBindings(GLContext* context);
+  void InitializeStaticBindings();
+  void InitializeDynamicBindings(GLContext* context);
   void InitializeDebugBindings();
   void ClearBindings();
-  void UpdateDebugExtensionBindings();
 
   ProcsGLX fn;
   ProcsGLX debug_fn;
@@ -328,9 +330,6 @@ GL_EXPORT extern EGLApi* g_current_egl_context;
 GL_EXPORT extern DriverEGL g_driver_egl;
 
 #endif
-
-// Find an entry point to the mock GL implementation.
-void* GL_BINDING_CALL GetMockGLProcAddress(const char* name);
 
 }  // namespace gfx
 

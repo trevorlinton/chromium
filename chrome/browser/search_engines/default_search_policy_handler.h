@@ -7,7 +7,7 @@
 
 #include <vector>
 
-#include "chrome/browser/policy/configuration_policy_handler.h"
+#include "components/policy/core/browser/configuration_policy_handler.h"
 
 namespace policy {
 
@@ -57,7 +57,7 @@ class DefaultSearchPolicyHandler : public ConfigurationPolicyHandler {
   // Returns whether the default search URL is set and valid.  On success, both
   // outparams (which must be non-NULL) are filled with the search URL.
   bool DefaultSearchURLIsValid(const PolicyMap& policies,
-                               const Value** url_value,
+                               const base::Value** url_value,
                                std::string* url_string);
 
   // Make sure that the |path| is present in |prefs_|.  If not, set it to

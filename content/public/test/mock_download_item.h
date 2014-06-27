@@ -41,6 +41,8 @@ class MockDownloadItem : public DownloadItem {
   MOCK_CONST_METHOD0(GetUrlChain, const std::vector<GURL>&());
   MOCK_CONST_METHOD0(GetOriginalUrl, const GURL&());
   MOCK_CONST_METHOD0(GetReferrerUrl, const GURL&());
+  MOCK_CONST_METHOD0(GetTabUrl, const GURL&());
+  MOCK_CONST_METHOD0(GetTabReferrerUrl, const GURL&());
   MOCK_CONST_METHOD0(GetSuggestedFilename, std::string());
   MOCK_CONST_METHOD0(GetContentDisposition, std::string());
   MOCK_CONST_METHOD0(GetMimeType, std::string());
@@ -60,7 +62,7 @@ class MockDownloadItem : public DownloadItem {
   MOCK_CONST_METHOD0(GetHash, const std::string&());
   MOCK_CONST_METHOD0(GetHashState, const std::string&());
   MOCK_CONST_METHOD0(GetFileExternallyRemoved, bool());
-  MOCK_METHOD0(DeleteFile, void());
+  MOCK_METHOD1(DeleteFile, void(const base::Callback<void(bool)>&));
   MOCK_CONST_METHOD0(IsDangerous, bool());
   MOCK_CONST_METHOD0(GetDangerType, DownloadDangerType());
   MOCK_CONST_METHOD1(TimeRemaining, bool(base::TimeDelta*));

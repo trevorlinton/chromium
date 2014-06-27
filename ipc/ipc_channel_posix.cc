@@ -135,6 +135,9 @@ class PipeMap {
   ChannelToFDMap map_;
 
   friend struct DefaultSingletonTraits<PipeMap>;
+#if defined(OS_ANDROID)
+  friend void ::IPC::Channel::NotifyProcessForkedForTesting();
+#endif
 };
 
 //------------------------------------------------------------------------------
@@ -159,6 +162,15 @@ bool SocketWriteErrorIsRecoverable() {
 }
 
 }  // namespace
+
+#if defined(OS_ANDROID)
+// When we fork for simple tests on Android, we can't 'exec', so we need to
+// reset these entries manually to get the expected testing behavior.
+void Channel::NotifyProcessForkedForTesting() {
+  PipeMap::GetInstance()->map_.clear();
+}
+#endif
+
 //------------------------------------------------------------------------------
 
 #if defined(OS_LINUX)
@@ -206,9 +218,9 @@ bool SocketPair(int* fd1, int* fd2) {
   if (fcntl(pipe_fds[0], F_SETFL, O_NONBLOCK) == -1 ||
       fcntl(pipe_fds[1], F_SETFL, O_NONBLOCK) == -1) {
     PLOG(ERROR) << "fcntl(O_NONBLOCK)";
-    if (HANDLE_EINTR(close(pipe_fds[0])) < 0)
+    if (IGNORE_EINTR(close(pipe_fds[0])) < 0)
       PLOG(ERROR) << "close";
-    if (HANDLE_EINTR(close(pipe_fds[1])) < 0)
+    if (IGNORE_EINTR(close(pipe_fds[1])) < 0)
       PLOG(ERROR) << "close";
     return false;
   }
@@ -227,7 +239,7 @@ bool Channel::ChannelImpl::CreatePipe(
   // 1) It's a channel wrapping a pipe that is given to us.
   // 2) It's for a named channel, so we create it.
   // 3) It's for a client that we implement ourself. This is used
-  //    in unittesting.
+  //    in single-process unittesting.
   // 4) It's the initial IPC channel:
   //   4a) Client side: Pull the pipe out of the GlobalDescriptors set.
   //   4b) Server side: create the pipe.
@@ -327,7 +339,7 @@ bool Channel::ChannelImpl::CreatePipe(
 
 bool Channel::ChannelImpl::Connect() {
   if (server_listen_pipe_ == -1 && pipe_ == -1) {
-    DLOG(INFO) << "Channel creation failed: " << pipe_name_;
+    DLOG(WARNING) << "Channel creation failed: " << pipe_name_;
     return false;
   }
 
@@ -464,15 +476,19 @@ bool Channel::ChannelImpl::ProcessOutgoingMessages() {
       CloseFileDescriptors(msg);
 
     if (bytes_written < 0 && !SocketWriteErrorIsRecoverable()) {
+      // We can't close the pipe here, because calling OnChannelError
+      // may destroy this object, and that would be bad if we are
+      // called from Send(). Instead, we return false and hope the
+      // caller will close the pipe. If they do not, the pipe will
+      // still be closed next time OnFileCanReadWithoutBlocking is
+      // called.
 #if defined(OS_MACOSX)
       // On OSX writing to a pipe with no listener returns EPERM.
       if (errno == EPERM) {
-        Close();
         return false;
       }
 #endif  // OS_MACOSX
       if (errno == EPIPE) {
-        Close();
         return false;
       }
       PLOG(ERROR) << "pipe error on "
@@ -547,7 +563,7 @@ void Channel::ChannelImpl::CloseClientFileDescriptor() {
   base::AutoLock lock(client_pipe_lock_);
   if (client_pipe_ != -1) {
     PipeMap::GetInstance()->Remove(pipe_name_);
-    if (HANDLE_EINTR(close(client_pipe_)) < 0)
+    if (IGNORE_EINTR(close(client_pipe_)) < 0)
       PLOG(ERROR) << "close " << pipe_name_;
     client_pipe_ = -1;
   }
@@ -571,18 +587,18 @@ void Channel::ChannelImpl::ResetToAcceptingConnectionState() {
   read_watcher_.StopWatchingFileDescriptor();
   write_watcher_.StopWatchingFileDescriptor();
   if (pipe_ != -1) {
-    if (HANDLE_EINTR(close(pipe_)) < 0)
+    if (IGNORE_EINTR(close(pipe_)) < 0)
       PLOG(ERROR) << "close pipe_ " << pipe_name_;
     pipe_ = -1;
   }
 #if defined(IPC_USES_READWRITE)
   if (fd_pipe_ != -1) {
-    if (HANDLE_EINTR(close(fd_pipe_)) < 0)
+    if (IGNORE_EINTR(close(fd_pipe_)) < 0)
       PLOG(ERROR) << "close fd_pipe_ " << pipe_name_;
     fd_pipe_ = -1;
   }
   if (remote_fd_pipe_ != -1) {
-    if (HANDLE_EINTR(close(remote_fd_pipe_)) < 0)
+    if (IGNORE_EINTR(close(remote_fd_pipe_)) < 0)
       PLOG(ERROR) << "close remote_fd_pipe_ " << pipe_name_;
     remote_fd_pipe_ = -1;
   }
@@ -602,7 +618,7 @@ void Channel::ChannelImpl::ResetToAcceptingConnectionState() {
   for (std::set<int>::iterator i = fds_to_close_.begin();
        i != fds_to_close_.end();
        ++i) {
-    if (HANDLE_EINTR(close(*i)) < 0)
+    if (IGNORE_EINTR(close(*i)) < 0)
       PLOG(ERROR) << "close";
   }
   fds_to_close_.clear();
@@ -637,7 +653,7 @@ void Channel::ChannelImpl::OnFileCanReadWithoutBlocking(int fd) {
       // close our new descriptor.
       if (HANDLE_EINTR(shutdown(new_pipe, SHUT_RDWR)) < 0)
         DPLOG(ERROR) << "shutdown " << pipe_name_;
-      if (HANDLE_EINTR(close(new_pipe)) < 0)
+      if (IGNORE_EINTR(close(new_pipe)) < 0)
         DPLOG(ERROR) << "close " << pipe_name_;
       listener()->OnChannelDenied();
       return;
@@ -680,7 +696,7 @@ void Channel::ChannelImpl::OnFileCanReadWithoutBlocking(int fd) {
   // If we're a server and handshaking, then we want to make sure that we
   // only send our handshake message after we've processed the client's.
   // This gives us a chance to kill the client if the incoming handshake
-  // is invalid. This also flushes any closefd messagse.
+  // is invalid. This also flushes any closefd messages.
   if (!is_blocked_on_write_) {
     if (!ProcessOutgoingMessages()) {
       ClosePipeOnError();
@@ -927,7 +943,7 @@ bool Channel::ChannelImpl::ExtractFileDescriptorsFromMsghdr(msghdr* msg) {
 
 void Channel::ChannelImpl::ClearInputFDs() {
   for (size_t i = 0; i < input_fds_.size(); ++i) {
-    if (HANDLE_EINTR(close(input_fds_[i])) < 0)
+    if (IGNORE_EINTR(close(input_fds_[i])) < 0)
       PLOG(ERROR) << "close ";
   }
   input_fds_.clear();
@@ -996,7 +1012,7 @@ void Channel::ChannelImpl::HandleInternalMessage(const Message& msg) {
         NOTREACHED();
       if (hops == 0) {
         if (fds_to_close_.erase(fd) > 0) {
-          if (HANDLE_EINTR(close(fd)) < 0)
+          if (IGNORE_EINTR(close(fd)) < 0)
             PLOG(ERROR) << "close";
         } else {
           NOTREACHED();
@@ -1020,7 +1036,7 @@ void Channel::ChannelImpl::Close() {
     must_unlink_ = false;
   }
   if (server_listen_pipe_ != -1) {
-    if (HANDLE_EINTR(close(server_listen_pipe_)) < 0)
+    if (IGNORE_EINTR(close(server_listen_pipe_)) < 0)
       DPLOG(ERROR) << "close " << server_listen_pipe_;
     server_listen_pipe_ = -1;
     // Unregister libevent for the listening socket and close it.

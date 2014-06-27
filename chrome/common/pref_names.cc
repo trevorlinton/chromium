@@ -47,6 +47,11 @@ const char kManagedUserCustodianEmail[] = "profile.managed.custodian_email";
 // starts a session.
 const char kManagedUserCustodianName[] = "profile.managed.custodian_name";
 
+// Stores settings that can be modified both by a supervised user and their
+// manager. See ManagedUserSharedSettingsService for a description of
+// the format.
+const char kManagedUserSharedSettings[] = "profile.managed.shared_settings";
+
 // An integer that keeps track of the profile icon version. This allows us to
 // determine the state of the profile icon for icon format changes.
 const char kProfileIconVersion[] = "profile.icon_version";
@@ -295,26 +300,6 @@ const char kShowAppsShortcutInBookmarkBar[] = "bookmark_bar.show_apps_shortcut";
 // the bookmark editor.
 const char kBookmarkEditorExpandedNodes[] = "bookmark_editor.expanded_nodes";
 
-// Boolean controlling whether password generation is enabled (will allow users
-// to generated passwords on account creation pages).
-const char kPasswordGenerationEnabled[] = "password_generation.enabled";
-
-// Boolean that is true if the password manager is on (will record new
-// passwords and fill in known passwords).
-const char kPasswordManagerEnabled[] = "profile.password_manager_enabled";
-
-// Boolean controlling whether the password manager allows to retrieve passwords
-// in clear text.
-const char kPasswordManagerAllowShowPasswords[] =
-    "profile.password_manager_allow_show_passwords";
-
-// A list of numbers. Each number corresponds to one of the domains monitored
-// for save-password-prompt breakages. That number is a random index into
-// the array of groups containing the monitored domain. That group should be
-// used for reporting that domain.
-const char kPasswordManagerGroupsForDomains[] =
-    "profile.password_manager_groups_for_domains";
-
 // Booleans identifying whether normal and reverse auto-logins are enabled.
 const char kAutologinEnabled[] = "autologin.enabled";
 const char kReverseAutologinEnabled[] = "reverse_autologin.enabled";
@@ -326,6 +311,10 @@ const char kReverseAutologinRejectedEmailList[] =
 
 // Boolean that is true when SafeBrowsing is enabled.
 const char kSafeBrowsingEnabled[] = "safebrowsing.enabled";
+
+// Boolean that tell us whether malicious download feedback is enabled.
+const char kSafeBrowsingDownloadFeedbackEnabled[] =
+    "safebrowsing.download_feedback_enabled";
 
 // Boolean that is true when SafeBrowsing Malware Report is enabled.
 const char kSafeBrowsingReportingEnabled[] =
@@ -344,6 +333,14 @@ const char kIncognitoModeAvailability[] = "incognito.mode_availability";
 
 // Boolean that is true when Suggest support is enabled.
 const char kSearchSuggestEnabled[] = "search.suggest_enabled";
+
+#if defined(OS_ANDROID)
+// Integer indicating the Contextual Search enabled state.
+// -1 - opt-out (disabled)
+//  0 - undecided
+//  1 - opt-in (enabled)
+const char kContextualSearchEnabled[] = "search.contextual_search_enabled";
+#endif
 
 // Boolean that indicates whether the browser should put up a confirmation
 // window when the user is attempting to quit. Mac only.
@@ -494,18 +491,14 @@ const char kAlternateProtocolServers[] = "spdy.alternate_protocol";
 // Disables the listed protocol schemes.
 const char kDisabledSchemes[] = "protocol.disabled_schemes";
 
-// Blocks access to the listed host patterns.
-const char kUrlBlacklist[] = "policy.url_blacklist";
-
-// Allows access to the listed host patterns, as exceptions to the blacklist.
-const char kUrlWhitelist[] = "policy.url_whitelist";
-
 #if defined(OS_ANDROID)
 // Last time that a check for cloud policy management was done. This time is
 // recorded on Android so that retries aren't attempted on every startup.
 // Instead the cloud policy registration is retried at least 1 or 3 days later.
 const char kLastPolicyCheckTime[] = "policy.last_policy_check_time";
+#endif
 
+#if defined(OS_ANDROID) || defined(OS_IOS)
 // A list of bookmarks to include in a Managed Bookmarks root node. Each
 // list item is a dictionary containing a "name" and an "url" entry, detailing
 // the bookmark name and target URL respectively.
@@ -527,8 +520,8 @@ const char kMultipleProfilePrefMigration[] =
     "local_state.multiple_profile_prefs_version";
 
 // A boolean pref set to true if prediction of network actions is allowed.
-// Actions include DNS prefetching, TCP and SSL preconnection, and prerendering
-// of web pages.
+// Actions include DNS prefetching, TCP and SSL preconnection, prerendering
+// of web pages, and resource prefetching.
 // NOTE: The "dns_prefetching.enabled" value is used so that historical user
 // preferences are not lost.
 const char kNetworkPredictionEnabled[] = "dns_prefetching.enabled";
@@ -682,6 +675,7 @@ const char kLanguageXkbAutoRepeatInterval[] =
 
 // A boolean pref which determines whether the large cursor feature is enabled.
 const char kLargeCursorEnabled[] = "settings.a11y.large_cursor_enabled";
+
 // A boolean pref which determines whether the sticky keys feature is enabled.
 const char kStickyKeysEnabled[] = "settings.a11y.sticky_keys_enabled";
 // A boolean pref which determines whether spoken feedback is enabled.
@@ -696,8 +690,9 @@ const char kScreenMagnifierEnabled[] = "settings.a11y.screen_magnifier";
 const char kScreenMagnifierType[] = "settings.a11y.screen_magnifier_type2";
 // A double pref which determines a zooming scale of the screen magnifier.
 const char kScreenMagnifierScale[] = "settings.a11y.screen_magnifier_scale";
-// A boolean pref which determines whether virtual keyboard is enabled.
-// TODO(hashimoto): Remove this pref.
+// A boolean pref which determines whether the virtual keyboard is enabled for
+// accessibility.  This feature is separate from displaying an onscreen keyboard
+// due to lack of a physical keyboard.
 const char kVirtualKeyboardEnabled[] = "settings.a11y.virtual_keyboard";
 // A boolean pref which determines whether autoclick is enabled.
 const char kAutoclickEnabled[] = "settings.a11y.autoclick";
@@ -716,8 +711,8 @@ const char kLabsAdvancedFilesystemEnabled[] =
 // A boolean pref which turns on the mediaplayer.
 const char kLabsMediaplayerEnabled[] = "settings.labs.mediaplayer";
 
-// A boolean pref that turns on screen locker.
-const char kEnableScreenLock[] = "settings.enable_screen_lock";
+// A boolean pref that turns on automatic screen locking.
+const char kEnableAutoScreenLock[] = "settings.enable_screen_lock";
 
 // A boolean pref of whether to show mobile plan notifications.
 const char kShowPlanNotifications[] =
@@ -857,6 +852,16 @@ const char kOpenNetworkConfiguration[] = "onc";
 const char kRAConsentFirstTime[] = "settings.privacy.ra_consent";
 
 // A boolean pref recording whether user has dismissed the multiprofile
+// itroduction dialog show.
+const char kMultiProfileNeverShowIntro[] =
+    "settings.multi_profile_never_show_intro";
+
+// A boolean pref recording whether user has dismissed the multiprofile
+// teleport warning dialog show.
+const char kMultiProfileWarningShowDismissed[] =
+    "settings.multi_profile_warning_show_dismissed";
+
+// A boolean pref recording whether user has dismissed the multiprofile
 // notification.
 const char kMultiProfileNotificationDismissed[] =
     "settings.multi_profile_notification_dismissed";
@@ -865,6 +870,30 @@ const char kMultiProfileNotificationDismissed[] =
 // in a multiprofile session. See ChromeOsMultiProfileUserBehavior policy
 // for more details of the valid values.
 const char kMultiProfileUserBehavior[] = "settings.multiprofile_user_behavior";
+
+// A boolean preference indicating whether user has seen first-run tutorial
+// already.
+const char kFirstRunTutorialShown[] = "settings.first_run_tutorial_shown";
+
+// Indicates the amount of time for which a user authenticated via SAML can use
+// offline authentication against a cached password before being forced to go
+// through online authentication against GAIA again. The time is expressed in
+// seconds. A value of -1 indicates no limit, allowing the user to use offline
+// authentication indefinitely. The limit is in effect only if GAIA redirected
+// the user to a SAML IdP during the last online authentication.
+const char kSAMLOfflineSigninTimeLimit[] = "saml.offline_signin_time_limit";
+
+// A preference to keep track of the last time the user authenticated against
+// GAIA using SAML. The preference is updated whenever the user authenticates
+// against GAIA: If GAIA redirects to a SAML IdP, the preference is set to the
+// current time. If GAIA performs the authentication itself, the preference is
+// cleared. The time is expressed as the serialization obtained from
+// base::Time::ToInternalValue().
+const char kSAMLLastGAIASignInTime[] = "saml.last_gaia_sign_in_time";
+
+// The total number of seconds that the machine has spent sitting on the
+// OOBE screen.
+const char kTimeOnOobe[] = "settings.time_on_oobe";
 #endif  // defined(OS_CHROMEOS)
 
 // The disabled messages in IPC logging.
@@ -936,20 +965,9 @@ const char kCurrentThemeDisplayProperties[] = "extensions.theme.properties";
 // (showing developer packing tools and extensions details)
 const char kExtensionsUIDeveloperMode[] = "extensions.ui.developer_mode";
 
-// Integer pref that tracks the number of browser actions visible in the browser
-// actions toolbar.
-const char kExtensionToolbarSize[] = "extensions.toolbarsize";
-
-// A preference that tracks browser action toolbar configuration. This is a list
-// object stored in the Preferences file. The extensions are stored by ID.
-const char kExtensionToolbar[] = "extensions.toolbar";
-
 // Dictionary pref that tracks which command belongs to which
 // extension + named command pair.
 const char kExtensionCommands[] = "extensions.commands";
-
-// A list of known disabled extensions IDs.
-const char kExtensionKnownDisabled[] = "extensions.known_disabled";
 
 // Pref containing the directory for internal plugins as written to the plugins
 // list (below).
@@ -1081,9 +1099,6 @@ const char kPerHostZoomLevels[] = "profile.per_host_zoom_levels";
 // the dialog.
 const char kAutofillDialogAutofillDefault[] = "autofill.data_model_default";
 
-// Whether a user has ever paid with Wallet via the autofill dialog.
-const char kAutofillDialogHasPaidWithWallet[] = "autofill.has_paid_with_wallet";
-
 // Whether a user opted out of making purchases with Google Wallet; changed via
 // the autofill dialog's account chooser and set explicitly on dialog submission
 // (but not cancel). If this isn't set, the dialog assumes it's the first run.
@@ -1094,25 +1109,24 @@ const char kAutofillDialogPayWithoutWallet[] = "autofill.pay_without_wallet";
 const char kAutofillDialogWalletLocationAcceptance[] =
     "autofill.wallet_location_disclosure";
 
-// The number of times the dialog has been shown (all time).
-const char kAutofillDialogShowCount[] = "autofill.show_count";
-
 // Whether a user wants to save data locally in Autofill.
 const char kAutofillDialogSaveData[] = "autofill.save_data";
+
+// Whether the user has selected "Same as billing" for the shipping address when
+// using Google Wallet.
+const char kAutofillDialogWalletShippingSameAsBilling[] =
+    "autofill.wallet_shipping_same_as_billing";
 
 // The number of times the generated credit card bubble has been shown.
 const char kAutofillGeneratedCardBubbleTimesShown[] =
     "autofill.generated_card_bubble_times_shown";
 
 // A dictionary that tracks the defaults to be set on the next invocation
-// of the requestAutocomplete/Autocheckout dialog.
+// of the requestAutocomplete dialog.
 const char kAutofillDialogDefaults[] = "autofill.rac_dialog_defaults";
 
 // Modifying bookmarks is completely disabled when this is set to false.
 const char kEditBookmarksEnabled[] = "bookmarks.editing_enabled";
-
-// Boolean that is true when the translate feature is enabled.
-const char kEnableTranslate[] = "translate.enabled";
 
 #if !defined(OS_ANDROID)
 const char kPinnedTabs[] = "pinned_tabs";
@@ -1135,6 +1149,9 @@ const char kDefaultAudioCaptureDevice[] = "media.default_audio_capture_device";
 // The default video capture device used by the Media content setting.
 const char kDefaultVideoCaptureDevice[] = "media.default_video_capture_Device";
 
+// The salt used for creating random MediaSource IDs.
+const char kMediaDeviceIdSalt[] = "media.device_id_salt";
+
 // Preference to disable 3D APIs (WebGL, Pepper 3D).
 const char kDisable3DAPIs[] = "disable_3d_apis";
 
@@ -1146,9 +1163,6 @@ const char kEnableReferrers[] = "enable_referrers";
 
 // Whether to send the DNT header.
 const char kEnableDoNotTrack[] = "enable_do_not_track";
-
-// Boolean to enable reporting memory info to page.
-const char kEnableMemoryInfo[] = "enable_memory_info";
 
 // GL_VENDOR string.
 const char kGLVendorString[] = "gl_vendor_string";
@@ -1179,16 +1193,6 @@ const char kImportSearchEngine[] = "import_search_engine";
 // browser on first run.
 const char kImportSavedPasswords[] = "import_saved_passwords";
 
-#if !defined(OS_MACOSX) && !defined(OS_CHROMEOS) && defined(OS_POSIX)
-// The local profile id for this profile.
-const char kLocalProfileId[] = "profile.local_profile_id";
-
-// Whether passwords in external services (e.g. GNOME Keyring) have been tagged
-// with the local profile id yet. (Used for migrating to tagged passwords.)
-const char kPasswordsUseLocalProfileId[] =
-    "profile.passwords_use_local_profile_id";
-#endif
-
 // Profile avatar and name
 const char kProfileAvatarIndex[] = "profile.avatar_index";
 const char kProfileName[] = "profile.name";
@@ -1198,6 +1202,23 @@ const char kProfileIsManaged[] = "profile.is_managed";
 
 // The managed user ID.
 const char kManagedUserId[] = "profile.managed_user_id";
+
+// 64-bit integer serialization of the base::Time when the user's GAIA info
+// was last updated.
+const char kProfileGAIAInfoUpdateTime[] = "profile.gaia_info_update_time";
+
+// The URL from which the GAIA profile picture was downloaded. This is cached to
+// prevent the same picture from being downloaded multiple times.
+const char kProfileGAIAInfoPictureURL[] = "profile.gaia_info_picture_url";
+
+// Integer that specifies the number of times that we have shown the tutorial
+// card in the profile avatar bubble.
+const char kProfileAvatarTutorialShown[] =
+    "profile.avatar_bubble_tutorial_shown";
+
+// Boolean that specifies whether we have shown the user manager tutorial.
+const char kProfileUserManagerTutorialShown[] =
+    "profile.user_manager_tutorial_shown";
 
 // Indicates if we've already shown a notification that high contrast
 // mode is on, recommending high-contrast extensions and themes.
@@ -1242,33 +1263,37 @@ extern const char kMessageCenterEnabledSyncNotifierIds[] =
 // List pref containing synced notification sending services that are currently
 // enabled.
 extern const char kEnabledSyncedNotificationSendingServices[] =
-    "synced_notification.enabled_sending_services";
+    "synced_notification.enabled_remote_services";
 
 // List pref containing which synced notification sending services have already
 // been turned on once for the user (so we don't turn them on again).
 extern const char kInitializedSyncedNotificationSendingServices[] =
-    "synced_notification.initialized_sending_services";
+    "synced_notification.initialized_remote_services";
 
 // Boolean pref containing whether this is the first run of the Synced
 // Notification feature.
 extern const char kSyncedNotificationFirstRun[] =
     "synced_notification.first_run";
 
-// Boolean pref indicating the welcome notification was dismissed by the user.
+// Boolean pref indicating the Chrome Now welcome notification was dismissed
+// by the user. Syncable.
+// Note: This is now read-only. The welcome notification writes the _local
+// version, below.
 extern const char kWelcomeNotificationDismissed[] =
     "message_center.welcome_notification_dismissed";
+
+// Boolean pref indicating the Chrome Now welcome notification was dismissed
+// by the user on this machine.
+extern const char kWelcomeNotificationDismissedLocal[] =
+    "message_center.welcome_notification_dismissed_local";
 
 // Boolean pref indicating the welcome notification was previously popped up.
 extern const char kWelcomeNotificationPreviouslyPoppedUp[] =
     "message_center.welcome_notification_previously_popped_up";
 
-// Dictionary pref that keeps track of per-extension settings. The keys are
-// extension ids.
-const char kExtensionsPref[] = "extensions.settings";
-
-// String pref for what version chrome was last time the extension prefs were
-// loaded.
-const char kExtensionsLastChromeVersion[] = "extensions.last_chrome_version";
+// Integer pref containing the expiration timestamp of the welcome notification.
+extern const char kWelcomeNotificationExpirationTimestamp[] =
+    "message_center.welcome_notification_expiration_timestamp";
 
 // Boolean pref that determines whether the user can enter fullscreen mode.
 // Disabling fullscreen mode also makes kiosk mode unavailable on desktop
@@ -1280,10 +1305,26 @@ extern const char kFullscreenAllowed[] = "fullscreen.allowed";
 const char kLocalDiscoveryNotificationsEnabled[] =
     "local_discovery.notifications_enabled";
 
+// A timestamp (stored in base::Time::ToInternalValue format) of the last time
+// a preference was reset.
+const char kPreferenceResetTime[] = "prefs.preference_reset_time";
+
 // String that indicates if the Profile Reset prompt has already been shown to
 // the user. Used both in user preferences and local state, in the latter, it is
 // actually a dictionary that maps profile keys to before-mentioned strings.
 const char kProfileResetPromptMemento[] = "profile.reset_prompt_memento";
+
+// The GCM channel's enabled state.
+const char kGCMChannelEnabled[] = "gcm.channel_enabled";
+
+// Whether Easy Unlock is enabled.
+extern const char kEasyUnlockEnabled[] = "easy_unlock.enabled";
+
+// Whether to show the Easy Unlock first run tutorial.
+extern const char kEasyUnlockShowTutorial[] = "easy_unlock.show_tutorial";
+
+// Preference storing Easy Unlock pairing data.
+extern const char kEasyUnlockPairing[] = "easy_unlock.pairing";
 
 // *************** LOCAL STATE ***************
 // These are attached to the machine/installation
@@ -1324,29 +1365,45 @@ const char kSSLVersionMax[] = "ssl.version_max";
 const char kCipherSuiteBlacklist[] = "ssl.cipher_suites.blacklist";
 const char kEnableOriginBoundCerts[] = "ssl.origin_bound_certs.enabled";
 const char kDisableSSLRecordSplitting[] = "ssl.ssl_record_splitting.disabled";
-const char kEnableUnrestrictedSSL3Fallback[] =
-    "ssl.unrestricted_ssl3_fallback.enabled";
 
 // A boolean pref of the EULA accepted flag.
 const char kEulaAccepted[] = "EulaAccepted";
 
 // The metrics client GUID, entropy source and session ID.
-const char kMetricsClientID[] = "user_experience_metrics.client_id";
+// Note: The names client_id2 and low_entropy_source2 are a result of creating
+// new prefs to do a one-time reset of the previous values.
+const char kMetricsClientID[] = "user_experience_metrics.client_id2";
 const char kMetricsSessionID[] = "user_experience_metrics.session_id";
 const char kMetricsLowEntropySource[] =
-    "user_experience_metrics.low_entropy_source";
+    "user_experience_metrics.low_entropy_source2";
 const char kMetricsPermutedEntropyCache[] =
     "user_experience_metrics.permuted_entropy_cache";
 
-// Date/time when the current metrics profile ID was created
-// (which hopefully corresponds to first run).
-const char kMetricsClientIDTimestamp[] =
-    "user_experience_metrics.client_id_timestamp";
+// Old client id and low entropy source values, cleared the first time this
+// version is launched.
+// TODO(asvitkine): Delete these after a few releases have gone by and old
+// values have been cleaned up. http://crbug.com/357704
+const char kMetricsOldClientID[] = "user_experience_metrics.client_id";
+const char kMetricsOldLowEntropySource[] =
+    "user_experience_metrics.low_entropy_source";
 
 // Boolean that specifies whether or not crash reporting and metrics reporting
 // are sent over the network for analysis.
 const char kMetricsReportingEnabled[] =
     "user_experience_metrics.reporting_enabled";
+// Date/time when the user opted in to UMA and generated the client id for the
+// very first time (local machine time, stored as a 64-bit time_t value).
+const char kMetricsReportingEnabledTimestamp[] =
+    "user_experience_metrics.client_id_timestamp";
+
+// A machine ID used to detect when underlying hardware changes. It is only
+// stored locally and never transmitted in metrics reports.
+const char kMetricsMachineId[] = "user_experience_metrics.machine_id";
+
+// Boolean that indicates a cloned install has been detected and the metrics
+// client id and low entropy source should be reset.
+const char kMetricsResetIds[] =
+    "user_experience_metrics.reset_metrics_ids";
 
 // Boolean that specifies whether or not crash reports are sent
 // over the network for analysis.
@@ -1388,8 +1445,11 @@ const char kVariationsSeed[] = "variations_seed";
 // 64-bit integer serialization of the base::Time from the last seed received.
 const char kVariationsSeedDate[] = "variations_seed_date";
 
-// SHA-1 hash of the serialized variations seed data.
+// SHA-1 hash of the serialized variations seed data (hex encoded).
 const char kVariationsSeedHash[] = "variations_seed_hash";
+
+// Digital signature of the binary variations seed data, base64-encoded.
+const char kVariationsSeedSignature[] = "variations_seed_signature";
 
 // An enum value to indicate the execution phase the browser was in.
 const char kStabilityExecutionPhase[] =
@@ -1429,6 +1489,14 @@ const char kStabilityIncompleteSessionEndCount[] =
 // Number of times a page load event occurred since the last report.
 const char kStabilityPageLoadCount[] =
     "user_experience_metrics.stability.page_load_count";
+
+// Base64 encoded serialized UMA system profile proto from the previous session.
+const char kStabilitySavedSystemProfile[] =
+    "user_experience_metrics.stability.saved_system_profile";
+
+// SHA-1 hash of the serialized UMA system profile proto (hex encoded).
+const char kStabilitySavedSystemProfileHash[] =
+    "user_experience_metrics.stability.saved_system_profile_hash";
 
 // Number of times a renderer process crashed since the last report.
 const char kStabilityRendererCrashCount[] =
@@ -1475,6 +1543,29 @@ const char kStabilityKernelCrashCount[] =
 // last report.
 const char kStabilitySystemUncleanShutdownCount[] =
     "user_experience_metrics.stability.system_unclean_shutdowns";
+
+#if defined(OS_ANDROID)
+// Activity type that is currently in the foreground for the UMA session.
+// Uses the ActivityTypeIds::Type enum.
+const char kStabilityForegroundActivityType[] =
+    "user_experience_metrics.stability.current_foreground_activity_type";
+
+// Tracks which Activities were launched during the last session.
+// See |metrics_service_android.cc| for its usage.
+const char kStabilityLaunchedActivityFlags[] =
+    "user_experience_metrics.stability.launched_activity_flags";
+
+// List pref: Counts how many times each Activity was launched.
+// Indexed into by ActivityTypeIds::Type.
+const char kStabilityLaunchedActivityCounts[] =
+    "user_experience_metrics.stability.launched_activity_counts";
+
+// List pref: Counts how many times each Activity type was in the foreground
+// when a UMA session failed to be shut down properly.
+// Indexed into by ActivityTypeIds::Type.
+const char kStabilityCrashedActivityCounts[] =
+    "user_experience_metrics.stability.crashed_activity_counts";
+#endif
 
 // Number of times the browser has been able to register crash reporting.
 const char kStabilityBreakpadRegistrationSuccess[] =
@@ -1583,9 +1674,6 @@ const char kPluginMessageResponseTimeout[] =
 // String which represents the dictionary name for our spell-checker.
 const char kSpellCheckDictionary[] = "spellcheck.dictionary";
 
-// Boolean pref indicating whether the spelling confirm dialog has been shown.
-const char kSpellCheckConfirmDialogShown[] = "spellcheck.confirm_dialog_shown";
-
 // String which represents whether we use the spelling service.
 const char kSpellCheckUseSpellingService[] = "spellcheck.use_spelling_service";
 
@@ -1671,68 +1759,34 @@ const char kDisableExtensions[] = "extensions.disabled";
 // Whether the plugin finder that lets you install missing plug-ins is enabled.
 const char kDisablePluginFinder[] = "plugins.disable_plugin_finder";
 
-// Integer boolean representing the width (in pixels) of the container for
-// browser actions.
-const char kBrowserActionContainerWidth[] =
-    "extensions.browseractions.container.width";
-
-// Time of the last, and next scheduled, extensions auto-update checks.
-const char kLastExtensionsUpdateCheck[] = "extensions.autoupdate.last_check";
-const char kNextExtensionsUpdateCheck[] = "extensions.autoupdate.next_check";
-
-// Whether we have run the extension-alert system (see ExtensionGlobalError)
-// at least once for this profile.
-const char kExtensionAlertsInitializedPref[] = "extensions.alerts.initialized";
-
-// The sites that are allowed to install extensions. These sites should be
-// allowed to install extensions without the scary dangerous downloads bar.
-// Also, when off-store-extension installs are disabled, these sites are exempt.
-const char kExtensionAllowedInstallSites[] = "extensions.allowed_install_sites";
-
-// A list of allowed extension types. Extensions can only be installed if their
-// type is on this whitelist or alternatively on kExtensionInstallAllowList or
-// kExtensionInstallForceList.
-const char kExtensionAllowedTypes[] = "extensions.allowed_types";
-
-// Version number of last blacklist check.
-const char kExtensionBlacklistUpdateVersion[] =
-    "extensions.blacklistupdate.version";
-
-// A whitelist of extension ids the user can install: exceptions from the
-// following blacklist.
-const char kExtensionInstallAllowList[] = "extensions.install.allowlist";
-
-// A blacklist, containing extensions the user cannot install. This list can
-// contain "*" meaning all extensions. This list should not be confused with the
-// extension blacklist, which is Google controlled.
-const char kExtensionInstallDenyList[] = "extensions.install.denylist";
-
-// A list containing extensions that Chrome will silently install
-// at startup time. It is a list of strings, each string contains
-// an extension ID and an update URL, delimited by a semicolon.
-// This preference is set by an admin policy, and meant to be only
-// accessed through extensions::ExternalPolicyProvider.
-const char kExtensionInstallForceList[] = "extensions.install.forcelist";
-
-// Indicates on-disk data might have skeletal data that needs to be cleaned
-// on the next start of the browser.
-const char kExtensionStorageGarbageCollect[] =
-    "extensions.storage.garbagecollect";
+// Customized app page names that appear on the New Tab Page.
+const char kNtpAppPageNames[] = "ntp.app_page_names";
 
 // Keeps track of which sessions are collapsed in the Other Devices menu.
 const char kNtpCollapsedForeignSessions[] = "ntp.collapsed_foreign_sessions";
 
-// New Tab Page URLs that should not be shown as most visited thumbnails.
-const char kNtpMostVisitedURLsBlacklist[] = "ntp.most_visited_blacklist";
+// Keeps track of recently closed tabs collapsed state in the Other Devices
+// menu.
+const char kNtpCollapsedRecentlyClosedTabs[] =
+    "ntp.collapsed_recently_closed_tabs";
 
-// Last time of update of promo_resource_cache.
-const char kNtpPromoResourceCacheUpdate[] = "ntp.promo_resource_cache_update";
+// Keeps track of snapshot documents collapsed state in the Other Devices menu.
+const char kNtpCollapsedSnapshotDocument[] = "ntp.collapsed_snapshot_document";
 
-// Serves tips for the NTP.
-const char kNtpTipsResourceServer[] = "ntp.tips_resource_server";
+// Keeps track of sync promo collapsed state in the Other Devices menu.
+const char kNtpCollapsedSyncPromo[] = "ntp.collapsed_sync_promo";
 
 // Serves dates to determine display of elements on the NTP.
 const char kNtpDateResourceServer[] = "ntp.date_resource_server";
+
+// New Tab Page URLs that should not be shown as most visited thumbnails.
+const char kNtpMostVisitedURLsBlacklist[] = "ntp.most_visited_blacklist";
+
+// True if a desktop sync session was found for this user.
+const char kNtpPromoDesktopSessionFound[] = "ntp.promo_desktop_session_found";
+
+// Last time of update of promo_resource_cache.
+const char kNtpPromoResourceCacheUpdate[] = "ntp.promo_resource_cache_update";
 
 // Which bookmarks folder should be visible on the new tab page v4.
 const char kNtpShownBookmarksFolder[] = "ntp.shown_bookmarks_folder";
@@ -1740,14 +1794,11 @@ const char kNtpShownBookmarksFolder[] = "ntp.shown_bookmarks_folder";
 // Which page should be visible on the new tab page v4
 const char kNtpShownPage[] = "ntp.shown_page";
 
-// True if a desktop sync session was found for this user.
-const char kNtpPromoDesktopSessionFound[] = "ntp.promo_desktop_session_found";
+// Serves tips for the NTP.
+const char kNtpTipsResourceServer[] = "ntp.tips_resource_server";
 
 // Boolean indicating whether the web store is active for the current locale.
 const char kNtpWebStoreEnabled[] = "ntp.webstore_enabled";
-
-// Customized app page names that appear on the New Tab Page.
-const char kNtpAppPageNames[] = "ntp.app_page_names";
 
 // A private RSA key for ADB handshake.
 const char kDevToolsAdbKey[] = "devtools.adb_key";
@@ -1759,17 +1810,11 @@ const char kDevToolsDisabled[] = "devtools.disabled";
 const char kDevToolsDiscoverUsbDevicesEnabled[] =
     "devtools.discover_usb_devices";
 
-// A string specifying the dock location (either 'bottom' or 'right').
-const char kDevToolsDockSide[] = "devtools.dock_side";
-
 // Maps of files edited locally using DevTools.
 const char kDevToolsEditedFiles[] = "devtools.edited_files";
 
 // List of file system paths added in DevTools.
 const char kDevToolsFileSystemPaths[] = "devtools.file_system_paths";
-
-// Integer location of the horizontal split bar in the browser view.
-const char kDevToolsHSplitLocation[] = "devtools.split_location";
 
 // A boolean specifying whether dev tools window should be opened docked.
 const char kDevToolsOpenDocked[] = "devtools.open_docked";
@@ -1791,75 +1836,11 @@ const char kDevToolsPortForwardingConfig[] = "devtools.port_forwarding_config";
 const char kDevToolsRemoteEnabled[] = "devtools.remote_enabled";
 #endif
 
-// Integer location of the vertical split bar in the browser view.
-const char kDevToolsVSplitLocation[] = "devtools.v_split_location";
-
 #if defined(OS_ANDROID) || defined(OS_IOS)
 // A boolean specifying whether a SPDY proxy is enabled.
 const char kSpdyProxyAuthEnabled[] = "spdy_proxy.enabled";
 const char kSpdyProxyAuthWasEnabledBefore[] = "spdy_proxy.was_enabled_before";
 #endif  // defined(OS_ANDROID) || defined(OS_IOS)
-
-// Boolean which stores if the user is allowed to signin to chrome.
-const char kSigninAllowed[] = "signin.allowed";
-
-// 64-bit integer serialization of the base::Time when the last sync occurred.
-const char kSyncLastSyncedTime[] = "sync.last_synced_time";
-
-// Boolean specifying whether the user finished setting up sync.
-const char kSyncHasSetupCompleted[] = "sync.has_setup_completed";
-
-// Boolean specifying whether to automatically sync all data types (including
-// future ones, as they're added).  If this is true, the following preferences
-// (kSyncBookmarks, kSyncPasswords, etc.) can all be ignored.
-const char kSyncKeepEverythingSynced[] = "sync.keep_everything_synced";
-
-// Booleans specifying whether the user has selected to sync the following
-// datatypes.
-const char kSyncAppNotifications[] = "sync.app_notifications";
-const char kSyncAppSettings[] = "sync.app_settings";
-const char kSyncApps[] = "sync.apps";
-const char kSyncAutofillProfile[] = "sync.autofill_profile";
-const char kSyncAutofill[] = "sync.autofill";
-const char kSyncBookmarks[] = "sync.bookmarks";
-const char kSyncDictionary[] = "sync.dictionary";
-const char kSyncExtensionSettings[] = "sync.extension_settings";
-const char kSyncExtensions[] = "sync.extensions";
-const char kSyncFaviconImages[] = "sync.favicon_images";
-const char kSyncFaviconTracking[] = "sync.favicon_tracking";
-const char kSyncHistoryDeleteDirectives[] = "sync.history_delete_directives";
-const char kSyncManagedUserSettings[] = "sync.managed_user_settings";
-const char kSyncManagedUsers[] = "sync.managed_users";
-const char kSyncArticles[] = "sync.articles";
-const char kSyncPasswords[] = "sync.passwords";
-const char kSyncPreferences[] = "sync.preferences";
-const char kSyncPriorityPreferences[] = "sync.priority_preferences";
-const char kSyncSearchEngines[] = "sync.search_engines";
-const char kSyncSessions[] = "sync.sessions";
-const char kSyncSyncedNotifications[] = "sync.synced_notifications";
-const char kSyncTabs[] = "sync.tabs";
-const char kSyncThemes[] = "sync.themes";
-const char kSyncTypedUrls[] = "sync.typed_urls";
-
-// Boolean used by enterprise configuration management in order to lock down
-// sync.
-const char kSyncManaged[] = "sync.managed";
-
-// Boolean to prevent sync from automatically starting up.  This is
-// used when sync is disabled by the user via the privacy dashboard.
-const char kSyncSuppressStart[] = "sync.suppress_start";
-
-// List of the currently acknowledged set of sync types, used to figure out
-// if a new sync type has rolled out so we can notify the user.
-const char kSyncAcknowledgedSyncTypes[] = "sync.acknowledged_types";
-
-// Dictionary from sync model type (as an int) to max invalidation
-// version (int64 represented as a string).
-const char kSyncMaxInvalidationVersions[] = "sync.max_invalidation_versions";
-
-// The GUID session sync will use to identify this client, even across sync
-// disable/enable events.
-const char kSyncSessionsGUID[] = "sync.session_sync_guid";
 
 // An ID to uniquely identify this client to the invalidator service.
 const char kInvalidatorClientId[] = "invalidator.client_id";
@@ -1868,35 +1849,14 @@ const char kInvalidatorClientId[] = "invalidator.client_id";
 // The value is base 64 encoded.
 const char kInvalidatorInvalidationState[] = "invalidator.invalidation_state";
 
-// List of {source, name, max invalidation version} tuples. source is an int,
-// while max invalidation version is an int64; both are stored as string
-// representations though.
-const char kInvalidatorMaxInvalidationVersions[] =
-    "invalidator.max_invalidation_versions";
+// List of received invalidations that have not been acted on by any clients
+// yet.  Used to keep invalidation clients in sync in case of a restart.
+const char kInvalidatorSavedInvalidations[] = "invalidator.saved_invalidations";
 
-// A string that can be used to restore sync encryption infrastructure on
-// startup so that the user doesn't need to provide credentials on each start.
-const char kSyncEncryptionBootstrapToken[] =
-    "sync.encryption_bootstrap_token";
-
-// Same as kSyncEncryptionBootstrapToken, but derived from the keystore key,
-// so we don't have to do a GetKey command at restart.
-const char kSyncKeystoreEncryptionBootstrapToken[] =
-    "sync.keystore_encryption_bootstrap_token";
-
-// Boolean tracking whether the user chose to specify a secondary encryption
-// passphrase.
-const char kSyncUsingSecondaryPassphrase[] = "sync.using_secondary_passphrase";
-
-// String the identifies the last user that logged into sync and other
-// google services. As opposed to kGoogleServicesUsername, this value is not
-// cleared on signout, but while the user is signed in the two values will
-// be the same.
-const char kGoogleServicesLastUsername[] = "google.services.last_username";
-
-// String that identifies the current user logged into sync and other google
-// services.
-const char kGoogleServicesUsername[] = "google.services.username";
+// Boolean indicating that TiclInvalidationService should use GCM channel.
+// False or lack of settings means XMPPPushClient channel.
+const char kInvalidationServiceUseGCMChannel[] =
+    "invalidation_service.use_gcm_channel";
 
 // Local state pref containing a string regex that restricts which accounts
 // can be used to log in to chrome (e.g. "*@google.com"). If missing or blank,
@@ -1925,13 +1885,6 @@ const char kSignInPromoShowOnFirstRunAllowed[] =
 // The bubble is used to confirm that the user is signed into sync.
 const char kSignInPromoShowNTPBubble[] = "sync_promo.show_ntp_bubble";
 #endif
-
-// Time when the user's GAIA info was last updated (represented as an int64).
-const char kProfileGAIAInfoUpdateTime[] = "profile.gaia_info_update_time";
-
-// The URL from which the GAIA profile picture was downloaded. This is cached to
-// prevent the same picture from being downloaded multiple times.
-const char kProfileGAIAInfoPictureURL[] = "profile.gaia_info_picture_url";
 
 // Create web application shortcut dialog preferences.
 const char kWebAppCreateOnDesktop[] = "browser.web_app.create_on_desktop";
@@ -1969,6 +1922,10 @@ const char kRemoteAccessHostRequireCurtain[] =
 // Boolean controlling whether curtaining is required when connecting to a host.
 const char kRemoteAccessHostAllowClientPairing[] =
     "remote_access.host_allow_client_pairing";
+
+// Whether Chrome Remote Desktop can proxy gnubby authentication traffic.
+const char kRemoteAccessHostAllowGnubbyAuth[] =
+    "remote_access.host_allow_gnubby_auth";
 
 // The last used printer and its settings.
 const char kPrintPreviewStickySettings[] =
@@ -2060,6 +2017,19 @@ const char kDailyOriginalContentLengthWithDataReductionProxyEnabled[] =
 const char kDailyContentLengthWithDataReductionProxyEnabled[] =
     "data_reduction.daily_received_length_with_data_reduction_proxy_enabled";
 
+const char kDailyContentLengthHttpsWithDataReductionProxyEnabled[] =
+    "data_reduction.daily_received_length_https_with_"
+    "data_reduction_proxy_enabled";
+const char kDailyContentLengthShortBypassWithDataReductionProxyEnabled[] =
+    "data_reduction.daily_received_length_short_bypass_with_"
+    "data_reduction_proxy_enabled";
+const char kDailyContentLengthLongBypassWithDataReductionProxyEnabled[] =
+    "data_reduction.daily_received_length_long_bypass_with_"
+    "data_reduction_proxy_enabled";
+const char kDailyContentLengthUnknownWithDataReductionProxyEnabled[] =
+    "data_reduction.daily_received_length_unknown_with_"
+    "data_reduction_proxy_enabled";
+
 // A List pref that contains daily totals of the original size of all HTTP/HTTPS
 // that was received via the data reduction proxy.
 const char kDailyOriginalContentLengthViaDataReductionProxy[] =
@@ -2101,12 +2071,17 @@ const char kVideoCaptureAllowedUrls[] = "hardware.video_capture_allowed_urls";
 
 // A boolean pref that controls the enabled-state of hotword search voice
 // trigger.
-const char kHotwordSearchEnabled[] = "hotword.search_enabled";
+const char kHotwordSearchEnabled[] = "hotword.search_enabled_2";
 
-// A boolean pref that controls the enabled-state of hotword search voice
-// trigger when using incognito mode.
-const char kHotwordSearchIncognitoEnabled[] =
-    "hotword.incognito_search_enabled";
+// An integer pref that keeps track of how many times the opt in popup for
+// hotword void search has been shown to the user. After this pref has reached
+// the maximum number of times as defined by the HotwordService, the popup is no
+// longer shown.
+const char kHotwordOptInPopupTimesShown[] = "hotword.opt_in_popup_times_shown";
+
+// A boolean pref that controls whether the sound of "Ok, Google" plus a few
+// seconds of audio data before is sent back to improve voice search.
+const char kHotwordAudioLoggingEnabled[] = "hotword.audio_logging_enabled";
 
 #if defined(OS_ANDROID)
 // Boolean that controls the global enabled-state of protected media identifier.
@@ -2146,10 +2121,6 @@ const char kDeviceActivityTimes[] = "device_status.activity_times";
 // A pref holding the last known location when device location reporting is
 // enabled.
 const char kDeviceLocation[] = "device_status.location";
-
-// A string that is used to store first-time sync startup after once sync is
-// disabled. This will be refreshed every sign-in.
-const char kSyncSpareBootstrapToken[] = "sync.spare_bootstrap_token";
 
 // A pref holding the value of the policy used to disable mounting of external
 // storage for the user.
@@ -2214,6 +2185,14 @@ const char kOobeComplete[] = "OobeComplete";
 // A boolean pref of the device registered flag (second part after first login).
 const char kDeviceRegistered[] = "DeviceRegistered";
 
+// List of usernames that used certificates pushed by policy before.
+// This is used to prevent these users from joining multiprofile sessions.
+const char kUsedPolicyCertificates[] = "policy.used_policy_certificates";
+
+// A dictionary containing server-provided device state pulled form the cloud
+// after recovery.
+const char kServerBackedDeviceState[] = "server_backed_device_state";
+
 #endif
 
 // Whether there is a Flash version installed that supports clearing LSO data.
@@ -2244,8 +2223,12 @@ const char kPerformanceTracingEnabled[] =
 // Value of the enums in TabStrip::LayoutType as an int.
 const char kTabStripLayoutType[] = "tab_strip_layout_type";
 
-// Indicates that factory reset was requested from options page.
+// Indicates that factory reset was requested from options page or reset screen.
 const char kFactoryResetRequested[] = "FactoryResetRequested";
+
+// Indicates that rollback was requested alongside with factory reset.
+// Makes sense only if kFactoryResetRequested is true.
+const char kRollbackRequested[] = "RollbackRequested";
 
 // Boolean recording whether we have showed a balloon that calls out the message
 // center for desktop notifications.
@@ -2396,6 +2379,13 @@ const char kRecoveryComponentVersion[] = "recovery_component.version";
 // troubleshooting.
 const char kComponentUpdaterState[] = "component_updater.state";
 
+// A boolean where true means that the browser has previously attempted to
+// enable autoupdate and failed, so the next out-of-date browser start should
+// not prompt the user to enable autoupdate, it should offer to reinstall Chrome
+// instead.
+const char kAttemptedToEnableAutoupdate[] =
+    "browser.attempted_to_enable_autoupdate";
+
 // The next media gallery ID to assign.
 const char kMediaGalleriesUniqueId[] = "media_galleries.gallery_id";
 
@@ -2403,6 +2393,9 @@ const char kMediaGalleriesUniqueId[] = "media_galleries.gallery_id";
 // gallery.
 const char kMediaGalleriesRememberedGalleries[] =
     "media_galleries.remembered_galleries";
+
+// The last time a media scan completed.
+const char kMediaGalleriesLastScanTime[] = "media_galleries.last_scan_time";
 
 #if defined(USE_ASH)
 // |kShelfAlignment| and |kShelfAutoHideBehavior| have a local variant. The
@@ -2419,20 +2412,25 @@ const char kShelfAlignmentLocal[] = "shelf_alignment_local";
 const char kShelfAutoHideBehavior[] = "auto_hide_behavior";
 const char kShelfAutoHideBehaviorLocal[] = "auto_hide_behavior_local";
 // This value stores chrome icon's index in the launcher. This should be handled
-// separately with app shortcut's index because of LauncherModel's backward
+// separately with app shortcut's index because of ShelfModel's backward
 // compatability. If we add chrome icon index to |kPinnedLauncherApps|, its
 // index is also stored in the |kPinnedLauncherApp| pref. It may causes
 // creating two chrome icons.
 const char kShelfChromeIconIndex[] = "shelf_chrome_icon_index";
-
-const char kPinnedLauncherApps[] = "pinned_launcher_apps";
-// Boolean value indicating whether to show a logout button in the ash tray.
-const char kShowLogoutButtonInTray[] = "show_logout_button_in_tray";
 // Dictionary value that holds per-display preference of shelf alignment and
 // auto-hide behavior. Key of the dictionary is the id of the display, and
 // its value is a dictionary whose keys are kShelfAlignment and
 // kShelfAutoHideBehavior.
 const char kShelfPreferences[] = "shelf_preferences";
+
+// Integer value in milliseconds indicating the length of time for which a
+// confirmation dialog should be shown when the user presses the logout button.
+// A value of 0 indicates that logout should happen immediately, without showing
+// a confirmation dialog.
+const char kLogoutDialogDurationMs[] = "logout_dialog_duration_ms";
+const char kPinnedLauncherApps[] = "pinned_launcher_apps";
+// Boolean value indicating whether to show a logout button in the ash tray.
+const char kShowLogoutButtonInTray[] = "show_logout_button_in_tray";
 #endif
 
 #if defined(USE_AURA)
@@ -2464,8 +2462,6 @@ const char kMinRailBreakVelocity[] =
     "gesture.min_rail_break_velocity";
 const char kMinScrollDeltaSquared[] =
     "gesture.min_scroll_delta_squared";
-const char kMinScrollSuccessiveVelocityEvents[] =
-    "gesture.min_scroll_successive_velocity_events";
 const char kMinSwipeSpeed[] =
     "gesture.min_swipe_speed";
 const char kMinTouchDownDurationInSecondsForClick[] =
@@ -2516,10 +2512,6 @@ const char kOverscrollHorizontalResistThreshold[] =
     "overscroll.horizontal_resist_threshold";
 const char kOverscrollVerticalResistThreshold[] =
     "overscroll.vertical_resist_threshold";
-// TODO(mohsen): Remove following pref in M32. By then, gesture prefs will have
-// been cleared for majority of the users: crbug.com/269292.
-// A temporary pref to do a one-time wipe of gesture preferences.
-const char kGestureConfigIsTrustworthy[] = "gesture.config_is_trustworthy";
 #endif
 
 // Counts how many more times the 'profile on a network share' warning should be
@@ -2540,7 +2532,7 @@ const char kRLZDisabled[] = "rlz.disabled";
 #if defined(ENABLE_APP_LIST)
 // The directory in user data dir that contains the profile to be used with the
 // app launcher.
-extern const char kAppListProfile[] = "app_list.profile";
+const char kAppListProfile[] = "app_list.profile";
 
 // Whether to show the app list on a browser relaunch. Used when switching out
 // of metro mode after a user gesture requests showing the app list.
@@ -2548,17 +2540,24 @@ const char kRestartWithAppList[] = "app_list.show_on_relaunch";
 
 // The number of times the app launcher was launched since last ping and
 // the time of the last ping.
-extern const char kAppListLaunchCount[] = "app_list.launch_count";
-extern const char kLastAppListLaunchPing[] = "app_list.last_launch_ping";
+const char kAppListLaunchCount[] = "app_list.launch_count";
+const char kLastAppListLaunchPing[] = "app_list.last_launch_ping";
 
 // The number of times the an app was launched from the app launcher since last
 // ping and the time of the last ping.
-extern const char kAppListAppLaunchCount[] = "app_list.app_launch_count";
-extern const char kLastAppListAppLaunchPing[] = "app_list.last_app_launch_ping";
+const char kAppListAppLaunchCount[] = "app_list.app_launch_count";
+const char kLastAppListAppLaunchPing[] = "app_list.last_app_launch_ping";
 
 // A boolean that tracks whether the user has ever enabled the app launcher.
 const char kAppLauncherHasBeenEnabled[] =
     "apps.app_launcher.has_been_enabled";
+
+// An enum indicating how the app launcher was enabled. E.g., via webstore, app
+// install, command line, etc. For UMA.
+const char kAppListEnableMethod[] = "app_list.how_enabled";
+
+// The time that the app launcher was enabled. Cleared when UMA is recorded.
+const char kAppListEnableTime[] = "app_list.when_enabled";
 
 // TODO(calamity): remove this pref since app launcher will always be
 // installed.
@@ -2596,10 +2595,13 @@ const char kDRMSalt[] = "settings.privacy.drm_salt";
 // enables the use of remote attestation for content protection.
 const char kEnableDRM[] = "settings.privacy.drm_enabled";
 
-// A boolean per-profile pref that signals if the watchdog extension is
+// An integer per-profile pref that signals if the watchdog extension is
 // installed and active. We need to know if the watchdog extension active for
 // ActivityLog initialization before the extension system is initialized.
 const char kWatchdogExtensionActive[] =
+    "profile.extensions.activity_log.num_consumers_active";
+// The old version was a bool.
+const char kWatchdogExtensionActiveOld[] =
     "profile.extensions.activity_log.watchdog_extension_active";
 
 // A dictionary pref which maps profile names to dictionary values which hold
@@ -2619,5 +2621,8 @@ const char kNetworkTimeMapping[] = "profile.network_time_mapping";
 // title or an empty string if the bookmark node was removed.
 const char kPartnerBookmarkMappings[] = "partnerbookmarks.mappings";
 #endif
+
+// Whether DNS Quick Check is disabled in proxy resolution.
+const char kQuickCheckEnabled[] = "proxy.quick_check_enabled";
 
 }  // namespace prefs

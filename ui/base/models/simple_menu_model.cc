@@ -69,11 +69,11 @@ void SimpleMenuModel::Delegate::ExecuteCommand(
 void SimpleMenuModel::Delegate::MenuWillShow(SimpleMenuModel* /*source*/) {
 }
 
-void SimpleMenuModel::Delegate::MenuClosed(SimpleMenuModel* /*source*/) {
-}
-
 bool SimpleMenuModel::Delegate::HasIcon(int command_id) {
   return false;
+}
+
+void SimpleMenuModel::Delegate::MenuClosed(SimpleMenuModel* /*source*/) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -250,10 +250,6 @@ void SimpleMenuModel::RemoveItemAt(int index) {
 void SimpleMenuModel::SetIcon(int index, const gfx::Image& icon) {
   items_[ValidateItemIndex(index)].icon = icon;
   MenuItemsChanged();
-}
-
-void SimpleMenuModel::RemoveAt(int index) {
-  items_.erase(items_.begin() + index);
 }
 
 void SimpleMenuModel::SetSublabel(int index, const base::string16& sublabel) {

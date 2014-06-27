@@ -44,6 +44,8 @@ QuicServer::QuicServer()
   // Use hardcoded crypto parameters for now.
   config_.SetDefaults();
   config_.set_initial_round_trip_time_us(kMaxInitialRoundTripTimeUs, 0);
+  config_.set_server_initial_congestion_window(kMaxInitialWindow,
+                                               kDefaultInitialWindow);
   Initialize();
 }
 
@@ -131,7 +133,7 @@ bool QuicServer::Listen(const IPEndPoint& address) {
     return false;
   }
 
-  LOG(INFO) << "Listening on " << address.ToString();
+  DVLOG(1) << "Listening on " << address.ToString();
   if (port_ == 0) {
     SockaddrStorage storage;
     IPEndPoint server_address;
@@ -141,13 +143,13 @@ bool QuicServer::Listen(const IPEndPoint& address) {
       return false;
     }
     port_ = server_address.port();
-    LOG(INFO) << "Kernel assigned port is " << port_;
+    DVLOG(1) << "Kernel assigned port is " << port_;
   }
 
   epoll_server_.RegisterFD(fd_, this, kEpollFlags);
-  dispatcher_.reset(new QuicDispatcher(config_, crypto_config_,
-                                       supported_versions_,
-                                       fd_, &epoll_server_));
+  dispatcher_.reset(new QuicDispatcher(
+      config_, crypto_config_, supported_versions_, &epoll_server_));
+  dispatcher_->Initialize(fd_);
 
   return true;
 }
@@ -170,7 +172,7 @@ void QuicServer::OnEvent(int fd, EpollEvent* event) {
   event->out_ready_mask = 0;
 
   if (event->in_events & EPOLLIN) {
-    LOG(ERROR) << "EPOLLIN";
+    DVLOG(1) << "EPOLLIN";
     bool read = true;
     while (read) {
         read = ReadAndDispatchSinglePacket(
@@ -179,8 +181,8 @@ void QuicServer::OnEvent(int fd, EpollEvent* event) {
     }
   }
   if (event->in_events & EPOLLOUT) {
-    bool can_write_more = dispatcher_->OnCanWrite();
-    if (can_write_more) {
+    dispatcher_->OnCanWrite();
+    if (dispatcher_->HasPendingWrites()) {
       event->out_ready_mask |= EPOLLOUT;
     }
   }
@@ -189,22 +191,10 @@ void QuicServer::OnEvent(int fd, EpollEvent* event) {
 }
 
 /* static */
-void QuicServer::MaybeDispatchPacket(QuicDispatcher* dispatcher,
-                                     const QuicEncryptedPacket& packet,
-                                     const IPEndPoint& server_address,
-                                     const IPEndPoint& client_address) {
-  QuicGuid guid;
-  if (!QuicFramer::ReadGuidFromPacket(packet, &guid)) {
-    return;
-  }
-
-  dispatcher->ProcessPacket(server_address, client_address, guid, packet);
-}
-
 bool QuicServer::ReadAndDispatchSinglePacket(int fd,
                                              int port,
                                              QuicDispatcher* dispatcher,
-                                             int* packets_dropped) {
+                                             uint32* packets_dropped) {
   // Allocate some extra space so we can send an error if the client goes over
   // the limit.
   char buf[2 * kMaxPacketSize];
@@ -223,7 +213,7 @@ bool QuicServer::ReadAndDispatchSinglePacket(int fd,
   QuicEncryptedPacket packet(buf, bytes_read, false);
 
   IPEndPoint server_address(server_ip, port);
-  MaybeDispatchPacket(dispatcher, packet, server_address, client_address);
+  dispatcher->ProcessPacket(server_address, client_address, packet);
 
   return true;
 }

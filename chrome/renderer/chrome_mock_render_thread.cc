@@ -7,11 +7,11 @@
 #include <vector>
 
 #include "base/values.h"
-#include "chrome/common/extensions/extension_messages.h"
 #include "chrome/renderer/mock_printer.h"
+#include "extensions/common/extension_messages.h"
 #include "ipc/ipc_sync_message.h"
-#include "printing/print_job_constants.h"
 #include "printing/page_range.h"
+#include "printing/print_job_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_CHROMEOS)
@@ -103,7 +103,7 @@ void ChromeMockRenderThread::OnAllocateTempFileForPrinting(
   renderer_fd->auto_close = false;
 
   base::FilePath path;
-  if (file_util::CreateTemporaryFile(&path)) {
+  if (base::CreateTemporaryFile(&path)) {
     int fd = open(path.value().c_str(), O_WRONLY);
     DCHECK_GE(fd, 0);
     renderer_fd->fd = *browser_fd = fd;
@@ -183,7 +183,7 @@ void ChromeMockRenderThread::OnUpdatePrintSettings(
   }
 
   // Just return the default settings.
-  const ListValue* page_range_array;
+  const base::ListValue* page_range_array;
   printing::PageRanges new_ranges;
   if (job_settings.GetList(printing::kSettingPageRange, &page_range_array)) {
     for (size_t index = 0; index < page_range_array->GetSize(); ++index) {

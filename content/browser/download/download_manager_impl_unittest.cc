@@ -120,7 +120,7 @@ class MockDownloadItemImpl : public DownloadItemImpl {
   MOCK_CONST_METHOD0(CurrentSpeed, int64());
   MOCK_CONST_METHOD0(PercentComplete, int());
   MOCK_CONST_METHOD0(AllDataSaved, bool());
-  MOCK_CONST_METHOD1(MatchesQuery, bool(const string16& query));
+  MOCK_CONST_METHOD1(MatchesQuery, bool(const base::string16& query));
   MOCK_CONST_METHOD0(IsDone, bool());
   MOCK_CONST_METHOD0(GetFullPath, const base::FilePath&());
   MOCK_CONST_METHOD0(GetTargetFilePath, const base::FilePath&());
@@ -132,6 +132,8 @@ class MockDownloadItemImpl : public DownloadItemImpl {
   MOCK_CONST_METHOD0(GetURL, const GURL&());
   MOCK_CONST_METHOD0(GetOriginalUrl, const GURL&());
   MOCK_CONST_METHOD0(GetReferrerUrl, const GURL&());
+  MOCK_CONST_METHOD0(GetTabUrl, const GURL&());
+  MOCK_CONST_METHOD0(GetTabReferrerUrl, const GURL&());
   MOCK_CONST_METHOD0(GetSuggestedFilename, std::string());
   MOCK_CONST_METHOD0(GetContentDisposition, std::string());
   MOCK_CONST_METHOD0(GetMimeType, std::string());
@@ -404,17 +406,28 @@ class MockBrowserContext : public BrowserContext {
   MOCK_METHOD2(GetMediaRequestContextForStoragePartition,
                net::URLRequestContextGetter*(
                    const base::FilePath& partition_path, bool in_memory));
-  MOCK_METHOD5(RequestMIDISysExPermission,
+  MOCK_METHOD6(RequestMidiSysExPermission,
                void(int render_process_id,
                     int render_view_id,
                     int bridge_id,
                     const GURL& requesting_frame,
-                    const MIDISysExPermissionCallback& callback));
-  MOCK_METHOD4(CancelMIDISysExPermissionRequest,
+                    bool user_gesture,
+                    const MidiSysExPermissionCallback& callback));
+  MOCK_METHOD4(CancelMidiSysExPermissionRequest,
                void(int render_process_id,
                     int render_view_id,
                     int bridge_id,
                     const GURL& requesting_frame));
+  MOCK_METHOD6(RequestProtectedMediaIdentifierPermission,
+               void(int render_process_id,
+                    int render_view_id,
+                    int bridge_id,
+                    int group_id,
+                    const GURL& requesting_frame,
+                    const ProtectedMediaIdentifierPermissionCallback&
+                        callback));
+  MOCK_METHOD1(CancelProtectedMediaIdentifierPermissionRequests,
+               void(int group_id));
   MOCK_METHOD0(GetResourceContext, ResourceContext*());
   MOCK_METHOD0(GetDownloadManagerDelegate, DownloadManagerDelegate*());
   MOCK_METHOD0(GetGeolocationPermissionContext,

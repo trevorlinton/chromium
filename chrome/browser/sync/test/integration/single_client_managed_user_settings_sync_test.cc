@@ -11,7 +11,7 @@
 #include "chrome/browser/managed_mode/managed_user_settings_service.h"
 #include "chrome/browser/managed_mode/managed_user_settings_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/sync/profile_sync_service_harness.h"
+#include "chrome/browser/sync/test/integration/profile_sync_service_harness.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "chrome/common/chrome_switches.h"
 
@@ -24,13 +24,11 @@ class SingleClientManagedUserSettingsSyncTest : public SyncTest {
   // SyncTest overrides:
   virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE {
     SyncTest::SetUpCommandLine(command_line);
-    command_line->AppendSwitch(switches::kNewProfileIsSupervised);
+    command_line->AppendSwitchASCII(switches::kManagedUserId, "asdf");
   }
 };
 
-// TODO(pavely): Fix this test. See also: http://crbug.com/279307
-IN_PROC_BROWSER_TEST_F(SingleClientManagedUserSettingsSyncTest,
-                       DISABLED_Sanity) {
+IN_PROC_BROWSER_TEST_F(SingleClientManagedUserSettingsSyncTest, Sanity) {
   ASSERT_TRUE(SetupClients());
   for (int i = 0; i < num_clients(); ++i) {
     Profile* profile = GetProfile(i);

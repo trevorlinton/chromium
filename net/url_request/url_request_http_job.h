@@ -16,6 +16,7 @@
 #include "net/base/completion_callback.h"
 #include "net/base/net_export.h"
 #include "net/cookies/cookie_store.h"
+#include "net/filter/filter.h"
 #include "net/http/http_request_info.h"
 #include "net/url_request/url_request_job.h"
 #include "net/url_request/url_request_throttler_entry_interface.h"
@@ -113,12 +114,16 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   virtual void CancelAuth() OVERRIDE;
   virtual void ContinueWithCertificate(X509Certificate* client_cert) OVERRIDE;
   virtual void ContinueDespiteLastError() OVERRIDE;
+  virtual void ResumeNetworkStart() OVERRIDE;
   virtual bool ReadRawData(IOBuffer* buf, int buf_size,
                            int* bytes_read) OVERRIDE;
   virtual void StopCaching() OVERRIDE;
   virtual bool GetFullRequestHeaders(
       HttpRequestHeaders* headers) const OVERRIDE;
+  virtual int64 GetTotalReceivedBytes() const OVERRIDE;
   virtual void DoneReading() OVERRIDE;
+  virtual void DoneReadingRedirectResponse() OVERRIDE;
+
   virtual HostPortPair GetSocketAddress() const OVERRIDE;
   virtual void NotifyURLRequestDestroyed() OVERRIDE;
 
@@ -164,9 +169,6 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   // Returns the effective response headers, considering that they may be
   // overridden by |override_response_headers_|.
   HttpResponseHeaders* GetResponseHeaders() const;
-
-  // Override of the private interface of URLRequestJob.
-  virtual void OnDetachRequest() OVERRIDE;
 
   RequestPriority priority_;
 
@@ -254,14 +256,15 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   // layers of the network stack.
   scoped_refptr<HttpResponseHeaders> override_response_headers_;
 
+  // The network delegate can mark a URL as safe for redirection.
+  GURL allowed_unsafe_redirect_url_;
+
   // Flag used to verify that |this| is not deleted while we are awaiting
   // a callback from the NetworkDelegate. Used as a fail-fast mechanism.
   // True if we are waiting a callback and
   // NetworkDelegate::NotifyURLRequestDestroyed has not been called, yet,
   // to inform the NetworkDelegate that it may not call back.
   bool awaiting_callback_;
-
-  scoped_ptr<HttpTransactionDelegateImpl> http_transaction_delegate_;
 
   const HttpUserAgentSettings* http_user_agent_settings_;
 

@@ -91,95 +91,16 @@ TEST_F(XKeyboardTest, TestSetCapsLockEnabled) {
   xkey_->SetCapsLockEnabled(initial_lock_state);
 }
 
-TEST_F(XKeyboardTest, TestSetNumLockEnabled) {
-  if (!DisplayAvailable()) {
-    DVLOG(1) << "X server is not available. Skip the test.";
-    return;
-  }
-  const unsigned int num_lock_mask = xkey_->GetNumLockMask();
-  ASSERT_NE(0U, num_lock_mask);
-
-  const bool initial_lock_state = xkey_->NumLockIsEnabled();
-  xkey_->SetNumLockEnabled(true);
-  EXPECT_TRUE(xkey_->NumLockIsEnabled());
-  xkey_->SetNumLockEnabled(false);
-  EXPECT_FALSE(xkey_->NumLockIsEnabled());
-  xkey_->SetNumLockEnabled(true);
-  EXPECT_TRUE(xkey_->NumLockIsEnabled());
-  xkey_->SetNumLockEnabled(false);
-  EXPECT_FALSE(xkey_->NumLockIsEnabled());
-  xkey_->SetNumLockEnabled(initial_lock_state);
-}
-
-TEST_F(XKeyboardTest, TestSetCapsLockAndNumLockAtTheSameTime) {
-  if (!DisplayAvailable()) {
-    DVLOG(1) << "X server is not available. Skip the test.";
-    return;
-  }
-  const unsigned int num_lock_mask = xkey_->GetNumLockMask();
-  ASSERT_NE(0U, num_lock_mask);
-
-  const bool initial_caps_lock_state = xkey_->CapsLockIsEnabled();
-  const bool initial_num_lock_state = xkey_->NumLockIsEnabled();
-
-  // Flip both.
-  xkey_->SetLockedModifiers(
-      initial_caps_lock_state ? kDisableLock : kEnableLock,
-      initial_num_lock_state ? kDisableLock : kEnableLock);
-  EXPECT_EQ(!initial_caps_lock_state, xkey_->CapsLockIsEnabled());
-  EXPECT_EQ(!initial_num_lock_state, xkey_->NumLockIsEnabled());
-
-  // Flip Caps Lock.
-  xkey_->SetLockedModifiers(
-      initial_caps_lock_state ? kEnableLock : kDisableLock,
-      kDontChange);
-  // Use GetLockedModifiers() for verifying the result.
-  bool c, n;
-  xkey_->GetLockedModifiers(&c, &n);
-  EXPECT_EQ(initial_caps_lock_state, c);
-  EXPECT_EQ(!initial_num_lock_state, n);
-
-  // Flip both.
-  xkey_->SetLockedModifiers(
-      initial_caps_lock_state ? kDisableLock : kEnableLock,
-      initial_num_lock_state ? kEnableLock : kDisableLock);
-  EXPECT_EQ(!initial_caps_lock_state, xkey_->CapsLockIsEnabled());
-  EXPECT_EQ(initial_num_lock_state, xkey_->NumLockIsEnabled());
-
-  // Flip Num Lock.
-  xkey_->SetLockedModifiers(
-      kDontChange,
-      initial_num_lock_state ? kDisableLock : kEnableLock);
-  xkey_->GetLockedModifiers(&c, &n);
-  EXPECT_EQ(!initial_caps_lock_state, c);
-  EXPECT_EQ(!initial_num_lock_state, n);
-
-  // Flip both to restore the initial state.
-  xkey_->SetLockedModifiers(
-      initial_caps_lock_state ? kEnableLock : kDisableLock,
-      initial_num_lock_state ? kEnableLock : kDisableLock);
-  EXPECT_EQ(initial_caps_lock_state, xkey_->CapsLockIsEnabled());
-  EXPECT_EQ(initial_num_lock_state, xkey_->NumLockIsEnabled());
-
-  // No-op SetLockedModifiers call.
-  xkey_->SetLockedModifiers(kDontChange, kDontChange);
-  EXPECT_EQ(initial_caps_lock_state, xkey_->CapsLockIsEnabled());
-  EXPECT_EQ(initial_num_lock_state, xkey_->NumLockIsEnabled());
-
-  // No-op GetLockedModifiers call. Confirm it does not crash.
-  xkey_->GetLockedModifiers(NULL, NULL);
-}
-
 TEST_F(XKeyboardTest, TestSetAutoRepeatEnabled) {
   if (!DisplayAvailable()) {
     DVLOG(1) << "X server is not available. Skip the test.";
     return;
   }
   const bool state = XKeyboard::GetAutoRepeatEnabledForTesting();
-  XKeyboard::SetAutoRepeatEnabled(!state);
+  xkey_->SetAutoRepeatEnabled(!state);
   EXPECT_EQ(!state, XKeyboard::GetAutoRepeatEnabledForTesting());
   // Restore the initial state.
-  XKeyboard::SetAutoRepeatEnabled(state);
+  xkey_->SetAutoRepeatEnabled(state);
   EXPECT_EQ(state, XKeyboard::GetAutoRepeatEnabledForTesting());
 }
 
@@ -194,13 +115,13 @@ TEST_F(XKeyboardTest, TestSetAutoRepeatRate) {
   AutoRepeatRate tmp(rate);
   ++tmp.initial_delay_in_ms;
   ++tmp.repeat_interval_in_ms;
-  EXPECT_TRUE(XKeyboard::SetAutoRepeatRate(tmp));
+  EXPECT_TRUE(xkey_->SetAutoRepeatRate(tmp));
   EXPECT_TRUE(XKeyboard::GetAutoRepeatRateForTesting(&tmp));
   EXPECT_EQ(rate.initial_delay_in_ms + 1, tmp.initial_delay_in_ms);
   EXPECT_EQ(rate.repeat_interval_in_ms + 1, tmp.repeat_interval_in_ms);
 
   // Restore the initial state.
-  EXPECT_TRUE(XKeyboard::SetAutoRepeatRate(rate));
+  EXPECT_TRUE(xkey_->SetAutoRepeatRate(rate));
   EXPECT_TRUE(XKeyboard::GetAutoRepeatRateForTesting(&tmp));
   EXPECT_EQ(rate.initial_delay_in_ms, tmp.initial_delay_in_ms);
   EXPECT_EQ(rate.repeat_interval_in_ms, tmp.repeat_interval_in_ms);

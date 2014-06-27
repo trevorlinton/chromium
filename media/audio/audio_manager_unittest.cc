@@ -5,13 +5,15 @@
 #include "base/environment.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/synchronization/waitable_event.h"
 #include "media/audio/audio_manager.h"
 #include "media/audio/audio_manager_base.h"
+#include "media/audio/fake_audio_log_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if defined(OS_LINUX)
-#include "media/audio/linux/audio_manager_linux.h"
-#endif  // defined(OS_LINUX)
+#if defined(USE_ALSA)
+#include "media/audio/alsa/audio_manager_alsa.h"
+#endif  // defined(USE_ALSA)
 
 #if defined(OS_WIN)
 #include "base/win/scoped_com_initializer.h"
@@ -27,16 +29,23 @@ namespace media {
 
 // Test fixture which allows us to override the default enumeration API on
 // Windows.
-class AudioManagerTest
-    : public ::testing::Test {
+class AudioManagerTest : public ::testing::Test {
  protected:
   AudioManagerTest()
-      : audio_manager_(AudioManager::Create())
+      : audio_manager_(AudioManager::CreateForTesting())
 #if defined(OS_WIN)
       , com_init_(base::win::ScopedCOMInitializer::kMTA)
 #endif
   {
+    // Wait for audio thread initialization to complete.  Otherwise the
+    // enumeration type may not have been set yet.
+    base::WaitableEvent event(false, false);
+    audio_manager_->GetTaskRunner()->PostTask(FROM_HERE, base::Bind(
+        &base::WaitableEvent::Signal, base::Unretained(&event)));
+    event.Wait();
   }
+
+  AudioManager* audio_manager() { return audio_manager_.get(); };
 
 #if defined(OS_WIN)
   bool SetMMDeviceEnumeration() {
@@ -111,6 +120,40 @@ class AudioManagerTest
     return audio_manager_->HasAudioOutputDevices();
   }
 
+#if defined(USE_ALSA) || defined(USE_PULSEAUDIO)
+  template <class T>
+  void CreateAudioManagerForTesting() {
+    // Only one AudioManager may exist at a time, so destroy the one we're
+    // currently holding before creating a new one.
+    audio_manager_.reset();
+    audio_manager_.reset(T::Create(&fake_audio_log_factory_));
+  }
+#endif
+
+  // Synchronously runs the provided callback/closure on the audio thread.
+  void RunOnAudioThread(const base::Closure& closure) {
+    if (!audio_manager()->GetTaskRunner()->BelongsToCurrentThread()) {
+      base::WaitableEvent event(false, false);
+      audio_manager_->GetTaskRunner()->PostTask(
+          FROM_HERE,
+          base::Bind(&AudioManagerTest::RunOnAudioThreadImpl,
+                     base::Unretained(this),
+                     closure,
+                     &event));
+      event.Wait();
+    } else {
+      closure.Run();
+    }
+  }
+
+  void RunOnAudioThreadImpl(const base::Closure& closure,
+                            base::WaitableEvent* event) {
+    DCHECK(audio_manager()->GetTaskRunner()->BelongsToCurrentThread());
+    closure.Run();
+    event->Signal();
+  }
+
+  FakeAudioLogFactory fake_audio_log_factory_;
   scoped_ptr<AudioManager> audio_manager_;
 
 #if defined(OS_WIN)
@@ -125,7 +168,10 @@ TEST_F(AudioManagerTest, EnumerateInputDevices) {
     return;
 
   AudioDeviceNames device_names;
-  audio_manager_->GetAudioInputDeviceNames(&device_names);
+  RunOnAudioThread(
+      base::Bind(&AudioManager::GetAudioInputDeviceNames,
+                 base::Unretained(audio_manager()),
+                 &device_names));
   CheckDeviceNames(device_names);
 }
 
@@ -135,7 +181,10 @@ TEST_F(AudioManagerTest, EnumerateOutputDevices) {
     return;
 
   AudioDeviceNames device_names;
-  audio_manager_->GetAudioOutputDeviceNames(&device_names);
+  RunOnAudioThread(
+      base::Bind(&AudioManager::GetAudioOutputDeviceNames,
+                 base::Unretained(audio_manager()),
+                 &device_names));
   CheckDeviceNames(device_names);
 }
 
@@ -254,7 +303,7 @@ TEST_F(AudioManagerTest, EnumerateInputDevicesPulseaudio) {
   if (!CanRunInputTest())
     return;
 
-  audio_manager_.reset(AudioManagerPulse::Create());
+  CreateAudioManagerForTesting<AudioManagerPulse>();
   if (audio_manager_.get()) {
     AudioDeviceNames device_names;
     audio_manager_->GetAudioInputDeviceNames(&device_names);
@@ -268,7 +317,7 @@ TEST_F(AudioManagerTest, EnumerateOutputDevicesPulseaudio) {
   if (!CanRunOutputTest())
     return;
 
-  audio_manager_.reset(AudioManagerPulse::Create());
+  CreateAudioManagerForTesting<AudioManagerPulse>();
   if (audio_manager_.get()) {
     AudioDeviceNames device_names;
     audio_manager_->GetAudioOutputDeviceNames(&device_names);
@@ -288,8 +337,8 @@ TEST_F(AudioManagerTest, EnumerateInputDevicesAlsa) {
   if (!CanRunInputTest())
     return;
 
-  VLOG(2) << "Testing AudioManagerLinux.";
-  audio_manager_.reset(new AudioManagerLinux());
+  VLOG(2) << "Testing AudioManagerAlsa.";
+  CreateAudioManagerForTesting<AudioManagerAlsa>();
   AudioDeviceNames device_names;
   audio_manager_->GetAudioInputDeviceNames(&device_names);
   CheckDeviceNames(device_names);
@@ -299,8 +348,8 @@ TEST_F(AudioManagerTest, EnumerateOutputDevicesAlsa) {
   if (!CanRunOutputTest())
     return;
 
-  VLOG(2) << "Testing AudioManagerLinux.";
-  audio_manager_.reset(new AudioManagerLinux());
+  VLOG(2) << "Testing AudioManagerAlsa.";
+  CreateAudioManagerForTesting<AudioManagerAlsa>();
   AudioDeviceNames device_names;
   audio_manager_->GetAudioOutputDeviceNames(&device_names);
   CheckDeviceNames(device_names);

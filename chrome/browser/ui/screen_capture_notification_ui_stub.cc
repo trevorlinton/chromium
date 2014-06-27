@@ -12,14 +12,16 @@ class ScreenCaptureNotificationUIStub : public ScreenCaptureNotificationUI {
   ScreenCaptureNotificationUIStub() {}
   virtual ~ScreenCaptureNotificationUIStub() {}
 
-  virtual void OnStarted(const base::Closure& stop_callback) OVERRIDE {
+  virtual gfx::NativeViewId OnStarted(const base::Closure& stop_callback)
+      OVERRIDE {
     NOTIMPLEMENTED();
+    return 0;
   }
 };
 
 // static
 scoped_ptr<ScreenCaptureNotificationUI> ScreenCaptureNotificationUI::Create(
-    const string16& title) {
+    const base::string16& title) {
   return scoped_ptr<ScreenCaptureNotificationUI>(
       new ScreenCaptureNotificationUIStub());
 }

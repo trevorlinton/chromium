@@ -12,13 +12,17 @@
 #include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/sync/glue/session_model_associator.h"
+#include "chrome/browser/sync/open_tabs_ui_delegate.h"
 #include "chrome/browser/sync/profile_sync_service.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/sync/profile_sync_service_mock.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/testing_browser_process.h"
+#include "sync/api/fake_sync_change_processor.h"
+#include "sync/api/sync_error_factory_mock.h"
 
 namespace utils = extension_function_test_utils;
 
@@ -103,30 +107,47 @@ void ExtensionSessionsTest::CreateTestProfileSyncService() {
   PathService::Get(chrome::DIR_USER_DATA, &path);
   path = path.AppendASCII("test_profile");
   if (!base::PathExists(path))
-    CHECK(file_util::CreateDirectory(path));
+    CHECK(base::CreateDirectory(path));
   Profile* profile =
       Profile::CreateProfile(path, NULL, Profile::CREATE_MODE_SYNCHRONOUS);
   profile_manager->RegisterTestingProfile(profile, true, false);
-  browser_ = new Browser(Browser::CreateParams(
-      profile, chrome::HOST_DESKTOP_TYPE_NATIVE));
   ProfileSyncServiceMock* service = static_cast<ProfileSyncServiceMock*>(
       ProfileSyncServiceFactory::GetInstance()->SetTestingFactoryAndUse(
       profile, &ProfileSyncServiceMock::BuildMockProfileSyncService));
+  browser_ = new Browser(Browser::CreateParams(
+      profile, chrome::HOST_DESKTOP_TYPE_NATIVE));
 
-  associator_ = new browser_sync::SessionModelAssociator(
-      static_cast<ProfileSyncService*>(service), true);
+  if (CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableSyncSessionsV2)) {
+    associator_ = new browser_sync::SessionModelAssociator(
+        static_cast<ProfileSyncService*>(service), true);
+    associator_->SetCurrentMachineTagForTesting(kSessionTags[0]);
+    ON_CALL(*service, GetSessionModelAssociatorDeprecated())
+        .WillByDefault(testing::Return(associator_));
+  }
+
   syncer::ModelTypeSet preferred_types;
   preferred_types.Put(syncer::SESSIONS);
   GoogleServiceAuthError no_error(GoogleServiceAuthError::NONE);
-
-  ON_CALL(*service, GetSessionModelAssociator()).WillByDefault(
-      testing::Return(associator_));
+  ON_CALL(*service, IsSessionsDataTypeControllerRunning())
+      .WillByDefault(testing::Return(true));
+  ON_CALL(*service, GetRegisteredDataTypes())
+      .WillByDefault(testing::Return(syncer::UserTypes()));
   ON_CALL(*service, GetPreferredDataTypes()).WillByDefault(
       testing::Return(preferred_types));
   EXPECT_CALL(*service, GetAuthError()).WillRepeatedly(
       testing::ReturnRef(no_error));
   ON_CALL(*service, GetActiveDataTypes()).WillByDefault(
       testing::Return(preferred_types));
+  ON_CALL(*service, GetLocalDeviceInfoMock()).WillByDefault(
+      testing::Return(new browser_sync::DeviceInfo(
+          std::string(kSessionTags[0]),
+          "machine name",
+          "Chromium 10k",
+          "Chrome 10k",
+          sync_pb::SyncEnums_DeviceType_TYPE_LINUX)));
+  ON_CALL(*service, GetLocalSyncCacheGUID()).WillByDefault(
+      testing::Return(std::string(kSessionTags[0])));
   EXPECT_CALL(*service, AddObserver(testing::_)).Times(testing::AnyNumber());
   EXPECT_CALL(*service, RemoveObserver(testing::_)).Times(testing::AnyNumber());
 
@@ -142,6 +163,7 @@ void ExtensionSessionsTest::CreateTestExtension() {
 }
 
 void ExtensionSessionsTest::CreateSessionModels() {
+  syncer::SyncDataList initial_data;
   for (size_t index = 0; index < kNumSessions; ++index) {
     // Fill an instance of session specifics with a foreign session's data.
     sync_pb::SessionSpecifics meta;
@@ -156,14 +178,38 @@ void ExtensionSessionsTest::CreateSessionModels() {
       BuildTabSpecifics(kSessionTags[index], 0, tab_list1[i], &tabs1[i]);
     }
 
-    associator_->SetCurrentMachineTagForTesting(kSessionTags[index]);
-    // Update associator with the session's meta node containing one window.
-    associator_->AssociateForeignSpecifics(meta, base::Time());
-    // Add tabs for the window.
-    for (std::vector<sync_pb::SessionSpecifics>::iterator iter = tabs1.begin();
-         iter != tabs1.end(); ++iter) {
-      associator_->AssociateForeignSpecifics(*iter, base::Time());
+    if (!CommandLine::ForCurrentProcess()->HasSwitch(
+            switches::kDisableSyncSessionsV2)) {
+      sync_pb::EntitySpecifics entity;
+      entity.mutable_session()->CopyFrom(meta);
+      initial_data.push_back(
+          syncer::SyncData::CreateRemoteData(1, entity, base::Time()));
+      for (size_t i = 0; i < tabs1.size(); i++) {
+        sync_pb::EntitySpecifics entity;
+        entity.mutable_session()->CopyFrom(tabs1[i]);
+        initial_data.push_back(syncer::SyncData::CreateRemoteData(
+            i + 2, entity, base::Time()));
+      }
+    } else {
+      // Update associator with the session's meta node containing one window.
+      associator_->AssociateForeignSpecifics(meta, base::Time());
+      // Add tabs for the window.
+      std::vector<sync_pb::SessionSpecifics>::iterator iter;
+      for (iter = tabs1.begin(); iter != tabs1.end(); ++iter) {
+        associator_->AssociateForeignSpecifics(*iter, base::Time());
+      }
     }
+  }
+
+  if (!CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableSyncSessionsV2)) {
+    ProfileSyncServiceFactory::GetForProfile(browser_->profile())->
+        GetSessionsSyncableService()->
+            MergeDataAndStartSyncing(syncer::SESSIONS, initial_data,
+        scoped_ptr<syncer::SyncChangeProcessor>(
+            new syncer::FakeSyncChangeProcessor()),
+        scoped_ptr<syncer::SyncErrorFactory>(
+            new syncer::SyncErrorFactoryMock()));
   }
 }
 
@@ -176,10 +222,10 @@ IN_PROC_BROWSER_TEST_F(ExtensionSessionsTest, GetDevices) {
           "[{\"maxResults\": 0}]",
           browser_)));
   ASSERT_TRUE(result);
-  ListValue* devices = result.get();
+  base::ListValue* devices = result.get();
   EXPECT_EQ(5u, devices->GetSize());
-  DictionaryValue* device = NULL;
-  ListValue* sessions = NULL;
+  base::DictionaryValue* device = NULL;
+  base::ListValue* sessions = NULL;
   for (size_t i = 0; i < devices->GetSize(); ++i) {
     EXPECT_TRUE(devices->GetDictionary(i, &device));
     EXPECT_EQ(kSessionTags[i], utils::GetString(device, "info"));
@@ -197,10 +243,10 @@ IN_PROC_BROWSER_TEST_F(ExtensionSessionsTest, GetDevicesMaxResults) {
           "[]",
           browser_)));
   ASSERT_TRUE(result);
-  ListValue* devices = result.get();
+  base::ListValue* devices = result.get();
   EXPECT_EQ(5u, devices->GetSize());
-  DictionaryValue* device = NULL;
-  ListValue* sessions = NULL;
+  base::DictionaryValue* device = NULL;
+  base::ListValue* sessions = NULL;
   for (size_t i = 0; i < devices->GetSize(); ++i) {
     EXPECT_TRUE(devices->GetDictionary(i, &device));
     EXPECT_EQ(kSessionTags[i], utils::GetString(device, "info"));
@@ -217,7 +263,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionSessionsTest, GetDevicesListEmpty) {
           browser_)));
 
   ASSERT_TRUE(result);
-  ListValue* devices = result.get();
+  base::ListValue* devices = result.get();
   EXPECT_EQ(0u, devices->GetSize());
 }
 
@@ -241,12 +287,12 @@ IN_PROC_BROWSER_TEST_F(ExtensionSessionsTest,
           browser_)));
   ASSERT_TRUE(result);
 
-  ListValue* windows = result.get();
+  base::ListValue* windows = result.get();
   EXPECT_EQ(2u, windows->GetSize());
-  DictionaryValue* restored_window = NULL;
+  base::DictionaryValue* restored_window = NULL;
   EXPECT_TRUE(restored_window_session->GetDictionary("window",
                                                      &restored_window));
-  DictionaryValue* window = NULL;
+  base::DictionaryValue* window = NULL;
   int restored_id = utils::GetInteger(restored_window, "id");
   for (size_t i = 0; i < windows->GetSize(); ++i) {
     EXPECT_TRUE(windows->GetDictionary(i, &window));
@@ -263,6 +309,27 @@ IN_PROC_BROWSER_TEST_F(ExtensionSessionsTest, RestoreForeignSessionInvalidId) {
       CreateFunction<SessionsRestoreFunction>(true).get(),
       "[\"tag3.0\"]",
       browser_), "Invalid session id: \"tag3.0\"."));
+}
+
+IN_PROC_BROWSER_TEST_F(ExtensionSessionsTest, RestoreInIncognito) {
+  CreateSessionModels();
+
+  EXPECT_TRUE(MatchPattern(utils::RunFunctionAndReturnError(
+      CreateFunction<SessionsRestoreFunction>(true).get(),
+      "[\"1\"]",
+      CreateIncognitoBrowser()),
+      "Can not restore sessions in incognito mode."));
+}
+
+IN_PROC_BROWSER_TEST_F(ExtensionSessionsTest, GetRecentlyClosedIncognito) {
+  scoped_ptr<base::ListValue> result(utils::ToList(
+      utils::RunFunctionAndReturnSingleResult(
+          CreateFunction<SessionsGetRecentlyClosedFunction>(true).get(),
+          "[]",
+          CreateIncognitoBrowser())));
+  ASSERT_TRUE(result);
+  base::ListValue* sessions = result.get();
+  EXPECT_EQ(0u, sessions->GetSize());
 }
 
 // Flaky on ChromeOS, times out on OSX Debug http://crbug.com/251199

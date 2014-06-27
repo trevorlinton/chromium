@@ -3,10 +3,16 @@
 // found in the LICENSE file.
 
 #include "base/logging.h"
+#include "base/strings/utf_string_conversions.h"
+#include "content/renderer/media/webrtc/webrtc_local_audio_track_adapter.h"
+#include "content/renderer/media/webrtc_audio_capturer.h"
 #include "content/renderer/media/webrtc_local_audio_source_provider.h"
+#include "content/renderer/media/webrtc_local_audio_track.h"
 #include "media/audio/audio_parameters.h"
 #include "media/base/audio_bus.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/WebKit/public/platform/WebMediaConstraints.h"
+#include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
 
 namespace content {
 
@@ -19,23 +25,41 @@ class WebRtcLocalAudioSourceProviderTest : public testing::Test {
         media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
         media::CHANNEL_LAYOUT_STEREO, 2, 0, 44100, 16,
         WebRtcLocalAudioSourceProvider::kWebAudioRenderBufferSize);
-    source_bus_ = media::AudioBus::Create(source_params_);
+    const int length =
+        source_params_.frames_per_buffer() * source_params_.channels();
+    source_data_.reset(new int16[length]);
     sink_bus_ = media::AudioBus::Create(sink_params_);
-    source_provider_.reset(new WebRtcLocalAudioSourceProvider());
+    blink::WebMediaConstraints constraints;
+    scoped_refptr<WebRtcAudioCapturer> capturer(
+        WebRtcAudioCapturer::CreateCapturer(-1, StreamDeviceInfo(),
+                                            constraints, NULL));
+    scoped_refptr<WebRtcLocalAudioTrackAdapter> adapter(
+        WebRtcLocalAudioTrackAdapter::Create(std::string(), NULL));
+    scoped_ptr<WebRtcLocalAudioTrack> native_track(
+        new WebRtcLocalAudioTrack(adapter, capturer, NULL));
+    blink::WebMediaStreamSource audio_source;
+    audio_source.initialize(base::UTF8ToUTF16("dummy_source_id"),
+                            blink::WebMediaStreamSource::TypeAudio,
+                            base::UTF8ToUTF16("dummy_source_name"));
+    blink_track_.initialize(blink::WebString::fromUTF8("audio_track"),
+                            audio_source);
+    blink_track_.setExtraData(native_track.release());
+    source_provider_.reset(new WebRtcLocalAudioSourceProvider(blink_track_));
     source_provider_->SetSinkParamsForTesting(sink_params_);
-    source_provider_->Initialize(source_params_);
+    source_provider_->OnSetFormat(source_params_);
   }
 
   media::AudioParameters source_params_;
+  scoped_ptr<int16[]> source_data_;
   media::AudioParameters sink_params_;
-  scoped_ptr<media::AudioBus> source_bus_;
   scoped_ptr<media::AudioBus> sink_bus_;
+  blink::WebMediaStreamTrack blink_track_;
   scoped_ptr<WebRtcLocalAudioSourceProvider> source_provider_;
 };
 
 TEST_F(WebRtcLocalAudioSourceProviderTest, VerifyDataFlow) {
   // Point the WebVector into memory owned by |sink_bus_|.
-  WebKit::WebVector<float*> audio_data(
+  blink::WebVector<float*> audio_data(
       static_cast<size_t>(sink_bus_->channels()));
   for (size_t i = 0; i < audio_data.size(); ++i)
     audio_data[i] = sink_bus_->channel(i);
@@ -47,12 +71,15 @@ TEST_F(WebRtcLocalAudioSourceProviderTest, VerifyDataFlow) {
   EXPECT_TRUE(sink_bus_->channel(0)[0] == 0);
 
   // Set the value of source data to be 1.
-  for (int i = 0; i < source_params_.frames_per_buffer(); ++i) {
-    source_bus_->channel(0)[i] = 1;
-  }
+  const int length =
+      source_params_.frames_per_buffer() * source_params_.channels();
+  std::fill(source_data_.get(), source_data_.get() + length, 1);
 
   // Deliver data to |source_provider_|.
-  source_provider_->DeliverData(source_bus_.get(), 0, 0, false);
+  source_provider_->OnData(source_data_.get(),
+                           source_params_.sample_rate(),
+                           source_params_.channels(),
+                           source_params_.frames_per_buffer());
 
   // Consume the first packet in the resampler, which contains only zero.
   // And the consumption of the data will trigger pulling the real packet from
@@ -69,7 +96,10 @@ TEST_F(WebRtcLocalAudioSourceProviderTest, VerifyDataFlow) {
   }
 
   // Prepare the second packet for featching.
-  source_provider_->DeliverData(source_bus_.get(), 0, 0, false);
+  source_provider_->OnData(source_data_.get(),
+                           source_params_.sample_rate(),
+                           source_params_.channels(),
+                           source_params_.frames_per_buffer());
 
   // Verify the packets.
   for (int i = 0; i < source_params_.frames_per_buffer();
@@ -83,39 +113,25 @@ TEST_F(WebRtcLocalAudioSourceProviderTest, VerifyDataFlow) {
   }
 }
 
-TEST_F(WebRtcLocalAudioSourceProviderTest, VerifyAudioProcessingParams) {
-  // Point the WebVector into memory owned by |sink_bus_|.
-  WebKit::WebVector<float*> audio_data(
-      static_cast<size_t>(sink_bus_->channels()));
-  for (size_t i = 0; i < audio_data.size(); ++i)
-    audio_data[i] = sink_bus_->channel(i);
+TEST_F(WebRtcLocalAudioSourceProviderTest,
+       DeleteSourceProviderBeforeStoppingTrack) {
+  source_provider_.reset();
 
-  // Enable the source provider.
-  source_provider_->provideInput(audio_data, sink_params_.frames_per_buffer());
+  // Stop the audio track.
+  WebRtcLocalAudioTrack* native_track = static_cast<WebRtcLocalAudioTrack*>(
+      MediaStreamTrack::GetTrack(blink_track_));
+  native_track->Stop();
+}
 
-  // Deliver data to |source_provider_| with audio processing params.
-  int source_delay = 5;
-  int source_volume = 255;
-  bool source_key_pressed = true;
-  source_provider_->DeliverData(source_bus_.get(), source_delay,
-                                source_volume, source_key_pressed);
+TEST_F(WebRtcLocalAudioSourceProviderTest,
+       StopTrackBeforeDeletingSourceProvider) {
+  // Stop the audio track.
+  WebRtcLocalAudioTrack* native_track = static_cast<WebRtcLocalAudioTrack*>(
+      MediaStreamTrack::GetTrack(blink_track_));
+  native_track->Stop();
 
-  int delay = 0, volume = 0;
-  bool key_pressed = false;
-  source_provider_->GetAudioProcessingParams(&delay, &volume, &key_pressed);
-  EXPECT_EQ(volume, source_volume);
-  EXPECT_EQ(key_pressed, source_key_pressed);
-  int expected_delay = source_delay + static_cast<int>(
-      source_bus_->frames() / source_params_.sample_rate() + 0.5);
-  EXPECT_GE(delay, expected_delay);
-
-  // Sleep a few ms to simulate processing time. This should increase the delay
-  // value as time passes.
-  int cached_delay = delay;
-  const int kSleepMs = 10;
-  base::PlatformThread::Sleep(base::TimeDelta::FromSeconds(kSleepMs));
-  source_provider_->GetAudioProcessingParams(&delay, &volume, &key_pressed);
-  EXPECT_GT(delay, cached_delay);
+  // Delete the source provider.
+  source_provider_.reset();
 }
 
 }  // namespace content

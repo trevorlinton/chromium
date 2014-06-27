@@ -8,11 +8,11 @@
 #include "base/prefs/pref_value_map.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
-#include "chrome/browser/policy/policy_error_map.h"
-#include "chrome/browser/policy/policy_map.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/common/pref_names.h"
-#include "grit/generated_resources.h"
+#include "components/policy/core/browser/policy_error_map.h"
+#include "components/policy/core/common/policy_map.h"
+#include "grit/component_strings.h"
 #include "policy/policy_constants.h"
 
 namespace policy {

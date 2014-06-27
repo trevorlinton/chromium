@@ -67,14 +67,14 @@ class TemplateURLRef {
   // TemplateURLRef::ReplaceSearchTerms methods.  By default, only search_terms
   // is required and is passed in the constructor.
   struct SearchTermsArgs {
-    explicit SearchTermsArgs(const string16& search_terms);
+    explicit SearchTermsArgs(const base::string16& search_terms);
     ~SearchTermsArgs();
 
     // The search terms (query).
-    string16 search_terms;
+    base::string16 search_terms;
 
     // The original (input) query.
-    string16 original_query;
+    base::string16 original_query;
 
     // The optional assisted query stats, aka AQS, used for logging purposes.
     // This string contains impressions of all autocomplete matches shown
@@ -88,7 +88,7 @@ class TemplateURLRef {
     int accepted_suggestion;
 
     // The 0-based position of the cursor within the query string at the time
-    // the request was issued.  Set to string16::npos if not used.
+    // the request was issued.  Set to base::string16::npos if not used.
     size_t cursor_position;
 
     // The start-edge margin of the omnibox in pixels, used in extended Instant
@@ -97,7 +97,7 @@ class TemplateURLRef {
 
     // The URL of the current webpage to be used for experimental zero-prefix
     // suggestions.
-    std::string zero_prefix_url;
+    std::string current_page_url;
 
     // Which omnibox the user used to type the prefix.
     AutocompleteInput::PageClassification page_classification;
@@ -131,7 +131,7 @@ class TemplateURLRef {
     // If set, ReplaceSearchTerms() will append a param to the TemplateURLRef to
     // update the search results page incrementally even if that is otherwise
     // disabled by google.com preferences. See comments on
-    // SearchTermsData::ForceInstantResultsParam().
+    // chrome::ForceInstantResultsParam().
     bool force_instant_results;
   };
 
@@ -189,11 +189,11 @@ class TemplateURLRef {
 
   // Returns a string representation of this TemplateURLRef suitable for
   // display. The display format is the same as the format used by Firefox.
-  string16 DisplayURL() const;
+  base::string16 DisplayURL() const;
 
   // Converts a string as returned by DisplayURL back into a string as
   // understood by TemplateURLRef.
-  static std::string DisplayURLToURLRef(const string16& display_url);
+  static std::string DisplayURLToURLRef(const base::string16& display_url);
 
   // If this TemplateURLRef is valid and contains one search term, this returns
   // the host/path of the URL, otherwise this returns an empty string.
@@ -204,8 +204,8 @@ class TemplateURLRef {
   // the key of the search term, otherwise this returns an empty string.
   const std::string& GetSearchTermKey() const;
 
-  // Converts the specified term in our owner's encoding to a string16.
-  string16 SearchTermToString16(const std::string& term) const;
+  // Converts the specified term in our owner's encoding to a base::string16.
+  base::string16 SearchTermToString16(const std::string& term) const;
 
   // Returns true if this TemplateURLRef has a replacement term of
   // {google:baseURL} or {google:baseSuggestURL}.
@@ -221,7 +221,7 @@ class TemplateURLRef {
   // does not match.
   bool ExtractSearchTermsFromURL(
       const GURL& url,
-      string16* search_terms,
+      base::string16* search_terms,
       const SearchTermsData& search_terms_data,
       url_parse::Parsed::ComponentType* search_term_component,
       url_parse::Component* search_terms_position) const;
@@ -253,6 +253,7 @@ class TemplateURLRef {
     GOOGLE_BASE_URL,
     GOOGLE_BASE_SUGGEST_URL,
     GOOGLE_BOOKMARK_BAR_PINNED,
+    GOOGLE_CURRENT_PAGE_URL,
     GOOGLE_CURSOR_POSITION,
     GOOGLE_IMAGE_ORIGINAL_HEIGHT,
     GOOGLE_IMAGE_ORIGINAL_WIDTH,
@@ -269,8 +270,8 @@ class TemplateURLRef {
     GOOGLE_SEARCH_CLIENT,
     GOOGLE_SEARCH_FIELDTRIAL_GROUP,
     GOOGLE_SUGGEST_CLIENT,
+    GOOGLE_SUGGEST_REQUEST_ID,
     GOOGLE_UNESCAPED_SEARCH_TERMS,
-    GOOGLE_ZERO_PREFIX_URL,
     LANGUAGE,
     SEARCH_TERMS,
   };
@@ -419,11 +420,11 @@ struct TemplateURLData {
   // A short description of the template. This is the name we show to the user
   // in various places that use TemplateURLs. For example, the location bar
   // shows this when the user selects a substituting match.
-  string16 short_name;
+  base::string16 short_name;
 
   // The shortcut for this TemplateURL.  |keyword| must be non-empty.
-  void SetKeyword(const string16& keyword);
-  const string16& keyword() const { return keyword_; }
+  void SetKeyword(const base::string16& keyword);
+  const base::string16& keyword() const { return keyword_; }
 
   // The raw URL for the TemplateURL, which may not be valid as-is (e.g. because
   // it requires substitutions first).  This must be non-empty.
@@ -510,7 +511,7 @@ struct TemplateURLData {
  private:
   // Private so we can enforce using the setters and thus enforce that these
   // fields are never empty.
-  string16 keyword_;
+  base::string16 keyword_;
   std::string url_;
 };
 
@@ -565,12 +566,12 @@ class TemplateURL {
   Profile* profile() { return profile_; }
   const TemplateURLData& data() const { return data_; }
 
-  const string16& short_name() const { return data_.short_name; }
+  const base::string16& short_name() const { return data_.short_name; }
   // An accessor for the short_name, but adjusted so it can be appropriately
   // displayed even if it is LTR and the UI is RTL.
-  string16 AdjustedShortNameForLocaleDirection() const;
+  base::string16 AdjustedShortNameForLocaleDirection() const;
 
-  const string16& keyword() const { return data_.keyword(); }
+  const base::string16& keyword() const { return data_.keyword(); }
 
   const std::string& url() const { return data_.url(); }
   const std::string& suggestions_url() const { return data_.suggestions_url; }
@@ -676,13 +677,13 @@ class TemplateURL {
   // "http://foo/?q={searchTerms}", and the URL to be decoded is
   // "http://foo/?q=a#q=b", the alternate URL will match first and the decoded
   // search term will be "b".
-  bool ExtractSearchTermsFromURL(const GURL& url, string16* search_terms);
+  bool ExtractSearchTermsFromURL(const GURL& url, base::string16* search_terms);
 
   // Like ExtractSearchTermsFromURL but usable on threads other than the UI
   // thread.
   bool ExtractSearchTermsFromURLUsingTermsData(
       const GURL& url,
-      string16* search_terms,
+      base::string16* search_terms,
       const SearchTermsData& search_terms_data);
 
   // Returns true if non-empty search terms could be extracted from |url| using
@@ -722,8 +723,8 @@ class TemplateURL {
       const TemplateURLRef::SearchTermsArgs& search_terms_args,
       bool is_in_query,
       std::string* input_encoding,
-      string16* encoded_terms,
-      string16* encoded_original_query) const;
+      base::string16* encoded_terms,
+      base::string16* encoded_original_query) const;
 
  private:
   friend class TemplateURLService;
@@ -748,7 +749,7 @@ class TemplateURL {
   bool FindSearchTermsInURL(
       const GURL& url,
       const SearchTermsData& search_terms_data,
-      string16* search_terms,
+      base::string16* search_terms,
       url_parse::Parsed::ComponentType* search_terms_component,
       url_parse::Component* search_terms_position);
 

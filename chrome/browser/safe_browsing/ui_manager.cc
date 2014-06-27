@@ -73,36 +73,10 @@ bool SafeBrowsingUIManager::CanReportStats() const {
   return metrics && metrics->reporting_active();
 }
 
-void SafeBrowsingUIManager::DisplayBlockingPage(
-    const GURL& url,
-    const GURL& original_url,
-    const std::vector<GURL>& redirect_urls,
-    bool is_subresource,
-    SBThreatType threat_type,
-    const UrlCheckCallback& callback,
-    int render_process_host_id,
-    int render_view_id) {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
-  UnsafeResource resource;
-  resource.url = url;
-  resource.original_url = original_url;
-  resource.redirect_urls = redirect_urls;
-  resource.is_subresource = is_subresource;
-  resource.threat_type = threat_type;
-  resource.callback = callback;
-  resource.render_process_host_id = render_process_host_id;
-  resource.render_view_id = render_view_id;
-
-  // The blocking page must be created from the UI thread.
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::Bind(&SafeBrowsingUIManager::DoDisplayBlockingPage, this,
-                 resource));
-}
-
 void SafeBrowsingUIManager::OnBlockingPageDone(
     const std::vector<UnsafeResource>& resources,
     bool proceed) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   for (std::vector<UnsafeResource>::const_iterator iter = resources.begin();
        iter != resources.end(); ++iter) {
     const UnsafeResource& resource = *iter;
@@ -118,9 +92,17 @@ void SafeBrowsingUIManager::OnBlockingPageDone(
   }
 }
 
-void SafeBrowsingUIManager::DoDisplayBlockingPage(
+void SafeBrowsingUIManager::DisplayBlockingPage(
     const UnsafeResource& resource) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+
+  // Indicate to interested observers that the resource in question matched the
+  // SB filters. If the resource is already whitelisted, OnSafeBrowsingHit
+  // won't be called.
+  if (resource.threat_type != SB_THREAT_TYPE_SAFE) {
+    FOR_EACH_OBSERVER(Observer, observer_list_, OnSafeBrowsingMatch(resource));
+  }
+
   // Check if the user has already ignored our warning for this render_view
   // and domain.
   if (IsWhitelisted(resource)) {
@@ -290,3 +272,4 @@ bool SafeBrowsingUIManager::IsWhitelisted(const UnsafeResource& resource) {
   }
   return false;
 }
+

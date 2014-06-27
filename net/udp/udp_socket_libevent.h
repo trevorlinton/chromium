@@ -129,6 +129,12 @@ class NET_EXPORT UDPSocketLibevent : public base::NonThreadSafe {
   // Return a network error code.
   int LeaveGroup(const IPAddressNumber& group_address) const;
 
+  // Set interface to use for multicast. If |interface_index| set to 0, default
+  // interface is used.
+  // Should be called before Bind().
+  // Returns a network error code.
+  int SetMulticastInterface(uint32 interface_index);
+
   // Set the time-to-live option for UDP packets sent to the multicast
   // group address. The default value of this option is 1.
   // Cannot be negative or more than 255.
@@ -156,6 +162,9 @@ class NET_EXPORT UDPSocketLibevent : public base::NonThreadSafe {
   // do anything on some platforms.
   // Return a network error code.
   int SetDiffServCodePoint(DiffServCodePoint dscp);
+
+  // Resets the thread to be used for thread-safety checks.
+  void DetachFromThread();
 
  private:
   enum SocketOptions {
@@ -210,7 +219,7 @@ class NET_EXPORT UDPSocketLibevent : public base::NonThreadSafe {
   void LogWrite(int result, const char* bytes, const IPEndPoint* address) const;
 
   // Returns the OS error code (or 0 on success).
-  int CreateSocket(const IPEndPoint& address);
+  int CreateSocket(int addr_family);
 
   // Same as SendTo(), except that address is passed by pointer
   // instead of by reference. It is called from Write() with |address|
@@ -228,7 +237,8 @@ class NET_EXPORT UDPSocketLibevent : public base::NonThreadSafe {
   // Bind().
   int SetSocketOptions();
   int DoBind(const IPEndPoint& address);
-  int RandomBind(const IPEndPoint& address);
+  // Binds to a random port on |address|.
+  int RandomBind(const IPAddressNumber& address);
 
   int socket_;
   int addr_family_;
@@ -236,6 +246,9 @@ class NET_EXPORT UDPSocketLibevent : public base::NonThreadSafe {
   // Bitwise-or'd combination of SocketOptions. Specifies the set of
   // options that should be applied to |socket_| before Bind().
   int socket_options_;
+
+  // Multicast interface.
+  uint32 multicast_interface_;
 
   // Multicast socket options cached for SetSocketOption.
   // Cannot be used after Bind().

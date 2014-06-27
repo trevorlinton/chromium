@@ -6,10 +6,20 @@
 
 namespace switches {
 
+// Disables crash throttling for Portable Native Client.
+const char kDisablePnaclCrashThrottling[]   = "disable-pnacl-crash-throttling";
+
+// Disables the installation of Portable Native Client.
+const char kDisablePnaclInstall[]           = "disable-pnacl-install";
+
 // Enables debugging via RSP over a socket.
 const char kEnableNaClDebug[]               = "enable-nacl-debug";
 
-// Causes the process to run as a NativeClient broker
+// Enables Non-SFI mode, in which programs can be run without NaCl's SFI
+// sandbox.
+const char kEnableNaClNonSfiMode[]          = "enable-nacl-nonsfi-mode";
+
+// Value for --type that causes the process to run as a NativeClient broker
 // (used for launching NaCl loader processes on 64-bit Windows).
 const char kNaClBrokerProcess[]             = "nacl-broker";
 
@@ -29,11 +39,7 @@ const char kNaClGdb[]                       = "nacl-gdb";
 // GDB script to pass to the nacl-gdb debugger at startup.
 const char kNaClGdbScript[]                 = "nacl-gdb-script";
 
-// On POSIX only: the contents of this flag are prepended to the nacl-loader
-// command line. Useful values might be "valgrind" or "xterm -e gdb --args".
-const char kNaClLoaderCmdPrefix[]           = "nacl-loader-cmd-prefix";
-
-// Causes the process to run as a NativeClient loader.
+// Value for --type that causes the process to run as a NativeClient loader.
 const char kNaClLoaderProcess[]             = "nacl-loader";
 
 }  // namespace switches

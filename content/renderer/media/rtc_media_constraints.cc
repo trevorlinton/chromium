@@ -16,7 +16,7 @@ namespace content {
 namespace {
 
 void GetNativeMediaConstraints(
-    const WebKit::WebVector<WebKit::WebMediaConstraint>& constraints,
+    const blink::WebVector<blink::WebMediaConstraint>& constraints,
     webrtc::MediaConstraintsInterface::Constraints* native_constraints) {
   DCHECK(native_constraints);
   for (size_t i = 0; i < constraints.size(); ++i) {
@@ -29,13 +29,9 @@ void GetNativeMediaConstraints(
         new_constraint.key == kMediaStreamSourceId)
       continue;
 
-    // Ignore internal constraints set by JS.
-    if (StartsWithASCII(
-        new_constraint.key,
-        webrtc::MediaConstraintsInterface::kInternalConstraintPrefix,
-        true)) {
+    // Ignore sourceId constraint since that has nothing to do with webrtc.
+    if (new_constraint.key == kMediaStreamSourceInfoId)
       continue;
-    }
 
     DVLOG(3) << "MediaStreamConstraints:" << new_constraint.key
              << " : " <<  new_constraint.value;
@@ -48,13 +44,13 @@ void GetNativeMediaConstraints(
 RTCMediaConstraints::RTCMediaConstraints() {}
 
 RTCMediaConstraints::RTCMediaConstraints(
-      const WebKit::WebMediaConstraints& constraints) {
+      const blink::WebMediaConstraints& constraints) {
   if (constraints.isNull())
     return;  // Will happen in unit tests.
-  WebKit::WebVector<WebKit::WebMediaConstraint> mandatory;
+  blink::WebVector<blink::WebMediaConstraint> mandatory;
   constraints.getMandatoryConstraints(mandatory);
   GetNativeMediaConstraints(mandatory, &mandatory_);
-  WebKit::WebVector<WebKit::WebMediaConstraint> optional;
+  blink::WebVector<blink::WebMediaConstraint> optional;
   constraints.getOptionalConstraints(optional);
   GetNativeMediaConstraints(optional, &optional_);
 }
@@ -71,16 +67,24 @@ RTCMediaConstraints::GetOptional() const {
   return optional_;
 }
 
-void RTCMediaConstraints::AddOptional(const std::string& key,
-                                      const std::string& value) {
-  optional_.push_back(Constraint(key, value));
+bool RTCMediaConstraints::AddOptional(const std::string& key,
+                                      const std::string& value,
+                                      bool override_if_exists) {
+  return AddConstraint(&optional_, key, value, override_if_exists);
 }
 
 bool RTCMediaConstraints::AddMandatory(const std::string& key,
                                        const std::string& value,
                                        bool override_if_exists) {
-  for (Constraints::iterator iter = mandatory_.begin();
-       iter != mandatory_.end();
+  return AddConstraint(&mandatory_, key, value, override_if_exists);
+}
+
+bool RTCMediaConstraints::AddConstraint(Constraints* constraints,
+                                        const std::string& key,
+                                        const std::string& value,
+                                        bool override_if_exists) {
+  for (Constraints::iterator iter = constraints->begin();
+       iter != constraints->end();
        ++iter) {
     if (iter->key == key) {
       if (override_if_exists)
@@ -89,7 +93,7 @@ bool RTCMediaConstraints::AddMandatory(const std::string& key,
     }
   }
   // The key wasn't found, add it.
-  mandatory_.push_back(Constraint(key, value));
+  constraints->push_back(Constraint(key, value));
   return true;
 }
 

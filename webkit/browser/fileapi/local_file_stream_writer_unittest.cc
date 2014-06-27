@@ -70,7 +70,7 @@ class LocalFileStreamWriterTest : public testing::Test {
   base::FilePath CreateFileWithContent(const std::string& name,
                                  const std::string& data) {
     base::FilePath path = Path(name);
-    file_util::WriteFile(path, data.c_str(), data.size());
+    base::WriteFile(path, data.c_str(), data.size());
     return path;
   }
 
@@ -80,7 +80,8 @@ class LocalFileStreamWriterTest : public testing::Test {
 
   LocalFileStreamWriter* CreateWriter(const base::FilePath& path,
                                       int64 offset) {
-    return new LocalFileStreamWriter(file_task_runner(), path, offset);
+    return new LocalFileStreamWriter(file_task_runner(), path, offset,
+        FileStreamWriter::OPEN_EXISTING_FILE);
   }
 
  private:

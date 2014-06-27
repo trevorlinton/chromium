@@ -10,6 +10,7 @@
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/prefs/pref_service.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
@@ -19,11 +20,7 @@
 #include "chrome/browser/chromeos/login/startup_utils.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
 #include "chrome/browser/chromeos/login/user_manager_impl.h"
-#include "chrome/browser/policy/browser_policy_connector.h"
-#include "chrome/browser/policy/external_data_fetcher.h"
-#include "chrome/browser/policy/mock_configuration_policy_provider.h"
-#include "chrome/browser/policy/policy_map.h"
-#include "chrome/browser/policy/policy_types.h"
+#include "chrome/browser/extensions/api/braille_display_private/mock_braille_controller.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/chrome_switches.h"
@@ -31,12 +28,20 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/chromeos_switches.h"
+#include "components/policy/core/browser/browser_policy_connector.h"
+#include "components/policy/core/common/external_data_fetcher.h"
+#include "components/policy/core/common/mock_configuration_policy_provider.h"
+#include "components/policy/core/common/policy_map.h"
+#include "components/policy/core/common/policy_types.h"
 #include "content/public/test/test_utils.h"
 #include "policy/policy_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/views/controls/label.h"
 #include "ui/views/widget/widget.h"
 
-using testing::AnyNumber;
+using extensions::api::braille_display_private::BrailleObserver;
+using extensions::api::braille_display_private::DisplayState;
+using extensions::api::braille_display_private::MockBrailleController;
 using testing::Return;
 using testing::_;
 using testing::WithParamInterface;
@@ -59,11 +64,14 @@ class TrayAccessibilityTest
   TrayAccessibilityTest() {}
   virtual ~TrayAccessibilityTest() {}
 
+  // The profile which should be used by these tests.
+  Profile* GetProfile() { return ProfileManager::GetActiveUserProfile(); }
+
   virtual void SetUpInProcessBrowserTestFixture() OVERRIDE {
     EXPECT_CALL(provider_, IsInitializationComplete(_))
         .WillRepeatedly(Return(true));
-    EXPECT_CALL(provider_, RegisterPolicyDomain(_)).Times(AnyNumber());
     policy::BrowserPolicyConnector::SetPolicyProviderForTesting(&provider_);
+    AccessibilityManager::SetBrailleControllerForTest(&braille_controller_);
   }
 
   virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE {
@@ -73,10 +81,8 @@ class TrayAccessibilityTest
   }
 
   virtual void SetUpOnMainThread() OVERRIDE {
-    AccessibilityManager::Get()->SetProfileForTest(
-        ProfileManager::GetDefaultProfile());
-    MagnificationManager::Get()->SetProfileForTest(
-        ProfileManager::GetDefaultProfile());
+    AccessibilityManager::Get()->SetProfileForTest(GetProfile());
+    MagnificationManager::Get()->SetProfileForTest(GetProfile());
   }
 
   virtual void RunTestOnMainThreadLoop() OVERRIDE {
@@ -85,10 +91,13 @@ class TrayAccessibilityTest
     InProcessBrowserTest::RunTestOnMainThreadLoop();
   }
 
+  virtual void CleanUpOnMainThread() OVERRIDE {
+    AccessibilityManager::SetBrailleControllerForTest(NULL);
+  }
+
   void SetShowAccessibilityOptionsInSystemTrayMenu(bool value) {
     if (GetParam() == PREF_SERVICE) {
-      Profile* profile = ProfileManager::GetDefaultProfile();
-      PrefService* prefs = profile->GetPrefs();
+      PrefService* prefs = GetProfile()->GetPrefs();
       prefs->SetBoolean(prefs::kShouldAlwaysShowAccessibilityMenu, value);
     } else if (GetParam() == POLICY) {
       policy::PolicyMap policy_map;
@@ -109,9 +118,13 @@ class TrayAccessibilityTest
         GetTrayAccessibilityForTest();
   }
 
-  bool IsTrayIconVisible() {
-    return tray()->tray_icon_visible_;
+  const ash::internal::TrayAccessibility* tray() const {
+    return ash::Shell::GetInstance()
+        ->GetPrimarySystemTray()
+        ->GetTrayAccessibilityForTest();
   }
+
+  bool IsTrayIconVisible() const { return tray()->tray_icon_visible_; }
 
   views::View* CreateMenuItem() {
     return tray()->CreateDefaultView(GetLoginStatus());
@@ -148,67 +161,102 @@ class TrayAccessibilityTest
 
   void ClickSpokenFeedbackOnDetailMenu() {
     views::View* button = tray()->detailed_menu_->spoken_feedback_view_;
+    ASSERT_TRUE(button);
     tray()->detailed_menu_->OnViewClicked(button);
   }
 
   void ClickHighContrastOnDetailMenu() {
     views::View* button = tray()->detailed_menu_->high_contrast_view_;
-    EXPECT_TRUE(button);
+    ASSERT_TRUE(button);
     tray()->detailed_menu_->OnViewClicked(button);
   }
 
   void ClickScreenMagnifierOnDetailMenu() {
     views::View* button = tray()->detailed_menu_->screen_magnifier_view_;
-    EXPECT_TRUE(button);
+    ASSERT_TRUE(button);
     tray()->detailed_menu_->OnViewClicked(button);
   }
 
   void ClickAutoclickOnDetailMenu() {
     views::View* button = tray()->detailed_menu_->autoclick_view_;
-    EXPECT_TRUE(button);
+    ASSERT_TRUE(button);
     tray()->detailed_menu_->OnViewClicked(button);
   }
 
-  bool IsSpokenFeedbackEnabledOnDetailMenu() {
+  void ClickVirtualKeyboardOnDetailMenu() {
+    views::View* button = tray()->detailed_menu_->virtual_keyboard_view_;
+    ASSERT_TRUE(button);
+    tray()->detailed_menu_->OnViewClicked(button);
+  }
+
+  bool IsSpokenFeedbackEnabledOnDetailMenu() const {
     return tray()->detailed_menu_->spoken_feedback_enabled_;
   }
 
-  bool IsHighContrastEnabledOnDetailMenu() {
+  bool IsHighContrastEnabledOnDetailMenu() const {
     return tray()->detailed_menu_->high_contrast_enabled_;
   }
 
-  bool IsScreenMagnifierEnabledOnDetailMenu() {
+  bool IsScreenMagnifierEnabledOnDetailMenu() const {
     return tray()->detailed_menu_->screen_magnifier_enabled_;
   }
 
-  bool IsLargeCursorEnabledOnDetailMenu() {
+  bool IsLargeCursorEnabledOnDetailMenu() const {
     return tray()->detailed_menu_->large_cursor_enabled_;
   }
 
-  bool IsAutoclickEnabledOnDetailMenu() {
+  bool IsAutoclickEnabledOnDetailMenu() const {
     return tray()->detailed_menu_->autoclick_enabled_;
   }
-  bool IsSpokenFeedbackMenuShownOnDetailMenu() {
+
+  bool IsVirtualKeyboardEnabledOnDetailMenu() const {
+    return tray()->detailed_menu_->virtual_keyboard_enabled_;
+  }
+
+  bool IsSpokenFeedbackMenuShownOnDetailMenu() const {
     return tray()->detailed_menu_->spoken_feedback_view_;
   }
 
-  bool IsHighContrastMenuShownOnDetailMenu() {
+  bool IsHighContrastMenuShownOnDetailMenu() const {
     return tray()->detailed_menu_->high_contrast_view_;
   }
 
-  bool IsScreenMagnifierMenuShownOnDetailMenu() {
+  bool IsScreenMagnifierMenuShownOnDetailMenu() const {
     return tray()->detailed_menu_->screen_magnifier_view_;
   }
 
-  bool IsLargeCursorMenuShownOnDetailMenu() {
+  bool IsLargeCursorMenuShownOnDetailMenu() const {
     return tray()->detailed_menu_->large_cursor_view_;
   }
 
-  bool IsAutoclickMenuShownOnDetailMenu() {
+  bool IsAutoclickMenuShownOnDetailMenu() const {
     return tray()->detailed_menu_->autoclick_view_;
   }
 
+  bool IsVirtualKeyboardMenuShownOnDetailMenu() const {
+    return tray()->detailed_menu_->virtual_keyboard_view_;
+  }
+
+  bool IsNotificationShown() const {
+    return (tray()->detailed_popup_ &&
+            !tray()->detailed_popup_->GetWidget()->IsClosed());
+  }
+
+  base::string16 GetNotificationText() const {
+    if (IsNotificationShown())
+      return tray()->detailed_popup_->label_for_test()->text();
+    else
+      return base::string16();
+  }
+
+  void SetBrailleConnected(bool connected) {
+    braille_controller_.SetAvailable(connected);
+    braille_controller_.GetObserver()->OnDisplayStateChanged(
+        *braille_controller_.GetDisplayState());
+  }
+
   policy::MockConfigurationPolicyProvider provider_;
+  MockBrailleController braille_controller_;
 };
 
 IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, LoginStatus) {
@@ -254,6 +302,13 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowTrayIcon) {
   SetMagnifierEnabled(false);
   EXPECT_FALSE(IsTrayIconVisible());
 
+  // Toggling the virtual keyboard setting changes the visibility of the a11y
+  // icon.
+  AccessibilityManager::Get()->EnableVirtualKeyboard(true);
+  EXPECT_TRUE(IsTrayIconVisible());
+  AccessibilityManager::Get()->EnableVirtualKeyboard(false);
+  EXPECT_FALSE(IsTrayIconVisible());
+
   // Enabling all accessibility features.
   SetMagnifierEnabled(true);
   EXPECT_TRUE(IsTrayIconVisible());
@@ -262,12 +317,16 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowTrayIcon) {
   AccessibilityManager::Get()->EnableSpokenFeedback(
       true, ash::A11Y_NOTIFICATION_NONE);
   EXPECT_TRUE(IsTrayIconVisible());
+  AccessibilityManager::Get()->EnableVirtualKeyboard(true);
+  EXPECT_TRUE(IsTrayIconVisible());
   AccessibilityManager::Get()->EnableSpokenFeedback(
       false, ash::A11Y_NOTIFICATION_NONE);
   EXPECT_TRUE(IsTrayIconVisible());
   AccessibilityManager::Get()->EnableHighContrast(false);
   EXPECT_TRUE(IsTrayIconVisible());
   SetMagnifierEnabled(false);
+  EXPECT_TRUE(IsTrayIconVisible());
+  AccessibilityManager::Get()->EnableVirtualKeyboard(false);
   EXPECT_FALSE(IsTrayIconVisible());
 
   // Confirms that prefs::kShouldAlwaysShowAccessibilityMenu doesn't affect
@@ -316,6 +375,12 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowMenu) {
   AccessibilityManager::Get()->EnableAutoclick(false);
   EXPECT_FALSE(CanCreateMenuItem());
 
+  // Toggling virtual keyboard changes the visibility of the menu.
+  AccessibilityManager::Get()->EnableVirtualKeyboard(true);
+  EXPECT_TRUE(CanCreateMenuItem());
+  AccessibilityManager::Get()->EnableVirtualKeyboard(false);
+  EXPECT_FALSE(CanCreateMenuItem());
+
   // Enabling all accessibility features.
   SetMagnifierEnabled(true);
   EXPECT_TRUE(CanCreateMenuItem());
@@ -325,6 +390,10 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowMenu) {
       true, ash::A11Y_NOTIFICATION_NONE);
   EXPECT_TRUE(CanCreateMenuItem());
   AccessibilityManager::Get()->EnableAutoclick(true);
+  EXPECT_TRUE(CanCreateMenuItem());
+  AccessibilityManager::Get()->EnableVirtualKeyboard(true);
+  EXPECT_TRUE(CanCreateMenuItem());
+  AccessibilityManager::Get()->EnableVirtualKeyboard(false);
   EXPECT_TRUE(CanCreateMenuItem());
   AccessibilityManager::Get()->EnableAutoclick(false);
   EXPECT_TRUE(CanCreateMenuItem());
@@ -348,7 +417,7 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowMenuWithShowMenuOption) {
   // Confirms that the menu is visible.
   EXPECT_TRUE(CanCreateMenuItem());
 
-  // The menu is keeping visible regardless of toggling spoken feedback.
+  // The menu remains visible regardless of toggling spoken feedback.
   AccessibilityManager::Get()->EnableSpokenFeedback(
       true, ash::A11Y_NOTIFICATION_NONE);
   EXPECT_TRUE(CanCreateMenuItem());
@@ -356,22 +425,28 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowMenuWithShowMenuOption) {
       false, ash::A11Y_NOTIFICATION_NONE);
   EXPECT_TRUE(CanCreateMenuItem());
 
-  // The menu is keeping visible regardless of toggling high contrast.
+  // The menu remains visible regardless of toggling high contrast.
   AccessibilityManager::Get()->EnableHighContrast(true);
   EXPECT_TRUE(CanCreateMenuItem());
   AccessibilityManager::Get()->EnableHighContrast(false);
   EXPECT_TRUE(CanCreateMenuItem());
 
-  // The menu is keeping visible regardless of toggling screen magnifier.
+  // The menu remains visible regardless of toggling screen magnifier.
   SetMagnifierEnabled(true);
   EXPECT_TRUE(CanCreateMenuItem());
   SetMagnifierEnabled(false);
   EXPECT_TRUE(CanCreateMenuItem());
 
-  // The menu is keeping visible regardless of toggling autoclick.
+  // The menu remains visible regardless of toggling autoclick.
   AccessibilityManager::Get()->EnableAutoclick(true);
   EXPECT_TRUE(CanCreateMenuItem());
   AccessibilityManager::Get()->EnableAutoclick(false);
+  EXPECT_TRUE(CanCreateMenuItem());
+
+  // The menu remains visible regardless of toggling on-screen keyboard.
+  AccessibilityManager::Get()->EnableVirtualKeyboard(true);
+  EXPECT_TRUE(CanCreateMenuItem());
+  AccessibilityManager::Get()->EnableVirtualKeyboard(false);
   EXPECT_TRUE(CanCreateMenuItem());
 
   // Enabling all accessibility features.
@@ -383,6 +458,10 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowMenuWithShowMenuOption) {
       true, ash::A11Y_NOTIFICATION_NONE);
   EXPECT_TRUE(CanCreateMenuItem());
   AccessibilityManager::Get()->EnableAutoclick(true);
+  EXPECT_TRUE(CanCreateMenuItem());
+  AccessibilityManager::Get()->EnableVirtualKeyboard(true);
+  EXPECT_TRUE(CanCreateMenuItem());
+  AccessibilityManager::Get()->EnableVirtualKeyboard(false);
   EXPECT_TRUE(CanCreateMenuItem());
   AccessibilityManager::Get()->EnableAutoclick(false);
   EXPECT_TRUE(CanCreateMenuItem());
@@ -406,7 +485,7 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowMenuWithShowOnLoginScreen) {
   // Confirms that the menu is visible.
   EXPECT_TRUE(CanCreateMenuItem());
 
-  // The menu is keeping visible regardless of toggling spoken feedback.
+  // The menu remains visible regardless of toggling spoken feedback.
   AccessibilityManager::Get()->EnableSpokenFeedback(
       true, ash::A11Y_NOTIFICATION_NONE);
   EXPECT_TRUE(CanCreateMenuItem());
@@ -414,16 +493,22 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowMenuWithShowOnLoginScreen) {
       false, ash::A11Y_NOTIFICATION_NONE);
   EXPECT_TRUE(CanCreateMenuItem());
 
-  // The menu is keeping visible regardless of toggling high contrast.
+  // The menu remains visible regardless of toggling high contrast.
   AccessibilityManager::Get()->EnableHighContrast(true);
   EXPECT_TRUE(CanCreateMenuItem());
   AccessibilityManager::Get()->EnableHighContrast(false);
   EXPECT_TRUE(CanCreateMenuItem());
 
-  // The menu is keeping visible regardless of toggling screen magnifier.
+  // The menu remains visible regardless of toggling screen magnifier.
   SetMagnifierEnabled(true);
   EXPECT_TRUE(CanCreateMenuItem());
   SetMagnifierEnabled(false);
+  EXPECT_TRUE(CanCreateMenuItem());
+
+  // The menu remains visible regardless of toggling on-screen keyboard.
+  AccessibilityManager::Get()->EnableVirtualKeyboard(true);
+  EXPECT_TRUE(CanCreateMenuItem());
+  AccessibilityManager::Get()->EnableVirtualKeyboard(false);
   EXPECT_TRUE(CanCreateMenuItem());
 
   // Enabling all accessibility features.
@@ -433,6 +518,10 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowMenuWithShowOnLoginScreen) {
   EXPECT_TRUE(CanCreateMenuItem());
   AccessibilityManager::Get()->EnableSpokenFeedback(
       true, ash::A11Y_NOTIFICATION_NONE);
+  EXPECT_TRUE(CanCreateMenuItem());
+  AccessibilityManager::Get()->EnableVirtualKeyboard(true);
+  EXPECT_TRUE(CanCreateMenuItem());
+  AccessibilityManager::Get()->EnableVirtualKeyboard(false);
   EXPECT_TRUE(CanCreateMenuItem());
   AccessibilityManager::Get()->EnableSpokenFeedback(
       false, ash::A11Y_NOTIFICATION_NONE);
@@ -444,13 +533,50 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowMenuWithShowOnLoginScreen) {
 
   SetShowAccessibilityOptionsInSystemTrayMenu(true);
 
-  // Confirms that the menu is keeping visible.
+  // Confirms that the menu remains visible.
   EXPECT_TRUE(CanCreateMenuItem());
 
   SetShowAccessibilityOptionsInSystemTrayMenu(false);
 
-  // Confirms that the menu is keeping visible.
+  // Confirms that the menu remains visible.
   EXPECT_TRUE(CanCreateMenuItem());
+}
+
+IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowNotification) {
+  const base::string16 BRAILLE_CONNECTED =
+      base::ASCIIToUTF16("Braille display connected.");
+  const base::string16 CHROMEVOX_ENABLED = base::ASCIIToUTF16(
+      "ChromeVox (spoken feedback) is enabled.\nPress Ctrl+Alt+Z to disable.");
+  const base::string16 BRAILLE_CONNECTED_AND_CHROMEVOX_ENABLED(
+      BRAILLE_CONNECTED + base::ASCIIToUTF16(" ") + CHROMEVOX_ENABLED);
+
+  EXPECT_FALSE(AccessibilityManager::Get()->IsSpokenFeedbackEnabled());
+
+  // Enabling spoken feedback should show the notification.
+  AccessibilityManager::Get()->EnableSpokenFeedback(
+      true, ash::A11Y_NOTIFICATION_SHOW);
+  EXPECT_EQ(CHROMEVOX_ENABLED, GetNotificationText());
+
+  // Connecting a braille display when spoken feedback is already enabled
+  // should only show the message about the braille display.
+  SetBrailleConnected(true);
+  EXPECT_EQ(BRAILLE_CONNECTED, GetNotificationText());
+
+  // Neither disconnecting a braille display, nor disabling spoken feedback
+  // should show any notification.
+  SetBrailleConnected(false);
+  EXPECT_TRUE(AccessibilityManager::Get()->IsSpokenFeedbackEnabled());
+  EXPECT_FALSE(IsNotificationShown());
+  AccessibilityManager::Get()->EnableSpokenFeedback(
+      false, ash::A11Y_NOTIFICATION_SHOW);
+  EXPECT_FALSE(IsNotificationShown());
+  EXPECT_FALSE(AccessibilityManager::Get()->IsSpokenFeedbackEnabled());
+
+  // Connecting a braille display should enable spoken feedback and show
+  // both messages.
+  SetBrailleConnected(true);
+  EXPECT_TRUE(AccessibilityManager::Get()->IsSpokenFeedbackEnabled());
+  EXPECT_EQ(BRAILLE_CONNECTED_AND_CHROMEVOX_ENABLED, GetNotificationText());
 }
 
 IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, KeepMenuVisibilityOnLockScreen) {
@@ -520,6 +646,17 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, MAYBE_ClickDetailMenu) {
   EXPECT_TRUE(CreateDetailedMenu());
   ClickAutoclickOnDetailMenu();
   EXPECT_FALSE(AccessibilityManager::Get()->IsAutoclickEnabled());
+
+  // Confirms that the check item toggles on-screen keyboard.
+  EXPECT_FALSE(AccessibilityManager::Get()->IsVirtualKeyboardEnabled());
+
+  EXPECT_TRUE(CreateDetailedMenu());
+  ClickVirtualKeyboardOnDetailMenu();
+  EXPECT_TRUE(AccessibilityManager::Get()->IsVirtualKeyboardEnabled());
+
+  EXPECT_TRUE(CreateDetailedMenu());
+  ClickVirtualKeyboardOnDetailMenu();
+  EXPECT_FALSE(AccessibilityManager::Get()->IsVirtualKeyboardEnabled());
 }
 
 IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMarksOnDetailMenu) {
@@ -532,7 +669,7 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMarksOnDetailMenu) {
   EXPECT_FALSE(IsScreenMagnifierEnabledOnDetailMenu());
   EXPECT_FALSE(IsLargeCursorEnabledOnDetailMenu());
   EXPECT_FALSE(IsAutoclickEnabledOnDetailMenu());
-  EXPECT_FALSE(IsAutoclickEnabledOnDetailMenu());
+  EXPECT_FALSE(IsVirtualKeyboardEnabledOnDetailMenu());
   CloseDetailMenu();
 
   // Enabling spoken feedback.
@@ -544,6 +681,7 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMarksOnDetailMenu) {
   EXPECT_FALSE(IsScreenMagnifierEnabledOnDetailMenu());
   EXPECT_FALSE(IsLargeCursorEnabledOnDetailMenu());
   EXPECT_FALSE(IsAutoclickEnabledOnDetailMenu());
+  EXPECT_FALSE(IsVirtualKeyboardEnabledOnDetailMenu());
   CloseDetailMenu();
 
   // Disabling spoken feedback.
@@ -555,6 +693,7 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMarksOnDetailMenu) {
   EXPECT_FALSE(IsScreenMagnifierEnabledOnDetailMenu());
   EXPECT_FALSE(IsLargeCursorEnabledOnDetailMenu());
   EXPECT_FALSE(IsAutoclickEnabledOnDetailMenu());
+  EXPECT_FALSE(IsVirtualKeyboardEnabledOnDetailMenu());
   CloseDetailMenu();
 
   // Enabling high contrast.
@@ -565,6 +704,7 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMarksOnDetailMenu) {
   EXPECT_FALSE(IsScreenMagnifierEnabledOnDetailMenu());
   EXPECT_FALSE(IsLargeCursorEnabledOnDetailMenu());
   EXPECT_FALSE(IsAutoclickEnabledOnDetailMenu());
+  EXPECT_FALSE(IsVirtualKeyboardEnabledOnDetailMenu());
   CloseDetailMenu();
 
   // Disabling high contrast.
@@ -575,6 +715,7 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMarksOnDetailMenu) {
   EXPECT_FALSE(IsScreenMagnifierEnabledOnDetailMenu());
   EXPECT_FALSE(IsLargeCursorEnabledOnDetailMenu());
   EXPECT_FALSE(IsAutoclickEnabledOnDetailMenu());
+  EXPECT_FALSE(IsVirtualKeyboardEnabledOnDetailMenu());
   CloseDetailMenu();
 
   // Enabling full screen magnifier.
@@ -585,6 +726,7 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMarksOnDetailMenu) {
   EXPECT_TRUE(IsScreenMagnifierEnabledOnDetailMenu());
   EXPECT_FALSE(IsLargeCursorEnabledOnDetailMenu());
   EXPECT_FALSE(IsAutoclickEnabledOnDetailMenu());
+  EXPECT_FALSE(IsVirtualKeyboardEnabledOnDetailMenu());
   CloseDetailMenu();
 
   // Disabling screen magnifier.
@@ -595,6 +737,7 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMarksOnDetailMenu) {
   EXPECT_FALSE(IsScreenMagnifierEnabledOnDetailMenu());
   EXPECT_FALSE(IsLargeCursorEnabledOnDetailMenu());
   EXPECT_FALSE(IsAutoclickEnabledOnDetailMenu());
+  EXPECT_FALSE(IsVirtualKeyboardEnabledOnDetailMenu());
   CloseDetailMenu();
 
   // Enabling large cursor.
@@ -605,6 +748,7 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMarksOnDetailMenu) {
   EXPECT_FALSE(IsScreenMagnifierEnabledOnDetailMenu());
   EXPECT_TRUE(IsLargeCursorEnabledOnDetailMenu());
   EXPECT_FALSE(IsAutoclickEnabledOnDetailMenu());
+  EXPECT_FALSE(IsVirtualKeyboardEnabledOnDetailMenu());
   CloseDetailMenu();
 
   // Disabling large cursor.
@@ -615,6 +759,29 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMarksOnDetailMenu) {
   EXPECT_FALSE(IsScreenMagnifierEnabledOnDetailMenu());
   EXPECT_FALSE(IsLargeCursorEnabledOnDetailMenu());
   EXPECT_FALSE(IsAutoclickEnabledOnDetailMenu());
+  EXPECT_FALSE(IsVirtualKeyboardEnabledOnDetailMenu());
+  CloseDetailMenu();
+
+  // Enable on-screen keyboard.
+  AccessibilityManager::Get()->EnableVirtualKeyboard(true);
+  EXPECT_TRUE(CreateDetailedMenu());
+  EXPECT_FALSE(IsSpokenFeedbackEnabledOnDetailMenu());
+  EXPECT_FALSE(IsHighContrastEnabledOnDetailMenu());
+  EXPECT_FALSE(IsScreenMagnifierEnabledOnDetailMenu());
+  EXPECT_FALSE(IsLargeCursorEnabledOnDetailMenu());
+  EXPECT_FALSE(IsAutoclickEnabledOnDetailMenu());
+  EXPECT_TRUE(IsVirtualKeyboardEnabledOnDetailMenu());
+  CloseDetailMenu();
+
+  // Disable on-screen keyboard.
+  AccessibilityManager::Get()->EnableVirtualKeyboard(false);
+  EXPECT_TRUE(CreateDetailedMenu());
+  EXPECT_FALSE(IsSpokenFeedbackEnabledOnDetailMenu());
+  EXPECT_FALSE(IsHighContrastEnabledOnDetailMenu());
+  EXPECT_FALSE(IsScreenMagnifierEnabledOnDetailMenu());
+  EXPECT_FALSE(IsLargeCursorEnabledOnDetailMenu());
+  EXPECT_FALSE(IsAutoclickEnabledOnDetailMenu());
+  EXPECT_FALSE(IsVirtualKeyboardEnabledOnDetailMenu());
   CloseDetailMenu();
 
   // Enabling all of the a11y features.
@@ -623,12 +790,14 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMarksOnDetailMenu) {
   AccessibilityManager::Get()->EnableHighContrast(true);
   SetMagnifierEnabled(true);
   AccessibilityManager::Get()->EnableLargeCursor(true);
+  AccessibilityManager::Get()->EnableVirtualKeyboard(true);
   EXPECT_TRUE(CreateDetailedMenu());
   EXPECT_TRUE(IsSpokenFeedbackEnabledOnDetailMenu());
   EXPECT_TRUE(IsHighContrastEnabledOnDetailMenu());
   EXPECT_TRUE(IsScreenMagnifierEnabledOnDetailMenu());
   EXPECT_TRUE(IsLargeCursorEnabledOnDetailMenu());
   EXPECT_FALSE(IsAutoclickEnabledOnDetailMenu());
+  EXPECT_TRUE(IsVirtualKeyboardEnabledOnDetailMenu());
   CloseDetailMenu();
 
   // Disabling all of the a11y features.
@@ -637,12 +806,14 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMarksOnDetailMenu) {
   AccessibilityManager::Get()->EnableHighContrast(false);
   SetMagnifierEnabled(false);
   AccessibilityManager::Get()->EnableLargeCursor(false);
+  AccessibilityManager::Get()->EnableVirtualKeyboard(false);
   EXPECT_TRUE(CreateDetailedMenu());
   EXPECT_FALSE(IsSpokenFeedbackEnabledOnDetailMenu());
   EXPECT_FALSE(IsHighContrastEnabledOnDetailMenu());
   EXPECT_FALSE(IsScreenMagnifierEnabledOnDetailMenu());
   EXPECT_FALSE(IsLargeCursorEnabledOnDetailMenu());
   EXPECT_FALSE(IsAutoclickEnabledOnDetailMenu());
+  EXPECT_FALSE(IsVirtualKeyboardEnabledOnDetailMenu());
   CloseDetailMenu();
 
   // Autoclick is disabled on login screen.
@@ -656,6 +827,7 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMarksOnDetailMenu) {
   EXPECT_FALSE(IsScreenMagnifierEnabledOnDetailMenu());
   EXPECT_FALSE(IsLargeCursorEnabledOnDetailMenu());
   EXPECT_TRUE(IsAutoclickEnabledOnDetailMenu());
+  EXPECT_FALSE(IsVirtualKeyboardEnabledOnDetailMenu());
   CloseDetailMenu();
 
   // Disabling autoclick.
@@ -666,6 +838,7 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMarksOnDetailMenu) {
   EXPECT_FALSE(IsScreenMagnifierEnabledOnDetailMenu());
   EXPECT_FALSE(IsLargeCursorEnabledOnDetailMenu());
   EXPECT_FALSE(IsAutoclickEnabledOnDetailMenu());
+  EXPECT_FALSE(IsVirtualKeyboardEnabledOnDetailMenu());
   CloseDetailMenu();
 }
 
@@ -677,6 +850,7 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMenuVisibilityOnDetailMenu) {
   EXPECT_TRUE(IsScreenMagnifierMenuShownOnDetailMenu());
   EXPECT_TRUE(IsLargeCursorMenuShownOnDetailMenu());
   EXPECT_FALSE(IsAutoclickMenuShownOnDetailMenu());
+  EXPECT_TRUE(IsVirtualKeyboardMenuShownOnDetailMenu());
   CloseDetailMenu();
 
   SetLoginStatus(ash::user::LOGGED_IN_USER);
@@ -686,6 +860,7 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMenuVisibilityOnDetailMenu) {
   EXPECT_TRUE(IsScreenMagnifierMenuShownOnDetailMenu());
   EXPECT_FALSE(IsLargeCursorMenuShownOnDetailMenu());
   EXPECT_TRUE(IsAutoclickMenuShownOnDetailMenu());
+  EXPECT_TRUE(IsVirtualKeyboardMenuShownOnDetailMenu());
   CloseDetailMenu();
 
   SetLoginStatus(ash::user::LOGGED_IN_LOCKED);
@@ -695,6 +870,7 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMenuVisibilityOnDetailMenu) {
   EXPECT_TRUE(IsScreenMagnifierMenuShownOnDetailMenu());
   EXPECT_FALSE(IsLargeCursorMenuShownOnDetailMenu());
   EXPECT_TRUE(IsAutoclickMenuShownOnDetailMenu());
+  EXPECT_TRUE(IsVirtualKeyboardMenuShownOnDetailMenu());
   CloseDetailMenu();
 }
 

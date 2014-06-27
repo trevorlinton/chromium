@@ -8,7 +8,7 @@
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/common/extensions/extension.h"
+#include "extensions/common/extension.h"
 
 using base::DictionaryValue;
 using base::ListValue;
@@ -68,7 +68,7 @@ int GetCategoryId(const std::string& category) {
 // Takes a DictionaryValue entry from the JSON file and fills the whitelist
 // (via URL patterns or hostname hashes) and the URL in the corresponding Site
 // struct.
-void AddWhitelistEntries(const DictionaryValue* site_dict,
+void AddWhitelistEntries(const base::DictionaryValue* site_dict,
                          ManagedModeSiteList::Site* site) {
   std::vector<std::string>* patterns = &site->patterns;
 
@@ -125,7 +125,7 @@ void AddWhitelistEntries(const DictionaryValue* site_dict,
 
 }  // namespace
 
-ManagedModeSiteList::Site::Site(const string16& name,
+ManagedModeSiteList::Site::Site(const base::string16& name,
                                 int category_id)
     : name(name),
       category_id(category_id) {}
@@ -134,7 +134,7 @@ ManagedModeSiteList::Site::~Site() {}
 
 ManagedModeSiteList::ManagedModeSiteList(
     const std::string& extension_id,
-    const extensions::ExtensionResource& path)
+    const base::FilePath& path)
     : extension_id_(extension_id),
       path_(path) {
 }
@@ -147,10 +147,11 @@ ManagedModeSiteList* ManagedModeSiteList::Clone() {
 }
 
 // static
-void ManagedModeSiteList::GetCategoryNames(std::vector<string16>* categories) {
+void ManagedModeSiteList::GetCategoryNames(
+    std::vector<base::string16>* categories) {
   // TODO(bauerb): Collect custom categories from extensions.
   for (size_t i = 0; i < arraysize(g_categories); ++i) {
-    categories->push_back(ASCIIToUTF16(g_categories[i].name));
+    categories->push_back(base::ASCIIToUTF16(g_categories[i].name));
   }
 }
 
@@ -166,13 +167,13 @@ void ManagedModeSiteList::GetSites(std::vector<Site>* sites) {
       continue;
     }
 
-    string16 name;
+    base::string16 name;
     entry->GetString(kNameKey, &name);
 
     // TODO(bauerb): We need to distinguish between "no category assigned" and
     // "not on any site list".
     int category_id = 0;
-    const ListValue* categories = NULL;
+    const base::ListValue* categories = NULL;
     if (entry->GetList(kCategoriesKey, &categories)) {
       for (base::ListValue::const_iterator it = categories->begin();
            it != categories->end(); ++it) {
@@ -194,46 +195,45 @@ bool ManagedModeSiteList::LazyLoad() {
   if (sites_.get())
     return true;
 
-  base::FilePath path = path_.GetFilePath();
-  JSONFileValueSerializer serializer(path);
+  JSONFileValueSerializer serializer(path_);
   std::string error;
   scoped_ptr<base::Value> value(serializer.Deserialize(NULL, &error));
   if (!value.get()) {
-    LOG(ERROR) << "Couldn't load site list " << path.value() << ": "
+    LOG(ERROR) << "Couldn't load site list " << path_.value() << ": "
                << error;
     return false;
   }
 
-  DictionaryValue* dict = NULL;
+  base::DictionaryValue* dict = NULL;
   if (!value->GetAsDictionary(&dict)) {
-    LOG(ERROR) << "Site list " << path.value() << " is invalid";
+    LOG(ERROR) << "Site list " << path_.value() << " is invalid";
     return false;
   }
 
   int version = 0;
   if (!dict->GetInteger(kSitelistFormatVersionKey, &version)) {
-    LOG(ERROR) << "Site list " << path.value() << " has invalid version";
+    LOG(ERROR) << "Site list " << path_.value() << " has invalid version";
     return false;
   }
 
   if (version > kSitelistFormatVersion) {
-    LOG(ERROR) << "Site list " << path.value() << " has a too new format";
+    LOG(ERROR) << "Site list " << path_.value() << " has a too new format";
     return false;
   }
 
-  ListValue* sites = NULL;
+  base::ListValue* sites = NULL;
   if (dict->GetList(kSitesKey, &sites))
     sites_.reset(sites->DeepCopy());
 
-  DictionaryValue* categories = NULL;
+  base::DictionaryValue* categories = NULL;
   if (dict->GetDictionary(kCategoriesKey, &categories))
     categories_.reset(categories->DeepCopy());
 
   return true;
 }
 
-void ManagedModeSiteList::CopyThumbnailUrl(const DictionaryValue* source,
-                                           DictionaryValue* dest) {
+void ManagedModeSiteList::CopyThumbnailUrl(const base::DictionaryValue* source,
+                                           base::DictionaryValue* dest) {
   if (!source->HasKey(kThumbnailKey))
     return;
 

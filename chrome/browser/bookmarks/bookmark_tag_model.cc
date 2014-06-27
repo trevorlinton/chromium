@@ -46,7 +46,8 @@ std::set<BookmarkTag> ExtractTagsFromBookmark(const BookmarkNode* bookmark) {
     std::set<BookmarkTag> tags;
     const BookmarkNode* folder = bookmark->parent();
     while (folder && folder->type() == BookmarkNode::FOLDER) {
-      BookmarkTag trimmed_tag = CollapseWhitespace(folder->GetTitle(), true);
+      BookmarkTag trimmed_tag =
+          base::CollapseWhitespace(folder->GetTitle(), true);
       if (!trimmed_tag.empty())
         tags.insert(trimmed_tag);
       folder = folder->parent();
@@ -144,7 +145,7 @@ const gfx::Image& BookmarkTagModel::GetFavicon(const BookmarkNode* bookmark) {
 }
 
 void BookmarkTagModel::SetTitle(const BookmarkNode* bookmark,
-                                const string16& title) {
+                                const base::string16& title) {
   DCHECK(bookmark_model_);
   DCHECK(loaded_);
   bookmark_model_->SetTitle(bookmark, title);
@@ -173,7 +174,7 @@ const BookmarkNode*
 // Tags specific code.
 
 const BookmarkNode* BookmarkTagModel::AddURL(
-    const string16& title,
+    const base::string16& title,
     const GURL& url,
     const std::set<BookmarkTag>& tags) {
   DCHECK(bookmark_model_);
@@ -205,7 +206,7 @@ void BookmarkTagModel::AddTagsToBookmark(
   std::set<BookmarkTag> all_tags(GetTagsForBookmark(bookmark));
   for (std::set<BookmarkTag>::const_iterator it = tags.begin();
        it != tags.end(); ++it) {
-    BookmarkTag trimmed_tag = CollapseWhitespace(*it, true);
+    BookmarkTag trimmed_tag = base::CollapseWhitespace(*it, true);
     if (trimmed_tag.empty())
       continue;
     all_tags.insert(trimmed_tag);
@@ -217,7 +218,7 @@ void BookmarkTagModel::AddTagsToBookmarks(
     const std::set<BookmarkTag>& tags,
     const std::set<const BookmarkNode*>& bookmarks) {
   for (std::set<const BookmarkNode*>::const_iterator it = bookmarks.begin();
-      it != bookmarks.end(); ++it) {
+       it != bookmarks.end(); ++it) {
     AddTagsToBookmark(tags, *it);
   }
 }
@@ -237,7 +238,7 @@ void BookmarkTagModel::RemoveTagsFromBookmarks(
     const std::set<BookmarkTag>& tags,
     const std::set<const BookmarkNode*>& bookmarks){
   for (std::set<const BookmarkNode*>::const_iterator it = bookmarks.begin();
-      it != bookmarks.end(); ++it) {
+       it != bookmarks.end(); ++it) {
     RemoveTagsFromBookmark(tags, *it);
   }
 }
@@ -307,7 +308,8 @@ std::vector<BookmarkTag> BookmarkTagModel::TagsRelatedToTag(
 
 // BookmarkModelObserver methods.
 
-void BookmarkTagModel::Loaded(BookmarkModel* model, bool ids_reassigned) {
+void BookmarkTagModel::BookmarkModelLoaded(BookmarkModel* model,
+                                           bool ids_reassigned) {
   Load();
 }
 
@@ -505,7 +507,7 @@ void BookmarkTagModel::Load() {
   }
   loaded_ = true;
   FOR_EACH_OBSERVER(BookmarkTagModelObserver, observers_,
-                    Loaded(this));
+                    BookmarkTagModelLoaded(this));
 }
 
 void BookmarkTagModel::ReloadDescendants(const BookmarkNode* folder) {

@@ -7,12 +7,14 @@
 
 #include <string>
 
+#include "base/callback_forward.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/login/help_app_launcher.h"
+#include "chrome/browser/chromeos/login/login_display.h"
 #include "chrome/browser/chromeos/login/login_status_consumer.h"
 #include "chrome/browser/chromeos/login/screen_locker_delegate.h"
 #include "chrome/browser/chromeos/login/user.h"
@@ -22,10 +24,16 @@ namespace content {
 class WebUI;
 }
 
+namespace gfx {
+class Image;
+}
+
 namespace chromeos {
 
 class Authenticator;
+class ExtendedAuthenticator;
 class LoginFailure;
+class ScreenlockIconProvider;
 
 namespace test {
 class ScreenLockerTester;
@@ -75,6 +83,25 @@ class ScreenLocker : public LoginStatusConsumer {
   // Exit the chrome, which will sign out the current session.
   void Signout();
 
+  // Displays |message| in a banner on the lock screen.
+  void ShowBannerMessage(const std::string& message);
+
+  // Shows a button inside the user pod on the lock screen with an icon.
+  void ShowUserPodButton(const std::string& username,
+                         const gfx::Image& icon,
+                         const base::Closure& click_callback);
+
+  // Hides the user pod button for a user.
+  void HideUserPodButton(const std::string& username);
+
+  // Set the authentication type to be used on the lock screen.
+  void SetAuthType(const std::string& username,
+                   LoginDisplay::AuthType auth_type,
+                   const std::string& initial_value);
+
+  // Returns the authentication type used for |username|.
+  LoginDisplay::AuthType GetAuthType(const std::string& username) const;
+
   // Disables all UI needed and shows error bubble with |message|.
   // If |sign_out_only| is true then all other input except "Sign Out"
   // button is blocked.
@@ -96,10 +123,14 @@ class ScreenLocker : public LoginStatusConsumer {
   // there isn't one.
   content::WebUI* GetAssociatedWebUI();
 
-  // Initialize ScreenLocker class. It will listen to
-  // LOGIN_USER_CHANGED notification so that the screen locker accepts
-  // lock event only after a user is logged in.
+  // Initialize or uninitialize the ScreenLocker class. It listens to
+  // NOTIFICATION_SESSION_STARTED so that the screen locker accepts lock
+  // requests only after a user has logged in.
   static void InitClass();
+  static void ShutDownClass();
+
+  // Handles a request from the session manager to lock the screen.
+  static void HandleLockScreenRequest();
 
   // Show the screen locker.
   static void Show();
@@ -135,6 +166,9 @@ class ScreenLocker : public LoginStatusConsumer {
   // Returns true if |username| is found among logged in users.
   bool IsUserLoggedIn(const std::string& username);
 
+  // Looks up user in unlock user list.
+  const User* FindUnlockUser(const std::string& user_id);
+
   // ScreenLockerDelegate instance in use.
   scoped_ptr<ScreenLockerDelegate> delegate_;
 
@@ -143,6 +177,9 @@ class ScreenLocker : public LoginStatusConsumer {
 
   // Used to authenticate the user to unlock.
   scoped_refptr<Authenticator> authenticator_;
+
+  // Used to authenticate the user to unlock supervised users.
+  scoped_refptr<ExtendedAuthenticator> extended_authenticator_;
 
   // True if the screen is locked, or false otherwise.  This changes
   // from false to true, but will never change from true to
@@ -168,6 +205,9 @@ class ScreenLocker : public LoginStatusConsumer {
   // Copy of parameters passed to last call of OnLoginSuccess for usage in
   // UnlockOnLoginSuccess().
   scoped_ptr<AuthenticationParametersCapture> authentication_capture_;
+
+  // Provider for button icon set by the screenlockPrivate API.
+  scoped_ptr<ScreenlockIconProvider> screenlock_icon_provider_;
 
   base::WeakPtrFactory<ScreenLocker> weak_factory_;
 

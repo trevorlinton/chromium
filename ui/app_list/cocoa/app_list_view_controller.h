@@ -45,26 +45,31 @@ APP_LIST_EXPORT
   // Subview of |backgroundView_| that slides out when search results are shown.
   base::scoped_nsobject<NSView> contentsView_;
 
+  // Progress indicator that is visible while the delegate is NULL.
+  base::scoped_nsobject<NSProgressIndicator> loadingIndicator_;
+
   scoped_ptr<app_list::AppListViewDelegate> delegate_;
   scoped_ptr<app_list::AppListModelObserverBridge>
       app_list_model_observer_bridge_;
   BOOL showingSearchResults_;
 }
 
+@property(readonly, nonatomic) AppsSearchBoxController*
+    searchBoxController;
+
 - (app_list::AppListViewDelegate*)delegate;
 - (void)setDelegate:(scoped_ptr<app_list::AppListViewDelegate>)newDelegate;
-- (void)onSigninStatusChanged;
+- (void)onProfilesChanged;
 
 @end
 
 @interface AppListViewController (TestingAPI)
 
+@property(nonatomic, readonly) BOOL showingSearchResults;
+
 - (AppsGridController*)appsGridController;
 - (NSSegmentedControl*)pagerControl;
 - (NSView*)backgroundView;
-
-- (void)setDelegate:(scoped_ptr<app_list::AppListViewDelegate>)newDelegate
-      withTestModel:(scoped_ptr<app_list::AppListModel>)newModel;
 
 @end
 

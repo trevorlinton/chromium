@@ -54,6 +54,11 @@ class CertificateResourceHandler : public ResourceHandler {
                            const GURL& url,
                            bool* defer) OVERRIDE;
 
+  // Pass-through implementation.
+  virtual bool OnBeforeNetworkStart(int request_id,
+                                    const GURL& url,
+                                    bool* defer) OVERRIDE;
+
   // Create a new buffer to store received data.
   virtual bool OnWillRead(int request_id,
                           scoped_refptr<net::IOBuffer>* buf,
@@ -66,9 +71,10 @@ class CertificateResourceHandler : public ResourceHandler {
                                bool* defer) OVERRIDE;
 
   // Done downloading the certificate.
-  virtual bool OnResponseCompleted(int request_id,
+  virtual void OnResponseCompleted(int request_id,
                                    const net::URLRequestStatus& urs,
-                                   const std::string& sec_info) OVERRIDE;
+                                   const std::string& sec_info,
+                                   bool* defer) OVERRIDE;
 
   // N/A to cert downloading.
   virtual void OnDataDownloaded(int request_id, int bytes_downloaded) OVERRIDE;

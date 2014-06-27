@@ -18,9 +18,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread.h"
-#include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
-#include "build/build_config.h"
 #include "chrome/browser/about_flags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/first_run/upgrade_util.h"
@@ -28,15 +26,14 @@
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/metrics/metrics_service.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/service/service_process_control.h"
+#include "chrome/browser/service_process/service_process_control.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/crash_keys.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/switch_utils.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/browser/render_view_host.h"
-#include "ui/base/resource/resource_bundle.h"
 
 #if defined(OS_WIN)
 #include "chrome/browser/browser_util_win.h"
@@ -56,12 +53,10 @@ using base::TimeDelta;
 using content::BrowserThread;
 
 namespace browser_shutdown {
+namespace {
 
 // Whether the browser is trying to quit (e.g., Quit chosen from menu).
 bool g_trying_to_quit = false;
-
-// Whether the browser should quit without closing browsers.
-bool g_shutting_down_without_closing_browsers = false;
 
 #if defined(OS_WIN)
 upgrade_util::RelaunchMode g_relaunch_mode =
@@ -74,6 +69,23 @@ int shutdown_num_processes_;
 int shutdown_num_processes_slow_;
 
 const char kShutdownMsFile[] = "chrome_shutdown_ms.txt";
+
+const char* ToShutdownTypeString(ShutdownType type) {
+  switch (type) {
+    case NOT_VALID:
+      NOTREACHED();
+      return "";
+    case WINDOW_CLOSE:
+      return "close";
+    case BROWSER_EXIT:
+      return "exit";
+    case END_SESSION:
+      return "end";
+  }
+  return "";
+}
+
+}  // namespace
 
 void RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterIntegerPref(prefs::kShutdownType, NOT_VALID);
@@ -88,7 +100,8 @@ ShutdownType GetShutdownType() {
 void OnShutdownStarting(ShutdownType type) {
   if (shutdown_type_ != NOT_VALID)
     return;
-
+  base::debug::SetCrashKeyValue(crash_keys::kShutdownType,
+                                ToShutdownTypeString(type));
 #if !defined(OS_CHROMEOS)
   // Start the shutdown tracing. Note that On ChromeOS we have started this
   // already.
@@ -249,7 +262,7 @@ void ShutdownPostThreadsStop(bool restart_last_session) {
         base::Int64ToString(shutdown_delta.InMilliseconds());
     int len = static_cast<int>(shutdown_ms.length()) + 1;
     base::FilePath shutdown_ms_file = GetShutdownMsPath();
-    file_util::WriteFile(shutdown_ms_file, shutdown_ms.c_str(), len);
+    base::WriteFile(shutdown_ms_file, shutdown_ms.c_str(), len);
   }
 
 #if defined(OS_CHROMEOS)
@@ -324,14 +337,6 @@ void SetTryingToQuit(bool quitting) {
 
 bool IsTryingToQuit() {
   return g_trying_to_quit;
-}
-
-bool ShuttingDownWithoutClosingBrowsers() {
-  return g_shutting_down_without_closing_browsers;
-}
-
-void SetShuttingDownWithoutClosingBrowsers(bool without_close) {
-  g_shutting_down_without_closing_browsers = without_close;
 }
 
 }  // namespace browser_shutdown

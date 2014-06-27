@@ -53,6 +53,7 @@ void SSLPolicy::OnCertError(SSLCertErrorHandler* handler) {
     case net::ERR_CERT_AUTHORITY_INVALID:
     case net::ERR_CERT_WEAK_SIGNATURE_ALGORITHM:
     case net::ERR_CERT_WEAK_KEY:
+    case net::ERR_CERT_NAME_CONSTRAINT_VIOLATION:
       OnCertErrorInternal(handler, !handler->fatal(), handler->fatal());
       break;
     case net::ERR_CERT_NO_REVOCATION_MECHANISM:
@@ -109,6 +110,9 @@ void SSLPolicy::UpdateEntry(NavigationEntryImpl* entry,
   if (!entry->GetURL().SchemeIsSecure())
     return;
 
+  if (!web_contents->DisplayedInsecureContent())
+    entry->GetSSL().content_status &= ~SSLStatus::DISPLAYED_INSECURE_CONTENT;
+
   // An HTTPS response may not have a certificate for some reason.  When that
   // happens, use the unauthenticated (HTTP) rather than the authentication
   // broken security style so that we can detect this error condition.
@@ -116,6 +120,9 @@ void SSLPolicy::UpdateEntry(NavigationEntryImpl* entry,
     entry->GetSSL().security_style = SECURITY_STYLE_UNAUTHENTICATED;
     return;
   }
+
+  if (web_contents->DisplayedInsecureContent())
+    entry->GetSSL().content_status |= SSLStatus::DISPLAYED_INSECURE_CONTENT;
 
   if (net::IsCertStatusError(entry->GetSSL().cert_status)) {
     // Minor errors don't lower the security style to
@@ -139,11 +146,6 @@ void SSLPolicy::UpdateEntry(NavigationEntryImpl* entry,
     entry->GetSSL().content_status |= SSLStatus::RAN_INSECURE_CONTENT;
     return;
   }
-
-  if (web_contents->DisplayedInsecureContent())
-    entry->GetSSL().content_status |= SSLStatus::DISPLAYED_INSECURE_CONTENT;
-  else
-    entry->GetSSL().content_status &= ~SSLStatus::DISPLAYED_INSECURE_CONTENT;
 }
 
 void SSLPolicy::OnAllowCertificate(scoped_refptr<SSLCertErrorHandler> handler,
@@ -186,7 +188,7 @@ void SSLPolicy::OnCertErrorInternal(SSLCertErrorHandler* handler,
       CERTIFICATE_REQUEST_RESULT_TYPE_CONTINUE;
   GetContentClient()->browser()->AllowCertificateError(
       handler->render_process_id(),
-      handler->render_view_id(),
+      handler->render_frame_id(),
       handler->cert_error(),
       handler->ssl_info(),
       handler->request_url(),

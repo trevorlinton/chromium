@@ -88,6 +88,10 @@ html[dir='rtl'] .controls {
   padding-top: 5px;
 }
 
+.inline-login-promo {
+    display: inline;
+}
+
 .inline-spinner {
   position: relative;
   top: 3px;
@@ -99,4 +103,8 @@ html[dir='rtl'] .controls {
 
 section {
   margin-bottom: 23px;
+}
+
+.dialog-contents {
+    padding-left: 17px;
 }

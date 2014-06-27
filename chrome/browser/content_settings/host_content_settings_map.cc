@@ -34,13 +34,14 @@
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/common/content_switches.h"
+#include "extensions/browser/extension_prefs.h"
 #include "extensions/common/constants.h"
 #include "net/base/net_errors.h"
 #include "net/base/static_cookie_policy.h"
 #include "url/gurl.h"
 
+using base::UserMetricsAction;
 using content::BrowserThread;
-using content::UserMetricsAction;
 
 namespace {
 
@@ -119,7 +120,8 @@ void HostContentSettingsMap::RegisterExtensionService(
 
   content_settings::ObservableProvider* custom_extension_provider =
       new content_settings::CustomExtensionProvider(
-          extension_service->GetContentSettingsStore(),
+          extensions::ExtensionPrefs::Get(
+              extension_service->GetBrowserContext())->content_settings_store(),
           is_off_the_record_);
   custom_extension_provider->AddObserver(this);
   content_settings_providers_[CUSTOM_EXTENSION_PROVIDER] =
@@ -254,7 +256,7 @@ void HostContentSettingsMap::SetDefaultContentSetting(
 
   base::Value* value = NULL;
   if (setting != CONTENT_SETTING_DEFAULT)
-    value = Value::CreateIntegerValue(setting);
+    value = base::Value::CreateIntegerValue(setting);
   SetWebsiteSetting(
       ContentSettingsPattern::Wildcard(),
       ContentSettingsPattern::Wildcard(),
@@ -297,7 +299,7 @@ void HostContentSettingsMap::SetContentSetting(
   DCHECK(!ContentTypeHasCompoundValue(content_type));
   base::Value* value = NULL;
   if (setting != CONTENT_SETTING_DEFAULT)
-    value = Value::CreateIntegerValue(setting);
+    value = base::Value::CreateIntegerValue(setting);
   SetWebsiteSetting(primary_pattern,
                     secondary_pattern,
                     content_type,
@@ -309,7 +311,6 @@ void HostContentSettingsMap::AddExceptionForURL(
     const GURL& primary_url,
     const GURL& secondary_url,
     ContentSettingsType content_type,
-    const std::string& resource_identifier,
     ContentSetting setting) {
   // TODO(markusheintz): Until the UI supports pattern pairs, both urls must
   // match.
@@ -321,13 +322,13 @@ void HostContentSettingsMap::AddExceptionForURL(
   SetContentSetting(ContentSettingsPattern::FromURLNoWildcard(primary_url),
                     ContentSettingsPattern::Wildcard(),
                     content_type,
-                    resource_identifier,
+                    std::string(),
                     CONTENT_SETTING_DEFAULT);
 
   SetContentSetting(ContentSettingsPattern::FromURL(primary_url),
                     ContentSettingsPattern::Wildcard(),
                     content_type,
-                    resource_identifier,
+                    std::string(),
                     setting);
 }
 
@@ -368,6 +369,12 @@ bool HostContentSettingsMap::IsSettingAllowedForType(
     return false;
   }
 
+#if defined(OS_ANDROID)
+  // App banners store a dictionary.
+  if (content_type == CONTENT_SETTINGS_TYPE_APP_BANNER)
+    return false;
+#endif
+
   // DEFAULT, ALLOW and BLOCK are always allowed.
   if (setting == CONTENT_SETTING_DEFAULT ||
       setting == CONTENT_SETTING_ALLOW ||
@@ -399,6 +406,11 @@ bool HostContentSettingsMap::ContentTypeHasCompoundValue(
   // Values for content type CONTENT_SETTINGS_TYPE_AUTO_SELECT_CERTIFICATE and
   // CONTENT_SETTINGS_TYPE_MEDIASTREAM are of type dictionary/map. Compound
   // types like dictionaries can't be mapped to the type |ContentSetting|.
+#if defined(OS_ANDROID)
+  if (type == CONTENT_SETTINGS_TYPE_APP_BANNER)
+    return true;
+#endif
+
   return (type == CONTENT_SETTINGS_TYPE_AUTO_SELECT_CERTIFICATE ||
           type == CONTENT_SETTINGS_TYPE_MEDIASTREAM);
 }
@@ -477,7 +489,8 @@ void HostContentSettingsMap::MigrateObsoleteClearOnExitPref() {
                       it->secondary_pattern,
                       CONTENT_SETTINGS_TYPE_COOKIES,
                       std::string(),
-                      Value::CreateIntegerValue(CONTENT_SETTING_SESSION_ONLY));
+                      base::Value::CreateIntegerValue(
+                          CONTENT_SETTING_SESSION_ONLY));
   }
 
   prefs_->SetBoolean(prefs::kContentSettingsClearOnExitMigrated, true);
@@ -535,7 +548,12 @@ bool HostContentSettingsMap::ShouldAllowAllContent(
       content_type == CONTENT_SETTINGS_TYPE_MIDI_SYSEX) {
     return false;
   }
-  if (secondary_url.SchemeIs(chrome::kChromeUIScheme) &&
+#if defined(OS_ANDROID) || defined(OS_CHROMEOS)
+  if (content_type == CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER) {
+    return false;
+  }
+#endif
+  if (secondary_url.SchemeIs(content::kChromeUIScheme) &&
       content_type == CONTENT_SETTINGS_TYPE_COOKIES &&
       primary_url.SchemeIsSecure()) {
     return true;
@@ -553,9 +571,8 @@ bool HostContentSettingsMap::ShouldAllowAllContent(
         return true;
     }
   }
-  return primary_url.SchemeIs(chrome::kChromeDevToolsScheme) ||
-         primary_url.SchemeIs(chrome::kChromeInternalScheme) ||
-         primary_url.SchemeIs(chrome::kChromeUIScheme);
+  return primary_url.SchemeIs(content::kChromeDevToolsScheme) ||
+         primary_url.SchemeIs(content::kChromeUIScheme);
 }
 
 base::Value* HostContentSettingsMap::GetWebsiteSetting(
@@ -574,7 +591,7 @@ base::Value* HostContentSettingsMap::GetWebsiteSetting(
       info->primary_pattern = ContentSettingsPattern::Wildcard();
       info->secondary_pattern = ContentSettingsPattern::Wildcard();
     }
-    return Value::CreateIntegerValue(CONTENT_SETTING_ALLOW);
+    return base::Value::CreateIntegerValue(CONTENT_SETTING_ALLOW);
   }
 
   ContentSettingsPattern* primary_pattern = NULL;

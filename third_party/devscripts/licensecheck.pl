@@ -444,7 +444,7 @@ sub parselicense($) {
     }
 
     if ($licensetext =~ /version ([^, ]+?)[.,]? (?:or later|or any later version) (?:of the GNU (?:Lesser |Library )General Public License )(as )?published by the Free Software Foundation/i or
-	$licensetext =~ /GNU (?:Lesser |Library )General Public License (?:(?:as )?published by the Free Software Foundation;)?,? (?:either )?[Vv]ersion ([^, ]+?)(?: of the license)?[.,]? (?:or later|or (?:\(at your option\) )?any later version)/i or
+	$licensetext =~ /(?:GNU (?:Lesser |Library )|(?:Lesser|Library) GNU )General Public License (?:(?:as )?published by the Free Software Foundation;)?,? (?:either )?[Vv]ersion ([^, ]+?)(?: of the license)?[.,]? (?:or later|or (?:\(at your option\) )?any later version)/i or
 	$licensetext =~ /GNU (?:Lesser |Library )General Public License(?: \(LGPL\))?,? [Vv]ersion (\d+(?:\.\d+)?)[ \.]/) {
 	$lgplver = " (v$1 or later)";
     }
@@ -458,7 +458,7 @@ sub parselicense($) {
     }
 
     if ($licensetext =~ /is (free software.? you can redistribute it and\/or modify it|licensed) under the terms of (version [^ ]+ of )?the (GNU (Library |Lesser )General Public License|LGPL)/i or
-        $licensetext =~ /(is distributed|may be used).*terms.*LGPL/) {
+        $licensetext =~ /(is distributed|may be used|can redistribute).*terms.*(LGPL|(Lesser|Library) GNU General Public License)/) {
         if ($lgplver) {
 	    $license = "LGPL$lgplver$extrainfo $license";
         } else {
@@ -485,15 +485,19 @@ sub parselicense($) {
 	$license = "QPL $license";
     }
 
-    if ($licensetext =~ /opensource\.org\/licenses\/mit-license\.php/) {
+    if ($licensetext =~ /opensource\.org\/licenses\/mit/) {
 	$license = "MIT/X11 (BSD like) $license";
     } elsif ($licensetext =~ /Permission is hereby granted, free of charge, to any person obtaining a copy of this software and(\/or)? associated documentation files \(the (Software|Materials)\), to deal in the (Software|Materials)/) {
 	$license = "MIT/X11 (BSD like) $license";
     } elsif ($licensetext =~ /Permission is hereby granted, without written agreement and without license or royalty fees, to use, copy, modify, and distribute this software and its documentation for any purpose/) {
 	$license = "MIT/X11 (BSD like) $license";
+    } elsif ($licensetext =~ /Permission to use, copy, modify, distribute, and sell this software and its documentation for any purpose is hereby granted without fee/) {
+	$license = "MIT/X11 (BSD like) $license";
+    } elsif ($licensetext  =~ /MIT .* License/) {
+	$license = "MIT/X11 (BSD like) $license";
     }
 
-    if ($licensetext  =~ /This file is distributed under the University of Illinois Open Source License/){
+    if ($licensetext  =~ /the University of Illinois Open Source License/){
 	$license = "University of Illinois/NCSA Open Source License (BSD like) $license";
     }
 
@@ -567,7 +571,7 @@ sub parselicense($) {
 	$license = "SGI Free Software License B $license";
     }
 
-    if ($licensetext =~ /in the public domain/i) {
+    if ($licensetext =~ /(in|into) the public domain/i) {
 	$license = "Public domain $license";
     }
 

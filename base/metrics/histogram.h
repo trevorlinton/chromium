@@ -23,7 +23,7 @@
 // agree exactly in type, bucket size and range.
 
 // For Histogram and LinearHistogram, the maximum for a declared range should
-// always be larger (not equal) than minmal range. Zero and
+// always be larger (not equal) than minimal range. Zero and
 // HistogramBase::kSampleType_MAX are implicitly added as first and last ranges,
 // so the smallest legal bucket_count is 3. However CustomHistogram can have
 // bucket count as 2 (when you give a custom ranges vector containing only 1
@@ -96,7 +96,7 @@ class Lock;
 // process.
 
 // The following code is generally what a thread-safe static pointer
-// initializaion looks like for a histogram (after a macro is expanded).  This
+// initialization looks like for a histogram (after a macro is expanded).  This
 // sample is an expansion (with comments) of the code for
 // HISTOGRAM_CUSTOM_COUNTS().
 
@@ -107,7 +107,7 @@ class Lock;
     static base::subtle::AtomicWord atomic_histogram_pointer = 0;
 
     // Acquire_Load() ensures that we acquire visibility to the pointed-to data
-    // in the histogrom.
+    // in the histogram.
     base::Histogram* histogram_pointer(reinterpret_cast<base::Histogram*>(
         base::subtle::Acquire_Load(&atomic_histogram_pointer)));
 
@@ -155,8 +155,8 @@ class Lock;
       base::subtle::Release_Store(&atomic_histogram_pointer, \
           reinterpret_cast<base::subtle::AtomicWord>(histogram_pointer)); \
     } \
-    DCHECK_EQ(histogram_pointer->histogram_name(), \
-              std::string(constant_histogram_name)); \
+    if (DCHECK_IS_ON) \
+      histogram_pointer->CheckName(constant_histogram_name); \
     histogram_pointer->histogram_add_method_invocation; \
   } while (0)
 
@@ -189,6 +189,12 @@ class Lock;
     STATIC_HISTOGRAM_POINTER_BLOCK(name, Add(sample), \
         base::Histogram::FactoryGet(name, min, max, bucket_count, \
                                     base::HistogramBase::kNoFlags))
+
+// This is a helper macro used by other macros and shouldn't be used directly.
+#define HISTOGRAM_ENUMERATION_WITH_FLAG(name, sample, boundary, flag) \
+    STATIC_HISTOGRAM_POINTER_BLOCK(name, Add(sample), \
+        base::LinearHistogram::FactoryGet(name, 1, boundary, boundary + 1, \
+            flag))
 
 #define HISTOGRAM_PERCENTAGE(name, under_one_hundred) \
     HISTOGRAM_ENUMERATION(name, under_one_hundred, 101)
@@ -349,9 +355,15 @@ class Lock;
 // The samples should always be strictly less than |boundary_value|.  For more
 // details, see the comment for the |HISTOGRAM_ENUMERATION| macro, above.
 #define UMA_HISTOGRAM_ENUMERATION(name, sample, boundary_value) \
-    STATIC_HISTOGRAM_POINTER_BLOCK(name, Add(sample), \
-        base::LinearHistogram::FactoryGet(name, 1, boundary_value, \
-            boundary_value + 1, base::HistogramBase::kUmaTargetedHistogramFlag))
+    HISTOGRAM_ENUMERATION_WITH_FLAG(name, sample, boundary_value, \
+        base::HistogramBase::kUmaTargetedHistogramFlag)
+
+// Similar to UMA_HISTOGRAM_ENUMERATION, but used for recording stability
+// histograms.  Use this if recording a histogram that should be part of the
+// initial stability log.
+#define UMA_STABILITY_HISTOGRAM_ENUMERATION(name, sample, boundary_value) \
+    HISTOGRAM_ENUMERATION_WITH_FLAG(name, sample, boundary_value, \
+        base::HistogramBase::kUmaStabilityHistogramFlag)
 
 #define UMA_HISTOGRAM_CUSTOM_ENUMERATION(name, sample, custom_ranges) \
     STATIC_HISTOGRAM_POINTER_BLOCK(name, Add(sample), \
@@ -421,7 +433,7 @@ class BASE_EXPORT Histogram : public HistogramBase {
   virtual int FindCorruption(const HistogramSamples& samples) const OVERRIDE;
 
   //----------------------------------------------------------------------------
-  // Accessors for factory constuction, serialization and testing.
+  // Accessors for factory construction, serialization and testing.
   //----------------------------------------------------------------------------
   Sample declared_min() const { return declared_min_; }
   Sample declared_max() const { return declared_max_; }
@@ -604,7 +616,7 @@ class BASE_EXPORT LinearHistogram : public Histogram {
   static HistogramBase* DeserializeInfoImpl(PickleIterator* iter);
 
   // For some ranges, we store a printable description of a bucket range.
-  // If there is no desciption, then GetAsciiBucketRange() uses parent class
+  // If there is no description, then GetAsciiBucketRange() uses parent class
   // to provide a description.
   typedef std::map<Sample, std::string> BucketDescriptionMap;
   BucketDescriptionMap bucket_description_;

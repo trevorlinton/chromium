@@ -71,7 +71,7 @@ bool PathProviderMac(int key, base::FilePath* result) {
 #if defined(OS_IOS)
       // On IOS, this directory does not exist unless it is created explicitly.
       if (success && !base::PathExists(*result))
-        success = file_util::CreateDirectory(*result);
+        success = base::CreateDirectory(*result);
 #endif  // defined(OS_IOS)
       return success;
     }
@@ -106,9 +106,6 @@ bool PathProviderMac(int key, base::FilePath* result) {
 #endif
     case base::DIR_CACHE:
       return base::mac::GetUserDirectory(NSCachesDirectory, result);
-    case base::DIR_HOME:
-      *result = base::mac::NSStringToFilePath(NSHomeDirectory());
-      return true;
     default:
       return false;
   }

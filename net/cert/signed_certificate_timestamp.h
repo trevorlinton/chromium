@@ -8,9 +8,13 @@
 #include <string>
 #include <vector>
 
+#include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "net/base/hash_value.h"
 #include "net/base/net_export.h"
+
+class Pickle;
+class PickleIterator;
 
 namespace net {
 
@@ -69,21 +73,35 @@ struct NET_EXPORT_PRIVATE DigitallySigned {
 };
 
 // SignedCertificateTimestamp struct in RFC 6962, Section 3.2.
-struct NET_EXPORT SignedCertificateTimestamp {
+struct NET_EXPORT SignedCertificateTimestamp
+    : public base::RefCountedThreadSafe<SignedCertificateTimestamp> {
+  // Predicate functor used in maps when SignedCertificateTimestamp is used as
+  // the key.
+  struct NET_EXPORT LessThan {
+    bool operator()(const scoped_refptr<SignedCertificateTimestamp>& lhs,
+                    const scoped_refptr<SignedCertificateTimestamp>& rhs) const;
+  };
+
   // Version enum in RFC 6962, Section 3.2.
   enum Version {
     SCT_VERSION_1 = 0,
   };
 
   // Source of the SCT - supplementary, not defined in CT RFC.
+  // Note: The numeric values are used within histograms and should not change
+  // or be re-assigned.
   enum Origin {
     SCT_EMBEDDED = 0,
-    SCT_FROM_TLS_HANDSHAKE = 1,
+    SCT_FROM_TLS_EXTENSION = 1,
     SCT_FROM_OCSP_RESPONSE = 2,
+    SCT_ORIGIN_MAX,
   };
 
   SignedCertificateTimestamp();
-  ~SignedCertificateTimestamp();
+
+  void Persist(Pickle* pickle);
+  static scoped_refptr<SignedCertificateTimestamp> CreateFromPickle(
+      PickleIterator* iter);
 
   Version version;
   std::string log_id;
@@ -93,6 +111,18 @@ struct NET_EXPORT SignedCertificateTimestamp {
   // The origin should not participate in equality checks
   // as the same SCT can be provided from multiple sources.
   Origin origin;
+  // The log description is not one of the SCT fields, but a user-readable
+  // name defined alongside the log key. It should not participate
+  // in equality checks as the log's description could change while
+  // the SCT would be the same.
+  std::string log_description;
+
+ private:
+  friend class base::RefCountedThreadSafe<SignedCertificateTimestamp>;
+
+  ~SignedCertificateTimestamp();
+
+  DISALLOW_COPY_AND_ASSIGN(SignedCertificateTimestamp);
 };
 
 }  // namespace ct

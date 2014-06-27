@@ -18,20 +18,22 @@
 #include "ppapi/proxy/browser_font_singleton_resource.h"
 #include "ppapi/proxy/content_decryptor_private_serializer.h"
 #include "ppapi/proxy/enter_proxy.h"
-#include "ppapi/proxy/ext_crx_file_system_private_resource.h"
 #include "ppapi/proxy/extensions_common_resource.h"
+#include "ppapi/proxy/file_mapping_resource.h"
 #include "ppapi/proxy/flash_clipboard_resource.h"
 #include "ppapi/proxy/flash_file_resource.h"
 #include "ppapi/proxy/flash_fullscreen_resource.h"
 #include "ppapi/proxy/flash_resource.h"
 #include "ppapi/proxy/gamepad_resource.h"
 #include "ppapi/proxy/host_dispatcher.h"
+#include "ppapi/proxy/isolated_file_system_private_resource.h"
 #include "ppapi/proxy/network_proxy_resource.h"
 #include "ppapi/proxy/pdf_resource.h"
 #include "ppapi/proxy/plugin_dispatcher.h"
 #include "ppapi/proxy/ppapi_messages.h"
 #include "ppapi/proxy/serialized_var.h"
 #include "ppapi/proxy/truetype_font_singleton_resource.h"
+#include "ppapi/proxy/uma_private_resource.h"
 #include "ppapi/shared_impl/ppapi_globals.h"
 #include "ppapi/shared_impl/ppb_url_util_shared.h"
 #include "ppapi/shared_impl/ppb_view_shared.h"
@@ -57,13 +59,11 @@ namespace proxy {
 
 namespace {
 
+#if !defined(OS_NACL)
 const char kSerializationError[] = "Failed to convert a PostMessage "
     "argument from a PP_Var to a Javascript value. It may have cycles or be of "
     "an unsupported type.";
-
-InterfaceProxy* CreateInstanceProxy(Dispatcher* dispatcher) {
-  return new PPB_Instance_Proxy(dispatcher);
-}
+#endif
 
 void RequestSurroundingText(PP_Instance instance) {
   PluginDispatcher* dispatcher = PluginDispatcher::GetForInstance(instance);
@@ -94,18 +94,6 @@ PPB_Instance_Proxy::PPB_Instance_Proxy(Dispatcher* dispatcher)
 }
 
 PPB_Instance_Proxy::~PPB_Instance_Proxy() {
-}
-
-// static
-const InterfaceProxy::Info* PPB_Instance_Proxy::GetInfoPrivate() {
-  static const Info info = {
-    ppapi::thunk::GetPPB_Instance_Private_0_1_Thunk(),
-    PPB_INSTANCE_PRIVATE_INTERFACE_0_1,
-    API_ID_NONE,  // 1_0 is the canonical one.
-    false,
-    &CreateInstanceProxy,
-  };
-  return &info;
 }
 
 bool PPB_Instance_Proxy::OnMessageReceived(const IPC::Message& msg) {
@@ -139,6 +127,12 @@ bool PPB_Instance_Proxy::OnMessageReceived(const IPC::Message& msg) {
                         OnHostMsgExecuteScript)
     IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBInstance_GetDefaultCharSet,
                         OnHostMsgGetDefaultCharSet)
+    IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBInstance_SetPluginToHandleFindRequests,
+                        OnHostMsgSetPluginToHandleFindRequests);
+    IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBInstance_NumberOfFindResultsChanged,
+                        OnHostMsgNumberOfFindResultsChanged)
+    IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBInstance_SelectFindResultChanged,
+                        OnHostMsgSelectFindResultChanged)
     IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBInstance_PostMessage,
                         OnHostMsgPostMessage)
     IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBInstance_SetFullscreen,
@@ -175,12 +169,16 @@ bool PPB_Instance_Proxy::OnMessageReceived(const IPC::Message& msg) {
                         OnHostMsgGetPluginInstanceURL)
     IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBInstance_GetPluginReferrerURL,
                         OnHostMsgGetPluginReferrerURL)
-    IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBInstance_KeyAdded,
-                        OnHostMsgKeyAdded)
-    IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBInstance_KeyMessage,
-                        OnHostMsgKeyMessage)
-    IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBInstance_KeyError,
-                        OnHostMsgKeyError)
+    IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBInstance_SessionCreated,
+                        OnHostMsgSessionCreated)
+    IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBInstance_SessionMessage,
+                        OnHostMsgSessionMessage)
+    IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBInstance_SessionReady,
+                        OnHostMsgSessionReady)
+    IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBInstance_SessionClosed,
+                        OnHostMsgSessionClosed)
+    IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBInstance_SessionError,
+                        OnHostMsgSessionError)
     IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBInstance_DeliverBlock,
                         OnHostMsgDeliverBlock)
     IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBInstance_DecoderInitializeDone,
@@ -319,15 +317,22 @@ PP_Var PPB_Instance_Proxy::GetDefaultCharSet(PP_Instance instance) {
   return result.Return(dispatcher);
 }
 
+void PPB_Instance_Proxy::SetPluginToHandleFindRequests(PP_Instance instance) {
+  dispatcher()->Send(new PpapiHostMsg_PPBInstance_SetPluginToHandleFindRequests(
+      API_ID_PPB_INSTANCE, instance));
+}
+
 void PPB_Instance_Proxy::NumberOfFindResultsChanged(PP_Instance instance,
                                                     int32_t total,
                                                     PP_Bool final_result) {
-  NOTIMPLEMENTED();  // Not proxied yet.
+  dispatcher()->Send(new PpapiHostMsg_PPBInstance_NumberOfFindResultsChanged(
+      API_ID_PPB_INSTANCE, instance, total, final_result));
 }
 
 void PPB_Instance_Proxy::SelectedFindResultChanged(PP_Instance instance,
                                                    int32_t index) {
-  NOTIMPLEMENTED();  // Not proxied yet.
+  dispatcher()->Send(new PpapiHostMsg_PPBInstance_SelectFindResultChanged(
+      API_ID_PPB_INSTANCE, instance, index));
 }
 
 PP_Bool PPB_Instance_Proxy::IsFullscreen(PP_Instance instance) {
@@ -371,20 +376,27 @@ Resource* PPB_Instance_Proxy::GetSingletonResource(PP_Instance instance,
     case BROKER_SINGLETON_ID:
       new_singleton = new BrokerResource(connection, instance);
       break;
-    case CRX_FILESYSTEM_SINGLETON_ID:
-      new_singleton = new ExtCrxFileSystemPrivateResource(connection, instance);
-      break;
     case EXTENSIONS_COMMON_SINGLETON_ID:
       new_singleton = new ExtensionsCommonResource(connection, instance);
       break;
+    case FILE_MAPPING_SINGLETON_ID:
+      new_singleton = new FileMappingResource(connection, instance);
+      break;
     case GAMEPAD_SINGLETON_ID:
       new_singleton = new GamepadResource(connection, instance);
+      break;
+    case ISOLATED_FILESYSTEM_SINGLETON_ID:
+      new_singleton =
+          new IsolatedFileSystemPrivateResource(connection, instance);
       break;
     case NETWORK_PROXY_SINGLETON_ID:
       new_singleton = new NetworkProxyResource(connection, instance);
       break;
     case TRUETYPE_FONT_SINGLETON_ID:
       new_singleton = new TrueTypeFontSingletonResource(connection, instance);
+      break;
+    case UMA_SINGLETON_ID:
+      new_singleton = new UMAPrivateResource(connection, instance);
       break;
 // Flash/trusted resources aren't needed for NaCl.
 #if !defined(OS_NACL) && !defined(NACL_WIN64)
@@ -537,45 +549,46 @@ PP_Var PPB_Instance_Proxy::GetPluginReferrerURL(
       components);
 }
 
-void PPB_Instance_Proxy::KeyAdded(PP_Instance instance,
-                                  PP_Var key_system,
-                                  PP_Var session_id) {
-  dispatcher()->Send(
-      new PpapiHostMsg_PPBInstance_KeyAdded(
-          API_ID_PPB_INSTANCE,
-          instance,
-          SerializedVarSendInput(dispatcher(), key_system),
-          SerializedVarSendInput(dispatcher(), session_id)));
+void PPB_Instance_Proxy::SessionCreated(PP_Instance instance,
+                                        uint32_t session_id,
+                                        PP_Var web_session_id) {
+  dispatcher()->Send(new PpapiHostMsg_PPBInstance_SessionCreated(
+      API_ID_PPB_INSTANCE,
+      instance,
+      session_id,
+      SerializedVarSendInput(dispatcher(), web_session_id)));
 }
 
-void PPB_Instance_Proxy::KeyMessage(PP_Instance instance,
-                                    PP_Var key_system,
-                                    PP_Var session_id,
-                                    PP_Var message,
-                                    PP_Var default_url) {
-  dispatcher()->Send(
-      new PpapiHostMsg_PPBInstance_KeyMessage(
-          API_ID_PPB_INSTANCE,
-          instance,
-          SerializedVarSendInput(dispatcher(), key_system),
-          SerializedVarSendInput(dispatcher(), session_id),
-          SerializedVarSendInput(dispatcher(), message),
-          SerializedVarSendInput(dispatcher(), default_url)));
+void PPB_Instance_Proxy::SessionMessage(PP_Instance instance,
+                                        uint32_t session_id,
+                                        PP_Var message,
+                                        PP_Var destination_url) {
+  dispatcher()->Send(new PpapiHostMsg_PPBInstance_SessionMessage(
+      API_ID_PPB_INSTANCE,
+      instance,
+      session_id,
+      SerializedVarSendInput(dispatcher(), message),
+      SerializedVarSendInput(dispatcher(), destination_url)));
 }
 
-void PPB_Instance_Proxy::KeyError(PP_Instance instance,
-                                  PP_Var key_system,
-                                  PP_Var session_id,
-                                  int32_t media_error,
-                                  int32_t system_code) {
-  dispatcher()->Send(
-      new PpapiHostMsg_PPBInstance_KeyError(
-          API_ID_PPB_INSTANCE,
-          instance,
-          SerializedVarSendInput(dispatcher(), key_system),
-          SerializedVarSendInput(dispatcher(), session_id),
-          media_error,
-          system_code));
+void PPB_Instance_Proxy::SessionReady(PP_Instance instance,
+                                      uint32_t session_id) {
+  dispatcher()->Send(new PpapiHostMsg_PPBInstance_SessionReady(
+      API_ID_PPB_INSTANCE, instance, session_id));
+}
+
+void PPB_Instance_Proxy::SessionClosed(PP_Instance instance,
+                                       uint32_t session_id) {
+  dispatcher()->Send(new PpapiHostMsg_PPBInstance_SessionClosed(
+      API_ID_PPB_INSTANCE, instance, session_id));
+}
+
+void PPB_Instance_Proxy::SessionError(PP_Instance instance,
+                                      uint32_t session_id,
+                                      int32_t media_error,
+                                      uint32_t system_code) {
+  dispatcher()->Send(new PpapiHostMsg_PPBInstance_SessionError(
+      API_ID_PPB_INSTANCE, instance, session_id, media_error, system_code));
 }
 
 void PPB_Instance_Proxy::DeliverBlock(PP_Instance instance,
@@ -899,6 +912,38 @@ void PPB_Instance_Proxy::OnHostMsgGetDefaultCharSet(
     result.Return(dispatcher(), enter.functions()->GetDefaultCharSet(instance));
 }
 
+void PPB_Instance_Proxy::OnHostMsgSetPluginToHandleFindRequests(
+    PP_Instance instance) {
+  if (!dispatcher()->permissions().HasPermission(PERMISSION_PRIVATE))
+    return;
+  EnterInstanceNoLock enter(instance);
+  if (enter.succeeded())
+    enter.functions()->SetPluginToHandleFindRequests(instance);
+}
+
+void PPB_Instance_Proxy::OnHostMsgNumberOfFindResultsChanged(
+    PP_Instance instance,
+    int32_t total,
+    PP_Bool final_result) {
+  if (!dispatcher()->permissions().HasPermission(PERMISSION_PRIVATE))
+    return;
+  EnterInstanceNoLock enter(instance);
+  if (enter.succeeded()) {
+    enter.functions()->NumberOfFindResultsChanged(
+        instance, total, final_result);
+  }
+}
+
+void PPB_Instance_Proxy::OnHostMsgSelectFindResultChanged(
+    PP_Instance instance,
+    int32_t index) {
+  if (!dispatcher()->permissions().HasPermission(PERMISSION_PRIVATE))
+    return;
+  EnterInstanceNoLock enter(instance);
+  if (enter.succeeded())
+    enter.functions()->SelectedFindResultChanged(instance, index);
+}
+
 void PPB_Instance_Proxy::OnHostMsgSetFullscreen(PP_Instance instance,
                                                 PP_Bool fullscreen,
                                                 PP_Bool* result) {
@@ -1042,53 +1087,65 @@ void PPB_Instance_Proxy::OnHostMsgGetPluginReferrerURL(
   }
 }
 
-void PPB_Instance_Proxy::OnHostMsgKeyAdded(
+void PPB_Instance_Proxy::OnHostMsgSessionCreated(
     PP_Instance instance,
-    SerializedVarReceiveInput key_system,
-    SerializedVarReceiveInput session_id) {
+    uint32_t session_id,
+    SerializedVarReceiveInput web_session_id) {
   if (!dispatcher()->permissions().HasPermission(PERMISSION_PRIVATE))
     return;
   EnterInstanceNoLock enter(instance);
   if (enter.succeeded()) {
-    enter.functions()->KeyAdded(instance,
-                                key_system.Get(dispatcher()),
-                                session_id.Get(dispatcher()));
+    enter.functions()->SessionCreated(
+        instance, session_id, web_session_id.Get(dispatcher()));
   }
 }
 
-void PPB_Instance_Proxy::OnHostMsgKeyMessage(
+void PPB_Instance_Proxy::OnHostMsgSessionMessage(
     PP_Instance instance,
-    SerializedVarReceiveInput key_system,
-    SerializedVarReceiveInput session_id,
+    uint32_t session_id,
     SerializedVarReceiveInput message,
-    SerializedVarReceiveInput default_url) {
+    SerializedVarReceiveInput destination_url) {
   if (!dispatcher()->permissions().HasPermission(PERMISSION_PRIVATE))
     return;
   EnterInstanceNoLock enter(instance);
   if (enter.succeeded()) {
-    enter.functions()->KeyMessage(instance,
-                                  key_system.Get(dispatcher()),
-                                  session_id.Get(dispatcher()),
-                                  message.Get(dispatcher()),
-                                  default_url.Get(dispatcher()));
+    enter.functions()->SessionMessage(instance,
+                                      session_id,
+                                      message.Get(dispatcher()),
+                                      destination_url.Get(dispatcher()));
   }
 }
 
-void PPB_Instance_Proxy::OnHostMsgKeyError(
-    PP_Instance instance,
-    SerializedVarReceiveInput key_system,
-    SerializedVarReceiveInput session_id,
-    int32_t media_error,
-    int32_t system_error) {
+void PPB_Instance_Proxy::OnHostMsgSessionReady(PP_Instance instance,
+                                               uint32_t session_id) {
   if (!dispatcher()->permissions().HasPermission(PERMISSION_PRIVATE))
     return;
   EnterInstanceNoLock enter(instance);
   if (enter.succeeded()) {
-    enter.functions()->KeyError(instance,
-                                key_system.Get(dispatcher()),
-                                session_id.Get(dispatcher()),
-                                media_error,
-                                system_error);
+    enter.functions()->SessionReady(instance, session_id);
+  }
+}
+
+void PPB_Instance_Proxy::OnHostMsgSessionClosed(PP_Instance instance,
+                                                uint32_t session_id) {
+  if (!dispatcher()->permissions().HasPermission(PERMISSION_PRIVATE))
+    return;
+  EnterInstanceNoLock enter(instance);
+  if (enter.succeeded()) {
+    enter.functions()->SessionClosed(instance, session_id);
+  }
+}
+
+void PPB_Instance_Proxy::OnHostMsgSessionError(PP_Instance instance,
+                                               uint32_t session_id,
+                                               int32_t media_error,
+                                               uint32_t system_code) {
+  if (!dispatcher()->permissions().HasPermission(PERMISSION_PRIVATE))
+    return;
+  EnterInstanceNoLock enter(instance);
+  if (enter.succeeded()) {
+    enter.functions()->SessionError(
+        instance, session_id, media_error, system_code);
   }
 }
 

@@ -7,12 +7,10 @@ package org.chromium.chrome.browser.autofill;
 import junit.framework.Assert;
 
 import org.chromium.base.ThreadUtils;
-import org.chromium.chrome.browser.autofill.AutofillDialogControllerAndroid;
 import org.chromium.chrome.browser.autofill.AutofillDialogControllerAndroid.AutofillDialog;
 import org.chromium.chrome.browser.autofill.AutofillDialogControllerAndroid.AutofillDialogDelegate;
 import org.chromium.chrome.browser.autofill.AutofillDialogControllerAndroid.AutofillDialogFactory;
-import org.chromium.chrome.browser.autofill.AutofillDialogResult;
-import org.chromium.ui.WindowAndroid;
+import org.chromium.ui.base.WindowAndroid;
 
 /**
  * Mock of the AutofillDialog that returns a predefined set of values.

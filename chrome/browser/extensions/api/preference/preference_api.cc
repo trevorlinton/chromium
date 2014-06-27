@@ -17,15 +17,18 @@
 #include "chrome/browser/extensions/api/preference/preference_api_constants.h"
 #include "chrome/browser/extensions/api/preference/preference_helpers.h"
 #include "chrome/browser/extensions/api/proxy/proxy_api.h"
-#include "chrome/browser/extensions/extension_pref_value_map.h"
-#include "chrome/browser/extensions/extension_pref_value_map_factory.h"
-#include "chrome/browser/extensions/extension_prefs_factory.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
+#include "components/translate/core/common/translate_pref_names.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
+#include "extensions/browser/extension_pref_value_map.h"
+#include "extensions/browser/extension_pref_value_map_factory.h"
+#include "extensions/browser/extension_prefs_factory.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/extension_system_provider.h"
+#include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/pref_names.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/permissions/api_permission.h"
@@ -46,10 +49,15 @@ struct PrefMappingEntry {
   // Name of the preference in the PrefStores.
   const char* browser_pref;
 
-  // Permission required to access this preference.
-  // Use APIPermission::kInvalid for |permission| to express that no
-  // permission is necessary.
-  APIPermission::ID permission;
+  // Permission required to read and observe this preference.
+  // Use APIPermission::kInvalid for |read_permission| to express that the read
+  // permission should not be granted.
+  APIPermission::ID read_permission;
+
+  // Permission required to write this preference.
+  // Use APIPermission::kInvalid for |write_permission| to express that the
+  // write permission should not be granted.
+  APIPermission::ID write_permission;
 };
 
 const char kOnPrefChangeFormat[] = "types.ChromeSetting.%s.onChange";
@@ -58,83 +66,83 @@ const char kConversionErrorMessage[] =
     "properly.";
 
 PrefMappingEntry kPrefMapping[] = {
-  { "protectedContentEnabled",
-    prefs::kEnableDRM,
-    APIPermission::kPrivacy
-  },
-  { "alternateErrorPagesEnabled",
-    prefs::kAlternateErrorPagesEnabled,
-    APIPermission::kPrivacy
-  },
-  { "autofillEnabled",
-    autofill::prefs::kAutofillEnabled,
-    APIPermission::kPrivacy
-  },
-  { "hyperlinkAuditingEnabled",
-    prefs::kEnableHyperlinkAuditing,
-    APIPermission::kPrivacy
-  },
-  { "networkPredictionEnabled",
-    prefs::kNetworkPredictionEnabled,
-    APIPermission::kPrivacy
-  },
-  { "proxy",
-    prefs::kProxy,
-    APIPermission::kProxy
-  },
-  { "referrersEnabled",
-    prefs::kEnableReferrers,
-    APIPermission::kPrivacy
-  },
-  { "safeBrowsingEnabled",
-    prefs::kSafeBrowsingEnabled,
-    APIPermission::kPrivacy
-  },
-  { "searchSuggestEnabled",
-    prefs::kSearchSuggestEnabled,
-    APIPermission::kPrivacy
-  },
-  { "spellingServiceEnabled",
-    prefs::kSpellCheckUseSpellingService,
-    APIPermission::kPrivacy
-  },
-  { "thirdPartyCookiesAllowed",
-    prefs::kBlockThirdPartyCookies,
-    APIPermission::kPrivacy
-  },
-  { "translationServiceEnabled",
-    prefs::kEnableTranslate,
-    APIPermission::kPrivacy
-  },
+    {"protectedContentEnabled", prefs::kEnableDRM, APIPermission::kPrivacy,
+     APIPermission::kPrivacy},
+    {"alternateErrorPagesEnabled", prefs::kAlternateErrorPagesEnabled,
+     APIPermission::kPrivacy, APIPermission::kPrivacy},
+    {"autofillEnabled", autofill::prefs::kAutofillEnabled,
+     APIPermission::kPrivacy, APIPermission::kPrivacy},
+    {"hyperlinkAuditingEnabled", prefs::kEnableHyperlinkAuditing,
+     APIPermission::kPrivacy, APIPermission::kPrivacy},
+    {"networkPredictionEnabled", prefs::kNetworkPredictionEnabled,
+     APIPermission::kPrivacy, APIPermission::kPrivacy},
+    {"proxy", prefs::kProxy, APIPermission::kProxy, APIPermission::kProxy},
+    {"referrersEnabled", prefs::kEnableReferrers, APIPermission::kPrivacy,
+     APIPermission::kPrivacy},
+    {"safeBrowsingEnabled", prefs::kSafeBrowsingEnabled,
+     APIPermission::kPrivacy, APIPermission::kPrivacy},
+    {"searchSuggestEnabled", prefs::kSearchSuggestEnabled,
+     APIPermission::kPrivacy, APIPermission::kPrivacy},
+    {"spellingServiceEnabled", prefs::kSpellCheckUseSpellingService,
+     APIPermission::kPrivacy, APIPermission::kPrivacy},
+    {"thirdPartyCookiesAllowed", prefs::kBlockThirdPartyCookies,
+     APIPermission::kPrivacy, APIPermission::kPrivacy},
+    {"translationServiceEnabled", prefs::kEnableTranslate,
+     APIPermission::kPrivacy, APIPermission::kPrivacy},
+#if defined(OS_CHROMEOS)
+    {"autoclick", prefs::kAutoclickEnabled,
+     APIPermission::kAccessibilityFeaturesRead,
+     APIPermission::kAccessibilityFeaturesModify},
+    {"highContrast", prefs::kHighContrastEnabled,
+     APIPermission::kAccessibilityFeaturesRead,
+     APIPermission::kAccessibilityFeaturesModify},
+    {"largeCursor", prefs::kLargeCursorEnabled,
+     APIPermission::kAccessibilityFeaturesRead,
+     APIPermission::kAccessibilityFeaturesModify},
+    {"screenMagnifier", prefs::kScreenMagnifierEnabled,
+     APIPermission::kAccessibilityFeaturesRead,
+     APIPermission::kAccessibilityFeaturesModify},
+    {"spokenFeedback", prefs::kSpokenFeedbackEnabled,
+     APIPermission::kAccessibilityFeaturesRead,
+     APIPermission::kAccessibilityFeaturesModify},
+    {"stickyKeys", prefs::kStickyKeysEnabled,
+     APIPermission::kAccessibilityFeaturesRead,
+     APIPermission::kAccessibilityFeaturesModify},
+    {"virtualKeyboard", prefs::kVirtualKeyboardEnabled,
+     APIPermission::kAccessibilityFeaturesRead,
+     APIPermission::kAccessibilityFeaturesModify},
+#endif
 };
 
 class IdentityPrefTransformer : public PrefTransformerInterface {
  public:
-  virtual Value* ExtensionToBrowserPref(const Value* extension_pref,
-                                        std::string* error,
-                                        bool* bad_message) OVERRIDE {
+  virtual base::Value* ExtensionToBrowserPref(const base::Value* extension_pref,
+                                              std::string* error,
+                                              bool* bad_message) OVERRIDE {
     return extension_pref->DeepCopy();
   }
 
-  virtual Value* BrowserToExtensionPref(const Value* browser_pref) OVERRIDE {
+  virtual base::Value* BrowserToExtensionPref(
+      const base::Value* browser_pref) OVERRIDE {
     return browser_pref->DeepCopy();
   }
 };
 
 class InvertBooleanTransformer : public PrefTransformerInterface {
  public:
-  virtual Value* ExtensionToBrowserPref(const Value* extension_pref,
-                                        std::string* error,
-                                        bool* bad_message) OVERRIDE {
+  virtual base::Value* ExtensionToBrowserPref(const base::Value* extension_pref,
+                                              std::string* error,
+                                              bool* bad_message) OVERRIDE {
     return InvertBooleanValue(extension_pref);
   }
 
-  virtual Value* BrowserToExtensionPref(const Value* browser_pref) OVERRIDE {
+  virtual base::Value* BrowserToExtensionPref(
+      const base::Value* browser_pref) OVERRIDE {
     return InvertBooleanValue(browser_pref);
   }
 
  private:
-  static Value* InvertBooleanValue(const Value* value) {
+  static base::Value* InvertBooleanValue(const base::Value* value) {
     bool bool_value = false;
     bool result = value->GetAsBoolean(&bool_value);
     DCHECK(result);
@@ -150,11 +158,13 @@ class PrefMapping {
 
   bool FindBrowserPrefForExtensionPref(const std::string& extension_pref,
                                        std::string* browser_pref,
-                                       APIPermission::ID* permission) {
+                                       APIPermission::ID* read_permission,
+                                       APIPermission::ID* write_permission) {
     PrefMap::iterator it = mapping_.find(extension_pref);
     if (it != mapping_.end()) {
-      *browser_pref = it->second.first;
-      *permission = it->second.second;
+      *browser_pref = it->second.pref_name;
+      *read_permission = it->second.read_permission;
+      *write_permission = it->second.write_permission;
       return true;
     }
     return false;
@@ -165,8 +175,8 @@ class PrefMapping {
                                APIPermission::ID* permission) {
     PrefMap::iterator it = event_mapping_.find(browser_pref);
     if (it != event_mapping_.end()) {
-      *event_name = it->second.first;
-      *permission = it->second.second;
+      *event_name = it->second.pref_name;
+      *permission = it->second.read_permission;
       return true;
     }
     return false;
@@ -189,13 +199,16 @@ class PrefMapping {
     identity_transformer_.reset(new IdentityPrefTransformer());
     for (size_t i = 0; i < arraysize(kPrefMapping); ++i) {
       mapping_[kPrefMapping[i].extension_pref] =
-          std::make_pair(kPrefMapping[i].browser_pref,
-                         kPrefMapping[i].permission);
+          PrefMapData(kPrefMapping[i].browser_pref,
+                      kPrefMapping[i].read_permission,
+                      kPrefMapping[i].write_permission);
       std::string event_name =
           base::StringPrintf(kOnPrefChangeFormat,
                              kPrefMapping[i].extension_pref);
       event_mapping_[kPrefMapping[i].browser_pref] =
-          std::make_pair(event_name, kPrefMapping[i].permission);
+          PrefMapData(event_name,
+                      kPrefMapping[i].read_permission,
+                      kPrefMapping[i].write_permission);
     }
     DCHECK_EQ(arraysize(kPrefMapping), mapping_.size());
     DCHECK_EQ(arraysize(kPrefMapping), event_mapping_.size());
@@ -216,9 +229,29 @@ class PrefMapping {
     transformers_[browser_pref] = transformer;
   }
 
-  typedef std::map<std::string,
-                   std::pair<std::string, APIPermission::ID> >
-          PrefMap;
+  struct PrefMapData {
+    PrefMapData()
+        : read_permission(APIPermission::kInvalid),
+          write_permission(APIPermission::kInvalid) {}
+
+    PrefMapData(const std::string& pref_name,
+                APIPermission::ID read,
+                APIPermission::ID write)
+        : pref_name(pref_name),
+          read_permission(read),
+          write_permission(write) {}
+
+    // Browser or extension preference to which the data maps.
+    std::string pref_name;
+
+    // Permission needed to read the preference.
+    APIPermission::ID read_permission;
+
+    // Permission needed to write the preference.
+    APIPermission::ID write_permission;
+  };
+
+  typedef std::map<std::string, PrefMapData> PrefMap;
 
   // Mapping from extension pref keys to browser pref keys and permissions.
   PrefMap mapping_;
@@ -265,14 +298,14 @@ void PreferenceEventRouter::OnPrefChanged(PrefService* pref_service,
   DCHECK(rv);
 
   base::ListValue args;
-  DictionaryValue* dict = new DictionaryValue();
+  base::DictionaryValue* dict = new base::DictionaryValue();
   args.Append(dict);
   const PrefService::Preference* pref =
       pref_service->FindPreference(browser_pref.c_str());
   CHECK(pref);
   PrefTransformerInterface* transformer =
       PrefMapping::GetInstance()->FindTransformerForBrowserPref(browser_pref);
-  Value* transformed_value =
+  base::Value* transformed_value =
       transformer->BrowserToExtensionPref(pref->GetValue());
   if (!transformed_value) {
     LOG(ERROR) << ErrorUtils::FormatErrorMessage(kConversionErrorMessage,
@@ -317,7 +350,7 @@ void PreferenceAPIBase::SetExtensionControlledPref(
     ExtensionPrefs::ScopedDictionaryUpdate update(extension_prefs(),
                                                   extension_id,
                                                   scope_string);
-    DictionaryValue* preference = update.Get();
+    base::DictionaryValue* preference = update.Get();
     if (!preference)
       preference = update.Create();
     preference->SetWithoutPathExpansion(pref_key, value->DeepCopy());
@@ -339,7 +372,7 @@ void PreferenceAPIBase::RemoveExtensionControlledPref(
     ExtensionPrefs::ScopedDictionaryUpdate update(extension_prefs(),
                                                   extension_id,
                                                   scope_string);
-    DictionaryValue* preference = update.Get();
+    base::DictionaryValue* preference = update.Get();
     if (preference)
       preference->RemoveWithoutPathExpansion(pref_key, NULL);
   }
@@ -371,7 +404,8 @@ bool PreferenceAPIBase::DoesExtensionControlPref(
       extension_id, pref_key, from_incognito);
 }
 
-PreferenceAPI::PreferenceAPI(Profile* profile) : profile_(profile) {
+PreferenceAPI::PreferenceAPI(content::BrowserContext* context)
+    : profile_(Profile::FromBrowserContext(context)) {
   for (size_t i = 0; i < arraysize(kPrefMapping); ++i) {
     std::string event_name;
     APIPermission::ID permission = APIPermission::kInvalid;
@@ -394,96 +428,23 @@ void PreferenceAPI::Shutdown() {
   extension_prefs()->content_settings_store()->RemoveObserver(this);
 }
 
-static base::LazyInstance<ProfileKeyedAPIFactory<PreferenceAPI> >
-g_factory = LAZY_INSTANCE_INITIALIZER;
+static base::LazyInstance<BrowserContextKeyedAPIFactory<PreferenceAPI> >
+    g_factory = LAZY_INSTANCE_INITIALIZER;
 
 // static
-ProfileKeyedAPIFactory<PreferenceAPI>* PreferenceAPI::GetFactoryInstance() {
-  return &g_factory.Get();
+BrowserContextKeyedAPIFactory<PreferenceAPI>*
+PreferenceAPI::GetFactoryInstance() {
+  return g_factory.Pointer();
 }
 
 // static
-PreferenceAPI* PreferenceAPI::Get(Profile* profile) {
-  return ProfileKeyedAPIFactory<PreferenceAPI>::GetForProfile(profile);
+PreferenceAPI* PreferenceAPI::Get(content::BrowserContext* context) {
+  return BrowserContextKeyedAPIFactory<PreferenceAPI>::Get(context);
 }
 
 void PreferenceAPI::OnListenerAdded(const EventListenerInfo& details) {
   preference_event_router_.reset(new PreferenceEventRouter(profile_));
   ExtensionSystem::Get(profile_)->event_router()->UnregisterObserver(this);
-}
-
-// static
-void PreferenceAPI::LoadExtensionControlledPrefs(
-    ExtensionPrefs* prefs,
-    ExtensionPrefValueMap* value_map,
-    const std::string& extension_id,
-    ExtensionPrefsScope scope) {
-  std::string scope_string;
-  if (!pref_names::ScopeToPrefName(scope, &scope_string))
-    return;
-  std::string key = extension_id + "." + scope_string;
-
-  const DictionaryValue* source_dict = prefs->pref_service()->
-      GetDictionary(prefs::kExtensionsPref);
-  const DictionaryValue* preferences = NULL;
-  if (!source_dict->GetDictionary(key, &preferences))
-    return;
-
-  for (DictionaryValue::Iterator iter(*preferences);
-       !iter.IsAtEnd(); iter.Advance()) {
-    value_map->SetExtensionPref(
-        extension_id, iter.key(), scope, iter.value().DeepCopy());
-  }
-}
-
-// static
-void PreferenceAPI::InitExtensionControlledPrefs(
-    ExtensionPrefs* prefs,
-    ExtensionPrefValueMap* value_map) {
-  ExtensionIdList extension_ids;
-  prefs->GetExtensions(&extension_ids);
-
-  for (ExtensionIdList::iterator extension_id = extension_ids.begin();
-       extension_id != extension_ids.end(); ++extension_id) {
-    base::Time install_time = prefs->GetInstallTime(*extension_id);
-    bool is_enabled = !prefs->IsExtensionDisabled(*extension_id);
-    value_map->RegisterExtension(*extension_id, install_time, is_enabled);
-    prefs->content_settings_store()->RegisterExtension(
-        *extension_id, install_time, is_enabled);
-
-    // Set regular extension controlled prefs.
-    LoadExtensionControlledPrefs(prefs,
-                                 value_map,
-                                 *extension_id,
-                                 kExtensionPrefsScopeRegular);
-    // Set incognito extension controlled prefs.
-    LoadExtensionControlledPrefs(prefs,
-                                 value_map,
-                                 *extension_id,
-                                 kExtensionPrefsScopeIncognitoPersistent);
-    // Set regular-only extension controlled prefs.
-    LoadExtensionControlledPrefs(prefs,
-                                 value_map,
-                                 *extension_id,
-                                 kExtensionPrefsScopeRegularOnly);
-
-    // Set content settings.
-    const base::ListValue* content_settings = NULL;
-    if (prefs->ReadPrefAsList(*extension_id,
-                              pref_names::kPrefContentSettings,
-                              &content_settings)) {
-      prefs->content_settings_store()->SetExtensionContentSettingFromList(
-          *extension_id, content_settings, kExtensionPrefsScopeRegular);
-    }
-    if (prefs->ReadPrefAsList(*extension_id,
-                              pref_names::kPrefIncognitoContentSettings,
-                              &content_settings)) {
-      prefs->content_settings_store()->SetExtensionContentSettingFromList(
-          *extension_id,
-          content_settings,
-          kExtensionPrefsScopeIncognitoPersistent);
-    }
-  }
 }
 
 void PreferenceAPI::OnContentSettingChanged(const std::string& extension_id,
@@ -524,21 +485,30 @@ ExtensionPrefValueMap* PreferenceAPI::extension_pref_value_map() {
 }
 
 template <>
-void ProfileKeyedAPIFactory<PreferenceAPI>::DeclareFactoryDependencies() {
-  DependsOn(ExtensionSystemFactory::GetInstance());
+void
+BrowserContextKeyedAPIFactory<PreferenceAPI>::DeclareFactoryDependencies() {
   DependsOn(ExtensionPrefsFactory::GetInstance());
   DependsOn(ExtensionPrefValueMapFactory::GetInstance());
+  DependsOn(ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
 }
 
 PreferenceFunction::~PreferenceFunction() { }
 
 bool PreferenceFunction::ValidateBrowserPref(
     const std::string& extension_pref_key,
+    PreferenceFunction::PermissionType permission_type,
     std::string* browser_pref_key) {
-  APIPermission::ID permission = APIPermission::kInvalid;
+  APIPermission::ID read_permission = APIPermission::kInvalid;
+  APIPermission::ID write_permission = APIPermission::kInvalid;
   EXTENSION_FUNCTION_VALIDATE(
       PrefMapping::GetInstance()->FindBrowserPrefForExtensionPref(
-          extension_pref_key, browser_pref_key, &permission));
+          extension_pref_key,
+          browser_pref_key,
+          &read_permission,
+          &write_permission));
+  APIPermission::ID permission = permission_type == PERMISSION_TYPE_READ
+                                     ? read_permission
+                                     : write_permission;
   if (!GetExtension()->HasAPIPermission(permission)) {
     error_ = ErrorUtils::FormatErrorMessage(
         keys::kPermissionErrorMessage, extension_pref_key);
@@ -552,7 +522,7 @@ GetPreferenceFunction::~GetPreferenceFunction() { }
 bool GetPreferenceFunction::RunImpl() {
   std::string pref_key;
   EXTENSION_FUNCTION_VALIDATE(args_->GetString(0, &pref_key));
-  DictionaryValue* details = NULL;
+  base::DictionaryValue* details = NULL;
   EXTENSION_FUNCTION_VALIDATE(args_->GetDictionary(1, &details));
 
   bool incognito = false;
@@ -568,15 +538,17 @@ bool GetPreferenceFunction::RunImpl() {
 
   // Obtain pref.
   std::string browser_pref;
-  if (!ValidateBrowserPref(pref_key, &browser_pref))
+  if (!ValidateBrowserPref(
+          pref_key, PreferenceFunction::PERMISSION_TYPE_READ, &browser_pref)) {
     return false;
+  }
   PrefService* prefs = incognito ? GetProfile()->GetOffTheRecordPrefs()
                                  : GetProfile()->GetPrefs();
   const PrefService::Preference* pref =
       prefs->FindPreference(browser_pref.c_str());
   CHECK(pref);
 
-  scoped_ptr<DictionaryValue> result(new DictionaryValue);
+  scoped_ptr<base::DictionaryValue> result(new base::DictionaryValue);
 
   // Retrieve level of control.
   std::string level_of_control = helpers::GetLevelOfControl(
@@ -586,7 +558,7 @@ bool GetPreferenceFunction::RunImpl() {
   // Retrieve pref value.
   PrefTransformerInterface* transformer =
       PrefMapping::GetInstance()->FindTransformerForBrowserPref(browser_pref);
-  Value* transformed_value =
+  base::Value* transformed_value =
       transformer->BrowserToExtensionPref(pref->GetValue());
   if (!transformed_value) {
     LOG(ERROR) <<
@@ -612,10 +584,10 @@ SetPreferenceFunction::~SetPreferenceFunction() { }
 bool SetPreferenceFunction::RunImpl() {
   std::string pref_key;
   EXTENSION_FUNCTION_VALIDATE(args_->GetString(0, &pref_key));
-  DictionaryValue* details = NULL;
+  base::DictionaryValue* details = NULL;
   EXTENSION_FUNCTION_VALIDATE(args_->GetDictionary(1, &details));
 
-  Value* value = NULL;
+  base::Value* value = NULL;
   EXTENSION_FUNCTION_VALIDATE(details->Get(keys::kValue, &value));
 
   ExtensionPrefsScope scope = kExtensionPrefsScopeRegular;
@@ -654,8 +626,10 @@ bool SetPreferenceFunction::RunImpl() {
 
   // Obtain pref.
   std::string browser_pref;
-  if (!ValidateBrowserPref(pref_key, &browser_pref))
+  if (!ValidateBrowserPref(
+          pref_key, PreferenceFunction::PERMISSION_TYPE_WRITE, &browser_pref)) {
     return false;
+  }
   ExtensionPrefs* prefs = ExtensionPrefs::Get(GetProfile());
   const PrefService::Preference* pref =
       prefs->pref_service()->FindPreference(browser_pref.c_str());
@@ -667,7 +641,7 @@ bool SetPreferenceFunction::RunImpl() {
       PrefMapping::GetInstance()->FindTransformerForBrowserPref(browser_pref);
   std::string error;
   bool bad_message = false;
-  scoped_ptr<Value> browser_pref_value(
+  scoped_ptr<base::Value> browser_pref_value(
       transformer->ExtensionToBrowserPref(value, &error, &bad_message));
   if (!browser_pref_value) {
     error_ = error;
@@ -677,7 +651,7 @@ bool SetPreferenceFunction::RunImpl() {
 
   // Validate also that the stored value can be converted back by the
   // transformer.
-  scoped_ptr<Value> extensionPrefValue(
+  scoped_ptr<base::Value> extensionPrefValue(
       transformer->BrowserToExtensionPref(browser_pref_value.get()));
   if (!extensionPrefValue) {
     error_ =  ErrorUtils::FormatErrorMessage(kConversionErrorMessage,
@@ -696,7 +670,7 @@ ClearPreferenceFunction::~ClearPreferenceFunction() { }
 bool ClearPreferenceFunction::RunImpl() {
   std::string pref_key;
   EXTENSION_FUNCTION_VALIDATE(args_->GetString(0, &pref_key));
-  DictionaryValue* details = NULL;
+  base::DictionaryValue* details = NULL;
   EXTENSION_FUNCTION_VALIDATE(args_->GetDictionary(1, &details));
 
   ExtensionPrefsScope scope = kExtensionPrefsScopeRegular;
@@ -725,8 +699,10 @@ bool ClearPreferenceFunction::RunImpl() {
   }
 
   std::string browser_pref;
-  if (!ValidateBrowserPref(pref_key, &browser_pref))
+  if (!ValidateBrowserPref(
+          pref_key, PreferenceFunction::PERMISSION_TYPE_WRITE, &browser_pref)) {
     return false;
+  }
 
   PreferenceAPI::Get(GetProfile())
       ->RemoveExtensionControlledPref(extension_id(), browser_pref, scope);

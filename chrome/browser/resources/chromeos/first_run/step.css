@@ -5,27 +5,36 @@
  */
 
 .step {
-  color: white;
-  display: none;
-  padding: 18px;
-  position: absolute;
+  background: white;
+  color: #8c8c8c;
+  padding: 0;
 }
 
-.step button {
-  background-color: rgb(72, 136, 246);
-  border: none;
-  color: white;
-  cursor: pointer;
-  font-size: 0.9em;
-  padding: 0.5em 2.5em;
+.step h1 {
+  color: #333;
+  font-weight: normal;
 }
 
 .step p {
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
-.step .controls {
-  -webkit-margin-after: 2em;
-  -webkit-margin-before: 1.5em;
+.step button.blue-button {
+  color: white;
 }
 
+.step button.white-button {
+  color: black;
+}
+
+.step .controls button {
+  margin: 0 3px;
+}
+
+.step .controls button:first-of-type {
+  -webkit-margin-start: 0;
+}
+
+.step .controls button:last-of-type {
+  -webkit-margin-end: 0;
+}

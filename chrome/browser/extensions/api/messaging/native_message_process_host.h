@@ -13,8 +13,9 @@
 #include "base/message_loop/message_loop.h"
 #include "base/process/process.h"
 #include "chrome/browser/extensions/api/messaging/native_process_launcher.h"
-#include "content/public/browser/browser_thread.h"
 #include "ui/gfx/native_widget_types.h"
+
+class PrefService;
 
 namespace net {
 
@@ -50,14 +51,26 @@ class NativeMessageProcessHost
                               const std::string& error_message) = 0;
   };
 
+  // Result returned from IsHostAllowed().
+  enum PolicyPermission {
+    DISALLOW,           // The host is not allowed.
+    ALLOW_SYSTEM_ONLY,  // Allowed only when installed on system level.
+    ALLOW_ALL,          // Allowed when installed on system or user level.
+  };
+
   virtual ~NativeMessageProcessHost();
+
+  // Returns policy permissions for the host with the specified name.
+  static PolicyPermission IsHostAllowed(const PrefService* pref_service,
+                                        const std::string& native_host_name);
 
   static scoped_ptr<NativeMessageProcessHost> Create(
       gfx::NativeView native_view,
       base::WeakPtr<Client> weak_client_ui,
       const std::string& source_extension_id,
       const std::string& native_host_name,
-      int destination_port);
+      int destination_port,
+      bool allow_user_level);
 
   // Create using specified |launcher|. Used in tests.
   static scoped_ptr<NativeMessageProcessHost> CreateWithLauncher(
@@ -93,8 +106,8 @@ class NativeMessageProcessHost
   // Callback for NativeProcessLauncher::Launch().
   void OnHostProcessLaunched(NativeProcessLauncher::LaunchResult result,
                              base::ProcessHandle process_handle,
-                             base::PlatformFile read_file,
-                             base::PlatformFile write_file);
+                             base::File read_file,
+                             base::File write_file);
 
   // Helper methods to read incoming messages.
   void WaitRead();
@@ -134,11 +147,13 @@ class NativeMessageProcessHost
 
   base::ProcessHandle process_handle_;
 
-  // Input stream handle and reader.
-  base::PlatformFile read_file_;
+  // Input stream reader.
   scoped_ptr<net::FileStream> read_stream_;
 
 #if defined(OS_POSIX)
+  // TODO(rvargas): Remove these members, maybe merging the functionality to
+  // net::FileStream.
+  base::PlatformFile read_file_;
   base::MessageLoopForIO::FileDescriptorWatcher read_watcher_;
 #endif  // !defined(OS_POSIX)
 

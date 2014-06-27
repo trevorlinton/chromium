@@ -131,9 +131,10 @@ class AboutMemoryHandler : public MemoryDetails {
  private:
   virtual ~AboutMemoryHandler() {}
 
-  void BindProcessMetrics(DictionaryValue* data,
+  void BindProcessMetrics(base::DictionaryValue* data,
                           ProcessMemoryInformation* info);
-  void AppendProcess(ListValue* child_data, ProcessMemoryInformation* info);
+  void AppendProcess(base::ListValue* child_data,
+                     ProcessMemoryInformation* info);
 
   content::URLDataSource::GotDataCallback callback_;
 
@@ -247,12 +248,6 @@ class ChromeOSTermsHandler
       BrowserThread::PostTask(
           BrowserThread::FILE, FROM_HERE,
           base::Bind(&ChromeOSTermsHandler::LoadOemEulaFileOnFileThread, this));
-    } else if (CommandLine::ForCurrentProcess()->HasSwitch(
-                   chromeos::switches::kDisableOnlineEULA)) {
-      // Fallback to the local file.
-      BrowserThread::PostTask(
-          BrowserThread::FILE, FROM_HERE,
-          base::Bind(&ChromeOSTermsHandler::LoadEulaFileOnFileThread, this));
     } else {
       // Try to load online version of ChromeOS terms first.
       // ChromeOSOnlineTermsHandler object destroys itself.
@@ -459,12 +454,12 @@ std::string AboutDiscards(const std::string& path) {
 
   chromeos::OomPriorityManager* oom =
       g_browser_process->platform_part()->oom_priority_manager();
-  std::vector<string16> titles = oom->GetTabTitles();
+  std::vector<base::string16> titles = oom->GetTabTitles();
   if (!titles.empty()) {
     output.append("<ul>");
-    std::vector<string16>::iterator it = titles.begin();
+    std::vector<base::string16>::iterator it = titles.begin();
     for ( ; it != titles.end(); ++it) {
-      std::string title = UTF16ToUTF8(*it);
+      std::string title = base::UTF16ToUTF8(*it);
       title = net::EscapeForHTML(title);
       output.append(WrapWithTag("li", title));
     }
@@ -609,9 +604,9 @@ void FinishMemoryDataRequest(
 //      if |query| is "raw", returns plain text of counter deltas.
 //      otherwise, returns HTML with pretty JS/HTML to display the data.
 std::string AboutStats(const std::string& query) {
-  // We keep the DictionaryValue tree live so that we can do delta
+  // We keep the base::DictionaryValue tree live so that we can do delta
   // stats computations across runs.
-  CR_DEFINE_STATIC_LOCAL(DictionaryValue, root, ());
+  CR_DEFINE_STATIC_LOCAL(base::DictionaryValue, root, ());
   static base::TimeTicks last_sample_time = base::TimeTicks::Now();
 
   base::TimeTicks now = base::TimeTicks::Now();
@@ -624,15 +619,15 @@ std::string AboutStats(const std::string& query) {
 
   // We maintain two lists - one for counters and one for timers.
   // Timers actually get stored on both lists.
-  ListValue* counters;
+  base::ListValue* counters;
   if (!root.GetList("counters", &counters)) {
-    counters = new ListValue();
+    counters = new base::ListValue();
     root.Set("counters", counters);
   }
 
-  ListValue* timers;
+  base::ListValue* timers;
   if (!root.GetList("timers", &timers)) {
-    timers = new ListValue();
+    timers = new base::ListValue();
     root.Set("timers", timers);
   }
 
@@ -652,10 +647,10 @@ std::string AboutStats(const std::string& query) {
       name.replace(pos, 1, ":");
 
     // Try to see if this name already exists.
-    DictionaryValue* counter = NULL;
+    base::DictionaryValue* counter = NULL;
     for (size_t scan_index = 0;
          scan_index < counters->GetSize(); scan_index++) {
-      DictionaryValue* dictionary;
+      base::DictionaryValue* dictionary;
       if (counters->GetDictionary(scan_index, &dictionary)) {
         std::string scan_name;
         if (dictionary->GetString("name", &scan_name) && scan_name == name) {
@@ -667,7 +662,7 @@ std::string AboutStats(const std::string& query) {
     }
 
     if (counter == NULL) {
-      counter = new DictionaryValue();
+      counter = new base::DictionaryValue();
       counter->SetString("name", name);
       counters->Append(counter);
     }
@@ -708,8 +703,7 @@ std::string AboutStats(const std::string& query) {
   if (query == "json" || query == kStringsJsPath) {
     base::JSONWriter::WriteWithOptions(
           &root,
-          base::JSONWriter::OPTIONS_DO_NOT_ESCAPE |
-              base::JSONWriter::OPTIONS_PRETTY_PRINT,
+          base::JSONWriter::OPTIONS_PRETTY_PRINT,
           &data);
     if (query == kStringsJsPath)
       data = "var templateData = " + data + ";";
@@ -719,11 +713,12 @@ std::string AboutStats(const std::string& query) {
     data.append(base::StringPrintf("Counter changes in the last %ldms\n",
         static_cast<long int>(time_since_last_sample.InMilliseconds())));
     for (size_t i = 0; i < counters->GetSize(); ++i) {
-      Value* entry = NULL;
+      base::Value* entry = NULL;
       bool rv = counters->Get(i, &entry);
       if (!rv)
         continue;  // None of these should fail.
-      DictionaryValue* counter = static_cast<DictionaryValue*>(entry);
+      base::DictionaryValue* counter =
+          static_cast<base::DictionaryValue*>(entry);
       int delta;
       rv = counter->GetInteger("delta", &delta);
       if (!rv)
@@ -755,7 +750,7 @@ std::string AboutStats(const std::string& query) {
       // as well.
       for (int index = static_cast<int>(timers->GetSize())-1; index >= 0;
            index--) {
-        scoped_ptr<Value> value;
+        scoped_ptr<base::Value> value;
         timers->Remove(index, &value);
         // We don't care about the value pointer; it's still tracked
         // on the counters list.
@@ -778,7 +773,7 @@ std::string AboutLinuxProxyConfig() {
   data.append(l10n_util::GetStringFUTF8(
       IDS_ABOUT_LINUX_PROXY_CONFIG_BODY,
       l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
-      ASCIIToUTF16(binary.BaseName().value())));
+      base::ASCIIToUTF16(binary.BaseName().value())));
   AppendFooter(&data);
   return data;
 }
@@ -824,7 +819,11 @@ std::string AboutSandbox() {
   AboutSandboxRow(&data,
                   std::string(),
                   IDS_ABOUT_SANDBOX_SECCOMP_BPF_SANDBOX,
-                  status & content::kSandboxLinuxSeccompBpf);
+                  status & content::kSandboxLinuxSeccompBPF);
+  AboutSandboxRow(&data,
+                  std::string(),
+                  IDS_ABOUT_SANDBOX_YAMA_LSM,
+                  status & content::kSandboxLinuxYama);
 
   data.append("</table>");
 
@@ -833,7 +832,7 @@ std::string AboutSandbox() {
                      status & content::kSandboxLinuxPIDNS &&
                      status & content::kSandboxLinuxNetNS;
   // A second-layer sandbox is also required to be adequately sandboxed.
-  bool good_layer2 = status & content::kSandboxLinuxSeccompBpf;
+  bool good_layer2 = status & content::kSandboxLinuxSeccompBPF;
   bool good = good_layer1 && good_layer2;
 
   if (good) {
@@ -855,7 +854,7 @@ std::string AboutSandbox() {
 // Helper for AboutMemory to bind results from a ProcessMetrics object
 // to a DictionaryValue. Fills ws_usage and comm_usage so that the objects
 // can be used in caller's scope (e.g for appending to a net total).
-void AboutMemoryHandler::BindProcessMetrics(DictionaryValue* data,
+void AboutMemoryHandler::BindProcessMetrics(base::DictionaryValue* data,
                                             ProcessMemoryInformation* info) {
   DCHECK(data && info);
 
@@ -874,12 +873,12 @@ void AboutMemoryHandler::BindProcessMetrics(DictionaryValue* data,
 
 // Helper for AboutMemory to append memory usage information for all
 // sub-processes (i.e. renderers, plugins) used by Chrome.
-void AboutMemoryHandler::AppendProcess(ListValue* child_data,
+void AboutMemoryHandler::AppendProcess(base::ListValue* child_data,
                                        ProcessMemoryInformation* info) {
   DCHECK(child_data && info);
 
   // Append a new DictionaryValue for this renderer to our list.
-  DictionaryValue* child = new DictionaryValue();
+  base::DictionaryValue* child = new base::DictionaryValue();
   child_data->Append(child);
   BindProcessMetrics(child, info);
 
@@ -889,22 +888,22 @@ void AboutMemoryHandler::AppendProcess(ListValue* child_data,
   if (info->is_diagnostics)
     child_label.append(" (diagnostics)");
   child->SetString("child_name", child_label);
-  ListValue* titles = new ListValue();
+  base::ListValue* titles = new base::ListValue();
   child->Set("titles", titles);
   for (size_t i = 0; i < info->titles.size(); ++i)
-    titles->Append(new StringValue(info->titles[i]));
+    titles->Append(new base::StringValue(info->titles[i]));
 }
 
 void AboutMemoryHandler::OnDetailsAvailable() {
   // the root of the JSON hierarchy for about:memory jstemplate
-  scoped_ptr<DictionaryValue> root(new DictionaryValue);
-  ListValue* browsers = new ListValue();
+  scoped_ptr<base::DictionaryValue> root(new base::DictionaryValue);
+  base::ListValue* browsers = new base::ListValue();
   root->Set("browsers", browsers);
 
   const std::vector<ProcessData>& browser_processes = processes();
 
   // Aggregate per-process data into browser summary data.
-  string16 log_string;
+  base::string16 log_string;
   for (size_t index = 0; index < browser_processes.size(); index++) {
     if (browser_processes[index].processes.empty())
       continue;
@@ -928,7 +927,7 @@ void AboutMemoryHandler::OnDetailsAvailable() {
       }
       ++iterator;
     }
-    DictionaryValue* browser_data = new DictionaryValue();
+    base::DictionaryValue* browser_data = new base::DictionaryValue();
     browsers->Append(browser_data);
     browser_data->SetString("name", browser_processes[index].name);
 
@@ -936,21 +935,21 @@ void AboutMemoryHandler::OnDetailsAvailable() {
 
     // We log memory info as we record it.
     if (!log_string.empty())
-      log_string += ASCIIToUTF16(", ");
-    log_string += browser_processes[index].name + ASCIIToUTF16(", ") +
+      log_string += base::ASCIIToUTF16(", ");
+    log_string += browser_processes[index].name + base::ASCIIToUTF16(", ") +
                   base::Int64ToString16(aggregate.working_set.priv) +
-                  ASCIIToUTF16(", ") +
+                  base::ASCIIToUTF16(", ") +
                   base::Int64ToString16(aggregate.working_set.shared) +
-                  ASCIIToUTF16(", ") +
+                  base::ASCIIToUTF16(", ") +
                   base::Int64ToString16(aggregate.working_set.shareable);
   }
   if (!log_string.empty())
     VLOG(1) << "memory: " << log_string;
 
   // Set the browser & renderer detailed process data.
-  DictionaryValue* browser_data = new DictionaryValue();
+  base::DictionaryValue* browser_data = new base::DictionaryValue();
   root->Set("browzr_data", browser_data);
-  ListValue* child_data = new ListValue();
+  base::ListValue* child_data = new base::ListValue();
   root->Set("child_data", child_data);
 
   ProcessData process = browser_processes[0];  // Chrome is the first browser.
@@ -966,7 +965,7 @@ void AboutMemoryHandler::OnDetailsAvailable() {
   root->SetBoolean("show_other_browsers",
       browser_defaults::kShowOtherBrowsersInAboutMemory);
 
-  DictionaryValue load_time_data;
+  base::DictionaryValue load_time_data;
   load_time_data.SetString(
       "summary_desc",
       l10n_util::GetStringUTF16(IDS_MEMORY_USAGE_SUMMARY_DESC));
@@ -997,7 +996,7 @@ std::string AboutUIHTMLSource::GetSource() const {
 void AboutUIHTMLSource::StartDataRequest(
     const std::string& path,
     int render_process_id,
-    int render_view_id,
+    int render_frame_id,
     const content::URLDataSource::GotDataCallback& callback) {
   std::string response;
   // Add your data source here, in alphabetical order.

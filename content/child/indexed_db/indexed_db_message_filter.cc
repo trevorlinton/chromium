@@ -4,50 +4,40 @@
 
 #include "content/child/indexed_db/indexed_db_message_filter.h"
 
-#include "base/bind.h"
-#include "base/location.h"
 #include "base/message_loop/message_loop_proxy.h"
-#include "base/pickle.h"
 #include "content/child/indexed_db/indexed_db_dispatcher.h"
 #include "content/child/thread_safe_sender.h"
+#include "content/child/worker_thread_task_runner.h"
+#include "content/common/indexed_db/indexed_db_constants.h"
 #include "content/common/indexed_db/indexed_db_messages.h"
-#include "webkit/child/worker_task_runner.h"
-
-using webkit_glue::WorkerTaskRunner;
 
 namespace content {
 
 IndexedDBMessageFilter::IndexedDBMessageFilter(
     ThreadSafeSender* thread_safe_sender)
-    : main_thread_loop_proxy_(base::MessageLoopProxy::current()),
-      thread_safe_sender_(thread_safe_sender) {
+    : main_thread_loop_(base::MessageLoopProxy::current()),
+      thread_safe_sender_(thread_safe_sender) {}
+
+IndexedDBMessageFilter::~IndexedDBMessageFilter() {}
+
+base::TaskRunner* IndexedDBMessageFilter::OverrideTaskRunnerForMessage(
+    const IPC::Message& msg) {
+  if (IPC_MESSAGE_CLASS(msg) != IndexedDBMsgStart)
+    return NULL;
+  int ipc_thread_id = 0;
+  const bool success = PickleIterator(msg).ReadInt(&ipc_thread_id);
+  DCHECK(success);
+  if (!ipc_thread_id)
+    return main_thread_loop_.get();
+  return new WorkerThreadTaskRunner(ipc_thread_id);
 }
 
 bool IndexedDBMessageFilter::OnMessageReceived(const IPC::Message& msg) {
   if (IPC_MESSAGE_CLASS(msg) != IndexedDBMsgStart)
     return false;
-  int ipc_thread_id = -1;
-  bool result = PickleIterator(msg).ReadInt(&ipc_thread_id);
-  DCHECK(result);
-  base::Closure closure = base::Bind(
-      &IndexedDBMessageFilter::DispatchMessage, this, msg);
-  if (!ipc_thread_id) {
-    main_thread_loop_proxy_->PostTask(FROM_HERE, closure);
-    return true;
-  }
-  if (WorkerTaskRunner::Instance()->PostTask(ipc_thread_id, closure))
-    return true;
-
-  // Message for a terminated worker - perform necessary cleanup
-  OnStaleMessageReceived(msg);
-  return true;
-}
-
-IndexedDBMessageFilter::~IndexedDBMessageFilter() {}
-
-void IndexedDBMessageFilter::DispatchMessage(const IPC::Message& msg) {
   IndexedDBDispatcher::ThreadSpecificInstance(thread_safe_sender_.get())
       ->OnMessageReceived(msg);
+  return true;
 }
 
 void IndexedDBMessageFilter::OnStaleMessageReceived(const IPC::Message& msg) {
@@ -65,6 +55,8 @@ void IndexedDBMessageFilter::OnStaleSuccessIDBDatabase(
     int32 ipc_database_callbacks_id,
     int32 ipc_database_id,
     const IndexedDBDatabaseMetadata& idb_metadata) {
+  if (ipc_database_id == kNoDatabase)
+    return;
   thread_safe_sender_->Send(
       new IndexedDBHostMsg_DatabaseClose(ipc_database_id));
 }

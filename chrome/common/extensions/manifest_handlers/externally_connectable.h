@@ -9,9 +9,9 @@
 #include <vector>
 
 #include "base/memory/scoped_ptr.h"
-#include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/manifest_handler.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/install_warning.h"
+#include "extensions/common/manifest_handler.h"
 #include "extensions/common/url_pattern_set.h"
 
 class GURL;
@@ -38,7 +38,7 @@ class ExternallyConnectableHandler : public ManifestHandler {
   ExternallyConnectableHandler();
   virtual ~ExternallyConnectableHandler();
 
-  virtual bool Parse(Extension* extension, string16* error) OVERRIDE;
+  virtual bool Parse(Extension* extension, base::string16* error) OVERRIDE;
 
  private:
   virtual const std::vector<std::string> Keys() const OVERRIDE;
@@ -58,7 +58,7 @@ struct ExternallyConnectableInfo : public Extension::ManifestData {
   static scoped_ptr<ExternallyConnectableInfo> FromValue(
       const base::Value& value,
       std::vector<InstallWarning>* install_warnings,
-      string16* error);
+      base::string16* error);
 
   virtual ~ExternallyConnectableInfo();
 

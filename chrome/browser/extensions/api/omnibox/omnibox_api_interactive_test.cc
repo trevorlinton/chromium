@@ -19,14 +19,14 @@ IN_PROC_BROWSER_TEST_F(OmniboxApiTest, PopupStaysClosed) {
       TemplateURLServiceFactory::GetForProfile(browser()->profile()));
 
   LocationBar* location_bar = GetLocationBar(browser());
-  OmniboxView* omnibox_view = location_bar->GetLocationEntry();
+  OmniboxView* omnibox_view = location_bar->GetOmniboxView();
   AutocompleteController* autocomplete_controller =
       GetAutocompleteController(browser());
   OmniboxPopupModel* popup_model = omnibox_view->model()->popup_model();
 
   // Input a keyword query and wait for suggestions from the extension.
   omnibox_view->OnBeforePossibleChange();
-  omnibox_view->SetUserText(ASCIIToUTF16("keyword comman"));
+  omnibox_view->SetUserText(base::ASCIIToUTF16("keyword comman"));
   omnibox_view->OnAfterPossibleChange();
   WaitForAutocompleteDone(autocomplete_controller);
   EXPECT_TRUE(autocomplete_controller->done());
@@ -41,9 +41,10 @@ IN_PROC_BROWSER_TEST_F(OmniboxApiTest, PopupStaysClosed) {
   // directly, figure out how to send it via the proper calls to
   // location_bar or location_bar->().
   autocomplete_controller->Start(
-      AutocompleteInput(ASCIIToUTF16("keyword command"), string16::npos,
-                        string16(), GURL(), AutocompleteInput::NEW_TAB_PAGE,
-                        true, false, true, AutocompleteInput::ALL_MATCHES));
+      AutocompleteInput(base::ASCIIToUTF16("keyword command"),
+                        base::string16::npos, base::string16(), GURL(),
+                        AutocompleteInput::NTP, true, false, true,
+                        AutocompleteInput::ALL_MATCHES));
   location_bar->AcceptInput();
   WaitForAutocompleteDone(autocomplete_controller);
   EXPECT_TRUE(autocomplete_controller->done());

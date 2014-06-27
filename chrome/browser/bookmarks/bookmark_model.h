@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_BOOKMARKS_BOOKMARK_MODEL_H_
 #define CHROME_BROWSER_BOOKMARKS_BOOKMARK_MODEL_H_
 
+#include <map>
 #include <set>
 #include <vector>
 
@@ -16,9 +17,9 @@
 #include "base/strings/string16.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/task/cancelable_task_tracker.h"
 #include "chrome/browser/bookmarks/bookmark_service.h"
-#include "chrome/common/cancelable_task_tracker.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service.h"
+#include "components/keyed_service/core/keyed_service.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "ui/base/models/tree_node_model.h"
@@ -33,6 +34,7 @@ class BookmarkModelObserver;
 class BookmarkStorage;
 struct BookmarkTitleMatch;
 class Profile;
+class ScopedGroupBookmarkActions;
 
 namespace base {
 class SequencedTaskRunner;
@@ -62,6 +64,10 @@ class BookmarkNode : public ui::TreeNode<BookmarkNode> {
     LOADED_FAVICON,
   };
 
+  typedef std::map<std::string, std::string> MetaInfoMap;
+
+  static const int64 kInvalidSyncTransactionVersion;
+
   // Creates a new node with an id of 0 and |url|.
   explicit BookmarkNode(const GURL& url);
   // Creates a new node with |id| and |url|.
@@ -72,7 +78,7 @@ class BookmarkNode : public ui::TreeNode<BookmarkNode> {
   // Set the node's internal title. Note that this neither invokes observers
   // nor updates any bookmark model this node may be in. For that functionality,
   // BookmarkModel::SetTitle(..) should be used instead.
-  virtual void SetTitle(const string16& title) OVERRIDE;
+  virtual void SetTitle(const base::string16& title) OVERRIDE;
 
   // Returns an unique id for this node.
   // For bookmark nodes that are managed by the bookmark model, the IDs are
@@ -123,11 +129,16 @@ class BookmarkNode : public ui::TreeNode<BookmarkNode> {
   bool GetMetaInfo(const std::string& key, std::string* value) const;
   bool SetMetaInfo(const std::string& key, const std::string& value);
   bool DeleteMetaInfo(const std::string& key);
-  void set_meta_info_str(const std::string& meta_info_str) {
-    meta_info_str_.reserve(meta_info_str.size());
-    meta_info_str_ = meta_info_str.substr(0);
+  void SetMetaInfoMap(const MetaInfoMap& meta_info_map);
+  // Returns NULL if there are no values in the map.
+  const MetaInfoMap* GetMetaInfoMap() const;
+
+  void set_sync_transaction_version(int64 sync_transaction_version) {
+    sync_transaction_version_ = sync_transaction_version;
   }
-  const std::string& meta_info_str() const { return meta_info_str_; }
+  int64 sync_transaction_version() const {
+    return sync_transaction_version_;
+  }
 
   // TODO(sky): Consider adding last visit time here, it'll greatly simplify
   // HistoryContentsProvider.
@@ -152,10 +163,10 @@ class BookmarkNode : public ui::TreeNode<BookmarkNode> {
   FaviconState favicon_state() const { return favicon_state_; }
   void set_favicon_state(FaviconState state) { favicon_state_ = state; }
 
-  CancelableTaskTracker::TaskId favicon_load_task_id() const {
+  base::CancelableTaskTracker::TaskId favicon_load_task_id() const {
     return favicon_load_task_id_;
   }
-  void set_favicon_load_task_id(CancelableTaskTracker::TaskId id) {
+  void set_favicon_load_task_id(base::CancelableTaskTracker::TaskId id) {
     favicon_load_task_id_ = id;
   }
 
@@ -184,13 +195,16 @@ class BookmarkNode : public ui::TreeNode<BookmarkNode> {
   // The loading state of the favicon.
   FaviconState favicon_state_;
 
-  // If not CancelableTaskTracker::kBadTaskId, it indicates we're loading the
+  // If not base::CancelableTaskTracker::kBadTaskId, it indicates
+  // we're loading the
   // favicon and the task is tracked by CancelabelTaskTracker.
-  CancelableTaskTracker::TaskId favicon_load_task_id_;
+  base::CancelableTaskTracker::TaskId favicon_load_task_id_;
 
-  // A JSON string representing a DictionaryValue that stores arbitrary meta
-  // information about the node. Use serialized format to save memory.
-  std::string meta_info_str_;
+  // A map that stores arbitrary meta information about the node.
+  scoped_ptr<MetaInfoMap> meta_info_map_;
+
+  // The sync transaction version. Defaults to kInvalidSyncTransactionVersion.
+  int64 sync_transaction_version_;
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkNode);
 };
@@ -227,7 +241,7 @@ class BookmarkPermanentNode : public BookmarkNode {
 // BookmarkModelFactory.
 class BookmarkModel : public content::NotificationObserver,
                       public BookmarkService,
-                      public BrowserContextKeyedService {
+                      public KeyedService {
  public:
   explicit BookmarkModel(Profile* profile);
   virtual ~BookmarkModel();
@@ -310,7 +324,7 @@ class BookmarkModel : public content::NotificationObserver,
   const gfx::Image& GetFavicon(const BookmarkNode* node);
 
   // Sets the title of |node|.
-  void SetTitle(const BookmarkNode* node, const string16& title);
+  void SetTitle(const BookmarkNode* node, const base::string16& title);
 
   // Sets the URL of |node|.
   void SetURL(const BookmarkNode* node, const GURL& url);
@@ -350,18 +364,18 @@ class BookmarkModel : public content::NotificationObserver,
   // Adds a new folder node at the specified position.
   const BookmarkNode* AddFolder(const BookmarkNode* parent,
                                 int index,
-                                const string16& title);
+                                const base::string16& title);
 
   // Adds a url at the specified position.
   const BookmarkNode* AddURL(const BookmarkNode* parent,
                              int index,
-                             const string16& title,
+                             const base::string16& title,
                              const GURL& url);
 
   // Adds a url with a specific creation date.
   const BookmarkNode* AddURLWithCreationTime(const BookmarkNode* parent,
                                              int index,
-                                             const string16& title,
+                                             const base::string16& title,
                                              const GURL& url,
                                              const base::Time& creation_time);
 
@@ -385,7 +399,7 @@ class BookmarkModel : public content::NotificationObserver,
   void ResetDateFolderModified(const BookmarkNode* node);
 
   void GetBookmarksWithTitlesMatching(
-      const string16& text,
+      const base::string16& text,
       size_t max_count,
       std::vector<BookmarkTitleMatch>* matches);
 
@@ -410,13 +424,23 @@ class BookmarkModel : public content::NotificationObserver,
   void SetNodeMetaInfo(const BookmarkNode* node,
                        const std::string& key,
                        const std::string& value);
+  void SetNodeMetaInfoMap(const BookmarkNode* node,
+                          const BookmarkNode::MetaInfoMap& meta_info_map);
   void DeleteNodeMetaInfo(const BookmarkNode* node,
                           const std::string& key);
+
+  // Sets the sync transaction version of |node|.
+  void SetNodeSyncTransactionVersion(const BookmarkNode* node,
+                                     int64 sync_transaction_version);
+
+  // Returns the profile that corresponds to this BookmarkModel.
+  Profile* profile() { return profile_; }
 
  private:
   friend class BookmarkCodecTest;
   friend class BookmarkModelTest;
   friend class BookmarkStorage;
+  friend class ScopedGroupBookmarkActions;
 
   // Used to order BookmarkNodes by URL.
   class NodeURLComparator {
@@ -454,6 +478,9 @@ class BookmarkModel : public content::NotificationObserver,
   // type specifies how the node should be removed.
   void RemoveAndDeleteNode(BookmarkNode* delete_me);
 
+  // Remove |node| from |nodes_ordered_by_url_set_|.
+  void RemoveNodeFromURLSet(BookmarkNode* node);
+
   // Notifies the history backend about urls of removed bookmarks.
   void NotifyHistoryAboutRemovedBookmarks(
       const std::set<GURL>& removed_bookmark_urls) const;
@@ -488,6 +515,11 @@ class BookmarkModel : public content::NotificationObserver,
 
   // If we're waiting on a favicon for node, the load request is canceled.
   void CancelPendingFaviconLoadRequests(BookmarkNode* node);
+
+  // Notifies the observers that a set of changes initiated by a single user
+  // action is about to happen and has completed.
+  void BeginGroupedChanges();
+  void EndGroupedChanges();
 
   // content::NotificationObserver:
   virtual void Observe(int type,
@@ -536,7 +568,7 @@ class BookmarkModel : public content::NotificationObserver,
   base::Lock url_lock_;
 
   // Used for loading favicons.
-  CancelableTaskTracker cancelable_task_tracker_;
+  base::CancelableTaskTracker cancelable_task_tracker_;
 
   // Reads/writes bookmarks to disk.
   scoped_refptr<BookmarkStorage> store_;

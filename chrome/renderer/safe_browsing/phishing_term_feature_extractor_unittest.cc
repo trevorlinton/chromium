@@ -23,6 +23,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using base::ASCIIToUTF16;
 using ::testing::Return;
 
 namespace safe_browsing {
@@ -78,7 +79,7 @@ class PhishingTermFeatureExtractorTest : public ::testing::Test {
 
   // Runs the TermFeatureExtractor on |page_text|, waiting for the
   // completion callback.  Returns the success boolean from the callback.
-  bool ExtractFeatures(const string16* page_text, FeatureMap* features) {
+  bool ExtractFeatures(const base::string16* page_text, FeatureMap* features) {
     success_ = false;
     extractor_->ExtractFeatures(
         page_text,
@@ -89,7 +90,8 @@ class PhishingTermFeatureExtractorTest : public ::testing::Test {
     return success_;
   }
 
-  void PartialExtractFeatures(const string16* page_text, FeatureMap* features) {
+  void PartialExtractFeatures(const base::string16* page_text,
+                              FeatureMap* features) {
     extractor_->ExtractFeatures(
         page_text,
         features,
@@ -125,7 +127,7 @@ TEST_F(PhishingTermFeatureExtractorTest, ExtractFeatures) {
   // This test doesn't exercise the extraction timing.
   EXPECT_CALL(clock_, Now()).WillRepeatedly(Return(base::TimeTicks::Now()));
 
-  string16 page_text = ASCIIToUTF16("blah");
+  base::string16 page_text = ASCIIToUTF16("blah");
   FeatureMap expected_features;  // initially empty
 
   FeatureMap features;
@@ -178,7 +180,7 @@ TEST_F(PhishingTermFeatureExtractorTest, ExtractFeatures) {
   ExpectFeatureMapsAreEqual(features, expected_features);
 
   // Test with empty page text.
-  page_text = string16();
+  page_text = base::string16();
   expected_features.Clear();
   features.Clear();
   ASSERT_TRUE(ExtractFeatures(&page_text, &features));
@@ -186,7 +188,8 @@ TEST_F(PhishingTermFeatureExtractorTest, ExtractFeatures) {
 
   // Chinese translation of the phrase "hello goodbye". This tests that
   // we can correctly separate terms in languages that don't use spaces.
-  page_text = UTF8ToUTF16("\xe4\xbd\xa0\xe5\xa5\xbd\xe5\x86\x8d\xe8\xa7\x81");
+  page_text =
+      base::UTF8ToUTF16("\xe4\xbd\xa0\xe5\xa5\xbd\xe5\x86\x8d\xe8\xa7\x81");
   expected_features.Clear();
   expected_features.AddBooleanFeature(
       features::kPageTerm + std::string("\xe4\xbd\xa0\xe5\xa5\xbd"));
@@ -204,7 +207,7 @@ TEST_F(PhishingTermFeatureExtractorTest, Continuation) {
 
   // This page has a total of 30 words.  For the features to be computed
   // correctly, the extractor has to process the entire string of text.
-  string16 page_text(ASCIIToUTF16("one "));
+  base::string16 page_text(ASCIIToUTF16("one "));
   for (int i = 0; i < 28; ++i) {
     page_text.append(ASCIIToUTF16(base::StringPrintf("%d ", i)));
   }
@@ -272,7 +275,8 @@ TEST_F(PhishingTermFeatureExtractorTest, Continuation) {
 }
 
 TEST_F(PhishingTermFeatureExtractorTest, PartialExtractionTest) {
-  scoped_ptr<string16> page_text(new string16(ASCIIToUTF16("one ")));
+  scoped_ptr<base::string16> page_text(
+      new base::string16(ASCIIToUTF16("one ")));
   for (int i = 0; i < 28; ++i) {
     page_text->append(ASCIIToUTF16(base::StringPrintf("%d ", i)));
   }
@@ -293,7 +297,7 @@ TEST_F(PhishingTermFeatureExtractorTest, PartialExtractionTest) {
   // Extract first 10 words then stop.
   PartialExtractFeatures(page_text.get(), &features);
 
-  page_text.reset(new string16());
+  page_text.reset(new base::string16());
   for (int i = 30; i < 58; ++i) {
     page_text->append(ASCIIToUTF16(base::StringPrintf("%d ", i)));
   }

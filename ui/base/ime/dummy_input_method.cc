@@ -39,11 +39,7 @@ TextInputClient* DummyInputMethod::GetTextInputClient() const {
   return NULL;
 }
 
-bool DummyInputMethod::DispatchKeyEvent(const base::NativeEvent& event) {
-  return false;
-}
-
-bool DummyInputMethod::DispatchFabricatedKeyEvent(const ui::KeyEvent& event) {
+bool DummyInputMethod::DispatchKeyEvent(const ui::KeyEvent& event) {
   return false;
 }
 
@@ -61,10 +57,6 @@ void DummyInputMethod::OnInputLocaleChanged() {
 
 std::string DummyInputMethod::GetInputLocale() {
   return std::string();
-}
-
-base::i18n::TextDirection DummyInputMethod::GetInputTextDirection() {
-  return base::i18n::UNKNOWN_DIRECTION;
 }
 
 bool DummyInputMethod::IsActive() {
@@ -87,6 +79,9 @@ bool DummyInputMethod::IsCandidatePopupOpen() const {
   return false;
 }
 
+void DummyInputMethod::ShowImeIfNeeded() {
+}
+
 void DummyInputMethod::AddObserver(InputMethodObserver* observer) {
 }
 
@@ -94,4 +89,3 @@ void DummyInputMethod::RemoveObserver(InputMethodObserver* observer) {
 }
 
 }  // namespace ui
-

@@ -12,12 +12,14 @@
 #include "android_webview/native/aw_dev_tools_server.h"
 #include "android_webview/native/aw_form_database.h"
 #include "android_webview/native/aw_http_auth_handler.h"
+#include "android_webview/native/aw_pdf_exporter.h"
 #include "android_webview/native/aw_picture.h"
 #include "android_webview/native/aw_quota_manager_bridge_impl.h"
 #include "android_webview/native/aw_resource.h"
 #include "android_webview/native/aw_settings.h"
 #include "android_webview/native/aw_web_contents_delegate.h"
 #include "android_webview/native/cookie_manager.h"
+#include "android_webview/native/external_video_surface_container_impl.h"
 #include "android_webview/native/input_stream_impl.h"
 #include "android_webview/native/intercepted_request_data_impl.h"
 #include "android_webview/native/java_browser_view_renderer_helper.h"
@@ -39,10 +41,14 @@ static base::android::RegistrationMethod kWebViewRegisteredMethods[] = {
   { "AwPicture", RegisterAwPicture },
   { "AwSettings", RegisterAwSettings },
   { "AwHttpAuthHandler", RegisterAwHttpAuthHandler },
+  { "AwPdfExporter", RegisterAwPdfExporter },
   { "AwQuotaManagerBridge", RegisterAwQuotaManagerBridge },
   { "AwResource", AwResource::RegisterAwResource },
   { "AwWebContentsDelegate", RegisterAwWebContentsDelegate },
   { "CookieManager", RegisterCookieManager },
+#if defined(VIDEO_HOLE)
+  { "ExternalVideoSurfaceContainer", RegisterExternalVideoSurfaceContainer },
+#endif
   { "InterceptedRequestDataImpl", RegisterInterceptedRequestData },
   { "InputStream", RegisterInputStream },
   { "JavaBrowserViewRendererHelper", RegisterJavaBrowserViewRendererHelper },

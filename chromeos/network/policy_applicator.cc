@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/memory/scoped_ptr.h"
 #include "base/stl_util.h"
 #include "base/values.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
@@ -167,22 +168,42 @@ void PolicyApplicator::GetEntryCallback(
       VLOG(1) << "Not updating existing managed configuration with guid "
               << new_guid << " because the policy didn't change.";
     } else {
-      // Delete the entry to ensure that no old configuration remains.
-      // Don't do this if a policy is reapplied (e.g. after reboot) or updated
-      // (i.e. the GUID didn't change), in order to keep implicit state of
-      // Shill like "connected successfully before".
-      if (old_guid == new_guid) {
+      const base::DictionaryValue* user_settings =
+          ui_data ? ui_data->user_settings() : NULL;
+      scoped_ptr<base::DictionaryValue> new_shill_properties =
+          policy_util::CreateShillConfiguration(
+              profile_, new_guid, new_policy, user_settings);
+      // A new policy has to be applied to this profile entry. In order to keep
+      // implicit state of Shill like "connected successfully before", keep the
+      // entry if a policy is reapplied (e.g. after reboot) or is updated.
+      // However, some Shill properties are used to identify the network and
+      // cannot be modified after initial configuration, so we have to delete
+      // the profile entry in these cases. Also, keeping Shill's state if the
+      // SSID changed might not be a good idea anyways. If the policy GUID
+      // changed, or there was no policy before, we delete the entry at first to
+      // ensure that no old configuration remains.
+      if (old_guid == new_guid &&
+          shill_property_util::DoIdentifyingPropertiesMatch(
+              *new_shill_properties, entry_properties)) {
         VLOG(1) << "Updating previously managed configuration with the "
                 << "updated policy " << new_guid << ".";
       } else {
+        VLOG(1) << "Deleting profile entry before writing new policy "
+                << new_guid << " because of identifying properties changed.";
         DeleteEntry(entry);
       }
 
-      const base::DictionaryValue* user_settings =
-          ui_data ? ui_data->user_settings() : NULL;
-
-      // Write the new configuration.
-      CreateAndWriteNewShillConfiguration(new_guid, *new_policy, user_settings);
+      // In general, old entries should at first be deleted before new
+      // configurations are written to prevent inconsistencies. Therefore, we
+      // delay the writing of the new config here until ~PolicyApplicator.
+      // E.g. one problematic case is if a policy { {GUID=X, SSID=Y} } is
+      // applied to the profile entries
+      // { ENTRY1 = {GUID=X, SSID=X, USER_SETTINGS=X},
+      //   ENTRY2 = {SSID=Y, ... } }.
+      // At first ENTRY1 and ENTRY2 should be removed, then the new config be
+      // written and the result should be:
+      // { {GUID=X, SSID=Y, USER_SETTINGS=X} }
+      WriteNewShillConfiguration(*new_shill_properties, *new_policy, true);
       remaining_policies_.erase(new_guid);
     }
   } else if (was_managed) {
@@ -196,7 +217,6 @@ void PolicyApplicator::GetEntryCallback(
   } else {
     // The entry wasn't managed and doesn't match any current policy. Global
     // network settings have to be applied.
-
     base::DictionaryValue shill_properties_to_update;
     GetPropertiesForUnmanagedEntry(entry_properties,
                                    &shill_properties_to_update);
@@ -219,10 +239,10 @@ void PolicyApplicator::DeleteEntry(const std::string& entry) {
       base::Bind(&LogErrorMessage, FROM_HERE));
 }
 
-void PolicyApplicator::CreateAndWriteNewShillConfiguration(
-    const std::string& guid,
+void PolicyApplicator::WriteNewShillConfiguration(
+    const base::DictionaryValue& shill_dictionary,
     const base::DictionaryValue& policy,
-    const base::DictionaryValue* user_settings) {
+    bool write_later) {
   // Ethernet (non EAP) settings, like GUID or UIData, cannot be stored per
   // user. Abort in that case.
   std::string type;
@@ -239,10 +259,10 @@ void PolicyApplicator::CreateAndWriteNewShillConfiguration(
       return;
   }
 
-  scoped_ptr<base::DictionaryValue> shill_dictionary =
-      policy_util::CreateShillConfiguration(
-          profile_, guid, &policy, user_settings);
-  handler_->CreateConfigurationFromPolicy(*shill_dictionary);
+  if (write_later)
+    new_shill_configurations_.push_back(shill_dictionary.DeepCopy());
+  else
+    handler_->CreateConfigurationFromPolicy(shill_dictionary);
 }
 
 void PolicyApplicator::GetPropertiesForUnmanagedEntry(
@@ -279,6 +299,10 @@ void PolicyApplicator::GetPropertiesForUnmanagedEntry(
 PolicyApplicator::~PolicyApplicator() {
   ApplyRemainingPolicies();
   STLDeleteValues(&all_policies_);
+  // Notify the handler about all policies being applied, so that the network
+  // lists can be updated.
+  if (handler_)
+    handler_->OnPoliciesApplied();
 }
 
 void PolicyApplicator::ApplyRemainingPolicies() {
@@ -286,6 +310,14 @@ void PolicyApplicator::ApplyRemainingPolicies() {
     LOG(WARNING) << "Handler destructed during policy application to profile "
                  << profile_.ToDebugString();
     return;
+  }
+
+  // Write all queued configurations now.
+  for (ScopedVector<base::DictionaryValue>::const_iterator it =
+           new_shill_configurations_.begin();
+       it != new_shill_configurations_.end();
+       ++it) {
+    handler_->CreateConfigurationFromPolicy(**it);
   }
 
   if (remaining_policies_.empty())
@@ -304,8 +336,9 @@ void PolicyApplicator::ApplyRemainingPolicies() {
     VLOG(1) << "Creating new configuration managed by policy " << *it
             << " in profile " << profile_.ToDebugString() << ".";
 
-    CreateAndWriteNewShillConfiguration(
-        *it, *policy, NULL /* no user settings */);
+    scoped_ptr<base::DictionaryValue> shill_dictionary =
+        policy_util::CreateShillConfiguration(profile_, *it, policy, NULL);
+    WriteNewShillConfiguration(*shill_dictionary, *policy, false);
   }
 }
 

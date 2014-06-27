@@ -209,8 +209,9 @@ void ParamTraits<skia::RefPtr<SkImageFilter> >::Write(
     Message* m, const param_type& p) {
   SkImageFilter* filter = p.get();
   const CommandLine& command_line = *CommandLine::ForCurrentProcess();
-  if (filter && command_line.HasSwitch(switches::kAllowFiltersOverIPC)) {
-    skia::RefPtr<SkData> data = skia::AdoptRef(SkSerializeFlattenable(filter));
+  if (filter && !command_line.HasSwitch(switches::kDisableFiltersOverIPC)) {
+    skia::RefPtr<SkData> data =
+        skia::AdoptRef(SkValidatingSerializeFlattenable(filter));
     m->WriteData(static_cast<const char*>(data->data()), data->size());
   } else {
     m->WriteData(0, 0);
@@ -224,8 +225,10 @@ bool ParamTraits<skia::RefPtr<SkImageFilter> >::Read(
   if (!m->ReadData(iter, &data, &length))
     return false;
   const CommandLine& command_line = *CommandLine::ForCurrentProcess();
-  if ((length > 0) && command_line.HasSwitch(switches::kAllowFiltersOverIPC)) {
-    SkFlattenable* flattenable = SkDeserializeFlattenable(data, length);
+  if ((length > 0) &&
+      !command_line.HasSwitch(switches::kDisableFiltersOverIPC)) {
+    SkFlattenable* flattenable = SkValidatingDeserializeFlattenable(
+        data, length, SkImageFilter::GetFlattenableType());
     *r = skia::AdoptRef(static_cast<SkImageFilter*>(flattenable));
   } else {
     r->clear();
@@ -290,10 +293,8 @@ void ParamTraits<cc::RenderPass>::Write(
   WriteParam(m, p.shared_quad_state_list.size());
   WriteParam(m, p.quad_list.size());
 
-  for (size_t i = 0; i < p.shared_quad_state_list.size(); ++i)
-    WriteParam(m, *p.shared_quad_state_list[i]);
-
   size_t shared_quad_state_index = 0;
+  size_t last_shared_quad_state_index = kuint32max;
   for (size_t i = 0; i < p.quad_list.size(); ++i) {
     const cc::DrawQuad* quad = p.quad_list[i];
     DCHECK(quad->rect.Contains(quad->visible_rect))
@@ -325,6 +326,9 @@ void ParamTraits<cc::RenderPass>::Write(
         break;
       case cc::DrawQuad::SOLID_COLOR:
         WriteParam(m, *cc::SolidColorDrawQuad::MaterialCast(quad));
+        break;
+      case cc::DrawQuad::SURFACE_CONTENT:
+        WriteParam(m, *cc::SurfaceDrawQuad::MaterialCast(quad));
         break;
       case cc::DrawQuad::TILED_CONTENT:
         WriteParam(m, *cc::TileDrawQuad::MaterialCast(quad));
@@ -364,8 +368,11 @@ void ParamTraits<cc::RenderPass>::Write(
       continue;
     }
 
-    DCHECK_LT(shared_quad_state_index, p.shared_quad_state_list.size());
     WriteParam(m, shared_quad_state_index);
+    if (shared_quad_state_index != last_shared_quad_state_index) {
+      WriteParam(m, *sqs_list[shared_quad_state_index]);
+      last_shared_quad_state_index = shared_quad_state_index;
+    }
   }
 }
 
@@ -416,14 +423,7 @@ bool ParamTraits<cc::RenderPass>::Read(
             transform_to_root_target,
             has_transparent_background);
 
-  for (size_t i = 0; i < shared_quad_state_list_size; ++i) {
-    scoped_ptr<cc::SharedQuadState> state(cc::SharedQuadState::Create());
-    if (!ReadParam(m, iter, state.get()))
-      return false;
-    p->shared_quad_state_list.push_back(state.Pass());
-  }
-
-  size_t last_shared_quad_state_index = 0;
+  size_t last_shared_quad_state_index = kuint32max;
   for (size_t i = 0; i < quad_list_size; ++i) {
     cc::DrawQuad::Material material;
     PickleIterator temp_iter = *iter;
@@ -444,6 +444,9 @@ bool ParamTraits<cc::RenderPass>::Read(
       case cc::DrawQuad::PICTURE_CONTENT:
         NOTREACHED();
         return false;
+      case cc::DrawQuad::SURFACE_CONTENT:
+        draw_quad = ReadDrawQuad<cc::SurfaceDrawQuad>(m, iter);
+        break;
       case cc::DrawQuad::TEXTURE_CONTENT:
         draw_quad = ReadDrawQuad<cc::TextureDrawQuad>(m, iter);
         break;
@@ -482,17 +485,25 @@ bool ParamTraits<cc::RenderPass>::Read(
     }
 
     size_t shared_quad_state_index;
-    if (!ReadParam(m, iter, &shared_quad_state_index) ||
-        shared_quad_state_index >= p->shared_quad_state_list.size())
+    if (!ReadParam(m, iter, &shared_quad_state_index))
+      return false;
+    if (shared_quad_state_index >= shared_quad_state_list_size)
       return false;
     // SharedQuadState indexes should be in ascending order.
-    if (shared_quad_state_index < last_shared_quad_state_index)
+    if (last_shared_quad_state_index != kuint32max &&
+        shared_quad_state_index < last_shared_quad_state_index)
       return false;
-    last_shared_quad_state_index = shared_quad_state_index;
 
-    draw_quad->shared_quad_state =
-        p->shared_quad_state_list[shared_quad_state_index];
+    // If the quad has a new shared quad state, read it in.
+    if (last_shared_quad_state_index != shared_quad_state_index) {
+      scoped_ptr<cc::SharedQuadState> state(cc::SharedQuadState::Create());
+      if (!ReadParam(m, iter, state.get()))
+        return false;
+      p->shared_quad_state_list.push_back(state.Pass());
+      last_shared_quad_state_index = shared_quad_state_index;
+    }
 
+    draw_quad->shared_quad_state = p->shared_quad_state_list.back();
     p->quad_list.push_back(draw_quad.Pass());
   }
 
@@ -545,6 +556,9 @@ void ParamTraits<cc::RenderPass>::Log(
         break;
       case cc::DrawQuad::SOLID_COLOR:
         LogParam(*cc::SolidColorDrawQuad::MaterialCast(quad), l);
+        break;
+      case cc::DrawQuad::SURFACE_CONTENT:
+        LogParam(*cc::SurfaceDrawQuad::MaterialCast(quad), l);
         break;
       case cc::DrawQuad::TILED_CONTENT:
         LogParam(*cc::TileDrawQuad::MaterialCast(quad), l);
@@ -737,6 +751,44 @@ void ParamTraits<cc::DelegatedFrameData>::Log(const param_type& p,
     LogParam(*p.render_pass_list[i], l);
   }
   l->append("])");
+}
+
+void ParamTraits<cc::SoftwareFrameData>::Write(Message* m,
+                                               const param_type& p) {
+  DCHECK(p.CheckedSizeInBytes().IsValid());
+
+  m->Reserve(sizeof(cc::SoftwareFrameData));
+  WriteParam(m, p.id);
+  WriteParam(m, p.size);
+  WriteParam(m, p.damage_rect);
+  WriteParam(m, p.handle);
+}
+
+bool ParamTraits<cc::SoftwareFrameData>::Read(const Message* m,
+                                              PickleIterator* iter,
+                                              param_type* p) {
+  if (!ReadParam(m, iter, &p->id))
+    return false;
+  if (!ReadParam(m, iter, &p->size) || !p->CheckedSizeInBytes().IsValid())
+    return false;
+  if (!ReadParam(m, iter, &p->damage_rect))
+    return false;
+  if (!ReadParam(m, iter, &p->handle))
+    return false;
+  return true;
+}
+
+void ParamTraits<cc::SoftwareFrameData>::Log(const param_type& p,
+                                             std::string* l) {
+  l->append("SoftwareFrameData(");
+  LogParam(p.id, l);
+  l->append(", ");
+  LogParam(p.size, l);
+  l->append(", ");
+  LogParam(p.damage_rect, l);
+  l->append(", ");
+  LogParam(p.handle, l);
+  l->append(")");
 }
 
 }  // namespace IPC

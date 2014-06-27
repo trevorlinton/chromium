@@ -4,34 +4,24 @@
 
 #include "ui/gl/gl_image_egl.h"
 
-#include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_surface_egl.h"
 
 namespace gfx {
 
 GLImageEGL::GLImageEGL(gfx::Size size)
-    : egl_image_(EGL_NO_IMAGE_KHR),
-      size_(size),
-      in_use_(false) {
-}
+    : egl_image_(EGL_NO_IMAGE_KHR), size_(size) {}
 
-GLImageEGL::~GLImageEGL() {
-  Destroy();
-}
+GLImageEGL::~GLImageEGL() { Destroy(); }
 
-bool GLImageEGL::Initialize(gfx::GpuMemoryBufferHandle buffer) {
-  DCHECK(buffer.native_buffer);
-  EGLint attrs[] = {
-    EGL_IMAGE_PRESERVED_KHR, EGL_TRUE,
-    EGL_NONE,
-  };
-  egl_image_ = eglCreateImageKHR(
-      GLSurfaceEGL::GetHardwareDisplay(),
-      EGL_NO_CONTEXT,
-      EGL_NATIVE_BUFFER_ANDROID,
-      buffer.native_buffer,
-      attrs);
-
+bool GLImageEGL::Initialize(EGLenum target,
+                            EGLClientBuffer buffer,
+                            const EGLint* attrs) {
+  DCHECK_EQ(EGL_NO_IMAGE_KHR, egl_image_);
+  egl_image_ = eglCreateImageKHR(GLSurfaceEGL::GetHardwareDisplay(),
+                                 EGL_NO_CONTEXT,
+                                 target,
+                                 buffer,
+                                 attrs);
   if (egl_image_ == EGL_NO_IMAGE_KHR) {
     EGLint error = eglGetError();
     LOG(ERROR) << "Error creating EGLImage: " << error;
@@ -42,64 +32,19 @@ bool GLImageEGL::Initialize(gfx::GpuMemoryBufferHandle buffer) {
 }
 
 void GLImageEGL::Destroy() {
-  if (egl_image_ == EGL_NO_IMAGE_KHR)
-    return;
-
-  EGLBoolean success = eglDestroyImageKHR(
-      GLSurfaceEGL::GetHardwareDisplay(), egl_image_);
-
-  if (success == EGL_FALSE) {
-    EGLint error = eglGetError();
-    LOG(ERROR) << "Error destroying EGLImage: " << error;
+  if (egl_image_ != EGL_NO_IMAGE_KHR) {
+    eglDestroyImageKHR(GLSurfaceEGL::GetHardwareDisplay(), egl_image_);
+    egl_image_ = EGL_NO_IMAGE_KHR;
   }
-
-  egl_image_ = EGL_NO_IMAGE_KHR;
 }
 
-gfx::Size GLImageEGL::GetSize() {
-  return size_;
-}
+gfx::Size GLImageEGL::GetSize() { return size_; }
 
-bool GLImageEGL::BindTexImage() {
-  if (egl_image_ == EGL_NO_IMAGE_KHR) {
-    LOG(ERROR) << "NULL EGLImage in BindTexImage";
-    return false;
-  }
-
-  // Defer ImageTargetTexture2D if not currently in use.
-  if (!in_use_)
-    return true;
-
-  glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, egl_image_);
+bool GLImageEGL::BindTexImage(unsigned target) {
+  DCHECK_NE(EGL_NO_IMAGE_KHR, egl_image_);
+  glEGLImageTargetTexture2DOES(target, egl_image_);
   DCHECK_EQ(static_cast<GLenum>(GL_NO_ERROR), glGetError());
   return true;
-}
-
-void GLImageEGL::ReleaseTexImage() {
-  // Nothing to do here as image is released after each use.
-}
-
-void GLImageEGL::WillUseTexImage() {
-  DCHECK(egl_image_);
-  DCHECK(!in_use_);
-  in_use_ = true;
-  glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, egl_image_);
-  DCHECK_EQ(static_cast<GLenum>(GL_NO_ERROR), glGetError());
-}
-
-void GLImageEGL::DidUseTexImage() {
-  DCHECK(in_use_);
-  in_use_ = false;
-  char zero[4] = { 0, };
-  glTexImage2D(GL_TEXTURE_2D,
-               0,
-               GL_RGBA,
-               1,
-               1,
-               0,
-               GL_RGBA,
-               GL_UNSIGNED_BYTE,
-               &zero);
 }
 
 }  // namespace gfx

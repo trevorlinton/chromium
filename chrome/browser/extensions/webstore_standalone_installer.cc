@@ -8,27 +8,18 @@
 #include "chrome/browser/extensions/crx_installer.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/extension_install_ui.h"
-#include "chrome/browser/extensions/extension_prefs.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/webstore_data_fetcher.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/extensions/extension.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
 #include "url/gurl.h"
 
 using content::WebContents;
 
 namespace extensions {
-
-const char kManifestKey[] = "manifest";
-const char kIconUrlKey[] = "icon_url";
-const char kLocalizedNameKey[] = "localized_name";
-const char kLocalizedDescriptionKey[] = "localized_description";
-const char kUsersKey[] = "users";
-const char kShowUserCountKey[] = "show_user_count";
-const char kAverageRatingKey[] = "average_rating";
-const char kRatingCountKey[] = "rating_count";
 
 const char kInvalidWebstoreItemId[] = "Invalid Chrome Web Store item ID";
 const char kWebstoreRequestError[] =
@@ -49,7 +40,6 @@ WebstoreStandaloneInstaller::WebstoreStandaloneInstaller(
       show_user_count_(true),
       average_rating_(0.0),
       rating_count_(0) {
-  CHECK(!callback_.is_null());
 }
 
 WebstoreStandaloneInstaller::~WebstoreStandaloneInstaller() {}
@@ -80,9 +70,29 @@ void WebstoreStandaloneInstaller::BeginInstall() {
   webstore_data_fetcher_->Start();
 }
 
+bool WebstoreStandaloneInstaller::CheckInstallValid(
+    const base::DictionaryValue& manifest,
+    std::string* error) {
+  return true;
+}
+
 scoped_ptr<ExtensionInstallPrompt>
 WebstoreStandaloneInstaller::CreateInstallUI() {
   return make_scoped_ptr(new ExtensionInstallPrompt(GetWebContents()));
+}
+
+scoped_ptr<WebstoreInstaller::Approval>
+WebstoreStandaloneInstaller::CreateApproval() const {
+  scoped_ptr<WebstoreInstaller::Approval> approval(
+      WebstoreInstaller::Approval::CreateWithNoInstallPrompt(
+          profile_,
+          id_,
+          scoped_ptr<base::DictionaryValue>(manifest_.get()->DeepCopy()),
+          true));
+  approval->skip_post_install_ui = !ShouldShowPostInstallUI();
+  approval->use_app_installed_bubble = ShouldShowAppInstalledBubble();
+  approval->installing_icon = gfx::ImageSkia::CreateFrom1xBitmap(icon_);
+  return approval.Pass();
 }
 
 void WebstoreStandaloneInstaller::OnWebstoreRequestFailure() {
@@ -90,7 +100,7 @@ void WebstoreStandaloneInstaller::OnWebstoreRequestFailure() {
 }
 
 void WebstoreStandaloneInstaller::OnWebstoreResponseParseSuccess(
-    DictionaryValue* webstore_data) {
+    scoped_ptr<base::DictionaryValue> webstore_data) {
   if (!CheckRequestorAlive()) {
     CompleteInstall(std::string());
     return;
@@ -155,7 +165,7 @@ void WebstoreStandaloneInstaller::OnWebstoreResponseParseSuccess(
   }
 
   // Assume ownership of webstore_data.
-  webstore_data_.reset(webstore_data);
+  webstore_data_ = webstore_data.Pass();
 
   scoped_refptr<WebstoreInstallHelper> helper =
       new WebstoreInstallHelper(this,
@@ -187,6 +197,13 @@ void WebstoreStandaloneInstaller::OnWebstoreParseSuccess(
 
   manifest_.reset(manifest);
   icon_ = icon;
+
+  std::string error;
+  if (!CheckInstallValid(*manifest, &error)) {
+    DCHECK(!error.empty());
+    CompleteInstall(error);
+    return;
+  }
 
   install_prompt_ = CreateInstallPrompt();
   if (install_prompt_) {
@@ -227,25 +244,22 @@ void WebstoreStandaloneInstaller::InstallUIProceed() {
       } else {  // Don't install a blacklisted extension.
         install_result = kExtensionIsBlacklisted;
       }
-    }  // else extension is installed and enabled; no work to be done.
-    CompleteInstall(install_result);
-    return;
+    } else if (!extension->is_ephemeral()) {
+      // else extension is installed and enabled; no work to be done.
+      CompleteInstall(install_result);
+      return;
+    }
+
+    // TODO(tmdiep): Optimize installation of ephemeral apps. For now we just
+    // reinstall the app.
   }
 
-  scoped_ptr<WebstoreInstaller::Approval> approval(
-      WebstoreInstaller::Approval::CreateWithNoInstallPrompt(
-          profile_,
-          id_,
-          scoped_ptr<base::DictionaryValue>(manifest_.get()->DeepCopy()),
-          true));
-  approval->skip_post_install_ui = !ShouldShowPostInstallUI();
-  approval->use_app_installed_bubble = ShouldShowAppInstalledBubble();
-  approval->installing_icon = gfx::ImageSkia::CreateFrom1xBitmap(icon_);
+  scoped_ptr<WebstoreInstaller::Approval> approval = CreateApproval();
 
   scoped_refptr<WebstoreInstaller> installer = new WebstoreInstaller(
       profile_,
       this,
-      &(GetWebContents()->GetController()),
+      GetWebContents(),
       id_,
       approval.Pass(),
       install_source_);
@@ -282,9 +296,13 @@ void WebstoreStandaloneInstaller::AbortInstall() {
   }
 }
 
-void WebstoreStandaloneInstaller::CompleteInstall(const std::string& error) {
+void WebstoreStandaloneInstaller::InvokeCallback(const std::string& error) {
   if (!callback_.is_null())
     callback_.Run(error.empty(), error);
+}
+
+void WebstoreStandaloneInstaller::CompleteInstall(const std::string& error) {
+  InvokeCallback(error);
   Release();  // Matches the AddRef in BeginInstall.
 }
 

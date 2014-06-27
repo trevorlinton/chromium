@@ -6,10 +6,12 @@
 #define MOJO_SYSTEM_CORE_IMPL_H_
 
 #include "base/basictypes.h"
+#include "base/compiler_specific.h"
 #include "base/containers/hash_tables.h"
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/lock.h"
-#include "mojo/public/system/core.h"
+#include "mojo/public/system/core_private.h"
+#include "mojo/system/system_impl_export.h"
 
 namespace mojo {
 namespace system {
@@ -17,62 +19,122 @@ namespace system {
 class CoreImpl;
 class Dispatcher;
 
-namespace test {
-class CoreTestBase;
+// Test-only function (defined/used in embedder/test_embedder.cc). Declared here
+// so it can be friended.
+namespace internal {
+bool ShutdownCheckNoLeaks(CoreImpl*);
 }
 
-// |CoreImpl| is a singleton object that implements the Mojo system calls. With
-// the (obvious) exception of |Init()|, which must be called first (and the call
-// completed) before making any other calls, all the public methods are
-// thread-safe.
-class MOJO_SYSTEM_EXPORT CoreImpl {
+// |CoreImpl| is a singleton object that implements the Mojo system calls. All
+// public methods are thread-safe.
+class MOJO_SYSTEM_IMPL_EXPORT CoreImpl : public Core {
  public:
-  static void Init();
+  // These methods are only to be used by via the embedder API.
+  CoreImpl();
+  virtual ~CoreImpl();
+  MojoHandle AddDispatcher(const scoped_refptr<Dispatcher>& dispatcher);
 
-  static CoreImpl* Get() {
-    return singleton_;
-  }
-
-  MojoResult Close(MojoHandle handle);
-
-  MojoResult Wait(MojoHandle handle,
-                  MojoWaitFlags flags,
-                  MojoDeadline deadline);
-
-  MojoResult WaitMany(const MojoHandle* handles,
-                      const MojoWaitFlags* flags,
-                      uint32_t num_handles,
-                      MojoDeadline deadline);
-
-  MojoResult CreateMessagePipe(MojoHandle* handle_0, MojoHandle* handle_1);
-
-  MojoResult WriteMessage(MojoHandle handle,
-                          const void* bytes, uint32_t num_bytes,
-                          const MojoHandle* handles, uint32_t num_handles,
-                          MojoWriteMessageFlags flags);
-
-  MojoResult ReadMessage(MojoHandle handle,
-                         void* bytes, uint32_t* num_bytes,
-                         MojoHandle* handles, uint32_t* num_handles,
-                         MojoReadMessageFlags flags);
+  // |CorePrivate| implementation:
+  virtual MojoTimeTicks GetTimeTicksNow() OVERRIDE;
+  virtual MojoResult Close(MojoHandle handle) OVERRIDE;
+  virtual MojoResult Wait(MojoHandle handle,
+                          MojoWaitFlags flags,
+                          MojoDeadline deadline) OVERRIDE;
+  virtual MojoResult WaitMany(const MojoHandle* handles,
+                              const MojoWaitFlags* flags,
+                              uint32_t num_handles,
+                              MojoDeadline deadline) OVERRIDE;
+  virtual MojoResult CreateMessagePipe(
+      MojoHandle* message_pipe_handle0,
+      MojoHandle* message_pipe_handle1) OVERRIDE;
+  virtual MojoResult WriteMessage(MojoHandle message_pipe_handle,
+                                  const void* bytes,
+                                  uint32_t num_bytes,
+                                  const MojoHandle* handles,
+                                  uint32_t num_handles,
+                                  MojoWriteMessageFlags flags) OVERRIDE;
+  virtual MojoResult ReadMessage(MojoHandle message_pipe_handle,
+                                 void* bytes,
+                                 uint32_t* num_bytes,
+                                 MojoHandle* handles,
+                                 uint32_t* num_handles,
+                                 MojoReadMessageFlags flags) OVERRIDE;
+  virtual MojoResult CreateDataPipe(
+      const MojoCreateDataPipeOptions* options,
+      MojoHandle* data_pipe_producer_handle,
+      MojoHandle* data_pipe_consumer_handle) OVERRIDE;
+  virtual MojoResult WriteData(MojoHandle data_pipe_producer_handle,
+                               const void* elements,
+                               uint32_t* num_bytes,
+                               MojoWriteDataFlags flags) OVERRIDE;
+  virtual MojoResult BeginWriteData(MojoHandle data_pipe_producer_handle,
+                                    void** buffer,
+                                    uint32_t* buffer_num_bytes,
+                                    MojoWriteDataFlags flags) OVERRIDE;
+  virtual MojoResult EndWriteData(MojoHandle data_pipe_producer_handle,
+                                  uint32_t num_bytes_written) OVERRIDE;
+  virtual MojoResult ReadData(MojoHandle data_pipe_consumer_handle,
+                              void* elements,
+                              uint32_t* num_bytes,
+                              MojoReadDataFlags flags) OVERRIDE;
+  virtual MojoResult BeginReadData(MojoHandle data_pipe_consumer_handle,
+                                   const void** buffer,
+                                   uint32_t* buffer_num_bytes,
+                                   MojoReadDataFlags flags) OVERRIDE;
+  virtual MojoResult EndReadData(MojoHandle data_pipe_consumer_handle,
+                                 uint32_t num_bytes_read) OVERRIDE;
+  virtual MojoResult CreateSharedBuffer(
+      const MojoCreateSharedBufferOptions* options,
+      uint64_t num_bytes,
+      MojoHandle* shared_buffer_handle) OVERRIDE;
+  virtual MojoResult DuplicateBufferHandle(
+      MojoHandle buffer_handle,
+      const MojoDuplicateBufferHandleOptions* options,
+      MojoHandle* new_buffer_handle) OVERRIDE;
+  virtual MojoResult MapBuffer(MojoHandle buffer_handle,
+                               uint64_t offset,
+                               uint64_t num_bytes,
+                               void** buffer,
+                               MojoMapBufferFlags flags) OVERRIDE;
+  virtual MojoResult UnmapBuffer(void* buffer) OVERRIDE;
 
  private:
-  friend class test::CoreTestBase;
+  friend bool internal::ShutdownCheckNoLeaks(CoreImpl*);
 
-  typedef base::hash_map<MojoHandle, scoped_refptr<Dispatcher> >
-      HandleTableMap;
+  // The |busy| member is used only to deal with functions (in particular
+  // |WriteMessage()|) that want to hold on to a dispatcher and later remove it
+  // from the handle table, without holding on to the handle table lock.
+  //
+  // For example, if |WriteMessage()| is called with a handle to be sent, (under
+  // the handle table lock) it must first check that that handle is not busy (if
+  // it is busy, then it fails with |MOJO_RESULT_BUSY|) and then marks it as
+  // busy. To avoid deadlock, it should also try to acquire the locks for all
+  // the dispatchers for the handles that it is sending (and fail with
+  // |MOJO_RESULT_BUSY| if the attempt fails). At this point, it can release the
+  // handle table lock.
+  //
+  // If |Close()| is simultaneously called on that handle, it too checks if the
+  // handle is marked busy. If it is, it fails (with |MOJO_RESULT_BUSY|). This
+  // prevents |WriteMessage()| from sending a handle that has been closed (or
+  // learning about this too late).
+  struct HandleTableEntry {
+    HandleTableEntry();
+    explicit HandleTableEntry(const scoped_refptr<Dispatcher>& dispatcher);
+    ~HandleTableEntry();
 
-  CoreImpl();
-  ~CoreImpl();
+    scoped_refptr<Dispatcher> dispatcher;
+    bool busy;
+  };
+  typedef base::hash_map<MojoHandle, HandleTableEntry> HandleTableMap;
 
   // Looks up the dispatcher for the given handle. Returns null if the handle is
   // invalid.
   scoped_refptr<Dispatcher> GetDispatcher(MojoHandle handle);
 
-  // Assigns a new handle for the given dispatcher (which must be valid);
-  // returns |MOJO_HANDLE_INVALID| on failure (due to hitting resource limits).
-  // Must be called under |handle_table_lock_|.
-  MojoHandle AddDispatcherNoLock(scoped_refptr<Dispatcher> dispatcher);
+  // Assigns a new handle for the given dispatcher; returns
+  // |MOJO_HANDLE_INVALID| on failure (due to hitting resource limits) or if
+  // |dispatcher| is null. Must be called under |handle_table_lock_|.
+  MojoHandle AddDispatcherNoLock(const scoped_refptr<Dispatcher>& dispatcher);
 
   // Internal implementation of |Wait()| and |WaitMany()|; doesn't do basic
   // validation of arguments.
@@ -80,10 +142,6 @@ class MOJO_SYSTEM_EXPORT CoreImpl {
                               const MojoWaitFlags* flags,
                               uint32_t num_handles,
                               MojoDeadline deadline);
-
-  // ---------------------------------------------------------------------------
-
-  static CoreImpl* singleton_;
 
   // ---------------------------------------------------------------------------
 

@@ -22,7 +22,7 @@ def DoDex(options, paths):
 
   record_path = '%s.md5.stamp' % options.dex_path
   md5_check.CallAndRecordIfStale(
-      lambda: build_utils.CheckCallDie(dex_cmd, suppress_output=True),
+      lambda: build_utils.CheckOutput(dex_cmd, print_stderr=False),
       record_path=record_path,
       input_paths=paths,
       input_strings=dex_cmd)
@@ -30,7 +30,7 @@ def DoDex(options, paths):
   build_utils.Touch(options.dex_path)
 
 
-def main(argv):
+def main():
   parser = optparse.OptionParser()
   parser.add_option('--android-sdk-tools',
                     help='Android sdk build tools directory.')
@@ -44,10 +44,6 @@ def main(argv):
                           'is enabled.'))
   parser.add_option('--no-locals',
                     help='Exclude locals list from the dex file.')
-  parser.add_option('--stamp', help='Path to touch on success.')
-
-  # TODO(newt): remove this once http://crbug.com/177552 is fixed in ninja.
-  parser.add_option('--ignore', help='Ignored.')
 
   options, paths = parser.parse_args()
 
@@ -57,9 +53,6 @@ def main(argv):
 
   DoDex(options, paths)
 
-  if options.stamp:
-    build_utils.Touch(options.stamp)
-
 
 if __name__ == '__main__':
-  sys.exit(main(sys.argv))
+  sys.exit(main())

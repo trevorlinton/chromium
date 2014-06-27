@@ -4,12 +4,13 @@
 
 #include "base/compiler_specific.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/safe_numerics.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/sys_byteorder.h"
 #include "content/public/common/child_process_sandbox_support_linux.h"
 #include "content/renderer/pepper/pepper_truetype_font.h"
 #include "ppapi/c/dev/ppb_truetype_font_dev.h"
 #include "ppapi/c/pp_errors.h"
+#include "ppapi/c/trusted/ppb_browser_font_trusted.h"
 
 namespace content {
 
@@ -69,7 +70,8 @@ PepperTrueTypeFontLinux::PepperTrueTypeFontLinux(
       desc_.family.c_str(),
       desc_.weight >= PP_TRUETYPEFONTWEIGHT_BOLD,
       desc_.style & PP_TRUETYPEFONTSTYLE_ITALIC,
-      desc_.charset);
+      desc_.charset,
+      PP_BROWSERFONT_TRUSTED_FAMILY_DEFAULT);
 }
 
 PepperTrueTypeFontLinux::~PepperTrueTypeFontLinux() {
@@ -144,7 +146,7 @@ int32_t PepperTrueTypeFontLinux::GetTable(uint32_t table_tag,
                     &table_size))
     return PP_ERROR_FAILED;
 
-  return base::checked_numeric_cast<int32_t>(table_size);
+  return base::checked_cast<int32_t>(table_size);
 }
 
 }  // namespace

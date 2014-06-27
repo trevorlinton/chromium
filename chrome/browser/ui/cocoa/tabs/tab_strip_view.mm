@@ -39,6 +39,8 @@
 
     // Register to be an URL drop target.
     dropHandler_.reset([[URLDropTargetHandler alloc] initWithView:self]);
+
+    [self setWantsLayer:YES];
   }
   return self;
 }

@@ -15,7 +15,6 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/omnibox/omnibox_api.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url.h"
@@ -23,6 +22,7 @@
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
+#include "extensions/browser/extension_system.h"
 #include "grit/generated_resources.h"
 #include "net/base/escape.h"
 #include "net/base/net_util.h"
@@ -83,8 +83,8 @@ class CompareQuality {
   // A keyword is of higher quality when a greater fraction of it has been
   // typed, that is, when it is shorter.
   //
-  // TODO(pkasting): http://b/740691 Most recent and most frequent keywords are
-  // probably better rankings than the fraction of the keyword typed.  We should
+  // TODO(pkasting): Most recent and most frequent keywords are probably
+  // better rankings than the fraction of the keyword typed.  We should
   // always put any exact matches first no matter what, since the code in
   // Start() assumes this (and it makes sense).
   bool operator()(const TemplateURL* t_url1, const TemplateURL* t_url2) const {
@@ -99,21 +99,22 @@ static int global_input_uid_;
 }  // namespace
 
 // static
-string16 KeywordProvider::SplitKeywordFromInput(
-    const string16& input,
+base::string16 KeywordProvider::SplitKeywordFromInput(
+    const base::string16& input,
     bool trim_leading_whitespace,
-    string16* remaining_input) {
+    base::string16* remaining_input) {
   // Find end of first token.  The AutocompleteController has trimmed leading
   // whitespace, so we need not skip over that.
-  const size_t first_white(input.find_first_of(kWhitespaceUTF16));
+  const size_t first_white(input.find_first_of(base::kWhitespaceUTF16));
   DCHECK_NE(0U, first_white);
-  if (first_white == string16::npos)
+  if (first_white == base::string16::npos)
     return input;  // Only one token provided.
 
   // Set |remaining_input| to everything after the first token.
   DCHECK(remaining_input != NULL);
   const size_t remaining_start = trim_leading_whitespace ?
-      input.find_first_not_of(kWhitespaceUTF16, first_white) : first_white + 1;
+      input.find_first_not_of(base::kWhitespaceUTF16, first_white) :
+      first_white + 1;
 
   if (remaining_start < input.length())
     remaining_input->assign(input.begin() + remaining_start, input.end());
@@ -123,15 +124,15 @@ string16 KeywordProvider::SplitKeywordFromInput(
 }
 
 // static
-string16 KeywordProvider::SplitReplacementStringFromInput(
-    const string16& input,
+base::string16 KeywordProvider::SplitReplacementStringFromInput(
+    const base::string16& input,
     bool trim_leading_whitespace) {
   // The input may contain leading whitespace, strip it.
-  string16 trimmed_input;
-  TrimWhitespace(input, TRIM_LEADING, &trimmed_input);
+  base::string16 trimmed_input;
+  base::TrimWhitespace(input, base::TRIM_LEADING, &trimmed_input);
 
   // And extract the replacement string.
-  string16 remaining_input;
+  base::string16 remaining_input;
   SplitKeywordFromInput(trimmed_input, trim_leading_whitespace,
       &remaining_input);
   return remaining_input;
@@ -144,7 +145,7 @@ const TemplateURL* KeywordProvider::GetSubstitutingTemplateURLForInput(
   if (!input->allow_exact_keyword_match())
     return NULL;
 
-  string16 keyword, remaining_input;
+  base::string16 keyword, remaining_input;
   if (!ExtractKeywordFromInput(*input, &keyword, &remaining_input))
     return NULL;
 
@@ -152,10 +153,10 @@ const TemplateURL* KeywordProvider::GetSubstitutingTemplateURLForInput(
   const TemplateURL* template_url = model->GetTemplateURLForKeyword(keyword);
   if (template_url && template_url->SupportsReplacement()) {
     // Adjust cursor position iff it was set before, otherwise leave it as is.
-    size_t cursor_position = string16::npos;
+    size_t cursor_position = base::string16::npos;
     // The adjustment assumes that the keyword was stripped from the beginning
     // of the original input.
-    if (input->cursor_position() != string16::npos &&
+    if (input->cursor_position() != base::string16::npos &&
         !remaining_input.empty() &&
         EndsWith(input->text(), remaining_input, true)) {
       int offset = input->text().length() - input->cursor_position();
@@ -180,21 +181,22 @@ const TemplateURL* KeywordProvider::GetSubstitutingTemplateURLForInput(
   return NULL;
 }
 
-string16 KeywordProvider::GetKeywordForText(const string16& text) const {
-  const string16 keyword(TemplateURLService::CleanUserInputKeyword(text));
+base::string16 KeywordProvider::GetKeywordForText(
+    const base::string16& text) const {
+  const base::string16 keyword(TemplateURLService::CleanUserInputKeyword(text));
 
   if (keyword.empty())
     return keyword;
 
   TemplateURLService* url_service = GetTemplateURLService();
   if (!url_service)
-    return string16();
+    return base::string16();
 
   // Don't provide a keyword if it doesn't support replacement.
   const TemplateURL* const template_url =
       url_service->GetTemplateURLForKeyword(keyword);
   if (!template_url || !template_url->SupportsReplacement())
-    return string16();
+    return base::string16();
 
   // Don't provide a keyword for inactive/disabled extension keywords.
   if (template_url->GetType() == TemplateURL::OMNIBOX_API_EXTENSION) {
@@ -204,17 +206,16 @@ string16 KeywordProvider::GetKeywordForText(const string16& text) const {
         GetExtensionById(template_url->GetExtensionId(), false);
     if (!extension ||
         (profile_->IsOffTheRecord() &&
-        !extension_util::IsIncognitoEnabled(extension->id(),
-                                            extension_service)))
-      return string16();
+        !extensions::util::IsIncognitoEnabled(extension->id(), profile_)))
+      return base::string16();
   }
 
   return keyword;
 }
 
 AutocompleteMatch KeywordProvider::CreateVerbatimMatch(
-    const string16& text,
-    const string16& keyword,
+    const base::string16& text,
+    const base::string16& keyword,
     const AutocompleteInput& input) {
   // A verbatim match is allowed to be the default match.
   return CreateAutocompleteMatch(
@@ -247,11 +248,11 @@ void KeywordProvider::Start(const AutocompleteInput& input,
   // automatically/manually create keywords will need to be in sync with
   // whatever we do here!
   //
-  // TODO(pkasting): http://b/1112681 If someday we remember usage frequency for
-  // keywords, we might suggest keywords that haven't even been partially typed,
-  // if the user uses them enough and isn't obviously typing something else.  In
-  // this case we'd consider all input here to be query input.
-  string16 keyword, remaining_input;
+  // TODO(pkasting): http://crbug/347744 If someday we remember usage frequency
+  // for keywords, we might suggest keywords that haven't even been partially
+  // typed, if the user uses them enough and isn't obviously typing something
+  // else.  In this case we'd consider all input here to be query input.
+  base::string16 keyword, remaining_input;
   if (!ExtractKeywordFromInput(input, &keyword, &remaining_input))
     return;
 
@@ -261,10 +262,6 @@ void KeywordProvider::Start(const AutocompleteInput& input,
   // |minimal_changes| case, but since we'd still have to recalculate their
   // relevances and we can just recreate the results synchronously anyway, we
   // don't bother.
-  //
-  // TODO(pkasting): http://b/893701 We should remember the user's use of a
-  // search query both from the autocomplete popup and from web pages
-  // themselves.
   TemplateURLService::TemplateURLVector matches;
   GetTemplateURLService()->FindMatchingKeywords(
       keyword, !remaining_input.empty(), &matches);
@@ -283,8 +280,8 @@ void KeywordProvider::Start(const AutocompleteInput& input,
           service->GetExtensionById(template_url->GetExtensionId(), false);
       bool enabled =
           extension && (!profile_->IsOffTheRecord() ||
-                        extension_util::IsIncognitoEnabled(extension->id(),
-                                                           service));
+                        extensions::util::IsIncognitoEnabled(
+                            extension->id(), profile_));
       if (!enabled) {
         i = matches.erase(i);
         continue;
@@ -360,7 +357,7 @@ void KeywordProvider::Start(const AutocompleteInput& input,
         bool have_listeners =
           extensions::ExtensionOmniboxEventRouter::OnInputChanged(
               profile_, template_url->GetExtensionId(),
-              UTF16ToUTF8(remaining_input), current_input_id_);
+              base::UTF16ToUTF8(remaining_input), current_input_id_);
 
         // We only have to wait for suggest results if there are actually
         // extensions listening for input changes.
@@ -388,8 +385,8 @@ KeywordProvider::~KeywordProvider() {}
 
 // static
 bool KeywordProvider::ExtractKeywordFromInput(const AutocompleteInput& input,
-                                              string16* keyword,
-                                              string16* remaining_input) {
+                                              base::string16* keyword,
+                                              base::string16* remaining_input) {
   if ((input.type() == AutocompleteInput::INVALID) ||
       (input.type() == AutocompleteInput::FORCED_QUERY))
     return false;
@@ -426,7 +423,7 @@ AutocompleteMatch KeywordProvider::CreateAutocompleteMatch(
     const TemplateURL* template_url,
     const AutocompleteInput& input,
     size_t prefix_length,
-    const string16& remaining_input,
+    const base::string16& remaining_input,
     bool allowed_to_be_default_match,
     int relevance) {
   DCHECK(template_url);
@@ -436,7 +433,7 @@ AutocompleteMatch KeywordProvider::CreateAutocompleteMatch(
   // Create an edit entry of "[keyword] [remaining input]".  This is helpful
   // even when [remaining input] is empty, as the user can select the popup
   // choice and immediately begin typing in query input.
-  const string16& keyword = template_url->keyword();
+  const base::string16& keyword = template_url->keyword();
   const bool keyword_complete = (prefix_length == keyword.length());
   if (relevance < 0) {
     relevance =
@@ -452,7 +449,7 @@ AutocompleteMatch KeywordProvider::CreateAutocompleteMatch(
                              AutocompleteMatchType::HISTORY_KEYWORD);
   match.allowed_to_be_default_match = allowed_to_be_default_match;
   match.fill_into_edit = keyword;
-  if (!remaining_input.empty() || !keyword_complete || supports_replacement)
+  if (!remaining_input.empty() || supports_replacement)
     match.fill_into_edit.push_back(L' ');
   match.fill_into_edit.append(remaining_input);
   // If we wanted to set |result.inline_autocompletion| correctly, we'd need
@@ -471,9 +468,10 @@ AutocompleteMatch KeywordProvider::CreateAutocompleteMatch(
   return match;
 }
 
-void KeywordProvider::FillInURLAndContents(const string16& remaining_input,
-                                           const TemplateURL* element,
-                                           AutocompleteMatch* match) const {
+void KeywordProvider::FillInURLAndContents(
+    const base::string16& remaining_input,
+    const TemplateURL* element,
+    AutocompleteMatch* match) const {
   DCHECK(!element->short_name().empty());
   const TemplateURLRef& element_ref = element->url_ref();
   DCHECK(element_ref.IsValid());
@@ -541,7 +539,7 @@ void KeywordProvider::Observe(int type,
     case chrome::NOTIFICATION_EXTENSION_OMNIBOX_DEFAULT_SUGGESTION_CHANGED: {
       // It's possible to change the default suggestion while not in an editing
       // session.
-      string16 keyword, remaining_input;
+      base::string16 keyword, remaining_input;
       if (matches_.empty() || current_keyword_extension_id_.empty() ||
           !ExtractKeywordFromInput(input, &keyword, &remaining_input))
         return;
@@ -563,7 +561,7 @@ void KeywordProvider::Observe(int type,
       if (suggestions.request_id != current_input_id_)
         return;  // This is an old result. Just ignore.
 
-      string16 keyword, remaining_input;
+      base::string16 keyword, remaining_input;
       bool result = ExtractKeywordFromInput(input, &keyword, &remaining_input);
       DCHECK(result);
       const TemplateURL* template_url =
@@ -587,14 +585,13 @@ void KeywordProvider::Observe(int type,
         // interaction.
         extension_suggest_matches_.push_back(CreateAutocompleteMatch(
             template_url, input, keyword.length(),
-            UTF8ToUTF16(suggestion.content), false, first_relevance - (i + 1)));
+            base::UTF8ToUTF16(suggestion.content), false,
+            first_relevance - (i + 1)));
 
         AutocompleteMatch* match = &extension_suggest_matches_.back();
-        match->contents.assign(UTF8ToUTF16(suggestion.description));
+        match->contents.assign(base::UTF8ToUTF16(suggestion.description));
         match->contents_class =
             extensions::StyleTypesToACMatchClassifications(suggestion);
-        match->description.clear();
-        match->description_class.clear();
       }
 
       done_ = true;

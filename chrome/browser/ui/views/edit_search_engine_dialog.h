@@ -40,7 +40,7 @@ class EditSearchEngineDialog : public views::TextfieldController,
 
   // views::DialogDelegate:
   virtual ui::ModalType GetModalType() const OVERRIDE;
-  virtual string16 GetWindowTitle() const OVERRIDE;
+  virtual base::string16 GetWindowTitle() const OVERRIDE;
   virtual bool IsDialogButtonEnabled(ui::DialogButton button) const OVERRIDE;
   virtual bool Cancel() OVERRIDE;
   virtual bool Accept() OVERRIDE;
@@ -49,7 +49,7 @@ class EditSearchEngineDialog : public views::TextfieldController,
   // Updates whether the user can accept the dialog as well as updating image
   // views showing whether value is valid.
   virtual void ContentsChanged(views::Textfield* sender,
-                               const string16& new_contents) OVERRIDE;
+                               const base::string16& new_contents) OVERRIDE;
   virtual bool HandleKeyEvent(views::Textfield* sender,
                               const ui::KeyEvent& key_event) OVERRIDE;
  private:
@@ -58,9 +58,8 @@ class EditSearchEngineDialog : public views::TextfieldController,
   // Create a Label containing the text with the specified message id.
   views::Label* CreateLabel(int message_id);
 
-  // Creates a text field with the specified text. If |lowercase| is true, the
-  // Textfield is configured to map all input to lower case.
-  views::Textfield* CreateTextfield(const string16& text, bool lowercase);
+  // Creates a text field with the specified text.
+  views::Textfield* CreateTextfield(const base::string16& text);
 
   // Invokes UpdateImageView for each of the images views.
   void UpdateImageViews();

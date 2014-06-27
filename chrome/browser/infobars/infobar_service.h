@@ -8,45 +8,57 @@
 #include <vector>
 
 #include "base/memory/scoped_ptr.h"
+#include "base/observer_list.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 
-class InfoBarDelegate;
+class InfoBar;
 
 // Provides access to creating, removing and enumerating info bars
 // attached to a tab.
 class InfoBarService : public content::WebContentsObserver,
                        public content::WebContentsUserData<InfoBarService> {
  public:
-  // Changes whether infobars are enabled.  The default is true.
-  void set_infobars_enabled(bool enabled) { infobars_enabled_ = enabled; }
 
-  // Adds an InfoBar for the specified |delegate|.
-  //
-  // If infobars are disabled for this tab or the tab already has a delegate
-  // which returns true for InfoBarDelegate::EqualsDelegate(delegate),
-  // |delegate| is closed immediately without being added.
-  //
-  // Returns the delegate if it was successfully added.
-  InfoBarDelegate* AddInfoBar(scoped_ptr<InfoBarDelegate> infobar);
+  // Observer class for infobar events.
+  class Observer {
+   public:
+    virtual void OnInfoBarAdded(InfoBar* infobar) = 0;
+    virtual void OnInfoBarRemoved(InfoBar* infobar, bool animate) = 0;
+    virtual void OnInfoBarReplaced(InfoBar* old_infobar,
+                                   InfoBar* new_infobar) = 0;
+    virtual void OnServiceShuttingDown(InfoBarService* service) = 0;
+  };
 
-  // Removes the InfoBar for the specified |delegate|.
+  // Adds the specified |infobar|, which already owns a delegate.
+  //
+  // If infobars are disabled for this tab or the tab already has an infobar
+  // whose delegate returns true for
+  // InfoBarDelegate::EqualsDelegate(infobar->delegate()), |infobar| is deleted
+  // immediately without being added.
+  //
+  // Returns the infobar if it was successfully added.
+  virtual InfoBar* AddInfoBar(scoped_ptr<InfoBar> infobar);
+
+  // Removes the specified |infobar|.  This in turn may close immediately or
+  // animate closed; at the end the infobar will delete itself.
   //
   // If infobars are disabled for this tab, this will do nothing, on the
-  // assumption that the matching AddInfoBar() call will have already closed the
-  // delegate (see above).
-  void RemoveInfoBar(InfoBarDelegate* infobar);
+  // assumption that the matching AddInfoBar() call will have already deleted
+  // the infobar (see above).
+  void RemoveInfoBar(InfoBar* infobar);
 
-  // Replaces one infobar with another, without any animation in between.
+  // Replaces one infobar with another, without any animation in between.  This
+  // will result in |old_infobar| being synchronously deleted.
   //
-  // If infobars are disabled for this tab, |new_delegate| is closed immediately
+  // If infobars are disabled for this tab, |new_infobar| is deleted immediately
   // without being added, and nothing else happens.
   //
-  // Returns the new delegate if it was successfully added.
+  // Returns the new infobar if it was successfully added.
   //
   // NOTE: This does not perform any EqualsDelegate() checks like AddInfoBar().
-  InfoBarDelegate* ReplaceInfoBar(InfoBarDelegate* old_infobar,
-                                  scoped_ptr<InfoBarDelegate> new_infobar);
+  InfoBar* ReplaceInfoBar(InfoBar* old_infobar,
+                          scoped_ptr<InfoBar> new_infobar);
 
   // Returns the number of infobars for this tab.
   size_t infobar_count() const { return infobars_.size(); }
@@ -55,22 +67,26 @@ class InfoBarService : public content::WebContentsObserver,
   // ownership.
   //
   // Warning: Does not sanity check |index|.
-  InfoBarDelegate* infobar_at(size_t index) { return infobars_[index]; }
+  InfoBar* infobar_at(size_t index) { return infobars_[index]; }
 
   // Retrieve the WebContents for the tab this service is associated with.
   content::WebContents* web_contents() {
     return content::WebContentsObserver::web_contents();
   }
 
+  void AddObserver(Observer* obs);
+  void RemoveObserver(Observer* obs);
+
  private:
   friend class content::WebContentsUserData<InfoBarService>;
 
-  typedef std::vector<InfoBarDelegate*> InfoBars;
+  // InfoBars associated with this InfoBarService.  We own these pointers.
+  // However, this is not a ScopedVector, because we don't delete the infobars
+  // directly once they've been added to this; instead, when we're done with an
+  // infobar, we instruct it to delete itself and then orphan it.  See
+  // RemoveInfoBarInternal().
+  typedef std::vector<InfoBar*> InfoBars;
 
-  // Delegates for InfoBars associated with this InfoBarService.  We do not own
-  // these pointers; they own themselves and are deleted in response to being
-  // closed.
-  // TODO(pkasting): These leak if closed while not visible.
   explicit InfoBarService(content::WebContents* web_contents);
   virtual ~InfoBarService();
 
@@ -82,7 +98,7 @@ class InfoBarService : public content::WebContentsObserver,
       content::WebContents* web_contents) OVERRIDE;
   virtual bool OnMessageReceived(const IPC::Message& message) OVERRIDE;
 
-  void RemoveInfoBarInternal(InfoBarDelegate* infobar, bool animate);
+  void RemoveInfoBarInternal(InfoBar* infobar, bool animate);
   void RemoveAllInfoBars(bool animate);
 
   // Message handlers.
@@ -91,6 +107,7 @@ class InfoBarService : public content::WebContentsObserver,
 
   InfoBars infobars_;
   bool infobars_enabled_;
+  ObserverList<Observer, true> observer_list_;
 
   DISALLOW_COPY_AND_ASSIGN(InfoBarService);
 };

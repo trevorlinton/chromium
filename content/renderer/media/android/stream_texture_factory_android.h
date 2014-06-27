@@ -10,9 +10,12 @@
 #include "gpu/command_buffer/common/mailbox.h"
 #include "ui/gfx/size.h"
 
-namespace WebKit {
-class WebGraphicsContext3D;
-}
+namespace gpu {
+namespace gles2 {
+class GLES2Interface;
+}  // namespace gles2
+}  // namespace gpu
+
 
 namespace content {
 
@@ -25,8 +28,6 @@ class StreamTextureProxy {
   // Initialize and bind to the current thread, which becomes the thread that
   // a connected client will receive callbacks on.
   virtual void BindToCurrentThread(int32 stream_id) = 0;
-
-  virtual bool IsBoundToThread() = 0;
 
   // Setting the target for callback when a frame is available. This function
   // could be called on both the main thread and the compositor thread.
@@ -75,7 +76,7 @@ class StreamTextureFactory {
   virtual void SetStreamTextureSize(int32 texture_id,
                                     const gfx::Size& size) = 0;
 
-  virtual WebKit::WebGraphicsContext3D* Context3d() = 0;
+  virtual gpu::gles2::GLES2Interface* ContextGL() = 0;
 };
 
 }  // namespace content

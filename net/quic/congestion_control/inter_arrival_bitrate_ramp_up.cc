@@ -4,8 +4,6 @@
 
 #include "net/quic/congestion_control/inter_arrival_bitrate_ramp_up.h"
 
-#include <algorithm>
-
 #include "base/basictypes.h"
 #include "base/logging.h"
 #include "net/quic/congestion_control/cube_root.h"
@@ -58,7 +56,7 @@ void InterArrivalBitrateRampUp::Reset(QuicBandwidth new_rate,
         new_rate.Subtract(available_channel_estimate_));
   }
   current_rate_ = new_rate;
-  DLOG(INFO) << "Reset; time to origin point:" << time_to_origin_point_;
+  DVLOG(1) << "Reset; time to origin point:" << time_to_origin_point_;
 }
 
 void InterArrivalBitrateRampUp::UpdateChannelEstimate(
@@ -79,7 +77,7 @@ void InterArrivalBitrateRampUp::UpdateChannelEstimate(
     channel_estimate_ = channel_estimate;
     halfway_point_ = available_channel_estimate_.Add(
         (channel_estimate_.Subtract(available_channel_estimate_).Scale(0.5f)));
-    DLOG(INFO) << "UpdateChannelEstimate; first usable value:"
+    DVLOG(1) << "UpdateChannelEstimate; first usable value:"
                << channel_estimate.ToKBitsPerSecond() << " Kbits/s";
     return;
   }
@@ -97,7 +95,7 @@ void InterArrivalBitrateRampUp::UpdateChannelEstimate(
   time_to_origin_point_ =
       CalcuateTimeToOriginPoint(channel_estimate_.Subtract(current_rate_));
 
-  DLOG(INFO) << "UpdateChannelEstimate; time to origin point:"
+  DVLOG(1) << "UpdateChannelEstimate; time to origin point:"
              << time_to_origin_point_;
 }
 
@@ -119,7 +117,7 @@ QuicBandwidth InterArrivalBitrateRampUp::GetNewBitrate(
     // Don't go up in bitrate when we are not sending.
     // We need to update the epoch to reflect this state.
     epoch_ = epoch_.Add(time_from_last_update);
-    DLOG(INFO) << "Don't increase; our sent bitrate is:"
+    DVLOG(1) << "Don't increase; our sent bitrate is:"
                << sent_bitrate.ToKBitsPerSecond() << " Kbits/s"
                << " current target rate is:"
                << current_rate_.ToKBitsPerSecond() << " Kbits/s";
@@ -156,7 +154,7 @@ QuicBandwidth InterArrivalBitrateRampUp::GetNewBitrate(
         time_to_origin_point_ =
             CalcuateTimeToOriginPoint(channel_estimate_.Subtract(current_rate));
       }
-      DLOG(INFO) << "Passed the halfway point; time to origin point:"
+      DVLOG(1) << "Passed the halfway point; time to origin point:"
                  << time_to_origin_point_;
     }
     current_rate_ = current_rate;

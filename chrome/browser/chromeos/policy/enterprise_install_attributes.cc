@@ -11,7 +11,7 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
-#include "chrome/browser/policy/proto/chromeos/install_attributes.pb.h"
+#include "chrome/browser/chromeos/policy/proto/install_attributes.pb.h"
 #include "chromeos/cryptohome/cryptohome_util.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "google_apis/gaia/gaia_auth_util.h"
@@ -31,7 +31,7 @@ std::string GetDeviceModeString(DeviceMode mode) {
       return EnterpriseInstallAttributes::kEnterpiseDeviceMode;
     case DEVICE_MODE_RETAIL_KIOSK:
       return EnterpriseInstallAttributes::kRetailKioskDeviceMode;
-    case DEVICE_MODE_CONSUMER_KIOSK:
+    case DEVICE_MODE_CONSUMER_KIOSK_AUTOLAUNCH:
       return EnterpriseInstallAttributes::kConsumerKioskDeviceMode;
     case DEVICE_MODE_PENDING:
     case DEVICE_MODE_NOT_SET:
@@ -51,7 +51,7 @@ DeviceMode GetDeviceModeFromString(
   else if (mode == EnterpriseInstallAttributes::kRetailKioskDeviceMode)
     return DEVICE_MODE_RETAIL_KIOSK;
   else if (mode == EnterpriseInstallAttributes::kConsumerKioskDeviceMode)
-    return DEVICE_MODE_CONSUMER_KIOSK;
+    return DEVICE_MODE_CONSUMER_KIOSK_AUTOLAUNCH;
   NOTREACHED() << "Unknown device mode string: " << mode;
   return DEVICE_MODE_NOT_SET;
 }
@@ -94,7 +94,8 @@ EnterpriseInstallAttributes::EnterpriseInstallAttributes(
     : device_locked_(false),
       registration_mode_(DEVICE_MODE_PENDING),
       cryptohome_client_(cryptohome_client),
-      weak_ptr_factory_(this) {}
+      weak_ptr_factory_(this) {
+}
 
 EnterpriseInstallAttributes::~EnterpriseInstallAttributes() {}
 
@@ -106,7 +107,7 @@ void EnterpriseInstallAttributes::ReadCacheFile(
   device_locked_ = true;
 
   char buf[16384];
-  int len = file_util::ReadFile(cache_file, buf, sizeof(buf));
+  int len = base::ReadFile(cache_file, buf, sizeof(buf));
   if (len == -1 || len >= static_cast<int>(sizeof(buf))) {
     PLOG(ERROR) << "Failed to read " << cache_file.value();
     return;
@@ -189,7 +190,7 @@ void EnterpriseInstallAttributes::LockDevice(
 
   // Check for existing lock first.
   if (device_locked_) {
-    if (device_mode == DEVICE_MODE_CONSUMER_KIOSK) {
+    if (device_mode == DEVICE_MODE_CONSUMER_KIOSK_AUTOLAUNCH) {
       callback.Run((registration_mode_ == device_mode) ? LOCK_SUCCESS :
                                                          LOCK_NOT_READY);
     } else {
@@ -246,7 +247,7 @@ void EnterpriseInstallAttributes::LockDeviceIfAttributesIsReady(
   if (!user.empty())
     registration_user = gaia::CanonicalizeEmail(user);
 
-  if (device_mode == DEVICE_MODE_CONSUMER_KIOSK) {
+  if (device_mode == DEVICE_MODE_CONSUMER_KIOSK_AUTOLAUNCH) {
     // Set values in the InstallAttrs and lock it.
     if (!cryptohome_util::InstallAttributesSet(kAttrConsumerKioskEnabled,
                                                "true")) {
@@ -302,8 +303,9 @@ bool EnterpriseInstallAttributes::IsEnterpriseDevice() {
   return device_locked_ && !registration_user_.empty();
 }
 
-bool EnterpriseInstallAttributes::IsConsumerKioskDevice() {
-  return device_locked_ && registration_mode_ == DEVICE_MODE_CONSUMER_KIOSK;
+bool EnterpriseInstallAttributes::IsConsumerKioskDeviceWithAutoLaunch() {
+  return device_locked_ &&
+         registration_mode_ == DEVICE_MODE_CONSUMER_KIOSK_AUTOLAUNCH;
 }
 
 std::string EnterpriseInstallAttributes::GetRegistrationUser() {
@@ -364,7 +366,7 @@ void EnterpriseInstallAttributes::DecodeInstallAttributes(
                         kAttrConsumerKioskEnabled,
                         &consumer_kiosk_enabled) &&
              consumer_kiosk_enabled == "true") {
-    registration_mode_ = DEVICE_MODE_CONSUMER_KIOSK;
+    registration_mode_ = DEVICE_MODE_CONSUMER_KIOSK_AUTOLAUNCH;
   } else if (enterprise_user.empty() && enterprise_owned != "true") {
     // |registration_user_| is empty on consumer devices.
     registration_mode_ = DEVICE_MODE_CONSUMER;

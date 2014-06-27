@@ -12,7 +12,7 @@
 #include "chrome/browser/chromeos/boot_times_loader.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/version_loader.h"
-#include "chrome/browser/policy/cloud/cloud_policy_store.h"
+#include "components/policy/core/common/cloud/cloud_policy_store.h"
 
 namespace chromeos {
 
@@ -67,7 +67,7 @@ class VersionInfoUpdater : public policy::CloudPolicyStore::Observer {
   // Handles asynchronously loading the boot times.
   BootTimesLoader boot_times_loader_;
   // Used to request version and boot times.
-  CancelableTaskTracker tracker_;
+  base::CancelableTaskTracker tracker_;
 
   // Information pieces for version label.
   std::string version_text_;

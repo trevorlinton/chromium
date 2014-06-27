@@ -12,18 +12,21 @@
 #include "base/run_loop.h"
 #include "base/test/test_timeouts.h"
 #include "chrome/browser/chromeos/drive/change_list_loader.h"
-#include "chrome/browser/chromeos/drive/change_list_processor.h"
 #include "chrome/browser/chromeos/drive/drive.pb.h"
 #include "chrome/browser/chromeos/drive/fake_free_disk_space_getter.h"
 #include "chrome/browser/chromeos/drive/file_cache.h"
+#include "chrome/browser/chromeos/drive/file_system/move_operation.h"
 #include "chrome/browser/chromeos/drive/file_system/operation_observer.h"
+#include "chrome/browser/chromeos/drive/file_system/remove_operation.h"
+#include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/drive/job_scheduler.h"
 #include "chrome/browser/chromeos/drive/resource_entry_conversion.h"
 #include "chrome/browser/chromeos/drive/resource_metadata.h"
 #include "chrome/browser/chromeos/drive/test_util.h"
+#include "chrome/browser/drive/event_logger.h"
 #include "chrome/browser/drive/fake_drive_service.h"
-#include "chrome/browser/google_apis/test_util.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "google_apis/drive/test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace drive {
@@ -41,6 +44,8 @@ const char kRemoteContent[] = "World!";
 // made with the specified resource ID.
 class SyncClientTestDriveService : public ::drive::FakeDriveService {
  public:
+  SyncClientTestDriveService() : download_file_count_(0) {}
+
   // FakeDriveService override:
   virtual google_apis::CancelCallback DownloadFile(
       const base::FilePath& local_cache_path,
@@ -48,12 +53,19 @@ class SyncClientTestDriveService : public ::drive::FakeDriveService {
       const google_apis::DownloadActionCallback& download_action_callback,
       const google_apis::GetContentCallback& get_content_callback,
       const google_apis::ProgressCallback& progress_callback) OVERRIDE {
+    ++download_file_count_;
     if (resource_id == resource_id_to_be_cancelled_) {
       base::MessageLoopProxy::current()->PostTask(
           FROM_HERE,
           base::Bind(download_action_callback,
                      google_apis::GDATA_CANCELLED,
                      base::FilePath()));
+      return google_apis::CancelCallback();
+    }
+    if (resource_id == resource_id_to_be_paused_) {
+      paused_action_ = base::Bind(download_action_callback,
+                                  google_apis::GDATA_OTHER_ERROR,
+                                  base::FilePath());
       return google_apis::CancelCallback();
     }
     return FakeDriveService::DownloadFile(local_cache_path,
@@ -63,20 +75,29 @@ class SyncClientTestDriveService : public ::drive::FakeDriveService {
                                           progress_callback);
   }
 
+  int download_file_count() const { return download_file_count_; }
+
   void set_resource_id_to_be_cancelled(const std::string& resource_id) {
     resource_id_to_be_cancelled_ = resource_id;
   }
 
+  void set_resource_id_to_be_paused(const std::string& resource_id) {
+    resource_id_to_be_paused_ = resource_id;
+  }
+
+  const base::Closure& paused_action() const { return paused_action_; }
+
  private:
+  int download_file_count_;
   std::string resource_id_to_be_cancelled_;
+  std::string resource_id_to_be_paused_;
+  base::Closure paused_action_;
 };
 
 class DummyOperationObserver : public file_system::OperationObserver {
   // OperationObserver override:
   virtual void OnDirectoryChangedByOperation(
       const base::FilePath& path) OVERRIDE {}
-  virtual void OnCacheFileUploadNeededByOperation(
-      const std::string& local_id) OVERRIDE {}
 };
 
 }  // namespace
@@ -92,12 +113,15 @@ class SyncClientTest : public testing::Test {
     fake_network_change_notifier_.reset(
         new test_util::FakeNetworkChangeNotifier);
 
+    logger_.reset(new EventLogger);
+
     drive_service_.reset(new SyncClientTestDriveService);
     drive_service_->LoadResourceListForWapi("gdata/empty_feed.json");
     drive_service_->LoadAccountMetadataForWapi(
         "gdata/account_metadata.json");
 
     scheduler_.reset(new JobScheduler(pref_service_.get(),
+                                      logger_.get(),
                                       drive_service_.get(),
                                       base::MessageLoopProxy::current().get()));
 
@@ -115,6 +139,15 @@ class SyncClientTest : public testing::Test {
                                NULL /* free_disk_space_getter */));
     ASSERT_TRUE(cache_->Initialize());
 
+    about_resource_loader_.reset(new AboutResourceLoader(scheduler_.get()));
+    loader_controller_.reset(new LoaderController);
+    change_list_loader_.reset(new ChangeListLoader(
+        logger_.get(),
+        base::MessageLoopProxy::current().get(),
+        metadata_.get(),
+        scheduler_.get(),
+        about_resource_loader_.get(),
+        loader_controller_.get()));
     ASSERT_NO_FATAL_FAILURE(SetUpTestData());
 
     sync_client_.reset(new SyncClient(base::MessageLoopProxy::current().get(),
@@ -122,6 +155,7 @@ class SyncClientTest : public testing::Test {
                                       scheduler_.get(),
                                       metadata_.get(),
                                       cache_.get(),
+                                      loader_controller_.get(),
                                       temp_dir_.path()));
 
     // Disable delaying so that DoSyncLoop() starts immediately.
@@ -149,8 +183,7 @@ class SyncClientTest : public testing::Test {
   void SetUpTestData() {
     // Prepare a temp file.
     base::FilePath temp_file;
-    EXPECT_TRUE(file_util::CreateTemporaryFileInDir(temp_dir_.path(),
-                                                    &temp_file));
+    EXPECT_TRUE(base::CreateTemporaryFileInDir(temp_dir_.path(), &temp_file));
     ASSERT_TRUE(google_apis::test_util::WriteStringToFile(temp_file,
                                                           kLocalContent));
 
@@ -160,16 +193,12 @@ class SyncClientTest : public testing::Test {
     ASSERT_NO_FATAL_FAILURE(AddFileEntry("baz"));
     ASSERT_NO_FATAL_FAILURE(AddFileEntry("fetched"));
     ASSERT_NO_FATAL_FAILURE(AddFileEntry("dirty"));
+    ASSERT_NO_FATAL_FAILURE(AddFileEntry("removed"));
+    ASSERT_NO_FATAL_FAILURE(AddFileEntry("moved"));
 
     // Load data from the service to the metadata.
     FileError error = FILE_ERROR_FAILED;
-    internal::ChangeListLoader change_list_loader(
-        base::MessageLoopProxy::current().get(),
-        metadata_.get(),
-        scheduler_.get(),
-        drive_service_.get());
-    change_list_loader.LoadIfNeeded(
-        DirectoryFetchInfo(),
+    change_list_loader_->LoadIfNeeded(
         google_apis::test_util::CreateCopyResultCallback(&error));
     base::RunLoop().RunUntilIdle();
     EXPECT_EQ(FILE_ERROR_OK, error);
@@ -187,13 +216,31 @@ class SyncClientTest : public testing::Test {
     EXPECT_EQ(FILE_ERROR_OK, cache_->Pin(GetLocalId("fetched")));
 
     // Prepare a pinned-and-fetched-and-dirty file.
-    const std::string md5_dirty = "";  // Don't care.
     EXPECT_EQ(FILE_ERROR_OK,
-              cache_->Store(GetLocalId("dirty"), md5_dirty,
+              cache_->Store(GetLocalId("dirty"), std::string(),
                             temp_file, FileCache::FILE_OPERATION_COPY));
     EXPECT_EQ(FILE_ERROR_OK, cache_->Pin(GetLocalId("dirty")));
-    EXPECT_EQ(FILE_ERROR_OK, cache_->MarkDirty(GetLocalId("dirty")));
 
+    // Prepare a removed file.
+    file_system::RemoveOperation remove_operation(
+        base::MessageLoopProxy::current().get(), &observer_, metadata_.get(),
+        cache_.get());
+    remove_operation.Remove(
+        metadata_->GetFilePath(GetLocalId("removed")),
+        false,  // is_recursive
+        google_apis::test_util::CreateCopyResultCallback(&error));
+    base::RunLoop().RunUntilIdle();
+    EXPECT_EQ(FILE_ERROR_OK, error);
+
+    // Prepare a moved file.
+    file_system::MoveOperation move_operation(
+        base::MessageLoopProxy::current().get(), &observer_, metadata_.get());
+    move_operation.Move(
+        metadata_->GetFilePath(GetLocalId("moved")),
+        util::GetDriveMyDriveRootPath().AppendASCII("moved_new_title"),
+        google_apis::test_util::CreateCopyResultCallback(&error));
+    base::RunLoop().RunUntilIdle();
+    EXPECT_EQ(FILE_ERROR_OK, error);
   }
 
  protected:
@@ -210,6 +257,7 @@ class SyncClientTest : public testing::Test {
   scoped_ptr<TestingPrefServiceSimple> pref_service_;
   scoped_ptr<test_util::FakeNetworkChangeNotifier>
       fake_network_change_notifier_;
+  scoped_ptr<EventLogger> logger_;
   scoped_ptr<SyncClientTestDriveService> drive_service_;
   DummyOperationObserver observer_;
   scoped_ptr<JobScheduler> scheduler_;
@@ -217,6 +265,9 @@ class SyncClientTest : public testing::Test {
              test_util::DestroyHelperForTests> metadata_storage_;
   scoped_ptr<ResourceMetadata, test_util::DestroyHelperForTests> metadata_;
   scoped_ptr<FileCache, test_util::DestroyHelperForTests> cache_;
+  scoped_ptr<AboutResourceLoader> about_resource_loader_;
+  scoped_ptr<LoaderController> loader_controller_;
+  scoped_ptr<ChangeListLoader> change_list_loader_;
   scoped_ptr<SyncClient> sync_client_;
 
   std::map<std::string, std::string> resource_ids_;  // Name-to-id map.
@@ -240,6 +291,29 @@ TEST_F(SyncClientTest, StartProcessingBacklog) {
   // Dirty file gets uploaded.
   EXPECT_TRUE(cache_->GetCacheEntry(GetLocalId("dirty"), &cache_entry));
   EXPECT_FALSE(cache_entry.is_dirty());
+
+  // Removed entry is not found.
+  google_apis::GDataErrorCode status = google_apis::GDATA_OTHER_ERROR;
+  scoped_ptr<google_apis::ResourceEntry> resource_entry;
+  drive_service_->GetResourceEntry(
+      resource_ids_["removed"],
+      google_apis::test_util::CreateCopyResultCallback(&status,
+                                                       &resource_entry));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(google_apis::HTTP_SUCCESS, status);
+  ASSERT_TRUE(resource_entry);
+  EXPECT_TRUE(resource_entry->deleted());
+
+  // Moved entry was moved.
+  status = google_apis::GDATA_OTHER_ERROR;
+  drive_service_->GetResourceEntry(
+      resource_ids_["moved"],
+      google_apis::test_util::CreateCopyResultCallback(&status,
+                                                       &resource_entry));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(google_apis::HTTP_SUCCESS, status);
+  ASSERT_TRUE(resource_entry);
+  EXPECT_EQ("moved_new_title", resource_entry->title());
 }
 
 TEST_F(SyncClientTest, AddFetchTask) {
@@ -320,7 +394,8 @@ TEST_F(SyncClientTest, RetryOnDisconnection) {
 
   // Try fetch and upload.
   sync_client_->AddFetchTask(GetLocalId("foo"));
-  sync_client_->AddUploadTask(GetLocalId("dirty"));
+  sync_client_->AddUpdateTask(ClientContext(USER_INITIATED),
+                              GetLocalId("dirty"));
   base::RunLoop().RunUntilIdle();
 
   // Not yet fetched nor uploaded.
@@ -341,6 +416,66 @@ TEST_F(SyncClientTest, RetryOnDisconnection) {
   EXPECT_TRUE(cache_entry.is_present());
   EXPECT_TRUE(cache_->GetCacheEntry(GetLocalId("dirty"), &cache_entry));
   EXPECT_FALSE(cache_entry.is_dirty());
+}
+
+TEST_F(SyncClientTest, ScheduleRerun) {
+  // Add a fetch task for "foo", this should result in being paused.
+  drive_service_->set_resource_id_to_be_paused(resource_ids_["foo"]);
+  sync_client_->AddFetchTask(GetLocalId("foo"));
+  base::RunLoop().RunUntilIdle();
+
+  // While the first task is paused, add a task again.
+  // This results in scheduling rerun of the task.
+  sync_client_->AddFetchTask(GetLocalId("foo"));
+  base::RunLoop().RunUntilIdle();
+
+  // Resume the paused task.
+  drive_service_->set_resource_id_to_be_paused(std::string());
+  ASSERT_FALSE(drive_service_->paused_action().is_null());
+  drive_service_->paused_action().Run();
+  base::RunLoop().RunUntilIdle();
+
+  // Task should be run twice.
+  EXPECT_EQ(2, drive_service_->download_file_count());
+}
+
+TEST_F(SyncClientTest, Dependencies) {
+  // Create directories locally.
+  const base::FilePath kPath1(FILE_PATH_LITERAL("drive/root/dir1"));
+  const base::FilePath kPath2 = kPath1.AppendASCII("dir2");
+
+  ResourceEntry parent;
+  EXPECT_EQ(FILE_ERROR_OK,
+            metadata_->GetResourceEntryByPath(kPath1.DirName(), &parent));
+
+  ResourceEntry entry1;
+  entry1.set_parent_local_id(parent.local_id());
+  entry1.set_title(kPath1.BaseName().AsUTF8Unsafe());
+  entry1.mutable_file_info()->set_is_directory(true);
+  entry1.set_metadata_edit_state(ResourceEntry::DIRTY);
+  std::string local_id1;
+  EXPECT_EQ(FILE_ERROR_OK, metadata_->AddEntry(entry1, &local_id1));
+
+  ResourceEntry entry2;
+  entry2.set_parent_local_id(local_id1);
+  entry2.set_title(kPath2.BaseName().AsUTF8Unsafe());
+  entry2.mutable_file_info()->set_is_directory(true);
+  entry2.set_metadata_edit_state(ResourceEntry::DIRTY);
+  std::string local_id2;
+  EXPECT_EQ(FILE_ERROR_OK, metadata_->AddEntry(entry2, &local_id2));
+
+  // Start syncing the child first.
+  sync_client_->AddUpdateTask(ClientContext(USER_INITIATED), local_id2);
+  base::RunLoop().RunUntilIdle();
+  // Start syncing the parent later.
+  sync_client_->AddUpdateTask(ClientContext(USER_INITIATED), local_id1);
+  base::RunLoop().RunUntilIdle();
+
+  // Both entries are synced.
+  EXPECT_EQ(FILE_ERROR_OK, metadata_->GetResourceEntryById(local_id1, &entry1));
+  EXPECT_EQ(ResourceEntry::CLEAN, entry1.metadata_edit_state());
+  EXPECT_EQ(FILE_ERROR_OK, metadata_->GetResourceEntryById(local_id2, &entry2));
+  EXPECT_EQ(ResourceEntry::CLEAN, entry2.metadata_edit_state());
 }
 
 }  // namespace internal

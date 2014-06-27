@@ -16,6 +16,7 @@
 #include "base/path_service.h"
 #include "base/win/registry.h"
 #include "base/win/windows_version.h"
+#include "chrome/common/chrome_icon_resources_win.h"
 #include "chrome/common/env_vars.h"
 #include "chrome/installer/util/chrome_app_host_distribution.h"
 #include "chrome/installer/util/chrome_frame_distribution.h"
@@ -39,32 +40,16 @@ const wchar_t kChromiumActiveSetupGuid[] =
 const wchar_t kCommandExecuteImplUuid[] =
     L"{A2DF06F9-A21A-44A8-8A99-8B9C84F29160}";
 
-// The Chromium App Launcher icon is index 1; see chrome_exe.rc.
-const int kAppLauncherIconIndex = 1;
-
 // The BrowserDistribution objects are never freed.
 BrowserDistribution* g_browser_distribution = NULL;
 BrowserDistribution* g_chrome_frame_distribution = NULL;
 BrowserDistribution* g_binaries_distribution = NULL;
 BrowserDistribution* g_chrome_app_host_distribution = NULL;
 
-// Returns true if currently running in npchrome_frame.dll
-bool IsChromeFrameModule() {
-  base::FilePath module_path;
-  PathService::Get(base::FILE_MODULE, &module_path);
-  return base::FilePath::CompareEqualIgnoreCase(module_path.BaseName().value(),
-                                          installer::kChromeFrameDll);
-}
-
 BrowserDistribution::Type GetCurrentDistributionType() {
   // TODO(erikwright): If the app host is installed, but not Chrome, perhaps
   // this should return CHROME_APP_HOST.
-  static BrowserDistribution::Type type =
-      (MasterPreferences::ForCurrentProcess().install_chrome_frame() ||
-       IsChromeFrameModule()) ?
-          BrowserDistribution::CHROME_FRAME :
-          BrowserDistribution::CHROME_BROWSER;
-  return type;
+  return BrowserDistribution::CHROME_BROWSER;
 }
 
 }  // end namespace
@@ -142,26 +127,27 @@ BrowserDistribution* BrowserDistribution::GetSpecificDistribution(
 
 void BrowserDistribution::DoPostUninstallOperations(
     const Version& version, const base::FilePath& local_data_path,
-    const string16& distribution_data) {
+    const base::string16& distribution_data) {
 }
 
-string16 BrowserDistribution::GetActiveSetupGuid() {
+base::string16 BrowserDistribution::GetActiveSetupGuid() {
   return kChromiumActiveSetupGuid;
 }
 
-string16 BrowserDistribution::GetAppGuid() {
+base::string16 BrowserDistribution::GetAppGuid() {
   return L"";
 }
 
-string16 BrowserDistribution::GetBaseAppName() {
+base::string16 BrowserDistribution::GetBaseAppName() {
   return L"Chromium";
 }
 
-string16 BrowserDistribution::GetDisplayName() {
+base::string16 BrowserDistribution::GetDisplayName() {
   return GetShortcutName(SHORTCUT_CHROME);
 }
 
-string16 BrowserDistribution::GetShortcutName(ShortcutType shortcut_type) {
+base::string16 BrowserDistribution::GetShortcutName(
+    ShortcutType shortcut_type) {
   switch (shortcut_type) {
     case SHORTCUT_CHROME_ALTERNATE:
       // TODO(calamity): Change IDS_OEM_MAIN_SHORTCUT_NAME in
@@ -179,52 +165,57 @@ string16 BrowserDistribution::GetShortcutName(ShortcutType shortcut_type) {
 
 int BrowserDistribution::GetIconIndex(ShortcutType shortcut_type) {
   if (shortcut_type == SHORTCUT_APP_LAUNCHER)
-    return kAppLauncherIconIndex;
+    return icon_resources::kAppLauncherIndex;
   DCHECK(shortcut_type == SHORTCUT_CHROME ||
          shortcut_type == SHORTCUT_CHROME_ALTERNATE) << shortcut_type;
-  return 0;
+  return icon_resources::kApplicationIndex;
 }
 
-string16 BrowserDistribution::GetIconFilename() {
+base::string16 BrowserDistribution::GetIconFilename() {
   return installer::kChromeExe;
 }
 
-string16 BrowserDistribution::GetStartMenuShortcutSubfolder(
+base::string16 BrowserDistribution::GetStartMenuShortcutSubfolder(
     Subfolder subfolder_type) {
-  DCHECK_EQ(subfolder_type, SUBFOLDER_CHROME);
-  return GetShortcutName(SHORTCUT_CHROME);
+  switch (subfolder_type) {
+    case SUBFOLDER_APPS:
+      return installer::GetLocalizedString(IDS_APP_SHORTCUTS_SUBDIR_NAME_BASE);
+    default:
+      DCHECK_EQ(subfolder_type, SUBFOLDER_CHROME);
+      return GetShortcutName(SHORTCUT_CHROME);
+  }
 }
 
-string16 BrowserDistribution::GetBaseAppId() {
+base::string16 BrowserDistribution::GetBaseAppId() {
   return L"Chromium";
 }
 
-string16 BrowserDistribution::GetBrowserProgIdPrefix() {
+base::string16 BrowserDistribution::GetBrowserProgIdPrefix() {
   // This used to be "ChromiumHTML", but was forced to become "ChromiumHTM"
   // because of http://crbug.com/153349.  See the declaration of this function
   // in the header file for more details.
   return L"ChromiumHTM";
 }
 
-string16 BrowserDistribution::GetBrowserProgIdDesc() {
+base::string16 BrowserDistribution::GetBrowserProgIdDesc() {
   return L"Chromium HTML Document";
 }
 
 
-string16 BrowserDistribution::GetInstallSubDir() {
+base::string16 BrowserDistribution::GetInstallSubDir() {
   return L"Chromium";
 }
 
-string16 BrowserDistribution::GetPublisherName() {
+base::string16 BrowserDistribution::GetPublisherName() {
   return L"Chromium";
 }
 
-string16 BrowserDistribution::GetAppDescription() {
+base::string16 BrowserDistribution::GetAppDescription() {
   return L"Browse the web";
 }
 
-string16 BrowserDistribution::GetLongAppDescription() {
-  const string16& app_description =
+base::string16 BrowserDistribution::GetLongAppDescription() {
+  const base::string16& app_description =
       installer::GetLocalizedString(IDS_PRODUCT_DESCRIPTION_BASE);
   return app_description;
 }
@@ -233,11 +224,11 @@ std::string BrowserDistribution::GetSafeBrowsingName() {
   return "chromium";
 }
 
-string16 BrowserDistribution::GetStateKey() {
+base::string16 BrowserDistribution::GetStateKey() {
   return L"Software\\Chromium";
 }
 
-string16 BrowserDistribution::GetStateMediumKey() {
+base::string16 BrowserDistribution::GetStateMediumKey() {
   return L"Software\\Chromium";
 }
 
@@ -249,19 +240,19 @@ std::string BrowserDistribution::GetHttpPipeliningTestServer() const {
   return "";
 }
 
-string16 BrowserDistribution::GetDistributionData(HKEY root_key) {
+base::string16 BrowserDistribution::GetDistributionData(HKEY root_key) {
   return L"";
 }
 
-string16 BrowserDistribution::GetUninstallLinkName() {
+base::string16 BrowserDistribution::GetUninstallLinkName() {
   return L"Uninstall Chromium";
 }
 
-string16 BrowserDistribution::GetUninstallRegPath() {
+base::string16 BrowserDistribution::GetUninstallRegPath() {
   return L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Chromium";
 }
 
-string16 BrowserDistribution::GetVersionKey() {
+base::string16 BrowserDistribution::GetVersionKey() {
   return L"Software\\Chromium";
 }
 
@@ -274,12 +265,12 @@ bool BrowserDistribution::CanCreateDesktopShortcuts() {
   return true;
 }
 
-bool BrowserDistribution::GetChromeChannel(string16* channel) {
+bool BrowserDistribution::GetChromeChannel(base::string16* channel) {
   return false;
 }
 
 bool BrowserDistribution::GetCommandExecuteImplClsid(
-    string16* handler_class_uuid) {
+    base::string16* handler_class_uuid) {
   if (handler_class_uuid)
     *handler_class_uuid = kCommandExecuteImplUuid;
   return true;

@@ -4,6 +4,8 @@
 
 #include "cloud_print/gcp20/prototype/printer.h"
 
+#include <algorithm>
+#include <limits.h>
 #include <stdio.h>
 #include <string>
 #include <vector>
@@ -15,12 +17,15 @@
 #include "base/guid.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
+#include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "cloud_print/gcp20/prototype/command_line_reader.h"
 #include "cloud_print/gcp20/prototype/local_settings.h"
 #include "cloud_print/gcp20/prototype/service_parameters.h"
 #include "cloud_print/gcp20/prototype/special_io.h"
+#include "cloud_print/version.h"
 #include "net/base/net_util.h"
 #include "net/base/url_util.h"
 
@@ -33,8 +38,8 @@ const uint32 kTtlDefault = 60*60;  // in seconds
 
 const char kServiceType[] = "_privet._tcp.local";
 const char kSecondaryServiceType[] = "_printer._sub._privet._tcp.local";
-const char kServiceNamePrefixDefault[] = "first_gcp20_device";
-const char kServiceDomainNameDefault[] = "my-privet-device.local";
+const char kServiceNamePrefixDefault[] = "gcp20_device_";
+const char kServiceDomainNameFormatDefault[] = "my-privet-device%d.local";
 
 const char kPrinterName[] = "Google GCP2.0 Prototype";
 const char kPrinterDescription[] = "Printer emulator";
@@ -48,60 +53,57 @@ const int kReconnectTimeout = 5;  // in seconds
 const double kTimeToNextAccessTokenUpdate = 0.8;  // relatively to living time.
 
 const char kCdd[] =
-"{\n"
-"  \"version\": \"1.0\",\n"
-"  \"printer\": {\n"
-"    \"supported_content_type\": [\n"
-"      {\n"
-"        \"content_type\": \"application/pdf\"\n"
-"      },\n"
-"      {\n"
-"        \"content_type\": \"image/pwg-raster\"\n"
-"      },\n"
-"      {\n"
-"        \"content_type\": \"image/jpeg\"\n"
-"      }\n"
-"    ],\n"
-"    \"color\": {\n"
-"     \"option\": [\n"
-"        {\n"
-"          \"is_default\": true,\n"
-"          \"type\": \"STANDARD_COLOR\",\n"
-"          \"vendor_id\": \"CMYK\"\n"
-"        },\n"
-"        {\n"
-"          \"is_default\": false,\n"
-"          \"type\": \"STANDARD_MONOCHROME\",\n"
-"          \"vendor_id\": \"Gray\"\n"
-"        }\n"
-"      ]\n"
-"    },\n"
-"    \"vendor_capability\": [\n"
-"      {\n"
-"        \"id\": \"psk:MediaType\",\n"
-"        \"display_name\": \"Media Type\",\n"
-"        \"type\": \"SELECT\",\n"
-"        \"select_cap\": {\n"
-"          \"option\": [\n"
-"            {\n"
-"              \"value\": \"psk:Plain\",\n"
-"              \"display_name\": \"Plain Paper\",\n"
-"              \"is_default\": true\n"
-"            },\n"
-"            {\n"
-"              \"value\": \"ns0000:Glossy\",\n"
-"              \"display_name\": \"Glossy Photo\",\n"
-"              \"is_default\": false\n"
-"            }\n"
-"          ]\n"
-"        }\n"
-"      }\n"
-"    ],\n"
-"    \"reverse_order\": {\n"
-"      \"default\": false\n"
-"    }\n"
-"  }\n"
-"}\n";
+"{"
+"  'version': '1.0',"
+"  'printer': {"
+"    'supported_content_type': ["
+"      {"
+"        'content_type': 'application/pdf'"
+"      },"
+"      {"
+"        'content_type': 'image/pwg-raster'"
+"      },"
+"      {"
+"        'content_type': 'image/jpeg'"
+"      }"
+"    ],"
+"    'color': {"
+"     'option': ["
+"        {"
+"          'is_default': true,"
+"          'type': 'STANDARD_COLOR'"
+"        },"
+"        {"
+"          'type': 'STANDARD_MONOCHROME'"
+"        }"
+"      ]"
+"    },"
+"    'media_size': {"
+"       'option': [ {"
+"          'height_microns': 297000,"
+"          'name': 'ISO_A4',"
+"          'width_microns': 210000"
+"       }, {"
+"          'custom_display_name': 'Letter',"
+"          'height_microns': 279400,"
+"          'is_default': true,"
+"          'name': 'NA_LETTER',"
+"          'width_microns': 215900"
+"       } ]"
+"    },"
+"    'page_orientation': {"
+"       'option': [ {"
+"          'is_default': true,"
+"          'type': 'PORTRAIT'"
+"       }, {"
+"          'type': 'LANDSCAPE'"
+"       } ]"
+"    },"
+"    'reverse_order': {"
+"      'default': false"
+"    }"
+"  }"
+"}";
 
 // Returns local IP address number of first interface found (except loopback).
 // Return value is empty if no interface found. Possible interfaces names are
@@ -110,7 +112,8 @@ const char kCdd[] =
 net::IPAddressNumber GetLocalIp(const std::string& interface_name,
                                 bool return_ipv6_number) {
   net::NetworkInterfaceList interfaces;
-  bool success = net::GetNetworkList(&interfaces);
+  bool success = net::GetNetworkList(
+      &interfaces, net::INCLUDE_HOST_SCOPE_VIRTUAL_INTERFACES);
   DCHECK(success);
 
   size_t expected_address_size = return_ipv6_number ? net::kIPv6AddressSize
@@ -125,6 +128,14 @@ net::IPAddressNumber GetLocalIp(const std::string& interface_name,
   }
 
   return net::IPAddressNumber();
+}
+
+std::string GetDescription() {
+  std::string result = kPrinterDescription;
+  net::IPAddressNumber ip = GetLocalIp("", false);
+  if (!ip.empty())
+    result += " at " + net::IPAddressToString(ip);
+  return result;
 }
 
 scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner() {
@@ -180,7 +191,11 @@ void Printer::Stop() {
 }
 
 std::string Printer::GetRawCdd() {
-  return kCdd;
+  std::string json_str;
+  base::JSONWriter::WriteWithOptions(&GetCapabilities(),
+                                     base::JSONWriter::OPTIONS_PRETTY_PRINT,
+                                     &json_str);
+  return json_str;
 }
 
 void Printer::OnAuthError() {
@@ -219,9 +234,9 @@ PrivetHttpServer::RegistrationErrorStatus Printer::RegistrationStart(
 
   if (CommandLine::ForCurrentProcess()->HasSwitch("disable-confirmation")) {
     state_.confirmation_state = PrinterState::CONFIRMATION_CONFIRMED;
-    LOG(INFO) << "Registration confirmed by default.";
+    VLOG(0) << "Registration confirmed by default.";
   } else {
-    printf("%s", kUserConfirmationTitle);
+    LOG(WARNING) << kUserConfirmationTitle;
     base::Time valid_until = base::Time::Now() +
         base::TimeDelta::FromSeconds(kUserConfirmationTimeout);
     base::MessageLoop::current()->PostTask(
@@ -230,7 +245,7 @@ PrivetHttpServer::RegistrationErrorStatus Printer::RegistrationStart(
   }
 
   requester_->StartRegistration(GenerateProxyId(), kPrinterName, user,
-                                state_.local_settings, kCdd);
+                                state_.local_settings, GetRawCdd());
 
   return PrivetHttpServer::REG_ERROR_OK;
 }
@@ -323,19 +338,18 @@ void Printer::CreateInfo(PrivetHttpServer::DeviceInfo* info) {
   CheckRegistrationExpiration();
 
   // TODO(maksymb): Replace "text" with constants.
-
   *info = PrivetHttpServer::DeviceInfo();
   info->version = "1.0";
   info->name = kPrinterName;
-  info->description = kPrinterDescription;
+  info->description = GetDescription();
   info->url = kCloudPrintUrl;
   info->id = state_.device_id;
   info->device_state = "idle";
   info->connection_state = ConnectionStateToString(connection_state_);
-  info->manufacturer = "Google";
-  info->model = "Prototype";
-  info->serial_number = "2.3.5.7.13.17.19.31.61.89.107.127.521.607.1279.2203";
-  info->firmware = "3.7.31.127.8191.131071.524287.2147483647";
+  info->manufacturer = COMPANY_FULLNAME_STRING;
+  info->model = "Prototype r" + std::string(LASTCHANGE_STRING);
+  info->serial_number = "20CB5FF2-B28C-4EFA-8DCD-516CFF0455A2";
+  info->firmware = CHROME_VERSION_STRING;
   info->uptime = static_cast<int>((base::Time::Now() - starttime_).InSeconds());
 
   info->x_privet_token = xtoken_.GenerateXToken();
@@ -369,11 +383,16 @@ bool Printer::CheckXPrivetTokenHeader(const std::string& token) const {
   return xtoken_.CheckValidXToken(token);
 }
 
-scoped_ptr<base::DictionaryValue> Printer::GetCapabilities() {
-  scoped_ptr<base::Value> value(base::JSONReader::Read(kCdd));
-  base::DictionaryValue* dictionary_value = NULL;
-  value->GetAsDictionary(&dictionary_value);
-  return scoped_ptr<base::DictionaryValue>(dictionary_value->DeepCopy());
+const base::DictionaryValue& Printer::GetCapabilities() {
+  if (!state_.cdd.get()) {
+    std::string cdd_string;
+    base::ReplaceChars(kCdd, "'", "\"", &cdd_string);
+    scoped_ptr<base::Value> json_val(base::JSONReader::Read(cdd_string));
+    base::DictionaryValue* json = NULL;
+    CHECK(json_val->GetAsDictionary(&json));
+    state_.cdd.reset(json->DeepCopy());
+  }
+  return *state_.cdd;
 }
 
 LocalPrintJob::CreateResult Printer::CreateJob(const std::string& ticket,
@@ -471,14 +490,14 @@ void Printer::OnServerError(const std::string& description) {
 void Printer::OnPrintJobsAvailable(const std::vector<Job>& jobs) {
   VLOG(3) << "Function: " << __FUNCTION__;
 
-  LOG(INFO) << "Available printjobs: " << jobs.size();
+  VLOG(0) << "Available printjobs: " << jobs.size();
   if (jobs.empty()) {
     pending_print_jobs_check_ = false;
     PostOnIdle();
     return;
   }
 
-  LOG(INFO) << "Downloading printjob.";
+  VLOG(0) << "Downloading printjob.";
   requester_->RequestPrintJob(jobs[0]);
   return;
 }
@@ -486,7 +505,7 @@ void Printer::OnPrintJobsAvailable(const std::vector<Job>& jobs) {
 void Printer::OnPrintJobDownloaded(const Job& job) {
   VLOG(3) << "Function: " << __FUNCTION__;
   print_job_handler_->SavePrintJob(job.file, job.ticket, job.create_time,
-                                   job.job_id, "remote", job.title, "pdf");
+                                   job.job_id, job.title, "pdf");
   requester_->SendPrintJobDone(job.job_id);
 }
 
@@ -500,11 +519,11 @@ void Printer::OnLocalSettingsReceived(LocalSettings::State state,
   pending_local_settings_check_ = false;
   switch (state) {
     case LocalSettings::CURRENT:
-      LOG(INFO) << "No new local settings";
+      VLOG(0) << "No new local settings";
       PostOnIdle();
       break;
     case LocalSettings::PENDING:
-      LOG(INFO) << "New local settings were received";
+      VLOG(0) << "New local settings were received";
       ApplyLocalSettings(settings);
       break;
     case LocalSettings::PRINTER_DELETED:
@@ -664,7 +683,7 @@ void Printer::RememberAccessToken(const std::string& access_token,
                                             kTimeToNextAccessTokenUpdate);
   state_.access_token_update =
       Time::Now() + TimeDelta::FromSeconds(time_to_update);
-  VLOG(1) << "Current access_token: " << access_token;
+  VLOG(0) << "Current access_token: " << access_token;
   SaveToFile();
 }
 
@@ -699,7 +718,7 @@ void Printer::WaitUserConfirmation(base::Time valid_until) {
 
   if (base::Time::Now() > valid_until) {
     state_.confirmation_state = PrinterState::CONFIRMATION_TIMEOUT;
-    LOG(INFO) << "Confirmation timeout reached.";
+    VLOG(0) << "Confirmation timeout reached.";
     return;
   }
 
@@ -707,10 +726,10 @@ void Printer::WaitUserConfirmation(base::Time valid_until) {
     int c = _getche();
     if (c == 'y' || c == 'Y') {
       state_.confirmation_state = PrinterState::CONFIRMATION_CONFIRMED;
-      LOG(INFO) << "Registration confirmed by user.";
+      VLOG(0) << "Registration confirmed by user.";
     } else {
       state_.confirmation_state = PrinterState::CONFIRMATION_DISCARDED;
-      LOG(INFO) << "Registration discarded by user.";
+      VLOG(0) << "Registration discarded by user.";
     }
     return;
   }
@@ -729,7 +748,7 @@ std::vector<std::string> Printer::CreateTxt() const {
   std::vector<std::string> txt;
   txt.push_back("txtvers=1");
   txt.push_back("ty=" + std::string(kPrinterName));
-  txt.push_back("note=" + std::string(kPrinterDescription));
+  txt.push_back("note=" + std::string(GetDescription()));
   txt.push_back("url=" + std::string(kCloudPrintUrl));
   txt.push_back("type=printer");
   txt.push_back("id=" + state_.device_id);
@@ -738,15 +757,16 @@ std::vector<std::string> Printer::CreateTxt() const {
   return txt;
 }
 
-void Printer::SaveToFile() const {
+void Printer::SaveToFile() {
+  GetCapabilities();  // Make sure capabilities created.
   base::FilePath file_path;
   file_path = file_path.AppendASCII(
       command_line_reader::ReadStatePath(kPrinterStatePathDefault));
 
   if (printer_state::SaveToFile(file_path, state_)) {
-    LOG(INFO) << "Printer state written to file";
+    VLOG(0) << "Printer state written to file";
   } else {
-    LOG(INFO) << "Cannot write printer state to file";
+    VLOG(0) << "Cannot write printer state to file";
   }
 }
 
@@ -758,14 +778,15 @@ bool Printer::LoadFromFile() {
       command_line_reader::ReadStatePath(kPrinterStatePathDefault));
 
   if (!base::PathExists(file_path)) {
-    LOG(INFO) << "Printer state file not found";
+    VLOG(0) << "Printer state file not found";
     return false;
   }
 
   if (printer_state::LoadFromFile(file_path, &state_)) {
-    LOG(INFO) << "Printer state loaded from file";
+    VLOG(0) << "Printer state loaded from file";
+    SaveToFile();
   } else {
-    LOG(INFO) << "Reading/parsing printer state from file failed";
+    VLOG(0) << "Reading/parsing printer state from file failed";
   }
 
   return true;
@@ -817,18 +838,24 @@ bool Printer::StartDnsServer() {
     LOG(ERROR) << "No local IP found. Cannot start printer.";
     return false;
   }
-  VLOG(1) << "Local address: " << net::IPAddressToString(ip);
+  VLOG(0) << "Local address: " << net::IPAddressToString(ip);
 
   uint16 port = command_line_reader::ReadHttpPort(kHttpPortDefault);
 
   std::string service_name_prefix =
-      command_line_reader::ReadServiceNamePrefix(kServiceNamePrefixDefault);
+      command_line_reader::ReadServiceNamePrefix(kServiceNamePrefixDefault +
+                                                 net::IPAddressToString(ip));
+  std::replace(service_name_prefix .begin(), service_name_prefix .end(),
+               '.', '_');
+
   std::string service_domain_name =
-      command_line_reader::ReadDomainName(kServiceDomainNameDefault);
+      command_line_reader::ReadDomainName(
+          base::StringPrintf(kServiceDomainNameFormatDefault,
+                             base::RandInt(0, INT_MAX)));
 
   ServiceParameters params(kServiceType, kSecondaryServiceType,
-                           service_name_prefix,
-                           service_domain_name, ip, port);
+                           service_name_prefix, service_domain_name,
+                           ip, GetLocalIp("", true), port);
 
   return dns_server_.Start(params,
                            command_line_reader::ReadTtl(kTtlDefault),
@@ -899,7 +926,7 @@ bool Printer::ChangeState(ConnectionState new_state) {
     return false;
 
   connection_state_ = new_state;
-  LOG(INFO) << base::StringPrintf(
+  VLOG(0) << base::StringPrintf(
       "Printer is now %s (%s)",
       ConnectionStateToString(connection_state_).c_str(),
       IsRegistered() ? "registered" : "unregistered");

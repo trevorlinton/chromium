@@ -19,6 +19,7 @@
 #include "content/browser/fileapi/chrome_blob_storage_context.h"
 #include "content/browser/loader/resource_request_info_impl.h"
 #include "content/browser/resource_context_impl.h"
+#include "content/browser/service_worker/service_worker_request_handler.h"
 #include "content/browser/storage_partition_impl.h"
 #include "content/browser/streams/stream.h"
 #include "content/browser/streams/stream_context.h"
@@ -290,8 +291,8 @@ void BlockingGarbageCollect(
 
   base::FileEnumerator enumerator(storage_root, false, kAllFileTypes);
   base::FilePath trash_directory;
-  if (!file_util::CreateTemporaryDirInDir(storage_root, kTrashDirname,
-                                          &trash_directory)) {
+  if (!base::CreateTemporaryDirInDir(storage_root, kTrashDirname,
+                                     &trash_directory)) {
     // Unable to continue without creating the trash directory so give up.
     return;
   }
@@ -376,15 +377,16 @@ StoragePartitionImpl* StoragePartitionImplMap::Get(
       ChromeBlobStorageContext::GetFor(browser_context_);
   StreamContext* stream_context = StreamContext::GetFor(browser_context_);
   ProtocolHandlerMap protocol_handlers;
-  protocol_handlers[chrome::kBlobScheme] =
+  protocol_handlers[kBlobScheme] =
       linked_ptr<net::URLRequestJobFactory::ProtocolHandler>(
           new BlobProtocolHandler(blob_storage_context,
                                   stream_context,
                                   partition->GetFileSystemContext()));
-  protocol_handlers[chrome::kFileSystemScheme] =
+  protocol_handlers[kFileSystemScheme] =
       linked_ptr<net::URLRequestJobFactory::ProtocolHandler>(
-          CreateFileSystemProtocolHandler(partition->GetFileSystemContext()));
-  protocol_handlers[chrome::kChromeUIScheme] =
+          CreateFileSystemProtocolHandler(partition_domain,
+                                          partition->GetFileSystemContext()));
+  protocol_handlers[kChromeUIScheme] =
       linked_ptr<net::URLRequestJobFactory::ProtocolHandler>(
           URLDataManagerBackend::CreateProtocolHandler(
               browser_context_->GetResourceContext(),
@@ -406,22 +408,30 @@ StoragePartitionImpl* StoragePartitionImplMap::Get(
                 partition->GetAppCacheService(),
                 blob_storage_context));
   }
-  protocol_handlers[chrome::kChromeDevToolsScheme] =
+  protocol_handlers[kChromeDevToolsScheme] =
       linked_ptr<net::URLRequestJobFactory::ProtocolHandler>(
           CreateDevToolsProtocolHandler(browser_context_->GetResourceContext(),
                                         browser_context_->IsOffTheRecord()));
+
+  ProtocolHandlerScopedVector protocol_interceptors;
+  protocol_interceptors.push_back(
+      ServiceWorkerRequestHandler::CreateInterceptor().release());
 
   // These calls must happen after StoragePartitionImpl::Create().
   if (partition_domain.empty()) {
     partition->SetURLRequestContext(
         GetContentClient()->browser()->CreateRequestContext(
             browser_context_,
-            &protocol_handlers));
+            &protocol_handlers,
+            protocol_interceptors.Pass()));
   } else {
     partition->SetURLRequestContext(
         GetContentClient()->browser()->CreateRequestContextForStoragePartition(
-            browser_context_, partition->GetPath(), in_memory,
-            &protocol_handlers));
+            browser_context_,
+            partition->GetPath(),
+            in_memory,
+            &protocol_handlers,
+            protocol_interceptors.Pass()));
   }
   partition->SetMediaURLRequestContext(
       partition_domain.empty() ?
@@ -460,11 +470,15 @@ void StoragePartitionImplMap::AsyncObliterate(
        ++it) {
     const StoragePartitionConfig& config = it->first;
     if (config.partition_domain == partition_domain) {
-      it->second->ClearDataForUnboundedRange(
+      it->second->ClearData(
           // All except shader cache.
           StoragePartition::REMOVE_DATA_MASK_ALL &
             (~StoragePartition::REMOVE_DATA_MASK_SHADER_CACHE),
-          StoragePartition::QUOTA_MANAGED_STORAGE_MASK_ALL);
+          StoragePartition::QUOTA_MANAGED_STORAGE_MASK_ALL,
+          GURL(),
+          StoragePartition::OriginMatcherFunction(),
+          base::Time(), base::Time::Max(),
+          base::Bind(&base::DoNothing));
       if (!config.in_memory) {
         paths_to_keep.push_back(it->second->GetPath());
       }

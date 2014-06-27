@@ -20,6 +20,9 @@ namespace system {
 // Developer switch value.
 CHROMEOS_EXPORT extern const char kDevSwitchBootMode[];
 
+// Customization ID key.
+CHROMEOS_EXPORT extern const char kCustomizationIdKey[];
+
 // HWID key.
 CHROMEOS_EXPORT extern const char kHardwareClassKey[];
 
@@ -42,6 +45,12 @@ CHROMEOS_EXPORT extern const char kOffersCouponCodeKey[];
 
 // Offer group key.
 CHROMEOS_EXPORT extern const char kOffersGroupCodeKey[];
+
+// Release Brand Code key.
+CHROMEOS_EXPORT extern const char kRlzBrandCodeKey[];
+
+// The serial number of the disk the root device is on.
+CHROMEOS_EXPORT extern const char kDiskSerialNumber[];
 
 // This interface provides access to Chrome OS statistics.
 class CHROMEOS_EXPORT StatisticsProvider {

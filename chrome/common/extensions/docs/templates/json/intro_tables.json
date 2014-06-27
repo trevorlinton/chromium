@@ -38,8 +38,8 @@
   "bluetooth": {
     "Learn More": [
       {
-        "link": "app_hardware.html",
-        "text": "Accessing Hardware Devices"
+        "link": "app_bluetooth.html",
+        "text": "Bluetooth"
       }
     ]
   },
@@ -117,6 +117,14 @@
       }
     ]
   },
+  "gcm": {
+    "Learn More": [
+      {
+        "link": "cloudMessagingV2.html",
+        "text": "Google Cloud Messaging"
+      }
+    ]
+  },
   "identity": {
     "Learn More": [
       {
@@ -157,7 +165,7 @@
   "permissions": {
     "Learn More": [
       {
-        "link": "declare_permissions.html#host-permissions",
+        "link": "declare_permissions.html",
         "text": "Declaring permissions"
       }
     ]
@@ -189,7 +197,7 @@
   "serial": {
     "Learn More": [
       {
-        "link": "app_hardware.html",
+        "link": "app_usb.html",
         "text": "Accessing Hardware Devices"
       }
     ]
@@ -265,7 +273,7 @@
   "usb": {
     "Learn More": [
       {
-        "link": "app_hardware.html",
+        "link": "app_usb.html",
         "text": "Accessing Hardware Devices"
       }
     ]

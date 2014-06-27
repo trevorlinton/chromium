@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,8 +13,11 @@
 #include "base/process/kill.h"
 #include "base/process/launch.h"
 #include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/win/scoped_handle.h"
 #include "chrome/installer/util/util_constants.h"
+
+namespace component_updater {
 
 namespace {
 
@@ -37,8 +40,8 @@ base::FilePath FindSetupProgram() {
   if (!PathService::Get(base::DIR_MODULE, &exe_dir))
     return base::FilePath();
 
-  const std::string installer_dir(WideToASCII(installer::kInstallerDir));
-  const std::string setup_exe(WideToASCII(installer::kSetupExe));
+  const std::string installer_dir(base::UTF16ToASCII(installer::kInstallerDir));
+  const std::string setup_exe(base::UTF16ToASCII(installer::kSetupExe));
 
   base::FilePath setup_path = exe_dir;
   setup_path = setup_path.AppendASCII(installer_dir);
@@ -112,3 +115,4 @@ ComponentUnpacker::Error ComponentPatcherWin::Patch(
                   ComponentUnpacker::kNone;
 }
 
+}  // namespace component_updater

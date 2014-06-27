@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_PROFILES_PROFILE_WINDOW_H_
 
 #include "base/callback_forward.h"
+#include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/startup/startup_types.h"
 
@@ -16,6 +17,13 @@ namespace profiles {
 
 // Callback to be used when switching to a new profile is completed.
 typedef base::Callback<void()> ProfileSwitchingDoneCallback;
+
+// Different tutorials that can be displayed in the user manager.
+enum UserManagerTutorialMode {
+  USER_MANAGER_NO_TUTORIAL,        // Does not display a tutorial.
+  USER_MANAGER_TUTORIAL_OVERVIEW,  // Basic overview of new features.
+  USER_MANAGER_TUTORIAL_LOCK,      // TODO(noms): To be implemented.
+};
 
 // Activates a window for |profile| on the desktop specified by
 // |desktop_type|. If no such window yet exists, or if |always_create| is
@@ -35,11 +43,11 @@ void FindOrCreateNewWindowForProfile(
 // even if a window for that profile already exists. When the browser is
 // opened, |callback| will be run if it isn't null.
 
-void SwitchToProfile(
-    const base::FilePath& path,
-    chrome::HostDesktopType desktop_type,
-    bool always_create,
-    ProfileSwitchingDoneCallback callback);
+void SwitchToProfile(const base::FilePath& path,
+                     chrome::HostDesktopType desktop_type,
+                     bool always_create,
+                     ProfileSwitchingDoneCallback callback,
+                     ProfileMetrics::ProfileOpen metric);
 
 // Opens a Browser for the guest profile and runs |callback| if it isn't null.
 void SwitchToGuestProfile(chrome::HostDesktopType desktop_type,
@@ -49,10 +57,30 @@ void SwitchToGuestProfile(chrome::HostDesktopType desktop_type,
 // opens a new browser window for the profile once it is ready. When the browser
 // is opened, |callback| will be run if it isn't null.
 void CreateAndSwitchToNewProfile(chrome::HostDesktopType desktop_type,
-                                 ProfileSwitchingDoneCallback callback);
+                                 ProfileSwitchingDoneCallback callback,
+                                 ProfileMetrics::ProfileAdd metric);
 
 // Closes all browser windows that belong to the guest profile.
 void CloseGuestProfileWindows();
+
+// Closes all the browser windows for |profile| and opens the user manager.
+void LockProfile(Profile* profile);
+
+// Creates or reuses the guest profile needed by the user manager. Based on
+// the value of |tutorial_mode|, the user manager can show a specific
+// tutorial, or no tutorial at all. If a tutorial is not shown, then
+// |profile_path_to_focus| could be used to specify which user should be
+// focused. |callback| is run with the custom url to be displayed, as well as
+// a pointer to the guest profile.
+void CreateGuestProfileForUserManager(
+    const base::FilePath& profile_path_to_focus,
+    profiles::UserManagerTutorialMode tutorial_mode,
+    const base::Callback<void(Profile*, const std::string&)>& callback);
+
+// Based on the |profile| preferences, determines whether a user manager
+// tutorial needs to be shown, and displays the user manager with or without
+// the tutorial.
+void ShowUserManagerMaybeWithTutorial(Profile* profile);
 
 }  // namespace profiles
 

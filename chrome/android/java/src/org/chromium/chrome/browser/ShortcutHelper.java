@@ -8,13 +8,11 @@ import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
-import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.Base64;
 import android.util.Log;
 
 import org.chromium.base.CalledByNative;
-import org.chromium.chrome.browser.BookmarkUtils;
 
 import java.util.UUID;
 
@@ -29,9 +27,8 @@ public class ShortcutHelper {
     private static String sFullScreenAction;
 
     /**
-     * Sets the class names used when launching the shortcuts.
-     * @param browserName Class name of the browser Activity.
-     * @param fullScreenName Class name of the fullscreen Activity.
+     * Sets the class name used when launching the shortcuts.
+     * @param fullScreenAction Class name of the fullscreen Activity.
      */
     public static void setFullScreenAction(String fullScreenAction) {
         sFullScreenAction = fullScreenAction;
@@ -43,7 +40,7 @@ public class ShortcutHelper {
      * @param tab Tab to create a shortcut for.
      * @param userRequestedTitle Updated title for the shortcut.
      */
-    public static void addShortcut(Context appContext, TabBase tab, String userRequestedTitle) {
+    public static void addShortcut(Context appContext, Tab tab, String userRequestedTitle) {
         if (TextUtils.isEmpty(sFullScreenAction)) {
             Log.e("ShortcutHelper", "ShortcutHelper is uninitialized.  Aborting.");
             return;
@@ -95,6 +92,6 @@ public class ShortcutHelper {
         context.startActivity(homeIntent);
     }
 
-    private static native void nativeAddShortcut(int tabAndroidPtr, String userRequestedTitle,
+    private static native void nativeAddShortcut(long tabAndroidPtr, String userRequestedTitle,
             int launcherLargeIconSize);
 }

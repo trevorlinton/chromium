@@ -25,7 +25,7 @@
 #include "grit/theme_resources.h"
 #include "grit/ui_resources.h"
 #include "skia/ext/skia_utils_mac.h"
-#include "third_party/GTM/AppKit/GTMUILocalizerAndLayoutTweaker.h"
+#include "third_party/google_toolbox_for_mac/src/AppKit/GTMUILocalizerAndLayoutTweaker.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image.h"
@@ -179,7 +179,7 @@ class WebContentsObserverBridge : public content::WebContentsObserver {
   base::scoped_nsobject<NSMutableArray> favicons([[NSMutableArray alloc] init]);
   for (TabContentsIterator it; !it.done(); it.Next()) {
     if (it->GetRenderProcessHost() == hungContents_->GetRenderProcessHost()) {
-      string16 title = it->GetTitle();
+      base::string16 title = it->GetTitle();
       if (title.empty())
         title = CoreTabHelper::GetDefaultTitle();
       [titles addObject:base::SysUTF16ToNSString(title)];

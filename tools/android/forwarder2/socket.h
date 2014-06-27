@@ -37,21 +37,28 @@ class Socket {
   void Close();
   bool IsClosed() const { return socket_ < 0; }
 
+  int fd() const { return socket_; }
+
   bool Accept(Socket* new_socket);
 
   // Returns the port allocated to this socket or zero on error.
   int GetPort();
-
-  bool IsFdInSet(const fd_set& fds) const;
-  bool AddFdToSet(fd_set* fds) const;
 
   // Just a wrapper around unix read() function.
   // Reads up to buffer_size, but may read less then buffer_size.
   // Returns the number of bytes read.
   int Read(void* buffer, size_t buffer_size);
 
-  // Same as Read(), just a wrapper around write().
+  // Non-blocking version of Read() above. This must be called after a
+  // successful call to select(). The socket must also be in non-blocking mode
+  // before calling this method.
+  int NonBlockingRead(void* buffer, size_t buffer_size);
+
+  // Wrapper around send().
   int Write(const void* buffer, size_t count);
+
+  // Same as NonBlockingRead() but for writing.
+  int NonBlockingWrite(const void* buffer, size_t count);
 
   // Calls Read() multiple times until num_bytes is written to the provided
   // buffer. No bounds checking is performed.
@@ -81,8 +88,6 @@ class Socket {
 
   bool DidReceiveEvent() const;
 
-  static int GetHighestFileDescriptor(const Socket& s1, const Socket& s2);
-
   static pid_t GetUnixDomainSocketProcessOwner(const std::string& path);
 
  private:
@@ -104,6 +109,8 @@ class Socket {
     int fd;
     bool was_fired;
   };
+
+  bool SetNonBlocking();
 
   // If |host| is empty, use localhost.
   bool InitTcpSocket(const std::string& host, int port);

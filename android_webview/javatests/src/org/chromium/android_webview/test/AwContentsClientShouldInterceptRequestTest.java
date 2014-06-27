@@ -1,33 +1,29 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 package org.chromium.android_webview.test;
 
 import android.test.suitebuilder.annotation.SmallTest;
-import android.util.Log;
 import android.util.Pair;
 
-import org.chromium.android_webview.AndroidProtocolHandler;
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.InterceptedRequestData;
 import org.chromium.android_webview.test.util.CommonResources;
-import org.chromium.android_webview.test.util.JSUtils;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.TestFileUtil;
 import org.chromium.content.browser.test.util.CallbackHelper;
-import org.chromium.content.browser.test.util.TestCallbackHelperContainer.OnPageFinishedHelper;
-import org.chromium.content.browser.test.util.TestCallbackHelperContainer.OnPageStartedHelper;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer.OnReceivedErrorHelper;
 import org.chromium.net.test.util.TestWebServer;
 
 import java.io.ByteArrayInputStream;
-import java.io.InputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.List;
-import java.util.Random;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 
 /**
  * Tests for the WebViewClient.shouldInterceptRequest() method.
@@ -255,6 +251,70 @@ public class AwContentsClientShouldInterceptRequestTest extends AwTestBase {
         mContentsClient.getOnPageFinishedHelper().waitForCallback(onPageFinishedCallCount);
     }
 
+    private static class SlowInterceptedRequestData extends InterceptedRequestData {
+        private CallbackHelper mReadStartedCallbackHelper = new CallbackHelper();
+        private CountDownLatch mLatch = new CountDownLatch(1);
+
+        public SlowInterceptedRequestData(String mimeType, String encoding, InputStream data) {
+            super(mimeType, encoding, data);
+        }
+
+        @Override
+        public InputStream getData() {
+            mReadStartedCallbackHelper.notifyCalled();
+            try {
+                mLatch.await();
+            } catch (InterruptedException e) {
+                // ignore
+            }
+            return super.getData();
+        }
+
+        public void unblockReads() {
+            mLatch.countDown();
+        }
+
+        public CallbackHelper getReadStartedCallbackHelper() {
+            return mReadStartedCallbackHelper;
+        }
+    }
+
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    public void testDoesNotCrashOnSlowStream() throws Throwable {
+        final String aboutPageUrl = addAboutPageToTestServer(mWebServer);
+        final String aboutPageData = makePageWithTitle("some title");
+        final String encoding = "UTF-8";
+        final SlowInterceptedRequestData slowInterceptedRequestData =
+            new SlowInterceptedRequestData("text/html", encoding,
+                    new ByteArrayInputStream(aboutPageData.getBytes(encoding)));
+
+        mShouldInterceptRequestHelper.setReturnValue(slowInterceptedRequestData);
+        int callCount = slowInterceptedRequestData.getReadStartedCallbackHelper().getCallCount();
+        loadUrlAsync(mAwContents, aboutPageUrl);
+        slowInterceptedRequestData.getReadStartedCallbackHelper().waitForCallback(callCount);
+
+        // Now the AwContents is "stuck" waiting for the SlowInputStream to finish reading so we
+        // delete it to make sure that the dangling 'read' task doesn't cause a crash. Unfortunately
+        // this will not always lead to a crash but it should happen often enough for us to notice.
+
+        runTestOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                getActivity().removeAllViews();
+            }
+        });
+        destroyAwContentsOnMainSync(mAwContents);
+        pollOnUiThread(new Callable<Boolean>() {
+            @Override
+            public Boolean call() {
+                return AwContents.getNativeInstanceCount() == 0;
+            }
+        });
+
+        slowInterceptedRequestData.unblockReads();
+    }
+
     @SmallTest
     @Feature({"AndroidWebView"})
     public void testHttpStatusField() throws Throwable {
@@ -280,6 +340,39 @@ public class AwContentsClientShouldInterceptRequestTest extends AwTestBase {
         mShouldInterceptRequestHelper.setReturnValue(
                 new InterceptedRequestData("text/html", "UTF-8", new EmptyInputStream()));
         assertEquals("200",
+                executeJavaScriptAndWaitForResult(mAwContents, mContentsClient, syncGetJs));
+    }
+
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    public void testHttpResponseClientHeader() throws Throwable {
+        final String clientResponseHeaderName = "Client-Via";
+        // JSON stringification applied by executeJavaScriptAndWaitForResult adds quotes
+        // around returned strings.
+        final String clientResponseHeaderValue = "\"shouldInterceptRequest\"";
+        final String syncGetUrl = mWebServer.getResponseUrl("/intercept_me");
+        final String syncGetJs =
+            "(function() {" +
+            "  var xhr = new XMLHttpRequest();" +
+            "  xhr.open('GET', '" + syncGetUrl + "', false);" +
+            "  xhr.send(null);" +
+            "  console.info(xhr.getAllResponseHeaders());" +
+            "  return xhr.getResponseHeader('" + clientResponseHeaderName + "');" +
+            "})();";
+        enableJavaScriptOnUiThread(mAwContents);
+
+        final String aboutPageUrl = addAboutPageToTestServer(mWebServer);
+        loadUrlSync(mAwContents, mContentsClient.getOnPageFinishedHelper(), aboutPageUrl);
+
+        // The response header is set regardless of whether the embedder has provided a
+        // valid resource stream.
+        mShouldInterceptRequestHelper.setReturnValue(
+                new InterceptedRequestData("text/html", "UTF-8", null));
+        assertEquals(clientResponseHeaderValue,
+                executeJavaScriptAndWaitForResult(mAwContents, mContentsClient, syncGetJs));
+        mShouldInterceptRequestHelper.setReturnValue(
+                new InterceptedRequestData("text/html", "UTF-8", new EmptyInputStream()));
+        assertEquals(clientResponseHeaderValue,
                 executeJavaScriptAndWaitForResult(mAwContents, mContentsClient, syncGetJs));
     }
 

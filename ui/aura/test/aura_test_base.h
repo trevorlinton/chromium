@@ -12,7 +12,6 @@
 #include "ui/aura/test/aura_test_helper.h"
 
 namespace aura {
-class RootWindow;
 class Window;
 class WindowDelegate;
 namespace test {
@@ -32,15 +31,18 @@ class AuraTestBase : public testing::Test {
   aura::Window* CreateNormalWindow(int id, Window* parent,
                                    aura::WindowDelegate* delegate);
 
-  // Creates a transient window that is transient to |parent|.
-  aura::Window* CreateTransientChild(int id, aura::Window* parent);
-
  protected:
   void RunAllPendingInMessageLoop();
 
   void ParentWindow(Window* window);
 
-  RootWindow* root_window() { return helper_->root_window(); }
+  // A convenience function for dispatching an event to |dispatcher()|.
+  // Returns whether |event| was handled.
+  bool DispatchEventUsingWindowDispatcher(ui::Event* event);
+
+  Window* root_window() { return helper_->root_window(); }
+  WindowTreeHost* host() { return helper_->host(); }
+  ui::EventProcessor* event_processor() { return helper_->event_processor(); }
   TestScreen* test_screen() { return helper_->test_screen(); }
 
  private:

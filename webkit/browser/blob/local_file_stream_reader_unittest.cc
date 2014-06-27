@@ -7,10 +7,10 @@
 #include <string>
 
 #include "base/file_util.h"
+#include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/platform_file.h"
 #include "base/run_loop.h"
 #include "base/threading/thread.h"
 #include "net/base/io_buffer.h"
@@ -66,9 +66,9 @@ class LocalFileStreamReaderTest : public testing::Test {
     ASSERT_TRUE(file_thread_.Start());
     ASSERT_TRUE(dir_.CreateUniqueTempDir());
 
-    file_util::WriteFile(test_path(), kTestData, kTestDataSize);
-    base::PlatformFileInfo info;
-    ASSERT_TRUE(file_util::GetFileInfo(test_path(), &info));
+    base::WriteFile(test_path(), kTestData, kTestDataSize);
+    base::File::Info info;
+    ASSERT_TRUE(base::GetFileInfo(test_path(), &info));
     test_file_modification_time_ = info.last_modified;
   }
 
@@ -94,9 +94,9 @@ class LocalFileStreamReaderTest : public testing::Test {
   void TouchTestFile() {
     base::Time new_modified_time =
         test_file_modification_time() - base::TimeDelta::FromSeconds(1);
-    ASSERT_TRUE(file_util::TouchFile(test_path(),
-                                    test_file_modification_time(),
-                                    new_modified_time));
+    ASSERT_TRUE(base::TouchFile(test_path(),
+                                test_file_modification_time(),
+                                new_modified_time));
   }
 
   base::MessageLoopProxy* file_task_runner() const {
@@ -135,14 +135,9 @@ TEST_F(LocalFileStreamReaderTest, NonExistent) {
 
 TEST_F(LocalFileStreamReaderTest, Empty) {
   base::FilePath empty_path = test_dir().AppendASCII("empty");
-  base::PlatformFileError error = base::PLATFORM_FILE_OK;
-  base::PlatformFile file = base::CreatePlatformFile(
-      empty_path,
-      base::PLATFORM_FILE_CREATE | base::PLATFORM_FILE_READ,
-      NULL, &error);
-  ASSERT_EQ(base::PLATFORM_FILE_OK, error);
-  ASSERT_NE(base::kInvalidPlatformFileValue, file);
-  base::ClosePlatformFile(file);
+  base::File file(empty_path, base::File::FLAG_CREATE | base::File::FLAG_READ);
+  ASSERT_TRUE(file.IsValid());
+  file.Close();
 
   scoped_ptr<LocalFileStreamReader> reader(
       CreateFileReader(empty_path, 0, base::Time()));

@@ -371,14 +371,7 @@ void TabRendererGtk::UpdateData(WebContents* contents,
       data_.media_state = next_media_state;
     }
 
-    SkBitmap* app_icon =
-        extensions::TabHelper::FromWebContents(contents)->GetExtensionAppIcon();
-    if (app_icon) {
-      data_.favicon = *app_icon;
-    } else {
-      data_.favicon = favicon_tab_helper->GetFavicon().AsBitmap();
-    }
-
+    data_.favicon = favicon_tab_helper->GetFavicon().AsBitmap();
     data_.app = app;
 
     // Make a cairo cached version of the favicon.
@@ -629,7 +622,7 @@ void TabRendererGtk::Raise() const {
         GTK_BUTTON(close_button_->widget())));
 }
 
-string16 TabRendererGtk::GetTitle() const {
+base::string16 TabRendererGtk::GetTitle() const {
   return data_.title;
 }
 
@@ -880,7 +873,7 @@ void TabRendererGtk::PaintTitle(GtkWidget* widget, cairo_t* cr) {
     return;
 
   // Paint the Title.
-  string16 title = data_.title;
+  base::string16 title = data_.title;
   if (title.empty()) {
     title = data_.loading ?
         l10n_util::GetStringUTF16(IDS_TAB_LOADING_TITLE) :

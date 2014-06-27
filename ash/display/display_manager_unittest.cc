@@ -6,7 +6,7 @@
 
 #include "ash/display/display_controller.h"
 #include "ash/display/display_layout_store.h"
-#include "ash/screen_ash.h"
+#include "ash/screen_util.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/test/display_manager_test_api.h"
@@ -15,11 +15,13 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "ui/aura/env.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/test/event_generator.h"
 #include "ui/aura/window_observer.h"
+#include "ui/aura/window_tree_host.h"
 #include "ui/gfx/display_observer.h"
 #include "ui/gfx/display.h"
+#include "ui/gfx/screen.h"
+#include "ui/gfx/screen_type_delegate.h"
 
 namespace ash {
 namespace internal {
@@ -273,7 +275,7 @@ TEST_F(DisplayManagerTest, OverscanInsetsTest) {
   EXPECT_EQ("13,12,11,10",
             updated_display_info2.overscan_insets_in_dip().ToString());
   EXPECT_EQ("500,0 378x376",
-            ScreenAsh::GetSecondaryDisplay().bounds().ToString());
+            ScreenUtil::GetSecondaryDisplay().bounds().ToString());
 
   // Make sure that SetOverscanInsets() is idempotent.
   display_manager()->SetOverscanInsets(display_info1.id(), gfx::Insets());
@@ -340,11 +342,11 @@ TEST_F(DisplayManagerTest, OverscanInsetsTest) {
 
   // Make sure switching primary display applies the overscan offset only once.
   ash::Shell::GetInstance()->display_controller()->SetPrimaryDisplay(
-      ScreenAsh::GetSecondaryDisplay());
+      ScreenUtil::GetSecondaryDisplay());
   EXPECT_EQ("-500,0 500x500",
-            ScreenAsh::GetSecondaryDisplay().bounds().ToString());
+            ScreenUtil::GetSecondaryDisplay().bounds().ToString());
   EXPECT_EQ("0,0 500x500",
-            GetDisplayInfo(ScreenAsh::GetSecondaryDisplay()).
+            GetDisplayInfo(ScreenUtil::GetSecondaryDisplay()).
             bounds_in_native().ToString());
   EXPECT_EQ("0,501 400x400",
             GetDisplayInfo(Shell::GetScreen()->GetPrimaryDisplay()).
@@ -382,13 +384,12 @@ TEST_F(DisplayManagerTest, TestDeviceScaleOnlyChange) {
     return;
 
   UpdateDisplay("1000x600");
-  aura::WindowEventDispatcher* dispatcher =
-      Shell::GetPrimaryRootWindow()->GetDispatcher();
-  EXPECT_EQ(1, dispatcher->compositor()->device_scale_factor());
+  aura::WindowTreeHost* host = Shell::GetPrimaryRootWindow()->GetHost();
+  EXPECT_EQ(1, host->compositor()->device_scale_factor());
   EXPECT_EQ("1000x600",
             Shell::GetPrimaryRootWindow()->bounds().size().ToString());
   UpdateDisplay("1000x600*2");
-  EXPECT_EQ(2, dispatcher->compositor()->device_scale_factor());
+  EXPECT_EQ(2, host->compositor()->device_scale_factor());
   EXPECT_EQ("500x300",
             Shell::GetPrimaryRootWindow()->bounds().size().ToString());
 }
@@ -590,8 +591,8 @@ TEST_F(DisplayManagerTest, MAYBE_TestNativeDisplaysChangedNoInternal) {
   EXPECT_EQ(1U, display_manager()->GetNumDisplays());
   EXPECT_EQ("1,1 100x100",
             GetDisplayInfoForId(10).bounds_in_native().ToString());
-  EXPECT_EQ("100x100", ash::Shell::GetPrimaryRootWindow()->GetDispatcher()->
-      GetHostSize().ToString());
+  EXPECT_EQ("100x100", ash::Shell::GetPrimaryRootWindow()->GetHost()->
+      GetBounds().size().ToString());
 }
 
 #if defined(OS_WIN)
@@ -605,7 +606,7 @@ TEST_F(DisplayManagerTest, MAYBE_TestNativeDisplaysChangedNoInternal) {
 
 TEST_F(DisplayManagerTest, MAYBE_EnsurePointerInDisplays) {
   UpdateDisplay("200x200,300x300");
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
 
   aura::Env* env = aura::Env::GetInstance();
 
@@ -652,10 +653,10 @@ TEST_F(DisplayManagerTest, MAYBE_EnsurePointerInDisplays_2ndOnLeft) {
   layout_store->SetDefaultDisplayLayout(layout);
 
   UpdateDisplay("200x200,300x300");
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
 
   EXPECT_EQ("-300,0 300x300",
-            ScreenAsh::GetSecondaryDisplay().bounds().ToString());
+            ScreenUtil::GetSecondaryDisplay().bounds().ToString());
 
   aura::Env* env = aura::Env::GetInstance();
 
@@ -717,36 +718,99 @@ TEST_F(DisplayManagerTest, DontRememberBestResolution) {
   int display_id = 1000;
   DisplayInfo native_display_info =
       CreateDisplayInfo(display_id, gfx::Rect(0, 0, 1000, 500));
-  std::vector<Resolution> resolutions;
-  resolutions.push_back(Resolution(gfx::Size(1000, 500), false));
-  resolutions.push_back(Resolution(gfx::Size(800, 300), false));
-  resolutions.push_back(Resolution(gfx::Size(400, 500), false));
+  std::vector<DisplayMode> display_modes;
+  display_modes.push_back(
+      DisplayMode(gfx::Size(1000, 500), 58.0f, false, true));
+  display_modes.push_back(
+      DisplayMode(gfx::Size(800, 300), 59.0f, false, false));
+  display_modes.push_back(
+      DisplayMode(gfx::Size(400, 500), 60.0f, false, false));
 
-  native_display_info.set_resolutions(resolutions);
+  native_display_info.set_display_modes(display_modes);
 
   std::vector<DisplayInfo> display_info_list;
   display_info_list.push_back(native_display_info);
   display_manager()->OnNativeDisplaysChanged(display_info_list);
 
-  gfx::Size selected;
-  EXPECT_FALSE(display_manager()->GetSelectedResolutionForDisplayId(
-      display_id, &selected));
+  DisplayMode mode;
+  EXPECT_FALSE(
+      display_manager()->GetSelectedModeForDisplayId(display_id, &mode));
 
   // Unsupported resolution.
   display_manager()->SetDisplayResolution(display_id, gfx::Size(800, 4000));
-  EXPECT_FALSE(display_manager()->GetSelectedResolutionForDisplayId(
-      display_id, &selected));
+  EXPECT_FALSE(
+      display_manager()->GetSelectedModeForDisplayId(display_id, &mode));
 
   // Supported resolution.
   display_manager()->SetDisplayResolution(display_id, gfx::Size(800, 300));
-  EXPECT_TRUE(display_manager()->GetSelectedResolutionForDisplayId(
-      display_id, &selected));
-  EXPECT_EQ("800x300", selected.ToString());
+  EXPECT_TRUE(
+      display_manager()->GetSelectedModeForDisplayId(display_id, &mode));
+  EXPECT_EQ("800x300", mode.size.ToString());
+  EXPECT_EQ(59.0f, mode.refresh_rate);
+  EXPECT_FALSE(mode.native);
 
   // Best resolution.
   display_manager()->SetDisplayResolution(display_id, gfx::Size(1000, 500));
-  EXPECT_FALSE(display_manager()->GetSelectedResolutionForDisplayId(
-      display_id, &selected));
+  EXPECT_TRUE(
+      display_manager()->GetSelectedModeForDisplayId(display_id, &mode));
+  EXPECT_EQ("1000x500", mode.size.ToString());
+  EXPECT_EQ(58.0f, mode.refresh_rate);
+  EXPECT_TRUE(mode.native);
+}
+
+TEST_F(DisplayManagerTest, ResolutionFallback) {
+  int display_id = 1000;
+  DisplayInfo native_display_info =
+      CreateDisplayInfo(display_id, gfx::Rect(0, 0, 1000, 500));
+  std::vector<DisplayMode> display_modes;
+  display_modes.push_back(
+      DisplayMode(gfx::Size(1000, 500), 58.0f, false, true));
+  display_modes.push_back(
+      DisplayMode(gfx::Size(800, 300), 59.0f, false, false));
+  display_modes.push_back(
+      DisplayMode(gfx::Size(400, 500), 60.0f, false, false));
+
+  std::vector<DisplayMode> copy = display_modes;
+  native_display_info.set_display_modes(copy);
+
+  std::vector<DisplayInfo> display_info_list;
+  display_info_list.push_back(native_display_info);
+  display_manager()->OnNativeDisplaysChanged(display_info_list);
+  {
+    display_manager()->SetDisplayResolution(display_id, gfx::Size(800, 300));
+    DisplayInfo new_native_display_info =
+        CreateDisplayInfo(display_id, gfx::Rect(0, 0, 400, 500));
+    copy = display_modes;
+    new_native_display_info.set_display_modes(copy);
+    std::vector<DisplayInfo> new_display_info_list;
+    new_display_info_list.push_back(new_native_display_info);
+    display_manager()->OnNativeDisplaysChanged(new_display_info_list);
+
+    DisplayMode mode;
+    EXPECT_TRUE(
+        display_manager()->GetSelectedModeForDisplayId(display_id, &mode));
+    EXPECT_EQ("400x500", mode.size.ToString());
+    EXPECT_EQ(60.0f, mode.refresh_rate);
+    EXPECT_FALSE(mode.native);
+  }
+  {
+    // Best resolution should find itself on the resolutions list.
+    display_manager()->SetDisplayResolution(display_id, gfx::Size(800, 300));
+    DisplayInfo new_native_display_info =
+        CreateDisplayInfo(display_id, gfx::Rect(0, 0, 1000, 500));
+    std::vector<DisplayMode> copy = display_modes;
+    new_native_display_info.set_display_modes(copy);
+    std::vector<DisplayInfo> new_display_info_list;
+    new_display_info_list.push_back(new_native_display_info);
+    display_manager()->OnNativeDisplaysChanged(new_display_info_list);
+
+    DisplayMode mode;
+    EXPECT_TRUE(
+        display_manager()->GetSelectedModeForDisplayId(display_id, &mode));
+    EXPECT_EQ("1000x500", mode.size.ToString());
+    EXPECT_EQ(58.0f, mode.refresh_rate);
+    EXPECT_TRUE(mode.native);
+  }
 }
 
 TEST_F(DisplayManagerTest, Rotate) {
@@ -804,69 +868,82 @@ TEST_F(DisplayManagerTest, UIScale) {
   UpdateDisplay("1280x800");
   int64 display_id = Shell::GetScreen()->GetPrimaryDisplay().id();
   display_manager()->SetDisplayUIScale(display_id, 1.125f);
-  EXPECT_EQ(1.0, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(1.0, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 0.8f);
-  EXPECT_EQ(1.0f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(1.0f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 0.75f);
-  EXPECT_EQ(1.0f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(1.0f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 0.625f);
-  EXPECT_EQ(1.0f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(1.0f, GetDisplayInfoAt(0).configured_ui_scale());
 
   gfx::Display::SetInternalDisplayId(display_id);
 
   display_manager()->SetDisplayUIScale(display_id, 1.5f);
-  EXPECT_EQ(1.0f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(1.0f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 1.25f);
-  EXPECT_EQ(1.0f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(1.0f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 1.125f);
-  EXPECT_EQ(1.125f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(1.125f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 0.8f);
-  EXPECT_EQ(0.8f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(0.8f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 0.75f);
-  EXPECT_EQ(0.8f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(0.8f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 0.625f);
-  EXPECT_EQ(0.625f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(0.625f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 0.6f);
-  EXPECT_EQ(0.625f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(0.625f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 0.5f);
-  EXPECT_EQ(0.5f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(0.5f, GetDisplayInfoAt(0).configured_ui_scale());
 
   UpdateDisplay("1366x768");
   display_manager()->SetDisplayUIScale(display_id, 1.5f);
-  EXPECT_EQ(1.0f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(1.0f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 1.25f);
-  EXPECT_EQ(1.0f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(1.0f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 1.125f);
-  EXPECT_EQ(1.125f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(1.125f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 0.8f);
-  EXPECT_EQ(1.125f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(1.125f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 0.75f);
-  EXPECT_EQ(0.75f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(0.75f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 0.6f);
-  EXPECT_EQ(0.6f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(0.6f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 0.625f);
-  EXPECT_EQ(0.6f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(0.6f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 0.5f);
-  EXPECT_EQ(0.5f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(0.5f, GetDisplayInfoAt(0).configured_ui_scale());
 
   UpdateDisplay("1280x850*2");
-  EXPECT_EQ(1.0f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(1.0f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 1.5f);
-  EXPECT_EQ(1.5f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(1.5f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 1.25f);
-  EXPECT_EQ(1.25f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(1.25f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 1.125f);
-  EXPECT_EQ(1.125f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(1.125f, GetDisplayInfoAt(0).configured_ui_scale());
+  display_manager()->SetDisplayUIScale(display_id, 1.0f);
+  EXPECT_EQ(1.0f, GetDisplayInfoAt(0).configured_ui_scale());
+  gfx::Display display = Shell::GetScreen()->GetPrimaryDisplay();
+  EXPECT_EQ(2.0f, display.device_scale_factor());
+  EXPECT_EQ("640x425", display.bounds().size().ToString());
+
   display_manager()->SetDisplayUIScale(display_id, 0.8f);
-  EXPECT_EQ(0.8f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(0.8f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 0.75f);
-  EXPECT_EQ(0.8f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(0.8f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 0.625f);
-  EXPECT_EQ(0.625f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(0.625f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 0.6f);
-  EXPECT_EQ(0.625f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(0.625f, GetDisplayInfoAt(0).configured_ui_scale());
   display_manager()->SetDisplayUIScale(display_id, 0.5f);
-  EXPECT_EQ(0.5f, GetDisplayInfoAt(0).ui_scale());
+  EXPECT_EQ(0.5f, GetDisplayInfoAt(0).configured_ui_scale());
+
+  display_manager()->SetDisplayUIScale(display_id, 2.0f);
+  EXPECT_EQ(2.0f, GetDisplayInfoAt(0).configured_ui_scale());
+  EXPECT_EQ(1.0f, GetDisplayInfoAt(0).GetEffectiveUIScale());
+  display = Shell::GetScreen()->GetPrimaryDisplay();
+  EXPECT_EQ(1.0f, display.device_scale_factor());
+  EXPECT_EQ("1280x850", display.bounds().size().ToString());
 }
 
 
@@ -881,7 +958,7 @@ TEST_F(DisplayManagerTest, UIScale) {
 TEST_F(DisplayManagerTest, MAYBE_UpdateMouseCursorAfterRotateZoom) {
   // Make sure just rotating will not change native location.
   UpdateDisplay("300x200,200x150");
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
   aura::Env* env = aura::Env::GetInstance();
 
   aura::test::EventGenerator generator1(root_windows[0]);
@@ -936,14 +1013,14 @@ class TestDisplayObserver : public gfx::DisplayObserver {
   }
   virtual void OnDisplayAdded(const gfx::Display& new_display) OVERRIDE {
     // Mirror window should already be delete before restoring
-    // the external dispay.
-    EXPECT_FALSE(test_api.GetRootWindow());
+    // the external display.
+    EXPECT_FALSE(test_api.GetHost());
     changed_ = true;
   }
   virtual void OnDisplayRemoved(const gfx::Display& old_display) OVERRIDE {
     // Mirror window should not be created until the external display
     // is removed.
-    EXPECT_FALSE(test_api.GetRootWindow());
+    EXPECT_FALSE(test_api.GetHost());
     changed_ = true;
   }
 
@@ -967,7 +1044,7 @@ TEST_F(DisplayManagerTest, SoftwareMirroring) {
   UpdateDisplay("300x400,400x500");
 
   test::MirrorWindowTestApi test_api;
-  EXPECT_EQ(NULL, test_api.GetRootWindow());
+  EXPECT_EQ(NULL, test_api.GetHost());
 
   TestDisplayObserver display_observer;
   Shell::GetScreen()->AddObserver(&display_observer);
@@ -979,13 +1056,14 @@ TEST_F(DisplayManagerTest, SoftwareMirroring) {
   EXPECT_EQ(1U, display_manager->GetNumDisplays());
   EXPECT_EQ("0,0 300x400",
             Shell::GetScreen()->GetPrimaryDisplay().bounds().ToString());
-  EXPECT_EQ("400x500", test_api.GetRootWindow()->GetHostSize().ToString());
-  EXPECT_EQ("300x400", test_api.GetRootWindow()->bounds().size().ToString());
+  EXPECT_EQ("400x500", test_api.GetHost()->GetBounds().size().ToString());
+  EXPECT_EQ("300x400",
+            test_api.GetHost()->window()->bounds().size().ToString());
   EXPECT_TRUE(display_manager->IsMirrored());
 
   display_manager->SetMirrorMode(false);
   EXPECT_TRUE(display_observer.changed_and_reset());
-  EXPECT_EQ(NULL, test_api.GetRootWindow());
+  EXPECT_EQ(NULL, test_api.GetHost());
   EXPECT_EQ(2U, display_manager->GetNumDisplays());
   EXPECT_FALSE(display_manager->IsMirrored());
 
@@ -996,24 +1074,29 @@ TEST_F(DisplayManagerTest, SoftwareMirroring) {
 
   UpdateDisplay("300x400@0.5,400x500");
   EXPECT_FALSE(display_observer.changed_and_reset());
-  EXPECT_EQ("300x400", test_api.GetRootWindow()->bounds().size().ToString());
+  EXPECT_EQ("300x400",
+            test_api.GetHost()->window()->bounds().size().ToString());
 
   UpdateDisplay("310x410*2,400x500");
   EXPECT_FALSE(display_observer.changed_and_reset());
-  EXPECT_EQ("310x410", test_api.GetRootWindow()->bounds().size().ToString());
+  EXPECT_EQ("310x410",
+            test_api.GetHost()->window()->bounds().size().ToString());
 
   UpdateDisplay("320x420/r,400x500");
   EXPECT_FALSE(display_observer.changed_and_reset());
-  EXPECT_EQ("320x420", test_api.GetRootWindow()->bounds().size().ToString());
+  EXPECT_EQ("320x420",
+            test_api.GetHost()->window()->bounds().size().ToString());
 
   UpdateDisplay("330x440/r,400x500");
   EXPECT_FALSE(display_observer.changed_and_reset());
-  EXPECT_EQ("330x440", test_api.GetRootWindow()->bounds().size().ToString());
+  EXPECT_EQ("330x440",
+            test_api.GetHost()->window()->bounds().size().ToString());
 
   // Overscan insets are ignored.
   UpdateDisplay("400x600/o,600x800/o");
   EXPECT_FALSE(display_observer.changed_and_reset());
-  EXPECT_EQ("400x600", test_api.GetRootWindow()->bounds().size().ToString());
+  EXPECT_EQ("400x600",
+            test_api.GetHost()->window()->bounds().size().ToString());
 
   Shell::GetScreen()->RemoveObserver(&display_observer);
 }
@@ -1080,35 +1163,71 @@ TEST_F(DisplayManagerTest, InvertLayout) {
 TEST_F(DisplayManagerTest, MAYBE_UpdateDisplayWithHostOrigin) {
   UpdateDisplay("100x200,300x400");
   ASSERT_EQ(2, Shell::GetScreen()->GetNumDisplays());
-  Shell::RootWindowList root_windows =
+  aura::Window::Windows root_windows =
       Shell::GetInstance()->GetAllRootWindows();
   ASSERT_EQ(2U, root_windows.size());
-  EXPECT_EQ("1,1", root_windows[0]->GetHostOrigin().ToString());
-  EXPECT_EQ("100x200", root_windows[0]->GetHostSize().ToString());
+  aura::WindowTreeHost* host0 = root_windows[0]->GetHost();
+  aura::WindowTreeHost* host1 = root_windows[1]->GetHost();
+
+  EXPECT_EQ("1,1", host0->GetBounds().origin().ToString());
+  EXPECT_EQ("100x200", host0->GetBounds().size().ToString());
   // UpdateDisplay set the origin if it's not set.
-  EXPECT_NE("1,1", root_windows[1]->GetHostOrigin().ToString());
-  EXPECT_EQ("300x400", root_windows[1]->GetHostSize().ToString());
+  EXPECT_NE("1,1", host1->GetBounds().origin().ToString());
+  EXPECT_EQ("300x400", host1->GetBounds().size().ToString());
 
   UpdateDisplay("100x200,200+300-300x400");
   ASSERT_EQ(2, Shell::GetScreen()->GetNumDisplays());
-  EXPECT_EQ("0,0", root_windows[0]->GetHostOrigin().ToString());
-  EXPECT_EQ("100x200", root_windows[0]->GetHostSize().ToString());
-  EXPECT_EQ("200,300", root_windows[1]->GetHostOrigin().ToString());
-  EXPECT_EQ("300x400", root_windows[1]->GetHostSize().ToString());
+  EXPECT_EQ("0,0", host0->GetBounds().origin().ToString());
+  EXPECT_EQ("100x200", host0->GetBounds().size().ToString());
+  EXPECT_EQ("200,300", host1->GetBounds().origin().ToString());
+  EXPECT_EQ("300x400", host1->GetBounds().size().ToString());
 
   UpdateDisplay("400+500-200x300,300x400");
   ASSERT_EQ(2, Shell::GetScreen()->GetNumDisplays());
-  EXPECT_EQ("400,500", root_windows[0]->GetHostOrigin().ToString());
-  EXPECT_EQ("200x300", root_windows[0]->GetHostSize().ToString());
-  EXPECT_EQ("0,0", root_windows[1]->GetHostOrigin().ToString());
-  EXPECT_EQ("300x400", root_windows[1]->GetHostSize().ToString());
+  EXPECT_EQ("400,500", host0->GetBounds().origin().ToString());
+  EXPECT_EQ("200x300", host0->GetBounds().size().ToString());
+  EXPECT_EQ("0,0", host1->GetBounds().origin().ToString());
+  EXPECT_EQ("300x400", host1->GetBounds().size().ToString());
 
   UpdateDisplay("100+200-100x200,300+500-200x300");
   ASSERT_EQ(2, Shell::GetScreen()->GetNumDisplays());
-  EXPECT_EQ("100,200", root_windows[0]->GetHostOrigin().ToString());
-  EXPECT_EQ("100x200", root_windows[0]->GetHostSize().ToString());
-  EXPECT_EQ("300,500", root_windows[1]->GetHostOrigin().ToString());
-  EXPECT_EQ("200x300", root_windows[1]->GetHostSize().ToString());
+  EXPECT_EQ("100,200", host0->GetBounds().origin().ToString());
+  EXPECT_EQ("100x200", host0->GetBounds().size().ToString());
+  EXPECT_EQ("300,500", host1->GetBounds().origin().ToString());
+  EXPECT_EQ("200x300", host1->GetBounds().size().ToString());
+}
+
+
+class ScreenShutdownTest : public test::AshTestBase {
+ public:
+  ScreenShutdownTest() {
+  }
+  virtual ~ScreenShutdownTest() {}
+
+  virtual void TearDown() OVERRIDE {
+    gfx::Screen* orig_screen =
+        gfx::Screen::GetScreenByType(gfx::SCREEN_TYPE_ALTERNATE);
+    AshTestBase::TearDown();
+    if (!SupportsMultipleDisplays())
+      return;
+    gfx::Screen* screen =
+        gfx::Screen::GetScreenByType(gfx::SCREEN_TYPE_ALTERNATE);
+    EXPECT_NE(orig_screen, screen);
+    EXPECT_EQ(2, screen->GetNumDisplays());
+    EXPECT_EQ("500x300", screen->GetPrimaryDisplay().size().ToString());
+    std::vector<gfx::Display> all = screen->GetAllDisplays();
+    EXPECT_EQ("500x300", all[0].size().ToString());
+    EXPECT_EQ("800x400", all[1].size().ToString());
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(ScreenShutdownTest);
+};
+
+TEST_F(ScreenShutdownTest, ScreenAfterShutdown) {
+  if (!SupportsMultipleDisplays())
+    return;
+  UpdateDisplay("500x300,800x400");
 }
 
 }  // namespace internal

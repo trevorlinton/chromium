@@ -46,8 +46,10 @@ cr.define('options', function() {
         // Blurring is delayed for list elements.  Queue save and close to
         // ensure that pending changes have been applied.
         setTimeout(function() {
-          self.saveAddress_();
-          self.dismissOverlay_();
+          $('phone-list').doneValidating().then(function() {
+            self.saveAddress_();
+            self.dismissOverlay_();
+          });
         }, 0);
       };
 
@@ -66,6 +68,16 @@ cr.define('options', function() {
       self.populateCountryList_();
       self.clearInputFields_();
       self.connectInputEvents_();
+    },
+
+    /**
+    * Specifically catch the situations in which the overlay is cancelled
+    * externally (e.g. by pressing <Esc>), so that the input fields and
+    * GUID can be properly cleared.
+    * @override
+    */
+    handleCancel: function() {
+      this.dismissOverlay_();
     },
 
     /**
@@ -271,10 +283,6 @@ cr.define('options', function() {
     },
   };
 
-  AutofillEditAddressOverlay.clearInputFields = function() {
-    AutofillEditAddressOverlay.getInstance().clearInputFields_();
-  };
-
   AutofillEditAddressOverlay.loadAddress = function(address) {
     AutofillEditAddressOverlay.getInstance().loadAddress_(address);
   };
@@ -286,6 +294,7 @@ cr.define('options', function() {
   AutofillEditAddressOverlay.setValidatedPhoneNumbers = function(numbers) {
     AutofillEditAddressOverlay.getInstance().setMultiValueList_('phone-list',
                                                                 numbers);
+    $('phone-list').didReceiveValidationResult();
   };
 
   // Export

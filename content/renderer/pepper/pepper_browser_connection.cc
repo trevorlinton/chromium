@@ -9,16 +9,16 @@
 #include "base/logging.h"
 #include "content/common/view_messages.h"
 #include "content/renderer/pepper/pepper_in_process_router.h"
-#include "content/renderer/render_view_impl.h"
+#include "content/renderer/render_frame_impl.h"
 #include "ipc/ipc_message_macros.h"
 #include "ppapi/proxy/ppapi_messages.h"
 #include "ppapi/proxy/resource_message_params.h"
 
 namespace content {
 
-PepperBrowserConnection::PepperBrowserConnection(RenderView* render_view)
-    : RenderViewObserver(render_view),
-      RenderViewObserverTracker<PepperBrowserConnection>(render_view),
+PepperBrowserConnection::PepperBrowserConnection(RenderFrame* render_frame)
+    : RenderFrameObserver(render_frame),
+      RenderFrameObserverTracker<PepperBrowserConnection>(render_frame),
       next_sequence_number_(1) {
 }
 
@@ -41,14 +41,14 @@ bool PepperBrowserConnection::OnMessageReceived(const IPC::Message& msg) {
 
 void PepperBrowserConnection::DidCreateInProcessInstance(
     PP_Instance instance,
-    int render_view_id,
+    int render_frame_id,
     const GURL& document_url,
     const GURL& plugin_url) {
   Send(new ViewHostMsg_DidCreateInProcessInstance(
       instance,
       // Browser provides the render process id.
       PepperRendererInstanceData(0,
-                                 render_view_id,
+                                 render_frame_id,
                                  document_url,
                                  plugin_url)));
 }

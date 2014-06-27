@@ -24,6 +24,11 @@ class CONTENT_EXPORT DevToolsAgentHost
   // Returns DevToolsAgentHost with a given |id| or NULL of it does not exist.
   static scoped_refptr<DevToolsAgentHost> GetForId(const std::string& id);
 
+  // Returns DevToolsAgentHost that can be used for inspecting |web_contents|.
+  // New DevToolsAgentHost will be created if it does not exist.
+  static scoped_refptr<DevToolsAgentHost> GetOrCreateFor(
+      WebContents* web_contents);
+
   // Returns DevToolsAgentHost that can be used for inspecting |rvh|.
   // New DevToolsAgentHost will be created if it does not exist.
   static scoped_refptr<DevToolsAgentHost> GetOrCreateFor(RenderViewHost* rvh);
@@ -36,11 +41,6 @@ class CONTENT_EXPORT DevToolsAgentHost
   // with given worker process host id and routing id.
   static scoped_refptr<DevToolsAgentHost> GetForWorker(int worker_process_id,
                                                        int worker_route_id);
-
-  // Returns true iff an instance of DevToolsAgentHost exists for the shared
-  // worker with given process host id and routing id.
-  static bool HasForWorker(int worker_process_id,
-                           int worker_route_id);
 
   static bool IsDebuggerAttached(WebContents* web_contents);
 

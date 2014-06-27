@@ -1,3 +1,5 @@
 include_rules = [
-  "+media/cast",  # For cast mirroring library.
+  "+media/audio",  # For basic audio functions.
+  "+media/base",  # For basic media functions.
+  "+media/cast",  # For cast streaming library.  
 ]

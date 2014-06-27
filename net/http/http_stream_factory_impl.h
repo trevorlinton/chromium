@@ -50,7 +50,7 @@ class NET_EXPORT_PRIVATE HttpStreamFactoryImpl :
       const SSLConfig& server_ssl_config,
       const SSLConfig& proxy_ssl_config,
       HttpStreamRequest::Delegate* delegate,
-      WebSocketHandshakeStreamBase::Factory* factory,
+      WebSocketHandshakeStreamBase::CreateHelper* create_helper,
       const BoundNetLog& net_log) OVERRIDE;
 
   virtual void PreconnectStreams(int num_streams,
@@ -85,12 +85,12 @@ class NET_EXPORT_PRIVATE HttpStreamFactoryImpl :
       const SSLConfig& server_ssl_config,
       const SSLConfig& proxy_ssl_config,
       HttpStreamRequest::Delegate* delegate,
-      WebSocketHandshakeStreamBase::Factory* factory,
+      WebSocketHandshakeStreamBase::CreateHelper* create_helper,
       const BoundNetLog& net_log);
 
   PortAlternateProtocolPair GetAlternateProtocolRequestFor(
       const GURL& original_url,
-      GURL* alternate_url) const;
+      GURL* alternate_url);
 
   // Detaches |job| from |request|.
   void OrphanJob(Job* job, const Request* request);

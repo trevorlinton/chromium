@@ -87,7 +87,7 @@ void IndexedDBInternalsUI::GetAllOriginsOnIndexedDBThread(
     const base::FilePath& context_path) {
   DCHECK(context->TaskRunner()->RunsTasksOnCurrentThread());
 
-  scoped_ptr<ListValue> info_list(static_cast<IndexedDBContextImpl*>(
+  scoped_ptr<base::ListValue> info_list(static_cast<IndexedDBContextImpl*>(
       context.get())->GetAllOriginsDetails());
 
   BrowserThread::PostTask(BrowserThread::UI,
@@ -98,7 +98,7 @@ void IndexedDBInternalsUI::GetAllOriginsOnIndexedDBThread(
                                      context_path));
 }
 
-void IndexedDBInternalsUI::OnOriginsReady(scoped_ptr<ListValue> origins,
+void IndexedDBInternalsUI::OnOriginsReady(scoped_ptr<base::ListValue> origins,
                                           const base::FilePath& path) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   web_ui()->CallJavascriptFunction(
@@ -201,7 +201,8 @@ void IndexedDBInternalsUI::DownloadOriginDataOnIndexedDBThread(
   if (!context->IsInOriginSet(origin_url))
     return;
 
-  context->ForceClose(origin_url);
+  context->ForceClose(origin_url,
+                      IndexedDBContextImpl::FORCE_CLOSE_INTERNALS_PAGE);
   size_t connection_count = context->GetConnectionCount(origin_url);
 
   base::ScopedTempDir temp_dir;
@@ -242,7 +243,8 @@ void IndexedDBInternalsUI::ForceCloseOriginOnIndexedDBThread(
   if (!context->IsInOriginSet(origin_url))
     return;
 
-  context->ForceClose(origin_url);
+  context->ForceClose(origin_url,
+                      IndexedDBContextImpl::FORCE_CLOSE_INTERNALS_PAGE);
   size_t connection_count = context->GetConnectionCount(origin_url);
 
   BrowserThread::PostTask(BrowserThread::UI,
@@ -280,7 +282,7 @@ void IndexedDBInternalsUI::OnDownloadDataReady(
 
   const GURL referrer(web_ui()->GetWebContents()->GetLastCommittedURL());
   dl_params->set_referrer(
-      content::Referrer(referrer, WebKit::WebReferrerPolicyDefault));
+      content::Referrer(referrer, blink::WebReferrerPolicyDefault));
 
   // This is how to watch for the download to finish: first wait for it
   // to start, then attach a DownloadItem::Observer to observe the
@@ -338,11 +340,11 @@ void IndexedDBInternalsUI::OnDownloadStarted(
     const base::FilePath& temp_path,
     size_t connection_count,
     DownloadItem* item,
-    net::Error error) {
+    DownloadInterruptReason interrupt_reason) {
 
-  if (error != net::OK) {
-    LOG(ERROR)
-        << "Error downloading database dump: " << net::ErrorToString(error);
+  if (interrupt_reason != DOWNLOAD_INTERRUPT_REASON_NONE) {
+    LOG(ERROR) << "Error downloading database dump: "
+               << DownloadInterruptReasonToString(interrupt_reason);
     return;
   }
 

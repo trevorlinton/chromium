@@ -4,16 +4,16 @@
 
 import json
 import logging
-import os
 from StringIO import StringIO
+import posixpath
 
-import appengine_blobstore as blobstore
+from appengine_blobstore import AppEngineBlobstore, BLOBSTORE_GITHUB
 from appengine_url_fetcher import AppEngineUrlFetcher
-from appengine_wrappers import GetAppVersion, urlfetch
+from appengine_wrappers import urlfetch, blobstore
 from docs_server_utils import StringIdentity
 from file_system import FileSystem, StatInfo
 from future import Future
-from object_store_creator import ObjectStoreCreator
+from path_util import IsDirectory
 import url_constants
 from zipfile import ZipFile, BadZipfile
 
@@ -21,58 +21,52 @@ ZIP_KEY = 'zipball'
 USERNAME = None
 PASSWORD = None
 
+
 def _MakeBlobstoreKey(version):
   return ZIP_KEY + '.' + str(version)
 
-class _AsyncFetchFutureZip(object):
-  def __init__(self,
-               fetcher,
-               username,
-               password,
-               blobstore,
-               key_to_set,
-               key_to_delete=None):
-    self._fetcher = fetcher
-    self._fetch = fetcher.FetchAsync(ZIP_KEY,
-                                     username=username,
-                                     password=password)
-    self._blobstore = blobstore
-    self._key_to_set = key_to_set
-    self._key_to_delete = key_to_delete
 
-  def Get(self):
+def _GetAsyncFetchCallback(fetcher,
+                           username,
+                           password,
+                           blobstore,
+                           key_to_set,
+                           key_to_delete=None):
+  fetch = fetcher.FetchAsync(ZIP_KEY, username=username, password=password)
+
+  def resolve():
     try:
-      result = self._fetch.Get()
+      result = fetch.Get()
       # Check if Github authentication failed.
       if result.status_code == 401:
         logging.error('Github authentication failed for %s, falling back to '
                       'unauthenticated.' % USERNAME)
-        blob = self._fetcher.Fetch(ZIP_KEY).content
+        blob = fetcher.Fetch(ZIP_KEY).content
       else:
         blob = result.content
     except urlfetch.DownloadError as e:
       logging.error('Bad github zip file: %s' % e)
       return None
-    if self._key_to_delete is not None:
-      self._blobstore.Delete(_MakeBlobstoreKey(self._key_to_delete),
-                             blobstore.BLOBSTORE_GITHUB)
+    if key_to_delete is not None:
+      blobstore.Delete(_MakeBlobstoreKey(key_to_delete, BLOBSTORE_GITHUB))
     try:
       return_zip = ZipFile(StringIO(blob))
     except BadZipfile as e:
       logging.error('Bad github zip file: %s' % e)
       return None
 
-    self._blobstore.Set(_MakeBlobstoreKey(self._key_to_set),
-                        blob,
-                        blobstore.BLOBSTORE_GITHUB)
+    blobstore.Set(_MakeBlobstoreKey(key_to_set), blob, BLOBSTORE_GITHUB)
     return return_zip
+
+  return resolve
+
 
 class GithubFileSystem(FileSystem):
   @staticmethod
   def CreateChromeAppsSamples(object_store_creator):
     return GithubFileSystem(
         '%s/GoogleChrome/chrome-app-samples' % url_constants.GITHUB_REPOS,
-        blobstore.AppEngineBlobstore(),
+        AppEngineBlobstore(),
         object_store_creator)
 
   def __init__(self, url, blobstore, object_store_creator):
@@ -100,24 +94,26 @@ class GithubFileSystem(FileSystem):
     self._GetZip(self.Stat(ZIP_KEY).version)
 
   def _GetZip(self, version):
-    blob = self._blobstore.Get(_MakeBlobstoreKey(version),
-                               blobstore.BLOBSTORE_GITHUB)
+    try:
+      blob = self._blobstore.Get(_MakeBlobstoreKey(version), BLOBSTORE_GITHUB)
+    except blobstore.BlobNotFoundError:
+      self._zip_file = Future(value=None)
+      return
     if blob is not None:
       try:
         self._zip_file = Future(value=ZipFile(StringIO(blob)))
       except BadZipfile as e:
-        self._blobstore.Delete(_MakeBlobstoreKey(version),
-                               blobstore.BLOBSTORE_GITHUB)
+        self._blobstore.Delete(_MakeBlobstoreKey(version), BLOBSTORE_GITHUB)
         logging.error('Bad github zip file: %s' % e)
         self._zip_file = Future(value=None)
     else:
       self._zip_file = Future(
-          delegate=_AsyncFetchFutureZip(self._fetcher,
-                                        self._username,
-                                        self._password,
-                                        self._blobstore,
-                                        version,
-                                        key_to_delete=self._version))
+          callback=_GetAsyncFetchCallback(self._fetcher,
+                                          self._username,
+                                          self._password,
+                                          self._blobstore,
+                                          version,
+                                          key_to_delete=self._version))
     self._version = version
 
   def _ReadFile(self, path):
@@ -129,7 +125,7 @@ class GithubFileSystem(FileSystem):
     if zip_file is None:
       logging.error('Bad github zip file.')
       return ''
-    prefix = zip_file.namelist()[0][:-1]
+    prefix = zip_file.namelist()[0]
     return zip_file.read(prefix + path)
 
   def _ListDir(self, path):
@@ -143,20 +139,20 @@ class GithubFileSystem(FileSystem):
       return []
     filenames = zip_file.namelist()
     # Take out parent directory name (GoogleChrome-chrome-app-samples-c78a30f)
-    filenames = [f[len(filenames[0]) - 1:] for f in filenames]
+    filenames = [f[len(filenames[0]):] for f in filenames]
     # Remove the path of the directory we're listing from the filenames.
     filenames = [f[len(path):] for f in filenames
                  if f != path and f.startswith(path)]
     # Remove all files not directly in this directory.
     return [f for f in filenames if f[:-1].count('/') == 0]
 
-  def Read(self, paths, binary=False):
+  def Read(self, paths):
     version = self.Stat(ZIP_KEY).version
     if version != self._version:
       self._GetZip(version)
     result = {}
     for path in paths:
-      if path.endswith('/'):
+      if IsDirectory(path):
         result[path] = self._ListDir(path)
       else:
         result[path] = self._ReadFile(path)
@@ -195,7 +191,7 @@ class GithubFileSystem(FileSystem):
 
     # Parse response JSON - but sometimes github gives us invalid JSON.
     try:
-      version = json.loads(result.content)['commit']['tree']['sha']
+      version = json.loads(result.content)['sha']
       self._stat_object_store.Set(path, version)
       return StatInfo(version)
     except StandardError as e:

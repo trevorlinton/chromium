@@ -27,7 +27,7 @@ void UnhandledKeyboardEventHandler::HandleKeyboardEvent(
   // Previous calls to TranslateMessage can generate Char events as well as
   // RawKeyDown events, even if the latter triggered an accelerator.  In these
   // cases, we discard the Char events.
-  if (event.type == WebKit::WebInputEvent::Char && ignore_next_char_event_) {
+  if (event.type == blink::WebInputEvent::Char && ignore_next_char_event_) {
     ignore_next_char_event_ = false;
     return;
   }
@@ -35,7 +35,7 @@ void UnhandledKeyboardEventHandler::HandleKeyboardEvent(
   // always generate a Char event.
   ignore_next_char_event_ = false;
 
-  if (event.type == WebKit::WebInputEvent::RawKeyDown) {
+  if (event.type == blink::WebInputEvent::RawKeyDown) {
     ui::Accelerator accelerator(
         static_cast<ui::KeyboardCode>(event.windowsKeyCode),
         content::GetModifiersFromNativeWebKeyboardEvent(event));
@@ -57,13 +57,9 @@ void UnhandledKeyboardEventHandler::HandleKeyboardEvent(
 
   // Any unhandled keyboard/character messages should be defproced.
   // This allows stuff like F10, etc to work correctly.
-#if defined(USE_AURA)
   if (!event.os_event)
     return;
   const MSG& message(event.os_event->native_event());
-#else
-  const MSG& message(event.os_event);
-#endif
   DefWindowProc(message.hwnd, message.message, message.wParam, message.lParam);
 }
 

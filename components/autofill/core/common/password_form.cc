@@ -17,7 +17,8 @@ PasswordForm::PasswordForm()
       preferred(false),
       blacklisted_by_user(false),
       type(TYPE_MANUAL),
-      times_used(0) {
+      times_used(0),
+      use_additional_authentication(false) {
 }
 
 PasswordForm::~PasswordForm() {
@@ -46,6 +47,7 @@ bool PasswordForm::operator==(const PasswordForm& form) const {
       blacklisted_by_user == form.blacklisted_by_user &&
       type == form.type &&
       times_used == form.times_used &&
+      use_additional_authentication == form.use_additional_authentication &&
       form_data == form.form_data;
 }
 
@@ -58,14 +60,15 @@ std::ostream& operator<<(std::ostream& os, const PasswordForm& form) {
             << " signon_realm: " << form.signon_realm
             << " origin: " << form.origin
             << " action: " << form.action
-            << " submit_element: " << UTF16ToUTF8(form.submit_element)
-            << " username_elem: " << UTF16ToUTF8(form.username_element)
-            << " username_value: " << UTF16ToUTF8(form.username_value)
-            << " password_elem: " << UTF16ToUTF8(form.password_element)
-            << " password_value: " << UTF16ToUTF8(form.password_value)
+            << " submit_element: " << base::UTF16ToUTF8(form.submit_element)
+            << " username_elem: " << base::UTF16ToUTF8(form.username_element)
+            << " username_value: " << base::UTF16ToUTF8(form.username_value)
+            << " password_elem: " << base::UTF16ToUTF8(form.password_element)
+            << " password_value: " << base::UTF16ToUTF8(form.password_value)
             << " old_password_element: "
-            << UTF16ToUTF8(form.old_password_element)
-            << " old_password_value: " << UTF16ToUTF8(form.old_password_value)
+            << base::UTF16ToUTF8(form.old_password_element)
+            << " old_password_value: "
+            << base::UTF16ToUTF8(form.old_password_value)
             << " autocomplete_set:" << form.password_autocomplete_set
             << " blacklisted: " << form.blacklisted_by_user
             << " preferred: " << form.preferred
@@ -73,6 +76,8 @@ std::ostream& operator<<(std::ostream& os, const PasswordForm& form) {
             << " date_created: " << form.date_created.ToDoubleT()
             << " type: " << form.type
             << " times_used: " << form.times_used
+            << " use additional authentication: "
+            << form.use_additional_authentication
             << " form_data: " << form.form_data;
 }
 

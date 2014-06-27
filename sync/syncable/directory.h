@@ -14,6 +14,7 @@
 #include "base/containers/hash_tables.h"
 #include "base/file_util.h"
 #include "base/gtest_prod_util.h"
+#include "base/values.h"
 #include "sync/base/sync_export.h"
 #include "sync/internal_api/public/util/report_unrecoverable_error_function.h"
 #include "sync/internal_api/public/util/weak_handle.h"
@@ -250,12 +251,6 @@ class SYNC_EXPORT Directory {
   bool GetChildHandlesById(BaseTransaction*, const Id& parent_id,
       Metahandles* result);
 
-  // Returns the child meta handles (even those for deleted/unlinked
-  // nodes) for given meta handle.  Clears |result| if there are no
-  // children.
-  bool GetChildHandlesByHandle(BaseTransaction*, int64 handle,
-      Metahandles* result);
-
   // Counts all items under the given node, including the node itself.
   int GetTotalNodeCount(BaseTransaction*, EntryKernel* kernel_) const;
 
@@ -302,10 +297,6 @@ class SYNC_EXPORT Directory {
   // WARNING: THIS METHOD PERFORMS SYNCHRONOUS I/O VIA SQLITE.
   bool SaveChanges();
 
-  // Fill in |result| with all entry kernels.
-  void GetAllEntryKernels(BaseTransaction* trans,
-                          std::vector<const EntryKernel*>* result);
-
   // Returns the number of entities with the unsynced bit set.
   int64 unsynced_entity_count() const;
 
@@ -315,11 +306,8 @@ class SYNC_EXPORT Directory {
   void GetUnsyncedMetaHandles(BaseTransaction* trans,
                               Metahandles* result);
 
-  // Returns all server types with unapplied updates.  A subset of
-  // those types can then be passed into
-  // GetUnappliedUpdateMetaHandles() below.
-  FullModelTypeSet GetServerTypesWithUnappliedUpdates(
-      BaseTransaction* trans) const;
+  // Returns whether or not this |type| has unapplied updates.
+  bool TypeHasUnappliedUpdates(ModelType type);
 
   // Get all the metahandles for unapplied updates for a given set of
   // server types.
@@ -327,12 +315,19 @@ class SYNC_EXPORT Directory {
                                      FullModelTypeSet server_types,
                                      std::vector<int64>* result);
 
+  // Get all the metahandles of entries of |type|.
+  void GetMetaHandlesOfType(BaseTransaction* trans,
+                            ModelType type,
+                            Metahandles* result);
+
   // Get metahandle counts for various criteria to show on the
   // about:sync page. The information is computed on the fly
   // each time. If this results in a significant performance hit,
   // additional data structures can be added to cache results.
   void CollectMetaHandleCounts(std::vector<int>* num_entries_by_type,
                                std::vector<int>* num_to_delete_entries_by_type);
+
+  scoped_ptr<base::ListValue> GetAllNodeDetails(BaseTransaction* trans);
 
   // Sets the level of invariant checking performed after transactions.
   void SetInvariantCheckLevel(InvariantCheckLevel check_level);

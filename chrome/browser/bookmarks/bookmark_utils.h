@@ -13,6 +13,7 @@
 
 class BookmarkModel;
 class BookmarkNode;
+class Profile;
 
 namespace user_prefs {
 class PrefRegistrySyncable;
@@ -21,6 +22,16 @@ class PrefRegistrySyncable;
 // A collection of bookmark utility functions used by various parts of the UI
 // that show bookmarks: bookmark manager, bookmark bar view ...
 namespace bookmark_utils {
+
+// Fields to use when finding matching bookmarks.
+struct QueryFields {
+  QueryFields();
+  ~QueryFields();
+
+  scoped_ptr<base::string16> word_phrase_query;
+  scoped_ptr<base::string16> url;
+  scoped_ptr<base::string16> title;
+};
 
 // Clones bookmark node, adding newly created nodes to |parent| starting at
 // |index_to_add_at|. If |reset_node_times| is true cloned bookmarks and
@@ -63,14 +74,15 @@ void GetMostRecentlyAddedEntries(BookmarkModel* model,
 // Returns true if |n1| was added more recently than |n2|.
 bool MoreRecentlyAdded(const BookmarkNode* n1, const BookmarkNode* n2);
 
-// Returns up to |max_count| bookmarks from |model| whose url or title contains
-// the text |text|.  |languages| is user's accept-language setting to decode
-// IDN.
-void GetBookmarksContainingText(BookmarkModel* model,
-                                const string16& text,
-                                size_t max_count,
-                                const std::string& languages,
-                                std::vector<const BookmarkNode*>* nodes);
+// Returns up to |max_count| bookmarks from |model| whose url or title contain
+// the text |query.word_phrase_query| and exactly match |query.url| and
+// |query.title|, for all of the preceding fields that are not NULL.
+// |languages| is user's accept-language setting to decode IDN.
+void GetBookmarksMatchingProperties(BookmarkModel* model,
+                                    const QueryFields& query,
+                                    size_t max_count,
+                                    const std::string& languages,
+                                    std::vector<const BookmarkNode*>* nodes);
 
 // Register user preferences for Bookmarks Bar.
 void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
@@ -90,7 +102,7 @@ void DeleteBookmarkFolders(BookmarkModel* model, const std::vector<int64>& ids);
 // If there are no bookmarks for url, a bookmark is created.
 void AddIfNotBookmarked(BookmarkModel* model,
                         const GURL& url,
-                        const string16& title);
+                        const base::string16& title);
 
 // Removes all bookmarks for the given |url|.
 void RemoveAllBookmarks(BookmarkModel* model, const GURL& url);

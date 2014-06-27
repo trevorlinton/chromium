@@ -6,21 +6,24 @@
 
 #include "base/memory/scoped_ptr.h"
 #include "content/child/child_thread.h"
-#include "content/child/npapi/webplugin.h"
 #include "content/child/npapi/plugin_host.h"
 #include "content/child/npapi/plugin_instance.h"
 #include "content/child/npapi/plugin_stream_url.h"
+#include "content/child/npapi/webplugin.h"
 #include "content/child/npapi/webplugin_resource_client.h"
 #include "content/child/plugin_messages.h"
+#include "content/child/request_extra_data.h"
+#include "content/child/request_info.h"
 #include "content/child/resource_dispatcher.h"
+#include "content/child/web_url_loader_impl.h"
+#include "content/common/resource_request_body.h"
+#include "content/common/service_worker/service_worker_types.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_response_headers.h"
 #include "third_party/WebKit/public/platform/WebURLLoaderClient.h"
 #include "third_party/WebKit/public/platform/WebURLResponse.h"
 #include "webkit/child/multipart_response_delegate.h"
-#include "webkit/child/weburlloader_impl.h"
-#include "webkit/common/resource_request_body.h"
 
 namespace content {
 namespace {
@@ -32,15 +35,15 @@ namespace {
 // TODO(jam): this is similar to MultiPartResponseClient in webplugin_impl.cc,
 // we should remove that other class once we switch to loading from the plugin
 // process by default.
-class MultiPartResponseClient : public WebKit::WebURLLoaderClient {
+class MultiPartResponseClient : public blink::WebURLLoaderClient {
  public:
   explicit MultiPartResponseClient(PluginStreamUrl* plugin_stream)
       : byte_range_lower_bound_(0), plugin_stream_(plugin_stream) {}
 
-  // WebKit::WebURLLoaderClient implementation:
+  // blink::WebURLLoaderClient implementation:
   virtual void didReceiveResponse(
-      WebKit::WebURLLoader* loader,
-      const WebKit::WebURLResponse& response) OVERRIDE {
+      blink::WebURLLoader* loader,
+      const blink::WebURLResponse& response) OVERRIDE {
     int64 byte_range_upper_bound, instance_size;
     if (!webkit_glue::MultipartResponseDelegate::ReadContentRanges(
             response, &byte_range_lower_bound_, &byte_range_upper_bound,
@@ -48,7 +51,7 @@ class MultiPartResponseClient : public WebKit::WebURLLoaderClient {
       NOTREACHED();
     }
   }
-  virtual void didReceiveData(WebKit::WebURLLoader* loader,
+  virtual void didReceiveData(blink::WebURLLoader* loader,
                               const char* data,
                               int data_length,
                               int encoded_data_length) OVERRIDE {
@@ -80,6 +83,7 @@ PluginURLFetcher::PluginURLFetcher(PluginStreamUrl* plugin_stream,
                                    bool notify_redirects,
                                    bool is_plugin_src_load,
                                    int origin_pid,
+                                   int render_frame_id,
                                    int render_view_id,
                                    unsigned long resource_id,
                                    bool copy_stream_data)
@@ -94,7 +98,7 @@ PluginURLFetcher::PluginURLFetcher(PluginStreamUrl* plugin_stream,
       copy_stream_data_(copy_stream_data),
       data_offset_(0),
       pending_failure_notification_(false) {
-  webkit_glue::ResourceLoaderBridge::RequestInfo request_info;
+  RequestInfo request_info;
   request_info.method = method;
   request_info.url = url;
   request_info.first_party_for_cookies = first_party_for_cookies;
@@ -103,6 +107,11 @@ PluginURLFetcher::PluginURLFetcher(PluginStreamUrl* plugin_stream,
   request_info.requestor_pid = origin_pid;
   request_info.request_type = ResourceType::OBJECT;
   request_info.routing_id = render_view_id;
+
+  RequestExtraData extra_data;
+  extra_data.set_render_frame_id(render_frame_id);
+  extra_data.set_is_main_frame(false);
+  request_info.extra_data = &extra_data;
 
   std::vector<char> body;
   if (method == "POST") {
@@ -128,8 +137,8 @@ PluginURLFetcher::PluginURLFetcher(PluginStreamUrl* plugin_stream,
   bridge_.reset(ChildThread::current()->resource_dispatcher()->CreateBridge(
       request_info));
   if (!body.empty()) {
-    scoped_refptr<webkit_glue::ResourceRequestBody> request_body =
-        new webkit_glue::ResourceRequestBody;
+    scoped_refptr<ResourceRequestBody> request_body =
+        new ResourceRequestBody;
     request_body->AppendBytes(&body[0], body.size());
     bridge_->SetRequestBody(request_body.get());
   }
@@ -216,9 +225,9 @@ void PluginURLFetcher::OnReceivedResponse(
   if (plugin_stream_->seekable()) {
     int response_code = info.headers->response_code();
     if (response_code == 206) {
-      WebKit::WebURLResponse response;
+      blink::WebURLResponse response;
       response.initialize();
-      webkit_glue::WebURLLoaderImpl::PopulateURLResponse(url_, info, &response);
+      WebURLLoaderImpl::PopulateURLResponse(url_, info, &response);
 
       std::string multipart_boundary;
       if (webkit_glue::MultipartResponseDelegate::ReadMultipartBoundary(
@@ -322,8 +331,10 @@ void PluginURLFetcher::OnReceivedData(const char* data,
 void PluginURLFetcher::OnCompletedRequest(
     int error_code,
     bool was_ignored_by_handler,
+    bool stale_copy_in_cache,
     const std::string& security_info,
-    const base::TimeTicks& completion_time) {
+    const base::TimeTicks& completion_time,
+    int64 total_transfer_size) {
   if (multipart_delegate_) {
     multipart_delegate_->OnCompletedRequest();
     multipart_delegate_.reset();

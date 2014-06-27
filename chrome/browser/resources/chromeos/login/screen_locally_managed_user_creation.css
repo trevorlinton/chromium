@@ -47,11 +47,11 @@
 }
 
 .below-marketing::-webkit-scrollbar-track-piece {
-  background: #888
+  background: #eee;
 }
 
 .below-marketing::-webkit-scrollbar-thumb {
-  background: #eee
+  background: #888;
 }
 
 #managed-user-creation .page-no-marketing {
@@ -105,7 +105,7 @@
 }
 
 #managed-user-creation-intro .below-marketing {
-  margin: 20px 40px 0;
+  margin: 20px 21px 2px 40px;
 }
 
 #managed-user-creation-intro-alternate-text {
@@ -176,6 +176,7 @@ input.managed-user-creation-manager-password,
   border: 1px solid #c8c8c8;
   height: 100%;
   margin-top: 20px;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
@@ -382,10 +383,13 @@ html[dir=rtl] #managed-user-creation-image-preview {
 }
 
 #managed-user-creation-image-preview-img {
-  -webkit-transition: -webkit-transform 200ms linear;
   display: block;
   max-height: 220px;
   max-width: 220px;
+}
+
+#managed-user-creation-image-preview-img.animated-transform {
+  -webkit-transition: -webkit-transform 200ms linear;
 }
 
 .camera.live #managed-user-creation-image-preview-img {
@@ -461,13 +465,19 @@ html[dir=rtl] #managed-user-creation-image-preview {
   width: 32px;
 }
 
+/* TODO(merkulova): remove when webkit crbug.com/126479 is fixed. */
+.flip-trick {
+  -webkit-transform: translateZ(1px);
+}
+
 html[dir=rtl] #managed-user-creation-flip-photo {
   left: 8px;
   right: auto;
 }
 
 /* "Flip photo" button is hidden during flip animation. */
-.camera.online:not(.animation) #managed-user-creation-flip-photo {
+.camera.online:not(.animation) #managed-user-creation-flip-photo,
+.camera.phototaken:not(.animation) #managed-user-creation-flip-photo {
   opacity: 0.75;
 }
 
@@ -482,7 +492,7 @@ html[dir=rtl] #managed-user-creation-flip-photo {
 
 .camera:not(.live) #managed-user-creation-discard-photo {
   background: url('chrome://theme/IDR_USER_IMAGE_RECYCLE')
-      no-repeat center 0;
+      no-repeat center center;
   display: block;
 }
 
@@ -494,6 +504,10 @@ html[dir=rtl] #managed-user-creation-flip-photo {
 
 #managed-user-creation-image-preview .perspective-box {
   -webkit-perspective: 600px;
+   border: solid 1px #cacaca;
+   border-radius: 4px;
+   padding: 2px;
+   width: 220px;
 }
 
 .managed-user-creation-image-stream-area .spinner {

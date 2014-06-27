@@ -13,6 +13,7 @@
 #include "chrome/browser/google/google_url_tracker_infobar_delegate.h"
 #include "chrome/browser/google/google_url_tracker_navigation_helper.h"
 #include "chrome/browser/google/google_util.h"
+#include "chrome/browser/infobars/infobar.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
@@ -40,13 +41,13 @@ GoogleURLTracker::GoogleURLTracker(
       infobar_creator_(base::Bind(&GoogleURLTrackerInfoBarDelegate::Create)),
       google_url_(mode == UNIT_TEST_MODE ? kDefaultGoogleHomepage :
           profile->GetPrefs()->GetString(prefs::kLastKnownGoogleURL)),
-      weak_ptr_factory_(this),
       fetcher_id_(0),
       in_startup_sleep_(true),
       already_fetched_(false),
       need_to_fetch_(false),
       need_to_prompt_(false),
-      search_committed_(false) {
+      search_committed_(false),
+      weak_ptr_factory_(this) {
   net::NetworkChangeNotifier::AddIPAddressObserver(this);
   nav_helper_->SetGoogleURLTracker(this);
 
@@ -135,7 +136,7 @@ void GoogleURLTracker::OnURLFetchComplete(const net::URLFetcher* source) {
   // "<scheme>://[www.]google.<TLD>/".
   std::string url_str;
   source->GetResponseAsString(&url_str);
-  TrimWhitespace(url_str, TRIM_ALL, &url_str);
+  base::TrimWhitespace(url_str, base::TRIM_ALL, &url_str);
   GURL url(url_str);
   if (!url.is_valid() || (url.path().length() > 1) || url.has_query() ||
       url.has_ref() ||
@@ -154,7 +155,7 @@ void GoogleURLTracker::OnURLFetchComplete(const net::URLFetcher* source) {
     return;
   }
 
-  string16 fetched_host(net::StripWWWFromHost(fetched_google_url_));
+  base::string16 fetched_host(net::StripWWWFromHost(fetched_google_url_));
   if (fetched_google_url_ == google_url_) {
     // Either the user has continually been on this URL, or we prompted for a
     // different URL but have now changed back before they responded to any of
@@ -201,8 +202,8 @@ void GoogleURLTracker::OnIPAddressChanged() {
 
 void GoogleURLTracker::Shutdown() {
   nav_helper_.reset();
-  weak_ptr_factory_.InvalidateWeakPtrs();
   fetcher_.reset();
+  weak_ptr_factory_.InvalidateWeakPtrs();
   net::NetworkChangeNotifier::RemoveIPAddressObserver(this);
 }
 
@@ -348,12 +349,13 @@ void GoogleURLTracker::OnNavigationCommitted(InfoBarService* infobar_service,
   if (map_entry->has_infobar_delegate()) {
     map_entry->infobar_delegate()->Update(search_url);
   } else {
-    GoogleURLTrackerInfoBarDelegate* infobar =
-        infobar_creator_.Run(infobar_service, this, search_url);
-    if (infobar)
-      map_entry->SetInfoBarDelegate(infobar);
-    else
+    InfoBar* infobar = infobar_creator_.Run(infobar_service, this, search_url);
+    if (infobar) {
+      map_entry->SetInfoBarDelegate(
+          static_cast<GoogleURLTrackerInfoBarDelegate*>(infobar->delegate()));
+    } else {
       map_entry->Close(false);
+    }
   }
 }
 

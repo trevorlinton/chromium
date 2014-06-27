@@ -24,6 +24,10 @@ UserFlow::~UserFlow() {}
 
 DefaultUserFlow::~DefaultUserFlow() {}
 
+bool DefaultUserFlow::CanLockScreen() {
+  return true;
+}
+
 bool DefaultUserFlow::ShouldShowSettings() {
   return true;
 }
@@ -39,6 +43,8 @@ bool DefaultUserFlow::ShouldSkipPostLoginScreens() {
 bool DefaultUserFlow::HandleLoginFailure(const LoginFailure& failure) {
   return false;
 }
+
+void DefaultUserFlow::HandleLoginSuccess(const UserContext& context) {}
 
 bool DefaultUserFlow::HandlePasswordChangeDetected() {
   return false;

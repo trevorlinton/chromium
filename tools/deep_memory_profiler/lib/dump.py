@@ -14,7 +14,7 @@ from lib.exceptions import EmptyDumpException, InvalidDumpException
 from lib.exceptions import ObsoleteDumpVersionException, ParsingException
 from lib.pageframe import PageFrame
 from lib.range_dict import ExclusiveRangeDict
-from lib.symbol import proc_maps
+from lib.symbol import procfs
 
 
 LOGGER = logging.getLogger('dmprof')
@@ -295,7 +295,7 @@ class Dump(object):
     current_vma = {}
     pageframe_list = []
     while True:
-      entry = proc_maps.ProcMaps.parse_line(self._lines[ln])
+      entry = procfs.ProcMaps.parse_line(self._lines[ln])
       if entry:
         current_vma = {}
         for _, _, attr in self._procmaps.iter_range(entry.begin, entry.end):
@@ -407,33 +407,35 @@ class Dump(object):
 
 
 class DumpList(object):
-  """Represents a sequence of heap profile dumps."""
+  """Represents a sequence of heap profile dumps.
 
-  def __init__(self, dump_list):
-    self._dump_list = dump_list
+  Individual dumps are loaded into memory lazily as the sequence is accessed,
+  either while being iterated through or randomly accessed.  Loaded dumps are
+  not cached, meaning a newly loaded Dump object is returned every time an
+  element in the list is accessed.
+  """
+
+  def __init__(self, dump_path_list):
+    self._dump_path_list = dump_path_list
 
   @staticmethod
   def load(path_list):
-    LOGGER.info('Loading heap dump profiles.')
-    dump_list = []
-    for path in path_list:
-      dump_list.append(Dump.load(path, '  '))
-    return DumpList(dump_list)
+    return DumpList(path_list)
 
   def __len__(self):
-    return len(self._dump_list)
+    return len(self._dump_path_list)
 
   def __iter__(self):
-    for dump in self._dump_list:
-      yield dump
+    for dump in self._dump_path_list:
+      yield Dump.load(dump)
 
   def __getitem__(self, index):
-    return self._dump_list[index]
+    return Dump.load(self._dump_path_list[index])
 
 
 class ProcMapsEntryAttribute(ExclusiveRangeDict.RangeAttribute):
   """Represents an entry of /proc/maps in range_dict.ExclusiveRangeDict."""
-  _DUMMY_ENTRY = proc_maps.ProcMapsEntry(
+  _DUMMY_ENTRY = procfs.ProcMapsEntry(
       0,     # begin
       0,     # end
       '-',   # readable

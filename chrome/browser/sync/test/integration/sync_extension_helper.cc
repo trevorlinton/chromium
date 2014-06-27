@@ -9,20 +9,23 @@
 #include "base/logging.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/pending_extension_info.h"
 #include "chrome/browser/extensions/pending_extension_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/test/integration/sync_datatype_helper.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
-#include "chrome/common/extensions/extension.h"
+#include "extensions/browser/extension_registry.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/extension_set.h"
 #include "extensions/common/id_util.h"
 #include "extensions/common/manifest_constants.h"
 #include "sync/api/string_ordinal.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using extensions::Extension;
+using extensions::ExtensionRegistry;
 using extensions::Manifest;
 
 SyncExtensionHelper::ExtensionState::ExtensionState()
@@ -66,11 +69,12 @@ std::string SyncExtensionHelper::InstallExtension(
     NOTREACHED() << "Could not install extension " << name;
     return std::string();
   }
-  profile->GetExtensionService()
+  extensions::ExtensionSystem::Get(profile)
+      ->extension_service()
       ->OnExtensionInstalled(extension.get(),
                              syncer::StringOrdinal(),
                              false /* no requirement errors */,
-                             extensions::Blacklist::NOT_BLACKLISTED,
+                             extensions::NOT_BLACKLISTED,
                              false /* don't wait for idle to install */);
   return extension->id();
 }
@@ -78,18 +82,18 @@ std::string SyncExtensionHelper::InstallExtension(
 void SyncExtensionHelper::UninstallExtension(
     Profile* profile, const std::string& name) {
   ExtensionService::UninstallExtensionHelper(
-      profile->GetExtensionService(),
+      extensions::ExtensionSystem::Get(profile)->extension_service(),
       extensions::id_util::GenerateId(name));
 }
 
 std::vector<std::string> SyncExtensionHelper::GetInstalledExtensionNames(
     Profile* profile) const {
   std::vector<std::string> names;
-  ExtensionService* extension_service = profile->GetExtensionService();
 
-  scoped_ptr<const ExtensionSet> extensions(
-      extension_service->GenerateInstalledExtensionsSet());
-  for (ExtensionSet::const_iterator it = extensions->begin();
+  scoped_ptr<const extensions::ExtensionSet> extensions(
+      extensions::ExtensionRegistry::Get(profile)
+          ->GenerateInstalledExtensionsSet());
+  for (extensions::ExtensionSet::const_iterator it = extensions->begin();
        it != extensions->end(); ++it) {
     names.push_back((*it)->name());
   }
@@ -99,45 +103,51 @@ std::vector<std::string> SyncExtensionHelper::GetInstalledExtensionNames(
 
 void SyncExtensionHelper::EnableExtension(Profile* profile,
                                           const std::string& name) {
-  profile->GetExtensionService()->EnableExtension(
-      extensions::id_util::GenerateId(name));
+  extensions::ExtensionSystem::Get(profile)
+      ->extension_service()
+      ->EnableExtension(extensions::id_util::GenerateId(name));
 }
 
 void SyncExtensionHelper::DisableExtension(Profile* profile,
                                            const std::string& name) {
-  profile->GetExtensionService()->DisableExtension(
-      extensions::id_util::GenerateId(name), Extension::DISABLE_USER_ACTION);
+  extensions::ExtensionSystem::Get(profile)
+      ->extension_service()
+      ->DisableExtension(extensions::id_util::GenerateId(name),
+                         Extension::DISABLE_USER_ACTION);
 }
 
 bool SyncExtensionHelper::IsExtensionEnabled(
     Profile* profile, const std::string& name) const {
-  return profile->GetExtensionService()->IsExtensionEnabled(
-      extensions::id_util::GenerateId(name));
+  return extensions::ExtensionSystem::Get(profile)
+      ->extension_service()
+      ->IsExtensionEnabled(extensions::id_util::GenerateId(name));
 }
 
 void SyncExtensionHelper::IncognitoEnableExtension(
     Profile* profile, const std::string& name) {
-  extension_util::SetIsIncognitoEnabled(extensions::id_util::GenerateId(name),
-                                        profile->GetExtensionService(), true);
+  extensions::util::SetIsIncognitoEnabled(
+      extensions::id_util::GenerateId(name), profile, true);
 }
 
 void SyncExtensionHelper::IncognitoDisableExtension(
     Profile* profile, const std::string& name) {
-  extension_util::SetIsIncognitoEnabled(extensions::id_util::GenerateId(name),
-                                        profile->GetExtensionService(), false);
+  extensions::util::SetIsIncognitoEnabled(
+      extensions::id_util::GenerateId(name), profile, false);
 }
 
 bool SyncExtensionHelper::IsIncognitoEnabled(
     Profile* profile, const std::string& name) const {
-  return extension_util::IsIncognitoEnabled(
-      extensions::id_util::GenerateId(name), profile->GetExtensionService());
+  return extensions::util::IsIncognitoEnabled(
+      extensions::id_util::GenerateId(name), profile);
 }
 
 
 bool SyncExtensionHelper::IsExtensionPendingInstallForSync(
     Profile* profile, const std::string& id) const {
   const extensions::PendingExtensionManager* pending_extension_manager =
-      profile->GetExtensionService()->pending_extension_manager();
+      extensions::ExtensionSystem::Get(profile)
+          ->extension_service()
+          ->pending_extension_manager();
   const extensions::PendingExtensionInfo* info =
       pending_extension_manager->GetById(id);
   if (!info)
@@ -153,7 +163,9 @@ void SyncExtensionHelper::InstallExtensionsPendingForSync(Profile* profile) {
   // We make a copy here since InstallExtension() removes the
   // extension from the extensions service's copy.
   const extensions::PendingExtensionManager* pending_extension_manager =
-      profile->GetExtensionService()->pending_extension_manager();
+      extensions::ExtensionSystem::Get(profile)
+          ->extension_service()
+          ->pending_extension_manager();
 
   std::list<std::string> pending_crx_ids;
   pending_extension_manager->GetPendingIdsForUpdateCheck(&pending_crx_ids);
@@ -186,11 +198,13 @@ SyncExtensionHelper::ExtensionStateMap
 
   ExtensionStateMap extension_state_map;
 
-  ExtensionService* extension_service = profile->GetExtensionService();
+  scoped_ptr<const extensions::ExtensionSet> extensions(
+      extensions::ExtensionRegistry::Get(profile)
+          ->GenerateInstalledExtensionsSet());
 
-  scoped_ptr<const ExtensionSet> extensions(
-      extension_service->GenerateInstalledExtensionsSet());
-  for (ExtensionSet::const_iterator it = extensions->begin();
+  ExtensionService* extension_service =
+      extensions::ExtensionSystem::Get(profile)->extension_service();
+  for (extensions::ExtensionSet::const_iterator it = extensions->begin();
        it != extensions->end(); ++it) {
     const std::string& id = (*it)->id();
     extension_state_map[id].enabled_state =
@@ -198,7 +212,7 @@ SyncExtensionHelper::ExtensionStateMap
         ExtensionState::ENABLED :
         ExtensionState::DISABLED;
     extension_state_map[id].incognito_enabled =
-        extension_util::IsIncognitoEnabled(id, extension_service);
+        extensions::util::IsIncognitoEnabled(id, profile);
 
     DVLOG(2) << "Extension " << (*it)->id() << " in profile "
              << profile_debug_name << " is "
@@ -216,7 +230,7 @@ SyncExtensionHelper::ExtensionStateMap
   for (id = pending_crx_ids.begin(); id != pending_crx_ids.end(); ++id) {
     extension_state_map[*id].enabled_state = ExtensionState::PENDING;
     extension_state_map[*id].incognito_enabled =
-        extension_util::IsIncognitoEnabled(*id, extension_service);
+        extensions::util::IsIncognitoEnabled(*id, profile);
     DVLOG(2) << "Extension " << *id << " in profile "
              << profile_debug_name << " is pending";
   }
@@ -253,7 +267,7 @@ bool SyncExtensionHelper::ExtensionStatesMatch(
 }
 
 void SyncExtensionHelper::SetupProfile(Profile* profile) {
-  extensions::ExtensionSystem::Get(profile)->InitForRegularProfile(true, false);
+  extensions::ExtensionSystem::Get(profile)->InitForRegularProfile(true);
   profile_extensions_.insert(make_pair(profile, ExtensionNameMap()));
 }
 
@@ -273,7 +287,7 @@ std::string NameToPublicKey(const std::string& name) {
 scoped_refptr<Extension> CreateExtension(const base::FilePath& base_dir,
                                          const std::string& name,
                                          Manifest::Type type) {
-  DictionaryValue source;
+  base::DictionaryValue source;
   source.SetString(extensions::manifest_keys::kName, name);
   const std::string& public_key = NameToPublicKey(name);
   source.SetString(extensions::manifest_keys::kPublicKey, public_key);
@@ -283,19 +297,20 @@ scoped_refptr<Extension> CreateExtension(const base::FilePath& base_dir,
       // Do nothing.
       break;
     case Manifest::TYPE_THEME:
-      source.Set(extensions::manifest_keys::kTheme, new DictionaryValue());
+      source.Set(extensions::manifest_keys::kTheme,
+                 new base::DictionaryValue());
       break;
     case Manifest::TYPE_HOSTED_APP:
     case Manifest::TYPE_LEGACY_PACKAGED_APP:
-      source.Set(extensions::manifest_keys::kApp, new DictionaryValue());
+      source.Set(extensions::manifest_keys::kApp, new base::DictionaryValue());
       source.SetString(extensions::manifest_keys::kLaunchWebURL,
                        "http://www.example.com");
       break;
     case Manifest::TYPE_PLATFORM_APP: {
-      source.Set(extensions::manifest_keys::kApp, new DictionaryValue());
+      source.Set(extensions::manifest_keys::kApp, new base::DictionaryValue());
       source.Set(extensions::manifest_keys::kPlatformAppBackground,
-                 new DictionaryValue());
-      ListValue* scripts = new ListValue();
+                 new base::DictionaryValue());
+      base::ListValue* scripts = new base::ListValue();
       scripts->AppendString("main.js");
       source.Set(extensions::manifest_keys::kPlatformAppBackgroundScripts,
                  scripts);
@@ -308,12 +323,12 @@ scoped_refptr<Extension> CreateExtension(const base::FilePath& base_dir,
   const base::FilePath sub_dir = base::FilePath().AppendASCII(name);
   base::FilePath extension_dir;
   if (!base::PathExists(base_dir) &&
-      !file_util::CreateDirectory(base_dir)) {
+      !base::CreateDirectory(base_dir)) {
     ADD_FAILURE();
     return NULL;
   }
-  if (!file_util::CreateTemporaryDirInDir(
-          base_dir, sub_dir.value(), &extension_dir)) {
+  if (!base::CreateTemporaryDirInDir(base_dir, sub_dir.value(),
+                                     &extension_dir)) {
     ADD_FAILURE();
     return NULL;
   }
@@ -359,8 +374,11 @@ scoped_refptr<Extension> SyncExtensionHelper::GetExtension(
   }
 
   scoped_refptr<Extension> extension =
-      CreateExtension(profile->GetExtensionService()->install_directory(),
-                      name, type);
+      CreateExtension(extensions::ExtensionSystem::Get(profile)
+                          ->extension_service()
+                          ->install_directory(),
+                      name,
+                      type);
   if (!extension.get()) {
     ADD_FAILURE();
     return NULL;

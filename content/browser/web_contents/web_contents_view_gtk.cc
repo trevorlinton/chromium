@@ -29,8 +29,8 @@
 #include "ui/gfx/rect.h"
 #include "ui/gfx/size.h"
 
-using WebKit::WebDragOperation;
-using WebKit::WebDragOperationsMask;
+using blink::WebDragOperation;
+using blink::WebDragOperationsMask;
 
 namespace content {
 namespace {
@@ -248,14 +248,14 @@ RenderWidgetHostView* WebContentsViewGtk::CreateViewForPopupWidget(
   return RenderWidgetHostViewPort::CreateViewForWidget(render_widget_host);
 }
 
-void WebContentsViewGtk::SetPageTitle(const string16& title) {
+void WebContentsViewGtk::SetPageTitle(const base::string16& title) {
   // Set the window name to include the page title so it's easier to spot
   // when debugging (e.g. via xwininfo -tree).
   gfx::NativeView content_view = GetContentNativeView();
   if (content_view) {
     GdkWindow* content_window = gtk_widget_get_window(content_view);
     if (content_window) {
-      gdk_window_set_title(content_window, UTF16ToUTF8(title).c_str());
+      gdk_window_set_title(content_window, base::UTF16ToUTF8(title).c_str());
     }
   }
 }
@@ -364,22 +364,12 @@ gboolean WebContentsViewGtk::OnFocus(GtkWidget* widget,
   return TRUE;
 }
 
-void WebContentsViewGtk::ShowContextMenu(const ContextMenuParams& params) {
+void WebContentsViewGtk::ShowContextMenu(RenderFrameHost* render_frame_host,
+                                         const ContextMenuParams& params) {
   if (delegate_)
-    delegate_->ShowContextMenu(params);
+    delegate_->ShowContextMenu(render_frame_host, params);
   else
     DLOG(ERROR) << "Cannot show context menus without a delegate.";
-}
-
-void WebContentsViewGtk::ShowPopupMenu(const gfx::Rect& bounds,
-                                       int item_height,
-                                       double item_font_size,
-                                       int selected_item,
-                                       const std::vector<MenuItem>& items,
-                                       bool right_aligned,
-                                       bool allow_multiple_selection) {
-  // External popup menus are only used on Mac and Android.
-  NOTIMPLEMENTED();
 }
 
 // Render view DnD -------------------------------------------------------------

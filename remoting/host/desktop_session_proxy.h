@@ -20,7 +20,6 @@
 #include "remoting/host/screen_resolution.h"
 #include "remoting/proto/event.pb.h"
 #include "remoting/protocol/clipboard_stub.h"
-#include "third_party/skia/include/core/SkRegion.h"
 #include "third_party/webrtc/modules/desktop_capture/screen_capturer.h"
 
 namespace base {
@@ -103,7 +102,6 @@ class DesktopSessionProxy
 
   // APIs used to implement the webrtc::ScreenCapturer interface. These must be
   // called on the |video_capture_task_runner_| thread.
-  void InvalidateRegion(const SkRegion& invalid_region);
   void CaptureFrame();
 
   // Stores |video_capturer| to be used to post captured video frames. Called on
@@ -114,6 +112,7 @@ class DesktopSessionProxy
   // APIs used to implement the InputInjector interface.
   void InjectClipboardEvent(const protocol::ClipboardEvent& event);
   void InjectKeyEvent(const protocol::KeyEvent& event);
+  void InjectTextEvent(const protocol::TextEvent& event);
   void InjectMouseEvent(const protocol::MouseEvent& event);
   void StartInputInjector(scoped_ptr<protocol::ClipboardStub> client_clipboard);
 

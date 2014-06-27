@@ -46,12 +46,12 @@ ui::ClipboardType ConvertClipboardType(uint32_t type) {
 // assume all data that is placed on the clipboard is UTF16 and pepper allows
 // arbitrary data so this change would require some reworking of the chrome
 // clipboard interface for custom data.
-bool JumpToFormatInPickle(const string16& format, PickleIterator* iter) {
+bool JumpToFormatInPickle(const base::string16& format, PickleIterator* iter) {
   uint64 size = 0;
   if (!iter->ReadUInt64(&size))
     return false;
   for (uint64 i = 0; i < size; ++i) {
-    string16 stored_format;
+    base::string16 stored_format;
     if (!iter->ReadString16(&stored_format))
       return false;
     if (stored_format == format)
@@ -65,12 +65,14 @@ bool JumpToFormatInPickle(const string16& format, PickleIterator* iter) {
   return false;
 }
 
-bool IsFormatAvailableInPickle(const string16& format, const Pickle& pickle) {
+bool IsFormatAvailableInPickle(const base::string16& format,
+                               const Pickle& pickle) {
   PickleIterator iter(pickle);
   return JumpToFormatInPickle(format, &iter);
 }
 
-std::string ReadDataFromPickle(const string16& format, const Pickle& pickle) {
+std::string ReadDataFromPickle(const base::string16& format,
+                               const Pickle& pickle) {
   std::string result;
   PickleIterator iter(pickle);
   if (!JumpToFormatInPickle(format, &iter) || !iter.ReadString(&result))
@@ -78,10 +80,10 @@ std::string ReadDataFromPickle(const string16& format, const Pickle& pickle) {
   return result;
 }
 
-bool WriteDataToPickle(const std::map<string16, std::string>& data,
+bool WriteDataToPickle(const std::map<base::string16, std::string>& data,
                        Pickle* pickle) {
   pickle->WriteUInt64(data.size());
-  for (std::map<string16, std::string>::const_iterator it = data.begin();
+  for (std::map<base::string16, std::string>::const_iterator it = data.begin();
        it != data.end(); ++it) {
     if (!pickle->WriteString16(it->first))
       return false;
@@ -135,6 +137,9 @@ int32_t PepperFlashClipboardMessageFilter::OnResourceMessageReceived(
     PPAPI_DISPATCH_HOST_RESOURCE_CALL(
         PpapiHostMsg_FlashClipboard_WriteData,
         OnMsgWriteData);
+    PPAPI_DISPATCH_HOST_RESOURCE_CALL(
+        PpapiHostMsg_FlashClipboard_GetSequenceNumber,
+        OnMsgGetSequenceNumber);
   IPC_END_MESSAGE_MAP()
   return PP_ERROR_FAILED;
 }
@@ -188,7 +193,8 @@ int32_t PepperFlashClipboardMessageFilter::OnMsgIsFormatAvailable(
         clipboard->ReadData(
             ui::Clipboard::GetPepperCustomDataFormatType(), &clipboard_data);
         Pickle pickle(clipboard_data.data(), clipboard_data.size());
-        available = IsFormatAvailableInPickle(UTF8ToUTF16(format_name), pickle);
+        available =
+            IsFormatAvailableInPickle(base::UTF8ToUTF16(format_name), pickle);
       }
       break;
   }
@@ -213,11 +219,11 @@ int32_t PepperFlashClipboardMessageFilter::OnMsgReadData(
     case PP_FLASH_CLIPBOARD_FORMAT_PLAINTEXT: {
       if (clipboard->IsFormatAvailable(
           ui::Clipboard::GetPlainTextWFormatType(), type)) {
-        string16 text;
+        base::string16 text;
         clipboard->ReadText(type, &text);
         if (!text.empty()) {
           result = PP_OK;
-          clipboard_string = UTF16ToUTF8(text);
+          clipboard_string = base::UTF16ToUTF8(text);
           break;
         }
       }
@@ -236,13 +242,13 @@ int32_t PepperFlashClipboardMessageFilter::OnMsgReadData(
         break;
       }
 
-      string16 html;
+      base::string16 html;
       std::string url;
       uint32 fragment_start;
       uint32 fragment_end;
       clipboard->ReadHTML(type, &html, &url, &fragment_start, &fragment_end);
       result = PP_OK;
-      clipboard_string = UTF16ToUTF8(
+      clipboard_string = base::UTF16ToUTF8(
           html.substr(fragment_start, fragment_end - fragment_start));
       break;
     }
@@ -259,8 +265,8 @@ int32_t PepperFlashClipboardMessageFilter::OnMsgReadData(
       break;
     default: {
       if (custom_formats_.IsFormatRegistered(format)) {
-        string16 format_name =
-            UTF8ToUTF16(custom_formats_.GetFormatName(format));
+        base::string16 format_name =
+            base::UTF8ToUTF16(custom_formats_.GetFormatName(format));
         std::string clipboard_data;
         clipboard->ReadData(
             ui::Clipboard::GetPepperCustomDataFormatType(), &clipboard_data);
@@ -302,7 +308,7 @@ int32_t PepperFlashClipboardMessageFilter::OnMsgWriteData(
   }
 
   ui::ScopedClipboardWriter scw(clipboard, type);
-  std::map<string16, std::string> custom_data_map;
+  std::map<base::string16, std::string> custom_data_map;
   int32_t res = PP_OK;
   for (uint32_t i = 0; i < formats.size(); ++i) {
     if (data[i].length() > kMaxClipboardWriteSize) {
@@ -312,10 +318,10 @@ int32_t PepperFlashClipboardMessageFilter::OnMsgWriteData(
 
     switch (formats[i]) {
       case PP_FLASH_CLIPBOARD_FORMAT_PLAINTEXT:
-        scw.WriteText(UTF8ToUTF16(data[i]));
+        scw.WriteText(base::UTF8ToUTF16(data[i]));
         break;
       case PP_FLASH_CLIPBOARD_FORMAT_HTML:
-        scw.WriteHTML(UTF8ToUTF16(data[i]), std::string());
+        scw.WriteHTML(base::UTF8ToUTF16(data[i]), std::string());
         break;
       case PP_FLASH_CLIPBOARD_FORMAT_RTF:
         scw.WriteRTF(data[i]);
@@ -326,7 +332,7 @@ int32_t PepperFlashClipboardMessageFilter::OnMsgWriteData(
       default:
         if (custom_formats_.IsFormatRegistered(formats[i])) {
           std::string format_name = custom_formats_.GetFormatName(formats[i]);
-          custom_data_map[UTF8ToUTF16(format_name)] = data[i];
+          custom_data_map[base::UTF8ToUTF16(format_name)] = data[i];
         } else {
           // Invalid format.
           res = PP_ERROR_BADARGUMENT;
@@ -354,6 +360,22 @@ int32_t PepperFlashClipboardMessageFilter::OnMsgWriteData(
   }
 
   return res;
+}
+
+int32_t PepperFlashClipboardMessageFilter::OnMsgGetSequenceNumber(
+    ppapi::host::HostMessageContext* host_context,
+    uint32_t clipboard_type) {
+  if (clipboard_type != PP_FLASH_CLIPBOARD_TYPE_STANDARD) {
+    NOTIMPLEMENTED();
+    return PP_ERROR_FAILED;
+  }
+
+  ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
+  ui::ClipboardType type = ConvertClipboardType(clipboard_type);
+  int64_t sequence_number = clipboard->GetSequenceNumber(type);
+  host_context->reply_msg =
+      PpapiPluginMsg_FlashClipboard_GetSequenceNumberReply(sequence_number);
+  return PP_OK;
 }
 
 }  // namespace chrome

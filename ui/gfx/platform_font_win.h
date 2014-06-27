@@ -58,11 +58,10 @@ class GFX_EXPORT PlatformFontWin : public PlatformFont {
   virtual int GetHeight() const OVERRIDE;
   virtual int GetBaseline() const OVERRIDE;
   virtual int GetCapHeight() const OVERRIDE;
-  virtual int GetAverageCharacterWidth() const OVERRIDE;
-  virtual int GetStringWidth(const base::string16& text) const OVERRIDE;
   virtual int GetExpectedTextWidth(int length) const OVERRIDE;
   virtual int GetStyle() const OVERRIDE;
   virtual std::string GetFontName() const OVERRIDE;
+  virtual std::string GetActualFontNameForTesting() const OVERRIDE;
   virtual int GetFontSize() const OVERRIDE;
   virtual NativeFont GetNativeFont() const OVERRIDE;
 

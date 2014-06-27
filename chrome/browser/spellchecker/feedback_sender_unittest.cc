@@ -41,7 +41,7 @@ SpellCheckResult BuildSpellCheckResult() {
   return SpellCheckResult(SpellCheckResult::SPELLING,
                           kMisspellingStart,
                           kMisspellingLength,
-                          UTF8ToUTF16("Hello"));
+                          base::UTF8ToUTF16("Hello"));
 }
 
 // Returns the number of times that |needle| appears in |haystack| without
@@ -62,25 +62,41 @@ int CountOccurences(const std::string& haystack, const std::string& needle) {
 class FeedbackSenderTest : public testing::Test {
  public:
   FeedbackSenderTest() : ui_thread_(content::BrowserThread::UI, &loop_) {
-    // The command-line switch and the field trial are temporary.
-    // TODO(rouslan): Remove the command-line switch and the field trial.
-    // http://crbug.com/247726
+    feedback_.reset(new FeedbackSender(NULL, kLanguage, kCountry));
+    feedback_->StartFeedbackCollection();
+  }
+
+  virtual ~FeedbackSenderTest() {}
+
+ protected:
+  // Appends the "--enable-spelling-service-feedback" switch to the
+  // command-line.
+  void AppendCommandLineSwitch() {
+    // The command-line switch is temporary.
+    // TODO(rouslan): Remove the command-line switch. http://crbug.com/247726
     CommandLine::ForCurrentProcess()->AppendSwitch(
-        switches::kEnableSpellingServiceFeedback);
+        switches::kEnableSpellingFeedbackFieldTrial);
+    feedback_.reset(new FeedbackSender(NULL, kLanguage, kCountry));
+    feedback_->StartFeedbackCollection();
+  }
+
+  // Enables the "SpellingServiceFeedback.Enabled" field trial.
+  void EnableFieldTrial() {
+    // The field trial is temporary.
+    // TODO(rouslan): Remove the field trial. http://crbug.com/247726
     field_trial_list_.reset(
         new base::FieldTrialList(new metrics::SHA1EntropyProvider("foo")));
     field_trial_ = base::FieldTrialList::CreateFieldTrial(
         kFeedbackFieldTrialName, kFeedbackFieldTrialEnabledGroupName);
     field_trial_->group();
     feedback_.reset(new FeedbackSender(NULL, kLanguage, kCountry));
+    feedback_->StartFeedbackCollection();
   }
-  virtual ~FeedbackSenderTest() {}
 
- protected:
   uint32 AddPendingFeedback() {
     std::vector<SpellCheckResult> results(1, BuildSpellCheckResult());
     feedback_->OnSpellcheckResults(kRendererProcessId,
-                                   UTF8ToUTF16(kText),
+                                   base::UTF8ToUTF16(kText),
                                    std::vector<SpellCheckMarker>(),
                                    &results);
     return results[0].hash;
@@ -225,7 +241,7 @@ TEST_F(FeedbackSenderTest, IgnoreFeedbackMarkerNotInDocument) {
 TEST_F(FeedbackSenderTest, ManuallyCorrectedFeedback) {
   uint32 hash = AddPendingFeedback();
   static const std::string kManualCorrection = "Howdy";
-  feedback_->ManuallyCorrected(hash, ASCIIToUTF16(kManualCorrection));
+  feedback_->ManuallyCorrected(hash, base::ASCIIToUTF16(kManualCorrection));
   feedback_->OnReceiveDocumentMarkers(kRendererProcessId,
                                       std::vector<uint32>());
   EXPECT_TRUE(UploadDataContains("\"actionType\":\"MANUALLY_CORRECTED\""));
@@ -239,15 +255,15 @@ TEST_F(FeedbackSenderTest, BatchFeedback) {
   results.push_back(SpellCheckResult(SpellCheckResult::SPELLING,
                                      kMisspellingStart,
                                      kMisspellingLength,
-                                     ASCIIToUTF16("Hello")));
+                                     base::ASCIIToUTF16("Hello")));
   static const int kSecondMisspellingStart = 7;
   static const int kSecondMisspellingLength = 5;
   results.push_back(SpellCheckResult(SpellCheckResult::SPELLING,
                                      kSecondMisspellingStart,
                                      kSecondMisspellingLength,
-                                     ASCIIToUTF16("world")));
+                                     base::ASCIIToUTF16("world")));
   feedback_->OnSpellcheckResults(kRendererProcessId,
-                                 UTF8ToUTF16(kText),
+                                 base::UTF8ToUTF16(kText),
                                  std::vector<SpellCheckMarker>(),
                                  &results);
   feedback_->OnReceiveDocumentMarkers(kRendererProcessId,
@@ -294,9 +310,9 @@ TEST_F(FeedbackSenderTest, SessionExpirationFeedback) {
       SpellCheckResult(SpellCheckResult::SPELLING,
                        kMisspellingStart,
                        kMisspellingLength,
-                       ASCIIToUTF16("Hello")));
+                       base::ASCIIToUTF16("Hello")));
   feedback_->OnSpellcheckResults(kRendererProcessId,
-                                 UTF8ToUTF16(kText),
+                                 base::UTF8ToUTF16(kText),
                                  std::vector<SpellCheckMarker>(),
                                  &results);
   uint32 original_hash = results[0].hash;
@@ -331,9 +347,9 @@ TEST_F(FeedbackSenderTest, SessionExpirationFeedback) {
   results[0] = SpellCheckResult(SpellCheckResult::SPELLING,
                                 kMisspellingStart,
                                 kMisspellingLength,
-                                ASCIIToUTF16("Hello"));
+                                base::ASCIIToUTF16("Hello"));
   feedback_->OnSpellcheckResults(
-      kRendererProcessId, UTF8ToUTF16(kText), original_markers, &results);
+      kRendererProcessId, base::UTF8ToUTF16(kText), original_markers, &results);
   uint32 updated_hash = results[0].hash;
   EXPECT_NE(updated_hash, original_hash);
   remaining_markers[0] = updated_hash;
@@ -433,6 +449,55 @@ TEST_F(FeedbackSenderTest, FeedbackAPI) {
       << "\nActual data:   " << actual_data;
 }
 
+// The default API version is "v2".
+TEST_F(FeedbackSenderTest, DefaultApiVersion) {
+  AddPendingFeedback();
+  feedback_->OnReceiveDocumentMarkers(kRendererProcessId,
+                                      std::vector<uint32>());
+  EXPECT_TRUE(UploadDataContains("\"apiVersion\":\"v2\""));
+  EXPECT_FALSE(UploadDataContains("\"apiVersion\":\"v2-internal\""));
+}
+
+// The API version should not change for field-trial participants that do not
+// append the command-line switch.
+TEST_F(FeedbackSenderTest, FieldTrialAloneHasSameApiVersion) {
+  EnableFieldTrial();
+
+  AddPendingFeedback();
+  feedback_->OnReceiveDocumentMarkers(kRendererProcessId,
+                                      std::vector<uint32>());
+
+  EXPECT_TRUE(UploadDataContains("\"apiVersion\":\"v2\""));
+  EXPECT_FALSE(UploadDataContains("\"apiVersion\":\"v2-internal\""));
+}
+
+// The API version should not change if the command-line switch is appended, but
+// the user is not participating in the field-trial.
+TEST_F(FeedbackSenderTest, CommandLineSwitchAloneHasSameApiVersion) {
+  AppendCommandLineSwitch();
+
+  AddPendingFeedback();
+  feedback_->OnReceiveDocumentMarkers(kRendererProcessId,
+                                      std::vector<uint32>());
+
+  EXPECT_TRUE(UploadDataContains("\"apiVersion\":\"v2\""));
+  EXPECT_FALSE(UploadDataContains("\"apiVersion\":\"v2-internal\""));
+}
+
+// The API version should be different for field-trial participants that also
+// append the command-line switch.
+TEST_F(FeedbackSenderTest, InternalApiVersion) {
+  AppendCommandLineSwitch();
+  EnableFieldTrial();
+
+  AddPendingFeedback();
+  feedback_->OnReceiveDocumentMarkers(kRendererProcessId,
+                                      std::vector<uint32>());
+
+  EXPECT_FALSE(UploadDataContains("\"apiVersion\":\"v2\""));
+  EXPECT_TRUE(UploadDataContains("\"apiVersion\":\"v2-internal\""));
+}
+
 // Duplicate spellcheck results should be matched to the existing markers.
 TEST_F(FeedbackSenderTest, MatchDupliateResultsWithExistingMarkers) {
   uint32 hash = AddPendingFeedback();
@@ -441,12 +506,12 @@ TEST_F(FeedbackSenderTest, MatchDupliateResultsWithExistingMarkers) {
       SpellCheckResult(SpellCheckResult::SPELLING,
                        kMisspellingStart,
                        kMisspellingLength,
-                       ASCIIToUTF16("Hello")));
+                       base::ASCIIToUTF16("Hello")));
   std::vector<SpellCheckMarker> markers(
       1, SpellCheckMarker(hash, results[0].location));
   EXPECT_EQ(static_cast<uint32>(0), results[0].hash);
   feedback_->OnSpellcheckResults(
-      kRendererProcessId, UTF8ToUTF16(kText), markers, &results);
+      kRendererProcessId, base::UTF8ToUTF16(kText), markers, &results);
   EXPECT_EQ(hash, results[0].hash);
 }
 
@@ -456,13 +521,13 @@ TEST_F(FeedbackSenderTest, MultipleAddToDictFeedback) {
   std::vector<SpellCheckResult> results;
   static const int kSentenceLength = 14;
   static const int kNumberOfSentences = 2;
-  static const string16 kTextWithDuplicates =
-      ASCIIToUTF16("Helllo world. Helllo world.");
+  static const base::string16 kTextWithDuplicates =
+      base::ASCIIToUTF16("Helllo world. Helllo world.");
   for (int i = 0; i < kNumberOfSentences; ++i) {
     results.push_back(SpellCheckResult(SpellCheckResult::SPELLING,
                                        kMisspellingStart + i * kSentenceLength,
                                        kMisspellingLength,
-                                       ASCIIToUTF16("Hello")));
+                                       base::ASCIIToUTF16("Hello")));
   }
   static const int kNumberOfRenderers = 2;
   int last_renderer_process_id = -1;
@@ -506,19 +571,51 @@ TEST_F(FeedbackSenderTest, AddToDictOnlyPending) {
 TEST_F(FeedbackSenderTest, IgnoreOutOfBounds) {
   std::vector<SpellCheckResult> results;
   results.push_back(SpellCheckResult(
-      SpellCheckResult::SPELLING, 0, 100, UTF8ToUTF16("Hello")));
+      SpellCheckResult::SPELLING, 0, 100, base::UTF8ToUTF16("Hello")));
   results.push_back(SpellCheckResult(
-      SpellCheckResult::SPELLING, 100, 3, UTF8ToUTF16("world")));
-  results.push_back(
-      SpellCheckResult(SpellCheckResult::SPELLING, -1, 3, UTF8ToUTF16("how")));
-  results.push_back(
-      SpellCheckResult(SpellCheckResult::SPELLING, 0, 0, UTF8ToUTF16("are")));
-  results.push_back(
-      SpellCheckResult(SpellCheckResult::SPELLING, 2, -1, UTF8ToUTF16("you")));
+      SpellCheckResult::SPELLING, 100, 3, base::UTF8ToUTF16("world")));
+  results.push_back(SpellCheckResult(
+      SpellCheckResult::SPELLING, -1, 3, base::UTF8ToUTF16("how")));
+  results.push_back(SpellCheckResult(
+      SpellCheckResult::SPELLING, 0, 0, base::UTF8ToUTF16("are")));
+  results.push_back(SpellCheckResult(
+      SpellCheckResult::SPELLING, 2, -1, base::UTF8ToUTF16("you")));
   feedback_->OnSpellcheckResults(kRendererProcessId,
-                                 UTF8ToUTF16(kText),
+                                 base::UTF8ToUTF16(kText),
                                  std::vector<SpellCheckMarker>(),
                                  &results);
+  feedback_->OnReceiveDocumentMarkers(kRendererProcessId,
+                                      std::vector<uint32>());
+  EXPECT_FALSE(IsUploadingData());
+}
+
+// FeedbackSender does not collect and upload feedback when instructed to stop.
+TEST_F(FeedbackSenderTest, CanStopFeedbackCollection) {
+  feedback_->StopFeedbackCollection();
+  AddPendingFeedback();
+  feedback_->OnReceiveDocumentMarkers(kRendererProcessId,
+                                      std::vector<uint32>());
+  EXPECT_FALSE(IsUploadingData());
+}
+
+// FeedbackSender resumes collecting and uploading feedback when instructed to
+// start after stopping.
+TEST_F(FeedbackSenderTest, CanResumeFeedbackCollection) {
+  feedback_->StopFeedbackCollection();
+  feedback_->StartFeedbackCollection();
+  AddPendingFeedback();
+  feedback_->OnReceiveDocumentMarkers(kRendererProcessId,
+                                      std::vector<uint32>());
+  EXPECT_TRUE(IsUploadingData());
+}
+
+// FeedbackSender does not collect data while being stopped and upload it later.
+TEST_F(FeedbackSenderTest, NoFeedbackCollectionWhenStopped) {
+  feedback_->StopFeedbackCollection();
+  AddPendingFeedback();
+  feedback_->OnReceiveDocumentMarkers(kRendererProcessId,
+                                      std::vector<uint32>());
+  feedback_->StartFeedbackCollection();
   feedback_->OnReceiveDocumentMarkers(kRendererProcessId,
                                       std::vector<uint32>());
   EXPECT_FALSE(IsUploadingData());

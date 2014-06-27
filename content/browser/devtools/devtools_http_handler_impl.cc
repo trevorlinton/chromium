@@ -31,14 +31,18 @@
 #include "content/public/browser/devtools_target.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/url_constants.h"
+#include "content/public/common/user_agent.h"
+#include "content/public/common/user_agent.h"
 #include "grit/devtools_resources_map.h"
 #include "net/base/escape.h"
 #include "net/base/io_buffer.h"
 #include "net/base/ip_endpoint.h"
 #include "net/server/http_server_request_info.h"
 #include "net/server/http_server_response_info.h"
-#include "webkit/common/user_agent/user_agent.h"
-#include "webkit/common/user_agent/user_agent_util.h"
+
+#if defined(OS_ANDROID)
+#include "base/android/build_info.h"
+#endif
 
 namespace content {
 
@@ -211,10 +215,8 @@ GURL DevToolsHttpHandlerImpl::GetFrontendURL(DevToolsAgentHost* agent_host) {
   net::IPEndPoint ip_address;
   if (server_->GetLocalAddress(&ip_address))
     return GURL();
-  if (!agent_host) {
-    return GURL(std::string("http://") + ip_address.ToString() +
-      overridden_frontend_url_);
-  }
+  if (!agent_host)
+    return GURL(std::string("http://") + ip_address.ToString() + frontend_url_);
   std::string host = ip_address.ToString();
   std::string id = agent_host->GetId();
   return GURL(std::string("http://") +
@@ -393,8 +395,8 @@ std::string DevToolsHttpHandlerImpl::GetFrontendURLInternal(
     const std::string& host) {
   return base::StringPrintf(
       "%s%sws=%s%s%s",
-      overridden_frontend_url_.c_str(),
-      overridden_frontend_url_.find("?") == std::string::npos ? "?" : "&",
+      frontend_url_.c_str(),
+      frontend_url_.find("?") == std::string::npos ? "?" : "&",
       host.c_str(),
       kPageUrlPrefix,
       id.c_str());
@@ -463,10 +465,13 @@ void DevToolsHttpHandlerImpl::OnJsonRequestUI(
   if (command == "version") {
     base::DictionaryValue version;
     version.SetString("Protocol-Version", kProtocolVersion);
-    version.SetString("WebKit-Version", webkit_glue::GetWebKitVersion());
-    version.SetString("Browser", content::GetContentClient()->GetProduct());
-    version.SetString("User-Agent",
-                      webkit_glue::GetUserAgent(GURL(kAboutBlankURL)));
+    version.SetString("WebKit-Version", GetWebKitVersion());
+    version.SetString("Browser", GetContentClient()->GetProduct());
+    version.SetString("User-Agent", GetContentClient()->GetUserAgent());
+#if defined(OS_ANDROID)
+    version.SetString("Android-Package",
+        base::android::BuildInfo::GetInstance()->package_name());
+#endif
     SendJson(connection_id, net::HTTP_OK, &version, std::string());
     return;
   }
@@ -662,11 +667,11 @@ DevToolsHttpHandlerImpl::DevToolsHttpHandlerImpl(
     const net::StreamListenSocketFactory* socket_factory,
     const std::string& frontend_url,
     DevToolsHttpHandlerDelegate* delegate)
-    : overridden_frontend_url_(frontend_url),
+    : frontend_url_(frontend_url),
       socket_factory_(socket_factory),
       delegate_(delegate) {
-  if (overridden_frontend_url_.empty())
-      overridden_frontend_url_ = "/devtools/devtools.html";
+  if (frontend_url_.empty())
+      frontend_url_ = "/devtools/devtools.html";
 
   // Balanced in ResetHandlerThreadAndRelease().
   AddRef();

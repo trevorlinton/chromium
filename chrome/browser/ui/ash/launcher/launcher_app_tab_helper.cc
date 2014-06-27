@@ -6,12 +6,19 @@
 
 #include <vector>
 
+#include "base/command_line.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/common/extensions/extension.h"
+#include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/web_applications/web_app.h"
+#include "chrome/common/chrome_switches.h"
+#include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
+#include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/extension_registry.h"
+#include "extensions/common/extension.h"
 
 namespace {
 
@@ -20,7 +27,36 @@ const extensions::Extension* GetExtensionForTab(Profile* profile,
   ExtensionService* extension_service = profile->GetExtensionService();
   if (!extension_service || !extension_service->extensions_enabled())
     return NULL;
-  return extension_service->GetInstalledApp(tab->GetURL());
+
+  Browser* browser = chrome::FindBrowserWithWebContents(tab);
+  DCHECK(browser);
+
+  // Use the Browser's app name to determine the extension for app windows and
+  // use the tab's url for app tabs.
+  if (browser->is_app()) {
+    return extension_service->GetInstalledExtension(
+        web_app::GetExtensionIdFromApplicationName(browser->app_name()));
+  }
+
+  const GURL url = tab->GetURL();
+  if (extension_service->IsInstalledApp(url))
+    return extension_service->GetInstalledApp(url);
+
+  // Bookmark app windows should match their launch url extension despite
+  // their web extents.
+  if (CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kEnableStreamlinedHostedApps)) {
+    const extensions::ExtensionSet& extensions =
+        extensions::ExtensionRegistry::Get(profile)->enabled_extensions();
+    for (extensions::ExtensionSet::const_iterator it = extensions.begin();
+         it != extensions.end(); ++it) {
+      if (it->get()->from_bookmark() &&
+          extensions::AppLaunchInfo::GetLaunchWebURL(it->get()) == url) {
+        return it->get();
+      }
+    }
+  }
+  return NULL;
 }
 
 const extensions::Extension* GetExtensionByID(Profile* profile,

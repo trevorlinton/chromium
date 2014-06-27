@@ -14,6 +14,8 @@
 #include "third_party/WebKit/public/platform/WebIDBDatabaseException.h"
 #include "webkit/common/database/database_identifier.h"
 
+using base::ASCIIToUTF16;
+
 namespace content {
 
 const int64 kBackingStoreGracePeriodMs = 2000;
@@ -23,19 +25,36 @@ IndexedDBFactory::IndexedDBFactory(IndexedDBContextImpl* context)
 
 IndexedDBFactory::~IndexedDBFactory() {}
 
-void IndexedDBFactory::ReleaseDatabase(
-    const IndexedDBDatabase::Identifier& identifier,
-    const GURL& origin_url,
-    bool forcedClose) {
+void IndexedDBFactory::RemoveDatabaseFromMaps(
+    const IndexedDBDatabase::Identifier& identifier) {
   IndexedDBDatabaseMap::iterator it = database_map_.find(identifier);
   DCHECK(it != database_map_.end());
-  DCHECK(!it->second->backing_store());
+  IndexedDBDatabase* database = it->second;
   database_map_.erase(it);
+
+  std::pair<OriginDBMap::iterator, OriginDBMap::iterator> range =
+      origin_dbs_.equal_range(database->identifier().first);
+  DCHECK(range.first != range.second);
+  for (OriginDBMap::iterator it2 = range.first; it2 != range.second; ++it2) {
+    if (it2->second == database) {
+      origin_dbs_.erase(it2);
+      break;
+    }
+  }
+}
+
+void IndexedDBFactory::ReleaseDatabase(
+    const IndexedDBDatabase::Identifier& identifier,
+    bool forcedClose) {
+
+  DCHECK(!database_map_.find(identifier)->second->backing_store());
+
+  RemoveDatabaseFromMaps(identifier);
 
   // No grace period on a forced-close, as the initiator is
   // assuming the backing store will be released once all
   // connections are closed.
-  ReleaseBackingStore(origin_url, forcedClose);
+  ReleaseBackingStore(identifier.first, forcedClose);
 }
 
 void IndexedDBFactory::ReleaseBackingStore(const GURL& origin_url,
@@ -90,6 +109,20 @@ bool IndexedDBFactory::HasLastBackingStoreReference(const GURL& origin_url)
   return ptr->HasOneRef();
 }
 
+void IndexedDBFactory::ForceClose(const GURL& origin_url) {
+  std::pair<OriginDBMapIterator, OriginDBMapIterator> range =
+      GetOpenDatabasesForOrigin(origin_url);
+
+  while (range.first != range.second) {
+    IndexedDBDatabase* db = range.first->second;
+    ++range.first;
+    db->ForceClose();
+  }
+
+  if (backing_store_map_.find(origin_url) != backing_store_map_.end())
+    ReleaseBackingStore(origin_url, true /* immediate */);
+}
+
 void IndexedDBFactory::ContextDestroyed() {
   // Timers on backing stores hold a reference to this factory. When the
   // context (which nominally owns this factory) is destroyed during thread
@@ -109,7 +142,7 @@ void IndexedDBFactory::GetDatabaseNames(
     const base::FilePath& data_directory) {
   IDB_TRACE("IndexedDBFactory::GetDatabaseNames");
   // TODO(dgrogan): Plumb data_loss back to script eventually?
-  WebKit::WebIDBCallbacks::DataLoss data_loss;
+  blink::WebIDBDataLoss data_loss;
   std::string data_loss_message;
   bool disk_full;
   scoped_refptr<IndexedDBBackingStore> backing_store =
@@ -120,17 +153,19 @@ void IndexedDBFactory::GetDatabaseNames(
                        &disk_full);
   if (!backing_store) {
     callbacks->OnError(
-        IndexedDBDatabaseError(WebKit::WebIDBDatabaseExceptionUnknownError,
+        IndexedDBDatabaseError(blink::WebIDBDatabaseExceptionUnknownError,
                                "Internal error opening backing store for "
                                "indexedDB.webkitGetDatabaseNames."));
     return;
   }
 
   callbacks->OnSuccess(backing_store->GetDatabaseNames());
+  backing_store = NULL;
+  ReleaseBackingStore(origin_url, false /* immediate */);
 }
 
 void IndexedDBFactory::DeleteDatabase(
-    const string16& name,
+    const base::string16& name,
     scoped_refptr<IndexedDBCallbacks> callbacks,
     const GURL& origin_url,
     const base::FilePath& data_directory) {
@@ -145,7 +180,7 @@ void IndexedDBFactory::DeleteDatabase(
   }
 
   // TODO(dgrogan): Plumb data_loss back to script eventually?
-  WebKit::WebIDBCallbacks::DataLoss data_loss;
+  blink::WebIDBDataLoss data_loss;
   std::string data_loss_message;
   bool disk_full = false;
   scoped_refptr<IndexedDBBackingStore> backing_store =
@@ -156,7 +191,7 @@ void IndexedDBFactory::DeleteDatabase(
                        &disk_full);
   if (!backing_store) {
     callbacks->OnError(
-        IndexedDBDatabaseError(WebKit::WebIDBDatabaseExceptionUnknownError,
+        IndexedDBDatabaseError(blink::WebIDBDatabaseExceptionUnknownError,
                                ASCIIToUTF16(
                                    "Internal error opening backing store "
                                    "for indexedDB.deleteDatabase.")));
@@ -167,7 +202,7 @@ void IndexedDBFactory::DeleteDatabase(
       IndexedDBDatabase::Create(name, backing_store, this, unique_identifier);
   if (!database) {
     callbacks->OnError(IndexedDBDatabaseError(
-        WebKit::WebIDBDatabaseExceptionUnknownError,
+        blink::WebIDBDatabaseExceptionUnknownError,
         ASCIIToUTF16(
             "Internal error creating database backend for "
             "indexedDB.deleteDatabase.")));
@@ -175,26 +210,53 @@ void IndexedDBFactory::DeleteDatabase(
   }
 
   database_map_[unique_identifier] = database;
+  origin_dbs_.insert(std::make_pair(origin_url, database));
   database->DeleteDatabase(callbacks);
-  database_map_.erase(unique_identifier);
+  RemoveDatabaseFromMaps(unique_identifier);
+  database = NULL;
+  backing_store = NULL;
+  ReleaseBackingStore(origin_url, false /* immediate */);
+}
+
+void IndexedDBFactory::DatabaseDeleted(
+    const IndexedDBDatabase::Identifier& identifier) {
+  // NULL after ContextDestroyed() called, and in some unit tests.
+  if (!context_)
+    return;
+  context_->DatabaseDeleted(identifier.first);
 }
 
 void IndexedDBFactory::HandleBackingStoreFailure(const GURL& origin_url) {
   // NULL after ContextDestroyed() called, and in some unit tests.
   if (!context_)
     return;
-  context_->ForceClose(origin_url);
+  context_->ForceClose(origin_url,
+                       IndexedDBContextImpl::FORCE_CLOSE_BACKING_STORE_FAILURE);
 }
 
-bool IndexedDBFactory::IsBackingStoreOpenForTesting(const GURL& origin_url)
-    const {
+bool IndexedDBFactory::IsDatabaseOpen(const GURL& origin_url,
+                                      const base::string16& name) const {
+
+  return !!database_map_.count(IndexedDBDatabase::Identifier(origin_url, name));
+}
+
+bool IndexedDBFactory::IsBackingStoreOpen(const GURL& origin_url) const {
   return backing_store_map_.find(origin_url) != backing_store_map_.end();
+}
+
+bool IndexedDBFactory::IsBackingStorePendingClose(const GURL& origin_url)
+    const {
+  IndexedDBBackingStoreMap::const_iterator it =
+      backing_store_map_.find(origin_url);
+  if (it == backing_store_map_.end())
+    return false;
+  return it->second->close_timer()->IsRunning();
 }
 
 scoped_refptr<IndexedDBBackingStore> IndexedDBFactory::OpenBackingStore(
     const GURL& origin_url,
     const base::FilePath& data_directory,
-    WebKit::WebIDBCallbacks::DataLoss* data_loss,
+    blink::WebIDBDataLoss* data_loss,
     std::string* data_loss_message,
     bool* disk_full) {
   const bool open_in_memory = data_directory.empty();
@@ -232,23 +294,20 @@ scoped_refptr<IndexedDBBackingStore> IndexedDBFactory::OpenBackingStore(
   return 0;
 }
 
-void IndexedDBFactory::Open(
-    const string16& name,
-    int64 version,
-    int64 transaction_id,
-    scoped_refptr<IndexedDBCallbacks> callbacks,
-    scoped_refptr<IndexedDBDatabaseCallbacks> database_callbacks,
-    const GURL& origin_url,
-    const base::FilePath& data_directory) {
+void IndexedDBFactory::Open(const base::string16& name,
+                            const IndexedDBPendingConnection& connection,
+                            const GURL& origin_url,
+                            const base::FilePath& data_directory) {
   IDB_TRACE("IndexedDBFactory::Open");
   scoped_refptr<IndexedDBDatabase> database;
   IndexedDBDatabase::Identifier unique_identifier(origin_url, name);
   IndexedDBDatabaseMap::iterator it = database_map_.find(unique_identifier);
-  WebKit::WebIDBCallbacks::DataLoss data_loss =
-      WebKit::WebIDBCallbacks::DataLossNone;
+  blink::WebIDBDataLoss data_loss =
+      blink::WebIDBDataLossNone;
   std::string data_loss_message;
   bool disk_full = false;
-  if (it == database_map_.end()) {
+  bool was_open = (it != database_map_.end());
+  if (!was_open) {
     scoped_refptr<IndexedDBBackingStore> backing_store =
         OpenBackingStore(origin_url,
                          data_directory,
@@ -257,15 +316,15 @@ void IndexedDBFactory::Open(
                          &disk_full);
     if (!backing_store) {
       if (disk_full) {
-        callbacks->OnError(
-            IndexedDBDatabaseError(WebKit::WebIDBDatabaseExceptionQuotaError,
+        connection.callbacks->OnError(
+            IndexedDBDatabaseError(blink::WebIDBDatabaseExceptionQuotaError,
                                    ASCIIToUTF16(
                                        "Encountered full disk while opening "
                                        "backing store for indexedDB.open.")));
         return;
       }
-      callbacks->OnError(IndexedDBDatabaseError(
-          WebKit::WebIDBDatabaseExceptionUnknownError,
+      connection.callbacks->OnError(IndexedDBDatabaseError(
+          blink::WebIDBDatabaseExceptionUnknownError,
           ASCIIToUTF16(
               "Internal error opening backing store for indexedDB.open.")));
       return;
@@ -274,36 +333,42 @@ void IndexedDBFactory::Open(
     database =
         IndexedDBDatabase::Create(name, backing_store, this, unique_identifier);
     if (!database) {
-      callbacks->OnError(IndexedDBDatabaseError(
-          WebKit::WebIDBDatabaseExceptionUnknownError,
+      connection.callbacks->OnError(IndexedDBDatabaseError(
+          blink::WebIDBDatabaseExceptionUnknownError,
           ASCIIToUTF16(
               "Internal error creating database backend for indexedDB.open.")));
       return;
     }
-
-    database_map_[unique_identifier] = database;
   } else {
     database = it->second;
   }
 
-  database->OpenConnection(callbacks,
-                           database_callbacks,
-                           transaction_id,
-                           version,
-                           data_loss,
-                           data_loss_message);
+  if (data_loss != blink::WebIDBDataLossNone)
+    connection.callbacks->OnDataLoss(data_loss, data_loss_message);
+
+  database->OpenConnection(connection);
+
+  if (!was_open && database->ConnectionCount() > 0) {
+    database_map_[unique_identifier] = database;
+    origin_dbs_.insert(std::make_pair(origin_url, database));
+  }
 }
 
-std::vector<IndexedDBDatabase*> IndexedDBFactory::GetOpenDatabasesForOrigin(
-    const GURL& origin_url) const {
-  std::vector<IndexedDBDatabase*> result;
-  for (IndexedDBDatabaseMap::const_iterator it = database_map_.begin();
-       it != database_map_.end();
-       ++it) {
-    if (it->first.first == origin_url)
-      result.push_back(it->second.get());
-  }
-  return result;
+std::pair<IndexedDBFactory::OriginDBMapIterator,
+          IndexedDBFactory::OriginDBMapIterator>
+IndexedDBFactory::GetOpenDatabasesForOrigin(const GURL& origin_url) const {
+  return origin_dbs_.equal_range(origin_url);
+}
+
+size_t IndexedDBFactory::GetConnectionCount(const GURL& origin_url) const {
+  size_t count(0);
+
+  std::pair<OriginDBMapIterator, OriginDBMapIterator> range =
+      GetOpenDatabasesForOrigin(origin_url);
+  for (OriginDBMapIterator it = range.first; it != range.second; ++it)
+    count += it->second->ConnectionCount();
+
+  return count;
 }
 
 }  // namespace content

@@ -56,7 +56,7 @@ void ComputePluginsFromCommandLine(std::vector<PepperPluginInfo>* plugins) {
 
   size_t plugins_to_register = modules.size();
   if (plugins_to_register > kMaxPluginsToRegisterFromCommandLine) {
-    DLOG(WARNING) << plugins_to_register << " pepper plugins registered from"
+    VLOG(1) << plugins_to_register << " pepper plugins registered from"
         << " command line which exceeds the limit (maximum "
         << kMaxPluginsToRegisterFromCommandLine << " plugins allowed)";
     plugins_to_register = kMaxPluginsToRegisterFromCommandLine;
@@ -66,7 +66,7 @@ void ComputePluginsFromCommandLine(std::vector<PepperPluginInfo>* plugins) {
     std::vector<std::string> parts;
     base::SplitString(modules[i], ';', &parts);
     if (parts.size() < 2) {
-      DLOG(ERROR) << "Required mime-type not found";
+      VLOG(1) << "Required mime-type not found";
       continue;
     }
 
@@ -79,7 +79,7 @@ void ComputePluginsFromCommandLine(std::vector<PepperPluginInfo>* plugins) {
     // This means we can't provide plugins from non-ASCII paths, but
     // since this switch is only for development I don't think that's
     // too awful.
-    plugin.path = base::FilePath(ASCIIToUTF16(name_parts[0]));
+    plugin.path = base::FilePath(base::ASCIIToUTF16(name_parts[0]));
 #else
     plugin.path = base::FilePath(name_parts[0]);
 #endif
@@ -89,7 +89,7 @@ void ComputePluginsFromCommandLine(std::vector<PepperPluginInfo>* plugins) {
       if (base::PathExists(plugin.path)) {
         skip_file_check_flags |= index_mask;
       } else {
-        DLOG(ERROR) << "Plugin doesn't exist:" << plugin.path.MaybeAsASCII();
+        VLOG(1) << "Plugin doesn't exist: " << plugin.path.MaybeAsASCII();
         continue;
       }
     }
@@ -108,8 +108,10 @@ void ComputePluginsFromCommandLine(std::vector<PepperPluginInfo>* plugins) {
     }
 
     // If the plugin name is empty, use the filename.
-    if (plugin.name.empty())
-      plugin.name = UTF16ToUTF8(plugin.path.BaseName().LossyDisplayName());
+    if (plugin.name.empty()) {
+      plugin.name =
+          base::UTF16ToUTF8(plugin.path.BaseName().LossyDisplayName());
+    }
 
     // Command-line plugins get full permissions.
     plugin.permissions = ppapi::PERMISSION_ALL_BITS;
@@ -132,9 +134,9 @@ bool MakePepperPluginInfo(const WebPluginInfo& webplugin_info,
       WebPluginInfo::PLUGIN_TYPE_PEPPER_UNSANDBOXED;
 
   pepper_info->path = base::FilePath(webplugin_info.path);
-  pepper_info->name = UTF16ToASCII(webplugin_info.name);
-  pepper_info->description = UTF16ToASCII(webplugin_info.desc);
-  pepper_info->version = UTF16ToASCII(webplugin_info.version);
+  pepper_info->name = base::UTF16ToASCII(webplugin_info.name);
+  pepper_info->description = base::UTF16ToASCII(webplugin_info.desc);
+  pepper_info->version = base::UTF16ToASCII(webplugin_info.version);
   pepper_info->mime_types = webplugin_info.mime_types;
   pepper_info->permissions = webplugin_info.pepper_permissions;
 

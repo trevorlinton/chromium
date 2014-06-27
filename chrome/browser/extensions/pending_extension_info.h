@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,14 +7,15 @@
 
 #include <string>
 
+#include "base/gtest_prod_util.h"
 #include "base/version.h"
-#include "chrome/common/extensions/extension.h"
 #include "extensions/common/manifest.h"
 #include "url/gurl.h"
 
 FORWARD_DECLARE_TEST(ExtensionServiceTest, AddPendingExtensionFromSync);
 
 namespace extensions {
+class Extension;
 
 // A pending extension is an extension that hasn't been installed yet
 // and is intended to be installed in the next auto-update cycle.  The
@@ -26,19 +27,21 @@ class PendingExtensionInfo {
  public:
   typedef bool (*ShouldAllowInstallPredicate)(const Extension*);
 
-  PendingExtensionInfo(
-      const std::string& id,
-      const GURL& update_url,
-      const Version& version,
-      ShouldAllowInstallPredicate should_allow_install,
-      bool is_from_sync,
-      bool install_silently,
-      Manifest::Location install_source,
-      int creation_flags,
-      bool mark_acknowledged);
+  PendingExtensionInfo(const std::string& id,
+                       const std::string& install_parameter,
+                       const GURL& update_url,
+                       const Version& version,
+                       ShouldAllowInstallPredicate should_allow_install,
+                       bool is_from_sync,
+                       bool install_silently,
+                       Manifest::Location install_source,
+                       int creation_flags,
+                       bool mark_acknowledged);
 
   // Required for STL container membership.  Should not be used directly.
   PendingExtensionInfo();
+
+  ~PendingExtensionInfo();
 
   // Consider two PendingExtensionInfos equal if their ids are equal.
   bool operator==(const PendingExtensionInfo& rhs) const;
@@ -46,6 +49,7 @@ class PendingExtensionInfo {
   const std::string& id() const { return id_; }
   const GURL& update_url() const { return update_url_; }
   const Version& version() const { return version_; }
+  const std::string& install_parameter() const { return install_parameter_; }
 
   // ShouldAllowInstall() returns the result of running constructor argument
   // |should_allow_install| on an extension. After an extension is unpacked,
@@ -74,6 +78,7 @@ class PendingExtensionInfo {
 
   GURL update_url_;
   Version version_;
+  std::string install_parameter_;
 
   // When the extension is about to be installed, this function is
   // called.  If this function returns true, the install proceeds.  If

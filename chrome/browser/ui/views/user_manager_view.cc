@@ -4,14 +4,15 @@
 
 #include "chrome/browser/ui/views/user_manager_view.h"
 
-#include "base/strings/string_number_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/profiles/profile_metrics.h"
+#include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/common/url_constants.h"
+#include "chrome/browser/ui/views/auto_keep_alive.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
 #include "grit/generated_resources.h"
@@ -44,7 +45,12 @@ namespace chrome {
 
 // Declared in browser_dialogs.h so others don't have to depend on this header.
 void ShowUserManager(const base::FilePath& profile_path_to_focus) {
-  UserManagerView::Show(profile_path_to_focus);
+  UserManagerView::Show(
+      profile_path_to_focus, profiles::USER_MANAGER_NO_TUTORIAL);
+}
+
+void ShowUserManagerWithTutorial(profiles::UserManagerTutorialMode tutorial) {
+  UserManagerView::Show(base::FilePath(), tutorial);
 }
 
 void HideUserManager() {
@@ -63,14 +69,12 @@ UserManagerView::UserManagerView(Profile* profile)
 }
 
 UserManagerView::~UserManagerView() {
-  chrome::EndKeepAlive();  // Remove shutdown prevention.
 }
 
 // static
-void UserManagerView::Show(const base::FilePath& profile_path_to_focus) {
-  // Prevent the browser process from shutting down while this window is open.
-  chrome::StartKeepAlive();
-
+void UserManagerView::Show(const base::FilePath& profile_path_to_focus,
+                           profiles::UserManagerTutorialMode tutorial_mode) {
+  ProfileMetrics::LogProfileSwitchUser(ProfileMetrics::OPEN_USER_MANAGER);
   if (instance_) {
     // If there's a user manager window open already, just activate it.
     instance_->GetWidget()->Activate();
@@ -79,14 +83,10 @@ void UserManagerView::Show(const base::FilePath& profile_path_to_focus) {
 
   // Create the guest profile, if necessary, and open the user manager
   // from the guest profile.
-  ProfileManager* profile_manager = g_browser_process->profile_manager();
-  profile_manager->CreateProfileAsync(
-      ProfileManager::GetGuestProfilePath(),
-      base::Bind(&UserManagerView::OnGuestProfileCreated,
-                 profile_path_to_focus),
-      string16(),
-      string16(),
-      std::string());
+  profiles::CreateGuestProfileForUserManager(
+      profile_path_to_focus,
+      tutorial_mode,
+      base::Bind(&UserManagerView::OnGuestProfileCreated));
 }
 
 // static
@@ -100,15 +100,14 @@ bool UserManagerView::IsShowing() {
   return instance_ ? instance_->GetWidget()->IsActive() : false;
 }
 
-void UserManagerView::OnGuestProfileCreated(
-    const base::FilePath& profile_path_to_focus,
-    Profile* guest_profile,
-    Profile::CreateStatus status) {
-  if (status != Profile::CREATE_STATUS_INITIALIZED)
-    return;
-
+// static
+void UserManagerView::OnGuestProfileCreated(Profile* guest_profile,
+                                            const std::string& url) {
   instance_ = new UserManagerView(guest_profile);
   DialogDelegate::CreateDialogWidget(instance_, NULL, NULL);
+
+  gfx::NativeWindow window = instance_->GetWidget()->GetNativeWindow();
+  instance_->keep_alive_.reset(new AutoKeepAlive(window));
 
 #if defined(OS_WIN)
   // Set the app id for the task manager to the app id of its parent
@@ -119,20 +118,7 @@ void UserManagerView::OnGuestProfileCreated(
 #endif
   instance_->GetWidget()->Show();
 
-  // Tell the webui which user pod should be focused.
-  std::string page = chrome::kChromeUIUserManagerURL;
-
-  if (!profile_path_to_focus.empty()) {
-    ProfileInfoCache& cache =
-        g_browser_process->profile_manager()->GetProfileInfoCache();
-    size_t index = cache.GetIndexOfProfileWithPath(profile_path_to_focus);
-    if (index != std::string::npos) {
-      page += "#";
-      page += base::IntToString(index);
-    }
-  }
-
-  instance_->web_view_->LoadInitialURL(GURL(page));
+  instance_->web_view_->LoadInitialURL(GURL(url));
   instance_->web_view_->RequestFocus();
 }
 
@@ -148,7 +134,7 @@ bool UserManagerView::CanMaximize() const {
   return true;
 }
 
-string16 UserManagerView::GetWindowTitle() const {
+base::string16 UserManagerView::GetWindowTitle() const {
   return l10n_util::GetStringUTF16(IDS_USER_MANAGER_SCREEN_TITLE);
 }
 

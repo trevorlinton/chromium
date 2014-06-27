@@ -31,8 +31,12 @@ bool ContentViewRenderView::RegisterContentViewRenderView(JNIEnv* env) {
   return RegisterNativesImpl(env);
 }
 
-ContentViewRenderView::ContentViewRenderView(JNIEnv* env, jobject obj)
-    : buffers_swapped_during_composite_(false) {
+ContentViewRenderView::ContentViewRenderView(JNIEnv* env,
+                                             jobject obj,
+                                             gfx::NativeWindow root_window)
+    : buffers_swapped_during_composite_(false),
+      root_window_(root_window),
+      current_surface_format_(0) {
   java_obj_.Reset(env, obj);
 }
 
@@ -40,10 +44,12 @@ ContentViewRenderView::~ContentViewRenderView() {
 }
 
 // static
-static jint Init(JNIEnv* env, jobject obj) {
+static jlong Init(JNIEnv* env, jobject obj, jlong native_root_window) {
+  gfx::NativeWindow root_window =
+      reinterpret_cast<gfx::NativeWindow>(native_root_window);
   ContentViewRenderView* content_view_render_view =
-      new ContentViewRenderView(env, obj);
-  return reinterpret_cast<jint>(content_view_render_view);
+      new ContentViewRenderView(env, obj, root_window);
+  return reinterpret_cast<intptr_t>(content_view_render_view);
 }
 
 void ContentViewRenderView::Destroy(JNIEnv* env, jobject obj) {
@@ -51,7 +57,7 @@ void ContentViewRenderView::Destroy(JNIEnv* env, jobject obj) {
 }
 
 void ContentViewRenderView::SetCurrentContentView(
-    JNIEnv* env, jobject obj, int native_content_view) {
+    JNIEnv* env, jobject obj, jlong native_content_view) {
   InitCompositor();
   ContentViewCoreImpl* content_view =
       reinterpret_cast<ContentViewCoreImpl*>(native_content_view);
@@ -62,17 +68,21 @@ void ContentViewRenderView::SetCurrentContentView(
 }
 
 void ContentViewRenderView::SurfaceCreated(
-    JNIEnv* env, jobject obj, jobject jsurface) {
+    JNIEnv* env, jobject obj) {
   InitCompositor();
-  compositor_->SetSurface(jsurface);
 }
 
 void ContentViewRenderView::SurfaceDestroyed(JNIEnv* env, jobject obj) {
   compositor_->SetSurface(NULL);
+  current_surface_format_ = 0;
 }
 
-void ContentViewRenderView::SurfaceSetSize(
-    JNIEnv* env, jobject obj, jint width, jint height) {
+void ContentViewRenderView::SurfaceChanged(JNIEnv* env, jobject obj,
+    jint format, jint width, jint height, jobject surface) {
+  if (current_surface_format_ != format) {
+    current_surface_format_ = format;
+    compositor_->SetSurface(surface);
+  }
   compositor_->SetWindowBounds(gfx::Size(width, height));
 }
 
@@ -94,6 +104,12 @@ jboolean ContentViewRenderView::CompositeToBitmap(JNIEnv* env, jobject obj,
                                            gfx::Rect(bitmap.size()));
 }
 
+void ContentViewRenderView::SetOverlayVideoMode(
+    JNIEnv* env, jobject obj, bool enabled) {
+  compositor_->SetHasTransparentBackground(enabled);
+  Java_ContentViewRenderView_requestRender(env, obj);
+}
+
 void ContentViewRenderView::ScheduleComposite() {
   JNIEnv* env = base::android::AttachCurrentThread();
   Java_ContentViewRenderView_requestRender(env, java_obj_.obj());
@@ -110,7 +126,7 @@ void ContentViewRenderView::OnSwapBuffersCompleted() {
 
 void ContentViewRenderView::InitCompositor() {
   if (!compositor_)
-    compositor_.reset(Compositor::Create(this));
+    compositor_.reset(Compositor::Create(this, root_window_));
 }
 
 }  // namespace content

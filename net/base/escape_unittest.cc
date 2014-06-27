@@ -218,6 +218,31 @@ TEST(EscapeTest, UnescapeURLComponent) {
      L"Some%20random text %25%2dOK"},
     {L"Some%20random text %25%2dOK", UnescapeRule::NORMAL,
      L"Some%20random text %25-OK"},
+    {L"Some%20random text %25%E2%80", UnescapeRule::NORMAL,
+     L"Some%20random text %25\xE2\x80"},
+    {L"Some%20random text %25%E2%80OK", UnescapeRule::NORMAL,
+     L"Some%20random text %25\xE2\x80OK"},
+    {L"Some%20random text %25%E2%80%84OK", UnescapeRule::NORMAL,
+     L"Some%20random text %25\xE2\x80\x84OK"},
+
+    // BiDi Control characters should not be unescaped.
+    {L"Some%20random text %25%D8%9COK", UnescapeRule::NORMAL,
+     L"Some%20random text %25%D8%9COK"},
+    {L"Some%20random text %25%E2%80%8EOK", UnescapeRule::NORMAL,
+     L"Some%20random text %25%E2%80%8EOK"},
+    {L"Some%20random text %25%E2%80%8FOK", UnescapeRule::NORMAL,
+     L"Some%20random text %25%E2%80%8FOK"},
+    {L"Some%20random text %25%E2%80%AAOK", UnescapeRule::NORMAL,
+     L"Some%20random text %25%E2%80%AAOK"},
+    {L"Some%20random text %25%E2%80%ABOK", UnescapeRule::NORMAL,
+     L"Some%20random text %25%E2%80%ABOK"},
+    {L"Some%20random text %25%E2%80%AEOK", UnescapeRule::NORMAL,
+     L"Some%20random text %25%E2%80%AEOK"},
+    {L"Some%20random text %25%E2%81%A6OK", UnescapeRule::NORMAL,
+     L"Some%20random text %25%E2%81%A6OK"},
+    {L"Some%20random text %25%E2%81%A9OK", UnescapeRule::NORMAL,
+     L"Some%20random text %25%E2%81%A9OK"},
+
     {L"Some%20random text %25%2dOK", UnescapeRule::SPACES,
      L"Some random text %25-OK"},
     {L"Some%20random text %25%2dOK", UnescapeRule::URL_SPECIAL_CHARS,
@@ -250,28 +275,28 @@ TEST(EscapeTest, UnescapeURLComponent) {
   };
 
   for (size_t i = 0; i < arraysize(unescape_cases); i++) {
-    base::string16 str(WideToUTF16(unescape_cases[i].input));
-    EXPECT_EQ(WideToUTF16(unescape_cases[i].output),
+    base::string16 str(base::WideToUTF16(unescape_cases[i].input));
+    EXPECT_EQ(base::WideToUTF16(unescape_cases[i].output),
               UnescapeURLComponent(str, unescape_cases[i].rules));
   }
 
   // Test the NULL character unescaping (which wouldn't work above since those
   // are just char pointers).
-  base::string16 input(WideToUTF16(L"Null"));
+  base::string16 input(base::WideToUTF16(L"Null"));
   input.push_back(0);  // Also have a NULL in the input.
-  input.append(WideToUTF16(L"%00%39Test"));
+  input.append(base::WideToUTF16(L"%00%39Test"));
 
   // When we're unescaping NULLs
-  base::string16 expected(WideToUTF16(L"Null"));
+  base::string16 expected(base::WideToUTF16(L"Null"));
   expected.push_back(0);
   expected.push_back(0);
-  expected.append(ASCIIToUTF16("9Test"));
+  expected.append(base::ASCIIToUTF16("9Test"));
   EXPECT_EQ(expected, UnescapeURLComponent(input, UnescapeRule::CONTROL_CHARS));
 
   // When we're not unescaping NULLs.
-  expected = WideToUTF16(L"Null");
+  expected = base::WideToUTF16(L"Null");
   expected.push_back(0);
-  expected.append(WideToUTF16(L"%009Test"));
+  expected.append(base::WideToUTF16(L"%009Test"));
   EXPECT_EQ(expected, UnescapeURLComponent(input, UnescapeRule::NORMAL));
 }
 
@@ -331,7 +356,7 @@ TEST(EscapeTest, UnescapeAndDecodeUTF8URLComponent) {
     // TODO: Need to test unescape_spaces and unescape_percent.
     base::string16 decoded = UnescapeAndDecodeUTF8URLComponent(
         unescape_cases[i].input, UnescapeRule::NORMAL, NULL);
-    EXPECT_EQ(WideToUTF16(unescape_cases[i].decoded), decoded);
+    EXPECT_EQ(base::WideToUTF16(unescape_cases[i].decoded), decoded);
   }
 }
 
@@ -387,8 +412,8 @@ TEST(EscapeTest, UnescapeForHTML) {
     { "&amp; &", "& &" },
   };
   for (size_t i = 0; i < arraysize(tests); ++i) {
-    base::string16 result = UnescapeForHTML(ASCIIToUTF16(tests[i].input));
-    EXPECT_EQ(ASCIIToUTF16(tests[i].expected_output), result);
+    base::string16 result = UnescapeForHTML(base::ASCIIToUTF16(tests[i].input));
+    EXPECT_EQ(base::ASCIIToUTF16(tests[i].expected_output), result);
   }
 }
 

@@ -18,19 +18,19 @@
 #include "base/version.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/image_loader.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/i18n/default_locale_handler.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_file_util.h"
-#include "chrome/common/extensions/extension_set.h"
 #include "chrome/common/extensions/manifest_handlers/content_scripts_handler.h"
 #include "chrome/common/extensions/message_bundle.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_process_host.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/extension_resource.h"
+#include "extensions/common/extension_set.h"
 #include "ui/base/resource/resource_bundle.h"
 
 using content::BrowserThread;
@@ -51,7 +51,7 @@ static bool GetDeclarationValue(const base::StringPiece& line,
   if (temp.empty() || !IsWhitespace(temp[0]))
     return false;
 
-  TrimWhitespaceASCII(temp, TRIM_ALL, value);
+  base::TrimWhitespaceASCII(temp, base::TRIM_ALL, value);
   return true;
 }
 
@@ -221,9 +221,9 @@ static bool LoadScriptContent(UserScript::File* script_file,
   }
 
   // Remove BOM from the content.
-  std::string::size_type index = content.find(kUtf8ByteOrderMark);
+  std::string::size_type index = content.find(base::kUtf8ByteOrderMark);
   if (index == 0) {
-    script_file->set_content(content.substr(strlen(kUtf8ByteOrderMark)));
+    script_file->set_content(content.substr(strlen(base::kUtf8ByteOrderMark)));
   } else {
     script_file->set_content(content);
   }
@@ -285,15 +285,26 @@ static base::SharedMemory* Serialize(const UserScriptList& scripts) {
   }
 
   // Create the shared memory object.
-  scoped_ptr<base::SharedMemory> shared_memory(new base::SharedMemory());
+  base::SharedMemory shared_memory;
 
-  if (!shared_memory->CreateAndMapAnonymous(pickle.size()))
+  base::SharedMemoryCreateOptions options;
+  options.size = pickle.size();
+  options.share_read_only = true;
+  if (!shared_memory.Create(options))
+    return NULL;
+
+  if (!shared_memory.Map(pickle.size()))
     return NULL;
 
   // Copy the pickle to shared memory.
-  memcpy(shared_memory->memory(), pickle.data(), pickle.size());
+  memcpy(shared_memory.memory(), pickle.data(), pickle.size());
 
-  return shared_memory.release();
+  base::SharedMemoryHandle readonly_handle;
+  if (!shared_memory.ShareReadOnlyToProcess(base::GetCurrentProcessHandle(),
+                                            &readonly_handle))
+    return NULL;
+
+  return new base::SharedMemory(readonly_handle, /*read_only=*/true);
 }
 
 // This method will be called on the file thread.
@@ -319,7 +330,7 @@ UserScriptMaster::UserScriptMaster(Profile* profile)
                  content::Source<Profile>(profile_));
   registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_LOADED,
                  content::Source<Profile>(profile_));
-  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED,
+  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
                  content::Source<Profile>(profile_));
   registrar_.Add(this, content::NOTIFICATION_RENDERER_PROCESS_CREATED,
                  content::NotificationService::AllBrowserContextsAndSources());
@@ -374,9 +385,8 @@ void UserScriptMaster::Observe(int type,
       extensions_info_[extension->id()] =
           ExtensionSet::ExtensionPathAndDefaultLocale(
               extension->path(), LocaleInfo::GetDefaultLocale(extension));
-      bool incognito_enabled = extension_util::IsIncognitoEnabled(
-          extension->id(),
-          extensions::ExtensionSystem::Get(profile_)->extension_service());
+      bool incognito_enabled =
+          util::IsIncognitoEnabled(extension->id(), profile_);
       const UserScriptList& scripts =
           ContentScriptsInfo::GetContentScripts(extension);
       for (UserScriptList::const_iterator iter = scripts.begin();
@@ -388,7 +398,7 @@ void UserScriptMaster::Observe(int type,
         should_start_load = true;
       break;
     }
-    case chrome::NOTIFICATION_EXTENSION_UNLOADED: {
+    case chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED: {
       // Remove any content scripts.
       const Extension* extension =
           content::Details<UnloadedExtensionInfo>(details)->extension;

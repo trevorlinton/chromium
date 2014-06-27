@@ -12,36 +12,21 @@ class WaitAction(page_action.PageAction):
   def __init__(self, attributes=None):
     self.timeout = 60
     super(WaitAction, self).__init__(attributes)
+    self._SetTimelineMarkerBaseName('WaitAction::RunAction')
 
-  def RunsPreviousAction(self):
+  def _RunsPreviousAction(self):
     return (getattr(self, 'condition', None) == 'navigate' or
             getattr(self, 'condition', None) == 'href_change')
 
-  def RunAction(self, page, tab, previous_action):
+  def RunAction(self, page, tab):
+    assert not self._RunsPreviousAction(), \
+        ('"navigate" and "href_change" support for wait is deprecated, use '
+         'wait_until instead')
     tab.ExecuteJavaScript(
-        'console.time("' + self.GetTimelineMarkerLabel() + '")')
+        'console.time("' + self._GetUniqueTimelineMarkerName() + '")')
 
     if hasattr(self, 'seconds'):
       time.sleep(self.seconds)
-
-    elif getattr(self, 'condition', None) == 'navigate':
-      if not previous_action:
-        raise page_action.PageActionFailed('You need to perform an action '
-                                           'before waiting for navigate.')
-      previous_action.WillRunAction(page, tab)
-      action_to_perform = lambda: previous_action.RunAction(page, tab, None)
-      tab.PerformActionAndWaitForNavigate(action_to_perform, self.timeout)
-
-    elif getattr(self, 'condition', None) == 'href_change':
-      if not previous_action:
-        raise page_action.PageActionFailed('You need to perform an action '
-                                           'before waiting for a href change.')
-      previous_action.WillRunAction(page, tab)
-      old_url = tab.EvaluateJavaScript('document.location.href')
-      previous_action.RunAction(page, tab, None)
-      tab.WaitForJavaScriptExpression(
-          'document.location.href != "%s"' % old_url, self.timeout)
-
     elif getattr(self, 'condition', None) == 'element':
       if hasattr(self, 'text'):
         callback_code = 'function(element) { return element != null; }'
@@ -69,7 +54,4 @@ class WaitAction(page_action.PageAction):
       raise page_action.PageActionFailed('No wait condition found')
 
     tab.ExecuteJavaScript(
-        'console.timeEnd("' + self.GetTimelineMarkerLabel() + '")')
-
-  def GetTimelineMarkerLabel(self):
-    return 'WaitAction::RunAction'
+        'console.timeEnd("' + self._GetUniqueTimelineMarkerName() + '")')

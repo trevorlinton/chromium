@@ -8,6 +8,7 @@
 #include "base/threading/sequenced_worker_pool.h"
 #include "chrome/browser/chromeos/extensions/wallpaper_function_base.h"
 #include "chrome/common/extensions/api/wallpaper.h"
+#include "net/url_request/url_request_status.h"
 
 // Implementation of chrome.wallpaper.setWallpaper API.
 // After this API being called, a jpeg encoded wallpaper will be saved to
@@ -41,13 +42,16 @@ class WallpaperSetWallpaperFunction : public WallpaperFunctionBase {
   // Thumbnail is ready. Calls api function javascript callback.
   void ThumbnailGenerated(base::RefCountedBytes* data);
 
-  scoped_ptr<extensions::api::wallpaper::SetWallpaper::Params> params;
+  // Called by OnURLFetchComplete().
+  void OnWallpaperFetched(bool success, const std::string& response);
+
+  scoped_ptr<extensions::api::wallpaper::SetWallpaper::Params> params_;
 
   // Unique file name of the custom wallpaper.
   std::string file_name_;
 
-  // Email address of logged in user.
-  std::string email_;
+  // User id of the user who initiate this API call.
+  std::string user_id_;
 
   // User id hash of the logged in user.
   std::string user_id_hash_;

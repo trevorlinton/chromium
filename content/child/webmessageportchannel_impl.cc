@@ -12,10 +12,10 @@
 #include "third_party/WebKit/public/platform/WebMessagePortChannelClient.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 
-using WebKit::WebMessagePortChannel;
-using WebKit::WebMessagePortChannelArray;
-using WebKit::WebMessagePortChannelClient;
-using WebKit::WebString;
+using blink::WebMessagePortChannel;
+using blink::WebMessagePortChannelArray;
+using blink::WebMessagePortChannelClient;
+using blink::WebString;
 
 namespace content {
 
@@ -56,7 +56,26 @@ WebMessagePortChannelImpl::~WebMessagePortChannelImpl() {
     Send(new MessagePortHostMsg_DestroyMessagePort(message_port_id_));
 
   if (route_id_ != MSG_ROUTING_NONE)
-    ChildThread::current()->RemoveRoute(route_id_);
+    ChildThread::current()->GetRouter()->RemoveRoute(route_id_);
+}
+
+// static
+std::vector<int> WebMessagePortChannelImpl::ExtractMessagePortIDs(
+    WebMessagePortChannelArray* channels) {
+  std::vector<int> message_port_ids;
+  if (channels) {
+    message_port_ids.resize(channels->size());
+    // Extract the port IDs from the source array, then free it.
+    for (size_t i = 0; i < channels->size(); ++i) {
+      WebMessagePortChannelImpl* webchannel =
+          static_cast<WebMessagePortChannelImpl*>((*channels)[i]);
+      message_port_ids[i] = webchannel->message_port_id();
+      webchannel->QueueMessages();
+      DCHECK(message_port_ids[i] != MSG_ROUTING_NONE);
+    }
+    delete channels;
+  }
+  return message_port_ids;
 }
 
 void WebMessagePortChannelImpl::setClient(WebMessagePortChannelClient* client) {
@@ -89,25 +108,17 @@ void WebMessagePortChannelImpl::postMessage(
     child_thread_loop_->PostTask(
         FROM_HERE,
         base::Bind(
-            &WebMessagePortChannelImpl::postMessage, this, message, channels));
-    return;
+            &WebMessagePortChannelImpl::PostMessage, this, message, channels));
+  } else {
+    PostMessage(message, channels);
   }
+}
 
-  std::vector<int> message_port_ids(channels ? channels->size() : 0);
-  if (channels) {
-    // Extract the port IDs from the source array, then free it.
-    for (size_t i = 0; i < channels->size(); ++i) {
-      WebMessagePortChannelImpl* webchannel =
-          static_cast<WebMessagePortChannelImpl*>((*channels)[i]);
-      message_port_ids[i] = webchannel->message_port_id();
-      webchannel->QueueMessages();
-      DCHECK(message_port_ids[i] != MSG_ROUTING_NONE);
-    }
-    delete channels;
-  }
-
+void WebMessagePortChannelImpl::PostMessage(
+    const base::string16& message,
+    WebMessagePortChannelArray* channels) {
   IPC::Message* msg = new MessagePortHostMsg_PostMessage(
-      message_port_id_, message, message_port_ids);
+      message_port_id_, message, ExtractMessagePortIDs(channels));
   Send(msg);
 }
 
@@ -144,7 +155,7 @@ void WebMessagePortChannelImpl::Init() {
         &route_id_, &message_port_id_));
   }
 
-  ChildThread::current()->AddRoute(route_id_, this);
+  ChildThread::current()->GetRouter()->AddRoute(route_id_, this);
 }
 
 void WebMessagePortChannelImpl::Entangle(
@@ -188,7 +199,7 @@ void WebMessagePortChannelImpl::Send(IPC::Message* message) {
     return;
   }
 
-  ChildThread::current()->Send(message);
+  ChildThread::current()->GetRouter()->Send(message);
 }
 
 bool WebMessagePortChannelImpl::OnMessageReceived(const IPC::Message& message) {
@@ -202,7 +213,7 @@ bool WebMessagePortChannelImpl::OnMessageReceived(const IPC::Message& message) {
 }
 
 void WebMessagePortChannelImpl::OnMessage(
-    const string16& message,
+    const base::string16& message,
     const std::vector<int>& sent_message_port_ids,
     const std::vector<int>& new_routing_ids) {
   base::AutoLock auto_lock(lock_);
@@ -230,7 +241,7 @@ void WebMessagePortChannelImpl::OnMessagesQueued() {
     base::AutoLock auto_lock(lock_);
     queued_messages.reserve(message_queue_.size());
     while (!message_queue_.empty()) {
-      string16 message = message_queue_.front().message;
+      base::string16 message = message_queue_.front().message;
       const std::vector<WebMessagePortChannelImpl*>& channel_array =
           message_queue_.front().ports;
       std::vector<int> port_ids(channel_array.size());

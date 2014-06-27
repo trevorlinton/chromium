@@ -14,6 +14,7 @@
 #include "cc/base/math_util.h"
 #include "cc/output/copy_output_request.h"
 #include "cc/quads/draw_quad.h"
+#include "cc/resources/raster_worker_pool.h"
 #include "ui/gfx/rect_conversions.h"
 #include "ui/gfx/transform.h"
 
@@ -81,9 +82,9 @@ void DirectRenderer::QuadRectTransform(gfx::Transform* quad_rect_transform,
 }
 
 void DirectRenderer::InitializeViewport(DrawingFrame* frame,
-                                        gfx::Rect draw_rect,
-                                        gfx::Rect viewport_rect,
-                                        gfx::Size surface_size) {
+                                        const gfx::Rect& draw_rect,
+                                        const gfx::Rect& viewport_rect,
+                                        const gfx::Size& surface_size) {
   bool flip_y = FlippedFramebuffer();
 
   DCHECK_GE(viewport_rect.x(), 0);
@@ -132,14 +133,18 @@ DirectRenderer::DirectRenderer(RendererClient* client,
                                ResourceProvider* resource_provider)
     : Renderer(client, settings),
       output_surface_(output_surface),
-      resource_provider_(resource_provider) {}
+      resource_provider_(resource_provider),
+      overlay_processor_(
+          new OverlayProcessor(output_surface, resource_provider)) {
+  overlay_processor_->Initialize();
+}
 
 DirectRenderer::~DirectRenderer() {}
 
 bool DirectRenderer::CanReadPixels() const { return true; }
 
 void DirectRenderer::SetEnlargePassTextureAmountForTesting(
-    gfx::Vector2d amount) {
+    const gfx::Vector2d& amount) {
   enlarge_pass_texture_amount_ = amount;
 }
 
@@ -185,7 +190,7 @@ void DirectRenderer::DecideRenderPassAllocationsForFrame(
   for (size_t i = 0; i < render_passes_in_draw_order.size(); ++i) {
     if (!render_pass_textures_.contains(render_passes_in_draw_order[i]->id)) {
       scoped_ptr<ScopedResource> texture =
-          ScopedResource::create(resource_provider_);
+          ScopedResource::Create(resource_provider_);
       render_pass_textures_.set(render_passes_in_draw_order[i]->id,
                               texture.Pass());
     }
@@ -195,7 +200,8 @@ void DirectRenderer::DecideRenderPassAllocationsForFrame(
 void DirectRenderer::DrawFrame(RenderPassList* render_passes_in_draw_order,
                                ContextProvider* offscreen_context_provider,
                                float device_scale_factor,
-                               bool allow_partial_swap,
+                               const gfx::Rect& device_viewport_rect,
+                               const gfx::Rect& device_clip_rect,
                                bool disable_picture_quad_image_filtering) {
   TRACE_EVENT0("cc", "DirectRenderer::DrawFrame");
   UMA_HISTOGRAM_COUNTS("Renderer4.renderPassCount",
@@ -206,27 +212,30 @@ void DirectRenderer::DrawFrame(RenderPassList* render_passes_in_draw_order,
 
   DrawingFrame frame;
   frame.root_render_pass = root_render_pass;
-  frame.root_damage_rect =
-      Capabilities().using_partial_swap && allow_partial_swap
-          ? root_render_pass->damage_rect
-          : root_render_pass->output_rect;
-  frame.root_damage_rect.Intersect(gfx::Rect(client_->DeviceViewport().size()));
+  frame.root_damage_rect = Capabilities().using_partial_swap
+                               ? root_render_pass->damage_rect
+                               : root_render_pass->output_rect;
+  frame.root_damage_rect.Intersect(gfx::Rect(device_viewport_rect.size()));
+  frame.device_viewport_rect = device_viewport_rect;
+  frame.device_clip_rect = device_clip_rect;
   frame.offscreen_context_provider = offscreen_context_provider;
   frame.disable_picture_quad_image_filtering =
       disable_picture_quad_image_filtering;
+
+  overlay_processor_->ProcessForOverlays(render_passes_in_draw_order,
+                                         &frame.overlay_list);
 
   EnsureBackbuffer();
 
   // Only reshape when we know we are going to draw. Otherwise, the reshape
   // can leave the window at the wrong size if we never draw and the proper
   // viewport size is never set.
-  output_surface_->Reshape(client_->DeviceViewport().size(),
-                           device_scale_factor);
+  output_surface_->Reshape(device_viewport_rect.size(), device_scale_factor);
 
   BeginDrawingFrame(&frame);
   for (size_t i = 0; i < render_passes_in_draw_order->size(); ++i) {
     RenderPass* pass = render_passes_in_draw_order->at(i);
-    DrawRenderPass(&frame, pass, allow_partial_swap);
+    DrawRenderPass(&frame, pass);
 
     for (ScopedPtrVector<CopyOutputRequest>::iterator it =
              pass->copy_requests.begin();
@@ -249,7 +258,8 @@ gfx::RectF DirectRenderer::ComputeScissorRectForRenderPass(
     const DrawingFrame* frame) {
   gfx::RectF render_pass_scissor = frame->current_render_pass->output_rect;
 
-  if (frame->root_damage_rect == frame->root_render_pass->output_rect)
+  if (frame->root_damage_rect == frame->root_render_pass->output_rect ||
+      !frame->current_render_pass->copy_requests.empty())
     return render_pass_scissor;
 
   gfx::Transform inverse_transform(gfx::Transform::kSkipInitialization);
@@ -269,11 +279,12 @@ bool DirectRenderer::NeedDeviceClip(const DrawingFrame* frame) const {
   if (frame->current_render_pass != frame->root_render_pass)
     return false;
 
-  return !client_->DeviceClip().Contains(client_->DeviceViewport());
+  return !frame->device_clip_rect.Contains(frame->device_viewport_rect);
 }
 
-gfx::Rect DirectRenderer::DeviceClipRect(const DrawingFrame* frame) const {
-  gfx::Rect device_clip_rect = client_->DeviceClip();
+gfx::Rect DirectRenderer::DeviceClipRectInWindowSpace(const DrawingFrame* frame)
+    const {
+  gfx::Rect device_clip_rect = frame->device_clip_rect;
   if (FlippedFramebuffer())
     device_clip_rect.set_y(current_surface_size_.height() -
                            device_clip_rect.bottom());
@@ -287,7 +298,7 @@ void DirectRenderer::SetScissorStateForQuad(const DrawingFrame* frame,
     return;
   }
   if (NeedDeviceClip(frame)) {
-    SetScissorTestRect(DeviceClipRect(frame));
+    SetScissorTestRect(DeviceClipRectInWindowSpace(frame));
     return;
   }
 
@@ -313,29 +324,28 @@ void DirectRenderer::SetScissorStateForQuadWithRenderPassScissor(
   SetScissorTestRectInDrawSpace(frame, quad_scissor_rect);
 }
 
-void DirectRenderer::SetScissorTestRectInDrawSpace(const DrawingFrame* frame,
-                                                   gfx::RectF draw_space_rect) {
+void DirectRenderer::SetScissorTestRectInDrawSpace(
+    const DrawingFrame* frame,
+    const gfx::RectF& draw_space_rect) {
   gfx::Rect window_space_rect = MoveFromDrawToWindowSpace(draw_space_rect);
   if (NeedDeviceClip(frame))
-    window_space_rect.Intersect(DeviceClipRect(frame));
+    window_space_rect.Intersect(DeviceClipRectInWindowSpace(frame));
   SetScissorTestRect(window_space_rect);
 }
 
 void DirectRenderer::FinishDrawingQuadList() {}
 
 void DirectRenderer::DrawRenderPass(DrawingFrame* frame,
-                                    const RenderPass* render_pass,
-                                    bool allow_partial_swap) {
+                                    const RenderPass* render_pass) {
   TRACE_EVENT0("cc", "DirectRenderer::DrawRenderPass");
   if (!UseRenderPass(frame, render_pass))
     return;
 
-  bool using_scissor_as_optimization =
-      Capabilities().using_partial_swap && allow_partial_swap;
+  bool using_scissor_as_optimization = Capabilities().using_partial_swap;
   gfx::RectF render_pass_scissor;
   bool draw_rect_covers_full_surface = true;
   if (frame->current_render_pass == frame->root_render_pass &&
-      !client_->DeviceViewport().Contains(
+      !frame->device_viewport_rect.Contains(
            gfx::Rect(output_surface_->SurfaceSize())))
     draw_rect_covers_full_surface = false;
 
@@ -349,7 +359,7 @@ void DirectRenderer::DrawRenderPass(DrawingFrame* frame,
   if (frame->current_render_pass != frame->root_render_pass ||
       settings_->should_clear_root_render_pass) {
     if (NeedDeviceClip(frame)) {
-      SetScissorTestRect(DeviceClipRect(frame));
+      SetScissorTestRect(DeviceClipRectInWindowSpace(frame));
       draw_rect_covers_full_surface = false;
     } else if (!using_scissor_as_optimization) {
       EnsureScissorTestDisabled();
@@ -392,13 +402,10 @@ bool DirectRenderer::UseRenderPass(DrawingFrame* frame,
     BindFramebufferToOutputSurface(frame);
     InitializeViewport(frame,
                        render_pass->output_rect,
-                       client_->DeviceViewport(),
+                       frame->device_viewport_rect,
                        output_surface_->SurfaceSize());
     return true;
   }
-
-  if (!resource_provider_)
-    return false;
 
   ScopedResource* texture = render_pass_textures_.get(render_pass->id);
   DCHECK(texture);
@@ -406,12 +413,41 @@ bool DirectRenderer::UseRenderPass(DrawingFrame* frame,
   gfx::Size size = RenderPassTextureSize(render_pass);
   size.Enlarge(enlarge_pass_texture_amount_.x(),
                enlarge_pass_texture_amount_.y());
-  if (!texture->id() &&
-      !texture->Allocate(
-           size, ResourceProvider::TextureUsageFramebuffer, RGBA_8888))
-    return false;
+  if (!texture->id())
+    texture->Allocate(
+        size, ResourceProvider::TextureUsageFramebuffer, RGBA_8888);
+  DCHECK(texture->id());
 
   return BindFramebufferToTexture(frame, texture, render_pass->output_rect);
+}
+
+void DirectRenderer::RunOnDemandRasterTask(
+    internal::Task* on_demand_raster_task) {
+  internal::TaskGraphRunner* task_graph_runner =
+      RasterWorkerPool::GetTaskGraphRunner();
+  DCHECK(task_graph_runner);
+
+  // Make sure we have a unique task namespace token.
+  if (!on_demand_task_namespace_.IsValid())
+    on_demand_task_namespace_ = task_graph_runner->GetNamespaceToken();
+
+  // Construct a task graph that contains this single raster task.
+  internal::TaskGraph graph;
+  graph.nodes.push_back(
+      internal::TaskGraph::Node(on_demand_raster_task,
+                                RasterWorkerPool::kOnDemandRasterTaskPriority,
+                                0u));
+
+  // Schedule task and wait for task graph runner to finish running it.
+  task_graph_runner->ScheduleTasks(on_demand_task_namespace_, &graph);
+  task_graph_runner->WaitForTasksToFinishRunning(on_demand_task_namespace_);
+
+  // Collect task now that it has finished running.
+  internal::Task::Vector completed_tasks;
+  task_graph_runner->CollectCompletedTasks(on_demand_task_namespace_,
+                                           &completed_tasks);
+  DCHECK_EQ(1u, completed_tasks.size());
+  DCHECK_EQ(completed_tasks[0], on_demand_raster_task);
 }
 
 bool DirectRenderer::HasAllocatedResourcesForTesting(RenderPass::Id id)

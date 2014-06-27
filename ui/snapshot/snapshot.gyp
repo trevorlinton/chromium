@@ -13,9 +13,9 @@
       'dependencies': [
         '../../skia/skia.gyp:skia',
         '../../base/base.gyp:base',
-        '../events/events.gyp:events',
+        '../base/ui_base.gyp:ui_base',
         '../gfx/gfx.gyp:gfx',
-        '../ui.gyp:ui',
+        '../gfx/gfx.gyp:gfx_geometry',
       ],
       'defines': [
         'SNAPSHOT_IMPLEMENTATION',
@@ -37,6 +37,7 @@
       'conditions': [
         ['use_aura==1', {
           'dependencies': [
+            '../../cc/cc.gyp:cc',
             '../aura/aura.gyp:aura',
             '../compositor/compositor.gyp:compositor',
           ],
@@ -51,9 +52,9 @@
         '../../base/base.gyp:base',
         '../../base/base.gyp:test_support_base',
         '../../testing/gtest.gyp:gtest',
-        '../events/events.gyp:events',
+        '../base/ui_base.gyp:ui_base',
         '../gfx/gfx.gyp:gfx',
-        '../ui.gyp:ui',
+        '../gfx/gfx.gyp:gfx_geometry',
         'snapshot'
       ],
       'sources': [
@@ -71,7 +72,8 @@
           ],
         }],
         # See http://crbug.com/162998#c4 for why this is needed.
-        ['OS=="linux" and linux_use_tcmalloc==1', {
+        # TODO(dmikurube): Kill linux_use_tcmalloc. http://crbug.com/345554
+        ['OS=="linux" and ((use_allocator!="none" and use_allocator!="see_use_tcmalloc") or (use_allocator=="see_use_tcmalloc" and linux_use_tcmalloc==1))', {
           'dependencies': [
             '../../base/allocator/allocator.gyp:allocator',
           ],

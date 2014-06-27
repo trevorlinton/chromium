@@ -24,8 +24,8 @@
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/validation.h"
 #include "components/autofill/core/common/form_field_data.h"
+#include "grit/component_scaled_resources.h"
 #include "grit/component_strings.h"
-#include "grit/webkit_resources.h"
 #include "third_party/icu/source/common/unicode/uloc.h"
 #include "third_party/icu/source/i18n/unicode/dtfmtsym.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -34,7 +34,7 @@ namespace autofill {
 
 namespace {
 
-const char16 kCreditCardObfuscationSymbol = '*';
+const base::char16 kCreditCardObfuscationSymbol = '*';
 
 // This is the maximum obfuscated symbols displayed.
 // It is introduced to avoid rare cases where the credit card number is
@@ -133,9 +133,9 @@ CreditCard::~CreditCard() {}
 
 // static
 const base::string16 CreditCard::StripSeparators(const base::string16& number) {
-  const char16 kSeparators[] = {'-', ' ', '\0'};
+  const base::char16 kSeparators[] = {'-', ' ', '\0'};
   base::string16 stripped;
-  RemoveChars(number, kSeparators, &stripped);
+  base::RemoveChars(number, kSeparators, &stripped);
   return stripped;
 }
 
@@ -295,7 +295,7 @@ base::string16 CreditCard::GetRawInfo(ServerFieldType type) const {
       base::string16 month = ExpirationMonthAsString();
       base::string16 year = Expiration2DigitYearAsString();
       if (!month.empty() && !year.empty())
-        return month + ASCIIToUTF16("/") + year;
+        return month + base::ASCIIToUTF16("/") + year;
       return base::string16();
     }
 
@@ -303,7 +303,7 @@ base::string16 CreditCard::GetRawInfo(ServerFieldType type) const {
       base::string16 month = ExpirationMonthAsString();
       base::string16 year = Expiration4DigitYearAsString();
       if (!month.empty() && !year.empty())
-        return month + ASCIIToUTF16("/") + year;
+        return month + base::ASCIIToUTF16("/") + year;
       return base::string16();
     }
 
@@ -423,7 +423,7 @@ const base::string16 CreditCard::Label() const {
 
   // TODO(georgey): Internationalize date.
   base::string16 formatted_date(ExpirationMonthAsString());
-  formatted_date.append(ASCIIToUTF16("/"));
+  formatted_date.append(base::ASCIIToUTF16("/"));
   formatted_date.append(Expiration4DigitYearAsString());
 
   label = l10n_util::GetStringFUTF16(IDS_CREDIT_CARD_NUMBER_PREVIEW_FORMAT,
@@ -434,8 +434,10 @@ const base::string16 CreditCard::Label() const {
 
 void CreditCard::SetInfoForMonthInputType(const base::string16& value) {
   // Check if |text| is "yyyy-mm" format first, and check normal month format.
-  if (!autofill::MatchesPattern(value, UTF8ToUTF16("^[0-9]{4}-[0-9]{1,2}$")))
+  if (!autofill::MatchesPattern(value,
+                                base::UTF8ToUTF16("^[0-9]{4}-[0-9]{1,2}$"))) {
     return;
+  }
 
   std::vector<base::string16> year_month;
   base::SplitString(value, L'-', &year_month);
@@ -487,7 +489,7 @@ base::string16 CreditCard::TypeAndLastFourDigits() const {
     return type;
 
   // TODO(estade): i18n.
-  return type + ASCIIToUTF16(" - ") + digits;
+  return type + base::ASCIIToUTF16(" - ") + digits;
 }
 
 void CreditCard::operator=(const CreditCard& credit_card) {
@@ -600,7 +602,7 @@ base::string16 CreditCard::ExpirationMonthAsString() const {
   if (expiration_month_ >= 10)
     return month;
 
-  base::string16 zero = ASCIIToUTF16("0");
+  base::string16 zero = base::ASCIIToUTF16("0");
   zero.append(month);
   return zero;
 }
@@ -660,21 +662,22 @@ void CreditCard::SetExpirationYear(int expiration_year) {
 // So we can compare CreditCards with EXPECT_EQ().
 std::ostream& operator<<(std::ostream& os, const CreditCard& credit_card) {
   return os
-      << UTF16ToUTF8(credit_card.Label())
+      << base::UTF16ToUTF8(credit_card.Label())
       << " "
       << credit_card.guid()
       << " "
       << credit_card.origin()
       << " "
-      << UTF16ToUTF8(credit_card.GetRawInfo(CREDIT_CARD_NAME))
+      << base::UTF16ToUTF8(credit_card.GetRawInfo(CREDIT_CARD_NAME))
       << " "
-      << UTF16ToUTF8(credit_card.GetRawInfo(CREDIT_CARD_TYPE))
+      << base::UTF16ToUTF8(credit_card.GetRawInfo(CREDIT_CARD_TYPE))
       << " "
-      << UTF16ToUTF8(credit_card.GetRawInfo(CREDIT_CARD_NUMBER))
+      << base::UTF16ToUTF8(credit_card.GetRawInfo(CREDIT_CARD_NUMBER))
       << " "
-      << UTF16ToUTF8(credit_card.GetRawInfo(CREDIT_CARD_EXP_MONTH))
+      << base::UTF16ToUTF8(credit_card.GetRawInfo(CREDIT_CARD_EXP_MONTH))
       << " "
-      << UTF16ToUTF8(credit_card.GetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR));
+      << base::UTF16ToUTF8(
+             credit_card.GetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR));
 }
 
 // These values must match the values in WebKitPlatformSupportImpl in

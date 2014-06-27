@@ -10,8 +10,8 @@
 #include "ash/wm/window_properties.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "content/public/browser/notification_service.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/message_center/message_center.h"
 
 LoginStateNotificationBlockerChromeOS::LoginStateNotificationBlockerChromeOS(
@@ -26,6 +26,7 @@ LoginStateNotificationBlockerChromeOS::LoginStateNotificationBlockerChromeOS(
   // LoginState may not exist in some tests.
   if (chromeos::LoginState::IsInitialized())
     chromeos::LoginState::Get()->AddObserver(this);
+  chromeos::UserAddingScreen::Get()->AddObserver(this);
 }
 
 LoginStateNotificationBlockerChromeOS::
@@ -34,8 +35,11 @@ LoginStateNotificationBlockerChromeOS::
   // OnAppTerminating().
   if (chromeos::LoginState::IsInitialized())
     chromeos::LoginState::Get()->RemoveObserver(this);
-  if (observing_ && ash::Shell::HasInstance())
-    ash::Shell::GetInstance()->RemoveShellObserver(this);
+  if (observing_) {
+    if (ash::Shell::HasInstance())
+      ash::Shell::GetInstance()->RemoveShellObserver(this);
+    chromeos::UserAddingScreen::Get()->RemoveObserver(this);
+  }
 }
 
 bool LoginStateNotificationBlockerChromeOS::ShouldShowNotificationAsPopup(
@@ -46,6 +50,9 @@ bool LoginStateNotificationBlockerChromeOS::ShouldShowNotificationAsPopup(
   if (locked_)
     return false;
 
+  if (chromeos::UserAddingScreen::Get()->IsRunning())
+    return false;
+
   if (chromeos::LoginState::IsInitialized())
     return chromeos::LoginState::Get()->IsUserLoggedIn();
 
@@ -54,16 +61,23 @@ bool LoginStateNotificationBlockerChromeOS::ShouldShowNotificationAsPopup(
 
 void LoginStateNotificationBlockerChromeOS::OnLockStateChanged(bool locked) {
   locked_ = locked;
-  FOR_EACH_OBSERVER(
-      NotificationBlocker::Observer, observers(), OnBlockingStateChanged());
+  NotifyBlockingStateChanged();
 }
 
 void LoginStateNotificationBlockerChromeOS::OnAppTerminating() {
   ash::Shell::GetInstance()->RemoveShellObserver(this);
+  chromeos::UserAddingScreen::Get()->RemoveObserver(this);
   observing_ = false;
 }
 
 void LoginStateNotificationBlockerChromeOS::LoggedInStateChanged() {
-  FOR_EACH_OBSERVER(
-      NotificationBlocker::Observer, observers(), OnBlockingStateChanged());
+  NotifyBlockingStateChanged();
+}
+
+void LoginStateNotificationBlockerChromeOS::OnUserAddingStarted() {
+  NotifyBlockingStateChanged();
+}
+
+void LoginStateNotificationBlockerChromeOS::OnUserAddingFinished() {
+  NotifyBlockingStateChanged();
 }

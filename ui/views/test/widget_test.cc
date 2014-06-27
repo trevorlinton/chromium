@@ -10,12 +10,11 @@
 namespace views {
 namespace test {
 
-// A widget that assumes mouse capture always works. It won't on Aura in
-// testing, so we mock it.
-#if defined(USE_AURA)
+// A widget that assumes mouse capture always works. It won't in testing, so we
+// mock it.
 NativeWidgetCapture::NativeWidgetCapture(
     internal::NativeWidgetDelegate* delegate)
-    : NativeWidgetPlatform(delegate),
+    : NativeWidgetAura(delegate),
       mouse_capture_(false) {}
 NativeWidgetCapture::~NativeWidgetCapture() {}
 
@@ -32,14 +31,13 @@ void NativeWidgetCapture::ReleaseCapture() {
 bool NativeWidgetCapture::HasCapture() const {
   return mouse_capture_;
 }
-#endif
 
 WidgetTest::WidgetTest() {}
 WidgetTest::~WidgetTest() {}
 
 NativeWidget* WidgetTest::CreatePlatformNativeWidget(
     internal::NativeWidgetDelegate* delegate) {
-  return new NativeWidgetPlatformForTest(delegate);
+  return new NativeWidgetCapture(delegate);
 }
 
 Widget* WidgetTest::CreateTopLevelPlatformWidget() {
@@ -71,23 +69,6 @@ Widget* WidgetTest::CreateChildPlatformWidget(
   child->SetContentsView(new View);
   return child;
 }
-
-#if defined(OS_WIN) && !defined(USE_AURA)
-// On Windows, it is possible for us to have a child window that is
-// TYPE_POPUP.
-Widget* WidgetTest::CreateChildPopupPlatformWidget(
-    gfx::NativeView parent_native_view) {
-  Widget* child = new Widget;
-  Widget::InitParams child_params =
-      CreateParams(Widget::InitParams::TYPE_POPUP);
-  child_params.child = true;
-  child_params.native_widget = CreatePlatformNativeWidget(child);
-  child_params.parent = parent_native_view;
-  child->Init(child_params);
-  child->SetContentsView(new View);
-  return child;
-}
-#endif
 
 Widget* WidgetTest::CreateTopLevelNativeWidget() {
   Widget* toplevel = new Widget;

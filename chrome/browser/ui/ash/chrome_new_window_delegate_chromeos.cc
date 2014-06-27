@@ -4,12 +4,13 @@
 
 #include "chrome/browser/ui/ash/chrome_new_window_delegate_chromeos.h"
 
-#include "apps/shell_window_registry.h"
+#include "apps/app_window_registry.h"
 #include "apps/ui/native_app_window.h"
 #include "ash/keyboard_overlay/keyboard_overlay_view.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
 #include "chrome/browser/extensions/api/terminal/terminal_extension_helper.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -19,17 +20,22 @@
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
+#include "extensions/browser/extension_system.h"
 
 ChromeNewWindowDelegateChromeos::ChromeNewWindowDelegateChromeos() {}
 ChromeNewWindowDelegateChromeos::~ChromeNewWindowDelegateChromeos() {}
 
 void ChromeNewWindowDelegateChromeos::OpenFileManager() {
   using file_manager::kFileManagerAppId;
-  Profile* const profile = ProfileManager::GetDefaultProfileOrOffTheRecord();
-  const ExtensionService* const service = profile->GetExtensionService();
-  if (service == NULL ||
-      !service->IsExtensionEnabledForLauncher(kFileManagerAppId))
+  Profile* const profile = ProfileManager::GetActiveUserProfile();
+  const ExtensionService* const service =
+      extensions::ExtensionSystem::Get(profile)->extension_service();
+  if (!service ||
+      !extensions::util::IsAppLaunchableWithoutEnabling(kFileManagerAppId,
+                                                        profile)) {
     return;
+  }
+
   const extensions::Extension* const extension =
       service->GetInstalledExtension(kFileManagerAppId);
   // event_flags = 0 means this invokes the same behavior as the launcher
@@ -41,12 +47,13 @@ void ChromeNewWindowDelegateChromeos::OpenFileManager() {
 }
 
 void ChromeNewWindowDelegateChromeos::OpenCrosh() {
+  Profile* profile = ProfileManager::GetActiveUserProfile();
   GURL crosh_url = extensions::TerminalExtensionHelper::GetCroshExtensionURL(
-      ProfileManager::GetDefaultProfileOrOffTheRecord());
+      profile);
   if (!crosh_url.is_valid())
     return;
   chrome::ScopedTabbedBrowserDisplayer displayer(
-      ProfileManager::GetDefaultProfileOrOffTheRecord(),
+      profile,
       chrome::HOST_DESKTOP_TYPE_ASH);
   Browser* browser = displayer.browser();
   content::WebContents* page = browser->OpenURL(
@@ -62,7 +69,7 @@ void ChromeNewWindowDelegateChromeos::OpenCrosh() {
 
 void ChromeNewWindowDelegateChromeos::ShowKeyboardOverlay() {
   // TODO(mazda): Move the show logic to ash (http://crbug.com/124222).
-  Profile* profile = ProfileManager::GetDefaultProfileOrOffTheRecord();
+  Profile* profile = ProfileManager::GetActiveUserProfile();
   std::string url(chrome::kChromeUIKeyboardOverlayURL);
   ash::KeyboardOverlayView::ShowDialog(profile,
                                        new ChromeWebContentsHandler,

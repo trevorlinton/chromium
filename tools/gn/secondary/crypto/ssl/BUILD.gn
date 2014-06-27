@@ -2,7 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("flags.gni")
+import("//build/config/crypto.gni")
+import("//build/config/linux/pkg_config.gni")
 
 config("ssl_preprocessor_flags") {
   if (use_openssl) {
@@ -12,30 +13,13 @@ config("ssl_preprocessor_flags") {
   }
 }
 
-# Config for system SSL on Linux.
-if (is_linux && use_system_ssl) {
-  pkg_script = "//build/config/linux/pkg-config.py"
-  config("system_ssl_config") {
-    defines = [ "USE_SYSTEM_SSL" ]
-    pkgresult = exec_script(pkg_script, [ "nss" ], "value")
-    include_dirs = pkgresult[0]
-    cflags = pkgresult[1]
-    libs = pkgresult[2]
-    lib_dirs = pkgresult[3]
-  }
-}
-
 # This meta-target will include the SSL library according to the build flags.
 group("metassl") {
   direct_dependent_configs = [ ":ssl_preprocessor_flags" ]
 
   if (use_openssl) {
     assert(is_linux)
-    deps = "//third_party/openssl"
-    use_openssl = false
-  } else if (use_system_ssl) {
-    assert(is_linux)
-    direct_dependent_configs = ":system_ssl_config"
+    deps = [ "//third_party/openssl" ]
   } else {
     deps = [ "//net/third_party/nss:ssl" ]
   }

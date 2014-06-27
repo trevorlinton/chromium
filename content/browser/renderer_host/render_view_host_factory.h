@@ -9,6 +9,7 @@
 #include "content/common/content_export.h"
 
 namespace content {
+class RenderFrameHostDelegate;
 class RenderViewHost;
 class RenderViewHostDelegate;
 class RenderWidgetHostDelegate;

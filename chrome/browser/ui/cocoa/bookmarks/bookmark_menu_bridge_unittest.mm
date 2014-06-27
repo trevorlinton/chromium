@@ -18,6 +18,8 @@
 #include "testing/platform_test.h"
 #include "ui/base/l10n/l10n_util.h"
 
+using base::ASCIIToUTF16;
+
 class TestBookmarkMenuBridge : public BookmarkMenuBridge {
  public:
   TestBookmarkMenuBridge(Profile* profile, NSMenu *menu)
@@ -94,7 +96,7 @@ class BookmarkMenuBridgeTest : public CocoaProfileTest {
 
 TEST_F(BookmarkMenuBridgeTest, TestBookmarkMenuAutoSeparator) {
   BookmarkModel* model = bridge_->GetBookmarkModel();
-  bridge_->Loaded(model, false);
+  bridge_->BookmarkModelLoaded(model, false);
   NSMenu* menu = bridge_->menu_;
   bridge_->UpdateMenu(menu);
   // The bare menu after loading used to have a separator and an
@@ -141,7 +143,7 @@ TEST_F(BookmarkMenuBridgeTest, TestClearBookmarkMenu) {
 // Test invalidation
 TEST_F(BookmarkMenuBridgeTest, TestInvalidation) {
   BookmarkModel* model = bridge_->GetBookmarkModel();
-  bridge_->Loaded(model, false);
+  bridge_->BookmarkModelLoaded(model, false);
 
   EXPECT_FALSE(menu_is_valid());
   bridge_->UpdateMenu(bridge_->menu_);
@@ -168,7 +170,7 @@ TEST_F(BookmarkMenuBridgeTest, TestInvalidation) {
 // Test that AddNodeToMenu() properly adds bookmark nodes as menus,
 // including the recursive case.
 TEST_F(BookmarkMenuBridgeTest, TestAddNodeToMenu) {
-  string16 empty;
+  base::string16 empty;
   NSMenu* menu = bridge_->menu_;
 
   BookmarkModel* model = bridge_->GetBookmarkModel();
@@ -311,7 +313,7 @@ TEST_F(BookmarkMenuBridgeTest, TestAddItemToMenu) {
 
 // Makes sure our internal map of BookmarkNode to NSMenuItem works.
 TEST_F(BookmarkMenuBridgeTest, TestGetMenuItemForNode) {
-  string16 empty;
+  base::string16 empty;
   NSMenu* menu = bridge_->menu_;
 
   BookmarkModel* model = bridge_->GetBookmarkModel();

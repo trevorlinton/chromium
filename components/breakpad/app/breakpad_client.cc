@@ -90,11 +90,6 @@ bool BreakpadClient::GetCrashDumpLocation(base::FilePath* crash_dir) {
   return false;
 }
 
-#if defined(OS_POSIX)
-void BreakpadClient::SetDumpWithoutCrashingFunction(void (*function)()) {
-}
-#endif
-
 size_t BreakpadClient::RegisterCrashKeys() {
   return 0;
 }
@@ -123,5 +118,9 @@ int BreakpadClient::GetAndroidMinidumpDescriptor() {
 void BreakpadClient::InstallAdditionalFilters(BreakpadRef breakpad) {
 }
 #endif
+
+bool BreakpadClient::EnableBreakpadForProcess(const std::string& process_type) {
+  return false;
+}
 
 }  // namespace breakpad

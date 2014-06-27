@@ -4,19 +4,22 @@
 
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
 
 from telemetry.core import exceptions
+from telemetry.core import forwarders
 from telemetry.core import util
 from telemetry.core.backends import adb_commands
-from telemetry.core.backends import android_rndis
 from telemetry.core.backends import browser_backend
 from telemetry.core.backends.chrome import chrome_browser_backend
+from telemetry.core.forwarders import android_forwarder
 
 
 class AndroidBrowserBackendSettings(object):
+
   def __init__(self, adb, activity, cmdline_file, package, pseudo_exec_name,
                supports_tab_control):
     self.adb = adb
@@ -30,8 +33,10 @@ class AndroidBrowserBackendSettings(object):
     raise NotImplementedError()
 
   def RemoveProfile(self):
-    self.adb.RunShellCommand(
-        'su -c rm -r "%s"' % self.profile_dir)
+    files = self.adb.RunShellCommandWithSU('ls "%s"' % self.profile_dir)
+    # Don't delete lib, since it is created by the installer.
+    paths = ['"%s/%s"' % (self.profile_dir, f) for f in files if f != 'lib']
+    self.adb.RunShellCommandWithSU('rm -r %s' % ' '.join(paths))
 
   def PushProfile(self, _):
     logging.critical('Profiles cannot be overriden with current configuration')
@@ -43,18 +48,25 @@ class AndroidBrowserBackendSettings(object):
 
   @property
   def profile_dir(self):
-    raise NotImplementedError()
+    return '/data/data/%s/' % self.package
 
 
 class ChromeBackendSettings(AndroidBrowserBackendSettings):
   # Stores a default Preferences file, re-used to speed up "--page-repeat".
   _default_preferences_file = None
 
+  @staticmethod
+  def _GetCommandLineFile(adb):
+    if adb.IsUserBuild():
+      return '/data/local/tmp/chrome-command-line'
+    else:
+      return '/data/local/chrome-command-line'
+
   def __init__(self, adb, package):
     super(ChromeBackendSettings, self).__init__(
         adb=adb,
         activity='com.google.android.apps.chrome.Main',
-        cmdline_file='/data/local/chrome-command-line',
+        cmdline_file=ChromeBackendSettings._GetCommandLineFile(adb),
         package=package,
         pseudo_exec_name='chrome',
         supports_tab_control=True)
@@ -63,12 +75,31 @@ class ChromeBackendSettings(AndroidBrowserBackendSettings):
     return 'localabstract:chrome_devtools_remote'
 
   def PushProfile(self, new_profile_dir):
-    self.adb.Push(new_profile_dir, self.profile_dir)
+    # Pushing the profile is slow, so we don't want to do it every time.
+    # Avoid this by pushing to a safe location using PushIfNeeded, and
+    # then copying into the correct location on each test run.
 
-  @property
-  def profile_dir(self):
-    return '/data/data/%s/app_chrome/' % self.package
+    (profile_parent, profile_base) = os.path.split(new_profile_dir)
+    # If the path ends with a '/' python split will return an empty string for
+    # the base name; so we now need to get the base name from the directory.
+    if not profile_base:
+      profile_base = os.path.basename(profile_parent)
 
+    saved_profile_location = '/sdcard/profile/%s' % profile_base
+    self.adb.Adb().PushIfNeeded(new_profile_dir, saved_profile_location)
+
+    self.adb.Adb().EfficientDeviceDirectoryCopy(saved_profile_location,
+                                                self.profile_dir)
+    dumpsys = self.adb.RunShellCommand('dumpsys package %s' % self.package)
+    id_line = next(line for line in dumpsys if 'userId=' in line)
+    uid = re.search('\d+', id_line).group()
+    files = self.adb.RunShellCommandWithSU('ls "%s"' % self.profile_dir)
+    files.remove('lib')
+    paths = ['%s/%s' % (self.profile_dir, f) for f in files]
+    for path in paths:
+      extended_path = '%s %s/* %s/*/* %s/*/*/*' % (path, path, path, path)
+      self.adb.RunShellCommand('chown %s.%s %s' %
+                             (uid, uid, extended_path))
 
 class ContentShellBackendSettings(AndroidBrowserBackendSettings):
   def __init__(self, adb, package):
@@ -87,31 +118,23 @@ class ContentShellBackendSettings(AndroidBrowserBackendSettings):
   def is_content_shell(self):
     return True
 
-  @property
-  def profile_dir(self):
-    return '/data/data/%s/app_content_shell/' % self.package
 
-
-class ChromiumTestShellBackendSettings(AndroidBrowserBackendSettings):
+class ChromeShellBackendSettings(AndroidBrowserBackendSettings):
   def __init__(self, adb, package):
-    super(ChromiumTestShellBackendSettings, self).__init__(
+    super(ChromeShellBackendSettings, self).__init__(
           adb=adb,
-          activity='org.chromium.chrome.testshell.ChromiumTestShellActivity',
-          cmdline_file='/data/local/tmp/chromium-testshell-command-line',
+          activity='org.chromium.chrome.shell.ChromeShellActivity',
+          cmdline_file='/data/local/tmp/chrome-shell-command-line',
           package=package,
-          pseudo_exec_name='chromium_testshell',
+          pseudo_exec_name='chrome_shell',
           supports_tab_control=False)
 
   def GetDevtoolsRemotePort(self):
-    return 'localabstract:chromium_testshell_devtools_remote'
+    return 'localabstract:chrome_shell_devtools_remote'
 
   @property
   def is_content_shell(self):
     return True
-
-  @property
-  def profile_dir(self):
-    return '/data/data/%s/app_chromiumtestshell/' % self.package
 
 
 class WebviewBackendSettings(AndroidBrowserBackendSettings):
@@ -145,15 +168,10 @@ class WebviewBackendSettings(AndroidBrowserBackendSettings):
         raise exceptions.BrowserGoneException('Timeout waiting for PID.')
     return 'localabstract:webview_devtools_remote_%s' % str(pid)
 
-  @property
-  def profile_dir(self):
-    return '/data/data/%s/app_webview/' % self.package
-
 
 class AndroidBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
-  """The backend for controlling a browser instance running on Android.
-  """
-  def __init__(self, browser_options, backend_settings, rndis,
+  """The backend for controlling a browser instance running on Android."""
+  def __init__(self, browser_options, backend_settings, use_rndis_forwarder,
                output_profile_path, extensions_to_load):
     super(AndroidBrowserBackend, self).__init__(
         is_content_shell=backend_settings.is_content_shell,
@@ -167,29 +185,36 @@ class AndroidBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
     # Initialize fields so that an explosion during init doesn't break in Close.
     self._adb = backend_settings.adb
     self._backend_settings = backend_settings
-    self._saved_cmdline = None
-    if not self.browser_options.keep_test_server_ports:
-      adb_commands.ResetTestServerPortAllocation()
+    self._saved_cmdline = ''
+
+    # TODO(tonyg): This is flaky because it doesn't reserve the port that it
+    # allocates. Need to fix this.
     self._port = adb_commands.AllocateTestServerPort()
 
     # Kill old browser.
     self._adb.CloseApplication(self._backend_settings.package)
 
     if self._adb.Adb().CanAccessProtectedFileContents():
-      if not self.browser_options.dont_override_profile:
-        self._backend_settings.RemoveProfile()
       if self.browser_options.profile_dir:
         self._backend_settings.PushProfile(self.browser_options.profile_dir)
+      elif not self.browser_options.dont_override_profile:
+        self._backend_settings.RemoveProfile()
 
-    # Pre-configure RNDIS forwarding.
-    self._rndis_forwarder = None
-    if rndis:
-      self._rndis_forwarder = android_rndis.RndisForwarderWithRoot(self._adb)
-      self.WEBPAGEREPLAY_HOST = self._rndis_forwarder.host_ip
-    # TODO(szym): only override DNS if WPR has privileges to proxy on port 25.
-    self._override_dns = False
+    self._forwarder_factory = android_forwarder.AndroidForwarderFactory(
+        self._adb, use_rndis_forwarder)
 
-    self._SetUpCommandLine()
+    if self.browser_options.netsim:
+      assert use_rndis_forwarder, 'Netsim requires RNDIS forwarding.'
+      self.wpr_port_pairs = forwarders.PortPairs(
+          http=forwarders.PortPair(0, 80),
+          https=forwarders.PortPair(0, 443),
+          dns=forwarders.PortPair(0, 53))
+
+    # Set the debug app if needed.
+    if self._adb.IsUserBuild():
+      logging.debug('User build device, setting debug app')
+      self._adb.RunShellCommand('am set-debug-app --persistent %s' %
+                                self._backend_settings.package)
 
   def _SetUpCommandLine(self):
     def QuoteIfNeeded(arg):
@@ -197,7 +222,7 @@ class AndroidBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
       # Already quoted values, or values without space are left untouched.
       # This is required so CommandLine.java can parse valueB correctly rather
       # than as a separate switch.
-      params = arg.split('=')
+      params = arg.split('=', 1)
       if len(params) != 2:
         return arg
       key, values = params
@@ -206,7 +231,6 @@ class AndroidBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
       if values[0] in '"\'' and values[-1] == values[0]:
         return arg
       return '%s="%s"' % (key, values)
-
     args = [self._backend_settings.pseudo_exec_name]
     args.extend(self.GetBrowserStartupArgs())
     args = ' '.join(map(QuoteIfNeeded, args))
@@ -214,6 +238,7 @@ class AndroidBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
     self._SetCommandLineFile(args)
 
   def _SetCommandLineFile(self, file_contents):
+    logging.debug('Using command line: ' + file_contents)
     def IsProtectedFile(name):
       if self._adb.Adb().FileExistsOnDevice(name):
         return not self._adb.Adb().IsFileWritableOnDevice(name)
@@ -240,11 +265,17 @@ class AndroidBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
                                       file_contents)
 
   def Start(self):
+    self._SetUpCommandLine()
     self._adb.RunShellCommand('logcat -c')
     if self.browser_options.startup_url:
       url = self.browser_options.startup_url
+    elif self.browser_options.profile_dir:
+      url = None
     else:
+      # If we have no existing tabs start with a blank page since default
+      # startup with the NTP can lead to race conditions with Telemetry
       url = 'about:blank'
+    self._adb.Adb().DismissCrashDialogIfNeeded()
     self._adb.StartActivity(self._backend_settings.package,
                             self._backend_settings.activity,
                             True,
@@ -273,17 +304,27 @@ class AndroidBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
       self.Close()
       raise
     finally:
-      self._SetCommandLineFile(self._saved_cmdline or '')
+      # Restore the saved command line if it appears to have come from a user.
+      # If it appears to be a Telemetry created command line, then don't restore
+      # it. This is to prevent a common bug where --host-resolver-rules borks
+      # people's browsers if something goes wrong with Telemetry.
+      self._SetCommandLineFile(
+          self._saved_cmdline
+          if '--host-resolver-rules' not in self._saved_cmdline else '')
 
   def GetBrowserStartupArgs(self):
     args = super(AndroidBrowserBackend, self).GetBrowserStartupArgs()
-    if self._override_dns:
+    if self.forwarder_factory.does_forwarder_override_dns:
       args = [arg for arg in args
               if not arg.startswith('--host-resolver-rules')]
     args.append('--enable-remote-debugging')
-    args.append('--no-restore-state')
     args.append('--disable-fre')
+    args.append('--disable-external-intent-requests')
     return args
+
+  @property
+  def forwarder_factory(self):
+    return self._forwarder_factory
 
   @property
   def adb(self):
@@ -329,8 +370,20 @@ class AndroidBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
                    self._output_profile_path)
       # To minimize bandwidth it might be good to look at whether all the data
       # pulled down is really needed e.g. .pak files.
-      self._adb.Pull(self._backend_settings.profile_dir,
-                     self._output_profile_path)
+      if not os.path.exists(self._output_profile_path):
+        os.makedirs(self._output_profile_pathame)
+      files = self.adb.RunShellCommandWithSU(
+          'ls "%s"' % self._backend_settings.profile_dir)
+      for f in files:
+        # Don't pull lib, since it is created by the installer.
+        if f != 'lib':
+          source = '%s%s' % (self._backend_settings.profile_dir, f)
+          dest = os.path.join(self._output_profile_path, f)
+          # self._adb.Pull(source, dest) doesn't work because its timeout
+          # is fixed in android's adb_interface at 60 seconds, which may
+          # be too short to pull the cache.
+          cmd = 'pull %s %s' % (source, dest)
+          self._adb.Adb().Adb().SendCommand(cmd, timeout_time=240)
 
   def IsBrowserRunning(self):
     pids = self._adb.ExtractPid(self._backend_settings.package)
@@ -367,20 +420,7 @@ class AndroidBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
     return ret
 
   def AddReplayServerOptions(self, extra_wpr_args):
-    """Override. Only add --no-dns_forwarding if not using RNDIS."""
-    if not self._override_dns:
+    if not self.forwarder_factory.does_forwarder_override_dns:
       extra_wpr_args.append('--no-dns_forwarding')
-
-  def CreateForwarder(self, *port_pairs):
-    if self._rndis_forwarder:
-      forwarder = self._rndis_forwarder
-      forwarder.SetPorts(*port_pairs)
-      assert self.WEBPAGEREPLAY_HOST == forwarder.host_ip, (
-        'Host IP address on the RNDIS interface changed. Must restart browser!')
-      if self._override_dns:
-        forwarder.OverrideDns()
-      return forwarder
-    assert not self._override_dns, ('The user-space forwarder does not support '
-                                    'DNS override!')
-    logging.warning('Using the user-space forwarder.\n')
-    return adb_commands.Forwarder(self._adb, *port_pairs)
+    if self.browser_options.netsim:
+      extra_wpr_args.append('--net=%s' % self.browser_options.netsim)

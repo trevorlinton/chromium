@@ -8,12 +8,13 @@
 #include "content/browser/frame_host/navigation_entry_impl.h"
 #include "content/browser/renderer_host/render_view_host_factory.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
-#include "content/browser/renderer_host/test_render_view_host.h"
 #include "content/browser/site_instance_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/test_browser_context.h"
+#include "content/test/test_render_frame_host_factory.h"
+#include "content/test/test_render_view_host.h"
 #include "content/test/test_render_view_host_factory.h"
 #include "content/test/test_web_contents.h"
 
@@ -23,6 +24,7 @@
 
 #if defined(USE_AURA)
 #include "ui/aura/test/aura_test_helper.h"
+#include "ui/compositor/test/context_factories_for_test.h"
 #endif
 
 namespace content {
@@ -44,7 +46,8 @@ RenderViewHost* RenderViewHostTester::GetPendingForController(
 
 // static
 bool RenderViewHostTester::IsRenderViewHostSwappedOut(RenderViewHost* rvh) {
-  return static_cast<RenderViewHostImpl*>(rvh)->is_swapped_out();
+  return static_cast<RenderViewHostImpl*>(rvh)->rvh_state() ==
+         RenderViewHostImpl::STATE_SWAPPED_OUT;
 }
 
 // static
@@ -64,8 +67,8 @@ bool RenderViewHostTester::HasTouchEventHandler(RenderViewHost* rvh) {
 
 RenderViewHostTestEnabler::RenderViewHostTestEnabler()
     : rph_factory_(new MockRenderProcessHostFactory()),
-      rvh_factory_(new TestRenderViewHostFactory(rph_factory_.get())) {
-}
+      rvh_factory_(new TestRenderViewHostFactory(rph_factory_.get())),
+      rfh_factory_(new TestRenderFrameHostFactory()) {}
 
 RenderViewHostTestEnabler::~RenderViewHostTestEnabler() {
 }
@@ -98,6 +101,12 @@ RenderViewHost* RenderViewHostTestHarness::pending_rvh() {
 
 RenderViewHost* RenderViewHostTestHarness::active_rvh() {
   return pending_rvh() ? pending_rvh() : rvh();
+}
+
+RenderFrameHost* RenderViewHostTestHarness::main_rfh() {
+  WebContentsImpl* web_contents = static_cast<WebContentsImpl*>(
+      this->web_contents());
+  return web_contents->GetFrameTree()->GetMainFrame();
 }
 
 BrowserContext* RenderViewHostTestHarness::browser_context() {
@@ -158,6 +167,10 @@ void RenderViewHostTestHarness::SetUp() {
   ole_initializer_.reset(new ui::ScopedOleInitializer());
 #endif
 #if defined(USE_AURA)
+  // The ContextFactory must exist before any Compositors are created.
+  bool enable_pixel_output = false;
+  ui::InitializeContextFactoryForTests(enable_pixel_output);
+
   aura_test_helper_.reset(
       new aura::test::AuraTestHelper(base::MessageLoopForUI::current()));
   aura_test_helper_->SetUp();
@@ -173,6 +186,7 @@ void RenderViewHostTestHarness::TearDown() {
   SetContents(NULL);
 #if defined(USE_AURA)
   aura_test_helper_->TearDown();
+  ui::TerminateContextFactoryForTests();
 #endif
   // Make sure that we flush any messages related to WebContentsImpl destruction
   // before we destroy the browser context.

@@ -23,6 +23,14 @@ class SafeBrowsingTabObserver
  public:
   virtual ~SafeBrowsingTabObserver();
 
+  ClientSideDetectionHost* detection_host() {
+    return safebrowsing_detection_host_.get();
+  }
+
+  const ClientSideDetectionHost* detection_host() const {
+    return safebrowsing_detection_host_.get();
+  }
+
  private:
   explicit SafeBrowsingTabObserver(content::WebContents* web_contents);
   friend class content::WebContentsUserData<SafeBrowsingTabObserver>;

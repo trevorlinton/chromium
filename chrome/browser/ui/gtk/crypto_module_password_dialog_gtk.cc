@@ -9,7 +9,6 @@
 #include "base/basictypes.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/gtk/gtk_util.h"
-#include "crypto/crypto_module_blocking_password_delegate.h"
 #include "grit/generated_resources.h"
 #include "ui/base/gtk/gtk_hig_constants.h"
 #include "ui/base/gtk/gtk_signal.h"
@@ -25,7 +24,8 @@ class CryptoModulePasswordDialog {
       const std::string& slot_name,
       bool retry,
       chrome::CryptoModulePasswordReason reason,
-      const std::string& server,
+      const std::string& hostname,
+      gfx::NativeWindow parent,
       const chrome::CryptoModulePasswordCallback& callback);
 
   ~CryptoModulePasswordDialog() {}
@@ -48,12 +48,13 @@ CryptoModulePasswordDialog::CryptoModulePasswordDialog(
     const std::string& slot_name,
     bool retry,
     chrome::CryptoModulePasswordReason reason,
-    const std::string& server,
+    const std::string& hostname,
+    gfx::NativeWindow parent,
     const chrome::CryptoModulePasswordCallback& callback)
     : callback_(callback) {
   dialog_ = gtk_dialog_new_with_buttons(
       l10n_util::GetStringUTF8(IDS_CRYPTO_MODULE_AUTH_DIALOG_TITLE).c_str(),
-      NULL,
+      parent,
       GTK_DIALOG_NO_SEPARATOR,
       NULL);  // Populate the buttons later, for control over the OK button.
   gtk_dialog_add_button(GTK_DIALOG(dialog_),
@@ -69,20 +70,22 @@ CryptoModulePasswordDialog::CryptoModulePasswordDialog(
 
   // Select an appropriate text for the reason.
   std::string text;
-  const string16& server16 = UTF8ToUTF16(server);
-  const string16& slot16 = UTF8ToUTF16(slot_name);
+  const base::string16& hostname16 = base::UTF8ToUTF16(hostname);
+  const base::string16& slot16 = base::UTF8ToUTF16(slot_name);
   switch (reason) {
     case chrome::kCryptoModulePasswordKeygen:
       text = l10n_util::GetStringFUTF8(
-          IDS_CRYPTO_MODULE_AUTH_DIALOG_TEXT_KEYGEN, slot16, server16);
+          IDS_CRYPTO_MODULE_AUTH_DIALOG_TEXT_KEYGEN, slot16, hostname16);
       break;
     case chrome::kCryptoModulePasswordCertEnrollment:
       text = l10n_util::GetStringFUTF8(
-          IDS_CRYPTO_MODULE_AUTH_DIALOG_TEXT_CERT_ENROLLMENT, slot16, server16);
+          IDS_CRYPTO_MODULE_AUTH_DIALOG_TEXT_CERT_ENROLLMENT,
+          slot16,
+          hostname16);
       break;
     case chrome::kCryptoModulePasswordClientAuth:
       text = l10n_util::GetStringFUTF8(
-          IDS_CRYPTO_MODULE_AUTH_DIALOG_TEXT_CLIENT_AUTH, slot16, server16);
+          IDS_CRYPTO_MODULE_AUTH_DIALOG_TEXT_CLIENT_AUTH, slot16, hostname16);
       break;
     case chrome::kCryptoModulePasswordListCerts:
       text = l10n_util::GetStringFUTF8(
@@ -135,7 +138,7 @@ void CryptoModulePasswordDialog::OnResponse(GtkWidget* dialog,
   if (response_id == GTK_RESPONSE_ACCEPT)
     callback_.Run(gtk_entry_get_text(GTK_ENTRY(password_entry_)));
   else
-    callback_.Run(static_cast<const char*>(NULL));
+    callback_.Run(std::string());
 
   // This will cause gtk to zero out the buffer.  (see
   // gtk_entry_buffer_normal_delete_text:
@@ -156,10 +159,11 @@ void ShowCryptoModulePasswordDialog(
     const std::string& slot_name,
     bool retry,
     CryptoModulePasswordReason reason,
-    const std::string& server,
+    const std::string& hostname,
+    gfx::NativeWindow parent,
     const CryptoModulePasswordCallback& callback) {
-  (new CryptoModulePasswordDialog(slot_name, retry, reason, server,
-                                  callback))->Show();
+  (new CryptoModulePasswordDialog(
+       slot_name, retry, reason, hostname, parent, callback))->Show();
 }
 
 }  // namespace chrome

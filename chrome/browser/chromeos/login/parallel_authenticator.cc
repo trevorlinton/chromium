@@ -110,6 +110,24 @@ void MountGuest(AuthAttemptState* attempt,
                  resolver));
 }
 
+// Calls cryptohome's mount method for guest and also get the user hash from
+// cryptohome.
+void MountGuestAndGetHash(AuthAttemptState* attempt,
+                          scoped_refptr<ParallelAuthenticator> resolver) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  attempt->UsernameHashRequested();
+  cryptohome::AsyncMethodCaller::GetInstance()->AsyncMountGuest(
+      base::Bind(&TriggerResolveWithLoginTimeMarker,
+                 "CryptohomeMount-End",
+                 attempt,
+                 resolver));
+  cryptohome::AsyncMethodCaller::GetInstance()->AsyncGetSanitizedUsername(
+      attempt->user_context.username,
+      base::Bind(&TriggerResolveHash,
+                 attempt,
+                 resolver));
+}
+
 // Calls cryptohome's MountPublic method
 void MountPublic(AuthAttemptState* attempt,
                  scoped_refptr<ParallelAuthenticator> resolver,
@@ -237,7 +255,10 @@ void ParallelAuthenticator::CompleteLogin(Profile* profile,
       new AuthAttemptState(
           UserContext(canonicalized,
                       user_context.password,
-                      user_context.auth_code),
+                      user_context.auth_code,
+                      user_context.username_hash,
+                      user_context.using_oauth,
+                      user_context.auth_flow),
           !UserManager::Get()->IsKnownUser(canonicalized)));
 
   // Reset the verified flag.
@@ -343,20 +364,31 @@ void ParallelAuthenticator::LoginAsPublicAccount(const std::string& username) {
 }
 
 void ParallelAuthenticator::LoginAsKioskAccount(
-    const std::string& app_user_id) {
+    const std::string& app_user_id,
+    bool use_guest_mount) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+
+  const std::string user_id =
+      use_guest_mount ? UserManager::kGuestUserName : app_user_id;
   current_state_.reset(new AuthAttemptState(
-      UserContext(app_user_id,
+      UserContext(user_id,
                   std::string(),  // password
                   std::string()),  // auth_code
       std::string(),  // login_token
       std::string(),  // login_captcha
       User::USER_TYPE_KIOSK_APP,
       false));
+
   remove_user_data_on_failure_ = true;
-  MountPublic(current_state_.get(),
-        scoped_refptr<ParallelAuthenticator>(this),
-        cryptohome::CREATE_IF_MISSING);
+  if (!use_guest_mount) {
+    MountPublic(current_state_.get(),
+          scoped_refptr<ParallelAuthenticator>(this),
+          cryptohome::CREATE_IF_MISSING);
+  } else {
+    ephemeral_mount_attempted_ = true;
+    MountGuestAndGetHash(current_state_.get(),
+                         scoped_refptr<ParallelAuthenticator>(this));
+  }
 }
 
 void ParallelAuthenticator::OnRetailModeLoginSuccess() {

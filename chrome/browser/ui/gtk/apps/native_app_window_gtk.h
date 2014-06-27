@@ -7,7 +7,8 @@
 
 #include <gtk/gtk.h>
 
-#include "apps/shell_window.h"
+#include "apps/app_window.h"
+#include "apps/size_constraints.h"
 #include "apps/ui/native_app_window.h"
 #include "base/observer_list.h"
 #include "base/timer/timer.h"
@@ -20,7 +21,6 @@
 #include "ui/gfx/x/x11_atom_cache.h"
 
 class ExtensionKeybindingRegistryGtk;
-class Profile;
 
 namespace extensions {
 class Extension;
@@ -31,8 +31,8 @@ class NativeAppWindowGtk : public apps::NativeAppWindow,
                            public ui::ActiveWindowWatcherXObserver,
                            public content::WebContentsObserver {
  public:
-  NativeAppWindowGtk(apps::ShellWindow* shell_window,
-                     const apps::ShellWindow::CreateParams& params);
+  NativeAppWindowGtk(apps::AppWindow* app_window,
+                     const apps::AppWindow::CreateParams& params);
 
   // ui::BaseWindow implementation.
   virtual bool IsActive() const OVERRIDE;
@@ -67,23 +67,29 @@ class NativeAppWindowGtk : public apps::NativeAppWindow,
 
  private:
   // NativeAppWindow implementation.
-  virtual void SetFullscreen(bool fullscreen) OVERRIDE;
+  virtual void SetFullscreen(int fullscreen_types) OVERRIDE;
   virtual bool IsFullscreenOrPending() const OVERRIDE;
   virtual bool IsDetached() const OVERRIDE;
   virtual void UpdateWindowIcon() OVERRIDE;
   virtual void UpdateWindowTitle() OVERRIDE;
+  virtual void UpdateBadgeIcon() OVERRIDE;
   virtual void UpdateDraggableRegions(
       const std::vector<extensions::DraggableRegion>& regions) OVERRIDE;
   virtual SkRegion* GetDraggableRegion() OVERRIDE;
-  virtual void UpdateInputRegion(scoped_ptr<SkRegion> region) OVERRIDE;
+  virtual void UpdateShape(scoped_ptr<SkRegion> region) OVERRIDE;
   virtual void HandleKeyboardEvent(
       const content::NativeWebKeyboardEvent& event) OVERRIDE;
   virtual bool IsFrameless() const OVERRIDE;
+  virtual bool HasFrameColor() const OVERRIDE;
+  virtual SkColor FrameColor() const OVERRIDE;
   virtual gfx::Insets GetFrameInsets() const OVERRIDE;
   virtual void HideWithApp() OVERRIDE;
   virtual void ShowWithApp() OVERRIDE;
-  // Calls gtk_window_set_geometry_hints with the current size constraints.
-  virtual void UpdateWindowMinMaxSize() OVERRIDE;
+  virtual void UpdateShelfMenu() OVERRIDE;
+  virtual gfx::Size GetContentMinimumSize() const OVERRIDE;
+  virtual gfx::Size GetContentMaximumSize() const OVERRIDE;
+  virtual void SetContentSizeConstraints(const gfx::Size& min_size,
+                                         const gfx::Size& max_size) OVERRIDE;
 
   // web_modal::WebContentsModalDialogHost implementation.
   virtual gfx::NativeView GetHostView() const OVERRIDE;
@@ -95,10 +101,10 @@ class NativeAppWindowGtk : public apps::NativeAppWindow,
       web_modal::ModalDialogHostObserver* observer) OVERRIDE;
 
   content::WebContents* web_contents() const {
-    return shell_window_->web_contents();
+    return app_window_->web_contents();
   }
   const extensions::Extension* extension() const {
-    return shell_window_->extension();
+    return app_window_->extension();
   }
 
   virtual ~NativeAppWindowGtk();
@@ -124,7 +130,9 @@ class NativeAppWindowGtk : public apps::NativeAppWindow,
 
   void OnConfigureDebounced();
 
-  apps::ShellWindow* shell_window_;  // weak - ShellWindow owns NativeAppWindow.
+  void UpdateContentMinMaxSize();
+
+  apps::AppWindow* app_window_;  // weak - AppWindow owns NativeAppWindow.
 
   GtkWindow* window_;
   GdkWindowState state_;
@@ -164,6 +172,9 @@ class NativeAppWindowGtk : public apps::NativeAppWindow,
   // True if the window should be kept on top of other windows that do not have
   // this flag enabled.
   bool always_on_top_;
+
+  // The size constraints of the window.
+  apps::SizeConstraints size_constraints_;
 
   // The current window cursor.  We set it to a resize cursor when over the
   // custom frame border.  We set it to NULL if we want the default cursor.

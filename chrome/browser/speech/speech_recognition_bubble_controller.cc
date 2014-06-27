@@ -63,7 +63,8 @@ void SpeechRecognitionBubbleController::SetBubbleRecognizingMode() {
   ProcessRequestInUiThread(UIRequest(REQUEST_SET_RECOGNIZING_MODE));
 }
 
-void SpeechRecognitionBubbleController::SetBubbleMessage(const string16& text) {
+void SpeechRecognitionBubbleController::SetBubbleMessage(
+    const base::string16& text) {
   UIRequest request(REQUEST_SET_MESSAGE);
   request.message = text;
   ProcessRequestInUiThread(request);
@@ -167,8 +168,7 @@ void SpeechRecognitionBubbleController::ProcessRequestInUiThread(
   switch (request.type) {
     case REQUEST_CREATE:
       bubble_.reset(SpeechRecognitionBubble::Create(
-          tab_util::GetWebContentsByID(request.render_process_id,
-                                       request.render_view_id),
+          request.render_process_id, request.render_view_id,
           this, request.element_rect));
 
       if (!bubble_.get()) {

@@ -54,13 +54,13 @@ class BrowsingDataLocalStorageHelperTest : public InProcessBrowserTest {
     // Note: This helper depends on details of how the dom_storage library
     // stores data in the host file system.
     base::FilePath storage_path = GetLocalStoragePathForTestingProfile();
-    file_util::CreateDirectory(storage_path);
+    base::CreateDirectory(storage_path);
     const base::FilePath::CharType* kFilesToCreate[] = {
         kTestFile0, kTestFile1, kTestFileInvalid, kTestFileExtension
     };
     for (size_t i = 0; i < arraysize(kFilesToCreate); ++i) {
       base::FilePath file_path = storage_path.Append(kFilesToCreate[i]);
-      file_util::WriteFile(file_path, NULL, 0);
+      base::WriteFile(file_path, NULL, 0);
     }
   }
 

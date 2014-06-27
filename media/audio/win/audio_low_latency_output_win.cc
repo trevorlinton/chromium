@@ -25,19 +25,6 @@ using base::win::ScopedCoMem;
 
 namespace media {
 
-// Compare two sets of audio parameters and return true if they are equal.
-// Note that bits_per_sample() is excluded from this comparison since Core
-// Audio can deal with most bit depths. As an example, if the native/mixing
-// bit depth is 32 bits (default), opening at 16 or 24 still works fine and
-// the audio engine will do the required conversion for us. Channel count is
-// excluded since Open() will fail anyways and it doesn't impact buffering.
-static bool CompareAudioParametersNoBitDepthOrChannels(
-    const media::AudioParameters& a, const media::AudioParameters& b) {
-  return (a.format() == b.format() &&
-          a.sample_rate() == b.sample_rate() &&
-          a.frames_per_buffer() == b.frames_per_buffer());
-}
-
 // static
 AUDCLNT_SHAREMODE WASAPIAudioOutputStream::GetShareMode() {
   const CommandLine* cmd_line = CommandLine::ForCurrentProcess();
@@ -71,9 +58,11 @@ WASAPIAudioOutputStream::WASAPIAudioOutputStream(AudioManagerWin* manager,
                                                  ERole device_role)
     : creating_thread_id_(base::PlatformThread::CurrentId()),
       manager_(manager),
+      format_(),
       opened_(false),
-      audio_parameters_are_valid_(false),
       volume_(1.0),
+      packet_size_frames_(0),
+      packet_size_bytes_(0),
       endpoint_buffer_size_frames_(0),
       device_id_(device_id),
       device_role_(device_role),
@@ -85,23 +74,6 @@ WASAPIAudioOutputStream::WASAPIAudioOutputStream(AudioManagerWin* manager,
   VLOG(1) << "WASAPIAudioOutputStream::WASAPIAudioOutputStream()";
   VLOG_IF(1, share_mode_ == AUDCLNT_SHAREMODE_EXCLUSIVE)
       << "Core Audio (WASAPI) EXCLUSIVE MODE is enabled.";
-
-  if (share_mode_ == AUDCLNT_SHAREMODE_SHARED) {
-    // Verify that the input audio parameters are identical (bit depth and
-    // channel count are excluded) to the preferred (native) audio parameters.
-    // Open() will fail if this is not the case.
-    AudioParameters preferred_params;
-    HRESULT hr = device_id_.empty() ?
-        CoreAudioUtil::GetPreferredAudioParameters(eRender, device_role,
-                                                   &preferred_params) :
-        CoreAudioUtil::GetPreferredAudioParameters(device_id_,
-                                                   &preferred_params);
-    audio_parameters_are_valid_ = SUCCEEDED(hr) &&
-        CompareAudioParametersNoBitDepthOrChannels(params, preferred_params);
-    LOG_IF(WARNING, !audio_parameters_are_valid_)
-        << "Input and preferred parameters are not identical. "
-        << "Device id: " << device_id_;
-  }
 
   // Load the Avrt DLL if not already loaded. Required to support MMCSS.
   bool avrt_init = avrt::Initialize();
@@ -130,11 +102,11 @@ WASAPIAudioOutputStream::WASAPIAudioOutputStream(AudioManagerWin* manager,
   // get from the audio endpoint device in each render event.
   packet_size_frames_ = params.frames_per_buffer();
   packet_size_bytes_ = params.GetBytesPerBuffer();
-  packet_size_ms_ = (1000.0 * packet_size_frames_) / params.sample_rate();
   VLOG(1) << "Number of bytes per audio frame  : " << format->nBlockAlign;
   VLOG(1) << "Number of audio frames per packet: " << packet_size_frames_;
   VLOG(1) << "Number of bytes per packet       : " << packet_size_bytes_;
-  VLOG(1) << "Number of milliseconds per packet: " << packet_size_ms_;
+  VLOG(1) << "Number of milliseconds per packet: "
+          << params.GetBufferDuration().InMillisecondsF();
 
   // All events are auto-reset events and non-signaled initially.
 
@@ -156,18 +128,10 @@ bool WASAPIAudioOutputStream::Open() {
   if (opened_)
     return true;
 
-  // Audio parameters must be identical to the preferred set of parameters
-  // if shared mode (default) is utilized.
-  if (share_mode_ == AUDCLNT_SHAREMODE_SHARED) {
-    if (!audio_parameters_are_valid_) {
-      LOG(ERROR) << "Audio parameters are not valid.";
-      return false;
-    }
-  }
-
   // Create an IAudioClient interface for the default rendering IMMDevice.
   ScopedComPtr<IAudioClient> audio_client;
-  if (device_id_.empty()) {
+  if (device_id_.empty() ||
+      CoreAudioUtil::DeviceIsDefault(eRender, device_role_, device_id_)) {
     audio_client = CoreAudioUtil::CreateDefaultClient(eRender, device_role_);
   } else {
     ScopedComPtr<IMMDevice> device(CoreAudioUtil::CreateDevice(device_id_));
@@ -183,6 +147,7 @@ bool WASAPIAudioOutputStream::Open() {
   if (!CoreAudioUtil::IsFormatSupported(audio_client,
                                         share_mode_,
                                         &format_)) {
+    LOG(ERROR) << "Audio parameters are not supported.";
     return false;
   }
 
@@ -198,10 +163,13 @@ bool WASAPIAudioOutputStream::Open() {
 
     // We know from experience that the best possible callback sequence is
     // achieved when the packet size (given by the native device period)
-    // is an even multiple of the endpoint buffer size.
+    // is an even divisor of the endpoint buffer size.
     // Examples: 48kHz => 960 % 480, 44.1kHz => 896 % 448 or 882 % 441.
     if (endpoint_buffer_size_frames_ % packet_size_frames_ != 0) {
-      LOG(ERROR) << "Bailing out due to non-perfect timing.";
+      LOG(ERROR)
+          << "Bailing out due to non-perfect timing.  Buffer size of "
+          << packet_size_frames_ << " is not an even divisor of "
+          << endpoint_buffer_size_frames_;
       return false;
     }
   } else {
@@ -234,6 +202,13 @@ bool WASAPIAudioOutputStream::Open() {
   audio_client_ = audio_client;
   audio_render_client_ = audio_render_client;
 
+  hr = audio_client_->GetService(__uuidof(IAudioClock),
+                                 audio_clock_.ReceiveVoid());
+  if (FAILED(hr)) {
+    LOG(ERROR) << "Failed to get IAudioClock service.";
+    return false;
+  }
+
   opened_ = true;
   return true;
 }
@@ -251,6 +226,17 @@ void WASAPIAudioOutputStream::Start(AudioSourceCallback* callback) {
 
   source_ = callback;
 
+  // Ensure that the endpoint buffer is prepared with silence.
+  if (share_mode_ == AUDCLNT_SHAREMODE_SHARED) {
+    if (!CoreAudioUtil::FillRenderEndpointBufferWithSilence(
+             audio_client_, audio_render_client_)) {
+      LOG(ERROR) << "Failed to prepare endpoint buffers with silence.";
+      callback->OnError(this);
+      return;
+    }
+  }
+  num_written_frames_ = endpoint_buffer_size_frames_;
+
   // Create and start the thread that will drive the rendering by waiting for
   // render events.
   render_thread_.reset(
@@ -262,18 +248,6 @@ void WASAPIAudioOutputStream::Start(AudioSourceCallback* callback) {
     callback->OnError(this);
     return;
   }
-
-  // Ensure that the endpoint buffer is prepared with silence.
-  if (share_mode_ == AUDCLNT_SHAREMODE_SHARED) {
-    if (!CoreAudioUtil::FillRenderEndpointBufferWithSilence(
-             audio_client_, audio_render_client_)) {
-      LOG(ERROR) << "Failed to prepare endpoint buffers with silence.";
-      StopThread();
-      callback->OnError(this);
-      return;
-    }
-  }
-  num_written_frames_ = endpoint_buffer_size_frames_;
 
   // Start streaming data between the endpoint buffer and the audio engine.
   HRESULT hr = audio_client_->Start();
@@ -377,17 +351,9 @@ void WASAPIAudioOutputStream::Run() {
                           audio_samples_render_event_ };
   UINT64 device_frequency = 0;
 
-  // The IAudioClock interface enables us to monitor a stream's data
-  // rate and the current position in the stream. Allocate it before we
-  // start spinning.
-  ScopedComPtr<IAudioClock> audio_clock;
-  hr = audio_client_->GetService(__uuidof(IAudioClock),
-                                 audio_clock.ReceiveVoid());
-  if (SUCCEEDED(hr)) {
-    // The device frequency is the frequency generated by the hardware clock in
-    // the audio device. The GetFrequency() method reports a constant frequency.
-    hr = audio_clock->GetFrequency(&device_frequency);
-  }
+  // The device frequency is the frequency generated by the hardware clock in
+  // the audio device. The GetFrequency() method reports a constant frequency.
+  hr = audio_clock_->GetFrequency(&device_frequency);
   error = FAILED(hr);
   PLOG_IF(ERROR, error) << "Failed to acquire IAudioClock interface: "
                         << std::hex << hr;
@@ -408,7 +374,7 @@ void WASAPIAudioOutputStream::Run() {
         break;
       case WAIT_OBJECT_0 + 1:
         // |audio_samples_render_event_| has been set.
-        error = !RenderAudioFromSource(audio_clock, device_frequency);
+        error = !RenderAudioFromSource(device_frequency);
         break;
       default:
         error = true;
@@ -430,8 +396,7 @@ void WASAPIAudioOutputStream::Run() {
   }
 }
 
-bool WASAPIAudioOutputStream::RenderAudioFromSource(
-    IAudioClock* audio_clock, UINT64 device_frequency) {
+bool WASAPIAudioOutputStream::RenderAudioFromSource(UINT64 device_frequency) {
   TRACE_EVENT0("audio", "RenderAudioFromSource");
 
   HRESULT hr = S_FALSE;
@@ -503,7 +468,7 @@ bool WASAPIAudioOutputStream::RenderAudioFromSource(
     // unit at the render side.
     UINT64 position = 0;
     int audio_delay_bytes = 0;
-    hr = audio_clock->GetPosition(&position, NULL);
+    hr = audio_clock_->GetPosition(&position, NULL);
     if (SUCCEEDED(hr)) {
       // Stream position of the sample that is currently playing
       // through the speaker.

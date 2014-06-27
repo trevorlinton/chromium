@@ -145,12 +145,7 @@ def CheckTypedefs(filenode, releases):
   See http://crbug.com/233439 for details.
   """
   cgen = CGen()
-  # TODO(teravest): Fix the following callback to pass PP_Var by pointer
-  # instead of by value.
-  node_whitelist = ['PP_Ext_Alarms_OnAlarm_Func_Dev_0_1']
   for node in filenode.GetListOf('Typedef'):
-    if node.GetName() in node_whitelist:
-      continue
     build_list = node.GetUniqueReleases(releases)
     callnode = node.GetOneOf('Callspec')
     if callnode:
@@ -162,7 +157,7 @@ def CheckTypedefs(filenode, releases):
         t = param.GetType(build_list[0])
         while t.IsA('Typedef'):
           t = t.GetType(build_list[0])
-        if t.IsA('Struct'):
+        if t.IsA('Struct') and t.GetProperty('passByValue'):
           raise Exception('%s is a struct in callback %s. '
                           'See http://crbug.com/233439' %
                           (t.GetName(), node.GetName()))
@@ -293,12 +288,33 @@ class HGen(GeneratorByFile):
       # Skip this interface if there are no matching versions
       if not unique: continue
 
+      last_stable_ver = None
+      last_dev_rel = None
+      for rel in unique:
+        channel = node.GetProperty('FILE').release_map.GetChannel(rel)
+        if channel == 'dev':
+          last_dev_rel = rel
+
       for rel in unique:
         version = node.GetVersion(rel)
         name = cgen.GetInterfaceString(node, version)
         strver = str(version).replace('.', '_')
-        idefs += cgen.GetDefine('%s_%s' % (macro, strver), '"%s"' % name)
-      idefs += cgen.GetDefine(macro, '%s_%s' % (macro, strver)) + '\n'
+        channel = node.GetProperty('FILE').release_map.GetChannel(rel)
+        if channel == 'dev':
+          # Skip dev channel interface versions that are
+          #   Not the newest version, and
+          #   Don't have an equivalent stable version.
+          if rel != last_dev_rel and not node.DevInterfaceMatchesStable(rel):
+            continue
+          value_string = '"%s" /* dev */' % name
+        else:
+          value_string = '"%s"' % name
+          last_stable_ver = strver
+        idefs += cgen.GetDefine('%s_%s' % (macro, strver), value_string)
+      if last_stable_ver:
+        idefs += cgen.GetDefine(macro, '%s_%s' % (macro, last_stable_ver))
+        idefs += '\n'
+
       out.Write(idefs)
 
     # Generate the @file comment
@@ -342,11 +358,11 @@ def main(args):
   filenames = glob.glob(idldir)
 
   ast = ParseFiles(filenames)
-  if hgen.GenerateRange(ast, ['M13', 'M14', 'M15'], {}):
-    print "Golden file for M13-M15 failed."
+  if hgen.GenerateRange(ast, ['M13', 'M14', 'M15', 'M16', 'M17'], {}):
+    print "Golden file for M13-M17 failed."
     failed =1
   else:
-    print "Golden file for M13-M15 passed."
+    print "Golden file for M13-M17 passed."
 
   return failed
 

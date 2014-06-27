@@ -16,7 +16,9 @@
 #include "base/memory/scoped_vector.h"
 #include "base/values.h"
 #include "content/public/browser/certificate_request_result_type.h"
+#if defined(OS_POSIX) && !defined(OS_MACOSX)
 #include "content/public/browser/file_descriptor_info.h"
+#endif
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/socket_permission_request.h"
@@ -26,27 +28,29 @@
 #include "net/url_request/url_request_job_factory.h"
 #include "third_party/WebKit/public/web/WebNotificationPresenter.h"
 #include "ui/base/window_open_disposition.h"
+#include "webkit/browser/fileapi/file_system_context.h"
 #include "webkit/common/resource_type.h"
 
 #if defined(OS_POSIX) && !defined(OS_MACOSX)
 #include "base/posix/global_descriptors.h"
 #endif
 
-class CommandLine;
+#if defined(OS_POSIX)
+#include "content/public/browser/file_descriptor_info.h"
+#endif
+
 class GURL;
 class RendererPreferences;
 struct WebPreferences;
 
-namespace WebKit {
-struct WebWindowFeatures;
-}
-
 namespace base {
+class CommandLine;
 class DictionaryValue;
 class FilePath;
 }
-namespace crypto {
-class CryptoModuleBlockingPasswordDelegate;
+
+namespace blink {
+struct WebWindowFeatures;
 }
 
 namespace gfx {
@@ -55,6 +59,7 @@ class ImageSkia;
 
 namespace net {
 class CookieOptions;
+class CookieStore;
 class HttpNetworkSession;
 class NetLog;
 class SSLCertRequestInfo;
@@ -96,6 +101,7 @@ class RenderViewHostDelegateView;
 class ResourceContext;
 class SiteInstance;
 class SpeechRecognitionManagerDelegate;
+class VibrationProvider;
 class WebContents;
 class WebContentsViewDelegate;
 class WebContentsViewPort;
@@ -108,6 +114,10 @@ struct ShowDesktopNotificationHostMsgParams;
 typedef std::map<
   std::string, linked_ptr<net::URLRequestJobFactory::ProtocolHandler> >
     ProtocolHandlerMap;
+
+// A scoped vector of protocol handlers.
+typedef ScopedVector<net::URLRequestJobFactory::ProtocolHandler>
+    ProtocolHandlerScopedVector;
 
 // Embedder API (or SPI) for participating in browser logic, to be implemented
 // by the client of the content browser. See ChromeContentBrowserClient for the
@@ -169,10 +179,10 @@ class CONTENT_EXPORT ContentBrowserClient {
       WebContents* embedder_web_contents,
       const base::DictionaryValue& extra_params) {}
 
-  // Notifies that a RenderProcessHost has been created. This is called before
+  // Notifies that a render process will be created. This is called before
   // the content layer adds its own BrowserMessageFilters, so that the
   // embedder's IPC filters have priority.
-  virtual void RenderProcessHostCreated(RenderProcessHost* host) {}
+  virtual void RenderProcessWillLaunch(RenderProcessHost* host) {}
 
   // Notifies that a BrowserChildProcessHost has been created.
   virtual void BrowserChildProcessHostCreated(BrowserChildProcessHost* host) {}
@@ -190,16 +200,23 @@ class CONTENT_EXPORT ContentBrowserClient {
   // Returns a list additional WebUI schemes, if any.  These additional schemes
   // act as aliases to the chrome: scheme.  The additional schemes may or may
   // not serve specific WebUI pages depending on the particular URLDataSource
-  // and its override of URLDataSource::ShouldServiceRequest.
+  // and its override of URLDataSource::ShouldServiceRequest. For all schemes
+  // returned here, view-source is allowed.
   virtual void GetAdditionalWebUISchemes(
       std::vector<std::string>* additional_schemes) {}
+
+  // Returns a list of webUI hosts to ignore the storage partition check in
+  // URLRequestChromeJob::CheckStoragePartitionMatches.
+  virtual void GetAdditionalWebUIHostsToIgnoreParititionCheck(
+      std::vector<std::string>* hosts) {}
 
   // Creates the main net::URLRequestContextGetter. Should only be called once
   // per ContentBrowserClient object.
   // TODO(ajwong): Remove once http://crbug.com/159193 is resolved.
   virtual net::URLRequestContextGetter* CreateRequestContext(
       BrowserContext* browser_context,
-      ProtocolHandlerMap* protocol_handlers);
+      ProtocolHandlerMap* protocol_handlers,
+      ProtocolHandlerScopedVector protocol_interceptors);
 
   // Creates the net::URLRequestContextGetter for a StoragePartition. Should
   // only be called once per partition_path per ContentBrowserClient object.
@@ -208,7 +225,8 @@ class CONTENT_EXPORT ContentBrowserClient {
       BrowserContext* browser_context,
       const base::FilePath& partition_path,
       bool in_memory,
-      ProtocolHandlerMap* protocol_handlers);
+      ProtocolHandlerMap* protocol_handlers,
+      ProtocolHandlerScopedVector protocol_interceptors);
 
   // Returns whether a specified URL is handled by the embedder's internal
   // protocol handlers.
@@ -241,12 +259,23 @@ class CONTENT_EXPORT ContentBrowserClient {
   // Called from a site instance's destructor.
   virtual void SiteInstanceDeleting(SiteInstance* site_instance) {}
 
+  // Called when a worker process is created.
+  virtual void WorkerProcessCreated(SiteInstance* site_instance,
+                                    int worker_process_id) {}
+
+  // Called when a worker process is terminated.
+  virtual void WorkerProcessTerminated(SiteInstance* site_instance,
+                                       int worker_process_id) {}
+
   // Returns true if for the navigation from |current_url| to |new_url|
-  // in |site_instance|, the process should be swapped (even if we are in a
-  // process model that doesn't usually swap).
-  virtual bool ShouldSwapProcessesForNavigation(SiteInstance* site_instance,
-                                                const GURL& current_url,
-                                                const GURL& new_url);
+  // in |site_instance|, a new SiteInstance and BrowsingInstance should be
+  // created (even if we are in a process model that doesn't usually swap.)
+  // This forces a process swap and severs script connections with existing
+  // tabs.
+  virtual bool ShouldSwapBrowsingInstancesForNavigation(
+      SiteInstance* site_instance,
+      const GURL& current_url,
+      const GURL& new_url);
 
   // Returns true if the given navigation redirect should cause a renderer
   // process swap.
@@ -265,7 +294,7 @@ class CONTENT_EXPORT ContentBrowserClient {
 
   // Allows the embedder to pass extra command line flags.
   // switches::kProcessType will already be set at this point.
-  virtual void AppendExtraCommandLineSwitches(CommandLine* command_line,
+  virtual void AppendExtraCommandLineSwitches(base::CommandLine* command_line,
                                               int child_process_id) {}
 
   // Returns the locale used by the application.
@@ -292,7 +321,7 @@ class CONTENT_EXPORT ContentBrowserClient {
                               const net::CookieList& cookie_list,
                               ResourceContext* context,
                               int render_process_id,
-                              int render_view_id);
+                              int render_frame_id);
 
   // Allow the embedder to control if the given cookie can be set.
   // This is called on the IO thread.
@@ -301,23 +330,23 @@ class CONTENT_EXPORT ContentBrowserClient {
                               const std::string& cookie_line,
                               ResourceContext* context,
                               int render_process_id,
-                              int render_view_id,
+                              int render_frame_id,
                               net::CookieOptions* options);
 
   // This is called on the IO thread.
   virtual bool AllowSaveLocalState(ResourceContext* context);
 
   // Allow the embedder to control if access to web database by a shared worker
-  // is allowed. |render_views| is a vector of pairs of
-  // RenderProcessID/RenderViewID of RenderViews that are using this worker.
+  // is allowed. |render_frame| is a vector of pairs of
+  // RenderProcessID/RenderFrameID of RenderFrame that are using this worker.
   // This is called on the IO thread.
   virtual bool AllowWorkerDatabase(
       const GURL& url,
-      const string16& name,
-      const string16& display_name,
+      const base::string16& name,
+      const base::string16& display_name,
       unsigned long estimated_size,
       ResourceContext* context,
-      const std::vector<std::pair<int, int> >& render_views);
+      const std::vector<std::pair<int, int> >& render_frames);
 
   // Allow the embedder to control if access to file system by a shared worker
   // is allowed.
@@ -325,16 +354,16 @@ class CONTENT_EXPORT ContentBrowserClient {
   virtual bool AllowWorkerFileSystem(
       const GURL& url,
       ResourceContext* context,
-      const std::vector<std::pair<int, int> >& render_views);
+      const std::vector<std::pair<int, int> >& render_frames);
 
   // Allow the embedder to control if access to IndexedDB by a shared worker
   // is allowed.
   // This is called on the IO thread.
   virtual bool AllowWorkerIndexedDB(
       const GURL& url,
-      const string16& name,
+      const base::string16& name,
       ResourceContext* context,
-      const std::vector<std::pair<int, int> >& render_views);
+      const std::vector<std::pair<int, int> >& render_frames);
 
   // Allow the embedder to override the request context based on the URL for
   // certain operations, like cookie access. Returns NULL to indicate the
@@ -389,7 +418,7 @@ class CONTENT_EXPORT ContentBrowserClient {
   // or denied immediately, and the callback won't be run.
   virtual void AllowCertificateError(
       int render_process_id,
-      int render_view_id,
+      int render_frame_id,
       int cert_error,
       const net::SSLInfo& ssl_info,
       const GURL& request_url,
@@ -403,7 +432,7 @@ class CONTENT_EXPORT ContentBrowserClient {
   // certificate was selected NULL is returned to the |callback|.
   virtual void SelectClientCertificate(
       int render_process_id,
-      int render_view_id,
+      int render_frame_id,
       const net::HttpNetworkSession* network_session,
       net::SSLCertRequestInfo* cert_request_info,
       const base::Callback<void(net::X509Certificate*)>& callback) {}
@@ -433,7 +462,7 @@ class CONTENT_EXPORT ContentBrowserClient {
 
   // Checks if the given page has permission to show desktop notifications.
   // This is called on the IO thread.
-  virtual WebKit::WebNotificationPresenter::Permission
+  virtual blink::WebNotificationPresenter::Permission
       CheckDesktopNotificationPermission(
           const GURL& source_url,
           ResourceContext* context,
@@ -464,7 +493,7 @@ class CONTENT_EXPORT ContentBrowserClient {
                                const GURL& target_url,
                                const content::Referrer& referrer,
                                WindowOpenDisposition disposition,
-                               const WebKit::WebWindowFeatures& features,
+                               const blink::WebWindowFeatures& features,
                                bool user_gesture,
                                bool opener_suppressed,
                                content::ResourceContext* context,
@@ -561,6 +590,10 @@ class CONTENT_EXPORT ContentBrowserClient {
   virtual void GetAdditionalAllowedSchemesForFileSystem(
       std::vector<std::string>* additional_schemes) {}
 
+  // Returns auto mount handlers for URL requests for FileSystem APIs.
+  virtual void GetURLRequestAutoMountHandlers(
+      std::vector<fileapi::URLRequestAutoMountHandler>* handlers) {}
+
   // Returns additional file system backends for FileSystem API.
   // |browser_context| is needed in the additional FileSystemBackends.
   // It has mount points to create objects returned by additional
@@ -572,13 +605,23 @@ class CONTENT_EXPORT ContentBrowserClient {
 
   // Allows an embedder to return its own LocationProvider implementation.
   // Return NULL to use the default one for the platform to be created.
+  // FYI: Used by an external project; please don't remove.
+  // Contact Viatcheslav Ostapenko at sl.ostapenko@samsung.com for more
+  // information.
   virtual LocationProvider* OverrideSystemLocationProvider();
+
+  // Allows an embedder to return its own VibrationProvider implementation.
+  // Return NULL to use the default one for the platform to be created.
+  // FYI: Used by an external project; please don't remove.
+  // Contact Viatcheslav Ostapenko at sl.ostapenko@samsung.com for more
+  // information.
+  virtual VibrationProvider* OverrideVibrationProvider();
 
 #if defined(OS_POSIX) && !defined(OS_MACOSX)
   // Populates |mappings| with all files that need to be mapped before launching
   // a child process.
   virtual void GetAdditionalMappedFilesForChildProcess(
-      const CommandLine& command_line,
+      const base::CommandLine& command_line,
       int child_process_id,
       std::vector<FileDescriptorInfo>* mappings) {}
 #endif
@@ -594,19 +637,20 @@ class CONTENT_EXPORT ContentBrowserClient {
                                 bool* success) {}
 #endif
 
-#if defined(USE_NSS)
-  // Return a delegate to authenticate and unlock |module|.
-  // This is called on a worker thread.
-  virtual
-      crypto::CryptoModuleBlockingPasswordDelegate* GetCryptoPasswordDelegate(
-          const GURL& url);
-#endif
-
   // Returns true if plugin referred to by the url can use
   // pp::FileIO::RequestOSFileHandle.
   virtual bool IsPluginAllowedToCallRequestOSFileHandle(
       content::BrowserContext* browser_context,
       const GURL& url);
+
+  // Returns true if dev channel APIs are available for plugins.
+  virtual bool IsPluginAllowedToUseDevChannelAPIs();
+
+  // Returns a special cookie store to use for a given render process, or NULL
+  // if the default cookie store should be used
+  // This is called on the IO thread.
+  virtual net::CookieStore* OverrideCookieStoreForRenderProcess(
+      int render_process_id_);
 };
 
 }  // namespace content

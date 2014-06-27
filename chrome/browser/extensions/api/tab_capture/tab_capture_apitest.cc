@@ -17,7 +17,6 @@
 #include "chrome/browser/ui/fullscreen/fullscreen_controller.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/chrome_version_info.h"
-#include "chrome/common/extensions/feature_switch.h"
 #include "chrome/common/extensions/features/base_feature_provider.h"
 #include "chrome/common/extensions/features/complex_feature.h"
 #include "chrome/common/extensions/features/simple_feature.h"
@@ -25,6 +24,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/common/content_switches.h"
+#include "extensions/common/feature_switch.h"
 #include "extensions/common/features/feature.h"
 #include "ui/compositor/compositor_switches.h"
 
@@ -34,38 +34,23 @@ const char kExtensionId[] = "ddchlicdkolnonkihahngkmmmjnjlkkf";
 
 class TabCaptureApiTest : public ExtensionApiTest {
  public:
-  TabCaptureApiTest() {}
-
-  virtual void SetUp() OVERRIDE {
-    // TODO(danakj): The GPU Video Decoder needs real GL bindings.
-    // crbug.com/269087
-    UseRealGLBindings();
-
-    // These test should be using OSMesa on CrOS, which would make this
-    // unneeded.
-    // crbug.com/313128
-#if !defined(OS_CHROMEOS)
-    UseRealGLContexts();
-#endif
-
-    ExtensionApiTest::SetUp();
-  }
-
   void AddExtensionToCommandLineWhitelist() {
     CommandLine::ForCurrentProcess()->AppendSwitchASCII(
         switches::kWhitelistedExtensionID, kExtensionId);
   }
 };
 
+class TabCaptureApiPixelTest : public TabCaptureApiTest {
+ public:
+  virtual void SetUp() OVERRIDE {
+    EnablePixelOutput();
+    TabCaptureApiTest::SetUp();
+  }
+};
+
 }  // namespace
 
-// http://crbug.com/261493
-#if defined(OS_CHROMEOS)
-#define MAYBE_ApiTests DISABLED_ApiTests
-#else
-#define MAYBE_ApiTests ApiTests
-#endif
-IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, MAYBE_ApiTests) {
+IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, ApiTests) {
 #if defined(OS_WIN) && defined(USE_ASH)
   // Disable this test in Metro+Ash for now (http://crbug.com/262796).
   if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kAshBrowserTests))
@@ -80,8 +65,7 @@ IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, MAYBE_ApiTests) {
 #endif
 
   AddExtensionToCommandLineWhitelist();
-  ASSERT_TRUE(RunExtensionSubtest("tab_capture/experimental",
-                                  "api_tests.html")) << message_;
+  ASSERT_TRUE(RunExtensionSubtest("tab_capture", "api_tests.html")) << message_;
 }
 
 IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, ApiTestsAudio) {
@@ -93,33 +77,30 @@ IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, ApiTestsAudio) {
 #endif
 
   AddExtensionToCommandLineWhitelist();
-  ASSERT_TRUE(RunExtensionSubtest("tab_capture/experimental",
-                                  "api_tests_audio.html")) << message_;
+  ASSERT_TRUE(RunExtensionSubtest("tab_capture", "api_tests_audio.html"))
+      << message_;
 }
 
 // http://crbug.com/177163
-#if defined(OS_WIN) && !defined(NDEBUG)
+#if !defined(NDEBUG)
 #define MAYBE_EndToEnd DISABLED_EndToEnd
 #else
 #define MAYBE_EndToEnd EndToEnd
 #endif
-IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, MAYBE_EndToEnd) {
+IN_PROC_BROWSER_TEST_F(TabCaptureApiPixelTest, MAYBE_EndToEnd) {
 #if defined(OS_WIN)
   // TODO(justinlin): Disabled for WinXP due to timeout issues.
   if (base::win::GetVersion() < base::win::VERSION_VISTA) {
     return;
   }
 #endif
-#if defined(OS_MACOSX)
-  // TODO(miu): Disabled for Mac OS X 10.6 due to timeout issues.
-  // http://crbug.com/174640
-  if (base::mac::IsOSSnowLeopard())
+  // This test is too slow to succeed with OSMesa on the bots.
+  if (UsingOSMesa())
     return;
-#endif
 
   AddExtensionToCommandLineWhitelist();
-  ASSERT_TRUE(RunExtensionSubtest("tab_capture/experimental",
-                                  "end_to_end.html")) << message_;
+  ASSERT_TRUE(RunExtensionSubtest("tab_capture", "end_to_end.html"))
+      << message_;
 }
 
 // http://crbug.com/177163
@@ -132,8 +113,8 @@ IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, MAYBE_EndToEnd) {
 IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, MAYBE_GetUserMediaTest) {
   ExtensionTestMessageListener listener("ready", true);
 
-  ASSERT_TRUE(RunExtensionSubtest("tab_capture/experimental",
-                                  "get_user_media_test.html")) << message_;
+  ASSERT_TRUE(RunExtensionSubtest("tab_capture", "get_user_media_test.html"))
+      << message_;
 
   EXPECT_TRUE(listener.WaitUntilSatisfied());
 
@@ -167,9 +148,9 @@ IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, MAYBE_ActiveTabPermission) {
   ExtensionTestMessageListener before_open_new_tab("ready3", true);
   ExtensionTestMessageListener before_whitelist_extension("ready4", true);
 
-  ASSERT_TRUE(RunExtensionSubtest(
-      "tab_capture/experimental", "active_tab_permission_test.html"))
-          << message_;
+  ASSERT_TRUE(RunExtensionSubtest("tab_capture",
+                                  "active_tab_permission_test.html"))
+      << message_;
 
   // Open a new tab and make sure capture is denied.
   EXPECT_TRUE(before_open_tab.WaitUntilSatisfied());
@@ -236,8 +217,8 @@ IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, MAYBE_FullscreenEvents) {
   ExtensionTestMessageListener listeners_setup("ready1", true);
   ExtensionTestMessageListener fullscreen_entered("ready2", true);
 
-  ASSERT_TRUE(RunExtensionSubtest("tab_capture/experimental",
-                                  "fullscreen_test.html")) << message_;
+  ASSERT_TRUE(RunExtensionSubtest("tab_capture", "fullscreen_test.html"))
+      << message_;
   EXPECT_TRUE(listeners_setup.WaitUntilSatisfied());
 
   // Toggle fullscreen after setting up listeners.
@@ -267,8 +248,9 @@ IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, MAYBE_FullscreenEvents) {
 // Make sure tabCapture API can be granted for Chrome:// pages.
 IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, MAYBE_GrantForChromePages) {
   ExtensionTestMessageListener before_open_tab("ready1", true);
-  ASSERT_TRUE(RunExtensionSubtest("tab_capture/experimental",
-                                  "active_tab_chrome_pages.html")) << message_;
+  ASSERT_TRUE(RunExtensionSubtest("tab_capture",
+                                  "active_tab_chrome_pages.html"))
+      << message_;
   EXPECT_TRUE(before_open_tab.WaitUntilSatisfied());
 
   // Open a tab on a chrome:// page and make sure we can capture.
@@ -289,7 +271,8 @@ IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, MAYBE_GrantForChromePages) {
   EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
 }
 
-#if defined(OS_WIN) && !defined(NDEBUG)
+#if (defined(OS_WIN) && !defined(NDEBUG)) || defined(OS_MACOSX)
+// http://crbug.com/326319
 #define MAYBE_CaptureInSplitIncognitoMode DISABLED_CaptureInSplitIncognitoMode
 #else
 #define MAYBE_CaptureInSplitIncognitoMode CaptureInSplitIncognitoMode
@@ -297,7 +280,7 @@ IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, MAYBE_GrantForChromePages) {
 // Test that a tab can be captured in split incognito mode.
 IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, MAYBE_CaptureInSplitIncognitoMode) {
   AddExtensionToCommandLineWhitelist();
-  ASSERT_TRUE(RunExtensionSubtest("tab_capture/experimental",
+  ASSERT_TRUE(RunExtensionSubtest("tab_capture",
                                   "incognito.html",
                                   kFlagEnableIncognito | kFlagUseIncognito))
       << message_;
@@ -310,6 +293,6 @@ IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, MAYBE_CaptureInSplitIncognitoMode) {
 #endif
 IN_PROC_BROWSER_TEST_F(TabCaptureApiTest, MAYBE_Constraints) {
   AddExtensionToCommandLineWhitelist();
-  ASSERT_TRUE(RunExtensionSubtest("tab_capture/experimental",
-                                  "constraints.html")) << message_;
+  ASSERT_TRUE(RunExtensionSubtest("tab_capture", "constraints.html"))
+      << message_;
 }

@@ -8,12 +8,10 @@ from telemetry.core import util
 from telemetry.page.actions import wait
 from telemetry.unittest import tab_test_case
 
+
 class WaitActionTest(tab_test_case.TabTestCase):
   def testWaitAction(self):
-    self._browser.SetHTTPServerDirectories(util.GetUnittestDataDir())
-    self._tab.Navigate(
-      self._browser.http_server.UrlOf('blank.html'))
-    self._tab.WaitForDocumentReadyStateToBeComplete()
+    self.Navigate('blank.html')
     self.assertEquals(
         self._tab.EvaluateJavaScript('document.location.pathname;'),
         '/blank.html')
@@ -21,8 +19,8 @@ class WaitActionTest(tab_test_case.TabTestCase):
     i = wait.WaitAction({ 'condition': 'duration', 'seconds': 1 })
 
     start_time = time.time()
-    i.RunAction(None, self._tab, None)
-    self.assertAlmostEqual(time.time() - start_time, 1, places=1)
+    i.RunAction(None, self._tab)
+    self.assertTrue(time.time() - start_time >= 1.0)
 
   def testWaitActionTimeout(self):
     wait_action = wait.WaitAction({
@@ -34,5 +32,5 @@ class WaitActionTest(tab_test_case.TabTestCase):
     start_time = time.time()
     self.assertRaises(
         util.TimeoutException,
-        lambda: wait_action.RunAction(None, self._tab, None))
+        lambda: wait_action.RunAction(None, self._tab))
     self.assertTrue(time.time() - start_time < 5)

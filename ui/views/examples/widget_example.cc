@@ -5,12 +5,15 @@
 #include "ui/views/examples/widget_example.h"
 
 #include "base/strings/utf_string_conversions.h"
+#include "ui/views/background.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/dialog_delegate.h"
+
+using base::ASCIIToUTF16;
 
 namespace views {
 namespace examples {
@@ -21,7 +24,7 @@ class DialogExample : public DialogDelegateView {
  public:
   DialogExample();
   virtual ~DialogExample();
-  virtual string16 GetWindowTitle() const OVERRIDE;
+  virtual base::string16 GetWindowTitle() const OVERRIDE;
   virtual View* CreateExtraView() OVERRIDE;
   virtual View* CreateTitlebarExtraView() OVERRIDE;
   virtual View* CreateFootnoteView() OVERRIDE;
@@ -35,13 +38,13 @@ DialogExample::DialogExample() {
 
 DialogExample::~DialogExample() {}
 
-string16 DialogExample::GetWindowTitle() const {
+base::string16 DialogExample::GetWindowTitle() const {
   return ASCIIToUTF16("Dialog Widget Example");
 }
 
 View* DialogExample::CreateExtraView() {
   LabelButton* button = new LabelButton(NULL, ASCIIToUTF16("Extra button!"));
-  button->SetStyle(Button::STYLE_NATIVE_TEXTBUTTON);
+  button->SetStyle(Button::STYLE_BUTTON);
   return button;
 }
 
@@ -77,7 +80,7 @@ void WidgetExample::BuildButton(View* container,
                                 const std::string& label,
                                 int tag) {
   LabelButton* button = new LabelButton(this, ASCIIToUTF16(label));
-  button->set_focusable(true);
+  button->SetFocusable(true);
   button->set_tag(tag);
   container->AddChildView(button);
 }

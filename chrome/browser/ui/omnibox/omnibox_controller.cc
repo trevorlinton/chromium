@@ -31,23 +31,31 @@ namespace {
 //
 // The SearchProvider may mark some suggestions to be prefetched based on
 // instructions from the suggest server. If such a match ranks sufficiently
-// highly, we'll return it. We only care about matches that are the default or
-// else the very first entry in the dropdown (which can happen for non-default
-// matches only if we're hiding a top verbatim match); for other matches, we
-// think the likelihood of the user selecting them is low enough that
-// prefetching isn't worth doing.
+// highly, we'll return it.
+//
+// We only care about matches that are the default or the very first entry in
+// the dropdown (which can happen for non-default matches only if we're hiding
+// a top verbatim match) or the second entry in the dropdown (which can happen
+// for non-default matches when a top verbatim match is shown); for other
+// matches, we think the likelihood of the user selecting them is low enough
+// that prefetching isn't worth doing.
 const AutocompleteMatch* GetMatchToPrefetch(const AutocompleteResult& result) {
+  // If the default match should be prefetched, do that.
   const AutocompleteResult::const_iterator default_match(
       result.default_match());
-  if (default_match == result.end())
-    return NULL;
-
-  if (SearchProvider::ShouldPrefetch(*default_match))
+  if ((default_match != result.end()) &&
+      SearchProvider::ShouldPrefetch(*default_match))
     return &(*default_match);
 
-  return (result.ShouldHideTopMatch() && (result.size() > 1) &&
-      SearchProvider::ShouldPrefetch(result.match_at(1))) ?
-          &result.match_at(1) : NULL;
+  // Otherwise, if the top match is a verbatim match and the very next match is
+  // prefetchable, fetch that.
+  if ((result.ShouldHideTopMatch() ||
+       result.TopMatchIsStandaloneVerbatimMatch()) &&
+      (result.size() > 1) &&
+      SearchProvider::ShouldPrefetch(result.match_at(1)))
+    return &result.match_at(1);
+
+  return NULL;
 }
 
 }  // namespace
@@ -56,6 +64,7 @@ OmniboxController::OmniboxController(OmniboxEditModel* omnibox_edit_model,
                                      Profile* profile)
     : omnibox_edit_model_(omnibox_edit_model),
       profile_(profile),
+      popup_(NULL),
       autocomplete_controller_(new AutocompleteController(profile, this,
           AutocompleteClassifier::kDefaultOmniboxProviders)) {
 }
@@ -64,7 +73,7 @@ OmniboxController::~OmniboxController() {
 }
 
 void OmniboxController::StartAutocomplete(
-    string16 user_text,
+    base::string16 user_text,
     size_t cursor_position,
     const GURL& current_url,
     AutocompleteInput::PageClassification current_page_classification,
@@ -77,7 +86,7 @@ void OmniboxController::StartAutocomplete(
   // We don't explicitly clear OmniboxPopupModel::manually_selected_match, as
   // Start ends up invoking OmniboxPopupModel::OnResultChanged which clears it.
   autocomplete_controller_->Start(AutocompleteInput(
-      user_text, cursor_position, string16(), current_url,
+      user_text, cursor_position, base::string16(), current_url,
       current_page_classification, prevent_inline_autocomplete,
       prefer_keyword, allow_exact_keyword_match,
       AutocompleteInput::ALL_MATCHES));
@@ -114,8 +123,8 @@ void OmniboxController::OnResultChanged(bool default_match_changed) {
     } else {
       InvalidateCurrentMatch();
       popup_->OnResultChanged();
-      omnibox_edit_model_->OnPopupDataChanged(string16(), NULL, string16(),
-                                              false);
+      omnibox_edit_model_->OnPopupDataChanged(base::string16(), NULL,
+                                              base::string16(), false);
     }
   } else {
     popup_->OnResultChanged();

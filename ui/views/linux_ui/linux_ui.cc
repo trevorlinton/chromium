@@ -5,6 +5,7 @@
 #include "ui/views/linux_ui/linux_ui.h"
 
 #include "ui/base/ime/linux/linux_input_method_context_factory.h"
+#include "ui/gfx/linux_font_delegate.h"
 #include "ui/shell_dialogs/linux_shell_dialog.h"
 
 namespace {
@@ -18,10 +19,10 @@ namespace views {
 void LinuxUI::SetInstance(LinuxUI* instance) {
   delete g_linux_ui;
   g_linux_ui = instance;
-#if defined(USE_X11)
   LinuxInputMethodContextFactory::SetInstance(instance);
-#endif
+  LinuxFontDelegate::SetInstance(instance);
   LinuxShellDialog::SetInstance(instance);
+  ui::SetTextEditKeyBindingsDelegate(instance);
 }
 
 LinuxUI* LinuxUI::instance() {

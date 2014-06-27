@@ -11,7 +11,6 @@
 #include "media/base/decrypt_config.h"
 #include "media/base/mock_filters.h"
 #include "media/cdm/aes_decryptor.h"
-#include "media/webm/webm_constants.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -38,12 +37,8 @@ const uint8 kKeyId[] = {
     0x00, 0x01, 0x02, 0x03
 };
 
-const uint8 kKey[] = {
-    // base64 equivalent is BAUGBwgJCgsMDQ4PEBESEw
-    0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b,
-    0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13
-};
-
+// Key is 0x0405060708090a0b0c0d0e0f10111213,
+// base64 equivalent is BAUGBwgJCgsMDQ4PEBESEw.
 const char kKeyAsJWK[] =
     "{"
     "  \"keys\": ["
@@ -51,6 +46,18 @@ const char kKeyAsJWK[] =
     "      \"kty\": \"oct\","
     "      \"kid\": \"AAECAw\","
     "      \"k\": \"BAUGBwgJCgsMDQ4PEBESEw\""
+    "    }"
+    "  ]"
+    "}";
+
+// Same kid as kKeyAsJWK, key to decrypt kEncryptedData2
+const char kKeyAlternateAsJWK[] =
+    "{"
+    "  \"keys\": ["
+    "    {"
+    "      \"kty\": \"oct\","
+    "      \"kid\": \"AAECAw\","
+    "      \"k\": \"FBUWFxgZGhscHR4fICEiIw\""
     "    }"
     "  ]"
     "}";
@@ -169,12 +176,10 @@ static scoped_refptr<DecoderBuffer> CreateEncryptedBuffer(
     const std::vector<uint8>& data,
     const std::vector<uint8>& key_id,
     const std::vector<uint8>& iv,
-    int offset,
     const std::vector<SubsampleEntry>& subsample_entries) {
   DCHECK(!data.empty());
-  int padded_size = offset + data.size();
-  scoped_refptr<DecoderBuffer> encrypted_buffer(new DecoderBuffer(padded_size));
-  memcpy(encrypted_buffer->writable_data() + offset, &data[0], data.size());
+  scoped_refptr<DecoderBuffer> encrypted_buffer(new DecoderBuffer(data.size()));
+  memcpy(encrypted_buffer->writable_data(), &data[0], data.size());
   CHECK(encrypted_buffer.get());
   std::string key_id_string(
       reinterpret_cast<const char*>(key_id.empty() ? NULL : &key_id[0]),
@@ -182,17 +187,23 @@ static scoped_refptr<DecoderBuffer> CreateEncryptedBuffer(
   std::string iv_string(
       reinterpret_cast<const char*>(iv.empty() ? NULL : &iv[0]), iv.size());
   encrypted_buffer->set_decrypt_config(scoped_ptr<DecryptConfig>(
-      new DecryptConfig(key_id_string, iv_string, offset, subsample_entries)));
+      new DecryptConfig(key_id_string, iv_string, subsample_entries)));
   return encrypted_buffer;
 }
 
 class AesDecryptorTest : public testing::Test {
  public:
   AesDecryptorTest()
-      : decryptor_(
-            base::Bind(&AesDecryptorTest::KeyAdded, base::Unretained(this)),
-            base::Bind(&AesDecryptorTest::KeyError, base::Unretained(this)),
-            base::Bind(&AesDecryptorTest::KeyMessage, base::Unretained(this))),
+      : decryptor_(base::Bind(&AesDecryptorTest::OnSessionCreated,
+                              base::Unretained(this)),
+                   base::Bind(&AesDecryptorTest::OnSessionMessage,
+                              base::Unretained(this)),
+                   base::Bind(&AesDecryptorTest::OnSessionReady,
+                              base::Unretained(this)),
+                   base::Bind(&AesDecryptorTest::OnSessionClosed,
+                              base::Unretained(this)),
+                   base::Bind(&AesDecryptorTest::OnSessionError,
+                              base::Unretained(this))),
         decrypt_cb_(base::Bind(&AesDecryptorTest::BufferDecrypted,
                                base::Unretained(this))),
         original_data_(kOriginalData, kOriginalData + kOriginalDataSize),
@@ -205,58 +216,52 @@ class AesDecryptorTest : public testing::Test {
         iv_(kIv, kIv + arraysize(kIv)),
         normal_subsample_entries_(
             kSubsampleEntriesNormal,
-            kSubsampleEntriesNormal + arraysize(kSubsampleEntriesNormal)) {
+            kSubsampleEntriesNormal + arraysize(kSubsampleEntriesNormal)),
+        next_session_id_(1) {
   }
 
  protected:
-  void GenerateKeyRequest(const std::vector<uint8>& key_id) {
+  // Creates a new session using |key_id|. Returns the session ID.
+  uint32 CreateSession(const std::vector<uint8>& key_id) {
     DCHECK(!key_id.empty());
-    EXPECT_CALL(*this, KeyMessage(StrNe(std::string()), key_id, ""))
-        .WillOnce(SaveArg<0>(&session_id_string_));
-    EXPECT_TRUE(decryptor_.GenerateKeyRequest(
-        std::string(), &key_id[0], key_id.size()));
+    uint32 session_id = next_session_id_++;
+    EXPECT_CALL(*this, OnSessionCreated(session_id, StrNe(std::string())));
+    EXPECT_CALL(*this, OnSessionMessage(session_id, key_id, ""));
+    EXPECT_TRUE(decryptor_.CreateSession(
+        session_id, std::string(), &key_id[0], key_id.size()));
+    return session_id;
   }
 
-  enum AddKeyExpectation {
-    KEY_ADDED,
-    KEY_ERROR
+  // Releases the session specified by |session_id|.
+  void ReleaseSession(uint32 session_id) {
+    EXPECT_CALL(*this, OnSessionClosed(session_id));
+    decryptor_.ReleaseSession(session_id);
+  }
+
+  enum UpdateSessionExpectation {
+    SESSION_READY,
+    SESSION_ERROR
   };
 
-  void AddRawKeyAndExpect(const std::vector<uint8>& key_id,
-                          const std::vector<uint8>& key,
-                          AddKeyExpectation result) {
-    // TODO(jrummell): Remove once raw keys no longer supported.
-    DCHECK(!key_id.empty());
+  // Updates the session specified by |session_id| with |key|. |result|
+  // tests that the update succeeds or generates an error.
+  void UpdateSessionAndExpect(uint32 session_id,
+                              const std::string& key,
+                              UpdateSessionExpectation result) {
     DCHECK(!key.empty());
 
-    if (result == KEY_ADDED) {
-      EXPECT_CALL(*this, KeyAdded(session_id_string_));
-    } else if (result == KEY_ERROR) {
-      EXPECT_CALL(*this, KeyError(session_id_string_,
-                                  MediaKeys::kUnknownError, 0));
-    } else {
-      NOTREACHED();
+    switch (result) {
+      case SESSION_READY:
+        EXPECT_CALL(*this, OnSessionReady(session_id));
+        break;
+      case SESSION_ERROR:
+        EXPECT_CALL(*this,
+                    OnSessionError(session_id, MediaKeys::kUnknownError, 0));
+        break;
     }
 
-    decryptor_.AddKey(&key[0], key.size(), &key_id[0], key_id.size(),
-                      session_id_string_);
-  }
-
-  void AddKeyAndExpect(const std::string& key, AddKeyExpectation result) {
-    DCHECK(!key.empty());
-
-    if (result == KEY_ADDED) {
-      EXPECT_CALL(*this, KeyAdded(session_id_string_));
-    } else if (result == KEY_ERROR) {
-      EXPECT_CALL(*this,
-                  KeyError(session_id_string_, MediaKeys::kUnknownError, 0));
-    } else {
-      NOTREACHED();
-    }
-
-    decryptor_.AddKey(reinterpret_cast<const uint8*>(key.c_str()), key.length(),
-                      NULL, 0,
-                      session_id_string_);
+    decryptor_.UpdateSession(
+        session_id, reinterpret_cast<const uint8*>(key.c_str()), key.length());
   }
 
   MOCK_METHOD2(BufferDecrypted, void(Decryptor::Status,
@@ -266,7 +271,8 @@ class AesDecryptorTest : public testing::Test {
     SUCCESS,
     DATA_MISMATCH,
     DATA_AND_SIZE_MISMATCH,
-    DECRYPT_ERROR
+    DECRYPT_ERROR,
+    NO_KEY
   };
 
   void DecryptAndExpect(const scoped_refptr<DecoderBuffer>& encrypted,
@@ -274,12 +280,21 @@ class AesDecryptorTest : public testing::Test {
                         DecryptExpectation result) {
     scoped_refptr<DecoderBuffer> decrypted;
 
-    if (result != DECRYPT_ERROR) {
-      EXPECT_CALL(*this, BufferDecrypted(Decryptor::kSuccess, NotNull()))
-          .WillOnce(SaveArg<1>(&decrypted));
-    } else {
-      EXPECT_CALL(*this, BufferDecrypted(Decryptor::kError, IsNull()))
-          .WillOnce(SaveArg<1>(&decrypted));
+    switch (result) {
+      case SUCCESS:
+      case DATA_MISMATCH:
+      case DATA_AND_SIZE_MISMATCH:
+        EXPECT_CALL(*this, BufferDecrypted(Decryptor::kSuccess, NotNull()))
+            .WillOnce(SaveArg<1>(&decrypted));
+        break;
+      case DECRYPT_ERROR:
+        EXPECT_CALL(*this, BufferDecrypted(Decryptor::kError, IsNull()))
+            .WillOnce(SaveArg<1>(&decrypted));
+        break;
+      case NO_KEY:
+        EXPECT_CALL(*this, BufferDecrypted(Decryptor::kNoKey, IsNull()))
+            .WillOnce(SaveArg<1>(&decrypted));
+        break;
     }
 
     decryptor_.Decrypt(Decryptor::kVideo, encrypted, decrypt_cb_);
@@ -302,20 +317,26 @@ class AesDecryptorTest : public testing::Test {
         EXPECT_NE(plain_text.size(), decrypted_text.size());
         break;
       case DECRYPT_ERROR:
+      case NO_KEY:
         EXPECT_TRUE(decrypted_text.empty());
         break;
     }
   }
 
-  MOCK_METHOD1(KeyAdded, void(const std::string&));
-  MOCK_METHOD3(KeyError, void(const std::string&,
-                              MediaKeys::KeyError, int));
-  MOCK_METHOD3(KeyMessage, void(const std::string& session_id,
-                                const std::vector<uint8>& message,
-                                const std::string& default_url));
+  MOCK_METHOD2(OnSessionCreated,
+               void(uint32 session_id, const std::string& web_session_id));
+  MOCK_METHOD3(OnSessionMessage,
+               void(uint32 session_id,
+                    const std::vector<uint8>& message,
+                    const std::string& default_url));
+  MOCK_METHOD1(OnSessionReady, void(uint32 session_id));
+  MOCK_METHOD1(OnSessionClosed, void(uint32 session_id));
+  MOCK_METHOD3(OnSessionError,
+               void(uint32 session_id,
+                    MediaKeys::KeyError,
+                    uint32 system_code));
 
   AesDecryptor decryptor_;
-  std::string session_id_string_;
   AesDecryptor::DecryptCB decrypt_cb_;
 
   // Constants for testing.
@@ -326,83 +347,93 @@ class AesDecryptorTest : public testing::Test {
   const std::vector<uint8> iv_;
   const std::vector<SubsampleEntry> normal_subsample_entries_;
   const std::vector<SubsampleEntry> no_subsample_entries_;
+
+  // Generate new session ID every time
+  uint32 next_session_id_;
 };
 
-TEST_F(AesDecryptorTest, GenerateKeyRequestWithNullInitData) {
-  EXPECT_CALL(*this, KeyMessage(StrNe(std::string()), IsEmpty(), ""));
-  EXPECT_TRUE(decryptor_.GenerateKeyRequest(std::string(), NULL, 0));
+TEST_F(AesDecryptorTest, CreateSessionWithNullInitData) {
+  uint32 session_id = 8;
+  EXPECT_CALL(*this, OnSessionMessage(session_id, IsEmpty(), ""));
+  EXPECT_CALL(*this, OnSessionCreated(session_id, StrNe(std::string())));
+  EXPECT_TRUE(decryptor_.CreateSession(session_id, std::string(), NULL, 0));
+}
+
+TEST_F(AesDecryptorTest, MultipleCreateSession) {
+  uint32 session_id1 = 10;
+  EXPECT_CALL(*this, OnSessionMessage(session_id1, IsEmpty(), ""));
+  EXPECT_CALL(*this, OnSessionCreated(session_id1, StrNe(std::string())));
+  EXPECT_TRUE(decryptor_.CreateSession(session_id1, std::string(), NULL, 0));
+
+  uint32 session_id2 = 11;
+  EXPECT_CALL(*this, OnSessionMessage(session_id2, IsEmpty(), ""));
+  EXPECT_CALL(*this, OnSessionCreated(session_id2, StrNe(std::string())));
+  EXPECT_TRUE(decryptor_.CreateSession(session_id2, std::string(), NULL, 0));
+
+  uint32 session_id3 = 23;
+  EXPECT_CALL(*this, OnSessionMessage(session_id3, IsEmpty(), ""));
+  EXPECT_CALL(*this, OnSessionCreated(session_id3, StrNe(std::string())));
+  EXPECT_TRUE(decryptor_.CreateSession(session_id3, std::string(), NULL, 0));
 }
 
 TEST_F(AesDecryptorTest, NormalDecryption) {
-  GenerateKeyRequest(key_id_);
-  AddKeyAndExpect(kKeyAsJWK, KEY_ADDED);
+  uint32 session_id = CreateSession(key_id_);
+  UpdateSessionAndExpect(session_id, kKeyAsJWK, SESSION_READY);
   scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
-      encrypted_data_, key_id_, iv_, 0, no_subsample_entries_);
-  DecryptAndExpect(encrypted_buffer, original_data_, SUCCESS);
-}
-
-TEST_F(AesDecryptorTest, DecryptionWithOffset) {
-  GenerateKeyRequest(key_id_);
-  AddKeyAndExpect(kKeyAsJWK, KEY_ADDED);
-  scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
-      encrypted_data_, key_id_, iv_, 23, no_subsample_entries_);
+      encrypted_data_, key_id_, iv_, no_subsample_entries_);
   DecryptAndExpect(encrypted_buffer, original_data_, SUCCESS);
 }
 
 TEST_F(AesDecryptorTest, UnencryptedFrame) {
   // An empty iv string signals that the frame is unencrypted.
   scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
-      original_data_, key_id_, std::vector<uint8>(), 0, no_subsample_entries_);
+      original_data_, key_id_, std::vector<uint8>(), no_subsample_entries_);
   DecryptAndExpect(encrypted_buffer, original_data_, SUCCESS);
 }
 
 TEST_F(AesDecryptorTest, WrongKey) {
-  GenerateKeyRequest(key_id_);
-  AddKeyAndExpect(kWrongKeyAsJWK, KEY_ADDED);
+  uint32 session_id = CreateSession(key_id_);
+  UpdateSessionAndExpect(session_id, kWrongKeyAsJWK, SESSION_READY);
   scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
-      encrypted_data_, key_id_, iv_, 0, no_subsample_entries_);
+      encrypted_data_, key_id_, iv_, no_subsample_entries_);
   DecryptAndExpect(encrypted_buffer, original_data_, DATA_MISMATCH);
 }
 
 TEST_F(AesDecryptorTest, NoKey) {
   scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
-      encrypted_data_, key_id_, iv_, 0, no_subsample_entries_);
+      encrypted_data_, key_id_, iv_, no_subsample_entries_);
   EXPECT_CALL(*this, BufferDecrypted(AesDecryptor::kNoKey, IsNull()));
   decryptor_.Decrypt(Decryptor::kVideo, encrypted_buffer, decrypt_cb_);
 }
 
 TEST_F(AesDecryptorTest, KeyReplacement) {
-  GenerateKeyRequest(key_id_);
+  uint32 session_id = CreateSession(key_id_);
   scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
-      encrypted_data_, key_id_, iv_, 0, no_subsample_entries_);
+      encrypted_data_, key_id_, iv_, no_subsample_entries_);
 
-  AddKeyAndExpect(kWrongKeyAsJWK, KEY_ADDED);
+  UpdateSessionAndExpect(session_id, kWrongKeyAsJWK, SESSION_READY);
   ASSERT_NO_FATAL_FAILURE(DecryptAndExpect(
       encrypted_buffer, original_data_, DATA_MISMATCH));
 
-  AddKeyAndExpect(kKeyAsJWK, KEY_ADDED);
+  UpdateSessionAndExpect(session_id, kKeyAsJWK, SESSION_READY);
   ASSERT_NO_FATAL_FAILURE(
       DecryptAndExpect(encrypted_buffer, original_data_, SUCCESS));
 }
 
 TEST_F(AesDecryptorTest, WrongSizedKey) {
-  GenerateKeyRequest(key_id_);
-  AddKeyAndExpect(kWrongSizedKeyAsJWK, KEY_ERROR);
-
-  // Repeat for a raw key. Use "-1" to create a wrong sized key.
-  std::vector<uint8> wrong_sized_key(kKey, kKey + arraysize(kKey) - 1);
-  AddRawKeyAndExpect(key_id_, wrong_sized_key, KEY_ERROR);
+  uint32 session_id = CreateSession(key_id_);
+  UpdateSessionAndExpect(session_id, kWrongSizedKeyAsJWK, SESSION_ERROR);
 }
 
 TEST_F(AesDecryptorTest, MultipleKeysAndFrames) {
-  GenerateKeyRequest(key_id_);
-  AddKeyAndExpect(kKeyAsJWK, KEY_ADDED);
+  uint32 session_id = CreateSession(key_id_);
+  UpdateSessionAndExpect(session_id, kKeyAsJWK, SESSION_READY);
   scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
-      encrypted_data_, key_id_, iv_, 10, no_subsample_entries_);
+      encrypted_data_, key_id_, iv_, no_subsample_entries_);
   ASSERT_NO_FATAL_FAILURE(
       DecryptAndExpect(encrypted_buffer, original_data_, SUCCESS));
 
-  AddKeyAndExpect(kKey2AsJWK, KEY_ADDED);
+  UpdateSessionAndExpect(session_id, kKey2AsJWK, SESSION_READY);
 
   // The first key is still available after we added a second key.
   ASSERT_NO_FATAL_FAILURE(
@@ -414,7 +445,6 @@ TEST_F(AesDecryptorTest, MultipleKeysAndFrames) {
                          kEncryptedData2 + arraysize(kEncryptedData2)),
       std::vector<uint8>(kKeyId2, kKeyId2 + arraysize(kKeyId2)),
       std::vector<uint8>(kIv2, kIv2 + arraysize(kIv2)),
-      30,
       no_subsample_entries_);
   ASSERT_NO_FATAL_FAILURE(DecryptAndExpect(
       encrypted_buffer,
@@ -424,43 +454,43 @@ TEST_F(AesDecryptorTest, MultipleKeysAndFrames) {
 }
 
 TEST_F(AesDecryptorTest, CorruptedIv) {
-  GenerateKeyRequest(key_id_);
-  AddKeyAndExpect(kKeyAsJWK, KEY_ADDED);
+  uint32 session_id = CreateSession(key_id_);
+  UpdateSessionAndExpect(session_id, kKeyAsJWK, SESSION_READY);
 
   std::vector<uint8> bad_iv = iv_;
   bad_iv[1]++;
 
   scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
-      encrypted_data_, key_id_, bad_iv, 0, no_subsample_entries_);
+      encrypted_data_, key_id_, bad_iv, no_subsample_entries_);
 
   DecryptAndExpect(encrypted_buffer, original_data_, DATA_MISMATCH);
 }
 
 TEST_F(AesDecryptorTest, CorruptedData) {
-  GenerateKeyRequest(key_id_);
-  AddKeyAndExpect(kKeyAsJWK, KEY_ADDED);
+  uint32 session_id = CreateSession(key_id_);
+  UpdateSessionAndExpect(session_id, kKeyAsJWK, SESSION_READY);
 
   std::vector<uint8> bad_data = encrypted_data_;
   bad_data[1]++;
 
   scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
-      bad_data, key_id_, iv_, 0, no_subsample_entries_);
+      bad_data, key_id_, iv_, no_subsample_entries_);
   DecryptAndExpect(encrypted_buffer, original_data_, DATA_MISMATCH);
 }
 
 TEST_F(AesDecryptorTest, EncryptedAsUnencryptedFailure) {
-  GenerateKeyRequest(key_id_);
-  AddKeyAndExpect(kKeyAsJWK, KEY_ADDED);
+  uint32 session_id = CreateSession(key_id_);
+  UpdateSessionAndExpect(session_id, kKeyAsJWK, SESSION_READY);
   scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
-      encrypted_data_, key_id_, std::vector<uint8>(), 0, no_subsample_entries_);
+      encrypted_data_, key_id_, std::vector<uint8>(), no_subsample_entries_);
   DecryptAndExpect(encrypted_buffer, original_data_, DATA_MISMATCH);
 }
 
 TEST_F(AesDecryptorTest, SubsampleDecryption) {
-  GenerateKeyRequest(key_id_);
-  AddKeyAndExpect(kKeyAsJWK, KEY_ADDED);
+  uint32 session_id = CreateSession(key_id_);
+  UpdateSessionAndExpect(session_id, kKeyAsJWK, SESSION_READY);
   scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
-      subsample_encrypted_data_, key_id_, iv_, 0, normal_subsample_entries_);
+      subsample_encrypted_data_, key_id_, iv_, normal_subsample_entries_);
   DecryptAndExpect(encrypted_buffer, original_data_, SUCCESS);
 }
 
@@ -468,29 +498,29 @@ TEST_F(AesDecryptorTest, SubsampleDecryption) {
 // expect to encounter this in the wild, but since the DecryptConfig doesn't
 // disallow such a configuration, it should be covered.
 TEST_F(AesDecryptorTest, SubsampleDecryptionWithOffset) {
-  GenerateKeyRequest(key_id_);
-  AddKeyAndExpect(kKeyAsJWK, KEY_ADDED);
+  uint32 session_id = CreateSession(key_id_);
+  UpdateSessionAndExpect(session_id, kKeyAsJWK, SESSION_READY);
   scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
-      subsample_encrypted_data_, key_id_, iv_, 23, normal_subsample_entries_);
+      subsample_encrypted_data_, key_id_, iv_, normal_subsample_entries_);
   DecryptAndExpect(encrypted_buffer, original_data_, SUCCESS);
 }
 
 TEST_F(AesDecryptorTest, SubsampleWrongSize) {
-  GenerateKeyRequest(key_id_);
-  AddKeyAndExpect(kKeyAsJWK, KEY_ADDED);
+  uint32 session_id = CreateSession(key_id_);
+  UpdateSessionAndExpect(session_id, kKeyAsJWK, SESSION_READY);
 
   std::vector<SubsampleEntry> subsample_entries_wrong_size(
       kSubsampleEntriesWrongSize,
       kSubsampleEntriesWrongSize + arraysize(kSubsampleEntriesWrongSize));
 
   scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
-      subsample_encrypted_data_, key_id_, iv_, 0, subsample_entries_wrong_size);
+      subsample_encrypted_data_, key_id_, iv_, subsample_entries_wrong_size);
   DecryptAndExpect(encrypted_buffer, original_data_, DATA_MISMATCH);
 }
 
 TEST_F(AesDecryptorTest, SubsampleInvalidTotalSize) {
-  GenerateKeyRequest(key_id_);
-  AddKeyAndExpect(kKeyAsJWK, KEY_ADDED);
+  uint32 session_id = CreateSession(key_id_);
+  UpdateSessionAndExpect(session_id, kKeyAsJWK, SESSION_READY);
 
   std::vector<SubsampleEntry> subsample_entries_invalid_total_size(
       kSubsampleEntriesInvalidTotalSize,
@@ -498,51 +528,120 @@ TEST_F(AesDecryptorTest, SubsampleInvalidTotalSize) {
           arraysize(kSubsampleEntriesInvalidTotalSize));
 
   scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
-      subsample_encrypted_data_, key_id_, iv_, 0,
+      subsample_encrypted_data_, key_id_, iv_,
       subsample_entries_invalid_total_size);
   DecryptAndExpect(encrypted_buffer, original_data_, DECRYPT_ERROR);
 }
 
 // No cypher bytes in any of the subsamples.
 TEST_F(AesDecryptorTest, SubsampleClearBytesOnly) {
-  GenerateKeyRequest(key_id_);
-  AddKeyAndExpect(kKeyAsJWK, KEY_ADDED);
+  uint32 session_id = CreateSession(key_id_);
+  UpdateSessionAndExpect(session_id, kKeyAsJWK, SESSION_READY);
 
   std::vector<SubsampleEntry> clear_only_subsample_entries(
       kSubsampleEntriesClearOnly,
       kSubsampleEntriesClearOnly + arraysize(kSubsampleEntriesClearOnly));
 
   scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
-      original_data_, key_id_, iv_, 0, clear_only_subsample_entries);
+      original_data_, key_id_, iv_, clear_only_subsample_entries);
   DecryptAndExpect(encrypted_buffer, original_data_, SUCCESS);
 }
 
 // No clear bytes in any of the subsamples.
 TEST_F(AesDecryptorTest, SubsampleCypherBytesOnly) {
-  GenerateKeyRequest(key_id_);
-  AddKeyAndExpect(kKeyAsJWK, KEY_ADDED);
+  uint32 session_id = CreateSession(key_id_);
+  UpdateSessionAndExpect(session_id, kKeyAsJWK, SESSION_READY);
 
   std::vector<SubsampleEntry> cypher_only_subsample_entries(
       kSubsampleEntriesCypherOnly,
       kSubsampleEntriesCypherOnly + arraysize(kSubsampleEntriesCypherOnly));
 
   scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
-      encrypted_data_, key_id_, iv_, 0, cypher_only_subsample_entries);
+      encrypted_data_, key_id_, iv_, cypher_only_subsample_entries);
   DecryptAndExpect(encrypted_buffer, original_data_, SUCCESS);
 }
 
+TEST_F(AesDecryptorTest, ReleaseSession) {
+  uint32 session_id = CreateSession(key_id_);
+  scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
+      encrypted_data_, key_id_, iv_, no_subsample_entries_);
+
+  UpdateSessionAndExpect(session_id, kKeyAsJWK, SESSION_READY);
+  ASSERT_NO_FATAL_FAILURE(
+      DecryptAndExpect(encrypted_buffer, original_data_, SUCCESS));
+
+  ReleaseSession(session_id);
+}
+
+TEST_F(AesDecryptorTest, NoKeyAfterReleaseSession) {
+  uint32 session_id = CreateSession(key_id_);
+  scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
+      encrypted_data_, key_id_, iv_, no_subsample_entries_);
+
+  UpdateSessionAndExpect(session_id, kKeyAsJWK, SESSION_READY);
+  ASSERT_NO_FATAL_FAILURE(
+      DecryptAndExpect(encrypted_buffer, original_data_, SUCCESS));
+
+  ReleaseSession(session_id);
+  ASSERT_NO_FATAL_FAILURE(
+      DecryptAndExpect(encrypted_buffer, original_data_, NO_KEY));
+}
+
+TEST_F(AesDecryptorTest, LatestKeyUsed) {
+  uint32 session_id1 = CreateSession(key_id_);
+  scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
+      encrypted_data_, key_id_, iv_, no_subsample_entries_);
+
+  // Add alternate key, buffer should not be decoded properly.
+  UpdateSessionAndExpect(session_id1, kKeyAlternateAsJWK, SESSION_READY);
+  ASSERT_NO_FATAL_FAILURE(
+      DecryptAndExpect(encrypted_buffer, original_data_, DATA_MISMATCH));
+
+  // Create a second session with a correct key value for key_id_.
+  uint32 session_id2 = CreateSession(key_id_);
+  UpdateSessionAndExpect(session_id2, kKeyAsJWK, SESSION_READY);
+
+  // Should be able to decode with latest key.
+  ASSERT_NO_FATAL_FAILURE(
+      DecryptAndExpect(encrypted_buffer, original_data_, SUCCESS));
+}
+
+TEST_F(AesDecryptorTest, LatestKeyUsedAfterReleaseSession) {
+  uint32 session_id1 = CreateSession(key_id_);
+  scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
+      encrypted_data_, key_id_, iv_, no_subsample_entries_);
+  UpdateSessionAndExpect(session_id1, kKeyAsJWK, SESSION_READY);
+  ASSERT_NO_FATAL_FAILURE(
+      DecryptAndExpect(encrypted_buffer, original_data_, SUCCESS));
+
+  // Create a second session with a different key value for key_id_.
+  uint32 session_id2 = CreateSession(key_id_);
+  UpdateSessionAndExpect(session_id2, kKeyAlternateAsJWK, SESSION_READY);
+
+  // Should not be able to decode with new key.
+  ASSERT_NO_FATAL_FAILURE(
+      DecryptAndExpect(encrypted_buffer, original_data_, DATA_MISMATCH));
+
+  // Close second session, should revert to original key.
+  ReleaseSession(session_id2);
+  ASSERT_NO_FATAL_FAILURE(
+      DecryptAndExpect(encrypted_buffer, original_data_, SUCCESS));
+}
+
 TEST_F(AesDecryptorTest, JWKKey) {
+  uint32 session_id = CreateSession(key_id_);
+
   // Try a simple JWK key (i.e. not in a set)
-  const std::string key1 =
+  const std::string kJwkSimple =
       "{"
       "  \"kty\": \"oct\","
       "  \"kid\": \"AAECAwQFBgcICQoLDA0ODxAREhM\","
       "  \"k\": \"FBUWFxgZGhscHR4fICEiIw\""
       "}";
-  AddKeyAndExpect(key1, KEY_ERROR);
+  UpdateSessionAndExpect(session_id, kJwkSimple, SESSION_ERROR);
 
   // Try a key list with multiple entries.
-  const std::string key2 =
+  const std::string kJwksMultipleEntries =
       "{"
       "  \"keys\": ["
       "    {"
@@ -557,42 +656,43 @@ TEST_F(AesDecryptorTest, JWKKey) {
       "    }"
       "  ]"
       "}";
-  AddKeyAndExpect(key2, KEY_ADDED);
+  UpdateSessionAndExpect(session_id, kJwksMultipleEntries, SESSION_READY);
 
   // Try a key with no spaces and some \n plus additional fields.
-  const std::string key3 =
+  const std::string kJwksNoSpaces =
       "\n\n{\"something\":1,\"keys\":[{\n\n\"kty\":\"oct\",\"alg\":\"A128KW\","
       "\"kid\":\"AAECAwQFBgcICQoLDA0ODxAREhM\",\"k\":\"GawgguFyGrWKav7AX4VKUg"
       "\",\"foo\":\"bar\"}]}\n\n";
-  AddKeyAndExpect(key3, KEY_ADDED);
+  UpdateSessionAndExpect(session_id, kJwksNoSpaces, SESSION_READY);
 
   // Try some non-ASCII characters.
-  AddKeyAndExpect("This is not ASCII due to \xff\xfe\xfd in it.", KEY_ERROR);
+  UpdateSessionAndExpect(session_id,
+                         "This is not ASCII due to \xff\xfe\xfd in it.",
+                         SESSION_ERROR);
 
   // Try a badly formatted key. Assume that the JSON parser is fully tested,
   // so we won't try a lot of combinations. However, need a test to ensure
   // that the code doesn't crash if invalid JSON received.
-  AddKeyAndExpect("This is not a JSON key.", KEY_ERROR);
+  UpdateSessionAndExpect(session_id, "This is not a JSON key.", SESSION_ERROR);
 
   // Try passing some valid JSON that is not a dictionary at the top level.
-  AddKeyAndExpect("40", KEY_ERROR);
+  UpdateSessionAndExpect(session_id, "40", SESSION_ERROR);
 
   // Try an empty dictionary.
-  AddKeyAndExpect("{ }", KEY_ERROR);
+  UpdateSessionAndExpect(session_id, "{ }", SESSION_ERROR);
 
   // Try an empty 'keys' dictionary.
-  AddKeyAndExpect("{ \"keys\": [] }", KEY_ERROR);
+  UpdateSessionAndExpect(session_id, "{ \"keys\": [] }", SESSION_ERROR);
 
   // Try with 'keys' not a dictionary.
-  AddKeyAndExpect("{ \"keys\":\"1\" }", KEY_ERROR);
+  UpdateSessionAndExpect(session_id, "{ \"keys\":\"1\" }", SESSION_ERROR);
 
   // Try with 'keys' a list of integers.
-  AddKeyAndExpect("{ \"keys\": [ 1, 2, 3 ] }", KEY_ERROR);
+  UpdateSessionAndExpect(
+      session_id, "{ \"keys\": [ 1, 2, 3 ] }", SESSION_ERROR);
 
-  // TODO(jrummell): The next 2 tests should fail once checking for padding
-  // characters is enabled.
-  // Try a key with padding(=) at end of base64 string.
-  const std::string key4 =
+  // Try padding(=) at end of 'k' base64 string.
+  const std::string kJwksWithPaddedKey =
       "{"
       "  \"keys\": ["
       "    {"
@@ -602,10 +702,10 @@ TEST_F(AesDecryptorTest, JWKKey) {
       "    }"
       "  ]"
       "}";
-  AddKeyAndExpect(key4, KEY_ADDED);
+  UpdateSessionAndExpect(session_id, kJwksWithPaddedKey, SESSION_ERROR);
 
-  // Try a key ID with padding(=) at end of base64 string.
-  const std::string key5 =
+  // Try padding(=) at end of 'kid' base64 string.
+  const std::string kJwksWithPaddedKeyId =
       "{"
       "  \"keys\": ["
       "    {"
@@ -615,10 +715,10 @@ TEST_F(AesDecryptorTest, JWKKey) {
       "    }"
       "  ]"
       "}";
-  AddKeyAndExpect(key5, KEY_ADDED);
+  UpdateSessionAndExpect(session_id, kJwksWithPaddedKeyId, SESSION_ERROR);
 
   // Try a key with invalid base64 encoding.
-  const std::string key6 =
+  const std::string kJwksWithInvalidBase64 =
       "{"
       "  \"keys\": ["
       "    {"
@@ -628,12 +728,12 @@ TEST_F(AesDecryptorTest, JWKKey) {
       "    }"
       "  ]"
       "}";
-  AddKeyAndExpect(key6, KEY_ERROR);
+  UpdateSessionAndExpect(session_id, kJwksWithInvalidBase64, SESSION_ERROR);
 
-  // Try a key where no padding is required. 'k' has to be 16 bytes, so it
-  // will always require padding. (Test above using |key2| has 2 'kid's that
-  // require 1 and 2 padding bytes).
-  const std::string key7 =
+  // Try a 3-byte 'kid' where no base64 padding is required.
+  // |kJwksMultipleEntries| above has 2 'kid's that require 1 and 2 padding
+  // bytes. Note that 'k' has to be 16 bytes, so it will always require padding.
+  const std::string kJwksWithNoPadding =
       "{"
       "  \"keys\": ["
       "    {"
@@ -643,10 +743,10 @@ TEST_F(AesDecryptorTest, JWKKey) {
       "    }"
       "  ]"
       "}";
-  AddKeyAndExpect(key7, KEY_ADDED);
+  UpdateSessionAndExpect(session_id, kJwksWithNoPadding, SESSION_READY);
 
   // Empty key id.
-  const std::string key8 =
+  const std::string kJwksWithEmptyKeyId =
       "{"
       "  \"keys\": ["
       "    {"
@@ -656,18 +756,8 @@ TEST_F(AesDecryptorTest, JWKKey) {
       "    }"
       "  ]"
       "}";
-  AddKeyAndExpect(key8, KEY_ERROR);
-}
-
-TEST_F(AesDecryptorTest, RawKey) {
-  // Verify that v0.1b keys (raw key) is still supported. Raw keys are
-  // 16 bytes long. Use the undecoded value of |kKey|.
-  GenerateKeyRequest(key_id_);
-  AddRawKeyAndExpect(
-      key_id_, std::vector<uint8>(kKey, kKey + arraysize(kKey)), KEY_ADDED);
-  scoped_refptr<DecoderBuffer> encrypted_buffer = CreateEncryptedBuffer(
-      encrypted_data_, key_id_, iv_, 0, no_subsample_entries_);
-  DecryptAndExpect(encrypted_buffer, original_data_, SUCCESS);
+  UpdateSessionAndExpect(session_id, kJwksWithEmptyKeyId, SESSION_ERROR);
+  ReleaseSession(session_id);
 }
 
 }  // namespace media

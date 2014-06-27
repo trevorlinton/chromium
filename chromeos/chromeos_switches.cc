@@ -15,31 +15,27 @@ const char kAppOemManifestFile[]            = "app-mode-oem-manifest";
 // Possible values: parallel|postpone. Default: parallel.
 const char kAshWebUIInit[]                  = "ash-webui-init";
 
-// Enables overriding the path for the default authentication extension.
-const char kAuthExtensionPath[]             = "auth-ext-path";
-
 // Forces the stub implementation of dbus clients.
 const char kDbusStub[] = "dbus-stub";
 
-// All stub networks are idle by default.
-const char kDefaultStubNetworkStateIdle[] = "default-stub-network-state-idle";
+// Time before a machine at OOBE is considered derelict.
+const char kDerelictDetectionTimeout[] = "derelict-detection-timeout";
+
+// Time before a derelict machines starts demo mode.
+const char kDerelictIdleTimeout[] = "derelict-idle-timeout";
 
 // Disables wallpaper boot animation (except of OOBE case).
 const char kDisableBootAnimation[]          = "disable-boot-animation";
 
-// Disables Chrome Captive Portal detector, which initiates Captive
-// Portal detection for new active networks.
-const char kDisableChromeCaptivePortalDetector[] =
-    "disable-chrome-captive-portal-detector";
+// Disables the ChromeOS demo.
+const char kDisableDemoMode[]               = "disable-demo-mode";
 
-// Disables Google Drive integration.
-const char kDisableDrive[]                  = "disable-drive";
+// Disables reporting recently logged in users for enterprise-managed devices.
+const char kDisableEnterpriseUserReporting[] =
+    "disable-enterprise-user-reporting";
 
 // Disable Genius App and use the original Help App instead.
 const char kDisableGeniusApp[]              = "disable-genius-app";
-
-// Disable policy-configured local accounts.
-const char kDisableLocalAccounts[]          = "disable-local-accounts";
 
 // Avoid doing expensive animations upon login.
 const char kDisableLoginAnimations[]        = "disable-login-animations";
@@ -47,54 +43,31 @@ const char kDisableLoginAnimations[]        = "disable-login-animations";
 // Disable new channel switcher UI.
 const char kDisableNewChannelSwitcherUI[]   = "disable-new-channel-switcher-ui";
 
+// Disables new Kiosk UI when kiosk apps are represented as user pods.
+const char kDisableNewKioskUI[]             = "disable-new-kiosk-ui";
+
 // Disable Quickoffice component app thus handlers won't be registered so
 // it will be possible to install another version as normal app for testing.
 const char kDisableQuickofficeComponentApp[] =
     "disable-quickoffice-component-app";
 
-// Disables fetching online CrOS EULA page, only static version is shown.
-const char kDisableOnlineEULA[] = "disable-cros-online-eula";
+// Disables volume adjust sound.
+const char kDisableVolumeAdjustSound[] = "disable-volume-adjust-sound";
 
-// Avoid doing animations upon oobe.
-const char kDisableOobeAnimation[]          = "disable-oobe-animation";
-
-// Disables portal detection and network error handling before auto
-// update.
-const char kDisableOOBEBlockingUpdate[] =
-    "disable-oobe-blocking-update";
-
-// Disables fake ethernet network in the stub implementations.
-const char kDisableStubEthernet[] = "disable-stub-ethernet";
+// Disables notifications about captive portals in session.
+const char kDisableNetworkPortalNotification[] =
+    "disable-network-portal-notification";
 
 // Enables overriding the path for the default echo component extension.
 // Useful for testing.
 const char kEchoExtensionPath[]             = "echo-ext-path";
 
-// Enables component extension that initializes background pages of
-// certain hosted applications.
-const char kEnableBackgroundLoader[]        = "enable-background-loader";
-
 // Enables switching between different cellular carriers from the UI.
 const char kEnableCarrierSwitching[]        = "enable-carrier-switching";
 
-// Enables Chrome Captive Portal detector, which initiates Captive
-// Portal detection for new active networks.
-const char kEnableChromeCaptivePortalDetector[] =
-    "enable-chrome-captive-portal-detector";
-
-// Enables reporting recently logged in users for enterprise-managed devices.
-const char kEnableEnterpriseUserReporting[] =
-    "enable-enterprise-user-reporting";
-
-// Enable to show the indicator about the IME (input method editor) mode
-// on Chrome OS.
-const char kEnableIMEModeIndicator[] = "enable-ime-mode-indicator";
-
-// Enable "interactive" mode for stub implemenations (e.g. NetworkStateHandler)
-const char kEnableStubInteractive[] = "enable-stub-interactive";
-
-// Enable stub portalled wifi network for testing.
-const char kEnableStubPortalledWifi[] = "enable-stub-portalled-wifi";
+// Enables notifications about captive portals in session.
+const char kEnableNetworkPortalNotification[] =
+    "enable-network-portal-notification";
 
 // Enables touchpad three-finger-click as middle button.
 const char kEnableTouchpadThreeFingerClick[]
@@ -104,8 +77,15 @@ const char kEnableTouchpadThreeFingerClick[]
 // than the kiosk app mode.
 const char kEnableKioskMode[]               = "enable-kiosk-mode";
 
+// Enables rollback option for resetting ChromeOS.
+const char kEnableRollbackOption[]          = "enable-rollback-option";
+
 // Enables request of tablet site (via user agent override).
 const char kEnableRequestTabletSite[]       = "enable-request-tablet-site";
+
+// Whether to enable forced enterprise re-enrollment.
+const char kEnterpriseEnableForcedReEnrollment[] =
+    "enterprise-enable-forced-re-enrollment";
 
 // Power of the power-of-2 initial modulus that will be used by the
 // auto-enrollment client. E.g. "4" means the modulus will be 2^4 = 16.
@@ -122,12 +102,9 @@ const char kEnterpriseEnrollmentModulusLimit[] =
 const char kEnterpriseEnrollmentSkipRobotAuth[] =
     "enterprise-enrollment-skip-robot-auth";
 
-// Shows the selecting checkboxes in the Files.app.
-const char kFileManagerShowCheckboxes[]     = "file-manager-show-checkboxes";
-
-// Enables the webstore integration feature in the Files.app.
-const char kFileManagerEnableWebstoreIntegration[] =
-    "file-manager-enable-webstore-integration";
+// Enables the new audio player in the Files.app.
+const char kFileManagerEnableNewAudioPlayer[] =
+    "file-manager-enable-new-audio-player";
 
 // Passed to Chrome the first time that it's run after the system boots.
 // Not passed on restart after sign out.
@@ -172,8 +149,30 @@ const char kNaturalScrollDefault[]          = "enable-natural-scroll-default";
 // Skips all other OOBE pages after user login.
 const char kOobeSkipPostLogin[]             = "oobe-skip-postlogin";
 
-// Integer flag that sets the DeviceRegistered local state pref.
-const char kDeviceRegistered[]              = "device-registered";
+// Interval at which we check for total time on OOBE.
+const char kOobeTimerInterval[]             = "oobe-timer-interval";
+
+// Indicates that a guest session has been started before OOBE completion.
+const char kOobeGuestSession[]              = "oobe-guest-session";
+
+// Specifies power stub behavior:
+//  'cycle=2' - Cycles power states every 2 seconds.
+// See FakeDBusThreadManager::ParsePowerCommandLineSwitch for full details.
+const char kPowerStub[] = "power-stub";
+
+// Specifies network stub behavior. If this switch is not specified,
+// ethernet, wifi and vpn are enabled by default, and transitions occur
+// instantaneously. Multiple options can be comma separated (no spaces).
+// See FakeShillManagerClient::SetInitialNetworkState for implementation.
+// Examples:
+//  'wifi=on' - A wifi network is initially connected ('1' also works)
+//  'wifi=off' - Wifi networks are all initially disconnected ('0' also works)
+//  'wifi=disabled' - Wifi is initially disabled
+//  'wifi=none' - Wifi is unavailable
+//  'wifi=portal' - Wifi connection will be in Portal state
+//  'cellular=1' - Cellular is initially connected
+//  'interactive=3' - Interactive mode, connect/scan/etc requests take 3 secs
+const char kShillStub[] = "shill-stub";
 
 // Skips the machine hwid check. Useful for running in VMs because they have no
 // hwid.
@@ -190,14 +189,26 @@ const char kStubCrosSettings[]              = "stub-cros-settings";
 // Disables user image sync.
 const char kDisableUserImageSync[]          = "disable-user-image-sync";
 
-// Enables SAML sigin support.
-const char kEnableSamlSignin[]              = "enable-saml-signin";
+// Disables SAML sigin support.
+const char kDisableSamlSignin[]             = "disable-saml-signin";
 
-// Enables new first-run overlay UI.
-const char kEnableFirstRunUI[] = "enable-first-run-ui";
+// Overrides the manifest of the GAIA auth extension with the given file.
+const char kGAIAAuthExtensionManifest[]     = "gaia-auth-extension-manifest";
+
+// Disables new first-run overlay UI.
+const char kDisableFirstRunUI[] = "disable-first-run-ui";
+
+// Enables animated transitions during first-run tutorial.
+const char kEnableFirstRunUITransitions[] = "enable-first-run-ui-transitions";
+
+// Forces first-run UI to be shown for every login.
+const char kForceFirstRunUI[] = "force-first-run-ui";
 
 // Enables testing for auto update UI.
 const char kTestAutoUpdateUI[] = "test-auto-update-ui";
+
+// Enables features required for supervised user sync,
+const char kEnableSupervisedPasswordSync[] = "enable-supervised-password-sync";
 
 }  // namespace switches
 }  // namespace chromeos

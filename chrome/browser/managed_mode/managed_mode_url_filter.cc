@@ -13,18 +13,20 @@
 #include "base/strings/string_util.h"
 #include "base/task_runner_util.h"
 #include "base/threading/sequenced_worker_pool.h"
-#include "chrome/browser/policy/url_blacklist_manager.h"
+#include "chrome/common/net/url_fixer_upper.h"
+#include "components/policy/core/browser/url_blacklist_manager.h"
+#include "components/url_matcher/url_matcher.h"
 #include "content/public/browser/browser_thread.h"
-#include "extensions/common/matcher/url_matcher.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "url/gurl.h"
 
 using content::BrowserThread;
-using extensions::URLMatcher;
-using extensions::URLMatcherConditionSet;
 using net::registry_controlled_domains::EXCLUDE_UNKNOWN_REGISTRIES;
 using net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES;
 using net::registry_controlled_domains::GetRegistryLength;
+using policy::URLBlacklist;
+using url_matcher::URLMatcher;
+using url_matcher::URLMatcherConditionSet;
 
 struct ManagedModeURLFilter::Contents {
   URLMatcher url_matcher;
@@ -35,10 +37,11 @@ struct ManagedModeURLFilter::Contents {
 
 namespace {
 
-const char* kStandardSchemes[] = {
+// URL schemes not in this list (e.g., file:// and chrome://) will always be
+// allowed.
+const char* kFilteredSchemes[] = {
   "http",
   "https",
-  "file",
   "ftp",
   "gopher",
   "ws",
@@ -87,14 +90,16 @@ bool FilterBuilder::AddPattern(const std::string& pattern, int site_id) {
   uint16 port;
   std::string path;
   bool match_subdomains = true;
-  if (!policy::URLBlacklist::FilterToComponents(
-          pattern, &scheme, &host, &match_subdomains, &port, &path)) {
+  URLBlacklist::SegmentURLCallback callback =
+      static_cast<URLBlacklist::SegmentURLCallback>(URLFixerUpper::SegmentURL);
+  if (!URLBlacklist::FilterToComponents(
+          callback, pattern, &scheme, &host, &match_subdomains, &port, &path)) {
     LOG(ERROR) << "Invalid pattern " << pattern;
     return false;
   }
 
-  scoped_refptr<extensions::URLMatcherConditionSet> condition_set =
-      policy::URLBlacklist::CreateConditionSet(
+  scoped_refptr<URLMatcherConditionSet> condition_set =
+      URLBlacklist::CreateConditionSet(
           &contents_->url_matcher, ++matcher_id_,
           scheme, host, match_subdomains, port, path);
   all_conditions_.push_back(condition_set);
@@ -200,12 +205,17 @@ GURL ManagedModeURLFilter::Normalize(const GURL& url) {
 }
 
 // static
-bool ManagedModeURLFilter::HasStandardScheme(const GURL& url) {
-  for (size_t i = 0; i < arraysize(kStandardSchemes); ++i) {
-      if (url.scheme() == kStandardSchemes[i])
+bool ManagedModeURLFilter::HasFilteredScheme(const GURL& url) {
+  for (size_t i = 0; i < arraysize(kFilteredSchemes); ++i) {
+      if (url.scheme() == kFilteredSchemes[i])
         return true;
     }
   return false;
+}
+
+std::string GetHostnameHash(const GURL& url) {
+  std::string hash = base::SHA1HashString(url.host());
+  return base::HexEncode(hash.data(), hash.length());
 }
 
 // static
@@ -251,7 +261,7 @@ ManagedModeURLFilter::GetFilteringBehaviorForURL(const GURL& url) const {
   DCHECK(CalledOnValidThread());
 
   // URLs with a non-standard scheme (e.g. chrome://) are always allowed.
-  if (!HasStandardScheme(url))
+  if (!HasFilteredScheme(url))
     return ALLOW;
 
   // Check manual overrides for the exact URL.
@@ -286,9 +296,7 @@ ManagedModeURLFilter::GetFilteringBehaviorForURL(const GURL& url) const {
     return ALLOW;
 
   // Check the list of hostname hashes.
-  std::string hash = base::SHA1HashString(url.host());
-  std::string hash_hex = base::HexEncode(hash.data(), hash.length());
-  if (contents_->hash_site_map.count(hash_hex))
+  if (contents_->hash_site_map.count(GetHostnameHash(url)))
     return ALLOW;
 
   // Fall back to the default behavior.
@@ -311,10 +319,10 @@ void ManagedModeURLFilter::GetSites(
     sites->push_back(&contents_->sites[entry->second]);
   }
 
-  typedef base::hash_map<std::string, int>::const_iterator
+  typedef base::hash_multimap<std::string, int>::const_iterator
       hash_site_map_iterator;
   std::pair<hash_site_map_iterator, hash_site_map_iterator> bounds =
-      contents_->hash_site_map.equal_range(url.host());
+      contents_->hash_site_map.equal_range(GetHostnameHash(url));
   for (hash_site_map_iterator hash_it = bounds.first;
        hash_it != bounds.second; hash_it++) {
     sites->push_back(&contents_->sites[hash_it->second]);

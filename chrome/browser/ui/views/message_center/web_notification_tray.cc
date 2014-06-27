@@ -133,11 +133,14 @@ WebNotificationTray::WebNotificationTray()
   message_center_tray_.reset(
       new MessageCenterTray(this, g_browser_process->message_center()));
   last_quiet_mode_state_ = message_center()->IsQuietMode();
+  popup_collection_.reset(new message_center::MessagePopupCollection(
+      NULL, message_center(), message_center_tray_.get(), false));
 }
 
 WebNotificationTray::~WebNotificationTray() {
   // Reset this early so that delegated events during destruction don't cause
   // problems.
+  popup_collection_.reset();
   message_center_tray_.reset();
   DestroyStatusIcon();
 }
@@ -147,12 +150,14 @@ message_center::MessageCenter* WebNotificationTray::message_center() {
 }
 
 bool WebNotificationTray::ShowPopups() {
-  popup_collection_.reset(new message_center::MessagePopupCollection(
-      NULL, message_center(), message_center_tray_.get(), false));
+  popup_collection_->DoUpdateIfPossible();
   return true;
 }
 
-void WebNotificationTray::HidePopups() { popup_collection_.reset(); }
+void WebNotificationTray::HidePopups() {
+  DCHECK(popup_collection_.get());
+  popup_collection_->MarkAllPopupsShown();
+}
 
 bool WebNotificationTray::ShowMessageCenter() {
   message_center_delegate_ =
@@ -183,6 +188,12 @@ bool WebNotificationTray::ShowNotifierSettings() {
                                       true,  // settings initally visible
                                       GetPositionInfo());
 
+  return true;
+}
+
+bool WebNotificationTray::IsContextMenuEnabled() const {
+  // It can always return true because the notifications are invisible if
+  // the context menu shouldn't be enabled, such as in the lock screen.
   return true;
 }
 
@@ -232,9 +243,9 @@ void WebNotificationTray::UpdateStatusIcon() {
 
   int unread_notifications = message_center()->UnreadNotificationCount();
 
-  string16 tool_tip;
+  base::string16 tool_tip;
   if (unread_notifications > 0) {
-    string16 str_unread_count = base::FormatNumber(unread_notifications);
+    base::string16 str_unread_count = base::FormatNumber(unread_notifications);
     tool_tip = l10n_util::GetStringFUTF16(IDS_MESSAGE_CENTER_TOOLTIP_UNREAD,
                                           str_unread_count);
   } else {
@@ -315,7 +326,7 @@ MessageCenterTray* WebNotificationTray::GetMessageCenterTray() {
 }
 
 void WebNotificationTray::CreateStatusIcon(const gfx::ImageSkia& image,
-                                           const string16& tool_tip) {
+                                           const base::string16& tool_tip) {
   if (status_icon_)
     return;
 

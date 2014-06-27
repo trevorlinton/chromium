@@ -16,16 +16,24 @@
 #include "ui/gfx/size_f.h"
 
 #if defined(OS_WIN)
-#include "ui/aura/root_window_host.h"
+#include "ui/aura/window_tree_host.h"
+#include "ui/gfx/win/dpi.h"
 #endif
 
 namespace ash {
 namespace internal {
 
-Resolution::Resolution(const gfx::Size& size, bool interlaced)
+DisplayMode::DisplayMode()
+    : refresh_rate(0.0f), interlaced(false), native(false) {}
+
+DisplayMode::DisplayMode(const gfx::Size& size,
+                         float refresh_rate,
+                         bool interlaced,
+                         bool native)
     : size(size),
-      interlaced(interlaced) {
-}
+      refresh_rate(refresh_rate),
+      interlaced(interlaced),
+      native(native) {}
 
 // satic
 DisplayInfo DisplayInfo::CreateFromSpec(const std::string& spec) {
@@ -45,7 +53,7 @@ DisplayInfo DisplayInfo::CreateFromSpecWithID(const std::string& spec,
   static int64 synthesized_display_id = 2200000000LL;
 
 #if defined(OS_WIN)
-  gfx::Rect bounds_in_native(aura::RootWindowHost::GetNativeScreenSize());
+  gfx::Rect bounds_in_native(aura::WindowTreeHost::GetNativeScreenSize());
 #else
   gfx::Rect bounds_in_native(kDefaultHostWindowX, kDefaultHostWindowY,
                              kDefaultHostWindowWidth, kDefaultHostWindowHeight);
@@ -95,19 +103,43 @@ DisplayInfo DisplayInfo::CreateFromSpecWithID(const std::string& spec,
       sscanf(main_spec.c_str(), "%d+%d-%dx%d*%f", &x, &y, &width, &height,
              &device_scale_factor) >= 4) {
     bounds_in_native.SetRect(x, y, width, height);
+  } else {
+#if defined(OS_WIN)
+    if (gfx::IsHighDPIEnabled()) {
+      device_scale_factor = gfx::GetModernUIScale();
+    }
+#endif
   }
 
-  std::vector<Resolution> resolutions;
+  std::vector<DisplayMode> display_modes;
   if (Tokenize(main_spec, "#", &parts) == 2) {
+    size_t native_mode = 0;
+    int largest_area = -1;
+    float highest_refresh_rate = -1.0f;
     main_spec = parts[0];
     std::string resolution_list = parts[1];
     count = Tokenize(resolution_list, "|", &parts);
     for (size_t i = 0; i < count; ++i) {
       std::string resolution = parts[i];
       int width, height;
-      if (sscanf(resolution.c_str(), "%dx%d", &width, &height) == 2)
-        resolutions.push_back(Resolution(gfx::Size(width, height), false));
+      float refresh_rate = 0.0f;
+      if (sscanf(resolution.c_str(),
+                 "%dx%d%%%f",
+                 &width,
+                 &height,
+                 &refresh_rate) >= 2) {
+        if (width * height >= largest_area &&
+            refresh_rate > highest_refresh_rate) {
+          // Use mode with largest area and highest refresh rate as native.
+          largest_area = width * height;
+          highest_refresh_rate = refresh_rate;
+          native_mode = i;
+        }
+        display_modes.push_back(
+            DisplayMode(gfx::Size(width, height), refresh_rate, false, false));
+      }
     }
+    display_modes[native_mode].native = true;
   }
 
   if (id == gfx::Display::kInvalidDisplayID)
@@ -116,9 +148,9 @@ DisplayInfo DisplayInfo::CreateFromSpecWithID(const std::string& spec,
       id, base::StringPrintf("Display-%d", static_cast<int>(id)), has_overscan);
   display_info.set_device_scale_factor(device_scale_factor);
   display_info.set_rotation(rotation);
-  display_info.set_ui_scale(ui_scale);
+  display_info.set_configured_ui_scale(ui_scale);
   display_info.SetBounds(bounds_in_native);
-  display_info.set_resolutions(resolutions);
+  display_info.set_display_modes(display_modes);
 
   // To test the overscan, it creates the default 5% overscan.
   if (has_overscan) {
@@ -140,8 +172,9 @@ DisplayInfo::DisplayInfo()
       touch_support_(gfx::Display::TOUCH_SUPPORT_UNKNOWN),
       device_scale_factor_(1.0f),
       overscan_insets_in_dip_(0, 0, 0, 0),
-      ui_scale_(1.0f),
-      native_(false) {
+      configured_ui_scale_(1.0f),
+      native_(false),
+      color_profile_(ui::COLOR_PROFILE_STANDARD) {
 }
 
 DisplayInfo::DisplayInfo(int64 id,
@@ -154,8 +187,9 @@ DisplayInfo::DisplayInfo(int64 id,
       touch_support_(gfx::Display::TOUCH_SUPPORT_UNKNOWN),
       device_scale_factor_(1.0f),
       overscan_insets_in_dip_(0, 0, 0, 0),
-      ui_scale_(1.0f),
-      native_(false) {
+      configured_ui_scale_(1.0f),
+      native_(false),
+      color_profile_(ui::COLOR_PROFILE_STANDARD) {
 }
 
 DisplayInfo::~DisplayInfo() {
@@ -170,7 +204,7 @@ void DisplayInfo::Copy(const DisplayInfo& native_info) {
   bounds_in_native_ = native_info.bounds_in_native_;
   size_in_pixel_ = native_info.size_in_pixel_;
   device_scale_factor_ = native_info.device_scale_factor_;
-  resolutions_ = native_info.resolutions_;
+  display_modes_ = native_info.display_modes_;
   touch_support_ = native_info.touch_support_;
 
   // Copy overscan_insets_in_dip_ if it's not empty. This is for test
@@ -180,13 +214,17 @@ void DisplayInfo::Copy(const DisplayInfo& native_info) {
   if (!native_info.overscan_insets_in_dip_.empty())
     overscan_insets_in_dip_ = native_info.overscan_insets_in_dip_;
 
-  // Rotation_ and ui_scale_ are given by preference, or unit
-  // tests. Don't copy if this native_info came from
+  // Rotation_ and ui_scale_ color_profile_ are given by preference,
+  // or unit tests. Don't copy if this native_info came from
   // DisplayChangeObserver.
   if (!native_info.native()) {
     rotation_ = native_info.rotation_;
-    ui_scale_ = native_info.ui_scale_;
+    configured_ui_scale_ = native_info.configured_ui_scale_;
+    color_profile_ = native_info.color_profile();
   }
+
+  available_color_profiles_ = native_info.available_color_profiles();
+
   // Don't copy insets as it may be given by preference.  |rotation_|
   // is treated as a native so that it can be specified in
   // |CreateFromSpec|.
@@ -196,6 +234,12 @@ void DisplayInfo::SetBounds(const gfx::Rect& new_bounds_in_native) {
   bounds_in_native_ = new_bounds_in_native;
   size_in_pixel_ = new_bounds_in_native.size();
   UpdateDisplaySize();
+}
+
+float DisplayInfo::GetEffectiveUIScale() const {
+  if (device_scale_factor_ == 2.0f && configured_ui_scale_ == 2.0f)
+    return 1.0f;
+  return configured_ui_scale_;
 }
 
 void DisplayInfo::UpdateDisplaySize() {
@@ -212,7 +256,7 @@ void DisplayInfo::UpdateDisplaySize() {
       rotation_ == gfx::Display::ROTATE_270)
     size_in_pixel_.SetSize(size_in_pixel_.height(), size_in_pixel_.width());
   gfx::SizeF size_f(size_in_pixel_);
-  size_f.Scale(ui_scale_);
+  size_f.Scale(GetEffectiveUIScale());
   size_in_pixel_ = gfx::ToFlooredSize(size_f);
 }
 
@@ -235,23 +279,41 @@ std::string DisplayInfo::ToString() const {
       device_scale_factor_,
       overscan_insets_in_dip_.ToString().c_str(),
       rotation_degree,
-      ui_scale_,
-      touch_support_ == gfx::Display::TOUCH_SUPPORT_AVAILABLE ? "yes" :
-      touch_support_ == gfx::Display::TOUCH_SUPPORT_UNAVAILABLE ? "no" :
-      "unknown");
+      configured_ui_scale_,
+      touch_support_ == gfx::Display::TOUCH_SUPPORT_AVAILABLE
+          ? "yes"
+          : touch_support_ == gfx::Display::TOUCH_SUPPORT_UNAVAILABLE
+                ? "no"
+                : "unknown");
 }
 
 std::string DisplayInfo::ToFullString() const {
-  std::string resolutions_str;
-  std::vector<Resolution>::const_iterator iter = resolutions_.begin();
-  for (; iter != resolutions_.end(); ++iter) {
-    if (!resolutions_str.empty())
-      resolutions_str += ",";
-    resolutions_str += iter->size.ToString();
-    if (iter->interlaced)
-      resolutions_str += "(i)";
+  std::string display_modes_str;
+  std::vector<DisplayMode>::const_iterator iter = display_modes_.begin();
+  for (; iter != display_modes_.end(); ++iter) {
+    if (!display_modes_str.empty())
+      display_modes_str += ",";
+    base::StringAppendF(&display_modes_str,
+                        "(%dx%d@%f%c%s)",
+                        iter->size.width(),
+                        iter->size.height(),
+                        iter->refresh_rate,
+                        iter->interlaced ? 'I' : 'P',
+                        iter->native ? "(N)" : "");
   }
-  return ToString() + ", resolutions=" + resolutions_str;
+  return ToString() + ", display_modes==" + display_modes_str;
+}
+
+void DisplayInfo::SetColorProfile(ui::ColorCalibrationProfile profile) {
+  if (IsColorProfileAvailable(profile))
+    color_profile_ = profile;
+}
+
+bool DisplayInfo::IsColorProfileAvailable(
+    ui::ColorCalibrationProfile profile) const {
+  return std::find(available_color_profiles_.begin(),
+                   available_color_profiles_.end(),
+                   profile) != available_color_profiles_.end();
 }
 
 }  // namespace internal

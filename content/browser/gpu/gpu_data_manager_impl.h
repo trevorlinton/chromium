@@ -21,11 +21,13 @@
 #include "content/public/common/gpu_memory_stats.h"
 #include "content/public/common/three_d_api_types.h"
 #include "gpu/config/gpu_info.h"
-#include "gpu/config/gpu_switching_option.h"
 
-class CommandLine;
 class GURL;
 struct WebPreferences;
+
+namespace base {
+class CommandLine;
+}
 
 namespace content {
 
@@ -96,20 +98,17 @@ class CONTENT_EXPORT GpuDataManagerImpl
 
   // Insert disable-feature switches corresponding to preliminary gpu feature
   // flags into the renderer process command line.
-  void AppendRendererCommandLine(CommandLine* command_line) const;
+  void AppendRendererCommandLine(base::CommandLine* command_line) const;
 
-  // Insert switches into gpu process command line: kUseGL,
-  // kDisableGLMultisampling.
-  void AppendGpuCommandLine(CommandLine* command_line) const;
+  // Insert switches into gpu process command line: kUseGL, etc.
+  void AppendGpuCommandLine(base::CommandLine* command_line) const;
 
   // Insert switches into plugin process command line:
   // kDisableCoreAnimationPlugins.
-  void AppendPluginCommandLine(CommandLine* command_line) const;
+  void AppendPluginCommandLine(base::CommandLine* command_line) const;
 
   // Update WebPreferences for renderer based on blacklisting decisions.
   void UpdateRendererWebPrefs(WebPreferences* prefs) const;
-
-  gpu::GpuSwitchingOption GetGpuSwitchingOption() const;
 
   std::string GetBlacklistVersion() const;
   std::string GetDriverBugListVersion() const;
@@ -135,12 +134,6 @@ class CONTENT_EXPORT GpuDataManagerImpl
 
   // Called when switching gpu.
   void HandleGpuSwitch();
-
-#if defined(OS_WIN)
-  // Is the GPU process using the accelerated surface to present, instead of
-  // presenting by itself.
-  bool IsUsingAcceleratedSurface() const;
-#endif
 
   // Maintenance of domains requiring explicit user permission before
   // using client-facing 3D APIs (WebGL, Pepper 3D), either because

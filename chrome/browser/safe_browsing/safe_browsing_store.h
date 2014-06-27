@@ -12,6 +12,7 @@
 #include "base/callback_forward.h"
 #include "base/containers/hash_tables.h"
 #include "base/time/time.h"
+#include "chrome/browser/safe_browsing/prefix_set.h"
 #include "chrome/browser/safe_browsing/safe_browsing_util.h"
 
 namespace base {
@@ -52,6 +53,8 @@ struct SBAddPrefix {
   SBPrefix GetAddPrefix() const { return prefix; }
 };
 
+// TODO(shess): Measure the performance impact of switching this back to
+// std::vector<> once the v8 file format dominates.  Also SBSubPrefixes.
 typedef std::deque<SBAddPrefix> SBAddPrefixes;
 
 struct SBSubPrefix {
@@ -59,7 +62,7 @@ struct SBSubPrefix {
   int32 add_chunk_id;
   SBPrefix add_prefix;
 
-  SBSubPrefix(int32 id, int32 add_id, int prefix)
+  SBSubPrefix(int32 id, int32 add_id, SBPrefix prefix)
       : chunk_id(id), add_chunk_id(add_id), add_prefix(prefix) {}
   SBSubPrefix() : chunk_id(), add_chunk_id(), add_prefix() {}
 
@@ -104,16 +107,16 @@ struct SBSubFullHash {
   SBPrefix GetAddPrefix() const { return full_hash.prefix; }
 };
 
-// Determine less-than based on add chunk and prefix.
+// Determine less-than based on prefix and add chunk.
 template <class T, class U>
 bool SBAddPrefixLess(const T& a, const U& b) {
-  if (a.GetAddChunkId() != b.GetAddChunkId())
-    return a.GetAddChunkId() < b.GetAddChunkId();
+  if (a.GetAddPrefix() != b.GetAddPrefix())
+    return a.GetAddPrefix() < b.GetAddPrefix();
 
-  return a.GetAddPrefix() < b.GetAddPrefix();
+  return a.GetAddChunkId() < b.GetAddChunkId();
 }
 
-// Determine less-than based on add chunk, prefix, and full hash.
+// Determine less-than based on prefix, add chunk, and full hash.
 // Prefix can compare differently than hash due to byte ordering,
 // so it must take precedence.
 template <class T, class U>
@@ -133,27 +136,13 @@ bool SBAddPrefixHashLess(const T& a, const U& b) {
 // matched items from all vectors.  Additionally remove items from
 // deleted chunks.
 //
-// TODO(shess): Since the prefixes are uniformly-distributed hashes,
-// there aren't many ways to organize the inputs for efficient
-// processing.  For this reason, the vectors are sorted and processed
-// in parallel.  At this time this code does the sorting internally,
-// but it might make sense to make sorting an API requirement so that
-// the storage can optimize for it.
+// The inputs must be sorted by SBAddPrefixLess or SBAddPrefixHashLess.
 void SBProcessSubs(SBAddPrefixes* add_prefixes,
                    SBSubPrefixes* sub_prefixes,
                    std::vector<SBAddFullHash>* add_full_hashes,
                    std::vector<SBSubFullHash>* sub_full_hashes,
                    const base::hash_set<int32>& add_chunks_deleted,
                    const base::hash_set<int32>& sub_chunks_deleted);
-
-// Records a histogram of the number of items in |prefix_misses| which
-// are not in |add_prefixes|.
-void SBCheckPrefixMisses(const SBAddPrefixes& add_prefixes,
-                         const std::set<SBPrefix>& prefix_misses);
-
-// TODO(shess): This uses int32 rather than int because it's writing
-// specifically-sized items to files.  SBPrefix should likewise be
-// explicitly sized.
 
 // Abstract interface for storing data.
 class SafeBrowsingStore {
@@ -234,13 +223,10 @@ class SafeBrowsingStore {
   // |pending_adds| is the set of full hashes which have been received
   // since the previous update, and is provided as a convenience
   // (could be written via WriteAddHash(), but that would flush the
-  // chunk to disk).  |prefix_misses| is the set of prefixes where the
-  // |GetHash()| request returned no full hashes, used for diagnostic
-  // purposes.
+  // chunk to disk).
   virtual bool FinishUpdate(
       const std::vector<SBAddFullHash>& pending_adds,
-      const std::set<SBPrefix>& prefix_misses,
-      SBAddPrefixes* add_prefixes_result,
+      safe_browsing::PrefixSetBuilder* builder,
       std::vector<SBAddFullHash>* add_full_hashes_result) = 0;
 
   // Cancel the update in process and remove any temporary disk

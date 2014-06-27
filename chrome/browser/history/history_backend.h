@@ -37,8 +37,6 @@ class AndroidProviderBackend;
 #endif
 
 class CommitLaterTask;
-class HistoryPublisher;
-class PageCollector;
 class VisitFilter;
 struct DownloadRow;
 
@@ -73,8 +71,7 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
     virtual ~Delegate() {}
 
     // Called when the database cannot be read correctly for some reason.
-    virtual void NotifyProfileError(int backend_id,
-                                    sql::InitStatus init_status) = 0;
+    virtual void NotifyProfileError(sql::InitStatus init_status) = 0;
 
     // Sets the in-memory history backend. The in-memory backend is created by
     // the main backend. For non-unit tests, this happens on the background
@@ -83,22 +80,18 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
     //
     // This function is NOT guaranteed to be called. If there is an error,
     // there may be no in-memory database.
-    //
-    // Ownership of the backend pointer is transferred to this function.
-    virtual void SetInMemoryBackend(int backend_id,
-                                    InMemoryHistoryBackend* backend) = 0;
+    virtual void SetInMemoryBackend(
+        scoped_ptr<InMemoryHistoryBackend> backend) = 0;
 
     // Broadcasts the specified notification to the notification service.
     // This is implemented here because notifications must only be sent from
     // the main thread. This is the only method that doesn't identify the
     // caller because notifications must always be sent.
-    //
-    // Ownership of the HistoryDetails is transferred to this function.
     virtual void BroadcastNotifications(int type,
-                                        HistoryDetails* details) = 0;
+                                        scoped_ptr<HistoryDetails> details) = 0;
 
     // Invoked when the backend has finished loading the db.
-    virtual void DBLoaded(int backend_id) = 0;
+    virtual void DBLoaded() = 0;
 
     virtual void NotifyVisitDBObserversOnAddVisit(
         const history::BriefVisitInfo& info) = 0;
@@ -112,15 +105,11 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
   // See the definition of BroadcastNotificationsCallback above. This function
   // takes ownership of the callback pointer.
   //
-  // |id| is used to communicate with the delegate, to identify which
-  // backend is calling the method.
-  //
   // |bookmark_service| is used to determine bookmarked URLs when deleting and
   // may be NULL.
   //
   // This constructor is fast and does no I/O, so can be called at any time.
   HistoryBackend(const base::FilePath& history_dir,
-                 int id,
                  Delegate* delegate,
                  BookmarkService* bookmark_service);
 
@@ -145,8 +134,8 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
 
   // |request.time| must be unique with high probability.
   void AddPage(const HistoryAddPageArgs& request);
-  virtual void SetPageTitle(const GURL& url, const string16& title);
-  void AddPageNoVisitForBookmark(const GURL& url, const string16& title);
+  virtual void SetPageTitle(const GURL& url, const base::string16& title);
+  void AddPageNoVisitForBookmark(const GURL& url, const base::string16& title);
 
   // Updates the database backend with a page's ending time stamp information.
   // The page can be identified by the combination of the pointer to
@@ -158,11 +147,6 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
                              int32 page_id,
                              const GURL& url,
                              base::Time end_ts);
-
-
-  // Indexing ------------------------------------------------------------------
-
-  void SetPageContents(const GURL& url, const string16& contents);
 
   // Querying ------------------------------------------------------------------
 
@@ -179,7 +163,7 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
                 const GURL& url,
                 bool want_visits);
   void QueryHistory(scoped_refptr<QueryHistoryRequest> request,
-                    const string16& text_query,
+                    const base::string16& text_query,
                     const QueryOptions& options);
   void QueryRedirectsFrom(scoped_refptr<QueryRedirectsRequest> request,
                           const GURL& url);
@@ -289,11 +273,10 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
 
   // Downloads -----------------------------------------------------------------
 
-  void GetNextDownloadId(uint32* next_id);
+  uint32 GetNextDownloadId();
   void QueryDownloads(std::vector<DownloadRow>* rows);
   void UpdateDownload(const DownloadRow& data);
-  void CreateDownload(const history::DownloadRow& history_info,
-                      bool* success);
+  bool CreateDownload(const history::DownloadRow& history_info);
   void RemoveDownloads(const std::set<uint32>& ids);
 
   // Segment usage -------------------------------------------------------------
@@ -303,29 +286,24 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
                          int max_result_count);
   void DeleteOldSegmentData();
 
-  void IncreaseSegmentDuration(const GURL& url,
-                               base::Time time,
-                               base::TimeDelta delta);
-
-  void QuerySegmentDuration(scoped_refptr<QuerySegmentUsageRequest> request,
-                            const base::Time from_time,
-                            int max_result_count);
-
   // Keyword search terms ------------------------------------------------------
 
   void SetKeywordSearchTermsForURL(const GURL& url,
                                    TemplateURLID keyword_id,
-                                   const string16& term);
+                                   const base::string16& term);
 
   void DeleteAllSearchTermsForKeyword(TemplateURLID keyword_id);
 
   void GetMostRecentKeywordSearchTerms(
       scoped_refptr<GetMostRecentKeywordSearchTermsRequest> request,
       TemplateURLID keyword_id,
-      const string16& prefix,
+      const base::string16& prefix,
       int max_count);
 
   void DeleteKeywordSearchTermForURL(const GURL& url);
+
+  void DeleteMatchingURLsForKeyword(TemplateURLID keyword_id,
+                                    const base::string16& term);
 
 #if defined(OS_ANDROID)
   // Android Provider ---------------------------------------------------------
@@ -338,21 +316,23 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
       scoped_refptr<QueryRequest> request,
       const std::vector<HistoryAndBookmarkRow::ColumnID>& projections,
       const std::string& selection,
-      const std::vector<string16>& selection_args,
+      const std::vector<base::string16>& selection_args,
       const std::string& sort_order);
 
-  void UpdateHistoryAndBookmarks(scoped_refptr<UpdateRequest> request,
-                                 const HistoryAndBookmarkRow& row,
-                                 const std::string& selection,
-                                 const std::vector<string16>& selection_args);
+  void UpdateHistoryAndBookmarks(
+      scoped_refptr<UpdateRequest> request,
+      const HistoryAndBookmarkRow& row,
+      const std::string& selection,
+      const std::vector<base::string16>& selection_args);
 
-  void DeleteHistoryAndBookmarks(scoped_refptr<DeleteRequest> request,
-                                 const std::string& selection,
-                                 const std::vector<string16>& selection_args);
+  void DeleteHistoryAndBookmarks(
+      scoped_refptr<DeleteRequest> request,
+      const std::string& selection,
+      const std::vector<base::string16>& selection_args);
 
   void DeleteHistory(scoped_refptr<DeleteRequest> request,
                      const std::string& selection,
-                     const std::vector<string16>& selection_args);
+                     const std::vector<base::string16>& selection_args);
 
   // Statement ----------------------------------------------------------------
   // Move the statement's current position.
@@ -371,16 +351,16 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
   void UpdateSearchTerms(scoped_refptr<UpdateRequest> request,
                          const SearchRow& row,
                          const std::string& selection,
-                         const std::vector<string16> selection_args);
+                         const std::vector<base::string16> selection_args);
 
   void DeleteSearchTerms(scoped_refptr<DeleteRequest> request,
                          const std::string& selection,
-                         const std::vector<string16> selection_args);
+                         const std::vector<base::string16> selection_args);
 
   void QuerySearchTerms(scoped_refptr<QueryRequest> request,
                         const std::vector<SearchRow::ColumnID>& projections,
                         const std::string& selection,
-                        const std::vector<string16>& selection_args,
+                        const std::vector<base::string16>& selection_args,
                         const std::string& sort_order);
 
 #endif  // defined(OS_ANDROID)
@@ -627,7 +607,7 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
                          const QueryOptions& options, QueryResults* result);
   void QueryHistoryText(URLDatabase* url_db,
                         VisitDatabase* visit_db,
-                        const string16& text_query,
+                        const base::string16& text_query,
                         const QueryOptions& options,
                         QueryResults* result);
 
@@ -779,11 +759,10 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
   // Release all tasks in history_db_tasks_ and clears it.
   void ReleaseDBTasks();
 
-  // Schedules a broadcast of the given notification on the main thread. The
-  // details argument will have ownership taken by this function (it will be
-  // sent to the main thread and deleted there).
-  virtual void BroadcastNotifications(int type,
-                                      HistoryDetails* details_deleted) OVERRIDE;
+  // Schedules a broadcast of the given notification on the main thread.
+  virtual void BroadcastNotifications(
+      int type,
+      scoped_ptr<HistoryDetails> details) OVERRIDE;
 
   virtual void NotifySyncURLsDeleted(bool all_history,
                                      bool archived,
@@ -828,10 +807,6 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
   // non-NULL in between.
   scoped_ptr<Delegate> delegate_;
 
-  // The id of this class, given in creation and used for identifying the
-  // backend when calling the delegate.
-  int id_;
-
   // Directory where database files will be stored.
   base::FilePath history_dir_;
 
@@ -845,9 +820,6 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
 
   // Stores old history in a larger, slower database.
   scoped_ptr<ArchivedDatabase> archived_db_;
-
-  // Helper to collect page data for vending to history_publisher_.
-  scoped_ptr<PageCollector> page_collector_;
 
   // Manages expiration between the various databases.
   ExpireHistoryBackend expirer_;
@@ -894,10 +866,6 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
   // Use GetBookmarkService to access this, which makes sure the service is
   // loaded.
   BookmarkService* bookmark_service_;
-
-  // Publishes the history to all indexers which are registered to receive
-  // history data from us. Can be NULL if there are no listeners.
-  scoped_ptr<HistoryPublisher> history_publisher_;
 
 #if defined(OS_ANDROID)
   // Used to provide the Android ContentProvider APIs.

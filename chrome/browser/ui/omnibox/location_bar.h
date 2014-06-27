@@ -21,6 +21,7 @@
 class ExtensionAction;
 class LocationBarTesting;
 class OmniboxView;
+class Profile;
 
 namespace content {
 class WebContents;
@@ -28,6 +29,8 @@ class WebContents;
 
 class LocationBar {
  public:
+  explicit LocationBar(Profile* profile);
+
   // Shows the first run bubble anchored to the location bar.
   virtual void ShowFirstRunBubble() = 0;
 
@@ -48,6 +51,9 @@ class LocationBar {
 
   // Updates the state of the images showing the content settings status.
   virtual void UpdateContentSettingsIcons() = 0;
+
+  // Updates the password icon and pops up a bubble from the icon if needed.
+  virtual void UpdateManagePasswordsIconAndBubble() = 0;
 
   // Updates the state of the page actions.
   virtual void UpdatePageActions() = 0;
@@ -71,15 +77,24 @@ class LocationBar {
   // Reverts the location bar.  The bar's permanent text will be shown.
   virtual void Revert() = 0;
 
-  // Returns a pointer to the text entry view.
-  virtual const OmniboxView* GetLocationEntry() const = 0;
-  virtual OmniboxView* GetLocationEntry() = 0;
+  virtual const OmniboxView* GetOmniboxView() const = 0;
+  virtual OmniboxView* GetOmniboxView() = 0;
 
   // Returns a pointer to the testing interface.
   virtual LocationBarTesting* GetLocationBarForTesting() = 0;
 
+  Profile* profile() { return profile_; }
+
  protected:
-  virtual ~LocationBar() {}
+  virtual ~LocationBar();
+
+  // Checks if any extension has requested that the bookmark star be hidden.
+  bool IsBookmarkStarHiddenByExtension() const;
+
+ private:
+  Profile* profile_;
+
+  DISALLOW_COPY_AND_ASSIGN(LocationBar);
 };
 
 class LocationBarTesting {

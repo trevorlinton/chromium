@@ -14,14 +14,19 @@
 #include "base/timer/timer.h"
 #include "chrome/browser/extensions/api/image_writer_private/image_writer_private_api.h"
 #include "chrome/browser/extensions/api/image_writer_private/operation.h"
-#include "chrome/browser/extensions/api/profile_keyed_api_factory.h"
-#include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/image_writer_private.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
+#include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "url/gurl.h"
 
 namespace image_writer_api = extensions::api::image_writer_private;
+
+class Profile;
+
+namespace content {
+class BrowserContext;
+}
 
 namespace extensions {
 namespace image_writer {
@@ -30,14 +35,13 @@ class Operation;
 
 // Manages image writer operations for the current profile.  Including clean-up
 // and message routing.
-class OperationManager
-    : public ProfileKeyedAPI,
-      public content::NotificationObserver,
-      public base::SupportsWeakPtr<OperationManager> {
+class OperationManager : public BrowserContextKeyedAPI,
+                         public content::NotificationObserver,
+                         public base::SupportsWeakPtr<OperationManager> {
  public:
   typedef std::string ExtensionId;
 
-  explicit OperationManager(Profile* profile);
+  explicit OperationManager(content::BrowserContext* context);
   virtual ~OperationManager();
 
   virtual void Shutdown() OVERRIDE;
@@ -45,39 +49,41 @@ class OperationManager
   // Starts a WriteFromUrl operation.
   void StartWriteFromUrl(const ExtensionId& extension_id,
                          GURL url,
-                         content::RenderViewHost* rvh,
                          const std::string& hash,
-                         bool saveImageAsDownload,
-                         const std::string& storage_unit_id,
+                         const std::string& device_path,
                          const Operation::StartWriteCallback& callback);
 
   // Starts a WriteFromFile operation.
   void StartWriteFromFile(const ExtensionId& extension_id,
-                          const std::string& storage_unit_id,
+                          const base::FilePath& path,
+                          const std::string& device_path,
                           const Operation::StartWriteCallback& callback);
 
   // Cancels the extensions current operation if any.
   void CancelWrite(const ExtensionId& extension_id,
                    const Operation::CancelWriteCallback& callback);
 
+  // Starts a write that removes the partition table.
+  void DestroyPartitions(const ExtensionId& extension_id,
+                         const std::string& device_path,
+                         const Operation::StartWriteCallback& callback);
+
   // Callback for progress events.
-  void OnProgress(const ExtensionId& extension_id,
-                  image_writer_api::Stage stage,
-                  int progress);
+  virtual void OnProgress(const ExtensionId& extension_id,
+                          image_writer_api::Stage stage,
+                          int progress);
   // Callback for completion events.
-  void OnComplete(const ExtensionId& extension_id);
+  virtual void OnComplete(const ExtensionId& extension_id);
 
   // Callback for error events.
-  // TODO (haven): Add error codes.
-  void OnError(const ExtensionId& extension_id,
-               image_writer_api::Stage stage,
-               int progress,
-               const std::string& error_message);
+  virtual void OnError(const ExtensionId& extension_id,
+                       image_writer_api::Stage stage,
+                       int progress,
+                       const std::string& error_message);
 
-  // ProfileKeyedAPI
-  static ProfileKeyedAPIFactory<OperationManager>*
-      GetFactoryInstance();
-  static OperationManager* Get(Profile* profile);
+  // BrowserContextKeyedAPI
+  static BrowserContextKeyedAPIFactory<OperationManager>* GetFactoryInstance();
+  static OperationManager* Get(content::BrowserContext* context);
 
   Profile* profile() { return profile_; }
 
@@ -95,7 +101,7 @@ class OperationManager
   Operation* GetOperation(const ExtensionId& extension_id);
   void DeleteOperation(const ExtensionId& extension_id);
 
-  friend class ProfileKeyedAPIFactory<OperationManager>;
+  friend class BrowserContextKeyedAPIFactory<OperationManager>;
   typedef std::map<ExtensionId, scoped_refptr<Operation> > OperationMap;
 
   Profile* profile_;

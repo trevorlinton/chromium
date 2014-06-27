@@ -3,12 +3,12 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import os
 import json
 import unittest
 
 from api_models import APIModels
 from compiled_file_system import CompiledFileSystem
+from extensions_paths import API_PATHS, CHROME_API, CHROME_EXTENSIONS
 from features_bundle import FeaturesBundle
 from file_system import FileNotFoundError
 from mock_file_system import MockFileSystem
@@ -20,8 +20,8 @@ from test_util import ReadFile
 _TEST_DATA = {
   'api': {
     'devtools': {
-      'inspected_window.json': ReadFile(os.path.join(
-          'api', 'devtools', 'inspected_window.json')),
+      'inspected_window.json': ReadFile(
+          CHROME_API, 'devtools', 'inspected_window.json'),
     },
     '_api_features.json': json.dumps({
       'alarms': {},
@@ -36,12 +36,12 @@ _TEST_DATA = {
     }),
     '_manifest_features.json': '{}',
     '_permission_features.json': '{}',
-    'alarms.idl': ReadFile(os.path.join('api', 'alarms.idl')),
-    'declarative_web_request.json': ReadFile(os.path.join(
-        'api', 'declarative_web_request.json')),
-    'experimental_accessibility.json': ReadFile(os.path.join(
-        'api', 'experimental_accessibility.json')),
-    'page_action.json': ReadFile(os.path.join('api', 'page_action.json')),
+    'alarms.idl': ReadFile(CHROME_API, 'alarms.idl'),
+    'declarative_web_request.json': ReadFile(
+        CHROME_API, 'declarative_web_request.json'),
+    'experimental_accessibility.json': ReadFile(
+        CHROME_API, 'experimental_accessibility.json'),
+    'page_action.json': ReadFile(CHROME_API, 'page_action.json'),
   },
   'docs': {
     'templates': {
@@ -58,7 +58,8 @@ class APIModelsTest(unittest.TestCase):
   def setUp(self):
     object_store_creator = ObjectStoreCreator.ForTest()
     compiled_fs_factory = CompiledFileSystem.Factory(object_store_creator)
-    self._mock_file_system = MockFileSystem(TestFileSystem(_TEST_DATA))
+    self._mock_file_system = MockFileSystem(
+        TestFileSystem(_TEST_DATA, relative_to=CHROME_EXTENSIONS))
     features_bundle = FeaturesBundle(
         self._mock_file_system, compiled_fs_factory, object_store_creator)
     self._api_models = APIModels(
@@ -82,25 +83,29 @@ class APIModelsTest(unittest.TestCase):
     self.assertEqual('devtools.inspectedWindow',
                      get_model_name('devtools/inspected_window.json'))
     self.assertEqual('devtools.inspectedWindow',
-                     get_model_name('api/devtools/inspected_window.json'))
+                     get_model_name(CHROME_API +
+                                    'devtools/inspected_window.json'))
     self.assertEqual('alarms', get_model_name('alarms'))
     self.assertEqual('alarms', get_model_name('alarms.idl'))
-    self.assertEqual('alarms', get_model_name('api/alarms.idl'))
+    self.assertEqual('alarms', get_model_name(CHROME_API + 'alarms.idl'))
     self.assertEqual('declarativeWebRequest',
                      get_model_name('declarativeWebRequest'))
     self.assertEqual('declarativeWebRequest',
                      get_model_name('declarative_web_request.json'))
     self.assertEqual('declarativeWebRequest',
-                     get_model_name('api/declarative_web_request.json'))
+                     get_model_name(CHROME_API +
+                                    'declarative_web_request.json'))
     self.assertEqual('experimental.accessibility',
                      get_model_name('experimental.accessibility'))
     self.assertEqual('experimental.accessibility',
                      get_model_name('experimental_accessibility.json'))
     self.assertEqual('experimental.accessibility',
-                     get_model_name('api/experimental_accessibility.json'))
+                     get_model_name(CHROME_API +
+                                    'experimental_accessibility.json'))
     self.assertEqual('pageAction', get_model_name('pageAction'))
     self.assertEqual('pageAction', get_model_name('page_action.json'))
-    self.assertEqual('pageAction', get_model_name('api/page_action.json'))
+    self.assertEqual('pageAction', get_model_name(CHROME_API +
+                                                  'page_action.json'))
 
   def testGetNonexistentModel(self):
     self.assertRaises(FileNotFoundError,
@@ -108,21 +113,26 @@ class APIModelsTest(unittest.TestCase):
     self.assertRaises(FileNotFoundError,
                       self._api_models.GetModel('notfound.json').Get)
     self.assertRaises(FileNotFoundError,
-                      self._api_models.GetModel('api/notfound.json').Get)
+                      self._api_models.GetModel(CHROME_API +
+                                                'notfound.json').Get)
     self.assertRaises(FileNotFoundError,
-                      self._api_models.GetModel('api/alarms.json').Get)
+                      self._api_models.GetModel(CHROME_API +
+                                                'alarms.json').Get)
     self.assertRaises(FileNotFoundError,
                       self._api_models.GetModel('storage').Get)
     self.assertRaises(FileNotFoundError,
-                      self._api_models.GetModel('api/storage.json').Get)
+                      self._api_models.GetModel(CHROME_API +
+                                                'storage.json').Get)
     self.assertRaises(FileNotFoundError,
-                      self._api_models.GetModel('api/storage.idl').Get)
+                      self._api_models.GetModel(CHROME_API +
+                                                'storage.idl').Get)
 
   def testSingleFile(self):
-    # 2 stats (1 for JSON and 1 for IDL), 1 read (for IDL file which existed).
+    # 2 stats (1 for JSON and 1 for IDL) for each available API path.
+    # 1 read (for IDL file which existed).
     future = self._api_models.GetModel('alarms')
     self.assertTrue(*self._mock_file_system.CheckAndReset(
-        read_count=1, stat_count=2))
+        read_count=1, stat_count=len(API_PATHS)*2))
 
     # 1 read-resolve (for the IDL file).
     #
@@ -133,9 +143,11 @@ class APIModelsTest(unittest.TestCase):
     self.assertTrue(*self._mock_file_system.CheckAndReset(
         read_resolve_count=1))
 
-    # 2 stats (1 for JSON and 1 for IDL), no reads (still cached).
+    # 2 stats (1 for JSON and 1 for IDL) for each available API path.
+    # No reads (still cached).
     future = self._api_models.GetModel('alarms')
-    self.assertTrue(*self._mock_file_system.CheckAndReset(stat_count=2))
+    self.assertTrue(*self._mock_file_system.CheckAndReset(
+        stat_count=len(API_PATHS)*2))
     future.Get()
     self.assertTrue(*self._mock_file_system.CheckAndReset())
 

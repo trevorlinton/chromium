@@ -10,6 +10,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/url_constants.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/manifest_constants.h"
@@ -26,8 +27,8 @@ bool ReadLaunchDimension(const extensions::Manifest* manifest,
                          const char* key,
                          int* target,
                          bool is_valid_container,
-                         string16* error) {
-  const Value* temp = NULL;
+                         base::string16* error) {
+  const base::Value* temp = NULL;
   if (manifest->Get(key, &temp)) {
     if (!is_valid_container) {
       *error = ErrorUtils::FormatErrorMessageUTF16(
@@ -58,7 +59,7 @@ const AppLaunchInfo& GetAppLaunchInfo(const Extension* extension) {
 }  // namespace
 
 AppLaunchInfo::AppLaunchInfo()
-    : launch_container_(extension_misc::LAUNCH_TAB),
+    : launch_container_(LAUNCH_CONTAINER_TAB),
       launch_width_(0),
       launch_height_(0) {
 }
@@ -79,7 +80,7 @@ const GURL& AppLaunchInfo::GetLaunchWebURL(
 }
 
 // static
-extension_misc::LaunchContainer AppLaunchInfo::GetLaunchContainer(
+extensions::LaunchContainer AppLaunchInfo::GetLaunchContainer(
     const Extension* extension) {
   return GetAppLaunchInfo(extension).launch_container_;
 }
@@ -103,26 +104,26 @@ GURL AppLaunchInfo::GetFullLaunchURL(const Extension* extension) {
     return extension->url().Resolve(info.launch_local_path_);
 }
 
-bool AppLaunchInfo::Parse(Extension* extension, string16* error) {
+bool AppLaunchInfo::Parse(Extension* extension, base::string16* error) {
   if (!LoadLaunchURL(extension, error) ||
       !LoadLaunchContainer(extension, error))
     return false;
   return true;
 }
 
-bool AppLaunchInfo::LoadLaunchURL(Extension* extension, string16* error) {
-  const Value* temp = NULL;
+bool AppLaunchInfo::LoadLaunchURL(Extension* extension, base::string16* error) {
+  const base::Value* temp = NULL;
 
   // Launch URL can be either local (to chrome-extension:// root) or an absolute
   // web URL.
   if (extension->manifest()->Get(keys::kLaunchLocalPath, &temp)) {
     if (extension->manifest()->Get(keys::kLaunchWebURL, NULL)) {
-      *error = ASCIIToUTF16(errors::kLaunchPathAndURLAreExclusive);
+      *error = base::ASCIIToUTF16(errors::kLaunchPathAndURLAreExclusive);
       return false;
     }
 
     if (extension->manifest()->Get(keys::kWebURLs, NULL)) {
-      *error = ASCIIToUTF16(errors::kLaunchPathAndExtentAreExclusive);
+      *error = base::ASCIIToUTF16(errors::kLaunchPathAndExtentAreExclusive);
       return false;
     }
 
@@ -165,7 +166,7 @@ bool AppLaunchInfo::LoadLaunchURL(Extension* extension, string16* error) {
 
     launch_web_url_ = url;
   } else if (extension->is_legacy_packaged_app()) {
-    *error = ASCIIToUTF16(errors::kLaunchURLRequired);
+    *error = base::ASCIIToUTF16(errors::kLaunchURLRequired);
     return false;
   }
 
@@ -224,29 +225,28 @@ bool AppLaunchInfo::LoadLaunchURL(Extension* extension, string16* error) {
 }
 
 bool AppLaunchInfo::LoadLaunchContainer(Extension* extension,
-                                        string16* error) {
-  const Value* tmp_launcher_container = NULL;
+                                        base::string16* error) {
+  const base::Value* tmp_launcher_container = NULL;
   if (!extension->manifest()->Get(keys::kLaunchContainer,
                                   &tmp_launcher_container))
     return true;
 
   std::string launch_container_string;
   if (!tmp_launcher_container->GetAsString(&launch_container_string)) {
-    *error = ASCIIToUTF16(errors::kInvalidLaunchContainer);
+    *error = base::ASCIIToUTF16(errors::kInvalidLaunchContainer);
     return false;
   }
 
   if (launch_container_string == values::kLaunchContainerPanel) {
-    launch_container_ = extension_misc::LAUNCH_PANEL;
+    launch_container_ = LAUNCH_CONTAINER_PANEL;
   } else if (launch_container_string == values::kLaunchContainerTab) {
-    launch_container_ = extension_misc::LAUNCH_TAB;
+    launch_container_ = LAUNCH_CONTAINER_TAB;
   } else {
-    *error = ASCIIToUTF16(errors::kInvalidLaunchContainer);
+    *error = base::ASCIIToUTF16(errors::kInvalidLaunchContainer);
     return false;
   }
 
-  bool can_specify_initial_size =
-      launch_container_ == extension_misc::LAUNCH_PANEL;
+  bool can_specify_initial_size = launch_container_ == LAUNCH_CONTAINER_PANEL;
 
   // Validate the container width if present.
   if (!ReadLaunchDimension(extension->manifest(),
@@ -299,7 +299,8 @@ AppLaunchManifestHandler::AppLaunchManifestHandler() {
 AppLaunchManifestHandler::~AppLaunchManifestHandler() {
 }
 
-bool AppLaunchManifestHandler::Parse(Extension* extension, string16* error) {
+bool AppLaunchManifestHandler::Parse(Extension* extension,
+                                     base::string16* error) {
   scoped_ptr<AppLaunchInfo> info(new AppLaunchInfo);
   if (!info->Parse(extension, error))
     return false;

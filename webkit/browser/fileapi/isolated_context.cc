@@ -41,21 +41,10 @@ base::FilePath::StringType GetRegisterNameForPath(const base::FilePath& path) {
 }
 
 bool IsSinglePathIsolatedFileSystem(FileSystemType type) {
-  switch (type) {
-    // As of writing dragged file system is the only filesystem
-    // which could have multiple top-level paths.
-    case kFileSystemTypeDragged:
-      return false;
-
-    case kFileSystemTypeUnknown:
-      NOTREACHED();
-      return true;
-
-    default:
-      return true;
-  }
-  NOTREACHED();
-  return true;
+  DCHECK_NE(kFileSystemTypeUnknown, type);
+  // As of writing dragged file system is the only filesystem which could have
+  // multiple top-level paths.
+  return type != kFileSystemTypeDragged;
 }
 
 static base::LazyInstance<IsolatedContext>::Leaky g_isolated_context =
@@ -288,16 +277,21 @@ bool IsolatedContext::GetRegisteredPath(
   return true;
 }
 
-bool IsolatedContext::CrackVirtualPath(const base::FilePath& virtual_path,
-                                       std::string* id_or_name,
-                                       FileSystemType* type,
-                                       base::FilePath* path) const {
+bool IsolatedContext::CrackVirtualPath(
+    const base::FilePath& virtual_path,
+    std::string* id_or_name,
+    FileSystemType* type,
+    base::FilePath* path,
+    FileSystemMountOption* mount_option) const {
   DCHECK(id_or_name);
   DCHECK(path);
 
   // This should not contain any '..' references.
   if (virtual_path.ReferencesParent())
     return false;
+
+  // Set the default mount option.
+  *mount_option = FileSystemMountOption();
 
   // The virtual_path should comprise <id_or_name> and <relative_path> parts.
   std::vector<base::FilePath::StringType> components;
@@ -428,13 +422,16 @@ FileSystemURL IsolatedContext::CrackFileSystemURL(
   std::string mount_name;
   FileSystemType cracked_type;
   base::FilePath cracked_path;
-  if (!CrackVirtualPath(url.path(), &mount_name, &cracked_type, &cracked_path))
+  FileSystemMountOption cracked_mount_option;
+  if (!CrackVirtualPath(url.path(), &mount_name, &cracked_type,
+                        &cracked_path, &cracked_mount_option)) {
     return FileSystemURL();
+  }
 
   return FileSystemURL(
       url.origin(), url.mount_type(), url.virtual_path(),
       !url.filesystem_id().empty() ? url.filesystem_id() : mount_name,
-      cracked_type, cracked_path, mount_name);
+      cracked_type, cracked_path, mount_name, cracked_mount_option);
 }
 
 bool IsolatedContext::UnregisterFileSystem(const std::string& filesystem_id) {

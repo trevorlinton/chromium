@@ -19,14 +19,13 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/content_browser_test.h"
+#include "content/public/test/content_browser_test_utils.h"
 #include "content/shell/browser/shell.h"
-#include "content/test/content_browser_test.h"
-#include "content/test/content_browser_test_utils.h"
 #include "media/base/video_frame.h"
 #include "media/filters/skcanvas_video_renderer.h"
 #include "net/base/net_util.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-#include "third_party/skia/include/core/SkBitmapDevice.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/gfx/size_conversions.h"
@@ -58,7 +57,7 @@ namespace {
 // Convenience macro: Short-circuit a pass for platforms where setting up
 // high-DPI fails.
 #define PASS_TEST_IF_SCALE_FACTOR_NOT_SUPPORTED(factor) \
-  if (ui::GetImageScale( \
+  if (ui::GetScaleForScaleFactor( \
           GetScaleFactorForView(GetRenderWidgetHostViewPort())) != factor) {  \
     LOG(WARNING) << "Blindly passing this test: failed to set up "  \
                     "scale factor: " << factor;  \
@@ -75,9 +74,8 @@ class RenderWidgetHostViewBrowserTest : public ContentBrowserTest {
         callback_invoke_count_(0),
         frames_captured_(0) {}
 
-  virtual void SetUpInProcessBrowserTestFixture() OVERRIDE {
+  virtual void SetUpOnMainThread() OVERRIDE {
     ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &test_dir_));
-    ContentBrowserTest::SetUpInProcessBrowserTestFixture();
   }
 
   // Attempts to set up the source surface.  Returns false if unsupported on the
@@ -147,7 +145,7 @@ class RenderWidgetHostViewBrowserTest : public ContentBrowserTest {
   // Callback when using frame subscriber API.
   void FrameDelivered(const scoped_refptr<base::MessageLoopProxy>& loop,
                       base::Closure quit_closure,
-                      base::Time timestamp,
+                      base::TimeTicks timestamp,
                       bool frame_captured) {
     ++callback_invoke_count_;
     if (frame_captured)
@@ -173,7 +171,8 @@ class RenderWidgetHostViewBrowserTest : public ContentBrowserTest {
           base::Bind(
               &RenderWidgetHostViewBrowserTest::FinishCopyFromBackingStore,
               base::Unretained(this),
-              run_loop.QuitClosure()));
+              run_loop.QuitClosure()),
+          SkBitmap::kARGB_8888_Config);
       run_loop.Run();
 
       if (frames_captured())
@@ -211,18 +210,21 @@ class RenderWidgetHostViewBrowserTest : public ContentBrowserTest {
   int frames_captured_;
 };
 
+enum CompositingMode {
+  GL_COMPOSITING,
+  SOFTWARE_COMPOSITING,
+};
+
 class CompositingRenderWidgetHostViewBrowserTest
-    : public RenderWidgetHostViewBrowserTest {
+    : public RenderWidgetHostViewBrowserTest,
+      public testing::WithParamInterface<CompositingMode> {
  public:
+  explicit CompositingRenderWidgetHostViewBrowserTest()
+      : compositing_mode_(GetParam()) {}
+
   virtual void SetUp() OVERRIDE {
-    // We expect real pixel output for these tests.
-    UseRealGLContexts();
-
-    // On legacy windows, these tests need real GL bindings to pass.
-#if defined(OS_WIN) && !defined(USE_AURA)
-    UseRealGLBindings();
-#endif
-
+    if (compositing_mode_ == SOFTWARE_COMPOSITING)
+      UseSoftwareCompositing();
     RenderWidgetHostViewBrowserTest::SetUp();
   }
 
@@ -268,11 +270,18 @@ class CompositingRenderWidgetHostViewBrowserTest
     WaitForCopySourceReady();
     return true;
   }
+
+ private:
+  const CompositingMode compositing_mode_;
+
+  DISALLOW_COPY_AND_ASSIGN(CompositingRenderWidgetHostViewBrowserTest);
 };
 
 class NonCompositingRenderWidgetHostViewBrowserTest
     : public RenderWidgetHostViewBrowserTest {
  public:
+  NonCompositingRenderWidgetHostViewBrowserTest() {}
+
   virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE {
     // Note: Appending the kDisableAcceleratedCompositing switch here, but there
     // are some builds that only use compositing and will ignore this switch.
@@ -306,6 +315,9 @@ class NonCompositingRenderWidgetHostViewBrowserTest
     // Return whether the renderer left accelerated compositing turned off.
     return !GetRenderWidgetHost()->is_accelerated_compositing_active();
   }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(NonCompositingRenderWidgetHostViewBrowserTest);
 };
 
 class FakeFrameSubscriber : public RenderWidgetHostViewFrameSubscriber {
@@ -315,10 +327,9 @@ class FakeFrameSubscriber : public RenderWidgetHostViewFrameSubscriber {
       : callback_(callback) {
   }
 
-  virtual bool ShouldCaptureFrame(
-      base::Time present_time,
-      scoped_refptr<media::VideoFrame>* storage,
-      DeliverFrameCallback* callback) OVERRIDE {
+  virtual bool ShouldCaptureFrame(base::TimeTicks present_time,
+                                  scoped_refptr<media::VideoFrame>* storage,
+                                  DeliverFrameCallback* callback) OVERRIDE {
     // Only allow one frame capture to be made.  Otherwise, the compositor could
     // start multiple captures, unbounded, and eventually its own limiter logic
     // will begin invoking |callback| with a |false| result.  This flakes out
@@ -342,7 +353,7 @@ class FakeFrameSubscriber : public RenderWidgetHostViewFrameSubscriber {
 
 // The CopyFromBackingStore() API should work on all platforms when compositing
 // is enabled.
-IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTest,
+IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTest,
                        CopyFromBackingStore) {
   RunBasicCopyFromBackingStoreTest();
 }
@@ -356,7 +367,7 @@ IN_PROC_BROWSER_TEST_F(NonCompositingRenderWidgetHostViewBrowserTest,
 
 // Tests that the callback passed to CopyFromBackingStore is always called,
 // even when the RenderWidgetHost is deleting in the middle of an async copy.
-IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTest,
+IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTest,
                        CopyFromBackingStore_CallbackDespiteDelete) {
   SET_UP_SURFACE_OR_PASS_TEST(NULL);
 
@@ -365,7 +376,9 @@ IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTest,
       gfx::Rect(),
       frame_size(),
       base::Bind(&RenderWidgetHostViewBrowserTest::FinishCopyFromBackingStore,
-                 base::Unretained(this), run_loop.QuitClosure()));
+                 base::Unretained(this),
+                 run_loop.QuitClosure()),
+      SkBitmap::kARGB_8888_Config);
   // Delete the surface before the callback is run.
   GetRenderWidgetHostViewPort()->AcceleratedSurfaceRelease();
   run_loop.Run();
@@ -377,16 +390,15 @@ IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTest,
 // always called, even when the RenderWidgetHost is deleting in the middle of
 // an async copy.
 //
-// Test is flaky on Win Aura. http://crbug.com/276783
-#if (defined(OS_WIN) && defined(USE_AURA)) || \
-    (defined(OS_CHROMEOS) && !defined(NDEBUG))
+// Test is flaky on Win. http://crbug.com/276783
+#if defined(OS_WIN) || (defined(OS_CHROMEOS) && !defined(NDEBUG))
 #define MAYBE_CopyFromCompositingSurface_CallbackDespiteDelete \
   DISABLED_CopyFromCompositingSurface_CallbackDespiteDelete
 #else
 #define MAYBE_CopyFromCompositingSurface_CallbackDespiteDelete \
   CopyFromCompositingSurface_CallbackDespiteDelete
 #endif
-IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTest,
+IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTest,
                        MAYBE_CopyFromCompositingSurface_CallbackDespiteDelete) {
   SET_UP_SURFACE_OR_PASS_TEST(NULL);
   RenderWidgetHostViewPort* const view = GetRenderWidgetHostViewPort();
@@ -421,7 +433,7 @@ IN_PROC_BROWSER_TEST_F(NonCompositingRenderWidgetHostViewBrowserTest,
 
 // Test basic frame subscription functionality.  We subscribe, and then run
 // until at least one DeliverFrameCallback has been invoked.
-IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTest,
+IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTest,
                        FrameSubscriberTest) {
   SET_UP_SURFACE_OR_PASS_TEST(NULL);
   RenderWidgetHostViewPort* const view = GetRenderWidgetHostViewPort();
@@ -447,7 +459,7 @@ IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTest,
 }
 
 // Test that we can copy twice from an accelerated composited page.
-IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTest, CopyTwice) {
+IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTest, CopyTwice) {
   SET_UP_SURFACE_OR_PASS_TEST(NULL);
   RenderWidgetHostViewPort* const view = GetRenderWidgetHostViewPort();
   if (!view->CanCopyToVideoFrame()) {
@@ -471,14 +483,15 @@ IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTest, CopyTwice) {
                  base::Unretained(this),
                  base::MessageLoopProxy::current(),
                  base::Closure(),
-                 base::Time::Now()));
+                 base::TimeTicks::Now()));
   view->CopyFromCompositingSurfaceToVideoFrame(
-      gfx::Rect(view->GetViewBounds().size()), second_output,
+      gfx::Rect(view->GetViewBounds().size()),
+      second_output,
       base::Bind(&RenderWidgetHostViewBrowserTest::FrameDelivered,
                  base::Unretained(this),
                  base::MessageLoopProxy::current(),
                  run_loop.QuitClosure(),
-                 base::Time::Now()));
+                 base::TimeTicks::Now()));
   run_loop.Run();
 
   EXPECT_EQ(2, callback_invoke_count());
@@ -492,6 +505,11 @@ class CompositingRenderWidgetHostViewBrowserTestTabCapture
       : expected_copy_from_compositing_surface_result_(false),
         allowable_error_(0),
         test_url_("data:text/html,<!doctype html>") {}
+
+  virtual void SetUp() OVERRIDE {
+    EnablePixelOutput();
+    CompositingRenderWidgetHostViewBrowserTest::SetUp();
+  }
 
   void CopyFromCompositingSurfaceCallback(base::Closure quit_callback,
                                           bool result,
@@ -565,14 +583,12 @@ class CompositingRenderWidgetHostViewBrowserTestTabCapture
     media::SkCanvasVideoRenderer video_renderer;
 
     SkBitmap bitmap;
-    bitmap.setConfig(SkBitmap::kARGB_8888_Config,
-                     video_frame->visible_rect().width(),
-                     video_frame->visible_rect().height(),
-                     0, kOpaque_SkAlphaType);
+    bitmap.allocPixels(SkImageInfo::Make(video_frame->visible_rect().width(),
+                                         video_frame->visible_rect().height(),
+                                         kPMColor_SkColorType,
+                                         kOpaque_SkAlphaType));
     bitmap.allocPixels();
-
-    SkBitmapDevice device(bitmap);
-    SkCanvas canvas(&device);
+    SkCanvas canvas(bitmap);
 
     video_renderer.Paint(video_frame.get(),
                          &canvas,
@@ -648,6 +664,20 @@ class CompositingRenderWidgetHostViewBrowserTestTabCapture
       return;
 
     RenderWidgetHostViewPort* rwhvp = GetRenderWidgetHostViewPort();
+    if (video_frame && !rwhvp->CanCopyToVideoFrame()) {
+      // This should only happen on Mac when using the software compositor.
+      // Otherwise, raise an error. This can be removed when Mac is moved to a
+      // browser compositor.
+      // http://crbug.com/314190
+#if defined(OS_MACOSX)
+      if (!content::GpuDataManager::GetInstance()->GpuAccessAllowed(NULL)) {
+        LOG(WARNING) << ("Blindly passing this test because copying to "
+                         "video frames is not supported on this platform.");
+        return;
+      }
+#endif
+      NOTREACHED();
+    }
 
     // The page is loaded in the renderer, wait for a new frame to arrive.
     uint32 frame = rwhvp->RendererFrameNumber();
@@ -701,7 +731,10 @@ class CompositingRenderWidgetHostViewBrowserTestTabCapture
                        CopyFromCompositingSurfaceCallback,
                    base::Unretained(this),
                    run_loop.QuitClosure());
-      rwhvp->CopyFromCompositingSurface(copy_rect, output_size, callback);
+      rwhvp->CopyFromCompositingSurface(copy_rect,
+                                        output_size,
+                                        callback,
+                                        SkBitmap::kARGB_8888_Config);
     }
     run_loop.Run();
   }
@@ -739,7 +772,7 @@ class CompositingRenderWidgetHostViewBrowserTestTabCapture
   std::string test_url_;
 };
 
-IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTestTabCapture,
+IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTestTabCapture,
                        CopyFromCompositingSurface_Origin_Unscaled) {
   gfx::Rect copy_rect(400, 300);
   gfx::Size output_size = copy_rect.size();
@@ -753,7 +786,7 @@ IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTestTabCapture,
                                 video_frame);
 }
 
-IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTestTabCapture,
+IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTestTabCapture,
                        CopyFromCompositingSurface_Origin_Scaled) {
   gfx::Rect copy_rect(400, 300);
   gfx::Size output_size(200, 100);
@@ -767,7 +800,7 @@ IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTestTabCapture,
                                 video_frame);
 }
 
-IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTestTabCapture,
+IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTestTabCapture,
                        CopyFromCompositingSurface_Cropped_Unscaled) {
   // Grab 60x60 pixels from the center of the tab contents.
   gfx::Rect copy_rect(400, 300);
@@ -784,7 +817,7 @@ IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTestTabCapture,
                                 video_frame);
 }
 
-IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTestTabCapture,
+IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTestTabCapture,
                        CopyFromCompositingSurface_Cropped_Scaled) {
   // Grab 60x60 pixels from the center of the tab contents.
   gfx::Rect copy_rect(400, 300);
@@ -801,7 +834,7 @@ IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTestTabCapture,
                                 video_frame);
 }
 
-IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTestTabCapture,
+IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTestTabCapture,
                        CopyFromCompositingSurface_ForVideoFrame) {
   // Grab 90x60 pixels from the center of the tab contents.
   gfx::Rect copy_rect(400, 300);
@@ -818,7 +851,7 @@ IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTestTabCapture,
                                 video_frame);
 }
 
-IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTestTabCapture,
+IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTestTabCapture,
                        CopyFromCompositingSurface_ForVideoFrame_Scaled) {
   // Grab 90x60 pixels from the center of the tab contents.
   gfx::Rect copy_rect(400, 300);
@@ -839,16 +872,14 @@ IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewBrowserTestTabCapture,
 class CompositingRenderWidgetHostViewTabCaptureHighDPI
     : public CompositingRenderWidgetHostViewBrowserTestTabCapture {
  public:
-  CompositingRenderWidgetHostViewTabCaptureHighDPI()
-      : kScale(2.f) {
-  }
+  CompositingRenderWidgetHostViewTabCaptureHighDPI() : kScale(2.f) {}
 
-  virtual void SetUpCommandLine(CommandLine* cmd) OVERRIDE {
-    CompositingRenderWidgetHostViewBrowserTestTabCapture::SetUpCommandLine(cmd);
+  virtual void SetUpOnMainThread() OVERRIDE {
+    CommandLine* cmd = CommandLine::ForCurrentProcess();
     cmd->AppendSwitchASCII(switches::kForceDeviceScaleFactor,
                            base::StringPrintf("%f", scale()));
 #if defined(OS_WIN)
-    cmd->AppendSwitchASCII(switches::kHighDPISupport, "1");
+    gfx::ForceHighDPISupportForTesting(scale());
     gfx::EnableHighDPISupport();
 #endif
   }
@@ -866,7 +897,7 @@ class CompositingRenderWidgetHostViewTabCaptureHighDPI
   DISALLOW_COPY_AND_ASSIGN(CompositingRenderWidgetHostViewTabCaptureHighDPI);
 };
 
-IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewTabCaptureHighDPI,
+IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewTabCaptureHighDPI,
                        CopyFromCompositingSurface) {
   gfx::Rect copy_rect(200, 150);
   gfx::Size output_size = copy_rect.size();
@@ -881,7 +912,7 @@ IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewTabCaptureHighDPI,
                                 video_frame);
 }
 
-IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewTabCaptureHighDPI,
+IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewTabCaptureHighDPI,
                        CopyFromCompositingSurfaceVideoFrame) {
   gfx::Size html_rect_size(200, 150);
   // Grab 90x60 pixels from the center of the tab contents.
@@ -898,6 +929,25 @@ IN_PROC_BROWSER_TEST_F(CompositingRenderWidgetHostViewTabCaptureHighDPI,
                                 expected_bitmap_size,
                                 video_frame);
 }
+
+#if !defined(USE_AURA) && !defined(OS_MACOSX)
+// TODO(danakj): Remove this case when GTK linux is no more and move the
+// values inline to testing::Values() below.
+static const CompositingMode kAllCompositingModes[] = {GL_COMPOSITING};
+#else
+static const CompositingMode kAllCompositingModes[] = {GL_COMPOSITING,
+                                                       SOFTWARE_COMPOSITING};
+#endif
+
+INSTANTIATE_TEST_CASE_P(GLAndSoftwareCompositing,
+                        CompositingRenderWidgetHostViewBrowserTest,
+                        testing::ValuesIn(kAllCompositingModes));
+INSTANTIATE_TEST_CASE_P(GLAndSoftwareCompositing,
+                        CompositingRenderWidgetHostViewBrowserTestTabCapture,
+                        testing::ValuesIn(kAllCompositingModes));
+INSTANTIATE_TEST_CASE_P(GLAndSoftwareCompositing,
+                        CompositingRenderWidgetHostViewTabCaptureHighDPI,
+                        testing::ValuesIn(kAllCompositingModes));
 
 #endif  // !defined(OS_ANDROID) && !defined(OS_IOS)
 

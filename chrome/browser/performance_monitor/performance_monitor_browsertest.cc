@@ -32,7 +32,6 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/chrome_version_info.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/notification_registrar.h"
@@ -41,6 +40,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/common/extension.h"
 
 #if defined(OS_CHROMEOS)
 #include "chromeos/chromeos_switches.h"
@@ -85,7 +85,7 @@ struct ExtensionBasicInfo {
 // Compare the fields of |extension| to those in |value|; this is a check to
 // make sure the extension data was recorded properly in the event.
 void ValidateExtensionInfo(const ExtensionBasicInfo extension,
-                           const DictionaryValue* value) {
+                           const base::DictionaryValue* value) {
   std::string extension_description;
   std::string extension_id;
   std::string extension_name;
@@ -300,7 +300,7 @@ class PerformanceMonitorUncleanExitBrowserTest
 
     base::FilePath first_profile =
         user_data_directory.AppendASCII(first_profile_name_);
-    CHECK(file_util::CreateDirectory(first_profile));
+    CHECK(base::CreateDirectory(first_profile));
 
     base::FilePath stock_prefs_file;
     PathService::Get(chrome::DIR_TEST_DATA, &stock_prefs_file);
@@ -319,7 +319,7 @@ class PerformanceMonitorUncleanExitBrowserTest
 
     base::FilePath second_profile =
         user_data_directory.AppendASCII(second_profile_name_);
-    CHECK(file_util::CreateDirectory(second_profile));
+    CHECK(base::CreateDirectory(second_profile));
 
     base::FilePath second_profile_prefs_file =
         second_profile.Append(chrome::kPreferencesFilename);
@@ -474,7 +474,7 @@ IN_PROC_BROWSER_TEST_F(PerformanceMonitorBrowserTest, UpdateExtensionEvent) {
       chrome::NOTIFICATION_CRX_INSTALLER_DONE,
       content::Source<extensions::CrxInstaller>(crx_installer));
   ASSERT_TRUE(extension_service->
-      UpdateExtension(extension->id(), path_v2_, GURL(), &crx_installer));
+      UpdateExtension(extension->id(), path_v2_, true, GURL(), &crx_installer));
   windowed_observer.Wait();
 
   extension = extension_service->GetExtensionById(
@@ -621,14 +621,16 @@ IN_PROC_BROWSER_TEST_F(PerformanceMonitorBrowserTest,
 }
 #endif  // !defined(OS_WIN)
 
+// TODO(jam): http://crbug.com/350550
+#if !(defined(OS_CHROMEOS) && defined(ADDRESS_SANITIZER))
 IN_PROC_BROWSER_TEST_F(PerformanceMonitorBrowserTest, RendererCrashEvent) {
-  content::WindowedNotificationObserver windowed_observer(
-      content::NOTIFICATION_RENDERER_PROCESS_CLOSED,
-      content::NotificationService::AllSources());
+  content::RenderProcessHostWatcher observer(
+      browser()->tab_strip_model()->GetActiveWebContents(),
+      content::RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
 
   ui_test_utils::NavigateToURL(browser(), GURL(content::kChromeUICrashURL));
 
-  windowed_observer.Wait();
+  observer.Wait();
 
   Database::EventVector events = GetEvents();
   ASSERT_EQ(1u, events.size());
@@ -639,6 +641,7 @@ IN_PROC_BROWSER_TEST_F(PerformanceMonitorBrowserTest, RendererCrashEvent) {
   ASSERT_TRUE(events[0]->data()->GetString("url", &url));
   ASSERT_EQ("chrome://crash/", url);
 }
+#endif
 
 IN_PROC_BROWSER_TEST_F(PerformanceMonitorUncleanExitBrowserTest,
                        OneProfileUncleanExit) {
@@ -758,12 +761,12 @@ IN_PROC_BROWSER_TEST_F(PerformanceMonitorBrowserTest, NetworkBytesRead) {
   PathService::Get(chrome::DIR_TEST_DATA, &test_dir);
 
   int64 page1_size = 0;
-  ASSERT_TRUE(file_util::GetFileSize(test_dir.AppendASCII("title1.html"),
-                                     &page1_size));
+  ASSERT_TRUE(base::GetFileSize(test_dir.AppendASCII("title1.html"),
+                                &page1_size));
 
   int64 page2_size = 0;
-  ASSERT_TRUE(file_util::GetFileSize(test_dir.AppendASCII("title2.html"),
-                                     &page2_size));
+  ASSERT_TRUE(base::GetFileSize(test_dir.AppendASCII("title2.html"),
+                                &page2_size));
 
   ASSERT_TRUE(test_server()->Start());
 

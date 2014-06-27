@@ -132,6 +132,9 @@ void HttpServer::DidRead(StreamListenSocket* socket,
     if (!ParseHeaders(connection, &request, &pos))
       break;
 
+    // Sets peer address if exists.
+    socket->GetPeerAddress(&request.peer);
+
     std::string connection_header = request.GetHeaderValue("connection");
     if (connection_header == "Upgrade") {
       connection->web_socket_.reset(WebSocket::CreateWebSocket(connection,
@@ -281,7 +284,7 @@ bool HttpServer::ParseHeaders(HttpConnection* connection,
           buffer.clear();
           break;
         case ST_VALUE:
-          TrimWhitespaceASCII(buffer, TRIM_LEADING, &header_value);
+          base::TrimWhitespaceASCII(buffer, base::TRIM_LEADING, &header_value);
           // TODO(mbelshe): Deal better with duplicate headers
           DCHECK(info->headers.find(header_name) == info->headers.end());
           info->headers[header_name] = header_value;

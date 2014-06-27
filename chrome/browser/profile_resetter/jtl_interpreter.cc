@@ -4,11 +4,16 @@
 
 #include "chrome/browser/profile_resetter/jtl_interpreter.h"
 
+#include <numeric>
+
 #include "base/memory/scoped_vector.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "chrome/browser/profile_resetter/jtl_foundation.h"
 #include "crypto/hmac.h"
+#include "crypto/sha2.h"
+#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+#include "url/gurl.h"
 
 namespace {
 
@@ -32,8 +37,8 @@ class ExecutionContext {
   // sentence is evaluated on.
   ExecutionContext(const jtl_foundation::Hasher* hasher,
                    const std::vector<Operation*>& sentence,
-                   const DictionaryValue* input,
-                   DictionaryValue* working_memory)
+                   const base::DictionaryValue* input,
+                   base::DictionaryValue* working_memory)
       : hasher_(hasher),
         sentence_(sentence),
         next_instruction_index_(0u),
@@ -65,7 +70,7 @@ class ExecutionContext {
 
   // Calculates the |hash| of a string, integer or double |value|, and returns
   // true. Returns false otherwise.
-  bool GetValueHash(const Value& value, std::string* hash) {
+  bool GetValueHash(const base::Value& value, std::string* hash) {
     DCHECK(hash);
     std::string value_as_string;
     int tmp_int = 0;
@@ -80,9 +85,9 @@ class ExecutionContext {
     return true;
   }
 
-  const Value* current_node() const { return stack_.back(); }
-  std::vector<const Value*>* stack() { return &stack_; }
-  DictionaryValue* working_memory() { return working_memory_; }
+  const base::Value* current_node() const { return stack_.back(); }
+  std::vector<const base::Value*>* stack() { return &stack_; }
+  base::DictionaryValue* working_memory() { return working_memory_; }
   bool error() const { return error_; }
 
  private:
@@ -95,9 +100,9 @@ class ExecutionContext {
   // A stack of Values, indicating a navigation path from the root node of
   // |input| (see constructor) to the current node on which the
   // sentence_[next_instruction_index_] is evaluated.
-  std::vector<const Value*> stack_;
+  std::vector<const base::Value*> stack_;
   // Memory into which values can be stored by the program.
-  DictionaryValue* working_memory_;
+  base::DictionaryValue* working_memory_;
   // Whether a runtime error occurred.
   bool error_;
   DISALLOW_COPY_AND_ASSIGN(ExecutionContext);
@@ -109,7 +114,7 @@ class NavigateOperation : public Operation {
       : hashed_key_(hashed_key) {}
   virtual ~NavigateOperation() {}
   virtual bool Execute(ExecutionContext* context) OVERRIDE {
-    const DictionaryValue* dict = NULL;
+    const base::DictionaryValue* dict = NULL;
     if (!context->current_node()->GetAsDictionary(&dict)) {
       // Just ignore this node gracefully as this navigation is a dead end.
       // If this NavigateOperation occurred after a NavigateAny operation, those
@@ -117,7 +122,7 @@ class NavigateOperation : public Operation {
       // sentence on other nodes.
       return true;
     }
-    for (DictionaryValue::Iterator i(*dict); !i.IsAtEnd(); i.Advance()) {
+    for (base::DictionaryValue::Iterator i(*dict); !i.IsAtEnd(); i.Advance()) {
       if (context->GetHash(i.key()) != hashed_key_)
         continue;
       context->stack()->push_back(&i.value());
@@ -139,10 +144,11 @@ class NavigateAnyOperation : public Operation {
   NavigateAnyOperation() {}
   virtual ~NavigateAnyOperation() {}
   virtual bool Execute(ExecutionContext* context) OVERRIDE {
-    const DictionaryValue* dict = NULL;
-    const ListValue* list = NULL;
+    const base::DictionaryValue* dict = NULL;
+    const base::ListValue* list = NULL;
     if (context->current_node()->GetAsDictionary(&dict)) {
-      for (DictionaryValue::Iterator i(*dict); !i.IsAtEnd(); i.Advance()) {
+      for (base::DictionaryValue::Iterator i(*dict);
+           !i.IsAtEnd(); i.Advance()) {
         context->stack()->push_back(&i.value());
         bool continue_traversal = context->ContinueExecution();
         context->stack()->pop_back();
@@ -150,7 +156,8 @@ class NavigateAnyOperation : public Operation {
           return false;
       }
     } else if (context->current_node()->GetAsList(&list)) {
-      for (ListValue::const_iterator i = list->begin(); i != list->end(); ++i) {
+      for (base::ListValue::const_iterator i = list->begin();
+           i != list->end(); ++i) {
         context->stack()->push_back(*i);
         bool continue_traversal = context->ContinueExecution();
         context->stack()->pop_back();
@@ -172,7 +179,7 @@ class NavigateBackOperation : public Operation {
   NavigateBackOperation() {}
   virtual ~NavigateBackOperation() {}
   virtual bool Execute(ExecutionContext* context) OVERRIDE {
-    const Value* current_node = context->current_node();
+    const base::Value* current_node = context->current_node();
     context->stack()->pop_back();
     bool continue_traversal = context->ContinueExecution();
     context->stack()->push_back(current_node);
@@ -185,7 +192,7 @@ class NavigateBackOperation : public Operation {
 
 class StoreValue : public Operation {
  public:
-  StoreValue(const std::string& hashed_name, scoped_ptr<Value> value)
+  StoreValue(const std::string& hashed_name, scoped_ptr<base::Value> value)
       : hashed_name_(hashed_name),
         value_(value.Pass()) {
     DCHECK(IsStringUTF8(hashed_name));
@@ -199,15 +206,15 @@ class StoreValue : public Operation {
 
  private:
   std::string hashed_name_;
-  scoped_ptr<Value> value_;
+  scoped_ptr<base::Value> value_;
   DISALLOW_COPY_AND_ASSIGN(StoreValue);
 };
 
 class CompareStoredValue : public Operation {
  public:
   CompareStoredValue(const std::string& hashed_name,
-                     scoped_ptr<Value> value,
-                     scoped_ptr<Value> default_value)
+                     scoped_ptr<base::Value> value,
+                     scoped_ptr<base::Value> default_value)
       : hashed_name_(hashed_name),
         value_(value.Pass()),
         default_value_(default_value.Pass()) {
@@ -217,7 +224,7 @@ class CompareStoredValue : public Operation {
   }
   virtual ~CompareStoredValue() {}
   virtual bool Execute(ExecutionContext* context) OVERRIDE {
-    const Value* actual_value = NULL;
+    const base::Value* actual_value = NULL;
     if (!context->working_memory()->Get(hashed_name_, &actual_value))
       actual_value = default_value_.get();
     if (!value_->Equals(actual_value))
@@ -227,8 +234,8 @@ class CompareStoredValue : public Operation {
 
  private:
   std::string hashed_name_;
-  scoped_ptr<Value> value_;
-  scoped_ptr<Value> default_value_;
+  scoped_ptr<base::Value> value_;
+  scoped_ptr<base::Value> default_value_;
   DISALLOW_COPY_AND_ASSIGN(CompareStoredValue);
 };
 
@@ -259,6 +266,61 @@ class StoreNodeValue : public Operation {
  private:
   std::string hashed_name_;
   DISALLOW_COPY_AND_ASSIGN(StoreNodeValue);
+};
+
+// Stores the hash of the registerable domain name -- as in, the portion of the
+// domain that is registerable, as opposed to controlled by a registrar; without
+// subdomains -- of the URL represented by the current node into working memory.
+class StoreNodeRegisterableDomain : public Operation {
+ public:
+  explicit StoreNodeRegisterableDomain(const std::string& hashed_name)
+      : hashed_name_(hashed_name) {
+    DCHECK(IsStringUTF8(hashed_name));
+  }
+  virtual ~StoreNodeRegisterableDomain() {}
+  virtual bool Execute(ExecutionContext* context) OVERRIDE {
+    std::string possibly_invalid_url;
+    std::string domain;
+    if (!context->current_node()->GetAsString(&possibly_invalid_url) ||
+        !GetRegisterableDomain(possibly_invalid_url, &domain))
+      return true;
+    context->working_memory()->Set(
+        hashed_name_, new base::StringValue(context->GetHash(domain)));
+    return context->ContinueExecution();
+  }
+
+ private:
+  // If |possibly_invalid_url| is a valid URL having a registerable domain name
+  // part, outputs that in |registerable_domain| and returns true. Otherwise,
+  // returns false.
+  static bool GetRegisterableDomain(const std::string& possibly_invalid_url,
+                                    std::string* registerable_domain) {
+    namespace domains = net::registry_controlled_domains;
+    DCHECK(registerable_domain);
+    GURL url(possibly_invalid_url);
+    if (!url.is_valid())
+      return false;
+    std::string registry_plus_one = domains::GetDomainAndRegistry(
+        url.host(), domains::INCLUDE_PRIVATE_REGISTRIES);
+    size_t registry_length = domains::GetRegistryLength(
+        url.host(),
+        domains::INCLUDE_UNKNOWN_REGISTRIES,
+        domains::INCLUDE_PRIVATE_REGISTRIES);
+    // Fail unless (1.) the URL has a host part; and (2.) that host part is a
+    // well-formed domain name consisting of at least one subcomponent; followed
+    // by either a recognized registry identifier, or exactly one subcomponent,
+    // which is then assumed to be the unknown registry identifier.
+    if (registry_length == std::string::npos || registry_length == 0)
+      return false;
+    DCHECK_LT(registry_length, registry_plus_one.size());
+    // Subtract one to cut off the dot separating the SLD and the registry.
+    registerable_domain->assign(
+        registry_plus_one, 0, registry_plus_one.size() - registry_length - 1);
+    return true;
+  }
+
+  std::string hashed_name_;
+  DISALLOW_COPY_AND_ASSIGN(StoreNodeRegisterableDomain);
 };
 
 class CompareNodeBool : public Operation {
@@ -322,7 +384,7 @@ class CompareNodeToStored : public Operation {
       : hashed_name_(hashed_name) {}
   virtual ~CompareNodeToStored() {}
   virtual bool Execute(ExecutionContext* context) OVERRIDE {
-    const Value* stored_value = NULL;
+    const base::Value* stored_value = NULL;
     if (!context->working_memory()->Get(hashed_name_, &stored_value))
       return true;
     if (ExpectedTypeIsBooleanNotHashable) {
@@ -343,6 +405,46 @@ class CompareNodeToStored : public Operation {
  private:
   std::string hashed_name_;
   DISALLOW_COPY_AND_ASSIGN(CompareNodeToStored);
+};
+
+class CompareNodeSubstring : public Operation {
+ public:
+  explicit CompareNodeSubstring(const std::string& hashed_pattern,
+                                size_t pattern_length,
+                                uint32 pattern_sum)
+      : hashed_pattern_(hashed_pattern),
+        pattern_length_(pattern_length),
+        pattern_sum_(pattern_sum) {
+    DCHECK(pattern_length_);
+  }
+  virtual ~CompareNodeSubstring() {}
+  virtual bool Execute(ExecutionContext* context) OVERRIDE {
+    std::string value_as_string;
+    if (!context->current_node()->GetAsString(&value_as_string) ||
+        !pattern_length_ || value_as_string.size() < pattern_length_)
+      return true;
+    // Go over the string with a sliding window. Meanwhile, maintain the sum in
+    // an incremental fashion, and only calculate the SHA-256 hash when the sum
+    // checks out so as to improve performance.
+    std::string::const_iterator window_begin = value_as_string.begin();
+    std::string::const_iterator window_end = window_begin + pattern_length_ - 1;
+    uint32 window_sum =
+        std::accumulate(window_begin, window_end, static_cast<uint32>(0u));
+    while (window_end != value_as_string.end()) {
+      window_sum += *window_end++;
+      if (window_sum == pattern_sum_ && context->GetHash(std::string(
+          window_begin, window_end)) == hashed_pattern_)
+        return context->ContinueExecution();
+      window_sum -= *window_begin++;
+    }
+    return true;
+  }
+
+ private:
+  std::string hashed_pattern_;
+  size_t pattern_length_;
+  uint32 pattern_sum_;
+  DISALLOW_COPY_AND_ASSIGN(CompareNodeSubstring);
 };
 
 class StopExecutingSentenceOperation : public Operation {
@@ -393,7 +495,7 @@ class Parser {
             return false;
           operators.push_back(new StoreValue(
               hashed_name,
-              scoped_ptr<Value>(new base::FundamentalValue(value))));
+              scoped_ptr<base::Value>(new base::FundamentalValue(value))));
           break;
         }
         case jtl_foundation::COMPARE_STORED_BOOL: {
@@ -408,8 +510,9 @@ class Parser {
             return false;
           operators.push_back(new CompareStoredValue(
               hashed_name,
-              scoped_ptr<Value>(new base::FundamentalValue(value)),
-              scoped_ptr<Value>(new base::FundamentalValue(default_value))));
+              scoped_ptr<base::Value>(new base::FundamentalValue(value)),
+              scoped_ptr<base::Value>(
+                  new base::FundamentalValue(default_value))));
           break;
         }
         case jtl_foundation::STORE_HASH: {
@@ -421,7 +524,7 @@ class Parser {
             return false;
           operators.push_back(new StoreValue(
               hashed_name,
-              scoped_ptr<Value>(new base::StringValue(hashed_value))));
+              scoped_ptr<base::Value>(new base::StringValue(hashed_value))));
           break;
         }
         case jtl_foundation::COMPARE_STORED_HASH: {
@@ -436,8 +539,9 @@ class Parser {
             return false;
           operators.push_back(new CompareStoredValue(
               hashed_name,
-              scoped_ptr<Value>(new base::StringValue(hashed_value)),
-              scoped_ptr<Value>(new base::StringValue(hashed_default_value))));
+              scoped_ptr<base::Value>(new base::StringValue(hashed_value)),
+              scoped_ptr<base::Value>(
+                  new base::StringValue(hashed_default_value))));
           break;
         }
         case jtl_foundation::STORE_NODE_BOOL: {
@@ -452,6 +556,13 @@ class Parser {
           if (!ReadHash(&hashed_name) || !IsStringUTF8(hashed_name))
             return false;
           operators.push_back(new StoreNodeValue<false>(hashed_name));
+          break;
+        }
+        case jtl_foundation::STORE_NODE_REGISTERABLE_DOMAIN_HASH: {
+          std::string hashed_name;
+          if (!ReadHash(&hashed_name) || !IsStringUTF8(hashed_name))
+            return false;
+          operators.push_back(new StoreNodeRegisterableDomain(hashed_name));
           break;
         }
         case jtl_foundation::COMPARE_NODE_BOOL: {
@@ -489,6 +600,19 @@ class Parser {
           operators.push_back(new CompareNodeToStored<false>(hashed_name));
           break;
         }
+        case jtl_foundation::COMPARE_NODE_SUBSTRING: {
+          std::string hashed_pattern;
+          uint32 pattern_length = 0, pattern_sum = 0;
+          if (!ReadHash(&hashed_pattern))
+            return false;
+          if (!ReadUint32(&pattern_length) || pattern_length == 0)
+            return false;
+          if (!ReadUint32(&pattern_sum))
+            return false;
+          operators.push_back(new CompareNodeSubstring(
+              hashed_pattern, pattern_length, pattern_sum));
+          break;
+        }
         case jtl_foundation::STOP_EXECUTING_SENTENCE:
           operators.push_back(new StopExecutingSentenceOperation);
           break;
@@ -510,6 +634,7 @@ class Parser {
  private:
   // Reads an uint8 and returns whether this operation was successful.
   bool ReadUint8(uint8* out) {
+    DCHECK(out);
     if (next_instruction_index_ + 1u > program_.size())
       return false;
     *out = static_cast<uint8>(program_[next_instruction_index_]);
@@ -517,10 +642,25 @@ class Parser {
     return true;
   }
 
+  // Reads an uint32 and returns whether this operation was successful.
+  bool ReadUint32(uint32* out) {
+    DCHECK(out);
+    if (next_instruction_index_ + 4u > program_.size())
+      return false;
+    *out = 0u;
+    for (int i = 0; i < 4; ++i) {
+      *out >>= 8;
+      *out |= static_cast<uint8>(program_[next_instruction_index_]) << 24;
+      ++next_instruction_index_;
+    }
+    return true;
+  }
+
   // Reads an operator code and returns whether this operation was successful.
   bool ReadOpCode(uint8* out) { return ReadUint8(out); }
 
   bool ReadHash(std::string* out) {
+    DCHECK(out);
     if (next_instruction_index_ + jtl_foundation::kHashSizeInBytes >
         program_.size())
       return false;
@@ -532,6 +672,7 @@ class Parser {
   }
 
   bool ReadBool(bool* out) {
+    DCHECK(out);
     uint8 value = 0;
     if (!ReadUint8(&value))
       return false;
@@ -554,13 +695,13 @@ class Parser {
 JtlInterpreter::JtlInterpreter(
     const std::string& hasher_seed,
     const std::string& program,
-    const DictionaryValue* input)
+    const base::DictionaryValue* input)
     : hasher_seed_(hasher_seed),
       program_(program),
       input_(input),
-      working_memory_(new DictionaryValue),
+      working_memory_(new base::DictionaryValue),
       result_(OK) {
-  DCHECK(input->IsType(Value::TYPE_DICTIONARY));
+  DCHECK(input->IsType(base::Value::TYPE_DICTIONARY));
 }
 
 JtlInterpreter::~JtlInterpreter() {}
@@ -596,4 +737,12 @@ bool JtlInterpreter::GetOutputString(const std::string& unhashed_key,
   std::string hashed_key =
       jtl_foundation::Hasher(hasher_seed_).GetHash(unhashed_key);
   return working_memory_->GetString(hashed_key, output);
+}
+
+int JtlInterpreter::CalculateProgramChecksum() const {
+  uint8 digest[3] = {};
+  crypto::SHA256HashString(program_, digest, arraysize(digest));
+  return static_cast<uint32>(digest[0]) << 16 |
+         static_cast<uint32>(digest[1]) << 8 |
+         static_cast<uint32>(digest[2]);
 }

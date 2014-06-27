@@ -9,10 +9,10 @@
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/logging.h"
-#include "media/base/bind_to_loop.h"
-#include "third_party/WebKit/public/web/WebAudioSourceProviderClient.h"
+#include "media/base/bind_to_current_loop.h"
+#include "third_party/WebKit/public/platform/WebAudioSourceProviderClient.h"
 
-using WebKit::WebVector;
+using blink::WebVector;
 
 namespace content {
 
@@ -48,21 +48,20 @@ class AutoTryLock {
 
 WebAudioSourceProviderImpl::WebAudioSourceProviderImpl(
     const scoped_refptr<media::AudioRendererSink>& sink)
-    : weak_this_(this),
-      channels_(0),
+    : channels_(0),
       sample_rate_(0),
       volume_(1.0),
       state_(kStopped),
       renderer_(NULL),
       client_(NULL),
-      sink_(sink) {
-}
+      sink_(sink),
+      weak_factory_(this) {}
 
 WebAudioSourceProviderImpl::~WebAudioSourceProviderImpl() {
 }
 
 void WebAudioSourceProviderImpl::setClient(
-    WebKit::WebAudioSourceProviderClient* client) {
+    blink::WebAudioSourceProviderClient* client) {
   base::AutoLock auto_lock(sink_lock_);
   if (client && client != client_) {
     // Detach the audio renderer from normal playback.
@@ -71,9 +70,8 @@ void WebAudioSourceProviderImpl::setClient(
     // The client will now take control by calling provideInput() periodically.
     client_ = client;
 
-    set_format_cb_ = media::BindToCurrentLoop(
-        base::Bind(&WebAudioSourceProviderImpl::OnSetFormat,
-                   weak_this_.GetWeakPtr()));
+    set_format_cb_ = media::BindToCurrentLoop(base::Bind(
+        &WebAudioSourceProviderImpl::OnSetFormat, weak_factory_.GetWeakPtr()));
 
     // If |renderer_| is set, then run |set_format_cb_| to send |client_|
     // the current format info. If |renderer_| is not set, then |set_format_cb_|

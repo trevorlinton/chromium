@@ -22,6 +22,7 @@
 #include "media/base/media_log.h"
 #include "media/base/ranges.h"
 #include "media/base/stream_parser_buffer.h"
+#include "media/base/text_track_config.h"
 #include "media/base/video_decoder_config.h"
 
 namespace media {
@@ -31,7 +32,7 @@ class SourceBufferRange;
 // See file-level comment for complete description.
 class MEDIA_EXPORT SourceBufferStream {
  public:
-  typedef std::deque<scoped_refptr<StreamParserBuffer> > BufferQueue;
+  typedef StreamParser::BufferQueue BufferQueue;
 
   // Status returned by GetNextBuffer().
   // kSuccess: Indicates that the next buffer was returned.
@@ -45,10 +46,21 @@ class MEDIA_EXPORT SourceBufferStream {
     kEndOfStream
   };
 
+  enum Type {
+    kAudio,
+    kVideo,
+    kText
+  };
+
   SourceBufferStream(const AudioDecoderConfig& audio_config,
-                     const LogCB& log_cb);
+                     const LogCB& log_cb,
+                     bool splice_frames_enabled);
   SourceBufferStream(const VideoDecoderConfig& video_config,
-                     const LogCB& log_cb);
+                     const LogCB& log_cb,
+                     bool splice_frames_enabled);
+  SourceBufferStream(const TextTrackConfig& text_config,
+                     const LogCB& log_cb,
+                     bool splice_frames_enabled);
 
   ~SourceBufferStream();
 
@@ -99,6 +111,11 @@ class MEDIA_EXPORT SourceBufferStream {
   // Returns a list of the buffered time ranges.
   Ranges<base::TimeDelta> GetBufferedTime() const;
 
+  // Returns the duration of the buffered ranges, which is equivalent
+  // to the end timestamp of the last buffered range. If no data is buffered
+  // then base::TimeDelta() is returned.
+  base::TimeDelta GetBufferedDuration() const;
+
   // Notifies this object that end of stream has been signalled.
   void MarkEndOfStream();
 
@@ -107,6 +124,7 @@ class MEDIA_EXPORT SourceBufferStream {
 
   const AudioDecoderConfig& GetCurrentAudioDecoderConfig();
   const VideoDecoderConfig& GetCurrentVideoDecoderConfig();
+  const TextTrackConfig& GetCurrentTextTrackConfig();
 
   // Notifies this object that the audio config has changed and buffers in
   // future Append() calls should be associated with this new config.
@@ -256,8 +274,8 @@ class MEDIA_EXPORT SourceBufferStream {
   // have a keyframe after |timestamp| then kNoTimestamp() is returned.
   base::TimeDelta FindKeyframeAfterTimestamp(const base::TimeDelta timestamp);
 
-  // Returns "VIDEO" for a video SourceBufferStream and "AUDIO" for an audio
-  // one.
+  // Returns "VIDEO" for a video SourceBufferStream, "AUDIO" for an audio
+  // stream, and "TEXT" for a text stream.
   std::string GetStreamTypeName() const;
 
   // Returns true if we don't have any ranges or the last range is selected
@@ -282,7 +300,18 @@ class MEDIA_EXPORT SourceBufferStream {
       base::TimeDelta start, base::TimeDelta end, bool is_exclusive,
       BufferQueue* deleted_buffers);
 
-  bool is_video() const { return video_configs_.size() > 0; }
+  Type GetType() const;
+
+  // See GetNextBuffer() for additional details.  The internal method hands out
+  // buffers from the |track_buffer_| and |selected_range_| without additional
+  // processing for splice frame buffers; which is handled by GetNextBuffer().
+  Status GetNextBufferInternal(scoped_refptr<StreamParserBuffer>* out_buffer);
+
+  // Called by PrepareRangesForNextAppend() before pruning overlapped buffers to
+  // generate a splice frame with a small portion of the overlapped buffers.  If
+  // a splice frame is generated, the first buffer in |new_buffers| will have
+  // its timestamps, duration, and fade out preroll updated.
+  void GenerateSpliceFrame(const BufferQueue& new_buffers);
 
   // Callback used to report error strings that can help the web developer
   // figure out what is wrong with the content.
@@ -306,6 +335,9 @@ class MEDIA_EXPORT SourceBufferStream {
   // and |append_config_index_| represent indexes into one of these vectors.
   std::vector<AudioDecoderConfig> audio_configs_;
   std::vector<VideoDecoderConfig> video_configs_;
+
+  // Holds the text config for this stream.
+  TextTrackConfig text_track_config_;
 
   // True if more data needs to be appended before the Seek() can complete,
   // false if no Seek() has been requested or the Seek() is completed.
@@ -356,6 +388,18 @@ class MEDIA_EXPORT SourceBufferStream {
   // config. GetNextBuffer() must not be called again until
   // GetCurrentXXXDecoderConfig() has been called.
   bool config_change_pending_;
+
+  // Used by GetNextBuffer() when a buffer with fade out is returned from
+  // GetNextBufferInternal().  Will be set to the returned buffer and will be
+  // destroyed after the splice_buffers() section has been exhausted.
+  scoped_refptr<StreamParserBuffer> splice_buffer_;
+
+  // Indicates which of the splice buffers in |splice_buffer_| should be
+  // handled out next.
+  size_t splice_buffers_index_;
+
+  // Indicates that splice frame generation is enabled.
+  const bool splice_frames_enabled_;
 
   DISALLOW_COPY_AND_ASSIGN(SourceBufferStream);
 };

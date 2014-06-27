@@ -10,13 +10,14 @@
 #include "base/message_loop/message_loop_proxy.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/common/cloud_print/cloud_print_constants.h"
-#include "chrome/service/cloud_print/cloud_print_helpers.h"
+#include "chrome/service/cloud_print/cloud_print_service_helpers.h"
 #include "chrome/service/cloud_print/cloud_print_token_store.h"
 #include "chrome/service/cloud_print/print_system.h"
 #include "chrome/service/cloud_print/printer_job_handler.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "net/url_request/test_url_fetcher_factory.h"
+#include "net/url_request/url_request_status.h"
 #include "net/url_request/url_request_test_util.h"
 #include "printing/backend/print_backend.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -189,6 +190,9 @@ const char kExamplePrintData[] = "__EXAMPLE_PRINT_DATA";
 const char kExampleJobDownloadResponseHeaders[] =
     "Content-Type: Application/PDF\n";
 
+const char kExampleTicketDownloadResponseHeaders[] =
+    "Content-Type: application/json\n";
+
 const char kExamplePrinterName[] = "Example Printer";
 
 const char kExamplePrinterDescription[] = "Example Description";
@@ -206,10 +210,6 @@ std::string JobListResponse(int num_jobs) {
 
 GURL JobListURI(const char* reason) {
   return GURL(StringPrintf(kExamplePrinterJobListURI, reason));
-}
-
-std::string JobID(int job_num) {
-  return StringPrintf(kExampleJobID, job_num);
 }
 
 GURL DoneURI(int job_num) {
@@ -282,9 +282,10 @@ class TestURLFetcherCallback {
       const GURL& url,
       net::URLFetcherDelegate* d,
       const std::string& response_data,
-      net::HttpStatusCode response_code) {
+      net::HttpStatusCode response_code,
+      net::URLRequestStatus::Status status) {
     scoped_ptr<net::FakeURLFetcher> fetcher(
-        new net::FakeURLFetcher(url, d, response_data, response_code));
+        new net::FakeURLFetcher(url, d, response_data, response_code, status));
     OnRequestCreate(url, fetcher.get());
     return fetcher.Pass();
   }
@@ -350,8 +351,9 @@ class MockPrinterWatcher : public PrintSystem::PrinterWatcher {
 
 class MockJobSpooler : public PrintSystem::JobSpooler {
  public:
-  MOCK_METHOD7(Spool, bool(
+  MOCK_METHOD8(Spool, bool(
       const std::string& print_ticket,
+      const std::string& print_ticket_mime_type,
       const base::FilePath& print_data_file_path,
       const std::string& print_data_mime_type,
       const std::string& printer_name,
@@ -405,8 +407,10 @@ class MockPrintSystem : public PrintSystem {
 
   MOCK_METHOD1(IsValidPrinter, bool(const std::string& printer_name));
 
-  MOCK_METHOD2(ValidatePrintTicket, bool(const std::string& printer_name,
-                                         const std::string& print_ticket_data));
+  MOCK_METHOD3(ValidatePrintTicket,
+               bool(const std::string& printer_name,
+                    const std::string& print_ticket_data,
+                    const std::string& print_ticket_mime_type));
 
   MOCK_METHOD3(GetJobDetails, bool(const std::string& printer_name,
                                     PlatformJobId job_id,
@@ -417,6 +421,7 @@ class MockPrintSystem : public PrintSystem {
                PrintSystem::PrinterWatcher*(const std::string& printer_name));
   MOCK_METHOD0(CreateJobSpooler, PrintSystem::JobSpooler*());
 
+  MOCK_METHOD0(UseCddAndCjt, bool());
   MOCK_METHOD0(GetSupportedMimeTypes, std::string());
 
   friend class scoped_refptr<NiceMock<MockPrintSystem> >;
@@ -444,6 +449,7 @@ class PrinterJobHandlerTest : public ::testing::Test {
       const std::string& printer_name,
       const PrintSystem::PrinterCapsAndDefaultsCallback& callback);
   void AddMimeHeader(const GURL& url, net::FakeURLFetcher* fetcher);
+  void AddTicketMimeHeader(const GURL& url, net::FakeURLFetcher* fetcher);
   bool PostSpoolSuccess();
   void SetUpJobSuccessTest(int job_num);
   void BeginTest(int timeout_seconds);
@@ -498,11 +504,14 @@ void PrinterJobHandlerTest::SetUp() {
 
 void PrinterJobHandlerTest::MakeJobFetchReturnNoJobs() {
   factory_.SetFakeResponse(JobListURI(kJobFetchReasonStartup),
-                           JobListResponse(0), net::HTTP_OK);
+                           JobListResponse(0), net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
   factory_.SetFakeResponse(JobListURI(kJobFetchReasonFailure),
-                           JobListResponse(0), net::HTTP_OK);
+                           JobListResponse(0), net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
   factory_.SetFakeResponse(JobListURI(kJobFetchReasonRetry),
-                           JobListResponse(0), net::HTTP_OK);
+                           JobListResponse(0), net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
 }
 
 void PrinterJobHandlerTest::MessageLoopQuitNowHelper(
@@ -541,24 +550,36 @@ void PrinterJobHandlerTest::AddMimeHeader(const GURL& url,
   fetcher->set_response_headers(download_headers);
 }
 
+void PrinterJobHandlerTest::AddTicketMimeHeader(const GURL& url,
+                                                net::FakeURLFetcher* fetcher) {
+  scoped_refptr<net::HttpResponseHeaders> download_headers =
+      new net::HttpResponseHeaders(kExampleTicketDownloadResponseHeaders);
+  fetcher->set_response_headers(download_headers);
+}
+
 
 void PrinterJobHandlerTest::SetUpJobSuccessTest(int job_num) {
   factory_.SetFakeResponse(TicketURI(job_num),
-                           kExamplePrintTicket, net::HTTP_OK);
+                           kExamplePrintTicket, net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
   factory_.SetFakeResponse(DownloadURI(job_num),
-                           kExamplePrintData, net::HTTP_OK);
+                           kExamplePrintData, net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
 
   factory_.SetFakeResponse(DoneURI(job_num),
                            StatusResponse(job_num, "DONE"),
-                           net::HTTP_OK);
+                           net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
   factory_.SetFakeResponse(InProgressURI(job_num),
                            StatusResponse(job_num, "IN_PROGRESS"),
-                           net::HTTP_OK);
+                           net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
 
   // The times requirement is relaxed for the ticket URI
   // in order to accommodate TicketDownloadFailureTest
   EXPECT_CALL(url_callback_, OnRequestCreate(TicketURI(job_num), _))
-      .Times(AtLeast(1));
+      .Times(AtLeast(1))
+      .WillOnce(Invoke(this, &PrinterJobHandlerTest::AddTicketMimeHeader));
 
   EXPECT_CALL(url_callback_, OnRequestCreate(DownloadURI(job_num), _))
       .Times(Exactly(1))
@@ -571,7 +592,7 @@ void PrinterJobHandlerTest::SetUpJobSuccessTest(int job_num) {
       .Times(Exactly(1));
 
   EXPECT_CALL(print_system_->JobSpooler(),
-              Spool(kExamplePrintTicket, _, _, _, _, _, _))
+              Spool(kExamplePrintTicket, _, _, _, _, _, _, _))
       .Times(Exactly(1))
       .WillOnce(InvokeWithoutArgs(this,
                                   &PrinterJobHandlerTest::PostSpoolSuccess));
@@ -629,8 +650,8 @@ MockPrinterWatcher::MockPrinterWatcher() : delegate_(NULL) {
 }
 
 MockJobSpooler::MockJobSpooler() : delegate_(NULL) {
-  ON_CALL(*this, Spool(_, _, _, _, _, _, _))
-      .WillByDefault(DoAll(SaveArg<6>(&delegate_), Return(true)));
+  ON_CALL(*this, Spool(_, _, _, _, _, _, _, _))
+      .WillByDefault(DoAll(SaveArg<7>(&delegate_), Return(true)));
 }
 
 MockPrintSystem::MockPrintSystem()
@@ -648,7 +669,7 @@ MockPrintSystem::MockPrintSystem()
   ON_CALL(*this, IsValidPrinter(_)).
       WillByDefault(Return(true));
 
-  ON_CALL(*this, ValidatePrintTicket(_, _)).
+  ON_CALL(*this, ValidatePrintTicket(_, _, _)).
       WillByDefault(Return(true));
 };
 
@@ -657,9 +678,11 @@ MockPrintSystem::MockPrintSystem()
 // Disabled - http://crbug.com/184245
 TEST_F(PrinterJobHandlerTest, DISABLED_HappyPathTest) {
   factory_.SetFakeResponse(JobListURI(kJobFetchReasonStartup),
-                           JobListResponse(1), net::HTTP_OK);
+                           JobListResponse(1), net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
   factory_.SetFakeResponse(JobListURI(kJobFetchReasonQueryMore),
-                           JobListResponse(0), net::HTTP_OK);
+                           JobListResponse(0), net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
 
   EXPECT_CALL(url_callback_,
               OnRequestCreate(JobListURI(kJobFetchReasonStartup), _))
@@ -674,16 +697,21 @@ TEST_F(PrinterJobHandlerTest, DISABLED_HappyPathTest) {
 
 TEST_F(PrinterJobHandlerTest, TicketDownloadFailureTest) {
   factory_.SetFakeResponse(JobListURI(kJobFetchReasonStartup),
-                           JobListResponse(2), net::HTTP_OK);
+                           JobListResponse(2), net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
   factory_.SetFakeResponse(JobListURI(kJobFetchReasonFailure),
-                           JobListResponse(2), net::HTTP_OK);
+                           JobListResponse(2), net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
   factory_.SetFakeResponse(JobListURI(kJobFetchReasonQueryMore),
-                           JobListResponse(0), net::HTTP_OK);
+                           JobListResponse(0), net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
   factory_.SetFakeResponse(TicketURI(1), std::string(),
-                           net::HTTP_INTERNAL_SERVER_ERROR);
+                           net::HTTP_INTERNAL_SERVER_ERROR,
+                           net::URLRequestStatus::FAILED);
 
   EXPECT_CALL(url_callback_, OnRequestCreate(TicketURI(1), _))
-      .Times(AtLeast(1));
+      .Times(AtLeast(1))
+      .WillOnce(Invoke(this, &PrinterJobHandlerTest::AddTicketMimeHeader));
 
   EXPECT_CALL(url_callback_,
               OnRequestCreate(JobListURI(kJobFetchReasonStartup), _))
@@ -705,13 +733,17 @@ TEST_F(PrinterJobHandlerTest, TicketDownloadFailureTest) {
 // re-enable it
 TEST_F(PrinterJobHandlerTest, DISABLED_ManyFailureTest) {
   factory_.SetFakeResponse(JobListURI(kJobFetchReasonStartup),
-                           JobListResponse(1), net::HTTP_OK);
+                           JobListResponse(1), net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
   factory_.SetFakeResponse(JobListURI(kJobFetchReasonFailure),
-                           JobListResponse(1), net::HTTP_OK);
+                           JobListResponse(1), net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
   factory_.SetFakeResponse(JobListURI(kJobFetchReasonRetry),
-                           JobListResponse(1), net::HTTP_OK);
+                           JobListResponse(1), net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
   factory_.SetFakeResponse(JobListURI(kJobFetchReasonQueryMore),
-                           JobListResponse(0), net::HTTP_OK);
+                           JobListResponse(0), net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
 
   EXPECT_CALL(url_callback_,
               OnRequestCreate(JobListURI(kJobFetchReasonStartup), _))
@@ -733,14 +765,16 @@ TEST_F(PrinterJobHandlerTest, DISABLED_ManyFailureTest) {
 
   factory_.SetFakeResponse(TicketURI(1),
                            std::string(),
-                           net::HTTP_INTERNAL_SERVER_ERROR);
+                           net::HTTP_INTERNAL_SERVER_ERROR,
+                           net::URLRequestStatus::FAILED);
 
   loop_.PostDelayedTask(FROM_HERE,
                         base::Bind(&net::FakeURLFetcherFactory::SetFakeResponse,
                                    base::Unretained(&factory_),
                                    TicketURI(1),
                                    kExamplePrintTicket,
-                                   net::HTTP_OK),
+                                   net::HTTP_OK,
+                                   net::URLRequestStatus::SUCCESS),
                         base::TimeDelta::FromSeconds(1));
 
 
@@ -752,15 +786,19 @@ TEST_F(PrinterJobHandlerTest, DISABLED_ManyFailureTest) {
 // constant values) seconds and re-enable it
 TEST_F(PrinterJobHandlerTest, DISABLED_CompleteFailureTest) {
   factory_.SetFakeResponse(JobListURI(kJobFetchReasonStartup),
-                           JobListResponse(1), net::HTTP_OK);
+                           JobListResponse(1), net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
   factory_.SetFakeResponse(JobListURI(kJobFetchReasonFailure),
-                           JobListResponse(1), net::HTTP_OK);
+                           JobListResponse(1), net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
   factory_.SetFakeResponse(JobListURI(kJobFetchReasonRetry),
-                           JobListResponse(1), net::HTTP_OK);
+                           JobListResponse(1), net::HTTP_OK,
+                           net::URLRequestStatus::SUCCESS);
   factory_.SetFakeResponse(ErrorURI(1), StatusResponse(1, "ERROR"),
-                           net::HTTP_OK);
+                           net::HTTP_OK, net::URLRequestStatus::SUCCESS);
   factory_.SetFakeResponse(TicketURI(1), std::string(),
-                           net::HTTP_INTERNAL_SERVER_ERROR);
+                           net::HTTP_INTERNAL_SERVER_ERROR,
+                           net::URLRequestStatus::FAILED);
 
   EXPECT_CALL(url_callback_,
               OnRequestCreate(JobListURI(kJobFetchReasonStartup), _))

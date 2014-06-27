@@ -9,11 +9,12 @@
 #include <string>
 #include <vector>
 
+#include "base/values.h"
 #include "chromeos/chromeos_export.h"
 #include "chromeos/dbus/dbus_client.h"
-#include "chromeos/dbus/dbus_client_implementation_type.h"
 #include "chromeos/dbus/nfc_client_helpers.h"
 #include "chromeos/dbus/nfc_property_set.h"
+#include "chromeos/dbus/nfc_record_client.h"
 #include "dbus/object_path.h"
 #include "dbus/object_proxy.h"
 #include "dbus/property.h"
@@ -29,6 +30,7 @@ class CHROMEOS_EXPORT NfcDeviceClient : public DBusClient {
   // Structure of properties associated with an NFC device.
   struct Properties : public NfcPropertySet {
     // List of object paths for NDEF records associated with the NFC device.
+    // Read-only.
     dbus::Property<std::vector<dbus::ObjectPath> > records;
 
     Properties(dbus::ObjectProxy* object_proxy,
@@ -43,21 +45,17 @@ class CHROMEOS_EXPORT NfcDeviceClient : public DBusClient {
 
     // Called when a remote NFC device with the object |object_path| is added
     // to the set of known devices.
-    virtual void DeviceFound(const dbus::ObjectPath& object_path) {}
+    virtual void DeviceAdded(const dbus::ObjectPath& object_path) {}
 
     // Called when a remote NFC device with the object path |object_path| is
     // removed from the set of known devices.
-    virtual void DeviceLost(const dbus::ObjectPath& object_path) {}
+    virtual void DeviceRemoved(const dbus::ObjectPath& object_path) {}
 
     // Called when the device property with the name |property_name| on device
     // with object path |object_path| has acquired a new value.
     virtual void DevicePropertyChanged(const dbus::ObjectPath& object_path,
                                        const std::string& property_name) {}
   };
-
-  // TODO(armansito): Move this typedef to the NFC Record client, once
-  // implemented.
-  typedef std::map<std::string, std::string> RecordAttributes;
 
   virtual ~NfcDeviceClient();
 
@@ -66,6 +64,11 @@ class CHROMEOS_EXPORT NfcDeviceClient : public DBusClient {
   // issuing the event.
   virtual void AddObserver(Observer* observer) = 0;
   virtual void RemoveObserver(Observer* observer) = 0;
+
+  // Returns the list of device object paths associated with the given adapter
+  // identified by the D-Bus object path |adapter_path|.
+  virtual std::vector<dbus::ObjectPath> GetDevicesForAdapter(
+      const dbus::ObjectPath& adapter_path) = 0;
 
   // Obtain the properties for the NFC device with object path |object_path|;
   // any values should be copied if needed.
@@ -93,13 +96,12 @@ class CHROMEOS_EXPORT NfcDeviceClient : public DBusClient {
   //    etc.
   virtual void Push(
       const dbus::ObjectPath& object_path,
-      const RecordAttributes& attributes,
+      const base::DictionaryValue& attributes,
       const base::Closure& callback,
       const nfc_client_helpers::ErrorCallback& error_callback) = 0;
 
   // Creates the instance.
-  static NfcDeviceClient* Create(DBusClientImplementationType type,
-                                 NfcAdapterClient* adapter_client);
+  static NfcDeviceClient* Create(NfcAdapterClient* adapter_client);
 
  protected:
   friend class NfcClientTest;

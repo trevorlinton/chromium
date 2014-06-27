@@ -650,7 +650,15 @@ bool HttpPipelinedConnectionImpl::IsConnectionReused(int pipeline_id) const {
 
 void HttpPipelinedConnectionImpl::SetConnectionReused(int pipeline_id) {
   CHECK(ContainsKey(stream_info_map_, pipeline_id));
-  connection_->set_is_reused(true);
+  connection_->set_reuse_type(ClientSocketHandle::REUSED_IDLE);
+}
+
+int64 HttpPipelinedConnectionImpl::GetTotalReceivedBytes(
+    int pipeline_id) const {
+  CHECK(ContainsKey(stream_info_map_, pipeline_id));
+  if (stream_info_map_.find(pipeline_id)->second.parser.get())
+    return stream_info_map_.find(pipeline_id)->second.parser->received_bytes();
+  return 0;
 }
 
 bool HttpPipelinedConnectionImpl::GetLoadTimingInfo(

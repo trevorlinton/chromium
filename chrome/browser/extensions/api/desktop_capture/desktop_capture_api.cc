@@ -4,17 +4,23 @@
 
 #include "chrome/browser/extensions/api/desktop_capture/desktop_capture_api.h"
 
+#include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
+#include "chrome/browser/media/desktop_media_list_ash.h"
 #include "chrome/browser/media/desktop_streams_registry.h"
 #include "chrome/browser/media/media_capture_devices_dispatcher.h"
+#include "chrome/browser/media/native_desktop_media_list.h"
+#include "chrome/browser/ui/ash/ash_util.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/api/tabs.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
+#include "net/base/net_util.h"
+#include "third_party/webrtc/modules/desktop_capture/desktop_capture_options.h"
 #include "third_party/webrtc/modules/desktop_capture/screen_capturer.h"
 #include "third_party/webrtc/modules/desktop_capture/window_capturer.h"
 
@@ -30,6 +36,8 @@ const char kNoTabIdError[] = "targetTab doesn't have id field set.";
 const char kNoUrlError[] = "targetTab doesn't have URL field set.";
 const char kInvalidTabIdError[] = "Invalid tab specified.";
 const char kTabUrlChangedError[] = "URL for the specified tab has changed.";
+const char kTabUrlNotSecure[] =
+    "URL scheme for the specified tab is not secure.";
 
 DesktopCaptureChooseDesktopMediaFunction::PickerFactory* g_picker_factory =
     NULL;
@@ -83,6 +91,7 @@ bool DesktopCaptureChooseDesktopMediaFunction::RunImpl() {
 
   gfx::NativeWindow parent_window;
   content::RenderViewHost* render_view;
+  base::string16 target_name;
   if (params->target_tab) {
     if (!params->target_tab->url) {
       error_ = kNoUrlError;
@@ -90,19 +99,23 @@ bool DesktopCaptureChooseDesktopMediaFunction::RunImpl() {
     }
     origin_ = GURL(*(params->target_tab->url)).GetOrigin();
 
+    if (!CommandLine::ForCurrentProcess()->HasSwitch(
+            switches::kAllowHttpScreenCapture) &&
+        !origin_.SchemeIsSecure()) {
+      error_ = kTabUrlNotSecure;
+      return false;
+    }
+    target_name = base::UTF8ToUTF16(origin_.SchemeIsSecure() ?
+        net::GetHostAndOptionalPort(origin_) : origin_.spec());
+
     if (!params->target_tab->id) {
       error_ = kNoTabIdError;
       return false;
     }
 
     content::WebContents* web_contents = NULL;
-    if (!ExtensionTabUtil::GetTabById(*(params->target_tab->id),
-                                      GetProfile(),
-                                      false,
-                                      NULL,
-                                      NULL,
-                                      &web_contents,
-                                      NULL)) {
+    if (!ExtensionTabUtil::GetTabById(*(params->target_tab->id), GetProfile(),
+                                      true, NULL, NULL, &web_contents, NULL)) {
       error_ = kInvalidTabIdError;
       return false;
     }
@@ -114,10 +127,14 @@ bool DesktopCaptureChooseDesktopMediaFunction::RunImpl() {
       return false;
     }
 
+    // Register to be notified when the tab is closed.
+    Observe(web_contents);
+
     render_view = web_contents->GetRenderViewHost();
     parent_window = web_contents->GetView()->GetTopLevelNativeWindow();
   } else {
     origin_ = GetExtension()->url();
+    target_name = base::UTF8ToUTF16(GetExtension()->name());
     render_view = render_view_host();
     parent_window =
         GetAssociatedWebContents()->GetView()->GetTopLevelNativeWindow();
@@ -125,8 +142,8 @@ bool DesktopCaptureChooseDesktopMediaFunction::RunImpl() {
   render_process_id_ = render_view->GetProcess()->GetID();
   render_view_id_ = render_view->GetRoutingID();
 
-  scoped_ptr<webrtc::ScreenCapturer> screen_capturer;
-  scoped_ptr<webrtc::WindowCapturer> window_capturer;
+  bool show_screens = false;
+  bool show_windows = false;
 
   for (std::vector<api::desktop_capture::DesktopCaptureSourceType>::iterator
        it = params->sources.begin(); it != params->sources.end(); ++it) {
@@ -136,17 +153,11 @@ bool DesktopCaptureChooseDesktopMediaFunction::RunImpl() {
         return false;
 
       case api::desktop_capture::DESKTOP_CAPTURE_SOURCE_TYPE_SCREEN:
-#if defined(OS_WIN)
-        // ScreenCapturerWin disables Aero by default.
-        screen_capturer.reset(
-            webrtc::ScreenCapturer::CreateWithDisableAero(false));
-#else
-        screen_capturer.reset(webrtc::ScreenCapturer::Create());
-#endif
+        show_screens = true;
         break;
 
       case api::desktop_capture::DESKTOP_CAPTURE_SOURCE_TYPE_WINDOW:
-        window_capturer.reset(webrtc::WindowCapturer::Create());
+        show_windows = true;
         break;
 
       case api::desktop_capture::DESKTOP_CAPTURE_SOURCE_TYPE_TAB:
@@ -155,27 +166,43 @@ bool DesktopCaptureChooseDesktopMediaFunction::RunImpl() {
     }
   }
 
-  if (!screen_capturer && !window_capturer) {
+  if (!show_screens && !show_windows) {
     error_ = kEmptySourcesListError;
     return false;
   }
 
-  scoped_ptr<DesktopMediaPickerModel> model;
+  scoped_ptr<DesktopMediaList> media_list;
   if (g_picker_factory) {
-    model = g_picker_factory->CreateModel(
-        screen_capturer.Pass(), window_capturer.Pass());
+    media_list = g_picker_factory->CreateModel(
+        show_screens, show_windows);
     picker_ = g_picker_factory->CreatePicker();
   } else {
+#if defined(USE_ASH)
+    if (chrome::IsNativeWindowInAsh(parent_window)) {
+      media_list.reset(new DesktopMediaListAsh(
+          (show_screens ? DesktopMediaListAsh::SCREENS : 0) |
+          (show_windows ? DesktopMediaListAsh::WINDOWS : 0)));
+    } else
+#endif
+    {
+      webrtc::DesktopCaptureOptions options =
+          webrtc::DesktopCaptureOptions::CreateDefault();
+      options.set_disable_effects(false);
+      scoped_ptr<webrtc::ScreenCapturer> screen_capturer(
+          show_screens ? webrtc::ScreenCapturer::Create(options) : NULL);
+      scoped_ptr<webrtc::WindowCapturer> window_capturer(
+          show_windows ? webrtc::WindowCapturer::Create(options) : NULL);
+
+      media_list.reset(new NativeDesktopMediaList(
+          screen_capturer.Pass(), window_capturer.Pass()));
+    }
+
     // DesktopMediaPicker is implemented only for Windows, OSX and
     // Aura Linux builds.
-#if (defined(TOOLKIT_VIEWS) && !defined(OS_CHROMEOS)) || defined(OS_MACOSX)
-    model.reset(new DesktopMediaPickerModelImpl(
-        screen_capturer.Pass(), window_capturer.Pass()));
+#if defined(TOOLKIT_VIEWS) || defined(OS_MACOSX)
     picker_ = DesktopMediaPicker::Create();
 #else
-    const char kNotImplementedError[] =
-        "Desktop Capture API is not yet implemented for this platform.";
-    error_ = kNotImplementedError;
+    error_ = "Desktop Capture API is not yet implemented for this platform.";
     return false;
 #endif
   }
@@ -183,9 +210,15 @@ bool DesktopCaptureChooseDesktopMediaFunction::RunImpl() {
       &DesktopCaptureChooseDesktopMediaFunction::OnPickerDialogResults, this);
 
   picker_->Show(parent_window, parent_window,
-                UTF8ToUTF16(GetExtension()->name()),
-                model.Pass(), callback);
+                base::UTF8ToUTF16(GetExtension()->name()),
+                target_name,
+                media_list.Pass(), callback);
   return true;
+}
+
+void DesktopCaptureChooseDesktopMediaFunction::WebContentsDestroyed(
+    content::WebContents* web_contents) {
+  Cancel();
 }
 
 void DesktopCaptureChooseDesktopMediaFunction::OnPickerDialogResults(
@@ -196,7 +229,11 @@ void DesktopCaptureChooseDesktopMediaFunction::OnPickerDialogResults(
         MediaCaptureDevicesDispatcher::GetInstance()->
         GetDesktopStreamsRegistry();
     result = registry->RegisterStream(
-        render_process_id_, render_view_id_, origin_, source);
+        render_process_id_,
+        render_view_id_,
+        origin_,
+        source,
+        GetExtension()->name());
   }
 
   SetResult(new base::StringValue(result));

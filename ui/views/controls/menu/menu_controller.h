@@ -13,7 +13,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_dispatcher.h"
 #include "base/timer/timer.h"
 #include "ui/events/event_constants.h"
 #include "ui/views/controls/menu/menu_delegate.h"
@@ -45,7 +45,7 @@ class MenuRunnerImpl;
 // MenuController is used internally by the various menu classes to manage
 // showing, selecting and drag/drop for menus. All relevant events are
 // forwarded to the MenuController from SubmenuView and MenuHost.
-class VIEWS_EXPORT MenuController : public base::MessageLoop::Dispatcher,
+class VIEWS_EXPORT MenuController : public base::MessagePumpDispatcher,
                                     public WidgetObserver {
  public:
   // Enumeration of how the menu should exit.
@@ -101,7 +101,7 @@ class VIEWS_EXPORT MenuController : public base::MessageLoop::Dispatcher,
   // Returns the time from the event which closed the menu - or 0.
   base::TimeDelta closing_event_time() const { return closing_event_time_; }
 
-  void set_accept_on_f4(bool accept_on_f4) { accept_on_f4_ = accept_on_f4; }
+  void set_is_combobox(bool is_combobox) { is_combobox_ = is_combobox; }
 
   // Various events, forwarded from the submenu.
   //
@@ -112,9 +112,7 @@ class VIEWS_EXPORT MenuController : public base::MessageLoop::Dispatcher,
   void OnMouseReleased(SubmenuView* source, const ui::MouseEvent& event);
   void OnMouseMoved(SubmenuView* source, const ui::MouseEvent& event);
   void OnMouseEntered(SubmenuView* source, const ui::MouseEvent& event);
-#if defined(USE_AURA)
   bool OnMouseWheel(SubmenuView* source, const ui::MouseWheelEvent& event);
-#endif
   void OnGestureEvent(SubmenuView* source, ui::GestureEvent* event);
 
   bool GetDropFormats(
@@ -255,7 +253,7 @@ class VIEWS_EXPORT MenuController : public base::MessageLoop::Dispatcher,
 
   // Dispatcher method. This returns true if the menu was canceled, or
   // if the message is such that the menu should be closed.
-  virtual bool Dispatch(const base::NativeEvent& event) OVERRIDE;
+  virtual uint32_t Dispatch(const base::NativeEvent& event) OVERRIDE;
 
   // Key processing. The return value of this is returned from Dispatch.
   // In other words, if this returns false (which happens if escape was
@@ -416,8 +414,8 @@ class VIEWS_EXPORT MenuController : public base::MessageLoop::Dispatcher,
   // |match_function| is used to determine which menus match.
   SelectByCharDetails FindChildForMnemonic(
       MenuItemView* parent,
-      char16 key,
-      bool (*match_function)(MenuItemView* menu, char16 mnemonic));
+      base::char16 key,
+      bool (*match_function)(MenuItemView* menu, base::char16 mnemonic));
 
   // Selects or accepts the appropriate menu item based on |details|. Returns
   // true if |Accept| was invoked (which happens if there aren't multiple item
@@ -426,7 +424,7 @@ class VIEWS_EXPORT MenuController : public base::MessageLoop::Dispatcher,
 
   // Selects by mnemonic, and if that doesn't work tries the first character of
   // the title. Returns true if a match was selected and the menu should exit.
-  bool SelectByChar(char16 key);
+  bool SelectByChar(base::char16 key);
 
   // For Windows and Aura we repost an event for some events that dismiss
   // the context menu. The event is then reprocessed to cause its result
@@ -584,8 +582,9 @@ class VIEWS_EXPORT MenuController : public base::MessageLoop::Dispatcher,
   // screen coordinates). Otherwise this will be (0, 0).
   gfx::Point menu_start_mouse_press_loc_;
 
-  // Whether the menu should accept on F4, like Windows native Combobox menus.
-  bool accept_on_f4_;
+  // Controls behavior differences between a combobox and other types of menu
+  // (like a context menu).
+  bool is_combobox_;
 
   // Set to true if the menu item was selected by touch.
   bool item_selected_by_touch_;

@@ -11,11 +11,11 @@
 #include "base/basictypes.h"
 #include "base/location.h"
 #include "base/strings/string16.h"
+#include "base/task/cancelable_task_tracker.h"
 #include "base/threading/worker_pool.h"
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/favicon/favicon_service.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
-#include "chrome/common/cancelable_task_tracker.h"
 #include "chrome/common/render_messages.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
@@ -29,7 +29,7 @@
 #include "url/gurl.h"
 
 ShortcutBuilder::ShortcutBuilder(content::WebContents* web_contents,
-                                 const string16& title,
+                                 const base::string16& title,
                                  int launcher_large_icon_size)
     : launcher_large_icon_size_(launcher_large_icon_size),
       shortcut_type_(BOOKMARK) {
@@ -125,7 +125,7 @@ void ShortcutBuilder::Destroy() {
 }
 
 void ShortcutHelper::AddShortcut(content::WebContents* web_contents,
-                                 const string16& title,
+                                 const base::string16& title,
                                  int launcher_large_icon_size) {
   // The ShortcutBuilder deletes itself when it's done.
   new ShortcutBuilder(web_contents, title, launcher_large_icon_size);
@@ -137,7 +137,7 @@ bool ShortcutHelper::RegisterShortcutHelper(JNIEnv* env) {
 
 void ShortcutHelper::AddShortcutInBackground(
     const GURL& url,
-    const string16& title,
+    const base::string16& title,
     ShortcutBuilder::ShortcutType shortcut_type,
     const chrome::FaviconBitmapResult& bitmap_result) {
   DCHECK(base::WorkerPool::RunsTasksOnCurrentThread());
@@ -146,14 +146,10 @@ void ShortcutHelper::AddShortcutInBackground(
   SkColor color = SK_ColorWHITE;
   SkBitmap favicon_bitmap;
   if (bitmap_result.is_valid()) {
-    color_utils::GridSampler sampler;
-    color = color_utils::CalculateKMeanColorOfPNG(bitmap_result.bitmap_data,
-                                                  100,
-                                                  665,
-                                                  &sampler);
-    gfx::PNGCodec::Decode(bitmap_result.bitmap_data->front(),
-                          bitmap_result.bitmap_data->size(),
-                          &favicon_bitmap);
+    if (gfx::PNGCodec::Decode(bitmap_result.bitmap_data->front(),
+                              bitmap_result.bitmap_data->size(),
+                              &favicon_bitmap))
+      color = color_utils::CalculateKMeanColorOfBitmap(favicon_bitmap);
   }
 
   int r_value = SkColorGetR(color);
@@ -184,15 +180,15 @@ void ShortcutHelper::AddShortcutInBackground(
   switch (shortcut_type) {
     case ShortcutBuilder::APP_SHORTCUT:
       content::RecordAction(
-          content::UserMetricsAction("webapps.AddShortcut.AppShortcut"));
+          base::UserMetricsAction("webapps.AddShortcut.AppShortcut"));
       break;
     case ShortcutBuilder::APP_SHORTCUT_APPLE:
       content::RecordAction(
-          content::UserMetricsAction("webapps.AddShortcut.AppShortcutApple"));
+          base::UserMetricsAction("webapps.AddShortcut.AppShortcutApple"));
       break;
     case ShortcutBuilder::BOOKMARK:
       content::RecordAction(
-          content::UserMetricsAction("webapps.AddShortcut.Bookmark"));
+          base::UserMetricsAction("webapps.AddShortcut.Bookmark"));
       break;
     default:
       NOTREACHED();
@@ -205,7 +201,7 @@ void ShortcutHelper::AddShortcutInBackground(
 // its otherwise inaccessible WebContents.
 static void AddShortcut(JNIEnv* env,
                         jclass clazz,
-                        jint tab_android_ptr,
+                        jlong tab_android_ptr,
                         jstring title,
                         jint launcher_large_icon_size) {
   TabAndroid* tab = reinterpret_cast<TabAndroid*>(tab_android_ptr);

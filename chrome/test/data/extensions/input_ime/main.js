@@ -67,6 +67,7 @@ APIArgumentIME.prototype = new IMEBase();
  **/
 APIArgumentIME.prototype.onKeyEvent = function(context, engine, keyData) {
   chrome.test.sendMessage('onKeyEvent:' +
+                          (keyData.extensionId || '') + ':' +
                           keyData.type + ':' +
                           keyData.key + ':' +
                           keyData.code + ':' +
@@ -138,7 +139,7 @@ EngineBridge.prototype = {
     this.focusedContext_ = context;
     if (this.activeEngine_)
       this.engineInstance_[this.activeEngine_].onFocus(context);
-    chrome.test.sendMessage('onFocus');
+    chrome.test.sendMessage('onFocus:' + context.type);
   },
 
   /**

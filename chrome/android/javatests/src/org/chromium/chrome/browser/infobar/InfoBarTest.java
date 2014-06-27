@@ -4,32 +4,30 @@
 
 package org.chromium.chrome.browser.infobar;
 
+import static org.chromium.base.test.util.ScalableTimeout.scaleTimeout;
+
 import android.test.suitebuilder.annotation.MediumTest;
 import android.test.suitebuilder.annotation.Smoke;
 
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.UrlUtils;
-import org.chromium.chrome.browser.infobar.InfoBar;
-import org.chromium.chrome.browser.infobar.InfoBarContainer;
-import org.chromium.chrome.browser.infobar.InfoBarListeners;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.chrome.shell.ChromeShellTestBase;
 import org.chromium.chrome.test.util.InfoBarTestAnimationListener;
 import org.chromium.chrome.test.util.InfoBarUtil;
 import org.chromium.chrome.test.util.TestHttpServerClient;
-import org.chromium.chrome.testshell.ChromiumTestShellTestBase;
+import org.chromium.content.browser.test.util.Criteria;
+import org.chromium.content.browser.test.util.CriteriaHelper;
 
-
-import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.TimeoutException;
 
-public class InfoBarTest extends ChromiumTestShellTestBase {
-    private final static int MAX_TIMEOUT = 2000;
-    private final static int CHECK_INTERVAL = 500;
-    private final static String GEOLOCAION_PAGE =
+public class InfoBarTest extends ChromeShellTestBase {
+    private static final long MAX_TIMEOUT = scaleTimeout(2000);
+    private static final int CHECK_INTERVAL = 500;
+    private static final String GEOLOCATION_PAGE =
             "chrome/test/data/geolocation/geolocation_on_load.html";
-    public final static String HELLO_WORLD_URL = UrlUtils.encodeHtmlDataUri(
+    private static final String POPUP_PAGE =
+            "chrome/test/data/popup_blocker/popup-window-open.html";
+    public static final String HELLO_WORLD_URL = UrlUtils.encodeHtmlDataUri(
             "<html>" +
             "<head><title>Hello, World!</title></head>" +
             "<body>Hello, World!</body>" +
@@ -49,20 +47,44 @@ public class InfoBarTest extends ChromiumTestShellTestBase {
     }
 
     /**
+     * Verify PopUp InfoBar. Only basic triggering verified due to lack of tabs
+     * in ChromeShell
+     */
+    @Smoke
+    @MediumTest
+    @Feature({"Browser", "Main"})
+    public void testInfoBarForPopUp() throws InterruptedException {
+        loadUrlWithSanitization(TestHttpServerClient.getUrl(POPUP_PAGE));
+        assertTrue("InfoBar not added", mListener.addInfoBarAnimationFinished());
+
+        List<InfoBar> infoBars = getActivity().getActiveTab().getInfoBarContainer().getInfoBars();
+        assertEquals("Wrong infobar count", 1, infoBars.size());
+        assertTrue(InfoBarUtil.hasPrimaryButton(this, infoBars.get(0)));
+        assertFalse(InfoBarUtil.hasSecondaryButton(this, infoBars.get(0)));
+        InfoBarUtil.clickPrimaryButton(this, infoBars.get(0));
+        assertTrue("InfoBar not removed.", mListener.removeInfoBarAnimationFinished());
+        assertEquals("Wrong infobar count", 0, infoBars.size());
+
+        // A second load should not show the infobar.
+        loadUrlWithSanitization(TestHttpServerClient.getUrl(POPUP_PAGE));
+        assertFalse("InfoBar added when it should not", mListener.addInfoBarAnimationFinished());
+    }
+
+    /**
      * Verify Geolocation creates an InfoBar.
      */
     @Smoke
     @MediumTest
     @Feature({"Browser", "Main"})
     public void testInfoBarForGeolocation() throws InterruptedException {
-        loadUrlWithSanitization(TestHttpServerClient.getUrl(GEOLOCAION_PAGE));
+        loadUrlWithSanitization(TestHttpServerClient.getUrl(GEOLOCATION_PAGE));
         assertTrue("InfoBar not added", mListener.addInfoBarAnimationFinished());
 
         // Make sure it has OK/Cancel buttons.
         List<InfoBar> infoBars = getActivity().getActiveTab().getInfoBarContainer().getInfoBars();
         assertEquals("Wrong infobar count", 1, infoBars.size());
-        InfoBarUtil.hasPrimaryButton(this, infoBars.get(0));
-        InfoBarUtil.hasSecondaryButton(this, infoBars.get(0));
+        assertTrue(InfoBarUtil.hasPrimaryButton(this, infoBars.get(0)));
+        assertTrue(InfoBarUtil.hasSecondaryButton(this, infoBars.get(0)));
 
         loadUrlWithSanitization(HELLO_WORLD_URL);
         assertTrue("InfoBar not removed.", mListener.removeInfoBarAnimationFinished());
@@ -79,7 +101,7 @@ public class InfoBarTest extends ChromiumTestShellTestBase {
     @Feature({"Browser"})
     public void testInfoBarForGeolocationDisappearsOnBack() throws InterruptedException {
         loadUrlWithSanitization(HELLO_WORLD_URL);
-        loadUrlWithSanitization(TestHttpServerClient.getUrl(GEOLOCAION_PAGE));
+        loadUrlWithSanitization(TestHttpServerClient.getUrl(GEOLOCATION_PAGE));
         assertTrue("InfoBar not added.", mListener.addInfoBarAnimationFinished());
 
         List<InfoBar> infoBars = getActivity().getActiveTab().getInfoBarContainer().getInfoBars();

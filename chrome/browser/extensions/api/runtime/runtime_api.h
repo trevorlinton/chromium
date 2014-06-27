@@ -11,6 +11,8 @@
 #include "chrome/common/extensions/api/runtime.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
+#include "extensions/browser/browser_context_keyed_api_factory.h"
+#include "extensions/browser/update_observer.h"
 
 class Profile;
 
@@ -18,18 +20,71 @@ namespace base {
 class Version;
 }
 
+namespace content {
+class BrowserContext;
+}
+
 namespace extensions {
 class Extension;
 class ExtensionHost;
 
+// Runtime API dispatches onStartup, onInstalled, and similar events to
+// extensions. There is one instance shared between a browser context and
+// its related incognito instance.
+class RuntimeAPI : public BrowserContextKeyedAPI,
+                   public content::NotificationObserver,
+                   public extensions::UpdateObserver {
+ public:
+  static BrowserContextKeyedAPIFactory<RuntimeAPI>* GetFactoryInstance();
+
+  explicit RuntimeAPI(content::BrowserContext* context);
+  virtual ~RuntimeAPI();
+
+  // content::NotificationObserver overrides:
+  virtual void Observe(int type,
+                       const content::NotificationSource& source,
+                       const content::NotificationDetails& details) OVERRIDE;
+
+ private:
+  friend class BrowserContextKeyedAPIFactory<RuntimeAPI>;
+
+  void OnExtensionsReady();
+  void OnExtensionLoaded(const Extension* extension);
+  void OnExtensionInstalled(const Extension* extension);
+  void OnExtensionUninstalled(const Extension* extension);
+
+  // BrowserContextKeyedAPI implementation:
+  static const char* service_name() { return "RuntimeAPI"; }
+  static const bool kServiceRedirectedInIncognito = true;
+  static const bool kServiceIsNULLWhileTesting = true;
+
+  // extensions::UpdateObserver overrides:
+  virtual void OnAppUpdateAvailable(const Extension* extension) OVERRIDE;
+  virtual void OnChromeUpdateAvailable() OVERRIDE;
+
+  content::BrowserContext* browser_context_;
+
+  // True if we should dispatch the chrome.runtime.onInstalled event with
+  // reason "chrome_update" upon loading each extension.
+  bool dispatch_chrome_updated_event_;
+
+  // Whether the API registered with the ExtensionService to receive
+  // update notifications.
+  bool registered_for_updates_;
+
+  content::NotificationRegistrar registrar_;
+
+  DISALLOW_COPY_AND_ASSIGN(RuntimeAPI);
+};
+
 class RuntimeEventRouter {
  public:
   // Dispatches the onStartup event to all currently-loaded extensions.
-  static void DispatchOnStartupEvent(Profile* profile,
+  static void DispatchOnStartupEvent(content::BrowserContext* context,
                                      const std::string& extension_id);
 
   // Dispatches the onInstalled event to the given extension.
-  static void DispatchOnInstalledEvent(Profile* profile,
+  static void DispatchOnInstalledEvent(content::BrowserContext* context,
                                        const std::string& extension_id,
                                        const base::Version& old_version,
                                        bool chrome_updated);
@@ -67,13 +122,13 @@ class RuntimeGetBackgroundPageFunction : public ChromeAsyncExtensionFunction {
   void OnPageLoaded(ExtensionHost*);
 };
 
-class RuntimeSetUninstallUrlFunction : public ChromeSyncExtensionFunction {
+class RuntimeSetUninstallURLFunction : public ChromeSyncExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("runtime.setUninstallUrl",
+  DECLARE_EXTENSION_FUNCTION("runtime.setUninstallURL",
                              RUNTIME_SETUNINSTALLURL)
 
  protected:
-  virtual ~RuntimeSetUninstallUrlFunction() {}
+  virtual ~RuntimeSetUninstallURLFunction() {}
   virtual bool RunImpl() OVERRIDE;
 };
 

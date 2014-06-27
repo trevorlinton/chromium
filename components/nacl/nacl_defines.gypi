@@ -26,6 +26,13 @@
           'NACL_OSX=1',
         ],
       }],
+      # "disabled_nacl" is always set to "1" when building for "ios" or android,
+      # so set "nacl_defines" to the empty list to ensure the variable is
+      # always defined.
+      ['OS=="ios" or OS=="android"', {
+        'nacl_defines': [
+        ],
+      }],
       # TODO(mcgrathr): This duplicates native_client/build/common.gypi;
       # we should figure out a way to unify the settings.
       ['target_arch=="ia32"', {
@@ -54,6 +61,10 @@
       }],
       ['target_arch=="mipsel"', {
         'nacl_defines': [
+          'NACL_BUILD_ARCH=mips',
+          'NACL_BUILD_SUBARCH=32',
+          'NACL_TARGET_ARCH=mips',
+          'NACL_TARGET_SUBARCH=32',
         ],
       }],
     ],

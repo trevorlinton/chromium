@@ -15,15 +15,26 @@
 // or not to launch the application for the given protocol.
 class ExternalProtocolDialogDelegate : public ProtocolDialogDelegate {
  public:
-  explicit ExternalProtocolDialogDelegate(const GURL& url);
+  explicit ExternalProtocolDialogDelegate(const GURL& url,
+                                          int render_process_host_id,
+                                          int tab_contents_id);
   virtual ~ExternalProtocolDialogDelegate();
+
+  const base::string16& program_name() const { return program_name_; }
 
   virtual void DoAccept(const GURL& url, bool dont_block) const OVERRIDE;
   virtual void DoCancel(const GURL& url, bool dont_block) const OVERRIDE;
 
-  virtual string16 GetMessageText() const OVERRIDE;
-  virtual string16 GetCheckboxText() const OVERRIDE;
-  virtual string16 GetTitleText() const OVERRIDE;
+  virtual base::string16 GetMessageText() const OVERRIDE;
+  virtual base::string16 GetCheckboxText() const OVERRIDE;
+  virtual base::string16 GetTitleText() const OVERRIDE;
+
+ private:
+  int render_process_host_id_;
+  int tab_contents_id_;
+  const base::string16 program_name_;
+
+  DISALLOW_COPY_AND_ASSIGN(ExternalProtocolDialogDelegate);
 };
 
 #endif  // CHROME_BROWSER_UI_EXTERNAL_PROTOCOL_DIALOG_DELEGATE_H_

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,9 +22,10 @@ import android.widget.TextView.OnEditorActionListener;
 import org.chromium.base.CalledByNative;
 import org.chromium.base.JNINamespace;
 import org.chromium.content.browser.ContentView;
+import org.chromium.content.browser.ContentViewClient;
 import org.chromium.content.browser.ContentViewRenderView;
 import org.chromium.content.browser.LoadUrlParams;
-import org.chromium.ui.WindowAndroid;
+import org.chromium.ui.base.WindowAndroid;
 
 /**
  * Container for the various UI components that make up a shell window.
@@ -34,7 +35,7 @@ public class Shell extends LinearLayout {
 
     private static final long COMPLETED_PROGRESS_TIMEOUT_MS = 200;
 
-    private Runnable mClearProgressRunnable = new Runnable() {
+    private final Runnable mClearProgressRunnable = new Runnable() {
         @Override
         public void run() {
             mProgressDrawable.setLevel(0);
@@ -43,12 +44,14 @@ public class Shell extends LinearLayout {
 
     // TODO(jrg): a mContentView.destroy() call is needed, both upstream and downstream.
     private ContentView mContentView;
+    private ContentViewClient mContentViewClient;
     private EditText mUrlTextView;
     private ImageButton mPrevButton;
     private ImageButton mNextButton;
 
     private ClipDrawable mProgressDrawable;
 
+    private long mNativeShell;
     private ContentViewRenderView mContentViewRenderView;
     private WindowAndroid mWindow;
 
@@ -80,10 +83,41 @@ public class Shell extends LinearLayout {
     }
 
     /**
+     * Initializes the Shell for use.
+     *
+     * @param nativeShell The pointer to the native Shell object.
      * @param window The owning window for this shell.
+     * @param client The {@link ContentViewClient} to be bound to any current or new
+     *               {@link ContentViewCore}s associated with this shell.
      */
-    public void setWindow(WindowAndroid window) {
+    public void initialize(long nativeShell, WindowAndroid window, ContentViewClient client) {
+        mNativeShell = nativeShell;
         mWindow = window;
+        mContentViewClient = client;
+    }
+
+    /**
+     * Closes the shell and cleans up the native instance, which will handle destroying all
+     * dependencies.
+     */
+    public void close() {
+        if (mNativeShell == 0) return;
+        nativeCloseShell(mNativeShell);
+    }
+
+    @CalledByNative
+    private void onNativeDestroyed() {
+        mWindow = null;
+        mNativeShell = 0;
+        mContentView.destroy();
+    }
+
+    /**
+     * @return Whether the Shell has been destroyed.
+     * @see #onNativeDestroyed()
+     */
+    public boolean isDestroyed() {
+        return mNativeShell == 0;
     }
 
     /**
@@ -141,7 +175,7 @@ public class Shell extends LinearLayout {
         if (url == null) return;
 
         if (TextUtils.equals(url, mContentView.getUrl())) {
-            mContentView.reload();
+            mContentView.getContentViewCore().reload(true);
         } else {
             mContentView.loadUrl(new LoadUrlParams(sanitizeUrl(url)));
         }
@@ -215,8 +249,10 @@ public class Shell extends LinearLayout {
      */
     @SuppressWarnings("unused")
     @CalledByNative
-    private void initFromNativeTabContents(int nativeTabContents) {
+    private void initFromNativeTabContents(long nativeTabContents) {
         mContentView = ContentView.newInstance(getContext(), nativeTabContents, mWindow);
+        mContentView.setContentViewClient(mContentViewClient);
+        if (getParent() != null) mContentView.onShow();
         if (mContentView.getUrl() != null) mUrlTextView.setText(mContentView.getUrl());
         ((FrameLayout) findViewById(R.id.contentview_holder)).addView(mContentView,
                 new FrameLayout.LayoutParams(
@@ -242,4 +278,6 @@ public class Shell extends LinearLayout {
             imm.hideSoftInputFromWindow(mUrlTextView.getWindowToken(), 0);
         }
     }
+
+    private static native void nativeCloseShell(long shellPtr);
 }

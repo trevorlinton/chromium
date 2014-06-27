@@ -6,8 +6,10 @@ import json
 import unittest
 
 from telemetry.core.timeline import trace_event_importer
-import telemetry.core.timeline.model as timeline_model
 import telemetry.core.timeline.counter as tracing_counter
+import telemetry.core.timeline.model as timeline_model
+from telemetry.core.backends.chrome import tracing_timeline_data
+
 
 def FindEventNamed(events, name):
   for event in events:
@@ -17,24 +19,35 @@ def FindEventNamed(events, name):
 
 class TraceEventTimelineImporterTest(unittest.TestCase):
   def testCanImportEmpty(self):
+    # TraceEventTimelineImporter needs to return false for empty lists and
+    # strings, because it assumes that they are >0 in len. But, TimelineMode can
+    # still import empty lists and strings (wrapped in a TimelineData object)
+    # via EmptyTimelineDataImporter.
     self.assertFalse(
-        trace_event_importer.TraceEventTimelineImporter.CanImport([]))
+        trace_event_importer.TraceEventTimelineImporter.CanImport(
+            tracing_timeline_data.TracingTimelineData([])))
     self.assertFalse(
-        trace_event_importer.TraceEventTimelineImporter.CanImport(''))
+        trace_event_importer.TraceEventTimelineImporter.CanImport(
+            tracing_timeline_data.TracingTimelineData('')))
 
   def testBasicSingleThreadNonnestedParsing(self):
     events = [
-      {'name': 'a', 'args': {}, 'pid': 52, 'ts': 520, 'cat': 'foo',
+      {'name': 'a', 'args': {}, 'pid': 52, 'ts': 520, 'tts': 280, 'cat': 'foo',
        'tid': 53, 'ph': 'B'},
-      {'name': 'a', 'args': {}, 'pid': 52, 'ts': 560, 'cat': 'foo',
+      {'name': 'a', 'args': {}, 'pid': 52, 'ts': 560, 'tts': 310, 'cat': 'foo',
        'tid': 53, 'ph': 'E'},
-      {'name': 'b', 'args': {}, 'pid': 52, 'ts': 629, 'cat': 'bar',
+      {'name': 'b', 'args': {}, 'pid': 52, 'ts': 629, 'tts': 356, 'cat': 'bar',
        'tid': 53, 'ph': 'B'},
-      {'name': 'b', 'args': {}, 'pid': 52, 'ts': 631, 'cat': 'bar',
+      {'name': 'b', 'args': {}, 'pid': 52, 'ts': 631, 'tts': 357, 'cat': 'bar',
+       'tid': 53, 'ph': 'E'},
+      {'name': 'c', 'args': {}, 'pid': 52, 'ts': 633, 'cat': 'baz',
+       'tid': 53, 'ph': 'B'},
+      {'name': 'c', 'args': {}, 'pid': 52, 'ts': 637, 'cat': 'baz',
        'tid': 53, 'ph': 'E'}
     ]
 
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     processes = m.GetAllProcesses()
     self.assertEqual(1, len(processes))
     p = processes[0]
@@ -42,13 +55,17 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
 
     self.assertEqual(1, len(p.threads))
     t = p.threads[53]
-    self.assertEqual(2, len(t.all_slices))
+    self.assertEqual(3, len(t.all_slices))
     self.assertEqual(53, t.tid)
     slice_event = t.all_slices[0]
     self.assertEqual('a', slice_event.name)
     self.assertEqual('foo', slice_event.category)
     self.assertAlmostEqual(0, slice_event.start)
     self.assertAlmostEqual((560 - 520) / 1000.0, slice_event.duration)
+    self.assertAlmostEqual((560 - 520) / 1000.0, slice_event.end)
+    self.assertAlmostEqual(280 / 1000.0, slice_event.thread_start)
+    self.assertAlmostEqual((310 - 280) / 1000.0, slice_event.thread_duration)
+    self.assertAlmostEqual(310 / 1000.0, slice_event.thread_end)
     self.assertEqual(0, len(slice_event.sub_slices))
 
     slice_event = t.all_slices[1]
@@ -56,7 +73,22 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
     self.assertEqual('bar', slice_event.category)
     self.assertAlmostEqual((629 - 520) / 1000.0, slice_event.start)
     self.assertAlmostEqual((631 - 629) / 1000.0, slice_event.duration)
+    self.assertAlmostEqual((631 - 520) / 1000.0, slice_event.end)
+    self.assertAlmostEqual(356 / 1000.0, slice_event.thread_start)
+    self.assertAlmostEqual((357 - 356) / 1000.0, slice_event.thread_duration)
+    self.assertAlmostEqual(357 / 1000.0, slice_event.thread_end)
     self.assertEqual(0, len(slice_event.sub_slices))
+
+    slice_event = t.all_slices[2]
+    self.assertEqual('c', slice_event.name)
+    self.assertEqual('baz', slice_event.category)
+    self.assertAlmostEqual((633 - 520) / 1000.0, slice_event.start)
+    self.assertAlmostEqual((637 - 633) / 1000.0, slice_event.duration)
+    self.assertEqual(None, slice_event.thread_start)
+    self.assertEqual(None, slice_event.thread_duration)
+    self.assertEqual(None, slice_event.thread_end)
+    self.assertEqual(0, len(slice_event.sub_slices))
+
 
   def testArgumentDupeCreatesNonFailingImportError(self):
     events = [
@@ -66,7 +98,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
        'tid': 1, 'ph': 'E'}
     ]
 
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     processes = m.GetAllProcesses()
     t = processes[0].threads[1]
     slice_a = FindEventNamed(t.all_slices, 'a')
@@ -82,7 +115,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
        'tid': 53, 'ph': 'E'}
     ]
 
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     processes = m.GetAllProcesses()
     self.assertEqual(1, len(processes))
     p = processes[0]
@@ -98,16 +132,17 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
 
   def testNestedParsing(self):
     events = [
-      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 1, 'cat': 'foo',
+      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 1, 'tts': 2, 'cat': 'foo',
        'tid': 1, 'ph': 'B'},
-      {'name': 'b', 'args': {}, 'pid': 1, 'ts': 2, 'cat': 'bar',
+      {'name': 'b', 'args': {}, 'pid': 1, 'ts': 3, 'tts': 3, 'cat': 'bar',
        'tid': 1, 'ph': 'B'},
-      {'name': 'b', 'args': {}, 'pid': 1, 'ts': 3, 'cat': 'bar',
+      {'name': 'b', 'args': {}, 'pid': 1, 'ts': 5, 'tts': 4, 'cat': 'bar',
        'tid': 1, 'ph': 'E'},
-      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 4, 'cat': 'foo',
+      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 7, 'tts': 5, 'cat': 'foo',
        'tid': 1, 'ph': 'E'}
     ]
-    m = timeline_model.TimelineModel(event_data=events,
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data,
                                      shift_world_to_zero=False)
     t = m.GetAllProcesses()[0].threads[1]
 
@@ -117,42 +152,67 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
     self.assertEqual('a', slice_a.name)
     self.assertEqual('foo', slice_a.category)
     self.assertAlmostEqual(0.001, slice_a.start)
-    self.assertAlmostEqual(0.003, slice_a.duration)
+    self.assertAlmostEqual(0.006, slice_a.duration)
+    self.assertAlmostEqual(0.002, slice_a.thread_start)
+    self.assertAlmostEqual(0.003, slice_a.thread_duration)
 
     self.assertEqual('b', slice_b.name)
     self.assertEqual('bar', slice_b.category)
-    self.assertAlmostEqual(0.002, slice_b.start)
-    self.assertAlmostEqual(0.001, slice_b.duration)
+    self.assertAlmostEqual(0.003, slice_b.start)
+    self.assertAlmostEqual(0.002, slice_b.duration)
+    self.assertAlmostEqual(0.003, slice_b.thread_start)
+    self.assertAlmostEqual(0.001, slice_b.thread_duration)
 
   def testAutoclosing(self):
     events = [
-      # Slice that doesn't finish.
-      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 1, 'cat': 'foo',
+      # Slices that don't finish.
+      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 1, 'tts': 1, 'cat': 'foo',
        'tid': 1, 'ph': 'B'},
-
-      # Slice that does finish to give an 'end time' to make autoclosing work.
-      {'name': 'b', 'args': {}, 'pid': 1, 'ts': 1, 'cat': 'bar',
+      {'name': 'b', 'args': {}, 'pid': 1, 'ts': 2, 'tts': 2, 'cat': 'foo',
        'tid': 2, 'ph': 'B'},
-      {'name': 'b', 'args': {}, 'pid': 1, 'ts': 2, 'cat': 'bar',
+
+      # Slices on thread 1 and 2 that do finish to give an 'end time' to make
+      # autoclosing work.
+      {'name': 'c', 'args': {}, 'pid': 1, 'ts': 2, 'tts': 1.5, 'cat': 'bar',
+       'tid': 1, 'ph': 'B'},
+      {'name': 'c', 'args': {}, 'pid': 1, 'ts': 4, 'tts': 3, 'cat': 'bar',
+       'tid': 1, 'ph': 'E'},
+      {'name': 'd', 'args': {}, 'pid': 1, 'ts': 3, 'tts': 2.5, 'cat': 'bar',
+       'tid': 2, 'ph': 'B'},
+      {'name': 'd', 'args': {}, 'pid': 1, 'ts': 7, 'tts': 5, 'cat': 'bar',
        'tid': 2, 'ph': 'E'}
     ]
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     p = m.GetAllProcesses()[0]
-    t = p.threads[1]
-    slice_event = t.all_slices[0]
+    t1 = p.threads[1]
+    slice_event = FindEventNamed(t1.all_slices, 'a')
     self.assertEqual('a', slice_event.name)
     self.assertEqual('foo', slice_event.category)
     self.assertTrue(slice_event.did_not_finish)
     self.assertAlmostEqual(0, slice_event.start)
-    self.assertAlmostEqual((2 - 1) / 1000.0, slice_event.duration)
+    self.assertAlmostEqual((7 - 1) / 1000.0, slice_event.duration)
+    self.assertAlmostEqual(1 / 1000.0, slice_event.thread_start)
+    self.assertAlmostEqual((3 - 1) / 1000.0, slice_event.thread_duration)
+
+    t2 = p.threads[2]
+    slice_event = FindEventNamed(t2.all_slices, 'b')
+    self.assertEqual('b', slice_event.name)
+    self.assertEqual('foo', slice_event.category)
+    self.assertTrue(slice_event.did_not_finish)
+    self.assertAlmostEqual((2 - 1) / 1000.0, slice_event.start)
+    self.assertAlmostEqual((7 - 2) / 1000.0, slice_event.duration)
+    self.assertAlmostEqual(2 / 1000.0, slice_event.thread_start)
+    self.assertAlmostEqual((5 - 2) / 1000.0, slice_event.thread_duration)
 
   def testAutoclosingLoneBegin(self):
     events = [
       # Slice that doesn't finish.
-      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 1, 'cat': 'foo',
+      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 1, 'tts': 1, 'cat': 'foo',
        'tid': 1, 'ph': 'B'}
     ]
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     p = m.GetAllProcesses()[0]
     t = p.threads[1]
     slice_event = t.all_slices[0]
@@ -161,6 +221,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
     self.assertTrue(slice_event.did_not_finish)
     self.assertAlmostEqual(0, slice_event.start)
     self.assertAlmostEqual(0, slice_event.duration)
+    self.assertAlmostEqual(1 / 1000.0, slice_event.thread_start)
+    self.assertAlmostEqual(0, slice_event.thread_duration)
 
   def testAutoclosingWithSubTasks(self):
     events = [
@@ -173,7 +235,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
       {'name': 'b2', 'args': {}, 'pid': 1, 'ts': 3, 'cat': 'foo',
        'tid': 1, 'ph': 'B'}
     ]
-    m = timeline_model.TimelineModel(event_data=events,
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data,
                                      shift_world_to_zero=False)
     t = m.GetAllProcesses()[0].threads[1]
 
@@ -188,38 +251,47 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
   def testAutoclosingWithEventsOutsideBounds(self):
     events = [
       # Slice that begins before min and ends after max of the other threads.
-      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 0, 'cat': 'foo',
+      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 0, 'tts': 0, 'cat': 'foo',
        'tid': 1, 'ph': 'B'},
-      {'name': 'b', 'args': {}, 'pid': 1, 'ts': 3, 'cat': 'foo',
+      {'name': 'b', 'args': {}, 'pid': 1, 'ts': 6, 'tts': 3, 'cat': 'foo',
        'tid': 1, 'ph': 'B'},
 
       # Slice that does finish to give an 'end time' to establish a basis
-      {'name': 'c', 'args': {}, 'pid': 1, 'ts': 1, 'cat': 'bar',
+      {'name': 'c', 'args': {}, 'pid': 1, 'ts': 2, 'tts': 1, 'cat': 'bar',
        'tid': 2, 'ph': 'B'},
-      {'name': 'c', 'args': {}, 'pid': 1, 'ts': 2, 'cat': 'bar',
+      {'name': 'c', 'args': {}, 'pid': 1, 'ts': 4, 'tts': 2, 'cat': 'bar',
        'tid': 2, 'ph': 'E'}
     ]
-    m = timeline_model.TimelineModel(event_data=events,
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data,
                                      shift_world_to_zero=False)
     p = m.GetAllProcesses()[0]
-    t = p.threads[1]
-    self.assertEqual(2, len(t.all_slices))
+    t1 = p.threads[1]
+    self.assertAlmostEqual(0.000, m.thread_time_bounds[t1].min)
+    self.assertAlmostEqual(0.003, m.thread_time_bounds[t1].max)
+    self.assertEqual(2, len(t1.all_slices))
 
-    slice_event = FindEventNamed(t.all_slices, 'a')
+    slice_event = FindEventNamed(t1.all_slices, 'a')
     self.assertEqual('a', slice_event.name)
     self.assertEqual('foo', slice_event.category)
     self.assertAlmostEqual(0, slice_event.start)
-    self.assertAlmostEqual(0.003, slice_event.duration)
+    self.assertAlmostEqual(0.006, slice_event.duration)
+    self.assertAlmostEqual(0, slice_event.thread_start)
+    self.assertAlmostEqual(0.003, slice_event.thread_duration)
 
     t2 = p.threads[2]
+    self.assertAlmostEqual(0.001, m.thread_time_bounds[t2].min)
+    self.assertAlmostEqual(0.002, m.thread_time_bounds[t2].max)
     slice2 = FindEventNamed(t2.all_slices, 'c')
     self.assertEqual('c', slice2.name)
     self.assertEqual('bar', slice2.category)
-    self.assertAlmostEqual(0.001, slice2.start)
-    self.assertAlmostEqual(0.001, slice2.duration)
+    self.assertAlmostEqual(0.002, slice2.start)
+    self.assertAlmostEqual(0.002, slice2.duration)
+    self.assertAlmostEqual(0.001, slice2.thread_start)
+    self.assertAlmostEqual(0.001, slice2.thread_duration)
 
     self.assertAlmostEqual(0.000, m.bounds.min)
-    self.assertAlmostEqual(0.003, m.bounds.max)
+    self.assertAlmostEqual(0.006, m.bounds.max)
 
   def testNestedAutoclosing(self):
     events = [
@@ -235,7 +307,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
       {'name': 'b', 'args': {}, 'pid': 1, 'ts': 2, 'cat': 'foo',
        'tid': 2, 'ph': 'E'}
     ]
-    m = timeline_model.TimelineModel(event_data=events,
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data,
                                      shift_world_to_zero=False)
     t1 = m.GetAllProcesses()[0].threads[1]
     t2 = m.GetAllProcesses()[0].threads[2]
@@ -249,16 +322,17 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
 
   def testMultipleThreadParsing(self):
     events = [
-      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 1, 'cat': 'foo',
+      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 2, 'tts': 1, 'cat': 'foo',
        'tid': 1, 'ph': 'B'},
-      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 2, 'cat': 'foo',
+      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 4, 'tts': 2, 'cat': 'foo',
        'tid': 1, 'ph': 'E'},
-      {'name': 'b', 'args': {}, 'pid': 1, 'ts': 3, 'cat': 'bar',
+      {'name': 'b', 'args': {}, 'pid': 1, 'ts': 6, 'tts': 3, 'cat': 'bar',
        'tid': 2, 'ph': 'B'},
-      {'name': 'b', 'args': {}, 'pid': 1, 'ts': 4, 'cat': 'bar',
+      {'name': 'b', 'args': {}, 'pid': 1, 'ts': 8, 'tts': 4, 'cat': 'bar',
        'tid': 2, 'ph': 'E'}
     ]
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     processes = m.GetAllProcesses()
     self.assertEqual(1, len(processes))
     p = processes[0]
@@ -274,7 +348,9 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
     self.assertEqual('a', slice_event.name)
     self.assertEqual('foo', slice_event.category)
     self.assertAlmostEqual(0, slice_event.start)
-    self.assertAlmostEqual((2 - 1) / 1000.0, slice_event.duration)
+    self.assertAlmostEqual((4 - 2) / 1000.0, slice_event.duration)
+    self.assertAlmostEqual(1 / 1000.0, slice_event.thread_start)
+    self.assertAlmostEqual((2 - 1) / 1000.0, slice_event.thread_duration)
 
     # Check thread 2.
     t = p.threads[2]
@@ -284,22 +360,25 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
     slice_event = t.all_slices[0]
     self.assertEqual('b', slice_event.name)
     self.assertEqual('bar', slice_event.category)
-    self.assertAlmostEqual((3 - 1) / 1000.0, slice_event.start)
-    self.assertAlmostEqual((4 - 3) / 1000.0, slice_event.duration)
+    self.assertAlmostEqual((6 - 2) / 1000.0, slice_event.start)
+    self.assertAlmostEqual((8 - 6) / 1000.0, slice_event.duration)
+    self.assertAlmostEqual(3 / 1000.0, slice_event.thread_start)
+    self.assertAlmostEqual((4 - 3) / 1000.0, slice_event.thread_duration)
 
   def testMultiplePidParsing(self):
     events = [
-      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 1, 'cat': 'foo',
+      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 2, 'tts': 1, 'cat': 'foo',
        'tid': 1, 'ph': 'B'},
-      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 2, 'cat': 'foo',
+      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 4, 'tts': 2, 'cat': 'foo',
        'tid': 1, 'ph': 'E'},
-      {'name': 'b', 'args': {}, 'pid': 2, 'ts': 3, 'cat': 'bar',
+      {'name': 'b', 'args': {}, 'pid': 2, 'ts': 6, 'tts': 3, 'cat': 'bar',
        'tid': 2, 'ph': 'B'},
-      {'name': 'b', 'args': {}, 'pid': 2, 'ts': 4, 'cat': 'bar',
+      {'name': 'b', 'args': {}, 'pid': 2, 'ts': 8, 'tts': 4, 'cat': 'bar',
        'tid': 2, 'ph': 'E'}
     ]
 
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     processes = m.GetAllProcesses()
     self.assertEqual(2, len(processes))
 
@@ -316,7 +395,9 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
     self.assertEqual('a', slice_event.name)
     self.assertEqual('foo', slice_event.category)
     self.assertAlmostEqual(0, slice_event.start)
-    self.assertAlmostEqual((2 - 1) / 1000.0, slice_event.duration)
+    self.assertAlmostEqual((4 - 2) / 1000.0, slice_event.duration)
+    self.assertAlmostEqual(1 / 1000.0, slice_event.thread_start)
+    self.assertAlmostEqual((2 - 1) / 1000.0, slice_event.thread_duration)
 
     # Check process 2 thread 2.
     # TODO: will this be in deterministic order?
@@ -330,8 +411,10 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
     slice_event = t.all_slices[0]
     self.assertEqual('b', slice_event.name)
     self.assertEqual('bar', slice_event.category)
-    self.assertAlmostEqual((3 - 1) / 1000.0, slice_event.start)
-    self.assertAlmostEqual((4 - 3) / 1000.0, slice_event.duration)
+    self.assertAlmostEqual((6 - 2) / 1000.0, slice_event.start)
+    self.assertAlmostEqual((8 - 6) / 1000.0, slice_event.duration)
+    self.assertAlmostEqual(3 / 1000.0, slice_event.thread_start)
+    self.assertAlmostEqual((4 - 3) / 1000.0, slice_event.thread_duration)
 
     # Check getAllThreads.
     self.assertEqual([processes[0].threads[1],
@@ -353,21 +436,23 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
       {'name': 'thread_name', 'args': {'name': 'Thread 2'},
         'pid': 2, 'ts': 0, 'tid': 2, 'ph': 'M'}
     ]
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     processes = m.GetAllProcesses()
     self.assertEqual('Thread 1', processes[0].threads[1].name)
     self.assertEqual('Thread 2', processes[1].threads[2].name)
 
   def testParsingWhenEndComesFirst(self):
     events = [
-      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 1, 'cat': 'foo',
+      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 1, 'tts': 1, 'cat': 'foo',
        'tid': 1, 'ph': 'E'},
-      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 4, 'cat': 'foo',
+      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 4, 'tts': 4, 'cat': 'foo',
        'tid': 1, 'ph': 'B'},
-      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 5, 'cat': 'foo',
+      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 5, 'tts': 5, 'cat': 'foo',
        'tid': 1, 'ph': 'E'}
     ]
-    m = timeline_model.TimelineModel(event_data=events,
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data,
                                      shift_world_to_zero=False)
     p = m.GetAllProcesses()[0]
     t = p.threads[1]
@@ -376,51 +461,50 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
     self.assertEqual('foo', t.all_slices[0].category)
     self.assertEqual(0.004, t.all_slices[0].start)
     self.assertEqual(0.001, t.all_slices[0].duration)
+    self.assertEqual(0.004, t.all_slices[0].thread_start)
+    self.assertEqual(0.001, t.all_slices[0].thread_duration)
     self.assertEqual(1, len(m.import_errors))
 
   def testImmediateParsing(self):
     events = [
       # Need to include immediates inside a task so the timeline
       # recentering/zeroing doesn't clobber their timestamp.
-      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 1, 'cat': 'foo',
+      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 2, 'tts': 1, 'cat': 'foo',
        'tid': 1, 'ph': 'B'},
-      {'name': 'immediate', 'args': {}, 'pid': 1, 'ts': 2, 'cat': 'bar',
+      {'name': 'immediate', 'args': {}, 'pid': 1, 'ts': 4, 'cat': 'bar',
        'tid': 1, 'ph': 'I'},
-      {'name': 'slower', 'args': {}, 'pid': 1, 'ts': 4, 'cat': 'baz',
+      {'name': 'slower', 'args': {}, 'pid': 1, 'ts': 8, 'cat': 'baz',
        'tid': 1, 'ph': 'i'},
-      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 4, 'cat': 'foo',
+      {'name': 'a', 'args': {}, 'pid': 1, 'ts': 8, 'tts': 4, 'cat': 'foo',
        'tid': 1, 'ph': 'E'}
     ]
-    m = timeline_model.TimelineModel(event_data=events,
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data,
                                      shift_world_to_zero=False)
     p = m.GetAllProcesses()[0]
     t = p.threads[1]
     self.assertEqual(3, len(t.all_slices))
 
     i = m.GetAllEventsOfName('immediate')[0]
-    self.assertAlmostEqual(0.002, i.start)
+    self.assertEqual('immediate', i.name)
+    self.assertEqual('bar', i.category)
+    self.assertAlmostEqual(0.004, i.start)
     self.assertAlmostEqual(0, i.duration)
 
     slower = m.GetAllEventsOfName('slower')[0]
-    self.assertAlmostEqual(0.004, slower.start)
-
-    a = m.GetAllEventsOfName('a')[0]
-    self.assertAlmostEqual(0.001, a.start)
-    self.assertAlmostEqual(0.003, a.duration)
-
-    self.assertEqual('a', a.name)
-    self.assertEqual('foo', a.category)
-    self.assertEqual(0.003, a.duration)
-
-    self.assertEqual('immediate', i.name)
-    self.assertEqual('bar', i.category)
-    self.assertAlmostEqual(0.002, i.start)
-    self.assertAlmostEqual(0, i.duration)
-
     self.assertEqual('slower', slower.name)
     self.assertEqual('baz', slower.category)
-    self.assertAlmostEqual(0.004, slower.start)
+    self.assertAlmostEqual(0.008, slower.start)
     self.assertAlmostEqual(0, slower.duration)
+
+    a = m.GetAllEventsOfName('a')[0]
+    self.assertEqual('a', a.name)
+    self.assertEqual('foo', a.category)
+    self.assertAlmostEqual(0.002, a.start)
+    self.assertAlmostEqual(0.006, a.duration)
+    self.assertAlmostEqual(0.001, a.thread_start)
+    self.assertAlmostEqual(0.003, a.thread_duration)
+
 
   def testSimpleCounter(self):
     events = [
@@ -431,7 +515,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
       {'name': 'ctr', 'args': {'value': 0}, 'pid': 1, 'ts': 20, 'cat': 'foo',
        'tid': 1, 'ph': 'C'}
     ]
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     p = m.GetAllProcesses()[0]
     ctr = p.counters['foo.ctr']
 
@@ -467,7 +552,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
        'tid': 1,
        'ph': 'C', 'id': 2}
     ]
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     p = m.GetAllProcesses()[0]
     ctr = p.counters['foo.ctr[0]']
     self.assertEqual('ctr[0]', ctr.name)
@@ -526,7 +612,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
       {'name': 'ctr', 'args': {'value1': 0, 'value2': 1 }, 'pid': 1, 'ts': 20,
        'cat': 'foo', 'tid': 1, 'ph': 'C'}
     ]
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     p = m.GetAllProcesses()[0]
     ctr = p.counters['foo.ctr']
     self.assertEqual('ctr', ctr.name)
@@ -551,7 +638,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
        'tid': 53, 'ph': 'E'}
     ] }
 
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     self.assertEqual(1, len(m.GetAllProcesses()))
 
   def testImportString(self):
@@ -562,7 +650,9 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
        'tid': 53, 'ph': 'E'}
     ]
 
-    m = timeline_model.TimelineModel(event_data=json.dumps(events))
+    timeline_data = tracing_timeline_data.TracingTimelineData(
+        json.dumps(events))
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     self.assertEqual(1, len(m.GetAllProcesses()))
 
   def testImportStringWithTrailingNewLine(self):
@@ -573,7 +663,9 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
        'tid': 53, 'ph': 'E'}
     ]
 
-    m = timeline_model.TimelineModel(event_data=json.dumps(events) + '\n')
+    timeline_data = tracing_timeline_data.TracingTimelineData(
+        json.dumps(events) + '\n')
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     self.assertEqual(1, len(m.GetAllProcesses()))
 
   def testImportStringWithMissingCloseSquareBracket(self):
@@ -589,7 +681,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
 
     # Drop off the trailing ]
     dropped = tmp[:-1]
-    m = timeline_model.TimelineModel(event_data=dropped)
+    timeline_data = tracing_timeline_data.TracingTimelineData(dropped)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     self.assertEqual(1, len(m.GetAllProcesses()))
 
   def testImportStringWithEndingCommaButMissingCloseSquareBracket(self):
@@ -602,7 +695,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
       ]
     text = '\n'.join(lines)
 
-    m = timeline_model.TimelineModel(event_data=text)
+    timeline_data = tracing_timeline_data.TracingTimelineData(text)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     processes = m.GetAllProcesses()
     self.assertEqual(1, len(processes))
     self.assertEqual(1, len(processes[0].threads[53].all_slices))
@@ -620,7 +714,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
 
     # Drop off the trailing ] and add a newline
     dropped = tmp[:-1]
-    m = timeline_model.TimelineModel(event_data=dropped + '\n')
+    timeline_data = tracing_timeline_data.TracingTimelineData(dropped + '\n')
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     self.assertEqual(1, len(m.GetAllProcesses()))
 
   def testImportStringWithEndingCommaButMissingCloseSquareBracketCRLF(self):
@@ -633,7 +728,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
       ]
     text = '\r\n'.join(lines)
 
-    m = timeline_model.TimelineModel(event_data=text)
+    timeline_data = tracing_timeline_data.TracingTimelineData(text)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     processes = m.GetAllProcesses()
     self.assertEqual(1, len(processes))
     self.assertEqual(1, len(processes[0].threads[53].all_slices))
@@ -646,7 +742,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
       ']'
       ]
     text = '\n'.join(lines)
-    m = timeline_model.TimelineModel(event_data=text)
+    timeline_data = tracing_timeline_data.TracingTimelineData(text)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     processes = m.GetAllProcesses()
     self.assertEqual(1, len(processes))
     self.assertEqual(1, len(processes[0].threads[8].all_slices))
@@ -662,7 +759,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
          'ph': 'S', 'id': 72, 'args': {'foo': 'bar'}}
     ]
 
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
 
     self.assertEqual(2, len(m.GetAllEvents()))
 
@@ -687,7 +785,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
        'tid': 53, 'ph': 'E'}
     ]
 
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     processes = m.GetAllProcesses()
     self.assertEqual(1, len(processes))
     p = processes[0]
@@ -711,7 +810,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
        'tid': 53, 'ph': 'E'}
     ]
 
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     processes = m.GetAllProcesses()
     self.assertEqual(1, len(processes))
     p = processes[0]
@@ -752,7 +852,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
       {'name': 'e', 'args': {}, 'pid': 52, 'ts': 165, 'cat': 'foo',
        'tid': 53, 'ph': 'E'}
     ]
-    m = timeline_model.TimelineModel(event_data=events,
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data,
                                      shift_world_to_zero=False)
     processes = m.GetAllProcesses()
     self.assertEqual(1, len(processes))
@@ -789,7 +890,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
          'ph': 'S', 'id': 72}
     ]
 
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     t = m.GetAllProcesses()[0].threads[53]
     self.assertEqual(1, len(t.async_slices))
     parent_slice = t.async_slices[0]
@@ -812,7 +914,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
          'ph': 'S', 'id': 72}
     ]
 
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     t = m.GetAllProcesses()[0].threads[53]
     self.assertEqual(1, len(t.async_slices))
     parent_slice = t.async_slices[0]
@@ -827,14 +930,15 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
     events = [
       # Time is intentionally out of order.
       {'name': 'a', 'args': {'z': 3}, 'pid': 52, 'ts': 560, 'cat': 'foo',
-       'tid': 53, 'ph': 'F', 'id': 72},
+       'tid': 53, 'ph': 'F', 'id': 72, 'tts': 25},
       {'name': 'a', 'args': {'step': 's1', 'y': 2}, 'pid': 52, 'ts': 548,
-       'cat': 'foo', 'tid': 53, 'ph': 'T', 'id': 72},
+       'cat': 'foo', 'tid': 53, 'ph': 'T', 'id': 72, 'tts': 20},
       {'name': 'a', 'args': {'x': 1}, 'pid': 52, 'ts': 524, 'cat': 'foo',
-       'tid': 53, 'ph': 'S', 'id': 72}
+       'tid': 53, 'ph': 'S', 'id': 72, 'tts': 17}
     ]
 
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     t = m.GetAllProcesses()[0].threads[53]
     self.assertEqual(1, len(t.async_slices))
     parent_slice = t.async_slices[0]
@@ -848,6 +952,7 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
     self.assertEqual('foo', sub_slice.category)
     self.assertAlmostEqual(0, sub_slice.start)
     self.assertAlmostEqual((548 - 524) / 1000.0, sub_slice.duration)
+    self.assertAlmostEqual((20 - 17) / 1000.0, sub_slice.thread_duration)
     self.assertEqual(1, sub_slice.args['x'])
 
     sub_slice = parent_slice.sub_slices[1]
@@ -855,6 +960,7 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
     self.assertEqual('foo', sub_slice.category)
     self.assertAlmostEqual((548 - 524) / 1000.0, sub_slice.start)
     self.assertAlmostEqual((560 - 548) / 1000.0, sub_slice.duration)
+    self.assertAlmostEqual((25 - 20) / 1000.0, sub_slice.thread_duration)
     self.assertEqual(2, sub_slice.args['y'])
     self.assertEqual(3, sub_slice.args['z'])
 
@@ -867,7 +973,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
        'cat': 'foo', 'tid': 53, 'ph': 'T', 'id': 72}
     ]
 
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     t = m.GetAllProcesses()[0].threads[53]
     self.assertTrue(t is not None)
 
@@ -880,7 +987,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
        'tid': 53, 'ph': 'S', 'id': 72}
     ]
 
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     t = m.GetAllProcesses()[0].threads[53]
     self.assertTrue(t is not None)
 
@@ -893,7 +1001,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
       {'name': 'c', 'args': {}, 'pid': 52, 'ts': 558, 'cat': 'test',
        'tid': 53, 'ph': 'P'}
     ]
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     p = m.GetAllProcesses()[0]
     t = p.threads[53]
     self.assertEqual(3, len(t.samples))
@@ -914,7 +1023,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
       {'name': 'c', 'pid': 52, 'ts': 549, 'cat': 'test',
        'tid': 53, 'ph': 'P'}
     ]
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     p = m.GetAllProcesses()[0]
     t = p.threads[53]
     self.assertEqual(3, len(t.samples))
@@ -922,14 +1032,15 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
 
   def testImportCompleteEvent(self):
     events = [
-      {'name': 'a', 'args': {}, 'pid': 52, 'ts': 629, 'dur': 1, 'cat': 'baz',
-       'tid': 53, 'ph': 'X'},
-      {'name': 'b', 'args': {}, 'pid': 52, 'ts': 730, 'dur': 20, 'cat': 'foo',
-       'tid': 53, 'ph': 'X'},
-      {'name': 'c', 'args': {}, 'pid': 52, 'ts': 740, 'cat': 'baz',
+      {'name': 'a', 'args': {}, 'pid': 52, 'ts': 629, 'tts': 538, 'dur': 1,
+       'tdur': 1, 'cat': 'baz', 'tid': 53, 'ph': 'X'},
+      {'name': 'b', 'args': {}, 'pid': 52, 'ts': 730, 'tts': 620, 'dur': 20,
+       'tdur': 14, 'cat': 'foo', 'tid': 53, 'ph': 'X'},
+      {'name': 'c', 'args': {}, 'pid': 52, 'ts': 740, 'tts': 625, 'cat': 'baz',
        'tid': 53, 'ph': 'X'},
     ]
-    m = timeline_model.TimelineModel(event_data=events)
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
     p = m.GetAllProcesses()[0]
     t = p.threads[53]
     self.assertEqual(3, len(t.all_slices))
@@ -938,6 +1049,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
     self.assertEqual('a', slice_event.name)
     self.assertAlmostEqual(0.0, slice_event.start)
     self.assertAlmostEqual(1 / 1000.0, slice_event.duration)
+    self.assertAlmostEqual(538 / 1000.0, slice_event.thread_start)
+    self.assertAlmostEqual(1 / 1000.0, slice_event.thread_duration)
     self.assertFalse(slice_event.did_not_finish)
     self.assertEqual(0, len(slice_event.sub_slices))
 
@@ -945,6 +1058,8 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
     self.assertEqual('b', slice_event.name)
     self.assertAlmostEqual((730 - 629) / 1000.0, slice_event.start)
     self.assertAlmostEqual(20 / 1000.0, slice_event.duration)
+    self.assertAlmostEqual(620 / 1000.0, slice_event.thread_start)
+    self.assertAlmostEqual(14 / 1000.0, slice_event.thread_duration)
     self.assertFalse(slice_event.did_not_finish)
     self.assertEqual(1, len(slice_event.sub_slices))
     self.assertEqual(t.all_slices[2], slice_event.sub_slices[0])
@@ -953,5 +1068,85 @@ class TraceEventTimelineImporterTest(unittest.TestCase):
     self.assertEqual('c', slice_event.name)
     self.assertAlmostEqual((740 - 629) / 1000.0, slice_event.start)
     self.assertAlmostEqual(10 / 1000.0, slice_event.duration)
+    self.assertAlmostEqual(625 / 1000.0, slice_event.thread_start)
+    self.assertAlmostEqual(9 / 1000.0, slice_event.thread_duration)
     self.assertTrue(slice_event.did_not_finish)
     self.assertEqual(0, len(slice_event.sub_slices))
+
+  def testImportFlowEvent(self):
+    events = [
+      {'name': 'a', 'cat': 'foo', 'id': 72, 'pid': 52, 'tid': 53, 'ts': 548,
+       'ph': 's', 'args': {}},
+      {'name': 'a', 'cat': 'foo', 'id': 72, 'pid': 52, 'tid': 53, 'ts': 560,
+       'ph': 't', 'args': {}},
+      {'name': 'a', 'cat': 'foo', 'id': 72, 'pid': 52, 'tid': 53, 'ts': 580,
+       'ph': 'f', 'args': {}},
+    ]
+
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
+    p = m.GetAllProcesses()[0]
+    t = p.threads[53]
+    self.assertTrue(t is not None)
+    self.assertEqual(2, len(m.flow_events))
+
+    start = m.flow_events[0][0]
+    step = m.flow_events[0][1]
+    finish = m.flow_events[1][1]
+
+    self.assertEqual('a', start.name)
+    self.assertEqual('foo', start.category)
+    self.assertEqual(72, start.event_id)
+    self.assertEqual(0, start.start)
+    self.assertEqual(0, start.duration)
+
+    self.assertEqual(start.name, step.name)
+    self.assertEqual(start.category, step.category)
+    self.assertEqual(start.event_id, step.event_id)
+    self.assertAlmostEqual(12 / 1000.0, step.start)
+    self.assertEquals(0, step.duration)
+
+    self.assertEqual(start.name, finish.name)
+    self.assertEqual(start.category, finish.category)
+    self.assertEqual(start.event_id, finish.event_id)
+    self.assertAlmostEqual((20 + 12) / 1000.0, finish.start)
+    self.assertEqual(0, finish.duration)
+
+  def testImportOutOfOrderFlowEvent(self):
+    events = [
+      {'name': 'a', 'cat': 'foo', 'id': 72, 'pid': 52, 'tid': 53, 'ts': 548,
+       'ph': 's', 'args': {}},
+      {'name': 'b', 'cat': 'foo', 'id': 73, 'pid': 52, 'tid': 53, 'ts': 148,
+       'ph': 's', 'args': {}},
+      {'name': 'b', 'cat': 'foo', 'id': 73, 'pid': 52, 'tid': 53, 'ts': 570,
+       'ph': 'f', 'args': {}},
+      {'name': 'a', 'cat': 'foo', 'id': 72, 'pid': 52, 'tid': 53, 'ts': 560,
+       'ph': 't', 'args': {}},
+      {'name': 'a', 'cat': 'foo', 'id': 72, 'pid': 52, 'tid': 53, 'ts': 580,
+       'ph': 'f', 'args': {}},
+    ]
+
+    expected = [[0.4, 0.412], [0.0, 0.422], [0.412, 0.432]]
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
+    self.assertEqual(3, len(m.flow_events))
+
+    for i in range(len(expected)):
+      self.assertAlmostEqual(expected[i][0], m.flow_events[i][0].start)
+      self.assertAlmostEqual(expected[i][1], m.flow_events[i][1].start)
+
+  def testImportErrornousFlowEvent(self):
+    events = [
+      {'name': 'a', 'cat': 'foo', 'id': 70, 'pid': 52, 'tid': 53, 'ts': 548,
+       'ph': 's', 'args': {}},
+      {'name': 'a2', 'cat': 'foo', 'id': 70, 'pid': 52, 'tid': 53, 'ts': 550,
+       'ph': 's', 'args': {}},
+      {'name': 'b', 'cat': 'foo', 'id': 73, 'pid': 52, 'tid': 53, 'ts': 570,
+       'ph': 'f', 'args': {}},
+      {'name': 'a', 'cat': 'foo', 'id': 72, 'pid': 52, 'tid': 53, 'ts': 560,
+       'ph': 't', 'args': {}},
+    ]
+
+    timeline_data = tracing_timeline_data.TracingTimelineData(events)
+    m = timeline_model.TimelineModel(timeline_data=timeline_data)
+    self.assertEqual(0, len(m.flow_events))

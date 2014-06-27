@@ -42,12 +42,13 @@ base::LazyInstance<scoped_refptr<AutoThreadTaskRunner> > g_module_task_runner =
 // Lowers the process integrity level such that it does not exceed |max_level|.
 // |max_level| is expected to be one of SECURITY_MANDATORY_XXX constants.
 bool LowerProcessIntegrityLevel(DWORD max_level) {
-  base::win::ScopedHandle token;
+  HANDLE temp_handle;
   if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_WRITE,
-                        token.Receive())) {
+                        &temp_handle)) {
     PLOG(ERROR) << "OpenProcessToken() failed";
     return false;
   }
+  base::win::ScopedHandle token(temp_handle);
 
   TypedBuffer<TOKEN_MANDATORY_LABEL> mandatory_label;
   DWORD length = 0;
@@ -131,7 +132,7 @@ bool ChromotingModule::Run() {
   }
 
   // Arrange to run |message_loop| until no components depend on it.
-  base::MessageLoop message_loop(base::MessageLoop::TYPE_UI);
+  base::MessageLoopForUI message_loop;
   base::RunLoop run_loop;
   g_module_task_runner.Get() = new AutoThreadTaskRunner(
       message_loop.message_loop_proxy(), run_loop.QuitClosure());
@@ -203,7 +204,7 @@ int ElevatedControllerMain() {
   ChromotingModule module(elevated_controller_entry,
                           elevated_controller_entry + 1);
 
-  if (!InitializeComSecurity(WideToUTF8(kElevatedControllerSd), "", true))
+  if (!InitializeComSecurity(base::WideToUTF8(kElevatedControllerSd), "", true))
     return kInitializationFailed;
 
   if (!module.Run())

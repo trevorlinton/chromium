@@ -9,8 +9,9 @@
 #include "chrome/test/base/interactive_test_utils.h"
 #include "content/public/test/browser_test_utils.h"
 #include "ui/base/base_window.h"
+#include "ui/base/test/ui_controls.h"
 
-#if defined(TOOLKIT_GTK)
+#if defined(OS_LINUX)
 #include <X11/Xlib.h>
 #include <X11/extensions/XTest.h>
 #include <X11/keysym.h>
@@ -19,11 +20,17 @@
 #include "ui/gfx/x/x11_types.h"
 #endif
 
+#if defined(OS_MACOSX)
+#include <Carbon/Carbon.h>
+
+#include "base/mac/scoped_cftyperef.h"
+#endif
+
 namespace extensions {
 
 typedef ExtensionApiTest GlobalCommandsApiTest;
 
-#if defined(TOOLKIT_GTK)
+#if defined(OS_LINUX)
 // Send a simulated key press and release event, where |control|, |shift| or
 // |alt| indicates whether the key is struck with corresponding modifier.
 void SendNativeKeyEventToXDisplay(ui::KeyboardCode key,
@@ -64,14 +71,51 @@ void SendNativeKeyEventToXDisplay(ui::KeyboardCode key,
 
   XFlush(display);
 }
-#endif  // TOOLKIT_GTK
+#endif  // OS_LINUX
 
-#if defined(OS_WIN) || defined(TOOLKIT_GTK)
-// The feature is only fully implemented on Windows and Linux GTK+, other
-// platforms coming.
-#define MAYBE_GlobalCommand GlobalCommand
-#else
+#if defined(OS_MACOSX)
+using base::ScopedCFTypeRef;
+
+void SendNativeCommandShift(int key_code) {
+  CGEventSourceRef event_source =
+      CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+  CGEventTapLocation event_tap_location = kCGHIDEventTap;
+
+  // Create the keyboard press events.
+  ScopedCFTypeRef<CGEventRef> command_down(CGEventCreateKeyboardEvent(
+      event_source, kVK_Command, true));
+  ScopedCFTypeRef<CGEventRef> shift_down(CGEventCreateKeyboardEvent(
+      event_source, kVK_Shift, true));
+  ScopedCFTypeRef<CGEventRef> key_down(CGEventCreateKeyboardEvent(
+      event_source, key_code, true));
+  CGEventSetFlags(key_down, kCGEventFlagMaskCommand | kCGEventFlagMaskShift);
+
+  // Create the keyboard release events.
+  ScopedCFTypeRef<CGEventRef> command_up(CGEventCreateKeyboardEvent(
+      event_source, kVK_Command, false));
+  ScopedCFTypeRef<CGEventRef> shift_up(CGEventCreateKeyboardEvent(
+      event_source, kVK_Shift, false));
+  ScopedCFTypeRef<CGEventRef> key_up(CGEventCreateKeyboardEvent(
+      event_source, key_code, false));
+  CGEventSetFlags(key_up, kCGEventFlagMaskCommand | kCGEventFlagMaskShift);
+
+  // Post all of the events.
+  CGEventPost(event_tap_location, command_down);
+  CGEventPost(event_tap_location, shift_down);
+  CGEventPost(event_tap_location, key_down);
+  CGEventPost(event_tap_location, key_up);
+  CGEventPost(event_tap_location, shift_up);
+  CGEventPost(event_tap_location, command_up);
+
+  CFRelease(event_source);
+}
+#endif
+
+#if defined(OS_CHROMEOS)
+// Fully implemented everywhere except Chrome OS.
 #define MAYBE_GlobalCommand DISABLED_GlobalCommand
+#else
+#define MAYBE_GlobalCommand GlobalCommand
 #endif
 
 // Test the basics of global commands and make sure they work when Chrome
@@ -87,7 +131,7 @@ IN_PROC_BROWSER_TEST_F(GlobalCommandsApiTest, MAYBE_GlobalCommand) {
   ASSERT_TRUE(RunExtensionTest("keybinding/global")) << message_;
   ASSERT_TRUE(catcher.GetNextResult());
 
-#if !defined(TOOLKIT_GTK)
+#if defined(OS_WIN)
   // Our infrastructure for sending keys expects a browser to send them to, but
   // to properly test global shortcuts you need to send them to another target.
   // So, create an incognito browser to use as a target to send the shortcuts
@@ -108,8 +152,11 @@ IN_PROC_BROWSER_TEST_F(GlobalCommandsApiTest, MAYBE_GlobalCommand) {
   // Activate the shortcut (Ctrl+Shift+9). This should have an effect.
   ASSERT_TRUE(ui_test_utils::SendKeyPressSync(
       incognito_browser, ui::VKEY_9, true, true, false, false));
-#else
-  // On Linux GTK+, our infrastructure for sending keys just synthesize keyboard
+#elif defined(OS_LINUX)
+  // Create an incognito browser to capture the focus.
+  CreateIncognitoBrowser();
+
+  // On Linux, our infrastructure for sending keys just synthesize keyboard
   // event and send them directly to the specified window, without notifying the
   // X root window. It didn't work while testing global shortcut because the
   // stuff of global shortcut on Linux need to be notified when KeyPress event
@@ -117,12 +164,54 @@ IN_PROC_BROWSER_TEST_F(GlobalCommandsApiTest, MAYBE_GlobalCommand) {
   SendNativeKeyEventToXDisplay(ui::VKEY_1, true, true, false);
   SendNativeKeyEventToXDisplay(ui::VKEY_A, true, true, false);
   SendNativeKeyEventToXDisplay(ui::VKEY_9, true, true, false);
+#elif defined(OS_MACOSX)
+  // Create an incognito browser to capture the focus.
+  CreateIncognitoBrowser();
+
+  // Send some native mac key events.
+  SendNativeCommandShift(kVK_ANSI_1);
+  SendNativeCommandShift(kVK_ANSI_A);
+  SendNativeCommandShift(kVK_ANSI_9);
 #endif
 
   // If this fails, it might be because the global shortcut failed to work,
   // but it might also be because the non-global shortcuts unexpectedly
   // worked.
   ASSERT_TRUE(catcher.GetNextResult()) << catcher.message();
+}
+
+#if defined(OS_WIN)
+// The feature is only fully implemented on Windows, other platforms coming.
+// TODO(smus): On mac, SendKeyPress must first support media keys.
+#define MAYBE_GlobalDuplicatedMediaKey GlobalDuplicatedMediaKey
+#else
+#define MAYBE_GlobalDuplicatedMediaKey DISABLED_GlobalDuplicatedMediaKey
+#endif
+
+IN_PROC_BROWSER_TEST_F(GlobalCommandsApiTest, MAYBE_GlobalDuplicatedMediaKey) {
+  FeatureSwitch::ScopedOverride enable_global_commands(
+      FeatureSwitch::global_commands(), true);
+
+  ResultCatcher catcher;
+  ASSERT_TRUE(RunExtensionTest("keybinding/global_media_keys_0")) << message_;
+  ASSERT_TRUE(catcher.GetNextResult());
+  ASSERT_TRUE(RunExtensionTest("keybinding/global_media_keys_1")) << message_;
+  ASSERT_TRUE(catcher.GetNextResult());
+
+  Browser* incognito_browser = CreateIncognitoBrowser();  // Ditto.
+  WindowController* controller =
+      incognito_browser->extension_window_controller();
+
+  ui_controls::SendKeyPress(controller->window()->GetNativeWindow(),
+                            ui::VKEY_MEDIA_NEXT_TRACK,
+                            false,
+                            false,
+                            false,
+                            false);
+
+  // We should get two success result.
+  ASSERT_TRUE(catcher.GetNextResult());
+  ASSERT_TRUE(catcher.GetNextResult());
 }
 
 }  // namespace extensions

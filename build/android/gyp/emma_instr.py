@@ -63,7 +63,7 @@ def _AddInstrumentOptions(option_parser):
             'patterns separated with whitespace and/or comma.'))
 
 
-def _RunCopyCommand(command, options, args, option_parser):
+def _RunCopyCommand(_command, options, _, option_parser):
   """Copies the jar from input to output locations.
 
   Also removes any old coverage/sources file.
@@ -129,7 +129,7 @@ def _CreateSourcesFile(sources_string, sources_file, src_root):
     json.dump(relative_sources, f)
 
 
-def _RunInstrumentCommand(command, options, args, option_parser):
+def _RunInstrumentCommand(command, options, _, option_parser):
   """Instruments the classes/jar files using EMMA.
 
   Args:
@@ -152,6 +152,8 @@ def _RunInstrumentCommand(command, options, args, option_parser):
                                options.coverage_file)
   sources_file = os.path.join(os.path.dirname(options.output_path),
                               options.sources_file)
+  if os.path.exists(coverage_file):
+    os.remove(coverage_file)
   temp_dir = tempfile.mkdtemp()
   try:
     cmd = ['java', '-cp', options.emma_jar,
@@ -161,7 +163,7 @@ def _RunInstrumentCommand(command, options, args, option_parser):
            '-d', temp_dir,
            '-out', coverage_file,
            '-m', 'fullcopy']
-    build_utils.CheckCallDie(cmd, suppress_output=True)
+    build_utils.CheckOutput(cmd)
 
     if command == 'instrument_jar':
       for jar in os.listdir(os.path.join(temp_dir, 'lib')):
@@ -195,11 +197,11 @@ VALID_COMMANDS = {
 }
 
 
-def main(argv):
+def main():
   option_parser = command_option_parser.CommandOptionParser(
       commands_dict=VALID_COMMANDS)
   command_option_parser.ParseAndExecute(option_parser)
 
 
 if __name__ == '__main__':
-  sys.exit(main(sys.argv))
+  sys.exit(main())

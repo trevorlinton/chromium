@@ -199,13 +199,11 @@ void FileSelectHelper::OnListFile(
     const net::DirectoryLister::DirectoryListerData& data) {
   ActiveDirectoryEnumeration* entry = directory_enumerations_[id];
 
-  // Directory upload returns directories via a "." file, so that
-  // empty directories are included.  This util call just checks
-  // the flags in the structure; there's no file I/O going on.
+  // Directory upload only cares about files.
   if (data.info.IsDirectory())
-    entry->results_.push_back(data.path.Append(FILE_PATH_LITERAL(".")));
-  else
-    entry->results_.push_back(data.path);
+    return;
+
+  entry->results_.push_back(data.path);
 }
 
 void FileSelectHelper::OnListDone(int id, int error) {
@@ -232,7 +230,7 @@ void FileSelectHelper::OnListDone(int id, int error) {
 
 scoped_ptr<ui::SelectFileDialog::FileTypeInfo>
 FileSelectHelper::GetFileTypesFromAcceptType(
-    const std::vector<string16>& accept_types) {
+    const std::vector<base::string16>& accept_types) {
   scoped_ptr<ui::SelectFileDialog::FileTypeInfo> base_file_type(
       new ui::SelectFileDialog::FileTypeInfo());
   if (accept_types.empty())
@@ -250,7 +248,7 @@ FileSelectHelper::GetFileTypesFromAcceptType(
   int valid_type_count = 0;
   int description_id = 0;
   for (size_t i = 0; i < accept_types.size(); ++i) {
-    std::string ascii_type = UTF16ToASCII(accept_types[i]);
+    std::string ascii_type = base::UTF16ToASCII(accept_types[i]);
     if (!IsAcceptTypeValid(ascii_type))
       continue;
 
@@ -367,6 +365,8 @@ void FileSelectHelper::RunFileChooserOnUIThread(
 
   select_file_dialog_ = ui::SelectFileDialog::Create(
       this, new ChromeSelectFilePolicy(web_contents_));
+  if (!select_file_dialog_)
+    return;
 
   dialog_mode_ = params.mode;
   switch (params.mode) {
@@ -397,7 +397,7 @@ void FileSelectHelper::RunFileChooserOnUIThread(
 
 #if defined(OS_ANDROID)
   // Android needs the original MIME types and an additional capture value.
-  std::pair<std::vector<string16>, bool> accept_types =
+  std::pair<std::vector<base::string16>, bool> accept_types =
       std::make_pair(params.accept_types, params.capture);
 #endif
 
@@ -479,7 +479,8 @@ bool FileSelectHelper::IsAcceptTypeValid(const std::string& accept_type) {
   std::string unused;
   if (accept_type.length() <= 1 ||
       StringToLowerASCII(accept_type) != accept_type ||
-      TrimWhitespaceASCII(accept_type, TRIM_ALL, &unused) != TRIM_NONE) {
+      base::TrimWhitespaceASCII(accept_type, base::TRIM_ALL, &unused) !=
+          base::TRIM_NONE) {
     return false;
   }
   return true;

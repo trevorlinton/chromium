@@ -4,6 +4,7 @@
 
 #include "ui/events/x/touch_factory_x11.h"
 
+#include <X11/Xatom.h>
 #include <X11/cursorfont.h>
 #include <X11/extensions/XInput.h>
 #include <X11/extensions/XInput2.h>
@@ -18,6 +19,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "ui/events/event_switches.h"
+#include "ui/events/x/device_data_manager.h"
 #include "ui/events/x/device_list_cache_x.h"
 #include "ui/gfx/x/x11_types.h"
 
@@ -28,11 +30,10 @@ TouchFactory::TouchFactory()
       touch_device_available_(false),
       touch_events_disabled_(false),
       touch_device_list_(),
+      max_touch_points_(-1),
       id_generator_(0) {
-#if defined(USE_AURA)
-  if (!base::MessagePumpForUI::HasXInput2())
+  if (!DeviceDataManager::GetInstance()->IsXInput2Available())
     return;
-#endif
 
   XDisplay* display = gfx::GetXDisplay();
   UpdateDeviceList(display);
@@ -81,6 +82,8 @@ void TouchFactory::UpdateDeviceList(Display* display) {
   touch_device_available_ = false;
   touch_device_lookup_.reset();
   touch_device_list_.clear();
+  touchscreen_ids_.clear();
+  max_touch_points_ = -1;
 
 #if !defined(USE_XI2_MT)
   // NOTE: The new API for retrieving the list of devices (XIQueryDevice) does
@@ -100,6 +103,9 @@ void TouchFactory::UpdateDeviceList(Display* display) {
     }
   }
 #endif
+
+  if (!DeviceDataManager::GetInstance()->IsXInput2Available())
+    return;
 
   // Instead of asking X for the list of devices all the time, let's maintain a
   // list of pointer devices we care about.
@@ -124,18 +130,35 @@ void TouchFactory::UpdateDeviceList(Display* display) {
         XIAnyClassInfo* xiclassinfo = devinfo->classes[k];
         if (xiclassinfo->type == XITouchClass) {
           XITouchClassInfo* tci =
-              reinterpret_cast<XITouchClassInfo *>(xiclassinfo);
+              reinterpret_cast<XITouchClassInfo*>(xiclassinfo);
           // Only care direct touch device (such as touch screen) right now
           if (tci->mode == XIDirectTouch) {
             touch_device_lookup_[devinfo->deviceid] = true;
             touch_device_list_[devinfo->deviceid] = true;
             touch_device_available_ = true;
+            if (tci->num_touches > 0 && tci->num_touches > max_touch_points_)
+              max_touch_points_ = tci->num_touches;
           }
         }
       }
 #endif
       pointer_device_lookup_[devinfo->deviceid] = true;
     }
+
+#if defined(USE_XI2_MT)
+    if (devinfo->use == XIFloatingSlave || devinfo->use == XISlavePointer) {
+      for (int k = 0; k < devinfo->num_classes; ++k) {
+        XIAnyClassInfo* xiclassinfo = devinfo->classes[k];
+        if (xiclassinfo->type == XITouchClass) {
+          XITouchClassInfo* tci =
+              reinterpret_cast<XITouchClassInfo*>(xiclassinfo);
+          // Only care direct touch device (such as touch screen) right now
+          if (tci->mode == XIDirectTouch)
+            CacheTouchscreenIds(display, devinfo->deviceid);
+        }
+      }
+    }
+#endif
   }
 }
 
@@ -235,6 +258,10 @@ bool TouchFactory::IsTouchDevicePresent() {
   return !touch_events_disabled_ && touch_device_available_;
 }
 
+int TouchFactory::GetMaxTouchPoints() const {
+  return max_touch_points_;
+}
+
 void TouchFactory::SetTouchDeviceForTest(
     const std::vector<unsigned int>& devices) {
   touch_device_lookup_.reset();
@@ -247,6 +274,54 @@ void TouchFactory::SetTouchDeviceForTest(
   }
   touch_device_available_ = true;
   touch_events_disabled_ = false;
+}
+
+void TouchFactory::SetPointerDeviceForTest(
+    const std::vector<unsigned int>& devices) {
+  pointer_device_lookup_.reset();
+  for (std::vector<unsigned int>::const_iterator iter = devices.begin();
+       iter != devices.end(); ++iter) {
+    pointer_device_lookup_[*iter] = true;
+  }
+}
+
+void TouchFactory::CacheTouchscreenIds(Display* display, int device_id) {
+  XDevice* device = XOpenDevice(display, device_id);
+  if (!device)
+    return;
+
+  Atom actual_type_return;
+  int actual_format_return;
+  unsigned long nitems_return;
+  unsigned long bytes_after_return;
+  unsigned char *prop_return;
+
+  const char kDeviceProductIdString[] = "Device Product ID";
+  Atom device_product_id_atom =
+      XInternAtom(display, kDeviceProductIdString, false);
+
+  if (device_product_id_atom != None &&
+      XGetDeviceProperty(display, device, device_product_id_atom, 0, 2,
+                         False, XA_INTEGER, &actual_type_return,
+                         &actual_format_return, &nitems_return,
+                         &bytes_after_return, &prop_return) == Success) {
+    if (actual_type_return == XA_INTEGER &&
+        actual_format_return == 32 &&
+        nitems_return == 2) {
+      // An actual_format_return of 32 implies that the returned data is an
+      // array of longs. See the description of |prop_return| in `man
+      // XGetDeviceProperty` for details.
+      long* ptr = reinterpret_cast<long*>(prop_return);
+
+      // Internal displays will have a vid and pid of 0. Ignore them.
+      // ptr[0] is the vid, and ptr[1] is the pid.
+      if (ptr[0] || ptr[1])
+        touchscreen_ids_.insert(std::make_pair(ptr[0], ptr[1]));
+    }
+    XFree(prop_return);
+  }
+
+  XCloseDevice(display, device);
 }
 
 }  // namespace ui

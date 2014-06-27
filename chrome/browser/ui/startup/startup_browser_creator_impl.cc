@@ -32,7 +32,7 @@
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/extensions/extension_creator.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
+#include "chrome/browser/extensions/launch_util.h"
 #include "chrome/browser/extensions/pack_extension_job.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/google/google_util.h"
@@ -64,7 +64,7 @@
 #include "chrome/browser/ui/startup/bad_flags_prompt.h"
 #include "chrome/browser/ui/startup/default_browser_prompt.h"
 #include "chrome/browser/ui/startup/google_api_keys_infobar_delegate.h"
-#include "chrome/browser/ui/startup/obsolete_os_infobar_delegate.h"
+#include "chrome/browser/ui/startup/obsolete_system_infobar_delegate.h"
 #include "chrome/browser/ui/startup/session_crashed_infobar_delegate.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/browser/ui/tabs/pinned_tab_codec.h"
@@ -87,11 +87,13 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
+#include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registry.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/constants.h"
 #include "grit/locale_settings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/gfx/rect.h"
-#include "ui/gfx/screen.h"
 
 #if defined(OS_MACOSX)
 #include "base/mac/mac_util.h"
@@ -138,9 +140,9 @@ LaunchMode GetLaunchShortcutKind() {
   if (si.dwFlags & 0x800) {
     if (!si.lpTitle)
       return LM_SHORTCUT_NONAME;
-    string16 shortcut(si.lpTitle);
+    base::string16 shortcut(si.lpTitle);
     // The windows quick launch path is not localized.
-    if (shortcut.find(L"\\Quick Launch\\") != string16::npos) {
+    if (shortcut.find(L"\\Quick Launch\\") != base::string16::npos) {
       if (base::win::GetVersion() >= base::win::VERSION_WIN7)
         return LM_SHORTCUT_TASKBAR;
       else
@@ -150,7 +152,7 @@ LaunchMode GetLaunchShortcutKind() {
     std::string appdata_path;
     env->GetVar("USERPROFILE", &appdata_path);
     if (!appdata_path.empty() &&
-        shortcut.find(ASCIIToWide(appdata_path)) != std::wstring::npos)
+        shortcut.find(base::ASCIIToWide(appdata_path)) != std::wstring::npos)
       return LM_SHORTCUT_DESKTOP;
     return LM_SHORTCUT_UNKNOWN;
   }
@@ -186,12 +188,11 @@ bool GetAppLaunchContainer(
     Profile* profile,
     const std::string& app_id,
     const Extension** out_extension,
-    extension_misc::LaunchContainer* out_launch_container) {
+    extensions::LaunchContainer* out_launch_container) {
 
   ExtensionService* extensions_service = profile->GetExtensionService();
   const Extension* extension =
       extensions_service->GetExtensionById(app_id, false);
-
   // The extension with id |app_id| may have been uninstalled.
   if (!extension)
     return false;
@@ -200,33 +201,20 @@ bool GetAppLaunchContainer(
   if (profile->IsOffTheRecord() && extension->is_platform_app())
     return false;
 
-  // Look at preferences to find the right launch container.  If no
+  // Look at preferences to find the right launch container. If no
   // preference is set, launch as a window.
-  extension_misc::LaunchContainer launch_container =
-      extensions_service->extension_prefs()->GetLaunchContainer(
-          extension, extensions::ExtensionPrefs::LAUNCH_WINDOW);
+  extensions::LaunchContainer launch_container = extensions::GetLaunchContainer(
+      extensions::ExtensionPrefs::Get(profile), extension);
+
+  if (!CommandLine::ForCurrentProcess()->HasSwitch(
+           switches::kEnableStreamlinedHostedApps) &&
+      !extensions::HasPreferredLaunchContainer(
+           extensions::ExtensionPrefs::Get(profile), extension)) {
+    launch_container = extensions::LAUNCH_CONTAINER_WINDOW;
+  }
 
   *out_extension = extension;
   *out_launch_container = launch_container;
-  return true;
-}
-
-// Parse two comma-separated integers from string. Return true on success.
-bool ParseCommaSeparatedIntegers(const std::string& str,
-                                 int* ret_num1,
-                                 int* ret_num2) {
-  std::vector<std::string> dimensions;
-  base::SplitString(str, ',', &dimensions);
-  if (dimensions.size() != 2)
-    return false;
-
-  int num1, num2;
-  if (!base::StringToInt(dimensions[0], &num1) ||
-      !base::StringToInt(dimensions[1], &num2))
-    return false;
-
-  *ret_num1 = num1;
-  *ret_num2 = num2;
   return true;
 }
 
@@ -298,11 +286,12 @@ class WebContentsCloseObserver : public content::NotificationObserver {
   DISALLOW_COPY_AND_ASSIGN(WebContentsCloseObserver);
 };
 
-const Extension* GetDisabledPlatformApp(Profile* profile,
-                                        const std::string& extension_id) {
-  ExtensionService* service =
-      extensions::ExtensionSystem::Get(profile)->extension_service();
-  const Extension* extension = service->GetExtensionById(extension_id, true);
+// TODO(koz): Consolidate this function and remove the special casing.
+const Extension* GetPlatformApp(Profile* profile,
+                                const std::string& extension_id) {
+  const Extension* extension =
+      extensions::ExtensionRegistry::Get(profile)->GetExtensionById(
+          extension_id, extensions::ExtensionRegistry::EVERYTHING);
   return extension && extension->is_platform_app() ? extension : NULL;
 }
 
@@ -360,15 +349,18 @@ bool StartupBrowserCreatorImpl::Launch(Profile* profile,
   AppListService::InitAll(profile);
   if (command_line_.HasSwitch(switches::kAppId)) {
     std::string app_id = command_line_.GetSwitchValueASCII(switches::kAppId);
-    const Extension* extension = GetDisabledPlatformApp(profile, app_id);
-    // If |app_id| is a disabled platform app we handle it specially here,
-    // otherwise it will be handled below.
+    const Extension* extension = GetPlatformApp(profile, app_id);
+    // If |app_id| is a disabled or terminated platform app we handle it
+    // specially here, otherwise it will be handled below.
     if (extension) {
       RecordCmdLineAppHistogram(extensions::Manifest::TYPE_PLATFORM_APP);
       AppLaunchParams params(profile, extension,
-                             extension_misc::LAUNCH_NONE, NEW_WINDOW);
-      params.command_line = &command_line_;
+                             extensions::LAUNCH_CONTAINER_NONE, NEW_WINDOW);
+      params.command_line = command_line_;
       params.current_directory = cur_dir_;
+      // If we are being launched from the command line, default to native
+      // desktop.
+      params.desktop_type = chrome::HOST_DESKTOP_TYPE_NATIVE;
       OpenApplicationWithReenablePrompt(params);
       return true;
     }
@@ -414,37 +406,7 @@ bool StartupBrowserCreatorImpl::Launch(Profile* profile,
     ShellIntegration::MigrateChromiumShortcuts();
 #endif  // defined(OS_WIN)
 
-#if defined(ENABLE_EXTENSIONS)
-  // If we deferred creation of background extension hosts, we want to create
-  // them now that the session (if any) has been restored.
-  ExtensionProcessManager* process_manager =
-      extensions::ExtensionSystem::Get(profile)->process_manager();
-  process_manager->DeferBackgroundHostCreation(false);
-#endif
-
   return true;
-}
-
-void StartupBrowserCreatorImpl::ExtractOptionalAppWindowSize(
-    gfx::Rect* bounds) {
-  if (command_line_.HasSwitch(switches::kAppWindowSize)) {
-    int width, height;
-    width = height = 0;
-    std::string switch_value =
-        command_line_.GetSwitchValueASCII(switches::kAppWindowSize);
-    if (ParseCommaSeparatedIntegers(switch_value, &width, &height)) {
-      // TODO(scottmg): NativeScreen might be wrong. http://crbug.com/133312
-      const gfx::Rect work_area =
-          gfx::Screen::GetNativeScreen()->GetPrimaryDisplay().work_area();
-      width = std::min(width, work_area.width());
-      height = std::min(height, work_area.height());
-      bounds->set_size(gfx::Size(width, height));
-      bounds->set_x((work_area.width() - bounds->width()) / 2);
-      // TODO(nkostylev): work_area does include launcher but should not.
-      // Launcher auto hide pref is synced and is most likely not applied here.
-      bounds->set_y((work_area.height() - bounds->height()) / 2);
-    }
-  }
 }
 
 bool StartupBrowserCreatorImpl::IsAppLaunch(std::string* app_url,
@@ -471,19 +433,20 @@ bool StartupBrowserCreatorImpl::OpenApplicationTab(Profile* profile) {
   if (!IsAppLaunch(NULL, &app_id) || app_id.empty())
     return false;
 
-  extension_misc::LaunchContainer launch_container;
+  extensions::LaunchContainer launch_container;
   const Extension* extension;
   if (!GetAppLaunchContainer(profile, app_id, &extension, &launch_container))
     return false;
 
   // If the user doesn't want to open a tab, fail.
-  if (launch_container != extension_misc::LAUNCH_TAB)
+  if (launch_container != extensions::LAUNCH_CONTAINER_TAB)
     return false;
 
   RecordCmdLineAppHistogram(extension->GetType());
 
   WebContents* app_tab = OpenApplication(AppLaunchParams(
-      profile, extension, extension_misc::LAUNCH_TAB, NEW_FOREGROUND_TAB));
+      profile, extension, extensions::LAUNCH_CONTAINER_TAB,
+      NEW_FOREGROUND_TAB));
   return (app_tab != NULL);
 }
 
@@ -503,7 +466,7 @@ bool StartupBrowserCreatorImpl::OpenApplicationWindow(
   // TODO(skerner): Do something reasonable here. Pop up a warning panel?
   // Open an URL to the gallery page of the extension id?
   if (!app_id.empty()) {
-    extension_misc::LaunchContainer launch_container;
+    extensions::LaunchContainer launch_container;
     const Extension* extension;
     if (!GetAppLaunchContainer(profile, app_id, &extension, &launch_container))
       return false;
@@ -512,13 +475,13 @@ bool StartupBrowserCreatorImpl::OpenApplicationWindow(
     // and avoid calling GetAppLaunchContainer() both here and in
     // OpenApplicationTab().
 
-    if (launch_container == extension_misc::LAUNCH_TAB)
+    if (launch_container == extensions::LAUNCH_CONTAINER_TAB)
       return false;
 
     RecordCmdLineAppHistogram(extension->GetType());
 
     AppLaunchParams params(profile, extension, launch_container, NEW_WINDOW);
-    params.command_line = &command_line_;
+    params.command_line = command_line_;
     params.current_directory = cur_dir_;
     WebContents* tab_in_app_window = OpenApplication(params);
 
@@ -542,7 +505,7 @@ bool StartupBrowserCreatorImpl::OpenApplicationWindow(
     ChildProcessSecurityPolicy* policy =
         ChildProcessSecurityPolicy::GetInstance();
     if (policy->IsWebSafeScheme(url.scheme()) ||
-        url.SchemeIs(chrome::kFileScheme)) {
+        url.SchemeIs(content::kFileScheme)) {
       const extensions::Extension* extension =
           profile->GetExtensionService()->GetInstalledApp(url);
       if (extension) {
@@ -553,12 +516,7 @@ bool StartupBrowserCreatorImpl::OpenApplicationWindow(
             extensions::Manifest::TYPE_HOSTED_APP);
       }
 
-      gfx::Rect override_bounds;
-      ExtractOptionalAppWindowSize(&override_bounds);
-
-      WebContents* app_tab = OpenAppShortcutWindow(profile,
-                                                   url,
-                                                   override_bounds);
+      WebContents* app_tab = OpenAppShortcutWindow(profile, url);
 
       if (out_app_contents)
         *out_app_contents = app_tab;
@@ -827,10 +785,6 @@ Browser* StartupBrowserCreatorImpl::OpenTabsInBrowser(
 #endif
   }
 
-  // In kiosk mode, we want to always be fullscreen, so switch to that now.
-  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kKioskMode))
-    chrome::ToggleFullscreenMode(browser);
-
   bool first_tab = true;
   ProtocolHandlerRegistry* registry = profile_ ?
       ProtocolHandlerRegistryFactory::GetForProfile(profile_) : NULL;
@@ -856,12 +810,12 @@ Browser* StartupBrowserCreatorImpl::OpenTabsInBrowser(
     params.tabstrip_add_types = add_types;
     params.extension_app_id = tabs[i].app_id;
 
-#if defined(ENABLE_RLZ)
+#if defined(ENABLE_RLZ) && !defined(OS_IOS)
     if (process_startup && google_util::IsGoogleHomePageUrl(tabs[i].url)) {
       params.extra_headers = RLZTracker::GetAccessPointHttpHeader(
           RLZTracker::CHROME_HOME_PAGE);
     }
-#endif
+#endif  // defined(ENABLE_RLZ) && !defined(OS_IOS)
 
     chrome::Navigate(&params);
 
@@ -870,7 +824,7 @@ Browser* StartupBrowserCreatorImpl::OpenTabsInBrowser(
   if (!browser->tab_strip_model()->GetActiveWebContents()) {
     // TODO: this is a work around for 110909. Figure out why it's needed.
     if (!browser->tab_strip_model()->count())
-      chrome::AddBlankTabAt(browser, -1, true);
+      chrome::AddTabAt(browser, GURL(), -1, true);
     else
       browser->tab_strip_model()->ActivateTabAt(0, false);
   }
@@ -881,6 +835,11 @@ Browser* StartupBrowserCreatorImpl::OpenTabsInBrowser(
   // to take care of that.
   if (!browser_creator_ || browser_creator_->show_main_browser_window())
     browser->window()->Show();
+
+  // In kiosk mode, we want to always be fullscreen, so switch to that now.
+  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kKioskMode) ||
+      CommandLine::ForCurrentProcess()->HasSwitch(switches::kStartFullscreen))
+    chrome::ToggleFullscreenMode(browser);
 
   return browser;
 }
@@ -897,14 +856,12 @@ void StartupBrowserCreatorImpl::AddInfoBarsIfNecessary(
   // The below info bars are only added to the first profile which is launched.
   // Other profiles might be restoring the browsing sessions asynchronously,
   // so we cannot add the info bars to the focused tabs here.
-  if (is_process_startup == chrome::startup::IS_PROCESS_STARTUP) {
+  if (is_process_startup == chrome::startup::IS_PROCESS_STARTUP &&
+      !command_line_.HasSwitch(switches::kTestType)) {
     chrome::ShowBadFlagsPrompt(browser);
-    if (!command_line_.HasSwitch(switches::kTestType)) {
-      GoogleApiKeysInfoBarDelegate::Create(InfoBarService::FromWebContents(
-          browser->tab_strip_model()->GetActiveWebContents()));
-    }
-
-    ObsoleteOSInfoBarDelegate::Create(InfoBarService::FromWebContents(
+    GoogleApiKeysInfoBarDelegate::Create(InfoBarService::FromWebContents(
+        browser->tab_strip_model()->GetActiveWebContents()));
+    ObsoleteSystemInfoBarDelegate::Create(InfoBarService::FromWebContents(
         browser->tab_strip_model()->GetActiveWebContents()));
 
 #if !defined(OS_CHROMEOS)

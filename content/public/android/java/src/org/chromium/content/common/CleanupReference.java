@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@ import android.os.Message;
 import android.util.Log;
 
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.TraceEvent;
 
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
@@ -41,7 +42,8 @@ public class CleanupReference extends WeakReference<Object> {
     private static ReferenceQueue<Object> sGcQueue = new ReferenceQueue<Object>();
     private static Object sCleanupMonitor = new Object();
 
-    static private final Thread sReaperThread = new Thread(TAG) {
+    private static final Thread sReaperThread = new Thread(TAG) {
+        @Override
         public void run() {
             while (true) {
                 try {
@@ -79,7 +81,7 @@ public class CleanupReference extends WeakReference<Object> {
      * set yet early in startup.
      */
     private static class LazyHolder {
-       static final Handler sHandler = new Handler(ThreadUtils.getUiThreadLooper()) {
+        static final Handler sHandler = new Handler(ThreadUtils.getUiThreadLooper()) {
             @Override
             public void handleMessage(Message msg) {
                 TraceEvent.begin();

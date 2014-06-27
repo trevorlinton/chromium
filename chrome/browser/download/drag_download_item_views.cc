@@ -6,27 +6,29 @@
 
 #include <string>
 
+#include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/download_item.h"
 #include "net/base/mime_util.h"
 #include "net/base/net_util.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/dragdrop/drag_utils.h"
+#include "ui/base/dragdrop/file_info.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/gfx/image/image.h"
+#include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/point.h"
 #include "ui/gfx/screen.h"
 #include "ui/views/widget/widget.h"
 #include "url/gurl.h"
 
-#if defined(OS_WIN) && !defined(USE_AURA)
-#include "ui/base/dragdrop/drag_source_win.h"
-#include "ui/base/dragdrop/os_exchange_data_provider_win.h"
+#if defined(USE_AURA)
+#include "ui/aura/window.h"
+#include "ui/aura/window_event_dispatcher.h"
+#include "ui/wm/public/drag_drop_client.h"
 #endif
 
-#if defined(USE_AURA)
-#include "ui/aura/client/drag_drop_client.h"
-#include "ui/aura/root_window.h"
-#include "ui/aura/window.h"
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/drive/download_handler.h"
 #endif
 
 void DragDownloadItem(const content::DownloadItem* download,
@@ -38,23 +40,29 @@ void DragDownloadItem(const content::DownloadItem* download,
   // Set up our OLE machinery
   ui::OSExchangeData data;
 
-  if (icon) {
-    drag_utils::CreateDragImageForFile(
-        download->GetFileNameToReportUser(), icon->ToImageSkia(), &data);
-  }
+  drag_utils::CreateDragImageForFile(
+      download->GetFileNameToReportUser(),
+      icon ? icon->AsImageSkia() : gfx::ImageSkia(),
+      &data);
 
-  const base::FilePath full_path = download->GetTargetFilePath();
-  data.SetFilename(full_path);
-
-  std::string mime_type = download->GetMimeType();
-  if (mime_type.empty())
-    net::GetMimeTypeFromFile(full_path, &mime_type);
+  base::FilePath full_path = download->GetTargetFilePath();
+#if defined(OS_CHROMEOS)
+  // Overwrite |full_path| with drive cache file path when appropriate.
+  Profile* profile = Profile::FromBrowserContext(download->GetBrowserContext());
+  drive::DownloadHandler* drive_download_handler =
+      drive::DownloadHandler::GetForProfile(profile);
+  if (drive_download_handler &&
+      drive_download_handler->IsDriveDownload(download))
+    full_path = drive_download_handler->GetCacheFilePath(download);
+#endif
+  std::vector<ui::FileInfo> file_infos;
+  file_infos.push_back(
+      ui::FileInfo(full_path, download->GetFileNameToReportUser()));
+  data.SetFilenames(file_infos);
 
   // Add URL so that we can load supported files when dragged to WebContents.
-  if (net::IsSupportedMimeType(mime_type)) {
-    data.SetURL(net::FilePathToFileURL(full_path),
-                download->GetFileNameToReportUser().LossyDisplayName());
-  }
+  data.SetURL(net::FilePathToFileURL(full_path),
+              download->GetFileNameToReportUser().LossyDisplayName());
 
 #if !defined(TOOLKIT_GTK)
 #if defined(USE_AURA)

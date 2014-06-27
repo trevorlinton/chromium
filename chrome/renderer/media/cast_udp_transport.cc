@@ -4,20 +4,17 @@
 
 #include "chrome/renderer/media/cast_udp_transport.h"
 
-#include "base/logging.h"
 #include "chrome/renderer/media/cast_session.h"
 
-CastUdpTransport::CastUdpTransport()
-    : cast_session_(new CastSession()) {
+CastUdpTransport::CastUdpTransport(
+    const scoped_refptr<CastSession>& session)
+    : cast_session_(session), weak_factory_(this) {
 }
 
 CastUdpTransport::~CastUdpTransport() {
 }
 
-void CastUdpTransport::Start(const net::IPEndPoint& remote_address) {
-  NOTIMPLEMENTED();
-}
-
-void CastUdpTransport::Stop() {
-  NOTIMPLEMENTED();
+void CastUdpTransport::SetDestination(const net::IPEndPoint& remote_address) {
+  remote_address_ = remote_address;
+  cast_session_->StartUDP(remote_address);
 }

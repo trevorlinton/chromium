@@ -10,14 +10,13 @@ import android.util.Log;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.HostDrivenTest;
-import org.chromium.base.test.util.DisabledTest;
 import org.chromium.chrome.browser.identity.UniqueIdentificationGenerator;
 import org.chromium.chrome.browser.identity.UniqueIdentificationGeneratorFactory;
 import org.chromium.chrome.browser.identity.UuidBasedUniqueIdentificationGenerator;
+import org.chromium.chrome.shell.ChromeShellActivity;
+import org.chromium.chrome.shell.ChromeShellTestBase;
+import org.chromium.chrome.shell.sync.SyncController;
 import org.chromium.chrome.test.util.browser.sync.SyncTestUtil;
-import org.chromium.chrome.testshell.ChromiumTestShellActivity;
-import org.chromium.chrome.testshell.ChromiumTestShellTestBase;
-import org.chromium.chrome.testshell.sync.SyncController;
 import org.chromium.content.browser.ContentView;
 import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content.browser.test.util.Criteria;
@@ -30,14 +29,12 @@ import org.chromium.sync.signin.ChromeSigninController;
 import org.chromium.sync.test.util.MockAccountManager;
 import org.chromium.sync.test.util.MockSyncContentResolverDelegate;
 
-import java.lang.Override;
-import java.lang.Runnable;
 import java.util.concurrent.TimeoutException;
 
 /**
  * Test suite for Sync.
  */
-public class SyncTest extends ChromiumTestShellTestBase {
+public class SyncTest extends ChromeShellTestBase {
     private static final String TAG = "SyncTest";
 
     private static final String FOREIGN_SESSION_TEST_MACHINE_ID =
@@ -91,7 +88,7 @@ public class SyncTest extends ChromiumTestShellTestBase {
         assertTrue("Couldn't get about info.", gotInfo);
     }
 
-    @DisabledTest
+    @HostDrivenTest
     public void testAboutSyncPageDisplaysCurrentSyncStatus() throws InterruptedException {
         setupTestAccountAndSignInToSync(FOREIGN_SESSION_TEST_MACHINE_ID);
 
@@ -156,9 +153,8 @@ public class SyncTest extends ChromiumTestShellTestBase {
     private void setupTestAccountAndSignInToSync(
             final String syncClientIdentifier)
             throws InterruptedException {
-        Account defaultTestAccount = SyncTestUtil.setupTestAccount(mAccountManager,
-                SyncTestUtil.DEFAULT_TEST_ACCOUNT, SyncTestUtil.DEFAULT_PASSWORD,
-                SyncTestUtil.CHROME_SYNC_OAUTH2_SCOPE, SyncTestUtil.LOGIN_OAUTH2_SCOPE);
+        Account defaultTestAccount = SyncTestUtil.setupTestAccountThatAcceptsAllAuthTokens(
+                mAccountManager, SyncTestUtil.DEFAULT_TEST_ACCOUNT, SyncTestUtil.DEFAULT_PASSWORD);
 
         UniqueIdentificationGeneratorFactory.registerGenerator(
                 UuidBasedUniqueIdentificationGenerator.GENERATOR_ID,
@@ -171,7 +167,7 @@ public class SyncTest extends ChromiumTestShellTestBase {
 
         SyncTestUtil.verifySyncIsSignedOut(getActivity());
 
-        final Activity activity = launchChromiumTestShellWithBlankPage();
+        final Activity activity = launchChromeShellWithBlankPage();
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
@@ -184,7 +180,7 @@ public class SyncTest extends ChromiumTestShellTestBase {
                 SyncTestUtil.isSyncEverythingEnabled(mContext));
     }
 
-    private static ContentViewCore getContentViewCore(ChromiumTestShellActivity activity) {
+    private static ContentViewCore getContentViewCore(ChromeShellActivity activity) {
         ContentView contentView = activity.getActiveContentView();
         if (contentView == null) return null;
         return contentView.getContentViewCore();

@@ -66,8 +66,7 @@ TEST_F(ContentSettingImageModelTest, UpdateFromWebContents) {
   EXPECT_EQ(0, content_setting_image_model->get_icon());
   EXPECT_TRUE(content_setting_image_model->get_tooltip().empty());
 
-  content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_IMAGES,
-                                     std::string());
+  content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_IMAGES);
   content_setting_image_model->UpdateFromWebContents(web_contents());
 
   EXPECT_TRUE(content_setting_image_model->is_visible());
@@ -87,7 +86,8 @@ TEST_F(ContentSettingImageModelTest, RPHUpdateFromWebContents) {
       TabSpecificContentSettings::FromWebContents(web_contents());
   content_settings->set_pending_protocol_handler(
       ProtocolHandler::CreateProtocolHandler(
-          "mailto", GURL("http://www.google.com/"), ASCIIToUTF16("Handler")));
+          "mailto", GURL("http://www.google.com/"),
+          base::ASCIIToUTF16("Handler")));
   content_setting_image_model->UpdateFromWebContents(web_contents());
   EXPECT_TRUE(content_setting_image_model->is_visible());
 }

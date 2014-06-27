@@ -30,7 +30,8 @@ bool LooksLikePacScript(const base::string16& script) {
   // file not containing the string is not likely to be a PAC script.
   //
   // An exact test would have to load the script in a javascript evaluator.
-  return script.find(ASCIIToUTF16("FindProxyForURL")) != base::string16::npos;
+  return script.find(base::ASCIIToUTF16("FindProxyForURL")) !=
+             base::string16::npos;
 }
 
 }
@@ -86,7 +87,8 @@ ProxyScriptDecider::ProxyScriptDecider(
       next_state_(STATE_NONE),
       net_log_(BoundNetLog::Make(
           net_log, NetLog::SOURCE_PROXY_SCRIPT_DECIDER)),
-      fetch_pac_bytes_(false) {
+      fetch_pac_bytes_(false),
+      quick_check_enabled_(true) {
   if (proxy_script_fetcher &&
       proxy_script_fetcher->GetRequestContext() &&
       proxy_script_fetcher->GetRequestContext()->host_resolver()) {
@@ -153,8 +155,8 @@ ProxyScriptDecider::PacSourceList ProxyScriptDecider::
     const ProxyConfig& config) const {
   PacSourceList pac_sources;
   if (config.auto_detect()) {
-    pac_sources.push_back(PacSource(PacSource::WPAD_DHCP, GURL()));
-    pac_sources.push_back(PacSource(PacSource::WPAD_DNS, GURL()));
+    pac_sources.push_back(PacSource(PacSource::WPAD_DHCP, GURL(kWpadUrl)));
+    pac_sources.push_back(PacSource(PacSource::WPAD_DNS, GURL(kWpadUrl)));
   }
   if (config.has_pac_url())
     pac_sources.push_back(PacSource(PacSource::CUSTOM, config.pac_url()));
@@ -240,52 +242,42 @@ int ProxyScriptDecider::DoWaitComplete(int result) {
     net_log_.EndEventWithNetErrorCode(NetLog::TYPE_PROXY_SCRIPT_DECIDER_WAIT,
                                       result);
   }
-  next_state_ = GetStartState();
+  if (quick_check_enabled_ && current_pac_source().type == PacSource::WPAD_DNS)
+    next_state_ = STATE_QUICK_CHECK;
+  else
+    next_state_ = GetStartState();
   return OK;
 }
 
 int ProxyScriptDecider::DoQuickCheck() {
+  DCHECK(quick_check_enabled_);
   if (host_resolver_.get() == NULL) {
     // If we have no resolver, skip QuickCheck altogether.
     next_state_ = GetStartState();
     return OK;
   }
 
-  if (have_custom_pac_url_) {
-    // If there's a custom URL, skip QuickCheck.
-    next_state_ = GetStartState();
-    return OK;
-  }
-
   quick_check_start_time_ = base::Time::Now();
-  HostResolver::RequestInfo reqinfo(HostPortPair("wpad", 80));
+  std::string host = current_pac_source().url.host();
+  HostResolver::RequestInfo reqinfo(HostPortPair(host, 80));
   reqinfo.set_host_resolver_flags(HOST_RESOLVER_SYSTEM_ONLY);
   CompletionCallback callback = base::Bind(
       &ProxyScriptDecider::OnIOCompletion,
       base::Unretained(this));
 
+  next_state_ = STATE_QUICK_CHECK_COMPLETE;
+  quick_check_timer_.Start(FROM_HERE,
+                           base::TimeDelta::FromMilliseconds(
+                              kQuickCheckDelayMs),
+                           base::Bind(callback, ERR_NAME_NOT_RESOLVED));
 
   // We use HIGHEST here because proxy decision blocks doing any other requests.
-  int rv = host_resolver_->Resolve(reqinfo, HIGHEST, &wpad_addresses_,
-                                   callback, net_log_);
-
-  // We can't get an error response - the name is known to be valid, and we
-  // don't cache negative dns responses.
-  DCHECK(rv == OK || rv == ERR_IO_PENDING);
-
-  if (rv == OK) {
-    next_state_ = GetStartState();
-  } else {
-    quick_check_timer_.Start(FROM_HERE,
-                             base::TimeDelta::FromMilliseconds(
-                                kQuickCheckDelayMs),
-                             base::Bind(callback, ERR_NAME_NOT_RESOLVED));
-    next_state_ = STATE_QUICK_CHECK_COMPLETE;
-  }
-  return rv;
+  return host_resolver_->Resolve(reqinfo, HIGHEST, &wpad_addresses_,
+                                 callback, net_log_);
 }
 
 int ProxyScriptDecider::DoQuickCheckComplete(int result) {
+  DCHECK(quick_check_enabled_);
   base::TimeDelta delta = base::Time::Now() - quick_check_start_time_;
   if (result == OK)
     UMA_HISTOGRAM_TIMES("Net.WpadQuickCheckSuccess", delta);
@@ -293,8 +285,9 @@ int ProxyScriptDecider::DoQuickCheckComplete(int result) {
     UMA_HISTOGRAM_TIMES("Net.WpadQuickCheckFailure", delta);
   host_resolver_->Cancel();
   quick_check_timer_.Stop();
-  if (result == OK)
-    next_state_ = GetStartState();
+  if (result != OK)
+    return TryToFallbackPacSource(result);
+  next_state_ = GetStartState();
   return result;
 }
 
@@ -420,8 +413,10 @@ int ProxyScriptDecider::TryToFallbackPacSource(int error) {
 
   net_log_.AddEvent(
       NetLog::TYPE_PROXY_SCRIPT_DECIDER_FALLING_BACK_TO_NEXT_PAC_SOURCE);
-
-  next_state_ = GetStartState();
+  if (quick_check_enabled_ && current_pac_source().type == PacSource::WPAD_DNS)
+    next_state_ = STATE_QUICK_CHECK;
+  else
+    next_state_ = GetStartState();
 
   return OK;
 }

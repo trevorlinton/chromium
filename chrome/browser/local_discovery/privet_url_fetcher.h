@@ -7,12 +7,17 @@
 
 #include <string>
 
+#include "base/file_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/values.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "url/gurl.h"
+
+namespace base {
+class FilePath;
+}
 
 namespace local_discovery {
 
@@ -46,38 +51,65 @@ class PrivetURLFetcher : public net::URLFetcherDelegate {
     virtual void OnParsedJson(PrivetURLFetcher* fetcher,
                               const base::DictionaryValue* value,
                               bool has_error) = 0;
+
+    // If this method is returns true, the data will not be parsed as JSON, and
+    // |OnParsedJson| will not be called. Otherwise, |OnParsedJson| will be
+    // called.
+    virtual bool OnRawData(PrivetURLFetcher* fetcher,
+                           bool response_is_file,
+                           const std::string& data_string,
+                           const base::FilePath& data_file);
   };
 
   PrivetURLFetcher(
-      const std::string& token,
       const GURL& url,
       net::URLFetcher::RequestType request_type,
       net::URLRequestContextGetter* request_context,
       Delegate* delegate);
+
   virtual ~PrivetURLFetcher();
+
+  static void SetTokenForHost(const std::string& host,
+                              const std::string& token);
+
+  static void ResetTokenMapForTests();
 
   void DoNotRetryOnTransientError();
 
   void AllowEmptyPrivetToken();
+
+  // Set the contents of the Range header. |OnRawData| must return true if this
+  // is called.
+  void SetByteRange(int start, int end);
+
+  // Save the response to a file. |OnRawData| must return true if this is
+  // called.
+  void SaveResponseToFile();
 
   void Start();
 
   void SetUploadData(const std::string& upload_content_type,
                      const std::string& upload_data);
 
+  void SetUploadFilePath(const std::string& upload_content_type,
+                         const base::FilePath& upload_file_path);
+
   virtual void OnURLFetchComplete(const net::URLFetcher* source) OVERRIDE;
+  void OnURLFetchCompleteParseData(const net::URLFetcher* source);
+  bool OnURLFetchCompleteDoNotParseData(const net::URLFetcher* source);
 
   const GURL& url() const { return url_fetcher_->GetOriginalURL(); }
   int response_code() const { return url_fetcher_->GetResponseCode(); }
 
  private:
+  std::string GetHostString();  // Get string representing the host.
+  std::string GetPrivetAccessToken();
   void Try();
   void ScheduleRetry(int timeout_seconds);
   bool PrivetErrorTransient(const std::string& error);
   void RequestTokenRefresh();
   void RefreshToken(const std::string& token);
 
-  std::string privet_access_token_;
   GURL url_;
   net::URLFetcher::RequestType request_type_;
   scoped_refptr<net::URLRequestContextGetter> request_context_;
@@ -85,35 +117,20 @@ class PrivetURLFetcher : public net::URLFetcherDelegate {
 
   bool do_not_retry_on_transient_error_;
   bool allow_empty_privet_token_;
+  bool has_byte_range_;
+  bool make_response_file_;
+
+  int byte_range_start_;
+  int byte_range_end_;
 
   int tries_;
   std::string upload_data_;
   std::string upload_content_type_;
+  base::FilePath upload_file_path_;
   scoped_ptr<net::URLFetcher> url_fetcher_;
 
   base::WeakPtrFactory<PrivetURLFetcher> weak_factory_;
   DISALLOW_COPY_AND_ASSIGN(PrivetURLFetcher);
-};
-
-class PrivetURLFetcherFactory {
- public:
-  explicit PrivetURLFetcherFactory(
-      net::URLRequestContextGetter* request_context);
-  ~PrivetURLFetcherFactory();
-
-  scoped_ptr<PrivetURLFetcher> CreateURLFetcher(
-      const GURL& url,
-      net::URLFetcher::RequestType request_type,
-      PrivetURLFetcher::Delegate* delegate) const;
-
-  void set_token(const std::string& token) { token_ = token; }
-  const std::string& get_token() const { return token_; }
-
- private:
-  scoped_refptr<net::URLRequestContextGetter> request_context_;
-  std::string token_;
-
-  DISALLOW_COPY_AND_ASSIGN(PrivetURLFetcherFactory);
 };
 
 }  // namespace local_discovery

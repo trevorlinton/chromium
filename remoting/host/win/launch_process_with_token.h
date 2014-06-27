@@ -32,13 +32,13 @@ bool CreateSessionToken(uint32 session_id, base::win::ScopedHandle* token_out);
 // If |inherit_handles| is true |g_inherit_handles_lock| should be taken while
 // any inheritable handles are open.
 bool LaunchProcessWithToken(const base::FilePath& binary,
-                            const CommandLine::StringType& command_line,
+                            const base::CommandLine::StringType& command_line,
                             HANDLE user_token,
                             SECURITY_ATTRIBUTES* process_attributes,
                             SECURITY_ATTRIBUTES* thread_attributes,
                             bool inherit_handles,
                             DWORD creation_flags,
-                            const char16* desktop_name,
+                            const base::char16* desktop_name,
                             base::win::ScopedHandle* process_out,
                             base::win::ScopedHandle* thread_out);
 

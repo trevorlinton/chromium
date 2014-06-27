@@ -143,10 +143,13 @@ SadTabGtk::SadTabGtk(WebContents* web_contents, chrome::SadTabKind kind)
       gtk_container_add(GTK_CONTAINER(vbox), help_hbox);
 
       size_t offset = 0;
-      string16 help_text(l10n_util::GetStringFUTF16(IDS_SAD_TAB_HELP_MESSAGE,
-                                                    string16(), &offset));
-      std::string help_prefix_text(UTF16ToUTF8(help_text.substr(0, offset)));
-      std::string help_suffix_text(UTF16ToUTF8(help_text.substr(offset)));
+      base::string16 help_text(
+          l10n_util::GetStringFUTF16(IDS_SAD_TAB_HELP_MESSAGE,
+                                     base::string16(), &offset));
+      std::string help_prefix_text(
+          base::UTF16ToUTF8(help_text.substr(0, offset)));
+      std::string help_suffix_text(
+          base::UTF16ToUTF8(help_text.substr(offset)));
 
       GtkWidget* help_prefix = MakeWhiteMarkupLabel(
           "<span style=\"normal\">%s</span>", help_prefix_text);

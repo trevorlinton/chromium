@@ -28,7 +28,7 @@ class NetLogLoggerTest : public testing::Test {
 TEST_F(NetLogLoggerTest, GeneratesValidJSONForNoEvents) {
   {
     // Create and destroy a logger.
-    FILE* file = file_util::OpenFile(log_path_, "w");
+    FILE* file = base::OpenFile(log_path_, "w");
     ASSERT_TRUE(file);
     scoped_ptr<base::Value> constants(NetLogLogger::GetConstants());
     NetLogLogger logger(file, *constants);
@@ -50,19 +50,19 @@ TEST_F(NetLogLoggerTest, GeneratesValidJSONForNoEvents) {
 
 TEST_F(NetLogLoggerTest, GeneratesValidJSONWithOneEvent) {
   {
-    FILE* file = file_util::OpenFile(log_path_, "w");
+    FILE* file = base::OpenFile(log_path_, "w");
     ASSERT_TRUE(file);
     scoped_ptr<base::Value> constants(NetLogLogger::GetConstants());
     NetLogLogger logger(file, *constants);
 
     const int kDummyId = 1;
     NetLog::Source source(NetLog::SOURCE_SPDY_SESSION, kDummyId);
-    NetLog::Entry entry(NetLog::TYPE_PROXY_SERVICE,
-                        source,
-                        NetLog::PHASE_BEGIN,
-                        base::TimeTicks::Now(),
-                        NULL,
-                        NetLog::LOG_BASIC);
+    NetLog::EntryData entry_data(NetLog::TYPE_PROXY_SERVICE,
+                                 source,
+                                 NetLog::PHASE_BEGIN,
+                                 base::TimeTicks::Now(),
+                                 NULL);
+    NetLog::Entry entry(&entry_data, NetLog::LOG_ALL);
     logger.OnAddEntry(entry);
   }
 
@@ -82,19 +82,19 @@ TEST_F(NetLogLoggerTest, GeneratesValidJSONWithOneEvent) {
 
 TEST_F(NetLogLoggerTest, GeneratesValidJSONWithMultipleEvents) {
   {
-    FILE* file = file_util::OpenFile(log_path_, "w");
+    FILE* file = base::OpenFile(log_path_, "w");
     ASSERT_TRUE(file);
     scoped_ptr<base::Value> constants(NetLogLogger::GetConstants());
     NetLogLogger logger(file, *constants);
 
     const int kDummyId = 1;
     NetLog::Source source(NetLog::SOURCE_SPDY_SESSION, kDummyId);
-    NetLog::Entry entry(NetLog::TYPE_PROXY_SERVICE,
-                        source,
-                        NetLog::PHASE_BEGIN,
-                        base::TimeTicks::Now(),
-                        NULL,
-                        NetLog::LOG_BASIC);
+    NetLog::EntryData entry_data(NetLog::TYPE_PROXY_SERVICE,
+                                 source,
+                                 NetLog::PHASE_BEGIN,
+                                 base::TimeTicks::Now(),
+                                 NULL);
+    NetLog::Entry entry(&entry_data, NetLog::LOG_ALL);
 
     // Add the entry multiple times.
     logger.OnAddEntry(entry);

@@ -5,17 +5,33 @@ import collections
 import json
 import os
 
+from metrics import power
 from telemetry import test
-from telemetry.core import util
 from telemetry.page import page_measurement
 from telemetry.page import page_set
 
 
+_URL = 'http://www.webkit.org/perf/sunspider-1.0.2/sunspider-1.0.2/driver.html'
+
+
 class _SunspiderMeasurement(page_measurement.PageMeasurement):
-  def MeasurePage(self, _, tab, results):
+  def __init__(self):
+    super(_SunspiderMeasurement, self).__init__()
+    self._power_metric = power.PowerMetric()
+
+  def CustomizeBrowserOptions(self, options):
+    power.PowerMetric.CustomizeBrowserOptions(options)
+
+  def DidNavigateToPage(self, page, tab):
+    self._power_metric.Start(page, tab)
+
+  def MeasurePage(self, page, tab, results):
     tab.WaitForJavaScriptExpression(
         'window.location.pathname.indexOf("results.html") >= 0'
         '&& typeof(output) != "undefined"', 300)
+
+    self._power_metric.Stop(page, tab)
+    self._power_metric.AddResults(tab, results)
 
     js_get_results = 'JSON.stringify(output);'
     js_results = json.loads(tab.EvaluateJavaScript(js_get_results))
@@ -40,11 +56,9 @@ class Sunspider(test.Test):
   test = _SunspiderMeasurement
 
   def CreatePageSet(self, options):
-    sunspider_dir = os.path.join(util.GetChromiumSrcDir(),
-                                 'chrome', 'test', 'data', 'sunspider')
     return page_set.PageSet.FromDict(
         {
-          'serving_dirs': ['.'],
-          'pages': [{ 'url': 'file://sunspider-1.0/driver.html' }],
-        },
-        sunspider_dir)
+          'archive_data_file': '../page_sets/data/sunspider.json',
+          'make_javascript_deterministic': False,
+          'pages': [{ 'url': _URL }],
+        }, os.path.abspath(__file__))

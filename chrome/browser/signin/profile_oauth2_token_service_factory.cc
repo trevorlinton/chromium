@@ -5,39 +5,43 @@
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/profile_oauth2_token_service.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
-#include "chrome/browser/signin/token_service_factory.h"
+#include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
-#include "components/browser_context_keyed_service/browser_context_dependency_manager.h"
+#include "chrome/browser/webdata/web_data_service_factory.h"
+#include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/signin/core/browser/profile_oauth2_token_service.h"
+
+#if defined(OS_ANDROID)
+#include "chrome/browser/signin/android_profile_oauth2_token_service.h"
+#else
+#include "components/signin/core/browser/mutable_profile_oauth2_token_service.h"
+#endif
 
 ProfileOAuth2TokenServiceFactory::ProfileOAuth2TokenServiceFactory()
     : BrowserContextKeyedServiceFactory(
         "ProfileOAuth2TokenService",
         BrowserContextDependencyManager::GetInstance()) {
   DependsOn(GlobalErrorServiceFactory::GetInstance());
-  DependsOn(SigninManagerFactory::GetInstance());
-  DependsOn(TokenServiceFactory::GetInstance());
+  DependsOn(WebDataServiceFactory::GetInstance());
+  DependsOn(ChromeSigninClientFactory::GetInstance());
 }
 
 ProfileOAuth2TokenServiceFactory::~ProfileOAuth2TokenServiceFactory() {
 }
 
-#if defined(OS_ANDROID)
-// static
-AndroidProfileOAuth2TokenService*
-    ProfileOAuth2TokenServiceFactory::GetForProfile(Profile* profile) {
-  return static_cast<AndroidProfileOAuth2TokenService*>(
-      GetInstance()->GetServiceForBrowserContext(profile, true));
-}
-#else
-// static
-ProfileOAuth2TokenService* ProfileOAuth2TokenServiceFactory::GetForProfile(
-    Profile* profile) {
+ProfileOAuth2TokenService*
+ProfileOAuth2TokenServiceFactory::GetForProfile(Profile* profile) {
   return static_cast<ProfileOAuth2TokenService*>(
       GetInstance()->GetServiceForBrowserContext(profile, true));
 }
-#endif  // defined(OS_ANDROID)
+
+// static
+ProfileOAuth2TokenServiceFactory::PlatformSpecificOAuth2TokenService*
+ProfileOAuth2TokenServiceFactory::GetPlatformSpecificForProfile(
+    Profile* profile) {
+  return static_cast<PlatformSpecificOAuth2TokenService*>(
+      GetForProfile(profile));
+}
 
 // static
 ProfileOAuth2TokenServiceFactory*
@@ -45,16 +49,12 @@ ProfileOAuth2TokenServiceFactory*
   return Singleton<ProfileOAuth2TokenServiceFactory>::get();
 }
 
-BrowserContextKeyedService*
-ProfileOAuth2TokenServiceFactory::BuildServiceInstanceFor(
+KeyedService* ProfileOAuth2TokenServiceFactory::BuildServiceInstanceFor(
     content::BrowserContext* context) const {
   Profile* profile = static_cast<Profile*>(context);
-  ProfileOAuth2TokenService* service;
-#if defined(OS_ANDROID)
-  service = new AndroidProfileOAuth2TokenService();
-#else
-  service = new ProfileOAuth2TokenService();
-#endif
-  service->Initialize(profile);
+  PlatformSpecificOAuth2TokenService* service =
+      new PlatformSpecificOAuth2TokenService();
+  service->Initialize(
+      ChromeSigninClientFactory::GetInstance()->GetForProfile(profile));
   return service;
 }

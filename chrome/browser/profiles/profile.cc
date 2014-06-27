@@ -13,13 +13,14 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/sync/profile_sync_service.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/browser/sync/sync_prefs.h"
 #include "chrome/common/pref_names.h"
+#include "components/sync_driver/sync_prefs.h"
 #include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
+#include "extensions/browser/pref_names.h"
 
 #if defined(OS_CHROMEOS)
 #include "base/command_line.h"
@@ -63,6 +64,12 @@ void Profile::RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
       prefs::kSearchSuggestEnabled,
       true,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+#if defined(OS_ANDROID)
+  registry->RegisterIntegerPref(
+      prefs::kContextualSearchEnabled,
+      0,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+#endif
   registry->RegisterBooleanPref(
       prefs::kSessionExitedCleanly,
       true,
@@ -75,6 +82,10 @@ void Profile::RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
       prefs::kSafeBrowsingEnabled,
       true,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kSafeBrowsingDownloadFeedbackEnabled,
+      false,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
   registry->RegisterBooleanPref(
       prefs::kSafeBrowsingReportingEnabled,
       false,
@@ -94,7 +105,7 @@ void Profile::RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
       false,
       user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
   registry->RegisterBooleanPref(
-      prefs::kExtensionAlertsInitializedPref,
+      extensions::pref_names::kAlertsInitialized,
       false,
       user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
   registry->RegisterStringPref(
@@ -155,10 +166,19 @@ void Profile::RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
       prefs::kSpdyProxyAuthWasEnabledBefore,
       false,
       user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
-
 #endif  // defined(OS_ANDROID) || defined(OS_IOS)
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS) && !defined(OS_IOS)
+  // Preferences related to the avatar bubble and user manager tutorials.
+  registry->RegisterIntegerPref(
+      prefs::kProfileAvatarTutorialShown,
+      0,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kProfileUserManagerTutorialShown,
+      false,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+#endif
 }
-
 
 std::string Profile::GetDebugName() {
   std::string name = GetPath().BaseName().MaybeAsASCII();
@@ -193,7 +213,7 @@ bool Profile::IsSyncAccessible() {
 
   // No ProfileSyncService created yet - we don't want to create one, so just
   // infer the accessible state by looking at prefs/command line flags.
-  browser_sync::SyncPrefs prefs(GetPrefs());
+  sync_driver::SyncPrefs prefs(GetPrefs());
   return ProfileSyncService::IsSyncEnabled() && !prefs.IsManaged();
 }
 

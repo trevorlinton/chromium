@@ -9,7 +9,7 @@
 
 #include "base/android/scoped_java_ref.h"
 #include "base/memory/scoped_ptr.h"
-#include "chrome/common/cancelable_task_tracker.h"
+#include "base/task/cancelable_task_tracker.h"
 
 class FaviconHelper {
  public:
@@ -27,11 +27,10 @@ class FaviconHelper {
       jobject obj,
       jobject jprofile,
       jstring j_page_url);
-  jint GetDominantColorForBitmap(JNIEnv* env, jobject obj, jobject bitmap);
   static bool RegisterFaviconHelper(JNIEnv* env);
 
  private:
-  scoped_ptr<CancelableTaskTracker> cancelable_task_tracker_;
+  scoped_ptr<base::CancelableTaskTracker> cancelable_task_tracker_;
 
   virtual ~FaviconHelper();
 

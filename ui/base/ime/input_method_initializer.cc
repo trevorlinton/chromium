@@ -4,25 +4,17 @@
 
 #include "ui/base/ime/input_method_initializer.h"
 
-#include "ui/base/ime/input_method_factory.h"
-
 #if defined(OS_CHROMEOS)
+#include "ui/base/ime/chromeos/ime_bridge.h"
+#elif defined(USE_AURA) && defined(OS_LINUX) && !defined(USE_OZONE)
 #include "base/logging.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/ime/ibus_bridge.h"
-#elif defined(USE_AURA) && defined(USE_X11)
-#include "base/memory/scoped_ptr.h"
 #include "ui/base/ime/linux/fake_input_method_context_factory.h"
-#elif defined(OS_WIN)
-#include "base/win/metro.h"
-#include "ui/base/ime/win/tsf_bridge.h"
 #endif
 
 namespace {
 
-#if defined(OS_CHROMEOS)
-bool dbus_thread_manager_was_initialized = false;
-#elif defined(USE_AURA) && defined(USE_X11)
+#if !defined(OS_CHROMEOS) && defined(USE_AURA) && defined(OS_LINUX) && \
+    !defined(USE_OZONE)
 const ui::LinuxInputMethodContextFactory* g_linux_input_method_context_factory;
 #endif
 
@@ -32,32 +24,20 @@ namespace ui {
 
 void InitializeInputMethod() {
 #if defined(OS_CHROMEOS)
-  chromeos::IBusBridge::Initialize();
-#elif defined(OS_WIN)
-  if (base::win::IsTSFAwareRequired())
-    ui::TSFBridge::Initialize();
+  chromeos::IMEBridge::Initialize();
 #endif
 }
 
 void ShutdownInputMethod() {
 #if defined(OS_CHROMEOS)
-  chromeos::IBusBridge::Shutdown();
-#elif defined(OS_WIN)
-  ui::internal::DestroySharedInputMethod();
-  if (base::win::IsTSFAwareRequired())
-    ui::TSFBridge::Shutdown();
+  chromeos::IMEBridge::Shutdown();
 #endif
 }
 
 void InitializeInputMethodForTesting() {
 #if defined(OS_CHROMEOS)
-  chromeos::IBusBridge::Initialize();
-  // TODO(nona): Remove DBusThreadManager initialize.
-  if (!chromeos::DBusThreadManager::IsInitialized()) {
-    chromeos::DBusThreadManager::InitializeWithStub();
-    dbus_thread_manager_was_initialized = true;
-  }
-#elif defined(USE_AURA) && defined(USE_X11)
+  chromeos::IMEBridge::Initialize();
+#elif defined(USE_AURA) && defined(OS_LINUX) && !defined(USE_OZONE)
   if (!g_linux_input_method_context_factory)
     g_linux_input_method_context_factory = new FakeInputMethodContextFactory();
   const LinuxInputMethodContextFactory* factory =
@@ -67,24 +47,13 @@ void InitializeInputMethodForTesting() {
       << "else.";
   LinuxInputMethodContextFactory::SetInstance(
       g_linux_input_method_context_factory);
-#elif defined(OS_WIN)
-  if (base::win::IsTSFAwareRequired()) {
-    // Make sure COM is initialized because TSF depends on COM.
-    CoInitialize(NULL);
-    ui::TSFBridge::Initialize();
-  }
 #endif
 }
 
 void ShutdownInputMethodForTesting() {
 #if defined(OS_CHROMEOS)
-  chromeos::IBusBridge::Shutdown();
-  // TODO(nona): Remove DBusThreadManager finalize.
-  if (dbus_thread_manager_was_initialized) {
-    chromeos::DBusThreadManager::Shutdown();
-    dbus_thread_manager_was_initialized = false;
-  }
-#elif defined(USE_AURA) && defined(USE_X11)
+  chromeos::IMEBridge::Shutdown();
+#elif defined(USE_AURA) && defined(OS_LINUX) && !defined(USE_OZONE)
   const LinuxInputMethodContextFactory* factory =
       LinuxInputMethodContextFactory::instance();
   CHECK(!factory || factory == g_linux_input_method_context_factory)
@@ -92,12 +61,6 @@ void ShutdownInputMethodForTesting() {
   LinuxInputMethodContextFactory::SetInstance(NULL);
   delete g_linux_input_method_context_factory;
   g_linux_input_method_context_factory = NULL;
-#elif defined(OS_WIN)
-  ui::internal::DestroySharedInputMethod();
-  if (base::win::IsTSFAwareRequired()) {
-    ui::TSFBridge::Shutdown();
-    CoUninitialize();
-  }
 #endif
 }
 

@@ -2,39 +2,50 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+
+import telemetry.core.timeline.bounds as timeline_bounds
+from telemetry.page.actions import wait_until
+
 class PageActionNotSupported(Exception):
   pass
 
 class PageActionFailed(Exception):
   pass
 
+class PageActionInvalidTimelineMarker(Exception):
+  pass
+
 class PageAction(object):
   """Represents an action that a user might try to perform to a page."""
+  _next_timeline_marker_id = 0
+
   def __init__(self, attributes=None):
     if attributes:
       for k, v in attributes.iteritems():
         setattr(self, k, v)
-
-  def CustomizeBrowserOptions(self, options):
-    """Override to add action-specific options to the BrowserOptions
-    object."""
-    pass
+    self._timeline_marker_base_name = None
+    self._timeline_marker_id = None
+    if hasattr(self, 'wait_until'):
+      self.wait_until = wait_until.WaitUntil(self, self.wait_until)
+    else:
+      self.wait_until = None
 
   def WillRunAction(self, page, tab):
     """Override to do action-specific setup before
     Test.WillRunAction is called."""
     pass
 
-  def RunAction(self, page, tab, previous_action):
-    raise NotImplementedError()
+  def WillWaitAfterRun(self):
+    return self.wait_until is not None
 
-  def RunsPreviousAction(self):
-    """Some actions require some initialization to be performed before the
-    previous action. For example, wait for href change needs to record the old
-    href before the previous action changes it. Therefore, we allow actions to
-    run the previous action. An action that does this should override this to
-    return True in order to prevent the previous action from being run twice."""
-    return False
+  def RunActionAndMaybeWait(self, page, tab):
+    if self.wait_until:
+      self.wait_until.RunActionAndWait(page, tab)
+    else:
+      self.RunAction(page, tab)
+
+  def RunAction(self, page, tab):
+    raise NotImplementedError()
 
   def CleanUp(self, page, tab):
     pass
@@ -60,5 +71,31 @@ class PageAction(object):
     """
     raise Exception('This action cannot be bound.')
 
-  def GetTimelineMarkerLabel(self):
-    return None
+  @staticmethod
+  def ResetNextTimelineMarkerId():
+    PageAction._next_timeline_marker_id = 0
+
+  def _SetTimelineMarkerBaseName(self, name):
+    self._timeline_marker_base_name = name
+    self._timeline_marker_id = PageAction._next_timeline_marker_id
+    PageAction._next_timeline_marker_id += 1
+
+  def _GetUniqueTimelineMarkerName(self):
+    if self._timeline_marker_base_name:
+      return \
+        '%s_%d' % (self._timeline_marker_base_name, self._timeline_marker_id)
+    else:
+      return None
+
+  def GetActiveRangeOnTimeline(self, timeline):
+    active_range = timeline_bounds.Bounds()
+
+    if self._GetUniqueTimelineMarkerName():
+      active_range.AddEvent(
+          timeline.GetEventOfName(self._GetUniqueTimelineMarkerName(),
+                                  True, True))
+    if self.wait_until:
+      active_range.AddBounds(
+          self.wait_until.GetActiveRangeOnTimeline(timeline))
+
+    return active_range

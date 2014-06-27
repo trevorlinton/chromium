@@ -15,10 +15,17 @@
 #include "chrome/browser/notifications/desktop_notification_service.h"
 #include "chrome/browser/notifications/notification.h"
 #include "chrome/browser/notifications/notification_test_util.h"
+#include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/test/render_view_test.h"
 #include "content/public/test/test_browser_thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if defined(USE_AURA)
+namespace wm {
+class WMState;
+}
+#endif
 
 class ActiveDesktopMonitor;
 class DesktopNotificationsTest;
@@ -94,6 +101,10 @@ class DesktopNotificationsTest : public testing::Test {
   // Constructs a notification parameter structure for use in tests.
   content::ShowDesktopNotificationHostMsgParams StandardTestNotification();
 
+  // Must be first member. Because we're running a unit test in browser_tests
+  // we need to handle TestingBrowserProcess initialization ourselves.
+  TestingBrowserProcessInitializer initializer_;
+
   // Create a message loop to allow notifications code to post tasks,
   // and a thread so that notifications code runs on the expected thread.
   base::MessageLoopForUI message_loop_;
@@ -116,6 +127,13 @@ class DesktopNotificationsTest : public testing::Test {
 
   // Contains the cumulative output of the unit test.
   static std::string log_output_;
+
+ private:
+#if defined(USE_AURA)
+  scoped_ptr<wm::WMState> wm_state_;
+#endif
+
+  DISALLOW_COPY_AND_ASSIGN(DesktopNotificationsTest);
 };
 
 #endif  // CHROME_BROWSER_NOTIFICATIONS_DESKTOP_NOTIFICATIONS_UNITTEST_H_

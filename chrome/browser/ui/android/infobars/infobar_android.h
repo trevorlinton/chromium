@@ -31,7 +31,7 @@ class InfoBarAndroid : public InfoBar {
     ACTION_TRANSLATE_SHOW_ORIGINAL = 4,
   };
 
-  InfoBarAndroid(InfoBarService* owner, InfoBarDelegate* delegate);
+  explicit InfoBarAndroid(scoped_ptr<InfoBarDelegate> delegate);
   virtual ~InfoBarAndroid();
 
   // InfoBar:
@@ -70,8 +70,6 @@ class InfoBarAndroid : public InfoBar {
   void CloseInfoBar();
 
  private:
-  // The InfoBar's delegate.
-  InfoBarDelegate* delegate_;
   base::android::ScopedJavaGlobalRef<jobject> java_info_bar_;
 
   DISALLOW_COPY_AND_ASSIGN(InfoBarAndroid);

@@ -8,8 +8,6 @@
 #include <CoreServices/CoreServices.h>
 #include <Security/Security.h>
 
-#include <cert.h>
-
 #include <vector>
 
 #include "base/lazy_instance.h"
@@ -24,7 +22,6 @@
 #include "base/synchronization/lock.h"
 #include "crypto/cssm_init.h"
 #include "crypto/mac_security_services_lock.h"
-#include "crypto/nss_util.h"
 #include "net/cert/x509_util_mac.h"
 
 using base::ScopedCFTypeRef;
@@ -198,99 +195,6 @@ void AddCertificatesFromBytes(const char* data, size_t length,
     }
   }
 }
-
-struct CSSMOIDString {
-  const CSSM_OID* oid_;
-  std::string string_;
-};
-
-typedef std::vector<CSSMOIDString> CSSMOIDStringVector;
-
-bool CERTNameToCSSMOIDVector(CERTName* name, CSSMOIDStringVector* out_values) {
-  struct OIDCSSMMap {
-    SECOidTag sec_OID_;
-    const CSSM_OID* cssm_OID_;
-  };
-
-  const OIDCSSMMap kOIDs[] = {
-      { SEC_OID_AVA_COMMON_NAME, &CSSMOID_CommonName },
-      { SEC_OID_AVA_COUNTRY_NAME, &CSSMOID_CountryName },
-      { SEC_OID_AVA_LOCALITY, &CSSMOID_LocalityName },
-      { SEC_OID_AVA_STATE_OR_PROVINCE, &CSSMOID_StateProvinceName },
-      { SEC_OID_AVA_STREET_ADDRESS, &CSSMOID_StreetAddress },
-      { SEC_OID_AVA_ORGANIZATION_NAME, &CSSMOID_OrganizationName },
-      { SEC_OID_AVA_ORGANIZATIONAL_UNIT_NAME, &CSSMOID_OrganizationalUnitName },
-      { SEC_OID_AVA_DN_QUALIFIER, &CSSMOID_DNQualifier },
-      { SEC_OID_RFC1274_UID, &CSSMOID_UniqueIdentifier },
-      { SEC_OID_PKCS9_EMAIL_ADDRESS, &CSSMOID_EmailAddress },
-  };
-
-  CERTRDN** rdns = name->rdns;
-  for (size_t rdn = 0; rdns[rdn]; ++rdn) {
-    CERTAVA** avas = rdns[rdn]->avas;
-    for (size_t pair = 0; avas[pair] != 0; ++pair) {
-      SECOidTag tag = CERT_GetAVATag(avas[pair]);
-      if (tag == SEC_OID_UNKNOWN) {
-        return false;
-      }
-      CSSMOIDString oidString;
-      bool found_oid = false;
-      for (size_t oid = 0; oid < ARRAYSIZE_UNSAFE(kOIDs); ++oid) {
-        if (kOIDs[oid].sec_OID_ == tag) {
-          SECItem* decode_item = CERT_DecodeAVAValue(&avas[pair]->value);
-          if (!decode_item)
-            return false;
-
-          // TODO(wtc): Pass decode_item to CERT_RFC1485_EscapeAndQuote.
-          std::string value(reinterpret_cast<char*>(decode_item->data),
-                            decode_item->len);
-          oidString.oid_ = kOIDs[oid].cssm_OID_;
-          oidString.string_ = value;
-          out_values->push_back(oidString);
-          SECITEM_FreeItem(decode_item, PR_TRUE);
-          found_oid = true;
-          break;
-        }
-      }
-      if (!found_oid) {
-        DLOG(ERROR) << "Unrecognized OID: " << tag;
-      }
-    }
-  }
-  return true;
-}
-
-class ScopedCertName {
- public:
-  explicit ScopedCertName(CERTName* name) : name_(name) { }
-  ~ScopedCertName() {
-    if (name_) CERT_DestroyName(name_);
-  }
-  operator CERTName*() { return name_; }
-
- private:
-  CERTName* name_;
-};
-
-class ScopedEncodedCertResults {
- public:
-  explicit ScopedEncodedCertResults(CSSM_TP_RESULT_SET* results)
-      : results_(results) { }
-  ~ScopedEncodedCertResults() {
-    if (results_) {
-      CSSM_ENCODED_CERT* encCert =
-          reinterpret_cast<CSSM_ENCODED_CERT*>(results_->Results);
-      for (uint32 i = 0; i < results_->NumberOfResults; i++) {
-        crypto::CSSMFree(encCert[i].CertBlob.Data);
-      }
-      crypto::CSSMFree(results_->Results);
-      crypto::CSSMFree(results_);
-    }
-  }
-
- private:
-  CSSM_TP_RESULT_SET* results_;
-};
 
 }  // namespace
 

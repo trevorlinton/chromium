@@ -6,8 +6,8 @@
 #define UI_VIEWS_CONTROLS_BUTTON_LABEL_BUTTON_H_
 
 #include "base/compiler_specific.h"
+#include "base/memory/scoped_ptr.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "ui/gfx/font.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/views/controls/button/custom_button.h"
 #include "ui/views/controls/image_view.h"
@@ -16,13 +16,19 @@
 
 namespace views {
 
+class LabelButtonBorder;
+class Painter;
+
 // LabelButton is an alternative to TextButton, it's not focusable by default.
 class VIEWS_EXPORT LabelButton : public CustomButton,
                                  public NativeThemeDelegate {
  public:
+  // The length of the hover fade animation.
+  static const int kHoverAnimationDurationMs;
+
   static const char kViewClassName[];
 
-  LabelButton(ButtonListener* listener, const string16& text);
+  LabelButton(ButtonListener* listener, const base::string16& text);
   virtual ~LabelButton();
 
   // Get or set the image shown for the specified button state.
@@ -31,8 +37,8 @@ class VIEWS_EXPORT LabelButton : public CustomButton,
   void SetImage(ButtonState for_state, const gfx::ImageSkia& image);
 
   // Get or set the text shown on the button.
-  const string16& GetText() const;
-  void SetText(const string16& text);
+  const base::string16& GetText() const;
+  void SetText(const base::string16& text);
 
   // Set the text color shown for the specified button state.
   void SetTextColor(ButtonState for_state, SkColor color);
@@ -41,9 +47,9 @@ class VIEWS_EXPORT LabelButton : public CustomButton,
   bool GetTextMultiLine() const;
   void SetTextMultiLine(bool text_multi_line);
 
-  // Get or set the font used by this button.
-  const gfx::Font& GetFont() const;
-  void SetFont(const gfx::Font& font);
+  // Get or set the font list used by this button.
+  const gfx::FontList& GetFontList() const;
+  void SetFontList(const gfx::FontList& font_list);
 
   // Set the elide behavior of this button.
   void SetElideBehavior(Label::ElideBehavior elide_behavior);
@@ -65,13 +71,21 @@ class VIEWS_EXPORT LabelButton : public CustomButton,
   ButtonStyle style() const { return style_; }
   void SetStyle(ButtonStyle style);
 
-  // Overridden from View:
+  void SetFocusPainter(scoped_ptr<Painter> focus_painter);
+
+  // View:
   virtual gfx::Size GetPreferredSize() OVERRIDE;
   virtual void Layout() OVERRIDE;
   virtual const char* GetClassName() const OVERRIDE;
 
  protected:
-   Label* label() const { return label_; }
+  ImageView* image() const { return image_; }
+  Label* label() const { return label_; }
+
+  // View:
+  virtual void OnPaint(gfx::Canvas* canvas) OVERRIDE;
+  virtual void OnFocus() OVERRIDE;
+  virtual void OnBlur() OVERRIDE;
 
   // Fill |params| with information about the button.
   virtual void GetExtraParams(ui::NativeTheme::ExtraParams* params) const;
@@ -82,23 +96,30 @@ class VIEWS_EXPORT LabelButton : public CustomButton,
   // Updates the image view to contain the appropriate button state image.
   void UpdateImage();
 
+  // Updates our border with a specific Border instance which has different
+  // insets, etc. This may wrap the border in an object which will draw a
+  // native style border.
+  void UpdateThemedBorder(scoped_ptr<Border> border);
+
+  // NativeThemeDelegate:
+  virtual gfx::Rect GetThemePaintRect() const OVERRIDE;
+
  private:
   FRIEND_TEST_ALL_PREFIXES(LabelButtonTest, Init);
   FRIEND_TEST_ALL_PREFIXES(LabelButtonTest, Label);
   FRIEND_TEST_ALL_PREFIXES(LabelButtonTest, Image);
   FRIEND_TEST_ALL_PREFIXES(LabelButtonTest, LabelAndImage);
-  FRIEND_TEST_ALL_PREFIXES(LabelButtonTest, Font);
+  FRIEND_TEST_ALL_PREFIXES(LabelButtonTest, FontList);
 
-  // Overridden from CustomButton:
+  // CustomButton:
   virtual void StateChanged() OVERRIDE;
 
-  // Overridden from View:
+  // View:
   virtual void ChildPreferredSizeChanged(View* child) OVERRIDE;
   virtual void OnNativeThemeChanged(const ui::NativeTheme* theme) OVERRIDE;
 
-  // Overridden from NativeThemeDelegate:
+  // NativeThemeDelegate:
   virtual ui::NativeTheme::Part GetThemePart() const OVERRIDE;
-  virtual gfx::Rect GetThemePaintRect() const OVERRIDE;
   virtual ui::NativeTheme::State GetThemeState(
       ui::NativeTheme::ExtraParams* params) const OVERRIDE;
   virtual const gfx::Animation* GetThemeAnimation() const OVERRIDE;
@@ -110,6 +131,10 @@ class VIEWS_EXPORT LabelButton : public CustomButton,
   // The image and label shown in the button.
   ImageView* image_;
   Label* label_;
+
+  // The cached font lists in the normal and bold style.
+  gfx::FontList cached_normal_font_list_;
+  gfx::FontList cached_bold_font_list_;
 
   // The images and colors for each button state.
   gfx::ImageSkia button_state_images_[STATE_COUNT];
@@ -130,6 +155,8 @@ class VIEWS_EXPORT LabelButton : public CustomButton,
 
   // The button's overall style.
   ButtonStyle style_;
+
+  scoped_ptr<Painter> focus_painter_;
 
   DISALLOW_COPY_AND_ASSIGN(LabelButton);
 };

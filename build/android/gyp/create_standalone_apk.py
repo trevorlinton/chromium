@@ -23,10 +23,9 @@ def CreateStandaloneApk(options):
       intermediate_path = intermediate_file.name
       shutil.copy(options.input_apk_path, intermediate_path)
       apk_path_abs = os.path.abspath(intermediate_path)
-      build_utils.CheckCallDie(
+      build_utils.CheckOutput(
           ['zip', '-r', '-1', apk_path_abs, 'lib'],
-          cwd=options.libraries_top_dir,
-          suppress_output=True)
+          cwd=options.libraries_top_dir)
       shutil.copy(intermediate_path, options.output_apk_path)
 
   input_paths = [options.input_apk_path, options.libraries_top_dir]
@@ -37,7 +36,7 @@ def CreateStandaloneApk(options):
       input_paths=input_paths)
 
 
-def main(argv):
+def main():
   parser = optparse.OptionParser()
   parser.add_option('--libraries-top-dir',
       help='Top directory that contains libraries '
@@ -58,4 +57,4 @@ def main(argv):
 
 
 if __name__ == '__main__':
-  sys.exit(main(sys.argv))
+  sys.exit(main())

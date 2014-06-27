@@ -32,8 +32,7 @@ class ChildTraceMessageFilter : public IPC::ChannelProxy::MessageFilter {
   // Message handlers.
   void OnBeginTracing(const std::string& category_filter_str,
                       base::TimeTicks browser_time,
-                      int options,
-                      bool tracing_startup);
+                      int options);
   void OnEndTracing();
   void OnEnableMonitoring(const std::string& category_filter_str,
                           base::TimeTicks browser_time,
@@ -44,6 +43,7 @@ class ChildTraceMessageFilter : public IPC::ChannelProxy::MessageFilter {
   void OnSetWatchEvent(const std::string& category_name,
                        const std::string& event_name);
   void OnCancelWatchEvent();
+  void OnWatchEventMatched();
 
   // Callback from trace subsystem.
   void OnTraceDataCollected(
@@ -53,8 +53,6 @@ class ChildTraceMessageFilter : public IPC::ChannelProxy::MessageFilter {
   void OnMonitoringTraceDataCollected(
       const scoped_refptr<base::RefCountedString>& events_str_ptr,
       bool has_more_events);
-
-  void OnTraceNotification(int notification);
 
   IPC::Channel* channel_;
   base::MessageLoopProxy* ipc_message_loop_;

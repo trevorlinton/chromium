@@ -52,6 +52,7 @@ class NET_EXPORT_PRIVATE QuicHttpStream :
   virtual bool IsConnectionReused() const OVERRIDE;
   virtual void SetConnectionReused() OVERRIDE;
   virtual bool IsConnectionReusable() const OVERRIDE;
+  virtual int64 GetTotalReceivedBytes() const OVERRIDE;
   virtual bool GetLoadTimingInfo(
       LoadTimingInfo* load_timing_info) const OVERRIDE;
   virtual void GetSSLInfo(SSLInfo* ssl_info) OVERRIDE;
@@ -62,8 +63,6 @@ class NET_EXPORT_PRIVATE QuicHttpStream :
   virtual void SetPriority(RequestPriority priority) OVERRIDE;
 
   // QuicReliableClientStream::Delegate implementation
-  virtual int OnSendData() OVERRIDE;
-  virtual int OnSendDataComplete(int status, bool* eof) OVERRIDE;
   virtual int OnDataReceived(const char* data, int length) OVERRIDE;
   virtual void OnClose(QuicErrorCode error) OVERRIDE;
   virtual void OnError(int error) OVERRIDE;
@@ -131,6 +130,9 @@ class NET_EXPORT_PRIVATE QuicHttpStream :
   // response.
   int response_status_;
 
+  // Serialized request headers.
+  SpdyHeaderBlock request_headers_;
+
   bool response_headers_received_;
 
   // Serialized HTTP request.
@@ -142,6 +144,9 @@ class NET_EXPORT_PRIVATE QuicHttpStream :
   // We buffer the response body as it arrives asynchronously from the stream.
   // TODO(rch): This is infinite buffering, which is bad.
   std::list<scoped_refptr<IOBufferWithSize> > response_body_;
+
+  // Number of bytes received when the stream was closed.
+  int64 closed_stream_received_bytes_;
 
   // The caller's callback to be used for asynchronous operations.
   CompletionCallback callback_;

@@ -10,7 +10,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/image/image_skia_rep.h"
 
-using aura::RootWindow;
 using aura::Window;
 
 namespace {
@@ -41,7 +40,8 @@ gfx::ImageSkia CreateTestImage(const gfx::Size& size) {
     }
   }
 
-  return gfx::ImageSkia::CreateFrom1xBitmap(src);
+  gfx::ImageSkia image = gfx::ImageSkia::CreateFrom1xBitmap(src);
+  return image;
 }
 
 bool IsColor(const gfx::ImageSkia& image, const uint32_t expect) {
@@ -74,7 +74,7 @@ class WallpaperResizerTest : public testing::Test,
     resizer->StartResize();
     WaitForResize();
     resizer->RemoveObserver(this);
-    return resizer->wallpaper_image();
+    return resizer->image();
   }
 
   void WaitForResize() {
@@ -139,6 +139,21 @@ TEST_F(WallpaperResizerTest, AllLayoutDifferent) {
   EXPECT_TRUE(IsColor(center_cropped, kExpectedCenterCropped));
   EXPECT_TRUE(IsColor(stretch, kExpectedStretch));
   EXPECT_TRUE(IsColor(tile, kExpectedTile));
+}
+
+TEST_F(WallpaperResizerTest, ImageId) {
+  gfx::ImageSkia image = CreateTestImage(
+      gfx::Size(kTestImageWidth, kTestImageHeight));
+
+  // Create a WallpaperResizer and check that it reports an original image ID
+  // both pre- and post-resize that matches the ID returned by GetImageId().
+  WallpaperResizer resizer(image, gfx::Size(10, 20), WALLPAPER_LAYOUT_STRETCH);
+  EXPECT_EQ(WallpaperResizer::GetImageId(image), resizer.original_image_id());
+  resizer.AddObserver(this);
+  resizer.StartResize();
+  WaitForResize();
+  resizer.RemoveObserver(this);
+  EXPECT_EQ(WallpaperResizer::GetImageId(image), resizer.original_image_id());
 }
 
 }  // namespace internal

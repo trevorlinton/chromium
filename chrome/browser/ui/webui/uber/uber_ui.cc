@@ -12,7 +12,6 @@
 #include "chrome/browser/ui/webui/chrome_web_ui_controller_factory.h"
 #include "chrome/browser/ui/webui/extensions/extensions_ui.h"
 #include "chrome/browser/ui/webui/options/options_ui.h"
-#include "chrome/common/extensions/extension_set.h"
 #include "chrome/common/extensions/manifest_url_handler.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/navigation_controller.h"
@@ -21,10 +20,12 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
+#include "extensions/common/extension_set.h"
 #include "grit/browser_resources.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
 
+using base::ASCIIToUTF16;
 using content::NavigationController;
 using content::NavigationEntry;
 using content::RenderViewHost;
@@ -68,10 +69,10 @@ content::WebUIDataSource* CreateUberHTMLSource() {
 
 // Determines whether the user has an active extension of the given type.
 bool HasExtensionType(Profile* profile, const char* extensionType) {
-  const ExtensionSet* extensionSet =
+  const extensions::ExtensionSet* extensionSet =
       profile->GetExtensionService()->extensions();
 
-  for (ExtensionSet::const_iterator iter = extensionSet->begin();
+  for (extensions::ExtensionSet::const_iterator iter = extensionSet->begin();
        iter != extensionSet->end(); ++iter) {
     extensions::URLOverrides::URLOverrideMap map =
         extensions::URLOverrides::GetChromeURLOverrides(iter->get());
@@ -130,23 +131,35 @@ UberUI::UberUI(content::WebUI* web_ui) : WebUIController(web_ui) {
   Profile* profile = Profile::FromWebUI(web_ui);
   content::WebUIDataSource::Add(profile, CreateUberHTMLSource());
 
-  RegisterSubpage(chrome::kChromeUIExtensionsFrameURL);
-  RegisterSubpage(chrome::kChromeUIHelpFrameURL);
-  RegisterSubpage(chrome::kChromeUIHistoryFrameURL);
-  RegisterSubpage(chrome::kChromeUISettingsFrameURL);
-  RegisterSubpage(chrome::kChromeUIUberFrameURL);
+  RegisterSubpage(chrome::kChromeUIExtensionsFrameURL,
+                  chrome::kChromeUIExtensionsHost);
+  RegisterSubpage(chrome::kChromeUIHelpFrameURL,
+                  chrome::kChromeUIHelpHost);
+  RegisterSubpage(chrome::kChromeUIHistoryFrameURL,
+                  chrome::kChromeUIHistoryHost);
+  RegisterSubpage(chrome::kChromeUISettingsFrameURL,
+                  chrome::kChromeUISettingsHost);
+  RegisterSubpage(chrome::kChromeUIUberFrameURL,
+                  chrome::kChromeUIUberHost);
 }
 
 UberUI::~UberUI() {
   STLDeleteValues(&sub_uis_);
 }
 
-void UberUI::RegisterSubpage(const std::string& page_url) {
-  content::WebUI* webui =
-      web_ui()->GetWebContents()->CreateWebUI(GURL(page_url));
+void UberUI::RegisterSubpage(const std::string& page_url,
+                             const std::string& page_host) {
+  GURL page_gurl(page_url);
+  content::WebUI* webui = web_ui()->GetWebContents()->CreateWebUI(page_gurl);
 
-  webui->SetFrameXPath("//iframe[starts-with(@src,'" + page_url + "')]");
+  webui->OverrideJavaScriptFrame(page_host);
   sub_uis_[page_url] = webui;
+}
+
+content::WebUI* UberUI::GetSubpage(const std::string& page_url) {
+  if (!sub_uis_.count(page_url))
+    return NULL;
+  return sub_uis_[page_url];
 }
 
 void UberUI::RenderViewCreated(RenderViewHost* render_view_host) {
@@ -165,7 +178,7 @@ void UberUI::RenderViewReused(RenderViewHost* render_view_host) {
 
 bool UberUI::OverrideHandleWebUIMessage(const GURL& source_url,
                                         const std::string& message,
-                                        const ListValue& args) {
+                                        const base::ListValue& args) {
   // Find the appropriate subpage and forward the message.
   SubpageMap::iterator subpage = sub_uis_.find(source_url.GetOrigin().spec());
   if (subpage == sub_uis_.end()) {
@@ -191,7 +204,7 @@ UberFrameUI::UberFrameUI(content::WebUI* web_ui) : WebUIController(web_ui) {
   // Register as an observer for when extensions are loaded and unloaded.
   registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_LOADED,
       content::Source<Profile>(profile));
-  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED,
+  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
       content::Source<Profile>(profile));
 }
 
@@ -208,7 +221,7 @@ void UberFrameUI::Observe(int type, const content::NotificationSource& source,
     // it opens the history extension if one is installed and enabled or
     // opens the default history page if one is uninstalled or disabled.
     case chrome::NOTIFICATION_EXTENSION_LOADED:
-    case chrome::NOTIFICATION_EXTENSION_UNLOADED: {
+    case chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED: {
       Profile* profile = Profile::FromWebUI(web_ui());
       bool overrides_history =
           HasExtensionType(profile, chrome::kChromeUIHistoryHost);

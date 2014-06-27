@@ -12,8 +12,8 @@
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/common/extensions/extension.h"
 #include "content/public/test/mock_download_item.h"
+#include "extensions/common/extension.h"
 #include "grit/generated_resources.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -152,6 +152,8 @@ TEST_F(DownloadItemModelTest, InterruptedStatus) {
       "Failed - Network disconnected" },
     { content::DOWNLOAD_INTERRUPT_REASON_NETWORK_SERVER_DOWN,
       "Failed - Server unavailable" },
+    { content::DOWNLOAD_INTERRUPT_REASON_NETWORK_INVALID_REQUEST,
+      "Failed - Network error" },
     { content::DOWNLOAD_INTERRUPT_REASON_SERVER_FAILED,
       "Failed - Server problem" },
     { content::DOWNLOAD_INTERRUPT_REASON_SERVER_NO_RANGE,
@@ -175,7 +177,7 @@ TEST_F(DownloadItemModelTest, InterruptedStatus) {
     const TestCase& test_case = kTestCases[i];
     SetupInterruptedDownloadItem(test_case.reason);
     EXPECT_STREQ(test_case.expected_status,
-                 UTF16ToUTF8(model().GetStatusText()).c_str());
+                 base::UTF16ToUTF8(model().GetStatusText()).c_str());
   }
 }
 
@@ -222,6 +224,8 @@ TEST_F(DownloadItemModelTest, InterruptTooltip) {
       "foo.bar\nNetwork disconnected" },
     { content::DOWNLOAD_INTERRUPT_REASON_NETWORK_SERVER_DOWN,
       "foo.bar\nServer unavailable" },
+    { content::DOWNLOAD_INTERRUPT_REASON_NETWORK_INVALID_REQUEST,
+      "foo.bar\nNetwork error" },
     { content::DOWNLOAD_INTERRUPT_REASON_SERVER_FAILED,
       "foo.bar\nServer problem" },
     { content::DOWNLOAD_INTERRUPT_REASON_SERVER_NO_RANGE,
@@ -261,15 +265,15 @@ TEST_F(DownloadItemModelTest, InterruptTooltip) {
     // large enough to accomodate all the strings.
     EXPECT_STREQ(
         test_case.expected_tooltip,
-        UTF16ToUTF8(model().GetTooltipText(font_list,
-                                           kLargeTooltipWidth)).c_str());
+        base::UTF16ToUTF8(model().GetTooltipText(font_list,
+                                                 kLargeTooltipWidth)).c_str());
 
     // Check that if the width is small, the returned tooltip only contains
     // lines of the given width or smaller.
-    std::vector<string16> lines;
-    string16 truncated_tooltip =
+    std::vector<base::string16> lines;
+    base::string16 truncated_tooltip =
         model().GetTooltipText(font_list, kSmallTooltipWidth);
-    Tokenize(truncated_tooltip, ASCIIToUTF16("\n"), &lines);
+    Tokenize(truncated_tooltip, base::ASCIIToUTF16("\n"), &lines);
     for (unsigned i = 0; i < lines.size(); ++i)
       EXPECT_GE(kSmallTooltipWidth, gfx::GetStringWidth(lines[i], font_list));
   }
@@ -343,7 +347,7 @@ TEST_F(DownloadItemModelTest, InProgressStatus) {
         .WillRepeatedly(Return(test_case.is_paused));
 
     EXPECT_STREQ(test_case.expected_status,
-                 UTF16ToUTF8(model().GetStatusText()).c_str());
+                 base::UTF16ToUTF8(model().GetStatusText()).c_str());
   }
 }
 

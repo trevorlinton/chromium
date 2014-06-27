@@ -11,9 +11,11 @@
 
 #include "base/containers/hash_tables.h"
 #include "base/values.h"
+#include "cc/base/scoped_ptr_vector.h"
+#include "cc/base/swap_promise.h"
 #include "cc/layers/layer_impl.h"
+#include "cc/output/renderer.h"
 #include "cc/resources/ui_resource_client.h"
-#include "ui/events/latency_info.h"
 
 #if defined(COMPILER_GCC)
 namespace BASE_HASH_NAMESPACE {
@@ -32,6 +34,7 @@ class ContextProvider;
 class DebugRectHistory;
 class FrameRateCounter;
 class HeadsUpDisplayLayerImpl;
+class LayerScrollOffsetDelegateProxy;
 class LayerTreeDebugState;
 class LayerTreeHostImpl;
 class LayerTreeImpl;
@@ -55,10 +58,12 @@ class CC_EXPORT LayerTreeImpl {
   }
   virtual ~LayerTreeImpl();
 
+  void Shutdown();
+
   // Methods called by the layer tree that pass-through or access LTHI.
   // ---------------------------------------------------------------------------
   const LayerTreeSettings& settings() const;
-  const RendererCapabilities& GetRendererCapabilities() const;
+  const RendererCapabilitiesImpl& GetRendererCapabilities() const;
   ContextProvider* context_provider() const;
   OutputSurface* output_surface() const;
   ResourceProvider* resource_provider() const;
@@ -75,11 +80,10 @@ class CC_EXPORT LayerTreeImpl {
   int MaxTextureSize() const;
   bool PinchGestureActive() const;
   base::TimeTicks CurrentFrameTimeTicks() const;
-  base::Time CurrentFrameTime() const;
-  base::TimeTicks CurrentPhysicalTimeTicks() const;
   void SetNeedsCommit();
   gfx::Size DrawViewportSize() const;
   void StartScrollbarAnimation();
+  void DidAnimateScrollOffset();
 
   // Tree specific methods exposed to layer-impl tree.
   // ---------------------------------------------------------------------------
@@ -110,18 +114,24 @@ class CC_EXPORT LayerTreeImpl {
     hud_layer_ = layer_impl;
   }
 
-  LayerImpl* RootScrollLayer() const;
-  LayerImpl* RootContainerLayer() const;
+  LayerImpl* InnerViewportScrollLayer() const;
+  // This function may return NULL, it is the caller's responsibility to check.
+  LayerImpl* OuterViewportScrollLayer() const;
+  gfx::Vector2dF TotalScrollOffset() const;
+  gfx::Vector2dF TotalMaxScrollOffset() const;
+  gfx::Vector2dF TotalScrollDelta() const;
+
+  LayerImpl* InnerViewportContainerLayer() const;
   LayerImpl* CurrentlyScrollingLayer() const;
   void SetCurrentlyScrollingLayer(LayerImpl* layer);
   void ClearCurrentlyScrollingLayer();
+  float VerticalAdjust(const int clip_layer_id) const;
 
-  void FindRootScrollLayer();
-  void UpdateMaxScrollOffset();
   void SetViewportLayersFromIds(int page_scale_layer_id,
                                 int inner_viewport_scroll_layer_id,
                                 int outer_viewport_scroll_layer_id);
   void ClearViewportLayers();
+  LayerImpl* page_scale_layer() { return page_scale_layer_; }
   void ApplySentScrollAndScaleDeltasFromAbortedCommit();
   void ApplyScrollDeltasSinceBeginMainFrame();
 
@@ -193,6 +203,10 @@ class CC_EXPORT LayerTreeImpl {
   void SetContentsTexturesPurged();
   void ResetContentsTexturesPurged();
 
+  void SetRequiresHighResToDraw();
+  void ResetRequiresHighResToDraw();
+  bool RequiresHighResToDraw() const;
+
   // Set on the active tree when the viewport size recently changed
   // and the active tree's size is now out of date.
   bool ViewportSizeInvalid() const;
@@ -204,10 +218,17 @@ class CC_EXPORT LayerTreeImpl {
 
   void SetRootLayerScrollOffsetDelegate(
       LayerScrollOffsetDelegate* root_layer_scroll_offset_delegate);
+  void UpdateScrollOffsetDelegate();
+  gfx::Vector2dF GetDelegatedScrollOffset(LayerImpl* layer);
 
-  void SetLatencyInfo(const ui::LatencyInfo& latency_info);
-  const ui::LatencyInfo& GetLatencyInfo();
-  void ClearLatencyInfo();
+  // Call this function when you expect there to be a swap buffer.
+  // See swap_promise.h for how to use SwapPromise.
+  void QueueSwapPromise(scoped_ptr<SwapPromise> swap_promise);
+
+  // Take the |new_swap_promise| and append it to |swap_promise_list_|.
+  void PassSwapPromises(ScopedPtrVector<SwapPromise>* new_swap_promise);
+  void FinishSwapPromises(CompositorFrameMetadata* metadata);
+  void BreakSwapPromises(SwapPromise::DidNotSwapReason reason);
 
   void DidModifyTilePriorities();
 
@@ -218,22 +239,21 @@ class CC_EXPORT LayerTreeImpl {
 
   void AddLayerWithCopyOutputRequest(LayerImpl* layer);
   void RemoveLayerWithCopyOutputRequest(LayerImpl* layer);
-  const std::vector<LayerImpl*> LayersWithCopyOutputRequest() const;
+  const std::vector<LayerImpl*>& LayersWithCopyOutputRequest() const;
 
  protected:
   explicit LayerTreeImpl(LayerTreeHostImpl* layer_tree_host_impl);
-
-  void UpdateSolidColorScrollbars();
-
-  void UpdateRootScrollLayerSizeDelta();
 
   LayerTreeHostImpl* layer_tree_host_impl_;
   int source_frame_number_;
   scoped_ptr<LayerImpl> root_layer_;
   HeadsUpDisplayLayerImpl* hud_layer_;
-  LayerImpl* root_scroll_layer_;
   LayerImpl* currently_scrolling_layer_;
   LayerScrollOffsetDelegate* root_layer_scroll_offset_delegate_;
+  scoped_ptr<LayerScrollOffsetDelegateProxy>
+      inner_viewport_scroll_delegate_proxy_;
+  scoped_ptr<LayerScrollOffsetDelegateProxy>
+      outer_viewport_scroll_delegate_proxy_;
   SkColor background_color_;
   bool has_transparent_background_;
 
@@ -260,6 +280,7 @@ class CC_EXPORT LayerTreeImpl {
   LayerImplList render_surface_layer_list_;
 
   bool contents_textures_purged_;
+  bool requires_high_res_to_draw_;
   bool viewport_size_invalid_;
   bool needs_update_draw_properties_;
 
@@ -269,7 +290,7 @@ class CC_EXPORT LayerTreeImpl {
 
   bool next_activation_forces_redraw_;
 
-  ui::LatencyInfo latency_info_;
+  ScopedPtrVector<SwapPromise> swap_promise_list_;
 
   UIResourceRequestQueue ui_resource_request_queue_;
 

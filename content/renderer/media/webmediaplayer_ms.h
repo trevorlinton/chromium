@@ -13,10 +13,10 @@
 #include "cc/layers/video_frame_provider.h"
 #include "media/filters/skcanvas_video_renderer.h"
 #include "skia/ext/platform_canvas.h"
-#include "third_party/WebKit/public/web/WebMediaPlayer.h"
+#include "third_party/WebKit/public/platform/WebMediaPlayer.h"
 #include "url/gurl.h"
 
-namespace WebKit {
+namespace blink {
 class WebFrame;
 class WebMediaPlayerClient;
 }
@@ -47,71 +47,70 @@ class WebMediaPlayerDelegate;
 // AudioPlayer
 //   plays audio streams.
 //
-// WebKit::WebMediaPlayerClient
+// blink::WebMediaPlayerClient
 //   WebKit client of this media player object.
 class WebMediaPlayerMS
-    : public WebKit::WebMediaPlayer,
+    : public blink::WebMediaPlayer,
       public cc::VideoFrameProvider,
       public base::SupportsWeakPtr<WebMediaPlayerMS> {
  public:
   // Construct a WebMediaPlayerMS with reference to the client, and
   // a MediaStreamClient which provides VideoFrameProvider.
-  WebMediaPlayerMS(WebKit::WebFrame* frame,
-                   WebKit::WebMediaPlayerClient* client,
+  WebMediaPlayerMS(blink::WebFrame* frame,
+                   blink::WebMediaPlayerClient* client,
                    base::WeakPtr<WebMediaPlayerDelegate> delegate,
                    MediaStreamClient* media_stream_client,
                    media::MediaLog* media_log);
   virtual ~WebMediaPlayerMS();
 
   virtual void load(LoadType load_type,
-                    const WebKit::WebURL& url,
-                    CORSMode cors_mode) OVERRIDE;
+                    const blink::WebURL& url,
+                    CORSMode cors_mode);
 
   // Playback controls.
-  virtual void play() OVERRIDE;
-  virtual void pause() OVERRIDE;
-  virtual bool supportsFullscreen() const OVERRIDE;
-  virtual bool supportsSave() const OVERRIDE;
+  virtual void play();
+  virtual void pause();
+  virtual bool supportsSave() const;
   virtual void seek(double seconds);
   virtual void setRate(double rate);
   virtual void setVolume(double volume);
-  virtual void setPreload(WebKit::WebMediaPlayer::Preload preload) OVERRIDE;
-  virtual const WebKit::WebTimeRanges& buffered() OVERRIDE;
+  virtual void setPreload(blink::WebMediaPlayer::Preload preload);
+  virtual const blink::WebTimeRanges& buffered();
   virtual double maxTimeSeekable() const;
 
   // Methods for painting.
-  virtual void paint(WebKit::WebCanvas* canvas,
-                     const WebKit::WebRect& rect,
-                     unsigned char alpha) OVERRIDE;
+  virtual void paint(blink::WebCanvas* canvas,
+                     const blink::WebRect& rect,
+                     unsigned char alpha);
 
   // True if the loaded media has a playable video/audio track.
-  virtual bool hasVideo() const OVERRIDE;
-  virtual bool hasAudio() const OVERRIDE;
+  virtual bool hasVideo() const;
+  virtual bool hasAudio() const;
 
   // Dimensions of the video.
-  virtual WebKit::WebSize naturalSize() const OVERRIDE;
+  virtual blink::WebSize naturalSize() const;
 
   // Getters of playback state.
-  virtual bool paused() const OVERRIDE;
-  virtual bool seeking() const OVERRIDE;
+  virtual bool paused() const;
+  virtual bool seeking() const;
   virtual double duration() const;
   virtual double currentTime() const;
 
   // Internal states of loading and network.
-  virtual WebKit::WebMediaPlayer::NetworkState networkState() const OVERRIDE;
-  virtual WebKit::WebMediaPlayer::ReadyState readyState() const OVERRIDE;
+  virtual blink::WebMediaPlayer::NetworkState networkState() const;
+  virtual blink::WebMediaPlayer::ReadyState readyState() const;
 
-  virtual bool didLoadingProgress() const OVERRIDE;
+  virtual bool didLoadingProgress() const;
 
-  virtual bool hasSingleSecurityOrigin() const OVERRIDE;
-  virtual bool didPassCORSAccessCheck() const OVERRIDE;
+  virtual bool hasSingleSecurityOrigin() const;
+  virtual bool didPassCORSAccessCheck() const;
 
   virtual double mediaTimeForTimeValue(double timeValue) const;
 
-  virtual unsigned decodedFrameCount() const OVERRIDE;
-  virtual unsigned droppedFrameCount() const OVERRIDE;
-  virtual unsigned audioDecodedByteCount() const OVERRIDE;
-  virtual unsigned videoDecodedByteCount() const OVERRIDE;
+  virtual unsigned decodedFrameCount() const;
+  virtual unsigned droppedFrameCount() const;
+  virtual unsigned audioDecodedByteCount() const;
+  virtual unsigned videoDecodedByteCount() const;
 
   // VideoFrameProvider implementation.
   virtual void SetVideoFrameProviderClient(
@@ -131,23 +130,23 @@ class WebMediaPlayerMS
 
   // Helpers that set the network/ready state and notifies the client if
   // they've changed.
-  void SetNetworkState(WebKit::WebMediaPlayer::NetworkState state);
-  void SetReadyState(WebKit::WebMediaPlayer::ReadyState state);
+  void SetNetworkState(blink::WebMediaPlayer::NetworkState state);
+  void SetReadyState(blink::WebMediaPlayer::ReadyState state);
 
   // Getter method to |client_|.
-  WebKit::WebMediaPlayerClient* GetClient();
+  blink::WebMediaPlayerClient* GetClient();
 
-  WebKit::WebFrame* frame_;
+  blink::WebFrame* frame_;
 
-  WebKit::WebMediaPlayer::NetworkState network_state_;
-  WebKit::WebMediaPlayer::ReadyState ready_state_;
+  blink::WebMediaPlayer::NetworkState network_state_;
+  blink::WebMediaPlayer::ReadyState ready_state_;
 
-  WebKit::WebTimeRanges buffered_;
+  blink::WebTimeRanges buffered_;
 
   // Used for DCHECKs to ensure methods calls executed in the correct thread.
   base::ThreadChecker thread_checker_;
 
-  WebKit::WebMediaPlayerClient* client_;
+  blink::WebMediaPlayerClient* client_;
 
   base::WeakPtr<WebMediaPlayerDelegate> delegate_;
 
@@ -159,12 +158,15 @@ class WebMediaPlayerMS
 
   // |current_frame_| is updated only on main thread. The object it holds
   // can be freed on the compositor thread if it is the last to hold a
-  // reference but media::VideoFrame is a thread-safe ref-pointer.
+  // reference but media::VideoFrame is a thread-safe ref-pointer. It is
+  // however read on the compositing thread so locking is required around all
+  // modifications on the main thread, and all reads on the compositing thread.
   scoped_refptr<media::VideoFrame> current_frame_;
   // |current_frame_used_| is updated on both main and compositing thread.
   // It's used to track whether |current_frame_| was painted for detecting
   // when to increase |dropped_frame_count_|.
   bool current_frame_used_;
+  // |current_frame_lock_| protects |current_frame_used_| and |current_frame_|.
   base::Lock current_frame_lock_;
   bool pending_repaint_;
 
@@ -177,6 +179,7 @@ class WebMediaPlayerMS
   bool received_first_frame_;
   bool sequence_started_;
   base::TimeDelta start_time_;
+  base::TimeDelta current_time_;
   unsigned total_frame_count_;
   unsigned dropped_frame_count_;
   media::SkCanvasVideoRenderer video_renderer_;

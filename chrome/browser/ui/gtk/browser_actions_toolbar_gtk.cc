@@ -21,7 +21,7 @@
 #include "chrome/browser/extensions/extension_action_manager.h"
 #include "chrome/browser/extensions/extension_context_menu_model.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
+#include "chrome/browser/extensions/extension_toolbar_model.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
@@ -37,9 +37,10 @@
 #include "chrome/browser/ui/gtk/menu_gtk.h"
 #include "chrome/browser/ui/gtk/view_id_util.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/extensions/extension.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
 #include "grit/theme_resources.h"
 #include "grit/ui_resources.h"
@@ -143,7 +144,7 @@ class BrowserActionButton : public content::NotificationObserver,
         this, chrome::NOTIFICATION_EXTENSION_BROWSER_ACTION_UPDATED,
         content::Source<ExtensionAction>(browser_action()));
     registrar_.Add(
-        this, chrome::NOTIFICATION_EXTENSION_UNLOADED,
+        this, chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
         content::Source<Profile>(
             toolbar->browser()->profile()->GetOriginalProfile()));
     registrar_.Add(
@@ -176,7 +177,7 @@ class BrowserActionButton : public content::NotificationObserver,
      case chrome::NOTIFICATION_EXTENSION_BROWSER_ACTION_UPDATED:
       UpdateState();
       break;
-     case chrome::NOTIFICATION_EXTENSION_UNLOADED:
+     case chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED:
      case chrome::NOTIFICATION_WINDOW_CLOSED:
       DisconnectBrowserActionPopupAccelerator();
       break;
@@ -258,16 +259,16 @@ class BrowserActionButton : public content::NotificationObserver,
   // popup will grant tab permissions if |should_grant| is true. Popup's shown
   // via an API should not grant permissions.
   bool Activate(GtkWidget* widget, bool should_grant) {
-    ExtensionToolbarModel* model = toolbar_->model();
+    extensions::ExtensionToolbarModel* model = toolbar_->model();
     const Extension* extension = extension_;
     Browser* browser = toolbar_->browser();
     GURL popup_url;
 
     switch (model->ExecuteBrowserAction(
         extension, browser, &popup_url, should_grant)) {
-      case ExtensionToolbarModel::ACTION_NONE:
+      case extensions::ExtensionToolbarModel::ACTION_NONE:
         break;
-      case ExtensionToolbarModel::ACTION_SHOW_POPUP:
+      case extensions::ExtensionToolbarModel::ACTION_SHOW_POPUP:
         ExtensionPopupGtk::Show(popup_url, browser, widget,
                                 ExtensionPopupGtk::SHOW);
         return true;
@@ -502,9 +503,8 @@ BrowserActionsToolbarGtk::BrowserActionsToolbarGtk(Browser* browser)
       desired_width_(0),
       start_width_(0),
       weak_factory_(this) {
-  ExtensionService* extension_service =
-      extensions::ExtensionSystem::Get(profile_)->extension_service();
-  if (!extension_service)
+  model_ = extensions::ExtensionToolbarModel::Get(profile_);
+  if (!model_)
     return;
 
   overflow_button_.reset(new CustomDrawButton(
@@ -559,7 +559,6 @@ BrowserActionsToolbarGtk::BrowserActionsToolbarGtk(Browser* browser)
   gtk_box_pack_start(GTK_BOX(hbox_.get()), overflow_area_.get(), FALSE, FALSE,
                      0);
 
-  model_ = extension_service->toolbar_model();
   model_->AddObserver(this);
   SetupDrags();
 
@@ -703,9 +702,7 @@ bool BrowserActionsToolbarGtk::ShouldDisplayBrowserAction(
     const Extension* extension) {
   // Only display incognito-enabled extensions while in incognito mode.
   return (!profile_->IsOffTheRecord() ||
-          extension_util:: IsIncognitoEnabled(
-              extension->id(),
-              extensions::ExtensionSystem::Get(profile_)->extension_service()));
+          extensions::util::IsIncognitoEnabled(extension->id(), profile_));
 }
 
 void BrowserActionsToolbarGtk::HidePopup() {
@@ -796,7 +793,7 @@ bool BrowserActionsToolbarGtk::BrowserActionShowPopup(
   return button->Activate(anchor, false);
 }
 
-void BrowserActionsToolbarGtk::ModelLoaded() {
+void BrowserActionsToolbarGtk::VisibleCountChanged() {
   SetContainerWidth();
 }
 
@@ -837,9 +834,9 @@ void BrowserActionsToolbarGtk::ExecuteCommand(int command_id, int event_flags) {
 
   switch (model_->ExecuteBrowserAction(
       extension, browser(), &popup_url, true)) {
-    case ExtensionToolbarModel::ACTION_NONE:
+    case extensions::ExtensionToolbarModel::ACTION_NONE:
       break;
-    case ExtensionToolbarModel::ACTION_SHOW_POPUP:
+    case extensions::ExtensionToolbarModel::ACTION_SHOW_POPUP:
       ExtensionPopupGtk::Show(popup_url, browser(), chevron(),
                               ExtensionPopupGtk::SHOW);
       break;
@@ -1068,7 +1065,8 @@ gboolean BrowserActionsToolbarGtk::OnOverflowButtonPress(
     const Extension* extension = model_->toolbar_items()[model_index].get();
     BrowserActionButton* button = extension_button_map_[extension->id()].get();
 
-    overflow_menu_model_->AddItem(model_index, UTF8ToUTF16(extension->name()));
+    overflow_menu_model_->AddItem(model_index,
+                                  base::UTF8ToUTF16(extension->name()));
     overflow_menu_model_->SetIcon(overflow_menu_model_->GetItemCount() - 1,
                                   button->GetIcon());
 

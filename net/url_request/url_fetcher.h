@@ -12,14 +12,16 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/supports_user_data.h"
-#include "base/task_runner.h"
 #include "net/base/net_export.h"
+#include "net/url_request/url_request.h"
 
 class GURL;
 
 namespace base {
 class FilePath;
 class MessageLoopProxy;
+class SequencedTaskRunner;
+class TaskRunner;
 class TimeDelta;
 }
 
@@ -169,6 +171,11 @@ class NET_EXPORT URLFetcher {
   // started.
   virtual void SetReferrer(const std::string& referrer) = 0;
 
+  // The referrer policy to apply when updating the referrer during redirects.
+  // The referrer policy may only be changed before Start() is called.
+  virtual void SetReferrerPolicy(
+      URLRequest::ReferrerPolicy referrer_policy) = 0;
+
   // Set extra headers on the request.  Must be called before the request
   // is started.
   // This replaces the entire extra request headers.
@@ -179,9 +186,6 @@ class NET_EXPORT URLFetcher {
   // headers.  Must be called before the request is started.
   // This appends the header to the current extra request headers.
   virtual void AddExtraRequestHeader(const std::string& header_line) = 0;
-
-  virtual void GetExtraRequestHeaders(
-      HttpRequestHeaders* headers) const = 0;
 
   // Set the URLRequestContext on the request.  Must be called before the
   // request is started.
@@ -231,7 +235,7 @@ class NET_EXPORT URLFetcher {
   // take ownership by calling GetResponseAsFilePath().
   virtual void SaveResponseToFileAtPath(
       const base::FilePath& file_path,
-      scoped_refptr<base::TaskRunner> file_task_runner) = 0;
+      scoped_refptr<base::SequencedTaskRunner> file_task_runner) = 0;
 
   // By default, the response is saved in a string. Call this method to save the
   // response to a temporary file instead. Must be called before Start().
@@ -239,7 +243,7 @@ class NET_EXPORT URLFetcher {
   // The created file is removed when the URLFetcher is deleted unless you
   // take ownership by calling GetResponseAsFilePath().
   virtual void SaveResponseToTemporaryFile(
-      scoped_refptr<base::TaskRunner> file_task_runner) = 0;
+      scoped_refptr<base::SequencedTaskRunner> file_task_runner) = 0;
 
   // By default, the response is saved in a string. Call this method to use the
   // specified writer to save the response. Must be called before Start().

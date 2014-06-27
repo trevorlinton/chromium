@@ -10,6 +10,7 @@ Usage:
   ./provision_devices.py [-d <device serial number>]
 """
 
+import logging
 import optparse
 import os
 import re
@@ -19,6 +20,9 @@ import time
 
 from pylib import android_commands
 from pylib import constants
+from pylib import device_settings
+from pylib.cmd_helper import GetCmdOutput
+
 
 def KillHostHeartbeat():
   ps = subprocess.Popen(['ps', 'aux'], stdout = subprocess.PIPE)
@@ -65,6 +69,48 @@ def PushAndLaunchAdbReboot(devices, target):
   LaunchHostHeartbeat()
 
 
+def _ConfigureLocalProperties(adb):
+  """Set standard readonly testing device properties prior to reboot."""
+  local_props = [
+      'ro.monkey=1',
+      'ro.test_harness=1',
+      'ro.audio.silent=1',
+      'ro.setupwizard.mode=DISABLED',
+      ]
+  adb.SetProtectedFileContents(android_commands.LOCAL_PROPERTIES_PATH,
+                               '\n'.join(local_props))
+  # Android will not respect the local props file if it is world writable.
+  adb.RunShellCommandWithSU('chmod 644 %s' %
+                            android_commands.LOCAL_PROPERTIES_PATH)
+
+
+def WipeDeviceData(device):
+  """Wipes data from device, keeping only the adb_keys for authorization.
+
+  After wiping data on a device that has been authorized, adb can still
+  communicate with the device, but after reboot the device will need to be
+  re-authorized because the adb keys file is stored in /data/misc/adb/.
+  Thus, before reboot the adb_keys file is rewritten so the device does not need
+  to be re-authorized.
+
+  Arguments:
+    device: the device to wipe
+  """
+  android_cmd = android_commands.AndroidCommands(device)
+  device_authorized = android_cmd.FileExistsOnDevice(constants.ADB_KEYS_FILE)
+  if device_authorized:
+    adb_keys = android_cmd.RunShellCommandWithSU(
+      'cat %s' % constants.ADB_KEYS_FILE)[0]
+  android_cmd.RunShellCommandWithSU('wipe data')
+  if device_authorized:
+    path_list = constants.ADB_KEYS_FILE.split('/')
+    dir_path = '/'.join(path_list[:len(path_list)-1])
+    android_cmd.RunShellCommandWithSU('mkdir -p %s' % dir_path)
+    adb_keys = android_cmd.RunShellCommand(
+      'echo %s > %s' % (adb_keys, constants.ADB_KEYS_FILE))
+  android_cmd.Reboot()
+
+
 def ProvisionDevices(options):
   if options.device is not None:
     devices = [options.device]
@@ -72,12 +118,30 @@ def ProvisionDevices(options):
     devices = android_commands.GetAttachedDevices()
   for device in devices:
     android_cmd = android_commands.AndroidCommands(device)
+    install_output = GetCmdOutput(
+      ['%s/build/android/adb_install_apk.py' % constants.DIR_SOURCE_ROOT,
+       '--apk',
+       '%s/build/android/CheckInstallApk-debug.apk' % constants.DIR_SOURCE_ROOT
+       ])
+    failure_string = 'Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]'
+    if failure_string in install_output:
+      WipeDeviceData(device)
+    _ConfigureLocalProperties(android_cmd)
+    device_settings.ConfigureContentSettingsDict(
+        android_cmd, device_settings.DETERMINISTIC_DEVICE_SETTINGS)
+    # TODO(tonyg): We eventually want network on. However, currently radios
+    # can cause perfbots to drain faster than they charge.
+    if 'perf' in os.environ.get('BUILDBOT_BUILDERNAME', '').lower():
+      device_settings.ConfigureContentSettingsDict(
+          android_cmd, device_settings.NETWORK_DISABLED_SETTINGS)
     android_cmd.RunShellCommandWithSU('date -u %f' % time.time())
   if options.auto_reconnect:
     PushAndLaunchAdbReboot(devices, options.target)
 
 
 def main(argv):
+  logging.basicConfig(level=logging.INFO)
+
   parser = optparse.OptionParser()
   parser.add_option('-d', '--device',
                     help='The serial number of the device to be provisioned')

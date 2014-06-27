@@ -8,6 +8,7 @@
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/metrics/user_metrics.h"
 #include "base/stl_util.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -15,8 +16,11 @@
 #include "chrome/browser/feedback/feedback_util.h"
 #include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/signin/signin_manager.h"
 #include "chrome/browser/ui/app_list/app_list_controller_delegate.h"
-#include "chrome/browser/ui/app_list/extension_app_model_builder.h"
+#include "chrome/browser/ui/app_list/app_list_service.h"
+#include "chrome/browser/ui/app_list/app_list_syncable_service.h"
+#include "chrome/browser/ui/app_list/app_list_syncable_service_factory.h"
 #include "chrome/browser/ui/app_list/search/search_controller.h"
 #include "chrome/browser/ui/app_list/start_page_service.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -28,11 +32,13 @@
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/notification_service.h"
-#include "content/public/browser/notification_source.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/user_metrics.h"
+#include "grit/theme_resources.h"
+#include "ui/app_list/app_list_view_delegate_observer.h"
 #include "ui/app_list/search_box_model.h"
+#include "ui/app_list/speech_ui_model.h"
+#include "ui/base/resource/resource_bundle.h"
 
 #if defined(USE_ASH)
 #include "chrome/browser/ui/ash/app_list/app_sync_ui_state_watcher.h"
@@ -43,6 +49,8 @@
 #endif
 
 namespace {
+
+const int kAutoLaunchDefaultTimeoutMilliSec = 50;
 
 #if defined(OS_WIN)
 void CreateShortcutInWebAppDir(
@@ -59,17 +67,19 @@ void CreateShortcutInWebAppDir(
 
 void PopulateUsers(const ProfileInfoCache& profile_info,
                    const base::FilePath& active_profile_path,
-                   app_list::AppListModel::Users* users) {
+                   app_list::AppListViewDelegate::Users* users) {
+  users->clear();
   const size_t count = profile_info.GetNumberOfProfiles();
   for (size_t i = 0; i < count; ++i) {
     // Don't display managed users.
     if (profile_info.ProfileIsManagedAtIndex(i))
       continue;
 
-    app_list::AppListModel::User user;
+    app_list::AppListViewDelegate::User user;
     user.name = profile_info.GetNameOfProfileAtIndex(i);
     user.email = profile_info.GetUserNameOfProfileAtIndex(i);
     user.profile_path = profile_info.GetPathOfProfileAtIndex(i);
+    user.signin_required = profile_info.ProfileIsSigninRequiredAtIndex(i);
     user.active = active_profile_path == user.profile_path;
     users->push_back(user);
   }
@@ -77,46 +87,99 @@ void PopulateUsers(const ProfileInfoCache& profile_info,
 
 }  // namespace
 
-AppListViewDelegate::AppListViewDelegate(
-    scoped_ptr<AppListControllerDelegate> controller,
-    Profile* profile)
-    : controller_(controller.Pass()),
+AppListViewDelegate::AppListViewDelegate(Profile* profile,
+                                         AppListControllerDelegate* controller)
+    : controller_(controller),
       profile_(profile),
-      model_(NULL) {
+      model_(NULL),
+      scoped_observer_(this) {
   CHECK(controller_);
-  RegisterForNotifications();
-  g_browser_process->profile_manager()->GetProfileInfoCache().AddObserver(this);
+  SigninManagerFactory::GetInstance()->AddObserver(this);
+
+  // Start observing all already-created SigninManagers.
+  ProfileManager* profile_manager = g_browser_process->profile_manager();
+  std::vector<Profile*> profiles = profile_manager->GetLoadedProfiles();
+  for (std::vector<Profile*>::iterator i = profiles.begin();
+       i != profiles.end();
+       ++i) {
+    SigninManagerBase* manager =
+        SigninManagerFactory::GetForProfileIfExists(*i);
+    if (manager) {
+      DCHECK(!scoped_observer_.IsObserving(manager));
+      scoped_observer_.Add(manager);
+    }
+  }
+
+  profile_manager->GetProfileInfoCache().AddObserver(this);
+
+  app_list::StartPageService* service =
+      app_list::StartPageService::Get(profile_);
+  speech_ui_.reset(new app_list::SpeechUIModel(
+      service ? service->state() : app_list::SPEECH_RECOGNITION_OFF));
+
+#if defined(GOOGLE_CHROME_BUILD)
+  speech_ui_->set_logo(
+      *ui::ResourceBundle::GetSharedInstance().
+      GetImageSkiaNamed(IDR_APP_LIST_GOOGLE_LOGO_VOICE_SEARCH));
+#endif
+
+  OnProfileChanged();  // sets model_
+  if (service)
+    service->AddObserver(this);
 }
 
 AppListViewDelegate::~AppListViewDelegate() {
+  app_list::StartPageService* service =
+      app_list::StartPageService::Get(profile_);
+  if (service)
+    service->RemoveObserver(this);
   g_browser_process->
       profile_manager()->GetProfileInfoCache().RemoveObserver(this);
+
+  SigninManagerFactory* factory = SigninManagerFactory::GetInstance();
+  if (factory)
+    factory->RemoveObserver(this);
+
+  // Ensure search controller is released prior to speech_ui_.
+  search_controller_.reset();
 }
 
-void AppListViewDelegate::RegisterForNotifications() {
-  registrar_.RemoveAll();
-  DCHECK(profile_);
+void AppListViewDelegate::SigninManagerCreated(SigninManagerBase* manager) {
+  scoped_observer_.Add(manager);
+}
 
-  registrar_.Add(this, chrome::NOTIFICATION_GOOGLE_SIGNIN_SUCCESSFUL,
-                 content::NotificationService::AllSources());
-  registrar_.Add(this, chrome::NOTIFICATION_GOOGLE_SIGNIN_FAILED,
-                 content::NotificationService::AllSources());
-  registrar_.Add(this, chrome::NOTIFICATION_GOOGLE_SIGNED_OUT,
-                 content::NotificationService::AllSources());
+void AppListViewDelegate::SigninManagerShutdown(SigninManagerBase* manager) {
+  if (scoped_observer_.IsObserving(manager))
+    scoped_observer_.Remove(manager);
+}
+
+void AppListViewDelegate::GoogleSigninFailed(
+    const GoogleServiceAuthError& error) {
+  OnProfileChanged();
+}
+
+void AppListViewDelegate::GoogleSigninSucceeded(const std::string& username,
+                                                const std::string& password) {
+  OnProfileChanged();
+}
+
+void AppListViewDelegate::GoogleSignedOut(const std::string& username) {
+  OnProfileChanged();
 }
 
 void AppListViewDelegate::OnProfileChanged() {
-  CHECK(controller_);
+  model_ = app_list::AppListSyncableServiceFactory::GetForProfile(
+      profile_)->model();
+
   search_controller_.reset(new app_list::SearchController(
-      profile_, model_->search_box(), model_->results(), controller_.get()));
+      profile_, model_->search_box(), model_->results(),
+      speech_ui_.get(), controller_));
 
   signin_delegate_.SetProfile(profile_);
 
 #if defined(USE_ASH)
   app_sync_ui_state_watcher_.reset(new AppSyncUIStateWatcher(profile_, model_));
 #endif
-
-  model_->SetSignedIn(!GetSigninDelegate()->NeedSignin());
 
   // Don't populate the app list users if we are on the ash desktop.
   chrome::HostDesktopType desktop = chrome::GetHostDesktopTypeForNativeWindow(
@@ -125,10 +188,12 @@ void AppListViewDelegate::OnProfileChanged() {
     return;
 
   // Populate the app list users.
-  app_list::AppListModel::Users users;
   PopulateUsers(g_browser_process->profile_manager()->GetProfileInfoCache(),
-                profile_->GetPath(), &users);
-  model_->SetUsers(users);
+                profile_->GetPath(), &users_);
+
+  FOR_EACH_OBSERVER(app_list::AppListViewDelegateObserver,
+                    observers_,
+                    OnProfilesChanged());
 }
 
 bool AppListViewDelegate::ForceNativeDesktop() const {
@@ -143,32 +208,22 @@ void AppListViewDelegate::SetProfileByPath(const base::FilePath& profile_path) {
       g_browser_process->profile_manager()->GetProfileByPath(profile_path);
   DCHECK(profile_);
 
-  RegisterForNotifications();
-
-  apps_builder_->SwitchProfile(profile_);
-
   OnProfileChanged();
 
   // Clear search query.
   model_->search_box()->SetText(base::string16());
 }
 
-void AppListViewDelegate::InitModel(app_list::AppListModel* model) {
-  DCHECK(!model_);
-  DCHECK(model);
-  model_ = model;
-
-  // Initialize apps model.
-  apps_builder_.reset(new ExtensionAppModelBuilder(profile_,
-                                                   model,
-                                                   controller_.get()));
-
-  // Initialize the profile information in the app list menu.
-  OnProfileChanged();
+app_list::AppListModel* AppListViewDelegate::GetModel() {
+  return model_;
 }
 
 app_list::SigninDelegate* AppListViewDelegate::GetSigninDelegate() {
   return &signin_delegate_;
+}
+
+app_list::SpeechUIModel* AppListViewDelegate::GetSpeechUI() {
+  return speech_ui_.get();
 }
 
 void AppListViewDelegate::GetShortcutPathForApp(
@@ -190,7 +245,7 @@ void AppListViewDelegate::GetShortcutPathForApp(
                                       GURL()));
 
   web_app::UpdateShortcutInfoAndIconForApp(
-      *extension,
+      extension,
       profile_,
       base::Bind(CreateShortcutInWebAppDir, app_data_dir, callback));
 #else
@@ -210,7 +265,10 @@ void AppListViewDelegate::StopSearch() {
 
 void AppListViewDelegate::OpenSearchResult(
     app_list::SearchResult* result,
+    bool auto_launch,
     int event_flags) {
+  if (auto_launch)
+    base::RecordAction(base::UserMetricsAction("AppList_AutoLaunched"));
   search_controller_->OpenResult(result, event_flags);
 }
 
@@ -221,12 +279,35 @@ void AppListViewDelegate::InvokeSearchResultAction(
   search_controller_->InvokeResultAction(result, action_index, event_flags);
 }
 
+base::TimeDelta AppListViewDelegate::GetAutoLaunchTimeout() {
+  return auto_launch_timeout_;
+}
+
+void AppListViewDelegate::AutoLaunchCanceled() {
+  base::RecordAction(base::UserMetricsAction("AppList_AutoLaunchCanceled"));
+  auto_launch_timeout_ = base::TimeDelta();
+}
+
+void AppListViewDelegate::ViewInitialized() {
+  content::WebContents* contents = GetSpeechRecognitionContents();
+  if (contents) {
+    contents->GetWebUI()->CallJavascriptFunction(
+        "appList.startPage.onAppListShown");
+  }
+}
+
 void AppListViewDelegate::Dismiss()  {
   controller_->DismissView();
 }
 
 void AppListViewDelegate::ViewClosing() {
   controller_->ViewClosing();
+
+  content::WebContents* contents = GetSpeechRecognitionContents();
+  if (contents) {
+    contents->GetWebUI()->CallJavascriptFunction(
+        "appList.startPage.onAppListHidden");
+  }
 }
 
 gfx::ImageSkia AppListViewDelegate::GetWindowIcon() {
@@ -265,16 +346,35 @@ void AppListViewDelegate::OpenFeedback() {
                            chrome::kAppLauncherCategoryTag);
 }
 
+void AppListViewDelegate::ToggleSpeechRecognition() {
+  app_list::StartPageService* service =
+      app_list::StartPageService::Get(profile_);
+  if (service)
+    service->ToggleSpeechRecognition();
+}
+
 void AppListViewDelegate::ShowForProfileByPath(
     const base::FilePath& profile_path) {
   controller_->ShowForProfileByPath(profile_path);
 }
 
-void AppListViewDelegate::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
-  OnProfileChanged();
+void AppListViewDelegate::OnSpeechResult(const base::string16& result,
+                                         bool is_final) {
+  speech_ui_->SetSpeechResult(result, is_final);
+  if (is_final) {
+    auto_launch_timeout_ = base::TimeDelta::FromMilliseconds(
+        kAutoLaunchDefaultTimeoutMilliSec);
+    model_->search_box()->SetText(result);
+  }
+}
+
+void AppListViewDelegate::OnSpeechSoundLevelChanged(int16 level) {
+  speech_ui_->UpdateSoundLevel(level);
+}
+
+void AppListViewDelegate::OnSpeechRecognitionStateChanged(
+    app_list::SpeechRecognitionState new_state) {
+  speech_ui_->SetSpeechRecognitionState(new_state);
 }
 
 void AppListViewDelegate::OnProfileAdded(const base::FilePath& profile_path) {
@@ -298,5 +398,29 @@ content::WebContents* AppListViewDelegate::GetStartPageContents() {
   if (!service)
     return NULL;
 
-  return service->contents();
+  return service->GetStartPageContents();
+}
+
+content::WebContents* AppListViewDelegate::GetSpeechRecognitionContents() {
+  app_list::StartPageService* service =
+      app_list::StartPageService::Get(profile_);
+  if (!service)
+    return NULL;
+
+  return service->GetSpeechRecognitionContents();
+}
+
+const app_list::AppListViewDelegate::Users&
+AppListViewDelegate::GetUsers() const {
+  return users_;
+}
+
+void AppListViewDelegate::AddObserver(
+    app_list::AppListViewDelegateObserver* observer) {
+  observers_.AddObserver(observer);
+}
+
+void AppListViewDelegate::RemoveObserver(
+    app_list::AppListViewDelegateObserver* observer) {
+  observers_.RemoveObserver(observer);
 }

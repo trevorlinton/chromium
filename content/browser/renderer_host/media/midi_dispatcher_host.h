@@ -13,12 +13,12 @@ namespace content {
 
 class BrowserContext;
 
-// MIDIDispatcherHost handles permissions for using system exclusive messages.
+// MidiDispatcherHost handles permissions for using system exclusive messages.
 // It works as BrowserMessageFilter to handle IPC messages between
-// MIDIDispatcher running as a RenderViewObserver.
-class MIDIDispatcherHost : public BrowserMessageFilter {
+// MidiDispatcher running as a RenderViewObserver.
+class MidiDispatcherHost : public BrowserMessageFilter {
  public:
-  MIDIDispatcherHost(int render_process_id, BrowserContext* browser_context);
+  MidiDispatcherHost(int render_process_id, BrowserContext* browser_context);
 
   // BrowserMessageFilter implementation.
   virtual bool OnMessageReceived(const IPC::Message& message,
@@ -27,12 +27,13 @@ class MIDIDispatcherHost : public BrowserMessageFilter {
       const IPC::Message& message, BrowserThread::ID* thread) OVERRIDE;
 
  protected:
-  virtual ~MIDIDispatcherHost();
+  virtual ~MidiDispatcherHost();
 
  private:
   void OnRequestSysExPermission(int render_view_id,
                                 int bridge_id,
-                                const GURL& origin);
+                                const GURL& origin,
+                                bool user_gesture);
   void OnCancelSysExPermissionRequest(int render_view_id,
                                       int bridge_id,
                                       const GURL& requesting_frame);
@@ -43,7 +44,7 @@ class MIDIDispatcherHost : public BrowserMessageFilter {
   int render_process_id_;
   BrowserContext* browser_context_;
 
-  DISALLOW_COPY_AND_ASSIGN(MIDIDispatcherHost);
+  DISALLOW_COPY_AND_ASSIGN(MidiDispatcherHost);
 };
 
 }  // namespace content

@@ -9,8 +9,6 @@
 #include "chrome/browser/extensions/unpacked_installer.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_file_util.h"
 #include "chrome/test/remoting/key_code_conv.h"
 #include "chrome/test/remoting/page_load_notification_observer.h"
@@ -18,6 +16,10 @@
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/common/constants.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/extension_set.h"
+#include "extensions/common/switches.h"
 #include "ui/base/window_open_disposition.h"
 
 namespace remoting {
@@ -116,17 +118,17 @@ void RemoteDesktopBrowserTest::UninstallChromotingApp() {
 }
 
 void RemoteDesktopBrowserTest::VerifyChromotingLoaded(bool expected) {
-  const ExtensionSet* extensions = extension_service()->extensions();
+  const extensions::ExtensionSet* extensions =
+      extension_service()->extensions();
   scoped_refptr<const extensions::Extension> extension;
-  ExtensionSet::const_iterator iter;
   bool installed = false;
 
-  for (iter = extensions->begin(); iter != extensions->end(); ++iter) {
+  for (extensions::ExtensionSet::const_iterator iter = extensions->begin();
+       iter != extensions->end(); ++iter) {
     extension = *iter;
     // Is there a better way to recognize the chromoting extension
     // than name comparison?
-    if (extension->name() == "Chromoting" ||
-        extension->name() == "Chrome Remote Desktop") {
+    if (extension->name() == extension_name_) {
       installed = true;
       break;
     }
@@ -146,7 +148,7 @@ void RemoteDesktopBrowserTest::VerifyChromotingLoaded(bool expected) {
     EXPECT_TRUE(extension->ShouldDisplayInAppLauncher());
   }
 
-  EXPECT_EQ(installed, expected);
+  ASSERT_EQ(installed, expected);
 }
 
 void RemoteDesktopBrowserTest::LaunchChromotingApp() {
@@ -161,8 +163,8 @@ void RemoteDesktopBrowserTest::LaunchChromotingApp() {
   OpenApplication(AppLaunchParams(
       browser()->profile(),
       extension_,
-      is_platform_app() ? extension_misc::LAUNCH_NONE :
-                          extension_misc::LAUNCH_TAB,
+      is_platform_app() ? extensions::LAUNCH_CONTAINER_NONE :
+          extensions::LAUNCH_CONTAINER_TAB,
       is_platform_app() ? NEW_WINDOW : CURRENT_TAB));
 
   observer.Wait();
@@ -178,14 +180,14 @@ void RemoteDesktopBrowserTest::LaunchChromotingApp() {
     web_contents_stack_.push_back(web_contents);
 
   if (is_platform_app()) {
-    EXPECT_EQ(GetFirstShellWindowWebContents(), active_web_contents());
+    EXPECT_EQ(GetFirstAppWindowWebContents(), active_web_contents());
   } else {
     // For apps v1 only, the DOMOperationObserver is not ready at the LOAD_STOP
     // event. A half second wait is necessary for the subsequent javascript
     // injection to work.
     // TODO(weitaosu): Find out whether there is a more appropriate notification
     // to wait for so we can get rid of this wait.
-    ASSERT_TRUE(TimeoutWaiter(base::TimeDelta::FromMilliseconds(500)).Wait());
+    ASSERT_TRUE(TimeoutWaiter(base::TimeDelta::FromSeconds(5)).Wait());
   }
 
   EXPECT_EQ(Chromoting_Main_URL(), GetCurrentURL());
@@ -263,7 +265,7 @@ void RemoteDesktopBrowserTest::Approve() {
     // TODO(weitaosu): Revoke the permission at the beginning of the test so
     // that we can test first-time experience here.
     ConditionalTimeoutWaiter waiter(
-        base::TimeDelta::FromSeconds(3),
+        base::TimeDelta::FromSeconds(7),
         base::TimeDelta::FromSeconds(1),
         base::Bind(
             &RemoteDesktopBrowserTest::IsAuthenticatedInWindow,
@@ -399,11 +401,11 @@ void RemoteDesktopBrowserTest::SimulateStringInput(const std::string& input) {
 }
 
 void RemoteDesktopBrowserTest::SimulateMouseLeftClickAt(int x, int y) {
-  SimulateMouseClickAt(0, WebKit::WebMouseEvent::ButtonLeft, x, y);
+  SimulateMouseClickAt(0, blink::WebMouseEvent::ButtonLeft, x, y);
 }
 
 void RemoteDesktopBrowserTest::SimulateMouseClickAt(
-    int modifiers, WebKit::WebMouseEvent::Button button, int x, int y) {
+    int modifiers, blink::WebMouseEvent::Button button, int x, int y) {
   // TODO(weitaosu): The coordinate translation doesn't work correctly for
   // apps v2.
   ExecuteScript(
@@ -451,6 +453,12 @@ void RemoteDesktopBrowserTest::Cleanup() {
     UninstallChromotingApp();
     VerifyChromotingLoaded(false);
   }
+
+  // TODO(chaitali): Remove this additional timeout after we figure out
+  // why this is needed for the v1 app to work.
+  // Without this timeout the test fail with a "CloseWebContents called for
+  // tab not in our strip" error for the v1 app.
+  ASSERT_TRUE(TimeoutWaiter(base::TimeDelta::FromSeconds(2)).Wait());
 }
 
 void RemoteDesktopBrowserTest::Auth() {
@@ -542,6 +550,7 @@ void RemoteDesktopBrowserTest::ParseCommandLine() {
   password_ = command_line->GetSwitchValueASCII(kkPassword);
   me2me_pin_ = command_line->GetSwitchValueASCII(kMe2MePin);
   remote_host_name_ = command_line->GetSwitchValueASCII(kRemoteHostName);
+  extension_name_ = command_line->GetSwitchValueASCII(kExtensionName);
 
   no_cleanup_ = command_line->HasSwitch(kNoCleanup);
   no_install_ = command_line->HasSwitch(kNoInstall);
@@ -552,6 +561,15 @@ void RemoteDesktopBrowserTest::ParseCommandLine() {
     // One and only one of these two arguments should be provided.
     ASSERT_NE(webapp_crx_.empty(), webapp_unpacked_.empty());
   }
+
+  // Run with "enable-web-based-signin" flag to enforce web-based sign-in,
+  // rather than inline signin. This ensures we use the same authentication
+  // page, regardless of whether we are testing the v1 or v2 web-app.
+  command_line->AppendSwitch(switches::kEnableWebBasedSignin);
+
+  // Enable experimental extensions; this is to allow adding the LG extensions
+  command_line->AppendSwitch(
+    extensions::switches::kEnableExperimentalExtensionApis);
 }
 
 void RemoteDesktopBrowserTest::ExecuteScript(const std::string& script) {

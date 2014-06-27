@@ -6,11 +6,11 @@
 
 #include "base/mac/scoped_nsobject.h"
 #include "base/memory/scoped_ptr.h"
-#import "ui/base/test/ui_cocoa_test_helper.h"
+#import "ui/gfx/test/ui_cocoa_test_helper.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/message_center_tray.h"
 
-namespace {
+namespace message_center {
 
 class TrayControllerTest : public ui::CocoaTest {
  public:
@@ -56,4 +56,4 @@ TEST_F(TrayControllerTest, OpenLeftRight) {
   EXPECT_EQ(left_point.x - NSWidth(window_frame), NSMinX(window_frame));
 }
 
-}  // namespace
+}  // namespace message_center

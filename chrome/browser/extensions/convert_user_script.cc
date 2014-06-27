@@ -17,10 +17,10 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/user_script_master.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_file_util.h"
 #include "crypto/sha2.h"
 #include "extensions/common/constants.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/user_script.h"
 #include "url/gurl.h"
@@ -32,40 +32,41 @@ namespace values = manifest_values;
 
 scoped_refptr<Extension> ConvertUserScriptToExtension(
     const base::FilePath& user_script_path, const GURL& original_url,
-    const base::FilePath& extensions_dir, string16* error) {
+    const base::FilePath& extensions_dir, base::string16* error) {
   std::string content;
   if (!base::ReadFileToString(user_script_path, &content)) {
-    *error = ASCIIToUTF16("Could not read source file.");
+    *error = base::ASCIIToUTF16("Could not read source file.");
     return NULL;
   }
 
   if (!IsStringUTF8(content)) {
-    *error = ASCIIToUTF16("User script must be UTF8 encoded.");
+    *error = base::ASCIIToUTF16("User script must be UTF8 encoded.");
     return NULL;
   }
 
   UserScript script;
   if (!UserScriptMaster::ScriptReloader::ParseMetadataHeader(content,
                                                              &script)) {
-    *error = ASCIIToUTF16("Invalid script header.");
+    *error = base::ASCIIToUTF16("Invalid script header.");
     return NULL;
   }
 
   base::FilePath install_temp_dir =
       extension_file_util::GetInstallTempDir(extensions_dir);
   if (install_temp_dir.empty()) {
-    *error = ASCIIToUTF16("Could not get path to profile temporary directory.");
+    *error = base::ASCIIToUTF16(
+        "Could not get path to profile temporary directory.");
     return NULL;
   }
 
   base::ScopedTempDir temp_dir;
   if (!temp_dir.CreateUniqueTempDirUnderPath(install_temp_dir)) {
-    *error = ASCIIToUTF16("Could not create temporary directory.");
+    *error = base::ASCIIToUTF16("Could not create temporary directory.");
     return NULL;
   }
 
   // Create the manifest
-  scoped_ptr<DictionaryValue> root(new DictionaryValue);
+  scoped_ptr<base::DictionaryValue> root(new base::DictionaryValue);
   std::string script_name;
   if (!script.name().empty() && !script.name_space().empty())
     script_name = script.name_space() + "/" + script.name();
@@ -136,7 +137,7 @@ scoped_refptr<Extension> ConvertUserScriptToExtension(
   for (size_t i = 0; i < script.exclude_globs().size(); ++i)
     excludes->Append(new base::StringValue(script.exclude_globs().at(i)));
 
-  DictionaryValue* content_script = new DictionaryValue();
+  base::DictionaryValue* content_script = new base::DictionaryValue();
   content_script->Set(keys::kMatches, matches);
   content_script->Set(keys::kExcludeMatches, exclude_matches);
   content_script->Set(keys::kIncludeGlobs, includes);
@@ -159,19 +160,19 @@ scoped_refptr<Extension> ConvertUserScriptToExtension(
   base::FilePath manifest_path = temp_dir.path().Append(kManifestFilename);
   JSONFileValueSerializer serializer(manifest_path);
   if (!serializer.Serialize(*root)) {
-    *error = ASCIIToUTF16("Could not write JSON.");
+    *error = base::ASCIIToUTF16("Could not write JSON.");
     return NULL;
   }
 
   // Write the script file.
   if (!base::CopyFile(user_script_path,
                       temp_dir.path().AppendASCII("script.js"))) {
-    *error = ASCIIToUTF16("Could not copy script file.");
+    *error = base::ASCIIToUTF16("Could not copy script file.");
     return NULL;
   }
 
   // TODO(rdevlin.cronin): Continue removing std::string errors and replacing
-  // with string16
+  // with base::string16
   std::string utf8_error;
   scoped_refptr<Extension> extension = Extension::Create(
       temp_dir.path(),
@@ -179,7 +180,7 @@ scoped_refptr<Extension> ConvertUserScriptToExtension(
       *root,
       Extension::NO_FLAGS,
       &utf8_error);
-  *error = UTF8ToUTF16(utf8_error);
+  *error = base::UTF8ToUTF16(utf8_error);
   if (!extension.get()) {
     NOTREACHED() << "Could not init extension " << *error;
     return NULL;

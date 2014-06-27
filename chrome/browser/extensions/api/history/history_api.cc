@@ -15,28 +15,27 @@
 #include "base/prefs/pref_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/cancelable_task_tracker.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/activity_log/activity_log.h"
-#include "chrome/browser/extensions/event_router.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/history/history_service.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/history/history_types.h"
-#include "chrome/browser/history/visit_filter.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/cancelable_task_tracker.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/extensions/api/experimental_history.h"
 #include "chrome/common/extensions/api/history.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
+#include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/extension_system_provider.h"
+#include "extensions/browser/extensions_browser_client.h"
 
 namespace extensions {
 
-using api::experimental_history::MostVisitedItem;
 using api::history::HistoryItem;
 using api::history::VisitItem;
 using extensions::ActivityLog;
@@ -49,7 +48,6 @@ typedef std::vector<linked_ptr<api::history::VisitItem> >
 namespace AddUrl = api::history::AddUrl;
 namespace DeleteUrl = api::history::DeleteUrl;
 namespace DeleteRange = api::history::DeleteRange;
-namespace GetMostVisited = api::experimental_history::GetMostVisited;
 namespace GetVisits = api::history::GetVisits;
 namespace OnVisited = api::history::OnVisited;
 namespace OnVisitRemoved = api::history::OnVisitRemoved;
@@ -70,7 +68,7 @@ scoped_ptr<HistoryItem> GetHistoryItem(const history::URLRow& row) {
 
   history_item->id = base::Int64ToString(row.id());
   history_item->url.reset(new std::string(row.url().spec()));
-  history_item->title.reset(new std::string(UTF16ToUTF8(row.title())));
+  history_item->title.reset(new std::string(base::UTF16ToUTF8(row.title())));
   history_item->last_visit_time.reset(
       new double(MilliSecondsFromTime(row.last_visit())));
   history_item->typed_count.reset(new int(row.typed_count()));
@@ -198,16 +196,17 @@ void HistoryEventRouter::DispatchEvent(
   if (profile && extensions::ExtensionSystem::Get(profile)->event_router()) {
     scoped_ptr<extensions::Event> event(new extensions::Event(
         event_name, event_args.Pass()));
-    event->restrict_to_profile = profile;
+    event->restrict_to_browser_context = profile;
     extensions::ExtensionSystem::Get(profile)->event_router()->
         BroadcastEvent(event.Pass());
   }
 }
 
-HistoryAPI::HistoryAPI(Profile* profile) : profile_(profile) {
-  ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
+HistoryAPI::HistoryAPI(content::BrowserContext* context)
+    : browser_context_(context) {
+  ExtensionSystem::Get(browser_context_)->event_router()->RegisterObserver(
       this, api::history::OnVisited::kEventName);
-  ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
+  ExtensionSystem::Get(browser_context_)->event_router()->RegisterObserver(
       this, api::history::OnVisitRemoved::kEventName);
 }
 
@@ -215,25 +214,29 @@ HistoryAPI::~HistoryAPI() {
 }
 
 void HistoryAPI::Shutdown() {
-  ExtensionSystem::Get(profile_)->event_router()->UnregisterObserver(this);
+  ExtensionSystem::Get(browser_context_)->event_router()->UnregisterObserver(
+      this);
 }
 
-static base::LazyInstance<ProfileKeyedAPIFactory<HistoryAPI> >
-g_factory = LAZY_INSTANCE_INITIALIZER;
+static base::LazyInstance<BrowserContextKeyedAPIFactory<HistoryAPI> >
+    g_factory = LAZY_INSTANCE_INITIALIZER;
 
 // static
-ProfileKeyedAPIFactory<HistoryAPI>* HistoryAPI::GetFactoryInstance() {
-  return &g_factory.Get();
+BrowserContextKeyedAPIFactory<HistoryAPI>* HistoryAPI::GetFactoryInstance() {
+  return g_factory.Pointer();
 }
 
-template<>
-void ProfileKeyedAPIFactory<HistoryAPI>::DeclareFactoryDependencies() {
-  DependsOn(ActivityLogFactory::GetInstance());
+template <>
+void BrowserContextKeyedAPIFactory<HistoryAPI>::DeclareFactoryDependencies() {
+  DependsOn(ActivityLog::GetFactoryInstance());
+  DependsOn(ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
 }
 
 void HistoryAPI::OnListenerAdded(const EventListenerInfo& details) {
-  history_event_router_.reset(new HistoryEventRouter(profile_));
-  ExtensionSystem::Get(profile_)->event_router()->UnregisterObserver(this);
+  history_event_router_.reset(
+      new HistoryEventRouter(Profile::FromBrowserContext(browser_context_)));
+  ExtensionSystem::Get(browser_context_)->event_router()->UnregisterObserver(
+      this);
 }
 
 void HistoryFunction::Run() {
@@ -296,46 +299,6 @@ void HistoryFunctionWithCallback::SendResponseToCallback() {
   Release();  // Balanced in RunImpl().
 }
 
-bool HistoryGetMostVisitedFunction::RunAsyncImpl() {
-  scoped_ptr<GetMostVisited::Params> params =
-      GetMostVisited::Params::Create(*args_);
-  EXTENSION_FUNCTION_VALIDATE(params.get());
-
-  history::VisitFilter filter;
-  if (params->details.filter_time.get())
-    filter.SetFilterTime(GetTime(*params->details.filter_time));
-  if (params->details.filter_width.get()) {
-    filter.SetFilterWidth(base::TimeDelta::FromMilliseconds(
-        static_cast<int64>(*params->details.filter_width)));
-  }
-  if (params->details.day_of_the_week.get())
-    filter.SetDayOfTheWeekFilter(*params->details.day_of_the_week);
-  int max_results = 100;
-  if (params->details.max_results.get())
-    max_results = *params->details.max_results;
-  HistoryService* hs = HistoryServiceFactory::GetForProfile(
-      GetProfile(), Profile::EXPLICIT_ACCESS);
-  hs->QueryFilteredURLs(max_results, filter, false, &cancelable_consumer_,
-      base::Bind(&HistoryGetMostVisitedFunction::QueryComplete,
-                 base::Unretained(this)));
-  return true;
-}
-
-void HistoryGetMostVisitedFunction::QueryComplete(
-    CancelableRequestProvider::Handle handle,
-    const history::FilteredURLList& data) {
-  std::vector<linked_ptr<MostVisitedItem> > results;
-  results.reserve(data.size());
-  for (size_t i = 0; i < data.size(); i++) {
-    linked_ptr<MostVisitedItem> item(new MostVisitedItem);
-    item->url = data[i].url.spec();
-    item->title = UTF16ToUTF8(data[i].title);
-    results.push_back(item);
-  }
-  results_ = GetMostVisited::Results::Create(results);
-  SendAsyncResponse();
-}
-
 bool HistoryGetVisitsFunction::RunAsyncImpl() {
   scoped_ptr<GetVisits::Params> params(GetVisits::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
@@ -378,7 +341,7 @@ bool HistorySearchFunction::RunAsyncImpl() {
   scoped_ptr<Search::Params> params(Search::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
-  string16 search_text = UTF8ToUTF16(params->query.text);
+  base::string16 search_text = base::UTF8ToUTF16(params->query.text);
 
   history::QueryOptions options;
   options.SetRecentDayRange(1);

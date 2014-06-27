@@ -15,7 +15,7 @@
 #include "net/base/load_flags.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/request_priority.h"
-#include "net/disk_cache/histogram_macros.h"
+#include "net/disk_cache/blockfile/histogram_macros.h"
 #include "net/http/http_network_layer.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_response_headers.h"
@@ -93,15 +93,16 @@ Request::Request(int request_id,
       url_request_(url_request_context->CreateRequest(GURL(base_url +
                                                            info.filename),
                                                       net::DEFAULT_PRIORITY,
-                                                      this)),
+                                                      this,
+                                                      NULL)),
       info_(info),
       response_code_(0) {
-  url_request_->set_load_flags(net::LOAD_BYPASS_CACHE |
-                               net::LOAD_DISABLE_CACHE |
-                               net::LOAD_DO_NOT_SAVE_COOKIES |
-                               net::LOAD_DO_NOT_SEND_COOKIES |
-                               net::LOAD_DO_NOT_PROMPT_FOR_LOGIN |
-                               net::LOAD_DO_NOT_SEND_AUTH_DATA);
+  url_request_->SetLoadFlags(net::LOAD_BYPASS_CACHE |
+                             net::LOAD_DISABLE_CACHE |
+                             net::LOAD_DO_NOT_SAVE_COOKIES |
+                             net::LOAD_DO_NOT_SEND_COOKIES |
+                             net::LOAD_DO_NOT_PROMPT_FOR_LOGIN |
+                             net::LOAD_DO_NOT_SEND_AUTH_DATA);
 }
 
 void Request::Start() {
@@ -366,6 +367,8 @@ void HttpPipeliningCompatibilityClient::OnRequestFinished(
     int request_id, internal::PipelineTestRequest::Status status) {
   // The CACHE_HISTOGRAM_* macros are used, because they allow dynamic metric
   // names.
+  // TODO(gavinp): Clean up this dependency by moving the needed functionality
+  // into base/.
   CACHE_HISTOGRAM_ENUMERATION(GetMetricName(request_id, "Status"),
                               status,
                               internal::PipelineTestRequest::STATUS_MAX);

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,24 +7,24 @@ package org.chromium.android_webview.test;
 import android.graphics.Bitmap;
 import android.test.suitebuilder.annotation.SmallTest;
 
-import org.chromium.android_webview.AndroidProtocolHandler;
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwSettings;
 import org.chromium.android_webview.test.util.CommonResources;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.content.browser.ContentViewCore;
-import org.chromium.content.browser.LoadUrlParams;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.content.browser.test.util.HistoryUtils;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer;
 import org.chromium.net.test.util.TestWebServer;
 
 import java.io.File;
 import java.io.FileOutputStream;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.Callable;
 
+/**
+ * Tests for the {@link android.webkit.WebView#loadDataWithBaseURL(String, String, String, String,
+ * String)} method.
+ */
 public class LoadDataWithBaseUrlTest extends AwTestBase {
 
     private TestAwContentsClient mContentsClient;
@@ -44,24 +44,8 @@ public class LoadDataWithBaseUrlTest extends AwTestBase {
     protected void loadDataWithBaseUrlSync(
         final String data, final String mimeType, final boolean isBase64Encoded,
         final String baseUrl, final String historyUrl) throws Throwable {
-        TestCallbackHelperContainer.OnPageFinishedHelper onPageFinishedHelper =
-                mContentsClient.getOnPageFinishedHelper();
-        int currentCallCount = onPageFinishedHelper.getCallCount();
-        loadDataWithBaseUrlAsync(data, mimeType, isBase64Encoded, baseUrl, historyUrl);
-        onPageFinishedHelper.waitForCallback(currentCallCount, 1, WAIT_TIMEOUT_SECONDS,
-                TimeUnit.SECONDS);
-    }
-
-    protected void loadDataWithBaseUrlAsync(
-        final String data, final String mimeType, final boolean isBase64Encoded,
-        final String baseUrl, final String historyUrl) throws Throwable {
-        runTestOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                mAwContents.loadUrl(LoadUrlParams.createLoadDataParamsWithBaseUrl(
-                        data, mimeType, isBase64Encoded, baseUrl, historyUrl));
-            }
-        });
+        loadDataWithBaseUrlSync(mAwContents, mContentsClient.getOnPageFinishedHelper(),
+                data, mimeType, isBase64Encoded, baseUrl, historyUrl);
     }
 
     private static final String SCRIPT_FILE = "/script.js";
@@ -196,6 +180,19 @@ public class LoadDataWithBaseUrlTest extends AwTestBase {
 
     @SmallTest
     @Feature({"AndroidWebView"})
+    public void testloadDataWithBaseUrlCallsOnPageStarted() throws Throwable {
+        final String baseUrl = "http://base.com/";
+        TestCallbackHelperContainer.OnPageStartedHelper onPageStartedHelper =
+                mContentsClient.getOnPageStartedHelper();
+        final int callCount = onPageStartedHelper.getCallCount();
+        loadDataWithBaseUrlAsync(mAwContents, CommonResources.ABOUT_HTML, "text/html", false,
+                baseUrl, "about:blank");
+        onPageStartedHelper.waitForCallback(callCount);
+        assertEquals(baseUrl, onPageStartedHelper.getUrl());
+    }
+
+    @SmallTest
+    @Feature({"AndroidWebView"})
     public void testHistoryUrl() throws Throwable {
 
         final String pageHtml = "<html><body>Hello, world!</body></html>";
@@ -210,6 +207,18 @@ public class LoadDataWithBaseUrlTest extends AwTestBase {
         loadDataWithBaseUrlSync(pageHtml, "text/html", false, baseUrl, null);
         assertEquals("about:blank", HistoryUtils.getUrlOnUiThread(
                 getInstrumentation(), mContentViewCore));
+    }
+
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    public void testOnPageFinishedUrlIsBaseUrl() throws Throwable {
+        final String pageHtml = "<html><body>Hello, world!</body></html>";
+        final String baseUrl = "http://example.com/";
+        loadDataWithBaseUrlSync(pageHtml, "text/html", false, baseUrl, baseUrl);
+        loadDataWithBaseUrlSync(pageHtml, "text/html", false, baseUrl, baseUrl);
+        TestCallbackHelperContainer.OnPageFinishedHelper onPageFinishedHelper =
+                mContentsClient.getOnPageFinishedHelper();
+        assertEquals(baseUrl, onPageFinishedHelper.getUrl());
     }
 
     @SmallTest
@@ -275,15 +284,11 @@ public class LoadDataWithBaseUrlTest extends AwTestBase {
 
         loadDataWithBaseUrlSync(data, "text/html", false, baseUrl, null);
 
-        CriteriaHelper.pollForCriteria(new Criteria() {
+        poll(new Callable<Boolean>() {
             @Override
-            public boolean isSatisfied() {
-                try {
-                    String title = getTitleOnUiThread(mAwContents);
-                    return IMAGE_LOADED.equals(title) || IMAGE_NOT_LOADED.equals(title);
-                } catch (Throwable t) {
-                    return false;
-                }
+            public Boolean call() throws Exception {
+                String title = getTitleOnUiThread(mAwContents);
+                return IMAGE_LOADED.equals(title) || IMAGE_NOT_LOADED.equals(title);
             }
         });
 
@@ -348,7 +353,7 @@ public class LoadDataWithBaseUrlTest extends AwTestBase {
             assertTrue(canAccessFileFromData(NON_DATA_BASE_URL,
                   "file://" + imagePath + "?" + token));
         } finally {
-          if (!tempImage.delete()) throw new AssertionError();
+            if (!tempImage.delete()) throw new AssertionError();
         }
     }
 }

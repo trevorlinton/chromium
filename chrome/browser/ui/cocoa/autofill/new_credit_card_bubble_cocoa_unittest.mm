@@ -58,10 +58,6 @@ class NewCreditCardBubbleCocoaUnitTest : public CocoaProfileTest {
 TEST_F(NewCreditCardBubbleCocoaUnitTest, CloseDeletes) {
   base::mac::ScopedNSAutoreleasePool autorelease_pool;
   NSWindow* window = browser()->window()->GetNativeWindow();
-  BrowserWindowController* bwc = [BrowserWindowController
-      browserWindowControllerForWindow:window];
-  [bwc showWindow:nil];
-
   WebContents* web_contents = AppendToTabStrip();
   NewCreditCardBubbleController* controller = CreateController(web_contents);
   base::WeakPtr<NewCreditCardBubbleView> view =
@@ -75,9 +71,7 @@ TEST_F(NewCreditCardBubbleCocoaUnitTest, CloseDeletes) {
   cocoa_view->CreateCocoaController(window);
 
   // ... so window animations can be disabled, guaranteeing prompt deallocation.
-  InfoBubbleWindow* bubble_window =
-      base::mac::ObjCCastStrict<InfoBubbleWindow>(
-          [cocoa_view->bubbleController_ window]);
+  InfoBubbleWindow* bubble_window = cocoa_view->GetInfoBubbleWindow();
   [bubble_window setAllowedAnimations:info_bubble::kAnimateNone];
 
   view->Show();
@@ -88,9 +82,7 @@ TEST_F(NewCreditCardBubbleCocoaUnitTest, CloseDeletes) {
   autorelease_pool.Recycle();
   ASSERT_FALSE(view.get());
 
-  // |controller| gets magically deleted via the bubble closing. And since it
-  // doesn't expose weak ptrs or callbacks, there's no way to verify it except
-  // hope for the memory bots.
+  // |controller| gets deleted via the bubble closing.
 }
 
 }  // autofill

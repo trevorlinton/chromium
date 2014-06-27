@@ -11,16 +11,14 @@
 #include "content/browser/browser_thread_impl.h"
 #include "content/public/browser/resource_context.h"
 #include "content/public/test/test_browser_context.h"
+#include "content/test/appcache_test_helper.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "webkit/browser/appcache/appcache_database.h"
 #include "webkit/browser/appcache/appcache_storage_impl.h"
-#include "webkit/browser/appcache/appcache_test_helper.h"
 #include "webkit/browser/quota/mock_special_storage_policy.h"
 
 #include <set>
-
-using appcache::AppCacheTestHelper;
 
 namespace content {
 namespace {
@@ -63,8 +61,7 @@ class MockURLRequestContextGetter : public net::URLRequestContextGetter {
 class ChromeAppCacheServiceTest : public testing::Test {
  public:
   ChromeAppCacheServiceTest()
-      : message_loop_(base::MessageLoop::TYPE_IO),
-        kProtectedManifestURL(kProtectedManifest),
+      : kProtectedManifestURL(kProtectedManifest),
         kNormalManifestURL(kNormalManifest),
         kSessionOnlyManifestURL(kSessionOnlyManifest),
         file_thread_(BrowserThread::FILE, &message_loop_),
@@ -79,7 +76,7 @@ class ChromeAppCacheServiceTest : public testing::Test {
       bool init_storage);
   void InsertDataIntoAppCache(ChromeAppCacheService* appcache_service);
 
-  base::MessageLoop message_loop_;
+  base::MessageLoopForIO message_loop_;
   base::ScopedTempDir temp_dir_;
   const GURL kProtectedManifestURL;
   const GURL kNormalManifestURL;

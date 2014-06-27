@@ -63,17 +63,15 @@ class SearchMetadataTest : public testing::Test {
 
   void AddEntriesToMetadata() {
     base::FilePath temp_file;
-    EXPECT_TRUE(file_util::CreateTemporaryFileInDir(temp_dir_.path(),
-                                                    &temp_file));
+    EXPECT_TRUE(base::CreateTemporaryFileInDir(temp_dir_.path(), &temp_file));
     const std::string temp_file_md5 = "md5";
 
     ResourceEntry entry;
     std::string local_id;
 
     // drive/root
-    EXPECT_EQ(FILE_ERROR_OK, resource_metadata_->AddEntry(GetDirectoryEntry(
-        util::kDriveMyDriveRootDirName, "root", 100,
-        util::kDriveGrandRootSpecialResourceId), &local_id));
+    EXPECT_EQ(FILE_ERROR_OK, resource_metadata_->GetIdByPath(
+        util::GetDriveMyDriveRootPath(), &local_id));
     const std::string root_local_id = local_id;
 
     // drive/root/Directory 1
@@ -231,11 +229,8 @@ TEST_F(SearchMetadataTest, SearchMetadata_RegularFiles) {
   ASSERT_TRUE(result);
   ASSERT_EQ(2U, result->size());
 
-  // The results should be sorted by the last accessed time in descending order.
-  EXPECT_EQ(6, result->at(0).entry.file_info().last_accessed());
-  EXPECT_EQ(2, result->at(1).entry.file_info().last_accessed());
-
-  // All base names should contain "File".
+  // All base names should contain "File". The results should be sorted by the
+  // last accessed time in descending order.
   EXPECT_EQ("drive/root/Slash \xE2\x88\x95 in directory/Slash SubDir File.txt",
             result->at(0).path.AsUTF8Unsafe());
   EXPECT_EQ("drive/root/Directory 1/SubDirectory File 1.txt",

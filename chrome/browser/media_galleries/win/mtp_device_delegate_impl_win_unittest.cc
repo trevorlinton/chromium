@@ -11,22 +11,30 @@
 #include "base/stl_util.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/media_galleries/media_file_system_registry.h"
 #include "chrome/browser/media_galleries/media_galleries_test_util.h"
-#include "chrome/browser/storage_monitor/storage_info.h"
-#include "chrome/browser/storage_monitor/storage_monitor.h"
-#include "chrome/browser/storage_monitor/test_portable_device_watcher_win.h"
-#include "chrome/browser/storage_monitor/test_storage_monitor.h"
-#include "chrome/browser/storage_monitor/test_storage_monitor_win.h"
-#include "chrome/browser/storage_monitor/test_volume_mount_watcher_win.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/storage_monitor/storage_info.h"
+#include "components/storage_monitor/storage_monitor.h"
+#include "components/storage_monitor/test_portable_device_watcher_win.h"
+#include "components/storage_monitor/test_storage_monitor.h"
+#include "components/storage_monitor/test_storage_monitor_win.h"
+#include "components/storage_monitor/test_volume_mount_watcher_win.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/extension_system.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using storage_monitor::PortableDeviceWatcherWin;
+using storage_monitor::StorageInfo;
+using storage_monitor::StorageMonitor;
+using storage_monitor::TestPortableDeviceWatcherWin;
+using storage_monitor::TestStorageMonitor;
+using storage_monitor::TestStorageMonitorWin;
+using storage_monitor::TestVolumeMountWatcherWin;
 
 namespace {
 
@@ -49,13 +57,13 @@ class MTPDeviceDelegateImplWinTest : public ChromeRenderViewHostTestHarness {
   void TearDown() OVERRIDE;
 
   void ProcessAttach(const std::string& id,
-                     const string16& name,
+                     const base::string16& name,
                      const base::FilePath::StringType& location);
   std::string AttachDevice(StorageInfo::Type type,
                            const std::string& unique_id,
                            const base::FilePath& location);
   void CheckGalleryInfo(const MediaFileSystemInfo& info,
-                        const string16& name,
+                        const base::string16& name,
                         const base::FilePath& path,
                         bool removable,
                         bool media_device);
@@ -70,7 +78,7 @@ class MTPDeviceDelegateImplWinTest : public ChromeRenderViewHostTestHarness {
 void MTPDeviceDelegateImplWinTest::SetUp() {
   ChromeRenderViewHostTestHarness::SetUp();
 
-  TestStorageMonitor::RemoveSingleton();
+  TestStorageMonitor::Destroy();
   TestPortableDeviceWatcherWin* portable_device_watcher =
       new TestPortableDeviceWatcherWin;
   TestVolumeMountWatcherWin* mount_watcher = new TestVolumeMountWatcherWin;
@@ -80,7 +88,7 @@ void MTPDeviceDelegateImplWinTest::SetUp() {
   TestingBrowserProcess* browser_process = TestingBrowserProcess::GetGlobal();
   DCHECK(browser_process);
   monitor_ = monitor.get();
-  browser_process->SetStorageMonitor(monitor.Pass());
+  StorageMonitor::SetStorageMonitorForTesting(monitor.Pass());
 
   base::RunLoop runloop;
   browser_process->media_file_system_registry()->GetPreferences(profile())->
@@ -102,16 +110,16 @@ void MTPDeviceDelegateImplWinTest::SetUp() {
 void MTPDeviceDelegateImplWinTest::TearDown() {
   // Windows storage monitor must be destroyed on the same thread
   // as construction.
-  TestStorageMonitor::RemoveSingleton();
+  TestStorageMonitor::Destroy();
 
   ChromeRenderViewHostTestHarness::TearDown();
 }
 
 void MTPDeviceDelegateImplWinTest::ProcessAttach(
     const std::string& id,
-    const string16& label,
+    const base::string16& label,
     const base::FilePath::StringType& location) {
-  StorageInfo info(id, string16(), location, label, string16(), string16(), 0);
+  StorageInfo info(id, location, label, base::string16(), base::string16(), 0);
   monitor_->receiver()->ProcessAttach(info);
 }
 
@@ -121,7 +129,7 @@ std::string MTPDeviceDelegateImplWinTest::AttachDevice(
     const base::FilePath& location) {
   std::string device_id = StorageInfo::MakeDeviceId(type, unique_id);
   DCHECK(StorageInfo::IsRemovableDevice(device_id));
-  string16 label = location.LossyDisplayName();
+  base::string16 label = location.LossyDisplayName();
   ProcessAttach(device_id, label, location.value());
   base::RunLoop().RunUntilIdle();
   return device_id;
@@ -129,7 +137,7 @@ std::string MTPDeviceDelegateImplWinTest::AttachDevice(
 
 void MTPDeviceDelegateImplWinTest::CheckGalleryInfo(
     const MediaFileSystemInfo& info,
-    const string16& name,
+    const base::string16& name,
     const base::FilePath& path,
     bool removable,
     bool media_device) {

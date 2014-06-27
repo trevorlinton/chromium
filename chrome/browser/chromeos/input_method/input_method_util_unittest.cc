@@ -16,6 +16,8 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
 
+using base::ASCIIToUTF16;
+
 namespace chromeos {
 
 extern const char* kExtensionImePrefix;
@@ -25,9 +27,15 @@ namespace input_method {
 namespace {
 
 const char pinyin_ime_id[] =
-    "_comp_ime_nmblnjkfdkabgdofidlkienfnnbjhnabzh-t-i0-pinyin";
+    "_comp_ime_gjaehgfemfahhmlgpdfknkhdnemmolopzh-t-i0-pinyin";
 const char zhuyin_ime_id[] =
-    "_comp_ime_goedamlknlnjaengojinmfgpmdjmkooozh-hant-t-i0-und";
+    "_comp_ime_gjaehgfemfahhmlgpdfknkhdnemmolopzh-hant-t-i0-und";
+const char kKeyboardExtId[] =
+#if defined(OFFICIAL_BUILD)
+    "habcdindjejkmepknlhkkloncjcpcnbf";
+#else
+    "jhffeifommiaekmbkkjlpmilogcfdohp";
+#endif
 
 class TestableInputMethodUtil : public InputMethodUtil {
  public:
@@ -64,9 +72,11 @@ class InputMethodUtilTest : public testing::Test {
 
     InputMethodDescriptor pinyin_ime(pinyin_ime_id,
                                      "Pinyin input for testing",
+                                     "CN",
                                      layouts,
                                      languages,
                                      false,
+                                     GURL(""),
                                      GURL(""));
     input_methods.push_back(pinyin_ime);
 
@@ -74,9 +84,11 @@ class InputMethodUtilTest : public testing::Test {
     languages.push_back("zh-TW");
     InputMethodDescriptor zhuyin_ime(zhuyin_ime_id,
                                      "Zhuyin input for testing",
+                                     "TW",
                                      layouts,
                                      languages,
                                      false,
+                                     GURL(""),
                                      GURL(""));
     input_methods.push_back(zhuyin_ime);
 
@@ -85,20 +97,23 @@ class InputMethodUtilTest : public testing::Test {
 
   InputMethodDescriptor GetDesc(const std::string& id,
                                 const std::string& raw_layout,
-                                const std::string& language_code) {
+                                const std::string& language_code,
+                                const std::string& indicator) {
     std::vector<std::string> layouts;
     layouts.push_back(raw_layout);
     std::vector<std::string> languages;
     languages.push_back(language_code);
     return InputMethodDescriptor(id,
-                                 "",
+                                 "",  // Description.
+                                 indicator,  // Short name used for indicator.
                                  layouts,
                                  languages,
                                  true,
-                                 GURL());  // options page url
+                                 GURL(),  // options page url
+                                 GURL());  // input view page url
   }
 
-  static string16 GetDisplayLanguageName(const std::string& language_code) {
+  static base::string16 GetDisplayLanguageName(const std::string& language_code) {
     return l10n_util::GetDisplayNameForLocale(language_code, "en", true);
   }
 
@@ -112,54 +127,62 @@ TEST_F(InputMethodUtilTest, GetInputMethodShortNameTest) {
   {
     InputMethodDescriptor desc = GetDesc("m17n:fa:isiri",  // input method id
                                          "us",  // keyboard layout name
-                                         "fa");  // language name
+                                         "fa", // language name
+                                         ""); // indicator
     EXPECT_EQ(ASCIIToUTF16("FA"), util_.GetInputMethodShortName(desc));
   }
   {
-    InputMethodDescriptor desc = GetDesc("mozc-hangul", "us", "ko");
-    EXPECT_EQ(UTF8ToUTF16("\xed\x95\x9c"),
+    InputMethodDescriptor desc = GetDesc("mozc-hangul", "us", "ko", "");
+    EXPECT_EQ(base::UTF8ToUTF16("\xed\x95\x9c"),
               util_.GetInputMethodShortName(desc));
   }
   {
-    InputMethodDescriptor desc = GetDesc("invalid-id", "us", "xx");
+    InputMethodDescriptor desc = GetDesc("invalid-id", "us", "xx", "");
     // Upper-case string of the unknown language code, "xx", should be returned.
     EXPECT_EQ(ASCIIToUTF16("XX"), util_.GetInputMethodShortName(desc));
   }
 
   // Test special cases.
   {
-    InputMethodDescriptor desc = GetDesc("xkb:us:dvorak:eng", "us", "en-US");
+    InputMethodDescriptor desc =
+        GetDesc("xkb:us:dvorak:eng", "us", "en-US", "DV");
     EXPECT_EQ(ASCIIToUTF16("DV"), util_.GetInputMethodShortName(desc));
   }
   {
-    InputMethodDescriptor desc = GetDesc("xkb:us:colemak:eng", "us", "en-US");
+    InputMethodDescriptor desc =
+        GetDesc("xkb:us:colemak:eng", "us", "en-US", "CO");
     EXPECT_EQ(ASCIIToUTF16("CO"), util_.GetInputMethodShortName(desc));
   }
   {
     InputMethodDescriptor desc =
-        GetDesc("xkb:us:altgr-intl:eng", "us", "en-US");
+        GetDesc("xkb:us:altgr-intl:eng", "us", "en-US", "EXTD");
     EXPECT_EQ(ASCIIToUTF16("EXTD"), util_.GetInputMethodShortName(desc));
   }
   {
-    InputMethodDescriptor desc = GetDesc("xkb:us:intl:eng", "us", "en-US");
+    InputMethodDescriptor desc =
+        GetDesc("xkb:us:intl:eng", "us", "en-US", "INTL");
     EXPECT_EQ(ASCIIToUTF16("INTL"), util_.GetInputMethodShortName(desc));
   }
   {
-    InputMethodDescriptor desc = GetDesc("xkb:de:neo:ger", "de(neo)", "de");
+    InputMethodDescriptor desc =
+        GetDesc("xkb:de:neo:ger", "de(neo)", "de", "NEO");
     EXPECT_EQ(ASCIIToUTF16("NEO"), util_.GetInputMethodShortName(desc));
   }
   {
-    InputMethodDescriptor desc = GetDesc("xkb:es:cat:cat", "es(cat)", "ca");
+    InputMethodDescriptor desc =
+        GetDesc("xkb:es:cat:cat", "es(cat)", "ca", "CAS");
     EXPECT_EQ(ASCIIToUTF16("CAS"), util_.GetInputMethodShortName(desc));
   }
   {
-    InputMethodDescriptor desc = GetDesc(pinyin_ime_id, "us", "zh-CN");
-    EXPECT_EQ(UTF8ToUTF16("\xe6\x8b\xbc"),
+    InputMethodDescriptor desc =
+        GetDesc(pinyin_ime_id, "us", "zh-CN", "");
+    EXPECT_EQ(base::UTF8ToUTF16("\xe6\x8b\xbc"),
               util_.GetInputMethodShortName(desc));
   }
   {
-    InputMethodDescriptor desc = GetDesc(zhuyin_ime_id, "us", "zh-TW");
-    EXPECT_EQ(UTF8ToUTF16("\xE6\xB3\xA8"),
+    InputMethodDescriptor desc =
+        GetDesc(zhuyin_ime_id, "us", "zh-TW", "");
+    EXPECT_EQ(base::UTF8ToUTF16("\xE6\xB3\xA8"),
               util_.GetInputMethodShortName(desc));
   }
 }
@@ -172,16 +195,15 @@ TEST_F(InputMethodUtilTest, GetInputMethodMediumNameTest) {
       "xkb:us:dvorak:eng",
       "xkb:us:intl:eng",
       "xkb:us:colemak:eng",
-      "english-m",
       "xkb:de:neo:ger",
       "xkb:es:cat:cat",
       "xkb:gb:dvorak:eng",
     };
     const int len = ARRAYSIZE_UNSAFE(input_method_id);
     for (int i=0; i<len; ++i) {
-      InputMethodDescriptor desc = GetDesc(input_method_id[i], "", "");
-      string16 medium_name = util_.GetInputMethodMediumName(desc);
-      string16 short_name = util_.GetInputMethodShortName(desc);
+      InputMethodDescriptor desc = GetDesc(input_method_id[i], "", "", "");
+      base::string16 medium_name = util_.GetInputMethodMediumName(desc);
+      base::string16 short_name = util_.GetInputMethodShortName(desc);
       EXPECT_EQ(medium_name,short_name);
     }
   }
@@ -198,9 +220,9 @@ TEST_F(InputMethodUtilTest, GetInputMethodMediumNameTest) {
     };
     const int len = ARRAYSIZE_UNSAFE(input_method_id);
     for (int i=0; i<len; ++i) {
-      InputMethodDescriptor desc = GetDesc(input_method_id[i], "", "");
-      string16 medium_name = util_.GetInputMethodMediumName(desc);
-      string16 short_name = util_.GetInputMethodShortName(desc);
+      InputMethodDescriptor desc = GetDesc(input_method_id[i], "", "", "");
+      base::string16 medium_name = util_.GetInputMethodMediumName(desc);
+      base::string16 short_name = util_.GetInputMethodShortName(desc);
       EXPECT_NE(medium_name,short_name);
     }
   }
@@ -210,78 +232,78 @@ TEST_F(InputMethodUtilTest, GetInputMethodLongNameTest) {
   // For most languages input method or keyboard layout name is returned.
   // See below for exceptions.
   {
-    InputMethodDescriptor desc = GetDesc("m17n:fa:isiri", "us", "fa");
+    InputMethodDescriptor desc = GetDesc("m17n:fa:isiri", "us", "fa", "");
     EXPECT_EQ(ASCIIToUTF16("Persian input method (ISIRI 2901 layout)"),
               util_.GetInputMethodLongName(desc));
   }
   {
-    InputMethodDescriptor desc = GetDesc("mozc-hangul", "us", "ko");
+    InputMethodDescriptor desc = GetDesc("mozc-hangul", "us", "ko", "");
     EXPECT_EQ(ASCIIToUTF16("Korean input method"),
               util_.GetInputMethodLongName(desc));
   }
   {
-    InputMethodDescriptor desc = GetDesc("m17n:vi:tcvn", "us", "vi");
+    InputMethodDescriptor desc = GetDesc("m17n:vi:tcvn", "us", "vi", "");
     EXPECT_EQ(ASCIIToUTF16("Vietnamese input method (TCVN6064)"),
               util_.GetInputMethodLongName(desc));
   }
   {
-    InputMethodDescriptor desc = GetDesc("xkb:jp::jpn", "jp", "ja");
-    EXPECT_EQ(ASCIIToUTF16("Japanese keyboard"),
+    InputMethodDescriptor desc = GetDesc("xkb:jp::jpn", "jp", "ja", "");
+    EXPECT_EQ(ASCIIToUTF16("Japanese"),
               util_.GetInputMethodLongName(desc));
   }
   {
     InputMethodDescriptor desc =
-        GetDesc("xkb:us:dvorak:eng", "us(dvorak)", "en-US");
-    EXPECT_EQ(ASCIIToUTF16("US Dvorak keyboard"),
+        GetDesc("xkb:us:dvorak:eng", "us(dvorak)", "en-US", "");
+    EXPECT_EQ(ASCIIToUTF16("US Dvorak"),
               util_.GetInputMethodLongName(desc));
   }
   {
     InputMethodDescriptor desc =
-        GetDesc("xkb:gb:dvorak:eng", "gb(dvorak)", "en-US");
-    EXPECT_EQ(ASCIIToUTF16("UK Dvorak keyboard"),
+        GetDesc("xkb:gb:dvorak:eng", "gb(dvorak)", "en-US", "");
+    EXPECT_EQ(ASCIIToUTF16("UK Dvorak"),
               util_.GetInputMethodLongName(desc));
   }
 
   // For Arabic, Dutch, French, German and Hindi,
   // "language - keyboard layout" pair is returned.
   {
-    InputMethodDescriptor desc = GetDesc("m17n:ar:kbd", "us", "ar");
+    InputMethodDescriptor desc = GetDesc("m17n:ar:kbd", "us", "ar", "");
     EXPECT_EQ(ASCIIToUTF16("Arabic - Standard input method"),
               util_.GetInputMethodLongName(desc));
   }
   {
-    InputMethodDescriptor desc = GetDesc("xkb:be::nld", "be", "nl");
-    EXPECT_EQ(ASCIIToUTF16("Dutch - Belgian keyboard"),
+    InputMethodDescriptor desc = GetDesc("xkb:be::nld", "be", "nl", "");
+    EXPECT_EQ(ASCIIToUTF16("Dutch - Belgian"),
               util_.GetInputMethodLongName(desc));
   }
   {
-    InputMethodDescriptor desc = GetDesc("xkb:fr::fra", "fr", "fr");
-    EXPECT_EQ(ASCIIToUTF16("French - French keyboard"),
+    InputMethodDescriptor desc = GetDesc("xkb:fr::fra", "fr", "fr", "");
+    EXPECT_EQ(ASCIIToUTF16("French - French"),
               util_.GetInputMethodLongName(desc));
   }
   {
-    InputMethodDescriptor desc = GetDesc("xkb:be::fra", "be", "fr");
-    EXPECT_EQ(ASCIIToUTF16("French - Belgian keyboard"),
+    InputMethodDescriptor desc = GetDesc("xkb:be::fra", "be", "fr", "");
+    EXPECT_EQ(ASCIIToUTF16("French - Belgian"),
               util_.GetInputMethodLongName(desc));
   }
   {
-    InputMethodDescriptor desc = GetDesc("xkb:de::ger", "de", "de");
-    EXPECT_EQ(ASCIIToUTF16("German - German keyboard"),
+    InputMethodDescriptor desc = GetDesc("xkb:de::ger", "de", "de", "");
+    EXPECT_EQ(ASCIIToUTF16("German - German"),
               util_.GetInputMethodLongName(desc));
   }
   {
-    InputMethodDescriptor desc = GetDesc("xkb:be::ger", "be", "de");
-    EXPECT_EQ(ASCIIToUTF16("German - Belgian keyboard"),
+    InputMethodDescriptor desc = GetDesc("xkb:be::ger", "be", "de", "");
+    EXPECT_EQ(ASCIIToUTF16("German - Belgian"),
               util_.GetInputMethodLongName(desc));
   }
   {
-    InputMethodDescriptor desc = GetDesc("m17n:hi:itrans", "us", "hi");
+    InputMethodDescriptor desc = GetDesc("m17n:hi:itrans", "us", "hi", "");
     EXPECT_EQ(ASCIIToUTF16("Hindi - Standard input method"),
               util_.GetInputMethodLongName(desc));
   }
 
   {
-    InputMethodDescriptor desc = GetDesc("invalid-id", "us", "xx");
+    InputMethodDescriptor desc = GetDesc("invalid-id", "us", "xx", "");
     // You can safely ignore the "Resouce ID is not found for: invalid-id"
     // error.
     EXPECT_EQ(ASCIIToUTF16("invalid-id"),
@@ -321,7 +343,7 @@ TEST_F(InputMethodUtilTest, TestGetLanguageCodeFromInputMethodId) {
 }
 
 TEST_F(InputMethodUtilTest, TestGetInputMethodDisplayNameFromId) {
-  EXPECT_EQ("US keyboard",
+  EXPECT_EQ("US",
             util_.GetInputMethodDisplayNameFromId("xkb:us::eng"));
   EXPECT_EQ("", util_.GetInputMethodDisplayNameFromId("nonexistent"));
 }
@@ -427,7 +449,7 @@ TEST_F(InputMethodUtilTest, TestGetFirstLoginInputMethodIds_Us_And_Th) {
   util_.GetFirstLoginInputMethodIds("th", *descriptor, &input_method_ids);
   ASSERT_EQ(2U, input_method_ids.size());
   EXPECT_EQ("xkb:us::eng", input_method_ids[0]);
-  EXPECT_EQ("_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_th",
+  EXPECT_EQ(std::string("_comp_ime_") + kKeyboardExtId + "vkd_th",
             input_method_ids[1]);  // Kesmanee.
 }
 
@@ -440,7 +462,7 @@ TEST_F(InputMethodUtilTest, TestGetFirstLoginInputMethodIds_Us_And_Vi) {
   util_.GetFirstLoginInputMethodIds("vi", *descriptor, &input_method_ids);
   ASSERT_EQ(2U, input_method_ids.size());
   EXPECT_EQ("xkb:us::eng", input_method_ids[0]);
-  EXPECT_EQ("_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_vi_tcvn",
+  EXPECT_EQ(std::string("_comp_ime_") + kKeyboardExtId + "vkd_vi_tcvn",
             input_method_ids[1]);  // TCVN6064.
 }
 
@@ -458,12 +480,12 @@ TEST_F(InputMethodUtilTest, TestGetLanguageCodesFromInputMethodIds) {
   EXPECT_EQ("fr", language_codes[2]);
 }
 
-// Test all supported descriptors to detect a typo in ibus_input_methods.txt.
+// Test all supported descriptors to detect a typo in input_methods.txt.
 TEST_F(InputMethodUtilTest, TestIBusInputMethodText) {
   for (size_t i = 0; i < util_.supported_input_methods_->size(); ++i) {
     const std::string language_code =
         util_.supported_input_methods_->at(i).language_codes().at(0);
-    const string16 display_name =
+    const base::string16 display_name =
         l10n_util::GetDisplayNameForLocale(language_code, "en", false);
     // Only two formats, like "fr" (lower case) and "en-US" (lower-upper), are
     // allowed. See the text file for details.
@@ -475,7 +497,7 @@ TEST_F(InputMethodUtilTest, TestIBusInputMethodText) {
     EXPECT_FALSE(display_name.empty())
         << "Invalid language code " << language_code;
     // On error, GetDisplayNameForLocale() returns the |language_code| as-is.
-    EXPECT_NE(language_code, UTF16ToUTF8(display_name))
+    EXPECT_NE(language_code, base::UTF16ToUTF8(display_name))
         << "Invalid language code " << language_code;
   }
 }

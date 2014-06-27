@@ -10,18 +10,17 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
-#include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_toolbar_model.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/feature_switch.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "extensions/browser/extension_error.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/error_utils.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/extension_urls.h"
+#include "extensions/common/feature_switch.h"
 #include "extensions/common/manifest_constants.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -49,8 +48,8 @@ const StackTrace& GetStackTraceFromError(const ExtensionError* error) {
 void CheckStackFrame(const StackFrame& frame,
                      const std::string& source,
                      const std::string& function) {
-  EXPECT_EQ(UTF8ToUTF16(source), frame.source);
-  EXPECT_EQ(UTF8ToUTF16(function), frame.function);
+  EXPECT_EQ(base::UTF8ToUTF16(source), frame.source);
+  EXPECT_EQ(base::UTF8ToUTF16(function), frame.function);
 }
 
 // Verify that all properties of a given |frame| are correct. Overloaded because
@@ -76,9 +75,9 @@ void CheckError(const ExtensionError* error,
   ASSERT_TRUE(error);
   EXPECT_EQ(type, error->type());
   EXPECT_EQ(id, error->extension_id());
-  EXPECT_EQ(UTF8ToUTF16(source), error->source());
+  EXPECT_EQ(base::UTF8ToUTF16(source), error->source());
   EXPECT_EQ(from_incognito, error->from_incognito());
-  EXPECT_EQ(UTF8ToUTF16(message), error->message());
+  EXPECT_EQ(base::UTF8ToUTF16(message), error->message());
 }
 
 // Verify that all properties of a JS runtime error are correct.
@@ -118,8 +117,8 @@ void CheckManifestError(const ExtensionError* error,
 
   const ManifestError* manifest_error =
       static_cast<const ManifestError*>(error);
-  EXPECT_EQ(UTF8ToUTF16(manifest_key), manifest_error->manifest_key());
-  EXPECT_EQ(UTF8ToUTF16(manifest_specific),
+  EXPECT_EQ(base::UTF8ToUTF16(manifest_key), manifest_error->manifest_key());
+  EXPECT_EQ(base::UTF8ToUTF16(manifest_specific),
             manifest_error->manifest_specific());
 }
 
@@ -189,10 +188,15 @@ class ErrorConsoleBrowserTest : public ExtensionBrowserTest {
   // The type of action which we take after we load an extension in order to
   // cause any errors.
   enum Action {
-    ACTION_NAVIGATE,  // navigate to a page to allow a content script to run.
-    ACTION_BROWSER_ACTION,  // simulate a browser action click.
-    ACTION_NONE  // Do nothing (errors will be caused by a background script,
-                 // or by a manifest/loading warning).
+    // Navigate to a (non-chrome) page to allow a content script to run.
+    ACTION_NAVIGATE,
+    // Simulate a browser action click.
+    ACTION_BROWSER_ACTION,
+    // Navigate to the new tab page.
+    ACTION_NEW_TAB,
+    // Do nothing (errors will be caused by a background script,
+    // or by a manifest/loading warning).
+    ACTION_NONE
   };
 
   virtual void SetUpInProcessBrowserTestFixture() OVERRIDE {
@@ -244,10 +248,13 @@ class ErrorConsoleBrowserTest : public ExtensionBrowserTest {
         break;
       }
       case ACTION_BROWSER_ACTION: {
-        ExtensionService* service =
-            extensions::ExtensionSystem::Get(profile())->extension_service();
-        service->toolbar_model()->ExecuteBrowserAction(
+        ExtensionToolbarModel::Get(profile())->ExecuteBrowserAction(
             *extension, browser(), NULL, true);
+        break;
+      }
+      case ACTION_NEW_TAB: {
+        ui_test_utils::NavigateToURL(browser(),
+                                     GURL(chrome::kChromeUINewTabURL));
         break;
       }
       case ACTION_NONE:
@@ -260,7 +267,8 @@ class ErrorConsoleBrowserTest : public ExtensionBrowserTest {
 
     // We should only have errors for a single extension, or should have no
     // entries, if no errors were expected.
-    ASSERT_EQ(errors_expected > 0 ? 1u : 0u, error_console()->errors().size());
+    ASSERT_EQ(errors_expected > 0 ? 1u : 0u,
+              error_console()->get_num_entries_for_test());
     ASSERT_EQ(
         errors_expected,
         error_console()->GetErrorsForExtension((*extension)->id()).size());
@@ -287,7 +295,7 @@ IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest, ReportManifestErrors) {
                               ACTION_NONE,
                               &extension);
 
-  const ErrorConsole::ErrorList& errors =
+  const ErrorList& errors =
       error_console()->GetErrorsForExtension(extension->id());
 
   // Unfortunately, there's not always a hard guarantee of order in parsing the
@@ -299,7 +307,7 @@ IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest, ReportManifestErrors) {
   const char kFakeKey[] = "not_a_real_key";
   for (size_t i = 0; i < errors.size(); ++i) {
     ASSERT_EQ(ExtensionError::MANIFEST_ERROR, errors[i]->type());
-    std::string utf8_key = UTF16ToUTF8(
+    std::string utf8_key = base::UTF16ToUTF8(
         (static_cast<const ManifestError*>(errors[i]))->manifest_key());
     if (utf8_key == manifest_keys::kPermissions)
       permissions_error = errors[i];
@@ -324,7 +332,7 @@ IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest, ReportManifestErrors) {
                          manifest_errors::kUnrecognizedManifestKey,
                          kFakeKey),
                      kFakeKey,
-                     EmptyString());
+                     std::string());
 }
 
 // Test that we do not store any errors unless the Developer Mode switch is
@@ -366,7 +374,7 @@ IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest,
 
   std::string script_url = extension->url().Resolve("content_script.js").spec();
 
-  const ErrorConsole::ErrorList& errors =
+  const ErrorList& errors =
       error_console()->GetErrorsForExtension(extension->id());
 
   // The first error should be a console log.
@@ -424,22 +432,26 @@ IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest, BrowserActionRuntimeError) {
 
   std::string script_url = extension->url().Resolve("browser_action.js").spec();
 
-  const ErrorConsole::ErrorList& errors =
+  const ErrorList& errors =
       error_console()->GetErrorsForExtension(extension->id());
 
   std::string event_bindings_str =
       base::StringPrintf("extensions::%s", kEventBindings);
+
+  std::string event_dispatch_to_listener_str =
+      base::StringPrintf("Event.publicClass.%s [as dispatchToListener]",
+                         kAnonymousFunction);
 
   CheckRuntimeError(
       errors[0],
       extension->id(),
       script_url,
       false,  // not incognito
-      "Error in event handler for browserAction.onClicked: "
-          "ReferenceError: baz is not defined",
+      "Error in event handler for browserAction.onClicked: baz is not defined\n"
+          "Stack trace: ReferenceError: baz is not defined",
       logging::LOG_ERROR,
       extension->url().Resolve(kBackgroundPageName),
-      6u);
+      8u);
 
   const StackTrace& stack_trace = GetStackTraceFromError(errors[0]);
 
@@ -448,10 +460,15 @@ IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest, BrowserActionRuntimeError) {
                   "extensions::SafeBuiltins",
                   std::string("Function.target.") + kAnonymousFunction);
   CheckStackFrame(
-      stack_trace[2], event_bindings_str, "Event.dispatchToListener");
-  CheckStackFrame(stack_trace[3], event_bindings_str, "Event.dispatch_");
-  CheckStackFrame(stack_trace[4], event_bindings_str, "dispatchArgs");
-  CheckStackFrame(stack_trace[5], event_bindings_str, "dispatchEvent");
+      stack_trace[2], event_bindings_str, "EventImpl.dispatchToListener");
+  CheckStackFrame(stack_trace[3],
+                  "extensions::SafeBuiltins",
+                  std::string("Function.target.") + kAnonymousFunction);
+  CheckStackFrame(stack_trace[4], "extensions::utils",
+                  event_dispatch_to_listener_str);
+  CheckStackFrame(stack_trace[5], event_bindings_str, "EventImpl.dispatch_");
+  CheckStackFrame(stack_trace[6], event_bindings_str, "dispatchArgs");
+  CheckStackFrame(stack_trace[7], event_bindings_str, "dispatchEvent");
 }
 
 // Test that we can catch an error for calling an API with improper arguments.
@@ -464,7 +481,7 @@ IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest, BadAPIArgumentsRuntimeError) {
       ACTION_NONE,
       &extension);
 
-  const ErrorConsole::ErrorList& errors =
+  const ErrorList& errors =
       error_console()->GetErrorsForExtension(extension->id());
 
   std::string schema_utils_str =
@@ -503,7 +520,7 @@ IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest, BadAPIPermissionsRuntimeError) {
 
   std::string script_url = extension->url().Resolve("background.js").spec();
 
-  const ErrorConsole::ErrorList& errors =
+  const ErrorList& errors =
       error_console()->GetErrorsForExtension(extension->id());
 
   CheckRuntimeError(
@@ -511,7 +528,7 @@ IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest, BadAPIPermissionsRuntimeError) {
       extension->id(),
       script_url,
       false,  // not incognito
-      "Uncaught TypeError: Cannot call method 'addUrl' of undefined",
+      "Uncaught TypeError: Cannot read property 'addUrl' of undefined",
       logging::LOG_ERROR,
       extension->url().Resolve(kBackgroundPageName),
       1u);
@@ -522,6 +539,16 @@ IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest, BadAPIPermissionsRuntimeError) {
                   script_url,
                   kAnonymousFunction,
                   5u, 1u);
+}
+
+IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest, BadExtensionPage) {
+  const Extension* extension = NULL;
+  LoadExtensionAndCheckErrors(
+      "bad_extension_page",
+      kNoFlags,
+      1,  // One error: the page will load JS which has a reference error.
+      ACTION_NEW_TAB,
+      &extension);
 }
 
 }  // namespace extensions

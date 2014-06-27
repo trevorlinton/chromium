@@ -7,15 +7,14 @@ from copy import deepcopy
 import json
 import unittest
 
-from compiled_file_system import CompiledFileSystem
-from features_bundle import FeaturesBundle
+from future import Future
 import manifest_data_source
 from object_store_creator import ObjectStoreCreator
 
 
 convert_and_annotate_docs = {
   'name': {
-    'example': "My {{title}}",
+    'example': "My {{platform}}",
     'name': 'name',
     'level': 'required'
   },
@@ -201,6 +200,42 @@ class ManifestDataSourceTest(unittest.TestCase):
     self.assertEqual(
         expected_docs, manifest_data_source._ListifyAndSortDocs(docs, 'apps'))
 
+  def testNonExpandedExamples(self):
+    docs = {
+      'doc1': {
+        'name': 'doc1',
+        'example': {}
+      },
+      'doc2': {
+        'name': 'doc2',
+        'example': []
+      },
+      'doc3': {
+        'name': 'doc3',
+        'example': [{}]
+      }
+    }
+
+    expected_docs = [
+      {
+        'name': 'doc1',
+        'has_example': True,
+        'example': '{...}'
+      },
+      {
+        'name': 'doc2',
+        'has_example': True,
+        'example': '[...]'
+      },
+      {
+        'name': 'doc3',
+        'has_example': True,
+        'example': '[{...}]'
+      }
+    ]
+    self.assertEqual(
+        expected_docs, manifest_data_source._ListifyAndSortDocs(docs, 'apps'))
+
   def testManifestDataSource(self):
     manifest_features = {
       'doc1': {
@@ -246,7 +281,7 @@ class ManifestDataSourceTest(unittest.TestCase):
 
     class FakeFeaturesBundle(object):
       def GetManifestFeatures(self):
-        return manifest_features
+        return Future(value=manifest_features)
 
     class FakeServerInstance(object):
       def __init__(self):

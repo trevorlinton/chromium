@@ -184,6 +184,7 @@ ImageData PDF::GetResourceImageForScale(const InstanceHandle& instance,
   return ImageData();
 }
 
+// static
 Var PDF::ModalPromptForPassword(const InstanceHandle& instance,
                                 Var message) {
   if (has_interface<PPB_PDF>()) {
@@ -194,4 +195,29 @@ Var PDF::ModalPromptForPassword(const InstanceHandle& instance,
   }
   return Var();
 }
+
+// static
+bool PDF::IsOutOfProcess(const InstanceHandle& instance) {
+  if (has_interface<PPB_PDF>()) {
+    return PP_ToBool(get_interface<PPB_PDF>()->IsOutOfProcess(
+        instance.pp_instance()));
+  }
+  return false;
+}
+
+// static
+void PDF::SetSelectedText(const InstanceHandle& instance,
+                          const char* selected_text) {
+  if (has_interface<PPB_PDF>()) {
+    get_interface<PPB_PDF>()->SetSelectedText(instance.pp_instance(),
+                                              selected_text);
+  }
+}
+
+// static
+void PDF::SetLinkUnderCursor(const InstanceHandle& instance, const char* url) {
+  if (has_interface<PPB_PDF>())
+    get_interface<PPB_PDF>()->SetLinkUnderCursor(instance.pp_instance(), url);
+}
+
 }  // namespace pp

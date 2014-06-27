@@ -52,7 +52,6 @@ enum AcceleratorAction {
   BRIGHTNESS_UP,
   CYCLE_BACKWARD_MRU,
   CYCLE_FORWARD_MRU,
-  CYCLE_LINEAR,
   DEBUG_TOGGLE_DEVICE_SCALE_FACTOR,
   DEBUG_TOGGLE_SHOW_DEBUG_BORDERS,
   DEBUG_TOGGLE_SHOW_FPS_COUNTER,
@@ -100,7 +99,6 @@ enum AcceleratorAction {
   SCALE_UI_UP,
   SHOW_KEYBOARD_OVERLAY,
   SHOW_MESSAGE_CENTER_BUBBLE,
-  SHOW_OAK,
   SHOW_SYSTEM_TRAY_BUBBLE,
   SHOW_TASK_MANAGER,
   SILENCE_SPOKEN_FEEDBACK,
@@ -114,8 +112,10 @@ enum AcceleratorAction {
   TOGGLE_DESKTOP_BACKGROUND_MODE,
   TOGGLE_FULLSCREEN,
   TOGGLE_MAXIMIZED,
+  TOGGLE_OVERVIEW,
   TOGGLE_ROOT_WINDOW_FULL_SCREEN,
   TOGGLE_SPOKEN_FEEDBACK,
+  TOGGLE_TOUCH_VIEW_TESTING,
   TOGGLE_WIFI,
   TOUCH_HUD_CLEAR,
   TOUCH_HUD_MODE_CHANGE,
@@ -135,6 +135,7 @@ enum AcceleratorAction {
   OPEN_CROSH,
   OPEN_FILE_MANAGER,
   SWITCH_TO_NEXT_USER,
+  SWITCH_TO_PREVIOUS_USER,
 #endif
 };
 
@@ -191,6 +192,10 @@ ASH_EXPORT extern const size_t kNonrepeatableActionsLength;
 // Actions allowed in app mode.
 ASH_EXPORT extern const AcceleratorAction kActionsAllowedInAppMode[];
 ASH_EXPORT extern const size_t kActionsAllowedInAppModeLength;
+
+// Actions that require at least 1 window.
+ASH_EXPORT extern const AcceleratorAction kActionsNeedingWindow[];
+ASH_EXPORT extern const size_t kActionsNeedingWindowLength;
 
 }  // namespace ash
 

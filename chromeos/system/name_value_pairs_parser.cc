@@ -12,6 +12,7 @@
 #include "base/stl_util.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
+#include "base/sys_info.h"
 
 namespace chromeos {  // NOLINT
 namespace system {
@@ -91,8 +92,8 @@ bool NameValuePairsParser::ParseNameValuePairsWithComments(
 
       std::string key;
       std::string value;
-      TrimString(pair.substr(0, eq_pos), kTrimChars, &key);
-      TrimString(pair.substr(eq_pos + 1, value_size), kTrimChars, &value);
+      base::TrimString(pair.substr(0, eq_pos), kTrimChars, &key);
+      base::TrimString(pair.substr(eq_pos + 1, value_size), kTrimChars, &value);
 
       if (!key.empty()) {
         AddNameValuePair(key, value);
@@ -113,7 +114,7 @@ bool NameValuePairsParser::GetSingleValueFromTool(int argc,
   if (!GetToolOutput(argc, argv, output_string))
     return false;
 
-  TrimWhitespaceASCII(output_string, TRIM_ALL, &output_string);
+  base::TrimWhitespaceASCII(output_string, base::TRIM_ALL, &output_string);
   AddNameValuePair(key, output_string);
   return true;
 }
@@ -126,7 +127,8 @@ bool NameValuePairsParser::GetNameValuePairsFromFile(
   if (base::ReadFileToString(file_path, &contents)) {
     return ParseNameValuePairs(contents, eq, delim);
   } else {
-    LOG(WARNING) << "Unable to read statistics file: " << file_path.value();
+    if (base::SysInfo::IsRunningOnChromeOS())
+      LOG(WARNING) << "Unable to read statistics file: " << file_path.value();
     return false;
   }
 }

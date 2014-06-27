@@ -292,27 +292,6 @@ bool ContentSettingDecoration::OnMousePressed(NSRect frame) {
   return true;
 }
 
-void ContentSettingDecoration::PopUpIfNeeded(NSRect frame) {
-  if (!IsVisible())
-    return;
-
-  WebContents* web_contents = owner_->GetWebContents();
-  TabSpecificContentSettings* content_settings = web_contents ?
-      TabSpecificContentSettings::FromWebContents(web_contents) : NULL;
-  if (!content_settings)
-    return;
-
-  ContentSettingsType content_type =
-      content_setting_image_model_->get_content_settings_type();
-  if (!content_settings->IsBlockageIndicated(content_type)) {
-    if (content_setting_image_model_->ShouldShowBubbleOnBlockage()) {
-      // Pop up the bubble.
-      OnMousePressed(frame);
-    }
-    content_settings->SetBlockageHasBeenIndicated(content_type);
-  }
-}
-
 NSString* ContentSettingDecoration::GetToolTip() {
   return tooltip_.get();
 }
@@ -354,17 +333,8 @@ CGFloat ContentSettingDecoration::GetWidthForSpace(CGFloat width) {
 void ContentSettingDecoration::DrawInFrame(NSRect frame, NSView* control_view) {
   if ([animation_ animationState] != kNoAnimation) {
     NSRect background_rect = NSInsetRect(frame, 0.0, kBorderPadding);
-    const ui::NinePartImageIds image_ids = {
-      IDR_OMNIBOX_CONTENT_SETTING_BUBBLE_TOP_LEFT,
-      IDR_OMNIBOX_CONTENT_SETTING_BUBBLE_TOP,
-      IDR_OMNIBOX_CONTENT_SETTING_BUBBLE_TOP_RIGHT,
-      IDR_OMNIBOX_CONTENT_SETTING_BUBBLE_LEFT,
-      IDR_OMNIBOX_CONTENT_SETTING_BUBBLE_CENTER,
-      IDR_OMNIBOX_CONTENT_SETTING_BUBBLE_RIGHT,
-      IDR_OMNIBOX_CONTENT_SETTING_BUBBLE_BOTTOM_LEFT,
-      IDR_OMNIBOX_CONTENT_SETTING_BUBBLE_BOTTOM,
-      IDR_OMNIBOX_CONTENT_SETTING_BUBBLE_BOTTOM_RIGHT
-    };
+    const ui::NinePartImageIds image_ids =
+        IMAGE_GRID(IDR_OMNIBOX_CONTENT_SETTING_BUBBLE);
     ui::DrawNinePartImage(
         background_rect, image_ids, NSCompositeSourceOver, 1.0, true);
 

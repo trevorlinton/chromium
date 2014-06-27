@@ -5,25 +5,25 @@
 #include "ash/shell/shell_delegate_impl.h"
 
 #include "ash/accessibility_delegate.h"
-#include "ash/caps_lock_delegate_stub.h"
 #include "ash/default_accessibility_delegate.h"
 #include "ash/default_user_wallpaper_delegate.h"
-#include "ash/host/root_window_host_factory.h"
-#include "ash/keyboard_controller_proxy_stub.h"
+#include "ash/gpu_support_stub.h"
+#include "ash/host/window_tree_host_factory.h"
 #include "ash/media_delegate.h"
 #include "ash/new_window_delegate.h"
 #include "ash/session_state_delegate.h"
 #include "ash/session_state_delegate_stub.h"
 #include "ash/shell/context_menu.h"
 #include "ash/shell/example_factory.h"
-#include "ash/shell/launcher_delegate_impl.h"
+#include "ash/shell/keyboard_controller_proxy_stub.h"
+#include "ash/shell/shelf_delegate_impl.h"
 #include "ash/shell/toplevel_window.h"
 #include "ash/shell_window_ids.h"
 #include "ash/system/tray/default_system_tray_delegate.h"
 #include "ash/wm/window_state.h"
 #include "base/message_loop/message_loop.h"
 #include "ui/aura/window.h"
-#include "ui/views/corewm/input_method_event_filter.h"
+#include "ui/wm/core/input_method_event_filter.h"
 
 namespace ash {
 namespace shell {
@@ -69,7 +69,8 @@ class MediaDelegateImpl : public MediaDelegate {
 
 ShellDelegateImpl::ShellDelegateImpl()
     : watcher_(NULL),
-      launcher_delegate_(NULL) {
+      shelf_delegate_(NULL),
+      browser_context_(NULL) {
 }
 
 ShellDelegateImpl::~ShellDelegateImpl() {
@@ -77,8 +78,8 @@ ShellDelegateImpl::~ShellDelegateImpl() {
 
 void ShellDelegateImpl::SetWatcher(WindowWatcher* watcher) {
   watcher_ = watcher;
-  if (launcher_delegate_)
-    launcher_delegate_->set_watcher(watcher);
+  if (shelf_delegate_)
+    shelf_delegate_->set_watcher(watcher);
 }
 
 bool ShellDelegateImpl::IsFirstRunAfterBoot() const {
@@ -100,7 +101,7 @@ bool ShellDelegateImpl::IsRunningInForcedAppMode() const {
 void ShellDelegateImpl::PreInit() {
 }
 
-void ShellDelegateImpl::Shutdown() {
+void ShellDelegateImpl::PreShutdown() {
 }
 
 void ShellDelegateImpl::Exit() {
@@ -112,18 +113,17 @@ keyboard::KeyboardControllerProxy*
   return new KeyboardControllerProxyStub();
 }
 
-content::BrowserContext* ShellDelegateImpl::GetCurrentBrowserContext() {
-  return Shell::GetInstance()->browser_context();
+content::BrowserContext* ShellDelegateImpl::GetActiveBrowserContext() {
+  return browser_context_;
 }
 
 app_list::AppListViewDelegate* ShellDelegateImpl::CreateAppListViewDelegate() {
   return ash::shell::CreateAppListViewDelegate();
 }
 
-ash::LauncherDelegate* ShellDelegateImpl::CreateLauncherDelegate(
-    ash::LauncherModel* model) {
-  launcher_delegate_ = new LauncherDelegateImpl(watcher_);
-  return launcher_delegate_;
+ShelfDelegate* ShellDelegateImpl::CreateShelfDelegate(ShelfModel* model) {
+  shelf_delegate_ = new ShelfDelegateImpl(watcher_);
+  return shelf_delegate_;
 }
 
 ash::SystemTrayDelegate* ShellDelegateImpl::CreateSystemTrayDelegate() {
@@ -132,10 +132,6 @@ ash::SystemTrayDelegate* ShellDelegateImpl::CreateSystemTrayDelegate() {
 
 ash::UserWallpaperDelegate* ShellDelegateImpl::CreateUserWallpaperDelegate() {
   return new DefaultUserWallpaperDelegate();
-}
-
-ash::CapsLockDelegate* ShellDelegateImpl::CreateCapsLockDelegate() {
-  return new CapsLockDelegateStub;
 }
 
 ash::SessionStateDelegate* ShellDelegateImpl::CreateSessionStateDelegate() {
@@ -154,19 +150,20 @@ ash::MediaDelegate* ShellDelegateImpl::CreateMediaDelegate() {
   return new MediaDelegateImpl;
 }
 
-aura::client::UserActionClient* ShellDelegateImpl::CreateUserActionClient() {
-  return NULL;
-}
-
-void ShellDelegateImpl::RecordUserMetricsAction(UserMetricsAction action) {
-}
-
-ui::MenuModel* ShellDelegateImpl::CreateContextMenu(aura::Window* root) {
+ui::MenuModel* ShellDelegateImpl::CreateContextMenu(
+    aura::Window* root,
+    ash::ShelfItemDelegate* item_delegate,
+    ash::ShelfItem* item) {
   return new ContextMenu(root);
 }
 
-RootWindowHostFactory* ShellDelegateImpl::CreateRootWindowHostFactory() {
-  return RootWindowHostFactory::Create();
+WindowTreeHostFactory* ShellDelegateImpl::CreateWindowTreeHostFactory() {
+  return WindowTreeHostFactory::Create();
+}
+
+GPUSupport* ShellDelegateImpl::CreateGPUSupport() {
+  // Real GPU support depends on src/content, so just use a stub.
+  return new GPUSupportStub;
 }
 
 base::string16 ShellDelegateImpl::GetProductName() const {

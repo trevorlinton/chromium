@@ -60,20 +60,19 @@ class BrowsingDataHelperTest : public testing::Test {
 TEST_F(BrowsingDataHelperTest, WebSafeSchemesAreWebSafe) {
   EXPECT_TRUE(IsWebScheme(content::kHttpScheme));
   EXPECT_TRUE(IsWebScheme(content::kHttpsScheme));
-  EXPECT_TRUE(IsWebScheme(chrome::kFtpScheme));
-  EXPECT_TRUE(IsWebScheme(chrome::kDataScheme));
+  EXPECT_TRUE(IsWebScheme(content::kFtpScheme));
+  EXPECT_TRUE(IsWebScheme(content::kDataScheme));
   EXPECT_TRUE(IsWebScheme("feed"));
-  EXPECT_TRUE(IsWebScheme(chrome::kBlobScheme));
-  EXPECT_TRUE(IsWebScheme(chrome::kFileSystemScheme));
+  EXPECT_TRUE(IsWebScheme(content::kBlobScheme));
+  EXPECT_TRUE(IsWebScheme(content::kFileSystemScheme));
   EXPECT_FALSE(IsWebScheme("invalid-scheme-i-just-made-up"));
 }
 
 TEST_F(BrowsingDataHelperTest, ChromeSchemesAreNotWebSafe) {
   EXPECT_FALSE(IsWebScheme(extensions::kExtensionScheme));
-  EXPECT_FALSE(IsWebScheme(chrome::kAboutScheme));
-  EXPECT_FALSE(IsWebScheme(chrome::kChromeDevToolsScheme));
-  EXPECT_FALSE(IsWebScheme(chrome::kChromeInternalScheme));
-  EXPECT_FALSE(IsWebScheme(chrome::kChromeUIScheme));
+  EXPECT_FALSE(IsWebScheme(content::kAboutScheme));
+  EXPECT_FALSE(IsWebScheme(content::kChromeDevToolsScheme));
+  EXPECT_FALSE(IsWebScheme(content::kChromeUIScheme));
   EXPECT_FALSE(IsWebScheme(content::kJavaScriptScheme));
   EXPECT_FALSE(IsWebScheme(content::kMailToScheme));
   EXPECT_FALSE(IsWebScheme(content::kMetadataScheme));
@@ -84,21 +83,20 @@ TEST_F(BrowsingDataHelperTest, ChromeSchemesAreNotWebSafe) {
 TEST_F(BrowsingDataHelperTest, WebSafeSchemesAreNotExtensions) {
   EXPECT_FALSE(IsExtensionScheme(content::kHttpScheme));
   EXPECT_FALSE(IsExtensionScheme(content::kHttpsScheme));
-  EXPECT_FALSE(IsExtensionScheme(chrome::kFtpScheme));
-  EXPECT_FALSE(IsExtensionScheme(chrome::kDataScheme));
+  EXPECT_FALSE(IsExtensionScheme(content::kFtpScheme));
+  EXPECT_FALSE(IsExtensionScheme(content::kDataScheme));
   EXPECT_FALSE(IsExtensionScheme("feed"));
-  EXPECT_FALSE(IsExtensionScheme(chrome::kBlobScheme));
-  EXPECT_FALSE(IsExtensionScheme(chrome::kFileSystemScheme));
+  EXPECT_FALSE(IsExtensionScheme(content::kBlobScheme));
+  EXPECT_FALSE(IsExtensionScheme(content::kFileSystemScheme));
   EXPECT_FALSE(IsExtensionScheme("invalid-scheme-i-just-made-up"));
 }
 
 TEST_F(BrowsingDataHelperTest, ChromeSchemesAreNotAllExtension) {
   EXPECT_TRUE(IsExtensionScheme(extensions::kExtensionScheme));
 
-  EXPECT_FALSE(IsExtensionScheme(chrome::kAboutScheme));
-  EXPECT_FALSE(IsExtensionScheme(chrome::kChromeDevToolsScheme));
-  EXPECT_FALSE(IsExtensionScheme(chrome::kChromeInternalScheme));
-  EXPECT_FALSE(IsExtensionScheme(chrome::kChromeUIScheme));
+  EXPECT_FALSE(IsExtensionScheme(content::kAboutScheme));
+  EXPECT_FALSE(IsExtensionScheme(content::kChromeDevToolsScheme));
+  EXPECT_FALSE(IsExtensionScheme(content::kChromeUIScheme));
   EXPECT_FALSE(IsExtensionScheme(content::kJavaScriptScheme));
   EXPECT_FALSE(IsExtensionScheme(content::kMailToScheme));
   EXPECT_FALSE(IsExtensionScheme(content::kMetadataScheme));

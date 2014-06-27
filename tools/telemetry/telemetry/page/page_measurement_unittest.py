@@ -1,35 +1,44 @@
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
+
 import json
 import os
 
+from telemetry import test
 from telemetry.core import wpr_modes
+from telemetry.page import page as page_module
 from telemetry.page import page_measurement
 from telemetry.page import page_measurement_unittest_base
-from telemetry.page import page as page_module
 from telemetry.page import page_set
 from telemetry.page import page_set_archive_info
 from telemetry.page.actions import all_page_actions
 from telemetry.page.actions import page_action
 from telemetry.unittest import options_for_unittests
 
+
 class MeasurementThatFails(page_measurement.PageMeasurement):
   def MeasurePage(self, page, tab, results):
     raise page_measurement.MeasurementFailure('Intentional failure.')
 
 class MeasurementThatHasDefaults(page_measurement.PageMeasurement):
-  def AddCommandLineOptions(self, parser):
+  def AddCommandLineArgs(self, parser):
     parser.add_option('-x', dest='x', default=3)
 
   def MeasurePage(self, page, tab, results):
-    assert self.options.x == 3
+    if not hasattr(self.options, 'x'):
+      raise page_measurement.MeasurementFailure('Default option was not set.')
+    if self.options.x != 3:
+      raise page_measurement.MeasurementFailure(
+          'Expected x == 3, got x == ' + self.options.x)
     results.Add('x', 'ms', 7)
 
 class MeasurementForBlank(page_measurement.PageMeasurement):
   def MeasurePage(self, page, tab, results):
     contents = tab.EvaluateJavaScript('document.body.textContent')
-    assert contents.strip() == 'Hello world'
+    if contents.strip() != 'Hello world':
+      raise page_measurement.MeasurementFailure(
+          'Page contents were: ' + contents)
 
 class MeasurementForReplay(page_measurement.PageMeasurement):
   def MeasurePage(self, page, tab, results):
@@ -41,11 +50,14 @@ class MeasurementForReplay(page_measurement.PageMeasurement):
 class MeasurementQueryParams(page_measurement.PageMeasurement):
   def MeasurePage(self, page, tab, results):
     query = tab.EvaluateJavaScript('window.location.search')
-    assert query.strip() == '?foo=1'
+    expected = '?foo=1'
+    if query.strip() != expected:
+      raise page_measurement.MeasurementFailure(
+          'query was %s, not %s.' % (query, expected))
 
 class MeasurementWithAction(page_measurement.PageMeasurement):
   def __init__(self):
-    super(MeasurementWithAction, self).__init__('test_action')
+    super(MeasurementWithAction, self).__init__('RunTestAction')
 
   def MeasurePage(self, page, tab, results):
     pass
@@ -63,11 +75,9 @@ class PageMeasurementUnitTest(
     all_results = self.RunMeasurement(measurement, ps, options=self._options)
     self.assertEquals(0, len(all_results.failures))
 
-  def disabled_testGotQueryParams(self):
-    # Disabled due to http://crbug.com/288631
+  def testGotQueryParams(self):
     ps = self.CreatePageSet('file://blank.html?foo=1')
     measurement = MeasurementQueryParams()
-    ps.pages[-1].query_params = '?foo=1'
     all_results = self.RunMeasurement(measurement, ps, options=self._options)
     self.assertEquals(0, len(all_results.failures))
 
@@ -81,13 +91,14 @@ class PageMeasurementUnitTest(
     ps = self.CreatePageSetFromFileInUnittestDataDir('blank.html')
     measurement = MeasurementThatHasDefaults()
     all_results = self.RunMeasurement(measurement, ps, options=self._options)
-    self.assertEquals(len(all_results.page_results), 1)
+    self.assertEquals(len(all_results.all_page_specific_values), 1)
     self.assertEquals(
-      all_results.page_results[0].FindValueByTraceName('x').value, 7)
+      all_results.all_page_specific_values[0].value, 7)
 
-  def disabled_testRecordAndReplay(self):
-    # This test is disabled because it runs against live sites, and needs to be
-    # fixed. crbug.com/179038
+  # This test is disabled because it runs against live sites, and needs to be
+  # fixed. crbug.com/179038
+  @test.Disabled
+  def testRecordAndReplay(self):
     test_archive = '/tmp/google.wpr'
     google_url = 'http://www.google.com/'
     foo_url = 'http://www.foo.com/'
@@ -137,12 +148,12 @@ class PageMeasurementUnitTest(
   def testActions(self):
     action_called = [False]
     class MockAction(page_action.PageAction):
-      def RunAction(self, page, tab, previous_action):
+      def RunAction(self, page, tab):
         action_called[0] = True
     all_page_actions.RegisterClassForTest('mock', MockAction)
 
     ps = self.CreatePageSetFromFileInUnittestDataDir('blank.html')
-    setattr(ps.pages[0], 'test_action', {'action': 'mock'})
+    setattr(ps.pages[0], 'RunTestAction', {'action': 'mock'})
     measurement = MeasurementWithAction()
     self.RunMeasurement(measurement, ps, options=self._options)
     self.assertTrue(action_called[0])

@@ -29,7 +29,7 @@ class BuildDirAmbiguous(Exception): pass
 
 class ChromeTests:
   SLOW_TOOLS = ["memcheck", "tsan", "tsan_rv", "drmemory"]
-  LAYOUT_TESTS_DEFAULT_CHUNK_SIZE = 500
+  LAYOUT_TESTS_DEFAULT_CHUNK_SIZE = 400
 
   def __init__(self, options, args, test):
     if ':' in test:
@@ -119,8 +119,17 @@ class ChromeTests:
       # Valgrind runs tests slowly, so slow tests hurt more; show elapased time
       # so we can find the slowpokes.
       cmd.append("--gtest_print_time")
+      # Built-in test launcher for gtest-based executables runs tests using
+      # multiple process by default. Force the single-process mode back.
+      cmd.append("--single-process-tests")
     if self._options.gtest_repeat:
       cmd.append("--gtest_repeat=%s" % self._options.gtest_repeat)
+    if self._options.gtest_shuffle:
+      cmd.append("--gtest_shuffle")
+    if self._options.brave_new_test_launcher:
+      cmd.append("--brave-new-test-launcher")
+    if self._options.test_launcher_bot_mode:
+      cmd.append("--test-launcher-bot-mode")
     return cmd
 
   def Run(self):
@@ -257,6 +266,9 @@ class ChromeTests:
   def TestBase(self):
     return self.SimpleTest("base", "base_unittests")
 
+  def TestCast(self):
+    return self.SimpleTest("chrome", "cast_unittests")
+
   def TestChromeOS(self):
     return self.SimpleTest("chromeos", "chromeos_unittests")
 
@@ -281,11 +293,17 @@ class ChromeTests:
   def TestDevice(self):
     return self.SimpleTest("device", "device_unittests")
 
+  def TestEvents(self):
+    return self.SimpleTest("events", "events_unittests")
+
   def TestFFmpeg(self):
     return self.SimpleTest("chrome", "ffmpeg_unittests")
 
   def TestFFmpegRegressions(self):
     return self.SimpleTest("chrome", "ffmpeg_regression_tests")
+
+  def TestGCM(self):
+    return self.SimpleTest("gcm", "gcm_unit_tests")
 
   def TestGPU(self):
     return self.SimpleTest("gpu", "gpu_unittests")
@@ -429,7 +447,9 @@ class ChromeTests:
     # http://crbug.com/260627: After the switch to content_shell from DRT, each
     # test now brings up 3 processes.  Under Valgrind, they become memory bound
     # and can eventually OOM if we don't reduce the total count.
-    jobs = max(1, int(multiprocessing.cpu_count() * 0.4))
+    # It'd be nice if content_shell automatically throttled the startup of new
+    # tests if we're low on memory.
+    jobs = max(1, int(multiprocessing.cpu_count() * 0.3))
     script_cmd = ["python", script, "-v",
                   "--run-singly",  # run a separate DumpRenderTree for each test
                   "--fully-parallel",
@@ -525,6 +545,7 @@ class ChromeTests:
     "automated_ui" : TestAutomatedUI,
     "base": TestBase,            "base_unittests": TestBase,
     "browser": TestBrowser,      "browser_tests": TestBrowser,
+    "cast": TestCast,            "cast_unittests": TestCast,
     "chromeos": TestChromeOS,    "chromeos_unittests": TestChromeOS,
     "components": TestComponents,"components_unittests": TestComponents,
     "compositor": TestCompositor,"compositor_unittests": TestCompositor,
@@ -533,8 +554,10 @@ class ChromeTests:
     "courgette": TestCourgette,  "courgette_unittests": TestCourgette,
     "crypto": TestCrypto,        "crypto_unittests": TestCrypto,
     "device": TestDevice,        "device_unittests": TestDevice,
+    "events": TestEvents,        "events_unittests": TestEvents,
     "ffmpeg": TestFFmpeg,        "ffmpeg_unittests": TestFFmpeg,
     "ffmpeg_regression_tests": TestFFmpegRegressions,
+    "gcm": TestGCM,              "gcm_unit_tests": TestGCM,
     "gpu": TestGPU,              "gpu_unittests": TestGPU,
     "ipc": TestIpc,              "ipc_tests": TestIpc,
     "interactive_ui": TestInteractiveUI,
@@ -580,6 +603,8 @@ def _main():
   parser.add_option("--gtest_filter",
                     help="additional arguments to --gtest_filter")
   parser.add_option("--gtest_repeat", help="argument for --gtest_repeat")
+  parser.add_option("--gtest_shuffle", action="store_true", default=False,
+                    help="Randomize tests' orders on every iteration.")
   parser.add_option("-v", "--verbose", action="store_true", default=False,
                     help="verbose output - enable debug log messages")
   parser.add_option("--tool", dest="valgrind_tool", default="memcheck",
@@ -597,6 +622,10 @@ def _main():
   # TODO(thestig) Remove this if we can.
   parser.add_option("--gtest_color", dest="gtest_color", default="no",
                     help="dummy compatibility flag for sharding_supervisor.")
+  parser.add_option("--brave-new-test-launcher", action="store_true",
+                    help="run the tests with --brave-new-test-launcher")
+  parser.add_option("--test-launcher-bot-mode", action="store_true",
+                    help="run the tests with --test-launcher-bot-mode")
 
   options, args = parser.parse_args()
 

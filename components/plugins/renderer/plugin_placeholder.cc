@@ -13,8 +13,9 @@
 #include "base/values.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/common/context_menu_params.h"
+#include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_thread.h"
-#include "content/public/renderer/render_view.h"
+#include "gin/object_template_builder.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebElement.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
@@ -24,31 +25,32 @@
 #include "third_party/WebKit/public/web/WebView.h"
 #include "third_party/re2/re2/re2.h"
 
+using base::UserMetricsAction;
+using blink::WebElement;
+using blink::WebFrame;
+using blink::WebMouseEvent;
+using blink::WebNode;
+using blink::WebPlugin;
+using blink::WebPluginContainer;
+using blink::WebPluginParams;
+using blink::WebScriptSource;
+using blink::WebURLRequest;
 using content::RenderThread;
-using WebKit::WebElement;
-using WebKit::WebFrame;
-using WebKit::WebMouseEvent;
-using WebKit::WebNode;
-using WebKit::WebPlugin;
-using WebKit::WebPluginContainer;
-using WebKit::WebPluginParams;
-using WebKit::WebScriptSource;
-using WebKit::WebURLRequest;
-using webkit_glue::CppArgumentList;
-using webkit_glue::CppVariant;
 
 namespace plugins {
 
-PluginPlaceholder::PluginPlaceholder(content::RenderView* render_view,
+gin::WrapperInfo PluginPlaceholder::kWrapperInfo = {gin::kEmbedderNativeGin};
+
+PluginPlaceholder::PluginPlaceholder(content::RenderFrame* render_frame,
                                      WebFrame* frame,
                                      const WebPluginParams& params,
                                      const std::string& html_data,
                                      GURL placeholderDataUrl)
-    : content::RenderViewObserver(render_view),
+    : content::RenderFrameObserver(render_frame),
       frame_(frame),
       plugin_params_(params),
       plugin_(WebViewPlugin::Create(this,
-                                    render_view->GetWebkitPreferences(),
+                                    render_frame->GetWebkitPreferences(),
                                     html_data,
                                     placeholderDataUrl)),
       is_blocked_for_prerendering_(false),
@@ -58,17 +60,13 @@ PluginPlaceholder::PluginPlaceholder(content::RenderView* render_view,
 
 PluginPlaceholder::~PluginPlaceholder() {}
 
-void PluginPlaceholder::BindWebFrame(WebFrame* frame) {
-  BindToJavascript(frame, "plugin");
-  BindCallback(
-      "load",
-      base::Bind(&PluginPlaceholder::LoadCallback, base::Unretained(this)));
-  BindCallback(
-      "hide",
-      base::Bind(&PluginPlaceholder::HideCallback, base::Unretained(this)));
-  BindCallback("didFinishLoading",
-               base::Bind(&PluginPlaceholder::DidFinishLoadingCallback,
-                          base::Unretained(this)));
+gin::ObjectTemplateBuilder PluginPlaceholder::GetObjectTemplateBuilder(
+    v8::Isolate* isolate) {
+  return gin::Wrappable<PluginPlaceholder>::GetObjectTemplateBuilder(isolate)
+      .SetMethod("load", &PluginPlaceholder::LoadCallback)
+      .SetMethod("hide", &PluginPlaceholder::HideCallback)
+      .SetMethod("didFinishLoading",
+                 &PluginPlaceholder::DidFinishLoadingCallback);
 }
 
 void PluginPlaceholder::ReplacePlugin(WebPlugin* new_plugin) {
@@ -86,8 +84,8 @@ void PluginPlaceholder::ReplacePlugin(WebPlugin* new_plugin) {
     return;
   }
 
-  // The plug-in has been removed from the page. Destroy the old plug-in
-  // (which will destroy us).
+  // The plug-in has been removed from the page. Destroy the old plug-in. We
+  // will be destroyed as soon as V8 garbage collects us.
   if (!element.pluginContainer()) {
     plugin_->destroy();
     return;
@@ -107,6 +105,8 @@ void PluginPlaceholder::ReplacePlugin(WebPlugin* new_plugin) {
 
 void PluginPlaceholder::HidePlugin() {
   hidden_ = true;
+  if (!plugin_)
+    return;
   WebPluginContainer* container = plugin_->container();
   WebElement element = container->element();
   element.setAttribute("style", "display: none;");
@@ -126,14 +126,14 @@ void PluginPlaceholder::HidePlugin() {
     if (EndsWith(width_str, "px", false)) {
       width_str = width_str.substr(0, width_str.length() - 2);
     }
-    TrimWhitespace(width_str, TRIM_TRAILING, &width_str);
+    base::TrimWhitespace(width_str, base::TRIM_TRAILING, &width_str);
     width_str += "[\\s]*px";
     std::string height_str("height:[\\s]*");
     height_str += element.getAttribute("height").utf8().data();
     if (EndsWith(height_str, "px", false)) {
       height_str = height_str.substr(0, height_str.length() - 2);
     }
-    TrimWhitespace(height_str, TRIM_TRAILING, &height_str);
+    base::TrimWhitespace(height_str, base::TRIM_TRAILING, &height_str);
     height_str += "[\\s]*px";
     WebNode parent = element;
     while (!parent.parentNode().isNull()) {
@@ -151,19 +151,19 @@ void PluginPlaceholder::HidePlugin() {
   }
 }
 
-void PluginPlaceholder::WillDestroyPlugin() { delete this; }
-
-void PluginPlaceholder::SetMessage(const string16& message) {
+void PluginPlaceholder::SetMessage(const base::string16& message) {
   message_ = message;
   if (finished_loading_)
     UpdateMessage();
 }
 
 void PluginPlaceholder::UpdateMessage() {
+  if (!plugin_)
+    return;
   std::string script =
-      "window.setMessage(" + base::GetDoubleQuotedJson(message_) + ")";
+      "window.setMessage(" + base::GetQuotedJSONString(message_) + ")";
   plugin_->web_view()->mainFrame()->executeScript(
-      WebScriptSource(ASCIIToUTF16(script)));
+      WebScriptSource(base::ASCIIToUTF16(script)));
 }
 
 void PluginPlaceholder::ShowContextMenu(const WebMouseEvent& event) {
@@ -172,11 +172,19 @@ void PluginPlaceholder::ShowContextMenu(const WebMouseEvent& event) {
   return;
 }
 
+void PluginPlaceholder::PluginDestroyed() {
+  plugin_ = NULL;
+}
+
+void PluginPlaceholder::OnDestruct() {
+  frame_ = NULL;
+}
+
 void PluginPlaceholder::OnLoadBlockedPlugins(const std::string& identifier) {
   if (!identifier.empty() && identifier != identifier_)
     return;
 
-  RenderThread::Get()->RecordUserMetrics("Plugin_Load_UI");
+  RenderThread::Get()->RecordAction(UserMetricsAction("Plugin_Load_UI"));
   LoadPlugin();
 }
 
@@ -193,6 +201,8 @@ void PluginPlaceholder::LoadPlugin() {
   // event propagation changes between "close" vs. "click-to-play".
   if (hidden_)
     return;
+  if (!plugin_)
+    return;
   if (!allow_loading_) {
     NOTREACHED();
     return;
@@ -202,24 +212,21 @@ void PluginPlaceholder::LoadPlugin() {
   //                ChromeContentRendererClient::CreatePlugin instead, to
   //                reduce the chance of future regressions.
   WebPlugin* plugin =
-      render_view()->CreatePlugin(frame_, plugin_info_, plugin_params_);
+      render_frame()->CreatePlugin(frame_, plugin_info_, plugin_params_);
   ReplacePlugin(plugin);
 }
 
-void PluginPlaceholder::LoadCallback(const CppArgumentList& args,
-                                     CppVariant* result) {
-  RenderThread::Get()->RecordUserMetrics("Plugin_Load_Click");
+void PluginPlaceholder::LoadCallback() {
+  RenderThread::Get()->RecordAction(UserMetricsAction("Plugin_Load_Click"));
   LoadPlugin();
 }
 
-void PluginPlaceholder::HideCallback(const CppArgumentList& args,
-                                     CppVariant* result) {
-  RenderThread::Get()->RecordUserMetrics("Plugin_Hide_Click");
+void PluginPlaceholder::HideCallback() {
+  RenderThread::Get()->RecordAction(UserMetricsAction("Plugin_Hide_Click"));
   HidePlugin();
 }
 
-void PluginPlaceholder::DidFinishLoadingCallback(const CppArgumentList& args,
-                                                 CppVariant* result) {
+void PluginPlaceholder::DidFinishLoadingCallback() {
   finished_loading_ = true;
   if (message_.length() > 0)
     UpdateMessage();
@@ -238,9 +245,9 @@ void PluginPlaceholder::SetIdentifier(const std::string& identifier) {
   identifier_ = identifier;
 }
 
-WebKit::WebFrame* PluginPlaceholder::GetFrame() { return frame_; }
+blink::WebFrame* PluginPlaceholder::GetFrame() { return frame_; }
 
-const WebKit::WebPluginParams& PluginPlaceholder::GetPluginParams() const {
+const blink::WebPluginParams& PluginPlaceholder::GetPluginParams() const {
   return plugin_params_;
 }
 

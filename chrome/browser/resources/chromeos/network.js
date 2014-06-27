@@ -3,12 +3,19 @@
 // found in the LICENSE file.
 
 var NetworkUI = function() {
-  // Properties to display in the network state table
+  // Properties to display in the network state table. Each entry can be either
+  // a single state field or an array of state fields. If more than one is
+  // specified then the first non empty value is used.
   var NETWORK_STATE_FIELDS = [
     'Name', 'Type', 'State', 'Profile', 'Connectable',
-    'Error', 'Address', 'Security', 'Cellular.NetworkTechnology',
+    'Error', 'Address', 'Security',
+    ['Cellular.NetworkTechnology', 'EAP.EAP'],
     'Cellular.ActivationState', 'Cellular.RoamingState',
     'Cellular.OutOfCredits', 'Strength'
+  ];
+
+  var FAVORITE_STATE_FIELDS = [
+    'Name', 'Type', 'Profile', 'onc_source'
   ];
 
   var LOG_LEVEL_CLASSNAME = {
@@ -55,9 +62,14 @@ var NetworkUI = function() {
     var fileinfo = '';
     if ($('log-fileinfo').checked)
       fileinfo = logEntry['file'];
+    var timestamp = '';
+    if ($('log-timedetail').checked)
+      timestamp = logEntry['timestamp'];
+    else
+      timestamp = logEntry['timestampshort'];
     textWrapper.textContent = loadTimeData.getStringF(
       'logEntryFormat',
-      logEntry['timestamp'],
+      timestamp,
       fileinfo,
       logEntry['event'],
       logEntry['description']);
@@ -83,49 +95,84 @@ var NetworkUI = function() {
   };
 
   /**
+   * Create a cell with a button for expanding a network state table row.
+   *
+   * @param {dictionary} state Property values for the network or favorite.
+   * @return {DOMElement} The created td element that displays the given value.
+   */
+  var createStateTableExpandButton = function(state) {
+    var cell = document.createElement('td');
+    cell.className = 'state-table-expand-button-cell';
+    var button = document.createElement('button');
+    button.addEventListener('click', function(event) {
+      toggleExpandRow(event.target, state);
+    });
+    button.className = 'state-table-expand-button';
+    cell.appendChild(button);
+    return cell;
+  };
+
+  /**
    * Create a cell in network state table.
    *
    * @param {string} value Content in the cell.
    * @return {DOMElement} The created td element that displays the given value.
    */
-  var createStatusTableCell = function(value) {
-    var col = document.createElement('td');
-    col.textContent = value || '';
-    return col;
+  var createStateTableCell = function(value) {
+    var cell = document.createElement('td');
+    cell.textContent = value || '';
+    return cell;
   };
 
   /**
    * Create a row in the network state table.
    *
-   * @param {string} path The network path.
-   * @param {dictionary} status Properties of the network.
+   * @param {string} stateFields The state fields to use for the row.
+   * @param {string} path The network or favorite path.
+   * @param {dictionary} state Property values for the network or favorite.
    * @return {DOMElement} The created tr element that contains the network
    *     state information.
    */
-  var createStatusTableRow = function(path, status) {
+  var createStateTableRow = function(stateFields, path, state) {
     var row = document.createElement('tr');
-    row.className = 'network-status-table-row';
-    row.appendChild(createStatusTableCell(path));
-    row.appendChild(createStatusTableCell(status['GUID'].slice(1, 9)));
-    for (var i = 0; i < NETWORK_STATE_FIELDS.length; ++i) {
-      row.appendChild(createStatusTableCell(status[NETWORK_STATE_FIELDS[i]]));
+    row.className = 'state-table-row';
+    row.appendChild(createStateTableExpandButton(state));
+    row.appendChild(createStateTableCell(path));
+    var guid = state['GUID'];
+    if (guid)
+      guid = guid.slice(1, 9);
+    row.appendChild(createStateTableCell(guid));
+    for (var i = 0; i < stateFields.length; ++i) {
+      var field = stateFields[i];
+      var value = '';
+      if (typeof field == 'string') {
+        value = state[field];
+      } else {
+        for (var j = 0; j < field.length; ++j) {
+          value = state[field[j]];
+          if (value)
+            break;
+        }
+      }
+      row.appendChild(createStateTableCell(value));
     }
     return row;
   };
 
   /**
-   * Create network state table.
+   * Create table for networks or favorites.
    *
-   * @param {Array.<Object>} networkStatuses An array of network states.
+   * @param {string} tablename The name of the table to be created.
+   * @param {Array.<Object>} stateFields The list of fields for the table.
+   * @param {Array.<Object>} states An array of network or favorite states.
    */
-  var createNetworkTable = function(networkStatuses) {
-    var table = $('network-status-table');
-    var oldRows = table.querySelectorAll('.network-status-table-row');
+  var createStateTable = function(tablename, stateFields, states) {
+    var table = $(tablename);
+    var oldRows = table.querySelectorAll('.state-table-row');
     for (var i = 0; i < oldRows.length; ++i)
       table.removeChild(oldRows[i]);
-    for (var path in networkStatuses)
-      table.appendChild(
-          createStatusTableRow(path, networkStatuses[path]));
+    for (var path in states)
+      table.appendChild(createStateTableRow(stateFields, path, states[path]));
   };
 
   /**
@@ -136,7 +183,51 @@ var NetworkUI = function() {
    */
   var onNetworkInfoReceived = function(data) {
     createEventLog(JSON.parse(data.networkEventLog));
-    createNetworkTable(data.networkState);
+    createStateTable(
+        'network-state-table', NETWORK_STATE_FIELDS, data.networkStates);
+    createStateTable(
+        'favorite-state-table', FAVORITE_STATE_FIELDS, data.favoriteStates);
+  };
+
+  /**
+   * Toggle the button state and add or remove a row displaying the complete
+   * state information for a row.
+   *
+   * @param {DOMElement} btn The button that was clicked.
+   * @param {dictionary} state Property values for the network or favorite.
+   */
+  var toggleExpandRow = function(btn, state) {
+    var cell = btn.parentNode;
+    var row = cell.parentNode;
+    if (btn.classList.contains('state-table-expand-button-expanded')) {
+      btn.classList.remove('state-table-expand-button-expanded');
+      row.parentNode.removeChild(row.nextSibling);
+    } else {
+      btn.classList.add('state-table-expand-button-expanded');
+      var expandedRow = createExpandedRow(state, row);
+      row.parentNode.insertBefore(expandedRow, row.nextSibling);
+    }
+  };
+
+  /**
+   * Creates the expanded row for displaying the complete state as JSON.
+   *
+   * @param {dictionary} state Property values for the network or favorite.
+   * @param {DOMElement} baseRow The unexpanded row associated with the new row.
+   * @return {DOMElement} The created tr element for the expanded row.
+   */
+  var createExpandedRow = function(state, baseRow) {
+    var expandedRow = document.createElement('tr');
+    expandedRow.className = 'state-table-row';
+    var emptyCell = document.createElement('td');
+    emptyCell.style.border = 'none';
+    expandedRow.appendChild(emptyCell);
+    var detailCell = document.createElement('td');
+    detailCell.className = 'state-table-expanded-cell';
+    detailCell.colSpan = baseRow.childNodes.length - 1;
+    detailCell.innerHTML = JSON.stringify(state, null, '\t');
+    expandedRow.appendChild(detailCell);
+    return expandedRow;
   };
 
   /**
@@ -144,7 +235,7 @@ var NetworkUI = function() {
    */
   var sendRefresh = function() {
     chrome.send('requestNetworkInfo');
-  }
+  };
 
   /**
    * Sets refresh rate if the interval is found in the url.
@@ -170,6 +261,8 @@ var NetworkUI = function() {
     $('log-debug').onclick = sendRefresh;
     $('log-fileinfo').checked = false;
     $('log-fileinfo').onclick = sendRefresh;
+    $('log-timedetail').checked = false;
+    $('log-timedetail').onclick = sendRefresh;
     setRefresh();
     sendRefresh();
   });

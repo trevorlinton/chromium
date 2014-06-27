@@ -12,14 +12,15 @@
 #include "ash/wm/window_util.h"
 #include "base/compiler_specific.h"
 #include "base/run_loop.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/test/event_generator.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/compositor/layer.h"
 #include "ui/gfx/screen.h"
 #include "ui/views/test/capture_tracking_view.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
+#include "ui/wm/core/window_util.h"
 
 namespace ash {
 namespace test {
@@ -161,7 +162,7 @@ TEST_F(SystemModalContainerLayoutManagerTest, NonModalTransient) {
   TransientWindowObserver destruction_observer;
   transient->AddObserver(&destruction_observer);
 
-  EXPECT_EQ(parent.get(), transient->transient_parent());
+  EXPECT_EQ(parent.get(), ::wm::GetTransientParent(transient));
   EXPECT_EQ(parent->parent(), transient->parent());
 
   // The transient should be destroyed with its parent.
@@ -178,7 +179,7 @@ TEST_F(SystemModalContainerLayoutManagerTest, ModalTransient) {
   TransientWindowObserver do1;
   t1->AddObserver(&do1);
 
-  EXPECT_EQ(parent.get(), t1->transient_parent());
+  EXPECT_EQ(parent.get(), ::wm::GetTransientParent(t1));
   EXPECT_EQ(GetModalContainer(), t1->parent());
 
   // t1 should now be active.
@@ -196,7 +197,7 @@ TEST_F(SystemModalContainerLayoutManagerTest, ModalTransient) {
 
   EXPECT_TRUE(wm::IsActiveWindow(t2));
 
-  EXPECT_EQ(t1, t2->transient_parent());
+  EXPECT_EQ(t1, ::wm::GetTransientParent(t2));
   EXPECT_EQ(GetModalContainer(), t2->parent());
 
   // t2 should still be active, even after clicking on t1.
@@ -217,7 +218,7 @@ TEST_F(SystemModalContainerLayoutManagerTest, ModalNonTransient) {
   TransientWindowObserver do1;
   t1->AddObserver(&do1);
 
-  EXPECT_EQ(NULL, t1->transient_parent());
+  EXPECT_EQ(NULL, ::wm::GetTransientParent(t1.get()));
   EXPECT_EQ(GetModalContainer(), t1->parent());
 
   // t1 should now be active.
@@ -236,7 +237,7 @@ TEST_F(SystemModalContainerLayoutManagerTest, ModalNonTransient) {
 
   EXPECT_TRUE(wm::IsActiveWindow(t2));
 
-  EXPECT_EQ(t1, t2->transient_parent());
+  EXPECT_EQ(t1, ::wm::GetTransientParent(t2));
   EXPECT_EQ(GetModalContainer(), t2->parent());
 
   // t2 should still be active, even after clicking on t1.
@@ -443,7 +444,7 @@ TEST_F(SystemModalContainerLayoutManagerTest, MultiDisplays) {
   scoped_ptr<aura::Window> normal(OpenToplevelTestWindow(false));
   normal->SetBounds(gfx::Rect(100, 100, 50, 50));
 
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
   EXPECT_EQ(2U, root_windows.size());
   aura::Window* container1 = Shell::GetContainer(
       root_windows[0], ash::internal::kShellWindowId_SystemModalContainer);

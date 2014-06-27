@@ -4,18 +4,21 @@
 
 #include "content/browser/web_contents/touch_editable_impl_aura.h"
 
+#include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_aura.h"
 #include "content/common/view_messages.h"
+#include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
+#include "content/public/browser/web_contents.h"
 #include "grit/ui_strings.h"
-#include "ui/aura/client/activation_client.h"
 #include "ui/aura/client/screen_position_client.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_tree_host.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/ui_base_switches_util.h"
 #include "ui/gfx/range/range.h"
+#include "ui/wm/public/activation_client.h"
 
 namespace content {
 
@@ -62,7 +65,7 @@ void TouchEditableImplAura::UpdateEditingController() {
     if (touch_selection_controller_)
       touch_selection_controller_->SelectionChanged();
   } else {
-    EndTouchEditing();
+    EndTouchEditing(false);
   }
 }
 
@@ -94,6 +97,9 @@ void TouchEditableImplAura::OverscrollCompleted() {
 // implementation:
 
 void TouchEditableImplAura::StartTouchEditing() {
+  if (!rwhva_ || !rwhva_->HasFocus())
+    return;
+
   if (!touch_selection_controller_) {
     touch_selection_controller_.reset(
         ui::TouchSelectionController::create(this));
@@ -102,12 +108,14 @@ void TouchEditableImplAura::StartTouchEditing() {
     touch_selection_controller_->SelectionChanged();
 }
 
-void TouchEditableImplAura::EndTouchEditing() {
+void TouchEditableImplAura::EndTouchEditing(bool quick) {
   if (touch_selection_controller_) {
-    if (touch_selection_controller_->IsHandleDragInProgress())
+    if (touch_selection_controller_->IsHandleDragInProgress()) {
       touch_selection_controller_->SelectionChanged();
-    else
+    } else {
+      touch_selection_controller_->HideHandles(quick);
       touch_selection_controller_.reset();
+    }
   }
 }
 
@@ -128,7 +136,7 @@ bool TouchEditableImplAura::HandleInputEvent(const ui::Event* event) {
     return false;
 
   if (!event->IsGestureEvent()) {
-    EndTouchEditing();
+    EndTouchEditing(false);
     return false;
   }
 
@@ -172,7 +180,7 @@ bool TouchEditableImplAura::HandleInputEvent(const ui::Event* event) {
       handles_hidden_due_to_scroll_ = false;
       if (touch_selection_controller_)
         handles_hidden_due_to_scroll_ = true;
-      EndTouchEditing();
+      EndTouchEditing(true);
       break;
     case ui::ET_GESTURE_SCROLL_END:
       // Scroll has ended, but we might still be in overscroll animation.
@@ -195,7 +203,7 @@ bool TouchEditableImplAura::HandleInputEvent(const ui::Event* event) {
 
 void TouchEditableImplAura::GestureEventAck(int gesture_event_type) {
   DCHECK(rwhva_);
-  if (gesture_event_type == WebKit::WebInputEvent::GestureTap &&
+  if (gesture_event_type == blink::WebInputEvent::GestureTap &&
       text_input_type_ != ui::TEXT_INPUT_TYPE_NONE &&
       is_tap_on_focused_textfield_) {
     StartTouchEditing();
@@ -203,9 +211,9 @@ void TouchEditableImplAura::GestureEventAck(int gesture_event_type) {
       touch_selection_controller_->SelectionChanged();
   }
 
-  if (gesture_event_type == WebKit::WebInputEvent::GestureLongPress)
+  if (gesture_event_type == blink::WebInputEvent::GestureLongPress)
     selection_gesture_in_process_ = false;
-  if (gesture_event_type == WebKit::WebInputEvent::GestureTap) {
+  if (gesture_event_type == blink::WebInputEvent::GestureTap) {
     if (tap_gesture_tap_count_queue_.front() > 1)
       selection_gesture_in_process_ = false;
     tap_gesture_tap_count_queue_.pop();
@@ -221,12 +229,11 @@ void TouchEditableImplAura::OnViewDestroyed() {
 
 void TouchEditableImplAura::SelectRect(const gfx::Point& start,
                                        const gfx::Point& end) {
-  if (!rwhva_)
+  RenderFrameHost* focused_frame = GetFocusedFrame();
+  if (!focused_frame)
     return;
 
-  RenderWidgetHostImpl* host = RenderWidgetHostImpl::From(
-      rwhva_->GetRenderWidgetHost());
-  host->SelectRange(start, end);
+  static_cast<RenderFrameHostImpl*>(focused_frame)->SelectRange(start, end);
 }
 
 void TouchEditableImplAura::MoveCaretTo(const gfx::Point& point) {
@@ -245,11 +252,12 @@ void TouchEditableImplAura::GetSelectionEndPoints(gfx::Rect* p1,
 }
 
 gfx::Rect TouchEditableImplAura::GetBounds() {
-  return rwhva_ ? rwhva_->GetNativeView()->bounds() : gfx::Rect();
+  return rwhva_ ? gfx::Rect(rwhva_->GetNativeView()->bounds().size()) :
+      gfx::Rect();
 }
 
-gfx::NativeView TouchEditableImplAura::GetNativeView() {
-  return rwhva_ ? rwhva_->GetNativeView()->GetRootWindow() : NULL;
+gfx::NativeView TouchEditableImplAura::GetNativeView() const {
+  return rwhva_ ? rwhva_->GetNativeView()->GetToplevelWindow() : NULL;
 }
 
 void TouchEditableImplAura::ConvertPointToScreen(gfx::Point* point) {
@@ -283,7 +291,7 @@ void TouchEditableImplAura::OpenContextMenu(const gfx::Point& anchor) {
   ConvertPointFromScreen(&point);
   RenderWidgetHost* host = rwhva_->GetRenderWidgetHost();
   host->Send(new ViewMsg_ShowContextMenu(host->GetRoutingID(), point));
-  EndTouchEditing();
+  EndTouchEditing(false);
 }
 
 bool TouchEditableImplAura::IsCommandIdChecked(int command_id) const {
@@ -304,7 +312,7 @@ bool TouchEditableImplAura::IsCommandIdEnabled(int command_id) const {
     case IDS_APP_COPY:
       return has_selection;
     case IDS_APP_PASTE: {
-      string16 result;
+      base::string16 result;
       ui::Clipboard::GetForCurrentThread()->ReadText(
           ui::CLIPBOARD_TYPE_COPY_PASTE, &result);
       return editable && !result.empty();
@@ -325,30 +333,30 @@ bool TouchEditableImplAura::GetAcceleratorForCommandId(
 }
 
 void TouchEditableImplAura::ExecuteCommand(int command_id, int event_flags) {
-  if (!rwhva_)
+  RenderFrameHost* focused_frame = GetFocusedFrame();
+  if (!focused_frame)
     return;
-  RenderWidgetHost* host = rwhva_->GetRenderWidgetHost();
   switch (command_id) {
     case IDS_APP_CUT:
-      host->Cut();
+      focused_frame->Cut();
       break;
     case IDS_APP_COPY:
-      host->Copy();
+      focused_frame->Copy();
       break;
     case IDS_APP_PASTE:
-      host->Paste();
+      focused_frame->Paste();
       break;
     case IDS_APP_DELETE:
-      host->Delete();
+      focused_frame->Delete();
       break;
     case IDS_APP_SELECT_ALL:
-      host->SelectAll();
+      focused_frame->SelectAll();
       break;
     default:
       NOTREACHED();
       break;
   }
-  EndTouchEditing();
+  EndTouchEditing(false);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -370,10 +378,19 @@ void TouchEditableImplAura::Cleanup() {
     rwhva_ = NULL;
   }
   text_input_type_ = ui::TEXT_INPUT_TYPE_NONE;
-  touch_selection_controller_.reset();
+  EndTouchEditing(true);
   handles_hidden_due_to_scroll_ = false;
   scroll_in_progress_ = false;
   overscroll_in_progress_ = false;
+}
+
+RenderFrameHost* TouchEditableImplAura::GetFocusedFrame() {
+  if (!rwhva_)
+    return NULL;
+  RenderWidgetHost* host = rwhva_->GetRenderWidgetHost();
+  RenderViewHost* rvh = RenderViewHost::From(host);
+  WebContents* wc = WebContents::FromRenderViewHost(rvh);
+  return wc->GetFocusedFrame();
 }
 
 }  // namespace content

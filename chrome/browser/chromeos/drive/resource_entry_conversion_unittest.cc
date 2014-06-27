@@ -8,9 +8,8 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/drive/drive.pb.h"
-#include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/drive/test_util.h"
-#include "chrome/browser/google_apis/gdata_wapi_parser.h"
+#include "google_apis/drive/gdata_wapi_parser.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace drive {
@@ -32,10 +31,11 @@ TEST(ResourceEntryConversionTest, ConvertToResourceEntry_File) {
   EXPECT_EQ("File 1.mp3", entry.title());
   EXPECT_EQ("File 1.mp3", entry.base_name());
   EXPECT_EQ("file:2_file_resource_id", entry.resource_id());
-  EXPECT_EQ(util::kDriveOtherDirSpecialResourceId, parent_resource_id);
+  EXPECT_EQ("", parent_resource_id);
 
   EXPECT_FALSE(entry.deleted());
   EXPECT_FALSE(entry.shared_with_me());
+  EXPECT_FALSE(entry.shared());
 
   base::Time expected_creation_time;
   base::Time expected_modified_time;
@@ -108,10 +108,11 @@ TEST(ResourceEntryConversionTest,
   EXPECT_EQ("Document 1.gdoc", entry.base_name());  // The suffix added.
   EXPECT_EQ(".gdoc", entry.file_specific_info().document_extension());
   EXPECT_EQ("document:5_document_resource_id", entry.resource_id());
-  EXPECT_EQ(util::kDriveOtherDirSpecialResourceId, parent_resource_id);
+  EXPECT_EQ("", parent_resource_id);
 
   EXPECT_FALSE(entry.deleted());
   EXPECT_FALSE(entry.shared_with_me());
+  EXPECT_FALSE(entry.shared());
 
   // 2011-12-12T23:28:52.783Z
   base::Time::Exploded exploded;
@@ -193,6 +194,7 @@ TEST(ResourceEntryConversionTest,
 
   EXPECT_FALSE(entry.deleted());
   EXPECT_FALSE(entry.shared_with_me());
+  EXPECT_FALSE(entry.shared());
 
   // 2011-04-01T18:34:08.234Z
   base::Time::Exploded exploded;
@@ -260,10 +262,11 @@ TEST(ResourceEntryConversionTest,
   EXPECT_EQ("Deleted document", entry.title());
   EXPECT_EQ("Deleted document.gdoc", entry.base_name());
   EXPECT_EQ("document:deleted_in_root_id", entry.resource_id());
-  EXPECT_EQ(util::kDriveOtherDirSpecialResourceId, parent_resource_id);
+  EXPECT_EQ("", parent_resource_id);
 
   EXPECT_TRUE(entry.deleted());  // The document was deleted.
   EXPECT_FALSE(entry.shared_with_me());
+  EXPECT_FALSE(entry.shared());
 
   // 2012-04-10T22:50:55.797Z
   base::Time::Exploded exploded;
@@ -334,6 +337,7 @@ TEST(ResourceEntryConversionTest,
   EXPECT_TRUE(ConvertToResourceEntry(*gdata_resource_entry, &entry,
                                      &parent_resource_id));
   EXPECT_TRUE(entry.shared_with_me());
+  EXPECT_TRUE(entry.shared());
 }
 
 TEST(ResourceEntryConversionTest, ToPlatformFileInfo) {
@@ -345,8 +349,8 @@ TEST(ResourceEntryConversionTest, ToPlatformFileInfo) {
   entry.mutable_file_info()->set_last_modified(123456789);
   entry.mutable_file_info()->set_last_accessed(987654321);
 
-  base::PlatformFileInfo file_info;
-  ConvertResourceEntryToPlatformFileInfo(entry, &file_info);
+  base::File::Info file_info;
+  ConvertResourceEntryToFileInfo(entry, &file_info);
   EXPECT_EQ(entry.file_info().size(), file_info.size);
   EXPECT_EQ(entry.file_info().is_directory(), file_info.is_directory);
   EXPECT_EQ(entry.file_info().is_symbolic_link(), file_info.is_symbolic_link);
@@ -359,7 +363,7 @@ TEST(ResourceEntryConversionTest, ToPlatformFileInfo) {
 }
 
 TEST(ResourceEntryConversionTest, FromPlatformFileInfo) {
-  base::PlatformFileInfo file_info;
+  base::File::Info file_info;
   file_info.size = 12345;
   file_info.is_directory = true;
   file_info.is_symbolic_link = true;

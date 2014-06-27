@@ -9,6 +9,7 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_shutdown.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/defaults.h"
 #include "chrome/browser/download/chrome_download_manager_delegate.h"
 #include "chrome/browser/download/download_service.h"
 #include "chrome/browser/download/download_service_factory.h"
@@ -170,19 +171,20 @@ class TestDownloadManagerDelegate : public ChromeDownloadManagerDelegate {
  public:
   explicit TestDownloadManagerDelegate(Profile* profile)
       : ChromeDownloadManagerDelegate(profile) {
-    SetNextId(content::DownloadItem::kInvalidId + 1);
+    GetDownloadIdReceiverCallback().Run(content::DownloadItem::kInvalidId + 1);
   }
+  virtual ~TestDownloadManagerDelegate() {}
 
   virtual bool DetermineDownloadTarget(
       content::DownloadItem* item,
       const content::DownloadTargetCallback& callback) OVERRIDE {
     content::DownloadTargetCallback dangerous_callback =
-        base::Bind(&TestDownloadManagerDelegate::SetDangerous, this, callback);
+        base::Bind(&TestDownloadManagerDelegate::SetDangerous, callback);
     return ChromeDownloadManagerDelegate::DetermineDownloadTarget(
         item, dangerous_callback);
   }
 
-  void SetDangerous(
+  static void SetDangerous(
       const content::DownloadTargetCallback& callback,
       const base::FilePath& target_path,
       content::DownloadItem::TargetDisposition disp,
@@ -193,9 +195,6 @@ class TestDownloadManagerDelegate : public ChromeDownloadManagerDelegate {
                  content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL,
                  intermediate_path);
   }
-
- private:
-  virtual ~TestDownloadManagerDelegate() {}
 };
 
 class FakeBackgroundModeManager : public BackgroundModeManager {
@@ -699,10 +698,11 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   ASSERT_TRUE(embedded_test_server()->InitializeAndWaitUntilReady());
 
   // Set up the fake delegate that forces the download to be malicious.
-  scoped_refptr<TestDownloadManagerDelegate> test_delegate(
+  scoped_ptr<TestDownloadManagerDelegate> test_delegate(
       new TestDownloadManagerDelegate(browser()->profile()));
   DownloadServiceFactory::GetForBrowserContext(browser()->profile())->
-      SetDownloadManagerDelegateForTesting(test_delegate.get());
+      SetDownloadManagerDelegateForTesting(
+          test_delegate.PassAs<ChromeDownloadManagerDelegate>());
 
   // Run a dangerous download, but the user doesn't make a decision.
   // This .swf normally would be categorized as DANGEROUS_FILE, but
@@ -757,6 +757,10 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest, TestWithDownloads) {
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
   EXPECT_TRUE(chrome::BrowserIterator().done());
+  if (browser_defaults::kBrowserAliveWithNoWindows)
+    EXPECT_EQ(1, DownloadService::NonMaliciousDownloadCountAllProfiles());
+  else
+    EXPECT_EQ(0, DownloadService::NonMaliciousDownloadCountAllProfiles());
 }
 
 // Test shutdown with a download in progress from one profile, where the only
@@ -767,7 +771,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   base::FilePath path =
       profile_manager->user_data_dir().AppendASCII("test_profile");
   if (!base::PathExists(path))
-    ASSERT_TRUE(file_util::CreateDirectory(path));
+    ASSERT_TRUE(base::CreateDirectory(path));
   Profile* other_profile =
       Profile::CreateProfile(path, NULL, Profile::CREATE_MODE_SYNCHRONOUS);
   profile_manager->RegisterTestingProfile(other_profile, true, false);
@@ -804,11 +808,16 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
   EXPECT_TRUE(chrome::BrowserIterator().done());
+  if (browser_defaults::kBrowserAliveWithNoWindows)
+    EXPECT_EQ(1, DownloadService::NonMaliciousDownloadCountAllProfiles());
+  else
+    EXPECT_EQ(0, DownloadService::NonMaliciousDownloadCountAllProfiles());
 }
 
 // Test shutdown with downloads in progress and beforeunload handlers.
+// Disabled, see http://crbug.com/315754.
 IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
-                       TestBeforeUnloadAndDownloads) {
+                       DISABLED_TestBeforeUnloadAndDownloads) {
   ASSERT_TRUE(embedded_test_server()->InitializeAndWaitUntilReady());
   ASSERT_NO_FATAL_FAILURE(CreateStalledDownload(browser()));
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
@@ -868,7 +877,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerWithBackgroundModeBrowserTest,
   {
     RepeatedNotificationObserver close_observer(
         chrome::NOTIFICATION_BROWSER_CLOSED, 1);
-    chrome::StartKeepAlive();
+    chrome::IncrementKeepAliveCount();
     chrome::CloseAllBrowsers();
     close_observer.Wait();
   }
@@ -880,7 +889,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerWithBackgroundModeBrowserTest,
   ui_test_utils::BrowserAddedObserver new_browser_observer;
   chrome::NewEmptyWindow(profile, chrome::HOST_DESKTOP_TYPE_NATIVE);
   new_browser_observer.WaitForSingleNewBrowser();
-  chrome::EndKeepAlive();
+  chrome::DecrementKeepAliveCount();
   EXPECT_FALSE(IsBackgroundModeSuspended());
   RepeatedNotificationObserver close_observer(
       chrome::NOTIFICATION_BROWSER_CLOSED, 1);
@@ -915,7 +924,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerWithBackgroundModeBrowserTest,
   RepeatedNotificationObserver close_observer(
       chrome::NOTIFICATION_BROWSER_CLOSED, 1);
   EXPECT_FALSE(IsBackgroundModeSuspended());
-  chrome::StartKeepAlive();
+  chrome::IncrementKeepAliveCount();
   browser()->window()->Close();
   close_observer.Wait();
   EXPECT_FALSE(browser_shutdown::IsTryingToQuit());

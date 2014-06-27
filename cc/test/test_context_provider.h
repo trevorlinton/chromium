@@ -7,17 +7,18 @@
 
 #include "base/callback.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
 #include "cc/output/context_provider.h"
 #include "cc/test/test_context_support.h"
-
-namespace WebKit { class WebGraphicsContext3D; }
+#include "gpu/command_buffer/client/gles2_interface_stub.h"
 
 namespace cc {
 class TestWebGraphicsContext3D;
+class TestGLES2Interface;
 
-class TestContextProvider : public cc::ContextProvider {
+class TestContextProvider : public ContextProvider {
  public:
   typedef base::Callback<scoped_ptr<TestWebGraphicsContext3D>(void)>
     CreateCallback;
@@ -28,14 +29,13 @@ class TestContextProvider : public cc::ContextProvider {
 
   virtual bool BindToCurrentThread() OVERRIDE;
   virtual Capabilities ContextCapabilities() OVERRIDE;
-  virtual WebKit::WebGraphicsContext3D* Context3d() OVERRIDE;
+  virtual gpu::gles2::GLES2Interface* ContextGL() OVERRIDE;
   virtual gpu::ContextSupport* ContextSupport() OVERRIDE;
   virtual class GrContext* GrContext() OVERRIDE;
+  virtual bool IsContextLost() OVERRIDE;
   virtual void VerifyContexts() OVERRIDE;
   virtual bool DestroyedOnMainThread() OVERRIDE;
   virtual void SetLostContextCallback(const LostContextCallback& cb) OVERRIDE;
-  virtual void SetSwapBuffersCompleteCallback(
-      const SwapBuffersCompleteCallback& cb) OVERRIDE;
   virtual void SetMemoryPolicyChangedCallback(
       const MemoryPolicyChangedCallback& cb) OVERRIDE;
 
@@ -47,6 +47,8 @@ class TestContextProvider : public cc::ContextProvider {
   // makeContextCurrent on the context returned from this method.
   TestWebGraphicsContext3D* UnboundTestContext3d();
 
+  TestContextSupport* support() { return &support_; }
+
   void SetMemoryAllocation(const ManagedMemoryPolicy& policy);
 
   void SetMaxTransferBufferUsageBytes(size_t max_transfer_buffer_usage_bytes);
@@ -55,12 +57,13 @@ class TestContextProvider : public cc::ContextProvider {
   explicit TestContextProvider(scoped_ptr<TestWebGraphicsContext3D> context);
   virtual ~TestContextProvider();
 
+ private:
   void OnLostContext();
-  void OnSwapBuffersComplete();
 
   TestContextSupport support_;
 
   scoped_ptr<TestWebGraphicsContext3D> context3d_;
+  scoped_ptr<TestGLES2Interface> context_gl_;
   bool bound_;
 
   base::ThreadChecker main_thread_checker_;
@@ -70,15 +73,11 @@ class TestContextProvider : public cc::ContextProvider {
   bool destroyed_;
 
   LostContextCallback lost_context_callback_;
-  SwapBuffersCompleteCallback swap_buffers_complete_callback_;
   MemoryPolicyChangedCallback memory_policy_changed_callback_;
 
-  class LostContextCallbackProxy;
-  scoped_ptr<LostContextCallbackProxy> lost_context_callback_proxy_;
+  base::WeakPtrFactory<TestContextProvider> weak_ptr_factory_;
 
-  class SwapBuffersCompleteCallbackProxy;
-  scoped_ptr<SwapBuffersCompleteCallbackProxy>
-      swap_buffers_complete_callback_proxy_;
+  DISALLOW_COPY_AND_ASSIGN(TestContextProvider);
 };
 
 }  // namespace cc

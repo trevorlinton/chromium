@@ -19,7 +19,7 @@ using content::BrowserThread;
 namespace {
 
 // Gathers log data from various scripts/programs.
-void ExecuteCommandLines(chromeos::SystemLogsResponse* response) {
+void ExecuteCommandLines(system_logs::SystemLogsResponse* response) {
   // TODO(tudalex): Move program calling in a array or something similar to make
   // it more easier to modify and understand.
   std::vector<std::pair<std::string, CommandLine> > commands;
@@ -31,7 +31,11 @@ void ExecuteCommandLines(chromeos::SystemLogsResponse* response) {
 
   command = CommandLine((base::FilePath("/usr/bin/cras_test_client")));
   command.AppendArg("--dump_server_info");
+  command.AppendArg("--dump_audio_thread");
   commands.push_back(std::make_pair("cras", command));
+
+  command = CommandLine((base::FilePath("/usr/bin/audio_diagnostics")));
+  commands.push_back(std::make_pair("audio_diagnostics", command));
 
   command = CommandLine((base::FilePath("/usr/bin/cras_test_client")));
   command.AppendArg("--loopback_file");
@@ -77,7 +81,7 @@ void ExecuteCommandLines(chromeos::SystemLogsResponse* response) {
 
 }  // namespace
 
-namespace chromeos {
+namespace system_logs {
 
 void CommandLineLogSource::Fetch(const SysLogsSourceCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
@@ -90,4 +94,4 @@ void CommandLineLogSource::Fetch(const SysLogsSourceCallback& callback) {
       base::Bind(callback, base::Owned(response)));
 }
 
-}  // namespace chromeos
+}  // namespace system_logs

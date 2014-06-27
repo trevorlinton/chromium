@@ -9,9 +9,11 @@
 #include <string>
 
 #include "base/basictypes.h"
+#include "base/callback_helpers.h"
 #include "base/compiler_specific.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "media/base/channel_layout.h"
 #include "media/base/decryptor.h"
 #include "media/base/media_keys.h"
 #include "media/base/sample_format.h"
@@ -39,23 +41,27 @@ class ContentDecryptorDelegate {
       const PPP_ContentDecryptor_Private* plugin_decryption_interface);
   ~ContentDecryptorDelegate();
 
+  // This object should not be accessed after |fatal_plugin_error_cb| is called.
   void Initialize(const std::string& key_system,
-                  const bool can_challenge_platform);
+                  const media::SessionCreatedCB& session_created_cb,
+                  const media::SessionMessageCB& session_message_cb,
+                  const media::SessionReadyCB& session_ready_cb,
+                  const media::SessionClosedCB& session_closed_cb,
+                  const media::SessionErrorCB& session_error_cb,
+                  const base::Closure& fatal_plugin_error_cb);
 
-  void SetKeyEventCallbacks(const media::KeyAddedCB& key_added_cb,
-                            const media::KeyErrorCB& key_error_cb,
-                            const media::KeyMessageCB& key_message_cb);
+  void InstanceCrashed();
 
   // Provides access to PPP_ContentDecryptor_Private.
-  bool GenerateKeyRequest(const std::string& type,
-                          const uint8* init_data,
-                          int init_data_length);
-  bool AddKey(const std::string& session_id,
-              const uint8* key,
-              int key_length,
-              const uint8* init_data,
-              int init_data_length);
-  bool CancelKeyRequest(const std::string& session_id);
+  bool CreateSession(uint32 session_id,
+                     const std::string& content_type,
+                     const uint8* init_data,
+                     int init_data_length);
+  void LoadSession(uint32 session_id, const std::string& web_session_id);
+  bool UpdateSession(uint32 session_id,
+                     const uint8* response,
+                     int response_length);
+  bool ReleaseSession(uint32 session_id);
   bool Decrypt(media::Decryptor::StreamType stream_type,
                const scoped_refptr<media::DecoderBuffer>& encrypted_buffer,
                const media::Decryptor::DecryptCB& decrypt_cb);
@@ -79,18 +85,15 @@ class ContentDecryptorDelegate {
       const media::Decryptor::VideoDecodeCB& video_decode_cb);
 
   // PPB_ContentDecryptor_Private dispatching methods.
-  // TODO(ddorwin): Remove this method.
-  void NeedKey(PP_Var key_system, PP_Var session_id, PP_Var init_data);
-  // TODO(ddorwin): Remove key_system_var parameter from these methods.
-  void KeyAdded(PP_Var key_system, PP_Var session_id);
-  void KeyMessage(PP_Var key_system,
-                  PP_Var session_id,
-                  PP_Var message,
-                  PP_Var default_url);
-  void KeyError(PP_Var key_system,
-                PP_Var session_id,
-                int32_t media_error,
-                int32_t system_code);
+  void OnSessionCreated(uint32 session_id, PP_Var web_session_id_var);
+  void OnSessionMessage(uint32 session_id,
+                        PP_Var message,
+                        PP_Var destination_url);
+  void OnSessionReady(uint32 session_id);
+  void OnSessionClosed(uint32 session_id);
+  void OnSessionError(uint32 session_id,
+                      int32_t media_error,
+                      uint32_t system_code);
   void DeliverBlock(PP_Resource decrypted_block,
                     const PP_DecryptedBlockInfo* block_info);
   void DecoderInitializeDone(PP_DecryptorStreamType decoder_type,
@@ -106,6 +109,37 @@ class ContentDecryptorDelegate {
                       const PP_DecryptedSampleInfo* sample_info);
 
  private:
+  template <typename Callback>
+  class TrackableCallback {
+   public:
+    TrackableCallback() : id_(0u) {}
+    ~TrackableCallback() {
+      // Callbacks must be satisfied.
+      DCHECK_EQ(id_, 0u);
+      DCHECK(is_null());
+    };
+
+    bool Matches(uint32_t id) const { return id == id_; }
+
+    bool is_null() const { return cb_.is_null(); }
+
+    void Set(uint32_t id, const Callback& cb) {
+      DCHECK_EQ(id_, 0u);
+      DCHECK(cb_.is_null());
+      id_ = id;
+      cb_ = cb;
+    }
+
+    Callback ResetAndReturn() {
+      id_ = 0;
+      return base::ResetAndReturn(&cb_);
+    }
+
+   private:
+    uint32_t id_;
+    Callback cb_;
+  };
+
   // Cancels the pending decrypt-and-decode callback for |stream_type|.
   void CancelDecode(media::Decryptor::StreamType stream_type);
 
@@ -135,16 +169,24 @@ class ContentDecryptorDelegate {
                               media::SampleFormat sample_format,
                               media::Decryptor::AudioBuffers* frames);
 
+  void SatisfyAllPendingCallbacksOnError();
+
   const PP_Instance pp_instance_;
   const PPP_ContentDecryptor_Private* const plugin_decryption_interface_;
 
   // TODO(ddorwin): Remove after updating the Pepper API to not use key system.
   std::string key_system_;
 
-  // Callbacks for firing key events.
-  media::KeyAddedCB key_added_cb_;
-  media::KeyErrorCB key_error_cb_;
-  media::KeyMessageCB key_message_cb_;
+  // Callbacks for firing session events.
+  media::SessionCreatedCB session_created_cb_;
+  media::SessionMessageCB session_message_cb_;
+  media::SessionReadyCB session_ready_cb_;
+  media::SessionClosedCB session_closed_cb_;
+  media::SessionErrorCB session_error_cb_;
+
+  // Callback to notify that unexpected error happened and |this| should not
+  // be used anymore.
+  base::Closure fatal_plugin_error_cb_;
 
   gfx::Size natural_size_;
 
@@ -154,23 +196,12 @@ class ContentDecryptorDelegate {
   // of request IDs.
   uint32_t next_decryption_request_id_;
 
-  uint32_t pending_audio_decrypt_request_id_;
-  media::Decryptor::DecryptCB pending_audio_decrypt_cb_;
-
-  uint32_t pending_video_decrypt_request_id_;
-  media::Decryptor::DecryptCB pending_video_decrypt_cb_;
-
-  uint32_t pending_audio_decoder_init_request_id_;
-  media::Decryptor::DecoderInitCB pending_audio_decoder_init_cb_;
-
-  uint32_t pending_video_decoder_init_request_id_;
-  media::Decryptor::DecoderInitCB pending_video_decoder_init_cb_;
-
-  uint32_t pending_audio_decode_request_id_;
-  media::Decryptor::AudioDecodeCB pending_audio_decode_cb_;
-
-  uint32_t pending_video_decode_request_id_;
-  media::Decryptor::VideoDecodeCB pending_video_decode_cb_;
+  TrackableCallback<media::Decryptor::DecryptCB> audio_decrypt_cb_;
+  TrackableCallback<media::Decryptor::DecryptCB> video_decrypt_cb_;
+  TrackableCallback<media::Decryptor::DecoderInitCB> audio_decoder_init_cb_;
+  TrackableCallback<media::Decryptor::DecoderInitCB> video_decoder_init_cb_;
+  TrackableCallback<media::Decryptor::AudioDecodeCB> audio_decode_cb_;
+  TrackableCallback<media::Decryptor::VideoDecodeCB> video_decode_cb_;
 
   // Cached audio and video input buffers. See MakeMediaBufferResource.
   scoped_refptr<PPB_Buffer_Impl> audio_input_resource_;
@@ -181,6 +212,7 @@ class ContentDecryptorDelegate {
   // Keep track of audio parameters.
   int audio_samples_per_second_;
   int audio_channel_count_;
+  media::ChannelLayout audio_channel_layout_;
 
   base::WeakPtr<ContentDecryptorDelegate> weak_this_;
   base::WeakPtrFactory<ContentDecryptorDelegate> weak_ptr_factory_;

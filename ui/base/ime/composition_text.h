@@ -7,13 +7,13 @@
 
 #include "base/strings/string16.h"
 #include "ui/base/ime/composition_underline.h"
-#include "ui/base/ui_export.h"
+#include "ui/base/ui_base_export.h"
 #include "ui/gfx/range/range.h"
 
 namespace ui {
 
 // A struct represents the status of an ongoing composition text.
-struct UI_EXPORT CompositionText {
+struct UI_BASE_EXPORT CompositionText {
   CompositionText();
   ~CompositionText();
 
@@ -36,7 +36,7 @@ struct UI_EXPORT CompositionText {
   void Clear();
 
   // Content of the composition text.
-  string16 text;
+  base::string16 text;
 
   // Underline information of the composition text.
   // They must be sorted in ascending order by their start_offset and cannot be

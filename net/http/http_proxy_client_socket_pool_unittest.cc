@@ -77,6 +77,7 @@ class HttpProxyClientSocketPoolTest
                          session_deps_.cert_verifier.get(),
                          NULL /* server_bound_cert_store */,
                          NULL /* transport_security_state */,
+                         NULL /* cert_transparency_verifier */,
                          std::string() /* ssl_session_cache_shard */,
                          session_deps_.deterministic_socket_factory.get(),
                          &transport_socket_pool_,
@@ -99,8 +100,8 @@ class HttpProxyClientSocketPoolTest
   }
 
   void AddAuthToCache() {
-    const base::string16 kFoo(ASCIIToUTF16("foo"));
-    const base::string16 kBar(ASCIIToUTF16("bar"));
+    const base::string16 kFoo(base::ASCIIToUTF16("foo"));
+    const base::string16 kBar(base::ASCIIToUTF16("bar"));
     GURL proxy_url(GetParam().proxy_type == HTTP ?
                    (std::string("http://") + kHttpProxyHost) :
                    (std::string("https://") + kHttpsProxyHost));

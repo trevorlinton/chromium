@@ -11,7 +11,7 @@
 #include "ui/gfx/point.h"
 #include "ui/gfx/range/range.h"
 
-namespace WebKit {
+namespace blink {
 class WebView;
 }
 
@@ -32,9 +32,10 @@ class TextInputClientObserver : public RenderViewObserver {
 
  private:
   // Returns the WebView of the RenderView.
-  WebKit::WebView* webview();
+  blink::WebView* webview();
 
   // IPC Message handlers:
+  void OnStringAtPoint(gfx::Point point);
   void OnCharacterIndexForPoint(gfx::Point point);
   void OnFirstRectForCharacterRange(gfx::Range range);
   void OnStringForRange(gfx::Range range);

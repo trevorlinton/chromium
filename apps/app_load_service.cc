@@ -5,22 +5,23 @@
 #include "apps/app_load_service.h"
 
 #include "apps/app_load_service_factory.h"
+#include "apps/app_window_registry.h"
 #include "apps/launcher.h"
-#include "apps/shell_window_registry.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/extensions/extension_host.h"
-#include "chrome/browser/extensions/extension_prefs.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/extensions/extension.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
+#include "extensions/browser/extension_host.h"
+#include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
 
 using extensions::Extension;
 using extensions::ExtensionPrefs;
+using extensions::ExtensionSystem;
 
 namespace apps {
 
@@ -35,7 +36,7 @@ AppLoadService::AppLoadService(Profile* profile)
       this, chrome::NOTIFICATION_EXTENSION_HOST_DID_STOP_LOADING,
       content::NotificationService::AllSources());
   registrar_.Add(
-      this, chrome::NOTIFICATION_EXTENSION_UNLOADED,
+      this, chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
       content::NotificationService::AllSources());
 }
 
@@ -52,8 +53,10 @@ void AppLoadService::RestartApplication(const std::string& extension_id) {
 bool AppLoadService::LoadAndLaunch(const base::FilePath& extension_path,
                                    const CommandLine& command_line,
                                    const base::FilePath& current_dir) {
+  ExtensionService* extension_service =
+      ExtensionSystem::Get(profile_)->extension_service();
   std::string extension_id;
-  if (!extensions::UnpackedInstaller::Create(profile_->GetExtensionService())->
+  if (!extensions::UnpackedInstaller::Create(extension_service)->
           LoadFromCommandLine(base::FilePath(extension_path), &extension_id)) {
     return false;
   }
@@ -96,7 +99,7 @@ void AppLoadService::Observe(int type,
           break;
         case LAUNCH_WITH_COMMAND_LINE:
           LaunchPlatformAppWithCommandLine(
-              profile_, extension, &it->second.command_line,
+              profile_, extension, it->second.command_line,
               it->second.current_dir);
           break;
         default:
@@ -106,14 +109,14 @@ void AppLoadService::Observe(int type,
       post_reload_actions_.erase(it);
       break;
     }
-    case chrome::NOTIFICATION_EXTENSION_UNLOADED: {
+    case chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED: {
       const extensions::UnloadedExtensionInfo* unload_info =
           content::Details<extensions::UnloadedExtensionInfo>(details).ptr();
       if (!unload_info->extension->is_platform_app())
         break;
 
       if (WasUnloadedForReload(*unload_info) &&
-          HasShellWindows(unload_info->extension->id()) &&
+          HasAppWindows(unload_info->extension->id()) &&
           !HasPostReloadAction(unload_info->extension->id())) {
         post_reload_actions_[unload_info->extension->id()].action_type = LAUNCH;
       }
@@ -124,9 +127,10 @@ void AppLoadService::Observe(int type,
   }
 }
 
-bool AppLoadService::HasShellWindows(const std::string& extension_id) {
-  return !ShellWindowRegistry::Get(profile_)->
-      GetShellWindowsForApp(extension_id).empty();
+bool AppLoadService::HasAppWindows(const std::string& extension_id) {
+  return !AppWindowRegistry::Get(profile_)
+              ->GetAppWindowsForApp(extension_id)
+              .empty();
 }
 
 bool AppLoadService::WasUnloadedForReload(

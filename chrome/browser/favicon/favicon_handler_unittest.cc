@@ -5,6 +5,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "chrome/browser/favicon/favicon_handler.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
+#include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "content/public/browser/favicon_status.h"
@@ -257,7 +258,7 @@ class TestFaviconHandler : public FaviconHandler {
       const GURL& icon_url,
       chrome::IconType icon_type,
       const FaviconService::FaviconResultsCallback& callback,
-      CancelableTaskTracker* tracker) OVERRIDE {
+      base::CancelableTaskTracker* tracker) OVERRIDE {
     history_handler_.reset(new HistoryRequestHandler(page_url, icon_url,
                                                      icon_type, callback));
   }
@@ -266,7 +267,7 @@ class TestFaviconHandler : public FaviconHandler {
       const GURL& icon_url,
       chrome::IconType icon_type,
       const FaviconService::FaviconResultsCallback& callback,
-      CancelableTaskTracker* tracker) OVERRIDE {
+      base::CancelableTaskTracker* tracker) OVERRIDE {
     history_handler_.reset(new HistoryRequestHandler(GURL(), icon_url,
                                                      icon_type, callback));
   }
@@ -275,7 +276,7 @@ class TestFaviconHandler : public FaviconHandler {
       const GURL& page_url,
       int icon_types,
       const FaviconService::FaviconResultsCallback& callback,
-      CancelableTaskTracker* tracker) OVERRIDE {
+      base::CancelableTaskTracker* tracker) OVERRIDE {
     history_handler_.reset(new HistoryRequestHandler(page_url, GURL(),
                                                      icon_types, callback));
   }
@@ -459,7 +460,8 @@ TEST_F(FaviconHandlerTest, GetFaviconFromHistory) {
 
   // Simulates update favicon url.
   std::vector<FaviconURL> urls;
-  urls.push_back(FaviconURL(icon_url, FaviconURL::FAVICON));
+  urls.push_back(
+      FaviconURL(icon_url, FaviconURL::FAVICON, std::vector<gfx::Size>()));
   helper.OnUpdateFaviconURL(0, urls);
 
   // Verify FaviconHandler status
@@ -501,7 +503,8 @@ TEST_F(FaviconHandlerTest, DownloadFavicon) {
 
   // Simulates update favicon url.
   std::vector<FaviconURL> urls;
-  urls.push_back(FaviconURL(icon_url, FaviconURL::FAVICON));
+  urls.push_back(
+      FaviconURL(icon_url, FaviconURL::FAVICON, std::vector<gfx::Size>()));
   helper.OnUpdateFaviconURL(0, urls);
 
   // Verify FaviconHandler status
@@ -573,7 +576,8 @@ TEST_F(FaviconHandlerTest, UpdateAndDownloadFavicon) {
 
   // Simulates update with the different favicon url.
   std::vector<FaviconURL> urls;
-  urls.push_back(FaviconURL(new_icon_url, FaviconURL::FAVICON));
+  urls.push_back(
+      FaviconURL(new_icon_url, FaviconURL::FAVICON, std::vector<gfx::Size>()));
   helper.OnUpdateFaviconURL(0, urls);
 
   // Verify FaviconHandler status.
@@ -663,7 +667,8 @@ TEST_F(FaviconHandlerTest, FaviconInHistoryInvalid) {
 
   // Simulates update with matching favicon URL.
   std::vector<FaviconURL> urls;
-  urls.push_back(FaviconURL(icon_url, FaviconURL::FAVICON));
+  urls.push_back(
+      FaviconURL(icon_url, FaviconURL::FAVICON, std::vector<gfx::Size>()));
   helper.OnUpdateFaviconURL(0, urls);
 
   // A download for the favicon should be requested, and we should not do
@@ -727,7 +732,8 @@ TEST_F(FaviconHandlerTest, UpdateFavicon) {
 
   // Simulates update with the different favicon url.
   std::vector<FaviconURL> urls;
-  urls.push_back(FaviconURL(new_icon_url, FaviconURL::FAVICON));
+  urls.push_back(
+      FaviconURL(new_icon_url, FaviconURL::FAVICON, std::vector<gfx::Size>()));
   helper.OnUpdateFaviconURL(0, urls);
 
   // Verify FaviconHandler status.
@@ -790,9 +796,12 @@ TEST_F(FaviconHandlerTest, Download2ndFaviconURLCandidate) {
 
   // Simulates update with the different favicon url.
   std::vector<FaviconURL> urls;
-  urls.push_back(FaviconURL(icon_url, FaviconURL::TOUCH_PRECOMPOSED_ICON));
-  urls.push_back(FaviconURL(new_icon_url, FaviconURL::TOUCH_ICON));
-  urls.push_back(FaviconURL(new_icon_url, FaviconURL::FAVICON));
+  urls.push_back(FaviconURL(
+      icon_url, FaviconURL::TOUCH_PRECOMPOSED_ICON, std::vector<gfx::Size>()));
+  urls.push_back(FaviconURL(
+      new_icon_url, FaviconURL::TOUCH_ICON, std::vector<gfx::Size>()));
+  urls.push_back(
+      FaviconURL(new_icon_url, FaviconURL::FAVICON, std::vector<gfx::Size>()));
   helper.OnUpdateFaviconURL(0, urls);
 
   // Verify FaviconHandler status.
@@ -900,9 +909,12 @@ TEST_F(FaviconHandlerTest, UpdateDuringDownloading) {
 
   // Simulates update with the different favicon url.
   std::vector<FaviconURL> urls;
-  urls.push_back(FaviconURL(icon_url, FaviconURL::TOUCH_PRECOMPOSED_ICON));
-  urls.push_back(FaviconURL(new_icon_url, FaviconURL::TOUCH_ICON));
-  urls.push_back(FaviconURL(new_icon_url, FaviconURL::FAVICON));
+  urls.push_back(FaviconURL(
+      icon_url, FaviconURL::TOUCH_PRECOMPOSED_ICON, std::vector<gfx::Size>()));
+  urls.push_back(FaviconURL(
+      new_icon_url, FaviconURL::TOUCH_ICON, std::vector<gfx::Size>()));
+  urls.push_back(
+      FaviconURL(new_icon_url, FaviconURL::FAVICON, std::vector<gfx::Size>()));
   helper.OnUpdateFaviconURL(0, urls);
 
   // Verify FaviconHandler status.
@@ -935,7 +947,8 @@ TEST_F(FaviconHandlerTest, UpdateDuringDownloading) {
   helper.set_history_handler(NULL);
   const GURL latest_icon_url("http://www.google.com/latest_favicon");
   std::vector<FaviconURL> latest_urls;
-  latest_urls.push_back(FaviconURL(latest_icon_url, FaviconURL::TOUCH_ICON));
+  latest_urls.push_back(FaviconURL(
+      latest_icon_url, FaviconURL::TOUCH_ICON, std::vector<gfx::Size>()));
   helper.OnUpdateFaviconURL(0, latest_urls);
 
   EXPECT_EQ(1U, helper.urls().size());
@@ -983,12 +996,21 @@ TEST_F(FaviconHandlerTest, UpdateDuringDownloading) {
 TEST_F(FaviconHandlerTest, MultipleFavicons) {
   const GURL kPageURL("http://www.google.com");
   const FaviconURL kSourceIconURLs[] = {
-    FaviconURL(GURL("http://www.google.com/a"), FaviconURL::FAVICON),
-    FaviconURL(GURL("http://www.google.com/b"), FaviconURL::FAVICON),
-    FaviconURL(GURL("http://www.google.com/c"), FaviconURL::FAVICON),
-    FaviconURL(GURL("http://www.google.com/d"), FaviconURL::FAVICON),
-    FaviconURL(GURL("http://www.google.com/e"), FaviconURL::FAVICON)
-  };
+      FaviconURL(GURL("http://www.google.com/a"),
+                 FaviconURL::FAVICON,
+                 std::vector<gfx::Size>()),
+      FaviconURL(GURL("http://www.google.com/b"),
+                 FaviconURL::FAVICON,
+                 std::vector<gfx::Size>()),
+      FaviconURL(GURL("http://www.google.com/c"),
+                 FaviconURL::FAVICON,
+                 std::vector<gfx::Size>()),
+      FaviconURL(GURL("http://www.google.com/d"),
+                 FaviconURL::FAVICON,
+                 std::vector<gfx::Size>()),
+      FaviconURL(GURL("http://www.google.com/e"),
+                 FaviconURL::FAVICON,
+                 std::vector<gfx::Size>())};
 
   // Set the supported scale factors to 1x and 2x. This affects the behavior of
   // SelectFaviconFrames().
@@ -1067,9 +1089,12 @@ TEST_F(FaviconHandlerTest, MultipleFavicons) {
 
 #endif
 
-static BrowserContextKeyedService* BuildFaviconService(
-    content::BrowserContext* profile) {
-  return new FaviconService(NULL);
+static KeyedService* BuildFaviconService(content::BrowserContext* profile) {
+  return new FaviconService(static_cast<Profile*>(profile));
+}
+
+static KeyedService* BuildHistoryService(content::BrowserContext* profile) {
+  return NULL;
 }
 
 // Test that Favicon is not requested repeatedly during the same session if
@@ -1083,6 +1108,10 @@ TEST_F(FaviconHandlerTest, UnableToDownloadFavicon) {
 
   FaviconServiceFactory::GetInstance()->SetTestingFactory(
       profile, BuildFaviconService);
+
+  HistoryServiceFactory::GetInstance()->SetTestingFactory(
+      profile, BuildHistoryService);
+
   FaviconService* favicon_service = FaviconServiceFactory::GetForProfile(
       profile, Profile::IMPLICIT_ACCESS);
 

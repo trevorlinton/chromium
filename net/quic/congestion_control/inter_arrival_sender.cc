@@ -4,6 +4,14 @@
 
 #include "net/quic/congestion_control/inter_arrival_sender.h"
 
+#include <algorithm>
+
+#include "base/stl_util.h"
+#include "net/quic/congestion_control/rtt_stats.h"
+
+using std::max;
+using std::min;
+
 namespace net {
 
 namespace {
@@ -13,17 +21,18 @@ const float kUncertainSafetyMargin = 0.7f;
 const float kMaxBitrateReduction = 0.9f;
 const float kMinBitrateReduction = 0.05f;
 const uint64 kMinBitrateKbit = 10;
-const int kInitialRttMs = 60;  // At a typical RTT 60 ms.
-const float kAlpha = 0.125f;
-const float kOneMinusAlpha = 1 - kAlpha;
 
+static const int kHistoryPeriodMs = 5000;
 static const int kBitrateSmoothingPeriodMs = 1000;
 static const int kMinBitrateSmoothingPeriodMs = 500;
 
 }  // namespace
 
-InterArrivalSender::InterArrivalSender(const QuicClock* clock)
-    : probing_(true),
+InterArrivalSender::InterArrivalSender(const QuicClock* clock,
+                                       const RttStats* rtt_stats)
+    : clock_(clock),
+      rtt_stats_(rtt_stats),
+      probing_(true),
       max_segment_size_(kDefaultMaxPacketSize),
       current_bandwidth_(QuicBandwidth::Zero()),
       smoothed_rtt_(QuicTime::Delta::Zero()),
@@ -34,7 +43,6 @@ InterArrivalSender::InterArrivalSender(const QuicClock* clock)
       state_machine_(new InterArrivalStateMachine(clock)),
       paced_sender_(new PacedSender(QuicBandwidth::FromKBytesPerSecond(
           kProbeBitrateKBytesPerSecond), max_segment_size_)),
-      accumulated_number_of_lost_packets_(0),
       bandwidth_usage_state_(kBandwidthSteady),
       back_down_time_(QuicTime::Zero()),
       back_down_bandwidth_(QuicBandwidth::Zero()),
@@ -42,20 +50,17 @@ InterArrivalSender::InterArrivalSender(const QuicClock* clock)
 }
 
 InterArrivalSender::~InterArrivalSender() {
+  STLDeleteValues(&packet_history_map_);
 }
 
 void InterArrivalSender::SetFromConfig(const QuicConfig& config,
                                        bool is_server) {
-  max_segment_size_ = config.server_max_packet_size();
-  paced_sender_->set_max_segment_size(max_segment_size_);
-  probe_->set_max_segment_size(max_segment_size_);
 }
 
 // TODO(pwestin): this is really inefficient (4% CPU on the GFE loadtest).
 // static
 QuicBandwidth InterArrivalSender::CalculateSentBandwidth(
-    const SendAlgorithmInterface::SentPacketsMap& sent_packets_map,
-    QuicTime feedback_receive_time) {
+    QuicTime feedback_receive_time) const {
   const QuicTime::Delta kBitrateSmoothingPeriod =
       QuicTime::Delta::FromMilliseconds(kBitrateSmoothingPeriodMs);
   const QuicTime::Delta kMinBitrateSmoothingPeriod =
@@ -64,17 +69,17 @@ QuicBandwidth InterArrivalSender::CalculateSentBandwidth(
   QuicByteCount sum_bytes_sent = 0;
 
   // Sum packet from new until they are kBitrateSmoothingPeriod old.
-  SendAlgorithmInterface::SentPacketsMap::const_reverse_iterator history_rit =
-      sent_packets_map.rbegin();
+  SentPacketsMap::const_reverse_iterator history_rit =
+      packet_history_map_.rbegin();
 
   QuicTime::Delta max_diff = QuicTime::Delta::Zero();
-  for (; history_rit != sent_packets_map.rend(); ++history_rit) {
+  for (; history_rit != packet_history_map_.rend(); ++history_rit) {
     QuicTime::Delta diff =
-        feedback_receive_time.Subtract(history_rit->second->SendTimestamp());
+        feedback_receive_time.Subtract(history_rit->second->send_timestamp());
     if (diff > kBitrateSmoothingPeriod) {
       break;
     }
-    sum_bytes_sent += history_rit->second->BytesSent();
+    sum_bytes_sent += history_rit->second->bytes_sent();
     max_diff = diff;
   }
   if (max_diff < kMinBitrateSmoothingPeriod) {
@@ -86,16 +91,14 @@ QuicBandwidth InterArrivalSender::CalculateSentBandwidth(
 
 void InterArrivalSender::OnIncomingQuicCongestionFeedbackFrame(
     const QuicCongestionFeedbackFrame& feedback,
-    QuicTime feedback_receive_time,
-    const SentPacketsMap& sent_packets) {
+    QuicTime feedback_receive_time) {
   DCHECK(feedback.type == kInterArrival);
 
   if (feedback.type != kInterArrival) {
     return;
   }
 
-  QuicBandwidth sent_bandwidth = CalculateSentBandwidth(sent_packets,
-                                                        feedback_receive_time);
+  QuicBandwidth sent_bandwidth = CalculateSentBandwidth(feedback_receive_time);
 
   TimeMap::const_iterator received_it;
   for (received_it = feedback.inter_arrival.received_packet_times.begin();
@@ -103,16 +106,17 @@ void InterArrivalSender::OnIncomingQuicCongestionFeedbackFrame(
       ++received_it) {
     QuicPacketSequenceNumber sequence_number = received_it->first;
 
-    SentPacketsMap::const_iterator sent_it = sent_packets.find(sequence_number);
-    if (sent_it == sent_packets.end()) {
+    SentPacketsMap::const_iterator sent_it =
+        packet_history_map_.find(sequence_number);
+    if (sent_it == packet_history_map_.end()) {
       // Too old data; ignore and move forward.
-      DLOG(INFO) << "Too old feedback move forward, sequence_number:"
+      DVLOG(1) << "Too old feedback move forward, sequence_number:"
                  << sequence_number;
       continue;
     }
     QuicTime time_received = received_it->second;
-    QuicTime time_sent = sent_it->second->SendTimestamp();
-    QuicByteCount bytes_sent = sent_it->second->BytesSent();
+    QuicTime time_sent = sent_it->second->send_timestamp();
+    QuicByteCount bytes_sent = sent_it->second->bytes_sent();
 
     channel_estimator_->OnAcknowledgedPacket(
         sequence_number, bytes_sent, time_sent, time_received);
@@ -122,11 +126,11 @@ void InterArrivalSender::OnIncomingQuicCongestionFeedbackFrame(
     } else {
       bool last_of_send_time = false;
       SentPacketsMap::const_iterator next_sent_it = ++sent_it;
-      if (next_sent_it == sent_packets.end()) {
+      if (next_sent_it == packet_history_map_.end()) {
         // No more sent packets; hence this must be the last.
         last_of_send_time = true;
       } else {
-        if (time_sent != next_sent_it->second->SendTimestamp()) {
+        if (time_sent != next_sent_it->second->send_timestamp()) {
           // Next sent packet have a different send time.
           last_of_send_time = true;
         }
@@ -140,26 +144,11 @@ void InterArrivalSender::OnIncomingQuicCongestionFeedbackFrame(
     return;
   }
 
-  bool packet_loss_event = false;
-  if (accumulated_number_of_lost_packets_ !=
-      feedback.inter_arrival.accumulated_number_of_lost_packets) {
-    accumulated_number_of_lost_packets_ =
-        feedback.inter_arrival.accumulated_number_of_lost_packets;
-    packet_loss_event = true;
-  }
   InterArrivalState state = state_machine_->GetInterArrivalState();
 
   if (state == kInterArrivalStatePacketLoss ||
       state == kInterArrivalStateCompetingTcpFLow) {
-    if (packet_loss_event) {
-      if (!state_machine_->PacketLossEvent()) {
-        // Less than one RTT since last PacketLossEvent.
-        return;
-      }
-      EstimateBandwidthAfterLossEvent(feedback_receive_time);
-    } else {
-      EstimateNewBandwidth(feedback_receive_time, sent_bandwidth);
-    }
+    EstimateNewBandwidth(feedback_receive_time, sent_bandwidth);
     return;
   }
   EstimateDelayBandwidth(feedback_receive_time, sent_bandwidth);
@@ -189,15 +178,15 @@ bool InterArrivalSender::ProbingPhase(QuicTime feedback_receive_time) {
       // Do nothing.
       break;
   }
-  new_rate = std::max(new_rate,
-                       QuicBandwidth::FromKBitsPerSecond(kMinBitrateKbit));
+  new_rate = max(new_rate,
+                 QuicBandwidth::FromKBitsPerSecond(kMinBitrateKbit));
 
   bitrate_ramp_up_->Reset(new_rate, available_channel_estimate,
                           channel_estimate);
 
   current_bandwidth_ = new_rate;
   paced_sender_->UpdateBandwidthEstimate(feedback_receive_time, new_rate);
-  DLOG(INFO) << "Probe result; new rate:"
+  DVLOG(1) << "Probe result; new rate:"
              << new_rate.ToKBitsPerSecond() << " Kbits/s "
              << " available estimate:"
              << available_channel_estimate.ToKBitsPerSecond() << " Kbits/s "
@@ -206,32 +195,17 @@ bool InterArrivalSender::ProbingPhase(QuicTime feedback_receive_time) {
   return false;
 }
 
-void InterArrivalSender::OnIncomingAck(
+void InterArrivalSender::OnPacketAcked(
     QuicPacketSequenceNumber /*acked_sequence_number*/,
-    QuicByteCount acked_bytes,
-    QuicTime::Delta rtt) {
-  // RTT can't be negative.
-  DCHECK_LE(0, rtt.ToMicroseconds());
-
+    QuicByteCount acked_bytes) {
   if (probing_) {
     probe_->OnAcknowledgedPacket(acked_bytes);
   }
-
-  if (rtt.IsInfinite()) {
-    return;
-  }
-
-  if (smoothed_rtt_.IsZero()) {
-    smoothed_rtt_ = rtt;
-  } else {
-    smoothed_rtt_ = QuicTime::Delta::FromMicroseconds(
-        kOneMinusAlpha * smoothed_rtt_.ToMicroseconds() +
-        kAlpha * rtt.ToMicroseconds());
-  }
-  state_machine_->set_rtt(smoothed_rtt_);
 }
 
-void InterArrivalSender::OnIncomingLoss(QuicTime ack_receive_time) {
+void InterArrivalSender::OnPacketLost(
+    QuicPacketSequenceNumber /*sequence_number*/,
+    QuicTime ack_receive_time) {
   // Packet loss was reported.
   if (!probing_) {
     if (!state_machine_->PacketLossEvent()) {
@@ -253,7 +227,18 @@ bool InterArrivalSender::OnPacketSent(
     probe_->OnPacketSent(bytes);
   }
   paced_sender_->OnPacketSent(sent_time, bytes);
+
+  packet_history_map_[sequence_number] = new SentPacket(bytes, sent_time);
+  CleanupPacketHistory();
   return true;
+}
+
+void InterArrivalSender::OnRetransmissionTimeout(
+    bool /*packets_retransmitted*/) {
+  // TODO(ianswett): Decrease the available bandwidth.
+  if (probing_) {
+    probe_->OnRetransmissionTimeout();
+  }
 }
 
 void InterArrivalSender::OnPacketAbandoned(
@@ -315,28 +300,22 @@ void InterArrivalSender::EstimateDelayBandwidth(QuicTime feedback_receive_time,
   bandwidth_usage_state_ = new_bandwidth_usage_state;
 }
 
-QuicBandwidth InterArrivalSender::BandwidthEstimate() {
+QuicBandwidth InterArrivalSender::BandwidthEstimate() const {
   return current_bandwidth_;
 }
 
-QuicTime::Delta InterArrivalSender::SmoothedRtt() {
-  if (smoothed_rtt_.IsZero()) {
-    return QuicTime::Delta::FromMilliseconds(kInitialRttMs);
-  }
-  return smoothed_rtt_;
+void InterArrivalSender::UpdateRtt(QuicTime::Delta rtt) {
+  state_machine_->set_rtt(rtt_stats_->SmoothedRtt());
 }
 
-QuicTime::Delta InterArrivalSender::RetransmissionDelay() {
+QuicTime::Delta InterArrivalSender::RetransmissionDelay() const {
   // TODO(pwestin): Calculate and return retransmission delay.
   // Use 2 * the smoothed RTT for now.
-  return smoothed_rtt_.Add(smoothed_rtt_);
+  return rtt_stats_->SmoothedRtt().Multiply(2);
 }
 
-QuicByteCount InterArrivalSender::GetCongestionWindow() {
+QuicByteCount InterArrivalSender::GetCongestionWindow() const {
   return 0;
-}
-
-void InterArrivalSender::SetCongestionWindow(QuicByteCount window) {
 }
 
 void InterArrivalSender::EstimateNewBandwidth(QuicTime feedback_receive_time,
@@ -357,7 +336,7 @@ void InterArrivalSender::EstimateNewBandwidth(QuicTime feedback_receive_time,
   }
   paced_sender_->UpdateBandwidthEstimate(feedback_receive_time,
                                          current_bandwidth_);
-  DLOG(INFO) << "New bandwidth estimate in steady state:"
+  DVLOG(1) << "New bandwidth estimate in steady state:"
              << current_bandwidth_.ToKBitsPerSecond()
              << " Kbits/s";
 }
@@ -369,19 +348,20 @@ void InterArrivalSender::EstimateNewBandwidthAfterDraining(
   if (current_bandwidth_ > back_down_bandwidth_) {
     // Do nothing, our current bandwidth is higher than our bandwidth at the
     // previous back down.
-    DLOG(INFO) << "Current bandwidth estimate is higher than before draining";
+    DVLOG(1) << "Current bandwidth estimate is higher than before draining";
     return;
   }
   if (estimated_congestion_delay >= back_down_congestion_delay_) {
     // Do nothing, our estimated delay have increased.
-    DLOG(INFO) << "Current delay estimate is higher than before draining";
+    DVLOG(1) << "Current delay estimate is higher than before draining";
     return;
   }
   DCHECK(back_down_time_.IsInitialized());
   QuicTime::Delta buffer_reduction =
       back_down_congestion_delay_.Subtract(estimated_congestion_delay);
   QuicTime::Delta elapsed_time =
-      feedback_receive_time.Subtract(back_down_time_).Subtract(SmoothedRtt());
+      feedback_receive_time.Subtract(back_down_time_).Subtract(
+          rtt_stats_->SmoothedRtt());
 
   QuicBandwidth new_estimate = QuicBandwidth::Zero();
   if (buffer_reduction >= elapsed_time) {
@@ -401,10 +381,10 @@ void InterArrivalSender::EstimateNewBandwidthAfterDraining(
     } else {
       // Use our drain rate and our kMinBitrateReduction to go to our
       // new estimate.
-      new_estimate = std::max(current_bandwidth_,
-                              current_bandwidth_.Add(draining_rate).Scale(
-                                  1.0f - kMinBitrateReduction));
-      DLOG(INFO) << "Draining calculation; current rate:"
+      new_estimate = max(current_bandwidth_,
+                         current_bandwidth_.Add(draining_rate).Scale(
+                             1.0f - kMinBitrateReduction));
+      DVLOG(1) << "Draining calculation; current rate:"
                  << current_bandwidth_.ToKBitsPerSecond() << " Kbits/s "
                  << "draining rate:"
                  << draining_rate.ToKBitsPerSecond() << " Kbits/s "
@@ -440,7 +420,7 @@ void InterArrivalSender::EstimateNewBandwidthAfterDraining(
   state_machine_->IncreaseBitrateDecision();
   paced_sender_->UpdateBandwidthEstimate(feedback_receive_time, new_estimate);
   current_bandwidth_ = new_estimate;
-  DLOG(INFO) << "New bandwidth estimate after draining:"
+  DVLOG(1) << "New bandwidth estimate after draining:"
              << new_estimate.ToKBitsPerSecond() << " Kbits/s";
 }
 
@@ -454,46 +434,43 @@ void InterArrivalSender::EstimateBandwidthAfterDelayEvent(
   // bitrate with the following.
   // TODO(pwestin): this is a crude first implementation.
   int64 draining_rate_per_rtt = (estimated_byte_buildup *
-      kNumMicrosPerSecond) / SmoothedRtt().ToMicroseconds();
+      kNumMicrosPerSecond) / rtt_stats_->SmoothedRtt().ToMicroseconds();
 
   float decrease_factor =
       draining_rate_per_rtt / current_bandwidth_.ToBytesPerSecond();
 
-  decrease_factor = std::max(decrease_factor, kMinBitrateReduction);
-  decrease_factor = std::min(decrease_factor, kMaxBitrateReduction);
+  decrease_factor = max(decrease_factor, kMinBitrateReduction);
+  decrease_factor = min(decrease_factor, kMaxBitrateReduction);
   back_down_congestion_delay_ = estimated_congestion_delay;
   QuicBandwidth new_target_bitrate =
       current_bandwidth_.Scale(1.0f - decrease_factor);
 
   // While in delay sensing mode send at least one packet per RTT.
   QuicBandwidth min_delay_bitrate =
-      QuicBandwidth::FromBytesAndTimeDelta(max_segment_size_, SmoothedRtt());
-  new_target_bitrate = std::max(new_target_bitrate, min_delay_bitrate);
+      QuicBandwidth::FromBytesAndTimeDelta(max_segment_size_,
+                                           rtt_stats_->SmoothedRtt());
+  new_target_bitrate = max(new_target_bitrate, min_delay_bitrate);
 
   ResetCurrentBandwidth(feedback_receive_time, new_target_bitrate);
 
-  DLOG(INFO) << "New bandwidth estimate after delay event:"
-      << current_bandwidth_.ToKBitsPerSecond()
-      << " Kbits/s min delay bitrate:"
-      << min_delay_bitrate.ToKBitsPerSecond()
-      << " Kbits/s RTT:"
-      << SmoothedRtt().ToMicroseconds()
-      << " us";
+  DVLOG(1) << "New bandwidth estimate after delay event:"
+      << current_bandwidth_.ToKBitsPerSecond() << " Kbits/s min delay bitrate:"
+      << min_delay_bitrate.ToKBitsPerSecond() << " Kbits/s RTT:"
+      << rtt_stats_->SmoothedRtt().ToMicroseconds() << " us";
 }
 
 void InterArrivalSender::EstimateBandwidthAfterLossEvent(
     QuicTime feedback_receive_time) {
   ResetCurrentBandwidth(feedback_receive_time,
                         current_bandwidth_.Scale(kPacketLossBitrateReduction));
-  DLOG(INFO) << "New bandwidth estimate after loss event:"
-             << current_bandwidth_.ToKBitsPerSecond()
-             << " Kbits/s";
+  DVLOG(1) << "New bandwidth estimate after loss event:"
+             << current_bandwidth_.ToKBitsPerSecond() << " Kbits/s";
 }
 
 void InterArrivalSender::ResetCurrentBandwidth(QuicTime feedback_receive_time,
                                                QuicBandwidth new_rate) {
-  new_rate = std::max(new_rate,
-                      QuicBandwidth::FromKBitsPerSecond(kMinBitrateKbit));
+  new_rate = max(new_rate,
+                 QuicBandwidth::FromKBitsPerSecond(kMinBitrateKbit));
   QuicBandwidth channel_estimate = QuicBandwidth::Zero();
   ChannelEstimateState channel_estimator_state =
       channel_estimator_->GetChannelEstimate(&channel_estimate);
@@ -517,6 +494,22 @@ void InterArrivalSender::ResetCurrentBandwidth(QuicTime feedback_receive_time,
     paced_sender_->UpdateBandwidthEstimate(feedback_receive_time,
                                            current_bandwidth_);
     state_machine_->DecreaseBitrateDecision();
+  }
+}
+
+void InterArrivalSender::CleanupPacketHistory() {
+  const QuicTime::Delta kHistoryPeriod =
+      QuicTime::Delta::FromMilliseconds(kHistoryPeriodMs);
+  QuicTime now = clock_->ApproximateNow();
+
+  SentPacketsMap::iterator history_it = packet_history_map_.begin();
+  for (; history_it != packet_history_map_.end(); ++history_it) {
+    if (now.Subtract(history_it->second->send_timestamp()) <= kHistoryPeriod) {
+      return;
+    }
+    delete history_it->second;
+    packet_history_map_.erase(history_it);
+    history_it = packet_history_map_.begin();
   }
 }
 

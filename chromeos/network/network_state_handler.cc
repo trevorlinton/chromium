@@ -7,6 +7,7 @@
 #include "base/bind.h"
 #include "base/format_macros.h"
 #include "base/location.h"
+#include "base/logging.h"
 #include "base/metrics/histogram.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
@@ -179,13 +180,9 @@ const NetworkState* NetworkStateHandler::GetNetworkState(
 }
 
 const NetworkState* NetworkStateHandler::DefaultNetwork() const {
-  if (network_list_.empty())
+  if (default_network_path_.empty())
     return NULL;
-  const NetworkState* network = network_list_.front()->AsNetworkState();
-  DCHECK(network);
-  if (!network->update_received() || !network->IsConnectedState())
-    return NULL;
-  return network;
+  return GetNetworkState(default_network_path_);
 }
 
 const FavoriteState* NetworkStateHandler::DefaultFavoriteNetwork() const {
@@ -194,8 +191,10 @@ const FavoriteState* NetworkStateHandler::DefaultFavoriteNetwork() const {
     return NULL;
   const FavoriteState* default_favorite =
       GetFavoriteState(default_network->path());
-  DCHECK(default_favorite);
-  DCHECK(default_favorite->update_received());
+  DCHECK(default_network->type() != shill::kTypeWifi ||
+         default_favorite) << "No favorite for: " << default_network->path();
+  DCHECK(!default_favorite || default_favorite->update_received())
+      << "No update received for: " << default_network->path();
   return default_favorite;
 }
 
@@ -245,31 +244,17 @@ const NetworkState* NetworkStateHandler::FirstNetworkByType(
   return NULL;
 }
 
-std::string NetworkStateHandler::HardwareAddressForType(
-    const NetworkTypePattern& type) const {
-  const NetworkState* network = ConnectedNetworkByType(type);
-  if (!network)
-    return std::string();
-  const DeviceState* device = GetDeviceState(network->device_path());
-  if (!device)
-    return std::string();
-  std::string result = device->mac_address();
-  StringToUpperASCII(&result);
-  return result;
-}
-
 std::string NetworkStateHandler::FormattedHardwareAddressForType(
     const NetworkTypePattern& type) const {
-  std::string address = HardwareAddressForType(type);
-  if (address.size() % 2 != 0)
-    return address;
-  std::string result;
-  for (size_t i = 0; i < address.size(); ++i) {
-    if ((i != 0) && (i % 2 == 0))
-      result.push_back(':');
-    result.push_back(address[i]);
-  }
-  return result;
+  const DeviceState* device = NULL;
+  const NetworkState* network = ConnectedNetworkByType(type);
+  if (network)
+    device = GetDeviceState(network->device_path());
+  else
+    device = GetDeviceStateByType(type);
+  if (!device)
+    return std::string();
+  return device->GetFormattedMacAddress();
 }
 
 void NetworkStateHandler::GetNetworkList(NetworkStateList* list) const {
@@ -290,13 +275,18 @@ void NetworkStateHandler::GetNetworkListByType(const NetworkTypePattern& type,
 }
 
 void NetworkStateHandler::GetDeviceList(DeviceStateList* list) const {
+  GetDeviceListByType(NetworkTypePattern::Default(), list);
+}
+
+void NetworkStateHandler::GetDeviceListByType(const NetworkTypePattern& type,
+                                              DeviceStateList* list) const {
   DCHECK(list);
   list->clear();
   for (ManagedStateList::const_iterator iter = device_list_.begin();
        iter != device_list_.end(); ++iter) {
     const DeviceState* device = (*iter)->AsDeviceState();
     DCHECK(device);
-    if (device->update_received())
+    if (device->update_received() && device->Matches(type))
       list->push_back(device);
   }
 }
@@ -314,7 +304,7 @@ void NetworkStateHandler::GetFavoriteListByType(const NetworkTypePattern& type,
        iter != favorite_list_.end(); ++iter) {
     const FavoriteState* favorite = (*iter)->AsFavoriteState();
     DCHECK(favorite);
-    if (favorite->update_received() && favorite->is_favorite() &&
+    if (favorite->update_received() && favorite->IsFavorite() &&
         favorite->Matches(type)) {
       list->push_back(favorite);
     }
@@ -327,9 +317,11 @@ const FavoriteState* NetworkStateHandler::GetFavoriteState(
       GetModifiableManagedState(&favorite_list_, service_path);
   if (!managed)
     return NULL;
-  if (managed && !managed->update_received())
+  const FavoriteState* favorite = managed->AsFavoriteState();
+  DCHECK(favorite);
+  if (!favorite->update_received() || !favorite->IsFavorite())
     return NULL;
-  return managed->AsFavoriteState();
+  return favorite;
 }
 
 void NetworkStateHandler::RequestScan() const {
@@ -361,15 +353,11 @@ void NetworkStateHandler::RequestUpdateForNetwork(
       ManagedState::MANAGED_TYPE_NETWORK, service_path);
 }
 
-void NetworkStateHandler::RequestUpdateForAllNetworks() {
-  NET_LOG_EVENT("RequestUpdateForAllNetworks", "");
-  for (ManagedStateList::iterator iter = network_list_.begin();
-       iter != network_list_.end(); ++iter) {
-    ManagedState* network = *iter;
-    network->set_update_requested(true);
-    shill_property_handler_->RequestProperties(
-        ManagedState::MANAGED_TYPE_NETWORK, network->path());
-  }
+void NetworkStateHandler::ClearLastErrorForNetwork(
+    const std::string& service_path) {
+  NetworkState* network = GetModifiableNetworkState(service_path);
+  if (network)
+    network->clear_last_error();
 }
 
 void NetworkStateHandler::SetCheckPortalList(
@@ -484,8 +472,8 @@ void NetworkStateHandler::UpdateManagedList(ManagedState::ManagedType type,
 
 void NetworkStateHandler::ProfileListChanged() {
   NET_LOG_EVENT("ProfileListChanged", "Re-Requesting Network Properties");
-  for (ManagedStateList::iterator iter = network_list_.begin();
-       iter != network_list_.end(); ++iter) {
+  for (ManagedStateList::iterator iter = favorite_list_.begin();
+       iter != favorite_list_.end(); ++iter) {
     shill_property_handler_->RequestProperties(
         ManagedState::MANAGED_TYPE_NETWORK, (*iter)->path());
   }
@@ -511,7 +499,7 @@ void NetworkStateHandler::UpdateManagedStateProperties(
   }
   managed->set_update_received();
 
-  std::string desc = GetManagedStateLogType(managed) + " PropertiesReceived";
+  std::string desc = GetManagedStateLogType(managed) + " Properties Received";
   NET_LOG_DEBUG(desc, GetManagedStateLogName(managed));
 
   if (type == ManagedState::MANAGED_TYPE_NETWORK) {
@@ -544,7 +532,8 @@ void NetworkStateHandler::UpdateNetworkStateProperties(
     // Signal connection state changed after all properties have been updated.
     if (ConnectionStateChanged(network, prev_connection_state))
       OnNetworkConnectionStateChanged(network);
-    NetworkPropertiesUpdated(network);
+    NET_LOG_EVENT("NetworkPropertiesUpdated", GetManagedStateLogName(network));
+    NotifyNetworkPropertiesUpdated(network);
   }
 }
 
@@ -586,10 +575,13 @@ void NetworkStateHandler::UpdateNetworkServiceProperty(
     if (key != shill::kSignalStrengthProperty &&
         key != shill::kWifiFrequencyListProperty &&
         (key != shill::kDeviceProperty || value_str != "/")) {
+      std::string log_event = "NetworkPropertyUpdated";
       // Trigger a default network update for interesting changes only.
-      if (network->path() == default_network_path_)
-        OnDefaultNetworkChanged();
-      // Log interesting event.
+      if (network->path() == default_network_path_) {
+        NotifyDefaultNetworkChanged(network);
+        log_event = "Default" + log_event;
+      }
+      // Log event.
       std::string detail = network->name() + "." + key;
       detail += " = " + network_event_log::ValueAsString(value);
       network_event_log::LogLevel log_level;
@@ -598,12 +590,12 @@ void NetworkStateHandler::UpdateNetworkServiceProperty(
       } else {
         log_level = network_event_log::LOG_LEVEL_EVENT;
       }
-      NET_LOG_LEVEL(log_level, "NetworkPropertyUpdated", detail);
+      NET_LOG_LEVEL(log_level, log_event, detail);
     }
   }
 
   // All property updates signal 'NetworkPropertiesUpdated'.
-  NetworkPropertiesUpdated(network);
+  NotifyNetworkPropertiesUpdated(network);
 
   // If added to a Profile, request a full update so that a FavoriteState
   // gets created.
@@ -663,9 +655,6 @@ void NetworkStateHandler::ManagedStateListChanged(
                   base::StringPrintf("Size:%" PRIuS, network_list_.size()));
     FOR_EACH_OBSERVER(NetworkStateHandlerObserver, observers_,
                       NetworkListChanged());
-    // The list order may have changed, so check if the default network changed.
-    if (CheckDefaultNetworkChanged())
-      OnDefaultNetworkChanged();
     // Update UMA stats.
     UMA_HISTOGRAM_COUNTS_100("Networks.Visible", network_list_.size());
   } else if (type == ManagedState::MANAGED_TYPE_FAVORITE) {
@@ -679,7 +668,7 @@ void NetworkStateHandler::ManagedStateListChanged(
     for (ManagedStateList::iterator iter = favorite_list_.begin();
          iter != favorite_list_.end(); ++iter) {
       FavoriteState* favorite = (*iter)->AsFavoriteState();
-      if (!favorite->is_favorite())
+      if (!favorite->IsFavorite())
         continue;
       if (favorite->IsPrivate())
         ++unshared;
@@ -693,6 +682,34 @@ void NetworkStateHandler::ManagedStateListChanged(
   } else {
     NOTREACHED();
   }
+}
+
+void NetworkStateHandler::DefaultNetworkServiceChanged(
+    const std::string& service_path) {
+  // Shill uses '/' for empty service path values; check explicitly for that.
+  const char* kEmptyServicePath = "/";
+  if (service_path == kEmptyServicePath)
+    default_network_path_.clear();
+  else
+    default_network_path_ = service_path;
+  NET_LOG_EVENT("DefaultNetworkServiceChanged:", default_network_path_);
+  const NetworkState* network = NULL;
+  if (!default_network_path_.empty()) {
+    network = GetNetworkState(default_network_path_);
+    if (!network) {
+      // If NetworkState is not available yet, do not notify observers here,
+      // they will be notified when the state is received.
+      NET_LOG_DEBUG("Default NetworkState not available",
+                    default_network_path_);
+      return;
+    }
+  }
+  if (network && !network->IsConnectedState()) {
+    NET_LOG_ERROR(
+        "DefaultNetwork is not connected: " + network->connection_state(),
+        network->path());
+  }
+  NotifyDefaultNetworkChanged(network);
 }
 
 //------------------------------------------------------------------------------
@@ -751,35 +768,30 @@ NetworkStateHandler::ManagedStateList* NetworkStateHandler::GetManagedList(
 void NetworkStateHandler::OnNetworkConnectionStateChanged(
     NetworkState* network) {
   DCHECK(network);
-  NET_LOG_EVENT("NetworkConnectionStateChanged", base::StringPrintf(
-      "%s:%s", GetManagedStateLogName(network).c_str(),
-      network->connection_state().c_str()));
+  std::string event = "NetworkConnectionStateChanged";
+  if (network->path() == default_network_path_) {
+    event = "Default" + event;
+    if (!network->IsConnectedState()) {
+      NET_LOG_ERROR(
+          "DefaultNetwork is not connected: " + network->connection_state(),
+          network->path());
+    }
+  }
+  NET_LOG_EVENT(event + ": " + network->connection_state(),
+                GetManagedStateLogName(network));
   FOR_EACH_OBSERVER(NetworkStateHandlerObserver, observers_,
                     NetworkConnectionStateChanged(network));
-  if (CheckDefaultNetworkChanged() || network->path() == default_network_path_)
-    OnDefaultNetworkChanged();
+  if (network->path() == default_network_path_)
+    NotifyDefaultNetworkChanged(network);
 }
 
-bool NetworkStateHandler::CheckDefaultNetworkChanged() {
-  std::string new_default_network_path;
-  const NetworkState* new_default_network = DefaultNetwork();
-  if (new_default_network)
-    new_default_network_path = new_default_network->path();
-  if (new_default_network_path == default_network_path_)
-    return false;
-  default_network_path_ = new_default_network_path;
-  return true;
-}
-
-void NetworkStateHandler::OnDefaultNetworkChanged() {
-  const NetworkState* default_network = DefaultNetwork();
-  NET_LOG_EVENT("DefaultNetworkChanged",
-                GetManagedStateLogName(default_network));
+void NetworkStateHandler::NotifyDefaultNetworkChanged(
+    const NetworkState* default_network) {
   FOR_EACH_OBSERVER(NetworkStateHandlerObserver, observers_,
                     DefaultNetworkChanged(default_network));
 }
 
-void NetworkStateHandler::NetworkPropertiesUpdated(
+void NetworkStateHandler::NotifyNetworkPropertiesUpdated(
     const NetworkState* network) {
   FOR_EACH_OBSERVER(NetworkStateHandlerObserver, observers_,
                     NetworkPropertiesUpdated(network));

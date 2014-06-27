@@ -7,19 +7,21 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/image_loader.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_icon_set.h"
 #include "chrome/common/extensions/manifest_handlers/icons_handler.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/extension_resource.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
@@ -57,6 +59,7 @@ ExtensionUninstallDialog::ExtensionUninstallDialog(
       browser_(browser),
       delegate_(delegate),
       extension_(NULL),
+      triggering_extension_(NULL),
       state_(kImageIsLoading),
       ui_loop_(base::MessageLoop::current()) {
   if (browser) {
@@ -69,13 +72,24 @@ ExtensionUninstallDialog::ExtensionUninstallDialog(
 ExtensionUninstallDialog::~ExtensionUninstallDialog() {
 }
 
+void ExtensionUninstallDialog::ConfirmProgrammaticUninstall(
+    const extensions::Extension* extension,
+    const extensions::Extension* triggering_extension) {
+  triggering_extension_ = triggering_extension;
+  ConfirmUninstall(extension);
+}
+
 void ExtensionUninstallDialog::ConfirmUninstall(
     const extensions::Extension* extension) {
   DCHECK(ui_loop_ == base::MessageLoop::current());
   extension_ = extension;
+  // Bookmark apps may not have 128x128 icons so accept 48x48 icons.
+  const int icon_size = extension_->from_bookmark()
+      ? extension_misc::EXTENSION_ICON_MEDIUM
+      : extension_misc::EXTENSION_ICON_LARGE;
   extensions::ExtensionResource image = extensions::IconsInfo::GetIconResource(
       extension_,
-      extension_misc::EXTENSION_ICON_LARGE,
+      icon_size,
       ExtensionIconSet::MATCH_BIGGER);
   // Load the icon whose pixel size is large enough to be displayed under
   // maximal supported scale factor. UI code will scale the icon down if needed.
@@ -131,4 +145,15 @@ void ExtensionUninstallDialog::Observe(
     state_ = kBrowserIsClosing;
     delegate_->ExtensionUninstallCanceled();
   }
+}
+
+std::string ExtensionUninstallDialog::GetHeadingText() {
+  if (triggering_extension_) {
+    return l10n_util::GetStringFUTF8(
+        IDS_EXTENSION_PROGRAMMATIC_UNINSTALL_PROMPT_HEADING,
+        base::UTF8ToUTF16(triggering_extension_->name()),
+        base::UTF8ToUTF16(extension_->name()));
+  }
+  return l10n_util::GetStringFUTF8(IDS_EXTENSION_UNINSTALL_PROMPT_HEADING,
+                                   base::UTF8ToUTF16(extension_->name()));
 }

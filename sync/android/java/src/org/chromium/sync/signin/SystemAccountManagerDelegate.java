@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,7 +27,7 @@ public class SystemAccountManagerDelegate implements AccountManagerDelegate {
     private final AccountManager mAccountManager;
 
     public SystemAccountManagerDelegate(Context context) {
-        mAccountManager = AccountManager.get(context);
+        mAccountManager = AccountManager.get(context.getApplicationContext());
     }
 
     @Override

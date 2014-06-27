@@ -27,11 +27,12 @@ FakeUserManager::~FakeUserManager() {
   }
 }
 
-void FakeUserManager::AddUser(const std::string& email) {
+const User* FakeUserManager::AddUser(const std::string& email) {
   User* user = User::CreateRegularUser(email);
   user->set_username_hash(email + kUserIdHashSuffix);
   user->SetStubImage(User::kProfileImageIndex, false);
   user_list_.push_back(user);
+  return user;
 }
 
 void FakeUserManager::AddKioskAppUser(const std::string& kiosk_app_username) {
@@ -42,6 +43,10 @@ void FakeUserManager::AddKioskAppUser(const std::string& kiosk_app_username) {
 
 void FakeUserManager::LoginUser(const std::string& email) {
   UserLoggedIn(email, email + kUserIdHashSuffix, false);
+}
+
+void FakeUserManager::SetProfileForUser(const User* user, Profile* profile) {
+  user_to_profile_[user] = profile;
 }
 
 const UserList& FakeUserManager::GetUsers() const {
@@ -108,7 +113,7 @@ void FakeUserManager::SwitchActiveUser(const std::string& email) {
 
 void FakeUserManager::SaveUserDisplayName(
     const std::string& username,
-    const string16& display_name) {
+    const base::string16& display_name) {
   for (UserList::iterator it = user_list_.begin();
        it != user_list_.end(); ++it) {
     if ((*it)->email() == username) {
@@ -118,16 +123,16 @@ void FakeUserManager::SaveUserDisplayName(
   }
 }
 
-void FakeUserManager::UpdateUserAccountData(const std::string&, const string16&,
-                           const std::string&) {
-  // Not implemented
+MultiProfileUserController* FakeUserManager::GetMultiProfileUserController() {
+  return NULL;
 }
 
 SupervisedUserManager* FakeUserManager::GetSupervisedUserManager() {
   return supervised_user_manager_.get();
 }
 
-UserImageManager* FakeUserManager::GetUserImageManager() {
+UserImageManager* FakeUserManager::GetUserImageManager(
+    const std::string& /* user_id */) {
   return NULL;
 }
 
@@ -148,6 +153,10 @@ bool FakeUserManager::IsKnownUser(const std::string& email) const {
 }
 
 const User* FakeUserManager::FindUser(const std::string& email) const {
+  return NULL;
+}
+
+User* FakeUserManager::FindUserAndModify(const std::string& email) {
   return NULL;
 }
 
@@ -174,13 +183,14 @@ User* FakeUserManager::GetUserByProfile(Profile* profile) const {
 }
 
 Profile* FakeUserManager::GetProfileByUser(const User* user) const {
-  NOTIMPLEMENTED();
-  return NULL;
+  std::map<const User*, Profile*>::const_iterator it =
+      user_to_profile_.find(user);
+  return it == user_to_profile_.end() ? NULL : it->second;
 }
 
-string16 FakeUserManager::GetUserDisplayName(
+base::string16 FakeUserManager::GetUserDisplayName(
     const std::string& username) const {
-  return string16();
+  return base::string16();
 }
 
 std::string FakeUserManager::GetUserDisplayEmail(
@@ -279,8 +289,11 @@ base::FilePath FakeUserManager::GetUserProfileDir(
   return base::FilePath();
 }
 
-void FakeUserManager::RespectLocalePreference(Profile* profile,
-                                              const User* user) const {
+bool FakeUserManager::RespectLocalePreference(
+    Profile* profile,
+    const User* user,
+    scoped_ptr<locale_util::SwitchLanguageCallback> callback) const {
+  return false;
 }
 
 }  // namespace chromeos

@@ -4,9 +4,9 @@
 
 #include "ui/aura/client/default_activation_client.h"
 
-#include "ui/aura/client/activation_change_observer.h"
-#include "ui/aura/client/activation_delegate.h"
 #include "ui/aura/window.h"
+#include "ui/wm/public/activation_change_observer.h"
+#include "ui/wm/public/activation_delegate.h"
 
 namespace aura {
 namespace client {
@@ -102,7 +102,6 @@ void DefaultActivationClient::OnWindowDestroyed(Window* window) {
     last_active_ = NULL;
 
   if (window == GetActiveWindow()) {
-    window->RemoveObserver(this);
     active_windows_.pop_back();
     Window* next_active = GetActiveWindow();
     if (next_active && aura::client::GetActivationChangeObserver(next_active)) {

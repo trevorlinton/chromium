@@ -135,9 +135,9 @@ bool ServiceState::IsValid() const {
 }
 
 std::string ServiceState::ToString() {
-  scoped_ptr<base::DictionaryValue> services(new DictionaryValue());
+  scoped_ptr<base::DictionaryValue> services(new base::DictionaryValue());
 
-  scoped_ptr<base::DictionaryValue> cloud_print(new DictionaryValue());
+  scoped_ptr<base::DictionaryValue> cloud_print(new base::DictionaryValue());
   cloud_print->SetBoolean(kEnabledOptionName, true);
 
   SetNotEmptyJsonString(cloud_print.get(), kEmailOptionName, email_);
@@ -160,7 +160,7 @@ std::string ServiceState::ToString() {
 std::string ServiceState::LoginToGoogle(const std::string& service,
                                         const std::string& email,
                                         const std::string& password) {
-  base::MessageLoop loop(base::MessageLoop::TYPE_IO);
+  base::MessageLoopForIO loop;
 
   net::URLRequestContextBuilder builder;
   scoped_ptr<net::URLRequestContext> context(builder.Build());
@@ -180,7 +180,7 @@ std::string ServiceState::LoginToGoogle(const std::string& service,
   int load_flags = request.load_flags();
   load_flags = load_flags | net::LOAD_DO_NOT_SEND_COOKIES;
   load_flags = load_flags | net::LOAD_DO_NOT_SAVE_COOKIES;
-  request.set_load_flags(load_flags);
+  request.SetLoadFlags(load_flags);
 
   scoped_ptr<net::UploadElementReader> reader(
       net::UploadOwnedBytesElementReader::CreateWithString(post_body));

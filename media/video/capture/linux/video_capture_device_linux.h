@@ -12,6 +12,8 @@
 
 #include <string>
 
+#include "base/file_util.h"
+#include "base/files/scoped_file.h"
 #include "base/threading/thread.h"
 #include "media/video/capture/video_capture_device.h"
 #include "media/video/capture/video_capture_types.h"
@@ -24,7 +26,7 @@ class VideoCaptureDeviceLinux : public VideoCaptureDevice {
   virtual ~VideoCaptureDeviceLinux();
 
   // VideoCaptureDevice implementation.
-  virtual void AllocateAndStart(const VideoCaptureCapability& capture_format,
+  virtual void AllocateAndStart(const VideoCaptureParams& params,
                                 scoped_ptr<Client> client) OVERRIDE;
 
   virtual void StopAndDeAllocate() OVERRIDE;
@@ -59,11 +61,12 @@ class VideoCaptureDeviceLinux : public VideoCaptureDevice {
   InternalState state_;
   scoped_ptr<VideoCaptureDevice::Client> client_;
   Name device_name_;
-  int device_fd_;  // File descriptor for the opened camera device.
+  base::ScopedFD device_fd_;  // File descriptor for the opened camera device.
   base::Thread v4l2_thread_;  // Thread used for reading data from the device.
   Buffer* buffer_pool_;
   int buffer_pool_size_;  // Number of allocated buffers.
   int timeout_count_;
+  VideoCaptureFormat capture_format_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(VideoCaptureDeviceLinux);
 };

@@ -18,7 +18,7 @@
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_checker.h"
 #include "ui/base/clipboard/clipboard_types.h"
-#include "ui/base/ui_export.h"
+#include "ui/base/ui_base_export.h"
 
 #if defined(TOOLKIT_GTK)
 #include <gdk/gdk.h>
@@ -45,6 +45,11 @@ class MessageWindow;
 }  // namespace win
 }  // namespace base
 
+// TODO(dcheng): Temporary until the IPC layer doesn't use WriteObjects().
+namespace content {
+class ClipboardMessageFilter;
+}
+
 namespace gfx {
 class Size;
 }
@@ -63,8 +68,9 @@ class NSString;
 
 namespace ui {
 class ClipboardTest;
+class ScopedClipboardWriter;
 
-class UI_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
+class UI_BASE_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
  public:
   // MIME type constants.
   static const char kMimeTypeText[];
@@ -75,7 +81,7 @@ class UI_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
   static const char kMimeTypePNG[];
 
   // Platform neutral holder for native data representation of a clipboard type.
-  struct UI_EXPORT FormatType {
+  struct UI_BASE_EXPORT FormatType {
     FormatType();
     ~FormatType();
 
@@ -90,18 +96,18 @@ class UI_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
 
 #if defined(OS_WIN)
     const FORMATETC& ToFormatEtc() const { return data_; }
+#elif defined(USE_AURA)
+    const std::string& ToString() const { return data_; }
 #elif defined(OS_MACOSX)
     // Custom copy and assignment constructor to handle NSString.
     FormatType(const FormatType& other);
     FormatType& operator=(const FormatType& other);
-#elif defined(USE_AURA)
-    const std::string& ToString() const { return data_; }
 #endif
+
+    bool Equals(const FormatType& other) const;
 
    private:
     friend class Clipboard;
-
-    bool Equals(const FormatType& other) const;
 
     // Platform-specific glue used internally by the Clipboard class. Each
     // plaform should define,at least one of each of the following:
@@ -116,13 +122,14 @@ class UI_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
     FormatType(UINT native_format, LONG index);
     UINT ToUINT() const { return data_.cfFormat; }
     FORMATETC data_;
+#elif defined(USE_AURA)
+    explicit FormatType(const std::string& native_format);
+    const std::string& data() const { return data_; }
+    std::string data_;
 #elif defined(OS_MACOSX)
     explicit FormatType(NSString* native_format);
     NSString* ToNSString() const { return data_; }
     NSString* data_;
-#elif defined(USE_AURA)
-    explicit FormatType(const std::string& native_format);
-    std::string data_;
 #elif defined(TOOLKIT_GTK)
     explicit FormatType(const std::string& native_format);
     explicit FormatType(const GdkAtom& native_format);
@@ -139,6 +146,8 @@ class UI_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
     // Copyable and assignable, since this is essentially an opaque value type.
   };
 
+  // TODO(dcheng): Make this private once the IPC layer no longer needs to
+  // serialize this information.
   // ObjectType designates the type of data to be stored in the clipboard. This
   // designation is shared across all OSes. The system-specific designation
   // is defined by FormatType. A single ObjectType might be represented by
@@ -150,9 +159,7 @@ class UI_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
     CBF_HTML,
     CBF_RTF,
     CBF_BOOKMARK,
-    CBF_FILES,
     CBF_WEBKIT,
-    CBF_BITMAP,
     CBF_SMBITMAP,  // Bitmap from shared memory.
     CBF_DATA,  // Arbitrary block of bytes.
   };
@@ -170,18 +177,10 @@ class UI_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
   // CBF_RTF       data         byte array
   // CBF_BOOKMARK  html         char array
   //               url          char array
-  // CBF_LINK      html         char array
-  //               url          char array
-  // CBF_FILES     files        char array representing multiple files.
-  //                            Filenames are separated by null characters and
-  //                            the final filename is double null terminated.
-  //                            The filenames are encoded in platform-specific
-  //                            encoding.
   // CBF_WEBKIT    none         empty vector
-  // CBF_BITMAP    pixels       byte array
-  //               size         gfx::Size struct
   // CBF_SMBITMAP  shared_mem   A pointer to an unmapped base::SharedMemory
-  //                            object containing the bitmap data.
+  //                            object containing the bitmap data. The bitmap
+  //                            data should be premultiplied.
   //               size         gfx::Size struct
   // CBF_DATA      format       char array
   //               data         byte array
@@ -193,7 +192,7 @@ class UI_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
     switch (type) {
       case CLIPBOARD_TYPE_COPY_PASTE:
         return true;
-#if defined(USE_X11) && !defined(OS_CHROMEOS)
+#if !defined(OS_WIN) && !defined(OS_MACOSX) && !defined(OS_CHROMEOS)
       case CLIPBOARD_TYPE_SELECTION:
         return true;
 #endif
@@ -222,12 +221,6 @@ class UI_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
   // clipboard, so it shouldn't be a problem.)
   static void DestroyClipboardForCurrentThread();
 
-  // Write a bunch of objects to the system clipboard. Copies are made of the
-  // contents of |objects|. On Windows they are copied to the system clipboard.
-  // On linux they are copied into a structure owned by the Clipboard object and
-  // kept until the system clipboard is set again.
-  void WriteObjects(ClipboardType type, const ObjectMap& objects);
-
   // Returns a sequence number which uniquely identifies clipboard state.
   // This can be used to version the data on the clipboard and determine
   // whether it has changed.
@@ -240,11 +233,11 @@ class UI_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
   void Clear(ClipboardType type);
 
   void ReadAvailableTypes(ClipboardType type,
-                          std::vector<string16>* types,
+                          std::vector<base::string16>* types,
                           bool* contains_filenames) const;
 
   // Reads UNICODE text from the clipboard, if available.
-  void ReadText(ClipboardType type, string16* result) const;
+  void ReadText(ClipboardType type, base::string16* result) const;
 
   // Reads ASCII text from the clipboard, if available.
   void ReadAsciiText(ClipboardType type, std::string* result) const;
@@ -254,7 +247,7 @@ class UI_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
   // markup indicating the beginning and end of the actual fragment. Otherwise,
   // they will contain 0 and markup->size().
   void ReadHTML(ClipboardType type,
-                string16* markup,
+                base::string16* markup,
                 std::string* src_url,
                 uint32* fragment_start,
                 uint32* fragment_end) const;
@@ -267,11 +260,11 @@ class UI_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
   SkBitmap ReadImage(ClipboardType type) const;
 
   void ReadCustomData(ClipboardType clipboard_type,
-                      const string16& type,
-                      string16* result) const;
+                      const base::string16& type,
+                      base::string16* result) const;
 
   // Reads a bookmark from the clipboard, if available.
-  void ReadBookmark(string16* title, std::string* url) const;
+  void ReadBookmark(base::string16* title, std::string* url) const;
 
   // Reads raw data from the clipboard with the given format type. Stores result
   // as a byte vector.
@@ -318,13 +311,22 @@ class UI_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
   static const FormatType& GetIDListFormatType();
 #endif
 
+  void WriteObjects(ClipboardType type, const ObjectMap& objects);
+
  private:
   FRIEND_TEST_ALL_PREFIXES(ClipboardTest, SharedBitmapTest);
   FRIEND_TEST_ALL_PREFIXES(ClipboardTest, EmptyHTMLTest);
   friend class ClipboardTest;
+  // For access to WriteObjects().
+  // TODO(dcheng): Remove the temporary exception for content.
+  friend class content::ClipboardMessageFilter;
+  friend class ScopedClipboardWriter;
 
   Clipboard();
   ~Clipboard();
+
+  // Write a bunch of objects to the system clipboard. Copies are made of the
+  // contents of |objects|.
 
   void DispatchObject(ObjectType type, const ObjectMapParams& params);
 
@@ -356,8 +358,8 @@ class UI_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
   // Safely write to system clipboard. Free |handle| on failure.
   void WriteToClipboard(unsigned int format, HANDLE handle);
 
-  static void ParseBookmarkClipboardFormat(const string16& bookmark,
-                                           string16* title,
+  static void ParseBookmarkClipboardFormat(const base::string16& bookmark,
+                                           base::string16* title,
                                            std::string* url);
 
   // Free a handle depending on its type (as intuited from format)
@@ -394,7 +396,7 @@ class UI_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
   TargetMap* clipboard_data_;
   GtkClipboard* clipboard_;
   GtkClipboard* primary_selection_;
-#elif defined(USE_AURA) && defined(USE_X11) && !defined(OS_CHROMEOS)
+#elif defined(USE_CLIPBOARD_AURAX11)
  private:
   // We keep our implementation details private because otherwise we bring in
   // the X11 headers and break chrome compile.

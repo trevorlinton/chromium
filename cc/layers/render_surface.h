@@ -19,6 +19,8 @@
 namespace cc {
 
 class Layer;
+template <typename LayerType>
+class LayerIterator;
 
 class CC_EXPORT RenderSurface {
  public:
@@ -29,7 +31,9 @@ class CC_EXPORT RenderSurface {
   // reflection.
   gfx::RectF DrawableContentRect() const;
 
-  void SetContentRect(gfx::Rect content_rect) { content_rect_ = content_rect; }
+  void SetContentRect(const gfx::Rect& content_rect) {
+      content_rect_ = content_rect;
+  }
   gfx::Rect content_rect() const { return content_rect_; }
 
   void SetDrawOpacity(float opacity) { draw_opacity_ = opacity; }
@@ -84,7 +88,7 @@ class CC_EXPORT RenderSurface {
   void SetIsClipped(bool is_clipped) { is_clipped_ = is_clipped; }
 
   gfx::Rect clip_rect() const { return clip_rect_; }
-  void SetClipRect(gfx::Rect clip_rect) { clip_rect_ = clip_rect; }
+  void SetClipRect(const gfx::Rect& clip_rect) { clip_rect_ = clip_rect; }
 
   // When false, the RenderSurface does not contribute to another target
   // RenderSurface that is being drawn for the current frame. It could still be
@@ -102,15 +106,15 @@ class CC_EXPORT RenderSurface {
   // RenderPasses so they can't contribute to a surface.
   void AddContributingDelegatedRenderPassLayer(Layer* layer) {}
 
-  void SetNearestAncestorThatMovesPixels(RenderSurface* surface) {
-    nearest_ancestor_that_moves_pixels_ = surface;
+  void SetNearestOcclusionImmuneAncestor(RenderSurface* surface) {
+    nearest_occlusion_immune_ancestor_ = surface;
   }
-  const RenderSurface* nearest_ancestor_that_moves_pixels() const {
-    return nearest_ancestor_that_moves_pixels_;
+  const RenderSurface* nearest_occlusion_immune_ancestor() const {
+    return nearest_occlusion_immune_ancestor_;
   }
 
  private:
-  friend struct LayerIteratorActions;
+  friend class LayerIterator<Layer>;
 
   Layer* owning_layer_;
 
@@ -135,9 +139,8 @@ class CC_EXPORT RenderSurface {
   RenderSurfaceLayerList layer_list_;
 
   // The nearest ancestor target surface that will contain the contents of this
-  // surface, and that is going to move pixels within the surface (such as with
-  // a blur). This can point to itself.
-  RenderSurface* nearest_ancestor_that_moves_pixels_;
+  // surface, and that ignores outside occlusion. This can point to itself.
+  RenderSurface* nearest_occlusion_immune_ancestor_;
 
   // For LayerIteratorActions
   int target_render_surface_layer_index_history_;

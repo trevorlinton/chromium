@@ -50,7 +50,7 @@ SpellingServiceClient::~SpellingServiceClient() {
 bool SpellingServiceClient::RequestTextCheck(
     content::BrowserContext* context,
     ServiceType type,
-    const string16& text,
+    const base::string16& text,
     const TextCheckCompleteCallback& callback) {
   DCHECK(type == SUGGEST || type == SPELLCHECK);
   if (!context || !IsAvailable(context, type)) {
@@ -69,21 +69,20 @@ bool SpellingServiceClient::RequestTextCheck(
       &country_code);
 
   // Format the JSON request to be sent to the Spelling service.
-  std::string encoded_text;
-  base::JsonDoubleQuote(text, false, &encoded_text);
+  std::string encoded_text = base::GetQuotedJSONString(text);
 
   static const char kSpellingRequest[] =
       "{"
       "\"method\":\"spelling.check\","
       "\"apiVersion\":\"v%d\","
       "\"params\":{"
-      "\"text\":\"%s\","
+      "\"text\":%s,"
       "\"language\":\"%s\","
       "\"originCountry\":\"%s\","
       "\"key\":%s"
       "}"
       "}";
-  std::string api_key = base::GetDoubleQuotedJson(google_apis::GetAPIKey());
+  std::string api_key = base::GetQuotedJSONString(google_apis::GetAPIKey());
   std::string request = base::StringPrintf(
       kSpellingRequest,
       type,
@@ -184,21 +183,21 @@ bool SpellingServiceClient::ParseResponse(
   //     "data": [...]
   //   }
   // }
-  scoped_ptr<DictionaryValue> value(
-      static_cast<DictionaryValue*>(
+  scoped_ptr<base::DictionaryValue> value(
+      static_cast<base::DictionaryValue*>(
           base::JSONReader::Read(data, base::JSON_ALLOW_TRAILING_COMMAS)));
   if (!value.get() || !value->IsType(base::Value::TYPE_DICTIONARY))
     return false;
 
   // Check for errors from spelling service.
-  DictionaryValue* error = NULL;
+  base::DictionaryValue* error = NULL;
   if (value->GetDictionary(kErrorPath, &error))
     return false;
 
   // Retrieve the array of Misspelling objects. When the input text does not
   // have misspelled words, it returns an empty JSON. (In this case, its HTTP
   // status is 200.) We just return true for this case.
-  ListValue* misspellings = NULL;
+  base::ListValue* misspellings = NULL;
   if (!value->GetList(kMisspellingsPath, &misspellings))
     return true;
 
@@ -206,21 +205,21 @@ bool SpellingServiceClient::ParseResponse(
     // Retrieve the i-th misspelling region and put it to the given vector. When
     // the Spelling service sends two or more suggestions, we read only the
     // first one because SpellCheckResult can store only one suggestion.
-    DictionaryValue* misspelling = NULL;
+    base::DictionaryValue* misspelling = NULL;
     if (!misspellings->GetDictionary(i, &misspelling))
       return false;
 
     int start = 0;
     int length = 0;
-    ListValue* suggestions = NULL;
+    base::ListValue* suggestions = NULL;
     if (!misspelling->GetInteger("charStart", &start) ||
         !misspelling->GetInteger("charLength", &length) ||
         !misspelling->GetList("suggestions", &suggestions)) {
       return false;
     }
 
-    DictionaryValue* suggestion = NULL;
-    string16 replacement;
+    base::DictionaryValue* suggestion = NULL;
+    base::string16 replacement;
     if (!suggestions->GetDictionary(0, &suggestion) ||
         !suggestion->GetString("suggestion", &replacement)) {
       return false;
@@ -234,7 +233,7 @@ bool SpellingServiceClient::ParseResponse(
 
 SpellingServiceClient::TextCheckCallbackData::TextCheckCallbackData(
     TextCheckCompleteCallback callback,
-    string16 text)
+    base::string16 text)
       : callback(callback),
         text(text) {
 }
@@ -255,8 +254,11 @@ void SpellingServiceClient::OnURLFetchComplete(
     fetcher->GetResponseAsString(&data);
     success = ParseResponse(data, &results);
   }
-  callback_data->callback.Run(success, callback_data->text, results);
   spellcheck_fetchers_.erase(fetcher.get());
+
+  // The callback may release the last (transitive) dependency on |this|. It
+  // MUST be the last function called.
+  callback_data->callback.Run(success, callback_data->text, results);
 }
 
 net::URLFetcher* SpellingServiceClient::CreateURLFetcher(const GURL& url) {

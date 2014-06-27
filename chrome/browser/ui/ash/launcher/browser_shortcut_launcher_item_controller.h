@@ -30,22 +30,20 @@ class BrowserShortcutLauncherItemController : public LauncherItemController {
   void UpdateBrowserItemState();
 
   // LauncherItemController overrides:
-  virtual bool IsCurrentlyShownInWindow(aura::Window* window) const OVERRIDE;
   virtual bool IsOpen() const OVERRIDE;
   virtual bool IsVisible() const OVERRIDE;
   virtual void Launch(ash::LaunchSource source, int event_flags) OVERRIDE;
-  virtual void Activate(ash::LaunchSource source) OVERRIDE;
-  virtual void Close() OVERRIDE;
+  virtual bool Activate(ash::LaunchSource source) OVERRIDE;
   virtual ChromeLauncherAppMenuItems GetApplicationList(
       int event_flags) OVERRIDE;
-  virtual void ItemSelected(const ui::Event& event) OVERRIDE;
+  virtual bool ItemSelected(const ui::Event& event) OVERRIDE;
   virtual base::string16 GetTitle() OVERRIDE;
   virtual ui::MenuModel* CreateContextMenu(
       aura::Window* root_window) OVERRIDE;
-  virtual ash::LauncherMenuModel* CreateApplicationMenu(
-      int event_flags) OVERRIDE;
+  virtual ash::ShelfMenuModel* CreateApplicationMenu(int event_flags) OVERRIDE;
   virtual bool IsDraggable() OVERRIDE;
   virtual bool ShouldShowTooltip() OVERRIDE;
+  virtual void Close() OVERRIDE;
 
  private:
   // Get the favicon for the browser list entry for |web_contents|.
@@ -54,7 +52,7 @@ class BrowserShortcutLauncherItemController : public LauncherItemController {
 
   // Get the title for the browser list entry for |web_contents|.
   // If |web_contents| has not loaded, returns "Net Tab".
-  string16 GetBrowserListTitle(content::WebContents* web_contents) const;
+  base::string16 GetBrowserListTitle(content::WebContents* web_contents) const;
 
   // Check if the given |web_contents| is in incognito mode.
   bool IsIncognito(content::WebContents* web_contents) const;

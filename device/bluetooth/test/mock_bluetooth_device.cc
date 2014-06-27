@@ -24,6 +24,16 @@ MockBluetoothDevice::MockBluetoothDevice(MockBluetoothAdapter* adapter,
       .WillByDefault(testing::Return(name_));
   ON_CALL(*this, GetAddress())
       .WillByDefault(testing::Return(address_));
+  ON_CALL(*this, GetDeviceType())
+      .WillByDefault(testing::Return(DEVICE_UNKNOWN));
+  ON_CALL(*this, GetVendorIDSource())
+      .WillByDefault(testing::Return(VENDOR_ID_UNKNOWN));
+  ON_CALL(*this, GetVendorID())
+      .WillByDefault(testing::Return(0));
+  ON_CALL(*this, GetProductID())
+      .WillByDefault(testing::Return(0));
+  ON_CALL(*this, GetDeviceID())
+      .WillByDefault(testing::Return(0));
   ON_CALL(*this, IsPaired())
       .WillByDefault(testing::Return(paired));
   ON_CALL(*this, IsConnected())
@@ -33,15 +43,15 @@ MockBluetoothDevice::MockBluetoothDevice(MockBluetoothAdapter* adapter,
   ON_CALL(*this, IsConnecting())
       .WillByDefault(testing::Return(false));
   ON_CALL(*this, GetName())
-      .WillByDefault(testing::Return(UTF8ToUTF16(name_)));
+      .WillByDefault(testing::Return(base::UTF8ToUTF16(name_)));
   ON_CALL(*this, ExpectingPinCode())
       .WillByDefault(testing::Return(false));
   ON_CALL(*this, ExpectingPasskey())
       .WillByDefault(testing::Return(false));
   ON_CALL(*this, ExpectingConfirmation())
       .WillByDefault(testing::Return(false));
-  ON_CALL(*this, GetServices())
-      .WillByDefault(testing::Return(service_list_));
+  ON_CALL(*this, GetUUIDs())
+      .WillByDefault(testing::Return(uuids_));
 }
 
 MockBluetoothDevice::~MockBluetoothDevice() {}

@@ -6,7 +6,7 @@
 
 # Add new suites here before upgrading them to the stable list below.
 EXPERIMENTAL_TEST_SUITES = [
-    'content_browsertests',
+    'content_gl_tests',
 ]
 
 # Do not modify this list without approval of an android owner.
@@ -15,22 +15,31 @@ EXPERIMENTAL_TEST_SUITES = [
 STABLE_TEST_SUITES = [
     'android_webview_unittests',
     'base_unittests',
+    'breakpad_unittests',
     'cc_unittests',
     'components_unittests',
+    'content_browsertests',
     'content_unittests',
+    'events_unittests',
     'gl_tests',
     'gpu_unittests',
     'ipc_tests',
     'media_unittests',
     'net_unittests',
+    'sandbox_linux_unittests',
     'sql_unittests',
     'sync_unit_tests',
     'ui_unittests',
     'unit_tests',
     'webkit_compositor_bindings_unittests',
     'webkit_unit_tests',
+]
+
+# Tests fail in component=shared_library build, which is required for ASan.
+# http://crbug.com/344868
+ASAN_EXCLUDED_TEST_SUITES = [
     'breakpad_unittests',
-    'sandbox_linux_unittests',
+    'sandbox_linux_unittests'
 ]
 
 WEBRTC_CHROMIUM_TEST_SUITES = [
@@ -41,7 +50,6 @@ WEBRTC_NATIVE_TEST_SUITES = [
     'audio_decoder_unittests',
     'common_audio_unittests',
     'common_video_unittests',
-    'metrics_unittests',
     'modules_tests',
     'modules_unittests',
     'neteq_unittests',

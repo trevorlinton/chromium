@@ -34,6 +34,12 @@ class MEDIA_EXPORT MediaPlayerAndroid {
     MEDIA_ERROR_INVALID_CODE,
   };
 
+  // Callback when the player needs decoding resources.
+  typedef base::Callback<void(int player_id)> RequestMediaResourcesCB;
+
+  // Callback when the player releases decoding resources.
+  typedef base::Callback<void(int player_id)> ReleaseMediaResourcesCB;
+
   // Passing an external java surface object to the player.
   virtual void SetVideoSurface(gfx::ScopedJavaSurface surface) = 0;
 
@@ -46,7 +52,7 @@ class MEDIA_EXPORT MediaPlayerAndroid {
   // Seek to a particular position, based on renderer signaling actual seek
   // with MediaPlayerHostMsg_Seek. If eventual success, OnSeekComplete() will be
   // called.
-  virtual void SeekTo(const base::TimeDelta& timestamp) = 0;
+  virtual void SeekTo(base::TimeDelta timestamp) = 0;
 
   // Release the player resources.
   virtual void Release() = 0;
@@ -55,7 +61,6 @@ class MEDIA_EXPORT MediaPlayerAndroid {
   virtual void SetVolume(double volume) = 0;
 
   // Get the media information from the player.
-  virtual bool IsRemote() const;
   virtual int GetVideoWidth() = 0;
   virtual int GetVideoHeight() = 0;
   virtual base::TimeDelta GetDuration() = 0;
@@ -75,13 +80,22 @@ class MEDIA_EXPORT MediaPlayerAndroid {
   // may want to start/resume playback if it is waiting for a key.
   virtual void OnKeyAdded();
 
+  // Check whether the player still uses the current surface.
+  virtual bool IsSurfaceInUse() const = 0;
+
   int player_id() { return player_id_; }
 
  protected:
   MediaPlayerAndroid(int player_id,
-                     MediaPlayerManager* manager);
+                     MediaPlayerManager* manager,
+                     const RequestMediaResourcesCB& request_media_resources_cb,
+                     const ReleaseMediaResourcesCB& release_media_resources_cb);
 
   MediaPlayerManager* manager() { return manager_; }
+
+  RequestMediaResourcesCB request_media_resources_cb_;
+
+  ReleaseMediaResourcesCB release_media_resources_cb_;
 
  private:
   // Player ID assigned to this player.

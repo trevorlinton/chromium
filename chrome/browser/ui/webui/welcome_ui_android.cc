@@ -9,6 +9,7 @@
 #include "base/strings/string16.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/android/accessibility_util.h"
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
@@ -48,27 +49,27 @@ WelcomeUI::WelcomeUI(content::WebUI* web_ui)
   std::string locale = g_browser_process->GetApplicationLocale();
   std::string product_tour_url = base::StringPrintf(
       kProductTourBaseURL, locale.c_str());
+
+  if (chrome::android::AccessibilityUtil::IsAccessibilityEnabled())
+    product_tour_url += "?talkback";
+
   html_source->AddString("productTourUrl", product_tour_url);
 
   TabAndroid* tab = TabAndroid::FromWebContents(web_ui->GetWebContents());
   bool tos_visible = tab && tab->ShouldWelcomePageLinkToTermsOfService();
   html_source->AddBoolean("tosVisible", tos_visible);
 
-  string16 tos_html;
+  base::string16 tos_html;
   if (tos_visible) {
     std::string privacy_notice_url =
         base::StringPrintf(kPrivacyNoticeBaseURL, locale.c_str());
-    tos_html = l10n_util::GetStringFUTF16(IDS_FIRSTRUN_TOS_EXPLANATION,
-                                          UTF8ToUTF16(privacy_notice_url));
+    tos_html = l10n_util::GetStringFUTF16(
+        IDS_FIRSTRUN_TOS_EXPLANATION, base::UTF8ToUTF16(privacy_notice_url));
   }
   html_source->AddString("tosHtml", tos_html);
 
   // Add required resources.
   html_source->SetJsonPath("strings.js");
-  html_source->AddResourcePath("about_welcome_android.css",
-      IDR_ABOUT_WELCOME_CSS);
-  html_source->AddResourcePath("about_welcome_android.js",
-      IDR_ABOUT_WELCOME_JS);
   html_source->SetDefaultResource(IDR_ABOUT_WELCOME_HTML);
 
   Profile* profile = Profile::FromWebUI(web_ui);

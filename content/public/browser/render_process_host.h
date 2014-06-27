@@ -26,8 +26,10 @@ class TimeDelta;
 namespace content {
 class BrowserContext;
 class BrowserMessageFilter;
+class RenderProcessHostObserver;
 class RenderWidgetHost;
 class StoragePartition;
+struct GlobalRequestID;
 
 typedef base::Thread* (*RendererMainThreadFactoryFunction)(
     const std::string& id);
@@ -55,6 +57,8 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
     int exit_code;
   };
 
+  // General functions ---------------------------------------------------------
+
   virtual ~RenderProcessHost() {}
 
   // Initialize the new renderer process, returning true on success. This must
@@ -72,6 +76,12 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // listeners own it any more, it will delete itself.
   virtual void AddRoute(int32 routing_id, IPC::Listener* listener) = 0;
   virtual void RemoveRoute(int32 routing_id) = 0;
+
+  // Add and remove observers for lifecycle events. The order in which
+  // notifications are sent to observers is undefined. Observers must be sure to
+  // remove the observer before they go away.
+  virtual void AddObserver(RenderProcessHostObserver* observer) = 0;
+  virtual void RemoveObserver(RenderProcessHostObserver* observer) = 0;
 
   // Called to wait for the next UpdateRect message for the specified render
   // widget.  Returns true if successful, and the msg out-param will contain a
@@ -141,12 +151,14 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // |partition|.
   virtual bool InSameStoragePartition(StoragePartition* partition) const = 0;
 
-  // Returns the unique ID for this child process. This can be used later in
-  // a call to FromID() to get back to this object (this is used to avoid
+  // Returns the unique ID for this child process host. This can be used later
+  // in a call to FromID() to get back to this object (this is used to avoid
   // sending non-threadsafe pointers to other threads).
   //
-  // This ID will be unique for all child processes, including workers, plugins,
-  // etc.
+  // This ID will be unique across all child process hosts, including workers,
+  // plugins, etc.
+  //
+  // This will never return ChildProcessHost::kInvalidUniqueID.
   virtual int GetID() const = 0;
 
   // Returns true iff channel_ has been set to non-NULL. Use this for checking
@@ -192,14 +204,33 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // 10 milliseconds.
   virtual base::TimeDelta GetChildProcessIdleTime() const = 0;
 
-  // Signals that a compositing surface has been updated after a lost context
-  // event, so that we can process requests from the renderer to create contexts
-  // with that surface.
-  virtual void SurfaceUpdated(int32 surface_id) = 0;
-
   // Called to resume the requests for a view created through window.open that
   // were initially blocked.
   virtual void ResumeRequestsForView(int route_id) = 0;
+
+  // Checks that the given renderer can request |url|, if not it sets it to
+  // about:blank.
+  // |empty_allowed| must be set to false for navigations for security reasons.
+  virtual void FilterURL(bool empty_allowed, GURL* url) = 0;
+
+#if defined(ENABLE_WEBRTC)
+  virtual void EnableAecDump(const base::FilePath& file) = 0;
+  virtual void DisableAecDump() = 0;
+
+  // When set, |callback| receives log messages regarding, for example, media
+  // devices (webcams, mics, etc) that were initially requested in the render
+  // process associated with this RenderProcessHost.
+  virtual void SetWebRtcLogMessageCallback(
+      base::Callback<void(const std::string&)> callback) = 0;
+#endif
+
+  // Tells the ResourceDispatcherHost to resume a deferred navigation without
+  // transferring it to a new renderer process.
+  virtual void ResumeDeferredNavigation(const GlobalRequestID& request_id) = 0;
+
+  // Notifies the renderer that the timezone configuration of the system might
+  // have changed.
+  virtual void NotifyTimezoneChange() = 0;
 
   // Static management functions -----------------------------------------------
 

@@ -17,10 +17,11 @@ ShellRenderViewObserver::ShellRenderViewObserver(RenderView* render_view)
     : RenderViewObserver(render_view) {
 }
 
-void ShellRenderViewObserver::DidClearWindowObject(WebKit::WebFrame* frame) {
+void ShellRenderViewObserver::DidClearWindowObject(blink::WebFrame* frame,
+                                                   int world_id) {
   if (CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kExposeInternalsForTesting)) {
-    WebKit::WebTestingSupport::injectInternalsObject(frame);
+    blink::WebTestingSupport::injectInternalsObject(frame);
   }
 }
 

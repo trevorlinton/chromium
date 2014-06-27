@@ -8,6 +8,24 @@
 #include "chrome/common/render_messages.h"
 #include "content/public/browser/web_contents.h"
 
+namespace {
+
+bool IsProviderValid(const base::string16& provider) {
+  // Only allow string of 8 alphanumeric characters or less as providers.
+  // The empty string is considered valid and should be treated as if no
+  // provider were specified.
+  if (provider.length() > 8)
+    return false;
+  for (base::string16::const_iterator it = provider.begin();
+       it != provider.end(); ++it) {
+    if (!IsAsciiAlpha(*it) && !IsAsciiDigit(*it))
+      return false;
+  }
+  return true;
+}
+
+}  // namespace
+
 SearchIPCRouter::SearchIPCRouter(content::WebContents* web_contents,
                                  Delegate* delegate, scoped_ptr<Policy> policy)
     : WebContentsObserver(web_contents),
@@ -25,6 +43,16 @@ void SearchIPCRouter::DetermineIfPageSupportsInstant() {
   Send(new ChromeViewMsg_DetermineIfPageSupportsInstant(routing_id()));
 }
 
+void SearchIPCRouter::SendChromeIdentityCheckResult(
+    const base::string16& identity,
+    bool identity_match) {
+  if (!policy_->ShouldProcessChromeIdentityCheck())
+    return;
+
+  Send(new ChromeViewMsg_ChromeIdentityCheckResult(routing_id(), identity,
+                                                   identity_match));
+}
+
 void SearchIPCRouter::SetPromoInformation(bool is_app_launcher_enabled) {
   if (!policy_->ShouldSendSetPromoInformation())
     return;
@@ -40,36 +68,8 @@ void SearchIPCRouter::SetDisplayInstantResults() {
   bool is_search_results_page = !chrome::GetSearchTerms(web_contents()).empty();
   Send(new ChromeViewMsg_SearchBoxSetDisplayInstantResults(
        routing_id(),
-       is_search_results_page && chrome::ShouldPrefetchSearchResultsOnSRP()));
-}
-
-void SearchIPCRouter::SendThemeBackgroundInfo(
-    const ThemeBackgroundInfo& theme_info) {
-  if (!policy_->ShouldSendThemeBackgroundInfo())
-    return;
-
-  Send(new ChromeViewMsg_SearchBoxThemeChanged(routing_id(), theme_info));
-}
-
-void SearchIPCRouter::SendMostVisitedItems(
-    const std::vector<InstantMostVisitedItem>& items) {
-  if (!policy_->ShouldSendMostVisitedItems())
-    return;
-
-  Send(new ChromeViewMsg_SearchBoxMostVisitedItemsChanged(
-      routing_id(), items));
-}
-
-void SearchIPCRouter::SendChromeIdentityCheckResult(
-    const string16& identity,
-    bool identity_match) {
-  if (!policy_->ShouldProcessChromeIdentityCheck())
-    return;
-
-  Send(new ChromeViewMsg_ChromeIdentityCheckResult(
-      routing_id(),
-      identity,
-      identity_match));
+       (is_search_results_page && chrome::ShouldPrefetchSearchResultsOnSRP()) ||
+       chrome::ShouldPrefetchSearchResults()));
 }
 
 void SearchIPCRouter::SetSuggestionToPrefetch(
@@ -81,7 +81,53 @@ void SearchIPCRouter::SetSuggestionToPrefetch(
                                                           suggestion));
 }
 
-void SearchIPCRouter::Submit(const string16& text) {
+void SearchIPCRouter::SetOmniboxStartMargin(int start_margin) {
+  if (!policy_->ShouldSendSetOmniboxStartMargin())
+    return;
+
+  Send(new ChromeViewMsg_SearchBoxMarginChange(routing_id(), start_margin));
+}
+
+void SearchIPCRouter::SetInputInProgress(bool input_in_progress) {
+  if (!policy_->ShouldSendSetInputInProgress(is_active_tab_))
+    return;
+
+  Send(new ChromeViewMsg_SearchBoxSetInputInProgress(routing_id(),
+                                                     input_in_progress));
+}
+
+void SearchIPCRouter::OmniboxFocusChanged(OmniboxFocusState state,
+                                          OmniboxFocusChangeReason reason) {
+  if (!policy_->ShouldSendOmniboxFocusChanged())
+    return;
+
+  Send(new ChromeViewMsg_SearchBoxFocusChanged(routing_id(), state, reason));
+}
+
+void SearchIPCRouter::SendMostVisitedItems(
+    const std::vector<InstantMostVisitedItem>& items) {
+  if (!policy_->ShouldSendMostVisitedItems())
+    return;
+
+  Send(new ChromeViewMsg_SearchBoxMostVisitedItemsChanged(routing_id(), items));
+}
+
+void SearchIPCRouter::SendThemeBackgroundInfo(
+    const ThemeBackgroundInfo& theme_info) {
+  if (!policy_->ShouldSendThemeBackgroundInfo())
+    return;
+
+  Send(new ChromeViewMsg_SearchBoxThemeChanged(routing_id(), theme_info));
+}
+
+void SearchIPCRouter::ToggleVoiceSearch() {
+  if (!policy_->ShouldSendToggleVoiceSearch())
+    return;
+
+  Send(new ChromeViewMsg_SearchBoxToggleVoiceSearch(routing_id()));
+}
+
+void SearchIPCRouter::Submit(const base::string16& text) {
   if (!policy_->ShouldSubmitQuery())
     return;
 
@@ -113,6 +159,10 @@ bool SearchIPCRouter::OnMessageReceived(const IPC::Message& message) {
     IPC_MESSAGE_HANDLER(ChromeViewHostMsg_SearchBoxUndoAllMostVisitedDeletions,
                         OnUndoAllMostVisitedDeletions);
     IPC_MESSAGE_HANDLER(ChromeViewHostMsg_LogEvent, OnLogEvent);
+    IPC_MESSAGE_HANDLER(ChromeViewHostMsg_LogMostVisitedImpression,
+                        OnLogMostVisitedImpression);
+    IPC_MESSAGE_HANDLER(ChromeViewHostMsg_LogMostVisitedNavigation,
+                        OnLogMostVisitedNavigation);
     IPC_MESSAGE_HANDLER(ChromeViewHostMsg_PasteAndOpenDropdown,
                         OnPasteAndOpenDropDown);
     IPC_MESSAGE_HANDLER(ChromeViewHostMsg_ChromeIdentityCheck,
@@ -216,8 +266,34 @@ void SearchIPCRouter::OnLogEvent(int page_id, NTPLoggingEventType event) const {
   delegate_->OnLogEvent(event);
 }
 
+void SearchIPCRouter::OnLogMostVisitedImpression(
+    int page_id, int position, const base::string16& provider) const {
+  if (!web_contents()->IsActiveEntry(page_id) || !IsProviderValid(provider))
+    return;
+
+  delegate_->OnInstantSupportDetermined(true);
+  // Logging impressions is controlled by the same policy as logging events.
+  if (!policy_->ShouldProcessLogEvent())
+    return;
+
+  delegate_->OnLogMostVisitedImpression(position, provider);
+}
+
+void SearchIPCRouter::OnLogMostVisitedNavigation(
+    int page_id, int position, const base::string16& provider) const {
+  if (!web_contents()->IsActiveEntry(page_id) || !IsProviderValid(provider))
+    return;
+
+  delegate_->OnInstantSupportDetermined(true);
+  // Logging navigations is controlled by the same policy as logging events.
+  if (!policy_->ShouldProcessLogEvent())
+    return;
+
+  delegate_->OnLogMostVisitedNavigation(position, provider);
+}
+
 void SearchIPCRouter::OnPasteAndOpenDropDown(int page_id,
-                                             const string16& text) const {
+                                             const base::string16& text) const {
   if (!web_contents()->IsActiveEntry(page_id))
     return;
 
@@ -228,8 +304,9 @@ void SearchIPCRouter::OnPasteAndOpenDropDown(int page_id,
   delegate_->PasteIntoOmnibox(text);
 }
 
-void SearchIPCRouter::OnChromeIdentityCheck(int page_id,
-                                            const string16& identity) const {
+void SearchIPCRouter::OnChromeIdentityCheck(
+    int page_id,
+    const base::string16& identity) const {
   if (!web_contents()->IsActiveEntry(page_id))
     return;
 

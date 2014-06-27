@@ -26,6 +26,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/url_constants.h"
 #include "content/shell/browser/shell.h"
 #include "content/shell/browser/shell_browser_context.h"
 #include "content/shell/browser/shell_content_browser_client.h"
@@ -170,10 +171,9 @@ void WebKitTestResultPrinter::PrintEncodedBinaryData(
   *output_ << "Content-Transfer-Encoding: base64\n";
 
   std::string data_base64;
-  const bool success = base::Base64Encode(
+  base::Base64Encode(
       base::StringPiece(reinterpret_cast<const char*>(&data[0]), data.size()),
       &data_base64);
-  DCHECK(success);
 
   *output_ << "Content-Length: " << data_base64.length() << "\n";
   output_->write(data_base64.c_str(), data_base64.length());
@@ -201,7 +201,9 @@ WebKitTestController* WebKitTestController::Get() {
 
 WebKitTestController::WebKitTestController()
     : main_window_(NULL),
-      test_phase_(BETWEEN_TESTS) {
+      test_phase_(BETWEEN_TESTS),
+      is_leak_detection_enabled_(CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kEnableLeakDetection)) {
   CHECK(!instance_);
   instance_ = this;
   printer_.reset(new WebKitTestResultPrinter(&std::cout, &std::cerr));
@@ -256,10 +258,9 @@ bool WebKitTestController::PrepareForLayoutTest(
     current_pid_ = base::kNullProcessId;
     main_window_->LoadURL(test_url);
   } else {
-#if (defined(OS_WIN) && !defined(USE_AURA)) || \
-    defined(TOOLKIT_GTK) || defined(OS_MACOSX)
+#if defined(TOOLKIT_GTK) || defined(OS_MACOSX)
     // Shell::SizeTo is not implemented on all platforms.
-    main_window_->SizeTo(initial_size_.width(), initial_size_.height());
+    main_window_->SizeTo(initial_size_);
 #endif
     main_window_->web_contents()->GetRenderViewHost()->GetView()
         ->SetSize(initial_size_);
@@ -368,6 +369,8 @@ bool WebKitTestController::OnMessageReceived(const IPC::Message& message) {
     IPC_MESSAGE_HANDLER(ShellViewHostMsg_OverridePreferences,
                         OnOverridePreferences)
     IPC_MESSAGE_HANDLER(ShellViewHostMsg_TestFinished, OnTestFinished)
+    IPC_MESSAGE_HANDLER(ShellViewHostMsg_ClearDevToolsLocalStorage,
+                        OnClearDevToolsLocalStorage)
     IPC_MESSAGE_HANDLER(ShellViewHostMsg_ShowDevTools, OnShowDevTools)
     IPC_MESSAGE_HANDLER(ShellViewHostMsg_CloseDevTools, OnCloseDevTools)
     IPC_MESSAGE_HANDLER(ShellViewHostMsg_GoToOffset, OnGoToOffset)
@@ -378,6 +381,7 @@ bool WebKitTestController::OnMessageReceived(const IPC::Message& message) {
     IPC_MESSAGE_HANDLER(ShellViewHostMsg_CloseRemainingWindows,
                         OnCloseRemainingWindows)
     IPC_MESSAGE_HANDLER(ShellViewHostMsg_ResetDone, OnResetDone)
+    IPC_MESSAGE_HANDLER(ShellViewHostMsg_LeakDetectionDone, OnLeakDetectionDone)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
 
@@ -452,13 +456,6 @@ void WebKitTestController::OnGpuProcessCrashed(
     base::TerminationStatus exit_code) {
   DCHECK(CalledOnValidThread());
   printer_->AddErrorMessage("#CRASHED - gpu");
-  DiscardMainWindow();
-}
-
-void WebKitTestController::TimeoutHandler() {
-  DCHECK(CalledOnValidThread());
-  printer_->AddErrorMessage(
-      "FAIL: Timed out waiting for notifyDone to be called");
   DiscardMainWindow();
 }
 
@@ -567,14 +564,17 @@ void WebKitTestController::OnOverridePreferences(const WebPreferences& prefs) {
   prefs_ = prefs;
 }
 
-void WebKitTestController::OnShowDevTools() {
+void WebKitTestController::OnClearDevToolsLocalStorage() {
   ShellBrowserContext* browser_context =
       ShellContentBrowserClient::Get()->browser_context();
   StoragePartition* storage_partition =
       BrowserContext::GetStoragePartition(browser_context, NULL);
   storage_partition->GetDOMStorageContext()->DeleteLocalStorage(
-      content::GetDevToolsPathAsURL().GetOrigin());
-  main_window_->ShowDevTools();
+      content::GetDevToolsPathAsURL("").GetOrigin());
+}
+
+void WebKitTestController::OnShowDevTools(const std::string& settings) {
+  main_window_->ShowDevToolsForTest(settings);
 }
 
 void WebKitTestController::OnCloseDevTools() {
@@ -649,8 +649,32 @@ void WebKitTestController::OnCloseRemainingWindows() {
 }
 
 void WebKitTestController::OnResetDone() {
+  if (is_leak_detection_enabled_) {
+    if (main_window_ && main_window_->web_contents()) {
+      RenderViewHost* render_view_host =
+          main_window_->web_contents()->GetRenderViewHost();
+      render_view_host->Send(
+          new ShellViewMsg_TryLeakDetection(render_view_host->GetRoutingID()));
+    }
+    return;
+  }
+
   base::MessageLoop::current()->PostTask(FROM_HERE,
                                          base::MessageLoop::QuitClosure());
+}
+
+void WebKitTestController::OnLeakDetectionDone(
+    const LeakDetectionResult& result) {
+  if (!result.leaked) {
+    base::MessageLoop::current()->PostTask(FROM_HERE,
+                                           base::MessageLoop::QuitClosure());
+    return;
+  }
+
+  printer_->AddErrorMessage(
+      base::StringPrintf("#LEAK - renderer pid %d (%s)", current_pid_,
+                         result.detail.c_str()));
+  DiscardMainWindow();
 }
 
 }  // namespace content

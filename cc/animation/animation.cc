@@ -14,9 +14,7 @@ namespace {
 
 // This should match the RunState enum.
 static const char* const s_runStateNames[] = {
-  "WaitingForNextTick",
   "WaitingForTargetAvailability",
-  "WaitingForStartTime",
   "WaitingForDeletion",
   "Starting",
   "Running",
@@ -34,6 +32,7 @@ static const char* const s_targetPropertyNames[] = {
   "Transform",
   "Opacity",
   "Filter",
+  "ScrollOffset",
   "BackgroundColor"
 };
 
@@ -93,9 +92,7 @@ void Animation::SetRunState(RunState run_state, double monotonic_time) {
                  group_,
                  is_controlling_instance_ ? "(impl)" : "");
 
-  bool is_waiting_to_start = run_state_ == WaitingForNextTick ||
-                             run_state_ == WaitingForTargetAvailability ||
-                             run_state_ == WaitingForStartTime ||
+  bool is_waiting_to_start = run_state_ == WaitingForTargetAvailability ||
                              run_state_ == Starting;
 
   if (is_waiting_to_start && run_state == Running) {
@@ -155,7 +152,8 @@ bool Animation::IsFinishedAt(double monotonic_time) const {
          iterations_ >= 0 &&
          iterations_ * curve_->Duration() <= (monotonic_time -
                                               start_time() -
-                                              total_paused_time_);
+                                              total_paused_time_ +
+                                              time_offset_);
 }
 
 double Animation::TrimTimeToCurrentIteration(double monotonic_time) const {

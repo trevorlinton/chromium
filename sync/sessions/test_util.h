@@ -53,6 +53,9 @@ void SimulatePollSuccess(ModelTypeSet requested_types,
 void SimulatePollFailed(ModelTypeSet requested_types,
                         sessions::SyncSession* session);
 
+void SimulateGuRetryDelayCommandImpl(sessions::SyncSession* session,
+                                     base::TimeDelta delay);
+
 void SimulateThrottledImpl(sessions::SyncSession* session,
     const base::TimeDelta& delta);
 
@@ -88,6 +91,10 @@ ACTION_P(SimulatePollIntervalUpdate, poll) {
 
 ACTION_P(SimulateSessionsCommitDelayUpdate, poll) {
   SimulateSessionsCommitDelayUpdateImpl(arg0, arg1, arg2, poll);
+}
+
+ACTION_P(SimulateGuRetryDelayCommand, delay) {
+  SimulateGuRetryDelayCommandImpl(arg0, delay);
 }
 
 }  // namespace test_util

@@ -10,8 +10,12 @@ window.console.log('Guest script loading.');
 // The window reference of the embedder to send post message reply.
 var embedderWindowChannel = null;
 
+// A value that uniquely identifies the guest sending the messages to the
+// embedder.
+var channelId = 0;
 var notifyEmbedder = function(msg_array) {
-  embedderWindowChannel.postMessage(JSON.stringify(msg_array), '*');
+  var msg = msg_array.concat([channelId]);
+  embedderWindowChannel.postMessage(JSON.stringify(msg), '*');
 };
 
 var onPostMessageReceived = function(e) {
@@ -19,6 +23,7 @@ var onPostMessageReceived = function(e) {
   var data = JSON.parse(e.data);
   if (data[0] == 'create-channel') {
     window.console.log('aaa. guest: create-channel');
+    channelId = data[1];
     notifyEmbedder(['channel-created']);
     return;
   }

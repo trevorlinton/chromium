@@ -5,6 +5,7 @@
 #include "ui/events/event.h"
 
 #if defined(USE_X11)
+#include <X11/extensions/XInput2.h>
 #include <X11/Xlib.h>
 #endif
 
@@ -22,6 +23,8 @@
 
 #if defined(USE_X11)
 #include "ui/events/keycodes/keyboard_code_conversion_x.h"
+#elif defined(USE_OZONE)
+#include "ui/events/keycodes/keyboard_code_conversion.h"
 #endif
 
 namespace {
@@ -42,17 +45,6 @@ base::NativeEvent CopyNativeEvent(const base::NativeEvent& event) {
       "Don't know how to copy base::NativeEvent for this platform";
   return NULL;
 #endif
-}
-
-gfx::Point CalibratePoint(const gfx::Point& point,
-                          const gfx::Size& from,
-                          const gfx::Size& to) {
-  float calibrated_x =
-      static_cast<float>(point.x()) * to.width() / from.width();
-  float calibrated_y =
-      static_cast<float>(point.y()) * to.height() / from.height();
-  return gfx::Point(static_cast<int>(floorf(calibrated_x + 0.5f)),
-                    static_cast<int>(floorf(calibrated_y + 0.5f)));
 }
 
 std::string EventTypeName(ui::EventType type) {
@@ -82,6 +74,7 @@ std::string EventTypeName(ui::EventType type) {
     CASE_TYPE(ET_GESTURE_SCROLL_END);
     CASE_TYPE(ET_GESTURE_SCROLL_UPDATE);
     CASE_TYPE(ET_GESTURE_SHOW_PRESS);
+    CASE_TYPE(ET_GESTURE_WIN8_EDGE_SWIPE);
     CASE_TYPE(ET_GESTURE_TAP);
     CASE_TYPE(ET_GESTURE_TAP_DOWN);
     CASE_TYPE(ET_GESTURE_TAP_CANCEL);
@@ -94,6 +87,8 @@ std::string EventTypeName(ui::EventType type) {
     CASE_TYPE(ET_GESTURE_LONG_PRESS);
     CASE_TYPE(ET_GESTURE_LONG_TAP);
     CASE_TYPE(ET_GESTURE_MULTIFINGER_SWIPE);
+    CASE_TYPE(ET_GESTURE_TAP_UNCONFIRMED);
+    CASE_TYPE(ET_GESTURE_DOUBLE_TAP);
     CASE_TYPE(ET_SCROLL);
     CASE_TYPE(ET_SCROLL_FLING_START);
     CASE_TYPE(ET_SCROLL_FLING_CANCEL);
@@ -156,7 +151,6 @@ Event::Event(EventType type, base::TimeDelta time_stamp, int flags)
     : type_(type),
       time_stamp_(time_stamp),
       flags_(flags),
-      dispatch_to_hidden_targets_(false),
 #if defined(USE_X11)
       native_event_(NULL),
 #endif
@@ -176,7 +170,6 @@ Event::Event(const base::NativeEvent& native_event,
     : type_(type),
       time_stamp_(EventTimeFromNative(native_event)),
       flags_(flags),
-      dispatch_to_hidden_targets_(false),
       delete_native_event_(false),
       cancelable_(true),
       target_(NULL),
@@ -186,13 +179,13 @@ Event::Event(const base::NativeEvent& native_event,
   if (type_ < ET_LAST)
     name_ = EventTypeName(type_);
   UMA_HISTOGRAM_CUSTOM_COUNTS("Event.Latency.Browser",
-                              delta.InMicroseconds(), 0, 1000000, 100);
+                              delta.InMicroseconds(), 1, 1000000, 100);
   std::string name_for_event =
       base::StringPrintf("Event.Latency.Browser.%s", name_.c_str());
   base::HistogramBase* counter_for_type =
       base::Histogram::FactoryGet(
           name_for_event,
-          0,
+          1,
           1000000,
           100,
           base::HistogramBase::kUmaTargetedHistogramFlag);
@@ -205,7 +198,6 @@ Event::Event(const Event& copy)
       time_stamp_(copy.time_stamp_),
       latency_(copy.latency_),
       flags_(copy.flags_),
-      dispatch_to_hidden_targets_(false),
       native_event_(::CopyNativeEvent(copy.native_event_)),
       delete_native_event_(false),
       cancelable_(true),
@@ -236,17 +228,6 @@ void Event::InitWithNativeEvent(const base::NativeEvent& native_event) {
   native_event_ = native_event;
 }
 
-void Event::InitLatencyInfo() {
-  latency_.AddLatencyNumberWithTimestamp(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT,
-                                         0,
-                                         0,
-                                         base::TimeTicks::FromInternalValue(
-                                             time_stamp_.ToInternalValue()),
-                                         1,
-                                         true);
-  latency_.AddLatencyNumber(INPUT_EVENT_LATENCY_UI_COMPONENT, 0, 0);
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // CancelModeEvent
 
@@ -273,8 +254,8 @@ LocatedEvent::LocatedEvent(const base::NativeEvent& native_event)
 }
 
 LocatedEvent::LocatedEvent(EventType type,
-                           const gfx::Point& location,
-                           const gfx::Point& root_location,
+                           const gfx::PointF& location,
+                           const gfx::PointF& root_location,
                            base::TimeDelta time_stamp,
                            int flags)
     : Event(type, time_stamp, flags),
@@ -287,7 +268,8 @@ void LocatedEvent::UpdateForRootTransform(
   // Transform has to be done at root level.
   gfx::Point3F p(location_);
   reversed_root_transform.TransformPoint(&p);
-  root_location_ = location_ = gfx::ToFlooredPoint(p.AsPointF());
+  location_ = p.AsPointF();
+  root_location_ = location_;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -302,11 +284,12 @@ MouseEvent::MouseEvent(const base::NativeEvent& native_event)
 }
 
 MouseEvent::MouseEvent(EventType type,
-                       const gfx::Point& location,
-                       const gfx::Point& root_location,
-                       int flags)
+                       const gfx::PointF& location,
+                       const gfx::PointF& root_location,
+                       int flags,
+                       int changed_button_flags)
     : LocatedEvent(type, location, root_location, EventTimeForNow(), flags),
-      changed_button_flags_(0) {
+      changed_button_flags_(changed_button_flags) {
   if (this->type() == ET_MOUSE_MOVED && IsAnyButton())
     SetType(ET_MOUSE_DRAGGED);
 }
@@ -334,10 +317,10 @@ bool MouseEvent::IsRepeatedClickEvent(
   if (time_difference.InMilliseconds() > kDoubleClickTimeMS)
     return false;
 
-  if (abs(event2.x() - event1.x()) > kDoubleClickWidth / 2)
+  if (std::abs(event2.x() - event1.x()) > kDoubleClickWidth / 2)
     return false;
 
-  if (abs(event2.y() - event1.y()) > kDoubleClickHeight / 2)
+  if (std::abs(event2.y() - event1.y()) > kDoubleClickHeight / 2)
     return false;
 
   return true;
@@ -459,12 +442,25 @@ TouchEvent::TouchEvent(const base::NativeEvent& native_event)
       radius_x_(GetTouchRadiusX(native_event)),
       radius_y_(GetTouchRadiusY(native_event)),
       rotation_angle_(GetTouchAngle(native_event)),
-      force_(GetTouchForce(native_event)) {
-  InitLatencyInfo();
+      force_(GetTouchForce(native_event)),
+      source_device_id_(-1) {
+  latency()->AddLatencyNumberWithTimestamp(
+      INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT,
+      0,
+      0,
+      base::TimeTicks::FromInternalValue(time_stamp().ToInternalValue()),
+      1);
+
+#if defined(USE_X11)
+  XIDeviceEvent* xiev = static_cast<XIDeviceEvent*>(native_event->xcookie.data);
+  source_device_id_ = xiev->deviceid;
+#endif
+
+  latency()->AddLatencyNumber(INPUT_EVENT_LATENCY_UI_COMPONENT, 0, 0);
 }
 
 TouchEvent::TouchEvent(EventType type,
-                       const gfx::Point& location,
+                       const gfx::PointF& location,
                        int touch_id,
                        base::TimeDelta time_stamp)
     : LocatedEvent(type, location, location, time_stamp, 0),
@@ -472,12 +468,13 @@ TouchEvent::TouchEvent(EventType type,
       radius_x_(0.0f),
       radius_y_(0.0f),
       rotation_angle_(0.0f),
-      force_(0.0f) {
-  InitLatencyInfo();
+      force_(0.0f),
+      source_device_id_(-1) {
+  latency()->AddLatencyNumber(INPUT_EVENT_LATENCY_UI_COMPONENT, 0, 0);
 }
 
 TouchEvent::TouchEvent(EventType type,
-                       const gfx::Point& location,
+                       const gfx::PointF& location,
                        int flags,
                        int touch_id,
                        base::TimeDelta time_stamp,
@@ -490,8 +487,9 @@ TouchEvent::TouchEvent(EventType type,
       radius_x_(radius_x),
       radius_y_(radius_y),
       rotation_angle_(angle),
-      force_(force) {
-  InitLatencyInfo();
+      force_(force),
+      source_device_id_(-1) {
+  latency()->AddLatencyNumber(INPUT_EVENT_LATENCY_UI_COMPONENT, 0, 0);
 }
 
 TouchEvent::~TouchEvent() {
@@ -527,6 +525,7 @@ KeyEvent::KeyEvent(const base::NativeEvent& native_event, bool is_char)
             EventTypeFromNative(native_event),
             EventFlagsFromNative(native_event)),
       key_code_(KeyboardCodeFromNative(native_event)),
+      code_(CodeFromNative(native_event)),
       is_char_(is_char),
       character_(0) {
 #if defined(USE_X11)
@@ -540,6 +539,18 @@ KeyEvent::KeyEvent(EventType type,
                    bool is_char)
     : Event(type, EventTimeForNow(), flags),
       key_code_(key_code),
+      is_char_(is_char),
+      character_(GetCharacterFromKeyCode(key_code, flags)) {
+}
+
+KeyEvent::KeyEvent(EventType type,
+                   KeyboardCode key_code,
+                   const std::string& code,
+                   int flags,
+                   bool is_char)
+    : Event(type, EventTimeForNow(), flags),
+      key_code_(key_code),
+      code_(code),
       is_char_(is_char),
       character_(GetCharacterFromKeyCode(key_code, flags)) {
 }
@@ -563,26 +574,17 @@ uint16 KeyEvent::GetCharacter() const {
     ch = GetCharacterFromXEvent(native_event());
   return ch ? ch : GetCharacterFromKeyCode(key_code_, flags());
 #else
-  NOTIMPLEMENTED();
-  return 0;
-#endif
-}
+  if (native_event()) {
+    DCHECK(EventTypeFromNative(native_event()) == ET_KEY_PRESSED ||
+           EventTypeFromNative(native_event()) == ET_KEY_RELEASED);
+  }
 
-KeyEvent* KeyEvent::Copy() const {
-#if defined(USE_OZONE)
-  KeyEvent* copy = new KeyEvent(*this);
-#else
-  KeyEvent* copy = HasNativeEvent() ?
-      new KeyEvent(::CopyNativeEvent(native_event()), is_char()) :
-      new KeyEvent(*this);
+  return GetCharacterFromKeyCode(key_code_, flags());
 #endif
-#if defined(USE_X11)
-  copy->set_delete_native_event(true);
-#endif
-  return copy;
 }
 
 bool KeyEvent::IsUnicodeKeyCode() const {
+#if defined(OS_WIN)
   if (!IsAltDown())
     return false;
   const int key = key_code();
@@ -596,6 +598,9 @@ bool KeyEvent::IsUnicodeKeyCode() const {
            key == VKEY_NEXT   || key == VKEY_LEFT || key == VKEY_CLEAR ||
            key == VKEY_RIGHT  || key == VKEY_HOME || key == VKEY_UP ||
            key == VKEY_PRIOR));
+#else
+  return false;
+#endif
 }
 
 void KeyEvent::NormalizeFlags() {
@@ -641,6 +646,13 @@ TranslatedKeyEvent::TranslatedKeyEvent(bool is_press,
                false) {
 }
 
+TranslatedKeyEvent::TranslatedKeyEvent(const KeyEvent& key_event)
+    : KeyEvent(key_event) {
+  SetType(type() == ET_KEY_PRESSED ?
+          ET_TRANSLATED_KEY_PRESS : ET_TRANSLATED_KEY_RELEASE);
+  set_is_char(false);
+}
+
 void TranslatedKeyEvent::ConvertToKeyEvent() {
   SetType(type() == ET_TRANSLATED_KEY_PRESS ?
           ET_KEY_PRESSED : ET_KEY_RELEASED);
@@ -669,7 +681,7 @@ ScrollEvent::ScrollEvent(const base::NativeEvent& native_event)
 }
 
 ScrollEvent::ScrollEvent(EventType type,
-                         const gfx::Point& location,
+                         const gfx::PointF& location,
                          base::TimeDelta time_stamp,
                          int flags,
                          float x_offset,
@@ -677,7 +689,7 @@ ScrollEvent::ScrollEvent(EventType type,
                          float x_offset_ordinal,
                          float y_offset_ordinal,
                          int finger_count)
-    : MouseEvent(type, location, location, flags),
+    : MouseEvent(type, location, location, flags, 0),
       x_offset_(x_offset),
       y_offset_(y_offset),
       x_offset_ordinal_(x_offset_ordinal),
@@ -698,15 +710,15 @@ void ScrollEvent::Scale(const float factor) {
 // GestureEvent
 
 GestureEvent::GestureEvent(EventType type,
-                           int x,
-                           int y,
+                           float x,
+                           float y,
                            int flags,
                            base::TimeDelta time_stamp,
                            const GestureEventDetails& details,
                            unsigned int touch_ids_bitfield)
     : LocatedEvent(type,
-                   gfx::Point(x, y),
-                   gfx::Point(x, y),
+                   gfx::PointF(x, y),
+                   gfx::PointF(x, y),
                    time_stamp,
                    flags | EF_FROM_TOUCH),
       details_(details),

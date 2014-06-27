@@ -7,7 +7,6 @@
 #include <set>
 #include <string>
 
-#include "base/command_line.h"
 #include "base/format_macros.h"
 #include "base/logging.h"
 #include "base/metrics/histogram.h"
@@ -29,16 +28,10 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/search.h"
 #include "chrome/browser/search_engines/template_url.h"
-#include "chrome/common/chrome_switches.h"
 #include "content/public/browser/notification_service.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
-
-#if defined(OS_CHROMEOS)
-#include "chrome/browser/autocomplete/contact_provider_chromeos.h"
-#include "chrome/browser/chromeos/contacts/contact_manager.h"
-#endif
 
 namespace {
 
@@ -50,11 +43,27 @@ void AutocompleteMatchToAssistedQuery(
   // This type indicates a native chrome suggestion.
   *type = 69;
   // Default value, indicating no subtype.
-  *subtype = string16::npos;
+  *subtype = base::string16::npos;
 
   switch (match) {
     case AutocompleteMatchType::SEARCH_SUGGEST: {
       *type = 0;
+      return;
+    }
+    case AutocompleteMatchType::SEARCH_SUGGEST_ENTITY: {
+      *subtype = 46;
+      return;
+    }
+    case AutocompleteMatchType::SEARCH_SUGGEST_INFINITE: {
+      *subtype = 33;
+      return;
+    }
+    case AutocompleteMatchType::SEARCH_SUGGEST_PERSONALIZED: {
+      *subtype = 35;
+      return;
+    }
+    case AutocompleteMatchType::SEARCH_SUGGEST_PROFILE: {
+      *subtype = 44;
       return;
     }
     case AutocompleteMatchType::NAVSUGGEST: {
@@ -111,8 +120,8 @@ void AppendAvailableAutocompletion(size_t type,
   if (!autocompletions->empty())
     autocompletions->append("j");
   base::StringAppendF(autocompletions, "%" PRIuS, type);
-  // Subtype is optional - string16::npos indicates no subtype.
-  if (subtype != string16::npos)
+  // Subtype is optional - base::string16::npos indicates no subtype.
+  if (subtype != base::string16::npos)
     base::StringAppendF(autocompletions, "i%" PRIuS, subtype);
   if (count > 1)
     base::StringAppendF(autocompletions, "l%d", count);
@@ -127,9 +136,13 @@ bool IsTrivialAutocompletion(const AutocompleteMatch& match) {
       match.type == AutocompleteMatchType::SEARCH_OTHER_ENGINE;
 }
 
-}  // namespace
+// Whether this autocomplete match type supports custom descriptions.
+bool AutocompleteMatchHasCustomDescription(const AutocompleteMatch& match) {
+  return match.type == AutocompleteMatchType::SEARCH_SUGGEST_ENTITY ||
+      match.type == AutocompleteMatchType::SEARCH_SUGGEST_PROFILE;
+}
 
-const int AutocompleteController::kNoItemSelected = -1;
+}  // namespace
 
 AutocompleteController::AutocompleteController(
     Profile* profile,
@@ -140,35 +153,24 @@ AutocompleteController::AutocompleteController(
       keyword_provider_(NULL),
       search_provider_(NULL),
       zero_suggest_provider_(NULL),
-      in_stop_timer_field_trial_(
-          OmniboxFieldTrial::InStopTimerFieldTrialExperimentGroup()),
+      stop_timer_duration_(OmniboxFieldTrial::StopTimerFieldTrialDuration()),
       done_(true),
       in_start_(false),
-      in_zero_suggest_(false),
       profile_(profile) {
-  // AND with the disabled providers, if any.
   provider_types &= ~OmniboxFieldTrial::GetDisabledProviderTypes();
-  bool use_hqp = !!(provider_types & AutocompleteProvider::TYPE_HISTORY_QUICK);
-  // TODO(mrossetti): Permanently modify the HistoryURLProvider to not search
-  // titles once HQP is turned on permanently.
-
+  if (provider_types & AutocompleteProvider::TYPE_BOOKMARK)
+    providers_.push_back(new BookmarkProvider(this, profile));
   if (provider_types & AutocompleteProvider::TYPE_BUILTIN)
     providers_.push_back(new BuiltinProvider(this, profile));
-#if defined(OS_CHROMEOS)
-  if (provider_types & AutocompleteProvider::TYPE_CONTACT)
-    providers_.push_back(new ContactProvider(this, profile,
-        contacts::ContactManager::GetInstance()->GetWeakPtr()));
-#endif
   if (provider_types & AutocompleteProvider::TYPE_EXTENSION_APP)
     providers_.push_back(new ExtensionAppProvider(this, profile));
-  if (use_hqp)
+  if (provider_types & AutocompleteProvider::TYPE_HISTORY_QUICK)
     providers_.push_back(new HistoryQuickProvider(this, profile));
   if (provider_types & AutocompleteProvider::TYPE_HISTORY_URL) {
     history_url_provider_ = new HistoryURLProvider(this, profile);
     providers_.push_back(history_url_provider_);
   }
-  // Search provider/"tab to search" can be used on all platforms other than
-  // Android.
+  // "Tab to search" can be used on all platforms other than Android.
 #if !defined(OS_ANDROID)
   if (provider_types & AutocompleteProvider::TYPE_KEYWORD) {
     keyword_provider_ = new KeywordProvider(this, profile);
@@ -181,18 +183,11 @@ AutocompleteController::AutocompleteController(
   }
   if (provider_types & AutocompleteProvider::TYPE_SHORTCUTS)
     providers_.push_back(new ShortcutsProvider(this, profile));
-
-  // Create ZeroSuggest if it is enabled.
   if (provider_types & AutocompleteProvider::TYPE_ZERO_SUGGEST) {
     zero_suggest_provider_ = ZeroSuggestProvider::Create(this, profile);
     if (zero_suggest_provider_)
       providers_.push_back(zero_suggest_provider_);
   }
-
-  if ((provider_types & AutocompleteProvider::TYPE_BOOKMARK) &&
-      !CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kDisableBookmarkAutocompleteProvider))
-    providers_.push_back(new BookmarkProvider(this, profile));
 
   for (ACProviders::iterator i(providers_.begin()); i != providers_.end(); ++i)
     (*i)->AddRef();
@@ -215,7 +210,7 @@ AutocompleteController::~AutocompleteController() {
 }
 
 void AutocompleteController::Start(const AutocompleteInput& input) {
-  const string16 old_input_text(input_.text());
+  const base::string16 old_input_text(input_.text());
   const AutocompleteInput::MatchesRequested old_matches_requested =
       input_.matches_requested();
   input_ = input;
@@ -236,7 +231,6 @@ void AutocompleteController::Start(const AutocompleteInput& input) {
   stop_timer_.Stop();
 
   // Start the new query.
-  in_zero_suggest_ = false;
   in_start_ = true;
   base::TimeTicks start_time = base::TimeTicks::Now();
   for (ACProviders::iterator i(providers_.begin()); i != providers_.end();
@@ -244,7 +238,14 @@ void AutocompleteController::Start(const AutocompleteInput& input) {
     // TODO(mpearson): Remove timing code once bugs 178705 / 237703 / 168933
     // are resolved.
     base::TimeTicks provider_start_time = base::TimeTicks::Now();
-    (*i)->Start(input_, minimal_changes);
+
+    // Call Start() on ZeroSuggestProvider with an INVALID AutocompleteInput
+    // to clear out zero-suggest |matches_|.
+    if (*i == zero_suggest_provider_)
+      (*i)->Start(AutocompleteInput(), minimal_changes);
+    else
+      (*i)->Start(input_, minimal_changes);
+
     if (input.matches_requested() != AutocompleteInput::ALL_MATCHES)
       DCHECK((*i)->done());
     base::TimeTicks provider_end_time = base::TimeTicks::Now();
@@ -303,32 +304,40 @@ void AutocompleteController::Stop(bool clear_result) {
   }
 }
 
-void AutocompleteController::StartZeroSuggest(
-    const GURL& url,
-    AutocompleteInput::PageClassification page_classification,
-    const string16& permanent_text) {
+void AutocompleteController::StartZeroSuggest(const AutocompleteInput& input) {
   if (zero_suggest_provider_ != NULL) {
     DCHECK(!in_start_);  // We should not be already running a query.
-    in_zero_suggest_ = true;
-    zero_suggest_provider_->StartZeroSuggest(
-        url, page_classification, permanent_text);
-  }
-}
 
-void AutocompleteController::StopZeroSuggest() {
-  if (zero_suggest_provider_ != NULL) {
-    DCHECK(!in_start_);  // We should not be already running a query.
-    zero_suggest_provider_->Stop(false);
+    // Call Start() on all prefix-based providers with an INVALID
+    // AutocompleteInput to clear out cached |matches_|, which ensures that
+    // they aren't used with zero suggest.
+    for (ACProviders::iterator i(providers_.begin()); i != providers_.end();
+        ++i) {
+      if (*i == zero_suggest_provider_)
+        (*i)->Start(input, false);
+      else
+        (*i)->Start(AutocompleteInput(), false);
+    }
   }
 }
 
 void AutocompleteController::DeleteMatch(const AutocompleteMatch& match) {
-  DCHECK(match.deletable);
-  match.provider->DeleteMatch(match);  // This may synchronously call back to
-                                       // OnProviderUpdate().
-  // If DeleteMatch resulted in a callback to OnProviderUpdate and we're
-  // not done, we might attempt to redisplay the deleted match. Make sure
-  // we aren't displaying it by removing any old entries.
+  DCHECK(match.SupportsDeletion());
+
+  // Delete duplicate matches attached to the main match first.
+  for (ACMatches::const_iterator it(match.duplicate_matches.begin());
+       it != match.duplicate_matches.end(); ++it) {
+    if (it->deletable)
+      it->provider->DeleteMatch(*it);
+  }
+
+  if (match.deletable)
+    match.provider->DeleteMatch(match);
+
+  OnProviderUpdate(true);
+
+  // If we're not done, we might attempt to redisplay the deleted match. Make
+  // sure we aren't displaying it by removing any old entries.
   ExpireCopiedEntries();
 }
 
@@ -340,21 +349,11 @@ void AutocompleteController::ExpireCopiedEntries() {
 }
 
 void AutocompleteController::OnProviderUpdate(bool updated_matches) {
-  if (in_zero_suggest_) {
-    // We got ZeroSuggest results before Start(). Show only those results,
-    // because results from other providers are stale.
-    result_.Reset();
-    result_.AppendMatches(zero_suggest_provider_->matches());
-    result_.SortAndCull(input_, profile_);
-    UpdateAssistedQueryStats(&result_);
-    NotifyChanged(true);
-  } else {
-    CheckIfDone();
-    // Multiple providers may provide synchronous results, so we only update the
-    // results if we're not in Start().
-    if (!in_start_ && (updated_matches || done_))
-      UpdateResult(false, false);
-  }
+  CheckIfDone();
+  // Multiple providers may provide synchronous results, so we only update the
+  // results if we're not in Start().
+  if (!in_start_ && (updated_matches || done_))
+    UpdateResult(false, false);
 }
 
 void AutocompleteController::AddProvidersInfo(
@@ -374,34 +373,30 @@ void AutocompleteController::ResetSession() {
   for (ACProviders::const_iterator i(providers_.begin()); i != providers_.end();
        ++i)
     (*i)->ResetSession();
-  in_zero_suggest_ = false;
 }
 
-GURL AutocompleteController::GetDestinationURL(
-    const AutocompleteMatch& match,
-    base::TimeDelta query_formulation_time) const {
-  GURL destination_url(match.destination_url);
-  TemplateURL* template_url = match.GetTemplateURL(profile_, false);
+void AutocompleteController::UpdateMatchDestinationURL(
+    base::TimeDelta query_formulation_time,
+    AutocompleteMatch* match) const {
+  TemplateURL* template_url = match->GetTemplateURL(profile_, false);
+  if (!template_url || !match->search_terms_args.get() ||
+      match->search_terms_args->assisted_query_stats.empty())
+    return;
 
   // Append the query formulation time (time from when the user first typed a
   // character into the omnibox to when the user selected a query) and whether
-  // a field trial has triggered to the AQS parameter, if other AQS parameters
-  // were already populated.
-  if (template_url && match.search_terms_args.get() &&
-      !match.search_terms_args->assisted_query_stats.empty()) {
-    TemplateURLRef::SearchTermsArgs search_terms_args(*match.search_terms_args);
-    search_terms_args.assisted_query_stats += base::StringPrintf(
-        ".%" PRId64 "j%dj%d",
-        query_formulation_time.InMilliseconds(),
-        (search_provider_ &&
-         search_provider_->field_trial_triggered_in_session()) ||
-        (zero_suggest_provider_ &&
-         zero_suggest_provider_->field_trial_triggered_in_session()),
-        input_.current_page_classification());
-    destination_url = GURL(template_url->url_ref().
-                           ReplaceSearchTerms(search_terms_args));
-  }
-  return destination_url;
+  // a field trial has triggered to the AQS parameter.
+  TemplateURLRef::SearchTermsArgs search_terms_args(*match->search_terms_args);
+  search_terms_args.assisted_query_stats += base::StringPrintf(
+      ".%" PRId64 "j%dj%d",
+      query_formulation_time.InMilliseconds(),
+      (search_provider_ &&
+       search_provider_->field_trial_triggered_in_session()) ||
+      (zero_suggest_provider_ &&
+       zero_suggest_provider_->field_trial_triggered_in_session()),
+      input_.current_page_classification());
+  match->destination_url =
+      GURL(template_url->url_ref().ReplaceSearchTerms(search_terms_args));
 }
 
 void AutocompleteController::UpdateResult(
@@ -410,7 +405,7 @@ void AutocompleteController::UpdateResult(
   const bool last_default_was_valid = result_.default_match() != result_.end();
   // The following three variables are only set and used if
   // |last_default_was_valid|.
-  string16 last_default_fill_into_edit, last_default_keyword,
+  base::string16 last_default_fill_into_edit, last_default_keyword,
       last_default_associated_keyword;
   if (last_default_was_valid) {
     last_default_fill_into_edit = result_.default_match()->fill_into_edit;
@@ -426,8 +421,8 @@ void AutocompleteController::UpdateResult(
   AutocompleteResult last_result;
   last_result.Swap(&result_);
 
-  for (ACProviders::const_iterator i(providers_.begin()); i != providers_.end();
-       ++i)
+  for (ACProviders::const_iterator i(providers_.begin());
+       i != providers_.end(); ++i)
     result_.AppendMatches((*i)->matches());
 
   // Sort the matches and trim to a small number of "best" matches.
@@ -450,7 +445,7 @@ void AutocompleteController::UpdateResult(
   UpdateAssistedQueryStats(&result_);
 
   const bool default_is_valid = result_.default_match() != result_.end();
-  string16 default_associated_keyword;
+  base::string16 default_associated_keyword;
   if (default_is_valid &&
       (result_.default_match()->associated_keyword != NULL)) {
     default_associated_keyword =
@@ -483,10 +478,11 @@ void AutocompleteController::UpdateAssociatedKeywords(
   if (!keyword_provider_)
     return;
 
-  std::set<string16> keywords;
+  std::set<base::string16> keywords;
   for (ACMatches::iterator match(result->begin()); match != result->end();
        ++match) {
-    string16 keyword(match->GetSubstitutingExplicitlyInvokedKeyword(profile_));
+    base::string16 keyword(
+        match->GetSubstitutingExplicitlyInvokedKeyword(profile_));
     if (!keyword.empty()) {
       keywords.insert(keyword);
       continue;
@@ -512,13 +508,12 @@ void AutocompleteController::UpdateAssociatedKeywords(
 
 void AutocompleteController::UpdateKeywordDescriptions(
     AutocompleteResult* result) {
-  string16 last_keyword;
+  base::string16 last_keyword;
   for (AutocompleteResult::iterator i(result->begin()); i != result->end();
        ++i) {
-    if ((i->provider->type() == AutocompleteProvider::TYPE_KEYWORD &&
-         !i->keyword.empty()) ||
-        (i->provider->type() == AutocompleteProvider::TYPE_SEARCH &&
-         AutocompleteMatch::IsSearchType(i->type))) {
+    if (AutocompleteMatch::IsSearchType(i->type)) {
+      if (AutocompleteMatchHasCustomDescription(*i))
+        continue;
       i->description.clear();
       i->description_class.clear();
       DCHECK(!i->keyword.empty());
@@ -552,14 +547,14 @@ void AutocompleteController::UpdateAssistedQueryStats(
   // Build the impressions string (the AQS part after ".").
   std::string autocompletions;
   int count = 0;
-  size_t last_type = string16::npos;
-  size_t last_subtype = string16::npos;
+  size_t last_type = base::string16::npos;
+  size_t last_subtype = base::string16::npos;
   for (ACMatches::iterator match(result->begin()); match != result->end();
        ++match) {
-    size_t type = string16::npos;
-    size_t subtype = string16::npos;
+    size_t type = base::string16::npos;
+    size_t subtype = base::string16::npos;
     AutocompleteMatchToAssistedQuery(match->type, &type, &subtype);
-    if (last_type != string16::npos &&
+    if (last_type != base::string16::npos &&
         (type != last_type || subtype != last_subtype)) {
       AppendAvailableAutocompletion(
           last_type, last_subtype, count, &autocompletions);
@@ -627,17 +622,8 @@ void AutocompleteController::StartExpireTimer() {
 }
 
 void AutocompleteController::StartStopTimer() {
-  if (!in_stop_timer_field_trial_)
-    return;
-
-  // Amount of time (in ms) between when the user stops typing and
-  // when we send Stop() to every provider.  This is intended to avoid
-  // the disruptive effect of belated omnibox updates, updates that
-  // come after the user has had to time to read the whole dropdown
-  // and doesn't expect it to change.
-  const int kStopTimeMS = 1500;
   stop_timer_.Start(FROM_HERE,
-                    base::TimeDelta::FromMilliseconds(kStopTimeMS),
+                    stop_timer_duration_,
                     base::Bind(&AutocompleteController::Stop,
                                base::Unretained(this),
                                false));

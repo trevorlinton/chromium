@@ -16,7 +16,7 @@
 #include "content/public/browser/web_ui.h"
 #include "ui/base/models/menu_model.h"
 #include "ui/base/webui/web_ui_util.h"
-#include "ui/gfx/font.h"
+#include "ui/gfx/font_list.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
 
@@ -96,10 +96,9 @@ base::ListValue* NetworkMenuWebUI::ConvertMenuModel(ui::MenuModel* model) {
     }
     if (id >= 0) {
       item->SetBoolean("enabled", model->IsEnabledAt(i));
-      const gfx::Font* font = model->GetLabelFontAt(i);
-      if (font) {
-        item->SetBoolean("bold", font->GetStyle() == gfx::Font::BOLD);
-      }
+      const gfx::FontList* font_list = model->GetLabelFontListAt(i);
+      if (font_list)
+        item->SetBoolean("bold", font_list->GetFontStyle() == gfx::Font::BOLD);
     }
     if (type == ui::MenuModel::TYPE_SUBMENU)
       item->Set("sub", ConvertMenuModel(model->GetSubmenuModelAt(i)));
@@ -181,7 +180,7 @@ void NetworkDropdown::Refresh() {
 }
 
 void NetworkDropdown::SetNetworkIconAndText() {
-  string16 text;
+  base::string16 text;
   gfx::ImageSkia icon_image;
   bool animating = false;
   ash::network_icon::GetDefaultNetworkImageAndLabel(

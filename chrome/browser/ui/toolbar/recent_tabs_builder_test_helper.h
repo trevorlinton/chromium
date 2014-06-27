@@ -12,7 +12,9 @@
 #include "chrome/browser/sessions/session_id.h"
 
 namespace browser_sync {
+class OpenTabsUIDelegate;
 class SessionModelAssociator;
+class SessionsSyncManager;
 }
 namespace sync_pb {
 class SessionSpecifics;
@@ -37,7 +39,7 @@ class RecentTabsBuilderTestHelper {
   void AddTabWithInfo(int session_index,
                       int window_index,
                       base::Time timestamp,
-                      const string16& title);
+                      const base::string16& title);
   int GetTabCount(int session_index, int window_index);
   SessionID::id_type GetTabID(int session_index,
                               int window_index,
@@ -45,13 +47,16 @@ class RecentTabsBuilderTestHelper {
   base::Time GetTabTimestamp(int session_index,
                              int window_index,
                              int tab_index);
-  string16 GetTabTitle(int session_index,
+  base::string16 GetTabTitle(int session_index,
                        int window_index,
                        int tab_index);
 
-  void RegisterRecentTabs(browser_sync::SessionModelAssociator* associator);
+  void ExportToSessionModelAssociator(
+      browser_sync::SessionModelAssociator* associator);
+  void ExportToSessionsSyncManager(
+      browser_sync::SessionsSyncManager* manager);
 
-  std::vector<string16> GetTabTitlesSortedByRecency();
+  std::vector<base::string16> GetTabTitlesSortedByRecency();
 
  private:
   void BuildSessionSpecifics(int session_index,
@@ -63,6 +68,7 @@ class RecentTabsBuilderTestHelper {
                          int window_index,
                          int tab_index,
                          sync_pb::SessionSpecifics* tab_base);
+  void VerifyExport(browser_sync::OpenTabsUIDelegate* delegate);
 
   struct TabInfo;
   struct WindowInfo;

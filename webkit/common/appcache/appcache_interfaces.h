@@ -34,7 +34,8 @@ enum Status {
   CHECKING,
   DOWNLOADING,
   UPDATE_READY,
-  OBSOLETE
+  OBSOLETE,
+  STATUS_LAST = OBSOLETE
 };
 
 enum EventID {
@@ -45,7 +46,8 @@ enum EventID {
   PROGRESS_EVENT,
   UPDATE_READY_EVENT,
   CACHED_EVENT,
-  OBSOLETE_EVENT
+  OBSOLETE_EVENT,
+  EVENT_ID_LAST = OBSOLETE_EVENT
 };
 
 // Temporarily renumber them in wierd way, to help remove LOG_TIP from WebKit
@@ -177,8 +179,6 @@ WEBKIT_STORAGE_COMMON_EXPORT extern const char kHttpHEADMethod[];
 
 // CommandLine flag to turn this experimental feature on.
 WEBKIT_STORAGE_COMMON_EXPORT extern const char kEnableExecutableHandlers[];
-
-WEBKIT_STORAGE_COMMON_EXPORT void AddSupportedScheme(const char* scheme);
 
 WEBKIT_STORAGE_COMMON_EXPORT bool IsSchemeSupported(const GURL& url);
 WEBKIT_STORAGE_COMMON_EXPORT bool IsMethodSupported(const std::string& method);

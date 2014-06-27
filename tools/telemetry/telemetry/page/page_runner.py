@@ -1,27 +1,31 @@
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
+
 import collections
+import copy
 import glob
 import logging
 import os
+import random
 import sys
 import tempfile
 import time
 import traceback
-import random
 
+from telemetry import decorators
 from telemetry.core import browser_finder
 from telemetry.core import exceptions
 from telemetry.core import util
 from telemetry.core import wpr_modes
 from telemetry.core.platform.profiler import profiler_finder
-from telemetry.page import page_filter as page_filter_module
-from telemetry.page import page_measurement_results
+from telemetry.page import page_filter
 from telemetry.page import page_runner_repeat
 from telemetry.page import page_test
 from telemetry.page import results_options
 from telemetry.page.actions import navigate
+from telemetry.page.actions import page_action
+from telemetry.util import exception_formatter
 
 
 class _RunState(object):
@@ -35,13 +39,21 @@ class _RunState(object):
     self.profiler_dir = None
     self.repeat_state = None
 
-  def StartBrowser(self, test, page_set, page, possible_browser,
-                   credentials_path, archive_path):
+  def StartBrowserIfNeeded(self, test, page_set, page, possible_browser,
+                           credentials_path, archive_path):
     started_browser = not self.browser
     # Create a browser.
     if not self.browser:
+      test.CustomizeBrowserOptionsForSinglePage(page,
+                                                possible_browser.finder_options)
       self.browser = possible_browser.Create()
       self.browser.credentials.credentials_path = credentials_path
+
+      # Set up WPR path on the new browser.
+      self.browser.SetReplayArchivePath(archive_path,
+                                        self._append_to_existing_wpr,
+                                        page_set.make_javascript_deterministic)
+      self._last_archive_path = page.archive_path
 
       test.WillStartBrowser(self.browser)
       self.browser.Start()
@@ -50,6 +62,9 @@ class _RunState(object):
       if self._first_browser:
         self._first_browser = False
         self.browser.credentials.WarnIfMissingCredentials(page_set)
+        logging.info('OS: %s %s',
+                     self.browser.platform.GetOSName(),
+                     self.browser.platform.GetOSVersionName())
         if self.browser.supports_system_info:
           system_info = self.browser.GetSystemInfo()
           if system_info.model_name:
@@ -65,14 +80,12 @@ class _RunState(object):
               logging.info('Feature Status:')
               for k, v in sorted(system_info.gpu.feature_status.iteritems()):
                 logging.info('  %-20s: %s', k, v)
+            if system_info.gpu.driver_bug_workarounds:
+              logging.info('Driver Bug Workarounds:')
+              for workaround in system_info.gpu.driver_bug_workarounds:
+                logging.info('  %s', workaround)
           else:
             logging.info('No GPU devices')
-
-      # Set up WPR path on the new browser.
-      self.browser.SetReplayArchivePath(archive_path,
-                                        self._append_to_existing_wpr,
-                                        page_set.make_javascript_deterministic)
-      self._last_archive_path = page.archive_path
     else:
       # Set up WPR path if it changed.
       if page.archive_path and self._last_archive_path != page.archive_path:
@@ -85,6 +98,9 @@ class _RunState(object):
     if self.browser.supports_tab_control and test.close_tabs_before_run:
       # Create a tab if there's none.
       if len(self.browser.tabs) == 0:
+        # TODO(nduca/tonyg): Remove this line. Added as part of crbug.com/348337
+        # chasing.
+        logging.warning('Making a new tab\n')
         self.browser.tabs.New()
 
       # Ensure only one tab is open, unless the test is a multi-tab test.
@@ -93,7 +109,7 @@ class _RunState(object):
           self.browser.tabs[-1].Close()
 
       # Must wait for tab to commit otherwise it can commit after the next
-      # navigation has begun and RenderViewHostManager::DidNavigateMainFrame()
+      # navigation has begun and RenderFrameHostManager::DidNavigateMainFrame()
       # will cancel the next navigation because it's pending. This manifests as
       # the first navigation in a PageSet freezing indefinitly because the
       # navigation was silently cancelled when |self.browser.tabs[0]| was
@@ -102,9 +118,6 @@ class _RunState(object):
       # loading so we'll wait forever.
       if started_browser:
         self.browser.tabs[0].WaitForDocumentReadyStateToBeComplete()
-
-    if self.first_page[page]:
-      self.first_page[page] = False
 
   def StopBrowser(self):
     if self.browser:
@@ -151,7 +164,7 @@ class PageState(object):
 
     if test:
       if test.clear_cache_before_each_run:
-        self.tab.ClearCache()
+        self.tab.ClearCache(force=True)
 
   def ImplicitPageNavigation(self, test=None):
     """Executes the implicit navigation that occurs for every page iteration.
@@ -166,19 +179,25 @@ class PageState(object):
       i = navigate.NavigateAction()
       i.RunAction(self.page, self.tab, None)
 
-  def CleanUpPage(self):
+  def CleanUpPage(self, test):
+    try:
+      test.CleanUpAfterPage(self.page, self.tab)
+    except Exception:
+      logging.error('While cleaning up %s:\n%s', self.page.url,
+                    traceback.format_exc())
+
     if self.page.credentials and self._did_login:
       self.tab.browser.credentials.LoginNoLongerNeeded(
           self.tab, self.page.credentials)
 
-    if self.tab:
-      self.tab.Disconnect()
-      self.tab = None
 
-
-def AddCommandLineOptions(parser):
-  page_filter_module.PageFilter.AddCommandLineOptions(parser)
+def AddCommandLineArgs(parser):
+  page_filter.PageFilter.AddCommandLineArgs(parser)
   results_options.AddResultsOptions(parser)
+
+
+def ProcessCommandLineArgs(parser, args):
+  page_filter.PageFilter.ProcessCommandLineArgs(parser, args)
 
 
 def _LogStackTrace(title, browser):
@@ -201,16 +220,19 @@ def _PrepareAndRunPage(test, page_set, expectations, finder_options,
         wpr_modes.WPR_REPLAY
         if page.archive_path and os.path.isfile(page.archive_path)
         else wpr_modes.WPR_OFF)
-  results_for_current_run = results
-  if state.first_page[page] and test.discard_first_result:
-    # If discarding results, substitute a dummy object.
-    results_for_current_run = page_measurement_results.PageMeasurementResults()
-  results_for_current_run.StartTest(page)
-  tries = 3
+
+  tries = test.attempts
   while tries:
+    tries -= 1
     try:
-      state.StartBrowser(test, page_set, page, possible_browser,
-                         credentials_path, page.archive_path)
+      results_for_current_run = copy.copy(results)
+      results_for_current_run.StartTest(page)
+      if test.RestartBrowserBeforeEachPage() or page.startup_url:
+        state.StopBrowser()
+        # If we are restarting the browser for each page customize the per page
+        # options for just the current page before starting the browser.
+      state.StartBrowserIfNeeded(test, page_set, page, possible_browser,
+                                 credentials_path, page.archive_path)
 
       expectation = expectations.GetExpectationForPage(state.browser, page)
 
@@ -235,15 +257,20 @@ def _PrepareAndRunPage(test, page_set, expectations, finder_options,
       if finder_options.profiler:
         state.StopProfiling()
 
-      if test.NeedsBrowserRestartAfterEachRun(state.browser):
+      if (test.StopBrowserAfterPage(state.browser, page)):
         state.StopBrowser()
 
-      break
+      results_for_current_run.StopTest(page)
+
+      if state.first_page[page]:
+        state.first_page[page] = False
+        if test.discard_first_result:
+          return results
+      return results_for_current_run
     except exceptions.BrowserGoneException:
       _LogStackTrace('Browser crashed', state.browser)
       logging.warning('Lost connection to browser. Retrying.')
       state.StopBrowser()
-      tries -= 1
       if not tries:
         logging.error('Lost connection to browser 3 times. Failing.')
         raise
@@ -251,7 +278,6 @@ def _PrepareAndRunPage(test, page_set, expectations, finder_options,
         logging.error(
           'Lost connection to browser during multi-tab test. Failing.')
         raise
-  results_for_current_run.StopTest(page)
 
 
 def Run(test, page_set, expectations, finder_options):
@@ -275,6 +301,12 @@ def Run(test, page_set, expectations, finder_options):
         '\n')
     sys.exit(1)
 
+  browser_options.browser_type = possible_browser.browser_type
+
+  if not decorators.IsEnabled(
+      test, browser_options.browser_type, possible_browser.platform):
+    return results
+
   # Reorder page set based on options.
   pages = _ShuffleAndFilterPageSet(page_set, finder_options)
 
@@ -294,8 +326,6 @@ def Run(test, page_set, expectations, finder_options):
   if page_set.user_agent_type:
     browser_options.browser_user_agent_type = page_set.user_agent_type
 
-  for page in pages:
-    test.CustomizeBrowserOptionsForPage(page, possible_browser.finder_options)
   if finder_options.profiler:
     profiler_class = profiler_finder.FindProfiler(finder_options.profiler)
     profiler_class.CustomizeBrowserOptions(possible_browser.browser_type,
@@ -303,7 +333,7 @@ def Run(test, page_set, expectations, finder_options):
 
   for page in list(pages):
     if not test.CanRunForPage(page):
-      logging.warning('Skipping test: it cannot run for %s', page.url)
+      logging.debug('Skipping test: it cannot run for %s', page.url)
       results.AddSkip(page, 'Test cannot run')
       pages.remove(page)
 
@@ -314,7 +344,7 @@ def Run(test, page_set, expectations, finder_options):
   # TODO(dtu): Move results creation and results_for_current_run into RunState.
 
   try:
-    test.WillRunTest()
+    test.WillRunTest(finder_options)
     state.repeat_state = page_runner_repeat.PageRunnerRepeatState(
                              finder_options.repeat_options)
 
@@ -324,12 +354,19 @@ def Run(test, page_set, expectations, finder_options):
         state.repeat_state.WillRunPage()
         test.WillRunPageRepeats(page)
         while state.repeat_state.ShouldRepeatPage():
-          # execute test on page
-          _PrepareAndRunPage(test, page_set, expectations, finder_options,
-                             browser_options, page, credentials_path,
-                             possible_browser, results, state)
+          results = _PrepareAndRunPage(
+              test, page_set, expectations, finder_options, browser_options,
+              page, credentials_path, possible_browser, results, state)
           state.repeat_state.DidRunPage()
         test.DidRunPageRepeats(page)
+        if (not test.max_failures is None and
+            len(results.failures) > test.max_failures):
+          logging.error('Too many failures. Aborting.')
+          test.RequestExit()
+        if (not test.max_errors is None and
+            len(results.errors) > test.max_errors):
+          logging.error('Too many errors. Aborting.')
+          test.RequestExit()
         if test.IsExiting():
           break
       state.repeat_state.DidRunPageSet()
@@ -349,9 +386,8 @@ def _ShuffleAndFilterPageSet(page_set, finder_options):
   if finder_options.pageset_shuffle_order_file:
     return page_set.ReorderPageSet(finder_options.pageset_shuffle_order_file)
 
-  page_filter = page_filter_module.PageFilter(finder_options)
   pages = [page for page in page_set.pages[:]
-           if not page.disabled and page_filter.IsSelected(page)]
+           if not page.disabled and page_filter.PageFilter.IsSelected(page)]
 
   if finder_options.pageset_shuffle:
     random.Random().shuffle(pages)
@@ -417,12 +453,15 @@ def _CheckArchives(page_set, pages, results):
 
 def _RunPage(test, page, state, expectation, results, finder_options):
   if expectation == 'skip':
-    logging.warning('Skipped %s' % page.url)
+    logging.debug('Skipping test: Skip expectation for %s', page.url)
+    results.AddSkip(page, 'Skipped by test expectations')
     return
 
   logging.info('Running %s' % page.url)
 
   page_state = PageState(page, test.TabForPage(page, state.browser))
+
+  page_action.PageAction.ResetNextTimelineMarkerId()
 
   def ProcessError():
     logging.error('%s:\n%s', page.url, traceback.format_exc())
@@ -437,14 +476,15 @@ def _RunPage(test, page, state, expectation, results, finder_options):
     if state.repeat_state.ShouldNavigate(
         finder_options.skip_navigate_on_repeat):
       page_state.ImplicitPageNavigation(test)
-    test.Run(finder_options, page, page_state.tab, results)
+    test.RunPage(page, page_state.tab, results)
     util.CloseConnections(page_state.tab)
   except page_test.Failure:
-    logging.warning('%s:\n%s', page.url, traceback.format_exc())
     if expectation == 'fail':
+      logging.info('%s:\n%s', page.url, traceback.format_exc())
       logging.info('Failure was expected\n')
       results.AddSuccess(page)
     else:
+      logging.warning('%s:\n%s', page.url, traceback.format_exc())
       results.AddFailure(page, sys.exc_info())
   except (util.TimeoutException, exceptions.LoginException,
           exceptions.ProfilingException):
@@ -454,13 +494,15 @@ def _RunPage(test, page, state, expectation, results, finder_options):
     # Run() catches these exceptions to relaunch the tab/browser, so re-raise.
     raise
   except Exception:
-    raise
+    logging.warning('While running %s', page.url)
+    exception_formatter.PrintFormattedException(*sys.exc_info())
+    results.AddFailure(page, sys.exc_info())
   else:
     if expectation == 'fail':
       logging.warning('%s was expected to fail, but passed.\n', page.url)
     results.AddSuccess(page)
   finally:
-    page_state.CleanUpPage()
+    page_state.CleanUpPage(test)
 
 
 def _GetSequentialFileName(base_name):

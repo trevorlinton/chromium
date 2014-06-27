@@ -27,7 +27,7 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service.h"
+#include "components/keyed_service/core/keyed_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/plugin_service.h"
@@ -101,7 +101,8 @@ scoped_refptr<PluginPrefs> PluginPrefs::GetForTestingProfile(
           profile, &PluginPrefsFactory::CreateForTestingProfile).get());
 }
 
-void PluginPrefs::EnablePluginGroup(bool enabled, const string16& group_name) {
+void PluginPrefs::EnablePluginGroup(bool enabled,
+                                    const base::string16& group_name) {
   PluginService::GetInstance()->GetPlugins(
       base::Bind(&PluginPrefs::EnablePluginGroupInternal,
                  this, enabled, group_name));
@@ -109,7 +110,7 @@ void PluginPrefs::EnablePluginGroup(bool enabled, const string16& group_name) {
 
 void PluginPrefs::EnablePluginGroupInternal(
     bool enabled,
-    const string16& group_name,
+    const base::string16& group_name,
     const std::vector<content::WebPluginInfo>& plugins) {
   base::AutoLock auto_lock(lock_);
   PluginFinder* finder = PluginFinder::GetInstance();
@@ -176,7 +177,7 @@ void PluginPrefs::EnablePluginInternal(
     plugin_state_.Set(path, enabled);
   }
 
-  string16 group_name;
+  base::string16 group_name;
   for (size_t i = 0; i < plugins.size(); ++i) {
     if (plugins[i].path == path) {
       scoped_ptr<PluginMetadata> plugin_metadata(
@@ -212,7 +213,7 @@ void PluginPrefs::EnablePluginInternal(
 }
 
 PluginPrefs::PolicyStatus PluginPrefs::PolicyStatusForPlugin(
-    const string16& name) const {
+    const base::string16& name) const {
   base::AutoLock auto_lock(lock_);
   if (IsStringMatchedInSet(name, policy_enabled_plugin_patterns_)) {
     return POLICY_ENABLED;
@@ -228,7 +229,7 @@ PluginPrefs::PolicyStatus PluginPrefs::PolicyStatusForPlugin(
 bool PluginPrefs::IsPluginEnabled(const content::WebPluginInfo& plugin) const {
   scoped_ptr<PluginMetadata> plugin_metadata(
       PluginFinder::GetInstance()->GetPluginMetadata(plugin));
-  string16 group_name = plugin_metadata->name();
+  base::string16 group_name = plugin_metadata->name();
 
   // Check if the plug-in or its group is enabled by policy.
   PolicyStatus plugin_status = PolicyStatusForPlugin(plugin.name);
@@ -245,7 +246,7 @@ bool PluginPrefs::IsPluginEnabled(const content::WebPluginInfo& plugin) const {
   // information.
   // TODO(dspringer): When NaCl is on by default, remove this code.
   if ((plugin.name ==
-       ASCIIToUTF16(chrome::ChromeContentClient::kNaClPluginName)) &&
+       base::ASCIIToUTF16(ChromeContentClient::kNaClPluginName)) &&
       CommandLine::ForCurrentProcess()->HasSwitch(switches::kEnableNaCl)) {
     return true;
   }
@@ -257,7 +258,7 @@ bool PluginPrefs::IsPluginEnabled(const content::WebPluginInfo& plugin) const {
     return plugin_enabled;
 
   // Check user preferences for the plug-in group.
-  std::map<string16, bool>::const_iterator group_it(
+  std::map<base::string16, bool>::const_iterator group_it(
       plugin_group_state_.find(group_name));
   if (group_it != plugin_group_state_.end())
     return group_it->second;
@@ -266,7 +267,7 @@ bool PluginPrefs::IsPluginEnabled(const content::WebPluginInfo& plugin) const {
   return true;
 }
 
-void PluginPrefs::UpdatePatternsAndNotify(std::set<string16>* patterns,
+void PluginPrefs::UpdatePatternsAndNotify(std::set<base::string16>* patterns,
                                           const std::string& pref_name) {
   base::AutoLock auto_lock(lock_);
   ListValueToStringSet(prefs_->GetList(pref_name.c_str()), patterns);
@@ -275,9 +276,10 @@ void PluginPrefs::UpdatePatternsAndNotify(std::set<string16>* patterns,
 }
 
 /*static*/
-bool PluginPrefs::IsStringMatchedInSet(const string16& name,
-                                       const std::set<string16>& pattern_set) {
-  std::set<string16>::const_iterator pattern(pattern_set.begin());
+bool PluginPrefs::IsStringMatchedInSet(
+    const base::string16& name,
+    const std::set<base::string16>& pattern_set) {
+  std::set<base::string16>::const_iterator pattern(pattern_set.begin());
   while (pattern != pattern_set.end()) {
     if (MatchPattern(name, *pattern))
       return true;
@@ -288,15 +290,15 @@ bool PluginPrefs::IsStringMatchedInSet(const string16& name,
 }
 
 /* static */
-void PluginPrefs::ListValueToStringSet(const ListValue* src,
-                                       std::set<string16>* dest) {
+void PluginPrefs::ListValueToStringSet(const base::ListValue* src,
+                                       std::set<base::string16>* dest) {
   DCHECK(src);
   DCHECK(dest);
   dest->clear();
-  ListValue::const_iterator end(src->end());
-  for (ListValue::const_iterator current(src->begin());
+  base::ListValue::const_iterator end(src->end());
+  for (base::ListValue::const_iterator current(src->begin());
        current != end; ++current) {
-    string16 plugin_name;
+    base::string16 plugin_name;
     if ((*current)->GetAsString(&plugin_name)) {
       dest->insert(plugin_name);
     }
@@ -344,13 +346,13 @@ void PluginPrefs::SetPrefs(PrefService* prefs) {
 
   {  // Scoped update of prefs::kPluginsPluginsList.
     ListPrefUpdate update(prefs_, prefs::kPluginsPluginsList);
-    ListValue* saved_plugins_list = update.Get();
+    base::ListValue* saved_plugins_list = update.Get();
     if (saved_plugins_list && !saved_plugins_list->empty()) {
       // The following four variables are only valid when
       // |migrate_to_pepper_flash| is set to true.
       base::FilePath npapi_flash;
       base::FilePath pepper_flash;
-      DictionaryValue* pepper_flash_node = NULL;
+      base::DictionaryValue* pepper_flash_node = NULL;
       bool npapi_flash_enabled = false;
       if (migrate_to_pepper_flash) {
         PathService::Get(chrome::FILE_FLASH_PLUGIN, &npapi_flash);
@@ -358,19 +360,20 @@ void PluginPrefs::SetPrefs(PrefService* prefs) {
       }
 
       // Used when |remove_component_pepper_flash_settings| is set to true.
-      ListValue::iterator component_pepper_flash_node =
+      base::ListValue::iterator component_pepper_flash_node =
           saved_plugins_list->end();
 
-      for (ListValue::iterator it = saved_plugins_list->begin();
+      for (base::ListValue::iterator it = saved_plugins_list->begin();
            it != saved_plugins_list->end();
            ++it) {
-        if (!(*it)->IsType(Value::TYPE_DICTIONARY)) {
+        if (!(*it)->IsType(base::Value::TYPE_DICTIONARY)) {
           LOG(WARNING) << "Invalid entry in " << prefs::kPluginsPluginsList;
           continue;  // Oops, don't know what to do with this item.
         }
 
-        DictionaryValue* plugin = static_cast<DictionaryValue*>(*it);
-        string16 group_name;
+        base::DictionaryValue* plugin =
+            static_cast<base::DictionaryValue*>(*it);
+        base::string16 group_name;
         bool enabled;
         if (!plugin->GetBoolean("enabled", &enabled))
           enabled = true;
@@ -463,7 +466,7 @@ void PluginPrefs::SetPrefs(PrefService* prefs) {
 
       // Only want one PDF plugin enabled at a time. See http://crbug.com/50105
       // for background.
-      plugin_group_state_[ASCIIToUTF16(
+      plugin_group_state_[base::ASCIIToUTF16(
           PluginMetadata::kAdobeReaderGroupName)] = false;
     }
   }  // Scoped update of prefs::kPluginsPluginsList.
@@ -513,9 +516,9 @@ PluginPrefs::~PluginPrefs() {
 }
 
 void PluginPrefs::SetPolicyEnforcedPluginPatterns(
-    const std::set<string16>& disabled_patterns,
-    const std::set<string16>& disabled_exception_patterns,
-    const std::set<string16>& enabled_patterns) {
+    const std::set<base::string16>& disabled_patterns,
+    const std::set<base::string16>& disabled_exception_patterns,
+    const std::set<base::string16>& enabled_patterns) {
   policy_disabled_plugin_patterns_ = disabled_patterns;
   policy_disabled_plugin_exception_patterns_ = disabled_exception_patterns;
   policy_enabled_plugin_patterns_ = enabled_patterns;
@@ -528,7 +531,7 @@ void PluginPrefs::OnUpdatePreferences(
 
   PluginFinder* finder = PluginFinder::GetInstance();
   ListPrefUpdate update(prefs_, prefs::kPluginsPluginsList);
-  ListValue* plugins_list = update.Get();
+  base::ListValue* plugins_list = update.Get();
   plugins_list->Clear();
 
   base::FilePath internal_dir;
@@ -538,9 +541,9 @@ void PluginPrefs::OnUpdatePreferences(
   base::AutoLock auto_lock(lock_);
 
   // Add the plugin files.
-  std::set<string16> group_names;
+  std::set<base::string16> group_names;
   for (size_t i = 0; i < plugins.size(); ++i) {
-    DictionaryValue* summary = new DictionaryValue();
+    base::DictionaryValue* summary = new base::DictionaryValue();
     summary->SetString("path", plugins[i].path.value());
     summary->SetString("name", plugins[i].name);
     summary->SetString("version", plugins[i].version);
@@ -556,12 +559,12 @@ void PluginPrefs::OnUpdatePreferences(
   }
 
   // Add the plug-in groups.
-  for (std::set<string16>::const_iterator it = group_names.begin();
+  for (std::set<base::string16>::const_iterator it = group_names.begin();
       it != group_names.end(); ++it) {
-    DictionaryValue* summary = new DictionaryValue();
+    base::DictionaryValue* summary = new base::DictionaryValue();
     summary->SetString("name", *it);
     bool enabled = true;
-    std::map<string16, bool>::iterator gstate_it =
+    std::map<base::string16, bool>::iterator gstate_it =
         plugin_group_state_.find(*it);
     if (gstate_it != plugin_group_state_.end())
       enabled = gstate_it->second;

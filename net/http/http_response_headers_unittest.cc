@@ -9,6 +9,7 @@
 #include "base/pickle.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "net/http/http_byte_range.h"
 #include "net/http/http_response_headers.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -1851,6 +1852,58 @@ TEST(HttpResponseHeadersTest, ReplaceStatus) {
   }
 }
 
+TEST(HttpResponseHeadersTest, UpdateWithNewRange) {
+  const struct {
+    const char* orig_headers;
+    const char* expected_headers;
+    const char* expected_headers_with_replaced_status;
+  } tests[] = {
+    { "HTTP/1.1 200 OK\n"
+      "Content-Length: 450\n",
+
+      "HTTP/1.1 200 OK\n"
+      "Content-Range: bytes 3-5/450\n"
+      "Content-Length: 3\n",
+
+      "HTTP/1.1 206 Partial Content\n"
+      "Content-Range: bytes 3-5/450\n"
+      "Content-Length: 3\n",
+    },
+    { "HTTP/1.1 200 OK\n"
+      "Content-Length: 5\n",
+
+      "HTTP/1.1 200 OK\n"
+      "Content-Range: bytes 3-5/5\n"
+      "Content-Length: 3\n",
+
+      "HTTP/1.1 206 Partial Content\n"
+      "Content-Range: bytes 3-5/5\n"
+      "Content-Length: 3\n",
+    },
+  };
+  const net::HttpByteRange range = net::HttpByteRange::Bounded(3, 5);
+
+  for (size_t i = 0; i < ARRAYSIZE_UNSAFE(tests); ++i) {
+    std::string orig_headers(tests[i].orig_headers);
+    std::replace(orig_headers.begin(), orig_headers.end(), '\n', '\0');
+    scoped_refptr<net::HttpResponseHeaders> parsed(
+        new net::HttpResponseHeaders(orig_headers + '\0'));
+    int64 content_size = parsed->GetContentLength();
+    std::string resulting_headers;
+
+    // Update headers without replacing status line.
+    parsed->UpdateWithNewRange(range, content_size, false);
+    parsed->GetNormalizedHeaders(&resulting_headers);
+    EXPECT_EQ(std::string(tests[i].expected_headers), resulting_headers);
+
+    // Replace status line too.
+    parsed->UpdateWithNewRange(range, content_size, true);
+    parsed->GetNormalizedHeaders(&resulting_headers);
+    EXPECT_EQ(std::string(tests[i].expected_headers_with_replaced_status),
+              resulting_headers);
+  }
+}
+
 TEST(HttpResponseHeadersTest, ToNetLogParamAndBackAgain) {
   std::string headers("HTTP/1.1 404\n"
                       "Content-Length: 450\n"
@@ -1884,79 +1937,76 @@ TEST(HttpResponseHeadersTest, GetProxyBypassInfo) {
      const char* headers;
      bool expected_result;
      int64 expected_retry_delay;
+     bool expected_bypass_all;
   } tests[] = {
     { "HTTP/1.1 200 OK\n"
       "Content-Length: 999\n",
       false,
       0,
+      false,
     },
     { "HTTP/1.1 200 OK\n"
       "connection: keep-alive\n"
       "Content-Length: 999\n",
       false,
       0,
-    },
-    { "HTTP/1.1 200 OK\n"
-      "connection: proxy-bypass\n"
-      "Content-Length: 999\n",
-      true,
-      0,
-    },
-    { "HTTP/1.1 200 OK\n"
-      "connection: proxy-bypass\n"
-      "Chrome-Proxy: bypass=86400\n"
-      "Content-Length: 999\n",
-      true,
-      86400
+      false,
     },
     { "HTTP/1.1 200 OK\n"
       "connection: keep-alive\n"
       "Chrome-Proxy: bypass=86400\n"
       "Content-Length: 999\n",
       true,
-      86400
+      86400,
+      false,
     },
     { "HTTP/1.1 200 OK\n"
       "connection: keep-alive\n"
       "Chrome-Proxy: bypass=0\n"
       "Content-Length: 999\n",
       true,
-      0
+      0,
+      false,
     },
     { "HTTP/1.1 200 OK\n"
       "connection: keep-alive\n"
       "Chrome-Proxy: bypass=-1\n"
       "Content-Length: 999\n",
       false,
-      0
+      0,
+      false,
     },
     { "HTTP/1.1 200 OK\n"
       "connection: keep-alive\n"
       "Chrome-Proxy: bypass=xyz\n"
       "Content-Length: 999\n",
       false,
-      0
+      0,
+      false,
     },
     { "HTTP/1.1 200 OK\n"
       "connection: keep-alive\n"
       "Chrome-Proxy: bypass\n"
       "Content-Length: 999\n",
       false,
-      0
+      0,
+      false,
     },
     { "HTTP/1.1 200 OK\n"
       "connection: keep-alive\n"
       "Chrome-Proxy: foo=abc, bypass=86400\n"
       "Content-Length: 999\n",
       true,
-      86400
+      86400,
+      false,
     },
     { "HTTP/1.1 200 OK\n"
       "connection: keep-alive\n"
       "Chrome-Proxy: bypass=86400, bar=abc\n"
       "Content-Length: 999\n",
       true,
-      86400
+      86400,
+      false,
     },
     { "HTTP/1.1 200 OK\n"
       "connection: keep-alive\n"
@@ -1964,21 +2014,24 @@ TEST(HttpResponseHeadersTest, GetProxyBypassInfo) {
       "Chrome-Proxy: bypass=86400\n"
       "Content-Length: 999\n",
       true,
-      3600
+      3600,
+      false,
     },
     { "HTTP/1.1 200 OK\n"
       "connection: keep-alive\n"
       "Chrome-Proxy: bypass=3600, bypass=86400\n"
       "Content-Length: 999\n",
       true,
-      3600
+      3600,
+      false,
     },
     { "HTTP/1.1 200 OK\n"
       "connection: keep-alive\n"
       "Chrome-Proxy: bypass=, bypass=86400\n"
       "Content-Length: 999\n",
       true,
-      86400
+      86400,
+      false,
     },
     { "HTTP/1.1 200 OK\n"
       "connection: keep-alive\n"
@@ -1986,7 +2039,48 @@ TEST(HttpResponseHeadersTest, GetProxyBypassInfo) {
       "Chrome-Proxy: bypass=86400\n"
       "Content-Length: 999\n",
       true,
-      86400
+      86400,
+      false,
+    },
+    { "HTTP/1.1 200 OK\n"
+      "connection: keep-alive\n"
+      "Chrome-Proxy: block=, block=3600\n"
+      "Content-Length: 999\n",
+      true,
+      3600,
+      true,
+    },
+    { "HTTP/1.1 200 OK\n"
+      "connection: keep-alive\n"
+      "Chrome-Proxy: bypass=86400, block=3600\n"
+      "Content-Length: 999\n",
+      true,
+      3600,
+      true,
+    },
+    { "HTTP/1.1 200 OK\n"
+      "connection: proxy-bypass\n"
+      "Chrome-Proxy: block=, bypass=86400\n"
+      "Content-Length: 999\n",
+      true,
+      86400,
+      false,
+    },
+    { "HTTP/1.1 200 OK\n"
+      "connection: proxy-bypass\n"
+      "Chrome-Proxy: block=-1\n"
+      "Content-Length: 999\n",
+      false,
+      0,
+      false,
+    },
+    { "HTTP/1.1 200 OK\n"
+      "connection: proxy-bypass\n"
+      "Chrome-Proxy: block=99999999999999999999\n"
+      "Content-Length: 999\n",
+      false,
+      0,
+      false,
     },
   };
   for (size_t i = 0; i < ARRAYSIZE_UNSAFE(tests); ++i) {
@@ -1995,10 +2089,87 @@ TEST(HttpResponseHeadersTest, GetProxyBypassInfo) {
     scoped_refptr<net::HttpResponseHeaders> parsed(
         new net::HttpResponseHeaders(headers));
 
-    base::TimeDelta duration;
+    net::HttpResponseHeaders::ChromeProxyInfo chrome_proxy_info;
     EXPECT_EQ(tests[i].expected_result,
-              parsed->GetChromeProxyInfo(&duration));
-    EXPECT_EQ(tests[i].expected_retry_delay, duration.InSeconds());
+              parsed->GetChromeProxyInfo(&chrome_proxy_info));
+    EXPECT_EQ(tests[i].expected_retry_delay,
+              chrome_proxy_info.bypass_duration.InSeconds());
+    EXPECT_EQ(tests[i].expected_bypass_all,
+              chrome_proxy_info.bypass_all);
+  }
+}
+
+TEST(HttpResponseHeadersTest, IsChromeProxyResponse) {
+  const struct {
+     const char* headers;
+     bool expected_result;
+  } tests[] = {
+    { "HTTP/1.1 200 OK\n"
+      "Via: 1.1 Chrome-Proxy\n",
+      false,
+    },
+    { "HTTP/1.1 200 OK\n"
+      "Via: 1\n",
+      false,
+    },
+    { "HTTP/1.1 200 OK\n"
+      "Via: 1.1 Chrome-Compression-Proxy\n",
+      true,
+    },
+    { "HTTP/1.1 200 OK\n"
+      "Via: 1.0 Chrome-Compression-Proxy\n",
+      true,
+    },
+    { "HTTP/1.1 200 OK\n"
+      "Via: 1.1 Foo-Bar, 1.1 Chrome-Compression-Proxy\n",
+      true,
+    },
+    { "HTTP/1.1 200 OK\n"
+      "Via: 1.1 Chrome-Compression-Proxy, 1.1 Bar-Foo\n",
+      true,
+    },
+    { "HTTP/1.1 200 OK\n"
+      "Via: 1.1 chrome-compression-proxy\n",
+      false,
+    },
+    { "HTTP/1.1 200 OK\n"
+      "Via: 1.1 Foo-Bar\n"
+      "Via: 1.1 Chrome-Compression-Proxy\n",
+      true,
+    },
+    { "HTTP/1.1 200 OK\n"
+      "Via: 1.1 Chrome-Proxy\n",
+      false,
+    },
+    { "HTTP/1.1 200 OK\n"
+      "Via: 1.1 Chrome Compression Proxy\n",
+      true,
+    },
+    { "HTTP/1.1 200 OK\n"
+      "Via: 1.1 Foo-Bar, 1.1 Chrome Compression Proxy\n",
+      true,
+    },
+    { "HTTP/1.1 200 OK\n"
+      "Via: 1.1 Chrome Compression Proxy, 1.1 Bar-Foo\n",
+      true,
+    },
+    { "HTTP/1.1 200 OK\n"
+      "Via: 1.1 chrome compression proxy\n",
+      false,
+    },
+    { "HTTP/1.1 200 OK\n"
+      "Via: 1.1 Foo-Bar\n"
+      "Via: 1.1 Chrome Compression Proxy\n",
+      true,
+    },
+  };
+  for (size_t i = 0; i < ARRAYSIZE_UNSAFE(tests); ++i) {
+    std::string headers(tests[i].headers);
+    HeadersToRaw(&headers);
+    scoped_refptr<net::HttpResponseHeaders> parsed(
+        new net::HttpResponseHeaders(headers));
+
+    EXPECT_EQ(tests[i].expected_result, parsed->IsChromeProxyResponse());
   }
 }
 #endif  // defined(SPDY_PROXY_AUTH_ORIGIN)

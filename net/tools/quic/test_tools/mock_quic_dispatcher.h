@@ -21,13 +21,12 @@ class MockQuicDispatcher : public QuicDispatcher {
  public:
   MockQuicDispatcher(const QuicConfig& config,
                      const QuicCryptoServerConfig& crypto_config,
-                     QuicGuid guid,
                      EpollServer* eps);
+
   virtual ~MockQuicDispatcher();
 
-  MOCK_METHOD4(ProcessPacket, void(const IPEndPoint& server_address,
+  MOCK_METHOD3(ProcessPacket, void(const IPEndPoint& server_address,
                                    const IPEndPoint& client_address,
-                                   QuicGuid guid,
                                    const QuicEncryptedPacket& packet));
 };
 

@@ -1,0 +1,119 @@
+// Copyright 2013 The Chromium Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include "ui/gfx/ozone/dri/dri_surface.h"
+
+#include <errno.h>
+#include <sys/mman.h>
+#include <sys/types.h>
+#include <xf86drm.h>
+
+#include "base/logging.h"
+#include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/skia/include/core/SkBitmapDevice.h"
+#include "third_party/skia/include/core/SkCanvas.h"
+#include "ui/gfx/ozone/dri/dri_skbitmap.h"
+#include "ui/gfx/ozone/dri/dri_wrapper.h"
+#include "ui/gfx/skia_util.h"
+
+namespace gfx {
+
+namespace {
+
+// Extends the SkBitmapDevice to allow setting the SkPixelRef. We use the setter
+// to change the SkPixelRef such that the device always points to the
+// backbuffer.
+class CustomSkBitmapDevice : public SkBitmapDevice {
+ public:
+  CustomSkBitmapDevice(const SkBitmap& bitmap) : SkBitmapDevice(bitmap) {}
+  virtual ~CustomSkBitmapDevice() {}
+
+  void SetPixelRef(SkPixelRef* pixel_ref) { setPixelRef(pixel_ref); }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(CustomSkBitmapDevice);
+};
+
+}  // namespace
+
+////////////////////////////////////////////////////////////////////////////////
+// DriSurface implementation
+
+DriSurface::DriSurface(
+    DriWrapper* dri, const gfx::Size& size)
+    : dri_(dri),
+      bitmaps_(),
+      front_buffer_(0),
+      size_(size) {
+}
+
+DriSurface::~DriSurface() {
+}
+
+bool DriSurface::Initialize() {
+  for (int i = 0; i < 2; ++i) {
+    bitmaps_[i].reset(CreateBuffer());
+    // TODO(dnicoara) Should select the configuration based on what the
+    // underlying system supports.
+    SkImageInfo info = SkImageInfo::Make(size_.width(),
+                                         size_.height(),
+                                         kPMColor_SkColorType,
+                                         kPremul_SkAlphaType);
+    if (!bitmaps_[i]->Initialize(info)) {
+      return false;
+    }
+  }
+
+  skia_device_ = skia::AdoptRef(
+      new CustomSkBitmapDevice(*bitmaps_[front_buffer_ ^ 1].get()));
+  skia_canvas_ = skia::AdoptRef(new SkCanvas(skia_device_.get()));
+
+  return true;
+}
+
+uint32_t DriSurface::GetFramebufferId() const {
+  CHECK(bitmaps_[0].get() && bitmaps_[1].get());
+  return bitmaps_[front_buffer_ ^ 1]->get_framebuffer();
+}
+
+uint32_t DriSurface::GetHandle() const {
+  CHECK(bitmaps_[0].get() && bitmaps_[1].get());
+  return bitmaps_[front_buffer_ ^ 1]->get_handle();
+}
+
+// This call is made after the hardware just started displaying our back buffer.
+// We need to update our pointer reference and synchronize the two buffers.
+void DriSurface::SwapBuffers() {
+  CHECK(bitmaps_[0].get() && bitmaps_[1].get());
+
+  // Update our front buffer pointer.
+  front_buffer_ ^= 1;
+
+  // Unlocking will unset the pixel pointer, so it won't be pointing to the old
+  // PixelRef.
+  skia_device_->accessBitmap(false).unlockPixels();
+  // Update the backing pixels for the bitmap device.
+  static_cast<CustomSkBitmapDevice*>(skia_device_.get())->SetPixelRef(
+      bitmaps_[front_buffer_ ^ 1]->pixelRef());
+  // Locking the pixels will set the pixel pointer based on the PixelRef value.
+  skia_device_->accessBitmap(false).lockPixels();
+
+  SkIRect device_damage;
+  skia_canvas_->getClipDeviceBounds(&device_damage);
+  SkRect damage = SkRect::Make(device_damage);
+
+  skia_canvas_->drawBitmapRectToRect(*bitmaps_[front_buffer_].get(),
+                                     &damage,
+                                     damage);
+}
+
+SkCanvas* DriSurface::GetDrawableForWidget() {
+  return skia_canvas_.get();
+}
+
+DriSkBitmap* DriSurface::CreateBuffer() {
+  return new DriSkBitmap(dri_->get_fd());
+}
+
+}  // namespace gfx

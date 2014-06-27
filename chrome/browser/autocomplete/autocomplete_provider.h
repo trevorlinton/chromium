@@ -143,14 +143,13 @@ class AutocompleteProvider
   enum Type {
     TYPE_BOOKMARK         = 1 << 0,
     TYPE_BUILTIN          = 1 << 1,
-    TYPE_CONTACT          = 1 << 2,
-    TYPE_EXTENSION_APP    = 1 << 3,
-    TYPE_HISTORY_QUICK    = 1 << 4,
-    TYPE_HISTORY_URL      = 1 << 5,
-    TYPE_KEYWORD          = 1 << 6,
-    TYPE_SEARCH           = 1 << 7,
-    TYPE_SHORTCUTS        = 1 << 8,
-    TYPE_ZERO_SUGGEST     = 1 << 9,
+    TYPE_EXTENSION_APP    = 1 << 2,
+    TYPE_HISTORY_QUICK    = 1 << 3,
+    TYPE_HISTORY_URL      = 1 << 4,
+    TYPE_KEYWORD          = 1 << 5,
+    TYPE_SEARCH           = 1 << 6,
+    TYPE_SHORTCUTS        = 1 << 7,
+    TYPE_ZERO_SUGGEST     = 1 << 8,
   };
 
   AutocompleteProvider(AutocompleteProviderListener* listener,
@@ -193,7 +192,8 @@ class AutocompleteProvider
   // match should not appear again in this or future queries.  This can only be
   // called for matches the provider marks as deletable.  This should only be
   // called when no query is running.
-  // NOTE: Remember to call OnProviderUpdate() if matches_ is updated.
+  // NOTE: Do NOT call OnProviderUpdate() in this method, it is the
+  // responsibility of the caller to do so after calling us.
   virtual void DeleteMatch(const AutocompleteMatch& match);
 
   // Called when an omnibox event log entry is generated.  This gives
@@ -210,9 +210,9 @@ class AutocompleteProvider
   // A convenience function to call net::FormatUrl() with the current set of
   // "Accept Languages" when check_accept_lang is true.  Otherwise, it's called
   // with an empty list.
-  string16 StringForURLDisplay(const GURL& url,
-                               bool check_accept_lang,
-                               bool trim_http) const;
+  base::string16 StringForURLDisplay(const GURL& url,
+                                     bool check_accept_lang,
+                                     bool trim_http) const;
 
   // Returns the set of matches for the current query.
   const ACMatches& matches() const { return matches_; }
@@ -245,6 +245,26 @@ class AutocompleteProvider
   // Updates the starred state of each of the matches in matches_ from the
   // profile's bookmark bar model.
   void UpdateStarredStateOfMatches();
+
+  // Fixes up user URL input to make it more possible to match against.  Among
+  // many other things, this takes care of the following:
+  // * Prepending file:// to file URLs
+  // * Converting drive letters in file URLs to uppercase
+  // * Converting case-insensitive parts of URLs (like the scheme and domain)
+  //   to lowercase
+  // * Convert spaces to %20s
+  // Note that we don't do this in AutocompleteInput's constructor, because if
+  // e.g. we convert a Unicode hostname to punycode, other providers will show
+  // output that surprises the user ("Search Google for xn--6ca.com").
+  // Returns false if the fixup attempt resulted in an empty string (which
+  // providers generally can't do anything with).
+  static bool FixupUserInput(AutocompleteInput* input);
+
+  // Trims "http:" and up to two subsequent slashes from |url|.  Returns the
+  // number of characters that were trimmed.
+  // NOTE: For a view-source: URL, this will trim from after "view-source:" and
+  // return 0.
+  static size_t TrimHttpPrefix(base::string16* url);
 
   // The profile associated with the AutocompleteProvider.  Reference is not
   // owned by us.

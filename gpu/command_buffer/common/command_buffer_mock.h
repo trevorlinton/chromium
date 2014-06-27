@@ -26,12 +26,14 @@ class MockCommandBuffer : public CommandBuffer {
   MOCK_METHOD0(GetLastState, State());
   MOCK_METHOD0(GetLastToken, int32());
   MOCK_METHOD1(Flush, void(int32 put_offset));
-  MOCK_METHOD2(FlushSync, State(int32 put_offset, int32 last_known_get));
+  MOCK_METHOD2(WaitForTokenInRange, void(int32 start, int32 end));
+  MOCK_METHOD2(WaitForGetOffsetInRange, void(int32 start, int32 end));
   MOCK_METHOD1(SetGetBuffer, void(int32 transfer_buffer_id));
   MOCK_METHOD1(SetGetOffset, void(int32 get_offset));
-  MOCK_METHOD2(CreateTransferBuffer, Buffer(size_t size, int32* id));
+  MOCK_METHOD2(CreateTransferBuffer,
+               scoped_refptr<gpu::Buffer>(size_t size, int32* id));
   MOCK_METHOD1(DestroyTransferBuffer, void(int32 id));
-  MOCK_METHOD1(GetTransferBuffer, Buffer(int32 id));
+  MOCK_METHOD1(GetTransferBuffer, scoped_refptr<gpu::Buffer>(int32 id));
   MOCK_METHOD1(SetToken, void(int32 token));
   MOCK_METHOD1(SetParseError, void(error::Error error));
   MOCK_METHOD1(SetContextLostReason,

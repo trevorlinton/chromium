@@ -30,8 +30,12 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/menu_model.h"
 
+namespace wrench_menu_controller {
+const CGFloat kWrenchBubblePointOffsetY = 6;
+}
+
+using base::UserMetricsAction;
 using content::HostZoomMap;
-using content::UserMetricsAction;
 
 @interface WrenchMenuController (Private)
 - (void)createModel;
@@ -79,7 +83,7 @@ class ZoomLevelObserver {
   void OnZoomLevelChanged(const HostZoomMap::ZoomLevelChange& change) {
     WrenchMenuModel* wrenchMenuModel = [controller_ wrenchMenuModel];
     wrenchMenuModel->UpdateZoomControls();
-    const string16 level =
+    const base::string16 level =
         wrenchMenuModel->GetLabelForCommandId(IDC_ZOOM_PERCENT_DISPLAY);
     [[controller_ zoomDisplay] setTitle:SysUTF16ToNSString(level)];
   }
@@ -155,10 +159,11 @@ class ZoomLevelObserver {
           [[menuItem representedObject] pointerValue]);
 
   // The section headers in the recent tabs submenu should be bold and black if
-  // a font is specified for the items (bold is already applied in the
-  // |MenuController| as the font returned by |GetLabelFontAt| is bold).
+  // a font list is specified for the items (bold is already applied in the
+  // |MenuController| as the font list returned by |GetLabelFontListAt| is
+  // bold).
   if (model && model == [self recentTabsMenuModel]) {
-    if (model->GetLabelFontAt([item tag])) {
+    if (model->GetLabelFontListAt([item tag])) {
       DCHECK([menuItem attributedTitle]);
       base::scoped_nsobject<NSMutableAttributedString> title(
           [[NSMutableAttributedString alloc]
@@ -170,7 +175,7 @@ class ZoomLevelObserver {
     } else {
       // Not a section header. Add a tooltip with the title and the URL.
       std::string url;
-      string16 title;
+      base::string16 title;
       if ([self recentTabsMenuModel]->GetURLAndTitleForItemAtIndex(
               [item tag], &url, &title)) {
         [menuItem setToolTip:

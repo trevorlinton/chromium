@@ -35,25 +35,25 @@ class TestShellDelegate : public ShellDelegate {
   virtual bool IsMultiProfilesEnabled() const OVERRIDE;
   virtual bool IsRunningInForcedAppMode() const OVERRIDE;
   virtual void PreInit() OVERRIDE;
-  virtual void Shutdown() OVERRIDE;
+  virtual void PreShutdown() OVERRIDE;
   virtual void Exit() OVERRIDE;
   virtual keyboard::KeyboardControllerProxy*
       CreateKeyboardControllerProxy() OVERRIDE;
-  virtual content::BrowserContext* GetCurrentBrowserContext() OVERRIDE;
+  virtual content::BrowserContext* GetActiveBrowserContext() OVERRIDE;
   virtual app_list::AppListViewDelegate* CreateAppListViewDelegate() OVERRIDE;
-  virtual LauncherDelegate* CreateLauncherDelegate(
-      ash::LauncherModel* model) OVERRIDE;
+  virtual ShelfDelegate* CreateShelfDelegate(ShelfModel* model) OVERRIDE;
   virtual SystemTrayDelegate* CreateSystemTrayDelegate() OVERRIDE;
   virtual UserWallpaperDelegate* CreateUserWallpaperDelegate() OVERRIDE;
-  virtual CapsLockDelegate* CreateCapsLockDelegate() OVERRIDE;
   virtual SessionStateDelegate* CreateSessionStateDelegate() OVERRIDE;
   virtual AccessibilityDelegate* CreateAccessibilityDelegate() OVERRIDE;
   virtual NewWindowDelegate* CreateNewWindowDelegate() OVERRIDE;
   virtual MediaDelegate* CreateMediaDelegate() OVERRIDE;
-  virtual aura::client::UserActionClient* CreateUserActionClient() OVERRIDE;
-  virtual void RecordUserMetricsAction(UserMetricsAction action) OVERRIDE;
-  virtual ui::MenuModel* CreateContextMenu(aura::Window* root) OVERRIDE;
-  virtual RootWindowHostFactory* CreateRootWindowHostFactory() OVERRIDE;
+  virtual ui::MenuModel* CreateContextMenu(
+      aura::Window* root,
+      ash::ShelfItemDelegate* item_delegate,
+      ash::ShelfItem* item) OVERRIDE;
+  virtual WindowTreeHostFactory* CreateWindowTreeHostFactory() OVERRIDE;
+  virtual GPUSupport* CreateGPUSupport() OVERRIDE;
   virtual base::string16 GetProductName() const OVERRIDE;
 
   int num_exit_requests() const { return num_exit_requests_; }
@@ -64,7 +64,7 @@ class TestShellDelegate : public ShellDelegate {
   int num_exit_requests_;
   bool multi_profiles_enabled_;
 
-  scoped_ptr<content::BrowserContext> current_browser_context_;
+  scoped_ptr<content::BrowserContext> active_browser_context_;
 
   TestSessionStateDelegate* test_session_state_delegate_;  // Not owned.
 

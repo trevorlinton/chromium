@@ -18,19 +18,19 @@
 namespace syncer {
 
 InvalidationNotifier::InvalidationNotifier(
-    scoped_ptr<notifier::PushClient> push_client,
+    scoped_ptr<SyncNetworkChannel> network_channel,
     const std::string& invalidator_client_id,
-    const InvalidationStateMap& initial_invalidation_state_map,
+    const UnackedInvalidationsMap& saved_invalidations,
     const std::string& invalidation_bootstrap_data,
     const WeakHandle<InvalidationStateTracker>& invalidation_state_tracker,
     const std::string& client_info)
     : state_(STOPPED),
-      initial_invalidation_state_map_(initial_invalidation_state_map),
+      saved_invalidations_(saved_invalidations),
       invalidation_state_tracker_(invalidation_state_tracker),
       client_info_(client_info),
       invalidator_client_id_(invalidator_client_id),
       invalidation_bootstrap_data_(invalidation_bootstrap_data),
-      invalidation_listener_(&tick_clock_, push_client.Pass()) {
+      invalidation_listener_(network_channel.Pass()) {
 }
 
 InvalidationNotifier::~InvalidationNotifier() {
@@ -54,12 +54,6 @@ void InvalidationNotifier::UnregisterHandler(InvalidationHandler* handler) {
   registrar_.UnregisterHandler(handler);
 }
 
-void InvalidationNotifier::Acknowledge(const invalidation::ObjectId& id,
-                                       const AckHandle& ack_handle) {
-  DCHECK(CalledOnValidThread());
-  invalidation_listener_.Acknowledge(id, ack_handle);
-}
-
 InvalidatorState InvalidationNotifier::GetInvalidatorState() const {
   DCHECK(CalledOnValidThread());
   return registrar_.GetInvalidatorState();
@@ -71,12 +65,18 @@ void InvalidationNotifier::UpdateCredentials(
     invalidation_listener_.Start(
         base::Bind(&invalidation::CreateInvalidationClient),
         invalidator_client_id_, client_info_, invalidation_bootstrap_data_,
-        initial_invalidation_state_map_,
+        saved_invalidations_,
         invalidation_state_tracker_,
         this);
     state_ = STARTED;
   }
   invalidation_listener_.UpdateCredentials(email, token);
+}
+
+void InvalidationNotifier::RequestDetailedStatus(
+    base::Callback<void(const base::DictionaryValue&)> callback) const {
+  DCHECK(CalledOnValidThread());
+  invalidation_listener_.RequestDetailedStatus(callback);
 }
 
 void InvalidationNotifier::OnInvalidate(

@@ -11,7 +11,7 @@ Source language support
 =======================
 
 The currently supported languages are C and C++. The PNaCl toolchain is
-based on Clang 3.3, which fully supports C++11 and most of C11. A
+based on recent Clang, which fully supports C++11 and most of C11. A
 detailed status of the language support is available `here
 <http://clang.llvm.org/cxx_status.html>`_.
 
@@ -19,10 +19,19 @@ For information on using languages other than C/C++, see the :ref:`FAQ
 section on other languages <other_languages>`.
 
 As for the standard libraries, the PNaCl toolchain is currently based on
-``libstdc++`` version 4.6.1, and the ``newlib`` standard C library
-(version is available through the macro ``NEWLIB_VERSION``).
-Experimental ``libc++`` support is also included; see
-:ref:`building_cpp_libraries` for more details.
+``libc++``, and the ``newlib`` standard C library. ``libstdc++`` is also
+supported but its use is discouraged; see :ref:`building_cpp_libraries`
+for more details.
+
+Versions
+--------
+
+Version information can be obtained:
+
+* Clang/LLVM: run ``pnacl-clang -v``.
+* ``newlib``: use the ``_NEWLIB_VERSION`` macro.
+* ``libc++``: use the ``_LIBCPP_VERSION`` macro.
+* ``libstdc++``: use the ``_GLIBCXX_VERSION`` macro.
 
 Preprocessor definitions
 ------------------------
@@ -49,7 +58,8 @@ locations to each other as the C11/C++11 standards do.
 
 Non-atomic memory accesses may be reordered, separated, elided or fused
 according to C and C++'s memory model before the pexe is created as well
-as after its creation.
+as after its creation. Accessing atomic memory location through
+non-atomic primitives is `Undefined Behavior <undefined_behavior>`.
 
 As in C11/C++11 some atomic accesses may be implemented with locks on
 certain platforms. The ``ATOMIC_*_LOCK_FREE`` macros will always be
@@ -61,6 +71,8 @@ C++11 header ``<atomic>``.
 
 The PNaCl toolchain supports concurrent memory accesses through legacy
 GCC-style ``__sync_*`` builtins, as well as through C11/C++11 atomic
+primitives and the underlying `GCCMM
+<http://gcc.gnu.org/wiki/Atomic/GCCMM>`_ ``__atomic_*``
 primitives. ``volatile`` memory accesses can also be used, though these
 are discouraged. See `Volatile Memory Accesses`_.
 
@@ -158,6 +170,19 @@ in `Memory Model and Atomics`_.
 PNaCl and NaCl support ``setjmp`` and ``longjmp`` without any
 restrictions beyond C's.
 
+C++ Exception Handling
+======================
+
+PNaCl currently supports C++ exception handling through ``setjmp()`` and
+``longjmp()``, which can be enabled with the ``--pnacl-exceptions=sjlj``
+linker flag. Exceptions are disabled by default so that faster and
+smaller code is generated, and ``throw`` statements are replaced with
+calls to ``abort()``. The usual ``-fno-exceptions`` flag is also
+supported. PNaCl will support full zero-cost exception handling in the
+future.
+
+NaCl supports full zero-cost C++ exception handling.
+
 Inline Assembly
 ===============
 
@@ -172,6 +197,55 @@ prevent reordering of memory accesses to objects which may escape.
 NaCl supports a fairly wide subset of inline assembly through GCC's
 inline assembly syntax, with the restriction that the sandboxing model
 for the target architecture has to be respected.
+
+Undefined Behavior
+==================
+
+The C and C++ languages expose some undefined behavior which is
+discussed in `PNaCl Undefined Behavior <undefined_behavior>`.
+
+Floating-Point
+==============
+
+PNaCl exposes 32-bit and 64-bit floating point operations which are
+mostly IEEE-754 compliant. There are a few caveats:
+
+* Some :ref:`floating-point behavior is currently left as undefined
+  <undefined_behavior_fp>`.
+* The default rounding mode is round-to-nearest and other rounding modes
+  are currently not usable, which isn't IEEE-754 compliant. PNaCl could
+  support switching modes (the 4 modes exposed by C99 ``FLT_ROUNDS``
+  macros).
+* Signaling ``NaN`` never fault.
+* Fast-math optimizations are currently supported before *pexe* creation
+  time. A *pexe* loses all fast-math information when it is
+  created. Fast-math translation could be enabled at a later date,
+  potentially at a perf-function granularity. This wouldn't affect
+  already-existing *pexe*; it would be an opt-in feature.
+
+  * Fused-multiply-add have higher precision and often execute faster;
+    PNaCl currently disallows them in the *pexe* because they aren't
+    supported on all platforms and can't realistically be
+    emulated. PNaCl could (but currently doesn't) only generate them in
+    the backend if fast-math were specified and the hardware supports
+    the operation.
+  * Transcendentals aren't exposed by PNaCl's ABI; they are part of the
+    math library that is included in the *pexe*. PNaCl could, but
+    currently doesn't, use hardware support if fast-math were provided
+    in the *pexe*.
+
+Computed ``goto``
+=================
+
+PNaCl supports computed ``goto``, a non-standard GCC extension to C used
+by some interpreters, by lowering them to ``switch`` statements. The
+resulting use of ``switch`` might not be as fast as the original
+indirect branches. If you are compiling a program that has a
+compile-time option for using computed ``goto``, it's possible that the
+program will run faster with the option turned off (e.g., if the program
+does extra work to take advantage of computed ``goto``).
+
+NaCl supports computed ``goto`` without any transformation.
 
 Future Directions
 =================
@@ -193,30 +267,31 @@ operations which are lock-free on the current platform (``is_lock_free``
 methods). It will rely on the address-free properly discussed in `Memory
 Model for Concurrent Operations`_.
 
-Signal Handling
----------------
+POSIX-style Signal Handling
+---------------------------
 
-Signal handling from user code currently isn't supported by PNaCl. When
-supported, the impact of ``volatile`` and atomics for same-thread signal
-handling will need to be carefully detailed.
+POSIX-style signal handling really consists of two different features:
 
-NaCl supports signal handling.
+* **Hardware exception handling** (synchronous signals): The ability
+  to catch hardware exceptions (such as memory access faults and
+  division by zero) using a signal handler.
 
-Exception Handling
-------------------
+  PNaCl currently doesn't support hardware exception handling.
 
-PNaCl currently doesn't support exception handling. It supports the
-usual ``-fno-exceptions`` flag, and by default it transforms all
-``throw`` statements into ``abort``. We plan to add exception-handling
-support in the very near future, and zero-cost exception handling soon
-thereafter.
+  NaCl supports hardware exception handling via the
+  ``<nacl/nacl_exception.h>`` interface.
 
-NaCl supports exception handling.
+* **Asynchronous interruption of threads** (asynchronous signals): The
+  ability to asynchronously interrupt the execution of a thread,
+  forcing the thread to run a signal handler.
 
-Computed ``goto``
------------------
+  A similar feature is **thread suspension**: The ability to
+  asynchronously suspend and resume a thread and inspect or modify its
+  execution state (such as register state).
 
-PNaCl currently doesn't support computed ``goto``, a non-standard
-extension to C used by some interpreters.
+  Neither PNaCl nor NaCl currently support asynchronous interruption
+  or suspension of threads.
 
-NaCl supports computed ``goto``.
+If PNaCl were to support either of these, the interaction of
+``volatile`` and atomics with same-thread signal handling would need
+to be carefully detailed.

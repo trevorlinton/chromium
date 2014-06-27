@@ -9,6 +9,8 @@
 #include <string>
 
 #include "base/callback.h"
+#include "ui/gfx/insets.h"
+#include "ui/gfx/size.h"
 
 namespace base {
 class ListValue;
@@ -28,9 +30,13 @@ class DevToolsEmbedderMessageDispatcher {
 
     virtual void ActivateWindow() = 0;
     virtual void CloseWindow() = 0;
-    virtual void SetWindowBounds(int x, int y, int width, int height) = 0;
+    virtual void SetContentsInsets(
+        int top, int left, int bottom, int right) = 0;
+    virtual void SetContentsResizingStrategy(
+        const gfx::Insets& insets, const gfx::Size& min_size) = 0;
+    virtual void InspectElementCompleted() = 0;
     virtual void MoveWindow(int x, int y) = 0;
-    virtual void SetDockSide(const std::string& side) = 0;
+    virtual void SetIsDocked(bool is_docked) = 0;
     virtual void OpenInNewTab(const std::string& url) = 0;
     virtual void SaveToFile(const std::string& url,
                             const std::string& content,
@@ -40,26 +46,26 @@ class DevToolsEmbedderMessageDispatcher {
     virtual void RequestFileSystems() = 0;
     virtual void AddFileSystem() = 0;
     virtual void RemoveFileSystem(const std::string& file_system_path) = 0;
+    virtual void UpgradeDraggedFileSystemPermissions(
+        const std::string& file_system_url) = 0;
     virtual void IndexPath(int request_id,
                            const std::string& file_system_path) = 0;
     virtual void StopIndexing(int request_id) = 0;
     virtual void SearchInPath(int request_id,
                               const std::string& file_system_path,
                               const std::string& query) = 0;
+    virtual void ZoomIn() = 0;
+    virtual void ZoomOut() = 0;
+    virtual void ResetZoom() = 0;
   };
 
-  explicit DevToolsEmbedderMessageDispatcher(Delegate* delegate);
+  virtual ~DevToolsEmbedderMessageDispatcher() {}
+  virtual bool Dispatch(const std::string& method,
+                        const base::ListValue* params,
+                        std::string* error) = 0;
 
-  ~DevToolsEmbedderMessageDispatcher();
-
-  std::string Dispatch(const std::string& method, base::ListValue* params);
-
- private:
-  typedef base::Callback<bool(const base::ListValue&)> Handler;
-  void RegisterHandler(const std::string& method, const Handler& handler);
-
-  typedef std::map<std::string, Handler> HandlerMap;
-  HandlerMap handlers_;
+  static DevToolsEmbedderMessageDispatcher* createForDevToolsFrontend(
+      Delegate* delegate);
 };
 
 #endif  // CHROME_BROWSER_DEVTOOLS_DEVTOOLS_EMBEDDER_MESSAGE_DISPATCHER_H_

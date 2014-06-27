@@ -8,6 +8,7 @@
 #include "base/basictypes.h"
 #include "base/time/time.h"
 #include "cc/base/cc_export.h"
+#include "cc/base/swap_promise_monitor.h"
 #include "cc/input/scrollbar.h"
 
 namespace gfx {
@@ -68,7 +69,7 @@ class CC_EXPORT InputHandler {
   // can be scrolled, ScrollOnMainThread if the scroll event should instead be
   // delegated to the main thread, or ScrollIgnored if there is nothing to be
   // scrolled at the given coordinates.
-  virtual ScrollStatus ScrollBegin(gfx::Point viewport_point,
+  virtual ScrollStatus ScrollBegin(const gfx::Point& viewport_point,
                                    ScrollInputType type) = 0;
 
   // Scroll the selected layer starting at the given position. If the scroll
@@ -83,20 +84,19 @@ class CC_EXPORT InputHandler {
   // the root overscroll accumulated within this ScrollBegin() scope is reported
   // to the client.
   // Should only be called if ScrollBegin() returned ScrollStarted.
-  virtual bool ScrollBy(gfx::Point viewport_point,
-                        gfx::Vector2dF scroll_delta) = 0;
+  virtual bool ScrollBy(const gfx::Point& viewport_point,
+                        const gfx::Vector2dF& scroll_delta) = 0;
 
-  virtual bool ScrollVerticallyByPage(
-      gfx::Point viewport_point,
-      ScrollDirection direction) = 0;
+  virtual bool ScrollVerticallyByPage(const gfx::Point& viewport_point,
+                                      ScrollDirection direction) = 0;
 
   // Returns ScrollStarted if a layer was being actively being scrolled,
   // ScrollIgnored if not.
   virtual ScrollStatus FlingScrollBegin() = 0;
 
-  virtual void NotifyCurrentFlingVelocity(gfx::Vector2dF velocity) = 0;
+  virtual void NotifyCurrentFlingVelocity(const gfx::Vector2dF& velocity) = 0;
 
-  virtual void MouseMoveAt(gfx::Point mouse_position) = 0;
+  virtual void MouseMoveAt(const gfx::Point& mouse_position) = 0;
 
   // Stop scrolling the selected layer. Should only be called if ScrollBegin()
   // returned ScrollStarted.
@@ -113,10 +113,11 @@ class CC_EXPORT InputHandler {
   virtual void OnRootLayerDelegatedScrollOffsetChanged() = 0;
 
   virtual void PinchGestureBegin() = 0;
-  virtual void PinchGestureUpdate(float magnify_delta, gfx::Point anchor) = 0;
+  virtual void PinchGestureUpdate(float magnify_delta,
+                                  const gfx::Point& anchor) = 0;
   virtual void PinchGestureEnd() = 0;
 
-  virtual void StartPageScaleAnimation(gfx::Vector2d target_offset,
+  virtual void StartPageScaleAnimation(const gfx::Vector2d& target_offset,
                                        bool anchor_point,
                                        float page_scale,
                                        base::TimeDelta duration) = 0;
@@ -124,10 +125,15 @@ class CC_EXPORT InputHandler {
   // Request another callback to InputHandlerClient::Animate().
   virtual void ScheduleAnimation() = 0;
 
-  virtual bool HaveTouchEventHandlersAt(gfx::Point viewport_point) = 0;
+  virtual bool HaveTouchEventHandlersAt(const gfx::Point& viewport_point) = 0;
 
-  virtual void SetLatencyInfoForInputEvent(
-      const ui::LatencyInfo& latency_info) = 0;
+  // Calling CreateLatencyInfoSwapPromiseMonitor() to get a scoped
+  // LatencyInfoSwapPromiseMonitor. During the life time of the
+  // LatencyInfoSwapPromiseMonitor, if SetNeedsRedraw() or SetNeedsRedrawRect()
+  // is called on LayerTreeHostImpl, the original latency info will be turned
+  // into a LatencyInfoSwapPromise.
+  virtual scoped_ptr<SwapPromiseMonitor> CreateLatencyInfoSwapPromiseMonitor(
+      ui::LatencyInfo* latency) = 0;
 
  protected:
   InputHandler() {}

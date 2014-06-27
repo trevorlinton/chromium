@@ -18,7 +18,9 @@
 #include "testing/platform_test.h"
 #include "ui/base/models/combobox_model.h"
 #include "ui/base/models/simple_menu_model.h"
-#import "ui/base/test/ui_cocoa_test_helper.h"
+#import "ui/gfx/test/ui_cocoa_test_helper.h"
+
+using base::ASCIIToUTF16;
 
 namespace {
 
@@ -78,8 +80,8 @@ TEST_F(AutofillSectionContainerTest, ModelsPopulateComboboxes) {
   using namespace testing;
 
   const DetailInput kTestInputs[] = {
-    { 2, CREDIT_CARD_EXP_MONTH },
-    { 3, CREDIT_CARD_EXP_4_DIGIT_YEAR }
+    { DetailInput::SHORT, CREDIT_CARD_EXP_MONTH },
+    { DetailInput::SHORT, CREDIT_CARD_EXP_4_DIGIT_YEAR },
   };
 
   DetailInputs inputs;
@@ -117,8 +119,8 @@ TEST_F(AutofillSectionContainerTest, OutputMatchesDefinition) {
   using namespace testing;
 
   const DetailInput kTestInputs[] = {
-    { 1, EMAIL_ADDRESS, IDS_AUTOFILL_DIALOG_PLACEHOLDER_EMAIL },
-    { 2, CREDIT_CARD_EXP_MONTH }
+    { DetailInput::LONG, EMAIL_ADDRESS },
+    { DetailInput::SHORT, CREDIT_CARD_EXP_MONTH },
   };
   autofill::MonthComboboxModel comboModel;
   DetailInputs inputs;
@@ -139,12 +141,12 @@ TEST_F(AutofillSectionContainerTest, OutputMatchesDefinition) {
   [popup selectItemWithTitle:@"02"];
   [[container_ getField:EMAIL_ADDRESS] setStringValue:@"magic@example.org"];
 
-  autofill::DetailOutputMap output;
+  autofill::FieldValueMap output;
   [container_ getInputs:&output];
 
   ASSERT_EQ(inputs.size(), output.size());
-  EXPECT_EQ(ASCIIToUTF16("magic@example.org"), output[&inputs[0]]);
-  EXPECT_EQ(ASCIIToUTF16("02"), output[&inputs[1]]);
+  EXPECT_EQ(ASCIIToUTF16("magic@example.org"), output[inputs[0].type]);
+  EXPECT_EQ(ASCIIToUTF16("02"), output[inputs[1].type]);
 }
 
 TEST_F(AutofillSectionContainerTest, SuggestionsPopulatedByController) {
@@ -180,8 +182,8 @@ TEST_F(AutofillSectionContainerTest, FieldsAreInitiallyValid) {
   using namespace testing;
 
   const DetailInput kTestInputs[] = {
-    { 1, EMAIL_ADDRESS, IDS_AUTOFILL_DIALOG_PLACEHOLDER_EMAIL },
-    { 2, CREDIT_CARD_EXP_MONTH }
+    { DetailInput::LONG, EMAIL_ADDRESS },
+    { DetailInput::SHORT, CREDIT_CARD_EXP_MONTH },
   };
 
   MonthComboboxModel comboModel;
@@ -208,8 +210,8 @@ TEST_F(AutofillSectionContainerTest, ControllerInformsValidity) {
   using namespace testing;
 
   const DetailInput kTestInputs[] = {
-    { 1, EMAIL_ADDRESS, IDS_AUTOFILL_DIALOG_PLACEHOLDER_EMAIL },
-    { 2, CREDIT_CARD_EXP_MONTH }
+    { DetailInput::LONG, EMAIL_ADDRESS },
+    { DetailInput::SHORT, CREDIT_CARD_EXP_MONTH },
   };
 
   MonthComboboxModel comboModel;
@@ -217,7 +219,6 @@ TEST_F(AutofillSectionContainerTest, ControllerInformsValidity) {
   inputs.push_back(kTestInputs[0]);
   inputs.push_back(kTestInputs[1]);
 
-  DetailOutputMap output;
   ValidityMessages validity, validity2;
 
   validity.Set(EMAIL_ADDRESS,
@@ -232,6 +233,7 @@ TEST_F(AutofillSectionContainerTest, ControllerInformsValidity) {
       .WillRepeatedly(Return(&comboModel));
 
   ResetContainer();
+  autofill::FieldValueMap output;
   [container_ getInputs:&output];
   EXPECT_CALL(delegate_, InputsAreValid(section_, output))
       .WillOnce(Return(validity))

@@ -28,7 +28,7 @@ class FakeOutputSurface : public OutputSurface {
   }
 
   static scoped_ptr<FakeOutputSurface> Create3d(
-      scoped_refptr<TestContextProvider> context_provider) {
+      scoped_refptr<ContextProvider> context_provider) {
     return make_scoped_ptr(new FakeOutputSurface(context_provider, false));
   }
 
@@ -124,7 +124,7 @@ class FakeOutputSurface : public OutputSurface {
   }
 
   void SetMemoryPolicyToSetAtBind(
-      scoped_ptr<cc::ManagedMemoryPolicy> memory_policy_to_set_at_bind);
+      scoped_ptr<ManagedMemoryPolicy> memory_policy_to_set_at_bind);
 
  protected:
   FakeOutputSurface(
@@ -150,12 +150,8 @@ class FakeOutputSurface : public OutputSurface {
   bool has_external_stencil_test_;
   TransferableResourceArray resources_held_by_parent_;
   base::WeakPtrFactory<FakeOutputSurface> fake_weak_ptr_factory_;
-  scoped_ptr<cc::ManagedMemoryPolicy> memory_policy_to_set_at_bind_;
+  scoped_ptr<ManagedMemoryPolicy> memory_policy_to_set_at_bind_;
 };
-
-static inline scoped_ptr<OutputSurface> CreateFakeOutputSurface() {
-  return FakeOutputSurface::Create3d().PassAs<OutputSurface>();
-}
 
 }  // namespace cc
 

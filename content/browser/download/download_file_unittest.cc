@@ -195,7 +195,7 @@ class DownloadFileTest : public testing::Test {
   void VerifyStreamAndSize() {
     ::testing::Mock::VerifyAndClearExpectations(input_stream_);
     int64 size;
-    EXPECT_TRUE(file_util::GetFileSize(download_file_->FullPath(), &size));
+    EXPECT_TRUE(base::GetFileSize(download_file_->FullPath(), &size));
     EXPECT_EQ(expected_data_.size(), static_cast<size_t>(size));
   }
 
@@ -414,7 +414,7 @@ TEST_F(DownloadFileTest, RenameFileFinal) {
   ASSERT_FALSE(base::PathExists(path_5));
   static const char file_data[] = "xyzzy";
   ASSERT_EQ(static_cast<int>(sizeof(file_data) - 1),
-            file_util::WriteFile(path_5, file_data, sizeof(file_data) - 1));
+            base::WriteFile(path_5, file_data, sizeof(file_data) - 1));
   ASSERT_TRUE(base::PathExists(path_5));
   EXPECT_TRUE(base::ReadFileToString(path_5, &file_contents));
   EXPECT_EQ(std::string(file_data), file_contents);
@@ -442,7 +442,7 @@ TEST_F(DownloadFileTest, RenameUniquifies) {
   ASSERT_FALSE(base::PathExists(path_1));
   static const char file_data[] = "xyzzy";
   ASSERT_EQ(static_cast<int>(sizeof(file_data)),
-            file_util::WriteFile(path_1, file_data, sizeof(file_data)));
+            base::WriteFile(path_1, file_data, sizeof(file_data)));
   ASSERT_TRUE(base::PathExists(path_1));
 
   EXPECT_EQ(DOWNLOAD_INTERRUPT_REASON_NONE, RenameAndUniquify(path_1, NULL));
@@ -461,7 +461,7 @@ TEST_F(DownloadFileTest, RenameError) {
   // Create a subdirectory.
   base::FilePath tempdir(
       initial_path.DirName().Append(FILE_PATH_LITERAL("tempdir")));
-  ASSERT_TRUE(file_util::CreateDirectory(tempdir));
+  ASSERT_TRUE(base::CreateDirectory(tempdir));
   base::FilePath target_path(tempdir.Append(initial_path.BaseName()));
 
   // Targets

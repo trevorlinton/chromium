@@ -157,7 +157,7 @@ bool BeingDebugged() {
   char buf[1024];
 
   ssize_t num_read = HANDLE_EINTR(read(status_fd, buf, sizeof(buf)));
-  if (HANDLE_EINTR(close(status_fd)) < 0)
+  if (IGNORE_EINTR(close(status_fd)) < 0)
     return false;
 
   if (num_read <= 0)
@@ -199,8 +199,10 @@ bool BeingDebugged() {
 //        SIGABRT
 // Mac: Always send SIGTRAP.
 
-#if defined(ARCH_CPU_ARM_FAMILY)
+#if defined(ARCH_CPU_ARMEL)
 #define DEBUG_BREAK_ASM() asm("bkpt 0")
+#elif defined(ARCH_CPU_ARM64)
+#define DEBUG_BREAK_ASM() asm("brk 0")
 #elif defined(ARCH_CPU_MIPS_FAMILY)
 #define DEBUG_BREAK_ASM() asm("break 2")
 #elif defined(ARCH_CPU_X86_FAMILY)

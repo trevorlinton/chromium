@@ -70,7 +70,6 @@ class SyncableFileSystemOperation
                          const StatusCallback& callback) OVERRIDE;
   virtual void OpenFile(const fileapi::FileSystemURL& url,
                         int file_flags,
-                        base::ProcessHandle peer_handle,
                         const OpenFileCallback& callback) OVERRIDE;
   virtual void Cancel(const StatusCallback& cancel_callback) OVERRIDE;
   virtual void CreateSnapshotFile(
@@ -92,7 +91,7 @@ class SyncableFileSystemOperation
                              const fileapi::FileSystemURL& dest_url,
                              CopyOrMoveOption option,
                              const StatusCallback& callback) OVERRIDE;
-  virtual base::PlatformFileError SyncGetPlatformPath(
+  virtual base::File::Error SyncGetPlatformPath(
       const fileapi::FileSystemURL& url,
       base::FilePath* platform_path) OVERRIDE;
 
@@ -108,9 +107,9 @@ class SyncableFileSystemOperation
       fileapi::FileSystemContext* file_system_context,
       scoped_ptr<fileapi::FileSystemOperationContext> operation_context);
 
-  void DidFinish(base::PlatformFileError status);
+  void DidFinish(base::File::Error status);
   void DidWrite(const WriteCallback& callback,
-                base::PlatformFileError result,
+                base::File::Error result,
                 int64 bytes,
                 bool complete);
 

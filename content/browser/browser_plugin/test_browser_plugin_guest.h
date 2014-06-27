@@ -31,12 +31,13 @@ class TestBrowserPluginGuest : public BrowserPluginGuest {
   virtual void RenderProcessGone(base::TerminationStatus status) OVERRIDE;
   virtual void OnHandleInputEvent(int instance_id,
                                   const gfx::Rect& guest_window_rect,
-                                  const WebKit::WebInputEvent* event) OVERRIDE;
+                                  const blink::WebInputEvent* event) OVERRIDE;
   virtual void OnSetFocus(int instance_id, bool focused) OVERRIDE;
   virtual void OnTakeFocus(bool reverse) OVERRIDE;
   virtual void SetDamageBuffer(
       const BrowserPluginHostMsg_ResizeGuest_Params& params) OVERRIDE;
   virtual void DidStopLoading(RenderViewHost* render_view_host) OVERRIDE;
+  virtual void OnImeCancelComposition() OVERRIDE;
 
   // Overridden from WebContentsObserver.
   virtual void WasHidden() OVERRIDE;
@@ -64,6 +65,16 @@ class TestBrowserPluginGuest : public BrowserPluginGuest {
   void WaitForLoadStop();
   // Waits until UpdateRect with a particular |view_size| is observed.
   void WaitForViewSize(const gfx::Size& view_size);
+  // Waits until IME cancellation is observed.
+  void WaitForImeCancel();
+
+  void set_guest_hang_timeout(const base::TimeDelta& timeout) {
+    guest_hang_timeout_ = timeout;
+  }
+
+  ui::TextInputType last_text_input_type() {
+    return last_text_input_type_;
+  }
 
  private:
   // Overridden methods from BrowserPluginGuest to intercept in test objects.
@@ -79,6 +90,7 @@ class TestBrowserPluginGuest : public BrowserPluginGuest {
   bool set_damage_buffer_observed_;
   bool input_observed_;
   bool load_stop_observed_;
+  bool ime_cancel_observed_;
   gfx::Size last_view_size_observed_;
   gfx::Size expected_auto_view_size_;
 
@@ -97,6 +109,7 @@ class TestBrowserPluginGuest : public BrowserPluginGuest {
   scoped_refptr<MessageLoopRunner> input_message_loop_runner_;
   scoped_refptr<MessageLoopRunner> load_stop_message_loop_runner_;
   scoped_refptr<MessageLoopRunner> auto_view_size_message_loop_runner_;
+  scoped_refptr<MessageLoopRunner> ime_cancel_message_loop_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(TestBrowserPluginGuest);
 };

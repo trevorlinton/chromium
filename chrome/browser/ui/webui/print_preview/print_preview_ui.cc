@@ -163,7 +163,7 @@ content::WebUIDataSource* CreatePrintPreviewUISource() {
                              IDS_PRINT_PREVIEW_NATIVE_DIALOG);
   source->AddLocalizedString("previewFailed", IDS_PRINT_PREVIEW_FAILED);
   source->AddLocalizedString("invalidPrinterSettings",
-                             IDS_PRINT_PREVIEW_INVALID_PRINTER_SETTINGS);
+                             IDS_PRINT_INVALID_PRINTER_SETTINGS);
   source->AddLocalizedString("printButton", IDS_PRINT_PREVIEW_PRINT_BUTTON);
   source->AddLocalizedString("saveButton", IDS_PRINT_PREVIEW_SAVE_BUTTON);
   source->AddLocalizedString("cancelButton", IDS_PRINT_PREVIEW_CANCEL_BUTTON);
@@ -209,7 +209,7 @@ content::WebUIDataSource* CreatePrintPreviewUISource() {
                              IDS_PRINT_PREVIEW_PAGE_LABEL_SINGULAR);
   source->AddLocalizedString("printPreviewPageLabelPlural",
                              IDS_PRINT_PREVIEW_PAGE_LABEL_PLURAL);
-  const string16 shortcut_text(UTF8ToUTF16(kAdvancedPrintShortcut));
+  const base::string16 shortcut_text(base::UTF8ToUTF16(kAdvancedPrintShortcut));
 #if defined(OS_CHROMEOS)
   source->AddString(
       "systemDialogOption",
@@ -320,6 +320,10 @@ content::WebUIDataSource* CreatePrintPreviewUISource() {
   source->AddLocalizedString(
       "noDestsPromoNotNowButtonLabel",
       IDS_PRINT_PREVIEW_NO_DESTS_PROMO_NOT_NOW_BUTTON_LABEL);
+  source->AddLocalizedString("couldNotPrint",
+                             IDS_PRINT_PREVIEW_COULD_NOT_PRINT);
+  source->AddLocalizedString("registerPromoButtonText",
+                             IDS_PRINT_PREVIEW_REGISTER_PROMO_BUTTON_TEXT);
 
   source->SetJsonPath("strings.js");
   source->AddResourcePath("print_preview.js", IDR_PRINT_PREVIEW_JS);
@@ -396,7 +400,7 @@ int PrintPreviewUI::GetAvailableDraftPageCount() {
 }
 
 void PrintPreviewUI::SetInitiatorTitle(
-    const string16& job_title) {
+    const base::string16& job_title) {
   initiator_title_ = job_title;
 }
 
@@ -516,13 +520,6 @@ void PrintPreviewUI::OnDidPreviewPage(int page_number,
     web_ui()->CallJavascriptFunction("autoCancelForTesting");
 }
 
-void PrintPreviewUI::OnReusePreviewData(int preview_request_id) {
-  base::FundamentalValue ui_identifier(id_);
-  base::FundamentalValue ui_preview_request_id(preview_request_id);
-  web_ui()->CallJavascriptFunction("reloadPreviewPages", ui_identifier,
-                                   ui_preview_request_id);
-}
-
 void PrintPreviewUI::OnPreviewDataIsAvailable(int expected_pages_count,
                                               int preview_request_id) {
   VLOG(1) << "Print preview request finished with "
@@ -533,6 +530,9 @@ void PrintPreviewUI::OnPreviewDataIsAvailable(int expected_pages_count,
                         base::TimeTicks::Now() - initial_preview_start_time_);
     UMA_HISTOGRAM_COUNTS("PrintPreview.PageCount.Initial",
                          expected_pages_count);
+    UMA_HISTOGRAM_COUNTS(
+        "PrintPreview.RegeneratePreviewRequest.BeforeFirstData",
+        handler_->regenerate_preview_request_count());
     initial_preview_start_time_ = base::TimeTicks();
   }
   base::FundamentalValue ui_identifier(id_);

@@ -10,19 +10,20 @@
 #include "chrome/browser/extensions/extension_action.h"
 #include "chrome/browser/extensions/extension_action_manager.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
-#include "chrome/browser/extensions/management_policy.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/manifest_url_handler.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/management_policy.h"
+#include "extensions/common/extension.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -112,14 +113,11 @@ void ExtensionContextMenuModel::ExecuteCommand(int command_id,
     }
     case CONFIGURE:
       DCHECK(!extensions::ManifestURL::GetOptionsPage(extension).is_empty());
-      ExtensionTabUtil::OpenOptionsPage(extension, browser_);
+      extensions::ExtensionTabUtil::OpenOptionsPage(extension, browser_);
       break;
     case HIDE: {
       extensions::ExtensionActionAPI::SetBrowserActionVisibility(
-          extensions::ExtensionSystem::Get(profile_)->
-              extension_service()->extension_prefs(),
-          extension->id(),
-          false);
+          extensions::ExtensionPrefs::Get(profile_), extension->id(), false);
       break;
     }
     case UNINSTALL: {
@@ -169,8 +167,8 @@ void ExtensionContextMenuModel::InitMenu(const Extension* extension) {
   std::string extension_name = extension->name();
   // Ampersands need to be escaped to avoid being treated like
   // mnemonics in the menu.
-  ReplaceChars(extension_name, "&", "&&", &extension_name);
-  AddItem(NAME, UTF8ToUTF16(extension_name));
+  base::ReplaceChars(extension_name, "&", "&&", &extension_name);
+  AddItem(NAME, base::UTF8ToUTF16(extension_name));
   AddSeparator(ui::NORMAL_SEPARATOR);
   AddItemWithStringId(CONFIGURE, IDS_EXTENSIONS_OPTIONS_MENU_ITEM);
   AddItem(UNINSTALL, l10n_util::GetStringUTF16(IDS_EXTENSIONS_UNINSTALL));

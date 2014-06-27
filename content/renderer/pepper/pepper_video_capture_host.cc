@@ -10,6 +10,7 @@
 #include "content/renderer/pepper/pepper_plugin_instance_impl.h"
 #include "content/renderer/pepper/renderer_ppapi_host_impl.h"
 #include "content/renderer/render_view_impl.h"
+#include "media/base/limits.h"
 #include "ppapi/host/dispatch_host_message.h"
 #include "ppapi/host/ppapi_host.h"
 #include "ppapi/proxy/host_dispatcher.h"
@@ -17,9 +18,6 @@
 #include "ppapi/shared_impl/host_resource.h"
 #include "ppapi/thunk/enter.h"
 #include "ppapi/thunk/ppb_buffer_api.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElement.h"
-#include "third_party/WebKit/public/web/WebPluginContainer.h"
 
 using ppapi::HostResource;
 using ppapi::TrackedCallback;
@@ -46,7 +44,8 @@ PepperVideoCaptureHost::PepperVideoCaptureHost(RendererPpapiHostImpl* host,
           this,
           PepperMediaDeviceManager::GetForRenderView(
               host->GetRenderViewForInstance(pp_instance())),
-          PP_DEVICETYPE_DEV_VIDEOCAPTURE) {
+          PP_DEVICETYPE_DEV_VIDEOCAPTURE,
+          host->GetDocumentURL(instance)) {
 }
 
 PepperVideoCaptureHost::~PepperVideoCaptureHost() {
@@ -275,9 +274,8 @@ int32_t PepperVideoCaptureHost::OnOpen(
 
   SetRequestedInfo(requested_info, buffer_count);
 
-  PepperPluginInstance* instance =
-      renderer_ppapi_host_->GetPluginInstance(pp_instance());
-  if (!instance)
+  GURL document_url = renderer_ppapi_host_->GetDocumentURL(pp_instance());
+  if (!document_url.is_valid())
     return PP_ERROR_FAILED;
 
   RenderViewImpl* render_view = static_cast<RenderViewImpl*>(
@@ -285,7 +283,7 @@ int32_t PepperVideoCaptureHost::OnOpen(
 
   platform_video_capture_ = new PepperPlatformVideoCapture(
       render_view->AsWeakPtr(), device_id,
-      instance->GetContainer()->element().document().url(), this);
+      document_url, this);
 
   open_reply_context_ = context->MakeReplyMessageContext();
 
@@ -367,12 +365,16 @@ void PepperVideoCaptureHost::SetRequestedInfo(
     uint32_t buffer_count) {
   // Clamp the buffer count to between 1 and |kMaxBuffers|.
   buffer_count_hint_ = std::min(std::max(buffer_count, 1U), kMaxBuffers);
+  // Clamp the frame rate to between 1 and |kMaxFramesPerSecond - 1|.
+  int frames_per_second =
+      std::min(std::max(device_info.frames_per_second, 1U),
+               static_cast<uint32_t>(media::limits::kMaxFramesPerSecond - 1));
 
-  video_capture_params_.requested_format =
-      media::VideoCaptureFormat(device_info.width,
-                                device_info.height,
-                                device_info.frames_per_second,
-                                media::ConstantResolutionVideoCaptureDevice);
+  video_capture_params_.requested_format = media::VideoCaptureFormat(
+      gfx::Size(device_info.width, device_info.height),
+      frames_per_second,
+      media::PIXEL_FORMAT_I420);
+  video_capture_params_.allow_resolution_change = false;
 }
 
 void PepperVideoCaptureHost::DetachPlatformVideoCapture() {

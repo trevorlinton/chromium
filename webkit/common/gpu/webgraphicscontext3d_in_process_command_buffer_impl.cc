@@ -22,9 +22,9 @@
 #include "gpu/command_buffer/client/gl_in_process_context.h"
 #include "gpu/command_buffer/client/gles2_implementation.h"
 #include "gpu/command_buffer/client/gles2_lib.h"
+#include "gpu/skia_bindings/gl_bindings_skia_cmd_buffer.h"
 #include "ui/gfx/size.h"
-#include "ui/gl/gl_surface.h"
-#include "webkit/common/gpu/gl_bindings_skia_cmd_buffer.h"
+#include "ui/gl/gl_implementation.h"
 
 using gpu::gles2::GLES2Implementation;
 using gpu::GLInProcessContext;
@@ -72,45 +72,52 @@ static base::LazyInstance<GLES2Initializer> g_gles2_initializer =
 // static
 scoped_ptr<WebGraphicsContext3DInProcessCommandBufferImpl>
 WebGraphicsContext3DInProcessCommandBufferImpl::CreateViewContext(
-    const WebKit::WebGraphicsContext3D::Attributes& attributes,
+    const blink::WebGraphicsContext3D::Attributes& attributes,
+    bool lose_context_when_out_of_memory,
     gfx::AcceleratedWidget window) {
-  scoped_ptr<WebGraphicsContext3DInProcessCommandBufferImpl> context;
-  if (gfx::GLSurface::InitializeOneOff()) {
-    context.reset(new WebGraphicsContext3DInProcessCommandBufferImpl(
-      scoped_ptr< ::gpu::GLInProcessContext>(), attributes, false, window));
-  }
-  return context.Pass();
+  DCHECK_NE(gfx::GetGLImplementation(), gfx::kGLImplementationNone);
+  bool is_offscreen = false;
+  return make_scoped_ptr(new WebGraphicsContext3DInProcessCommandBufferImpl(
+      scoped_ptr< ::gpu::GLInProcessContext>(),
+      attributes,
+      lose_context_when_out_of_memory,
+      is_offscreen,
+      window));
 }
 
 // static
 scoped_ptr<WebGraphicsContext3DInProcessCommandBufferImpl>
 WebGraphicsContext3DInProcessCommandBufferImpl::CreateOffscreenContext(
-    const WebKit::WebGraphicsContext3D::Attributes& attributes) {
+    const blink::WebGraphicsContext3D::Attributes& attributes,
+    bool lose_context_when_out_of_memory) {
+  bool is_offscreen = true;
   return make_scoped_ptr(new WebGraphicsContext3DInProcessCommandBufferImpl(
-                             scoped_ptr< ::gpu::GLInProcessContext>(),
-                             attributes,
-                             true,
-                             gfx::kNullAcceleratedWidget))
-      .Pass();
+      scoped_ptr< ::gpu::GLInProcessContext>(),
+      attributes,
+      lose_context_when_out_of_memory,
+      is_offscreen,
+      gfx::kNullAcceleratedWidget));
 }
 
 scoped_ptr<WebGraphicsContext3DInProcessCommandBufferImpl>
 WebGraphicsContext3DInProcessCommandBufferImpl::WrapContext(
     scoped_ptr< ::gpu::GLInProcessContext> context,
-    const WebKit::WebGraphicsContext3D::Attributes& attributes) {
-  return make_scoped_ptr(
-      new WebGraphicsContext3DInProcessCommandBufferImpl(
-          context.Pass(),
-          attributes,
-          true /* is_offscreen. Not used. */,
-          gfx::kNullAcceleratedWidget /* window. Not used. */))
-      .Pass();
+    const blink::WebGraphicsContext3D::Attributes& attributes) {
+  bool lose_context_when_out_of_memory = false;  // Not used.
+  bool is_offscreen = true;                      // Not used.
+  return make_scoped_ptr(new WebGraphicsContext3DInProcessCommandBufferImpl(
+      context.Pass(),
+      attributes,
+      lose_context_when_out_of_memory,
+      is_offscreen,
+      gfx::kNullAcceleratedWidget /* window. Not used. */));
 }
 
 WebGraphicsContext3DInProcessCommandBufferImpl::
     WebGraphicsContext3DInProcessCommandBufferImpl(
         scoped_ptr< ::gpu::GLInProcessContext> context,
-        const WebKit::WebGraphicsContext3D::Attributes& attributes,
+        const blink::WebGraphicsContext3D::Attributes& attributes,
+        bool lose_context_when_out_of_memory,
         bool is_offscreen,
         gfx::AcceleratedWidget window)
     : is_offscreen_(is_offscreen),
@@ -122,8 +129,8 @@ WebGraphicsContext3DInProcessCommandBufferImpl::
       context_lost_callback_(NULL),
       context_lost_reason_(GL_NO_ERROR),
       attributes_(attributes),
-      flush_id_(0) {
-}
+      lose_context_when_out_of_memory_(lose_context_when_out_of_memory),
+      flush_id_(0) {}
 
 WebGraphicsContext3DInProcessCommandBufferImpl::
     ~WebGraphicsContext3DInProcessCommandBufferImpl() {
@@ -131,13 +138,15 @@ WebGraphicsContext3DInProcessCommandBufferImpl::
 
 // static
 void WebGraphicsContext3DInProcessCommandBufferImpl::ConvertAttributes(
-    const WebKit::WebGraphicsContext3D::Attributes& attributes,
+    const blink::WebGraphicsContext3D::Attributes& attributes,
     ::gpu::GLInProcessContextAttribs* output_attribs) {
   output_attribs->alpha_size = attributes.alpha ? 8 : 0;
   output_attribs->depth_size = attributes.depth ? 24 : 0;
   output_attribs->stencil_size = attributes.stencil ? 8 : 0;
   output_attribs->samples = attributes.antialias ? 4 : 0;
   output_attribs->sample_buffers = attributes.antialias ? 1 : 0;
+  output_attribs->fail_if_major_perf_caveat =
+      attributes.failIfMajorPerformanceCaveat ? 1 : 0;
 }
 
 bool WebGraphicsContext3DInProcessCommandBufferImpl::MaybeInitializeGL() {
@@ -159,7 +168,9 @@ bool WebGraphicsContext3DInProcessCommandBufferImpl::MaybeInitializeGL() {
     gfx::GpuPreference gpu_preference = gfx::PreferDiscreteGpu;
 
     ::gpu::GLInProcessContextAttribs attrib_struct;
-    ConvertAttributes(attributes_, &attrib_struct),
+    ConvertAttributes(attributes_, &attrib_struct);
+    attrib_struct.lose_context_when_out_of_memory =
+        lose_context_when_out_of_memory_;
 
     context_.reset(GLInProcessContext::CreateContext(
         is_offscreen_,
@@ -332,15 +343,12 @@ void WebGraphicsContext3DInProcessCommandBufferImpl::name(              \
 }
 
 void WebGraphicsContext3DInProcessCommandBufferImpl::prepareTexture() {
-  if (!isContextLost()) {
-    gl_->SwapBuffers();
-    gl_->ShallowFlushCHROMIUM();
-  }
+  NOTREACHED();
 }
 
 void WebGraphicsContext3DInProcessCommandBufferImpl::postSubBufferCHROMIUM(
     int x, int y, int width, int height) {
-  gl_->PostSubBufferCHROMIUM(x, y, width, height);
+  NOTREACHED();
 }
 
 DELEGATE_TO_GL_3(reshapeWithScaleFactor, ResizeCHROMIUM, int, int, float)
@@ -399,30 +407,15 @@ void WebGraphicsContext3DInProcessCommandBufferImpl::discardFramebufferEXT(
 }
 
 void WebGraphicsContext3DInProcessCommandBufferImpl::
-    discardBackbufferCHROMIUM() {
-}
-
-void WebGraphicsContext3DInProcessCommandBufferImpl::
-    ensureBackbufferCHROMIUM() {
-}
-
-void WebGraphicsContext3DInProcessCommandBufferImpl::
     copyTextureToParentTextureCHROMIUM(WebGLId texture, WebGLId parentTexture) {
   NOTIMPLEMENTED();
 }
 
-void WebGraphicsContext3DInProcessCommandBufferImpl::
-    rateLimitOffscreenContextCHROMIUM() {
-  // TODO(gmam): See if we can comment this in.
-  // ClearContext();
-  gl_->RateLimitOffscreenContextCHROMIUM();
-}
-
-WebKit::WebString WebGraphicsContext3DInProcessCommandBufferImpl::
+blink::WebString WebGraphicsContext3DInProcessCommandBufferImpl::
     getRequestableExtensionsCHROMIUM() {
   // TODO(gmam): See if we can comment this in.
   // ClearContext();
-  return WebKit::WebString::fromUTF8(
+  return blink::WebString::fromUTF8(
       gl_->GetRequestableExtensionsCHROMIUM());
 }
 
@@ -438,7 +431,7 @@ void WebGraphicsContext3DInProcessCommandBufferImpl::blitFramebufferCHROMIUM(
     WGC3Dint dstX0, WGC3Dint dstY0, WGC3Dint dstX1, WGC3Dint dstY1,
     WGC3Dbitfield mask, WGC3Denum filter) {
   ClearContext();
-  gl_->BlitFramebufferEXT(
+  gl_->BlitFramebufferCHROMIUM(
       srcX0, srcY0, srcX1, srcY1,
       dstX0, dstY0, dstX1, dstY1,
       mask, filter);
@@ -449,7 +442,7 @@ void WebGraphicsContext3DInProcessCommandBufferImpl::
         WGC3Denum target, WGC3Dsizei samples, WGC3Denum internalformat,
         WGC3Dsizei width, WGC3Dsizei height) {
   ClearContext();
-  gl_->RenderbufferStorageMultisampleEXT(
+  gl_->RenderbufferStorageMultisampleCHROMIUM(
       target, samples, internalformat, width, height);
 }
 
@@ -603,7 +596,7 @@ bool WebGraphicsContext3DInProcessCommandBufferImpl::getActiveAttrib(
   if (size < 0) {
     return false;
   }
-  info.name = WebKit::WebString::fromUTF8(name.get(), length);
+  info.name = blink::WebString::fromUTF8(name.get(), length);
   info.type = type;
   info.size = size;
   return true;
@@ -630,7 +623,7 @@ bool WebGraphicsContext3DInProcessCommandBufferImpl::getActiveUniform(
   if (size < 0) {
     return false;
   }
-  info.name = WebKit::WebString::fromUTF8(name.get(), length);
+  info.name = blink::WebString::fromUTF8(name.get(), length);
   info.type = type;
   info.size = size;
   return true;
@@ -647,7 +640,7 @@ DELEGATE_TO_GL_2(getBooleanv, GetBooleanv, WGC3Denum, WGC3Dboolean*)
 DELEGATE_TO_GL_3(getBufferParameteriv, GetBufferParameteriv,
                  WGC3Denum, WGC3Denum, WGC3Dint*)
 
-WebKit::WebGraphicsContext3D::Attributes
+blink::WebGraphicsContext3D::Attributes
 WebGraphicsContext3DInProcessCommandBufferImpl::getContextAttributes() {
   return attributes_;
 }
@@ -678,22 +671,22 @@ DELEGATE_TO_GL_2(getIntegerv, GetIntegerv, WGC3Denum, WGC3Dint*)
 
 DELEGATE_TO_GL_3(getProgramiv, GetProgramiv, WebGLId, WGC3Denum, WGC3Dint*)
 
-WebKit::WebString WebGraphicsContext3DInProcessCommandBufferImpl::
+blink::WebString WebGraphicsContext3DInProcessCommandBufferImpl::
     getProgramInfoLog(WebGLId program) {
   ClearContext();
   GLint logLength = 0;
   gl_->GetProgramiv(program, GL_INFO_LOG_LENGTH, &logLength);
   if (!logLength)
-    return WebKit::WebString();
+    return blink::WebString();
   scoped_ptr<GLchar[]> log(new GLchar[logLength]);
   if (!log)
-    return WebKit::WebString();
+    return blink::WebString();
   GLsizei returnedLogLength = 0;
   gl_->GetProgramInfoLog(
       program, logLength, &returnedLogLength, log.get());
   DCHECK_EQ(logLength, returnedLogLength + 1);
-  WebKit::WebString res =
-      WebKit::WebString::fromUTF8(log.get(), returnedLogLength);
+  blink::WebString res =
+      blink::WebString::fromUTF8(log.get(), returnedLogLength);
   return res;
 }
 
@@ -702,75 +695,75 @@ DELEGATE_TO_GL_3(getRenderbufferParameteriv, GetRenderbufferParameteriv,
 
 DELEGATE_TO_GL_3(getShaderiv, GetShaderiv, WebGLId, WGC3Denum, WGC3Dint*)
 
-WebKit::WebString WebGraphicsContext3DInProcessCommandBufferImpl::
+blink::WebString WebGraphicsContext3DInProcessCommandBufferImpl::
     getShaderInfoLog(WebGLId shader) {
   ClearContext();
   GLint logLength = 0;
   gl_->GetShaderiv(shader, GL_INFO_LOG_LENGTH, &logLength);
   if (!logLength)
-    return WebKit::WebString();
+    return blink::WebString();
   scoped_ptr<GLchar[]> log(new GLchar[logLength]);
   if (!log)
-    return WebKit::WebString();
+    return blink::WebString();
   GLsizei returnedLogLength = 0;
   gl_->GetShaderInfoLog(
       shader, logLength, &returnedLogLength, log.get());
   DCHECK_EQ(logLength, returnedLogLength + 1);
-  WebKit::WebString res =
-      WebKit::WebString::fromUTF8(log.get(), returnedLogLength);
+  blink::WebString res =
+      blink::WebString::fromUTF8(log.get(), returnedLogLength);
   return res;
 }
 
 DELEGATE_TO_GL_4(getShaderPrecisionFormat, GetShaderPrecisionFormat,
                  WGC3Denum, WGC3Denum, WGC3Dint*, WGC3Dint*)
 
-WebKit::WebString WebGraphicsContext3DInProcessCommandBufferImpl::
+blink::WebString WebGraphicsContext3DInProcessCommandBufferImpl::
     getShaderSource(WebGLId shader) {
   ClearContext();
   GLint logLength = 0;
   gl_->GetShaderiv(shader, GL_SHADER_SOURCE_LENGTH, &logLength);
   if (!logLength)
-    return WebKit::WebString();
+    return blink::WebString();
   scoped_ptr<GLchar[]> log(new GLchar[logLength]);
   if (!log)
-    return WebKit::WebString();
+    return blink::WebString();
   GLsizei returnedLogLength = 0;
   gl_->GetShaderSource(
       shader, logLength, &returnedLogLength, log.get());
   if (!returnedLogLength)
-    return WebKit::WebString();
+    return blink::WebString();
   DCHECK_EQ(logLength, returnedLogLength + 1);
-  WebKit::WebString res =
-      WebKit::WebString::fromUTF8(log.get(), returnedLogLength);
+  blink::WebString res =
+      blink::WebString::fromUTF8(log.get(), returnedLogLength);
   return res;
 }
 
-WebKit::WebString WebGraphicsContext3DInProcessCommandBufferImpl::
+blink::WebString WebGraphicsContext3DInProcessCommandBufferImpl::
     getTranslatedShaderSourceANGLE(WebGLId shader) {
   ClearContext();
   GLint logLength = 0;
   gl_->GetShaderiv(
       shader, GL_TRANSLATED_SHADER_SOURCE_LENGTH_ANGLE, &logLength);
   if (!logLength)
-    return WebKit::WebString();
+    return blink::WebString();
   scoped_ptr<GLchar[]> log(new GLchar[logLength]);
   if (!log)
-    return WebKit::WebString();
+    return blink::WebString();
   GLsizei returnedLogLength = 0;
   gl_->GetTranslatedShaderSourceANGLE(
       shader, logLength, &returnedLogLength, log.get());
   if (!returnedLogLength)
-    return WebKit::WebString();
+    return blink::WebString();
   DCHECK_EQ(logLength, returnedLogLength + 1);
-  WebKit::WebString res =
-      WebKit::WebString::fromUTF8(log.get(), returnedLogLength);
+  blink::WebString res =
+      blink::WebString::fromUTF8(log.get(), returnedLogLength);
   return res;
 }
 
-WebKit::WebString WebGraphicsContext3DInProcessCommandBufferImpl::getString(
+blink::WebString WebGraphicsContext3DInProcessCommandBufferImpl::getString(
     WGC3Denum name) {
   ClearContext();
-  return WebKit::WebString::fromUTF8(
+  return blink::WebString::fromUTF8(
       reinterpret_cast<const char*>(gl_->GetString(name)));
 }
 
@@ -1055,9 +1048,6 @@ DELEGATE_TO_GL_1(deleteProgram, DeleteProgram, WebGLId);
 
 DELEGATE_TO_GL_1(deleteShader, DeleteShader, WebGLId);
 
-void WebGraphicsContext3DInProcessCommandBufferImpl::OnSwapBuffersComplete() {
-}
-
 void WebGraphicsContext3DInProcessCommandBufferImpl::setContextLostCallback(
     WebGraphicsContext3D::WebGraphicsContextLostCallback* cb) {
   context_lost_callback_ = cb;
@@ -1112,11 +1102,6 @@ DELEGATE_TO_GL_2(bindTexImage2DCHROMIUM, BindTexImage2DCHROMIUM,
 DELEGATE_TO_GL_2(releaseTexImage2DCHROMIUM, ReleaseTexImage2DCHROMIUM,
                  WGC3Denum, WGC3Dint)
 
-DELEGATE_TO_GL_1R(createStreamTextureCHROMIUM, CreateStreamTextureCHROMIUM,
-                  WebGLId, WebGLId)
-DELEGATE_TO_GL_1(destroyStreamTextureCHROMIUM, DestroyStreamTextureCHROMIUM,
-                 WebGLId)
-
 void* WebGraphicsContext3DInProcessCommandBufferImpl::mapBufferCHROMIUM(
     WGC3Denum target, WGC3Denum access) {
   ClearContext();
@@ -1131,7 +1116,13 @@ WGC3Dboolean WebGraphicsContext3DInProcessCommandBufferImpl::
 
 GrGLInterface* WebGraphicsContext3DInProcessCommandBufferImpl::
     createGrGLInterface() {
-  return CreateCommandBufferSkiaGLBinding();
+  makeContextCurrent();
+  return skia_bindings::CreateCommandBufferSkiaGLBinding();
+}
+
+::gpu::gles2::GLES2Interface*
+WebGraphicsContext3DInProcessCommandBufferImpl::GetGLInterface() {
+  return gl_;
 }
 
 ::gpu::ContextSupport*
@@ -1160,6 +1151,14 @@ DELEGATE_TO_GL_2R(mapImageCHROMIUM, MapImageCHROMIUM,
 
 DELEGATE_TO_GL_1(unmapImageCHROMIUM, UnmapImageCHROMIUM, WGC3Duint);
 
+DELEGATE_TO_GL_6(framebufferTexture2DMultisampleEXT,
+                 FramebufferTexture2DMultisampleEXT,
+                 WGC3Denum, WGC3Denum, WGC3Denum, WebGLId, WGC3Dint, WGC3Dsizei)
+
+DELEGATE_TO_GL_5(renderbufferStorageMultisampleEXT,
+                 RenderbufferStorageMultisampleEXT, WGC3Denum, WGC3Dsizei,
+                 WGC3Denum, WGC3Dsizei, WGC3Dsizei)
+
 DELEGATE_TO_GL_3(bindUniformLocationCHROMIUM, BindUniformLocationCHROMIUM,
                  WebGLId, WGC3Dint, const WGC3Dchar*)
 
@@ -1182,10 +1181,7 @@ DELEGATE_TO_GL_2(consumeTextureCHROMIUM, ConsumeTextureCHROMIUM,
 DELEGATE_TO_GL_2(drawBuffersEXT, DrawBuffersEXT,
                  WGC3Dsizei, const WGC3Denum*)
 
-unsigned WebGraphicsContext3DInProcessCommandBufferImpl::insertSyncPoint() {
-  shallowFlushCHROMIUM();
-  return 0;
-}
+DELEGATE_TO_GL_R(insertSyncPoint, InsertSyncPointCHROMIUM, unsigned)
 
 void WebGraphicsContext3DInProcessCommandBufferImpl::loseContextCHROMIUM(
     WGC3Denum current, WGC3Denum other) {

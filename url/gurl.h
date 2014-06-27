@@ -195,6 +195,11 @@ class URL_EXPORT GURL {
   // will be the empty URL.
   GURL GetOrigin() const;
 
+  // A helper function to return a GURL stripped from the elements that are not
+  // supposed to be sent as HTTP referrer: username, password and ref fragment.
+  // For invalid URLs the original URL will be returned.
+  GURL GetAsReferrer() const;
+
   // Returns true if the scheme for the current URL is a known "standard"
   // scheme. Standard schemes have an authority and a path section. This
   // includes file: and filesystem:, which some callers may want to filter out
@@ -209,6 +214,9 @@ class URL_EXPORT GURL {
 
   // Returns true if the scheme is "http" or "https".
   bool SchemeIsHTTPOrHTTPS() const;
+
+  // Returns true is the scheme is "ws" or "wss".
+  bool SchemeIsWSOrWSS() const;
 
   // We often need to know if this is a file URL. File URLs are "standard", but
   // are often treated separately by some programs.
@@ -355,6 +363,17 @@ class URL_EXPORT GURL {
   }
 
  private:
+  // Variant of the string parsing constructor that allows the caller to elect
+  // retain trailing whitespace, if any, on the passed URL spec but only  if the
+  // scheme is one that allows trailing whitespace. The primary use-case is
+  // for data: URLs. In most cases, you want to use the single parameter
+  // constructor above.
+  enum RetainWhiteSpaceSelector { RETAIN_TRAILING_PATH_WHITEPACE };
+  GURL(const std::string& url_string, RetainWhiteSpaceSelector);
+
+  template<typename STR>
+  void InitCanonical(const STR& input_spec, bool trim_path_end);
+
   void InitializeFromCanonicalSpec();
 
   // Returns the substring of the input identified by the given component.

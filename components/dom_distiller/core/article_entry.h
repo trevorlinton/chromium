@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_DOM_DISTILLER_CORE_ARTICLE_ENTRY_H_
 #define COMPONENTS_DOM_DISTILLER_CORE_ARTICLE_ENTRY_H_
 
+#include <string>
+
 #include "sync/api/sync_data.h"
 #include "sync/protocol/article_specifics.pb.h"
 #include "sync/protocol/sync.pb.h"
@@ -18,6 +20,7 @@ namespace dom_distiller {
 typedef sync_pb::ArticleSpecifics ArticleEntry;
 typedef sync_pb::ArticlePage ArticleEntryPage;
 
+// A valid entry has an entry_id and all its pages have a URL.
 bool IsEntryValid(const ArticleEntry& entry);
 
 bool AreEntriesEqual(const ArticleEntry& left, const ArticleEntry& right);
@@ -29,7 +32,6 @@ ArticleEntry GetEntryFromChange(const syncer::SyncChange& change);
 std::string GetEntryIdFromSyncData(const syncer::SyncData& data);
 syncer::SyncData CreateLocalData(const ArticleEntry& entry);
 
-
 }  // namespace dom_distiller
 
-#endif
+#endif  // COMPONENTS_DOM_DISTILLER_CORE_ARTICLE_ENTRY_H_

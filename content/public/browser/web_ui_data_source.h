@@ -25,12 +25,21 @@ class WebUIDataSource {
 
   CONTENT_EXPORT static WebUIDataSource* Create(const std::string& source_name);
 
+#if defined(USE_MOJO)
+  // Adds the necessary resources for mojo bindings returning the
+  // WebUIDataSource that handles the resources. Callers do not own the return
+  // value.
+  CONTENT_EXPORT static WebUIDataSource* AddMojoDataSource(
+      BrowserContext* browser_context);
+#endif
+
   // Adds a WebUI data source to |browser_context|.
   CONTENT_EXPORT static void Add(BrowserContext* browser_context,
                                  WebUIDataSource* source);
 
   // Adds a string keyed to its name to our dictionary.
-  virtual void AddString(const std::string& name, const string16& value) = 0;
+  virtual void AddString(const std::string& name,
+                         const base::string16& value) = 0;
 
   // Adds a string keyed to its name to our dictionary.
   virtual void AddString(const std::string& name, const std::string& value) = 0;

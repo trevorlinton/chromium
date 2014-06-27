@@ -38,8 +38,11 @@ ChargerLinkDialog::~ChargerLinkDialog() {
 }
 
 void ChargerLinkDialog::Show() {
+  // We show the dialog for the active user, so that the dialog will get
+  // displayed immediately. The parent window is a system modal/lock container
+  // and does not belong to any user.
   chrome::ShowWebDialog(parent_window_,
-                        ProfileManager::GetDefaultProfile(),
+                        ProfileManager::GetActiveUserProfile(),
                         this);
 }
 
@@ -47,7 +50,7 @@ ui::ModalType ChargerLinkDialog::GetDialogModalType() const {
   return ui::MODAL_TYPE_SYSTEM;
 }
 
-string16 ChargerLinkDialog::GetDialogTitle() const {
+base::string16 ChargerLinkDialog::GetDialogTitle() const {
   return l10n_util::GetStringUTF16(IDS_CHARGER_REPLACEMENT_DIALOG_TITLE);
 }
 

@@ -6,9 +6,14 @@
 
 #include "base/json/json_writer.h"
 #include "base/values.h"
+#include "chrome/browser/extensions/api/storage/sync_value_store_cache.h"
+#include "content/public/browser/browser_thread.h"
+#include "extensions/browser/api/storage/storage_frontend.h"
 #include "sync/protocol/app_setting_specifics.pb.h"
 #include "sync/protocol/extension_setting_specifics.pb.h"
 #include "sync/protocol/sync.pb.h"
+
+using content::BrowserThread;
 
 namespace extensions {
 
@@ -19,7 +24,7 @@ namespace {
 void PopulateExtensionSettingSpecifics(
     const std::string& extension_id,
     const std::string& key,
-    const Value& value,
+    const base::Value& value,
     sync_pb::ExtensionSettingSpecifics* specifics) {
   specifics->set_extension_id(extension_id);
   specifics->set_key(key);
@@ -33,7 +38,7 @@ void PopulateExtensionSettingSpecifics(
 void PopulateAppSettingSpecifics(
     const std::string& extension_id,
     const std::string& key,
-    const Value& value,
+    const base::Value& value,
     sync_pb::AppSettingSpecifics* specifics) {
   PopulateExtensionSettingSpecifics(
       extension_id, key, value, specifics->mutable_extension_setting());
@@ -44,7 +49,7 @@ void PopulateAppSettingSpecifics(
 syncer::SyncData CreateData(
     const std::string& extension_id,
     const std::string& key,
-    const Value& value,
+    const base::Value& value,
     syncer::ModelType type) {
   sync_pb::EntitySpecifics specifics;
   switch (type) {
@@ -75,7 +80,7 @@ syncer::SyncData CreateData(
 syncer::SyncChange CreateAdd(
     const std::string& extension_id,
     const std::string& key,
-    const Value& value,
+    const base::Value& value,
     syncer::ModelType type) {
   return syncer::SyncChange(
       FROM_HERE,
@@ -86,7 +91,7 @@ syncer::SyncChange CreateAdd(
 syncer::SyncChange CreateUpdate(
     const std::string& extension_id,
     const std::string& key,
-    const Value& value,
+    const base::Value& value,
     syncer::ModelType type) {
   return syncer::SyncChange(
       FROM_HERE,
@@ -103,6 +108,16 @@ syncer::SyncChange CreateDelete(
       FROM_HERE,
       syncer::SyncChange::ACTION_DELETE,
       CreateData(extension_id, key, no_value, type));
+}
+
+syncer::SyncableService* GetSyncableService(content::BrowserContext* context,
+                                            syncer::ModelType type) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE));
+  DCHECK(type == syncer::APP_SETTINGS || type == syncer::EXTENSION_SETTINGS);
+  StorageFrontend* frontend = StorageFrontend::Get(context);
+  SyncValueStoreCache* sync_cache = static_cast<SyncValueStoreCache*>(
+      frontend->GetValueStoreCache(settings_namespace::SYNC));
+  return sync_cache->GetSyncableService(type);
 }
 
 }  // namespace settings_sync_util

@@ -16,22 +16,21 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/invalidation/fake_invalidation_service.h"
 #include "chrome/browser/invalidation/invalidation_service_factory.h"
-#include "chrome/browser/policy/browser_policy_connector.h"
-#include "chrome/browser/policy/cloud/cloud_policy_client.h"
-#include "chrome/browser/policy/cloud/cloud_policy_constants.h"
-#include "chrome/browser/policy/cloud/mock_cloud_policy_client.h"
-#include "chrome/browser/policy/external_data_fetcher.h"
-#include "chrome/browser/policy/policy_map.h"
-#include "chrome/browser/policy/policy_service.h"
-#include "chrome/browser/policy/policy_test_utils.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
 #include "chrome/browser/policy/profile_policy_connector_factory.h"
 #include "chrome/browser/policy/test/local_policy_test_server.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "content/public/browser/browser_thread.h"
+#include "components/policy/core/browser/browser_policy_connector.h"
+#include "components/policy/core/common/cloud/cloud_policy_client.h"
+#include "components/policy/core/common/cloud/cloud_policy_constants.h"
+#include "components/policy/core/common/cloud/mock_cloud_policy_client.h"
+#include "components/policy/core/common/external_data_fetcher.h"
+#include "components/policy/core/common/policy_map.h"
+#include "components/policy/core/common/policy_service.h"
+#include "components/policy/core/common/policy_switches.h"
+#include "components/policy/core/common/policy_test_utils.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/test/test_utils.h"
@@ -51,10 +50,10 @@
 #include "chromeos/chromeos_paths.h"
 #include "chromeos/dbus/cryptohome_client.h"
 #else
-#include "chrome/browser/policy/cloud/user_cloud_policy_manager.h"
 #include "chrome/browser/policy/cloud/user_cloud_policy_manager_factory.h"
 #include "chrome/browser/signin/signin_manager.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
+#include "components/policy/core/common/cloud/user_cloud_policy_manager.h"
 #endif
 
 using testing::AnyNumber;
@@ -162,7 +161,7 @@ class CloudPolicyTest : public InProcessBrowserTest,
     command_line->AppendSwitchASCII(switches::kDeviceManagementUrl, url);
 
     invalidation::InvalidationServiceFactory::GetInstance()->
-        SetBuildOnlyFakeInvalidatorsForTest(true);
+        RegisterTestingFactory(invalidation::FakeInvalidationService::Build);
   }
 
   virtual void SetUpOnMainThread() OVERRIDE {
@@ -187,12 +186,15 @@ class CloudPolicyTest : public InProcessBrowserTest,
     signin_manager->SetAuthenticatedUsername(GetTestUser());
 
     UserCloudPolicyManager* policy_manager =
-        UserCloudPolicyManagerFactory::GetForProfile(browser()->profile());
+        UserCloudPolicyManagerFactory::GetForBrowserContext(
+            browser()->profile());
     ASSERT_TRUE(policy_manager);
-    policy_manager->Connect(g_browser_process->local_state(),
-                            g_browser_process->system_request_context(),
-                            UserCloudPolicyManager::CreateCloudPolicyClient(
-                                connector->device_management_service()).Pass());
+    policy_manager->Connect(
+        g_browser_process->local_state(),
+        g_browser_process->system_request_context(),
+        UserCloudPolicyManager::CreateCloudPolicyClient(
+            connector->device_management_service(),
+            g_browser_process->system_request_context()).Pass());
 #endif  // defined(OS_CHROMEOS)
 
     ASSERT_TRUE(policy_manager->core()->client());
@@ -212,7 +214,8 @@ class CloudPolicyTest : public InProcessBrowserTest,
         em::DeviceRegisterRequest::BROWSER;
 #endif
     policy_manager->core()->client()->Register(
-        registration_type, "bogus", std::string(), false, std::string());
+        registration_type, "bogus", std::string(), false, std::string(),
+        std::string());
     run_loop.Run();
     Mock::VerifyAndClearExpectations(&observer);
     policy_manager->core()->client()->RemoveObserver(&observer);
@@ -243,8 +246,8 @@ class CloudPolicyTest : public InProcessBrowserTest,
   }
 
   void SetServerPolicy(const std::string& policy) {
-    int result = file_util::WriteFile(policy_file_path(), policy.data(),
-                                      policy.size());
+    int result = base::WriteFile(policy_file_path(), policy.data(),
+                                 policy.size());
     ASSERT_EQ(static_cast<int>(policy.size()), result);
   }
 

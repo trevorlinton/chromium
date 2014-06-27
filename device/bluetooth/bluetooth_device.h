@@ -15,7 +15,6 @@
 namespace device {
 
 class BluetoothProfile;
-class BluetoothServiceRecord;
 class BluetoothSocket;
 
 struct BluetoothOutOfBandPairingData;
@@ -33,6 +32,15 @@ struct BluetoothOutOfBandPairingData;
 // for devices coming and going, as well as properties being updated.
 class BluetoothDevice {
  public:
+  // Possible values that may be returned by GetVendorIDSource(),
+  // indicating different organisations that allocate the identifiers returned
+  // by GetVendorID().
+  enum VendorIDSource {
+    VENDOR_ID_UNKNOWN,
+    VENDOR_ID_BLUETOOTH,
+    VENDOR_ID_USB
+  };
+
   // Possible values that may be returned by GetDeviceType(), representing
   // different types of bluetooth device that we support or are aware of
   // decoded from the bluetooth class information.
@@ -102,9 +110,7 @@ class BluetoothDevice {
 
     // This method will be called when the Bluetooth daemon requires that the
     // user enter the PIN code |pincode| into the device |device| so that it
-    // may be authenticated. The DismissDisplayOrConfirm() method
-    // will be called to dismiss the display once pairing is complete or
-    // cancelled.
+    // may be authenticated.
     //
     // This is used for Bluetooth 2.0 and earlier keyboard devices, the
     // |pincode| will always be a six-digit numeric in the range 000000-999999
@@ -114,8 +120,7 @@ class BluetoothDevice {
 
     // This method will be called when the Bluetooth daemon requires that the
     // user enter the Passkey |passkey| into the device |device| so that it
-    // may be authenticated. The DismissDisplayOrConfirm() method will be
-    // called to dismiss the display once pairing is complete or cancelled.
+    // may be authenticated.
     //
     // This is used for Bluetooth 2.1 and later devices that support input
     // but not display, such as keyboards. The Passkey is a numeric in the
@@ -129,8 +134,7 @@ class BluetoothDevice {
     // using a PIN code or a Passkey.
     //
     // This method will be called only after DisplayPinCode() or
-    // DisplayPasskey() is called and before the corresponding
-    // DismissDisplayOrConfirm() is called, but is not warranted to be called
+    // DisplayPasskey() method is called, but is not warranted to be called
     // on every pairing process that requires a PIN code or a Passkey because
     // some device may not support this feature.
     //
@@ -155,10 +159,14 @@ class BluetoothDevice {
     virtual void ConfirmPasskey(BluetoothDevice* device,
                                 uint32 passkey) = 0;
 
-    // This method will be called when any previous DisplayPinCode(),
-    // DisplayPasskey() or ConfirmPasskey() request should be concluded
-    // and removed from the user.
-    virtual void DismissDisplayOrConfirm() = 0;
+    // This method will be called when the Bluetooth daemon requires that a
+    // pairing request, usually only incoming, using the just-works model is
+    // authorized. The delegate should decide whether the user should confirm
+    // or not, then call ConfirmPairing() on the device to confirm the pairing
+    // (whether by user action or by default), RejectPairing() on the device to
+    // reject or CancelPairing() on the device to cancel authorization for
+    // any other reason.
+    virtual void AuthorizePairing(BluetoothDevice* device) = 0;
   };
 
   // Returns true if uuid is in a a valid canonical format
@@ -175,6 +183,10 @@ class BluetoothDevice {
   // a unique key to identify the device and copied where needed.
   virtual std::string GetAddress() const = 0;
 
+  // Returns the allocation source of the identifier returned by GetVendorID(),
+  // where available, or VENDOR_ID_UNKNOWN where not.
+  virtual VendorIDSource GetVendorIDSource() const = 0;
+
   // Returns the Vendor ID of the device, where available.
   virtual uint16 GetVendorID() const = 0;
 
@@ -188,7 +200,7 @@ class BluetoothDevice {
   // Returns the name of the device suitable for displaying, this may
   // be a synthesized string containing the address and localized type name
   // if the device has no obtained name.
-  virtual string16 GetName() const;
+  virtual base::string16 GetName() const;
 
   // Returns the type of the device, limited to those we support or are
   // aware of, by decoding the bluetooth class information. The returned
@@ -220,10 +232,14 @@ class BluetoothDevice {
   // were called after the corresponding call to Connect().
   virtual bool IsConnecting() const = 0;
 
-  // Returns the services (as UUID strings) that this device provides.
-  // TODO(youngki): Rename this to GetProfiles().
-  typedef std::vector<std::string> ServiceList;
-  virtual ServiceList GetServices() const = 0;
+  // Returns the set of UUIDs that this device supports. For classic Bluetooth
+  // devices this data is collected from both the EIR data and SDP tables,
+  // for Low Energy devices this data is collected from AD and GATT primary
+  // services, for dual mode devices this may be collected from both./
+  //
+  // All UUIDs are returned in the canonical 128-bit format.
+  typedef std::vector<std::string> UUIDList;
+  virtual UUIDList GetUUIDs() const = 0;
 
   // The ErrorCallback is used for methods that can fail in which case it
   // is called, in the success case the callback is simply not called.
@@ -233,25 +249,6 @@ class BluetoothDevice {
   // passed back as an error code argument to this callback.
   // In the success case this callback is not called.
   typedef base::Callback<void(enum ConnectErrorCode)> ConnectErrorCallback;
-
-  // Returns the services (as BluetoothServiceRecord objects) that this device
-  // provides.
-  typedef ScopedVector<BluetoothServiceRecord> ServiceRecordList;
-  typedef base::Callback<void(const ServiceRecordList&)> ServiceRecordsCallback;
-  virtual void GetServiceRecords(const ServiceRecordsCallback& callback,
-                                 const ErrorCallback& error_callback) = 0;
-
-  // Indicates whether this device provides the given service.
-  virtual bool ProvidesServiceWithUUID(const std::string& uuid) const;
-
-  // The ProvidesServiceCallback is used by ProvidesServiceWithName to indicate
-  // whether or not a matching service was found.
-  typedef base::Callback<void(bool)> ProvidesServiceCallback;
-
-  // Indicates whether this device provides the given service.
-  virtual void ProvidesServiceWithName(
-      const std::string& name,
-      const ProvidesServiceCallback& callback) = 0;
 
   // Indicates whether the device is currently pairing and expecting a
   // PIN Code to be returned.
@@ -283,7 +280,7 @@ class BluetoothDevice {
   // If the request fails, |error_callback| will be called; otherwise,
   // |callback| is called when the request is complete.
   // After calling Connect, CancelPairing should be called to cancel the pairing
-  // process and release |pairing_delegate_| if user cancels the pairing and
+  // process and release the pairing delegate if user cancels the pairing and
   // closes the pairing UI.
   virtual void Connect(PairingDelegate* pairing_delegate,
                        const base::Closure& callback,
@@ -309,8 +306,8 @@ class BluetoothDevice {
   // Rejects a pairing or connection request from a remote device.
   virtual void RejectPairing() = 0;
 
-  // Cancels a pairing or connection attempt to a remote device or release
-  // |pairing_deleage_| and |agent_|.
+  // Cancels a pairing or connection attempt to a remote device, releasing
+  // the pairing delegate.
   virtual void CancelPairing() = 0;
 
   // Disconnects the device, terminating the low-level ACL connection
@@ -369,7 +366,7 @@ class BluetoothDevice {
  private:
   // Returns a localized string containing the device's bluetooth address and
   // a device type for display when |name_| is empty.
-  string16 GetAddressWithLocalizedDeviceTypeName() const;
+  base::string16 GetAddressWithLocalizedDeviceTypeName() const;
 };
 
 }  // namespace device

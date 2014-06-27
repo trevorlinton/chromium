@@ -8,6 +8,7 @@
 #include <string>
 
 #include "net/quic/crypto/crypto_handshake.h"
+#include "net/quic/crypto/quic_crypto_server_config.h"
 #include "net/quic/quic_config.h"
 #include "net/quic/quic_crypto_stream.h"
 
@@ -28,6 +29,10 @@ class NET_EXPORT_PRIVATE QuicCryptoServerStream : public QuicCryptoStream {
   explicit QuicCryptoServerStream(QuicSession* session);
   virtual ~QuicCryptoServerStream();
 
+  // Cancel any outstanding callbacks, such as asynchronous validation of client
+  // hello.
+  void CancelOutstandingCallbacks();
+
   // CryptoFramerVisitorInterface implementation
   virtual void OnHandshakeMessage(
       const CryptoHandshakeMessage& message) OVERRIDE;
@@ -40,14 +45,44 @@ class NET_EXPORT_PRIVATE QuicCryptoServerStream : public QuicCryptoStream {
  protected:
   virtual QuicErrorCode ProcessClientHello(
       const CryptoHandshakeMessage& message,
+      const ValidateClientHelloResultCallback::Result& result,
       CryptoHandshakeMessage* reply,
       std::string* error_details);
 
  private:
   friend class test::CryptoTestUtils;
 
+  class ValidateCallback : public ValidateClientHelloResultCallback {
+   public:
+    explicit ValidateCallback(QuicCryptoServerStream* parent);
+    // To allow the parent to detach itself from the callback before deletion.
+    void Cancel();
+
+    // From ValidateClientHelloResultCallback
+    virtual void RunImpl(const CryptoHandshakeMessage& client_hello,
+                         const Result& result) OVERRIDE;
+
+   private:
+    QuicCryptoServerStream* parent_;
+
+    DISALLOW_COPY_AND_ASSIGN(ValidateCallback);
+  };
+
+  // Invoked by ValidateCallback::RunImpl once initial validation of
+  // the client hello is complete.  Finishes processing of the client
+  // hello message and handles handshake success/failure.
+  void FinishProcessingHandshakeMessage(
+      const CryptoHandshakeMessage& message,
+      const ValidateClientHelloResultCallback::Result& result);
+
   // crypto_config_ contains crypto parameters for the handshake.
   const QuicCryptoServerConfig& crypto_config_;
+
+  // Pointer to the active callback that will receive the result of
+  // the client hello validation request and forward it to
+  // FinishProcessingHandshakeMessage for processing.  NULL if no
+  // handshake message is being validated.
+  ValidateCallback* validate_client_hello_cb_;
 };
 
 }  // namespace net

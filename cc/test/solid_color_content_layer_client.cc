@@ -12,7 +12,7 @@
 namespace cc {
 
 void SolidColorContentLayerClient::PaintContents(
-    SkCanvas* canvas, gfx::Rect rect, gfx::RectF* opaque_rect) {
+    SkCanvas* canvas, const gfx::Rect& rect, gfx::RectF* opaque_rect) {
   SkPaint paint;
   paint.setStyle(SkPaint::kFill_Style);
   paint.setColor(color_);
@@ -24,6 +24,10 @@ void SolidColorContentLayerClient::PaintContents(
 
   if (SkColorGetA(color_) == 255)
     *opaque_rect = rect;
+}
+
+bool SolidColorContentLayerClient::FillsBoundsCompletely() const {
+  return false;
 }
 
 }  // namespace cc

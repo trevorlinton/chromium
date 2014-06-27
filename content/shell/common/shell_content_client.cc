@@ -8,13 +8,13 @@
 #include "base/strings/string_piece.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/user_agent.h"
 #include "content/shell/common/shell_switches.h"
 #include "grit/shell_resources.h"
 #include "grit/webkit_resources.h"
 #include "grit/webkit_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "webkit/common/user_agent/user_agent_util.h"
 
 namespace content {
 
@@ -26,28 +26,28 @@ std::string ShellContentClient::GetUserAgent() const {
   CommandLine* command_line = CommandLine::ForCurrentProcess();
   if (command_line->HasSwitch(switches::kUseMobileUserAgent))
     product += " Mobile";
-  return webkit_glue::BuildUserAgentFromProduct(product);
+  return BuildUserAgentFromProduct(product);
 }
 
-string16 ShellContentClient::GetLocalizedString(int message_id) const {
+base::string16 ShellContentClient::GetLocalizedString(int message_id) const {
   if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kDumpRenderTree)) {
     switch (message_id) {
       case IDS_FORM_OTHER_DATE_LABEL:
-        return ASCIIToUTF16("<<OtherDateLabel>>");
+        return base::ASCIIToUTF16("<<OtherDateLabel>>");
       case IDS_FORM_OTHER_MONTH_LABEL:
-        return ASCIIToUTF16("<<OtherMonthLabel>>");
+        return base::ASCIIToUTF16("<<OtherMonthLabel>>");
       case IDS_FORM_OTHER_TIME_LABEL:
-        return ASCIIToUTF16("<<OtherTimeLabel>>");
+        return base::ASCIIToUTF16("<<OtherTimeLabel>>");
       case IDS_FORM_OTHER_WEEK_LABEL:
-        return ASCIIToUTF16("<<OtherWeekLabel>>");
+        return base::ASCIIToUTF16("<<OtherWeekLabel>>");
       case IDS_FORM_CALENDAR_CLEAR:
-        return ASCIIToUTF16("<<CalendarClear>>");
+        return base::ASCIIToUTF16("<<CalendarClear>>");
       case IDS_FORM_CALENDAR_TODAY:
-        return ASCIIToUTF16("<<CalendarToday>>");
+        return base::ASCIIToUTF16("<<CalendarToday>>");
       case IDS_FORM_THIS_MONTH_LABEL:
-        return ASCIIToUTF16("<<ThisMonthLabel>>");
+        return base::ASCIIToUTF16("<<ThisMonthLabel>>");
       case IDS_FORM_THIS_WEEK_LABEL:
-        return ASCIIToUTF16("<<ThisWeekLabel>>");
+        return base::ASCIIToUTF16("<<ThisWeekLabel>>");
     }
   }
   return l10n_util::GetStringUTF16(message_id);

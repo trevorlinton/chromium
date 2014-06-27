@@ -142,13 +142,13 @@ const gfx::ImageSkia& GetDefaultImage(int index) {
       GetImageSkiaNamed(kDefaultImageResourceIDs[index]);
 }
 
-string16 GetDefaultImageDescription(int index) {
+base::string16 GetDefaultImageDescription(int index) {
   DCHECK(index >= 0 && index < kDefaultImagesCount);
   int string_id = kDefaultImageDescriptions[index];
   if (string_id)
     return l10n_util::GetStringUTF16(string_id);
   else
-    return string16();
+    return base::string16();
 }
 
 // Resource IDs of default user images.

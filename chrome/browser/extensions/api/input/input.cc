@@ -4,49 +4,51 @@
 
 #include "chrome/browser/extensions/api/input/input.h"
 
-#include "ash/root_window_controller.h"
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
 #include "base/metrics/histogram.h"
 #include "base/strings/string16.h"
-#include "chrome/browser/extensions/extension_function_registry.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/user_metrics.h"
+#include "extensions/browser/extension_function_registry.h"
 #include "ui/events/event.h"
 #include "ui/keyboard/keyboard_controller.h"
 #include "ui/keyboard/keyboard_switches.h"
 
 #if defined(USE_ASH)
+#include "ash/root_window_controller.h"
 #include "ash/shell.h"
+#include "ui/aura/window_tree_host.h"
 #include "ui/keyboard/keyboard_util.h"
 #endif
 
+#if !defined(USE_ASH)
 namespace {
 
 const char kNotYetImplementedError[] =
     "API is not implemented on this platform.";
 
 }  // namespace
+#endif
 
 namespace extensions {
 
 bool VirtualKeyboardPrivateInsertTextFunction::RunImpl() {
-#if defined(USE_ASH)
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-
-  string16 text;
+#if defined(USE_ASH)
+  base::string16 text;
   EXTENSION_FUNCTION_VALIDATE(args_->GetString(0, &text));
 
   return keyboard::InsertText(text, ash::Shell::GetPrimaryRootWindow());
-#endif
+#else
   error_ = kNotYetImplementedError;
   return false;
+#endif
 }
 
 bool VirtualKeyboardPrivateMoveCursorFunction::RunImpl() {
-#if defined(USE_ASH)
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-
+#if defined(USE_ASH)
   if (!CommandLine::ForCurrentProcess()->HasSwitch(
       keyboard::switches::kEnableSwipeSelection)) {
     return false;
@@ -60,21 +62,22 @@ bool VirtualKeyboardPrivateMoveCursorFunction::RunImpl() {
   return keyboard::MoveCursor(
       swipe_direction,
       modifier_flags,
-      ash::Shell::GetPrimaryRootWindow()->GetDispatcher());
-#endif
+      ash::Shell::GetPrimaryRootWindow()->GetHost());
+#else
   error_ = kNotYetImplementedError;
   return false;
+#endif
 }
 
 bool VirtualKeyboardPrivateSendKeyEventFunction::RunImpl() {
-#if defined(USE_ASH)
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-
+#if defined(USE_ASH)
   base::Value* options_value = NULL;
   base::DictionaryValue* params = NULL;
   std::string type;
   int char_value;
   int key_code;
+  std::string key_name;
   int modifiers;
 
   EXTENSION_FUNCTION_VALIDATE(args_->Get(0, &options_value));
@@ -82,23 +85,25 @@ bool VirtualKeyboardPrivateSendKeyEventFunction::RunImpl() {
   EXTENSION_FUNCTION_VALIDATE(params->GetString("type", &type));
   EXTENSION_FUNCTION_VALIDATE(params->GetInteger("charValue", &char_value));
   EXTENSION_FUNCTION_VALIDATE(params->GetInteger("keyCode", &key_code));
+  EXTENSION_FUNCTION_VALIDATE(params->GetString("keyName", &key_name));
   EXTENSION_FUNCTION_VALIDATE(params->GetInteger("modifiers", &modifiers));
 
   return keyboard::SendKeyEvent(
       type,
       char_value,
       key_code,
+      key_name,
       modifiers,
-      ash::Shell::GetPrimaryRootWindow()->GetDispatcher());
-#endif
+      ash::Shell::GetPrimaryRootWindow()->GetHost());
+#else
   error_ = kNotYetImplementedError;
   return false;
+#endif
 }
 
 bool VirtualKeyboardPrivateHideKeyboardFunction::RunImpl() {
-#if defined(USE_ASH)
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-
+#if defined(USE_ASH)
   UMA_HISTOGRAM_ENUMERATION(
       "VirtualKeyboard.KeyboardControlEvent",
       keyboard::KEYBOARD_CONTROL_HIDE_USER,
@@ -110,37 +115,62 @@ bool VirtualKeyboardPrivateHideKeyboardFunction::RunImpl() {
       keyboard::KeyboardController::HIDE_REASON_MANUAL);
 
   return true;
-#endif
+#else
   error_ = kNotYetImplementedError;
   return false;
+#endif
+}
+
+bool VirtualKeyboardPrivateLockKeyboardFunction::RunImpl() {
+  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
+#if defined(USE_ASH)
+  bool lock;
+  EXTENSION_FUNCTION_VALIDATE(args_->GetBoolean(0, &lock));
+  ash::Shell::GetInstance()->keyboard_controller()->set_lock_keyboard(lock);
+  return true;
+#else
+  error_ = kNotYetImplementedError;
+  return false;
+#endif
 }
 
 bool VirtualKeyboardPrivateKeyboardLoadedFunction::RunImpl() {
-#if defined(USE_ASH)
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-
+#if defined(USE_ASH)
   keyboard::MarkKeyboardLoadFinished();
-
-  content::UserMetricsAction("VirtualKeyboardLoaded");
-
+  base::UserMetricsAction("VirtualKeyboardLoaded");
   return true;
-#endif
+#else
   error_ = kNotYetImplementedError;
   return false;
+#endif
 }
 
-InputAPI::InputAPI(Profile* profile) {
+bool VirtualKeyboardPrivateGetKeyboardConfigFunction::RunImpl() {
+  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
+#if defined(USE_ASH)
+  base::DictionaryValue* results = new base::DictionaryValue();
+  results->SetString("layout", keyboard::GetKeyboardLayout());
+  results->SetBoolean("a11ymode", keyboard::GetAccessibilityKeyboardEnabled());
+  SetResult(results);
+  return true;
+#else
+  error_ = kNotYetImplementedError;
+  return false;
+#endif
 }
+
+InputAPI::InputAPI(content::BrowserContext* context) {}
 
 InputAPI::~InputAPI() {
 }
 
-static base::LazyInstance<ProfileKeyedAPIFactory<InputAPI> >
-g_factory = LAZY_INSTANCE_INITIALIZER;
+static base::LazyInstance<BrowserContextKeyedAPIFactory<InputAPI> > g_factory =
+    LAZY_INSTANCE_INITIALIZER;
 
 // static
-ProfileKeyedAPIFactory<InputAPI>* InputAPI::GetFactoryInstance() {
-  return &g_factory.Get();
+BrowserContextKeyedAPIFactory<InputAPI>* InputAPI::GetFactoryInstance() {
+  return g_factory.Pointer();
 }
 
 }  // namespace extensions

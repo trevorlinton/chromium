@@ -16,7 +16,7 @@
 #include "chrome/browser/chromeos/login/user_manager.h"
 #include "chrome/browser/chromeos/login/user_manager_impl.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
-#include "chrome/browser/extensions/api/braille_display_private/stub_braille_controller.h"
+#include "chrome/browser/extensions/api/braille_display_private/mock_braille_controller.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/pref_names.h"
@@ -28,7 +28,7 @@
 
 using extensions::api::braille_display_private::BrailleObserver;
 using extensions::api::braille_display_private::DisplayState;
-using extensions::api::braille_display_private::StubBrailleController;
+using extensions::api::braille_display_private::MockBrailleController;
 
 namespace chromeos {
 
@@ -42,20 +42,19 @@ const int kTestAutoclickDelayMs = 2000;
 // with UserManager::kLocallyManagedUserDomain.
 const char kTestLocallyManagedUserName[] = "test@locally-managed.localhost";
 
-class MockAccessibilityObserver : public content::NotificationObserver {
+class MockAccessibilityObserver {
  public:
   MockAccessibilityObserver() : observed_(false),
                                 observed_enabled_(false),
-                                observed_type_(-1) {
-    registrar_.Add(
-        this,
-        chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK,
-        content::NotificationService::AllSources());
-    registrar_.Add(
-        this,
-        chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE,
-        content::NotificationService::AllSources());
+                                observed_type_(-1)
+  {
+    AccessibilityManager* accessibility_manager = AccessibilityManager::Get();
+    CHECK(accessibility_manager);
+    accessibility_subscription_ = accessibility_manager->RegisterCallback(
+        base::Bind(&MockAccessibilityObserver::OnAccessibilityStatusChanged,
+                   base::Unretained(this)));
   }
+
   virtual ~MockAccessibilityObserver() {}
 
   bool observed() const { return observed_; }
@@ -65,26 +64,12 @@ class MockAccessibilityObserver : public content::NotificationObserver {
   void reset() { observed_ = false; }
 
  private:
-  // content::NotificationObserver implimentation:
-  virtual void Observe(int type,
-                       const content::NotificationSource& source,
-                       const content::NotificationDetails& details) OVERRIDE {
-    AccessibilityStatusEventDetails* accessibility_status =
-        content::Details<AccessibilityStatusEventDetails>(
-            details).ptr();
-    ASSERT_FALSE(observed_);
-
-    switch (type) {
-      case chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK:
-        observed_ = true;
-        observed_enabled_ = accessibility_status->enabled;
-        observed_type_ = type;
-        break;
-      case chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE:
-        observed_ = true;
-        observed_enabled_ = accessibility_status->enabled;
-        observed_type_ = type;
-        break;
+  void OnAccessibilityStatusChanged(
+      const AccessibilityStatusEventDetails& details) {
+    if (details.notification_type != ACCESSIBILITY_TOGGLE_SCREEN_MAGNIFIER) {
+      observed_type_ = details.notification_type;
+      observed_enabled_ = details.enabled;
+      observed_ = true;
     }
   }
 
@@ -92,42 +77,9 @@ class MockAccessibilityObserver : public content::NotificationObserver {
   bool observed_enabled_;
   int observed_type_;
 
-  content::NotificationRegistrar registrar_;
+  scoped_ptr<AccessibilityStatusSubscription> accessibility_subscription_;
 
   DISALLOW_COPY_AND_ASSIGN(MockAccessibilityObserver);
-};
-
-class MockBrailleController : public StubBrailleController {
- public:
-
-  MockBrailleController() : available_(false), observer_(NULL) {}
-
-  virtual scoped_ptr<DisplayState> GetDisplayState() OVERRIDE {
-    scoped_ptr<DisplayState> state(new DisplayState());
-    state->available = available_;
-    return state.Pass();
-  }
-
-  virtual void AddObserver(BrailleObserver* observer) OVERRIDE {
-    ASSERT_EQ(NULL, observer_);
-    observer_ = observer;
-  }
-
-  virtual void RemoveObserver(BrailleObserver* observer) OVERRIDE {
-    ASSERT_EQ(observer_, observer);
-  }
-
-  void SetAvailable(bool available) {
-    available_ = available;
-  }
-
-  BrailleObserver* GetObserver() {
-    return observer_;
-  }
-
- private:
-  bool available_;
-  BrailleObserver* observer_;
 };
 
 void SetLargeCursorEnabled(bool enabled) {
@@ -136,6 +88,10 @@ void SetLargeCursorEnabled(bool enabled) {
 
 bool IsLargeCursorEnabled() {
   return AccessibilityManager::Get()->IsLargeCursorEnabled();
+}
+
+bool ShouldShowAccessibilityMenu() {
+  return AccessibilityManager::Get()->ShouldShowAccessibilityMenu();
 }
 
 void SetHighContrastEnabled(bool enabled) {
@@ -171,8 +127,16 @@ int GetAutoclickDelay() {
   return AccessibilityManager::Get()->GetAutoclickDelay();
 }
 
+void SetVirtualKeyboardEnabled(bool enabled) {
+  return AccessibilityManager::Get()->EnableVirtualKeyboard(enabled);
+}
+
+bool IsVirtualKeyboardEnabled() {
+  return AccessibilityManager::Get()->IsVirtualKeyboardEnabled();
+}
+
 Profile* GetProfile() {
-  Profile* profile = ProfileManager::GetDefaultProfileOrOffTheRecord();
+  Profile* profile = ProfileManager::GetActiveUserProfile();
   DCHECK(profile);
   return profile;
 }
@@ -199,6 +163,10 @@ void SetAutoclickEnabledPref(bool enabled) {
 
 void SetAutoclickDelayPref(int delay_ms) {
   GetPrefs()->SetInteger(prefs::kAutoclickDelayMs, delay_ms);
+}
+
+void SetVirtualKeyboardEnabledPref(bool enabled) {
+  GetPrefs()->SetBoolean(prefs::kVirtualKeyboardEnabled, enabled);
 }
 
 bool GetLargeCursorEnabledFromPref() {
@@ -265,6 +233,7 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, Login) {
   EXPECT_FALSE(IsSpokenFeedbackEnabled());
   EXPECT_FALSE(IsHighContrastEnabled());
   EXPECT_FALSE(IsAutoclickEnabled());
+  EXPECT_FALSE(IsVirtualKeyboardEnabled());
   EXPECT_EQ(default_autoclick_delay(), GetAutoclickDelay());
 
   // Logs in.
@@ -275,6 +244,7 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, Login) {
   EXPECT_FALSE(IsSpokenFeedbackEnabled());
   EXPECT_FALSE(IsHighContrastEnabled());
   EXPECT_FALSE(IsAutoclickEnabled());
+  EXPECT_FALSE(IsVirtualKeyboardEnabled());
   EXPECT_EQ(default_autoclick_delay(), GetAutoclickDelay());
 
   UserManager::Get()->SessionStarted();
@@ -284,6 +254,7 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, Login) {
   EXPECT_FALSE(IsSpokenFeedbackEnabled());
   EXPECT_FALSE(IsHighContrastEnabled());
   EXPECT_FALSE(IsAutoclickEnabled());
+  EXPECT_FALSE(IsVirtualKeyboardEnabled());
   EXPECT_EQ(default_autoclick_delay(), GetAutoclickDelay());
 
   // Enables large cursor.
@@ -309,6 +280,11 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, Login) {
   // Test that autoclick delay is set properly.
   SetAutoclickDelay(kTestAutoclickDelayMs);
   EXPECT_EQ(kTestAutoclickDelayMs, GetAutoclickDelay());
+
+  // Enable on-screen keyboard
+  SetVirtualKeyboardEnabled(true);
+  // Confirm that the on-screen keyboard option is enabled.
+  EXPECT_TRUE(IsVirtualKeyboardEnabled());
 }
 
 IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, BrailleOnLoginScreen) {
@@ -334,6 +310,7 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, TypePref) {
   EXPECT_FALSE(IsHighContrastEnabled());
   EXPECT_FALSE(IsAutoclickEnabled());
   EXPECT_EQ(default_autoclick_delay(), GetAutoclickDelay());
+  EXPECT_FALSE(IsVirtualKeyboardEnabled());
 
   // Sets the pref as true to enable the large cursor.
   SetLargeCursorEnabledPref(true);
@@ -360,6 +337,11 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, TypePref) {
   // Confirm that the correct value is set.
   EXPECT_EQ(kTestAutoclickDelayMs, GetAutoclickDelay());
 
+  // Sets the on-screen keyboard pref.
+  SetVirtualKeyboardEnabledPref(true);
+  // Confirm that the on-screen keyboard option is enabled.
+  EXPECT_TRUE(IsVirtualKeyboardEnabled());
+
   SetLargeCursorEnabledPref(false);
   EXPECT_FALSE(IsLargeCursorEnabled());
 
@@ -371,6 +353,9 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, TypePref) {
 
   SetAutoclickEnabledPref(false);
   EXPECT_FALSE(IsAutoclickEnabled());
+
+  SetVirtualKeyboardEnabledPref(false);
+  EXPECT_FALSE(IsVirtualKeyboardEnabled());
 }
 
 IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, ResumeSavedPref) {
@@ -398,15 +383,20 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, ResumeSavedPref) {
   SetAutoclickDelayPref(kTestAutoclickDelayMs);
   EXPECT_EQ(default_autoclick_delay(), GetAutoclickDelay());
 
+  // Sets the pref to enable the on-screen keyboard before login.
+  SetVirtualKeyboardEnabledPref(true);
+  EXPECT_FALSE(IsVirtualKeyboardEnabled());
+
   // Logs in.
   UserManager::Get()->SessionStarted();
 
-  // Confirms that features are enabled by restring from pref just after login.
+  // Confirms that features are enabled by restoring from pref just after login.
   EXPECT_TRUE(IsLargeCursorEnabled());
   EXPECT_TRUE(IsSpokenFeedbackEnabled());
   EXPECT_TRUE(IsHighContrastEnabled());
   EXPECT_TRUE(IsAutoclickEnabled());
   EXPECT_EQ(kTestAutoclickDelayMs, GetAutoclickDelay());
+  EXPECT_TRUE(IsVirtualKeyboardEnabled());
 }
 
 IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest,
@@ -424,7 +414,7 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest,
   EXPECT_TRUE(observer.observed());
   EXPECT_TRUE(observer.observed_enabled());
   EXPECT_EQ(observer.observed_type(),
-            chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK);
+            ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK);
   EXPECT_TRUE(IsSpokenFeedbackEnabled());
 
   observer.reset();
@@ -432,7 +422,7 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest,
   EXPECT_TRUE(observer.observed());
   EXPECT_FALSE(observer.observed_enabled());
   EXPECT_EQ(observer.observed_type(),
-            chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK);
+            ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK);
   EXPECT_FALSE(IsSpokenFeedbackEnabled());
 
   observer.reset();
@@ -440,7 +430,7 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest,
   EXPECT_TRUE(observer.observed());
   EXPECT_TRUE(observer.observed_enabled());
   EXPECT_EQ(observer.observed_type(),
-            chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE);
+            ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE);
   EXPECT_TRUE(IsHighContrastEnabled());
 
   observer.reset();
@@ -448,8 +438,24 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest,
   EXPECT_TRUE(observer.observed());
   EXPECT_FALSE(observer.observed_enabled());
   EXPECT_EQ(observer.observed_type(),
-            chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE);
+            ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE);
   EXPECT_FALSE(IsHighContrastEnabled());
+
+  observer.reset();
+  SetVirtualKeyboardEnabled(true);
+  EXPECT_TRUE(observer.observed());
+  EXPECT_TRUE(observer.observed_enabled());
+  EXPECT_EQ(observer.observed_type(),
+            ACCESSIBILITY_TOGGLE_VIRTUAL_KEYBOARD);
+  EXPECT_TRUE(IsVirtualKeyboardEnabled());
+
+  observer.reset();
+  SetVirtualKeyboardEnabled(false);
+  EXPECT_TRUE(observer.observed());
+  EXPECT_FALSE(observer.observed_enabled());
+  EXPECT_EQ(observer.observed_type(),
+            ACCESSIBILITY_TOGGLE_VIRTUAL_KEYBOARD);
+  EXPECT_FALSE(IsVirtualKeyboardEnabled());
 }
 
 IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest,
@@ -467,7 +473,7 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest,
   EXPECT_TRUE(observer.observed());
   EXPECT_TRUE(observer.observed_enabled());
   EXPECT_EQ(observer.observed_type(),
-            chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK);
+            ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK);
   EXPECT_TRUE(IsSpokenFeedbackEnabled());
 
   observer.reset();
@@ -475,7 +481,7 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest,
   EXPECT_TRUE(observer.observed());
   EXPECT_FALSE(observer.observed_enabled());
   EXPECT_EQ(observer.observed_type(),
-            chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK);
+            ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK);
   EXPECT_FALSE(IsSpokenFeedbackEnabled());
 
   observer.reset();
@@ -483,7 +489,7 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest,
   EXPECT_TRUE(observer.observed());
   EXPECT_TRUE(observer.observed_enabled());
   EXPECT_EQ(observer.observed_type(),
-            chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE);
+            ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE);
   EXPECT_TRUE(IsHighContrastEnabled());
 
   observer.reset();
@@ -491,8 +497,24 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest,
   EXPECT_TRUE(observer.observed());
   EXPECT_FALSE(observer.observed_enabled());
   EXPECT_EQ(observer.observed_type(),
-            chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE);
+            ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE);
   EXPECT_FALSE(IsHighContrastEnabled());
+
+  observer.reset();
+  SetVirtualKeyboardEnabledPref(true);
+  EXPECT_TRUE(observer.observed());
+  EXPECT_TRUE(observer.observed_enabled());
+  EXPECT_EQ(observer.observed_type(),
+            ACCESSIBILITY_TOGGLE_VIRTUAL_KEYBOARD);
+  EXPECT_TRUE(IsVirtualKeyboardEnabled());
+
+  observer.reset();
+  SetVirtualKeyboardEnabledPref(false);
+  EXPECT_TRUE(observer.observed());
+  EXPECT_FALSE(observer.observed_enabled());
+  EXPECT_EQ(observer.observed_type(),
+            ACCESSIBILITY_TOGGLE_VIRTUAL_KEYBOARD);
+  EXPECT_FALSE(IsVirtualKeyboardEnabled());
 }
 
 class AccessibilityManagerUserTypeTest
@@ -558,6 +580,50 @@ IN_PROC_BROWSER_TEST_P(AccessibilityManagerUserTypeTest,
   EXPECT_TRUE(GetHighContrastEnabledFromPref());
   EXPECT_TRUE(GetAutoclickEnabledFromPref());
   EXPECT_EQ(kTestAutoclickDelayMs, GetAutoclickDelayFromPref());
+}
+
+IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, AcessibilityMenuVisibility) {
+  // Log in.
+  UserManager::Get()->UserLoggedIn(kTestUserName, kTestUserName, true);
+  UserManager::Get()->SessionStarted();
+
+  // Confirms that the features are disabled.
+  EXPECT_FALSE(IsLargeCursorEnabled());
+  EXPECT_FALSE(IsSpokenFeedbackEnabled());
+  EXPECT_FALSE(IsHighContrastEnabled());
+  EXPECT_FALSE(IsAutoclickEnabled());
+  EXPECT_FALSE(ShouldShowAccessibilityMenu());
+  EXPECT_FALSE(IsVirtualKeyboardEnabled());
+
+  // Check large cursor.
+  SetLargeCursorEnabled(true);
+  EXPECT_TRUE(ShouldShowAccessibilityMenu());
+  SetLargeCursorEnabled(false);
+  EXPECT_FALSE(ShouldShowAccessibilityMenu());
+
+  // Check spoken feedback.
+  SetSpokenFeedbackEnabled(true);
+  EXPECT_TRUE(ShouldShowAccessibilityMenu());
+  SetSpokenFeedbackEnabled(false);
+  EXPECT_FALSE(ShouldShowAccessibilityMenu());
+
+  // Check high contrast.
+  SetHighContrastEnabled(true);
+  EXPECT_TRUE(ShouldShowAccessibilityMenu());
+  SetHighContrastEnabled(false);
+  EXPECT_FALSE(ShouldShowAccessibilityMenu());
+
+  // Check autoclick.
+  SetAutoclickEnabled(true);
+  EXPECT_TRUE(ShouldShowAccessibilityMenu());
+  SetAutoclickEnabled(false);
+  EXPECT_FALSE(ShouldShowAccessibilityMenu());
+
+  // Check on-screen keyboard.
+  SetVirtualKeyboardEnabled(true);
+  EXPECT_TRUE(ShouldShowAccessibilityMenu());
+  SetVirtualKeyboardEnabled(false);
+  EXPECT_FALSE(ShouldShowAccessibilityMenu());
 }
 
 }  // namespace chromeos

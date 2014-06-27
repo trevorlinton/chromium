@@ -13,8 +13,8 @@
 #include "base/message_loop/message_loop.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/events/event.h"
 #include "ui/events/event_constants.h"
 #include "ui/gfx/insets.h"
@@ -29,7 +29,7 @@ namespace internal {
 namespace {
 const int kTooltipTopBottomMargin = 3;
 const int kTooltipLeftRightMargin = 10;
-const int kTooltipAppearanceDelay = 200;  // msec
+const int kTooltipAppearanceDelay = 1000;  // msec
 const int kTooltipMinHeight = 29 - 2 * kTooltipTopBottomMargin;
 const SkColor kTooltipTextColor = SkColorSetRGB(0x22, 0x22, 0x22);
 
@@ -80,7 +80,7 @@ ShelfTooltipManager::ShelfTooltipBubble::ShelfTooltipBubble(
                                    kArrowOffsetLeftRight,
                                    kArrowOffsetTopBottom,
                                    kArrowOffsetLeftRight);
-  // Launcher items can have an asymmetrical border for spacing reasons.
+  // Shelf items can have an asymmetrical border for spacing reasons.
   // Adjust anchor location for this.
   if (anchor->border())
     insets += anchor->border()->GetInsets();
@@ -324,8 +324,8 @@ void ShelfTooltipManager::CancelHidingAnimation() {
     return;
 
   gfx::NativeView native_view = widget_->GetNativeView();
-  views::corewm::SetWindowVisibilityAnimationTransition(
-      native_view, views::corewm::ANIMATE_NONE);
+  wm::SetWindowVisibilityAnimationTransition(
+      native_view, wm::ANIMATE_NONE);
 }
 
 void ShelfTooltipManager::CloseSoon() {
@@ -359,10 +359,10 @@ void ShelfTooltipManager::CreateBubble(views::View* anchor,
   view_->SetText(text_);
 
   gfx::NativeView native_view = widget_->GetNativeView();
-  views::corewm::SetWindowVisibilityAnimationType(
-      native_view, views::corewm::WINDOW_VISIBILITY_ANIMATION_TYPE_VERTICAL);
-  views::corewm::SetWindowVisibilityAnimationTransition(
-      native_view, views::corewm::ANIMATE_HIDE);
+  wm::SetWindowVisibilityAnimationType(
+      native_view, wm::WINDOW_VISIBILITY_ANIMATION_TYPE_VERTICAL);
+  wm::SetWindowVisibilityAnimationTransition(
+      native_view, wm::ANIMATE_HIDE);
 }
 
 void ShelfTooltipManager::CreateTimer(int delay_in_ms) {

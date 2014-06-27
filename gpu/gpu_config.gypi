@@ -4,8 +4,8 @@
 
 {
   'dependencies': [
-    '../base/base.gyp:base',
     '../third_party/re2/re2.gyp:re2',
+    '../base/base.gyp:base',
     '../ui/gl/gl.gyp:gl',
   ],
   'include_dirs': [
@@ -35,10 +35,6 @@
     'config/gpu_info_collector.cc',
     'config/gpu_info_collector.h',
     'config/gpu_performance_stats.h',
-    'config/gpu_switching_list_json.cc',
-    'config/gpu_switching_list.cc',
-    'config/gpu_switching_list.h',
-    'config/gpu_switching_option.h',
     'config/gpu_test_config.cc',
     'config/gpu_test_config.h',
     'config/gpu_test_expectations_parser.cc',

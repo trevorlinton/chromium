@@ -23,16 +23,25 @@ specific_include_rules = {
     "+media/filters",
   ],
   "render_sandbox_host_linux\.cc": [
+    "+content/child/blink_platform_impl.h",
+    "+third_party/WebKit/public/platform/linux/WebFontInfo.h",
     "+third_party/WebKit/public/web/WebKit.h",
-    "+third_party/WebKit/public/web/linux/WebFontInfo.h",
   ],
   "render_process_host_impl\.cc": [
     "+content/browser/frame_host/render_frame_message_filter.h",
+  ],
+  "render_widget_host_view_mac\.mm": [
+    "+content/browser/frame_host",
+  ],
+  "ime_adapter_android\.cc": [
+    "+content/browser/frame_host",
   ],
   # TODO(nasko): Remove these exceptions once we've untangled the dependency
   # of RenderViewHost on the FrameTree.
   "render_view_host_impl\.(cc|h)": [
     "+content/browser/frame_host/frame_tree.h",
-    "+content/browser/frame_host/render_frame_host_impl.h",
+  ],
+  "render_widget_host_view_aura\.cc": [
+    "+content/browser/frame_host",
   ],
 }

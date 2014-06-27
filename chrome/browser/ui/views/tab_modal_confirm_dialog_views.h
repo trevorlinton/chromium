@@ -14,7 +14,6 @@
 
 namespace content {
 class WebContents;
-class BrowserContext;
 }
 
 namespace views {
@@ -35,16 +34,15 @@ class TabModalConfirmDialogViews : public TabModalConfirmDialog,
                              content::WebContents* web_contents);
 
   // views::DialogDelegate:
-  virtual string16 GetWindowTitle() const OVERRIDE;
-  virtual string16 GetDialogButtonLabel(ui::DialogButton button) const OVERRIDE;
+  virtual base::string16 GetWindowTitle() const OVERRIDE;
+  virtual base::string16 GetDialogButtonLabel(
+      ui::DialogButton button) const OVERRIDE;
   virtual bool Cancel() OVERRIDE;
   virtual bool Accept() OVERRIDE;
   virtual bool Close() OVERRIDE;
 
   // views::WidgetDelegate:
   virtual views::View* GetContentsView() OVERRIDE;
-  virtual views::NonClientFrameView* CreateNonClientFrameView(
-      views::Widget* widget) OVERRIDE;
   virtual views::Widget* GetWidget() OVERRIDE;
   virtual const views::Widget* GetWidget() const OVERRIDE;
   virtual void DeleteDelegate() OVERRIDE;
@@ -69,7 +67,6 @@ class TabModalConfirmDialogViews : public TabModalConfirmDialog,
   views::MessageBoxView* message_box_view_;
 
   views::Widget* dialog_;
-  content::BrowserContext* browser_context_;
 
   DISALLOW_COPY_AND_ASSIGN(TabModalConfirmDialogViews);
 };

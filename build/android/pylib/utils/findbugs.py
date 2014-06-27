@@ -62,15 +62,12 @@ def _DiffKnownWarnings(current_warnings_set, known_bugs_file):
 def _Rebaseline(current_warnings_set, known_bugs_file):
   with file(known_bugs_file, 'w') as known_bugs:
     for warning in sorted(current_warnings_set):
-      print >>known_bugs, warning
+      print >> known_bugs, warning
   return 0
 
 
-def _GetChromeClasses(release_version):
-  version = 'Debug'
-  if release_version:
-    version = 'Release'
-  path = os.path.join(constants.DIR_SOURCE_ROOT, 'out', version)
+def _GetChromeClasses():
+  path = constants.GetOutDirectory()
   cmd = 'find %s -name "*.class"' % path
   out = cmd_helper.GetCmdOutput(shlex.split(cmd))
   if not out:
@@ -79,7 +76,7 @@ def _GetChromeClasses(release_version):
 
 
 def _Run(exclude, known_bugs, classes_to_analyze, auxiliary_classes,
-        rebaseline, release_version, findbug_args):
+        rebaseline, findbug_args):
   """Run the FindBugs.
 
   Args:
@@ -91,8 +88,6 @@ def _Run(exclude, known_bugs, classes_to_analyze, auxiliary_classes,
     auxiliary_classes: the classes help to analyze, refer to FindBug's
                        -auxclasspath command line option.
     rebaseline: True if the known_bugs file needs rebaseline.
-    release_version: True if the release version needs check, otherwise check
-                     debug version.
     findbug_args: addtional command line options needs pass to Findbugs.
   """
 
@@ -107,8 +102,19 @@ def _Run(exclude, known_bugs, classes_to_analyze, auxiliary_classes,
     for classes in auxiliary_classes:
       system_classes.append(os.path.abspath(classes))
 
-  cmd = '%s -textui -sortByClass ' % os.path.join(chrome_src, 'third_party',
-                                                  'findbugs', 'bin', 'findbugs')
+  findbugs_javacmd = 'java'
+  findbugs_home = os.path.join(chrome_src, 'third_party', 'findbugs')
+  findbugs_jar = os.path.join(findbugs_home, 'lib', 'findbugs.jar')
+  findbugs_pathsep = ':'
+  findbugs_maxheap = '768'
+
+  cmd = '%s ' % findbugs_javacmd
+  cmd = '%s -classpath %s%s' % (cmd, findbugs_jar, findbugs_pathsep)
+  cmd = '%s -Xmx%sm ' % (cmd, findbugs_maxheap)
+  cmd = '%s -Dfindbugs.home="%s" ' % (cmd, findbugs_home)
+  cmd = '%s -jar %s ' % (cmd, findbugs_jar)
+
+  cmd = '%s -textui -sortByClass ' % cmd
   cmd = '%s -pluginList %s' % (cmd, os.path.join(chrome_src, 'tools', 'android',
                                                  'findbugs_plugin', 'lib',
                                                  'chromiumPlugin.jar'))
@@ -124,15 +130,14 @@ def _Run(exclude, known_bugs, classes_to_analyze, auxiliary_classes,
   if findbug_args:
     cmd = '%s %s ' % (cmd, findbug_args)
 
-
-  chrome_classes = _GetChromeClasses(release_version)
+  chrome_classes = _GetChromeClasses()
   if not chrome_classes:
     return 1
   cmd = '%s %s ' % (cmd, chrome_classes)
 
   proc = subprocess.Popen(shlex.split(cmd),
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-  out, err = proc.communicate()
+  out, _err = proc.communicate()
   current_warnings_set = set(_StripLineNumbers(filter(None, out.splitlines())))
 
   if rebaseline:
@@ -158,7 +163,7 @@ def Run(options):
   if options.auxclasspath:
     auxclasspath = options.auxclasspath.split(':')
   return _Run(exclude_file, known_bugs_file, options.only_analyze, auxclasspath,
-              options.rebaseline, options.release_build, options.findbug_args)
+              options.rebaseline, options.findbug_args)
 
 
 def GetCommonParser():
@@ -197,12 +202,6 @@ def GetCommonParser():
                     dest='known_bugs',
                     help='Not report the bugs in the given file.')
 
-  parser.add_option('-l',
-                    '--release-build',
-                    action='store_true',
-                    dest='release_build',
-                    help='Analyze release build instead of debug.')
-
   parser.add_option('-f',
                     '--findbug-args',
                     action='store',
@@ -220,7 +219,7 @@ def GetCommonParser():
   return parser
 
 
-def main(argv):
+def main():
   parser = GetCommonParser()
   options, _ = parser.parse_args()
 
@@ -228,4 +227,4 @@ def main(argv):
 
 
 if __name__ == '__main__':
-  sys.exit(main(sys.argv))
+  sys.exit(main())

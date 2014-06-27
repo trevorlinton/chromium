@@ -12,6 +12,7 @@
 #include "content/browser/ssl/ssl_error_handler.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/resource_controller.h"
+#include "content/public/common/signed_certificate_timestamp_id_and_status.h"
 #include "net/url_request/url_request.h"
 
 namespace content {
@@ -38,7 +39,7 @@ class CONTENT_EXPORT ResourceLoader : public net::URLRequest::Delegate,
   void ReportUploadProgress();
 
   bool is_transferring() const { return is_transferring_; }
-  void MarkAsTransferring(const GURL& target_url);
+  void MarkAsTransferring();
   void CompleteTransfer();
 
   net::URLRequest* request() { return request_.get(); }
@@ -65,6 +66,8 @@ class CONTENT_EXPORT ResourceLoader : public net::URLRequest::Delegate,
   virtual void OnSSLCertificateError(net::URLRequest* request,
                                      const net::SSLInfo& info,
                                      bool fatal) OVERRIDE;
+  virtual void OnBeforeNetworkStart(net::URLRequest* request,
+                                    bool* defer) OVERRIDE;
   virtual void OnResponseStarted(net::URLRequest* request) OVERRIDE;
   virtual void OnReadCompleted(net::URLRequest* request,
                                int bytes_read) OVERRIDE;
@@ -83,6 +86,14 @@ class CONTENT_EXPORT ResourceLoader : public net::URLRequest::Delegate,
 
   void StartRequestInternal();
   void CancelRequestInternal(int error, bool from_renderer);
+  // Stores the SignedCertificateTimestamps held in |sct_list| in the
+  // SignedCertificateTimestampStore singleton, associated with |process_id|.
+  // On return, |sct_ids| contains the assigned ID and verification status of
+  // each SignedCertificateTimestamp.
+  void StoreSignedCertificateTimestamps(
+      const net::SignedCertificateTimestampAndStatusList& sct_list,
+      int process_id,
+      SignedCertificateTimestampIDStatusList* sct_ids);
   void CompleteResponseStarted();
   void StartReading(bool is_continuation);
   void ResumeReading();
@@ -108,6 +119,7 @@ class CONTENT_EXPORT ResourceLoader : public net::URLRequest::Delegate,
   enum DeferredStage {
     DEFERRED_NONE,
     DEFERRED_START,
+    DEFERRED_NETWORK_START,
     DEFERRED_REDIRECT,
     DEFERRED_READ,
     DEFERRED_FINISH

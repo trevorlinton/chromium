@@ -5,12 +5,22 @@
 #ifndef MOJO_SYSTEM_MESSAGE_PIPE_ENDPOINT_H_
 #define MOJO_SYSTEM_MESSAGE_PIPE_ENDPOINT_H_
 
+#include <stdint.h>
+
+#include <vector>
+
 #include "base/basictypes.h"
-#include "mojo/public/system/core.h"
+#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_ptr.h"
+#include "mojo/public/c/system/core.h"
+#include "mojo/system/dispatcher.h"
+#include "mojo/system/message_in_transit.h"
+#include "mojo/system/system_impl_export.h"
 
 namespace mojo {
 namespace system {
 
+class Channel;
 class Waiter;
 
 // This is an interface to one of the ends of a message pipe, and is used by
@@ -21,34 +31,50 @@ class Waiter;
 // |MessagePipeEndpoint| also implements the functionality required by the
 // dispatcher, e.g., to read messages and to wait. Implementations of this class
 // are not thread-safe; instances are protected by |MesssagePipe|'s lock.
-class MessagePipeEndpoint {
+class MOJO_SYSTEM_IMPL_EXPORT MessagePipeEndpoint {
  public:
   virtual ~MessagePipeEndpoint() {}
 
+  enum Type {
+    kTypeLocal,
+    kTypeProxy
+  };
+  virtual Type GetType() const = 0;
+
   // All implementations must implement these.
+  virtual void Close() = 0;
   virtual void OnPeerClose() = 0;
-  virtual MojoResult EnqueueMessage(
-      const void* bytes, uint32_t num_bytes,
-      const MojoHandle* handles, uint32_t num_handles,
-      MojoWriteMessageFlags flags) = 0;
+  // Implements |MessagePipe::EnqueueMessage()|. The major differences are that:
+  //  a) Dispatchers have been vetted and cloned/attached to the message.
+  //  b) At this point, we cannot report failure (if, e.g., a channel is torn
+  //     down at this point, we should silently swallow the message).
+  virtual void EnqueueMessage(scoped_ptr<MessageInTransit> message) = 0;
 
   // Implementations must override these if they represent a local endpoint,
   // i.e., one for which there's a |MessagePipeDispatcher| (and thus a handle).
-  // An implementation for a remote endpoint (for which there's no dispatcher)
+  // An implementation for a proxy endpoint (for which there's no dispatcher)
   // needs not override these methods, since they should never be called.
   //
   // These methods implement the methods of the same name in |MessagePipe|,
   // though |MessagePipe|'s implementation may have to do a little more if the
   // operation involves both endpoints.
   virtual void CancelAllWaiters();
-  virtual void Close();
-  virtual MojoResult ReadMessage(void* bytes, uint32_t* num_bytes,
-                                 MojoHandle* handles, uint32_t* num_handles,
-                                 MojoReadMessageFlags flags);
+  virtual MojoResult ReadMessage(
+      void* bytes, uint32_t* num_bytes,
+      std::vector<scoped_refptr<Dispatcher> >* dispatchers,
+      uint32_t* num_dispatchers,
+      MojoReadMessageFlags flags);
   virtual MojoResult AddWaiter(Waiter* waiter,
                                MojoWaitFlags flags,
                                MojoResult wake_result);
   virtual void RemoveWaiter(Waiter* waiter);
+
+  // Implementations must override these if they represent a proxy endpoint. An
+  // implementation for a local endpoint needs not override these methods, since
+  // they should never be called.
+  virtual void Attach(scoped_refptr<Channel> channel,
+                      MessageInTransit::EndpointId local_id);
+  virtual void Run(MessageInTransit::EndpointId remote_id);
 
  protected:
   MessagePipeEndpoint() {}

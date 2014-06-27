@@ -23,7 +23,6 @@ int GetMessagePrefixID(bool is_app,
                        bool is_extension,
                        bool is_incognito,
                        bool is_prerender,
-                       bool is_instant_overlay,
                        bool is_background) {
   if (is_app) {
     if (is_background)
@@ -39,15 +38,13 @@ int GetMessagePrefixID(bool is_app,
   }
   if (is_prerender)
     return IDS_TASK_MANAGER_PRERENDER_PREFIX;
-  if (is_instant_overlay)
-    return IDS_TASK_MANAGER_INSTANT_OVERLAY_PREFIX;
   if (is_incognito)
     return IDS_TASK_MANAGER_TAB_INCOGNITO_PREFIX;
 
   return IDS_TASK_MANAGER_TAB_PREFIX;
 }
 
-string16 GetProfileNameFromInfoCache(Profile* profile) {
+base::string16 GetProfileNameFromInfoCache(Profile* profile) {
   DCHECK(profile);
 
   ProfileInfoCache& cache =
@@ -55,18 +52,18 @@ string16 GetProfileNameFromInfoCache(Profile* profile) {
   size_t index = cache.GetIndexOfProfileWithPath(
       profile->GetOriginalProfile()->GetPath());
   if (index == std::string::npos)
-    return string16();
+    return base::string16();
   else
     return cache.GetNameOfProfileAtIndex(index);
 }
 
-string16 GetTitleFromWebContents(content::WebContents* web_contents) {
+base::string16 GetTitleFromWebContents(content::WebContents* web_contents) {
   DCHECK(web_contents);
 
-  string16 title = web_contents->GetTitle();
+  base::string16 title = web_contents->GetTitle();
   if (title.empty()) {
     GURL url = web_contents->GetURL();
-    title = UTF8ToUTF16(url.spec());
+    title = base::UTF8ToUTF16(url.spec());
     // Force URL to be LTR.
     title = base::i18n::GetDisplayStringInLTRDirectionality(title);
   } else {

@@ -8,7 +8,7 @@
 #include "ash/shell_window_ids.h"
 #include "ash/wm/window_animations.h"
 #include "ui/aura/client/aura_constants.h"
-#include "ui/aura/root_window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/compositor/layer_animation_observer.h"
 #include "ui/compositor/layer_animation_sequence.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
@@ -611,23 +611,6 @@ void SessionStateAnimator::RunAnimationForWindow(
           window, 0.0, duration, gfx::Tween::EASE_IN_OUT, observer);
       break;
   }
-}
-
-void SessionStateAnimator::CreateForeground() {
-  if (foreground_)
-    return;
-  aura::Window* window = Shell::GetContainer(
-      Shell::GetPrimaryRootWindow(),
-      internal::kShellWindowId_PowerButtonAnimationContainer);
-  HideWindowImmediately(window, NULL);
-  foreground_.reset(
-      new ColoredWindowController(window, "SessionStateAnimatorForeground"));
-  foreground_->SetColor(SK_ColorWHITE);
-  foreground_->GetWidget()->Show();
-}
-
-void SessionStateAnimator::DropForeground() {
-  foreground_.reset();
 }
 
 }  // namespace internal

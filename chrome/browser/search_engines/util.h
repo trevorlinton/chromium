@@ -21,11 +21,12 @@ class WebDataService;
 
 // Returns the short name of the default search engine, or the empty string if
 // none is set. |profile| may be NULL.
-string16 GetDefaultSearchEngineName(Profile* profile);
+base::string16 GetDefaultSearchEngineName(Profile* profile);
 
 // Returns a GURL that searches for |terms| using the default search engine of
 // |profile|.
-GURL GetDefaultSearchURLForSearchTerms(Profile* profile, const string16& terms);
+GURL GetDefaultSearchURLForSearchTerms(Profile* profile,
+                                       const base::string16& terms);
 
 // Returns matching URL from |template_urls| or NULL.
 TemplateURL* FindURLByPrepopulateID(

@@ -8,7 +8,7 @@
 #include "base/mac/mac_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "grit/ui_resources.h"
-#import "third_party/GTM/AppKit/GTMNSBezierPath+RoundRect.h"
+#import "third_party/google_toolbox_for_mac/src/AppKit/GTMNSBezierPath+RoundRect.h"
 #include "ui/app_list/app_list_menu.h"
 #include "ui/app_list/app_list_model.h"
 #include "ui/app_list/search_box_model.h"
@@ -53,6 +53,7 @@ class SearchBoxModelObserverBridge : public SearchBoxModelObserver {
   void SetSearchText(const base::string16& text);
 
   virtual void IconChanged() OVERRIDE;
+  virtual void SpeechRecognitionButtonPropChanged() OVERRIDE;
   virtual void HintTextChanged() OVERRIDE;
   virtual void SelectionModelChanged() OVERRIDE;
   virtual void TextChanged() OVERRIDE;
@@ -94,6 +95,11 @@ void SearchBoxModelObserverBridge::SetSearchText(const base::string16& text) {
 void SearchBoxModelObserverBridge::IconChanged() {
   [[parent_ searchImageView] setImage:gfx::NSImageFromImageSkiaWithColorSpace(
       GetModel()->icon(), base::mac::GetSRGBColorSpace())];
+}
+
+void SearchBoxModelObserverBridge::SpeechRecognitionButtonPropChanged() {
+  // TODO(mukai): implement.
+  NOTIMPLEMENTED();
 }
 
 void SearchBoxModelObserverBridge::HintTextChanged() {
@@ -161,8 +167,7 @@ void SearchBoxModelObserverBridge::TextChanged() {
 
   menuController_.reset();
   appListMenu_.reset(
-      new app_list::AppListMenu([delegate_ appListDelegate],
-                                [delegate_ appListModel]->users()));
+      new app_list::AppListMenu([delegate_ appListDelegate]));
   menuController_.reset([[AppListMenuController alloc]
       initWithSearchBoxController:self]);
   [menuButton_ setMenu:[menuController_ menu]];  // Menu will populate here.

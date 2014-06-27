@@ -23,16 +23,15 @@ class RootWindowController;
 struct RootWindowSettings {
   RootWindowSettings();
 
-  // Indicate if the window in the active workspace should
-  // use the transparent "solo-window" header style.
-  bool solo_window_header;
-
   // ID of the display associated with the root window.
   int64 display_id;
 
   // RootWindowController for the root window. This may be NULL
   // for the root window used for mirroring.
   RootWindowController* controller;
+
+  // True if the root window has already been shutdown.
+  bool shutdown;
 };
 
 // Initializes and returns RootWindowSettings for |root|.

@@ -12,7 +12,7 @@
 #endif
 
 #include "base/strings/string16.h"
-#include "ui/base/accessibility/accessibility_types.h"
+#include "ui/accessibility/ax_enums.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/views/views_export.h"
@@ -29,6 +29,7 @@ class SiteInstance;
 }
 
 namespace gfx {
+class ImageSkia;
 class Rect;
 }
 
@@ -75,12 +76,12 @@ class VIEWS_EXPORT ViewsDelegate {
 
   virtual void NotifyAccessibilityEvent(
       View* view,
-      ui::AccessibilityTypes::Event event_type) = 0;
+      ui::AXEvent event_type) = 0;
 
   // For accessibility, notify the delegate that a menu item was focused
   // so that alternate feedback (speech / magnified text) can be provided.
-  virtual void NotifyMenuItemFocused(const string16& menu_name,
-                                     const string16& menu_item_name,
+  virtual void NotifyMenuItemFocused(const base::string16& menu_name,
+                                     const base::string16& menu_item_name,
                                      int item_index,
                                      int item_count,
                                      bool has_submenu) = 0;
@@ -91,6 +92,8 @@ class VIEWS_EXPORT ViewsDelegate {
   // Returns true if the window passed in is in the Windows 8 metro
   // environment.
   virtual bool IsWindowInMetro(gfx::NativeWindow window) const = 0;
+#elif defined(OS_LINUX) && !defined(OS_CHROMEOS)
+  virtual gfx::ImageSkia* GetDefaultWindowIcon() const = 0;
 #endif
 
   // Creates a default NonClientFrameView to be used for windows that don't
@@ -98,11 +101,6 @@ class VIEWS_EXPORT ViewsDelegate {
   // views::CustomFrameView type will be used.
   virtual NonClientFrameView* CreateDefaultNonClientFrameView(
       Widget* widget) = 0;
-
-  // Returns whether the embedding app wants windows to be created with the
-  // views::Widget marked as transparent.  For example, an app may wish to
-  // apply transparent window frames in the NonClientFrameView.
-  virtual bool UseTransparentWindows() const = 0;
 
   // AddRef/ReleaseRef are invoked while a menu is visible. They are used to
   // ensure we don't attempt to exit while a menu is showing.
@@ -120,6 +118,12 @@ class VIEWS_EXPORT ViewsDelegate {
 
   // Returns the default obscured text reveal duration.
   virtual base::TimeDelta GetDefaultTextfieldObscuredRevealDuration() = 0;
+
+  // Returns true if the operating system's window manager will always provide a
+  // title bar with caption buttons (ignoring the setting to
+  // |remove_standard_frame| in InitParams). If |maximized|, this applies to
+  // maximized windows; otherwise to restored windows.
+  virtual bool WindowManagerProvidesTitleBar(bool maximized);
 
  private:
   scoped_ptr<ViewsTouchSelectionControllerFactory> views_tsc_factory_;

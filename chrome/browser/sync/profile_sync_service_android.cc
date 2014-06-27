@@ -22,9 +22,10 @@
 #include "chrome/browser/sync/about_sync_util.h"
 #include "chrome/browser/sync/profile_sync_service.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/browser/sync/sync_prefs.h"
 #include "chrome/browser/sync/sync_ui_util.h"
-#include "chrome/common/pref_names.h"
+#include "components/sync_driver/pref_names.h"
+#include "components/sync_driver/sync_prefs.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "google/cacheinvalidation/types.pb.h"
@@ -33,6 +34,7 @@
 #include "grit/generated_resources.h"
 #include "jni/ProfileSyncService_jni.h"
 #include "sync/internal_api/public/read_transaction.h"
+#include "sync/notifier/object_id_invalidation_map.h"
 #include "ui/base/l10n/l10n_util.h"
 
 using base::android::AttachCurrentThread;
@@ -62,13 +64,13 @@ ProfileSyncServiceAndroid::ProfileSyncServiceAndroid(JNIEnv* env, jobject obj)
     return;
   }
 
-  profile_ = g_browser_process->profile_manager()->GetDefaultProfile();
+  profile_ = ProfileManager::GetActiveUserProfile();
   if (profile_ == NULL) {
     NOTREACHED() << "Sync Init: Profile not found.";
     return;
   }
 
-  sync_prefs_.reset(new browser_sync::SyncPrefs(profile_->GetPrefs()));
+  sync_prefs_.reset(new sync_driver::SyncPrefs(profile_->GetPrefs()));
 
   sync_service_ =
       ProfileSyncServiceFactory::GetInstance()->GetForProfile(profile_);
@@ -294,7 +296,8 @@ ScopedJavaLocalRef<jstring>
         JNIEnv* env, jobject) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   base::Time passphrase_time = sync_service_->GetExplicitPassphraseTime();
-  string16 passphrase_time_str = base::TimeFormatShortDate(passphrase_time);
+  base::string16 passphrase_time_str =
+      base::TimeFormatShortDate(passphrase_time);
   return base::android::ConvertUTF16ToJavaString(env,
       l10n_util::GetStringFUTF16(
         IDS_SYNC_ENTER_GOOGLE_PASSPHRASE_BODY_WITH_DATE,
@@ -306,7 +309,8 @@ ScopedJavaLocalRef<jstring>
         JNIEnv* env, jobject) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   base::Time passphrase_time = sync_service_->GetExplicitPassphraseTime();
-  string16 passphrase_time_str = base::TimeFormatShortDate(passphrase_time);
+  base::string16 passphrase_time_str =
+      base::TimeFormatShortDate(passphrase_time);
   return base::android::ConvertUTF16ToJavaString(env,
       l10n_util::GetStringFUTF16(IDS_SYNC_ENTER_PASSPHRASE_BODY_WITH_DATE,
         passphrase_time_str));
@@ -321,7 +325,7 @@ ScopedJavaLocalRef<jstring>
   return base::android::ConvertUTF16ToJavaString(env,
       l10n_util::GetStringFUTF16(
           IDS_SYNC_ACCOUNT_SYNCING_TO_USER,
-          ASCIIToUTF16(sync_username)));
+          base::ASCIIToUTF16(sync_username)));
 }
 
 ScopedJavaLocalRef<jstring>
@@ -454,7 +458,7 @@ ScopedJavaLocalRef<jstring> ProfileSyncServiceAndroid::GetAboutInfoForTest(
     JNIEnv* env, jobject) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 
-  scoped_ptr<DictionaryValue> about_info =
+  scoped_ptr<base::DictionaryValue> about_info =
       sync_ui_util::ConstructAboutInformation(sync_service_);
   std::string about_info_json;
   base::JSONWriter::Write(about_info.get(), &about_info_json);
@@ -468,7 +472,7 @@ jlong ProfileSyncServiceAndroid::GetLastSyncedTimeForTest(
   // conversion, since SyncPrefs::GetLastSyncedTime() converts the stored value
   // to to base::Time.
   return static_cast<jlong>(
-      profile_->GetPrefs()->GetInt64(prefs::kSyncLastSyncedTime));
+      profile_->GetPrefs()->GetInt64(sync_driver::prefs::kSyncLastSyncedTime));
 }
 
 void ProfileSyncServiceAndroid::NudgeSyncer(JNIEnv* env,
@@ -501,11 +505,11 @@ ProfileSyncServiceAndroid*
       AttachCurrentThread(), base::android::GetApplicationContext()));
 }
 
-static int Init(JNIEnv* env, jobject obj) {
+static jlong Init(JNIEnv* env, jobject obj) {
   ProfileSyncServiceAndroid* profile_sync_service_android =
       new ProfileSyncServiceAndroid(env, obj);
   profile_sync_service_android->Init();
-  return reinterpret_cast<jint>(profile_sync_service_android);
+  return reinterpret_cast<intptr_t>(profile_sync_service_android);
 }
 
 // static

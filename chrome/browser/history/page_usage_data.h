@@ -6,7 +6,6 @@
 #define CHROME_BROWSER_HISTORY_PAGE_USAGE_DATA_H__
 
 #include "base/strings/string16.h"
-#include "base/time/time.h"
 #include "chrome/browser/history/history_types.h"
 #include "url/gurl.h"
 
@@ -41,11 +40,11 @@ class PageUsageData {
     return url_;
   }
 
-  void SetTitle(const string16& s) {
+  void SetTitle(const base::string16& s) {
     title_ = s;
   }
 
-  const string16& GetTitle() const {
+  const base::string16& GetTitle() const {
     return title_;
   }
 
@@ -57,26 +56,15 @@ class PageUsageData {
     return score_;
   }
 
-  void SetDuration(base::TimeDelta duration) {
-    duration_ = duration;
-  }
-
-  base::TimeDelta duration() const {
-    return duration_;
-  }
-
   // Sort predicate to sort instances by score (high to low)
   static bool Predicate(const PageUsageData* dud1, const PageUsageData* dud2);
 
  private:
   history::SegmentID id_;
   GURL url_;
-  string16 title_;
+  base::string16 title_;
 
   double score_;
-
-  // Duration is only set by QuerySegmentDurationSince().
-  base::TimeDelta duration_;
 };
 
 #endif  // CHROME_BROWSER_HISTORY_PAGE_USAGE_DATA_H__

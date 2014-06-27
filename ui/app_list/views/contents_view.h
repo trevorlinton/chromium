@@ -36,10 +36,12 @@ class PaginationModel;
 // and animates the transition between show states.
 class ContentsView : public views::View {
  public:
+  enum ShowState { SHOW_APPS, SHOW_SEARCH_RESULTS, };
+
   ContentsView(AppListMainView* app_list_main_view,
                PaginationModel* pagination_model,
                AppListModel* model,
-               content::WebContents* start_page_contents);
+               AppListViewDelegate* view_delegate);
   virtual ~ContentsView();
 
   // The app list gets closed and drag and drop operations need to be cancelled.
@@ -53,30 +55,25 @@ class ContentsView : public views::View {
   void ShowSearchResults(bool show);
   void ShowFolderContent(AppListFolderItem* folder);
 
+  // Sets show state and animates the subviews to match the show state.
+  void SetShowState(ShowState show_state);
+
   void Prerender();
 
   AppsContainerView* apps_container_view() { return apps_container_view_; }
-
- private:
-  enum ShowState {
-    SHOW_APPS,
-    SHOW_SEARCH_RESULTS,
-  };
-
-  // Sets show state.
-  void SetShowState(ShowState show_state);
-
-  // Invoked when show state is changed.
-  void ShowStateChanged();
-
-  void CalculateIdealBounds();
-  void AnimateToIdealBounds();
 
   // Overridden from views::View:
   virtual gfx::Size GetPreferredSize() OVERRIDE;
   virtual void Layout() OVERRIDE;
   virtual bool OnKeyPressed(const ui::KeyEvent& event) OVERRIDE;
   virtual bool OnMouseWheel(const ui::MouseWheelEvent& event) OVERRIDE;
+
+ private:
+  // Invoked when show state is changed.
+  void ShowStateChanged();
+
+  void CalculateIdealBounds();
+  void AnimateToIdealBounds();
 
   // Overridden from ui::EventHandler:
   virtual void OnGestureEvent(ui::GestureEvent* event) OVERRIDE;
@@ -85,7 +82,7 @@ class ContentsView : public views::View {
   ShowState show_state_;
   PaginationModel* pagination_model_;  // Owned by AppListController.
 
-  AppsContainerView* apps_container_view_; // Owned by the views hierarchy.
+  AppsContainerView* apps_container_view_;  // Owned by the views hierarchy.
 
   scoped_ptr<views::ViewModel> view_model_;
   scoped_ptr<views::BoundsAnimator> bounds_animator_;

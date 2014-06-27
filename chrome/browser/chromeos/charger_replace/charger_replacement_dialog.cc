@@ -12,6 +12,7 @@
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/user_metrics.h"
 #include "grit/generated_resources.h"
+#include "ui/aura/window.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/size.h"
 
@@ -34,6 +35,7 @@ const char kNewChargerNotOrdered[] = "0";
 
 // static member variable.
 bool ChargerReplacementDialog::is_window_visible_ = false;
+gfx::NativeWindow ChargerReplacementDialog::current_window_ = NULL;
 
 ChargerReplacementDialog::ChargerReplacementDialog(
     gfx::NativeWindow parent_window)
@@ -44,8 +46,10 @@ ChargerReplacementDialog::ChargerReplacementDialog(
 
 ChargerReplacementDialog::~ChargerReplacementDialog() {
   is_window_visible_ = false;
+  current_window_ = NULL;
 }
 
+// static
 bool ChargerReplacementDialog::ShouldShowDialog() {
   if (is_window_visible_)
     return false;
@@ -60,23 +64,36 @@ bool ChargerReplacementDialog::ShouldShowDialog() {
           ChargerReplacementHandler::CONFIRM_ORDER_NEW_CHARGER_BY_PHONE);
 }
 
+// static
+bool ChargerReplacementDialog::IsDialogVisible() {
+  return is_window_visible_;
+}
+
+void ChargerReplacementDialog::SetFocusOnChargerDialogIfVisible() {
+  if (is_window_visible_ && current_window_)
+    current_window_->Focus();
+}
+
 void ChargerReplacementDialog::Show() {
   content::RecordAction(
-        content::UserMetricsAction("ShowChargerReplacementDialog"));
+        base::UserMetricsAction("ShowChargerReplacementDialog"));
 
   is_window_visible_ = true;
-  gfx::NativeWindow dialog_window =
-      chrome::ShowWebDialog(parent_window_,
-                            ProfileManager::GetDefaultProfile(),
-                            this);
-  charger_replacement_handler_->set_charger_window(dialog_window);
+  // We show the dialog for the active user, so that the dialog will get
+  // displayed immediately. The parent window is a system modal/lock container
+  // and does not belong to any user.
+  current_window_ = chrome::ShowWebDialog(
+      parent_window_,
+      ProfileManager::GetActiveUserProfile(),
+      this);
+  charger_replacement_handler_->set_charger_window(current_window_);
 }
 
 ui::ModalType ChargerReplacementDialog::GetDialogModalType() const {
   return ui::MODAL_TYPE_SYSTEM;
 }
 
-string16 ChargerReplacementDialog::GetDialogTitle() const {
+base::string16 ChargerReplacementDialog::GetDialogTitle() const {
   return l10n_util::GetStringUTF16(IDS_CHARGER_REPLACEMENT_DIALOG_TITLE);
 }
 

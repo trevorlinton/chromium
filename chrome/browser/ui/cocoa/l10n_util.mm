@@ -6,7 +6,7 @@
 
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
-#import "third_party/GTM/AppKit/GTMUILocalizerAndLayoutTweaker.h"
+#import "third_party/google_toolbox_for_mac/src/AppKit/GTMUILocalizerAndLayoutTweaker.h"
 
 namespace cocoa_l10n_util {
 
@@ -67,7 +67,7 @@ CGFloat VerticallyReflowGroup(NSArray* views) {
 }
 
 NSString* ReplaceNSStringPlaceholders(NSString* formatString,
-                                      const string16& a,
+                                      const base::string16& a,
                                       size_t* offset) {
   return base::SysUTF16ToNSString(
       ReplaceStringPlaceholders(base::SysNSStringToUTF16(formatString),

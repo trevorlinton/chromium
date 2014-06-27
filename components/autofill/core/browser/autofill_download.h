@@ -18,9 +18,7 @@
 #include "components/autofill/core/browser/autofill_type.h"
 #include "net/url_request/url_fetcher_delegate.h"
 
-namespace content {
-class BrowserContext;
-}  // namespace content
+class PrefService;
 
 namespace net {
 class URLFetcher;
@@ -28,16 +26,14 @@ class URLFetcher;
 
 namespace autofill {
 
+class AutofillDriver;
 class AutofillMetrics;
 class FormStructure;
 
 // Handles getting and updating Autofill heuristics.
 class AutofillDownloadManager : public net::URLFetcherDelegate {
  public:
-  enum AutofillRequestType {
-    REQUEST_QUERY,
-    REQUEST_UPLOAD,
-  };
+  enum RequestType { REQUEST_QUERY, REQUEST_UPLOAD, };
 
   // An interface used to notify clients of AutofillDownloadManager.
   class Observer {
@@ -55,15 +51,17 @@ class AutofillDownloadManager : public net::URLFetcherDelegate {
     // |request_type| - type of request that failed.
     // |http_error| - HTTP error code.
     virtual void OnServerRequestError(const std::string& form_signature,
-                                      AutofillRequestType request_type,
+                                      RequestType request_type,
                                       int http_error) {}
 
    protected:
     virtual ~Observer() {}
   };
 
+  // |driver| and |pref_service| must outlive this instance.
   // |observer| - observer to notify on successful completion or error.
-  AutofillDownloadManager(content::BrowserContext* context,
+  AutofillDownloadManager(AutofillDriver* driver,
+                          PrefService* pref_service,
                           Observer* observer);
   virtual ~AutofillDownloadManager();
 
@@ -87,8 +85,6 @@ class AutofillDownloadManager : public net::URLFetcherDelegate {
  private:
   friend class AutofillDownloadTest;
   FRIEND_TEST_ALL_PREFIXES(AutofillDownloadTest, QueryAndUploadTest);
-
-  static std::string AutofillRequestTypeToString(const AutofillRequestType);
 
   struct FormRequestData;
   typedef std::list<std::pair<std::string, std::string> > QueryRequestCache;
@@ -132,12 +128,15 @@ class AutofillDownloadManager : public net::URLFetcherDelegate {
   void SetPositiveUploadRate(double rate);
   void SetNegativeUploadRate(double rate);
 
-  // The pointer value is const, so this can only be set in the
-  // constructor.  Must not be null.
-  content::BrowserContext* const browser_context_;  // WEAK
+  // The AutofillDriver that this instance will use. Must not be null, and must
+  // outlive this instance.
+  AutofillDriver* const driver_;  // WEAK
+
+  // The PrefService that this instance will use. Must not be null, and must
+  // outlive this instance.
+  PrefService* const pref_service_;  // WEAK
 
   // The observer to notify when server predictions are successfully received.
-  // The pointer value is const, so this can only be set in the constructor.
   // Must not be null.
   AutofillDownloadManager::Observer* const observer_;  // WEAK
 

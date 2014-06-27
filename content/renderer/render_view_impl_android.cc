@@ -7,7 +7,10 @@
 #include "base/command_line.h"
 #include "base/message_loop/message_loop.h"
 #include "cc/trees/layer_tree_host.h"
+#include "content/common/view_messages.h"
 #include "content/renderer/gpu/render_widget_compositor.h"
+#include "third_party/WebKit/public/platform/WebRect.h"
+#include "third_party/WebKit/public/web/WebView.h"
 
 namespace content {
 
@@ -51,7 +54,7 @@ void RenderViewImpl::UpdateTopControlsState(TopControlsState constraints,
   top_controls_constraints_ = constraints_cc;
 }
 
-void RenderViewImpl::didScrollWithKeyboard(const WebKit::WebSize& delta) {
+void RenderViewImpl::didScrollWithKeyboard(const blink::WebSize& delta) {
   if (delta.height == 0)
     return;
   if (compositor_) {
@@ -59,6 +62,29 @@ void RenderViewImpl::didScrollWithKeyboard(const WebKit::WebSize& delta) {
     compositor_->UpdateTopControlsState(top_controls_constraints_,
                                         current,
                                         true);
+  }
+}
+
+void RenderViewImpl::OnExtractSmartClipData(const gfx::Rect& rect) {
+  Send(new ViewHostMsg_SmartClipDataExtracted(
+      routing_id_, webview()->getSmartClipData(rect)));
+}
+
+void RenderViewImpl::GetSelectionRootBounds(gfx::Rect* bounds) const {
+  blink::WebRect bounds_webrect;
+  webview()->getSelectionRootBounds(bounds_webrect);
+  *bounds = bounds_webrect;
+}
+
+void RenderViewImpl::UpdateSelectionRootBounds() {
+  if (!webview() || handling_ime_event_)
+    return;
+
+  gfx::Rect bounds;
+  GetSelectionRootBounds(&bounds);
+  if (selection_root_rect_ != bounds) {
+    selection_root_rect_ = bounds;
+    Send(new ViewHostMsg_SelectionRootBoundsChanged(routing_id_, bounds));
   }
 }
 

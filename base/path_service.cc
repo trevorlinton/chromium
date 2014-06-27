@@ -187,7 +187,7 @@ bool PathService::Get(int key, FilePath* result) {
 
   // special case the current directory because it can never be cached
   if (key == base::DIR_CURRENT)
-    return file_util::GetCurrentDirectory(result);
+    return base::GetCurrentDirectory(result);
 
   Provider* provider = NULL;
   {
@@ -254,7 +254,7 @@ bool PathService::OverrideAndCreateIfNeeded(int key,
     // this to the absolute path because on POSIX, MakeAbsoluteFilePath fails
     // if called on a non-existent path.
     if (!base::PathExists(file_path) &&
-        !file_util::CreateDirectory(file_path))
+        !base::CreateDirectory(file_path))
       return false;
   }
 

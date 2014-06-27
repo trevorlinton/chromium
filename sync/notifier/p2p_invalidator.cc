@@ -180,12 +180,6 @@ void P2PInvalidator::UnregisterHandler(InvalidationHandler* handler) {
   registrar_.UnregisterHandler(handler);
 }
 
-void P2PInvalidator::Acknowledge(const invalidation::ObjectId& id,
-                                 const AckHandle& ack_handle) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  // Do nothing for the P2P implementation.
-}
-
 InvalidatorState P2PInvalidator::GetInvalidatorState() const {
   DCHECK(thread_checker_.CalledOnValidThread());
   return registrar_.GetInvalidatorState();
@@ -206,6 +200,14 @@ void P2PInvalidator::UpdateCredentials(
   // next reconnection.
   push_client_->UpdateCredentials(email, token);
   logged_in_ = true;
+}
+
+void P2PInvalidator::RequestDetailedStatus(
+    base::Callback<void(const base::DictionaryValue&)> callback) const {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  // TODO(mferreria): Make the P2P Invalidator work.
+  scoped_ptr<base::DictionaryValue> value(new base::DictionaryValue());
+  callback.Run(*value);
 }
 
 void P2PInvalidator::SendInvalidation(const ObjectIdSet& ids) {

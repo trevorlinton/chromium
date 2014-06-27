@@ -25,9 +25,10 @@ class FakeContentLayer : public ContentLayer {
   size_t push_properties_count() const { return push_properties_count_; }
   void reset_push_properties_count() { push_properties_count_ = 0; }
 
-  virtual bool Update(
-      ResourceUpdateQueue* queue,
-      const OcclusionTracker* occlusion) OVERRIDE;
+  virtual bool Update(ResourceUpdateQueue* queue,
+                      const OcclusionTracker<Layer>* occlusion) OVERRIDE;
+
+  gfx::Rect LastPaintRect() const;
 
   void set_always_update_resources(bool always_update_resources) {
     always_update_resources_ = always_update_resources;

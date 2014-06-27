@@ -96,13 +96,13 @@ class ChromeSpeechRecognitionManagerDelegate::OptionalRequestInfo
     DCHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE));
     base::AutoLock lock(lock_);
     can_report_metrics_ = true;
-    string16 device_model =
+    base::string16 device_model =
         SpeechRecognitionManager::GetInstance()->GetAudioInputDeviceModel();
 #if defined(OS_WIN)
-    value_ = UTF16ToUTF8(
+    value_ = base::UTF16ToUTF8(
         installer::WMIComputerSystem::GetModel() + L"|" + device_model);
 #else  // defined(OS_WIN)
-    value_ = UTF16ToUTF8(device_model);
+    value_ = base::UTF16ToUTF8(device_model);
 #endif  // defined(OS_WIN)
   }
 
@@ -440,7 +440,7 @@ void ChromeSpeechRecognitionManagerDelegate::CheckRenderViewType(
   // Right now the extension popup closes and dismisses immediately on user
   // click.
   if (view_type == extensions::VIEW_TYPE_TAB_CONTENTS ||
-      view_type == extensions::VIEW_TYPE_APP_SHELL ||
+      view_type == extensions::VIEW_TYPE_APP_WINDOW ||
       view_type == extensions::VIEW_TYPE_VIRTUAL_KEYBOARD ||
       // Only allow requests through JavaScript API (|js_api| = true).
       // Requests originating from html element (|js_api| = false) would want
@@ -448,7 +448,7 @@ void ChromeSpeechRecognitionManagerDelegate::CheckRenderViewType(
       // see todo above about issues with rendering such bubbles from extension
       // popups.
       (view_type == extensions::VIEW_TYPE_EXTENSION_BACKGROUND_PAGE &&
-           js_api)) {
+       js_api)) {
     // If it is a tab, we can show the speech input bubble or check for
     // permission. For apps, this means manifest would be checked for
     // permission.

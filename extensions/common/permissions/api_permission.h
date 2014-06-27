@@ -35,23 +35,24 @@ class APIPermission {
     kUnknown = -1,
 
     // Real permissions.
+    kAccessibilityFeaturesModify,
+    kAccessibilityFeaturesRead,
     kActiveTab,
     kActivityLogPrivate,
     kAdView,
     kAlarms,
-    kAppCurrentWindowInternal,
-    kAppRuntime,
-    kAppWindow,
+    kAlwaysOnTopWindows,
     kAudio,
     kAudioCapture,
+    kAutomation,
     kAutoTestPrivate,
     kBackground,
-    kBluetooth,
     kBookmark,
     kBookmarkManagerPrivate,
     kBrailleDisplayPrivate,
     kBrowsingData,
     kCast,
+    kCastStreaming,
     kChromeosInfoPrivate,
     kClipboardRead,
     kClipboardWrite,
@@ -83,14 +84,18 @@ class APIPermission {
     kFileBrowserPrivate,
     kFileSystem,
     kFileSystemDirectory,
+    kFileSystemProvider,
     kFileSystemRetainEntries,
     kFileSystemWrite,
     kFileSystemWriteDirectory,
     kFontSettings,
     kFullscreen,
+    kGcm,
     kGeolocation,
+    kHid,
     kHistory,
     kHomepage,
+    kHotwordPrivate,
     kIdentity,
     kIdentityPrivate,
     kIdltest,
@@ -110,6 +115,7 @@ class APIPermission {
     kNativeMessaging,
     kNetworkingPrivate,
     kNotification,
+    kOverrideEscFullscreen,
     kPageCapture,
     kPointerLock,
     kPlugin,
@@ -121,19 +127,18 @@ class APIPermission {
     kProxy,
     kPushMessaging,
     kImageWriterPrivate,
+    kReadingListPrivate,
     kRtcPrivate,
     kSearchProvider,
     kSerial,
     kSessions,
     kSignedInDevices,
     kSocket,
-    kSocketsUdp,
     kStartupPages,
     kStorage,
     kStreamsPrivate,
     kSyncFileSystem,
     kSystemPrivate,
-    kSystemIndicator,
     kSystemDisplay,
     kSystemStorage,
     kTab,
@@ -155,15 +160,18 @@ class APIPermission {
     kWebRequest,
     kWebRequestBlocking,
     kWebRequestInternal,
-    kWebRtc,
     kWebrtcAudioPrivate,
     kWebrtcLoggingPrivate,
     kWebstorePrivate,
     kWebView,
+    kWindowShape,
+    kScreenlockPrivate,
     kSystemCpu,
     kSystemMemory,
+    kSystemNetwork,
     kSystemInfoCpu,
     kSystemInfoMemory,
+    kFirstRunPrivate,
     kEnumBoundary
   };
 
@@ -200,8 +208,9 @@ class APIPermission {
   // Returns true if |rhs| is equal to this.
   virtual bool Equal(const APIPermission* rhs) const = 0;
 
-  // Parses the APIPermission from |value|. Returns false if error happens.
-  virtual bool FromValue(const base::Value* value) = 0;
+  // Parses the APIPermission from |value|. Returns false if an error happens
+  // and optionally set |error| if |error| is not NULL.
+  virtual bool FromValue(const base::Value* value, std::string* error) = 0;
 
   // Stores this into a new created |value|.
   virtual scoped_ptr<base::Value> ToValue() const = 0;
@@ -304,8 +313,7 @@ class APIPermissionInfo {
   }
 
  private:
-  // Instances should only be constructed from within a
-  // PermissionsInfo::Delegate.
+  // Instances should only be constructed from within a PermissionsProvider.
   friend class ChromeAPIPermissions;
   // Implementations of APIPermission will want to get the permission message,
   // but this class's implementation should be hidden from everyone else.

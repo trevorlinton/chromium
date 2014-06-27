@@ -12,6 +12,11 @@
 #include "cc/quads/render_pass_draw_quad.h"
 #include "cc/quads/shared_quad_state.h"
 
+namespace {
+const size_t kDefaultNumSharedQuadStatesToReserve = 32;
+const size_t kDefaultNumQuadsToReserve = 128;
+}
+
 namespace cc {
 
 void* RenderPass::Id::AsTracingId() const {
@@ -21,12 +26,25 @@ void* RenderPass::Id::AsTracingId() const {
 }
 
 scoped_ptr<RenderPass> RenderPass::Create() {
-  return make_scoped_ptr(new RenderPass);
+  return make_scoped_ptr(new RenderPass());
 }
 
-RenderPass::RenderPass()
-    : id(Id(-1, -1)),
-      has_transparent_background(true) {}
+scoped_ptr<RenderPass> RenderPass::Create(size_t num_layers) {
+  return make_scoped_ptr(new RenderPass(num_layers));
+}
+
+RenderPass::RenderPass() : id(Id(-1, -1)), has_transparent_background(true) {
+  shared_quad_state_list.reserve(kDefaultNumSharedQuadStatesToReserve);
+  quad_list.reserve(kDefaultNumQuadsToReserve);
+}
+
+RenderPass::RenderPass(size_t num_layers)
+    : id(Id(-1, -1)), has_transparent_background(true) {
+  // Each layer usually produces one shared quad state, so the number of layers
+  // is a good hint for what to reserve here.
+  shared_quad_state_list.reserve(num_layers);
+  quad_list.reserve(kDefaultNumQuadsToReserve);
+}
 
 RenderPass::~RenderPass() {
   TRACE_EVENT_OBJECT_DELETED_WITH_ID(
@@ -91,8 +109,8 @@ void RenderPass::CopyAll(const ScopedPtrVector<RenderPass>& in,
 }
 
 void RenderPass::SetNew(Id id,
-                        gfx::Rect output_rect,
-                        gfx::RectF damage_rect,
+                        const gfx::Rect& output_rect,
+                        const gfx::RectF& damage_rect,
                         const gfx::Transform& transform_to_root_target) {
   DCHECK_GT(id.layer_id, 0);
   DCHECK_GE(id.index, 0);
@@ -107,8 +125,8 @@ void RenderPass::SetNew(Id id,
 }
 
 void RenderPass::SetAll(Id id,
-                        gfx::Rect output_rect,
-                        gfx::RectF damage_rect,
+                        const gfx::Rect& output_rect,
+                        const gfx::RectF& damage_rect,
                         const gfx::Transform& transform_to_root_target,
                         bool has_transparent_background) {
   DCHECK_GT(id.layer_id, 0);

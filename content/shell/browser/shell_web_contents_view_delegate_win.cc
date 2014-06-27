@@ -5,6 +5,7 @@
 #include "content/shell/browser/shell_web_contents_view_delegate.h"
 
 #include "base/command_line.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -20,7 +21,7 @@
 #include "content/shell/common/shell_switches.h"
 #include "third_party/WebKit/public/web/WebContextMenuData.h"
 
-using WebKit::WebContextMenuData;
+using blink::WebContextMenuData;
 
 namespace {
 
@@ -70,6 +71,7 @@ ShellWebContentsViewDelegate::~ShellWebContentsViewDelegate() {
 }
 
 void ShellWebContentsViewDelegate::ShowContextMenu(
+    RenderFrameHost* render_frame_host,
     const ContextMenuParams& params) {
   if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kDumpRenderTree))
     return;
@@ -189,18 +191,23 @@ void ShellWebContentsViewDelegate::ShowContextMenu(
 }
 
 void ShellWebContentsViewDelegate::MenuItemSelected(int selection) {
+  RenderFrameHost* frame = web_contents_->GetFocusedFrame();
   switch (selection) {
     case ShellContextMenuItemCutId:
-      web_contents_->GetRenderViewHost()->Cut();
+       if (frame)
+         frame->Cut();
       break;
     case ShellContextMenuItemCopyId:
-      web_contents_->GetRenderViewHost()->Copy();
+      if (frame)
+        frame->Copy();
       break;
     case ShellContextMenuItemPasteId:
-      web_contents_->GetRenderViewHost()->Paste();
+      if (frame)
+        frame->Paste();
       break;
     case ShellContextMenuItemDeleteId:
-      web_contents_->GetRenderViewHost()->Delete();
+      if (frame)
+        frame->Delete();
       break;
     case ShellContextMenuItemOpenLinkId: {
       ShellBrowserContext* browser_context =

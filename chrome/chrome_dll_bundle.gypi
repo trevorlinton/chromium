@@ -108,7 +108,6 @@
       }],
     ],
     'libpeer_target_type%': 'static_library',
-    'repack_path': '../tools/grit/grit/format/repack.py',
   },
   'postbuilds': [
     {
@@ -241,7 +240,7 @@
     ['mac_breakpad_compiled_in==1', {
       'dependencies': [
         '../breakpad/breakpad.gyp:breakpad',
-        'app/policy/cloud_policy_codegen.gyp:policy',
+        '../components/components.gyp:policy',
       ],
       'copies': [
         {
@@ -288,8 +287,8 @@
       'postbuilds': [{
         'postbuild_name': 'Copy inspector files',
         'action': [
-          'cp',
-          '-r',
+          'ln',
+          '-fs',
           '${BUILT_PRODUCTS_DIR}/resources/inspector',
           '${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources',
         ],
@@ -307,6 +306,11 @@
           '<(PRODUCT_DIR)/libpeerconnection.so',
         ],
       }],
+    }],
+    ['icu_use_data_file_flag==1', {
+      'mac_bundle_resources': [
+        '<(PRODUCT_DIR)/icudtl.dat',
+      ],
     }],
   ],  # conditions
 }

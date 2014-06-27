@@ -12,6 +12,7 @@
 #include "base/android/fifo_utils.h"
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
+#include "base/android/library_loader/library_loader_hooks.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/base_switches.h"
 #include "base/command_line.h"
@@ -61,7 +62,7 @@ static void RunTests(JNIEnv* env,
   // Set the application context in base.
   base::android::ScopedJavaLocalRef<jobject> scoped_context(
       env, env->NewLocalRef(app_context));
-  base::android::InitApplicationContext(scoped_context);
+  base::android::InitApplicationContext(env, scoped_context);
   base::android::RegisterJni(env);
 
   std::vector<std::string> args;
@@ -98,10 +99,13 @@ static void RunTests(JNIEnv* env,
 
 // This is called by the VM when the shared library is first loaded.
 JNI_EXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
+
+  base::android::SetLibraryLoadedHook(&content::LibraryLoaded);
+
   base::android::InitVM(vm);
   JNIEnv* env = base::android::AttachCurrentThread();
 
-  if (!content::RegisterLibraryLoaderEntryHook(env))
+  if (!base::android::RegisterLibraryLoaderEntryHook(env))
     return -1;
 
   if (!content::android::RegisterShellJni(env))

@@ -3,25 +3,26 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/safe_browsing/safe_browsing_store.h"
-#include "chrome/browser/safe_browsing/safe_browsing_store_unittest_helper.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
 
 TEST(SafeBrowsingStoreTest, SBAddPrefixLess) {
-  // chunk_id then prefix.
+  // prefix dominates.
+  EXPECT_TRUE(SBAddPrefixLess(SBAddPrefix(11, 1), SBAddPrefix(10, 2)));
+  EXPECT_FALSE(SBAddPrefixLess(SBAddPrefix(10, 2), SBAddPrefix(11, 1)));
+
+  // After prefix, chunk_id.
   EXPECT_TRUE(SBAddPrefixLess(SBAddPrefix(10, 1), SBAddPrefix(11, 1)));
   EXPECT_FALSE(SBAddPrefixLess(SBAddPrefix(11, 1), SBAddPrefix(10, 1)));
-  EXPECT_TRUE(SBAddPrefixLess(SBAddPrefix(10, 1), SBAddPrefix(10, 2)));
-  EXPECT_FALSE(SBAddPrefixLess(SBAddPrefix(10, 2), SBAddPrefix(10, 1)));
 
-  // Equal is not less.
+  // Equal is not less-than.
   EXPECT_FALSE(SBAddPrefixLess(SBAddPrefix(10, 1), SBAddPrefix(10, 1)));
 }
 
 TEST(SafeBrowsingStoreTest, SBAddPrefixHashLess) {
-  // The first four bytes of SBFullHash can be read as an int32, which
+  // The first four bytes of SBFullHash can be read as a SBPrefix, which
   // means that byte-ordering issues can come up.  To test this, |one|
   // and |two| differ in the prefix, while |one| and |onetwo| have the
   // same prefix, but differ in the byte after the prefix.
@@ -30,26 +31,26 @@ TEST(SafeBrowsingStoreTest, SBAddPrefixHashLess) {
   memset(&onetwo, 0, sizeof(onetwo));
   memset(&two, 0, sizeof(two));
   one.prefix = 1;
-  one.full_hash[sizeof(int32)] = 1;
+  one.full_hash[sizeof(SBPrefix)] = 1;
   onetwo.prefix = 1;
-  onetwo.full_hash[sizeof(int32)] = 2;
+  onetwo.full_hash[sizeof(SBPrefix)] = 2;
   two.prefix = 2;
 
   const base::Time now = base::Time::Now();
 
-  // add_id dominates.
-  EXPECT_TRUE(SBAddPrefixHashLess(SBAddFullHash(10, now, two),
-                                  SBAddFullHash(11, now, one)));
+  // prefix dominates.
+  EXPECT_TRUE(SBAddPrefixHashLess(SBAddFullHash(11, now, one),
+                                  SBAddFullHash(10, now, two)));
   EXPECT_FALSE(SBAddPrefixHashLess(SBAddFullHash(11, now, two),
                                    SBAddFullHash(10, now, one)));
 
-  // After add_id, prefix.
+  // After prefix, add_id.
   EXPECT_TRUE(SBAddPrefixHashLess(SBAddFullHash(10, now, one),
-                                  SBAddFullHash(10, now, two)));
-  EXPECT_FALSE(SBAddPrefixHashLess(SBAddFullHash(10, now, two),
-                                   SBAddFullHash(10, now, one)));
+                                  SBAddFullHash(11, now, onetwo)));
+  EXPECT_FALSE(SBAddPrefixHashLess(SBAddFullHash(11, now, one),
+                                   SBAddFullHash(10, now, onetwo)));
 
-  // After prefix, full hash.
+  // After add_id, full hash.
   EXPECT_TRUE(SBAddPrefixHashLess(SBAddFullHash(10, now, one),
                                   SBAddFullHash(10, now, onetwo)));
   EXPECT_FALSE(SBAddPrefixHashLess(SBAddFullHash(10, now, onetwo),
@@ -61,13 +62,13 @@ TEST(SafeBrowsingStoreTest, SBAddPrefixHashLess) {
 }
 
 TEST(SafeBrowsingStoreTest, SBSubPrefixLess) {
-  // add_id dominates.
-  EXPECT_TRUE(SBAddPrefixLess(SBSubPrefix(12, 10, 2), SBSubPrefix(9, 11, 1)));
+  // prefix dominates.
+  EXPECT_TRUE(SBAddPrefixLess(SBSubPrefix(12, 11, 1), SBSubPrefix(9, 10, 2)));
   EXPECT_FALSE(SBAddPrefixLess(SBSubPrefix(12, 11, 2), SBSubPrefix(9, 10, 1)));
 
-  // After add_id, prefix.
-  EXPECT_TRUE(SBAddPrefixLess(SBSubPrefix(12, 10, 1), SBSubPrefix(9, 10, 2)));
-  EXPECT_FALSE(SBAddPrefixLess(SBSubPrefix(12, 10, 2), SBSubPrefix(9, 10, 1)));
+  // After prefix, add_id.
+  EXPECT_TRUE(SBAddPrefixLess(SBSubPrefix(12, 9, 1), SBSubPrefix(9, 10, 1)));
+  EXPECT_FALSE(SBAddPrefixLess(SBSubPrefix(12, 10, 1), SBSubPrefix(9, 9, 1)));
 
   // Equal is not less-than.
   EXPECT_FALSE(SBAddPrefixLess(SBSubPrefix(12, 10, 1), SBSubPrefix(12, 10, 1)));
@@ -81,24 +82,24 @@ TEST(SafeBrowsingStoreTest, SBSubFullHashLess) {
   memset(&onetwo, 0, sizeof(onetwo));
   memset(&two, 0, sizeof(two));
   one.prefix = 1;
-  one.full_hash[sizeof(int32)] = 1;
+  one.full_hash[sizeof(SBPrefix)] = 1;
   onetwo.prefix = 1;
-  onetwo.full_hash[sizeof(int32)] = 2;
+  onetwo.full_hash[sizeof(SBPrefix)] = 2;
   two.prefix = 2;
 
-  // add_id dominates.
-  EXPECT_TRUE(SBAddPrefixHashLess(SBSubFullHash(12, 10, two),
-                                  SBSubFullHash(9, 11, one)));
+  // prefix dominates.
+  EXPECT_TRUE(SBAddPrefixHashLess(SBSubFullHash(12, 11, one),
+                                  SBSubFullHash(9, 10, two)));
   EXPECT_FALSE(SBAddPrefixHashLess(SBSubFullHash(12, 11, two),
                                    SBSubFullHash(9, 10, one)));
 
-  // After add_id, prefix.
+  // After prefix, add_id.
   EXPECT_TRUE(SBAddPrefixHashLess(SBSubFullHash(12, 10, one),
-                                  SBSubFullHash(9, 10, two)));
-  EXPECT_FALSE(SBAddPrefixHashLess(SBSubFullHash(12, 10, two),
-                                   SBSubFullHash(9, 10, one)));
+                                  SBSubFullHash(9, 11, onetwo)));
+  EXPECT_FALSE(SBAddPrefixHashLess(SBSubFullHash(12, 11, one),
+                                   SBSubFullHash(9, 10, onetwo)));
 
-  // After prefix, full_hash.
+  // After add_id, full_hash.
   EXPECT_TRUE(SBAddPrefixHashLess(SBSubFullHash(12, 10, one),
                                   SBSubFullHash(9, 10, onetwo)));
   EXPECT_FALSE(SBAddPrefixHashLess(SBSubFullHash(12, 10, onetwo),
@@ -129,10 +130,10 @@ TEST(SafeBrowsingStoreTest, SBProcessSubsEmpty) {
 // Test that subs knock out adds.
 TEST(SafeBrowsingStoreTest, SBProcessSubsKnockout) {
   const base::Time kNow = base::Time::Now();
-  const SBFullHash kHash1(SBFullHashFromString("one"));
-  const SBFullHash kHash2(SBFullHashFromString("two"));
-  const SBFullHash kHash3(SBFullHashFromString("three"));
-  const SBFullHash kHash4(SBFullHashFromString("four"));
+  const SBFullHash kHash1(SBFullHashForString("one"));
+  const SBFullHash kHash2(SBFullHashForString("two"));
+  const SBFullHash kHash3(SBFullHashForString("three"));
+  const SBFullHash kHash4(SBFullHashForString("four"));
   const int kAddChunk1 = 1;  // Use different chunk numbers just in case.
   const int kSubChunk1 = 2;
 
@@ -177,6 +178,15 @@ TEST(SafeBrowsingStoreTest, SBProcessSubsKnockout) {
   add_hashes.push_back(SBAddFullHash(kAddChunk1, kNow, kHash4mod));
   sub_hashes.push_back(SBSubFullHash(kSubChunk1, kAddChunk1, kHash4mod));
 
+  std::sort(add_prefixes.begin(), add_prefixes.end(),
+            SBAddPrefixLess<SBAddPrefix,SBAddPrefix>);
+  std::sort(sub_prefixes.begin(), sub_prefixes.end(),
+            SBAddPrefixLess<SBSubPrefix,SBSubPrefix>);
+  std::sort(add_hashes.begin(), add_hashes.end(),
+            SBAddPrefixHashLess<SBAddFullHash,SBAddFullHash>);
+  std::sort(sub_hashes.begin(), sub_hashes.end(),
+            SBAddPrefixHashLess<SBSubFullHash,SBSubFullHash>);
+
   const base::hash_set<int32> no_deletions;
   SBProcessSubs(&add_prefixes, &sub_prefixes, &add_hashes, &sub_hashes,
                 no_deletions, no_deletions);
@@ -184,16 +194,16 @@ TEST(SafeBrowsingStoreTest, SBProcessSubsKnockout) {
   ASSERT_LE(2U, add_prefixes.size());
   EXPECT_EQ(2U, add_prefixes.size());
   EXPECT_EQ(kAddChunk1, add_prefixes[0].chunk_id);
-  EXPECT_EQ(kHash2.prefix, add_prefixes[0].prefix);
+  EXPECT_EQ(kHash4.prefix, add_prefixes[0].prefix);
   EXPECT_EQ(kAddChunk1, add_prefixes[1].chunk_id);
-  EXPECT_EQ(kHash4.prefix, add_prefixes[1].prefix);
+  EXPECT_EQ(kHash2.prefix, add_prefixes[1].prefix);
 
   ASSERT_LE(2U, add_hashes.size());
   EXPECT_EQ(2U, add_hashes.size());
   EXPECT_EQ(kAddChunk1, add_hashes[0].chunk_id);
-  EXPECT_TRUE(SBFullHashEq(kHash2, add_hashes[0].full_hash));
+  EXPECT_TRUE(SBFullHashEqual(kHash4, add_hashes[0].full_hash));
   EXPECT_EQ(kAddChunk1, add_hashes[1].chunk_id);
-  EXPECT_TRUE(SBFullHashEq(kHash4, add_hashes[1].full_hash));
+  EXPECT_TRUE(SBFullHashEqual(kHash2, add_hashes[1].full_hash));
 
   ASSERT_LE(1U, sub_prefixes.size());
   EXPECT_EQ(1U, sub_prefixes.size());
@@ -205,16 +215,16 @@ TEST(SafeBrowsingStoreTest, SBProcessSubsKnockout) {
   EXPECT_EQ(1U, sub_hashes.size());
   EXPECT_EQ(kSubChunk1, sub_hashes[0].chunk_id);
   EXPECT_EQ(kAddChunk1, sub_hashes[0].add_chunk_id);
-  EXPECT_TRUE(SBFullHashEq(kHash3, sub_hashes[0].full_hash));
+  EXPECT_TRUE(SBFullHashEqual(kHash3, sub_hashes[0].full_hash));
 }
 
 // Test chunk deletions, and ordering of deletions WRT subs knocking
 // out adds.
 TEST(SafeBrowsingStoreTest, SBProcessSubsDeleteChunk) {
   const base::Time kNow = base::Time::Now();
-  const SBFullHash kHash1(SBFullHashFromString("one"));
-  const SBFullHash kHash2(SBFullHashFromString("two"));
-  const SBFullHash kHash3(SBFullHashFromString("three"));
+  const SBFullHash kHash1(SBFullHashForString("one"));
+  const SBFullHash kHash2(SBFullHashForString("two"));
+  const SBFullHash kHash3(SBFullHashForString("three"));
   const int kAddChunk1 = 1;  // Use different chunk numbers just in case.
   const int kSubChunk1 = 2;
 
@@ -248,6 +258,15 @@ TEST(SafeBrowsingStoreTest, SBProcessSubsDeleteChunk) {
   sub_hashes.push_back(SBSubFullHash(kSubChunk1, kAddChunk1, kHash3));
   sub_prefixes.push_back(SBSubPrefix(kSubChunk1, kAddChunk1, kHash3.prefix));
 
+  std::sort(add_prefixes.begin(), add_prefixes.end(),
+            SBAddPrefixLess<SBAddPrefix,SBAddPrefix>);
+  std::sort(sub_prefixes.begin(), sub_prefixes.end(),
+            SBAddPrefixLess<SBSubPrefix,SBSubPrefix>);
+  std::sort(add_hashes.begin(), add_hashes.end(),
+            SBAddPrefixHashLess<SBAddFullHash,SBAddFullHash>);
+  std::sort(sub_hashes.begin(), sub_hashes.end(),
+            SBAddPrefixHashLess<SBSubFullHash,SBSubFullHash>);
+
   const base::hash_set<int32> no_deletions;
   base::hash_set<int32> add_deletions;
   add_deletions.insert(kAddChunk1);
@@ -265,7 +284,16 @@ TEST(SafeBrowsingStoreTest, SBProcessSubsDeleteChunk) {
   EXPECT_EQ(1U, sub_hashes.size());
   EXPECT_EQ(kSubChunk1, sub_hashes[0].chunk_id);
   EXPECT_EQ(kAddChunk1, sub_hashes[0].add_chunk_id);
-  EXPECT_TRUE(SBFullHashEq(kHash3, sub_hashes[0].full_hash));
+  EXPECT_TRUE(SBFullHashEqual(kHash3, sub_hashes[0].full_hash));
+
+  std::sort(add_prefixes.begin(), add_prefixes.end(),
+            SBAddPrefixLess<SBAddPrefix,SBAddPrefix>);
+  std::sort(sub_prefixes.begin(), sub_prefixes.end(),
+            SBAddPrefixLess<SBSubPrefix,SBSubPrefix>);
+  std::sort(add_hashes.begin(), add_hashes.end(),
+            SBAddPrefixHashLess<SBAddFullHash,SBAddFullHash>);
+  std::sort(sub_hashes.begin(), sub_hashes.end(),
+            SBAddPrefixHashLess<SBSubFullHash,SBSubFullHash>);
 
   base::hash_set<int32> sub_deletions;
   sub_deletions.insert(kSubChunk1);

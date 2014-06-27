@@ -15,7 +15,6 @@
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/managed_mode/managed_user_service.h"
 #include "chrome/browser/profiles/gaia_info_update_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_info_cache.h"
@@ -33,10 +32,12 @@
 #include "chrome/browser/ui/webui/options/options_handlers_helper.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/url_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_ui.h"
 #include "grit/generated_resources.h"
+#include "grit/google_chrome_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/webui/web_ui_util.h"
 
@@ -54,26 +55,12 @@ const char kManageProfileIconGridName[] = "manage-profile-icon-grid";
 
 // Given |args| from the WebUI, parses value 0 as a FilePath |profile_file_path|
 // and returns true on success.
-bool GetProfilePathFromArgs(const ListValue* args,
+bool GetProfilePathFromArgs(const base::ListValue* args,
                             base::FilePath* profile_file_path) {
-  const Value* file_path_value;
+  const base::Value* file_path_value;
   if (!args->Get(0, &file_path_value))
     return false;
   return base::GetValueAsFilePath(*file_path_value, profile_file_path);
-}
-
-void OnNewDefaultProfileCreated(
-    chrome::HostDesktopType desktop_type,
-    Profile* profile,
-    Profile::CreateStatus status) {
-  if (status == Profile::CREATE_STATUS_INITIALIZED) {
-    profiles::FindOrCreateNewWindowForProfile(
-        profile,
-        chrome::startup::IS_PROCESS_STARTUP,
-        chrome::startup::IS_FIRST_RUN,
-        desktop_type,
-        false);
-  }
 }
 
 }  // namespace
@@ -91,7 +78,7 @@ ManageProfileHandler::~ManageProfileHandler() {
 }
 
 void ManageProfileHandler::GetLocalizedValues(
-    DictionaryValue* localized_strings) {
+    base::DictionaryValue* localized_strings) {
   DCHECK(localized_strings);
 
   static OptionsStringResource resources[] = {
@@ -99,6 +86,8 @@ void ManageProfileHandler::GetLocalizedValues(
     { "manageProfilesDuplicateNameError",
         IDS_PROFILES_MANAGE_DUPLICATE_NAME_ERROR },
     { "manageProfilesIconLabel", IDS_PROFILES_MANAGE_ICON_LABEL },
+    { "manageProfilesExistingSupervisedUser",
+        IDS_PROFILES_CREATE_EXISTING_MANAGED_USER_ERROR },
     { "manageProfilesManagedSignedInLabel",
         IDS_PROFILES_CREATE_MANAGED_SIGNED_IN_LABEL },
     { "manageProfilesManagedNotSignedInLabel",
@@ -113,6 +102,14 @@ void ManageProfileHandler::GetLocalizedValues(
     { "deleteProfileOK", IDS_PROFILES_DELETE_OK_BUTTON_LABEL },
     { "deleteProfileMessage", IDS_PROFILES_DELETE_MESSAGE },
     { "deleteManagedProfileAddendum", IDS_PROFILES_DELETE_MANAGED_ADDENDUM },
+    { "disconnectManagedProfileTitle",
+        IDS_PROFILES_DISCONNECT_MANAGED_PROFILE_TITLE },
+    { "disconnectManagedProfileOK",
+        IDS_PROFILES_DISCONNECT_MANAGED_PROFILE_OK_BUTTON_LABEL },
+    { "disconnectManagedProfileText",
+        IDS_PROFILES_DISCONNECT_MANAGED_PROFILE_TEXT },
+    { "disconnectManagedProfileLearnMore",
+        IDS_PROFILES_DISCONNECT_MANAGED_PROFILE_LEARN_MORE },
     { "createProfileTitle", IDS_PROFILES_CREATE_TITLE },
     { "createProfileInstructions", IDS_PROFILES_CREATE_INSTRUCTIONS },
     { "createProfileConfirm", IDS_PROFILES_CREATE_CONFIRM },
@@ -133,13 +130,14 @@ void ManageProfileHandler::GetLocalizedValues(
 
   localized_strings->SetBoolean("profileShortcutsEnabled",
                                 ProfileShortcutManager::IsFeatureEnabled());
-  localized_strings->SetBoolean("managedUsersEnabled",
-                                ManagedUserService::AreManagedUsersEnabled());
 
   localized_strings->SetBoolean(
-      "allowCreateExistingManagedUsers",
+      "disableCreateExistingManagedUsers",
       CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAllowCreateExistingManagedUsers));
+          switches::kDisableCreateExistingManagedUsers));
+
+  localized_strings->SetString("enterpriseManagedAccountHelpURL",
+                               chrome::kEnterpriseManagedAccountHelpURL);
 }
 
 void ManageProfileHandler::InitializeHandler() {
@@ -208,8 +206,6 @@ void ManageProfileHandler::Observe(
     SendProfileNames();
     base::StringValue value(kManageProfileIconGridName);
     SendProfileIcons(value);
-  } else {
-    OptionsPageUIHandler::Observe(type, source, details);
   }
 }
 
@@ -217,19 +213,21 @@ void ManageProfileHandler::OnStateChanged() {
   RequestCreateProfileUpdate(NULL);
 }
 
-void ManageProfileHandler::RequestDefaultProfileIcons(const ListValue* args) {
+void ManageProfileHandler::RequestDefaultProfileIcons(
+    const base::ListValue* args) {
   base::StringValue create_value(kCreateProfileIconGridName);
   base::StringValue manage_value(kManageProfileIconGridName);
   SendProfileIcons(manage_value);
   SendProfileIcons(create_value);
 }
 
-void ManageProfileHandler::RequestNewProfileDefaults(const ListValue* args) {
+void ManageProfileHandler::RequestNewProfileDefaults(
+    const base::ListValue* args) {
   const ProfileInfoCache& cache =
       g_browser_process->profile_manager()->GetProfileInfoCache();
   const size_t icon_index = cache.ChooseAvatarIconIndexForNewProfile();
 
-  DictionaryValue profile_info;
+  base::DictionaryValue profile_info;
   profile_info.SetString("name", cache.ChooseNameForNewProfile(icon_index));
   profile_info.SetString("iconURL", cache.GetDefaultAvatarIconUrl(icon_index));
 
@@ -239,7 +237,7 @@ void ManageProfileHandler::RequestNewProfileDefaults(const ListValue* args) {
 
 void ManageProfileHandler::SendProfileIcons(
     const base::StringValue& icon_grid) {
-  ListValue image_url_list;
+  base::ListValue image_url_list;
 
   // First add the GAIA picture if it's available.
   const ProfileInfoCache& cache =
@@ -270,16 +268,17 @@ void ManageProfileHandler::SendProfileIcons(
 void ManageProfileHandler::SendProfileNames() {
   const ProfileInfoCache& cache =
       g_browser_process->profile_manager()->GetProfileInfoCache();
-  DictionaryValue profile_name_dict;
-  for (size_t i = 0, e = cache.GetNumberOfProfiles(); i < e; ++i)
-    profile_name_dict.SetBoolean(UTF16ToUTF8(cache.GetNameOfProfileAtIndex(i)),
-                                 true);
+  base::DictionaryValue profile_name_dict;
+  for (size_t i = 0, e = cache.GetNumberOfProfiles(); i < e; ++i) {
+    profile_name_dict.SetBoolean(
+        base::UTF16ToUTF8(cache.GetNameOfProfileAtIndex(i)), true);
+  }
 
   web_ui()->CallJavascriptFunction("ManageProfileOverlay.receiveProfileNames",
                                    profile_name_dict);
 }
 
-void ManageProfileHandler::SetProfileIconAndName(const ListValue* args) {
+void ManageProfileHandler::SetProfileIconAndName(const base::ListValue* args) {
   DCHECK(args);
 
   base::FilePath profile_file_path;
@@ -327,38 +326,19 @@ void ManageProfileHandler::SetProfileIconAndName(const ListValue* args) {
   if (profile->IsManaged())
     return;
 
-  string16 new_profile_name;
+  base::string16 new_profile_name;
   if (!args->GetString(2, &new_profile_name))
     return;
 
-  if ((new_profile_name ==
-           cache.GetGAIAGivenNameOfProfileAtIndex(profile_index)) ||
-      (new_profile_name == cache.GetGAIANameOfProfileAtIndex(profile_index))) {
-    // Set the profile to use the GAIA name as the profile name. Note, this
-    // is a little weird if the user typed their GAIA name manually but
-    // it's not a big deal.
-    cache.SetIsUsingGAIANameOfProfileAtIndex(profile_index, true);
-  } else {
-    PrefService* pref_service = profile->GetPrefs();
-    // Updating the profile preference will cause the cache to be updated for
-    // this preference.
-    pref_service->SetString(prefs::kProfileName, UTF16ToUTF8(new_profile_name));
-
-    // Changing the profile name can invalidate the profile index.
-    profile_index = cache.GetIndexOfProfileWithPath(profile_file_path);
-    if (profile_index == std::string::npos)
-      return;
-
-    cache.SetIsUsingGAIANameOfProfileAtIndex(profile_index, false);
-  }
+  profiles::UpdateProfileName(profile, new_profile_name);
 }
 
 #if defined(ENABLE_SETTINGS_APP)
-void ManageProfileHandler::SwitchAppListProfile(const ListValue* args) {
+void ManageProfileHandler::SwitchAppListProfile(const base::ListValue* args) {
   DCHECK(args);
   DCHECK(profiles::IsMultipleProfilesEnabled());
 
-  const Value* file_path_value;
+  const base::Value* file_path_value;
   base::FilePath profile_file_path;
   if (!args->Get(0, &file_path_value) ||
       !base::GetValueAsFilePath(*file_path_value, &profile_file_path))
@@ -401,16 +381,17 @@ void ManageProfileHandler::ProfileIconSelectionChanged(
   size_t profile_index = cache.GetIndexOfProfileWithPath(profile_file_path);
   if (profile_index == std::string::npos)
     return;
-  string16 gaia_name = cache.GetNameOfProfileAtIndex(profile_index);
+  base::string16 gaia_name = cache.GetNameOfProfileAtIndex(profile_index);
   if (gaia_name.empty())
     return;
 
-  StringValue gaia_name_value(gaia_name);
+  base::StringValue gaia_name_value(gaia_name);
   web_ui()->CallJavascriptFunction("ManageProfileOverlay.setProfileName",
                                    gaia_name_value);
 }
 
-void ManageProfileHandler::RequestHasProfileShortcuts(const ListValue* args) {
+void ManageProfileHandler::RequestHasProfileShortcuts(
+    const base::ListValue* args) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
   DCHECK(ProfileShortcutManager::IsFeatureEnabled());
 
@@ -438,7 +419,8 @@ void ManageProfileHandler::RequestCreateProfileUpdate(
   Profile* profile = Profile::FromWebUI(web_ui());
   SigninManagerBase* manager =
       SigninManagerFactory::GetForProfile(profile);
-  string16 username = UTF8ToUTF16(manager->GetAuthenticatedUsername());
+  base::string16 username =
+      base::UTF8ToUTF16(manager->GetAuthenticatedUsername());
   ProfileSyncService* service =
      ProfileSyncServiceFactory::GetForProfile(profile);
   GoogleServiceAuthError::State state = service->GetAuthError().state();

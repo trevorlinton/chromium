@@ -15,6 +15,7 @@ extern const char kEventConsoleMessage[];
 extern const char kEventContentLoad[];
 extern const char kEventDialog[];
 extern const char kEventExit[];
+extern const char kEventFindReply[];
 extern const char kEventLoadAbort[];
 extern const char kEventLoadCommit[];
 extern const char kEventLoadProgress[];
@@ -26,8 +27,11 @@ extern const char kEventPermissionRequest[];
 extern const char kEventResponsive[];
 extern const char kEventSizeChanged[];
 extern const char kEventUnresponsive[];
+extern const char kEventZoomChange[];
 
 // Parameters/properties on events.
+extern const char kFindSearchText[];
+extern const char kFindFinalUpdate[];
 extern const char kLevel[];
 extern const char kLine[];
 extern const char kMessage[];
@@ -50,11 +54,24 @@ extern const char kProgress[];
 extern const char kReason[];
 extern const char kRequestId[];
 extern const char kSourceId[];
+extern const char kOldZoomFactor[];
+extern const char kNewZoomFactor[];
 
 // Internal parameters/properties on events.
 extern const char kInternalCurrentEntryIndex[];
 extern const char kInternalEntryCount[];
 extern const char kInternalProcessId[];
+
+// Parameters to callback functions.
+extern const char kFindNumberOfMatches[];
+extern const char kFindActiveMatchOrdinal[];
+extern const char kFindSelectionRect[];
+extern const char kFindRectLeft[];
+extern const char kFindRectTop[];
+extern const char kFindRectWidth[];
+extern const char kFindRectHeight[];
+extern const char kFindCanceled[];
+extern const char kFindDone[];
 
 // Initialization parameters.
 extern const char kParameterUserAgentOverride[];
@@ -65,4 +82,3 @@ extern const unsigned int kMaxOutstandingPermissionRequests;
 }  // namespace webview
 
 #endif  // CHROME_BROWSER_GUESTVIEW_WEBVIEW_WEBVIEW_CONSTANTS_H_
-

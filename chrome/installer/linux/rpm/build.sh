@@ -105,8 +105,8 @@ do_package() {
   fi
 
   # Use find-requires script to make sure the dependencies are complete
-  # (especially libc and libstdc++ versions). Filter out udev to avoid
-  # libudev.so.0 vs. libudev.so.1 mismatches.
+  # (especially libc and libstdc++ versions).
+  # - Filter out udev to avoid libudev.so.0 vs. libudev.so.1 mismatches.
   DETECTED_DEPENDS="$(echo "${BUILDDIR}/chrome" | /usr/lib/rpm/find-requires |
       grep -v udev)"
 
@@ -118,7 +118,7 @@ do_package() {
     echo
     echo "ERROR: Shared library dependencies changed!"
     echo "If this is intentional, please update:"
-    echo "chrome/installer/linux/rpm/expected_deps_i686"
+    echo "chrome/installer/linux/rpm/expected_deps_i386"
     echo "chrome/installer/linux/rpm/expected_deps_x86_64"
     echo
     exit $BAD_DIFF

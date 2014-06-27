@@ -18,6 +18,8 @@ const int kMaxInputChannels = 2;
 // to resolve http://crbug.com/79936 for Windows platforms.  This then caused
 // breakage (very hard to repro bugs!) on other platforms: See
 // http://crbug.com/226327 and http://crbug.com/230972.
+// See also that the timer has been disabled on Mac now due to
+// crbug.com/357501.
 const int kTimerResetIntervalSeconds = 1;
 // We have received reports that the timer can be too trigger happy on some
 // Mac devices and the initial timer interval has therefore been increased
@@ -33,20 +35,20 @@ AudioInputController::Factory* AudioInputController::factory_ = NULL;
 AudioInputController::AudioInputController(EventHandler* handler,
                                            SyncWriter* sync_writer,
                                            UserInputMonitor* user_input_monitor)
-    : creator_loop_(base::MessageLoopProxy::current()),
+    : creator_task_runner_(base::MessageLoopProxy::current()),
       handler_(handler),
       stream_(NULL),
       data_is_active_(false),
-      state_(kEmpty),
+      state_(CLOSED),
       sync_writer_(sync_writer),
       max_volume_(0.0),
       user_input_monitor_(user_input_monitor),
       prev_key_down_count_(0) {
-  DCHECK(creator_loop_.get());
+  DCHECK(creator_task_runner_.get());
 }
 
 AudioInputController::~AudioInputController() {
-  DCHECK(kClosed == state_ || kCreated == state_ || kEmpty == state_);
+  DCHECK_EQ(state_, CLOSED);
 }
 
 // static
@@ -68,11 +70,11 @@ scoped_refptr<AudioInputController> AudioInputController::Create(
   scoped_refptr<AudioInputController> controller(
       new AudioInputController(event_handler, NULL, user_input_monitor));
 
-  controller->message_loop_ = audio_manager->GetMessageLoop();
+  controller->task_runner_ = audio_manager->GetTaskRunner();
 
   // Create and open a new audio input stream from the existing
   // audio-device thread.
-  if (!controller->message_loop_->PostTask(FROM_HERE,
+  if (!controller->task_runner_->PostTask(FROM_HERE,
           base::Bind(&AudioInputController::DoCreate, controller,
                      base::Unretained(audio_manager), params, device_id))) {
     controller = NULL;
@@ -99,11 +101,11 @@ scoped_refptr<AudioInputController> AudioInputController::CreateLowLatency(
   // the audio-manager thread.
   scoped_refptr<AudioInputController> controller(
       new AudioInputController(event_handler, sync_writer, user_input_monitor));
-  controller->message_loop_ = audio_manager->GetMessageLoop();
+  controller->task_runner_ = audio_manager->GetTaskRunner();
 
   // Create and open a new audio input stream from the existing
   // audio-device thread. Use the provided audio-input device.
-  if (!controller->message_loop_->PostTask(FROM_HERE,
+  if (!controller->task_runner_->PostTask(FROM_HERE,
           base::Bind(&AudioInputController::DoCreate, controller,
                      base::Unretained(audio_manager), params, device_id))) {
     controller = NULL;
@@ -114,7 +116,7 @@ scoped_refptr<AudioInputController> AudioInputController::CreateLowLatency(
 
 // static
 scoped_refptr<AudioInputController> AudioInputController::CreateForStream(
-    const scoped_refptr<base::MessageLoopProxy>& message_loop,
+    const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
     EventHandler* event_handler,
     AudioInputStream* stream,
     SyncWriter* sync_writer,
@@ -126,14 +128,14 @@ scoped_refptr<AudioInputController> AudioInputController::CreateForStream(
   // the audio-manager thread.
   scoped_refptr<AudioInputController> controller(
       new AudioInputController(event_handler, sync_writer, user_input_monitor));
-  controller->message_loop_ = message_loop;
+  controller->task_runner_ = task_runner;
 
   // TODO(miu): See TODO at top of file.  Until that's resolved, we need to
   // disable the error auto-detection here (since the audio mirroring
   // implementation will reliably report error and close events).  Note, of
   // course, that we're assuming CreateForStream() has been called for the audio
   // mirroring use case only.
-  if (!controller->message_loop_->PostTask(
+  if (!controller->task_runner_->PostTask(
           FROM_HERE,
           base::Bind(&AudioInputController::DoCreateForStream, controller,
                      stream, false))) {
@@ -144,32 +146,32 @@ scoped_refptr<AudioInputController> AudioInputController::CreateForStream(
 }
 
 void AudioInputController::Record() {
-  message_loop_->PostTask(FROM_HERE, base::Bind(
+  task_runner_->PostTask(FROM_HERE, base::Bind(
       &AudioInputController::DoRecord, this));
 }
 
 void AudioInputController::Close(const base::Closure& closed_task) {
   DCHECK(!closed_task.is_null());
-  DCHECK(creator_loop_->BelongsToCurrentThread());
+  DCHECK(creator_task_runner_->BelongsToCurrentThread());
 
-  message_loop_->PostTaskAndReply(
+  task_runner_->PostTaskAndReply(
       FROM_HERE, base::Bind(&AudioInputController::DoClose, this), closed_task);
 }
 
 void AudioInputController::SetVolume(double volume) {
-  message_loop_->PostTask(FROM_HERE, base::Bind(
+  task_runner_->PostTask(FROM_HERE, base::Bind(
       &AudioInputController::DoSetVolume, this, volume));
 }
 
 void AudioInputController::SetAutomaticGainControl(bool enabled) {
-  message_loop_->PostTask(FROM_HERE, base::Bind(
+  task_runner_->PostTask(FROM_HERE, base::Bind(
       &AudioInputController::DoSetAutomaticGainControl, this, enabled));
 }
 
 void AudioInputController::DoCreate(AudioManager* audio_manager,
                                     const AudioParameters& params,
                                     const std::string& device_id) {
-  DCHECK(message_loop_->BelongsToCurrentThread());
+  DCHECK(task_runner_->BelongsToCurrentThread());
   SCOPED_UMA_HISTOGRAM_TIMER("Media.AudioInputController.CreateTime");
   // TODO(miu): See TODO at top of file.  Until that's resolved, assume all
   // platform audio input requires the |no_data_timer_| be used to auto-detect
@@ -181,24 +183,35 @@ void AudioInputController::DoCreate(AudioManager* audio_manager,
 
 void AudioInputController::DoCreateForStream(
     AudioInputStream* stream_to_control, bool enable_nodata_timer) {
-  DCHECK(message_loop_->BelongsToCurrentThread());
+  DCHECK(task_runner_->BelongsToCurrentThread());
 
   DCHECK(!stream_);
   stream_ = stream_to_control;
 
   if (!stream_) {
-    handler_->OnError(this);
+    handler_->OnError(this, STREAM_CREATE_ERROR);
     return;
   }
 
   if (stream_ && !stream_->Open()) {
     stream_->Close();
     stream_ = NULL;
-    handler_->OnError(this);
+    handler_->OnError(this, STREAM_OPEN_ERROR);
     return;
   }
 
   DCHECK(!no_data_timer_.get());
+
+  // This is a fix for crbug.com/357501.  The timer can trigger when closing
+  // the lid on Macs, which causes more problems than the timer fixes.
+  // Also, in crbug.com/357569, the goal is to remove usage of this timer
+  // since it was added to solve a crash on Windows that no longer can be
+  // reproduced.
+  // TODO(henrika): remove usage of timer when it has been verified on Canary
+  // that we are safe doing so. Goal is to get rid of |no_data_timer_| and
+  // everything that is tied to it.
+  enable_nodata_timer = false;
+
   if (enable_nodata_timer) {
     // Create the data timer which will call DoCheckForNoData(). The timer
     // is started in DoRecord() and restarted in each DoCheckForNoData()
@@ -211,7 +224,7 @@ void AudioInputController::DoCreateForStream(
     DVLOG(1) << "Disabled: timer check for no data.";
   }
 
-  state_ = kCreated;
+  state_ = CREATED;
   handler_->OnCreated(this);
 
   if (user_input_monitor_) {
@@ -221,15 +234,15 @@ void AudioInputController::DoCreateForStream(
 }
 
 void AudioInputController::DoRecord() {
-  DCHECK(message_loop_->BelongsToCurrentThread());
+  DCHECK(task_runner_->BelongsToCurrentThread());
   SCOPED_UMA_HISTOGRAM_TIMER("Media.AudioInputController.RecordTime");
 
-  if (state_ != kCreated)
+  if (state_ != CREATED)
     return;
 
   {
     base::AutoLock auto_lock(lock_);
-    state_ = kRecording;
+    state_ = RECORDING;
   }
 
   if (no_data_timer_) {
@@ -243,38 +256,38 @@ void AudioInputController::DoRecord() {
 }
 
 void AudioInputController::DoClose() {
-  DCHECK(message_loop_->BelongsToCurrentThread());
+  DCHECK(task_runner_->BelongsToCurrentThread());
   SCOPED_UMA_HISTOGRAM_TIMER("Media.AudioInputController.CloseTime");
+
+  if (state_ == CLOSED)
+    return;
 
   // Delete the timer on the same thread that created it.
   no_data_timer_.reset();
 
-  if (state_ != kClosed) {
-    DoStopCloseAndClearStream(NULL);
-    SetDataIsActive(false);
+  DoStopCloseAndClearStream(NULL);
+  SetDataIsActive(false);
 
-    if (LowLatencyMode()) {
-      sync_writer_->Close();
-    }
+  if (LowLatencyMode())
+    sync_writer_->Close();
 
-    state_ = kClosed;
+  if (user_input_monitor_)
+    user_input_monitor_->DisableKeyPressMonitoring();
 
-    if (user_input_monitor_)
-      user_input_monitor_->DisableKeyPressMonitoring();
-  }
+  state_ = CLOSED;
 }
 
 void AudioInputController::DoReportError() {
-  DCHECK(message_loop_->BelongsToCurrentThread());
-  handler_->OnError(this);
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  handler_->OnError(this, STREAM_ERROR);
 }
 
 void AudioInputController::DoSetVolume(double volume) {
-  DCHECK(message_loop_->BelongsToCurrentThread());
+  DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK_GE(volume, 0);
   DCHECK_LE(volume, 1.0);
 
-  if (state_ != kCreated && state_ != kRecording)
+  if (state_ != CREATED && state_ != RECORDING)
     return;
 
   // Only ask for the maximum volume at first call and use cached value
@@ -293,24 +306,24 @@ void AudioInputController::DoSetVolume(double volume) {
 }
 
 void AudioInputController::DoSetAutomaticGainControl(bool enabled) {
-  DCHECK(message_loop_->BelongsToCurrentThread());
-  DCHECK_NE(state_, kRecording);
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK_NE(state_, RECORDING);
 
   // Ensure that the AGC state only can be modified before streaming starts.
-  if (state_ != kCreated || state_ == kRecording)
+  if (state_ != CREATED)
     return;
 
   stream_->SetAutomaticGainControl(enabled);
 }
 
 void AudioInputController::DoCheckForNoData() {
-  DCHECK(message_loop_->BelongsToCurrentThread());
+  DCHECK(task_runner_->BelongsToCurrentThread());
 
   if (!GetDataIsActive()) {
     // The data-is-active marker will be false only if it has been more than
     // one second since a data packet was recorded. This can happen if a
     // capture device has been removed or disabled.
-    handler_->OnError(this);
+    handler_->OnError(this, NO_DATA_ERROR);
     return;
   }
 
@@ -334,7 +347,7 @@ void AudioInputController::OnData(AudioInputStream* stream,
                                   double volume) {
   {
     base::AutoLock auto_lock(lock_);
-    if (state_ != kRecording)
+    if (state_ != RECORDING)
       return;
   }
 
@@ -360,22 +373,15 @@ void AudioInputController::OnData(AudioInputStream* stream,
   handler_->OnData(this, data, size);
 }
 
-void AudioInputController::OnClose(AudioInputStream* stream) {
-  DVLOG(1) << "AudioInputController::OnClose()";
-  // TODO(satish): Sometimes the device driver closes the input stream without
-  // us asking for it (may be if the device was unplugged?). Check how to handle
-  // such cases here.
-}
-
 void AudioInputController::OnError(AudioInputStream* stream) {
   // Handle error on the audio-manager thread.
-  message_loop_->PostTask(FROM_HERE, base::Bind(
+  task_runner_->PostTask(FROM_HERE, base::Bind(
       &AudioInputController::DoReportError, this));
 }
 
 void AudioInputController::DoStopCloseAndClearStream(
     base::WaitableEvent* done) {
-  DCHECK(message_loop_->BelongsToCurrentThread());
+  DCHECK(task_runner_->BelongsToCurrentThread());
 
   // Allow calling unconditionally and bail if we don't have a stream to close.
   if (stream_ != NULL) {

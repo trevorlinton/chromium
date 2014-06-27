@@ -4,7 +4,6 @@
 
 from branch_utility import BranchUtility
 from compiled_file_system import CompiledFileSystem
-from empty_dir_file_system import EmptyDirFileSystem
 from environment import IsDevServer
 from github_file_system_provider import GithubFileSystemProvider
 from host_file_system_provider import HostFileSystemProvider
@@ -12,8 +11,9 @@ from third_party.json_schema_compiler.memoize import memoize
 from render_servlet import RenderServlet
 from object_store_creator import ObjectStoreCreator
 from server_instance import ServerInstance
+from gcs_file_system_provider import CloudStorageFileSystemProvider
 
-class OfflineRenderServletDelegate(RenderServlet.Delegate):
+class InstanceServletRenderServletDelegate(RenderServlet.Delegate):
   '''AppEngine instances should never need to call out to SVN. That should only
   ever be done by the cronjobs, which then write the result into DataStore,
   which is as far as instances look. To enable this, crons can pass a custom
@@ -35,16 +35,24 @@ class OfflineRenderServletDelegate(RenderServlet.Delegate):
   def CreateServerInstance(self):
     object_store_creator = ObjectStoreCreator(start_empty=False)
     branch_utility = self._delegate.CreateBranchUtility(object_store_creator)
+    # In production have offline=True so that we can catch cron errors. In
+    # development it's annoying to have to run the cron job, so offline=False.
+    #
+    # XXX(kalman): The above comment is not true, I have temporarily disabled
+    # this while the cron is running out of memory and not reliably finishing.
+    # In the meantime, live dangerously and fetch content if it's not there.
+    # I.e. never offline. See http://crbug.com/345361.
     host_file_system_provider = self._delegate.CreateHostFileSystemProvider(
         object_store_creator,
-        offline=True)
+        offline=False)  # XXX(kalman): condition should be "not IsDevServer()"
     github_file_system_provider = self._delegate.CreateGithubFileSystemProvider(
         object_store_creator)
     return ServerInstance(object_store_creator,
                           CompiledFileSystem.Factory(object_store_creator),
                           branch_utility,
                           host_file_system_provider,
-                          github_file_system_provider)
+                          github_file_system_provider,
+                          CloudStorageFileSystemProvider(object_store_creator))
 
 class InstanceServlet(object):
   '''Servlet for running on normal AppEngine instances.
@@ -65,7 +73,7 @@ class InstanceServlet(object):
 
   @staticmethod
   def GetConstructor(delegate_for_test=None):
-    render_servlet_delegate = OfflineRenderServletDelegate(
+    render_servlet_delegate = InstanceServletRenderServletDelegate(
         delegate_for_test or InstanceServlet.Delegate())
     return lambda request: RenderServlet(request, render_servlet_delegate)
 

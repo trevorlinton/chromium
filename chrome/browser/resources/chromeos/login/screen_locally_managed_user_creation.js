@@ -37,6 +37,7 @@ login.createScreen('LocallyManagedUserCreationScreen',
                             this.handleMouseDown_.bind(this));
       var screen = $('managed-user-creation');
       var managerPod = this;
+      var managerPodList = screen.managerList_;
       var hideManagerPasswordError = function(element) {
         managerPod.passwordElement.classList.remove('password-error');
         $('bubble').hide();
@@ -50,6 +51,19 @@ login.createScreen('LocallyManagedUserCreationScreen',
             screen.getScreenButton('next').focus();
           },
           hideManagerPasswordError);
+
+      this.passwordElement.addEventListener('keydown', function(e) {
+        switch (e.keyIdentifier) {
+          case 'Up':
+            managerPodList.selectNextPod(-1);
+            e.stopPropagation();
+            break;
+          case 'Down':
+            managerPodList.selectNextPod(+1);
+            e.stopPropagation();
+            break;
+        }
+      });
     },
 
     /**
@@ -196,6 +210,31 @@ login.createScreen('LocallyManagedUserCreationScreen',
       chrome.send('managerSelectedOnLocallyManagedUserCreationFlow',
           [podToSelect.user.username]);
     },
+
+    /**
+     * Select pod next to currently selected one in given |direction|.
+     * @param {integer} direction - +1 for selecting pod below current, -1 for
+     *     selecting pod above current.
+     * @type {boolean} returns if selected pod has changed.
+     */
+    selectNextPod: function(direction) {
+      if (!this.selectedPod_)
+        return false;
+      var index = -1;
+      for (var i = 0, pod; pod = this.pods[i]; ++i) {
+        if (pod == this.selectedPod_) {
+          index = i;
+          break;
+        }
+      }
+      if (-1 == index)
+        return false;
+      index = index + direction;
+      if (index < 0 || index >= this.pods.length)
+        return false;
+      this.selectPod(this.pods[index]);
+      return true;
+    }
   };
 
   var ImportPod = cr.ui.define(function() {
@@ -485,6 +524,7 @@ login.createScreen('LocallyManagedUserCreationScreen',
 
       imageGrid.previewElement = previewElement;
       imageGrid.selectionType = 'default';
+      imageGrid.flipPhotoElement = this.getScreenElement('flip-photo');
 
       imageGrid.addEventListener('activate',
                                  this.handleActivate_.bind(this));
@@ -506,10 +546,7 @@ login.createScreen('LocallyManagedUserCreationScreen',
 
       // Toggle 'animation' class for the duration of WebKit transition.
       this.getScreenElement('flip-photo').addEventListener(
-          'click', function(e) {
-            previewElement.classList.add('animation');
-            imageGrid.flipPhoto = !imageGrid.flipPhoto;
-          });
+          'click', this.handleFlipPhoto_.bind(this));
       this.getScreenElement('image-stream-crop').addEventListener(
           'webkitTransitionEnd', function(e) {
             previewElement.classList.remove('animation');
@@ -951,11 +988,15 @@ login.createScreen('LocallyManagedUserCreationScreen',
         this.setButtonDisabledStatus('import', !passwordOk);
         return passwordOk;
       }
+      var imageGrid = this.getScreenElement('image-grid');
+      var imageChosen = !(imageGrid.selectionType == 'camera' &&
+                          imageGrid.cameraLive);
       var canProceed =
           passwordOk &&
           (userName.length > 0) &&
-           this.lastVerifiedName_ &&
-           (userName == this.lastVerifiedName_);
+          this.lastVerifiedName_ &&
+          (userName == this.lastVerifiedName_) &&
+          imageChosen;
 
       this.setButtonDisabledStatus('next', !canProceed);
       return canProceed;
@@ -1014,9 +1055,9 @@ login.createScreen('LocallyManagedUserCreationScreen',
 
       var pagesWithCancel = ['intro', 'manager', 'username', 'import-password',
           'error', 'import'];
-      var cancelButton = $('cancel-add-user-button');
-      cancelButton.hidden = pagesWithCancel.indexOf(visiblePage) < 0;
-      cancelButton.disabled = false;
+      $('login-header-bar').allowCancel =
+          pagesWithCancel.indexOf(visiblePage) > 0;
+      $('cancel-add-user-button').disabled = false;
 
       this.getScreenElement('import-link').hidden = true;
       this.getScreenElement('create-link').hidden = true;
@@ -1028,8 +1069,7 @@ login.createScreen('LocallyManagedUserCreationScreen',
 
       if (visiblePage == 'manager' || visiblePage == 'intro') {
         $('managed-user-creation-password').classList.remove('password-error');
-        this.managerList_.selectPod(null);
-        if (this.managerList_.pods.length == 1)
+        if (this.managerList_.pods.length > 0)
           this.managerList_.selectPod(this.managerList_.pods[0]);
       }
 
@@ -1222,7 +1262,7 @@ login.createScreen('LocallyManagedUserCreationScreen',
       this.managerList_.clearPods();
       for (var i = 0; i < userList.length; ++i)
         this.managerList_.addPod(userList[i]);
-      if (userList.length == 1)
+      if (userList.length > 0)
         this.managerList_.selectPod(this.managerList_.pods[0]);
     },
 
@@ -1367,7 +1407,16 @@ login.createScreen('LocallyManagedUserCreationScreen',
      */
     handleSelect_: function(e) {
       var imageGrid = this.getScreenElement('image-grid');
-      if (!(imageGrid.selectionType == 'camera' && imageGrid.cameraLive)) {
+      this.updateNextButtonForUser_();
+
+      $('managed-user-creation-flip-photo').tabIndex =
+          (imageGrid.selectionType == 'camera') ? 0 : -1;
+      if (imageGrid.cameraLive || imageGrid.selectionType != 'camera')
+        imageGrid.previewElement.classList.remove('phototaken');
+      else
+        imageGrid.previewElement.classList.add('phototaken');
+
+      if (!imageGrid.cameraLive || imageGrid.selectionType != 'camera') {
         this.context_.selectedImageUrl = imageGrid.selectedItemUrl;
         chrome.send('supervisedUserSelectImage',
                     [imageGrid.selectedItemUrl, imageGrid.selectionType]);
@@ -1381,12 +1430,28 @@ login.createScreen('LocallyManagedUserCreationScreen',
           imageGrid.startCamera(
               function() {
                 // Start capture if camera is still the selected item.
+                $('managed-user-creation-image-preview-img').classList.toggle(
+                    'animated-transform', true);
                 return imageGrid.selectedItem == imageGrid.cameraImage;
               });
         } else {
+          $('managed-user-creation-image-preview-img').classList.toggle(
+              'animated-transform', false);
           imageGrid.stopCamera();
         }
       }
+    },
+
+    /**
+     * Handle camera-photo flip.
+     */
+    handleFlipPhoto_: function() {
+      var imageGrid = this.getScreenElement('image-grid');
+      imageGrid.previewElement.classList.add('animation');
+      imageGrid.flipPhoto = !imageGrid.flipPhoto;
+      var flipMessageId = imageGrid.flipPhoto ?
+         'photoFlippedAccessibleText' : 'photoFlippedBackAccessibleText';
+      announceAccessibleMessage(loadTimeData.getString(flipMessageId));
     },
 
     /**
@@ -1394,10 +1459,13 @@ login.createScreen('LocallyManagedUserCreationScreen',
      */
     handleTakePhoto_: function(e) {
       this.getScreenElement('image-grid').takePhoto();
+      chrome.send('supervisedUserTakePhoto');
     },
 
     handlePhotoTaken_: function(e) {
       chrome.send('supervisedUserPhotoTaken', [e.dataURL]);
+      announceAccessibleMessage(
+          loadTimeData.getString('photoCaptureAccessibleText'));
     },
 
     /**
@@ -1414,6 +1482,9 @@ login.createScreen('LocallyManagedUserCreationScreen',
     handleDiscardPhoto_: function(e) {
       var imageGrid = this.getScreenElement('image-grid');
       imageGrid.discardPhoto();
+      chrome.send('supervisedUserDiscardPhoto');
+      announceAccessibleMessage(
+          loadTimeData.getString('photoDiscardAccessibleText'));
     },
 
     setCameraPresent: function(present) {

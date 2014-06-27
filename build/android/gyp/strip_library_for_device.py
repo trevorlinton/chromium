@@ -17,11 +17,11 @@ def StripLibrary(android_strip, android_strip_args, library_path, output_path):
     strip_cmd = ([android_strip] +
                  android_strip_args +
                  ['-o', output_path, library_path])
-    build_utils.CheckCallDie(strip_cmd)
+    build_utils.CheckOutput(strip_cmd)
 
 
 
-def main(argv):
+def main():
   parser = optparse.OptionParser()
 
   parser.add_option('--android-strip',
@@ -56,4 +56,4 @@ def main(argv):
 
 
 if __name__ == '__main__':
-  sys.exit(main(sys.argv))
+  sys.exit(main())

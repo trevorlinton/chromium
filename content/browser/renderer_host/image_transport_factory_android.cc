@@ -10,6 +10,7 @@
 #include "content/common/gpu/client/gl_helper.h"
 #include "content/common/gpu/client/webgraphicscontext3d_command_buffer_impl.h"
 #include "content/common/gpu/gpu_process_launch_causes.h"
+#include "gpu/command_buffer/client/gles2_implementation.h"
 #include "third_party/WebKit/public/platform/WebGraphicsContext3D.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "ui/gfx/android/device_display_info.h"
@@ -20,7 +21,7 @@ base::LazyInstance<ObserverList<ImageTransportFactoryAndroidObserver> >::Leaky
     g_factory_observers = LAZY_INSTANCE_INITIALIZER;
 
 class GLContextLostListener
-    : public WebKit::WebGraphicsContext3D::WebGraphicsContextLostCallback {
+    : public blink::WebGraphicsContext3D::WebGraphicsContextLostCallback {
  public:
   // WebGraphicsContextLostCallback implementation.
   virtual void onContextLost() OVERRIDE;
@@ -43,10 +44,13 @@ class CmdBufferImageTransportFactory : public ImageTransportFactoryAndroid {
   virtual void DeleteTexture(uint32_t id) OVERRIDE;
   virtual void AcquireTexture(
       uint32 texture_id, const signed char* mailbox_name) OVERRIDE;
-  virtual WebKit::WebGraphicsContext3D* GetContext3D() OVERRIDE {
-    return context_.get();
+  virtual gpu::gles2::GLES2Interface* GetContextGL() OVERRIDE {
+    return context_->GetImplementation();
   }
   virtual GLHelper* GetGLHelper() OVERRIDE;
+  virtual uint32 GetChannelID() OVERRIDE {
+    return BrowserGpuChannelHostFactory::instance()->GetGpuChannelId();
+  }
 
  private:
   scoped_ptr<WebGraphicsContext3DCommandBufferImpl> context_;
@@ -62,10 +66,9 @@ CmdBufferImageTransportFactory::CmdBufferImageTransportFactory() {
       CAUSE_FOR_GPU_LAUNCH_WEBGRAPHICSCONTEXT3DCOMMANDBUFFERIMPL_INITIALIZE));
   DCHECK(gpu_channel_host);
 
-  WebKit::WebGraphicsContext3D::Attributes attrs;
+  blink::WebGraphicsContext3D::Attributes attrs;
   attrs.shareResources = true;
   GURL url("chrome://gpu/ImageTransportFactoryAndroid");
-  base::WeakPtr<WebGraphicsContext3DSwapBuffersClient> swap_client;
   static const size_t kBytesPerPixel = 4;
   gfx::DeviceDisplayInfo display_info;
   size_t full_screen_texture_size_in_bytes = display_info.GetDisplayHeight() *
@@ -79,14 +82,21 @@ CmdBufferImageTransportFactory::CmdBufferImageTransportFactory() {
       3 * full_screen_texture_size_in_bytes, kDefaultMaxTransferBufferSize);
   limits.mapped_memory_reclaim_limit =
       WebGraphicsContext3DCommandBufferImpl::kNoLimit;
+#if !defined(OS_CHROMEOS)
+  bool bind_generates_resource = false;
+#endif
+  bool lose_context_when_out_of_memory = false;
   context_.reset(
       new WebGraphicsContext3DCommandBufferImpl(0,  // offscreen
                                                 url,
                                                 gpu_channel_host.get(),
-                                                swap_client,
                                                 attrs,
-                                                false,
-                                                limits));
+#if !defined(OS_CHROMEOS)
+                                                bind_generates_resource,
+#endif
+                                                lose_context_when_out_of_memory,
+                                                limits,
+                                                NULL));
   context_->setContextLostCallback(context_lost_listener_.get());
   if (context_->makeContextCurrent())
     context_->pushGroupMarkerEXT(
@@ -138,12 +148,12 @@ void CmdBufferImageTransportFactory::AcquireTexture(
   }
   context_->bindTexture(GL_TEXTURE_2D, texture_id);
   context_->consumeTextureCHROMIUM(GL_TEXTURE_2D, mailbox_name);
-  context_->flush();
+  context_->shallowFlushCHROMIUM();
 }
 
 GLHelper* CmdBufferImageTransportFactory::GetGLHelper() {
   if (!gl_helper_)
-    gl_helper_.reset(new GLHelper(context_.get(),
+    gl_helper_.reset(new GLHelper(context_->GetImplementation(),
                                   context_->GetContextSupport()));
 
   return gl_helper_.get();

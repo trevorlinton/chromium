@@ -15,8 +15,8 @@
 #include "chrome/browser/extensions/extension_action_manager.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
+#include "chrome/browser/extensions/extension_toolbar_model.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -27,12 +27,14 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/feature_switch.h"
 #include "grit/theme_resources.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/gfx/rect.h"
-#include "ui/gfx/size.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_operations.h"
+#include "ui/gfx/rect.h"
+#include "ui/gfx/size.h"
 #include "ui/gfx/skia_util.h"
 
 using content::WebContents;
@@ -52,9 +54,9 @@ gfx::ImageSkia AddBackgroundForViews(const gfx::ImageSkia& icon) {
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   gfx::ImageSkia bg = *rb.GetImageSkiaNamed(IDR_BROWSER_ACTION);
   return gfx::ImageSkiaOperations::CreateSuperimposedImage(bg, icon);
-#endif
-
+#else
   return icon;
+#endif
 }
 
 bool ImagesAreEqualAtScale(const gfx::ImageSkia& i1,
@@ -118,10 +120,9 @@ IN_PROC_BROWSER_TEST_F(BrowserActionApiTest, Basic) {
   ui_test_utils::NavigateToURL(browser(),
       test_server()->GetURL("files/extensions/test_file.txt"));
 
-  ExtensionService* service = extensions::ExtensionSystem::Get(
-      browser()->profile())->extension_service();
-  service->toolbar_model()->ExecuteBrowserAction(
-      extension, browser(), NULL, true);
+  ExtensionToolbarModel* toolbar_model = ExtensionToolbarModel::Get(
+      browser()->profile());
+  toolbar_model->ExecuteBrowserAction(extension, browser(), NULL, true);
 
   ASSERT_TRUE(catcher.GetNextResult()) << catcher.message();
 }
@@ -174,10 +175,10 @@ IN_PROC_BROWSER_TEST_F(BrowserActionApiTest, DynamicBrowserAction) {
 
   EXPECT_FALSE(action_icon.ToImageSkia()->HasRepresentation(2.0f));
 
-  EXPECT_TRUE(ImagesAreEqualAtScale(
-      AddBackgroundForViews(*action_icon.ToImageSkia()),
-      *GetBrowserActionsBar().GetIcon(0).ToImageSkia(),
-      1.0f));
+  EXPECT_TRUE(
+      ImagesAreEqualAtScale(AddBackgroundForViews(*action_icon.ToImageSkia()),
+                            *GetBrowserActionsBar().GetIcon(0).ToImageSkia(),
+                            1.0f));
 
   // Tell the extension to update the icon using path.
   GetBrowserActionsBar().Press(0);
@@ -192,10 +193,10 @@ IN_PROC_BROWSER_TEST_F(BrowserActionApiTest, DynamicBrowserAction) {
   EXPECT_FALSE(
       action_icon.ToImageSkia()->HasRepresentation(2.0f));
 
-  EXPECT_TRUE(ImagesAreEqualAtScale(
-      AddBackgroundForViews(*action_icon.ToImageSkia()),
-      *GetBrowserActionsBar().GetIcon(0).ToImageSkia(),
-      1.0f));
+  EXPECT_TRUE(
+      ImagesAreEqualAtScale(AddBackgroundForViews(*action_icon.ToImageSkia()),
+                            *GetBrowserActionsBar().GetIcon(0).ToImageSkia(),
+                            1.0f));
 
   // Tell the extension to update the icon using dictionary of ImageData
   // objects.
@@ -210,10 +211,10 @@ IN_PROC_BROWSER_TEST_F(BrowserActionApiTest, DynamicBrowserAction) {
 
   EXPECT_TRUE(action_icon.ToImageSkia()->HasRepresentation(2.0f));
 
-  EXPECT_TRUE(ImagesAreEqualAtScale(
-      AddBackgroundForViews(*action_icon.ToImageSkia()),
-      *GetBrowserActionsBar().GetIcon(0).ToImageSkia(),
-      1.0f));
+  EXPECT_TRUE(
+      ImagesAreEqualAtScale(AddBackgroundForViews(*action_icon.ToImageSkia()),
+                            *GetBrowserActionsBar().GetIcon(0).ToImageSkia(),
+                            1.0f));
 
   // Tell the extension to update the icon using dictionary of paths.
   GetBrowserActionsBar().Press(0);
@@ -227,10 +228,10 @@ IN_PROC_BROWSER_TEST_F(BrowserActionApiTest, DynamicBrowserAction) {
 
   EXPECT_TRUE(action_icon.ToImageSkia()->HasRepresentation(2.0f));
 
-  EXPECT_TRUE(ImagesAreEqualAtScale(
-      AddBackgroundForViews(*action_icon.ToImageSkia()),
-      *GetBrowserActionsBar().GetIcon(0).ToImageSkia(),
-      1.0f));
+  EXPECT_TRUE(
+      ImagesAreEqualAtScale(AddBackgroundForViews(*action_icon.ToImageSkia()),
+                            *GetBrowserActionsBar().GetIcon(0).ToImageSkia(),
+                            1.0f));
 
   // Tell the extension to update the icon using dictionary of ImageData
   // objects, but setting only size 19.
@@ -245,10 +246,10 @@ IN_PROC_BROWSER_TEST_F(BrowserActionApiTest, DynamicBrowserAction) {
 
   EXPECT_FALSE(action_icon.ToImageSkia()->HasRepresentation(2.0f));
 
-  EXPECT_TRUE(ImagesAreEqualAtScale(
-      AddBackgroundForViews(*action_icon.ToImageSkia()),
-      *GetBrowserActionsBar().GetIcon(0).ToImageSkia(),
-      1.0f));
+  EXPECT_TRUE(
+      ImagesAreEqualAtScale(AddBackgroundForViews(*action_icon.ToImageSkia()),
+                            *GetBrowserActionsBar().GetIcon(0).ToImageSkia(),
+                            1.0f));
 
   // Tell the extension to update the icon using dictionary of paths, but
   // setting only size 19.
@@ -263,10 +264,10 @@ IN_PROC_BROWSER_TEST_F(BrowserActionApiTest, DynamicBrowserAction) {
 
   EXPECT_FALSE(action_icon.ToImageSkia()->HasRepresentation(2.0f));
 
-  EXPECT_TRUE(ImagesAreEqualAtScale(
-      AddBackgroundForViews(*action_icon.ToImageSkia()),
-      *GetBrowserActionsBar().GetIcon(0).ToImageSkia(),
-      1.0f));
+  EXPECT_TRUE(
+      ImagesAreEqualAtScale(AddBackgroundForViews(*action_icon.ToImageSkia()),
+                            *GetBrowserActionsBar().GetIcon(0).ToImageSkia(),
+                            1.0f));
 
   // Tell the extension to update the icon using dictionary of ImageData
   // objects, but setting only size 38.
@@ -288,10 +289,10 @@ IN_PROC_BROWSER_TEST_F(BrowserActionApiTest, DynamicBrowserAction) {
       *action_icon.ToSkBitmap(),
       action_icon_skia->GetRepresentation(2.0f).sk_bitmap()));
 
-  EXPECT_TRUE(ImagesAreEqualAtScale(
-      AddBackgroundForViews(*action_icon_skia),
-      *GetBrowserActionsBar().GetIcon(0).ToImageSkia(),
-      2.0f));
+  EXPECT_TRUE(
+      ImagesAreEqualAtScale(AddBackgroundForViews(*action_icon_skia),
+                            *GetBrowserActionsBar().GetIcon(0).ToImageSkia(),
+                            2.0f));
 
   // Try setting icon with empty dictionary of ImageData objects.
   GetBrowserActionsBar().Press(0);
@@ -338,8 +339,8 @@ IN_PROC_BROWSER_TEST_F(BrowserActionApiTest,
 // http://code.google.com/p/chromium/issues/detail?id=70829
 // Mac used to be ok, but then mac 10.5 started failing too. =(
 IN_PROC_BROWSER_TEST_F(BrowserActionApiTest, DISABLED_BrowserActionPopup) {
-  ASSERT_TRUE(LoadExtension(test_data_dir_.AppendASCII(
-      "browser_action/popup")));
+  ASSERT_TRUE(
+      LoadExtension(test_data_dir_.AppendASCII("browser_action/popup")));
   BrowserActionTestUtil actions_bar = GetBrowserActionsBar();
   const Extension* extension = GetSingleLoadedExtension();
   ASSERT_TRUE(extension) << message_;
@@ -484,8 +485,8 @@ IN_PROC_BROWSER_TEST_F(BrowserActionApiTest, IncognitoBasic) {
   // Now enable the extension in incognito mode, and test that the browser
   // action shows up. Note that we don't update the existing window at the
   // moment, so we just create a new one.
-  extensions::ExtensionSystem::Get(browser()->profile())->extension_service()->
-      extension_prefs()->SetIsIncognitoEnabled(extension->id(), true);
+  extensions::ExtensionPrefs::Get(browser()->profile())
+      ->SetIsIncognitoEnabled(extension->id(), true);
 
   chrome::CloseWindow(incognito_browser);
   incognito_browser =
@@ -503,18 +504,19 @@ IN_PROC_BROWSER_TEST_F(BrowserActionApiTest, IncognitoDragging) {
       browser()->profile())->extension_service();
 
   // The tooltips for each respective browser action.
-  const char kTooltipA[] = "Make this page red";
-  const char kTooltipB[] = "grow";
-  const char kTooltipC[] = "Test setPopup()";
+  const char kTooltipA[] = "Alpha";
+  const char kTooltipB[] = "Beta";
+  const char kTooltipC[] = "Gamma";
 
   const size_t size_before = service->extensions()->size();
 
-  const Extension* extension_a = LoadExtension(test_data_dir_.AppendASCII(
-      "browser_action/basics"));
-  const Extension* extension_b = LoadExtension(test_data_dir_.AppendASCII(
-      "browser_action/popup"));
-  const Extension* extension_c = LoadExtension(test_data_dir_.AppendASCII(
-      "browser_action/add_popup"));
+  base::FilePath test_dir = test_data_dir_.AppendASCII("browser_action");
+  const Extension* extension_a = InstallExtension(
+      test_dir.AppendASCII("empty_browser_action_alpha.crx"), 1);
+  const Extension* extension_b = InstallExtension(
+      test_dir.AppendASCII("empty_browser_action_beta.crx"), 1);
+  const Extension* extension_c = InstallExtension(
+      test_dir.AppendASCII("empty_browser_action_gamma.crx"), 1);
   ASSERT_TRUE(extension_a);
   ASSERT_TRUE(extension_b);
   ASSERT_TRUE(extension_c);
@@ -525,8 +527,10 @@ IN_PROC_BROWSER_TEST_F(BrowserActionApiTest, IncognitoDragging) {
 
   // Now enable 2 of the extensions in incognito mode, and test that the browser
   // actions show up.
-  service->extension_prefs()->SetIsIncognitoEnabled(extension_a->id(), true);
-  service->extension_prefs()->SetIsIncognitoEnabled(extension_c->id(), true);
+  extensions::ExtensionPrefs* prefs =
+      extensions::ExtensionPrefs::Get(browser()->profile());
+  prefs->SetIsIncognitoEnabled(extension_a->id(), true);
+  prefs->SetIsIncognitoEnabled(extension_c->id(), true);
 
   Profile* incognito_profile = browser()->profile()->GetOffTheRecordProfile();
   Browser* incognito_browser =
@@ -551,7 +555,9 @@ IN_PROC_BROWSER_TEST_F(BrowserActionApiTest, IncognitoDragging) {
   // regular and incognito mode.
 
   // ABC -> CAB
-  service->toolbar_model()->MoveBrowserAction(extension_c, 0);
+  ExtensionToolbarModel* toolbar_model = ExtensionToolbarModel::Get(
+      browser()->profile());
+  toolbar_model->MoveBrowserAction(extension_c, 0);
 
   EXPECT_EQ(kTooltipC, GetBrowserActionsBar().GetTooltip(0));
   EXPECT_EQ(kTooltipA, GetBrowserActionsBar().GetTooltip(1));
@@ -561,7 +567,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionApiTest, IncognitoDragging) {
   EXPECT_EQ(kTooltipA, incognito_bar.GetTooltip(1));
 
   // CAB -> CBA
-  service->toolbar_model()->MoveBrowserAction(extension_b, 1);
+  toolbar_model->MoveBrowserAction(extension_b, 1);
 
   EXPECT_EQ(kTooltipC, GetBrowserActionsBar().GetTooltip(0));
   EXPECT_EQ(kTooltipB, GetBrowserActionsBar().GetTooltip(1));
@@ -591,28 +597,26 @@ IN_PROC_BROWSER_TEST_F(BrowserActionApiTest, IncognitoSplit) {
             BrowserActionTestUtil(incognito_browser).NumberOfBrowserActions());
 
   // A click in the regular profile should open a tab in the regular profile.
-  ExtensionService* service = extensions::ExtensionSystem::Get(
-      browser()->profile())->extension_service();
-  service->toolbar_model()->ExecuteBrowserAction(
-      extension, browser(), NULL, true);
+  ExtensionToolbarModel* toolbar_model = ExtensionToolbarModel::Get(
+      browser()->profile());
+  toolbar_model->ExecuteBrowserAction(extension, browser(), NULL, true);
   ASSERT_TRUE(catcher.GetNextResult()) << catcher.message();
 
   // A click in the incognito profile should open a tab in the
   // incognito profile.
-  service->toolbar_model()->ExecuteBrowserAction(
-      extension, incognito_browser, NULL, true);
+  toolbar_model->ExecuteBrowserAction(extension, incognito_browser, NULL, true);
   ASSERT_TRUE(catcher.GetNextResult()) << catcher.message();
 }
 
 // Disabled because of failures (crashes) on ASAN bot.
 // See http://crbug.com/98861.
 IN_PROC_BROWSER_TEST_F(BrowserActionApiTest, DISABLED_CloseBackgroundPage) {
-  ASSERT_TRUE(LoadExtension(test_data_dir_.AppendASCII(
-      "browser_action/close_background")));
+  ASSERT_TRUE(LoadExtension(
+      test_data_dir_.AppendASCII("browser_action/close_background")));
   const Extension* extension = GetSingleLoadedExtension();
 
   // There is a background page and a browser action with no badge text.
-  ExtensionProcessManager* manager =
+  extensions::ProcessManager* manager =
       extensions::ExtensionSystem::Get(browser()->profile())->process_manager();
   ASSERT_TRUE(manager->GetBackgroundHostForExtension(extension->id()));
   ExtensionAction* action = GetBrowserAction(*extension);
@@ -623,8 +627,9 @@ IN_PROC_BROWSER_TEST_F(BrowserActionApiTest, DISABLED_CloseBackgroundPage) {
       content::NotificationService::AllSources());
 
   // Click the browser action.
-  extensions::ExtensionSystem::Get(browser()->profile())->extension_service()->
-      toolbar_model()->ExecuteBrowserAction(extension, browser(), NULL, true);
+  ExtensionToolbarModel* toolbar_model = ExtensionToolbarModel::Get(
+      browser()->profile());
+  toolbar_model->ExecuteBrowserAction(extension, browser(), NULL, true);
 
   // It can take a moment for the background page to actually get destroyed
   // so we wait for the notification before checking that it's really gone
@@ -721,9 +726,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionApiTest, TestTriggerBrowserAction) {
       "window.domAutomationController.send(document.body.style."
       "backgroundColor);";
   std::string result;
-  const std::string frame_xpath;
-  EXPECT_TRUE(content::ExecuteScriptInFrameAndExtractString(
-      tab, frame_xpath, script, &result));
+  EXPECT_TRUE(content::ExecuteScriptAndExtractString(tab, script, &result));
   EXPECT_EQ(result, "red");
 }
 

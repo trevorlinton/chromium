@@ -10,8 +10,8 @@
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/drive/resource_entry_conversion.h"
 #include "chrome/browser/chromeos/drive/resource_metadata.h"
-#include "chrome/browser/google_apis/drive_api_parser.h"
-#include "chrome/browser/google_apis/gdata_wapi_parser.h"
+#include "google_apis/drive/drive_api_parser.h"
+#include "google_apis/drive/gdata_wapi_parser.h"
 
 namespace drive {
 namespace internal {
@@ -53,10 +53,27 @@ class ChangeListToEntryMapUMAStats {
   int num_shared_with_me_entries_;
 };
 
+// Returns true if it's OK to overwrite the local entry with the remote one.
+// |modification_date| is the time of the modification whose result is
+// |remote_entry|.
+bool ShouldApplyChange(const ResourceEntry& local_entry,
+                       const ResourceEntry& remote_entry,
+                       const base::Time& modification_date) {
+  // TODO(hashimoto): Implement more sophisticated conflict resolution.
+
+  // If the entry is locally available and is newly created in this change,
+  // No need to overwrite the local entry.
+  base::Time creation_time =
+      base::Time::FromInternalValue(remote_entry.file_info().creation_time());
+  const bool entry_is_new = creation_time == modification_date;
+  return !entry_is_new;
+}
+
 }  // namespace
 
 std::string DirectoryFetchInfo::ToString() const {
-  return ("resource_id: " + resource_id_ +
+  return ("local_id: " + local_id_ +
+          ", resource_id: " + resource_id_ +
           ", changestamp: " + base::Int64ToString(changestamp_));
 }
 
@@ -68,15 +85,20 @@ ChangeList::ChangeList(const google_apis::ResourceList& resource_list)
 
   entries_.resize(resource_list.entries().size());
   parent_resource_ids_.resize(resource_list.entries().size());
+  modification_dates_.resize(resource_list.entries().size());
   size_t entries_index = 0;
   for (size_t i = 0; i < resource_list.entries().size(); ++i) {
     if (ConvertToResourceEntry(*resource_list.entries()[i],
                                &entries_[entries_index],
-                               &parent_resource_ids_[entries_index]))
+                               &parent_resource_ids_[entries_index])) {
+      modification_dates_[entries_index] =
+          resource_list.entries()[i]->modification_date();
       ++entries_index;
+    }
   }
   entries_.resize(entries_index);
   parent_resource_ids_.resize(entries_index);
+  modification_dates_.resize(entries_index);
 }
 
 ChangeList::~ChangeList() {}
@@ -125,6 +147,8 @@ FileError ChangeListProcessor::Apply(
         if (entry->shared_with_me())
           uma_stats.IncrementNumSharedWithMeEntries();
       }
+      modification_date_map_[entry->resource_id()] =
+          change_list->modification_dates()[i];
       parent_resource_id_map_[entry->resource_id()] =
           change_list->parent_resource_ids()[i];
       entry_map_[entry->resource_id()].Swap(entry);
@@ -142,9 +166,7 @@ FileError ChangeListProcessor::Apply(
     }
   }
 
-  FileError error = ApplyEntryMap(is_delta_update,
-                                  largest_changestamp,
-                                  about_resource.Pass());
+  FileError error = ApplyEntryMap(largest_changestamp, about_resource.Pass());
   if (error != FILE_ERROR_OK) {
     DLOG(ERROR) << "ApplyEntryMap failed: " << FileErrorToString(error);
     return error;
@@ -165,7 +187,6 @@ FileError ChangeListProcessor::Apply(
 }
 
 FileError ChangeListProcessor::ApplyEntryMap(
-    bool is_delta_update,
     int64 changestamp,
     scoped_ptr<google_apis::AboutResource> about_resource) {
   DCHECK(about_resource);
@@ -174,24 +195,14 @@ FileError ChangeListProcessor::ApplyEntryMap(
   ResourceEntry root;
   FileError error = resource_metadata_->GetResourceEntryByPath(
       util::GetDriveMyDriveRootPath(), &root);
-  switch (error) {
-    case FILE_ERROR_OK:  // Refresh the existing My Drive root entry.
-      root.mutable_directory_specific_info()->set_changestamp(changestamp);
-      error = resource_metadata_->RefreshEntry(root);
-      break;
-    case FILE_ERROR_NOT_FOUND: {  // Add the My Drive root directory.
-      changed_dirs_.insert(util::GetDriveGrandRootPath());
-      changed_dirs_.insert(util::GetDriveMyDriveRootPath());
-
-      root = util::CreateMyDriveRootEntry(about_resource->root_folder_id());
-      root.mutable_directory_specific_info()->set_changestamp(changestamp);
-      std::string local_id;
-      error = resource_metadata_->AddEntry(root, &local_id);
-      break;
-    }
-    default:
-      break;
+  if (error != FILE_ERROR_OK) {
+    LOG(ERROR) << "Failed to get root entry: " << FileErrorToString(error);
+    return error;
   }
+
+  root.mutable_directory_specific_info()->set_changestamp(changestamp);
+  root.set_resource_id(about_resource->root_folder_id());
+  error = resource_metadata_->RefreshEntry(root);
   if (error != FILE_ERROR_OK) {
     LOG(ERROR) << "Failed to update root entry: " << FileErrorToString(error);
     return error;
@@ -209,15 +220,13 @@ FileError ChangeListProcessor::ApplyEntryMap(
   }
 
   // Apply all entries except deleted ones to the metadata.
-  std::vector<ResourceEntry> deleted_entries;
-  deleted_entries.reserve(entry_map_.size());
+  std::vector<std::string> deleted_resource_ids;
   while (!entry_map_.empty()) {
     ResourceEntryMap::iterator it = entry_map_.begin();
 
     // Process deleted entries later to avoid deleting moved entries under it.
     if (it->second.deleted()) {
-      deleted_entries.push_back(ResourceEntry());
-      deleted_entries.back().Swap(&it->second);
+      deleted_resource_ids.push_back(it->first);
       entry_map_.erase(it);
       continue;
     }
@@ -237,9 +246,12 @@ FileError ChangeListProcessor::ApplyEntryMap(
          it != entry_map_.end();) {
       entries.push_back(it);
 
+      DCHECK(parent_resource_id_map_.count(it->first)) << it->first;
       const std::string& parent_resource_id =
           parent_resource_id_map_[it->first];
-      DCHECK(!parent_resource_id.empty()) << it->first;
+
+      if (parent_resource_id.empty())  // This entry has no parent.
+        break;
 
       ResourceEntryMap::iterator it_parent =
           entry_map_.find(parent_resource_id);
@@ -250,8 +262,16 @@ FileError ChangeListProcessor::ApplyEntryMap(
         FileError error = resource_metadata_->GetIdByResourceId(
             parent_resource_id, &parent_local_id);
         if (error != FILE_ERROR_OK) {
-          LOG(ERROR) << "Failed to get local ID: " << parent_resource_id
-                     << ", error = " << FileErrorToString(error);
+          // See crbug.com/326043. In some complicated situations, parent folder
+          // for shared entries may be accessible (and hence its resource id is
+          // included), but not in the change/file list.
+          // In such a case, clear the parent and move it to drive/other.
+          if (error == FILE_ERROR_NOT_FOUND) {
+            parent_resource_id_map_[it->first] = "";
+          } else {
+            LOG(ERROR) << "Failed to get local ID: " << parent_resource_id
+                       << ", error = " << FileErrorToString(error);
+          }
           break;
         }
         ResourceEntry parent_entry;
@@ -288,141 +308,152 @@ FileError ChangeListProcessor::ApplyEntryMap(
   }
 
   // Apply deleted entries.
-  for (size_t i = 0; i < deleted_entries.size(); ++i) {
-    // TODO(hashimoto): Handle ApplyEntry errors correctly.
-    FileError error = ApplyEntry(deleted_entries[i]);
-    DLOG_IF(WARNING, error != FILE_ERROR_OK)
-        << "ApplyEntry failed: " << FileErrorToString(error)
-        << ", title = " << deleted_entries[i].title();
+  for (size_t i = 0; i < deleted_resource_ids.size(); ++i) {
+    std::string local_id;
+    FileError error = resource_metadata_->GetIdByResourceId(
+        deleted_resource_ids[i], &local_id);
+    if (error == FILE_ERROR_OK)
+      error = resource_metadata_->RemoveEntry(local_id);
+
+    DLOG_IF(WARNING, error != FILE_ERROR_OK && error != FILE_ERROR_NOT_FOUND)
+        << "Failed to delete: " << FileErrorToString(error)
+        << ", resource_id = " << deleted_resource_ids[i];
   }
 
   return FILE_ERROR_OK;
 }
 
 FileError ChangeListProcessor::ApplyEntry(const ResourceEntry& entry) {
+  DCHECK(!entry.deleted());
+  DCHECK(parent_resource_id_map_.count(entry.resource_id()));
+  DCHECK(modification_date_map_.count(entry.resource_id()));
+  const std::string& parent_resource_id =
+      parent_resource_id_map_[entry.resource_id()];
+  const base::Time& modification_date =
+      modification_date_map_[entry.resource_id()];
+
+  ResourceEntry new_entry(entry);
+  FileError error = SetParentLocalIdOfEntry(resource_metadata_, &new_entry,
+                                            parent_resource_id);
+  if (error != FILE_ERROR_OK)
+    return error;
+
   // Lookup the entry.
   std::string local_id;
-  FileError error = resource_metadata_->GetIdByResourceId(entry.resource_id(),
-                                                          &local_id);
+  error = resource_metadata_->GetIdByResourceId(entry.resource_id(), &local_id);
+
   ResourceEntry existing_entry;
   if (error == FILE_ERROR_OK)
     error = resource_metadata_->GetResourceEntryById(local_id, &existing_entry);
 
-  const FileError get_existing_entry_result = error;
-  if (entry.deleted()) {
-    // Deleted file/directory.
-    switch (get_existing_entry_result) {
-      case FILE_ERROR_OK:
-        error = resource_metadata_->RemoveEntry(local_id);
-        break;
-      case FILE_ERROR_NOT_FOUND:  // Already deleted.
-        error = FILE_ERROR_OK;
-        break;
-      default:
-        error = get_existing_entry_result;
-    }
-  } else {
-    const std::string& parent_resource_id =
-        parent_resource_id_map_[entry.resource_id()];
-    DCHECK(!parent_resource_id.empty()) << entry.resource_id();
-
-    std::string parent_local_id;
-    error = resource_metadata_->GetIdByResourceId(
-        parent_resource_id, &parent_local_id);
-    if (error == FILE_ERROR_OK) {
-      ResourceEntry new_entry(entry);
-      new_entry.set_parent_local_id(parent_local_id);
-
-      switch (get_existing_entry_result) {
-        case FILE_ERROR_OK:  // Entry exists and needs to be refreshed.
-          new_entry.set_local_id(local_id);
+  switch (error) {
+    case FILE_ERROR_OK:
+      if (ShouldApplyChange(existing_entry, new_entry, modification_date)) {
+        // Entry exists and needs to be refreshed.
+        new_entry.set_local_id(local_id);
+        error = resource_metadata_->RefreshEntry(new_entry);
+      } else {
+        if (entry.file_info().is_directory()) {
+          // No need to refresh, but update the changestamp.
+          new_entry = existing_entry;
+          new_entry.mutable_directory_specific_info()->set_changestamp(
+              new_entry.directory_specific_info().changestamp());
           error = resource_metadata_->RefreshEntry(new_entry);
-          break;
-        case FILE_ERROR_NOT_FOUND: {  // Adding a new entry.
-          std::string local_id;
-          error = resource_metadata_->AddEntry(new_entry, &local_id);
-          break;
         }
-        default:
-          error = get_existing_entry_result;
+        DVLOG(1) << "Change was discarded for: "
+                 << resource_metadata_->GetFilePath(local_id).value();
       }
-
-      if (error == FILE_ERROR_OK)
-        UpdateChangedDirs(entry);
+      break;
+    case FILE_ERROR_NOT_FOUND: {  // Adding a new entry.
+      std::string local_id;
+      error = resource_metadata_->AddEntry(new_entry, &local_id);
+      break;
     }
+    default:
+      return error;
   }
+  if (error != FILE_ERROR_OK)
+    return error;
 
-  return error;
+  UpdateChangedDirs(entry);
+  return FILE_ERROR_OK;
 }
 
 // static
 FileError ChangeListProcessor::RefreshDirectory(
     ResourceMetadata* resource_metadata,
     const DirectoryFetchInfo& directory_fetch_info,
-    ScopedVector<ChangeList> change_lists,
-    base::FilePath* out_file_path) {
+    scoped_ptr<ChangeList> change_list,
+    std::vector<ResourceEntry>* out_refreshed_entries) {
   DCHECK(!directory_fetch_info.empty());
 
-  std::string directory_local_id;
-  FileError error = resource_metadata->GetIdByResourceId(
-      directory_fetch_info.resource_id(), &directory_local_id);
-  if (error != FILE_ERROR_OK)
-    return error;
-
   ResourceEntry directory;
-  error = resource_metadata->GetResourceEntryById(directory_local_id,
-                                                  &directory);
+  FileError error = resource_metadata->GetResourceEntryById(
+      directory_fetch_info.local_id(), &directory);
   if (error != FILE_ERROR_OK)
     return error;
 
   if (!directory.file_info().is_directory())
     return FILE_ERROR_NOT_A_DIRECTORY;
 
-  for (size_t i = 0; i < change_lists.size(); ++i) {
-    ChangeList* change_list = change_lists[i];
-    std::vector<ResourceEntry>* entries = change_list->mutable_entries();
-    for (size_t i = 0; i < entries->size(); ++i) {
-      ResourceEntry* entry = &(*entries)[i];
-      const std::string& parent_resource_id =
-          change_list->parent_resource_ids()[i];
+  std::vector<ResourceEntry>* entries = change_list->mutable_entries();
+  for (size_t i = 0; i < entries->size(); ++i) {
+    ResourceEntry* entry = &(*entries)[i];
+    const std::string& parent_resource_id =
+        change_list->parent_resource_ids()[i];
 
-      // Skip if the parent resource ID does not match. This is needed to
-      // handle entries with multiple parents. For such entries, the first
-      // parent is picked and other parents are ignored, hence some entries may
-      // have a parent resource ID which does not match the target directory's.
-      if (parent_resource_id != directory_fetch_info.resource_id()) {
-        DVLOG(1) << "Wrong-parent entry rejected: " << entry->resource_id();
-        continue;
-      }
-
-      entry->set_parent_local_id(directory_local_id);
-
-      std::string local_id;
-      error = resource_metadata->GetIdByResourceId(entry->resource_id(),
-                                                   &local_id);
-      if (error == FILE_ERROR_OK) {
-        entry->set_local_id(local_id);
-        error = resource_metadata->RefreshEntry(*entry);
-      }
-
-      if (error == FILE_ERROR_NOT_FOUND) {  // If refreshing fails, try adding.
-        std::string local_id;
-        entry->clear_local_id();
-        error = resource_metadata->AddEntry(*entry, &local_id);
-      }
-
-      if (error != FILE_ERROR_OK)
-        return error;
+    // Skip if the parent resource ID does not match. This is needed to
+    // handle entries with multiple parents. For such entries, the first
+    // parent is picked and other parents are ignored, hence some entries may
+    // have a parent resource ID which does not match the target directory's.
+    if (parent_resource_id != directory_fetch_info.resource_id()) {
+      DVLOG(1) << "Wrong-parent entry rejected: " << entry->resource_id();
+      continue;
     }
+
+    entry->set_parent_local_id(directory_fetch_info.local_id());
+
+    std::string local_id;
+    error = resource_metadata->GetIdByResourceId(entry->resource_id(),
+                                                 &local_id);
+    if (error == FILE_ERROR_OK) {
+      entry->set_local_id(local_id);
+      error = resource_metadata->RefreshEntry(*entry);
+    }
+
+    if (error == FILE_ERROR_NOT_FOUND) {  // If refreshing fails, try adding.
+      entry->clear_local_id();
+      error = resource_metadata->AddEntry(*entry, &local_id);
+    }
+
+    if (error != FILE_ERROR_OK)
+      return error;
+
+    ResourceEntry result_entry;
+    error = resource_metadata->GetResourceEntryById(local_id, &result_entry);
+    if (error != FILE_ERROR_OK)
+      return error;
+    out_refreshed_entries->push_back(result_entry);
   }
+  return FILE_ERROR_OK;
+}
 
-  directory.mutable_directory_specific_info()->set_changestamp(
-      directory_fetch_info.changestamp());
-  error = resource_metadata->RefreshEntry(directory);
-  if (error != FILE_ERROR_OK)
-    return error;
-
-  *out_file_path = resource_metadata->GetFilePath(directory_local_id);
+// static
+FileError ChangeListProcessor::SetParentLocalIdOfEntry(
+    ResourceMetadata* resource_metadata,
+    ResourceEntry* entry,
+    const std::string& parent_resource_id) {
+  std::string parent_local_id;
+  if (parent_resource_id.empty()) {
+    // Entries without parents should go under "other" directory.
+    parent_local_id = util::kDriveOtherDirLocalId;
+  } else {
+    FileError error = resource_metadata->GetIdByResourceId(
+        parent_resource_id, &parent_local_id);
+    if (error != FILE_ERROR_OK)
+      return error;
+  }
+  entry->set_parent_local_id(parent_local_id);
   return FILE_ERROR_OK;
 }
 

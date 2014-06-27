@@ -5,12 +5,14 @@
 #ifndef CHROME_BROWSER_SYNC_FILE_SYSTEM_DRIVE_BACKEND_UNINSTALL_APP_TASK_H_
 #define CHROME_BROWSER_SYNC_FILE_SYSTEM_DRIVE_BACKEND_UNINSTALL_APP_TASK_H_
 
+#include <string>
+
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "chrome/browser/google_apis/gdata_errorcode.h"
+#include "chrome/browser/sync_file_system/drive_backend/sync_task.h"
 #include "chrome/browser/sync_file_system/remote_file_sync_service.h"
 #include "chrome/browser/sync_file_system/sync_callbacks.h"
-#include "chrome/browser/sync_file_system/sync_task.h"
+#include "google_apis/drive/gdata_errorcode.h"
 
 namespace drive {
 class DriveServiceInterface;
@@ -29,7 +31,7 @@ class MetadataDatabase;
 class SyncEngineContext;
 class TrackerSet;
 
-class UninstallAppTask : public SyncTask {
+class UninstallAppTask : public SequentialSyncTask {
  public:
   typedef RemoteFileSyncService::UninstallFlag UninstallFlag;
   UninstallAppTask(SyncEngineContext* sync_context,
@@ -37,13 +39,14 @@ class UninstallAppTask : public SyncTask {
                    UninstallFlag uninstall_flag);
   virtual ~UninstallAppTask();
 
-  virtual void Run(const SyncStatusCallback& callback) OVERRIDE;
+  virtual void RunSequential(const SyncStatusCallback& callback) OVERRIDE;
 
  private:
   void DidDeleteAppRoot(const SyncStatusCallback& callback,
                         int64 change_id,
                         google_apis::GDataErrorCode error);
 
+  bool IsContextReady();
   MetadataDatabase* metadata_database();
   drive::DriveServiceInterface* drive_service();
 

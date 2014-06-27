@@ -5,8 +5,7 @@
 /**
  * Extension apitests for drive search methods.
  * There are three tests functions run:
- * - loadFileSystem() which requests local file system and verifies the drive
- *   mount point exists.
+ * - loadFileSystem() which requests the Drive file system.
  * - driveSearch() which tests chrome.fileBrowserPrivate.searchDrive function.
  * - driveMetadataSearch() which tests
  *   chrome.fileBrowserPrivate.searchDriveMetadata function.
@@ -29,7 +28,9 @@
 function verifyFile(entry, successCallback) {
   chrome.test.assertFalse(!entry.file, 'Entry has no file method.');
   entry.file(successCallback,
-             chrome.test.fail.bind(null, 'Error reading result file.'));
+             function() {
+               chrome.test.fail('Error reading result file.');
+              });
 }
 
 /**
@@ -71,10 +72,10 @@ chrome.test.runTests([
   // Loads filesystem that contains drive mount point.
   function loadFileSystem() {
     chrome.fileBrowserPrivate.requestFileSystem(
-      'compatible',
+      'drive:drive-user',
       function (fileSystem) {
         chrome.test.assertFalse(!fileSystem, 'Failed to get file system.');
-        fileSystem.root.getDirectory('drive/root/test_dir', {create: false},
+        fileSystem.root.getDirectory('/root/test_dir', {create: false},
             // Also read a non-root directory. This will initiate loading of
             // the full resource metadata. As of now, 'search' only works
             // with the resource metadata fully loaded. crbug.com/181075
@@ -82,61 +83,56 @@ chrome.test.runTests([
               var reader = entry.createReader();
               reader.readEntries(
                   chrome.test.succeed,
-                  chrome.test.fail.bind(null, 'Error reading directory.'));
+                  function() {
+                    chrome.test.fail('Error reading directory.');
+                  });
             },
-            chrome.test.fail.bind(null, 'Unable to get drive mount point.'));
+            function() {
+              chrome.test.fail('Unable to get the testing directory.');
+            });
       });
   },
 
   // Tests chrome.fileBrowserPrivate.searchDrive method.
   function driveSearch() {
-    var testCases = [
-      {
-        nextFeed: '',
-        expectedPath: '/drive/root/test_dir/empty_test_dir',
-        expectedType: 'dir',
-        expectedNextFeed:
-            'http://localhost/?start-offset=1&max-results=1&q=empty',
-      },
-      {
-        // The same as the previous test case's expected next feed.
-        nextFeed: 'http://localhost/?start-offset=1&max-results=1&q=empty',
-        expectedPath: '/drive/root/test_dir/empty_test_file.foo',
-        expectedType: 'file',
-        expectedNextFeed: '',
-      }
+    var query = 'empty';
+    var expectedEntries = [
+      {path: '/root/test_dir/empty_test_dir', type: 'dir'},
+      {path: '/root/test_dir/empty_test_file.foo', type: 'file'},
     ];
 
-    function runNextQuery() {
-      // If there is no more queries the test ended successfully.
-      if (testCases.length == 0) {
-        chrome.test.succeed();
-        return;
-      }
-
-      var testCase = testCases.shift();
+    function runNextQuery(entries, nextFeed) {
+      chrome.test.assertFalse(!entries);
 
       // Each search query should return exactly one result (this should be
       // ensured by Chrome part of the test).
-      chrome.fileBrowserPrivate.searchDrive(
-          {query: 'empty', nextFeed: testCase.nextFeed},
-          function(entries, nextFeed) {
-            chrome.test.assertFalse(!entries);
-            chrome.test.assertEq(1, entries.length);
-            chrome.test.assertEq(testCase.expectedPath,
-                                 entries[0].fullPath);
-            chrome.test.assertEq(testCase.expectedNextFeed, nextFeed);
+      chrome.test.assertEq(1, entries.length);
 
-            var verifyEntry = getEntryVerifier(testCase.expectedType);
-            chrome.test.assertFalse(!verifyEntry);
+      var index = -1;
+      for (var i = 0; i < expectedEntries.length; ++i) {
+        if (expectedEntries[i].path === entries[0].fullPath)
+          index = i;
+      }
+      chrome.test.assertFalse(index === -1);
 
-            // The callback will be called only it the entry is successfully
-            // verified, otherwise the test function will fail.
-            verifyEntry(entries[0], runNextQuery);
+      var verifyEntry = getEntryVerifier(expectedEntries[index].type);
+      chrome.test.assertFalse(!verifyEntry);
+      verifyEntry(entries[0], function() {
+        expectedEntries.splice(index, 1);
+
+        if (nextFeed === '') {
+          chrome.test.assertEq(0, expectedEntries.length);
+          chrome.test.succeed();
+          return;
+        }
+
+        chrome.fileBrowserPrivate.searchDrive(
+            {query: query, nextFeed: nextFeed}, runNextQuery);
       });
     }
 
-    runNextQuery();
+    chrome.fileBrowserPrivate.searchDrive(
+        {query: query, nextFeed: ''}, runNextQuery);
   },
 
   // Tests chrome.fileBrowserPrivate.searchDriveMetadata method.
@@ -149,13 +145,13 @@ chrome.test.runTests([
     // matches in the test file system.
     var expectedResults = [
         // (2012-01-02T00:00:01.000Z, 2012-01-02T00:00:0.000Z)
-        {path: '/drive/root/test_dir', type: 'dir'},
+        {path: '/root/test_dir', type: 'dir'},
         // (2012-01-02T00:00:00.000Z, 2012-01-01T00:00:00.005Z)
-        {path: '/drive/root/test_dir/test_file.xul', type: 'file'},
+        {path: '/root/test_dir/test_file.xul', type: 'file'},
         // (2012-01-02T00:00:00.000Z, 2011-04-03T11:11:10.000Z)
-        {path: '/drive/root/test_dir/test_file.tiff', type: 'file'},
+        {path: '/root/test_dir/test_file.tiff', type: 'file'},
         // (2012-01-01T11:00:00.000Z, 2012-01-01T10:00:30.00Z)
-        {path: '/drive/root/test_dir/test_file.xul.foo', type: 'file'},
+        {path: '/root/test_dir/test_file.xul.foo', type: 'file'},
     ];
 
     var query = {

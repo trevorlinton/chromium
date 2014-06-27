@@ -10,9 +10,6 @@
 #include "chromeos/login/login_state.h"
 #include "chromeos/settings/cros_settings_names.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/browser/render_view_host.h"
-#include "content/public/browser/render_widget_host.h"
-#include "content/public/browser/render_widget_host_iterator.h"
 
 namespace chromeos {
 
@@ -33,11 +30,11 @@ SystemSettingsProvider::~SystemSettingsProvider() {
 void SystemSettingsProvider::DoSet(const std::string& path,
                                    const base::Value& in_value) {
   // Non-guest users can change the time zone.
-  if (!LoginState::Get()->IsUserAuthenticated())
+  if (LoginState::Get()->IsGuestUser())
     return;
 
   if (path == kSystemTimezone) {
-    string16 timezone_id;
+    base::string16 timezone_id;
     if (!in_value.GetAsString(&timezone_id))
       return;
     // This will call TimezoneChanged.
@@ -68,13 +65,11 @@ void SystemSettingsProvider::TimezoneChanged(const icu::TimeZone& timezone) {
   NotifyObservers(kSystemTimezone);
 
   // Notify renderers
-  scoped_ptr<content::RenderWidgetHostIterator> widgets(
-      content::RenderWidgetHost::GetRenderWidgetHosts());
-  while (content::RenderWidgetHost* widget = widgets->GetNextHost()) {
-    if (widget->IsRenderView()) {
-      content::RenderViewHost* view = content::RenderViewHost::From(widget);
-      view->NotifyTimezoneChange();
-    }
+  for (content::RenderProcessHost::iterator it(
+           content::RenderProcessHost::AllHostsIterator());
+       !it.IsAtEnd();
+       it.Advance()) {
+    it.GetCurrentValue()->NotifyTimezoneChange();
   }
 }
 

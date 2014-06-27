@@ -17,6 +17,8 @@
       'sources': [
         'variations/entropy_provider.cc',
         'variations/entropy_provider.h',
+        'variations/processed_study.cc',
+        'variations/processed_study.h',
         'variations/proto/variations_seed.proto',
         'variations/proto/study.proto',
         'variations/metrics_util.cc',
@@ -25,6 +27,8 @@
         'variations/variations_associated_data.h',
         'variations/variations_seed_processor.cc',
         'variations/variations_seed_processor.h',
+        'variations/variations_seed_simulator.cc',
+        'variations/variations_seed_simulator.h',
       ],
       'variables': {
         'proto_in_dir': 'variations/proto',

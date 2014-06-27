@@ -28,8 +28,8 @@
 #include "ui/base/dragdrop/cocoa_dnd_util.h"
 #include "ui/gfx/image/image_skia_util_mac.h"
 
-using WebKit::WebDragOperation;
-using WebKit::WebDragOperationsMask;
+using blink::WebDragOperation;
+using blink::WebDragOperationsMask;
 using content::DropData;
 using content::PopupMenuHelper;
 using content::RenderViewHostFactory;
@@ -39,10 +39,10 @@ using content::WebContents;
 using content::WebContentsImpl;
 using content::WebContentsViewMac;
 
-// Ensure that the WebKit::WebDragOperation enum values stay in sync with
+// Ensure that the blink::WebDragOperation enum values stay in sync with
 // NSDragOperation constants, since the code below static_casts between 'em.
 #define COMPILE_ASSERT_MATCHING_ENUM(name) \
-  COMPILE_ASSERT(int(NS##name) == int(WebKit::Web##name), enum_mismatch_##name)
+  COMPILE_ASSERT(int(NS##name) == int(blink::Web##name), enum_mismatch_##name)
 COMPILE_ASSERT_MATCHING_ENUM(DragOperationNone);
 COMPILE_ASSERT_MATCHING_ENUM(DragOperationCopy);
 COMPILE_ASSERT_MATCHING_ENUM(DragOperationLink);
@@ -81,7 +81,9 @@ WebContentsViewMac::WebContentsViewMac(WebContentsImpl* web_contents,
                                        WebContentsViewDelegate* delegate)
     : web_contents_(web_contents),
       delegate_(delegate),
-      allow_overlapping_views_(false) {
+      allow_overlapping_views_(false),
+      overlay_view_(NULL),
+      underlay_view_(NULL) {
 }
 
 WebContentsViewMac::~WebContentsViewMac() {
@@ -157,14 +159,8 @@ void WebContentsViewMac::OnTabCrashed(base::TerminationStatus /* status */,
 void WebContentsViewMac::SizeContents(const gfx::Size& size) {
   // TODO(brettw | japhet) This is a hack and should be removed.
   // See web_contents_view.h.
-  gfx::Rect rect(gfx::Point(), size);
-  WebContentsViewCocoa* view = cocoa_view_.get();
-
-  NSPoint origin = [view frame].origin;
-  NSRect frame = [view flipRectToNSRect:rect];
-  frame.origin = NSMakePoint(NSMinX(frame) + origin.x,
-                             NSMinY(frame) + origin.y);
-  [view setFrame:frame];
+  // Note(erikchen): This method has /never/ worked correctly. I've removed the
+  // previous implementation.
 }
 
 void WebContentsViewMac::Focus() {
@@ -228,7 +224,9 @@ void WebContentsViewMac::TakeFocus(bool reverse) {
   }
 }
 
-void WebContentsViewMac::ShowContextMenu(const ContextMenuParams& params) {
+void WebContentsViewMac::ShowContextMenu(
+    content::RenderFrameHost* render_frame_host,
+    const ContextMenuParams& params) {
   // Allow delegates to handle the context menu operation first.
   if (web_contents_->GetDelegate() &&
       web_contents_->GetDelegate()->HandleContextMenu(params)) {
@@ -236,7 +234,7 @@ void WebContentsViewMac::ShowContextMenu(const ContextMenuParams& params) {
   }
 
   if (delegate())
-    delegate()->ShowContextMenu(params);
+    delegate()->ShowContextMenu(render_frame_host, params);
   else
     DLOG(ERROR) << "Cannot show context menus without a delegate.";
 }
@@ -250,10 +248,17 @@ void WebContentsViewMac::ShowPopupMenu(
     const std::vector<MenuItem>& items,
     bool right_aligned,
     bool allow_multiple_selection) {
-  PopupMenuHelper popup_menu_helper(web_contents_->GetRenderViewHost());
-  popup_menu_helper.ShowPopupMenu(bounds, item_height, item_font_size,
-                                  selected_item, items, right_aligned,
-                                  allow_multiple_selection);
+  popup_menu_helper_.reset(
+      new PopupMenuHelper(web_contents_->GetRenderViewHost()));
+  popup_menu_helper_->ShowPopupMenu(bounds, item_height, item_font_size,
+                                    selected_item, items, right_aligned,
+                                    allow_multiple_selection);
+  popup_menu_helper_.reset();
+}
+
+void WebContentsViewMac::HidePopupMenu() {
+  if (popup_menu_helper_)
+    popup_menu_helper_->Hide();
 }
 
 gfx::Rect WebContentsViewMac::GetViewBounds() const {
@@ -275,6 +280,54 @@ void WebContentsViewMac::SetAllowOverlappingViews(bool overlapping) {
 
 bool WebContentsViewMac::GetAllowOverlappingViews() const {
   return allow_overlapping_views_;
+}
+
+void WebContentsViewMac::SetOverlayView(
+    WebContentsView* overlay, const gfx::Point& offset) {
+  DCHECK(!underlay_view_);
+  if (overlay_view_)
+    RemoveOverlayView();
+
+  overlay_view_ = static_cast<WebContentsViewMac*>(overlay);
+  DCHECK(!overlay_view_->overlay_view_);
+  overlay_view_->underlay_view_ = this;
+  overlay_view_offset_ = offset;
+  UpdateRenderWidgetHostViewOverlay();
+}
+
+void WebContentsViewMac::RemoveOverlayView() {
+  DCHECK(overlay_view_);
+
+  RenderWidgetHostViewMac* rwhv = static_cast<RenderWidgetHostViewMac*>(
+      web_contents_->GetRenderWidgetHostView());
+  if (rwhv)
+    rwhv->RemoveOverlayView();
+
+  overlay_view_->underlay_view_ = NULL;
+  overlay_view_ = NULL;
+}
+
+void WebContentsViewMac::UpdateRenderWidgetHostViewOverlay() {
+  RenderWidgetHostViewMac* rwhv = static_cast<RenderWidgetHostViewMac*>(
+      web_contents_->GetRenderWidgetHostView());
+  if (!rwhv)
+    return;
+
+  if (overlay_view_) {
+    RenderWidgetHostViewMac* overlay_rwhv =
+        static_cast<RenderWidgetHostViewMac*>(
+            overlay_view_->web_contents_->GetRenderWidgetHostView());
+    if (overlay_rwhv)
+      rwhv->SetOverlayView(overlay_rwhv, overlay_view_offset_);
+  }
+
+  if (underlay_view_) {
+    RenderWidgetHostViewMac* underlay_rwhv =
+        static_cast<RenderWidgetHostViewMac*>(
+            underlay_view_->web_contents_->GetRenderWidgetHostView());
+    if (underlay_rwhv)
+      underlay_rwhv->SetOverlayView(rwhv, underlay_view_->overlay_view_offset_);
+  }
 }
 
 void WebContentsViewMac::CreateView(
@@ -299,9 +352,11 @@ RenderWidgetHostView* WebContentsViewMac::CreateViewForWidget(
   RenderWidgetHostViewMac* view = static_cast<RenderWidgetHostViewMac*>(
       RenderWidgetHostView::CreateViewForWidget(render_widget_host));
   if (delegate()) {
-    NSObject<RenderWidgetHostViewMacDelegate>* rw_delegate =
-        delegate()->CreateRenderWidgetHostViewDelegate(render_widget_host);
-    view->SetDelegate(rw_delegate);
+    base::scoped_nsobject<NSObject<RenderWidgetHostViewMacDelegate> >
+        rw_delegate(
+            delegate()->CreateRenderWidgetHostViewDelegate(render_widget_host));
+
+    view->SetDelegate(rw_delegate.get());
   }
   view->SetAllowOverlappingViews(allow_overlapping_views_);
 
@@ -332,7 +387,7 @@ RenderWidgetHostView* WebContentsViewMac::CreateViewForPopupWidget(
   return RenderWidgetHostViewPort::CreateViewForWidget(render_widget_host);
 }
 
-void WebContentsViewMac::SetPageTitle(const string16& title) {
+void WebContentsViewMac::SetPageTitle(const base::string16& title) {
   // Meaningless on the Mac; widgets don't have a "title" attribute
 }
 
@@ -345,6 +400,7 @@ void WebContentsViewMac::RenderViewCreated(RenderViewHost* host) {
 }
 
 void WebContentsViewMac::RenderViewSwappedIn(RenderViewHost* host) {
+  UpdateRenderWidgetHostViewOverlay();
 }
 
 void WebContentsViewMac::SetOverscrollControllerEnabled(bool enabled) {
@@ -571,6 +627,15 @@ void WebContentsViewMac::CloseTab() {
 
   [self webContents]->
       FocusThroughTabTraversal(direction == NSSelectingPrevious);
+}
+
+// When the subviews require a layout, their size should be reset to the size
+// of this view. (It is possible for the size to get out of sync as an
+// optimization in preparation for an upcoming WebContentsView resize.
+// http://crbug.com/264207)
+- (void)resizeSubviewsWithOldSize:(NSSize)oldBoundsSize {
+  for (NSView* subview in self.subviews)
+    [subview setFrame:self.bounds];
 }
 
 @end

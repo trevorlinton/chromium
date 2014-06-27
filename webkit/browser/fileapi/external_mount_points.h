@@ -13,6 +13,7 @@
 #include "base/synchronization/lock.h"
 #include "webkit/browser/fileapi/mount_points.h"
 #include "webkit/browser/webkit_storage_browser_export.h"
+#include "webkit/common/fileapi/file_system_mount_option.h"
 #include "webkit/common/fileapi/file_system_types.h"
 
 namespace base {
@@ -20,10 +21,8 @@ class FilePath;
 }
 
 namespace fileapi {
-class FileSystemURL;
-}
 
-namespace fileapi {
+class FileSystemURL;
 
 // Manages external filesystem namespaces that are identified by 'mount name'
 // and are persisted until RevokeFileSystem is called.
@@ -61,6 +60,7 @@ class WEBKIT_STORAGE_BROWSER_EXPORT ExternalMountPoints
   // by calling RevokeFileSystem with |mount_name|.
   bool RegisterFileSystem(const std::string& mount_name,
                           FileSystemType type,
+                          const FileSystemMountOption& mount_option,
                           const base::FilePath& path);
 
   // MountPoints overrides.
@@ -68,10 +68,12 @@ class WEBKIT_STORAGE_BROWSER_EXPORT ExternalMountPoints
   virtual bool RevokeFileSystem(const std::string& mount_name) OVERRIDE;
   virtual bool GetRegisteredPath(const std::string& mount_name,
                                  base::FilePath* path) const OVERRIDE;
-  virtual bool CrackVirtualPath(const base::FilePath& virtual_path,
-                                std::string* mount_name,
-                                FileSystemType* type,
-                                base::FilePath* path) const OVERRIDE;
+  virtual bool CrackVirtualPath(
+      const base::FilePath& virtual_path,
+      std::string* mount_name,
+      FileSystemType* type,
+      base::FilePath* path,
+      FileSystemMountOption* mount_option) const OVERRIDE;
   virtual FileSystemURL CrackURL(const GURL& url) const OVERRIDE;
   virtual FileSystemURL CreateCrackedFileSystemURL(
       const GURL& origin,

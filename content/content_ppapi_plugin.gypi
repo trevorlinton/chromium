@@ -8,9 +8,10 @@
       'dependencies': [
         '../base/base.gyp:base',
         '../ppapi/ppapi_internal.gyp:ppapi_ipc',
-        '../skia/skia.gyp:skia',
+        '../ui/base/ui_base.gyp:ui_base',
         '../ui/gfx/gfx.gyp:gfx',
-        '../ui/ui.gyp:ui',
+        '../ui/gfx/gfx.gyp:gfx_geometry',
+        '../third_party/WebKit/public/blink.gyp:blink',
       ],
       'sources': [
         'ppapi_plugin/broker_process_dispatcher.cc',

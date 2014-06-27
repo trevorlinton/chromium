@@ -49,7 +49,7 @@ void Problem(const char* format, ...) {
 
 std::string ReadOrFail(const base::FilePath& file_name, const char* kind) {
   int64 file_size = 0;
-  if (!file_util::GetFileSize(file_name, &file_size))
+  if (!base::GetFileSize(file_name, &file_size))
     Problem("Can't read %s file.", kind);
   std::string buffer;
   buffer.reserve(static_cast<size_t>(file_size));
@@ -61,7 +61,7 @@ std::string ReadOrFail(const base::FilePath& file_name, const char* kind) {
 void WriteSinkToFile(const courgette::SinkStream *sink,
                      const base::FilePath& output_file) {
   int count =
-      file_util::WriteFile(output_file,
+      base::WriteFile(output_file,
                            reinterpret_cast<const char*>(sink->Buffer()),
                            static_cast<int>(sink->Length()));
   if (count == -1)

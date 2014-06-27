@@ -7,61 +7,61 @@
 // Generic class that handles event logging for the cast library.
 // Logging has three possible optional forms:
 // 1. Raw data and stats accessible by the application.
-// 2. UMA stats.
-// 3. Tracing of raw events.
+// 2. Tracing of raw events.
 
+#include "base/memory/ref_counted.h"
+#include "base/threading/thread_checker.h"
+#include "media/cast/cast_config.h"
 #include "media/cast/logging/logging_defines.h"
 #include "media/cast/logging/logging_raw.h"
-#include "media/cast/logging/logging_stats.h"
 
 namespace media {
 namespace cast {
 
 class LoggingImpl {
  public:
-  LoggingImpl(base::TickClock* clock,
-              bool enable_data_collection,
-              bool enable_uma_stats,
-              bool enable_tracing);
-
+  LoggingImpl();
   ~LoggingImpl();
 
-  void InsertFrameEvent(CastLoggingEvent event,
-                        uint32 rtp_timestamp,
-                        uint8 frame_id);
-  void InsertFrameEventWithSize(CastLoggingEvent event,
-                                uint32 rtp_timestamp,
-                                uint8 frame_id,
-                                int frame_size);
-  void InsertFrameEventWithDelay(CastLoggingEvent event,
-                                 uint32 rtp_timestamp,
-                                 uint8 frame_id,
-                                 base::TimeDelta delay);
-  void InsertPacketEvent(CastLoggingEvent event,
-                         uint32 rtp_timestamp,
-                         uint8 frame_id,
-                         uint16 packet_id,
-                         uint16 max_packet_id,
-                         int size);
-  void InsertGenericEvent(CastLoggingEvent event, int value);
+  // Note: All methods below should be called from the same thread.
 
-  // Get raw data.
-  FrameRawMap GetFrameRawData();
-  PacketRawMap GetPacketRawData();
-  GenericRawMap GetGenericRawData();
-  // Get stats only (computed when called). Triggers UMA stats when enabled.
-  const FrameStatsMap* GetFrameStatsData();
-  const PacketStatsMap* GetPacketStatsData();
-  const GenericStatsMap* GetGenericStatsData();
+  void InsertFrameEvent(const base::TimeTicks& time_of_event,
+                        CastLoggingEvent event, uint32 rtp_timestamp,
+                        uint32 frame_id);
 
-  void Reset();
+  void InsertFrameEventWithSize(const base::TimeTicks& time_of_event,
+                                CastLoggingEvent event, uint32 rtp_timestamp,
+                                uint32 frame_id, int frame_size);
+
+  void InsertFrameEventWithDelay(const base::TimeTicks& time_of_event,
+                                 CastLoggingEvent event, uint32 rtp_timestamp,
+                                 uint32 frame_id, base::TimeDelta delay);
+
+  void InsertSinglePacketEvent(const base::TimeTicks& time_of_event,
+                               CastLoggingEvent event,
+                               const Packet& packet);
+
+  void InsertPacketListEvent(const base::TimeTicks& time_of_event,
+                             CastLoggingEvent event, const PacketList& packets);
+
+  void InsertPacketEvent(const base::TimeTicks& time_of_event,
+                         CastLoggingEvent event, uint32 rtp_timestamp,
+                         uint32 frame_id, uint16 packet_id,
+                         uint16 max_packet_id, size_t size);
+
+  void InsertGenericEvent(const base::TimeTicks& time_of_event,
+                          CastLoggingEvent event, int value);
+
+
+  // Delegates to |LoggingRaw::AddRawEventSubscriber()|.
+  void AddRawEventSubscriber(RawEventSubscriber* subscriber);
+
+  // Delegates to |LoggingRaw::RemoveRawEventSubscriber()|.
+  void RemoveRawEventSubscriber(RawEventSubscriber* subscriber);
 
  private:
+  base::ThreadChecker thread_checker_;
   LoggingRaw raw_;
-  LoggingStats stats_;
-  bool enable_data_collection_;
-  bool enable_uma_stats_;
-  bool enable_tracing_;
 
   DISALLOW_COPY_AND_ASSIGN(LoggingImpl);
 };

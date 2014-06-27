@@ -151,7 +151,8 @@ net::URLRequestJob* ProtocolHandlerRegistry::IOThreadDelegate::MaybeCreateJob(
 
   return new net::URLRequestRedirectJob(
       request, network_delegate, translated_url,
-      net::URLRequestRedirectJob::REDIRECT_307_TEMPORARY_REDIRECT);
+      net::URLRequestRedirectJob::REDIRECT_307_TEMPORARY_REDIRECT,
+      "Protocol Handler Registry");
 }
 
 // JobInterceptorFactory -------------------------------------------------------
@@ -444,9 +445,9 @@ void ProtocolHandlerRegistry::InitProtocolSettings() {
       Disable();
     }
   }
-  std::vector<const DictionaryValue*> registered_handlers =
+  std::vector<const base::DictionaryValue*> registered_handlers =
       GetHandlersFromPref(prefs::kRegisteredProtocolHandlers);
-  for (std::vector<const DictionaryValue*>::const_iterator p =
+  for (std::vector<const base::DictionaryValue*>::const_iterator p =
        registered_handlers.begin();
        p != registered_handlers.end(); ++p) {
     ProtocolHandler handler = ProtocolHandler::CreateProtocolHandler(*p);
@@ -456,9 +457,9 @@ void ProtocolHandlerRegistry::InitProtocolSettings() {
       SetDefault(handler);
     }
   }
-  std::vector<const DictionaryValue*> ignored_handlers =
+  std::vector<const base::DictionaryValue*> ignored_handlers =
     GetHandlersFromPref(prefs::kIgnoredProtocolHandlers);
-  for (std::vector<const DictionaryValue*>::const_iterator p =
+  for (std::vector<const base::DictionaryValue*>::const_iterator p =
        ignored_handlers.begin();
        p != ignored_handlers.end(); ++p) {
     IgnoreProtocolHandler(ProtocolHandler::CreateProtocolHandler(*p));
@@ -739,9 +740,10 @@ void ProtocolHandlerRegistry::Save() {
   if (is_loading_) {
     return;
   }
-  scoped_ptr<Value> registered_protocol_handlers(EncodeRegisteredHandlers());
-  scoped_ptr<Value> ignored_protocol_handlers(EncodeIgnoredHandlers());
-  scoped_ptr<Value> enabled(Value::CreateBooleanValue(enabled_));
+  scoped_ptr<base::Value> registered_protocol_handlers(
+      EncodeRegisteredHandlers());
+  scoped_ptr<base::Value> ignored_protocol_handlers(EncodeIgnoredHandlers());
+  scoped_ptr<base::Value> enabled(base::Value::CreateBooleanValue(enabled_));
   profile_->GetPrefs()->Set(prefs::kRegisteredProtocolHandlers,
       *registered_protocol_handlers);
   profile_->GetPrefs()->Set(prefs::kIgnoredProtocolHandlers,
@@ -792,16 +794,16 @@ void ProtocolHandlerRegistry::InsertHandler(const ProtocolHandler& handler) {
   protocol_handlers_[handler.protocol()] = new_list;
 }
 
-Value* ProtocolHandlerRegistry::EncodeRegisteredHandlers() {
+base::Value* ProtocolHandlerRegistry::EncodeRegisteredHandlers() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  ListValue* protocol_handlers = new ListValue();
+  base::ListValue* protocol_handlers = new base::ListValue();
   for (ProtocolHandlerMultiMap::iterator i = protocol_handlers_.begin();
        i != protocol_handlers_.end(); ++i) {
     for (ProtocolHandlerList::iterator j = i->second.begin();
          j != i->second.end(); ++j) {
-      DictionaryValue* encoded = j->Encode();
+      base::DictionaryValue* encoded = j->Encode();
       if (IsDefault(*j)) {
-        encoded->Set("default", Value::CreateBooleanValue(true));
+        encoded->Set("default", base::Value::CreateBooleanValue(true));
       }
       protocol_handlers->Append(encoded);
     }
@@ -809,9 +811,9 @@ Value* ProtocolHandlerRegistry::EncodeRegisteredHandlers() {
   return protocol_handlers;
 }
 
-Value* ProtocolHandlerRegistry::EncodeIgnoredHandlers() {
+base::Value* ProtocolHandlerRegistry::EncodeIgnoredHandlers() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  ListValue* handlers = new ListValue();
+  base::ListValue* handlers = new base::ListValue();
   for (ProtocolHandlerList::iterator i = ignored_protocol_handlers_.begin();
        i != ignored_protocol_handlers_.end(); ++i) {
     handlers->Append(i->Encode());
@@ -840,19 +842,19 @@ void ProtocolHandlerRegistry::RegisterProtocolHandler(
   InsertHandler(handler);
 }
 
-std::vector<const DictionaryValue*>
+std::vector<const base::DictionaryValue*>
 ProtocolHandlerRegistry::GetHandlersFromPref(const char* pref_name) const {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  std::vector<const DictionaryValue*> result;
+  std::vector<const base::DictionaryValue*> result;
   PrefService* prefs = profile_->GetPrefs();
   if (!prefs->HasPrefPath(pref_name)) {
     return result;
   }
 
-  const ListValue* handlers = prefs->GetList(pref_name);
+  const base::ListValue* handlers = prefs->GetList(pref_name);
   if (handlers) {
     for (size_t i = 0; i < handlers->GetSize(); ++i) {
-      const DictionaryValue* dict;
+      const base::DictionaryValue* dict;
       if (!handlers->GetDictionary(i, &dict))
         continue;
       if (ProtocolHandler::IsValidDict(dict)) {

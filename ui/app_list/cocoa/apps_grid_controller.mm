@@ -5,7 +5,7 @@
 #import "ui/app_list/cocoa/apps_grid_controller.h"
 
 #include "base/mac/foundation_util.h"
-#include "ui/app_list/app_list_item_model.h"
+#include "ui/app_list/app_list_item.h"
 #include "ui/app_list/app_list_model.h"
 #include "ui/app_list/app_list_model_observer.h"
 #include "ui/app_list/app_list_view_delegate.h"
@@ -78,7 +78,7 @@ NSTimeInterval g_scroll_duration = 0.18;
 
 // Bridged methods for AppListItemListObserver.
 - (void)listItemAdded:(size_t)index
-                 item:(app_list::AppListItemModel*)item;
+                 item:(app_list::AppListItem*)item;
 
 - (void)listItemRemoved:(size_t)index;
 
@@ -87,6 +87,11 @@ NSTimeInterval g_scroll_duration = 0.18;
 
 // Moves the selection by |indexDelta| items.
 - (BOOL)moveSelectionByDelta:(int)indexDelta;
+
+// -[NSCollectionView frameForItemAtIndex:] misreports the frame origin of an
+// item when the method is called during a scroll animation provided by the
+// NSScrollView. This returns the correct value.
+- (NSRect)trueFrameForItemAtIndex:(size_t)itemIndex;
 
 @end
 
@@ -98,17 +103,16 @@ class AppsGridDelegateBridge : public AppListItemListObserver {
 
  private:
   // Overridden from AppListItemListObserver:
-  virtual void OnListItemAdded(size_t index, AppListItemModel* item) OVERRIDE {
+  virtual void OnListItemAdded(size_t index, AppListItem* item) OVERRIDE {
     [parent_ listItemAdded:index
                       item:item];
   }
-  virtual void OnListItemRemoved(size_t index,
-                                 AppListItemModel* item) OVERRIDE {
+  virtual void OnListItemRemoved(size_t index, AppListItem* item) OVERRIDE {
     [parent_ listItemRemoved:index];
   }
   virtual void OnListItemMoved(size_t from_index,
                                size_t to_index,
-                               AppListItemModel* item) OVERRIDE {
+                               AppListItem* item) OVERRIDE {
     [parent_ listItemMovedFromIndex:from_index
                        toModelIndex:to_index];
   }
@@ -164,7 +168,6 @@ class AppsGridDelegateBridge : public AppListItemListObserver {
 
 - (void)dealloc {
   [[NSNotificationCenter defaultCenter] removeObserver:self];
-  [self setModel:scoped_ptr<app_list::AppListModel>()];
   [super dealloc];
 }
 
@@ -181,43 +184,42 @@ class AppsGridDelegateBridge : public AppListItemListObserver {
 }
 
 - (app_list::AppListModel*)model {
-  return model_.get();
+  return delegate_ ? delegate_->GetModel() : NULL;
 }
 
-- (void)setModel:(scoped_ptr<app_list::AppListModel>)newModel {
-  if (model_) {
-    model_->item_list()->RemoveObserver(bridge_.get());
-
-    // Since the model is about to be deleted, and the AppKit objects might be
-    // sitting in an NSAutoreleasePool, ensure there are no references to the
-    // model.
-    for (size_t i = 0; i < [items_ count]; ++i)
-      [[self itemAtIndex:i] setModel:NULL];
-
-    [items_ removeAllObjects];
-    [self updatePages:0];
-    [self scrollToPage:0];
+- (void)setDelegate:(app_list::AppListViewDelegate*)newDelegate {
+  if (delegate_) {
+    app_list::AppListModel* oldModel = delegate_->GetModel();
+    if (oldModel)
+      oldModel->top_level_item_list()->RemoveObserver(bridge_.get());
   }
 
-  model_.reset(newModel.release());
-  if (!model_)
+  // Since the old model may be getting deleted, and the AppKit objects might
+  // be sitting in an NSAutoreleasePool, ensure there are no references to
+  // the model.
+  for (size_t i = 0; i < [items_ count]; ++i)
+    [[self itemAtIndex:i] setModel:NULL];
+
+  [items_ removeAllObjects];
+  [self updatePages:0];
+  [self scrollToPage:0];
+
+  delegate_ = newDelegate;
+  if (!delegate_)
     return;
 
-  model_->item_list()->AddObserver(bridge_.get());
-  for (size_t i = 0; i < model_->item_list()->item_count(); ++i) {
-    app_list::AppListItemModel* itemModel = model_->item_list()->item_at(i);
+  app_list::AppListModel* newModel = delegate_->GetModel();
+  if (!newModel)
+    return;
+
+  newModel->top_level_item_list()->AddObserver(bridge_.get());
+  for (size_t i = 0; i < newModel->top_level_item_list()->item_count(); ++i) {
+    app_list::AppListItem* itemModel =
+        newModel->top_level_item_list()->item_at(i);
     [items_ insertObject:[NSValue valueWithPointer:itemModel]
                  atIndex:i];
   }
   [self updatePages:0];
-}
-
-- (void)setDelegate:(app_list::AppListViewDelegate*)newDelegate {
-  scoped_ptr<app_list::AppListModel> newModel(new app_list::AppListModel);
-  delegate_ = newDelegate;
-  if (delegate_)
-    delegate_->InitModel(newModel.get());  // Populates items.
-  [self setModel:newModel.Pass()];
 }
 
 - (size_t)visiblePage {
@@ -383,9 +385,9 @@ class AppsGridDelegateBridge : public AppListItemListObserver {
 
 - (void)onItemClicked:(id)sender {
   for (size_t i = 0; i < [items_ count]; ++i) {
-    AppsGridViewItem* item = [self itemAtIndex:i];
-    if ([[item button] isEqual:sender])
-      [item model]->Activate(0);
+    AppsGridViewItem* gridItem = [self itemAtIndex:i];
+    if ([[gridItem button] isEqual:sender])
+      [gridItem model]->Activate(0);
   }
 }
 
@@ -470,9 +472,9 @@ class AppsGridDelegateBridge : public AppListItemListObserver {
     // Clear the models first, otherwise removed items could be autoreleased at
     // an unknown point in the future, when the model owner may have gone away.
     for (size_t i = 0; i < [[pageView content] count]; ++i) {
-      AppsGridViewItem* item = base::mac::ObjCCastStrict<AppsGridViewItem>(
+      AppsGridViewItem* gridItem = base::mac::ObjCCastStrict<AppsGridViewItem>(
           [pageView itemAtIndex:i]);
-      [item setModel:NULL];
+      [gridItem setModel:NULL];
     }
   }
 
@@ -485,10 +487,11 @@ class AppsGridDelegateBridge : public AppListItemListObserver {
     return;
 
   for (size_t i = 0; i < [pageContent count]; ++i) {
-    AppsGridViewItem* item = base::mac::ObjCCastStrict<AppsGridViewItem>(
+    AppsGridViewItem* gridItem = base::mac::ObjCCastStrict<AppsGridViewItem>(
         [pageView itemAtIndex:i]);
-    [item setModel:static_cast<app_list::AppListItemModel*>(
+    [gridItem setModel:static_cast<app_list::AppListItem*>(
         [[pageContent objectAtIndex:i] pointerValue])];
+    [gridItem setInitialFrameRect:[self trueFrameForItemAtIndex:i]];
   }
 }
 
@@ -524,9 +527,10 @@ class AppsGridDelegateBridge : public AppListItemListObserver {
   if (itemIndex == modelIndex)
     return;
 
-  model_->item_list()->RemoveObserver(bridge_.get());
-  model_->item_list()->MoveItem(itemIndex, modelIndex);
-  model_->item_list()->AddObserver(bridge_.get());
+  app_list::AppListItemList* itemList = [self model]->top_level_item_list();
+  itemList->RemoveObserver(bridge_.get());
+  itemList->MoveItem(itemIndex, modelIndex);
+  itemList->AddObserver(bridge_.get());
 }
 
 - (AppsCollectionViewDragManager*)dragManager {
@@ -538,7 +542,7 @@ class AppsGridDelegateBridge : public AppListItemListObserver {
 }
 
 - (void)listItemAdded:(size_t)index
-                 item:(app_list::AppListItemModel*)itemModel {
+                 item:(app_list::AppListItem*)itemModel {
   // Cancel any drag, to ensure the model stays consistent.
   [dragManager_ cancelDrag];
 
@@ -615,6 +619,15 @@ class AppsGridDelegateBridge : public AppListItemListObserver {
 
   [self selectItemAtIndex:oldIndex + indexDelta];
   return YES;
+}
+
+- (NSRect)trueFrameForItemAtIndex:(size_t)itemIndex {
+  size_t column = itemIndex % kFixedColumns;
+  size_t row = itemIndex % kItemsPerPage / kFixedColumns;
+  return NSMakeRect(column * kPreferredTileWidth,
+                    row * kPreferredTileHeight,
+                    kPreferredTileWidth,
+                    kPreferredTileHeight);
 }
 
 - (void)selectItemAtIndex:(NSUInteger)index {

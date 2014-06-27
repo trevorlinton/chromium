@@ -140,7 +140,7 @@ content::WebUIDataSource* CreateHistoryUIHTMLSource(Profile* profile) {
   source->AddString(
       "deleteWarning",
       l10n_util::GetStringFUTF16(IDS_HISTORY_DELETE_PRIOR_VISITS_WARNING,
-                                 UTF8ToUTF16(kIncognitoModeShortcut)));
+                                 base::UTF8ToUTF16(kIncognitoModeShortcut)));
   source->AddLocalizedString("actionMenuDescription",
                              IDS_HISTORY_ACTION_MENU_DESCRIPTION);
   source->AddLocalizedString("removeFromHistory", IDS_HISTORY_REMOVE_PAGE);
@@ -193,9 +193,9 @@ content::WebUIDataSource* CreateHistoryUIHTMLSource(Profile* profile) {
 
 // Returns a localized version of |visit_time| including a relative
 // indicator (e.g. today, yesterday).
-string16 getRelativeDateLocalized(const base::Time& visit_time) {
+base::string16 getRelativeDateLocalized(const base::Time& visit_time) {
   base::Time midnight = base::Time::Now().LocalMidnight();
-  string16 date_str = ui::TimeFormat::RelativeDate(visit_time, &midnight);
+  base::string16 date_str = ui::TimeFormat::RelativeDate(visit_time, &midnight);
   if (date_str.empty()) {
     date_str = base::TimeFormatFriendlyDate(visit_time);
   } else {
@@ -215,20 +215,6 @@ void normalizeMonths(base::Time::Exploded* exploded) {
     exploded->month += 12;
     exploded->year--;
   }
-}
-
-// Returns the URL of a query result value.
-bool GetResultTimeAndUrl(Value* result, base::Time* time, string16* url) {
-  DictionaryValue* result_dict;
-  double timestamp;
-
-  if (result->GetAsDictionary(&result_dict) &&
-      result_dict->GetDouble("time", &timestamp) &&
-      result_dict->GetString("url", url)) {
-    *time = base::Time::FromJsTime(timestamp);
-    return true;
-  }
-  return false;
 }
 
 // Returns true if |entry| represents a local visit that had no corresponding
@@ -277,9 +263,9 @@ void GetDeviceNameAndType(const ProfileSyncService* sync_service,
 
 BrowsingHistoryHandler::HistoryEntry::HistoryEntry(
     BrowsingHistoryHandler::HistoryEntry::EntryType entry_type,
-    const GURL& url, const string16& title, base::Time time,
+    const GURL& url, const base::string16& title, base::Time time,
     const std::string& client_id, bool is_search_result,
-    const string16& snippet, bool blocked_visit,
+    const base::string16& snippet, bool blocked_visit,
     const std::string& accept_languages) {
   this->entry_type = entry_type;
   this->url = url;
@@ -301,14 +287,14 @@ BrowsingHistoryHandler::HistoryEntry::~HistoryEntry() {
 }
 
 void BrowsingHistoryHandler::HistoryEntry::SetUrlAndTitle(
-    DictionaryValue* result) const {
+    base::DictionaryValue* result) const {
   result->SetString("url", url.spec());
 
   bool using_url_as_the_title = false;
-  string16 title_to_set(title);
+  base::string16 title_to_set(title);
   if (title.empty()) {
     using_url_as_the_title = true;
-    title_to_set = UTF8ToUTF16(url.spec());
+    title_to_set = base::UTF8ToUTF16(url.spec());
   }
 
   // Since the title can contain BiDi text, we need to mark the text as either
@@ -324,18 +310,24 @@ void BrowsingHistoryHandler::HistoryEntry::SetUrlAndTitle(
   result->SetString("title", title_to_set);
 }
 
-scoped_ptr<DictionaryValue> BrowsingHistoryHandler::HistoryEntry::ToValue(
+scoped_ptr<base::DictionaryValue> BrowsingHistoryHandler::HistoryEntry::ToValue(
     BookmarkModel* bookmark_model,
     ManagedUserService* managed_user_service,
     const ProfileSyncService* sync_service) const {
-  scoped_ptr<DictionaryValue> result(new DictionaryValue());
+  scoped_ptr<base::DictionaryValue> result(new base::DictionaryValue());
   SetUrlAndTitle(result.get());
-  result->SetString("domain",
-                    net::IDNToUnicode(url.host(), accept_languages));
+
+  base::string16 domain = net::IDNToUnicode(url.host(), accept_languages);
+  // When the domain is empty, use the scheme instead. This allows for a
+  // sensible treatment of e.g. file: URLs when group by domain is on.
+  if (domain.empty())
+    domain = base::UTF8ToUTF16(url.scheme() + ":");
+
+  result->SetString("domain", domain);
   result->SetDouble("time", time.ToJsTime());
 
   // Pass the timestamps in a list.
-  scoped_ptr<ListValue> timestamps(new ListValue);
+  scoped_ptr<base::ListValue> timestamps(new base::ListValue);
   for (std::set<int64>::const_iterator it = all_timestamps.begin();
        it != all_timestamps.end(); ++it) {
     timestamps->AppendDouble(base::Time::FromInternalValue(*it).ToJsTime());
@@ -352,7 +344,7 @@ scoped_ptr<DictionaryValue> BrowsingHistoryHandler::HistoryEntry::ToValue(
     result->SetString("snippet", snippet);
   } else {
     base::Time midnight = base::Time::Now().LocalMidnight();
-    string16 date_str = ui::TimeFormat::RelativeDate(time, &midnight);
+    base::string16 date_str = ui::TimeFormat::RelativeDate(time, &midnight);
     if (date_str.empty()) {
       date_str = base::TimeFormatFriendlyDate(time);
     } else {
@@ -394,7 +386,10 @@ bool BrowsingHistoryHandler::HistoryEntry::SortByTimeDescending(
   return entry1.time > entry2.time;
 }
 
-BrowsingHistoryHandler::BrowsingHistoryHandler() {}
+BrowsingHistoryHandler::BrowsingHistoryHandler()
+    : has_pending_delete_request_(false),
+      weak_factory_(this) {
+}
 
 BrowsingHistoryHandler::~BrowsingHistoryHandler() {
   history_request_consumer_.CancelAllRequests();
@@ -425,9 +420,10 @@ void BrowsingHistoryHandler::RegisterMessages() {
                  base::Unretained(this)));
 }
 
-bool BrowsingHistoryHandler::ExtractIntegerValueAtIndex(const ListValue* value,
-                                                        int index,
-                                                        int* out_int) {
+bool BrowsingHistoryHandler::ExtractIntegerValueAtIndex(
+    const base::ListValue* value,
+    int index,
+    int* out_int) {
   double double_value;
   if (value->GetDouble(index, &double_value)) {
     *out_int = static_cast<int>(double_value);
@@ -448,7 +444,7 @@ void BrowsingHistoryHandler::WebHistoryTimeout() {
 }
 
 void BrowsingHistoryHandler::QueryHistory(
-    string16 search_text, const history::QueryOptions& options) {
+    base::string16 search_text, const history::QueryOptions& options) {
   Profile* profile = Profile::FromWebUI(web_ui());
 
   // Anything in-flight is invalid.
@@ -487,7 +483,7 @@ void BrowsingHistoryHandler::QueryHistory(
   }
 }
 
-void BrowsingHistoryHandler::HandleQueryHistory(const ListValue* args) {
+void BrowsingHistoryHandler::HandleQueryHistory(const base::ListValue* args) {
   history::QueryOptions options;
 
   // Parse the arguments from JavaScript. There are five required arguments:
@@ -500,7 +496,7 @@ void BrowsingHistoryHandler::HandleQueryHistory(const ListValue* args) {
   //   returned.
   // - the maximum number of results to return (may be 0, meaning that there
   //   is no maximum).
-  string16 search_text = ExtractStringValue(args);
+  base::string16 search_text = ExtractStringValue(args);
   int offset;
   if (!args->GetInteger(1, &offset)) {
     NOTREACHED() << "Failed to convert argument 1. ";
@@ -534,9 +530,12 @@ void BrowsingHistoryHandler::HandleQueryHistory(const ListValue* args) {
   QueryHistory(search_text, options);
 }
 
-void BrowsingHistoryHandler::HandleRemoveVisits(const ListValue* args) {
+void BrowsingHistoryHandler::HandleRemoveVisits(const base::ListValue* args) {
   Profile* profile = Profile::FromWebUI(web_ui());
+  // TODO(davidben): history.js is not aware of this failure and will still
+  // override |deleteCompleteCallback_|.
   if (delete_task_tracker_.HasTrackedTasks() ||
+      has_pending_delete_request_ ||
       !profile->GetPrefs()->GetBoolean(prefs::kAllowDeletingBrowserHistory)) {
     web_ui()->CallJavascriptFunction("deleteFailed");
     return;
@@ -552,10 +551,11 @@ void BrowsingHistoryHandler::HandleRemoveVisits(const ListValue* args) {
   expire_list.reserve(args->GetSize());
 
   DCHECK(urls_to_be_deleted_.empty());
-  for (ListValue::const_iterator it = args->begin(); it != args->end(); ++it) {
-    DictionaryValue* deletion = NULL;
-    string16 url;
-    ListValue* timestamps = NULL;
+  for (base::ListValue::const_iterator it = args->begin();
+       it != args->end(); ++it) {
+    base::DictionaryValue* deletion = NULL;
+    base::string16 url;
+    base::ListValue* timestamps = NULL;
 
     // Each argument is a dictionary with properties "url" and "timestamps".
     if (!((*it)->GetAsDictionary(&deletion) &&
@@ -575,7 +575,7 @@ void BrowsingHistoryHandler::HandleRemoveVisits(const ListValue* args) {
 
     double timestamp;
     history::ExpireHistoryArgs* expire_args = NULL;
-    for (ListValue::const_iterator ts_iterator = timestamps->begin();
+    for (base::ListValue::const_iterator ts_iterator = timestamps->begin();
          ts_iterator != timestamps->end(); ++ts_iterator) {
       if (!(*ts_iterator)->GetAsDouble(&timestamp)) {
         NOTREACHED() << "Unable to extract visit timestamp.";
@@ -618,10 +618,11 @@ void BrowsingHistoryHandler::HandleRemoveVisits(const ListValue* args) {
       &delete_task_tracker_);
 
   if (web_history) {
-    web_history_delete_request_ = web_history->ExpireHistory(
+    has_pending_delete_request_ = true;
+    web_history->ExpireHistory(
         expire_list,
         base::Bind(&BrowsingHistoryHandler::RemoveWebHistoryComplete,
-                   base::Unretained(this)));
+                   weak_factory_.GetWeakPtr()));
   }
 
 #if defined(ENABLE_EXTENSIONS)
@@ -638,11 +639,11 @@ void BrowsingHistoryHandler::HandleRemoveVisits(const ListValue* args) {
 #endif
 }
 
-void BrowsingHistoryHandler::HandleClearBrowsingData(const ListValue* args) {
+void BrowsingHistoryHandler::HandleClearBrowsingData(
+    const base::ListValue* args) {
 #if defined(OS_ANDROID)
-  Profile* profile = Profile::FromWebUI(web_ui());
-  const TabModel* tab_model =
-      TabModelList::GetTabModelWithProfile(profile);
+  const TabModel* tab_model = TabModelList::GetTabModelForWebContents(
+      web_ui()->GetWebContents());
   if (tab_model)
     tab_model->OpenClearBrowsingData();
 #else
@@ -654,8 +655,8 @@ void BrowsingHistoryHandler::HandleClearBrowsingData(const ListValue* args) {
 #endif
 }
 
-void BrowsingHistoryHandler::HandleRemoveBookmark(const ListValue* args) {
-  string16 url = ExtractStringValue(args);
+void BrowsingHistoryHandler::HandleRemoveBookmark(const base::ListValue* args) {
+  base::string16 url = ExtractStringValue(args);
   Profile* profile = Profile::FromWebUI(web_ui());
   BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile);
   bookmark_utils::RemoveAllBookmarks(model, GURL(url));
@@ -739,7 +740,7 @@ void BrowsingHistoryHandler::ReturnResultsToFrontEnd() {
   }
 
   // Convert the result vector into a ListValue.
-  ListValue results_value;
+  base::ListValue results_value;
   for (std::vector<BrowsingHistoryHandler::HistoryEntry>::iterator it =
            query_results_.begin(); it != query_results_.end(); ++it) {
     scoped_ptr<base::Value> value(
@@ -755,7 +756,7 @@ void BrowsingHistoryHandler::ReturnResultsToFrontEnd() {
 }
 
 void BrowsingHistoryHandler::QueryComplete(
-    const string16& search_text,
+    const base::string16& search_text,
     const history::QueryOptions& options,
     HistoryService::Handle request_handle,
     history::QueryResults* results) {
@@ -799,11 +800,11 @@ void BrowsingHistoryHandler::QueryComplete(
 }
 
 void BrowsingHistoryHandler::WebHistoryQueryComplete(
-    const string16& search_text,
+    const base::string16& search_text,
     const history::QueryOptions& options,
     base::TimeTicks start_time,
     history::WebHistoryService::Request* request,
-    const DictionaryValue* results_value) {
+    const base::DictionaryValue* results_value) {
   base::TimeDelta delta = base::TimeTicks::Now() - start_time;
   UMA_HISTOGRAM_TIMES("WebHistory.ResponseTime", delta);
   const std::string accept_languages = GetAcceptLanguages();
@@ -820,16 +821,16 @@ void BrowsingHistoryHandler::WebHistoryQueryComplete(
       NUM_WEB_HISTORY_QUERY_BUCKETS);
 
   DCHECK_EQ(0U, web_history_query_results_.size());
-  const ListValue* events = NULL;
+  const base::ListValue* events = NULL;
   if (results_value && results_value->GetList("event", &events)) {
     web_history_query_results_.reserve(events->GetSize());
     for (unsigned int i = 0; i < events->GetSize(); ++i) {
-      const DictionaryValue* event = NULL;
-      const DictionaryValue* result = NULL;
-      const ListValue* results = NULL;
-      const ListValue* ids = NULL;
-      string16 url;
-      string16 title;
+      const base::DictionaryValue* event = NULL;
+      const base::DictionaryValue* result = NULL;
+      const base::ListValue* results = NULL;
+      const base::ListValue* ids = NULL;
+      base::string16 url;
+      base::string16 title;
       base::Time visit_time;
 
       if (!(events->GetDictionary(i, &event) &&
@@ -847,7 +848,7 @@ void BrowsingHistoryHandler::WebHistoryQueryComplete(
       // Extract the timestamps of all the visits to this URL.
       // They are referred to as "IDs" by the server.
       for (int j = 0; j < static_cast<int>(ids->GetSize()); ++j) {
-        const DictionaryValue* id = NULL;
+        const base::DictionaryValue* id = NULL;
         std::string timestamp_string;
         int64 timestamp_usec;
 
@@ -873,7 +874,7 @@ void BrowsingHistoryHandler::WebHistoryQueryComplete(
                 time,
                 client_id,
                 !search_text.empty(),
-                string16(),
+                base::string16(),
                 /* blocked_visit */ false,
                 accept_languages));
       }
@@ -891,14 +892,12 @@ void BrowsingHistoryHandler::RemoveComplete() {
 
   // Notify the page that the deletion request is complete, but only if a web
   // history delete request is not still pending.
-  if (!(web_history_delete_request_.get() &&
-        web_history_delete_request_->is_pending())) {
+  if (!has_pending_delete_request_)
     web_ui()->CallJavascriptFunction("deleteComplete");
-  }
 }
 
-void BrowsingHistoryHandler::RemoveWebHistoryComplete(
-    history::WebHistoryService::Request* request, bool success) {
+void BrowsingHistoryHandler::RemoveWebHistoryComplete(bool success) {
+  has_pending_delete_request_ = false;
   // TODO(dubroy): Should we handle failure somehow? Delete directives will
   // ensure that the visits are eventually deleted, so maybe it's not necessary.
   if (!delete_task_tracker_.HasTrackedTasks())
@@ -1007,9 +1006,9 @@ HistoryUI::HistoryUI(content::WebUI* web_ui) : WebUIController(web_ui) {
 }
 
 // static
-const GURL HistoryUI::GetHistoryURLWithSearchText(const string16& text) {
+const GURL HistoryUI::GetHistoryURLWithSearchText(const base::string16& text) {
   return GURL(std::string(chrome::kChromeUIHistoryURL) + "#q=" +
-              net::EscapeQueryParamValue(UTF16ToUTF8(text), true));
+              net::EscapeQueryParamValue(base::UTF16ToUTF8(text), true));
 }
 
 // static

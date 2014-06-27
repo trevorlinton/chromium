@@ -35,8 +35,8 @@ void JavaHandlerThread::Start() {
   base::WaitableEvent initialize_event(false, false);
   Java_JavaHandlerThread_start(env,
                                java_thread_.obj(),
-                               reinterpret_cast<jint>(this),
-                               reinterpret_cast<jint>(&initialize_event));
+                               reinterpret_cast<intptr_t>(this),
+                               reinterpret_cast<intptr_t>(&initialize_event));
   // Wait for thread to be initialized so it is ready to be used when Start
   // returns.
   base::ThreadRestrictions::ScopedAllowWait wait_allowed;
@@ -46,7 +46,8 @@ void JavaHandlerThread::Start() {
 void JavaHandlerThread::Stop() {
 }
 
-void JavaHandlerThread::InitializeThread(JNIEnv* env, jobject obj, jint event) {
+void JavaHandlerThread::InitializeThread(JNIEnv* env, jobject obj,
+                                         jlong event) {
   // TYPE_JAVA to get the Android java style message loop.
   message_loop_.reset(new base::MessageLoop(base::MessageLoop::TYPE_JAVA));
   static_cast<MessageLoopForUI*>(message_loop_.get())->Start();

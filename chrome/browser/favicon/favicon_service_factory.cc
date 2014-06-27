@@ -10,7 +10,7 @@
 #include "chrome/browser/history/history_service.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/common/pref_names.h"
-#include "components/browser_context_keyed_service/browser_context_dependency_manager.h"
+#include "components/keyed_service/content/browser_context_dependency_manager.h"
 
 // static
 FaviconService* FaviconServiceFactory::GetForProfile(
@@ -44,11 +44,9 @@ FaviconServiceFactory::FaviconServiceFactory()
 
 FaviconServiceFactory::~FaviconServiceFactory() {}
 
-BrowserContextKeyedService* FaviconServiceFactory::BuildServiceInstanceFor(
+KeyedService* FaviconServiceFactory::BuildServiceInstanceFor(
     content::BrowserContext* profile) const {
-  HistoryService* history_service = HistoryServiceFactory::GetForProfile(
-      static_cast<Profile*>(profile), Profile::EXPLICIT_ACCESS);
-  return new FaviconService(history_service);
+  return new FaviconService(static_cast<Profile*>(profile));
 }
 
 bool FaviconServiceFactory::ServiceIsNULLWhileTesting() const {

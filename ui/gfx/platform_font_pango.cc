@@ -15,10 +15,14 @@
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "third_party/skia/include/core/SkPaint.h"
+#include "third_party/skia/include/core/SkString.h"
 #include "third_party/skia/include/core/SkTypeface.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font.h"
+#include "ui/gfx/font_list.h"
+#include "ui/gfx/linux_font_delegate.h"
 #include "ui/gfx/pango_util.h"
+#include "ui/gfx/text_utils.h"
 
 #if defined(TOOLKIT_GTK)
 #include <gdk/gdk.h>
@@ -183,23 +187,7 @@ int PlatformFontPango::GetBaseline() const {
 }
 
 int PlatformFontPango::GetCapHeight() const {
-  // Return the ascent as an approximation because Pango doesn't support cap
-  // height.
-  // TODO(yukishiino): Come up with a better approximation of cap height, or
-  // support cap height metrics.  Another option is to have a hard-coded table
-  // of cap height for major fonts used in Chromium/Chrome.
-  // See http://crbug.com/249507
-  return ascent_pixels_;
-}
-
-int PlatformFontPango::GetAverageCharacterWidth() const {
-  const_cast<PlatformFontPango*>(this)->InitPangoMetrics();
-  return SkScalarRound(average_width_pixels_);
-}
-
-int PlatformFontPango::GetStringWidth(const base::string16& text) const {
-  return Canvas::GetStringWidth(text,
-                                Font(const_cast<PlatformFontPango*>(this)));
+  return cap_height_pixels_;
 }
 
 int PlatformFontPango::GetExpectedTextWidth(int length) const {
@@ -213,6 +201,12 @@ int PlatformFontPango::GetStyle() const {
 
 std::string PlatformFontPango::GetFontName() const {
   return font_family_;
+}
+
+std::string PlatformFontPango::GetActualFontNameForTesting() const {
+  SkString family_name;
+  typeface_->getFamilyName(&family_name);
+  return family_name.c_str();
 }
 
 int PlatformFontPango::GetFontSize() const {
@@ -268,6 +262,10 @@ std::string PlatformFontPango::GetDefaultFont() {
   CHECK(default_font_description_);
   return *default_font_description_;
 #else
+  const gfx::LinuxFontDelegate* delegate = gfx::LinuxFontDelegate::instance();
+  if (delegate)
+    return delegate->GetDefaultFontName();
+
   return "sans 10";
 #endif    // defined(OS_CHROMEOS)
 #else
@@ -293,7 +291,7 @@ void PlatformFontPango::InitWithNameAndSize(const std::string& font_name,
   std::string fallback;
 
   skia::RefPtr<SkTypeface> typeface = skia::AdoptRef(
-          SkTypeface::CreateFromName(font_name.c_str(), SkTypeface::kNormal));
+      SkTypeface::CreateFromName(font_name.c_str(), SkTypeface::kNormal));
   if (!typeface) {
     // A non-scalable font such as .pcf is specified. Falls back to a default
     // scalable font.
@@ -331,8 +329,9 @@ void PlatformFontPango::InitWithTypefaceNameSizeAndStyle(
   PaintSetup(&paint);
   paint.getFontMetrics(&metrics);
 
-  ascent_pixels_ = SkScalarCeil(-metrics.fAscent);
-  height_pixels_ = ascent_pixels_ + SkScalarCeil(metrics.fDescent);
+  ascent_pixels_ = SkScalarCeilToInt(-metrics.fAscent);
+  height_pixels_ = ascent_pixels_ + SkScalarCeilToInt(metrics.fDescent);
+  cap_height_pixels_ = SkScalarCeilToInt(metrics.fCapHeight);
 }
 
 void PlatformFontPango::InitFromPlatformFont(const PlatformFontPango* other) {
@@ -342,6 +341,7 @@ void PlatformFontPango::InitFromPlatformFont(const PlatformFontPango* other) {
   style_ = other->style_;
   height_pixels_ = other->height_pixels_;
   ascent_pixels_ = other->ascent_pixels_;
+  cap_height_pixels_ = other->cap_height_pixels_;
   pango_metrics_inited_ = other->pango_metrics_inited_;
   average_width_pixels_ = other->average_width_pixels_;
   underline_position_pixels_ = other->underline_position_pixels_;
@@ -385,7 +385,9 @@ void PlatformFontPango::InitPangoMetrics() {
     // Yes, this is how Microsoft recommends calculating the dialog unit
     // conversions.
     const int text_width_pixels = GetStringWidth(
-        ASCIIToUTF16("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"));
+        base::ASCIIToUTF16(
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"),
+        FontList(Font(this)));
     const double dialog_units_pixels = (text_width_pixels / 26 + 1) / 2;
     average_width_pixels_ = std::min(pango_width_pixels, dialog_units_pixels);
   }

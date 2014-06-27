@@ -71,7 +71,7 @@ const std::string DefaultSystemTrayDelegate::GetEnterpriseDomain() const {
 }
 
 const base::string16 DefaultSystemTrayDelegate::GetEnterpriseMessage() const {
-  return string16();
+  return base::string16();
 }
 
 const std::string
@@ -82,12 +82,12 @@ DefaultSystemTrayDelegate::GetLocallyManagedUserManager() const {
 const base::string16
 DefaultSystemTrayDelegate::GetLocallyManagedUserManagerName()
     const {
-  return string16();
+  return base::string16();
 }
 
 const base::string16 DefaultSystemTrayDelegate::GetLocallyManagedUserMessage()
     const {
-  return string16();
+  return base::string16();
 }
 
 bool DefaultSystemTrayDelegate::SystemShouldUpgrade() const {
@@ -152,7 +152,12 @@ void DefaultSystemTrayDelegate::ShowLocallyManagedUserInfo() {
 void DefaultSystemTrayDelegate::ShowUserLogin() {
 }
 
-void DefaultSystemTrayDelegate::ShowSpringChargerReplacementDialog() {
+bool DefaultSystemTrayDelegate::ShowSpringChargerReplacementDialog() {
+  return false;
+}
+
+bool DefaultSystemTrayDelegate::IsSpringChargerReplacementDialogVisible() {
+  return false;
 }
 
 bool DefaultSystemTrayDelegate::HasUserConfirmedSafeSpringCharger() {
@@ -276,7 +281,16 @@ int DefaultSystemTrayDelegate::GetSystemTrayMenuWidth() {
   return 300;
 }
 
-void DefaultSystemTrayDelegate::MaybeSpeak(const std::string& utterance) const {
+void DefaultSystemTrayDelegate::ActiveUserWasChanged() {
+}
+
+bool DefaultSystemTrayDelegate::IsNetworkBehindCaptivePortal(
+    const std::string& /* service_path */) const {
+  return false;
+}
+
+bool DefaultSystemTrayDelegate::IsSearchKeyMappedToCapsLock() {
+  return false;
 }
 
 }  // namespace ash

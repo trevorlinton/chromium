@@ -5,21 +5,35 @@
 #include "chrome/browser/ui/app_list/app_list_controller_delegate.h"
 
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
+#include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/install_tracker_factory.h"
-#include "chrome/browser/extensions/management_policy.h"
+#include "chrome/browser/extensions/launch_util.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/app_list/app_list_syncable_service.h"
+#include "chrome/browser/ui/app_list/app_list_syncable_service_factory.h"
 #include "chrome/browser/ui/app_list/extension_uninstaller.h"
+#include "chrome/browser/ui/apps/app_info_dialog.h"
 #include "chrome/browser/ui/browser_navigator.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
-#include "chrome/common/extensions/extension_set.h"
 #include "chrome/common/extensions/manifest_url_handler.h"
+#include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registry.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/management_policy.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/extension_set.h"
 #include "net/base/url_util.h"
+#include "ui/app_list/app_list_folder_item.h"
+#include "ui/app_list/app_list_item.h"
+#include "ui/app_list/app_list_model.h"
+#include "ui/app_list/app_list_switches.h"
+
+using extensions::ExtensionRegistry;
 
 namespace {
 
 const extensions::Extension* GetExtension(Profile* profile,
-                              const std::string& extension_id) {
+                                          const std::string& extension_id) {
   const ExtensionService* service =
       extensions::ExtensionSystem::Get(profile)->extension_service();
   const extensions::Extension* extension =
@@ -47,7 +61,8 @@ std::string AppListControllerDelegate::AppListSourceToString(
       return extension_urls::kLaunchSourceAppList;
     case LAUNCH_FROM_APP_LIST_SEARCH:
       return extension_urls::kLaunchSourceAppListSearch;
-    default: return std::string();
+    default:
+      return std::string();
   }
 }
 
@@ -59,6 +74,34 @@ bool AppListControllerDelegate::UserMayModifySettings(
       extensions::ExtensionSystem::Get(profile)->management_policy();
   return extension &&
          policy->UserMayModifySettings(extension, NULL);
+}
+
+bool AppListControllerDelegate::CanDoShowAppInfoFlow() {
+  return app_list::switches::IsAppInfoEnabled();
+}
+
+void AppListControllerDelegate::DoShowAppInfoFlow(
+    Profile* profile,
+    const std::string& extension_id) {
+  DCHECK(CanDoShowAppInfoFlow());
+  ExtensionService* service =
+      extensions::ExtensionSystem::Get(profile)->extension_service();
+  DCHECK(service);
+  const extensions::Extension* extension = service->GetInstalledExtension(
+      extension_id);
+  DCHECK(extension);
+
+  gfx::NativeWindow parent_window = GetAppListWindow();
+  if (!parent_window)
+    return;
+
+  OnShowExtensionPrompt();
+  ShowAppInfoDialog(
+      parent_window,
+      profile,
+      extension,
+      base::Bind(&AppListControllerDelegate::OnCloseExtensionPrompt,
+                 base::Unretained(this)));
 }
 
 void AppListControllerDelegate::UninstallApp(Profile* profile,
@@ -103,10 +146,8 @@ void AppListControllerDelegate::ShowAppInWebStore(
 bool AppListControllerDelegate::HasOptionsPage(
     Profile* profile,
     const std::string& app_id) {
-  const ExtensionService* service =
-      extensions::ExtensionSystem::Get(profile)->extension_service();
   const extensions::Extension* extension = GetExtension(profile, app_id);
-  return service->IsExtensionEnabledForLauncher(app_id) &&
+  return extensions::util::IsAppLaunchableWithoutEnabling(app_id, profile) &&
          extension &&
          !extensions::ManifestURL::GetOptionsPage(extension).is_empty();
 }
@@ -125,24 +166,21 @@ void AppListControllerDelegate::ShowOptionsPage(
   chrome::Navigate(&params);
 }
 
-extensions::ExtensionPrefs::LaunchType
-AppListControllerDelegate::GetExtensionLaunchType(
+extensions::LaunchType AppListControllerDelegate::GetExtensionLaunchType(
     Profile* profile,
     const std::string& app_id) {
-  ExtensionService* service =
-      extensions::ExtensionSystem::Get(profile)->extension_service();
-  return service->extension_prefs()->
-      GetLaunchType(GetExtension(profile, app_id),
-                    extensions::ExtensionPrefs::LAUNCH_DEFAULT);
+  return extensions::GetLaunchType(extensions::ExtensionPrefs::Get(profile),
+                                   GetExtension(profile, app_id));
 }
 
 void AppListControllerDelegate::SetExtensionLaunchType(
     Profile* profile,
     const std::string& extension_id,
-    extensions::ExtensionPrefs::LaunchType launch_type) {
+    extensions::LaunchType launch_type) {
   ExtensionService* service =
       extensions::ExtensionSystem::Get(profile)->extension_service();
-  service->extension_prefs()->SetLaunchType(extension_id, launch_type);
+  extensions::SetLaunchType(
+      service, extension_id, launch_type);
 }
 
 bool AppListControllerDelegate::IsExtensionInstalled(
@@ -158,12 +196,10 @@ extensions::InstallTracker* AppListControllerDelegate::GetInstallTrackerFor(
 }
 
 void AppListControllerDelegate::GetApps(Profile* profile,
-                                        ExtensionSet* out_apps) {
-  ExtensionService* service =
-      extensions::ExtensionSystem::Get(profile)->extension_service();
-  if (!service)
-    return;
-  out_apps->InsertAll(*service->extensions());
-  out_apps->InsertAll(*service->disabled_extensions());
-  out_apps->InsertAll(*service->terminated_extensions());
+                                        extensions::ExtensionSet* out_apps) {
+  ExtensionRegistry* registry = ExtensionRegistry::Get(profile);
+  DCHECK(registry);
+  out_apps->InsertAll(registry->enabled_extensions());
+  out_apps->InsertAll(registry->disabled_extensions());
+  out_apps->InsertAll(registry->terminated_extensions());
 }

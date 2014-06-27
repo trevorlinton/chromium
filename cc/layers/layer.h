@@ -13,28 +13,34 @@
 #include "base/observer_list.h"
 #include "cc/animation/layer_animation_controller.h"
 #include "cc/animation/layer_animation_value_observer.h"
+#include "cc/animation/layer_animation_value_provider.h"
 #include "cc/base/cc_export.h"
 #include "cc/base/region.h"
 #include "cc/base/scoped_ptr_vector.h"
 #include "cc/debug/micro_benchmark.h"
-#include "cc/layers/compositing_reasons.h"
 #include "cc/layers/draw_properties.h"
 #include "cc/layers/layer_lists.h"
 #include "cc/layers/layer_position_constraint.h"
 #include "cc/layers/paint_properties.h"
 #include "cc/layers/render_surface.h"
 #include "cc/output/filter_operations.h"
-#include "cc/trees/occlusion_tracker.h"
 #include "skia/ext/refptr.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkImageFilter.h"
 #include "third_party/skia/include/core/SkPicture.h"
+#include "third_party/skia/include/core/SkXfermode.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/rect_f.h"
 #include "ui/gfx/transform.h"
 
 namespace gfx {
 class BoxF;
+}
+
+namespace base {
+namespace debug {
+class ConvertableToTraceFormat;
+}
 }
 
 namespace cc {
@@ -54,11 +60,14 @@ class RenderingStatsInstrumentation;
 class ResourceUpdateQueue;
 class ScrollbarLayerInterface;
 struct AnimationEvent;
+template <typename LayerType>
+class OcclusionTracker;
 
 // Base class for composited layers. Special layer types are derived from
 // this class.
 class CC_EXPORT Layer : public base::RefCounted<Layer>,
-                        public LayerAnimationValueObserver {
+                        public LayerAnimationValueObserver,
+                        public LayerAnimationValueProvider {
  public:
   typedef RenderSurfaceLayerList RenderSurfaceListType;
   typedef LayerList LayerListType;
@@ -94,7 +103,7 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
     return !copy_requests_.empty();
   }
 
-  void SetAnchorPoint(gfx::PointF anchor_point);
+  void SetAnchorPoint(const gfx::PointF& anchor_point);
   gfx::PointF anchor_point() const { return anchor_point_; }
 
   void SetAnchorPointZ(float anchor_point_z);
@@ -108,7 +117,7 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
 
   // A layer's bounds are in logical, non-page-scaled pixels (however, the
   // root layer's bounds are in physical pixels).
-  void SetBounds(gfx::Size bounds);
+  void SetBounds(const gfx::Size& bounds);
   gfx::Size bounds() const { return bounds_; }
 
   void SetMasksToBounds(bool masks_to_bounds);
@@ -126,6 +135,22 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   bool OpacityIsAnimating() const;
   virtual bool OpacityCanAnimateOnImplThread() const;
 
+  void SetBlendMode(SkXfermode::Mode blend_mode);
+  SkXfermode::Mode blend_mode() const { return blend_mode_; }
+
+  bool uses_default_blend_mode() const {
+    return blend_mode_ == SkXfermode::kSrcOver_Mode;
+  }
+
+  // A layer is root for an isolated group when it and all its descendants are
+  // drawn over a black and fully transparent background, creating an isolated
+  // group. It should be used along with SetBlendMode(), in order to restrict
+  // layers within the group to blend with layers outside this group.
+  void SetIsRootForIsolatedGroup(bool root);
+  bool is_root_for_isolated_group() const {
+    return is_root_for_isolated_group_;
+  }
+
   void SetFilters(const FilterOperations& filters);
   const FilterOperations& filters() const { return filters_; }
   bool FilterIsAnimating() const;
@@ -141,7 +166,7 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   virtual void SetContentsOpaque(bool opaque);
   bool contents_opaque() const { return contents_opaque_; }
 
-  void SetPosition(gfx::PointF position);
+  void SetPosition(const gfx::PointF& position);
   gfx::PointF position() const { return position_; }
 
   void SetIsContainerForFixedPositionLayers(bool container);
@@ -150,11 +175,6 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   void SetPositionConstraint(const LayerPositionConstraint& constraint);
   const LayerPositionConstraint& position_constraint() const {
     return position_constraint_;
-  }
-
-  void SetSublayerTransform(const gfx::Transform& sublayer_transform);
-  const gfx::Transform& sublayer_transform() const {
-    return sublayer_transform_;
   }
 
   void SetTransform(const gfx::Transform& transform);
@@ -243,13 +263,11 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
 
   void SetScrollOffset(gfx::Vector2d scroll_offset);
   gfx::Vector2d scroll_offset() const { return scroll_offset_; }
-  void SetScrollOffsetFromImplSide(gfx::Vector2d scroll_offset);
+  void SetScrollOffsetFromImplSide(const gfx::Vector2d& scroll_offset);
 
-  void SetMaxScrollOffset(gfx::Vector2d max_scroll_offset);
-  gfx::Vector2d max_scroll_offset() const { return max_scroll_offset_; }
-
-  void SetScrollable(bool scrollable);
-  bool scrollable() const { return scrollable_; }
+  gfx::Vector2d MaxScrollOffset() const;
+  void SetScrollClipLayerId(int clip_layer_id);
+  bool scrollable() const { return scroll_clip_layer_id_ != INVALID_ID; }
 
   void SetUserScrollable(bool horizontal, bool vertical);
   bool user_scrollable_horizontal() const {
@@ -280,7 +298,7 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   }
 
   void SetDrawCheckerboardForMissingTiles(bool checkerboard);
-  bool DrawCheckerboardForMissingTiles() const {
+  bool draw_checkerboard_for_missing_tiles() const {
     return draw_checkerboard_for_missing_tiles_;
   }
 
@@ -296,8 +314,11 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   void SetDoubleSided(bool double_sided);
   bool double_sided() const { return double_sided_; }
 
-  void SetPreserves3d(bool preserves_3d) { preserves_3d_ = preserves_3d; }
-  bool preserves_3d() const { return preserves_3d_; }
+  void SetShouldFlattenTransform(bool flatten);
+  bool should_flatten_transform() const { return should_flatten_transform_; }
+
+  void SetIs3dSorted(bool sorted);
+  bool is_3d_sorted() const { return is_3d_sorted_; }
 
   void set_use_parent_backface_visibility(bool use) {
     use_parent_backface_visibility_ = use;
@@ -332,17 +353,15 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   virtual void SavePaintProperties();
   // Returns true iff any resources were updated that need to be committed.
   virtual bool Update(ResourceUpdateQueue* queue,
-                      const OcclusionTracker* occlusion);
+                      const OcclusionTracker<Layer>* occlusion);
   virtual bool NeedMoreUpdates();
   virtual void SetIsMask(bool is_mask) {}
   virtual void ReduceMemoryUsage() {}
   virtual void OnOutputSurfaceCreated() {}
 
-  virtual std::string DebugName();
+  virtual scoped_refptr<base::debug::ConvertableToTraceFormat> TakeDebugInfo();
 
   void SetLayerClient(LayerClient* client) { client_ = client; }
-
-  void SetCompositingReasons(CompositingReasons reasons);
 
   virtual void PushPropertiesTo(LayerImpl* layer);
 
@@ -374,10 +393,6 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   bool AddAnimation(scoped_ptr<Animation> animation);
   void PauseAnimation(int animation_id, double time_offset);
   void RemoveAnimation(int animation_id);
-
-  bool AnimatedBoundsForBox(const gfx::BoxF& box, gfx::BoxF* bounds) {
-    return layer_animation_controller_->AnimatedBoundsForBox(box, bounds);
-  }
 
   LayerAnimationController* layer_animation_controller() {
     return layer_animation_controller_.get();
@@ -426,9 +441,13 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
 
   virtual bool SupportsLCDText() const;
 
+  void SetNeedsPushProperties();
   bool needs_push_properties() const { return needs_push_properties_; }
   bool descendant_needs_push_properties() const {
     return num_dependents_need_push_properties_ > 0;
+  }
+  void reset_needs_push_properties_for_testing() {
+    needs_push_properties_ = false;
   }
 
   virtual void RunMicroBenchmark(MicroBenchmark* benchmark);
@@ -459,7 +478,9 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   // unused resources on the impl thread are returned before commit completes.
   void SetNextCommitWaitsForActivation();
 
-  void SetNeedsPushProperties();
+  // Called when the blend mode or filters have been changed.
+  void SetNeedsFilterContextIfNeeded();
+
   void AddDependentNeedsPushProperties();
   void RemoveDependentNeedsPushProperties();
   bool parent_should_know_need_push_properties() const {
@@ -518,10 +539,16 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   // This should only be called from RemoveFromParent().
   void RemoveChildOrDependent(Layer* child);
 
+  // LayerAnimationValueProvider implementation.
+  virtual gfx::Vector2dF ScrollOffsetForAnimation() const OVERRIDE;
+
   // LayerAnimationValueObserver implementation.
   virtual void OnFilterAnimated(const FilterOperations& filters) OVERRIDE;
   virtual void OnOpacityAnimated(float opacity) OVERRIDE;
   virtual void OnTransformAnimated(const gfx::Transform& transform) OVERRIDE;
+  virtual void OnScrollOffsetAnimated(
+      const gfx::Vector2dF& scroll_offset) OVERRIDE;
+  virtual void OnAnimationWaitingForDeletion() OVERRIDE;
   virtual bool IsActive() const OVERRIDE;
 
   LayerList children_;
@@ -538,33 +565,38 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   gfx::Size bounds_;
 
   gfx::Vector2d scroll_offset_;
-  gfx::Vector2d max_scroll_offset_;
-  bool scrollable_;
-  bool should_scroll_on_main_thread_;
-  bool have_wheel_event_handlers_;
-  bool user_scrollable_horizontal_;
-  bool user_scrollable_vertical_;
+  // This variable indicates which ancestor layer (if any) whose size,
+  // transformed relative to this layer, defines the maximum scroll offset for
+  // this layer.
+  int scroll_clip_layer_id_;
+  bool scrollable_ : 1;
+  bool should_scroll_on_main_thread_ : 1;
+  bool have_wheel_event_handlers_ : 1;
+  bool user_scrollable_horizontal_ : 1;
+  bool user_scrollable_vertical_ : 1;
+  bool is_root_for_isolated_group_ : 1;
+  bool is_container_for_fixed_position_layers_ : 1;
+  bool is_drawable_ : 1;
+  bool hide_layer_and_subtree_ : 1;
+  bool masks_to_bounds_ : 1;
+  bool contents_opaque_ : 1;
+  bool double_sided_ : 1;
+  bool should_flatten_transform_ : 1;
+  bool use_parent_backface_visibility_ : 1;
+  bool draw_checkerboard_for_missing_tiles_ : 1;
+  bool force_render_surface_ : 1;
+  bool is_3d_sorted_ : 1;
   Region non_fast_scrollable_region_;
   Region touch_event_handler_region_;
   gfx::PointF position_;
   gfx::PointF anchor_point_;
   SkColor background_color_;
-  CompositingReasons compositing_reasons_;
   float opacity_;
+  SkXfermode::Mode blend_mode_;
   FilterOperations filters_;
   FilterOperations background_filters_;
   float anchor_point_z_;
-  bool is_container_for_fixed_position_layers_;
   LayerPositionConstraint position_constraint_;
-  bool is_drawable_;
-  bool hide_layer_and_subtree_;
-  bool masks_to_bounds_;
-  bool contents_opaque_;
-  bool double_sided_;
-  bool preserves_3d_;
-  bool use_parent_backface_visibility_;
-  bool draw_checkerboard_for_missing_tiles_;
-  bool force_render_surface_;
   Layer* scroll_parent_;
   scoped_ptr<std::set<Layer*> > scroll_children_;
 
@@ -572,7 +604,6 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   scoped_ptr<std::set<Layer*> > clip_children_;
 
   gfx::Transform transform_;
-  gfx::Transform sublayer_transform_;
 
   // Replica layer used for reflections.
   scoped_refptr<Layer> replica_layer_;

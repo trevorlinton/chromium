@@ -2,9 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "content/public/test/test_launcher.h"
-
-#include <stack>
+#include "chrome/test/base/chrome_test_launcher.h"
 
 #include "base/command_line.h"
 #include "base/debug/leak_annotations.h"
@@ -19,10 +17,10 @@
 #include "chrome/app/chrome_main_delegate.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/chrome_test_suite.h"
+#include "chrome/test/base/test_switches.h"
 #include "content/public/app/content_main.h"
-#include "content/public/browser/browser_thread.h"
+#include "content/public/test/test_launcher.h"
 #include "content/public/test/test_utils.h"
 #include "ui/base/test/ui_controls.h"
 
@@ -34,10 +32,6 @@
 #include "content/public/app/startup_helper_win.h"
 #include "sandbox/win/src/sandbox_types.h"
 #endif  // defined(OS_WIN)
-
-#if defined(TOOLKIT_VIEWS)
-#include "ui/views/focus/accelerator_handler.h"
-#endif
 
 #if defined(USE_AURA)
 #include "ui/aura/test/ui_controls_factory_aura.h"
@@ -59,11 +53,12 @@ namespace {
 
 class ChromeTestLauncherDelegate : public content::TestLauncherDelegate {
  public:
-  ChromeTestLauncherDelegate() {}
+  explicit ChromeTestLauncherDelegate(ChromeTestSuiteRunner* runner)
+      : runner_(runner) {}
   virtual ~ChromeTestLauncherDelegate() {}
 
   virtual int RunTestSuite(int argc, char** argv) OVERRIDE {
-    return ChromeTestSuite(argc, argv).Run();
+    return runner_->RunTestSuite(argc, argv);
   }
 
   virtual bool AdjustChildProcessCommandLine(
@@ -88,49 +83,35 @@ class ChromeTestLauncherDelegate : public content::TestLauncherDelegate {
     return true;
   }
 
-  virtual void PreRunMessageLoop(base::RunLoop* run_loop) OVERRIDE {
-#if !defined(USE_AURA) && defined(TOOLKIT_VIEWS)
-    if (content::BrowserThread::CurrentlyOn(content::BrowserThread::UI)) {
-      linked_ptr<views::AcceleratorHandler> handler(
-          new views::AcceleratorHandler);
-      handlers_.push(handler);
-      run_loop->set_dispatcher(handler.get());
-    }
-#endif
-  }
-
-  virtual void PostRunMessageLoop() OVERRIDE {
-#if !defined(USE_AURA) && defined(TOOLKIT_VIEWS)
-    if (content::BrowserThread::CurrentlyOn(content::BrowserThread::UI)) {
-      DCHECK_EQ(handlers_.empty(), false);
-      handlers_.pop();
-    }
-#endif
-  }
-
  protected:
   virtual content::ContentMainDelegate* CreateContentMainDelegate() OVERRIDE {
-#if defined(OS_WIN) || defined (OS_LINUX)
     return new ChromeMainDelegate();
-#else
-    // This delegate is only guaranteed to link on linux and windows, so just
-    // bail out if we are on any other platform.
-    NOTREACHED();
-    return NULL;
-#endif
+  }
+
+  virtual void AdjustDefaultParallelJobs(int* default_jobs) OVERRIDE {
+#if defined(OS_WIN)
+    if (CommandLine::ForCurrentProcess()->HasSwitch(
+            switches::kAshBrowserTests)) {
+      *default_jobs = 1;
+      fprintf(stdout,
+              "Disabling test parallelization for --ash-browsertests.\n");
+      fflush(stdout);
+    }
+#endif  // defined(OS_WIN)
   }
 
  private:
-#if !defined(USE_AURA) && defined(TOOLKIT_VIEWS)
-  std::stack<linked_ptr<views::AcceleratorHandler> > handlers_;
-#endif
+  ChromeTestSuiteRunner* runner_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeTestLauncherDelegate);
 };
 
 }  // namespace
 
-int LaunchChromeTests(int default_jobs, int argc, char** argv) {
+int LaunchChromeTests(int default_jobs,
+                      ChromeTestSuiteRunner* runner,
+                      int argc,
+                      char** argv) {
 #if defined(OS_MACOSX)
   chrome_browser_application_mac::RegisterBrowserCrApp();
 #endif
@@ -144,6 +125,6 @@ int LaunchChromeTests(int default_jobs, int argc, char** argv) {
   breakpad::SetBreakpadClient(breakpad_client);
 #endif
 
-  ChromeTestLauncherDelegate launcher_delegate;
+  ChromeTestLauncherDelegate launcher_delegate(runner);
   return content::LaunchTests(&launcher_delegate, default_jobs, argc, argv);
 }

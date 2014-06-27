@@ -10,7 +10,6 @@
 #include "base/basictypes.h"
 #include "chromeos/chromeos_export.h"
 #include "chromeos/dbus/dbus_client.h"
-#include "chromeos/dbus/dbus_client_implementation_type.h"
 #include "chromeos/dbus/dbus_method_call_status.h"
 #include "chromeos/dbus/shill_client_helper.h"
 
@@ -58,6 +57,10 @@ class CHROMEOS_EXPORT ShillManagerClient : public DBusClient {
     // Used to reset all properties; does not notify observers.
     virtual void ClearProperties() = 0;
 
+    // Set manager property.
+    virtual void SetManagerProperty(const std::string& key,
+                                    const base::Value& value) = 0;
+
     // Add/Remove/ClearService should only be called from ShillServiceClient.
     virtual void AddManagerService(const std::string& service_path,
                                    bool add_to_visible_list,
@@ -65,9 +68,23 @@ class CHROMEOS_EXPORT ShillManagerClient : public DBusClient {
     virtual void RemoveManagerService(const std::string& service_path) = 0;
     virtual void ClearManagerServices() = 0;
 
-    // Called by ShillServiceClient when a service's State property changes.
-    // Services are sorted first by Active vs. Inactive State, then by Type.
+    // Called by ShillServiceClient when a service's State property changes,
+    // before notifying observers. Sets the DefaultService property to empty
+    // if the state changes to a non-connected state.
+    virtual void ServiceStateChanged(const std::string& service_path,
+                                     const std::string& state) = 0;
+
+    // Called by ShillServiceClient when a service's State property changes,
+    // after notifying observers. Services are sorted first by Active or
+    // Inactive State, then by Type.
     virtual void SortManagerServices() = 0;
+
+    // Sets up the default fake environment based on default initial states
+    // or states provided by the command line.
+    virtual void SetupDefaultEnvironment() = 0;
+
+    // Returns the interactive delay specified on the command line, 0 for none.
+    virtual int GetInteractiveDelay() const = 0;
 
    protected:
     virtual ~TestInterface() {}
@@ -109,7 +126,7 @@ class CHROMEOS_EXPORT ShillManagerClient : public DBusClient {
 
   // Factory function, creates a new instance which is owned by the caller.
   // For normal usage, access the singleton via DBusThreadManager::Get().
-  static ShillManagerClient* Create(DBusClientImplementationType type);
+  static ShillManagerClient* Create();
 
   // Adds a property changed |observer|.
   virtual void AddPropertyChangedObserver(

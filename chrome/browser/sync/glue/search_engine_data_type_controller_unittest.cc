@@ -10,12 +10,12 @@
 #include "base/tracked_objects.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/search_engines/template_url_service_test_util.h"
-#include "chrome/browser/sync/glue/data_type_controller_mock.h"
 #include "chrome/browser/sync/glue/fake_generic_change_processor.h"
 #include "chrome/browser/sync/glue/search_engine_data_type_controller.h"
 #include "chrome/browser/sync/profile_sync_components_factory_mock.h"
 #include "chrome/browser/sync/profile_sync_service_mock.h"
 #include "chrome/test/base/profile_mock.h"
+#include "components/sync_driver/data_type_controller_mock.h"
 #include "sync/api/fake_syncable_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -39,23 +39,26 @@ ACTION_P(ReturnAndRelease, change_processor) {
 class SyncSearchEngineDataTypeControllerTest : public testing::Test {
  public:
   SyncSearchEngineDataTypeControllerTest()
-      : change_processor_(new FakeGenericChangeProcessor()) {}
+      : change_processor_(new FakeGenericChangeProcessor()) {
+  }
 
   virtual void SetUp() {
     test_util_.SetUp();
+    service_.reset(new ProfileSyncServiceMock(test_util_.profile()));
     profile_sync_factory_.reset(new ProfileSyncComponentsFactoryMock());
     // Feed the DTC test_util_'s profile so it is reused later.
     // This allows us to control the associated TemplateURLService.
     search_engine_dtc_ =
         new SearchEngineDataTypeController(profile_sync_factory_.get(),
                                            test_util_.profile(),
-                                           &service_);
+                                           service_.get());
   }
 
   virtual void TearDown() {
     // Must be done before we pump the loop.
     syncable_service_.StopSyncing(syncer::SEARCH_ENGINES);
     search_engine_dtc_ = NULL;
+    service_.reset();
     test_util_.TearDown();
   }
 
@@ -79,11 +82,13 @@ class SyncSearchEngineDataTypeControllerTest : public testing::Test {
   }
 
   void SetActivateExpectations() {
-    EXPECT_CALL(service_, ActivateDataType(syncer::SEARCH_ENGINES, _, _));
+    EXPECT_CALL(*service_.get(),
+                ActivateDataType(syncer::SEARCH_ENGINES, _, _));
   }
 
   void SetStopExpectations() {
-    EXPECT_CALL(service_, DeactivateDataType(syncer::SEARCH_ENGINES));
+    EXPECT_CALL(*service_.get(),
+                DeactivateDataType(syncer::SEARCH_ENGINES));
   }
 
   void Start() {
@@ -101,7 +106,7 @@ class SyncSearchEngineDataTypeControllerTest : public testing::Test {
   TemplateURLServiceTestUtil test_util_;
   scoped_refptr<SearchEngineDataTypeController> search_engine_dtc_;
   scoped_ptr<ProfileSyncComponentsFactoryMock> profile_sync_factory_;
-  ProfileSyncServiceMock service_;
+  scoped_ptr<ProfileSyncServiceMock> service_;
   scoped_ptr<FakeGenericChangeProcessor> change_processor_;
   syncer::FakeSyncableService syncable_service_;
   StartCallbackMock start_callback_;
@@ -209,7 +214,7 @@ TEST_F(SyncSearchEngineDataTypeControllerTest,
   SetStartExpectations();
   PreloadTemplateURLService();
   SetActivateExpectations();
-  EXPECT_CALL(service_, DisableBrokenDatatype(_, _, _)).
+  EXPECT_CALL(*service_.get(), DisableBrokenDatatype(_, _, _)).
       WillOnce(InvokeWithoutArgs(search_engine_dtc_.get(),
                                  &SearchEngineDataTypeController::Stop));
   SetStopExpectations();

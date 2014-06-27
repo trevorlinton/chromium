@@ -2,27 +2,16 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+from data_source import DataSource
+from future import Future
 from operator import itemgetter
-import os
-import posixpath
 
-from svn_constants import PUBLIC_TEMPLATE_PATH
 import docs_server_utils as utils
 
-def _GetAPICategory(api, documented_apis):
-  name = api['name']
-  if (name.endswith('Private') or
-      name not in documented_apis):
-    return 'private'
-  if name.startswith('experimental.'):
-    return 'experimental'
-  return 'chrome'
-
-
-class APIListDataSource(object):
+class APIListDataSource(DataSource):
   """ This class creates a list of chrome.* APIs and chrome.experimental.* APIs
-  for extensions and apps that are used in the api_index.html and
-  experimental.html pages.
+  for extensions and apps that are used in the api_index.html,
+  experimental.html, and private_apis.html pages.
 
   An API is considered listable if it is listed in _api_features.json,
   it has a corresponding HTML file in the public template path, and one of
@@ -34,72 +23,82 @@ class APIListDataSource(object):
       "extension_types" property where either/both "extension"/"platform_app"
       values are present.
   """
-  class Factory(object):
-    def __init__(self,
-                 compiled_fs_factory,
-                 file_system,
-                 features_bundle,
-                 object_store_creator):
-      self._file_system = file_system
-      self._cache = compiled_fs_factory.Create(file_system,
-                                               self._CollectDocumentedAPIs,
-                                               APIListDataSource)
-      self._features_bundle = features_bundle
-      self._object_store_creator = object_store_creator
+  def __init__(self, server_instance, _):
+    self._features_bundle = server_instance.features_bundle
+    self._object_store = server_instance.object_store_creator.Create(
+        APIListDataSource)
+    self._api_models = server_instance.api_models
+    self._api_categorizer = server_instance.api_categorizer
+    self._availability_finder = server_instance.availability_finder
 
-    def _CollectDocumentedAPIs(self, base_dir, files):
-      def GetDocumentedAPIsForPlatform(names, platform):
-        public_templates = []
-        for root, _, files in self._file_system.Walk(posixpath.join(
-            PUBLIC_TEMPLATE_PATH, platform)):
-          public_templates.extend(
-              ('%s/%s' % (root, name)).lstrip('/') for name in files)
-        template_names = set(os.path.splitext(name)[0]
-                             for name in public_templates)
-        return [name.replace('_', '.') for name in template_names]
-      api_names = set(utils.SanitizeAPIName(name) for name in files)
-      return {
-        'apps': GetDocumentedAPIsForPlatform(api_names, 'apps'),
-        'extensions': GetDocumentedAPIsForPlatform(api_names, 'extensions')
+  def _GenerateAPIDict(self):
+    def get_channel_info(api_name):
+      return self._availability_finder.GetApiAvailability(api_name)
+
+    def get_api_platform(api_name):
+      feature = self._features_bundle.GetAPIFeatures().Get()[api_name]
+      return feature['platforms']
+
+    def make_dict_for_platform(platform):
+      platform_dict = {
+        'chrome': {'stable': [], 'beta': [], 'dev': [], 'trunk': []},
       }
+      private_apis = []
+      experimental_apis = []
+      all_apis = []
+      for api_name, api_model in self._api_models.IterModels():
+        if not self._api_categorizer.IsDocumented(platform, api_name):
+          continue
+        api = {
+          'name': api_name,
+          'description': api_model.description,
+          'platforms': get_api_platform(api_name),
+        }
+        category = self._api_categorizer.GetCategory(platform, api_name)
+        if category == 'chrome':
+          channel_info = get_channel_info(api_name)
+          channel = channel_info.channel
+          if channel == 'stable':
+            version = channel_info.version
+            api['version'] = version
+          platform_dict[category][channel].append(api)
+          all_apis.append(api)
+        elif category == 'experimental':
+          experimental_apis.append(api)
+          all_apis.append(api)
+        elif category == 'private':
+          private_apis.append(api)
 
-    def _GenerateAPIDict(self):
-      documented_apis = self._cache.GetFromFileListing(
-          PUBLIC_TEMPLATE_PATH).Get()
-      api_features = self._features_bundle.GetAPIFeatures()
+      for channel, apis_by_channel in platform_dict['chrome'].iteritems():
+        apis_by_channel.sort(key=itemgetter('name'))
+        utils.MarkLast(apis_by_channel)
+        platform_dict['chrome'][channel] = apis_by_channel
 
-      def FilterAPIs(platform):
-        return (api for api in api_features.itervalues()
-            if platform in api['platforms'])
+      for key, apis in (('all', all_apis),
+                        ('private', private_apis),
+                        ('experimental', experimental_apis)):
+        apis.sort(key=itemgetter('name'))
+        utils.MarkLast(apis)
+        platform_dict[key] = apis
 
-      def MakeDictForPlatform(platform):
-        platform_dict = { 'chrome': [], 'experimental': [], 'private': [] }
-        for api in FilterAPIs(platform):
-          category = _GetAPICategory(api, documented_apis[platform])
-          platform_dict[category].append(api)
-        for category, apis in platform_dict.iteritems():
-          platform_dict[category] = sorted(apis, key=itemgetter('name'))
-          utils.MarkLast(platform_dict[category])
-        return platform_dict
-
-      return {
-        'apps': MakeDictForPlatform('apps'),
-        'extensions': MakeDictForPlatform('extensions')
-      }
-
-    def Create(self):
-      return APIListDataSource(self, self._object_store_creator)
-
-  def __init__(self, factory, object_store_creator):
-    self._factory = factory
-    self._object_store = object_store_creator.Create(APIListDataSource)
+      return platform_dict
+    return {
+      'apps': make_dict_for_platform('apps'),
+      'extensions': make_dict_for_platform('extensions'),
+    }
 
   def _GetCachedAPIData(self):
-    data = self._object_store.Get('api_data').Get()
-    if data is None:
-      data = self._factory._GenerateAPIDict()
-      self._object_store.Set('api_data', data)
-    return data
+    data_future = self._object_store.Get('api_data')
+    def resolve():
+      data = data_future.Get()
+      if data is None:
+        data = self._GenerateAPIDict()
+        self._object_store.Set('api_data', data)
+      return data
+    return Future(callback=resolve)
 
   def get(self, key):
-    return self._GetCachedAPIData().get(key)
+    return self._GetCachedAPIData().Get().get(key)
+
+  def Cron(self):
+    return self._GetCachedAPIData()

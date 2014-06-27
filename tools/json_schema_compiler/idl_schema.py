@@ -100,14 +100,14 @@ class Callspec(object):
     return_type = None
     if self.node.GetProperty('TYPEREF') not in ('void', None):
       return_type = Typeref(self.node.GetProperty('TYPEREF'),
-                            self.node,
+                            self.node.parent,
                             {'name': self.node.GetName()}).process(callbacks)
       # The IDL parser doesn't allow specifying return types as optional.
       # Instead we infer any object return values to be optional.
       # TODO(asargent): fix the IDL parser to support optional return types.
       if return_type.get('type') == 'object' or '$ref' in return_type:
         return_type['optional'] = True
-    for node in self.node.children:
+    for node in self.node.GetChildren():
       parameter = Param(node).process(callbacks)
       if parameter['name'] in self.comment:
         parameter['description'] = self.comment[parameter['name']]
@@ -139,14 +139,16 @@ class Dictionary(object):
 
   def process(self, callbacks):
     properties = OrderedDict()
-    for node in self.node.children:
+    for node in self.node.GetChildren():
       if node.cls == 'Member':
         k, v = Member(node).process(callbacks)
         properties[k] = v
     result = {'id': self.node.GetName(),
               'properties': properties,
               'type': 'object'}
-    if self.node.GetProperty('inline_doc'):
+    if self.node.GetProperty('nodoc'):
+      result['nodoc'] = True
+    elif self.node.GetProperty('inline_doc'):
       result['inline_doc'] = True
     elif self.node.GetProperty('noinline_doc'):
       result['noinline_doc'] = True
@@ -166,6 +168,8 @@ class Member(object):
   def process(self, callbacks):
     properties = OrderedDict()
     name = self.node.GetName()
+    if self.node.GetProperty('deprecated'):
+      properties['deprecated'] = self.node.GetProperty('deprecated')
     for property_name in ('OPTIONAL', 'nodoc', 'nocompile', 'nodart'):
       if self.node.GetProperty(property_name):
         properties[property_name.lower()] = True
@@ -181,7 +185,7 @@ class Member(object):
           option_name))
     is_function = False
     parameter_comments = OrderedDict()
-    for node in self.node.children:
+    for node in self.node.GetChildren():
       if node.cls == 'Comment':
         (parent_comment, parameter_comments) = ProcessComment(node.GetName())
         properties['description'] = parent_comment
@@ -214,7 +218,7 @@ class Typeref(object):
   function parameter, converts into a Python dictionary that the JSON schema
   compiler expects to see.
   '''
-  def __init__(self, typeref, parent, additional_properties=OrderedDict()):
+  def __init__(self, typeref, parent, additional_properties):
     self.typeref = typeref
     self.parent = parent
     self.additional_properties = additional_properties
@@ -223,7 +227,7 @@ class Typeref(object):
     properties = self.additional_properties
     result = properties
 
-    if self.parent.GetProperty('OPTIONAL', False):
+    if self.parent.GetPropertyLocal('OPTIONAL'):
       properties['optional'] = True
 
     # The IDL parser denotes array types by adding a child 'Array' node onto
@@ -262,6 +266,13 @@ class Typeref(object):
       if 'additionalProperties' not in properties:
         properties['additionalProperties'] = OrderedDict()
       properties['additionalProperties']['type'] = 'any'
+    elif self.parent.GetPropertyLocal('Union'):
+      choices = []
+      properties['choices'] = [Typeref(node.GetProperty('TYPEREF'),
+                                       node,
+                                       OrderedDict()).process(callbacks)
+                               for node in self.parent.GetChildren()
+                               if node.cls == 'Option']
     elif self.typeref is None:
       properties['type'] = 'function'
     else:
@@ -290,10 +301,10 @@ class Enum(object):
 
   def process(self, callbacks):
     enum = []
-    for node in self.node.children:
+    for node in self.node.GetChildren():
       if node.cls == 'EnumItem':
         enum_value = {'name': node.GetName()}
-        for child in node.children:
+        for child in node.GetChildren():
           if child.cls == 'Comment':
             enum_value['description'] = ProcessComment(child.GetName())[0]
           else:
@@ -307,9 +318,12 @@ class Enum(object):
               'description': self.description,
               'type': 'string',
               'enum': enum}
-    for property_name in ('inline_doc', 'noinline_doc', 'nodoc'):
+    for property_name in (
+        'inline_doc', 'noinline_doc', 'nodoc', 'cpp_omit_enum_type',):
       if self.node.GetProperty(property_name):
         result[property_name] = True
+    if self.node.GetProperty('deprecated'):
+        result[deprecated] = self.node.GetProperty('deprecated')
     return result
 
 
@@ -324,19 +338,23 @@ class Namespace(object):
                description,
                nodoc=False,
                internal=False,
-               platforms=None):
+               platforms=None,
+               compiler_options=None,
+               deprecated=None):
     self.namespace = namespace_node
     self.nodoc = nodoc
     self.internal = internal
     self.platforms = platforms
+    self.compiler_options = compiler_options
     self.events = []
     self.functions = []
     self.types = []
     self.callbacks = OrderedDict()
     self.description = description
+    self.deprecated = deprecated
 
   def process(self):
-    for node in self.namespace.children:
+    for node in self.namespace.GetChildren():
       if node.cls == 'Dictionary':
         self.types.append(Dictionary(node).process(self.callbacks))
       elif node.cls == 'Callback':
@@ -350,6 +368,10 @@ class Namespace(object):
         self.types.append(Enum(node).process(self.callbacks))
       else:
         sys.exit('Did not process %s %s' % (node.cls, node))
+    if self.compiler_options is not None:
+      compiler_options = self.compiler_options
+    else:
+      compiler_options = {}
     return {'namespace': self.namespace.GetName(),
             'description': self.description,
             'nodoc': self.nodoc,
@@ -357,11 +379,13 @@ class Namespace(object):
             'functions': self.functions,
             'internal': self.internal,
             'events': self.events,
-            'platforms': self.platforms}
+            'platforms': self.platforms,
+            'compiler_options': compiler_options,
+            'deprecated': self.deprecated}
 
   def process_interface(self, node):
     members = []
-    for member in node.children:
+    for member in node.GetChildren():
       if member.cls == 'Member':
         name, properties = Member(member).process(self.callbacks)
         members.append(properties)
@@ -383,6 +407,8 @@ class IDLSchema(object):
     internal = False
     description = None
     platforms = None
+    compiler_options = None
+    deprecated = None
     for node in self.idl:
       if node.cls == 'Namespace':
         if not description:
@@ -390,11 +416,15 @@ class IDLSchema(object):
           print('%s must have a namespace-level comment. This will '
                            'appear on the API summary page.' % node.GetName())
           description = ''
-        namespace = Namespace(node, description, nodoc, internal, platforms)
+        namespace = Namespace(node, description, nodoc, internal,
+                              platforms=platforms,
+                              compiler_options=compiler_options,
+                              deprecated=deprecated)
         namespaces.append(namespace.process())
         nodoc = False
         internal = False
         platforms = None
+        compiler_options = None
       elif node.cls == 'Copyright':
         continue
       elif node.cls == 'Comment':
@@ -406,6 +436,10 @@ class IDLSchema(object):
           internal = bool(node.value)
         elif node.name == 'platforms':
           platforms = list(node.value)
+        elif node.name == 'implemented_in':
+          compiler_options = {'implemented_in': node.value}
+        elif node.name == 'deprecated':
+          deprecated = str(node.value)
         else:
           continue
       else:

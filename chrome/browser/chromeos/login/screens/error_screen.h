@@ -7,25 +7,39 @@
 
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/memory/scoped_ptr.h"
+#include "base/memory/weak_ptr.h"
+#include "base/observer_list.h"
+#include "chrome/browser/chromeos/login/login_performer.h"
 #include "chrome/browser/chromeos/login/oobe_display.h"
-#include "chrome/browser/chromeos/login/oobe_display.h"
+#include "chrome/browser/chromeos/login/screens/error_screen_actor_delegate.h"
 #include "chrome/browser/chromeos/login/screens/wizard_screen.h"
+#include "chrome/browser/chromeos/settings/device_settings_service.h"
 
 namespace chromeos {
 
-class ErrorScreenActor;
 class ScreenObserver;
 
 // Controller for the error screen.
-class ErrorScreen : public WizardScreen {
+class ErrorScreen : public WizardScreen,
+                    public ErrorScreenActorDelegate,
+                    public LoginPerformer::Delegate {
  public:
+  class Observer {
+   public:
+    virtual ~Observer() {}
+    virtual void OnErrorScreenShow() = 0;
+    virtual void OnErrorScreenHide() = 0;
+  };
+
   enum UIState {
     UI_STATE_UNKNOWN = 0,
     UI_STATE_UPDATE,
     UI_STATE_SIGNIN,
     UI_STATE_LOCALLY_MANAGED,
     UI_STATE_KIOSK_MODE,
-    UI_STATE_LOCAL_STATE_ERROR
+    UI_STATE_LOCAL_STATE_ERROR,
+    UI_STATE_AUTO_ENROLLMENT_ERROR,
   };
 
   enum ErrorState {
@@ -33,17 +47,36 @@ class ErrorScreen : public WizardScreen {
     ERROR_STATE_PORTAL,
     ERROR_STATE_OFFLINE,
     ERROR_STATE_PROXY,
-    ERROR_STATE_AUTH_EXT_TIMEOUT
+    ERROR_STATE_AUTH_EXT_TIMEOUT,
+    ERROR_STATE_KIOSK_ONLINE
   };
 
   ErrorScreen(ScreenObserver* screen_observer, ErrorScreenActor* actor);
   virtual ~ErrorScreen();
+
+  void AddObserver(Observer* observer);
+  void RemoveObserver(Observer* observer);
 
   // WizardScreen implementation.
   virtual void PrepareToShow() OVERRIDE;
   virtual void Show() OVERRIDE;
   virtual void Hide() OVERRIDE;
   virtual std::string GetName() const OVERRIDE;
+
+  // ErrorScreenActorDelegate implementation:
+  virtual void OnErrorShow() OVERRIDE;
+  virtual void OnErrorHide() OVERRIDE;
+  virtual void OnLaunchOobeGuestSession() OVERRIDE;
+
+  // LoginPerformer::Delegate implementation:
+  virtual void OnLoginFailure(const LoginFailure& error) OVERRIDE;
+  virtual void OnLoginSuccess(const UserContext& user_context) OVERRIDE;
+  virtual void OnOffTheRecordLoginSuccess() OVERRIDE;
+  virtual void OnPasswordChangeDetected() OVERRIDE;
+  virtual void WhiteListCheckFailed(const std::string& email) OVERRIDE;
+  virtual void PolicyLoadFailed() OVERRIDE;
+  virtual void OnOnlineChecked(const std::string& username,
+                               bool success) OVERRIDE;
 
   // Initializes captive portal dialog and shows that if needed.
   void FixCaptivePortal();
@@ -63,15 +96,32 @@ class ErrorScreen : public WizardScreen {
   // |error_state|, and |network|.
   void SetErrorState(ErrorState error_state, const std::string& network);
 
+  // Toggles the guest sign-in prompt.
+  void AllowGuestSignin(bool allow);
+
+  // Toggles the connection pending indicator.
+  void ShowConnectingIndicator(bool show);
+
   void set_parent_screen(OobeDisplay::Screen parent_screen) {
     parent_screen_ = parent_screen;
   }
   OobeDisplay::Screen parent_screen() const { return parent_screen_; }
 
  private:
+  // Handles the response of an ownership check and starts the guest session if
+  // applicable.
+  void StartGuestSessionAfterOwnershipCheck(
+      DeviceSettingsService::OwnershipStatus ownership_status);
+
   ErrorScreenActor* actor_;
 
   OobeDisplay::Screen parent_screen_;
+
+  base::WeakPtrFactory<ErrorScreen> weak_factory_;
+
+  ObserverList<Observer> observers_;
+
+  scoped_ptr<LoginPerformer> guest_login_performer_;
 
   DISALLOW_COPY_AND_ASSIGN(ErrorScreen);
 };

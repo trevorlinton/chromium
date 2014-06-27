@@ -20,10 +20,10 @@
 #include "chrome/browser/chromeos/accessibility/magnification_manager.h"
 #include "chrome/browser/chromeos/policy/device_policy_builder.h"
 #include "chrome/browser/chromeos/policy/device_policy_cros_browser_test.h"
+#include "chrome/browser/chromeos/policy/proto/chrome_device_policy.pb.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
-#include "chrome/browser/policy/proto/chromeos/chrome_device_policy.pb.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/pref_names.h"
@@ -227,7 +227,7 @@ void LoginScreenDefaultPolicyInSessionBrowsertest::SetUpOnMainThread() {
 
 void LoginScreenDefaultPolicyInSessionBrowsertest::VerifyPrefFollowsDefault(
     const char* pref_name) {
-  Profile* profile = ProfileManager::GetDefaultProfile();
+  Profile* profile = ProfileManager::GetActiveUserProfile();
   ASSERT_TRUE(profile);
   const PrefService::Preference* pref =
       profile->GetPrefs()->FindPreference(pref_name);
@@ -432,6 +432,30 @@ IN_PROC_BROWSER_TEST_F(LoginScreenDefaultPolicyInSessionBrowsertest,
   EXPECT_FALSE(magnification_manager->IsMagnifierEnabled());
   EXPECT_EQ(ash::kDefaultMagnifierType,
             magnification_manager->GetMagnifierType());
+}
+
+IN_PROC_BROWSER_TEST_F(LoginScreenDefaultPolicyLoginScreenBrowsertest,
+                       DeviceLoginScreenDefaultVirtualKeyboardEnabled) {
+  // Verifies that the default state of the on-screen keyboard accessibility
+  // feature on the login screen can be controlled through device policy.
+
+  // Enable the on-screen keyboard through device policy and wait for the change
+  // to take effect.
+  em::ChromeDeviceSettingsProto& proto(device_policy()->payload());
+  proto.mutable_accessibility_settings()->
+      set_login_screen_default_virtual_keyboard_enabled(true);
+  RefreshDevicePolicyAndWaitForPrefChange(prefs::kVirtualKeyboardEnabled);
+
+  // Verify that the pref which controls the on-screen keyboard in the login
+  // profile has changed to the policy-supplied default.
+  VerifyPrefFollowsRecommendation(prefs::kVirtualKeyboardEnabled,
+                                  base::FundamentalValue(true));
+
+  // Verify that the on-screen keyboard is enabled.
+  chromeos::AccessibilityManager* accessibility_manager =
+      chromeos::AccessibilityManager::Get();
+  ASSERT_TRUE(accessibility_manager);
+  EXPECT_TRUE(accessibility_manager->IsVirtualKeyboardEnabled());
 }
 
 } // namespace policy

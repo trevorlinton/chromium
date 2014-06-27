@@ -8,7 +8,8 @@
 #import <Cocoa/Cocoa.h>
 #include <vector>
 
-#include "apps/shell_window.h"
+#include "apps/app_window.h"
+#include "apps/size_constraints.h"
 #include "apps/ui/native_app_window.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/memory/scoped_ptr.h"
@@ -18,7 +19,6 @@
 #include "ui/gfx/rect.h"
 
 class ExtensionKeybindingRegistryCocoa;
-class Profile;
 class NativeAppWindowCocoa;
 @class ShellNSWindow;
 class SkRegion;
@@ -44,8 +44,8 @@ class SkRegion;
 class NativeAppWindowCocoa : public apps::NativeAppWindow,
                              public content::WebContentsObserver {
  public:
-  NativeAppWindowCocoa(apps::ShellWindow* shell_window,
-                       const apps::ShellWindow::CreateParams& params);
+  NativeAppWindowCocoa(apps::AppWindow* app_window,
+                       const apps::AppWindow::CreateParams& params);
 
   // ui::BaseWindow implementation.
   virtual bool IsActive() const OVERRIDE;
@@ -101,30 +101,29 @@ class NativeAppWindowCocoa : public apps::NativeAppWindow,
   // Called to handle a key event.
   bool HandledByExtensionCommand(NSEvent* event);
 
-  // Called to handle a mouse event.
-  void HandleMouseEvent(NSEvent* event);
-
   // Returns true if |point| in local Cocoa coordinate system falls within
   // the draggable region.
   bool IsWithinDraggableRegion(NSPoint point) const;
 
   NSRect restored_bounds() const { return restored_bounds_; }
-  bool use_system_drag() const { return use_system_drag_; }
 
  protected:
   // NativeAppWindow implementation.
-  virtual void SetFullscreen(bool fullscreen) OVERRIDE;
+  virtual void SetFullscreen(int fullscreen_types) OVERRIDE;
   virtual bool IsFullscreenOrPending() const OVERRIDE;
   virtual bool IsDetached() const OVERRIDE;
   virtual void UpdateWindowIcon() OVERRIDE;
   virtual void UpdateWindowTitle() OVERRIDE;
-  virtual void UpdateInputRegion(scoped_ptr<SkRegion> region) OVERRIDE;
+  virtual void UpdateBadgeIcon() OVERRIDE;
+  virtual void UpdateShape(scoped_ptr<SkRegion> region) OVERRIDE;
   virtual void UpdateDraggableRegions(
       const std::vector<extensions::DraggableRegion>& regions) OVERRIDE;
   virtual SkRegion* GetDraggableRegion() OVERRIDE;
   virtual void HandleKeyboardEvent(
       const content::NativeWebKeyboardEvent& event) OVERRIDE;
   virtual bool IsFrameless() const OVERRIDE;
+  virtual bool HasFrameColor() const OVERRIDE;
+  virtual SkColor FrameColor() const OVERRIDE;
   virtual gfx::Insets GetFrameInsets() const OVERRIDE;
 
   // These are used to simulate Mac-style hide/show. Since windows can be hidden
@@ -132,13 +131,14 @@ class NativeAppWindowCocoa : public apps::NativeAppWindow,
   // differentiate the reason a window was hidden.
   virtual void ShowWithApp() OVERRIDE;
   virtual void HideWithApp() OVERRIDE;
-  // Calls setContent[Min|Max]Size with the current size constraints.
-  virtual void UpdateWindowMinMaxSize() OVERRIDE;
+  virtual void UpdateShelfMenu() OVERRIDE;
+  virtual gfx::Size GetContentMinimumSize() const OVERRIDE;
+  virtual gfx::Size GetContentMaximumSize() const OVERRIDE;
+  virtual void SetContentSizeConstraints(const gfx::Size& min_size,
+                                         const gfx::Size& max_size) OVERRIDE;
 
   // WebContentsObserver implementation.
-  virtual void RenderViewHostChanged(
-      content::RenderViewHost* old_host,
-      content::RenderViewHost* new_host) OVERRIDE;
+  virtual void RenderViewCreated(content::RenderViewHost* rvh) OVERRIDE;
 
   virtual void SetAlwaysOnTop(bool always_on_top) OVERRIDE;
 
@@ -157,10 +157,10 @@ class NativeAppWindowCocoa : public apps::NativeAppWindow,
   ShellNSWindow* window() const;
 
   content::WebContents* web_contents() const {
-    return shell_window_->web_contents();
+    return app_window_->web_contents();
   }
   const extensions::Extension* extension() const {
-    return shell_window_->extension();
+    return app_window_->extension();
   }
 
   // Returns the WindowStyleMask based on the type of window frame.
@@ -171,12 +171,7 @@ class NativeAppWindowCocoa : public apps::NativeAppWindow,
 
   void InstallView();
   void UninstallView();
-  void InstallDraggableRegionViews();
-  void UpdateDraggableRegionsForSystemDrag(
-      const std::vector<extensions::DraggableRegion>& regions,
-      const extensions::DraggableRegion* draggable_area);
-  void UpdateDraggableRegionsForCustomDrag(
-      const std::vector<extensions::DraggableRegion>& regions);
+  void UpdateDraggableRegionViews();
 
   // Cache |restored_bounds_| only if the window is currently restored.
   void UpdateRestoredBounds();
@@ -184,7 +179,7 @@ class NativeAppWindowCocoa : public apps::NativeAppWindow,
   // Hides the window unconditionally. Used by Hide and HideWithApp.
   void HideWithoutMarkingHidden();
 
-  apps::ShellWindow* shell_window_; // weak - ShellWindow owns NativeAppWindow.
+  apps::AppWindow* app_window_;  // weak - AppWindow owns NativeAppWindow.
 
   bool has_frame_;
 
@@ -199,27 +194,18 @@ class NativeAppWindowCocoa : public apps::NativeAppWindow,
   bool is_fullscreen_;
   NSRect restored_bounds_;
 
+  bool is_resizable_;
   bool shows_resize_controls_;
   bool shows_fullscreen_controls_;
+
+  apps::SizeConstraints size_constraints_;
 
   base::scoped_nsobject<NativeAppWindowController> window_controller_;
   NSInteger attention_request_id_;  // identifier from requestUserAttention
 
-  // Indicates whether system drag or custom drag should be used, depending on
-  // the complexity of draggable regions.
-  bool use_system_drag_;
-
   // For system drag, the whole window is draggable and the non-draggable areas
   // have to been explicitly excluded.
-  std::vector<gfx::Rect> system_drag_exclude_areas_;
-
-  // For custom drag, the whole window is non-draggable and the draggable region
-  // has to been explicitly provided.
-  scoped_ptr<SkRegion> draggable_region_;  // used in custom drag.
-
-  // Mouse location since the last mouse event, in screen coordinates. This is
-  // used in custom drag to compute the window movement.
-  NSPoint last_mouse_location_;
+  std::vector<extensions::DraggableRegion> draggable_regions_;
 
   // The Extension Command Registry used to determine which keyboard events to
   // handle.

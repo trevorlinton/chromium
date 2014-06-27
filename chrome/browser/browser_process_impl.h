@@ -23,7 +23,6 @@
 
 class ChromeNetLog;
 class ChromeResourceDispatcherHostDelegate;
-class CommandLine;
 class RemoteDebuggingServer;
 class PrefRegistrySimple;
 class PromoResourceService;
@@ -33,7 +32,12 @@ class PluginsResourceService;
 #endif
 
 namespace base {
+class CommandLine;
 class SequencedTaskRunner;
+}
+
+namespace extensions {
+class ExtensionsBrowserClient;
 }
 
 namespace policy {
@@ -47,7 +51,7 @@ class BrowserProcessImpl : public BrowserProcess,
  public:
   // |local_state_task_runner| must be a shutdown-blocking task runner.
   BrowserProcessImpl(base::SequencedTaskRunner* local_state_task_runner,
-                     const CommandLine& command_line);
+                     const base::CommandLine& command_line);
   virtual ~BrowserProcessImpl();
 
   // Called before the browser threads are created.
@@ -69,6 +73,7 @@ class BrowserProcessImpl : public BrowserProcess,
   virtual void ResourceDispatcherHostCreated() OVERRIDE;
   virtual void EndSession() OVERRIDE;
   virtual MetricsService* metrics_service() OVERRIDE;
+  virtual rappor::RapporService* rappor_service() OVERRIDE;
   virtual IOThread* io_thread() OVERRIDE;
   virtual WatchDogThread* watchdog_thread() OVERRIDE;
   virtual ProfileManager* profile_manager() OVERRIDE;
@@ -85,13 +90,11 @@ class BrowserProcessImpl : public BrowserProcess,
   virtual IconManager* icon_manager() OVERRIDE;
   virtual GLStringManager* gl_string_manager() OVERRIDE;
   virtual GpuModeManager* gpu_mode_manager() OVERRIDE;
-  virtual RenderWidgetSnapshotTaker* GetRenderWidgetSnapshotTaker() OVERRIDE;
   virtual AutomationProviderList* GetAutomationProviderList() OVERRIDE;
   virtual void CreateDevToolsHttpProtocolHandler(
       chrome::HostDesktopType host_desktop_type,
       const std::string& ip,
-      int port,
-      const std::string& frontend_url) OVERRIDE;
+      int port) OVERRIDE;
   virtual unsigned int AddRefModule() OVERRIDE;
   virtual unsigned int ReleaseModule() OVERRIDE;
   virtual bool IsShuttingDown() OVERRIDE;
@@ -119,12 +122,12 @@ class BrowserProcessImpl : public BrowserProcess,
 
   virtual ChromeNetLog* net_log() OVERRIDE;
   virtual prerender::PrerenderTracker* prerender_tracker() OVERRIDE;
-  virtual ComponentUpdateService* component_updater() OVERRIDE;
+  virtual component_updater::ComponentUpdateService*
+      component_updater() OVERRIDE;
   virtual CRLSetFetcher* crl_set_fetcher() OVERRIDE;
-  virtual PnaclComponentInstaller* pnacl_component_installer() OVERRIDE;
+  virtual component_updater::PnaclComponentInstaller*
+      pnacl_component_installer() OVERRIDE;
   virtual BookmarkPromptController* bookmark_prompt_controller() OVERRIDE;
-  virtual StorageMonitor* storage_monitor() OVERRIDE;
-  void set_storage_monitor_for_test(scoped_ptr<StorageMonitor> monitor);
   virtual MediaFileSystemRegistry* media_file_system_registry() OVERRIDE;
   virtual bool created_local_state() const OVERRIDE;
 #if defined(ENABLE_WEBRTC)
@@ -157,6 +160,8 @@ class BrowserProcessImpl : public BrowserProcess,
   bool created_metrics_service_;
   scoped_ptr<MetricsService> metrics_service_;
 
+  scoped_ptr<rappor::RapporService> rappor_service_;
+
   scoped_ptr<IOThread> io_thread_;
 
   bool created_watchdog_thread_;
@@ -166,12 +171,12 @@ class BrowserProcessImpl : public BrowserProcess,
 #if defined(ENABLE_CONFIGURATION_POLICY)
   // Must be destroyed after |local_state_|.
   scoped_ptr<policy::BrowserPolicyConnector> browser_policy_connector_;
-#endif
-
+#else
   // Must be destroyed after |local_state_|.
   // This is a stub when policy is not enabled. Otherwise, the PolicyService
   // is owned by the |browser_policy_connector_| and this is not used.
   scoped_ptr<policy::PolicyService> policy_service_;
+#endif
 
   bool created_profile_manager_;
   scoped_ptr<ProfileManager> profile_manager_;
@@ -186,6 +191,7 @@ class BrowserProcessImpl : public BrowserProcess,
 
   scoped_ptr<GpuModeManager> gpu_mode_manager_;
 
+  scoped_ptr<extensions::ExtensionsBrowserClient> extensions_browser_client_;
   scoped_refptr<extensions::EventRouterForwarder>
       extension_event_router_forwarder_;
 
@@ -197,8 +203,6 @@ class BrowserProcessImpl : public BrowserProcess,
 #endif
 
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
-  scoped_ptr<StorageMonitor> storage_monitor_;
-
   scoped_ptr<MediaFileSystemRegistry> media_file_system_registry_;
 #endif
 
@@ -233,13 +237,6 @@ class BrowserProcessImpl : public BrowserProcess,
   scoped_ptr<printing::PrintJobManager> print_job_manager_;
 
   std::string locale_;
-
-  bool checked_for_new_frames_;
-  bool using_new_frames_;
-
-  // This service just sits around and makes snapshots for renderers. It does
-  // nothing in the constructor so we don't have to worry about lazy init.
-  scoped_ptr<RenderWidgetSnapshotTaker> render_widget_snapshot_taker_;
 
   // Download status updates (like a changing application icon on dock/taskbar)
   // are global per-application. DownloadStatusUpdater does no work in the ctor
@@ -280,9 +277,10 @@ class BrowserProcessImpl : public BrowserProcess,
   // component updater is normally not used under ChromeOS due
   // to concerns over integrity of data shared between profiles,
   // but some users of component updater only install per-user.
-  scoped_ptr<ComponentUpdateService> component_updater_;
+  scoped_ptr<component_updater::ComponentUpdateService> component_updater_;
   scoped_refptr<CRLSetFetcher> crl_set_fetcher_;
-  scoped_ptr<PnaclComponentInstaller> pnacl_component_installer_;
+  scoped_ptr<component_updater::PnaclComponentInstaller>
+      pnacl_component_installer_;
 
 #if defined(ENABLE_PLUGIN_INSTALLATION)
   scoped_refptr<PluginsResourceService> plugins_resource_service_;

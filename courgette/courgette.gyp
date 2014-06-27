@@ -121,7 +121,8 @@
       'conditions': [
         [ 'os_posix == 1 and OS != "mac" and OS != "android" and OS != "ios"', {
           'conditions': [
-            ['linux_use_tcmalloc==1', {
+            # TODO(dmikurube): Kill linux_use_tcmalloc. http://crbug.com/345554
+            ['(use_allocator!="none" and use_allocator!="see_use_tcmalloc") or (use_allocator=="see_use_tcmalloc" and linux_use_tcmalloc==1)', {
               'dependencies': [
                 '../base/allocator/allocator.gyp:allocator',
               ],
@@ -176,7 +177,7 @@
           'target_name': 'courgette_lib64',
           'type': 'static_library',
           'dependencies': [
-            '../base/base.gyp:base_nacl_win64',
+            '../base/base.gyp:base_win64',
             '../third_party/lzma_sdk/lzma_sdk.gyp:lzma_sdk64',
           ],
           'sources': [
@@ -196,7 +197,7 @@
           ],
           'dependencies': [
             'courgette_lib64',
-            '../base/base.gyp:base_nacl_win64',
+            '../base/base.gyp:base_win64',
           ],
           'configurations': {
             'Common_Base': {

@@ -39,7 +39,6 @@ class TestBufferedSpdyVisitor : public BufferedSpdyFramerVisitorInterface {
   virtual void OnSynStream(SpdyStreamId stream_id,
                            SpdyStreamId associated_stream_id,
                            SpdyPriority priority,
-                           uint8 credential_slot,
                            bool fin,
                            bool unidirectional,
                            const SpdyHeaderBlock& headers) OVERRIDE {
@@ -67,6 +66,12 @@ class TestBufferedSpdyVisitor : public BufferedSpdyFramerVisitorInterface {
     headers_ = headers;
   }
 
+  virtual void OnDataFrameHeader(SpdyStreamId stream_id,
+                                 size_t length,
+                                 bool fin) OVERRIDE {
+    ADD_FAILURE() << "Unexpected OnDataFrameHeader call.";
+  }
+
   virtual void OnStreamFrameData(SpdyStreamId stream_id,
                                  const char* data,
                                  size_t len,
@@ -82,7 +87,7 @@ class TestBufferedSpdyVisitor : public BufferedSpdyFramerVisitorInterface {
     setting_count_++;
   }
 
-  virtual void OnPing(uint32 unique_id) OVERRIDE {}
+  virtual void OnPing(SpdyPingId unique_id, bool is_ack) OVERRIDE {}
 
   virtual void OnRstStream(SpdyStreamId stream_id,
                            SpdyRstStreamStatus status) OVERRIDE {
@@ -193,13 +198,10 @@ INSTANTIATE_TEST_CASE_P(
 
 TEST_P(BufferedSpdyFramerTest, OnSetting) {
   SpdyFramer framer(spdy_version());
-  SettingsMap settings;
-  settings[SETTINGS_UPLOAD_BANDWIDTH] =
-      SettingsFlagsAndValue(SETTINGS_FLAG_NONE, 0x00000002);
-  settings[SETTINGS_DOWNLOAD_BANDWIDTH] =
-      SettingsFlagsAndValue(SETTINGS_FLAG_NONE, 0x00000003);
-
-  scoped_ptr<SpdyFrame> control_frame(framer.CreateSettings(settings));
+  SpdySettingsIR settings_ir;
+  settings_ir.AddSetting(SETTINGS_UPLOAD_BANDWIDTH, false, false, 0x00000002);
+  settings_ir.AddSetting(SETTINGS_DOWNLOAD_BANDWIDTH, false, false, 0x00000003);
+  scoped_ptr<SpdyFrame> control_frame(framer.SerializeSettings(settings_ir));
   TestBufferedSpdyVisitor visitor(spdy_version());
 
   visitor.SimulateInFramer(
@@ -218,9 +220,7 @@ TEST_P(BufferedSpdyFramerTest, ReadSynStreamHeaderBlock) {
       framer.CreateSynStream(1,                        // stream_id
                              0,                        // associated_stream_id
                              1,                        // priority
-                             0,                        // credential_slot
                              CONTROL_FLAG_NONE,
-                             true,                     // compress
                              &headers));
   EXPECT_TRUE(control_frame.get() != NULL);
 
@@ -243,7 +243,6 @@ TEST_P(BufferedSpdyFramerTest, ReadSynReplyHeaderBlock) {
   scoped_ptr<SpdyFrame> control_frame(
       framer.CreateSynReply(1,                        // stream_id
                             CONTROL_FLAG_NONE,
-                            true,                     // compress
                             &headers));
   EXPECT_TRUE(control_frame.get() != NULL);
 
@@ -253,8 +252,13 @@ TEST_P(BufferedSpdyFramerTest, ReadSynReplyHeaderBlock) {
       control_frame.get()->size());
   EXPECT_EQ(0, visitor.error_count_);
   EXPECT_EQ(0, visitor.syn_frame_count_);
-  EXPECT_EQ(1, visitor.syn_reply_frame_count_);
-  EXPECT_EQ(0, visitor.headers_frame_count_);
+  if(spdy_version() < SPDY4) {
+    EXPECT_EQ(1, visitor.syn_reply_frame_count_);
+    EXPECT_EQ(0, visitor.headers_frame_count_);
+  } else {
+    EXPECT_EQ(0, visitor.syn_reply_frame_count_);
+    EXPECT_EQ(1, visitor.headers_frame_count_);
+  }
   EXPECT_TRUE(CompareHeaderBlocks(&headers, &visitor.headers_));
 }
 
@@ -266,7 +270,6 @@ TEST_P(BufferedSpdyFramerTest, ReadHeadersHeaderBlock) {
   scoped_ptr<SpdyFrame> control_frame(
       framer.CreateHeaders(1,                        // stream_id
                            CONTROL_FLAG_NONE,
-                           true,                    // compress
                            &headers));
   EXPECT_TRUE(control_frame.get() != NULL);
 

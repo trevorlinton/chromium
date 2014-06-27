@@ -12,7 +12,6 @@
 #include "base/observer_list.h"
 #include "chromeos/chromeos_export.h"
 #include "chromeos/dbus/bluetooth_adapter_client.h"
-#include "chromeos/dbus/dbus_client_implementation_type.h"
 #include "dbus/object_path.h"
 #include "dbus/property.h"
 
@@ -57,6 +56,9 @@ class CHROMEOS_EXPORT FakeBluetoothAdapterClient
                             const base::Closure& callback,
                             const ErrorCallback& error_callback) OVERRIDE;
 
+  // Sets the current simulation timeout interval.
+  void SetSimulationIntervalMs(int interval_ms);
+
   // Mark the adapter and second adapter as visible or invisible.
   void SetVisible(bool visible);
   void SetSecondVisible(bool visible);
@@ -74,6 +76,10 @@ class CHROMEOS_EXPORT FakeBluetoothAdapterClient
   // Property callback passed when we create Properties* structures.
   void OnPropertyChanged(const std::string& property_name);
 
+  // Posts the delayed task represented by |callback| onto the current
+  // message loop to be executed after |simulation_interval_ms_| milliseconds.
+  void PostDelayedTask(const base::Closure& callback);
+
   // List of observers interested in event notifications from us.
   ObserverList<Observer> observers_;
 
@@ -87,6 +93,9 @@ class CHROMEOS_EXPORT FakeBluetoothAdapterClient
 
   // Number of times we've been asked to discover.
   int discovering_count_;
+
+  // Current timeout interval used when posting delayed tasks.
+  int simulation_interval_ms_;
 };
 
 }  // namespace chromeos

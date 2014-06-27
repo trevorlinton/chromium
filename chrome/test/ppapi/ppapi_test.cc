@@ -6,19 +6,15 @@
 
 #include "base/command_line.h"
 #include "base/file_util.h"
-#include "base/logging.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/test/test_timeouts.h"
-#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/content_settings/host_content_settings_map.h"
 #include "chrome/browser/infobars/confirm_infobar_delegate.h"
 #include "chrome/browser/infobars/infobar.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
@@ -26,12 +22,7 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/dom_operation_notification_details.h"
 #include "content/public/browser/notification_service.h"
-#include "content/public/browser/notification_types.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/content_paths.h"
-#include "content/public/common/content_switches.h"
-#include "content/public/test/browser_test_utils.h"
-#include "content/public/test/test_renderer_host.h"
 #include "net/base/net_util.h"
 #include "net/base/test_data_directory.h"
 #include "ppapi/shared_impl/ppapi_switches.h"
@@ -51,6 +42,13 @@ const char library_name[] = "ppapi_tests.plugin";
 const char library_name[] = "libppapi_tests.so";
 #endif
 
+void AddPrivateSwitches(base::CommandLine* command_line) {
+  // For TestRequestOSFileHandle.
+  command_line->AppendSwitch(switches::kUnlimitedStorage);
+  command_line->AppendSwitchASCII(switches::kAllowNaClFileHandleAPI,
+                                  "127.0.0.1");
+}
+
 }  // namespace
 
 PPAPITestMessageHandler::PPAPITestMessageHandler() {
@@ -58,14 +56,12 @@ PPAPITestMessageHandler::PPAPITestMessageHandler() {
 
 TestMessageHandler::MessageResponse PPAPITestMessageHandler::HandleMessage(
     const std::string& json) {
- std::string trimmed;
- TrimString(json, "\"", &trimmed);
- if (trimmed == "...") {
-   return CONTINUE;
- } else {
-   message_ = trimmed;
-   return DONE;
- }
+  std::string trimmed;
+  base::TrimString(json, "\"", &trimmed);
+  if (trimmed == "...")
+    return CONTINUE;
+  message_ = trimmed;
+  return DONE;
 }
 
 void PPAPITestMessageHandler::Reset() {
@@ -73,13 +69,23 @@ void PPAPITestMessageHandler::Reset() {
   message_.clear();
 }
 
-PPAPITestBase::InfoBarObserver::InfoBarObserver() {
+PPAPITestBase::InfoBarObserver::InfoBarObserver(PPAPITestBase* test_base)
+    : test_base_(test_base),
+      expecting_infobar_(false),
+      should_accept_(false) {
   registrar_.Add(this, chrome::NOTIFICATION_TAB_CONTENTS_INFOBAR_ADDED,
                  content::NotificationService::AllSources());
 }
 
 PPAPITestBase::InfoBarObserver::~InfoBarObserver() {
-  EXPECT_EQ(0u, expected_infobars_.size()) << "Missing an expected infobar";
+  EXPECT_FALSE(expecting_infobar_) << "Missing an expected infobar";
+}
+
+void PPAPITestBase::InfoBarObserver::ExpectInfoBarAndAccept(
+    bool should_accept) {
+  ASSERT_FALSE(expecting_infobar_);
+  expecting_infobar_ = true;
+  should_accept_ = should_accept;
 }
 
 void PPAPITestBase::InfoBarObserver::Observe(
@@ -87,31 +93,48 @@ void PPAPITestBase::InfoBarObserver::Observe(
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
   ASSERT_EQ(chrome::NOTIFICATION_TAB_CONTENTS_INFOBAR_ADDED, type);
-  InfoBarDelegate* infobar =
-      content::Details<InfoBarAddedDetails>(details).ptr();
-  ConfirmInfoBarDelegate* confirm_infobar_delegate =
-      infobar->AsConfirmInfoBarDelegate();
-  ASSERT_TRUE(confirm_infobar_delegate);
-
-  ASSERT_FALSE(expected_infobars_.empty()) << "Unexpected infobar";
-  if (expected_infobars_.front())
-    confirm_infobar_delegate->Accept();
-  else
-    confirm_infobar_delegate->Cancel();
-  expected_infobars_.pop_front();
-
-  // TODO(bauerb): We should close the infobar.
+  // It's not safe to remove the infobar here, since other observers (e.g. the
+  // InfoBarContainer) may still need to access it.  Instead, post a task to
+  // do all necessary infobar manipulation as soon as this call stack returns.
+  base::MessageLoop::current()->PostTask(
+      FROM_HERE, base::Bind(&InfoBarObserver::VerifyInfoBarState,
+                            base::Unretained(this)));
 }
 
-void PPAPITestBase::InfoBarObserver::ExpectInfoBarAndAccept(
-    bool should_accept) {
-  expected_infobars_.push_back(should_accept);
+void PPAPITestBase::InfoBarObserver::VerifyInfoBarState() {
+  content::WebContents* web_contents =
+      test_base_->browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_TRUE(web_contents != NULL);
+  InfoBarService* infobar_service =
+      InfoBarService::FromWebContents(web_contents);
+  ASSERT_TRUE(infobar_service != NULL);
+
+  EXPECT_EQ(expecting_infobar_ ? 1U : 0U, infobar_service->infobar_count());
+  if (!expecting_infobar_)
+    return;
+  expecting_infobar_ = false;
+
+  InfoBar* infobar = infobar_service->infobar_at(0);
+  ConfirmInfoBarDelegate* delegate =
+      infobar->delegate()->AsConfirmInfoBarDelegate();
+  ASSERT_TRUE(delegate != NULL);
+  if (should_accept_)
+    delegate->Accept();
+  else
+    delegate->Cancel();
+
+  infobar_service->RemoveInfoBar(infobar);
 }
 
 PPAPITestBase::PPAPITestBase() {
 }
 
-void PPAPITestBase::SetUpCommandLine(CommandLine* command_line) {
+void PPAPITestBase::SetUp() {
+  EnablePixelOutput();
+  InProcessBrowserTest::SetUp();
+}
+
+void PPAPITestBase::SetUpCommandLine(base::CommandLine* command_line) {
   // The test sends us the result via a cookie.
   command_line->AppendSwitch(switches::kEnableFileCookies);
 
@@ -121,11 +144,6 @@ void PPAPITestBase::SetUpCommandLine(CommandLine* command_line) {
 
   // Smooth scrolling confuses the scrollbar test.
   command_line->AppendSwitch(switches::kDisableSmoothScrolling);
-
-  // For TestRequestOSFileHandle.
-  command_line->AppendSwitch(switches::kUnlimitedStorage);
-  command_line->AppendSwitchASCII(switches::kAllowNaClFileHandleAPI,
-                                  "127.0.0.1");
 }
 
 void PPAPITestBase::SetUpOnMainThread() {
@@ -246,7 +264,8 @@ std::string PPAPITestBase::StripPrefixes(const std::string& test_name) {
 void PPAPITestBase::RunTestURL(const GURL& test_url) {
 #if defined(OS_WIN) && defined(USE_ASH)
   // PPAPITests are broken in Ash browser tests (http://crbug.com/263548).
-  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kAshBrowserTests)) {
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kAshBrowserTests)) {
     LOG(WARNING) << "PPAPITests are disabled for Ash browser tests.";
     return;
   }
@@ -259,7 +278,7 @@ void PPAPITestBase::RunTestURL(const GURL& test_url) {
   // "PASS" or "FAIL"). This keeps us from timing out on waits for long tests.
   PPAPITestMessageHandler handler;
   JavascriptTestObserver observer(
-      browser()->tab_strip_model()->GetActiveWebContents()->GetRenderViewHost(),
+      browser()->tab_strip_model()->GetActiveWebContents(),
       &handler);
 
   ui_test_utils::NavigateToURL(browser(), test_url);
@@ -282,7 +301,7 @@ GURL PPAPITestBase::GetTestURL(
 PPAPITest::PPAPITest() : in_process_(true) {
 }
 
-void PPAPITest::SetUpCommandLine(CommandLine* command_line) {
+void PPAPITest::SetUpCommandLine(base::CommandLine* command_line) {
   PPAPITestBase::SetUpCommandLine(command_line);
 
   // Append the switch to register the pepper plugin.
@@ -308,28 +327,87 @@ std::string PPAPITest::BuildQuery(const std::string& base,
   return base::StringPrintf("%stestcase=%s", base.c_str(), test_case.c_str());
 }
 
+void PPAPIPrivateTest::SetUpCommandLine(base::CommandLine* command_line) {
+  PPAPITest::SetUpCommandLine(command_line);
+  AddPrivateSwitches(command_line);
+}
+
 OutOfProcessPPAPITest::OutOfProcessPPAPITest() {
   in_process_ = false;
 }
 
-void OutOfProcessPPAPITest::SetUpCommandLine(CommandLine* command_line) {
+void OutOfProcessPPAPITest::SetUpCommandLine(base::CommandLine* command_line) {
   PPAPITest::SetUpCommandLine(command_line);
   command_line->AppendSwitch(switches::kUseFakeDeviceForMediaStream);
   command_line->AppendSwitch(switches::kUseFakeUIForMediaStream);
 }
 
-void PPAPINaClTest::SetUpCommandLine(CommandLine* command_line) {
-  PPAPITestBase::SetUpCommandLine(command_line);
+void OutOfProcessPPAPIPrivateTest::SetUpCommandLine(
+    base::CommandLine* command_line) {
+  OutOfProcessPPAPITest::SetUpCommandLine(command_line);
+  AddPrivateSwitches(command_line);
+}
 
-  base::FilePath plugin_lib;
-  EXPECT_TRUE(PathService::Get(chrome::FILE_NACL_PLUGIN, &plugin_lib));
-  EXPECT_TRUE(base::PathExists(plugin_lib));
+void PPAPINaClTest::SetUpCommandLine(base::CommandLine* command_line) {
+#if !defined(DISABLE_NACL)
+  PPAPITestBase::SetUpCommandLine(command_line);
 
   // Enable running (non-portable) NaCl outside of the Chrome web store.
   command_line->AppendSwitch(switches::kEnableNaCl);
   command_line->AppendSwitchASCII(switches::kAllowNaClSocketAPI, "127.0.0.1");
   command_line->AppendSwitch(switches::kUseFakeDeviceForMediaStream);
   command_line->AppendSwitch(switches::kUseFakeUIForMediaStream);
+#endif
+}
+
+void PPAPINaClTest::SetUpOnMainThread() {
+  base::FilePath plugin_lib;
+  EXPECT_TRUE(PathService::Get(chrome::FILE_NACL_PLUGIN, &plugin_lib));
+  EXPECT_TRUE(base::PathExists(plugin_lib));
+}
+
+void PPAPINaClTest::RunTest(const std::string& test_case) {
+#if !defined(DISABLE_NACL)
+  PPAPITestBase::RunTest(test_case);
+#endif
+}
+
+void PPAPINaClTest::RunTestAndReload(const std::string& test_case) {
+#if !defined(DISABLE_NACL)
+  PPAPITestBase::RunTestAndReload(test_case);
+#endif
+}
+
+void PPAPINaClTest::RunTestViaHTTP(const std::string& test_case) {
+#if !defined(DISABLE_NACL)
+  PPAPITestBase::RunTestViaHTTP(test_case);
+#endif
+}
+
+void PPAPINaClTest::RunTestWithSSLServer(const std::string& test_case) {
+#if !defined(DISABLE_NACL)
+  PPAPITestBase::RunTestWithSSLServer(test_case);
+#endif
+}
+
+void PPAPINaClTest::RunTestWithWebSocketServer(const std::string& test_case) {
+#if !defined(DISABLE_NACL)
+  PPAPITestBase::RunTestWithWebSocketServer(test_case);
+#endif
+}
+
+void PPAPINaClTest::RunTestIfAudioOutputAvailable(
+    const std::string& test_case) {
+#if !defined(DISABLE_NACL)
+  PPAPITestBase::RunTestIfAudioOutputAvailable(test_case);
+#endif
+}
+
+void PPAPINaClTest::RunTestViaHTTPIfAudioOutputAvailable(
+    const std::string& test_case) {
+#if !defined(DISABLE_NACL)
+  PPAPITestBase::RunTestViaHTTPIfAudioOutputAvailable(test_case);
+#endif
 }
 
 // Append the correct mode and testcase string
@@ -339,11 +417,23 @@ std::string PPAPINaClNewlibTest::BuildQuery(const std::string& base,
                             test_case.c_str());
 }
 
+void PPAPIPrivateNaClNewlibTest::SetUpCommandLine(
+    base::CommandLine* command_line) {
+  PPAPINaClNewlibTest::SetUpCommandLine(command_line);
+  AddPrivateSwitches(command_line);
+}
+
 // Append the correct mode and testcase string
 std::string PPAPINaClGLibcTest::BuildQuery(const std::string& base,
                                            const std::string& test_case) {
   return base::StringPrintf("%smode=nacl_glibc&testcase=%s", base.c_str(),
                             test_case.c_str());
+}
+
+void PPAPIPrivateNaClGLibcTest::SetUpCommandLine(
+    base::CommandLine* command_line) {
+  PPAPINaClGLibcTest::SetUpCommandLine(command_line);
+  AddPrivateSwitches(command_line);
 }
 
 // Append the correct mode and testcase string
@@ -353,13 +443,15 @@ std::string PPAPINaClPNaClTest::BuildQuery(const std::string& base,
                             test_case.c_str());
 }
 
-void PPAPINaClTestDisallowedSockets::SetUpCommandLine(
-    CommandLine* command_line) {
-  PPAPITestBase::SetUpCommandLine(command_line);
+void PPAPIPrivateNaClPNaClTest::SetUpCommandLine(
+    base::CommandLine* command_line) {
+  PPAPINaClPNaClTest::SetUpCommandLine(command_line);
+  AddPrivateSwitches(command_line);
+}
 
-  base::FilePath plugin_lib;
-  EXPECT_TRUE(PathService::Get(chrome::FILE_NACL_PLUGIN, &plugin_lib));
-  EXPECT_TRUE(base::PathExists(plugin_lib));
+void PPAPINaClTestDisallowedSockets::SetUpCommandLine(
+    base::CommandLine* command_line) {
+  PPAPITestBase::SetUpCommandLine(command_line);
 
   // Enable running (non-portable) NaCl outside of the Chrome web store.
   command_line->AppendSwitch(switches::kEnableNaCl);
@@ -376,4 +468,8 @@ std::string PPAPINaClTestDisallowedSockets::BuildQuery(
 void PPAPIBrokerInfoBarTest::SetUpOnMainThread() {
   // The default content setting for the PPAPI broker is ASK. We purposefully
   // don't call PPAPITestBase::SetUpOnMainThread() to keep it that way.
+
+  base::FilePath plugin_lib;
+  EXPECT_TRUE(PathService::Get(chrome::FILE_NACL_PLUGIN, &plugin_lib));
+  EXPECT_TRUE(base::PathExists(plugin_lib));
 }

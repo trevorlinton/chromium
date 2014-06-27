@@ -6,6 +6,7 @@
 
 #include "ash/shell.h"
 #include "base/command_line.h"
+#include "base/debug/leak_annotations.h"
 #include "base/i18n/rtl.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/themes/theme_service.h"
@@ -23,19 +24,16 @@
 #include "chrome/browser/ui/views/frame/top_container_view.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/common/chrome_switches.h"
-#include "ui/aura/root_window.h"
+#include "chrome/common/pref_names.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/hit_test.h"
 #include "ui/base/theme_provider.h"
-#include "ui/gfx/font.h"
+#include "ui/events/event_handler.h"
+#include "ui/gfx/font_list.h"
 #include "ui/gfx/screen.h"
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/widget/native_widget.h"
-
-#if defined(OS_WIN) && !defined(USE_AURA)
-#include "chrome/browser/ui/views/frame/glass_browser_frame_view.h"
-#include "ui/views/widget/native_widget_win.h"
-#endif
 
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
 #include "chrome/browser/shell_integration_linux.h"
@@ -47,6 +45,10 @@
 
 #if defined(OS_CHROMEOS)
 #include "ash/session_state_delegate.h"
+#endif
+
+#if defined(USE_X11)
+#include "chrome/browser/ui/views/frame/browser_command_handler_x11.h"
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -63,23 +65,32 @@ BrowserFrame::BrowserFrame(BrowserView* browser_view)
   set_is_secondary_widget(false);
   // Don't focus anything on creation, selecting a tab will set the focus.
   set_focus_on_creation(false);
+
+#if defined(USE_X11)
+  browser_command_handler_.reset(
+      new BrowserCommandHandlerX11(browser_view_->browser()));
+#endif
 }
 
 BrowserFrame::~BrowserFrame() {
+  if (browser_command_handler_ && GetNativeView())
+    GetNativeView()->RemovePreTargetHandler(browser_command_handler_.get());
 }
 
 // static
-const gfx::Font& BrowserFrame::GetTitleFont() {
-#if !defined(OS_WIN) || defined(USE_AURA)
-  static gfx::Font* title_font = new gfx::Font;
-#else
-  static gfx::Font* title_font =
-      new gfx::Font(views::NativeWidgetWin::GetWindowTitleFont());
-#endif
-  return *title_font;
+const gfx::FontList& BrowserFrame::GetTitleFontList() {
+  static const gfx::FontList* title_font_list = new gfx::FontList();
+  ANNOTATE_LEAKING_OBJECT_PTR(title_font_list);
+  return *title_font_list;
 }
 
 void BrowserFrame::InitBrowserFrame() {
+  use_custom_frame_pref_.Init(
+      prefs::kUseCustomChromeFrame,
+      browser_view_->browser()->profile()->GetPrefs(),
+      base::Bind(&BrowserFrame::OnUseCustomChromeFrameChanged,
+                 base::Unretained(this)));
+
   native_browser_frame_ =
       NativeBrowserFrameFactory::CreateNativeBrowserFrame(this, browser_view_);
   views::Widget::InitParams params;
@@ -113,7 +124,7 @@ void BrowserFrame::InitBrowserFrame() {
   params.wm_class_name = params.wm_class_class;
   if (browser.is_app() && !browser.is_devtools()) {
     // This window is a hosted app or v1 packaged app.
-    // NOTE: v2 packaged app windows are created by NativeAppWindowViews.
+    // NOTE: v2 packaged app windows are created by ChromeNativeAppWindowViews.
     params.wm_class_name = web_app::GetWMClassFromAppName(browser.app_name());
   } else if (command_line.HasSwitch(switches::kUserDataDir)) {
     // Set the class name to e.g. "Chrome (/tmp/my-user-data)".  The
@@ -124,6 +135,14 @@ void BrowserFrame::InitBrowserFrame() {
         command_line.GetSwitchValueNative(switches::kUserDataDir);
     params.wm_class_name += " (" + user_data_dir + ")";
   }
+  const char kX11WindowRoleBrowser[] = "browser";
+  const char kX11WindowRolePopup[] = "pop-up";
+  params.wm_role_name = browser_view_->browser()->is_type_tabbed() ?
+      std::string(kX11WindowRoleBrowser) : std::string(kX11WindowRolePopup);
+
+  params.remove_standard_frame = UseCustomFrame();
+  set_frame_type(UseCustomFrame() ? Widget::FRAME_TYPE_FORCE_CUSTOM
+                                  : Widget::FRAME_TYPE_FORCE_NATIVE);
 #endif  // defined(OS_LINUX)
 
   Init(params);
@@ -132,6 +151,9 @@ void BrowserFrame::InitBrowserFrame() {
     DCHECK(non_client_view());
     non_client_view()->set_context_menu_controller(this);
   }
+
+  if (browser_command_handler_)
+    GetNativeWindow()->AddPreTargetHandler(browser_command_handler_.get());
 }
 
 void BrowserFrame::SetThemeProvider(scoped_ptr<ui::ThemeProvider> provider) {
@@ -147,9 +169,8 @@ gfx::Rect BrowserFrame::GetBoundsForTabStrip(views::View* tabstrip) const {
   return browser_frame_view_->GetBoundsForTabStrip(tabstrip);
 }
 
-BrowserNonClientFrameView::TabStripInsets BrowserFrame::GetTabStripInsets(
-    bool force_restored) const {
-  return browser_frame_view_->GetTabStripInsets(force_restored);
+int BrowserFrame::GetTopInset() const {
+  return browser_frame_view_->GetTopInset();
 }
 
 int BrowserFrame::GetThemeBackgroundXInset() const {
@@ -164,13 +185,8 @@ views::View* BrowserFrame::GetFrameView() const {
   return browser_frame_view_;
 }
 
-void BrowserFrame::TabStripDisplayModeChanged() {
-  if (GetRootView()->has_children()) {
-    // Make sure the child of the root view gets Layout again.
-    GetRootView()->child_at(0)->InvalidateLayout();
-  }
-  GetRootView()->Layout();
-  native_browser_frame_->TabStripDisplayModeChanged();
+bool BrowserFrame::UseCustomFrame() const {
+  return use_custom_frame_pref_.GetValue();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -214,10 +230,10 @@ void BrowserFrame::OnNativeWidgetActivationChanged(bool active) {
   if (active) {
     // When running under remote desktop, if the remote desktop client is not
     // active on the users desktop, then none of the windows contained in the
-    // remote desktop will be activated.  However, NativeWidgetWin::Activate()
-    // will still bring this browser window to the foreground.  We explicitly
-    // set ourselves as the last active browser window to ensure that we get
-    // treated as such by the rest of Chrome.
+    // remote desktop will be activated.  However, NativeWidget::Activate() will
+    // still bring this browser window to the foreground.  We explicitly set
+    // ourselves as the last active browser window to ensure that we get treated
+    // as such by the rest of Chrome.
     BrowserList::SetLastActive(browser_view_->browser());
   }
   Widget::OnNativeWidgetActivationChanged(active);
@@ -280,3 +296,10 @@ bool BrowserFrame::ShouldLeaveOffsetNearTopBorder() {
   return !IsMaximized();
 }
 #endif  // OS_WIN
+
+void BrowserFrame::OnUseCustomChromeFrameChanged() {
+  // Tell the window manager to add or remove system borders.
+  set_frame_type(UseCustomFrame() ? Widget::FRAME_TYPE_FORCE_CUSTOM
+                                  : Widget::FRAME_TYPE_FORCE_NATIVE);
+  FrameTypeChanged();
+}

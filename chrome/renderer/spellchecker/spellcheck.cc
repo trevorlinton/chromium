@@ -21,9 +21,9 @@
 #include "third_party/WebKit/public/web/WebTextDecorationType.h"
 #include "third_party/WebKit/public/web/WebView.h"
 
-using WebKit::WebVector;
-using WebKit::WebTextCheckingResult;
-using WebKit::WebTextDecorationType;
+using blink::WebVector;
+using blink::WebTextCheckingResult;
+using blink::WebTextDecorationType;
 
 namespace {
 
@@ -71,21 +71,21 @@ bool DocumentMarkersCollector::Visit(content::RenderView* render_view) {
 
 class SpellCheck::SpellcheckRequest {
  public:
-  SpellcheckRequest(const string16& text,
-                    WebKit::WebTextCheckingCompletion* completion)
+  SpellcheckRequest(const base::string16& text,
+                    blink::WebTextCheckingCompletion* completion)
       : text_(text), completion_(completion) {
     DCHECK(completion);
   }
   ~SpellcheckRequest() {}
 
-  string16 text() { return text_; }
-  WebKit::WebTextCheckingCompletion* completion() { return completion_; }
+  base::string16 text() { return text_; }
+  blink::WebTextCheckingCompletion* completion() { return completion_; }
 
  private:
-  string16 text_;  // Text to be checked in this task.
+  base::string16 text_;  // Text to be checked in this task.
 
   // The interface to send the misspelled ranges to WebKit.
-  WebKit::WebTextCheckingCompletion* completion_;
+  blink::WebTextCheckingCompletion* completion_;
 
   DISALLOW_COPY_AND_ASSIGN(SpellcheckRequest);
 };
@@ -134,7 +134,7 @@ void SpellCheck::OnInit(IPC::PlatformFileForTransit bdict_file,
                         const std::set<std::string>& custom_words,
                         const std::string& language,
                         bool auto_spell_correct) {
-  Init(IPC::PlatformFileForTransitToPlatformFile(bdict_file),
+  Init(IPC::PlatformFileForTransitToFile(bdict_file),
        custom_words, language);
   auto_spell_correct_turned_on_ = auto_spell_correct;
 #if !defined(OS_MACOSX)
@@ -167,20 +167,20 @@ void SpellCheck::OnRequestDocumentMarkers() {
 
 // TODO(groby): Make sure we always have a spelling engine, even before Init()
 // is called.
-void SpellCheck::Init(base::PlatformFile file,
+void SpellCheck::Init(base::File file,
                       const std::set<std::string>& custom_words,
                       const std::string& language) {
-  spellcheck_.Init(file, language);
+  spellcheck_.Init(file.Pass(), language);
   custom_dictionary_.Init(custom_words);
 }
 
 bool SpellCheck::SpellCheckWord(
-    const char16* in_word,
+    const base::char16* in_word,
     int in_word_len,
     int tag,
     int* misspelling_start,
     int* misspelling_len,
-    std::vector<string16>* optional_suggestions) {
+    std::vector<base::string16>* optional_suggestions) {
   DCHECK(in_word_len >= 0);
   DCHECK(misspelling_start && misspelling_len) << "Out vars must be given.";
 
@@ -196,7 +196,7 @@ bool SpellCheck::SpellCheckWord(
 }
 
 bool SpellCheck::SpellCheckParagraph(
-    const string16& text,
+    const base::string16& text,
     WebVector<WebTextCheckingResult>* results) {
 #if !defined(OS_MACOSX)
   // Mac has its own spell checker, so this method will not be used.
@@ -225,9 +225,9 @@ bool SpellCheck::SpellCheckParagraph(
 
     if (!custom_dictionary_.SpellCheckWord(
             text, misspelling_start + offset, misspelling_length)) {
-      string16 replacement;
+      base::string16 replacement;
       textcheck_results.push_back(WebTextCheckingResult(
-          WebKit::WebTextDecorationTypeSpelling,
+          blink::WebTextDecorationTypeSpelling,
           misspelling_start + offset,
           misspelling_length,
           replacement));
@@ -244,8 +244,9 @@ bool SpellCheck::SpellCheckParagraph(
 #endif
 }
 
-string16 SpellCheck::GetAutoCorrectionWord(const string16& word, int tag) {
-  string16 autocorrect_word;
+base::string16 SpellCheck::GetAutoCorrectionWord(const base::string16& word,
+                                                 int tag) {
+  base::string16 autocorrect_word;
   if (!auto_spell_correct_turned_on_)
     return autocorrect_word;  // Return the empty string.
 
@@ -257,9 +258,9 @@ string16 SpellCheck::GetAutoCorrectionWord(const string16& word, int tag) {
   if (InitializeIfNeeded())
     return autocorrect_word;
 
-  char16 misspelled_word[
+  base::char16 misspelled_word[
       chrome::spellcheck_common::kMaxAutoCorrectWordSize + 1];
-  const char16* word_char = word.c_str();
+  const base::char16* word_char = word.c_str();
   for (int i = 0; i <= chrome::spellcheck_common::kMaxAutoCorrectWordSize;
        ++i) {
     if (i >= word_length)
@@ -298,8 +299,8 @@ string16 SpellCheck::GetAutoCorrectionWord(const string16& word, int tag) {
 
 #if !defined(OS_MACOSX)  // OSX uses its own spell checker
 void SpellCheck::RequestTextChecking(
-    const string16& text,
-    WebKit::WebTextCheckingCompletion* completion) {
+    const base::string16& text,
+    blink::WebTextCheckingCompletion* completion) {
   // Clean up the previous request before starting a new request.
   if (pending_request_param_.get())
     pending_request_param_->completion()->didCancelCheckingText();
@@ -337,7 +338,7 @@ void SpellCheck::PerformSpellCheck(SpellcheckRequest* param) {
   if (!spellcheck_.IsEnabled()) {
     param->completion()->didCancelCheckingText();
   } else {
-    WebVector<WebKit::WebTextCheckingResult> results;
+    WebVector<blink::WebTextCheckingResult> results;
     SpellCheckParagraph(param->text(), &results);
     param->completion()->didFinishCheckingText(results);
   }
@@ -347,13 +348,13 @@ void SpellCheck::PerformSpellCheck(SpellcheckRequest* param) {
 void SpellCheck::CreateTextCheckingResults(
     ResultFilter filter,
     int line_offset,
-    const string16& line_text,
+    const base::string16& line_text,
     const std::vector<SpellCheckResult>& spellcheck_results,
     WebVector<WebTextCheckingResult>* textcheck_results) {
   // Double-check misspelled words with our spellchecker and attach grammar
   // markers to them if our spellchecker tells they are correct words, i.e. they
   // are probably contextually-misspelled words.
-  const char16* text = line_text.c_str();
+  const base::char16* text = line_text.c_str();
   std::vector<WebTextCheckingResult> list;
   for (size_t i = 0; i < spellcheck_results.size(); ++i) {
     SpellCheckResult::Decoration decoration = spellcheck_results[i].decoration;

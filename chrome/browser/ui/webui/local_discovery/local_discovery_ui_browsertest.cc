@@ -10,19 +10,28 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "chrome/browser/local_discovery/test_service_discovery_client.h"
-#include "chrome/browser/signin/profile_oauth2_token_service.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_manager.h"
-#include "chrome/browser/signin/signin_manager_base.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/webui/local_discovery/local_discovery_ui_handler.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
-#include "chrome/test/base/ui_test_utils.cc"
+#include "chrome/test/base/ui_test_utils.h"
 #include "chrome/test/base/web_ui_browsertest.h"
+#include "components/signin/core/browser/profile_oauth2_token_service.h"
+#include "components/signin/core/browser/signin_manager_base.h"
+#include "google_apis/gaia/gaia_urls.h"
 #include "net/http/http_status_code.h"
 #include "net/url_request/test_url_fetcher_factory.h"
+#include "net/url_request/url_request_status.h"
 #include "net/url_request/url_request_test_util.h"
+
+#if defined(OS_CHROMEOS)
+#include "base/prefs/pref_service.h"
+#include "chrome/common/pref_names.h"
+#endif
 
 using testing::InvokeWithoutArgs;
 using testing::Return;
@@ -140,7 +149,7 @@ const uint8 kGoodbyePacket[] = {
   0x00, 0x00,               // ID is zeroed out
   0x80, 0x00,               // Standard query response, RA, no error
   0x00, 0x00,               // No questions (for simplicity)
-  0x00, 0x01,               // 1 RR (answers)
+  0x00, 0x02,               // 1 RR (answers)
   0x00, 0x00,               // 0 authority RRs
   0x00, 0x00,               // 0 additional RRs
 
@@ -155,6 +164,21 @@ const uint8 kGoodbyePacket[] = {
   0x00, 0x0c,        // RDLENGTH is 12 bytes.
   0x09, 'm', 'y', 'S', 'e', 'r', 'v', 'i', 'c', 'e',
   0xc0, 0x0c,
+
+
+  0x09, 'm', 'y', 'S', 'e', 'r', 'v', 'i', 'c', 'e',
+  0xc0, 0x0c,
+  0x00, 0x21,        // Type is SRV
+  0x00, 0x01,        // CLASS is IN
+  0x00, 0x00,        // TTL (4 bytes) is 0 seconds.
+  0x00, 0x00,
+  0x00, 0x17,        // RDLENGTH is 23
+  0x00, 0x00,
+  0x00, 0x00,
+  0x22, 0xb8,        // port 8888
+  0x09, 'm', 'y', 'S', 'e', 'r', 'v', 'i', 'c', 'e',
+  0x05, 'l', 'o', 'c', 'a', 'l',
+  0x00,
 };
 
 const uint8 kAnnouncePacketRegistered[] = {
@@ -226,6 +250,10 @@ const char kResponseGaiaToken[] = "{"
     "  \"token_type\": \"Bearer\""
     "}";
 
+const char kResponseGaiaId[] = "{"
+    "  \"id\": \"12345\""
+    "}";
+
 const char kURLInfo[] = "http://1.2.3.4:8888/privet/info";
 
 const char kURLRegisterStart[] =
@@ -294,10 +322,11 @@ class MockableFakeURLFetcherCreator {
       const GURL& url,
       net::URLFetcherDelegate* delegate,
       const std::string& response_data,
-      net::HttpStatusCode response_code) {
+      net::HttpStatusCode response_code,
+      net::URLRequestStatus::Status status) {
     OnCreateFakeURLFetcher(url.spec());
-    return scoped_ptr<net::FakeURLFetcher>(
-        new net::FakeURLFetcher(url, delegate, response_data, response_code));
+    return scoped_ptr<net::FakeURLFetcher>(new net::FakeURLFetcher(
+        url, delegate, response_data, response_code, status));
   }
 
   net::FakeURLFetcherFactory::FakeURLFetcherCreator callback() {
@@ -331,41 +360,63 @@ class LocalDiscoveryUITest : public WebUIBrowserTest {
     SigninManagerBase* signin_manager =
         SigninManagerFactory::GetForProfile(browser()->profile());
 
+#if defined(OS_CHROMEOS)
+    // Chrome OS initializes prefs::kGoogleServicesUsername to "stub user" so
+    // we need to override it as well.
+    browser()->profile()->GetPrefs()->
+        SetString(prefs::kGoogleServicesUsername, kSampleUser);
+#endif
     DCHECK(signin_manager);
     signin_manager->SetAuthenticatedUsername(kSampleUser);
 
     fake_fetcher_factory().SetFakeResponse(
         GURL(kURLInfo),
         kResponseInfo,
-        net::HTTP_OK);
+        net::HTTP_OK,
+        net::URLRequestStatus::SUCCESS);
 
     fake_fetcher_factory().SetFakeResponse(
         GURL(kURLRegisterStart),
         kResponseRegisterStart,
-        net::HTTP_OK);
+        net::HTTP_OK,
+        net::URLRequestStatus::SUCCESS);
 
     fake_fetcher_factory().SetFakeResponse(
         GURL(kURLRegisterClaimToken),
         kResponseRegisterClaimTokenNoConfirm,
-        net::HTTP_OK);
+        net::HTTP_OK,
+        net::URLRequestStatus::SUCCESS);
 
     fake_fetcher_factory().SetFakeResponse(
         GURL(kURLCloudPrintConfirm),
         kResponseCloudPrintConfirm,
-        net::HTTP_OK);
+        net::HTTP_OK,
+        net::URLRequestStatus::SUCCESS);
 
     fake_fetcher_factory().SetFakeResponse(
         GURL(kURLRegisterComplete),
         kResponseRegisterComplete,
-        net::HTTP_OK);
+        net::HTTP_OK,
+        net::URLRequestStatus::SUCCESS);
 
     fake_fetcher_factory().SetFakeResponse(
         GURL(kURLGaiaToken),
         kResponseGaiaToken,
-        net::HTTP_OK);
+        net::HTTP_OK,
+        net::URLRequestStatus::SUCCESS);
 
     EXPECT_CALL(fake_url_fetcher_creator(), OnCreateFakeURLFetcher(
         kURLGaiaToken))
+        .Times(AnyNumber());
+
+    fake_fetcher_factory().SetFakeResponse(
+        GaiaUrls::GetInstance()->oauth_user_info_url(),
+        kResponseGaiaId,
+        net::HTTP_OK,
+        net::URLRequestStatus::SUCCESS);
+
+    EXPECT_CALL(fake_url_fetcher_creator(), OnCreateFakeURLFetcher(
+        GaiaUrls::GetInstance()->oauth_user_info_url().spec()))
         .Times(AnyNumber());
 
     ProfileOAuth2TokenService* token_service =
@@ -482,12 +533,14 @@ IN_PROC_BROWSER_TEST_F(LocalDiscoveryUITest, RegisterTest) {
   fake_fetcher_factory().SetFakeResponse(
       GURL(kURLRegisterClaimToken),
       kResponseRegisterClaimTokenConfirm,
-      net::HTTP_OK);
+      net::HTTP_OK,
+      net::URLRequestStatus::SUCCESS);
 
   fake_fetcher_factory().SetFakeResponse(
       GURL(kURLInfo),
       kResponseInfoWithID,
-      net::HTTP_OK);
+      net::HTTP_OK,
+      net::URLRequestStatus::SUCCESS);
 
   {
     InSequence s;

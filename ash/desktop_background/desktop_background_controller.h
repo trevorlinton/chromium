@@ -14,16 +14,17 @@
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/timer/timer.h"
-#include "ui/aura/window.h"
 #include "ui/compositor/layer.h"
 #include "ui/gfx/image/image_skia.h"
 
 typedef unsigned int SkColor;
 
-class CommandLine;
-
 namespace aura {
-class RootWindow;
+class Window;
+}
+
+namespace base {
+class CommandLine;
 }
 
 namespace ash {
@@ -82,7 +83,7 @@ class ASH_EXPORT DesktopBackgroundController
     return desktop_background_mode_;
   }
 
-  void set_command_line_for_testing(CommandLine* command_line) {
+  void set_command_line_for_testing(base::CommandLine* command_line) {
     command_line_for_testing_ = command_line;
   }
 
@@ -97,7 +98,7 @@ class ASH_EXPORT DesktopBackgroundController
   WallpaperLayout GetWallpaperLayout() const;
 
   // Initialize root window's background.
-  void OnRootWindowAdded(aura::RootWindow* root_window);
+  void OnRootWindowAdded(aura::Window* root_window);
 
   // Loads builtin wallpaper asynchronously and sets to current wallpaper
   // after loaded. Returns true if the controller started loading the
@@ -109,15 +110,15 @@ class ASH_EXPORT DesktopBackgroundController
   // from file system or changed the layout of wallpaper.
   void SetCustomWallpaper(const gfx::ImageSkia& image, WallpaperLayout layout);
 
-  // Cancels the current wallpaper loading operation.
-  void CancelPendingWallpaperOperation();
+  // Cancels |default_wallpaper_loader_| if non-NULL.
+  void CancelDefaultWallpaperLoader();
 
   // Creates an empty wallpaper. Some tests require a wallpaper widget is ready
-  // when running. However, the wallpaper widgets are now created asynchronously
-  // . If loading a real wallpaper, there are cases that these tests crash
-  // because the required widget is not ready. This function synchronously
-  // creates an empty widget for those tests to prevent crashes. An example test
-  // is SystemGestureEventFilterTest.ThreeFingerSwipe.
+  // when running. However, the wallpaper widgets are now created
+  // asynchronously. If loading a real wallpaper, there are cases that these
+  // tests crash because the required widget is not ready. This function
+  // synchronously creates an empty widget for those tests to prevent
+  // crashes. An example test is SystemGestureEventFilterTest.ThreeFingerSwipe.
   void CreateEmptyWallpaper();
 
   // Returns the appropriate wallpaper resolution for all root windows.
@@ -160,7 +161,7 @@ class ASH_EXPORT DesktopBackgroundController
 
   // Creates and adds component for current mode (either Widget or Layer) to
   // |root_window|.
-  void InstallDesktopController(aura::RootWindow* root_window);
+  void InstallDesktopController(aura::Window* root_window);
 
   // Creates and adds component for current mode (either Widget or Layer) to
   // all root windows.
@@ -190,7 +191,7 @@ class ASH_EXPORT DesktopBackgroundController
   static gfx::Size GetMaxDisplaySizeInNative();
 
   // If non-NULL, used in place of the real command line.
-  CommandLine* command_line_for_testing_;
+  base::CommandLine* command_line_for_testing_;
 
   // Can change at runtime.
   bool locked_;
@@ -212,7 +213,8 @@ class ASH_EXPORT DesktopBackgroundController
 
   gfx::Size current_max_display_size_;
 
-  scoped_refptr<WallpaperLoader> wallpaper_loader_;
+  // Loads default wallpaper from disk.
+  scoped_refptr<WallpaperLoader> default_wallpaper_loader_;
 
   base::WeakPtrFactory<DesktopBackgroundController> weak_ptr_factory_;
 

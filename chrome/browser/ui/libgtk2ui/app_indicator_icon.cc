@@ -139,14 +139,13 @@ base::FilePath CreateTempImageFile(gfx::ImageSkia* image_ptr,
   // Create a new temporary directory for each image since using a single
   // temporary directory seems to have issues when changing icons in quick
   // succession.
-  if (!file_util::CreateNewTempDirectory("", &temp_dir))
+  if (!base::CreateNewTempDirectory(base::FilePath::StringType(), &temp_dir))
     return base::FilePath();
   new_file_path =
       temp_dir.Append(id + base::StringPrintf("_%d.png", icon_change_count));
   int bytes_written =
-      file_util::WriteFile(new_file_path,
-                           reinterpret_cast<const char*>(png_data->front()),
-                           png_data->size());
+      base::WriteFile(new_file_path,
+                      png_data->front_as<char>(), png_data->size());
 
   if (bytes_written != static_cast<int>(png_data->size()))
     return base::FilePath();
@@ -165,7 +164,7 @@ namespace libgtk2ui {
 
 AppIndicatorIcon::AppIndicatorIcon(std::string id,
                                    const gfx::ImageSkia& image,
-                                   const string16& tool_tip)
+                                   const base::string16& tool_tip)
     : id_(id),
       icon_(NULL),
       gtk_menu_(NULL),
@@ -174,7 +173,7 @@ AppIndicatorIcon::AppIndicatorIcon(std::string id,
       block_activation_(false),
       weak_factory_(this) {
   EnsureMethodsLoaded();
-  tool_tip_ = UTF16ToUTF8(tool_tip);
+  tool_tip_ = base::UTF16ToUTF8(tool_tip);
   SetImage(image);
 }
 AppIndicatorIcon::~AppIndicatorIcon() {
@@ -222,9 +221,9 @@ void AppIndicatorIcon::SetPressedImage(const gfx::ImageSkia& image) {
   // pressed status icons.
 }
 
-void AppIndicatorIcon::SetToolTip(const string16& tool_tip) {
+void AppIndicatorIcon::SetToolTip(const base::string16& tool_tip) {
   DCHECK(!tool_tip_.empty());
-  tool_tip_ = UTF16ToUTF8(tool_tip);
+  tool_tip_ = base::UTF16ToUTF8(tool_tip);
 
   // We can set the click action label only if the icon exists. Also we only
   // need to update the label if it is shown and it's only shown if we are sure

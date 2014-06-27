@@ -18,11 +18,13 @@
 #include "base/prefs/base_prefs_export.h"
 #include "base/prefs/persistent_pref_store.h"
 
+class PrefFilter;
+
 namespace base {
 class DictionaryValue;
 class FilePath;
-class SequencedWorkerPool;
 class SequencedTaskRunner;
+class SequencedWorkerPool;
 class Value;
 }
 
@@ -41,7 +43,8 @@ class BASE_PREFS_EXPORT JsonPrefStore
   // |sequenced_task_runner| is must be a shutdown-blocking task runner, ideally
   // created by GetTaskRunnerForFile() method above.
   JsonPrefStore(const base::FilePath& pref_filename,
-                base::SequencedTaskRunner* sequenced_task_runner);
+                base::SequencedTaskRunner* sequenced_task_runner,
+                scoped_ptr<PrefFilter> pref_filter);
 
   // PrefStore overrides:
   virtual bool GetValue(const std::string& key,
@@ -58,7 +61,6 @@ class BASE_PREFS_EXPORT JsonPrefStore
   virtual void SetValueSilently(const std::string& key,
                                 base::Value* value) OVERRIDE;
   virtual void RemoveValue(const std::string& key) OVERRIDE;
-  virtual void MarkNeedsEmptyValue(const std::string& key) OVERRIDE;
   virtual bool ReadOnly() const OVERRIDE;
   virtual PrefReadError GetReadError() const OVERRIDE;
   virtual PrefReadError ReadPrefs() OVERRIDE;
@@ -88,6 +90,7 @@ class BASE_PREFS_EXPORT JsonPrefStore
   // Helper for safely writing pref data.
   base::ImportantFileWriter writer_;
 
+  scoped_ptr<PrefFilter> pref_filter_;
   ObserverList<PrefStore::Observer, true> observers_;
 
   scoped_ptr<ReadErrorDelegate> error_delegate_;

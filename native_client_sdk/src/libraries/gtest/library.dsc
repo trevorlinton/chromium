@@ -1,5 +1,5 @@
 {
-  'TOOLS': ['newlib', 'glibc', 'pnacl', 'win', 'linux'],
+  'TOOLS': ['bionic', 'newlib', 'glibc', 'pnacl', 'win', 'linux'],
   'SEARCH': [
     '.',
     '../../../../testing/gtest/include/gtest',
@@ -21,17 +21,11 @@
         'gtest-typed-test.cc',
         'nacl_gtest_dummy_sys.cc',
       ],
-      # Ignore warnings:
-      #   gtest.cc:2555: error: enumeration value ‘COLOR_DEFAULT’ not handled in switch
-      #   gtest-typed-test.h:239:47: error: anonymous variadic macros were introduced in C99
-      #   gtest-internal-inl.h:213:8: error: private field 'pretty_' is not used
-      'CXXFLAGS': ['-Wno-switch-enum', '-Wno-variadic-macros', '-Wno-unused-private-field'],
-      'CFLAGS_GCC': ['-Wno-unused-local-typedefs'],
-
       'INCLUDES': [
         # See comment below about gtest-internal-inl.h
         '$(NACL_SDK_ROOT)/include/gtest/internal',
       ],
+      'CXXFLAGS': ['-Wno-unused-const-variable'],
     }
   ],
   'HEADERS': [

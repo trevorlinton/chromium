@@ -14,7 +14,7 @@
 #include "content/public/browser/user_metrics.h"
 #include "url/gurl.h"
 
-using content::UserMetricsAction;
+using base::UserMetricsAction;
 
 EditSearchEngineController::EditSearchEngineController(
     TemplateURL* template_url,
@@ -27,8 +27,8 @@ EditSearchEngineController::EditSearchEngineController(
 }
 
 bool EditSearchEngineController::IsTitleValid(
-    const string16& title_input) const {
-  return !CollapseWhitespace(title_input, true).empty();
+    const base::string16& title_input) const {
+  return !base::CollapseWhitespace(title_input, true).empty();
 }
 
 bool EditSearchEngineController::IsURLValid(
@@ -58,12 +58,13 @@ bool EditSearchEngineController::IsURLValid(
   // Replace any search term with a placeholder string and make sure the
   // resulting URL is valid.
   return GURL(template_ref.ReplaceSearchTerms(
-      TemplateURLRef::SearchTermsArgs(ASCIIToUTF16("x")))).is_valid();
+      TemplateURLRef::SearchTermsArgs(base::ASCIIToUTF16("x")))).is_valid();
 }
 
 bool EditSearchEngineController::IsKeywordValid(
-    const string16& keyword_input) const {
-  string16 keyword_input_trimmed(CollapseWhitespace(keyword_input, true));
+    const base::string16& keyword_input) const {
+  base::string16 keyword_input_trimmed(
+      base::CollapseWhitespace(keyword_input, true));
   if (keyword_input_trimmed.empty())
     return false;  // Do not allow empty keyword.
   const TemplateURL* turl_with_keyword =
@@ -73,8 +74,8 @@ bool EditSearchEngineController::IsKeywordValid(
 }
 
 void EditSearchEngineController::AcceptAddOrEdit(
-    const string16& title_input,
-    const string16& keyword_input,
+    const base::string16& title_input,
+    const base::string16& keyword_input,
     const std::string& url_input) {
   DCHECK(!keyword_input.empty());
   std::string url_string = GetFixedUpURL(url_input);
@@ -122,8 +123,9 @@ void EditSearchEngineController::CleanUpCancelledAdd() {
 std::string EditSearchEngineController::GetFixedUpURL(
     const std::string& url_input) const {
   std::string url;
-  TrimWhitespace(TemplateURLRef::DisplayURLToURLRef(UTF8ToUTF16(url_input)),
-                 TRIM_ALL, &url);
+  base::TrimWhitespace(TemplateURLRef::DisplayURLToURLRef(
+                           base::UTF8ToUTF16(url_input)),
+                       base::TRIM_ALL, &url);
   if (url.empty())
     return url;
 
@@ -134,7 +136,7 @@ std::string EditSearchEngineController::GetFixedUpURL(
   data.SetURL(url);
   TemplateURL t_url(profile_, data);
   std::string expanded_url(t_url.url_ref().ReplaceSearchTerms(
-      TemplateURLRef::SearchTermsArgs(ASCIIToUTF16("x"))));
+      TemplateURLRef::SearchTermsArgs(base::ASCIIToUTF16("x"))));
   url_parse::Parsed parts;
   std::string scheme(URLFixerUpper::SegmentURL(expanded_url, &parts));
   if (!parts.scheme.is_valid())

@@ -25,6 +25,12 @@ const char kSampleJSONWithError[] = "{ \"error\" : \"unittest_example\" }";
 
 class MockPrivetURLFetcherDelegate : public PrivetURLFetcher::Delegate {
  public:
+  MockPrivetURLFetcherDelegate() : raw_mode_(false) {
+  }
+
+  virtual ~MockPrivetURLFetcherDelegate() {
+  }
+
   virtual void OnError(PrivetURLFetcher* fetcher,
                        PrivetURLFetcher::ErrorType error) OVERRIDE {
     OnErrorInternal(error);
@@ -46,10 +52,35 @@ class MockPrivetURLFetcherDelegate : public PrivetURLFetcher::Delegate {
       const PrivetURLFetcher::TokenCallback& callback) {
   }
 
-  const DictionaryValue* saved_value() { return saved_value_.get(); }
+  bool OnRawData(PrivetURLFetcher* fetcher,
+                 bool response_is_file,
+                 const std::string& data,
+                 const base::FilePath& response_file) {
+    if (!raw_mode_) return false;
+
+    if (response_is_file) {
+      EXPECT_TRUE(response_file != base::FilePath());
+      OnFileInternal();
+    } else {
+      OnRawDataInternal(data);
+    }
+
+    return true;
+  }
+
+  MOCK_METHOD1(OnRawDataInternal, void(std::string data));
+
+  MOCK_METHOD0(OnFileInternal, void());
+
+  const base::DictionaryValue* saved_value() { return saved_value_.get(); }
+
+  void SetRawMode(bool raw_mode) {
+    raw_mode_ = raw_mode;
+  }
 
  private:
-  scoped_ptr<DictionaryValue> saved_value_;
+  scoped_ptr<base::DictionaryValue> saved_value_;
+  bool raw_mode_;
 };
 
 class PrivetURLFetcherTest : public ::testing::Test {
@@ -58,13 +89,29 @@ class PrivetURLFetcherTest : public ::testing::Test {
     request_context_= new net::TestURLRequestContextGetter(
         base::MessageLoopProxy::current());
     privet_urlfetcher_.reset(new PrivetURLFetcher(
-        kSamplePrivetToken,
         GURL(kSamplePrivetURL),
         net::URLFetcher::POST,
         request_context_.get(),
         &delegate_));
+
+    PrivetURLFetcher::SetTokenForHost(GURL(kSamplePrivetURL).GetOrigin().spec(),
+                                      kSamplePrivetToken);
   }
   virtual ~PrivetURLFetcherTest() {
+  }
+
+  void RunFor(base::TimeDelta time_period) {
+    base::CancelableCallback<void()> callback(base::Bind(
+        &PrivetURLFetcherTest::Stop, base::Unretained(this)));
+    base::MessageLoop::current()->PostDelayedTask(
+        FROM_HERE, callback.callback(), time_period);
+
+    base::MessageLoop::current()->Run();
+    callback.Cancel();
+  }
+
+  void Stop() {
+    base::MessageLoop::current()->Quit();
   }
 
  protected:
@@ -94,16 +141,27 @@ TEST_F(PrivetURLFetcherTest, FetchSuccess) {
   EXPECT_EQ(2, hello_value);
 }
 
-TEST_F(PrivetURLFetcherTest, URLFetcherError) {
+TEST_F(PrivetURLFetcherTest, HTTP503Retry) {
   privet_urlfetcher_->Start();
   net::TestURLFetcher* fetcher = fetcher_factory_.GetFetcherByID(0);
   ASSERT_TRUE(fetcher != NULL);
   fetcher->SetResponseString(kSampleParsableJSON);
-  fetcher->set_status(net::URLRequestStatus(net::URLRequestStatus::FAILED,
-                                            net::ERR_TIMED_OUT));
-  fetcher->set_response_code(-1);
+  fetcher->set_status(net::URLRequestStatus(net::URLRequestStatus::SUCCESS,
+                                            net::OK));
+  fetcher->set_response_code(503);
 
-  EXPECT_CALL(delegate_, OnErrorInternal(PrivetURLFetcher::URL_FETCH_ERROR));
+  fetcher->delegate()->OnURLFetchComplete(fetcher);
+
+  RunFor(base::TimeDelta::FromSeconds(7));
+  fetcher = fetcher_factory_.GetFetcherByID(0);
+
+  ASSERT_TRUE(fetcher != NULL);
+  fetcher->SetResponseString(kSampleParsableJSON);
+  fetcher->set_status(net::URLRequestStatus(net::URLRequestStatus::SUCCESS,
+                                            net::OK));
+  fetcher->set_response_code(200);
+
+  EXPECT_CALL(delegate_, OnParsedJsonInternal(false));
   fetcher->delegate()->OnURLFetchComplete(fetcher);
 }
 
@@ -148,12 +206,8 @@ TEST_F(PrivetURLFetcherTest, Header) {
 }
 
 TEST_F(PrivetURLFetcherTest, Header2) {
-  privet_urlfetcher_.reset(new PrivetURLFetcher(
-      "",
-      GURL(kSamplePrivetURL),
-      net::URLFetcher::POST,
-      request_context_.get(),
-      &delegate_));
+  PrivetURLFetcher::SetTokenForHost(GURL(kSamplePrivetURL).GetOrigin().spec(),
+                                    "");
 
   privet_urlfetcher_->AllowEmptyPrivetToken();
   privet_urlfetcher_->Start();
@@ -178,6 +232,50 @@ TEST_F(PrivetURLFetcherTest, FetchHasError) {
   fetcher->set_response_code(200);
 
   EXPECT_CALL(delegate_, OnParsedJsonInternal(true));
+  fetcher->delegate()->OnURLFetchComplete(fetcher);
+}
+
+TEST_F(PrivetURLFetcherTest, FetcherRawData) {
+  delegate_.SetRawMode(true);
+  privet_urlfetcher_->Start();
+  net::TestURLFetcher* fetcher = fetcher_factory_.GetFetcherByID(0);
+  ASSERT_TRUE(fetcher != NULL);
+  fetcher->SetResponseString(kSampleJSONWithError);
+  fetcher->set_status(net::URLRequestStatus(net::URLRequestStatus::SUCCESS,
+                                            net::OK));
+  fetcher->set_response_code(200);
+
+  EXPECT_CALL(delegate_, OnRawDataInternal(kSampleJSONWithError));
+  fetcher->delegate()->OnURLFetchComplete(fetcher);
+}
+
+TEST_F(PrivetURLFetcherTest, RangeRequest) {
+  delegate_.SetRawMode(true);
+  privet_urlfetcher_->SetByteRange(200, 300);
+  privet_urlfetcher_->Start();
+  net::TestURLFetcher* fetcher = fetcher_factory_.GetFetcherByID(0);
+  ASSERT_TRUE(fetcher != NULL);
+  net::HttpRequestHeaders headers;
+  fetcher->GetExtraRequestHeaders(&headers);
+
+  std::string header_range;
+  ASSERT_TRUE(headers.GetHeader("Range", &header_range));
+  EXPECT_EQ("bytes=200-300", header_range);
+}
+
+TEST_F(PrivetURLFetcherTest, FetcherToFile) {
+  delegate_.SetRawMode(true);
+  privet_urlfetcher_->SaveResponseToFile();
+  privet_urlfetcher_->Start();
+  net::TestURLFetcher* fetcher = fetcher_factory_.GetFetcherByID(0);
+  ASSERT_TRUE(fetcher != NULL);
+  fetcher->SetResponseFilePath(
+      base::FilePath(FILE_PATH_LITERAL("sample/file")));
+  fetcher->set_status(net::URLRequestStatus(net::URLRequestStatus::SUCCESS,
+                                            net::OK));
+  fetcher->set_response_code(200);
+
+  EXPECT_CALL(delegate_, OnFileInternal());
   fetcher->delegate()->OnURLFetchComplete(fetcher);
 }
 

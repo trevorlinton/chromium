@@ -61,10 +61,6 @@
 #include "content/public/browser/browser_message_filter.h"
 #include "ipc/ipc_message.h"
 
-namespace media {
-class VideoCaptureCapability;
-}
-
 namespace content {
 class MediaStreamManager;
 
@@ -88,11 +84,15 @@ class CONTENT_EXPORT VideoCaptureHost
                                int buffer_id) OVERRIDE;
   virtual void OnBufferDestroyed(const VideoCaptureControllerID& id,
                                  int buffer_id) OVERRIDE;
-  virtual void OnBufferReady(
-      const VideoCaptureControllerID& id,
-      int buffer_id,
-      base::Time timestamp,
-      const media::VideoCaptureFormat& format) OVERRIDE;
+  virtual void OnBufferReady(const VideoCaptureControllerID& id,
+                             int buffer_id,
+                             const media::VideoCaptureFormat& format,
+                             base::TimeTicks timestamp) OVERRIDE;
+  virtual void OnMailboxBufferReady(const VideoCaptureControllerID& id,
+                                    int buffer_id,
+                                    const gpu::MailboxHolder& mailbox_holder,
+                                    const media::VideoCaptureFormat& format,
+                                    base::TimeTicks timestamp) OVERRIDE;
   virtual void OnEnded(const VideoCaptureControllerID& id) OVERRIDE;
 
  private:
@@ -104,16 +104,17 @@ class CONTENT_EXPORT VideoCaptureHost
   virtual ~VideoCaptureHost();
 
   // IPC message: Start capture on the VideoCaptureDevice referenced by
-  // VideoCaptureParams::session_id. |device_id| is an id created by
-  // VideoCaptureMessageFilter to identify a session
-  // between a VideoCaptureMessageFilter and a VideoCaptureHost.
+  // |session_id|. |device_id| is an id created by VideoCaptureMessageFilter
+  // to identify a session between a VideoCaptureMessageFilter and a
+  // VideoCaptureHost.
   void OnStartCapture(int device_id,
+                      media::VideoCaptureSessionId session_id,
                       const media::VideoCaptureParams& params);
   void OnControllerAdded(
-      int device_id, const media::VideoCaptureParams& params,
+      int device_id,
       const base::WeakPtr<VideoCaptureController>& controller);
   void DoControllerAddedOnIOThread(
-      int device_id, const media::VideoCaptureParams& params,
+      int device_id,
       const base::WeakPtr<VideoCaptureController>& controller);
 
   // IPC message: Stop capture on device referenced by |device_id|.
@@ -124,7 +125,20 @@ class CONTENT_EXPORT VideoCaptureHost
 
   // IPC message: Receive an empty buffer from renderer. Send it to device
   // referenced by |device_id|.
-  void OnReceiveEmptyBuffer(int device_id, int buffer_id);
+  void OnReceiveEmptyBuffer(int device_id, int buffer_id, uint32 sync_point);
+
+  // IPC message: Get supported formats referenced by |capture_session_id|.
+  // |device_id| is needed for message back-routing purposes.
+  void OnGetDeviceSupportedFormats(
+      int device_id,
+      media::VideoCaptureSessionId capture_session_id);
+
+  // IPC message: Get a device's currently in use format(s), referenced by
+  // |capture_session_id|. |device_id| is needed for message back-routing
+  // purposes.
+  void OnGetDeviceFormatsInUse(
+      int device_id,
+      media::VideoCaptureSessionId capture_session_id);
 
   // Send a newly created buffer to the VideoCaptureMessageFilter.
   void DoSendNewBufferOnIOThread(
@@ -141,8 +155,16 @@ class CONTENT_EXPORT VideoCaptureHost
   void DoSendFilledBufferOnIOThread(
       const VideoCaptureControllerID& controller_id,
       int buffer_id,
-      base::Time timestamp,
-      const media::VideoCaptureFormat& format);
+      const media::VideoCaptureFormat& format,
+      base::TimeTicks timestamp);
+
+  // Send a filled texture mailbox buffer to the VideoCaptureMessageFilter.
+  void DoSendFilledMailboxBufferOnIOThread(
+      const VideoCaptureControllerID& controller_id,
+      int buffer_id,
+      const gpu::MailboxHolder& mailbox_holder,
+      const media::VideoCaptureFormat& format,
+      base::TimeTicks timestamp);
 
   // Handle error coming from VideoCaptureDevice.
   void DoHandleErrorOnIOThread(const VideoCaptureControllerID& controller_id);

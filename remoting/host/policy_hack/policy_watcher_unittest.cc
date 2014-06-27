@@ -5,6 +5,7 @@
 #include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
 #include "remoting/host/dns_blackhole_checker.h"
 #include "remoting/host/policy_hack/fake_policy_watcher.h"
@@ -70,6 +71,10 @@ class PolicyWatcherTest : public testing::Test {
         kOverrideNatTraversalToFalse);
     pairing_true_.SetBoolean(PolicyWatcher::kHostAllowClientPairing, true);
     pairing_false_.SetBoolean(PolicyWatcher::kHostAllowClientPairing, false);
+    gnubby_auth_true_.SetBoolean(PolicyWatcher::kHostAllowGnubbyAuthPolicyName,
+                                 true);
+    gnubby_auth_false_.SetBoolean(PolicyWatcher::kHostAllowGnubbyAuthPolicyName,
+                                 false);
 #if !defined(NDEBUG)
     SetDefaults(nat_false_overridden_others_default_);
     nat_false_overridden_others_default_.SetBoolean(
@@ -83,13 +88,13 @@ class PolicyWatcherTest : public testing::Test {
  protected:
   void StartWatching() {
     policy_watcher_->StartWatching(policy_callback_);
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void StopWatching() {
     base::WaitableEvent stop_event(false, false);
     policy_watcher_->StopWatching(&stop_event);
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     EXPECT_EQ(true, stop_event.IsSignaled());
   }
 
@@ -119,6 +124,8 @@ class PolicyWatcherTest : public testing::Test {
   base::DictionaryValue nat_false_overridden_others_default_;
   base::DictionaryValue pairing_true_;
   base::DictionaryValue pairing_false_;
+  base::DictionaryValue gnubby_auth_true_;
+  base::DictionaryValue gnubby_auth_false_;
 
  private:
   void SetDefaults(base::DictionaryValue& dict) {
@@ -132,7 +139,10 @@ class PolicyWatcherTest : public testing::Test {
     dict.SetString(PolicyWatcher::kHostTokenUrlPolicyName, std::string());
     dict.SetString(PolicyWatcher::kHostTokenValidationUrlPolicyName,
                    std::string());
+    dict.SetString(PolicyWatcher::kHostTokenValidationCertIssuerPolicyName,
+                   std::string());
     dict.SetBoolean(PolicyWatcher::kHostAllowClientPairing, true);
+    dict.SetBoolean(PolicyWatcher::kHostAllowGnubbyAuthPolicyName, true);
 #if !defined(NDEBUG)
     dict.SetString(PolicyWatcher::kHostDebugOverridePoliciesName, "");
 #endif
@@ -326,6 +336,22 @@ TEST_F(PolicyWatcherTest, PairingFalseThenTrue) {
   policy_watcher_->SetPolicies(&empty_);
   policy_watcher_->SetPolicies(&pairing_false_);
   policy_watcher_->SetPolicies(&pairing_true_);
+  StopWatching();
+}
+
+TEST_F(PolicyWatcherTest, GnubbyAuth) {
+  testing::InSequence sequence;
+  EXPECT_CALL(mock_policy_callback_,
+              OnPolicyUpdatePtr(IsPolicies(&nat_true_others_default_)));
+  EXPECT_CALL(mock_policy_callback_,
+              OnPolicyUpdatePtr(IsPolicies(&gnubby_auth_false_)));
+  EXPECT_CALL(mock_policy_callback_,
+              OnPolicyUpdatePtr(IsPolicies(&gnubby_auth_true_)));
+
+  StartWatching();
+  policy_watcher_->SetPolicies(&empty_);
+  policy_watcher_->SetPolicies(&gnubby_auth_false_);
+  policy_watcher_->SetPolicies(&gnubby_auth_true_);
   StopWatching();
 }
 

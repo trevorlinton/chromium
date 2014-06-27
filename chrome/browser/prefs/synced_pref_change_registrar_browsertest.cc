@@ -15,6 +15,7 @@
 #include "chrome/test/base/testing_pref_service_syncable.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/test/test_utils.h"
+#include "sync/api/fake_sync_change_processor.h"
 #include "sync/api/sync_change.h"
 #include "sync/api/sync_error_factory.h"
 #include "sync/api/sync_error_factory_mock.h"
@@ -22,30 +23,16 @@
 #include "sync/protocol/sync.pb.h"
 
 #if defined(ENABLE_CONFIGURATION_POLICY)
-#include "chrome/browser/policy/browser_policy_connector.h"
-#include "chrome/browser/policy/mock_configuration_policy_provider.h"
-#include "chrome/browser/policy/policy_map.h"
+#include "components/policy/core/browser/browser_policy_connector.h"
+#include "components/policy/core/common/mock_configuration_policy_provider.h"
+#include "components/policy/core/common/policy_map.h"
 #include "policy/policy_constants.h"
 #endif
 
 namespace {
 
-using testing::AnyNumber;
 using testing::Return;
 using testing::_;
-
-class TestSyncProcessorStub : public syncer::SyncChangeProcessor {
-  virtual syncer::SyncError ProcessSyncChanges(
-      const tracked_objects::Location& from_here,
-      const syncer::SyncChangeList& change_list) OVERRIDE {
-    return syncer::SyncError();
-  }
-
-  virtual syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const
-      OVERRIDE {
-    return syncer::SyncDataList();
-  }
-};
 
 class SyncedPrefChangeRegistrarTest : public InProcessBrowserTest {
  public:
@@ -104,7 +91,6 @@ class SyncedPrefChangeRegistrarTest : public InProcessBrowserTest {
   virtual void SetUpInProcessBrowserTestFixture() OVERRIDE {
     EXPECT_CALL(policy_provider_, IsInitializationComplete(_))
         .WillRepeatedly(Return(true));
-    EXPECT_CALL(policy_provider_, RegisterPolicyDomain(_)).Times(AnyNumber());
     policy::BrowserPolicyConnector::SetPolicyProviderForTesting(
         &policy_provider_);
   }
@@ -116,7 +102,8 @@ class SyncedPrefChangeRegistrarTest : public InProcessBrowserTest {
     syncer_->MergeDataAndStartSyncing(
         syncer::PREFERENCES,
         syncer::SyncDataList(),
-        scoped_ptr<syncer::SyncChangeProcessor>(new TestSyncProcessorStub),
+        scoped_ptr<syncer::SyncChangeProcessor>(
+            new syncer::FakeSyncChangeProcessor),
         scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock));
     registrar_.reset(new SyncedPrefChangeRegistrar(prefs_));
   }

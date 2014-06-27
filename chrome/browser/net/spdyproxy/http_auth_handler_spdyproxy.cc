@@ -14,6 +14,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_auth.h"
+#include "net/http/http_auth_challenge_tokenizer.h"
 #include "net/http/http_request_info.h"
 
 namespace spdyproxy {
@@ -22,6 +23,7 @@ using net::AuthCredentials;
 using net::BoundNetLog;
 using net::CompletionCallback;
 using net::HttpAuth;
+using net::HttpAuthChallengeTokenizer;
 using net::HttpAuthHandler;
 using net::HttpAuthHandlerFactory;
 using net::HttpRequestInfo;
@@ -42,7 +44,7 @@ HttpAuthHandlerSpdyProxy::Factory::~Factory() {
 }
 
 int HttpAuthHandlerSpdyProxy::Factory::CreateAuthHandler(
-    HttpAuth::ChallengeTokenizer* challenge,
+    HttpAuthChallengeTokenizer* challenge,
     HttpAuth::Target target,
     const GURL& origin,
     CreateReason reason,
@@ -58,10 +60,9 @@ int HttpAuthHandlerSpdyProxy::Factory::CreateAuthHandler(
   // SPDY proxy, since otherwise a user's authentication token can be
   // sniffed by a malicious proxy that presents an appropriate challenge.
   const GURL origin_origin = origin.GetOrigin();
-  if (!(target == HttpAuth::AUTH_PROXY &&
-      std::find(authorized_spdyproxy_origins_.begin(),
-                authorized_spdyproxy_origins_.end(),
-                origin_origin) != authorized_spdyproxy_origins_.end())) {
+  if (!(std::find(authorized_spdyproxy_origins_.begin(),
+                  authorized_spdyproxy_origins_.end(),
+                  origin_origin) != authorized_spdyproxy_origins_.end())) {
     UMA_HISTOGRAM_COUNTS("Net.UnexpectedSpdyProxyAuth", 1);
     VLOG(1) << "SpdyProxy auth request with an unexpected config."
             << " origin: " << origin_origin.possibly_invalid_spec();
@@ -77,7 +78,7 @@ int HttpAuthHandlerSpdyProxy::Factory::CreateAuthHandler(
 
 HttpAuth::AuthorizationResult
 HttpAuthHandlerSpdyProxy::HandleAnotherChallenge(
-    HttpAuth::ChallengeTokenizer* challenge) {
+    HttpAuthChallengeTokenizer* challenge) {
   // SpdyProxy authentication is always a single round, so any responses
   // should be treated as a rejection.
   return HttpAuth::AUTHORIZATION_RESULT_REJECT;
@@ -98,7 +99,7 @@ bool HttpAuthHandlerSpdyProxy::AllowsExplicitCredentials() {
 HttpAuthHandlerSpdyProxy::~HttpAuthHandlerSpdyProxy() {}
 
 bool HttpAuthHandlerSpdyProxy::Init(
-    HttpAuth::ChallengeTokenizer* challenge) {
+    HttpAuthChallengeTokenizer* challenge) {
   auth_scheme_ = HttpAuth::AUTH_SCHEME_SPDYPROXY;
   score_ = 5;
   properties_ = ENCRYPTS_IDENTITY;
@@ -115,12 +116,12 @@ int HttpAuthHandlerSpdyProxy::GenerateAuthTokenImpl(
     return -1;
   }
   *auth_token = "SpdyProxy ps=\"" + ps_token_ + "\", sid=\"" +
-      UTF16ToUTF8(credentials->password()) + "\"";
+      base::UTF16ToUTF8(credentials->password()) + "\"";
   return net::OK;
 }
 
 bool HttpAuthHandlerSpdyProxy::ParseChallenge(
-    HttpAuth::ChallengeTokenizer* challenge) {
+    HttpAuthChallengeTokenizer* challenge) {
 
   // Verify the challenge's auth-scheme.
   if (!LowerCaseEqualsASCII(challenge->scheme(), "spdyproxy")) {

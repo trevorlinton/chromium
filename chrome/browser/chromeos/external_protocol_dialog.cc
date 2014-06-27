@@ -35,7 +35,6 @@ void ExternalProtocolHandler::RunExternalProtocolDialog(
     const GURL& url, int render_process_host_id, int routing_id) {
   WebContents* web_contents = tab_util::GetWebContentsByID(
       render_process_host_id, routing_id);
-  DCHECK(web_contents);
   new ExternalProtocolDialog(web_contents, url);
 }
 
@@ -52,12 +51,12 @@ int ExternalProtocolDialog::GetDialogButtons() const {
   return ui::DIALOG_BUTTON_OK;
 }
 
-string16 ExternalProtocolDialog::GetDialogButtonLabel(
+base::string16 ExternalProtocolDialog::GetDialogButtonLabel(
     ui::DialogButton button) const {
   return l10n_util::GetStringUTF16(IDS_EXTERNAL_PROTOCOL_OK_BUTTON_TEXT);
 }
 
-string16 ExternalProtocolDialog::GetWindowTitle() const {
+base::string16 ExternalProtocolDialog::GetWindowTitle() const {
   return l10n_util::GetStringUTF16(IDS_EXTERNAL_PROTOCOL_TITLE);
 }
 
@@ -94,14 +93,14 @@ ExternalProtocolDialog::ExternalProtocolDialog(WebContents* web_contents,
     : creation_time_(base::TimeTicks::Now()),
       scheme_(url.scheme()) {
   const int kMaxUrlWithoutSchemeSize = 256;
-  string16 elided_url_without_scheme;
-  gfx::ElideString(ASCIIToUTF16(url.possibly_invalid_spec()),
+  base::string16 elided_url_without_scheme;
+  gfx::ElideString(base::ASCIIToUTF16(url.possibly_invalid_spec()),
       kMaxUrlWithoutSchemeSize, &elided_url_without_scheme);
 
   views::MessageBoxView::InitParams params(
       l10n_util::GetStringFUTF16(IDS_EXTERNAL_PROTOCOL_INFORMATION,
-      ASCIIToUTF16(url.scheme() + ":"),
-      elided_url_without_scheme) + ASCIIToUTF16("\n\n"));
+      base::ASCIIToUTF16(url.scheme() + ":"),
+      elided_url_without_scheme) + base::ASCIIToUTF16("\n\n"));
   params.message_width = kMessageWidth;
   message_box_view_ = new views::MessageBoxView(params);
   message_box_view_->SetCheckBoxLabel(

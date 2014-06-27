@@ -26,6 +26,7 @@ class BluetoothDeviceMac : public BluetoothDevice {
   // BluetoothDevice override
   virtual uint32 GetBluetoothClass() const OVERRIDE;
   virtual std::string GetAddress() const OVERRIDE;
+  virtual VendorIDSource GetVendorIDSource() const OVERRIDE;
   virtual uint16 GetVendorID() const OVERRIDE;
   virtual uint16 GetProductID() const OVERRIDE;
   virtual uint16 GetDeviceID() const OVERRIDE;
@@ -33,13 +34,7 @@ class BluetoothDeviceMac : public BluetoothDevice {
   virtual bool IsConnected() const OVERRIDE;
   virtual bool IsConnectable() const OVERRIDE;
   virtual bool IsConnecting() const OVERRIDE;
-  virtual ServiceList GetServices() const OVERRIDE;
-  virtual void GetServiceRecords(
-      const ServiceRecordsCallback& callback,
-      const ErrorCallback& error_callback) OVERRIDE;
-  virtual void ProvidesServiceWithName(
-      const std::string& name,
-      const ProvidesServiceCallback& callback) OVERRIDE;
+  virtual UUIDList GetUUIDs() const OVERRIDE;
   virtual bool ExpectingPinCode() const OVERRIDE;
   virtual bool ExpectingPasskey() const OVERRIDE;
   virtual bool ExpectingConfirmation() const OVERRIDE;

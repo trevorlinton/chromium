@@ -10,6 +10,7 @@
 #include "cc/test/fake_output_surface_client.h"
 #include "cc/test/fake_proxy.h"
 #include "cc/test/scheduler_test_common.h"
+#include "cc/test/test_shared_bitmap_manager.h"
 #include "cc/test/test_web_graphics_context_3d.h"
 #include "cc/test/tiled_layer_test_common.h"
 #include "cc/trees/single_thread_proxy.h"  // For DebugScopedSetImplThread
@@ -17,12 +18,6 @@
 #include "third_party/khronos/GLES2/gl2ext.h"
 
 using testing::Test;
-using WebKit::WGC3Denum;
-using WebKit::WGC3Dint;
-using WebKit::WGC3Duint;
-using WebKit::WGC3Dsizei;
-using WebKit::WebGLId;
-using WebKit::WebString;
 
 namespace cc {
 namespace {
@@ -35,28 +30,22 @@ class ResourceUpdateControllerTest;
 class WebGraphicsContext3DForUploadTest : public TestWebGraphicsContext3D {
  public:
   explicit WebGraphicsContext3DForUploadTest(ResourceUpdateControllerTest* test)
-      : test_(test) {
-    test_capabilities_.shallow_flush = true;
-  }
+      : test_(test) {}
 
   virtual void flush() OVERRIDE;
   virtual void shallowFlushCHROMIUM() OVERRIDE;
-  virtual void texSubImage2D(
-      WGC3Denum target,
-      WGC3Dint level,
-      WGC3Dint xoffset,
-      WGC3Dint yoffset,
-      WGC3Dsizei width,
-      WGC3Dsizei height,
-      WGC3Denum format,
-      WGC3Denum type,
-      const void* pixels) OVERRIDE;
-  virtual GrGLInterface* createGrGLInterface() OVERRIDE { return NULL; }
+  virtual void texSubImage2D(GLenum target,
+                             GLint level,
+                             GLint xoffset,
+                             GLint yoffset,
+                             GLsizei width,
+                             GLsizei height,
+                             GLenum format,
+                             GLenum type,
+                             const void* pixels) OVERRIDE;
 
-  virtual void getQueryObjectuivEXT(
-      WebGLId id,
-      WGC3Denum pname,
-      WGC3Duint* value);
+  virtual void getQueryObjectuivEXT(GLuint id, GLenum pname, GLuint* value)
+      OVERRIDE;
 
  private:
   ResourceUpdateControllerTest* test_;
@@ -119,8 +108,7 @@ class ResourceUpdateControllerTest : public Test {
 
  protected:
   virtual void SetUp() {
-    bitmap_.setConfig(SkBitmap::kARGB_8888_Config, 300, 150);
-    bitmap_.allocPixels();
+    bitmap_.allocN32Pixels(300, 150);
 
     for (int i = 0; i < 4; i++) {
       textures_[i] = PrioritizedResource::Create(resource_manager_.get(),
@@ -136,8 +124,9 @@ class ResourceUpdateControllerTest : public Test {
             new WebGraphicsContext3DForUploadTest(this)));
     CHECK(output_surface_->BindToClient(&output_surface_client_));
 
-    resource_provider_ =
-        ResourceProvider::Create(output_surface_.get(), NULL, 0, false, 1);
+    shared_bitmap_manager_.reset(new TestSharedBitmapManager());
+    resource_provider_ = ResourceProvider::Create(
+        output_surface_.get(), shared_bitmap_manager_.get(), 0, false, 1);
   }
 
   void AppendFullUploadsOfIndexedTextureToUpdateQueue(int count,
@@ -194,6 +183,7 @@ class ResourceUpdateControllerTest : public Test {
   FakeProxy proxy_;
   FakeOutputSurfaceClient output_surface_client_;
   scoped_ptr<OutputSurface> output_surface_;
+  scoped_ptr<SharedBitmapManager> shared_bitmap_manager_;
   scoped_ptr<ResourceProvider> resource_provider_;
   scoped_ptr<ResourceUpdateQueue> queue_;
   scoped_ptr<PrioritizedResource> textures_[4];
@@ -220,23 +210,21 @@ void WebGraphicsContext3DForUploadTest::shallowFlushCHROMIUM() {
   test_->OnFlush();
 }
 
-void WebGraphicsContext3DForUploadTest::texSubImage2D(
-    WGC3Denum target,
-    WGC3Dint level,
-    WGC3Dint xoffset,
-    WGC3Dint yoffset,
-    WGC3Dsizei width,
-    WGC3Dsizei height,
-    WGC3Denum format,
-    WGC3Denum type,
-    const void* pixels) {
+void WebGraphicsContext3DForUploadTest::texSubImage2D(GLenum target,
+                                                      GLint level,
+                                                      GLint xoffset,
+                                                      GLint yoffset,
+                                                      GLsizei width,
+                                                      GLsizei height,
+                                                      GLenum format,
+                                                      GLenum type,
+                                                      const void* pixels) {
   test_->OnUpload();
 }
 
-void WebGraphicsContext3DForUploadTest::getQueryObjectuivEXT(
-    WebGLId id,
-    WGC3Denum pname,
-    WGC3Duint* params) {
+void WebGraphicsContext3DForUploadTest::getQueryObjectuivEXT(GLuint id,
+                                                             GLenum pname,
+                                                             GLuint* params) {
   if (pname == GL_QUERY_RESULT_AVAILABLE_EXT)
     *params = test_->IsQueryResultAvailable();
 }
@@ -355,12 +343,14 @@ class FakeResourceUpdateController : public ResourceUpdateController {
   }
 
   void SetNow(base::TimeTicks time) { now_ = time; }
-  virtual base::TimeTicks Now() const OVERRIDE { return now_; }
-  void SetUpdateMoreTexturesTime(base::TimeDelta time) {
-    update_more_textures_time_ = time;
+  base::TimeTicks Now() const { return now_; }
+  void SetUpdateTextureTime(base::TimeDelta time) {
+    update_textures_time_ = time;
   }
-  virtual base::TimeDelta UpdateMoreTexturesTime() const OVERRIDE {
-    return update_more_textures_time_;
+  virtual base::TimeTicks UpdateMoreTexturesCompletionTime() OVERRIDE {
+    size_t total_updates =
+        resource_provider_->NumBlockingUploads() + update_more_textures_size_;
+    return now_ + total_updates * update_textures_time_;
   }
   void SetUpdateMoreTexturesSize(size_t size) {
     update_more_textures_size_ = size;
@@ -376,10 +366,12 @@ class FakeResourceUpdateController : public ResourceUpdateController {
                                ResourceProvider* resource_provider)
       : ResourceUpdateController(
           client, task_runner, queue.Pass(), resource_provider),
+        resource_provider_(resource_provider),
         update_more_textures_size_(0) {}
 
+  ResourceProvider* resource_provider_;
   base::TimeTicks now_;
-  base::TimeDelta update_more_textures_time_;
+  base::TimeDelta update_textures_time_;
   size_t update_more_textures_size_;
 };
 
@@ -408,14 +400,14 @@ TEST_F(ResourceUpdateControllerTest, UpdateMoreTextures) {
                                            resource_provider_.get()));
 
   controller->SetNow(controller->Now() + base::TimeDelta::FromMilliseconds(1));
-  controller->SetUpdateMoreTexturesTime(base::TimeDelta::FromMilliseconds(100));
+  controller->SetUpdateTextureTime(base::TimeDelta::FromMilliseconds(100));
   controller->SetUpdateMoreTexturesSize(1);
   // Not enough time for any updates.
   controller->PerformMoreUpdates(controller->Now() +
                                  base::TimeDelta::FromMilliseconds(90));
   EXPECT_FALSE(task_runner->HasPendingTask());
 
-  controller->SetUpdateMoreTexturesTime(base::TimeDelta::FromMilliseconds(100));
+  controller->SetUpdateTextureTime(base::TimeDelta::FromMilliseconds(100));
   controller->SetUpdateMoreTexturesSize(1);
   // Only enough time for 1 update.
   controller->PerformMoreUpdates(controller->Now() +
@@ -426,7 +418,7 @@ TEST_F(ResourceUpdateControllerTest, UpdateMoreTextures) {
   // Complete one upload.
   MakeQueryResultAvailable();
 
-  controller->SetUpdateMoreTexturesTime(base::TimeDelta::FromMilliseconds(100));
+  controller->SetUpdateTextureTime(base::TimeDelta::FromMilliseconds(100));
   controller->SetUpdateMoreTexturesSize(1);
   // Enough time for 2 updates.
   controller->PerformMoreUpdates(controller->Now() +
@@ -455,7 +447,7 @@ TEST_F(ResourceUpdateControllerTest, NoMoreUpdates) {
                                            resource_provider_.get()));
 
   controller->SetNow(controller->Now() + base::TimeDelta::FromMilliseconds(1));
-  controller->SetUpdateMoreTexturesTime(base::TimeDelta::FromMilliseconds(100));
+  controller->SetUpdateTextureTime(base::TimeDelta::FromMilliseconds(100));
   controller->SetUpdateMoreTexturesSize(1);
   // Enough time for 3 updates but only 2 necessary.
   controller->PerformMoreUpdates(controller->Now() +
@@ -465,15 +457,16 @@ TEST_F(ResourceUpdateControllerTest, NoMoreUpdates) {
   EXPECT_TRUE(client.ReadyToFinalizeCalled());
   EXPECT_EQ(2, num_total_uploads_);
 
-  controller->SetUpdateMoreTexturesTime(base::TimeDelta::FromMilliseconds(100));
+  client.Reset();
+  controller->SetUpdateTextureTime(base::TimeDelta::FromMilliseconds(100));
   controller->SetUpdateMoreTexturesSize(1);
   // Enough time for updates but no more updates left.
   controller->PerformMoreUpdates(controller->Now() +
                                  base::TimeDelta::FromMilliseconds(310));
-  // 0-delay task used to call ReadyToFinalizeTextureUpdates().
-  RunPendingTask(task_runner.get(), controller.get());
+
+  // ReadyToFinalizeTextureUpdates should only be called once.
   EXPECT_FALSE(task_runner->HasPendingTask());
-  EXPECT_TRUE(client.ReadyToFinalizeCalled());
+  EXPECT_FALSE(client.ReadyToFinalizeCalled());
   EXPECT_EQ(2, num_total_uploads_);
 }
 
@@ -495,7 +488,7 @@ TEST_F(ResourceUpdateControllerTest, UpdatesCompleteInFiniteTime) {
                                            resource_provider_.get()));
 
   controller->SetNow(controller->Now() + base::TimeDelta::FromMilliseconds(1));
-  controller->SetUpdateMoreTexturesTime(base::TimeDelta::FromMilliseconds(500));
+  controller->SetUpdateTextureTime(base::TimeDelta::FromMilliseconds(500));
   controller->SetUpdateMoreTexturesSize(1);
 
   for (int i = 0; i < 100; i++) {

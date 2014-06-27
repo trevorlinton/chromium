@@ -27,7 +27,7 @@
 // SetKeywordSearchTermsForURL.
 class TestingTemplateURLService : public TemplateURLService {
  public:
-  static BrowserContextKeyedService* Build(content::BrowserContext* profile) {
+  static KeyedService* Build(content::BrowserContext* profile) {
     return new TestingTemplateURLService(static_cast<Profile*>(profile));
   }
 
@@ -35,21 +35,22 @@ class TestingTemplateURLService : public TemplateURLService {
       : TemplateURLService(profile) {
   }
 
-  string16 GetAndClearSearchTerm() {
-    string16 search_term;
+  base::string16 GetAndClearSearchTerm() {
+    base::string16 search_term;
     search_term.swap(search_term_);
     return search_term;
   }
 
  protected:
-  virtual void SetKeywordSearchTermsForURL(const TemplateURL* t_url,
-                                           const GURL& url,
-                                           const string16& term) OVERRIDE {
+  virtual void SetKeywordSearchTermsForURL(
+      const TemplateURL* t_url,
+      const GURL& url,
+      const base::string16& term) OVERRIDE {
     search_term_ = term;
   }
 
  private:
-  string16 search_term_;
+  base::string16 search_term_;
 
   DISALLOW_COPY_AND_ASSIGN(TestingTemplateURLService);
 };
@@ -115,7 +116,7 @@ void TemplateURLServiceTestUtilBase::ResetModel(bool verify_load) {
     VerifyLoad();
 }
 
-string16 TemplateURLServiceTestUtilBase::GetAndClearSearchTerm() {
+base::string16 TemplateURLServiceTestUtilBase::GetAndClearSearchTerm() {
   return
       static_cast<TestingTemplateURLService*>(model())->GetAndClearSearchTerm();
 }
@@ -145,27 +146,27 @@ void TemplateURLServiceTestUtilBase::SetManagedDefaultSearchPreferences(
     const std::string& search_terms_replacement_key) {
   TestingPrefServiceSyncable* pref_service = profile()->GetTestingPrefService();
   pref_service->SetManagedPref(prefs::kDefaultSearchProviderEnabled,
-                               Value::CreateBooleanValue(enabled));
+                               base::Value::CreateBooleanValue(enabled));
   pref_service->SetManagedPref(prefs::kDefaultSearchProviderName,
-                               Value::CreateStringValue(name));
+                               base::Value::CreateStringValue(name));
   pref_service->SetManagedPref(prefs::kDefaultSearchProviderKeyword,
-                               Value::CreateStringValue(keyword));
+                               base::Value::CreateStringValue(keyword));
   pref_service->SetManagedPref(prefs::kDefaultSearchProviderSearchURL,
-                               Value::CreateStringValue(search_url));
+                               base::Value::CreateStringValue(search_url));
   pref_service->SetManagedPref(prefs::kDefaultSearchProviderSuggestURL,
-                               Value::CreateStringValue(suggest_url));
+                               base::Value::CreateStringValue(suggest_url));
   pref_service->SetManagedPref(prefs::kDefaultSearchProviderIconURL,
-                               Value::CreateStringValue(icon_url));
+                               base::Value::CreateStringValue(icon_url));
   pref_service->SetManagedPref(prefs::kDefaultSearchProviderEncodings,
-                               Value::CreateStringValue(encodings));
+                               base::Value::CreateStringValue(encodings));
   scoped_ptr<base::ListValue> alternate_url_list(new base::ListValue());
   if (!alternate_url.empty())
-    alternate_url_list->Append(Value::CreateStringValue(alternate_url));
+    alternate_url_list->Append(base::Value::CreateStringValue(alternate_url));
   pref_service->SetManagedPref(prefs::kDefaultSearchProviderAlternateURLs,
                                alternate_url_list.release());
   pref_service->SetManagedPref(
       prefs::kDefaultSearchProviderSearchTermsReplacementKey,
-      Value::CreateStringValue(search_terms_replacement_key));
+      base::Value::CreateStringValue(search_terms_replacement_key));
   model()->Observe(chrome::NOTIFICATION_DEFAULT_SEARCH_POLICY_CHANGED,
                    content::NotificationService::AllSources(),
                    content::NotificationService::NoDetails());

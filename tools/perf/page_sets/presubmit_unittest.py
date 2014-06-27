@@ -3,10 +3,15 @@
 # found in the LICENSE file.
 
 import collections
+import os
+import sys
 import unittest
 
+PERF_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(PERF_ROOT), 'telemetry'))
 from telemetry.unittest import system_stub
 
+sys.path.insert(0, PERF_ROOT)
 from page_sets import PRESUBMIT
 
 
@@ -35,6 +40,9 @@ class InputAPIStub(object):
   def AbsoluteLocalPaths(self):
     return [af.AbsoluteLocalPath() for af in self.AffectedFiles()]
 
+  def PresubmitLocalPath(self):
+    return PRESUBMIT.__file__
+
 
 class OutputAPIStub(object):
   class PresubmitError(Exception):
@@ -44,12 +52,15 @@ class OutputAPIStub(object):
     pass
 
 
+PRESUBMIT.LoadSupport(InputAPIStub([]))   # do this to support monkey patching
+
 class PresubmitTest(unittest.TestCase):
   def setUp(self):
     success_file_hash = 'da39a3ee5e6b4b0d3255bfef95601890afd80709'
 
     self._stubs = system_stub.Override(
-        PRESUBMIT, ['cloud_storage', 'open', 'os'])
+        PRESUBMIT, ['cloud_storage', 'os', 'raw_input'])
+    self._stubs.raw_input.input = 'public'
     # Files in Cloud Storage.
     self._stubs.cloud_storage.remote_paths = [
         'skip'.zfill(40),
@@ -64,7 +75,7 @@ class PresubmitTest(unittest.TestCase):
     self._stubs.os.path.files = (
         self._stubs.cloud_storage.local_file_hashes.keys())
     # Local hash files and their contents.
-    self._stubs.open.files = {
+    self._stubs.cloud_storage.local_hash_files = {
         '/path/to/invalid_hash.wpr.sha1': 'invalid_hash',
         '/path/to/missing.wpr.sha1': 'missing'.zfill(40),
         '/path/to/success.wpr.sha1': success_file_hash,
@@ -112,8 +123,7 @@ class PresubmitTest(unittest.TestCase):
 
   def testSkip(self):
     results = self._CheckUpload(['/path/to/skip.wpr.sha1'])
-    self.assertResultCount(results, 0, 1)
-    self.assertTrue('skipping' in str(results[0]), msg=results[0])
+    self.assertResultCount(results, 0, 0)
 
   def testSuccess(self):
     results = self._CheckUpload(['/path/to/success.wpr.sha1'])
@@ -123,3 +133,7 @@ class PresubmitTest(unittest.TestCase):
   def testWrongHash(self):
     results = self._CheckUpload(['/path/to/wrong_hash.wpr.sha1'])
     self.assertTrue('does not match' in str(results[0]), msg=results[0])
+
+
+if __name__ == '__main__':
+  unittest.main()

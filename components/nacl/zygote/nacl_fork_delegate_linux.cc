@@ -24,9 +24,9 @@
 #include "base/process/kill.h"
 #include "base/process/launch.h"
 #include "base/third_party/dynamic_annotations/dynamic_annotations.h"
-#include "components/nacl/common/nacl_helper_linux.h"
 #include "components/nacl/common/nacl_paths.h"
 #include "components/nacl/common/nacl_switches.h"
+#include "components/nacl/loader/nacl_helper_linux.h"
 #include "content/public/common/content_descriptors.h"
 #include "content/public/common/content_switches.h"
 
@@ -198,15 +198,15 @@ void NaClForkDelegate::Init(const int sandboxdesc) {
     // because the existing limit may prevent the initial exec of
     // nacl_helper_bootstrap from succeeding, with its large address space
     // reservation.
-    std::set<int> max_these_limits;
-    max_these_limits.insert(RLIMIT_AS);
+    std::vector<int> max_these_limits;
+    max_these_limits.push_back(RLIMIT_AS);
     options.maximize_rlimits = &max_these_limits;
 
     if (!base::LaunchProcess(argv_to_launch, options, NULL))
       status_ = kNaClHelperLaunchFailed;
     // parent and error cases are handled below
   }
-  if (HANDLE_EINTR(close(fds[1])) != 0)
+  if (IGNORE_EINTR(close(fds[1])) != 0)
     LOG(ERROR) << "close(fds[1]) failed";
   if (status_ == kNaClHelperUnused) {
     const ssize_t kExpectedLength = strlen(kNaClHelperStartupAck);
@@ -228,7 +228,7 @@ void NaClForkDelegate::Init(const int sandboxdesc) {
   // TODO(bradchen): Make this LOG(ERROR) when the NaCl helper
   // becomes the default.
   fd_ = -1;
-  if (HANDLE_EINTR(close(fds[0])) != 0)
+  if (IGNORE_EINTR(close(fds[0])) != 0)
     LOG(ERROR) << "close(fds[0]) failed";
 }
 
@@ -243,7 +243,7 @@ void NaClForkDelegate::InitialUMA(std::string* uma_name,
 NaClForkDelegate::~NaClForkDelegate() {
   // side effect of close: delegate process will terminate
   if (status_ == kNaClHelperSuccess) {
-    if (HANDLE_EINTR(close(fd_)) != 0)
+    if (IGNORE_EINTR(close(fd_)) != 0)
       LOG(ERROR) << "close(fd_) failed";
   }
 }
@@ -272,7 +272,7 @@ pid_t NaClForkDelegate::Fork(const std::vector<int>& fds) {
 
   // First, send a remote fork request.
   Pickle write_pickle;
-  write_pickle.WriteInt(kNaClForkRequest);
+  write_pickle.WriteInt(nacl::kNaClForkRequest);
 
   char reply_buf[kNaClMaxIPCMessageLength];
   ssize_t reply_size = 0;
@@ -314,7 +314,7 @@ bool NaClForkDelegate::GetTerminationStatus(pid_t pid, bool known_dead,
   DCHECK(exit_code);
 
   Pickle write_pickle;
-  write_pickle.WriteInt(kNaClGetTerminationStatusRequest);
+  write_pickle.WriteInt(nacl::kNaClGetTerminationStatusRequest);
   write_pickle.WriteInt(pid);
   write_pickle.WriteBool(known_dead);
 

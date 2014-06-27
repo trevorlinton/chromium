@@ -19,6 +19,8 @@
 #include "ui/gfx/point_conversions.h"
 #include "ui/gfx/transform.h"
 
+using base::UTF8ToWide;
+
 namespace ui {
 
 namespace {
@@ -102,4 +104,4 @@ void PrintLayerHierarchy(const Layer* layer, gfx::Point mouse_location) {
   LOG(ERROR) << out.str();
 }
 
-} // namespace ui
+}  // namespace ui

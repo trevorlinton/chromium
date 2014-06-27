@@ -59,7 +59,7 @@ class TraySms::SmsDefaultView : public TrayItemMore {
  public:
   explicit SmsDefaultView(TraySms* owner)
       : TrayItemMore(owner, true) {
-    SetImage(ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
+    SetImage(ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
         IDR_AURA_UBER_TRAY_SMS));
     Update();
   }
@@ -96,12 +96,12 @@ class TraySms::SmsMessageView : public views::View,
         index_(index) {
     number_label_ = new views::Label(
         l10n_util::GetStringFUTF16(IDS_ASH_STATUS_TRAY_SMS_NUMBER,
-                                   UTF8ToUTF16(number)));
+                                   base::UTF8ToUTF16(number)),
+        ui::ResourceBundle::GetSharedInstance().GetFontList(
+            ui::ResourceBundle::BoldFont));
     number_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-    number_label_->SetFont(
-        number_label_->font().DeriveFont(0, gfx::Font::BOLD));
 
-    message_label_ = new views::Label(UTF8ToUTF16(message));
+    message_label_ = new views::Label(base::UTF8ToUTF16(message));
     message_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
     message_label_->SetMultiLine(true);
 
@@ -124,9 +124,10 @@ class TraySms::SmsMessageView : public views::View,
  private:
   void LayoutDetailedView() {
     views::ImageButton* close_button = new views::ImageButton(this);
-    close_button->SetImage(views::CustomButton::STATE_NORMAL,
-        ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-            IDR_AURA_WINDOW_CLOSE));
+    close_button->SetImage(
+        views::CustomButton::STATE_NORMAL,
+        ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
+            IDR_AURA_UBER_TRAY_SMS_DISMISS));
     const int msg_width = owner_->system_tray()->GetSystemBubble()->
         bubble_view()->GetPreferredSize().width() -
             (kNotificationIconWidth + kTrayPopupPaddingHorizontal * 2);
@@ -234,7 +235,7 @@ class TraySms::SmsDetailedView : public TrayDetailsView,
   // Overridden from ViewClickListener.
   virtual void OnViewClicked(views::View* sender) OVERRIDE {
     if (sender == footer()->content())
-      owner()->system_tray()->ShowDefaultView(BUBBLE_USE_EXISTING);
+      TransitionToDefaultView();
   }
 
   DISALLOW_COPY_AND_ASSIGN(SmsDetailedView);
@@ -376,7 +377,7 @@ bool TraySms::GetLatestMessage(size_t* index,
                                std::string* text) {
   if (messages_.empty())
     return false;
-  DictionaryValue* message;
+  base::DictionaryValue* message;
   size_t message_index = messages_.GetSize() - 1;
   if (!messages_.GetDictionary(message_index, &message))
     return false;

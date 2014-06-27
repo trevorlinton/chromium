@@ -33,7 +33,7 @@ bool AutoStart::AddApplication(const std::string& autostart_filename,
   scoped_ptr<base::Environment> environment(base::Environment::Create());
   base::FilePath autostart_directory = GetAutostartDirectory(environment.get());
   if (!base::DirectoryExists(autostart_directory) &&
-      !file_util::CreateDirectory(autostart_directory)) {
+      !base::CreateDirectory(autostart_directory)) {
     return false;
   }
 
@@ -47,8 +47,8 @@ bool AutoStart::AddApplication(const std::string& autostart_filename,
       "Exec=" + command_line + "\n"
       "Name=" + application_name + "\n";
   std::string::size_type content_length = autostart_file_contents.length();
-  if (file_util::WriteFile(autostart_file, autostart_file_contents.c_str(),
-                           content_length) !=
+  if (base::WriteFile(autostart_file, autostart_file_contents.c_str(),
+                      content_length) !=
       static_cast<int>(content_length)) {
     base::DeleteFile(autostart_file, false);
     return false;

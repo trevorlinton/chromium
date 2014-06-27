@@ -4,7 +4,8 @@
 
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 
-#include "base/atomicops.h"
+#include "base/command_line.h"
+#include "base/strings/string_number_conversions.h"
 #include "gpu/command_buffer/common/gles2_cmd_format.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
 #include "gpu/command_buffer/common/id_allocator.h"
@@ -13,14 +14,14 @@
 #include "gpu/command_buffer/service/async_pixel_transfer_manager_mock.h"
 #include "gpu/command_buffer/service/cmd_buffer_engine.h"
 #include "gpu/command_buffer/service/context_group.h"
+#include "gpu/command_buffer/service/context_state.h"
 #include "gpu/command_buffer/service/gl_surface_mock.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder_unittest_base.h"
+#include "gpu/command_buffer/service/gpu_switches.h"
 #include "gpu/command_buffer/service/image_manager.h"
 #include "gpu/command_buffer/service/mailbox_manager.h"
 #include "gpu/command_buffer/service/mocks.h"
 #include "gpu/command_buffer/service/program_manager.h"
-#include "gpu/command_buffer/service/stream_texture_manager_mock.h"
-#include "gpu/command_buffer/service/stream_texture_mock.h"
 #include "gpu/command_buffer/service/test_helper.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gl/gl_implementation.h"
@@ -63,15 +64,21 @@ class GLES2DecoderTest : public GLES2DecoderTestBase {
       bool init);
 };
 
-class GLES2DecoderANGLETest : public GLES2DecoderTestBase {
+class GLES2DecoderTestWithExtensionsOnGLES2
+    : public GLES2DecoderTest,
+      public ::testing::WithParamInterface<const char*> {
  public:
-  GLES2DecoderANGLETest()
-      : GLES2DecoderTestBase() {
-    GLES2Decoder::set_testing_force_is_angle(true);
-  }
+  GLES2DecoderTestWithExtensionsOnGLES2() {}
 
-  virtual ~GLES2DecoderANGLETest() {
-    GLES2Decoder::set_testing_force_is_angle(false);
+  virtual void SetUp() {
+    InitState init;
+    init.extensions = GetParam();
+    init.gl_version = "opengl es 2.0";
+    init.has_alpha = true;
+    init.has_depth = true;
+    init.request_alpha = true;
+    init.request_depth = true;
+    InitDecoder(init);
   }
 };
 
@@ -92,15 +99,15 @@ class GLES2DecoderGeometryInstancingTest : public GLES2DecoderWithShaderTest {
   }
 
   virtual void SetUp() {
-    InitDecoder(
-        "GL_ANGLE_instanced_arrays", // extensions
-        true,                        // has alpha
-        true,                        // has depth
-        false,                       // has stencil
-        true,                        // request alpha
-        true,                        // request depth
-        false,                       // request stencil
-        true);                       // bind generates resource
+    InitState init;
+    init.extensions = "GL_ANGLE_instanced_arrays";
+    init.gl_version = "opengl es 2.0";
+    init.has_alpha = true;
+    init.has_depth = true;
+    init.request_alpha = true;
+    init.request_depth = true;
+    init.bind_generates_resource = true;
+    InitDecoder(init);
     SetupDefaultProgram();
   }
 };
@@ -110,15 +117,16 @@ class GLES2DecoderRGBBackbufferTest : public GLES2DecoderWithShaderTest {
   GLES2DecoderRGBBackbufferTest() { }
 
   virtual void SetUp() {
-    InitDecoder(
-        "",     // extensions
-        false,  // has alpha
-        false,  // has depth
-        false,  // has stencil
-        false,  // request alpha
-        false,  // request depth
-        false,  // request stencil
-        true);   // bind generates resource
+    // Test codepath with workaround clear_alpha_in_readpixels because
+    // ReadPixelsEmulator emulates the incorrect driver behavior.
+    CommandLine command_line(0, NULL);
+    command_line.AppendSwitchASCII(
+        switches::kGpuDriverBugWorkarounds,
+        base::IntToString(gpu::CLEAR_ALPHA_IN_READPIXELS));
+    InitState init;
+    init.gl_version = "3.0";
+    init.bind_generates_resource = true;
+    InitDecoderWithCommandLine(init, &command_line);
     SetupDefaultProgram();
   }
 };
@@ -132,12 +140,46 @@ class GLES2DecoderManualInitTest : public GLES2DecoderWithShaderTest {
   }
 };
 
-class GLES2DecoderANGLEManualInitTest : public GLES2DecoderANGLETest {
+class GLES2DecoderRestoreStateTest : public GLES2DecoderManualInitTest {
  public:
-  // Override default setup so nothing gets setup.
-  virtual void SetUp() {
-  }
+  GLES2DecoderRestoreStateTest() { }
+
+ protected:
+  void AddExpectationsForActiveTexture(GLenum unit);
+  void AddExpectationsForBindTexture(GLenum target, GLuint id);
+  void InitializeContextState(
+      ContextState* state, uint32 non_default_unit, uint32 active_unit);
 };
+
+void GLES2DecoderRestoreStateTest::AddExpectationsForActiveTexture(
+    GLenum unit) {
+  EXPECT_CALL(*gl_, ActiveTexture(unit))
+      .Times(1)
+      .RetiresOnSaturation();
+}
+
+void GLES2DecoderRestoreStateTest::AddExpectationsForBindTexture(GLenum target,
+                                                                 GLuint id) {
+  EXPECT_CALL(*gl_, BindTexture(target, id))
+      .Times(1)
+      .RetiresOnSaturation();
+}
+
+void GLES2DecoderRestoreStateTest::InitializeContextState(
+    ContextState* state, uint32 non_default_unit, uint32 active_unit) {
+  state->texture_units.resize(group().max_texture_units());
+  for (uint32 tt = 0; tt < state->texture_units.size(); ++tt) {
+    TextureRef* ref_cube_map =
+        group().texture_manager()->GetDefaultTextureInfo(GL_TEXTURE_CUBE_MAP);
+    state->texture_units[tt].bound_texture_cube_map = ref_cube_map;
+    TextureRef* ref_2d =
+        (tt == non_default_unit)
+            ? group().texture_manager()->GetTexture(client_texture_id_)
+            : group().texture_manager()->GetDefaultTextureInfo(GL_TEXTURE_2D);
+    state->texture_units[tt].bound_texture_2d = ref_2d;
+  }
+  state->active_texture_unit = active_unit;
+}
 
 TEST_F(GLES2DecoderWithShaderTest, DrawArraysNoAttributesSucceeds) {
   SetupTexture();
@@ -164,6 +206,7 @@ TEST_F(GLES2DecoderWithShaderTest, DrawArraysSimulatedAttrib0OverflowFails) {
   cmd.Init(GL_TRIANGLES, 0, kLargeCount);
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
   EXPECT_EQ(GL_OUT_OF_MEMORY, GetGLError());
+  EXPECT_FALSE(GetDecoder()->WasContextLost());
 }
 
 // Tests when the math overflows (0x7FFFFFFF + 1 = 0x8000000 verts)
@@ -177,6 +220,7 @@ TEST_F(GLES2DecoderWithShaderTest, DrawArraysSimulatedAttrib0PosToNegFails) {
   cmd.Init(GL_TRIANGLES, 0, kLargeCount);
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
   EXPECT_EQ(GL_OUT_OF_MEMORY, GetGLError());
+  EXPECT_FALSE(GetDecoder()->WasContextLost());
 }
 
 // Tests when the driver returns an error
@@ -192,6 +236,37 @@ TEST_F(GLES2DecoderWithShaderTest, DrawArraysSimulatedAttrib0OOMFails) {
   cmd.Init(GL_TRIANGLES, 0, kFakeLargeCount);
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
   EXPECT_EQ(GL_OUT_OF_MEMORY, GetGLError());
+  EXPECT_FALSE(GetDecoder()->WasContextLost());
+}
+
+// Test that we lose context.
+TEST_F(GLES2DecoderManualInitTest, LoseContextWhenOOM) {
+  InitState init;
+  init.gl_version = "3.0";
+  init.has_alpha = true;
+  init.has_depth = true;
+  init.request_alpha = true;
+  init.request_depth = true;
+  init.bind_generates_resource = true;
+  init.lose_context_when_out_of_memory = true;
+  InitDecoder(init);
+  SetupDefaultProgram();
+
+  const GLsizei kFakeLargeCount = 0x1234;
+  SetupTexture();
+  AddExpectationsForSimulatedAttrib0WithError(
+      kFakeLargeCount, 0, GL_OUT_OF_MEMORY);
+  EXPECT_CALL(*gl_, DrawArrays(_, _, _)).Times(0).RetiresOnSaturation();
+  // Other contexts in the group should be lost also.
+  EXPECT_CALL(*mock_decoder_, LoseContext(GL_UNKNOWN_CONTEXT_RESET_ARB))
+      .Times(1)
+      .RetiresOnSaturation();
+  DrawArrays cmd;
+  cmd.Init(GL_TRIANGLES, 0, kFakeLargeCount);
+  // This context should be lost.
+  EXPECT_EQ(error::kLostContext, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_OUT_OF_MEMORY, GetGLError());
+  EXPECT_TRUE(decoder_->WasContextLost());
 }
 
 TEST_F(GLES2DecoderWithShaderTest, DrawArraysBadTextureUsesBlack) {
@@ -254,6 +329,38 @@ TEST_F(GLES2DecoderWithShaderTest,
 }
 
 TEST_F(GLES2DecoderWithShaderTest, DrawArraysValidAttributesSucceeds) {
+  SetupTexture();
+  SetupVertexBuffer();
+  DoEnableVertexAttribArray(1);
+  DoVertexAttribPointer(1, 2, GL_FLOAT, 0, 0);
+  AddExpectationsForSimulatedAttrib0(kNumVertices, kServiceBufferId);
+  SetupExpectationsForApplyingDefaultDirtyState();
+
+  EXPECT_CALL(*gl_, DrawArrays(GL_TRIANGLES, 0, kNumVertices))
+      .Times(1)
+      .RetiresOnSaturation();
+  DrawArrays cmd;
+  cmd.Init(GL_TRIANGLES, 0, kNumVertices);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
+}
+
+// Same as DrawArraysValidAttributesSucceeds, but with workaround
+// |init_vertex_attributes|.
+TEST_F(GLES2DecoderManualInitTest, InitVertexAttributes) {
+  CommandLine command_line(0, NULL);
+  command_line.AppendSwitchASCII(
+      switches::kGpuDriverBugWorkarounds,
+      base::IntToString(gpu::INIT_VERTEX_ATTRIBUTES));
+  InitState init;
+  init.gl_version = "3.0";
+  init.has_alpha = true;
+  init.has_depth = true;
+  init.request_alpha = true;
+  init.request_depth = true;
+  init.bind_generates_resource = true;
+  InitDecoderWithCommandLine(init, &command_line);
+  SetupDefaultProgram();
   SetupTexture();
   SetupVertexBuffer();
   DoEnableVertexAttribArray(1);
@@ -1802,16 +1909,8 @@ TEST_F(GLES2DecoderTest, GenerateMipmapHandlesOutOfMemory) {
   DoTexImage2D(
       GL_TEXTURE_2D, 0, GL_RGBA, 16, 16, 0, GL_RGBA, GL_UNSIGNED_BYTE,
       kSharedMemoryId, kSharedMemoryOffset);
-  EXPECT_CALL(*gl_, TexParameteri(
-      GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST))
-      .Times(1)
-      .RetiresOnSaturation();
   EXPECT_CALL(*gl_, GenerateMipmapEXT(GL_TEXTURE_2D))
       .Times(1);
-  EXPECT_CALL(*gl_, TexParameteri(
-      GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR))
-      .Times(1)
-      .RetiresOnSaturation();
   EXPECT_CALL(*gl_, GetError())
       .WillOnce(Return(GL_NO_ERROR))
       .WillOnce(Return(GL_OUT_OF_MEMORY))
@@ -1829,9 +1928,40 @@ TEST_F(GLES2DecoderTest, GenerateMipmapClearsUnclearedTexture) {
   DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
   DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 2, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE,
                0, 0);
-  SetupClearTextureExpections(
+  SetupClearTextureExpectations(
       kServiceTextureId, kServiceTextureId, GL_TEXTURE_2D, GL_TEXTURE_2D,
-      0, GL_RGBA, GL_UNSIGNED_BYTE, 2, 2);
+      0, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, 2, 2);
+  EXPECT_CALL(*gl_, GenerateMipmapEXT(GL_TEXTURE_2D));
+  EXPECT_CALL(*gl_, GetError())
+      .WillOnce(Return(GL_NO_ERROR))
+      .WillOnce(Return(GL_NO_ERROR))
+      .RetiresOnSaturation();
+  GenerateMipmap cmd;
+  cmd.Init(GL_TEXTURE_2D);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
+}
+
+// Same as GenerateMipmapClearsUnclearedTexture, but with workaround
+// |set_texture_filters_before_generating_mipmap|.
+TEST_F(GLES2DecoderManualInitTest, SetTextureFiltersBeforeGenerateMipmap) {
+  CommandLine command_line(0, NULL);
+  command_line.AppendSwitchASCII(
+      switches::kGpuDriverBugWorkarounds,
+      base::IntToString(gpu::SET_TEXTURE_FILTER_BEFORE_GENERATING_MIPMAP));
+  InitState init;
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoderWithCommandLine(init, &command_line);
+
+  EXPECT_CALL(*gl_, GenerateMipmapEXT(_))
+       .Times(0);
+  DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 2, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+               0, 0);
+  SetupClearTextureExpectations(
+      kServiceTextureId, kServiceTextureId, GL_TEXTURE_2D, GL_TEXTURE_2D,
+      0, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, 2, 2);
   EXPECT_CALL(*gl_, TexParameteri(
       GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST))
       .Times(1)
@@ -2485,6 +2615,49 @@ TEST_F(GLES2DecoderTest, ReadPixelsInvalidArgs) {
            result_shm_id, kInvalidSharedMemoryOffset,
            false);
   EXPECT_NE(error::kNoError, ExecuteCmd(cmd));
+}
+
+TEST_F(GLES2DecoderManualInitTest, ReadPixelsAsyncError) {
+  InitState init;
+  init.extensions = "GL_ARB_sync";
+  init.gl_version = "opengl es 3.0";
+  init.has_alpha = true;
+  init.request_alpha = true;
+  init.bind_generates_resource = true;
+  InitDecoder(init);
+
+  typedef ReadPixels::Result Result;
+  Result* result = GetSharedMemoryAs<Result*>();
+
+  const GLsizei kWidth = 4;
+  const GLsizei kHeight = 4;
+  uint32 result_shm_id = kSharedMemoryId;
+  uint32 result_shm_offset = kSharedMemoryOffset;
+  uint32 pixels_shm_id = kSharedMemoryId;
+  uint32 pixels_shm_offset = kSharedMemoryOffset + sizeof(*result);
+
+  EXPECT_CALL(*gl_, GetError())
+     // first error check must pass to get to the test
+     .WillOnce(Return(GL_NO_ERROR))
+     // second check is after BufferData, simulate fail here
+     .WillOnce(Return(GL_INVALID_OPERATION))
+     // third error check is fall-through call to sync ReadPixels
+     .WillOnce(Return(GL_NO_ERROR))
+     .RetiresOnSaturation();
+
+  EXPECT_CALL(*gl_, ReadPixels(0, 0, kWidth, kHeight, GL_RGB,
+    GL_UNSIGNED_BYTE, _)).Times(1);
+  EXPECT_CALL(*gl_, GenBuffersARB(1, _)).Times(1);
+  EXPECT_CALL(*gl_, BindBuffer(GL_PIXEL_PACK_BUFFER_ARB, _)).Times(2);
+  EXPECT_CALL(*gl_, BufferData(GL_PIXEL_PACK_BUFFER_ARB, _, NULL,
+    GL_STREAM_READ)).Times(1);
+
+  ReadPixels cmd;
+  cmd.Init(0, 0, kWidth, kHeight, GL_RGB, GL_UNSIGNED_BYTE,
+           pixels_shm_id, pixels_shm_offset,
+           result_shm_id, result_shm_offset,
+           true);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
 }
 
 TEST_F(GLES2DecoderTest, BindAttribLocation) {
@@ -3730,15 +3903,12 @@ TEST_F(GLES2DecoderRGBBackbufferTest, RGBBackbufferColorMaskFBO) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, ActualAlphaMatchesRequestedAlpha) {
-  InitDecoder(
-      "",      // extensions
-      true,    // has alpha
-      false,   // has depth
-      false,   // has stencil
-      true,    // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.gl_version = "3.0";
+  init.has_alpha = true;
+  init.request_alpha = true;
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   EXPECT_CALL(*gl_, GetError())
       .WillOnce(Return(GL_NO_ERROR))
@@ -3761,15 +3931,11 @@ TEST_F(GLES2DecoderManualInitTest, ActualAlphaMatchesRequestedAlpha) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, ActualAlphaDoesNotMatchRequestedAlpha) {
-  InitDecoder(
-      "",      // extensions
-      true,    // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.gl_version = "3.0";
+  init.has_alpha = true;
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   EXPECT_CALL(*gl_, GetError())
       .WillOnce(Return(GL_NO_ERROR))
@@ -3792,15 +3958,12 @@ TEST_F(GLES2DecoderManualInitTest, ActualAlphaDoesNotMatchRequestedAlpha) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, ActualDepthMatchesRequestedDepth) {
-  InitDecoder(
-      "",      // extensions
-      false,   // has alpha
-      true,    // has depth
-      false,   // has stencil
-      false,   // request alpha
-      true,    // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.gl_version = "3.0";
+  init.has_depth = true;
+  init.request_depth = true;
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   EXPECT_CALL(*gl_, GetError())
       .WillOnce(Return(GL_NO_ERROR))
@@ -3823,15 +3986,11 @@ TEST_F(GLES2DecoderManualInitTest, ActualDepthMatchesRequestedDepth) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, ActualDepthDoesNotMatchRequestedDepth) {
-  InitDecoder(
-      "",      // extensions
-      false,   // has alpha
-      true,    // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.gl_version = "3.0";
+  init.has_depth = true;
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   EXPECT_CALL(*gl_, GetError())
       .WillOnce(Return(GL_NO_ERROR))
@@ -3854,15 +4013,12 @@ TEST_F(GLES2DecoderManualInitTest, ActualDepthDoesNotMatchRequestedDepth) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, ActualStencilMatchesRequestedStencil) {
-  InitDecoder(
-      "",      // extensions
-      false,   // has alpha
-      false,   // has depth
-      true,    // has stencil
-      false,   // request alpha
-      false,   // request depth
-      true,    // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.gl_version = "3.0";
+  init.has_stencil = true;
+  init.request_stencil = true;
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   EXPECT_CALL(*gl_, GetError())
       .WillOnce(Return(GL_NO_ERROR))
@@ -3885,15 +4041,11 @@ TEST_F(GLES2DecoderManualInitTest, ActualStencilMatchesRequestedStencil) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, ActualStencilDoesNotMatchRequestedStencil) {
-  InitDecoder(
-      "",      // extensions
-      false,   // has alpha
-      false,   // has depth
-      true,    // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.gl_version = "3.0";
+  init.has_stencil = true;
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   EXPECT_CALL(*gl_, GetError())
       .WillOnce(Return(GL_NO_ERROR))
@@ -3916,15 +4068,12 @@ TEST_F(GLES2DecoderManualInitTest, ActualStencilDoesNotMatchRequestedStencil) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, DepthEnableWithDepth) {
-  InitDecoder(
-      "",      // extensions
-      false,   // has alpha
-      true,    // has depth
-      false,   // has stencil
-      false,   // request alpha
-      true,    // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.gl_version = "3.0";
+  init.has_depth = true;
+  init.request_depth = true;
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   Enable cmd;
   cmd.Init(GL_DEPTH_TEST);
@@ -3978,15 +4127,11 @@ TEST_F(GLES2DecoderManualInitTest, DepthEnableWithDepth) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, DepthEnableWithoutRequestedDepth) {
-  InitDecoder(
-      "",      // extensions
-      false,   // has alpha
-      true,    // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.gl_version = "3.0";
+  init.has_depth = true;
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   Enable cmd;
   cmd.Init(GL_DEPTH_TEST);
@@ -4039,15 +4184,12 @@ TEST_F(GLES2DecoderManualInitTest, DepthEnableWithoutRequestedDepth) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, StencilEnableWithStencil) {
-  InitDecoder(
-      "",      // extensions
-      false,   // has alpha
-      false,   // has depth
-      true,    // has stencil
-      false,   // request alpha
-      false,   // request depth
-      true,    // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.gl_version = "3.0";
+  init.has_stencil = true;
+  init.request_stencil = true;
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   Enable cmd;
   cmd.Init(GL_STENCIL_TEST);
@@ -4100,15 +4242,11 @@ TEST_F(GLES2DecoderManualInitTest, StencilEnableWithStencil) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, StencilEnableWithoutRequestedStencil) {
-  InitDecoder(
-      "",      // extensions
-      false,   // has alpha
-      false,   // has depth
-      true,    // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.gl_version = "3.0";
+  init.has_stencil = true;
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   Enable cmd;
   cmd.Init(GL_STENCIL_TEST);
@@ -4161,15 +4299,15 @@ TEST_F(GLES2DecoderManualInitTest, StencilEnableWithoutRequestedStencil) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, PackedDepthStencilReportsCorrectValues) {
-  InitDecoder(
-      "GL_OES_packed_depth_stencil",      // extensions
-      false,   // has alpha
-      true,    // has depth
-      true,    // has stencil
-      false,   // request alpha
-      true,    // request depth
-      true,    // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_OES_packed_depth_stencil";
+  init.gl_version = "opengl es 2.0";
+  init.has_depth = true;
+  init.has_stencil = true;
+  init.request_depth = true;
+  init.request_stencil = true;
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   EXPECT_CALL(*gl_, GetError())
       .WillOnce(Return(GL_NO_ERROR))
@@ -4205,15 +4343,14 @@ TEST_F(GLES2DecoderManualInitTest, PackedDepthStencilReportsCorrectValues) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, PackedDepthStencilNoRequestedStencil) {
-  InitDecoder(
-      "GL_OES_packed_depth_stencil",      // extensions
-      false,   // has alpha
-      true,    // has depth
-      true,    // has stencil
-      false,   // request alpha
-      true,    // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_OES_packed_depth_stencil";
+  init.gl_version = "opengl es 2.0";
+  init.has_depth = true;
+  init.has_stencil = true;
+  init.request_depth = true;
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   EXPECT_CALL(*gl_, GetError())
       .WillOnce(Return(GL_NO_ERROR))
@@ -4249,15 +4386,11 @@ TEST_F(GLES2DecoderManualInitTest, PackedDepthStencilNoRequestedStencil) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, PackedDepthStencilRenderbufferDepth) {
-  InitDecoder(
-      "GL_OES_packed_depth_stencil",      // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_OES_packed_depth_stencil";
+  init.gl_version = "opengl es 2.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   DoBindRenderbuffer(GL_RENDERBUFFER, client_renderbuffer_id_,
                     kServiceRenderbufferId);
   DoBindFramebuffer(GL_FRAMEBUFFER, client_framebuffer_id_,
@@ -4320,15 +4453,11 @@ TEST_F(GLES2DecoderManualInitTest, PackedDepthStencilRenderbufferDepth) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, PackedDepthStencilRenderbufferStencil) {
-  InitDecoder(
-      "GL_OES_packed_depth_stencil",      // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_OES_packed_depth_stencil";
+  init.gl_version = "opengl es 2.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   DoBindRenderbuffer(GL_RENDERBUFFER, client_renderbuffer_id_,
                     kServiceRenderbufferId);
   DoBindFramebuffer(GL_FRAMEBUFFER, client_framebuffer_id_,
@@ -4538,9 +4667,9 @@ TEST_F(GLES2DecoderTest, TexImage2DRedefinitionSucceeds) {
           GL_TEXTURE_2D, 0, GL_RGBA, kWidth, kHeight, 0, GL_RGBA,
           GL_UNSIGNED_BYTE, kSharedMemoryId, kSharedMemoryOffset);
     } else {
-      SetupClearTextureExpections(
+      SetupClearTextureExpectations(
           kServiceTextureId, kServiceTextureId, GL_TEXTURE_2D, GL_TEXTURE_2D,
-          0, GL_RGBA, GL_UNSIGNED_BYTE, kWidth, kHeight);
+          0, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, kWidth, kHeight);
       cmd.Init(
           GL_TEXTURE_2D, 0, GL_RGBA, kWidth, kHeight, 0, GL_RGBA,
           GL_UNSIGNED_BYTE, 0, 0);
@@ -4721,16 +4850,13 @@ TEST_F(GLES2DecoderTest, RenderbufferStorageBadArgs) {
   EXPECT_EQ(GL_INVALID_VALUE, GetGLError());
 }
 
-TEST_F(GLES2DecoderManualInitTest, RenderbufferStorageMultisampleGLError) {
-  InitDecoder(
-      "GL_EXT_framebuffer_multisample",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+TEST_F(GLES2DecoderManualInitTest,
+       RenderbufferStorageMultisampleCHROMIUMGLError) {
+  InitState init;
+  init.extensions = "GL_EXT_framebuffer_multisample";
+  init.gl_version = "2.1";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   DoBindRenderbuffer(GL_RENDERBUFFER, client_renderbuffer_id_,
                     kServiceRenderbufferId);
   EXPECT_CALL(*gl_, GetError())
@@ -4741,28 +4867,25 @@ TEST_F(GLES2DecoderManualInitTest, RenderbufferStorageMultisampleGLError) {
       GL_RENDERBUFFER, 1, GL_RGBA, 100, 50))
       .Times(1)
       .RetiresOnSaturation();
-  RenderbufferStorageMultisampleEXT cmd;
+  RenderbufferStorageMultisampleCHROMIUM cmd;
   cmd.Init(GL_RENDERBUFFER, 1, GL_RGBA4, 100, 50);
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
   EXPECT_EQ(GL_OUT_OF_MEMORY, GetGLError());
 }
 
-TEST_F(GLES2DecoderManualInitTest, RenderbufferStorageMultisampleBadArgs) {
-  InitDecoder(
-      "GL_EXT_framebuffer_multisample",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+TEST_F(GLES2DecoderManualInitTest,
+       RenderbufferStorageMultisampleCHROMIUMBadArgs) {
+  InitState init;
+  init.extensions = "GL_EXT_framebuffer_multisample";
+  init.gl_version = "2.1";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   DoBindRenderbuffer(GL_RENDERBUFFER, client_renderbuffer_id_,
                     kServiceRenderbufferId);
   EXPECT_CALL(*gl_, RenderbufferStorageMultisampleEXT(_, _, _, _, _))
       .Times(0)
       .RetiresOnSaturation();
-  RenderbufferStorageMultisampleEXT cmd;
+  RenderbufferStorageMultisampleCHROMIUM cmd;
   cmd.Init(GL_RENDERBUFFER, TestHelper::kMaxSamples + 1,
            GL_RGBA4, TestHelper::kMaxRenderbufferSize, 1);
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
@@ -4776,6 +4899,113 @@ TEST_F(GLES2DecoderManualInitTest, RenderbufferStorageMultisampleBadArgs) {
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
   EXPECT_EQ(GL_INVALID_VALUE, GetGLError());
 }
+
+TEST_F(GLES2DecoderManualInitTest, RenderbufferStorageMultisampleCHROMIUM) {
+  InitState init;
+  init.extensions = "GL_EXT_framebuffer_multisample";
+  init.gl_version = "2.1";
+  InitDecoder(init);
+  DoBindRenderbuffer(GL_RENDERBUFFER, client_renderbuffer_id_,
+                    kServiceRenderbufferId);
+  InSequence sequence;
+  EXPECT_CALL(*gl_, GetError())
+      .WillOnce(Return(GL_NO_ERROR))
+      .RetiresOnSaturation();
+  EXPECT_CALL(
+      *gl_,
+      RenderbufferStorageMultisampleEXT(GL_RENDERBUFFER,
+                                        TestHelper::kMaxSamples,
+                                        GL_RGBA,
+                                        TestHelper::kMaxRenderbufferSize,
+                                        1))
+      .Times(1)
+      .RetiresOnSaturation();
+  EXPECT_CALL(*gl_, GetError())
+      .WillOnce(Return(GL_NO_ERROR))
+      .RetiresOnSaturation();
+  RenderbufferStorageMultisampleCHROMIUM cmd;
+  cmd.Init(GL_RENDERBUFFER, TestHelper::kMaxSamples,
+           GL_RGBA4, TestHelper::kMaxRenderbufferSize, 1);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
+}
+
+TEST_F(GLES2DecoderManualInitTest,
+       RenderbufferStorageMultisampleEXTNotSupported) {
+  InitState init;
+  init.extensions = "GL_EXT_framebuffer_multisample";
+  init.gl_version = "2.1";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
+  DoBindRenderbuffer(GL_RENDERBUFFER, client_renderbuffer_id_,
+                    kServiceRenderbufferId);
+  InSequence sequence;
+  // GL_EXT_framebuffer_multisample uses RenderbufferStorageMultisampleCHROMIUM.
+  RenderbufferStorageMultisampleEXT cmd;
+  cmd.Init(GL_RENDERBUFFER, TestHelper::kMaxSamples,
+           GL_RGBA4, TestHelper::kMaxRenderbufferSize, 1);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_INVALID_OPERATION, GetGLError());
+}
+
+class GLES2DecoderMultisampledRenderToTextureTest
+    : public GLES2DecoderTestWithExtensionsOnGLES2 {};
+
+TEST_P(GLES2DecoderMultisampledRenderToTextureTest,
+       NotCompatibleWithRenderbufferStorageMultisampleCHROMIUM) {
+  DoBindRenderbuffer(GL_RENDERBUFFER, client_renderbuffer_id_,
+                    kServiceRenderbufferId);
+  RenderbufferStorageMultisampleCHROMIUM cmd;
+  cmd.Init(GL_RENDERBUFFER, TestHelper::kMaxSamples,
+           GL_RGBA4, TestHelper::kMaxRenderbufferSize, 1);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_INVALID_OPERATION, GetGLError());
+}
+
+TEST_P(GLES2DecoderMultisampledRenderToTextureTest,
+       RenderbufferStorageMultisampleEXT) {
+  DoBindRenderbuffer(GL_RENDERBUFFER, client_renderbuffer_id_,
+                    kServiceRenderbufferId);
+  InSequence sequence;
+  EXPECT_CALL(*gl_, GetError())
+      .WillOnce(Return(GL_NO_ERROR))
+      .RetiresOnSaturation();
+  if (strstr(GetParam(), "GL_IMG_multisampled_render_to_texture")) {
+    EXPECT_CALL(
+        *gl_,
+        RenderbufferStorageMultisampleIMG(GL_RENDERBUFFER,
+                                          TestHelper::kMaxSamples,
+                                          GL_RGBA,
+                                          TestHelper::kMaxRenderbufferSize,
+                                          1))
+        .Times(1)
+        .RetiresOnSaturation();
+  } else {
+    EXPECT_CALL(
+        *gl_,
+        RenderbufferStorageMultisampleEXT(GL_RENDERBUFFER,
+                                          TestHelper::kMaxSamples,
+                                          GL_RGBA,
+                                          TestHelper::kMaxRenderbufferSize,
+                                          1))
+        .Times(1)
+        .RetiresOnSaturation();
+  }
+  EXPECT_CALL(*gl_, GetError())
+      .WillOnce(Return(GL_NO_ERROR))
+      .RetiresOnSaturation();
+  RenderbufferStorageMultisampleEXT cmd;
+  cmd.Init(GL_RENDERBUFFER, TestHelper::kMaxSamples,
+           GL_RGBA4, TestHelper::kMaxRenderbufferSize, 1);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
+}
+
+INSTANTIATE_TEST_CASE_P(
+    GLES2DecoderMultisampledRenderToTextureTests,
+    GLES2DecoderMultisampledRenderToTextureTest,
+    ::testing::Values("GL_EXT_multisampled_render_to_texture",
+                      "GL_IMG_multisampled_render_to_texture"));
 
 TEST_F(GLES2DecoderTest, ReadPixelsGLError) {
   GLenum kFormat = GL_RGBA;
@@ -4816,15 +5046,11 @@ static bool ValueInArray(GLint value, GLint* array, GLint count) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, GetCompressedTextureFormats) {
-  InitDecoder(
-      "GL_EXT_texture_compression_s3tc",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_EXT_texture_compression_s3tc";
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   EXPECT_CALL(*gl_, GetError())
       .WillOnce(Return(GL_NO_ERROR))
@@ -4873,15 +5099,10 @@ TEST_F(GLES2DecoderManualInitTest, GetCompressedTextureFormats) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, GetNoCompressedTextureFormats) {
-  InitDecoder(
-      "",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   EXPECT_CALL(*gl_, GetError())
       .WillOnce(Return(GL_NO_ERROR))
@@ -4917,15 +5138,11 @@ TEST_F(GLES2DecoderManualInitTest, GetNoCompressedTextureFormats) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, CompressedTexImage2DBucketBadBucket) {
-  InitDecoder(
-      "GL_EXT_texture_compression_s3tc",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_EXT_texture_compression_s3tc";
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   const uint32 kBadBucketId = 123;
   DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
@@ -4951,15 +5168,11 @@ struct S3TCTestData {
 }  // anonymous namespace.
 
 TEST_F(GLES2DecoderManualInitTest, CompressedTexImage2DS3TC) {
-  InitDecoder(
-      "GL_EXT_texture_compression_s3tc",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_EXT_texture_compression_s3tc";
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   const uint32 kBucketId = 123;
   CommonDecoder::Bucket* bucket = decoder_->CreateBucket(kBucketId);
   ASSERT_TRUE(bucket != NULL);
@@ -5105,15 +5318,11 @@ TEST_F(GLES2DecoderManualInitTest, CompressedTexImage2DS3TC) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, CompressedTexImage2DETC1) {
-  InitDecoder(
-      "GL_OES_compressed_ETC1_RGB8_texture",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_OES_compressed_ETC1_RGB8_texture";
+  init.gl_version = "opengl es 2.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   const uint32 kBucketId = 123;
   CommonDecoder::Bucket* bucket = decoder_->CreateBucket(kBucketId);
   ASSERT_TRUE(bucket != NULL);
@@ -5177,15 +5386,11 @@ TEST_F(GLES2DecoderManualInitTest, CompressedTexImage2DETC1) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, GetCompressedTextureFormatsETC1) {
-  InitDecoder(
-      "GL_OES_compressed_ETC1_RGB8_texture",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_OES_compressed_ETC1_RGB8_texture";
+  init.gl_version = "opengl es 2.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   EXPECT_CALL(*gl_, GetError())
       .WillOnce(Return(GL_NO_ERROR))
@@ -5252,15 +5457,11 @@ TEST_F(GLES2DecoderWithShaderTest, GetProgramInfoCHROMIUMInvalidArgs) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, EGLImageExternalBindTexture) {
-  InitDecoder(
-      "GL_OES_EGL_image_external",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_OES_EGL_image_external";
+  init.gl_version = "opengl es 2.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   EXPECT_CALL(*gl_, BindTexture(GL_TEXTURE_EXTERNAL_OES, kNewServiceId));
   EXPECT_CALL(*gl_, GenTextures(1, _))
       .WillOnce(SetArgumentPointee<1>(kNewServiceId));
@@ -5274,15 +5475,11 @@ TEST_F(GLES2DecoderManualInitTest, EGLImageExternalBindTexture) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, EGLImageExternalGetBinding) {
-  InitDecoder(
-      "GL_OES_EGL_image_external",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_OES_EGL_image_external";
+  init.gl_version = "opengl es 2.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   DoBindTexture(GL_TEXTURE_EXTERNAL_OES, client_texture_id_, kServiceTextureId);
 
   EXPECT_CALL(*gl_, GetError())
@@ -5307,15 +5504,11 @@ TEST_F(GLES2DecoderManualInitTest, EGLImageExternalGetBinding) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, EGLImageExternalTextureDefaults) {
-  InitDecoder(
-      "GL_OES_EGL_image_external",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_OES_EGL_image_external";
+  init.gl_version = "opengl es 2.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   DoBindTexture(GL_TEXTURE_EXTERNAL_OES, client_texture_id_, kServiceTextureId);
 
   TextureRef* texture_ref = GetTexture(client_texture_id_);
@@ -5328,16 +5521,11 @@ TEST_F(GLES2DecoderManualInitTest, EGLImageExternalTextureDefaults) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, EGLImageExternalTextureParam) {
-  InitDecoder(
-      "GL_OES_EGL_image_external",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
-
+  InitState init;
+  init.extensions = "GL_OES_EGL_image_external";
+  init.gl_version = "opengl es 2.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   DoBindTexture(GL_TEXTURE_EXTERNAL_OES, client_texture_id_, kServiceTextureId);
 
   EXPECT_CALL(*gl_, TexParameteri(GL_TEXTURE_EXTERNAL_OES,
@@ -5387,16 +5575,11 @@ TEST_F(GLES2DecoderManualInitTest, EGLImageExternalTextureParam) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, EGLImageExternalTextureParamInvalid) {
-  InitDecoder(
-      "GL_OES_EGL_image_external",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
-
+  InitState init;
+  init.extensions = "GL_OES_EGL_image_external";
+  init.gl_version = "opengl es 2.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   DoBindTexture(GL_TEXTURE_EXTERNAL_OES, client_texture_id_, kServiceTextureId);
 
   TexParameteri cmd;
@@ -5428,15 +5611,11 @@ TEST_F(GLES2DecoderManualInitTest, EGLImageExternalTextureParamInvalid) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, EGLImageExternalTexImage2DError) {
-  InitDecoder(
-      "GL_OES_EGL_image_external",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_OES_EGL_image_external";
+  init.gl_version = "opengl es 2.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   GLenum target = GL_TEXTURE_EXTERNAL_OES;
   GLint level = 0;
@@ -5458,413 +5637,37 @@ TEST_F(GLES2DecoderManualInitTest, EGLImageExternalTexImage2DError) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, BindGeneratesResourceFalse) {
-  InitDecoder(
-      "",      // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      false);  // bind generates resource
+  InitState init;
+  init.gl_version = "3.0";
+  InitDecoder(init);
 
   BindTexture cmd1;
   cmd1.Init(GL_TEXTURE_2D, kInvalidClientId);
-  EXPECT_NE(error::kNoError, ExecuteCmd(cmd1));
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd1));
+  EXPECT_EQ(GL_INVALID_OPERATION, GetGLError());
 
   BindBuffer cmd2;
   cmd2.Init(GL_ARRAY_BUFFER, kInvalidClientId);
-  EXPECT_NE(error::kNoError, ExecuteCmd(cmd2));
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd2));
+  EXPECT_EQ(GL_INVALID_OPERATION, GetGLError());
 
   BindFramebuffer cmd3;
   cmd3.Init(GL_FRAMEBUFFER, kInvalidClientId);
-  EXPECT_NE(error::kNoError, ExecuteCmd(cmd3));
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd3));
+  EXPECT_EQ(GL_INVALID_OPERATION, GetGLError());
 
   BindRenderbuffer cmd4;
   cmd4.Init(GL_RENDERBUFFER, kInvalidClientId);
-  EXPECT_NE(error::kNoError, ExecuteCmd(cmd4));
-}
-
-TEST_F(GLES2DecoderManualInitTest, CreateStreamTextureCHROMIUM) {
-  const GLuint kObjectId = 123;
-  InitDecoder(
-      "GL_CHROMIUM_stream_texture",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
-
-  EXPECT_CALL(*stream_texture_manager(), CreateStreamTexture(
-      kServiceTextureId, client_texture_id_))
-      .WillOnce(Return(kObjectId))
-      .RetiresOnSaturation();
-
-  CreateStreamTextureCHROMIUM cmd;
-  CreateStreamTextureCHROMIUM::Result* result =
-      static_cast<CreateStreamTextureCHROMIUM::Result*>(shared_memory_address_);
-  cmd.Init(client_texture_id_, shared_memory_id_, shared_memory_offset_);
-  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
-  EXPECT_EQ(kObjectId, *result);
-  EXPECT_EQ(GL_NO_ERROR, GetGLError());
-  TextureRef* texture_ref = GetTexture(client_texture_id_);
-  EXPECT_TRUE(texture_ref != NULL);
-  EXPECT_TRUE(texture_ref->texture()->IsStreamTexture());
-  EXPECT_CALL(*stream_texture_manager(),
-              DestroyStreamTexture(kServiceTextureId))
-      .Times(1)
-      .RetiresOnSaturation();
-}
-
-TEST_F(GLES2DecoderManualInitTest, CreateStreamTextureCHROMIUMBadId) {
-  InitDecoder(
-      "GL_CHROMIUM_stream_texture",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
-
-  CreateStreamTextureCHROMIUM cmd;
-  CreateStreamTextureCHROMIUM::Result* result =
-      static_cast<CreateStreamTextureCHROMIUM::Result*>(shared_memory_address_);
-  cmd.Init(kNewClientId, shared_memory_id_, shared_memory_offset_);
-  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
-  EXPECT_EQ(static_cast<GLuint>(GL_ZERO), *result);
-  EXPECT_EQ(GL_INVALID_VALUE, GetGLError());
-}
-
-TEST_F(GLES2DecoderManualInitTest, CreateStreamTextureCHROMIUMAlreadyBound) {
-  InitDecoder(
-      "GL_CHROMIUM_stream_texture",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
-  DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
-
-  CreateStreamTextureCHROMIUM cmd;
-  CreateStreamTextureCHROMIUM::Result* result =
-      static_cast<CreateStreamTextureCHROMIUM::Result*>(shared_memory_address_);
-  cmd.Init(client_texture_id_, shared_memory_id_, shared_memory_offset_);
-  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
-  EXPECT_EQ(static_cast<GLuint>(GL_ZERO), *result);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd4));
   EXPECT_EQ(GL_INVALID_OPERATION, GetGLError());
-}
-
-TEST_F(GLES2DecoderManualInitTest, CreateStreamTextureCHROMIUMAlreadySet) {
-  InitDecoder(
-      "GL_CHROMIUM_stream_texture",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
-
-  TextureRef* texture_ref = GetTexture(client_texture_id_);
-  group().texture_manager()->SetStreamTexture(texture_ref, true);
-
-  CreateStreamTextureCHROMIUM cmd;
-  cmd.Init(client_texture_id_, shared_memory_id_, shared_memory_offset_);
-  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
-  EXPECT_EQ(GL_INVALID_OPERATION, GetGLError());
-
-  EXPECT_CALL(*stream_texture_manager(),
-              DestroyStreamTexture(kServiceTextureId))
-      .Times(1)
-      .RetiresOnSaturation();
-}
-
-TEST_F(GLES2DecoderManualInitTest, DrawStreamTextureCHROMIUM) {
-  InitDecoder(
-      "GL_CHROMIUM_stream_texture GL_OES_EGL_image_external",  // extensions
-      true,                                                    // has alpha
-      true,                                                    // has depth
-      false,                                                   // has stencil
-      true,                                                    // request alpha
-      true,                                                    // request depth
-      false,  // request stencil
-      true);  // bind generates resource
-
-  StrictMock<MockStreamTexture> stream_texture;
-
-  TextureRef* texture_ref = GetTexture(client_texture_id_);
-  group().texture_manager()->SetStreamTexture(texture_ref, true);
-
-  DoBindTexture(GL_TEXTURE_EXTERNAL_OES, client_texture_id_, kServiceTextureId);
-  EXPECT_EQ(GL_NO_ERROR, GetGLError());
-
-  SetupSamplerExternalProgram();
-  SetupIndexBuffer();
-  AddExpectationsForSimulatedAttrib0(kMaxValidIndex + 1, 0);
-  SetupExpectationsForApplyingDefaultDirtyState();
-  EXPECT_TRUE(group().texture_manager()->CanRender(texture_ref));
-
-  InSequence s;
-  EXPECT_CALL(*stream_texture_manager(), LookupStreamTexture(kServiceTextureId))
-      .WillOnce(Return(&stream_texture))
-      .RetiresOnSaturation();
-  EXPECT_CALL(*gl_, ActiveTexture(GL_TEXTURE0))
-      .Times(1)
-      .RetiresOnSaturation();
-  EXPECT_CALL(stream_texture, Update())
-      .Times(1)
-      .RetiresOnSaturation();
-  EXPECT_CALL(*gl_, DrawElements(_, _, _, _))
-      .Times(1);
-  DrawElements cmd;
-  cmd.Init(GL_TRIANGLES, kValidIndexRangeCount, GL_UNSIGNED_SHORT,
-           kValidIndexRangeStart * 2);
-  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
-  EXPECT_EQ(GL_NO_ERROR, GetGLError());
-
-  EXPECT_CALL(*stream_texture_manager(),
-              DestroyStreamTexture(kServiceTextureId))
-      .Times(1)
-      .RetiresOnSaturation();
-}
-
-TEST_F(GLES2DecoderManualInitTest, BindStreamTextureCHROMIUMInvalid) {
-  InitDecoder(
-      "GL_CHROMIUM_stream_texture",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
-
-  TextureRef* texture_ref = GetTexture(client_texture_id_);
-  group().texture_manager()->SetStreamTexture(texture_ref, true);
-
-  BindTexture cmd;
-  cmd.Init(GL_TEXTURE_2D, client_texture_id_);
-  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
-  EXPECT_EQ(GL_INVALID_OPERATION, GetGLError());
-
-  BindTexture cmd2;
-  cmd2.Init(GL_TEXTURE_CUBE_MAP, client_texture_id_);
-  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd2));
-  EXPECT_EQ(GL_INVALID_OPERATION, GetGLError());
-
-  EXPECT_CALL(*stream_texture_manager(),
-              DestroyStreamTexture(kServiceTextureId))
-      .Times(1)
-      .RetiresOnSaturation();
-}
-
-TEST_F(GLES2DecoderManualInitTest, DestroyStreamTextureCHROMIUM) {
-  InitDecoder(
-      "GL_CHROMIUM_stream_texture",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
-
-  TextureRef* texture_ref = GetTexture(client_texture_id_);
-  group().texture_manager()->SetStreamTexture(texture_ref, true);
-
-  EXPECT_CALL(*stream_texture_manager(),
-              DestroyStreamTexture(kServiceTextureId))
-      .Times(1)
-      .RetiresOnSaturation();
-
-  DestroyStreamTextureCHROMIUM cmd;
-  cmd.Init(client_texture_id_);
-  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
-  EXPECT_EQ(GL_NO_ERROR, GetGLError());
-  EXPECT_FALSE(texture_ref->texture()->IsStreamTexture());
-  EXPECT_EQ(0U, texture_ref->texture()->target());
-}
-
-TEST_F(GLES2DecoderManualInitTest, DestroyStreamTextureCHROMIUMInvalid) {
-  InitDecoder(
-      "GL_CHROMIUM_stream_texture",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
-
-  DestroyStreamTextureCHROMIUM cmd;
-  cmd.Init(client_texture_id_);
-  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
-  EXPECT_EQ(GL_INVALID_VALUE, GetGLError());
-}
-
-TEST_F(GLES2DecoderManualInitTest, DestroyStreamTextureCHROMIUMBadId) {
-  InitDecoder(
-      "GL_CHROMIUM_stream_texture",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
-
-  DestroyStreamTextureCHROMIUM cmd;
-  cmd.Init(GL_ZERO);
-  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
-  EXPECT_EQ(GL_INVALID_VALUE, GetGLError());
-}
-
-TEST_F(GLES2DecoderManualInitTest, StreamTextureCHROMIUMNullMgr) {
-  InitDecoder(
-      "",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
-
-  CreateStreamTextureCHROMIUM cmd;
-  cmd.Init(client_texture_id_, shared_memory_id_, shared_memory_offset_);
-  EXPECT_EQ(error::kInvalidArguments, ExecuteCmd(cmd));
-  GetGLError(); // ignore internal error
-
-  TextureRef* texture_ref = GetTexture(client_texture_id_);
-  group().texture_manager()->SetStreamTexture(texture_ref, true);
-
-  DestroyStreamTextureCHROMIUM cmd2;
-  cmd2.Init(client_texture_id_);
-  EXPECT_EQ(error::kInvalidArguments, ExecuteCmd(cmd2));
-  GetGLError(); // ignore internal error
-}
-
-TEST_F(GLES2DecoderManualInitTest, ReCreateStreamTextureCHROMIUM) {
-  const GLuint kObjectId = 123;
-  InitDecoder(
-      "GL_CHROMIUM_stream_texture GL_OES_EGL_image_external",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
-
-  EXPECT_CALL(*stream_texture_manager(),
-              DestroyStreamTexture(kServiceTextureId))
-      .Times(1)
-      .RetiresOnSaturation();
-  EXPECT_CALL(*stream_texture_manager(),
-              CreateStreamTexture(kServiceTextureId, client_texture_id_))
-      .WillOnce(Return(kObjectId))
-      .RetiresOnSaturation();
-
-  TextureRef* texture_ref = GetTexture(client_texture_id_);
-  group().texture_manager()->SetStreamTexture(texture_ref, true);
-
-  DoBindTexture(GL_TEXTURE_EXTERNAL_OES, client_texture_id_, kServiceTextureId);
-  EXPECT_EQ(GL_NO_ERROR, GetGLError());
-
-  DestroyStreamTextureCHROMIUM cmd;
-  cmd.Init(client_texture_id_);
-  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
-  EXPECT_EQ(GL_NO_ERROR, GetGLError());
-  EXPECT_FALSE(texture_ref->texture()->IsStreamTexture());
-
-  CreateStreamTextureCHROMIUM cmd2;
-  cmd2.Init(client_texture_id_, shared_memory_id_, shared_memory_offset_);
-  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd2));
-  EXPECT_EQ(GL_NO_ERROR, GetGLError());
-  EXPECT_TRUE(texture_ref->texture()->IsStreamTexture());
-
-  EXPECT_CALL(*stream_texture_manager(),
-              DestroyStreamTexture(kServiceTextureId))
-      .Times(1)
-      .RetiresOnSaturation();
-}
-
-TEST_F(GLES2DecoderManualInitTest, ProduceAndConsumeStreamTextureCHROMIUM) {
-  InitDecoder(
-      "GL_CHROMIUM_stream_texture GL_OES_EGL_image_external",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
-
-  TextureRef* texture_ref = GetTexture(client_texture_id_);
-  group().texture_manager()->SetStreamTexture(texture_ref, true);
-
-  DoBindTexture(GL_TEXTURE_EXTERNAL_OES, client_texture_id_, kServiceTextureId);
-
-  GLbyte mailbox[GL_MAILBOX_SIZE_CHROMIUM];
-  group().mailbox_manager()->GenerateMailboxName(
-      reinterpret_cast<MailboxName*>(mailbox));
-
-  memcpy(shared_memory_address_, mailbox, sizeof(mailbox));
-
-  EXPECT_EQ(kServiceTextureId, texture_ref->service_id());
-
-  ProduceTextureCHROMIUM produce_cmd;
-  produce_cmd.Init(
-      GL_TEXTURE_EXTERNAL_OES, kSharedMemoryId, kSharedMemoryOffset);
-  EXPECT_EQ(error::kNoError, ExecuteCmd(produce_cmd));
-  EXPECT_EQ(GL_NO_ERROR, GetGLError());
-
-  // Create new texture for consume.
-  EXPECT_CALL(*gl_, GenTextures(_, _))
-      .WillOnce(SetArgumentPointee<1>(kNewServiceId))
-      .RetiresOnSaturation();
-  DoBindTexture(GL_TEXTURE_EXTERNAL_OES, kNewClientId, kNewServiceId);
-
-  // Assigns and binds original service size texture ID.
-  EXPECT_CALL(*gl_, DeleteTextures(1, _))
-      .Times(1)
-      .RetiresOnSaturation();
-  EXPECT_CALL(*gl_, BindTexture(GL_TEXTURE_EXTERNAL_OES, kServiceTextureId))
-      .Times(1)
-      .RetiresOnSaturation();
-
-  // Shared mem got clobbered from GetError() above.
-  memcpy(shared_memory_address_, mailbox, sizeof(mailbox));
-  ConsumeTextureCHROMIUM consume_cmd;
-  consume_cmd.Init(
-      GL_TEXTURE_EXTERNAL_OES, kSharedMemoryId, kSharedMemoryOffset);
-  EXPECT_EQ(error::kNoError, ExecuteCmd(consume_cmd));
-  EXPECT_EQ(GL_NO_ERROR, GetGLError());
-
-  // Service ID is restored.
-  EXPECT_EQ(kServiceTextureId, texture_ref->service_id());
-
-  EXPECT_CALL(*stream_texture_manager(),
-              DestroyStreamTexture(kServiceTextureId))
-      .Times(1)
-      .RetiresOnSaturation();
 }
 
 TEST_F(GLES2DecoderManualInitTest, ARBTextureRectangleBindTexture) {
-  InitDecoder(
-      "GL_ARB_texture_rectangle",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_ARB_texture_rectangle";
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   EXPECT_CALL(*gl_, BindTexture(GL_TEXTURE_RECTANGLE_ARB, kNewServiceId));
   EXPECT_CALL(*gl_, GenTextures(1, _))
      .WillOnce(SetArgumentPointee<1>(kNewServiceId));
@@ -5878,15 +5681,11 @@ TEST_F(GLES2DecoderManualInitTest, ARBTextureRectangleBindTexture) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, ARBTextureRectangleGetBinding) {
-  InitDecoder(
-      "GL_ARB_texture_rectangle",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_ARB_texture_rectangle";
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   DoBindTexture(
       GL_TEXTURE_RECTANGLE_ARB, client_texture_id_, kServiceTextureId);
 
@@ -5912,15 +5711,11 @@ TEST_F(GLES2DecoderManualInitTest, ARBTextureRectangleGetBinding) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, ARBTextureRectangleTextureDefaults) {
-  InitDecoder(
-      "GL_ARB_texture_rectangle",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_ARB_texture_rectangle";
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   DoBindTexture(
       GL_TEXTURE_RECTANGLE_ARB, client_texture_id_, kServiceTextureId);
 
@@ -5933,15 +5728,11 @@ TEST_F(GLES2DecoderManualInitTest, ARBTextureRectangleTextureDefaults) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, ARBTextureRectangleTextureParam) {
-  InitDecoder(
-      "GL_ARB_texture_rectangle",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_ARB_texture_rectangle";
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   DoBindTexture(
       GL_TEXTURE_RECTANGLE_ARB, client_texture_id_, kServiceTextureId);
@@ -5992,15 +5783,11 @@ TEST_F(GLES2DecoderManualInitTest, ARBTextureRectangleTextureParam) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, ARBTextureRectangleTextureParamInvalid) {
-  InitDecoder(
-      "GL_ARB_texture_rectangle",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_ARB_texture_rectangle";
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   DoBindTexture(
       GL_TEXTURE_RECTANGLE_ARB, client_texture_id_, kServiceTextureId);
@@ -6033,15 +5820,11 @@ TEST_F(GLES2DecoderManualInitTest, ARBTextureRectangleTextureParamInvalid) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, ARBTextureRectangleTexImage2DError) {
-  InitDecoder(
-      "GL_ARB_texture_rectangle",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_ARB_texture_rectangle";
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   GLenum target = GL_TEXTURE_RECTANGLE_ARB;
   GLint level = 0;
@@ -6081,9 +5864,9 @@ TEST_F(GLES2DecoderTest, TexSubImage2DClearsAfterTexImage2DNULL) {
   DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
   DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 2, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE,
                0, 0);
-  SetupClearTextureExpections(
+  SetupClearTextureExpectations(
       kServiceTextureId, kServiceTextureId, GL_TEXTURE_2D, GL_TEXTURE_2D,
-      0, GL_RGBA, GL_UNSIGNED_BYTE, 2, 2);
+      0, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, 2, 2);
   EXPECT_CALL(*gl_, TexSubImage2D(
       GL_TEXTURE_2D, 0, 1, 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
       shared_memory_address_))
@@ -6107,7 +5890,7 @@ TEST_F(GLES2DecoderTest, TexSubImage2DDoesNotClearAfterTexImage2DNULLThenData) {
   DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
   DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 2, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE,
                0, 0);
-  DoTexImage2DSameSize(
+  DoTexImage2D(
       GL_TEXTURE_2D, 0, GL_RGBA, 2, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE,
       kSharedMemoryId, kSharedMemoryOffset);
   EXPECT_CALL(*gl_, TexSubImage2D(
@@ -6129,14 +5912,43 @@ TEST_F(GLES2DecoderTest, TexSubImage2DDoesNotClearAfterTexImage2DNULLThenData) {
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
 }
 
-TEST_F(GLES2DecoderANGLETest,
-       TexSubImage2DDoesNotClearAfterTexImage2DNULLThenData) {
+TEST_F(
+    GLES2DecoderManualInitTest,
+    TexSubImage2DDoesNotClearAfterTexImage2DNULLThenDataWithTexImage2DIsFaster) {
+  CommandLine command_line(0, NULL);
+  command_line.AppendSwitchASCII(
+      switches::kGpuDriverBugWorkarounds,
+      base::IntToString(gpu::TEXSUBIMAGE2D_FASTER_THAN_TEXIMAGE2D));
+  InitState init;
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoderWithCommandLine(init, &command_line);
   DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
   DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 2, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE,
                0, 0);
-  DoTexImage2DSameSize(
-      GL_TEXTURE_2D, 0, GL_RGBA, 2, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-      kSharedMemoryId, kSharedMemoryOffset);
+
+  {
+    // Uses texSubimage internally because the above workaround is active and
+    // the update is for the full size of the texture.
+    EXPECT_CALL(*gl_,
+                TexSubImage2D(
+                    GL_TEXTURE_2D, 0, 0, 0, 2, 2, GL_RGBA, GL_UNSIGNED_BYTE, _))
+        .Times(1)
+        .RetiresOnSaturation();
+    cmds::TexImage2D cmd;
+    cmd.Init(GL_TEXTURE_2D,
+             0,
+             GL_RGBA,
+             2,
+             2,
+             0,
+             GL_RGBA,
+             GL_UNSIGNED_BYTE,
+             kSharedMemoryId,
+             kSharedMemoryOffset);
+    EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  }
+
   EXPECT_CALL(*gl_, TexSubImage2D(
       GL_TEXTURE_2D, 0, 1, 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
       shared_memory_address_))
@@ -6168,9 +5980,9 @@ TEST_F(GLES2DecoderTest, TexSubImage2DClearsAfterTexImage2DWithDataThenNULL) {
   // It won't actually call TexImage2D, just mark it as uncleared.
   EXPECT_EQ(error::kNoError, ExecuteCmd(tex_cmd));
   // Next call to TexSubImage2d should clear.
-  SetupClearTextureExpections(
+  SetupClearTextureExpectations(
       kServiceTextureId, kServiceTextureId, GL_TEXTURE_2D, GL_TEXTURE_2D,
-      0, GL_RGBA, GL_UNSIGNED_BYTE, 2, 2);
+      0, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, 2, 2);
   EXPECT_CALL(*gl_, TexSubImage2D(
       GL_TEXTURE_2D, 0, 1, 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
       shared_memory_address_))
@@ -6192,12 +6004,12 @@ TEST_F(GLES2DecoderWithShaderTest, DrawArraysClearsAfterTexImage2DNULL) {
   DoTexImage2D(GL_TEXTURE_2D, 1, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
                0, 0);
   // Expect 2 levels will be cleared.
-  SetupClearTextureExpections(
+  SetupClearTextureExpectations(
       kServiceTextureId, kServiceTextureId, GL_TEXTURE_2D, GL_TEXTURE_2D,
-      0, GL_RGBA, GL_UNSIGNED_BYTE, 2, 2);
-  SetupClearTextureExpections(
+      0, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, 2, 2);
+  SetupClearTextureExpectations(
       kServiceTextureId, kServiceTextureId, GL_TEXTURE_2D, GL_TEXTURE_2D,
-      1, GL_RGBA, GL_UNSIGNED_BYTE, 1, 1);
+      1, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, 1, 1);
   SetupExpectationsForApplyingDefaultDirtyState();
   EXPECT_CALL(*gl_, DrawArrays(GL_TRIANGLES, 0, kNumVertices))
       .Times(1)
@@ -6225,12 +6037,12 @@ TEST_F(GLES2DecoderWithShaderTest, DrawElementsClearsAfterTexImage2DNULL) {
   DoTexImage2D(GL_TEXTURE_2D, 1, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
                0, 0);
   // Expect 2 levels will be cleared.
-  SetupClearTextureExpections(
+  SetupClearTextureExpectations(
       kServiceTextureId, kServiceTextureId, GL_TEXTURE_2D, GL_TEXTURE_2D,
-      0, GL_RGBA, GL_UNSIGNED_BYTE, 2, 2);
-  SetupClearTextureExpections(
+      0, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, 2, 2);
+  SetupClearTextureExpectations(
       kServiceTextureId, kServiceTextureId, GL_TEXTURE_2D, GL_TEXTURE_2D,
-      1, GL_RGBA, GL_UNSIGNED_BYTE, 1, 1);
+      1, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, 1, 1);
   SetupExpectationsForApplyingDefaultDirtyState();
 
   EXPECT_CALL(*gl_, DrawElements(GL_TRIANGLES, kValidIndexRangeCount,
@@ -6380,9 +6192,9 @@ TEST_F(GLES2DecoderTest, CopyTexSubImage2DClearsUnclearedTexture) {
   DoTexImage2D(
       GL_TEXTURE_2D, 0, GL_RGBA, 2, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0, 0);
 
-  SetupClearTextureExpections(
+  SetupClearTextureExpectations(
       kServiceTextureId, kServiceTextureId, GL_TEXTURE_2D, GL_TEXTURE_2D,
-      0, GL_RGBA, GL_UNSIGNED_BYTE, 2, 2);
+      0, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, 2, 2);
   EXPECT_CALL(*gl_, CopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, 1, 1))
       .Times(1)
       .RetiresOnSaturation();
@@ -6392,15 +6204,11 @@ TEST_F(GLES2DecoderTest, CopyTexSubImage2DClearsUnclearedTexture) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, CompressedImage2DMarksTextureAsCleared) {
-  InitDecoder(
-      "GL_EXT_texture_compression_s3tc",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_EXT_texture_compression_s3tc";
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
   EXPECT_CALL(*gl_, GetError())
@@ -6531,15 +6339,11 @@ TEST_F(GLES2DecoderWithShaderTest, UnClearedAttachmentsGetClearedOnReadPixels) {
 
 TEST_F(GLES2DecoderManualInitTest,
        UnClearedAttachmentsGetClearedOnReadPixelsAndDrawBufferGetsRestored) {
-  InitDecoder(
-      "GL_EXT_framebuffer_multisample",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_EXT_framebuffer_multisample";
+  init.gl_version = "2.1";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   const GLuint kFBOClientTextureId = 4100;
   const GLuint kFBOServiceTextureId = 4101;
 
@@ -6658,12 +6462,14 @@ TEST_F(GLES2DecoderTest, DrawArraysClearsAfterTexImage2DNULLCubemap) {
                  GL_UNSIGNED_BYTE, shm_id, shm_offset);
   }
   // Expect 2 levels will be cleared.
-  SetupClearTextureExpections(
+  SetupClearTextureExpectations(
       kServiceTextureId, kServiceTextureId, GL_TEXTURE_CUBE_MAP,
-      GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, 0, GL_RGBA, GL_UNSIGNED_BYTE, 2, 2);
-  SetupClearTextureExpections(
+      GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, 0, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE,
+      2, 2);
+  SetupClearTextureExpectations(
       kServiceTextureId, kServiceTextureId, GL_TEXTURE_CUBE_MAP,
-      GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, 1, GL_RGBA, GL_UNSIGNED_BYTE, 1, 1);
+      GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, 1, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE,
+      1, 1);
   AddExpectationsForSimulatedAttrib0(kNumVertices, 0);
   SetupExpectationsForApplyingDefaultDirtyState();
   EXPECT_CALL(*gl_, DrawArrays(GL_TRIANGLES, 0, kNumVertices))
@@ -6983,15 +6789,13 @@ TEST_F(GLES2DecoderTest, BeginQueryEXTDisabled) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, BeginEndQueryEXT) {
-  InitDecoder(
-      "GL_EXT_occlusion_query_boolean",      // extensions
-      true,    // has alpha
-      false,   // has depth
-      false,   // has stencil
-      true,    // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_EXT_occlusion_query_boolean";
+  init.gl_version = "opengl es 2.0";
+  init.has_alpha = true;
+  init.request_alpha = true;
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   // Test end fails if no begin.
   EndQueryEXT end_cmd;
@@ -7051,45 +6855,80 @@ TEST_F(GLES2DecoderManualInitTest, BeginEndQueryEXT) {
       .RetiresOnSaturation();
 }
 
+struct QueryType {
+  GLenum type;
+  bool is_gl;
+};
+
+const QueryType kQueryTypes[] = {
+  { GL_COMMANDS_ISSUED_CHROMIUM, false },
+  { GL_LATENCY_QUERY_CHROMIUM, false },
+  { GL_ASYNC_PIXEL_UNPACK_COMPLETED_CHROMIUM, false },
+  { GL_ASYNC_PIXEL_PACK_COMPLETED_CHROMIUM, false },
+  { GL_GET_ERROR_QUERY_CHROMIUM, false },
+  { GL_ANY_SAMPLES_PASSED_EXT, true },
+};
+
 static void CheckBeginEndQueryBadMemoryFails(
     GLES2DecoderTestBase* test,
     GLuint client_id,
     GLuint service_id,
+    const QueryType& query_type,
     int32 shm_id,
     uint32 shm_offset) {
+  // We need to reset the decoder on each iteration, because we lose the
+  // context every time.
+  GLES2DecoderTestBase::InitState init;
+  init.extensions = "GL_EXT_occlusion_query_boolean";
+  init.gl_version = "opengl es 2.0";
+  init.has_alpha = true;
+  init.request_alpha = true;
+  init.bind_generates_resource = true;
+  test->InitDecoder(init);
   ::testing::StrictMock< ::gfx::MockGLInterface>* gl = test->GetGLMock();
 
   BeginQueryEXT begin_cmd;
 
   test->GenHelper<GenQueriesEXTImmediate>(client_id);
 
-  EXPECT_CALL(*gl, GenQueriesARB(1, _))
-     .WillOnce(SetArgumentPointee<1>(service_id))
-     .RetiresOnSaturation();
-  EXPECT_CALL(*gl, BeginQueryARB(GL_ANY_SAMPLES_PASSED_EXT, service_id))
-      .Times(1)
-      .RetiresOnSaturation();
+  if (query_type.is_gl) {
+    EXPECT_CALL(*gl, GenQueriesARB(1, _))
+       .WillOnce(SetArgumentPointee<1>(service_id))
+       .RetiresOnSaturation();
+    EXPECT_CALL(*gl, BeginQueryARB(query_type.type, service_id))
+        .Times(1)
+        .RetiresOnSaturation();
+  }
 
   // Test bad shared memory fails
-  begin_cmd.Init(GL_ANY_SAMPLES_PASSED_EXT, client_id, shm_id, shm_offset);
+  begin_cmd.Init(query_type.type, client_id, shm_id, shm_offset);
   error::Error error1 = test->ExecuteCmd(begin_cmd);
 
-  EXPECT_CALL(*gl, EndQueryARB(GL_ANY_SAMPLES_PASSED_EXT))
-      .Times(1)
-      .RetiresOnSaturation();
+  if (query_type.is_gl) {
+    EXPECT_CALL(*gl, EndQueryARB(query_type.type))
+        .Times(1)
+        .RetiresOnSaturation();
+  }
+  if (query_type.type == GL_GET_ERROR_QUERY_CHROMIUM) {
+    EXPECT_CALL(*gl, GetError())
+        .WillOnce(Return(GL_NO_ERROR))
+        .RetiresOnSaturation();
+  }
 
   EndQueryEXT end_cmd;
-  end_cmd.Init(GL_ANY_SAMPLES_PASSED_EXT, 1);
+  end_cmd.Init(query_type.type, 1);
   error::Error error2 = test->ExecuteCmd(end_cmd);
 
-  EXPECT_CALL(*gl,
-      GetQueryObjectuivARB(service_id, GL_QUERY_RESULT_AVAILABLE_EXT, _))
-      .WillOnce(SetArgumentPointee<2>(1))
-      .RetiresOnSaturation();
-  EXPECT_CALL(*gl,
-      GetQueryObjectuivARB(service_id, GL_QUERY_RESULT_EXT, _))
-      .WillOnce(SetArgumentPointee<2>(1))
-      .RetiresOnSaturation();
+  if (query_type.is_gl) {
+    EXPECT_CALL(*gl,
+        GetQueryObjectuivARB(service_id, GL_QUERY_RESULT_AVAILABLE_EXT, _))
+        .WillOnce(SetArgumentPointee<2>(1))
+        .RetiresOnSaturation();
+    EXPECT_CALL(*gl,
+        GetQueryObjectuivARB(service_id, GL_QUERY_RESULT_EXT, _))
+        .WillOnce(SetArgumentPointee<2>(1))
+        .RetiresOnSaturation();
+  }
 
   QueryManager* query_manager = test->GetDecoder()->GetQueryManager();
   ASSERT_TRUE(query_manager != NULL);
@@ -7099,41 +6938,36 @@ static void CheckBeginEndQueryBadMemoryFails(
               error2 != error::kNoError ||
               !process_success);
 
-  EXPECT_CALL(*gl, DeleteQueriesARB(1, _))
-      .Times(1)
-      .RetiresOnSaturation();
+  if (query_type.is_gl) {
+    EXPECT_CALL(*gl, DeleteQueriesARB(1, _))
+        .Times(1)
+        .RetiresOnSaturation();
+  }
+  test->ResetDecoder();
 }
 
 TEST_F(GLES2DecoderManualInitTest, BeginEndQueryEXTBadMemoryIdFails) {
-  InitDecoder(
-      "GL_EXT_occlusion_query_boolean",      // extensions
-      true,    // has alpha
-      false,   // has depth
-      false,   // has stencil
-      true,    // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
-
-  CheckBeginEndQueryBadMemoryFails(
-      this, kNewClientId, kNewServiceId,
-      kInvalidSharedMemoryId, kSharedMemoryOffset);
+  for (size_t i = 0; i < arraysize(kQueryTypes); ++i) {
+    CheckBeginEndQueryBadMemoryFails(
+        this, kNewClientId, kNewServiceId,
+        kQueryTypes[i],
+        kInvalidSharedMemoryId, kSharedMemoryOffset);
+  }
 }
 
 TEST_F(GLES2DecoderManualInitTest, BeginEndQueryEXTBadMemoryOffsetFails) {
-  InitDecoder(
-      "GL_EXT_occlusion_query_boolean",      // extensions
-      true,    // has alpha
-      false,   // has depth
-      false,   // has stencil
-      true,    // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
-
-  CheckBeginEndQueryBadMemoryFails(
-      this, kNewClientId, kNewServiceId,
-      kSharedMemoryId, kInvalidSharedMemoryOffset);
+  for (size_t i = 0; i < arraysize(kQueryTypes); ++i) {
+    // Out-of-bounds.
+    CheckBeginEndQueryBadMemoryFails(
+        this, kNewClientId, kNewServiceId,
+        kQueryTypes[i],
+        kSharedMemoryId, kInvalidSharedMemoryOffset);
+    // Overflow.
+    CheckBeginEndQueryBadMemoryFails(
+        this, kNewClientId, kNewServiceId,
+        kQueryTypes[i],
+        kSharedMemoryId, 0xfffffffcu);
+  }
 }
 
 TEST_F(GLES2DecoderTest, BeginEndQueryEXTCommandsIssuedCHROMIUM) {
@@ -7197,11 +7031,9 @@ TEST_F(GLES2DecoderTest, BeginEndQueryEXTGetErrorQueryCHROMIUM) {
 }
 
 TEST_F(GLES2DecoderTest, ProduceAndConsumeTextureCHROMIUM) {
-  GLbyte mailbox[GL_MAILBOX_SIZE_CHROMIUM];
-  group().mailbox_manager()->GenerateMailboxName(
-      reinterpret_cast<MailboxName*>(mailbox));
+  Mailbox mailbox = Mailbox::Generate();
 
-  memcpy(shared_memory_address_, mailbox, sizeof(mailbox));
+  memcpy(shared_memory_address_, mailbox.name, sizeof(mailbox.name));
 
   DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
   DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 3, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
@@ -7256,7 +7088,7 @@ TEST_F(GLES2DecoderTest, ProduceAndConsumeTextureCHROMIUM) {
       .Times(1)
       .RetiresOnSaturation();
 
-  memcpy(shared_memory_address_, mailbox, sizeof(mailbox));
+  memcpy(shared_memory_address_, mailbox.name, sizeof(mailbox.name));
   ConsumeTextureCHROMIUM consume_cmd;
   consume_cmd.Init(GL_TEXTURE_2D, kSharedMemoryId, kSharedMemoryOffset);
   EXPECT_EQ(error::kNoError, ExecuteCmd(consume_cmd));
@@ -7318,15 +7150,15 @@ TEST_F(GLES2DecoderTest, IsEnabledReturnsCachedValue) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, DepthTextureBadArgs) {
-  InitDecoder(
-      "GL_ANGLE_depth_texture",      // extensions
-      false,   // has alpha
-      true,    // has depth
-      true,    // has stencil
-      false,   // request alpha
-      true,    // request depth
-      true,    // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_ANGLE_depth_texture";
+  init.gl_version = "opengl es 2.0";
+  init.has_depth = true;
+  init.has_stencil = true;
+  init.request_depth = true;
+  init.request_stencil = true;
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
   // Check trying to upload data fails.
@@ -7370,15 +7202,15 @@ TEST_F(GLES2DecoderManualInitTest, DepthTextureBadArgs) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, GenerateMipmapDepthTexture) {
-  InitDecoder(
-      "GL_ANGLE_depth_texture",      // extensions
-      false,   // has alpha
-      true,    // has depth
-      true,    // has stencil
-      false,   // request alpha
-      true,    // request depth
-      true,    // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_ANGLE_depth_texture";
+  init.gl_version = "opengl es 2.0";
+  init.has_depth = true;
+  init.has_stencil = true;
+  init.request_depth = true;
+  init.request_stencil = true;
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
   DoTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
                2, 2, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT,
@@ -7389,16 +7221,16 @@ TEST_F(GLES2DecoderManualInitTest, GenerateMipmapDepthTexture) {
   EXPECT_EQ(GL_INVALID_OPERATION, GetGLError());
 }
 
-TEST_F(GLES2DecoderANGLEManualInitTest, DrawClearsDepthTexture) {
-  InitDecoder(
-      "GL_ANGLE_depth_texture",      // extensions
-      true,    // has alpha
-      true,    // has depth
-      false,   // has stencil
-      true,    // request alpha
-      true,    // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+TEST_F(GLES2DecoderManualInitTest, DrawClearsDepthTexture) {
+  InitState init;
+  init.extensions = "GL_ANGLE_depth_texture";
+  init.gl_version = "opengl es 2.0";
+  init.has_alpha = true;
+  init.has_depth = true;
+  init.request_alpha = true;
+  init.request_depth = true;
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   SetupDefaultProgram();
   SetupAllNeededVertexBuffers();
@@ -7521,15 +7353,11 @@ class GLES2DecoderVertexArraysOESTest : public GLES2DecoderWithShaderTest {
   bool vertex_array_deleted_manually_;
 
   virtual void SetUp() {
-    InitDecoder(
-        "GL_OES_vertex_array_object",  // extensions
-        false,  // has alpha
-        false,  // has depth
-        false,  // has stencil
-        false,  // request alpha
-        false,  // request depth
-        false,  // request stencil
-        true);  // bind generates resource
+    InitState init;
+    init.extensions = "GL_OES_vertex_array_object";
+    init.gl_version = "opengl es 2.0";
+    init.bind_generates_resource = true;
+    InitDecoder(init);
     SetupDefaultProgram();
 
     AddExpectationsForGenVertexArraysOES();
@@ -7671,15 +7499,10 @@ class GLES2DecoderEmulatedVertexArraysOESTest
   GLES2DecoderEmulatedVertexArraysOESTest() { }
 
   virtual void SetUp() {
-    InitDecoder(
-        "",     // extensions
-        false,  // has alpha
-        false,  // has depth
-        false,  // has stencil
-        false,  // request alpha
-        false,  // request depth
-        false,  // request stencil
-        true);  // bind generates resource
+    InitState init;
+    init.gl_version = "3.0";
+    init.bind_generates_resource = true;
+    InitDecoder(init);
     SetupDefaultProgram();
 
     AddExpectationsForGenVertexArraysOES();
@@ -7833,6 +7656,34 @@ TEST_F(GLES2DecoderTest, BindTexImage2DCHROMIUM) {
   EXPECT_TRUE(texture->GetLevelImage(GL_TEXTURE_2D, 0) == NULL);
 }
 
+TEST_F(GLES2DecoderTest, BindTexImage2DCHROMIUMCubeMapNotAllowed) {
+  group().image_manager()->AddImage(gfx::GLImage::CreateGLImage(0).get(), 1);
+  DoBindTexture(GL_TEXTURE_CUBE_MAP, client_texture_id_, kServiceTextureId);
+
+  BindTexImage2DCHROMIUM bind_tex_image_2d_cmd;
+  bind_tex_image_2d_cmd.Init(GL_TEXTURE_CUBE_MAP, 1);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(bind_tex_image_2d_cmd));
+  EXPECT_EQ(GL_INVALID_ENUM, GetGLError());
+}
+
+TEST_F(GLES2DecoderTest, OrphanGLImageWithTexImage2D) {
+  group().image_manager()->AddImage(gfx::GLImage::CreateGLImage(0).get(), 1);
+  DoBindTexture(GL_TEXTURE_CUBE_MAP, client_texture_id_, kServiceTextureId);
+
+  BindTexImage2DCHROMIUM bind_tex_image_2d_cmd;
+  bind_tex_image_2d_cmd.Init(GL_TEXTURE_CUBE_MAP, 1);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(bind_tex_image_2d_cmd));
+  EXPECT_EQ(GL_INVALID_ENUM, GetGLError());
+
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 3, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+               0, 0);
+  TextureRef* texture_ref = group().texture_manager()->GetTexture(
+      client_texture_id_);
+  ASSERT_TRUE(texture_ref != NULL);
+  Texture* texture = texture_ref->texture();
+  EXPECT_TRUE(texture->GetLevelImage(GL_TEXTURE_2D, 0) == NULL);
+}
+
 TEST_F(GLES2DecoderTest, ReleaseTexImage2DCHROMIUM) {
   DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
   DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 3, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
@@ -7893,10 +7744,12 @@ class MockGLImage : public gfx::GLImage {
   // Overridden from gfx::GLImage:
   MOCK_METHOD0(Destroy, void());
   MOCK_METHOD0(GetSize, gfx::Size());
-  MOCK_METHOD0(BindTexImage, bool());
-  MOCK_METHOD0(ReleaseTexImage, void());
+  MOCK_METHOD1(BindTexImage, bool(unsigned));
+  MOCK_METHOD1(ReleaseTexImage, void(unsigned));
   MOCK_METHOD0(WillUseTexImage, void());
   MOCK_METHOD0(DidUseTexImage, void());
+  MOCK_METHOD0(WillModifyTexImage, void());
+  MOCK_METHOD0(DidModifyTexImage, void());
 
  protected:
   virtual ~MockGLImage() {}
@@ -7918,7 +7771,7 @@ TEST_F(GLES2DecoderWithShaderTest, UseTexImage) {
   group().image_manager()->AddImage(image.get(), kImageId);
 
   // Bind image to texture.
-  EXPECT_CALL(*image, BindTexImage())
+  EXPECT_CALL(*image, BindTexImage(GL_TEXTURE_2D))
       .Times(1)
       .WillOnce(Return(true))
       .RetiresOnSaturation();
@@ -8026,16 +7879,86 @@ TEST_F(GLES2DecoderWithShaderTest, UseTexImage) {
   EXPECT_EQ(error::kNoError, ExecuteCmd(fbrb_cmd));
 }
 
+TEST_F(GLES2DecoderManualInitTest, DrawWithGLImageExternal) {
+  InitState init;
+  init.extensions = "GL_OES_EGL_image_external";
+  init.gl_version = "opengl es 2.0";
+  init.has_alpha = true;
+  init.has_depth = true;
+  init.request_alpha = true;
+  init.request_depth = true;
+  init.bind_generates_resource = true;
+  InitDecoder(init);
+
+  TextureRef* texture_ref = GetTexture(client_texture_id_);
+  scoped_refptr<MockGLImage> image(new MockGLImage);
+  group().texture_manager()->SetTarget(texture_ref, GL_TEXTURE_EXTERNAL_OES);
+  group().texture_manager()->SetLevelInfo(texture_ref,
+                                          GL_TEXTURE_EXTERNAL_OES,
+                                          0,
+                                          GL_RGBA,
+                                          0,
+                                          0,
+                                          1,
+                                          0,
+                                          GL_RGBA,
+                                          GL_UNSIGNED_BYTE,
+                                          true);
+  group().texture_manager()->SetLevelImage(
+      texture_ref, GL_TEXTURE_EXTERNAL_OES, 0, image);
+
+  DoBindTexture(GL_TEXTURE_EXTERNAL_OES, client_texture_id_, kServiceTextureId);
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
+
+  SetupSamplerExternalProgram();
+  SetupIndexBuffer();
+  AddExpectationsForSimulatedAttrib0(kMaxValidIndex + 1, 0);
+  SetupExpectationsForApplyingDefaultDirtyState();
+  EXPECT_TRUE(group().texture_manager()->CanRender(texture_ref));
+
+  InSequence s;
+  EXPECT_CALL(*gl_, GetError())
+      .WillOnce(Return(GL_NO_ERROR))
+      .RetiresOnSaturation();
+  EXPECT_CALL(*gl_, ActiveTexture(GL_TEXTURE0))
+      .Times(1)
+      .RetiresOnSaturation();
+  EXPECT_CALL(*image, WillUseTexImage())
+      .Times(1)
+      .RetiresOnSaturation();
+  EXPECT_CALL(*gl_, GetError())
+      .WillOnce(Return(GL_NO_ERROR))
+      .RetiresOnSaturation();
+  EXPECT_CALL(*gl_, DrawElements(_, _, _, _))
+      .Times(1);
+  EXPECT_CALL(*gl_, GetError())
+      .WillOnce(Return(GL_NO_ERROR))
+      .RetiresOnSaturation();
+  EXPECT_CALL(*gl_, ActiveTexture(GL_TEXTURE0))
+      .Times(1)
+      .RetiresOnSaturation();
+  EXPECT_CALL(*image, DidUseTexImage())
+      .Times(1)
+      .RetiresOnSaturation();
+  EXPECT_CALL(*gl_, GetError())
+      .WillOnce(Return(GL_NO_ERROR))
+      .RetiresOnSaturation();
+  EXPECT_CALL(*gl_, ActiveTexture(GL_TEXTURE0))
+      .Times(1)
+      .RetiresOnSaturation();
+  DrawElements cmd;
+  cmd.Init(GL_TRIANGLES, kValidIndexRangeCount, GL_UNSIGNED_SHORT,
+           kValidIndexRangeStart * 2);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
+}
+
 TEST_F(GLES2DecoderManualInitTest, GpuMemoryManagerCHROMIUM) {
-  InitDecoder(
-      "GL_ARB_texture_rectangle",  // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_ARB_texture_rectangle";
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   Texture* texture = GetTexture(client_texture_id_)->texture();
   EXPECT_TRUE(texture != NULL);
@@ -8067,11 +7990,11 @@ TEST_F(GLES2DecoderManualInitTest, GpuMemoryManagerCHROMIUM) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, AsyncPixelTransfers) {
-  InitDecoder(
-      "GL_CHROMIUM_async_pixel_transfers",  // extensions
-      false, false, false,  // has alpha/depth/stencil
-      false, false, false,  // request alpha/depth/stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_CHROMIUM_async_pixel_transfers";
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   // Set up the texture.
   DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
@@ -8257,11 +8180,11 @@ TEST_F(GLES2DecoderManualInitTest, AsyncPixelTransfers) {
 }
 
 TEST_F(GLES2DecoderManualInitTest, AsyncPixelTransferManager) {
-  InitDecoder(
-      "GL_CHROMIUM_async_pixel_transfers",  // extensions
-      false, false, false,  // has alpha/depth/stencil
-      false, false, false,  // request alpha/depth/stencil
-      true);   // bind generates resource
+  InitState init;
+  init.extensions = "GL_CHROMIUM_async_pixel_transfers";
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
 
   // Set up the texture.
   DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
@@ -8360,15 +8283,10 @@ TEST_F(GLES2DecoderManualInitTest, MemoryTrackerInitialSize) {
   scoped_refptr<SizeOnlyMemoryTracker> memory_tracker =
       new SizeOnlyMemoryTracker();
   set_memory_tracker(memory_tracker.get());
-  InitDecoder(
-      "",      // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   // Expect that initial size - size is 0.
   EXPECT_EQ(0u, memory_tracker->GetPoolSize(MemoryTracker::kUnmanaged));
   EXPECT_EQ(0u, memory_tracker->GetPoolSize(MemoryTracker::kManaged));
@@ -8378,15 +8296,10 @@ TEST_F(GLES2DecoderManualInitTest, MemoryTrackerTexImage2D) {
   scoped_refptr<SizeOnlyMemoryTracker> memory_tracker =
       new SizeOnlyMemoryTracker();
   set_memory_tracker(memory_tracker.get());
-  InitDecoder(
-      "",      // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
   EXPECT_CALL(*memory_tracker.get(), EnsureGPUMemoryAvailable(128))
       .WillOnce(Return(true)).RetiresOnSaturation();
@@ -8414,15 +8327,10 @@ TEST_F(GLES2DecoderManualInitTest, MemoryTrackerTexStorage2DEXT) {
   scoped_refptr<SizeOnlyMemoryTracker> memory_tracker =
       new SizeOnlyMemoryTracker();
   set_memory_tracker(memory_tracker.get());
-  InitDecoder(
-      "",      // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
   // Check we get out of memory and no call to glTexStorage2DEXT
   // if Ensure fails.
@@ -8445,15 +8353,12 @@ TEST_F(GLES2DecoderManualInitTest, MemoryTrackerCopyTexImage2D) {
   scoped_refptr<SizeOnlyMemoryTracker> memory_tracker =
       new SizeOnlyMemoryTracker();
   set_memory_tracker(memory_tracker.get());
-  InitDecoder(
-      "",      // extensions
-      true,    // has alpha
-      false,   // has depth
-      false,   // has stencil
-      true,    // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.gl_version = "3.0";
+  init.has_alpha = true;
+  init.request_alpha = true;
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
   EXPECT_CALL(*memory_tracker.get(), EnsureGPUMemoryAvailable(128))
       .WillOnce(Return(true)).RetiresOnSaturation();
@@ -8482,15 +8387,10 @@ TEST_F(GLES2DecoderManualInitTest, MemoryTrackerRenderbufferStorage) {
   scoped_refptr<SizeOnlyMemoryTracker> memory_tracker =
       new SizeOnlyMemoryTracker();
   set_memory_tracker(memory_tracker.get());
-  InitDecoder(
-      "",      // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   DoBindRenderbuffer(GL_RENDERBUFFER, client_renderbuffer_id_,
                     kServiceRenderbufferId);
   EXPECT_CALL(*gl_, GetError())
@@ -8521,15 +8421,10 @@ TEST_F(GLES2DecoderManualInitTest, MemoryTrackerBufferData) {
   scoped_refptr<SizeOnlyMemoryTracker> memory_tracker =
       new SizeOnlyMemoryTracker();
   set_memory_tracker(memory_tracker.get());
-  InitDecoder(
-      "",      // extensions
-      false,   // has alpha
-      false,   // has depth
-      false,   // has stencil
-      false,   // request alpha
-      false,   // request depth
-      false,   // request stencil
-      true);   // bind generates resource
+  InitState init;
+  init.gl_version = "3.0";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
   DoBindBuffer(GL_ARRAY_BUFFER, client_buffer_id_,
                kServiceBufferId);
   EXPECT_CALL(*gl_, GetError())
@@ -8610,15 +8505,30 @@ TEST_F(GLES2DecoderTest, DrawBuffersEXTImmediateBackbuffer) {
   EXPECT_EQ(GL_NO_ERROR, GetGLError());
 }
 
+TEST_F(GLES2DecoderManualInitTest, InvalidateFramebufferBinding) {
+  InitState init;
+  init.gl_version = "opengl es 3.0";
+  InitDecoder(init);
+
+  // EXPECT_EQ can't be used to compare function pointers
+  EXPECT_TRUE(
+      gfx::MockGLInterface::GetGLProcAddress("glInvalidateFramebuffer") ==
+      gfx::g_driver_gl.fn.glDiscardFramebufferEXTFn);
+  EXPECT_TRUE(
+      gfx::MockGLInterface::GetGLProcAddress("glInvalidateFramebuffer") !=
+      gfx::MockGLInterface::GetGLProcAddress("glDiscardFramebufferEXT"));
+}
+
 TEST_F(GLES2DecoderManualInitTest, DiscardFramebufferEXT) {
-  InitDecoder("GL_EXT_discard_framebuffer",  // extensions
-              false,                         // has alpha
-              false,                         // has depth
-              false,                         // has stencil
-              false,                         // request alpha
-              false,                         // request depth
-              false,                         // request stencil
-              false);                        // bind generates resource
+  InitState init;
+  init.extensions = "GL_EXT_discard_framebuffer";
+  init.gl_version = "opengl es 2.0";
+  InitDecoder(init);
+
+  // EXPECT_EQ can't be used to compare function pointers
+  EXPECT_TRUE(
+      gfx::MockGLInterface::GetGLProcAddress("glDiscardFramebufferEXT") ==
+      gfx::g_driver_gl.fn.glDiscardFramebufferEXTFn);
 
   const GLenum target = GL_FRAMEBUFFER;
   const GLsizei count = 1;
@@ -8664,6 +8574,431 @@ TEST_F(GLES2DecoderTest, DiscardFramebufferEXTUnsupported) {
   EXPECT_EQ(error::kNoError,
             ExecuteImmediateCmd(cmd, sizeof(attachments)));
   EXPECT_EQ(GL_INVALID_OPERATION, GetGLError());
+}
+
+TEST_F(GLES2DecoderRestoreStateTest, NullPreviousState) {
+  InitState init;
+  init.gl_version = "3.0";
+  InitDecoder(init);
+  SetupTexture();
+
+  InSequence sequence;
+  // Expect to restore texture bindings for unit GL_TEXTURE0.
+  AddExpectationsForActiveTexture(GL_TEXTURE0);
+  AddExpectationsForBindTexture(GL_TEXTURE_2D, kServiceTextureId);
+  AddExpectationsForBindTexture(GL_TEXTURE_CUBE_MAP,
+                                TestHelper::kServiceDefaultTextureCubemapId);
+
+  // Expect to restore texture bindings for remaining units.
+  for (uint32 i = 1; i < group().max_texture_units() ; ++i) {
+    AddExpectationsForActiveTexture(GL_TEXTURE0 + i);
+    AddExpectationsForBindTexture(GL_TEXTURE_2D,
+                                  TestHelper::kServiceDefaultTexture2dId);
+    AddExpectationsForBindTexture(GL_TEXTURE_CUBE_MAP,
+                                  TestHelper::kServiceDefaultTextureCubemapId);
+  }
+
+  // Expect to restore the active texture unit to GL_TEXTURE0.
+  AddExpectationsForActiveTexture(GL_TEXTURE0);
+
+  GetDecoder()->RestoreAllTextureUnitBindings(NULL);
+}
+
+TEST_F(GLES2DecoderRestoreStateTest, WithPreviousState) {
+  InitState init;
+  init.gl_version = "3.0";
+  InitDecoder(init);
+  SetupTexture();
+
+  // Construct a previous ContextState with all texture bindings
+  // set to default textures.
+  ContextState prev_state(NULL, NULL, NULL);
+  InitializeContextState(&prev_state, std::numeric_limits<uint32>::max(), 0);
+
+  InSequence sequence;
+  // Expect to restore only GL_TEXTURE_2D binding for GL_TEXTURE0 unit,
+  // since the rest of the bindings haven't changed between the current
+  // state and the |prev_state|.
+  AddExpectationsForActiveTexture(GL_TEXTURE0);
+  AddExpectationsForBindTexture(GL_TEXTURE_2D, kServiceTextureId);
+
+  // Expect to restore active texture unit to GL_TEXTURE0.
+  AddExpectationsForActiveTexture(GL_TEXTURE0);
+
+  GetDecoder()->RestoreAllTextureUnitBindings(&prev_state);
+}
+
+TEST_F(GLES2DecoderRestoreStateTest, ActiveUnit1) {
+  InitState init;
+  init.gl_version = "3.0";
+  InitDecoder(init);
+
+  // Bind a non-default texture to GL_TEXTURE1 unit.
+  EXPECT_CALL(*gl_, ActiveTexture(GL_TEXTURE1));
+  ActiveTexture cmd;
+  cmd.Init(GL_TEXTURE1);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
+  SetupTexture();
+
+  // Construct a previous ContextState with all texture bindings
+  // set to default textures.
+  ContextState prev_state(NULL, NULL, NULL);
+  InitializeContextState(&prev_state, std::numeric_limits<uint32>::max(), 0);
+
+  InSequence sequence;
+  // Expect to restore only GL_TEXTURE_2D binding for GL_TEXTURE1 unit,
+  // since the rest of the bindings haven't changed between the current
+  // state and the |prev_state|.
+  AddExpectationsForActiveTexture(GL_TEXTURE1);
+  AddExpectationsForBindTexture(GL_TEXTURE_2D, kServiceTextureId);
+
+  // Expect to restore active texture unit to GL_TEXTURE1.
+  AddExpectationsForActiveTexture(GL_TEXTURE1);
+
+  GetDecoder()->RestoreAllTextureUnitBindings(&prev_state);
+}
+
+TEST_F(GLES2DecoderRestoreStateTest, NonDefaultUnit0) {
+  InitState init;
+  init.gl_version = "3.0";
+  InitDecoder(init);
+
+  // Bind a non-default texture to GL_TEXTURE1 unit.
+  EXPECT_CALL(*gl_, ActiveTexture(GL_TEXTURE1));
+  SpecializedSetup<ActiveTexture, 0>(true);
+  ActiveTexture cmd;
+  cmd.Init(GL_TEXTURE1);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
+  SetupTexture();
+
+  // Construct a previous ContextState with GL_TEXTURE_2D target in
+  // GL_TEXTURE0 unit bound to a non-default texture and the rest
+  // set to default textures.
+  ContextState prev_state(NULL, NULL, NULL);
+  InitializeContextState(&prev_state, 0, kServiceTextureId);
+
+  InSequence sequence;
+  // Expect to restore GL_TEXTURE_2D binding for GL_TEXTURE0 unit to
+  // a default texture.
+  AddExpectationsForActiveTexture(GL_TEXTURE0);
+  AddExpectationsForBindTexture(GL_TEXTURE_2D,
+                                TestHelper::kServiceDefaultTexture2dId);
+
+  // Expect to restore GL_TEXTURE_2D binding for GL_TEXTURE1 unit to
+  // non-default.
+  AddExpectationsForActiveTexture(GL_TEXTURE1);
+  AddExpectationsForBindTexture(GL_TEXTURE_2D, kServiceTextureId);
+
+  // Expect to restore active texture unit to GL_TEXTURE1.
+  AddExpectationsForActiveTexture(GL_TEXTURE1);
+
+  GetDecoder()->RestoreAllTextureUnitBindings(&prev_state);
+}
+
+TEST_F(GLES2DecoderRestoreStateTest, NonDefaultUnit1) {
+  InitState init;
+  init.gl_version = "3.0";
+  InitDecoder(init);
+
+  // Bind a non-default texture to GL_TEXTURE0 unit.
+  SetupTexture();
+
+  // Construct a previous ContextState with GL_TEXTURE_2D target in
+  // GL_TEXTURE1 unit bound to a non-default texture and the rest
+  // set to default textures.
+  ContextState prev_state(NULL, NULL, NULL);
+  InitializeContextState(&prev_state, 1, kServiceTextureId);
+
+  InSequence sequence;
+  // Expect to restore GL_TEXTURE_2D binding to the non-default texture
+  // for GL_TEXTURE0 unit.
+  AddExpectationsForActiveTexture(GL_TEXTURE0);
+  AddExpectationsForBindTexture(GL_TEXTURE_2D, kServiceTextureId);
+
+  // Expect to restore GL_TEXTURE_2D binding to the default texture
+  // for GL_TEXTURE1 unit.
+  AddExpectationsForActiveTexture(GL_TEXTURE1);
+  AddExpectationsForBindTexture(GL_TEXTURE_2D,
+                                TestHelper::kServiceDefaultTexture2dId);
+
+  // Expect to restore active texture unit to GL_TEXTURE0.
+  AddExpectationsForActiveTexture(GL_TEXTURE0);
+
+  GetDecoder()->RestoreAllTextureUnitBindings(&prev_state);
+}
+
+TEST_F(GLES2DecoderManualInitTest, ClearUniformsBeforeFirstProgramUse) {
+  CommandLine command_line(0, NULL);
+  command_line.AppendSwitchASCII(
+      switches::kGpuDriverBugWorkarounds,
+      base::IntToString(gpu::CLEAR_UNIFORMS_BEFORE_FIRST_PROGRAM_USE));
+  InitState init;
+  init.gl_version = "3.0";
+  init.has_alpha = true;
+  init.request_alpha = true;
+  init.bind_generates_resource = true;
+  InitDecoderWithCommandLine(init, &command_line);
+  {
+    static AttribInfo attribs[] = {
+      { kAttrib1Name, kAttrib1Size, kAttrib1Type, kAttrib1Location, },
+      { kAttrib2Name, kAttrib2Size, kAttrib2Type, kAttrib2Location, },
+      { kAttrib3Name, kAttrib3Size, kAttrib3Type, kAttrib3Location, },
+    };
+    static UniformInfo uniforms[] = {
+      { kUniform1Name, kUniform1Size, kUniform1Type,
+        kUniform1FakeLocation, kUniform1RealLocation,
+        kUniform1DesiredLocation },
+      { kUniform2Name, kUniform2Size, kUniform2Type,
+        kUniform2FakeLocation, kUniform2RealLocation,
+        kUniform2DesiredLocation },
+      { kUniform3Name, kUniform3Size, kUniform3Type,
+        kUniform3FakeLocation, kUniform3RealLocation,
+        kUniform3DesiredLocation },
+    };
+    SetupShader(attribs, arraysize(attribs), uniforms, arraysize(uniforms),
+                client_program_id_, kServiceProgramId,
+                client_vertex_shader_id_, kServiceVertexShaderId,
+                client_fragment_shader_id_, kServiceFragmentShaderId);
+    TestHelper::SetupExpectationsForClearingUniforms(
+        gl_.get(), uniforms, arraysize(uniforms));
+  }
+
+  {
+    EXPECT_CALL(*gl_, UseProgram(kServiceProgramId))
+        .Times(1)
+        .RetiresOnSaturation();
+    cmds::UseProgram cmd;
+    cmd.Init(client_program_id_);
+    EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  }
+}
+
+TEST_F(GLES2DecoderManualInitTest, TexImage2DFloatOnGLES2) {
+  InitState init;
+  init.extensions = "GL_OES_texture_float";
+  init.gl_version = "opengl es 2.0";
+  InitDecoder(init);
+  DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 16, 17, 0, GL_RGBA, GL_FLOAT, 0, 0);
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 16, 17, 0, GL_RGB, GL_FLOAT, 0, 0);
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, 16, 17, 0, GL_LUMINANCE,
+               GL_FLOAT, 0, 0);
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, 16, 17, 0, GL_ALPHA, GL_FLOAT,
+               0, 0);
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, 16, 17, 0,
+               GL_LUMINANCE_ALPHA, GL_FLOAT, 0, 0);
+}
+
+TEST_F(GLES2DecoderManualInitTest, TexImage2DFloatOnGLES3) {
+  InitState init;
+  init.extensions = "GL_OES_texture_float GL_EXT_color_buffer_float";
+  init.gl_version = "opengl es 3.0";
+  InitDecoder(init);
+  DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 16, 17, 0, GL_RGBA, GL_FLOAT, 0, 0);
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 16, 17, 0, GL_RGB, GL_FLOAT, 0, 0);
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 16, 17, 0, GL_RGBA, GL_FLOAT, 0,
+               0);
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, 16, 17, 0, GL_LUMINANCE,
+               GL_FLOAT, 0, 0);
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, 16, 17, 0, GL_ALPHA, GL_FLOAT,
+               0, 0);
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, 16, 17, 0,
+               GL_LUMINANCE_ALPHA, GL_FLOAT, 0, 0);
+}
+
+TEST_F(GLES2DecoderManualInitTest, TexSubImage2DFloatOnGLES3) {
+  InitState init;
+  init.extensions = "GL_OES_texture_float GL_EXT_color_buffer_float";
+  init.gl_version = "opengl es 3.0";
+  InitDecoder(init);
+  const int kWidth = 8;
+  const int kHeight = 4;
+  DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, kWidth, kHeight, 0, GL_RGBA,
+               GL_FLOAT, 0, 0);
+  EXPECT_CALL(*gl_, TexImage2D(
+      GL_TEXTURE_2D, 0, GL_RGBA32F, kWidth, kHeight, 0, GL_RGBA, GL_FLOAT,
+      shared_memory_address_))
+      .Times(1)
+      .RetiresOnSaturation();
+  TexSubImage2D cmd;
+  cmd.Init(
+      GL_TEXTURE_2D, 0, 0, 0, kWidth, kHeight, GL_RGBA, GL_FLOAT,
+      kSharedMemoryId, kSharedMemoryOffset, GL_FALSE);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
+}
+
+TEST_F(GLES2DecoderManualInitTest, TexSubImage2DFloatDoesClearOnGLES3) {
+  InitState init;
+  init.extensions = "GL_OES_texture_float GL_EXT_color_buffer_float";
+  init.gl_version = "opengl es 3.0";
+  InitDecoder(init);
+  const int kWidth = 8;
+  const int kHeight = 4;
+  DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, kWidth, kHeight, 0, GL_RGBA,
+               GL_FLOAT, 0, 0);
+  SetupClearTextureExpectations(
+      kServiceTextureId, kServiceTextureId, GL_TEXTURE_2D, GL_TEXTURE_2D,
+      0, GL_RGBA32F, GL_RGBA, GL_FLOAT, kWidth, kHeight);
+  EXPECT_CALL(*gl_, TexSubImage2D(
+      GL_TEXTURE_2D, 0, 1, 0, kWidth - 1, kHeight, GL_RGBA, GL_FLOAT,
+      shared_memory_address_))
+      .Times(1)
+      .RetiresOnSaturation();
+  TexSubImage2D cmd;
+  cmd.Init(
+      GL_TEXTURE_2D, 0, 1, 0, kWidth - 1, kHeight, GL_RGBA, GL_FLOAT,
+      kSharedMemoryId, kSharedMemoryOffset, GL_FALSE);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
+}
+
+TEST_F(GLES2DecoderManualInitTest, TexImage2DFloatConvertsFormatDesktop) {
+  InitState init;
+  init.extensions = "GL_ARB_texture_float";
+  init.gl_version = "2.1";
+  InitDecoder(init);
+  DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 16, 17, 0, GL_RGBA, GL_FLOAT, 0,
+               0);
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, 16, 17, 0, GL_RGB, GL_FLOAT, 0, 0);
+  DoTexImage2DConvertInternalFormat(GL_TEXTURE_2D, 0, GL_RGBA, 16, 17, 0,
+                                    GL_RGBA, GL_FLOAT, 0, 0, GL_RGBA32F_ARB);
+  DoTexImage2DConvertInternalFormat(GL_TEXTURE_2D, 0, GL_RGB, 16, 17, 0,
+                                    GL_RGB, GL_FLOAT, 0, 0, GL_RGB32F_ARB);
+  DoTexImage2DConvertInternalFormat(GL_TEXTURE_2D, 0, GL_LUMINANCE, 16, 17, 0,
+                                    GL_LUMINANCE, GL_FLOAT, 0, 0,
+                                    GL_LUMINANCE32F_ARB);
+  DoTexImage2DConvertInternalFormat(GL_TEXTURE_2D, 0, GL_ALPHA, 16, 17, 0,
+                                    GL_ALPHA, GL_FLOAT, 0, 0, GL_ALPHA32F_ARB);
+  DoTexImage2DConvertInternalFormat(GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, 16,
+                                    17, 0, GL_LUMINANCE_ALPHA, GL_FLOAT, 0, 0,
+                                    GL_LUMINANCE_ALPHA32F_ARB);
+}
+
+TEST_F(GLES2DecoderManualInitTest, ReadFormatExtension) {
+  InitState init;
+  init.extensions = "GL_OES_read_format";
+  init.gl_version = "2.1";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
+
+  EXPECT_CALL(*gl_, GetError())
+      .WillOnce(Return(GL_NO_ERROR))
+      .WillOnce(Return(GL_NO_ERROR))
+      .WillOnce(Return(GL_NO_ERROR))
+      .WillOnce(Return(GL_NO_ERROR))
+      .RetiresOnSaturation();
+  EXPECT_CALL(*gl_, GetError())
+      .Times(6)
+      .RetiresOnSaturation();
+
+  typedef GetIntegerv::Result Result;
+  Result* result = static_cast<Result*>(shared_memory_address_);
+  GetIntegerv cmd;
+  const GLuint kFBOClientTextureId = 4100;
+  const GLuint kFBOServiceTextureId = 4101;
+
+  // Register a texture id.
+  EXPECT_CALL(*gl_, GenTextures(_, _))
+      .WillOnce(SetArgumentPointee<1>(kFBOServiceTextureId))
+      .RetiresOnSaturation();
+  GenHelper<GenTexturesImmediate>(kFBOClientTextureId);
+
+  // Setup "render to" texture.
+  DoBindTexture(GL_TEXTURE_2D, kFBOClientTextureId, kFBOServiceTextureId);
+  DoTexImage2D(
+      GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0, 0);
+  DoBindFramebuffer(
+      GL_FRAMEBUFFER, client_framebuffer_id_, kServiceFramebufferId);
+  DoFramebufferTexture2D(
+      GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+      kFBOClientTextureId, kFBOServiceTextureId, 0, GL_NO_ERROR);
+
+  result->size = 0;
+  EXPECT_CALL(*gl_, GetIntegerv(_, _))
+      .Times(1)
+      .RetiresOnSaturation();
+  cmd.Init(
+      GL_IMPLEMENTATION_COLOR_READ_FORMAT,
+      shared_memory_id_, shared_memory_offset_);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(1, result->GetNumResults());
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
+
+  result->size = 0;
+  EXPECT_CALL(*gl_, GetIntegerv(_, _))
+      .Times(1)
+      .RetiresOnSaturation();
+  cmd.Init(
+      GL_IMPLEMENTATION_COLOR_READ_TYPE,
+      shared_memory_id_, shared_memory_offset_);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(1, result->GetNumResults());
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
+}
+
+TEST_F(GLES2DecoderManualInitTest, NoReadFormatExtension) {
+  InitState init;
+  init.gl_version = "2.1";
+  init.bind_generates_resource = true;
+  InitDecoder(init);
+
+  EXPECT_CALL(*gl_, GetError())
+      .WillOnce(Return(GL_NO_ERROR))
+      .WillOnce(Return(GL_NO_ERROR))
+      .WillOnce(Return(GL_NO_ERROR))
+      .WillOnce(Return(GL_NO_ERROR))
+      .RetiresOnSaturation();
+
+  typedef GetIntegerv::Result Result;
+  Result* result = static_cast<Result*>(shared_memory_address_);
+  GetIntegerv cmd;
+  const GLuint kFBOClientTextureId = 4100;
+  const GLuint kFBOServiceTextureId = 4101;
+
+  // Register a texture id.
+  EXPECT_CALL(*gl_, GenTextures(_, _))
+      .WillOnce(SetArgumentPointee<1>(kFBOServiceTextureId))
+      .RetiresOnSaturation();
+  GenHelper<GenTexturesImmediate>(kFBOClientTextureId);
+
+  // Setup "render to" texture.
+  DoBindTexture(GL_TEXTURE_2D, kFBOClientTextureId, kFBOServiceTextureId);
+  DoTexImage2D(
+      GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0, 0);
+  DoBindFramebuffer(
+      GL_FRAMEBUFFER, client_framebuffer_id_, kServiceFramebufferId);
+  DoFramebufferTexture2D(
+      GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+      kFBOClientTextureId, kFBOServiceTextureId, 0, GL_NO_ERROR);
+
+  result->size = 0;
+  EXPECT_CALL(*gl_, GetIntegerv(_, _))
+      .Times(0)
+      .RetiresOnSaturation();
+  cmd.Init(
+      GL_IMPLEMENTATION_COLOR_READ_FORMAT,
+      shared_memory_id_, shared_memory_offset_);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(1, result->GetNumResults());
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
+
+  result->size = 0;
+  EXPECT_CALL(*gl_, GetIntegerv(_, _))
+      .Times(0)
+      .RetiresOnSaturation();
+  cmd.Init(
+      GL_IMPLEMENTATION_COLOR_READ_TYPE,
+      shared_memory_id_, shared_memory_offset_);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(1, result->GetNumResults());
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
 }
 
 // TODO(gman): Complete this test.

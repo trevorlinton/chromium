@@ -46,7 +46,7 @@
 #include "third_party/WebKit/public/web/WebPageSerializerClient.h"
 
 using base::Time;
-using WebKit::WebPageSerializerClient;
+using blink::WebPageSerializerClient;
 
 namespace content {
 namespace {
@@ -519,7 +519,7 @@ bool SavePackage::GenerateFileName(const std::string& disposition,
     if (ordinal_number > (kMaxFileOrdinalNumber - 1)) {
       // Use a random file from temporary file.
       base::FilePath temp_file;
-      file_util::CreateTemporaryFile(&temp_file);
+      base::CreateTemporaryFile(&temp_file);
       file_name = temp_file.RemoveExtension().BaseName().value();
       // Get safe pure file name.
       if (!GetSafePureFileName(saved_main_directory_path_,
@@ -1222,7 +1222,7 @@ base::FilePath SavePackage::GetSuggestedNameForSaveAs(
   // similarly).
   if (title_ == net::FormatUrl(page_url_, accept_langs)) {
     std::string url_path;
-    if (!page_url_.SchemeIs(chrome::kDataScheme)) {
+    if (!page_url_.SchemeIs(kDataScheme)) {
       std::vector<std::string> url_parts;
       base::SplitString(page_url_.path(), '/', &url_parts);
       if (!url_parts.empty()) {
@@ -1299,7 +1299,7 @@ const base::FilePath::CharType* SavePackage::ExtensionForMimeType(
 #if defined(OS_POSIX)
   base::FilePath::StringType mime_type(contents_mime_type);
 #elif defined(OS_WIN)
-  base::FilePath::StringType mime_type(UTF8ToWide(contents_mime_type));
+  base::FilePath::StringType mime_type(base::UTF8ToWide(contents_mime_type));
 #endif  // OS_WIN
   for (uint32 i = 0; i < ARRAYSIZE_UNSAFE(extensions); ++i) {
     if (mime_type == extensions[i].mime_type)
@@ -1347,7 +1347,7 @@ void SavePackage::CreateDirectoryOnFileThread(
   if (!skip_dir_check && !base::DirectoryExists(website_save_dir)) {
     // If the default download dir doesn't exist, create it.
     if (!base::DirectoryExists(download_save_dir)) {
-      bool res = file_util::CreateDirectory(download_save_dir);
+      bool res = base::CreateDirectory(download_save_dir);
       DCHECK(res);
     }
     save_dir = download_save_dir;

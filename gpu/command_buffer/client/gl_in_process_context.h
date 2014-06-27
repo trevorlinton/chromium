@@ -8,6 +8,7 @@
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "gles2_impl_export.h"
+#include "gpu/command_buffer/service/in_process_command_buffer.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gl/gl_surface.h"
 #include "ui/gl/gpu_preference.h"
@@ -40,6 +41,8 @@ struct GLES2_IMPL_EXPORT GLInProcessContextAttribs {
   int32 stencil_size;
   int32 samples;
   int32 sample_buffers;
+  int32 fail_if_major_perf_caveat;
+  int32 lose_context_when_out_of_memory;
 };
 
 class GLES2_IMPL_EXPORT GLInProcessContext {
@@ -63,7 +66,8 @@ class GLES2_IMPL_EXPORT GLInProcessContext {
   // thread safe.
   static GLInProcessContext* CreateWithSurface(
       scoped_refptr<gfx::GLSurface> surface,
-      bool share_resources,
+      scoped_refptr<gpu::InProcessCommandBuffer::Service> service,
+      GLInProcessContext* share_context,
       const GLInProcessContextAttribs& attribs,
       gfx::GpuPreference gpu_preference);
 

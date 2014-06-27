@@ -13,10 +13,10 @@
 #include "third_party/WebKit/public/web/WebFormElement.h"
 #include "third_party/WebKit/public/web/WebPasswordFormData.h"
 
-using WebKit::WebFormElement;
-using WebKit::WebFrame;
-using WebKit::WebPasswordFormData;
-using WebKit::WebVector;
+using blink::WebFormElement;
+using blink::WebFrame;
+using blink::WebPasswordFormData;
+using blink::WebVector;
 
 namespace autofill {
 namespace {
@@ -55,10 +55,10 @@ TEST_F(PasswordFormConversionUtilsTest, ValidWebFormElementToPasswordForm) {
 
   EXPECT_EQ("data:", password_form->signon_realm);
   EXPECT_EQ(GURL("http://cnn.com"), password_form->action);
-  EXPECT_EQ(UTF8ToUTF16("username"), password_form->username_element);
-  EXPECT_EQ(UTF8ToUTF16("johnsmith"), password_form->username_value);
-  EXPECT_EQ(UTF8ToUTF16("password"), password_form->password_element);
-  EXPECT_EQ(UTF8ToUTF16("secret"), password_form->password_value);
+  EXPECT_EQ(base::UTF8ToUTF16("username"), password_form->username_element);
+  EXPECT_EQ(base::UTF8ToUTF16("johnsmith"), password_form->username_value);
+  EXPECT_EQ(base::UTF8ToUTF16("password"), password_form->password_element);
+  EXPECT_EQ(base::UTF8ToUTF16("secret"), password_form->password_value);
   EXPECT_EQ(PasswordForm::SCHEME_HTML, password_form->scheme);
   EXPECT_FALSE(password_form->ssl_valid);
   EXPECT_FALSE(password_form->preferred);

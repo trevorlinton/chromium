@@ -61,7 +61,11 @@ function doGetUserMedia(constraints) {
     throw failTest('Not valid JavaScript expression: ' + constraints);
   }
   debug('Requesting doGetUserMedia: constraints: ' + constraints);
-  getUserMedia(evaluatedConstraints, getUserMediaOkCallback_,
+  getUserMedia(evaluatedConstraints,
+               function(stream) {
+                 ensureGotAllExpectedStreams_(stream, constraints);
+                 getUserMediaOkCallback_(stream);
+               },
                getUserMediaFailedCallback_);
   returnToTest('ok-requested');
 }
@@ -74,10 +78,6 @@ function doGetUserMedia(constraints) {
  *     callback) depending on which callback got called by WebRTC.
  */
 function obtainGetUserMediaResult() {
-  // Translate from the old error to the new. Remove when rename fully deployed.
-  if (gRequestWebcamAndMicrophoneResult === 'PERMISSION_DENIED')
-    gRequestWebcamAndMicrophoneResult = 'PermissionDeniedError';
-
   returnToTest(gRequestWebcamAndMicrophoneResult);
   return gRequestWebcamAndMicrophoneResult;
 }
@@ -137,6 +137,28 @@ function getLocalStream() {
 }
 
 // Internals.
+
+/**
+ * @private
+ * @param {MediaStream} stream Media stream from getUserMedia.
+ * @param {String} constraints The constraints passed
+ */
+function ensureGotAllExpectedStreams_(stream, constraints) {
+  var requestedVideo = /video\s*:\s*true/i;
+  if (requestedVideo.test(constraints) && stream.getVideoTracks().length == 0) {
+    gRequestWebcamAndMicrophoneResult = 'failed-to-get-video';
+    throw ('Requested video, but did not receive a video stream from ' +
+           'getUserMedia. Perhaps the machine you are running on ' +
+           'does not have a webcam.');
+  }
+  var requestedAudio = /audio\s*:\s*true/i;
+  if (requestedAudio.test(constraints) && stream.getAudioTracks().length == 0) {
+    gRequestWebcamAndMicrophoneResult = 'failed-to-get-audio';
+    throw ('Requested audio, but did not receive an audio stream ' +
+           'from getUserMedia. Perhaps the machine you are running ' +
+           'on does not have audio devices.');
+  }
+}
 
 /**
  * @private
@@ -217,10 +239,10 @@ function displayVideoSize_(videoTag) {
  * to update the constraints.
  */
 function getDevices() {
-  if ($('audiosrc') && $('videosrc') && $('refresh-devices')) {
+  if ($('audiosrc') && $('videosrc') && $('get-devices')) {
     var audio_select = $('audiosrc');
     var video_select = $('videosrc');
-    var refresh_devices = $('refresh-devices');
+    var get_devices = $('get-devices');
     audio_select.innerHTML = '';
     video_select.innerHTML = '';
     try {
@@ -228,7 +250,7 @@ function getDevices() {
     } catch (exception) {
       audio_select.disabled = true;
       video_select.disabled = true;
-      refresh_devices.disabled = true;
+      get_devices.disabled = true;
       updateGetUserMediaConstraints();
       debug('Device enumeration not supported. ' + exception);
       return;
@@ -240,13 +262,13 @@ function getDevices() {
         option.text = devices[i].label;
         if (devices[i].kind == 'audio') {
           if (option.text == '') {
-            option.text = 'Audio: ' + devices[i].id;
+            option.text = devices[i].id;
           }
           audio_select.appendChild(option);
         }
         else if (devices[i].kind == 'video') {
           if (option.text == '') {
-            option.text = 'Video: ' + devices[i].id;
+            option.text = devices[i].id;
           }
           video_select.appendChild(option);
         }
@@ -300,8 +322,6 @@ function getSourcesFromField(audio_select, video_select) {
 function getUserMediaFailedCallback_(error) {
   // Translate from the old error to the new. Remove when rename fully deployed.
   var errorName = error.name;
-  if (errorName === 'PERMISSION_DENIED')
-    errorName = 'PermissionDeniedError';
 
   debug('GetUserMedia FAILED: Maybe the camera is in use by another process?');
   gRequestWebcamAndMicrophoneResult = 'failed-with-error-' + errorName;

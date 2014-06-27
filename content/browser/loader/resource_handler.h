@@ -73,6 +73,15 @@ class CONTENT_EXPORT ResourceHandler
   // until someone calls ResourceDispatcherHost::StartDeferredRequest().
   virtual bool OnWillStart(int request_id, const GURL& url, bool* defer) = 0;
 
+  // Called before the net::URLRequest for |request_id| (whose url is |url|}
+  // uses the network for the first time to load the resource. If the handler
+  // returns false, then the request is cancelled. Otherwise if the return value
+  // is true, the ResourceHandler can delay the request from starting by setting
+  // |*defer = true|. Call controller()->Resume() to continue if deferred.
+  virtual bool OnBeforeNetworkStart(int request_id,
+                                    const GURL& url,
+                                    bool* defer) = 0;
+
   // Data will be read for the response.  Upon success, this method places the
   // size and address of the buffer where the data is to be written in its
   // out-params.  This call will be followed by either OnReadCompleted or
@@ -92,12 +101,13 @@ class CONTENT_EXPORT ResourceHandler
   virtual bool OnReadCompleted(int request_id, int bytes_read,
                                bool* defer) = 0;
 
-  // The response is complete.  The final response status is given.  Returns
-  // false if the handler is deferring the call to a later time.  Otherwise,
-  // the request will be destroyed upon return.
-  virtual bool OnResponseCompleted(int request_id,
+  // The response is complete.  The final response status is given.  Set
+  // |*defer| to true to defer destruction to a later time.  Otherwise, the
+  // request will be destroyed upon return.
+  virtual void OnResponseCompleted(int request_id,
                                    const net::URLRequestStatus& status,
-                                   const std::string& security_info) = 0;
+                                   const std::string& security_info,
+                                   bool* defer) = 0;
 
   // This notification is synthesized by the RedirectToFileResourceHandler
   // to indicate progress of 'download_to_file' requests. OnReadCompleted

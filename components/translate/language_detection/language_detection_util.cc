@@ -10,9 +10,9 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
-#include "components/translate/common/translate_constants.h"
-#include "components/translate/common/translate_metrics.h"
-#include "components/translate/common/translate_util.h"
+#include "components/translate/core/common/translate_constants.h"
+#include "components/translate/core/common/translate_metrics.h"
+#include "components/translate/core/common/translate_util.h"
 
 #if !defined(CLD_VERSION) || CLD_VERSION==1
 #include "third_party/cld/encodings/compact_lang_det/compact_lang_det.h"
@@ -110,7 +110,7 @@ std::string DetermineTextLanguage(const base::string16& text,
 #endif
 #if !defined(CLD_VERSION) || CLD_VERSION==2
     case 2: {
-      std::string utf8_text(UTF16ToUTF8(text));
+      std::string utf8_text(base::UTF16ToUTF8(text));
       CLD2::Language language3[3];
       int percent3[3];
       CLD2::DetectLanguageSummary(
@@ -245,29 +245,32 @@ std::string DeterminePageLanguage(const std::string& code,
     translate::ReportLanguageVerification(
         translate::LANGUAGE_VERIFICATION_UNKNOWN);
     return language;
-  } else if (CanCLDComplementSubCode(language, cld_language)) {
+  }
+
+  if (CanCLDComplementSubCode(language, cld_language)) {
     translate::ReportLanguageVerification(
         translate::LANGUAGE_VERIFICATION_CLD_COMPLEMENT_SUB_CODE);
     return cld_language;
-  } else if (IsSameOrSimilarLanguages(language, cld_language)) {
+  }
+
+  if (IsSameOrSimilarLanguages(language, cld_language)) {
     translate::ReportLanguageVerification(
         translate::LANGUAGE_VERIFICATION_CLD_AGREE);
     return language;
-  } else if (MaybeServerWrongConfiguration(language, cld_language)) {
+  }
+
+  if (MaybeServerWrongConfiguration(language, cld_language)) {
     translate::ReportLanguageVerification(
         translate::LANGUAGE_VERIFICATION_TRUST_CLD);
     return cld_language;
-  } else {
-    translate::ReportLanguageVerification(
-        translate::LANGUAGE_VERIFICATION_CLD_DISAGREE);
-    // Content-Language value might be wrong because CLD says that this page
-    // is written in another language with confidence.
-    // In this case, Chrome doesn't rely on any of the language codes, and
-    // gives up suggesting a translation.
-    return std::string(kUnknownLanguageCode);
   }
 
-  return language;
+  // Content-Language value might be wrong because CLD says that this page is
+  // written in another language with confidence.  In this case, Chrome doesn't
+  // rely on any of the language codes, and gives up suggesting a translation.
+  translate::ReportLanguageVerification(
+      translate::LANGUAGE_VERIFICATION_CLD_DISAGREE);
+  return kUnknownLanguageCode;
 }
 
 void CorrectLanguageCodeTypo(std::string* code) {
@@ -278,7 +281,7 @@ void CorrectLanguageCodeTypo(std::string* code) {
     // There are more than 1 language specified, just keep the first one.
     *code = code->substr(0, coma_index);
   }
-  TrimWhitespaceASCII(*code, TRIM_ALL, code);
+  base::TrimWhitespaceASCII(*code, base::TRIM_ALL, code);
 
   // An underscore instead of a dash is a frequent mistake.
   size_t underscore_index = code->find('_');

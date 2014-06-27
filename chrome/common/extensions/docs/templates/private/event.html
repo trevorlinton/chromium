@@ -1,49 +1,54 @@
+{{#event}}
 <div>
-  <h4 id="{{id}}">{{name}}</h4>
+  <h3 id="{{id}}">{{name}}</h3>
+  {{+partials.warning_deprecated item:event/}}
   <div class="description">
     {{?description}}<p>
       {{{description}}}
     </p>{{/description}}
     {{?supportsRules}}
     <p>Provides the <a href="events.html#declarative">Declarative Event API</a>
-    consisting of $ref:[events.Event.addRules addRules],
-    $ref:[events.Event.removeRules removeRules], and $ref:[events.Event.getRules
-    getRules].</p>
+    consisting of $(ref:events.Event.addRules addRules),
+    $(ref:events.Event.removeRules removeRules), and
+    $(ref:events.Event.addRules getRules).</p>
     <div class="summary">
       {{+partials.function_signature function:byName.addRules
                                      parentName:name
-                                     api:api}}
+                                     api:api/}}
       {{+partials.function_signature function:byName.removeRules
                                      parentName:name
-                                     api:api}}
+                                     api:api/}}
       {{+partials.function_signature function:byName.getRules
                                      parentName:name
-                                     api:api}}
+                                     api:api/}}
     </div>
     {{?conditions}}
-      <h4>Supported conditions</h4>
+      <h4 title="">Supported conditions</h4>
       <ul>
-        {{#conditions}}<div><li>{{+partials.ref_link}}</li></div>{{/}}
+        {{#c:conditions}}<div><li>{{+partials.ref_link link:c/}}</li></div>{{/}}
       </ul>
     {{/conditions}}
     {{?actions}}
-      <h4>Supported actions</h4>
+      <h4 title="">Supported actions</h4>
       <ul>
-        {{#actions}}<div><li>{{+partials.ref_link}}</li></div>{{/}}
+        {{#a:actions}}<div><li>{{+partials.ref_link link:a/}}</li></div>{{/}}
       </ul>
     {{/actions}}
     {{/supportsRules}}
     {{?filters}}
-      <h4>Filters</h4>
+      <h4 title="">Filters</h4>
       <dl>
-        {{#filters}}{{+partials.parameter_full}}{{/}}
+        {{#f:filters +partials.parameter_full parameter:f
+                                              parentName:name
+                                              hideParamTOC:true /}}
       </dl>
     {{/filters}}
     {{?supportsListeners}}
-      {{+partials.function @:byName.addListener
+      {{+partials.function function:byName.addListener
                            parentName:name
                            api:api
-                           parentId:id}}
+                           hideParamTOC:true /}}
     {{/supportsListeners}}
   </div>
 </div>
+{{/event}}

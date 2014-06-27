@@ -16,10 +16,10 @@
 #include "ppapi/proxy/ppapi_proxy_export.h"
 #include "ppapi/shared_impl/file_path.h"
 #include "ppapi/shared_impl/file_ref_create_info.h"
+#include "ppapi/shared_impl/media_stream_video_track_shared.h"
 #include "ppapi/shared_impl/ppapi_permissions.h"
 #include "ppapi/shared_impl/socket_option_data.h"
 
-struct PP_FileInfo;
 struct PP_NetAddress_Private;
 
 namespace ppapi {
@@ -46,14 +46,6 @@ namespace IPC {
 template<>
 struct PPAPI_PROXY_EXPORT ParamTraits<PP_Bool> {
   typedef PP_Bool param_type;
-  static void Write(Message* m, const param_type& p);
-  static bool Read(const Message* m, PickleIterator* iter, param_type* r);
-  static void Log(const param_type& p, std::string* l);
-};
-
-template<>
-struct PPAPI_PROXY_EXPORT ParamTraits<PP_FileInfo> {
-  typedef PP_FileInfo param_type;
   static void Write(Message* m, const param_type& p);
   static bool Read(const Message* m, PickleIterator* iter, param_type* r);
   static void Log(const param_type& p, std::string* l);

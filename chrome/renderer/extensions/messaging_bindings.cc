@@ -13,8 +13,6 @@
 #include "base/lazy_instance.h"
 #include "base/message_loop/message_loop.h"
 #include "base/values.h"
-#include "chrome/common/extensions/api/messaging/message.h"
-#include "chrome/common/extensions/extension_messages.h"
 #include "chrome/common/extensions/manifest_handlers/externally_connectable.h"
 #include "chrome/common/extensions/message_bundle.h"
 #include "chrome/common/url_constants.h"
@@ -27,9 +25,12 @@
 #include "content/public/renderer/render_thread.h"
 #include "content/public/renderer/render_view.h"
 #include "content/public/renderer/v8_value_converter.h"
+#include "extensions/common/api/messaging/message.h"
+#include "extensions/common/extension_messages.h"
 #include "grit/renderer_resources.h"
 #include "third_party/WebKit/public/web/WebScopedMicrotaskSuppression.h"
 #include "third_party/WebKit/public/web/WebScopedUserGesture.h"
+#include "third_party/WebKit/public/web/WebScopedWindowFocusAllowedIndicator.h"
 #include "third_party/WebKit/public/web/WebUserGestureIndicator.h"
 #include "v8/include/v8.h"
 
@@ -46,6 +47,8 @@
 using content::RenderThread;
 using content::V8ValueConverter;
 
+namespace extensions {
+
 namespace {
 
 struct ExtensionData {
@@ -56,19 +59,19 @@ struct ExtensionData {
   std::map<int, PortData> ports;  // port ID -> data
 };
 
-static base::LazyInstance<ExtensionData> g_extension_data =
+base::LazyInstance<ExtensionData> g_extension_data =
     LAZY_INSTANCE_INITIALIZER;
 
-static bool HasPortData(int port_id) {
+bool HasPortData(int port_id) {
   return g_extension_data.Get().ports.find(port_id) !=
       g_extension_data.Get().ports.end();
 }
 
-static ExtensionData::PortData& GetPortData(int port_id) {
+ExtensionData::PortData& GetPortData(int port_id) {
   return g_extension_data.Get().ports[port_id];
 }
 
-static void ClearPortData(int port_id) {
+void ClearPortData(int port_id) {
   g_extension_data.Get().ports.erase(port_id);
 }
 
@@ -76,11 +79,10 @@ const char kPortClosedError[] = "Attempting to use a disconnected port object";
 const char kReceivingEndDoesntExistError[] =
     "Could not establish connection. Receiving end does not exist.";
 
-class ExtensionImpl : public extensions::ChromeV8Extension {
+class ExtensionImpl : public ChromeV8Extension {
  public:
-  explicit ExtensionImpl(extensions::Dispatcher* dispatcher,
-                         extensions::ChromeV8Context* context)
-      : extensions::ChromeV8Extension(dispatcher, context) {
+  ExtensionImpl(Dispatcher* dispatcher, ChromeV8Context* context)
+      : ChromeV8Extension(dispatcher, context) {
     RouteFunction("CloseChannel",
         base::Bind(&ExtensionImpl::CloseChannel, base::Unretained(this)));
     RouteFunction("PortAddRef",
@@ -96,6 +98,11 @@ class ExtensionImpl : public extensions::ChromeV8Extension {
 
   virtual ~ExtensionImpl() {}
 
+  void ClearPortDataAndNotifyDispatcher(int port_id) {
+    ClearPortData(port_id);
+    dispatcher()->ClearPortData(port_id);
+  }
+
   // Sends a message along the given channel.
   void PostMessage(const v8::FunctionCallbackInfo<v8::Value>& args) {
     content::RenderView* renderview = GetRenderView();
@@ -109,16 +116,15 @@ class ExtensionImpl : public extensions::ChromeV8Extension {
 
     int port_id = args[0]->Int32Value();
     if (!HasPortData(port_id)) {
-      v8::ThrowException(v8::Exception::Error(
-        v8::String::New(kPortClosedError)));
+      args.GetIsolate()->ThrowException(v8::Exception::Error(
+          v8::String::NewFromUtf8(args.GetIsolate(), kPortClosedError)));
       return;
     }
 
     renderview->Send(new ExtensionHostMsg_PostMessage(
         renderview->GetRoutingID(), port_id,
-        extensions::Message(
-            *v8::String::AsciiValue(args[1]),
-            WebKit::WebUserGestureIndicator::isProcessingUserGesture())));
+        Message(*v8::String::Utf8Value(args[1]),
+                blink::WebUserGestureIndicator::isProcessingUserGesture())));
   }
 
   // Forcefully disconnects a port.
@@ -139,7 +145,7 @@ class ExtensionImpl : public extensions::ChromeV8Extension {
           new ExtensionHostMsg_CloseChannel(port_id, std::string()));
     }
 
-    ClearPortData(port_id);
+    ClearPortDataAndNotifyDispatcher(port_id);
   }
 
   // A new port has been created for a context.  This occurs both when script
@@ -166,7 +172,7 @@ class ExtensionImpl : public extensions::ChromeV8Extension {
       // Send via the RenderThread because the RenderView might be closing.
       content::RenderThread::Get()->Send(
           new ExtensionHostMsg_CloseChannel(port_id, std::string()));
-      ClearPortData(port_id);
+      ClearPortDataAndNotifyDispatcher(port_id);
     }
   }
 
@@ -178,18 +184,19 @@ class ExtensionImpl : public extensions::ChromeV8Extension {
                      v8::Handle<v8::Function> callback,
                      v8::Isolate* isolate) {
       GCCallback* cb = new GCCallback(object, callback, isolate);
-      cb->object_.MakeWeak(cb, NearDeathCallback);
+      cb->object_.SetWeak(cb, NearDeathCallback);
     }
 
    private:
-    static void NearDeathCallback(v8::Isolate* isolate,
-                                  v8::Persistent<v8::Object>* object,
-                                  GCCallback* self) {
+    static void NearDeathCallback(
+        const v8::WeakCallbackData<v8::Object, GCCallback>& data) {
       // v8 says we need to explicitly reset weak handles from their callbacks.
       // It's not implicit as one might expect.
-      self->object_.reset();
-      base::MessageLoop::current()->PostTask(FROM_HERE,
-          base::Bind(&GCCallback::RunCallback, base::Owned(self)));
+      data.GetParameter()->object_.reset();
+      base::MessageLoop::current()->PostTask(
+          FROM_HERE,
+          base::Bind(&GCCallback::RunCallback,
+                     base::Owned(data.GetParameter())));
     }
 
     GCCallback(v8::Handle<v8::Object> object,
@@ -204,12 +211,12 @@ class ExtensionImpl : public extensions::ChromeV8Extension {
       if (context.IsEmpty())
         return;
       v8::Context::Scope context_scope(context);
-      WebKit::WebScopedMicrotaskSuppression suppression;
+      blink::WebScopedMicrotaskSuppression suppression;
       callback->Call(context->Global(), 0, NULL);
     }
 
-    extensions::ScopedPersistent<v8::Object> object_;
-    extensions::ScopedPersistent<v8::Function> callback_;
+    ScopedPersistent<v8::Object> object_;
+    ScopedPersistent<v8::Function> callback_;
     v8::Isolate* isolate_;
 
     DISALLOW_COPY_AND_ASSIGN(GCCallback);
@@ -230,8 +237,6 @@ class ExtensionImpl : public extensions::ChromeV8Extension {
 
 }  // namespace
 
-namespace extensions {
-
 ChromeV8Extension* MessagingBindings::Get(
     Dispatcher* dispatcher,
     ChromeV8Context* context) {
@@ -249,7 +254,8 @@ void MessagingBindings::DispatchOnConnect(
     const GURL& source_url,
     const std::string& tls_channel_id,
     content::RenderView* restrict_to_render_view) {
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope handle_scope(isolate);
 
   scoped_ptr<V8ValueConverter> converter(V8ValueConverter::create());
 
@@ -268,28 +274,51 @@ void MessagingBindings::DispatchOnConnect(
     if ((*it)->v8_context().IsEmpty())
       continue;
 
-    v8::Handle<v8::Value> tab = v8::Null();
-    if (!source_tab.empty())
-      tab = converter->ToV8Value(&source_tab, (*it)->v8_context());
+    v8::Handle<v8::Value> tab = v8::Null(isolate);
+    v8::Handle<v8::Value> tls_channel_id_value = v8::Undefined(isolate);
+    const Extension* extension = (*it)->extension();
+    if (extension) {
+      if (!source_tab.empty() && !extension->is_platform_app())
+        tab = converter->ToV8Value(&source_tab, (*it)->v8_context());
 
-    v8::Handle<v8::Value> tls_channel_id_value = v8::Undefined();
-    if ((*it)->extension()) {
       ExternallyConnectableInfo* externally_connectable =
-          ExternallyConnectableInfo::Get((*it)->extension());
+          ExternallyConnectableInfo::Get(extension);
       if (externally_connectable &&
           externally_connectable->accepts_tls_channel_id) {
         tls_channel_id_value =
-            v8::String::New(tls_channel_id.c_str(), tls_channel_id.size());
+            v8::String::NewFromUtf8(isolate,
+                                    tls_channel_id.c_str(),
+                                    v8::String::kNormalString,
+                                    tls_channel_id.size());
       }
     }
 
     v8::Handle<v8::Value> arguments[] = {
-      v8::Integer::New(target_port_id),
-      v8::String::New(channel_name.c_str(), channel_name.size()),
+      // portId
+      v8::Integer::New(isolate, target_port_id),
+      // channelName
+      v8::String::NewFromUtf8(isolate,
+                              channel_name.c_str(),
+                              v8::String::kNormalString,
+                              channel_name.size()),
+      // sourceTab
       tab,
-      v8::String::New(source_extension_id.c_str(), source_extension_id.size()),
-      v8::String::New(target_extension_id.c_str(), target_extension_id.size()),
-      v8::String::New(source_url_spec.c_str(), source_url_spec.size()),
+      // sourceExtensionId
+      v8::String::NewFromUtf8(isolate,
+                              source_extension_id.c_str(),
+                              v8::String::kNormalString,
+                              source_extension_id.size()),
+      // targetExtensionId
+      v8::String::NewFromUtf8(isolate,
+                              target_extension_id.c_str(),
+                              v8::String::kNormalString,
+                              target_extension_id.size()),
+      // sourceUrl
+      v8::String::NewFromUtf8(isolate,
+                              source_url_spec.c_str(),
+                              v8::String::kNormalString,
+                              source_url_spec.size()),
+      // tlsChannelId
       tls_channel_id_value,
     };
 
@@ -322,11 +351,15 @@ void MessagingBindings::DeliverMessage(
     int target_port_id,
     const Message& message,
     content::RenderView* restrict_to_render_view) {
-  scoped_ptr<WebKit::WebScopedUserGesture> web_user_gesture;
-  if (message.user_gesture)
-    web_user_gesture.reset(new WebKit::WebScopedUserGesture);
+  scoped_ptr<blink::WebScopedUserGesture> web_user_gesture;
+  scoped_ptr<blink::WebScopedWindowFocusAllowedIndicator> allow_window_focus;
+  if (message.user_gesture) {
+    web_user_gesture.reset(new blink::WebScopedUserGesture);
+    allow_window_focus.reset(new blink::WebScopedWindowFocusAllowedIndicator);
+  }
 
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope handle_scope(isolate);
 
   // TODO(kalman): pass in the full ChromeV8ContextSet; call ForEach.
   for (ChromeV8ContextSet::ContextSet::const_iterator it = contexts.begin();
@@ -342,7 +375,8 @@ void MessagingBindings::DeliverMessage(
 
     // Check to see whether the context has this port before bothering to create
     // the message.
-    v8::Handle<v8::Value> port_id_handle = v8::Integer::New(target_port_id);
+    v8::Handle<v8::Value> port_id_handle =
+        v8::Integer::New(isolate, target_port_id);
     v8::Handle<v8::Value> has_port = (*it)->module_system()->CallModuleMethod(
         "messaging",
         "hasPort",
@@ -353,8 +387,10 @@ void MessagingBindings::DeliverMessage(
       continue;
 
     std::vector<v8::Handle<v8::Value> > arguments;
-    arguments.push_back(v8::String::New(message.data.c_str(),
-                                        message.data.size()));
+    arguments.push_back(v8::String::NewFromUtf8(isolate,
+                                                message.data.c_str(),
+                                                v8::String::kNormalString,
+                                                message.data.size()));
     arguments.push_back(port_id_handle);
     (*it)->module_system()->CallModuleMethod("messaging",
                                              "dispatchOnMessage",
@@ -368,7 +404,8 @@ void MessagingBindings::DispatchOnDisconnect(
     int port_id,
     const std::string& error_message,
     content::RenderView* restrict_to_render_view) {
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope handle_scope(isolate);
 
   // TODO(kalman): pass in the full ChromeV8ContextSet; call ForEach.
   for (ChromeV8ContextSet::ContextSet::const_iterator it = contexts.begin();
@@ -383,11 +420,12 @@ void MessagingBindings::DispatchOnDisconnect(
       continue;
 
     std::vector<v8::Handle<v8::Value> > arguments;
-    arguments.push_back(v8::Integer::New(port_id));
+    arguments.push_back(v8::Integer::New(isolate, port_id));
     if (!error_message.empty()) {
-      arguments.push_back(v8::String::New(error_message.c_str()));
+      arguments.push_back(
+          v8::String::NewFromUtf8(isolate, error_message.c_str()));
     } else {
-      arguments.push_back(v8::Null());
+      arguments.push_back(v8::Null(isolate));
     }
     (*it)->module_system()->CallModuleMethod("messaging",
                                              "dispatchOnDisconnect",

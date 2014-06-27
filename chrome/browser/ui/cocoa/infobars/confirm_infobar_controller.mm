@@ -9,8 +9,8 @@
 #include "chrome/browser/infobars/confirm_infobar_delegate.h"
 #import "chrome/browser/ui/cocoa/hyperlink_text_view.h"
 #include "chrome/browser/ui/cocoa/infobars/infobar_cocoa.h"
-#include "third_party/GTM/AppKit/GTMUILocalizerAndLayoutTweaker.h"
-#import "ui/base/cocoa/cocoa_event_utils.h"
+#include "third_party/google_toolbox_for_mac/src/AppKit/GTMUILocalizerAndLayoutTweaker.h"
+#import "ui/base/cocoa/cocoa_base_utils.h"
 #include "ui/base/window_open_disposition.h"
 
 @implementation ConfirmInfoBarController
@@ -107,7 +107,7 @@
 
   // Set the text and link.
   NSString* message = base::SysUTF16ToNSString(delegate->GetMessageText());
-  string16 link = delegate->GetLinkText();
+  base::string16 link = delegate->GetLinkText();
   if (!link.empty()) {
     // Add spacing between the label and the link.
     message = [message stringByAppendingString:@"   "];
@@ -137,10 +137,13 @@
 
 @end
 
-InfoBar* ConfirmInfoBarDelegate::CreateInfoBar(InfoBarService* owner) {
-  scoped_ptr<InfoBarCocoa> infobar(new InfoBarCocoa(owner, this));
+// static
+scoped_ptr<InfoBar> ConfirmInfoBarDelegate::CreateInfoBar(
+    scoped_ptr<ConfirmInfoBarDelegate> delegate) {
+  scoped_ptr<InfoBarCocoa> infobar(
+      new InfoBarCocoa(delegate.PassAs<InfoBarDelegate>()));
   base::scoped_nsobject<ConfirmInfoBarController> controller(
       [[ConfirmInfoBarController alloc] initWithInfoBar:infobar.get()]);
   infobar->set_controller(controller);
-  return infobar.release();
+  return infobar.PassAs<InfoBar>();
 }

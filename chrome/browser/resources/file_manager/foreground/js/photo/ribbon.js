@@ -107,7 +107,7 @@ Ribbon.prototype.onSplice_ = function(event) {
     return;
   }
 
-  var removed = this.renderCache_[event.removed[0].getUrl()];
+  var removed = this.renderCache_[event.removed[0].getEntry().toURL()];
   if (!removed || !removed.parentNode || !removed.hasAttribute('selected')) {
     console.error('Can only remove the selected item');
     return;
@@ -248,7 +248,7 @@ Ribbon.prototype.onSelection_ = function() {
   if (oldSelected) oldSelected.removeAttribute('selected');
 
   var newSelected =
-      this.renderCache_[this.dataModel_.item(selectedIndex).getUrl()];
+      this.renderCache_[this.dataModel_.item(selectedIndex).getEntry().toURL()];
   if (newSelected) newSelected.setAttribute('selected', true);
 };
 
@@ -291,7 +291,7 @@ Ribbon.prototype.removeVanishing_ = function() {
  */
 Ribbon.prototype.renderThumbnail_ = function(index) {
   var item = this.dataModel_.item(index);
-  var url = item.getUrl();
+  var url = item.getEntry().toURL();
 
   var cached = this.renderCache_[url];
   if (cached) {
@@ -311,8 +311,8 @@ Ribbon.prototype.renderThumbnail_ = function(index) {
 
   util.createChild(thumbnail, 'image-wrapper');
 
-  this.metadataCache_.get(url, Gallery.METADATA_TYPE,
-      this.setThumbnailImage_.bind(this, thumbnail, url));
+  this.metadataCache_.get(item.getEntry(), Gallery.METADATA_TYPE,
+      this.setThumbnailImage_.bind(this, thumbnail, item.getEntry()));
 
   // TODO: Implement LRU eviction.
   // Never evict the thumbnails that are currently in the DOM because we rely
@@ -325,12 +325,12 @@ Ribbon.prototype.renderThumbnail_ = function(index) {
  * Set the thumbnail image.
  *
  * @param {Element} thumbnail Thumbnail element.
- * @param {string} url Image url.
+ * @param {FileEntry} entry Image Entry.
  * @param {Object} metadata Metadata.
  * @private
  */
-Ribbon.prototype.setThumbnailImage_ = function(thumbnail, url, metadata) {
-  new ThumbnailLoader(url, ThumbnailLoader.LoaderType.IMAGE, metadata).load(
+Ribbon.prototype.setThumbnailImage_ = function(thumbnail, entry, metadata) {
+  new ThumbnailLoader(entry, ThumbnailLoader.LoaderType.IMAGE, metadata).load(
       thumbnail.querySelector('.image-wrapper'),
       ThumbnailLoader.FillMode.FILL /* fill */,
       ThumbnailLoader.OptimizationMode.NEVER_DISCARD);
@@ -343,12 +343,12 @@ Ribbon.prototype.setThumbnailImage_ = function(thumbnail, url, metadata) {
  * @private
  */
 Ribbon.prototype.onContentChange_ = function(event) {
-  var url = event.item.getUrl();
+  var url = event.item.getEntry().toURL();
   this.remapCache_(event.oldUrl, url);
 
   var thumbnail = this.renderCache_[url];
   if (thumbnail && event.metadata)
-    this.setThumbnailImage_(thumbnail, url, event.metadata);
+    this.setThumbnailImage_(thumbnail, event.item.getEntry(), event.metadata);
 };
 
 /**

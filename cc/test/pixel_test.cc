@@ -5,6 +5,7 @@
 #include "cc/test/pixel_test.h"
 
 #include "base/command_line.h"
+#include "base/message_loop/message_loop_proxy.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "cc/base/switches.h"
@@ -16,66 +17,21 @@
 #include "cc/output/software_renderer.h"
 #include "cc/resources/resource_provider.h"
 #include "cc/resources/texture_mailbox_deleter.h"
+#include "cc/test/fake_output_surface_client.h"
 #include "cc/test/paths.h"
 #include "cc/test/pixel_test_output_surface.h"
 #include "cc/test/pixel_test_software_output_device.h"
 #include "cc/test/pixel_test_utils.h"
+#include "cc/test/test_in_process_context_provider.h"
+#include "cc/test/test_shared_bitmap_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/gl/gl_implementation.h"
-#include "webkit/common/gpu/context_provider_in_process.h"
-#include "webkit/common/gpu/webgraphicscontext3d_in_process_command_buffer_impl.h"
 
 namespace cc {
-
-class PixelTest::PixelTestRendererClient
-    : public RendererClient, public OutputSurfaceClient {
- public:
-  explicit PixelTestRendererClient(gfx::Rect device_viewport)
-      : device_viewport_(device_viewport), device_clip_(device_viewport) {}
-
-  // RendererClient implementation.
-  virtual gfx::Rect DeviceViewport() const OVERRIDE {
-    return device_viewport_;
-  }
-  virtual gfx::Rect DeviceClip() const OVERRIDE { return device_clip_; }
-  virtual void SetFullRootLayerDamage() OVERRIDE {}
-  virtual CompositorFrameMetadata MakeCompositorFrameMetadata() const
-      OVERRIDE {
-    return CompositorFrameMetadata();
-  }
-
-  // OutputSurfaceClient implementation.
-  virtual bool DeferredInitialize(
-      scoped_refptr<ContextProvider> offscreen_context_provider) OVERRIDE {
-    return false;
-  }
-  virtual void ReleaseGL() OVERRIDE {}
-  virtual void SetNeedsRedrawRect(gfx::Rect damage_rect) OVERRIDE {}
-  virtual void BeginImplFrame(const BeginFrameArgs& args) OVERRIDE {}
-  virtual void OnSwapBuffersComplete() OVERRIDE {}
-  virtual void ReclaimResources(const CompositorFrameAck* ack) OVERRIDE {}
-  virtual void DidLoseOutputSurface() OVERRIDE {}
-  virtual void SetExternalDrawConstraints(
-      const gfx::Transform& transform,
-      gfx::Rect viewport,
-      gfx::Rect clip,
-      bool valid_for_tile_management) OVERRIDE {
-    device_viewport_ = viewport;
-    device_clip_ = clip;
-  }
-  virtual void SetMemoryPolicy(const ManagedMemoryPolicy& policy) OVERRIDE {}
-  virtual void SetTreeActivationCallback(const base::Closure&) OVERRIDE {}
-
- private:
-  gfx::Rect device_viewport_;
-  gfx::Rect device_clip_;
-};
 
 PixelTest::PixelTest()
     : device_viewport_size_(gfx::Size(200, 200)),
       disable_picture_quad_image_filtering_(false),
-      fake_client_(
-          new PixelTestRendererClient(gfx::Rect(device_viewport_size_))) {}
+      output_surface_client_(new FakeOutputSurfaceClient) {}
 
 PixelTest::~PixelTest() {}
 
@@ -103,25 +59,28 @@ bool PixelTest::RunPixelTestWithReadbackTarget(
                  base::Unretained(this),
                  run_loop.QuitClosure())));
 
-  scoped_refptr<webkit::gpu::ContextProviderInProcess> offscreen_contexts;
+  scoped_refptr<ContextProvider> offscreen_contexts;
   switch (provide_offscreen_context) {
     case NoOffscreenContext:
       break;
     case WithOffscreenContext:
-      offscreen_contexts =
-          webkit::gpu::ContextProviderInProcess::CreateOffscreen();
+      offscreen_contexts = new TestInProcessContextProvider;
       CHECK(offscreen_contexts->BindToCurrentThread());
       break;
   }
 
   float device_scale_factor = 1.f;
-  bool allow_partial_swap = true;
-
+  gfx::Rect device_viewport_rect =
+      gfx::Rect(device_viewport_size_) + external_device_viewport_offset_;
+  gfx::Rect device_clip_rect = external_device_clip_rect_.IsEmpty()
+                                   ? device_viewport_rect
+                                   : external_device_clip_rect_;
   renderer_->DecideRenderPassAllocationsForFrame(*pass_list);
   renderer_->DrawFrame(pass_list,
                        offscreen_contexts.get(),
                        device_scale_factor,
-                       allow_partial_swap,
+                       device_viewport_rect,
+                       device_clip_rect,
                        disable_picture_quad_image_filtering_);
 
   // Wait for the readback to complete.
@@ -141,7 +100,7 @@ void PixelTest::ReadbackResult(base::Closure quit_run_loop,
 bool PixelTest::PixelsMatchReference(const base::FilePath& ref_file,
                                      const PixelComparator& comparator) {
   base::FilePath test_data_dir;
-  if (!PathService::Get(cc::DIR_TEST_DATA, &test_data_dir))
+  if (!PathService::Get(CCPaths::DIR_TEST_DATA, &test_data_dir))
     return false;
 
   // If this is false, we didn't set up a readback on a render pass.
@@ -152,40 +111,35 @@ bool PixelTest::PixelsMatchReference(const base::FilePath& ref_file,
   if (cmd->HasSwitch(switches::kCCRebaselinePixeltests))
     return WritePNGFile(*result_bitmap_, test_data_dir.Append(ref_file), true);
 
-  return MatchesPNGFile(*result_bitmap_,
-                        test_data_dir.Append(ref_file),
-                        comparator);
+  return MatchesPNGFile(
+      *result_bitmap_, test_data_dir.Append(ref_file), comparator);
 }
 
 void PixelTest::SetUpGLRenderer(bool use_skia_gpu_backend) {
-  CHECK(fake_client_);
-  CHECK(gfx::InitializeGLBindings(gfx::kGLImplementationOSMesaGL));
+  enable_pixel_output_.reset(new gfx::DisableNullDrawGLBindings);
 
-  using webkit::gpu::ContextProviderInProcess;
-  output_surface_.reset(new PixelTestOutputSurface(
-      ContextProviderInProcess::CreateOffscreen()));
-  output_surface_->BindToClient(fake_client_.get());
+  output_surface_.reset(
+      new PixelTestOutputSurface(new TestInProcessContextProvider));
+  output_surface_->BindToClient(output_surface_client_.get());
 
-  resource_provider_ =
-      ResourceProvider::Create(output_surface_.get(), NULL, 0, false, 1);
+  shared_bitmap_manager_.reset(new TestSharedBitmapManager());
+  resource_provider_ = ResourceProvider::Create(
+      output_surface_.get(), shared_bitmap_manager_.get(), 0, false, 1);
 
-  texture_mailbox_deleter_ = make_scoped_ptr(new TextureMailboxDeleter);
+  texture_mailbox_deleter_ = make_scoped_ptr(
+      new TextureMailboxDeleter(base::MessageLoopProxy::current()));
 
-  renderer_ = GLRenderer::Create(fake_client_.get(),
+  renderer_ = GLRenderer::Create(this,
                                  &settings_,
                                  output_surface_.get(),
                                  resource_provider_.get(),
                                  texture_mailbox_deleter_.get(),
-                                 0,
-                                 use_skia_gpu_backend).PassAs<DirectRenderer>();
+                                 0).PassAs<DirectRenderer>();
 }
 
-void PixelTest::ForceExpandedViewport(gfx::Size surface_expansion,
-                                      gfx::Vector2d viewport_offset) {
+void PixelTest::ForceExpandedViewport(const gfx::Size& surface_expansion) {
   static_cast<PixelTestOutputSurface*>(output_surface_.get())
       ->set_surface_expansion_size(surface_expansion);
-  static_cast<PixelTestOutputSurface*>(output_surface_.get())
-      ->set_viewport_offset(viewport_offset);
   SoftwareOutputDevice* device = output_surface_->software_device();
   if (device) {
     static_cast<PixelTestSoftwareOutputDevice*>(device)
@@ -193,9 +147,12 @@ void PixelTest::ForceExpandedViewport(gfx::Size surface_expansion,
   }
 }
 
-void PixelTest::ForceDeviceClip(gfx::Rect clip) {
-  static_cast<PixelTestOutputSurface*>(output_surface_.get())
-      ->set_device_clip(clip);
+void PixelTest::ForceViewportOffset(const gfx::Vector2d& viewport_offset) {
+  external_device_viewport_offset_ = viewport_offset;
+}
+
+void PixelTest::ForceDeviceClip(const gfx::Rect& clip) {
+  external_device_clip_rect_ = clip;
 }
 
 void PixelTest::EnableExternalStencilTest() {
@@ -204,18 +161,16 @@ void PixelTest::EnableExternalStencilTest() {
 }
 
 void PixelTest::SetUpSoftwareRenderer() {
-  CHECK(fake_client_);
-
   scoped_ptr<SoftwareOutputDevice> device(new PixelTestSoftwareOutputDevice());
   output_surface_.reset(new PixelTestOutputSurface(device.Pass()));
-  output_surface_->BindToClient(fake_client_.get());
-  resource_provider_ =
-      ResourceProvider::Create(output_surface_.get(), NULL, 0, false, 1);
-  renderer_ = SoftwareRenderer::Create(fake_client_.get(),
-                                       &settings_,
-                                       output_surface_.get(),
-                                       resource_provider_.get())
-      .PassAs<DirectRenderer>();
+  output_surface_->BindToClient(output_surface_client_.get());
+  shared_bitmap_manager_.reset(new TestSharedBitmapManager());
+  resource_provider_ = ResourceProvider::Create(
+      output_surface_.get(), shared_bitmap_manager_.get(), 0, false, 1);
+  renderer_ =
+      SoftwareRenderer::Create(
+          this, &settings_, output_surface_.get(), resource_provider_.get())
+          .PassAs<DirectRenderer>();
 }
 
 }  // namespace cc

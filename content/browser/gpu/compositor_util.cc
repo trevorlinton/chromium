@@ -24,20 +24,7 @@ struct GpuFeatureInfo {
   bool fallback_to_software;
 };
 
-// Determine if accelerated-2d-canvas is supported, which depends on whether
-// lose_context could happen.
-bool SupportsAccelerated2dCanvas() {
-  if (GpuDataManagerImpl::GetInstance()->GetGPUInfo().can_lose_context)
-    return false;
-  return true;
-}
-
-#if defined(OS_CHROMEOS)
-const size_t kNumFeatures = 14;
-#else
-const size_t kNumFeatures = 13;
-#endif
-const GpuFeatureInfo GetGpuFeatureInfo(size_t index) {
+const GpuFeatureInfo GetGpuFeatureInfo(size_t index, bool* eof) {
   const CommandLine& command_line = *CommandLine::ForCurrentProcess();
   GpuDataManagerImpl* manager = GpuDataManagerImpl::GetInstance();
 
@@ -47,7 +34,8 @@ const GpuFeatureInfo GetGpuFeatureInfo(size_t index) {
           manager->IsFeatureBlacklisted(
               gpu::GPU_FEATURE_TYPE_ACCELERATED_2D_CANVAS),
           command_line.HasSwitch(switches::kDisableAccelerated2dCanvas) ||
-          !SupportsAccelerated2dCanvas(),
+          !GpuDataManagerImpl::GetInstance()->
+              GetGPUInfo().SupportsAccelerated2dCanvas(),
           "Accelerated 2D canvas is unavailable: either disabled at the command"
           " line or not supported by the current system.",
           true
@@ -90,14 +78,6 @@ const GpuFeatureInfo GetGpuFeatureInfo(size_t index) {
           false
       },
       {
-          "multisampling",
-          manager->IsFeatureBlacklisted(gpu::GPU_FEATURE_TYPE_MULTISAMPLING),
-          command_line.HasSwitch(switches::kDisableGLMultisampling),
-          "Multisampling has been disabled, either via about:flags or command"
-          " line.",
-          false
-      },
-      {
           "flash_3d",
           manager->IsFeatureBlacklisted(gpu::GPU_FEATURE_TYPE_FLASH3D),
           command_line.HasSwitch(switches::kDisableFlash3d),
@@ -124,14 +104,6 @@ const GpuFeatureInfo GetGpuFeatureInfo(size_t index) {
           false
       },
       {
-          "texture_sharing",
-          manager->IsFeatureBlacklisted(gpu::GPU_FEATURE_TYPE_TEXTURE_SHARING),
-          command_line.HasSwitch(switches::kDisableImageTransportSurface),
-          "Sharing textures between processes has been disabled, either via"
-          " about:flags or command line.",
-          false
-      },
-      {
           "video_decode",
           manager->IsFeatureBlacklisted(
               gpu::GPU_FEATURE_TYPE_ACCELERATED_VIDEO_DECODE),
@@ -140,6 +112,17 @@ const GpuFeatureInfo GetGpuFeatureInfo(size_t index) {
           " or command line.",
           true
       },
+#if defined(ENABLE_WEBRTC)
+      {
+          "video_encode",
+          manager->IsFeatureBlacklisted(
+              gpu::GPU_FEATURE_TYPE_ACCELERATED_VIDEO_ENCODE),
+          command_line.HasSwitch(switches::kDisableWebRtcHWEncoding),
+          "Accelerated video encode has been disabled, either via about:flags"
+          " or command line.",
+          true
+      },
+#endif
       {
           "video",
           manager->IsFeatureBlacklisted(
@@ -173,6 +156,8 @@ const GpuFeatureInfo GetGpuFeatureInfo(size_t index) {
           false
       },
   };
+  DCHECK(index < arraysize(kGpuFeatureInfo));
+  *eof = (index == arraysize(kGpuFeatureInfo) - 1);
   return kGpuFeatureInfo[index];
 }
 
@@ -209,28 +194,18 @@ bool IsThreadedCompositingEnabled() {
 
   // Command line switches take precedence over blacklist.
   if (command_line.HasSwitch(switches::kDisableForceCompositingMode) ||
-      command_line.HasSwitch(switches::kDisableThreadedCompositing)) {
+      command_line.HasSwitch(switches::kDisableThreadedCompositing))
     return false;
-  } else if (command_line.HasSwitch(switches::kEnableThreadedCompositing)) {
+  if (command_line.HasSwitch(switches::kEnableThreadedCompositing))
     return true;
-  }
 
-#if defined(USE_AURA)
-  // We always want threaded compositing on Aura.
+#if defined(USE_AURA) || defined(OS_MACOSX)
+  // We always want threaded compositing on Aura and Mac (the fallback is a
+  // threaded software compositor).
   return true;
-#endif
-
-  if (!CanDoAcceleratedCompositing() || IsForceCompositingModeBlacklisted())
-    return false;
-
-#if defined(OS_MACOSX) || defined(OS_WIN)
-  // Windows Vista+ has been shipping with TCM enabled at 100% since M24 and
-  // Mac OSX 10.8+ since M28. The blacklist check above takes care of returning
-  // false before this hits on unsupported Win/Mac versions.
-  return true;
-#endif
-
+#else
   return false;
+#endif
 }
 
 bool IsForceCompositingModeEnabled() {
@@ -243,7 +218,7 @@ bool IsForceCompositingModeEnabled() {
   // Command line switches take precedence over blacklisting.
   if (command_line.HasSwitch(switches::kDisableForceCompositingMode))
     return false;
-  else if (command_line.HasSwitch(switches::kForceCompositingMode))
+  if (command_line.HasSwitch(switches::kForceCompositingMode))
     return true;
 
   if (!CanDoAcceleratedCompositing() || IsForceCompositingModeBlacklisted())
@@ -254,9 +229,9 @@ bool IsForceCompositingModeEnabled() {
   // Mac OSX 10.8+ since M28. The blacklist check above takes care of returning
   // false before this hits on unsupported Win/Mac versions.
   return true;
-#endif
-
+#else
   return false;
+#endif
 }
 
 bool IsDelegatedRendererEnabled() {
@@ -283,17 +258,19 @@ bool IsDelegatedRendererEnabled() {
   return enabled;
 }
 
-bool IsDeadlineSchedulingEnabled() {
+bool IsImplSidePaintingEnabled() {
   const CommandLine& command_line = *CommandLine::ForCurrentProcess();
 
-  // Default to enabled.
-  bool enabled = true;
+  if (command_line.HasSwitch(switches::kDisableImplSidePainting))
+    return false;
+  else if (command_line.HasSwitch(switches::kEnableImplSidePainting))
+    return true;
 
-  // Flags override.
-  enabled |= command_line.HasSwitch(switches::kEnableDeadlineScheduling);
-  enabled &= !command_line.HasSwitch(switches::kDisableDeadlineScheduling);
-
-  return enabled;
+#if defined(OS_ANDROID)
+  return true;
+#else
+  return false;
+#endif
 }
 
 base::Value* GetFeatureStatus() {
@@ -305,8 +282,9 @@ base::Value* GetFeatureStatus() {
 
   base::DictionaryValue* feature_status_dict = new base::DictionaryValue();
 
-  for (size_t i = 0; i < kNumFeatures; ++i) {
-    const GpuFeatureInfo gpu_feature_info = GetGpuFeatureInfo(i);
+  bool eof = false;
+  for (size_t i = 0; !eof; ++i) {
+    const GpuFeatureInfo gpu_feature_info = GetGpuFeatureInfo(i, &eof);
     // force_compositing_mode status is part of the compositing status.
     if (gpu_feature_info.name == "force_compositing_mode")
       continue;
@@ -317,7 +295,7 @@ base::Value* GetFeatureStatus() {
       if (gpu_feature_info.name == "css_animation") {
         status += "_software_animated";
       } else if (gpu_feature_info.name == "raster") {
-        if (cc::switches::IsImplSidePaintingEnabled())
+        if (IsImplSidePaintingEnabled())
           status += "_software_multithreaded";
         else
           status += "_software";
@@ -359,31 +337,10 @@ base::Value* GetFeatureStatus() {
       }
     }
     // TODO(reveman): Remove this when crbug.com/223286 has been fixed.
-    if (gpu_feature_info.name == "raster" &&
-        cc::switches::IsImplSidePaintingEnabled()) {
+    if (gpu_feature_info.name == "raster" && IsImplSidePaintingEnabled())
       status = "disabled_software_multithreaded";
-    }
     feature_status_dict->SetString(
         gpu_feature_info.name.c_str(), status.c_str());
-  }
-  gpu::GpuSwitchingOption gpu_switching_option =
-      manager->GetGpuSwitchingOption();
-  if (gpu_switching_option != gpu::GPU_SWITCHING_OPTION_UNKNOWN) {
-    std::string gpu_switching;
-    switch (gpu_switching_option) {
-    case gpu::GPU_SWITCHING_OPTION_AUTOMATIC:
-        gpu_switching = "gpu_switching_automatic";
-        break;
-    case gpu::GPU_SWITCHING_OPTION_FORCE_DISCRETE:
-        gpu_switching = "gpu_switching_force_discrete";
-        break;
-    case gpu::GPU_SWITCHING_OPTION_FORCE_INTEGRATED:
-        gpu_switching = "gpu_switching_force_integrated";
-        break;
-      default:
-        break;
-    }
-    feature_status_dict->SetString("gpu_switching", gpu_switching.c_str());
   }
   return feature_status_dict;
 }
@@ -403,17 +360,26 @@ base::Value* GetProblems() {
         "GPU process was unable to boot: " + gpu_access_blocked_reason);
     problem->Set("crBugs", new base::ListValue());
     problem->Set("webkitBugs", new base::ListValue());
+    base::ListValue* disabled_features = new base::ListValue();
+    disabled_features->AppendString("all");
+    problem->Set("affectedGpuSettings", disabled_features);
+    problem->SetString("tag", "disabledFeatures");
     problem_list->Insert(0, problem);
   }
 
-  for (size_t i = 0; i < kNumFeatures; ++i) {
-    const GpuFeatureInfo gpu_feature_info = GetGpuFeatureInfo(i);
+  bool eof = false;
+  for (size_t i = 0; !eof; ++i) {
+    const GpuFeatureInfo gpu_feature_info = GetGpuFeatureInfo(i, &eof);
     if (gpu_feature_info.disabled) {
       base::DictionaryValue* problem = new base::DictionaryValue();
       problem->SetString(
           "description", gpu_feature_info.disabled_description);
       problem->Set("crBugs", new base::ListValue());
       problem->Set("webkitBugs", new base::ListValue());
+      base::ListValue* disabled_features = new base::ListValue();
+      disabled_features->AppendString(gpu_feature_info.name);
+      problem->Set("affectedGpuSettings", disabled_features);
+      problem->SetString("tag", "disabledFeatures");
       problem_list->Append(problem);
     }
   }

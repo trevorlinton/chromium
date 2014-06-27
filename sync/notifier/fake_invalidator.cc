@@ -4,6 +4,8 @@
 
 #include "sync/notifier/fake_invalidator.h"
 
+#include "sync/notifier/object_id_invalidation_map.h"
+
 namespace syncer {
 
 FakeInvalidator::FakeInvalidator() {}
@@ -49,11 +51,6 @@ void FakeInvalidator::UnregisterHandler(InvalidationHandler* handler) {
   registrar_.UnregisterHandler(handler);
 }
 
-void FakeInvalidator::Acknowledge(const invalidation::ObjectId& id,
-                                  const AckHandle& ack_handle) {
-  // Do nothing.
-}
-
 InvalidatorState FakeInvalidator::GetInvalidatorState() const {
   return registrar_.GetInvalidatorState();
 }
@@ -64,4 +61,9 @@ void FakeInvalidator::UpdateCredentials(
   token_ = token;
 }
 
+void FakeInvalidator::RequestDetailedStatus(
+    base::Callback<void(const base::DictionaryValue&)> callback) const {
+  base::DictionaryValue value;
+  callback.Run(value);
+}
 }  // namespace syncer

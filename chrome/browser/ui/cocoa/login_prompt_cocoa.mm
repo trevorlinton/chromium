@@ -11,17 +11,17 @@
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/password_manager/password_manager.h"
 #include "chrome/browser/tab_contents/tab_util.h"
 #import "chrome/browser/ui/cocoa/constrained_window/constrained_window_custom_sheet.h"
 #include "chrome/browser/ui/cocoa/constrained_window/constrained_window_mac.h"
-#include "chrome/browser/ui/login/login_model.h"
 #include "chrome/browser/ui/login/login_prompt.h"
+#include "components/password_manager/core/browser/login_model.h"
+#include "components/password_manager/core/browser/password_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
 #include "grit/generated_resources.h"
 #include "net/url_request/url_request.h"
-#include "third_party/GTM/AppKit/GTMUILocalizerAndLayoutTweaker.h"
+#include "third_party/google_toolbox_for_mac/src/AppKit/GTMUILocalizerAndLayoutTweaker.h"
 #include "ui/base/l10n/l10n_util.h"
 
 using autofill::PasswordForm;
@@ -43,8 +43,9 @@ class LoginHandlerMac : public LoginHandler,
   }
 
   // LoginModelObserver implementation.
-  virtual void OnAutofillDataAvailable(const string16& username,
-                                       const string16& password) OVERRIDE {
+  virtual void OnAutofillDataAvailable(
+      const base::string16& username,
+      const base::string16& password) OVERRIDE {
     DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 
     [sheet_controller_ autofillLogin:base::SysUTF16ToNSString(username)
@@ -55,7 +56,7 @@ class LoginHandlerMac : public LoginHandler,
   // LoginHandler:
   virtual void BuildViewForPasswordManager(
       PasswordManager* manager,
-      const string16& explanation) OVERRIDE {
+      const base::string16& explanation) OVERRIDE {
     DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 
     sheet_controller_.reset(
@@ -99,8 +100,8 @@ class LoginHandlerMac : public LoginHandler,
     sheet_controller_.reset();
   }
 
-  void OnLoginPressed(const string16& username,
-                      const string16& password) {
+  void OnLoginPressed(const base::string16& username,
+                      const base::string16& password) {
     DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
     SetAuth(username, password);
   }

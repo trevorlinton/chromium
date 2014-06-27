@@ -191,12 +191,21 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory,
 
   // HttpTransactionFactory implementation:
   virtual int CreateTransaction(RequestPriority priority,
-                                scoped_ptr<HttpTransaction>* trans,
-                                HttpTransactionDelegate* delegate) OVERRIDE;
+                                scoped_ptr<HttpTransaction>* trans) OVERRIDE;
   virtual HttpCache* GetCache() OVERRIDE;
   virtual HttpNetworkSession* GetSession() OVERRIDE;
 
- protected:
+  // Resets the network layer to allow for tests that probe
+  // network changes (e.g. host unreachable).  The old network layer is
+  // returned to allow for filter patterns that only intercept
+  // some creation requests.  Note ownership exchange.
+  scoped_ptr<HttpTransactionFactory>
+      SetHttpNetworkTransactionFactoryForTesting(
+          scoped_ptr<HttpTransactionFactory> new_network_layer);
+
+ private:
+  // Types --------------------------------------------------------------------
+
   // Disk cache entry data indices.
   enum {
     kResponseInfoIndex = 0,
@@ -206,15 +215,13 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory,
     // Must remain at the end of the enum.
     kNumCacheEntryDataIndices
   };
-  friend class ViewCacheHelper;
-
- private:
-  // Types --------------------------------------------------------------------
 
   class MetadataWriter;
+  class QuicServerInfoFactoryAdaptor;
   class Transaction;
   class WorkItem;
   friend class Transaction;
+  friend class ViewCacheHelper;
   struct PendingOp;  // Info for an entry under construction.
 
   typedef std::list<Transaction*> TransactionList;
@@ -382,7 +389,10 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory,
 
   Mode mode_;
 
-  const scoped_ptr<HttpTransactionFactory> network_layer_;
+  const scoped_ptr<QuicServerInfoFactoryAdaptor> quic_server_info_factory_;
+
+  scoped_ptr<HttpTransactionFactory> network_layer_;
+
   scoped_ptr<disk_cache::Backend> disk_cache_;
 
   // The set of active entries indexed by cache key.

@@ -15,6 +15,7 @@
 #include "ui/gfx/skia_util.h"
 #include "ui/gfx/sys_color_change_listener.h"
 #include "ui/native_theme/native_theme.h"
+#include "ui/views/border.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/native_theme_delegate.h"
 
@@ -30,36 +31,20 @@ const int kButtonInsets = 5;
 const int kTextHoveredImages[] = IMAGE_GRID(IDR_TEXTBUTTON_HOVER);
 const int kTextPressedImages[] = IMAGE_GRID(IDR_TEXTBUTTON_PRESSED);
 
-Button::ButtonState GetButtonState(ui::NativeTheme::State state) {
-  switch (state) {
-    case ui::NativeTheme::kDisabled: return Button::STATE_DISABLED;
-    case ui::NativeTheme::kHovered:  return Button::STATE_HOVERED;
-    case ui::NativeTheme::kNormal:   return Button::STATE_NORMAL;
-    case ui::NativeTheme::kPressed:  return Button::STATE_PRESSED;
-    case ui::NativeTheme::kMaxState: NOTREACHED() << "Unknown state: " << state;
-  }
-  return Button::STATE_NORMAL;
-}
-
-// A helper function to paint the native theme or images as appropriate.
+// A helper function to paint the appropriate broder images.
 void PaintHelper(LabelButtonBorder* border,
                  gfx::Canvas* canvas,
-                 const ui::NativeTheme* theme,
-                 ui::NativeTheme::Part part,
                  ui::NativeTheme::State state,
                  const gfx::Rect& rect,
                  const ui::NativeTheme::ExtraParams& extra) {
-  if (border->style() == Button::STYLE_NATIVE_TEXTBUTTON) {
-    theme->Paint(canvas->sk_canvas(), part, state, rect, extra);
-  } else {
-    Painter* painter =
-        border->GetPainter(extra.button.is_focused, GetButtonState(state));
-    // Paint any corresponding unfocused painter if there is no focused painter.
-    if (!painter && extra.button.is_focused)
-      painter = border->GetPainter(false, GetButtonState(state));
-    if (painter)
-      painter->Paint(canvas, rect.size());
-  }
+  Painter* painter =
+      border->GetPainter(extra.button.is_focused,
+                         Button::GetButtonStateFrom(state));
+  // Paint any corresponding unfocused painter if there is no focused painter.
+  if (!painter && extra.button.is_focused)
+    painter = border->GetPainter(false, Button::GetButtonStateFrom(state));
+  if (painter)
+    Painter::PaintPainterAt(canvas, painter, rect);
 }
 
 }  // namespace
@@ -104,8 +89,6 @@ LabelButtonBorder::LabelButtonBorder(Button::ButtonStyle style)
                Painter::CreateImageGridPainter(kTextHoveredImages));
     SetPainter(false, Button::STATE_PRESSED,
                Painter::CreateImageGridPainter(kTextPressedImages));
-  } else if (style == Button::STYLE_NATIVE_TEXTBUTTON) {
-    set_insets(gfx::Insets(5, 12, 5, 12));
   }
 }
 
@@ -114,10 +97,8 @@ LabelButtonBorder::~LabelButtonBorder() {}
 void LabelButtonBorder::Paint(const View& view, gfx::Canvas* canvas) {
   const NativeThemeDelegate* native_theme_delegate =
       static_cast<const LabelButton*>(&view);
-  ui::NativeTheme::Part part = native_theme_delegate->GetThemePart();
   gfx::Rect rect(native_theme_delegate->GetThemePaintRect());
   ui::NativeTheme::ExtraParams extra;
-  const ui::NativeTheme* theme = view.GetNativeTheme();
   const gfx::Animation* animation = native_theme_delegate->GetThemeAnimation();
   ui::NativeTheme::State state = native_theme_delegate->GetThemeState(&extra);
 
@@ -126,7 +107,7 @@ void LabelButtonBorder::Paint(const View& view, gfx::Canvas* canvas) {
     const SkRect sk_rect = gfx::RectToSkRect(rect);
     canvas->sk_canvas()->saveLayer(&sk_rect, NULL);
     state = native_theme_delegate->GetBackgroundThemeState(&extra);
-    PaintHelper(this, canvas, theme, part, state, rect, extra);
+    PaintHelper(this, canvas, state, rect, extra);
 
     SkPaint paint;
     skia::RefPtr<SkXfermode> sk_lerp_xfer =
@@ -134,28 +115,28 @@ void LabelButtonBorder::Paint(const View& view, gfx::Canvas* canvas) {
     paint.setXfermode(sk_lerp_xfer.get());
     canvas->sk_canvas()->saveLayer(&sk_rect, &paint);
     state = native_theme_delegate->GetForegroundThemeState(&extra);
-    PaintHelper(this, canvas, theme, part, state, rect, extra);
+    PaintHelper(this, canvas, state, rect, extra);
     canvas->sk_canvas()->restore();
 
     canvas->sk_canvas()->restore();
   } else {
-    PaintHelper(this, canvas, theme, part, state, rect, extra);
+    PaintHelper(this, canvas, state, rect, extra);
   }
-
-  // For inverted color schemes, draw a solid fill with the button color.
-  if (gfx::IsInvertedColorScheme()) {
-    rect.Inset(insets_);
-    canvas->FillRect(rect, extra.button.background_color);
-  }
-
-  // Draw the Views focus border for the native theme style.
-  if (style() == Button::STYLE_NATIVE_TEXTBUTTON &&
-      view.focus_border() && extra.button.is_focused)
-    view.focus_border()->Paint(view, canvas);
 }
 
 gfx::Insets LabelButtonBorder::GetInsets() const {
   return insets_;
+}
+
+gfx::Size LabelButtonBorder::GetMinimumSize() const {
+  gfx::Size minimum_size;
+  for (int i = 0; i < 2; ++i) {
+    for (int j = 0; j < Button::STATE_COUNT; ++j) {
+      if (painters_[i][j])
+        minimum_size.SetToMax(painters_[i][j]->GetMinimumSize());
+    }
+  }
+  return minimum_size;
 }
 
 Painter* LabelButtonBorder::GetPainter(bool focused,

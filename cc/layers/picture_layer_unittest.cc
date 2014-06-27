@@ -12,6 +12,7 @@
 #include "cc/test/fake_proxy.h"
 #include "cc/test/impl_side_painting_settings.h"
 #include "cc/trees/occlusion_tracker.h"
+#include "cc/trees/single_thread_proxy.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace cc {
@@ -20,9 +21,12 @@ namespace {
 class MockContentLayerClient : public ContentLayerClient {
  public:
   virtual void PaintContents(SkCanvas* canvas,
-                             gfx::Rect clip,
+                             const gfx::Rect& clip,
                              gfx::RectF* opaque) OVERRIDE {}
   virtual void DidChangeLayerCanUseLCDText() OVERRIDE {}
+  virtual bool FillsBoundsCompletely() const OVERRIDE {
+    return false;
+  };
 };
 
 TEST(PictureLayerTest, NoTilesIfEmptyBounds) {
@@ -35,7 +39,7 @@ TEST(PictureLayerTest, NoTilesIfEmptyBounds) {
   layer->SetIsDrawable(true);
   layer->SavePaintProperties();
 
-  OcclusionTracker occlusion(gfx::Rect(0, 0, 1000, 1000), false);
+  OcclusionTracker<Layer> occlusion(gfx::Rect(0, 0, 1000, 1000));
   scoped_ptr<ResourceUpdateQueue> queue(new ResourceUpdateQueue);
   layer->Update(queue.get(), &occlusion);
 
@@ -45,11 +49,12 @@ TEST(PictureLayerTest, NoTilesIfEmptyBounds) {
   // a layer with empty bounds.
 
   FakeProxy proxy;
-#ifndef NDEBUG
-  proxy.SetCurrentThreadIsImplThread(true);
-#endif
   {
-    FakeLayerTreeHostImpl host_impl(ImplSidePaintingSettings(), &proxy);
+    DebugScopedSetImplThread impl_thread(&proxy);
+
+    TestSharedBitmapManager shared_bitmap_manager;
+    FakeLayerTreeHostImpl host_impl(
+        ImplSidePaintingSettings(), &proxy, &shared_bitmap_manager);
     host_impl.CreatePendingTree();
     scoped_ptr<FakePictureLayerImpl> layer_impl =
         FakePictureLayerImpl::Create(host_impl.pending_tree(), 1);
@@ -58,11 +63,8 @@ TEST(PictureLayerTest, NoTilesIfEmptyBounds) {
     EXPECT_FALSE(layer_impl->CanHaveTilings());
     EXPECT_TRUE(layer_impl->bounds() == gfx::Size(0, 0));
     EXPECT_TRUE(layer_impl->pile()->size() == gfx::Size(0, 0));
-    EXPECT_TRUE(layer_impl->pile()->recorded_region().IsEmpty());
+    EXPECT_FALSE(layer_impl->pile()->HasRecordings());
   }
-#ifndef NDEBUG
-  proxy.SetCurrentThreadIsImplThread(false);
-#endif
 }
 
 }  // namespace

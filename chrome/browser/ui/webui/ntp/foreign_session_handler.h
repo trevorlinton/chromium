@@ -9,7 +9,7 @@
 
 #include "base/time/time.h"
 #include "chrome/browser/sessions/session_service.h"
-#include "chrome/browser/sync/glue/session_model_associator.h"
+#include "chrome/browser/sync/open_tabs_ui_delegate.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_ui.h"
@@ -47,10 +47,10 @@ class ForeignSessionHandler : public content::WebUIMessageHandler,
 
   // Helper method to create JSON compatible objects from Session objects.
   static bool SessionTabToValue(const SessionTab& tab,
-                                DictionaryValue* dictionary);
+                                base::DictionaryValue* dictionary);
 
   // Returns a pointer to the current session model associator or NULL.
-  static SessionModelAssociator* GetModelAssociator(content::WebUI* web_ui);
+  static OpenTabsUIDelegate* GetOpenTabsUIDelegate(content::WebUI* web_ui);
 
  private:
   // Used to register ForeignSessionHandler for notifications.
@@ -65,29 +65,29 @@ class ForeignSessionHandler : public content::WebUIMessageHandler,
   bool IsTabSyncEnabled();
 
   // Returns a string used to show the user when a session was last modified.
-  string16 FormatSessionTime(const base::Time& time);
+  base::string16 FormatSessionTime(const base::Time& time);
 
   // Determines which session is to be opened, and then calls
   // OpenForeignSession, to begin the process of opening a new browser window.
   // This is a javascript callback handler.
-  void HandleOpenForeignSession(const ListValue* args);
+  void HandleOpenForeignSession(const base::ListValue* args);
 
   // Determines whether foreign sessions should be obtained from the sync model.
   // This is a javascript callback handler, and it is also called when the sync
   // model has changed and the new tab page needs to reflect the changes.
-  void HandleGetForeignSessions(const ListValue* args);
+  void HandleGetForeignSessions(const base::ListValue* args);
 
   // Delete a foreign session. This will remove it from the list of foreign
   // sessions on all devices. It will reappear if the session is re-activated
   // on the original device.
   // This is a javascript callback handler.
-  void HandleDeleteForeignSession(const ListValue* args);
+  void HandleDeleteForeignSession(const base::ListValue* args);
 
-  void HandleSetForeignSessionCollapsed(const ListValue* args);
+  void HandleSetForeignSessionCollapsed(const base::ListValue* args);
 
   // Helper method to create JSON compatible objects from Session objects.
   bool SessionWindowToValue(const SessionWindow& window,
-                            DictionaryValue* dictionary);
+                            base::DictionaryValue* dictionary);
 
   // The Registrar used to register ForeignSessionHandler for notifications.
   content::NotificationRegistrar registrar_;

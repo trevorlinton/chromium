@@ -23,6 +23,7 @@
 #include "printing/backend/print_backend.h"
 #include "printing/page_range.h"
 #include "printing/pdf_render_settings.h"
+#include "printing/pwg_raster_settings.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
 #define IPC_MESSAGE_START ChromeUtilityMsgStart
@@ -44,6 +45,43 @@ IPC_STRUCT_TRAITS_BEGIN(printing::PrinterCapsAndDefaults)
   IPC_STRUCT_TRAITS_MEMBER(caps_mime_type)
   IPC_STRUCT_TRAITS_MEMBER(printer_defaults)
   IPC_STRUCT_TRAITS_MEMBER(defaults_mime_type)
+IPC_STRUCT_TRAITS_END()
+
+IPC_ENUM_TRAITS(printing::DuplexMode)
+
+#if defined(OS_WIN)
+IPC_STRUCT_TRAITS_BEGIN(printing::PrinterSemanticCapsAndDefaults::Paper)
+  IPC_STRUCT_TRAITS_MEMBER(name)
+  IPC_STRUCT_TRAITS_MEMBER(size_um)
+IPC_STRUCT_TRAITS_END()
+#endif
+
+IPC_STRUCT_TRAITS_BEGIN(printing::PrinterSemanticCapsAndDefaults)
+  IPC_STRUCT_TRAITS_MEMBER(color_changeable)
+  IPC_STRUCT_TRAITS_MEMBER(color_default)
+#if defined(USE_CUPS)
+  IPC_STRUCT_TRAITS_MEMBER(color_model)
+  IPC_STRUCT_TRAITS_MEMBER(bw_model)
+#endif
+#if defined(OS_WIN)
+  IPC_STRUCT_TRAITS_MEMBER(collate_capable)
+  IPC_STRUCT_TRAITS_MEMBER(collate_default)
+  IPC_STRUCT_TRAITS_MEMBER(copies_capable)
+  IPC_STRUCT_TRAITS_MEMBER(papers)
+  IPC_STRUCT_TRAITS_MEMBER(default_paper)
+  IPC_STRUCT_TRAITS_MEMBER(dpis)
+  IPC_STRUCT_TRAITS_MEMBER(default_dpi)
+#endif
+  IPC_STRUCT_TRAITS_MEMBER(duplex_capable)
+  IPC_STRUCT_TRAITS_MEMBER(duplex_default)
+IPC_STRUCT_TRAITS_END()
+
+IPC_ENUM_TRAITS(printing::PwgRasterTransformType);
+
+IPC_STRUCT_TRAITS_BEGIN(printing::PwgRasterSettings)
+  IPC_STRUCT_TRAITS_MEMBER(odd_page_transform)
+  IPC_STRUCT_TRAITS_MEMBER(rotate_all_pages)
+  IPC_STRUCT_TRAITS_MEMBER(reverse_page_order)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(UpdateManifest::Result)
@@ -69,6 +107,7 @@ IPC_STRUCT_TRAITS_END()
 IPC_STRUCT_TRAITS_BEGIN(iphoto::parser::Photo)
   IPC_STRUCT_TRAITS_MEMBER(id)
   IPC_STRUCT_TRAITS_MEMBER(location)
+  IPC_STRUCT_TRAITS_MEMBER(original_location)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(iphoto::parser::Library)
@@ -139,11 +178,20 @@ IPC_MESSAGE_CONTROL1(ChromeUtilityMsg_DecodeImageBase64,
                      std::string)  // base64 encoded image contents
 
 // Tell the utility process to render the given PDF into a metafile.
+// TODO(vitalybuka): switch to IPC::PlatformFileForTransit.
 IPC_MESSAGE_CONTROL4(ChromeUtilityMsg_RenderPDFPagesToMetafile,
                      base::PlatformFile,       // PDF file
                      base::FilePath,           // Location for output metafile
-                     printing::PdfRenderSettings,  // PDF render settitngs
+                     printing::PdfRenderSettings,  // PDF render settings
                      std::vector<printing::PageRange>)
+
+// Tell the utility process to render the given PDF into a PWGRaster.
+IPC_MESSAGE_CONTROL4(ChromeUtilityMsg_RenderPDFPagesToPWGRaster,
+                     IPC::PlatformFileForTransit, /* Input PDF file */
+                     printing::PdfRenderSettings, /* PDF render settings */
+                     // PWG transform settings.
+                     printing::PwgRasterSettings,
+                     IPC::PlatformFileForTransit /* Output PWG file */)
 
 // Tell the utility process to decode the given JPEG image data with a robust
 // libjpeg codec.
@@ -159,6 +207,13 @@ IPC_MESSAGE_CONTROL1(ChromeUtilityMsg_ParseJSON,
 // crashes by executing this in a separate process. This does not run in a
 // sandbox.
 IPC_MESSAGE_CONTROL1(ChromeUtilityMsg_GetPrinterCapsAndDefaults,
+                     std::string /* printer name */)
+
+// Tells the utility process to get capabilities and defaults for the specified
+// printer. Used on Windows to isolate the service process from printer driver
+// crashes by executing this in a separate process. This does not run in a
+// sandbox. Returns result as printing::PrinterSemanticCapsAndDefaults.
+IPC_MESSAGE_CONTROL1(ChromeUtilityMsg_GetPrinterSemanticCapsAndDefaults,
                      std::string /* printer name */)
 
 #if defined(OS_CHROMEOS)
@@ -219,7 +274,32 @@ IPC_MESSAGE_CONTROL2(ChromeUtilityMsg_IndexPicasaAlbumsContents,
 IPC_MESSAGE_CONTROL2(ChromeUtilityMsg_CheckMediaFile,
                      int64 /* milliseconds_of_decoding */,
                      IPC::PlatformFileForTransit /* Media file to parse */)
+
+IPC_MESSAGE_CONTROL2(ChromeUtilityMsg_ParseMediaMetadata,
+                     std::string /* mime_type */,
+                     int64 /* total_size */)
+
+IPC_MESSAGE_CONTROL2(ChromeUtilityMsg_RequestBlobBytes_Finished,
+                     int64 /* request_id */,
+                     std::string /* bytes */)
 #endif  // !defined(OS_ANDROID) && !defined(OS_IOS)
+
+// Requests that the utility process write the contents of the source file to
+// the removable drive listed in the target file. The target will be restricted
+// to removable drives by the utility process.
+IPC_MESSAGE_CONTROL2(ChromeUtilityMsg_ImageWriter_Write,
+                     base::FilePath /* source file */,
+                     base::FilePath /* target file */)
+
+// Requests that the utility process verify that the contents of the source file
+// was written to the target. As above the target will be restricted to
+// removable drives by the utility process.
+IPC_MESSAGE_CONTROL2(ChromeUtilityMsg_ImageWriter_Verify,
+                     base::FilePath /* source file */,
+                     base::FilePath /* target file */)
+
+// Cancels a pending write or verify operation.
+IPC_MESSAGE_CONTROL0(ChromeUtilityMsg_ImageWriter_Cancel)
 
 //------------------------------------------------------------------------------
 // Utility process host messages:
@@ -256,7 +336,7 @@ IPC_MESSAGE_CONTROL1(ChromeUtilityHostMsg_UnpackWebResource_Failed,
 IPC_MESSAGE_CONTROL1(ChromeUtilityHostMsg_ParseUpdateManifest_Succeeded,
                      UpdateManifest::Results /* updates */)
 
-// Reply when an error occured parsing the update manifest. |error_message|
+// Reply when an error occurred parsing the update manifest. |error_message|
 // is a description of what went wrong suitable for logging.
 IPC_MESSAGE_CONTROL1(ChromeUtilityHostMsg_ParseUpdateManifest_Failed,
                      std::string /* error_message, if any */)
@@ -265,7 +345,7 @@ IPC_MESSAGE_CONTROL1(ChromeUtilityHostMsg_ParseUpdateManifest_Failed,
 IPC_MESSAGE_CONTROL1(ChromeUtilityHostMsg_DecodeImage_Succeeded,
                      SkBitmap)  // decoded image
 
-// Reply when an error occured decoding the image.
+// Reply when an error occurred decoding the image.
 IPC_MESSAGE_CONTROL0(ChromeUtilityHostMsg_DecodeImage_Failed)
 
 // Reply when the utility process has succeeded in rendering the PDF.
@@ -273,8 +353,14 @@ IPC_MESSAGE_CONTROL2(ChromeUtilityHostMsg_RenderPDFPagesToMetafile_Succeeded,
                      int,          // Highest rendered page number
                      double)       // Scale factor
 
-// Reply when an error occured rendering the PDF.
+// Reply when an error occurred rendering the PDF.
 IPC_MESSAGE_CONTROL0(ChromeUtilityHostMsg_RenderPDFPagesToMetafile_Failed)
+
+// Reply when the utility process has succeeded in rendering the PDF to PWG.
+IPC_MESSAGE_CONTROL0(ChromeUtilityHostMsg_RenderPDFPagesToPWGRaster_Succeeded)
+
+// Reply when an error occurred rendering the PDF to PWG.
+IPC_MESSAGE_CONTROL0(ChromeUtilityHostMsg_RenderPDFPagesToPWGRaster_Failed)
 
 // Reply when the utility process successfully parsed a JSON string.
 //
@@ -295,12 +381,25 @@ IPC_MESSAGE_CONTROL1(ChromeUtilityHostMsg_ParseJSON_Failed,
 IPC_MESSAGE_CONTROL2(ChromeUtilityHostMsg_GetPrinterCapsAndDefaults_Succeeded,
                      std::string /* printer name */,
                      printing::PrinterCapsAndDefaults)
+
+// Reply when the utility process has succeeded in obtaining the printer
+// semantic capabilities and defaults.
+IPC_MESSAGE_CONTROL2(
+    ChromeUtilityHostMsg_GetPrinterSemanticCapsAndDefaults_Succeeded,
+    std::string /* printer name */,
+    printing::PrinterSemanticCapsAndDefaults)
 #endif
 
 // Reply when the utility process has failed to obtain the printer
 // capabilities and defaults.
 IPC_MESSAGE_CONTROL1(ChromeUtilityHostMsg_GetPrinterCapsAndDefaults_Failed,
                      std::string /* printer name */)
+
+// Reply when the utility process has failed to obtain the printer
+// semantic capabilities and defaults.
+IPC_MESSAGE_CONTROL1(
+  ChromeUtilityHostMsg_GetPrinterSemanticCapsAndDefaults_Failed,
+  std::string /* printer name */)
 
 #if defined(OS_CHROMEOS)
 // Reply when the utility process has succeeded in creating the zip file.
@@ -358,4 +457,41 @@ IPC_MESSAGE_CONTROL1(ChromeUtilityHostMsg_IndexPicasaAlbumsContents_Finished,
 // the file appears to be a well formed media file.
 IPC_MESSAGE_CONTROL1(ChromeUtilityHostMsg_CheckMediaFile_Finished,
                      bool /* passed_checks */)
+
+IPC_MESSAGE_CONTROL2(ChromeUtilityHostMsg_ParseMediaMetadata_Finished,
+                     bool /* parse_success */,
+                     base::DictionaryValue /* metadata */)
+
+IPC_MESSAGE_CONTROL3(ChromeUtilityHostMsg_RequestBlobBytes,
+                     int64 /* request_id */,
+                     int64 /* start_byte */,
+                     int64 /* length */)
 #endif  // !defined(OS_ANDROID) && !defined(OS_IOS)
+
+// Reply when a write or verify operation succeeds.
+IPC_MESSAGE_CONTROL0(ChromeUtilityHostMsg_ImageWriter_Succeeded)
+
+// Reply when a write or verify operation has been fully cancelled.
+IPC_MESSAGE_CONTROL0(ChromeUtilityHostMsg_ImageWriter_Cancelled)
+
+// Reply when a write or verify operation fails to complete.
+IPC_MESSAGE_CONTROL1(ChromeUtilityHostMsg_ImageWriter_Failed,
+                     std::string /* message */)
+
+// Periodic status update about the progress of an operation.
+IPC_MESSAGE_CONTROL1(ChromeUtilityHostMsg_ImageWriter_Progress,
+                     int64 /* number of bytes processed */)
+
+#if defined(OS_WIN)
+// Get plain-text WiFi credentials from the system (requires UAC privilege
+// elevation) and encrypt them with |public_key|.
+IPC_MESSAGE_CONTROL2(ChromeUtilityHostMsg_GetAndEncryptWiFiCredentials,
+                     std::string /* ssid */,
+                     std::vector<uint8> /* public_key */)
+
+// Reply after getting WiFi credentials from the system and encrypting them with
+// caller's public key. |success| is false if error occurred.
+IPC_MESSAGE_CONTROL2(ChromeUtilityHostMsg_GotEncryptedWiFiCredentials,
+                     std::vector<uint8> /* encrypted_key_data */,
+                     bool /* success */)
+#endif  // defined(OS_WIN)

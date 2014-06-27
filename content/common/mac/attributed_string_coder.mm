@@ -65,7 +65,7 @@ NSAttributedString* AttributedStringCoder::Decode(
 
 // Data Types //////////////////////////////////////////////////////////////////
 
-AttributedStringCoder::EncodedString::EncodedString(string16 string)
+AttributedStringCoder::EncodedString::EncodedString(base::string16 string)
     : string_(string) {
 }
 
@@ -129,7 +129,7 @@ bool ParamTraits<AttributedStringCoder::EncodedString>::Read(
     const Message* m, PickleIterator* iter, param_type* p) {
   bool success = true;
 
-  string16 result;
+  base::string16 result;
   success &= ReadParam(m, iter, &result);
   *p = AttributedStringCoder::EncodedString(result);
 
@@ -139,7 +139,7 @@ bool ParamTraits<AttributedStringCoder::EncodedString>::Read(
 
 void ParamTraits<AttributedStringCoder::EncodedString>::Log(
     const param_type& p, std::string* l) {
-  l->append(UTF16ToUTF8(p.string()));
+  l->append(base::UTF16ToUTF8(p.string()));
 }
 
 void ParamTraits<AttributedStringCoder::FontAttribute>::Write(

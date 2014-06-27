@@ -11,10 +11,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/extensions/event_router.h"
-#include "chrome/browser/extensions/extension_prefs.h"
-#include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url.h"
@@ -22,9 +18,16 @@
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/common/extensions/api/omnibox.h"
 #include "chrome/common/extensions/api/omnibox/omnibox_handler.h"
-#include "chrome/common/extensions/extension.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
+#include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_prefs_factory.h"
+#include "extensions/browser/extension_registry.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/extension_system_provider.h"
+#include "extensions/browser/extensions_browser_client.h"
+#include "extensions/common/extension.h"
 #include "ui/gfx/image/image.h"
 
 namespace extensions {
@@ -57,8 +60,7 @@ static const int kOmniboxIconPaddingRight = 0;
 scoped_ptr<omnibox::SuggestResult> GetOmniboxDefaultSuggestion(
     Profile* profile,
     const std::string& extension_id) {
-  ExtensionPrefs* prefs =
-      ExtensionSystem::Get(profile)->extension_service()->extension_prefs();
+  ExtensionPrefs* prefs = ExtensionPrefs::Get(profile);
 
   scoped_ptr<omnibox::SuggestResult> suggestion;
   const base::DictionaryValue* dict = NULL;
@@ -77,8 +79,7 @@ bool SetOmniboxDefaultSuggestion(
     Profile* profile,
     const std::string& extension_id,
     const omnibox::DefaultSuggestResult& suggestion) {
-  ExtensionPrefs* prefs =
-      ExtensionSystem::Get(profile)->extension_service()->extension_prefs();
+  ExtensionPrefs* prefs = ExtensionPrefs::Get(profile);
   if (!prefs)
     return false;
 
@@ -101,7 +102,7 @@ void ExtensionOmniboxEventRouter::OnInputStarted(
   scoped_ptr<Event> event(new Event(
       omnibox::OnInputStarted::kEventName,
       make_scoped_ptr(new base::ListValue())));
-  event->restrict_to_profile = profile;
+  event->restrict_to_browser_context = profile;
   ExtensionSystem::Get(profile)->event_router()->
       DispatchEventToExtension(extension_id, event.Pass());
 }
@@ -110,9 +111,8 @@ void ExtensionOmniboxEventRouter::OnInputStarted(
 bool ExtensionOmniboxEventRouter::OnInputChanged(
     Profile* profile, const std::string& extension_id,
     const std::string& input, int suggest_id) {
-  if (!extensions::ExtensionSystem::Get(profile)->event_router()->
-          ExtensionHasEventListener(extension_id,
-                                    omnibox::OnInputChanged::kEventName))
+  if (!ExtensionSystem::Get(profile)->event_router()->ExtensionHasEventListener(
+           extension_id, omnibox::OnInputChanged::kEventName))
     return false;
 
   scoped_ptr<base::ListValue> args(new base::ListValue());
@@ -121,7 +121,7 @@ bool ExtensionOmniboxEventRouter::OnInputChanged(
 
   scoped_ptr<Event> event(new Event(omnibox::OnInputChanged::kEventName,
                                     args.Pass()));
-  event->restrict_to_profile = profile;
+  event->restrict_to_browser_context = profile;
   ExtensionSystem::Get(profile)->event_router()->
       DispatchEventToExtension(extension_id, event.Pass());
   return true;
@@ -137,8 +137,8 @@ void ExtensionOmniboxEventRouter::OnInputEntered(
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
 
   const Extension* extension =
-      ExtensionSystem::Get(profile)->extension_service()->extensions()->
-          GetByID(extension_id);
+      ExtensionRegistry::Get(profile)->enabled_extensions().GetByID(
+          extension_id);
   CHECK(extension);
   extensions::TabHelper::FromWebContents(web_contents)->
       active_tab_permission_granter()->GrantIfRequested(extension);
@@ -154,7 +154,7 @@ void ExtensionOmniboxEventRouter::OnInputEntered(
 
   scoped_ptr<Event> event(new Event(omnibox::OnInputEntered::kEventName,
                                     args.Pass()));
-  event->restrict_to_profile = profile;
+  event->restrict_to_browser_context = profile;
   ExtensionSystem::Get(profile)->event_router()->
       DispatchEventToExtension(extension_id, event.Pass());
 
@@ -170,18 +170,20 @@ void ExtensionOmniboxEventRouter::OnInputCancelled(
   scoped_ptr<Event> event(new Event(
       omnibox::OnInputCancelled::kEventName,
       make_scoped_ptr(new base::ListValue())));
-  event->restrict_to_profile = profile;
+  event->restrict_to_browser_context = profile;
   ExtensionSystem::Get(profile)->event_router()->
       DispatchEventToExtension(extension_id, event.Pass());
 }
 
-OmniboxAPI::OmniboxAPI(Profile* profile)
-    : profile_(profile),
-      url_service_(TemplateURLServiceFactory::GetForProfile(profile)) {
-  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_LOADED,
-                 content::Source<Profile>(profile));
-  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED,
-                 content::Source<Profile>(profile));
+OmniboxAPI::OmniboxAPI(content::BrowserContext* context)
+    : profile_(Profile::FromBrowserContext(context)),
+      url_service_(TemplateURLServiceFactory::GetForProfile(profile_)) {
+  registrar_.Add(this,
+                 chrome::NOTIFICATION_EXTENSION_LOADED,
+                 content::Source<Profile>(profile_));
+  registrar_.Add(this,
+                 chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
+                 content::Source<Profile>(profile_));
   if (url_service_) {
     template_url_sub_ = url_service_->RegisterOnLoadedCallback(
         base::Bind(&OmniboxAPI::OnTemplateURLsLoaded,
@@ -202,17 +204,17 @@ void OmniboxAPI::Shutdown() {
 OmniboxAPI::~OmniboxAPI() {
 }
 
-static base::LazyInstance<ProfileKeyedAPIFactory<OmniboxAPI> >
+static base::LazyInstance<BrowserContextKeyedAPIFactory<OmniboxAPI> >
     g_factory = LAZY_INSTANCE_INITIALIZER;
 
 // static
-ProfileKeyedAPIFactory<OmniboxAPI>* OmniboxAPI::GetFactoryInstance() {
-  return &g_factory.Get();
+BrowserContextKeyedAPIFactory<OmniboxAPI>* OmniboxAPI::GetFactoryInstance() {
+  return g_factory.Pointer();
 }
 
 // static
-OmniboxAPI* OmniboxAPI::Get(Profile* profile) {
-  return ProfileKeyedAPIFactory<OmniboxAPI>::GetForProfile(profile);
+OmniboxAPI* OmniboxAPI::Get(content::BrowserContext* context) {
+  return BrowserContextKeyedAPIFactory<OmniboxAPI>::Get(context);
 }
 
 void OmniboxAPI::Observe(int type,
@@ -238,7 +240,7 @@ void OmniboxAPI::Observe(int type,
         }
       }
     }
-  } else if (type == chrome::NOTIFICATION_EXTENSION_UNLOADED) {
+  } else if (type == chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED) {
     const Extension* extension =
         content::Details<UnloadedExtensionInfo>(details)->extension;
     if (!OmniboxInfo::GetKeyword(extension).empty()) {
@@ -277,8 +279,9 @@ void OmniboxAPI::OnTemplateURLsLoaded() {
 }
 
 template <>
-void ProfileKeyedAPIFactory<OmniboxAPI>::DeclareFactoryDependencies() {
-  DependsOn(ExtensionSystemFactory::GetInstance());
+void BrowserContextKeyedAPIFactory<OmniboxAPI>::DeclareFactoryDependencies() {
+  DependsOn(ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
+  DependsOn(ExtensionPrefsFactory::GetInstance());
   DependsOn(TemplateURLServiceFactory::GetInstance());
 }
 
@@ -317,7 +320,7 @@ ACMatchClassifications StyleTypesToACMatchClassifications(
     const omnibox::SuggestResult &suggestion) {
   ACMatchClassifications match_classifications;
   if (suggestion.description_styles) {
-    string16 description = UTF8ToUTF16(suggestion.description);
+    base::string16 description = base::UTF8ToUTF16(suggestion.description);
     std::vector<int> styles(description.length(), 0);
 
     for (std::vector<linked_ptr<omnibox::SuggestResult::DescriptionStylesType> >
@@ -368,7 +371,7 @@ ACMatchClassifications StyleTypesToACMatchClassifications(
 void ApplyDefaultSuggestionForExtensionKeyword(
     Profile* profile,
     const TemplateURL* keyword,
-    const string16& remaining_input,
+    const base::string16& remaining_input,
     AutocompleteMatch* match) {
   DCHECK(keyword->GetType() == TemplateURL::OMNIBOX_API_EXTENSION);
 
@@ -377,18 +380,18 @@ void ApplyDefaultSuggestionForExtensionKeyword(
   if (!suggestion || suggestion->description.empty())
     return;  // fall back to the universal default
 
-  const string16 kPlaceholderText(ASCIIToUTF16("%s"));
-  const string16 kReplacementText(ASCIIToUTF16("<input>"));
+  const base::string16 kPlaceholderText(base::ASCIIToUTF16("%s"));
+  const base::string16 kReplacementText(base::ASCIIToUTF16("<input>"));
 
-  string16 description = UTF8ToUTF16(suggestion->description);
+  base::string16 description = base::UTF8ToUTF16(suggestion->description);
   ACMatchClassifications& description_styles = match->contents_class;
   description_styles = StyleTypesToACMatchClassifications(*suggestion);
 
   // Replace "%s" with the user's input and adjust the style offsets to the
   // new length of the description.
   size_t placeholder(description.find(kPlaceholderText, 0));
-  if (placeholder != string16::npos) {
-    string16 replacement =
+  if (placeholder != base::string16::npos) {
+    base::string16 replacement =
         remaining_input.empty() ? kReplacementText : remaining_input;
     description.replace(placeholder, kPlaceholderText.length(), replacement);
 

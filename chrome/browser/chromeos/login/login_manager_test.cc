@@ -37,7 +37,6 @@ void LoginManagerTest::SetUpCommandLine(CommandLine* command_line) {
   command_line->AppendSwitch(chromeos::switches::kLoginManager);
   command_line->AppendSwitch(chromeos::switches::kForceLoginManagerInTests);
   command_line->AppendSwitch(::switches::kMultiProfiles);
-  InProcessBrowserTest::SetUpCommandLine(command_line);
 }
 
 void LoginManagerTest::SetUpInProcessBrowserTestFixture() {
@@ -78,7 +77,10 @@ bool LoginManagerTest::AddUserTosession(const std::string& username,
                                         const std::string& password) {
   ExistingUserController* controller =
       ExistingUserController::current_controller();
-  EXPECT_TRUE(controller != NULL);
+  if (!controller) {
+    ADD_FAILURE();
+    return false;
+  }
   controller->Login(UserContext(username, password, std::string()));
   content::WindowedNotificationObserver(
       chrome::NOTIFICATION_SESSION_STARTED,
@@ -103,13 +105,7 @@ void LoginManagerTest::AddUser(const std::string& username) {
 }
 
 void LoginManagerTest::JSExpect(const std::string& expression) {
-  bool result;
-  EXPECT_TRUE(web_contents_ != NULL);
-  ASSERT_TRUE(content::ExecuteScriptAndExtractBool(
-      web_contents(),
-      "window.domAutomationController.send(!!(" + expression + "));",
-      &result));
-  ASSERT_TRUE(result) << expression;
+  js_checker_.ExpectTrue(expression);
 }
 
 void LoginManagerTest::InitializeWebContents() {
@@ -120,6 +116,7 @@ void LoginManagerTest::InitializeWebContents() {
         host->GetWebUILoginView()->GetWebContents();
     EXPECT_TRUE(web_contents != NULL);
     set_web_contents(web_contents);
+    js_checker_.set_web_contents(web_contents);
   }
 
 }  // namespace chromeos

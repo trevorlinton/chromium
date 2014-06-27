@@ -9,10 +9,10 @@
 #include "base/pickle.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/common/extensions/permissions/usb_device_permission.h"
-#include "chrome/common/extensions/permissions/usb_device_permission_data.h"
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/permissions_info.h"
+#include "extensions/common/permissions/usb_device_permission.h"
+#include "extensions/common/permissions/usb_device_permission_data.h"
 #include "ipc/ipc_message.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -51,13 +51,13 @@ TEST(USBDevicePermissionTest, MAYBE_PermissionMessage) {
 
   UsbDevicePermission permission(
       PermissionsInfo::GetInstance()->GetByID(APIPermission::kUsbDevice));
-  ASSERT_TRUE(permission.FromValue(permission_list.get()));
+  ASSERT_TRUE(permission.FromValue(permission_list.get(), NULL));
 
   PermissionMessages messages = permission.GetMessages();
   ASSERT_EQ(3U, messages.size());
-  EXPECT_EQ(ASCIIToUTF16(kMessages[0]), messages.at(0).message());
-  EXPECT_EQ(ASCIIToUTF16(kMessages[1]), messages.at(1).message());
-  EXPECT_EQ(ASCIIToUTF16(kMessages[2]), messages.at(2).message());
+  EXPECT_EQ(base::ASCIIToUTF16(kMessages[0]), messages.at(0).message());
+  EXPECT_EQ(base::ASCIIToUTF16(kMessages[1]), messages.at(1).message());
+  EXPECT_EQ(base::ASCIIToUTF16(kMessages[2]), messages.at(2).message());
 }
 
 }  // namespace extensions

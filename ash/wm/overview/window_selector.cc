@@ -9,7 +9,7 @@
 #include "ash/ash_switches.h"
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
-#include "ash/wm/mru_window_tracker.h"
+#include "ash/switchable_windows.h"
 #include "ash/wm/overview/window_overview.h"
 #include "ash/wm/overview/window_selector_delegate.h"
 #include "ash/wm/overview/window_selector_panels.h"
@@ -19,52 +19,37 @@
 #include "base/command_line.h"
 #include "base/metrics/histogram.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/timer/timer.h"
-#include "ui/aura/client/activation_client.h"
 #include "ui/aura/client/focus_client.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_observer.h"
 #include "ui/events/event.h"
 #include "ui/events/event_handler.h"
+#include "ui/wm/core/window_util.h"
+#include "ui/wm/public/activation_client.h"
 
 namespace ash {
 
 namespace {
 
-// The time from when the user pressed alt+tab while still holding alt before
-// overview is engaged.
-const int kOverviewDelayOnCycleMilliseconds = 10000;
-
-// If the delay before overview is less than or equal to this threshold the
-// initial monitor is used for multi-display overview, otherwise the monitor
-// of the currently selected window is used.
-const int kOverviewDelayInitialMonitorThreshold = 100;
-
-// The maximum amount of time allowed for the delay before overview on cycling.
-// If the specified time exceeds this the timer will not be started.
-const int kMaxOverviewDelayOnCycleMilliseconds = 10000;
-
-int GetOverviewDelayOnCycleMilliseconds() {
-  static int value = -1;
-  if (value == -1) {
-    value = kOverviewDelayOnCycleMilliseconds;
-    if (CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshOverviewDelayOnAltTab)) {
-      if (!base::StringToInt(CommandLine::ForCurrentProcess()->
-            GetSwitchValueASCII(switches::kAshOverviewDelayOnAltTab), &value)) {
-        LOG(ERROR) << "Expected int value for "
-                   << switches::kAshOverviewDelayOnAltTab;
-      }
-    }
-  }
-  return value;
-}
-
-// A comparator for locating a given target window.
+// A comparator for locating a given selectable window.
 struct WindowSelectorItemComparator
     : public std::unary_function<WindowSelectorItem*, bool> {
-  explicit WindowSelectorItemComparator(const aura::Window* target_window)
+  explicit WindowSelectorItemComparator(const aura::Window* window)
+      : window_(window) {
+  }
+
+  bool operator()(WindowSelectorItem* window) const {
+    return window->HasSelectableWindow(window_);
+  }
+
+  const aura::Window* window_;
+};
+
+// A comparator for locating a selectable window given a targeted window.
+struct WindowSelectorItemTargetComparator
+    : public std::unary_function<WindowSelectorItem*, bool> {
+  explicit WindowSelectorItemTargetComparator(const aura::Window* target_window)
       : target(target_window) {
   }
 
@@ -238,12 +223,6 @@ WindowSelector::WindowSelector(const WindowList& windows,
                                WindowSelector::Mode mode,
                                WindowSelectorDelegate* delegate)
     : mode_(mode),
-      timer_enabled_(GetOverviewDelayOnCycleMilliseconds() <
-                         kMaxOverviewDelayOnCycleMilliseconds),
-      start_overview_timer_(FROM_HERE,
-          base::TimeDelta::FromMilliseconds(
-              GetOverviewDelayOnCycleMilliseconds()),
-          this, &WindowSelector::StartOverview),
       delegate_(delegate),
       selected_window_(0),
       restore_focus_window_(aura::client::GetFocusClient(
@@ -256,11 +235,12 @@ WindowSelector::WindowSelector(const WindowList& windows,
 
   std::vector<WindowSelectorPanels*> panels_items;
   for (size_t i = 0; i < windows.size(); ++i) {
+    WindowSelectorItem* item = NULL;
     if (windows[i] != restore_focus_window_)
       windows[i]->AddObserver(this);
     observed_windows_.insert(windows[i]);
 
-    if (windows[i]->type() == aura::client::WINDOW_TYPE_PANEL &&
+    if (windows[i]->type() == ui::wm::WINDOW_TYPE_PANEL &&
         wm::GetWindowState(windows[i])->panel_attached()) {
       // Attached panel windows are grouped into a single overview item per
       // root window (display).
@@ -276,28 +256,33 @@ WindowSelector::WindowSelector(const WindowList& windows,
         panels_item = *iter;
       }
       panels_item->AddWindow(windows[i]);
+      item = panels_item;
     } else {
-      windows_.push_back(new WindowSelectorWindow(windows[i]));
+      item = new WindowSelectorWindow(windows[i]);
+      windows_.push_back(item);
     }
+    // Verify that the window has been added to an item in overview.
+    CHECK(item->TargetedWindow(windows[i]));
   }
   UMA_HISTOGRAM_COUNTS_100("Ash.WindowSelector.Items", windows_.size());
 
   // Observe window activations and switchable containers on all root windows
   // for newly created windows during overview.
   Shell::GetInstance()->activation_client()->AddObserver(this);
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
-  for (Shell::RootWindowList::const_iterator iter = root_windows.begin();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
+  for (aura::Window::Windows::const_iterator iter = root_windows.begin();
        iter != root_windows.end(); ++iter) {
     for (size_t i = 0; i < kSwitchableWindowContainerIdsLength; ++i) {
-      Shell::GetContainer(*iter,
-                          kSwitchableWindowContainerIds[i])->AddObserver(this);
+      aura::Window* container = Shell::GetContainer(*iter,
+          kSwitchableWindowContainerIds[i]);
+      container->AddObserver(this);
+      observed_windows_.insert(container);
     }
   }
 
   if (mode == WindowSelector::CYCLE) {
+    cycle_start_time_ = base::Time::Now();
     event_handler_.reset(new WindowSelectorEventFilter(this));
-    if (timer_enabled_)
-      start_overview_timer_.Reset();
   } else {
     StartOverview();
   }
@@ -310,18 +295,16 @@ WindowSelector::~WindowSelector() {
     (*iter)->RemoveObserver(this);
   }
   Shell::GetInstance()->activation_client()->RemoveObserver(this);
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
-  for (Shell::RootWindowList::const_iterator iter = root_windows.begin();
-       iter != root_windows.end(); ++iter) {
-    for (size_t i = 0; i < kSwitchableWindowContainerIdsLength; ++i) {
-      Shell::GetContainer(*iter,
-          kSwitchableWindowContainerIds[i])->RemoveObserver(this);
-    }
-  }
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
   window_overview_.reset();
   // Clearing the window list resets the ignored_by_shelf flag on the windows.
   windows_.clear();
   UpdateShelfVisibility();
+
+  if (!cycle_start_time_.is_null()) {
+    UMA_HISTOGRAM_MEDIUM_TIMES("Ash.WindowSelector.CycleTime",
+        base::Time::Now() - cycle_start_time_);
+  }
 }
 
 void WindowSelector::Step(WindowSelector::Direction direction) {
@@ -345,22 +328,20 @@ void WindowSelector::Step(WindowSelector::Direction direction) {
     base::AutoReset<bool> restoring_focus(&ignore_activations_, true);
     showing_window_.reset(new ScopedShowWindow);
     showing_window_->Show(windows_[selected_window_]->SelectionWindow());
-    if (timer_enabled_)
-      start_overview_timer_.Reset();
   }
 }
 
 void WindowSelector::SelectWindow() {
-  ResetFocusRestoreWindow(false);
   SelectWindow(windows_[selected_window_]->SelectionWindow());
 }
 
 void WindowSelector::SelectWindow(aura::Window* window) {
+  ResetFocusRestoreWindow(false);
   if (showing_window_ && showing_window_->window() == window)
     showing_window_->CancelRestore();
   ScopedVector<WindowSelectorItem>::iterator iter =
       std::find_if(windows_.begin(), windows_.end(),
-                   WindowSelectorItemComparator(window));
+                   WindowSelectorItemTargetComparator(window));
   DCHECK(iter != windows_.end());
   // The selected window should not be minimized when window selection is
   // ended.
@@ -373,14 +354,14 @@ void WindowSelector::CancelSelection() {
 }
 
 void WindowSelector::OnWindowAdded(aura::Window* new_window) {
-  if (new_window->type() != aura::client::WINDOW_TYPE_NORMAL &&
-      new_window->type() != aura::client::WINDOW_TYPE_PANEL) {
+  if (new_window->type() != ui::wm::WINDOW_TYPE_NORMAL &&
+      new_window->type() != ui::wm::WINDOW_TYPE_PANEL) {
     return;
   }
 
   for (size_t i = 0; i < kSwitchableWindowContainerIdsLength; ++i) {
     if (new_window->parent()->id() == kSwitchableWindowContainerIds[i] &&
-        !new_window->transient_parent()) {
+        !::wm::GetTransientParent(new_window)) {
       // The new window is in one of the switchable containers, abort overview.
       CancelSelection();
       return;
@@ -389,17 +370,18 @@ void WindowSelector::OnWindowAdded(aura::Window* new_window) {
 }
 
 void WindowSelector::OnWindowDestroying(aura::Window* window) {
+  // window is one of a container, the restore_focus_window and/or
+  // one of the selectable windows in overview.
   ScopedVector<WindowSelectorItem>::iterator iter =
       std::find_if(windows_.begin(), windows_.end(),
                    WindowSelectorItemComparator(window));
-  DCHECK(window == restore_focus_window_ || iter != windows_.end());
   window->RemoveObserver(this);
+  observed_windows_.erase(window);
   if (window == restore_focus_window_)
     restore_focus_window_ = NULL;
   if (iter == windows_.end())
     return;
 
-  observed_windows_.erase(window);
   (*iter)->RemoveWindow(window);
   // If there are still windows in this selector entry then the overview is
   // still active and the active selection remains the same.
@@ -431,7 +413,7 @@ void WindowSelector::OnWindowBoundsChanged(aura::Window* window,
 
   ScopedVector<WindowSelectorItem>::iterator iter =
       std::find_if(windows_.begin(), windows_.end(),
-                   WindowSelectorItemComparator(window));
+                   WindowSelectorItemTargetComparator(window));
   DCHECK(window == restore_focus_window_ || iter != windows_.end());
   if (iter == windows_.end())
     return;
@@ -469,12 +451,8 @@ void WindowSelector::StartOverview() {
       Shell::GetPrimaryRootWindow())->FocusWindow(NULL);
 
   aura::Window* overview_root = NULL;
-  if (mode_ == CYCLE) {
-    overview_root = GetOverviewDelayOnCycleMilliseconds() <=
-                        kOverviewDelayInitialMonitorThreshold ?
-                    windows_.front()->GetRootWindow() :
-                    windows_[selected_window_]->GetRootWindow();
-  }
+  if (mode_ == CYCLE)
+    overview_root = windows_[selected_window_]->GetRootWindow();
   window_overview_.reset(new WindowOverview(this, &windows_, overview_root));
   if (mode_ == CYCLE)
     window_overview_->SetSelection(selected_window_);

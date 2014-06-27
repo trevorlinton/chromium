@@ -18,6 +18,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.protos.ipc.invalidation.Types;
 
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.content.browser.BrowserStartupController;
 
 import java.util.concurrent.Semaphore;
@@ -86,8 +87,14 @@ public abstract class ChromiumSyncAdapter extends AbstractThreadedSyncAdapter {
                 public void run() {
                     initCommandLine();
                     if (mAsyncStartup) {
-                        BrowserStartupController.get(mApplication)
-                                .startBrowserProcessesAsync(callback);
+                        try {
+                            BrowserStartupController.get(mApplication)
+                                    .startBrowserProcessesAsync(callback);
+                        }
+                        catch (ProcessInitException e) {
+                            Log.e(TAG, "Unable to load native library.", e);
+                            System.exit(-1);
+                        }
                     } else {
                         startBrowserProcessesSync(callback);
                     }
@@ -104,23 +111,19 @@ public abstract class ChromiumSyncAdapter extends AbstractThreadedSyncAdapter {
 
     private void startBrowserProcessesSync(
             final BrowserStartupController.StartupCallback callback) {
-        if (BrowserStartupController.get(mApplication).startBrowserProcessesSync(
-                BrowserStartupController.MAX_RENDERERS_LIMIT)) {
-            new Handler().post(new Runnable() {
-                @Override
-                public void run() {
-                    callback.onSuccess(false);
-                }
-            });
-        } else {
-            Log.e(TAG, "Unable to start browser process.");
-            new Handler().post(new Runnable() {
-                @Override
-                public void run() {
-                    callback.onFailure();
-                }
-            });
+        try {
+            BrowserStartupController.get(mApplication).startBrowserProcessesSync(
+                    BrowserStartupController.MAX_RENDERERS_LIMIT);
+        } catch (ProcessInitException e) {
+            Log.e(TAG, "Unable to load native library.", e);
+            System.exit(-1);
         }
+        new Handler().post(new Runnable() {
+            @Override
+            public void run() {
+                callback.onSuccess(false);
+            }
+        });
     }
 
     private BrowserStartupController.StartupCallback getStartupCallback(
@@ -145,7 +148,7 @@ public abstract class ChromiumSyncAdapter extends AbstractThreadedSyncAdapter {
                     // invalidations can be expected to have the objectSource.
                     int resolvedSource = objectSource;
                     if (resolvedSource == 0) {
-                      resolvedSource = Types.ObjectSource.Type.CHROME_SYNC.getNumber();
+                        resolvedSource = Types.ObjectSource.Type.CHROME_SYNC.getNumber();
                     }
                     Log.v(TAG, "Received sync tickle for " + resolvedSource + " " + objectId + ".");
                     requestSync(resolvedSource, objectId, version, payload);

@@ -130,14 +130,14 @@ TEST(CommandTest, ExtensionCommandParsing) {
                  "| index: " + base::IntToString(i));
 
     extensions::Command command;
-    string16 error;
+    base::string16 error;
     bool result =
         command.Parse(input.get(), kTests[i].command_name, i, &error);
 
     EXPECT_EQ(kTests[i].expected_result, result);
     if (result) {
       EXPECT_STREQ(kTests[i].description,
-                   UTF16ToASCII(command.description()).c_str());
+                   base::UTF16ToASCII(command.description()).c_str());
       EXPECT_STREQ(kTests[i].command_name, command.command_name().c_str());
       EXPECT_EQ(kTests[i].accelerator, command.accelerator());
     }
@@ -157,7 +157,7 @@ TEST(CommandTest, ExtensionCommandParsing) {
       EXPECT_EQ(kTests[i].expected_result, result);
       if (result) {
         EXPECT_STREQ(kTests[i].description,
-                     UTF16ToASCII(command.description()).c_str());
+                     base::UTF16ToASCII(command.description()).c_str());
         EXPECT_STREQ(kTests[i].command_name, command.command_name().c_str());
         EXPECT_EQ(kTests[i].accelerator, command.accelerator());
       }
@@ -182,10 +182,10 @@ TEST(CommandTest, ExtensionCommandParsingFallback) {
   input->SetString("description", description);
 
   extensions::Command command;
-  string16 error;
+  base::string16 error;
   EXPECT_TRUE(command.Parse(input.get(), command_name, 0, &error));
   EXPECT_STREQ(description.c_str(),
-               UTF16ToASCII(command.description()).c_str());
+               base::UTF16ToASCII(command.description()).c_str());
   EXPECT_STREQ(command_name.c_str(), command.command_name().c_str());
 
 #if defined(OS_WIN)

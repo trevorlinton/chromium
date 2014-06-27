@@ -5,6 +5,7 @@
 #include "chrome/browser/shell_integration.h"
 
 #include <windows.h>
+#include <shlwapi.h>
 #include <shobjidl.h>
 #include <propkey.h>
 
@@ -48,10 +49,10 @@ const wchar_t kAppListAppNameSuffix[] = L"AppList";
 // Helper function for ShellIntegration::GetAppId to generates profile id
 // from profile path. "profile_id" is composed of sanitized basenames of
 // user data dir and profile dir joined by a ".".
-string16 GetProfileIdFromPath(const base::FilePath& profile_path) {
+base::string16 GetProfileIdFromPath(const base::FilePath& profile_path) {
   // Return empty string if profile_path is empty
   if (profile_path.empty())
-    return string16();
+    return base::string16();
 
   base::FilePath default_user_data_dir;
   // Return empty string if profile_path is in default user data
@@ -59,15 +60,15 @@ string16 GetProfileIdFromPath(const base::FilePath& profile_path) {
   if (chrome::GetDefaultUserDataDirectory(&default_user_data_dir) &&
       profile_path.DirName() == default_user_data_dir &&
       profile_path.BaseName().value() ==
-          ASCIIToUTF16(chrome::kInitialProfile)) {
-    return string16();
+          base::ASCIIToUTF16(chrome::kInitialProfile)) {
+    return base::string16();
   }
 
   // Get joined basenames of user data dir and profile.
-  string16 basenames = profile_path.DirName().BaseName().value() +
+  base::string16 basenames = profile_path.DirName().BaseName().value() +
       L"." + profile_path.BaseName().value();
 
-  string16 profile_id;
+  base::string16 profile_id;
   profile_id.reserve(basenames.size());
 
   // Generate profile_id from sanitized basenames.
@@ -81,17 +82,17 @@ string16 GetProfileIdFromPath(const base::FilePath& profile_path) {
   return profile_id;
 }
 
-string16 GetAppListAppName() {
+base::string16 GetAppListAppName() {
   BrowserDistribution* dist = BrowserDistribution::GetDistribution();
-  string16 app_name(dist->GetBaseAppId());
+  base::string16 app_name(dist->GetBaseAppId());
   app_name.append(kAppListAppNameSuffix);
   return app_name;
 }
 
 // Gets expected app id for given Chrome (based on |command_line| and
 // |is_per_user_install|).
-string16 GetExpectedAppId(const CommandLine& command_line,
-                          bool is_per_user_install) {
+base::string16 GetExpectedAppId(const CommandLine& command_line,
+                                bool is_per_user_install) {
   base::FilePath user_data_dir;
   if (command_line.HasSwitch(switches::kUserDataDir))
     user_data_dir = command_line.GetSwitchValuePath(switches::kUserDataDir);
@@ -106,18 +107,20 @@ string16 GetExpectedAppId(const CommandLine& command_line,
     profile_subdir =
         command_line.GetSwitchValuePath(switches::kProfileDirectory);
   } else {
-    profile_subdir = base::FilePath(ASCIIToUTF16(chrome::kInitialProfile));
+    profile_subdir =
+        base::FilePath(base::ASCIIToUTF16(chrome::kInitialProfile));
   }
   DCHECK(!profile_subdir.empty());
 
   base::FilePath profile_path = user_data_dir.Append(profile_subdir);
-  string16 app_name;
+  base::string16 app_name;
   if (command_line.HasSwitch(switches::kApp)) {
-    app_name = UTF8ToUTF16(web_app::GenerateApplicationNameFromURL(
+    app_name = base::UTF8ToUTF16(web_app::GenerateApplicationNameFromURL(
         GURL(command_line.GetSwitchValueASCII(switches::kApp))));
   } else if (command_line.HasSwitch(switches::kAppId)) {
-    app_name = UTF8ToUTF16(web_app::GenerateApplicationNameFromExtensionId(
-        command_line.GetSwitchValueASCII(switches::kAppId)));
+    app_name = base::UTF8ToUTF16(
+        web_app::GenerateApplicationNameFromExtensionId(
+            command_line.GetSwitchValueASCII(switches::kAppId)));
   } else if (command_line.HasSwitch(switches::kShowAppList)) {
     app_name = GetAppListAppName();
   } else {
@@ -173,6 +176,63 @@ void MigrateChromiumShortcutsCallback() {
                                                      check_dual_mode);
   }
 }
+
+// Windows 8 introduced a new protocol->executable binding system which cannot
+// be retrieved in the HKCR registry subkey method implemented below. We call
+// AssocQueryString with the new Win8-only flag ASSOCF_IS_PROTOCOL instead.
+base::string16 GetAppForProtocolUsingAssocQuery(const GURL& url) {
+  base::string16 url_spec = base::ASCIIToWide(url.possibly_invalid_spec());
+  // Don't attempt to query protocol association on an empty string.
+  if (url_spec.empty())
+    return base::string16();
+
+  // Elide the colon from the end of the spec or Windows will not find it in
+  // the protocol association map.
+  DCHECK(*url_spec.rbegin() == ':');
+  url_spec.erase(url_spec.length() - 1);
+
+  // Query AssocQueryString for a human-readable description of the program
+  // that will be invoked given the provided URL spec. This is used only to
+  // populate the external protocol dialog box the user sees when invoking
+  // an unknown external protocol.
+  wchar_t out_buffer[1024];
+  DWORD buffer_size = arraysize(out_buffer);
+  HRESULT hr = AssocQueryString(ASSOCF_IS_PROTOCOL,
+                                ASSOCSTR_FRIENDLYAPPNAME,
+                                url_spec.c_str(),
+                                NULL,
+                                out_buffer,
+                                &buffer_size);
+  if (FAILED(hr)) {
+    DLOG(WARNING) << "AssocQueryString failed!";
+    return base::string16();
+  }
+  return base::string16(out_buffer);
+}
+
+base::string16 GetAppForProtocolUsingRegistry(const GURL& url) {
+  base::string16 url_spec = base::ASCIIToWide(url.possibly_invalid_spec());
+  const base::string16 cmd_key_path =
+      base::ASCIIToWide(url.scheme() + "\\shell\\open\\command");
+  base::win::RegKey cmd_key(HKEY_CLASSES_ROOT,
+                            cmd_key_path.c_str(),
+                            KEY_READ);
+  size_t split_offset = url_spec.find(L':');
+  if (split_offset == base::string16::npos)
+    return base::string16();
+  const base::string16 parameters = url_spec.substr(split_offset + 1,
+                                                    url_spec.length() - 1);
+  base::string16 application_to_launch;
+  if (cmd_key.ReadValue(NULL, &application_to_launch) == ERROR_SUCCESS) {
+    ReplaceSubstringsAfterOffset(&application_to_launch,
+                                 0,
+                                 L"%1",
+                                 parameters);
+    return application_to_launch;
+  }
+  return base::string16();
+}
+
 
 ShellIntegration::DefaultWebClientState
     GetDefaultWebClientStateFromShellUtilDefaultState(
@@ -232,7 +292,7 @@ bool ShellIntegration::SetAsDefaultProtocolClient(const std::string& protocol) {
     return false;
   }
 
-  string16 wprotocol(UTF8ToUTF16(protocol));
+  base::string16 wprotocol(base::UTF8ToUTF16(protocol));
   BrowserDistribution* dist = BrowserDistribution::GetDistribution();
   if (!ShellUtil::MakeChromeDefaultProtocolClient(dist, chrome_exe.value(),
         wprotocol)) {
@@ -271,7 +331,7 @@ bool ShellIntegration::SetAsDefaultProtocolClientInteractive(
   }
 
   BrowserDistribution* dist = BrowserDistribution::GetDistribution();
-  string16 wprotocol(UTF8ToUTF16(protocol));
+  base::string16 wprotocol(base::UTF8ToUTF16(protocol));
   if (!ShellUtil::ShowMakeChromeDefaultProtocolClientSystemUI(
           dist, chrome_exe.value(), wprotocol)) {
     LOG(ERROR) << "Failed to launch the set-default-client Windows UI.";
@@ -290,14 +350,17 @@ ShellIntegration::DefaultWebClientState ShellIntegration::GetDefaultBrowser() {
 ShellIntegration::DefaultWebClientState
     ShellIntegration::IsDefaultProtocolClient(const std::string& protocol) {
   return GetDefaultWebClientStateFromShellUtilDefaultState(
-      ShellUtil::GetChromeDefaultProtocolClientState(UTF8ToUTF16(protocol)));
+      ShellUtil::GetChromeDefaultProtocolClientState(
+          base::UTF8ToUTF16(protocol)));
 }
 
-std::string ShellIntegration::GetApplicationForProtocol(const GURL& url) {
-  // TODO(calamity): this will be implemented when external_protocol_dialog is
-  // refactored on windows.
-  NOTREACHED();
-  return std::string();
+base::string16 ShellIntegration::GetApplicationNameForProtocol(
+    const GURL& url) {
+  // Windows 8 or above requires a new protocol association query.
+  if (base::win::GetVersion() >= base::win::VERSION_WIN8)
+    return GetAppForProtocolUsingAssocQuery(url);
+  else
+    return GetAppForProtocolUsingRegistry(url);
 }
 
 // There is no reliable way to say which browser is default on a machine (each
@@ -314,36 +377,36 @@ std::string ShellIntegration::GetApplicationForProtocol(const GURL& url) {
 bool ShellIntegration::IsFirefoxDefaultBrowser() {
   bool ff_default = false;
   if (base::win::GetVersion() >= base::win::VERSION_VISTA) {
-    string16 app_cmd;
+    base::string16 app_cmd;
     base::win::RegKey key(HKEY_CURRENT_USER,
                           ShellUtil::kRegVistaUrlPrefs, KEY_READ);
     if (key.Valid() && (key.ReadValue(L"Progid", &app_cmd) == ERROR_SUCCESS) &&
         app_cmd == L"FirefoxURL")
       ff_default = true;
   } else {
-    string16 key_path(L"http");
+    base::string16 key_path(L"http");
     key_path.append(ShellUtil::kRegShellOpen);
     base::win::RegKey key(HKEY_CLASSES_ROOT, key_path.c_str(), KEY_READ);
-    string16 app_cmd;
+    base::string16 app_cmd;
     if (key.Valid() && (key.ReadValue(L"", &app_cmd) == ERROR_SUCCESS) &&
-        string16::npos != StringToLowerASCII(app_cmd).find(L"firefox"))
+        base::string16::npos != StringToLowerASCII(app_cmd).find(L"firefox"))
       ff_default = true;
   }
   return ff_default;
 }
 
-string16 ShellIntegration::GetAppModelIdForProfile(
-    const string16& app_name,
+base::string16 ShellIntegration::GetAppModelIdForProfile(
+    const base::string16& app_name,
     const base::FilePath& profile_path) {
-  std::vector<string16> components;
+  std::vector<base::string16> components;
   components.push_back(app_name);
-  const string16 profile_id(GetProfileIdFromPath(profile_path));
+  const base::string16 profile_id(GetProfileIdFromPath(profile_path));
   if (!profile_id.empty())
     components.push_back(profile_id);
   return ShellUtil::BuildAppModelId(components);
 }
 
-string16 ShellIntegration::GetChromiumModelIdForProfile(
+base::string16 ShellIntegration::GetChromiumModelIdForProfile(
     const base::FilePath& profile_path) {
   BrowserDistribution* dist = BrowserDistribution::GetDistribution();
   base::FilePath chrome_exe;
@@ -357,7 +420,7 @@ string16 ShellIntegration::GetChromiumModelIdForProfile(
       profile_path);
 }
 
-string16 ShellIntegration::GetAppListAppModelIdForProfile(
+base::string16 ShellIntegration::GetAppListAppModelIdForProfile(
     const base::FilePath& profile_path) {
   return ShellIntegration::GetAppModelIdForProfile(
       GetAppListAppName(), profile_path);
@@ -393,7 +456,7 @@ int ShellIntegration::MigrateShortcutsInPathInternal(
 
   int shortcuts_migrated = 0;
   base::FilePath target_path;
-  string16 arguments;
+  base::string16 arguments;
   base::win::ScopedPropVariant propvariant;
   for (base::FilePath shortcut = shortcuts_enum.Next(); !shortcut.empty();
        shortcut = shortcuts_enum.Next()) {
@@ -407,7 +470,7 @@ int ShellIntegration::MigrateShortcutsInPathInternal(
         L"\"%ls\" %ls", target_path.value().c_str(), arguments.c_str())));
 
     // Get the expected AppId for this Chrome shortcut.
-    string16 expected_app_id(
+    base::string16 expected_app_id(
         GetExpectedAppId(command_line, is_per_user_install));
     if (expected_app_id.empty())
       continue;
@@ -444,7 +507,7 @@ int ShellIntegration::MigrateShortcutsInPathInternal(
             updated_properties.set_app_id(expected_app_id);
           break;
         case VT_LPWSTR:
-          if (expected_app_id != string16(propvariant.get().pwszVal))
+          if (expected_app_id != base::string16(propvariant.get().pwszVal))
             updated_properties.set_app_id(expected_app_id);
           break;
         default:
@@ -455,7 +518,7 @@ int ShellIntegration::MigrateShortcutsInPathInternal(
 
     // Only set dual mode if the expected app id is the default app id.
     BrowserDistribution* dist = BrowserDistribution::GetDistribution();
-    string16 default_chromium_model_id(
+    base::string16 default_chromium_model_id(
         ShellUtil::GetBrowserModelId(dist, is_per_user_install));
     if (check_dual_mode && expected_app_id == default_chromium_model_id) {
       propvariant.Reset();
@@ -503,7 +566,7 @@ base::FilePath ShellIntegration::GetStartMenuShortcut(
     base::DIR_START_MENU,
   };
   BrowserDistribution* dist = BrowserDistribution::GetDistribution();
-  string16 shortcut_name(
+  base::string16 shortcut_name(
       dist->GetShortcutName(BrowserDistribution::SHORTCUT_CHROME));
   base::FilePath shortcut;
 

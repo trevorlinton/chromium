@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -29,8 +29,8 @@ class ExtensionProcessResourceProvider
   explicit ExtensionProcessResourceProvider(TaskManager* task_manager);
 
   virtual Resource* GetResource(int origin_pid,
-                                int render_process_host_id,
-                                int routing_id) OVERRIDE;
+                                int child_id,
+                                int route_id) OVERRIDE;
   virtual void StartUpdating() OVERRIDE;
   virtual void StopUpdating() OVERRIDE;
 

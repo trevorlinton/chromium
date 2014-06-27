@@ -38,6 +38,8 @@ void UpdateScreenHandler::DeclareLocalizedValues(
                 IDS_UPDATE_MSG, IDS_SHORT_PRODUCT_NAME);
 
   builder->Add("updateScreenTitle", IDS_UPDATE_SCREEN_TITLE);
+  builder->Add("updateScreenAccessibleTitle",
+               IDS_UPDATE_SCREEN_ACCESSIBLE_TITLE);
   builder->Add("checkingForUpdates", IDS_CHECKING_FOR_UPDATES);
   builder->Add("downloading", IDS_DOWNLOADING);
   builder->Add("downloadingTimeLeftLong", IDS_DOWNLOADING_TIME_LEFT_LONG);
@@ -105,23 +107,23 @@ void UpdateScreenHandler::ShowProgressMessage(bool visible) {
 }
 
 void UpdateScreenHandler::SetProgressMessage(ProgressMessage message) {
-  scoped_ptr<StringValue> progress_message;
+  scoped_ptr<base::StringValue> progress_message;
   switch (message) {
     case PROGRESS_MESSAGE_UPDATE_AVAILABLE:
-      progress_message.reset(Value::CreateStringValue(
+      progress_message.reset(base::Value::CreateStringValue(
           l10n_util::GetStringUTF16(IDS_UPDATE_AVAILABLE)));
       break;
     case PROGRESS_MESSAGE_INSTALLING_UPDATE:
-      progress_message.reset(Value::CreateStringValue(
+      progress_message.reset(base::Value::CreateStringValue(
           l10n_util::GetStringFUTF16(IDS_INSTALLING_UPDATE,
             l10n_util::GetStringUTF16(IDS_SHORT_PRODUCT_NAME))));
       break;
     case PROGRESS_MESSAGE_VERIFYING:
-      progress_message.reset(Value::CreateStringValue(
+      progress_message.reset(base::Value::CreateStringValue(
           l10n_util::GetStringUTF16(IDS_UPDATE_VERIFYING)));
       break;
     case PROGRESS_MESSAGE_FINALIZING:
-      progress_message.reset(Value::CreateStringValue(
+      progress_message.reset(base::Value::CreateStringValue(
           l10n_util::GetStringUTF16(IDS_UPDATE_FINALIZING)));
       break;
     default:

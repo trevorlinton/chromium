@@ -6,8 +6,8 @@
 
 #include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/common/extensions/extension_messages.h"
 #include "content/public/renderer/render_view.h"
+#include "extensions/common/extension_messages.h"
 #include "grit/renderer_resources.h"
 #include "third_party/WebKit/public/web/WebBlob.h"
 #include "v8/include/v8.h"
@@ -31,9 +31,9 @@ void PageCaptureCustomBindings::CreateBlob(
   CHECK(args.Length() == 2);
   CHECK(args[0]->IsString());
   CHECK(args[1]->IsInt32());
-  WebKit::WebString path(UTF8ToUTF16(*v8::String::Utf8Value(args[0])));
-  WebKit::WebBlob blob =
-      WebKit::WebBlob::createFromFile(path, args[1]->Int32Value());
+  blink::WebString path(base::UTF8ToUTF16(*v8::String::Utf8Value(args[0])));
+  blink::WebBlob blob =
+      blink::WebBlob::createFromFile(path, args[1]->Int32Value());
   args.GetReturnValue().Set(blob.toV8Value());
 }
 

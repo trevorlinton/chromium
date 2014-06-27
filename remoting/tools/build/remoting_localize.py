@@ -590,7 +590,7 @@ def ReadMessagesFromFile(file_name):
   return values
 
 
-def WriteIfChanged(file_name, contents, encoding='utf-16'):
+def WriteIfChanged(file_name, contents, encoding):
   """
   Writes the specified contents to the specified file_name
   iff the contents are different than the current contents.
@@ -656,7 +656,7 @@ def Localize(source, locales, options):
   # Load the localized messages.
   message_map = MessageMap(languages, options.locale_dir)
 
-  # Add OFFICIAL_BUILD variable the same way chrome/tools/build/version.py
+  # Add OFFICIAL_BUILD variable the same way build/util/version.py
   # does.
   if os.environ.get('CHROME_BUILD_TYPE') == '_official':
     context['official_build'] = '1'
@@ -743,8 +743,8 @@ def DoMain(argv):
       '-d', '--define', dest='define', action='append', type='string',
       help='define a variable (NAME=VALUE).')
   parser.add_option(
-      '--encoding', dest='encoding', type='string', default='utf-16',
-      help="set the encoding of <output>. 'utf-16' is the default.")
+      '--encoding', dest='encoding', type='string', default='utf-8',
+      help="set the encoding of <output>. 'utf-8' is the default.")
   parser.add_option(
       '--jinja2', dest='jinja2', type='string',
       help="specifies path to the jinja2 library.")

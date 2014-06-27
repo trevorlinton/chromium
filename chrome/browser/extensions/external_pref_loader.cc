@@ -41,7 +41,7 @@ std::set<base::FilePath> GetPrefsCandidateFilesFromFolder(
       false,  // Recursive.
       base::FileEnumerator::FILES);
 #if defined(OS_WIN)
-  base::FilePath::StringType extension = UTF8ToWide(std::string(".json"));
+  base::FilePath::StringType extension = base::UTF8ToWide(std::string(".json"));
 #elif defined(OS_POSIX)
   base::FilePath::StringType extension(".json");
 #endif
@@ -67,23 +67,23 @@ std::set<base::FilePath> GetPrefsCandidateFilesFromFolder(
 // occurs). An empty dictionary is returned in case of failure (e.g. invalid
 // path or json content).
 // Caller takes ownership of the returned dictionary.
-DictionaryValue* ExtractExtensionPrefs(base::ValueSerializer* serializer,
-                                       const base::FilePath& path) {
+base::DictionaryValue* ExtractExtensionPrefs(base::ValueSerializer* serializer,
+                                             const base::FilePath& path) {
   std::string error_msg;
-  Value* extensions = serializer->Deserialize(NULL, &error_msg);
+  base::Value* extensions = serializer->Deserialize(NULL, &error_msg);
   if (!extensions) {
     LOG(WARNING) << "Unable to deserialize json data: " << error_msg
                  << " in file " << path.value() << ".";
-    return new DictionaryValue;
+    return new base::DictionaryValue;
   }
 
-  DictionaryValue* ext_dictionary = NULL;
+  base::DictionaryValue* ext_dictionary = NULL;
   if (extensions->GetAsDictionary(&ext_dictionary))
     return ext_dictionary;
 
   LOG(WARNING) << "Expected a JSON dictionary in file "
                << path.value() << ".";
-  return new DictionaryValue;
+  return new base::DictionaryValue;
 }
 
 }  // namespace
@@ -112,7 +112,7 @@ void ExternalPrefLoader::StartLoading() {
 void ExternalPrefLoader::LoadOnFileThread() {
   CHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE));
 
-  scoped_ptr<DictionaryValue> prefs(new DictionaryValue);
+  scoped_ptr<base::DictionaryValue> prefs(new base::DictionaryValue);
 
   // TODO(skerner): Some values of base_path_id_ will cause
   // PathService::Get() to return false, because the path does
@@ -126,8 +126,8 @@ void ExternalPrefLoader::LoadOnFileThread() {
     if (!prefs->empty())
       LOG(WARNING) << "You are using an old-style extension deployment method "
                       "(external_extensions.json), which will soon be "
-                      "deprecated. (see http://code.google.com/chrome/"
-                      "extensions/external_extensions.html )";
+                      "deprecated. (see http://developer.chrome.com/"
+                      "extensions/external_extensions.html)";
 
     ReadStandaloneExtensionPrefFiles(prefs.get());
   }
@@ -150,7 +150,8 @@ void ExternalPrefLoader::LoadOnFileThread() {
       base::Bind(&ExternalPrefLoader::LoadFinished, this));
 }
 
-void ExternalPrefLoader::ReadExternalExtensionPrefFile(DictionaryValue* prefs) {
+void ExternalPrefLoader::ReadExternalExtensionPrefFile(
+    base::DictionaryValue* prefs) {
   CHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE));
   CHECK(NULL != prefs);
 
@@ -163,7 +164,7 @@ void ExternalPrefLoader::ReadExternalExtensionPrefFile(DictionaryValue* prefs) {
 
   if (IsOptionSet(ENSURE_PATH_CONTROLLED_BY_ADMIN)) {
 #if defined(OS_MACOSX)
-    if (!file_util::VerifyPathControlledByAdmin(json_file)) {
+    if (!base::VerifyPathControlledByAdmin(json_file)) {
       LOG(ERROR) << "Can not read external extensions source.  The file "
                  << json_file.value() << " and every directory in its path, "
                  << "must be owned by root, have group \"admin\", and not be "
@@ -174,21 +175,21 @@ void ExternalPrefLoader::ReadExternalExtensionPrefFile(DictionaryValue* prefs) {
     }
 #else
     // The only platform that uses this check is Mac OS.  If you add one,
-    // you need to implement file_util::VerifyPathControlledByAdmin() for
+    // you need to implement base::VerifyPathControlledByAdmin() for
     // that platform.
     NOTREACHED();
 #endif  // defined(OS_MACOSX)
   }
 
   JSONFileValueSerializer serializer(json_file);
-  scoped_ptr<DictionaryValue> ext_prefs(
+  scoped_ptr<base::DictionaryValue> ext_prefs(
       ExtractExtensionPrefs(&serializer, json_file));
   if (ext_prefs)
     prefs->MergeDictionary(ext_prefs.get());
 }
 
 void ExternalPrefLoader::ReadStandaloneExtensionPrefFiles(
-    DictionaryValue* prefs) {
+    base::DictionaryValue* prefs) {
   CHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE));
   CHECK(NULL != prefs);
 
@@ -209,7 +210,7 @@ void ExternalPrefLoader::ReadStandaloneExtensionPrefFiles(
 
     std::string id =
 #if defined(OS_WIN)
-        WideToASCII(
+        base::UTF16ToASCII(
             extension_candidate_path.RemoveExtension().BaseName().value());
 #elif defined(OS_POSIX)
         extension_candidate_path.RemoveExtension().BaseName().value().c_str();
@@ -219,7 +220,7 @@ void ExternalPrefLoader::ReadStandaloneExtensionPrefFiles(
              << extension_candidate_path.LossyDisplayName().c_str();
 
     JSONFileValueSerializer serializer(extension_candidate_path);
-    scoped_ptr<DictionaryValue> ext_prefs(
+    scoped_ptr<base::DictionaryValue> ext_prefs(
         ExtractExtensionPrefs(&serializer, extension_candidate_path));
     if (ext_prefs) {
       DVLOG(1) << "Adding extension with id: " << id;
@@ -250,4 +251,4 @@ const base::FilePath ExternalTestingLoader::GetBaseCrxFilePath() {
   return fake_base_path_;
 }
 
-}  // extensions
+}  // namespace extensions

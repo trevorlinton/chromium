@@ -36,7 +36,7 @@
 #include "chrome/installer/util/google_update_settings.h"
 #else
 namespace GoogleUpdateSettings {
-static bool GetLanguage(string16* language) {
+static bool GetLanguage(base::string16* language) {
   // TODO(thakis): Implement.
   NOTIMPLEMENTED();
   return false;
@@ -44,7 +44,7 @@ static bool GetLanguage(string16* language) {
 
 // The referral program is defunct and not used. No need to implement these
 // functions on non-Win platforms.
-static bool GetReferral(string16* referral) {
+static bool GetReferral(base::string16* referral) {
   return true;
 }
 static bool ClearReferral() {
@@ -80,9 +80,11 @@ void RecordProductEvents(bool first_run,
   rlz_lib::RecordProductEvent(rlz_lib::CHROME,
                               RLZTracker::CHROME_OMNIBOX,
                               rlz_lib::INSTALL);
+#if !defined(OS_IOS)
   rlz_lib::RecordProductEvent(rlz_lib::CHROME,
                               RLZTracker::CHROME_HOME_PAGE,
                               rlz_lib::INSTALL);
+#endif  // !defined(OS_IOS)
 
   if (!already_ran) {
     // Do the initial event recording if is the first run or if we have an
@@ -100,6 +102,7 @@ void RecordProductEvents(bool first_run,
                                   rlz_lib::SET_TO_GOOGLE);
     }
 
+#if !defined(OS_IOS)
     char homepage_rlz[rlz_lib::kMaxRlzLength + 1];
     if (!rlz_lib::GetAccessPointRlz(RLZTracker::CHROME_HOME_PAGE, homepage_rlz,
                                     rlz_lib::kMaxRlzLength)) {
@@ -112,6 +115,7 @@ void RecordProductEvents(bool first_run,
                                   RLZTracker::CHROME_HOME_PAGE,
                                   rlz_lib::SET_TO_GOOGLE);
     }
+#endif  // !defined(OS_IOS)
   }
 
   // Record first user interaction with the omnibox. We call this all the
@@ -122,6 +126,7 @@ void RecordProductEvents(bool first_run,
                                 rlz_lib::FIRST_SEARCH);
   }
 
+#if !defined(OS_IOS)
   // Record first user interaction with the home page. We call this all the
   // time but the rlz lib should ingore all but the first one.
   if (homepage_used || is_google_in_startpages) {
@@ -129,16 +134,19 @@ void RecordProductEvents(bool first_run,
                                 RLZTracker::CHROME_HOME_PAGE,
                                 rlz_lib::FIRST_SEARCH);
   }
+#endif  // !defined(OS_IOS)
 }
 
 bool SendFinancialPing(const std::string& brand,
-                       const string16& lang,
-                       const string16& referral) {
+                       const base::string16& lang,
+                       const base::string16& referral) {
   rlz_lib::AccessPoint points[] = {RLZTracker::CHROME_OMNIBOX,
+#if !defined(OS_IOS)
                                    RLZTracker::CHROME_HOME_PAGE,
+#endif
                                    rlz_lib::NO_ACCESS_POINT};
-  std::string lang_ascii(UTF16ToASCII(lang));
-  std::string referral_ascii(UTF16ToASCII(referral));
+  std::string lang_ascii(base::UTF16ToASCII(lang));
+  std::string referral_ascii(base::UTF16ToASCII(referral));
   std::string product_signature;
 #if defined(OS_CHROMEOS)
   product_signature = "chromeos";
@@ -164,9 +172,6 @@ const rlz_lib::AccessPoint RLZTracker::CHROME_HOME_PAGE =
 // static
 const rlz_lib::AccessPoint RLZTracker::CHROME_OMNIBOX =
     rlz_lib::CHROME_IOS_OMNIBOX;
-// static
-const rlz_lib::AccessPoint RLZTracker::CHROME_HOME_PAGE =
-    rlz_lib::CHROME_IOS_HOME_PAGE;
 #elif defined(OS_MACOSX)
 // static
 const rlz_lib::AccessPoint RLZTracker::CHROME_OMNIBOX =
@@ -257,10 +262,12 @@ bool RLZTracker::InitRlzFromProfileDelayed(Profile* profile,
     return false;
   }
 
+#if !defined(OS_IOS)
   // Prime the RLZ cache for the home page access point so that its avaiable
   // for the startup page if needed (i.e., when the startup page is set to
   // the home page).
   GetAccessPointRlz(CHROME_HOME_PAGE, NULL);
+#endif  // !defined(OS_IOS)
 
   return true;
 }
@@ -289,10 +296,12 @@ bool RLZTracker::Init(bool first_run,
     registrar_.Add(this, chrome::NOTIFICATION_OMNIBOX_OPENED_URL,
                    content::NotificationService::AllSources());
 
+#if !defined(OS_IOS)
     // Register for notifications from navigations, to see if the user has used
     // the home page.
     registrar_.Add(this, content::NOTIFICATION_NAV_ENTRY_PENDING,
                    content::NotificationService::AllSources());
+#endif  // !defined(OS_IOS)
   }
   google_util::GetReactivationBrand(&reactivation_brand_);
 
@@ -356,11 +365,11 @@ void RLZTracker::ScheduleFinancialPing() {
 
 void RLZTracker::PingNowImpl() {
   TRACE_EVENT0("RLZ", "RLZTracker::PingNowImpl");
-  string16 lang;
+  base::string16 lang;
   GoogleUpdateSettings::GetLanguage(&lang);
   if (lang.empty())
-    lang = ASCIIToUTF16("en");
-  string16 referral;
+    lang = base::ASCIIToUTF16("en");
+  base::string16 referral;
   GoogleUpdateSettings::GetReferral(&referral);
 
   if (!IsBrandOrganic(brand_) && SendFinancialPing(brand_, lang, referral)) {
@@ -373,7 +382,9 @@ void RLZTracker::PingNowImpl() {
 
     // Prime the RLZ cache for the access points we are interested in.
     GetAccessPointRlz(RLZTracker::CHROME_OMNIBOX, NULL);
+#if !defined(OS_IOS)
     GetAccessPointRlz(RLZTracker::CHROME_HOME_PAGE, NULL);
+#endif  // !defined(OS_IOS)
   }
 
   if (!IsBrandOrganic(reactivation_brand_)) {
@@ -383,8 +394,8 @@ void RLZTracker::PingNowImpl() {
 }
 
 bool RLZTracker::SendFinancialPing(const std::string& brand,
-                                   const string16& lang,
-                                   const string16& referral) {
+                                   const base::string16& lang,
+                                   const base::string16& referral) {
   return ::SendFinancialPing(brand, lang, referral);
 }
 
@@ -397,6 +408,7 @@ void RLZTracker::Observe(int type,
       registrar_.Remove(this, chrome::NOTIFICATION_OMNIBOX_OPENED_URL,
                         content::NotificationService::AllSources());
       break;
+#if !defined(OS_IOS)
     case content::NOTIFICATION_NAV_ENTRY_PENDING: {
       const NavigationEntry* entry =
           content::Details<content::NavigationEntry>(details).ptr();
@@ -409,6 +421,7 @@ void RLZTracker::Observe(int type,
       }
       break;
     }
+#endif  // !defined(OS_IOS)
     default:
       NOTREACHED();
       break;
@@ -463,8 +476,13 @@ void RLZTracker::RecordFirstSearch(rlz_lib::AccessPoint point) {
   if (ScheduleRecordFirstSearch(point))
     return;
 
+#if !defined(OS_IOS)
   bool* record_used = point == CHROME_OMNIBOX ?
       &omnibox_used_ : &homepage_used_;
+#else
+  DCHECK_EQ(CHROME_OMNIBOX, point);
+  bool* record_used = &omnibox_used_;
+#endif
 
   // Try to record event now, else set the flag to try later when we
   // attempt the ping.
@@ -490,11 +508,11 @@ bool RLZTracker::ScheduleRecordFirstSearch(rlz_lib::AccessPoint point) {
 std::string RLZTracker::GetAccessPointHttpHeader(rlz_lib::AccessPoint point) {
   TRACE_EVENT0("RLZ", "RLZTracker::GetAccessPointHttpHeader");
   std::string extra_headers;
-  string16 rlz_string;
+  base::string16 rlz_string;
   RLZTracker::GetAccessPointRlz(point, &rlz_string);
   if (!rlz_string.empty()) {
     net::HttpUtil::AppendHeaderIfMissing("X-Rlz-String",
-                                         UTF16ToUTF8(rlz_string),
+                                         base::UTF16ToUTF8(rlz_string),
                                          &extra_headers);
   }
 
@@ -504,7 +522,7 @@ std::string RLZTracker::GetAccessPointHttpHeader(rlz_lib::AccessPoint point) {
 // GetAccessPointRlz() caches RLZ strings for all access points. If we had
 // a successful ping, then we update the cached value.
 bool RLZTracker::GetAccessPointRlz(rlz_lib::AccessPoint point,
-                                   string16* rlz) {
+                                   base::string16* rlz) {
   TRACE_EVENT0("RLZ", "RLZTracker::GetAccessPointRlz");
   return GetInstance()->GetAccessPointRlzImpl(point, rlz);
 }
@@ -512,7 +530,7 @@ bool RLZTracker::GetAccessPointRlz(rlz_lib::AccessPoint point,
 // GetAccessPointRlz() caches RLZ strings for all access points. If we had
 // a successful ping, then we update the cached value.
 bool RLZTracker::GetAccessPointRlzImpl(rlz_lib::AccessPoint point,
-                                       string16* rlz) {
+                                       base::string16* rlz) {
   // If the RLZ string for the specified access point is already cached,
   // simply return its value.
   {
@@ -533,7 +551,7 @@ bool RLZTracker::GetAccessPointRlzImpl(rlz_lib::AccessPoint point,
   if (!rlz_lib::GetAccessPointRlz(point, str_rlz, rlz_lib::kMaxRlzLength))
     return false;
 
-  string16 rlz_local(ASCIIToUTF16(std::string(str_rlz)));
+  base::string16 rlz_local(base::ASCIIToUTF16(std::string(str_rlz)));
   if (rlz)
     *rlz = rlz_local;
 
@@ -546,7 +564,7 @@ bool RLZTracker::ScheduleGetAccessPointRlz(rlz_lib::AccessPoint point) {
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI))
     return false;
 
-  string16* not_used = NULL;
+  base::string16* not_used = NULL;
   BrowserThread::GetBlockingPool()->PostSequencedWorkerTaskWithShutdownBehavior(
       worker_pool_token_,
       FROM_HERE,

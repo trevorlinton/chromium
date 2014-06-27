@@ -5,23 +5,24 @@
 
 import json
 import os
-import sys
 import unittest
 
+from extensions_paths import SERVER2
 from fake_url_fetcher import FakeUrlFetcher
 from file_system import FileSystemError, StatInfo
-from future import Future
 from subversion_file_system import SubversionFileSystem
-import test_util
+from test_util import ReadFile, Server2Path
 
-_SHARED_FILE_SYSTEM_TEST_DATA = os.path.join(
-    sys.path[0], 'test_data', 'file_system')
-_SUBVERSION_FILE_SYSTEM_TEST_DATA = os.path.join(
-    sys.path[0], 'test_data', 'subversion_file_system')
+
+_SHARED_FILE_SYSTEM_TEST_DATA = Server2Path('test_data', 'file_system')
+_SUBVERSION_FILE_SYSTEM_TEST_DATA = Server2Path(
+    'test_data', 'subversion_file_system')
+
 
 def _CreateSubversionFileSystem(path):
   fetcher = FakeUrlFetcher(path)
   return SubversionFileSystem(fetcher, fetcher, path), fetcher
+
 
 class SubversionFileSystemTest(unittest.TestCase):
   def testReadFiles(self):
@@ -62,8 +63,8 @@ class SubversionFileSystemTest(unittest.TestCase):
     self.assertTrue(*fetcher.CheckAndReset(sync_count=1))
     expected = StatInfo(
       '151113',
-      child_versions=json.loads(test_util.ReadFile('%s/stat_result.json' %
-          _SHARED_FILE_SYSTEM_TEST_DATA)))
+      child_versions=json.loads(ReadFile(
+          SERVER2, 'test_data', 'file_system', 'stat_result.json')))
     self.assertEqual(expected, stat_info)
 
   def testFileStat(self):
@@ -104,13 +105,13 @@ class SubversionFileSystemTest(unittest.TestCase):
     self.assertEqual('dir/file?p=42', file_fetcher.last_fetched)
     # Stat() will always stat directories.
     self.assertRaises(FileSystemError, svn_file_system.Stat, 'dir/file')
-    self.assertEqual('dir/?pathrev=42', stat_fetcher.last_fetched)
+    self.assertEqual('dir?pathrev=42', stat_fetcher.last_fetched)
 
     self.assertRaises(FileSystemError,
                       svn_file_system.ReadSingle('dir/').Get)
     self.assertEqual('dir/?p=42', file_fetcher.last_fetched)
     self.assertRaises(FileSystemError, svn_file_system.Stat, 'dir/')
-    self.assertEqual('dir/?pathrev=42', stat_fetcher.last_fetched)
+    self.assertEqual('dir?pathrev=42', stat_fetcher.last_fetched)
 
   def testDirectoryVersionOnDeletion(self):
     '''Tests the case when the most recent operation on a directory is the

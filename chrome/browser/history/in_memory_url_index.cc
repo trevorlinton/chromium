@@ -39,10 +39,10 @@ void InitializeSchemeWhitelist(std::set<std::string>* whitelist) {
   DCHECK(whitelist);
   if (!whitelist->empty())
     return;  // Nothing to do, already initialized.
-  whitelist->insert(std::string(chrome::kAboutScheme));
-  whitelist->insert(std::string(chrome::kChromeUIScheme));
-  whitelist->insert(std::string(chrome::kFileScheme));
-  whitelist->insert(std::string(chrome::kFtpScheme));
+  whitelist->insert(std::string(content::kAboutScheme));
+  whitelist->insert(std::string(content::kChromeUIScheme));
+  whitelist->insert(std::string(content::kFileScheme));
+  whitelist->insert(std::string(content::kFtpScheme));
   whitelist->insert(std::string(content::kHttpScheme));
   whitelist->insert(std::string(content::kHttpsScheme));
   whitelist->insert(std::string(content::kMailToScheme));
@@ -160,7 +160,7 @@ bool InMemoryURLIndex::GetCacheFilePath(base::FilePath* file_path) {
 // Querying --------------------------------------------------------------------
 
 ScoredHistoryMatches InMemoryURLIndex::HistoryItemsForTerms(
-    const string16& term_string,
+    const base::string16& term_string,
     size_t cursor_position) {
   return private_data_->HistoryItemsForTerms(
       term_string,

@@ -632,7 +632,6 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, MAYBE_TestProgressNotification) {
 #else
 #define MAYBE_TestPartialUpdate DISABLED_TestPartialUpdate
 #endif
-
 IN_PROC_BROWSER_TEST_F(NotificationsApiTest, MAYBE_TestPartialUpdate) {
   scoped_refptr<Extension> empty_extension(utils::CreateEmptyExtension());
 
@@ -721,8 +720,8 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, MAYBE_TestPartialUpdate) {
       g_browser_process->message_center()->GetVisibleNotifications();
   ASSERT_EQ(1u, notifications.size());
   message_center::Notification* notification = *(notifications.begin());
-  EXPECT_EQ(ASCIIToUTF16(kNewTitle), notification->title());
-  EXPECT_EQ(ASCIIToUTF16(kNewMessage), notification->message());
+  EXPECT_EQ(base::ASCIIToUTF16(kNewTitle), notification->title());
+  EXPECT_EQ(base::ASCIIToUTF16(kNewMessage), notification->message());
   EXPECT_EQ(kNewPriority, notification->priority());
   EXPECT_EQ(0u, notification->buttons().size());
 }
@@ -770,7 +769,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, MAYBE_TestGetPermissionLevel) {
     message_center::NotifierId notifier_id(
         message_center::NotifierId::APPLICATION,
         empty_extension->id());
-    message_center::Notifier notifier(notifier_id, string16(), true);
+    message_center::Notifier notifier(notifier_id, base::string16(), true);
     g_browser_process->message_center()->GetNotifierSettingsProvider()->
         SetNotifierEnabled(notifier, false);
 
@@ -807,7 +806,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest,
     message_center::NotifierId notifier_id(
         message_center::NotifierId::APPLICATION,
         extension->id());
-    message_center::Notifier notifier(notifier_id, string16(), true);
+    message_center::Notifier notifier(notifier_id, base::string16(), true);
     g_browser_process->message_center()->GetNotifierSettingsProvider()->
         SetNotifierEnabled(notifier, false);
 
@@ -821,7 +820,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest,
     message_center::NotifierId notifier_id(
         message_center::NotifierId::APPLICATION,
         extension->id());
-    message_center::Notifier notifier(notifier_id, string16(), false);
+    message_center::Notifier notifier(notifier_id, base::string16(), false);
     g_browser_process->message_center()->GetNotifierSettingsProvider()->
         SetNotifierEnabled(notifier, true);
 

@@ -42,10 +42,10 @@ void BackgroundModeManager::DisplayAppInstalledNotification(
       l10n_util::GetStringUTF16(IDS_BACKGROUND_APP_INSTALLED_BALLOON_TITLE),
       l10n_util::GetStringFUTF16(
           IDS_BACKGROUND_APP_INSTALLED_BALLOON_BODY,
-          UTF8ToUTF16(extension->name()),
+          base::UTF8ToUTF16(extension->name()),
           l10n_util::GetStringUTF16(IDS_PRODUCT_NAME)));
 }
 
-string16 BackgroundModeManager::GetPreferencesMenuLabel() {
+base::string16 BackgroundModeManager::GetPreferencesMenuLabel() {
   return l10n_util::GetStringUTF16(IDS_OPTIONS);
 }

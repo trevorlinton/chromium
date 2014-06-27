@@ -5,10 +5,13 @@
 #include "base/memory/scoped_ptr.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/event.h"
+#include "ui/events/event_utils.h"
+#include "ui/events/keycodes/dom4/keycode_converter.h"
+#include "ui/events/test/events_test_utils.h"
 
 #if defined(USE_X11)
 #include <X11/Xlib.h>
-#include "ui/events/x/events_x_utils.h"
+#include "ui/events/test/events_test_utils_x11.h"
 #include "ui/gfx/x/x11_types.h"
 #endif
 
@@ -25,9 +28,9 @@ TEST(EventTest, NativeEvent) {
   KeyEvent keyev(native_event, false);
   EXPECT_TRUE(keyev.HasNativeEvent());
 #elif defined(USE_X11)
-  scoped_ptr<XEvent> native_event(new XEvent);
-  InitXKeyEventForTesting(ET_KEY_RELEASED, VKEY_A, 0, native_event.get());
-  KeyEvent keyev(native_event.get(), false);
+  ScopedXI2Event event;
+  event.InitKeyEvent(ET_KEY_RELEASED, VKEY_A, 0);
+  KeyEvent keyev(event, false);
   EXPECT_TRUE(keyev.HasNativeEvent());
 #endif
 }
@@ -42,22 +45,20 @@ TEST(EventTest, GetCharacter) {
 
 #if defined(USE_X11)
   // For X11, test the functions with native_event() as well. crbug.com/107837
-  scoped_ptr<XEvent> native_event(new XEvent);
-
-  InitXKeyEventForTesting(ET_KEY_PRESSED, VKEY_RETURN, EF_CONTROL_DOWN,
-                          native_event.get());
-  KeyEvent keyev3(native_event.get(), false);
+  ScopedXI2Event event;
+  event.InitKeyEvent(ET_KEY_PRESSED, VKEY_RETURN, EF_CONTROL_DOWN);
+  KeyEvent keyev3(event, false);
   EXPECT_EQ(10, keyev3.GetCharacter());
 
-  InitXKeyEventForTesting(ET_KEY_PRESSED, VKEY_RETURN, 0, native_event.get());
-  KeyEvent keyev4(native_event.get(), false);
+  event.InitKeyEvent(ET_KEY_PRESSED, VKEY_RETURN, 0);
+  KeyEvent keyev4(event, false);
   EXPECT_EQ(13, keyev4.GetCharacter());
 #endif
 }
 
 TEST(EventTest, ClickCount) {
   const gfx::Point origin(0, 0);
-  MouseEvent mouseev(ET_MOUSE_PRESSED, origin, origin, 0);
+  MouseEvent mouseev(ET_MOUSE_PRESSED, origin, origin, 0, 0);
   for (int i = 1; i <=3 ; ++i) {
     mouseev.SetClickCount(i);
     EXPECT_EQ(i, mouseev.GetClickCount());
@@ -66,10 +67,10 @@ TEST(EventTest, ClickCount) {
 
 TEST(EventTest, Repeated) {
   const gfx::Point origin(0, 0);
-  MouseEvent mouse_ev1(ET_MOUSE_PRESSED, origin, origin, 0);
-  MouseEvent mouse_ev2(ET_MOUSE_PRESSED, origin, origin, 0);
-  MouseEvent::TestApi test_ev1(&mouse_ev1);
-  MouseEvent::TestApi test_ev2(&mouse_ev2);
+  MouseEvent mouse_ev1(ET_MOUSE_PRESSED, origin, origin, 0, 0);
+  MouseEvent mouse_ev2(ET_MOUSE_PRESSED, origin, origin, 0, 0);
+  LocatedEventTestApi test_ev1(&mouse_ev1);
+  LocatedEventTestApi test_ev2(&mouse_ev2);
 
   base::TimeDelta start = base::TimeDelta::FromMilliseconds(0);
   base::TimeDelta soon = start + base::TimeDelta::FromMilliseconds(1);
@@ -194,46 +195,35 @@ TEST(EventTest, KeyEventDirectUnicode) {
 TEST(EventTest, NormalizeKeyEventFlags) {
 #if defined(USE_X11)
   // Normalize flags when KeyEvent is created from XEvent.
+  ScopedXI2Event event;
   {
-    scoped_ptr<XEvent> native_event(new XEvent);
-    InitXKeyEventForTesting(ET_KEY_PRESSED, VKEY_SHIFT, EF_SHIFT_DOWN,
-                            native_event.get());
-    KeyEvent keyev(native_event.get(), false);
+    event.InitKeyEvent(ET_KEY_PRESSED, VKEY_SHIFT, EF_SHIFT_DOWN);
+    KeyEvent keyev(event, false);
     EXPECT_EQ(EF_SHIFT_DOWN, keyev.flags());
   }
   {
-    scoped_ptr<XEvent> native_event(new XEvent);
-    InitXKeyEventForTesting(ET_KEY_RELEASED, VKEY_SHIFT, EF_SHIFT_DOWN,
-                            native_event.get());
-    KeyEvent keyev(native_event.get(), false);
+    event.InitKeyEvent(ET_KEY_RELEASED, VKEY_SHIFT, EF_SHIFT_DOWN);
+    KeyEvent keyev(event, false);
     EXPECT_EQ(EF_NONE, keyev.flags());
   }
   {
-    scoped_ptr<XEvent> native_event(new XEvent);
-    InitXKeyEventForTesting(ET_KEY_PRESSED, VKEY_CONTROL, EF_CONTROL_DOWN,
-                            native_event.get());
-    KeyEvent keyev(native_event.get(), false);
+    event.InitKeyEvent(ET_KEY_PRESSED, VKEY_CONTROL, EF_CONTROL_DOWN);
+    KeyEvent keyev(event, false);
     EXPECT_EQ(EF_CONTROL_DOWN, keyev.flags());
   }
   {
-    scoped_ptr<XEvent> native_event(new XEvent);
-    InitXKeyEventForTesting(ET_KEY_RELEASED, VKEY_CONTROL, EF_CONTROL_DOWN,
-                            native_event.get());
-    KeyEvent keyev(native_event.get(), false);
+    event.InitKeyEvent(ET_KEY_RELEASED, VKEY_CONTROL, EF_CONTROL_DOWN);
+    KeyEvent keyev(event, false);
     EXPECT_EQ(EF_NONE, keyev.flags());
   }
   {
-    scoped_ptr<XEvent> native_event(new XEvent);
-    InitXKeyEventForTesting(ET_KEY_PRESSED, VKEY_MENU,  EF_ALT_DOWN,
-                            native_event.get());
-    KeyEvent keyev(native_event.get(), false);
+    event.InitKeyEvent(ET_KEY_PRESSED, VKEY_MENU,  EF_ALT_DOWN);
+    KeyEvent keyev(event, false);
     EXPECT_EQ(EF_ALT_DOWN, keyev.flags());
   }
   {
-    scoped_ptr<XEvent> native_event(new XEvent);
-    InitXKeyEventForTesting(ET_KEY_RELEASED, VKEY_MENU, EF_ALT_DOWN,
-                            native_event.get());
-    KeyEvent keyev(native_event.get(), false);
+    event.InitKeyEvent(ET_KEY_RELEASED, VKEY_MENU, EF_ALT_DOWN);
+    KeyEvent keyev(event, false);
     EXPECT_EQ(EF_NONE, keyev.flags());
   }
 #endif
@@ -274,9 +264,71 @@ TEST(EventTest, NormalizeKeyEventFlags) {
 
 TEST(EventTest, KeyEventCopy) {
   KeyEvent key(ET_KEY_PRESSED, VKEY_A, EF_NONE, false);
-  scoped_ptr<KeyEvent> copied_key(key.Copy());
+  scoped_ptr<KeyEvent> copied_key(new KeyEvent(key));
   EXPECT_EQ(copied_key->type(), key.type());
   EXPECT_EQ(copied_key->key_code(), key.key_code());
+}
+
+TEST(EventTest, KeyEventCode) {
+  KeycodeConverter* conv = KeycodeConverter::GetInstance();
+
+  const char kCodeForSpace[] = "Space";
+  const uint16 kNativeCodeSpace = conv->CodeToNativeKeycode(kCodeForSpace);
+  ASSERT_NE(conv->InvalidNativeKeycode(), kNativeCodeSpace);
+
+  {
+    KeyEvent key(ET_KEY_PRESSED, VKEY_SPACE, kCodeForSpace, EF_NONE, false);
+    EXPECT_EQ(kCodeForSpace, key.code());
+  }
+  {
+    // Regardless the KeyEvent.key_code (VKEY_RETURN), code should be
+    // the specified value.
+    KeyEvent key(ET_KEY_PRESSED, VKEY_RETURN, kCodeForSpace, EF_NONE, false);
+    EXPECT_EQ(kCodeForSpace, key.code());
+  }
+  {
+    // If the synthetic event is initialized without code, it returns
+    // an empty string.
+    // TODO(komatsu): Fill a fallback value assuming the US keyboard layout.
+    KeyEvent key(ET_KEY_PRESSED, VKEY_SPACE, EF_NONE, false);
+    EXPECT_TRUE(key.code().empty());
+  }
+#if defined(USE_X11)
+  {
+    // KeyEvent converts from the native keycode (XKB) to the code.
+    ScopedXI2Event xevent;
+    xevent.InitKeyEvent(ET_KEY_PRESSED, VKEY_SPACE, kNativeCodeSpace);
+    KeyEvent key(xevent, false);
+    EXPECT_EQ(kCodeForSpace, key.code());
+  }
+#endif  // USE_X11
+#if defined(OS_WIN)
+  {
+    // Test a non extended key.
+    ASSERT_EQ((kNativeCodeSpace & 0xFF), kNativeCodeSpace);
+
+    const LPARAM lParam = GetLParamFromScanCode(kNativeCodeSpace);
+    MSG native_event = { NULL, WM_KEYUP, VKEY_SPACE, lParam };
+    KeyEvent key(native_event, false);
+
+    // KeyEvent converts from the native keycode (scan code) to the code.
+    EXPECT_EQ(kCodeForSpace, key.code());
+  }
+  {
+    const char kCodeForHome[]  = "Home";
+    const uint16 kNativeCodeHome  = 0xe047;
+
+    // 'Home' is an extended key with 0xe000 bits.
+    ASSERT_NE((kNativeCodeHome & 0xFF), kNativeCodeHome);
+    const LPARAM lParam = GetLParamFromScanCode(kNativeCodeHome);
+
+    MSG native_event = { NULL, WM_KEYUP, VKEY_HOME, lParam };
+    KeyEvent key(native_event, false);
+
+    // KeyEvent converts from the native keycode (scan code) to the code.
+    EXPECT_EQ(kCodeForHome, key.code());
+  }
+#endif  // OS_WIN
 }
 
 }  // namespace ui

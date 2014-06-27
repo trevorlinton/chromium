@@ -14,6 +14,7 @@
 #include "chrome/browser/web_resource/resource_request_allowed_notifier_test_util.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
+#include "chrome/test/base/testing_pref_service_syncable.h"
 #include "components/variations/proto/study.pb.h"
 #include "components/variations/proto/variations_seed.pb.h"
 #include "content/public/test/test_browser_thread.h"
@@ -39,7 +40,9 @@ class TestVariationsService : public VariationsService {
   TestVariationsService(TestRequestAllowedNotifier* test_notifier,
                         PrefService* local_state)
       : VariationsService(test_notifier, local_state),
-        fetch_attempted_(false) {
+        intercepts_fetch_(true),
+        fetch_attempted_(false),
+        seed_stored_(false) {
     // Set this so StartRepeatedVariationsSeedFetch can be called in tests.
     SetCreateTrialsFromSeedCalledForTesting(true);
   }
@@ -47,15 +50,34 @@ class TestVariationsService : public VariationsService {
   virtual ~TestVariationsService() {
   }
 
+  void set_intercepts_fetch(bool value) {
+    intercepts_fetch_ = value;
+  }
+
   bool fetch_attempted() const { return fetch_attempted_; }
 
- protected:
+  bool seed_stored() const { return seed_stored_; }
+
   virtual void DoActualFetch() OVERRIDE {
-    fetch_attempted_ = true;
+    if (intercepts_fetch_) {
+      fetch_attempted_ = true;
+      return;
+    }
+
+    VariationsService::DoActualFetch();
+  }
+
+ protected:
+  virtual void StoreSeed(const std::string& seed_data,
+                         const std::string& seed_signature,
+                         const base::Time& date_fetched) OVERRIDE {
+    seed_stored_ = true;
   }
 
  private:
+  bool intercepts_fetch_;
   bool fetch_attempted_;
+  bool seed_stored_;
 
   DISALLOW_COPY_AND_ASSIGN(TestVariationsService);
 };
@@ -81,18 +103,6 @@ std::string SerializeSeed(const VariationsSeed& seed) {
   std::string serialized_seed;
   seed.SerializeToString(&serialized_seed);
   return serialized_seed;
-}
-
-// Serializes |seed| to base64-encoded protobuf binary format.
-std::string SerializeSeedBase64(const VariationsSeed& seed, std::string* hash) {
-  std::string serialized_seed = SerializeSeed(seed);
-  if (hash != NULL) {
-    std::string sha1 = base::SHA1HashString(serialized_seed);
-    *hash = base::HexEncode(sha1.data(), sha1.size());
-  }
-  std::string base64_serialized_seed;
-  EXPECT_TRUE(base::Base64Encode(serialized_seed, &base64_serialized_seed));
-  return base64_serialized_seed;
 }
 
 // Simulates a variations service response by setting a date header and the
@@ -123,8 +133,14 @@ class VariationsServiceTest : public ::testing::Test {
 
 #if !defined(OS_CHROMEOS)
 TEST_F(VariationsServiceTest, VariationsURLIsValid) {
+#if defined(OS_ANDROID)
+  // Android uses profile prefs as the PrefService to generate the URL.
+  TestingPrefServiceSyncable prefs;
+  VariationsService::RegisterProfilePrefs(prefs.registry());
+#else
   TestingPrefServiceSimple prefs;
   VariationsService::RegisterPrefs(prefs.registry());
+#endif
   const std::string default_variations_url =
       VariationsService::GetDefaultVariationsServerURLForTesting();
 
@@ -205,93 +221,6 @@ TEST_F(VariationsServiceTest, VariationsURLHasOSNameParam) {
   EXPECT_FALSE(value.empty());
 }
 
-TEST_F(VariationsServiceTest, LoadSeed) {
-  // Store good seed data to test if loading from prefs works.
-  const VariationsSeed seed = CreateTestSeed();
-  std::string seed_hash;
-  const std::string base64_seed = SerializeSeedBase64(seed, &seed_hash);
-
-  TestingPrefServiceSimple prefs;
-  VariationsService::RegisterPrefs(prefs.registry());
-  prefs.SetString(prefs::kVariationsSeed, base64_seed);
-
-  TestVariationsService variations_service(new TestRequestAllowedNotifier,
-                                           &prefs);
-  VariationsSeed loaded_seed;
-  // Check that loading a seed without a hash pref set works correctly.
-  EXPECT_TRUE(variations_service.LoadVariationsSeedFromPref(&loaded_seed));
-
-  // Check that the loaded data is the same as the original.
-  EXPECT_EQ(SerializeSeed(seed), SerializeSeed(loaded_seed));
-  // Make sure the pref hasn't been changed.
-  EXPECT_FALSE(prefs.FindPreference(prefs::kVariationsSeed)->IsDefaultValue());
-  EXPECT_EQ(base64_seed, prefs.GetString(prefs::kVariationsSeed));
-
-  // Check that loading a seed with the correct hash works.
-  prefs.SetString(prefs::kVariationsSeedHash, seed_hash);
-  loaded_seed.Clear();
-  EXPECT_TRUE(variations_service.LoadVariationsSeedFromPref(&loaded_seed));
-  EXPECT_EQ(SerializeSeed(seed), SerializeSeed(loaded_seed));
-
-  // Check that false is returned and the pref is cleared when hash differs.
-  VariationsSeed different_seed = seed;
-  different_seed.mutable_study(0)->set_name("octopus");
-  std::string different_hash;
-  prefs.SetString(prefs::kVariationsSeed,
-                  SerializeSeedBase64(different_seed, &different_hash));
-  ASSERT_NE(different_hash, prefs.GetString(prefs::kVariationsSeedHash));
-  EXPECT_FALSE(prefs.FindPreference(prefs::kVariationsSeed)->IsDefaultValue());
-  EXPECT_FALSE(variations_service.LoadVariationsSeedFromPref(&loaded_seed));
-  EXPECT_TRUE(prefs.FindPreference(prefs::kVariationsSeed)->IsDefaultValue());
-  EXPECT_TRUE(
-      prefs.FindPreference(prefs::kVariationsSeedDate)->IsDefaultValue());
-  EXPECT_TRUE(
-      prefs.FindPreference(prefs::kVariationsSeedHash)->IsDefaultValue());
-
-  // Check that loading a bad seed returns false and clears the pref.
-  prefs.ClearPref(prefs::kVariationsSeed);
-  prefs.SetString(prefs::kVariationsSeed, "this should fail");
-  EXPECT_FALSE(prefs.FindPreference(prefs::kVariationsSeed)->IsDefaultValue());
-  EXPECT_FALSE(variations_service.LoadVariationsSeedFromPref(&loaded_seed));
-  EXPECT_TRUE(prefs.FindPreference(prefs::kVariationsSeed)->IsDefaultValue());
-  EXPECT_TRUE(
-      prefs.FindPreference(prefs::kVariationsSeedDate)->IsDefaultValue());
-  EXPECT_TRUE(
-      prefs.FindPreference(prefs::kVariationsSeedHash)->IsDefaultValue());
-
-  // Check that having no seed in prefs results in a return value of false.
-  prefs.ClearPref(prefs::kVariationsSeed);
-  EXPECT_FALSE(variations_service.LoadVariationsSeedFromPref(&loaded_seed));
-}
-
-TEST_F(VariationsServiceTest, StoreSeed) {
-  const base::Time now = base::Time::Now();
-  const VariationsSeed seed = CreateTestSeed();
-  const std::string serialized_seed = SerializeSeed(seed);
-
-  TestingPrefServiceSimple prefs;
-  VariationsService::RegisterPrefs(prefs.registry());
-
-  TestVariationsService variations_service(new TestRequestAllowedNotifier,
-                                           &prefs);
-
-  EXPECT_TRUE(variations_service.StoreSeedData(serialized_seed, now));
-  // Make sure the pref was actually set.
-  EXPECT_FALSE(prefs.FindPreference(prefs::kVariationsSeed)->IsDefaultValue());
-
-  std::string loaded_serialized_seed = prefs.GetString(prefs::kVariationsSeed);
-  std::string decoded_serialized_seed;
-  ASSERT_TRUE(base::Base64Decode(loaded_serialized_seed,
-                                 &decoded_serialized_seed));
-  // Make sure the stored seed from pref is the same as the seed we created.
-  EXPECT_EQ(serialized_seed, decoded_serialized_seed);
-
-  // Check if trying to store a bad seed leaves the pref unchanged.
-  prefs.ClearPref(prefs::kVariationsSeed);
-  EXPECT_FALSE(variations_service.StoreSeedData("should fail", now));
-  EXPECT_TRUE(prefs.FindPreference(prefs::kVariationsSeed)->IsDefaultValue());
-}
-
 TEST_F(VariationsServiceTest, RequestsInitiallyNotAllowed) {
   base::MessageLoopForUI message_loop;
   content::TestBrowserThread ui_thread(content::BrowserThread::UI,
@@ -337,21 +266,19 @@ TEST_F(VariationsServiceTest, SeedStoredWhenOKStatus) {
   TestingPrefServiceSimple prefs;
   VariationsService::RegisterPrefs(prefs.registry());
 
-  VariationsService variations_service(new TestRequestAllowedNotifier, &prefs);
+  TestVariationsService service(new TestRequestAllowedNotifier, &prefs);
+  service.set_intercepts_fetch(false);
 
   net::TestURLFetcherFactory factory;
-  variations_service.DoActualFetch();
+  service.DoActualFetch();
 
   net::TestURLFetcher* fetcher = factory.GetFetcherByID(0);
   SimulateServerResponse(net::HTTP_OK, fetcher);
-  const VariationsSeed seed = CreateTestSeed();
-  fetcher->SetResponseString(SerializeSeed(seed));
+  fetcher->SetResponseString(SerializeSeed(CreateTestSeed()));
 
-  EXPECT_TRUE(prefs.FindPreference(prefs::kVariationsSeed)->IsDefaultValue());
-  variations_service.OnURLFetchComplete(fetcher);
-  EXPECT_FALSE(prefs.FindPreference(prefs::kVariationsSeed)->IsDefaultValue());
-  const std::string expected_base64 = SerializeSeedBase64(seed, NULL);
-  EXPECT_EQ(expected_base64, prefs.GetString(prefs::kVariationsSeed));
+  EXPECT_FALSE(service.seed_stored());
+  service.OnURLFetchComplete(fetcher);
+  EXPECT_TRUE(service.seed_stored());
 }
 
 TEST_F(VariationsServiceTest, SeedNotStoredWhenNonOKStatus) {

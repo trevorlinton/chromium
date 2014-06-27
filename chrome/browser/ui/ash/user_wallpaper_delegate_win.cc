@@ -27,25 +27,43 @@ class UserWallpaperDelegate : public ash::UserWallpaperDelegate {
   virtual int GetAnimationType() OVERRIDE {
     return ShouldShowInitialAnimation() ?
         ash::WINDOW_VISIBILITY_ANIMATION_TYPE_BRIGHTNESS_GRAYSCALE :
-        static_cast<int>(views::corewm::WINDOW_VISIBILITY_ANIMATION_TYPE_FADE);
+        static_cast<int>(wm::WINDOW_VISIBILITY_ANIMATION_TYPE_FADE);
   }
 
   virtual bool ShouldShowInitialAnimation() OVERRIDE {
     return true;
   }
 
-  virtual void UpdateWallpaper() OVERRIDE {
+  virtual int GetAnimationDurationOverride() OVERRIDE {
+    // Return 0 to select the default.
+    return 0;
   }
 
-  virtual void InitializeWallpaper() OVERRIDE {
+  virtual void SetAnimationDurationOverride(
+      int animation_duration_in_ms) OVERRIDE {
+    NOTIMPLEMENTED();
+  }
+
+  virtual void UpdateWallpaper(bool clear_cache) OVERRIDE {
     SkBitmap bitmap;
     bitmap.setConfig(SkBitmap::kARGB_8888_Config, 16, 16);
     bitmap.allocPixels();
     bitmap.eraseARGB(255, kBackgroundRed, kBackgroundGreen, kBackgroundBlue);
-    gfx::ImageSkia wallpaper =
-        gfx::ImageSkia::CreateFrom1xBitmap(bitmap);
+#if !defined(NDEBUG)
+    // In debug builds we generate a simple pattern that allows visually
+    // notice if transparency is broken.
+    {
+      SkAutoLockPixels alp(bitmap);
+      *bitmap.getAddr32(0,0) = SkColorSetRGB(0, 0, 0);
+    }
+#endif
+    gfx::ImageSkia wallpaper = gfx::ImageSkia::CreateFrom1xBitmap(bitmap);
     ash::Shell::GetInstance()->desktop_background_controller()->
         SetCustomWallpaper(wallpaper, ash::WALLPAPER_LAYOUT_TILE);
+  }
+
+  virtual void InitializeWallpaper() OVERRIDE {
+    UpdateWallpaper(false);
   }
 
   virtual void OpenSetWallpaperPage() OVERRIDE {

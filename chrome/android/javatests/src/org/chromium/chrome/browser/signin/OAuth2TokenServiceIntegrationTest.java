@@ -12,7 +12,7 @@ import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.AdvancedMockContext;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.testshell.ChromiumTestShellTestBase;
+import org.chromium.chrome.shell.ChromeShellTestBase;
 import org.chromium.sync.signin.AccountManagerHelper;
 import org.chromium.sync.signin.ChromeSigninController;
 import org.chromium.sync.test.util.AccountHolder;
@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * These tests initialize the native part of the service.
  */
-public class OAuth2TokenServiceIntegrationTest extends ChromiumTestShellTestBase {
+public class OAuth2TokenServiceIntegrationTest extends ChromeShellTestBase {
 
     private static final Account TEST_ACCOUNT1 =
             AccountManagerHelper.createAccountFromName("foo@gmail.com");
@@ -212,8 +212,9 @@ public class OAuth2TokenServiceIntegrationTest extends ChromiumTestShellTestBase
         // Run test.
         mOAuth2TokenService.validateAccounts(mContext);
 
-        // Ensure no calls have been made to the observer.
-        assertEquals(1, mObserver.getAvailableCallCount());
+        // All accounts will be notified. It is up to the observer
+        // to design if any action is needed.
+        assertEquals(2, mObserver.getAvailableCallCount());
         assertEquals(0, mObserver.getRevokedCallCount());
         assertEquals(0, mObserver.getLoadedCallCount());
     }

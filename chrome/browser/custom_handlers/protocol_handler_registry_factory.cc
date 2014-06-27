@@ -6,10 +6,9 @@
 
 #include "base/memory/singleton.h"
 #include "chrome/browser/custom_handlers/protocol_handler_registry.h"
-#include "chrome/browser/extensions/extension_system_factory.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
-#include "components/browser_context_keyed_service/browser_context_dependency_manager.h"
+#include "components/keyed_service/content/browser_context_dependency_manager.h"
 
 // static
 ProtocolHandlerRegistryFactory* ProtocolHandlerRegistryFactory::GetInstance() {
@@ -53,8 +52,7 @@ bool ProtocolHandlerRegistryFactory::ServiceIsNULLWhileTesting() const {
   return true;
 }
 
-BrowserContextKeyedService*
-ProtocolHandlerRegistryFactory::BuildServiceInstanceFor(
+KeyedService* ProtocolHandlerRegistryFactory::BuildServiceInstanceFor(
     content::BrowserContext* profile) const {
   ProtocolHandlerRegistry* registry = new ProtocolHandlerRegistry(
       static_cast<Profile*>(profile), new ProtocolHandlerRegistry::Delegate());

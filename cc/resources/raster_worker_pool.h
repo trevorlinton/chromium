@@ -5,81 +5,80 @@
 #ifndef CC_RESOURCES_RASTER_WORKER_POOL_H_
 #define CC_RESOURCES_RASTER_WORKER_POOL_H_
 
+#include <deque>
 #include <vector>
 
-#include "base/containers/hash_tables.h"
-#include "cc/debug/rendering_stats_instrumentation.h"
-#include "cc/resources/picture_pile_impl.h"
-#include "cc/resources/raster_mode.h"
-#include "cc/resources/resource.h"
-#include "cc/resources/resource_provider.h"
-#include "cc/resources/tile_priority.h"
-#include "cc/resources/worker_pool.h"
-#include "third_party/khronos/GLES2/gl2.h"
+#include "base/memory/weak_ptr.h"
+#include "cc/resources/resource_format.h"
+#include "cc/resources/task_graph_runner.h"
 
-namespace skia {
-class LazyPixelRef;
+class SkCanvas;
+
+namespace base {
+class SequencedTaskRunner;
 }
 
 namespace cc {
-class PicturePileImpl;
-class PixelBufferRasterWorkerPool;
+class Resource;
 class ResourceProvider;
 
 namespace internal {
+class WorkerPoolTask;
 
-class CC_EXPORT RasterWorkerPoolTask
-    : public base::RefCounted<RasterWorkerPoolTask> {
+class CC_EXPORT WorkerPoolTaskClient {
  public:
-  typedef std::vector<scoped_refptr<WorkerPoolTask> > TaskVector;
+  virtual SkCanvas* AcquireCanvasForRaster(WorkerPoolTask* task,
+                                           const Resource* resource) = 0;
+  virtual void ReleaseCanvasForRaster(WorkerPoolTask* task,
+                                      const Resource* resource) = 0;
 
-  // Returns true if |buffer| was written to. False indicate that
-  // the content of |buffer| is undefined and the resource doesn't
-  // need to be initialized.
-  virtual bool RunOnWorkerThread(unsigned thread_index,
-                                 void* buffer,
-                                 gfx::Size size,
-                                 int stride) = 0;
-  virtual void CompleteOnOriginThread() = 0;
+ protected:
+  virtual ~WorkerPoolTaskClient() {}
+};
 
-  void DidRun(bool was_canceled);
-  bool HasFinishedRunning() const;
-  bool WasCanceled() const;
+class CC_EXPORT WorkerPoolTask : public Task {
+ public:
+  typedef std::vector<scoped_refptr<WorkerPoolTask> > Vector;
+
+  virtual void ScheduleOnOriginThread(WorkerPoolTaskClient* client) = 0;
+  virtual void RunOnOriginThread() = 0;
+  virtual void CompleteOnOriginThread(WorkerPoolTaskClient* client) = 0;
+  virtual void RunReplyOnOriginThread() = 0;
+
+  void WillSchedule();
+  void DidSchedule();
+  bool HasBeenScheduled() const;
+
   void WillComplete();
   void DidComplete();
   bool HasCompleted() const;
 
+ protected:
+  WorkerPoolTask();
+  virtual ~WorkerPoolTask();
+
+  bool did_schedule_;
+  bool did_complete_;
+};
+
+class CC_EXPORT RasterWorkerPoolTask : public WorkerPoolTask {
+ public:
   const Resource* resource() const { return resource_; }
-  const TaskVector& dependencies() const { return dependencies_; }
+  const internal::WorkerPoolTask::Vector& dependencies() const {
+    return dependencies_;
+  }
 
  protected:
-  friend class base::RefCounted<RasterWorkerPoolTask>;
-
-  RasterWorkerPoolTask(const Resource* resource, TaskVector* dependencies);
+  RasterWorkerPoolTask(const Resource* resource,
+                       internal::WorkerPoolTask::Vector* dependencies);
   virtual ~RasterWorkerPoolTask();
 
  private:
-  bool did_run_;
-  bool did_complete_;
-  bool was_canceled_;
   const Resource* resource_;
-  TaskVector dependencies_;
+  WorkerPoolTask::Vector dependencies_;
 };
 
 }  // namespace internal
-}  // namespace cc
-
-#if defined(COMPILER_GCC)
-namespace BASE_HASH_NAMESPACE {
-template <> struct hash<cc::internal::RasterWorkerPoolTask*> {
-  size_t operator()(cc::internal::RasterWorkerPoolTask* ptr) const {
-    return hash<size_t>()(reinterpret_cast<size_t>(ptr));
-  }
-};
-}  // namespace BASE_HASH_NAMESPACE
-#endif  // COMPILER
-
-namespace cc {
 
 class CC_EXPORT RasterWorkerPoolClient {
  public:
@@ -91,186 +90,147 @@ class CC_EXPORT RasterWorkerPoolClient {
   virtual ~RasterWorkerPoolClient() {}
 };
 
+struct CC_EXPORT RasterTaskQueue {
+  struct CC_EXPORT Item {
+    class TaskComparator {
+     public:
+      explicit TaskComparator(const internal::WorkerPoolTask* task)
+          : task_(task) {}
+
+      bool operator()(const Item& item) const { return item.task == task_; }
+
+     private:
+      const internal::WorkerPoolTask* task_;
+    };
+
+    typedef std::vector<Item> Vector;
+
+    Item(internal::RasterWorkerPoolTask* task, bool required_for_activation);
+    ~Item();
+
+    static bool IsRequiredForActivation(const Item& item) {
+      return item.required_for_activation;
+    }
+
+    internal::RasterWorkerPoolTask* task;
+    bool required_for_activation;
+  };
+
+  RasterTaskQueue();
+  ~RasterTaskQueue();
+
+  void Swap(RasterTaskQueue* other);
+  void Reset();
+
+  Item::Vector items;
+  size_t required_for_activation_count;
+};
+
 // A worker thread pool that runs raster tasks.
-class CC_EXPORT RasterWorkerPool : public WorkerPool {
+class CC_EXPORT RasterWorkerPool : public internal::WorkerPoolTaskClient {
  public:
-  class CC_EXPORT Task {
-   public:
-    typedef base::Callback<void(bool was_canceled)> Reply;
-
-    class CC_EXPORT Set {
-     public:
-      Set();
-      ~Set();
-
-      void Insert(const Task& task);
-
-     private:
-      friend class RasterWorkerPool;
-      friend class RasterWorkerPoolTest;
-
-      typedef internal::RasterWorkerPoolTask::TaskVector TaskVector;
-      TaskVector tasks_;
-    };
-
-    Task();
-    ~Task();
-
-    // Returns true if Task is null (doesn't refer to anything).
-    bool is_null() const { return !internal_.get(); }
-
-    // Returns the Task into an uninitialized state.
-    void Reset();
-
-   protected:
-    friend class RasterWorkerPool;
-    friend class RasterWorkerPoolTest;
-
-    explicit Task(internal::WorkerPoolTask* internal);
-
-    scoped_refptr<internal::WorkerPoolTask> internal_;
-  };
-
-  class CC_EXPORT RasterTask {
-   public:
-    typedef base::Callback<void(const PicturePileImpl::Analysis& analysis,
-                                bool was_canceled)> Reply;
-
-    class CC_EXPORT Queue {
-     public:
-      Queue();
-      ~Queue();
-
-      void Append(const RasterTask& task, bool required_for_activation);
-
-     private:
-      friend class RasterWorkerPool;
-
-      typedef std::vector<scoped_refptr<internal::RasterWorkerPoolTask> >
-          TaskVector;
-      TaskVector tasks_;
-      typedef base::hash_set<internal::RasterWorkerPoolTask*> TaskSet;
-      TaskSet tasks_required_for_activation_;
-    };
-
-    RasterTask();
-    ~RasterTask();
-
-    // Returns true if Task is null (doesn't refer to anything).
-    bool is_null() const { return !internal_.get(); }
-
-    // Returns the Task into an uninitialized state.
-    void Reset();
-
-   protected:
-    friend class RasterWorkerPool;
-    friend class RasterWorkerPoolTest;
-
-    explicit RasterTask(internal::RasterWorkerPoolTask* internal);
-
-    scoped_refptr<internal::RasterWorkerPoolTask> internal_;
-  };
-
   virtual ~RasterWorkerPool();
+
+  static void SetNumRasterThreads(int num_threads);
+  static int GetNumRasterThreads();
+
+  static internal::TaskGraphRunner* GetTaskGraphRunner();
+
+  static size_t GetPictureCloneIndexForCurrentThread();
+
+  static unsigned kOnDemandRasterTaskPriority;
+  static unsigned kBenchmarkRasterTaskPriority;
+  static unsigned kRasterFinishedTaskPriority;
+  static unsigned kRasterRequiredForActivationFinishedTaskPriority;
+  static unsigned kRasterTaskPriorityBase;
 
   void SetClient(RasterWorkerPoolClient* client);
 
   // Tells the worker pool to shutdown after canceling all previously
   // scheduled tasks. Reply callbacks are still guaranteed to run.
-  virtual void Shutdown() OVERRIDE;
+  virtual void Shutdown();
 
   // Schedule running of raster tasks in |queue| and all dependencies.
   // Previously scheduled tasks that are no longer needed to run
   // raster tasks in |queue| will be canceled unless already running.
   // Once scheduled, reply callbacks are guaranteed to run for all tasks
   // even if they later get canceled by another call to ScheduleTasks().
-  virtual void ScheduleTasks(RasterTask::Queue* queue) = 0;
+  virtual void ScheduleTasks(RasterTaskQueue* queue) = 0;
+
+  // Force a check for completed tasks.
+  virtual void CheckForCompletedTasks() = 0;
+
+  // Returns the target that needs to be used for raster task resources.
+  virtual unsigned GetResourceTarget() const = 0;
 
   // Returns the format that needs to be used for raster task resources.
   virtual ResourceFormat GetResourceFormat() const = 0;
 
-  // TODO(vmpstr): Figure out an elegant way to not pass this many parameters.
-  static RasterTask CreateRasterTask(
-      const Resource* resource,
-      PicturePileImpl* picture_pile,
-      gfx::Rect content_rect,
-      float contents_scale,
-      RasterMode raster_mode,
-      TileResolution tile_resolution,
-      int layer_id,
-      const void* tile_id,
-      int source_frame_number,
-      RenderingStatsInstrumentation* rendering_stats,
-      const RasterTask::Reply& reply,
-      Task::Set* dependencies);
-
-  static Task CreateImageDecodeTask(
-      skia::LazyPixelRef* pixel_ref,
-      int layer_id,
-      RenderingStatsInstrumentation* stats_instrumentation,
-      const Task::Reply& reply);
-
  protected:
   typedef std::vector<scoped_refptr<internal::WorkerPoolTask> > TaskVector;
+  typedef std::deque<scoped_refptr<internal::WorkerPoolTask> > TaskDeque;
   typedef std::vector<scoped_refptr<internal::RasterWorkerPoolTask> >
       RasterTaskVector;
-  typedef base::hash_set<internal::RasterWorkerPoolTask*> RasterTaskSet;
-  typedef internal::RasterWorkerPoolTask* TaskMapKey;
-  typedef base::hash_map<TaskMapKey,
-                         scoped_refptr<internal::WorkerPoolTask> > TaskMap;
 
-  RasterWorkerPool(ResourceProvider* resource_provider, size_t num_threads);
+  RasterWorkerPool(base::SequencedTaskRunner* task_runner,
+                   internal::TaskGraphRunner* task_graph_runner,
+                   ResourceProvider* resource_provider);
 
   virtual void OnRasterTasksFinished() = 0;
   virtual void OnRasterTasksRequiredForActivationFinished() = 0;
 
-  void SetRasterTasks(RasterTask::Queue* queue);
-  bool IsRasterTaskRequiredForActivation(
-      internal::RasterWorkerPoolTask* task) const;
+  void SetTaskGraph(internal::TaskGraph* graph);
+  void CollectCompletedWorkerPoolTasks(internal::Task::Vector* completed_tasks);
 
+  base::SequencedTaskRunner* task_runner() const { return task_runner_; }
   RasterWorkerPoolClient* client() const { return client_; }
   ResourceProvider* resource_provider() const { return resource_provider_; }
-  const RasterTaskVector& raster_tasks() const { return raster_tasks_; }
-  const RasterTaskSet& raster_tasks_required_for_activation() const {
-    return raster_tasks_required_for_activation_;
-  }
+
   void set_raster_finished_task(
-      scoped_refptr<internal::WorkerPoolTask> raster_finished_task) {
+      internal::WorkerPoolTask* raster_finished_task) {
     raster_finished_task_ = raster_finished_task;
   }
+  internal::WorkerPoolTask* raster_finished_task() const {
+    return raster_finished_task_.get();
+  }
   void set_raster_required_for_activation_finished_task(
-      scoped_refptr<internal::WorkerPoolTask>
-          raster_required_for_activation_finished_task) {
+      internal::WorkerPoolTask* raster_required_for_activation_finished_task) {
     raster_required_for_activation_finished_task_ =
         raster_required_for_activation_finished_task;
+  }
+  internal::WorkerPoolTask* raster_required_for_activation_finished_task()
+      const {
+    return raster_required_for_activation_finished_task_.get();
   }
 
   scoped_refptr<internal::WorkerPoolTask> CreateRasterFinishedTask();
   scoped_refptr<internal::WorkerPoolTask>
-      CreateRasterRequiredForActivationFinishedTask();
+      CreateRasterRequiredForActivationFinishedTask(
+          size_t tasks_required_for_activation_count);
 
-  scoped_ptr<base::Value> ScheduledStateAsValue() const;
+  void RunTaskOnOriginThread(internal::WorkerPoolTask* task);
 
-  static internal::GraphNode* CreateGraphNodeForTask(
+  static void InsertNodeForTask(internal::TaskGraph* graph,
+                                internal::WorkerPoolTask* task,
+                                unsigned priority,
+                                size_t dependencies);
+
+  static void InsertNodeForRasterTask(
+      internal::TaskGraph* graph,
       internal::WorkerPoolTask* task,
-      unsigned priority,
-      TaskGraph* graph);
-
-  static internal::GraphNode* CreateGraphNodeForRasterTask(
-      internal::WorkerPoolTask* raster_task,
-      const TaskVector& decode_tasks,
-      unsigned priority,
-      TaskGraph* graph);
+      const internal::WorkerPoolTask::Vector& decode_tasks,
+      unsigned priority);
 
  private:
   void OnRasterFinished(const internal::WorkerPoolTask* source);
   void OnRasterRequiredForActivationFinished(
       const internal::WorkerPoolTask* source);
 
+  scoped_refptr<base::SequencedTaskRunner> task_runner_;
+  internal::TaskGraphRunner* task_graph_runner_;
+  internal::NamespaceToken namespace_token_;
   RasterWorkerPoolClient* client_;
   ResourceProvider* resource_provider_;
-  RasterTask::Queue::TaskVector raster_tasks_;
-  RasterTask::Queue::TaskSet raster_tasks_required_for_activation_;
 
   scoped_refptr<internal::WorkerPoolTask> raster_finished_task_;
   scoped_refptr<internal::WorkerPoolTask>

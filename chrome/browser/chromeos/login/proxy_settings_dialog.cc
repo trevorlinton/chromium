@@ -51,12 +51,14 @@ namespace chromeos {
 // static
 int ProxySettingsDialog::instance_count_ = 0;
 
-ProxySettingsDialog::ProxySettingsDialog(const NetworkState& network,
+ProxySettingsDialog::ProxySettingsDialog(Profile* profile,
+                                         const NetworkState& network,
                                          LoginWebDialog::Delegate* delegate,
                                          gfx::NativeWindow window)
-    : LoginWebDialog(delegate,
+    : LoginWebDialog(profile,
+                     delegate,
                      window,
-                     string16(),
+                     base::string16(),
                      GetURLForProxySettings(network.path()),
                      LoginWebDialog::STYLE_BUBBLE) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
@@ -77,7 +79,7 @@ ProxySettingsDialog::ProxySettingsDialog(const NetworkState& network,
   }
 
   SetDialogTitle(l10n_util::GetStringFUTF16(IDS_PROXY_PAGE_TITLE_FORMAT,
-                                            ASCIIToUTF16(network_name)));
+                                            base::ASCIIToUTF16(network_name)));
 }
 
 ProxySettingsDialog::~ProxySettingsDialog() {

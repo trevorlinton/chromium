@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,13 +11,13 @@
 
 class AutoLoginInfoBarDelegateAndroid : public AutoLoginInfoBarDelegate {
  public:
-  AutoLoginInfoBarDelegateAndroid(InfoBarService* owner, const Params& params);
+  AutoLoginInfoBarDelegateAndroid(const Params& params, Profile* profile);
   virtual ~AutoLoginInfoBarDelegateAndroid();
 
   // AutoLoginInfoBarDelegate:
   virtual bool Accept() OVERRIDE;
   virtual bool Cancel() OVERRIDE;
-  virtual string16 GetMessageText() const OVERRIDE;
+  virtual base::string16 GetMessageText() const OVERRIDE;
 
   // These methods are defined in downstream code.
   bool AttachAccount(JavaObjectWeakGlobalRef weak_java_translate_helper);

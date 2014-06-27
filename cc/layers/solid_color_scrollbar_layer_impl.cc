@@ -15,19 +15,28 @@ scoped_ptr<SolidColorScrollbarLayerImpl> SolidColorScrollbarLayerImpl::Create(
     int id,
     ScrollbarOrientation orientation,
     int thumb_thickness,
-    bool is_left_side_vertical_scrollbar) {
-  return make_scoped_ptr(new SolidColorScrollbarLayerImpl(
-      tree_impl, id, orientation, thumb_thickness,
-      is_left_side_vertical_scrollbar));
+    bool is_left_side_vertical_scrollbar,
+    bool is_overlay) {
+  return make_scoped_ptr(
+      new SolidColorScrollbarLayerImpl(tree_impl,
+                                       id,
+                                       orientation,
+                                       thumb_thickness,
+                                       is_left_side_vertical_scrollbar,
+                                       is_overlay));
 }
 
 SolidColorScrollbarLayerImpl::~SolidColorScrollbarLayerImpl() {}
 
 scoped_ptr<LayerImpl> SolidColorScrollbarLayerImpl::CreateLayerImpl(
     LayerTreeImpl* tree_impl) {
-  return SolidColorScrollbarLayerImpl::Create(
-      tree_impl, id(), orientation(), thumb_thickness_,
-      is_left_side_vertical_scrollbar()).PassAs<LayerImpl>();
+  return SolidColorScrollbarLayerImpl::Create(tree_impl,
+                                              id(),
+                                              orientation(),
+                                              thumb_thickness_,
+                                              is_left_side_vertical_scrollbar(),
+                                              is_overlay_scrollbar())
+      .PassAs<LayerImpl>();
 }
 
 SolidColorScrollbarLayerImpl::SolidColorScrollbarLayerImpl(
@@ -35,9 +44,13 @@ SolidColorScrollbarLayerImpl::SolidColorScrollbarLayerImpl(
     int id,
     ScrollbarOrientation orientation,
     int thumb_thickness,
-    bool is_left_side_vertical_scrollbar)
-    : ScrollbarLayerImplBase(tree_impl, id, orientation,
-          is_left_side_vertical_scrollbar),
+    bool is_left_side_vertical_scrollbar,
+    bool is_overlay)
+    : ScrollbarLayerImplBase(tree_impl,
+                             id,
+                             orientation,
+                             is_left_side_vertical_scrollbar,
+                             is_overlay),
       thumb_thickness_(thumb_thickness),
       color_(tree_impl->settings().solid_color_scrollbar_color) {}
 
@@ -72,17 +85,26 @@ int SolidColorScrollbarLayerImpl::TrackStart() const {
   return 0;
 }
 
+bool SolidColorScrollbarLayerImpl::IsThumbResizable() const {
+  return true;
+}
+
 void SolidColorScrollbarLayerImpl::AppendQuads(QuadSink* quad_sink,
                            AppendQuadsData* append_quads_data) {
-  gfx::Rect thumb_quad_rect = ComputeThumbQuadRect();
-
   SharedQuadState* shared_quad_state =
       quad_sink->UseSharedQuadState(CreateSharedQuadState());
   AppendDebugBorderQuad(quad_sink, shared_quad_state, append_quads_data);
 
+  gfx::Rect thumb_quad_rect(ComputeThumbQuadRect());
+  gfx::Rect visible_quad_rect = quad_sink->UnoccludedContentRect(
+      thumb_quad_rect, draw_properties().target_space_transform);
+  if (visible_quad_rect.IsEmpty())
+    return;
+
   scoped_ptr<SolidColorDrawQuad> quad = SolidColorDrawQuad::Create();
-  quad->SetNew(shared_quad_state, thumb_quad_rect, color_, false);
-  quad_sink->Append(quad.PassAs<DrawQuad>(), append_quads_data);
+  quad->SetNew(
+      shared_quad_state, thumb_quad_rect, visible_quad_rect, color_, false);
+  quad_sink->Append(quad.PassAs<DrawQuad>());
 }
 
 }  // namespace cc

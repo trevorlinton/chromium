@@ -148,6 +148,10 @@ int32_t PepperPDFHost::OnResourceMessageReceived(
                                         OnHostMsgSaveAs)
     PPAPI_DISPATCH_HOST_RESOURCE_CALL(PpapiHostMsg_PDF_GetResourceImage,
                                       OnHostMsgGetResourceImage)
+    PPAPI_DISPATCH_HOST_RESOURCE_CALL(PpapiHostMsg_PDF_SetSelectedText,
+                                      OnHostMsgSetSelectedText)
+    PPAPI_DISPATCH_HOST_RESOURCE_CALL(PpapiHostMsg_PDF_SetLinkUnderCursor,
+                                      OnHostMsgSetLinkUnderCursor)
   IPC_END_MESSAGE_MAP()
   return PP_ERROR_FAILED;
 }
@@ -157,13 +161,13 @@ int32_t PepperPDFHost::OnHostMsgGetLocalizedString(
     PP_ResourceString string_id) {
   std::string rv;
   if (string_id == PP_RESOURCESTRING_PDFGETPASSWORD) {
-    rv = UTF16ToUTF8(l10n_util::GetStringUTF16(IDS_PDF_NEED_PASSWORD));
+    rv = base::UTF16ToUTF8(l10n_util::GetStringUTF16(IDS_PDF_NEED_PASSWORD));
   } else if (string_id == PP_RESOURCESTRING_PDFLOADING) {
-    rv = UTF16ToUTF8(l10n_util::GetStringUTF16(IDS_PDF_PAGE_LOADING));
+    rv = base::UTF16ToUTF8(l10n_util::GetStringUTF16(IDS_PDF_PAGE_LOADING));
   } else if (string_id == PP_RESOURCESTRING_PDFLOAD_FAILED) {
-    rv = UTF16ToUTF8(l10n_util::GetStringUTF16(IDS_PDF_PAGE_LOAD_FAILED));
+    rv = base::UTF16ToUTF8(l10n_util::GetStringUTF16(IDS_PDF_PAGE_LOAD_FAILED));
   } else if (string_id == PP_RESOURCESTRING_PDFPROGRESSLOADING) {
-    rv = UTF16ToUTF8(l10n_util::GetStringUTF16(IDS_PDF_PROGRESS_LOADING));
+    rv = base::UTF16ToUTF8(l10n_util::GetStringUTF16(IDS_PDF_PROGRESS_LOADING));
   } else {
     NOTREACHED();
     return PP_ERROR_FAILED;
@@ -219,7 +223,7 @@ int32_t PepperPDFHost::OnHostMsgUserMetricsRecordAction(
     NOTREACHED();
     return PP_ERROR_FAILED;
   }
-  content::RenderThread::Get()->RecordUserMetrics(action);
+  content::RenderThread::Get()->RecordComputedAction(action);
   return PP_OK;
 }
 
@@ -234,7 +238,7 @@ int32_t PepperPDFHost::OnHostMsgHasUnsupportedFeature(
   if (!instance->IsFullPagePlugin())
     return PP_OK;
 
-  WebKit::WebView* view =
+  blink::WebView* view =
       instance->GetContainer()->element().document().frame()->view();
   content::RenderView* render_view = content::RenderView::FromWebView(view);
   render_view->Send(new ChromeViewHostMsg_PDFHasUnsupportedFeature(
@@ -250,8 +254,8 @@ int32_t PepperPDFHost::OnHostMsgPrint(
   if (!instance)
     return PP_ERROR_FAILED;
 
-  WebKit::WebElement element = instance->GetContainer()->element();
-  WebKit::WebView* view = element.document().frame()->view();
+  blink::WebElement element = instance->GetContainer()->element();
+  blink::WebView* view = element.document().frame()->view();
   content::RenderView* render_view = content::RenderView::FromWebView(view);
 
   using printing::PrintWebViewHelper;
@@ -272,7 +276,7 @@ int32_t PepperPDFHost::OnHostMsgSaveAs(
     return PP_ERROR_FAILED;
   GURL url = instance->GetPluginURL();
   content::RenderView* render_view = instance->GetRenderView();
-  WebKit::WebFrame* frame = render_view->GetWebView()->mainFrame();
+  blink::WebFrame* frame = render_view->GetWebView()->mainFrame();
   content::Referrer referrer(frame->document().url(),
                              frame->document().referrerPolicy());
   render_view->Send(new ChromeViewHostMsg_PDFSaveURLAs(
@@ -340,6 +344,28 @@ int32_t PepperPDFHost::OnHostMsgGetResourceImage(
   image_data_resource.Release();
 
   return PP_OK_COMPLETIONPENDING;
+}
+
+int32_t PepperPDFHost::OnHostMsgSetSelectedText(
+    ppapi::host::HostMessageContext* context,
+    const base::string16& selected_text) {
+  content::PepperPluginInstance* instance =
+      host_->GetPluginInstance(pp_instance());
+  if (!instance)
+    return PP_ERROR_FAILED;
+  instance->SetSelectedText(selected_text);
+  return PP_OK;
+}
+
+int32_t PepperPDFHost::OnHostMsgSetLinkUnderCursor(
+    ppapi::host::HostMessageContext* context,
+    const std::string& url) {
+  content::PepperPluginInstance* instance =
+      host_->GetPluginInstance(pp_instance());
+  if (!instance)
+    return PP_ERROR_FAILED;
+  instance->SetLinkUnderCursor(url);
+  return PP_OK;
 }
 
 // TODO(raymes): This function is mainly copied from ppb_image_data_proxy.cc.

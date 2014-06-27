@@ -12,15 +12,15 @@
 #include "chrome/browser/chromeos/login/captive_portal_window_proxy.h"
 #include "chrome/browser/chromeos/login/helper.h"
 #include "chrome/browser/command_updater.h"
-#include "chrome/browser/password_manager/password_manager.h"
-#include "chrome/browser/password_manager/password_manager_delegate_impl.h"
+#include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/content_settings/content_setting_bubble_model_delegate.h"
 #include "chrome/browser/ui/toolbar/toolbar_model_impl.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/location_bar/location_icon_view.h"
-#include "chrome/browser/ui/views/reload_button.h"
+#include "chrome/browser/ui/views/toolbar/reload_button.h"
+#include "components/password_manager/core/browser/password_manager.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
@@ -49,11 +49,12 @@ const int kExternalMargin = 60;
 // Margin between WebView and SimpleWebViewDialog border.
 const int kInnerMargin = 2;
 
+const SkColor kDialogColor = SK_ColorWHITE;
+
 class ToolbarRowView : public views::View {
  public:
   ToolbarRowView() {
-    set_background(views::Background::CreateSolidBackground(
-        SkColorSetRGB(0xbe, 0xbe, 0xbe)));
+    set_background(views::Background::CreateSolidBackground(kDialogColor));
   }
 
   virtual ~ToolbarRowView() {}
@@ -136,18 +137,15 @@ SimpleWebViewDialog::SimpleWebViewDialog(Profile* profile)
 }
 
 SimpleWebViewDialog::~SimpleWebViewDialog() {
-  if (web_view_container_.get()) {
-    // WebView can't be deleted immediately, because it could be on the stack.
+  if (web_view_ && web_view_->web_contents())
     web_view_->web_contents()->SetDelegate(NULL);
-    base::MessageLoop::current()->DeleteSoon(
-        FROM_HERE, web_view_container_.release());
-  }
 }
 
 void SimpleWebViewDialog::StartLoad(const GURL& url) {
   if (!web_view_container_.get())
     web_view_container_.reset(new views::WebView(profile_));
   web_view_ = web_view_container_.get();
+  web_view_->set_owned_by_client();
   web_view_->GetWebContents()->SetDelegate(this);
   web_view_->LoadInitialURL(url);
 
@@ -155,15 +153,13 @@ void SimpleWebViewDialog::StartLoad(const GURL& url) {
   DCHECK(web_contents);
 
   // Create the password manager that is needed for the proxy.
-  PasswordManagerDelegateImpl::CreateForWebContents(web_contents);
-  PasswordManager::CreateForWebContentsAndDelegate(
-      web_contents, PasswordManagerDelegateImpl::FromWebContents(web_contents));
+  ChromePasswordManagerClient::CreateForWebContents(web_contents);
 }
 
 void SimpleWebViewDialog::Init() {
   toolbar_model_.reset(new ToolbarModelImpl(this));
 
-  set_background(views::Background::CreateSolidBackground(SK_ColorWHITE));
+  set_background(views::Background::CreateSolidBackground(kDialogColor));
 
   // Back/Forward buttons.
   back_ = new views::ImageButton(this);
@@ -197,8 +193,6 @@ void SimpleWebViewDialog::Init() {
   reload_->SetAccessibleName(l10n_util::GetStringUTF16(IDS_ACCNAME_RELOAD));
   reload_->set_id(VIEW_ID_RELOAD_BUTTON);
 
-  LoadImages();
-
   // Use separate view to setup custom background.
   ToolbarRowView* toolbar_row = new ToolbarRowView;
   toolbar_row->Init(back_, forward_, reload_, location_bar_);
@@ -224,8 +218,10 @@ void SimpleWebViewDialog::Init() {
   layout->AddPaddingRow(0, kInnerMargin);
 
   layout->StartRow(1, 1);
-  layout->AddView(web_view_container_.release());
+  layout->AddView(web_view_container_.get());
   layout->AddPaddingRow(0, kInnerMargin);
+
+  LoadImages();
 
   location_bar_->Init();
   UpdateReload(web_view_->web_contents()->IsLoading(), true);
@@ -254,6 +250,13 @@ void SimpleWebViewDialog::ButtonPressed(views::Button* sender,
   command_updater_->ExecuteCommand(sender->tag());
 }
 
+content::WebContents* SimpleWebViewDialog::OpenURL(
+    const content::OpenURLParams& params) {
+  // As there are no Browsers right now, this could not actually ever work.
+  NOTIMPLEMENTED();
+  return NULL;
+}
+
 void SimpleWebViewDialog::NavigationStateChanged(
     const WebContents* source, unsigned changed_flags) {
   if (location_bar_) {
@@ -262,16 +265,10 @@ void SimpleWebViewDialog::NavigationStateChanged(
   }
 }
 
-content::WebContents* SimpleWebViewDialog::OpenURL(
-    const content::OpenURLParams& params) {
-  // As there are no Browsers right now, this could not actually ever work.
-  NOTIMPLEMENTED();
-  return NULL;
-}
-
-void SimpleWebViewDialog::LoadingStateChanged(WebContents* source) {
+void SimpleWebViewDialog::LoadingStateChanged(WebContents* source,
+    bool to_different_document) {
   bool is_loading = source->IsLoading();
-  UpdateReload(is_loading, false);
+  UpdateReload(is_loading && to_different_document, false);
   command_updater_->UpdateCommandEnabled(IDC_STOP, is_loading);
 }
 
@@ -322,6 +319,10 @@ content::WebContents* SimpleWebViewDialog::GetActiveWebContents() const {
   return web_view_->web_contents();
 }
 
+bool SimpleWebViewDialog::InTabbedBrowser() const {
+  return false;
+}
+
 void SimpleWebViewDialog::ExecuteCommandWithDisposition(
     int id,
     WindowOpenDisposition) {
@@ -346,6 +347,7 @@ void SimpleWebViewDialog::ExecuteCommandWithDisposition(
       // Always reload ignoring cache.
     case IDC_RELOAD_IGNORING_CACHE:
     case IDC_RELOAD_CLEARING_CACHE:
+      location_bar_->Revert();
       web_contents->GetController().ReloadIgnoringCache(true);
       break;
     default:
@@ -374,7 +376,7 @@ void SimpleWebViewDialog::LoadImages() {
   forward_->SetImage(views::CustomButton::STATE_DISABLED,
                      tp->GetImageSkiaNamed(IDR_FORWARD_D));
 
-  reload_->LoadImages(tp);
+  reload_->LoadImages();
 }
 
 void SimpleWebViewDialog::UpdateButtons() {

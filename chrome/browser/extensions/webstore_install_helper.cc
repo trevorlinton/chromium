@@ -75,7 +75,6 @@ void WebstoreInstallHelper::StartWorkOnIOThread() {
   CHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   utility_host_ = UtilityProcessHost::Create(
       this, base::MessageLoopProxy::current().get())->AsWeakPtr();
-  utility_host_->EnableZygote();
   utility_host_->StartBatchMode();
 
   if (!icon_base64_data_.empty())
@@ -153,11 +152,11 @@ void WebstoreInstallHelper::OnJSONParseSucceeded(
     const base::ListValue& wrapper) {
   CHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   manifest_parse_complete_ = true;
-  const Value* value = NULL;
+  const base::Value* value = NULL;
   CHECK(wrapper.Get(0, &value));
-  if (value->IsType(Value::TYPE_DICTIONARY)) {
+  if (value->IsType(base::Value::TYPE_DICTIONARY)) {
     parsed_manifest_.reset(
-        static_cast<const DictionaryValue*>(value)->DeepCopy());
+        static_cast<const base::DictionaryValue*>(value)->DeepCopy());
   } else {
     parse_error_ = Delegate::MANIFEST_ERROR;
   }

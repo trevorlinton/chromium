@@ -17,25 +17,27 @@
 #include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/extensions/event_router.h"
-#include "chrome/browser/extensions/extension_function_dispatcher.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
-#include "chrome/browser/policy/browser_policy_connector.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/profile_oauth2_token_service.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_global_error.h"
+#include "chrome/browser/signin/signin_manager.h"
+#include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/common/extensions/api/identity.h"
 #include "chrome/common/extensions/api/identity/oauth2_manifest_handler.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "components/signin/core/browser/profile_oauth2_token_service.h"
+#include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_function_dispatcher.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "url/gurl.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/login/user_manager.h"
+#include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/settings/device_oauth2_token_service.h"
 #include "chrome/browser/chromeos/settings/device_oauth2_token_service_factory.h"
 #include "google_apis/gaia/gaia_constants.h"
@@ -63,12 +65,19 @@ namespace {
 static const char kChromiumDomainRedirectUrlPattern[] =
     "https://%s.chromiumapp.org/";
 
+std::string GetPrimaryAccountId(content::BrowserContext* context) {
+  SigninManagerBase* signin_manager =
+      SigninManagerFactory::GetForProfile(Profile::FromBrowserContext(context));
+  return signin_manager->GetAuthenticatedAccountId();
+}
+
 }  // namespace
 
 namespace identity = api::identity;
 
 IdentityGetAuthTokenFunction::IdentityGetAuthTokenFunction()
-    : should_prompt_for_scopes_(false),
+    : OAuth2TokenService::Consumer("extensions_identity_api"),
+      should_prompt_for_scopes_(false),
       should_prompt_for_signin_(false) {}
 
 IdentityGetAuthTokenFunction::~IdentityGetAuthTokenFunction() {}
@@ -103,12 +112,19 @@ bool IdentityGetAuthTokenFunction::RunImpl() {
     return false;
   }
 
+  std::set<std::string> scopes(oauth2_info.scopes.begin(),
+                               oauth2_info.scopes.end());
+  token_key_.reset(new ExtensionTokenKey(
+      GetExtension()->id(), GetPrimaryAccountId(GetProfile()), scopes));
+
   // Balanced in CompleteFunctionWithResult|CompleteFunctionWithError
   AddRef();
 
 #if defined(OS_CHROMEOS)
+  policy::BrowserPolicyConnectorChromeOS* connector =
+      g_browser_process->platform_part()->browser_policy_connector_chromeos();
   if (chromeos::UserManager::Get()->IsLoggedInAsKioskApp() &&
-      g_browser_process->browser_policy_connector()->IsEnterpriseManaged()) {
+      connector->IsEnterpriseManaged()) {
     StartMintTokenFlow(IdentityMintRequestQueue::MINT_TYPE_NONINTERACTIVE);
     return true;
   }
@@ -146,8 +162,7 @@ void IdentityGetAuthTokenFunction::CompleteFunctionWithError(
 void IdentityGetAuthTokenFunction::StartSigninFlow() {
   // All cached tokens are invalid because the user is not signed in.
   IdentityAPI* id_api =
-      extensions::IdentityAPI::GetFactoryInstance()->GetForProfile(
-          GetProfile());
+      extensions::IdentityAPI::GetFactoryInstance()->Get(GetProfile());
   id_api->EraseAllCachedTokens();
   // Display a login prompt. If the subsequent mint fails, don't display the
   // login prompt again.
@@ -161,12 +176,8 @@ void IdentityGetAuthTokenFunction::StartMintTokenFlow(
 
   // Flows are serialized to prevent excessive traffic to GAIA, and
   // to consolidate UI pop-ups.
-  const OAuth2Info& oauth2_info = OAuth2Info::GetOAuth2Info(GetExtension());
-  std::set<std::string> scopes(oauth2_info.scopes.begin(),
-                               oauth2_info.scopes.end());
   IdentityAPI* id_api =
-      extensions::IdentityAPI::GetFactoryInstance()->GetForProfile(
-          GetProfile());
+      extensions::IdentityAPI::GetFactoryInstance()->Get(GetProfile());
 
   if (!should_prompt_for_scopes_) {
     // Caller requested no interaction.
@@ -177,17 +188,13 @@ void IdentityGetAuthTokenFunction::StartMintTokenFlow(
       return;
     }
     if (!id_api->mint_queue()->empty(
-            IdentityMintRequestQueue::MINT_TYPE_INTERACTIVE,
-            GetExtension()->id(), scopes)) {
+            IdentityMintRequestQueue::MINT_TYPE_INTERACTIVE, *token_key_)) {
       // Another call is going through a consent UI.
       CompleteFunctionWithError(identity_constants::kNoGrant);
       return;
     }
   }
-  id_api->mint_queue()->RequestStart(type,
-                                     GetExtension()->id(),
-                                     scopes,
-                                     this);
+  id_api->mint_queue()->RequestStart(type, *token_key_, this);
 }
 
 void IdentityGetAuthTokenFunction::CompleteMintTokenFlow() {
@@ -198,18 +205,16 @@ void IdentityGetAuthTokenFunction::CompleteMintTokenFlow() {
                                oauth2_info.scopes.end());
 
   extensions::IdentityAPI::GetFactoryInstance()
-      ->GetForProfile(GetProfile())
+      ->Get(GetProfile())
       ->mint_queue()
-      ->RequestComplete(type, GetExtension()->id(), scopes, this);
+      ->RequestComplete(type, *token_key_, this);
 }
 
 void IdentityGetAuthTokenFunction::StartMintToken(
     IdentityMintRequestQueue::MintType type) {
   const OAuth2Info& oauth2_info = OAuth2Info::GetOAuth2Info(GetExtension());
-  IdentityAPI* id_api =
-      IdentityAPI::GetFactoryInstance()->GetForProfile(GetProfile());
-  IdentityTokenCacheValue cache_entry = id_api->GetCachedToken(
-      GetExtension()->id(), oauth2_info.scopes);
+  IdentityAPI* id_api = IdentityAPI::GetFactoryInstance()->Get(GetProfile());
+  IdentityTokenCacheValue cache_entry = id_api->GetCachedToken(*token_key_);
   IdentityTokenCacheValue::CacheValueStatus cache_status =
       cache_entry.status();
 
@@ -220,8 +225,10 @@ void IdentityGetAuthTokenFunction::StartMintToken(
         // Always force minting token for ChromeOS kiosk app.
         if (chromeos::UserManager::Get()->IsLoggedInAsKioskApp()) {
           gaia_mint_token_mode_ = OAuth2MintTokenFlow::MODE_MINT_TOKEN_FORCE;
-          if (g_browser_process->browser_policy_connector()->
-                  IsEnterpriseManaged()) {
+          policy::BrowserPolicyConnectorChromeOS* connector =
+              g_browser_process->platform_part()
+                  ->browser_policy_connector_chromeos();
+          if (connector->IsEnterpriseManaged()) {
             StartDeviceLoginAccessTokenRequest();
           } else {
             StartLoginAccessTokenRequest();
@@ -266,12 +273,10 @@ void IdentityGetAuthTokenFunction::StartMintToken(
 
 void IdentityGetAuthTokenFunction::OnMintTokenSuccess(
     const std::string& access_token, int time_to_live) {
-  const OAuth2Info& oauth2_info = OAuth2Info::GetOAuth2Info(GetExtension());
   IdentityTokenCacheValue token(access_token,
                                 base::TimeDelta::FromSeconds(time_to_live));
-  IdentityAPI::GetFactoryInstance()
-      ->GetForProfile(GetProfile())
-      ->SetCachedToken(GetExtension()->id(), oauth2_info.scopes, token);
+  IdentityAPI::GetFactoryInstance()->Get(GetProfile())->SetCachedToken(
+      *token_key_, token);
 
   CompleteMintTokenFlow();
   CompleteFunctionWithResult(access_token);
@@ -286,7 +291,7 @@ void IdentityGetAuthTokenFunction::OnMintTokenFailure(
     case GoogleServiceAuthError::ACCOUNT_DELETED:
     case GoogleServiceAuthError::ACCOUNT_DISABLED:
       extensions::IdentityAPI::GetFactoryInstance()
-          ->GetForProfile(GetProfile())
+          ->Get(GetProfile())
           ->ReportAuthError(error);
       if (should_prompt_for_signin_) {
         // Display a login prompt and try again (once).
@@ -305,12 +310,8 @@ void IdentityGetAuthTokenFunction::OnMintTokenFailure(
 
 void IdentityGetAuthTokenFunction::OnIssueAdviceSuccess(
     const IssueAdviceInfo& issue_advice) {
-  const OAuth2Info& oauth2_info = OAuth2Info::GetOAuth2Info(GetExtension());
-  IdentityAPI::GetFactoryInstance()
-      ->GetForProfile(GetProfile())
-      ->SetCachedToken(GetExtension()->id(),
-                       oauth2_info.scopes,
-                       IdentityTokenCacheValue(issue_advice));
+  IdentityAPI::GetFactoryInstance()->Get(GetProfile())->SetCachedToken(
+      *token_key_, IdentityTokenCacheValue(issue_advice));
   CompleteMintTokenFlow();
 
   should_prompt_for_signin_ = false;
@@ -372,12 +373,10 @@ void IdentityGetAuthTokenFunction::OnGaiaFlowCompleted(
 
   int time_to_live;
   if (!expiration.empty() && base::StringToInt(expiration, &time_to_live)) {
-    const OAuth2Info& oauth2_info = OAuth2Info::GetOAuth2Info(GetExtension());
     IdentityTokenCacheValue token_value(
         access_token, base::TimeDelta::FromSeconds(time_to_live));
-    IdentityAPI::GetFactoryInstance()
-        ->GetForProfile(GetProfile())
-        ->SetCachedToken(GetExtension()->id(), oauth2_info.scopes, token_value);
+    IdentityAPI::GetFactoryInstance()->Get(GetProfile())->SetCachedToken(
+        *token_key_, token_value);
   }
 
   CompleteMintTokenFlow();
@@ -401,17 +400,8 @@ void IdentityGetAuthTokenFunction::OnGetTokenFailure(
 
 #if defined(OS_CHROMEOS)
 void IdentityGetAuthTokenFunction::StartDeviceLoginAccessTokenRequest() {
-  chromeos::DeviceOAuth2TokenServiceFactory::Get(
-      base::Bind(&IdentityGetAuthTokenFunction::DidGetTokenService,
-                 this));
-}
-
-void IdentityGetAuthTokenFunction::DidGetTokenService(
-    chromeos::DeviceOAuth2TokenService* service) {
-  if (!service) {
-    CompleteFunctionWithError(identity_constants::kUserNotSignedIn);
-    return;
-  }
+  chromeos::DeviceOAuth2TokenService* service =
+      chromeos::DeviceOAuth2TokenServiceFactory::Get();
   // Since robot account refresh tokens are scoped down to [any-api] only,
   // request access token for [any-api] instead of login.
   OAuth2TokenService::ScopeSet scopes;
@@ -426,6 +416,7 @@ void IdentityGetAuthTokenFunction::DidGetTokenService(
 void IdentityGetAuthTokenFunction::StartLoginAccessTokenRequest() {
   ProfileOAuth2TokenService* service =
       ProfileOAuth2TokenServiceFactory::GetForProfile(GetProfile());
+  const std::string primary_account_id = GetPrimaryAccountId(GetProfile());
 #if defined(OS_CHROMEOS)
   if (chrome::IsRunningInForcedAppMode()) {
     std::string app_client_id;
@@ -433,7 +424,7 @@ void IdentityGetAuthTokenFunction::StartLoginAccessTokenRequest() {
     if (chromeos::UserManager::Get()->GetAppModeChromeClientOAuthInfo(
            &app_client_id, &app_client_secret)) {
       login_token_request_ =
-          service->StartRequestForClient(service->GetPrimaryAccountId(),
+          service->StartRequestForClient(primary_account_id,
                                          app_client_id,
                                          app_client_secret,
                                          OAuth2TokenService::ScopeSet(),
@@ -443,7 +434,7 @@ void IdentityGetAuthTokenFunction::StartLoginAccessTokenRequest() {
   }
 #endif
   login_token_request_ = service->StartRequest(
-      service->GetPrimaryAccountId(), OAuth2TokenService::ScopeSet(), this);
+      primary_account_id, OAuth2TokenService::ScopeSet(), this);
 }
 
 void IdentityGetAuthTokenFunction::StartGaiaRequest(
@@ -488,7 +479,7 @@ bool IdentityGetAuthTokenFunction::HasLoginToken() const {
   ProfileOAuth2TokenService* token_service =
       ProfileOAuth2TokenServiceFactory::GetForProfile(GetProfile());
   return token_service->RefreshTokenIsAvailable(
-      token_service->GetPrimaryAccountId());
+      GetPrimaryAccountId(GetProfile()));
 }
 
 std::string IdentityGetAuthTokenFunction::MapOAuth2ErrorToDescription(
@@ -533,9 +524,8 @@ bool IdentityRemoveCachedAuthTokenFunction::RunImpl() {
   scoped_ptr<identity::RemoveCachedAuthToken::Params> params(
       identity::RemoveCachedAuthToken::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
-  IdentityAPI::GetFactoryInstance()
-      ->GetForProfile(GetProfile())
-      ->EraseCachedToken(GetExtension()->id(), params->details.token);
+  IdentityAPI::GetFactoryInstance()->Get(GetProfile())->EraseCachedToken(
+      GetExtension()->id(), params->details.token);
   return true;
 }
 
@@ -669,9 +659,9 @@ const base::Time& IdentityTokenCacheValue::expiration_time() const {
   return expiration_time_;
 }
 
-IdentityAPI::IdentityAPI(Profile* profile)
-    : profile_(profile),
-      account_tracker_(profile) {
+IdentityAPI::IdentityAPI(content::BrowserContext* context)
+    : browser_context_(context),
+      account_tracker_(Profile::FromBrowserContext(context)) {
   account_tracker_.AddObserver(this);
 }
 
@@ -681,12 +671,8 @@ IdentityMintRequestQueue* IdentityAPI::mint_queue() {
     return &mint_queue_;
 }
 
-void IdentityAPI::SetCachedToken(const std::string& extension_id,
-                                 const std::vector<std::string> scopes,
+void IdentityAPI::SetCachedToken(const ExtensionTokenKey& key,
                                  const IdentityTokenCacheValue& token_data) {
-  std::set<std::string> scopeset(scopes.begin(), scopes.end());
-  TokenCacheKey key(extension_id, scopeset);
-
   CachedTokens::iterator it = token_cache_.find(key);
   if (it != token_cache_.end() && it->second.status() <= token_data.status())
     token_cache_.erase(it);
@@ -712,9 +698,7 @@ void IdentityAPI::EraseAllCachedTokens() {
 }
 
 const IdentityTokenCacheValue& IdentityAPI::GetCachedToken(
-    const std::string& extension_id, const std::vector<std::string> scopes) {
-  std::set<std::string> scopeset(scopes.begin(), scopes.end());
-  TokenCacheKey key(extension_id, scopeset);
+    const ExtensionTokenKey& key) {
   return token_cache_[key];
 }
 
@@ -723,9 +707,12 @@ const IdentityAPI::CachedTokens& IdentityAPI::GetAllCachedTokens() {
 }
 
 void IdentityAPI::ReportAuthError(const GoogleServiceAuthError& error) {
-  ProfileOAuth2TokenService* token_service =
-      ProfileOAuth2TokenServiceFactory::GetForProfile(profile_);
-  account_tracker_.ReportAuthError(token_service->GetPrimaryAccountId(), error);
+  account_tracker_.ReportAuthError(GetPrimaryAccountId(browser_context_),
+                                   error);
+}
+
+GoogleServiceAuthError IdentityAPI::GetAuthStatusForTest() const {
+  return account_tracker_.GetAuthStatus();
 }
 
 void IdentityAPI::Shutdown() {
@@ -733,12 +720,12 @@ void IdentityAPI::Shutdown() {
   account_tracker_.Shutdown();
 }
 
-static base::LazyInstance<ProfileKeyedAPIFactory<IdentityAPI> >
+static base::LazyInstance<BrowserContextKeyedAPIFactory<IdentityAPI> >
     g_factory = LAZY_INSTANCE_INITIALIZER;
 
 // static
-ProfileKeyedAPIFactory<IdentityAPI>* IdentityAPI::GetFactoryInstance() {
-  return &g_factory.Get();
+BrowserContextKeyedAPIFactory<IdentityAPI>* IdentityAPI::GetFactoryInstance() {
+  return g_factory.Pointer();
 }
 
 void IdentityAPI::OnAccountAdded(const AccountIds& ids) {}
@@ -752,35 +739,18 @@ void IdentityAPI::OnAccountSignInChanged(const AccountIds& ids,
 
   scoped_ptr<base::ListValue> args =
       api::identity::OnSignInChanged::Create(account_info, is_signed_in);
-  scoped_ptr<Event> event(new Event(
-      api::identity::OnSignInChanged::kEventName, args.Pass(), profile_));
+  scoped_ptr<Event> event(new Event(api::identity::OnSignInChanged::kEventName,
+                                    args.Pass(),
+                                    browser_context_));
 
-  ExtensionSystem::Get(profile_)->event_router()->BroadcastEvent(event.Pass());
+  ExtensionSystem::Get(browser_context_)->event_router()->BroadcastEvent(
+      event.Pass());
 }
 
 template <>
-void ProfileKeyedAPIFactory<IdentityAPI>::DeclareFactoryDependencies() {
-  DependsOn(ExtensionSystemFactory::GetInstance());
+void BrowserContextKeyedAPIFactory<IdentityAPI>::DeclareFactoryDependencies() {
+  DependsOn(ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
   DependsOn(ProfileOAuth2TokenServiceFactory::GetInstance());
-}
-
-IdentityAPI::TokenCacheKey::TokenCacheKey(const std::string& extension_id,
-                                          const std::set<std::string> scopes)
-    : extension_id(extension_id),
-      scopes(scopes) {
-}
-
-IdentityAPI::TokenCacheKey::~TokenCacheKey() {
-}
-
-bool IdentityAPI::TokenCacheKey::operator<(
-    const IdentityAPI::TokenCacheKey& rhs) const {
-  if (extension_id < rhs.extension_id)
-    return true;
-  else if (rhs.extension_id < extension_id)
-    return false;
-
-  return scopes < rhs.scopes;
 }
 
 }  // namespace extensions

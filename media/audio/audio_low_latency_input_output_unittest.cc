@@ -6,7 +6,6 @@
 #include "base/environment.h"
 #include "base/file_util.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/synchronization/lock.h"
 #include "base/test/test_timeouts.h"
@@ -14,12 +13,13 @@
 #include "build/build_config.h"
 #include "media/audio/audio_io.h"
 #include "media/audio/audio_manager_base.h"
+#include "media/audio/fake_audio_log_factory.h"
 #include "media/base/seekable_buffer.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if defined(OS_LINUX) || defined(OS_OPENBSD)
-#include "media/audio/linux/audio_manager_linux.h"
+#if defined(USE_ALSA)
+#include "media/audio/alsa/audio_manager_alsa.h"
 #elif defined(OS_MACOSX)
 #include "media/audio/mac/audio_manager_mac.h"
 #elif defined(OS_WIN)
@@ -27,18 +27,22 @@
 #include "media/audio/win/core_audio_util_win.h"
 #elif defined(OS_ANDROID)
 #include "media/audio/android/audio_manager_android.h"
+#else
+#include "media/audio/fake_audio_manager.h"
 #endif
 
 namespace media {
 
-#if defined(OS_LINUX) || defined(OS_OPENBSD)
-typedef AudioManagerLinux AudioManagerAnyPlatform;
+#if defined(USE_ALSA)
+typedef AudioManagerAlsa AudioManagerAnyPlatform;
 #elif defined(OS_MACOSX)
 typedef AudioManagerMac AudioManagerAnyPlatform;
 #elif defined(OS_WIN)
 typedef AudioManagerWin AudioManagerAnyPlatform;
 #elif defined(OS_ANDROID)
 typedef AudioManagerAndroid AudioManagerAnyPlatform;
+#else
+typedef FakeAudioManager AudioManagerAnyPlatform;
 #endif
 
 // Limits the number of delay measurements we can store in an array and
@@ -80,14 +84,15 @@ struct AudioDelayState {
 // the main thread instead of the audio thread.
 class MockAudioManager : public AudioManagerAnyPlatform {
  public:
-  MockAudioManager() {}
+  MockAudioManager() : AudioManagerAnyPlatform(&fake_audio_log_factory_) {}
   virtual ~MockAudioManager() {}
 
-  virtual scoped_refptr<base::MessageLoopProxy> GetMessageLoop() OVERRIDE {
+  virtual scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner() OVERRIDE {
     return base::MessageLoop::current()->message_loop_proxy();
   }
 
  private:
+  FakeAudioLogFactory fake_audio_log_factory_;
   DISALLOW_COPY_AND_ASSIGN(MockAudioManager);
 };
 
@@ -156,9 +161,9 @@ class FullDuplexAudioSinkSource
     EXPECT_TRUE(PathService::Get(base::DIR_EXE, &file_name));
     file_name = file_name.AppendASCII(kDelayValuesFileName);
 
-    FILE* text_file = file_util::OpenFile(file_name, "wt");
+    FILE* text_file = base::OpenFile(file_name, "wt");
     DLOG_IF(ERROR, !text_file) << "Failed to open log file.";
-    LOG(INFO) << ">> Output file " << file_name.value() << " has been created.";
+    VLOG(0) << ">> Output file " << file_name.value() << " has been created.";
 
     // Write the array which contains time-stamps, buffer size and
     // audio delays values to a text file.
@@ -174,7 +179,7 @@ class FullDuplexAudioSinkSource
       ++elements_written;
     }
 
-    file_util::CloseFile(text_file);
+    base::CloseFile(text_file);
   }
 
   // AudioInputStream::AudioInputCallback.
@@ -208,7 +213,6 @@ class FullDuplexAudioSinkSource
     }
   }
 
-  virtual void OnClose(AudioInputStream* stream) OVERRIDE {}
   virtual void OnError(AudioInputStream* stream) OVERRIDE {}
 
   // AudioOutputStream::AudioSourceCallback.
@@ -308,8 +312,7 @@ class AudioOutputStreamTraits {
 
   static StreamType* CreateStream(AudioManager* audio_manager,
       const AudioParameters& params) {
-    return audio_manager->MakeAudioOutputStream(params, std::string(),
-        std::string());
+    return audio_manager->MakeAudioOutputStream(params, std::string());
   }
 };
 
@@ -421,10 +424,10 @@ TEST_F(AudioLowLatencyInputOutputTest, DISABLED_FullDuplexDelayMeasurement) {
   FullDuplexAudioSinkSource full_duplex(
       aisw.sample_rate(), aisw.samples_per_packet(), aisw.channels());
 
-  LOG(INFO) << ">> You should now be able to hear yourself in loopback...";
-  DLOG(INFO) << "   sample_rate       : " << aisw.sample_rate();
-  DLOG(INFO) << "   samples_per_packet: " << aisw.samples_per_packet();
-  DLOG(INFO) << "   channels          : " << aisw.channels();
+  VLOG(0) << ">> You should now be able to hear yourself in loopback...";
+  DVLOG(0) << "   sample_rate       : " << aisw.sample_rate();
+  DVLOG(0) << "   samples_per_packet: " << aisw.samples_per_packet();
+  DVLOG(0) << "   channels          : " << aisw.channels();
 
   ais->Start(&full_duplex);
   aos->Start(&full_duplex);

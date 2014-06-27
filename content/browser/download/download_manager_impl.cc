@@ -56,8 +56,8 @@ void BeginDownload(scoped_ptr<DownloadUrlParameters> params,
   // we must down cast. RDHI is the only subclass of RDH as of 2012 May 4.
   scoped_ptr<net::URLRequest> request(
       params->resource_context()->GetRequestContext()->CreateRequest(
-          params->url(), net::DEFAULT_PRIORITY, NULL));
-  request->set_load_flags(request->load_flags() | params->load_flags());
+          params->url(), net::DEFAULT_PRIORITY, NULL, NULL));
+  request->SetLoadFlags(request->load_flags() | params->load_flags());
   request->set_method(params->method());
   if (!params->post_body().empty()) {
     const std::string& body = params->post_body();
@@ -156,13 +156,6 @@ class MapValueIteratorAdapter {
   base::hash_map<int64, DownloadItem*>::const_iterator iter_;
   // Allow copy and assign.
 };
-
-void EnsureNoPendingDownloadJobsOnFile(bool* result) {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE));
-  *result = (DownloadFile::GetNumberOfDownloadFiles() == 0);
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE, base::MessageLoop::QuitClosure());
-}
 
 class DownloadItemFactoryImpl : public DownloadItemFactory {
  public:
@@ -400,11 +393,12 @@ void DownloadManagerImpl::StartDownloadWithId(
       // while resuming, then also ignore the request.
       info->request_handle.CancelRequest();
       if (!on_started.is_null())
-        on_started.Run(NULL, net::ERR_ABORTED);
+        on_started.Run(NULL, DOWNLOAD_INTERRUPT_REASON_USER_CANCELED);
       return;
     }
     download = item_iterator->second;
     DCHECK_EQ(DownloadItem::INTERRUPTED, download->GetState());
+    download->MergeOriginInfoOnResume(*info);
   }
 
   base::FilePath default_download_directory;
@@ -420,7 +414,7 @@ void DownloadManagerImpl::StartDownloadWithId(
       file_factory_->CreateFile(
           info->save_info.Pass(), default_download_directory,
           info->url(), info->referrer_url,
-          delegate_->GenerateFileHash(),
+          delegate_ && delegate_->GenerateFileHash(),
           stream.Pass(), download->GetBoundNetLog(),
           download->DestinationObserverAsWeakPtr()));
 
@@ -443,7 +437,7 @@ void DownloadManagerImpl::StartDownloadWithId(
     FOR_EACH_OBSERVER(Observer, observers_, OnDownloadCreated(this, download));
 
   if (!on_started.is_null())
-    on_started.Run(download, net::OK);
+    on_started.Run(download, DOWNLOAD_INTERRUPT_REASON_NONE);
 }
 
 void DownloadManagerImpl::CheckForHistoryFilesRemoval() {

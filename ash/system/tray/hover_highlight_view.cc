@@ -8,8 +8,11 @@
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/view_click_listener.h"
 #include "grit/ui_resources.h"
+#include "ui/accessibility/ax_view_state.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/font_list.h"
+#include "ui/views/border.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/box_layout.h"
@@ -32,7 +35,9 @@ HoverHighlightView::HoverHighlightView(ViewClickListener* listener)
       text_highlight_color_(0),
       text_default_color_(0),
       hover_(false),
-      expandable_(false) {
+      expandable_(false),
+      checkable_(false),
+      checked_(false) {
   set_notify_enter_exit_on_child(true);
 }
 
@@ -51,7 +56,7 @@ void HoverHighlightView::AddIconAndLabel(const gfx::ImageSkia& image,
 
   text_label_ = new views::Label(text);
   text_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  text_label_->SetFont(text_label_->font().DeriveFont(0, style));
+  text_label_->SetFontList(text_label_->font_list().DeriveWithStyle(style));
   if (text_default_color_)
     text_label_->SetEnabledColor(text_default_color_);
   AddChildView(text_label_);
@@ -71,10 +76,10 @@ views::Label* HoverHighlightView::AddLabel(const base::string16& text,
     right_margin = margin;
   else
     left_margin = margin;
-  text_label_->set_border(
+  text_label_->SetBorder(
       views::Border::CreateEmptyBorder(5, left_margin, 5, right_margin));
   text_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  text_label_->SetFont(text_label_->font().DeriveFont(0, style));
+  text_label_->SetFontList(text_label_->font_list().DeriveWithStyle(style));
   // Do not set alpha value in disable color. It will have issue with elide
   // blending filter in disabled state for rendering label text color.
   text_label_->SetDisabledColor(SkColorSetARGB(255, 127, 127, 127));
@@ -89,6 +94,8 @@ views::Label* HoverHighlightView::AddLabel(const base::string16& text,
 views::Label* HoverHighlightView::AddCheckableLabel(const base::string16& text,
                                                     gfx::Font::FontStyle style,
                                                     bool checked) {
+  checkable_ = true;
+  checked_ = checked;
   if (checked) {
     ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
     const gfx::ImageSkia* check =
@@ -104,7 +111,7 @@ views::Label* HoverHighlightView::AddCheckableLabel(const base::string16& text,
 
     text_label_ = new views::Label(text);
     text_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-    text_label_->SetFont(text_label_->font().DeriveFont(0, style));
+    text_label_->SetFontList(text_label_->font_list().DeriveWithStyle(style));
     text_label_->SetDisabledColor(SkColorSetARGB(127, 0, 0, 0));
     if (text_default_color_)
       text_label_->SetEnabledColor(text_default_color_);
@@ -128,6 +135,16 @@ bool HoverHighlightView::PerformAction(const ui::Event& event) {
     return false;
   listener_->OnViewClicked(this);
   return true;
+}
+
+void HoverHighlightView::GetAccessibleState(ui::AXViewState* state) {
+  ActionableView::GetAccessibleState(state);
+
+  if (checkable_) {
+    state->role = ui::AX_ROLE_CHECK_BOX;
+    if (checked_)
+      state->AddStateFlag(ui::AX_STATE_CHECKED);
+  }
 }
 
 gfx::Size HoverHighlightView::GetPreferredSize() {

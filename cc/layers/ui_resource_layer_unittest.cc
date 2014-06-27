@@ -4,12 +4,11 @@
 
 #include "cc/layers/ui_resource_layer.h"
 
-#include "cc/debug/overdraw_metrics.h"
 #include "cc/resources/prioritized_resource_manager.h"
 #include "cc/resources/resource_provider.h"
 #include "cc/resources/resource_update_queue.h"
 #include "cc/resources/scoped_ui_resource.h"
-#include "cc/scheduler/texture_uploader.h"
+#include "cc/test/fake_layer_tree_host.h"
 #include "cc/test/fake_layer_tree_host_client.h"
 #include "cc/test/fake_output_surface.h"
 #include "cc/test/fake_output_surface_client.h"
@@ -29,30 +28,21 @@ using ::testing::AnyNumber;
 namespace cc {
 namespace {
 
-class MockLayerTreeHost : public LayerTreeHost {
- public:
-  explicit MockLayerTreeHost(LayerTreeHostClient* client)
-      : LayerTreeHost(client, NULL, LayerTreeSettings()) {
-    Initialize(NULL);
-  }
-};
-
 class UIResourceLayerTest : public testing::Test {
  public:
   UIResourceLayerTest() : fake_client_(FakeLayerTreeHostClient::DIRECT_3D) {}
 
-  cc::Proxy* Proxy() const { return layer_tree_host_->proxy(); }
-
  protected:
   virtual void SetUp() {
-    layer_tree_host_.reset(new MockLayerTreeHost(&fake_client_));
+    layer_tree_host_ = FakeLayerTreeHost::Create();
+    layer_tree_host_->InitializeSingleThreaded(&fake_client_);
   }
 
   virtual void TearDown() {
     Mock::VerifyAndClearExpectations(layer_tree_host_.get());
   }
 
-  scoped_ptr<MockLayerTreeHost> layer_tree_host_;
+  scoped_ptr<FakeLayerTreeHost> layer_tree_host_;
   FakeLayerTreeHostClient fake_client_;
 };
 
@@ -66,18 +56,16 @@ TEST_F(UIResourceLayerTest, SetBitmap) {
   Mock::VerifyAndClearExpectations(layer_tree_host_.get());
   EXPECT_EQ(test_layer->layer_tree_host(), layer_tree_host_.get());
 
-  layer_tree_host_->InitializeOutputSurfaceIfNeeded();
-
   ResourceUpdateQueue queue;
-  OcclusionTracker occlusion_tracker(gfx::Rect(), false);
+  gfx::Rect screen_space_clip_rect;
+  OcclusionTracker<Layer> occlusion_tracker(screen_space_clip_rect);
   test_layer->SavePaintProperties();
   test_layer->Update(&queue, &occlusion_tracker);
 
   EXPECT_FALSE(test_layer->DrawsContent());
 
   SkBitmap bitmap;
-  bitmap.setConfig(SkBitmap::kARGB_8888_Config, 10, 10);
-  bitmap.allocPixels();
+  bitmap.allocN32Pixels(10, 10);
   bitmap.setImmutable();
 
   test_layer->SetBitmap(bitmap);
@@ -96,22 +84,17 @@ TEST_F(UIResourceLayerTest, SetUIResourceId) {
   Mock::VerifyAndClearExpectations(layer_tree_host_.get());
   EXPECT_EQ(test_layer->layer_tree_host(), layer_tree_host_.get());
 
-  layer_tree_host_->InitializeOutputSurfaceIfNeeded();
-
   ResourceUpdateQueue queue;
-  OcclusionTracker occlusion_tracker(gfx::Rect(), false);
+  gfx::Rect screen_space_clip_rect;
+  OcclusionTracker<Layer> occlusion_tracker(screen_space_clip_rect);
   test_layer->SavePaintProperties();
   test_layer->Update(&queue, &occlusion_tracker);
 
   EXPECT_FALSE(test_layer->DrawsContent());
 
-  SkBitmap bitmap;
-  bitmap.setConfig(SkBitmap::kARGB_8888_Config, 10, 10);
-  bitmap.allocPixels();
-  bitmap.setImmutable();
-
+  bool is_opaque = false;
   scoped_ptr<ScopedUIResource> resource = ScopedUIResource::Create(
-      layer_tree_host_.get(), UIResourceBitmap(bitmap));
+      layer_tree_host_.get(), UIResourceBitmap(gfx::Size(10, 10), is_opaque));
   test_layer->SetUIResourceId(resource->id());
   test_layer->Update(&queue, &occlusion_tracker);
 

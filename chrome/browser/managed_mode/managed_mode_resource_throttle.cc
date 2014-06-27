@@ -5,7 +5,6 @@
 #include "chrome/browser/managed_mode/managed_mode_resource_throttle.h"
 
 #include "base/bind.h"
-#include "base/lazy_instance.h"
 #include "chrome/browser/managed_mode/managed_mode_interstitial.h"
 #include "chrome/browser/managed_mode/managed_mode_navigation_observer.h"
 #include "chrome/browser/managed_mode/managed_mode_url_filter.h"
@@ -20,10 +19,10 @@ ManagedModeResourceThrottle::ManagedModeResourceThrottle(
     const net::URLRequest* request,
     bool is_main_frame,
     const ManagedModeURLFilter* url_filter)
-    : weak_ptr_factory_(this),
-      request_(request),
+    : request_(request),
       is_main_frame_(is_main_frame),
-      url_filter_(url_filter) {}
+      url_filter_(url_filter),
+      weak_ptr_factory_(this) {}
 
 ManagedModeResourceThrottle::~ManagedModeResourceThrottle() {}
 
@@ -56,6 +55,10 @@ void ManagedModeResourceThrottle::WillStartRequest(bool* defer) {
 void ManagedModeResourceThrottle::WillRedirectRequest(const GURL& new_url,
                                                       bool* defer) {
   ShowInterstitialIfNeeded(true, new_url, defer);
+}
+
+const char* ManagedModeResourceThrottle::GetNameForLogging() const {
+  return "ManagedModeResourceThrottle";
 }
 
 void ManagedModeResourceThrottle::OnInterstitialResult(bool continue_request) {

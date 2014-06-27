@@ -11,6 +11,8 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/platform_thread.h"
+#include "base/time/time.h"
 #include "content/browser/byte_stream.h"
 #include "content/browser/download/download_file_factory.h"
 #include "content/browser/download/download_file_impl.h"
@@ -23,6 +25,8 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/webplugininfo.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/content_browser_test.h"
+#include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/download_test_observer.h"
 #include "content/public/test/test_file_error_injector.h"
 #include "content/public/test/test_utils.h"
@@ -30,22 +34,24 @@
 #include "content/shell/browser/shell_browser_context.h"
 #include "content/shell/browser/shell_download_manager_delegate.h"
 #include "content/shell/browser/shell_network_delegate.h"
-#include "content/test/content_browser_test.h"
-#include "content/test/content_browser_test_utils.h"
 #include "content/test/net/url_request_mock_http_job.h"
 #include "content/test/net/url_request_slow_download_job.h"
+#include "net/test/embedded_test_server/embedded_test_server.h"
+#include "net/test/embedded_test_server/http_request.h"
+#include "net/test/embedded_test_server/http_response.h"
 #include "net/test/spawned_test_server/spawned_test_server.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
-using ::testing::_;
+using ::net::test_server::EmbeddedTestServer;
 using ::testing::AllOf;
 using ::testing::Field;
 using ::testing::InSequence;
 using ::testing::Property;
 using ::testing::Return;
 using ::testing::StrictMock;
+using ::testing::_;
 
 namespace content {
 
@@ -350,6 +356,7 @@ class TestShellDownloadManagerDelegate : public ShellDownloadManagerDelegate {
  public:
   TestShellDownloadManagerDelegate()
       : delay_download_open_(false) {}
+  virtual ~TestShellDownloadManagerDelegate() {}
 
   virtual bool ShouldOpenDownload(
       DownloadItem* item,
@@ -370,8 +377,6 @@ class TestShellDownloadManagerDelegate : public ShellDownloadManagerDelegate {
     callbacks->swap(delayed_callbacks_);
   }
  private:
-  virtual ~TestShellDownloadManagerDelegate() {}
-
   bool delay_download_open_;
   std::vector<DownloadOpenDelayedCallback> delayed_callbacks_;
 };
@@ -504,6 +509,54 @@ bool InitialSizeFilter(int* download_size, DownloadItem* download) {
   return true;
 }
 
+// Request handler to be used with CreateRedirectHandler().
+scoped_ptr<net::test_server::HttpResponse> HandleRequestAndSendRedirectResponse(
+    const std::string& relative_url,
+    const GURL& target_url,
+    const net::test_server::HttpRequest& request) {
+  scoped_ptr<net::test_server::BasicHttpResponse> response;
+  if (request.relative_url == relative_url) {
+    response.reset(new net::test_server::BasicHttpResponse);
+    response->set_code(net::HTTP_FOUND);
+    response->AddCustomHeader("Location", target_url.spec());
+  }
+  return response.PassAs<net::test_server::HttpResponse>();
+}
+
+// Creates a request handler for EmbeddedTestServer that responds with a HTTP
+// 302 redirect if the request URL matches |relative_url|.
+EmbeddedTestServer::HandleRequestCallback CreateRedirectHandler(
+    const std::string& relative_url,
+    const GURL& target_url) {
+  return base::Bind(
+      &HandleRequestAndSendRedirectResponse, relative_url, target_url);
+}
+
+// Request handler to be used with CreateBasicResponseHandler().
+scoped_ptr<net::test_server::HttpResponse> HandleRequestAndSendBasicResponse(
+    const std::string& relative_url,
+    const std::string& content_type,
+    const std::string& body,
+    const net::test_server::HttpRequest& request) {
+  scoped_ptr<net::test_server::BasicHttpResponse> response;
+  if (request.relative_url == relative_url) {
+    response.reset(new net::test_server::BasicHttpResponse);
+    response->set_content_type(content_type);
+    response->set_content(body);
+  }
+  return response.PassAs<net::test_server::HttpResponse>();
+}
+
+// Creates a request handler for an EmbeddedTestServer that response with an
+// HTTP 200 status code, a Content-Type header and a body.
+EmbeddedTestServer::HandleRequestCallback CreateBasicResponseHandler(
+    const std::string& relative_url,
+    const std::string& content_type,
+    const std::string& body) {
+  return base::Bind(
+      &HandleRequestAndSendBasicResponse, relative_url, content_type, body);
+}
+
 }  // namespace
 
 class DownloadContentTest : public ContentBrowserTest {
@@ -522,12 +575,12 @@ class DownloadContentTest : public ContentBrowserTest {
   virtual void SetUpOnMainThread() OVERRIDE {
     ASSERT_TRUE(downloads_directory_.CreateUniqueTempDir());
 
-    TestShellDownloadManagerDelegate* delegate =
-        new TestShellDownloadManagerDelegate();
-    delegate->SetDownloadBehaviorForTesting(downloads_directory_.path());
+    test_delegate_.reset(new TestShellDownloadManagerDelegate());
+    test_delegate_->SetDownloadBehaviorForTesting(downloads_directory_.path());
     DownloadManager* manager = DownloadManagerForShell(shell());
-    manager->SetDelegate(delegate);
-    delegate->SetDownloadManager(manager);
+    manager->GetDelegate()->Shutdown();
+    manager->SetDelegate(test_delegate_.get());
+    test_delegate_->SetDownloadManager(manager);
 
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
@@ -538,10 +591,8 @@ class DownloadContentTest : public ContentBrowserTest {
         base::Bind(&URLRequestMockHTTPJob::AddUrlHandler, mock_base));
   }
 
-  TestShellDownloadManagerDelegate* GetDownloadManagerDelegate(
-      DownloadManager* manager) {
-    return static_cast<TestShellDownloadManagerDelegate*>(
-        manager->GetDelegate());
+  TestShellDownloadManagerDelegate* GetDownloadManagerDelegate() {
+    return test_delegate_.get();
   }
 
   // Create a DownloadTestObserverTerminal that will wait for the
@@ -585,8 +636,10 @@ class DownloadContentTest : public ContentBrowserTest {
            (CountingDownloadFile::GetNumberActiveFilesFromFileThread() == 0);
   }
 
-  void DownloadAndWait(Shell* shell, const GURL& url,
-                       DownloadItem::DownloadState expected_terminal_state) {
+  void NavigateToURLAndWaitForDownload(
+      Shell* shell,
+      const GURL& url,
+      DownloadItem::DownloadState expected_terminal_state) {
     scoped_ptr<DownloadTestObserver> observer(CreateWaiter(shell, 1));
     NavigateToURL(shell, url);
     observer->WaitForFinished();
@@ -699,6 +752,7 @@ class DownloadContentTest : public ContentBrowserTest {
 
   // Location of the downloads directory for these tests
   base::ScopedTempDir downloads_directory_;
+  scoped_ptr<TestShellDownloadManagerDelegate> test_delegate_;
 };
 
 IN_PROC_BROWSER_TEST_F(DownloadContentTest, DownloadCancelled) {
@@ -748,7 +802,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, MultiDownload) {
   base::FilePath file(FILE_PATH_LITERAL("download-test.lib"));
   GURL url(URLRequestMockHTTPJob::GetMockUrl(file));
   // Download the file and wait.
-  DownloadAndWait(shell(), url, DownloadItem::COMPLETE);
+  NavigateToURLAndWaitForDownload(shell(), url, DownloadItem::COMPLETE);
 
   // Should now have 2 items on the manager.
   downloads.clear();
@@ -802,7 +856,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, DownloadOctetStream) {
 
   // The following is served with a Content-Type of application/octet-stream.
   GURL url(URLRequestMockHTTPJob::GetMockUrl(base::FilePath(kTestFilePath)));
-  DownloadAndWait(shell(), url, DownloadItem::COMPLETE);
+  NavigateToURLAndWaitForDownload(shell(), url, DownloadItem::COMPLETE);
 }
 #endif
 
@@ -857,7 +911,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, CancelAtRelease) {
   DownloadManagerImpl* download_manager(DownloadManagerForShell(shell()));
 
   // Mark delegate for delayed open.
-  GetDownloadManagerDelegate(download_manager)->SetDelayedOpen(true);
+  GetDownloadManagerDelegate()->SetDelayedOpen(true);
 
   // Setup new factory.
   DownloadFileWithDelayFactory* file_factory =
@@ -898,7 +952,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, CancelAtRelease) {
 
   // Need to complete open test.
   std::vector<DownloadOpenDelayedCallback> delayed_callbacks;
-  GetDownloadManagerDelegate(download_manager)->GetDelayedCallbacks(
+  GetDownloadManagerDelegate()->GetDelayedCallbacks(
       &delayed_callbacks);
   ASSERT_EQ(1u, delayed_callbacks.size());
   delayed_callbacks[0].Run(true);
@@ -944,7 +998,20 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, ShutdownInProgress) {
     EXPECT_CALL(item_observer, OnDownloadDestroyed(items[0]))
         .WillOnce(Return());
   }
+
+  // See http://crbug.com/324525.  If we have a refcount release/post task
+  // race, the second post will stall the IO thread long enough so that we'll
+  // lose the race and crash.  The first stall is just to give the UI thread
+  // a chance to get the second stall onto the IO thread queue after the cancel
+  // message created by Shutdown and before the notification callback
+  // created by the IO thread in canceling the request.
+  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
+                          base::Bind(&base::PlatformThread::Sleep,
+                                     base::TimeDelta::FromMilliseconds(25)));
   DownloadManagerForShell(shell())->Shutdown();
+  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
+                          base::Bind(&base::PlatformThread::Sleep,
+                                     base::TimeDelta::FromMilliseconds(25)));
   items.clear();
 }
 
@@ -954,7 +1021,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, ShutdownAtRelease) {
   DownloadManagerImpl* download_manager(DownloadManagerForShell(shell()));
 
   // Mark delegate for delayed open.
-  GetDownloadManagerDelegate(download_manager)->SetDelayedOpen(true);
+  GetDownloadManagerDelegate()->SetDelayedOpen(true);
 
   // Setup new factory.
   DownloadFileWithDelayFactory* file_factory =
@@ -1125,12 +1192,12 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest,
       switches::kEnableDownloadResumption);
   ASSERT_TRUE(test_server()->Start());
 
-  GURL url = test_server()->GetURL(
-      base::StringPrintf(
-          // First download hits an RST, rest don't, precondition fail.
-          "rangereset?size=%d&rst_boundary=%d&"
-          "token=NoRange&rst_limit=1&fail_precondition=2",
-          GetSafeBufferChunk() * 3, GetSafeBufferChunk()));
+  GURL url = test_server()->GetURL(base::StringPrintf(
+      // First download hits an RST, rest don't, precondition fail.
+      "rangereset?size=%d&rst_boundary=%d&"
+      "token=BadPrecondition&rst_limit=1&fail_precondition=2",
+      GetSafeBufferChunk() * 3,
+      GetSafeBufferChunk()));
 
   // Start the download and wait for first data chunk.
   DownloadItem* download(StartDownloadAndReturnItem(url));
@@ -1142,6 +1209,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest,
   ConfirmFileStatusForResume(
       download, true, GetSafeBufferChunk(), GetSafeBufferChunk() * 3,
       base::FilePath(FILE_PATH_LITERAL("rangereset.crdownload")));
+  EXPECT_EQ("BadPrecondition2", download->GetETag());
 
   DownloadUpdatedObserver completion_observer(
       download, base::Bind(DownloadCompleteFilter));
@@ -1151,6 +1219,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest,
   ConfirmFileStatusForResume(
       download, true, GetSafeBufferChunk() * 3, GetSafeBufferChunk() * 3,
       base::FilePath(FILE_PATH_LITERAL("rangereset")));
+  EXPECT_EQ("BadPrecondition0", download->GetETag());
 
   static const RecordingDownloadObserver::RecordStruct expected_record[] = {
     // Result of RST
@@ -1547,7 +1616,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, RemoveResumingDownload) {
   // single threaded. The response to this download request should follow the
   // response to the previous resumption request.
   GURL url2(test_server()->GetURL("rangereset?size=100&rst_limit=0&token=x"));
-  DownloadAndWait(shell(), url2, DownloadItem::COMPLETE);
+  NavigateToURLAndWaitForDownload(shell(), url2, DownloadItem::COMPLETE);
 
   EXPECT_TRUE(EnsureNoPendingDownloads());
 }
@@ -1595,7 +1664,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, CancelResumingDownload) {
   // single threaded. The response to this download request should follow the
   // response to the previous resumption request.
   GURL url2(test_server()->GetURL("rangereset?size=100&rst_limit=0&token=x"));
-  DownloadAndWait(shell(), url2, DownloadItem::COMPLETE);
+  NavigateToURLAndWaitForDownload(shell(), url2, DownloadItem::COMPLETE);
 
   EXPECT_TRUE(EnsureNoPendingDownloads());
 }
@@ -1636,6 +1705,98 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, CookiePolicy) {
   EXPECT_EQ("A=B",
             content::GetCookies(shell()->web_contents()->GetBrowserContext(),
                                 GURL(download)));
+}
+
+// A filename suggestion specified via a @download attribute should not be
+// effective if the final download URL is in another origin from the original
+// download URL.
+IN_PROC_BROWSER_TEST_F(DownloadContentTest,
+                       DownloadAttributeCrossOriginRedirect) {
+  EmbeddedTestServer origin_one;
+  EmbeddedTestServer origin_two;
+  ASSERT_TRUE(origin_one.InitializeAndWaitUntilReady());
+  ASSERT_TRUE(origin_two.InitializeAndWaitUntilReady());
+
+  // The download-attribute.html page contains an anchor element whose href is
+  // set to the value of the query parameter (specified as |target| in the URL
+  // below). The suggested filename for the anchor is 'suggested-filename'. When
+  // the page is loaded, a script simulates a click on the anchor, triggering a
+  // download of the target URL.
+  //
+  // We construct two test servers; origin_one and origin_two. Once started, the
+  // server URLs will differ by the port number. Therefore they will be in
+  // different origins.
+  GURL download_url = origin_one.GetURL("/ping");
+  GURL referrer_url = origin_one.GetURL(
+      std::string("/download-attribute.html?target=") + download_url.spec());
+
+  // <origin_one>/download-attribute.html initiates a download of
+  // <origin_one>/ping, which redirects to <origin_two>/download.
+  origin_one.ServeFilesFromDirectory(GetTestFilePath("download", ""));
+  origin_one.RegisterRequestHandler(
+      CreateRedirectHandler("/ping", origin_two.GetURL("/download")));
+  origin_two.RegisterRequestHandler(CreateBasicResponseHandler(
+      "/download", "application/octet-stream", "Hello"));
+
+  NavigateToURLAndWaitForDownload(
+      shell(), referrer_url, DownloadItem::COMPLETE);
+
+  std::vector<DownloadItem*> downloads;
+  DownloadManagerForShell(shell())->GetAllDownloads(&downloads);
+  ASSERT_EQ(1u, downloads.size());
+
+  EXPECT_EQ(FILE_PATH_LITERAL("download"),
+            downloads[0]->GetTargetFilePath().BaseName().value());
+  ASSERT_TRUE(origin_one.ShutdownAndWaitUntilComplete());
+  ASSERT_TRUE(origin_two.ShutdownAndWaitUntilComplete());
+}
+
+// A filename suggestion specified via a @download attribute should be effective
+// if the final download URL is in the same origin as the initial download URL.
+// Test that this holds even if there are cross origin redirects in the middle
+// of the redirect chain.
+IN_PROC_BROWSER_TEST_F(DownloadContentTest,
+                       DownloadAttributeSameOriginRedirect) {
+  EmbeddedTestServer origin_one;
+  EmbeddedTestServer origin_two;
+  ASSERT_TRUE(origin_one.InitializeAndWaitUntilReady());
+  ASSERT_TRUE(origin_two.InitializeAndWaitUntilReady());
+
+  // The download-attribute.html page contains an anchor element whose href is
+  // set to the value of the query parameter (specified as |target| in the URL
+  // below). The suggested filename for the anchor is 'suggested-filename'. When
+  // the page is loaded, a script simulates a click on the anchor, triggering a
+  // download of the target URL.
+  //
+  // We construct two test servers; origin_one and origin_two. Once started, the
+  // server URLs will differ by the port number. Therefore they will be in
+  // different origins.
+  GURL download_url = origin_one.GetURL("/ping");
+  GURL referrer_url = origin_one.GetURL(
+      std::string("/download-attribute.html?target=") + download_url.spec());
+  origin_one.ServeFilesFromDirectory(GetTestFilePath("download", ""));
+
+  // <origin_one>/download-attribute.html initiates a download of
+  // <origin_one>/ping, which redirects to <origin_two>/pong, and then finally
+  // to <origin_one>/download.
+  origin_one.RegisterRequestHandler(
+      CreateRedirectHandler("/ping", origin_two.GetURL("/pong")));
+  origin_two.RegisterRequestHandler(
+      CreateRedirectHandler("/pong", origin_one.GetURL("/download")));
+  origin_one.RegisterRequestHandler(CreateBasicResponseHandler(
+      "/download", "application/octet-stream", "Hello"));
+
+  NavigateToURLAndWaitForDownload(
+      shell(), referrer_url, DownloadItem::COMPLETE);
+
+  std::vector<DownloadItem*> downloads;
+  DownloadManagerForShell(shell())->GetAllDownloads(&downloads);
+  ASSERT_EQ(1u, downloads.size());
+
+  EXPECT_EQ(FILE_PATH_LITERAL("suggested-filename"),
+            downloads[0]->GetTargetFilePath().BaseName().value());
+  ASSERT_TRUE(origin_one.ShutdownAndWaitUntilComplete());
+  ASSERT_TRUE(origin_two.ShutdownAndWaitUntilComplete());
 }
 
 }  // namespace content

@@ -9,13 +9,14 @@
 
 #include "base/float_util.h"
 #include "base/values.h"
-#include "chrome/browser/extensions/extension_system.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/speech/extension_api/tts_engine_extension_api.h"
 #include "chrome/browser/speech/extension_api/tts_extension_api.h"
 #include "chrome/browser/speech/tts_platform.h"
 #include "chrome/common/extensions/api/speech/tts_engine_manifest_handler.h"
-#include "chrome/common/extensions/extension.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
 
 namespace {
 // A value to be used to indicate that there is no char index available.
@@ -57,6 +58,7 @@ UtteranceContinuousParameters::UtteranceContinuousParameters()
 
 VoiceData::VoiceData()
     : gender(TTS_GENDER_NONE),
+      remote(false),
       native(false) {}
 
 VoiceData::~VoiceData() {}
@@ -73,12 +75,11 @@ Utterance::Utterance(Profile* profile)
     : profile_(profile),
       id_(next_utterance_id_++),
       src_id_(-1),
-      event_delegate_(NULL),
       gender_(TTS_GENDER_NONE),
       can_enqueue_(false),
       char_index_(0),
       finished_(false) {
-  options_.reset(new DictionaryValue());
+  options_.reset(new base::DictionaryValue());
 }
 
 Utterance::~Utterance() {
@@ -96,14 +97,14 @@ void Utterance::OnTtsEvent(TtsEventType event_type,
   if (event_delegate_)
     event_delegate_->OnTtsEvent(this, event_type, char_index, error_message);
   if (finished_)
-    event_delegate_ = NULL;
+    event_delegate_.reset();
 }
 
 void Utterance::Finish() {
   finished_ = true;
 }
 
-void Utterance::set_options(const Value* options) {
+void Utterance::set_options(const base::Value* options) {
   options_.reset(options->DeepCopy());
 }
 
@@ -155,15 +156,36 @@ void TtsController::SpeakNow(Utterance* utterance) {
   GetVoices(utterance->profile(), &voices);
   int index = GetMatchingVoice(utterance, voices);
 
-  // Select the matching voice, but if none was found, initialize an
-  // empty VoiceData with native = true, which will give the native
-  // speech synthesizer a chance to try to synthesize the utterance
-  // anyway.
   VoiceData voice;
-  if (index >= 0 && index < static_cast<int>(voices.size()))
+  if (index != -1) {
+    // Select the matching voice.
     voice = voices[index];
-  else
-    voice.native = true;
+  } else {
+    // However, if no match was found on a platform without native tts voices,
+    // attempt to get a voice based only on the current locale without respect
+    // to any supplied voice names.
+    std::vector<VoiceData> native_voices;
+
+    if (GetPlatformImpl()->PlatformImplAvailable())
+      GetPlatformImpl()->GetVoices(&native_voices);
+
+    if (native_voices.empty() && !voices.empty()) {
+      // TODO(dtseng): Notify extension caller of an error.
+      utterance->set_voice_name("");
+      utterance->set_lang(g_browser_process->GetApplicationLocale());
+      index = GetMatchingVoice(utterance, voices);
+
+      // If even that fails, just take the first available voice.
+      if (index == -1)
+        index = 0;
+      voice = voices[index];
+    } else {
+      // Otherwise, simply give native voices a chance to handle this utterance.
+      voice.native = true;
+    }
+  }
+
+  GetPlatformImpl()->WillSpeakUtteranceWithVoice(utterance, voice);
 
   if (!voice.native) {
 #if !defined(OS_ANDROID)
@@ -419,4 +441,3 @@ void TtsController::RemoveVoicesChangedDelegate(
     VoicesChangedDelegate* delegate) {
   voices_changed_delegates_.erase(delegate);
 }
-

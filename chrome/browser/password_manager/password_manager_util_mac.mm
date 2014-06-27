@@ -18,7 +18,7 @@
 
 namespace password_manager_util {
 
-bool AuthenticateUser() {
+bool AuthenticateUser(gfx::NativeWindow window) {
   AuthorizationItem right_items[] = {
     {"com.google.Chrome.show-passwords", 0, NULL, 0}
   };
@@ -34,6 +34,11 @@ bool AuthenticateUser() {
           &rights, base::mac::NSToCFCast(prompt),
           kAuthorizationFlagDestroyRights));
   return authorization.get() != NULL;
+}
+
+// TODO(dubroy): Implement on Mac.
+OsPasswordStatus GetOsPasswordStatus() {
+  return PASSWORD_STATUS_UNSUPPORTED;
 }
 
 }  // namespace password_manager_util

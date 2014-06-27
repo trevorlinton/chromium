@@ -13,17 +13,21 @@
 #include "base/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
-#include "chrome/browser/extensions/api/profile_keyed_api_factory.h"
-#include "chrome/browser/extensions/extension_function.h"
 #include "chrome/common/extensions/api/alarms.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
+#include "extensions/browser/browser_context_keyed_api_factory.h"
+#include "extensions/browser/extension_function.h"
 
 class Profile;
 
 namespace base {
 class Clock;
 }  // namespace base
+
+namespace content {
+class BrowserContext;
+}  // namespace content
 
 namespace extensions {
 
@@ -51,10 +55,9 @@ struct Alarm {
 
 // Manages the currently pending alarms for every extension in a profile.
 // There is one manager per virtual Profile.
-class AlarmManager
-    : public ProfileKeyedAPI,
-      public content::NotificationObserver,
-      public base::SupportsWeakPtr<AlarmManager> {
+class AlarmManager : public BrowserContextKeyedAPI,
+                     public content::NotificationObserver,
+                     public base::SupportsWeakPtr<AlarmManager> {
  public:
   typedef std::vector<Alarm> AlarmList;
 
@@ -66,7 +69,7 @@ class AlarmManager
                          const Alarm& alarm) = 0;
   };
 
-  explicit AlarmManager(Profile* profile);
+  explicit AlarmManager(content::BrowserContext* context);
   virtual ~AlarmManager();
 
   // Override the default delegate. Callee assumes onwership. Used for testing.
@@ -108,8 +111,8 @@ class AlarmManager
   // Replaces AlarmManager's owned clock with |clock| and takes ownership of it.
   void SetClockForTesting(base::Clock* clock);
 
-  // ProfileKeyedAPI implementation.
-  static ProfileKeyedAPIFactory<AlarmManager>* GetFactoryInstance();
+  // BrowserContextKeyedAPI implementation.
+  static BrowserContextKeyedAPIFactory<AlarmManager>* GetFactoryInstance();
 
   // Convenience method to get the AlarmManager for a profile.
   static AlarmManager* Get(Profile* profile);
@@ -122,7 +125,11 @@ class AlarmManager
                            ReleasedExtensionPollsInfrequently);
   FRIEND_TEST_ALL_PREFIXES(ExtensionAlarmsSchedulingTest, TimerRunning);
   FRIEND_TEST_ALL_PREFIXES(ExtensionAlarmsSchedulingTest, MinimumGranularity);
-  friend class ProfileKeyedAPIFactory<AlarmManager>;
+  FRIEND_TEST_ALL_PREFIXES(ExtensionAlarmsSchedulingTest,
+                           DifferentMinimumGranularities);
+  FRIEND_TEST_ALL_PREFIXES(ExtensionAlarmsSchedulingTest,
+                           RepeatingAlarmsScheduledPredictably);
+  friend class BrowserContextKeyedAPIFactory<AlarmManager>;
 
   typedef std::string ExtensionId;
   typedef std::map<ExtensionId, AlarmList> AlarmMap;
@@ -180,6 +187,10 @@ class AlarmManager
   void ReadFromStorage(const std::string& extension_id,
                        scoped_ptr<base::Value> value);
 
+  // Set the timer to go off at the specified |time|, and set |next_poll_time|
+  // appropriately.
+  void SetNextPollTime(const base::Time& time);
+
   // Schedules the next poll of alarms for when the next soonest alarm runs,
   // but not more often than the minimum granularity of all alarms.
   void ScheduleNextPoll();
@@ -197,7 +208,7 @@ class AlarmManager
                        const content::NotificationSource& source,
                        const content::NotificationDetails& details) OVERRIDE;
 
-  // ProfileKeyedAPI implementation.
+  // BrowserContextKeyedAPI implementation.
   static const char* service_name() {
     return "AlarmManager";
   }
@@ -222,8 +233,8 @@ class AlarmManager
   // The previous time that alarms were run.
   base::Time last_poll_time_;
 
-  // Next poll's time. Used only by unit tests.
-  base::Time test_next_poll_time_;
+  // Next poll's time.
+  base::Time next_poll_time_;
 
   DISALLOW_COPY_AND_ASSIGN(AlarmManager);
 };

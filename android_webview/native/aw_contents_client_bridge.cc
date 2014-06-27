@@ -4,6 +4,7 @@
 
 #include "android_webview/native/aw_contents_client_bridge.h"
 
+#include "android_webview/common/devtools_instrumentation.h"
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
@@ -27,7 +28,7 @@ AwContentsClientBridge::AwContentsClientBridge(JNIEnv* env, jobject obj)
     : java_ref_(env, obj) {
   DCHECK(obj);
   Java_AwContentsClientBridge_setNativeContentsClientBridge(
-      env, obj, reinterpret_cast<jint>(this));
+      env, obj, reinterpret_cast<intptr_t>(this));
 }
 
 AwContentsClientBridge::~AwContentsClientBridge() {
@@ -90,8 +91,8 @@ void AwContentsClientBridge::ProceedSslError(JNIEnv* env, jobject obj,
 void AwContentsClientBridge::RunJavaScriptDialog(
     content::JavaScriptMessageType message_type,
     const GURL& origin_url,
-    const string16& message_text,
-    const string16& default_prompt_text,
+    const base::string16& message_text,
+    const base::string16& default_prompt_text,
     const content::JavaScriptDialogManager::DialogClosedCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   JNIEnv* env = AttachCurrentThread();
@@ -108,17 +109,22 @@ void AwContentsClientBridge::RunJavaScriptDialog(
       ConvertUTF16ToJavaString(env, message_text));
 
   switch (message_type) {
-    case content::JAVASCRIPT_MESSAGE_TYPE_ALERT:
+    case content::JAVASCRIPT_MESSAGE_TYPE_ALERT: {
+      devtools_instrumentation::ScopedEmbedderCallbackTask("onJsAlert");
       Java_AwContentsClientBridge_handleJsAlert(
           env, obj.obj(), jurl.obj(), jmessage.obj(), callback_id);
       break;
-    case content::JAVASCRIPT_MESSAGE_TYPE_CONFIRM:
+    }
+    case content::JAVASCRIPT_MESSAGE_TYPE_CONFIRM: {
+      devtools_instrumentation::ScopedEmbedderCallbackTask("onJsConfirm");
       Java_AwContentsClientBridge_handleJsConfirm(
           env, obj.obj(), jurl.obj(), jmessage.obj(), callback_id);
       break;
+    }
     case content::JAVASCRIPT_MESSAGE_TYPE_PROMPT: {
       ScopedJavaLocalRef<jstring> jdefault_value(
           ConvertUTF16ToJavaString(env, default_prompt_text));
+      devtools_instrumentation::ScopedEmbedderCallbackTask("onJsPrompt");
       Java_AwContentsClientBridge_handleJsPrompt(env,
                                                  obj.obj(),
                                                  jurl.obj(),
@@ -134,7 +140,7 @@ void AwContentsClientBridge::RunJavaScriptDialog(
 
 void AwContentsClientBridge::RunBeforeUnloadDialog(
     const GURL& origin_url,
-    const string16& message_text,
+    const base::string16& message_text,
     const content::JavaScriptDialogManager::DialogClosedCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   JNIEnv* env = AttachCurrentThread();
@@ -150,8 +156,23 @@ void AwContentsClientBridge::RunBeforeUnloadDialog(
   ScopedJavaLocalRef<jstring> jmessage(
       ConvertUTF16ToJavaString(env, message_text));
 
+  devtools_instrumentation::ScopedEmbedderCallbackTask("onJsBeforeUnload");
   Java_AwContentsClientBridge_handleJsBeforeUnload(
       env, obj.obj(), jurl.obj(), jmessage.obj(), callback_id);
+}
+
+bool AwContentsClientBridge::ShouldOverrideUrlLoading(
+    const base::string16& url) {
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
+  if (obj.is_null())
+    return false;
+  ScopedJavaLocalRef<jstring> jurl = ConvertUTF16ToJavaString(env, url);
+  devtools_instrumentation::ScopedEmbedderCallbackTask(
+      "shouldOverrideUrlLoading");
+  return Java_AwContentsClientBridge_shouldOverrideUrlLoading(
+      env, obj.obj(),
+      jurl.obj());
 }
 
 void AwContentsClientBridge::ConfirmJsResult(JNIEnv* env,
@@ -165,7 +186,7 @@ void AwContentsClientBridge::ConfirmJsResult(JNIEnv* env,
     LOG(WARNING) << "Unexpected JS dialog confirm. " << id;
     return;
   }
-  string16 prompt_text;
+  base::string16 prompt_text;
   if (prompt) {
     prompt_text = ConvertJavaStringToUTF16(env, prompt);
   }
@@ -181,7 +202,7 @@ void AwContentsClientBridge::CancelJsResult(JNIEnv*, jobject, int id) {
     LOG(WARNING) << "Unexpected JS dialog cancel. " << id;
     return;
   }
-  callback->Run(false, string16());
+  callback->Run(false, base::string16());
   pending_js_dialog_callbacks_.Remove(id);
 }
 

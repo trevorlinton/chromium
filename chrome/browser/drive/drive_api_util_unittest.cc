@@ -4,8 +4,11 @@
 
 #include "chrome/browser/drive/drive_api_util.h"
 
-#include "chrome/browser/google_apis/drive_api_parser.h"
-#include "chrome/browser/google_apis/gdata_wapi_parser.h"
+#include "base/files/scoped_temp_dir.h"
+#include "base/md5.h"
+#include "google_apis/drive/drive_api_parser.h"
+#include "google_apis/drive/gdata_wapi_parser.h"
+#include "google_apis/drive/test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -166,7 +169,6 @@ TEST(FileSystemUtilTest, ConvertAccountMetadataToAppList) {
   EXPECT_EQ("name", app_resource.name());
   EXPECT_EQ("object_type", app_resource.object_type());
   EXPECT_TRUE(app_resource.supports_create());
-  EXPECT_EQ("http://product/url", app_resource.product_url().spec());
   const ScopedVector<std::string>& primary_mimetypes =
       app_resource.primary_mimetypes();
   ASSERT_EQ(1U, primary_mimetypes.size());
@@ -190,6 +192,31 @@ TEST(FileSystemUtilTest, ConvertAccountMetadataToAppList) {
   EXPECT_EQ(google_apis::DriveAppIcon::DOCUMENT, icon.category());
   EXPECT_EQ(10, icon.icon_side_length());
   EXPECT_EQ("http://icon/url", icon.icon_url().spec());
+}
+
+TEST(FileSystemUtilTest, ConvertFileResourceToResource_Parents) {
+  google_apis::FileResource file_resource;
+
+  std::vector<GURL> expected_links;
+  expected_links.push_back(GURL("http://server/id1"));
+  expected_links.push_back(GURL("http://server/id2"));
+  expected_links.push_back(GURL("http://server/id3"));
+
+  for (size_t i = 0; i < expected_links.size(); ++i) {
+    google_apis::ParentReference parent;
+    parent.set_parent_link(expected_links[i]);
+    file_resource.mutable_parents()->push_back(parent);
+  }
+
+  scoped_ptr<google_apis::ResourceEntry> entry(
+      ConvertFileResourceToResourceEntry(file_resource));
+  std::vector<GURL> actual_links;
+  for (size_t i = 0; i < entry->links().size(); ++i) {
+    if (entry->links()[i]->type() == google_apis::Link::LINK_PARENT)
+      actual_links.push_back(entry->links()[i]->href());
+  }
+
+  EXPECT_EQ(expected_links, actual_links);
 }
 
 TEST(FileSystemUtilTest, ConvertFileResourceToResourceEntryImageMediaMetadata) {
@@ -284,6 +311,17 @@ TEST(FileSystemUtilTest, ConvertResourceEntryToFileResourceImageMediaMetadata) {
     EXPECT_EQ(-1, image_media_metadata.height());
     EXPECT_EQ(-1, image_media_metadata.rotation());
   }
+}
+
+TEST(DriveAPIUtilTest, GetMd5Digest) {
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+
+  base::FilePath path = temp_dir.path().AppendASCII("test.txt");
+  const char kTestData[] = "abcdefghijklmnopqrstuvwxyz0123456789";
+  ASSERT_TRUE(google_apis::test_util::WriteStringToFile(path, kTestData));
+
+  EXPECT_EQ(base::MD5String(kTestData), GetMd5Digest(path));
 }
 
 }  // namespace util

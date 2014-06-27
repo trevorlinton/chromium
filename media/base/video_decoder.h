@@ -20,8 +20,11 @@ class VideoFrame;
 class MEDIA_EXPORT VideoDecoder {
  public:
   // Status codes for decode operations on VideoDecoder.
+  // TODO(rileya): Now that both AudioDecoder and VideoDecoder Status enums
+  // match, break them into a decoder_status.h.
   enum Status {
     kOk,  // Everything went as planned.
+    kAborted,  // Decode was aborted as a result of Reset() being called.
     kNotEnoughData,  // Not enough data to produce a video frame.
     kDecodeError,  // Decoding error happened.
     kDecryptError  // Decrypting error happened.
@@ -52,13 +55,16 @@ class MEDIA_EXPORT VideoDecoder {
   // If the returned status is kOk:
   // - Non-EOS (end of stream) frame contains decoded video data.
   // - EOS frame indicates the end of the stream.
-  // - NULL frame indicates an aborted decode. This can happen if Reset() or
-  //   Stop() is called during the decoding process.
   // Otherwise the returned frame must be NULL.
   typedef base::Callback<void(Status,
                               const scoped_refptr<VideoFrame>&)> DecodeCB;
   virtual void Decode(const scoped_refptr<DecoderBuffer>& buffer,
                       const DecodeCB& decode_cb) = 0;
+
+  // Some VideoDecoders may queue up multiple VideoFrames from a single
+  // DecoderBuffer, if we have any such queued frames this will return the next
+  // one. Otherwise we return a NULL VideoFrame.
+  virtual scoped_refptr<VideoFrame> GetDecodeOutput();
 
   // Resets decoder state, fulfilling all pending DecodeCB and dropping extra
   // queued decoded data. After this call, the decoder is back to an initialized

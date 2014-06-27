@@ -24,9 +24,7 @@ class TraceLog {
   TraceLog() {
     events_.reserve(16384);
   }
-  ~TraceLog() {
-    // Trace items leanked intentionally.
-  }
+  // Trace items leaked intentionally.
 
   void Add(TraceItem* item) {
     base::AutoLock lock(lock_);
@@ -134,6 +132,16 @@ ScopedTrace::ScopedTrace(TraceItem::Type t, const std::string& name)
   }
 }
 
+ScopedTrace::ScopedTrace(TraceItem::Type t, const Label& label)
+    : item_(NULL),
+      done_(false) {
+  if (trace_log) {
+    item_ = new TraceItem(t, label.GetUserVisibleName(false),
+                          base::PlatformThread::CurrentId());
+    item_->set_begin(base::TimeTicks::HighResNow());
+  }
+}
+
 ScopedTrace::~ScopedTrace() {
   Done();
 }
@@ -190,6 +198,7 @@ std::string SummarizeTraces() {
         break;
       case TraceItem::TRACE_FILE_LOAD:
       case TraceItem::TRACE_FILE_WRITE:
+      case TraceItem::TRACE_DEFINE_TARGET:
         break;  // Ignore these for the summary.
     }
   }
@@ -212,6 +221,12 @@ void SaveTraces(const base::FilePath& file_name) {
 
   std::string quote_buffer;  // Allocate outside loop to prevent reallocationg.
 
+  // Write main thread metadata (assume this is being written on the main
+  // thread).
+  out << "{\"pid\":0,\"tid\":" << base::PlatformThread::CurrentId();
+  out << ",\"ts\":0,\"ph\":\"M\",";
+  out << "\"name\":\"thread_name\",\"args\":{\"name\":\"Main thread\"}},";
+
   std::vector<TraceItem*> events = trace_log->events();
   for (size_t i = 0; i < events.size(); i++) {
     const TraceItem& item = *events[i];
@@ -224,7 +239,7 @@ void SaveTraces(const base::FilePath& file_name) {
     out << ",\"dur\":" << item.delta().InMicroseconds();
 
     quote_buffer.resize(0);
-    base::JsonDoubleQuote(item.name(), true, &quote_buffer);
+    base::EscapeJSONString(item.name(), true, &quote_buffer);
     out << ",\"name\":" << quote_buffer;
 
     out << ",\"cat\":";
@@ -244,6 +259,8 @@ void SaveTraces(const base::FilePath& file_name) {
       case TraceItem::TRACE_SCRIPT_EXECUTE:
         out << "\"script_exec\"";
         break;
+      case TraceItem::TRACE_DEFINE_TARGET:
+        out << "\"define\"";
     }
 
     if (!item.toolchain().empty() || !item.cmdline().empty()) {
@@ -251,13 +268,13 @@ void SaveTraces(const base::FilePath& file_name) {
       bool needs_comma = false;
       if (!item.toolchain().empty()) {
         quote_buffer.resize(0);
-        base::JsonDoubleQuote(item.toolchain(), true, &quote_buffer);
+        base::EscapeJSONString(item.toolchain(), true, &quote_buffer);
         out << "\"toolchain\":" << quote_buffer;
         needs_comma = true;
       }
       if (!item.cmdline().empty()) {
         quote_buffer.resize(0);
-        base::JsonDoubleQuote(item.cmdline(), true, &quote_buffer);
+        base::EscapeJSONString(item.cmdline(), true, &quote_buffer);
         if (needs_comma)
           out << ",";
         out << "\"cmdline\":" << quote_buffer;
@@ -271,6 +288,6 @@ void SaveTraces(const base::FilePath& file_name) {
   out << "]}";
 
   std::string out_str = out.str();
-  file_util::WriteFile(file_name, out_str.data(),
+  base::WriteFile(file_name, out_str.data(),
                        static_cast<int>(out_str.size()));
 }

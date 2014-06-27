@@ -11,34 +11,26 @@
 #include "content/renderer/render_view_impl.h"
 #include "third_party/WebKit/public/platform/WebCookie.h"
 
-using WebKit::WebCookie;
-using WebKit::WebString;
-using WebKit::WebURL;
-using WebKit::WebVector;
+using blink::WebCookie;
+using blink::WebString;
+using blink::WebURL;
+using blink::WebVector;
 
 namespace content {
 
 void RendererWebCookieJarImpl::setCookie(
     const WebURL& url, const WebURL& first_party_for_cookies,
     const WebString& value) {
-  std::string value_utf8 = UTF16ToUTF8(value);
-  if (!GetContentClient()->renderer()->HandleSetCookieRequest(
-          sender_, url, first_party_for_cookies, value_utf8)) {
-    sender_->Send(new ViewHostMsg_SetCookie(
-        MSG_ROUTING_NONE, url, first_party_for_cookies, value_utf8));
-  }
+  std::string value_utf8 = base::UTF16ToUTF8(value);
+  sender_->Send(new ViewHostMsg_SetCookie(
+      sender_->GetRoutingID(), url, first_party_for_cookies, value_utf8));
 }
 
 WebString RendererWebCookieJarImpl::cookies(
     const WebURL& url, const WebURL& first_party_for_cookies) {
   std::string value_utf8;
-
-  if (!GetContentClient()->renderer()->HandleGetCookieRequest(
-          sender_, url, first_party_for_cookies, &value_utf8)) {
-    // NOTE: This may pump events (see RenderThread::Send).
-    sender_->Send(new ViewHostMsg_GetCookies(
-        MSG_ROUTING_NONE, url, first_party_for_cookies, &value_utf8));
-  }
+  sender_->Send(new ViewHostMsg_GetCookies(
+      sender_->GetRoutingID(), url, first_party_for_cookies, &value_utf8));
   return WebString::fromUTF8(value_utf8);
 }
 
@@ -51,7 +43,6 @@ void RendererWebCookieJarImpl::rawCookies(
     const WebURL& url, const WebURL& first_party_for_cookies,
     WebVector<WebCookie>& raw_cookies) {
   std::vector<CookieData> cookies;
-  // NOTE: This may pump events (see RenderThread::Send).
   sender_->Send(new ViewHostMsg_GetRawCookies(
       url, first_party_for_cookies, &cookies));
 
@@ -72,14 +63,13 @@ void RendererWebCookieJarImpl::rawCookies(
 
 void RendererWebCookieJarImpl::deleteCookie(
     const WebURL& url, const WebString& cookie_name) {
-  std::string cookie_name_utf8 = UTF16ToUTF8(cookie_name);
+  std::string cookie_name_utf8 = base::UTF16ToUTF8(cookie_name);
   sender_->Send(new ViewHostMsg_DeleteCookie(url, cookie_name_utf8));
 }
 
 bool RendererWebCookieJarImpl::cookiesEnabled(
     const WebURL& url, const WebURL& first_party_for_cookies) {
   bool cookies_enabled;
-  // NOTE: This may pump events (see RenderThread::Send).
   sender_->Send(new ViewHostMsg_CookiesEnabled(
       url, first_party_for_cookies, &cookies_enabled));
   return cookies_enabled;

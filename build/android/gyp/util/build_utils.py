@@ -10,7 +10,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import traceback
 
 
 def MakeDirectory(dir_path):
@@ -31,18 +30,18 @@ def Touch(path):
     os.utime(path, None)
 
 
-def FindInDirectory(directory, filter):
+def FindInDirectory(directory, filename_filter):
   files = []
-  for root, dirnames, filenames in os.walk(directory):
-    matched_files = fnmatch.filter(filenames, filter)
+  for root, _dirnames, filenames in os.walk(directory):
+    matched_files = fnmatch.filter(filenames, filename_filter)
     files.extend((os.path.join(root, f) for f in matched_files))
   return files
 
 
-def FindInDirectories(directories, filter):
+def FindInDirectories(directories, filename_filter):
   all_files = []
   for directory in directories:
-    all_files.extend(FindInDirectory(directory, filter))
+    all_files.extend(FindInDirectory(directory, filename_filter))
   return all_files
 
 
@@ -56,7 +55,9 @@ def ParseGypList(gyp_string):
   return shlex.split(gyp_string)
 
 
-def CheckOptions(options, parser, required=[]):
+def CheckOptions(options, parser, required=None):
+  if not required:
+    return
   for option_name in required:
     if not getattr(options, option_name):
       parser.error('--%s is required' % option_name.replace('_', '-'))
@@ -78,40 +79,45 @@ def ReadJson(path):
     return json.load(jsonfile)
 
 
-# This can be used in most cases like subprocess.check_call. The output,
+class CalledProcessError(Exception):
+  """This exception is raised when the process run by CheckOutput
+  exits with a non-zero exit code."""
+
+  def __init__(self, cwd, args, output):
+    super(CalledProcessError, self).__init__()
+    self.cwd = cwd
+    self.args = args
+    self.output = output
+
+  def __str__(self):
+    # A user should be able to simply copy and paste the command that failed
+    # into their shell.
+    copyable_command = '( cd {}; {} )'.format(os.path.abspath(self.cwd),
+        ' '.join(map(pipes.quote, self.args)))
+    return 'Command failed: {}\n{}'.format(copyable_command, self.output)
+
+
+# This can be used in most cases like subprocess.check_output(). The output,
 # particularly when the command fails, better highlights the command's failure.
-# This call will directly exit on a failure in the subprocess so that no python
-# stacktrace is printed after the output of the failed command (and will
-# instead print a python stack trace before the output of the failed command)
-def CheckCallDie(args, suppress_output=False, cwd=None):
+# If the command fails, raises a build_utils.CalledProcessError.
+def CheckOutput(args, cwd=None, print_stdout=False, print_stderr=True,
+                fail_if_stderr=False):
   if not cwd:
     cwd = os.getcwd()
 
   child = subprocess.Popen(args,
-      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=cwd)
+      stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd)
+  stdout, stderr = child.communicate()
 
-  stdout, _ = child.communicate()
+  if child.returncode or (stderr and fail_if_stderr):
+    raise CalledProcessError(cwd, args, stdout + stderr)
 
-  if child.returncode:
-    stacktrace = traceback.extract_stack()
-    print >> sys.stderr, ''.join(traceback.format_list(stacktrace))
-    # A user should be able to simply copy and paste the command that failed
-    # into their shell.
-    copyable_command = ' '.join(map(pipes.quote, args))
-    copyable_command = ('( cd ' + os.path.abspath(cwd) + '; '
-        + copyable_command + ' )')
-    print >> sys.stderr, 'Command failed:', copyable_command, '\n'
+  if print_stdout:
+    sys.stdout.write(stdout)
+  if print_stderr:
+    sys.stderr.write(stderr)
 
-    if stdout:
-      print stdout,
-
-    # Directly exit to avoid printing stacktrace.
-    sys.exit(child.returncode)
-
-  else:
-    if stdout and not suppress_output:
-      print stdout,
-    return stdout
+  return stdout
 
 
 def GetModifiedTime(path):
@@ -125,14 +131,14 @@ def IsTimeStale(output, inputs):
     return True
 
   output_time = GetModifiedTime(output)
-  for input in inputs:
-    if GetModifiedTime(input) > output_time:
+  for i in inputs:
+    if GetModifiedTime(i) > output_time:
       return True
   return False
 
 
 def IsDeviceReady():
-  device_state = CheckCallDie(['adb', 'get-state'], suppress_output=True)
+  device_state = CheckOutput(['adb', 'get-state'])
   return device_state.strip() == 'device'
 
 

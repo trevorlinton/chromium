@@ -7,12 +7,22 @@
 
 #include <string>
 
+#include "base/gtest_prod_util.h"
 #include "base/strings/string16.h"
 #include "ui/gfx/image/image.h"
 #include "ui/message_center/message_center_export.h"
 #include "url/gurl.h"
 
+class MessageCenterTrayBridgeTest;
+
+namespace ash {
+class WebNotificationTrayTest;
+}
+
 namespace message_center {
+namespace test {
+class MessagePopupCollectionTest;
+}
 
 class NotifierSettingsDelegate;
 class NotifierSettingsProvider;
@@ -33,45 +43,57 @@ struct MESSAGE_CENTER_EXPORT NotifierId {
     SYNCED_NOTIFICATION_SERVICE,
   };
 
-  // Constructor for APPLICATION and SYNCED_NOTIFICATION_SERVICE type.
+  // Constructor for non WEB_PAGE type.
   NotifierId(NotifierType type, const std::string& id);
 
   // Constructor for WEB_PAGE type.
   explicit NotifierId(const GURL& url);
 
-  // Constructor for system component types. The type should be positive.
-  explicit NotifierId(int type);
-
-  // The default constructor which doesn't specify the notifier. Used for tests.
-  NotifierId();
-
   bool operator==(const NotifierId& other) const;
+  // Allows NotifierId to be used as a key in std::map.
+  bool operator<(const NotifierId& other) const;
 
   NotifierType type;
 
-  // The identifier of the app notifier. Empty if it's not APPLICATION or
-  // SYNCED_NOTIFICATION_SERVICE.
+  // The identifier of the app notifier. Empty if it's WEB_PAGE.
   std::string id;
 
   // The URL pattern of the notifer.
   GURL url;
 
-  // The type of system component notifier, usually used in ash. -1 if it's not
-  // the system component. See also: ash/system/system_notifier.h
-  int system_component_type;
+  // The identifier of the profile where the notification is created. This is
+  // used for ChromeOS multi-profile support and can be empty.
+  std::string profile_id;
+
+ private:
+  friend class ::MessageCenterTrayBridgeTest;
+  friend class MessageCenterTrayTest;
+  friend class test::MessagePopupCollectionTest;
+  friend class NotificationControllerTest;
+  friend class PopupCollectionTest;
+  friend class TrayViewControllerTest;
+  friend class ash::WebNotificationTrayTest;
+  FRIEND_TEST_ALL_PREFIXES(PopupControllerTest, Creation);
+  FRIEND_TEST_ALL_PREFIXES(NotificationListTest, UnreadCountNoNegative);
+  FRIEND_TEST_ALL_PREFIXES(NotificationListTest, TestHasNotificationOfType);
+
+  // The default constructor which doesn't specify the notifier. Used for tests.
+  NotifierId();
 };
 
 // The struct to hold the information of notifiers. The information will be
 // used by NotifierSettingsView.
 struct MESSAGE_CENTER_EXPORT Notifier {
-  Notifier(const NotifierId& notifier_id, const string16& name, bool enabled);
+  Notifier(const NotifierId& notifier_id,
+           const base::string16& name,
+           bool enabled);
   ~Notifier();
 
   NotifierId notifier_id;
 
   // The human-readable name of the notifier such like the extension name.
   // It can be empty.
-  string16 name;
+  base::string16 name;
 
   // True if the source is allowed to send notifications. True is default.
   bool enabled;
@@ -85,8 +107,8 @@ struct MESSAGE_CENTER_EXPORT Notifier {
 
 struct MESSAGE_CENTER_EXPORT NotifierGroup {
   NotifierGroup(const gfx::Image& icon,
-                const string16& name,
-                const string16& login_info,
+                const base::string16& name,
+                const base::string16& login_info,
                 size_t index);
   ~NotifierGroup();
 
@@ -94,10 +116,10 @@ struct MESSAGE_CENTER_EXPORT NotifierGroup {
   const gfx::Image icon;
 
   // Display name of a notifier group.
-  const string16 name;
+  const base::string16 name;
 
   // More display information about the notifier group.
-  string16 login_info;
+  base::string16 login_info;
 
   // Unique identifier for the notifier group so that they can be selected in
   // the UI.

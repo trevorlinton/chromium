@@ -10,13 +10,13 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/browser/policy/configuration_policy_handler.h"
-#include "chrome/browser/policy/policy_error_map.h"
-#include "chrome/browser/policy/policy_map.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/sessions/restore_on_startup_policy_handler.h"
 #include "chrome/common/pref_names.h"
-#include "grit/generated_resources.h"
+#include "components/policy/core/browser/configuration_policy_handler.h"
+#include "components/policy/core/browser/policy_error_map.h"
+#include "components/policy/core/common/policy_map.h"
+#include "grit/component_strings.h"
 #include "policy/policy_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -53,8 +53,9 @@ TEST_F(RestoreOnStartupPolicyHandlerTest, CheckPolicySettings_FailsTypeCheck) {
   EXPECT_EQ(1U, errors().size());
   EXPECT_EQ(l10n_util::GetStringFUTF16(
                 IDS_POLICY_TYPE_ERROR,
-                ASCIIToUTF16(ConfigurationPolicyHandler::ValueTypeToString(
-                    Value::TYPE_INTEGER))),
+                base::ASCIIToUTF16(
+                    ConfigurationPolicyHandler::ValueTypeToString(
+                        base::Value::TYPE_INTEGER))),
             errors().begin()->second);
 }
 
@@ -78,7 +79,7 @@ TEST_F(RestoreOnStartupPolicyHandlerTest, CheckPolicySettings_UnknownValue) {
   EXPECT_EQ(1U, errors().size());
   EXPECT_EQ(l10n_util::GetStringFUTF16(
                 IDS_POLICY_OUT_OF_RANGE_ERROR,
-                ASCIIToUTF16(base::IntToString(impossible_value))),
+                base::ASCIIToUTF16(base::IntToString(impossible_value))),
             errors().begin()->second);
 }
 
@@ -107,8 +108,9 @@ TEST_F(RestoreOnStartupPolicyHandlerTest,
   EXPECT_TRUE(CheckPolicySettings());
   EXPECT_EQ(1U, errors().size());
   EXPECT_TRUE(key::kCookiesSessionOnlyForUrls == errors().begin()->first);
-  EXPECT_EQ(l10n_util::GetStringFUTF16(IDS_POLICY_OVERRIDDEN,
-                                       ASCIIToUTF16(key::kRestoreOnStartup)),
+  EXPECT_EQ(l10n_util::GetStringFUTF16(
+                IDS_POLICY_OVERRIDDEN,
+                base::ASCIIToUTF16(key::kRestoreOnStartup)),
             errors().begin()->second);
 }
 
@@ -123,8 +125,9 @@ TEST_F(RestoreOnStartupPolicyHandlerTest,
   EXPECT_TRUE(CheckPolicySettings());
   EXPECT_EQ(1U, errors().size());
   EXPECT_TRUE(key::kClearSiteDataOnExit == errors().begin()->first);
-  EXPECT_EQ(l10n_util::GetStringFUTF16(IDS_POLICY_OVERRIDDEN,
-                                       ASCIIToUTF16(key::kRestoreOnStartup)),
+  EXPECT_EQ(l10n_util::GetStringFUTF16(
+                IDS_POLICY_OVERRIDDEN,
+                base::ASCIIToUTF16(key::kRestoreOnStartup)),
             errors().begin()->second);
 }
 

@@ -227,16 +227,25 @@ void TestHelper::SetupTextureManagerDestructionExpectations(
 void TestHelper::SetupContextGroupInitExpectations(
       ::gfx::MockGLInterface* gl,
       const DisallowedFeatures& disallowed_features,
-      const char* extensions) {
+      const char* extensions,
+      const char* gl_version) {
   InSequence sequence;
 
-  SetupFeatureInfoInitExpectations(gl, extensions);
+  SetupFeatureInfoInitExpectationsWithGLVersion(gl, extensions, "", gl_version);
+
+  std::string l_version(StringToLowerASCII(std::string(gl_version)));
+  bool is_es3 = (l_version.substr(0, 12) == "opengl es 3.");
 
   EXPECT_CALL(*gl, GetIntegerv(GL_MAX_RENDERBUFFER_SIZE, _))
       .WillOnce(SetArgumentPointee<1>(kMaxRenderbufferSize))
       .RetiresOnSaturation();
-  if (strstr(extensions, "GL_EXT_framebuffer_multisample")) {
+  if (strstr(extensions, "GL_EXT_framebuffer_multisample") ||
+      strstr(extensions, "GL_EXT_multisampled_render_to_texture") || is_es3) {
     EXPECT_CALL(*gl, GetIntegerv(GL_MAX_SAMPLES, _))
+        .WillOnce(SetArgumentPointee<1>(kMaxSamples))
+        .RetiresOnSaturation();
+  } else if (strstr(extensions, "GL_IMG_multisampled_render_to_texture")) {
+    EXPECT_CALL(*gl, GetIntegerv(GL_MAX_SAMPLES_IMG, _))
         .WillOnce(SetArgumentPointee<1>(kMaxSamples))
         .RetiresOnSaturation();
   }
@@ -273,21 +282,97 @@ void TestHelper::SetupContextGroupInitExpectations(
 
 void TestHelper::SetupFeatureInfoInitExpectations(
       ::gfx::MockGLInterface* gl, const char* extensions) {
-  SetupFeatureInfoInitExpectationsWithGLVersion(gl, extensions, "");
+  SetupFeatureInfoInitExpectationsWithGLVersion(gl, extensions, "", "");
 }
 
 void TestHelper::SetupFeatureInfoInitExpectationsWithGLVersion(
      ::gfx::MockGLInterface* gl,
      const char* extensions,
-     const char* version) {
+     const char* gl_renderer,
+     const char* gl_version) {
   InSequence sequence;
 
   EXPECT_CALL(*gl, GetString(GL_EXTENSIONS))
       .WillOnce(Return(reinterpret_cast<const uint8*>(extensions)))
       .RetiresOnSaturation();
-  EXPECT_CALL(*gl, GetString(GL_VERSION))
-      .WillOnce(Return(reinterpret_cast<const uint8*>(version)))
+  EXPECT_CALL(*gl, GetString(GL_RENDERER))
+      .WillOnce(Return(reinterpret_cast<const uint8*>(gl_renderer)))
       .RetiresOnSaturation();
+  EXPECT_CALL(*gl, GetString(GL_VERSION))
+      .WillOnce(Return(reinterpret_cast<const uint8*>(gl_version)))
+      .RetiresOnSaturation();
+
+  std::string l_version(StringToLowerASCII(std::string(gl_version)));
+  bool is_es3 = (l_version.substr(0, 12) == "opengl es 3.");
+
+  if (strstr(extensions, "GL_ARB_texture_float") ||
+      (is_es3 && strstr(extensions, "GL_EXT_color_buffer_float"))) {
+    static const GLuint gl_ids[] = {101, 102};
+    const GLsizei width = 16;
+    EXPECT_CALL(*gl, GetIntegerv(GL_FRAMEBUFFER_BINDING, _))
+        .WillOnce(SetArgumentPointee<1>(gl_ids[0]))
+        .RetiresOnSaturation();
+    EXPECT_CALL(*gl, GetIntegerv(GL_TEXTURE_BINDING_2D, _))
+        .WillOnce(SetArgumentPointee<1>(gl_ids[0]))
+        .RetiresOnSaturation();
+    EXPECT_CALL(*gl, GenTextures(1, _))
+        .WillOnce(SetArrayArgument<1>(gl_ids + 1, gl_ids + 2))
+        .RetiresOnSaturation();
+    EXPECT_CALL(*gl, GenFramebuffersEXT(1, _))
+        .WillOnce(SetArrayArgument<1>(gl_ids + 1, gl_ids + 2))
+        .RetiresOnSaturation();
+    EXPECT_CALL(*gl, BindTexture(GL_TEXTURE_2D, gl_ids[1]))
+        .Times(1)
+        .RetiresOnSaturation();
+    EXPECT_CALL(*gl, TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+        GL_NEAREST))
+        .Times(1)
+        .RetiresOnSaturation();
+    EXPECT_CALL(*gl, TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width, width, 0,
+        GL_RGBA, GL_FLOAT, _))
+        .Times(1)
+        .RetiresOnSaturation();
+    EXPECT_CALL(*gl, BindFramebufferEXT(GL_FRAMEBUFFER, gl_ids[1]))
+        .Times(1)
+        .RetiresOnSaturation();
+    EXPECT_CALL(*gl, FramebufferTexture2DEXT(GL_FRAMEBUFFER,
+        GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gl_ids[1], 0))
+        .Times(1)
+        .RetiresOnSaturation();
+    EXPECT_CALL(*gl, CheckFramebufferStatusEXT(GL_FRAMEBUFFER))
+        .WillOnce(Return(GL_FRAMEBUFFER_COMPLETE))
+        .RetiresOnSaturation();
+    EXPECT_CALL(*gl, TexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, width, width, 0,
+        GL_RGB, GL_FLOAT, _))
+        .Times(1)
+        .RetiresOnSaturation();
+    if (is_es3) {
+      EXPECT_CALL(*gl, CheckFramebufferStatusEXT(GL_FRAMEBUFFER))
+          .WillOnce(Return(GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT))
+          .RetiresOnSaturation();
+    } else {
+      EXPECT_CALL(*gl, CheckFramebufferStatusEXT(GL_FRAMEBUFFER))
+          .WillOnce(Return(GL_FRAMEBUFFER_COMPLETE))
+          .RetiresOnSaturation();
+    }
+    EXPECT_CALL(*gl, DeleteFramebuffersEXT(1, _))
+        .Times(1)
+        .RetiresOnSaturation();
+    EXPECT_CALL(*gl, DeleteTextures(1, _))
+        .Times(1)
+        .RetiresOnSaturation();
+    EXPECT_CALL(*gl, BindFramebufferEXT(GL_FRAMEBUFFER, gl_ids[0]))
+        .Times(1)
+        .RetiresOnSaturation();
+    EXPECT_CALL(*gl, BindTexture(GL_TEXTURE_2D, gl_ids[0]))
+        .Times(1)
+        .RetiresOnSaturation();
+#if DCHECK_IS_ON
+    EXPECT_CALL(*gl, GetError())
+        .WillOnce(Return(GL_NO_ERROR))
+        .RetiresOnSaturation();
+#endif
+  }
 }
 
 void TestHelper::SetupExpectationsForClearingUniforms(
@@ -515,7 +600,7 @@ void TestHelper::DoBufferData(
   manager->DoBufferData(error_state, buffer, size, usage, data);
 }
 
-void TestHelper::SetTexParameterWithExpectations(
+void TestHelper::SetTexParameteriWithExpectations(
     ::gfx::MockGLInterface* gl, MockErrorState* error_state,
     TextureManager* manager, TextureRef* texture_ref,
     GLenum pname, GLint value, GLenum error) {
@@ -531,11 +616,11 @@ void TestHelper::SetTexParameterWithExpectations(
         .Times(1)
         .RetiresOnSaturation();
   } else {
-    EXPECT_CALL(*error_state, SetGLErrorInvalidParam(_, _, error, _, _, _))
+    EXPECT_CALL(*error_state, SetGLErrorInvalidParami(_, _, error, _, _, _))
         .Times(1)
         .RetiresOnSaturation();
   }
-  manager->SetParameter("", error_state, texture_ref, pname, value);
+  manager->SetParameteri("", error_state, texture_ref, pname, value);
 }
 
 ScopedGLImplementationSetter::ScopedGLImplementationSetter(

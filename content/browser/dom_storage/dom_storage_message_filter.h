@@ -17,10 +17,6 @@ namespace base {
 class NullableString16;
 }
 
-namespace base{
-  class WaitableEvent;
-}
-
 namespace content {
 
 class DOMStorageArea;
@@ -55,36 +51,34 @@ class DOMStorageMessageFilter
   void OnOpenStorageArea(int connection_id, int64 namespace_id,
                          const GURL& origin);
   void OnCloseStorageArea(int connection_id);
-  void OnLoadStorageArea(int connection_id, DOMStorageValuesMap* map);
-  void OnSetItem(int connection_id, const string16& key,
-                 const string16& value, const GURL& page_url);
-  void OnRemoveItem(int connection_id, const string16& key,
+  void OnLoadStorageArea(int connection_id, DOMStorageValuesMap* map,
+                         bool* send_log_get_messages);
+  void OnSetItem(int connection_id, const base::string16& key,
+                 const base::string16& value, const GURL& page_url);
+  void OnLogGetItem(int connection_id, const base::string16& key,
+                    const base::NullableString16& value);
+  void OnRemoveItem(int connection_id, const base::string16& key,
                     const GURL& page_url);
   void OnClear(int connection_id, const GURL& page_url);
   void OnFlushMessages();
-
-  void HandleOnOpenStorageAreaOnUIThread(
-      int routing_id,
-      const GURL& origin,
-      GURL* override,
-      base::WaitableEvent* done);
 
   // DOMStorageContextImpl::EventObserver implementation which
   // sends events back to our renderer process.
   virtual void OnDOMStorageItemSet(
       const DOMStorageArea* area,
-      const string16& key,
-      const string16& new_value,
+      const base::string16& key,
+      const base::string16& new_value,
       const base::NullableString16& old_value,
       const GURL& page_url) OVERRIDE;
   virtual void OnDOMStorageItemRemoved(
       const DOMStorageArea* area,
-      const string16& key,
-      const string16& old_value,
+      const base::string16& key,
+      const base::string16& old_value,
       const GURL& page_url) OVERRIDE;
   virtual void OnDOMStorageAreaCleared(
       const DOMStorageArea* area,
       const GURL& page_url) OVERRIDE;
+  virtual void OnDOMSessionStorageReset(int64 namespace_id) OVERRIDE;
 
   void SendDOMStorageEvent(
       const DOMStorageArea* area,
@@ -93,11 +87,10 @@ class DOMStorageMessageFilter
       const base::NullableString16& new_value,
       const base::NullableString16& old_value);
 
+  int render_process_id_;
   scoped_refptr<DOMStorageContextImpl> context_;
   scoped_ptr<DOMStorageHost> host_;
   int connection_dispatching_message_for_;
-  int render_process_id_;
-  int current_routing_id_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(DOMStorageMessageFilter);
 };

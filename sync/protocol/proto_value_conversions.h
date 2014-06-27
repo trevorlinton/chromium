@@ -14,6 +14,7 @@ class DictionaryValue;
 }
 
 namespace sync_pb {
+class AppListSpecifics;
 class AppNotification;
 class AppNotificationSettings;
 class AppSettingSpecifics;
@@ -46,6 +47,7 @@ class HistoryDeleteDirectiveSpecifics;
 class KeystoreEncryptionFlagsSpecifics;
 class Media;
 class ManagedUserSettingSpecifics;
+class ManagedUserSharedSettingSpecifics;
 class ManagedUserSpecifics;
 class NigoriSpecifics;
 class PasswordSpecifics;
@@ -61,6 +63,8 @@ class SimpleCollapsedLayout;
 class SyncCycleCompletedEventInfo;
 class SyncedNotification;
 class SyncedNotificationAction;
+class SyncedNotificationAppInfo;
+class SyncedNotificationAppInfoSpecifics;
 class SyncedNotificationDestination;
 class SyncedNotificationImage;
 class SyncedNotificationProfileImage;
@@ -90,6 +94,10 @@ namespace syncer {
 // TODO(akalin): Perhaps extend this to decrypt?
 SYNC_EXPORT_PRIVATE base::DictionaryValue* EncryptedDataToValue(
     const sync_pb::EncryptedData& encrypted_data);
+
+// Sub-protocol of AppListSpecifics.
+SYNC_EXPORT_PRIVATE base::DictionaryValue* AppListSpecificsToValue(
+    const sync_pb::AppListSpecifics& proto);
 
 // Sub-protocol of AppSpecifics.
 SYNC_EXPORT_PRIVATE base::DictionaryValue* AppSettingsToValue(
@@ -225,6 +233,11 @@ SYNC_EXPORT_PRIVATE base::DictionaryValue* ManagedUserSettingSpecificsToValue(
 SYNC_EXPORT_PRIVATE base::DictionaryValue* ManagedUserSpecificsToValue(
     const sync_pb::ManagedUserSpecifics& managed_user_specifics);
 
+SYNC_EXPORT_PRIVATE base::DictionaryValue*
+    ManagedUserSharedSettingSpecificsToValue(
+        const sync_pb::ManagedUserSharedSettingSpecifics&
+            managed_user_shared_setting_specifics);
+
 SYNC_EXPORT_PRIVATE base::DictionaryValue* MediaToValue(
     const sync_pb::Media& media);
 
@@ -236,6 +249,11 @@ SYNC_EXPORT_PRIVATE base::DictionaryValue* PasswordSpecificsToValue(
 
 SYNC_EXPORT_PRIVATE base::DictionaryValue* PreferenceSpecificsToValue(
     const sync_pb::PreferenceSpecifics& password_specifics);
+
+SYNC_EXPORT_PRIVATE base::DictionaryValue*
+    SyncedNotificationAppInfoSpecificsToValue(
+        const sync_pb::SyncedNotificationAppInfoSpecifics&
+        synced_notification_specifics);
 
 SYNC_EXPORT_PRIVATE base::DictionaryValue* SyncedNotificationSpecificsToValue(
     const sync_pb::SyncedNotificationSpecifics&

@@ -18,12 +18,12 @@
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/glue/change_processor_mock.h"
-#include "chrome/browser/sync/glue/data_type_controller_mock.h"
-#include "chrome/browser/sync/glue/model_associator_mock.h"
 #include "chrome/browser/sync/profile_sync_components_factory_mock.h"
 #include "chrome/browser/sync/profile_sync_service_mock.h"
 #include "chrome/test/base/profile_mock.h"
-#include "components/browser_context_keyed_service/refcounted_browser_context_keyed_service.h"
+#include "components/keyed_service/content/refcounted_browser_context_keyed_service.h"
+#include "components/sync_driver/data_type_controller_mock.h"
+#include "components/sync_driver/model_associator_mock.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/test_browser_thread.h"
 #include "sync/api/sync_error.h"
@@ -54,21 +54,19 @@ class HistoryMock : public HistoryService {
   virtual ~HistoryMock() {}
 };
 
-BrowserContextKeyedService* BuildBookmarkModel(
-    content::BrowserContext* context) {
+KeyedService* BuildBookmarkModel(content::BrowserContext* context) {
   Profile* profile = static_cast<Profile*>(context);
   BookmarkModel* bookmark_model = new BookmarkModel(profile);
   bookmark_model->Load(profile->GetIOTaskRunner());
   return bookmark_model;
 }
 
-BrowserContextKeyedService* BuildBookmarkModelWithoutLoading(
+KeyedService* BuildBookmarkModelWithoutLoading(
     content::BrowserContext* profile) {
   return new BookmarkModel(static_cast<Profile*>(profile));
 }
 
-BrowserContextKeyedService* BuildHistoryService(
-    content::BrowserContext* profile) {
+KeyedService* BuildHistoryService(content::BrowserContext* profile) {
   return new HistoryMock(static_cast<Profile*>(profile));
 }
 
@@ -77,7 +75,8 @@ BrowserContextKeyedService* BuildHistoryService(
 class SyncBookmarkDataTypeControllerTest : public testing::Test {
  public:
   SyncBookmarkDataTypeControllerTest()
-      : ui_thread_(BrowserThread::UI, &message_loop_) {}
+      : ui_thread_(BrowserThread::UI, &message_loop_),
+        service_(&profile_) {}
 
   virtual void SetUp() {
     model_associator_ = new ModelAssociatorMock();

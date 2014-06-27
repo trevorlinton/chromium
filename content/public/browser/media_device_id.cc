@@ -10,26 +10,29 @@
 
 namespace content {
 
-std::string GetHMACForMediaDeviceID(const GURL& security_origin,
+std::string GetHMACForMediaDeviceID(const ResourceContext::SaltCallback& sc,
+                                    const GURL& security_origin,
                                     const std::string& raw_unique_id) {
   DCHECK(security_origin.is_valid());
   DCHECK(!raw_unique_id.empty());
   crypto::HMAC hmac(crypto::HMAC::SHA256);
   const size_t digest_length = hmac.DigestLength();
   std::vector<uint8> digest(digest_length);
+  std::string salt = sc.Run();
   bool result = hmac.Init(security_origin.spec()) &&
-      hmac.Sign(raw_unique_id, &digest[0], digest.size());
+      hmac.Sign(raw_unique_id + salt, &digest[0], digest.size());
   DCHECK(result);
   return StringToLowerASCII(base::HexEncode(&digest[0], digest.size()));
 }
 
-bool DoesMediaDeviceIDMatchHMAC(const GURL& security_origin,
+bool DoesMediaDeviceIDMatchHMAC(const ResourceContext::SaltCallback& sc,
+                                const GURL& security_origin,
                                 const std::string& device_guid,
                                 const std::string& raw_unique_id) {
   DCHECK(security_origin.is_valid());
   DCHECK(!raw_unique_id.empty());
   std::string guid_from_raw_device_id =
-      GetHMACForMediaDeviceID(security_origin, raw_unique_id);
+      GetHMACForMediaDeviceID(sc, security_origin, raw_unique_id);
   return guid_from_raw_device_id == device_guid;
 }
 

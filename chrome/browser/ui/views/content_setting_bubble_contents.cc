@@ -18,13 +18,14 @@
 #include "chrome/browser/ui/content_settings/content_setting_bubble_model.h"
 #include "chrome/browser/ui/content_settings/content_setting_media_menu_model.h"
 #include "chrome/browser/ui/views/browser_dialogs.h"
-#include "chrome/browser/ui/views/password_menu_model.h"
 #include "content/public/browser/plugin_service.h"
 #include "content/public/browser/web_contents.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/simple_menu_model.h"
+#include "ui/base/resource/resource_bundle.h"
+#include "ui/gfx/font_list.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/button/menu_button.h"
 #include "ui/views/controls/button/radio_button.h"
@@ -142,8 +143,6 @@ ContentSettingBubbleContents::ContentSettingBubbleContents(
     views::BubbleBorder::Arrow arrow)
     : BubbleDelegateView(anchor_view, arrow),
       content_setting_bubble_model_(content_setting_bubble_model),
-      cancel_button_(NULL),
-      save_button_(NULL),
       custom_link_(NULL),
       manage_link_(NULL),
       close_button_(NULL) {
@@ -171,7 +170,7 @@ void ContentSettingBubbleContents::UpdateMenuLabel(
   for (MediaMenuPartsMap::const_iterator it = media_menus_.begin();
        it != media_menus_.end(); ++it) {
     if (it->second->type == type) {
-      it->first->SetText(UTF8ToUTF16(label));
+      it->first->SetText(base::UTF8ToUTF16(label));
       return;
     }
   }
@@ -194,27 +193,13 @@ void ContentSettingBubbleContents::Init() {
   bool bubble_content_empty = true;
 
   if (!bubble_content.title.empty()) {
-    views::Label* title_label = new views::Label(UTF8ToUTF16(
+    views::Label* title_label = new views::Label(base::UTF8ToUTF16(
         bubble_content.title));
     title_label->SetMultiLine(true);
     title_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
     layout->StartRow(0, kSingleColumnSetId);
     layout->AddView(title_label);
     bubble_content_empty = false;
-  }
-
-  const std::set<std::string>& plugins = bubble_content.resource_identifiers;
-  if (!plugins.empty()) {
-    if (!bubble_content_empty)
-      layout->AddPaddingRow(0, views::kRelatedControlVerticalSpacing);
-    PluginFinder* finder = PluginFinder::GetInstance();
-    for (std::set<std::string>::const_iterator i(plugins.begin());
-         i != plugins.end(); ++i) {
-      string16 name = finder->FindPluginNameWithIdentifier(*i);
-      layout->StartRow(0, kSingleColumnSetId);
-      layout->AddView(new views::Label(name));
-      bubble_content_empty = false;
-    }
   }
 
   if (content_setting_bubble_model_->content_type() ==
@@ -236,7 +221,7 @@ void ContentSettingBubbleContents::Init() {
         layout->AddPaddingRow(0, views::kRelatedControlVerticalSpacing);
       layout->StartRow(0, kPopupColumnSetId);
 
-      views::Link* link = new views::Link(UTF8ToUTF16(i->title));
+      views::Link* link = new views::Link(base::UTF8ToUTF16(i->title));
       link->set_listener(this);
       link->SetElideBehavior(views::Label::ELIDE_IN_MIDDLE);
       popup_links_[link] = i - bubble_content.popup_items.begin();
@@ -262,7 +247,8 @@ void ContentSettingBubbleContents::Init() {
     for (ContentSettingBubbleModel::RadioItems::const_iterator i(
          radio_group.radio_items.begin());
          i != radio_group.radio_items.end(); ++i) {
-      views::RadioButton* radio = new views::RadioButton(UTF8ToUTF16(*i), 0);
+      views::RadioButton* radio =
+          new views::RadioButton(base::UTF8ToUTF16(*i), 0);
       radio->SetEnabled(bubble_content.radio_group_enabled);
       radio->set_listener(this);
       radio_group_.push_back(radio);
@@ -298,14 +284,16 @@ void ContentSettingBubbleContents::Init() {
         layout->AddPaddingRow(0, views::kRelatedControlVerticalSpacing);
       layout->StartRow(0, kMediaMenuColumnSetId);
 
-      views::Label* label = new views::Label(UTF8ToUTF16(i->second.label));
+      views::Label* label =
+          new views::Label(base::UTF8ToUTF16(i->second.label));
       label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
 
       views::MenuButton* menu_button = new views::MenuButton(
-          NULL, UTF8ToUTF16((i->second.selected_device.name)), this, true);
+          NULL, base::UTF8ToUTF16((i->second.selected_device.name)),
+          this, true);
       menu_button->set_alignment(views::TextButton::ALIGN_LEFT);
-      menu_button->set_border(
-          new views::TextButtonNativeThemeBorder(menu_button));
+      menu_button->SetBorder(scoped_ptr<views::Border>(
+          new views::TextButtonNativeThemeBorder(menu_button)));
       menu_button->set_animate_on_state_change(false);
 
       MediaMenuParts* menu_view = new MediaMenuParts(i->first);
@@ -352,26 +340,28 @@ void ContentSettingBubbleContents::Init() {
     }
   }
 
-  gfx::Font domain_font =
-      views::Label().font().DeriveFont(0, gfx::Font::BOLD);
+  const gfx::FontList& domain_font =
+      ui::ResourceBundle::GetSharedInstance().GetFontList(
+          ui::ResourceBundle::BoldFont);
   for (std::vector<ContentSettingBubbleModel::DomainList>::const_iterator i(
-       bubble_content.domain_lists.begin());
+           bubble_content.domain_lists.begin());
        i != bubble_content.domain_lists.end(); ++i) {
     layout->StartRow(0, kSingleColumnSetId);
-    views::Label* section_title = new views::Label(UTF8ToUTF16(i->title));
+    views::Label* section_title = new views::Label(base::UTF8ToUTF16(i->title));
     section_title->SetMultiLine(true);
     section_title->SetHorizontalAlignment(gfx::ALIGN_LEFT);
     layout->AddView(section_title, 1, 1, GridLayout::FILL, GridLayout::LEADING);
     for (std::set<std::string>::const_iterator j = i->hosts.begin();
          j != i->hosts.end(); ++j) {
       layout->StartRow(0, indented_kSingleColumnSetId);
-      layout->AddView(new views::Label(UTF8ToUTF16(*j), domain_font));
+      layout->AddView(new views::Label(base::UTF8ToUTF16(*j), domain_font));
     }
     bubble_content_empty = false;
   }
 
   if (!bubble_content.custom_link.empty()) {
-    custom_link_ = new views::Link(UTF8ToUTF16(bubble_content.custom_link));
+    custom_link_ =
+        new views::Link(base::UTF8ToUTF16(bubble_content.custom_link));
     custom_link_->SetEnabled(bubble_content.custom_link_enabled);
     custom_link_->set_listener(this);
     if (!bubble_content_empty)
@@ -384,63 +374,7 @@ void ContentSettingBubbleContents::Init() {
   const int kDoubleColumnSetId = 1;
   views::ColumnSet* double_column_set =
       layout->AddColumnSet(kDoubleColumnSetId);
-
-  if (content_setting_bubble_model_->content_type() ==
-      CONTENT_SETTINGS_TYPE_SAVE_PASSWORD) {
-    double_column_set->AddColumn(GridLayout::TRAILING, GridLayout::CENTER, 1,
-                                 GridLayout::USE_PREF, 0, 0);
-    double_column_set->AddColumn(GridLayout::LEADING, GridLayout::CENTER, 0,
-                                 GridLayout::USE_PREF, 0, 0);
-    double_column_set->AddPaddingColumn(
-        0, views::kRelatedControlSmallVerticalSpacing);
-    double_column_set->AddColumn(GridLayout::TRAILING, GridLayout::CENTER, 0,
-                                 GridLayout::USE_PREF, 0, 0);
-
-    const int kSingleColumnRightSetId = 2;
-    views::ColumnSet* right_column_set =
-        layout->AddColumnSet(kSingleColumnRightSetId);
-    right_column_set->AddColumn(GridLayout::LEADING, GridLayout::FILL, 1,
-                                GridLayout::USE_PREF, 0, 0);
-
-    cancel_button_ = new views::LabelButton(
-        this, l10n_util::GetStringUTF16(IDS_PASSWORD_MANAGER_CANCEL_DROP_DOWN));
-    cancel_button_->set_border(
-        new views::TextButtonNativeThemeBorder(cancel_button_));
-    save_button_ = new views::LabelButton(
-        this, l10n_util::GetStringUTF16(IDS_PASSWORD_MANAGER_SAVE_BUTTON));
-    save_button_->set_border(
-        new views::TextButtonNativeThemeBorder(save_button_));
-    manage_link_ = new views::Link(UTF8ToUTF16(bubble_content.manage_link));
-    manage_link_->set_listener(this);
-
-    layout->AddPaddingRow(0, views::kRelatedControlVerticalSpacing);
-
-    layout->StartRow(0, kDoubleColumnSetId);
-    layout->AddView(cancel_button_);
-
-    views::MenuButton* menu_button =
-        new views::MenuButton(NULL, UTF8ToUTF16(" "), this, true);
-    menu_button->set_alignment(views::TextButton::ALIGN_LEFT);
-    menu_button->set_border(
-        new views::TextButtonNativeThemeBorder(menu_button));
-
-    password_menu_model_.reset(
-        new PasswordMenuModel(content_setting_bubble_model_.get(), this));
-    layout->AddView(menu_button);
-    menu_button->set_max_width(15);
-
-    layout->AddView(save_button_);
-
-    layout->AddPaddingRow(0, views::kRelatedControlVerticalSpacing);
-    layout->StartRow(0, kSingleColumnSetId);
-    layout->AddView(new views::Separator(views::Separator::HORIZONTAL), 1, 1,
-                    GridLayout::FILL, GridLayout::FILL);
-    layout->AddPaddingRow(0, views::kRelatedControlVerticalSpacing);
-
-    layout->StartRow(0, kSingleColumnRightSetId);
-    layout->AddView(manage_link_);
-  } else {
-    if (!bubble_content_empty) {
+  if (!bubble_content_empty) {
       layout->AddPaddingRow(0, views::kRelatedControlVerticalSpacing);
       layout->StartRow(0, kSingleColumnSetId);
       layout->AddView(new views::Separator(views::Separator::HORIZONTAL), 1, 1,
@@ -456,15 +390,15 @@ void ContentSettingBubbleContents::Init() {
                                  GridLayout::USE_PREF, 0, 0);
 
     layout->StartRow(0, kDoubleColumnSetId);
-    manage_link_ = new views::Link(UTF8ToUTF16(bubble_content.manage_link));
+    manage_link_ =
+        new views::Link(base::UTF8ToUTF16(bubble_content.manage_link));
     manage_link_->set_listener(this);
     layout->AddView(manage_link_);
 
     close_button_ =
         new views::LabelButton(this, l10n_util::GetStringUTF16(IDS_DONE));
-    close_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
+    close_button_->SetStyle(views::Button::STYLE_BUTTON);
     layout->AddView(close_button_);
-  }
 }
 
 void ContentSettingBubbleContents::ButtonPressed(views::Button* sender,
@@ -475,25 +409,20 @@ void ContentSettingBubbleContents::ButtonPressed(views::Button* sender,
     content_setting_bubble_model_->OnRadioClicked(i - radio_group_.begin());
     return;
   }
-
-  if (sender == save_button_)
-    content_setting_bubble_model_->OnSaveClicked();
-  else if (sender == cancel_button_ || sender == close_button_)
-    content_setting_bubble_model_->OnDoneClicked();
-  else
-    NOTREACHED();
-  StartFade(false);
+  DCHECK_EQ(sender, close_button_);
+  content_setting_bubble_model_->OnDoneClicked();
+  GetWidget()->Close();
 }
 
 void ContentSettingBubbleContents::LinkClicked(views::Link* source,
                                                int event_flags) {
   if (source == custom_link_) {
     content_setting_bubble_model_->OnCustomLinkClicked();
-    StartFade(false);
+    GetWidget()->Close();
     return;
   }
   if (source == manage_link_) {
-    StartFade(false);
+    GetWidget()->Close();
     content_setting_bubble_model_->OnManageLinkClicked();
     // CAREFUL: Showing the settings window activates it, which deactivates the
     // info bubble, which causes it to close, which deletes us.
@@ -508,21 +437,6 @@ void ContentSettingBubbleContents::LinkClicked(views::Link* source,
 void ContentSettingBubbleContents::OnMenuButtonClicked(
     views::View* source,
     const gfx::Point& point) {
-  if (password_menu_model_) {
-    menu_runner_.reset(new views::MenuRunner(password_menu_model_.get()));
-
-    gfx::Point screen_location;
-    views::View::ConvertPointToScreen(static_cast<views::MenuButton*>(source),
-                                      &screen_location);
-    ignore_result(menu_runner_->RunMenuAt(
-        source->GetWidget(),
-        static_cast<views::MenuButton*>(source),
-        gfx::Rect(screen_location,
-                  static_cast<views::MenuButton*>(source)->size()),
-        views::MenuItemView::TOPRIGHT,
-        ui::MENU_SOURCE_NONE,
-        views::MenuRunner::HAS_MNEMONICS));
-  } else {
     MediaMenuPartsMap::iterator j(media_menus_.find(
         static_cast<views::MenuButton*>(source)));
     DCHECK(j != media_menus_.end());
@@ -537,13 +451,12 @@ void ContentSettingBubbleContents::OnMenuButtonClicked(
         views::MenuItemView::TOPLEFT,
         ui::MENU_SOURCE_NONE,
         views::MenuRunner::HAS_MNEMONICS));
-  }
 }
 
 int ContentSettingBubbleContents::GetPreferredMediaMenuWidth(
     views::MenuButton* button,
     ui::SimpleMenuModel* menu_model) {
-  string16 title = button->text();
+  base::string16 title = button->text();
 
   int width = button->GetPreferredSize().width();
   for (int i = 0; i < menu_model->GetItemCount(); ++i) {

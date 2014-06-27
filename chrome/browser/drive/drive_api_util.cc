@@ -6,17 +6,17 @@
 
 #include <string>
 
-#include "base/command_line.h"
+#include "base/files/file.h"
 #include "base/logging.h"
+#include "base/md5.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/browser/drive/drive_switches.h"
-#include "chrome/browser/google_apis/drive_api_parser.h"
-#include "chrome/browser/google_apis/gdata_wapi_parser.h"
 #include "content/public/browser/browser_thread.h"
+#include "google_apis/drive/drive_api_parser.h"
+#include "google_apis/drive/gdata_wapi_parser.h"
 #include "net/base/escape.h"
 #include "third_party/re2/re2/re2.h"
 #include "url/gurl.h"
@@ -35,6 +35,25 @@ const char kGoogleSpreadsheetMimeType[] =
 const char kGoogleTableMimeType[] = "application/vnd.google-apps.table";
 const char kGoogleFormMimeType[] = "application/vnd.google-apps.form";
 const char kDriveFolderMimeType[] = "application/vnd.google-apps.folder";
+
+std::string GetMimeTypeFromEntryKind(google_apis::DriveEntryKind kind) {
+  switch (kind) {
+    case google_apis::ENTRY_KIND_DOCUMENT:
+      return kGoogleDocumentMimeType;
+    case google_apis::ENTRY_KIND_SPREADSHEET:
+      return kGoogleSpreadsheetMimeType;
+    case google_apis::ENTRY_KIND_PRESENTATION:
+      return kGooglePresentationMimeType;
+    case google_apis::ENTRY_KIND_DRAWING:
+      return kGoogleDrawingMimeType;
+    case google_apis::ENTRY_KIND_TABLE:
+      return kGoogleTableMimeType;
+    case google_apis::ENTRY_KIND_FORM:
+      return kGoogleFormMimeType;
+    default:
+      return std::string();
+  }
+}
 
 ScopedVector<std::string> CopyScopedVectorString(
     const ScopedVector<std::string>& source) {
@@ -82,7 +101,6 @@ ConvertInstalledAppToAppResource(
   resource->set_name(installed_app.app_name());
   resource->set_object_type(installed_app.object_type());
   resource->set_supports_create(installed_app.supports_create());
-  resource->set_product_url(installed_app.GetProductUrl());
 
   {
     ScopedVector<std::string> primary_mimetypes(
@@ -128,21 +146,6 @@ std::string Identity(const std::string& resource_id) { return resource_id; }
 }  // namespace
 
 
-bool IsDriveV2ApiEnabled() {
-  const CommandLine* command_line = CommandLine::ForCurrentProcess();
-
-  // Enable Drive API v2 by default.
-  if (!command_line->HasSwitch(switches::kEnableDriveV2Api))
-    return true;
-
-  std::string value =
-      command_line->GetSwitchValueASCII(switches::kEnableDriveV2Api);
-  StringToLowerASCII(&value);
-  // The value must be "" or "true" for true, or "false" for false.
-  DCHECK(value.empty() || value == "true" || value == "false");
-  return value != "false";
-}
-
 std::string EscapeQueryStringValue(const std::string& str) {
   std::string result;
   result.reserve(str.size());
@@ -157,14 +160,15 @@ std::string EscapeQueryStringValue(const std::string& str) {
 
 std::string TranslateQuery(const std::string& original_query) {
   // In order to handle non-ascii white spaces correctly, convert to UTF16.
-  base::string16 query = UTF8ToUTF16(original_query);
+  base::string16 query = base::UTF8ToUTF16(original_query);
   const base::string16 kDelimiter(
-      kWhitespaceUTF16 + base::string16(1, static_cast<char16>('"')));
+      base::kWhitespaceUTF16 +
+      base::string16(1, static_cast<base::char16>('"')));
 
   std::string result;
-  for (size_t index = query.find_first_not_of(kWhitespaceUTF16);
+  for (size_t index = query.find_first_not_of(base::kWhitespaceUTF16);
        index != base::string16::npos;
-       index = query.find_first_not_of(kWhitespaceUTF16, index)) {
+       index = query.find_first_not_of(base::kWhitespaceUTF16, index)) {
     bool is_exclusion = (query[index] == '-');
     if (is_exclusion)
       ++index;
@@ -215,7 +219,7 @@ std::string TranslateQuery(const std::string& original_query) {
         &result,
         "%sfullText contains \'%s\'",
         is_exclusion ? "not " : "",
-        EscapeQueryStringValue(UTF16ToUTF8(token)).c_str());
+        EscapeQueryStringValue(base::UTF16ToUTF8(token)).c_str());
   }
 
   return result;
@@ -309,17 +313,23 @@ scoped_ptr<google_apis::FileResource> ConvertResourceEntryToFileResource(
   file->set_created_date(entry.published_time());
 
   if (std::find(entry.labels().begin(), entry.labels().end(),
-                "shared-with-me") == entry.labels().end()) {
+                "shared-with-me") != entry.labels().end()) {
     // Set current time to mark the file is shared_with_me, since ResourceEntry
     // doesn't have |shared_with_me_date| equivalent.
     file->set_shared_with_me_date(base::Time::Now());
   }
 
-  file->set_download_url(entry.download_url());
-  if (entry.is_folder())
+  file->set_shared(std::find(entry.labels().begin(), entry.labels().end(),
+                             "shared") != entry.labels().end());
+
+  if (entry.is_folder()) {
     file->set_mime_type(kDriveFolderMimeType);
-  else
-    file->set_mime_type(entry.content_mime_type());
+  } else {
+    std::string mime_type = GetMimeTypeFromEntryKind(entry.kind());
+    if (mime_type.empty())
+      mime_type = entry.content_mime_type();
+    file->set_mime_type(mime_type);
+  }
 
   file->set_md5_checksum(entry.file_md5());
   file->set_file_size(entry.file_size());
@@ -333,40 +343,29 @@ scoped_ptr<google_apis::FileResource> ConvertResourceEntryToFileResource(
   image_media_metadata->set_height(entry.image_height());
   image_media_metadata->set_rotation(entry.image_rotation());
 
-  ScopedVector<google_apis::ParentReference> parents;
+  std::vector<google_apis::ParentReference>* parents = file->mutable_parents();
   for (size_t i = 0; i < entry.links().size(); ++i) {
     using google_apis::Link;
     const Link& link = *entry.links()[i];
     switch (link.type()) {
       case Link::LINK_PARENT: {
-        scoped_ptr<google_apis::ParentReference> parent(
-            new google_apis::ParentReference);
-        parent->set_parent_link(link.href());
+        google_apis::ParentReference parent;
+        parent.set_parent_link(link.href());
 
         std::string file_id =
             drive::util::ExtractResourceIdFromUrl(link.href());
-        parent->set_file_id(file_id);
-        parent->set_is_root(file_id == kWapiRootDirectoryResourceId);
-        parents.push_back(parent.release());
+        parent.set_file_id(file_id);
+        parent.set_is_root(file_id == kWapiRootDirectoryResourceId);
+        parents->push_back(parent);
         break;
       }
-      case Link::LINK_EDIT:
-        file->set_self_link(link.href());
-        break;
-      case Link::LINK_THUMBNAIL:
-        file->set_thumbnail_link(link.href());
-        break;
       case Link::LINK_ALTERNATE:
         file->set_alternate_link(link.href());
-        break;
-      case Link::LINK_EMBED:
-        file->set_embed_link(link.href());
         break;
       default:
         break;
     }
   }
-  file->set_parents(parents.Pass());
 
   file->set_modified_date(entry.updated_time());
   file->set_last_viewed_by_me_date(entry.last_viewed_time());
@@ -408,17 +407,17 @@ ConvertFileResourceToResourceEntry(
   entry->set_kind(GetKind(file_resource));
   entry->set_title(file_resource.title());
   entry->set_published_time(file_resource.created_date());
-  // TODO(kochi): entry->labels_
-  if (!file_resource.shared_with_me_date().is_null()) {
-    std::vector<std::string> labels;
+
+  std::vector<std::string> labels;
+  if (!file_resource.shared_with_me_date().is_null())
     labels.push_back("shared-with-me");
-    entry->set_labels(labels);
-  }
+  if (file_resource.shared())
+    labels.push_back("shared");
+  entry->set_labels(labels);
 
   // This should be the url to download the file_resource.
   {
     google_apis::Content content;
-    content.set_url(file_resource.download_url());
     content.set_mime_type(file_resource.mime_type());
     entry->set_content(content);
   }
@@ -445,34 +444,16 @@ ConvertFileResourceToResourceEntry(
   // entry->authors_
   // entry->links_.
   ScopedVector<google_apis::Link> links;
-  if (!file_resource.parents().empty()) {
+  for (size_t i = 0; i < file_resource.parents().size(); ++i) {
     google_apis::Link* link = new google_apis::Link;
     link->set_type(google_apis::Link::LINK_PARENT);
-    link->set_href(file_resource.parents()[0]->parent_link());
-    links.push_back(link);
-  }
-  if (!file_resource.self_link().is_empty()) {
-    google_apis::Link* link = new google_apis::Link;
-    link->set_type(google_apis::Link::LINK_EDIT);
-    link->set_href(file_resource.self_link());
-    links.push_back(link);
-  }
-  if (!file_resource.thumbnail_link().is_empty()) {
-    google_apis::Link* link = new google_apis::Link;
-    link->set_type(google_apis::Link::LINK_THUMBNAIL);
-    link->set_href(file_resource.thumbnail_link());
+    link->set_href(file_resource.parents()[i].parent_link());
     links.push_back(link);
   }
   if (!file_resource.alternate_link().is_empty()) {
     google_apis::Link* link = new google_apis::Link;
     link->set_type(google_apis::Link::LINK_ALTERNATE);
     link->set_href(file_resource.alternate_link());
-    links.push_back(link);
-  }
-  if (!file_resource.embed_link().is_empty()) {
-    google_apis::Link* link = new google_apis::Link;
-    link->set_type(google_apis::Link::LINK_EMBED);
-    link->set_href(file_resource.embed_link());
     links.push_back(link);
   }
   entry->set_links(links.Pass());
@@ -498,6 +479,7 @@ ConvertChangeResourceToResourceEntry(
   // If |is_deleted()| returns true, the file is removed from Drive.
   entry->set_removed(change_resource.is_deleted());
   entry->set_changestamp(change_resource.change_id());
+  entry->set_modification_date(change_resource.modification_date());
 
   return entry.Pass();
 }
@@ -548,6 +530,39 @@ ConvertChangeListToResourceList(const google_apis::ChangeList& change_list) {
   feed->set_links(links.Pass());
 
   return feed.Pass();
+}
+
+std::string GetMd5Digest(const base::FilePath& file_path) {
+  const int kBufferSize = 512 * 1024;  // 512kB.
+
+  base::File file(file_path, base::File::FLAG_OPEN | base::File::FLAG_READ);
+  if (!file.IsValid())
+    return std::string();
+
+  base::MD5Context context;
+  base::MD5Init(&context);
+
+  int64 offset = 0;
+  scoped_ptr<char[]> buffer(new char[kBufferSize]);
+  while (true) {
+    int result = file.Read(offset, buffer.get(), kBufferSize);
+    if (result < 0) {
+      // Found an error.
+      return std::string();
+    }
+
+    if (result == 0) {
+      // End of file.
+      break;
+    }
+
+    offset += result;
+    base::MD5Update(&context, base::StringPiece(buffer.get(), result));
+  }
+
+  base::MD5Digest digest;
+  base::MD5Final(&digest, &context);
+  return MD5DigestToBase16(digest);
 }
 
 const char kWapiRootDirectoryResourceId[] = "folder:root";

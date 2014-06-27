@@ -11,8 +11,8 @@
 #include "base/observer_list_threadsafe.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/api/storage/setting_sync_data.h"
-#include "chrome/browser/extensions/api/storage/settings_observer.h"
-#include "chrome/browser/value_store/value_store.h"
+#include "extensions/browser/api/storage/settings_observer.h"
+#include "extensions/browser/value_store/value_store.h"
 #include "sync/api/sync_change.h"
 #include "sync/api/syncable_service.h"
 
@@ -27,7 +27,9 @@ class SyncableSettingsStorage : public ValueStore {
       const scoped_refptr<SettingsObserverList>& observers,
       const std::string& extension_id,
       // Ownership taken.
-      ValueStore* delegate);
+      ValueStore* delegate,
+      syncer::ModelType sync_type,
+      const syncer::SyncableService::StartSyncFlare& flare);
 
   virtual ~SyncableSettingsStorage();
 
@@ -41,12 +43,14 @@ class SyncableSettingsStorage : public ValueStore {
   virtual WriteResult Set(
       WriteOptions options,
       const std::string& key,
-      const Value& value) OVERRIDE;
+      const base::Value& value) OVERRIDE;
   virtual WriteResult Set(
       WriteOptions options, const base::DictionaryValue& values) OVERRIDE;
   virtual WriteResult Remove(const std::string& key) OVERRIDE;
   virtual WriteResult Remove(const std::vector<std::string>& keys) OVERRIDE;
   virtual WriteResult Clear() OVERRIDE;
+  virtual bool Restore() OVERRIDE;
+  virtual bool RestoreKey(const std::string& key) OVERRIDE;
 
   // Sync-related methods, analogous to those on SyncableService (handled by
   // ExtensionSettings), but with looser guarantees about when the methods
@@ -80,16 +84,16 @@ class SyncableSettingsStorage : public ValueStore {
   // are taken.
   syncer::SyncError OnSyncAdd(
       const std::string& key,
-      Value* new_value,
+      base::Value* new_value,
       ValueStoreChangeList* changes);
   syncer::SyncError OnSyncUpdate(
       const std::string& key,
-      Value* old_value,
-      Value* new_value,
+      base::Value* old_value,
+      base::Value* new_value,
       ValueStoreChangeList* changes);
   syncer::SyncError OnSyncDelete(
       const std::string& key,
-      Value* old_value,
+      base::Value* old_value,
       ValueStoreChangeList* changes);
 
   // List of observers to settings changes.
@@ -103,6 +107,9 @@ class SyncableSettingsStorage : public ValueStore {
 
   // Object which sends changes to sync.
   scoped_ptr<SettingsSyncProcessor> sync_processor_;
+
+  const syncer::ModelType sync_type_;
+  const syncer::SyncableService::StartSyncFlare flare_;
 
   DISALLOW_COPY_AND_ASSIGN(SyncableSettingsStorage);
 };

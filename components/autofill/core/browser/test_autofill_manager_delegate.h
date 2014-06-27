@@ -7,12 +7,13 @@
 
 #include "base/compiler_specific.h"
 #include "base/i18n/rtl.h"
+#include "base/memory/scoped_ptr.h"
+#include "base/prefs/pref_service.h"
 #include "components/autofill/core/browser/autofill_manager_delegate.h"
 
 namespace autofill {
 
-// This class is only for easier writing of testings. All pure virtual functions
-// have been giving empty methods.
+// This class is for easier writing of tests.
 class TestAutofillManagerDelegate : public AutofillManagerDelegate {
  public:
   TestAutofillManagerDelegate();
@@ -20,12 +21,13 @@ class TestAutofillManagerDelegate : public AutofillManagerDelegate {
 
   // AutofillManagerDelegate implementation.
   virtual PersonalDataManager* GetPersonalDataManager() OVERRIDE;
+  virtual scoped_refptr<AutofillWebDataService>
+      GetDatabase() OVERRIDE;
   virtual PrefService* GetPrefs() OVERRIDE;
   virtual void HideRequestAutocompleteDialog() OVERRIDE;
   virtual void ShowAutofillSettings() OVERRIDE;
   virtual void ConfirmSaveCreditCard(
       const AutofillMetrics& metric_logger,
-      const CreditCard& credit_card,
       const base::Closure& save_card_callback) OVERRIDE;
   virtual void ShowRequestAutocompleteDialog(
       const FormData& form,
@@ -48,7 +50,16 @@ class TestAutofillManagerDelegate : public AutofillManagerDelegate {
   virtual void DetectAccountCreationForms(
       const std::vector<autofill::FormStructure*>& forms) OVERRIDE;
 
+  virtual void DidFillOrPreviewField(
+      const base::string16& autofilled_value,
+      const base::string16& profile_full_name) OVERRIDE;
+
+  void SetPrefs(scoped_ptr<PrefService> prefs) { prefs_ = prefs.Pass(); }
+
  private:
+  // NULL by default.
+  scoped_ptr<PrefService> prefs_;
+
   DISALLOW_COPY_AND_ASSIGN(TestAutofillManagerDelegate);
 };
 

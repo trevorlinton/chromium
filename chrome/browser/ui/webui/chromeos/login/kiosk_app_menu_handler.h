@@ -30,6 +30,9 @@ class KioskAppMenuHandler : public content::WebUIMessageHandler,
   // content::WebUIMessageHandler overrides:
   virtual void RegisterMessages() OVERRIDE;
 
+  // Returns true if new kiosk UI is enabled.
+  static bool EnableNewKioskUI();
+
  private:
   // Sends all kiosk apps to webui.
   void SendKioskApps();
@@ -43,12 +46,10 @@ class KioskAppMenuHandler : public content::WebUIMessageHandler,
   virtual void OnKioskAppsSettingsChanged() OVERRIDE;
   virtual void OnKioskAppDataChanged(const std::string& app_id) OVERRIDE;
 
-  // Callback for KioskAppManager::GetConsumerKioskModeStatus().
-  void OnGetConsumerKioskModeStatus(
-      KioskAppManager::ConsumerKioskModeStatus status);
-
-  bool initialized_;
   base::WeakPtrFactory<KioskAppMenuHandler> weak_ptr_factory_;
+
+  // True when WebUI is initialized. Otherwise don't allow calling JS functions.
+  bool is_webui_initialized_;
 
   DISALLOW_COPY_AND_ASSIGN(KioskAppMenuHandler);
 };

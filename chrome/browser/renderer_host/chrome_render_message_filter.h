@@ -21,8 +21,11 @@ struct ExtensionHostMsg_APIActionOrEvent_Params;
 struct ExtensionHostMsg_DOMAction_Params;
 struct ExtensionHostMsg_Request_Params;
 struct ExtensionMsg_ExternalConnectionInfo;
-class ExtensionInfoMap;
 class GURL;
+
+namespace extensions {
+class InfoMap;
+}
 
 namespace net {
 class HostResolver;
@@ -82,10 +85,15 @@ class ChromeRenderMessageFilter : public content::BrowserMessageFilter {
 
   void OnDnsPrefetch(const std::vector<std::string>& hostnames);
   void OnPreconnect(const GURL& url);
-  void OnResourceTypeStats(const WebKit::WebCache::ResourceTypeStats& stats);
-  void OnUpdatedCacheStats(const WebKit::WebCache::UsageStats& stats);
+  void OnResourceTypeStats(const blink::WebCache::ResourceTypeStats& stats);
+  void OnUpdatedCacheStats(const blink::WebCache::UsageStats& stats);
   void OnFPS(int routing_id, float fps);
   void OnV8HeapStats(int v8_memory_allocated, int v8_memory_used);
+
+  // TODO(jamescook): Move these functions into the extensions module. Ideally
+  // this would be in extensions::ExtensionMessageFilter but that will require
+  // resolving the MessageService and ActivityLog dependencies on src/chrome.
+  // http://crbug.com/339637
   void OnOpenChannelToExtension(int routing_id,
                                 const ExtensionMsg_ExternalConnectionInfo& info,
                                 const std::string& channel_name,
@@ -120,31 +128,10 @@ class ChromeRenderMessageFilter : public content::BrowserMessageFilter {
       const std::string& extension_id,
       const std::string& default_locale,
       IPC::Message* reply_msg);
-  void OnExtensionAddListener(const std::string& extension_id,
-                              const std::string& event_name);
-  void OnExtensionRemoveListener(const std::string& extension_id,
-                                 const std::string& event_name);
-  void OnExtensionAddLazyListener(const std::string& extension_id,
-                                  const std::string& event_name);
-  void OnExtensionRemoveLazyListener(const std::string& extension_id,
-                                     const std::string& event_name);
-  void OnExtensionAddFilteredListener(const std::string& extension_id,
-                                      const std::string& event_name,
-                                      const base::DictionaryValue& filter,
-                                      bool lazy);
-  void OnExtensionRemoveFilteredListener(const std::string& extension_id,
-                                         const std::string& event_name,
-                                         const base::DictionaryValue& filter,
-                                         bool lazy);
   void OnExtensionCloseChannel(int port_id, const std::string& error_message);
   void OnExtensionRequestForIOThread(
       int routing_id,
       const ExtensionHostMsg_Request_Params& params);
-  void OnExtensionShouldSuspendAck(const std::string& extension_id,
-                                   int sequence_id);
-  void OnExtensionSuspendAck(const std::string& extension_id);
-  void OnExtensionGenerateUniqueID(int* unique_id);
-  void OnExtensionResumeRequests(int route_id);
   void OnAddAPIActionToExtensionActivityLog(
       const std::string& extension_id,
       const ExtensionHostMsg_APIActionOrEvent_Params& params);
@@ -157,36 +144,29 @@ class ChromeRenderMessageFilter : public content::BrowserMessageFilter {
   void OnAddEventToExtensionActivityLog(
       const std::string& extension_id,
       const ExtensionHostMsg_APIActionOrEvent_Params& params);
-  void OnAllowDatabase(int render_view_id,
+  void OnAllowDatabase(int render_frame_id,
                        const GURL& origin_url,
                        const GURL& top_origin_url,
-                       const string16& name,
-                       const string16& display_name,
+                       const base::string16& name,
+                       const base::string16& display_name,
                        bool* allowed);
-  void OnAllowDOMStorage(int render_view_id,
+  void OnAllowDOMStorage(int render_frame_id,
                          const GURL& origin_url,
                          const GURL& top_origin_url,
                          bool local,
                          bool* allowed);
-  void OnAllowFileSystem(int render_view_id,
+  void OnAllowFileSystem(int render_frame_id,
                          const GURL& origin_url,
                          const GURL& top_origin_url,
                          bool* allowed);
-  void OnAllowIndexedDB(int render_view_id,
+  void OnAllowIndexedDB(int render_frame_id,
                         const GURL& origin_url,
                         const GURL& top_origin_url,
-                        const string16& name,
+                        const base::string16& name,
                         bool* allowed);
   void OnCanTriggerClipboardRead(const GURL& origin, bool* allowed);
   void OnCanTriggerClipboardWrite(const GURL& origin, bool* allowed);
-  void OnIsWebGLDebugRendererInfoAllowed(const GURL& origin, bool* allowed);
-  void OnGetCookies(const GURL& url,
-                    const GURL& first_party_for_cookies,
-                    IPC::Message* reply_msg);
-  void OnSetCookie(const IPC::Message& message,
-                   const GURL& url,
-                   const GURL& first_party_for_cookies,
-                   const std::string& cookie);
+  void OnIsCrashReportingEnabled(bool* enabled);
 
   int render_process_id_;
 
@@ -195,8 +175,11 @@ class ChromeRenderMessageFilter : public content::BrowserMessageFilter {
   Profile* profile_;
   // Copied from the profile so that it can be read on the IO thread.
   bool off_the_record_;
+  // The Predictor for the associated Profile. It is stored so that it can be
+  // used on the IO thread.
+  chrome_browser_net::Predictor* predictor_;
   scoped_refptr<net::URLRequestContextGetter> request_context_;
-  scoped_refptr<ExtensionInfoMap> extension_info_map_;
+  scoped_refptr<extensions::InfoMap> extension_info_map_;
   // Used to look up permissions at database creation time.
   scoped_refptr<CookieSettings> cookie_settings_;
 

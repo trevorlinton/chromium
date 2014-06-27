@@ -5,14 +5,14 @@
 #include "ui/views/controls/menu/menu_controller.h"
 
 #include "base/run_loop.h"
-#include "ui/aura/client/activation_change_observer.h"
-#include "ui/aura/client/activation_client.h"
-#include "ui/aura/client/dispatcher_client.h"
-#include "ui/aura/client/drag_drop_client.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_observer.h"
 #include "ui/gfx/screen.h"
 #include "ui/views/widget/widget.h"
+#include "ui/wm/public/activation_change_observer.h"
+#include "ui/wm/public/activation_client.h"
+#include "ui/wm/public/dispatcher_client.h"
+#include "ui/wm/public/drag_drop_client.h"
 
 namespace views {
 
@@ -89,8 +89,7 @@ void MenuController::RunMessageLoop(bool nested_menu) {
     scoped_ptr<ActivationChangeObserverImpl> observer;
     if (!nested_menu)
       observer.reset(new ActivationChangeObserverImpl(this, root));
-    aura::client::GetDispatcherClient(root)->
-        RunWithDispatcher(this, owner_->GetNativeWindow(), true);
+    aura::client::GetDispatcherClient(root)->RunWithDispatcher(this);
   } else {
     base::MessageLoopForUI* loop = base::MessageLoopForUI::current();
     base::MessageLoop::ScopedNestableTaskAllower allow(loop);

@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/cocoa/extensions/media_galleries_dialog_cocoa.h"
 
+#include "base/mac/scoped_nsobject.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/ui/chrome_style.h"
 #import "chrome/browser/ui/cocoa/constrained_window/constrained_window_alert.h"
@@ -14,15 +15,18 @@
 #include "content/public/browser/web_contents.h"
 #include "grit/generated_resources.h"
 #import "ui/base/cocoa/flipped_view.h"
+#import "ui/base/cocoa/menu_controller.h"
+#import "ui/base/models/menu_model.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
+// Controller for UI events on items in the media galleries dialog.
 @interface MediaGalleriesCocoaController : NSObject {
  @private
   MediaGalleriesDialogCocoa* dialog_;
 }
 
-@property(nonatomic, assign) MediaGalleriesDialogCocoa* dialog;
+@property(assign, nonatomic) MediaGalleriesDialogCocoa* dialog;
 
 @end
 
@@ -50,6 +54,42 @@
 
 @end
 
+
+@interface MediaGalleriesCheckbox : NSButton {
+ @private
+  MediaGalleriesDialogCocoa* dialog_;  // |dialog_| owns |this|.
+  MediaGalleryPrefId prefId_;
+  base::scoped_nsobject<MenuController> menuController_;
+}
+
+- (id)initWithFrame:(NSRect)frameRect
+             dialog:(MediaGalleriesDialogCocoa*)dialog
+             prefId:(MediaGalleryPrefId)prefId;
+- (NSMenu*)menuForEvent:(NSEvent*)theEvent;
+
+@end
+
+@implementation MediaGalleriesCheckbox
+
+- (id)initWithFrame:(NSRect)frameRect
+             dialog:(MediaGalleriesDialogCocoa*)dialog
+             prefId:(MediaGalleryPrefId)prefId {
+  if ((self = [super initWithFrame:frameRect])) {
+    dialog_ = dialog;
+    prefId_ = prefId;
+  }
+  return self;
+}
+
+- (NSMenu*)menuForEvent:(NSEvent*)theEvent {
+  menuController_.reset(
+    [[MenuController alloc] initWithModel:dialog_->GetContextMenu(prefId_)
+                   useWithPopUpButtonCell:NO]);
+  return [menuController_ menu];
+}
+
+@end
+
 namespace {
 
 const CGFloat kCheckboxMargin = 10;
@@ -73,7 +113,8 @@ MediaGalleriesDialogCocoa::MediaGalleriesDialogCocoa(
   alert_.reset([[ConstrainedWindowAlert alloc] init]);
 
   [alert_ setMessageText:base::SysUTF16ToNSString(controller_->GetHeader())];
-  [alert_ setInformativeText:SysUTF16ToNSString(controller_->GetSubtext())];
+  [alert_ setInformativeText:
+      base::SysUTF16ToNSString(controller_->GetSubtext())];
   [alert_ addButtonWithTitle:
     l10n_util::GetNSString(IDS_MEDIA_GALLERIES_DIALOG_CONFIRM)
                keyEquivalent:kKeyEquivalentReturn
@@ -108,31 +149,33 @@ MediaGalleriesDialogCocoa::~MediaGalleriesDialogCocoa() {
 }
 
 void MediaGalleriesDialogCocoa::InitDialogControls() {
-  accessory_.reset([[NSBox alloc] init]);
-  [accessory_ setBoxType:NSBoxCustom];
-  [accessory_ setBorderType:NSLineBorder];
-  [accessory_ setBorderWidth:1];
-  [accessory_ setCornerRadius:0];
-  [accessory_ setTitlePosition:NSNoTitle];
-  [accessory_ setBorderColor:[NSColor colorWithCalibratedRed:0.625
-                                                       green:0.625
-                                                        blue:0.625
-                                                       alpha:1.0]];
+  main_container_.reset([[NSBox alloc] init]);
+  [main_container_ setBoxType:NSBoxCustom];
+  [main_container_ setBorderType:NSLineBorder];
+  [main_container_ setBorderWidth:1];
+  [main_container_ setCornerRadius:0];
+  [main_container_ setContentViewMargins:NSZeroSize];
+  [main_container_ setTitlePosition:NSNoTitle];
+  [main_container_ setBorderColor:[NSColor colorWithCalibratedRed:0.625
+                                                            green:0.625
+                                                             blue:0.625
+                                                            alpha:1.0]];
 
-  base::scoped_nsobject<NSScrollView> scroll_view([[NSScrollView alloc]
-      initWithFrame:NSMakeRect(0, 0, kCheckboxMaxWidth, kScrollAreaHeight)]);
+  base::scoped_nsobject<NSScrollView> scroll_view(
+      [[NSScrollView alloc] initWithFrame:
+          NSMakeRect(0, 0, kCheckboxMaxWidth, kScrollAreaHeight)]);
   [scroll_view setHasVerticalScroller:YES];
   [scroll_view setHasHorizontalScroller:NO];
   [scroll_view setBorderType:NSNoBorder];
   [scroll_view setAutohidesScrollers:YES];
-  [[accessory_ contentView] addSubview:scroll_view];
+  [[main_container_ contentView] addSubview:scroll_view];
 
   // Add gallery permission checkboxes inside the scrolling view.
   checkbox_container_.reset([[FlippedView alloc] initWithFrame:NSZeroRect]);
   checkboxes_.reset([[NSMutableArray alloc] init]);
   [scroll_view setDocumentView:checkbox_container_];
 
-  CGFloat y_pos = kCheckboxMargin;
+  CGFloat y_pos = 0;
 
   y_pos = CreateAttachedCheckboxes(y_pos, controller_->AttachedPermissions());
 
@@ -152,9 +195,8 @@ void MediaGalleriesDialogCocoa::InitDialogControls() {
     [scroll_view setFrame:scroll_frame];
   }
 
-  [accessory_ setFrame:NSMakeRect(
-      0, 0, kCheckboxMaxWidth, NSHeight(scroll_frame))];
-  [alert_ setAccessoryView:accessory_];
+  [main_container_ setFrameFromContentFrame:scroll_frame];
+  [alert_ setAccessoryView:main_container_];
 
   // As a safeguard against the user skipping reading over the dialog and just
   // confirming, the button will be unavailable for dialogs without any checks
@@ -288,8 +330,11 @@ void MediaGalleriesDialogCocoa::UpdateGalleryCheckbox(
     const MediaGalleryPrefInfo& gallery,
     bool permitted,
     CGFloat y_pos) {
-  base::scoped_nsobject<NSButton> checkbox(
-      [[NSButton alloc] initWithFrame:NSZeroRect]);
+  // Checkbox.
+  base::scoped_nsobject<MediaGalleriesCheckbox> checkbox(
+      [[MediaGalleriesCheckbox alloc] initWithFrame:NSZeroRect
+                                             dialog:this
+                                             prefId:gallery.pref_id]);
   NSString* unique_id = GetUniqueIDForGallery(gallery);
   [[checkbox cell] setRepresentedObject:unique_id];
   [[checkbox cell] setLineBreakMode:NSLineBreakByTruncatingMiddle];
@@ -298,7 +343,6 @@ void MediaGalleriesDialogCocoa::UpdateGalleryCheckbox(
   [checkbox setAction:@selector(onCheckboxToggled:)];
   [checkboxes_ addObject:checkbox];
 
-  // TODO(gbillock): Would be nice to add middle text elide behavior here.
   [checkbox setTitle:base::SysUTF16ToNSString(
       gallery.GetGalleryDisplayName())];
   [checkbox setToolTip:base::SysUTF16ToNSString(gallery.GetGalleryTooltip())];
@@ -306,12 +350,8 @@ void MediaGalleriesDialogCocoa::UpdateGalleryCheckbox(
 
   [checkbox sizeToFit];
   NSRect rect = [checkbox bounds];
-  rect.origin.y = y_pos;
-  rect.origin.x = kCheckboxMargin;
-  rect.size.width = std::min(NSWidth(rect), kCheckboxMaxWidth);
-  [checkbox setFrame:rect];
-  [checkbox_container_ addSubview:checkbox];
 
+  // Detail text.
   base::scoped_nsobject<NSTextField> details(
       [[NSTextField alloc] initWithFrame:NSZeroRect]);
   [details setEditable:NO];
@@ -330,9 +370,16 @@ void MediaGalleriesDialogCocoa::UpdateGalleryCheckbox(
                                                   alpha:1.0]];
   [details sizeToFit];
   NSRect details_rect = [details bounds];
-  details_rect.origin.y = y_pos - 1;
-  details_rect.origin.x = kCheckboxMargin + rect.size.width + kCheckboxMargin;
-  details_rect.size.width = kCheckboxMaxWidth - details_rect.origin.x;
+
+  // The checkbox will elide so reduce its size so it will all fit.
+  rect.size.width =
+      std::min(NSWidth(rect),
+               kCheckboxMaxWidth - 3 * kCheckboxMargin - NSWidth(details_rect));
+  rect.origin = NSMakePoint(kCheckboxMargin, y_pos);
+  [checkbox setFrame:rect];
+  [checkbox_container_ addSubview:checkbox];
+
+  details_rect.origin = NSMakePoint(NSMaxX(rect) + kCheckboxMargin, y_pos - 1);
   [details setFrame:details_rect];
 
   [checkbox_container_ addSubview:details];
@@ -345,6 +392,11 @@ void MediaGalleriesDialogCocoa::UpdateGalleries() {
 void MediaGalleriesDialogCocoa::OnConstrainedWindowClosed(
     ConstrainedWindowMac* window) {
   controller_->DialogFinished(accepted_);
+}
+
+ui::MenuModel* MediaGalleriesDialogCocoa::GetContextMenu(
+    MediaGalleryPrefId prefid) {
+  return controller_->GetContextMenu(prefid);
 }
 
 // static

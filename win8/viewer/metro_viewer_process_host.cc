@@ -11,15 +11,22 @@
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
 #include "base/process/process.h"
+#include "base/process/process_handle.h"
 #include "base/strings/string16.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/time/time.h"
 #include "base/win/scoped_comptr.h"
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_message_macros.h"
-#include "ui/aura/remote_root_window_host_win.h"
+#include "ui/aura/remote_window_tree_host_win.h"
 #include "ui/metro_viewer/metro_viewer_messages.h"
 #include "win8/viewer/metro_viewer_constants.h"
+
+namespace {
+
+const int kViewerProcessConnectionTimeoutSecs = 60;
+
+}  // namespace
 
 namespace win8 {
 
@@ -43,6 +50,26 @@ MetroViewerProcessHost::MetroViewerProcessHost(
 }
 
 MetroViewerProcessHost::~MetroViewerProcessHost() {
+  if (!channel_)
+    return;
+
+  base::ProcessId viewer_process_id = GetViewerProcessId();
+  channel_->Close();
+  if (message_filter_) {
+    // Wait for the viewer process to go away.
+    if (viewer_process_id != base::kNullProcessId) {
+      base::ProcessHandle viewer_process = NULL;
+      base::OpenProcessHandleWithAccess(
+          viewer_process_id,
+          PROCESS_QUERY_INFORMATION | SYNCHRONIZE,
+          &viewer_process);
+      if (viewer_process) {
+        ::WaitForSingleObject(viewer_process, INFINITE);
+        ::CloseHandle(viewer_process);
+      }
+    }
+    channel_->RemoveFilter(message_filter_);
+  }
 }
 
 base::ProcessId MetroViewerProcessHost::GetViewerProcessId() {
@@ -57,16 +84,16 @@ bool MetroViewerProcessHost::LaunchViewerAndWaitForConnection(
 
   channel_connected_event_.reset(new base::WaitableEvent(false, false));
 
-  scoped_refptr<InternalMessageFilter> message_filter(
-      new InternalMessageFilter(this));
-  channel_->AddFilter(message_filter);
+  message_filter_ = new InternalMessageFilter(this);
+  channel_->AddFilter(message_filter_);
 
   base::win::ScopedComPtr<IApplicationActivationManager> activator;
   HRESULT hr = activator.CreateInstance(CLSID_ApplicationActivationManager);
   if (SUCCEEDED(hr)) {
     DWORD pid = 0;
+    // Use the "connect" verb to
     hr = activator->ActivateApplication(
-        app_user_model_id.c_str(), L"open", AO_NONE, &pid);
+        app_user_model_id.c_str(), kMetroViewerConnectVerb, AO_NONE, &pid);
   }
 
   LOG_IF(ERROR, FAILED(hr)) << "Tried and failed to launch Metro Chrome. "
@@ -74,13 +101,9 @@ bool MetroViewerProcessHost::LaunchViewerAndWaitForConnection(
 
   // Having launched the viewer process, now we wait for it to connect.
   bool success =
-      channel_connected_event_->TimedWait(base::TimeDelta::FromSeconds(60));
+      channel_connected_event_->TimedWait(base::TimeDelta::FromSeconds(
+          kViewerProcessConnectionTimeoutSecs));
   channel_connected_event_.reset();
-
-  // |message_filter| is only used to signal |channel_connected_event_| above
-  // and can thus be removed after |channel_connected_event_| is no longer
-  // waiting.
-  channel_->RemoveFilter(message_filter);
   return success;
 }
 
@@ -96,10 +119,12 @@ bool MetroViewerProcessHost::OnMessageReceived(
     IPC_MESSAGE_HANDLER(MetroViewerHostMsg_SetTargetSurface, OnSetTargetSurface)
     IPC_MESSAGE_HANDLER(MetroViewerHostMsg_OpenURL, OnOpenURL)
     IPC_MESSAGE_HANDLER(MetroViewerHostMsg_SearchRequest, OnHandleSearchRequest)
+    IPC_MESSAGE_HANDLER(MetroViewerHostMsg_WindowSizeChanged,
+                        OnWindowSizeChanged)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled ? true :
-      aura::RemoteRootWindowHostWin::Instance()->OnMessageReceived(message);
+      aura::RemoteWindowTreeHostWin::Instance()->OnMessageReceived(message);
 }
 
 void MetroViewerProcessHost::NotifyChannelConnected() {

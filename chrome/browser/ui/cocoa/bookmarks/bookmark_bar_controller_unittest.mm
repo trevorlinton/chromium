@@ -34,9 +34,11 @@
 #import "third_party/ocmock/OCMock/OCMock.h"
 #include "third_party/ocmock/gtest_support.h"
 #include "ui/base/cocoa/animation_utils.h"
-#include "ui/base/test/cocoa_test_event_utils.h"
 #include "ui/base/theme_provider.h"
+#include "ui/events/test/cocoa_test_event_utils.h"
 #include "ui/gfx/image/image_skia.h"
+
+using base::ASCIIToUTF16;
 
 // Unit tests don't need time-consuming asynchronous animations.
 @interface BookmarkBarControllerTestable : BookmarkBarController {
@@ -207,6 +209,9 @@ class FakeTheme : public ui::ThemeProvider {
   FakeTheme(NSColor* color) : color_(color) {}
   base::scoped_nsobject<NSColor> color_;
 
+  virtual bool UsingNativeTheme() const OVERRIDE {
+    return true;
+  }
   virtual gfx::ImageSkia* GetImageSkiaNamed(int id) const OVERRIDE {
     return NULL;
   }
@@ -758,13 +763,13 @@ TEST_F(BookmarkBarControllerTest, TestAddRemoveAndClear) {
   // narrow.
   // TODO(viettrungluu): make the test independent of window/view size, font
   // metrics, button size and spacing, and everything else.
-  string16 title1(ASCIIToUTF16("x"));
+  base::string16 title1(ASCIIToUTF16("x"));
   bookmark_utils::AddIfNotBookmarked(model, gurl1, title1);
   EXPECT_EQ(1U, [[bar_ buttons] count]);
   EXPECT_EQ(1+initial_subview_count, [[buttonView subviews] count]);
 
   GURL gurl2("http://legion-of-doom.gov");
-  string16 title2(ASCIIToUTF16("y"));
+  base::string16 title2(ASCIIToUTF16("y"));
   bookmark_utils::AddIfNotBookmarked(model, gurl2, title2);
   EXPECT_EQ(2U, [[bar_ buttons] count]);
   EXPECT_EQ(2+initial_subview_count, [[buttonView subviews] count]);
@@ -855,11 +860,11 @@ TEST_F(BookmarkBarControllerTest, CheckForGrowth) {
   WithNoAnimation at_all; // Turn off Cocoa auto animation in this scope.
   BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
   GURL gurl1("http://www.google.com");
-  string16 title1(ASCIIToUTF16("x"));
+  base::string16 title1(ASCIIToUTF16("x"));
   bookmark_utils::AddIfNotBookmarked(model, gurl1, title1);
 
   GURL gurl2("http://www.google.com/blah");
-  string16 title2(ASCIIToUTF16("y"));
+  base::string16 title2(ASCIIToUTF16("y"));
   bookmark_utils::AddIfNotBookmarked(model, gurl2, title2);
 
   EXPECT_EQ(2U, [[bar_ buttons] count]);
@@ -938,7 +943,7 @@ TEST_F(BookmarkBarControllerTest, Display) {
 TEST_F(BookmarkBarControllerTest, MiddleClick) {
   BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
   GURL gurl1("http://www.google.com/");
-  string16 title1(ASCIIToUTF16("x"));
+  base::string16 title1(ASCIIToUTF16("x"));
   bookmark_utils::AddIfNotBookmarked(model, gurl1, title1);
 
   EXPECT_EQ(1U, [[bar_ buttons] count]);
@@ -1035,9 +1040,9 @@ TEST_F(BookmarkBarControllerTest, TestDragButton) {
   GURL gurls[] = { GURL("http://www.google.com/a"),
                    GURL("http://www.google.com/b"),
                    GURL("http://www.google.com/c") };
-  string16 titles[] = { ASCIIToUTF16("a"),
-                        ASCIIToUTF16("b"),
-                        ASCIIToUTF16("c") };
+  base::string16 titles[] = { ASCIIToUTF16("a"),
+                              ASCIIToUTF16("b"),
+                              ASCIIToUTF16("c") };
   for (unsigned i = 0; i < arraysize(titles); i++)
     bookmark_utils::AddIfNotBookmarked(model, gurls[i], titles[i]);
 
@@ -1088,7 +1093,8 @@ TEST_F(BookmarkBarControllerTest, TestDragButton) {
   EXPECT_EQ(1, folder->child_count());
   x = NSMidX([[[bar_ buttons] objectAtIndex:0] frame]);
   x += [[bar_ view] frame].origin.x;
-  string16 title = [[[bar_ buttons] objectAtIndex:2] bookmarkNode]->GetTitle();
+  base::string16 title =
+      [[[bar_ buttons] objectAtIndex:2] bookmarkNode]->GetTitle();
   [bar_ dragButton:[[bar_ buttons] objectAtIndex:2]
                 to:NSMakePoint(x, 0)
               copy:NO];
@@ -1106,9 +1112,9 @@ TEST_F(BookmarkBarControllerTest, TestCopyButton) {
   GURL gurls[] = { GURL("http://www.google.com/a"),
                    GURL("http://www.google.com/b"),
                    GURL("http://www.google.com/c") };
-  string16 titles[] = { ASCIIToUTF16("a"),
-                        ASCIIToUTF16("b"),
-                        ASCIIToUTF16("c") };
+  base::string16 titles[] = { ASCIIToUTF16("a"),
+                              ASCIIToUTF16("b"),
+                              ASCIIToUTF16("c") };
   for (unsigned i = 0; i < arraysize(titles); i++)
     bookmark_utils::AddIfNotBookmarked(model, gurls[i], titles[i]);
 
@@ -1161,9 +1167,9 @@ TEST_F(BookmarkBarControllerTest, TestClearOnDealloc) {
   GURL gurls[] = { GURL("http://www.foo.com/"),
                    GURL("http://www.bar.com/"),
                    GURL("http://www.baz.com/") };
-  string16 titles[] = { ASCIIToUTF16("a"),
-                        ASCIIToUTF16("b"),
-                        ASCIIToUTF16("c") };
+  base::string16 titles[] = { ASCIIToUTF16("a"),
+                              ASCIIToUTF16("b"),
+                              ASCIIToUTF16("c") };
   for (size_t i = 0; i < arraysize(titles); i++)
     bookmark_utils::AddIfNotBookmarked(model, gurls[i], titles[i]);
 
@@ -1522,6 +1528,11 @@ TEST_F(BookmarkBarControllerTest, ShrinkOrHideView) {
 }
 
 TEST_F(BookmarkBarControllerTest, LastBookmarkResizeBehavior) {
+  // Hide the apps shortcut.
+  profile()->GetPrefs()->SetBoolean(prefs::kShowAppsShortcutInBookmarkBar,
+                                    false);
+  ASSERT_TRUE([bar_ appsPageShortcutButtonIsHidden]);
+
   BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
   const BookmarkNode* root = model->bookmark_bar_node();
   const std::string model_string("1b 2f:[ 2f1b 2f2b ] 3b ");
@@ -1547,17 +1558,7 @@ TEST_F(BookmarkBarControllerTest, LastBookmarkResizeBehavior) {
   }
 }
 
-class BookmarkBarControllerWithInstantExtendedTest :
-    public BookmarkBarControllerTest {
- public:
-  virtual void AddCommandLineSwitches() OVERRIDE {
-    CommandLine::ForCurrentProcess()->AppendSwitch(
-        switches::kEnableInstantExtendedAPI);
-  }
-};
-
-TEST_F(BookmarkBarControllerWithInstantExtendedTest,
-    BookmarksWithAppsPageShortcut) {
+TEST_F(BookmarkBarControllerTest, BookmarksWithAppsPageShortcut) {
   BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
   const BookmarkNode* root = model->bookmark_bar_node();
   const std::string model_string("1b 2f:[ 2f1b 2f2b ] 3b ");
@@ -1587,8 +1588,7 @@ TEST_F(BookmarkBarControllerWithInstantExtendedTest,
   }
 }
 
-TEST_F(BookmarkBarControllerWithInstantExtendedTest,
-    BookmarksWithoutAppsPageShortcut) {
+TEST_F(BookmarkBarControllerTest, BookmarksWithoutAppsPageShortcut) {
   // The no item containers should be to the right of the Apps button.
   ASSERT_FALSE([bar_ appsPageShortcutButtonIsHidden]);
   CGFloat apps_button_right = NSMaxX([[bar_ appsPageShortcutButton] frame]);
@@ -1978,6 +1978,11 @@ TEST_F(BookmarkBarControllerDragDropTest, DropPositionIndicator) {
   const BookmarkNode* root = model->bookmark_bar_node();
   const std::string model_string("1b 2f:[ 2f1b 2f2b 2f3b ] 3b 4b ");
   test::AddNodesFromModelString(model, root, model_string);
+
+  // Hide the apps shortcut.
+  profile()->GetPrefs()->SetBoolean(prefs::kShowAppsShortcutInBookmarkBar,
+                                    false);
+  ASSERT_TRUE([bar_ appsPageShortcutButtonIsHidden]);
 
   // Validate initial model.
   std::string actualModel = test::ModelStringFromNode(root);

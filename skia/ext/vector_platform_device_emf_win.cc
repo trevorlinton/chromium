@@ -117,10 +117,6 @@ HDC VectorPlatformDeviceEmf::BeginPlatformPaint() {
   return hdc_;
 }
 
-uint32_t VectorPlatformDeviceEmf::getDeviceCapabilities() {
-  return SkBitmapDevice::getDeviceCapabilities() | kVector_Capability;
-}
-
 void VectorPlatformDeviceEmf::drawPaint(const SkDraw& draw,
                                         const SkPaint& paint) {
   // TODO(maruel):  Bypass the current transformation matrix.
@@ -201,14 +197,21 @@ void VectorPlatformDeviceEmf::drawRect(const SkDraw& draw,
     return;
   }
   HDC dc = BeginPlatformPaint();
-  if (!Rectangle(dc, SkScalarRound(rect.fLeft),
-                 SkScalarRound(rect.fTop),
-                 SkScalarRound(rect.fRight),
-                 SkScalarRound(rect.fBottom))) {
+  if (!Rectangle(dc, SkScalarRoundToInt(rect.fLeft),
+                 SkScalarRoundToInt(rect.fTop),
+                 SkScalarRoundToInt(rect.fRight),
+                 SkScalarRoundToInt(rect.fBottom))) {
     SkASSERT(false);
   }
   EndPlatformPaint();
   Cleanup();
+}
+
+void VectorPlatformDeviceEmf::drawRRect(const SkDraw& draw, const SkRRect& rr,
+                                        const SkPaint& paint) {
+  SkPath path;
+  path.addRRect(rr);
+  this->drawPath(draw, path, paint, NULL, true);
 }
 
 void VectorPlatformDeviceEmf::drawPath(const SkDraw& draw,
@@ -393,7 +396,7 @@ bool SkGDIFontSetup::useGDI(HDC hdc, const SkPaint& paint) {
 
     LOGFONT lf;
     SkLOGFONTFromTypeface(paint.getTypeface(), &lf);
-    lf.lfHeight = -SkScalarRound(paint.getTextSize());
+    lf.lfHeight = -SkScalarRoundToInt(paint.getTextSize());
     fNewFont = CreateFontIndirect(&lf);
     fSavedFont = (HFONT)::SelectObject(hdc, fNewFont);
     fHDC = hdc;
@@ -458,11 +461,11 @@ bool EnsureExtTextOut(HDC hdc, int x, int y, UINT options, const RECT * lprect,
         SkLOGFONTFromTypeface(typeface, &lf);
         VLOG(1) << "SkFontHost::EnsureTypefaceCharactersAccessible FAILED for "
                 << " FaceName = " << lf.lfFaceName
-                << " and characters: " << string16(text, characters);
+                << " and characters: " << base::string16(text, characters);
       }
     } else {
       VLOG(1) << "ExtTextOut FAILED for default FaceName "
-              << " and characters: " << string16(text, characters);
+              << " and characters: " << base::string16(text, characters);
     }
   }
   return success;
@@ -481,8 +484,8 @@ void VectorPlatformDeviceEmf::drawText(const SkDraw& draw,
       && setup.useGDI(hdc_, paint)) {
     UINT options = getTextOutOptions(paint);
     UINT count = byteLength >> 1;
-    useDrawPath = !EnsureExtTextOut(hdc_, SkScalarRound(x),
-        SkScalarRound(y + getAscent(paint)), options, 0,
+    useDrawPath = !EnsureExtTextOut(hdc_, SkScalarRoundToInt(x),
+        SkScalarRoundToInt(y + getAscent(paint)), options, 0,
         reinterpret_cast<const wchar_t*>(text), count, NULL,
         paint.getTypeface());
   }
@@ -520,13 +523,13 @@ void VectorPlatformDeviceEmf::drawPosText(const SkDraw& draw,
   if (2 == scalarsPerPos
       && SkPaint::kUTF8_TextEncoding != paint.getTextEncoding()
       && setup.useGDI(hdc_, paint)) {
-    int startX = SkScalarRound(pos[0]);
-    int startY = SkScalarRound(pos[1] + getAscent(paint));
+    int startX = SkScalarRoundToInt(pos[0]);
+    int startY = SkScalarRoundToInt(pos[1] + getAscent(paint));
     const int count = len >> 1;
     SkAutoSTMalloc<64, INT> storage(count);
     INT* advances = storage.get();
     for (int i = 0; i < count - 1; ++i) {
-      advances[i] = SkScalarRound(pos[2] - pos[0]);
+      advances[i] = SkScalarRoundToInt(pos[2] - pos[0]);
       pos += 2;
     }
     useDrawText = !EnsureExtTextOut(hdc_, startX, startY,
@@ -693,11 +696,20 @@ void VectorPlatformDeviceEmf::LoadClipRegion() {
   LoadClippingRegionToDC(hdc_, clip_region_, t);
 }
 
+#ifdef SK_SUPPORT_LEGACY_COMPATIBLEDEVICE_CONFIG
 SkBaseDevice* VectorPlatformDeviceEmf::onCreateCompatibleDevice(
     SkBitmap::Config config, int width, int height, bool isOpaque,
     Usage /*usage*/) {
   SkASSERT(config == SkBitmap::kARGB_8888_Config);
   return VectorPlatformDeviceEmf::CreateDevice(width, height, isOpaque, NULL);
+}
+#endif
+
+SkBaseDevice* VectorPlatformDeviceEmf::onCreateDevice(const SkImageInfo& info,
+                                                      Usage /*usage*/) {
+  SkASSERT(info.colorType() == kPMColor_SkColorType);
+  return VectorPlatformDeviceEmf::CreateDevice(
+      info.width(), info.height(), info.isOpaque(), NULL);
 }
 
 bool VectorPlatformDeviceEmf::CreateBrush(bool use_brush, COLORREF color) {
@@ -853,7 +865,7 @@ bool VectorPlatformDeviceEmf::CreatePen(bool use_pen, const SkPaint& paint) {
 
   return CreatePen(use_pen,
                    SkColorToCOLORREF(paint.getColor()),
-                   SkScalarRound(paint.getStrokeWidth()),
+                   SkScalarRoundToInt(paint.getStrokeWidth()),
                    paint.getStrokeMiter(),
                    pen_style);
 }

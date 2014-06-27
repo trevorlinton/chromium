@@ -39,11 +39,11 @@ namespace {
 void ReadDirectoryTestHelperCallback(
     base::RunLoop* run_loop,
     FileSystemOperation::FileEntryList* contents,
-    bool* completed, base::PlatformFileError error,
+    bool* completed, base::File::Error error,
     const FileSystemOperation::FileEntryList& file_list,
     bool has_more) {
   DCHECK(!*completed);
-  *completed = !has_more && error == base::PLATFORM_FILE_OK;
+  *completed = (!has_more && error == base::File::FILE_OK);
   *contents = file_list;
   run_loop->Quit();
 }
@@ -142,7 +142,7 @@ class ItunesFileUtilTest : public testing::Test {
     ASSERT_TRUE(fake_library_dir_.CreateUniqueTempDir());
     ASSERT_EQ(
         0,
-        file_util::WriteFile(
+        base::WriteFile(
             fake_library_dir_.path().AppendASCII(kITunesLibraryXML),
             NULL,
             0));
@@ -182,8 +182,9 @@ class ItunesFileUtilTest : public testing::Test {
         storage_policy.get(),
         NULL,
         additional_providers.Pass(),
+        std::vector<fileapi::URLRequestAutoMountHandler>(),
         profile_dir_.path(),
-        fileapi::CreateAllowFileAccessOptions());
+        content::CreateAllowFileAccessOptions());
   }
 
  protected:
@@ -284,7 +285,7 @@ TEST_F(ItunesFileUtilTest, ItunesMediaDirectoryContentsAutoAdd) {
 
 TEST_F(ItunesFileUtilTest, ItunesAutoAddDirEnumerate) {
   data_provider()->SetProvideAutoAddDir(true);
-  ASSERT_EQ(0, file_util::WriteFile(
+  ASSERT_EQ(0, base::WriteFile(
       data_provider()->auto_add_path().AppendASCII("baz.ogg"), NULL, 0));
 
   FileSystemOperation::FileEntryList contents;
@@ -304,9 +305,9 @@ TEST_F(ItunesFileUtilTest, ItunesAutoAddDirEnumerateNested) {
   data_provider()->SetProvideAutoAddDir(true);
   base::FilePath nested_dir =
       data_provider()->auto_add_path().AppendASCII("foo").AppendASCII("bar");
-  ASSERT_TRUE(file_util::CreateDirectory(nested_dir));
+  ASSERT_TRUE(base::CreateDirectory(nested_dir));
   ASSERT_EQ(0,
-            file_util::WriteFile(nested_dir.AppendASCII("baz.ogg"), NULL, 0));
+            base::WriteFile(nested_dir.AppendASCII("baz.ogg"), NULL, 0));
 
   FileSystemOperation::FileEntryList contents;
   FileSystemURL url = CreateURL(

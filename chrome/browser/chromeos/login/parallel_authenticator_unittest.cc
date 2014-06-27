@@ -53,8 +53,7 @@ class ParallelAuthenticatorTest : public testing::Test {
             SystemSaltGetter::ConvertRawSaltToHexString(
                 FakeCryptohomeClient::GetStubSystemSalt()))),
         user_manager_enabler_(new MockUserManager),
-        mock_caller_(NULL),
-        fake_dbus_thread_manager_(new FakeDBusThreadManager) {
+        mock_caller_(NULL) {
   }
 
   virtual ~ParallelAuthenticatorTest() {
@@ -67,8 +66,12 @@ class ParallelAuthenticatorTest : public testing::Test {
     mock_caller_ = new cryptohome::MockAsyncMethodCaller;
     cryptohome::AsyncMethodCaller::InitializeForTesting(mock_caller_);
 
-    // Ownership of fake_dbus_thread_manager_ is taken.
-    DBusThreadManager::InitializeForTesting(fake_dbus_thread_manager_);
+    FakeDBusThreadManager* fake_dbus_thread_manager = new FakeDBusThreadManager;
+    fake_cryptohome_client_ = new FakeCryptohomeClient;
+    fake_dbus_thread_manager->SetCryptohomeClient(
+        scoped_ptr<CryptohomeClient>(fake_cryptohome_client_));
+    DBusThreadManager::InitializeForTesting(fake_dbus_thread_manager);
+
     SystemSaltGetter::Initialize();
 
     auth_ = new ParallelAuthenticator(&consumer_);
@@ -92,10 +95,10 @@ class ParallelAuthenticatorTest : public testing::Test {
 
   base::FilePath PopulateTempFile(const char* data, int data_len) {
     base::FilePath out;
-    FILE* tmp_file = file_util::CreateAndOpenTemporaryFile(&out);
+    FILE* tmp_file = base::CreateAndOpenTemporaryFile(&out);
     EXPECT_NE(tmp_file, static_cast<FILE*>(NULL));
-    EXPECT_EQ(file_util::WriteFile(out, data, data_len), data_len);
-    EXPECT_TRUE(file_util::CloseFile(tmp_file));
+    EXPECT_EQ(base::WriteFile(out, data, data_len), data_len);
+    EXPECT_TRUE(base::CloseFile(tmp_file));
     return out;
   }
 
@@ -143,11 +146,13 @@ class ParallelAuthenticatorTest : public testing::Test {
                           const std::string& password,
                           const std::string& username_hash_,
                           bool pending) {
-    EXPECT_CALL(consumer_, OnLoginSuccess(UserContext(username,
-                                                      password,
-                                                      std::string(),
-                                                      username_hash_,
-                                                      true /* using_oauth */)))
+    EXPECT_CALL(consumer_, OnLoginSuccess(UserContext(
+        username,
+        password,
+        std::string(),
+        username_hash_,
+        true,  // using_oauth
+        UserContext::AUTH_FLOW_OFFLINE)))
         .WillOnce(Invoke(MockConsumer::OnSuccessQuit))
         .RetiresOnSaturation();
   }
@@ -200,15 +205,17 @@ class ParallelAuthenticatorTest : public testing::Test {
   MockConsumer consumer_;
   scoped_refptr<ParallelAuthenticator> auth_;
   scoped_ptr<TestAttemptState> state_;
-  FakeDBusThreadManager* fake_dbus_thread_manager_;
+  FakeCryptohomeClient* fake_cryptohome_client_;
 };
 
 TEST_F(ParallelAuthenticatorTest, OnLoginSuccess) {
-  EXPECT_CALL(consumer_, OnLoginSuccess(UserContext(username_,
-                                                    password_,
-                                                    std::string(),
-                                                    username_hash_,
-                                                    true /* using oauth */)))
+  EXPECT_CALL(consumer_, OnLoginSuccess(UserContext(
+      username_,
+      password_,
+      std::string(),
+      username_hash_,
+      true,  // using oauth
+      UserContext::AUTH_FLOW_OFFLINE)))
       .Times(1)
       .RetiresOnSaturation();
 
@@ -289,9 +296,7 @@ TEST_F(ParallelAuthenticatorTest, ResolveOwnerNeededFailedMount) {
   LoginFailure failure = LoginFailure(LoginFailure::OWNER_REQUIRED);
   ExpectLoginFailure(failure);
 
-  FakeCryptohomeClient* fake_cryptohome_client  =
-      fake_dbus_thread_manager_->fake_cryptohome_client();
-  fake_cryptohome_client->set_unmount_result(true);
+  fake_cryptohome_client_->set_unmount_result(true);
 
   CrosSettingsProvider* device_settings_provider;
   StubCrosSettingsProvider stub_settings_provider;
@@ -316,11 +321,9 @@ TEST_F(ParallelAuthenticatorTest, ResolveOwnerNeededFailedMount) {
             SetAndResolveState(auth_.get(), state_.release()));
   EXPECT_TRUE(LoginState::Get()->IsInSafeMode());
 
-  // Simulate certificates load event. The exact certificates loaded are not
-  // actually used by the DeviceSettingsService, so it is OK to pass an empty
-  // list.
-  DeviceSettingsService::Get()->OnCertificatesLoaded(net::CertificateList(),
-                                                     true);
+  // Simulate TPM token ready event.
+  DeviceSettingsService::Get()->OnTPMTokenReady();
+
   // Flush all the pending operations. The operations should induce an owner
   // verification.
   device_settings_test_helper_.Flush();

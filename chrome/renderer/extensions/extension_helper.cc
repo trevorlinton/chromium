@@ -12,9 +12,8 @@
 #include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/extensions/api/messaging/message.h"
+#include "chrome/common/extensions/chrome_extension_messages.h"
 #include "chrome/common/extensions/extension_constants.h"
-#include "chrome/common/extensions/extension_messages.h"
 #include "chrome/common/render_messages.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/renderer/extensions/chrome_v8_context.h"
@@ -26,7 +25,9 @@
 #include "chrome/renderer/web_apps.h"
 #include "content/public/renderer/render_view.h"
 #include "content/public/renderer/render_view_visitor.h"
+#include "extensions/common/api/messaging/message.h"
 #include "extensions/common/constants.h"
+#include "extensions/common/extension_messages.h"
 #include "third_party/WebKit/public/platform/WebURLRequest.h"
 #include "third_party/WebKit/public/web/WebConsoleMessage.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
@@ -35,12 +36,12 @@
 #include "third_party/WebKit/public/web/WebView.h"
 
 using content::ConsoleMessageLevel;
-using WebKit::WebConsoleMessage;
-using WebKit::WebDataSource;
-using WebKit::WebFrame;
-using WebKit::WebURLRequest;
-using WebKit::WebScopedUserGesture;
-using WebKit::WebView;
+using blink::WebConsoleMessage;
+using blink::WebDataSource;
+using blink::WebFrame;
+using blink::WebURLRequest;
+using blink::WebScopedUserGesture;
+using blink::WebView;
 
 namespace extensions {
 
@@ -162,7 +163,8 @@ bool ExtensionHelper::OnMessageReceived(const IPC::Message& message) {
     IPC_MESSAGE_HANDLER(ExtensionMsg_DispatchOnDisconnect,
                         OnExtensionDispatchOnDisconnect)
     IPC_MESSAGE_HANDLER(ExtensionMsg_ExecuteCode, OnExecuteCode)
-    IPC_MESSAGE_HANDLER(ExtensionMsg_GetApplicationInfo, OnGetApplicationInfo)
+    IPC_MESSAGE_HANDLER(ChromeExtensionMsg_GetApplicationInfo,
+                        OnGetApplicationInfo)
     IPC_MESSAGE_HANDLER(ExtensionMsg_SetTabId, OnSetTabId)
     IPC_MESSAGE_HANDLER(ExtensionMsg_UpdateBrowserWindowId,
                         OnUpdateBrowserWindowId)
@@ -186,7 +188,7 @@ void ExtensionHelper::DidFinishDocumentLoad(WebFrame* frame) {
     i->second->DidFinishDocumentLoad();
 }
 
-void ExtensionHelper::DidFinishLoad(WebKit::WebFrame* frame) {
+void ExtensionHelper::DidFinishLoad(blink::WebFrame* frame) {
   SchedulerMap::iterator i = g_schedulers.Get().find(frame);
   if (i != g_schedulers.Get().end())
     i->second->DidFinishLoad();
@@ -202,14 +204,14 @@ void ExtensionHelper::DidCreateDocumentElement(WebFrame* frame) {
   dispatcher_->DidCreateDocumentElement(frame);
 }
 
-void ExtensionHelper::DidStartProvisionalLoad(WebKit::WebFrame* frame) {
+void ExtensionHelper::DidStartProvisionalLoad(blink::WebFrame* frame) {
   SchedulerMap::iterator i = g_schedulers.Get().find(frame);
   if (i != g_schedulers.Get().end())
     i->second->DidStartProvisionalLoad();
 }
 
-void ExtensionHelper::DraggableRegionsChanged(WebKit::WebFrame* frame) {
-  WebKit::WebVector<WebKit::WebDraggableRegion> webregions =
+void ExtensionHelper::DraggableRegionsChanged(blink::WebFrame* frame) {
+  blink::WebVector<blink::WebDraggableRegion> webregions =
       frame->document().draggableRegions();
   std::vector<DraggableRegion> regions;
   for (size_t i = 0; i < webregions.size(); ++i) {
@@ -233,9 +235,9 @@ void ExtensionHelper::FrameDetached(WebFrame* frame) {
 }
 
 void ExtensionHelper::DidMatchCSS(
-    WebKit::WebFrame* frame,
-    const WebKit::WebVector<WebKit::WebString>& newly_matching_selectors,
-    const WebKit::WebVector<WebKit::WebString>& stopped_matching_selectors) {
+    blink::WebFrame* frame,
+    const blink::WebVector<blink::WebString>& newly_matching_selectors,
+    const blink::WebVector<blink::WebString>& stopped_matching_selectors) {
   dispatcher_->DidMatchCSS(
       frame, newly_matching_selectors, stopped_matching_selectors);
 }
@@ -304,7 +306,7 @@ void ExtensionHelper::OnExecuteCode(
   WebView* webview = render_view()->GetWebView();
   WebFrame* main_frame = webview->mainFrame();
   if (!main_frame) {
-    ListValue val;
+    base::ListValue val;
     Send(new ExtensionHostMsg_ExecuteCodeFinished(routing_id(),
                                                   params.request_id,
                                                   "No main frame",
@@ -324,7 +326,7 @@ void ExtensionHelper::OnExecuteCode(
 void ExtensionHelper::OnGetApplicationInfo(int page_id) {
   WebApplicationInfo app_info;
   if (page_id == render_view()->GetPageId()) {
-    string16 error;
+    base::string16 error;
     web_apps::ParseWebAppFromWebDocument(
         render_view()->GetWebView()->mainFrame(), &app_info, &error);
   }
@@ -334,13 +336,13 @@ void ExtensionHelper::OnGetApplicationInfo(int page_id) {
   // to decode arbitrary data URLs in the browser process.  See
   // http://b/issue?id=1162972
   for (size_t i = 0; i < app_info.icons.size(); ++i) {
-    if (app_info.icons[i].url.SchemeIs(chrome::kDataScheme)) {
+    if (app_info.icons[i].url.SchemeIs(content::kDataScheme)) {
       app_info.icons.erase(app_info.icons.begin() + i);
       --i;
     }
   }
 
-  Send(new ExtensionHostMsg_DidGetApplicationInfo(
+  Send(new ChromeExtensionHostMsg_DidGetApplicationInfo(
       routing_id(), page_id, app_info));
 }
 

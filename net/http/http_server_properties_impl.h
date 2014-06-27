@@ -87,12 +87,12 @@ class NET_EXPORT HttpServerPropertiesImpl
                                bool support_spdy) OVERRIDE;
 
   // Returns true if |server| has an Alternate-Protocol header.
-  virtual bool HasAlternateProtocol(const HostPortPair& server) const OVERRIDE;
+  virtual bool HasAlternateProtocol(const HostPortPair& server) OVERRIDE;
 
   // Returns the Alternate-Protocol and port for |server|.
   // HasAlternateProtocol(server) must be true.
   virtual PortAlternateProtocolPair GetAlternateProtocol(
-      const HostPortPair& server) const OVERRIDE;
+      const HostPortPair& server) OVERRIDE;
 
   // Sets the Alternate-Protocol for |server|.
   virtual void SetAlternateProtocol(
@@ -103,13 +103,16 @@ class NET_EXPORT HttpServerPropertiesImpl
   // Sets the Alternate-Protocol for |server| to be BROKEN.
   virtual void SetBrokenAlternateProtocol(const HostPortPair& server) OVERRIDE;
 
+  // Clears the Alternate-Protocol for |server|.
+  virtual void ClearAlternateProtocol(const HostPortPair& server) OVERRIDE;
+
   // Returns all Alternate-Protocol mappings.
   virtual const AlternateProtocolMap& alternate_protocol_map() const OVERRIDE;
 
   // Gets a reference to the SettingsMap stored for a host.
   // If no settings are stored, returns an empty SettingsMap.
   virtual const SettingsMap& GetSpdySettings(
-      const HostPortPair& host_port_pair) const OVERRIDE;
+      const HostPortPair& host_port_pair) OVERRIDE;
 
   // Saves an individual SPDY setting for a host. Returns true if SPDY setting
   // is to be persisted.
@@ -126,6 +129,12 @@ class NET_EXPORT HttpServerPropertiesImpl
 
   // Returns all persistent SPDY settings.
   virtual const SpdySettingsMap& spdy_settings_map() const OVERRIDE;
+
+  virtual void SetServerNetworkStats(const HostPortPair& host_port_pair,
+                                     NetworkStats stats) OVERRIDE;
+
+  virtual const NetworkStats* GetServerNetworkStats(
+      const HostPortPair& host_port_pair) const OVERRIDE;
 
   virtual HttpPipelinedHostCapability GetPipelineCapability(
       const HostPortPair& origin) OVERRIDE;
@@ -144,12 +153,26 @@ class NET_EXPORT HttpServerPropertiesImpl
   // |spdy_servers_table_| has flattened representation of servers (host/port
   // pair) that either support or not support SPDY protocol.
   typedef base::hash_map<std::string, bool> SpdyServerHostPortTable;
+  typedef std::map<HostPortPair, NetworkStats> ServerNetworkStatsMap;
+  typedef std::map<HostPortPair, HostPortPair> CanonicalHostMap;
+  typedef std::vector<std::string> CanonicalSufficList;
+
+  // Return the canonical host for |server|, or end if none exists.
+  CanonicalHostMap::const_iterator GetCanonicalHost(HostPortPair server) const;
 
   SpdyServerHostPortTable spdy_servers_table_;
 
   AlternateProtocolMap alternate_protocol_map_;
   SpdySettingsMap spdy_settings_map_;
+  ServerNetworkStatsMap server_network_stats_map_;
   scoped_ptr<CachedPipelineCapabilityMap> pipeline_capability_map_;
+  // Contains a map of servers which could share the same alternate protocol.
+  // Map from a Canonical host/port (host is some postfix of host names) to an
+  // actual origin, which has a plausible alternate protocol mapping.
+  CanonicalHostMap canonical_host_to_origin_map_;
+  // Contains list of suffixes (for exmaple ".c.youtube.com",
+  // ".googlevideo.com") of canoncial hostnames.
+  CanonicalSufficList canoncial_suffixes_;
 
   base::WeakPtrFactory<HttpServerPropertiesImpl> weak_ptr_factory_;
 

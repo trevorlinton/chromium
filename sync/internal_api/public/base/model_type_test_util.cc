@@ -3,18 +3,26 @@
 // found in the LICENSE file.
 
 #include "sync/internal_api/public/base/model_type_test_util.h"
+#include "sync/internal_api/public/base/ack_handle.h"
 
 namespace syncer {
+
+syncer::Invalidation BuildInvalidation(
+    ModelType type,
+    int version,
+    const std::string& payload) {
+  invalidation::ObjectId id;
+  bool result = RealModelTypeToObjectId(type, &id);
+  DCHECK(result);
+  return Invalidation::Init(id, version, payload);
+}
 
 ObjectIdInvalidationMap BuildInvalidationMap(
     ModelType type,
     int version,
     const std::string& payload) {
   ObjectIdInvalidationMap map;
-  invalidation::ObjectId id;
-  bool result = RealModelTypeToObjectId(type, &id);
-  DCHECK(result);
-  map.Insert(Invalidation::Init(id, version, payload));
+  map.Insert(BuildInvalidation(type, version, payload));
   return map;
 }
 

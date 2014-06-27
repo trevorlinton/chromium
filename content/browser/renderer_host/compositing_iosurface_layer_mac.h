@@ -20,20 +20,25 @@ class RenderWidgetHostViewMac;
  @private
   content::RenderWidgetHostViewMac* renderWidgetHostView_;
   scoped_refptr<content::CompositingIOSurfaceContext> context_;
+
+  // Used to track when canDrawInCGLContext should return YES. This can be
+  // in response to receiving a new compositor frame, or from any of the events
+  // that cause setNeedsDisplay to be called on the layer.
+  BOOL needsDisplay_;
 }
 
-@property(nonatomic, readonly)
-    scoped_refptr<content::CompositingIOSurfaceContext> context;
-
 - (id)initWithRenderWidgetHostViewMac:(content::RenderWidgetHostViewMac*)r;
-
-// Update the scale factor of the layer to match the scale factor of the
-// IOSurface.
-- (void)updateScaleFactor;
 
 // Remove this layer from the layer heirarchy, and mark that
 // |renderWidgetHostView_| is no longer valid and may no longer be dereferenced.
 - (void)disableCompositing;
+
+// Called when a new frame is received.
+- (void)gotNewFrame;
+
+// Called when it has been a while since a new frame has been received, and the
+// layer should become not-asynchronous.
+- (void)timerSinceGotNewFrameFired;
 
 @end
 

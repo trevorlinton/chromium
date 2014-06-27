@@ -5,16 +5,14 @@
 package org.chromium.chrome.browser.translate;
 
 import android.test.FlakyTest;
-import android.test.suitebuilder.annotation.MediumTest;
 
-import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.infobar.InfoBar;
 import org.chromium.chrome.browser.infobar.InfoBarContainer;
+import org.chromium.chrome.shell.ChromeShellTestBase;
 import org.chromium.chrome.test.util.InfoBarTestAnimationListener;
 import org.chromium.chrome.test.util.InfoBarUtil;
-import org.chromium.chrome.test.util.TranslateUtil;
 import org.chromium.chrome.test.util.TestHttpServerClient;
-import org.chromium.chrome.testshell.ChromiumTestShellTestBase;
+import org.chromium.chrome.test.util.TranslateUtil;
 
 import java.util.List;
 
@@ -22,7 +20,7 @@ import java.util.List;
  * Tests for the translate infobar, assumes it runs on a system with language
  * preferences set to English.
  */
-public class TranslateInfoBarTest extends ChromiumTestShellTestBase {
+public class TranslateInfoBarTest extends ChromeShellTestBase {
     private static final String TRANSLATE_PAGE = "chrome/test/data/translate/fr_test.html";
 
     private InfoBarTestAnimationListener mListener;
@@ -79,7 +77,7 @@ public class TranslateInfoBarTest extends ChromiumTestShellTestBase {
         infoBar = infoBars.get(0);
         assertTrue(InfoBarUtil.clickCloseButton(this, infoBar));
 
-       assertTrue("Never Panel not opened.",
-           TranslateUtil.verifyInfoBarText(infoBar, NEVER_TRANSLATE_MESSAGE));
+        assertTrue("Never Panel not opened.",
+                TranslateUtil.verifyInfoBarText(infoBar, NEVER_TRANSLATE_MESSAGE));
     }
 }

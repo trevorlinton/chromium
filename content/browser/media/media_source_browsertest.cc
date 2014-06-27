@@ -11,6 +11,9 @@
 
 // Common media types.
 const char kWebMAudioOnly[] = "audio/webm; codecs=\"vorbis\"";
+#if !defined(OS_ANDROID)
+const char kWebMOpusAudioOnly[] = "audio/webm; codecs=\"opus\"";
+#endif
 const char kWebMVideoOnly[] = "video/webm; codecs=\"vp8\"";
 const char kWebMAudioVideo[] = "video/webm; codecs=\"vorbis, vp8\"";
 
@@ -20,7 +23,7 @@ namespace content {
 static bool IsMSESupported() {
 #if defined(OS_ANDROID)
   if (base::android::BuildInfo::GetInstance()->sdk_int() < 16) {
-    LOG(INFO) << "MSE is only supported in Android 4.1 and later.";
+    VLOG(0) << "MSE is only supported in Android 4.1 and later.";
     return false;
   }
 #endif  // defined(OS_ANDROID)
@@ -32,7 +35,7 @@ class MediaSourceTest : public content::MediaBrowserTest {
   void TestSimplePlayback(const char* media_file, const char* media_type,
                           const char* expectation) {
     if (!IsMSESupported()) {
-      LOG(INFO) << "Skipping test - MSE not supported.";
+      VLOG(0) << "Skipping test - MSE not supported.";
       return;
     }
 
@@ -59,6 +62,13 @@ IN_PROC_BROWSER_TEST_F(MediaSourceTest, Playback_VideoOnly_WebM) {
   TestSimplePlayback("bear-320x240-video-only.webm", kWebMVideoOnly, kEnded);
 }
 
+// Opus is not supported in Android as of now.
+#if !defined(OS_ANDROID)
+IN_PROC_BROWSER_TEST_F(MediaSourceTest, Playback_AudioOnly_Opus_WebM) {
+  TestSimplePlayback("bear-opus.webm", kWebMOpusAudioOnly, kEnded);
+}
+#endif
+
 IN_PROC_BROWSER_TEST_F(MediaSourceTest, Playback_AudioOnly_WebM) {
   TestSimplePlayback("bear-320x240-audio-only.webm", kWebMAudioOnly, kEnded);
 }
@@ -71,7 +81,7 @@ IN_PROC_BROWSER_TEST_F(MediaSourceTest, Playback_Type_Error) {
 // Test changed to skip checks resulting in flakiness. Proper fix still needed.
 IN_PROC_BROWSER_TEST_F(MediaSourceTest, ConfigChangeVideo) {
   if (!IsMSESupported()) {
-    LOG(INFO) << "Skipping test - MSE not supported.";
+    VLOG(0) << "Skipping test - MSE not supported.";
     return;
   }
   RunMediaTestPage("mse_config_change.html", NULL, kEnded, true);

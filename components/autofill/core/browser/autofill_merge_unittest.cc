@@ -10,14 +10,13 @@
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/autofill/core/browser/autofill_common_test.h"
+#include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/data_driven_test.h"
 #include "components/autofill/core/browser/form_structure.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/common/form_data.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/web/WebInputElement.h"
 #include "url/gurl.h"
 
 namespace autofill {
@@ -70,7 +69,7 @@ std::string SerializeProfiles(const std::vector<AutofillProfile*>& profiles) {
       for (size_t k = 0; k < values.size(); ++k) {
         result += AutofillType(type).ToString();
         result += kFieldSeparator;
-        result += UTF16ToUTF8(values[k]);
+        result += base::UTF16ToUTF8(values[k]);
         result += "\n";
       }
     }
@@ -185,8 +184,8 @@ void AutofillMergeTest::MergeProfiles(const std::string& profiles,
 
   // Create a test form.
   FormData form;
-  form.name = ASCIIToUTF16("MyTestForm");
-  form.method = ASCIIToUTF16("POST");
+  form.name = base::ASCIIToUTF16("MyTestForm");
+  form.method = base::ASCIIToUTF16("POST");
   form.origin = GURL("https://www.example.com/origin.html");
   form.action = GURL("https://www.example.com/action.html");
   form.user_submitted = true;
@@ -201,9 +200,10 @@ void AutofillMergeTest::MergeProfiles(const std::string& profiles,
       // Add a field to the current profile.
       size_t separator_pos = line.find(kFieldSeparator);
       ASSERT_NE(std::string::npos, separator_pos);
-      base::string16 field_type = UTF8ToUTF16(line.substr(0, separator_pos));
+      base::string16 field_type =
+          base::UTF8ToUTF16(line.substr(0, separator_pos));
       base::string16 value =
-          UTF8ToUTF16(line.substr(separator_pos + kFieldOffset));
+          base::UTF8ToUTF16(line.substr(separator_pos + kFieldOffset));
 
       FormFieldData field;
       field.label = field_type;
@@ -223,14 +223,15 @@ void AutofillMergeTest::MergeProfiles(const std::string& profiles,
         // into the field's name.
         AutofillField* field =
             const_cast<AutofillField*>(form_structure.field(i));
-        ServerFieldType type = StringToFieldType(UTF16ToUTF8(field->name));
+        ServerFieldType type =
+            StringToFieldType(base::UTF16ToUTF8(field->name));
         field->set_heuristic_type(type);
       }
 
       // Import the profile.
-      const CreditCard* imported_credit_card;
+      scoped_ptr<CreditCard> imported_credit_card;
       personal_data_.ImportFormData(form_structure, &imported_credit_card);
-      EXPECT_EQ(static_cast<const CreditCard*>(NULL), imported_credit_card);
+      EXPECT_EQ(static_cast<CreditCard*>(NULL), imported_credit_card.get());
 
       // Clear the |form| to start a new profile.
       form.fields.clear();

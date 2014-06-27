@@ -3,14 +3,15 @@
 // found in the LICENSE file.
 
 #include "ash/magnifier/magnification_controller.h"
+
 #include "ash/magnifier/magnifier_constants.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "base/strings/stringprintf.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/env.h"
-#include "ui/aura/root_window.h"
 #include "ui/aura/test/event_generator.h"
+#include "ui/aura/window_tree_host.h"
 #include "ui/gfx/rect_conversions.h"
 #include "ui/gfx/screen.h"
 
@@ -54,7 +55,7 @@ class MagnificationControllerTest: public test::AshTestBase {
 
   std::string GetHostMouseLocation() {
     gfx::Point point;
-    GetRootWindow()->GetDispatcher()->QueryMouseLocationForTest(&point);
+    GetRootWindow()->GetHost()->QueryMouseLocation(&point);
     return point.ToString();
   }
 

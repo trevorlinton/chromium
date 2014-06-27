@@ -6,20 +6,20 @@
 
 #include "ash/magnifier/magnifier_constants.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/values.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
 #include "chrome/browser/chromeos/accessibility/magnification_manager.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
+#include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/policy/device_cloud_policy_manager_chromeos.h"
 #include "chrome/browser/chromeos/system/input_device_settings.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
-#include "chrome/browser/policy/browser_policy_connector.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
+#include "chrome/browser/ui/webui/chromeos/login/signin_screen_handler.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_version_info.h"
 #include "chromeos/chromeos_constants.h"
-#include "content/public/browser/notification_service.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
 
@@ -29,11 +29,13 @@ const char kJsScreenPath[] = "cr.ui.Oobe";
 
 // JS API callbacks names.
 const char kJsApiEnableHighContrast[] = "enableHighContrast";
+const char kJsApiEnableVirtualKeyboard[] = "enableVirtualKeyboard";
 const char kJsApiEnableScreenMagnifier[] = "enableScreenMagnifier";
 const char kJsApiEnableLargeCursor[] = "enableLargeCursor";
 const char kJsApiEnableSpokenFeedback[] = "enableSpokenFeedback";
 const char kJsApiScreenStateInitialize[] = "screenStateInitialize";
 const char kJsApiSkipUpdateEnrollAfterEula[] = "skipUpdateEnrollAfterEula";
+const char kJsApiScreenAssetsLoaded[] = "screenAssetsLoaded";
 
 }  // namespace
 
@@ -47,22 +49,11 @@ CoreOobeHandler::CoreOobeHandler(OobeUI* oobe_ui)
       show_oobe_ui_(false),
       version_info_updater_(this),
       delegate_(NULL) {
-  registrar_.Add(
-      this,
-      chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE,
-      content::NotificationService::AllSources());
-  registrar_.Add(
-      this,
-      chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_SCREEN_MAGNIFIER,
-      content::NotificationService::AllSources());
-  registrar_.Add(
-      this,
-      chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK,
-      content::NotificationService::AllSources());
-  registrar_.Add(
-      this,
-      chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_LARGE_CURSOR,
-      content::NotificationService::AllSources());
+  AccessibilityManager* accessibility_manager = AccessibilityManager::Get();
+  CHECK(accessibility_manager);
+  accessibility_subscription_ = accessibility_manager->RegisterCallback(
+      base::Bind(&CoreOobeHandler::OnAccessibilityStatusChanged,
+                 base::Unretained(this)));
 }
 
 CoreOobeHandler::~CoreOobeHandler() {
@@ -83,6 +74,8 @@ void CoreOobeHandler::DeclareLocalizedValues(LocalizedValuesBuilder* builder) {
   builder->Add("largeCursorOption", IDS_OOBE_LARGE_CURSOR_OPTION);
   builder->Add("highContrastOption", IDS_OOBE_HIGH_CONTRAST_MODE_OPTION);
   builder->Add("screenMagnifierOption", IDS_OOBE_SCREEN_MAGNIFIER_OPTION);
+  builder->Add("virtualKeyboardOption", IDS_OOBE_VIRTUAL_KEYBOARD_OPTION);
+  builder->Add("closeAccessibilityMenu", IDS_OOBE_CLOSE_ACCESSIBILITY_MENU);
 
   // Strings for the device requisition prompt.
   builder->Add("deviceRequisitionPromptCancel",
@@ -95,8 +88,6 @@ void CoreOobeHandler::DeclareLocalizedValues(LocalizedValuesBuilder* builder) {
                IDS_CONFIRM_MESSAGEBOX_NO_BUTTON_LABEL);
   builder->Add("deviceRequisitionRemoraPromptOk",
                IDS_CONFIRM_MESSAGEBOX_YES_BUTTON_LABEL);
-  builder->Add("deviceRequisitionRemoraPromptTitle",
-               IDS_ENTERPRISE_DEVICE_REQUISITION_REMORA_PROMPT_TITLE);
   builder->Add("deviceRequisitionRemoraPromptText",
                IDS_ENTERPRISE_DEVICE_REQUISITION_REMORA_PROMPT_TEXT);
 }
@@ -123,14 +114,20 @@ void CoreOobeHandler::RegisterMessages() {
               &CoreOobeHandler::HandleEnableHighContrast);
   AddCallback(kJsApiEnableLargeCursor,
               &CoreOobeHandler::HandleEnableLargeCursor);
+  AddCallback(kJsApiEnableVirtualKeyboard,
+              &CoreOobeHandler::HandleEnableVirtualKeyboard);
   AddCallback(kJsApiEnableScreenMagnifier,
               &CoreOobeHandler::HandleEnableScreenMagnifier);
   AddCallback(kJsApiEnableSpokenFeedback,
               &CoreOobeHandler::HandleEnableSpokenFeedback);
   AddCallback("setDeviceRequisition",
               &CoreOobeHandler::HandleSetDeviceRequisition);
-  AddCallback("skipToLoginForTesting",
-              &CoreOobeHandler::HandleSkipToLoginForTesting);
+  AddCallback(kJsApiScreenAssetsLoaded,
+              &CoreOobeHandler::HandleScreenAssetsLoaded);
+  AddRawCallback("skipToLoginForTesting",
+                 &CoreOobeHandler::HandleSkipToLoginForTesting);
+  AddCallback("launchHelpApp",
+              &CoreOobeHandler::HandleLaunchHelpApp);
 }
 
 void CoreOobeHandler::ShowSignInError(
@@ -138,6 +135,7 @@ void CoreOobeHandler::ShowSignInError(
     const std::string& error_text,
     const std::string& help_link_text,
     HelpAppLauncher::HelpTopic help_topic_id) {
+  LOG(ERROR) << "CoreOobeHandler::ShowSignInError: error_text=" << error_text;
   CallJS("showSignInError", login_attempts, error_text,
          help_link_text, static_cast<int>(help_topic_id));
 }
@@ -214,6 +212,10 @@ void CoreOobeHandler::HandleEnableLargeCursor(bool enabled) {
   AccessibilityManager::Get()->EnableLargeCursor(enabled);
 }
 
+void CoreOobeHandler::HandleEnableVirtualKeyboard(bool enabled) {
+  AccessibilityManager::Get()->EnableVirtualKeyboard(enabled);
+}
+
 void CoreOobeHandler::HandleEnableScreenMagnifier(bool enabled) {
   // TODO(nkostylev): Add support for partial screen magnifier.
   DCHECK(MagnificationManager::Get());
@@ -229,15 +231,28 @@ void CoreOobeHandler::HandleEnableSpokenFeedback() {
 
 void CoreOobeHandler::HandleSetDeviceRequisition(
     const std::string& requisition) {
-  g_browser_process->browser_policy_connector()->GetDeviceCloudPolicyManager()->
-      SetDeviceRequisition(requisition);
+  policy::BrowserPolicyConnectorChromeOS* connector =
+      g_browser_process->platform_part()->browser_policy_connector_chromeos();
+  std::string initial_requisition =
+      connector->GetDeviceCloudPolicyManager()->GetDeviceRequisition();
+  connector->GetDeviceCloudPolicyManager()->SetDeviceRequisition(requisition);
   // Exit Chrome to force the restart as soon as a new requisition is set.
-  chrome::ExitCleanly();
+  if (initial_requisition !=
+          connector->GetDeviceCloudPolicyManager()->GetDeviceRequisition()) {
+    chrome::AttemptRestart();
+  }
 }
 
-void CoreOobeHandler::HandleSkipToLoginForTesting() {
+void CoreOobeHandler::HandleScreenAssetsLoaded(
+    const std::string& screen_async_load_id) {
+  oobe_ui_->OnScreenAssetsLoaded(screen_async_load_id);
+}
+
+void CoreOobeHandler::HandleSkipToLoginForTesting(
+    const base::ListValue* args) {
+  LoginScreenContext context(args);
   if (WizardController::default_controller())
-      WizardController::default_controller()->SkipToLoginForTesting();
+      WizardController::default_controller()->SkipToLoginForTesting(context);
 }
 
 void CoreOobeHandler::ShowOobeUI(bool show) {
@@ -261,6 +276,8 @@ void CoreOobeHandler::UpdateA11yState() {
                        AccessibilityManager::Get()->IsSpokenFeedbackEnabled());
   a11y_info.SetBoolean("screenMagnifierEnabled",
                        MagnificationManager::Get()->IsMagnifierEnabled());
+  a11y_info.SetBoolean("virtualKeyboardEnabled",
+                       AccessibilityManager::Get()->IsVirtualKeyboardEnabled());
   CallJS("refreshA11yInfo", a11y_info);
 }
 
@@ -274,7 +291,7 @@ void CoreOobeHandler::UpdateOobeUIVisibility() {
   }
   CallJS("showVersion", should_show_version);
   CallJS("showOobeUI", show_oobe_ui_);
-  if (system::keyboard_settings::ForceKeyboardDrivenUINavigation())
+  if (system::InputDeviceSettings::Get()->ForceKeyboardDrivenUINavigation())
     CallJS("enableKeyboardFlow", true);
 }
 
@@ -294,23 +311,25 @@ void CoreOobeHandler::UpdateLabel(const std::string& id,
 }
 
 void CoreOobeHandler::UpdateDeviceRequisition() {
+  policy::BrowserPolicyConnectorChromeOS* connector =
+      g_browser_process->platform_part()->browser_policy_connector_chromeos();
   CallJS("updateDeviceRequisition",
-         g_browser_process->browser_policy_connector()->
-             GetDeviceCloudPolicyManager()->GetDeviceRequisition());
+         connector->GetDeviceCloudPolicyManager()->GetDeviceRequisition());
 }
 
-void CoreOobeHandler::Observe(int type,
-                              const content::NotificationSource& source,
-                              const content::NotificationDetails& details) {
-  if (type ==
-          chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE ||
-      type == chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_LARGE_CURSOR ||
-      type == chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_SCREEN_MAGNIFIER ||
-      type == chrome::NOTIFICATION_CROS_ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK) {
+void CoreOobeHandler::OnAccessibilityStatusChanged(
+    const AccessibilityStatusEventDetails& details) {
+  if (details.notification_type == ACCESSIBILITY_MANAGER_SHUTDOWN)
+    accessibility_subscription_.reset();
+  else
     UpdateA11yState();
-  } else {
-    NOTREACHED() << "Unexpected notification " << type;
-  }
+}
+
+void CoreOobeHandler::HandleLaunchHelpApp(double help_topic_id) {
+  if (!help_app_)
+    help_app_ = new HelpAppLauncher(GetNativeWindow());
+  help_app_->ShowHelpTopic(
+      static_cast<HelpAppLauncher::HelpTopic>(help_topic_id));
 }
 
 }  // namespace chromeos

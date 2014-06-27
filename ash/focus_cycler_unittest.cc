@@ -4,21 +4,21 @@
 
 #include "ash/focus_cycler.h"
 
-#include "ash/launcher/launcher.h"
 #include "ash/root_window_controller.h"
+#include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
+#include "ash/shell_factory.h"
 #include "ash/shell_window_ids.h"
 #include "ash/system/status_area_widget.h"
 #include "ash/system/status_area_widget_delegate.h"
 #include "ash/system/tray/system_tray.h"
-#include "ash/wm/window_util.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/shell_factory.h"
-#include "ui/aura/root_window.h"
+#include "ash/wm/window_util.h"
 #include "ui/aura/test/event_generator.h"
 #include "ui/aura/test/test_windows.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/views/accessible_pane_view.h"
 #include "ui/views/controls/button/menu_button.h"
 #include "ui/views/widget/widget.h"
@@ -74,7 +74,7 @@ class FocusCyclerTest : public AshTestBase {
 
     focus_cycler_.reset(new FocusCycler());
 
-    ASSERT_TRUE(Launcher::ForPrimaryDisplay());
+    ASSERT_TRUE(Shelf::ForPrimaryDisplay());
   }
 
   virtual void TearDown() OVERRIDE {
@@ -116,7 +116,7 @@ class FocusCyclerTest : public AshTestBase {
   SystemTray* tray() { return tray_.get(); }
 
   ShelfWidget* shelf_widget() {
-    return Launcher::ForPrimaryDisplay()->shelf_widget();
+    return Shelf::ForPrimaryDisplay()->shelf_widget();
   }
 
   void InstallFocusCycleOnShelf() {
@@ -252,13 +252,16 @@ TEST_F(FocusCyclerTest, CycleFocusNoBrowser) {
   EXPECT_TRUE(tray()->GetWidget()->IsActive());
 }
 
+// Tests that focus cycles from the active browser to the status area and back.
 TEST_F(FocusCyclerTest, Shelf_CycleFocusForward) {
   ASSERT_TRUE(CreateTray());
   InstallFocusCycleOnShelf();
   shelf_widget()->Hide();
 
-  // Create a single test window.
+  // Create two test windows.
   scoped_ptr<Window> window0(CreateTestWindowInShellWithId(0));
+  scoped_ptr<Window> window1(CreateTestWindowInShellWithId(1));
+  wm::ActivateWindow(window1.get());
   wm::ActivateWindow(window0.get());
   EXPECT_TRUE(wm::IsActiveWindow(window0.get()));
 
@@ -269,6 +272,10 @@ TEST_F(FocusCyclerTest, Shelf_CycleFocusForward) {
   // Cycle focus to the browser.
   focus_cycler()->RotateFocus(FocusCycler::FORWARD);
   EXPECT_TRUE(wm::IsActiveWindow(window0.get()));
+
+  // Cycle focus to the status area.
+  focus_cycler()->RotateFocus(FocusCycler::FORWARD);
+  EXPECT_TRUE(tray()->GetWidget()->IsActive());
 }
 
 TEST_F(FocusCyclerTest, Shelf_CycleFocusBackwardInvisible) {
@@ -295,13 +302,13 @@ TEST_F(FocusCyclerTest, CycleFocusThroughWindowWithPanes) {
 
   InstallFocusCycleOnShelf();
 
+  scoped_ptr<PanedWidgetDelegate> test_widget_delegate;
   scoped_ptr<views::Widget> browser_widget(new views::Widget);
-  PanedWidgetDelegate* test_widget_delegate =
-      new PanedWidgetDelegate(browser_widget.get());
+  test_widget_delegate.reset(new PanedWidgetDelegate(browser_widget.get()));
   views::Widget::InitParams widget_params(
       views::Widget::InitParams::TYPE_WINDOW);
   widget_params.context = CurrentContext();
-  widget_params.delegate = test_widget_delegate;
+  widget_params.delegate = test_widget_delegate.get();
   widget_params.ownership =
       views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   browser_widget->Init(widget_params);
@@ -315,22 +322,22 @@ TEST_F(FocusCyclerTest, CycleFocusThroughWindowWithPanes) {
   root_view->AddChildView(pane1);
 
   views::View* view1 = new views::View;
-  view1->set_focusable(true);
+  view1->SetFocusable(true);
   pane1->AddChildView(view1);
 
   views::View* view2 = new views::View;
-  view2->set_focusable(true);
+  view2->SetFocusable(true);
   pane1->AddChildView(view2);
 
   views::AccessiblePaneView* pane2 = new views::AccessiblePaneView();
   root_view->AddChildView(pane2);
 
   views::View* view3 = new views::View;
-  view3->set_focusable(true);
+  view3->SetFocusable(true);
   pane2->AddChildView(view3);
 
   views::View* view4 = new views::View;
-  view4->set_focusable(true);
+  view4->SetFocusable(true);
   pane2->AddChildView(view4);
 
   std::vector<views::View*> panes;

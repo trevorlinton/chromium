@@ -24,17 +24,17 @@ BluetoothDevice::BluetoothDevice() {
 BluetoothDevice::~BluetoothDevice() {
 }
 
-string16 BluetoothDevice::GetName() const {
+base::string16 BluetoothDevice::GetName() const {
   std::string name = GetDeviceName();
   if (!name.empty()) {
-    return UTF8ToUTF16(name);
+    return base::UTF8ToUTF16(name);
   } else {
     return GetAddressWithLocalizedDeviceTypeName();
   }
 }
 
-string16 BluetoothDevice::GetAddressWithLocalizedDeviceTypeName() const {
-  string16 address_utf16 = UTF8ToUTF16(GetAddress());
+base::string16 BluetoothDevice::GetAddressWithLocalizedDeviceTypeName() const {
+  base::string16 address_utf16 = base::UTF8ToUTF16(GetAddress());
   BluetoothDevice::DeviceType device_type = GetDeviceType();
   switch (device_type) {
     case DEVICE_COMPUTER:
@@ -172,19 +172,6 @@ bool BluetoothDevice::IsPairable() const {
   // TODO: Move this database into a config file.
 
   return true;
-}
-
-bool BluetoothDevice::ProvidesServiceWithUUID(
-    const std::string& uuid) const {
-  std::string canonical_uuid = bluetooth_utils::CanonicalUuid(uuid);
-  BluetoothDevice::ServiceList services = GetServices();
-  for (BluetoothDevice::ServiceList::const_iterator iter = services.begin();
-       iter != services.end();
-       ++iter) {
-    if (bluetooth_utils::CanonicalUuid(*iter) == canonical_uuid)
-      return true;
-  }
-  return false;
 }
 
 }  // namespace device

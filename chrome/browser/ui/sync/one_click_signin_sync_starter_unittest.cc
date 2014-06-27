@@ -29,17 +29,20 @@ class OneClickSigninSyncStarterTest : public testing::Test {
   // testing::Test:
   virtual void SetUp() OVERRIDE {
     testing::Test::SetUp();
-    profile_.reset(new TestingProfile());
+
+    // Create the sign in manager required by OneClickSigninSyncStarter.
+    TestingProfile::Builder builder;
+    builder.AddTestingFactory(
+        SigninManagerFactory::GetInstance(),
+        &OneClickSigninSyncStarterTest::BuildSigninManager);
+    profile_ = builder.Build();
+
+    SigninManagerBase* signin_manager = static_cast<FakeSigninManager*>(
+        SigninManagerFactory::GetForProfile(profile_.get()));
 
     // Disable sync to simplify the creation of a OneClickSigninSyncStarter.
     CommandLine::ForCurrentProcess()->AppendSwitch(switches::kDisableSync);
 
-    // Create the sign in manager required by OneClickSigninSyncStarter.
-    SigninManagerBase* signin_manager =
-        static_cast<FakeSigninManager*>(
-            SigninManagerFactory::GetInstance()->SetTestingFactoryAndUse(
-                profile_.get(),
-                &OneClickSigninSyncStarterTest::BuildSigninManager));
     signin_manager->Initialize(profile_.get(), NULL);
     signin_manager->SetAuthenticatedUsername(kTestingUsername);
   }
@@ -54,17 +57,15 @@ class OneClickSigninSyncStarterTest : public testing::Test {
  protected:
   void CreateSyncStarter(OneClickSigninSyncStarter::Callback callback) {
     sync_starter_ = new OneClickSigninSyncStarter(
-      profile_.get(),
-      NULL,
-      std::string(),
-      kTestingUsername,
-      std::string(),
-      std::string(),
-      OneClickSigninSyncStarter::SYNC_WITH_DEFAULT_SETTINGS,
-      NULL,
-      OneClickSigninSyncStarter::NO_CONFIRMATION,
-      callback
-    );
+        profile_.get(),
+        NULL,
+        kTestingUsername,
+        std::string(),
+        "refresh_token",
+        OneClickSigninSyncStarter::SYNC_WITH_DEFAULT_SETTINGS,
+        NULL,
+        OneClickSigninSyncStarter::NO_CONFIRMATION,
+        callback);
   }
 
   content::TestBrowserThreadBundle thread_bundle_;
@@ -81,8 +82,7 @@ class OneClickSigninSyncStarterTest : public testing::Test {
   int succeeded_count_;
 
  private:
-  static BrowserContextKeyedService* BuildSigninManager(
-      content::BrowserContext* profile) {
+  static KeyedService* BuildSigninManager(content::BrowserContext* profile) {
     return new FakeSigninManager(static_cast<Profile*>(profile));
   }
 

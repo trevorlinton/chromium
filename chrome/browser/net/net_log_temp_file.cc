@@ -15,6 +15,7 @@ using content::BrowserThread;
 
 NetLogTempFile::NetLogTempFile(ChromeNetLog* chrome_net_log)
     : state_(STATE_UNINITIALIZED),
+      log_type_(LOG_TYPE_NONE),
       log_filename_(FILE_PATH_LITERAL("chrome-net-export-log.json")),
       chrome_net_log_(chrome_net_log) {
 }
@@ -31,7 +32,10 @@ void NetLogTempFile::ProcessCommand(Command command) {
 
   switch (command) {
     case DO_START:
-      StartNetLog();
+      StartNetLog(false);
+      break;
+    case DO_START_STRIP_PRIVATE_DATA:
+      StartNetLog(true);
       break;
     case DO_STOP:
       StopNetLog();
@@ -42,7 +46,7 @@ void NetLogTempFile::ProcessCommand(Command command) {
   }
 }
 
-DictionaryValue* NetLogTempFile::GetState() {
+base::DictionaryValue* NetLogTempFile::GetState() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE_USER_BLOCKING));
   base::DictionaryValue* dict = new base::DictionaryValue;
 
@@ -53,19 +57,32 @@ DictionaryValue* NetLogTempFile::GetState() {
 #endif  // NDEBUG
 
   switch (state_) {
-    case STATE_ALLOW_START:
-      dict->SetString("state", "ALLOW_START");
+    case STATE_NOT_LOGGING:
+      dict->SetString("state", "NOT_LOGGING");
       break;
-    case STATE_ALLOW_STOP:
-      dict->SetString("state", "ALLOW_STOP");
+    case STATE_LOGGING:
+      dict->SetString("state", "LOGGING");
       break;
-    case STATE_ALLOW_START_SEND:
-      dict->SetString("state", "ALLOW_START_SEND");
-      break;
-    default:
+    case STATE_UNINITIALIZED:
       dict->SetString("state", "UNINITIALIZED");
       break;
   }
+
+  switch (log_type_) {
+    case LOG_TYPE_NONE:
+      dict->SetString("logType", "NONE");
+      break;
+    case LOG_TYPE_UNKNOWN:
+      dict->SetString("logType", "UNKNOWN");
+      break;
+    case LOG_TYPE_NORMAL:
+      dict->SetString("logType", "NORMAL");
+      break;
+    case LOG_TYPE_STRIP_PRIVATE_DATA:
+      dict->SetString("logType", "STRIP_PRIVATE_DATA");
+      break;
+  }
+
   return dict;
 }
 
@@ -77,17 +94,18 @@ bool NetLogTempFile::EnsureInit() {
   if (!GetNetExportLog())
     return false;
 
+  state_ = STATE_NOT_LOGGING;
   if (NetExportLogExists())
-    state_ = STATE_ALLOW_START_SEND;
+    log_type_ = LOG_TYPE_UNKNOWN;
   else
-    state_ = STATE_ALLOW_START;
+    log_type_ = LOG_TYPE_NONE;
 
   return true;
 }
 
-void NetLogTempFile::StartNetLog() {
+void NetLogTempFile::StartNetLog(bool strip_private_data) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE_USER_BLOCKING));
-  if (state_ == STATE_ALLOW_STOP)
+  if (state_ == STATE_LOGGING)
     return;
 
   DCHECK_NE(STATE_UNINITIALIZED, state_);
@@ -96,29 +114,35 @@ void NetLogTempFile::StartNetLog() {
   // Try to make sure we can create the file.
   // TODO(rtenneti): Find a better for doing the following. Surface some error
   // to the user if we couldn't create the file.
-  FILE* file = file_util::OpenFile(log_path_, "w");
+  FILE* file = base::OpenFile(log_path_, "w");
   if (file == NULL)
     return;
 
   scoped_ptr<base::Value> constants(NetInternalsUI::GetConstants());
   net_log_logger_.reset(new net::NetLogLogger(file, *constants));
+  if (strip_private_data) {
+    net_log_logger_->set_log_level(net::NetLog::LOG_STRIP_PRIVATE_DATA);
+    log_type_ = LOG_TYPE_STRIP_PRIVATE_DATA;
+  } else {
+    log_type_ = LOG_TYPE_NORMAL;
+  }
   net_log_logger_->StartObserving(chrome_net_log_);
-  state_ = STATE_ALLOW_STOP;
+  state_ = STATE_LOGGING;
 }
 
 void NetLogTempFile::StopNetLog() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE_USER_BLOCKING));
-  if (state_ != STATE_ALLOW_STOP)
+  if (state_ != STATE_LOGGING)
     return;
 
   net_log_logger_->StopObserving();
   net_log_logger_.reset();
-  state_ = STATE_ALLOW_START_SEND;
+  state_ = STATE_NOT_LOGGING;
 }
 
 bool NetLogTempFile::GetFilePath(base::FilePath* path) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE_USER_BLOCKING));
-  if (state_ != STATE_ALLOW_START_SEND)
+  if (log_type_ == LOG_TYPE_NONE || state_ == STATE_LOGGING)
     return false;
 
   if (!NetExportLogExists())
@@ -127,8 +151,8 @@ bool NetLogTempFile::GetFilePath(base::FilePath* path) {
   DCHECK(!log_path_.empty());
 #if defined(OS_POSIX)
   // Users, group and others can read, write and traverse.
-  int mode = file_util::FILE_PERMISSION_MASK;
-  file_util::SetPosixFilePermissions(log_path_, mode);
+  int mode = base::FILE_PERMISSION_MASK;
+  base::SetPosixFilePermissions(log_path_, mode);
 #endif  // defined(OS_POSIX)
 
   *path = log_path_;
@@ -147,7 +171,7 @@ bool NetLogTempFile::GetNetExportLog() {
 
 bool NetLogTempFile::GetNetExportLogDirectory(base::FilePath* path) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE_USER_BLOCKING));
-  return file_util::GetTempDir(path);
+  return base::GetTempDir(path);
 }
 
 bool NetLogTempFile::NetExportLogExists() {

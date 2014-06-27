@@ -9,6 +9,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "base/memory/ref_counted.h"
 #include "base/memory/singleton.h"
@@ -16,7 +17,10 @@
 #include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "gpu/config/gpu_blacklist.h"
 #include "gpu/config/gpu_driver_bug_list.h"
-#include "gpu/config/gpu_switching_list.h"
+
+namespace base {
+class CommandLine;
+}
 
 namespace content {
 
@@ -57,15 +61,13 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
   void UpdateVideoMemoryUsageStats(
       const GPUVideoMemoryUsageStats& video_memory_usage_stats);
 
-  void AppendRendererCommandLine(CommandLine* command_line) const;
+  void AppendRendererCommandLine(base::CommandLine* command_line) const;
 
-  void AppendGpuCommandLine(CommandLine* command_line) const;
+  void AppendGpuCommandLine(base::CommandLine* command_line) const;
 
-  void AppendPluginCommandLine(CommandLine* command_line) const;
+  void AppendPluginCommandLine(base::CommandLine* command_line) const;
 
   void UpdateRendererWebPrefs(WebPreferences* prefs) const;
-
-  gpu::GpuSwitchingOption GetGpuSwitchingOption() const;
 
   std::string GetBlacklistVersion() const;
   std::string GetDriverBugListVersion() const;
@@ -83,12 +85,6 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
   base::ListValue* GetLogMessages() const;
 
   void HandleGpuSwitch();
-
-#if defined(OS_WIN)
-  // Is the GPU process using the accelerated surface to present, instead of
-  // presenting by itself.
-  bool IsUsingAcceleratedSurface() const;
-#endif
 
   bool CanUseGpuBrowserCompositor() const;
 
@@ -166,12 +162,26 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
   typedef ObserverListThreadSafe<GpuDataManagerObserver>
       GpuDataManagerObserverList;
 
+  struct LogMessage {
+    int level;
+    std::string header;
+    std::string message;
+
+    LogMessage(int _level,
+               const std::string& _header,
+               const std::string& _message)
+        : level(_level),
+          header(_header),
+          message(_message) { }
+  };
+
   explicit GpuDataManagerImplPrivate(GpuDataManagerImpl* owner);
 
   void InitializeImpl(const std::string& gpu_blacklist_json,
-                      const std::string& gpu_switching_list_json,
                       const std::string& gpu_driver_bug_list_json,
                       const gpu::GPUInfo& gpu_info);
+
+  void UpdateGpuInfoHelper();
 
   void UpdateBlacklistedFeatures(const std::set<int>& features);
 
@@ -206,19 +216,16 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
   std::set<int> blacklisted_features_;
   std::set<int> preliminary_blacklisted_features_;
 
-  gpu::GpuSwitchingOption gpu_switching_;
-
   std::set<int> gpu_driver_bugs_;
 
   gpu::GPUInfo gpu_info_;
 
   scoped_ptr<gpu::GpuBlacklist> gpu_blacklist_;
-  scoped_ptr<gpu::GpuSwitchingList> gpu_switching_list_;
   scoped_ptr<gpu::GpuDriverBugList> gpu_driver_bug_list_;
 
   const scoped_refptr<GpuDataManagerObserverList> observer_list_;
 
-  base::ListValue log_messages_;
+  std::vector<LogMessage> log_messages_;
 
   bool use_swiftshader_;
 

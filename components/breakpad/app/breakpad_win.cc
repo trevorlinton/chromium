@@ -17,6 +17,7 @@
 #include "base/basictypes.h"
 #include "base/command_line.h"
 #include "base/debug/crash_logging.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/environment.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
@@ -31,7 +32,6 @@
 #include "breakpad/src/client/windows/handler/exception_handler.h"
 #include "components/breakpad/app/breakpad_client.h"
 #include "components/breakpad/app/hard_error_handler_win.h"
-#include "content/public/common/content_switches.h"
 #include "content/public/common/result_codes.h"
 #include "sandbox/win/src/nt_internals.h"
 #include "sandbox/win/src/sidestep/preamble_patcher.h"
@@ -44,9 +44,6 @@
 
 namespace breakpad {
 
-// TODO(raymes): Modify the way custom crash info is stored. g_custom_entries
-// is way too too fragile. See
-// https://code.google.com/p/chromium/issues/detail?id=137062.
 std::vector<google_breakpad::CustomInfoEntry>* g_custom_entries = NULL;
 bool g_deferred_crash_uploads = false;
 
@@ -134,7 +131,7 @@ DWORD WINAPI DumpProcessWithoutCrashThread(void*) {
 // of pepper/renderer processes is reduced.
 DWORD WINAPI DumpForHangDebuggingThread(void*) {
   DumpProcessWithoutCrash();
-  LOG(INFO) << "dumped for hang debugging";
+  VLOG(1) << "dumped for hang debugging";
   return 0;
 }
 
@@ -269,13 +266,17 @@ google_breakpad::CustomClientInfo* GetCustomInfo(const std::wstring& exe_path,
 
   // Common g_custom_entries.
   g_custom_entries->push_back(
-      google_breakpad::CustomInfoEntry(L"ver", UTF16ToWide(version).c_str()));
+      google_breakpad::CustomInfoEntry(L"ver",
+                                       base::UTF16ToWide(version).c_str()));
   g_custom_entries->push_back(
-      google_breakpad::CustomInfoEntry(L"prod", UTF16ToWide(product).c_str()));
+      google_breakpad::CustomInfoEntry(L"prod",
+                                       base::UTF16ToWide(product).c_str()));
   g_custom_entries->push_back(
       google_breakpad::CustomInfoEntry(L"plat", L"Win32"));
   g_custom_entries->push_back(
       google_breakpad::CustomInfoEntry(L"ptype", type.c_str()));
+  g_custom_entries->push_back(google_breakpad::CustomInfoEntry(
+      L"pid", base::StringPrintf(L"%d", ::GetCurrentProcessId()).c_str()));
   g_custom_entries->push_back(google_breakpad::CustomInfoEntry(
       L"channel", base::UTF16ToWide(channel_name).c_str()));
   g_custom_entries->push_back(google_breakpad::CustomInfoEntry(
@@ -287,7 +288,7 @@ google_breakpad::CustomClientInfo* GetCustomInfo(const std::wstring& exe_path,
 
   if (!special_build.empty())
     g_custom_entries->push_back(google_breakpad::CustomInfoEntry(
-        L"special", UTF16ToWide(special_build).c_str()));
+        L"special", base::UTF16ToWide(special_build).c_str()));
 
   if (type == L"plugin" || type == L"ppapi") {
     std::wstring plugin_path =
@@ -488,13 +489,6 @@ bool ShowRestartDialogIfCrashed(bool* exit_now) {
   if (base::win::IsMetroProcess())
     return false;
 
-  // Only show this for the browser process. See crbug.com/132119.
-  const CommandLine& command_line = *CommandLine::ForCurrentProcess();
-  std::string process_type =
-      command_line.GetSwitchValueASCII(switches::kProcessType);
-  if (!process_type.empty())
-    return false;
-
   base::string16 message;
   base::string16 title;
   bool is_rtl_locale;
@@ -659,14 +653,14 @@ static void InitPipeNameEnvVar(bool is_per_user_install) {
     pipe_name = kGoogleUpdatePipeName;
     pipe_name += user_sid;
   }
-  env->SetVar(kPipeNameVar, WideToASCII(pipe_name));
+  env->SetVar(kPipeNameVar, base::UTF16ToASCII(pipe_name));
 }
 
 void InitDefaultCrashCallback(LPTOP_LEVEL_EXCEPTION_FILTER filter) {
   previous_filter = SetUnhandledExceptionFilter(filter);
 }
 
-void InitCrashReporter() {
+void InitCrashReporter(const std::string& process_type_switch) {
   const CommandLine& command = *CommandLine::ForCurrentProcess();
   if (command.HasSwitch(switches::kDisableBreakpad))
     return;
@@ -674,8 +668,7 @@ void InitCrashReporter() {
   // Disable the message box for assertions.
   _CrtSetReportMode(_CRT_ASSERT, 0);
 
-  std::wstring process_type =
-    command.GetSwitchValueNative(switches::kProcessType);
+  std::wstring process_type = base::ASCIIToWide(process_type_switch);
   if (process_type.empty())
     process_type = L"browser";
 
@@ -717,7 +710,7 @@ void InitCrashReporter() {
       InitDefaultCrashCallback(default_filter);
     return;
   }
-  std::wstring pipe_name = ASCIIToWide(pipe_name_ascii);
+  std::wstring pipe_name = base::ASCIIToWide(pipe_name_ascii);
 
 #ifdef _WIN64
   // The protocol for connecting to the out-of-process Breakpad crash
@@ -754,6 +747,8 @@ void InitCrashReporter() {
       // handlers.
       google_breakpad::ExceptionHandler::HANDLER_NONE,
       dump_type, pipe_name.c_str(), custom_info);
+
+  base::debug::SetDumpWithoutCrashingFunction(&DumpProcessWithoutCrash);
 
   if (g_breakpad->IsOutOfProcess()) {
     // Tells breakpad to handle breakpoint and single step exceptions.

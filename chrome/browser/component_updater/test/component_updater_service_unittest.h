@@ -10,6 +10,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
@@ -19,11 +20,39 @@
 #include "chrome/browser/component_updater/test/component_patcher_mock.h"
 #include "chrome/browser/component_updater/test/url_request_post_interceptor.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "content/test/net/url_request_prepackaged_interceptor.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+namespace component_updater {
+
 class TestInstaller;
+
+// Intercepts HTTP GET requests sent to "localhost".
+typedef content::URLLocalHostRequestPrepackagedInterceptor GetInterceptor;
+
+// Intercepts HTTP POST requests sent to "localhost2".
+class InterceptorFactory : public URLRequestPostInterceptorFactory {
+ public:
+  InterceptorFactory();
+  ~InterceptorFactory();
+
+  URLRequestPostInterceptor* CreateInterceptor();
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(InterceptorFactory);
+};
+
+class PartialMatch : public URLRequestPostInterceptor::RequestMatcher {
+ public:
+  explicit PartialMatch(const std::string& expected) : expected_(expected) {}
+  virtual bool Match(const std::string& actual) const OVERRIDE;
+ private:
+  const std::string expected_;
+
+  DISALLOW_COPY_AND_ASSIGN(PartialMatch);
+};
 
 // component 1 has extension id "jebgalgnebhfojomionfpkfelancnnkf", and
 // the RSA public key the following hash:
@@ -46,52 +75,36 @@ const uint8 ihfo_hash[] = {0x87, 0x5e, 0xa1, 0xa6, 0x9f, 0x85, 0xd1, 0x1e,
 
 class TestConfigurator : public ComponentUpdateService::Configurator {
  public:
-  explicit TestConfigurator();
-
+  TestConfigurator();
   virtual ~TestConfigurator();
 
+  // Overrrides for ComponentUpdateService::Configurator.
   virtual int InitialDelay() OVERRIDE;
+  virtual int NextCheckDelay() OVERRIDE;
+  virtual int StepDelay() OVERRIDE;
+  virtual int StepDelayMedium() OVERRIDE;
+  virtual int MinimumReCheckWait() OVERRIDE;
+  virtual int OnDemandDelay() OVERRIDE;
+  virtual GURL UpdateUrl() OVERRIDE;
+  virtual GURL PingUrl() OVERRIDE;
+  virtual std::string ExtraRequestParams() OVERRIDE;
+  virtual size_t UrlSizeLimit() OVERRIDE;
+  virtual net::URLRequestContextGetter* RequestContext() OVERRIDE;
+  virtual bool InProcess() OVERRIDE;
+  virtual ComponentPatcher* CreateComponentPatcher() OVERRIDE;
+  virtual bool DeltasEnabled() const OVERRIDE;
+  virtual bool UseBackgroundDownloader() const OVERRIDE;
 
   typedef std::pair<CrxComponent*, int> CheckAtLoopCount;
-
-  virtual int NextCheckDelay() OVERRIDE;
-
-  virtual int StepDelay() OVERRIDE;
-
-  virtual int StepDelayMedium() OVERRIDE;
-
-  virtual int MinimumReCheckWait() OVERRIDE;
-
-  virtual int OnDemandDelay() OVERRIDE;
-
-  virtual GURL UpdateUrl() OVERRIDE;
-
-  virtual GURL PingUrl() OVERRIDE;
-
-  virtual const char* ExtraRequestParams() OVERRIDE;
-
-  virtual size_t UrlSizeLimit() OVERRIDE;
-
-  virtual net::URLRequestContextGetter* RequestContext() OVERRIDE;
-
-  // Don't use the utility process to decode files.
-  virtual bool InProcess() OVERRIDE;
-
-  virtual ComponentPatcher* CreateComponentPatcher() OVERRIDE;
-
-  virtual bool DeltasEnabled() const OVERRIDE;
-
   void SetLoopCount(int times);
-
   void SetRecheckTime(int seconds);
-
   void SetOnDemandTime(int seconds);
-
   void SetComponentUpdateService(ComponentUpdateService* cus);
-
   void SetQuitClosure(const base::Closure& quit_closure);
+  void SetInitialDelay(int seconds);
 
  private:
+  int initial_time_;
   int times_;
   int recheck_time_;
   int ondemand_time_;
@@ -113,6 +126,8 @@ class ComponentUpdaterTest : public testing::Test {
 
   virtual ~ComponentUpdaterTest();
 
+  virtual void SetUp();
+
   virtual void TearDown();
 
   ComponentUpdateService* component_updater();
@@ -131,6 +146,10 @@ class ComponentUpdaterTest : public testing::Test {
   void RunThreads();
   void RunThreadsUntilIdle();
 
+  scoped_ptr<InterceptorFactory> interceptor_factory_;
+  URLRequestPostInterceptor* post_interceptor_;   // Owned by the factory.
+
+  scoped_ptr<GetInterceptor> get_interceptor_;
  private:
   TestConfigurator* test_config_;
   base::FilePath test_data_dir_;
@@ -140,30 +159,6 @@ class ComponentUpdaterTest : public testing::Test {
 
 const char expected_crx_url[] =
     "http://localhost/download/jebgalgnebhfojomionfpkfelancnnkf.crx";
-
-class PingChecker : public RequestCounter {
- public:
-  explicit PingChecker(const std::map<std::string, std::string>& attributes);
-
-  virtual ~PingChecker();
-
-  virtual void Trial(net::URLRequest* request) OVERRIDE;
-
-  int NumHits() const {
-    return num_hits_;
-  }
-  int NumMisses() const {
-    return num_misses_;
-  }
-  std::string GetPings() const;
-
- private:
-  std::vector<std::string> pings_;
-  int num_hits_;
-  int num_misses_;
-  const std::map<std::string, std::string> attributes_;
-  virtual bool Test(net::URLRequest* request);
-};
 
 class MockComponentObserver : public ComponentObserver {
  public:
@@ -177,5 +172,7 @@ class OnDemandTester {
   static ComponentUpdateService::Status OnDemand(
       ComponentUpdateService* cus, const std::string& component_id);
 };
+
+}  // namespace component_updater
 
 #endif  // CHROME_BROWSER_COMPONENT_UPDATER_TEST_COMPONENT_UPDATER_SERVICE_UNITTEST_H_

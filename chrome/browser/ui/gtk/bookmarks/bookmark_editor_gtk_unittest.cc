@@ -20,6 +20,8 @@
 #include "content/public/test/test_browser_thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using base::ASCIIToUTF16;
+using base::UTF16ToUTF8;
 using base::Time;
 using base::TimeDelta;
 using content::BrowserThread;
@@ -111,7 +113,7 @@ TEST_F(BookmarkEditorGtkTest, ModelsMatch) {
       profile_.get(),
       NULL,
       BookmarkEditor::EditDetails::AddNodeInFolder(
-          NULL, -1, GURL(), string16()),
+          NULL, -1, GURL(), base::string16()),
       BookmarkEditor::SHOW_TREE);
 
   // The root should have two or three children, one for the bookmark bar node,
@@ -286,7 +288,7 @@ TEST_F(BookmarkEditorGtkTest, NewURL) {
       profile_.get(),
       NULL,
       BookmarkEditor::EditDetails::AddNodeInFolder(
-          NULL, -1, GURL(), string16()),
+          NULL, -1, GURL(), base::string16()),
       BookmarkEditor::SHOW_TREE);
 
   gtk_entry_set_text(GTK_ENTRY(editor.url_entry_),

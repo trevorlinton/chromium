@@ -43,10 +43,12 @@
           '<(PRODUCT_DIR)',
           '<(PRODUCT_DIR)/unit_tests<(EXECUTABLE_SUFFIX)',
           '--brave-new-test-launcher',
+          '--test-launcher-bot-mode',
         ],
         'isolate_dependency_tracked': [
           '../testing/xvfb.py',
           '<(PRODUCT_DIR)/libffmpegsumo.so',
+          '<(PRODUCT_DIR)/libosmesa.so',
           '<(PRODUCT_DIR)/locales/fr.pak',
           '<(PRODUCT_DIR)/xdisplaycheck<(EXECUTABLE_SUFFIX)',
         ],
@@ -72,13 +74,20 @@
         ],
       },
     }],
+    ['OS=="linux" or OS=="mac"', {
+      'variables': {
+        # Can't be enabled on Windows due to http://crbug.com/342913
+        'read_only': 1,
+      },
+    }],
     ['OS=="mac"', {
       'variables': {
         'isolate_dependency_tracked': [
           '<(PRODUCT_DIR)/ffmpegsumo.so',
+          '<(PRODUCT_DIR)/osmesa.so',
         ],
         'isolate_dependency_untracked': [
-          '<(PRODUCT_DIR)/Chromium Framework.framework/',
+          '<(PRODUCT_DIR)/<(mac_product_name) Framework.framework/',
         ],
       },
     }],
@@ -88,6 +97,7 @@
           '../testing/test_env.py',
           '<(PRODUCT_DIR)/unit_tests<(EXECUTABLE_SUFFIX)',
           '--brave-new-test-launcher',
+          '--test-launcher-bot-mode',
         ],
         'isolate_dependency_untracked': [
           '<(PRODUCT_DIR)/test_data/chrome/browser/resources/google_now/',
@@ -100,16 +110,19 @@
     ['OS=="win"', {
       'variables': {
         'isolate_dependency_tracked': [
+          '<(PRODUCT_DIR)/chrome_elf.dll',
           '<(PRODUCT_DIR)/ffmpegsumo.dll',
-          '<(PRODUCT_DIR)/icudt.dll',
+          '<(PRODUCT_DIR)/osmesa.dll',
         ],
         'isolate_dependency_untracked': [
           '../ppapi/lib/gl/include/KHR/',
           '../skia/ext/data/',
-          '../third_party/python_26/',
           '../ui/base/glib/',
         ],
       },
     }],
+  ],
+  'includes': [
+    '../third_party/icu/icu.isolate',
   ],
 }

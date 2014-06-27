@@ -5,9 +5,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
 #include "base/strings/stringprintf.h"
-#include "chrome/browser/extensions/api/dns/host_resolver_wrapper.h"
 #include "chrome/browser/extensions/api/dns/mock_host_resolver_creator.h"
-#include "chrome/browser/extensions/api/socket/socket_api.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -17,6 +15,8 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "extensions/browser/api/dns/host_resolver_wrapper.h"
+#include "extensions/browser/api/socket/socket_api.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/spawned_test_server/spawned_test_server.h"
 
@@ -25,13 +25,6 @@ using extensions::Extension;
 namespace utils = extension_function_test_utils;
 
 namespace {
-
-// TODO(jschuh): Hanging plugin tests. crbug.com/244653
-#if defined(OS_WIN) && defined(ARCH_CPU_X86_64)
-#define MAYBE(x) DISABLED_##x
-#else
-#define MAYBE(x) x
-#endif
 
 const std::string kHostname = "127.0.0.1";
 const int kPort = 8888;
@@ -80,6 +73,10 @@ class SocketPpapiTest : public SocketApiTest {
     // going to move the Pepper API tests to a new place, use a string literal
     // for now.
     command_line->AppendSwitch("enable-pepper-testing");
+  }
+
+  virtual void SetUpOnMainThread() OVERRIDE {
+    SocketApiTest::SetUpOnMainThread();
 
     PathService::Get(chrome::DIR_GEN_TEST_DATA, &app_dir_);
     app_dir_ = app_dir_.AppendASCII("ppapi/tests/extensions/socket/newlib");
@@ -90,10 +87,11 @@ class SocketPpapiTest : public SocketApiTest {
     const Extension* extension = LoadExtension(app_dir_);
     ASSERT_TRUE(extension);
 
-    AppLaunchParams params(browser()->profile(), extension,
-                                   extension_misc::LAUNCH_NONE,
-                                   NEW_WINDOW);
-    params.command_line = CommandLine::ForCurrentProcess();
+    AppLaunchParams params(browser()->profile(),
+                           extension,
+                           extensions::LAUNCH_CONTAINER_NONE,
+                           NEW_WINDOW);
+    params.command_line = *CommandLine::ForCurrentProcess();
     OpenApplication(params);
   }
 
@@ -253,7 +251,14 @@ IN_PROC_BROWSER_TEST_F(SocketApiTest, SocketMulticast) {
 }
 
 #if !defined(DISABLE_NACL)
-IN_PROC_BROWSER_TEST_F(SocketPpapiTest, MAYBE(UDP)) {
+
+// TODO(jschuh): Hanging plugin tests. crbug.com/244653
+#if defined(OS_WIN) && defined(ARCH_CPU_X86_64)
+#define MAYBE_UDP DISABLED_UDP
+#else
+#define MAYBE_UDP UDP
+#endif
+IN_PROC_BROWSER_TEST_F(SocketPpapiTest, MAYBE_UDP) {
   scoped_ptr<net::SpawnedTestServer> test_server(
       new net::SpawnedTestServer(
           net::SpawnedTestServer::TYPE_UDP_ECHO,
@@ -282,7 +287,13 @@ IN_PROC_BROWSER_TEST_F(SocketPpapiTest, MAYBE(UDP)) {
   EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
 }
 
-IN_PROC_BROWSER_TEST_F(SocketPpapiTest, MAYBE(TCP)) {
+// TODO(jschuh): Hanging plugin tests. crbug.com/244653
+#if defined(OS_WIN) && defined(ARCH_CPU_X86_64)
+#define MAYBE_TCP DISABLED_TCP
+#else
+#define MAYBE_TCP TCP
+#endif
+IN_PROC_BROWSER_TEST_F(SocketPpapiTest, MAYBE_TCP) {
   scoped_ptr<net::SpawnedTestServer> test_server(
       new net::SpawnedTestServer(
           net::SpawnedTestServer::TYPE_TCP_ECHO,
@@ -311,7 +322,15 @@ IN_PROC_BROWSER_TEST_F(SocketPpapiTest, MAYBE(TCP)) {
   EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
 }
 
-IN_PROC_BROWSER_TEST_F(SocketPpapiTest, MAYBE(TCPServer)) {
+// TODO(jschuh): Hanging plugin tests. crbug.com/244653
+// Also fails on official Mac builds. See http://crbug.com/312916
+#if (defined(OS_WIN) && defined(ARCH_CPU_X86_64)) || \
+    (defined(OS_MACOSX) && defined(GOOGLE_CHROME_BUILD))
+#define MAYBE_TCPServer DISABLED_TCPServer
+#else
+#define MAYBE_TCPServer TCPServer
+#endif
+IN_PROC_BROWSER_TEST_F(SocketPpapiTest, MAYBE_TCPServer) {
   ResultCatcher catcher;
   catcher.RestrictToProfile(browser()->profile());
   ExtensionTestMessageListener listener("info_please", true);

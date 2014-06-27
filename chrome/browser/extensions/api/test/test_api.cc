@@ -9,14 +9,14 @@
 #include "base/command_line.h"
 #include "base/memory/singleton.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_function_dispatcher.h"
-#include "chrome/browser/extensions/extensions_quota_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/api/test.h"
 #include "content/public/browser/notification_service.h"
+#include "extensions/browser/extension_function_dispatcher.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/quota_service.h"
 
 namespace {
 
@@ -37,6 +37,7 @@ namespace CreateIncognitoTab = api::test::CreateIncognitoTab;
 namespace Log = api::test::Log;
 namespace NotifyFail = api::test::NotifyFail;
 namespace PassMessage = api::test::PassMessage;
+namespace WaitForRoundTrip = api::test::WaitForRoundTrip;
 
 TestExtensionFunction::~TestExtensionFunction() {}
 
@@ -54,7 +55,7 @@ TestNotifyPassFunction::~TestNotifyPassFunction() {}
 bool TestNotifyPassFunction::RunImpl() {
   content::NotificationService::current()->Notify(
       chrome::NOTIFICATION_EXTENSION_TEST_PASSED,
-      content::Source<Profile>(dispatcher()->profile()),
+      content::Source<content::BrowserContext>(dispatcher()->browser_context()),
       content::NotificationService::NoDetails());
   return true;
 }
@@ -66,7 +67,7 @@ bool TestNotifyFailFunction::RunImpl() {
   EXTENSION_FUNCTION_VALIDATE(params.get());
   content::NotificationService::current()->Notify(
       chrome::NOTIFICATION_EXTENSION_TEST_FAILED,
-      content::Source<Profile>(dispatcher()->profile()),
+      content::Source<content::BrowserContext>(dispatcher()->browser_context()),
       content::Details<std::string>(&params->message));
   return true;
 }
@@ -83,8 +84,7 @@ bool TestLogFunction::RunImpl() {
 TestResetQuotaFunction::~TestResetQuotaFunction() {}
 
 bool TestResetQuotaFunction::RunImpl() {
-  ExtensionService* service = GetProfile()->GetExtensionService();
-  ExtensionsQuotaService* quota = service->quota_service();
+  QuotaService* quota = ExtensionSystem::Get(GetProfile())->quota_service();
   quota->Purge();
   quota->violation_errors_.clear();
   return true;
@@ -106,7 +106,6 @@ bool TestSendMessageFunction::RunImpl() {
   scoped_ptr<PassMessage::Params> params(
       PassMessage::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
-  AddRef();  // balanced in Reply
   content::NotificationService::current()->Notify(
       chrome::NOTIFICATION_EXTENSION_TEST_MESSAGE,
       content::Source<TestSendMessageFunction>(this),
@@ -119,7 +118,6 @@ TestSendMessageFunction::~TestSendMessageFunction() {}
 void TestSendMessageFunction::Reply(const std::string& message) {
   SetResult(new base::StringValue(message));
   SendResponse(true);
-  Release();  // balanced in RunImpl
 }
 
 // static
@@ -149,6 +147,15 @@ bool TestGetConfigFunction::RunImpl() {
   }
 
   SetResult(test_config_state->config_state()->DeepCopy());
+  return true;
+}
+
+TestWaitForRoundTripFunction::~TestWaitForRoundTripFunction() {}
+
+bool TestWaitForRoundTripFunction::RunImpl() {
+  scoped_ptr<WaitForRoundTrip::Params> params(
+      WaitForRoundTrip::Params::Create(*args_));
+  SetResult(new base::StringValue(params->message));
   return true;
 }
 

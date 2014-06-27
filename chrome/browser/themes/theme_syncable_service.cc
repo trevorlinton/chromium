@@ -6,12 +6,13 @@
 
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/themes/theme_service.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/manifest_url_handler.h"
 #include "chrome/common/extensions/sync_helper.h"
+#include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
 #include "sync/protocol/sync.pb.h"
 #include "sync/protocol/theme_specifics.pb.h"
 
@@ -219,7 +220,7 @@ void ThemeSyncableService::SetCurrentThemeFromThemeSpecifics(
         return;
       }
       int disabled_reasons =
-          extensions_service->extension_prefs()->GetDisableReasons(id);
+          extensions::ExtensionPrefs::Get(profile_)->GetDisableReasons(id);
       if (!extensions_service->IsExtensionEnabled(id) &&
           disabled_reasons != extensions::Extension::DISABLE_USER_ACTION) {
         DVLOG(1) << "Theme " << id << " is disabled with reason "

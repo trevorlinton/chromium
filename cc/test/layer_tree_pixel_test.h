@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef CC_TEST_LAYER_TREE_PIXEL_TEST_H_
+#define CC_TEST_LAYER_TREE_PIXEL_TEST_H_
+
 #include <vector>
 
 #include "base/files/file_path.h"
@@ -9,11 +12,13 @@
 #include "base/memory/scoped_ptr.h"
 #include "cc/resources/single_release_callback.h"
 #include "cc/test/layer_tree_test.h"
-
-#ifndef CC_TEST_LAYER_TREE_PIXEL_TEST_H_
-#define CC_TEST_LAYER_TREE_PIXEL_TEST_H_
+#include "ui/gl/gl_implementation.h"
 
 class SkBitmap;
+
+namespace gpu {
+class GLInProcessContext;
+}
 
 namespace cc {
 class CopyOutputRequest;
@@ -31,6 +36,7 @@ class LayerTreePixelTest : public LayerTreeTest {
 
   virtual scoped_ptr<OutputSurface> CreateOutputSurface(bool fallback) OVERRIDE;
   virtual scoped_refptr<ContextProvider> OffscreenContextProvider() OVERRIDE;
+  virtual void CommitCompleteOnThread(LayerTreeHostImpl* impl) OVERRIDE;
 
   virtual scoped_ptr<CopyOutputRequest> CreateCopyOutputRequest();
 
@@ -43,14 +49,14 @@ class LayerTreePixelTest : public LayerTreeTest {
 
   void TryEndTest();
 
-  scoped_refptr<SolidColorLayer> CreateSolidColorLayer(gfx::Rect rect,
+  scoped_refptr<SolidColorLayer> CreateSolidColorLayer(const gfx::Rect& rect,
                                                        SkColor color);
   scoped_refptr<SolidColorLayer> CreateSolidColorLayerWithBorder(
-      gfx::Rect rect,
+      const gfx::Rect& rect,
       SkColor color,
       int border_width,
       SkColor border_color);
-  scoped_refptr<TextureLayer> CreateTextureLayer(gfx::Rect rect,
+  scoped_refptr<TextureLayer> CreateTextureLayer(const gfx::Rect& rect,
                                                  const SkBitmap& bitmap);
 
   enum PixelTestType {
@@ -70,7 +76,7 @@ class LayerTreePixelTest : public LayerTreeTest {
                                       base::FilePath file_name);
 
   scoped_ptr<SkBitmap> CopyTextureMailboxToBitmap(
-      gfx::Size size,
+      const gfx::Size& size,
       const TextureMailbox& texture_mailbox);
 
   void CopyBitmapToTextureMailboxAsTexture(
@@ -78,11 +84,10 @@ class LayerTreePixelTest : public LayerTreeTest {
       TextureMailbox* texture_mailbox,
       scoped_ptr<SingleReleaseCallback>* release_callback);
 
-  void ReleaseTextureMailbox(
-      scoped_ptr<WebKit::WebGraphicsContext3D> context3d,
-      uint32 texture,
-      uint32 sync_point,
-      bool lost_resource);
+  void ReleaseTextureMailbox(scoped_ptr<gpu::GLInProcessContext> context,
+                             uint32 texture,
+                             uint32 sync_point,
+                             bool lost_resource);
 
   // Common CSS colors defined for tests to use.
   enum Colors {
@@ -91,6 +96,7 @@ class LayerTreePixelTest : public LayerTreeTest {
     kCSSGreen = 0xff008000,
   };
 
+  gfx::DisableNullDrawGLBindings enable_pixel_output_;
   scoped_ptr<PixelComparator> pixel_comparator_;
   PixelTestType test_type_;
   scoped_refptr<Layer> content_root_;

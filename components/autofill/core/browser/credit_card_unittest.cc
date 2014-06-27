@@ -5,13 +5,15 @@
 #include "base/basictypes.h"
 #include "base/guid.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/autofill/core/browser/autofill_common_test.h"
+#include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/credit_card.h"
 #include "components/autofill/core/browser/validation.h"
 #include "components/autofill/core/common/form_field_data.h"
-#include "grit/webkit_resources.h"
+#include "grit/component_scaled_resources.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using base::ASCIIToUTF16;
 
 namespace autofill {
 namespace {

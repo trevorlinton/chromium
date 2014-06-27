@@ -101,7 +101,7 @@ AUAudioInputStream::AUAudioInputStream(
 
   requested_size_bytes_ = requested_size_frames * format_.mBytesPerFrame;
   DVLOG(1) << "Requested buffer size in bytes : " << requested_size_bytes_;
-  DLOG_IF(INFO, requested_size_frames > number_of_frames_) << "FIFO is used";
+  DVLOG_IF(0, requested_size_frames > number_of_frames_) << "FIFO is used";
 
   const int number_of_bytes = number_of_frames_ * format_.mBytesPerFrame;
   fifo_delay_bytes_ = requested_size_bytes_ - number_of_bytes;
@@ -289,9 +289,10 @@ void AUAudioInputStream::Stop() {
     return;
   StopAgc();
   OSStatus result = AudioOutputUnitStop(audio_unit_);
-  if (result == noErr) {
-    started_ = false;
-  }
+  DCHECK_EQ(result, noErr);
+  started_ = false;
+  sink_ = NULL;
+
   OSSTATUS_DLOG_IF(ERROR, result != noErr, result)
       << "Failed to stop acquiring data";
 }
@@ -309,10 +310,6 @@ void AUAudioInputStream::Close() {
     // Terminates our connection to the AUHAL component.
     CloseComponent(audio_unit_);
     audio_unit_ = 0;
-  }
-  if (sink_) {
-    sink_->OnClose(this);
-    sink_ = NULL;
   }
 
   // Inform the audio manager that we have been closed. This can cause our

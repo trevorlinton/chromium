@@ -132,6 +132,17 @@ ppapi::host::PpapiHost* RendererPpapiHostImpl::GetPpapiHost() {
   return ppapi_host_.get();
 }
 
+RenderFrame* RendererPpapiHostImpl::GetRenderFrameForInstance(
+    PP_Instance instance) const  {
+  PepperPluginInstanceImpl* instance_object = GetAndValidateInstance(instance);
+  if (!instance_object)
+    return NULL;
+
+  // Since we're the embedder, we can make assumptions about the helper on
+  // the instance and get back to our RenderFrame.
+  return instance_object->render_frame();
+}
+
 RenderView* RendererPpapiHostImpl::GetRenderViewForInstance(
     PP_Instance instance) const {
   PepperPluginInstanceImpl* instance_object = GetAndValidateInstance(instance);
@@ -140,7 +151,7 @@ RenderView* RendererPpapiHostImpl::GetRenderViewForInstance(
 
   // Since we're the embedder, we can make assumptions about the helper on
   // the instance and get back to our RenderView.
-  return instance_object->render_view();
+  return instance_object->render_frame()->render_view();
 }
 
 bool RendererPpapiHostImpl::IsValidInstance(PP_Instance instance) const {
@@ -152,7 +163,7 @@ PepperPluginInstance* RendererPpapiHostImpl::GetPluginInstance(
   return GetAndValidateInstance(instance);
 }
 
-WebKit::WebPluginContainer* RendererPpapiHostImpl::GetContainerForInstance(
+blink::WebPluginContainer* RendererPpapiHostImpl::GetContainerForInstance(
       PP_Instance instance) const {
   PepperPluginInstanceImpl* instance_object = GetAndValidateInstance(instance);
   if (!instance_object)
@@ -188,21 +199,14 @@ int RendererPpapiHostImpl::GetRoutingIDForWidget(PP_Instance instance) const {
   return GetRenderViewForInstance(instance)->GetRoutingID();
 }
 
-gfx::Point RendererPpapiHostImpl::PluginPointToRenderView(
+gfx::Point RendererPpapiHostImpl::PluginPointToRenderFrame(
     PP_Instance instance,
     const gfx::Point& pt) const {
   PepperPluginInstanceImpl* plugin_instance = GetAndValidateInstance(instance);
-  if (!plugin_instance)
+  if (!plugin_instance || plugin_instance->flash_fullscreen()) {
+    // Flash fullscreen is special in that it renders into its own separate,
+    // dedicated window.  So, do not offset the point.
     return pt;
-
-  RenderViewImpl* render_view = static_cast<RenderViewImpl*>(
-      GetRenderViewForInstance(instance));
-  if (plugin_instance->view_data().is_fullscreen ||
-      plugin_instance->flash_fullscreen()) {
-    WebKit::WebRect window_rect = render_view->windowRect();
-    WebKit::WebRect screen_rect = render_view->screenInfo().rect;
-    return gfx::Point(pt.x() - window_rect.x + screen_rect.x,
-                      pt.y() - window_rect.y + screen_rect.y);
   }
   return gfx::Point(pt.x() + plugin_instance->view_data().rect.point.x,
                     pt.y() + plugin_instance->view_data().rect.point.y);
@@ -231,9 +235,9 @@ void RendererPpapiHostImpl::CreateBrowserResourceHosts(
     PP_Instance instance,
     const std::vector<IPC::Message>& nested_msgs,
     const base::Callback<void(const std::vector<int>&)>& callback) const {
-  RenderView* render_view = GetRenderViewForInstance(instance);
+  RenderFrame* render_frame = GetRenderFrameForInstance(instance);
   PepperBrowserConnection* browser_connection =
-      PepperBrowserConnection::Get(render_view);
+      PepperBrowserConnection::Get(render_frame);
   if (!browser_connection) {
     base::MessageLoop::current()->PostTask(FROM_HERE,
         base::Bind(callback, std::vector<int>(nested_msgs.size(), 0)));
@@ -243,6 +247,14 @@ void RendererPpapiHostImpl::CreateBrowserResourceHosts(
                                           nested_msgs,
                                           callback);
   }
+}
+
+GURL RendererPpapiHostImpl::GetDocumentURL(PP_Instance instance) const {
+  PepperPluginInstanceImpl* instance_object = GetAndValidateInstance(instance);
+  if (!instance_object)
+    return GURL();
+
+  return instance_object->container()->element().document().url();
 }
 
 PepperPluginInstanceImpl* RendererPpapiHostImpl::GetAndValidateInstance(

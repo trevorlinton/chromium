@@ -21,7 +21,6 @@
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/size.h"
 #include "ui/message_center/message_center_style.h"
-#include "ui/message_center/views/message_center_focus_border.h"
 #include "ui/message_center/views/message_center_view.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
@@ -39,6 +38,7 @@
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/layout/grid_layout.h"
+#include "ui/views/painter.h"
 #include "ui/views/widget/widget.h"
 
 #if defined(USE_AURA)
@@ -124,25 +124,39 @@ const int kComputedTitleTopMargin =
 const int kComputedTitleElementSpacing =
     settings::kDescriptionToSwitcherSpace - kButtonPainterInsets - 1;
 
+// A function to create a focus border.
+scoped_ptr<views::Painter> CreateFocusPainter() {
+  return views::Painter::CreateSolidFocusPainter(kFocusBorderColor,
+                                                 gfx::Insets(1, 2, 3, 2));
+}
+
+// EntryView ------------------------------------------------------------------
+
 // The view to guarantee the 48px height and place the contents at the
 // middle. It also guarantee the left margin.
 class EntryView : public views::View {
  public:
-  EntryView(views::View* contents);
-  virtual ~EntryView(); // Overridden from views::View:
+  explicit EntryView(views::View* contents);
+  virtual ~EntryView();
+
+  // views::View:
   virtual void Layout() OVERRIDE;
   virtual gfx::Size GetPreferredSize() OVERRIDE;
-  virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE;
+  virtual void GetAccessibleState(ui::AXViewState* state) OVERRIDE;
   virtual void OnFocus() OVERRIDE;
   virtual bool OnKeyPressed(const ui::KeyEvent& event) OVERRIDE;
   virtual bool OnKeyReleased(const ui::KeyEvent& event) OVERRIDE;
+  virtual void OnPaint(gfx::Canvas* canvas) OVERRIDE;
+  virtual void OnBlur() OVERRIDE;
 
  private:
+  scoped_ptr<views::Painter> focus_painter_;
+
   DISALLOW_COPY_AND_ASSIGN(EntryView);
 };
 
-EntryView::EntryView(views::View* contents) {
-  set_focus_border(new MessageCenterFocusBorder());
+EntryView::EntryView(views::View* contents)
+    : focus_painter_(CreateFocusPainter()) {
   AddChildView(contents);
 }
 
@@ -164,7 +178,7 @@ gfx::Size EntryView::GetPreferredSize() {
   return size;
 }
 
-void EntryView::GetAccessibleState(ui::AccessibleViewState* state) {
+void EntryView::GetAccessibleState(ui::AXViewState* state) {
   DCHECK_EQ(1, child_count());
   child_at(0)->GetAccessibleState(state);
 }
@@ -172,6 +186,8 @@ void EntryView::GetAccessibleState(ui::AccessibleViewState* state) {
 void EntryView::OnFocus() {
   views::View::OnFocus();
   ScrollRectToVisible(GetLocalBounds());
+  // We render differently when focused.
+  SchedulePaint();
 }
 
 bool EntryView::OnKeyPressed(const ui::KeyEvent& event) {
@@ -182,60 +198,40 @@ bool EntryView::OnKeyReleased(const ui::KeyEvent& event) {
   return child_at(0)->OnKeyReleased(event);
 }
 
-}  // namespace
-
-// NotifierGroupMenuButtonBorder ///////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-class NotifierGroupMenuButtonBorder : public views::TextButtonDefaultBorder {
- public:
-  NotifierGroupMenuButtonBorder();
-
- private:
-  virtual ~NotifierGroupMenuButtonBorder();
-};
-
-NotifierGroupMenuButtonBorder::NotifierGroupMenuButtonBorder()
-    : views::TextButtonDefaultBorder() {
-  ui::ResourceBundle& rb = ResourceBundle::GetSharedInstance();
-
-  gfx::Insets insets(kButtonPainterInsets,
-                     kButtonPainterInsets,
-                     kButtonPainterInsets,
-                     kButtonPainterInsets);
-
-  set_normal_painter(views::Painter::CreateImagePainter(
-      *rb.GetImageSkiaNamed(IDR_BUTTON_NORMAL), insets));
-  set_hot_painter(views::Painter::CreateImagePainter(
-      *rb.GetImageSkiaNamed(IDR_BUTTON_HOVER), insets));
-  set_pushed_painter(views::Painter::CreateImagePainter(
-      *rb.GetImageSkiaNamed(IDR_BUTTON_PRESSED), insets));
-
-  SetInsets(gfx::Insets(kMenuButtonVerticalPadding,
-                        kMenuButtonLeftPadding,
-                        kMenuButtonVerticalPadding,
-                        kMenuButtonRightPadding));
+void EntryView::OnPaint(gfx::Canvas* canvas) {
+  View::OnPaint(canvas);
+  views::Painter::PaintFocusPainter(this, canvas, focus_painter_.get());
 }
 
-NotifierGroupMenuButtonBorder::~NotifierGroupMenuButtonBorder() {}
+void EntryView::OnBlur() {
+  View::OnBlur();
+  // We render differently when focused.
+  SchedulePaint();
+}
 
-// NotifierGroupMenuModel //////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
+}  // namespace
+
+
+// NotifierGroupMenuModel -----------------------------------------------------
+
 class NotifierGroupMenuModel : public ui::SimpleMenuModel,
                                public ui::SimpleMenuModel::Delegate {
  public:
   NotifierGroupMenuModel(NotifierSettingsProvider* notifier_settings_provider);
   virtual ~NotifierGroupMenuModel();
 
-  // Overridden from ui::SimpleMenuModel::Delegate:
+  // ui::SimpleMenuModel::Delegate:
   virtual bool IsCommandIdChecked(int command_id) const OVERRIDE;
   virtual bool IsCommandIdEnabled(int command_id) const OVERRIDE;
-  virtual bool GetAcceleratorForCommandId(int command_id,
-                                          ui::Accelerator* accelerator)
-      OVERRIDE;
+  virtual bool GetAcceleratorForCommandId(
+      int command_id,
+      ui::Accelerator* accelerator) OVERRIDE;
   virtual void ExecuteCommand(int command_id, int event_flags) OVERRIDE;
 
  private:
   NotifierSettingsProvider* notifier_settings_provider_;
+
+  DISALLOW_COPY_AND_ASSIGN(NotifierGroupMenuModel);
 };
 
 NotifierGroupMenuModel::NotifierGroupMenuModel(
@@ -258,10 +254,8 @@ NotifierGroupMenuModel::~NotifierGroupMenuModel() {}
 
 bool NotifierGroupMenuModel::IsCommandIdChecked(int command_id) const {
   // If there's no provider, assume only one notifier group - the active one.
-  if (!notifier_settings_provider_)
-    return true;
-
-  return notifier_settings_provider_->IsNotifierGroupActiveAt(command_id);
+  return !notifier_settings_provider_ ||
+      notifier_settings_provider_->IsNotifierGroupActiveAt(command_id);
 }
 
 bool NotifierGroupMenuModel::IsCommandIdEnabled(int command_id) const {
@@ -287,6 +281,9 @@ void NotifierGroupMenuModel::ExecuteCommand(int command_id, int event_flags) {
   notifier_settings_provider_->SwitchToNotifierGroup(notifier_group_index);
 }
 
+
+// NotifierSettingsView::NotifierButton ---------------------------------------
+
 // We do not use views::Checkbox class directly because it doesn't support
 // showing 'icon'.
 NotifierSettingsView::NotifierButton::NotifierButton(
@@ -298,7 +295,7 @@ NotifierSettingsView::NotifierButton::NotifierButton(
       notifier_(notifier),
       icon_view_(new views::ImageView()),
       name_view_(new views::Label(notifier_->name)),
-      checkbox_(new views::Checkbox(string16())),
+      checkbox_(new views::Checkbox(base::string16())),
       learn_more_(NULL) {
   DCHECK(provider);
   DCHECK(notifier);
@@ -309,15 +306,15 @@ NotifierSettingsView::NotifierButton::NotifierButton(
 
   checkbox_->SetChecked(notifier_->enabled);
   checkbox_->set_listener(this);
-  checkbox_->set_focusable(false);
+  checkbox_->SetFocusable(false);
   checkbox_->SetAccessibleName(notifier_->name);
 
   if (ShouldHaveLearnMoreButton()) {
     // Create a more-info button that will be right-aligned.
     learn_more_ = new views::ImageButton(this);
-    learn_more_->set_focus_border(new MessageCenterFocusBorder());
+    learn_more_->SetFocusPainter(CreateFocusPainter());
     learn_more_->set_request_focus_on_press(false);
-    learn_more_->set_focusable(true);
+    learn_more_->SetFocusable(true);
 
     ui::ResourceBundle& rb = ResourceBundle::GetSharedInstance();
     learn_more_->SetImage(
@@ -336,7 +333,7 @@ NotifierSettingsView::NotifierButton::NotifierButton(
         (settings::kLearnMoreTargetHeight - settings::kLearnMoreSize) / 2;
     // The image itself is quite small, this large invisible border creates a
     // much bigger click target.
-    learn_more_->set_border(
+    learn_more_->SetBorder(
         views::Border::CreateEmptyBorder(learn_more_border_height,
                                          learn_more_border_width,
                                          learn_more_border_height,
@@ -387,7 +384,8 @@ void NotifierSettingsView::NotifierButton::SendLearnMorePressedForTest() {
     return;
   gfx::Point point(110, 120);
   ui::MouseEvent pressed(
-      ui::ET_MOUSE_PRESSED, point, point, ui::EF_LEFT_MOUSE_BUTTON);
+      ui::ET_MOUSE_PRESSED, point, point, ui::EF_LEFT_MOUSE_BUTTON,
+      ui::EF_LEFT_MOUSE_BUTTON);
   ButtonPressed(learn_more_, pressed);
 }
 
@@ -408,7 +406,7 @@ void NotifierSettingsView::NotifierButton::ButtonPressed(
 }
 
 void NotifierSettingsView::NotifierButton::GetAccessibleState(
-    ui::AccessibleViewState* state) {
+    ui::AXViewState* state) {
   static_cast<views::View*>(checkbox_)->GetAccessibleState(state);
 }
 
@@ -473,6 +471,9 @@ void NotifierSettingsView::NotifierButton::GridChanged(bool has_learn_more,
   Layout();
 }
 
+
+// NotifierSettingsView -------------------------------------------------------
+
 NotifierSettingsView::NotifierSettingsView(NotifierSettingsProvider* provider)
     : title_arrow_(NULL),
       title_label_(NULL),
@@ -483,21 +484,18 @@ NotifierSettingsView::NotifierSettingsView(NotifierSettingsProvider* provider)
   if (provider_)
     provider_->AddObserver(this);
 
-  set_focusable(true);
-  set_focus_border(NULL);
+  SetFocusable(true);
   set_background(
       views::Background::CreateSolidBackground(kMessageCenterBackgroundColor));
-  if (get_use_acceleration_when_possible())
-    SetPaintToLayer(true);
+  SetPaintToLayer(true);
 
-  gfx::Font title_font =
-      ResourceBundle::GetSharedInstance().GetFont(ResourceBundle::MediumFont);
   title_label_ = new views::Label(
       l10n_util::GetStringUTF16(IDS_MESSAGE_CENTER_SETTINGS_BUTTON_LABEL),
-      title_font);
+      ui::ResourceBundle::GetSharedInstance().GetFontList(
+          ui::ResourceBundle::MediumFont));
   title_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   title_label_->SetMultiLine(true);
-  title_label_->set_border(
+  title_label_->SetBorder(
       views::Border::CreateEmptyBorder(kComputedTitleTopMargin,
                                        settings::kTitleMargin,
                                        kComputedTitleBottomMargin,
@@ -572,7 +570,7 @@ void NotifierSettingsView::UpdateContentsView(
 
   top_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   top_label->SetMultiLine(true);
-  top_label->set_border(views::Border::CreateEmptyBorder(
+  top_label->SetBorder(views::Border::CreateEmptyBorder(
       0,
       settings::kTitleMargin + kMenuButtonInnateMargin,
       0,
@@ -581,14 +579,29 @@ void NotifierSettingsView::UpdateContentsView(
 
   if (need_account_switcher) {
     const NotifierGroup& active_group = provider_->GetActiveNotifierGroup();
-    string16 notifier_group_text = active_group.login_info.empty() ?
+    base::string16 notifier_group_text = active_group.login_info.empty() ?
         active_group.name : active_group.login_info;
     notifier_group_selector_ =
         new views::MenuButton(NULL, notifier_group_text, this, true);
-    notifier_group_selector_->set_border(new NotifierGroupMenuButtonBorder);
-    notifier_group_selector_->set_focus_border(NULL);
+    scoped_ptr<views::TextButtonDefaultBorder> selector_border(
+        new views::TextButtonDefaultBorder());
+    ui::ResourceBundle* rb = &ResourceBundle::GetSharedInstance();
+    gfx::Insets painter_insets(kButtonPainterInsets, kButtonPainterInsets,
+                               kButtonPainterInsets, kButtonPainterInsets);
+    selector_border->set_normal_painter(views::Painter::CreateImagePainter(
+        *rb->GetImageSkiaNamed(IDR_BUTTON_NORMAL), painter_insets));
+    selector_border->set_hot_painter(views::Painter::CreateImagePainter(
+        *rb->GetImageSkiaNamed(IDR_BUTTON_HOVER), painter_insets));
+    selector_border->set_pushed_painter(views::Painter::CreateImagePainter(
+        *rb->GetImageSkiaNamed(IDR_BUTTON_PRESSED), painter_insets));
+    selector_border->SetInsets(gfx::Insets(
+        kMenuButtonVerticalPadding, kMenuButtonLeftPadding,
+        kMenuButtonVerticalPadding, kMenuButtonRightPadding));
+    notifier_group_selector_->SetBorder(
+        selector_border.PassAs<views::Border>());
+    notifier_group_selector_->SetFocusPainter(scoped_ptr<views::Painter>());
     notifier_group_selector_->set_animate_on_state_change(false);
-    notifier_group_selector_->set_focusable(true);
+    notifier_group_selector_->SetFocusable(true);
     contents_title_view->AddChildView(notifier_group_selector_);
   }
 
@@ -603,18 +616,18 @@ void NotifierSettingsView::UpdateContentsView(
     // border on the last notifier, as the spec leaves a space for it.
     scoped_ptr<views::Border> entry_border;
     if (i == notifier_count - 1) {
-      entry_border.reset(views::Border::CreateEmptyBorder(
-          0, 0, settings::kEntrySeparatorHeight, 0));
+      entry_border = views::Border::CreateEmptyBorder(
+          0, 0, settings::kEntrySeparatorHeight, 0);
     } else {
-      entry_border.reset(views::Border::CreateSolidSidedBorder(
-          0,
-          0,
-          settings::kEntrySeparatorHeight,
-          0,
-          settings::kEntrySeparatorColor));
+      entry_border =
+          views::Border::CreateSolidSidedBorder(0,
+                                                0,
+                                                settings::kEntrySeparatorHeight,
+                                                0,
+                                                settings::kEntrySeparatorColor);
     }
-    entry->set_border(entry_border.release());
-    entry->set_focusable(true);
+    entry->SetBorder(entry_border.Pass());
+    entry->SetFocusable(true);
     contents_view->AddChildView(entry);
     buttons_.insert(button);
   }

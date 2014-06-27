@@ -8,7 +8,6 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "grit/generated_resources.h"
-#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
 namespace {
@@ -23,9 +22,18 @@ namespace autofill {
 
 static const base::char16 kRangeSeparator = '|';
 
+// Street address is multi-line, except in countries where it shares a line
+// with other inputs (such as Coite d'Ivoire).
+bool DetailInput::IsMultiline() const {
+  return (type == ADDRESS_HOME_STREET_ADDRESS ||
+          type == ADDRESS_BILLING_STREET_ADDRESS) &&
+      length == DetailInput::LONG;
+}
+
 DialogNotification::DialogNotification() : type_(NONE) {}
 
-DialogNotification::DialogNotification(Type type, const string16& display_text)
+DialogNotification::DialogNotification(Type type,
+                                       const base::string16& display_text)
     : type_(type),
       display_text_(display_text),
       checked_(false) {
@@ -36,7 +44,7 @@ DialogNotification::DialogNotification(Type type, const string16& display_text)
     size_t start = pieces[0].size();
     size_t end = start + pieces[1].size();
     link_range_ = gfx::Range(start, end);
-    display_text_ = JoinString(pieces, string16());
+    display_text_ = JoinString(pieces, base::string16());
   }
 }
 
@@ -44,7 +52,6 @@ DialogNotification::~DialogNotification() {}
 
 SkColor DialogNotification::GetBackgroundColor() const {
   switch (type_) {
-    case DialogNotification::EXPLANATORY_MESSAGE:
     case DialogNotification::WALLET_USAGE_CONFIRMATION:
       return SkColorSetRGB(0xf5, 0xf5, 0xf5);
     case DialogNotification::REQUIRED_ACTION:
@@ -52,7 +59,6 @@ SkColor DialogNotification::GetBackgroundColor() const {
       return SkColorSetRGB(0xfc, 0xf3, 0xbf);
     case DialogNotification::DEVELOPER_WARNING:
     case DialogNotification::SECURITY_WARNING:
-    case DialogNotification::VALIDATION_ERROR:
       return kWarningColor;
     case DialogNotification::NONE:
       return SK_ColorTRANSPARENT;
@@ -64,14 +70,12 @@ SkColor DialogNotification::GetBackgroundColor() const {
 
 SkColor DialogNotification::GetBorderColor() const {
   switch (type_) {
-    case DialogNotification::EXPLANATORY_MESSAGE:
     case DialogNotification::WALLET_USAGE_CONFIRMATION:
       return SkColorSetRGB(0xe5, 0xe5, 0xe5);
     case DialogNotification::REQUIRED_ACTION:
     case DialogNotification::WALLET_ERROR:
     case DialogNotification::DEVELOPER_WARNING:
     case DialogNotification::SECURITY_WARNING:
-    case DialogNotification::VALIDATION_ERROR:
     case DialogNotification::NONE:
       return GetBackgroundColor();
   }
@@ -84,12 +88,10 @@ SkColor DialogNotification::GetTextColor() const {
   switch (type_) {
     case DialogNotification::REQUIRED_ACTION:
     case DialogNotification::WALLET_ERROR:
-    case DialogNotification::EXPLANATORY_MESSAGE:
     case DialogNotification::WALLET_USAGE_CONFIRMATION:
       return SkColorSetRGB(102, 102, 102);
     case DialogNotification::DEVELOPER_WARNING:
     case DialogNotification::SECURITY_WARNING:
-    case DialogNotification::VALIDATION_ERROR:
       return SK_ColorWHITE;
     case DialogNotification::NONE:
       return SK_ColorTRANSPARENT;
@@ -100,8 +102,7 @@ SkColor DialogNotification::GetTextColor() const {
 }
 
 bool DialogNotification::HasArrow() const {
-  return type_ == DialogNotification::EXPLANATORY_MESSAGE ||
-         type_ == DialogNotification::WALLET_ERROR ||
+  return type_ == DialogNotification::WALLET_ERROR ||
          type_ == DialogNotification::WALLET_USAGE_CONFIRMATION;
 }
 
@@ -113,12 +114,13 @@ SkColor const kWarningColor = SkColorSetRGB(0xde, 0x49, 0x32);
 
 SuggestionState::SuggestionState()
     : visible(false) {}
-SuggestionState::SuggestionState(bool visible,
-                                 const string16& vertically_compact_text,
-                                 const string16& horizontally_compact_text,
-                                 const gfx::Image& icon,
-                                 const string16& extra_text,
-                                 const gfx::Image& extra_icon)
+SuggestionState::SuggestionState(
+    bool visible,
+    const base::string16& vertically_compact_text,
+    const base::string16& horizontally_compact_text,
+    const gfx::Image& icon,
+    const base::string16& extra_text,
+    const gfx::Image& extra_icon)
     : visible(visible),
       vertically_compact_text(vertically_compact_text),
       horizontally_compact_text(horizontally_compact_text),
@@ -143,7 +145,14 @@ ValidityMessages::~ValidityMessages() {}
 
 void ValidityMessages::Set(
     ServerFieldType field, const ValidityMessage& message) {
-  messages_.erase(field);
+  MessageMap::iterator iter = messages_.find(field);
+  if (iter != messages_.end()) {
+    if (!iter->second.text.empty())
+      return;
+
+    messages_.erase(iter);
+  }
+
   messages_.insert(MessageMap::value_type(field, message));
 }
 

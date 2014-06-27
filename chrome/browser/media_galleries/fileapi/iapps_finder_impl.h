@@ -8,15 +8,18 @@
 #include <string>
 
 #include "base/callback.h"
+#include "base/files/file_path.h"
 #include "chrome/browser/media_galleries/fileapi/iapps_finder.h"
-#include "chrome/browser/storage_monitor/storage_info.h"
+#include "components/storage_monitor/storage_info.h"
 
 #if defined(OS_MACOSX)
 
 class MacPreferences;
 #if defined(__OBJC__)
+@class NSArray;
 @class NSString;
 #else  // __OBJC__
+class NSArray;
 class NSString;
 #endif  // __OBJC__
 
@@ -34,6 +37,9 @@ extern NSString* const kITunesRecentDatabasePathsKey;
 // it.
 void SetMacPreferencesForTesting(MacPreferences* preferences);
 
+// Returns an NSArray with a single string entry which is a path value.
+NSArray* NSArrayFromFilePath(const base::FilePath& path);
+
 #endif  // OS_MACOSX
 
 typedef base::Callback<void(const IAppsFinderCallback&)> IAppsFinderTask;
@@ -42,7 +48,8 @@ typedef base::Callback<void(const IAppsFinderCallback&)> IAppsFinderTask;
 // bouncing to the FILE thread to run |task| and then turning the result into a
 // device id and posting it to |callback| on the UI thread.  If |task| does not
 // find the iApps's library, |callback| gets an empty string.
-void FindIAppsOnFileThread(StorageInfo::Type type, const IAppsFinderTask& task,
+void FindIAppsOnFileThread(storage_monitor::StorageInfo::Type type,
+                           const IAppsFinderTask& task,
                            const IAppsFinderCallback& callback);
 
 }  // namespace iapps

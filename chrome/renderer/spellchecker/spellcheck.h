@@ -8,10 +8,10 @@
 #include <string>
 #include <vector>
 
+#include "base/files/file.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/platform_file.h"
 #include "base/strings/string16.h"
 #include "chrome/renderer/spellchecker/custom_dictionary_engine.h"
 #include "chrome/renderer/spellchecker/spellcheck_language.h"
@@ -21,7 +21,7 @@
 
 struct SpellCheckResult;
 
-namespace WebKit {
+namespace blink {
 class WebTextCheckingCompletion;
 struct WebTextCheckingResult;
 }
@@ -44,7 +44,7 @@ class SpellCheck : public content::RenderProcessObserver,
   virtual ~SpellCheck();
 
   // TODO: Try to move that all to SpellcheckLanguage.
-  void Init(base::PlatformFile file,
+  void Init(base::File file,
             const std::set<std::string>& custom_words,
             const std::string& language);
 
@@ -66,19 +66,19 @@ class SpellCheck : public content::RenderProcessObserver,
   // If the word is spelled correctly, the vector is empty.
   // If optional_suggestions is NULL, suggested words will not be looked up.
   // Note that Doing suggest lookups can be slow.
-  bool SpellCheckWord(const char16* in_word,
+  bool SpellCheckWord(const base::char16* in_word,
                       int in_word_len,
                       int tag,
                       int* misspelling_start,
                       int* misspelling_len,
-                      std::vector<string16>* optional_suggestions);
+                      std::vector<base::string16>* optional_suggestions);
 
   // SpellCheck a paragraph.
   // Returns true if |text| is correctly spelled, false otherwise.
   // If the spellchecker failed to initialize, always returns true.
   bool SpellCheckParagraph(
-      const string16& text,
-      WebKit::WebVector<WebKit::WebTextCheckingResult>* results);
+      const base::string16& text,
+      blink::WebVector<blink::WebTextCheckingResult>* results);
 
   // Find a possible correctly spelled word for a misspelled word. Computes an
   // empty string if input misspelled word is too long, there is ambiguity, or
@@ -86,13 +86,13 @@ class SpellCheck : public content::RenderProcessObserver,
   // NOTE: If using the platform spellchecker, this will send a *lot* of sync
   // IPCs. We should probably refactor this if we ever plan to take it out from
   // behind its command line flag.
-  string16 GetAutoCorrectionWord(const string16& word, int tag);
+  base::string16 GetAutoCorrectionWord(const base::string16& word, int tag);
 
   // Requests to spellcheck the specified text in the background. This function
   // posts a background task and calls SpellCheckParagraph() in the task.
 #if !defined (OS_MACOSX)
-  void RequestTextChecking(const string16& text,
-                           WebKit::WebTextCheckingCompletion* completion);
+  void RequestTextChecking(const base::string16& text,
+                           blink::WebTextCheckingCompletion* completion);
 #endif
 
   // Creates a list of WebTextCheckingResult objects (used by WebKit) from a
@@ -102,9 +102,9 @@ class SpellCheck : public content::RenderProcessObserver,
   void CreateTextCheckingResults(
       ResultFilter filter,
       int line_offset,
-      const string16& line_text,
+      const base::string16& line_text,
       const std::vector<SpellCheckResult>& spellcheck_results,
-      WebKit::WebVector<WebKit::WebTextCheckingResult>* textcheck_results);
+      blink::WebVector<blink::WebTextCheckingResult>* textcheck_results);
 
   bool is_spellcheck_enabled() { return spellcheck_enabled_; }
 

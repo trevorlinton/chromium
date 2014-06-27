@@ -1,14 +1,18 @@
 # Copyright 2013 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
+
 import json
 import logging
+import os
 import socket
 import sys
+import time
 
+from telemetry import decorators
+from telemetry.core import bitmap
 from telemetry.core import exceptions
 from telemetry.core import util
-from telemetry.core.backends import png_bitmap
 from telemetry.core.backends.chrome import inspector_console
 from telemetry.core.backends.chrome import inspector_memory
 from telemetry.core.backends.chrome import inspector_network
@@ -17,46 +21,55 @@ from telemetry.core.backends.chrome import inspector_runtime
 from telemetry.core.backends.chrome import inspector_timeline
 from telemetry.core.backends.chrome import websocket
 from telemetry.core.heap import model
+from telemetry.core.timeline import model as timeline_model
+from telemetry.core.timeline import recording_options
+
 
 class InspectorException(Exception):
   pass
 
+
 class InspectorBackend(object):
-  def __init__(self, browser, browser_backend, debugger_url):
-    assert debugger_url
-    self._browser = browser
+  def __init__(self, browser_backend, context, timeout=60):
     self._browser_backend = browser_backend
-    self._debugger_url = debugger_url
+    self._context = context
     self._socket = None
     self._domain_handlers = {}
     self._cur_socket_timeout = 0
     self._next_request_id = 0
 
+    self._Connect()
+
     self._console = inspector_console.InspectorConsole(self)
     self._memory = inspector_memory.InspectorMemory(self)
-    self._page = inspector_page.InspectorPage(self)
+    self._page = inspector_page.InspectorPage(self, timeout=timeout)
     self._runtime = inspector_runtime.InspectorRuntime(self)
     self._timeline = inspector_timeline.InspectorTimeline(self)
     self._network = inspector_network.InspectorNetwork(self)
+    self._timeline_model = None
 
   def __del__(self):
-    self.Disconnect()
+    self._Disconnect()
 
-  def _Connect(self):
-    if self._socket:
-      return
+  def _Connect(self, timeout=10):
+    assert not self._socket
+    logging.debug('InspectorBackend._Connect() to %s' % self.debugger_url)
     try:
-      self._socket = websocket.create_connection(self._debugger_url)
-    except (websocket.WebSocketException):
-      if self._browser_backend.IsBrowserRunning():
-        raise exceptions.TabCrashException(sys.exc_info()[1])
+      self._socket = websocket.create_connection(self.debugger_url,
+          timeout=timeout)
+    except (websocket.WebSocketException, util.TimeoutException):
+      err_msg = sys.exc_info()[1]
+      if not self._browser_backend.IsBrowserRunning():
+        raise exceptions.BrowserGoneException(err_msg)
+      elif not self._browser_backend.HasBrowserFinishedLaunching():
+        raise exceptions.BrowserConnectionGoneException(err_msg)
       else:
-        raise exceptions.BrowserGoneException()
+        raise exceptions.TabCrashException(err_msg)
 
     self._cur_socket_timeout = 0
     self._next_request_id = 0
 
-  def Disconnect(self):
+  def _Disconnect(self):
     for _, handlers in self._domain_handlers.items():
       _, will_close_handler = handlers
       will_close_handler()
@@ -70,46 +83,39 @@ class InspectorBackend(object):
 
   @property
   def browser(self):
-    return self._browser
+    return self._browser_backend.browser
 
   @property
   def url(self):
-    self.Disconnect()
-    return self._browser_backend.tab_list_backend.GetTabUrl(self._debugger_url)
+    return self._context['url']
 
-  def Activate(self):
-    self._Connect()
-    self._browser_backend.tab_list_backend.ActivateTab(self._debugger_url)
+  @property
+  def id(self):
+    return self._context['id']
 
-  def Close(self):
-    self.Disconnect()
-    self._browser_backend.tab_list_backend.CloseTab(self._debugger_url)
+  @property
+  def debugger_url(self):
+    return self._context['webSocketDebuggerUrl']
 
   # Public methods implemented in JavaScript.
 
   @property
+  @decorators.Cache
   def screenshot_supported(self):
-    if self._runtime.Evaluate(
-        'window.chrome.gpuBenchmarking === undefined'):
+    if (self.browser.platform.GetOSName() == 'linux' and (
+        os.getenv('DISPLAY') not in [':0', ':0.0'])):
+      # Displays other than 0 mean we are likely running in something like
+      # xvfb where screenshotting doesn't work.
       return False
-
-    if self._runtime.Evaluate(
-        'window.chrome.gpuBenchmarking.beginWindowSnapshotPNG === undefined'):
-      return False
-
-    return (self._browser_backend.chrome_branch_number >= 1391 or
-            self._browser_backend.is_content_shell)
+    return not self.EvaluateJavaScript("""
+        window.chrome.gpuBenchmarking === undefined ||
+        window.chrome.gpuBenchmarking.beginWindowSnapshotPNG === undefined
+      """)
 
   def Screenshot(self, timeout):
-    if self._runtime.Evaluate(
-        'window.chrome.gpuBenchmarking === undefined'):
-      raise Exception("Browser was not started with --enable-gpu-benchmarking")
+    assert self.screenshot_supported, 'Browser does not support screenshotting'
 
-    if self._runtime.Evaluate(
-        'window.chrome.gpuBenchmarking.beginWindowSnapshotPNG === undefined'):
-      raise Exception("Browser does not support window snapshot API.")
-
-    self._runtime.Evaluate("""
+    self.EvaluateJavaScript("""
         if(!window.__telemetry) {
           window.__telemetry = {}
         }
@@ -124,11 +130,12 @@ class InspectorBackend(object):
     """)
 
     def IsSnapshotComplete():
-      return self._runtime.Evaluate('window.__telemetry.snapshotComplete')
+      return self.EvaluateJavaScript(
+          'window.__telemetry.snapshotComplete')
 
     util.WaitFor(IsSnapshotComplete, timeout)
 
-    snap = self._runtime.Evaluate("""
+    snap = self.EvaluateJavaScript("""
       (function() {
         var data = window.__telemetry.snapshotData;
         delete window.__telemetry.snapshotComplete;
@@ -137,7 +144,7 @@ class InspectorBackend(object):
       })()
     """)
     if snap:
-      return png_bitmap.PngBitmap.FromBase64(snap['data'])
+      return bitmap.Bitmap.FromBase64Png(snap['data'])
     return None
 
   # Console public methods.
@@ -173,23 +180,43 @@ class InspectorBackend(object):
 
   # Runtime public methods.
 
-  def ExecuteJavaScript(self, expr, timeout):
-    self._runtime.Execute(expr, timeout)
+  def ExecuteJavaScript(self, expr, context_id=None, timeout=60):
+    self._runtime.Execute(expr, context_id, timeout)
 
-  def EvaluateJavaScript(self, expr, timeout):
-    return self._runtime.Evaluate(expr, timeout)
+  def EvaluateJavaScript(self, expr, context_id=None, timeout=60):
+    return self._runtime.Evaluate(expr, context_id, timeout)
 
   # Timeline public methods.
 
   @property
   def timeline_model(self):
-    return self._timeline.timeline_model
+    return self._timeline_model
 
-  def StartTimelineRecording(self):
-    self._timeline.Start()
+  def StartTimelineRecording(self, options=None):
+    if not options:
+      options = recording_options.TimelineRecordingOptions()
+    if options.record_timeline:
+      self._timeline.Start()
+    if options.record_network:
+      self._network.timeline_recorder.Start()
 
   def StopTimelineRecording(self):
-    self._timeline.Stop()
+    data = []
+    timeline_data = self._timeline.Stop()
+    if timeline_data:
+      data.append(timeline_data)
+    network_data = self._network.timeline_recorder.Stop()
+    if network_data:
+      data.append(network_data)
+    if data:
+      self._timeline_model = timeline_model.TimelineModel(
+          timeline_data=data, shift_world_to_zero=False)
+    else:
+      self._timeline_model = None
+
+  @property
+  def is_timeline_recording_running(self):
+    return self._timeline.is_timeline_recording_running
 
   # Network public methods.
 
@@ -199,21 +226,33 @@ class InspectorBackend(object):
   # Methods used internally by other backends.
 
   def DispatchNotifications(self, timeout=10):
-    self._Connect()
     self._SetTimeout(timeout)
-
-    try:
-      data = self._socket.recv()
-    except (socket.error, websocket.WebSocketException):
-      if self._browser_backend.tab_list_backend.DoesDebuggerUrlExist(
-          self._debugger_url):
-        return
-      raise exceptions.TabCrashException(sys.exc_info()[1])
-
-    res = json.loads(data)
-    logging.debug('got [%s]', data)
+    res = self._ReceiveJsonData(timeout)
     if 'method' in res:
       self._HandleNotification(res)
+
+  def _IsInspectable(self):
+    contexts = self._browser_backend.ListInspectableContexts()
+    return self.id in [c['id'] for c in contexts]
+
+  def _ReceiveJsonData(self, timeout):
+    try:
+      start_time = time.time()
+      data = self._socket.recv()
+    except (socket.error, websocket.WebSocketException):
+      if self._IsInspectable():
+        elapsed_time = time.time() - start_time
+        raise util.TimeoutException(
+            'Received a socket error in the browser connection and the tab '
+            'still exists, assuming it timed out. '
+            'Timeout=%ds Elapsed=%ds Error=%s' % (
+                timeout, elapsed_time, sys.exc_info()[1]))
+      raise exceptions.TabCrashException(
+          'Received a socket error in the browser connection and the tab no '
+          'longer exists, assuming it crashed. Error=%s' % sys.exc_info()[1])
+    res = json.loads(data)
+    logging.debug('got [%s]', data)
+    return res
 
   def _HandleNotification(self, res):
     if (res['method'] == 'Inspector.detached' and
@@ -236,7 +275,6 @@ class InspectorBackend(object):
       logging.debug('Unhandled inspector message: %s', res)
 
   def SendAndIgnoreResponse(self, req):
-    self._Connect()
     req['id'] = self._next_request_id
     self._next_request_id += 1
     data = json.dumps(req)
@@ -254,36 +292,28 @@ class InspectorBackend(object):
     self._socket.close()
     self._socket = None
     def IsBack():
-      return self._browser_backend.tab_list_backend.DoesDebuggerUrlExist(
-        self._debugger_url)
-    util.WaitFor(IsBack, 512, 0.5)
+      if not self._IsInspectable():
+        return False
+      try:
+        self._Connect()
+      except exceptions.TabCrashException, ex:
+        if ex.message.message.find('Handshake Status 500') == 0:
+          return False
+        raise
+      return True
+    util.WaitFor(IsBack, 512)
     sys.stderr.write('\n')
     sys.stderr.write('Inspector\'s UI closed. Telemetry will now resume.\n')
-    self._Connect()
 
   def SyncRequest(self, req, timeout=10):
-    self._Connect()
-    # TODO(nduca): Listen to the timeout argument
-    # pylint: disable=W0613
     self._SetTimeout(timeout)
     self.SendAndIgnoreResponse(req)
 
     while True:
-      try:
-        data = self._socket.recv()
-      except (socket.error, websocket.WebSocketException):
-        if self._browser_backend.tab_list_backend.DoesDebuggerUrlExist(
-            self._debugger_url):
-          raise util.TimeoutException(
-            'Timed out waiting for reply. This is unusual.')
-        raise exceptions.TabCrashException(sys.exc_info()[1])
-
-      res = json.loads(data)
-      logging.debug('got [%s]', data)
+      res = self._ReceiveJsonData(timeout)
       if 'method' in res:
         self._HandleNotification(res)
         continue
-
       if 'id' not in res or res['id'] != req['id']:
         logging.debug('Dropped reply: %s', json.dumps(res))
         continue
@@ -316,15 +346,10 @@ class InspectorBackend(object):
     self._page.CollectGarbage()
 
   def TakeJSHeapSnapshot(self, timeout=120):
-    # This is a hack to make the nested function be able to modify the
-    # variables.
-    snapshot_uid = [0]
     snapshot = []
 
     def OnNotification(res):
-      if res['method'] == 'HeapProfiler.addProfileHeader':
-        snapshot_uid[0] = res['params']['header']['uid']
-      elif res['method'] == 'HeapProfiler.addHeapSnapshotChunk':
+      if res['method'] == 'HeapProfiler.addHeapSnapshotChunk':
         snapshot.append(res['params']['chunk'])
 
     def OnClose():
@@ -334,10 +359,7 @@ class InspectorBackend(object):
 
     self.SyncRequest({'method': 'Page.getResourceTree'}, timeout)
     self.SyncRequest({'method': 'Debugger.enable'}, timeout)
-    self.SyncRequest({'method': 'HeapProfiler.clearProfiles'}, timeout)
     self.SyncRequest({'method': 'HeapProfiler.takeHeapSnapshot'}, timeout)
-    self.SyncRequest({'method': 'HeapProfiler.getHeapSnapshot',
-                      'params': {'uid': snapshot_uid[0]}}, timeout)
     snapshot = ''.join(snapshot)
 
     self.UnregisterDomain('HeapProfiler')

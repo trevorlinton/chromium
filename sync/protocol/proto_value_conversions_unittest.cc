@@ -24,6 +24,8 @@
 #include "sync/protocol/favicon_image_specifics.pb.h"
 #include "sync/protocol/favicon_tracking_specifics.pb.h"
 #include "sync/protocol/managed_user_setting_specifics.pb.h"
+#include "sync/protocol/managed_user_shared_setting_specifics.pb.h"
+#include "sync/protocol/managed_user_specifics.pb.h"
 #include "sync/protocol/nigori_specifics.pb.h"
 #include "sync/protocol/password_specifics.pb.h"
 #include "sync/protocol/preference_specifics.pb.h"
@@ -53,7 +55,7 @@ TEST_F(ProtoValueConversionsTest, ProtoChangeCheck) {
   // If this number changes, that means we added or removed a data
   // type.  Don't forget to add a unit test for {New
   // type}SpecificsToValue below.
-  EXPECT_EQ(29, MODEL_TYPE_COUNT);
+  EXPECT_EQ(32, MODEL_TYPE_COUNT);
 
   // We'd also like to check if we changed any field in our messages.
   // However, that's hard to do: sizeof could work, but it's
@@ -91,6 +93,10 @@ TEST_F(ProtoValueConversionsTest, PasswordSpecificsData) {
   std::string password_value;
   EXPECT_TRUE(value->GetString("password_value", &password_value));
   EXPECT_EQ("<redacted>", password_value);
+}
+
+TEST_F(ProtoValueConversionsTest, AppListSpecificsToValue) {
+  TestSpecificsToValue(AppListSpecificsToValue);
 }
 
 TEST_F(ProtoValueConversionsTest, AppNotificationToValue) {
@@ -133,6 +139,13 @@ TEST_F(ProtoValueConversionsTest, BookmarkSpecificsData) {
   sync_pb::BookmarkSpecifics specifics;
   specifics.set_creation_time_us(creation_time.ToInternalValue());
   specifics.set_icon_url(icon_url);
+  sync_pb::MetaInfo* meta_1 = specifics.add_meta_info();
+  meta_1->set_key("key1");
+  meta_1->set_value("value1");
+  sync_pb::MetaInfo* meta_2 = specifics.add_meta_info();
+  meta_2->set_key("key2");
+  meta_2->set_value("value2");
+
   scoped_ptr<base::DictionaryValue> value(BookmarkSpecificsToValue(specifics));
   EXPECT_FALSE(value->empty());
   std::string encoded_time;
@@ -141,6 +154,22 @@ TEST_F(ProtoValueConversionsTest, BookmarkSpecificsData) {
   std::string encoded_icon_url;
   EXPECT_TRUE(value->GetString("icon_url", &encoded_icon_url));
   EXPECT_EQ(icon_url, encoded_icon_url);
+  base::ListValue* meta_info_list;
+  ASSERT_TRUE(value->GetList("meta_info", &meta_info_list));
+  EXPECT_EQ(2u, meta_info_list->GetSize());
+  base::DictionaryValue* meta_info;
+  std::string meta_key;
+  std::string meta_value;
+  ASSERT_TRUE(meta_info_list->GetDictionary(0, &meta_info));
+  EXPECT_TRUE(meta_info->GetString("key", &meta_key));
+  EXPECT_TRUE(meta_info->GetString("value", &meta_value));
+  EXPECT_EQ("key1", meta_key);
+  EXPECT_EQ("value1", meta_value);
+  ASSERT_TRUE(meta_info_list->GetDictionary(1, &meta_info));
+  EXPECT_TRUE(meta_info->GetString("key", &meta_key));
+  EXPECT_TRUE(meta_info->GetString("value", &meta_value));
+  EXPECT_EQ("key2", meta_key);
+  EXPECT_EQ("value2", meta_value);
 }
 
 TEST_F(ProtoValueConversionsTest, PriorityPreferenceSpecificsToValue) {
@@ -183,6 +212,10 @@ TEST_F(ProtoValueConversionsTest, ManagedUserSpecificsToValue) {
   TestSpecificsToValue(ManagedUserSpecificsToValue);
 }
 
+TEST_F(ProtoValueConversionsTest, ManagedUserSharedSettingSpecificsToValue) {
+  TestSpecificsToValue(ManagedUserSharedSettingSpecificsToValue);
+}
+
 TEST_F(ProtoValueConversionsTest, NigoriSpecificsToValue) {
   TestSpecificsToValue(NigoriSpecificsToValue);
 }
@@ -201,6 +234,10 @@ TEST_F(ProtoValueConversionsTest, SearchEngineSpecificsToValue) {
 
 TEST_F(ProtoValueConversionsTest, SessionSpecificsToValue) {
   TestSpecificsToValue(SessionSpecificsToValue);
+}
+
+TEST_F(ProtoValueConversionsTest, SyncedNotificationAppInfoSpecificsToValue) {
+  TestSpecificsToValue(SyncedNotificationAppInfoSpecificsToValue);
 }
 
 TEST_F(ProtoValueConversionsTest, SyncedNotificationSpecificsToValue) {
@@ -232,6 +269,7 @@ TEST_F(ProtoValueConversionsTest, EntitySpecificsToValue) {
 #define SET_FIELD(key) (void)specifics.mutable_##key()
 
   SET_FIELD(app);
+  SET_FIELD(app_list);
   SET_FIELD(app_notification);
   SET_FIELD(app_setting);
   SET_FIELD(article);
@@ -247,6 +285,7 @@ TEST_F(ProtoValueConversionsTest, EntitySpecificsToValue) {
   SET_FIELD(favicon_tracking);
   SET_FIELD(history_delete_directive);
   SET_FIELD(managed_user_setting);
+  SET_FIELD(managed_user_shared_setting);
   SET_FIELD(managed_user);
   SET_FIELD(nigori);
   SET_FIELD(password);
@@ -255,6 +294,7 @@ TEST_F(ProtoValueConversionsTest, EntitySpecificsToValue) {
   SET_FIELD(search_engine);
   SET_FIELD(session);
   SET_FIELD(synced_notification);
+  SET_FIELD(synced_notification_app_info);
   SET_FIELD(theme);
   SET_FIELD(typed_url);
 

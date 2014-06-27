@@ -24,6 +24,15 @@ ui::EventFactoryOzone* OzonePlatformTest::GetEventFactoryOzone() {
   return &event_factory_ozone_;
 }
 
+ui::InputMethodContextFactoryOzone*
+OzonePlatformTest::GetInputMethodContextFactoryOzone() {
+  return &input_method_context_factory_ozone_;
+}
+
+ui::CursorFactoryOzone* OzonePlatformTest::GetCursorFactoryOzone() {
+  return &cursor_factory_ozone_;
+}
+
 OzonePlatform* CreateOzonePlatformTest() {
   CommandLine* cmd = CommandLine::ForCurrentProcess();
   base::FilePath location = base::FilePath("/dev/null");

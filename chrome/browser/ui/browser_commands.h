@@ -64,7 +64,7 @@ bool CanGoForward(const Browser* browser);
 void GoForward(Browser* browser, WindowOpenDisposition disposition);
 bool NavigateToIndexWithDisposition(Browser* browser,
                                     int index,
-                                    WindowOpenDisposition disp);
+                                    WindowOpenDisposition disposition);
 void Reload(Browser* browser, WindowOpenDisposition disposition);
 void ReloadIgnoringCache(Browser* browser, WindowOpenDisposition disposition);
 bool CanReload(const Browser* browser);
@@ -81,7 +81,6 @@ TabStripModelDelegate::RestoreTabType GetRestoreTabType(
     const Browser* browser);
 void SelectNextTab(Browser* browser);
 void SelectPreviousTab(Browser* browser);
-void OpenTabpose(Browser* browser);  // Mac-only
 void MoveTabNext(Browser* browser);
 void MoveTabPrevious(Browser* browser);
 void SelectNumberedTab(Browser* browser, int index);
@@ -158,6 +157,7 @@ void ViewSelectedSource(Browser* browser);
 bool CanViewSource(const Browser* browser);
 
 void CreateApplicationShortcuts(Browser* browser);
+void CreateHostedAppFromCurrentWebContents(Browser* browser);
 bool CanCreateApplicationShortcuts(const Browser* browser);
 
 void ConvertTabToAppWindow(Browser* browser, content::WebContents* contents);

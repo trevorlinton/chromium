@@ -7,7 +7,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/strings/string16.h"
-#include "ui/base/accessibility/accessibility_types.h"
+#include "ui/accessibility/ax_enums.h"
 #include "ui/base/models/dialog_model.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -30,10 +30,6 @@ class VIEWS_EXPORT DialogDelegate : public ui::DialogModel,
                                     public WidgetDelegate {
  public:
   virtual ~DialogDelegate();
-
-  // Returns whether to use the new dialog style in general.
-  // See UseNewStyleForThisDialog() for dialog-specific styling.
-  static bool UseNewStyle();
 
   // Create a |dialog| window Widget with the specified |context| or |parent|.
   static Widget* CreateDialogWidget(DialogDelegate* dialog,
@@ -94,15 +90,7 @@ class VIEWS_EXPORT DialogDelegate : public ui::DialogModel,
   virtual NonClientFrameView* CreateNonClientFrameView(Widget* widget) OVERRIDE;
 
   // Create a frame view using the new dialog style.
-  static NonClientFrameView* CreateNewStyleFrameView(Widget* widget);
-  // The semi-transparent border and shadow of the new style frame view does not
-  // work on child windows under Views/Win32. This is a kludge to get a
-  // reasonable-looking opaque border for the dialog. Note that this does not
-  // support arrows.
-  //
-  // TODO(wittman): Remove once WinAura is in place.
-  static NonClientFrameView* CreateNewStyleFrameView(Widget* widget,
-                                                     bool force_opaque_border);
+  static NonClientFrameView* CreateDialogFrameView(Widget* widget);
 
   // Returns whether this particular dialog should use the new dialog style.
   virtual bool UseNewStyleForThisDialog() const;
@@ -117,7 +105,7 @@ class VIEWS_EXPORT DialogDelegate : public ui::DialogModel,
 
  protected:
   // Overridden from WidgetDelegate:
-  virtual ui::AccessibilityTypes::Role GetAccessibleWindowRole() const OVERRIDE;
+  virtual ui::AXRole GetAccessibleWindowRole() const OVERRIDE;
 };
 
 // A DialogDelegate implementation that is-a View. Used to override GetWidget()

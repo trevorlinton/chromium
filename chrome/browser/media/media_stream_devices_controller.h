@@ -8,6 +8,7 @@
 #include <map>
 #include <string>
 
+#include "chrome/browser/ui/website_settings/permission_bubble_request.h"
 #include "content/public/browser/web_contents_delegate.h"
 
 class Profile;
@@ -21,7 +22,7 @@ namespace user_prefs {
 class PrefRegistrySyncable;
 }
 
-class MediaStreamDevicesController {
+class MediaStreamDevicesController : public PermissionBubbleRequest {
  public:
   // Permissions for media stream types.
   enum Permission {
@@ -68,7 +69,19 @@ class MediaStreamDevicesController {
   bool HasVideo() const;
   const std::string& GetSecurityOriginSpec() const;
   void Accept(bool update_content_setting);
-  void Deny(bool update_content_setting);
+  void Deny(bool update_content_setting,
+            content::MediaStreamRequestResult result);
+
+  // PermissionBubbleRequest:
+  virtual int GetIconID() const OVERRIDE;
+  virtual base::string16 GetMessageText() const OVERRIDE;
+  virtual base::string16 GetMessageTextFragment() const OVERRIDE;
+  virtual bool HasUserGesture() const OVERRIDE;
+  virtual GURL GetRequestingHostname() const OVERRIDE;
+  virtual void PermissionGranted() OVERRIDE;
+  virtual void PermissionDenied() OVERRIDE;
+  virtual void Cancelled() OVERRIDE;
+  virtual void RequestFinished() OVERRIDE;
 
  private:
   enum DevicePolicy {

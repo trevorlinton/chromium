@@ -51,11 +51,6 @@ bool LaunchSetupForEula(const base::FilePath::StringType& value,
   CommandLine cl(CommandLine::NO_PROGRAM);
   cl.AppendSwitchNative(installer::switches::kShowEula, value);
 
-  CommandLine* browser_command_line = CommandLine::ForCurrentProcess();
-  if (browser_command_line->HasSwitch(switches::kChromeFrame)) {
-    cl.AppendSwitch(switches::kChromeFrame);
-  }
-
   if (base::win::IsMetroProcess()) {
     cl.AppendSwitch(installer::switches::kShowEulaForMetro);
 
@@ -83,23 +78,10 @@ bool LaunchSetupForEula(const base::FilePath::StringType& value,
   }
 }
 
-// Populates |path| with the path to |file| in the sentinel directory. This is
-// the application directory for user-level installs, and the default user data
-// dir for system-level installs. Returns false on error.
-bool GetSentinelFilePath(const wchar_t* file, base::FilePath* path) {
-  base::FilePath exe_path;
-  if (!PathService::Get(base::DIR_EXE, &exe_path))
-    return false;
-  if (InstallUtil::IsPerUserInstall(exe_path.value().c_str()))
-    *path = exe_path;
-  else if (!PathService::Get(chrome::DIR_USER_DATA, path))
-    return false;
-  *path = path->Append(file);
-  return true;
-}
-
 bool GetEULASentinelFilePath(base::FilePath* path) {
-  return GetSentinelFilePath(installer::kEULASentinelFile, path);
+  return InstallUtil::GetSentinelFilePath(
+      installer::kEULASentinelFile, BrowserDistribution::GetDistribution(),
+      path);
 }
 
 // Returns true if the EULA is required but has not been accepted by this user.
@@ -125,8 +107,8 @@ bool IsEULANotAccepted(installer::MasterPreferences* install_prefs) {
 bool WriteEULAtoTempFile(base::FilePath* eula_path) {
   std::string terms = l10n_util::GetStringUTF8(IDS_TERMS_HTML);
   return (!terms.empty() &&
-          file_util::CreateTemporaryFile(eula_path) &&
-          file_util::WriteFile(*eula_path, terms.data(), terms.size()) != -1);
+          base::CreateTemporaryFile(eula_path) &&
+          base::WriteFile(*eula_path, terms.data(), terms.size()) != -1);
 }
 
 // Creates the sentinel indicating that the EULA was required and has been
@@ -136,8 +118,8 @@ bool CreateEULASentinel() {
   if (!GetEULASentinelFilePath(&eula_sentinel))
     return false;
 
-  return (file_util::CreateDirectory(eula_sentinel.DirName()) &&
-          file_util::WriteFile(eula_sentinel, "", 0) != -1);
+  return (base::CreateDirectory(eula_sentinel.DirName()) &&
+          base::WriteFile(eula_sentinel, "", 0) != -1);
 }
 
 }  // namespace
@@ -163,8 +145,28 @@ void DoPostImportPlatformSpecificTasks(Profile* /* profile */) {
   }
 }
 
-bool GetFirstRunSentinelFilePath(base::FilePath* path) {
-  return GetSentinelFilePath(chrome::kFirstRunSentinel, path);
+bool IsFirstRunSentinelPresent() {
+  base::FilePath sentinel;
+  if (!GetFirstRunSentinelFilePath(&sentinel) || base::PathExists(sentinel))
+    return true;
+
+  // Copy any legacy first run sentinel file for Windows user-level installs
+  // from the application directory to the user data directory.
+  base::FilePath exe_path;
+  if (PathService::Get(base::DIR_EXE, &exe_path) &&
+      InstallUtil::IsPerUserInstall(exe_path.value().c_str())) {
+    base::FilePath legacy_sentinel = exe_path.Append(chrome::kFirstRunSentinel);
+    if (base::PathExists(legacy_sentinel)) {
+      // Copy the file instead of moving it to avoid breaking developer builds
+      // where the sentinel is dropped beside chrome.exe by a build action.
+      bool migrated = base::CopyFile(legacy_sentinel, sentinel);
+      DPCHECK(migrated);
+      // The sentinel is present regardless of whether or not it was migrated.
+      return true;
+    }
+  }
+
+  return false;
 }
 
 bool ShowPostInstallEULAIfNeeded(installer::MasterPreferences* install_prefs) {

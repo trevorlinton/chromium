@@ -18,7 +18,7 @@
 #import "ui/base/dragdrop/cocoa_dnd_util.h"
 #include "ui/base/window_open_disposition.h"
 
-using WebKit::WebDragOperationsMask;
+using blink::WebDragOperationsMask;
 using content::DropData;
 using content::OpenURLParams;
 using content::Referrer;
@@ -28,13 +28,13 @@ int GetModifierFlags() {
   int modifier_state = 0;
   UInt32 currentModifiers = GetCurrentKeyModifiers();
   if (currentModifiers & ::shiftKey)
-    modifier_state |= WebKit::WebInputEvent::ShiftKey;
+    modifier_state |= blink::WebInputEvent::ShiftKey;
   if (currentModifiers & ::controlKey)
-    modifier_state |= WebKit::WebInputEvent::ControlKey;
+    modifier_state |= blink::WebInputEvent::ControlKey;
   if (currentModifiers & ::optionKey)
-    modifier_state |= WebKit::WebInputEvent::AltKey;
+    modifier_state |= blink::WebInputEvent::AltKey;
   if (currentModifiers & ::cmdKey)
-      modifier_state |= WebKit::WebInputEvent::MetaKey;
+      modifier_state |= blink::WebInputEvent::MetaKey;
   return modifier_state;
 }
 
@@ -253,6 +253,9 @@ int GetModifierFlags() {
   DCHECK(pboard);
   NSArray* types = [pboard types];
 
+  data->did_originate_from_renderer =
+      [types containsObject:ui::kChromeDragDummyPboardType];
+
   // Get URL if possible. To avoid exposing file system paths to web content,
   // filenames in the drag are not converted to file URLs.
   ui::PopulateURLAndTitleFromPasteboard(&data->url,
@@ -288,9 +291,9 @@ int GetModifierFlags() {
         BOOL exists = [[NSFileManager defaultManager]
                            fileExistsAtPath:filename];
         if (exists) {
-          data->filenames.push_back(
-              DropData::FileInfo(
-                  base::SysNSStringToUTF16(filename), string16()));
+          data->filenames.push_back(ui::FileInfo(
+              base::FilePath::FromUTF8Unsafe(base::SysNSStringToUTF8(filename)),
+              base::FilePath()));
         }
       }
     }

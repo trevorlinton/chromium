@@ -14,7 +14,6 @@
 #include "chrome/browser/extensions/api/tabs/tabs_windows_api.h"
 #include "chrome/browser/extensions/api/tabs/windows_event_router.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/image_loader.h"
 #include "chrome/browser/extensions/window_controller.h"
@@ -29,7 +28,6 @@
 #include "chrome/browser/ui/panels/panel_manager.h"
 #include "chrome/browser/ui/panels/stacked_panel_collection.h"
 #include "chrome/browser/web_applications/web_app.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/manifest_handlers/icons_handler.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
@@ -37,11 +35,13 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/rect.h"
 
+using base::UserMetricsAction;
 using content::RenderViewHost;
-using content::UserMetricsAction;
 
 namespace panel_internal {
 
@@ -93,9 +93,9 @@ PanelExtensionWindowController::CreateWindowValueWithTabs(
   base::DictionaryValue* result = CreateWindowValue();
 
   DCHECK(IsVisibleToExtension(extension));
-  DictionaryValue* tab_value = CreateTabValue(extension, 0);
+  base::DictionaryValue* tab_value = CreateTabValue(extension, 0);
   if (tab_value) {
-    base::ListValue* tab_list = new ListValue();
+    base::ListValue* tab_list = new base::ListValue();
     tab_list->Append(tab_value);
     result->Set(extensions::tabs_constants::kTabsKey, tab_list);
   }
@@ -112,7 +112,7 @@ base::DictionaryValue* PanelExtensionWindowController::CreateTabValue(
     return NULL;
 
   DCHECK(IsVisibleToExtension(extension));
-  DictionaryValue* tab_value = new DictionaryValue();
+  base::DictionaryValue* tab_value = new base::DictionaryValue();
   tab_value->SetInteger(extensions::tabs_constants::kIdKey,
                         SessionID::IdForTab(web_contents));
   tab_value->SetInteger(extensions::tabs_constants::kIndexKey, 0);
@@ -121,7 +121,7 @@ base::DictionaryValue* PanelExtensionWindowController::CreateTabValue(
   tab_value->SetString(
       extensions::tabs_constants::kUrlKey, web_contents->GetURL().spec());
   tab_value->SetString(extensions::tabs_constants::kStatusKey,
-                       ExtensionTabUtil::GetTabStatusText(
+                       extensions::ExtensionTabUtil::GetTabStatusText(
                            web_contents->IsLoading()));
   tab_value->SetBoolean(
       extensions::tabs_constants::kActiveKey, panel_->IsActive());
@@ -154,8 +154,10 @@ bool PanelExtensionWindowController::IsVisibleToExtension(
 
 Panel::~Panel() {
   DCHECK(!collection_);
+#if !defined(USE_AURA)
   // Invoked by native panel destructor. Do not access native_panel_ here.
-  chrome::EndKeepAlive();  // Remove shutdown prevention.
+  chrome::DecrementKeepAliveCount();  // Remove shutdown prevention.
+#endif
 }
 
 PanelManager* Panel::manager() const {
@@ -412,16 +414,14 @@ void Panel::ExecuteCommandWithDisposition(int id,
     // DevTools
     case IDC_DEV_TOOLS:
       content::RecordAction(UserMetricsAction("DevTools_ToggleWindow"));
-      DevToolsWindow::ToggleDevToolsWindow(
+      DevToolsWindow::OpenDevToolsWindow(
           GetWebContents()->GetRenderViewHost(),
-          true,
           DevToolsToggleAction::Show());
       break;
     case IDC_DEV_TOOLS_CONSOLE:
       content::RecordAction(UserMetricsAction("DevTools_ToggleConsole"));
-      DevToolsWindow::ToggleDevToolsWindow(
+      DevToolsWindow::OpenDevToolsWindow(
           GetWebContents()->GetRenderViewHost(),
-          true,
           DevToolsToggleAction::ShowConsole());
       break;
 
@@ -438,7 +438,7 @@ void Panel::Observe(int type,
     case content::NOTIFICATION_RENDER_VIEW_HOST_CHANGED:
       ConfigureAutoResize(content::Source<content::WebContents>(source).ptr());
       break;
-    case chrome::NOTIFICATION_EXTENSION_UNLOADED:
+    case chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED:
       if (content::Details<extensions::UnloadedExtensionInfo>(
               details)->extension->id() == extension_id())
         Close();
@@ -531,7 +531,7 @@ void Panel::Initialize(const GURL& url,
     native_panel_->AttachWebContents(web_contents);
 
   // Close when the extension is unloaded or the browser is exiting.
-  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED,
+  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
                  content::Source<Profile>(profile_));
   registrar_.Add(this, chrome::NOTIFICATION_APP_TERMINATING,
                  content::NotificationService::AllSources());
@@ -539,8 +539,11 @@ void Panel::Initialize(const GURL& url,
                  content::Source<ThemeService>(
                     ThemeServiceFactory::GetForProfile(profile_)));
 
+#if !defined(USE_AURA)
+  // Keep alive for AURA has been moved to panel_view.
   // Prevent the browser process from shutting down while this window is open.
-  chrome::StartKeepAlive();
+  chrome::IncrementKeepAliveCount();
+#endif
 
   UpdateAppIcon();
 }
@@ -748,9 +751,9 @@ bool Panel::ExecuteCommandIfEnabled(int id) {
   return false;
 }
 
-string16 Panel::GetWindowTitle() const {
+base::string16 Panel::GetWindowTitle() const {
   content::WebContents* contents = GetWebContents();
-  string16 title;
+  base::string16 title;
 
   // |contents| can be NULL during the window's creation.
   if (contents) {
@@ -759,7 +762,7 @@ string16 Panel::GetWindowTitle() const {
   }
 
   if (title.empty())
-    title = UTF8ToUTF16(app_name());
+    title = base::UTF8ToUTF16(app_name());
 
   return title;
 }
@@ -888,11 +891,12 @@ void Panel::UpdateAppIcon() {
 }
 
 // static
-void Panel::FormatTitleForDisplay(string16* title) {
+void Panel::FormatTitleForDisplay(base::string16* title) {
   size_t current_index = 0;
   size_t match_index;
-  while ((match_index = title->find(L'\n', current_index)) != string16::npos) {
-    title->replace(match_index, 1, string16());
+  while ((match_index = title->find(L'\n', current_index)) !=
+         base::string16::npos) {
+    title->replace(match_index, 1, base::string16());
     current_index = match_index;
   }
 }

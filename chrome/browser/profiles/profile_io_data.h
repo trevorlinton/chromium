@@ -18,6 +18,7 @@
 #include "chrome/browser/custom_handlers/protocol_handler_registry.h"
 #include "chrome/browser/io_thread.h"
 #include "chrome/browser/net/chrome_url_request_context.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/storage_partition_descriptor.h"
 #include "chrome/common/content_settings_types.h"
 #include "content/public/browser/content_browser_client.h"
@@ -29,22 +30,17 @@
 class ChromeHttpUserAgentSettings;
 class ChromeNetworkDelegate;
 class CookieSettings;
-class DesktopNotificationService;
-class ExtensionInfoMap;
 class HostContentSettingsMap;
 class ManagedModeURLFilter;
-class Profile;
+class MediaDeviceIDSalt;
 class ProtocolHandlerRegistry;
 class SigninNamesOnIOThread;
-class TransportSecurityPersister;
 
-namespace chrome_browser_net {
-class LoadTimeStats;
-class ResourcePrefetchPredictorObserver;
+namespace extensions {
+class InfoMap;
 }
 
 namespace net {
-class CertVerifier;
 class CookieStore;
 class FraudulentCertificateReporter;
 class FtpTransactionFactory;
@@ -54,12 +50,14 @@ class ServerBoundCertService;
 class ProxyConfigService;
 class ProxyService;
 class SSLConfigService;
+class TransportSecurityPersister;
 class TransportSecurityState;
 class URLRequestJobFactoryImpl;
 }  // namespace net
 
 namespace policy {
 class PolicyCertVerifier;
+class PolicyHeaderIOHelper;
 class URLBlacklistManager;
 }  // namespace policy
 
@@ -95,7 +93,8 @@ class ProfileIOData {
   // Initializes the ProfileIOData object and primes the RequestContext
   // generation. Must be called prior to any of the Get*() methods other than
   // GetResouceContext or GetMetricsEnabledStateOnIOThread.
-  void Init(content::ProtocolHandlerMap* protocol_handlers) const;
+  void Init(content::ProtocolHandlerMap* protocol_handlers,
+            content::ProtocolHandlerScopedVector protocol_interceptors) const;
 
   ChromeURLRequestContext* GetMainRequestContext() const;
   ChromeURLRequestContext* GetMediaRequestContext() const;
@@ -105,7 +104,8 @@ class ProfileIOData {
       const StoragePartitionDescriptor& partition_descriptor,
       scoped_ptr<ProtocolHandlerRegistry::JobInterceptorFactory>
           protocol_handler_interceptor,
-      content::ProtocolHandlerMap* protocol_handlers) const;
+      content::ProtocolHandlerMap* protocol_handlers,
+      content::ProtocolHandlerScopedVector protocol_interceptors) const;
   ChromeURLRequestContext* GetIsolatedMediaRequestContext(
       ChromeURLRequestContext* app_context,
       const StoragePartitionDescriptor& partition_descriptor) const;
@@ -113,13 +113,9 @@ class ProfileIOData {
   // These are useful when the Chrome layer is called from the content layer
   // with a content::ResourceContext, and they want access to Chrome data for
   // that profile.
-  ExtensionInfoMap* GetExtensionInfoMap() const;
+  extensions::InfoMap* GetExtensionInfoMap() const;
   CookieSettings* GetCookieSettings() const;
   HostContentSettingsMap* GetHostContentSettingsMap() const;
-
-#if defined(ENABLE_NOTIFICATIONS)
-  DesktopNotificationService* GetNotificationService() const;
-#endif
 
   IntegerPrefMember* session_startup_pref() const {
     return &session_startup_pref_;
@@ -127,6 +123,10 @@ class ProfileIOData {
 
   SigninNamesOnIOThread* signin_names() const {
     return signin_names_.get();
+  }
+
+  StringPrefMember* google_services_account_id() const {
+    return &google_services_user_account_id_;
   }
 
   StringPrefMember* google_services_username() const {
@@ -173,18 +173,33 @@ class ProfileIOData {
     return &signin_allowed_;
   }
 
+  BooleanPrefMember* network_prediction_enabled() const {
+    return &network_prediction_enabled_;
+  }
+
+  content::ResourceContext::SaltCallback GetMediaDeviceIDSalt() const;
+
   net::TransportSecurityState* transport_security_state() const {
     return transport_security_state_.get();
   }
 
-  bool is_incognito() const {
-    return is_incognito_;
+#if defined(OS_CHROMEOS)
+  std::string username_hash() const {
+    return username_hash_;
+  }
+#endif
+
+  Profile::ProfileType profile_type() const {
+    return profile_type_;
   }
 
-  chrome_browser_net::ResourcePrefetchPredictorObserver*
-      resource_prefetch_predictor_observer() const {
-    return resource_prefetch_predictor_observer_.get();
+  bool IsOffTheRecord() const;
+
+#if defined(ENABLE_CONFIGURATION_POLICY)
+  policy::PolicyHeaderIOHelper* policy_header_helper() const {
+    return policy_header_helper_.get();
   }
+#endif
 
 #if defined(ENABLE_MANAGED_USERS)
   const ManagedModeURLFilter* managed_mode_url_filter() const {
@@ -201,13 +216,17 @@ class ProfileIOData {
   // should only be called from there.
   bool GetMetricsEnabledStateOnIOThread() const;
 
+  void set_client_cert_store_factory_for_testing(
+    const base::Callback<scoped_ptr<net::ClientCertStore>()>& factory) {
+      client_cert_store_factory_ = factory;
+  }
+
  protected:
   // A URLRequestContext for media that owns its HTTP factory, to ensure
   // it is deleted.
   class MediaRequestContext : public ChromeURLRequestContext {
    public:
-    explicit MediaRequestContext(
-        chrome_browser_net::LoadTimeStats* load_time_stats);
+    MediaRequestContext();
 
     void SetHttpTransactionFactory(
         scoped_ptr<net::HttpTransactionFactory> http_factory);
@@ -222,8 +241,7 @@ class ProfileIOData {
   // to ensure they are deleted.
   class AppRequestContext : public ChromeURLRequestContext {
    public:
-    explicit AppRequestContext(
-        chrome_browser_net::LoadTimeStats* load_time_stats);
+    AppRequestContext();
 
     void SetCookieStore(net::CookieStore* cookie_store);
     void SetHttpTransactionFactory(
@@ -250,13 +268,7 @@ class ProfileIOData {
     scoped_refptr<HostContentSettingsMap> host_content_settings_map;
     scoped_refptr<net::SSLConfigService> ssl_config_service;
     scoped_refptr<net::CookieMonster::Delegate> cookie_monster_delegate;
-    scoped_refptr<ExtensionInfoMap> extension_info_map;
-    scoped_ptr<chrome_browser_net::ResourcePrefetchPredictorObserver>
-        resource_prefetch_predictor_observer_;
-
-#if defined(ENABLE_NOTIFICATIONS)
-    DesktopNotificationService* notification_service;
-#endif
+    scoped_refptr<extensions::InfoMap> extension_info_map;
 
     // This pointer exists only as a means of conveying a url job factory
     // pointer from the protocol handler registry on the UI thread to the
@@ -275,7 +287,7 @@ class ProfileIOData {
 #endif
 
 #if defined(OS_CHROMEOS)
-    scoped_ptr<policy::PolicyCertVerifier> cert_verifier;
+    std::string username_hash;
 #endif
 
     // The profile this struct was populated from. It's passed as a void* to
@@ -284,7 +296,7 @@ class ProfileIOData {
     void* profile;
   };
 
-  explicit ProfileIOData(bool is_incognito);
+  explicit ProfileIOData(Profile::ProfileType profile_type);
 
   static std::string GetSSLSessionCacheShard();
 
@@ -293,6 +305,7 @@ class ProfileIOData {
 
   scoped_ptr<net::URLRequestJobFactory> SetUpJobFactoryDefaults(
       scoped_ptr<net::URLRequestJobFactoryImpl> job_factory,
+      content::ProtocolHandlerScopedVector protocol_interceptors,
       scoped_ptr<ProtocolHandlerRegistry::JobInterceptorFactory>
           protocol_handler_interceptor,
       net::NetworkDelegate* network_delegate,
@@ -329,10 +342,6 @@ class ProfileIOData {
     return main_request_context_.get();
   }
 
-  chrome_browser_net::LoadTimeStats* load_time_stats() const {
-    return load_time_stats_;
-  }
-
   bool initialized() const {
     return initialized_;
   }
@@ -362,8 +371,15 @@ class ProfileIOData {
     virtual net::HostResolver* GetHostResolver() OVERRIDE;
     virtual net::URLRequestContext* GetRequestContext() OVERRIDE;
     virtual scoped_ptr<net::ClientCertStore> CreateClientCertStore() OVERRIDE;
+    virtual void CreateKeygenHandler(
+        uint32 key_size_in_bits,
+        const std::string& challenge_string,
+        const GURL& url,
+        const base::Callback<void(scoped_ptr<net::KeygenHandler>)>& callback)
+        OVERRIDE;
     virtual bool AllowMicAccess(const GURL& origin) OVERRIDE;
     virtual bool AllowCameraAccess(const GURL& origin) OVERRIDE;
+    virtual SaltCallback GetMediaDeviceIDSalt() OVERRIDE;
 
    private:
     friend class ProfileIOData;
@@ -391,7 +407,8 @@ class ProfileIOData {
   // should use the static helper functions above to implement this.
   virtual void InitializeInternal(
       ProfileParams* profile_params,
-      content::ProtocolHandlerMap* protocol_handlers) const = 0;
+      content::ProtocolHandlerMap* protocol_handlers,
+      content::ProtocolHandlerScopedVector protocol_interceptors) const = 0;
 
   // Initializes the RequestContext for extensions.
   virtual void InitializeExtensionsRequestContext(
@@ -403,7 +420,8 @@ class ProfileIOData {
       const StoragePartitionDescriptor& details,
       scoped_ptr<ProtocolHandlerRegistry::JobInterceptorFactory>
           protocol_handler_interceptor,
-      content::ProtocolHandlerMap* protocol_handlers) const = 0;
+      content::ProtocolHandlerMap* protocol_handlers,
+      content::ProtocolHandlerScopedVector protocol_interceptors) const = 0;
 
   // Does an on-demand initialization of a media RequestContext for the given
   // isolated app.
@@ -415,21 +433,17 @@ class ProfileIOData {
   // context from ProfileIOData to the URLRequestContextGetter.
   virtual ChromeURLRequestContext*
       AcquireMediaRequestContext() const = 0;
-  virtual ChromeURLRequestContext*
-      AcquireIsolatedAppRequestContext(
-          ChromeURLRequestContext* main_context,
-          const StoragePartitionDescriptor& partition_descriptor,
-          scoped_ptr<ProtocolHandlerRegistry::JobInterceptorFactory>
-              protocol_handler_interceptor,
-          content::ProtocolHandlerMap* protocol_handlers) const = 0;
+  virtual ChromeURLRequestContext* AcquireIsolatedAppRequestContext(
+      ChromeURLRequestContext* main_context,
+      const StoragePartitionDescriptor& partition_descriptor,
+      scoped_ptr<ProtocolHandlerRegistry::JobInterceptorFactory>
+          protocol_handler_interceptor,
+      content::ProtocolHandlerMap* protocol_handlers,
+      content::ProtocolHandlerScopedVector protocol_interceptors) const = 0;
   virtual ChromeURLRequestContext*
       AcquireIsolatedMediaRequestContext(
           ChromeURLRequestContext* app_context,
           const StoragePartitionDescriptor& partition_descriptor) const = 0;
-
-  // Returns the LoadTimeStats object to be used for this profile.
-  virtual chrome_browser_net::LoadTimeStats* GetLoadTimeStats(
-      IOThread::Globals* io_thread_globals) const = 0;
 
   // The order *DOES* matter for the majority of these member variables, so
   // don't move them around unless you know what you're doing!
@@ -454,6 +468,11 @@ class ProfileIOData {
   // Provides access to the email addresses of all signed in profiles.
   mutable scoped_ptr<SigninNamesOnIOThread> signin_names_;
 
+  // Used for testing.
+  mutable base::Callback<scoped_ptr<net::ClientCertStore>()>
+      client_cert_store_factory_;
+
+  mutable StringPrefMember google_services_user_account_id_;
   mutable StringPrefMember google_services_username_;
   mutable StringPrefMember google_services_username_pattern_;
   mutable BooleanPrefMember reverse_autologin_enabled_;
@@ -464,6 +483,8 @@ class ProfileIOData {
 
   mutable StringListPrefMember one_click_signin_rejected_email_list_;
 
+  mutable scoped_refptr<MediaDeviceIDSalt> media_device_id_salt_;
+
   // Member variables which are pointed to by the various context objects.
   mutable BooleanPrefMember enable_referrers_;
   mutable BooleanPrefMember enable_do_not_track_;
@@ -472,8 +493,10 @@ class ProfileIOData {
   mutable BooleanPrefMember printing_enabled_;
   mutable BooleanPrefMember sync_disabled_;
   mutable BooleanPrefMember signin_allowed_;
+  mutable BooleanPrefMember network_prediction_enabled_;
   // TODO(marja): Remove session_startup_pref_ if no longer needed.
   mutable IntegerPrefMember session_startup_pref_;
+  mutable BooleanPrefMember quick_check_enabled_;
 
   // The state of metrics reporting in the browser that this profile runs on.
   // Unfortunately, since ChromeOS has a separate representation of this state,
@@ -484,11 +507,14 @@ class ProfileIOData {
   BooleanPrefMember enable_metrics_;
 #endif
 
+#if defined(ENABLE_CONFIGURATION_POLICY)
   // Pointed to by NetworkDelegate.
   mutable scoped_ptr<policy::URLBlacklistManager> url_blacklist_manager_;
+  mutable scoped_ptr<policy::PolicyHeaderIOHelper> policy_header_helper_;
+#endif
 
   // Pointed to by URLRequestContext.
-  mutable scoped_refptr<ExtensionInfoMap> extension_info_map_;
+  mutable scoped_refptr<extensions::InfoMap> extension_info_map_;
   mutable scoped_ptr<net::ServerBoundCertService> server_bound_cert_service_;
   mutable scoped_ptr<ChromeNetworkDelegate> network_delegate_;
   mutable scoped_ptr<net::FraudulentCertificateReporter>
@@ -498,14 +524,11 @@ class ProfileIOData {
   mutable scoped_ptr<net::HttpServerProperties>
       http_server_properties_;
 #if defined(OS_CHROMEOS)
-  mutable scoped_ptr<net::CertVerifier> cert_verifier_;
+  mutable scoped_ptr<policy::PolicyCertVerifier> cert_verifier_;
+  mutable std::string username_hash_;
 #endif
 
-#if defined(ENABLE_NOTIFICATIONS)
-  mutable DesktopNotificationService* notification_service_;
-#endif
-
-  mutable scoped_ptr<TransportSecurityPersister>
+  mutable scoped_ptr<net::TransportSecurityPersister>
       transport_security_persister_;
 
   // These are only valid in between LazyInitialize() and their accessor being
@@ -522,13 +545,8 @@ class ProfileIOData {
 
   mutable scoped_refptr<HostContentSettingsMap> host_content_settings_map_;
 
-  mutable scoped_ptr<chrome_browser_net::ResourcePrefetchPredictorObserver>
-      resource_prefetch_predictor_observer_;
-
   mutable scoped_ptr<ChromeHttpUserAgentSettings>
       chrome_http_user_agent_settings_;
-
-  mutable chrome_browser_net::LoadTimeStats* load_time_stats_;
 
 #if defined(ENABLE_MANAGED_USERS)
   mutable scoped_refptr<const ManagedModeURLFilter> managed_mode_url_filter_;
@@ -537,7 +555,7 @@ class ProfileIOData {
   // TODO(jhawkins): Remove once crbug.com/102004 is fixed.
   bool initialized_on_UI_thread_;
 
-  bool is_incognito_;
+  const Profile::ProfileType profile_type_;
 
   DISALLOW_COPY_AND_ASSIGN(ProfileIOData);
 };

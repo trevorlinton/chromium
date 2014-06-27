@@ -108,25 +108,30 @@ void SyncFileSystemBackend::Initialize(fileapi::FileSystemContext* context) {
       fileapi::kFileSystemTypeSyncableForInternalSync);
 }
 
-void SyncFileSystemBackend::OpenFileSystem(
-    const GURL& origin_url,
-    fileapi::FileSystemType type,
-    fileapi::OpenFileSystemMode mode,
-    const OpenFileSystemCallback& callback) {
-  DCHECK(CanHandleType(type));
+void SyncFileSystemBackend::ResolveURL(const fileapi::FileSystemURL& url,
+                                       fileapi::OpenFileSystemMode mode,
+                                       const OpenFileSystemCallback& callback) {
+  DCHECK(CanHandleType(url.type()));
 
   if (skip_initialize_syncfs_service_for_testing_) {
-    GetDelegate()->OpenFileSystem(origin_url, type, mode, callback,
-                                  GetSyncableFileSystemRootURI(origin_url));
+    GetDelegate()->OpenFileSystem(url.origin(),
+                                  url.type(),
+                                  mode,
+                                  callback,
+                                  GetSyncableFileSystemRootURI(url.origin()));
     return;
   }
 
   // It is safe to pass Unretained(this) since |context_| owns it.
   SyncStatusCallback initialize_callback =
       base::Bind(&SyncFileSystemBackend::DidInitializeSyncFileSystemService,
-                 base::Unretained(this), make_scoped_refptr(context_),
-                 origin_url, type, mode, callback);
-  InitializeSyncFileSystemService(origin_url, initialize_callback);
+                 base::Unretained(this),
+                 make_scoped_refptr(context_),
+                 url.origin(),
+                 url.type(),
+                 mode,
+                 callback);
+  InitializeSyncFileSystemService(url.origin(), initialize_callback);
 }
 
 fileapi::AsyncFileUtil* SyncFileSystemBackend::GetAsyncFileUtil(
@@ -137,9 +142,9 @@ fileapi::AsyncFileUtil* SyncFileSystemBackend::GetAsyncFileUtil(
 fileapi::CopyOrMoveFileValidatorFactory*
 SyncFileSystemBackend::GetCopyOrMoveFileValidatorFactory(
     fileapi::FileSystemType type,
-    base::PlatformFileError* error_code) {
+    base::File::Error* error_code) {
   DCHECK(error_code);
-  *error_code = base::PLATFORM_FILE_OK;
+  *error_code = base::File::FILE_OK;
   return NULL;
 }
 
@@ -147,7 +152,7 @@ fileapi::FileSystemOperation*
 SyncFileSystemBackend::CreateFileSystemOperation(
     const fileapi::FileSystemURL& url,
     fileapi::FileSystemContext* context,
-    base::PlatformFileError* error_code) const {
+    base::File::Error* error_code) const {
   DCHECK(CanHandleType(url.type()));
   DCHECK(context);
   DCHECK(error_code);
@@ -164,6 +169,11 @@ SyncFileSystemBackend::CreateFileSystemOperation(
 
   return new SyncableFileSystemOperation(
       url, context, operation_context.Pass());
+}
+
+bool SyncFileSystemBackend::SupportsStreaming(
+    const fileapi::FileSystemURL& url) const {
+  return false;
 }
 
 scoped_ptr<webkit_blob::FileStreamReader>
@@ -277,12 +287,13 @@ void SyncFileSystemBackend::DidInitializeSyncFileSystemService(
 
   if (status != sync_file_system::SYNC_STATUS_OK) {
     callback.Run(GURL(), std::string(),
-                 SyncStatusCodeToPlatformFileError(status));
+                 SyncStatusCodeToFileError(status));
     return;
   }
 
-  GetDelegate()->OpenFileSystem(origin_url, type, mode, callback,
-                                GetSyncableFileSystemRootURI(origin_url));
+  callback.Run(GetSyncableFileSystemRootURI(origin_url),
+               GetFileSystemName(origin_url, type),
+               base::File::FILE_OK);
 }
 
 }  // namespace sync_file_system

@@ -5,27 +5,23 @@
 #ifndef CHROME_COMMON_METRICS_METRICS_LOG_MANAGER_H_
 #define CHROME_COMMON_METRICS_METRICS_LOG_MANAGER_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
 
 #include <string>
 #include <vector>
 
-class MetricsLogBase;
+#include "base/basictypes.h"
+#include "base/memory/scoped_ptr.h"
+#include "chrome/common/metrics/metrics_log_base.h"
 
 // Manages all the log objects used by a MetricsService implementation. Keeps
 // track of both an in progress log and a log that is staged for uploading as
 // text, as well as saving logs to, and loading logs from, persistent storage.
 class MetricsLogManager {
  public:
+  typedef MetricsLogBase::LogType LogType;
+
   MetricsLogManager();
   ~MetricsLogManager();
-
-  enum LogType {
-    INITIAL_LOG,  // The first log of a session.
-    ONGOING_LOG,  // Subsequent logs in a session.
-    NO_LOG,       // Placeholder value for when there is no log.
-  };
 
   class SerializedLog {
    public:
@@ -175,6 +171,9 @@ class MetricsLogManager {
 
   // Compresses |current_log_| into |compressed_log|.
   void CompressCurrentLog(SerializedLog* compressed_log);
+
+  // Tracks whether unsent logs (if any) have been loaded from the serializer.
+  bool unsent_logs_loaded_;
 
   // The log that we are still appending to.
   scoped_ptr<MetricsLogBase> current_log_;

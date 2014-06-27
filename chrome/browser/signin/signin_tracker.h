@@ -5,10 +5,10 @@
 #ifndef CHROME_BROWSER_SIGNIN_SIGNIN_TRACKER_H_
 #define CHROME_BROWSER_SIGNIN_SIGNIN_TRACKER_H_
 
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
-#include "content/public/browser/notification_types.h"
+#include "base/memory/scoped_ptr.h"
+#include "components/signin/core/browser/signin_manager_base.h"
 #include "google_apis/gaia/google_service_auth_error.h"
+#include "google_apis/gaia/merge_session_helper.h"
 #include "google_apis/gaia/oauth2_token_service.h"
 
 class Profile;
@@ -31,7 +31,7 @@ class Profile;
 //
 // LoginUIService - Our desktop UI flows rely on having only a single login flow
 // visible to the user at once. This is achieved via LoginUIService
-// (a BrowserContextKeyedService that keeps track of the currently visible
+// (a KeyedService that keeps track of the currently visible
 // login UI).
 //
 // SigninManager - Records the currently-logged-in user and handles all
@@ -39,18 +39,16 @@ class Profile;
 // SigninTracker, SigninManager only knows about the GAIA login state and is
 // not aware of the state of any signed in services.
 //
-// TokenService - Uses credentials provided by SigninManager to generate tokens
-// for all signed-in services in Chrome.
-//
 // OAuth2TokenService - Maintains and manages OAuth2 tokens for the accounts
 // connected to this profile.
 //
 // ProfileSyncService - Provides the external API for interacting with the
-// sync framework. Listens for notifications from the TokenService to know
-// when to startup sync, and provides an Observer interface to notify the UI
-// layer of changes in sync state so they can be reflected in the UI.
-class SigninTracker : public content::NotificationObserver,
-                      public OAuth2TokenService::Observer {
+// sync framework. Listens for notifications for tokens to know when to startup
+// sync, and provides an Observer interface to notify the UI layer of changes
+// in sync state so they can be reflected in the UI.
+class SigninTracker : public SigninManagerBase::Observer,
+                      public OAuth2TokenService::Observer,
+                      public MergeSessionHelper::Observer {
  public:
   class Observer {
    public:
@@ -59,6 +57,10 @@ class SigninTracker : public content::NotificationObserver,
 
     // The signin attempt succeeded.
     virtual void SigninSuccess() = 0;
+
+    // The signed in account has been merged into the content area cookie jar.
+    // This will be called only after a call to SigninSuccess().
+    virtual void MergeSessionComplete(const GoogleServiceAuthError& error) = 0;
   };
 
   // Creates a SigninTracker that tracks the signin status on the passed
@@ -67,10 +69,8 @@ class SigninTracker : public content::NotificationObserver,
   SigninTracker(Profile* profile, Observer* observer);
   virtual ~SigninTracker();
 
-  // content::NotificationObserver implementation.
-  virtual void Observe(int type,
-                       const content::NotificationSource& source,
-                       const content::NotificationDetails& details) OVERRIDE;
+  // SigninManagerBase::Observer implementation.
+  virtual void GoogleSigninFailed(const GoogleServiceAuthError& error) OVERRIDE;
 
   // OAuth2TokenService::Observer implementation.
   virtual void OnRefreshTokenAvailable(const std::string& account_id) OVERRIDE;
@@ -80,14 +80,16 @@ class SigninTracker : public content::NotificationObserver,
   // Initializes this by adding notifications and observers.
   void Initialize();
 
+  // MergeSessionHelper::Observer implementation.
+  virtual void MergeSessionCompleted(
+      const std::string& account_id,
+      const GoogleServiceAuthError& error) OVERRIDE;
+
   // The profile whose signin status we are tracking.
   Profile* profile_;
 
   // Weak pointer to the observer we call when the signin state changes.
   Observer* observer_;
-
-  // Used to listen to notifications from the SigninManager.
-  content::NotificationRegistrar registrar_;
 
   DISALLOW_COPY_AND_ASSIGN(SigninTracker);
 };

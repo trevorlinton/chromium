@@ -5,7 +5,8 @@
 #include "content/renderer/media/webaudio_capturer_source.h"
 
 #include "base/logging.h"
-#include "content/renderer/media/webrtc_local_audio_source_provider.h"
+#include "base/time/time.h"
+#include "content/renderer/media/webrtc_audio_capturer.h"
 #include "content/renderer/media/webrtc_local_audio_track.h"
 
 using media::AudioBus;
@@ -21,7 +22,8 @@ namespace content {
 
 WebAudioCapturerSource::WebAudioCapturerSource()
     : track_(NULL),
-      source_provider_(NULL) {
+      capturer_(NULL),
+      audio_format_changed_(false) {
 }
 
 WebAudioCapturerSource::~WebAudioCapturerSource() {
@@ -48,48 +50,45 @@ void WebAudioCapturerSource::setFormat(
   params_.Reset(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
                 channel_layout, number_of_channels, 0, sample_rate, 16,
                 sample_rate / 100);
-
-  // Update the downstream client to use the same format as what WebKit
-  // is using.
-  if (track_)
-    track_->SetCaptureFormat(params_);
+  audio_format_changed_ = true;
 
   wrapper_bus_ = AudioBus::CreateWrapper(params_.channels());
   capture_bus_ = AudioBus::Create(params_);
+  audio_data_.reset(
+      new int16[params_.frames_per_buffer() * params_.channels()]);
   fifo_.reset(new AudioFifo(
       params_.channels(),
       kMaxNumberOfBuffersInFifo * params_.frames_per_buffer()));
 }
 
 void WebAudioCapturerSource::Start(
-    WebRtcLocalAudioTrack* track,
-    WebRtcLocalAudioSourceProvider* source_provider) {
+    WebRtcLocalAudioTrack* track, WebRtcAudioCapturer* capturer) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(track);
-  // |source_provider| may be NULL if no getUserMedia has been called before
-  // calling CreateMediaStreamDestination.
-  // The downstream client should be configured the same as what WebKit
-  // is feeding it.
-  track->SetCaptureFormat(params_);
-
   base::AutoLock auto_lock(lock_);
   track_ = track;
-  source_provider_ = source_provider;
+  capturer_ = capturer;
 }
 
 void WebAudioCapturerSource::Stop() {
   DCHECK(thread_checker_.CalledOnValidThread());
   base::AutoLock auto_lock(lock_);
   track_ = NULL;
-  source_provider_ = NULL;
+  capturer_ = NULL;
 }
 
 void WebAudioCapturerSource::consumeAudio(
-    const WebKit::WebVector<const float*>& audio_data,
+    const blink::WebVector<const float*>& audio_data,
     size_t number_of_frames) {
   base::AutoLock auto_lock(lock_);
   if (!track_)
     return;
+
+  // Update the downstream client if the audio format has been changed.
+  if (audio_format_changed_) {
+    track_->OnSetFormat(params_);
+    audio_format_changed_ = false;
+  }
 
   wrapper_bus_->set_frames(number_of_frames);
 
@@ -109,16 +108,26 @@ void WebAudioCapturerSource::consumeAudio(
 
   fifo_->Push(wrapper_bus_.get());
   int capture_frames = params_.frames_per_buffer();
-  int delay_ms = 0;
+  base::TimeDelta delay;
   int volume = 0;
   bool key_pressed = false;
+  if (capturer_) {
+    capturer_->GetAudioProcessingParams(&delay, &volume, &key_pressed);
+  }
+
+  // Turn off audio processing if the delay value is 0, since in such case,
+  // it indicates the data is not from microphone.
+  // TODO(xians): remove the flag when supporting one APM per audio track.
+  // See crbug/264611 for details.
+  bool need_audio_processing = (delay.InMilliseconds() != 0);
   while (fifo_->frames() >= capture_frames) {
-    if (source_provider_) {
-      source_provider_->GetAudioProcessingParams(
-          &delay_ms, &volume, &key_pressed);
-    }
     fifo_->Consume(capture_bus_.get(), 0, capture_frames);
-    track_->Capture(capture_bus_.get(), delay_ms, volume, key_pressed);
+    // TODO(xians): Avoid this interleave/deinterleave operation.
+    capture_bus_->ToInterleaved(capture_bus_->frames(),
+                                params_.bits_per_sample() / 8,
+                                audio_data_.get());
+    track_->Capture(audio_data_.get(), delay, volume, key_pressed,
+                    need_audio_processing);
   }
 }
 

@@ -67,11 +67,10 @@ class CommandBufferProxyImpl
   // returns it as an owned pointer to a media::VideoDecodeAccelerator.  Returns
   // NULL on failure to create the GpuVideoDecodeAcceleratorHost.
   // Note that the GpuVideoDecodeAccelerator may still fail to be created in
-  // the GPU process, even if this returns non-NULL. In this case the client is
-  // notified of an error later.
+  // the GPU process, even if this returns non-NULL. In this case the VDA client
+  // is notified of an error later, after Initialize().
   scoped_ptr<media::VideoDecodeAccelerator> CreateVideoDecoder(
-      media::VideoCodecProfile profile,
-      media::VideoDecodeAccelerator::Client* client);
+      media::VideoCodecProfile profile);
 
   // IPC::Listener implementation:
   virtual bool OnMessageReceived(const IPC::Message& message) OVERRIDE;
@@ -83,38 +82,39 @@ class CommandBufferProxyImpl
   virtual State GetLastState() OVERRIDE;
   virtual int32 GetLastToken() OVERRIDE;
   virtual void Flush(int32 put_offset) OVERRIDE;
-  virtual State FlushSync(int32 put_offset, int32 last_known_get) OVERRIDE;
+  virtual void WaitForTokenInRange(int32 start, int32 end) OVERRIDE;
+  virtual void WaitForGetOffsetInRange(int32 start, int32 end) OVERRIDE;
   virtual void SetGetBuffer(int32 shm_id) OVERRIDE;
   virtual void SetGetOffset(int32 get_offset) OVERRIDE;
-  virtual gpu::Buffer CreateTransferBuffer(size_t size,
-                                           int32* id) OVERRIDE;
+  virtual scoped_refptr<gpu::Buffer> CreateTransferBuffer(size_t size,
+                                                          int32* id) OVERRIDE;
   virtual void DestroyTransferBuffer(int32 id) OVERRIDE;
-  virtual gpu::Buffer GetTransferBuffer(int32 id) OVERRIDE;
+  virtual scoped_refptr<gpu::Buffer> GetTransferBuffer(int32 id) OVERRIDE;
   virtual void SetToken(int32 token) OVERRIDE;
   virtual void SetParseError(gpu::error::Error error) OVERRIDE;
   virtual void SetContextLostReason(
       gpu::error::ContextLostReason reason) OVERRIDE;
 
   // gpu::GpuControl implementation:
-  virtual bool SupportsGpuMemoryBuffer() OVERRIDE;
+  virtual gpu::Capabilities GetCapabilities() OVERRIDE;
   virtual gfx::GpuMemoryBuffer* CreateGpuMemoryBuffer(
       size_t width,
       size_t height,
       unsigned internalformat,
       int32* id) OVERRIDE;
   virtual void DestroyGpuMemoryBuffer(int32 id) OVERRIDE;
-  virtual bool GenerateMailboxNames(unsigned num,
-                                    std::vector<gpu::Mailbox>* names) OVERRIDE;
   virtual uint32 InsertSyncPoint() OVERRIDE;
   virtual void SignalSyncPoint(uint32 sync_point,
                                const base::Closure& callback) OVERRIDE;
   virtual void SignalQuery(uint32 query,
                            const base::Closure& callback) OVERRIDE;
+  virtual void SetSurfaceVisible(bool visible) OVERRIDE;
   virtual void SendManagedMemoryStats(const gpu::ManagedMemoryStats& stats)
       OVERRIDE;
+  virtual void Echo(const base::Closure& callback) OVERRIDE;
+  virtual uint32 CreateStreamTexture(uint32 texture_id) OVERRIDE;
 
   int GetRouteID() const;
-  bool Echo(const base::Closure& callback);
   bool ProduceFrontBuffer(const gpu::Mailbox& mailbox);
   void SetChannelErrorCallback(const base::Closure& callback);
 
@@ -125,16 +125,12 @@ class CommandBufferProxyImpl
   void AddDeletionObserver(DeletionObserver* observer);
   void RemoveDeletionObserver(DeletionObserver* observer);
 
-  bool DiscardBackbuffer();
   bool EnsureBackbuffer();
-
-  // Sends an IPC message with the new state of surface visibility.
-  bool SetSurfaceVisible(bool visible);
 
   void SetOnConsoleMessageCallback(
       const GpuConsoleMessageCallback& callback);
 
-  void SetLatencyInfo(const ui::LatencyInfo& latency_info);
+  void SetLatencyInfo(const std::vector<ui::LatencyInfo>& latency_info);
 
   // TODO(apatrick): this is a temporary optimization while skia is calling
   // ContentGLContext::MakeCurrent prior to every GL call. It saves returning 6
@@ -145,7 +141,7 @@ class CommandBufferProxyImpl
   GpuChannelHost* channel() const { return channel_; }
 
  private:
-  typedef std::map<int32, gpu::Buffer> TransferBufferMap;
+  typedef std::map<int32, scoped_refptr<gpu::Buffer> > TransferBufferMap;
   typedef base::hash_map<uint32, base::Closure> SignalTaskMap;
   typedef std::map<int32, gfx::GpuMemoryBuffer*> GpuMemoryBufferMap;
 
@@ -161,7 +157,6 @@ class CommandBufferProxyImpl
   void OnConsoleMessage(const GPUCommandBufferConsoleMessage& message);
   void OnSetMemoryAllocation(const gpu::MemoryAllocation& allocation);
   void OnSignalSyncPointAck(uint32 id);
-  void OnGenerateMailboxNamesReply(const std::vector<std::string>& names);
 
   // Try to read an updated copy of the state from shared memory.
   void TryUpdateState();
@@ -206,6 +201,8 @@ class CommandBufferProxyImpl
 
   // Local cache of id to gpu memory buffer mapping.
   GpuMemoryBufferMap gpu_memory_buffers_;
+
+  gpu::Capabilities capabilities_;
 
   DISALLOW_COPY_AND_ASSIGN(CommandBufferProxyImpl);
 };

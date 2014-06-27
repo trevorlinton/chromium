@@ -12,8 +12,6 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/platform_file.h"
 #include "content/public/browser/content_browser_client.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
 #include "content/shell/browser/shell_speech_recognition_manager_delegate.h"
 
 namespace content {
@@ -22,8 +20,7 @@ class ShellBrowserContext;
 class ShellBrowserMainParts;
 class ShellResourceDispatcherHostDelegate;
 
-class ShellContentBrowserClient : public ContentBrowserClient,
-                                  public NotificationObserver {
+class ShellContentBrowserClient : public ContentBrowserClient {
  public:
   // Gets the current instance.
   static ShellContentBrowserClient* Get();
@@ -36,17 +33,19 @@ class ShellContentBrowserClient : public ContentBrowserClient,
   // ContentBrowserClient overrides.
   virtual BrowserMainParts* CreateBrowserMainParts(
       const MainFunctionParams& parameters) OVERRIDE;
-  virtual void RenderProcessHostCreated(RenderProcessHost* host) OVERRIDE;
+  virtual void RenderProcessWillLaunch(RenderProcessHost* host) OVERRIDE;
   virtual net::URLRequestContextGetter* CreateRequestContext(
       BrowserContext* browser_context,
-      ProtocolHandlerMap* protocol_handlers) OVERRIDE;
+      ProtocolHandlerMap* protocol_handlers,
+      ProtocolHandlerScopedVector protocol_interceptors) OVERRIDE;
   virtual net::URLRequestContextGetter* CreateRequestContextForStoragePartition(
       BrowserContext* browser_context,
       const base::FilePath& partition_path,
       bool in_memory,
-      ProtocolHandlerMap* protocol_handlers) OVERRIDE;
+      ProtocolHandlerMap* protocol_handlers,
+      ProtocolHandlerScopedVector protocol_interceptors) OVERRIDE;
   virtual bool IsHandledURL(const GURL& url) OVERRIDE;
-  virtual void AppendExtraCommandLineSwitches(CommandLine* command_line,
+  virtual void AppendExtraCommandLineSwitches(base::CommandLine* command_line,
                                               int child_process_id) OVERRIDE;
   virtual void OverrideWebkitPrefs(RenderViewHost* render_view_host,
                                    const GURL& url,
@@ -68,15 +67,10 @@ class ShellContentBrowserClient : public ContentBrowserClient,
 
 #if defined(OS_POSIX) && !defined(OS_MACOSX)
   virtual void GetAdditionalMappedFilesForChildProcess(
-      const CommandLine& command_line,
+      const base::CommandLine& command_line,
       int child_process_id,
       std::vector<content::FileDescriptorInfo>* mappings) OVERRIDE;
 #endif
-
-  // NotificationObserver implementation.
-  virtual void Observe(int type,
-                       const NotificationSource& source,
-                       const NotificationDetails& details) OVERRIDE;
 
   ShellBrowserContext* browser_context();
   ShellBrowserContext* off_the_record_browser_context();
@@ -97,8 +91,6 @@ class ShellContentBrowserClient : public ContentBrowserClient,
   base::FilePath webkit_source_dir_;
 
   ShellBrowserMainParts* shell_browser_main_parts_;
-
-  NotificationRegistrar registrar_;
 };
 
 }  // namespace content

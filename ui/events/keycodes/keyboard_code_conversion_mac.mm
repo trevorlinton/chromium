@@ -9,6 +9,7 @@
 #import <Carbon/Carbon.h>
 
 #include "base/logging.h"
+#include "ui/events/keycodes/dom4/keycode_converter.h"
 
 namespace ui {
 
@@ -520,18 +521,6 @@ int MacKeyCodeForWindowsKeyCode(KeyboardCode keycode,
     }
   }
 
-  // Control characters.
-  if (flags & NSControlKeyMask) {
-    if (keycode >= VKEY_A && keycode <= VKEY_Z)
-      *character = 1 + keycode - VKEY_A;
-    else if (macKeycode == kVK_ANSI_LeftBracket)
-      *character = 27;
-    else if (macKeycode == kVK_ANSI_Backslash)
-      *character = 28;
-    else if (macKeycode == kVK_ANSI_RightBracket)
-      *character = 29;
-  }
-
   // TODO(suzhe): Support characters for Option key bindings.
   return macKeycode;
 }
@@ -553,6 +542,11 @@ KeyboardCode KeyboardCodeFromNSEvent(NSEvent* event) {
       return code;
   }
   return KeyboardCodeFromKeyCode([event keyCode]);
+}
+
+const char* CodeFromNSEvent(NSEvent* event) {
+  return KeycodeConverter::GetInstance()->NativeKeycodeToCode(
+      [event keyCode]);
 }
 
 }  // namespace ui

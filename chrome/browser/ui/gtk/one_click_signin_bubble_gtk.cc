@@ -31,8 +31,8 @@ static const int kModalDialogMessageWidth = 400;
 OneClickSigninBubbleGtk::OneClickSigninBubbleGtk(
     BrowserWindowGtk* browser_window_gtk,
     BrowserWindow::OneClickSigninBubbleType type,
-    const string16& email,
-    const string16& error_message,
+    const base::string16& email,
+    const base::string16& error_message,
     const BrowserWindow::StartSyncCallback& start_sync_callback)
     : bubble_(NULL),
       email_(email),
@@ -159,8 +159,8 @@ void OneClickSigninBubbleGtk::InitializeWidgets(
         l10n_util::GetStringFUTF8(IDS_ONE_CLICK_SIGNIN_DIALOG_MESSAGE_NEW,
                                   email_);
   } else {
-    label_text = !error_message_.empty() ? UTF16ToUTF8(error_message_):
-        l10n_util::GetStringUTF8(IDS_ONE_CLICK_SIGNIN_BUBBLE_MESSAGE);
+    label_text = !error_message_.empty() ? base::UTF16ToUTF8(error_message_):
+        l10n_util::GetStringUTF8(IDS_ONE_CLICK_SIGNIN_BUBBLE_MESSAGE_FULL);
   }
 
   message_label_ = gtk_label_new(label_text.c_str());

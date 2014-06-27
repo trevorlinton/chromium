@@ -9,9 +9,9 @@
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebURLRequest.h"
 
-using WebKit::WebHTTPBody;
-using WebKit::WebString;
-using WebKit::WebURLRequest;
+using blink::WebHTTPBody;
+using blink::WebString;
+using blink::WebURLRequest;
 
 namespace content {
 
@@ -19,9 +19,9 @@ namespace {
 
 std::string GetHeader(const WebURLRequest& request, const char* name) {
   std::string result;
-  TrimWhitespace(
+  base::TrimWhitespace(
       request.httpHeaderField(WebString::fromUTF8(name)).utf8(),
-      TRIM_ALL,
+      base::TRIM_ALL,
       &result);
   return result;
 }

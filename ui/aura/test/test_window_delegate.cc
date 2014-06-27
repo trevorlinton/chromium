@@ -78,10 +78,10 @@ void TestWindowDelegate::OnDeviceScaleFactorChanged(
     float device_scale_factor) {
 }
 
-void TestWindowDelegate::OnWindowDestroying() {
+void TestWindowDelegate::OnWindowDestroying(Window* window) {
 }
 
-void TestWindowDelegate::OnWindowDestroyed() {
+void TestWindowDelegate::OnWindowDestroyed(Window* window) {
   if (delete_on_destroyed_)
     delete this;
 }
@@ -94,10 +94,6 @@ bool TestWindowDelegate::HasHitTestMask() const {
 }
 
 void TestWindowDelegate::GetHitTestMask(gfx::Path* mask) const {
-}
-
-void TestWindowDelegate::DidRecreateLayer(ui::Layer *old_layer,
-                                          ui::Layer *new_layer) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -116,7 +112,7 @@ void ColorTestWindowDelegate::OnKeyEvent(ui::KeyEvent* event) {
   event->SetHandled();
 }
 
-void ColorTestWindowDelegate::OnWindowDestroyed() {
+void ColorTestWindowDelegate::OnWindowDestroyed(Window* window) {
   delete this;
 }
 
@@ -143,13 +139,14 @@ void MaskedWindowDelegate::GetHitTestMask(gfx::Path* mask) const {
 // EventCountDelegate
 
 EventCountDelegate::EventCountDelegate()
-  : mouse_enter_count_(0),
-    mouse_move_count_(0),
-    mouse_leave_count_(0),
-    mouse_press_count_(0),
-    mouse_release_count_(0),
-    key_press_count_(0),
-    key_release_count_(0) {
+    : mouse_enter_count_(0),
+      mouse_move_count_(0),
+      mouse_leave_count_(0),
+      mouse_press_count_(0),
+      mouse_release_count_(0),
+      key_press_count_(0),
+      key_release_count_(0),
+      gesture_count_(0) {
 }
 
 void EventCountDelegate::OnKeyEvent(ui::KeyEvent* event) {
@@ -186,6 +183,10 @@ void EventCountDelegate::OnMouseEvent(ui::MouseEvent* event) {
   }
 }
 
+void EventCountDelegate::OnGestureEvent(ui::GestureEvent* event) {
+  gesture_count_++;
+}
+
 std::string EventCountDelegate::GetMouseMotionCountsAndReset() {
   std::string result = base::StringPrintf("%d %d %d",
                                           mouse_enter_count_,
@@ -214,6 +215,12 @@ std::string EventCountDelegate::GetKeyCountsAndReset() {
   key_press_count_ = 0;
   key_release_count_ = 0;
   return result;
+}
+
+int EventCountDelegate::GetGestureCountAndReset() {
+  int gesture_count = gesture_count_;
+  gesture_count_ = 0;
+  return gesture_count;
 }
 
 }  // namespace test

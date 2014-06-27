@@ -62,9 +62,9 @@ class NaClBrowserTestBase : public InProcessBrowserTest {
   NaClBrowserTestBase();
   virtual ~NaClBrowserTestBase();
 
-  virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE;
+  virtual void SetUpCommandLine(base::CommandLine* command_line) OVERRIDE;
 
-  virtual void SetUpInProcessBrowserTestFixture() OVERRIDE;
+  virtual void SetUpOnMainThread() OVERRIDE;
 
   // What variant are we running - newlib, glibc, pnacl, etc?
   // This is used to compute what directory we're pulling data from, but it can
@@ -127,13 +127,19 @@ class NaClBrowserTestPnacl : public NaClBrowserTestBase {
 // type is not available.
 class NaClBrowserTestPnaclDisabled : public NaClBrowserTestBase {
  public:
-  virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE;
+  virtual void SetUpCommandLine(base::CommandLine* command_line) OVERRIDE;
 
   virtual base::FilePath::StringType Variant() OVERRIDE;
 
   virtual bool IsAPnaclTest() OVERRIDE;
 
   virtual bool IsPnaclDisabled() OVERRIDE;
+};
+
+class NaClBrowserTestNonSfiMode : public NaClBrowserTestBase {
+ public:
+  virtual void SetUpCommandLine(base::CommandLine* command_line) OVERRIDE;
+  virtual base::FilePath::StringType Variant() OVERRIDE;
 };
 
 // A NaCl browser test only using static files.

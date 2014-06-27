@@ -240,15 +240,6 @@ FileTable.decorate = function(self, metadataCache, fullPage) {
 
   var tableColumnModelClass;
   tableColumnModelClass = FileTableColumnModel;
-  if (self.showCheckboxes) {
-    columns.push(new cr.ui.table.TableColumn('selection',
-                                             '',
-                                             50, true));
-    columns[4].renderFunction = self.renderSelection_.bind(self);
-    columns[4].headerRenderFunction =
-        self.renderSelectionColumnHeader_.bind(self);
-    columns[4].fixed = true;
-  }
 
   var columnModel = Object.create(tableColumnModelClass.prototype, {
     /**
@@ -314,39 +305,8 @@ FileTable.decorate = function(self, metadataCache, fullPage) {
     e.preventDefault();
   });
 
-  var handleSelectionChange = function() {
-    var selectAll = self.querySelector('#select-all-checkbox');
-    if (selectAll)
-      self.updateSelectAllCheckboxState_(selectAll);
-  };
-
   self.relayoutAggregation_ =
       new AsyncUtil.Aggregation(self.relayoutImmediately_.bind(self));
-
-  Object.defineProperty(self.list_, 'selectionModel', {
-    /**
-     * @this {cr.ui.List}
-     * @return {cr.ui.ListSelectionModel} The current selection model.
-     */
-    get: function() {
-      return this.selectionModel_;
-    },
-    /**
-     * @this {cr.ui.List}
-     */
-    set: function(value) {
-      var sm = this.selectionModel;
-      if (sm)
-        sm.removeEventListener('change', handleSelectionChange);
-
-      util.callInheritedSetter(this, 'selectionModel', value);
-      sm = value;
-
-      if (sm)
-        sm.addEventListener('change', handleSelectionChange);
-      handleSelectionChange();
-    }
-  });
 
   // Override header#redraw to use FileTableSplitter.
   self.header_.redraw = function() {
@@ -434,7 +394,7 @@ FileTable.prototype.shouldStartDragSelection_ = function(event) {
 
   // If the pointed item is already selected, it should not start the drag
   // selection.
-  if (this.lastSelection_.indexOf(itemIndex) != -1)
+  if (this.lastSelection_.indexOf(itemIndex) !== -1)
     return false;
 
   // If the horizontal value is not hit to column, it should start the drag
@@ -459,19 +419,6 @@ FileTable.prototype.shouldStartDragSelection_ = function(event) {
     default:
       return true;
   }
-};
-
-/**
- * Update check and disable states of the 'Select all' checkbox.
- * @param {HTMLInputElement} checkbox The checkbox. If not passed, using
- *     the default one.
- * @private
- */
-FileTable.prototype.updateSelectAllCheckboxState_ = function(checkbox) {
-  // TODO(serya): introduce this.selectionModel.selectedCount.
-  checkbox.checked = this.dataModel.length > 0 &&
-      this.dataModel.length == this.selectionModel.selectedIndexes.length;
-  checkbox.disabled = this.dataModel.length == 0;
 };
 
 /**
@@ -510,28 +457,6 @@ FileTable.prototype.renderName_ = function(entry, columnId, table) {
 };
 
 /**
- * Render the Selection column of the detail table.
- *
- * Invoked by cr.ui.Table when a file needs to be rendered.
- *
- * @param {Entry} entry The Entry object to render.
- * @param {string} columnId The id of the column to be rendered.
- * @param {cr.ui.Table} table The table doing the rendering.
- * @return {HTMLDivElement} Created element.
- * @private
- */
-FileTable.prototype.renderSelection_ = function(entry, columnId, table) {
-  var label = this.ownerDocument.createElement('div');
-  label.className = 'selection-label';
-  if (this.selectionModel.multiple) {
-    var checkBox = this.ownerDocument.createElement('input');
-    filelist.decorateSelectionCheckbox(checkBox, entry, this.list);
-    label.appendChild(checkBox);
-  }
-  return label;
-};
-
-/**
  * Render the Size column of the detail table.
  *
  * @param {Entry} entry The Entry object to render.
@@ -560,9 +485,9 @@ FileTable.prototype.renderSize_ = function(entry, columnId, table) {
 FileTable.prototype.updateSize_ = function(div, entry, filesystemProps) {
   if (!filesystemProps) {
     div.textContent = '...';
-  } else if (filesystemProps.size == -1) {
+  } else if (filesystemProps.size === -1) {
     div.textContent = '--';
-  } else if (filesystemProps.size == 0 &&
+  } else if (filesystemProps.size === 0 &&
              FileType.isHosted(entry)) {
     div.textContent = '--';
   } else {
@@ -582,7 +507,7 @@ FileTable.prototype.updateSize_ = function(div, entry, filesystemProps) {
 FileTable.prototype.renderType_ = function(entry, columnId, table) {
   var div = this.ownerDocument.createElement('div');
   div.className = 'type';
-  div.textContent = FileType.getTypeString(entry);
+  div.textContent = FileType.typeToString(FileType.getType(entry));
   return div;
 };
 
@@ -656,8 +581,8 @@ FileTable.prototype.updateFileMetadata = function(item, entry) {
 /**
  * Updates list items 'in place' on metadata change.
  * @param {string} type Type of metadata change.
- * @param {Object.<sting, Object>} propsMap Map from entry URLs to metadata
- *                                          properties.
+ * @param {Object.<string, Object>} propsMap Map from entry URLs to metadata
+ *     properties.
  */
 FileTable.prototype.updateListItemsMetadata = function(type, propsMap) {
   var forEachCell = function(selector, callback) {
@@ -673,14 +598,14 @@ FileTable.prototype.updateListItemsMetadata = function(type, propsMap) {
       }
     }
   }.bind(this);
-  if (type == 'filesystem') {
+  if (type === 'filesystem') {
     forEachCell('.table-row-cell > .date', function(item, entry, props) {
       this.updateDate_(item, props);
     });
     forEachCell('.table-row-cell > .size', function(item, entry, props) {
       this.updateSize_(item, entry, props);
     });
-  } else if (type == 'drive') {
+  } else if (type === 'drive') {
     // The cell name does not matter as the entire list item is needed.
     forEachCell('.table-row-cell > .date',
                 function(item, entry, props, listItem) {
@@ -737,7 +662,7 @@ FileTable.prototype.compareSize_ = function(a, b) {
   var bCachedFilesystem = this.metadataCache_.getCached(b, 'filesystem');
   var bSize = bCachedFilesystem ? bCachedFilesystem.size : 0;
 
-  if (aSize != bSize) return aSize - bSize;
+  if (aSize !== bSize) return aSize - bSize;
     return this.collator_.compare(a.name, b.name);
 };
 
@@ -750,14 +675,14 @@ FileTable.prototype.compareSize_ = function(a, b) {
  */
 FileTable.prototype.compareType_ = function(a, b) {
   // Directories precede files.
-  if (a.isDirectory != b.isDirectory)
+  if (a.isDirectory !== b.isDirectory)
     return Number(b.isDirectory) - Number(a.isDirectory);
 
-  var aType = FileType.getTypeString(a);
-  var bType = FileType.getTypeString(b);
+  var aType = FileType.typeToString(FileType.getType(a));
+  var bType = FileType.typeToString(FileType.getType(b));
 
   var result = this.collator_.compare(aType, bType);
-  if (result != 0)
+  if (result !== 0)
     return result;
 
   return this.collator_.compare(a.name, b.name);
@@ -774,69 +699,6 @@ FileTable.prototype.renderTableRow_ = function(baseRenderFunction, entry) {
   var item = baseRenderFunction(entry, this);
   filelist.decorateListItem(item, entry, this.metadataCache_);
   return item;
-};
-
-/**
- * Renders the name column header.
- * @param {string} name Localized column name.
- * @return {HTMLLiElement} Created element.
- * @private
- */
-FileTable.prototype.renderNameColumnHeader_ = function(name) {
-  if (!this.selectionModel.multiple)
-    return this.ownerDocument.createTextNode(name);
-
-  var input = this.ownerDocument.createElement('input');
-  input.setAttribute('type', 'checkbox');
-  input.setAttribute('tabindex', -1);
-  input.id = 'select-all-checkbox';
-  input.className = 'common';
-
-  this.updateSelectAllCheckboxState_(input);
-
-  input.addEventListener('click', function(event) {
-    if (input.checked)
-      this.selectionModel.selectAll();
-    else
-      this.selectionModel.unselectAll();
-    event.stopPropagation();
-  }.bind(this));
-
-  var fragment = this.ownerDocument.createDocumentFragment();
-  fragment.appendChild(input);
-  fragment.appendChild(this.ownerDocument.createTextNode(name));
-  return fragment;
-};
-
-/**
- * Renders the selection column header.
- * @param {string} name Localized column name.
- * @return {HTMLLiElement} Created element.
- * @private
- */
-FileTable.prototype.renderSelectionColumnHeader_ = function(name) {
-  if (!this.selectionModel.multiple)
-    return this.ownerDocument.createTextNode('');
-
-  var input = this.ownerDocument.createElement('input');
-  input.setAttribute('type', 'checkbox');
-  input.setAttribute('tabindex', -1);
-  input.id = 'select-all-checkbox';
-  input.className = 'common';
-
-  this.updateSelectAllCheckboxState_(input);
-
-  input.addEventListener('click', function(event) {
-    if (input.checked)
-      this.selectionModel.selectAll();
-    else
-      this.selectionModel.unselectAll();
-    event.stopPropagation();
-  }.bind(this));
-
-  var fragment = this.ownerDocument.createDocumentFragment();
-  fragment.appendChild(input);
-  return fragment;
 };
 
 /**
@@ -885,71 +747,6 @@ FileTable.prototype.relayoutImmediately_ = function() {
 };
 
 /**
- * Decorates (and wire up) a checkbox to be used in either a detail or a
- * thumbnail list item.
- * @param {HTMLInputElement} input Element to decorate.
- */
-filelist.decorateCheckbox = function(input) {
-  var stopEventPropagation = function(event) {
-    if (!event.shiftKey)
-      event.stopPropagation();
-  };
-  input.setAttribute('type', 'checkbox');
-  input.setAttribute('tabindex', -1);
-  input.classList.add('common');
-  input.addEventListener('mousedown', stopEventPropagation);
-  input.addEventListener('mouseup', stopEventPropagation);
-
-  input.addEventListener(
-      'click',
-      /**
-       * @this {HTMLInputElement}
-       */
-      function(event) {
-        // Revert default action and swallow the event
-        // if this is a multiple click or Shift is pressed.
-        if (event.detail > 1 || event.shiftKey) {
-          this.checked = !this.checked;
-          stopEventPropagation(event);
-        }
-      });
-};
-
-/**
- * Decorates selection checkbox.
- * @param {HTMLInputElement} input Element to decorate.
- * @param {Entry} entry Corresponding entry.
- * @param {cr.ui.List} list Owner list.
- */
-filelist.decorateSelectionCheckbox = function(input, entry, list) {
-  filelist.decorateCheckbox(input);
-  input.classList.add('file-checkbox');
-  input.addEventListener('click', function(e) {
-    var sm = list.selectionModel;
-    var listIndex = list.getListItemAncestor(this).listIndex;
-    sm.setIndexSelected(listIndex, this.checked);
-    sm.leadIndex = listIndex;
-    if (sm.anchorIndex == -1)
-      sm.anchorIndex = listIndex;
-
-  });
-  // Since we do not want to open the item when tap on checkbox, we need to
-  // stop propagation of TAP event dispatched by checkbox ideally. But all
-  // touch events from touch_handler are dispatched to the list control. So we
-  // have to stop propagation of native touchstart event to prevent list
-  // control from generating TAP event here. The synthetic click event will
-  // select the touched checkbox/item.
-  input.addEventListener('touchstart',
-                         function(e) { e.stopPropagation() });
-
-  var index = list.dataModel.indexOf(entry);
-  // Our DOM nodes get discarded as soon as we're scrolled out of view,
-  // so we have to make sure the check state is correct when we're brought
-  // back to life.
-  input.checked = list.selectionModel.getIndexSelected(index);
-};
-
-/**
  * Common item decoration for table's and grid's items.
  * @param {ListItem} li List item.
  * @param {Entry} entry The entry.
@@ -957,13 +754,12 @@ filelist.decorateSelectionCheckbox = function(input, entry, list) {
  */
 filelist.decorateListItem = function(li, entry, metadataCache) {
   li.classList.add(entry.isDirectory ? 'directory' : 'file');
-  if (FileType.isOnDrive(entry)) {
-    // The metadata may not yet be ready. In that case, the list item will be
-    // updated when the metadata is ready via updateListItemsMetadata.
-    var driveProps = metadataCache.getCached(entry, 'drive');
-    if (driveProps)
-      filelist.updateListItemDriveProps(li, driveProps);
-  }
+  // The metadata may not yet be ready. In that case, the list item will be
+  // updated when the metadata is ready via updateListItemsMetadata. For files
+  // not on Drive, driveProps is not available.
+  var driveProps = metadataCache.getCached(entry, 'drive');
+  if (driveProps)
+    filelist.updateListItemDriveProps(li, driveProps);
 
   // Overriding the default role 'list' to 'listbox' for better
   // accessibility on ChromeOS.
@@ -983,12 +779,9 @@ filelist.decorateListItem = function(li, entry, metadataCache) {
      */
     set: function(v) {
       if (v)
-        this.setAttribute('selected');
+        this.setAttribute('selected', '');
       else
         this.removeAttribute('selected');
-      var checkBox = this.querySelector('input.file-checkbox');
-      if (checkBox)
-        checkBox.checked = !!v;
     }
   });
 };

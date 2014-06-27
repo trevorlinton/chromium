@@ -17,11 +17,13 @@ HttpStreamFactoryImpl::Request::Request(
     const GURL& url,
     HttpStreamFactoryImpl* factory,
     HttpStreamRequest::Delegate* delegate,
-    WebSocketHandshakeStreamBase::Factory* websocket_handshake_stream_factory,
+    WebSocketHandshakeStreamBase::CreateHelper*
+        websocket_handshake_stream_create_helper,
     const BoundNetLog& net_log)
     : url_(url),
       factory_(factory),
-      websocket_handshake_stream_factory_(websocket_handshake_stream_factory),
+      websocket_handshake_stream_create_helper_(
+          websocket_handshake_stream_create_helper),
       delegate_(delegate),
       net_log_(net_log),
       completed_(false),
@@ -289,10 +291,15 @@ HttpStreamFactoryImpl::Request::RemoveRequestFromHttpPipeliningRequestMap() {
 
 void HttpStreamFactoryImpl::Request::OnNewSpdySessionReady(
     Job* job,
+    scoped_ptr<HttpStream> stream,
     const base::WeakPtr<SpdySession>& spdy_session,
     bool direct) {
   DCHECK(job);
   DCHECK(job->using_spdy());
+
+  // Note: |spdy_session| may be NULL. In that case, |delegate_| should still
+  // receive |stream| so the error propogates up correctly, however there is no
+  // point in broadcasting |spdy_session| to other requests.
 
   // The first case is the usual case.
   if (!bound_job_.get()) {
@@ -316,29 +323,24 @@ void HttpStreamFactoryImpl::Request::OnNewSpdySessionReady(
   // Cache this so we can still use it if the request is deleted.
   HttpStreamFactoryImpl* factory = factory_;
   if (factory->for_websockets_) {
-    DCHECK(websocket_handshake_stream_factory_);
-    bool use_relative_url = direct || url().SchemeIs("wss");
-    delegate_->OnWebSocketHandshakeStreamReady(
-        job->server_ssl_config(),
-        job->proxy_info(),
-        websocket_handshake_stream_factory_->CreateSpdyStream(
-            spdy_session, use_relative_url));
+    // TODO(ricea): Re-instate this code when WebSockets over SPDY is
+    // implemented.
+    NOTREACHED();
   } else {
-    bool use_relative_url = direct || url().SchemeIs("https");
-    delegate_->OnStreamReady(
-        job->server_ssl_config(),
-        job->proxy_info(),
-        new SpdyHttpStream(spdy_session, use_relative_url));
+    delegate_->OnStreamReady(job->server_ssl_config(), job->proxy_info(),
+                             stream.release());
   }
   // |this| may be deleted after this point.
-  factory->OnNewSpdySessionReady(spdy_session,
-                                 direct,
-                                 used_ssl_config,
-                                 used_proxy_info,
-                                 was_npn_negotiated,
-                                 protocol_negotiated,
-                                 using_spdy,
-                                 net_log);
+  if (spdy_session) {
+    factory->OnNewSpdySessionReady(spdy_session,
+                                   direct,
+                                   used_ssl_config,
+                                   used_proxy_info,
+                                   was_npn_negotiated,
+                                   protocol_negotiated,
+                                   using_spdy,
+                                   net_log);
+  }
 }
 
 void HttpStreamFactoryImpl::Request::OrphanJobsExcept(Job* job) {

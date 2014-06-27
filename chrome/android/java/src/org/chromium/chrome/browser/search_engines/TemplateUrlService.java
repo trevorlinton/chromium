@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -29,6 +29,9 @@ public class TemplateUrlService {
         public abstract void onTemplateUrlServiceLoaded();
     }
 
+    /**
+     * Represents search engine with its index.
+     */
     public static class TemplateUrl {
         private final int mIndex;
         private final String mShortName;
@@ -40,9 +43,9 @@ public class TemplateUrlService {
         }
 
         public TemplateUrl(int index, String shortName, String keyword) {
-          mIndex = index;
-          mShortName = shortName;
-          mKeyword = keyword;
+            mIndex = index;
+            mShortName = shortName;
+            mKeyword = keyword;
         }
 
         public int getIndex() {
@@ -68,7 +71,7 @@ public class TemplateUrlService {
         return sService;
     }
 
-    private final int mNativeTemplateUrlServiceAndroid;
+    private final long mNativeTemplateUrlServiceAndroid;
     private final ObserverList<LoadListener> mLoadListeners = new ObserverList<LoadListener>();
 
     private TemplateUrlService() {
@@ -98,7 +101,7 @@ public class TemplateUrlService {
             TemplateUrl templateUrl = nativeGetPrepopulatedTemplateUrlAt(
                     mNativeTemplateUrlServiceAndroid, i);
             if (templateUrl != null) {
-              templateUrls.add(templateUrl);
+                templateUrls.add(templateUrl);
             }
         }
         return templateUrls;
@@ -130,7 +133,11 @@ public class TemplateUrlService {
         if (!isLoaded()) return null;
 
         int defaultSearchEngineIndex = getDefaultSearchEngineIndex();
+        if (defaultSearchEngineIndex == -1) return null;
+
         assert defaultSearchEngineIndex >= 0;
+        assert defaultSearchEngineIndex < nativeGetTemplateUrlCount(
+                mNativeTemplateUrlServiceAndroid);
 
         return nativeGetPrepopulatedTemplateUrlAt(
                 mNativeTemplateUrlServiceAndroid, defaultSearchEngineIndex);
@@ -166,8 +173,8 @@ public class TemplateUrlService {
      */
     public void registerLoadListener(LoadListener listener) {
         ThreadUtils.assertOnUiThread();
-        assert !mLoadListeners.hasObserver(listener);
-        mLoadListeners.addObserver(listener);
+        boolean added = mLoadListeners.addObserver(listener);
+        assert added;
     }
 
     /**
@@ -176,8 +183,8 @@ public class TemplateUrlService {
      */
     public void unregisterLoadListener(LoadListener listener) {
         ThreadUtils.assertOnUiThread();
-        assert (mLoadListeners.hasObserver(listener));
-        mLoadListeners.removeObserver(listener);
+        boolean removed = mLoadListeners.removeObserver(listener);
+        assert removed;
     }
 
     /**
@@ -193,6 +200,18 @@ public class TemplateUrlService {
     }
 
     /**
+     * Finds the default search engine for the default provider and returns the url query
+     * {@link String} for {@code query} with voice input source param set.
+     * @param query The {@link String} that represents the text query the search url should
+     *              represent.
+     * @return      A {@link String} that contains the url of the default search engine with
+     *              {@code query} inserted as the search parameter and voice input source param set.
+     */
+    public String getUrlForVoiceSearchQuery(String query) {
+        return nativeGetUrlForVoiceSearchQuery(mNativeTemplateUrlServiceAndroid, query);
+    }
+
+    /**
      * Replaces the search terms from {@code query} in {@code url}.
      * @param query The {@link String} that represents the text query that should replace the
      *              existing query in {@code url}.
@@ -204,20 +223,22 @@ public class TemplateUrlService {
         return nativeReplaceSearchTermsInUrl(mNativeTemplateUrlServiceAndroid, query, url);
     }
 
-    private native int nativeInit();
-    private native void nativeLoad(int nativeTemplateUrlServiceAndroid);
-    private native boolean nativeIsLoaded(int nativeTemplateUrlServiceAndroid);
-    private native int nativeGetTemplateUrlCount(int nativeTemplateUrlServiceAndroid);
+    private native long nativeInit();
+    private native void nativeLoad(long nativeTemplateUrlServiceAndroid);
+    private native boolean nativeIsLoaded(long nativeTemplateUrlServiceAndroid);
+    private native int nativeGetTemplateUrlCount(long nativeTemplateUrlServiceAndroid);
     private native TemplateUrl nativeGetPrepopulatedTemplateUrlAt(
-            int nativeTemplateUrlServiceAndroid, int i);
-    private native void nativeSetDefaultSearchProvider(int nativeTemplateUrlServiceAndroid,
+            long nativeTemplateUrlServiceAndroid, int i);
+    private native void nativeSetDefaultSearchProvider(long nativeTemplateUrlServiceAndroid,
             int selectedIndex);
-    private native int nativeGetDefaultSearchProvider(int nativeTemplateUrlServiceAndroid);
-    private native boolean nativeIsSearchProviderManaged(int nativeTemplateUrlServiceAndroid);
-    private native boolean nativeIsSearchByImageAvailable(int nativeTemplateUrlServiceAndroid);
-    private native boolean nativeIsDefaultSearchEngineGoogle(int nativeTemplateUrlServiceAndroid);
-    private native String nativeGetUrlForSearchQuery(int nativeTemplateUrlServiceAndroid,
+    private native int nativeGetDefaultSearchProvider(long nativeTemplateUrlServiceAndroid);
+    private native boolean nativeIsSearchProviderManaged(long nativeTemplateUrlServiceAndroid);
+    private native boolean nativeIsSearchByImageAvailable(long nativeTemplateUrlServiceAndroid);
+    private native boolean nativeIsDefaultSearchEngineGoogle(long nativeTemplateUrlServiceAndroid);
+    private native String nativeGetUrlForSearchQuery(long nativeTemplateUrlServiceAndroid,
             String query);
-    private native String nativeReplaceSearchTermsInUrl(int nativeTemplateUrlServiceAndroid,
+    private native String nativeGetUrlForVoiceSearchQuery(long nativeTemplateUrlServiceAndroid,
+            String query);
+    private native String nativeReplaceSearchTermsInUrl(long nativeTemplateUrlServiceAndroid,
             String query, String currentUrl);
 }

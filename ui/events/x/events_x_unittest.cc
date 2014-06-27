@@ -6,6 +6,8 @@
 
 #include <X11/extensions/XInput2.h>
 #include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#include <X11/XKBlib.h>
 
 // Generically-named #defines from Xlib that conflict with symbols in GTest.
 #undef Bool
@@ -15,8 +17,7 @@
 #include "ui/events/event.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/event_utils.h"
-#include "ui/events/x/device_data_manager.h"
-#include "ui/events/x/touch_factory_x11.h"
+#include "ui/events/test/events_test_utils_x11.h"
 #include "ui/gfx/point.h"
 
 namespace ui {
@@ -41,90 +42,23 @@ void InitButtonEvent(XEvent* event,
   button_event->state = state;
 }
 
-#if defined(USE_XI2_MT)
-const int kValuatorNum = 3;
-const int kTouchValuatorMap[kValuatorNum][4] = {
-  // { valuator_index, valuator_type, min_val, max_val }
-  { 0, DeviceDataManager::DT_TOUCH_MAJOR, 0, 1000},
-  { 1, DeviceDataManager::DT_TOUCH_ORIENTATION, 0, 1},
-  { 2, DeviceDataManager::DT_TOUCH_PRESSURE, 0, 1000},
-};
-
-struct Valuator {
-  Valuator(DeviceDataManager::DataType type, double v)
-      : data_type(type), value(v) {}
-
-  DeviceDataManager::DataType data_type;
-  double value;
-};
-
-XEvent* CreateTouchEvent(int deviceid,
-                         int evtype,
-                         int tracking_id,
-                         const gfx::Point& location,
-                         const std::vector<Valuator>& valuators) {
-  XEvent* event = new XEvent;
+// Initializes the passed-in Xlib event.
+void InitKeyEvent(Display* display,
+                  XEvent* event,
+                  bool is_press,
+                  int keycode,
+                  int state) {
   memset(event, 0, sizeof(*event));
-  event->type = GenericEvent;
-  event->xcookie.data = new XIDeviceEvent;
-  XIDeviceEvent* xiev =
-      static_cast<XIDeviceEvent*>(event->xcookie.data);
-  xiev->deviceid = deviceid;
-  xiev->sourceid = deviceid;
-  xiev->evtype = evtype;
-  xiev->detail = tracking_id;
-  xiev->event_x = location.x();
-  xiev->event_y = location.y();
 
-  xiev->valuators.mask_len = (valuators.size() / 8) + 1;
-  xiev->valuators.mask = new unsigned char[xiev->valuators.mask_len];
-  memset(xiev->valuators.mask, 0, xiev->valuators.mask_len);
-  xiev->valuators.values = new double[valuators.size()];
-
-  int val_count = 0;
-  for (int i = 0; i < kValuatorNum; i++) {
-    for(size_t j = 0; j < valuators.size(); j++) {
-      if (valuators[j].data_type == kTouchValuatorMap[i][1]) {
-        XISetMask(xiev->valuators.mask, kTouchValuatorMap[i][0]);
-        xiev->valuators.values[val_count++] = valuators[j].value;
-      }
-    }
-  }
-
-  return event;
+  // We don't bother setting fields that the event code doesn't use, such as
+  // x_root/y_root and window/root/subwindow.
+  XKeyEvent* key_event = &(event->xkey);
+  key_event->display = display;
+  key_event->type = is_press ? KeyPress : KeyRelease;
+  key_event->keycode = keycode;
+  key_event->state = state;
 }
 
-void DestroyTouchEvent(XEvent* event) {
-  XIDeviceEvent* xiev =
-      static_cast<XIDeviceEvent*>(event->xcookie.data);
-  if (xiev) {
-    delete[] xiev->valuators.mask;
-    delete[] xiev->valuators.values;
-    delete xiev;
-  }
-  delete event;
-}
-
-void SetupTouchFactory(const std::vector<unsigned int>& devices) {
-  TouchFactory* factory = TouchFactory::GetInstance();
-  factory->SetTouchDeviceForTest(devices);
-}
-
-void SetupDeviceDataManager(const std::vector<unsigned int>& devices) {
-  ui::DeviceDataManager* manager = ui::DeviceDataManager::GetInstance();
-  manager->SetDeviceListForTest(devices);
-  for (size_t i = 0; i < devices.size(); i++) {
-    for (int j = 0; j < kValuatorNum; j++) {
-      manager->SetDeviceValuatorForTest(
-          devices[i],
-          kTouchValuatorMap[j][0],
-          static_cast<DeviceDataManager::DataType>(kTouchValuatorMap[j][1]),
-          kTouchValuatorMap[j][2],
-          kTouchValuatorMap[j][3]);
-    }
-  }
-}
-#endif
 }  // namespace
 
 TEST(EventsXTest, ButtonEvents) {
@@ -136,7 +70,6 @@ TEST(EventsXTest, ButtonEvents) {
   EXPECT_EQ(ui::ET_MOUSE_PRESSED, ui::EventTypeFromNative(&event));
   EXPECT_EQ(ui::EF_LEFT_MOUSE_BUTTON, ui::EventFlagsFromNative(&event));
   EXPECT_EQ(location, ui::EventLocationFromNative(&event));
-  EXPECT_TRUE(ui::IsMouseEvent(&event));
 
   InitButtonEvent(&event, true, location, 2, Button1Mask | ShiftMask);
   EXPECT_EQ(ui::ET_MOUSE_PRESSED, ui::EventTypeFromNative(&event));
@@ -144,20 +77,17 @@ TEST(EventsXTest, ButtonEvents) {
                 ui::EF_SHIFT_DOWN,
             ui::EventFlagsFromNative(&event));
   EXPECT_EQ(location, ui::EventLocationFromNative(&event));
-  EXPECT_TRUE(ui::IsMouseEvent(&event));
 
   InitButtonEvent(&event, false, location, 3, 0);
   EXPECT_EQ(ui::ET_MOUSE_RELEASED, ui::EventTypeFromNative(&event));
   EXPECT_EQ(ui::EF_RIGHT_MOUSE_BUTTON, ui::EventFlagsFromNative(&event));
   EXPECT_EQ(location, ui::EventLocationFromNative(&event));
-  EXPECT_TRUE(ui::IsMouseEvent(&event));
 
   // Scroll up.
   InitButtonEvent(&event, true, location, 4, 0);
   EXPECT_EQ(ui::ET_MOUSEWHEEL, ui::EventTypeFromNative(&event));
   EXPECT_EQ(0, ui::EventFlagsFromNative(&event));
   EXPECT_EQ(location, ui::EventLocationFromNative(&event));
-  EXPECT_TRUE(ui::IsMouseEvent(&event));
   offset = ui::GetMouseWheelOffset(&event);
   EXPECT_GT(offset.y(), 0);
   EXPECT_EQ(0, offset.x());
@@ -167,30 +97,27 @@ TEST(EventsXTest, ButtonEvents) {
   EXPECT_EQ(ui::ET_MOUSEWHEEL, ui::EventTypeFromNative(&event));
   EXPECT_EQ(0, ui::EventFlagsFromNative(&event));
   EXPECT_EQ(location, ui::EventLocationFromNative(&event));
-  EXPECT_TRUE(ui::IsMouseEvent(&event));
   offset = ui::GetMouseWheelOffset(&event);
   EXPECT_LT(offset.y(), 0);
   EXPECT_EQ(0, offset.x());
 
-  // Scroll left, typically.
+  // Scroll left.
   InitButtonEvent(&event, true, location, 6, 0);
   EXPECT_EQ(ui::ET_MOUSEWHEEL, ui::EventTypeFromNative(&event));
   EXPECT_EQ(0, ui::EventFlagsFromNative(&event));
   EXPECT_EQ(location, ui::EventLocationFromNative(&event));
-  EXPECT_TRUE(ui::IsMouseEvent(&event));
   offset = ui::GetMouseWheelOffset(&event);
   EXPECT_EQ(0, offset.y());
-  EXPECT_EQ(0, offset.x());
+  EXPECT_GT(offset.x(), 0);
 
-  // Scroll right, typically.
+  // Scroll right.
   InitButtonEvent(&event, true, location, 7, 0);
   EXPECT_EQ(ui::ET_MOUSEWHEEL, ui::EventTypeFromNative(&event));
   EXPECT_EQ(0, ui::EventFlagsFromNative(&event));
   EXPECT_EQ(location, ui::EventLocationFromNative(&event));
-  EXPECT_TRUE(ui::IsMouseEvent(&event));
   offset = ui::GetMouseWheelOffset(&event);
   EXPECT_EQ(0, offset.y());
-  EXPECT_EQ(0, offset.x());
+  EXPECT_LT(offset.x(), 0);
 
   // TODO(derat): Test XInput code.
 }
@@ -260,76 +187,187 @@ TEST(EventsXTest, ClickCount) {
 TEST(EventsXTest, TouchEventBasic) {
   std::vector<unsigned int> devices;
   devices.push_back(0);
-  SetupTouchFactory(devices);
-  SetupDeviceDataManager(devices);
-  XEvent* event = NULL;
+  ui::SetUpTouchDevicesForTest(devices);
   std::vector<Valuator> valuators;
 
   // Init touch begin with tracking id 5, touch id 0.
   valuators.push_back(Valuator(DeviceDataManager::DT_TOUCH_MAJOR, 20));
   valuators.push_back(Valuator(DeviceDataManager::DT_TOUCH_ORIENTATION, 0.3f));
   valuators.push_back(Valuator(DeviceDataManager::DT_TOUCH_PRESSURE, 100));
-  event = CreateTouchEvent(0, XI_TouchBegin, 5, gfx::Point(10, 10), valuators);
-  EXPECT_EQ(ui::ET_TOUCH_PRESSED, ui::EventTypeFromNative(event));
-  EXPECT_EQ("10,10", ui::EventLocationFromNative(event).ToString());
-  EXPECT_EQ(GetTouchId(event), 0);
-  EXPECT_EQ(GetTouchRadiusX(event), 10);
-  EXPECT_FLOAT_EQ(GetTouchAngle(event), 0.15f);
-  EXPECT_FLOAT_EQ(GetTouchForce(event), 0.1f);
-  DestroyTouchEvent(event);
+  ui::ScopedXI2Event scoped_xevent;
+  scoped_xevent.InitTouchEvent(
+      0, XI_TouchBegin, 5, gfx::Point(10, 10), valuators);
+  EXPECT_EQ(ui::ET_TOUCH_PRESSED, ui::EventTypeFromNative(scoped_xevent));
+  EXPECT_EQ("10,10", ui::EventLocationFromNative(scoped_xevent).ToString());
+  EXPECT_EQ(GetTouchId(scoped_xevent), 0);
+  EXPECT_EQ(GetTouchRadiusX(scoped_xevent), 10);
+  EXPECT_FLOAT_EQ(GetTouchAngle(scoped_xevent), 0.15f);
+  EXPECT_FLOAT_EQ(GetTouchForce(scoped_xevent), 0.1f);
 
   // Touch update, with new orientation info.
   valuators.clear();
   valuators.push_back(Valuator(DeviceDataManager::DT_TOUCH_ORIENTATION, 0.5f));
-  event = CreateTouchEvent(0, XI_TouchUpdate, 5, gfx::Point(20, 20), valuators);
-  EXPECT_EQ(ui::ET_TOUCH_MOVED, ui::EventTypeFromNative(event));
-  EXPECT_EQ("20,20", ui::EventLocationFromNative(event).ToString());
-  EXPECT_EQ(GetTouchId(event), 0);
-  EXPECT_EQ(GetTouchRadiusX(event), 10);
-  EXPECT_FLOAT_EQ(GetTouchAngle(event), 0.25f);
-  EXPECT_FLOAT_EQ(GetTouchForce(event), 0.1f);
-  DestroyTouchEvent(event);
+  scoped_xevent.InitTouchEvent(
+      0, XI_TouchUpdate, 5, gfx::Point(20, 20), valuators);
+  EXPECT_EQ(ui::ET_TOUCH_MOVED, ui::EventTypeFromNative(scoped_xevent));
+  EXPECT_EQ("20,20", ui::EventLocationFromNative(scoped_xevent).ToString());
+  EXPECT_EQ(GetTouchId(scoped_xevent), 0);
+  EXPECT_EQ(GetTouchRadiusX(scoped_xevent), 10);
+  EXPECT_FLOAT_EQ(GetTouchAngle(scoped_xevent), 0.25f);
+  EXPECT_FLOAT_EQ(GetTouchForce(scoped_xevent), 0.1f);
 
   // Another touch with tracking id 6, touch id 1.
   valuators.clear();
   valuators.push_back(Valuator(DeviceDataManager::DT_TOUCH_MAJOR, 100));
   valuators.push_back(Valuator(DeviceDataManager::DT_TOUCH_ORIENTATION, 0.9f));
   valuators.push_back(Valuator(DeviceDataManager::DT_TOUCH_PRESSURE, 500));
-  event = CreateTouchEvent(
+  scoped_xevent.InitTouchEvent(
       0, XI_TouchBegin, 6, gfx::Point(200, 200), valuators);
-  EXPECT_EQ(ui::ET_TOUCH_PRESSED, ui::EventTypeFromNative(event));
-  EXPECT_EQ("200,200", ui::EventLocationFromNative(event).ToString());
-  EXPECT_EQ(GetTouchId(event), 1);
-  EXPECT_EQ(GetTouchRadiusX(event), 50);
-  EXPECT_FLOAT_EQ(GetTouchAngle(event), 0.45f);
-  EXPECT_FLOAT_EQ(GetTouchForce(event), 0.5f);
-  DestroyTouchEvent(event);
+  EXPECT_EQ(ui::ET_TOUCH_PRESSED, ui::EventTypeFromNative(scoped_xevent));
+  EXPECT_EQ("200,200", ui::EventLocationFromNative(scoped_xevent).ToString());
+  EXPECT_EQ(GetTouchId(scoped_xevent), 1);
+  EXPECT_EQ(GetTouchRadiusX(scoped_xevent), 50);
+  EXPECT_FLOAT_EQ(GetTouchAngle(scoped_xevent), 0.45f);
+  EXPECT_FLOAT_EQ(GetTouchForce(scoped_xevent), 0.5f);
 
   // Touch with tracking id 5 should have old radius/angle value and new pressue
   // value.
   valuators.clear();
   valuators.push_back(Valuator(DeviceDataManager::DT_TOUCH_PRESSURE, 50));
-  event = CreateTouchEvent(0, XI_TouchEnd, 5, gfx::Point(30, 30), valuators);
-  EXPECT_EQ(ui::ET_TOUCH_RELEASED, ui::EventTypeFromNative(event));
-  EXPECT_EQ("30,30", ui::EventLocationFromNative(event).ToString());
-  EXPECT_EQ(GetTouchId(event), 0);
-  EXPECT_EQ(GetTouchRadiusX(event), 10);
-  EXPECT_FLOAT_EQ(GetTouchAngle(event), 0.25f);
-  EXPECT_FLOAT_EQ(GetTouchForce(event), 0.05f);
-  DestroyTouchEvent(event);
+  scoped_xevent.InitTouchEvent(
+      0, XI_TouchEnd, 5, gfx::Point(30, 30), valuators);
+  EXPECT_EQ(ui::ET_TOUCH_RELEASED, ui::EventTypeFromNative(scoped_xevent));
+  EXPECT_EQ("30,30", ui::EventLocationFromNative(scoped_xevent).ToString());
+  EXPECT_EQ(GetTouchId(scoped_xevent), 0);
+  EXPECT_EQ(GetTouchRadiusX(scoped_xevent), 10);
+  EXPECT_FLOAT_EQ(GetTouchAngle(scoped_xevent), 0.25f);
+  EXPECT_FLOAT_EQ(GetTouchForce(scoped_xevent), 0.05f);
 
   // Touch with tracking id 6 should have old angle/pressure value and new
   // radius value.
   valuators.clear();
   valuators.push_back(Valuator(DeviceDataManager::DT_TOUCH_MAJOR, 50));
-  event = CreateTouchEvent(0, XI_TouchEnd, 6, gfx::Point(200, 200), valuators);
-  EXPECT_EQ(ui::ET_TOUCH_RELEASED, ui::EventTypeFromNative(event));
-  EXPECT_EQ("200,200", ui::EventLocationFromNative(event).ToString());
-  EXPECT_EQ(GetTouchId(event), 1);
-  EXPECT_EQ(GetTouchRadiusX(event), 25);
-  EXPECT_FLOAT_EQ(GetTouchAngle(event), 0.45f);
-  EXPECT_FLOAT_EQ(GetTouchForce(event), 0.5f);
-  DestroyTouchEvent(event);
+  scoped_xevent.InitTouchEvent(
+      0, XI_TouchEnd, 6, gfx::Point(200, 200), valuators);
+  EXPECT_EQ(ui::ET_TOUCH_RELEASED, ui::EventTypeFromNative(scoped_xevent));
+  EXPECT_EQ("200,200", ui::EventLocationFromNative(scoped_xevent).ToString());
+  EXPECT_EQ(GetTouchId(scoped_xevent), 1);
+  EXPECT_EQ(GetTouchRadiusX(scoped_xevent), 25);
+  EXPECT_FLOAT_EQ(GetTouchAngle(scoped_xevent), 0.45f);
+  EXPECT_FLOAT_EQ(GetTouchForce(scoped_xevent), 0.5f);
 }
 #endif
+
+TEST(EventsXTest, NumpadKeyEvents) {
+  XEvent event;
+  Display* display = gfx::GetXDisplay();
+
+  struct {
+    bool is_numpad_key;
+    int x_keysym;
+    ui::KeyboardCode ui_keycode;
+  } keys[] = {
+    // XK_KP_Space and XK_KP_Equal are the extrema in the conventional
+    // keysymdef.h numbering.
+    { true,  XK_KP_Space },
+    { true,  XK_KP_Equal },
+    // Other numpad keysyms. (This is actually exhaustive in the current list.)
+    { true,  XK_KP_Tab },
+    { true,  XK_KP_Enter },
+    { true,  XK_KP_F1 },
+    { true,  XK_KP_F2 },
+    { true,  XK_KP_F3 },
+    { true,  XK_KP_F4 },
+    { true,  XK_KP_Home },
+    { true,  XK_KP_Left },
+    { true,  XK_KP_Up },
+    { true,  XK_KP_Right },
+    { true,  XK_KP_Down },
+    { true,  XK_KP_Prior },
+    { true,  XK_KP_Page_Up },
+    { true,  XK_KP_Next },
+    { true,  XK_KP_Page_Down },
+    { true,  XK_KP_End },
+    { true,  XK_KP_Begin },
+    { true,  XK_KP_Insert },
+    { true,  XK_KP_Delete },
+    { true,  XK_KP_Multiply },
+    { true,  XK_KP_Add },
+    { true,  XK_KP_Separator },
+    { true,  XK_KP_Subtract },
+    { true,  XK_KP_Decimal },
+    { true,  XK_KP_Divide },
+    { true,  XK_KP_0 },
+    { true,  XK_KP_1 },
+    { true,  XK_KP_2 },
+    { true,  XK_KP_3 },
+    { true,  XK_KP_4 },
+    { true,  XK_KP_5 },
+    { true,  XK_KP_6 },
+    { true,  XK_KP_7 },
+    { true,  XK_KP_8 },
+    { true,  XK_KP_9 },
+    // Largest keysym preceding XK_KP_Space.
+    { false, XK_Num_Lock },
+    // Smallest keysym following XK_KP_Equal.
+    { false, XK_F1 },
+    // Non-numpad analogues of numpad keysyms.
+    { false, XK_Tab },
+    { false, XK_Return },
+    { false, XK_F1 },
+    { false, XK_F2 },
+    { false, XK_F3 },
+    { false, XK_F4 },
+    { false, XK_Home },
+    { false, XK_Left },
+    { false, XK_Up },
+    { false, XK_Right },
+    { false, XK_Down },
+    { false, XK_Prior },
+    { false, XK_Page_Up },
+    { false, XK_Next },
+    { false, XK_Page_Down },
+    { false, XK_End },
+    { false, XK_Insert },
+    { false, XK_Delete },
+    { false, XK_multiply },
+    { false, XK_plus },
+    { false, XK_minus },
+    { false, XK_period },
+    { false, XK_slash },
+    { false, XK_0 },
+    { false, XK_1 },
+    { false, XK_2 },
+    { false, XK_3 },
+    { false, XK_4 },
+    { false, XK_5 },
+    { false, XK_6 },
+    { false, XK_7 },
+    { false, XK_8 },
+    { false, XK_9 },
+    // Miscellaneous other keysyms.
+    { false, XK_BackSpace },
+    { false, XK_Scroll_Lock },
+    { false, XK_Multi_key },
+    { false, XK_Select },
+    { false, XK_Num_Lock },
+    { false, XK_Shift_L },
+    { false, XK_space },
+    { false, XK_A },
+  };
+
+  for (size_t k = 0; k < ARRAYSIZE_UNSAFE(keys); ++k) {
+    int x_keycode = XKeysymToKeycode(display, keys[k].x_keysym);
+    // Exclude keysyms for which the server has no corresponding keycode.
+    if (x_keycode) {
+      InitKeyEvent(display, &event, true, x_keycode, 0);
+      // int keysym = XLookupKeysym(&event.xkey, 0);
+      // if (keysym) {
+      ui::KeyEvent ui_key_event(&event, false);
+      EXPECT_EQ(keys[k].is_numpad_key ? ui::EF_NUMPAD_KEY : 0,
+                ui_key_event.flags() & ui::EF_NUMPAD_KEY);
+    }
+  }
+}
+
 }  // namespace ui

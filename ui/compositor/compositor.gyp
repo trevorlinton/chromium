@@ -14,10 +14,10 @@
         '<(DEPTH)/base/base.gyp:base',
         '<(DEPTH)/base/third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations',
         '<(DEPTH)/cc/cc.gyp:cc',
+        '<(DEPTH)/gpu/gpu.gyp:command_buffer_common',
         '<(DEPTH)/skia/skia.gyp:skia',
-        '<(DEPTH)/third_party/WebKit/public/blink.gyp:blink_minimal',
-        '<(DEPTH)/ui/events/events.gyp:events',
         '<(DEPTH)/ui/gfx/gfx.gyp:gfx',
+        '<(DEPTH)/ui/gfx/gfx.gyp:gfx_geometry',
         '<(DEPTH)/ui/gl/gl.gyp:gl',
       ],
       'defines': [
@@ -28,6 +28,8 @@
         'compositor.h',
         'compositor_export.h',
         'compositor_observer.h',
+        'compositor_vsync_manager.cc',
+        'compositor_vsync_manager.h',
         'compositor_switches.cc',
         'compositor_switches.h',
         'debug_utils.cc',
@@ -50,6 +52,8 @@
         'layer_delegate.h',
         'layer_owner.cc',
         'layer_owner.h',
+        'layer_tree_owner.cc',
+        'layer_tree_owner.h',
         'layer_type.h',
         'reflector.h',
         'scoped_animation_duration_scale_mode.cc',
@@ -64,7 +68,7 @@
           # TODO(sky): before we make this real need to remove
           # IDR_BITMAP_BRUSH_IMAGE.
           'dependencies': [
-            '<(DEPTH)/ui/ui.gyp:ui_resources',
+            '<(DEPTH)/ui/resources/ui_resources.gyp:ui_resources',
             '<(angle_path)/src/build_angle.gyp:libEGL',
             '<(angle_path)/src/build_angle.gyp:libGLESv2',
           ],
@@ -79,51 +83,22 @@
         '<(DEPTH)/cc/cc.gyp:cc',
         '<(DEPTH)/cc/cc_tests.gyp:cc_test_support',
         '<(DEPTH)/skia/skia.gyp:skia',
+        '<(DEPTH)/testing/gtest.gyp:gtest',
         '<(DEPTH)/third_party/WebKit/public/blink.gyp:blink_minimal',
-        '<(DEPTH)/ui/events/events.gyp:events',
+        '<(DEPTH)/ui/base/ui_base.gyp:ui_base',
         '<(DEPTH)/ui/gfx/gfx.gyp:gfx',
+        '<(DEPTH)/ui/gfx/gfx.gyp:gfx_geometry',
         '<(DEPTH)/ui/gl/gl.gyp:gl',
-        '<(DEPTH)/ui/ui.gyp:ui',
         '<(DEPTH)/webkit/common/gpu/webkit_gpu.gyp:webkit_gpu',
         'compositor',
       ],
       'sources': [
-        'test/test_layers.cc',
-        'test/test_layers.h',
-        'test/test_context_factory.cc',
-        'test/test_context_factory.h',
-        'test/default_context_factory.cc',
-        'test/default_context_factory.h',
         'test/context_factories_for_test.cc',
         'test/context_factories_for_test.h',
-        'test/test_suite.cc',
-        'test/test_suite.h',
-      ],
-    },
-    {
-      'target_name': 'compositor_unittests',
-      'type': 'executable',
-      'dependencies': [
-        '<(DEPTH)/base/base.gyp:base',
-        '<(DEPTH)/base/base.gyp:test_support_base',
-        '<(DEPTH)/cc/cc.gyp:cc',
-        '<(DEPTH)/cc/cc_tests.gyp:cc_test_support',
-        '<(DEPTH)/skia/skia.gyp:skia',
-        '<(DEPTH)/testing/gtest.gyp:gtest',
-        '<(DEPTH)/ui/events/events.gyp:events',
-        '<(DEPTH)/ui/gfx/gfx.gyp:gfx',
-        '<(DEPTH)/ui/gl/gl.gyp:gl',
-        '<(DEPTH)/ui/ui.gyp:ui',
-        '<(DEPTH)/ui/ui.gyp:ui_resources',
-        'compositor',
-        'compositor_test_support',
-      ],
-      'sources': [
-        'layer_animation_element_unittest.cc',
-        'layer_animation_sequence_unittest.cc',
-        'layer_animator_unittest.cc',
-        'layer_unittest.cc',
-        'run_all_unittests.cc',
+        'test/draw_waiter_for_test.cc',
+        'test/draw_waiter_for_test.h',
+        'test/in_process_context_factory.cc',
+        'test/in_process_context_factory.h',
         'test/layer_animator_test_controller.cc',
         'test/layer_animator_test_controller.h',
         'test/test_compositor_host.h',
@@ -135,8 +110,45 @@
         'test/test_layer_animation_delegate.h',
         'test/test_layer_animation_observer.cc',
         'test/test_layer_animation_observer.h',
+        'test/test_layers.cc',
+        'test/test_layers.h',
+        'test/test_suite.cc',
+        'test/test_suite.h',
         'test/test_utils.cc',
         'test/test_utils.h',
+      ],
+      'conditions': [
+        ['use_x11==1', {
+          'dependencies': [
+            '<(DEPTH)/build/linux/system.gyp:x11'
+          ]
+        }]
+      ]
+    },
+    {
+      'target_name': 'compositor_unittests',
+      'type': 'executable',
+      'dependencies': [
+        '<(DEPTH)/base/base.gyp:base',
+        '<(DEPTH)/base/base.gyp:test_support_base',
+        '<(DEPTH)/cc/cc.gyp:cc',
+        '<(DEPTH)/cc/cc_tests.gyp:cc_test_support',
+        '<(DEPTH)/skia/skia.gyp:skia',
+        '<(DEPTH)/testing/gtest.gyp:gtest',
+        '<(DEPTH)/ui/base/ui_base.gyp:ui_base',
+        '<(DEPTH)/ui/gfx/gfx.gyp:gfx',
+        '<(DEPTH)/ui/gfx/gfx.gyp:gfx_geometry',
+        '<(DEPTH)/ui/gl/gl.gyp:gl',
+        '<(DEPTH)/ui/resources/ui_resources.gyp:ui_resources',
+        'compositor',
+        'compositor_test_support',
+      ],
+      'sources': [
+        'layer_animation_element_unittest.cc',
+        'layer_animation_sequence_unittest.cc',
+        'layer_animator_unittest.cc',
+        'layer_unittest.cc',
+        'run_all_unittests.cc',
         'transform_animation_curve_adapter_unittest.cc',
       ],
       'conditions': [
@@ -148,7 +160,8 @@
         }],
         ['os_posix == 1 and OS != "mac"', {
           'conditions': [
-            ['linux_use_tcmalloc==1', {
+            # TODO(dmikurube): Kill linux_use_tcmalloc. http://crbug.com/345554
+            ['(use_allocator!="none" and use_allocator!="see_use_tcmalloc") or (use_allocator=="see_use_tcmalloc" and linux_use_tcmalloc==1)', {
               'dependencies': [
                 '<(DEPTH)/base/allocator/allocator.gyp:allocator',
               ],

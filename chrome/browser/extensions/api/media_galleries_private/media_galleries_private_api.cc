@@ -14,19 +14,17 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/api/media_galleries_private/gallery_watch_manager.h"
 #include "chrome/browser/extensions/api/media_galleries_private/media_galleries_private_event_router.h"
-#include "chrome/browser/extensions/event_names.h"
-#include "chrome/browser/extensions/event_router.h"
-#include "chrome/browser/extensions/extension_function.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/media_galleries/media_file_system_registry.h"
 #include "chrome/browser/media_galleries/media_galleries_preferences.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/storage_monitor/storage_monitor.h"
 #include "chrome/common/extensions/api/media_galleries_private/media_galleries_handler.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_view_host.h"
+#include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_function.h"
+#include "extensions/browser/extension_system.h"
 
 using base::DictionaryValue;
 using base::ListValue;
@@ -82,15 +80,12 @@ bool GetGalleryFilePathAndId(const std::string& gallery_id,
 //                      MediaGalleriesPrivateAPI                             //
 ///////////////////////////////////////////////////////////////////////////////
 
-MediaGalleriesPrivateAPI::MediaGalleriesPrivateAPI(Profile* profile)
-    : profile_(profile),
-      weak_ptr_factory_(this) {
+MediaGalleriesPrivateAPI::MediaGalleriesPrivateAPI(
+    content::BrowserContext* context)
+    : profile_(Profile::FromBrowserContext(context)), weak_ptr_factory_(this) {
   DCHECK(profile_);
-  ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
-      this, media_galleries_private::OnDeviceAttached::kEventName);
-  ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
-      this, media_galleries_private::OnDeviceDetached::kEventName);
-  ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
+  EventRouter* event_router = ExtensionSystem::Get(profile_)->event_router();
+  event_router->RegisterObserver(
       this, media_galleries_private::OnGalleryChanged::kEventName);
 }
 
@@ -105,19 +100,20 @@ void MediaGalleriesPrivateAPI::Shutdown() {
       base::Bind(&HandleProfileShutdownOnFileThread, profile_));
 }
 
-static base::LazyInstance<ProfileKeyedAPIFactory<MediaGalleriesPrivateAPI> >
-g_factory = LAZY_INSTANCE_INITIALIZER;
+static base::LazyInstance<
+    BrowserContextKeyedAPIFactory<MediaGalleriesPrivateAPI> > g_factory =
+    LAZY_INSTANCE_INITIALIZER;
 
 // static
-ProfileKeyedAPIFactory<MediaGalleriesPrivateAPI>*
-    MediaGalleriesPrivateAPI::GetFactoryInstance() {
-  return &g_factory.Get();
+BrowserContextKeyedAPIFactory<MediaGalleriesPrivateAPI>*
+MediaGalleriesPrivateAPI::GetFactoryInstance() {
+  return g_factory.Pointer();
 }
 
 // static
-MediaGalleriesPrivateAPI* MediaGalleriesPrivateAPI::Get(Profile* profile) {
-  return
-      ProfileKeyedAPIFactory<MediaGalleriesPrivateAPI>::GetForProfile(profile);
+MediaGalleriesPrivateAPI* MediaGalleriesPrivateAPI::Get(
+    content::BrowserContext* context) {
+  return BrowserContextKeyedAPIFactory<MediaGalleriesPrivateAPI>::Get(context);
 }
 
 void MediaGalleriesPrivateAPI::OnListenerAdded(
@@ -388,14 +384,14 @@ bool MediaGalleriesPrivateGetHandlersFunction::RunImpl() {
       extensions::ExtensionSystem::Get(GetProfile())->extension_service();
   DCHECK(service);
 
-  ListValue* result_list = new ListValue;
+  base::ListValue* result_list = new base::ListValue;
 
   for (ExtensionSet::const_iterator iter = service->extensions()->begin();
        iter != service->extensions()->end();
        ++iter) {
     const Extension* extension = iter->get();
     if (GetProfile()->IsOffTheRecord() &&
-        !extension_util::IsIncognitoEnabled(extension->id(), service))
+        !util::IsIncognitoEnabled(extension->id(), GetProfile()))
       continue;
 
     MediaGalleriesHandler::List* handler_list =
@@ -408,7 +404,7 @@ bool MediaGalleriesPrivateGetHandlersFunction::RunImpl() {
          action_iter != handler_list->end();
          ++action_iter) {
       const MediaGalleriesHandler* action = action_iter->get();
-      DictionaryValue* handler = new DictionaryValue;
+      base::DictionaryValue* handler = new base::DictionaryValue;
       handler->SetString("extensionId", action->extension_id());
       handler->SetString("id", action->id());
       handler->SetString("title", action->title());

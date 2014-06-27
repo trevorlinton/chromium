@@ -13,7 +13,6 @@
 #include "base/values.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_icon_set.h"
-#include "chrome/common/extensions/extension_set.h"
 #include "chrome/common/extensions/manifest_handlers/icons_handler.h"
 #include "chrome/common/net/net_error_info.h"
 #include "grit/chromium_strings.h"
@@ -25,13 +24,12 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/webui/web_ui_util.h"
 #include "url/gurl.h"
-#include "webkit/glue/webkit_glue.h"
 
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
 #endif
 
-using WebKit::WebURLError;
+using blink::WebURLError;
 
 // Some error pages have no details.
 const unsigned int kErrorPagesNoDetails = 0;
@@ -496,6 +494,7 @@ void LocalizedError::GetStrings(int error_code,
                                 const std::string& error_domain,
                                 const GURL& failed_url,
                                 bool is_post,
+                                bool stale_copy_in_cache,
                                 const std::string& locale,
                                 const std::string& accept_languages,
                                 base::DictionaryValue* error_strings) {
@@ -532,7 +531,7 @@ void LocalizedError::GetStrings(int error_code,
     options.suggestions = SUGGEST_NONE;
   }
 
-  string16 failed_url_string(net::FormatUrl(
+  base::string16 failed_url_string(net::FormatUrl(
       failed_url, accept_languages, net::kFormatUrlOmitNothing,
       net::UnescapeRule::NORMAL, NULL, NULL, NULL));
   // URLs are always LTR.
@@ -560,27 +559,31 @@ void LocalizedError::GetStrings(int error_code,
   error_strings->SetString(
       "less", l10n_util::GetStringUTF16(IDS_ERRORPAGES_BUTTON_LESS));
   error_strings->Set("summary", summary);
+  error_strings->SetBoolean("staleCopyInCache", stale_copy_in_cache);
+
 #if defined(OS_CHROMEOS)
   error_strings->SetString(
       "diagnose", l10n_util::GetStringUTF16(IDS_ERRORPAGES_BUTTON_DIAGNOSE));
 #endif  // defined(OS_CHROMEOS)
+
+  error_strings->SetBoolean("staleCopyInCache", stale_copy_in_cache);
 
   if (options.details_resource_id != kErrorPagesNoDetails) {
     error_strings->SetString(
         "errorDetails", l10n_util::GetStringUTF16(options.details_resource_id));
   }
 
-  string16 error_string;
+  base::string16 error_string;
   if (error_domain == net::kErrorDomain) {
     // Non-internationalized error string, for debugging Chrome itself.
     std::string ascii_error_string = net::ErrorToString(error_code);
     // Remove the leading "net::" from the returned string.
-    RemoveChars(ascii_error_string, "net:", &ascii_error_string);
-    error_string = ASCIIToUTF16(ascii_error_string);
+    base::RemoveChars(ascii_error_string, "net:", &ascii_error_string);
+    error_string = base::ASCIIToUTF16(ascii_error_string);
   } else if (error_domain == chrome_common_net::kDnsProbeErrorDomain) {
     std::string ascii_error_string =
         chrome_common_net::DnsProbeStatusToString(error_code);
-    error_string = ASCIIToUTF16(ascii_error_string);
+    error_string = base::ASCIIToUTF16(ascii_error_string);
   } else {
     DCHECK_EQ(LocalizedError::kHttpErrorDomain, error_domain);
     error_string = base::IntToString16(error_code);
@@ -770,8 +773,8 @@ void LocalizedError::GetStrings(int error_code,
   error_strings->Set("suggestions", suggestions);
 }
 
-string16 LocalizedError::GetErrorDetails(const WebKit::WebURLError& error,
-                                         bool is_post) {
+base::string16 LocalizedError::GetErrorDetails(const blink::WebURLError& error,
+                                               bool is_post) {
   const LocalizedErrorMap* error_map =
       LookupErrorMap(error.domain.utf8(), error.reason, is_post);
   if (error_map)
@@ -797,7 +800,7 @@ void LocalizedError::GetAppErrorStrings(
   bool rtl = LocaleIsRTL();
   error_strings->SetString("textdirection", rtl ? "rtl" : "ltr");
 
-  string16 failed_url(ASCIIToUTF16(display_url.spec()));
+  base::string16 failed_url(base::ASCIIToUTF16(display_url.spec()));
   // URLs are always LTR.
   if (rtl)
     base::i18n::WrapStringWithLTRFormatting(&failed_url);

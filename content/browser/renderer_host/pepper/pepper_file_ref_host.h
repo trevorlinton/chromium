@@ -18,8 +18,8 @@
 #include "webkit/browser/fileapi/file_system_url.h"
 
 namespace content {
-
 class PepperFileRefHost;
+class PepperFileSystemBrowserHost;
 
 // Internal and external filesystems have very different codepaths for
 // performing FileRef operations. The logic is split into separate classes
@@ -29,7 +29,7 @@ class PepperFileRefBackend {
   virtual ~PepperFileRefBackend();
 
   virtual int32_t MakeDirectory(ppapi::host::ReplyMessageContext context,
-                                bool make_ancestors) = 0;
+                                int32_t make_directory_flags) = 0;
   virtual int32_t Touch(ppapi::host::ReplyMessageContext context,
                         PP_Time last_accessed_time,
                         PP_Time last_modified_time) = 0;
@@ -80,6 +80,7 @@ class CONTENT_EXPORT PepperFileRefHost
 
   // Required to support FileIO.
   base::FilePath GetExternalFilePath() const;
+  base::WeakPtr<PepperFileSystemBrowserHost> GetFileSystemHost() const;
 
   int32_t CanRead() const;
   int32_t CanWrite() const;
@@ -88,7 +89,7 @@ class CONTENT_EXPORT PepperFileRefHost
 
  private:
   int32_t OnMakeDirectory(ppapi::host::HostMessageContext* context,
-                          bool make_ancestors);
+                          int32_t make_directory_flags);
   int32_t OnTouch(ppapi::host::HostMessageContext* context,
                   PP_Time last_access_time,
                   PP_Time last_modified_time);
@@ -101,6 +102,7 @@ class CONTENT_EXPORT PepperFileRefHost
 
   BrowserPpapiHost* host_;
   scoped_ptr<PepperFileRefBackend> backend_;
+  base::WeakPtr<PepperFileSystemBrowserHost> file_system_host_;
   PP_FileSystemType fs_type_;
 
   DISALLOW_COPY_AND_ASSIGN(PepperFileRefHost);

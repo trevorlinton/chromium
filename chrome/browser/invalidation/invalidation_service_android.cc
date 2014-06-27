@@ -7,6 +7,7 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/invalidation/invalidation_controller_android.h"
 #include "content/public/browser/notification_service.h"
+#include "sync/notifier/object_id_invalidation_map.h"
 
 namespace invalidation {
 
@@ -14,7 +15,8 @@ InvalidationServiceAndroid::InvalidationServiceAndroid(
     Profile* profile,
     InvalidationControllerAndroid* invalidation_controller)
     : invalidator_state_(syncer::INVALIDATIONS_ENABLED),
-      invalidation_controller_(invalidation_controller) {
+      invalidation_controller_(invalidation_controller),
+      logger_() {
   DCHECK(CalledOnValidThread());
   DCHECK(invalidation_controller);
   registrar_.Add(this, chrome::NOTIFICATION_SYNC_REFRESH_REMOTE,
@@ -27,6 +29,7 @@ void InvalidationServiceAndroid::RegisterInvalidationHandler(
     syncer::InvalidationHandler* handler) {
   DCHECK(CalledOnValidThread());
   invalidator_registrar_.RegisterHandler(handler);
+  logger_.OnRegistration(handler->GetOwnerName());
 }
 
 void InvalidationServiceAndroid::UpdateRegisteredInvalidationIds(
@@ -36,19 +39,14 @@ void InvalidationServiceAndroid::UpdateRegisteredInvalidationIds(
   invalidator_registrar_.UpdateRegisteredIds(handler, ids);
   invalidation_controller_->SetRegisteredObjectIds(
       invalidator_registrar_.GetAllRegisteredIds());
+  logger_.OnUpdateIds(invalidator_registrar_.GetSanitizedHandlersIdsMap());
 }
 
 void InvalidationServiceAndroid::UnregisterInvalidationHandler(
     syncer::InvalidationHandler* handler) {
   DCHECK(CalledOnValidThread());
   invalidator_registrar_.UnregisterHandler(handler);
-}
-
-void InvalidationServiceAndroid::AcknowledgeInvalidation(
-    const invalidation::ObjectId& id,
-    const syncer::AckHandle& ack_handle) {
-  DCHECK(CalledOnValidThread());
-  // Do nothing.  The Android invalidator does not support ack tracking.
+  logger_.OnUnregistration(handler->GetOwnerName());
 }
 
 syncer::InvalidatorState
@@ -59,8 +57,20 @@ InvalidationServiceAndroid::GetInvalidatorState() const {
 
 std::string InvalidationServiceAndroid::GetInvalidatorClientId() const {
   DCHECK(CalledOnValidThread());
-  // TODO: Return a valid ID here.  See crbug.com/172391.
-  return "Bogus";
+  return invalidation_controller_->GetInvalidatorClientId();
+}
+
+InvalidationLogger* InvalidationServiceAndroid::GetInvalidationLogger() {
+  return &logger_;
+}
+
+void InvalidationServiceAndroid::RequestDetailedStatus(
+    base::Callback<void(const base::DictionaryValue&)> return_callback) const {
+}
+
+InvalidationAuthProvider*
+InvalidationServiceAndroid::GetInvalidationAuthProvider() {
+  return NULL;
 }
 
 void InvalidationServiceAndroid::Observe(
@@ -84,6 +94,7 @@ void InvalidationServiceAndroid::Observe(
 
   invalidator_registrar_.DispatchInvalidationsToHandlers(
       effective_invalidation_map);
+  logger_.OnInvalidation(effective_invalidation_map);
 }
 
 void InvalidationServiceAndroid::TriggerStateChangeForTest(

@@ -6,7 +6,6 @@
 
 #include <algorithm>
 
-#include "base/command_line.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
@@ -15,6 +14,7 @@
 #include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_info_util.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/signin/signin_manager.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/ui/browser.h"
@@ -22,7 +22,7 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/chrome_pages.h"
-#include "chrome/common/chrome_switches.h"
+#include "chrome/common/profile_management_switches.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/web_contents.h"
@@ -149,7 +149,7 @@ class HighlightDelegate {
 // the mouse is over this link.
 class EditProfileLink : public views::Link {
  public:
-  explicit EditProfileLink(const string16& title,
+  explicit EditProfileLink(const base::string16& title,
                            HighlightDelegate* delegate);
 
   virtual void OnMouseEntered(const ui::MouseEvent& event) OVERRIDE;
@@ -164,7 +164,7 @@ class EditProfileLink : public views::Link {
   views::CustomButton::ButtonState state_;
 };
 
-EditProfileLink::EditProfileLink(const string16& title,
+EditProfileLink::EditProfileLink(const base::string16& title,
                                  HighlightDelegate* delegate)
     : views::Link(title),
       delegate_(delegate),
@@ -269,9 +269,9 @@ ProfileItemView::ProfileItemView(const AvatarMenu::Item& item,
   // Add a label to show the profile name.
   ui::ResourceBundle* rb = &ui::ResourceBundle::GetSharedInstance();
   name_label_ = new views::Label(item_.name,
-                                 rb->GetFont(item_.active ?
-                                             ui::ResourceBundle::BoldFont :
-                                             ui::ResourceBundle::BaseFont));
+                                 rb->GetFontList(item_.active ?
+                                                 ui::ResourceBundle::BoldFont :
+                                                 ui::ResourceBundle::BaseFont));
   name_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   AddChildView(name_label_);
 
@@ -279,7 +279,8 @@ ProfileItemView::ProfileItemView(const AvatarMenu::Item& item,
   sync_state_label_ = new views::Label(item_.sync_state);
   if (item_.signed_in)
     sync_state_label_->SetElideBehavior(views::Label::ELIDE_AS_EMAIL);
-  sync_state_label_->SetFont(rb->GetFont(ui::ResourceBundle::SmallFont));
+  sync_state_label_->SetFontList(
+      rb->GetFontList(ui::ResourceBundle::SmallFont));
   sync_state_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   sync_state_label_->SetEnabled(false);
   AddChildView(sync_state_label_);
@@ -289,7 +290,6 @@ ProfileItemView::ProfileItemView(const AvatarMenu::Item& item,
       l10n_util::GetStringUTF16(IDS_PROFILES_EDIT_PROFILE_LINK), this);
   edit_link_->set_listener(parent);
   edit_link_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  edit_link_->SetHasFocusBorder(true);
   AddChildView(edit_link_);
 
   OnHighlightStateChanged();
@@ -440,14 +440,14 @@ ActionButtonView::ActionButtonView(views::ButtonListener* listener,
 
   manage_button_ = new views::LabelButton(
       listener, l10n_util::GetStringUTF16(IDS_PROFILES_MANAGE_PROFILES_BUTTON));
-  manage_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
+  manage_button_->SetStyle(views::Button::STYLE_BUTTON);
   manage_button_->SetTooltipText(
       l10n_util::GetStringUTF16(IDS_PROFILES_MANAGE_PROFILES_BUTTON_TIP));
   manage_button_->set_tag(IDS_PROFILES_MANAGE_PROFILES_BUTTON);
 
   signout_button_ = new views::LabelButton(
       listener, l10n_util::GetStringUTF16(IDS_PROFILES_PROFILE_SIGNOUT_BUTTON));
-  signout_button_->SetStyle(views::Button::STYLE_NATIVE_TEXTBUTTON);
+  signout_button_->SetStyle(views::Button::STYLE_BUTTON);
   if (username.empty()) {
     signout_button_->SetTooltipText(
         l10n_util::GetStringUTF16(
@@ -456,7 +456,7 @@ ActionButtonView::ActionButtonView(views::ButtonListener* listener,
   } else {
     signout_button_->SetTooltipText(
         l10n_util::GetStringFUTF16(IDS_PROFILES_PROFILE_SIGNOUT_BUTTON_TIP,
-                                   UTF8ToUTF16(username)));
+                                   base::UTF8ToUTF16(username)));
   }
   signout_button_->set_tag(IDS_PROFILES_PROFILE_SIGNOUT_BUTTON);
 
@@ -477,7 +477,7 @@ ActionButtonView::ActionButtonView(views::ButtonListener* listener,
 
 // static
 AvatarMenuBubbleView* AvatarMenuBubbleView::avatar_bubble_ = NULL;
-bool AvatarMenuBubbleView::close_on_deactivate_ = true;
+bool AvatarMenuBubbleView::close_on_deactivate_for_testing_ = true;
 
 // static
 void AvatarMenuBubbleView::ShowBubble(
@@ -493,7 +493,7 @@ void AvatarMenuBubbleView::ShowBubble(
   avatar_bubble_ = new AvatarMenuBubbleView(
       anchor_view, arrow, anchor_rect, browser);
   views::BubbleDelegateView::CreateBubble(avatar_bubble_);
-  avatar_bubble_->set_close_on_deactivate(close_on_deactivate_);
+  avatar_bubble_->set_close_on_deactivate(close_on_deactivate_for_testing_);
   avatar_bubble_->SetBackgroundColors();
   avatar_bubble_->SetAlignment(border_alignment);
   avatar_bubble_->GetWidget()->Show();
@@ -658,7 +658,7 @@ void AvatarMenuBubbleView::ButtonPressed(views::Button* sender,
     chrome::ShowSettingsSubPage(browser_, subpage);
     return;
   } else if (sender->tag() == IDS_PROFILES_PROFILE_SIGNOUT_BUTTON) {
-    avatar_menu_->BeginSignOut();
+    profiles::LockProfile(browser_->profile());
     return;
   }
 
@@ -668,7 +668,8 @@ void AvatarMenuBubbleView::ButtonPressed(views::Button* sender,
       // Clicking on the active profile shouldn't do anything.
       if (!item_view->item().active) {
         avatar_menu_->SwitchToProfile(
-            i, ui::DispositionFromEventFlags(event.flags()) == NEW_WINDOW);
+            i, ui::DispositionFromEventFlags(event.flags()) == NEW_WINDOW,
+            ProfileMetrics::SWITCH_PROFILE_ICON);
       }
       break;
     }
@@ -720,13 +721,12 @@ void AvatarMenuBubbleView::InitMenuContents(
                                                      avatar_menu_.get());
     item_view->SetAccessibleName(l10n_util::GetStringFUTF16(
         IDS_PROFILES_SWITCH_TO_PROFILE_ACCESSIBLE_NAME, item.name));
-    item_view->set_focusable(true);
+    item_view->SetFocusable(true);
     AddChildView(item_view);
     item_views_.push_back(item_view);
   }
 
-  if (CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kNewProfileManagement)) {
+  if (switches::IsNewProfileManagement()) {
     separator_ = new views::Separator(views::Separator::HORIZONTAL);
     AddChildView(separator_);
     buttons_view_ = new ActionButtonView(this, browser_->profile());
@@ -763,7 +763,7 @@ void AvatarMenuBubbleView::InitManagedUserContents(
   // Add information about managed users.
   managed_user_info_ =
       new views::Label(avatar_menu_->GetManagedUserInformation(),
-                       ui::ResourceBundle::GetSharedInstance().GetFont(
+                       ui::ResourceBundle::GetSharedInstance().GetFontList(
                            ui::ResourceBundle::SmallFont));
   managed_user_info_->SetMultiLine(true);
   managed_user_info_->SetHorizontalAlignment(gfx::ALIGN_LEFT);

@@ -6,7 +6,6 @@
     'grit_out_dir': '<(SHARED_INTERMEDIATE_DIR)/chrome',
     'about_credits_file': '<(SHARED_INTERMEDIATE_DIR)/about_credits.html',
     'additional_modules_list_file': '<(SHARED_INTERMEDIATE_DIR)/chrome/browser/internal/additional_modules_list.txt',
-    'repack_locales_cmd': ['python', 'tools/build/repack_locales.py'],
   },
   'targets': [
     {
@@ -27,6 +26,20 @@
           'action_name': 'net_internals_resources',
           'variables': {
             'grit_grd_file': 'browser/resources/net_internals_resources.grd',
+          },
+          'includes': [ '../build/grit_action.gypi' ],
+        },
+        {
+          'action_name': 'invalidations_resources',
+          'variables': {
+            'grit_grd_file': 'browser/resources/invalidations_resources.grd',
+            },
+          'includes': ['../build/grit_action.gypi' ],
+        },
+        {
+          'action_name': 'password_manager_internals_resources',
+          'variables': {
+            'grit_grd_file': 'browser/resources/password_manager_internals_resources.grd',
           },
           'includes': [ '../build/grit_action.gypi' ],
         },
@@ -56,7 +69,7 @@
       'conditions': [
         ['OS != "ios"', {
           'dependencies': [
-            '../components/components.gyp:dom_distiller_resources',
+            '../components/components_resources.gyp:components_resources',
             '../content/browser/devtools/devtools_resources.gyp:devtools_resources',
             '../content/browser/tracing/tracing_resources.gyp:tracing_resources',
           ],
@@ -83,14 +96,6 @@
               'includes': [ '../build/grit_action.gypi' ],
             },
             {
-              'action_name': 'devtools_discovery_page_resources',
-              'variables': {
-                'grit_grd_file':
-                   'browser/devtools/frontend/devtools_discovery_page_resources.grd',
-              },
-              'includes': [ '../build/grit_action.gypi' ]
-            },
-            {
               'action_name': 'sync_file_system_internals_resources',
               'variables': {
                 'grit_grd_file': 'browser/resources/sync_file_system_internals_resources.grd',
@@ -105,6 +110,11 @@
                 'browser/resources/extension_resource/demo/library.js',
               ],
             },
+          ],
+        }],
+        ['chromeos==1 and disable_nacl==0 and disable_nacl_untrusted==0', {
+          'dependencies': [
+            '../chrome/third_party/chromevox/chromevox.gyp:chromevox_resources',
           ],
         }],
       ],
@@ -135,7 +145,7 @@
                 '<(additional_modules_input_path)',
                 '<@(_outputs)',
               ],
-              'message': 'Transforming additional modules list.',
+              'message': 'Transforming additional modules list',
             }
           ],
         }],
@@ -303,15 +313,12 @@
       'dependencies': [
         'chrome_unscaled_resources',
         'theme_resources_gen',
-        '<(DEPTH)/ui/ui.gyp:ui_resources',
+        '<(DEPTH)/ui/resources/ui_resources.gyp:ui_resources',
       ],
     },
     {
       'target_name': 'packed_extra_resources',
       'type': 'none',
-      'variables': {
-        'repack_path': '../tools/grit/grit/format/repack.py',
-      },
       'dependencies': [
         'chrome_extra_resources',
         'packed_resources',
@@ -339,9 +346,6 @@
     {
       'target_name': 'packed_resources',
       'type': 'none',
-      'variables': {
-        'repack_path': '../tools/grit/grit/format/repack.py',
-      },
       'dependencies': [
         # MSVS needs the dependencies explictly named, Make is able to
         # derive the dependencies from the output files.
@@ -349,20 +353,25 @@
         'chrome_strings',
         'platform_locale_settings',
         'theme_resources',
-        '<(DEPTH)/components/component_strings.gyp:component_strings',
+        '<(DEPTH)/components/components_strings.gyp:components_strings',
         '<(DEPTH)/net/net.gyp:net_resources',
         '<(DEPTH)/ui/base/strings/ui_strings.gyp:ui_strings',
-        '<(DEPTH)/ui/ui.gyp:ui_resources',
+        '<(DEPTH)/ui/resources/ui_resources.gyp:ui_resources',
       ],
       'actions': [
         {
-          'includes': ['chrome_repack_chrome.gypi']
-        },
-        {
+          'action_name': 'repack_locales_pack',
+          'variables': {
+            'pak_locales': '<(locales)',
+          },
           'includes': ['chrome_repack_locales.gypi']
         },
         {
-          'includes': ['chrome_repack_pseudo_locales.gypi']
+          'action_name': 'repack_pseudo_locales_pack',
+          'variables': {
+            'pak_locales': '<(pseudo_locales)',
+          },
+          'includes': ['chrome_repack_locales.gypi']
         },
         {
           'includes': ['chrome_repack_chrome_100_percent.gypi']
@@ -370,15 +379,10 @@
         {
           'includes': ['chrome_repack_chrome_200_percent.gypi']
         },
-        {
-          'includes': ['chrome_repack_chrome_touch_100_percent.gypi']
-        },
       ],
       'conditions': [
         ['OS != "ios"', {
           'dependencies': [
-            # TODO(zork): Protect this with if use_aura==1
-            '<(DEPTH)/ash/ash_strings.gyp:ash_strings',
             '<(DEPTH)/content/content_resources.gyp:content_resources',
             '<(DEPTH)/device/bluetooth/bluetooth_strings.gyp:device_bluetooth_strings',
             '<(DEPTH)/webkit/webkit_resources.gyp:webkit_resources',
@@ -387,7 +391,13 @@
         }],
         ['use_ash==1', {
           'dependencies': [
+             '<(DEPTH)/ash/ash_strings.gyp:ash_strings',
              '<(DEPTH)/ash/ash.gyp:ash_resources',
+          ],
+        }],
+        ['enable_autofill_dialog==1 and OS!="android"', {
+          'dependencies': [
+            '<(DEPTH)/third_party/libaddressinput/libaddressinput.gyp:libaddressinput_strings',
           ],
         }],
         ['OS != "mac" and OS != "ios"', {
@@ -404,17 +414,11 @@
             {
               'destination': '<(PRODUCT_DIR)',
               'files': [
-                '<(SHARED_INTERMEDIATE_DIR)/repack/chrome.pak'
-              ],
-            },
-            {
-              'destination': '<(PRODUCT_DIR)',
-              'files': [
                 '<(SHARED_INTERMEDIATE_DIR)/repack/chrome_100_percent.pak'
               ],
             },
             {
-              'destination': '<(PRODUCT_DIR)/locales',
+              'destination': '<(PRODUCT_DIR)/locales-chrome',
               'files': [
                 '<!@pymod_do_main(repack_locales -o -p <(OS) -g <(grit_out_dir) -s <(SHARED_INTERMEDIATE_DIR) -x <(SHARED_INTERMEDIATE_DIR) <(locales))'
               ],
@@ -440,22 +444,12 @@
                 },
               ],
             }],
-            ['enable_hidpi == 1 and OS!="win"', {
+            ['enable_hidpi == 1', {
               'copies': [
                 {
                   'destination': '<(PRODUCT_DIR)',
                   'files': [
                     '<(SHARED_INTERMEDIATE_DIR)/repack/chrome_200_percent.pak',
-                  ],
-                },
-              ],
-            }],
-            ['enable_touch_ui==1', {
-              'copies': [
-                {
-                  'destination': '<(PRODUCT_DIR)',
-                  'files': [
-                    '<(SHARED_INTERMEDIATE_DIR)/repack/chrome_touch_100_percent.pak',
                   ],
                 },
               ],

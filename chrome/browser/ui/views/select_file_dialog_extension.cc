@@ -4,8 +4,8 @@
 
 #include "chrome/browser/ui/views/select_file_dialog_extension.h"
 
-#include "apps/shell_window.h"
-#include "apps/shell_window_registry.h"
+#include "apps/app_window.h"
+#include "apps/app_window_registry.h"
 #include "apps/ui/native_app_window.h"
 #include "base/bind.h"
 #include "base/callback.h"
@@ -13,13 +13,14 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/singleton.h"
 #include "base/message_loop/message_loop.h"
+#include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
 #include "chrome/browser/chromeos/file_manager/fileapi_util.h"
 #include "chrome/browser/chromeos/file_manager/select_file_dialog_util.h"
 #include "chrome/browser/chromeos/file_manager/url_util.h"
-#include "chrome/browser/extensions/extension_host.h"
+#include "chrome/browser/chromeos/login/login_web_dialog.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
+#include "chrome/browser/extensions/extension_view_host.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/ui/browser.h"
@@ -32,17 +33,20 @@
 #include "chrome/browser/ui/views/extensions/extension_dialog.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/browser/extension_system.h"
 #include "ui/base/base_window.h"
 #include "ui/shell_dialogs/selected_file_info.h"
 #include "ui/views/widget/widget.h"
 
-using apps::ShellWindow;
+using apps::AppWindow;
 using content::BrowserThread;
 
 namespace {
 
 const int kFileManagerWidth = 972;  // pixels
 const int kFileManagerHeight = 640;  // pixels
+const int kFileManagerMinimumWidth = 320;  // pixels
+const int kFileManagerMinimumHeight = 240;  // pixels
 
 // Holds references to file manager dialogs that have callbacks pending
 // to their listeners.
@@ -86,6 +90,61 @@ scoped_refptr<SelectFileDialogExtension> PendingDialog::Find(
   if (it == map_.end())
     return NULL;
   return it->second;
+}
+
+
+// Given |owner_window| finds corresponding |base_window|, it's associated
+// |web_contents| and |profile|.
+void FindRuntimeContext(
+    gfx::NativeWindow owner_window,
+    ui::BaseWindow** base_window,
+    content::WebContents** web_contents,
+    Profile** profile) {
+  *base_window = NULL;
+  *web_contents = NULL;
+  *profile = NULL;
+  // To get the base_window and profile, either a Browser or AppWindow is
+  // needed.
+  Browser* owner_browser =  NULL;
+  AppWindow* app_window = NULL;
+
+  // If owner_window is supplied, use that to find a browser or a app window.
+  if (owner_window) {
+    owner_browser = chrome::FindBrowserWithWindow(owner_window);
+    if (!owner_browser) {
+      // If an owner_window was supplied but we couldn't find a browser, this
+      // could be for a app window.
+      app_window =
+          apps::AppWindowRegistry::GetAppWindowForNativeWindowAnyProfile(
+              owner_window);
+    }
+  }
+
+  if (app_window) {
+    DCHECK(!app_window->window_type_is_panel());
+    *base_window = app_window->GetBaseWindow();
+    *web_contents = app_window->web_contents();
+  } else {
+    // If the owning window is still unknown, this could be a background page or
+    // and extension popup. Use the last active browser.
+    if (!owner_browser) {
+      owner_browser =
+          chrome::FindLastActiveWithHostDesktopType(chrome::GetActiveDesktop());
+    }
+    if (owner_browser) {
+      *base_window = owner_browser->window();
+      *web_contents = owner_browser->tab_strip_model()->GetActiveWebContents();
+    }
+  }
+
+  // In ChromeOS kiosk launch mode, we can still show file picker for
+  // certificate manager dialog. There are no browser or webapp window
+  // instances present in this case.
+  if (chrome::IsRunningInForcedAppMode() && !(*web_contents))
+    *web_contents = chromeos::LoginWebDialog::GetCurrentWebContents();
+
+  CHECK(web_contents);
+  *profile = Profile::FromBrowserContext((*web_contents)->GetBrowserContext());
 }
 
 }  // namespace
@@ -163,7 +222,8 @@ void SelectFileDialogExtension::ExtensionTerminated(
   // reload the extension at all - when we try to open the extension the next
   // time, the extension subsystem would automatically reload it for us. At
   // this time though this is broken because of some faulty wiring in
-  // ExtensionProcessManager::CreateViewHost. Once that is fixed, remove this.
+  // extensions::ProcessManager::CreateViewHost. Once that is fixed, remove
+  // this.
   if (profile_) {
     base::MessageLoop::current()->PostTask(
         FROM_HERE,
@@ -257,7 +317,7 @@ bool SelectFileDialogExtension::HasMultipleFileTypeChoicesImpl() {
 
 void SelectFileDialogExtension::SelectFileImpl(
     Type type,
-    const string16& title,
+    const base::string16& title,
     const base::FilePath& default_path,
     const FileTypeInfo* file_types,
     int file_type_index,
@@ -275,107 +335,93 @@ void SelectFileDialogExtension::SelectFileImpl(
   // The web contents to associate the dialog with.
   content::WebContents* web_contents = NULL;
 
-  // To get the base_window and profile, either a Browser or ShellWindow is
-  // needed.
-  Browser* owner_browser =  NULL;
-  ShellWindow* shell_window = NULL;
-
-  // If owner_window is supplied, use that to find a browser or a shell window.
-  if (owner_window) {
-    owner_browser = chrome::FindBrowserWithWindow(owner_window);
-    if (!owner_browser) {
-      // If an owner_window was supplied but we couldn't find a browser, this
-      // could be for a shell window.
-      shell_window = apps::ShellWindowRegistry::
-          GetShellWindowForNativeWindowAnyProfile(owner_window);
-    }
-  }
-
-  if (shell_window) {
-    if (shell_window->window_type_is_panel()) {
-      NOTREACHED() << "File dialog opened by panel.";
-      return;
-    }
-    base_window = shell_window->GetBaseWindow();
-    web_contents = shell_window->web_contents();
-  } else {
-    // If the owning window is still unknown, this could be a background page or
-    // and extension popup. Use the last active browser.
-    if (!owner_browser) {
-      owner_browser =
-          chrome::FindLastActiveWithHostDesktopType(chrome::GetActiveDesktop());
-    }
-    DCHECK(owner_browser);
-    if (!owner_browser) {
-      LOG(ERROR) << "Could not find browser or shell window for popup.";
-      return;
-    }
-    base_window = owner_browser->window();
-    web_contents = owner_browser->tab_strip_model()->GetActiveWebContents();
-  }
-
-  DCHECK(base_window);
-  DCHECK(web_contents);
-  profile_ = Profile::FromBrowserContext(web_contents->GetBrowserContext());
-  DCHECK(profile_);
+  FindRuntimeContext(owner_window, &base_window, &web_contents, &profile_);
+  CHECK(profile_);
 
   // Check if we have another dialog opened for the contents. It's unlikely, but
-  // possible.
+  // possible. In such situation, discard this request.
   RoutingID routing_id = GetRoutingIDFromWebContents(web_contents);
-  if (PendingExists(routing_id)) {
-    DLOG(WARNING) << "Pending dialog exists with id " << routing_id;
+  if (PendingExists(routing_id))
     return;
-  }
-
-  base::FilePath default_dialog_path;
 
   const PrefService* pref_service = profile_->GetPrefs();
+  DCHECK(pref_service);
 
-  if (default_path.empty() && pref_service) {
-    default_dialog_path =
-        pref_service->GetFilePath(prefs::kDownloadDefaultDirectory);
-  } else {
-    default_dialog_path = default_path;
+  base::FilePath download_default_path(
+      pref_service->GetFilePath(prefs::kDownloadDefaultDirectory));
+
+  base::FilePath selection_path = default_path.IsAbsolute() ?
+      default_path : download_default_path.Append(default_path.BaseName());
+
+  base::FilePath fallback_path = profile_->last_selected_directory().empty() ?
+      download_default_path : profile_->last_selected_directory();
+
+  // Convert the above absolute paths to file system URLs.
+  GURL selection_url;
+  if (!file_manager::util::ConvertAbsoluteFilePathToFileSystemUrl(
+      profile_,
+      selection_path,
+      file_manager::kFileManagerAppId,
+      &selection_url)) {
+    // Due to the current design, an invalid temporal cache file path may passed
+    // as |default_path| (crbug.com/178013 #9-#11). In such a case, we use the
+    // last selected directory as a workaround. Real fix is tracked at
+    // crbug.com/110119.
+    if (!file_manager::util::ConvertAbsoluteFilePathToFileSystemUrl(
+        profile_,
+        fallback_path.Append(default_path.BaseName()),
+        file_manager::kFileManagerAppId,
+        &selection_url)) {
+      DVLOG(1) << "Unable to resolve the selection URL.";
+    }
   }
 
-  base::FilePath virtual_path;
-  base::FilePath fallback_path = profile_->last_selected_directory().Append(
-      default_dialog_path.BaseName());
-  // If an absolute path is specified as the default path, convert it to the
-  // virtual path in the file browser extension. Due to the current design,
-  // an invalid temporal cache file path may passed as |default_dialog_path|
-  // (crbug.com/178013 #9-#11). In such a case, we use the last selected
-  // directory as a workaround. Real fix is tracked at crbug.com/110119.
-  using file_manager::kFileManagerAppId;
-  if (default_dialog_path.IsAbsolute() &&
-      (file_manager::util::ConvertAbsoluteFilePathToRelativeFileSystemPath(
-           profile_, kFileManagerAppId, default_dialog_path, &virtual_path) ||
-       file_manager::util::ConvertAbsoluteFilePathToRelativeFileSystemPath(
-           profile_, kFileManagerAppId, fallback_path, &virtual_path))) {
-    virtual_path = base::FilePath("/").Append(virtual_path);
-  } else {
-    // If the path was relative, or failed to convert, just use the base name,
-    virtual_path = default_dialog_path.BaseName();
+  GURL current_directory_url;
+  base::FilePath current_directory_path = selection_path.DirName();
+  if (!file_manager::util::ConvertAbsoluteFilePathToFileSystemUrl(
+      profile_,
+      current_directory_path,
+      file_manager::kFileManagerAppId,
+      &current_directory_url)) {
+    // Fallback if necessary, see the comment above.
+    if (!file_manager::util::ConvertAbsoluteFilePathToFileSystemUrl(
+            profile_,
+            fallback_path,
+            file_manager::kFileManagerAppId,
+            &current_directory_url)) {
+      DVLOG(1) << "Unable to resolve the current directory URL for: "
+               << fallback_path.value();
+    }
   }
 
   has_multiple_file_type_choices_ =
-      file_types ? file_types->extensions.size() > 1 : true;
+      !file_types || (file_types->extensions.size() > 1);
 
   GURL file_manager_url =
       file_manager::util::GetFileManagerMainPageUrlWithParams(
-          type, title, virtual_path, file_types, file_type_index,
+          type,
+          title,
+          current_directory_url,
+          selection_url,
+          default_path.BaseName().value(),
+          file_types,
+          file_type_index,
           default_extension);
 
-  ExtensionDialog* dialog = ExtensionDialog::Show(file_manager_url,
-      base_window, profile_, web_contents,
-      kFileManagerWidth, kFileManagerHeight,
+  ExtensionDialog* dialog = ExtensionDialog::Show(
+      file_manager_url,
+      base_window ? base_window->GetNativeWindow() : owner_window,
+      profile_,
+      web_contents,
       kFileManagerWidth,
       kFileManagerHeight,
+      kFileManagerMinimumWidth,
+      kFileManagerMinimumHeight,
 #if defined(USE_AURA)
       file_manager::util::GetSelectFileDialogTitle(type),
 #else
       // HTML-based header used.
-      string16(),
+      base::string16(),
 #endif
       this /* ExtensionDialog::Observer */);
   if (!dialog) {

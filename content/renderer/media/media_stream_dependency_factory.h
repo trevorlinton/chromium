@@ -9,10 +9,12 @@
 
 #include "base/basictypes.h"
 #include "base/memory/ref_counted.h"
+#include "base/platform_file.h"
 #include "base/threading/thread.h"
 #include "content/common/content_export.h"
-#include "content/renderer/media/media_stream_extra_data.h"
+#include "content/public/renderer/render_process_observer.h"
 #include "content/renderer/p2p/socket_dispatcher.h"
+#include "ipc/ipc_platform_file.h"
 #include "third_party/libjingle/source/talk/app/webrtc/peerconnectioninterface.h"
 #include "third_party/libjingle/source/talk/app/webrtc/videosourceinterface.h"
 
@@ -26,14 +28,12 @@ class PacketSocketFactory;
 class Thread;
 }
 
-namespace webrtc {
-class PeerConnection;
-}
-
-namespace WebKit {
+namespace blink {
 class WebFrame;
 class WebMediaConstraints;
 class WebMediaStream;
+class WebMediaStreamSource;
+class WebMediaStreamTrack;
 class WebRTCPeerConnectionHandler;
 class WebRTCPeerConnectionHandlerClient;
 }
@@ -42,76 +42,80 @@ namespace content {
 
 class IpcNetworkManager;
 class IpcPacketSocketFactory;
+class MediaStreamAudioSource;
 class RTCMediaConstraints;
-class VideoCaptureImplManager;
 class WebAudioCapturerSource;
 class WebRtcAudioCapturer;
 class WebRtcAudioDeviceImpl;
+class WebRtcLocalAudioTrack;
 class WebRtcLoggingHandlerImpl;
 class WebRtcLoggingMessageFilter;
+class WebRtcVideoCapturerAdapter;
 struct StreamDeviceInfo;
-
-#if defined(GOOGLE_TV)
-class RTCVideoDecoderFactoryTv;
-#endif
 
 // Object factory for RTC MediaStreams and RTC PeerConnections.
 class CONTENT_EXPORT MediaStreamDependencyFactory
-    : NON_EXPORTED_BASE(public base::NonThreadSafe) {
+    : NON_EXPORTED_BASE(public base::NonThreadSafe),
+      public RenderProcessObserver {
  public:
   // MediaSourcesCreatedCallback is used in CreateNativeMediaSources.
-  typedef base::Callback<void(WebKit::WebMediaStream* web_stream,
+  typedef base::Callback<void(blink::WebMediaStream* web_stream,
                               bool live)> MediaSourcesCreatedCallback;
   MediaStreamDependencyFactory(
-      VideoCaptureImplManager* vc_manager,
       P2PSocketDispatcher* p2p_socket_dispatcher);
   virtual ~MediaStreamDependencyFactory();
 
   // Create a RTCPeerConnectionHandler object that implements the
   // WebKit WebRTCPeerConnectionHandler interface.
-  WebKit::WebRTCPeerConnectionHandler* CreateRTCPeerConnectionHandler(
-      WebKit::WebRTCPeerConnectionHandlerClient* client);
+  blink::WebRTCPeerConnectionHandler* CreateRTCPeerConnectionHandler(
+      blink::WebRTCPeerConnectionHandlerClient* client);
 
-  // CreateNativeMediaSources creates libjingle representations of
-  // the underlying sources to the tracks in |web_stream|.
-  // |sources_created| is invoked when the sources have either been created and
-  // transitioned to a live state or failed.
-  // The libjingle sources is stored in the extra data field of
-  // WebMediaStreamSource.
-  // |audio_constraints| and |video_constraints| set parameters for the sources.
-  void CreateNativeMediaSources(
+  // InitializeMediaStreamAudioSource initialize a MediaStream source object
+  // for audio input.
+  bool InitializeMediaStreamAudioSource(
       int render_view_id,
-      const WebKit::WebMediaConstraints& audio_constraints,
-      const WebKit::WebMediaConstraints& video_constraints,
-      WebKit::WebMediaStream* web_stream,
-      const MediaSourcesCreatedCallback& sources_created);
+      const blink::WebMediaConstraints& audio_constraints,
+      MediaStreamAudioSource* source_data);
 
-  // Creates a libjingle representation of a MediaStream and stores
-  // it in the extra data field of |web_stream|.
-  void CreateNativeLocalMediaStream(
-      WebKit::WebMediaStream* web_stream);
+  // Creates an implementation of a cricket::VideoCapturer object that can be
+  // used when creating a libjingle webrtc::VideoSourceInterface object.
+  virtual WebRtcVideoCapturerAdapter* CreateVideoCapturer(
+      bool is_screen_capture);
 
-  // Creates a libjingle representation of a MediaStream and stores
-  // it in the extra data field of |web_stream|.
-  // |stream_stopped| is a callback that is run when a MediaStream have been
-  // stopped.
-  void CreateNativeLocalMediaStream(
-      WebKit::WebMediaStream* web_stream,
-      const MediaStreamExtraData::StreamStopCallback& stream_stop);
+  // Creates a libjingle representation of a MediaStream.
+  scoped_refptr<webrtc::MediaStreamInterface> CreateNativeLocalMediaStream(
+      const blink::WebMediaStream& web_stream);
 
-  // Adds a libjingle representation of a MediaStreamTrack to |stream| based
-  // on the source of |track|.
-  bool AddNativeMediaStreamTrack(const WebKit::WebMediaStream& stream,
-                                 const WebKit::WebMediaStreamTrack& track);
+  // Create an instance of WebRtcLocalAudioTrack and store it
+  // in the extraData field of |track|.
+  void CreateLocalAudioTrack(const blink::WebMediaStreamTrack& track);
+
+  // Asks the PeerConnection factory to create a Local VideoTrack object.
+  virtual scoped_refptr<webrtc::VideoTrackInterface>
+      CreateLocalVideoTrack(const std::string& id,
+                            webrtc::VideoSourceInterface* source);
+
+  // Adds a libjingle representation of a MediaStreamTrack to the libjingle
+  // Representation of |stream|.
+  bool AddNativeMediaStreamTrack(const blink::WebMediaStream& stream,
+                                 const blink::WebMediaStreamTrack& track);
 
   // Creates and adds libjingle representation of a MediaStreamTrack to |stream|
   // based on the desired |track_id| and |capturer|.
   bool AddNativeVideoMediaTrack(const std::string& track_id,
-                                WebKit::WebMediaStream* stream,
+                                blink::WebMediaStream* stream,
                                 cricket::VideoCapturer* capturer);
 
-  bool RemoveNativeMediaStreamTrack(const WebKit::WebMediaStream& stream,
-                                    const WebKit::WebMediaStreamTrack& track);
+  // Removes a libjingle MediaStreamTrack from the libjingle representation of
+  // |stream|.
+  bool RemoveNativeMediaStreamTrack(const blink::WebMediaStream& stream,
+                                    const blink::WebMediaStreamTrack& track);
+
+  // Asks the PeerConnection factory to create a Video Source.
+  // The video source takes ownership of |capturer|.
+  virtual scoped_refptr<webrtc::VideoSourceInterface>
+      CreateVideoSource(cricket::VideoCapturer* capturer,
+                        const blink::WebMediaConstraints& constraints);
 
   // Asks the libjingle PeerConnection factory to create a libjingle
   // PeerConnection object.
@@ -120,7 +124,7 @@ class CONTENT_EXPORT MediaStreamDependencyFactory
       CreatePeerConnection(
           const webrtc::PeerConnectionInterface::IceServers& ice_servers,
           const webrtc::MediaConstraintsInterface* constraints,
-          WebKit::WebFrame* web_frame,
+          blink::WebFrame* web_frame,
           webrtc::PeerConnectionObserver* observer);
 
   // Creates a libjingle representation of a Session description. Used by a
@@ -138,19 +142,10 @@ class CONTENT_EXPORT MediaStreamDependencyFactory
 
   WebRtcAudioDeviceImpl* GetWebRtcAudioDevice();
 
-#if defined(GOOGLE_TV)
-  RTCVideoDecoderFactoryTv* decoder_factory_tv() { return decoder_factory_tv_; }
-#endif
-
   static void AddNativeTrackToBlinkTrack(
       webrtc::MediaStreamTrackInterface* native_track,
-      const WebKit::WebMediaStreamTrack& webkit_track);
-
-  static webrtc::MediaStreamInterface* GetNativeMediaStream(
-      const WebKit::WebMediaStream& stream);
-
-  static webrtc::MediaStreamTrackInterface* GetNativeMediaStreamTrack(
-      const WebKit::WebMediaStreamTrack& track);
+      const blink::WebMediaStreamTrack& webkit_track,
+      bool is_local_track);
 
  protected:
   // Asks the PeerConnection factory to create a Local MediaStream object.
@@ -162,35 +157,12 @@ class CONTENT_EXPORT MediaStreamDependencyFactory
       CreateLocalAudioSource(
           const webrtc::MediaConstraintsInterface* constraints);
 
-  // Asks the PeerConnection factory to create a Local Video Source.
-  virtual scoped_refptr<webrtc::VideoSourceInterface>
-      CreateLocalVideoSource(
-          int video_session_id,
-          bool is_screen_cast,
-          const webrtc::MediaConstraintsInterface* constraints);
-
   // Creates a media::AudioCapturerSource with an implementation that is
   // specific for a WebAudio source. The created WebAudioCapturerSource
   // instance will function as audio source instead of the default
   // WebRtcAudioCapturer.
-  // The |constraints| will be modified to include the default, mandatory
-  // WebAudio constraints.
   virtual scoped_refptr<WebAudioCapturerSource> CreateWebAudioSource(
-      WebKit::WebMediaStreamSource* source, RTCMediaConstraints* constraints);
-
-  // Asks the PeerConnection factory to create a Local AudioTrack object.
-  virtual scoped_refptr<webrtc::AudioTrackInterface>
-      CreateLocalAudioTrack(
-          const std::string& id,
-          const scoped_refptr<WebRtcAudioCapturer>& capturer,
-          WebAudioCapturerSource* webaudio_source,
-          webrtc::AudioSourceInterface* source,
-          const webrtc::MediaConstraintsInterface* constraints);
-
-  // Asks the PeerConnection factory to create a Local VideoTrack object.
-  virtual scoped_refptr<webrtc::VideoTrackInterface>
-      CreateLocalVideoTrack(const std::string& id,
-                            webrtc::VideoSourceInterface* source);
+      blink::WebMediaStreamSource* source);
 
   // Asks the PeerConnection factory to create a Local VideoTrack object with
   // the video source using |capturer|.
@@ -198,19 +170,26 @@ class CONTENT_EXPORT MediaStreamDependencyFactory
       CreateLocalVideoTrack(const std::string& id,
                             cricket::VideoCapturer* capturer);
 
-  virtual bool EnsurePeerConnectionFactory();
+  virtual const scoped_refptr<webrtc::PeerConnectionFactoryInterface>&
+      GetPcFactory();
   virtual bool PeerConnectionFactoryCreated();
 
   // Returns a new capturer or existing capturer based on the |render_view_id|
   // and |device_info|. When the |render_view_id| and |device_info| are valid,
   // it reuses existing capture if any; otherwise it creates a new capturer.
-  virtual scoped_refptr<WebRtcAudioCapturer> MaybeCreateAudioCapturer(
-      int render_view_id, const StreamDeviceInfo& device_info);
+  virtual scoped_refptr<WebRtcAudioCapturer> CreateAudioCapturer(
+      int render_view_id, const StreamDeviceInfo& device_info,
+      const blink::WebMediaConstraints& constraints);
+
+  // Adds the audio device as a sink to the audio track and starts the local
+  // audio track. This is virtual for test purposes since no real audio device
+  // exist in unit tests.
+  virtual void StartLocalAudioTrack(WebRtcLocalAudioTrack* audio_track);
 
  private:
-  // Creates and deletes |pc_factory_|, which in turn is used for
+  // Creates |pc_factory_|, which in turn is used for
   // creating PeerConnection objects.
-  bool CreatePeerConnectionFactory();
+  void CreatePeerConnectionFactory();
 
   void InitializeWorkerThread(talk_base::Thread** thread,
                               base::WaitableEvent* event);
@@ -219,6 +198,17 @@ class CONTENT_EXPORT MediaStreamDependencyFactory
   void DeleteIpcNetworkManager();
   void CleanupPeerConnectionFactory();
 
+  // RenderProcessObserver implementation.
+  virtual bool OnControlMessageReceived(const IPC::Message& message) OVERRIDE;
+
+  void OnAecDumpFile(IPC::PlatformFileForTransit file_handle);
+  void OnDisableAecDump();
+
+  void StartAecDump(const base::PlatformFile& aec_dump_file);
+
+  // Helper method to create a WebRtcAudioDeviceImpl.
+  void EnsureWebRtcAudioDeviceImpl();
+
   // We own network_manager_, must be deleted on the worker thread.
   // The network manager uses |p2p_socket_dispatcher_|.
   IpcNetworkManager* network_manager_;
@@ -226,13 +216,6 @@ class CONTENT_EXPORT MediaStreamDependencyFactory
 
   scoped_refptr<webrtc::PeerConnectionFactoryInterface> pc_factory_;
 
-#if defined(GOOGLE_TV)
-  // |pc_factory_| will hold the ownership of this object, and |pc_factory_|
-  // outlives this object. Thus weak pointer is sufficient.
-  RTCVideoDecoderFactoryTv* decoder_factory_tv_;
-#endif
-
-  scoped_refptr<VideoCaptureImplManager> vc_manager_;
   scoped_refptr<P2PSocketDispatcher> p2p_socket_dispatcher_;
   scoped_refptr<WebRtcAudioDeviceImpl> audio_device_;
 
@@ -241,6 +224,8 @@ class CONTENT_EXPORT MediaStreamDependencyFactory
   talk_base::Thread* signaling_thread_;
   talk_base::Thread* worker_thread_;
   base::Thread chrome_worker_thread_;
+
+  base::PlatformFile aec_dump_file_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaStreamDependencyFactory);
 };

@@ -80,9 +80,7 @@ RecentlyUsedFoldersComboModel::RecentlyUsedFoldersComboModel(
   items_.push_back(Item(model->other_node(), Item::TYPE_NODE));
   if (model->mobile_node()->IsVisible())
     items_.push_back(Item(model->mobile_node(), Item::TYPE_NODE));
-#if defined(USE_AURA) || defined(TOOLKIT_GTK)
   items_.push_back(Item(NULL, Item::TYPE_SEPARATOR));
-#endif
   items_.push_back(Item(NULL, Item::TYPE_CHOOSE_ANOTHER_FOLDER));
 
   std::vector<Item>::iterator it = std::find(items_.begin(),
@@ -100,20 +98,20 @@ int RecentlyUsedFoldersComboModel::GetItemCount() const {
   return static_cast<int>(items_.size());
 }
 
-string16 RecentlyUsedFoldersComboModel::GetItemAt(int index) {
+base::string16 RecentlyUsedFoldersComboModel::GetItemAt(int index) {
   switch (items_[index].type) {
     case Item::TYPE_NODE:
       return items_[index].node->GetTitle();
     case Item::TYPE_SEPARATOR:
       // This function should not be called for separators.
       NOTREACHED();
-      return string16();
+      return base::string16();
     case Item::TYPE_CHOOSE_ANOTHER_FOLDER:
       return l10n_util::GetStringUTF16(
           IDS_BOOKMARK_BUBBLE_CHOOSER_ANOTHER_FOLDER);
   }
   NOTREACHED();
-  return string16();
+  return base::string16();
 }
 
 bool RecentlyUsedFoldersComboModel::IsItemSeparatorAt(int index) {
@@ -134,10 +132,8 @@ void RecentlyUsedFoldersComboModel::RemoveObserver(
   observers_.RemoveObserver(observer);
 }
 
-
-void RecentlyUsedFoldersComboModel::Loaded(BookmarkModel* model,
-                                           bool ids_reassigned) {
-}
+void RecentlyUsedFoldersComboModel::BookmarkModelLoaded(BookmarkModel* model,
+                                                        bool ids_reassigned) {}
 
 void RecentlyUsedFoldersComboModel::BookmarkModelBeingDeleted(
     BookmarkModel* model) {
@@ -174,8 +170,10 @@ void RecentlyUsedFoldersComboModel::OnWillRemoveBookmarks(
       ++i;
     }
   }
-  if (changed)
-    FOR_EACH_OBSERVER(ui::ComboboxModelObserver, observers_, OnModelChanged());
+  if (changed) {
+    FOR_EACH_OBSERVER(ui::ComboboxModelObserver, observers_,
+                      OnComboboxModelChanged(this));
+  }
 }
 
 void RecentlyUsedFoldersComboModel::BookmarkNodeRemoved(
@@ -215,8 +213,10 @@ void RecentlyUsedFoldersComboModel::BookmarkAllNodesRemoved(
       ++i;
     }
   }
-  if (changed)
-    FOR_EACH_OBSERVER(ui::ComboboxModelObserver, observers_, OnModelChanged());
+  if (changed) {
+    FOR_EACH_OBSERVER(ui::ComboboxModelObserver, observers_,
+                      OnComboboxModelChanged(this));
+  }
 }
 
 void RecentlyUsedFoldersComboModel::MaybeChangeParent(
@@ -228,7 +228,7 @@ void RecentlyUsedFoldersComboModel::MaybeChangeParent(
   const BookmarkNode* new_parent = GetNodeAt(selected_index);
   if (new_parent != node->parent()) {
     content::RecordAction(
-        content::UserMetricsAction("BookmarkBubble_ChangeParent"));
+        base::UserMetricsAction("BookmarkBubble_ChangeParent"));
     bookmark_model_->Move(node, new_parent, new_parent->child_count());
   }
 }

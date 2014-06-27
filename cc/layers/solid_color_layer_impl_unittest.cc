@@ -13,6 +13,7 @@
 #include "cc/test/fake_layer_tree_host.h"
 #include "cc/test/layer_test_common.h"
 #include "cc/test/mock_quad_culler.h"
+#include "cc/test/test_shared_bitmap_manager.h"
 #include "cc/trees/single_thread_proxy.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -26,7 +27,8 @@ TEST(SolidColorLayerImplTest, VerifyTilingCompleteAndNoOverlap) {
   gfx::Rect visible_content_rect = gfx::Rect(layer_size);
 
   FakeImplProxy proxy;
-  FakeLayerTreeHostImpl host_impl(&proxy);
+  TestSharedBitmapManager shared_bitmap_manager;
+  FakeLayerTreeHostImpl host_impl(&proxy, &shared_bitmap_manager);
   scoped_ptr<SolidColorLayerImpl> layer =
       SolidColorLayerImpl::Create(host_impl.active_tree(), 1);
   layer->draw_properties().visible_content_rect = visible_content_rect;
@@ -50,7 +52,8 @@ TEST(SolidColorLayerImplTest, VerifyCorrectBackgroundColorInQuad) {
   gfx::Rect visible_content_rect = gfx::Rect(layer_size);
 
   FakeImplProxy proxy;
-  FakeLayerTreeHostImpl host_impl(&proxy);
+  TestSharedBitmapManager shared_bitmap_manager;
+  FakeLayerTreeHostImpl host_impl(&proxy, &shared_bitmap_manager);
   scoped_ptr<SolidColorLayerImpl> layer =
       SolidColorLayerImpl::Create(host_impl.active_tree(), 1);
   layer->draw_properties().visible_content_rect = visible_content_rect;
@@ -76,7 +79,8 @@ TEST(SolidColorLayerImplTest, VerifyCorrectOpacityInQuad) {
   gfx::Rect visible_content_rect = gfx::Rect(layer_size);
 
   FakeImplProxy proxy;
-  FakeLayerTreeHostImpl host_impl(&proxy);
+  TestSharedBitmapManager shared_bitmap_manager;
+  FakeLayerTreeHostImpl host_impl(&proxy, &shared_bitmap_manager);
   scoped_ptr<SolidColorLayerImpl> layer =
       SolidColorLayerImpl::Create(host_impl.active_tree(), 1);
   layer->draw_properties().visible_content_rect = visible_content_rect;
@@ -162,6 +166,58 @@ TEST(SolidColorLayerImplTest, VerifyOpaqueRect) {
     ASSERT_EQ(quad_culler.quad_list().size(), 1U);
     EXPECT_EQ(gfx::Rect().ToString(),
               quad_culler.quad_list()[0]->opaque_rect.ToString());
+  }
+}
+
+TEST(SolidColorLayerImplTest, Occlusion) {
+  gfx::Size layer_size(1000, 1000);
+  gfx::Size viewport_size(1000, 1000);
+
+  LayerTestCommon::LayerImplTest impl;
+
+  SolidColorLayerImpl* solid_color_layer_impl =
+      impl.AddChildToRoot<SolidColorLayerImpl>();
+  solid_color_layer_impl->SetBackgroundColor(SkColorSetARGB(255, 10, 20, 30));
+  solid_color_layer_impl->SetAnchorPoint(gfx::PointF());
+  solid_color_layer_impl->SetBounds(layer_size);
+  solid_color_layer_impl->SetContentBounds(layer_size);
+  solid_color_layer_impl->SetDrawsContent(true);
+
+  impl.CalcDrawProps(viewport_size);
+
+  {
+    SCOPED_TRACE("No occlusion");
+    gfx::Rect occluded;
+    impl.AppendQuadsWithOcclusion(solid_color_layer_impl, occluded);
+
+    LayerTestCommon::VerifyQuadsExactlyCoverRect(impl.quad_list(),
+                                                 gfx::Rect(layer_size));
+    EXPECT_EQ(16u, impl.quad_list().size());
+  }
+
+  {
+    SCOPED_TRACE("Full occlusion");
+    gfx::Rect occluded(solid_color_layer_impl->visible_content_rect());
+    impl.AppendQuadsWithOcclusion(solid_color_layer_impl, occluded);
+
+    LayerTestCommon::VerifyQuadsExactlyCoverRect(impl.quad_list(), gfx::Rect());
+    EXPECT_EQ(impl.quad_list().size(), 0u);
+  }
+
+  {
+    SCOPED_TRACE("Partial occlusion");
+    gfx::Rect occluded(200, 200, 256 * 3, 256 * 3);
+    impl.AppendQuadsWithOcclusion(solid_color_layer_impl, occluded);
+
+    size_t partially_occluded_count = 0;
+    LayerTestCommon::VerifyQuadsCoverRectWithOcclusion(
+        impl.quad_list(),
+        gfx::Rect(layer_size),
+        occluded,
+        &partially_occluded_count);
+    // 4 quads are completely occluded, 8 are partially occluded.
+    EXPECT_EQ(16u - 4u, impl.quad_list().size());
+    EXPECT_EQ(8u, partially_occluded_count);
   }
 }
 

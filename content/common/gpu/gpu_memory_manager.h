@@ -62,6 +62,8 @@ class CONTENT_EXPORT GpuMemoryManager :
   GpuMemoryTrackingGroup* CreateTrackingGroup(
       base::ProcessId pid, gpu::gles2::MemoryTracker* memory_tracker);
 
+  uint64 GetClientMemoryUsage(const GpuMemoryManagerClient* client) const;
+
  private:
   friend class GpuMemoryManagerTest;
   friend class GpuMemoryTrackingGroup;
@@ -224,6 +226,9 @@ class CONTENT_EXPORT GpuMemoryManager :
   bool manage_immediate_scheduled_;
 
   uint64 max_surfaces_with_frontbuffer_soft_limit_;
+
+  // The priority cutoff used for all renderers.
+  gpu::MemoryAllocation::PriorityCutoff priority_cutoff_;
 
   // The maximum amount of memory that may be allocated for GPU resources
   uint64 bytes_available_gpu_memory_;

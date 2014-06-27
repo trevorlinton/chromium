@@ -18,13 +18,13 @@ namespace app_list {
 // the words again at camel case boundaries and alpha/number boundaries.
 class TokenizedString {
  public:
-  typedef std::vector<string16> Tokens;
+  typedef std::vector<base::string16> Tokens;
   typedef std::vector<gfx::Range> Mappings;
 
-  explicit TokenizedString(const string16& text);
+  explicit TokenizedString(const base::string16& text);
   ~TokenizedString();
 
-  const string16& text() const { return text_; }
+  const base::string16& text() const { return text_; }
   const Tokens& tokens() const { return tokens_; }
   const Mappings& mappings() const { return mappings_; }
 
@@ -32,7 +32,7 @@ class TokenizedString {
   void Tokenize();
 
   // Input text.
-  const string16 text_;
+  const base::string16 text_;
 
   // Broken down tokens and the index mapping of tokens in original string.
   Tokens tokens_;

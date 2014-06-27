@@ -9,6 +9,7 @@
 
 #include "base/android/scoped_java_ref.h"
 #include "base/compiler_specific.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "remoting/client/frame_consumer.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
@@ -22,6 +23,7 @@ class DesktopFrame;
 }  // namespace webrtc
 
 namespace remoting {
+class ChromotingJniInstance;
 class ChromotingJniRuntime;
 class FrameProducer;
 
@@ -29,7 +31,8 @@ class FrameProducer;
 class JniFrameConsumer : public FrameConsumer {
  public:
   // The instance does not take ownership of |jni_runtime|.
-  explicit JniFrameConsumer(ChromotingJniRuntime* jni_runtime);
+  explicit JniFrameConsumer(ChromotingJniRuntime* jni_runtime,
+                            scoped_refptr<ChromotingJniInstance> jni_instance);
 
   virtual ~JniFrameConsumer();
 
@@ -40,16 +43,17 @@ class JniFrameConsumer : public FrameConsumer {
   virtual void ApplyBuffer(const webrtc::DesktopSize& view_size,
                            const webrtc::DesktopRect& clip_area,
                            webrtc::DesktopFrame* buffer,
-                           const webrtc::DesktopRegion& region) OVERRIDE;
+                           const webrtc::DesktopRegion& region,
+                           const webrtc::DesktopRegion& shape) OVERRIDE;
   virtual void ReturnBuffer(webrtc::DesktopFrame* buffer) OVERRIDE;
   virtual void SetSourceSize(const webrtc::DesktopSize& source_size,
                              const webrtc::DesktopVector& dpi) OVERRIDE;
   virtual PixelFormat GetPixelFormat() OVERRIDE;
 
  private:
-  // Allocates a new buffer of |view_size_|, informs Java about it, and tells
+  // Allocates a new buffer of |source_size|, informs Java about it, and tells
   // the producer to draw onto it.
-  void AllocateBuffer();
+  void AllocateBuffer(const webrtc::DesktopSize& source_size);
 
   // Frees a frame buffer previously allocated by AllocateBuffer.
   void FreeBuffer(webrtc::DesktopFrame* buffer);
@@ -59,8 +63,10 @@ class JniFrameConsumer : public FrameConsumer {
   // Used to obtain task runner references and make calls to Java methods.
   ChromotingJniRuntime* jni_runtime_;
 
+  // Used to record statistics.
+  scoped_refptr<ChromotingJniInstance> jni_instance_;
+
   FrameProducer* frame_producer_;
-  webrtc::DesktopSize view_size_;
   webrtc::DesktopRect clip_area_;
 
   // List of allocated image buffers.

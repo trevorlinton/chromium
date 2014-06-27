@@ -11,6 +11,7 @@
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/theme_installed_infobar_delegate.h"
 #include "chrome/browser/infobars/confirm_infobar_delegate.h"
+#include "chrome/browser/infobars/infobar.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile.h"
@@ -31,11 +32,11 @@
 #include "chrome/browser/ui/singleton_tabs.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/common/extension.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -62,7 +63,7 @@ Browser* FindOrCreateVisibleBrowser(Profile* profile) {
       profile, chrome::GetActiveDesktop());
   Browser* browser = displayer.browser();
   if (browser->tab_strip_model()->count() == 0)
-    chrome::AddBlankTabAt(browser, -1, true);
+    chrome::AddTabAt(browser, GURL(), -1, true);
   return browser;
 }
 
@@ -80,19 +81,19 @@ void ShowExtensionInstalledBubble(const extensions::Extension* extension,
 // Helper class to put up an infobar when installation fails.
 class ErrorInfoBarDelegate : public ConfirmInfoBarDelegate {
  public:
-  // Creates an error infobar delegate and adds it to |infobar_service|.
+  // Creates an error infobar and delegate and adds the infobar to
+  // |infobar_service|.
   static void Create(InfoBarService* infobar_service,
                      const extensions::CrxInstallerError& error);
 
  private:
-  ErrorInfoBarDelegate(InfoBarService* infobar_service,
-                       const extensions::CrxInstallerError& error);
+  explicit ErrorInfoBarDelegate(const extensions::CrxInstallerError& error);
   virtual ~ErrorInfoBarDelegate();
 
   // ConfirmInfoBarDelegate:
-  virtual string16 GetMessageText() const OVERRIDE;
+  virtual base::string16 GetMessageText() const OVERRIDE;
   virtual int GetButtons() const OVERRIDE;
-  virtual string16 GetLinkText() const OVERRIDE;
+  virtual base::string16 GetLinkText() const OVERRIDE;
   virtual bool LinkClicked(WindowOpenDisposition disposition) OVERRIDE;
 
   extensions::CrxInstallerError error_;
@@ -103,21 +104,20 @@ class ErrorInfoBarDelegate : public ConfirmInfoBarDelegate {
 // static
 void ErrorInfoBarDelegate::Create(InfoBarService* infobar_service,
                                   const extensions::CrxInstallerError& error) {
-  infobar_service->AddInfoBar(scoped_ptr<InfoBarDelegate>(
-      new ErrorInfoBarDelegate(infobar_service, error)));
+  infobar_service->AddInfoBar(ConfirmInfoBarDelegate::CreateInfoBar(
+      scoped_ptr<ConfirmInfoBarDelegate>(new ErrorInfoBarDelegate(error))));
 }
 
 ErrorInfoBarDelegate::ErrorInfoBarDelegate(
-    InfoBarService* infobar_service,
     const extensions::CrxInstallerError& error)
-    : ConfirmInfoBarDelegate(infobar_service),
+    : ConfirmInfoBarDelegate(),
       error_(error) {
 }
 
 ErrorInfoBarDelegate::~ErrorInfoBarDelegate() {
 }
 
-string16 ErrorInfoBarDelegate::GetMessageText() const {
+base::string16 ErrorInfoBarDelegate::GetMessageText() const {
   return error_.message();
 }
 
@@ -125,9 +125,9 @@ int ErrorInfoBarDelegate::GetButtons() const {
   return BUTTON_OK;
 }
 
-string16 ErrorInfoBarDelegate::GetLinkText() const {
+base::string16 ErrorInfoBarDelegate::GetLinkText() const {
   return (error_.type() == extensions::CrxInstallerError::ERROR_OFF_STORE) ?
-      l10n_util::GetStringUTF16(IDS_LEARN_MORE) : string16();
+      l10n_util::GetStringUTF16(IDS_LEARN_MORE) : base::string16();
 }
 
 bool ErrorInfoBarDelegate::LinkClicked(WindowOpenDisposition disposition) {
@@ -191,7 +191,11 @@ ExtensionInstallPrompt* ExtensionInstallUI::CreateInstallPromptWithProfile(
     Profile* profile) {
   Browser* browser = chrome::FindLastActiveWithProfile(profile,
       chrome::GetActiveDesktop());
-  return CreateInstallPromptWithBrowser(browser);
+  if (browser)
+    return CreateInstallPromptWithBrowser(browser);
+  // No browser window is open yet. Create a free-standing dialog associated
+  // with |profile|.
+  return new ExtensionInstallPrompt(profile, NULL, NULL);
 }
 
 

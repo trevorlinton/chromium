@@ -33,14 +33,19 @@ class ResourceMetadata;
 class DirectoryFetchInfo {
  public:
   DirectoryFetchInfo() : changestamp_(0) {}
-  DirectoryFetchInfo(const std::string& resource_id,
+  DirectoryFetchInfo(const std::string& local_id,
+                     const std::string& resource_id,
                      int64 changestamp)
-      : resource_id_(resource_id),
+      : local_id_(local_id),
+        resource_id_(resource_id),
         changestamp_(changestamp) {
   }
 
   // Returns true if the object is empty.
-  bool empty() const { return resource_id_.empty(); }
+  bool empty() const { return local_id_.empty(); }
+
+  // Local ID of the directory.
+  const std::string& local_id() const { return local_id_; }
 
   // Resource ID of the directory.
   const std::string& resource_id() const { return resource_id_; }
@@ -53,6 +58,7 @@ class DirectoryFetchInfo {
   std::string ToString() const;
 
  private:
+  const std::string local_id_;
   const std::string resource_id_;
   const int64 changestamp_;
 };
@@ -72,12 +78,23 @@ class ChangeList {
   std::vector<std::string>* mutable_parent_resource_ids() {
     return &parent_resource_ids_;
   }
+  const std::vector<base::Time>& modification_dates() const {
+    return modification_dates_;
+  }
+  std::vector<base::Time>* mutable_modification_dates() {
+    return &modification_dates_;
+  }
   const GURL& next_url() const { return next_url_; }
   int64 largest_changestamp() const { return largest_changestamp_; }
+
+  void set_largest_changestamp(int64 largest_changestamp) {
+    largest_changestamp_ = largest_changestamp;
+  }
 
  private:
   std::vector<ResourceEntry> entries_;
   std::vector<std::string> parent_resource_ids_;
+  std::vector<base::Time> modification_dates_;
   GURL next_url_;
   int64 largest_changestamp_;
 
@@ -105,25 +122,30 @@ class ChangeListProcessor {
   // The set of changed directories as a result of change list processing.
   const std::set<base::FilePath>& changed_dirs() const { return changed_dirs_; }
 
-  // Updates the changestamp of a directory according to |directory_fetch_info|
-  // and adds or refreshes the child entries from |change_lists|.
+  // Adds or refreshes the child entries from |change_list| to the directory.
   static FileError RefreshDirectory(
       ResourceMetadata* resource_metadata,
       const DirectoryFetchInfo& directory_fetch_info,
-      ScopedVector<ChangeList> change_lists,
-      base::FilePath* out_file_path);
+      scoped_ptr<ChangeList> change_list,
+      std::vector<ResourceEntry>* out_refreshed_entries);
+
+  // Sets |entry|'s parent_local_id.
+  static FileError SetParentLocalIdOfEntry(
+      ResourceMetadata* resource_metadata,
+      ResourceEntry* entry,
+      const std::string& parent_resource_id);
 
  private:
   typedef std::map<std::string /* resource_id */, ResourceEntry>
       ResourceEntryMap;
   typedef std::map<std::string /* resource_id */,
                    std::string /* parent_resource_id*/> ParentResourceIdMap;
+  typedef std::map<std::string /* resource_id */,
+                   base::Time /* modification_date */> ModificationDateMap;
 
   // Applies the pre-processed metadata from entry_map_ onto the resource
-  // metadata. If this is not delta update (i.e. |is_delta_update| is false),
-  // |about_resource| must not be null.
+  // metadata. |about_resource| must not be null.
   FileError ApplyEntryMap(
-      bool is_delta_update,
       int64 changestamp,
       scoped_ptr<google_apis::AboutResource> about_resource);
 
@@ -137,6 +159,7 @@ class ChangeListProcessor {
 
   ResourceEntryMap entry_map_;
   ParentResourceIdMap parent_resource_id_map_;
+  ModificationDateMap modification_date_map_;
   std::set<base::FilePath> changed_dirs_;
 
   DISALLOW_COPY_AND_ASSIGN(ChangeListProcessor);

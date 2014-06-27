@@ -7,19 +7,28 @@
 #include <algorithm>
 
 #include "base/auto_reset.h"
+#include "base/bind.h"
+#include "base/callback.h"
+#include "base/command_line.h"
 #include "base/prefs/pref_service.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/extensions/extension_prefs.h"
 #include "chrome/browser/extensions/install_tracker.h"
 #include "chrome/browser/extensions/install_tracker_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/app_list_controller_delegate.h"
+#include "chrome/browser/ui/app_list/app_list_syncable_service.h"
+#include "chrome/browser/ui/app_list/app_list_syncable_service_factory.h"
 #include "chrome/browser/ui/app_list/extension_app_item.h"
-#include "chrome/common/extensions/extension.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_constants.h"
-#include "chrome/common/extensions/extension_set.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/notification_service.h"
+#include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/extensions_browser_client.h"
+#include "extensions/browser/pref_names.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/extension_set.h"
 #include "ui/gfx/image/image_skia.h"
 
 using extensions::Extension;
@@ -39,45 +48,82 @@ bool ShouldDisplayInAppLauncher(Profile* profile,
 }  // namespace
 
 ExtensionAppModelBuilder::ExtensionAppModelBuilder(
-    Profile* profile,
-    app_list::AppListModel* model,
     AppListControllerDelegate* controller)
-    : profile_(NULL),
+    : service_(NULL),
+      profile_(NULL),
       controller_(controller),
-      model_(model),
+      model_(NULL),
       highlighted_app_pending_(false),
       tracker_(NULL) {
-  model_->item_list()->AddObserver(this);
-  SwitchProfile(profile);  // Builds the model.
 }
 
 ExtensionAppModelBuilder::~ExtensionAppModelBuilder() {
   OnShutdown();
-  model_->item_list()->RemoveObserver(this);
+  if (!service_)
+    model_->top_level_item_list()->RemoveObserver(this);
+}
+
+void ExtensionAppModelBuilder::InitializeWithService(
+    app_list::AppListSyncableService* service) {
+  DCHECK(!service_ && !profile_);
+  model_ = service->model();
+  service_ = service;
+  profile_ = service->profile();
+  InitializePrefChangeRegistrar();
+
+  BuildModel();
+}
+
+void ExtensionAppModelBuilder::InitializeWithProfile(
+    Profile* profile,
+    app_list::AppListModel* model) {
+  DCHECK(!service_ && !profile_);
+  model_ = model;
+  model_->top_level_item_list()->AddObserver(this);
+  profile_ = profile;
+  InitializePrefChangeRegistrar();
+
+  BuildModel();
+}
+
+void ExtensionAppModelBuilder::InitializePrefChangeRegistrar() {
+  if (!CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kEnableStreamlinedHostedApps))
+    return;
+
+  // TODO(calamity): analyze the performance impact of doing this every
+  // extension pref change.
+  extensions::ExtensionsBrowserClient* client =
+      extensions::ExtensionsBrowserClient::Get();
+  extension_pref_change_registrar_.Init(
+      client->GetPrefServiceForContext(profile_));
+  extension_pref_change_registrar_.Add(
+    extensions::pref_names::kExtensions,
+    base::Bind(&ExtensionAppModelBuilder::OnExtensionPreferenceChanged,
+               base::Unretained(this)));
+}
+
+void ExtensionAppModelBuilder::OnExtensionPreferenceChanged() {
+  model_->NotifyExtensionPreferenceChanged();
 }
 
 void ExtensionAppModelBuilder::OnBeginExtensionInstall(
-    const std::string& extension_id,
-    const std::string& extension_name,
-    const gfx::ImageSkia& installing_icon,
-    bool is_app,
-    bool is_platform_app) {
-  if (!is_app)
+    const ExtensionInstallParams& params) {
+  if (!params.is_app || params.is_ephemeral)
     return;
 
-  ExtensionAppItem* existing_item = GetExtensionAppItem(extension_id);
+  DVLOG(2) << service_ << ": OnBeginExtensionInstall: "
+           << params.extension_id.substr(0, 8);
+  ExtensionAppItem* existing_item = GetExtensionAppItem(params.extension_id);
   if (existing_item) {
     existing_item->SetIsInstalling(true);
     return;
   }
-
-  InsertApp(new ExtensionAppItem(profile_,
-                                 extension_id,
-                                 controller_,
-                                 extension_name,
-                                 installing_icon,
-                                 is_platform_app));
-  SetHighlightedApp(extension_id);
+  InsertApp(CreateAppItem(params.extension_id,
+                          params.extension_name,
+                          params.installing_icon,
+                          params.is_platform_app));
+  SetHighlightedApp(params.extension_id);
 }
 
 void ExtensionAppModelBuilder::OnDownloadProgress(
@@ -91,25 +137,27 @@ void ExtensionAppModelBuilder::OnDownloadProgress(
 
 void ExtensionAppModelBuilder::OnInstallFailure(
     const std::string& extension_id) {
-  // Do nothing, item will be disabled
+  model_->DeleteItem(extension_id);
 }
 
 void ExtensionAppModelBuilder::OnExtensionLoaded(const Extension* extension) {
   if (!extension->ShouldDisplayInAppLauncher())
     return;
 
+  DVLOG(2) << service_ << ": OnExtensionLoaded: "
+           << extension->id().substr(0, 8);
   ExtensionAppItem* existing_item = GetExtensionAppItem(extension->id());
   if (existing_item) {
     existing_item->Reload();
+    if (service_)
+      service_->UpdateItem(existing_item);
     return;
   }
 
-  InsertApp(new ExtensionAppItem(profile_,
-                                 extension->id(),
-                                 controller_,
-                                 "",
-                                 gfx::ImageSkia(),
-                                 extension->is_platform_app()));
+  InsertApp(CreateAppItem(extension->id(),
+                          "",
+                          gfx::ImageSkia(),
+                          extension->is_platform_app()));
   UpdateHighlight();
 }
 
@@ -122,11 +170,23 @@ void ExtensionAppModelBuilder::OnExtensionUnloaded(const Extension* extension) {
 
 void ExtensionAppModelBuilder::OnExtensionUninstalled(
     const Extension* extension) {
-  model_->item_list()->DeleteItem(extension->id());
+  if (service_) {
+    DVLOG(2) << service_ << ": OnExtensionUninstalled: "
+             << extension->id().substr(0, 8);
+    service_->RemoveItem(extension->id());
+    return;
+  }
+  model_->DeleteItem(extension->id());
 }
 
-void ExtensionAppModelBuilder::OnAppsReordered() {
-  // Do nothing; App List order does not track extensions order.
+void ExtensionAppModelBuilder::OnDisabledExtensionUpdated(
+    const Extension* extension) {
+  if (!extension->ShouldDisplayInAppLauncher())
+    return;
+
+  ExtensionAppItem* existing_item = GetExtensionAppItem(extension->id());
+  if (existing_item)
+    existing_item->Reload();
 }
 
 void ExtensionAppModelBuilder::OnAppInstalledToAppList(
@@ -141,31 +201,23 @@ void ExtensionAppModelBuilder::OnShutdown() {
   }
 }
 
-void ExtensionAppModelBuilder::AddApps(const ExtensionSet* extensions,
-                                       ExtensionAppList* apps) {
-  for (ExtensionSet::const_iterator app = extensions->begin();
-       app != extensions->end(); ++app) {
-    if (ShouldDisplayInAppLauncher(profile_, *app))
-      apps->push_back(new ExtensionAppItem(profile_,
-                                           (*app)->id(),
-                                           controller_,
-                                           "",
-                                           gfx::ImageSkia(),
-                                           (*app)->is_platform_app()));
-  }
+scoped_ptr<ExtensionAppItem> ExtensionAppModelBuilder::CreateAppItem(
+    const std::string& extension_id,
+    const std::string& extension_name,
+    const gfx::ImageSkia& installing_icon,
+    bool is_platform_app) {
+  const app_list::AppListSyncableService::SyncItem* sync_item =
+      service_ ? service_->GetSyncItem(extension_id) : NULL;
+  return make_scoped_ptr(new ExtensionAppItem(profile_,
+                                              sync_item,
+                                              extension_id,
+                                              extension_name,
+                                              installing_icon,
+                                              is_platform_app));
 }
 
-void ExtensionAppModelBuilder::SwitchProfile(Profile* profile) {
-  if (profile_ == profile)
-    return;
-  profile_ = profile;
-
-  // Delete any extension apps.
-  model_->item_list()->DeleteItemsByType(ExtensionAppItem::kAppType);
-
-  if (tracker_)
-    tracker_->RemoveObserver(this);
-
+void ExtensionAppModelBuilder::BuildModel() {
+  DCHECK(!tracker_);
   tracker_ = controller_->GetInstallTrackerFor(profile_);
 
   PopulateApps();
@@ -177,20 +229,26 @@ void ExtensionAppModelBuilder::SwitchProfile(Profile* profile) {
 }
 
 void ExtensionAppModelBuilder::PopulateApps() {
-  ExtensionSet extensions;
+  extensions::ExtensionSet extensions;
   controller_->GetApps(profile_, &extensions);
-  ExtensionAppList apps;
-  AddApps(&extensions, &apps);
 
-  if (apps.empty())
-    return;
-
-  for (size_t i = 0; i < apps.size(); ++i)
-    InsertApp(apps[i]);
+  for (extensions::ExtensionSet::const_iterator app = extensions.begin();
+       app != extensions.end(); ++app) {
+    if (!ShouldDisplayInAppLauncher(profile_, *app))
+      continue;
+    InsertApp(CreateAppItem((*app)->id(),
+                            "",
+                            gfx::ImageSkia(),
+                            (*app)->is_platform_app()));
+  }
 }
 
-void ExtensionAppModelBuilder::InsertApp(ExtensionAppItem* app) {
-  model_->item_list()->AddItem(app);
+void ExtensionAppModelBuilder::InsertApp(scoped_ptr<ExtensionAppItem> app) {
+  if (service_) {
+    service_->AddItem(app.PassAs<app_list::AppListItem>());
+    return;
+  }
+  model_->AddItem(app.PassAs<app_list::AppListItem>());
 }
 
 void ExtensionAppModelBuilder::SetHighlightedApp(
@@ -209,12 +267,11 @@ void ExtensionAppModelBuilder::SetHighlightedApp(
 
 ExtensionAppItem* ExtensionAppModelBuilder::GetExtensionAppItem(
     const std::string& extension_id) {
-  app_list::AppListItemModel* item =
-      model_->item_list()->FindItem(extension_id);
+  app_list::AppListItem* item = model_->FindItem(extension_id);
   LOG_IF(ERROR, item &&
-         item->GetAppType() != ExtensionAppItem::kAppType)
+         item->GetItemType() != ExtensionAppItem::kItemType)
       << "App Item matching id: " << extension_id
-      << " has incorrect type: '" << item->GetAppType() << "'";
+      << " has incorrect type: '" << item->GetItemType() << "'";
   return static_cast<ExtensionAppItem*>(item);
 }
 
@@ -229,28 +286,29 @@ void ExtensionAppModelBuilder::UpdateHighlight() {
   highlighted_app_pending_ = false;
 }
 
-void ExtensionAppModelBuilder::OnListItemMoved(
-    size_t from_index,
-    size_t to_index,
-    app_list::AppListItemModel* item) {
+void ExtensionAppModelBuilder::OnListItemMoved(size_t from_index,
+                                               size_t to_index,
+                                               app_list::AppListItem* item) {
+  DCHECK(!service_);
+
   // This will get called from AppListItemList::ListItemMoved after
   // set_position is called for the item.
-  app_list::AppListItemList* item_list = model_->item_list();
-  if (item->GetAppType() != ExtensionAppItem::kAppType)
+  if (item->GetItemType() != ExtensionAppItem::kItemType)
     return;
 
+  app_list::AppListItemList* item_list = model_->top_level_item_list();
   ExtensionAppItem* prev = NULL;
   for (size_t idx = to_index; idx > 0; --idx) {
-    app_list::AppListItemModel* item = item_list->item_at(idx - 1);
-    if (item->GetAppType() == ExtensionAppItem::kAppType) {
+    app_list::AppListItem* item = item_list->item_at(idx - 1);
+    if (item->GetItemType() == ExtensionAppItem::kItemType) {
       prev = static_cast<ExtensionAppItem*>(item);
       break;
     }
   }
   ExtensionAppItem* next = NULL;
   for (size_t idx = to_index; idx < item_list->item_count() - 1; ++idx) {
-    app_list::AppListItemModel* item = item_list->item_at(idx + 1);
-    if (item->GetAppType() == ExtensionAppItem::kAppType) {
+    app_list::AppListItem* item = item_list->item_at(idx + 1);
+    if (item->GetItemType() == ExtensionAppItem::kItemType) {
       next = static_cast<ExtensionAppItem*>(item);
       break;
     }

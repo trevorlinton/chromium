@@ -28,6 +28,7 @@ cr.define('omniboxDebug', function() {
     $('prevent-inline-autocomplete').addEventListener(
         'change', startOmniboxQuery);
     $('prefer-keyword').addEventListener('change', startOmniboxQuery);
+    $('page-classification').addEventListener('change', startOmniboxQuery);
     $('show-details').addEventListener('change', refresh);
     $('show-incomplete-results').addEventListener('change', refresh);
     $('show-all-providers').addEventListener('change', refresh);
@@ -57,17 +58,19 @@ cr.define('omniboxDebug', function() {
   function startOmniboxQuery(event) {
     // First, clear the results of past calls (if any).
     progressiveAutocompleteResults = [];
-    // Then, call chrome with a four-element list:
+    // Then, call chrome with a five-element list:
     // - first element: the value in the text box
     // - second element: the location of the cursor in the text box
     // - third element: the value of prevent-inline-autocomplete
     // - forth element: the value of prefer-keyword
+    // - fifth element: the value of page-classification
     cursorPositionUsed = $('input-text').selectionEnd;
     chrome.send('startOmniboxQuery', [
         $('input-text').value,
         cursorPositionUsed,
         $('prevent-inline-autocomplete').checked,
-        $('prefer-keyword').checked]);
+        $('prefer-keyword').checked,
+        parseInt($('page-classification').value)]);
     // Cancel the submit action.  i.e., don't submit the form.  (We handle
     // display the results solely with Javascript.)
     event.preventDefault();
@@ -113,6 +116,11 @@ cr.define('omniboxDebug', function() {
         'The result score. Higher is more relevant.'),
     new PresentationInfoRecord('Contents', '', 'contents', true,
         'The text that is presented identifying the result.'),
+    new PresentationInfoRecord(
+        'Can Be Default', '', 'allowed_to_be_default_match', false,
+        'A green checkmark indicates that the result can be the default ' +
+        'match (i.e., can be the match that pressing enter in the omnibox ' +
+        'navigates to).'),
     new PresentationInfoRecord('Starred', '', 'starred', false,
         'A green checkmark indicates that the result has been bookmarked.'),
     new PresentationInfoRecord(
@@ -130,7 +138,7 @@ cr.define('omniboxDebug', function() {
         'The text shown in the omnibox as a blue highlight selection ' +
         'following the cursor, if this match is shown inline.'),
     new PresentationInfoRecord('Del', '', 'deletable', false,
-        'A green checkmark indicates that the results can be deleted from ' +
+        'A green checkmark indicates that the result can be deleted from ' +
         'the visit history.'),
     new PresentationInfoRecord('Prev', '', 'from_previous', false, ''),
     new PresentationInfoRecord(
@@ -152,6 +160,10 @@ cr.define('omniboxDebug', function() {
     new PresentationInfoRecord(
         'Keyword', '', 'keyword', false,
         'The keyword of the search engine to be used.'),
+    new PresentationInfoRecord(
+        'Duplicates', '', 'duplicates', false,
+        'The number of matches that have been marked as duplicates of this ' +
+        'match.'),
     new PresentationInfoRecord(
         'Additional Info', '', 'additional_info', false,
         'Provider-specific information about the result.')

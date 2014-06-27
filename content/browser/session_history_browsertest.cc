@@ -11,10 +11,10 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/content_browser_test.h"
+#include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
-#include "content/test/content_browser_test.h"
-#include "content/test/content_browser_test_utils.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
@@ -85,7 +85,7 @@ class SessionHistoryTest : public ContentBrowserTest {
   }
 
   std::string GetTabTitle() {
-    return UTF16ToASCII(shell()->web_contents()->GetTitle());
+    return base::UTF16ToASCII(shell()->web_contents()->GetTitle());
   }
 
   GURL GetTabURL() {
@@ -99,7 +99,7 @@ class SessionHistoryTest : public ContentBrowserTest {
 
   void NavigateAndCheckTitle(const char* filename,
                              const std::string& expected_title) {
-    string16 expected_title16(ASCIIToUTF16(expected_title));
+    base::string16 expected_title16(base::ASCIIToUTF16(expected_title));
     TitleWatcher title_watcher(shell()->web_contents(), expected_title16);
     NavigateToURL(shell(), GetURL(filename));
     ASSERT_EQ(expected_title16, title_watcher.WaitAndGetTitle());

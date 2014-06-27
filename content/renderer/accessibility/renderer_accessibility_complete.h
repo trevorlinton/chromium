@@ -10,13 +10,13 @@
 
 #include "base/containers/hash_tables.h"
 #include "base/memory/weak_ptr.h"
-#include "content/common/accessibility_node_data.h"
 #include "content/public/renderer/render_view_observer.h"
 #include "content/renderer/accessibility/renderer_accessibility.h"
 #include "third_party/WebKit/public/web/WebAXEnums.h"
 #include "third_party/WebKit/public/web/WebAXObject.h"
+#include "ui/accessibility/ax_node_data.h"
 
-namespace WebKit {
+namespace blink {
 class WebDocument;
 class WebNode;
 };
@@ -28,7 +28,7 @@ class RenderViewImpl;
 // complete accessibility support for assistive technology (as opposed to
 // partial support - see RendererAccessibilityFocusOnly).
 //
-// This version turns on WebKit's accessibility code and sends
+// This version turns on Blink's accessibility code and sends
 // a serialized representation of that tree whenever it changes. It also
 // handles requests from the browser to perform accessibility actions on
 // nodes in the tree (e.g., change focus, or click on a button).
@@ -40,12 +40,15 @@ class CONTENT_EXPORT RendererAccessibilityComplete
 
   // RenderView::Observer implementation.
   virtual bool OnMessageReceived(const IPC::Message& message) OVERRIDE;
-  virtual void FocusedNodeChanged(const WebKit::WebNode& node) OVERRIDE;
-  virtual void DidFinishLoad(WebKit::WebFrame* frame) OVERRIDE;
+  virtual void FocusedNodeChanged(const blink::WebNode& node) OVERRIDE;
+  virtual void DidFinishLoad(blink::WebFrame* frame) OVERRIDE;
 
   // RendererAccessibility.
   virtual void HandleWebAccessibilityEvent(
-      const WebKit::WebAXObject& obj, WebKit::WebAXEvent event) OVERRIDE;
+      const blink::WebAXObject& obj, blink::WebAXEvent event) OVERRIDE;
+  virtual RendererAccessibilityType GetType() OVERRIDE;
+
+  void HandleAXEvent(const blink::WebAXObject& obj, ui::AXEvent event);
 
   // In order to keep track of what nodes the browser knows about, we keep a
   // representation of the browser tree - just IDs and parent/child
@@ -67,10 +70,8 @@ class CONTENT_EXPORT RendererAccessibilityComplete
 
   // Check the entire accessibility tree to see if any nodes have
   // changed location, by comparing their locations to the cached
-  // versions. If any have moved, append a event to |events|
-  // that updates the coordinates of these objects.
-  void AppendLocationChangeEvents(
-      std::vector<AccessibilityHostMsg_EventParams>* events);
+  // versions. If any have moved, send an IPC with the new locations.
+  void SendLocationChanges();
 
  private:
   // Serialize the given accessibility object |obj| and append it to
@@ -78,8 +79,8 @@ class CONTENT_EXPORT RendererAccessibilityComplete
   // |obj|, based on what object ids we know the browser already has.
   // The set of ids serialized is added to |ids_serialized|, and any
   // ids previously in that set are not serialized again.
-  void SerializeChangedNodes(const WebKit::WebAXObject& obj,
-                             std::vector<AccessibilityNodeData>* dst,
+  void SerializeChangedNodes(const blink::WebAXObject& obj,
+                             std::vector<ui::AXNodeData>* dst,
                              std::set<int>* ids_serialized);
 
   // Clear the given node and recursively delete all of its descendants
@@ -96,27 +97,27 @@ class CONTENT_EXPORT RendererAccessibilityComplete
   void OnSetTextSelection(int acc_obj_id, int start_offset, int end_offset);
   void OnFatalError();
 
-  // Checks if a WebKit accessibility object is an editable text node.
-  bool IsEditableText(const WebKit::WebAXObject& node);
+  // Checks if a Blink accessibility object is an editable text node.
+  bool IsEditableText(const blink::WebAXObject& node);
 
-  // Recursively explore the tree of WebKit accessibility objects rooted
+  // Recursively explore the tree of Blink accessibility objects rooted
   // at |src|, and for each editable text node encountered, add a
   // corresponding WebAccessibility node as a child of |dst|.
   void RecursiveAddEditableTextNodesToTree(
-      const WebKit::WebAXObject& src,
-      AccessibilityNodeData* dst);
+      const blink::WebAXObject& src,
+      ui::AXNodeData* dst);
 
-  // Build a tree of serializable AccessibilityNodeData nodes to send to the
-  // browser process, given a WebAXObject node from WebKit.
+  // Build a tree of serializable ui::AXNodeData nodes to send to the
+  // browser process, given a WebAXObject node from Blink.
   // Modifies |dst| in-place, it's assumed to be empty.
-  void BuildAccessibilityTree(const WebKit::WebAXObject& src,
+  void BuildAccessibilityTree(const blink::WebAXObject& src,
                               bool include_children,
-                              AccessibilityNodeData* dst);
+                              ui::AXNodeData* dst);
 
   // So we can queue up tasks to be executed later.
   base::WeakPtrFactory<RendererAccessibilityComplete> weak_factory_;
 
-  // Events from WebKit are collected until they are ready to be
+  // Events from Blink are collected until they are ready to be
   // sent to the browser.
   std::vector<AccessibilityHostMsg_EventParams> pending_events_;
 
@@ -131,14 +132,8 @@ class CONTENT_EXPORT RendererAccessibilityComplete
   // is fixed.
   gfx::Size last_scroll_offset_;
 
-  // The current accessibility mode.
-  AccessibilityMode mode_;
-
   // Set if we are waiting for an accessibility event ack.
   bool ack_pending_;
-
-  // True if verbose logging of accessibility events is on.
-  bool logging_;
 
   DISALLOW_COPY_AND_ASSIGN(RendererAccessibilityComplete);
 };

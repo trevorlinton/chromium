@@ -16,15 +16,15 @@ namespace {
 class DirectoryAccessConfirmationDialog : public TabModalConfirmDialogDelegate {
  public:
   DirectoryAccessConfirmationDialog(bool writable,
-                                    const string16& app_name,
+                                    const base::string16& app_name,
                                     content::WebContents* web_contents,
                                     const base::Closure& on_accept,
                                     const base::Closure& on_cancel);
 
-  virtual string16 GetTitle() OVERRIDE;
-  virtual string16 GetMessage() OVERRIDE;
-  virtual string16 GetAcceptButtonTitle() OVERRIDE;
-  virtual string16 GetCancelButtonTitle() OVERRIDE;
+  virtual base::string16 GetTitle() OVERRIDE;
+  virtual base::string16 GetDialogMessage() OVERRIDE;
+  virtual base::string16 GetAcceptButtonTitle() OVERRIDE;
+  virtual base::string16 GetCancelButtonTitle() OVERRIDE;
 
  private:
   virtual void OnAccepted() OVERRIDE;
@@ -34,12 +34,12 @@ class DirectoryAccessConfirmationDialog : public TabModalConfirmDialogDelegate {
   const base::Closure on_accept_;
   const base::Closure on_cancel_;
   const bool writable_;
-  const string16 app_name_;
+  const base::string16 app_name_;
 };
 
 DirectoryAccessConfirmationDialog::DirectoryAccessConfirmationDialog(
     bool writable,
-    const string16& app_name,
+    const base::string16& app_name,
     content::WebContents* web_contents,
     const base::Closure& on_accept,
     const base::Closure& on_cancel)
@@ -49,12 +49,12 @@ DirectoryAccessConfirmationDialog::DirectoryAccessConfirmationDialog(
       writable_(writable),
       app_name_(app_name) {}
 
-string16 DirectoryAccessConfirmationDialog::GetTitle() {
+base::string16 DirectoryAccessConfirmationDialog::GetTitle() {
   return l10n_util::GetStringUTF16(
       IDS_EXTENSIONS_DIRECTORY_CONFIRMATION_DIALOG_TITLE);
 }
 
-string16 DirectoryAccessConfirmationDialog::GetMessage() {
+base::string16 DirectoryAccessConfirmationDialog::GetDialogMessage() {
   if (writable_) {
     return l10n_util::GetStringFUTF16(
         IDS_EXTENSIONS_DIRECTORY_CONFIRMATION_DIALOG_MESSAGE_WRITABLE,
@@ -66,10 +66,10 @@ string16 DirectoryAccessConfirmationDialog::GetMessage() {
   }
 }
 
-string16 DirectoryAccessConfirmationDialog::GetAcceptButtonTitle() {
+base::string16 DirectoryAccessConfirmationDialog::GetAcceptButtonTitle() {
   return l10n_util::GetStringUTF16(IDS_CONFIRM_MESSAGEBOX_YES_BUTTON_LABEL);
 }
-string16 DirectoryAccessConfirmationDialog::GetCancelButtonTitle() {
+base::string16 DirectoryAccessConfirmationDialog::GetCancelButtonTitle() {
   return l10n_util::GetStringUTF16(IDS_CONFIRM_MESSAGEBOX_NO_BUTTON_LABEL);
 }
 
@@ -88,7 +88,7 @@ void DirectoryAccessConfirmationDialog::OnClosed() {
 }  // namespace
 
 void CreateDirectoryAccessConfirmationDialog(bool writable,
-                                             const string16& app_name,
+                                             const base::string16& app_name,
                                              content::WebContents* web_contents,
                                              const base::Closure& on_accept,
                                              const base::Closure& on_cancel) {

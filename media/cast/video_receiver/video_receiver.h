@@ -16,30 +16,35 @@
 #include "media/cast/cast_config.h"
 #include "media/cast/cast_environment.h"
 #include "media/cast/cast_receiver.h"
+#include "media/cast/rtcp/receiver_rtcp_event_subscriber.h"
 #include "media/cast/rtcp/rtcp.h"
-#include "media/cast/rtp_common/rtp_defines.h"
 #include "media/cast/rtp_receiver/rtp_receiver.h"
+#include "media/cast/rtp_receiver/rtp_receiver_defines.h"
+#include "media/cast/transport/utility/transport_encryption_handler.h"
 
 namespace media {
 namespace cast {
 
 class Framer;
-class LocalRtpVideoData;
 class LocalRtpVideoFeedback;
-class PacedPacketSender;
 class PeerVideoReceiver;
 class Rtcp;
 class RtpReceiverStatistics;
 class VideoDecoder;
 
+// Callback used by the video receiver to inform the audio receiver of the new
+// delay used to compute the playout and render times.
+typedef base::Callback<void(base::TimeDelta)> SetTargetDelayCallback;
 
 // Should only be called from the Main cast thread.
 class VideoReceiver : public base::NonThreadSafe,
-                      public base::SupportsWeakPtr<VideoReceiver> {
+                      public base::SupportsWeakPtr<VideoReceiver>,
+                      public RtpReceiver {
  public:
   VideoReceiver(scoped_refptr<CastEnvironment> cast_environment,
                 const VideoReceiverConfig& video_config,
-                PacedPacketSender* const packet_sender);
+                transport::PacedPacketSender* const packet_sender,
+                const SetTargetDelayCallback& target_delay_cb);
 
   virtual ~VideoReceiver();
 
@@ -50,39 +55,40 @@ class VideoReceiver : public base::NonThreadSafe,
   void GetEncodedVideoFrame(const VideoFrameEncodedCallback& callback);
 
   // Insert a RTP packet to the video receiver.
-  void IncomingPacket(const uint8* packet, size_t length,
-                      const base::Closure callback);
+  void IncomingPacket(scoped_ptr<Packet> packet);
+
+  virtual void OnReceivedPayloadData(const uint8* payload_data,
+                                     size_t payload_size,
+                                     const RtpCastHeader& rtp_header) OVERRIDE;
 
  protected:
-  void IncomingRtpPacket(const uint8* payload_data,
-                         size_t payload_size,
-                         const RtpCastHeader& rtp_header);
-
   void DecodeVideoFrameThread(
-      scoped_ptr<EncodedVideoFrame> encoded_frame,
+      scoped_ptr<transport::EncodedVideoFrame> encoded_frame,
       const base::TimeTicks render_time,
       const VideoFrameDecodedCallback& frame_decoded_callback);
 
  private:
-  friend class LocalRtpVideoData;
   friend class LocalRtpVideoFeedback;
 
   void CastFeedback(const RtcpCastMessage& cast_message);
-  void RequestKeyFrame();
 
   void DecodeVideoFrame(const VideoFrameDecodedCallback& callback,
-                        scoped_ptr<EncodedVideoFrame> encoded_frame,
+                        scoped_ptr<transport::EncodedVideoFrame> encoded_frame,
                         const base::TimeTicks& render_time);
 
-  bool PullEncodedVideoFrame(uint32 rtp_timestamp,
-                             bool next_frame,
-                             scoped_ptr<EncodedVideoFrame>* encoded_frame,
-                             base::TimeTicks* render_time);
+  bool DecryptVideoFrame(scoped_ptr<transport::EncodedVideoFrame>* video_frame);
+
+  bool PullEncodedVideoFrame(
+      bool next_frame,
+      scoped_ptr<transport::EncodedVideoFrame>* encoded_frame,
+      base::TimeTicks* render_time);
 
   void PlayoutTimeout();
 
   // Returns Render time based on current time and the rtp timestamp.
   base::TimeTicks GetRenderTime(base::TimeTicks now, uint32 rtp_timestamp);
+
+  void InitializeTimers();
 
   // Schedule timing for the next cast message.
   void ScheduleNextCastMessage();
@@ -96,24 +102,38 @@ class VideoReceiver : public base::NonThreadSafe,
   // Actually send the next RTCP report.
   void SendNextRtcpReport();
 
+  // Update the target delay based on past information. Will also update the
+  // rtcp module and the audio receiver.
+  void UpdateTargetDelay();
+
   scoped_ptr<VideoDecoder> video_decoder_;
   scoped_refptr<CastEnvironment> cast_environment_;
+
+  // Subscribes to raw events.
+  // Processes raw audio events to be sent over to the cast sender via RTCP.
+  ReceiverRtcpEventSubscriber event_subscriber_;
+
   scoped_ptr<Framer> framer_;
-  const VideoCodec codec_;
-  const uint32 incoming_ssrc_;
+  const transport::VideoCodec codec_;
   base::TimeDelta target_delay_delta_;
   base::TimeDelta frame_delay_;
-  scoped_ptr<LocalRtpVideoData> incoming_payload_callback_;
   scoped_ptr<LocalRtpVideoFeedback> incoming_payload_feedback_;
-  RtpReceiver rtp_receiver_;
   scoped_ptr<Rtcp> rtcp_;
-  scoped_ptr<RtpReceiverStatistics> rtp_video_receiver_statistics_;
-  base::TimeTicks time_last_sent_cast_message_;
-  // Sender-receiver offset estimation.
-  base::TimeDelta time_offset_;
-
+  base::TimeDelta time_offset_;  // Sender-receiver offset estimation.
+  int time_offset_counter_;
+  transport::TransportEncryptionHandler decryptor_;
   std::list<VideoFrameEncodedCallback> queued_encoded_callbacks_;
+  bool time_incoming_packet_updated_;
+  base::TimeTicks time_incoming_packet_;
+  uint32 incoming_rtp_timestamp_;
+  base::TimeTicks last_render_time_;
+  SetTargetDelayCallback target_delay_cb_;
 
+  // This mapping allows us to log kVideoAckSent as a frame event. In addition
+  // it allows the event to be transmitted via RTCP.
+  RtpTimestamp frame_id_to_rtp_timestamp_[256];
+
+  // NOTE: Weak pointers must be invalidated before all other member variables.
   base::WeakPtrFactory<VideoReceiver> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(VideoReceiver);

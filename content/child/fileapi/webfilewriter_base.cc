@@ -10,12 +10,12 @@
 #include "third_party/WebKit/public/platform/WebURL.h"
 #include "webkit/common/fileapi/file_system_util.h"
 
-using fileapi::PlatformFileErrorToWebFileError;
+using fileapi::FileErrorToWebFileError;
 
 namespace content {
 
 WebFileWriterBase::WebFileWriterBase(const GURL& path,
-                                     WebKit::WebFileWriterClient* client)
+                                     blink::WebFileWriterClient* client)
     : path_(path),
       client_(client),
       operation_(kOperationNone),
@@ -32,7 +32,7 @@ void WebFileWriterBase::truncate(long long length) {
 
 void WebFileWriterBase::write(
       long long position,
-      const WebKit::WebString& id) {
+      const blink::WebString& id) {
   DCHECK_EQ(kOperationNone, operation_);
   DCHECK_EQ(kCancelNotInProgress, cancel_state_);
   operation_ = kOperationWrite;
@@ -63,8 +63,8 @@ void WebFileWriterBase::cancel() {
   DoCancel();
 }
 
-void WebFileWriterBase::DidFinish(base::PlatformFileError error_code) {
-  if (error_code == base::PLATFORM_FILE_OK)
+void WebFileWriterBase::DidFinish(base::File::Error error_code) {
+  if (error_code == base::File::FILE_OK)
     DidSucceed();
   else
     DidFail(error_code);
@@ -117,13 +117,13 @@ void WebFileWriterBase::DidSucceed() {
   }
 }
 
-void WebFileWriterBase::DidFail(base::PlatformFileError error_code) {
+void WebFileWriterBase::DidFail(base::File::Error error_code) {
   DCHECK(kOperationNone != operation_);
   switch (cancel_state_) {
     case kCancelNotInProgress:
       // A write or truncate failed.
       operation_ = kOperationNone;
-      client_->didFail(PlatformFileErrorToWebFileError(error_code));
+      client_->didFail(FileErrorToWebFileError(error_code));
       break;
     case kCancelSent:
       // This is the failure of a write or truncate; the next message should be
@@ -147,7 +147,7 @@ void WebFileWriterBase::FinishCancel() {
   DCHECK(kOperationNone != operation_);
   cancel_state_ = kCancelNotInProgress;
   operation_ = kOperationNone;
-  client_->didFail(WebKit::WebFileErrorAbort);
+  client_->didFail(blink::WebFileErrorAbort);
 }
 
 }  // namespace content

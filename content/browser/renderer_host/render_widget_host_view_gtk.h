@@ -16,6 +16,7 @@
 #include "content/browser/renderer_host/gtk_plugin_container_manager.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 #include "content/common/content_export.h"
+#include "content/common/cursors/webcursor.h"
 #include "ipc/ipc_sender.h"
 #include "ui/base/gtk/gtk_signal.h"
 #include "ui/base/gtk/gtk_signal_registrar.h"
@@ -24,7 +25,6 @@
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/point.h"
 #include "ui/gfx/rect.h"
-#include "webkit/common/cursors/webcursor.h"
 
 typedef struct _GtkClipboard GtkClipboard;
 typedef struct _GtkSelectionData GtkSelectionData;
@@ -88,13 +88,13 @@ class CONTENT_EXPORT RenderWidgetHostViewGtk
       const gfx::Rect& scroll_rect,
       const gfx::Vector2d& scroll_delta,
       const std::vector<gfx::Rect>& copy_rects,
-      const ui::LatencyInfo& latency_info) OVERRIDE;
+      const std::vector<ui::LatencyInfo>& latency_info) OVERRIDE;
   virtual void RenderProcessGone(base::TerminationStatus status,
                                  int error_code) OVERRIDE;
   virtual void Destroy() OVERRIDE;
   virtual void WillDestroyRenderWidget(RenderWidgetHost* rwh) {}
-  virtual void SetTooltipText(const string16& tooltip_text) OVERRIDE;
-  virtual void SelectionChanged(const string16& text,
+  virtual void SetTooltipText(const base::string16& tooltip_text) OVERRIDE;
+  virtual void SelectionChanged(const base::string16& text,
                                 size_t offset,
                                 const gfx::Range& range) OVERRIDE;
   virtual void SelectionBoundsChanged(
@@ -104,13 +104,16 @@ class CONTENT_EXPORT RenderWidgetHostViewGtk
   virtual void CopyFromCompositingSurface(
       const gfx::Rect& src_subrect,
       const gfx::Size& dst_size,
-      const base::Callback<void(bool, const SkBitmap&)>& callback) OVERRIDE;
+      const base::Callback<void(bool, const SkBitmap&)>& callback,
+      SkBitmap::Config config) OVERRIDE;
   virtual void CopyFromCompositingSurfaceToVideoFrame(
       const gfx::Rect& src_subrect,
       const scoped_refptr<media::VideoFrame>& target,
       const base::Callback<void(bool)>& callback) OVERRIDE;
   virtual bool CanCopyToVideoFrame() const OVERRIDE;
   virtual void OnAcceleratedCompositingStateChange() OVERRIDE;
+  virtual void AcceleratedSurfaceInitialized(int host_id,
+                                             int route_id) OVERRIDE;
   virtual void AcceleratedSurfaceBuffersSwapped(
       const GpuHostMsg_AcceleratedSurfaceBuffersSwapped_Params& params,
       int gpu_host_id) OVERRIDE;
@@ -124,15 +127,13 @@ class CONTENT_EXPORT RenderWidgetHostViewGtk
       bool has_horizontal_scrollbar) OVERRIDE;
   virtual void SetScrollOffsetPinning(
       bool is_pinned_to_left, bool is_pinned_to_right) OVERRIDE;
-  virtual void GetScreenInfo(WebKit::WebScreenInfo* results) OVERRIDE;
+  virtual void GetScreenInfo(blink::WebScreenInfo* results) OVERRIDE;
   virtual gfx::Rect GetBoundsInRootWindow() OVERRIDE;
   virtual gfx::GLSurfaceHandle GetCompositingSurface() OVERRIDE;
   virtual void ResizeCompositingSurface(const gfx::Size&) OVERRIDE;
   virtual bool LockMouse() OVERRIDE;
   virtual void UnlockMouse() OVERRIDE;
-  virtual void OnAccessibilityEvents(
-      const std::vector<AccessibilityHostMsg_EventParams>& params)
-      OVERRIDE;
+  virtual void CreateBrowserAccessibilityManagerIfNeeded() OVERRIDE;
 
   // ActiveWindowWatcherXObserver implementation.
   virtual void ActiveWindowChanged(GdkWindow* active_window) OVERRIDE;
@@ -149,7 +150,7 @@ class CONTENT_EXPORT RenderWidgetHostViewGtk
   // Mouse events always provide a movementX/Y which needs to be computed.
   // Also, mouse lock requires knowledge of last unlocked cursor coordinates.
   // State is stored on the host view to do this, and the mouse event modified.
-  void ModifyEventMovementAndCoords(WebKit::WebMouseEvent* event);
+  void ModifyEventMovementAndCoords(blink::WebMouseEvent* event);
 
   void Paint(const gfx::Rect&);
 
@@ -174,6 +175,8 @@ class CONTENT_EXPORT RenderWidgetHostViewGtk
       int acc_obj_id, int start_offset, int end_offset) OVERRIDE;
   virtual gfx::Point GetLastTouchEventLocation() const OVERRIDE;
   virtual void FatalAccessibilityTreeError() OVERRIDE;
+
+  virtual SkBitmap::Config PreferredReadbackFormat() OVERRIDE;
 
   // Get the root of the AtkObject* tree for accessibility.
   AtkObject* GetAccessible();
@@ -330,7 +333,7 @@ class CONTENT_EXPORT RenderWidgetHostViewGtk
 
   ui::GtkSignalRegistrar signals_;
 
-  ui::LatencyInfo software_latency_info_;
+  std::vector<ui::LatencyInfo> software_latency_info_;
 };
 
 }  // namespace content

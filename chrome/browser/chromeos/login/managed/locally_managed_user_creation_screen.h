@@ -9,7 +9,8 @@
 
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "chrome/browser/chromeos/login/managed/locally_managed_user_creation_controller.h"
+#include "chrome/browser/chromeos/camera_presence_notifier.h"
+#include "chrome/browser/chromeos/login/managed/managed_user_creation_controller.h"
 #include "chrome/browser/chromeos/login/screens/wizard_screen.h"
 #include "chrome/browser/chromeos/net/network_portal_detector.h"
 #include "chrome/browser/image_decoder.h"
@@ -26,9 +27,10 @@ class NetworkState;
 class LocallyManagedUserCreationScreen
     : public WizardScreen,
       public LocallyManagedUserCreationScreenHandler::Delegate,
-      public LocallyManagedUserCreationController::StatusConsumer,
+      public ManagedUserCreationController::StatusConsumer,
       public ImageDecoder::Delegate,
-      public NetworkPortalDetector::Observer {
+      public NetworkPortalDetector::Observer,
+      public CameraPresenceNotifier::Observer {
  public:
   LocallyManagedUserCreationScreen(
       ScreenObserver* observer,
@@ -58,6 +60,9 @@ class LocallyManagedUserCreationScreen
   // manager is selected.
   void ShowInitialScreen();
 
+  // CameraPresenceNotifier::Observer implementation:
+  virtual void OnCameraPresenceCheckDone(bool is_camera_present) OVERRIDE;
+
   // WizardScreen implementation:
   virtual void PrepareToShow() OVERRIDE;
   virtual void Show() OVERRIDE;
@@ -68,7 +73,7 @@ class LocallyManagedUserCreationScreen
   virtual void OnActorDestroyed(LocallyManagedUserCreationScreenHandler* actor)
       OVERRIDE;
   virtual void CreateManagedUser(
-      const string16& display_name,
+      const base::string16& display_name,
       const std::string& managed_user_password) OVERRIDE;
   virtual void ImportManagedUser(const std::string& user_id) OVERRIDE;
   virtual void ImportManagedUserWithPassword(
@@ -79,13 +84,13 @@ class LocallyManagedUserCreationScreen
       const std::string& manager_password) OVERRIDE;
   virtual void AbortFlow() OVERRIDE;
   virtual void FinishFlow() OVERRIDE;
-  virtual bool FindUserByDisplayName(const string16& display_name,
+  virtual bool FindUserByDisplayName(const base::string16& display_name,
                                      std::string *out_id) const OVERRIDE;
   virtual void OnPageSelected(const std::string& page) OVERRIDE;
 
   // LocallyManagedUserController::StatusConsumer overrides.
-  virtual void OnCreationError(
-      LocallyManagedUserCreationController::ErrorCode code) OVERRIDE;
+  virtual void OnCreationError(ManagedUserCreationController::ErrorCode code)
+      OVERRIDE;
   virtual void OnCreationTimeout() OVERRIDE;
   virtual void OnCreationSuccess() OVERRIDE;
   virtual void OnLongCreationWarning() OVERRIDE;
@@ -99,7 +104,6 @@ class LocallyManagedUserCreationScreen
   // It should be removed by issue 251179.
 
   // LocallyManagedUserCreationScreenHandler::Delegate (image) implementation:
-  virtual void CheckCameraPresence() OVERRIDE;
   virtual void OnPhotoTaken(const std::string& raw_data) OVERRIDE;
   virtual void OnImageSelected(const std::string& image_url,
                                const std::string& image_type) OVERRIDE;
@@ -111,13 +115,12 @@ class LocallyManagedUserCreationScreen
 
  private:
   void ApplyPicture();
-  void OnCameraPresenceCheckDone();
   void OnGetManagedUsers(const base::DictionaryValue* users);
 
   base::WeakPtrFactory<LocallyManagedUserCreationScreen> weak_factory_;
   LocallyManagedUserCreationScreenHandler* actor_;
 
-  scoped_ptr<LocallyManagedUserCreationController> controller_;
+  scoped_ptr<ManagedUserCreationController> controller_;
   scoped_ptr<base::DictionaryValue> existing_users_;
 
   bool on_error_screen_;

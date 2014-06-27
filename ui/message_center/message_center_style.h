@@ -15,19 +15,23 @@ namespace message_center {
 // Exported values /////////////////////////////////////////////////////////////
 
 // Square image sizes in DIPs.
-MESSAGE_CENTER_EXPORT extern const int kNotificationButtonIconSize;
-MESSAGE_CENTER_EXPORT extern const int kNotificationIconSize;
-MESSAGE_CENTER_EXPORT extern const int kNotificationPreferredImageSize;
-MESSAGE_CENTER_EXPORT extern const float kNotificationPreferredImageRatio;
-MESSAGE_CENTER_EXPORT extern const int kSettingsIconSize;
+const int kNotificationButtonIconSize = 16;
+const int kNotificationIconSize = 80;
+// A border is applied to images that have a non-preferred aspect ratio.
+const int kNotificationImageBorderSize = 10;
+const int kNotificationPreferredImageWidth = 360;
+const int kNotificationPreferredImageHeight = 240;
+const int kSettingsIconSize = 16;
+const int kSmallImageSize = 16;
+const int kSmallImagePadding = 4;
 
 // Limits.
-MESSAGE_CENTER_EXPORT extern const size_t kMaxVisiblePopupNotifications;
-MESSAGE_CENTER_EXPORT extern const size_t kMaxVisibleMessageCenterNotifications;
+const size_t kMaxVisibleMessageCenterNotifications = 100;
+const size_t kMaxVisiblePopupNotifications = 3;
 
-// DIP dimension
-MESSAGE_CENTER_EXPORT extern const int kNotificationWidth;  // H size of the
-                                                            // whole card.
+// DIP dimension; H size of the whole card.
+const int kNotificationWidth = 360;
+const int kMinScrollViewHeight = 100;
 
 // Colors.
 MESSAGE_CENTER_EXPORT extern const SkColor kMessageCenterBorderColor;
@@ -52,21 +56,24 @@ const int kCheckboxSizeWithPadding = 24;
 // Within a notification ///////////////////////////////////////////////////////
 
 // DIP dimensions (H = horizontal, V = vertical).
-extern const int kControlButtonSize;  // Square size of close & expand buttons.
-extern const int kIconToTextPadding;  // H space between icon & title/message.
-extern const int kTextTopPadding;     // V space between text elements.
-extern const int kIconBottomPadding;  // Minimum non-zero V space between icon
-                                      // and frame.
+
+const int kControlButtonSize = 29;  // Square size of close & expand buttons.
+const int kIconToTextPadding = 16;  // H space between icon & title/message.
+const int kTextTopPadding = 12;     // V space between text elements.
+const int kIconBottomPadding = 16;  // Minimum non-zero V space between icon
+                                    // and frame.
 
 // Text sizes.
-extern const int kTitleFontSize;             // For title only.
-extern const int kTitleLineHeight;           // In DIPs.
-extern const int kMessageFontSize;           // For everything but title.
-extern const int kMessageLineHeight;         // In DIPs.
+const int kTitleFontSize = 14;             // For title only.
+const int kEmptyCenterFontSize = 13;       // For empty message only.
+const int kTitleLineHeight = 20;           // In DIPs.
+const int kMessageFontSize = 12;           // For everything but title.
+const int kMessageLineHeight = 18;         // In DIPs.
 
 // Colors.
 extern const SkColor kNotificationBackgroundColor; // Background of the card.
-extern const SkColor kIconBackgroundColor;         // Used behind icons smaller.
+extern const SkColor kImageBackgroundColor;        // Background of the image.
+extern const SkColor kIconBackgroundColor;         // Used behind icons smaller
                                                    // than the icon view.
 extern const SkColor kRegularTextColor;            // Title, message, ...
 extern const SkColor kDimTextColor;
@@ -74,9 +81,10 @@ extern const SkColor kFocusBorderColor;  // The focus border.
 
 // Limits.
 
-// Given the size of an image, returns the rect the image should be displayed
-// in, centered.
-gfx::Size GetImageSizeForWidth(int width, const gfx::Size& image_size);
+// Given the size of an image, returns the size of the properly scaled-up image
+// which fits into |container_size|.
+gfx::Size GetImageSizeForContainerSize(const gfx::Size& container_size,
+                                       const gfx::Size& image_size);
 
 extern const int kNotificationMaximumImageHeight;  // For image notifications.
 extern const size_t kNotificationMaximumItems;     // For list notifications.
@@ -105,16 +113,15 @@ const SkColor kProgressBarSliceColor = SkColorSetRGB(120, 120, 120);
 
 // Line limits.
 const int kTitleLineLimit = 3;
-const int kMessageCollapsedLineLimit = 3;
+const int kMessageCollapsedLineLimit = 2;
 const int kMessageExpandedLineLimit = 7;
 const int kContextMessageLineLimit = 1;
 
 // Around notifications ////////////////////////////////////////////////////////
 
 // DIP dimensions (H = horizontal, V = vertical).
-MESSAGE_CENTER_EXPORT extern const int kMarginBetweenItems; // H & V space
-                                                            // around & between
-                                                            // notifications.
+const int kMarginBetweenItems = 10;  // H & V space around & between
+                                     // notifications.
 
 // Colors.
 extern const SkColor kBackgroundLightColor;  // Behind notifications, gradient

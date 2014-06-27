@@ -10,25 +10,12 @@
 #include "ash/display/display_layout_store.h"
 #include "ash/display/display_manager.h"
 #include "ui/aura/env.h"
-#include "ui/aura/root_window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/gfx/display.h"
 #include "ui/gfx/screen.h"
 
 namespace ash {
 namespace internal {
-namespace {
-
-gfx::Display GetPrimaryDisplay() {
-  return Shell::GetScreen()->GetDisplayNearestWindow(
-      Shell::GetAllRootWindows()[0]);
-}
-
-gfx::Display GetSecondaryDisplay() {
-  return Shell::GetScreen()->GetDisplayNearestWindow(
-      Shell::GetAllRootWindows()[1]);
-}
-
-}  // namespace
 
 class MouseCursorEventFilterTest : public test::AshTestBase {
  public:
@@ -40,7 +27,7 @@ class MouseCursorEventFilterTest : public test::AshTestBase {
     return Shell::GetInstance()->mouse_cursor_filter();
   }
 
-  bool WarpMouseCursorIfNecessary(aura::RootWindow* target_root,
+  bool WarpMouseCursorIfNecessary(aura::Window* target_root,
                                   gfx::Point point_in_screen) {
     bool is_warped = event_filter()->WarpMouseCursorIfNecessary(
         target_root, point_in_screen);
@@ -49,12 +36,12 @@ class MouseCursorEventFilterTest : public test::AshTestBase {
   }
 
   bool WarpMouseCursorIfNecessaryWithDragRoot(
-      aura::RootWindow* drag_source_root,
-      aura::RootWindow* target_root,
+      aura::Window* drag_source_root,
+      aura::Window* target_root,
       gfx::Point point_in_screen) {
     gfx::Point location = drag_source_root->bounds().CenterPoint();
     ui::MouseEvent pressed(ui::ET_MOUSE_PRESSED, location,
-                           location, 0);
+                           location, 0, 0);
     ui::Event::DispatcherApi(&pressed).set_target(drag_source_root);
     event_filter()->OnMouseEvent(&pressed);
     bool is_warped = event_filter()->WarpMouseCursorIfNecessary(
@@ -62,7 +49,7 @@ class MouseCursorEventFilterTest : public test::AshTestBase {
     event_filter()->reset_was_mouse_warped_for_test();
 
     ui::MouseEvent released(ui::ET_MOUSE_RELEASED, location,
-                           location, 0);
+                            location, 0, 0);
     ui::Event::DispatcherApi(&released).set_target(drag_source_root);
     event_filter()->OnMouseEvent(&released);
     return is_warped;
@@ -87,7 +74,7 @@ TEST_F(MouseCursorEventFilterTest, WarpMouse) {
       Shell::GetInstance()->display_manager()->layout_store()->
           default_display_layout().position);
 
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
   EXPECT_FALSE(WarpMouseCursorIfNecessary(root_windows[0], gfx::Point(11, 11)));
   EXPECT_FALSE(WarpMouseCursorIfNecessary(root_windows[1], gfx::Point(11, 11)));
 
@@ -131,7 +118,7 @@ TEST_F(MouseCursorEventFilterTest, WarpMouseDifferentSizeDisplays) {
       Shell::GetInstance()->display_manager()->
           GetCurrentDisplayLayout().position);
 
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
   aura::Env::GetInstance()->set_last_mouse_location(gfx::Point(623, 123));
 
   // Touch the left edge of the secondary root window. Pointer should NOT warp
@@ -161,7 +148,7 @@ TEST_F(MouseCursorEventFilterTest, WarpMouseDifferentScaleDisplays) {
       Shell::GetInstance()->display_manager()->
           GetCurrentDisplayLayout().position);
 
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
   aura::Env::GetInstance()->set_last_mouse_location(gfx::Point(900, 123));
 
   // This emulates the dragging to the 2nd display, which has
@@ -199,7 +186,7 @@ TEST_F(MouseCursorEventFilterTest, DoNotWarpTwice) {
 
   UpdateDisplay("500x500,600x600");
 
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
   aura::Env::GetInstance()->set_last_mouse_location(gfx::Point(623, 123));
 
   // Touch the right edge of the primary root window. Pointer should warp.
@@ -228,7 +215,7 @@ TEST_F(MouseCursorEventFilterTest, SetMouseWarpModeFlag) {
 
   UpdateDisplay("500x500,500x500");
 
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
   aura::Env::GetInstance()->set_last_mouse_location(gfx::Point(1, 1));
 
   event_filter()->set_mouse_warp_mode(MouseCursorEventFilter::WARP_NONE);
@@ -249,7 +236,7 @@ TEST_F(MouseCursorEventFilterTest, IndicatorBoundsTestOnRight) {
     return;
 
   UpdateDisplay("360x360,700x700");
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
 
   DisplayManager* display_manager = Shell::GetInstance()->display_manager();
   DisplayLayout layout(DisplayLayout::RIGHT, 0);
@@ -304,7 +291,7 @@ TEST_F(MouseCursorEventFilterTest, IndicatorBoundsTestOnLeft) {
     return;
 
   UpdateDisplay("360x360,700x700");
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
 
   DisplayManager* display_manager = Shell::GetInstance()->display_manager();
   DisplayLayout layout(DisplayLayout::LEFT, 0);
@@ -332,7 +319,7 @@ TEST_F(MouseCursorEventFilterTest, IndicatorBoundsTestOnTopBottom) {
     return;
 
   UpdateDisplay("360x360,700x700");
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
 
   DisplayManager* display_manager = Shell::GetInstance()->display_manager();
   DisplayLayout layout(DisplayLayout::TOP, 0);
@@ -377,7 +364,7 @@ TEST_F(MouseCursorEventFilterTest, CursorDeviceScaleFactor) {
   DisplayManager* display_manager = Shell::GetInstance()->display_manager();
   display_manager->SetLayoutForCurrentDisplays(
       DisplayLayout(DisplayLayout::RIGHT, 0));
-  Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
   ASSERT_EQ(2U, root_windows.size());
   test::CursorManagerTestApi cursor_test_api(
       Shell::GetInstance()->cursor_manager());

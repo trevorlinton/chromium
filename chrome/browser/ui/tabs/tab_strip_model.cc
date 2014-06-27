@@ -8,6 +8,7 @@
 #include <map>
 #include <string>
 
+#include "apps/ui/web_contents_sizer.h"
 #include "base/metrics/histogram.h"
 #include "base/stl_util.h"
 #include "chrome/app/chrome_command_ids.h"
@@ -27,7 +28,7 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_view.h"
 
-using content::UserMetricsAction;
+using base::UserMetricsAction;
 using content::WebContents;
 
 namespace {
@@ -277,9 +278,6 @@ void TabStripModel::AppendWebContents(WebContents* contents,
 void TabStripModel::InsertWebContentsAt(int index,
                                         WebContents* contents,
                                         int add_types) {
-  // TODO(sky): nuke, used in isolating 297118.
-  CHECK(!contents->IsBeingDestroyed());
-
   delegate_->WillAddWebContents(contents);
 
   bool active = add_types & ADD_ACTIVE;
@@ -840,8 +838,8 @@ void TabStripModel::AddWebContents(WebContents* contents,
   // new background tab.
   if (WebContents* old_contents = GetActiveWebContents()) {
     if ((add_types & ADD_ACTIVE) == 0) {
-      contents->GetView()->SizeContents(
-          old_contents->GetView()->GetContainerSize());
+      apps::ResizeWebContents(contents,
+                              old_contents->GetView()->GetContainerSize());
     }
   }
 }
@@ -947,7 +945,7 @@ void TabStripModel::ExecuteContextMenuCommand(
       UMA_HISTOGRAM_ENUMERATION("Tab.NewTab",
                                 TabStripModel::NEW_TAB_CONTEXT_MENU,
                                 TabStripModel::NEW_TAB_ENUM_COUNT);
-      delegate()->AddBlankTabAt(context_index + 1, true);
+      delegate()->AddTabAt(GURL(), context_index + 1, true);
       break;
 
     case CommandReload: {
@@ -1180,7 +1178,7 @@ std::vector<int> TabStripModel::GetIndicesForCommand(int index) const {
 
 bool TabStripModel::IsNewTabAtEndOfTabStrip(WebContents* contents) const {
   const GURL& url = contents->GetURL();
-  return url.SchemeIs(chrome::kChromeUIScheme) &&
+  return url.SchemeIs(content::kChromeUIScheme) &&
          url.host() == chrome::kChromeUINewTabHost &&
          contents == GetWebContentsAtImpl(count() - 1) &&
          contents->GetController().GetEntryCount() == 1;
@@ -1202,6 +1200,8 @@ bool TabStripModel::InternalCloseTabs(const std::vector<int>& indices,
     std::map<content::RenderProcessHost*, size_t> processes;
     for (size_t i = 0; i < indices.size(); ++i) {
       WebContents* closing_contents = GetWebContentsAtImpl(indices[i]);
+      if (delegate_->ShouldRunUnloadListenerBeforeClosing(closing_contents))
+        continue;
       content::RenderProcessHost* process =
           closing_contents->GetRenderProcessHost();
       ++processes[process];

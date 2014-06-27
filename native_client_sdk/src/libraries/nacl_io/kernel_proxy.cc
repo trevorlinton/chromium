@@ -18,26 +18,27 @@
 #include <iterator>
 #include <string>
 
+#include "nacl_io/devfs/dev_fs.h"
+#include "nacl_io/filesystem.h"
+#include "nacl_io/fusefs/fuse_fs_factory.h"
 #include "nacl_io/host_resolver.h"
+#include "nacl_io/html5fs/html5_fs.h"
+#include "nacl_io/httpfs/http_fs.h"
 #include "nacl_io/kernel_handle.h"
 #include "nacl_io/kernel_wrap_real.h"
-#include "nacl_io/mount.h"
-#include "nacl_io/mount_dev.h"
-#include "nacl_io/mount_html5fs.h"
-#include "nacl_io/mount_http.h"
-#include "nacl_io/mount_mem.h"
-#include "nacl_io/mount_node.h"
-#include "nacl_io/mount_node_pipe.h"
-#include "nacl_io/mount_node_tcp.h"
-#include "nacl_io/mount_node_udp.h"
-#include "nacl_io/mount_passthrough.h"
-#include "nacl_io/mount_stream.h"
+#include "nacl_io/memfs/mem_fs.h"
+#include "nacl_io/node.h"
 #include "nacl_io/osmman.h"
 #include "nacl_io/ossocket.h"
 #include "nacl_io/osstat.h"
+#include "nacl_io/passthroughfs/passthrough_fs.h"
 #include "nacl_io/path.h"
 #include "nacl_io/pepper_interface.h"
-#include "nacl_io/typed_mount_factory.h"
+#include "nacl_io/pipe/pipe_node.h"
+#include "nacl_io/socket/tcp_node.h"
+#include "nacl_io/socket/udp_node.h"
+#include "nacl_io/stream/stream_fs.h"
+#include "nacl_io/typed_fs_factory.h"
 #include "sdk_util/auto_lock.h"
 #include "sdk_util/ref_object.h"
 #include "sdk_util/string_util.h"
@@ -50,15 +51,15 @@ namespace nacl_io {
 
 
 KernelProxy::KernelProxy() : dev_(0), ppapi_(NULL),
-                             sigwinch_handler_(SIG_IGN),
+                             exit_handler_(NULL),
                              signal_emitter_(new EventEmitter) {
-
+   memset(&sigwinch_handler_, 0, sizeof(sigwinch_handler_));
+   sigwinch_handler_.sa_handler = SIG_DFL;
 }
 
 KernelProxy::~KernelProxy() {
   // Clean up the MountFactories.
-  for (MountFactoryMap_t::iterator i = factories_.begin();
-       i != factories_.end();
+  for (FsFactoryMap_t::iterator i = factories_.begin(); i != factories_.end();
        ++i) {
     delete i->second;
   }
@@ -71,11 +72,11 @@ Error KernelProxy::Init(PepperInterface* ppapi) {
   ppapi_ = ppapi;
   dev_ = 1;
 
-  factories_["memfs"] = new TypedMountFactory<MountMem>;
-  factories_["dev"] = new TypedMountFactory<MountDev>;
-  factories_["html5fs"] = new TypedMountFactory<MountHtml5Fs>;
-  factories_["httpfs"] = new TypedMountFactory<MountHttp>;
-  factories_["passthroughfs"] = new TypedMountFactory<MountPassthrough>;
+  factories_["memfs"] = new TypedFsFactory<MemFs>;
+  factories_["dev"] = new TypedFsFactory<DevFs>;
+  factories_["html5fs"] = new TypedFsFactory<Html5Fs>;
+  factories_["httpfs"] = new TypedFsFactory<HttpFs>;
+  factories_["passthroughfs"] = new TypedFsFactory<PassthroughFs>;
 
   int result;
   result = mount("", "/", "passthroughfs", 0, NULL);
@@ -111,9 +112,11 @@ Error KernelProxy::Init(PepperInterface* ppapi) {
   host_resolver_.Init(ppapi_);
 #endif
 
-  StringMap_t args;
-  stream_mount_.reset(new MountStream());
-  result = stream_mount_->Init(0, args, ppapi);
+  FsInitArgs args;
+  args.dev = dev_++;
+  args.ppapi = ppapi_;
+  stream_mount_.reset(new StreamFs());
+  result = stream_mount_->Init(args);
   if (result != 0) {
     assert(false);
     rtn = result;
@@ -122,67 +125,96 @@ Error KernelProxy::Init(PepperInterface* ppapi) {
   return rtn;
 }
 
+bool KernelProxy::RegisterFsType(const char* fs_type,
+                                 fuse_operations* fuse_ops) {
+  FsFactoryMap_t::iterator iter = factories_.find(fs_type);
+  if (iter != factories_.end())
+    return false;
+
+  factories_[fs_type] = new FuseFsFactory(fuse_ops);
+  return true;
+}
+
+bool KernelProxy::UnregisterFsType(const char* fs_type) {
+  FsFactoryMap_t::iterator iter = factories_.find(fs_type);
+  if (iter == factories_.end())
+    return false;
+
+  delete iter->second;
+  factories_.erase(iter);
+  return true;
+}
+
+bool KernelProxy::RegisterExitHandler(nacl_io_exit_handler_t exit_handler,
+                                      void* user_data) {
+  if (exit_handler_ != NULL)
+    return false;
+  exit_handler_ = exit_handler;
+  exit_handler_user_data_ = user_data;
+  return true;
+}
+
 int KernelProxy::open_resource(const char* path) {
-  ScopedMount mnt;
+  ScopedFilesystem fs;
   Path rel;
 
-  Error error = AcquireMountAndRelPath(path, &mnt, &rel);
+  Error error = AcquireFsAndRelPath(path, &fs, &rel);
   if (error) {
     errno = error;
     return -1;
   }
 
-  ScopedMountNode node;
-  error = mnt->OpenResource(rel, &node);
+  ScopedNode node;
+  error = fs->OpenResource(rel, &node);
   if (error) {
     // OpenResource failed, try Open().
-    error = mnt->Open(rel, O_RDONLY, &node);
+    error = fs->Open(rel, O_RDONLY, &node);
     if (error) {
       errno = error;
       return -1;
     }
   }
 
-  ScopedKernelHandle handle(new KernelHandle(mnt, node));
+  ScopedKernelHandle handle(new KernelHandle(fs, node));
   error = handle->Init(O_RDONLY);
   if (error) {
     errno = error;
     return -1;
   }
 
-  return AllocateFD(handle);
+  return AllocateFD(handle, path);
 }
 
 int KernelProxy::open(const char* path, int open_flags) {
-  ScopedMount mnt;
-  ScopedMountNode node;
+  ScopedFilesystem fs;
+  ScopedNode node;
 
-  Error error = AcquireMountAndNode(path, open_flags, &mnt, &node);
+  Error error = AcquireFsAndNode(path, open_flags, &fs, &node);
   if (error) {
     errno = error;
     return -1;
   }
 
-  ScopedKernelHandle handle(new KernelHandle(mnt, node));
+  ScopedKernelHandle handle(new KernelHandle(fs, node));
   error = handle->Init(open_flags);
   if (error) {
     errno = error;
     return -1;
   }
 
-  return AllocateFD(handle);
+  return AllocateFD(handle, path);
 }
 
 int KernelProxy::pipe(int pipefds[2]) {
-  MountNodePipe* pipe = new MountNodePipe(stream_mount_.get());
-  ScopedMountNode node(pipe);
+  PipeNode* pipe = new PipeNode(stream_mount_.get());
+  ScopedNode node(pipe);
 
-  if (pipe->Init(S_IREAD | S_IWRITE) == 0) {
+  if (pipe->Init(O_RDWR) == 0) {
     ScopedKernelHandle handle0(new KernelHandle(stream_mount_, node));
     ScopedKernelHandle handle1(new KernelHandle(stream_mount_, node));
 
     // Should never fail, but...
-    if (handle0->Init(S_IREAD) || handle1->Init(S_IWRITE)) {
+    if (handle0->Init(O_RDONLY) || handle1->Init(O_WRONLY)) {
       errno = EACCES;
       return -1;
     }
@@ -211,13 +243,13 @@ int KernelProxy::close(int fd) {
 
 int KernelProxy::dup(int oldfd) {
   ScopedKernelHandle handle;
-  Error error = AcquireHandle(oldfd, &handle);
+  std::string path;
+  Error error = AcquireHandleAndPath(oldfd, &handle, &path);
   if (error) {
     errno = error;
     return -1;
   }
-
-  return AllocateFD(handle);
+  return AllocateFD(handle, path);
 }
 
 int KernelProxy::dup2(int oldfd, int newfd) {
@@ -226,13 +258,14 @@ int KernelProxy::dup2(int oldfd, int newfd) {
     return newfd;
 
   ScopedKernelHandle old_handle;
-  Error error = AcquireHandle(oldfd, &old_handle);
+  std::string old_path;
+  Error error = AcquireHandleAndPath(oldfd, &old_handle, &old_path);
   if (error) {
     errno = error;
     return -1;
   }
 
-  FreeAndReassignFD(newfd, old_handle);
+  FreeAndReassignFD(newfd, old_handle, old_path);
   return newfd;
 }
 
@@ -245,28 +278,23 @@ int KernelProxy::chdir(const char* path) {
   return 0;
 }
 
-char* KernelProxy::getcwd(char* buf, size_t size) {
-  std::string cwd = GetCWD();
+void KernelProxy::exit(int status) {
+  if (exit_handler_)
+    exit_handler_(status, exit_handler_user_data_);
+}
 
-  if (size <= 0) {
-    errno = EINVAL;
+char* KernelProxy::getcwd(char* buf, size_t size) {
+  if (NULL == buf) {
+    errno = EFAULT;
     return NULL;
   }
 
-  // If size is 0, allocate as much as we need.
-  if (size == 0) {
-    size = cwd.size() + 1;
-  }
+  std::string cwd = GetCWD();
 
   // Verify the buffer is large enough
   if (size <= cwd.size()) {
     errno = ERANGE;
     return NULL;
-  }
-
-  // Allocate the buffer if needed
-  if (buf == NULL) {
-    buf = static_cast<char*>(malloc(size));
   }
 
   strcpy(buf, cwd.c_str());
@@ -308,16 +336,16 @@ int KernelProxy::utime(const char* filename, const struct utimbuf* times) {
 }
 
 int KernelProxy::mkdir(const char* path, mode_t mode) {
-  ScopedMount mnt;
+  ScopedFilesystem fs;
   Path rel;
 
-  Error error = AcquireMountAndRelPath(path, &mnt, &rel);
+  Error error = AcquireFsAndRelPath(path, &fs, &rel);
   if (error) {
     errno = error;
     return -1;
   }
 
-  error = mnt->Mkdir(rel, mode);
+  error = fs->Mkdir(rel, mode);
   if (error) {
     errno = error;
     return -1;
@@ -327,16 +355,16 @@ int KernelProxy::mkdir(const char* path, mode_t mode) {
 }
 
 int KernelProxy::rmdir(const char* path) {
-  ScopedMount mnt;
+  ScopedFilesystem fs;
   Path rel;
 
-  Error error = AcquireMountAndRelPath(path, &mnt, &rel);
+  Error error = AcquireFsAndRelPath(path, &fs, &rel);
   if (error) {
     errno = error;
     return -1;
   }
 
-  error = mnt->Rmdir(rel);
+  error = fs->Rmdir(rel);
   if (error) {
     errno = error;
     return -1;
@@ -364,7 +392,7 @@ int KernelProxy::mount(const char* source,
   std::string abs_path = GetAbsParts(target).Join();
 
   // Find a factory of that type
-  MountFactoryMap_t::iterator factory = factories_.find(filesystemtype);
+  FsFactoryMap_t::iterator factory = factories_.find(filesystemtype);
   if (factory == factories_.end()) {
     errno = ENODEV;
     return -1;
@@ -392,14 +420,19 @@ int KernelProxy::mount(const char* source,
     }
   }
 
-  ScopedMount mnt;
-  Error error = factory->second->CreateMount(dev_++, smap, ppapi_, &mnt);
+  FsInitArgs args;
+  args.dev = dev_++;
+  args.string_map = smap;
+  args.ppapi = ppapi_;
+
+  ScopedFilesystem fs;
+  Error error = factory->second->CreateFilesystem(args, &fs);
   if (error) {
     errno = error;
     return -1;
   }
 
-  error = AttachMountAtPath(mnt, abs_path);
+  error = AttachFsAtPath(fs, abs_path);
   if (error) {
     errno = error;
     return -1;
@@ -409,7 +442,7 @@ int KernelProxy::mount(const char* source,
 }
 
 int KernelProxy::umount(const char* path) {
-  Error error = DetachMountAtPath(path);
+  Error error = DetachFsAtPath(path);
   if (error) {
     errno = error;
     return -1;
@@ -487,8 +520,31 @@ int KernelProxy::getdents(int fd, void* buf, unsigned int count) {
 }
 
 int KernelProxy::fchdir(int fd) {
-  errno = ENOSYS;
-  return -1;
+  ScopedKernelHandle handle;
+  std::string path;
+  Error error = AcquireHandleAndPath(fd, &handle, &path);
+  if (error) {
+    errno = error;
+    return -1;
+  }
+
+  if (!handle->node()->IsaDir()) {
+    errno = ENOTDIR;
+    return -1;
+  }
+
+  if (path.empty()) {
+    errno = EBADF;
+    return -1;
+  }
+
+  error = SetCWD(path);
+  if (error) {
+    // errno is return value from SetCWD
+    errno = error;
+    return -1;
+  }
+  return 0;
 }
 
 int KernelProxy::ftruncate(int fd, off_t length) {
@@ -535,16 +591,16 @@ int KernelProxy::isatty(int fd) {
   Error error = AcquireHandle(fd, &handle);
   if (error) {
     errno = error;
-    return -1;
+    return 0;
   }
 
-  error = handle->node()->IsaTTY();
+  error = handle->node()->Isatty();
   if (error) {
     errno = error;
-    return -1;
+    return 0;
   }
 
-  return 0;
+  return 1;
 }
 
 int KernelProxy::ioctl(int fd, int request, va_list args) {
@@ -583,16 +639,16 @@ off_t KernelProxy::lseek(int fd, off_t offset, int whence) {
 }
 
 int KernelProxy::unlink(const char* path) {
-  ScopedMount mnt;
+  ScopedFilesystem fs;
   Path rel;
 
-  Error error = AcquireMountAndRelPath(path, &mnt, &rel);
+  Error error = AcquireFsAndRelPath(path, &fs, &rel);
   if (error) {
     errno = error;
     return -1;
   }
 
-  error = mnt->Unlink(rel);
+  error = fs->Unlink(rel);
   if (error) {
     errno = error;
     return -1;
@@ -602,31 +658,66 @@ int KernelProxy::unlink(const char* path) {
 }
 
 int KernelProxy::truncate(const char* path, off_t len) {
-  errno = ENOSYS;
-  return -1;
+  int fd = KernelProxy::open(path, O_WRONLY);
+  if (-1 == fd)
+    return -1;
+
+  int result = ftruncate(fd, len);
+  close(fd);
+  return result;
 }
 
 int KernelProxy::lstat(const char* path, struct stat* buf) {
-  errno = ENOSYS;
-  return -1;
+  return stat(path, buf);
 }
 
 int KernelProxy::rename(const char* path, const char* newpath) {
-  errno = ENOSYS;
-  return -1;
-}
-
-int KernelProxy::remove(const char* path) {
-  ScopedMount mnt;
+  ScopedFilesystem fs;
   Path rel;
-
-  Error error = AcquireMountAndRelPath(path, &mnt, &rel);
+  Error error = AcquireFsAndRelPath(path, &fs, &rel);
   if (error) {
     errno = error;
     return -1;
   }
 
-  error = mnt->Remove(rel);
+  ScopedFilesystem newfs;
+  Path newrel;
+  error = AcquireFsAndRelPath(newpath, &newfs, &newrel);
+  if (error) {
+    errno = error;
+    return -1;
+  }
+
+  if (newfs.get() != fs.get()) {
+    // Renaming accross mountpoints is not allowed
+    errno = EXDEV;
+    return -1;
+  }
+
+  // They already point to the same path
+  if (rel == newrel)
+    return 0;
+
+  error = fs->Rename(rel, newrel);
+  if (error) {
+    errno = error;
+    return -1;
+  }
+
+  return 0;
+}
+
+int KernelProxy::remove(const char* path) {
+  ScopedFilesystem fs;
+  Path rel;
+
+  Error error = AcquireFsAndRelPath(path, &fs, &rel);
+  if (error) {
+    errno = error;
+    return -1;
+  }
+
+  error = fs->Remove(rel);
   if (error) {
     errno = error;
     return -1;
@@ -692,16 +783,16 @@ int KernelProxy::fcntl(int fd, int request, va_list args) {
 }
 
 int KernelProxy::access(const char* path, int amode) {
-  ScopedMount mnt;
+  ScopedFilesystem fs;
   Path rel;
 
-  Error error = AcquireMountAndRelPath(path, &mnt, &rel);
+  Error error = AcquireFsAndRelPath(path, &fs, &rel);
   if (error) {
     errno = error;
     return -1;
   }
 
-  error = mnt->Access(rel, amode);
+  error = fs->Access(rel, amode);
   if (error) {
     errno = error;
     return -1;
@@ -859,8 +950,10 @@ int KernelProxy::kill(pid_t pid, int sig) {
   signal_emitter_->RaiseEvents_Locked(POLLERR);
   switch (sig) {
     case SIGWINCH:
-      if (sigwinch_handler_ != SIG_IGN)
-        sigwinch_handler_(SIGWINCH);
+      if (sigwinch_handler_.sa_handler != SIG_IGN &&
+          sigwinch_handler_.sa_handler != SIG_DFL) {
+        sigwinch_handler_.sa_handler(SIGWINCH);
+      }
       break;
 
     case SIGUSR1:
@@ -874,21 +967,28 @@ int KernelProxy::kill(pid_t pid, int sig) {
   return 0;
 }
 
-sighandler_t KernelProxy::sigset(int signum, sighandler_t handler) {
+int KernelProxy::sigaction(int signum, const struct sigaction* action,
+                           struct sigaction* oaction) {
+  if (action && action->sa_flags & SA_SIGINFO) {
+    // We don't support SA_SIGINFO (sa_sigaction field) yet
+    errno = EINVAL;
+    return -1;
+  }
+
   switch (signum) {
     // Handled signals.
     case SIGWINCH: {
-      sighandler_t old_value = sigwinch_handler_;
-      if (handler == SIG_DFL)
-        handler = SIG_IGN;
-      sigwinch_handler_ = handler;
-      return old_value;
+      if (oaction)
+        *oaction = sigwinch_handler_;
+      if (action) {
+        sigwinch_handler_ = *action;
+      }
+      return 0;
     }
 
     // Known signals
     case SIGHUP:
     case SIGINT:
-    case SIGKILL:
     case SIGPIPE:
     case SIGPOLL:
     case SIGPROF:
@@ -900,13 +1000,29 @@ sighandler_t KernelProxy::sigset(int signum, sighandler_t handler) {
     case SIGQUIT:
     case SIGSEGV:
     case SIGTRAP:
-      if (handler == SIG_DFL)
-        return SIG_DFL;
-      break;
+      if (action && action->sa_handler != SIG_DFL) {
+        // Trying to set this action to anything other than SIG_DFL
+        // is not yet supported.
+        errno = EINVAL;
+        return -1;
+      }
+
+      if (oaction) {
+        memset(oaction, 0, sizeof(*oaction));
+        oaction->sa_handler = SIG_DFL;
+      }
+      return 0;
+
+    // KILL and STOP cannot be handled
+    case SIGKILL:
+    case SIGSTOP:
+      errno = EINVAL;
+      return -1;
   }
 
+  // Unknown signum
   errno = EINVAL;
-  return SIG_ERR;
+  return -1;
 }
 
 #ifdef PROVIDES_SOCKET_API
@@ -1100,20 +1216,20 @@ int KernelProxy::accept(int fd, struct sockaddr* addr, socklen_t* len) {
     return -1;
   }
 
-  MountNodeSocket* sock = new MountNodeTCP(stream_mount_.get(), new_sock);
+  SocketNode* sock = new TcpNode(stream_mount_.get(), new_sock);
 
-  // The MountNodeSocket now holds a reference to the new socket
+  // The SocketNode now holds a reference to the new socket
   // so we release ours.
   ppapi_->ReleaseResource(new_sock);
-  error = sock->Init(S_IREAD | S_IWRITE);
+  error = sock->Init(O_RDWR);
   if (error != 0) {
     errno = error;
     return -1;
   }
 
-  ScopedMountNode node(sock);
+  ScopedNode node(sock);
   ScopedKernelHandle new_handle(new KernelHandle(stream_mount_, node));
-  error = sock->Init(O_RDWR);
+  error = new_handle->Init(O_RDWR);
   if (error != 0) {
     errno = error;
     return -1;
@@ -1161,6 +1277,16 @@ int KernelProxy::connect(int fd, const struct sockaddr* addr, socklen_t len) {
   }
 
   return 0;
+}
+
+void KernelProxy::freeaddrinfo(struct addrinfo *res) {
+  return host_resolver_.freeaddrinfo(res);
+}
+
+int KernelProxy::getaddrinfo(const char* node, const char* service,
+                             const struct addrinfo* hints,
+                             struct addrinfo** res) {
+  return host_resolver_.getaddrinfo(node, service, hints, res);
 }
 
 struct hostent* KernelProxy::gethostbyname(const char* name) {
@@ -1428,30 +1554,53 @@ int KernelProxy::socket(int domain, int type, int protocol) {
     return -1;
   }
 
-  MountNodeSocket* sock = NULL;
+  int open_flags = O_RDWR;
+
+  if (type & SOCK_CLOEXEC) {
+#ifdef O_CLOEXEC
+    // The NaCl newlib version of fcntl.h doesn't currently define
+    // O_CLOEXEC.
+    // TODO(sbc): remove this guard once it gets added.
+    open_flags |= O_CLOEXEC;
+#endif
+    type &= ~SOCK_CLOEXEC;
+  }
+
+  if (type & SOCK_NONBLOCK) {
+    open_flags |= O_NONBLOCK;
+    type &= ~SOCK_NONBLOCK;
+  }
+
+  SocketNode* sock = NULL;
   switch (type) {
     case SOCK_DGRAM:
-      sock = new MountNodeUDP(stream_mount_.get());
+      sock = new UdpNode(stream_mount_.get());
       break;
 
     case SOCK_STREAM:
-      sock = new MountNodeTCP(stream_mount_.get());
+      sock = new TcpNode(stream_mount_.get());
       break;
 
-    default:
+    case SOCK_SEQPACKET:
+    case SOCK_RDM:
+    case SOCK_RAW:
       errno = EPROTONOSUPPORT;
+      return -1;
+
+    default:
+      errno = EINVAL;
       return -1;
   }
 
-  ScopedMountNode node(sock);
-  Error rtn = sock->Init(S_IREAD | S_IWRITE);
+  ScopedNode node(sock);
+  Error rtn = sock->Init(O_RDWR);
   if (rtn != 0) {
     errno = rtn;
     return -1;
   }
 
   ScopedKernelHandle handle(new KernelHandle(stream_mount_, node));
-  rtn = handle->Init(O_RDWR);
+  rtn = handle->Init(open_flags);
   if (rtn != 0) {
     errno = rtn;
     return -1;

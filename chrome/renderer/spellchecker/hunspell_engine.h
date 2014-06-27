@@ -25,13 +25,15 @@ class HunspellEngine : public SpellingEngine {
   HunspellEngine();
   virtual ~HunspellEngine();
 
-  virtual void Init(base::PlatformFile file) OVERRIDE;
+  virtual void Init(base::File file) OVERRIDE;
 
   virtual bool InitializeIfNeeded() OVERRIDE;
   virtual bool IsEnabled() OVERRIDE;
-  virtual bool CheckSpelling(const string16& word_to_check, int tag) OVERRIDE;
-  virtual void FillSuggestionList(const string16& wrong_word,
-                          std::vector<string16>* optional_suggestions) OVERRIDE;
+  virtual bool CheckSpelling(const base::string16& word_to_check,
+                             int tag) OVERRIDE;
+  virtual void FillSuggestionList(
+      const base::string16& wrong_word,
+      std::vector<base::string16>* optional_suggestions) OVERRIDE;
 
  private:
   // Initializes the Hunspell dictionary, or does nothing if |hunspell_| is
@@ -44,15 +46,18 @@ class HunspellEngine : public SpellingEngine {
   // The hunspell dictionary in use.
   scoped_ptr<Hunspell> hunspell_;
 
-  base::PlatformFile file_;
+  base::File file_;
 
-  // This flags is true if we have been initialized.
+  // This flag is true if hunspell is enabled.
+  bool hunspell_enabled_;
+
+  // This flag is true if we have been initialized.
   // The value indicates whether we should request a
   // dictionary from the browser when the render view asks us to check the
   // spelling of a word.
   bool initialized_;
 
-  // This flags is true if we have requested dictionary.
+  // This flag is true if we have requested dictionary.
   bool dictionary_requested_;
 };
 

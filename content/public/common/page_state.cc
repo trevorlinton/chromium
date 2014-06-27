@@ -12,7 +12,7 @@ namespace content {
 namespace {
 
 base::NullableString16 ToNullableString16(const std::string& utf8) {
-  return base::NullableString16(UTF8ToUTF16(utf8), false);
+  return base::NullableString16(base::UTF8ToUTF16(utf8), false);
 }
 
 base::FilePath ToFilePath(const base::NullableString16& s) {
@@ -44,6 +44,16 @@ void RecursivelyRemoveScrollOffset(ExplodedFrameState* state) {
   state->scroll_offset = gfx::Point();
 }
 
+void RecursivelyRemoveReferrer(ExplodedFrameState* state) {
+  state->referrer = base::NullableString16();
+  state->referrer_policy = blink::WebReferrerPolicyDefault;
+  for (std::vector<ExplodedFrameState>::iterator it = state->children.begin();
+       it != state->children.end();
+       ++it) {
+    RecursivelyRemoveReferrer(&*it);
+  }
+}
+
 }  // namespace
 
 // static
@@ -55,8 +65,7 @@ PageState PageState::CreateFromEncodedData(const std::string& data) {
 PageState PageState::CreateFromURL(const GURL& url) {
   ExplodedPageState state;
 
-  state.top.url_string = state.top.original_url_string =
-      ToNullableString16(url.possibly_invalid_spec());
+  state.top.url_string = ToNullableString16(url.possibly_invalid_spec());
 
   return ToPageState(state);
 }
@@ -69,20 +78,19 @@ PageState PageState::CreateForTesting(
     const base::FilePath* optional_body_file_path) {
   ExplodedPageState state;
 
-  state.top.url_string = state.top.original_url_string =
-      ToNullableString16(url.possibly_invalid_spec());
+  state.top.url_string = ToNullableString16(url.possibly_invalid_spec());
 
   if (optional_body_data || optional_body_file_path) {
     state.top.http_body.is_null = false;
     if (optional_body_data) {
       ExplodedHttpBodyElement element;
-      element.type = WebKit::WebHTTPBody::Element::TypeData;
+      element.type = blink::WebHTTPBody::Element::TypeData;
       element.data = optional_body_data;
       state.top.http_body.elements.push_back(element);
     }
     if (optional_body_file_path) {
       ExplodedHttpBodyElement element;
-      element.type = WebKit::WebHTTPBody::Element::TypeFile;
+      element.type = blink::WebHTTPBody::Element::TypeFile;
       element.file_path =
           ToNullableString16(optional_body_file_path->AsUTF8Unsafe());
       state.top.http_body.elements.push_back(element);
@@ -136,6 +144,19 @@ PageState PageState::RemoveScrollOffset() const {
     return PageState();  // Oops!
 
   RecursivelyRemoveScrollOffset(&state.top);
+
+  return ToPageState(state);
+}
+
+PageState PageState::RemoveReferrer() const {
+  if (data_.empty())
+    return *this;
+
+  ExplodedPageState state;
+  if (!DecodePageState(data_, &state))
+    return PageState();  // Oops!
+
+  RecursivelyRemoveReferrer(&state.top);
 
   return ToPageState(state);
 }

@@ -4,7 +4,7 @@
 
 #include "ui/views/widget/desktop_aura/desktop_screen_position_client.h"
 
-#include "ui/aura/root_window.h"
+#include "ui/aura/window_tree_host.h"
 #include "ui/gfx/display.h"
 #include "ui/gfx/point_conversions.h"
 #include "ui/gfx/screen.h"
@@ -15,7 +15,8 @@ namespace views {
 namespace {
 
 gfx::Point GetOrigin(const aura::Window* root_window) {
-  gfx::Point origin_in_pixels = root_window->GetDispatcher()->GetHostOrigin();
+  gfx::Point origin_in_pixels =
+      root_window->GetHost()->GetBounds().origin();
   aura::Window* window = const_cast<aura::Window*>(root_window);
   float scale = gfx::Screen::GetScreenFor(window)->
        GetDisplayNearestWindow(window).device_scale_factor();
@@ -26,8 +27,8 @@ gfx::Point GetOrigin(const aura::Window* root_window) {
 // Returns true if bounds passed to window are treated as though they are in
 // screen coordinates.
 bool PositionWindowInScreenCoordinates(aura::Window* window) {
-  if (window->type() == aura::client::WINDOW_TYPE_POPUP ||
-      window->type() == aura::client::WINDOW_TYPE_TOOLTIP)
+  if (window->type() == ui::wm::WINDOW_TYPE_POPUP ||
+      window->type() == ui::wm::WINDOW_TYPE_TOOLTIP)
     return true;
 
   Widget* widget = Widget::GetWidgetForNativeView(window);
@@ -36,10 +37,13 @@ bool PositionWindowInScreenCoordinates(aura::Window* window) {
 
 }  // namespace
 
-DesktopScreenPositionClient::DesktopScreenPositionClient() {
+DesktopScreenPositionClient::DesktopScreenPositionClient(
+    aura::Window* root_window) : root_window_(root_window) {
+  aura::client::SetScreenPositionClient(root_window_, this);
 }
 
 DesktopScreenPositionClient::~DesktopScreenPositionClient() {
+  aura::client::SetScreenPositionClient(root_window_, NULL);
 }
 
 void DesktopScreenPositionClient::ConvertPointToScreen(
@@ -85,11 +89,13 @@ void DesktopScreenPositionClient::SetBounds(
     return;
   }
 
-  DesktopNativeWidgetAura* desktop_native_widget =
-      DesktopNativeWidgetAura::ForWindow(window);
-  if (desktop_native_widget) {
-    root->GetDispatcher()->SetHostBounds(bounds);
+  internal::NativeWidgetPrivate* desktop_native_widget =
+      DesktopNativeWidgetAura::ForWindow(root);
+  if (desktop_native_widget &&
+      desktop_native_widget->GetNativeView() == window) {
+    // |window| is the content_window.
     // Setting bounds of root resizes |window|.
+    root->GetHost()->SetBounds(bounds);
   } else {
     window->SetBounds(bounds);
   }

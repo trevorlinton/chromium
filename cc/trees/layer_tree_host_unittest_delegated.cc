@@ -14,7 +14,6 @@
 #include "cc/layers/delegated_frame_provider.h"
 #include "cc/layers/delegated_frame_resource_collection.h"
 #include "cc/layers/delegated_renderer_layer.h"
-#include "cc/layers/delegated_renderer_layer_client.h"
 #include "cc/layers/delegated_renderer_layer_impl.h"
 #include "cc/output/compositor_frame.h"
 #include "cc/output/compositor_frame_ack.h"
@@ -29,7 +28,6 @@
 #include "cc/test/layer_tree_test.h"
 #include "cc/trees/layer_tree_impl.h"
 #include "gpu/GLES2/gl2extchromium.h"
-#include "third_party/WebKit/public/platform/WebGraphicsContext3D.h"
 
 namespace cc {
 namespace {
@@ -76,8 +74,9 @@ bool ResourcesMatch(ReturnedResourceArray actual,
 // These tests deal with delegated renderer layers.
 class LayerTreeHostDelegatedTest : public LayerTreeTest {
  protected:
-  scoped_ptr<DelegatedFrameData> CreateFrameData(gfx::Rect root_output_rect,
-                                                 gfx::Rect root_damage_rect) {
+  scoped_ptr<DelegatedFrameData> CreateFrameData(
+      const gfx::Rect& root_output_rect,
+      const gfx::Rect& root_damage_rect) {
     scoped_ptr<DelegatedFrameData> frame(new DelegatedFrameData);
 
     scoped_ptr<RenderPass> root_pass(RenderPass::Create());
@@ -90,8 +89,8 @@ class LayerTreeHostDelegatedTest : public LayerTreeTest {
   }
 
   scoped_ptr<DelegatedFrameData> CreateInvalidFrameData(
-      gfx::Rect root_output_rect,
-      gfx::Rect root_damage_rect) {
+      const gfx::Rect& root_output_rect,
+      const gfx::Rect& root_damage_rect) {
     scoped_ptr<DelegatedFrameData> frame(new DelegatedFrameData);
 
     scoped_ptr<RenderPass> root_pass(RenderPass::Create());
@@ -104,6 +103,7 @@ class LayerTreeHostDelegatedTest : public LayerTreeTest {
 
     gfx::Rect rect = root_output_rect;
     gfx::Rect opaque_rect = root_output_rect;
+    gfx::Rect visible_rect = root_output_rect;
     // An invalid resource id! The resource isn't part of the frame.
     unsigned resource_id = 5;
     bool premultiplied_alpha = false;
@@ -117,6 +117,7 @@ class LayerTreeHostDelegatedTest : public LayerTreeTest {
     invalid_draw_quad->SetNew(shared_quad_state.get(),
                               rect,
                               opaque_rect,
+                              visible_rect,
                               resource_id,
                               premultiplied_alpha,
                               uv_top_left,
@@ -136,7 +137,12 @@ class LayerTreeHostDelegatedTest : public LayerTreeTest {
                                ResourceProvider::ResourceId resource_id) {
     TransferableResource resource;
     resource.id = resource_id;
-    resource.target = GL_TEXTURE_2D;
+    resource.mailbox_holder.texture_target = GL_TEXTURE_2D;
+    GLbyte arbitrary_mailbox[GL_MAILBOX_SIZE_CHROMIUM] = {
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2,
+        3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4,
+        5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4};
+    resource.mailbox_holder.mailbox.SetName(arbitrary_mailbox);
     frame->resource_list.push_back(resource);
   }
 
@@ -146,6 +152,7 @@ class LayerTreeHostDelegatedTest : public LayerTreeTest {
     scoped_ptr<TextureDrawQuad> quad = TextureDrawQuad::Create();
     float vertex_opacity[4] = { 1.f, 1.f, 1.f, 1.f };
     quad->SetNew(sqs.get(),
+                 gfx::Rect(0, 0, 10, 10),
                  gfx::Rect(0, 0, 10, 10),
                  gfx::Rect(0, 0, 10, 10),
                  resource_id,
@@ -161,8 +168,8 @@ class LayerTreeHostDelegatedTest : public LayerTreeTest {
 
   void AddRenderPass(DelegatedFrameData* frame,
                      RenderPass::Id id,
-                     gfx::Rect output_rect,
-                     gfx::Rect damage_rect,
+                     const gfx::Rect& output_rect,
+                     const gfx::Rect& damage_rect,
                      const FilterOperations& filters,
                      const FilterOperations& background_filters) {
     for (size_t i = 0; i < frame->render_pass_list.size(); ++i)
@@ -180,9 +187,10 @@ class LayerTreeHostDelegatedTest : public LayerTreeTest {
 
     quad->SetNew(sqs.get(),
                  output_rect,
+                 output_rect,
                  id,
                  false,  // is_replica
-                 0,  // mask_resource_id
+                 0,      // mask_resource_id
                  damage_rect,
                  gfx::Rect(0, 0, 1, 1),  // mask_uv_rect
                  filters,
@@ -238,7 +246,6 @@ class LayerTreeHostDelegatedTest : public LayerTreeTest {
 
 class LayerTreeHostDelegatedTestCaseSingleDelegatedLayer
     : public LayerTreeHostDelegatedTest,
-      public DelegatedRendererLayerClient,
       public DelegatedFrameResourceCollectionClient {
  public:
   LayerTreeHostDelegatedTestCaseSingleDelegatedLayer()
@@ -285,7 +292,7 @@ class LayerTreeHostDelegatedTestCaseSingleDelegatedLayer
   scoped_refptr<DelegatedRendererLayer> CreateDelegatedLayer(
       DelegatedFrameProvider* frame_provider) {
     scoped_refptr<DelegatedRendererLayer> delegated =
-        FakeDelegatedRendererLayer::Create(this, frame_provider);
+        FakeDelegatedRendererLayer::Create(frame_provider);
     delegated->SetAnchorPoint(gfx::PointF());
     delegated->SetBounds(gfx::Size(10, 10));
     delegated->SetIsDrawable(true);
@@ -295,9 +302,6 @@ class LayerTreeHostDelegatedTestCaseSingleDelegatedLayer
   }
 
   virtual void AfterTest() OVERRIDE { resource_collection_->SetClient(NULL); }
-
-  // DelegatedRendererLayerClient implementation.
-  virtual void DidCommitFrameData() OVERRIDE {}
 
   // DelegatedFrameProviderClient implementation.
   virtual void UnusedResourcesAreAvailable() OVERRIDE { available_ = true; }
@@ -315,37 +319,6 @@ class LayerTreeHostDelegatedTestCaseSingleDelegatedLayer
   scoped_refptr<DelegatedRendererLayer> delegated_;
   bool available_;
 };
-
-class LayerTreeHostDelegatedTestClientDidCommitCallback
-    : public LayerTreeHostDelegatedTestCaseSingleDelegatedLayer {
- public:
-  LayerTreeHostDelegatedTestClientDidCommitCallback()
-      : LayerTreeHostDelegatedTestCaseSingleDelegatedLayer(),
-        num_did_commit_frame_data_(0) {}
-
-  virtual void DidCommit() OVERRIDE {
-    if (TestEnded())
-      return;
-
-    EXPECT_EQ(1, num_did_commit_frame_data_);
-    EndTest();
-  }
-
-  virtual void BeginTest() OVERRIDE {
-    SetFrameData(CreateFrameData(gfx::Rect(0, 0, 1, 1), gfx::Rect(0, 0, 1, 1)));
-    PostSetNeedsCommitToMainThread();
-  }
-
-  virtual void DidCommitFrameData() OVERRIDE {
-    num_did_commit_frame_data_++;
-  }
-
- protected:
-  int num_did_commit_frame_data_;
-};
-
-SINGLE_AND_MULTI_THREAD_TEST_F(
-    LayerTreeHostDelegatedTestClientDidCommitCallback);
 
 class LayerTreeHostDelegatedTestCreateChildId
     : public LayerTreeHostDelegatedTestCaseSingleDelegatedLayer {
@@ -369,8 +342,8 @@ class LayerTreeHostDelegatedTestCreateChildId
     FakeDelegatedRendererLayerImpl* delegated_impl =
         static_cast<FakeDelegatedRendererLayerImpl*>(root_impl->children()[0]);
 
-    ContextProvider* context_provider =
-        host_impl->output_surface()->context_provider();
+    TestContextProvider* context_provider = static_cast<TestContextProvider*>(
+        host_impl->output_surface()->context_provider().get());
 
     ++num_activates_;
     switch (num_activates_) {
@@ -378,9 +351,10 @@ class LayerTreeHostDelegatedTestCreateChildId
         EXPECT_TRUE(delegated_impl->ChildId());
         EXPECT_FALSE(did_reset_child_id_);
 
-        context_provider->Context3d()->loseContextCHROMIUM(
+        context_provider->ContextGL()->LoseContextCHROMIUM(
             GL_GUILTY_CONTEXT_RESET_ARB,
             GL_INNOCENT_CONTEXT_RESET_ARB);
+        context_provider->ContextGL()->Flush();
         break;
       case 3:
         EXPECT_TRUE(delegated_impl->ChildId());
@@ -412,6 +386,87 @@ class LayerTreeHostDelegatedTestCreateChildId
 };
 
 SINGLE_AND_MULTI_THREAD_TEST_F(LayerTreeHostDelegatedTestCreateChildId);
+
+// Test that we can gracefully handle invalid frames after the context was lost.
+// For example, we might be trying to use the previous frame in that case and
+// have to make sure we don't crash because our resource accounting goes wrong.
+class LayerTreeHostDelegatedTestInvalidFrameAfterContextLost
+    : public LayerTreeHostDelegatedTestCaseSingleDelegatedLayer {
+ public:
+  LayerTreeHostDelegatedTestInvalidFrameAfterContextLost()
+      : num_activates_(0), num_output_surfaces_initialized_(0) {}
+
+  virtual void DidCommit() OVERRIDE {
+    if (TestEnded())
+      return;
+    scoped_ptr<DelegatedFrameData> frame1 =
+        CreateFrameData(gfx::Rect(0, 0, 1, 1), gfx::Rect(0, 0, 1, 1));
+    AddTextureQuad(frame1.get(), 999);
+    AddTransferableResource(frame1.get(), 999);
+    SetFrameData(frame1.Pass());
+  }
+
+  virtual void DidInitializeOutputSurface(bool succeeded) OVERRIDE {
+    if (!num_output_surfaces_initialized_++)
+      return;
+
+    scoped_refptr<DelegatedRendererLayer> old_delegated = delegated_;
+    SetFrameData(
+        CreateInvalidFrameData(gfx::Rect(0, 0, 1, 1), gfx::Rect(0, 0, 1, 1)));
+    // Make sure we end up using the same layer, or we won't test the right
+    // thing, which is to make sure we can handle an invalid frame when using
+    // a stale layer from before the context was lost.
+    DCHECK(delegated_.get() == old_delegated.get());
+  }
+
+  virtual void DidActivateTreeOnThread(LayerTreeHostImpl* host_impl) OVERRIDE {
+    if (host_impl->active_tree()->source_frame_number() < 1)
+      return;
+
+    TestContextProvider* context_provider = static_cast<TestContextProvider*>(
+        host_impl->output_surface()->context_provider().get());
+
+    ++num_activates_;
+    switch (num_activates_) {
+      case 2:
+        context_provider->ContextGL()->LoseContextCHROMIUM(
+            GL_GUILTY_CONTEXT_RESET_ARB,
+            GL_INNOCENT_CONTEXT_RESET_ARB);
+        break;
+      case 3:
+        EndTest();
+        break;
+    }
+  }
+
+  virtual void InitializedRendererOnThread(LayerTreeHostImpl* host_impl,
+                                           bool success) OVERRIDE {
+    EXPECT_TRUE(success);
+
+    if (num_activates_ < 2)
+      return;
+
+    LayerImpl* root_impl = host_impl->active_tree()->root_layer();
+    FakeDelegatedRendererLayerImpl* delegated_impl =
+        static_cast<FakeDelegatedRendererLayerImpl*>(root_impl->children()[0]);
+
+    EXPECT_EQ(2, num_activates_);
+    // Resources should have gotten cleared after the context was lost.
+    EXPECT_EQ(0U, delegated_impl->Resources().size());
+  }
+
+  virtual void AfterTest() OVERRIDE {
+    LayerTreeHostDelegatedTestCaseSingleDelegatedLayer::AfterTest();
+    EXPECT_EQ(2, num_output_surfaces_initialized_);
+  }
+
+ protected:
+  int num_activates_;
+  int num_output_surfaces_initialized_;
+};
+
+SINGLE_AND_MULTI_THREAD_TEST_F(
+    LayerTreeHostDelegatedTestInvalidFrameAfterContextLost);
 
 class LayerTreeHostDelegatedTestOffscreenContext_NoFilters
     : public LayerTreeHostDelegatedTestCaseSingleDelegatedLayer {
@@ -656,13 +711,14 @@ class LayerTreeHostDelegatedTestLayerUsesFrameDamage
     first_draw_for_source_frame_ = true;
   }
 
-  virtual bool PrepareToDrawOnThread(LayerTreeHostImpl* host_impl,
-                                     LayerTreeHostImpl::FrameData* frame,
-                                     bool result) OVERRIDE {
-    EXPECT_TRUE(result);
+  virtual DrawSwapReadbackResult::DrawResult PrepareToDrawOnThread(
+      LayerTreeHostImpl* host_impl,
+      LayerTreeHostImpl::FrameData* frame,
+      DrawSwapReadbackResult::DrawResult draw_result) OVERRIDE {
+    EXPECT_EQ(DrawSwapReadbackResult::DRAW_SUCCESS, draw_result);
 
     if (!first_draw_for_source_frame_)
-      return result;
+      return draw_result;
 
     gfx::RectF damage_rect;
     if (!frame->has_no_damage) {
@@ -758,7 +814,7 @@ class LayerTreeHostDelegatedTestLayerUsesFrameDamage
         break;
     }
 
-    return result;
+    return draw_result;
   }
 
  protected:
@@ -1810,12 +1866,7 @@ SINGLE_AND_MULTI_THREAD_TEST_F(LayerTreeHostDelegatedTestCommitWithoutTake);
 class DelegatedFrameIsActivatedDuringCommit
     : public LayerTreeHostDelegatedTestCaseSingleDelegatedLayer {
  protected:
-  DelegatedFrameIsActivatedDuringCommit()
-      : wait_thread_("WAIT"),
-        wait_event_(false, false),
-        returned_resource_count_(0) {
-    wait_thread_.Start();
-  }
+  DelegatedFrameIsActivatedDuringCommit() : returned_resource_count_(0) {}
 
   virtual void BeginTest() OVERRIDE {
     activate_count_ = 0;
@@ -1830,31 +1881,11 @@ class DelegatedFrameIsActivatedDuringCommit
   }
 
   virtual void WillActivateTreeOnThread(LayerTreeHostImpl* impl) OVERRIDE {
-    // Slow down activation so the main thread DidCommit() will run if
-    // not blocked.
-    wait_thread_.message_loop()->PostDelayedTask(
-        FROM_HERE,
-        base::Bind(&base::WaitableEvent::Signal,
-                   base::Unretained(&wait_event_)),
-        base::TimeDelta::FromMilliseconds(10));
-    wait_event_.Wait();
-
-    base::AutoLock lock(activate_lock_);
     ++activate_count_;
   }
 
-  virtual void DidActivateTreeOnThread(LayerTreeHostImpl* impl) OVERRIDE {
-    // The main thread is awake now, and will run DidCommit() immediately.
-    // Run DidActivate() afterwards by posting it now.
-    proxy()->MainThreadTaskRunner()->PostTask(
-        FROM_HERE,
-        base::Bind(&DelegatedFrameIsActivatedDuringCommit::DidActivate,
-                   base::Unretained(this)));
-  }
-
-  void DidActivate() {
-    base::AutoLock lock(activate_lock_);
-    switch (activate_count_) {
+  virtual void DidCommit() OVERRIDE {
+    switch (layer_tree_host()->source_frame_number()) {
       case 1: {
         // The first frame has been activated. Set a new frame, and
         // expect the next commit to finish *after* it is activated.
@@ -1863,8 +1894,6 @@ class DelegatedFrameIsActivatedDuringCommit
         AddTextureQuad(frame.get(), 555);
         AddTransferableResource(frame.get(), 555);
         SetFrameData(frame.Pass());
-        // So this commit number should complete after the second activate.
-        EXPECT_EQ(1, layer_tree_host()->source_frame_number());
         break;
       }
       case 2:
@@ -1872,28 +1901,26 @@ class DelegatedFrameIsActivatedDuringCommit
         // the tree to cause another commit/activation. The commit should
         // finish *after* the layer is removed from the active tree.
         delegated_->RemoveFromParent();
-        // So this commit number should complete after the third activate.
-        EXPECT_EQ(2, layer_tree_host()->source_frame_number());
+        break;
+      case 3:
+        // Finish the test by releasing resources on the next frame.
+        scoped_ptr<DelegatedFrameData> frame =
+            CreateFrameData(gfx::Rect(0, 0, 1, 1), gfx::Rect(0, 0, 1, 1));
+        SetFrameData(frame.Pass());
         break;
     }
   }
 
-  virtual void DidCommit() OVERRIDE {
-    switch (layer_tree_host()->source_frame_number()) {
+  virtual void CommitCompleteOnThread(LayerTreeHostImpl* host_impl) OVERRIDE {
+    switch (host_impl->active_tree()->source_frame_number()) {
       case 2: {
         // The activate for the 2nd frame should have happened before now.
-        base::AutoLock lock(activate_lock_);
         EXPECT_EQ(2, activate_count_);
         break;
       }
       case 3: {
         // The activate to remove the layer should have happened before now.
-        base::AutoLock lock(activate_lock_);
         EXPECT_EQ(3, activate_count_);
-
-        scoped_ptr<DelegatedFrameData> frame =
-            CreateFrameData(gfx::Rect(0, 0, 1, 1), gfx::Rect(0, 0, 1, 1));
-        SetFrameData(frame.Pass());
         break;
       }
     }
@@ -1915,9 +1942,6 @@ class DelegatedFrameIsActivatedDuringCommit
       EndTest();
   }
 
-  base::Thread wait_thread_;
-  base::WaitableEvent wait_event_;
-  base::Lock activate_lock_;
   int activate_count_;
   size_t returned_resource_count_;
 };

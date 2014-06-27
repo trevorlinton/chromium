@@ -6,7 +6,6 @@
 #include "content/browser/renderer_host/media/device_request_message_filter.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/common/media/media_stream_messages.h"
-#include "content/public/browser/media_device_id.h"
 #include "content/public/test/mock_resource_context.h"
 #include "content/public/test/test_browser_thread.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -26,10 +25,11 @@ class MockMediaStreamManager : public MediaStreamManager {
 
   virtual ~MockMediaStreamManager() {}
 
-  MOCK_METHOD6(EnumerateDevices,
+  MOCK_METHOD7(EnumerateDevices,
                std::string(MediaStreamRequester* requester,
                            int render_process_id,
                            int render_view_id,
+                           const ResourceContext::SaltCallback& rc,
                            int page_request_id,
                            MediaStreamType type,
                            const GURL& security_origin));
@@ -38,6 +38,7 @@ class MockMediaStreamManager : public MediaStreamManager {
   std::string DoEnumerateDevices(MediaStreamRequester* requester,
                                  int render_process_id,
                                  int render_view_id,
+                                 const ResourceContext::SaltCallback& rc,
                                  int page_request_id,
                                  MediaStreamType type,
                                  const GURL& security_origin) {
@@ -53,7 +54,7 @@ class MockDeviceRequestMessageFilter : public DeviceRequestMessageFilter {
  public:
   MockDeviceRequestMessageFilter(MockResourceContext* context,
                                  MockMediaStreamManager* manager)
-      : DeviceRequestMessageFilter(context, manager), received_id_(-1) {}
+      : DeviceRequestMessageFilter(context, manager, 0), received_id_(-1) {}
   StreamDeviceInfoArray requested_devices() { return requested_devices_; }
   int received_id() { return received_id_; }
 
@@ -94,10 +95,10 @@ class DeviceRequestMessageFilterTest : public testing::Test {
     AddVideoDevices(number_video_devices);
     GURL origin("https://test.com");
     EXPECT_CALL(*media_stream_manager_,
-                EnumerateDevices(_, _, _, _, MEDIA_DEVICE_AUDIO_CAPTURE, _))
+                EnumerateDevices(_, _, _, _, _, MEDIA_DEVICE_AUDIO_CAPTURE, _))
         .Times(1);
     EXPECT_CALL(*media_stream_manager_,
-                EnumerateDevices(_, _, _, _, MEDIA_DEVICE_VIDEO_CAPTURE, _))
+                EnumerateDevices(_, _, _, _, _, MEDIA_DEVICE_VIDEO_CAPTURE, _))
         .Times(1);
     // Send message to get devices. Should trigger 2 EnumerateDevice() requests.
     const int kRequestId = 123;
@@ -118,11 +119,6 @@ class DeviceRequestMessageFilterTest : public testing::Test {
               host_->requested_devices().size());
 
     EXPECT_EQ(kRequestId, host_->received_id());
-    // Check to make sure no devices have raw ids.
-    EXPECT_FALSE(DoesContainRawIds(host_->requested_devices()));
-
-    // Check to make sure every GUID produced matches a raw device id.
-    EXPECT_TRUE(DoesEveryDeviceMapToRawId(host_->requested_devices(), origin));
   }
 
   bool AreLabelsPresent(MediaStreamType type) {
@@ -138,12 +134,12 @@ class DeviceRequestMessageFilterTest : public testing::Test {
   virtual ~DeviceRequestMessageFilterTest() {}
 
   virtual void SetUp() OVERRIDE {
-    message_loop_.reset(new base::MessageLoop(base::MessageLoop::TYPE_IO));
+    message_loop_.reset(new base::MessageLoopForIO);
     io_thread_.reset(
         new TestBrowserThread(BrowserThread::IO, message_loop_.get()));
 
     media_stream_manager_.reset(new MockMediaStreamManager());
-    ON_CALL(*media_stream_manager_, EnumerateDevices(_, _, _, _, _, _))
+    ON_CALL(*media_stream_manager_, EnumerateDevices(_, _, _, _, _, _, _))
         .WillByDefault(Invoke(media_stream_manager_.get(),
                               &MockMediaStreamManager::DoEnumerateDevices));
 
@@ -192,53 +188,11 @@ class DeviceRequestMessageFilterTest : public testing::Test {
   }
 
   void FireAudioDeviceCallback() {
-    host_->DevicesEnumerated(kAudioLabel, physical_audio_devices_);
+    host_->DevicesEnumerated(-1, -1, kAudioLabel, physical_audio_devices_);
   }
 
   void FireVideoDeviceCallback() {
-    host_->DevicesEnumerated(kVideoLabel, physical_video_devices_);
-  }
-
-  bool DoesContainRawIds(const StreamDeviceInfoArray& devices) {
-    for (size_t i = 0; i < devices.size(); i++) {
-      for (size_t j = 0; j < physical_audio_devices_.size(); ++j) {
-        if (physical_audio_devices_[j].device.id == devices[i].device.id)
-          return true;
-      }
-      for (size_t j = 0; j < physical_video_devices_.size(); ++j) {
-        if (physical_video_devices_[j].device.id == devices[i].device.id)
-          return true;
-      }
-    }
-    return false;
-  }
-
-  bool DoesEveryDeviceMapToRawId(const StreamDeviceInfoArray& devices,
-                                 const GURL& origin) {
-    for (size_t i = 0; i < devices.size(); i++) {
-      bool found_match = false;
-      for (size_t j = 0; j < physical_audio_devices_.size(); ++j) {
-        if (content::DoesMediaDeviceIDMatchHMAC(
-                origin,
-                devices[i].device.id,
-                physical_audio_devices_[j].device.id)) {
-          EXPECT_FALSE(found_match);
-          found_match = true;
-        }
-      }
-      for (size_t j = 0; j < physical_video_devices_.size(); ++j) {
-        if (content::DoesMediaDeviceIDMatchHMAC(
-                origin,
-                devices[i].device.id,
-                physical_video_devices_[j].device.id)) {
-          EXPECT_FALSE(found_match);
-          found_match = true;
-        }
-      }
-      if (!found_match)
-        return false;
-    }
-    return true;
+    host_->DevicesEnumerated(-1, -1, kVideoLabel, physical_video_devices_);
   }
 
   int next_device_id_;

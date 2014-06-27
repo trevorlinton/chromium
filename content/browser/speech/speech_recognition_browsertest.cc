@@ -15,10 +15,10 @@
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/content_browser_test.h"
+#include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
-#include "content/test/content_browser_test.h"
-#include "content/test/content_browser_test_utils.h"
 #include "content/test/mock_google_streaming_server.h"
 #include "media/audio/mock_audio_manager.h"
 #include "media/audio/test_audio_input_controller_factory.h"
@@ -172,7 +172,7 @@ class SpeechRecognitionBrowserTest :
   SpeechRecognitionResult GetGoodSpeechResult() {
     SpeechRecognitionResult result;
     result.hypotheses.push_back(SpeechRecognitionHypothesis(
-        UTF8ToUTF16("Pictures of the moon"), 1.0F));
+        base::UTF8ToUTF16("Pictures of the moon"), 1.0F));
     return result;
   }
 

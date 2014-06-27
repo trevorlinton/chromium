@@ -6,57 +6,45 @@
 #include <vector>
 
 #include "base/command_line.h"
+#include "base/format_macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
+#include "base/message_loop/message_loop.h"
 #include "base/prefs/pref_service.h"
+#include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/tuple.h"
-#include "chrome/browser/autofill/personal_data_manager_factory.h"
-#include "chrome/browser/password_manager/password_manager.h"
-#include "chrome/browser/password_manager/password_manager_delegate_impl.h"
-#include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/sync/profile_sync_service.h"
-#include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/browser/ui/autofill/tab_autofill_manager_delegate.h"
-#include "chrome/test/base/chrome_render_view_host_test_harness.h"
-#include "chrome/test/base/testing_profile.h"
 #include "components/autofill/core/browser/autocomplete_history_manager.h"
-#include "components/autofill/core/browser/autofill_common_test.h"
 #include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/autofill_metrics.h"
 #include "components/autofill/core/browser/autofill_profile.h"
+#include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/credit_card.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
+#include "components/autofill/core/browser/popup_item_ids.h"
 #include "components/autofill/core/browser/test_autofill_driver.h"
 #include "components/autofill/core/browser/test_autofill_external_delegate.h"
 #include "components/autofill/core/browser/test_autofill_manager_delegate.h"
-#include "components/autofill/core/common/autofill_messages.h"
+#include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/autofill/core/common/autofill_pref_names.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/autofill/core/common/forms_seen_state.h"
-#include "components/user_prefs/user_prefs.h"
-#include "content/public/browser/web_contents.h"
-#include "content/public/test/mock_render_process_host.h"
-#include "content/public/test/test_utils.h"
 #include "grit/component_strings.h"
-#include "ipc/ipc_test_sink.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/web/WebAutofillClient.h"
-#include "third_party/WebKit/public/web/WebFormElement.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/rect.h"
 #include "url/gurl.h"
 
-using content::WebContents;
+using base::ASCIIToUTF16;
+using base::UTF8ToUTF16;
 using testing::_;
-using WebKit::WebFormElement;
 
 namespace autofill {
 
@@ -64,8 +52,6 @@ typedef PersonalDataManager::GUIDPair GUIDPair;
 
 namespace {
 
-// The page ID sent to the AutofillManager from the RenderView, used to send
-// an IPC message back to the renderer.
 const int kDefaultPageID = 137;
 
 class TestPersonalDataManager : public PersonalDataManager {
@@ -75,18 +61,8 @@ class TestPersonalDataManager : public PersonalDataManager {
     CreateTestCreditCards(&credit_cards_);
   }
 
-  void SetBrowserContext(content::BrowserContext* context) {
-    set_browser_context(context);
-  }
-
-  void SetPrefService(PrefService* pref_service) {
-    set_pref_service(pref_service);
-  }
-
-  // Factory method for keyed service.  PersonalDataManager is NULL for testing.
-  static BrowserContextKeyedService* Build(content::BrowserContext* profile) {
-    return NULL;
-  }
+  using PersonalDataManager::set_database;
+  using PersonalDataManager::SetPrefService;
 
   MOCK_METHOD1(SaveImportedProfile, std::string(const AutofillProfile&));
 
@@ -206,41 +182,6 @@ class TestPersonalDataManager : public PersonalDataManager {
   DISALLOW_COPY_AND_ASSIGN(TestPersonalDataManager);
 };
 
-// Populates |form| with 3 fields and a field with autocomplete attribute.
-void CreateTestFormWithAutocompleteAttribute(FormData* form) {
-  form->name = ASCIIToUTF16("UserSpecified");
-  form->method = ASCIIToUTF16("POST");
-  form->origin = GURL("http://myform.com/userspecified.html");
-  form->action = GURL("http://myform.com/submit.html");
-  form->user_submitted = true;
-
-  FormFieldData field;
-  test::CreateTestFormField("First Name", "firstname", "", "text", &field);
-  form->fields.push_back(field);
-  test::CreateTestFormField("Middle Name", "middlename", "", "text", &field);
-  form->fields.push_back(field);
-  test::CreateTestFormField("Last Name", "lastname", "", "text", &field);
-  form->fields.push_back(field);
-  field.autocomplete_attribute="cc-type";
-  test::CreateTestFormField("cc-type", "cc-type", "", "text", &field);
-  form->fields.push_back(field);
-}
-
-// Populates |form| with data corresponding to a simple shipping options form.
-void CreateTestShippingOptionsFormData(FormData* form) {
-  form->name = ASCIIToUTF16("Shipping Options");
-  form->method = ASCIIToUTF16("POST");
-  form->origin = GURL("http://myform.com/shipping.html");
-  form->action = GURL("http://myform.com/submit.html");
-  form->user_submitted = true;
-
-  FormFieldData field;
-  test::CreateTestFormField("Shipping1", "option", "option1", "radio", &field);
-  form->fields.push_back(field);
-  test::CreateTestFormField("Shipping2", "option", "option2", "radio", &field);
-  form->fields.push_back(field);
-}
-
 // Populates |form| with data corresponding to a simple credit card form.
 // Note that this actually appends fields to the form data, which can be useful
 // for building up more complex test forms.
@@ -272,31 +213,6 @@ void CreateTestCreditCardFormData(FormData* form,
     form->fields.push_back(field);
     test::CreateTestFormField("", "ccyear", "", "text", &field);
     form->fields.push_back(field);
-  }
-}
-
-void ExpectSuggestions(int page_id,
-                       const std::vector<base::string16>& values,
-                       const std::vector<base::string16>& labels,
-                       const std::vector<base::string16>& icons,
-                       const std::vector<int>& unique_ids,
-                       int expected_page_id,
-                       size_t expected_num_suggestions,
-                       const base::string16 expected_values[],
-                       const base::string16 expected_labels[],
-                       const base::string16 expected_icons[],
-                       const int expected_unique_ids[]) {
-  EXPECT_EQ(expected_page_id, page_id);
-  ASSERT_EQ(expected_num_suggestions, values.size());
-  ASSERT_EQ(expected_num_suggestions, labels.size());
-  ASSERT_EQ(expected_num_suggestions, icons.size());
-  ASSERT_EQ(expected_num_suggestions, unique_ids.size());
-  for (size_t i = 0; i < expected_num_suggestions; ++i) {
-    SCOPED_TRACE(base::StringPrintf("i: %" PRIuS, i));
-    EXPECT_EQ(expected_values[i], values[i]);
-    EXPECT_EQ(expected_labels[i], labels[i]);
-    EXPECT_EQ(expected_icons[i], icons[i]);
-    EXPECT_EQ(expected_unique_ids[i], unique_ids[i]);
   }
 }
 
@@ -456,11 +372,11 @@ class MockAutocompleteHistoryManager : public AutocompleteHistoryManager {
 
 class MockAutofillDriver : public TestAutofillDriver {
  public:
-  explicit MockAutofillDriver(content::WebContents* web_contents)
-      : TestAutofillDriver(web_contents) {}
+  MockAutofillDriver() {}
 
   // Mock methods to enable testability.
-  MOCK_METHOD2(SendFormDataToRenderer, void(int query_id,
+  MOCK_METHOD3(SendFormDataToRenderer, void(int query_id,
+                                            RendererFormDataAction action,
                                             const FormData& data));
 
  private:
@@ -483,12 +399,6 @@ class TestAutofillManager : public AutofillManager {
     autofill_enabled_ = autofill_enabled;
   }
 
-  const std::vector<std::pair<WebFormElement::AutocompleteResult, FormData> >&
-      request_autocomplete_results() const {
-    return request_autocomplete_results_;
-  }
-
-
   void set_expected_submitted_field_types(
       const std::vector<ServerFieldTypeSet>& expected_types) {
     expected_submitted_field_types_ = expected_types;
@@ -499,7 +409,7 @@ class TestAutofillManager : public AutofillManager {
       const base::TimeTicks& load_time,
       const base::TimeTicks& interaction_time,
       const base::TimeTicks& submission_time) OVERRIDE {
-    message_loop_runner_->Quit();
+    run_loop_->Quit();
 
     // If we have expected field types set, make sure they match.
     if (!expected_submitted_field_types_.empty()) {
@@ -509,7 +419,7 @@ class TestAutofillManager : public AutofillManager {
         SCOPED_TRACE(
             base::StringPrintf(
                 "Field %d with value %s", static_cast<int>(i),
-                UTF16ToUTF8(submitted_form->field(i)->value).c_str()));
+                base::UTF16ToUTF8(submitted_form->field(i)->value).c_str()));
         const ServerFieldTypeSet& possible_types =
             submitted_form->field(i)->possible_types();
         EXPECT_EQ(expected_submitted_field_types_[i].size(),
@@ -529,16 +439,12 @@ class TestAutofillManager : public AutofillManager {
                                                  submission_time);
   }
 
-  // Resets the MessageLoopRunner so that it can wait for an asynchronous form
+  // Resets the run loop so that it can wait for an asynchronous form
   // submission to complete.
-  void ResetMessageLoopRunner() {
-    message_loop_runner_ = new content::MessageLoopRunner();
-  }
+  void ResetRunLoop() { run_loop_.reset(new base::RunLoop()); }
 
   // Wait for the asynchronous OnFormSubmitted() call to complete.
-  void WaitForAsyncFormSubmit() {
-    message_loop_runner_->Run();
-  }
+  void WaitForAsyncFormSubmit() { run_loop_->Run(); }
 
   virtual void UploadFormData(const FormStructure& submitted_form) OVERRIDE {
     submitted_form_signature_ = submitted_form.FormSignature();
@@ -579,21 +485,13 @@ class TestAutofillManager : public AutofillManager {
     form_structures()->clear();
   }
 
-  virtual void ReturnAutocompleteResult(
-      WebFormElement::AutocompleteResult result,
-      const FormData& form_data) OVERRIDE {
-    request_autocomplete_results_.push_back(std::make_pair(result, form_data));
-  }
-
  private:
   // Weak reference.
   TestPersonalDataManager* personal_data_;
 
   bool autofill_enabled_;
-  std::vector<std::pair<WebFormElement::AutocompleteResult, FormData> >
-      request_autocomplete_results_;
 
-  scoped_refptr<content::MessageLoopRunner> message_loop_runner_;
+  scoped_ptr<base::RunLoop> run_loop_;
 
   std::string submitted_form_signature_;
   std::vector<ServerFieldTypeSet> expected_submitted_field_types_;
@@ -603,11 +501,9 @@ class TestAutofillManager : public AutofillManager {
 
 class TestAutofillExternalDelegate : public AutofillExternalDelegate {
  public:
-  explicit TestAutofillExternalDelegate(content::WebContents* web_contents,
-                                        AutofillManager* autofill_manager,
+  explicit TestAutofillExternalDelegate(AutofillManager* autofill_manager,
                                         AutofillDriver* autofill_driver)
-      : AutofillExternalDelegate(web_contents, autofill_manager,
-                                 autofill_driver),
+      : AutofillExternalDelegate(autofill_manager, autofill_driver),
         on_query_seen_(false),
         on_suggestions_returned_seen_(false) {}
   virtual ~TestAutofillExternalDelegate() {}
@@ -689,27 +585,17 @@ class TestAutofillExternalDelegate : public AutofillExternalDelegate {
 
 }  // namespace
 
-class AutofillManagerTest : public ChromeRenderViewHostTestHarness {
+class AutofillManagerTest : public testing::Test {
  public:
   virtual void SetUp() OVERRIDE {
-    ChromeRenderViewHostTestHarness::SetUp();
-
-    autofill::PersonalDataManagerFactory::GetInstance()->SetTestingFactory(
-        profile(), TestPersonalDataManager::Build);
-
-
-    autofill::TabAutofillManagerDelegate::CreateForWebContents(web_contents());
-
-    personal_data_.SetBrowserContext(profile());
-    personal_data_.SetPrefService(profile()->GetPrefs());
-    autofill_driver_.reset(new MockAutofillDriver(web_contents()));
+    autofill_delegate_.SetPrefs(test::PrefServiceForTesting());
+    personal_data_.set_database(autofill_delegate_.GetDatabase());
+    personal_data_.SetPrefService(autofill_delegate_.GetPrefs());
+    autofill_driver_.reset(new MockAutofillDriver());
     autofill_manager_.reset(new TestAutofillManager(
-        autofill_driver_.get(),
-        autofill::TabAutofillManagerDelegate::FromWebContents(web_contents()),
-        &personal_data_));
+        autofill_driver_.get(), &autofill_delegate_, &personal_data_));
 
     external_delegate_.reset(new TestAutofillExternalDelegate(
-        web_contents(),
         autofill_manager_.get(),
         autofill_driver_.get()));
     autofill_manager_->SetExternalDelegate(external_delegate_.get());
@@ -717,16 +603,14 @@ class AutofillManagerTest : public ChromeRenderViewHostTestHarness {
 
   virtual void TearDown() OVERRIDE {
     // Order of destruction is important as AutofillManager relies on
-    // PersonalDataManager to be around when it gets destroyed. Also, a real
-    // AutofillManager is tied to the lifetime of the WebContents, so it must
-    // be destroyed at the destruction of the WebContents.
+    // PersonalDataManager to be around when it gets destroyed.
     autofill_manager_.reset();
     autofill_driver_.reset();
-    ChromeRenderViewHostTestHarness::TearDown();
 
-    // Remove the BrowserContext so TestPersonalDataManager does not need to
-    // care about removing self as an observer in destruction.
-    personal_data_.SetBrowserContext(NULL);
+    // Remove the AutofillWebDataService so TestPersonalDataManager does not
+    // need to care about removing self as an observer in destruction.
+    personal_data_.set_database(scoped_refptr<AutofillWebDataService>(NULL));
+    personal_data_.SetPrefService(NULL);
   }
 
   void GetAutofillSuggestions(int query_id,
@@ -765,7 +649,7 @@ class AutofillManagerTest : public ChromeRenderViewHostTestHarness {
   }
 
   void FormSubmitted(const FormData& form) {
-    autofill_manager_->ResetMessageLoopRunner();
+    autofill_manager_->ResetRunLoop();
     if (autofill_manager_->OnFormSubmitted(form, base::TimeTicks::Now()))
       autofill_manager_->WaitForAsyncFormSubmit();
   }
@@ -774,7 +658,9 @@ class AutofillManagerTest : public ChromeRenderViewHostTestHarness {
                             const FormData& form,
                             const FormFieldData& field,
                             int unique_id) {
-    autofill_manager_->OnFillAutofillFormData(query_id, form, field, unique_id);
+    autofill_manager_->FillOrPreviewForm(
+        AutofillDriver::FORM_DATA_ACTION_FILL, query_id, form, field,
+        unique_id);
   }
 
   // Calls |autofill_manager_->OnFillAutofillFormData()| with the specified
@@ -788,9 +674,9 @@ class AutofillManagerTest : public ChromeRenderViewHostTestHarness {
                                           int unique_id,
                                           int* response_query_id,
                                           FormData* response_data) {
-    EXPECT_CALL(*autofill_driver_, SendFormDataToRenderer(_, _)).
+    EXPECT_CALL(*autofill_driver_, SendFormDataToRenderer(_, _, _)).
         WillOnce((DoAll(testing::SaveArg<0>(response_query_id),
-                        testing::SaveArg<1>(response_data))));
+                        testing::SaveArg<2>(response_data))));
     FillAutofillFormData(input_query_id, input_form, input_field, unique_id);
   }
 
@@ -799,14 +685,12 @@ class AutofillManagerTest : public ChromeRenderViewHostTestHarness {
   }
 
  protected:
+  base::MessageLoop message_loop_;
+  TestAutofillManagerDelegate autofill_delegate_;
   scoped_ptr<MockAutofillDriver> autofill_driver_;
   scoped_ptr<TestAutofillManager> autofill_manager_;
   scoped_ptr<TestAutofillExternalDelegate> external_delegate_;
   TestPersonalDataManager personal_data_;
-
-  // Used when we want an off the record profile. This will store the original
-  // profile from which the off the record profile is derived.
-  scoped_ptr<Profile> other_browser_context_;
 };
 
 class TestFormStructure : public FormStructure {
@@ -999,8 +883,7 @@ TEST_F(AutofillManagerTest, GetProfileSuggestionsMethodGet) {
   };
   base::string16 expected_labels[] = {base::string16()};
   base::string16 expected_icons[] = {base::string16()};
-  int expected_unique_ids[] =
-      {WebKit::WebAutofillClient::MenuItemIDWarningMessage};
+  int expected_unique_ids[] = {POPUP_ITEM_ID_WARNING_MESSAGE};
   external_delegate_->CheckSuggestions(
       kDefaultPageID, arraysize(expected_values), expected_values,
       expected_labels, expected_icons, expected_unique_ids);
@@ -1681,8 +1564,8 @@ TEST_F(AutofillManagerTest, FillAddressForm) {
 // Test that we correctly fill an address form from an auxiliary profile.
 TEST_F(AutofillManagerTest, FillAddressFormFromAuxiliaryProfile) {
   personal_data_.ClearAutofillProfiles();
-  PrefService* prefs = user_prefs::UserPrefs::Get(profile());
-  prefs->SetBoolean(::autofill::prefs::kAutofillAuxiliaryProfilesEnabled, true);
+  autofill_delegate_.GetPrefs()->SetBoolean(
+      ::autofill::prefs::kAutofillAuxiliaryProfilesEnabled, true);
   personal_data_.CreateTestAuxiliaryProfiles();
 
   // Set up our form data.
@@ -2605,7 +2488,7 @@ TEST_F(AutofillManagerTest, FormSubmittedWithDefaultValues) {
 // Checks that resetting the auxiliary profile enabled preference does the right
 // thing on all platforms.
 TEST_F(AutofillManagerTest, AuxiliaryProfilesReset) {
-  PrefService* prefs = user_prefs::UserPrefs::Get(profile());
+  PrefService* prefs = autofill_delegate_.GetPrefs();
 #if defined(OS_MACOSX) || defined(OS_ANDROID)
   // Auxiliary profiles is implemented on Mac and Android only.
   // OSX: enables Mac Address Book integration.
@@ -2961,18 +2844,6 @@ TEST_F(AutofillManagerTest, RemoveProfileVariant) {
   // update these expectations.
   // http://crbug.com/124211
   EXPECT_TRUE(autofill_manager_->GetProfileWithGUID(guid.c_str()));
-}
-
-TEST_F(AutofillManagerTest, DisabledAutofillDispatchesError) {
-  EXPECT_TRUE(autofill_manager_->request_autocomplete_results().empty());
-
-  autofill_manager_->set_autofill_enabled(false);
-  autofill_manager_->OnRequestAutocomplete(FormData(),
-                                           GURL());
-
-  EXPECT_EQ(1U, autofill_manager_->request_autocomplete_results().size());
-  EXPECT_EQ(WebFormElement::AutocompleteResultErrorDisabled,
-            autofill_manager_->request_autocomplete_results()[0].first);
 }
 
 namespace {

@@ -28,7 +28,7 @@ OpenSLESInputStream::OpenSLESInputStream(AudioManagerAndroid* audio_manager,
       active_buffer_index_(0),
       buffer_size_bytes_(0),
       started_(false) {
-  DVLOG(2) << "OpenSLESInputStream::OpenSLESInputStream()";
+  DVLOG(2) << __PRETTY_FUNCTION__;
   format_.formatType = SL_DATAFORMAT_PCM;
   format_.numChannels = static_cast<SLuint32>(params.channels());
   // Provides sampling rate in milliHertz to OpenSLES.
@@ -49,7 +49,7 @@ OpenSLESInputStream::OpenSLESInputStream(AudioManagerAndroid* audio_manager,
 }
 
 OpenSLESInputStream::~OpenSLESInputStream() {
-  DVLOG(2) << "OpenSLESInputStream::~OpenSLESInputStream()";
+  DVLOG(2) << __PRETTY_FUNCTION__;
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!recorder_object_.Get());
   DCHECK(!engine_object_.Get());
@@ -59,7 +59,7 @@ OpenSLESInputStream::~OpenSLESInputStream() {
 }
 
 bool OpenSLESInputStream::Open() {
-  DVLOG(2) << "OpenSLESInputStream::Open()";
+  DVLOG(2) << __PRETTY_FUNCTION__;
   DCHECK(thread_checker_.CalledOnValidThread());
   if (engine_object_.Get())
     return false;
@@ -73,7 +73,7 @@ bool OpenSLESInputStream::Open() {
 }
 
 void OpenSLESInputStream::Start(AudioInputCallback* callback) {
-  DVLOG(2) << "OpenSLESInputStream::Start()";
+  DVLOG(2) << __PRETTY_FUNCTION__;
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(callback);
   DCHECK(recorder_);
@@ -116,7 +116,7 @@ void OpenSLESInputStream::Start(AudioInputCallback* callback) {
 }
 
 void OpenSLESInputStream::Stop() {
-  DVLOG(2) << "OpenSLESInputStream::Stop()";
+  DVLOG(2) << __PRETTY_FUNCTION__;
   DCHECK(thread_checker_.CalledOnValidThread());
   if (!started_)
     return;
@@ -132,23 +132,18 @@ void OpenSLESInputStream::Stop() {
       (*simple_buffer_queue_)->Clear(simple_buffer_queue_));
 
   started_ = false;
+  callback_ = NULL;
 }
 
 void OpenSLESInputStream::Close() {
-  DVLOG(2) << "OpenSLESInputStream::Close()";
+  DVLOG(2) << __PRETTY_FUNCTION__;
   DCHECK(thread_checker_.CalledOnValidThread());
 
   // Stop the stream if it is still recording.
   Stop();
   {
+    // TODO(henrika): Do we need to hold the lock here?
     base::AutoLock lock(lock_);
-
-    // TODO(henrika): we use |callback_| in Close() but |callback_| is set
-    // in Start(). Hence, it should be cleared in Stop() and not used here.
-    if (callback_) {
-      callback_->OnClose(this);
-      callback_ = NULL;
-    }
 
     // Destroy the buffer queue recorder object and invalidate all associated
     // interfaces.
@@ -170,7 +165,9 @@ double OpenSLESInputStream::GetMaxVolume() {
   return 0.0;
 }
 
-void OpenSLESInputStream::SetVolume(double volume) { NOTIMPLEMENTED(); }
+void OpenSLESInputStream::SetVolume(double volume) {
+  NOTIMPLEMENTED();
+}
 
 double OpenSLESInputStream::GetVolume() {
   NOTIMPLEMENTED();

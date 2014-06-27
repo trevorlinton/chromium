@@ -120,6 +120,22 @@ std::string GetSSIDFromProperties(const base::DictionaryValue& properties,
   return ssid;
 }
 
+std::string GetNetworkIdFromProperties(
+    const base::DictionaryValue& properties) {
+  if (properties.empty())
+    return "EmptyProperties";
+  std::string result;
+  if (properties.GetStringWithoutPathExpansion(shill::kGuidProperty, &result))
+    return result;
+  if (properties.GetStringWithoutPathExpansion(shill::kSSIDProperty, &result))
+    return result;
+  if (properties.GetStringWithoutPathExpansion(shill::kNameProperty, &result))
+    return result;
+  std::string type = "UnknownType";
+  properties.GetStringWithoutPathExpansion(shill::kTypeProperty, &type);
+  return "Unidentified " + type;
+}
+
 std::string GetNameFromProperties(const std::string& service_path,
                                   const base::DictionaryValue& properties) {
   std::string name;
@@ -135,6 +151,10 @@ std::string GetNameFromProperties(const std::string& service_path,
 
   std::string type;
   properties.GetStringWithoutPathExpansion(shill::kTypeProperty, &type);
+  if (type.empty()) {
+    NET_LOG_ERROR("GetNameFromProperties: No type", service_path);
+    return validated_name;
+  }
   if (!NetworkTypePattern::WiFi().MatchesType(type))
     return validated_name;
 
@@ -222,8 +242,9 @@ bool CopyIdentifyingProperties(const base::DictionaryValue& service_properties,
     // with the keys "Provider.Type" and "Provider.Host".
     const base::DictionaryValue* provider_properties = NULL;
     if (!service_properties.GetDictionaryWithoutPathExpansion(
-             shill::kProviderProperty, &provider_properties)) {
-      NET_LOG_ERROR("CopyIdentifyingProperties", "Missing VPN provider dict");
+            shill::kProviderProperty, &provider_properties)) {
+      NET_LOG_ERROR("Missing VPN provider dict",
+                    GetNetworkIdFromProperties(service_properties));
       return false;
     }
     std::string vpn_provider_type;
@@ -246,9 +267,37 @@ bool CopyIdentifyingProperties(const base::DictionaryValue& service_properties,
     NOTREACHED() << "Unsupported network type " << type;
     success = false;
   }
-  if (!success)
-    NET_LOG_ERROR("CopyIdentifyingProperties", "Missing required properties");
+  if (!success) {
+    NET_LOG_ERROR("Missing required properties",
+                  GetNetworkIdFromProperties(service_properties));
+  }
   return success;
+}
+
+bool DoIdentifyingPropertiesMatch(const base::DictionaryValue& properties_a,
+                                  const base::DictionaryValue& properties_b) {
+  base::DictionaryValue identifying_a;
+  if (!CopyIdentifyingProperties(properties_a, &identifying_a))
+    return false;
+  base::DictionaryValue identifying_b;
+  if (!CopyIdentifyingProperties(properties_b, &identifying_b))
+    return false;
+
+  return identifying_a.Equals(&identifying_b);
+}
+
+bool IsPassphraseKey(const std::string& key) {
+  return key == shill::kEapPrivateKeyPasswordProperty ||
+      key == shill::kEapPasswordProperty ||
+      key == shill::kL2tpIpsecPasswordProperty ||
+      key == shill::kOpenVPNPasswordProperty ||
+      key == shill::kOpenVPNAuthUserPassProperty ||
+      key == shill::kOpenVPNTLSAuthContentsProperty ||
+      key == shill::kPassphraseProperty ||
+      key == shill::kOpenVPNOTPProperty ||
+      key == shill::kEapPrivateKeyProperty ||
+      key == shill::kEapPinProperty ||
+      key == shill::kApnPasswordProperty;
 }
 
 }  // namespace shill_property_util
@@ -268,7 +317,8 @@ enum NetworkTypeBitFlag {
   kNetworkTypeWimax = 1 << 2,
   kNetworkTypeCellular = 1 << 3,
   kNetworkTypeVPN = 1 << 4,
-  kNetworkTypeEthernetEap = 1 << 5
+  kNetworkTypeEthernetEap = 1 << 5,
+  kNetworkTypeBluetooth = 1 << 6
 };
 
 struct ShillToBitFlagEntry {
@@ -280,7 +330,8 @@ struct ShillToBitFlagEntry {
   { shill::kTypeWifi, kNetworkTypeWifi },
   { shill::kTypeWimax, kNetworkTypeWimax },
   { shill::kTypeCellular, kNetworkTypeCellular },
-  { shill::kTypeVPN, kNetworkTypeVPN }
+  { shill::kTypeVPN, kNetworkTypeVPN },
+  { shill::kTypeBluetooth, kNetworkTypeBluetooth }
 };
 
 NetworkTypeBitFlag ShillNetworkTypeToFlag(const std::string& shill_type) {

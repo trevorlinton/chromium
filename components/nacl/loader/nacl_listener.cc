@@ -24,7 +24,8 @@
 #include "ipc/ipc_switches.h"
 #include "ipc/ipc_sync_channel.h"
 #include "ipc/ipc_sync_message_filter.h"
-#include "native_client/src/trusted/service_runtime/sel_main_chrome.h"
+#include "native_client/src/public/chrome_main.h"
+#include "native_client/src/public/nacl_app.h"
 #include "native_client/src/trusted/validator/nacl_file_info.h"
 
 #if defined(OS_POSIX)
@@ -32,7 +33,9 @@
 #endif
 
 #if defined(OS_LINUX)
+#include "components/nacl/loader/nonsfi/nonsfi_main.h"
 #include "content/public/common/child_process_sandbox_support_linux.h"
+#include "ppapi/proxy/plugin_main_irt.h"
 #endif
 
 #if defined(OS_WIN)
@@ -106,6 +109,28 @@ int AttachDebugExceptionHandler(const void* info, size_t info_size) {
 }
 
 #endif
+
+// Creates the PPAPI IPC channel between the NaCl IRT and the host
+// (browser/renderer) process, and starts to listen it on the thread where
+// the given message_loop_proxy runs.
+// Also, creates and sets the corresponding NaClDesc to the given nap with
+// the FD #.
+void SetUpIPCAdapter(IPC::ChannelHandle* handle,
+                     scoped_refptr<base::MessageLoopProxy> message_loop_proxy,
+                     struct NaClApp* nap,
+                     int nacl_fd) {
+  scoped_refptr<NaClIPCAdapter> ipc_adapter(
+      new NaClIPCAdapter(*handle, message_loop_proxy.get()));
+  ipc_adapter->ConnectChannel();
+#if defined(OS_POSIX)
+  handle->socket =
+      base::FileDescriptor(ipc_adapter->TakeClientFileDescriptor(), true);
+#endif
+
+  // Pass a NaClDesc to the untrusted side. This will hold a ref to the
+  // NaClIPCAdapter.
+  NaClAppSetDesc(nap, nacl_fd, ipc_adapter->MakeNaClDesc());
+}
 
 }  // namespace
 
@@ -232,41 +257,99 @@ bool NaClListener::OnMessageReceived(const IPC::Message& msg) {
 }
 
 void NaClListener::OnStart(const nacl::NaClStartParams& params) {
+#if defined(OS_LINUX) || defined(OS_MACOSX)
+  int urandom_fd = dup(base::GetUrandomFD());
+  if (urandom_fd < 0) {
+    LOG(ERROR) << "Failed to dup() the urandom FD";
+    return;
+  }
+  NaClChromeMainSetUrandomFd(urandom_fd);
+#endif
+
+  NaClChromeMainInit();
   struct NaClChromeMainArgs *args = NaClChromeMainArgsCreate();
   if (args == NULL) {
     LOG(ERROR) << "NaClChromeMainArgsCreate() failed";
     return;
   }
 
-  if (params.enable_ipc_proxy) {
-    // Create the initial PPAPI IPC channel between the NaCl IRT and the
-    // browser process. The IRT uses this channel to communicate with the
-    // browser and to create additional IPC channels to renderer processes.
-    IPC::ChannelHandle handle =
-        IPC::Channel::GenerateVerifiedChannelID("nacl");
-    scoped_refptr<NaClIPCAdapter> ipc_adapter(
-        new NaClIPCAdapter(handle, io_thread_.message_loop_proxy().get()));
-    ipc_adapter->ConnectChannel();
-
-    // Pass a NaClDesc to the untrusted side. This will hold a ref to the
-    // NaClIPCAdapter.
-    args->initial_ipc_desc = ipc_adapter->MakeNaClDesc();
-#if defined(OS_POSIX)
-    handle.socket = base::FileDescriptor(
-        ipc_adapter->TakeClientFileDescriptor(), true);
-#endif
-    if (!Send(new NaClProcessHostMsg_PpapiChannelCreated(handle)))
-      LOG(ERROR) << "Failed to send IPC channel handle to NaClProcessHost.";
+  struct NaClApp *nap = NaClAppCreate();
+  if (nap == NULL) {
+    LOG(ERROR) << "NaClAppCreate() failed";
+    return;
   }
+
+  IPC::ChannelHandle browser_handle;
+  IPC::ChannelHandle ppapi_renderer_handle;
+
+  if (params.enable_ipc_proxy) {
+    browser_handle = IPC::Channel::GenerateVerifiedChannelID("nacl");
+    ppapi_renderer_handle = IPC::Channel::GenerateVerifiedChannelID("nacl");
+
+#if defined(OS_LINUX)
+    if (params.uses_nonsfi_mode) {
+      // In non-SFI mode, we neither intercept nor rewrite the message using
+      // NaClIPCAdapter, and the channels are connected between the plugin and
+      // the hosts directly. So, the IPC::Channel instances will be created in
+      // the plugin side, because the IPC::Listener needs to live on the
+      // plugin's main thread. However, on initialization (i.e. before loading
+      // the plugin binary), the FD needs to be passed to the hosts. So, here
+      // we create raw FD pairs, and pass the client side FDs to the hosts,
+      // and the server side FDs to the plugin.
+      int browser_server_ppapi_fd;
+      int browser_client_ppapi_fd;
+      int renderer_server_ppapi_fd;
+      int renderer_client_ppapi_fd;
+      if (!IPC::SocketPair(
+              &browser_server_ppapi_fd, &browser_client_ppapi_fd) ||
+          !IPC::SocketPair(
+              &renderer_server_ppapi_fd, &renderer_client_ppapi_fd)) {
+        LOG(ERROR) << "Failed to create sockets for IPC.";
+        return;
+      }
+
+      // Set the plugin IPC channel FDs.
+      SetIPCFileDescriptors(
+          browser_server_ppapi_fd, renderer_server_ppapi_fd);
+
+      // Send back to the client side IPC channel FD to the host.
+      browser_handle.socket =
+          base::FileDescriptor(browser_client_ppapi_fd, true);
+      ppapi_renderer_handle.socket =
+          base::FileDescriptor(renderer_client_ppapi_fd, true);
+    } else {
+#endif
+      // Create the PPAPI IPC channels between the NaCl IRT and the host
+      // (browser/renderer) processes. The IRT uses these channels to
+      // communicate with the host and to initialize the IPC dispatchers.
+      SetUpIPCAdapter(&browser_handle, io_thread_.message_loop_proxy(),
+                      nap, NACL_CHROME_DESC_BASE);
+      SetUpIPCAdapter(&ppapi_renderer_handle, io_thread_.message_loop_proxy(),
+                      nap, NACL_CHROME_DESC_BASE + 1);
+#if defined(OS_LINUX)
+    }
+#endif
+  }
+
+  // The argument passed to GenerateVerifiedChannelID() here MUST be "nacl".
+  // Using an alternate channel name prevents the pipe from being created on
+  // Windows when the sandbox is enabled.
+  IPC::ChannelHandle trusted_renderer_handle =
+      IPC::Channel::GenerateVerifiedChannelID("nacl");
+  trusted_listener_ = new NaClTrustedListener(
+      trusted_renderer_handle, io_thread_.message_loop_proxy(),
+      &shutdown_event_);
+#if defined(OS_POSIX)
+  trusted_renderer_handle.socket = base::FileDescriptor(
+      trusted_listener_->TakeClientFileDescriptor(), true);
+#endif
+  if (!Send(new NaClProcessHostMsg_PpapiChannelsCreated(
+          browser_handle, ppapi_renderer_handle, trusted_renderer_handle)))
+    LOG(ERROR) << "Failed to send IPC channel handle to NaClProcessHost.";
 
   std::vector<nacl::FileDescriptor> handles = params.handles;
 
 #if defined(OS_LINUX) || defined(OS_MACOSX)
-  args->urandom_fd = dup(base::GetUrandomFD());
-  if (args->urandom_fd < 0) {
-    LOG(ERROR) << "Failed to dup() the urandom FD";
-    return;
-  }
   args->number_of_cores = number_of_cores_;
   args->create_memory_object_func = CreateMemoryObject;
 # if defined(OS_MACOSX)
@@ -319,6 +402,11 @@ void NaClListener::OnStart(const nacl::NaClStartParams& params) {
     // PNaCl because it might break existing NaCl apps, and this limit
     // is only useful if the dyncode syscalls are disabled.
     args->initial_nexe_max_code_bytes = 32 << 20;  // 32 MB
+
+    // Indicate that this is a PNaCl module.
+    // TODO(jvoung): Plumb through something indicating that this is PNaCl
+    // instead of relying on enable_dyncode_syscalls.
+    args->pnacl_mode = 1;
   }
 #if defined(OS_LINUX) || defined(OS_MACOSX)
   args->debug_stub_server_bound_socket_fd = nacl::ToNativeHandle(
@@ -331,6 +419,13 @@ void NaClListener::OnStart(const nacl::NaClStartParams& params) {
 #if defined(OS_LINUX)
   args->prereserved_sandbox_size = prereserved_sandbox_size_;
 #endif
-  NaClChromeMainStart(args);
+
+#if defined(OS_LINUX)
+  if (params.uses_nonsfi_mode) {
+    nacl::nonsfi::MainStart(args->imc_bootstrap_handle);
+    return;
+  }
+#endif
+  NaClChromeMainStartApp(nap, args);
   NOTREACHED();
 }

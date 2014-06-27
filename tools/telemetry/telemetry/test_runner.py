@@ -7,164 +7,182 @@
 Handles test configuration, but all the logic for
 actually running the test is in Test and PageRunner."""
 
-import copy
 import inspect
 import json
-import optparse
 import os
 import sys
 
 from telemetry import test
 from telemetry.core import browser_options
+from telemetry.core import command_line
 from telemetry.core import discover
 from telemetry.core import util
+from telemetry.page import page_test
+from telemetry.page import profile_creator
+from telemetry.util import find_dependencies
 
 
-class Command(object):
-  usage = ''
+class Deps(find_dependencies.FindDependenciesCommand):
+  """Prints all dependencies"""
 
-  @property
-  def name(self):
-    return self.__class__.__name__.lower()
-
-  @property
-  def description(self):
-    return self.__doc__
-
-  def CreateParser(self):
-    return optparse.OptionParser('%%prog %s %s' % (self.name, self.usage))
-
-  def AddCommandLineOptions(self, parser):
-    pass
-
-  def ProcessCommandLine(self, parser, options, args):
-    pass
-
-  def Run(self, options, args):
-    raise NotImplementedError()
+  def Run(self, args):
+    main_module = sys.modules['__main__']
+    args.positional_args.append(os.path.realpath(main_module.__file__))
+    return super(Deps, self).Run(args)
 
 
-class Help(Command):
+class Help(command_line.OptparseCommand):
   """Display help information"""
 
-  def Run(self, options, args):
-    print >> sys.stderr, ('usage: %s <command> [<options>]' % _GetScriptName())
+  def Run(self, args):
+    print >> sys.stderr, ('usage: %s <command> [<options>]' % _ScriptName())
     print >> sys.stderr, 'Available commands are:'
-    for command in COMMANDS:
-      print >> sys.stderr, '  %-10s %s' % (command.name, command.description)
+    for command in _Commands():
+      print >> sys.stderr, '  %-10s %s' % (
+          command.Name(), command.Description())
     return 0
 
 
-class List(Command):
+class List(command_line.OptparseCommand):
   """Lists the available tests"""
 
   usage = '[test_name] [<options>]'
 
-  def __init__(self):
-    super(List, self).__init__()
-    self._tests = None
-
-  def AddCommandLineOptions(self, parser):
+  @classmethod
+  def AddCommandLineArgs(cls, parser):
     parser.add_option('-j', '--json', action='store_true')
 
-  def ProcessCommandLine(self, parser, options, args):
-    if not args:
-      self._tests = _GetTests()
-    elif len(args) == 1:
-      self._tests = _MatchTestName(args[0])
+  @classmethod
+  def ProcessCommandLineArgs(cls, parser, args):
+    if not args.positional_args:
+      args.tests = _Tests()
+    elif len(args.positional_args) == 1:
+      args.tests = _MatchTestName(args.positional_args[0], exact_matches=False)
     else:
       parser.error('Must provide at most one test name.')
 
-  def Run(self, options, args):
-    if options.json:
+  def Run(self, args):
+    if args.json:
       test_list = []
-      for test_name, test_class in sorted(self._tests.items()):
+      for test_class in sorted(args.tests, key=lambda t: t.Name()):
         test_list.append({
-              'name': test_name,
-              'description': test_class.__doc__,
-              'enabled': test_class.enabled,
-              'options': test_class.options,
-            })
+            'name': test_class.Name(),
+            'description': test_class.Description(),
+            'options': test_class.options,
+        })
       print json.dumps(test_list)
     else:
-      print >> sys.stderr, 'Available tests are:'
-      _PrintTestList(self._tests)
+      _PrintTestList(args.tests)
     return 0
 
 
-class Run(Command):
+class Run(command_line.OptparseCommand):
   """Run one or more tests"""
 
-  usage = 'test_name [<options>]'
+  usage = 'test_name [page_set] [<options>]'
 
-  def __init__(self):
-    super(Run, self).__init__()
-    self._test = None
-
-  def CreateParser(self):
+  @classmethod
+  def CreateParser(cls):
     options = browser_options.BrowserFinderOptions()
-    parser = options.CreateParser('%%prog %s %s' % (self.name, self.usage))
+    parser = options.CreateParser('%%prog %s %s' % (cls.Name(), cls.usage))
     return parser
 
-  def AddCommandLineOptions(self, parser):
-    test.Test.AddCommandLineOptions(parser)
+  @classmethod
+  def AddCommandLineArgs(cls, parser):
+    test.AddCommandLineArgs(parser)
 
     # Allow tests to add their own command line options.
-    matching_tests = {}
+    matching_tests = []
     for arg in sys.argv[1:]:
-      matching_tests.update(_MatchTestName(arg))
-    for test_class in matching_tests.itervalues():
-      test_class.AddTestCommandLineOptions(parser)
+      matching_tests += _MatchTestName(arg)
 
-  def ProcessCommandLine(self, parser, options, args):
-    if len(args) != 1:
-      parser.error('Must provide one test name.')
+    if matching_tests:
+      # TODO(dtu): After move to argparse, add command-line args for all tests
+      # to subparser. Using subparsers will avoid duplicate arguments.
+      matching_test = matching_tests.pop()
+      matching_test.AddCommandLineArgs(parser)
+      # The test's options override the defaults!
+      matching_test.SetArgumentDefaults(parser)
 
-    input_test_name = args[0]
+  @classmethod
+  def ProcessCommandLineArgs(cls, parser, args):
+    if not args.positional_args:
+      _PrintTestList(_Tests())
+      sys.exit(-1)
+
+    input_test_name = args.positional_args[0]
     matching_tests = _MatchTestName(input_test_name)
     if not matching_tests:
       print >> sys.stderr, 'No test named "%s".' % input_test_name
       print >> sys.stderr
-      print >> sys.stderr, 'Available tests:'
-      _PrintTestList(_GetTests())
-      sys.exit(1)
+      _PrintTestList(_Tests())
+      sys.exit(-1)
+
     if len(matching_tests) > 1:
       print >> sys.stderr, 'Multiple tests named "%s".' % input_test_name
-      print >> sys.stderr
       print >> sys.stderr, 'Did you mean one of these?'
+      print >> sys.stderr
       _PrintTestList(matching_tests)
-      sys.exit(1)
+      sys.exit(-1)
 
-    self._test = matching_tests.popitem()[1]
+    test_class = matching_tests.pop()
+    if issubclass(test_class, page_test.PageTest):
+      if len(args.positional_args) < 2:
+        parser.error('Need to specify a page set for "%s".' % test_class.Name())
+      if len(args.positional_args) > 2:
+        parser.error('Too many arguments.')
+      page_set_path = args.positional_args[1]
+      if not os.path.exists(page_set_path):
+        parser.error('Page set not found.')
+      if not (os.path.isfile(page_set_path) and
+              os.path.splitext(page_set_path)[1] == '.json'):
+        parser.error('Page set is not a JSON file.')
 
-  def Run(self, options, args):
-    if not self._test.enabled:
-      print >> sys.stderr, 'TEST IS DISABLED. SKIPPING.'
-      return 0
-    return min(255, self._test().Run(copy.copy(options)))
+      class TestWrapper(test.Test):
+        test = test_class
+        page_set = page_set_path
+      test_class = TestWrapper
+    else:
+      if len(args.positional_args) > 1:
+        parser.error('Too many arguments.')
+
+    assert issubclass(test_class, test.Test), 'Trying to run a non-Test?!'
+
+    test_class.ProcessCommandLineArgs(parser, args)
+    test.ProcessCommandLineArgs(parser, args)
+
+    cls._test = test_class
+
+  def Run(self, args):
+    return min(255, self._test().Run(args))
 
 
-COMMANDS = [cls() for _, cls in inspect.getmembers(sys.modules[__name__])
-            if inspect.isclass(cls)
-            and cls is not Command and issubclass(cls, Command)]
-
-
-def _GetScriptName():
+def _ScriptName():
   return os.path.basename(sys.argv[0])
 
 
-def _GetTests():
-  # Lazy load and cache results.
-  if not hasattr(_GetTests, 'tests'):
-    base_dir = util.GetBaseDir()
-    tests = discover.DiscoverClasses(base_dir, base_dir, test.Test,
-                                     index_by_class_name=True)
-    tests = dict((test.GetName(), test) for test in tests.itervalues())
-    _GetTests.tests = tests
-  return _GetTests.tests
+def _Commands():
+  """Generates a list of all classes in this file that subclass Command."""
+  for _, cls in inspect.getmembers(sys.modules[__name__]):
+    if not inspect.isclass(cls):
+      continue
+    if not issubclass(cls, command_line.Command):
+      continue
+    yield cls
 
 
-def _MatchTestName(input_test_name):
+def _Tests():
+  base_dir = util.GetBaseDir()
+  tests = discover.DiscoverClasses(base_dir, base_dir, test.Test,
+                                   index_by_class_name=True).values()
+  page_tests = discover.DiscoverClasses(base_dir, base_dir, page_test.PageTest,
+                                        index_by_class_name=True).values()
+  page_tests = [test_class for test_class in page_tests
+                if not issubclass(test_class, profile_creator.ProfileCreator)]
+  return tests + page_tests
+
+
+def _MatchTestName(input_test_name, exact_matches=True):
   def _Matches(input_string, search_string):
     if search_string.startswith(input_string):
       return True
@@ -174,28 +192,47 @@ def _MatchTestName(input_test_name):
     return False
 
   # Exact matching.
-  if input_test_name in test_aliases:
-    exact_match = test_aliases[input_test_name]
-  else:
-    exact_match = input_test_name
-  if exact_match in _GetTests():
-    return {exact_match: _GetTests()[exact_match]}
+  if exact_matches:
+    # Don't add aliases to search dict, only allow exact matching for them.
+    if input_test_name in test_aliases:
+      exact_match = test_aliases[input_test_name]
+    else:
+      exact_match = input_test_name
+
+    for test_class in _Tests():
+      if exact_match == test_class.Name():
+        return [test_class]
 
   # Fuzzy matching.
-  return dict((test_name, test_class)
-      for test_name, test_class in _GetTests().iteritems()
-      if _Matches(input_test_name, test_name))
+  return [test_class for test_class in _Tests()
+          if _Matches(input_test_name, test_class.Name())]
 
 
 def _PrintTestList(tests):
-  for test_name, test_class in sorted(tests.items()):
-    if test_class.__doc__:
-      description = test_class.__doc__.splitlines()[0]
-      # Align the test names to the longest one.
-      format_string = '  %%-%ds %%s' % max(map(len, tests.iterkeys()))
-      print >> sys.stderr, format_string % (test_name, description)
-    else:
-      print >> sys.stderr, '  %s' % test_name
+  if not tests:
+    print >> sys.stderr, 'No tests found!'
+    return
+
+  # Align the test names to the longest one.
+  format_string = '  %%-%ds %%s' % max(len(t.Name()) for t in tests)
+
+  filtered_tests = [test_class for test_class in tests
+                    if issubclass(test_class, test.Test)]
+  if filtered_tests:
+    print >> sys.stderr, 'Available tests are:'
+    for test_class in sorted(filtered_tests, key=lambda t: t.Name()):
+      print >> sys.stderr, format_string % (
+          test_class.Name(), test_class.Description())
+    print >> sys.stderr
+
+  filtered_tests = [test_class for test_class in tests
+                    if issubclass(test_class, page_test.PageTest)]
+  if filtered_tests:
+    print >> sys.stderr, 'Available page tests are:'
+    for test_class in sorted(filtered_tests, key=lambda t: t.Name()):
+      print >> sys.stderr, format_string % (
+          test_class.Name(), test_class.Description())
+    print >> sys.stderr
 
 
 test_aliases = {}
@@ -213,24 +250,26 @@ def Main():
       break
 
   # Validate and interpret the command name.
-  commands = [command for command in COMMANDS
-              if command.name.startswith(command_name)]
+  commands = [command for command in _Commands()
+              if command.Name().startswith(command_name)]
   if len(commands) > 1:
     print >> sys.stderr, ('"%s" is not a %s command. Did you mean one of these?'
-                          % (command_name, _GetScriptName()))
+                          % (command_name, _ScriptName()))
     for command in commands:
-      print >> sys.stderr, '  %-10s %s' % (command.name, command.description)
+      print >> sys.stderr, '  %-10s %s' % (
+          command.Name(), command.Description())
     return 1
   if commands:
     command = commands[0]
   else:
-    command = Run()
+    command = Run
 
   # Parse and run the command.
   parser = command.CreateParser()
-  command.AddCommandLineOptions(parser)
+  command.AddCommandLineArgs(parser)
   options, args = parser.parse_args()
   if commands:
     args = args[1:]
-  command.ProcessCommandLine(parser, options, args)
-  return command.Run(options, args)
+  options.positional_args = args
+  command.ProcessCommandLineArgs(parser, options)
+  return command().Run(options)

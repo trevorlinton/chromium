@@ -16,12 +16,12 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/content_browser_test.h"
+#include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "content/shell/browser/shell_content_browser_client.h"
 #include "content/shell/browser/shell_resource_dispatcher_host_delegate.h"
-#include "content/test/content_browser_test.h"
-#include "content/test/content_browser_test_utils.h"
 #include "net/base/test_data_directory.h"
 #include "net/test/spawned_test_server/spawned_test_server.h"
 #include "url/gurl.h"
@@ -42,10 +42,10 @@ class WorkerTest : public ContentBrowserTest {
                const std::string& test_case,
                const std::string& query) {
     GURL url = GetTestURL(test_case, query);
-    const string16 expected_title = ASCIIToUTF16("OK");
+    const base::string16 expected_title = base::ASCIIToUTF16("OK");
     TitleWatcher title_watcher(window->web_contents(), expected_title);
     NavigateToURL(window, url);
-    string16 final_title = title_watcher.WaitAndGetTitle();
+    base::string16 final_title = title_watcher.WaitAndGetTitle();
     EXPECT_EQ(expected_title, final_title);
   }
 
@@ -148,7 +148,7 @@ IN_PROC_BROWSER_TEST_F(WorkerTest, DISABLED_LimitPerPage) {
 #else
 IN_PROC_BROWSER_TEST_F(WorkerTest, LimitPerPage) {
 #endif
-  int max_workers_per_tab = WorkerServiceImpl::kMaxWorkersPerTabWhenSeparate;
+  int max_workers_per_tab = WorkerServiceImpl::kMaxWorkersPerFrameWhenSeparate;
   std::string query = base::StringPrintf("?count=%d", max_workers_per_tab + 1);
 
   GURL url = GetTestURL("many_shared_workers.html", query);
@@ -166,11 +166,11 @@ IN_PROC_BROWSER_TEST_F(WorkerTest, DISABLED_LimitTotal) {
 IN_PROC_BROWSER_TEST_F(WorkerTest, LimitTotal) {
 #endif
   if (base::SysInfo::AmountOfPhysicalMemoryMB() < 8192) {
-    LOG(INFO) << "WorkerTest.LimitTotal not running because it needs 8 GB RAM.";
+    VLOG(0) << "WorkerTest.LimitTotal not running because it needs 8 GB RAM.";
     return;
   }
 
-  int max_workers_per_tab = WorkerServiceImpl::kMaxWorkersPerTabWhenSeparate;
+  int max_workers_per_tab = WorkerServiceImpl::kMaxWorkersPerFrameWhenSeparate;
   int total_workers = WorkerServiceImpl::kMaxWorkersWhenSeparate;
 
   std::string query = base::StringPrintf("?count=%d", max_workers_per_tab);
@@ -208,7 +208,7 @@ IN_PROC_BROWSER_TEST_F(WorkerTest, WorkerClose) {
 IN_PROC_BROWSER_TEST_F(WorkerTest, DISABLED_QueuedSharedWorkerShutdown) {
   // Tests to make sure that queued shared workers are started up when shared
   // workers shut down.
-  int max_workers_per_tab = WorkerServiceImpl::kMaxWorkersPerTabWhenSeparate;
+  int max_workers_per_tab = WorkerServiceImpl::kMaxWorkersPerFrameWhenSeparate;
   std::string query = base::StringPrintf("?count=%d", max_workers_per_tab);
   RunTest("queued_shared_worker_shutdown.html", query);
   ASSERT_TRUE(WaitForWorkerProcessCount(max_workers_per_tab));
@@ -220,7 +220,7 @@ IN_PROC_BROWSER_TEST_F(WorkerTest, DISABLED_QueuedSharedWorkerShutdown) {
 IN_PROC_BROWSER_TEST_F(WorkerTest, DISABLED_MultipleTabsQueuedSharedWorker) {
   // Tests to make sure that only one instance of queued shared workers are
   // started up even when those instances are on multiple tabs.
-  int max_workers_per_tab = WorkerServiceImpl::kMaxWorkersPerTabWhenSeparate;
+  int max_workers_per_tab = WorkerServiceImpl::kMaxWorkersPerFrameWhenSeparate;
   std::string query = base::StringPrintf("?count=%d", max_workers_per_tab + 1);
   GURL url = GetTestURL("many_shared_workers.html", query);
   NavigateToURL(shell(), url);
@@ -243,7 +243,7 @@ IN_PROC_BROWSER_TEST_F(WorkerTest, DISABLED_MultipleTabsQueuedSharedWorker) {
 IN_PROC_BROWSER_TEST_F(WorkerTest, DISABLED_QueuedSharedWorkerStartedFromOtherTab) {
   // Tests to make sure that queued shared workers are started up when
   // an instance is launched from another tab.
-  int max_workers_per_tab = WorkerServiceImpl::kMaxWorkersPerTabWhenSeparate;
+  int max_workers_per_tab = WorkerServiceImpl::kMaxWorkersPerFrameWhenSeparate;
   std::string query = base::StringPrintf("?count=%d", max_workers_per_tab + 1);
   GURL url = GetTestURL("many_shared_workers.html", query);
   NavigateToURL(shell(), url);
@@ -275,10 +275,10 @@ IN_PROC_BROWSER_TEST_F(WorkerTest, WebSocketSharedWorker) {
 
   // Run test.
   Shell* window = shell();
-  const string16 expected_title = ASCIIToUTF16("OK");
+  const base::string16 expected_title = base::ASCIIToUTF16("OK");
   TitleWatcher title_watcher(window->web_contents(), expected_title);
   NavigateToURL(window, url);
-  string16 final_title = title_watcher.WaitAndGetTitle();
+  base::string16 final_title = title_watcher.WaitAndGetTitle();
   EXPECT_EQ(expected_title, final_title);
 }
 

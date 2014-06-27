@@ -39,7 +39,7 @@ DownloadInProgressDialogView::DownloadInProgressDialogView(
     : app_modal_(app_modal),
       callback_(callback),
       message_box_view_(NULL) {
-  string16 explanation_text;
+  base::string16 explanation_text;
   switch (dialog_type) {
     case Browser::DOWNLOAD_CLOSE_BROWSER_SHUTDOWN:
       if (download_count == 1) {
@@ -90,7 +90,7 @@ int DownloadInProgressDialogView::GetDefaultDialogButton() const {
   return ui::DIALOG_BUTTON_CANCEL;
 }
 
-string16 DownloadInProgressDialogView::GetDialogButtonLabel(
+base::string16 DownloadInProgressDialogView::GetDialogButtonLabel(
     ui::DialogButton button) const {
   return (button == ui::DIALOG_BUTTON_OK) ?
       ok_button_text_ : cancel_button_text_;
@@ -110,7 +110,7 @@ ui::ModalType DownloadInProgressDialogView::GetModalType() const {
   return app_modal_ ? ui::MODAL_TYPE_SYSTEM : ui::MODAL_TYPE_WINDOW;
 }
 
-string16 DownloadInProgressDialogView::GetWindowTitle() const {
+base::string16 DownloadInProgressDialogView::GetWindowTitle() const {
   return title_text_;
 }
 

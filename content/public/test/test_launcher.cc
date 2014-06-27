@@ -60,6 +60,7 @@ const char kPreTestPrefix[] = "PRE_";
 const char kManualTestPrefix[] = "MANUAL_";
 
 TestLauncherDelegate* g_launcher_delegate;
+ContentMainParams* g_params;
 
 std::string RemoveAnyPrePrefixes(const std::string& test_name) {
   std::string result(test_name);
@@ -69,17 +70,42 @@ std::string RemoveAnyPrePrefixes(const std::string& test_name) {
 
 void PrintUsage() {
   fprintf(stdout,
-      "Runs tests using the gtest framework, each test being run in its own\n"
-      "process.  Any gtest flags can be specified.\n"
-      "  --single_process\n"
-      "    Runs the tests and the launcher in the same process. Useful for \n"
-      "    debugging a specific test in a debugger.\n"
-      "  --single-process\n"
-      "    Same as above, and also runs Chrome in single-process mode.\n"
-      "  --help\n"
-      "    Shows this message.\n"
-      "  --gtest_help\n"
-      "    Shows the gtest help message.\n");
+          "Runs tests using the gtest framework, each batch of tests being\n"
+          "run in their own process. Supported command-line flags:\n"
+          "\n"
+          " Common flags:\n"
+          "  --gtest_filter=...\n"
+          "    Runs a subset of tests (see --gtest_help for more info).\n"
+          "\n"
+          "  --help\n"
+          "    Shows this message.\n"
+          "\n"
+          "  --gtest_help\n"
+          "    Shows the gtest help message.\n"
+          "\n"
+          "  --test-launcher-jobs=N\n"
+          "    Sets the number of parallel test jobs to N.\n"
+          "\n"
+          "  --single_process\n"
+          "    Runs the tests and the launcher in the same process. Useful\n"
+          "    for debugging a specific test in a debugger.\n"
+          "\n"
+          " Other flags:\n"
+          "  --test-launcher-retry-limit=N\n"
+          "    Sets the limit of test retries on failures to N.\n"
+          "\n"
+          "  --test-launcher-summary-output=PATH\n"
+          "    Saves a JSON machine-readable summary of the run.\n"
+          "\n"
+          "  --test-launcher-print-test-stdio=auto|always|never\n"
+          "    Controls when full test output is printed.\n"
+          "    auto means to print it when the test failed.\n"
+          "\n"
+          "  --test-launcher-total-shards=N\n"
+          "    Sets the total number of shards to N.\n"
+          "\n"
+          "  --test-launcher-shard-index=N\n"
+          "    Sets the shard index to run to N (from 0 to TOTAL - 1).\n");
 }
 
 // Implementation of base::TestLauncherDelegate. This is also a test launcher,
@@ -93,10 +119,6 @@ class WrapperTestLauncherDelegate : public base::TestLauncherDelegate {
   }
 
   // base::TestLauncherDelegate:
-  virtual void OnTestIterationStarting() OVERRIDE;
-  virtual std::string GetTestNameForFiltering(
-      const testing::TestCase* test_case,
-      const testing::TestInfo* test_info) OVERRIDE;
   virtual bool ShouldRunTest(const testing::TestCase* test_case,
                              const testing::TestInfo* test_info) OVERRIDE;
   virtual size_t RunTests(base::TestLauncher* test_launcher,
@@ -149,18 +171,6 @@ class WrapperTestLauncherDelegate : public base::TestLauncherDelegate {
   DISALLOW_COPY_AND_ASSIGN(WrapperTestLauncherDelegate);
 };
 
-void WrapperTestLauncherDelegate::OnTestIterationStarting() {
-  dependent_test_map_.clear();
-  user_data_dir_map_.clear();
-}
-
-std::string WrapperTestLauncherDelegate::GetTestNameForFiltering(
-    const testing::TestCase* test_case,
-    const testing::TestInfo* test_info) {
-  return RemoveAnyPrePrefixes(
-      std::string(test_case->name()) + "." + test_info->name());
-}
-
 bool WrapperTestLauncherDelegate::ShouldRunTest(
     const testing::TestCase* test_case,
     const testing::TestInfo* test_info) {
@@ -192,6 +202,10 @@ std::string GetPreTestName(const std::string& full_name) {
 size_t WrapperTestLauncherDelegate::RunTests(
     base::TestLauncher* test_launcher,
     const std::vector<std::string>& test_names) {
+  dependent_test_map_.clear();
+  reverse_dependent_test_map_.clear();
+  user_data_dir_map_.clear();
+
   // Number of additional tests to run because of dependencies.
   size_t additional_tests_to_run_count = 0;
 
@@ -222,8 +236,8 @@ size_t WrapperTestLauncherDelegate::RunTests(
 
     if (!ContainsKey(user_data_dir_map_, full_name)) {
       base::FilePath temp_dir;
-      CHECK(file_util::CreateTemporaryDirInDir(
-                temp_dir_.path(), FILE_PATH_LITERAL("d"), &temp_dir));
+      CHECK(base::CreateTemporaryDirInDir(temp_dir_.path(),
+                                          FILE_PATH_LITERAL("d"), &temp_dir));
       user_data_dir_map_[full_name] = temp_dir;
     }
 
@@ -278,8 +292,8 @@ size_t WrapperTestLauncherDelegate::RetryTests(
     std::string test_name_no_pre(RemoveAnyPrePrefixes(full_name));
     if (!ContainsKey(user_data_dir_map_, test_name_no_pre)) {
       base::FilePath temp_dir;
-      CHECK(file_util::CreateTemporaryDirInDir(
-                temp_dir_.path(), FILE_PATH_LITERAL("d"), &temp_dir));
+      CHECK(base::CreateTemporaryDirInDir(temp_dir_.path(),
+                                          FILE_PATH_LITERAL("d"), &temp_dir));
       user_data_dir_map_[test_name_no_pre] = temp_dir;
     }
 
@@ -399,20 +413,6 @@ void WrapperTestLauncherDelegate::GTestCallback(
   test_launcher->OnTestFinished(result);
 }
 
-bool GetSwitchValueAsInt(const std::string& switch_name, int* result) {
-  if (!CommandLine::ForCurrentProcess()->HasSwitch(switch_name))
-    return true;
-
-  std::string switch_value =
-      CommandLine::ForCurrentProcess()->GetSwitchValueASCII(switch_name);
-  if (!base::StringToInt(switch_value, result) || *result < 1) {
-    LOG(ERROR) << "Invalid value for " << switch_name << ": " << switch_value;
-    return false;
-  }
-
-  return true;
-}
-
 }  // namespace
 
 const char kHelpFlag[]   = "help";
@@ -426,36 +426,6 @@ const char kSingleProcessTestsFlag[]   = "single_process";
 
 
 TestLauncherDelegate::~TestLauncherDelegate() {
-}
-
-bool ShouldRunContentMain() {
-#if defined(OS_WIN) || defined(OS_LINUX)
-  CommandLine* command_line = CommandLine::ForCurrentProcess();
-  return command_line->HasSwitch(switches::kProcessType) ||
-         command_line->HasSwitch(kLaunchAsBrowser);
-#else
-  return false;
-#endif  // defined(OS_WIN) || defined(OS_LINUX)
-}
-
-int RunContentMain(int argc, char** argv,
-                   TestLauncherDelegate* launcher_delegate) {
-#if defined(OS_WIN)
-  sandbox::SandboxInterfaceInfo sandbox_info = {0};
-  InitializeSandboxInfo(&sandbox_info);
-  scoped_ptr<ContentMainDelegate> chrome_main_delegate(
-      launcher_delegate->CreateContentMainDelegate());
-  return ContentMain(GetModuleHandle(NULL),
-                     &sandbox_info,
-                     chrome_main_delegate.get());
-#elif defined(OS_LINUX)
-  scoped_ptr<ContentMainDelegate> chrome_main_delegate(
-      launcher_delegate->CreateContentMainDelegate());
-  return ContentMain(argc, const_cast<const char**>(argv),
-                     chrome_main_delegate.get());
-#endif  // defined(OS_WIN)
-  NOTREACHED();
-  return 0;
 }
 
 int LaunchTests(TestLauncherDelegate* launcher_delegate,
@@ -473,51 +443,66 @@ int LaunchTests(TestLauncherDelegate* launcher_delegate,
     return 0;
   }
 
+  scoped_ptr<ContentMainDelegate> chrome_main_delegate(
+      launcher_delegate->CreateContentMainDelegate());
+  ContentMainParams params(chrome_main_delegate.get());
+
+#if defined(OS_WIN)
+  sandbox::SandboxInterfaceInfo sandbox_info = {0};
+  InitializeSandboxInfo(&sandbox_info);
+
+  params.instance = GetModuleHandle(NULL);
+  params.sandbox_info = &sandbox_info;
+#elif !defined(OS_ANDROID)
+  params.argc = argc;
+  params.argv = const_cast<const char**>(argv);
+#endif  // defined(OS_WIN)
+
   if (command_line->HasSwitch(kSingleProcessTestsFlag) ||
       (command_line->HasSwitch(switches::kSingleProcess) &&
        command_line->HasSwitch(base::kGTestFilterFlag)) ||
       command_line->HasSwitch(base::kGTestListTestsFlag) ||
       command_line->HasSwitch(base::kGTestHelpFlag)) {
-#if defined(OS_WIN)
-    if (command_line->HasSwitch(kSingleProcessTestsFlag)) {
-      sandbox::SandboxInterfaceInfo sandbox_info;
-      InitializeSandboxInfo(&sandbox_info);
-      InitializeSandbox(&sandbox_info);
-    }
-#endif
+    g_params = &params;
     return launcher_delegate->RunTestSuite(argc, argv);
   }
 
-  if (ShouldRunContentMain())
-    return RunContentMain(argc, argv, launcher_delegate);
+#if !defined(OS_ANDROID)
+  if (command_line->HasSwitch(switches::kProcessType) ||
+      command_line->HasSwitch(kLaunchAsBrowser)) {
+    return ContentMain(params);
+  }
+#endif
 
   base::AtExitManager at_exit;
   testing::InitGoogleTest(&argc, argv);
   TestTimeouts::Initialize();
 
-  int jobs = default_jobs;
-  if (!GetSwitchValueAsInt(switches::kTestLauncherJobs, &jobs))
-    return 1;
-
   fprintf(stdout,
-      "Starting tests (using %d parallel jobs)...\n"
       "IMPORTANT DEBUGGING NOTE: each test is run inside its own process.\n"
       "For debugging a test inside a debugger, use the\n"
       "--gtest_filter=<your_test_name> flag along with either\n"
       "--single_process (to run the test in one launcher/browser process) or\n"
       "--single-process (to do the above, and also run Chrome in single-"
-          "process mode).\n", jobs);
+          "process mode).\n");
 
   base::MessageLoopForIO message_loop;
 
+  // Allow the |launcher_delegate| to modify |default_jobs|.
+  launcher_delegate->AdjustDefaultParallelJobs(&default_jobs);
+
   WrapperTestLauncherDelegate delegate(launcher_delegate);
-  base::TestLauncher launcher(&delegate, jobs);
+  base::TestLauncher launcher(&delegate, default_jobs);
   bool success = launcher.Run(argc, argv);
   return (success ? 0 : 1);
 }
 
 TestLauncherDelegate* GetCurrentTestLauncherDelegate() {
   return g_launcher_delegate;
+}
+
+ContentMainParams* GetContentMainParams() {
+  return g_params;
 }
 
 }  // namespace content

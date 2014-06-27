@@ -10,20 +10,21 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/test/test_api.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_service.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/extension_set.h"
 #include "net/base/escape.h"
 #include "net/base/net_util.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
-#include "net/test/embedded_test_server/http_response.h"
 #include "net/test/embedded_test_server/http_request.h"
+#include "net/test/embedded_test_server/http_response.h"
 #include "net/test/spawned_test_server/spawned_test_server.h"
 
 namespace {
@@ -32,6 +33,7 @@ const char kTestCustomArg[] = "customArg";
 const char kTestServerPort[] = "testServer.port";
 const char kTestDataDirectory[] = "testDataDirectory";
 const char kTestWebSocketPort[] = "testWebSocketPort";
+const char kFtpServerPort[] = "ftpServer.port";
 const char kSpawnedTestServerPort[] = "spawnedTestServer.port";
 
 scoped_ptr<net::test_server::HttpResponse> HandleServerRedirectRequest(
@@ -206,7 +208,7 @@ void ExtensionApiTest::ResultCatcher::Observe(
 
 void ExtensionApiTest::SetUpInProcessBrowserTestFixture() {
   DCHECK(!test_config_.get()) << "Previous test did not clear config state.";
-  test_config_.reset(new DictionaryValue());
+  test_config_.reset(new base::DictionaryValue());
   test_config_->SetString(kTestDataDirectory,
                           net::FilePathToFileURL(test_data_dir_).spec());
   test_config_->SetInteger(kTestWebSocketPort, 0);
@@ -304,6 +306,12 @@ bool ExtensionApiTest::RunPlatformAppTestWithArg(
       extension_name, std::string(), custom_arg, kFlagLaunchPlatformApp);
 }
 
+bool ExtensionApiTest::RunPlatformAppTestWithFlags(
+    const std::string& extension_name, int flags) {
+  return RunExtensionTestImpl(
+      extension_name, std::string(), NULL, flags | kFlagLaunchPlatformApp);
+}
+
 // Load |extension_name| extension and/or |page_url| and wait for
 // PASSED or FAILED notification.
 bool ExtensionApiTest::RunExtensionTestImpl(const std::string& extension_name,
@@ -365,10 +373,11 @@ bool ExtensionApiTest::RunExtensionTestImpl(const std::string& extension_name,
     else
       ui_test_utils::NavigateToURL(browser(), url);
   } else if (launch_platform_app) {
-    AppLaunchParams params(browser()->profile(), extension,
-                           extension_misc::LAUNCH_NONE,
+    AppLaunchParams params(browser()->profile(),
+                           extension,
+                           extensions::LAUNCH_CONTAINER_NONE,
                            NEW_WINDOW);
-    params.command_line = CommandLine::ForCurrentProcess();
+    params.command_line = *CommandLine::ForCurrentProcess();
     OpenApplication(params);
   }
 
@@ -386,7 +395,8 @@ const extensions::Extension* ExtensionApiTest::GetSingleLoadedExtension() {
       browser()->profile())->extension_service();
 
   const extensions::Extension* extension = NULL;
-  for (ExtensionSet::const_iterator it = service->extensions()->begin();
+  for (extensions::ExtensionSet::const_iterator it =
+           service->extensions()->begin();
        it != service->extensions()->end(); ++it) {
     // Ignore any component extensions. They are automatically loaded into all
     // profiles and aren't the extension we're looking for here.
@@ -436,6 +446,21 @@ bool ExtensionApiTest::StartWebSocketServer(
 
   test_config_->SetInteger(kTestWebSocketPort,
                            websocket_server_->host_port_pair().port());
+
+  return true;
+}
+
+bool ExtensionApiTest::StartFTPServer(const base::FilePath& root_directory) {
+  ftp_server_.reset(new net::SpawnedTestServer(
+      net::SpawnedTestServer::TYPE_FTP,
+      net::SpawnedTestServer::kLocalhost,
+      root_directory));
+
+  if (!ftp_server_->Start())
+    return false;
+
+  test_config_->SetInteger(kFtpServerPort,
+                           ftp_server_->host_port_pair().port());
 
   return true;
 }

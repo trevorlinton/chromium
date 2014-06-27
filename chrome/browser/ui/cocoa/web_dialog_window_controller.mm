@@ -46,7 +46,7 @@ public:
 
   // WebDialogDelegate declarations.
   virtual ui::ModalType GetDialogModalType() const OVERRIDE;
-  virtual string16 GetDialogTitle() const OVERRIDE;
+  virtual base::string16 GetDialogTitle() const OVERRIDE;
   virtual GURL GetDialogContentURL() const OVERRIDE;
   virtual void GetWebUIMessageHandlers(
       std::vector<WebUIMessageHandler*>* handlers) const OVERRIDE;
@@ -73,7 +73,8 @@ public:
                               const gfx::Rect& initial_pos,
                               bool user_gesture,
                               bool* was_blocked) OVERRIDE;
-  virtual void LoadingStateChanged(content::WebContents* source) OVERRIDE;
+  virtual void LoadingStateChanged(content::WebContents* source,
+                                   bool to_different_document) OVERRIDE;
 
 private:
   WebDialogWindowController* controller_;  // weak
@@ -150,8 +151,8 @@ ui::ModalType WebDialogWindowDelegateBridge::GetDialogModalType() const {
   return ui::MODAL_TYPE_NONE;
 }
 
-string16 WebDialogWindowDelegateBridge::GetDialogTitle() const {
-  return delegate_ ? delegate_->GetDialogTitle() : string16();
+base::string16 WebDialogWindowDelegateBridge::GetDialogTitle() const {
+  return delegate_ ? delegate_->GetDialogTitle() : base::string16();
 }
 
 GURL WebDialogWindowDelegateBridge::GetDialogContentURL() const {
@@ -240,7 +241,7 @@ void WebDialogWindowDelegateBridge::AddNewContents(
 }
 
 void WebDialogWindowDelegateBridge::LoadingStateChanged(
-    content::WebContents* source) {
+    content::WebContents* source, bool to_different_document) {
   if (delegate_)
     delegate_->OnLoadingStateChanged(source);
 }

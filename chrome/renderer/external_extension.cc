@@ -4,8 +4,6 @@
 
 #include "chrome/renderer/external_extension.h"
 
-#include "base/command_line.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/common/render_messages.h"
 #include "chrome/common/search_provider.h"
 #include "content/public/renderer/render_view.h"
@@ -14,13 +12,15 @@
 #include "third_party/WebKit/public/web/WebView.h"
 #include "v8/include/v8.h"
 
-using WebKit::WebFrame;
-using WebKit::WebView;
+using blink::WebFrame;
+using blink::WebView;
 using content::RenderView;
 
 namespace extensions_v8 {
 
-static const char* const kSearchProviderApi =
+namespace {
+
+const char* const kSearchProviderApi =
     "var external;"
     "if (!external)"
     "  external = {};"
@@ -33,7 +33,9 @@ static const char* const kSearchProviderApi =
     "  return NativeIsSearchProviderInstalled(name);"
     "};";
 
-const char* const kExternalExtensionName = "v8/External";
+const char kExternalExtensionName[] = "v8/External";
+
+}  // namespace
 
 class ExternalExtensionWrapper : public v8::Extension {
  public:
@@ -41,7 +43,8 @@ class ExternalExtensionWrapper : public v8::Extension {
 
   // Allows v8's javascript code to call the native functions defined
   // in this class for window.external.
-  virtual v8::Handle<v8::FunctionTemplate> GetNativeFunction(
+  virtual v8::Handle<v8::FunctionTemplate> GetNativeFunctionTemplate(
+      v8::Isolate* isolate,
       v8::Handle<v8::String> name) OVERRIDE;
 
   // Helper function to find the RenderView. May return NULL.
@@ -60,18 +63,19 @@ class ExternalExtensionWrapper : public v8::Extension {
 };
 
 ExternalExtensionWrapper::ExternalExtensionWrapper()
-    : v8::Extension(
-        kExternalExtensionName,
-        kSearchProviderApi) {
+    : v8::Extension(kExternalExtensionName, kSearchProviderApi) {
 }
 
-v8::Handle<v8::FunctionTemplate> ExternalExtensionWrapper::GetNativeFunction(
+v8::Handle<v8::FunctionTemplate>
+ExternalExtensionWrapper::GetNativeFunctionTemplate(
+    v8::Isolate* isolate,
     v8::Handle<v8::String> name) {
-  if (name->Equals(v8::String::New("NativeAddSearchProvider")))
-    return v8::FunctionTemplate::New(AddSearchProvider);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "NativeAddSearchProvider")))
+    return v8::FunctionTemplate::New(isolate, AddSearchProvider);
 
-  if (name->Equals(v8::String::New("NativeIsSearchProviderInstalled")))
-    return v8::FunctionTemplate::New(IsSearchProviderInstalled);
+  if (name->Equals(
+          v8::String::NewFromUtf8(isolate, "NativeIsSearchProviderInstalled")))
+    return v8::FunctionTemplate::New(isolate, IsSearchProviderInstalled);
 
   return v8::Handle<v8::FunctionTemplate>();
 }
@@ -92,10 +96,10 @@ RenderView* ExternalExtensionWrapper::GetRenderView() {
 // static
 void ExternalExtensionWrapper::AddSearchProvider(
     const v8::FunctionCallbackInfo<v8::Value>& args) {
-  if (!args.Length()) return;
+  if (!args.Length() || !args[0]->IsString()) return;
 
-  std::string name = std::string(*v8::String::Utf8Value(args[0]));
-  if (!name.length()) return;
+  std::string name(*v8::String::Utf8Value(args[0]));
+  if (name.empty()) return;
 
   RenderView* render_view = GetRenderView();
   if (!render_view) return;
@@ -111,11 +115,11 @@ void ExternalExtensionWrapper::AddSearchProvider(
 // static
 void ExternalExtensionWrapper::IsSearchProviderInstalled(
     const v8::FunctionCallbackInfo<v8::Value>& args) {
-  if (!args.Length()) return;
+  if (!args.Length() || !args[0]->IsString()) return;
   v8::String::Utf8Value utf8name(args[0]);
   if (!utf8name.length()) return;
 
-  std::string name = std::string(*utf8name);
+  std::string name(*utf8name);
   RenderView* render_view = GetRenderView();
   if (!render_view) return;
 
@@ -134,7 +138,8 @@ void ExternalExtensionWrapper::IsSearchProviderInstalled(
 
   if (install == search_provider::DENIED) {
     // FIXME: throw access denied exception.
-    v8::ThrowException(v8::Exception::Error(v8::String::Empty()));
+    v8::Isolate* isolate = args.GetIsolate();
+    isolate->ThrowException(v8::Exception::Error(v8::String::Empty(isolate)));
     return;
   }
   args.GetReturnValue().Set(static_cast<int32_t>(install));

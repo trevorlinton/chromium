@@ -10,11 +10,11 @@
 
 #include "base/basictypes.h"
 
-class CommandLine;
 class GURL;
 class Profile;
 
 namespace base {
+class CommandLine;
 class FilePath;
 }
 
@@ -73,12 +73,13 @@ struct MasterPrefs {
   bool homepage_defined;
   int do_import_items;
   int dont_import_items;
-  bool make_chrome_default;
+  bool make_chrome_default_for_user;
   bool suppress_first_run_default_browser_prompt;
   std::vector<GURL> new_tabs;
   std::vector<GURL> bookmarks;
   std::string import_bookmarks_path;
   std::string variations_seed;
+  std::string variations_seed_signature;
   std::string suppress_default_browser_prompt_for_version;
 };
 
@@ -87,7 +88,7 @@ bool IsChromeFirstRun();
 
 // Returns true if |command_line|'s switches explicitly specify that first run
 // should be suppressed in the current run.
-bool IsFirstRunSuppressed(const CommandLine& command_line);
+bool IsFirstRunSuppressed(const base::CommandLine& command_line);
 
 // Creates the first run sentinel if needed. This should only be called after
 // the process singleton has been grabbed by the current process
@@ -100,8 +101,7 @@ std::string GetPingDelayPrefName();
 // Register user preferences used by the MasterPrefs structure.
 void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
 
-// Removes the sentinel file created in ConfigDone(). Returns false if the
-// sentinel file could not be removed.
+// Remove the first run sentinel file; returns false on failure.
 bool RemoveSentinel();
 
 // Sets the kShowFirstRunBubbleOption local state pref so that the browser
@@ -146,9 +146,11 @@ void AutoImport(Profile* profile,
                 int dont_import_items,
                 const std::string& import_bookmarks_path);
 
-// Does remaining first run tasks for |profile| and makes Chrome default browser
-// if |make_chrome_default|. This can pop the first run consent dialog on linux.
-void DoPostImportTasks(Profile* profile, bool make_chrome_default);
+// Does remaining first run tasks. This can pop the first run consent dialog on
+// linux. |make_chrome_default_for_user| is the value of
+// kMakeChromeDefaultForUser in master_preferences which contributes to the
+// decision of making chrome default browser in post import tasks.
+void DoPostImportTasks(Profile* profile, bool make_chrome_default_for_user);
 
 // Returns the current state of AutoImport as recorded in a bitfield formed from
 // values in AutoImportState.
@@ -157,16 +159,16 @@ uint16 auto_import_state();
 // Set a master preferences file path that overrides platform defaults.
 void SetMasterPrefsPathForTesting(const base::FilePath& master_prefs);
 
-// The master preferences is a JSON file with the same entries as the
+// The master_preferences is a JSON file with the same entries as the
 // 'Default\Preferences' file. This function locates this file from a standard
-// location and processes it so it becomes the default preferences in the
-// profile pointed to by |user_data_dir|. After processing the file, the
-// function returns a value from the ProcessMasterPreferencesResult enum,
+// location, processes it, and uses its content to initialize the preferences
+// for the profile pointed to by |user_data_dir|. After processing the file,
+// this function returns a value from the ProcessMasterPreferencesResult enum,
 // indicating whether the first run flow should be shown, skipped, or whether
 // the browser should exit.
 //
-// This function destroys any existing prefs file and it is meant to be
-// invoked only on first run.
+// This function overwrites any existing Preferences file and is only meant to
+// be invoked on first run.
 //
 // See chrome/installer/util/master_preferences.h for a description of
 // 'master_preferences' file.

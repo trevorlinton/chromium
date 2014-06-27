@@ -10,6 +10,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/debug/alias.h"
+#include "base/strings/stringprintf.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_WIN)
@@ -23,7 +24,6 @@
 #include "base/process/memory_unittest_mac.h"
 #endif
 #if defined(OS_LINUX)
-#include <glib.h>
 #include <malloc.h>
 #endif
 
@@ -121,9 +121,7 @@ TEST(ProcessMemoryTest, MacMallocFailureDoesNotTerminate) {
         buf = malloc(std::numeric_limits<size_t>::max() - (2 * PAGE_SIZE) - 1);
       },
       testing::KilledBySignal(SIGTRAP),
-      "\\*\\*\\* error: can't allocate region.*"
-          "(Terminating process due to a potential for future heap "
-          "corruption){0}");
+      "\\*\\*\\* error: can't allocate region.*\\n?.*");
 
   base::debug::Alias(buf);
 }
@@ -143,8 +141,8 @@ TEST(ProcessMemoryTest, MacTerminateOnHeapCorruption) {
   ASSERT_DEATH(free(buf), "attempting free on address which "
       "was not malloc\\(\\)-ed");
 #else
-  ASSERT_DEATH(free(buf), "being freed.*"
-      "\\*\\*\\* set a breakpoint in malloc_error_break to debug.*"
+  ASSERT_DEATH(free(buf), "being freed.*\\n?\\.*"
+      "\\*\\*\\* set a breakpoint in malloc_error_break to debug.*\\n?.*"
       "Terminating process due to a potential for future heap corruption");
 #endif  // ARCH_CPU_64_BITS || defined(ADDRESS_SANITIZER)
 }
@@ -168,14 +166,14 @@ int tc_set_new_mode(int mode);
 }
 #endif  // defined(USE_TCMALLOC)
 
-class OutOfMemoryDeathTest : public testing::Test {
+class OutOfMemoryTest : public testing::Test {
  public:
-  OutOfMemoryDeathTest()
-      : value_(NULL),
-        // Make test size as large as possible minus a few pages so
-        // that alignment or other rounding doesn't make it wrap.
-        test_size_(std::numeric_limits<std::size_t>::max() - 12 * 1024),
-        signed_test_size_(std::numeric_limits<ssize_t>::max()) {
+  OutOfMemoryTest()
+    : value_(NULL),
+    // Make test size as large as possible minus a few pages so
+    // that alignment or other rounding doesn't make it wrap.
+    test_size_(std::numeric_limits<std::size_t>::max() - 12 * 1024),
+    signed_test_size_(std::numeric_limits<ssize_t>::max()) {
   }
 
 #if defined(USE_TCMALLOC)
@@ -188,6 +186,14 @@ class OutOfMemoryDeathTest : public testing::Test {
   }
 #endif  // defined(USE_TCMALLOC)
 
+ protected:
+  void* value_;
+  size_t test_size_;
+  ssize_t signed_test_size_;
+};
+
+class OutOfMemoryDeathTest : public OutOfMemoryTest {
+ public:
   void SetUpInDeathAssert() {
     // Must call EnableTerminationOnOutOfMemory() because that is called from
     // chrome's main function and therefore hasn't been called yet.
@@ -196,10 +202,6 @@ class OutOfMemoryDeathTest : public testing::Test {
     // should be done inside of the ASSERT_DEATH.
     base::EnableTerminationOnOutOfMemory();
   }
-
-  void* value_;
-  size_t test_size_;
-  ssize_t signed_test_size_;
 };
 
 TEST_F(OutOfMemoryDeathTest, New) {
@@ -245,12 +247,15 @@ TEST_F(OutOfMemoryDeathTest, Valloc) {
 }
 
 #if defined(OS_LINUX)
+
+#if PVALLOC_AVAILABLE == 1
 TEST_F(OutOfMemoryDeathTest, Pvalloc) {
   ASSERT_DEATH({
       SetUpInDeathAssert();
       value_ = pvalloc(test_size_);
     }, "");
 }
+#endif  // PVALLOC_AVAILABLE == 1
 
 TEST_F(OutOfMemoryDeathTest, Memalign) {
   ASSERT_DEATH({
@@ -260,14 +265,13 @@ TEST_F(OutOfMemoryDeathTest, Memalign) {
 }
 
 TEST_F(OutOfMemoryDeathTest, ViaSharedLibraries) {
-  // g_try_malloc is documented to return NULL on failure. (g_malloc is the
-  // 'safe' default that crashes if allocation fails). However, since we have
-  // hopefully overridden malloc, even g_try_malloc should fail. This tests
-  // that the run-time symbol resolution is overriding malloc for shared
-  // libraries as well as for our code.
+  // This tests that the run-time symbol resolution is overriding malloc for
+  // shared libraries (including libc itself) as well as for our code.
+  std::string format = base::StringPrintf("%%%zud", test_size_);
+  char *value = NULL;
   ASSERT_DEATH({
       SetUpInDeathAssert();
-      value_ = g_try_malloc(test_size_);
+      EXPECT_EQ(-1, asprintf(&value, format.c_str(), 0));
     }, "");
 }
 #endif  // OS_LINUX
@@ -374,6 +378,54 @@ TEST_F(OutOfMemoryDeathTest, PsychoticallyBigObjCObject) {
 
 #endif  // !ARCH_CPU_64_BITS
 #endif  // OS_MACOSX
+
+class OutOfMemoryHandledTest : public OutOfMemoryTest {
+ public:
+  static const size_t kSafeMallocSize = 512;
+  static const size_t kSafeCallocSize = 128;
+  static const size_t kSafeCallocItems = 4;
+
+  virtual void SetUp() {
+    OutOfMemoryTest::SetUp();
+
+    // We enable termination on OOM - just as Chrome does at early
+    // initialization - and test that UncheckedMalloc and  UncheckedCalloc
+    // properly by-pass this in order to allow the caller to handle OOM.
+    base::EnableTerminationOnOutOfMemory();
+  }
+};
+
+// TODO(b.kelemen): make UncheckedMalloc and UncheckedCalloc work
+// on Windows as well.
+
+TEST_F(OutOfMemoryHandledTest, UncheckedMalloc) {
+  EXPECT_TRUE(base::UncheckedMalloc(kSafeMallocSize, &value_));
+  EXPECT_TRUE(value_ != NULL);
+  free(value_);
+
+  EXPECT_FALSE(base::UncheckedMalloc(test_size_, &value_));
+  EXPECT_TRUE(value_ == NULL);
+}
+
+TEST_F(OutOfMemoryHandledTest, UncheckedCalloc) {
+  EXPECT_TRUE(base::UncheckedCalloc(1, kSafeMallocSize, &value_));
+  EXPECT_TRUE(value_ != NULL);
+  const char* bytes = static_cast<const char*>(value_);
+  for (size_t i = 0; i < kSafeMallocSize; ++i)
+    EXPECT_EQ(0, bytes[i]);
+  free(value_);
+
+  EXPECT_TRUE(
+      base::UncheckedCalloc(kSafeCallocItems, kSafeCallocSize, &value_));
+  EXPECT_TRUE(value_ != NULL);
+  bytes = static_cast<const char*>(value_);
+  for (size_t i = 0; i < (kSafeCallocItems * kSafeCallocSize); ++i)
+    EXPECT_EQ(0, bytes[i]);
+  free(value_);
+
+  EXPECT_FALSE(base::UncheckedCalloc(1, test_size_, &value_));
+  EXPECT_TRUE(value_ == NULL);
+}
 
 #endif  // !defined(OS_ANDROID) && !defined(OS_OPENBSD) &&
         // !defined(OS_WIN) && !defined(ADDRESS_SANITIZER)

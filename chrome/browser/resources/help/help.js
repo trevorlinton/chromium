@@ -72,7 +72,7 @@ cr.define('help', function() {
       $('get-help').onclick = function() {
         chrome.send('openHelpPage');
       };
-<if expr="pp_ifdef('_google_chrome')">
+<if expr="_google_chrome">
       $('report-issue').onclick = function() {
         chrome.send('openFeedbackDialog');
       };
@@ -246,6 +246,15 @@ cr.define('help', function() {
      * @private
      */
     setUpdateStatus_: function(status, message) {
+      if (cr.isMac &&
+          $('update-status-message') &&
+          $('update-status-message').hidden) {
+        // Chrome has reached the end of the line on this system. The
+        // update-obsolete-system message is displayed. No other auto-update
+        // status should be displayed.
+        return;
+      }
+
       var channel = this.targetChannel_;
       if (status == 'checking') {
         this.setUpdateImage_('working');
@@ -279,21 +288,26 @@ cr.define('help', function() {
         $('update-status-message').innerHTML = message;
       }
 
-      var container = $('update-status-container');
-      if (container) {
-        container.hidden = status == 'disabled';
-        $('relaunch').hidden = status != 'nearly_updated';
-
-        if (!cr.isMac)
-          $('update-percentage').hidden = status != 'updating';
-      }
-
+      // Following invariant must be established at the end of this function:
+      // { ~$('relaunch_and_powerwash').hidden -> $('relaunch').hidden }
+      var relaunchAndPowerwashHidden = true;
       if ($('relaunch-and-powerwash')) {
         // It's allowed to do powerwash only for customer devices,
         // when user explicitly decides to update to a more stable
         // channel.
-        $('relaunch-and-powerwash').hidden =
+        relaunchAndPowerwashHidden =
             !this.powerwashAfterUpdate_ || status != 'nearly_updated';
+        $('relaunch-and-powerwash').hidden = relaunchAndPowerwashHidden;
+      }
+
+      var container = $('update-status-container');
+      if (container) {
+        container.hidden = status == 'disabled';
+        $('relaunch').hidden =
+            (status != 'nearly_updated') || !relaunchAndPowerwashHidden;
+
+        if (!cr.isMac)
+          $('update-percentage').hidden = status != 'updating';
       }
     },
 
@@ -330,6 +344,30 @@ cr.define('help', function() {
       } else if (state == 'disabled') {
         $('promote').disabled = true;
         $('promote').hidden = false;
+      }
+    },
+
+    /**
+     * @private
+     */
+    setObsoleteSystem_: function(obsolete) {
+      if (cr.isMac && $('update-obsolete-system-container')) {
+        $('update-obsolete-system-container').hidden = !obsolete;
+      }
+    },
+
+    /**
+     * @private
+     */
+    setObsoleteSystemEndOfTheLine_: function(endOfTheLine) {
+      if (cr.isMac &&
+          $('update-obsolete-system-container') &&
+          !$('update-obsolete-system-container').hidden &&
+          $('update-status-message')) {
+        $('update-status-message').hidden = endOfTheLine;
+        if (endOfTheLine) {
+          this.setUpdateImage_('failed');
+        }
       }
     },
 
@@ -456,8 +494,12 @@ cr.define('help', function() {
     HelpPage.getInstance().setPromotionState_(state);
   };
 
-  HelpPage.setObsoleteOS = function(obsolete) {
-    HelpPage.getInstance().setObsoleteOS_(obsolete);
+  HelpPage.setObsoleteSystem = function(obsolete) {
+    HelpPage.getInstance().setObsoleteSystem_(obsolete);
+  };
+
+  HelpPage.setObsoleteSystemEndOfTheLine = function(endOfTheLine) {
+    HelpPage.getInstance().setObsoleteSystemEndOfTheLine_(endOfTheLine);
   };
 
   HelpPage.setOSVersion = function(version) {

@@ -101,8 +101,8 @@ void ContentSettingsUsagesState::GetDetailedInfo(
 
 std::string ContentSettingsUsagesState::GURLToFormattedHost(
     const GURL& url) const {
-  string16 display_host;
+  base::string16 display_host;
   net::AppendFormattedHost(url,
       profile_->GetPrefs()->GetString(prefs::kAcceptLanguages), &display_host);
-  return UTF16ToUTF8(display_host);
+  return base::UTF16ToUTF8(display_host);
 }

@@ -23,6 +23,7 @@
 #import "testing/gtest_mac.h"
 #include "testing/platform_test.h"
 
+using base::ASCIIToUTF16;
 using content::WebContents;
 
 // Watch for bookmark pulse notifications so we can confirm they were sent.
@@ -205,7 +206,7 @@ TEST_F(BookmarkBubbleControllerTest, TestFolderWithBlankName) {
                                                ASCIIToUTF16("one"));
   EXPECT_TRUE(node1);
   const BookmarkNode* node2 = model->AddFolder(bookmarkBarNode, 1,
-                                               string16());
+                                               base::string16());
   EXPECT_TRUE(node2);
   const BookmarkNode* node3 = model->AddFolder(bookmarkBarNode, 2,
                                                ASCIIToUTF16("three"));

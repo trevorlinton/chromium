@@ -54,14 +54,6 @@ void WebContentsViewAndroid::SetContentViewCore(
   }
 }
 
-#if defined(GOOGLE_TV)
-void WebContentsViewAndroid::NotifyExternalSurface(
-    int player_id, bool is_request, const gfx::RectF& rect) {
-  if (content_view_core_)
-    content_view_core_->NotifyExternalSurface(player_id, is_request, rect);
-}
-#endif
-
 gfx::NativeView WebContentsViewAndroid::GetNativeView() const {
   return content_view_core_ ? content_view_core_->GetViewAndroid() : NULL;
 }
@@ -75,12 +67,11 @@ gfx::NativeWindow WebContentsViewAndroid::GetTopLevelNativeWindow() const {
 }
 
 void WebContentsViewAndroid::GetContainerBounds(gfx::Rect* out) const {
-  RenderWidgetHostView* rwhv = web_contents_->GetRenderWidgetHostView();
-  if (rwhv)
-    *out = rwhv->GetViewBounds();
+  *out = content_view_core_ ? gfx::Rect(content_view_core_->GetViewSize())
+                            : gfx::Rect();
 }
 
-void WebContentsViewAndroid::SetPageTitle(const string16& title) {
+void WebContentsViewAndroid::SetPageTitle(const base::string16& title) {
   if (content_view_core_)
     content_view_core_->SetTitle(title);
 }
@@ -130,11 +121,10 @@ DropData* WebContentsViewAndroid::GetDropData() const {
 }
 
 gfx::Rect WebContentsViewAndroid::GetViewBounds() const {
-  RenderWidgetHostView* rwhv = web_contents_->GetRenderWidgetHostView();
-  if (rwhv)
-    return rwhv->GetViewBounds();
-  else
-    return gfx::Rect();
+  if (content_view_core_)
+    return gfx::Rect(content_view_core_->GetViewSize());
+
+  return gfx::Rect();
 }
 
 void WebContentsViewAndroid::CreateView(
@@ -178,9 +168,9 @@ void WebContentsViewAndroid::SetOverscrollControllerEnabled(bool enabled) {
 }
 
 void WebContentsViewAndroid::ShowContextMenu(
-    const ContextMenuParams& params) {
+    RenderFrameHost* render_frame_host, const ContextMenuParams& params) {
   if (delegate_)
-    delegate_->ShowContextMenu(params);
+    delegate_->ShowContextMenu(render_frame_host, params);
 }
 
 void WebContentsViewAndroid::ShowPopupMenu(
@@ -197,16 +187,20 @@ void WebContentsViewAndroid::ShowPopupMenu(
   }
 }
 
+void WebContentsViewAndroid::HidePopupMenu() {
+  // TODO(tkent): implement
+}
+
 void WebContentsViewAndroid::StartDragging(
     const DropData& drop_data,
-    WebKit::WebDragOperationsMask allowed_ops,
+    blink::WebDragOperationsMask allowed_ops,
     const gfx::ImageSkia& image,
     const gfx::Vector2d& image_offset,
     const DragEventSourceInfo& event_info) {
   NOTIMPLEMENTED();
 }
 
-void WebContentsViewAndroid::UpdateDragCursor(WebKit::WebDragOperation op) {
+void WebContentsViewAndroid::UpdateDragCursor(blink::WebDragOperation op) {
   NOTIMPLEMENTED();
 }
 

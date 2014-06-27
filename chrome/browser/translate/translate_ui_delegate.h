@@ -12,6 +12,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "chrome/common/chrome_constants.h"
+#include "components/translate/core/common/translate_errors.h"
 
 class TranslatePrefs;
 
@@ -34,6 +35,9 @@ class TranslateUIDelegate {
 
   content::WebContents* web_contents() { return web_contents_; }
 
+  // Handles when an error message is shown.
+  void OnErrorShown(TranslateErrors::Type error_type);
+
   // Returns the number of languages supported.
   size_t GetNumberOfLanguages() const;
 
@@ -53,7 +57,7 @@ class TranslateUIDelegate {
   std::string GetLanguageCodeAt(size_t index) const;
 
   // Returns the displayable name for the language at |index|.
-  string16 GetLanguageNameAt(size_t index) const;
+  base::string16 GetLanguageNameAt(size_t index) const;
 
   // The original language for Translate.
   std::string GetOriginalLanguageCode() const;
@@ -68,7 +72,7 @@ class TranslateUIDelegate {
   void RevertTranslation();
 
   // Processes when the user declines translation.
-  void TranslationDeclined();
+  void TranslationDeclined(bool explicitly_closed);
 
   // Returns true if the current language is blocked.
   bool IsLanguageBlocked();
@@ -97,7 +101,7 @@ class TranslateUIDelegate {
 
   content::WebContents* web_contents_;
 
-  typedef std::pair<std::string, string16> LanguageNamePair;
+  typedef std::pair<std::string, base::string16> LanguageNamePair;
 
   // The list supported languages for translation.
   // The pair first string is the language ISO code (ex: en, fr...), the second

@@ -14,8 +14,8 @@
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/drive/job_scheduler.h"
 #include "chrome/browser/drive/drive_notification_observer.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service_factory.h"
+#include "components/keyed_service/content/browser_context_keyed_service_factory.h"
+#include "components/keyed_service/core/keyed_service.h"
 
 namespace base {
 class FilePath;
@@ -28,6 +28,7 @@ class DebugInfoCollector;
 class DownloadHandler;
 class DriveAppRegistry;
 class DriveServiceInterface;
+class EventLogger;
 class FileSystemInterface;
 class JobListInterface;
 
@@ -61,14 +62,13 @@ class DriveIntegrationServiceObserver {
 // The class is essentially a container that manages lifetime of the objects
 // that are used to integrate Drive to Chrome. The object of this class is
 // created per-profile.
-class DriveIntegrationService
-    : public BrowserContextKeyedService,
-      public DriveNotificationObserver {
+class DriveIntegrationService : public KeyedService,
+                                public DriveNotificationObserver {
  public:
   class PreferenceWatcher;
 
-  // test_drive_service, test_cache_root and test_file_system are used by tests
-  // to inject customized instances.
+  // test_drive_service, test_mount_point_name, test_cache_root and
+  // test_file_system are used by tests to inject customized instances.
   // Pass NULL or the empty value when not interested.
   // |preference_watcher| observes the drive enable preference, and sets the
   // enable state when changed. It can be NULL. The ownership is taken by
@@ -77,11 +77,12 @@ class DriveIntegrationService
       Profile* profile,
       PreferenceWatcher* preference_watcher,
       DriveServiceInterface* test_drive_service,
+      const std::string& test_mount_point_name,
       const base::FilePath& test_cache_root,
       FileSystemInterface* test_file_system);
   virtual ~DriveIntegrationService();
 
-  // BrowserContextKeyedService override:
+  // KeyedService override:
   virtual void Shutdown() OVERRIDE;
 
   void SetEnabled(bool enabled);
@@ -97,10 +98,8 @@ class DriveIntegrationService
   virtual void OnNotificationReceived() OVERRIDE;
   virtual void OnPushNotificationEnabled(bool enabled) OVERRIDE;
 
-  DriveServiceInterface* drive_service() {
-    return drive_service_.get();
-  }
-
+  EventLogger* event_logger() { return logger_.get(); }
+  DriveServiceInterface* drive_service() { return drive_service_.get(); }
   DebugInfoCollector* debug_info_collector() {
     return debug_info_collector_.get();
   }
@@ -146,13 +145,20 @@ class DriveIntegrationService
   // the metadata initialization is successful.
   void InitializeAfterMetadataInitialized(FileError error);
 
+  // Change the download directory to the local "Downloads" if the download
+  // destination is set under Drive. This must be called when disabling Drive.
+  void AvoidDriveAsDownloadDirecotryPreference();
+
   friend class DriveIntegrationServiceFactory;
 
   Profile* profile_;
   State state_;
   bool enabled_;
+  // Custom mount point name that can be injected for testing in constructor.
+  std::string mount_point_name_;
 
   base::FilePath cache_root_directory_;
+  scoped_ptr<EventLogger> logger_;
   scoped_refptr<base::SequencedTaskRunner> blocking_task_runner_;
   scoped_ptr<internal::ResourceMetadataStorage,
              util::DestroyHelper> metadata_storage_;
@@ -184,6 +190,14 @@ class DriveIntegrationServiceFactory
   typedef base::Callback<DriveIntegrationService*(Profile* profile)>
       FactoryCallback;
 
+  // Sets and resets a factory function for tests. See below for why we can't
+  // use BrowserContextKeyedServiceFactory::SetTestingFactory().
+  class ScopedFactoryForTest {
+   public:
+    explicit ScopedFactoryForTest(FactoryCallback* factory_for_test);
+    ~ScopedFactoryForTest();
+  };
+
   // Returns the DriveIntegrationService for |profile|, creating it if it is
   // not yet created.
   static DriveIntegrationService* GetForProfile(Profile* profile);
@@ -203,9 +217,6 @@ class DriveIntegrationServiceFactory
   // Returns the DriveIntegrationServiceFactory instance.
   static DriveIntegrationServiceFactory* GetInstance();
 
-  // Sets a factory function for tests.
-  static void SetFactoryForTest(const FactoryCallback& factory_for_test);
-
  private:
   friend struct DefaultSingletonTraits<DriveIntegrationServiceFactory>;
 
@@ -213,10 +224,15 @@ class DriveIntegrationServiceFactory
   virtual ~DriveIntegrationServiceFactory();
 
   // BrowserContextKeyedServiceFactory:
-  virtual BrowserContextKeyedService* BuildServiceInstanceFor(
+  virtual KeyedService* BuildServiceInstanceFor(
       content::BrowserContext* context) const OVERRIDE;
 
-  FactoryCallback factory_for_test_;
+  // This is static so it can be set without instantiating the factory. This
+  // allows factory creation to be delayed until it normally happens (on profile
+  // creation) rather than when tests are set up. DriveIntegrationServiceFactory
+  // transitively depends on ExtensionSystemFactory which crashes if created too
+  // soon (i.e. before the BrowserProcess exists).
+  static FactoryCallback* factory_for_test_;
 };
 
 }  // namespace drive

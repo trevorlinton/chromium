@@ -5,8 +5,10 @@
 #include "ash/system/chromeos/network/network_state_list_detailed_view.h"
 
 #include "ash/ash_switches.h"
+#include "ash/metrics/user_metrics_recorder.h"
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
+#include "ash/shell_delegate.h"
 #include "ash/shell_window_ids.h"
 #include "ash/system/chromeos/network/network_connect.h"
 #include "ash/system/chromeos/network/network_icon.h"
@@ -26,7 +28,6 @@
 #include "base/time/time.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/network/device_state.h"
-#include "chromeos/network/favorite_state.h"
 #include "chromeos/network/network_configuration_handler.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
@@ -44,7 +45,6 @@
 #include "ui/views/widget/widget.h"
 
 using chromeos::DeviceState;
-using chromeos::FavoriteState;
 using chromeos::NetworkHandler;
 using chromeos::NetworkState;
 using chromeos::NetworkStateHandler;
@@ -63,7 +63,7 @@ const int kRequestScanDelaySeconds = 10;
 views::Label* CreateInfoBubbleLabel(const base::string16& text) {
   views::Label* label = new views::Label(text);
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
-  label->SetFont(rb.GetFont(ui::ResourceBundle::SmallFont));
+  label->SetFontList(rb.GetFontList(ui::ResourceBundle::SmallFont));
   label->SetEnabledColor(SkColorSetARGB(127, 0, 0, 0));
   return label;
 }
@@ -71,10 +71,11 @@ views::Label* CreateInfoBubbleLabel(const base::string16& text) {
 // Create a label formatted for info items in the menu
 views::Label* CreateMenuInfoLabel(const base::string16& text) {
   views::Label* label = new views::Label(text);
-  label->set_border(views::Border::CreateEmptyBorder(
-      ash::kTrayPopupPaddingBetweenItems,
-      ash::kTrayPopupPaddingHorizontal,
-      ash::kTrayPopupPaddingBetweenItems, 0));
+  label->SetBorder(
+      views::Border::CreateEmptyBorder(ash::kTrayPopupPaddingBetweenItems,
+                                       ash::kTrayPopupPaddingHorizontal,
+                                       ash::kTrayPopupPaddingBetweenItems,
+                                       0));
   label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   label->SetEnabledColor(SkColorSetARGB(192, 0, 0, 0));
   return label;
@@ -87,8 +88,8 @@ views::View* CreateInfoBubbleLine(const base::string16& text_label,
   view->SetLayoutManager(
       new views::BoxLayout(views::BoxLayout::kHorizontal, 0, 0, 1));
   view->AddChildView(CreateInfoBubbleLabel(text_label));
-  view->AddChildView(CreateInfoBubbleLabel(UTF8ToUTF16(": ")));
-  view->AddChildView(CreateInfoBubbleLabel(UTF8ToUTF16(text_string)));
+  view->AddChildView(CreateInfoBubbleLabel(base::UTF8ToUTF16(": ")));
+  view->AddChildView(CreateInfoBubbleLabel(base::UTF8ToUTF16(text_string)));
   return view;
 }
 
@@ -160,7 +161,6 @@ NetworkStateListDetailedView::NetworkStateListDetailedView(
       turn_on_wifi_(NULL),
       other_mobile_(NULL),
       other_vpn_(NULL),
-      toggle_debug_preferred_networks_(NULL),
       settings_(NULL),
       proxy_settings_(NULL),
       scanning_view_(NULL),
@@ -184,15 +184,9 @@ void NetworkStateListDetailedView::ManagerChanged() {
 
 void NetworkStateListDetailedView::NetworkListChanged() {
   NetworkStateHandler* handler = NetworkHandler::Get()->network_state_handler();
-  if (list_type_ == LIST_TYPE_DEBUG_PREFERRED) {
-    NetworkStateHandler::FavoriteStateList favorite_list;
-    handler->GetFavoriteList(&favorite_list);
-    UpdatePreferred(favorite_list);
-  } else {
-    NetworkStateHandler::NetworkStateList network_list;
-    handler->GetNetworkList(&network_list);
-    UpdateNetworks(network_list);
-  }
+  NetworkStateHandler::NetworkStateList network_list;
+  handler->GetNetworkList(&network_list);
+  UpdateNetworks(network_list);
   UpdateNetworkList();
   UpdateHeaderButtons();
   UpdateNetworkExtra();
@@ -223,7 +217,6 @@ void NetworkStateListDetailedView::Init() {
   turn_on_wifi_ = NULL;
   other_mobile_ = NULL;
   other_vpn_ = NULL;
-  toggle_debug_preferred_networks_ = NULL;
   settings_ = NULL;
   proxy_settings_ = NULL;
   scanning_view_ = NULL;
@@ -273,21 +266,22 @@ void NetworkStateListDetailedView::ButtonPressed(views::Button* sender,
   } else if (sender == button_mobile_) {
     ToggleMobile();
   } else if (sender == settings_) {
+    Shell::GetInstance()->metrics()->RecordUserMetricsAction(
+        list_type_ == LIST_TYPE_VPN ?
+        ash::UMA_STATUS_AREA_VPN_SETTINGS_CLICKED :
+        ash::UMA_STATUS_AREA_NETWORK_SETTINGS_CLICKED);
     delegate->ShowNetworkSettings("");
   } else if (sender == proxy_settings_) {
     delegate->ChangeProxySettings();
   } else if (sender == other_mobile_) {
     delegate->ShowOtherNetworkDialog(shill::kTypeCellular);
-  } else if (sender == toggle_debug_preferred_networks_) {
-    list_type_ = (list_type_ == LIST_TYPE_NETWORK)
-        ? LIST_TYPE_DEBUG_PREFERRED : LIST_TYPE_NETWORK;
-    // Re-initialize this after processing the event.
-    base::MessageLoopForUI::current()->PostTask(
-        FROM_HERE,
-        base::Bind(&NetworkStateListDetailedView::Init, AsWeakPtr()));
   } else if (sender == other_wifi_) {
+    Shell::GetInstance()->metrics()->RecordUserMetricsAction(
+        ash::UMA_STATUS_AREA_NETWORK_JOIN_OTHER_CLICKED);
     delegate->ShowOtherNetworkDialog(shill::kTypeWifi);
   } else if (sender == other_vpn_) {
+    Shell::GetInstance()->metrics()->RecordUserMetricsAction(
+        ash::UMA_STATUS_AREA_VPN_JOIN_OTHER_CLICKED);
     delegate->ShowOtherNetworkDialog(shill::kTypeVPN);
   } else {
     NOTREACHED();
@@ -299,8 +293,7 @@ void NetworkStateListDetailedView::OnViewClicked(views::View* sender) {
   ResetInfoBubble();
 
   if (sender == footer()->content()) {
-    RootWindowController::ForWindow(GetWidget()->GetNativeView())->
-        GetSystemTray()->ShowDefaultView(BUBBLE_USE_EXISTING);
+    TransitionToDefaultView();
     return;
   }
 
@@ -313,20 +306,20 @@ void NetworkStateListDetailedView::OnViewClicked(views::View* sender) {
     return;
 
   const std::string& service_path = found->second;
-  if (list_type_ == LIST_TYPE_DEBUG_PREFERRED) {
-    NetworkHandler::Get()->network_configuration_handler()->
-        RemoveConfiguration(service_path,
-                            base::Bind(&base::DoNothing),
-                            chromeos::network_handler::ErrorCallback());
-    return;
-  }
-
   const NetworkState* network = NetworkHandler::Get()->network_state_handler()->
       GetNetworkState(service_path);
   if (!network || network->IsConnectedState() || network->IsConnectingState()) {
+    Shell::GetInstance()->metrics()->RecordUserMetricsAction(
+        list_type_ == LIST_TYPE_VPN ?
+        ash::UMA_STATUS_AREA_SHOW_NETWORK_CONNECTION_DETAILS :
+        ash::UMA_STATUS_AREA_SHOW_VPN_CONNECTION_DETAILS);
     Shell::GetInstance()->system_tray_delegate()->ShowNetworkSettings(
         service_path);
   } else {
+    Shell::GetInstance()->metrics()->RecordUserMetricsAction(
+        list_type_ == LIST_TYPE_VPN ?
+        ash::UMA_STATUS_AREA_CONNECT_TO_VPN :
+        ash::UMA_STATUS_AREA_CONNECT_TO_CONFIGURED_NETWORK);
     ash::network_connect::ConnectToNetwork(service_path, NULL);
   }
 }
@@ -405,16 +398,6 @@ void NetworkStateListDetailedView::CreateNetworkExtra() {
     other_mobile_ = new TrayPopupLabelButton(
         this, rb.GetLocalizedString(IDS_ASH_STATUS_TRAY_OTHER_MOBILE));
     bottom_row->AddChildView(other_mobile_);
-
-    if (CommandLine::ForCurrentProcess()->HasSwitch(
-            ash::switches::kAshDebugShowPreferredNetworks)) {
-      // Debugging UI to view and remove favorites from the status area.
-      std::string toggle_debug_preferred_label =
-          (list_type_ == LIST_TYPE_DEBUG_PREFERRED) ? "Visible" : "Preferred";
-      toggle_debug_preferred_networks_ = new TrayPopupLabelButton(
-          this, UTF8ToUTF16(toggle_debug_preferred_label));
-      bottom_row->AddChildView(toggle_debug_preferred_networks_);
-    }
   } else {
     other_vpn_ = new TrayPopupLabelButton(
         this,
@@ -424,8 +407,15 @@ void NetworkStateListDetailedView::CreateNetworkExtra() {
   }
 
   CreateSettingsEntry();
-  DCHECK(settings_ || proxy_settings_);
-  bottom_row->AddChildView(settings_ ? settings_ : proxy_settings_);
+
+  // Both settings_ and proxy_settings_ can be NULL. This happens when
+  // we're logged in but showing settings page is not enabled.
+  // Example: supervised user creation flow where user session is active
+  // but all action happens on the login window.
+  // Allowing opening proxy settigns dialog will break assumption in
+  //  SystemTrayDelegateChromeOS::ChangeProxySettings(), see CHECK.
+  if (settings_ || proxy_settings_)
+    bottom_row->AddChildView(settings_ ? settings_ : proxy_settings_);
 
   AddChildView(bottom_row);
 }
@@ -473,7 +463,6 @@ void NetworkStateListDetailedView::UpdateTechnologyButton(
 
 void NetworkStateListDetailedView::UpdateNetworks(
     const NetworkStateHandler::NetworkStateList& networks) {
-  DCHECK(list_type_ != LIST_TYPE_DEBUG_PREFERRED);
   network_list_.clear();
   for (NetworkStateHandler::NetworkStateList::const_iterator iter =
            networks.begin(); iter != networks.end(); ++iter) {
@@ -488,18 +477,6 @@ void NetworkStateListDetailedView::UpdateNetworks(
   }
 }
 
-void NetworkStateListDetailedView::UpdatePreferred(
-    const NetworkStateHandler::FavoriteStateList& favorites) {
-  DCHECK(list_type_ == LIST_TYPE_DEBUG_PREFERRED);
-  network_list_.clear();
-  for (NetworkStateHandler::FavoriteStateList::const_iterator iter =
-           favorites.begin(); iter != favorites.end(); ++iter) {
-    const FavoriteState* favorite = *iter;
-    NetworkInfo* info = new NetworkInfo(favorite->path());
-    network_list_.push_back(info);
-  }
-}
-
 void NetworkStateListDetailedView::UpdateNetworkList() {
   NetworkStateHandler* handler = NetworkHandler::Get()->network_state_handler();
 
@@ -509,29 +486,18 @@ void NetworkStateListDetailedView::UpdateNetworkList() {
     NetworkInfo* info = network_list_[i];
     const NetworkState* network =
         handler->GetNetworkState(info->service_path);
-    if (network) {
-      info->image = network_icon::GetImageForNetwork(
-          network, network_icon::ICON_TYPE_LIST);
-      info->label = network_icon::GetLabelForNetwork(
-          network, network_icon::ICON_TYPE_LIST);
-      info->highlight =
-          network->IsConnectedState() || network->IsConnectingState();
-      info->disable =
-          network->activation_state() == shill::kActivationStateActivating;
-      if (!animating && network->IsConnectingState())
-        animating = true;
-    } else if (list_type_ == LIST_TYPE_DEBUG_PREFERRED) {
-      // Favorites that are visible will use the same display info as the
-      // visible network. Non visible favorites will show the disconnected
-      // icon and the name of the network.
-      const FavoriteState* favorite =
-          handler->GetFavoriteState(info->service_path);
-      if (favorite) {
-        info->image = network_icon::GetImageForDisconnectedNetwork(
-            network_icon::ICON_TYPE_LIST, favorite->type());
-        info->label = UTF8ToUTF16(favorite->name());
-      }
-    }
+    if (!network)
+      continue;
+    info->image = network_icon::GetImageForNetwork(
+        network, network_icon::ICON_TYPE_LIST);
+    info->label = network_icon::GetLabelForNetwork(
+        network, network_icon::ICON_TYPE_LIST);
+    info->highlight =
+        network->IsConnectedState() || network->IsConnectingState();
+    info->disable =
+        network->activation_state() == shill::kActivationStateActivating;
+    if (!animating && network->IsConnectingState())
+      animating = true;
   }
   if (animating)
     network_icon::NetworkIconAnimation::GetInstance()->AddObserver(this);
@@ -601,8 +567,8 @@ bool NetworkStateListDetailedView::UpdateNetworkChild(int index,
     container = new HoverHighlightView(this);
     container->AddIconAndLabel(info->image, info->label, font);
     scroll_content()->AddChildViewAt(container, index);
-    container->set_border(views::Border::CreateEmptyBorder(
-        0, kTrayPopupPaddingHorizontal, 0, 0));
+    container->SetBorder(
+        views::Border::CreateEmptyBorder(0, kTrayPopupPaddingHorizontal, 0, 0));
     needs_relayout = true;
   } else {
     container = found->second;
@@ -772,11 +738,19 @@ void NetworkStateListDetailedView::UpdateNetworkExtra() {
 
 void NetworkStateListDetailedView::CreateSettingsEntry() {
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
+  bool show_settings = ash::Shell::GetInstance()->
+      system_tray_delegate()->ShouldShowSettings();
   if (login_ != user::LOGGED_IN_NONE) {
-    // Settings, only if logged in.
-    settings_ = new TrayPopupLabelButton(
-        this, rb.GetLocalizedString(IDS_ASH_STATUS_TRAY_NETWORK_SETTINGS));
-  } else {
+    // Allow user access settings only if user is logged in
+    // and showing settings is allowed. There're situations (supervised user
+    // creation flow) when session is started but UI flow continues within
+    // login UI i.e. no browser window is yet avaialable.
+    if (show_settings) {
+      settings_ = new TrayPopupLabelButton(
+          this, rb.GetLocalizedString(IDS_ASH_STATUS_TRAY_NETWORK_SETTINGS));
+    }
+  } else  {
+    // Allow users to change proxy settings only when not logged in.
     proxy_settings_ = new TrayPopupLabelButton(
         this,
         rb.GetLocalizedString(IDS_ASH_STATUS_TRAY_NETWORK_PROXY_SETTINGS));
@@ -816,7 +790,7 @@ views::View* NetworkStateListDetailedView::CreateNetworkInfoView() {
   views::View* container = new views::View;
   container->SetLayoutManager(
       new views::BoxLayout(views::BoxLayout::kVertical, 0, 0, 1));
-  container->set_border(views::Border::CreateEmptyBorder(0, 5, 0, 5));
+  container->SetBorder(views::Border::CreateEmptyBorder(0, 5, 0, 5));
 
   std::string ethernet_address, wifi_address, vpn_address;
   if (list_type_ != LIST_TYPE_VPN) {

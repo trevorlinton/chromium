@@ -11,8 +11,8 @@
 #include "base/compiler_specific.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
-#include "chrome/browser/extensions/api/storage/settings_observer.h"
-#include "chrome/browser/value_store/value_store.h"
+#include "extensions/browser/api/storage/settings_observer.h"
+#include "extensions/browser/value_store/value_store.h"
 
 namespace policy {
 class PolicyMap;
@@ -32,12 +32,9 @@ class PolicyValueStore : public ValueStore {
                    scoped_ptr<ValueStore> delegate);
   virtual ~PolicyValueStore();
 
-  // Stores |policy| in the persistent database represented by the |delegate_|.
-  // If |notify_if_changed| and |policy| differs from the previously persisted
-  // version, then a notification is sent to the |observers_| with a list of the
-  // changes detected.
-  void SetCurrentPolicy(const policy::PolicyMap& policy,
-                        bool notify_if_changed);
+  // Stores |policy| in the persistent database represented by the |delegate_|
+  // and notifies observers with the changes from the previous policy.
+  void SetCurrentPolicy(const policy::PolicyMap& policy);
 
   // Clears all the stored data and deletes the database.
   void DeleteStorage();
@@ -58,6 +55,9 @@ class PolicyValueStore : public ValueStore {
   virtual WriteResult Remove(const std::string& key) OVERRIDE;
   virtual WriteResult Remove(const std::vector<std::string>& keys) OVERRIDE;
   virtual WriteResult Clear() OVERRIDE;
+  // Hopefully, as a Read-Only database, there is no reason to use these.
+  virtual bool Restore() OVERRIDE;
+  virtual bool RestoreKey(const std::string& key) OVERRIDE;
 
   // For unit tests.
   ValueStore* delegate() { return delegate_.get(); }

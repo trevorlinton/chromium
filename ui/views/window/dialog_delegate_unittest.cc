@@ -6,7 +6,6 @@
 #include "ui/base/hit_test.h"
 #include "ui/views/bubble/bubble_border.h"
 #include "ui/views/bubble/bubble_frame_view.h"
-#include "ui/views/controls/button/button_dropdown.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/test/views_test_base.h"
@@ -39,7 +38,7 @@ class TestDialog : public DialogDelegateView, public ButtonListener {
 
   // DialogDelegateView overrides:
   virtual gfx::Size GetPreferredSize() OVERRIDE { return gfx::Size(200, 200); }
-  virtual string16 GetWindowTitle() const OVERRIDE { return title_; }
+  virtual base::string16 GetWindowTitle() const OVERRIDE { return title_; }
 
   // ButtonListener override:
   virtual void ButtonPressed(Button* sender, const ui::Event& event) OVERRIDE {
@@ -74,7 +73,7 @@ class TestDialog : public DialogDelegateView, public ButtonListener {
     GetWidget()->Close();
   }
 
-  void set_title(const string16& title) { title_ = title; }
+  void set_title(const base::string16& title) { title_ = title; }
 
  private:
   bool canceled_;
@@ -82,7 +81,7 @@ class TestDialog : public DialogDelegateView, public ButtonListener {
   // Prevent the dialog from closing, for repeated ok and cancel button clicks.
   bool closeable_;
   Button* last_pressed_button_;
-  string16 title_;
+  base::string16 title_;
 
   DISALLOW_COPY_AND_ASSIGN(TestDialog);
 };
@@ -116,28 +115,27 @@ class DialogTest : public ViewsTestBase {
 TEST_F(DialogTest, DefaultButtons) {
   DialogClientView* client_view = dialog()->GetDialogClientView();
   LabelButton* ok_button = client_view->ok_button();
-  LabelButton* cancel_button = client_view->cancel_button();
 
   // DialogDelegate's default button (ok) should be default (and handle enter).
   EXPECT_EQ(ui::DIALOG_BUTTON_OK, dialog()->GetDefaultDialogButton());
   dialog()->PressEnterAndCheckStates(ok_button);
 
   // Focus another button in the dialog, it should become the default.
-  LabelButton* button_1 = new LabelButton(dialog(), string16());
+  LabelButton* button_1 = new LabelButton(dialog(), base::string16());
   client_view->AddChildView(button_1);
   client_view->OnWillChangeFocus(ok_button, button_1);
   EXPECT_TRUE(button_1->is_default());
   dialog()->PressEnterAndCheckStates(button_1);
 
   // Focus a Checkbox (not a push button), OK should become the default again.
-  Checkbox* checkbox = new Checkbox(string16());
+  Checkbox* checkbox = new Checkbox(base::string16());
   client_view->AddChildView(checkbox);
   client_view->OnWillChangeFocus(button_1, checkbox);
   EXPECT_FALSE(button_1->is_default());
   dialog()->PressEnterAndCheckStates(ok_button);
 
   // Focus yet another button in the dialog, it should become the default.
-  LabelButton* button_2 = new LabelButton(dialog(), string16());
+  LabelButton* button_2 = new LabelButton(dialog(), base::string16());
   client_view->AddChildView(button_2);
   client_view->OnWillChangeFocus(checkbox, button_2);
   EXPECT_FALSE(button_1->is_default());
@@ -149,27 +147,6 @@ TEST_F(DialogTest, DefaultButtons) {
   EXPECT_FALSE(button_1->is_default());
   EXPECT_FALSE(button_2->is_default());
   dialog()->PressEnterAndCheckStates(ok_button);
-
-  // A ButtonDropDown will handle events, but ok will be still be default.
-  ButtonDropDown* drop_down = new ButtonDropDown(dialog(), NULL);
-  dialog()->AddChildView(drop_down);
-  drop_down->SetBoundsRect(gfx::Rect(0, 0, 100, 100));
-  const gfx::Point point(1, 1);
-  client_view->OnWillChangeFocus(NULL, drop_down);
-  drop_down->OnMousePressed(ui::MouseEvent(
-      ui::ET_MOUSE_PRESSED, point, point, ui::EF_LEFT_MOUSE_BUTTON));
-  drop_down->OnMouseReleased(ui::MouseEvent(
-      ui::ET_MOUSE_RELEASED, point, point, ui::EF_LEFT_MOUSE_BUTTON));
-  dialog()->CheckAndResetStates(false, false, drop_down);
-  EXPECT_FALSE(button_1->is_default());
-  EXPECT_FALSE(button_2->is_default());
-  dialog()->PressEnterAndCheckStates(ok_button);
-
-  // Focus the cancel button, it should become the default.
-  client_view->OnWillChangeFocus(drop_down, cancel_button);
-  EXPECT_FALSE(button_1->is_default());
-  EXPECT_FALSE(button_2->is_default());
-  dialog()->PressEnterAndCheckStates(cancel_button);
 }
 
 TEST_F(DialogTest, AcceptAndCancel) {
@@ -204,9 +181,6 @@ TEST_F(DialogTest, RemoveDefaultButton) {
 }
 
 TEST_F(DialogTest, HitTest) {
-  if (!DialogDelegate::UseNewStyle())
-    return;
-
   // Ensure that the new style's BubbleFrameView hit-tests as expected.
   const NonClientView* view = dialog()->GetWidget()->non_client_view();
   BubbleFrameView* frame = static_cast<BubbleFrameView*>(view->frame_view());
@@ -231,24 +205,22 @@ TEST_F(DialogTest, HitTest) {
   }
 }
 
-TEST_F(DialogTest, InitialBoundsAccommodateTitle) {
-  if (!DialogDelegate::UseNewStyle())
-    return;
-
-  TestDialog* titled_dialog(new TestDialog());
-  titled_dialog->set_title(ASCIIToUTF16("Title"));
-  DialogDelegate::CreateDialogWidget(titled_dialog, GetContext(), NULL);
+TEST_F(DialogTest, BoundsAccommodateTitle) {
+  TestDialog* dialog2(new TestDialog());
+  dialog2->set_title(base::ASCIIToUTF16("Title"));
+  DialogDelegate::CreateDialogWidget(dialog2, GetContext(), NULL);
 
   // Titled dialogs have taller initial frame bounds than untitled dialogs.
-  EXPECT_GT(titled_dialog->GetWidget()->GetWindowBoundsInScreen().height(),
-            dialog()->GetWidget()->GetWindowBoundsInScreen().height());
+  View* frame1 = dialog()->GetWidget()->non_client_view()->frame_view();
+  View* frame2 = dialog2->GetWidget()->non_client_view()->frame_view();
+  EXPECT_LT(frame1->GetPreferredSize().height(),
+            frame2->GetPreferredSize().height());
 
-  // Giving the default test dialog a title will make the bounds the same.
-  dialog()->set_title(ASCIIToUTF16("Title"));
+  // Giving the default test dialog a title will yield the same bounds.
+  dialog()->set_title(base::ASCIIToUTF16("Title"));
   dialog()->GetWidget()->UpdateWindowTitle();
-  View* frame = dialog()->GetWidget()->non_client_view()->frame_view();
-  EXPECT_EQ(titled_dialog->GetWidget()->GetWindowBoundsInScreen().height(),
-            frame->GetPreferredSize().height());
+  EXPECT_EQ(frame1->GetPreferredSize().height(),
+            frame2->GetPreferredSize().height());
 }
 
 }  // namespace views

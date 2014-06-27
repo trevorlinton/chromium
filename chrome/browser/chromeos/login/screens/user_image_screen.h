@@ -6,7 +6,8 @@
 #define CHROME_BROWSER_CHROMEOS_LOGIN_SCREENS_USER_IMAGE_SCREEN_H_
 
 #include "base/compiler_specific.h"
-#include "base/memory/weak_ptr.h"
+#include "base/memory/scoped_ptr.h"
+#include "chrome/browser/chromeos/camera_presence_notifier.h"
 #include "chrome/browser/chromeos/login/screens/user_image_screen_actor.h"
 #include "chrome/browser/chromeos/login/screens/wizard_screen.h"
 #include "chrome/browser/chromeos/login/user.h"
@@ -17,7 +18,12 @@
 
 namespace base {
 class Timer;
+class Value;
 };
+
+namespace policy {
+class PolicyChangeRegistrar;
+}
 
 namespace chromeos {
 
@@ -25,7 +31,8 @@ class UserImageScreen: public WizardScreen,
                        public UserImageScreenActor::Delegate,
                        public ImageDecoder::Delegate,
                        public content::NotificationObserver,
-                       public UserImageSyncObserver::Observer {
+                       public UserImageSyncObserver::Observer,
+                       public CameraPresenceNotifier::Observer {
  public:
   UserImageScreen(ScreenObserver* screen_observer,
                   UserImageScreenActor* actor);
@@ -45,7 +52,6 @@ class UserImageScreen: public WizardScreen,
   // UserImageScreenActor::Delegate implementation:
   virtual void OnScreenReady() OVERRIDE;
   virtual void OnPhotoTaken(const std::string& raw_data) OVERRIDE;
-  virtual void CheckCameraPresence() OVERRIDE;
   virtual void OnImageSelected(const std::string& image_url,
                                const std::string& image_type,
                                bool is_user_selection) OVERRIDE;
@@ -66,6 +72,9 @@ class UserImageScreen: public WizardScreen,
                               const SkBitmap& decoded_image) OVERRIDE;
   virtual void OnDecodeImageFailed(const ImageDecoder* decoder) OVERRIDE;
 
+  // CameraPresenceNotifier::Observer implementation:
+  virtual void OnCameraPresenceCheckDone(bool is_camera_present) OVERRIDE;
+
   // UserImageSyncObserver::Observer implementation:
   virtual void OnInitialSync(bool local_image_updated) OVERRIDE;
 
@@ -77,19 +86,32 @@ class UserImageScreen: public WizardScreen,
 
   bool IsWaitingForSync() const;
 
+  // Called when the policy::key::kUserAvatarImage policy changes while the
+  // screen is being shown. If the policy is set, closes the screen because the
+  // user is not allowed to override a policy-set image.
+  void OnUserImagePolicyChanged(const base::Value* previous,
+                                const base::Value* current);
+
+  // Returns current user.
   const User* GetUser();
 
-  // Called when the camera presence check has been completed.
-  void OnCameraPresenceCheckDone();
+  // Returns UserImageManager for the current user.
+  UserImageManager* GetUserImageManager();
+
+  // Returns UserImageSyncObserver for the current user.
+  UserImageSyncObserver* GetSyncObserver();
 
   // Called when it's decided not to skip the screen.
   void HideCurtain();
 
-  content::NotificationRegistrar registrar_;
+  // Closes the screen.
+  void ExitScreen();
+
+  content::NotificationRegistrar notification_registrar_;
+
+  scoped_ptr<policy::PolicyChangeRegistrar> policy_registrar_;
 
   UserImageScreenActor* actor_;
-
-  base::WeakPtrFactory<UserImageScreen> weak_factory_;
 
   // Last ImageDecoder instance used to decode an image blob received by
   // HandlePhotoTaken.

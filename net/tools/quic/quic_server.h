@@ -8,6 +8,7 @@
 #ifndef NET_TOOLS_QUIC_QUIC_SERVER_H_
 #define NET_TOOLS_QUIC_QUIC_SERVER_H_
 
+#include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
 #include "net/base/ip_endpoint.h"
 #include "net/quic/crypto/quic_crypto_server_config.h"
@@ -44,8 +45,9 @@ class QuicServer : public EpollCallbackInterface {
   void Shutdown();
 
   // From EpollCallbackInterface
-  virtual void OnRegistration(
-      EpollServer* eps, int fd, int event_mask) OVERRIDE {}
+  virtual void OnRegistration(EpollServer* eps,
+                              int fd,
+                              int event_mask) OVERRIDE {}
   virtual void OnModification(int fd, int event_mask) OVERRIDE {}
   virtual void OnEvent(int fd, EpollEvent* event) OVERRIDE;
   virtual void OnUnregistration(int fd, bool replaced) OVERRIDE {}
@@ -58,25 +60,23 @@ class QuicServer : public EpollCallbackInterface {
   // dropped packets.
   static bool ReadAndDispatchSinglePacket(int fd, int port,
                                           QuicDispatcher* dispatcher,
-                                          int* packets_dropped);
+                                          uint32* packets_dropped);
 
   virtual void OnShutdown(EpollServer* eps, int fd) OVERRIDE {}
-
-  // Dispatches the given packet only if it looks like a valid QUIC packet.
-  // TODO(rjshade): Return a status describing why a packet was dropped, and log
-  //                somehow.  Maybe expose as a varz.
-  static void MaybeDispatchPacket(QuicDispatcher* dispatcher,
-                                  const QuicEncryptedPacket& packet,
-                                  const IPEndPoint& server_address,
-                                  const IPEndPoint& client_address);
 
   void SetStrikeRegisterNoStartupPeriod() {
     crypto_config_.set_strike_register_no_startup_period();
   }
 
+  // SetProofSource sets the ProofSource that will be used to verify the
+  // server's certificate, and takes ownership of |source|.
+  void SetProofSource(ProofSource* source) {
+    crypto_config_.SetProofSource(source);
+  }
+
   bool overflow_supported() { return overflow_supported_; }
 
-  int packets_dropped() { return packets_dropped_; }
+  uint32 packets_dropped() { return packets_dropped_; }
 
   int port() { return port_; }
 
@@ -100,7 +100,7 @@ class QuicServer : public EpollCallbackInterface {
   // If overflow_supported_ is true this will be the number of packets dropped
   // during the lifetime of the server.  This may overflow if enough packets
   // are dropped.
-  int packets_dropped_;
+  uint32 packets_dropped_;
 
   // True if the kernel supports SO_RXQ_OVFL, the number of packets dropped
   // because the socket would otherwise overflow.

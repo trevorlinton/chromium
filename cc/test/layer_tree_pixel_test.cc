@@ -17,10 +17,12 @@
 #include "cc/test/pixel_test_output_surface.h"
 #include "cc/test/pixel_test_software_output_device.h"
 #include "cc/test/pixel_test_utils.h"
+#include "cc/test/test_in_process_context_provider.h"
 #include "cc/trees/layer_tree_impl.h"
-#include "ui/gl/gl_implementation.h"
-#include "webkit/common/gpu/context_provider_in_process.h"
-#include "webkit/common/gpu/webgraphicscontext3d_in_process_command_buffer_impl.h"
+#include "gpu/command_buffer/client/gl_in_process_context.h"
+#include "gpu/command_buffer/client/gles2_implementation.h"
+
+using gpu::gles2::GLES2Interface;
 
 namespace cc {
 
@@ -34,7 +36,6 @@ LayerTreePixelTest::~LayerTreePixelTest() {}
 
 scoped_ptr<OutputSurface> LayerTreePixelTest::CreateOutputSurface(
     bool fallback) {
-  gfx::Vector2d viewport_offset(20, 10);
   gfx::Size surface_expansion_size(40, 60);
   scoped_ptr<PixelTestOutputSurface> output_surface;
 
@@ -53,26 +54,33 @@ scoped_ptr<OutputSurface> LayerTreePixelTest::CreateOutputSurface(
 
     case GL_WITH_DEFAULT:
     case GL_WITH_BITMAP: {
-      CHECK(gfx::InitializeGLBindings(gfx::kGLImplementationOSMesaGL));
-
-      using webkit::gpu::ContextProviderInProcess;
-      output_surface = make_scoped_ptr(new PixelTestOutputSurface(
-          ContextProviderInProcess::CreateOffscreen()));
+      output_surface = make_scoped_ptr(
+          new PixelTestOutputSurface(new TestInProcessContextProvider));
       break;
     }
   }
 
-  output_surface->set_viewport_offset(viewport_offset);
   output_surface->set_surface_expansion_size(surface_expansion_size);
   return output_surface.PassAs<OutputSurface>();
 }
 
-scoped_refptr<cc::ContextProvider>
-LayerTreePixelTest::OffscreenContextProvider() {
-  scoped_refptr<webkit::gpu::ContextProviderInProcess> provider =
-      webkit::gpu::ContextProviderInProcess::CreateOffscreen();
-  CHECK(provider.get());
-  return provider;
+scoped_refptr<ContextProvider> LayerTreePixelTest::OffscreenContextProvider() {
+  return scoped_refptr<ContextProvider>(new TestInProcessContextProvider);
+}
+
+void LayerTreePixelTest::CommitCompleteOnThread(LayerTreeHostImpl* impl) {
+  LayerTreeImpl* commit_tree =
+      impl->pending_tree() ? impl->pending_tree() : impl->active_tree();
+  if (commit_tree->source_frame_number() != 0)
+    return;
+
+  gfx::Rect viewport = impl->DeviceViewport();
+  // The viewport has a 0,0 origin without external influence.
+  EXPECT_EQ(gfx::Point().ToString(), viewport.origin().ToString());
+  // Be that influence!
+  viewport += gfx::Vector2d(20, 10);
+  impl->SetExternalDrawConstraints(gfx::Transform(), viewport, viewport, true);
+  EXPECT_EQ(viewport.ToString(), impl->DeviceViewport().ToString());
 }
 
 scoped_ptr<CopyOutputRequest> LayerTreePixelTest::CreateCopyOutputRequest() {
@@ -95,7 +103,7 @@ void LayerTreePixelTest::BeginTest() {
 
 void LayerTreePixelTest::AfterTest() {
   base::FilePath test_data_dir;
-  EXPECT_TRUE(PathService::Get(cc::DIR_TEST_DATA, &test_data_dir));
+  EXPECT_TRUE(PathService::Get(CCPaths::DIR_TEST_DATA, &test_data_dir));
   base::FilePath ref_file_path = test_data_dir.Append(ref_file_);
 
   CommandLine* cmd = CommandLine::ForCurrentProcess();
@@ -108,7 +116,7 @@ void LayerTreePixelTest::AfterTest() {
 }
 
 scoped_refptr<SolidColorLayer> LayerTreePixelTest::CreateSolidColorLayer(
-    gfx::Rect rect, SkColor color) {
+    const gfx::Rect& rect, SkColor color) {
   scoped_refptr<SolidColorLayer> layer = SolidColorLayer::Create();
   layer->SetIsDrawable(true);
   layer->SetAnchorPoint(gfx::PointF());
@@ -139,7 +147,8 @@ void LayerTreePixelTest::TryEndTest() {
 
 scoped_refptr<SolidColorLayer> LayerTreePixelTest::
     CreateSolidColorLayerWithBorder(
-        gfx::Rect rect, SkColor color, int border_width, SkColor border_color) {
+        const gfx::Rect& rect, SkColor color,
+        int border_width, SkColor border_color) {
   scoped_refptr<SolidColorLayer> layer = CreateSolidColorLayer(rect, color);
   scoped_refptr<SolidColorLayer> border_top = CreateSolidColorLayer(
       gfx::Rect(0, 0, rect.width(), border_width), border_color);
@@ -166,7 +175,7 @@ scoped_refptr<SolidColorLayer> LayerTreePixelTest::
 }
 
 scoped_refptr<TextureLayer> LayerTreePixelTest::CreateTextureLayer(
-    gfx::Rect rect, const SkBitmap& bitmap) {
+    const gfx::Rect& rect, const SkBitmap& bitmap) {
   scoped_refptr<TextureLayer> layer = TextureLayer::CreateForMailbox(NULL);
   layer->SetIsDrawable(true);
   layer->SetAnchorPoint(gfx::PointF());
@@ -216,63 +225,51 @@ void LayerTreePixelTest::SetupTree() {
 }
 
 scoped_ptr<SkBitmap> LayerTreePixelTest::CopyTextureMailboxToBitmap(
-    gfx::Size size,
+    const gfx::Size& size,
     const TextureMailbox& texture_mailbox) {
   DCHECK(texture_mailbox.IsTexture());
   if (!texture_mailbox.IsTexture())
     return scoped_ptr<SkBitmap>();
 
-  using webkit::gpu::WebGraphicsContext3DInProcessCommandBufferImpl;
-  scoped_ptr<WebKit::WebGraphicsContext3D> context3d(
-      WebGraphicsContext3DInProcessCommandBufferImpl::CreateOffscreenContext(
-          WebKit::WebGraphicsContext3D::Attributes()));
-
-  EXPECT_TRUE(context3d->makeContextCurrent());
+  scoped_ptr<gpu::GLInProcessContext> context = CreateTestInProcessContext();
+  GLES2Interface* gl = context->GetImplementation();
 
   if (texture_mailbox.sync_point())
-    context3d->waitSyncPoint(texture_mailbox.sync_point());
+    gl->WaitSyncPointCHROMIUM(texture_mailbox.sync_point());
 
-  unsigned texture_id = context3d->createTexture();
-  context3d->bindTexture(GL_TEXTURE_2D, texture_id);
-  context3d->texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  context3d->texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  context3d->texParameteri(
-      GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  context3d->texParameteri(
-      GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  context3d->consumeTextureCHROMIUM(texture_mailbox.target(),
-                                    texture_mailbox.data());
-  context3d->bindTexture(GL_TEXTURE_2D, 0);
+  GLuint texture_id = 0;
+  gl->GenTextures(1, &texture_id);
+  gl->BindTexture(GL_TEXTURE_2D, texture_id);
+  gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  gl->ConsumeTextureCHROMIUM(texture_mailbox.target(), texture_mailbox.name());
+  gl->BindTexture(GL_TEXTURE_2D, 0);
 
-  unsigned fbo = context3d->createFramebuffer();
-  context3d->bindFramebuffer(GL_FRAMEBUFFER, fbo);
-  context3d->framebufferTexture2D(GL_FRAMEBUFFER,
-                                  GL_COLOR_ATTACHMENT0,
-                                  GL_TEXTURE_2D,
-                                  texture_id,
-                                  0);
+  GLuint fbo = 0;
+  gl->GenFramebuffers(1, &fbo);
+  gl->BindFramebuffer(GL_FRAMEBUFFER, fbo);
+  gl->FramebufferTexture2D(
+      GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture_id, 0);
   EXPECT_EQ(static_cast<unsigned>(GL_FRAMEBUFFER_COMPLETE),
-            context3d->checkFramebufferStatus(GL_FRAMEBUFFER));
+            gl->CheckFramebufferStatus(GL_FRAMEBUFFER));
 
   scoped_ptr<uint8[]> pixels(new uint8[size.GetArea() * 4]);
-  context3d->readPixels(0,
-                        0,
-                        size.width(),
-                        size.height(),
-                        GL_RGBA,
-                        GL_UNSIGNED_BYTE,
-                        pixels.get());
+  gl->ReadPixels(0,
+                 0,
+                 size.width(),
+                 size.height(),
+                 GL_RGBA,
+                 GL_UNSIGNED_BYTE,
+                 pixels.get());
 
-  context3d->deleteFramebuffer(fbo);
-  context3d->deleteTexture(texture_id);
+  gl->DeleteFramebuffers(1, &fbo);
+  gl->DeleteTextures(1, &texture_id);
 
   scoped_ptr<SkBitmap> bitmap(new SkBitmap);
-  bitmap->setConfig(SkBitmap::kARGB_8888_Config,
-                    size.width(),
-                    size.height());
-  bitmap->allocPixels();
+  bitmap->allocN32Pixels(size.width(), size.height());
 
-  scoped_ptr<SkAutoLockPixels> lock(new SkAutoLockPixels(*bitmap));
   uint8* out_pixels = static_cast<uint8*>(bitmap->getPixels());
 
   size_t row_bytes = size.width() * 4;
@@ -293,13 +290,14 @@ scoped_ptr<SkBitmap> LayerTreePixelTest::CopyTextureMailboxToBitmap(
 }
 
 void LayerTreePixelTest::ReleaseTextureMailbox(
-    scoped_ptr<WebKit::WebGraphicsContext3D> context3d,
+    scoped_ptr<gpu::GLInProcessContext> context,
     uint32 texture,
     uint32 sync_point,
     bool lost_resource) {
+  GLES2Interface* gl = context->GetImplementation();
   if (sync_point)
-    context3d->waitSyncPoint(sync_point);
-  context3d->deleteTexture(texture);
+    gl->WaitSyncPointCHROMIUM(sync_point);
+  gl->DeleteTextures(1, &texture);
   pending_texture_mailbox_callbacks_--;
   TryEndTest();
 }
@@ -311,25 +309,18 @@ void LayerTreePixelTest::CopyBitmapToTextureMailboxAsTexture(
   DCHECK_GT(bitmap.width(), 0);
   DCHECK_GT(bitmap.height(), 0);
 
-  CHECK(gfx::InitializeGLBindings(gfx::kGLImplementationOSMesaGL));
+  scoped_ptr<gpu::GLInProcessContext> context = CreateTestInProcessContext();
+  GLES2Interface* gl = context->GetImplementation();
 
-  using webkit::gpu::WebGraphicsContext3DInProcessCommandBufferImpl;
-  scoped_ptr<WebKit::WebGraphicsContext3D> context3d(
-      WebGraphicsContext3DInProcessCommandBufferImpl::CreateOffscreenContext(
-          WebKit::WebGraphicsContext3D::Attributes()));
+  GLuint texture_id = 0;
+  gl->GenTextures(1, &texture_id);
+  gl->BindTexture(GL_TEXTURE_2D, texture_id);
+  gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-  EXPECT_TRUE(context3d->makeContextCurrent());
-
-  unsigned texture_id = context3d->createTexture();
-  context3d->bindTexture(GL_TEXTURE_2D, texture_id);
-  context3d->texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  context3d->texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  context3d->texParameteri(
-      GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  context3d->texParameteri(
-      GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-  DCHECK_EQ(SkBitmap::kARGB_8888_Config, bitmap.getConfig());
+  DCHECK_EQ(kPMColor_SkColorType, bitmap.colorType());
 
   {
     SkAutoLockPixels lock(bitmap);
@@ -352,28 +343,28 @@ void LayerTreePixelTest::CopyBitmapToTextureMailboxAsTexture(
       }
     }
 
-    context3d->texImage2D(GL_TEXTURE_2D,
-                          0,
-                          GL_RGBA,
-                          bitmap.width(),
-                          bitmap.height(),
-                          0,
-                          GL_RGBA,
-                          GL_UNSIGNED_BYTE,
-                          gl_pixels.get());
+    gl->TexImage2D(GL_TEXTURE_2D,
+                   0,
+                   GL_RGBA,
+                   bitmap.width(),
+                   bitmap.height(),
+                   0,
+                   GL_RGBA,
+                   GL_UNSIGNED_BYTE,
+                   gl_pixels.get());
   }
 
   gpu::Mailbox mailbox;
-  context3d->genMailboxCHROMIUM(mailbox.name);
-  context3d->produceTextureCHROMIUM(GL_TEXTURE_2D, mailbox.name);
-  context3d->bindTexture(GL_TEXTURE_2D, 0);
-  uint32 sync_point = context3d->insertSyncPoint();
+  gl->GenMailboxCHROMIUM(mailbox.name);
+  gl->ProduceTextureCHROMIUM(GL_TEXTURE_2D, mailbox.name);
+  gl->BindTexture(GL_TEXTURE_2D, 0);
+  uint32 sync_point = gl->InsertSyncPointCHROMIUM();
 
-  *texture_mailbox = TextureMailbox(mailbox, sync_point);
+  *texture_mailbox = TextureMailbox(mailbox, GL_TEXTURE_2D, sync_point);
   *release_callback = SingleReleaseCallback::Create(
       base::Bind(&LayerTreePixelTest::ReleaseTextureMailbox,
                  base::Unretained(this),
-                 base::Passed(&context3d),
+                 base::Passed(&context),
                  texture_id));
 }
 

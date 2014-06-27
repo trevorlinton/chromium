@@ -140,6 +140,22 @@ class ChildProcessSecurityPolicyImpl::SecurityState {
     return (it->second & permissions) == permissions;
   }
 
+#if defined(OS_ANDROID)
+  // Determine if the certain permissions have been granted to a content URI.
+  bool HasPermissionsForContentUri(const base::FilePath& file,
+                                   int permissions) {
+    DCHECK(!file.empty());
+    DCHECK(file.IsContentUri());
+    if (!permissions)
+      return false;
+    base::FilePath file_path = file.StripTrailingSeparators();
+    FileMap::const_iterator it = file_permissions_.find(file_path);
+    if (it != file_permissions_.end())
+      return (it->second & permissions) == permissions;
+    return false;
+  }
+#endif
+
   void GrantBindings(int bindings) {
     enabled_bindings_ |= bindings;
   }
@@ -152,7 +168,7 @@ class ChildProcessSecurityPolicyImpl::SecurityState {
     can_read_raw_cookies_ = false;
   }
 
-  void GrantPermissionForMIDISysEx() {
+  void GrantPermissionForMidiSysEx() {
     can_send_midi_sysex_ = true;
   }
 
@@ -168,7 +184,7 @@ class ChildProcessSecurityPolicyImpl::SecurityState {
 
     // file:// URLs are more granular.  The child may have been given
     // permission to a specific file but not the file:// scheme in general.
-    if (url.SchemeIs(chrome::kFileScheme)) {
+    if (url.SchemeIs(kFileScheme)) {
       base::FilePath path;
       if (net::FileURLToFilePath(url, &path))
         return ContainsKey(request_file_set_, path);
@@ -179,6 +195,10 @@ class ChildProcessSecurityPolicyImpl::SecurityState {
 
   // Determine if the certain permissions have been granted to a file.
   bool HasPermissionsForFile(const base::FilePath& file, int permissions) {
+#if defined(OS_ANDROID)
+    if (file.IsContentUri())
+      return HasPermissionsForContentUri(file, permissions);
+#endif
     if (universal_access_)
       return true;
 
@@ -315,14 +335,14 @@ ChildProcessSecurityPolicyImpl::ChildProcessSecurityPolicyImpl() {
   // We know about these schemes and believe them to be safe.
   RegisterWebSafeScheme(kHttpScheme);
   RegisterWebSafeScheme(kHttpsScheme);
-  RegisterWebSafeScheme(chrome::kFtpScheme);
-  RegisterWebSafeScheme(chrome::kDataScheme);
+  RegisterWebSafeScheme(kFtpScheme);
+  RegisterWebSafeScheme(kDataScheme);
   RegisterWebSafeScheme("feed");
-  RegisterWebSafeScheme(chrome::kBlobScheme);
-  RegisterWebSafeScheme(chrome::kFileSystemScheme);
+  RegisterWebSafeScheme(kBlobScheme);
+  RegisterWebSafeScheme(kFileSystemScheme);
 
   // We know about the following pseudo schemes and treat them specially.
-  RegisterPseudoScheme(chrome::kAboutScheme);
+  RegisterPseudoScheme(kAboutScheme);
   RegisterPseudoScheme(kJavaScriptScheme);
   RegisterPseudoScheme(kViewSourceScheme);
 }
@@ -448,7 +468,7 @@ void ChildProcessSecurityPolicyImpl::GrantRequestURL(
 void ChildProcessSecurityPolicyImpl::GrantRequestSpecificFileURL(
     int child_id,
     const GURL& url) {
-  if (!url.SchemeIs(chrome::kFileScheme))
+  if (!url.SchemeIs(kFileScheme))
     return;
 
   {
@@ -512,6 +532,12 @@ void ChildProcessSecurityPolicyImpl::GrantCreateFileForFileSystem(
   GrantPermissionsForFileSystem(child_id, filesystem_id, CREATE_NEW_FILE_GRANT);
 }
 
+void ChildProcessSecurityPolicyImpl::GrantCreateReadWriteFileSystem(
+    int child_id, const std::string& filesystem_id) {
+  GrantPermissionsForFileSystem(
+      child_id, filesystem_id, CREATE_READ_WRITE_FILE_GRANT);
+}
+
 void ChildProcessSecurityPolicyImpl::GrantCopyIntoFileSystem(
     int child_id, const std::string& filesystem_id) {
   GrantPermissionsForFileSystem(child_id, filesystem_id, COPY_INTO_FILE_GRANT);
@@ -522,14 +548,14 @@ void ChildProcessSecurityPolicyImpl::GrantDeleteFromFileSystem(
   GrantPermissionsForFileSystem(child_id, filesystem_id, DELETE_FILE_GRANT);
 }
 
-void ChildProcessSecurityPolicyImpl::GrantSendMIDISysExMessage(int child_id) {
+void ChildProcessSecurityPolicyImpl::GrantSendMidiSysExMessage(int child_id) {
   base::AutoLock lock(lock_);
 
   SecurityStateMap::iterator state = security_state_.find(child_id);
   if (state == security_state_.end())
     return;
 
-  state->second->GrantPermissionForMIDISysEx();
+  state->second->GrantPermissionForMidiSysEx();
 }
 
 void ChildProcessSecurityPolicyImpl::GrantScheme(int child_id,
@@ -553,10 +579,10 @@ void ChildProcessSecurityPolicyImpl::GrantWebUIBindings(int child_id) {
   state->second->GrantBindings(BINDINGS_POLICY_WEB_UI);
 
   // Web UI bindings need the ability to request chrome: URLs.
-  state->second->GrantScheme(chrome::kChromeUIScheme);
+  state->second->GrantScheme(kChromeUIScheme);
 
   // Web UI pages can contain links to file:// URLs.
-  state->second->GrantScheme(chrome::kFileScheme);
+  state->second->GrantScheme(kFileScheme);
 }
 
 void ChildProcessSecurityPolicyImpl::GrantReadRawCookies(int child_id) {
@@ -675,12 +701,6 @@ bool ChildProcessSecurityPolicyImpl::CanDeleteFromFileSystem(
     int child_id, const std::string& filesystem_id) {
   return HasPermissionsForFileSystem(child_id, filesystem_id,
                                      DELETE_FILE_GRANT);
-}
-
-void ChildProcessSecurityPolicyImpl::GrantCreateReadWriteFileSystem(
-    int child_id, const std::string& filesystem_id) {
-  GrantPermissionsForFileSystem(
-      child_id, filesystem_id, CREATE_READ_WRITE_FILE_GRANT);
 }
 
 bool ChildProcessSecurityPolicyImpl::HasPermissionsForFile(
@@ -885,7 +905,7 @@ void ChildProcessSecurityPolicyImpl::RegisterFileSystemPermissionPolicy(
   file_system_policy_map_[type] = policy;
 }
 
-bool ChildProcessSecurityPolicyImpl::CanSendMIDISysExMessage(int child_id) {
+bool ChildProcessSecurityPolicyImpl::CanSendMidiSysExMessage(int child_id) {
   base::AutoLock lock(lock_);
 
   SecurityStateMap::iterator state = security_state_.find(child_id);

@@ -8,18 +8,24 @@
 #include <vector>
 
 #include "base/basictypes.h"
+#include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/memory/scoped_ptr.h"
 #include "tools/gn/build_settings.h"
+#include "tools/gn/builder.h"
+#include "tools/gn/loader.h"
 #include "tools/gn/scheduler.h"
 #include "tools/gn/scope.h"
 #include "tools/gn/settings.h"
 #include "tools/gn/token.h"
 #include "tools/gn/toolchain.h"
 
-class CommandLine;
 class InputFile;
 class ParseNode;
+
+namespace base {
+class CommandLine;
+}
 
 extern const char kDotfile_Help[];
 
@@ -28,11 +34,23 @@ class CommonSetup {
  public:
   virtual ~CommonSetup();
 
+  // Returns the scheduler. This is virtual since only the main setup has a
+  // scheduler and the derived ones just store pointers.
+  virtual Scheduler* GetScheduler() = 0;
+
   // When true (the default), Run() will check for unresolved dependencies and
   // cycles upon completion. When false, such errors will be ignored.
   void set_check_for_bad_items(bool s) { check_for_bad_items_ = s; }
 
+  // When true (the default), RunPostMessageLoop will check for overrides that
+  // were specified but not used. When false, such errors will be ignored.
+  void set_check_for_unused_overrides(bool s) {
+    check_for_unused_overrides_ = s;
+  }
+
   BuildSettings& build_settings() { return build_settings_; }
+  Builder* builder() { return builder_.get(); }
+  LoaderImpl* loader() { return loader_.get(); }
 
  protected:
   CommonSetup();
@@ -43,10 +61,12 @@ class CommonSetup {
   void RunPreMessageLoop();
   bool RunPostMessageLoop();
 
- protected:
   BuildSettings build_settings_;
+  scoped_refptr<LoaderImpl> loader_;
+  scoped_refptr<Builder> builder_;
 
   bool check_for_bad_items_;
+  bool check_for_unused_overrides_;
 
  private:
   CommonSetup& operator=(const CommonSetup& other);  // Disallow.
@@ -61,7 +81,11 @@ class Setup : public CommonSetup {
 
   // Configures the build for the current command line. On success returns
   // true. On failure, prints the error and returns false.
-  bool DoSetup();
+  //
+  // The parameter is the string the user specified for the build directory. We
+  // will try to interpret this as a SourceDir if possible, and will fail if is
+  // is malformed.
+  bool DoSetup(const std::string& build_dir);
 
   // Runs the load, returning true on success. On failure, prints the error
   // and returns false. This includes both RunPreMessageLoop() and
@@ -70,12 +94,19 @@ class Setup : public CommonSetup {
 
   Scheduler& scheduler() { return scheduler_; }
 
+  virtual Scheduler* GetScheduler() OVERRIDE;
+
  private:
   // Fills build arguments. Returns true on success.
-  bool FillArguments(const CommandLine& cmdline);
+  bool FillArguments(const base::CommandLine& cmdline);
 
   // Fills the root directory into the settings. Returns true on success.
-  bool FillSourceDir(const CommandLine& cmdline);
+  bool FillSourceDir(const base::CommandLine& cmdline);
+
+  // Fills the build directory given the value the user has specified.
+  // Must happen after FillSourceDir so we can resolve source-relative
+  // paths.
+  bool FillBuildDir(const std::string& build_dir);
 
   // Fills the python path portion of the command line. On failure, sets
   // it to just "python".
@@ -84,7 +115,7 @@ class Setup : public CommonSetup {
   // Run config file.
   bool RunConfigFile();
 
-  bool FillOtherConfig(const CommandLine& cmdline);
+  bool FillOtherConfig(const base::CommandLine& cmdline);
 
   Scheduler scheduler_;
 
@@ -121,7 +152,11 @@ class Setup : public CommonSetup {
 // so that the main setup executes the message loop, but both are run.
 class DependentSetup : public CommonSetup {
  public:
-  DependentSetup(const Setup& main_setup);
+  // Note: this could be one function that takes a CommonSetup*, but then
+  // the compiler can get confused what to call, since it also matches the
+  // default copy constructor.
+  DependentSetup(Setup* derive_from);
+  DependentSetup(DependentSetup* derive_from);
   virtual ~DependentSetup();
 
   // These are the two parts of Run() in the regular setup, not including the
@@ -129,8 +164,10 @@ class DependentSetup : public CommonSetup {
   void RunPreMessageLoop();
   bool RunPostMessageLoop();
 
+  virtual Scheduler* GetScheduler() OVERRIDE;
+
  private:
-  DISALLOW_COPY_AND_ASSIGN(DependentSetup);
+  Scheduler* scheduler_;
 };
 
 #endif  // TOOLS_GN_SETUP_H_

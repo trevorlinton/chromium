@@ -17,6 +17,10 @@ std::string FakeProfile::GetProfileName() {
   return name_;
 }
 
+Profile::ProfileType FakeProfile::GetProfileType() const {
+  return REGULAR_PROFILE;
+}
+
 base::FilePath FakeProfile::GetPath() const {
   return path_;
 }
@@ -52,19 +56,33 @@ FakeProfile::GetMediaRequestContextForStoragePartition(
   return NULL;
 }
 
-void FakeProfile::RequestMIDISysExPermission(
+void FakeProfile::RequestMidiSysExPermission(
     int render_process_id,
     int render_view_id,
     int bridge_id,
     const GURL& requesting_frame,
-    const MIDISysExPermissionCallback& callback) {
+    bool user_gesture,
+    const MidiSysExPermissionCallback& callback) {
 }
 
-void FakeProfile::CancelMIDISysExPermissionRequest(
+void FakeProfile::CancelMidiSysExPermissionRequest(
     int render_process_id,
     int render_view_id,
     int bridge_id,
     const GURL& requesting_frame) {
+}
+
+void FakeProfile::RequestProtectedMediaIdentifierPermission(
+    int render_process_id,
+    int render_view_id,
+    int bridge_id,
+    int group_id,
+    const GURL& requesting_frame,
+    const ProtectedMediaIdentifierPermissionCallback& callback) {
+}
+
+void FakeProfile::CancelProtectedMediaIdentifierPermissionRequests(
+    int group_id) {
 }
 
 content::ResourceContext* FakeProfile::GetResourceContext() {
@@ -152,7 +170,8 @@ base::Time FakeProfile::GetStartTime() const {
 }
 
 net::URLRequestContextGetter* FakeProfile::CreateRequestContext(
-    content::ProtocolHandlerMap* protocol_handlers) {
+    content::ProtocolHandlerMap* protocol_handlers,
+    content::ProtocolHandlerScopedVector protocol_interceptors) {
   return NULL;
 }
 
@@ -160,7 +179,8 @@ net::URLRequestContextGetter*
 FakeProfile::CreateRequestContextForStoragePartition(
     const base::FilePath& partition_path,
     bool in_memory,
-    content::ProtocolHandlerMap* protocol_handlers) {
+    content::ProtocolHandlerMap* protocol_handlers,
+    content::ProtocolHandlerScopedVector protocol_interceptors) {
   return NULL;
 }
 
@@ -175,9 +195,6 @@ void FakeProfile::ChangeAppLocale(
     const std::string& locale, AppLocaleChangedVia via) {}
 void FakeProfile::OnLogin() {}
 void FakeProfile::InitChromeOSPreferences() {}
-bool FakeProfile::IsLoginProfile() {
-  return false;
-}
 #endif  // defined(OS_CHROMEOS)
 
 PrefProxyConfigTracker* FakeProfile::GetProxyConfigTracker() {

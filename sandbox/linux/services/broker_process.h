@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/basictypes.h"
+#include "base/callback_forward.h"
 #include "base/pickle.h"
 #include "base/process/process.h"
 
@@ -42,9 +43,9 @@ class BrokerProcess {
   ~BrokerProcess();
   // Will initialize the broker process. There should be no threads at this
   // point, since we need to fork().
-  // sandbox_callback is a function that should be called to enable the
-  // sandbox in the broker.
-  bool Init(bool (*sandbox_callback)(void));
+  // broker_process_init_callback will be called in the new broker process,
+  // after fork() returns.
+  bool Init(const base::Callback<bool(void)>& broker_process_init_callback);
 
   // Can be used in place of access(). Will be async signal safe.
   // X_OK will always return an error in practice since the broker process
@@ -66,26 +67,31 @@ class BrokerProcess {
     kCommandAccess,
   };
   int PathAndFlagsSyscall(enum IPCCommands command_type,
-                          const char* pathname, int flags) const;
+                          const char* pathname,
+                          int flags) const;
   bool HandleRequest() const;
-  bool HandleRemoteCommand(IPCCommands command_type, int reply_ipc,
-      const Pickle& read_pickle, PickleIterator iter) const;
+  bool HandleRemoteCommand(IPCCommands command_type,
+                           int reply_ipc,
+                           const Pickle& read_pickle,
+                           PickleIterator iter) const;
 
   void AccessFileForIPC(const std::string& requested_filename,
-                        int mode, Pickle* write_pickle) const;
+                        int mode,
+                        Pickle* write_pickle) const;
   void OpenFileForIPC(const std::string& requested_filename,
-                      int flags, Pickle* write_pickle,
+                      int flags,
+                      Pickle* write_pickle,
                       std::vector<int>* opened_files) const;
   bool GetFileNameIfAllowedToAccess(const char*, int, const char**) const;
   bool GetFileNameIfAllowedToOpen(const char*, int, const char**) const;
   const int denied_errno_;
-  bool initialized_;  // Whether we've been through Init() yet.
-  bool is_child_;  // Whether we're the child (broker process).
-  bool fast_check_in_client_;  // Whether to forward a request that we know
-                               // will be denied to the broker.
+  bool initialized_;               // Whether we've been through Init() yet.
+  bool is_child_;                  // Whether we're the child (broker process).
+  bool fast_check_in_client_;      // Whether to forward a request that we know
+                                   // will be denied to the broker.
   bool quiet_failures_for_tests_;  // Disable certain error message when
                                    // testing for failures.
-  pid_t broker_pid_;  // The PID of the broker (child).
+  pid_t broker_pid_;               // The PID of the broker (child).
   const std::vector<std::string> allowed_r_files_;  // Files allowed for read.
   const std::vector<std::string> allowed_w_files_;  // Files allowed for write.
   int ipc_socketpair_;  // Our communication channel to parent or child.

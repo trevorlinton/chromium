@@ -66,6 +66,16 @@ class NetworkStats {
     STATUS_MAX,            // Bounding value.
   };
 
+  enum ReadState {         // Used to track if |socket_| has a pending read.
+    READ_STATE_IDLE,
+    READ_STATE_READ_PENDING,
+  };
+
+  enum WriteState {        // Used to track if |socket_| has a pending write.
+    WRITE_STATE_IDLE,
+    WRITE_STATE_WRITE_PENDING,
+  };
+
   // |TestType| specifies the possible tests we may run
   // (except for the first and the last serving as boundaries).
   enum TestType {
@@ -78,6 +88,7 @@ class NetworkStats {
     PACED_PACKET_TEST,      // Packet loss test with pacing.
     // Test whether NAT binding expires after some idle period.
     NAT_BIND_TEST,
+    PACKET_SIZE_TEST,
     TEST_TYPE_MAX,
   };
 
@@ -97,6 +108,7 @@ class NetworkStats {
              uint16 histogram_port,
              bool has_proxy_server,
              uint32 probe_bytes,
+             uint32 bytes_for_packet_size_test,
              const net::CompletionCallback& callback);
 
  private:
@@ -169,8 +181,9 @@ class NetworkStats {
   // Collect network connectivity stats. This is called when all the data from
   // server is read or when there is a failure during connect/read/write. It
   // will either start the next phase of the test, or it will self destruct
-  // at the end of this method.
-  void TestPhaseComplete(Status status, int result);
+  // at the end of this method. Returns true if a new test wasn't started and it
+  // was self destructed.
+  bool TestPhaseComplete(Status status, int result);
 
   // This method is called from TestPhaseComplete() and calls
   // |finished_callback_| callback to indicate that the test has finished.
@@ -212,6 +225,10 @@ class NetworkStats {
   // Collect whether the second packet in the NAT test is received for the
   // given idle time.
   void RecordNATTestReceivedHistograms(Status status);
+
+  // Collect whether we have the requested packet size was received or not in
+  // the PACKET_SIZE_TEST test.
+  void RecordPacketSizeTestReceivedHistograms(Status status);
 
   // Record the time duration between sending the probe request and receiving
   // the last probe packet excluding the pacing time requested by the client.
@@ -268,8 +285,12 @@ class NetworkStats {
   // Time when sending probe_request, used for computing RTT.
   base::TimeTicks probe_request_time_;
 
-  // Size of the probe packets requested to be sent from servers.
+  // Size of the probe packets requested to be sent from servers. We don't use
+  // |probe_packet_bytes_| during PACKET_SIZE_TEST.
   uint32 probe_packet_bytes_;
+
+  // Size of the packet requested to be sent from servers for PACKET_SIZE_TEST.
+  uint32 bytes_for_packet_size_test_;
 
   // bitmask indicating which packets are received.
   std::bitset<21> packets_received_mask_;
@@ -295,6 +316,10 @@ class NetworkStats {
 
   // Token received from server for authentication.
   ProbePacket_Token token_;
+
+  // The state variables to track pending reads/writes.
+  ReadState read_state_;
+  WriteState write_state_;
 
   // We use this factory to create timeout tasks for socket's ReadData.
   base::WeakPtrFactory<NetworkStats> weak_factory_;

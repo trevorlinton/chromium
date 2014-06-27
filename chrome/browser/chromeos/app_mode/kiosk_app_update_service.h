@@ -12,11 +12,15 @@
 #include "base/memory/singleton.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/chromeos/system/automatic_reboot_manager_observer.h"
-#include "chrome/browser/extensions/update_observer.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service_factory.h"
+#include "components/keyed_service/content/browser_context_keyed_service_factory.h"
+#include "components/keyed_service/core/keyed_service.h"
+#include "extensions/browser/update_observer.h"
 
 class Profile;
+
+namespace extensions {
+class Extension;
+}
 
 namespace chromeos {
 
@@ -25,7 +29,7 @@ class AutomaticRebootManager;
 }
 
 // This class enforces automatic restart on app and Chrome updates in app mode.
-class KioskAppUpdateService : public BrowserContextKeyedService,
+class KioskAppUpdateService : public KeyedService,
                               public extensions::UpdateObserver,
                               public system::AutomaticRebootManagerObserver {
  public:
@@ -43,11 +47,12 @@ class KioskAppUpdateService : public BrowserContextKeyedService,
   void StartAppUpdateRestartTimer();
   void ForceAppUpdateRestart();
 
-  // BrowserContextKeyedService overrides:
+  // KeyedService overrides:
   virtual void Shutdown() OVERRIDE;
 
   // extensions::UpdateObserver overrides:
-  virtual void OnAppUpdateAvailable(const std::string& app_id) OVERRIDE;
+  virtual void OnAppUpdateAvailable(
+      const extensions::Extension* extension) OVERRIDE;
   virtual void OnChromeUpdateAvailable() OVERRIDE {}
 
   // system::AutomaticRebootManagerObserver overrides:
@@ -83,7 +88,7 @@ class KioskAppUpdateServiceFactory : public BrowserContextKeyedServiceFactory {
   virtual ~KioskAppUpdateServiceFactory();
 
   // BrowserContextKeyedServiceFactory overrides:
-  virtual BrowserContextKeyedService* BuildServiceInstanceFor(
+  virtual KeyedService* BuildServiceInstanceFor(
       content::BrowserContext* profile) const OVERRIDE;
 };
 

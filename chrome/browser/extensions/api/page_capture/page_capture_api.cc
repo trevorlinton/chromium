@@ -10,7 +10,6 @@
 #include "base/file_util.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
-#include "chrome/common/extensions/extension_messages.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
@@ -18,6 +17,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/common/extension_messages.h"
 
 using content::BrowserThread;
 using content::ChildProcessSecurityPolicy;
@@ -66,7 +66,7 @@ bool PageCaptureSaveAsMHTMLFunction::RunImpl() {
   return true;
 }
 
-bool PageCaptureSaveAsMHTMLFunction::OnMessageReceivedFromRenderView(
+bool PageCaptureSaveAsMHTMLFunction::OnMessageReceived(
     const IPC::Message& message) {
   if (message.type() != ExtensionHostMsg_ResponseAck::ID)
     return false;
@@ -90,7 +90,7 @@ bool PageCaptureSaveAsMHTMLFunction::OnMessageReceivedFromRenderView(
 
 void PageCaptureSaveAsMHTMLFunction::CreateTemporaryFile() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE));
-  bool success = file_util::CreateTemporaryFile(&mhtml_path_);
+  bool success = base::CreateTemporaryFile(&mhtml_path_);
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
       base::Bind(&PageCaptureSaveAsMHTMLFunction::TemporaryFileCreated, this,
@@ -181,8 +181,8 @@ void PageCaptureSaveAsMHTMLFunction::ReturnSuccess(int64 file_size) {
   SendResponse(true);
 
   // Note that we'll wait for a response ack message received in
-  // OnMessageReceivedFromRenderView before we call Release() (to prevent the
-  // blob file from being deleted).
+  // OnMessageReceived before we call Release() (to prevent the blob file from
+  // being deleted).
 }
 
 WebContents* PageCaptureSaveAsMHTMLFunction::GetWebContents() {

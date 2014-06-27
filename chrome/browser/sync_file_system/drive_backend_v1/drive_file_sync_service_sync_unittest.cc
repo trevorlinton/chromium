@@ -14,19 +14,22 @@
 #include "base/threading/sequenced_worker_pool.h"
 #include "chrome/browser/drive/drive_uploader.h"
 #include "chrome/browser/drive/fake_drive_service.h"
+#include "chrome/browser/sync_file_system/drive_backend/fake_drive_service_helper.h"
 #include "chrome/browser/sync_file_system/drive_backend_v1/api_util.h"
 #include "chrome/browser/sync_file_system/drive_backend_v1/drive_file_sync_util.h"
 #include "chrome/browser/sync_file_system/drive_backend_v1/drive_metadata_store.h"
-#include "chrome/browser/sync_file_system/drive_backend_v1/fake_drive_service_helper.h"
 #include "chrome/browser/sync_file_system/local/canned_syncable_file_system.h"
 #include "chrome/browser/sync_file_system/local/local_file_sync_context.h"
 #include "chrome/browser/sync_file_system/local/local_file_sync_service.h"
 #include "chrome/browser/sync_file_system/local/sync_file_system_backend.h"
+#include "chrome/browser/sync_file_system/sync_file_system_test_util.h"
 #include "chrome/browser/sync_file_system/syncable_file_system_util.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/test/test_browser_thread.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/leveldatabase/src/helpers/memenv/memenv.h"
+#include "third_party/leveldatabase/src/include/leveldb/env.h"
 #include "webkit/browser/fileapi/file_system_context.h"
 
 #define FPL(path) FILE_PATH_LITERAL(path)
@@ -42,40 +45,6 @@ using drive_backend::APIUtil;
 using drive_backend::APIUtilInterface;
 using drive_backend::FakeDriveServiceHelper;
 
-namespace {
-
-void SyncResultCallback(bool* done,
-                        SyncStatusCode* status_out,
-                        fileapi::FileSystemURL* url_out,
-                        SyncStatusCode status,
-                        const fileapi::FileSystemURL& url) {
-  EXPECT_FALSE(*done);
-  *status_out = status;
-  *url_out = url;
-  *done = true;
-}
-
-void SyncStatusResultCallback(bool* done,
-                              SyncStatusCode* status_out,
-                              SyncStatusCode status) {
-  EXPECT_FALSE(*done);
-  *status_out = status;
-  *done = true;
-}
-
-void DatabaseInitResultCallback(bool* done,
-                                SyncStatusCode* status_out,
-                                bool* created_out,
-                                SyncStatusCode status,
-                                bool created) {
-  EXPECT_FALSE(*done);
-  *status_out = status;
-  *created_out = created;
-  *done = true;
-}
-
-}  // namespace
-
 class DriveFileSyncServiceSyncTest : public testing::Test {
  public:
   DriveFileSyncServiceSyncTest()
@@ -86,9 +55,11 @@ class DriveFileSyncServiceSyncTest : public testing::Test {
 
   virtual void SetUp() OVERRIDE {
     // TODO(tzik): Set up TestExtensionSystem to support simulated relaunch.
+    in_memory_env_.reset(leveldb::NewMemEnv(leveldb::Env::Default()));
 
     RegisterSyncableFileSystem();
-    local_sync_service_.reset(new LocalFileSyncService(&profile_));
+    local_sync_service_ = LocalFileSyncService::CreateForTesting(
+        &profile_, in_memory_env_.get());
 
     fake_drive_service_ = new drive::FakeDriveService();
     fake_drive_service_->Initialize("test_user@gmail.com");
@@ -101,18 +72,16 @@ class DriveFileSyncServiceSyncTest : public testing::Test {
         fake_drive_service_, base::MessageLoopProxy::current().get());
 
     fake_drive_helper_.reset(new FakeDriveServiceHelper(
-        fake_drive_service_, drive_uploader_));
+        fake_drive_service_, drive_uploader_,
+        APIUtil::GetSyncRootDirectoryName()));
 
-    bool done = false;
     SyncStatusCode status = SYNC_STATUS_UNKNOWN;
     bool created = false;
     scoped_ptr<DriveMetadataStore> metadata_store(
         new DriveMetadataStore(fake_drive_helper_->base_dir_path(),
                                base::MessageLoopProxy::current().get()));
-    metadata_store->Initialize(
-        base::Bind(&DatabaseInitResultCallback, &done, &status, &created));
+    metadata_store->Initialize(CreateResultReceiver(&status, &created));
     FlushMessageLoop();
-    EXPECT_TRUE(done);
     EXPECT_EQ(SYNC_STATUS_OK, status);
     EXPECT_TRUE(created);
 
@@ -155,42 +124,31 @@ class DriveFileSyncServiceSyncTest : public testing::Test {
     if (!ContainsKey(file_systems_, origin)) {
       CannedSyncableFileSystem* file_system = new CannedSyncableFileSystem(
           origin,
+          in_memory_env_.get(),
           BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO).get(),
           BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE)
               .get());
 
-      bool done = false;
       SyncStatusCode status = SYNC_STATUS_UNKNOWN;
-      file_system->SetUp();
+      file_system->SetUp(CannedSyncableFileSystem::QUOTA_ENABLED);
       local_sync_service_->MaybeInitializeFileSystemContext(
           origin, file_system->file_system_context(),
-          base::Bind(&SyncStatusResultCallback, &done, &status));
+          CreateResultReceiver(&status));
       FlushMessageLoop();
-      EXPECT_TRUE(done);
       EXPECT_EQ(SYNC_STATUS_OK, status);
 
       file_system->backend()->sync_context()->
           set_mock_notify_changes_duration_in_sec(0);
 
-      EXPECT_EQ(base::PLATFORM_FILE_OK, file_system->OpenFileSystem());
+      EXPECT_EQ(base::File::FILE_OK, file_system->OpenFileSystem());
       file_systems_[origin] = file_system;
     }
 
-    bool done = false;
     SyncStatusCode status = SYNC_STATUS_UNKNOWN;
     remote_sync_service_->RegisterOrigin(
-        origin, base::Bind(&SyncStatusResultCallback, &done, &status));
+        origin, CreateResultReceiver(&status));
     FlushMessageLoop();
-    EXPECT_TRUE(done);
     EXPECT_EQ(SYNC_STATUS_OK, status);
-  }
-
-  void AddLocalFolder(const GURL& origin,
-                      const base::FilePath& path) {
-    ASSERT_TRUE(ContainsKey(file_systems_, origin));
-    EXPECT_EQ(base::PLATFORM_FILE_OK,
-              file_systems_[origin]->CreateDirectory(
-                  CreateSyncableFileSystemURL(origin, path)));
   }
 
   void AddOrUpdateLocalFile(const GURL& origin,
@@ -198,7 +156,7 @@ class DriveFileSyncServiceSyncTest : public testing::Test {
                             const std::string& content) {
     fileapi::FileSystemURL url(CreateSyncableFileSystemURL(origin, path));
     ASSERT_TRUE(ContainsKey(file_systems_, origin));
-    EXPECT_EQ(base::PLATFORM_FILE_OK, file_systems_[origin]->CreateFile(url));
+    EXPECT_EQ(base::File::FILE_OK, file_systems_[origin]->CreateFile(url));
     int64 bytes_written = file_systems_[origin]->WriteString(url, content);
     EXPECT_EQ(static_cast<int64>(content.size()), bytes_written);
     FlushMessageLoop();
@@ -216,7 +174,7 @@ class DriveFileSyncServiceSyncTest : public testing::Test {
 
   void RemoveLocal(const GURL& origin, const base::FilePath& path) {
     ASSERT_TRUE(ContainsKey(file_systems_, origin));
-    EXPECT_EQ(base::PLATFORM_FILE_OK,
+    EXPECT_EQ(base::File::FILE_OK,
               file_systems_[origin]->Remove(
                   CreateSyncableFileSystemURL(origin, path),
                   true /* recursive */));
@@ -224,24 +182,20 @@ class DriveFileSyncServiceSyncTest : public testing::Test {
   }
 
   SyncStatusCode ProcessLocalChange() {
-    bool done = false;
     SyncStatusCode status = SYNC_STATUS_UNKNOWN;
     fileapi::FileSystemURL url;
     local_sync_service_->ProcessLocalChange(
-        base::Bind(&SyncResultCallback, &done, &status, &url));
+        CreateResultReceiver(&status, &url));
     FlushMessageLoop();
-    EXPECT_TRUE(done);
     return status;
   }
 
   SyncStatusCode ProcessRemoteChange() {
-    bool done = false;
     SyncStatusCode status = SYNC_STATUS_UNKNOWN;
     fileapi::FileSystemURL url;
     remote_sync_service_->ProcessRemoteChange(
-        base::Bind(&SyncResultCallback, &done, &status, &url));
+        CreateResultReceiver(&status, &url));
     FlushMessageLoop();
-    EXPECT_TRUE(done);
     return status;
   }
 
@@ -351,7 +305,7 @@ class DriveFileSyncServiceSyncTest : public testing::Test {
 
     fileapi::FileSystemURL url(CreateSyncableFileSystemURL(origin, path));
     CannedSyncableFileSystem::FileEntryList local_entries;
-    EXPECT_EQ(base::PLATFORM_FILE_OK,
+    EXPECT_EQ(base::File::FILE_OK,
               file_system->ReadDirectory(url, &local_entries));
     for (CannedSyncableFileSystem::FileEntryList::iterator itr =
              local_entries.begin();
@@ -388,7 +342,7 @@ class DriveFileSyncServiceSyncTest : public testing::Test {
     std::string file_content;
     EXPECT_EQ(google_apis::HTTP_SUCCESS,
               fake_drive_helper_->ReadFile(file_id, &file_content));
-    EXPECT_EQ(base::PLATFORM_FILE_OK,
+    EXPECT_EQ(base::File::FILE_OK,
               file_system->VerifyFile(url, file_content));
   }
 
@@ -408,6 +362,7 @@ class DriveFileSyncServiceSyncTest : public testing::Test {
 
   content::TestBrowserThreadBundle thread_bundle_;
 
+  scoped_ptr<leveldb::Env> in_memory_env_;
   TestingProfile profile_;
 
   drive::FakeDriveService* fake_drive_service_;
@@ -552,7 +507,7 @@ void DriveFileSyncServiceSyncTest::TestRemoteFileDeletion() {
   VerifyConsistencyForOrigin(kOrigin);
 
   EXPECT_EQ(google_apis::HTTP_SUCCESS,
-            fake_drive_helper_->RemoveResource(remote_file_id));
+            fake_drive_helper_->TrashResource(remote_file_id));
 
   EXPECT_EQ(SYNC_STATUS_OK, ProcessChangesUntilDone());
   VerifyConsistency();

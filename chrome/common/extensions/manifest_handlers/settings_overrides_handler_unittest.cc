@@ -6,9 +6,9 @@
 
 #include "base/json/json_string_value_serializer.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/features/feature_channel.h"
 #include "chrome/common/extensions/manifest_url_handler.h"
+#include "extensions/common/error_utils.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -32,18 +32,34 @@ const char kManifest[] = "{"
     "  }"
     "}";
 
+const char kBrokenManifest[] = "{"
+    " \"version\" : \"1.0.0.0\","
+    " \"name\" : \"Test\","
+    " \"chrome_settings_overrides\" : {"
+    "   \"homepage\" : \"{invalid}\","
+    "   \"search_provider\" : {"
+    "        \"name\" : \"first\","
+    "        \"keyword\" : \"firstkey\","
+    "        \"search_url\" : \"{invalid}/s?q={searchTerms}\","
+    "        \"favicon_url\" : \"{invalid}/favicon.ico\","
+    "        \"encoding\" : \"UTF-8\","
+    "        \"is_default\" : true"
+    "    },"
+    "   \"startup_pages\" : [\"{invalid}\"]"
+    "  }"
+    "}";
+
 using extensions::api::manifest_types::ChromeSettingsOverrides;
 using extensions::Extension;
 using extensions::Manifest;
 using extensions::SettingsOverrides;
 namespace manifest_keys = extensions::manifest_keys;
 
-class DeclarativeSettingsTest : public testing::Test {
+class OverrideSettingsTest : public testing::Test {
 };
 
 
-TEST_F(DeclarativeSettingsTest, ParseManifest) {
-  extensions::ScopedCurrentChannel channel(chrome::VersionInfo::CHANNEL_DEV);
+TEST_F(OverrideSettingsTest, ParseManifest) {
   std::string manifest(kManifest);
   JSONStringValueSerializer json(&manifest);
   std::string error;
@@ -57,10 +73,11 @@ TEST_F(DeclarativeSettingsTest, ParseManifest) {
       Extension::NO_FLAGS,
       &error);
   ASSERT_TRUE(extension);
+#if defined(OS_WIN)
   ASSERT_TRUE(extension->manifest()->HasPath(manifest_keys::kSettingsOverride));
 
   SettingsOverrides* settings_override = static_cast<SettingsOverrides*>(
-        extension->GetManifestData(manifest_keys::kSettingsOverride));
+      extension->GetManifestData(manifest_keys::kSettingsOverride));
   ASSERT_TRUE(settings_override);
   ASSERT_TRUE(settings_override->search_engine);
   EXPECT_TRUE(settings_override->search_engine->is_default);
@@ -79,6 +96,37 @@ TEST_F(DeclarativeSettingsTest, ParseManifest) {
 
   ASSERT_TRUE(settings_override->homepage);
   EXPECT_EQ(GURL("http://www.homepage.com"), *settings_override->homepage);
+#else
+  EXPECT_FALSE(
+      extension->manifest()->HasPath(manifest_keys::kSettingsOverride));
+#endif
+}
+
+TEST_F(OverrideSettingsTest, ParseBrokenManifest) {
+  std::string manifest(kBrokenManifest);
+  JSONStringValueSerializer json(&manifest);
+  std::string error;
+  scoped_ptr<base::Value> root(json.Deserialize(NULL, &error));
+  ASSERT_TRUE(root);
+  ASSERT_TRUE(root->IsType(base::Value::TYPE_DICTIONARY));
+  scoped_refptr<Extension> extension = Extension::Create(
+      base::FilePath(FILE_PATH_LITERAL("//nonexistent")),
+      Manifest::INVALID_LOCATION,
+      *static_cast<base::DictionaryValue*>(root.get()),
+      Extension::NO_FLAGS,
+      &error);
+#if defined(OS_WIN)
+  EXPECT_FALSE(extension);
+  EXPECT_EQ(
+      extensions::ErrorUtils::FormatErrorMessage(
+          extensions::manifest_errors::kInvalidEmptyDictionary,
+          extensions::manifest_keys::kSettingsOverride),
+      error);
+#else
+  EXPECT_TRUE(extension);
+  EXPECT_FALSE(
+      extension->manifest()->HasPath(manifest_keys::kSettingsOverride));
+#endif
 }
 
 }  // namespace

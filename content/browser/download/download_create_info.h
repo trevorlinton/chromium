@@ -28,7 +28,8 @@ struct CONTENT_EXPORT DownloadCreateInfo {
                      int64 total_bytes,
                      const net::BoundNetLog& bound_net_log,
                      bool has_user_gesture,
-                     PageTransition transition_type);
+                     PageTransition transition_type,
+                     scoped_ptr<DownloadSaveInfo> save_info);
   DownloadCreateInfo();
   ~DownloadCreateInfo();
 
@@ -43,6 +44,12 @@ struct CONTENT_EXPORT DownloadCreateInfo {
 
   // The URL that referred us.
   GURL referrer_url;
+
+  // The URL of the tab that started us.
+  GURL tab_url;
+
+  // The referrer URL of the tab that started us.
+  GURL tab_referrer_url;
 
   // The time when the download started.
   base::Time start_time;

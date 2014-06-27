@@ -49,7 +49,7 @@ class HostNPScriptObject : public It2MeHost::Observer {
 
   // Post LogDebugInfo to the correct proxy (and thus, on the correct thread).
   // This should only be called by HostLogHandler. To log to the UI, use the
-  // standard LOG(INFO) and it will be sent to this method.
+  // standard HOST_LOG and it will be sent to this method.
   void PostLogDebugInfo(const std::string& message);
 
   void SetWindow(NPWindow* np_window);
@@ -182,7 +182,7 @@ class HostNPScriptObject : public It2MeHost::Observer {
   // |result| and returns true on success, or leaves it unchanged and returns
   // false on failure.
   bool LocalizeString(NPObject* localize_func, const char* tag,
-                      string16* result);
+                      base::string16* result);
 
   // Helper function for executing InvokeDefault on an NPObject that performs
   // a string->string mapping with one substitution. Stores the translation in
@@ -191,7 +191,7 @@ class HostNPScriptObject : public It2MeHost::Observer {
   bool LocalizeStringWithSubstitution(NPObject* localize_func,
                                       const char* tag,
                                       const char* substitution,
-                                      string16* result);
+                                      base::string16* result);
 
   //////////////////////////////////////////////////////////
   // Helper methods for Me2Me host.
@@ -266,6 +266,7 @@ class HostNPScriptObject : public It2MeHost::Observer {
   // It2Me host state.
 
   // Internal implementation of the It2Me host function.
+  scoped_ptr<ChromotingHostContext> host_context_;
   scoped_refptr<It2MeHost> it2me_host_;
 
   // Cached, read-only copies of |it2me_host_| session state.

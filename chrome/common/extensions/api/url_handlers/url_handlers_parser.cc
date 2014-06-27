@@ -9,9 +9,9 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/common/extensions/manifest_handlers/offline_enabled_info.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/manifest_constants.h"
+#include "extensions/common/manifest_handlers/offline_enabled_info.h"
 #include "extensions/common/switches.h"
 #include "net/base/network_change_notifier.h"
 #include "url/gurl.h"
@@ -89,20 +89,20 @@ UrlHandlersParser::~UrlHandlersParser() {
 }
 
 bool ParseUrlHandler(const std::string& handler_id,
-                     const DictionaryValue& handler_info,
+                     const base::DictionaryValue& handler_info,
                      std::vector<UrlHandlerInfo>* url_handlers,
-                     string16* error) {
+                     base::string16* error) {
   DCHECK(error);
 
   UrlHandlerInfo handler;
   handler.id = handler_id;
 
   if (!handler_info.GetString(mkeys::kUrlHandlerTitle, &handler.title)) {
-    *error = ASCIIToUTF16(merrors::kInvalidURLHandlerTitle);
+    *error = base::ASCIIToUTF16(merrors::kInvalidURLHandlerTitle);
     return false;
   }
 
-  const ListValue* manif_patterns = NULL;
+  const base::ListValue* manif_patterns = NULL;
   if (!handler_info.GetList(mkeys::kMatches, &manif_patterns) ||
       manif_patterns->GetSize() == 0) {
     *error = ErrorUtils::FormatErrorMessageUTF16(
@@ -110,7 +110,7 @@ bool ParseUrlHandler(const std::string& handler_id,
     return false;
   }
 
-  for (ListValue::const_iterator it = manif_patterns->begin();
+  for (base::ListValue::const_iterator it = manif_patterns->begin();
        it != manif_patterns->end(); ++it) {
     std::string str_pattern;
     (*it)->GetAsString(&str_pattern);
@@ -132,23 +132,23 @@ bool ParseUrlHandler(const std::string& handler_id,
   return true;
 }
 
-bool UrlHandlersParser::Parse(Extension* extension, string16* error) {
+bool UrlHandlersParser::Parse(Extension* extension, base::string16* error) {
   scoped_ptr<UrlHandlers> info(new UrlHandlers);
-  const DictionaryValue* all_handlers = NULL;
+  const base::DictionaryValue* all_handlers = NULL;
   if (!extension->manifest()->GetDictionary(
         mkeys::kUrlHandlers, &all_handlers)) {
-    *error = ASCIIToUTF16(merrors::kInvalidURLHandlers);
+    *error = base::ASCIIToUTF16(merrors::kInvalidURLHandlers);
     return false;
   }
 
   DCHECK(extension->is_platform_app());
 
-  for (DictionaryValue::Iterator iter(*all_handlers); !iter.IsAtEnd();
+  for (base::DictionaryValue::Iterator iter(*all_handlers); !iter.IsAtEnd();
        iter.Advance()) {
     // A URL handler entry is a title and a list of URL patterns to handle.
-    const DictionaryValue* handler = NULL;
+    const base::DictionaryValue* handler = NULL;
     if (!iter.value().GetAsDictionary(&handler)) {
-      *error = ASCIIToUTF16(merrors::kInvalidURLHandlerPatternElement);
+      *error = base::ASCIIToUTF16(merrors::kInvalidURLHandlerPatternElement);
       return false;
     }
 

@@ -8,6 +8,7 @@
 
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/renderer/extensions/chrome_v8_context.h"
+#include "third_party/WebKit/public/web/WebDOMFileSystem.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
 #include "v8/include/v8.h"
 #include "webkit/common/fileapi/file_system_util.h"
@@ -49,12 +50,14 @@ void SyncFileSystemCustomBindings::GetSyncFileSystemObject(
     return;
   }
 
-  WebKit::WebFrame* webframe =
-      WebKit::WebFrame::frameForContext(context()->v8_context());
+  blink::WebFrame* webframe =
+      blink::WebFrame::frameForContext(context()->v8_context());
   args.GetReturnValue().Set(
-    webframe->createFileSystem(WebKit::WebFileSystemTypeExternal,
-                               WebKit::WebString::fromUTF8(name),
-                               WebKit::WebString::fromUTF8(root_url)));
+      blink::WebDOMFileSystem::create(
+          webframe,
+          blink::WebFileSystemTypeExternal,
+          blink::WebString::fromUTF8(name),
+          GURL(root_url)).toV8Value());
 }
 
 }  // namespace extensions

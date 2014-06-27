@@ -16,12 +16,14 @@
 #import "testing/gtest_mac.h"
 #include "testing/platform_test.h"
 
+using base::ASCIIToUTF16;
+
 class BookmarkEditorControllerTest : public CocoaProfileTest {
  public:
   const BookmarkNode* default_node_;
   const BookmarkNode* default_parent_;
   const char* default_name_;
-  string16 default_title_;
+  base::string16 default_title_;
   BookmarkEditorController* controller_;
 
   virtual void SetUp() OVERRIDE {
@@ -41,7 +43,7 @@ class BookmarkEditorControllerTest : public CocoaProfileTest {
                                  parent:default_parent_
                                    node:default_node
                                     url:GURL()
-                                  title:string16()
+                                  title:base::string16()
                           configuration:BookmarkEditor::NO_TREE];
     [controller_ runAsModalSheet];
   }
@@ -150,7 +152,7 @@ class BookmarkEditorControllerNoNodeTest : public CocoaProfileTest {
                                  parent:parent
                                    node:NULL
                                     url:GURL()
-                                  title:string16()
+                                  title:base::string16()
                           configuration:BookmarkEditor::NO_TREE];
 
     [controller_ runAsModalSheet];
@@ -171,7 +173,7 @@ TEST_F(BookmarkEditorControllerNoNodeTest, NoNodeNoTree) {
 
 class BookmarkEditorControllerYesNodeTest : public CocoaProfileTest {
  public:
-  string16 default_title_;
+  base::string16 default_title_;
   BookmarkEditorController* controller_;
 
   virtual void SetUp() OVERRIDE {
@@ -190,7 +192,7 @@ class BookmarkEditorControllerYesNodeTest : public CocoaProfileTest {
                                  parent:parent
                                    node:node
                                     url:GURL()
-                                  title:string16()
+                                  title:base::string16()
                           configuration:BookmarkEditor::NO_TREE];
 
     [controller_ runAsModalSheet];
@@ -222,7 +224,7 @@ class BookmarkEditorControllerUtf8NodeTest : public CocoaProfileTest {
 
     BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
     const BookmarkNode* parent = model->bookmark_bar_node();
-    string16 title = ASCIIToUTF16("wooh title");
+    base::string16 title = ASCIIToUTF16("wooh title");
     const char* url_name = "http://www.foobar.com/心得寫作";
     const BookmarkNode* node = model->AddURL(parent, 0, title, GURL(url_name));
     controller_ = [[BookmarkEditorController alloc]
@@ -231,7 +233,7 @@ class BookmarkEditorControllerUtf8NodeTest : public CocoaProfileTest {
                                  parent:parent
                                    node:node
                                     url:GURL()
-                                  title:string16()
+                                  title:base::string16()
                           configuration:BookmarkEditor::NO_TREE];
 
     [controller_ runAsModalSheet];
@@ -315,7 +317,7 @@ class BookmarkEditorControllerTreeTest : public CocoaProfileTest {
                              parent:folder_bb_
                                node:bookmark_bb_3_
                                 url:GURL()
-                              title:string16()
+                              title:base::string16()
                       configuration:BookmarkEditor::SHOW_TREE];
   }
 
@@ -462,7 +464,7 @@ class BookmarkEditorControllerTreeNoNodeTest :
                              parent:folder_bb_
                                node:nil
                                 url:GURL()
-                              title:string16()
+                              title:base::string16()
                       configuration:BookmarkEditor::SHOW_TREE];
   }
 

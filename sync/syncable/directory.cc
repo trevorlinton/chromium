@@ -271,24 +271,6 @@ bool Directory::GetChildHandlesById(
   return true;
 }
 
-bool Directory::GetChildHandlesByHandle(
-    BaseTransaction* trans, int64 handle,
-    Directory::Metahandles* result) {
-  if (!SyncAssert(this == trans->directory(), FROM_HERE,
-                  "Directories don't match", trans))
-    return false;
-
-  result->clear();
-
-  ScopedKernelLock lock(this);
-  EntryKernel* kernel = GetEntryByHandle(handle, &lock);
-  if (!kernel)
-    return true;
-
-  AppendChildHandles(lock, kernel->ref(ID), result);
-  return true;
-}
-
 int Directory::GetTotalNodeCount(
     BaseTransaction* trans,
     EntryKernel* kernel) const {
@@ -887,16 +869,6 @@ void Directory::GetAllMetaHandles(BaseTransaction* trans,
   }
 }
 
-void Directory::GetAllEntryKernels(BaseTransaction* trans,
-                                   std::vector<const EntryKernel*>* result) {
-  result->clear();
-  ScopedKernelLock lock(this);
-  for (MetahandlesMap::iterator i = kernel_->metahandles_map.begin();
-       i != kernel_->metahandles_map.end(); ++i) {
-    result->push_back(i->second);
-  }
-}
-
 void Directory::GetUnsyncedMetaHandles(BaseTransaction* trans,
                                        Metahandles* result) {
   result->clear();
@@ -910,17 +882,9 @@ int64 Directory::unsynced_entity_count() const {
   return kernel_->unsynced_metahandles.size();
 }
 
-FullModelTypeSet Directory::GetServerTypesWithUnappliedUpdates(
-    BaseTransaction* trans) const {
-  FullModelTypeSet server_types;
+bool Directory::TypeHasUnappliedUpdates(ModelType type) {
   ScopedKernelLock lock(this);
-  for (int i = UNSPECIFIED; i < MODEL_TYPE_COUNT; ++i) {
-    const ModelType type = ModelTypeFromInt(i);
-    if (!kernel_->unapplied_update_metahandles[type].empty()) {
-      server_types.Put(type);
-    }
-  }
-  return server_types;
+  return !kernel_->unapplied_update_metahandles[type].empty();
 }
 
 void Directory::GetUnappliedUpdateMetaHandles(
@@ -939,6 +903,21 @@ void Directory::GetUnappliedUpdateMetaHandles(
   }
 }
 
+void Directory::GetMetaHandlesOfType(BaseTransaction* trans,
+                                     ModelType type,
+                                     std::vector<int64>* result) {
+  result->clear();
+  ScopedKernelLock lock(this);
+  for (MetahandlesMap::iterator it = kernel_->metahandles_map.begin();
+       it != kernel_->metahandles_map.end(); ++it) {
+    EntryKernel* entry = it->second;
+    const ModelType entry_type =
+        GetModelTypeFromSpecifics(entry->ref(SPECIFICS));
+    if (entry_type == type)
+      result->push_back(it->first);
+  }
+}
+
 void Directory::CollectMetaHandleCounts(
     std::vector<int>* num_entries_by_type,
     std::vector<int>* num_to_delete_entries_by_type) {
@@ -953,6 +932,30 @@ void Directory::CollectMetaHandleCounts(
     if (entry->ref(IS_DEL))
       (*num_to_delete_entries_by_type)[type]++;
   }
+}
+
+scoped_ptr<base::ListValue> Directory::GetAllNodeDetails(
+    BaseTransaction* trans) {
+  scoped_ptr<base::ListValue> nodes(new base::ListValue());
+
+  ScopedKernelLock lock(this);
+  for (MetahandlesMap::iterator it = kernel_->metahandles_map.begin();
+       it != kernel_->metahandles_map.end(); ++it) {
+    EntryKernel* kernel = it->second;
+    scoped_ptr<base::DictionaryValue> node(
+        kernel->ToValue(GetCryptographer(trans)));
+
+    // Add the position index if appropriate.  This must be done here (and not
+    // in EntryKernel) because the EntryKernel does not have access to its
+    // siblings.
+    if (kernel->ShouldMaintainPosition() && !kernel->ref(IS_DEL)) {
+      node->SetInteger("positionIndex", GetPositionIndex(trans, kernel));
+    }
+
+    nodes->Append(node.release());
+  }
+
+  return nodes.Pass();
 }
 
 bool Directory::CheckInvariantsOnTransactionClose(

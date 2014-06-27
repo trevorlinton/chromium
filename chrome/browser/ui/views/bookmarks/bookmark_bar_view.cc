@@ -18,7 +18,6 @@
 #include "chrome/browser/bookmarks/bookmark_model.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/browser_shutdown.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -33,6 +32,7 @@
 #include "chrome/browser/ui/bookmarks/bookmark_utils.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/chrome_pages.h"
+#include "chrome/browser/ui/elide_url.h"
 #include "chrome/browser/ui/omnibox/omnibox_popup_model.h"
 #include "chrome/browser/ui/omnibox/omnibox_view.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -60,7 +60,7 @@
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
 #include "grit/ui_resources.h"
-#include "ui/base/accessibility/accessible_view_state.h"
+#include "ui/accessibility/ax_view_state.h"
 #include "ui/base/dragdrop/drag_utils.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -81,10 +81,10 @@
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/non_client_view.h"
 
+using base::UserMetricsAction;
 using content::OpenURLParams;
 using content::PageNavigator;
 using content::Referrer;
-using content::UserMetricsAction;
 using ui::DropTargetEvent;
 using views::CustomButton;
 using views::MenuButton;
@@ -148,7 +148,7 @@ bool animations_enabled = true;
 class BookmarkButtonBase : public views::TextButton {
  public:
   BookmarkButtonBase(views::ButtonListener* listener,
-                     const string16& title)
+                     const base::string16& title)
       : TextButton(listener, title) {
     show_animation_.reset(new gfx::SlideAnimation(this));
     if (!animations_enabled) {
@@ -183,7 +183,7 @@ class BookmarkButton : public BookmarkButtonBase {
 
   BookmarkButton(views::ButtonListener* listener,
                  const GURL& url,
-                 const string16& title,
+                 const base::string16& title,
                  Profile* profile)
       : BookmarkButtonBase(listener, title),
         url_(url),
@@ -191,7 +191,7 @@ class BookmarkButton : public BookmarkButtonBase {
   }
 
   virtual bool GetTooltipText(const gfx::Point& p,
-                              string16* tooltip) const OVERRIDE {
+                              base::string16* tooltip) const OVERRIDE {
     gfx::Point location(p);
     ConvertPointToScreen(this, &location);
     *tooltip = BookmarkBarView::CreateToolTipForURLAndTitle(
@@ -223,7 +223,7 @@ class ShortcutButton : public BookmarkButtonBase {
   static const char kViewClassName[];
 
   ShortcutButton(views::ButtonListener* listener,
-                 const string16& title)
+                 const base::string16& title)
       : BookmarkButtonBase(listener, title) {
   }
 
@@ -246,7 +246,7 @@ const char ShortcutButton::kViewClassName[] = "ShortcutButton";
 class BookmarkFolderButton : public views::MenuButton {
  public:
   BookmarkFolderButton(views::ButtonListener* listener,
-                       const string16& title,
+                       const base::string16& title,
                        views::MenuButtonListener* menu_button_listener,
                        bool show_menu_marker)
       : MenuButton(listener, title, menu_button_listener, show_menu_marker) {
@@ -261,7 +261,7 @@ class BookmarkFolderButton : public views::MenuButton {
   }
 
   virtual bool GetTooltipText(const gfx::Point& p,
-                              string16* tooltip) const OVERRIDE {
+                              base::string16* tooltip) const OVERRIDE {
     if (text_size_.width() > GetTextBounds().width())
       *tooltip = text_;
     return !tooltip->empty();
@@ -296,7 +296,7 @@ class BookmarkFolderButton : public views::MenuButton {
 class OverFlowButton : public views::MenuButton {
  public:
   explicit OverFlowButton(BookmarkBarView* owner)
-      : MenuButton(NULL, string16(), owner, false),
+      : MenuButton(NULL, base::string16(), owner, false),
         owner_(owner) {}
 
   virtual bool OnMousePressed(const ui::MouseEvent& e) OVERRIDE {
@@ -401,9 +401,9 @@ class BookmarkBarView::ButtonSeparatorView : public views::View {
     return gfx::Size(kSeparatorWidth, 1);
   }
 
-  virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE {
+  virtual void GetAccessibleState(ui::AXViewState* state) OVERRIDE {
     state->name = l10n_util::GetStringUTF16(IDS_ACCNAME_SEPARATOR);
-    state->role = ui::AccessibilityTypes::ROLE_SEPARATOR;
+    state->role = ui::AX_ROLE_SPLITTER;
   }
 
  private:
@@ -594,29 +594,29 @@ void BookmarkBarView::StopThrobbing(bool immediate) {
 }
 
 // static
-string16 BookmarkBarView::CreateToolTipForURLAndTitle(
+base::string16 BookmarkBarView::CreateToolTipForURLAndTitle(
     const views::Widget* widget,
     const gfx::Point& screen_loc,
     const GURL& url,
-    const string16& title,
+    const base::string16& title,
     Profile* profile) {
   int max_width = views::TooltipManager::GetMaxWidth(
       screen_loc.x(),
       screen_loc.y(),
       widget->GetNativeView());
   const gfx::FontList tt_fonts = widget->GetTooltipManager()->GetFontList();
-  string16 result;
+  base::string16 result;
 
   // First the title.
   if (!title.empty()) {
-    string16 localized_title = title;
+    base::string16 localized_title = title;
     base::i18n::AdjustStringForLocaleDirection(&localized_title);
-    result.append(gfx::ElideText(localized_title, tt_fonts, max_width,
-                                gfx::ELIDE_AT_END));
+    result.append(ElideText(localized_title, tt_fonts, max_width,
+                            gfx::ELIDE_AT_END));
   }
 
   // Only show the URL if the url and title differ.
-  if (title != UTF8ToUTF16(url.spec())) {
+  if (title != base::UTF8ToUTF16(url.spec())) {
     if (!result.empty())
       result.push_back('\n');
 
@@ -628,7 +628,7 @@ string16 BookmarkBarView::CreateToolTipForURLAndTitle(
     // default.
     std::string languages = profile->GetPrefs()->GetString(
         prefs::kAcceptLanguages);
-    string16 elided_url(gfx::ElideUrl(url, tt_fonts, max_width, languages));
+    base::string16 elided_url(ElideUrl(url, tt_fonts, max_width, languages));
     elided_url = base::i18n::GetDisplayStringInLTRDirectionality(elided_url);
     result.append(elided_url);
   }
@@ -674,7 +674,7 @@ bool BookmarkBarView::HitTestRect(const gfx::Rect& rect) const {
   // omnibox popup from activating the top few pixels of items on the bookmark
   // bar.
   if (!IsDetached() && browser_view_ &&
-      browser_view_->GetLocationBar()->GetLocationEntry()->model()->
+      browser_view_->GetLocationBar()->GetOmniboxView()->model()->
           popup_model()->IsOpen()) {
     return false;
   }
@@ -918,8 +918,8 @@ const char* BookmarkBarView::GetClassName() const {
   return kViewClassName;
 }
 
-void BookmarkBarView::GetAccessibleState(ui::AccessibleViewState* state) {
-  state->role = ui::AccessibilityTypes::ROLE_TOOLBAR;
+void BookmarkBarView::GetAccessibleState(ui::AXViewState* state) {
+  state->role = ui::AX_ROLE_TOOLBAR;
   state->name = l10n_util::GetStringUTF16(IDS_ACCNAME_BOOKMARKS);
 }
 
@@ -972,7 +972,8 @@ void BookmarkBarView::OnBookmarkBubbleHidden() {
   StopThrobbing(false);
 }
 
-void BookmarkBarView::Loaded(BookmarkModel* model, bool ids_reassigned) {
+void BookmarkBarView::BookmarkModelLoaded(BookmarkModel* model,
+                                          bool ids_reassigned) {
   // There should be no buttons. If non-zero it means Load was invoked more than
   // once, or we didn't properly clear things. Either of which shouldn't happen.
   DCHECK_EQ(0, GetBookmarkButtonCount());
@@ -993,12 +994,7 @@ void BookmarkBarView::Loaded(BookmarkModel* model, bool ids_reassigned) {
 }
 
 void BookmarkBarView::BookmarkModelBeingDeleted(BookmarkModel* model) {
-  // In normal shutdown The bookmark model should never be deleted before us.
-  // When X exits suddenly though, it can happen, This code exists
-  // to check for regressions in shutdown code and not crash.
-  if (!browser_shutdown::ShuttingDownWithoutClosingBrowsers())
-    NOTREACHED();
-
+  NOTREACHED();
   // Do minimal cleanup, presumably we'll be deleted shortly.
   model_->RemoveObserver(this);
   model_ = NULL;
@@ -1241,12 +1237,11 @@ void BookmarkBarView::ShowContextMenuForView(views::View* source,
     parent = model_->bookmark_bar_node();
     nodes.push_back(parent);
   }
-  Profile* profile = browser_->profile();
   bool close_on_remove =
-      (parent == BookmarkModelFactory::GetForProfile(profile)->other_node()) &&
-      (parent->child_count() == 1);
+      (parent == model_->other_node()) && (parent->child_count() == 1);
+
   context_menu_.reset(new BookmarkContextMenu(
-      GetWidget(), browser_, profile,
+      GetWidget(), browser_, browser_->profile(),
       browser_->tab_strip_model()->GetActiveWebContents(),
       parent, nodes, close_on_remove));
   context_menu_->RunMenuAt(point, source_type);
@@ -1294,7 +1289,7 @@ void BookmarkBarView::Init() {
   if (model_) {
     model_->AddObserver(this);
     if (model_->loaded())
-      Loaded(model_, false);
+      BookmarkModelLoaded(model_, false);
     // else case: we'll receive notification back from the BookmarkModel when
     // done loading, then we'll populate the bar.
   }
@@ -1327,7 +1322,8 @@ int BookmarkBarView::GetFirstHiddenNodeIndex() {
 
 MenuButton* BookmarkBarView::CreateOtherBookmarkedButton() {
   // Title is set in Loaded.
-  MenuButton* button = new BookmarkFolderButton(this, string16(), this, false);
+  MenuButton* button =
+      new BookmarkFolderButton(this, base::string16(), this, false);
   button->set_id(VIEW_ID_OTHER_BOOKMARKS);
   button->SetIcon(GetFolderIcon());
   button->set_context_menu_controller(this);

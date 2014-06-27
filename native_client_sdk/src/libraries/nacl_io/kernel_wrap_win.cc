@@ -102,6 +102,17 @@ int _fstat64i32(int fd, struct _stat64i32* buf) {
 }
 
 char* _getcwd(char* buf, int size) {
+  // If size is 0, allocate as much as we need.
+  if (size == 0) {
+    char stack_buf[MAX_PATH + 1];
+    if (!ki_getcwd(stack_buf, MAX_PATH))
+      return NULL;
+    size = strlen(stack_buf) + 1;
+  }
+  // Allocate the buffer if needed
+  if (buf == NULL) {
+    buf = static_cast<char*>(malloc(size));
+  }
   return ki_getcwd(buf, size);
 }
 
@@ -215,74 +226,6 @@ int _write(int fd, const void* buf, size_t nbyte) {
   return ki_write(fd, buf, nbyte);
 }
 
-
-// "real" functions, i.e. the unwrapped original functions. On Windows we don't
-// wrap, so the real functions aren't accessible. In most cases, we just fail.
-
-int _real_close(int fd) {
-  return ENOSYS;
-}
-
-int _real_fstat(int fd, struct stat *buf) {
-  return 0;
-}
-
-int _real_getdents(int fd, void* nacl_buf, size_t nacl_count, size_t *nread) {
-  return ENOSYS;
-}
-
-int _real_lseek(int fd, off_t offset, int whence, off_t* new_offset) {
-  return ENOSYS;
-}
-
-int _real_mkdir(const char* pathname, mode_t mode) {
-  return ENOSYS;
-}
-
-int _real_mmap(void** addr, size_t length, int prot, int flags, int fd,
-               off_t offset) {
-  return ENOSYS;
-}
-
-int _real_munmap(void* addr, size_t length) {
-  return ENOSYS;
-}
-
-int _real_open(const char* pathname, int oflag, mode_t cmode, int* newfd) {
-  return ENOSYS;
-}
-
-int _real_open_resource(const char* file, int* fd) {
-  return ENOSYS;
-}
-
-int _real_read(int fd, void *buf, size_t count, size_t *nread) {
-  *nread = count;
-  return 0;
-}
-
-int _real_rmdir(const char* pathname) {
-  return ENOSYS;
-}
-
-int _real_write(int fd, const void *buf, size_t count, size_t *nwrote) {
-  *nwrote = count;
-  return 0;
-}
-
-#define USECS_FROM_WIN_TO_TO_UNIX_EPOCH 11644473600000LL
-uint64_t usec_since_epoch() {
-  FILETIME ft;
-  ULARGE_INTEGER ularge;
-  GetSystemTimeAsFileTime(&ft);
-
-  ularge.LowPart = ft.dwLowDateTime;
-  ularge.HighPart = ft.dwHighDateTime;
-
-  // Truncate to usec resolution.
-  return ularge.QuadPart / 10;
-}
-
 // Do nothing for Windows, we replace the library at link time.
 void kernel_wrap_init() {
 }
@@ -293,4 +236,3 @@ void kernel_wrap_uninit() {
 EXTERN_C_END
 
 #endif   // defined(WIN32)
-

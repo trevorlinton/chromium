@@ -57,7 +57,8 @@ class LayoutElement {
     for (typename std::vector<T*>::iterator i = elements->begin();
          i != elements->end(); ++i) {
       total_percent += (*i)->ResizePercent();
-      resize_count++;
+      if ((*i)->ResizePercent() > 0)
+        resize_count++;
     }
     if (total_percent == 0) {
       // None of the elements are resizable, return.
@@ -428,10 +429,10 @@ void ColumnSet::AddColumn(GridLayout::Alignment h_align,
 
 void ColumnSet::AddViewState(ViewState* view_state) {
   // view_states are ordered by column_span (in ascending order).
-  std::vector<ViewState*>::iterator i = lower_bound(view_states_.begin(),
-                                                    view_states_.end(),
-                                                    view_state,
-                                                    CompareByColumnSpan);
+  std::vector<ViewState*>::iterator i = std::lower_bound(view_states_.begin(),
+                                                         view_states_.end(),
+                                                         view_state,
+                                                         CompareByColumnSpan);
   view_states_.insert(i, view_state);
 }
 
@@ -503,8 +504,8 @@ void ColumnSet::AccumulateMasterColumns() {
     Column* column = *i;
     Column* master_column = column->GetLastMasterColumn();
     if (master_column &&
-        find(master_columns_.begin(), master_columns_.end(),
-             master_column) == master_columns_.end()) {
+        std::find(master_columns_.begin(), master_columns_.end(),
+                  master_column) == master_columns_.end()) {
       master_columns_.push_back(master_column);
     }
     // At this point, GetLastMasterColumn may not == master_column
@@ -678,12 +679,8 @@ GridLayout::~GridLayout() {
 // static
 GridLayout* GridLayout::CreatePanel(View* host) {
   GridLayout* layout = new GridLayout(host);
-
-  const int horizontal_margin = DialogDelegate::UseNewStyle() ?
-      kButtonHEdgeMarginNew : kPanelHorizMargin;
-
-  layout->SetInsets(kPanelVertMargin, horizontal_margin,
-                    kPanelVertMargin, horizontal_margin);
+  layout->SetInsets(kPanelVertMargin, kButtonHEdgeMarginNew,
+                    kPanelVertMargin, kButtonHEdgeMarginNew);
   return layout;
 }
 
@@ -984,10 +981,10 @@ void GridLayout::AddViewState(ViewState* view_state) {
   next_column_ += view_state->col_span;
   current_row_col_set_->AddViewState(view_state);
   // view_states are ordered by row_span (in ascending order).
-  std::vector<ViewState*>::iterator i = lower_bound(view_states_.begin(),
-                                                    view_states_.end(),
-                                                    view_state,
-                                                    CompareByRowSpan);
+  std::vector<ViewState*>::iterator i = std::lower_bound(view_states_.begin(),
+                                                         view_states_.end(),
+                                                         view_state,
+                                                         CompareByRowSpan);
   view_states_.insert(i, view_state);
   SkipPaddingColumns();
 }

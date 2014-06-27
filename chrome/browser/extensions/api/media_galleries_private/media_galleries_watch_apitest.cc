@@ -11,13 +11,14 @@
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_test_message_listener.h"
 #include "chrome/browser/media_galleries/media_galleries_test_util.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/extensions/extension.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/common/extension.h"
 
 namespace {
 
@@ -89,7 +90,7 @@ class MediaGalleriesPrivateGalleryWatchApiTest : public ExtensionApiTest {
                               const std::string& js_command,
                               const std::string& ok_message) {
     ExtensionTestMessageListener listener(ok_message, false);
-    host->ExecuteJavascriptInWebFrame(string16(), ASCIIToUTF16(js_command));
+    host->GetMainFrame()->ExecuteJavaScript(base::ASCIIToUTF16(js_command));
     EXPECT_TRUE(listener.WaitUntilSatisfied());
   }
 
@@ -105,8 +106,8 @@ class MediaGalleriesPrivateGalleryWatchApiTest : public ExtensionApiTest {
     base::FilePath gallery_file =
         gallery_dir.Append(FILE_PATH_LITERAL("test1.txt"));
     std::string content("new content");
-    int write_size = file_util::WriteFile(gallery_file, content.c_str(),
-                                          content.length());
+    int write_size = base::WriteFile(gallery_file, content.c_str(),
+                                     content.length());
     return (write_size == static_cast<int>(content.length()));
   }
 

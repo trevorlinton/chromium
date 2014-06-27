@@ -36,7 +36,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/canvas_paint_gtk.h"
 
-using content::UserMetricsAction;
+using base::UserMetricsAction;
 
 namespace {
 
@@ -218,7 +218,7 @@ BookmarkBubbleGtk::BookmarkBubbleGtk(GtkWidget* anchor,
         l10n_util::GetStringUTF8(IDS_BOOKMARK_SYNC_PROMO_LINK);
     char* link_markup = g_markup_printf_escaped(kPromoLinkMarkup,
                                                 link_text.c_str());
-    string16 link_markup_utf16;
+    base::string16 link_markup_utf16;
     base::UTF8ToUTF16(link_markup, strlen(link_markup), &link_markup_utf16);
     g_free(link_markup);
 
@@ -414,8 +414,8 @@ void BookmarkBubbleGtk::ApplyEdits() {
 
   const BookmarkNode* node = model_->GetMostRecentlyAddedNodeForURL(url_);
   if (node) {
-    const string16 new_title(
-        UTF8ToUTF16(gtk_entry_get_text(GTK_ENTRY(name_entry_))));
+    const base::string16 new_title(
+        base::UTF8ToUTF16(gtk_entry_get_text(GTK_ENTRY(name_entry_))));
 
     if (new_title != node->GetTitle()) {
       model_->SetTitle(node, new_title);
@@ -435,7 +435,7 @@ std::string BookmarkBubbleGtk::GetTitle() {
     return std::string();
   }
 
-  return UTF16ToUTF8(node->GetTitle());
+  return base::UTF16ToUTF8(node->GetTitle());
 }
 
 void BookmarkBubbleGtk::ShowEditor() {
@@ -473,7 +473,7 @@ void BookmarkBubbleGtk::InitFolderComboModel() {
   for (int i = 0; i < folder_combo_model_->GetItemCount(); ++i) {
     const bool is_separator = folder_combo_model_->IsItemSeparatorAt(i);
     const std::string name = is_separator ?
-        std::string() : UTF16ToUTF8(folder_combo_model_->GetItemAt(i));
+        std::string() : base::UTF16ToUTF8(folder_combo_model_->GetItemAt(i));
 
     GtkTreeIter iter;
     gtk_list_store_append(store, &iter);

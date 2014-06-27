@@ -11,20 +11,26 @@
 #include "chrome/browser/notifications/fake_balloon_view.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/test/base/chrome_unit_test_suite.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "content/public/common/show_desktop_notification_params.h"
 #include "ui/base/ime/input_method_initializer.h"
+#include "ui/gl/gl_surface.h"
 #include "ui/message_center/message_center.h"
 
 #if defined(USE_ASH)
 #include "ash/shell.h"
 #include "ash/test/test_shell_delegate.h"
 #include "ui/aura/env.h"
-#include "ui/aura/root_window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/compositor/test/context_factories_for_test.h"
+#endif
+
+#if defined(USE_AURA)
+#include "ui/wm/core/wm_state.h"
 #endif
 
 
@@ -94,14 +100,20 @@ int MockBalloonCollection::UppermostVerticalPosition() {
 }
 
 DesktopNotificationsTest::DesktopNotificationsTest()
-    : ui_thread_(BrowserThread::UI, &message_loop_) {
+    : ui_thread_(BrowserThread::UI, &message_loop_),
+      balloon_collection_(NULL) {
 }
 
 DesktopNotificationsTest::~DesktopNotificationsTest() {
 }
 
 void DesktopNotificationsTest::SetUp() {
+  ChromeUnitTestSuite::InitializeProviders();
+  ChromeUnitTestSuite::InitializeResourceBundle();
   ui::InitializeInputMethodForTesting();
+#if defined(USE_AURA)
+  wm_state_.reset(new wm::WMState);
+#endif
 #if defined(USE_ASH)
   ui::ScopedAnimationDurationScaleMode normal_duration_mode(
       ui::ScopedAnimationDurationScaleMode::ZERO_DURATION);
@@ -109,13 +121,12 @@ void DesktopNotificationsTest::SetUp() {
   // is not created for these tests.
   message_center::MessageCenter::Initialize();
   // The ContextFactory must exist before any Compositors are created.
-  bool allow_test_contexts = true;
-  ui::InitializeContextFactoryForTests(allow_test_contexts);
+  bool enable_pixel_output = false;
+  ui::InitializeContextFactoryForTests(enable_pixel_output);
   // MockBalloonCollection retrieves information about the screen on creation.
   // So it is necessary to make sure the desktop gets created first.
   ash::Shell::CreateInstance(new ash::test::TestShellDelegate);
 #endif
-
   chrome::RegisterLocalState(local_state_.registry());
   profile_.reset(new TestingProfile());
   ui_manager_.reset(new BalloonNotificationUIManager(&local_state_));
@@ -137,6 +148,9 @@ void DesktopNotificationsTest::TearDown() {
   aura::Env::DeleteInstance();
   ui::TerminateContextFactoryForTests();
 #endif
+#if defined(USE_AURA)
+  wm_state_.reset();
+#endif
   ui::ShutdownInputMethodForTesting();
 }
 
@@ -145,11 +159,10 @@ DesktopNotificationsTest::StandardTestNotification() {
   content::ShowDesktopNotificationHostMsgParams params;
   params.notification_id = 0;
   params.origin = GURL("http://www.google.com");
-  params.is_html = false;
   params.icon_url = GURL("/icon.png");
-  params.title = ASCIIToUTF16("Title");
-  params.body = ASCIIToUTF16("Text");
-  params.direction = WebKit::WebTextDirectionDefault;
+  params.title = base::ASCIIToUTF16("Title");
+  params.body = base::ASCIIToUTF16("Text");
+  params.direction = blink::WebTextDirectionDefault;
   return params;
 }
 
@@ -163,11 +176,11 @@ TEST_F(DesktopNotificationsTest, TestShow) {
   base::MessageLoopForUI::current()->RunUntilIdle();
   EXPECT_EQ(1, balloon_collection_->count());
 
-  content::ShowDesktopNotificationHostMsgParams params2;
-  params2.origin = GURL("http://www.google.com");
-  params2.is_html = true;
-  params2.contents_url = GURL("http://www.google.com/notification.html");
+  content::ShowDesktopNotificationHostMsgParams params2 =
+      StandardTestNotification();
   params2.notification_id = 2;
+  params2.origin = GURL("http://www.google.com");
+  params2.body = base::ASCIIToUTF16("Text");
 
   EXPECT_TRUE(service_->ShowDesktopNotification(
       params2, 0, 0, DesktopNotificationService::PageNotification));
@@ -254,13 +267,12 @@ TEST_F(DesktopNotificationsTest, TestPositioning) {
 TEST_F(DesktopNotificationsTest, TestVariableSize) {
   content::ShowDesktopNotificationHostMsgParams params;
   params.origin = GURL("http://long.google.com");
-  params.is_html = false;
   params.icon_url = GURL("/icon.png");
-  params.title = ASCIIToUTF16("Really Really Really Really Really Really "
-                              "Really Really Really Really Really Really "
-                              "Really Really Really Really Really Really "
-                              "Really Long Title"),
-  params.body = ASCIIToUTF16("Text");
+  params.title = base::ASCIIToUTF16("Really Really Really Really Really Really "
+                                    "Really Really Really Really Really Really "
+                                    "Really Really Really Really Really Really "
+                                    "Really Long Title"),
+  params.body = base::ASCIIToUTF16("Text");
   params.notification_id = 0;
 
   std::string expected_log;
@@ -271,7 +283,7 @@ TEST_F(DesktopNotificationsTest, TestVariableSize) {
   expected_log.append("notification displayed\n");
 
   params.origin = GURL("http://short.google.com");
-  params.title = ASCIIToUTF16("Short title");
+  params.title = base::ASCIIToUTF16("Short title");
   params.notification_id = 1;
   EXPECT_TRUE(service_->ShowDesktopNotification(
       params, 0, 0, DesktopNotificationService::PageNotification));
@@ -449,8 +461,8 @@ TEST_F(DesktopNotificationsTest, TestUserInputEscaping) {
   // data:// URL that's produced for the balloon.
   content::ShowDesktopNotificationHostMsgParams params =
       StandardTestNotification();
-  params.title = ASCIIToUTF16("<script>window.alert('uh oh');</script>");
-  params.body = ASCIIToUTF16("<i>this text is in italics</i>");
+  params.title = base::ASCIIToUTF16("<script>window.alert('uh oh');</script>");
+  params.body = base::ASCIIToUTF16("<i>this text is in italics</i>");
   params.notification_id = 1;
   EXPECT_TRUE(service_->ShowDesktopNotification(
       params, 0, 0, DesktopNotificationService::PageNotification));

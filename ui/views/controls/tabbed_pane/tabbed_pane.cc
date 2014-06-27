@@ -5,10 +5,11 @@
 #include "ui/views/controls/tabbed_pane/tabbed_pane.h"
 
 #include "base/logging.h"
-#include "ui/base/accessibility/accessible_view_state.h"
+#include "ui/accessibility/ax_view_state.h"
+#include "ui/base/resource/resource_bundle.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/canvas.h"
-#include "ui/gfx/font.h"
+#include "ui/gfx/font_list.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/tabbed_pane/tabbed_pane_listener.h"
 #include "ui/views/layout/layout_manager.h"
@@ -33,7 +34,7 @@ const char TabbedPane::kViewClassName[] = "TabbedPane";
 // The tab view shown in the tab strip.
 class Tab : public View {
  public:
-  Tab(TabbedPane* tabbed_pane, const string16& title, View* contents);
+  Tab(TabbedPane* tabbed_pane, const base::string16& title, View* contents);
   virtual ~Tab();
 
   View* contents() const { return contents_; }
@@ -43,8 +44,6 @@ class Tab : public View {
 
   // Overridden from View:
   virtual bool OnMousePressed(const ui::MouseEvent& event) OVERRIDE;
-  virtual void OnMouseReleased(const ui::MouseEvent& event) OVERRIDE;
-  virtual void OnMouseCaptureLost() OVERRIDE;
   virtual void OnMouseEntered(const ui::MouseEvent& event) OVERRIDE;
   virtual void OnMouseExited(const ui::MouseEvent& event) OVERRIDE;
   virtual void OnGestureEvent(ui::GestureEvent* event) OVERRIDE;
@@ -55,7 +54,6 @@ class Tab : public View {
   enum TabState {
     TAB_INACTIVE,
     TAB_ACTIVE,
-    TAB_PRESSED,
     TAB_HOVERED,
   };
 
@@ -88,12 +86,14 @@ class TabStrip : public View {
   DISALLOW_COPY_AND_ASSIGN(TabStrip);
 };
 
-Tab::Tab(TabbedPane* tabbed_pane, const string16& title, View* contents)
+Tab::Tab(TabbedPane* tabbed_pane, const base::string16& title, View* contents)
     : tabbed_pane_(tabbed_pane),
-      title_(new Label(title, gfx::Font().DeriveFont(0, gfx::Font::BOLD))),
+      title_(new Label(title,
+                       ui::ResourceBundle::GetSharedInstance().GetFontList(
+                           ui::ResourceBundle::BoldFont))),
       tab_state_(TAB_ACTIVE),
       contents_(contents) {
-  // Calculate this now while the font is guaranteed to be bold.
+  // Calculate this now while the font list is guaranteed to be bold.
   preferred_title_size_ = title_->GetPreferredSize();
 
   SetState(TAB_INACTIVE);
@@ -108,18 +108,10 @@ void Tab::SetSelected(bool selected) {
 }
 
 bool Tab::OnMousePressed(const ui::MouseEvent& event) {
-  SetState(TAB_PRESSED);
-  return true;
-}
-
-void Tab::OnMouseReleased(const ui::MouseEvent& event) {
-  SetState(selected() ? TAB_ACTIVE : TAB_HOVERED);
-  if (GetLocalBounds().Contains(event.location()))
+  if (event.IsOnlyLeftMouseButton() &&
+      GetLocalBounds().Contains(event.location()))
     tabbed_pane_->SelectTab(this);
-}
-
-void Tab::OnMouseCaptureLost() {
-  SetState(TAB_INACTIVE);
+  return true;
 }
 
 void Tab::OnMouseEntered(const ui::MouseEvent& event) {
@@ -133,8 +125,7 @@ void Tab::OnMouseExited(const ui::MouseEvent& event) {
 void Tab::OnGestureEvent(ui::GestureEvent* event) {
   switch (event->type()) {
     case ui::ET_GESTURE_TAP_DOWN:
-      SetState(TAB_PRESSED);
-      break;
+      // Fallthrough.
     case ui::ET_GESTURE_TAP:
       // SelectTab also sets the right tab color.
       tabbed_pane_->SelectTab(this);
@@ -169,21 +160,19 @@ void Tab::SetState(TabState tab_state) {
     return;
   tab_state_ = tab_state;
 
+  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   switch (tab_state) {
     case TAB_INACTIVE:
       title_->SetEnabledColor(kTabTitleColor_Inactive);
-      title_->SetFont(gfx::Font());
+      title_->SetFontList(rb.GetFontList(ui::ResourceBundle::BaseFont));
       break;
     case TAB_ACTIVE:
       title_->SetEnabledColor(kTabTitleColor_Active);
-      title_->SetFont(gfx::Font().DeriveFont(0, gfx::Font::BOLD));
-      break;
-    case TAB_PRESSED:
-      // No visual distinction for pressed state.
+      title_->SetFontList(rb.GetFontList(ui::ResourceBundle::BoldFont));
       break;
     case TAB_HOVERED:
       title_->SetEnabledColor(kTabTitleColor_Hovered);
-      title_->SetFont(gfx::Font());
+      title_->SetFontList(rb.GetFontList(ui::ResourceBundle::BaseFont));
       break;
   }
   SchedulePaint();
@@ -248,21 +237,14 @@ void TabStrip::OnPaint(gfx::Canvas* canvas) {
   }
 }
 
-TabbedPane::TabbedPane(bool draw_border)
+TabbedPane::TabbedPane()
   : listener_(NULL),
     tab_strip_(new TabStrip(this)),
     contents_(new View()),
     selected_tab_index_(-1) {
-  set_focusable(true);
+  SetFocusable(true);
   AddChildView(tab_strip_);
   AddChildView(contents_);
-  if (draw_border) {
-    contents_->set_border(Border::CreateSolidSidedBorder(0,
-                                                         kTabBorderThickness,
-                                                         kTabBorderThickness,
-                                                         kTabBorderThickness,
-                                                         kTabBorderColor));
-  }
 }
 
 TabbedPane::~TabbedPane() {}
@@ -277,12 +259,12 @@ View* TabbedPane::GetSelectedTab() {
       NULL : GetTabAt(selected_tab_index())->contents();
 }
 
-void TabbedPane::AddTab(const string16& title, View* contents) {
+void TabbedPane::AddTab(const base::string16& title, View* contents) {
   AddTabAtIndex(tab_strip_->child_count(), title, contents);
 }
 
 void TabbedPane::AddTabAtIndex(int index,
-                               const string16& title,
+                               const base::string16& title,
                                View* contents) {
   DCHECK(index >= 0 && index <= GetTabCount());
   contents->SetVisible(false);
@@ -382,12 +364,12 @@ void TabbedPane::OnFocus() {
   View* selected_tab = GetSelectedTab();
   if (selected_tab) {
     selected_tab->NotifyAccessibilityEvent(
-        ui::AccessibilityTypes::EVENT_FOCUS, true);
+        ui::AX_EVENT_FOCUS, true);
   }
 }
 
-void TabbedPane::GetAccessibleState(ui::AccessibleViewState* state) {
-  state->role = ui::AccessibilityTypes::ROLE_PAGETABLIST;
+void TabbedPane::GetAccessibleState(ui::AXViewState* state) {
+  state->role = ui::AX_ROLE_TAB_LIST;
 }
 
 }  // namespace views

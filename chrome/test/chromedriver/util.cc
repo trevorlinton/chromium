@@ -18,8 +18,8 @@
 #include "chrome/test/chromedriver/chrome/status.h"
 #include "chrome/test/chromedriver/chrome/ui_events.h"
 #include "chrome/test/chromedriver/chrome/web_view.h"
-#include "chrome/test/chromedriver/chrome/zip.h"
 #include "chrome/test/chromedriver/key_converter.h"
+#include "third_party/zlib/google/zip.h"
 
 std::string GenerateId() {
   uint64 msb = base::RandUint64();
@@ -29,10 +29,10 @@ std::string GenerateId() {
 
 namespace {
 
-Status FlattenStringArray(const base::ListValue* src, string16* dest) {
-  string16 keys;
+Status FlattenStringArray(const base::ListValue* src, base::string16* dest) {
+  base::string16 keys;
   for (size_t i = 0; i < src->GetSize(); ++i) {
-    string16 keys_list_part;
+    base::string16 keys_list_part;
     if (!src->GetString(i, &keys_list_part))
       return Status(kUnknownError, "keys should be a string");
     for (size_t j = 0; j < keys_list_part.size(); ++j) {
@@ -54,7 +54,7 @@ Status SendKeysOnWindow(
     const base::ListValue* key_list,
     bool release_modifiers,
     int* sticky_modifiers) {
-  string16 keys;
+  base::string16 keys;
   Status status = FlattenStringArray(key_list, &keys);
   if (status.IsError())
     return status;
@@ -76,7 +76,7 @@ bool Base64Decode(const std::string& base64,
   // Some WebDriver client base64 encoders follow RFC 1521, which require that
   // 'encoded lines be no more than 76 characters long'. Just remove any
   // newlines.
-  RemoveChars(copy, "\n", &copy);
+  base::RemoveChars(copy, "\n", &copy);
   return base::Base64Decode(copy, bytes);
 }
 
@@ -90,7 +90,7 @@ Status UnzipArchive(const base::FilePath& unzip_dir,
 
   base::FilePath archive = dir.path().AppendASCII("temp.zip");
   int length = bytes.length();
-  if (file_util::WriteFile(archive, bytes.c_str(), length) != length)
+  if (base::WriteFile(archive, bytes.c_str(), length) != length)
     return Status(kUnknownError, "could not write file to temp dir");
 
   if (!zip::Unzip(archive, unzip_dir))

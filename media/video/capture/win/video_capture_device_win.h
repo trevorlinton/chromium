@@ -40,12 +40,14 @@ class VideoCaptureDeviceWin
   bool Init();
 
   // VideoCaptureDevice implementation.
-  virtual void AllocateAndStart(
-      const VideoCaptureCapability& capture_format,
-      scoped_ptr<VideoCaptureDevice::Client> client) OVERRIDE;
+  virtual void AllocateAndStart(const VideoCaptureParams& params,
+                                scoped_ptr<VideoCaptureDevice::Client> client)
+      OVERRIDE;
   virtual void StopAndDeAllocate() OVERRIDE;
 
   static void GetDeviceNames(Names* device_names);
+  static void GetDeviceSupportedFormats(const Name& device,
+                                        VideoCaptureFormats* formats);
 
  private:
   enum InternalState {
@@ -59,7 +61,7 @@ class VideoCaptureDeviceWin
   virtual void FrameReceived(const uint8* buffer, int length);
 
   bool CreateCapabilityMap();
-  void SetErrorState(const char* reason);
+  void SetErrorState(const std::string& reason);
 
   Name device_name_;
   InternalState state_;
@@ -79,6 +81,7 @@ class VideoCaptureDeviceWin
 
   // Map of all capabilities this device support.
   CapabilityList capabilities_;
+  VideoCaptureFormat capture_format_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(VideoCaptureDeviceWin);
 };

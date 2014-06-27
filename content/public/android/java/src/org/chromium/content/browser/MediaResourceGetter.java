@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -55,7 +55,8 @@ class MediaResourceGetter {
     }
 
     @CalledByNative
-    private static MediaMetadata extractMediaMetadata(Context context, String url, String cookies) {
+    private static MediaMetadata extractMediaMetadata(Context context, String url, String cookies,
+            String userAgent) {
         int durationInMilliseconds = 0;
         int width = 0;
         int height = 0;
@@ -98,16 +99,19 @@ class MediaResourceGetter {
                 String path = file.getAbsolutePath();
                 if (file.exists() && (path.startsWith("/mnt/sdcard/") ||
                         path.startsWith("/sdcard/") ||
-                        path.startsWith(PathUtils.getExternalStorageDirectory()))) {
+                        path.startsWith(PathUtils.getExternalStorageDirectory()) ||
+                        path.startsWith(context.getCacheDir().getAbsolutePath()))) {
                     retriever.setDataSource(path);
                 } else {
-                    Log.e(TAG, "Unable to read file: " + url);
                     return new MediaMetadata(durationInMilliseconds, width, height, success);
                 }
             } else {
                 HashMap<String, String> headersMap = new HashMap<String, String>();
                 if (!TextUtils.isEmpty(cookies)) {
                     headersMap.put("Cookie", cookies);
+                }
+                if (!TextUtils.isEmpty(userAgent)) {
+                    headersMap.put("User-Agent", userAgent);
                 }
                 retriever.setDataSource(url, headersMap);
             }

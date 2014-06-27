@@ -8,7 +8,6 @@
 
 #include "base/command_line.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/extensions/extension_messages.h"
 #include "chrome/renderer/extensions/chrome_v8_context.h"
 #include "chrome/renderer/extensions/dispatcher.h"
 #include "chrome/renderer/extensions/scoped_persistent.h"
@@ -17,6 +16,7 @@
 #include "content/public/renderer/render_view_observer.h"
 #include "content/public/renderer/render_view_visitor.h"
 #include "content/public/renderer/v8_value_converter.h"
+#include "extensions/common/extension_messages.h"
 #include "grit/renderer_resources.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
 #include "third_party/WebKit/public/web/WebView.h"
@@ -32,7 +32,7 @@ class DidCreateDocumentElementObserver : public content::RenderViewObserver {
       : content::RenderViewObserver(view), dispatcher_(dispatcher) {
   }
 
-  virtual void DidCreateDocumentElement(WebKit::WebFrame* frame) OVERRIDE {
+  virtual void DidCreateDocumentElement(blink::WebFrame* frame) OVERRIDE {
     DCHECK(frame);
     DCHECK(dispatcher_);
     // Don't attempt to inject the titlebar into iframes.
@@ -100,8 +100,8 @@ void AppWindowCustomBindings::GetView(
   content::RenderView* render_view = GetRenderView();
   if (!render_view)
     return;
-  WebKit::WebFrame* opener = render_view->GetWebView()->mainFrame();
-  WebKit::WebFrame* frame = view->GetWebView()->mainFrame();
+  blink::WebFrame* opener = render_view->GetWebView()->mainFrame();
+  blink::WebFrame* frame = view->GetWebView()->mainFrame();
   frame->setOpener(opener);
   content::RenderThread::Get()->Send(
       new ExtensionHostMsg_ResumeRequests(view->GetRoutingID()));
@@ -114,7 +114,7 @@ void AppWindowCustomBindings::GetWindowControlsHtmlTemplate(
     const v8::FunctionCallbackInfo<v8::Value>& args) {
   CHECK_EQ(args.Length(), 0);
 
-  v8::Handle<v8::Value> result = v8::String::Empty();
+  v8::Handle<v8::Value> result = v8::String::Empty(args.GetIsolate());
   if (CommandLine::ForCurrentProcess()->HasSwitch(
       switches::kEnableAppWindowControls)) {
     base::Value* value = base::Value::CreateStringValue(

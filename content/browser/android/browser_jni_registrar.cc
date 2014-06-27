@@ -20,18 +20,22 @@
 #include "content/browser/android/interstitial_page_delegate_android.h"
 #include "content/browser/android/load_url_params.h"
 #include "content/browser/android/surface_texture_peer_browser_impl.h"
-#include "content/browser/android/touch_point.h"
 #include "content/browser/android/tracing_controller_android.h"
-#include "content/browser/android/vibration_message_filter.h"
 #include "content/browser/android/web_contents_observer_android.h"
-#include "content/browser/device_orientation/data_fetcher_impl_android.h"
+#include "content/browser/device_orientation/sensor_manager_android.h"
+#include "content/browser/frame_host/navigation_controller_android.h"
 #include "content/browser/geolocation/location_api_adapter_android.h"
 #include "content/browser/media/android/media_drm_credential_manager.h"
 #include "content/browser/media/android/media_resource_getter_impl.h"
 #include "content/browser/power_save_blocker_android.h"
 #include "content/browser/renderer_host/ime_adapter_android.h"
+#include "content/browser/renderer_host/input/motion_event_android.h"
+#include "content/browser/renderer_host/input/synthetic_gesture_target_android.h"
 #include "content/browser/renderer_host/java/java_bound_object.h"
+#include "content/browser/screen_orientation/screen_orientation_provider_android.h"
 #include "content/browser/speech/speech_recognizer_impl_android.h"
+#include "content/browser/vibration/vibration_provider_android.h"
+#include "content/browser/web_contents/web_contents_android.h"
 
 using content::SurfaceTexturePeerBrowserImpl;
 
@@ -48,25 +52,33 @@ base::android::RegistrationMethod kContentRegisteredMethods[] = {
      content::ContentViewRenderView::RegisterContentViewRenderView},
     {"ContentVideoView", content::ContentVideoView::RegisterContentVideoView},
     {"ContentViewCore", content::RegisterContentViewCore},
-    {"DataFetcherImplAndroid", content::DataFetcherImplAndroid::Register},
     {"DateTimePickerAndroid", content::RegisterDateTimeChooserAndroid},
     {"DownloadControllerAndroidImpl",
      content::DownloadControllerAndroidImpl::RegisterDownloadController},
     {"InterstitialPageDelegateAndroid",
      content::InterstitialPageDelegateAndroid::
          RegisterInterstitialPageDelegateAndroid},
+    {"LoadUrlParams", content::RegisterLoadUrlParams},
     {"MediaDrmCredentialManager",
      content::MediaDrmCredentialManager::RegisterMediaDrmCredentialManager},
     {"MediaResourceGetterImpl",
      content::MediaResourceGetterImpl::RegisterMediaResourceGetter},
-    {"LoadUrlParams", content::RegisterLoadUrlParams},
+    {"MotionEventAndroid",
+     content::MotionEventAndroid::RegisterMotionEventAndroid},
+    {"NavigationControllerAndroid",
+     content::NavigationControllerAndroid::Register},
     {"PowerSaveBlock", content::RegisterPowerSaveBlocker},
     {"RegisterImeAdapter", content::RegisterImeAdapter},
+    {"ScreenOrientationProvider",
+     content::ScreenOrientationProviderAndroid::Register},
+    {"SensorManagerAndroid", content::SensorManagerAndroid::Register},
     {"SpeechRecognizerImplAndroid",
      content::SpeechRecognizerImplAndroid::RegisterSpeechRecognizer},
-    {"TouchPoint", content::RegisterTouchPoint},
+    {"TouchEventSynthesizer",
+     content::SyntheticGestureTargetAndroid::RegisterTouchEventSynthesizer},
     {"TracingControllerAndroid", content::RegisterTracingControllerAndroid},
-    {"VibrationMessageFilter", content::VibrationMessageFilter::Register},
+    {"VibrationProvider", content::VibrationProviderAndroid::Register},
+    {"WebContentsAndroid", content::WebContentsAndroid::Register},
     {"WebContentsObserverAndroid", content::RegisterWebContentsObserverAndroid},
     {"WebViewStatics", content::RegisterWebViewStatics}, };
 

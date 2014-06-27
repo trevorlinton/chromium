@@ -8,8 +8,11 @@
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/browser/indexed_db/indexed_db_leveldb_coding.h"
+#include "content/browser/indexed_db/indexed_db_value.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/platform/WebIDBTypes.h"
+
+using base::ASCIIToUTF16;
 
 namespace content {
 
@@ -23,12 +26,11 @@ class IndexedDBBackingStoreTest : public testing::Test {
     backing_store_ = IndexedDBBackingStore::OpenInMemory(origin);
 
     // useful keys and values during tests
-    m_value1 = "value1";
-    m_value2 = "value2";
-    m_value3 = "value3";
-    m_key1 = IndexedDBKey(99, WebKit::WebIDBKeyTypeNumber);
+    m_value1 = IndexedDBValue("value1", std::vector<IndexedDBBlobInfo>());
+    m_value2 = IndexedDBValue("value2", std::vector<IndexedDBBlobInfo>());
+
+    m_key1 = IndexedDBKey(99, blink::WebIDBKeyTypeNumber);
     m_key2 = IndexedDBKey(ASCIIToUTF16("key2"));
-    m_key3 = IndexedDBKey(ASCIIToUTF16("key3"));
   }
 
  protected:
@@ -37,10 +39,8 @@ class IndexedDBBackingStoreTest : public testing::Test {
   // Sample keys and values that are consistent.
   IndexedDBKey m_key1;
   IndexedDBKey m_key2;
-  IndexedDBKey m_key3;
-  std::string m_value1;
-  std::string m_value2;
-  std::string m_value3;
+  IndexedDBValue m_value1;
+  IndexedDBValue m_value2;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(IndexedDBBackingStoreTest);
@@ -51,21 +51,21 @@ TEST_F(IndexedDBBackingStoreTest, PutGetConsistency) {
     IndexedDBBackingStore::Transaction transaction1(backing_store_);
     transaction1.Begin();
     IndexedDBBackingStore::RecordIdentifier record;
-    bool ok = backing_store_->PutRecord(
+    leveldb::Status s = backing_store_->PutRecord(
         &transaction1, 1, 1, m_key1, m_value1, &record);
-    EXPECT_TRUE(ok);
+    EXPECT_TRUE(s.ok());
     transaction1.Commit();
   }
 
   {
     IndexedDBBackingStore::Transaction transaction2(backing_store_);
     transaction2.Begin();
-    std::string result_value;
-    bool ok =
+    IndexedDBValue result_value;
+    leveldb::Status s =
         backing_store_->GetRecord(&transaction2, 1, 1, m_key1, &result_value);
     transaction2.Commit();
-    EXPECT_TRUE(ok);
-    EXPECT_EQ(m_value1, result_value);
+    EXPECT_TRUE(s.ok());
+    EXPECT_EQ(m_value1.bits, result_value.bits);
   }
 }
 
@@ -86,66 +86,66 @@ TEST_F(IndexedDBBackingStoreTest, HighIds) {
     IndexedDBBackingStore::Transaction transaction1(backing_store_);
     transaction1.Begin();
     IndexedDBBackingStore::RecordIdentifier record;
-    bool ok = backing_store_->PutRecord(&transaction1,
-                                        high_database_id,
-                                        high_object_store_id,
-                                        m_key1,
-                                        m_value1,
-                                        &record);
-    EXPECT_TRUE(ok);
+    leveldb::Status s = backing_store_->PutRecord(&transaction1,
+                                                  high_database_id,
+                                                  high_object_store_id,
+                                                  m_key1,
+                                                  m_value1,
+                                                  &record);
+    EXPECT_TRUE(s.ok());
 
-    ok = backing_store_->PutIndexDataForRecord(&transaction1,
-                                               high_database_id,
-                                               high_object_store_id,
-                                               invalid_high_index_id,
-                                               index_key,
-                                               record);
-    EXPECT_FALSE(ok);
+    s = backing_store_->PutIndexDataForRecord(&transaction1,
+                                              high_database_id,
+                                              high_object_store_id,
+                                              invalid_high_index_id,
+                                              index_key,
+                                              record);
+    EXPECT_FALSE(s.ok());
 
-    ok = backing_store_->PutIndexDataForRecord(&transaction1,
-                                               high_database_id,
-                                               high_object_store_id,
-                                               high_index_id,
-                                               index_key,
-                                               record);
-    EXPECT_TRUE(ok);
+    s = backing_store_->PutIndexDataForRecord(&transaction1,
+                                              high_database_id,
+                                              high_object_store_id,
+                                              high_index_id,
+                                              index_key,
+                                              record);
+    EXPECT_TRUE(s.ok());
 
-    ok = transaction1.Commit();
-    EXPECT_TRUE(ok);
+    s = transaction1.Commit();
+    EXPECT_TRUE(s.ok());
   }
 
   {
     IndexedDBBackingStore::Transaction transaction2(backing_store_);
     transaction2.Begin();
-    std::string result_value;
-    bool ok = backing_store_->GetRecord(&transaction2,
-                                        high_database_id,
-                                        high_object_store_id,
-                                        m_key1,
-                                        &result_value);
-    EXPECT_TRUE(ok);
-    EXPECT_EQ(m_value1, result_value);
+    IndexedDBValue result_value;
+    leveldb::Status s = backing_store_->GetRecord(&transaction2,
+                                                  high_database_id,
+                                                  high_object_store_id,
+                                                  m_key1,
+                                                  &result_value);
+    EXPECT_TRUE(s.ok());
+    EXPECT_EQ(m_value1.bits, result_value.bits);
 
     scoped_ptr<IndexedDBKey> new_primary_key;
-    ok = backing_store_->GetPrimaryKeyViaIndex(&transaction2,
-                                               high_database_id,
-                                               high_object_store_id,
-                                               invalid_high_index_id,
-                                               index_key,
-                                               &new_primary_key);
-    EXPECT_FALSE(ok);
+    s = backing_store_->GetPrimaryKeyViaIndex(&transaction2,
+                                              high_database_id,
+                                              high_object_store_id,
+                                              invalid_high_index_id,
+                                              index_key,
+                                              &new_primary_key);
+    EXPECT_FALSE(s.ok());
 
-    ok = backing_store_->GetPrimaryKeyViaIndex(&transaction2,
-                                               high_database_id,
-                                               high_object_store_id,
-                                               high_index_id,
-                                               index_key,
-                                               &new_primary_key);
-    EXPECT_TRUE(ok);
-    EXPECT_TRUE(new_primary_key->IsEqual(m_key1));
+    s = backing_store_->GetPrimaryKeyViaIndex(&transaction2,
+                                              high_database_id,
+                                              high_object_store_id,
+                                              high_index_id,
+                                              index_key,
+                                              &new_primary_key);
+    EXPECT_TRUE(s.ok());
+    EXPECT_TRUE(new_primary_key->Equals(m_key1));
 
-    ok = transaction2.Commit();
-    EXPECT_TRUE(ok);
+    s = transaction2.Commit();
+    EXPECT_TRUE(s.ok());
   }
 }
 
@@ -157,139 +157,139 @@ TEST_F(IndexedDBBackingStoreTest, InvalidIds) {
   const int64 index_id = kMinimumIndexId;
   const int64 invalid_low_index_id = 19;  // index_ids must be > kMinimumIndexId
 
-  std::string result_value;
+  IndexedDBValue result_value;
 
   IndexedDBBackingStore::Transaction transaction1(backing_store_);
   transaction1.Begin();
 
   IndexedDBBackingStore::RecordIdentifier record;
-  bool ok = backing_store_->PutRecord(&transaction1,
-                                      database_id,
-                                      KeyPrefix::kInvalidId,
-                                      m_key1,
-                                      m_value1,
-                                      &record);
-  EXPECT_FALSE(ok);
-  ok = backing_store_->PutRecord(
+  leveldb::Status s = backing_store_->PutRecord(&transaction1,
+                                                database_id,
+                                                KeyPrefix::kInvalidId,
+                                                m_key1,
+                                                m_value1,
+                                                &record);
+  EXPECT_FALSE(s.ok());
+  s = backing_store_->PutRecord(
       &transaction1, database_id, 0, m_key1, m_value1, &record);
-  EXPECT_FALSE(ok);
-  ok = backing_store_->PutRecord(&transaction1,
-                                 KeyPrefix::kInvalidId,
-                                 object_store_id,
-                                 m_key1,
-                                 m_value1,
-                                 &record);
-  EXPECT_FALSE(ok);
-  ok = backing_store_->PutRecord(
+  EXPECT_FALSE(s.ok());
+  s = backing_store_->PutRecord(&transaction1,
+                                KeyPrefix::kInvalidId,
+                                object_store_id,
+                                m_key1,
+                                m_value1,
+                                &record);
+  EXPECT_FALSE(s.ok());
+  s = backing_store_->PutRecord(
       &transaction1, 0, object_store_id, m_key1, m_value1, &record);
-  EXPECT_FALSE(ok);
+  EXPECT_FALSE(s.ok());
 
-  ok = backing_store_->GetRecord(
+  s = backing_store_->GetRecord(
       &transaction1, database_id, KeyPrefix::kInvalidId, m_key1, &result_value);
-  EXPECT_FALSE(ok);
-  ok = backing_store_->GetRecord(
+  EXPECT_FALSE(s.ok());
+  s = backing_store_->GetRecord(
       &transaction1, database_id, 0, m_key1, &result_value);
-  EXPECT_FALSE(ok);
-  ok = backing_store_->GetRecord(&transaction1,
-                                 KeyPrefix::kInvalidId,
-                                 object_store_id,
-                                 m_key1,
-                                 &result_value);
-  EXPECT_FALSE(ok);
-  ok = backing_store_->GetRecord(
+  EXPECT_FALSE(s.ok());
+  s = backing_store_->GetRecord(&transaction1,
+                                KeyPrefix::kInvalidId,
+                                object_store_id,
+                                m_key1,
+                                &result_value);
+  EXPECT_FALSE(s.ok());
+  s = backing_store_->GetRecord(
       &transaction1, 0, object_store_id, m_key1, &result_value);
-  EXPECT_FALSE(ok);
+  EXPECT_FALSE(s.ok());
 
   scoped_ptr<IndexedDBKey> new_primary_key;
-  ok = backing_store_->GetPrimaryKeyViaIndex(&transaction1,
-                                             database_id,
-                                             object_store_id,
-                                             KeyPrefix::kInvalidId,
-                                             m_key1,
-                                             &new_primary_key);
-  EXPECT_FALSE(ok);
-  ok = backing_store_->GetPrimaryKeyViaIndex(&transaction1,
-                                             database_id,
-                                             object_store_id,
-                                             invalid_low_index_id,
-                                             m_key1,
-                                             &new_primary_key);
-  EXPECT_FALSE(ok);
-  ok = backing_store_->GetPrimaryKeyViaIndex(
+  s = backing_store_->GetPrimaryKeyViaIndex(&transaction1,
+                                            database_id,
+                                            object_store_id,
+                                            KeyPrefix::kInvalidId,
+                                            m_key1,
+                                            &new_primary_key);
+  EXPECT_FALSE(s.ok());
+  s = backing_store_->GetPrimaryKeyViaIndex(&transaction1,
+                                            database_id,
+                                            object_store_id,
+                                            invalid_low_index_id,
+                                            m_key1,
+                                            &new_primary_key);
+  EXPECT_FALSE(s.ok());
+  s = backing_store_->GetPrimaryKeyViaIndex(
       &transaction1, database_id, object_store_id, 0, m_key1, &new_primary_key);
-  EXPECT_FALSE(ok);
+  EXPECT_FALSE(s.ok());
 
-  ok = backing_store_->GetPrimaryKeyViaIndex(&transaction1,
-                                             KeyPrefix::kInvalidId,
-                                             object_store_id,
-                                             index_id,
-                                             m_key1,
-                                             &new_primary_key);
-  EXPECT_FALSE(ok);
-  ok = backing_store_->GetPrimaryKeyViaIndex(&transaction1,
-                                             database_id,
-                                             KeyPrefix::kInvalidId,
-                                             index_id,
-                                             m_key1,
-                                             &new_primary_key);
-  EXPECT_FALSE(ok);
+  s = backing_store_->GetPrimaryKeyViaIndex(&transaction1,
+                                            KeyPrefix::kInvalidId,
+                                            object_store_id,
+                                            index_id,
+                                            m_key1,
+                                            &new_primary_key);
+  EXPECT_FALSE(s.ok());
+  s = backing_store_->GetPrimaryKeyViaIndex(&transaction1,
+                                            database_id,
+                                            KeyPrefix::kInvalidId,
+                                            index_id,
+                                            m_key1,
+                                            &new_primary_key);
+  EXPECT_FALSE(s.ok());
 }
 
 TEST_F(IndexedDBBackingStoreTest, CreateDatabase) {
-  const string16 database_name(ASCIIToUTF16("db1"));
+  const base::string16 database_name(ASCIIToUTF16("db1"));
   int64 database_id;
-  const string16 version(ASCIIToUTF16("old_string_version"));
+  const base::string16 version(ASCIIToUTF16("old_string_version"));
   const int64 int_version = 9;
 
   const int64 object_store_id = 99;
-  const string16 object_store_name(ASCIIToUTF16("object_store1"));
+  const base::string16 object_store_name(ASCIIToUTF16("object_store1"));
   const bool auto_increment = true;
   const IndexedDBKeyPath object_store_key_path(
       ASCIIToUTF16("object_store_key"));
 
   const int64 index_id = 999;
-  const string16 index_name(ASCIIToUTF16("index1"));
+  const base::string16 index_name(ASCIIToUTF16("index1"));
   const bool unique = true;
   const bool multi_entry = true;
   const IndexedDBKeyPath index_key_path(ASCIIToUTF16("index_key"));
 
   {
-    bool ok = backing_store_->CreateIDBDatabaseMetaData(
+    leveldb::Status s = backing_store_->CreateIDBDatabaseMetaData(
         database_name, version, int_version, &database_id);
-    EXPECT_TRUE(ok);
+    EXPECT_TRUE(s.ok());
     EXPECT_GT(database_id, 0);
 
     IndexedDBBackingStore::Transaction transaction(backing_store_);
     transaction.Begin();
 
-    ok = backing_store_->CreateObjectStore(&transaction,
-                                           database_id,
-                                           object_store_id,
-                                           object_store_name,
-                                           object_store_key_path,
-                                           auto_increment);
-    EXPECT_TRUE(ok);
+    s = backing_store_->CreateObjectStore(&transaction,
+                                          database_id,
+                                          object_store_id,
+                                          object_store_name,
+                                          object_store_key_path,
+                                          auto_increment);
+    EXPECT_TRUE(s.ok());
 
-    ok = backing_store_->CreateIndex(&transaction,
-                                     database_id,
-                                     object_store_id,
-                                     index_id,
-                                     index_name,
-                                     index_key_path,
-                                     unique,
-                                     multi_entry);
-    EXPECT_TRUE(ok);
+    s = backing_store_->CreateIndex(&transaction,
+                                    database_id,
+                                    object_store_id,
+                                    index_id,
+                                    index_name,
+                                    index_key_path,
+                                    unique,
+                                    multi_entry);
+    EXPECT_TRUE(s.ok());
 
-    ok = transaction.Commit();
-    EXPECT_TRUE(ok);
+    s = transaction.Commit();
+    EXPECT_TRUE(s.ok());
   }
 
   {
     IndexedDBDatabaseMetadata database;
     bool found;
-    bool ok = backing_store_->GetIDBDatabaseMetaData(
+    leveldb::Status s = backing_store_->GetIDBDatabaseMetaData(
         database_name, &database, &found);
-    EXPECT_TRUE(ok);
+    EXPECT_TRUE(s.ok());
     EXPECT_TRUE(found);
 
     // database.name is not filled in by the implementation.
@@ -297,8 +297,8 @@ TEST_F(IndexedDBBackingStoreTest, CreateDatabase) {
     EXPECT_EQ(int_version, database.int_version);
     EXPECT_EQ(database_id, database.id);
 
-    ok = backing_store_->GetObjectStores(database.id, &database.object_stores);
-    EXPECT_TRUE(ok);
+    s = backing_store_->GetObjectStores(database.id, &database.object_stores);
+    EXPECT_TRUE(s.ok());
 
     EXPECT_EQ(1UL, database.object_stores.size());
     IndexedDBObjectStoreMetadata object_store =

@@ -34,7 +34,7 @@ std::wstring GetRandomFilename() {
   // Replace the first digit with the letter 'R' (for "random", get it?).
   result[0] = 'R';
 
-  return ASCIIToWide(result);
+  return base::ASCIIToWide(result);
 }
 
 }  // namespace
@@ -161,8 +161,8 @@ TEST_F(SelfCleaningTempDirTest, LeaveUsedOnDestroy) {
     EXPECT_TRUE(base::DirectoryExists(temp_dir.path()));
     // Drop a file somewhere.
     EXPECT_EQ(arraysize(kHiHon) - 1,
-              file_util::WriteFile(parent_temp_dir.Append(GetRandomFilename()),
-                                   kHiHon, arraysize(kHiHon) - 1));
+              base::WriteFile(parent_temp_dir.Append(GetRandomFilename()),
+                              kHiHon, arraysize(kHiHon) - 1));
   }
   EXPECT_FALSE(base::DirectoryExists(parent_temp_dir.Append(L"Three")));
   EXPECT_TRUE(base::DirectoryExists(parent_temp_dir));

@@ -6,7 +6,7 @@
 
 #include "ash/shell.h"
 #include "base/time/time.h"
-#include "ui/aura/root_window.h"
+#include "ui/aura/window_event_dispatcher.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/gfx/rect.h"
@@ -25,7 +25,7 @@ const int kDimmingTransitionMs = 200;
 
 }  // namespace
 
-ScreenDimmer::ScreenDimmer(aura::RootWindow* root_window)
+ScreenDimmer::ScreenDimmer(aura::Window* root_window)
     : root_window_(root_window),
       currently_dimming_(false) {
   root_window_->AddObserver(this);

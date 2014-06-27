@@ -11,7 +11,6 @@ import unittest
 from telemetry.core import browser_finder
 from telemetry.core import extension_to_load
 from telemetry.core import util
-from telemetry.core.backends.chrome import extension_dict_backend
 from telemetry.unittest import options_for_unittests
 
 
@@ -50,15 +49,6 @@ class ExtensionTest(unittest.TestCase):
     self.assertEquals('abcdef',
                       self._extension.EvaluateJavaScript('_testVar'))
 
-  def testDisconnect(self):
-    """Test that ExtensionPage.Disconnect exists by calling it.
-    EvaluateJavaScript should reconnect."""
-    if not self._extension:
-      logging.warning('Did not find a browser that supports extensions, '
-                      'skipping test.')
-      return
-    self._extension.Disconnect()
-    self.assertEquals(2, self._extension.EvaluateJavaScript('1+1'))
 
 class NonExistentExtensionTest(unittest.TestCase):
   def testNonExistentExtensionPath(self):
@@ -77,10 +67,8 @@ class NonExistentExtensionTest(unittest.TestCase):
         extension_path, options.browser_type)
     browser_to_create = browser_finder.FindBrowser(options)
     with browser_to_create.Create() as b:
-      b.Start()
       if b.supports_extensions:
-        self.assertRaises(extension_dict_backend.ExtensionNotFoundException,
-                          lambda: b.extensions[load_extension])
+        self.assertRaises(KeyError, lambda: b.extensions[load_extension])
 
 class MultipleExtensionTest(unittest.TestCase):
   def setUp(self):
@@ -149,7 +137,6 @@ class ComponentExtensionTest(unittest.TestCase):
       return
 
     with browser_to_create.Create() as b:
-      b.Start()
       extension = b.extensions[load_extension]
       self.assertTrue(
           extension.EvaluateJavaScript('chrome.runtime != null'))

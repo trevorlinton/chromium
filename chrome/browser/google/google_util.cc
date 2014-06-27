@@ -16,6 +16,7 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/google/google_url_tracker.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/net/url_fixer_upper.h"
 #include "chrome/installer/util/google_update_settings.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/base/url_util.h"
@@ -112,18 +113,18 @@ bool GetBrand(std::string* brand) {
     return true;
   }
 
-  string16 brand16;
+  base::string16 brand16;
   bool ret = GoogleUpdateSettings::GetBrand(&brand16);
   if (ret)
-    brand->assign(WideToASCII(brand16));
+    brand->assign(base::UTF16ToASCII(brand16));
   return ret;
 }
 
 bool GetReactivationBrand(std::string* brand) {
-  string16 brand16;
+  base::string16 brand16;
   bool ret = GoogleUpdateSettings::GetReactivationBrand(&brand16);
   if (ret)
-    brand->assign(WideToASCII(brand16));
+    brand->assign(base::UTF16ToASCII(brand16));
   return ret;
 }
 
@@ -152,22 +153,35 @@ bool GetReactivationBrand(std::string* brand) {
 
 #endif
 
+GURL CommandLineGoogleBaseURL() {
+  // Unit tests may add command-line flags after the first call to this
+  // function, so we don't simply initialize a static |base_url| directly and
+  // then unconditionally return it.
+  CR_DEFINE_STATIC_LOCAL(std::string, switch_value, ());
+  CR_DEFINE_STATIC_LOCAL(GURL, base_url, ());
+  std::string current_switch_value(
+      CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+          switches::kGoogleBaseURL));
+  if (current_switch_value != switch_value) {
+    switch_value = current_switch_value;
+    base_url = URLFixerUpper::FixupURL(switch_value, std::string());
+    if (!base_url.is_valid() || base_url.has_query() || base_url.has_ref())
+      base_url = GURL();
+  }
+  return base_url;
+}
+
 bool StartsWithCommandLineGoogleBaseURL(const GURL& url) {
-  const std::string base_url(CommandLine::ForCurrentProcess()->
-      GetSwitchValueASCII(switches::kGoogleBaseURL));
-  return !base_url.empty() &&
-      StartsWithASCII(url.possibly_invalid_spec(), base_url, true);
+  GURL base_url(CommandLineGoogleBaseURL());
+  return base_url.is_valid() &&
+      StartsWithASCII(url.possibly_invalid_spec(), base_url.spec(), true);
 }
 
 bool IsGoogleHostname(const std::string& host,
                       SubdomainPermission subdomain_permission) {
-  const std::string base_url(CommandLine::ForCurrentProcess()->
-      GetSwitchValueASCII(switches::kGoogleBaseURL));
-  if (!base_url.empty()) {
-    GURL base_gurl(base_url);
-    if (base_gurl.is_valid() && (host == base_gurl.host()))
-      return true;
-  }
+  GURL base_url(CommandLineGoogleBaseURL());
+  if (base_url.is_valid() && (host == base_url.host()))
+    return true;
 
   size_t tld_length = net::registry_controlled_domains::GetRegistryLength(
       host,
@@ -219,10 +233,6 @@ bool IsGoogleSearchUrl(const GURL& url) {
 }
 
 bool IsOrganic(const std::string& brand) {
-  const CommandLine& command_line = *CommandLine::ForCurrentProcess();
-  if (command_line.HasSwitch(switches::kOrganicInstall))
-    return true;
-
 #if defined(OS_MACOSX)
   if (brand.empty()) {
     // An empty brand string on Mac is used for channels other than stable,
@@ -252,11 +262,6 @@ bool IsOrganic(const std::string& brand) {
 }
 
 bool IsOrganicFirstRun(const std::string& brand) {
-  // Used for testing, to force search engine selector to appear.
-  const CommandLine& command_line = *CommandLine::ForCurrentProcess();
-  if (command_line.HasSwitch(switches::kOrganicInstall))
-    return true;
-
 #if defined(OS_MACOSX)
   if (brand.empty()) {
     // An empty brand string on Mac is used for channels other than stable,

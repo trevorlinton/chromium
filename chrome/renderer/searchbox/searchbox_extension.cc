@@ -11,12 +11,13 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/common/autocomplete_match_type.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/instant_types.h"
 #include "chrome/common/ntp_logging_events.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/renderer/searchbox/searchbox.h"
+#include "content/public/common/url_constants.h"
 #include "content/public/renderer/render_view.h"
+#include "extensions/common/extension.h"
 #include "grit/renderer_resources.h"
 #include "third_party/WebKit/public/platform/WebURLRequest.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
@@ -56,32 +57,40 @@ const char kLTRHtmlTextDirection[] = "ltr";
 const char kRTLHtmlTextDirection[] = "rtl";
 
 // Converts a V8 value to a string16.
-string16 V8ValueToUTF16(v8::Handle<v8::Value> v) {
+base::string16 V8ValueToUTF16(v8::Handle<v8::Value> v) {
   v8::String::Value s(v);
-  return string16(reinterpret_cast<const char16*>(*s), s.length());
+  return base::string16(reinterpret_cast<const base::char16*>(*s), s.length());
 }
 
 // Converts string16 to V8 String.
-v8::Handle<v8::String> UTF16ToV8String(const string16& s) {
-  return v8::String::New(reinterpret_cast<const uint16_t*>(s.data()), s.size());
+v8::Handle<v8::String> UTF16ToV8String(v8::Isolate* isolate,
+                                       const base::string16& s) {
+  return v8::String::NewFromTwoByte(isolate,
+                                    reinterpret_cast<const uint16_t*>(s.data()),
+                                    v8::String::kNormalString,
+                                    s.size());
 }
 
 // Converts std::string to V8 String.
-v8::Handle<v8::String> UTF8ToV8String(const std::string& s) {
-  return v8::String::New(s.data(), s.size());
+v8::Handle<v8::String> UTF8ToV8String(v8::Isolate* isolate,
+                                      const std::string& s) {
+  return v8::String::NewFromUtf8(
+      isolate, s.data(), v8::String::kNormalString, s.size());
 }
 
-void Dispatch(WebKit::WebFrame* frame, const WebKit::WebString& script) {
+void Dispatch(blink::WebFrame* frame, const blink::WebString& script) {
   if (!frame) return;
-  frame->executeScript(WebKit::WebScriptSource(script));
+  frame->executeScript(blink::WebScriptSource(script));
 }
 
 v8::Handle<v8::String> GenerateThumbnailURL(
+    v8::Isolate* isolate,
     int render_view_id,
     InstantRestrictedID most_visited_item_id) {
-  return UTF8ToV8String(base::StringPrintf("chrome-search://thumb/%d/%d",
-                                           render_view_id,
-                                           most_visited_item_id));
+  return UTF8ToV8String(
+      isolate,
+      base::StringPrintf(
+          "chrome-search://thumb/%d/%d", render_view_id, most_visited_item_id));
 }
 
 // Populates a Javascript MostVisitedItem object from |mv_item|.
@@ -89,9 +98,10 @@ v8::Handle<v8::String> GenerateThumbnailURL(
 // not be returned to the Instant page. These should be erased before returning
 // the object. See GetMostVisitedItemsWrapper() in searchbox_api.js.
 v8::Handle<v8::Object> GenerateMostVisitedItem(
+    v8::Isolate* isolate,
     int render_view_id,
     InstantRestrictedID restricted_id,
-    const InstantMostVisitedItem &mv_item) {
+    const InstantMostVisitedItem& mv_item) {
   // We set the "dir" attribute of the title, so that in RTL locales, a LTR
   // title is rendered left-to-right and truncated from the right. For
   // example, the title of http://msdn.microsoft.com/en-us/default.aspx is
@@ -109,19 +119,25 @@ v8::Handle<v8::Object> GenerateMostVisitedItem(
   else
     direction = kLTRHtmlTextDirection;
 
-  string16 title = mv_item.title;
+  base::string16 title = mv_item.title;
   if (title.empty())
-    title = UTF8ToUTF16(mv_item.url.spec());
+    title = base::UTF8ToUTF16(mv_item.url.spec());
 
-  v8::Handle<v8::Object> obj = v8::Object::New();
-  obj->Set(v8::String::New("renderViewId"), v8::Int32::New(render_view_id));
-  obj->Set(v8::String::New("rid"), v8::Int32::New(restricted_id));
-  obj->Set(v8::String::New("thumbnailUrl"),
-           GenerateThumbnailURL(render_view_id, restricted_id));
-  obj->Set(v8::String::New("title"), UTF16ToV8String(title));
-  obj->Set(v8::String::New("domain"), UTF8ToV8String(mv_item.url.host()));
-  obj->Set(v8::String::New("direction"), UTF8ToV8String(direction));
-  obj->Set(v8::String::New("url"), UTF8ToV8String(mv_item.url.spec()));
+  v8::Handle<v8::Object> obj = v8::Object::New(isolate);
+  obj->Set(v8::String::NewFromUtf8(isolate, "renderViewId"),
+           v8::Int32::New(isolate, render_view_id));
+  obj->Set(v8::String::NewFromUtf8(isolate, "rid"),
+           v8::Int32::New(isolate, restricted_id));
+  obj->Set(v8::String::NewFromUtf8(isolate, "thumbnailUrl"),
+           GenerateThumbnailURL(isolate, render_view_id, restricted_id));
+  obj->Set(v8::String::NewFromUtf8(isolate, "title"),
+           UTF16ToV8String(isolate, title));
+  obj->Set(v8::String::NewFromUtf8(isolate, "domain"),
+           UTF8ToV8String(isolate, mv_item.url.host()));
+  obj->Set(v8::String::NewFromUtf8(isolate, "direction"),
+           UTF8ToV8String(isolate, direction));
+  obj->Set(v8::String::NewFromUtf8(isolate, "url"),
+           UTF8ToV8String(isolate, mv_item.url.spec()));
   return obj;
 }
 
@@ -130,10 +146,10 @@ v8::Handle<v8::Object> GenerateMostVisitedItem(
 // most visited data to pages with origin chrome-search://most-visited and
 // chrome-search://suggestions.
 content::RenderView* GetRenderViewWithCheckedOrigin(const GURL& origin) {
-  WebKit::WebFrame* webframe = WebKit::WebFrame::frameForCurrentContext();
+  blink::WebFrame* webframe = blink::WebFrame::frameForCurrentContext();
   if (!webframe)
     return NULL;
-  WebKit::WebView* webview = webframe->view();
+  blink::WebView* webview = webframe->view();
   if (!webview)
     return NULL;  // Can happen during closing.
   content::RenderView* render_view = content::RenderView::FromWebView(webview);
@@ -149,7 +165,7 @@ content::RenderView* GetRenderViewWithCheckedOrigin(const GURL& origin) {
 
 // Returns the current URL.
 GURL GetCurrentURL(content::RenderView* render_view) {
-  WebKit::WebView* webview = render_view->GetWebView();
+  blink::WebView* webview = render_view->GetWebView();
   return webview ? GURL(webview->mainFrame()->document().url()) : GURL();
 }
 
@@ -158,18 +174,19 @@ GURL GetCurrentURL(content::RenderView* render_view) {
 namespace internal {  // for testing.
 
 // Returns an array with the RGBA color components.
-v8::Handle<v8::Value> RGBAColorToArray(const RGBAColor& color) {
-  v8::Handle<v8::Array> color_array = v8::Array::New(4);
-  color_array->Set(0, v8::Int32::New(color.r));
-  color_array->Set(1, v8::Int32::New(color.g));
-  color_array->Set(2, v8::Int32::New(color.b));
-  color_array->Set(3, v8::Int32::New(color.a));
+v8::Handle<v8::Value> RGBAColorToArray(v8::Isolate* isolate,
+                                       const RGBAColor& color) {
+  v8::Handle<v8::Array> color_array = v8::Array::New(isolate, 4);
+  color_array->Set(0, v8::Int32::New(isolate, color.r));
+  color_array->Set(1, v8::Int32::New(isolate, color.g));
+  color_array->Set(2, v8::Int32::New(isolate, color.b));
+  color_array->Set(3, v8::Int32::New(isolate, color.a));
   return color_array;
 }
 
 // Resolves a possibly relative URL using the current URL.
 GURL ResolveURL(const GURL& current_url,
-                const string16& possibly_relative_url) {
+                const base::string16& possibly_relative_url) {
   if (current_url.is_valid() && !possibly_relative_url.empty())
     return current_url.Resolve(possibly_relative_url);
   return GURL(possibly_relative_url);
@@ -324,7 +341,8 @@ class SearchBoxExtensionWrapper : public v8::Extension {
 
   // Allows v8's javascript code to call the native functions defined
   // in this class for window.chrome.
-  virtual v8::Handle<v8::FunctionTemplate> GetNativeFunction(
+  virtual v8::Handle<v8::FunctionTemplate> GetNativeFunctionTemplate(
+      v8::Isolate*,
       v8::Handle<v8::String> name) OVERRIDE;
 
   // Helper function to find the RenderView. May return NULL.
@@ -343,6 +361,10 @@ class SearchBoxExtensionWrapper : public v8::Extension {
 
   // Gets whether or not the app launcher is enabled.
   static void GetAppLauncherEnabled(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+
+  // Gets the desired navigation behavior from a click event.
+  static void GetDispositionFromClick(
       const v8::FunctionCallbackInfo<v8::Value>& args);
 
   // Gets Most Visited Items.
@@ -387,6 +409,14 @@ class SearchBoxExtensionWrapper : public v8::Extension {
   // Logs information from the iframes/titles on the NTP.
   static void LogEvent(const v8::FunctionCallbackInfo<v8::Value>& args);
 
+  // Logs an impression on one of the Most Visited tile on the NTP.
+  static void LogMostVisitedImpression(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+
+  // Logs a navigation on one of the Most Visited tile on the NTP.
+  static void LogMostVisitedNavigation(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+
   // Navigates the window to a URL represented by either a URL string or a
   // restricted ID.
   static void NavigateContentWindow(
@@ -430,20 +460,21 @@ v8::Extension* SearchBoxExtension::Get() {
 }
 
 // static
-bool SearchBoxExtension::PageSupportsInstant(WebKit::WebFrame* frame) {
+bool SearchBoxExtension::PageSupportsInstant(blink::WebFrame* frame) {
   if (!frame) return false;
   v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
   v8::Handle<v8::Value> v = frame->executeScriptAndReturnValue(
-      WebKit::WebScriptSource(kSupportsInstantScript));
+      blink::WebScriptSource(kSupportsInstantScript));
   return !v.IsEmpty() && v->BooleanValue();
 }
 
 // static
 void SearchBoxExtension::DispatchChromeIdentityCheckResult(
-    WebKit::WebFrame* frame, const string16& identity, bool identity_match) {
-  std::string escaped_identity;
-  base::JsonDoubleQuote(identity, true, &escaped_identity);
-  WebKit::WebString script(UTF8ToUTF16(base::StringPrintf(
+    blink::WebFrame* frame,
+    const base::string16& identity,
+    bool identity_match) {
+  std::string escaped_identity = base::GetQuotedJSONString(identity);
+  blink::WebString script(base::UTF8ToUTF16(base::StringPrintf(
       kDispatchChromeIdentityCheckResult,
       escaped_identity.c_str(),
       identity_match ? "true" : "false")));
@@ -451,54 +482,54 @@ void SearchBoxExtension::DispatchChromeIdentityCheckResult(
 }
 
 // static
-void SearchBoxExtension::DispatchFocusChange(WebKit::WebFrame* frame) {
+void SearchBoxExtension::DispatchFocusChange(blink::WebFrame* frame) {
   Dispatch(frame, kDispatchFocusChangedScript);
 }
 
 // static
-void SearchBoxExtension::DispatchInputCancel(WebKit::WebFrame* frame) {
+void SearchBoxExtension::DispatchInputCancel(blink::WebFrame* frame) {
   Dispatch(frame, kDispatchInputCancelScript);
 }
 
 // static
-void SearchBoxExtension::DispatchInputStart(WebKit::WebFrame* frame) {
+void SearchBoxExtension::DispatchInputStart(blink::WebFrame* frame) {
   Dispatch(frame, kDispatchInputStartScript);
 }
 
 // static
-void SearchBoxExtension::DispatchKeyCaptureChange(WebKit::WebFrame* frame) {
+void SearchBoxExtension::DispatchKeyCaptureChange(blink::WebFrame* frame) {
   Dispatch(frame, kDispatchKeyCaptureChangeScript);
 }
 
 // static
-void SearchBoxExtension::DispatchMarginChange(WebKit::WebFrame* frame) {
+void SearchBoxExtension::DispatchMarginChange(blink::WebFrame* frame) {
   Dispatch(frame, kDispatchMarginChangeEventScript);
 }
 
 // static
 void SearchBoxExtension::DispatchMostVisitedChanged(
-    WebKit::WebFrame* frame) {
+    blink::WebFrame* frame) {
   Dispatch(frame, kDispatchMostVisitedChangedScript);
 }
 
 // static
-void SearchBoxExtension::DispatchSubmit(WebKit::WebFrame* frame) {
+void SearchBoxExtension::DispatchSubmit(blink::WebFrame* frame) {
   Dispatch(frame, kDispatchSubmitEventScript);
 }
 
 // static
-void SearchBoxExtension::DispatchSuggestionChange(WebKit::WebFrame* frame) {
+void SearchBoxExtension::DispatchSuggestionChange(blink::WebFrame* frame) {
   Dispatch(frame, kDispatchSuggestionChangeEventScript);
 }
 
 // static
-void SearchBoxExtension::DispatchThemeChange(WebKit::WebFrame* frame) {
+void SearchBoxExtension::DispatchThemeChange(blink::WebFrame* frame) {
   Dispatch(frame, kDispatchThemeChangeEventScript);
 }
 
 // static
 void SearchBoxExtension::DispatchToggleVoiceSearch(
-    WebKit::WebFrame* frame) {
+    blink::WebFrame* frame) {
   Dispatch(frame, kDispatchToggleVoiceSearchScript);
 }
 
@@ -507,63 +538,79 @@ SearchBoxExtensionWrapper::SearchBoxExtensionWrapper(
     : v8::Extension(kSearchBoxExtensionName, code.data(), 0, 0, code.size()) {
 }
 
-v8::Handle<v8::FunctionTemplate> SearchBoxExtensionWrapper::GetNativeFunction(
+v8::Handle<v8::FunctionTemplate>
+SearchBoxExtensionWrapper::GetNativeFunctionTemplate(
+    v8::Isolate* isolate,
     v8::Handle<v8::String> name) {
-  if (name->Equals(v8::String::New("CheckIsUserSignedInToChromeAs")))
-    return v8::FunctionTemplate::New(CheckIsUserSignedInToChromeAs);
-  if (name->Equals(v8::String::New("DeleteMostVisitedItem")))
-    return v8::FunctionTemplate::New(DeleteMostVisitedItem);
-  if (name->Equals(v8::String::New("Focus")))
-    return v8::FunctionTemplate::New(Focus);
-  if (name->Equals(v8::String::New("GetAppLauncherEnabled")))
-    return v8::FunctionTemplate::New(GetAppLauncherEnabled);
-  if (name->Equals(v8::String::New("GetMostVisitedItems")))
-    return v8::FunctionTemplate::New(GetMostVisitedItems);
-  if (name->Equals(v8::String::New("GetMostVisitedItemData")))
-    return v8::FunctionTemplate::New(GetMostVisitedItemData);
-  if (name->Equals(v8::String::New("GetQuery")))
-    return v8::FunctionTemplate::New(GetQuery);
-  if (name->Equals(v8::String::New("GetRightToLeft")))
-    return v8::FunctionTemplate::New(GetRightToLeft);
-  if (name->Equals(v8::String::New("GetStartMargin")))
-    return v8::FunctionTemplate::New(GetStartMargin);
-  if (name->Equals(v8::String::New("GetSuggestionToPrefetch")))
-    return v8::FunctionTemplate::New(GetSuggestionToPrefetch);
-  if (name->Equals(v8::String::New("GetThemeBackgroundInfo")))
-    return v8::FunctionTemplate::New(GetThemeBackgroundInfo);
-  if (name->Equals(v8::String::New("IsFocused")))
-    return v8::FunctionTemplate::New(IsFocused);
-  if (name->Equals(v8::String::New("IsInputInProgress")))
-    return v8::FunctionTemplate::New(IsInputInProgress);
-  if (name->Equals(v8::String::New("IsKeyCaptureEnabled")))
-    return v8::FunctionTemplate::New(IsKeyCaptureEnabled);
-  if (name->Equals(v8::String::New("LogEvent")))
-    return v8::FunctionTemplate::New(LogEvent);
-  if (name->Equals(v8::String::New("NavigateContentWindow")))
-    return v8::FunctionTemplate::New(NavigateContentWindow);
-  if (name->Equals(v8::String::New("Paste")))
-    return v8::FunctionTemplate::New(Paste);
-  if (name->Equals(v8::String::New("SetVoiceSearchSupported")))
-    return v8::FunctionTemplate::New(SetVoiceSearchSupported);
-  if (name->Equals(v8::String::New("StartCapturingKeyStrokes")))
-    return v8::FunctionTemplate::New(StartCapturingKeyStrokes);
-  if (name->Equals(v8::String::New("StopCapturingKeyStrokes")))
-    return v8::FunctionTemplate::New(StopCapturingKeyStrokes);
-  if (name->Equals(v8::String::New("UndoAllMostVisitedDeletions")))
-    return v8::FunctionTemplate::New(UndoAllMostVisitedDeletions);
-  if (name->Equals(v8::String::New("UndoMostVisitedDeletion")))
-    return v8::FunctionTemplate::New(UndoMostVisitedDeletion);
-  if (name->Equals(v8::String::New("GetDisplayInstantResults")))
-    return v8::FunctionTemplate::New(GetDisplayInstantResults);
+  if (name->Equals(
+          v8::String::NewFromUtf8(isolate, "CheckIsUserSignedInToChromeAs")))
+    return v8::FunctionTemplate::New(isolate, CheckIsUserSignedInToChromeAs);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "DeleteMostVisitedItem")))
+    return v8::FunctionTemplate::New(isolate, DeleteMostVisitedItem);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "Focus")))
+    return v8::FunctionTemplate::New(isolate, Focus);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "GetAppLauncherEnabled")))
+    return v8::FunctionTemplate::New(isolate, GetAppLauncherEnabled);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "GetDispositionFromClick")))
+    return v8::FunctionTemplate::New(isolate, GetDispositionFromClick);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "GetMostVisitedItems")))
+    return v8::FunctionTemplate::New(isolate, GetMostVisitedItems);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "GetMostVisitedItemData")))
+    return v8::FunctionTemplate::New(isolate, GetMostVisitedItemData);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "GetQuery")))
+    return v8::FunctionTemplate::New(isolate, GetQuery);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "GetRightToLeft")))
+    return v8::FunctionTemplate::New(isolate, GetRightToLeft);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "GetStartMargin")))
+    return v8::FunctionTemplate::New(isolate, GetStartMargin);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "GetSuggestionToPrefetch")))
+    return v8::FunctionTemplate::New(isolate, GetSuggestionToPrefetch);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "GetThemeBackgroundInfo")))
+    return v8::FunctionTemplate::New(isolate, GetThemeBackgroundInfo);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "IsFocused")))
+    return v8::FunctionTemplate::New(isolate, IsFocused);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "IsInputInProgress")))
+    return v8::FunctionTemplate::New(isolate, IsInputInProgress);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "IsKeyCaptureEnabled")))
+    return v8::FunctionTemplate::New(isolate, IsKeyCaptureEnabled);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "LogEvent")))
+    return v8::FunctionTemplate::New(isolate, LogEvent);
+  if (name->Equals(
+          v8::String::NewFromUtf8(isolate, "LogMostVisitedImpression"))) {
+    return v8::FunctionTemplate::New(isolate, LogMostVisitedImpression);
+  }
+  if (name->Equals(
+          v8::String::NewFromUtf8(isolate, "LogMostVisitedNavigation"))) {
+    return v8::FunctionTemplate::New(isolate, LogMostVisitedNavigation);
+  }
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "NavigateContentWindow")))
+    return v8::FunctionTemplate::New(isolate, NavigateContentWindow);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "Paste")))
+    return v8::FunctionTemplate::New(isolate, Paste);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "SetVoiceSearchSupported")))
+    return v8::FunctionTemplate::New(isolate, SetVoiceSearchSupported);
+  if (name->Equals(
+          v8::String::NewFromUtf8(isolate, "StartCapturingKeyStrokes")))
+    return v8::FunctionTemplate::New(isolate, StartCapturingKeyStrokes);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "StopCapturingKeyStrokes")))
+    return v8::FunctionTemplate::New(isolate, StopCapturingKeyStrokes);
+  if (name->Equals(
+          v8::String::NewFromUtf8(isolate, "UndoAllMostVisitedDeletions")))
+    return v8::FunctionTemplate::New(isolate, UndoAllMostVisitedDeletions);
+  if (name->Equals(v8::String::NewFromUtf8(isolate, "UndoMostVisitedDeletion")))
+    return v8::FunctionTemplate::New(isolate, UndoMostVisitedDeletion);
+  if (name->Equals(
+          v8::String::NewFromUtf8(isolate, "GetDisplayInstantResults")))
+    return v8::FunctionTemplate::New(isolate, GetDisplayInstantResults);
   return v8::Handle<v8::FunctionTemplate>();
 }
 
 // static
 content::RenderView* SearchBoxExtensionWrapper::GetRenderView() {
-  WebKit::WebFrame* webframe = WebKit::WebFrame::frameForCurrentContext();
+  blink::WebFrame* webframe = blink::WebFrame::frameForCurrentContext();
   if (!webframe) return NULL;
 
-  WebKit::WebView* webview = webframe->view();
+  blink::WebView* webview = webframe->view();
   if (!webview) return NULL;  // can happen during closing
 
   return content::RenderView::FromWebView(webview);
@@ -612,6 +659,27 @@ void SearchBoxExtensionWrapper::GetAppLauncherEnabled(
 }
 
 // static
+void SearchBoxExtensionWrapper::GetDispositionFromClick(
+    const v8::FunctionCallbackInfo<v8::Value>& args) {
+  content::RenderView* render_view = GetRenderView();
+  if (!render_view || args.Length() != 5) return;
+
+  bool middle_button = args[0]->BooleanValue();
+  bool alt_key = args[1]->BooleanValue();
+  bool ctrl_key = args[2]->BooleanValue();
+  bool meta_key = args[3]->BooleanValue();
+  bool shift_key = args[4]->BooleanValue();
+
+  WindowOpenDisposition disposition = ui::DispositionFromClick(middle_button,
+                                                               alt_key,
+                                                               ctrl_key,
+                                                               meta_key,
+                                                               shift_key);
+  v8::Isolate* isolate = args.GetIsolate();
+  args.GetReturnValue().Set(v8::Int32::New(isolate, disposition));
+}
+
+// static
 void SearchBoxExtensionWrapper::GetMostVisitedItems(
     const v8::FunctionCallbackInfo<v8::Value>& args) {
   content::RenderView* render_view = GetRenderView();
@@ -623,11 +691,15 @@ void SearchBoxExtensionWrapper::GetMostVisitedItems(
 
   std::vector<InstantMostVisitedItemIDPair> instant_mv_items;
   search_box->GetMostVisitedItems(&instant_mv_items);
-  v8::Handle<v8::Array> v8_mv_items = v8::Array::New(instant_mv_items.size());
+  v8::Isolate* isolate = args.GetIsolate();
+  v8::Handle<v8::Array> v8_mv_items =
+      v8::Array::New(isolate, instant_mv_items.size());
   for (size_t i = 0; i < instant_mv_items.size(); ++i) {
-    v8_mv_items->Set(i, GenerateMostVisitedItem(render_view->GetRoutingID(),
-                                                instant_mv_items[i].first,
-                                                instant_mv_items[i].second));
+    v8_mv_items->Set(i,
+                     GenerateMostVisitedItem(isolate,
+                                             render_view->GetRoutingID(),
+                                             instant_mv_items[i].first,
+                                             instant_mv_items[i].second));
   }
   args.GetReturnValue().Set(v8_mv_items);
 }
@@ -650,9 +722,9 @@ void SearchBoxExtensionWrapper::GetMostVisitedItemData(
           restricted_id, &mv_item)) {
     return;
   }
-  args.GetReturnValue().Set(
-      GenerateMostVisitedItem(render_view->GetRoutingID(), restricted_id,
-                              mv_item));
+  v8::Isolate* isolate = args.GetIsolate();
+  args.GetReturnValue().Set(GenerateMostVisitedItem(
+      isolate, render_view->GetRoutingID(), restricted_id, mv_item));
 }
 
 // static
@@ -660,9 +732,10 @@ void SearchBoxExtensionWrapper::GetQuery(
     const v8::FunctionCallbackInfo<v8::Value>& args) {
   content::RenderView* render_view = GetRenderView();
   if (!render_view) return;
-  const string16& query = SearchBox::Get(render_view)->query();
+  const base::string16& query = SearchBox::Get(render_view)->query();
   DVLOG(1) << render_view << " GetQuery: '" << query << "'";
-  args.GetReturnValue().Set(UTF16ToV8String(query));
+  v8::Isolate* isolate = args.GetIsolate();
+  args.GetReturnValue().Set(UTF16ToV8String(isolate, query));
 }
 
 // static
@@ -688,9 +761,12 @@ void SearchBoxExtensionWrapper::GetSuggestionToPrefetch(
 
   const InstantSuggestion& suggestion =
       SearchBox::Get(render_view)->suggestion();
-  v8::Handle<v8::Object> data = v8::Object::New();
-  data->Set(v8::String::New("text"), UTF16ToV8String(suggestion.text));
-  data->Set(v8::String::New("metadata"), UTF8ToV8String(suggestion.metadata));
+  v8::Isolate* isolate = args.GetIsolate();
+  v8::Handle<v8::Object> data = v8::Object::New(isolate);
+  data->Set(v8::String::NewFromUtf8(isolate, "text"),
+            UTF16ToV8String(isolate, suggestion.text));
+  data->Set(v8::String::NewFromUtf8(isolate, "metadata"),
+            UTF8ToV8String(isolate, suggestion.metadata));
   args.GetReturnValue().Set(data);
 }
 
@@ -703,10 +779,11 @@ void SearchBoxExtensionWrapper::GetThemeBackgroundInfo(
   DVLOG(1) << render_view << " GetThemeBackgroundInfo";
   const ThemeBackgroundInfo& theme_info =
       SearchBox::Get(render_view)->GetThemeBackgroundInfo();
-  v8::Handle<v8::Object> info = v8::Object::New();
+  v8::Isolate* isolate = args.GetIsolate();
+  v8::Handle<v8::Object> info = v8::Object::New(isolate);
 
-  info->Set(v8::String::New("usingDefaultTheme"),
-            v8::Boolean::New(theme_info.using_default_theme));
+  info->Set(v8::String::NewFromUtf8(isolate, "usingDefaultTheme"),
+            v8::Boolean::New(isolate, theme_info.using_default_theme));
 
   // The theme background color is in RGBA format "rgba(R,G,B,A)" where R, G and
   // B are between 0 and 255 inclusive, and A is a double between 0 and 1
@@ -715,51 +792,56 @@ void SearchBoxExtensionWrapper::GetThemeBackgroundInfo(
   // Value is always valid.
   // TODO(jfweitz): Remove this field after GWS is modified to use the new
   // backgroundColorRgba field.
-  info->Set(v8::String::New("colorRgba"), UTF8ToV8String(
-      // Convert the alpha using DoubleToString because StringPrintf will use
-      // locale specific formatters (e.g., use , instead of . in German).
-      base::StringPrintf(
-          kCSSBackgroundColorFormat,
-          theme_info.background_color.r,
-          theme_info.background_color.g,
-          theme_info.background_color.b,
-          base::DoubleToString(
-              theme_info.background_color.a / 255.0).c_str())));
+  info->Set(
+      v8::String::NewFromUtf8(isolate, "colorRgba"),
+      UTF8ToV8String(
+          isolate,
+          // Convert the alpha using DoubleToString because StringPrintf will
+          // use
+          // locale specific formatters (e.g., use , instead of . in German).
+          base::StringPrintf(
+              kCSSBackgroundColorFormat,
+              theme_info.background_color.r,
+              theme_info.background_color.g,
+              theme_info.background_color.b,
+              base::DoubleToString(theme_info.background_color.a / 255.0)
+                  .c_str())));
 
   // Theme color for background as an array with the RGBA components in order.
   // Value is always valid.
-  info->Set(v8::String::New("backgroundColorRgba"),
-            internal::RGBAColorToArray(theme_info.background_color));
+  info->Set(v8::String::NewFromUtf8(isolate, "backgroundColorRgba"),
+            internal::RGBAColorToArray(isolate, theme_info.background_color));
 
   // Theme color for text as an array with the RGBA components in order.
   // Value is always valid.
-  info->Set(v8::String::New("textColorRgba"),
-            internal::RGBAColorToArray(theme_info.text_color));
+  info->Set(v8::String::NewFromUtf8(isolate, "textColorRgba"),
+            internal::RGBAColorToArray(isolate, theme_info.text_color));
 
   // Theme color for links as an array with the RGBA components in order.
   // Value is always valid.
-  info->Set(v8::String::New("linkColorRgba"),
-            internal::RGBAColorToArray(theme_info.link_color));
+  info->Set(v8::String::NewFromUtf8(isolate, "linkColorRgba"),
+            internal::RGBAColorToArray(isolate, theme_info.link_color));
 
   // Theme color for light text as an array with the RGBA components in order.
   // Value is always valid.
-  info->Set(v8::String::New("textColorLightRgba"),
-            internal::RGBAColorToArray(theme_info.text_color_light));
+  info->Set(v8::String::NewFromUtf8(isolate, "textColorLightRgba"),
+            internal::RGBAColorToArray(isolate, theme_info.text_color_light));
 
   // Theme color for header as an array with the RGBA components in order.
   // Value is always valid.
-  info->Set(v8::String::New("headerColorRgba"),
-            internal::RGBAColorToArray(theme_info.header_color));
+  info->Set(v8::String::NewFromUtf8(isolate, "headerColorRgba"),
+            internal::RGBAColorToArray(isolate, theme_info.header_color));
 
   // Theme color for section border as an array with the RGBA components in
   // order. Value is always valid.
-  info->Set(v8::String::New("sectionBorderColorRgba"),
-          internal::RGBAColorToArray(theme_info.section_border_color));
+  info->Set(
+      v8::String::NewFromUtf8(isolate, "sectionBorderColorRgba"),
+      internal::RGBAColorToArray(isolate, theme_info.section_border_color));
 
   // The theme alternate logo value indicates a white logo when TRUE and a
   // colorful one when FALSE.
-  info->Set(v8::String::New("alternateLogo"),
-            v8::Boolean::New(theme_info.logo_alternate));
+  info->Set(v8::String::NewFromUtf8(isolate, "alternateLogo"),
+            v8::Boolean::New(isolate, theme_info.logo_alternate));
 
   // The theme background image url is of format kCSSBackgroundImageFormat
   // where both instances of "%s" are replaced with the id that identifies the
@@ -767,10 +849,11 @@ void SearchBoxExtensionWrapper::GetThemeBackgroundInfo(
   // This is the CSS "background-image" format.
   // Value is only valid if there's a custom theme background image.
   if (extensions::Extension::IdIsValid(theme_info.theme_id)) {
-    info->Set(v8::String::New("imageUrl"), UTF8ToV8String(
-        base::StringPrintf(kCSSBackgroundImageFormat,
-                           theme_info.theme_id.c_str(),
-                           theme_info.theme_id.c_str())));
+    info->Set(v8::String::NewFromUtf8(isolate, "imageUrl"),
+              UTF8ToV8String(isolate,
+                             base::StringPrintf(kCSSBackgroundImageFormat,
+                                                theme_info.theme_id.c_str(),
+                                                theme_info.theme_id.c_str())));
 
     // The theme background image horizontal alignment is one of "left",
     // "right", "center".
@@ -784,8 +867,8 @@ void SearchBoxExtensionWrapper::GetThemeBackgroundInfo(
                    THEME_BKGRND_IMAGE_ALIGN_RIGHT) {
       alignment = kCSSBackgroundPositionRight;
     }
-    info->Set(v8::String::New("imageHorizontalAlignment"),
-              UTF8ToV8String(alignment));
+    info->Set(v8::String::NewFromUtf8(isolate, "imageHorizontalAlignment"),
+              UTF8ToV8String(isolate, alignment));
 
     // The theme background image vertical alignment is one of "top", "bottom",
     // "center".
@@ -799,8 +882,8 @@ void SearchBoxExtensionWrapper::GetThemeBackgroundInfo(
     } else {
       alignment = kCSSBackgroundPositionCenter;
     }
-    info->Set(v8::String::New("imageVerticalAlignment"),
-              UTF8ToV8String(alignment));
+    info->Set(v8::String::NewFromUtf8(isolate, "imageVerticalAlignment"),
+              UTF8ToV8String(isolate, alignment));
 
     // The tiling of the theme background image is one of "no-repeat",
     // "repeat-x", "repeat-y", "repeat".
@@ -821,18 +904,21 @@ void SearchBoxExtensionWrapper::GetThemeBackgroundInfo(
         tiling = kCSSBackgroundRepeat;
         break;
     }
-    info->Set(v8::String::New("imageTiling"), UTF8ToV8String(tiling));
+    info->Set(v8::String::NewFromUtf8(isolate, "imageTiling"),
+              UTF8ToV8String(isolate, tiling));
 
     // The theme background image height is only valid if |imageUrl| is valid.
-    info->Set(v8::String::New("imageHeight"),
-              v8::Int32::New(theme_info.image_height));
+    info->Set(v8::String::NewFromUtf8(isolate, "imageHeight"),
+              v8::Int32::New(isolate, theme_info.image_height));
 
     // The attribution URL is only valid if the theme has attribution logo.
     if (theme_info.has_attribution) {
-      info->Set(v8::String::New("attributionUrl"), UTF8ToV8String(
-          base::StringPrintf(kThemeAttributionFormat,
-                             theme_info.theme_id.c_str(),
-                             theme_info.theme_id.c_str())));
+      info->Set(
+          v8::String::NewFromUtf8(isolate, "attributionUrl"),
+          UTF8ToV8String(isolate,
+                         base::StringPrintf(kThemeAttributionFormat,
+                                            theme_info.theme_id.c_str(),
+                                            theme_info.theme_id.c_str())));
     }
   }
 
@@ -892,6 +978,38 @@ void SearchBoxExtensionWrapper::LogEvent(
 }
 
 // static
+void SearchBoxExtensionWrapper::LogMostVisitedImpression(
+    const v8::FunctionCallbackInfo<v8::Value>& args) {
+  content::RenderView* render_view = GetRenderViewWithCheckedOrigin(
+      GURL(chrome::kChromeSearchMostVisitedUrl));
+  if (!render_view) return;
+
+  if (args.Length() < 2 || !args[0]->IsNumber() || args[1]->IsUndefined())
+    return;
+
+  DVLOG(1) << render_view << " LogMostVisitedImpression";
+
+  SearchBox::Get(render_view)->LogMostVisitedImpression(
+      args[0]->IntegerValue(), V8ValueToUTF16(args[1]));
+}
+
+// static
+void SearchBoxExtensionWrapper::LogMostVisitedNavigation(
+    const v8::FunctionCallbackInfo<v8::Value>& args) {
+  content::RenderView* render_view = GetRenderViewWithCheckedOrigin(
+      GURL(chrome::kChromeSearchMostVisitedUrl));
+  if (!render_view) return;
+
+  if (args.Length() < 2 || !args[0]->IsNumber() || args[1]->IsUndefined())
+    return;
+
+  DVLOG(1) << render_view << " LogMostVisitedNavigation";
+
+  SearchBox::Get(render_view)->LogMostVisitedNavigation(
+      args[0]->IntegerValue(), V8ValueToUTF16(args[1]));
+}
+
+// static
 void SearchBoxExtensionWrapper::NavigateContentWindow(
     const v8::FunctionCallbackInfo<v8::Value>& args) {
   content::RenderView* render_view = GetRenderView();
@@ -909,18 +1027,20 @@ void SearchBoxExtensionWrapper::NavigateContentWindow(
     }
   } else {
     // Resolve the URL
-    const string16& possibly_relative_url = V8ValueToUTF16(args[0]);
-    GURL current_url = GetCurrentURL(render_view);
+    const base::string16& possibly_relative_url = V8ValueToUTF16(args[0]);
+  GURL current_url = GetCurrentURL(render_view);
     destination_url = internal::ResolveURL(current_url, possibly_relative_url);
   }
 
   DVLOG(1) << render_view << " NavigateContentWindow: " << destination_url;
 
   // Navigate the main frame.
-  if (destination_url.is_valid()) {
+  if (destination_url.is_valid() &&
+      !destination_url.SchemeIs(content::kJavaScriptScheme)) {
     WindowOpenDisposition disposition = CURRENT_TAB;
-    if (args[1]->Uint32Value() == 2)
-      disposition = NEW_BACKGROUND_TAB;
+    if (args[1]->IsNumber()) {
+      disposition = (WindowOpenDisposition) args[1]->Uint32Value();
+    }
     SearchBox::Get(render_view)->NavigateToURL(destination_url, disposition,
                                                is_most_visited_item_url);
   }
@@ -932,7 +1052,7 @@ void SearchBoxExtensionWrapper::Paste(
   content::RenderView* render_view = GetRenderView();
   if (!render_view) return;
 
-  string16 text;
+  base::string16 text;
   if (!args[0]->IsUndefined())
     text = V8ValueToUTF16(args[0]);
 

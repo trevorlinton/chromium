@@ -15,13 +15,13 @@
 #include "third_party/WebKit/public/web/WebSpeechRecognitionResult.h"
 #include "third_party/WebKit/public/web/WebSpeechRecognizerClient.h"
 
-using WebKit::WebVector;
-using WebKit::WebString;
-using WebKit::WebSpeechGrammar;
-using WebKit::WebSpeechRecognitionHandle;
-using WebKit::WebSpeechRecognitionResult;
-using WebKit::WebSpeechRecognitionParams;
-using WebKit::WebSpeechRecognizerClient;
+using blink::WebVector;
+using blink::WebString;
+using blink::WebSpeechGrammar;
+using blink::WebSpeechRecognitionHandle;
+using blink::WebSpeechRecognitionResult;
+using blink::WebSpeechRecognitionParams;
+using blink::WebSpeechRecognizerClient;
 
 namespace content {
 
@@ -66,7 +66,7 @@ void SpeechRecognitionDispatcher::start(
     msg_params.grammars.push_back(
         SpeechRecognitionGrammar(grammar.src().spec(), grammar.weight()));
   }
-  msg_params.language = UTF16ToUTF8(params.language());
+  msg_params.language = base::UTF16ToUTF8(params.language());
   msg_params.max_hypotheses = static_cast<uint32>(params.maxAlternatives());
   msg_params.continuous = params.continuous();
   msg_params.interim_results = params.interimResults();

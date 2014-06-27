@@ -8,11 +8,10 @@
 #include "base/values.h"
 #include "chrome/browser/chromeos/extensions/input_method_event_router.h"
 #include "chrome/browser/extensions/api/input_ime/input_ime_api.h"
-#include "chrome/browser/extensions/event_names.h"
-#include "chrome/browser/extensions/extension_function_registry.h"
-#include "chrome/browser/extensions/extension_system.h"
-#include "chrome/browser/profiles/profile.h"
+#include "chromeos/ime/extension_ime_util.h"
 #include "chromeos/ime/input_method_manager.h"
+#include "extensions/browser/extension_function_registry.h"
+#include "extensions/browser/extension_system.h"
 
 namespace {
 
@@ -38,7 +37,7 @@ bool GetInputMethodFunction::RunImpl() {
       chromeos::input_method::InputMethodManager::Get();
   const std::string input_method = InputMethodAPI::GetInputMethodForXkb(
       manager->GetCurrentInputMethod().id());
-  SetResult(Value::CreateStringValue(input_method));
+  SetResult(base::Value::CreateStringValue(input_method));
   return true;
 #endif
 }
@@ -54,18 +53,22 @@ bool StartImeFunction::RunImpl() {
   NOTREACHED();
   return false;
 #else
-  chromeos::InputMethodEngine* engine =
+  chromeos::InputMethodEngineInterface* engine =
       InputImeEventRouter::GetInstance()->GetActiveEngine(extension_id());
   if (engine)
-    engine->StartIme();
+    engine->NotifyImeReady();
   return true;
 #endif
 }
 
-InputMethodAPI::InputMethodAPI(Profile* profile)
-    : profile_(profile) {
-  ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
-      this, event_names::kOnInputMethodChanged);
+// static
+const char InputMethodAPI::kOnInputMethodChanged[] =
+    "inputMethodPrivate.onChanged";
+
+InputMethodAPI::InputMethodAPI(content::BrowserContext* context)
+    : context_(context) {
+  ExtensionSystem::Get(context_)->event_router()->RegisterObserver(
+      this, kOnInputMethodChanged);
   ExtensionFunctionRegistry* registry =
       ExtensionFunctionRegistry::GetInstance();
   registry->RegisterFunction<GetInputMethodFunction>();
@@ -77,31 +80,35 @@ InputMethodAPI::~InputMethodAPI() {
 
 // static
 std::string InputMethodAPI::GetInputMethodForXkb(const std::string& xkb_id) {
-  size_t prefix_length = std::string(kXkbPrefix).length();
-  DCHECK(xkb_id.substr(0, prefix_length) == kXkbPrefix);
+  std::string xkb_prefix =
+      chromeos::extension_ime_util::GetInputMethodIDByKeyboardLayout(
+          kXkbPrefix);
+  size_t prefix_length = xkb_prefix.length();
+  DCHECK(xkb_id.substr(0, prefix_length) == xkb_prefix);
   return xkb_id.substr(prefix_length);
 }
 
 void InputMethodAPI::Shutdown() {
   // UnregisterObserver may have already been called in OnListenerAdded,
   // but it is safe to call it more than once.
-  ExtensionSystem::Get(profile_)->event_router()->UnregisterObserver(this);
+  ExtensionSystem::Get(context_)->event_router()->UnregisterObserver(this);
 }
 
 void InputMethodAPI::OnListenerAdded(
     const extensions::EventListenerInfo& details) {
   DCHECK(!input_method_event_router_.get());
   input_method_event_router_.reset(
-      new chromeos::ExtensionInputMethodEventRouter());
-  ExtensionSystem::Get(profile_)->event_router()->UnregisterObserver(this);
+      new chromeos::ExtensionInputMethodEventRouter(context_));
+  ExtensionSystem::Get(context_)->event_router()->UnregisterObserver(this);
 }
 
-static base::LazyInstance<ProfileKeyedAPIFactory<InputMethodAPI> >
+static base::LazyInstance<BrowserContextKeyedAPIFactory<InputMethodAPI> >
     g_factory = LAZY_INSTANCE_INITIALIZER;
 
 // static
-ProfileKeyedAPIFactory<InputMethodAPI>* InputMethodAPI::GetFactoryInstance() {
-  return &g_factory.Get();
+BrowserContextKeyedAPIFactory<InputMethodAPI>*
+InputMethodAPI::GetFactoryInstance() {
+  return g_factory.Pointer();
 }
 
 }  // namespace extensions

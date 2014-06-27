@@ -22,6 +22,8 @@ class PolicyOAuth2TokenFetcher;
 
 namespace chromeos {
 
+class AuthenticatedUserEmailRetriever;
+
 // WebUIMessageHandler implementation which handles events occurring on the
 // page, such as the user pressing the signin button.
 class EnrollmentScreenHandler
@@ -37,9 +39,8 @@ class EnrollmentScreenHandler
 
   // Implements EnrollmentScreenActor:
   virtual void SetParameters(Controller* controller,
-                             bool is_auto_enrollment,
-                             bool can_exit_enrollment,
-                             const std::string& user) OVERRIDE;
+                             EnrollmentMode enrollment_mode,
+                             const std::string& management_domain) OVERRIDE;
   virtual void PrepareToShow() OVERRIDE;
   virtual void Show() OVERRIDE;
   virtual void Hide() OVERRIDE;
@@ -61,6 +62,7 @@ class EnrollmentScreenHandler
 
  private:
   // Handlers for WebUI messages.
+  void HandleRetrieveAuthenticatedUserEmail(double attempt_token);
   void HandleClose(const std::string& reason);
   void HandleCompleteLogin(const std::string& user);
   void HandleRetry();
@@ -89,17 +91,14 @@ class EnrollmentScreenHandler
 
   bool show_on_init_;
 
-  // Whether this is an auto-enrollment screen.
-  bool is_auto_enrollment_;
+  // The enrollment mode.
+  EnrollmentMode enrollment_mode_;
 
-  // True of we can exit enrollment and return back to the regular login flow.
-  bool can_exit_enrollment_;
+  // The management domain, if applicable.
+  std::string management_domain_;
 
   // Whether an enrollment attempt has failed.
   bool enrollment_failed_once_;
-
-  // Username of the user signing in.
-  std::string user_;
 
   // This intentionally lives here and not in the controller, since it needs to
   // execute requests in the context of the profile that displays the webui.
@@ -110,6 +109,9 @@ class EnrollmentScreenHandler
 
   // The callbacks to invoke after browsing data has been cleared.
   std::vector<base::Closure> auth_reset_callbacks_;
+
+  // Helper that retrieves the authenticated user's e-mail address.
+  scoped_ptr<AuthenticatedUserEmailRetriever> email_retriever_;
 
   DISALLOW_COPY_AND_ASSIGN(EnrollmentScreenHandler);
 };

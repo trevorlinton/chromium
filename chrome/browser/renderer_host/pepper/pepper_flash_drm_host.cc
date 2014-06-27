@@ -15,8 +15,7 @@
 #include "content/public/browser/browser_ppapi_host.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_security_policy.h"
-#include "content/public/browser/render_widget_host.h"
-#include "content/public/browser/render_widget_host_view.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/common/pepper_plugin_info.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/host/dispatch_host_message.h"
@@ -25,7 +24,12 @@
 #include "ppapi/proxy/ppapi_messages.h"
 
 #if defined(USE_AURA)
-#include "ui/aura/root_window.h"
+#include "ui/aura/window.h"
+#include "ui/aura/window_tree_host.h"
+#endif
+
+#if defined(OS_MACOSX)
+#include "chrome/browser/renderer_host/pepper/monitor_finder_mac.h"
 #endif
 
 using content::BrowserPpapiHost;
@@ -45,9 +49,9 @@ const base::FilePath::CharType kVoucherFilename[] =
 // right monitor.
 class MonitorFinder : public base::RefCountedThreadSafe<MonitorFinder> {
  public:
-  MonitorFinder(int process_id, int render_id)
+  MonitorFinder(int process_id, int render_frame_id)
       : process_id_(process_id),
-        render_id_(render_id),
+        render_frame_id_(render_frame_id),
         monitor_(NULL),
         request_sent_(0) {
   }
@@ -71,19 +75,16 @@ class MonitorFinder : public base::RefCountedThreadSafe<MonitorFinder> {
 
   void FetchMonitorFromWidget() {
     InterlockedExchange(&request_sent_, 0);
-    content::RenderWidgetHost* rwh =
-        content::RenderWidgetHost::FromID(process_id_, render_id_);
-    if (!rwh)
+    content::RenderFrameHost* rfh =
+        content::RenderFrameHost::FromID(process_id_, render_frame_id_);
+    if (!rfh)
       return;
-    content::RenderWidgetHostView* view = rwh->GetView();
-    if (!view)
-      return;
-    gfx::NativeView native_view = view->GetNativeView();
+    gfx::NativeView native_view = rfh->GetNativeView();
 #if defined(USE_AURA)
-    aura::WindowEventDispatcher* dispatcher = native_view->GetDispatcher();
-    if (!dispatcher)
+    aura::WindowTreeHost* host = native_view->GetHost();
+    if (!host)
       return;
-    HWND window = dispatcher->GetAcceleratedWidget();
+    HWND window = host->GetAcceleratedWidget();
 #else
     HWND window = native_view;
 #endif
@@ -93,12 +94,12 @@ class MonitorFinder : public base::RefCountedThreadSafe<MonitorFinder> {
   }
 
   const int process_id_;
-  const int render_id_;
+  const int render_frame_id_;
   volatile HMONITOR monitor_;
   volatile long request_sent_;
 };
-#else
-// TODO(cpu): Support Mac and Linux someday.
+#elif !defined(OS_MACOSX)
+// TODO(cpu): Support Linux someday.
 class MonitorFinder : public base::RefCountedThreadSafe<MonitorFinder> {
  public:
   MonitorFinder(int, int) { }
@@ -117,10 +118,10 @@ PepperFlashDRMHost::PepperFlashDRMHost(BrowserPpapiHost* host,
       weak_factory_(this){
   // Grant permissions to read the flash voucher file.
   int render_process_id;
-  int render_view_id;
+  int render_frame_id;
   bool success =
-      host->GetRenderViewIDsForInstance(
-          instance, &render_process_id, &render_view_id);
+      host->GetRenderFrameIDsForInstance(
+          instance, &render_process_id, &render_frame_id);
   base::FilePath plugin_dir = host->GetPluginPath().DirName();
   DCHECK(!plugin_dir.empty() && success);
   base::FilePath voucher_file = plugin_dir.Append(
@@ -129,7 +130,7 @@ PepperFlashDRMHost::PepperFlashDRMHost(BrowserPpapiHost* host,
       render_process_id, voucher_file);
 
   fetcher_ = new DeviceIDFetcher(render_process_id);
-  monitor_finder_ = new MonitorFinder(render_process_id, render_view_id);
+  monitor_finder_ = new MonitorFinder(render_process_id, render_frame_id);
   monitor_finder_->GetMonitor();
 }
 
@@ -144,6 +145,8 @@ int32_t PepperFlashDRMHost::OnResourceMessageReceived(
                                         OnHostMsgGetDeviceID)
     PPAPI_DISPATCH_HOST_RESOURCE_CALL_0(PpapiHostMsg_FlashDRM_GetHmonitor,
                                         OnHostMsgGetHmonitor)
+    PPAPI_DISPATCH_HOST_RESOURCE_CALL_0(PpapiHostMsg_FlashDRM_MonitorIsExternal,
+                                        OnHostMsgMonitorIsExternal)
   IPC_END_MESSAGE_MAP()
   return PP_ERROR_FAILED;
 }
@@ -163,6 +166,19 @@ int32_t PepperFlashDRMHost::OnHostMsgGetHmonitor(
   int64_t monitor_id = monitor_finder_->GetMonitor();
   if (monitor_id) {
     context->reply_msg = PpapiPluginMsg_FlashDRM_GetHmonitorReply(monitor_id);
+    return PP_OK;
+  } else {
+    return PP_ERROR_FAILED;
+  }
+}
+
+int32_t PepperFlashDRMHost::OnHostMsgMonitorIsExternal(
+    ppapi::host::HostMessageContext* context) {
+  int64_t monitor_id = monitor_finder_->GetMonitor();
+  if (monitor_id) {
+    // TODO(bbudge) get information about whether monitor is external.
+    context->reply_msg =
+        PpapiPluginMsg_FlashDRM_MonitorIsExternalReply(PP_FALSE);
     return PP_OK;
   } else {
     return PP_ERROR_FAILED;

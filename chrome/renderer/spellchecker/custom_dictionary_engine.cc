@@ -21,7 +21,7 @@ void CustomDictionaryEngine::Init(const std::set<std::string>& custom_words) {
   for (std::set<std::string>::const_iterator it = custom_words.begin();
        it != custom_words.end();
        ++it) {
-    dictionary_.insert(UTF8ToUTF16(*it));
+    dictionary_.insert(base::UTF8ToUTF16(*it));
   }
 }
 
@@ -31,17 +31,17 @@ void CustomDictionaryEngine::OnCustomDictionaryChanged(
   for (std::vector<std::string>::const_iterator it = words_added.begin();
        it != words_added.end();
        ++it) {
-    dictionary_.insert(UTF8ToUTF16(*it));
+    dictionary_.insert(base::UTF8ToUTF16(*it));
   }
   for (std::vector<std::string>::const_iterator it = words_removed.begin();
        it != words_removed.end();
        ++it) {
-    dictionary_.erase(UTF8ToUTF16(*it));
+    dictionary_.erase(base::UTF8ToUTF16(*it));
   }
 }
 
 bool CustomDictionaryEngine::SpellCheckWord(
-    const string16& text,
+    const base::string16& text,
     int misspelling_start,
     int misspelling_len) {
   // The text to be checked is empty on OSX(async) right now.

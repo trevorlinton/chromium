@@ -7,6 +7,7 @@
 #include "base/metrics/histogram.h"
 #include "chrome/browser/content_settings/permission_queue_controller.h"
 #include "chrome/browser/google/google_util.h"
+#include "chrome/browser/infobars/infobar.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
@@ -61,29 +62,34 @@ void RecordUmaEvent(GeolocationInfoBarDelegateEvent event) {
 }  // namespace
 
 // static
-InfoBarDelegate* GeolocationInfoBarDelegate::Create(
+InfoBar* GeolocationInfoBarDelegate::Create(
     InfoBarService* infobar_service,
     PermissionQueueController* controller,
     const PermissionRequestID& id,
     const GURL& requesting_frame,
-    const std::string& display_languages) {
+    const std::string& display_languages,
+    const std::string& accept_button_label) {
   RecordUmaEvent(GEOLOCATION_INFO_BAR_DELEGATE_EVENT_CREATE);
   const content::NavigationEntry* committed_entry =
       infobar_service->web_contents()->GetController().GetLastCommittedEntry();
-  return infobar_service->AddInfoBar(scoped_ptr<InfoBarDelegate>(
-      new DelegateType(infobar_service, controller, id, requesting_frame,
-                       committed_entry ? committed_entry->GetUniqueID() : 0,
-                       display_languages)));
+  GeolocationInfoBarDelegate* const delegate = new DelegateType(
+          controller, id, requesting_frame,
+          committed_entry ? committed_entry->GetUniqueID() : 0,
+          display_languages, accept_button_label);
+
+  InfoBar* infobar = ConfirmInfoBarDelegate::CreateInfoBar(
+      scoped_ptr<ConfirmInfoBarDelegate>(delegate)).release();
+  return infobar_service->AddInfoBar(scoped_ptr<InfoBar>(infobar));
 }
 
 GeolocationInfoBarDelegate::GeolocationInfoBarDelegate(
-    InfoBarService* infobar_service,
     PermissionQueueController* controller,
     const PermissionRequestID& id,
     const GURL& requesting_frame,
     int contents_unique_id,
-    const std::string& display_languages)
-    : ConfirmInfoBarDelegate(infobar_service),
+    const std::string& display_languages,
+    const std::string& accept_button_label)
+    : ConfirmInfoBarDelegate(),
       controller_(controller),
       id_(id),
       requesting_frame_(requesting_frame.GetOrigin()),
@@ -106,11 +112,10 @@ bool GeolocationInfoBarDelegate::Accept() {
 
 void GeolocationInfoBarDelegate::SetPermission(bool update_content_setting,
                                                bool allowed) {
-  if (web_contents()) {
-    GURL embedder = web_contents()->GetLastCommittedURL().GetOrigin();
-    controller_->OnPermissionSet(id_, requesting_frame_, embedder,
-                                 update_content_setting, allowed);
-  }
+  controller_->OnPermissionSet(
+        id_, requesting_frame_,
+        web_contents()->GetLastCommittedURL().GetOrigin(),
+        update_content_setting, allowed);
 }
 
 void GeolocationInfoBarDelegate::InfoBarDismissed() {
@@ -120,7 +125,7 @@ void GeolocationInfoBarDelegate::InfoBarDismissed() {
 }
 
 int GeolocationInfoBarDelegate::GetIconID() const {
-  return IDR_GEOLOCATION_INFOBAR_ICON;
+  return IDR_INFOBAR_GEOLOCATION;
 }
 
 InfoBarDelegate::Type GeolocationInfoBarDelegate::GetInfoBarType() const {
@@ -138,12 +143,12 @@ bool GeolocationInfoBarDelegate::ShouldExpireInternal(
               content::PAGE_TRANSITION_RELOAD);
 }
 
-string16 GeolocationInfoBarDelegate::GetMessageText() const {
+base::string16 GeolocationInfoBarDelegate::GetMessageText() const {
   return l10n_util::GetStringFUTF16(IDS_GEOLOCATION_INFOBAR_QUESTION,
       net::FormatUrl(requesting_frame_, display_languages_));
 }
 
-string16 GeolocationInfoBarDelegate::GetButtonLabel(
+base::string16 GeolocationInfoBarDelegate::GetButtonLabel(
     InfoBarButton button) const {
   return l10n_util::GetStringUTF16((button == BUTTON_OK) ?
       IDS_GEOLOCATION_ALLOW_BUTTON : IDS_GEOLOCATION_DENY_BUTTON);
@@ -156,7 +161,7 @@ bool GeolocationInfoBarDelegate::Cancel() {
   return true;
 }
 
-string16 GeolocationInfoBarDelegate::GetLinkText() const {
+base::string16 GeolocationInfoBarDelegate::GetLinkText() const {
   return l10n_util::GetStringUTF16(IDS_LEARN_MORE);
 }
 

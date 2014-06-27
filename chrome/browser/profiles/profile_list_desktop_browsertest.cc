@@ -7,8 +7,10 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/avatar_menu.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -47,7 +49,13 @@ class ProfileListDesktopBrowserTest : public InProcessBrowserTest {
   DISALLOW_COPY_AND_ASSIGN(ProfileListDesktopBrowserTest);
 };
 
-IN_PROC_BROWSER_TEST_F(ProfileListDesktopBrowserTest, SignOut) {
+#if defined (OS_WIN)
+// SignOut is flaky. So far only observed on Windows. crbug.com/357329.
+#define MAYBE_SignOut DISABLED_SignOut
+#else
+#define MAYBE_SignOut SignOut
+#endif
+IN_PROC_BROWSER_TEST_F(ProfileListDesktopBrowserTest, MAYBE_SignOut) {
   if (!profiles::IsMultipleProfilesEnabled())
     return;
 
@@ -67,12 +75,14 @@ IN_PROC_BROWSER_TEST_F(ProfileListDesktopBrowserTest, SignOut) {
       content::Source<Browser>(browser()));
 
   EXPECT_FALSE(cache.ProfileIsSigninRequiredAtIndex(index));
-  menu->SetLogoutURL("about:blank");
-  menu->BeginSignOut();
-  EXPECT_TRUE(cache.ProfileIsSigninRequiredAtIndex(index));
-
+  profiles::LockProfile(current_profile);
   window_close_observer.Wait();  // rely on test time-out for failure indication
+
+  EXPECT_TRUE(cache.ProfileIsSigninRequiredAtIndex(index));
   EXPECT_EQ(0U, browser_list->size());
+
+  // Signing out brings up the User Manager which we should close before exit.
+  chrome::HideUserManager();
 }
 
 IN_PROC_BROWSER_TEST_F(ProfileListDesktopBrowserTest, SwitchToProfile) {
@@ -96,7 +106,8 @@ IN_PROC_BROWSER_TEST_F(ProfileListDesktopBrowserTest, SwitchToProfile) {
       FILE_PATH_LITERAL("New Profile 2"));
   profile_manager->CreateProfileAsync(path_profile2,
                                       base::Bind(&OnUnblockOnProfileCreation),
-                                      string16(), string16(), std::string());
+                                      base::string16(), base::string16(),
+                                      std::string());
 
   // Spin to allow profile creation to take place, loop is terminated
   // by OnUnblockOnProfileCreation when the profile is created.
@@ -111,16 +122,19 @@ IN_PROC_BROWSER_TEST_F(ProfileListDesktopBrowserTest, SwitchToProfile) {
   EXPECT_EQ(path_profile1, browser_list->get(0)->profile()->GetPath());
 
   // Open a browser window for the first profile.
-  menu->SwitchToProfile(cache.GetIndexOfProfileWithPath(path_profile1), false);
+  menu->SwitchToProfile(cache.GetIndexOfProfileWithPath(path_profile1),
+                        false, ProfileMetrics::SWITCH_PROFILE_ICON);
   EXPECT_EQ(1U, browser_list->size());
   EXPECT_EQ(path_profile1, browser_list->get(0)->profile()->GetPath());
 
   // Open a browser window for the second profile.
-  menu->SwitchToProfile(cache.GetIndexOfProfileWithPath(path_profile2), false);
+  menu->SwitchToProfile(cache.GetIndexOfProfileWithPath(path_profile2),
+                        false, ProfileMetrics::SWITCH_PROFILE_ICON);
   EXPECT_EQ(2U, browser_list->size());
 
   // Switch to the first profile without opening a new window.
-  menu->SwitchToProfile(cache.GetIndexOfProfileWithPath(path_profile1), false);
+  menu->SwitchToProfile(cache.GetIndexOfProfileWithPath(path_profile1),
+                        false, ProfileMetrics::SWITCH_PROFILE_ICON);
   EXPECT_EQ(2U, browser_list->size());
   EXPECT_EQ(path_profile1, browser_list->get(0)->profile()->GetPath());
   EXPECT_EQ(path_profile2, browser_list->get(1)->profile()->GetPath());

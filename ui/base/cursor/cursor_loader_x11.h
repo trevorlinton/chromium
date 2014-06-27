@@ -11,13 +11,13 @@
 #include "base/compiler_specific.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/base/cursor/cursor_loader.h"
-#include "ui/base/ui_export.h"
+#include "ui/base/ui_base_export.h"
 #include "ui/base/x/x11_util.h"
 #include "ui/gfx/display.h"
 
 namespace ui {
 
-class UI_EXPORT CursorLoaderX11 : public CursorLoader {
+class UI_BASE_EXPORT CursorLoaderX11 : public CursorLoader {
  public:
   CursorLoaderX11();
   virtual ~CursorLoaderX11();
@@ -55,15 +55,6 @@ class UI_EXPORT CursorLoaderX11 : public CursorLoader {
 
   DISALLOW_COPY_AND_ASSIGN(CursorLoaderX11);
 };
-
-// Scale and rotate the cursor's bitmap and hotpoint.
-// |bitmap_in_out| and |hotpoint_in_out| are used as
-// both input and output.
-UI_EXPORT void ScaleAndRotateCursorBitmapAndHotpoint(
-    float scale,
-    gfx::Display::Rotation rotation,
-    SkBitmap* bitmap_in_out,
-    gfx::Point* hotpoint_in_out);
 
 }  // namespace ui
 

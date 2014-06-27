@@ -5,10 +5,7 @@
 #include "base/command_line.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_apitest.h"
-#include "chrome/browser/extensions/extension_host.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
-#include "chrome/browser/extensions/process_map.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/blocked_content/popup_blocker_tab_helper.h"
 #include "chrome/browser/ui/browser.h"
@@ -18,7 +15,6 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_file_util.h"
 #include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -26,15 +22,22 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
+#include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
+#include "extensions/browser/extension_host.h"
+#include "extensions/browser/extension_system.h"
+#include "extensions/browser/process_map.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/switches.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "sync/api/string_ordinal.h"
 
 using content::NavigationController;
 using content::RenderViewHost;
+using content::SiteInstance;
 using content::WebContents;
 using extensions::Extension;
 
@@ -58,7 +61,7 @@ class AppApiTest : public ExtensionApiTest {
     CommandLine::ForCurrentProcess()->AppendSwitch(
         switches::kDisablePopupBlocking);
     CommandLine::ForCurrentProcess()->AppendSwitch(
-        switches::kAllowHTTPBackgroundPage);
+        extensions::switches::kAllowHTTPBackgroundPage);
   }
 
   // Helper function to test that independent tabs of the named app are loaded
@@ -66,8 +69,8 @@ class AppApiTest : public ExtensionApiTest {
   void TestAppInstancesHelper(std::string app_name) {
     LOG(INFO) << "Start of test.";
 
-    extensions::ProcessMap* process_map = extensions::ExtensionSystem::Get(
-        browser()->profile())->extension_service()->process_map();
+    extensions::ProcessMap* process_map =
+        extensions::ProcessMap::Get(browser()->profile());
 
     host_resolver()->AddRule("*", "127.0.0.1");
     ASSERT_TRUE(embedded_test_server()->InitializeAndWaitUntilReady());
@@ -133,7 +136,7 @@ class BlockedAppApiTest : public AppApiTest {
   virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE {
     ExtensionApiTest::SetUpCommandLine(command_line);
     CommandLine::ForCurrentProcess()->AppendSwitch(
-        switches::kAllowHTTPBackgroundPage);
+        extensions::switches::kAllowHTTPBackgroundPage);
   }
 };
 
@@ -143,8 +146,8 @@ class BlockedAppApiTest : public AppApiTest {
 IN_PROC_BROWSER_TEST_F(AppApiTest, DISABLED_AppProcess) {
   LOG(INFO) << "Start of test.";
 
-  extensions::ProcessMap* process_map = extensions::ExtensionSystem::Get(
-      browser()->profile())->extension_service()->process_map();
+  extensions::ProcessMap* process_map =
+      extensions::ProcessMap::Get(browser()->profile());
 
   host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->InitializeAndWaitUntilReady());
@@ -291,7 +294,8 @@ IN_PROC_BROWSER_TEST_F(AppApiTest, MAYBE_AppProcessBackgroundInstances) {
 IN_PROC_BROWSER_TEST_F(AppApiTest, MAYBE_BookmarkAppGetsNormalProcess) {
   ExtensionService* service = extensions::ExtensionSystem::Get(
       browser()->profile())->extension_service();
-  extensions::ProcessMap* process_map = service->process_map();
+  extensions::ProcessMap* process_map =
+      extensions::ProcessMap::Get(browser()->profile());
 
   host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->InitializeAndWaitUntilReady());
@@ -307,7 +311,7 @@ IN_PROC_BROWSER_TEST_F(AppApiTest, MAYBE_BookmarkAppGetsNormalProcess) {
   service->OnExtensionInstalled(extension.get(),
                                 syncer::StringOrdinal::CreateInitialOrdinal(),
                                 false /* no requirement errors */,
-                                extensions::Blacklist::NOT_BLACKLISTED,
+                                extensions::NOT_BLACKLISTED,
                                 false /* don't wait for idle */);
   ASSERT_TRUE(extension.get());
   ASSERT_TRUE(extension->from_bookmark());
@@ -373,7 +377,13 @@ IN_PROC_BROWSER_TEST_F(AppApiTest, MAYBE_BookmarkAppGetsNormalProcess) {
 // 3. page2 redirects back to a page in the app
 // The final navigation should end up in the app process.
 // See http://crbug.com/61757
-IN_PROC_BROWSER_TEST_F(AppApiTest, AppProcessRedirectBack) {
+// Flaky on Linux.  http://crbug.com/341898
+#if defined(OS_LINUX)
+#define MAYBE_AppProcessRedirectBack DISABLED_AppProcessRedirectBack
+#else
+#define MAYBE_AppProcessRedirectBack AppProcessRedirectBack
+#endif
+IN_PROC_BROWSER_TEST_F(AppApiTest, MAYBE_AppProcessRedirectBack) {
   host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->InitializeAndWaitUntilReady());
 
@@ -416,8 +426,8 @@ IN_PROC_BROWSER_TEST_F(AppApiTest, AppProcessRedirectBack) {
 // Fails on Windows. http://crbug.com/238670
 // Added logging to help diagnose the location of the problem.
 IN_PROC_BROWSER_TEST_F(AppApiTest, NavigateIntoAppProcess) {
-  extensions::ProcessMap* process_map = extensions::ExtensionSystem::Get(
-      browser()->profile())->extension_service()->process_map();
+  extensions::ProcessMap* process_map =
+      extensions::ProcessMap::Get(browser()->profile());
 
   host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->InitializeAndWaitUntilReady());
@@ -463,8 +473,8 @@ IN_PROC_BROWSER_TEST_F(AppApiTest, NavigateIntoAppProcess) {
 // Added logging to help diagnose the location of the problem.
 // http://crbug.com/238670
 IN_PROC_BROWSER_TEST_F(AppApiTest, ReloadIntoAppProcess) {
-  extensions::ProcessMap* process_map = extensions::ExtensionSystem::Get(
-      browser()->profile())->extension_service()->process_map();
+  extensions::ProcessMap* process_map =
+      extensions::ProcessMap::Get(browser()->profile());
 
   host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->InitializeAndWaitUntilReady());
@@ -528,8 +538,8 @@ IN_PROC_BROWSER_TEST_F(AppApiTest, ReloadIntoAppProcess) {
 // Crashes on Windows and Mac. http://crbug.com/238670
 // Added logging to help diagnose the location of the problem.
 IN_PROC_BROWSER_TEST_F(AppApiTest, ReloadIntoAppProcessWithJavaScript) {
-  extensions::ProcessMap* process_map = extensions::ExtensionSystem::Get(
-      browser()->profile())->extension_service()->process_map();
+  extensions::ProcessMap* process_map =
+      extensions::ProcessMap::Get(browser()->profile());
 
   host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->InitializeAndWaitUntilReady());
@@ -599,8 +609,8 @@ IN_PROC_BROWSER_TEST_F(AppApiTest, OpenAppFromIframe) {
     return;
 #endif
 
-  extensions::ProcessMap* process_map = extensions::ExtensionSystem::Get(
-      browser()->profile())->extension_service()->process_map();
+  extensions::ProcessMap* process_map =
+      extensions::ProcessMap::Get(browser()->profile());
 
   host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->InitializeAndWaitUntilReady());
@@ -749,8 +759,8 @@ IN_PROC_BROWSER_TEST_F(AppApiTest, ClientRedirectToAppFromExtension) {
 // missing special permissions and should be scriptable from the iframe.
 // See http://crbug.com/92669 for more details.
 IN_PROC_BROWSER_TEST_F(AppApiTest, OpenWebPopupFromWebIframe) {
-  extensions::ProcessMap* process_map = extensions::ExtensionSystem::Get(
-      browser()->profile())->extension_service()->process_map();
+  extensions::ProcessMap* process_map =
+      extensions::ProcessMap::Get(browser()->profile());
 
   host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->InitializeAndWaitUntilReady());
@@ -787,8 +797,8 @@ IN_PROC_BROWSER_TEST_F(AppApiTest, OpenWebPopupFromWebIframe) {
 #define MAYBE_ReloadAppAfterCrash ReloadAppAfterCrash
 #endif
 IN_PROC_BROWSER_TEST_F(AppApiTest, MAYBE_ReloadAppAfterCrash) {
-  extensions::ProcessMap* process_map = extensions::ExtensionSystem::Get(
-      browser()->profile())->extension_service()->process_map();
+  extensions::ProcessMap* process_map =
+      extensions::ProcessMap::Get(browser()->profile());
 
   host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->InitializeAndWaitUntilReady());
@@ -823,4 +833,49 @@ IN_PROC_BROWSER_TEST_F(AppApiTest, MAYBE_ReloadAppAfterCrash) {
       "window.domAutomationController.send(chrome.app.isInstalled)",
       &is_installed));
   ASSERT_TRUE(is_installed);
+}
+
+// Test that a cross-process navigation away from a hosted app stays in the same
+// BrowsingInstance, so that postMessage calls to the app's other windows still
+// work.
+IN_PROC_BROWSER_TEST_F(AppApiTest, SameBrowsingInstanceAfterSwap) {
+  extensions::ProcessMap* process_map =
+      extensions::ProcessMap::Get(browser()->profile());
+
+  host_resolver()->AddRule("*", "127.0.0.1");
+  ASSERT_TRUE(embedded_test_server()->InitializeAndWaitUntilReady());
+
+  GURL base_url = GetTestBaseURL("app_process");
+
+  // Load app and start URL (in the app).
+  const Extension* app =
+      LoadExtension(test_data_dir_.AppendASCII("app_process"));
+  ASSERT_TRUE(app);
+
+  ui_test_utils::NavigateToURL(browser(),
+                               base_url.Resolve("path1/iframe.html"));
+  content::SiteInstance* app_instance =
+      browser()->tab_strip_model()->GetWebContentsAt(0)->GetSiteInstance();
+  EXPECT_TRUE(process_map->Contains(app_instance->GetProcess()->GetID()));
+
+  // Popup window should be in the app's process.
+  const BrowserList* active_browser_list =
+      BrowserList::GetInstance(chrome::GetActiveDesktop());
+  EXPECT_EQ(2U, active_browser_list->size());
+  content::WebContents* popup_contents =
+      active_browser_list->get(1)->tab_strip_model()->GetActiveWebContents();
+  content::WaitForLoadStop(popup_contents);
+
+  SiteInstance* popup_instance = popup_contents->GetSiteInstance();
+  EXPECT_EQ(app_instance, popup_instance);
+
+  // Navigate the popup to another process outside the app.
+  GURL non_app_url(base_url.Resolve("path3/empty.html"));
+  ui_test_utils::NavigateToURL(active_browser_list->get(1), non_app_url);
+  SiteInstance* new_instance = popup_contents->GetSiteInstance();
+  EXPECT_NE(app_instance, new_instance);
+
+  // It should still be in the same BrowsingInstance, allowing postMessage to
+  // work.
+  EXPECT_TRUE(app_instance->IsRelatedSiteInstance(new_instance));
 }

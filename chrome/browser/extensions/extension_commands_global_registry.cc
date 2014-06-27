@@ -5,49 +5,58 @@
 #include "chrome/browser/extensions/extension_commands_global_registry.h"
 
 #include "base/lazy_instance.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/commands/command_service.h"
-#include "chrome/browser/extensions/extension_keybinding_registry.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/global_shortcut_listener.h"
-#include "chrome/browser/profiles/profile.h"
-#include "chrome/common/extensions/extension.h"
+#include "extensions/common/extension.h"
 
 namespace extensions {
 
 ExtensionCommandsGlobalRegistry::ExtensionCommandsGlobalRegistry(
-    Profile* profile)
-    : ExtensionKeybindingRegistry(
-          profile, ExtensionKeybindingRegistry::ALL_EXTENSIONS, NULL),
-      profile_(profile) {
+    content::BrowserContext* context)
+    : ExtensionKeybindingRegistry(context,
+                                  ExtensionKeybindingRegistry::ALL_EXTENSIONS,
+                                  NULL),
+      browser_context_(context) {
   Init();
 }
 
 ExtensionCommandsGlobalRegistry::~ExtensionCommandsGlobalRegistry() {
-  EventTargets::const_iterator iter;
-  for (iter = event_targets_.begin(); iter != event_targets_.end(); ++iter) {
-    GlobalShortcutListener::GetInstance()->UnregisterAccelerator(
-        iter->first, this);
+  if (!IsEventTargetsEmpty()) {
+    GlobalShortcutListener* global_shortcut_listener =
+        GlobalShortcutListener::GetInstance();
+
+    // Resume GlobalShortcutListener before we clean up if the shortcut handling
+    // is currently suspended.
+    if (global_shortcut_listener->IsShortcutHandlingSuspended())
+      global_shortcut_listener->SetShortcutHandlingSuspended(false);
+
+    global_shortcut_listener->UnregisterAccelerators(this);
   }
 }
 
 static base::LazyInstance<
-    ProfileKeyedAPIFactory<ExtensionCommandsGlobalRegistry> >
-g_factory = LAZY_INSTANCE_INITIALIZER;
+    BrowserContextKeyedAPIFactory<ExtensionCommandsGlobalRegistry> > g_factory =
+    LAZY_INSTANCE_INITIALIZER;
 
 // static
-ProfileKeyedAPIFactory<ExtensionCommandsGlobalRegistry>*
+BrowserContextKeyedAPIFactory<ExtensionCommandsGlobalRegistry>*
 ExtensionCommandsGlobalRegistry::GetFactoryInstance() {
-  return &g_factory.Get();
+  return g_factory.Pointer();
 }
 
 // static
-ExtensionCommandsGlobalRegistry*
-ExtensionCommandsGlobalRegistry::Get(Profile* profile) {
-  return ProfileKeyedAPIFactory<
-      ExtensionCommandsGlobalRegistry>::GetForProfile(profile);
+ExtensionCommandsGlobalRegistry* ExtensionCommandsGlobalRegistry::Get(
+    content::BrowserContext* context) {
+  return BrowserContextKeyedAPIFactory<ExtensionCommandsGlobalRegistry>::Get(
+      context);
 }
 
+// static
+void ExtensionCommandsGlobalRegistry::SetShortcutHandlingSuspended(
+    bool suspended) {
+  GlobalShortcutListener::GetInstance()->SetShortcutHandlingSuspended(
+      suspended);
+}
 
 void ExtensionCommandsGlobalRegistry::AddExtensionKeybinding(
     const extensions::Extension* extension,
@@ -57,7 +66,7 @@ void ExtensionCommandsGlobalRegistry::AddExtensionKeybinding(
     return;
 
   extensions::CommandService* command_service =
-      extensions::CommandService::Get(profile_);
+      extensions::CommandService::Get(browser_context_);
   // Add all the active global keybindings, if any.
   extensions::CommandMap commands;
   if (!command_service->GetNamedCommands(
@@ -71,16 +80,19 @@ void ExtensionCommandsGlobalRegistry::AddExtensionKeybinding(
   for (; iter != commands.end(); ++iter) {
     if (!command_name.empty() && (iter->second.command_name() != command_name))
       continue;
+    const ui::Accelerator& accelerator = iter->second.accelerator();
 
     VLOG(0) << "Adding global keybinding for " << extension->name().c_str()
             << " " << command_name.c_str()
-            << " key: " << iter->second.accelerator().GetShortcutText();
+            << " key: " << accelerator.GetShortcutText();
 
-    event_targets_[iter->second.accelerator()] =
-        std::make_pair(extension->id(), iter->second.command_name());
+    if (!IsAcceleratorRegistered(accelerator)) {
+      if (!GlobalShortcutListener::GetInstance()->RegisterAccelerator(
+              accelerator, this))
+        continue;
+    }
 
-    GlobalShortcutListener::GetInstance()->RegisterAccelerator(
-      iter->second.accelerator(), this);
+    AddEventTarget(accelerator, extension->id(), iter->second.command_name());
   }
 }
 
@@ -95,13 +107,7 @@ void ExtensionCommandsGlobalRegistry::RemoveExtensionKeybindingImpl(
 
 void ExtensionCommandsGlobalRegistry::OnKeyPressed(
     const ui::Accelerator& accelerator) {
-  EventTargets::iterator it = event_targets_.find(accelerator);
-  if (it == event_targets_.end()) {
-    NOTREACHED();  // Shouldn't get this event for something not registered.
-    return;
-  }
-
-  CommandExecuted(it->second.first, it->second.second);
+  ExtensionKeybindingRegistry::NotifyEventTargets(accelerator);
 }
 
 }  // namespace extensions

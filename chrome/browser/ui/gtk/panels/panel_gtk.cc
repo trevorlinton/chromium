@@ -918,8 +918,8 @@ gfx::NativeWindow PanelGtk::GetNativePanelWindow() {
 
 void PanelGtk::UpdatePanelTitleBar() {
   TRACE_EVENT0("ui::gtk", "PanelGtk::UpdatePanelTitleBar");
-  string16 title = panel_->GetWindowTitle();
-  gtk_window_set_title(window_, UTF16ToUTF8(title).c_str());
+  base::string16 title = panel_->GetWindowTitle();
+  gtk_window_set_title(window_, base::UTF16ToUTF8(title).c_str());
   titlebar_->UpdateTitleAndIcon();
 
   gfx::Image app_icon = panel_->app_icon();
@@ -989,7 +989,7 @@ bool PanelGtk::IsDrawingAttention() const {
 void PanelGtk::HandlePanelKeyboardEvent(
     const NativeWebKeyboardEvent& event) {
   GdkEventKey* os_event = &event.os_event->key;
-  if (os_event && event.type == WebKit::WebInputEvent::RawKeyDown)
+  if (os_event && event.type == blink::WebInputEvent::RawKeyDown)
     gtk_window_activate_key(window_, os_event);
 }
 

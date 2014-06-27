@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.test.util.browser.sync;
 
+import static org.chromium.base.test.util.ScalableTimeout.scaleTimeout;
+
 import android.accounts.Account;
 import android.content.Context;
 import android.util.Log;
@@ -11,13 +13,13 @@ import android.util.Pair;
 
 import junit.framework.Assert;
 
+import org.chromium.base.CommandLine;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.AdvancedMockContext;
 import org.chromium.chrome.browser.sync.ProfileSyncService;
 import org.chromium.chrome.test.util.TestHttpServerClient;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.content.common.CommandLine;
 import org.chromium.sync.signin.AccountManagerHelper;
 import org.chromium.sync.signin.ChromeSigninController;
 import org.chromium.sync.test.util.AccountHolder;
@@ -27,6 +29,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Semaphore;
@@ -34,27 +37,26 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
+/**
+ * Utility class for shared sync test functionality.
+ */
 public final class SyncTestUtil {
 
     public static final String DEFAULT_TEST_ACCOUNT = "test@gmail.com";
     public static final String DEFAULT_PASSWORD = "myPassword";
-    public static final String CHROME_SYNC_OAUTH2_SCOPE =
-            "oauth2:https://www.googleapis.com/auth/chromesync";
-    public static final String LOGIN_OAUTH2_SCOPE =
-            "oauth2:https://www.google.com/accounts/OAuthLogin";
     private static final String TAG = "SyncTestUtil";
 
-    public static final int UI_TIMEOUT_MS = 20000;
+    public static final long UI_TIMEOUT_MS = scaleTimeout(20000);
     public static final int CHECK_INTERVAL_MS = 250;
 
-    private static final int SYNC_WAIT_TIMEOUT_MS = 30 * 1000;
+    private static final long SYNC_WAIT_TIMEOUT_MS = scaleTimeout(30 * 1000);
     private static final int SYNC_CHECK_INTERVAL_MS = 250;
 
     public static final Pair<String, String> SYNC_SUMMARY_STATUS =
             newPair("Summary", "Summary");
     protected static final String UNINITIALIZED = "Uninitialized";
     protected static final Pair<String, String> USERNAME_STAT =
-            newPair("Credentials", "Username");
+            newPair("Identity", "Username");
 
     // Override the default server used for profile sync.
     // Native switch - chrome_switches::kSyncServiceURL
@@ -69,7 +71,8 @@ public final class SyncTestUtil {
      * keys.
      */
     private static Pair<String, String> newPair(String first, String second) {
-        return Pair.create(first.toLowerCase().trim(), second.toLowerCase().trim());
+        return Pair.create(first.toLowerCase(Locale.US).trim(),
+                second.toLowerCase(Locale.US).trim());
     }
 
     /**
@@ -172,12 +175,12 @@ public final class SyncTestUtil {
             Map<Pair<String, String>, String> actualStats) {
         for (Map.Entry<Pair<String, String>, String> statEntry : expectedStats.entrySet()) {
             // Make stuff lowercase here, at the site of comparison.
-            String expectedValue = statEntry.getValue().toLowerCase().trim();
+            String expectedValue = statEntry.getValue().toLowerCase(Locale.US).trim();
             String actualValue = actualStats.get(statEntry.getKey());
             if (actualValue == null) {
                 return false;
             }
-            actualValue = actualValue.toLowerCase().trim();
+            actualValue = actualValue.toLowerCase(Locale.US).trim();
             if (!expectedValue.contentEquals(actualValue)) {
                 return false;
             }
@@ -283,7 +286,7 @@ public final class SyncTestUtil {
     }
 
     /**
-     * Sets up a test Google account on the device.
+     * Sets up a test Google account on the device with specified auth token types.
      */
     public static Account setupTestAccount(MockAccountManager accountManager, String accountName,
                                            String password, String... allowedAuthTokenTypes) {
@@ -296,6 +299,19 @@ public final class SyncTestUtil {
                 accountHolder.hasBeenAccepted(authTokenType, true);
             }
         }
+        accountManager.addAccountHolderExplicitly(accountHolder.build());
+        return account;
+    }
+
+    /**
+     * Sets up a test Google account on the device, that accepts all auth tokens.
+     */
+    public static Account setupTestAccountThatAcceptsAllAuthTokens(
+            MockAccountManager accountManager,
+            String accountName, String password) {
+        Account account = AccountManagerHelper.createAccountFromName(accountName);
+        AccountHolder.Builder accountHolder =
+                AccountHolder.create().account(account).password(password).alwaysAccept(true);
         accountManager.addAccountHolderExplicitly(accountHolder.build());
         return account;
     }
@@ -327,6 +343,12 @@ public final class SyncTestUtil {
         verifySignedInWithAccount(context, account);
     }
 
+    /**
+     * Retrieves the sync internals information which is the basis for chrome://sync-internals and
+     * makes the result available in {@link AboutSyncInfoGetter#getAboutInfo()}.
+     *
+     * This class has to be run on the main thread, as it accesses the ProfileSyncService.
+     */
     public static class AboutSyncInfoGetter implements Runnable {
         private static final String TAG = "AboutSyncInfoGetter";
         final Context mContext;

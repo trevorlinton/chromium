@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,10 +19,9 @@ import com.google.ipc.invalidation.external.client.types.Invalidation;
 import com.google.ipc.invalidation.external.client.types.ObjectId;
 import com.google.protos.ipc.invalidation.Types.ClientType;
 
-import org.chromium.base.ActivityStatus;
+import org.chromium.base.ApplicationStatus;
 import org.chromium.base.CollectionUtil;
 import org.chromium.sync.internal_api.pub.base.ModelType;
-import org.chromium.sync.notifier.InvalidationIntentProtocol;
 import org.chromium.sync.notifier.InvalidationPreferences.EditContext;
 import org.chromium.sync.signin.AccountManagerHelper;
 import org.chromium.sync.signin.ChromeSigninController;
@@ -85,6 +84,7 @@ public class InvalidationService extends AndroidListener {
         Account account = intent.hasExtra(InvalidationIntentProtocol.EXTRA_ACCOUNT) ?
                 (Account) intent.getParcelableExtra(InvalidationIntentProtocol.EXTRA_ACCOUNT)
                 : null;
+
         ensureAccount(account);
         ensureClientStartState();
 
@@ -132,12 +132,12 @@ public class InvalidationService extends AndroidListener {
         if (isTransient) {
           // Retry immediately on transient failures. The base AndroidListener will handle
           // exponential backoff if there are repeated failures.
-          List<ObjectId> objectIdAsList = CollectionUtil.newArrayList(objectId);
-          if (readRegistrationsFromPrefs().contains(objectId)) {
-              register(clientId, objectIdAsList);
-          } else {
-              unregister(clientId, objectIdAsList);
-          }
+            List<ObjectId> objectIdAsList = CollectionUtil.newArrayList(objectId);
+            if (readRegistrationsFromPrefs().contains(objectId)) {
+                register(clientId, objectIdAsList);
+            } else {
+                unregister(clientId, objectIdAsList);
+            }
         }
     }
 
@@ -148,15 +148,15 @@ public class InvalidationService extends AndroidListener {
         List<ObjectId> objectIdAsList = CollectionUtil.newArrayList(objectId);
         boolean registrationisDesired = readRegistrationsFromPrefs().contains(objectId);
         if (regState == RegistrationState.REGISTERED) {
-          if (!registrationisDesired) {
-            Log.i(TAG, "Unregistering for object we're no longer interested in");
-            unregister(clientId, objectIdAsList);
-          }
+            if (!registrationisDesired) {
+                Log.i(TAG, "Unregistering for object we're no longer interested in");
+                unregister(clientId, objectIdAsList);
+            }
         } else {
-          if (registrationisDesired) {
-            Log.i(TAG, "Registering for an object");
-            register(clientId, objectIdAsList);
-          }
+            if (registrationisDesired) {
+                Log.i(TAG, "Registering for an object");
+                register(clientId, objectIdAsList);
+            }
         }
     }
 
@@ -265,7 +265,8 @@ public class InvalidationService extends AndroidListener {
      * {@link InvalidationPreferences#setAccount}.
      */
     private void startClient() {
-        Intent startIntent = AndroidListener.createStartIntent(this, CLIENT_TYPE, getClientName());
+        byte[] clientName = InvalidationClientNameProvider.get().getInvalidatorClientName();
+        Intent startIntent = AndroidListener.createStartIntent(this, CLIENT_TYPE, clientName);
         startService(startIntent);
         setIsClientStarted(true);
     }
@@ -477,7 +478,7 @@ public class InvalidationService extends AndroidListener {
      */
     @VisibleForTesting
     boolean isChromeInForeground() {
-        return ActivityStatus.isApplicationVisible();
+        return ApplicationStatus.hasVisibleActivities();
     }
 
     /** Returns whether the notification client has been started, for tests. */
@@ -494,13 +495,6 @@ public class InvalidationService extends AndroidListener {
 
     private static String getOAuth2ScopeWithType() {
         return "oauth2:" + SyncStatusHelper.CHROME_SYNC_OAUTH2_SCOPE;
-    }
-
-    /** Returns the client name used for the notification client. */
-    private static byte[] getClientName() {
-        // TODO(dsmyers): we should use the same client name as the native sync code.
-        // Bug: https://code.google.com/p/chromium/issues/detail?id=172391
-        return Long.toString(RANDOM.nextLong()).getBytes();
     }
 
     private static void setClientId(byte[] clientId) {

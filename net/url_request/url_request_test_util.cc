@@ -13,6 +13,7 @@
 #include "net/cert/cert_verifier.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/http/http_network_session.h"
+#include "net/http/http_response_headers.h"
 #include "net/http/http_server_properties_impl.h"
 #include "net/http/transport_security_state.h"
 #include "net/ssl/default_server_bound_cert_store.h"
@@ -120,7 +121,7 @@ void TestURLRequestContext::Init() {
   }
   if (!http_user_agent_settings()) {
     context_storage_.set_http_user_agent_settings(
-        new StaticHttpUserAgentSettings("en-us,fr", EmptyString()));
+        new StaticHttpUserAgentSettings("en-us,fr", std::string()));
   }
   if (!job_factory())
     context_storage_.set_job_factory(new URLRequestJobFactoryImpl);
@@ -168,10 +169,12 @@ TestDelegate::TestDelegate()
       cancel_in_rd_pending_(false),
       quit_on_complete_(true),
       quit_on_redirect_(false),
+      quit_on_before_network_start_(false),
       allow_certificate_errors_(false),
       response_started_count_(0),
       received_bytes_count_(0),
       received_redirect_count_(0),
+      received_before_network_start_count_(0),
       received_data_before_response_(false),
       request_failed_(false),
       have_certificate_errors_(false),
@@ -203,6 +206,15 @@ void TestDelegate::OnReceivedRedirect(URLRequest* request,
                                            base::MessageLoop::QuitClosure());
   } else if (cancel_in_rr_) {
     request->Cancel();
+  }
+}
+
+void TestDelegate::OnBeforeNetworkStart(URLRequest* request, bool* defer) {
+  received_before_network_start_count_++;
+  if (quit_on_before_network_start_) {
+    *defer = true;
+    base::MessageLoop::current()->PostTask(FROM_HERE,
+                                           base::MessageLoop::QuitClosure());
   }
 }
 
@@ -305,12 +317,15 @@ TestNetworkDelegate::TestNetworkDelegate()
       created_requests_(0),
       destroyed_requests_(0),
       completed_requests_(0),
+      canceled_requests_(0),
       cookie_options_bit_mask_(0),
       blocked_get_cookies_count_(0),
       blocked_set_cookie_count_(0),
       set_cookie_count_(0),
       has_load_timing_info_before_redirect_(false),
-      has_load_timing_info_before_auth_(false) {
+      has_load_timing_info_before_auth_(false),
+      can_access_files_(true),
+      can_throttle_requests_(true) {
 }
 
 TestNetworkDelegate::~TestNetworkDelegate() {
@@ -335,7 +350,11 @@ bool TestNetworkDelegate::GetLoadTimingInfoBeforeAuth(
 
 void TestNetworkDelegate::InitRequestStatesIfNew(int request_id) {
   if (next_states_.find(request_id) == next_states_.end()) {
-    next_states_[request_id] = kStageBeforeURLRequest;
+    // TODO(davidben): Although the URLRequest documentation does not allow
+    // calling Cancel() before Start(), the ResourceLoader does so. URLRequest's
+    // destructor also calls Cancel. Either officially support this or fix the
+    // ResourceLoader code.
+    next_states_[request_id] = kStageBeforeURLRequest | kStageCompletedError;
     event_order_[request_id] = "";
   }
 }
@@ -392,7 +411,8 @@ int TestNetworkDelegate::OnHeadersReceived(
     URLRequest* request,
     const CompletionCallback& callback,
     const HttpResponseHeaders* original_response_headers,
-    scoped_refptr<HttpResponseHeaders>* override_response_headers) {
+    scoped_refptr<HttpResponseHeaders>* override_response_headers,
+    GURL* allowed_unsafe_redirect_url) {
   int req_id = request->identifier();
   event_order_[req_id] += "OnHeadersReceived\n";
   InitRequestStatesIfNew(req_id);
@@ -407,6 +427,20 @@ int TestNetworkDelegate::OnHeadersReceived(
   // Basic authentication sends a second request from the URLRequestHttpJob
   // layer before the URLRequest reports that a response has started.
   next_states_[req_id] |= kStageBeforeSendHeaders;
+
+  if (!redirect_on_headers_received_url_.is_empty()) {
+    *override_response_headers =
+        new net::HttpResponseHeaders(original_response_headers->raw_headers());
+    (*override_response_headers)->ReplaceStatusLine("HTTP/1.1 302 Found");
+    (*override_response_headers)->RemoveHeader("Location");
+    (*override_response_headers)->AddHeader(
+        "Location: " + redirect_on_headers_received_url_.spec());
+
+    redirect_on_headers_received_url_ = GURL();
+
+    if (!allowed_unsafe_redirect_url_.is_empty())
+      *allowed_unsafe_redirect_url = allowed_unsafe_redirect_url_;
+  }
 
   return OK;
 }
@@ -475,6 +509,10 @@ void TestNetworkDelegate::OnCompleted(URLRequest* request, bool started) {
   if (request->status().status() == URLRequestStatus::FAILED) {
     error_count_++;
     last_error_ = request->status().error();
+  } else if (request->status().status() == URLRequestStatus::CANCELED) {
+    canceled_requests_++;
+  } else {
+    DCHECK_EQ(URLRequestStatus::SUCCESS, request->status().status());
   }
 }
 
@@ -549,23 +587,18 @@ bool TestNetworkDelegate::OnCanSetCookie(const URLRequest& request,
 
 bool TestNetworkDelegate::OnCanAccessFile(const URLRequest& request,
                                           const base::FilePath& path) const {
-  return true;
+  return can_access_files_;
 }
 
 bool TestNetworkDelegate::OnCanThrottleRequest(
     const URLRequest& request) const {
-  return true;
+  return can_throttle_requests_;
 }
 
 int TestNetworkDelegate::OnBeforeSocketStreamConnect(
     SocketStream* socket,
     const CompletionCallback& callback) {
   return OK;
-}
-
-void TestNetworkDelegate::OnRequestWaitStateChange(
-    const URLRequest& request,
-    RequestWaitState state) {
 }
 
 // static

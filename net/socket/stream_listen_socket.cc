@@ -65,13 +65,13 @@ StreamListenSocket::StreamListenSocket(SocketDescriptor s,
 }
 
 StreamListenSocket::~StreamListenSocket() {
+  CloseSocket();
 #if defined(OS_WIN)
   if (socket_event_) {
     WSACloseEvent(socket_event_);
     socket_event_ = WSA_INVALID_EVENT;
   }
 #endif
-  CloseSocket(socket_);
 }
 
 void StreamListenSocket::Send(const char* bytes, int len,
@@ -96,7 +96,24 @@ int StreamListenSocket::GetLocalAddress(IPEndPoint* address) {
     return MapSystemError(err);
   }
   if (!address->FromSockAddr(storage.addr, storage.addr_len))
-    return ERR_FAILED;
+    return ERR_ADDRESS_INVALID;
+  return OK;
+}
+
+int StreamListenSocket::GetPeerAddress(IPEndPoint* address) {
+  SockaddrStorage storage;
+  if (getpeername(socket_, storage.addr, &storage.addr_len)) {
+#if defined(OS_WIN)
+    int err = WSAGetLastError();
+#else
+    int err = errno;
+#endif
+    return MapSystemError(err);
+  }
+
+  if (!address->FromSockAddr(storage.addr, storage.addr_len))
+    return ERR_ADDRESS_INVALID;
+
   return OK;
 }
 
@@ -194,13 +211,13 @@ void StreamListenSocket::Close() {
   socket_delegate_->DidClose(this);
 }
 
-void StreamListenSocket::CloseSocket(SocketDescriptor s) {
-  if (s && s != kInvalidSocket) {
+void StreamListenSocket::CloseSocket() {
+  if (socket_ != kInvalidSocket) {
     UnwatchSocket();
 #if defined(OS_WIN)
-    closesocket(s);
+    closesocket(socket_);
 #elif defined(OS_POSIX)
-    close(s);
+    close(socket_);
 #endif
   }
 }

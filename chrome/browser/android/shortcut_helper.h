@@ -8,8 +8,8 @@
 #include "base/android/jni_helper.h"
 #include "base/basictypes.h"
 #include "base/strings/string16.h"
+#include "base/task/cancelable_task_tracker.h"
 #include "chrome/browser/android/tab_android.h"
-#include "chrome/common/cancelable_task_tracker.h"
 #include "content/public/browser/web_contents_observer.h"
 
 namespace chrome {
@@ -43,7 +43,7 @@ class ShortcutBuilder : public content::WebContentsObserver {
   };
 
   explicit ShortcutBuilder(content::WebContents* web_contents,
-                           const string16& title,
+                           const base::string16& title,
                            int launcher_large_icon_size);
   virtual ~ShortcutBuilder() {}
 
@@ -63,10 +63,10 @@ class ShortcutBuilder : public content::WebContentsObserver {
   void Destroy();
 
   GURL url_;
-  string16 title_;
+  base::string16 title_;
   int launcher_large_icon_size_;
   ShortcutType shortcut_type_;
-  CancelableTaskTracker cancelable_task_tracker_;
+  base::CancelableTaskTracker cancelable_task_tracker_;
 
   DISALLOW_COPY_AND_ASSIGN(ShortcutBuilder);
 };
@@ -76,7 +76,7 @@ class ShortcutHelper {
   // Adds a shortcut to the current URL to the Android home screen, firing
   // background tasks to pull all the data required.
   static void AddShortcut(content::WebContents* web_contents,
-                          const string16& title,
+                          const base::string16& title,
                           int launcher_larger_icon_size);
 
   // Adds a shortcut to the launcher.  Must be called from a WorkerPool task.

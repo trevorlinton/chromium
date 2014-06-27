@@ -18,11 +18,11 @@ FileMetadataParser::~FileMetadataParser() {}
 bool FileMetadataParser::Parse() {
   std::string value;
   int64 size;
-  if (file_util::GetFileSize(path_, &size)) {
+  if (base::GetFileSize(path_, &size)) {
     properties_[MetadataParser::kPropertyFilesize] = base::Int64ToString(size);
   }
 #if defined(OS_WIN)
-  value = WideToUTF8(path_.BaseName().value());
+  value = base::WideToUTF8(path_.BaseName().value());
   properties_[MetadataParser::kPropertyTitle] = value;
 #elif defined(OS_POSIX)
   properties_[MetadataParser::kPropertyTitle] = path_.BaseName().value();

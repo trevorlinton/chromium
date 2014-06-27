@@ -16,6 +16,7 @@
 #include "media/base/demuxer.h"
 #include "media/base/filter_collection.h"
 #include "media/base/pipeline_status.h"
+#include "media/base/text_track.h"
 #include "media/base/video_decoder.h"
 #include "media/base/video_decoder_config.h"
 #include "media/base/video_frame.h"
@@ -30,7 +31,8 @@ class MockDemuxer : public Demuxer {
   virtual ~MockDemuxer();
 
   // Demuxer implementation.
-  MOCK_METHOD2(Initialize, void(DemuxerHost* host, const PipelineStatusCB& cb));
+  MOCK_METHOD3(Initialize,
+               void(DemuxerHost* host, const PipelineStatusCB& cb, bool));
   MOCK_METHOD1(SetPlaybackRate, void(float playback_rate));
   MOCK_METHOD2(Seek, void(base::TimeDelta time, const PipelineStatusCB& cb));
   MOCK_METHOD1(Stop, void(const base::Closure& callback));
@@ -53,6 +55,7 @@ class MockDemuxerStream : public DemuxerStream {
   virtual AudioDecoderConfig audio_decoder_config() OVERRIDE;
   virtual VideoDecoderConfig video_decoder_config() OVERRIDE;
   MOCK_METHOD0(EnableBitstreamConverter, void());
+  MOCK_METHOD0(SupportsConfigChanges, bool());
 
   void set_audio_decoder_config(const AudioDecoderConfig& config);
   void set_video_decoder_config(const VideoDecoderConfig& config);
@@ -89,14 +92,13 @@ class MockAudioDecoder : public AudioDecoder {
   virtual ~MockAudioDecoder();
 
   // AudioDecoder implementation.
-  MOCK_METHOD3(Initialize, void(DemuxerStream*,
-                                const PipelineStatusCB&,
-                                const StatisticsCB&));
-  MOCK_METHOD1(Read, void(const ReadCB&));
-  MOCK_METHOD0(bits_per_channel, int(void));
-  MOCK_METHOD0(channel_layout, ChannelLayout(void));
-  MOCK_METHOD0(samples_per_second, int(void));
+  MOCK_METHOD2(Initialize, void(const AudioDecoderConfig& config,
+                                const PipelineStatusCB&));
+  MOCK_METHOD2(Decode,
+               void(const scoped_refptr<DecoderBuffer>& buffer,
+                    const DecodeCB&));
   MOCK_METHOD1(Reset, void(const base::Closure&));
+  MOCK_METHOD1(Stop, void(const base::Closure&));
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockAudioDecoder);
@@ -108,11 +110,10 @@ class MockVideoRenderer : public VideoRenderer {
   virtual ~MockVideoRenderer();
 
   // VideoRenderer implementation.
-  MOCK_METHOD9(Initialize, void(DemuxerStream* stream,
+  MOCK_METHOD8(Initialize, void(DemuxerStream* stream,
                                 const PipelineStatusCB& init_cb,
                                 const StatisticsCB& statistics_cb,
                                 const TimeCB& time_cb,
-                                const NaturalSizeChangedCB& size_changed_cb,
                                 const base::Closure& ended_cb,
                                 const PipelineStatusCB& error_cb,
                                 const TimeDeltaCB& get_time_cb,
@@ -153,6 +154,21 @@ class MockAudioRenderer : public AudioRenderer {
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockAudioRenderer);
+};
+
+class MockTextTrack : public TextTrack {
+ public:
+  MockTextTrack();
+  virtual ~MockTextTrack();
+
+  MOCK_METHOD5(addWebVTTCue, void(const base::TimeDelta& start,
+                                  const base::TimeDelta& end,
+                                  const std::string& id,
+                                  const std::string& content,
+                                  const std::string& settings));
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(MockTextTrack);
 };
 
 class MockDecryptor : public Decryptor {

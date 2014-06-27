@@ -7,15 +7,16 @@
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
-#include "chrome/browser/extensions/extension_host.h"
+#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "chrome/browser/ui/views/extensions/extension_view_views.h"
 #include "content/public/browser/notification_observer.h"
+#include "content/public/browser/notification_registrar.h"
 #include "ui/views/bubble/bubble_delegate.h"
 #include "ui/views/focus/widget_focus_manager.h"
 #include "url/gurl.h"
 
 #if defined(USE_AURA)
-#include "ui/aura/client/activation_change_observer.h"
+#include "ui/wm/public/activation_change_observer.h"
 #endif
 
 class Browser;
@@ -27,12 +28,17 @@ namespace content {
 class DevToolsAgentHost;
 }
 
+namespace extensions {
+class ExtensionViewHost;
+}
+
 class ExtensionPopup : public views::BubbleDelegateView,
 #if defined(USE_AURA)
                        public aura::client::ActivationChangeObserver,
 #endif
                        public ExtensionViewViews::Container,
-                       public content::NotificationObserver {
+                       public content::NotificationObserver,
+                       public TabStripModelObserver {
  public:
   enum ShowAction {
     SHOW,
@@ -56,7 +62,7 @@ class ExtensionPopup : public views::BubbleDelegateView,
                                    views::BubbleBorder::Arrow arrow,
                                    ShowAction show_action);
 
-  extensions::ExtensionHost* host() const { return extension_host_.get(); }
+  extensions::ExtensionViewHost* host() const { return host_.get(); }
 
   // content::NotificationObserver overrides.
   virtual void Observe(int type,
@@ -80,6 +86,12 @@ class ExtensionPopup : public views::BubbleDelegateView,
                                  aura::Window* lost_active) OVERRIDE;
 #endif
 
+  // TabStripModelObserver overrides.
+  virtual void ActiveTabChanged(content::WebContents* old_contents,
+                                content::WebContents* new_contents,
+                                int index,
+                                int reason) OVERRIDE;
+
   // The min/max height of popups.
   static const int kMinWidth;
   static const int kMinHeight;
@@ -87,7 +99,7 @@ class ExtensionPopup : public views::BubbleDelegateView,
   static const int kMaxHeight;
 
  private:
-  ExtensionPopup(extensions::ExtensionHost* host,
+  ExtensionPopup(extensions::ExtensionViewHost* host,
                  views::View* anchor_view,
                  views::BubbleBorder::Arrow arrow,
                  ShowAction show_action);
@@ -98,7 +110,7 @@ class ExtensionPopup : public views::BubbleDelegateView,
   void OnDevToolsStateChanged(content::DevToolsAgentHost*, bool attached);
 
   // The contained host for the view.
-  scoped_ptr<extensions::ExtensionHost> extension_host_;
+  scoped_ptr<extensions::ExtensionViewHost> host_;
 
   // Flag used to indicate if the pop-up should open a devtools window once
   // it is shown inspecting it.

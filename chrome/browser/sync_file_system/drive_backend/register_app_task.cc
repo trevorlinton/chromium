@@ -8,14 +8,15 @@
 #include "base/location.h"
 #include "chrome/browser/drive/drive_api_util.h"
 #include "chrome/browser/drive/drive_service_interface.h"
-#include "chrome/browser/google_apis/drive_api_parser.h"
-#include "chrome/browser/google_apis/gdata_wapi_parser.h"
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_constants.h"
+#include "chrome/browser/sync_file_system/drive_backend/folder_creator.h"
 #include "chrome/browser/sync_file_system/drive_backend/metadata_database.h"
 #include "chrome/browser/sync_file_system/drive_backend/metadata_database.pb.h"
 #include "chrome/browser/sync_file_system/drive_backend/sync_engine_context.h"
-#include "chrome/browser/sync_file_system/drive_backend/tracker_set.h"
+#include "chrome/browser/sync_file_system/drive_backend/tracker_id_set.h"
 #include "chrome/browser/sync_file_system/syncable_file_system_util.h"
+#include "google_apis/drive/drive_api_parser.h"
+#include "google_apis/drive/gdata_wapi_parser.h"
 
 namespace sync_file_system {
 namespace drive_backend {
@@ -41,7 +42,12 @@ RegisterAppTask::RegisterAppTask(SyncEngineContext* sync_context,
 RegisterAppTask::~RegisterAppTask() {
 }
 
-void RegisterAppTask::Run(const SyncStatusCallback& callback) {
+bool RegisterAppTask::CanFinishImmediately() {
+  return metadata_database() &&
+         metadata_database()->FindAppRootTracker(app_id_, NULL);
+}
+
+void RegisterAppTask::RunSequential(const SyncStatusCallback& callback) {
   if (create_folder_retry_count_++ >= kMaxRetry) {
     callback.Run(SYNC_STATUS_FAILED);
     return;
@@ -53,7 +59,7 @@ void RegisterAppTask::Run(const SyncStatusCallback& callback) {
   }
 
   int64 sync_root = metadata_database()->GetSyncRootTrackerID();
-  TrackerSet trackers;
+  TrackerIDSet trackers;
   if (!metadata_database()->FindTrackersByParentAndTitle(
           sync_root, app_id_, &trackers)) {
     CreateAppRootFolder(callback);
@@ -67,6 +73,8 @@ void RegisterAppTask::Run(const SyncStatusCallback& callback) {
   }
 
   if (candidate.active()) {
+    DCHECK(candidate.tracker_kind() == TRACKER_KIND_APP_ROOT ||
+           candidate.tracker_kind() == TRACKER_KIND_DISABLED_APP_ROOT);
     RunSoon(FROM_HERE, base::Bind(callback, SYNC_STATUS_OK));
     return;
   }
@@ -82,106 +90,72 @@ void RegisterAppTask::CreateAppRootFolder(const SyncStatusCallback& callback) {
       &sync_root_tracker);
   DCHECK(should_success);
 
-  drive_service()->AddNewDirectory(
-      sync_root_tracker.file_id(),
-      app_id_,
-      base::Bind(&RegisterAppTask::DidCreateAppRootFolder,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 callback,
-                 metadata_database()->GetLargestChangeID()));
+  DCHECK(!folder_creator_);
+  folder_creator_.reset(new FolderCreator(
+      drive_service(), metadata_database(),
+      sync_root_tracker.file_id(), app_id_));
+  folder_creator_->Run(base::Bind(
+      &RegisterAppTask::DidCreateAppRootFolder,
+      weak_ptr_factory_.GetWeakPtr(), callback));
 }
 
 void RegisterAppTask::DidCreateAppRootFolder(
     const SyncStatusCallback& callback,
-    int64 change_id,
-    google_apis::GDataErrorCode error,
-    scoped_ptr<google_apis::ResourceEntry> entry) {
-  if (error != google_apis::HTTP_SUCCESS &&
-      error != google_apis::HTTP_CREATED) {
-    callback.Run(SYNC_STATUS_FAILED);
-    return;
-  }
-
-  DCHECK(entry);
-  scoped_ptr<google_apis::FileResource> resource(
-      drive::util::ConvertResourceEntryToFileResource(*entry));
-  metadata_database()->UpdateByFileResource(
-      change_id,
-      *resource,
-      base::Bind(&RegisterAppTask::DidUpdateDatabase,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 callback,
-                 resource->file_id()));
-}
-
-void RegisterAppTask::DidUpdateDatabase(const SyncStatusCallback& callback,
-                                        const std::string& file_id,
-                                        SyncStatusCode status) {
+    const std::string& folder_id,
+    SyncStatusCode status) {
+  scoped_ptr<FolderCreator> deleter = folder_creator_.Pass();
   if (status != SYNC_STATUS_OK) {
-    callback.Run(SYNC_STATUS_FAILED);
+    callback.Run(status);
     return;
   }
 
-  FileMetadata file;
-  bool should_success = metadata_database()->FindFileByFileID(
-      file_id, &file);
-  DCHECK(should_success);
-
-  TrackerSet trackers;
-  should_success = metadata_database()->FindTrackersByFileID(
-      file_id, &trackers);
-  DCHECK(should_success);
-
-  DCHECK_EQ(1u, trackers.tracker_set().size());
-  FileTracker tracker = **trackers.begin();
-  DCHECK_EQ(metadata_database()->GetSyncRootTrackerID(),
-            tracker.parent_tracker_id());
-
-  metadata_database()->UpdateTracker(
-      tracker.tracker_id(),
-      file.details(),
-      base::Bind(&RegisterAppTask::DidPrepareForRegister,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 callback));
+  RunSequential(callback);
 }
 
-void RegisterAppTask::DidPrepareForRegister(const SyncStatusCallback& callback,
-                                            SyncStatusCode status) {
-  if (status != SYNC_STATUS_OK) {
-    callback.Run(SYNC_STATUS_FAILED);
-    return;
-  }
-
-  // TODO(tzik): Ensure the file didn't make create-create conflict by listing
-  // the same title folders.
-
-  Run(callback);
-}
-
-bool RegisterAppTask::FilterCandidates(const TrackerSet& trackers,
+bool RegisterAppTask::FilterCandidates(const TrackerIDSet& trackers,
                                        FileTracker* candidate) {
   DCHECK(candidate);
   if (trackers.has_active()) {
-    *candidate = *trackers.active_tracker();
-    return true;
+    if (metadata_database()->FindTrackerByTrackerID(
+            trackers.active_tracker(), candidate)) {
+      return true;
+    }
+    NOTREACHED();
   }
 
-  FileTracker* oldest_tracker = NULL;
-  for (TrackerSet::const_iterator itr = trackers.begin();
+  scoped_ptr<FileTracker> oldest_tracker;
+  for (TrackerIDSet::const_iterator itr = trackers.begin();
        itr != trackers.end(); ++itr) {
-    FileTracker* tracker = *itr;
+    scoped_ptr<FileTracker> tracker(new FileTracker);
+    if (!metadata_database()->FindTrackerByTrackerID(
+            *itr, tracker.get())) {
+      NOTREACHED();
+      continue;
+    }
+
+    FileMetadata file;
     DCHECK(!tracker->active());
     DCHECK(tracker->has_synced_details());
-    if (tracker->synced_details().file_kind() != FILE_KIND_FOLDER)
+
+    if (!metadata_database()->FindFileByFileID(tracker->file_id(), &file)) {
+      NOTREACHED();
+      // The parent folder is sync-root, whose contents are fetched in
+      // initialization sequence.
+      // So at this point, direct children of sync-root should have
+      // FileMetadata.
+      continue;
+    }
+
+    if (file.details().file_kind() != FILE_KIND_FOLDER)
       continue;
 
-    if (tracker->synced_details().deleted())
+    if (file.details().missing())
       continue;
 
     if (oldest_tracker && CompareOnCTime(*oldest_tracker, *tracker))
       continue;
 
-    oldest_tracker = tracker;
+    oldest_tracker = tracker.Pass();
   }
 
   if (!oldest_tracker)

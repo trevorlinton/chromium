@@ -44,9 +44,8 @@ function endCommand(testName, testResult) {
   testResultEl.textContent = testResult;
 }
 
-function testendCommand() {
+function testendCommand(exitCode) {
   testsFinished = true;
-  common.removeModule();
 
   if (failedTests) {
     common.updateStatus('FAILED');
@@ -61,6 +60,9 @@ function handleMessage(event) {
   var msg = event.data;
   var firstColon = msg.indexOf(':');
   var cmd = firstColon !== -1 ? msg.substr(0, firstColon) : msg;
+  if (cmd == 'testend')
+    event.srcElement.postMessage({'testend' : ''});
+
   var cmdFunctionName = cmd + 'Command';
   var cmdFunction = window[cmdFunctionName];
 

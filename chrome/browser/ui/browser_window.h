@@ -7,13 +7,14 @@
 
 #include "base/callback_forward.h"
 #include "chrome/browser/lifetime/browser_close_manager.h"
+#include "chrome/browser/translate/translate_tab_helper.h"
 #include "chrome/browser/ui/bookmarks/bookmark_bar.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/fullscreen/fullscreen_exit_bubble_type.h"
 #include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/sync/one_click_signin_sync_starter.h"
-#include "chrome/browser/ui/translate/translate_bubble_model.h"
 #include "chrome/common/content_settings_types.h"
+#include "components/translate/core/common/translate_errors.h"
 #include "ui/base/base_window.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/native_widget_types.h"
@@ -31,6 +32,8 @@ class TemplateURL;
 class ToolbarView;
 #endif
 
+struct WebApplicationInfo;
+
 namespace autofill {
 class PasswordGenerator;
 struct PasswordForm;
@@ -42,6 +45,7 @@ struct SSLStatus;
 }
 
 namespace extensions {
+class Command;
 class Extension;
 }
 
@@ -111,6 +115,9 @@ class BrowserWindow : public ui::BaseWindow {
 
   // Sets the starred state for the current tab.
   virtual void SetStarredState(bool is_starred) = 0;
+
+  // Sets whether the translate icon is lit for the current tab.
+  virtual void SetTranslateIconToggled(bool is_lit) = 0;
 
   // Called when the active tab changes.  Subclasses which implement
   // TabStripModelObserver should implement this instead of ActiveTabChanged();
@@ -198,12 +205,6 @@ class BrowserWindow : public ui::BaseWindow {
   // where we take care of it ourselves at the browser level).
   virtual gfx::Rect GetRootWindowResizerRect() const = 0;
 
-  // Tells the frame not to render as inactive until the next activation change.
-  // This is required on Windows when dropdown selects are shown to prevent the
-  // select from deactivating the browser frame. A stub implementation is
-  // provided here since the functionality is Windows-specific.
-  virtual void DisableInactiveFrame() {}
-
   // Shows a confirmation dialog box for adding a search engine described by
   // |template_url|. Takes ownership of |template_url|.
   virtual void ConfirmAddSearchProvider(TemplateURL* template_url,
@@ -216,14 +217,23 @@ class BrowserWindow : public ui::BaseWindow {
   // |already_bookmarked| is true if the url is already bookmarked.
   virtual void ShowBookmarkBubble(const GURL& url, bool already_bookmarked) = 0;
 
+  // Shows the Bookmark App bubble.
+  // See Extension::InitFromValueFlags::FROM_BOOKMARK for a description of
+  // bookmark apps.
+  //
+  // |web_app_info| is the WebApplicationInfo being converted into an app.
+  // |extension_id| is the id of the bookmark app.
+  virtual void ShowBookmarkAppBubble(const WebApplicationInfo& web_app_info,
+                                     const std::string& extension_id) = 0;
+
   // Shows the bookmark prompt.
   // TODO(yosin): Make ShowBookmarkPrompt pure virtual.
   virtual void ShowBookmarkPrompt() {}
 
   // Shows the translate bubble.
-  virtual void ShowTranslateBubble(
-      content::WebContents* contents,
-      TranslateBubbleModel::ViewState view_state) = 0;
+  virtual void ShowTranslateBubble(content::WebContents* contents,
+                                   TranslateTabHelper::TranslateStep step,
+                                   TranslateErrors::Type error_type) = 0;
 
 #if defined(ENABLE_ONE_CLICK_SIGNIN)
   enum OneClickSigninBubbleType {
@@ -242,8 +252,8 @@ class BrowserWindow : public ui::BaseWindow {
   // of the account that has signed in.
   virtual void ShowOneClickSigninBubble(
       OneClickSigninBubbleType type,
-      const string16& email,
-      const string16& error_message,
+      const base::string16& email,
+      const base::string16& error_message,
       const StartSyncCallback& start_sync_callback) = 0;
 #endif
 
@@ -308,9 +318,6 @@ class BrowserWindow : public ui::BaseWindow {
   virtual void Paste() = 0;
 
 #if defined(OS_MACOSX)
-  // Opens the tabpose view.
-  virtual void OpenTabpose() = 0;
-
   // Enters Mac specific fullscreen mode with chrome displayed (e.g. omnibox)
   // on OSX 10.7+, a.k.a. Lion Fullscreen mode.
   // Invalid to call on OSX earlier than 10.7.
@@ -348,14 +355,25 @@ class BrowserWindow : public ui::BaseWindow {
   // Construct a BrowserWindow implementation for the specified |browser|.
   static BrowserWindow* CreateBrowserWindow(Browser* browser);
 
+  // Returns a HostDesktopType that is compatible with the current Chrome window
+  // configuration. On Windows with Ash, this is always HOST_DESKTOP_TYPE_ASH
+  // while Chrome is running in Metro mode. Otherwise returns |desktop_type|.
+  static chrome::HostDesktopType AdjustHostDesktopType(
+      chrome::HostDesktopType desktop_type);
+
   // Shows the avatar bubble inside |web_contents|. The bubble is positioned
   // relative to |rect|. |rect| should be in the |web_contents| coordinate
   // system.
   virtual void ShowAvatarBubble(content::WebContents* web_contents,
                                 const gfx::Rect& rect) = 0;
 
-  // Shows the avatar bubble on the window frame off of the avatar button.
-  virtual void ShowAvatarBubbleFromAvatarButton() = 0;
+  // Shows the avatar bubble on the window frame off of the avatar button with
+  // the given mode.
+  enum AvatarBubbleMode {
+    AVATAR_BUBBLE_MODE_DEFAULT,
+    AVATAR_BUBBLE_MODE_ACCOUNT_MANAGEMENT
+  };
+  virtual void ShowAvatarBubbleFromAvatarButton(AvatarBubbleMode mode) = 0;
 
   // Show bubble for password generation positioned relative to |rect|. The
   // subclasses implementing this interface do not own the |password_generator|
@@ -374,6 +392,19 @@ class BrowserWindow : public ui::BaseWindow {
   // shown.  Invoked when a new RenderHostView is created for a non-NTP
   // navigation entry and the bookmark bar is detached.
   virtual int GetRenderViewHeightInsetWithDetachedBookmarkBar() = 0;
+
+  // Executes |command| registered by |extension|.
+  virtual void ExecuteExtensionCommand(const extensions::Extension* extension,
+                                       const extensions::Command& command) = 0;
+
+  // Shows the page action for the extension.
+  virtual void ShowPageActionPopup(const extensions::Extension* extension) = 0;
+
+  // Shows the browser action for the extension. NOTE(wittman): This function
+  // grants tab permissions to the browser action popup, so it should only be
+  // invoked due to user action, not due to invocation from an extensions API.
+  virtual void ShowBrowserActionPopup(
+      const extensions::Extension* extension) = 0;
 
  protected:
   friend class BrowserCloseManager;

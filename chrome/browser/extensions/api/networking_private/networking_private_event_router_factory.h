@@ -6,11 +6,9 @@
 #define CHROME_BROWSER_EXTENSIONS_API_NETWORKING_PRIVATE_NETWORKING_PRIVATE_EVENT_ROUTER_FACTORY_H_
 
 #include "base/memory/singleton.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service_factory.h"
+#include "components/keyed_service/content/browser_context_keyed_service_factory.h"
 
-class Profile;
-
-namespace chromeos {
+namespace extensions {
 
 class NetworkingPrivateEventRouter;
 
@@ -22,7 +20,8 @@ class NetworkingPrivateEventRouterFactory
  public:
   // Returns the NetworkingPrivateEventRouter for |profile|, creating it if
   // it is not yet created.
-  static NetworkingPrivateEventRouter* GetForProfile(Profile* profile);
+  static NetworkingPrivateEventRouter* GetForProfile(
+      content::BrowserContext* context);
 
   // Returns the NetworkingPrivateEventRouterFactory instance.
   static NetworkingPrivateEventRouterFactory* GetInstance();
@@ -41,13 +40,12 @@ class NetworkingPrivateEventRouterFactory
   virtual ~NetworkingPrivateEventRouterFactory();
 
   // BrowserContextKeyedServiceFactory:
-  virtual BrowserContextKeyedService* BuildServiceInstanceFor(
+  virtual KeyedService* BuildServiceInstanceFor(
       content::BrowserContext* profile) const OVERRIDE;
 
   DISALLOW_COPY_AND_ASSIGN(NetworkingPrivateEventRouterFactory);
 };
 
-}  // namespace chromeos
+}  // namespace extensions
 
 #endif  // CHROME_BROWSER_EXTENSIONS_API_NETWORKING_PRIVATE_NETWORKING_PRIVATE_EVENT_ROUTER_FACTORY_H_
-

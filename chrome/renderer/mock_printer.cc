@@ -70,10 +70,10 @@ MockPrinter::MockPrinter()
     is_first_request_(true),
     print_to_pdf_(false),
     preview_request_id_(0),
-    print_scaling_option_(WebKit::WebPrintScalingOptionSourceSize),
+    print_scaling_option_(blink::WebPrintScalingOptionSourceSize),
     display_header_footer_(false),
-    title_(ASCIIToUTF16("title")),
-    url_(ASCIIToUTF16("url")),
+    title_(base::ASCIIToUTF16("title")),
+    url_(base::ASCIIToUTF16("url")),
     use_invalid_settings_(false) {
   page_size_.SetSize(static_cast<int>(8.5 * dpi_),
                      static_cast<int>(11.0 * dpi_));
@@ -273,8 +273,8 @@ bool MockPrinter::SaveSource(
     return false;
   const uint8* source_data = pages_[page]->source_data();
   uint32 source_size = pages_[page]->source_size();
-  file_util::WriteFile(filepath, reinterpret_cast<const char*>(source_data),
-                       source_size);
+  base::WriteFile(filepath, reinterpret_cast<const char*>(source_data),
+                  source_size);
   return true;
 }
 

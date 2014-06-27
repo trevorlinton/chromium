@@ -20,9 +20,12 @@ class BrowserViewLayoutDelegate {
  public:
   virtual ~BrowserViewLayoutDelegate() {}
 
+  virtual views::View* GetContentsWebView() const = 0;
   virtual views::View* GetWindowSwitcherButton() const = 0;
   virtual bool IsTabStripVisible() const = 0;
-  virtual gfx::Rect GetBoundsForTabStrip(views::View* tab_strip) const = 0;
+  virtual gfx::Rect GetBoundsForTabStripInBrowserView() const = 0;
+  virtual int GetTopInsetInBrowserView() const = 0;
+  virtual int GetThemeBackgroundXInset() const = 0;
   virtual bool IsToolbarVisible() const = 0;
   virtual bool IsBookmarkBarVisible() const = 0;
   virtual bool DownloadShelfNeedsLayout() const = 0;

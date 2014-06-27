@@ -7,6 +7,7 @@
 #include "ash/shell.h"
 #include "ash/system/chromeos/network/network_icon_animation.h"
 #include "ash/system/chromeos/network/network_icon_animation_observer.h"
+#include "ash/system/tray/system_tray_delegate.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chromeos/network/device_state.h"
 #include "chromeos/network/network_connection_handler.h"
@@ -70,6 +71,9 @@ class NetworkIconImpl {
   // Updates the local state for cellular networks. Returns true if changed.
   bool UpdateCellularState(const chromeos::NetworkState* network);
 
+  // Updates the portal state for wireless networks. Returns true if changed.
+  bool UpdatePortalState(const chromeos::NetworkState* network);
+
   // Updates the VPN badge. Returns true if changed.
   bool UpdateVPNBadge();
 
@@ -96,6 +100,9 @@ class NetworkIconImpl {
 
   // Cached roaming state of the network when the icon was last generated.
   std::string roaming_state_;
+
+  // Cached portal state of the network when the icon was last generated.
+  bool behind_captive_portal_;
 
   // Generated icon image.
   gfx::ImageSkia image_;
@@ -526,7 +533,8 @@ NetworkIconImpl::NetworkIconImpl(IconType icon_type)
     : icon_type_(icon_type),
       strength_index_(-1),
       technology_badge_(NULL),
-      vpn_badge_(NULL) {
+      vpn_badge_(NULL),
+      behind_captive_portal_(false) {
   // Default image
   image_ = GetDisconnectedImage(shill::kTypeWifi, icon_type);
 }
@@ -542,8 +550,11 @@ void NetworkIconImpl::Update(const NetworkState* network) {
     dirty = true;
   }
 
-  if (network->Matches(NetworkTypePattern::Wireless()))
+  dirty |= UpdatePortalState(network);
+
+  if (network->Matches(NetworkTypePattern::Wireless())) {
     dirty |= UpdateWirelessStrengthIndex(network);
+  }
 
   if (network->Matches(NetworkTypePattern::Cellular()))
     dirty |= UpdateCellularState(network);
@@ -582,6 +593,20 @@ bool NetworkIconImpl::UpdateCellularState(const NetworkState* network) {
     dirty = true;
   }
   return dirty;
+}
+
+bool NetworkIconImpl::UpdatePortalState(const NetworkState* network) {
+  bool behind_captive_portal = false;
+  if (network) {
+    SystemTrayDelegate* delegate = Shell::GetInstance()->system_tray_delegate();
+    behind_captive_portal =
+        delegate->IsNetworkBehindCaptivePortal(network->path());
+  }
+
+  if (behind_captive_portal == behind_captive_portal_)
+    return false;
+  behind_captive_portal_ = behind_captive_portal;
+  return true;
 }
 
 bool NetworkIconImpl::UpdateVPNBadge() {
@@ -632,6 +657,14 @@ void NetworkIconImpl::GetBadges(const NetworkState* network, Badges* badges) {
   if (!network->IsConnectingState()) {
     badges->top_left = technology_badge_;
     badges->bottom_left = vpn_badge_;
+  }
+
+  if (behind_captive_portal_) {
+    gfx::ImageSkia* badge = rb.GetImageSkiaNamed(
+       IconTypeIsDark(icon_type_) ?
+       IDR_AURA_UBER_TRAY_NETWORK_PORTAL_DARK :
+       IDR_AURA_UBER_TRAY_NETWORK_PORTAL_LIGHT);
+    badges->bottom_right = badge;
   }
 }
 
@@ -694,33 +727,33 @@ base::string16 GetLabelForNetwork(const chromeos::NetworkState* network,
     if (network->IsConnectingState()) {
       return l10n_util::GetStringFUTF16(
           IDS_ASH_STATUS_TRAY_NETWORK_LIST_CONNECTING,
-          UTF8ToUTF16(network->name()));
+          base::UTF8ToUTF16(network->name()));
     }
     if (activation_state == shill::kActivationStateActivating) {
       return l10n_util::GetStringFUTF16(
           IDS_ASH_STATUS_TRAY_NETWORK_LIST_ACTIVATING,
-          UTF8ToUTF16(network->name()));
+          base::UTF8ToUTF16(network->name()));
     }
     // Show "Activate <network>" in list view only.
     if (activation_state == shill::kActivationStateNotActivated ||
         activation_state == shill::kActivationStatePartiallyActivated) {
       return l10n_util::GetStringFUTF16(
           IDS_ASH_STATUS_TRAY_NETWORK_LIST_ACTIVATE,
-          UTF8ToUTF16(network->name()));
+          base::UTF8ToUTF16(network->name()));
     }
   } else {
     // Show "[Connected to|Connecting to|Activating] <network>" (non-list view).
     if (network->IsConnectedState()) {
-      return l10n_util::GetStringFUTF16(
-          IDS_ASH_STATUS_TRAY_NETWORK_CONNECTED, UTF8ToUTF16(network->name()));
+      return l10n_util::GetStringFUTF16(IDS_ASH_STATUS_TRAY_NETWORK_CONNECTED,
+                                        base::UTF8ToUTF16(network->name()));
     }
     if (network->IsConnectingState()) {
-      return l10n_util::GetStringFUTF16(
-          IDS_ASH_STATUS_TRAY_NETWORK_CONNECTING, UTF8ToUTF16(network->name()));
+      return l10n_util::GetStringFUTF16(IDS_ASH_STATUS_TRAY_NETWORK_CONNECTING,
+                                        base::UTF8ToUTF16(network->name()));
     }
     if (activation_state == shill::kActivationStateActivating) {
-      return l10n_util::GetStringFUTF16(
-          IDS_ASH_STATUS_TRAY_NETWORK_ACTIVATING, UTF8ToUTF16(network->name()));
+      return l10n_util::GetStringFUTF16(IDS_ASH_STATUS_TRAY_NETWORK_ACTIVATING,
+                                        base::UTF8ToUTF16(network->name()));
     }
   }
 
@@ -728,7 +761,7 @@ base::string16 GetLabelForNetwork(const chromeos::NetworkState* network,
   if (network->Matches(NetworkTypePattern::Ethernet())) {
     return l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_ETHERNET);
   } else {
-    return UTF8ToUTF16(network->name());
+    return base::UTF8ToUTF16(network->name());
   }
 }
 

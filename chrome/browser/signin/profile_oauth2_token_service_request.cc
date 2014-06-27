@@ -10,8 +10,10 @@
 #include "base/single_thread_task_runner.h"
 #include "base/thread_task_runner_handle.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/profile_oauth2_token_service.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
+#include "chrome/browser/signin/signin_manager.h"
+#include "chrome/browser/signin/signin_manager_factory.h"
+#include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "google_apis/gaia/oauth2_access_token_consumer.h"
@@ -32,6 +34,8 @@ class ProfileOAuth2TokenServiceRequest::Core
   // Stops the OAuth2 access token fetching. It should be called on the owner
   // thread.
   void Stop();
+
+  OAuth2TokenService::Request* request();
 
   // OAuth2TokenService::Consumer. It should be called on the UI thread.
   virtual void OnGetTokenSuccess(const OAuth2TokenService::Request* request,
@@ -81,7 +85,8 @@ class ProfileOAuth2TokenServiceRequest::Core
 ProfileOAuth2TokenServiceRequest::Core::Core(
     Profile* profile,
     ProfileOAuth2TokenServiceRequest* owner)
-    : profile_(profile),
+    : OAuth2TokenService::Consumer("oauth2_token_service"),
+      profile_(profile),
       owner_(owner),
       owner_task_runner_(base::ThreadTaskRunnerHandle::Get()) {
   DCHECK(profile);
@@ -124,6 +129,10 @@ void ProfileOAuth2TokenServiceRequest::Core::Stop() {
   }
 }
 
+OAuth2TokenService::Request* ProfileOAuth2TokenServiceRequest::Core::request() {
+  return request_.get();
+}
+
 void ProfileOAuth2TokenServiceRequest::Core::StopOnUIThread() {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
   request_.reset();
@@ -137,8 +146,12 @@ void ProfileOAuth2TokenServiceRequest::Core::StartOnUIThread(
   ProfileOAuth2TokenService* service =
       ProfileOAuth2TokenServiceFactory::GetForProfile(profile_);
   DCHECK(service);
+  SigninManagerBase* signin_manager =
+      SigninManagerFactory::GetForProfile(profile_);
+  DCHECK(signin_manager);
   std::string account_id_to_use =
-      account_id.empty() ? service->GetPrimaryAccountId() : account_id;
+      account_id.empty() ? signin_manager->GetAuthenticatedAccountId()
+                         : account_id;
   request_.reset(
       service->StartRequest(account_id_to_use, scopes, this).release());
 }
@@ -211,3 +224,8 @@ ProfileOAuth2TokenServiceRequest::~ProfileOAuth2TokenServiceRequest() {
   DCHECK(CalledOnValidThread());
   core_->Stop();
 }
+
+std::string ProfileOAuth2TokenServiceRequest::GetAccountId() const {
+  return core_->request()->GetAccountId();
+}
+

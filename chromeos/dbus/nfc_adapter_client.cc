@@ -11,7 +11,6 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
 #include "base/strings/stringprintf.h"
-#include "chromeos/dbus/fake_nfc_adapter_client.h"
 #include "chromeos/dbus/nfc_manager_client.h"
 #include "dbus/bus.h"
 #include "dbus/message.h"
@@ -63,6 +62,11 @@ class NfcAdapterClientImpl
   virtual void RemoveObserver(NfcAdapterClient::Observer* observer) OVERRIDE {
     DCHECK(observer);
     observers_.RemoveObserver(observer);
+  }
+
+  // NfcAdapterClient override.
+  virtual std::vector<dbus::ObjectPath> GetAdapters() OVERRIDE {
+    return object_map_->GetObjectPaths();
   }
 
   // NfcAdapterClient override.
@@ -148,9 +152,8 @@ class NfcAdapterClientImpl
     if (property_name != manager_properties->adapters.name())
       return;
 
-    VLOG(1) << "NFC adapters changed.";
-
     // Update the known adapters.
+    VLOG(1) << "NFC adapters changed.";
     const std::vector<dbus::ObjectPath>& received_adapters =
         manager_properties->adapters.value();
     object_map_->UpdateObjects(received_adapters);
@@ -172,6 +175,7 @@ class NfcAdapterClientImpl
                       AdapterAdded(object_path));
   }
 
+  // nfc_client_helpers::DBusObjectMap::Delegate override.
   virtual void ObjectRemoved(const dbus::ObjectPath& object_path) OVERRIDE {
     FOR_EACH_OBSERVER(NfcAdapterClient::Observer, observers_,
                       AdapterRemoved(object_path));
@@ -191,15 +195,15 @@ class NfcAdapterClientImpl
   // new NFC adapters that appear.
   dbus::Bus* bus_;
 
+  // List of observers interested in event notifications.
+  ObserverList<NfcAdapterClient::Observer> observers_;
+
   // Mapping from object paths to object proxies and properties structures that
   // were already created by us.
   scoped_ptr<nfc_client_helpers::DBusObjectMap> object_map_;
 
   // The manager client that we listen to events notifications from.
   NfcManagerClient* manager_client_;
-
-  // List of observers interested in event notifications.
-  ObserverList<NfcAdapterClient::Observer> observers_;
 
   // Weak pointer factory for generating 'this' pointers that might live longer
   // than we do.
@@ -216,12 +220,8 @@ NfcAdapterClient::NfcAdapterClient() {
 NfcAdapterClient::~NfcAdapterClient() {
 }
 
-NfcAdapterClient* NfcAdapterClient::Create(DBusClientImplementationType type,
-                                           NfcManagerClient* manager_client) {
-  if (type == REAL_DBUS_CLIENT_IMPLEMENTATION)
-    return new NfcAdapterClientImpl(manager_client);
-  DCHECK_EQ(STUB_DBUS_CLIENT_IMPLEMENTATION, type);
-  return new FakeNfcAdapterClient();
+NfcAdapterClient* NfcAdapterClient::Create(NfcManagerClient* manager_client) {
+  return new NfcAdapterClientImpl(manager_client);
 }
 
 }  // namespace chromeos

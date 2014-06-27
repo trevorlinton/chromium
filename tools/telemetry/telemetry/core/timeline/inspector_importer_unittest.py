@@ -3,8 +3,15 @@
 # found in the LICENSE file.
 import unittest
 
+from telemetry.core.backends.chrome import inspector_timeline_data
 from telemetry.core.timeline import inspector_importer
 from telemetry.core.timeline import model
+
+_BACKGROUND_MESSAGE = {
+  'data': {},
+  'type': 'BeginFrame',
+  'thread': '2',
+  'startTime': 1352783525921.824}
 
 _SAMPLE_MESSAGE = {
   'children': [
@@ -93,20 +100,49 @@ class InspectorEventParsingTest(unittest.TestCase):
         RawEventToTimelineEvent(raw_event))
     self.assertEquals(None, event)
 
-  def testEventsWithNoEndTimeAreDropped(self):
+  def testEventsWithNoEndTimeAreOk(self):
     raw_event = {'type': 'Foo',
-                 'endTime': 1,
+                 'startTime': 1,
                  'children': []}
     event = (inspector_importer.InspectorTimelineImporter.
         RawEventToTimelineEvent(raw_event))
-    self.assertEquals(None, event)
+    self.assertEquals(1, event.start)
+    self.assertEquals(1, event.end)
+
+  def testOutOfOrderData(self):
+    raw_event = {
+      'startTime': 5295.004, 'endTime': 5305.004,
+      'data': {}, 'type': 'Program',
+      'children': [
+        {'startTime': 5295.004, 'data': {'id': 0}, 'type': 'BeginFrame', },
+        {'startTime': 4492.973, 'endTime': 4493.086, 'data': {'rootNode': -3},
+         'type': 'PaintSetup'},
+        {'startTime': 5298.004, 'endTime': 5301.004, 'type': 'Paint',
+         'frameId': '53228.1',
+         'data': {'rootNode': -3, 'clip': [0, 0, 1018, 0, 1018, 764, 0, 764],
+                  'layerId': 10}, 'children': []},
+        {'startTime': 5301.004, 'endTime': 5305.004, 'data': {},
+         'type': 'CompositeLayers', 'children': []},
+        {'startTime': 5305.004, 'data': {}, 'type': 'MarkFirstPaint'}
+    ]}
+    timeline_data = inspector_timeline_data.InspectorTimelineData([raw_event])
+    model.TimelineModel(timeline_data=timeline_data, shift_world_to_zero=False)
 
 class InspectorImporterTest(unittest.TestCase):
   def testImport(self):
-    m = model.TimelineModel([_SAMPLE_MESSAGE], shift_world_to_zero=False)
+    messages = [_BACKGROUND_MESSAGE, _SAMPLE_MESSAGE]
+    timeline_data = inspector_timeline_data.InspectorTimelineData(messages)
+    m = model.TimelineModel(timeline_data=timeline_data,
+                            shift_world_to_zero=False)
     self.assertEquals(1, len(m.processes))
-    self.assertEquals(1, len(m.processes.values()[0].threads))
-    renderer_thread = m.GetAllThreads()[0]
+    process = m.processes.values()[0]
+    threads = process.threads
+    self.assertEquals(2, len(threads))
+    renderer_thread = threads[0]
     self.assertEquals(1, len(renderer_thread.toplevel_slices))
     self.assertEquals('Program',
                       renderer_thread.toplevel_slices[0].name)
+    second_thread = threads['2']
+    self.assertEquals(1, len(second_thread.toplevel_slices))
+    self.assertEquals('BeginFrame',
+                      second_thread.toplevel_slices[0].name)

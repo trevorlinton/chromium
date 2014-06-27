@@ -9,12 +9,17 @@
 
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
-#include "chrome/browser/extensions/api/api_function.h"
 #include "chrome/browser/extensions/api/bluetooth/bluetooth_extension_function.h"
-#include "chrome/browser/extensions/event_router.h"
-#include "components/browser_context_keyed_service/browser_context_keyed_service.h"
 #include "device/bluetooth/bluetooth_device.h"
 #include "device/bluetooth/bluetooth_profile.h"
+#include "extensions/browser/api/async_api_function.h"
+#include "extensions/browser/browser_context_keyed_api_factory.h"
+#include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_function.h"
+
+namespace content {
+class BrowserContext;
+}
 
 namespace device {
 
@@ -30,18 +35,20 @@ namespace extensions {
 class ExtensionBluetoothEventRouter;
 
 // The profile-keyed service that manages the bluetooth extension API.
-class BluetoothAPI : public BrowserContextKeyedService,
+class BluetoothAPI : public BrowserContextKeyedAPI,
                      public EventRouter::Observer {
  public:
   // Convenience method to get the BluetoothAPI for a profile.
-  static BluetoothAPI* Get(Profile* profile);
+  static BluetoothAPI* Get(content::BrowserContext* context);
 
-  explicit BluetoothAPI(Profile* profile);
+  static BrowserContextKeyedAPIFactory<BluetoothAPI>* GetFactoryInstance();
+
+  explicit BluetoothAPI(content::BrowserContext* context);
   virtual ~BluetoothAPI();
 
   ExtensionBluetoothEventRouter* bluetooth_event_router();
 
-  // BrowserContextKeyedService implementation.
+  // KeyedService implementation.
   virtual void Shutdown() OVERRIDE;
 
   // EventRouter::Observer implementation.
@@ -49,7 +56,14 @@ class BluetoothAPI : public BrowserContextKeyedService,
   virtual void OnListenerRemoved(const EventListenerInfo& details) OVERRIDE;
 
  private:
-  Profile* profile_;
+  friend class BrowserContextKeyedAPIFactory<BluetoothAPI>;
+
+  // BrowserContextKeyedAPI implementation.
+  static const char* service_name() { return "BluetoothAPI"; }
+  static const bool kServiceRedirectedInIncognito = true;
+  static const bool kServiceIsNULLWhileTesting = true;
+
+  content::BrowserContext* browser_context_;
 
   // Created lazily on first access.
   scoped_ptr<ExtensionBluetoothEventRouter> bluetooth_event_router_;
@@ -57,7 +71,7 @@ class BluetoothAPI : public BrowserContextKeyedService,
 
 namespace api {
 
-class BluetoothAddProfileFunction : public ChromeAsyncExtensionFunction {
+class BluetoothAddProfileFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("bluetooth.addProfile", BLUETOOTH_ADDPROFILE)
 
@@ -77,7 +91,7 @@ class BluetoothAddProfileFunction : public ChromeAsyncExtensionFunction {
   std::string uuid_;
 };
 
-class BluetoothRemoveProfileFunction : public ChromeSyncExtensionFunction {
+class BluetoothRemoveProfileFunction : public SyncExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("bluetooth.removeProfile",
                              BLUETOOTH_REMOVEPROFILE)
@@ -85,17 +99,6 @@ class BluetoothRemoveProfileFunction : public ChromeSyncExtensionFunction {
  protected:
   virtual ~BluetoothRemoveProfileFunction() {}
   virtual bool RunImpl() OVERRIDE;
-};
-
-class BluetoothGetProfilesFunction : public BluetoothExtensionFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("bluetooth.getProfiles", BLUETOOTH_GETPROFILES)
-
- protected:
-  virtual ~BluetoothGetProfilesFunction() {}
-
-  // BluetoothExtensionFunction:
-  virtual bool DoWork(scoped_refptr<device::BluetoothAdapter> adapter) OVERRIDE;
 };
 
 class BluetoothGetAdapterStateFunction : public BluetoothExtensionFunction {
@@ -114,36 +117,22 @@ class BluetoothGetDevicesFunction : public BluetoothExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("bluetooth.getDevices", BLUETOOTH_GETDEVICES)
 
-  BluetoothGetDevicesFunction();
-
  protected:
   virtual ~BluetoothGetDevicesFunction() {}
 
   // BluetoothExtensionFunction:
   virtual bool DoWork(scoped_refptr<device::BluetoothAdapter> adapter) OVERRIDE;
-
- private:
-  void DispatchDeviceSearchResult(const device::BluetoothDevice& device);
-  void FinishDeviceSearch();
-
-  int device_events_sent_;
 };
 
-class BluetoothGetServicesFunction : public BluetoothExtensionFunction {
+class BluetoothGetDeviceFunction : public BluetoothExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("bluetooth.getServices", BLUETOOTH_GETSERVICES)
+  DECLARE_EXTENSION_FUNCTION("bluetooth.getDevice", BLUETOOTH_GETDEVICE)
 
  protected:
-  virtual ~BluetoothGetServicesFunction() {}
+  virtual ~BluetoothGetDeviceFunction() {}
 
   // BluetoothExtensionFunction:
   virtual bool DoWork(scoped_refptr<device::BluetoothAdapter> adapter) OVERRIDE;
-
- private:
-  void GetServiceRecordsCallback(
-      base::ListValue* services,
-      const device::BluetoothDevice::ServiceRecordList& records);
-  void OnErrorCallback();
 };
 
 class BluetoothConnectFunction : public BluetoothExtensionFunction {
@@ -161,7 +150,7 @@ class BluetoothConnectFunction : public BluetoothExtensionFunction {
   void OnErrorCallback();
 };
 
-class BluetoothDisconnectFunction : public ChromeSyncExtensionFunction {
+class BluetoothDisconnectFunction : public SyncExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("bluetooth.disconnect", BLUETOOTH_DISCONNECT)
 

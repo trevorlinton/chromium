@@ -8,9 +8,9 @@
 #include "media/base/gmock_callback_support.h"
 #include "media/base/mock_filters.h"
 #include "media/base/test_helpers.h"
+#include "media/filters/decoder_stream.h"
 #include "media/filters/fake_demuxer_stream.h"
 #include "media/filters/fake_video_decoder.h"
-#include "media/filters/video_frame_stream.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using ::testing::_;
@@ -26,14 +26,17 @@ static const int kDecodingDelay = 7;
 
 namespace media {
 
-class VideoFrameStreamTest : public testing::TestWithParam<bool> {
+class VideoFrameStreamTest
+    : public testing::Test,
+      public testing::WithParamInterface<std::tr1::tuple<bool, bool> > {
  public:
   VideoFrameStreamTest()
       : demuxer_stream_(new FakeDemuxerStream(kNumConfigs,
                                               kNumBuffersInOneConfig,
-                                              GetParam())),
+                                              IsEncrypted())),
         decryptor_(new NiceMock<MockDecryptor>()),
-        decoder_(new FakeVideoDecoder(kDecodingDelay)),
+        decoder_(
+            new FakeVideoDecoder(kDecodingDelay, IsGetDecodeOutputEnabled())),
         is_initialized_(false),
         num_decoded_frames_(0),
         pending_initialize_(false),
@@ -70,6 +73,14 @@ class VideoFrameStreamTest : public testing::TestWithParam<bool> {
     EXPECT_FALSE(is_initialized_);
   }
 
+  bool IsEncrypted() {
+    return std::tr1::get<0>(GetParam());
+  }
+
+  bool IsGetDecodeOutputEnabled() {
+    return std::tr1::get<1>(GetParam());
+  }
+
   MOCK_METHOD1(SetDecryptorReadyCallback, void(const media::DecryptorReadyCB&));
 
   void OnStatistics(const PipelineStatistics& statistics) {
@@ -102,6 +113,7 @@ class VideoFrameStreamTest : public testing::TestWithParam<bool> {
   void Decrypt(Decryptor::StreamType stream_type,
                const scoped_refptr<DecoderBuffer>& encrypted,
                const Decryptor::DecryptCB& decrypt_cb) {
+    DCHECK(encrypted->decrypt_config());
     if (has_no_key_) {
       decrypt_cb.Run(Decryptor::kNoKey, NULL);
       return;
@@ -124,7 +136,7 @@ class VideoFrameStreamTest : public testing::TestWithParam<bool> {
     ASSERT_TRUE(status == VideoFrameStream::OK ||
                 status == VideoFrameStream::ABORTED) << status;
     frame_read_ = frame;
-    if (frame.get() && !frame->IsEndOfStream())
+    if (frame.get() && !frame->end_of_stream())
       num_decoded_frames_++;
     pending_read_ = false;
   }
@@ -329,8 +341,14 @@ class VideoFrameStreamTest : public testing::TestWithParam<bool> {
   DISALLOW_COPY_AND_ASSIGN(VideoFrameStreamTest);
 };
 
-INSTANTIATE_TEST_CASE_P(Clear, VideoFrameStreamTest, testing::Values(false));
-INSTANTIATE_TEST_CASE_P(Encrypted, VideoFrameStreamTest, testing::Values(true));
+INSTANTIATE_TEST_CASE_P(Clear, VideoFrameStreamTest,
+  testing::Combine(testing::Values(false), testing::Values(false)));
+INSTANTIATE_TEST_CASE_P(Clear_GetDecodeOutput, VideoFrameStreamTest,
+  testing::Combine(testing::Values(false), testing::Values(true)));
+INSTANTIATE_TEST_CASE_P(Encrypted, VideoFrameStreamTest,
+  testing::Combine(testing::Values(true), testing::Values(false)));
+INSTANTIATE_TEST_CASE_P(Encrypted_GetDecodeOutput, VideoFrameStreamTest,
+  testing::Combine(testing::Values(true), testing::Values(true)));
 
 TEST_P(VideoFrameStreamTest, Initialization) {
   Initialize();
@@ -345,7 +363,7 @@ TEST_P(VideoFrameStreamTest, ReadAllFrames) {
   Initialize();
   do {
     Read();
-  } while (frame_read_.get() && !frame_read_->IsEndOfStream());
+  } while (frame_read_.get() && !frame_read_->end_of_stream());
 
   const int total_num_frames = kNumConfigs * kNumBuffersInOneConfig;
   DCHECK_EQ(num_decoded_frames_, total_num_frames);
@@ -442,7 +460,7 @@ TEST_P(VideoFrameStreamTest, Stop_BeforeInitialization) {
 }
 
 TEST_P(VideoFrameStreamTest, Stop_DuringSetDecryptor) {
-  if (!GetParam()) {
+  if (!IsEncrypted()) {
     DVLOG(1) << "SetDecryptor test only runs when the stream is encrytped.";
     return;
   }

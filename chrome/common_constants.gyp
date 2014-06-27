@@ -8,7 +8,7 @@
   },
 
   'includes': [
-    'version.gypi',
+    '../build/util/version.gypi',
   ],
 
   'target_defaults': {
@@ -18,6 +18,8 @@
       '../extensions/common/constants.h',
       'common/chrome_constants.cc',
       'common/chrome_constants.h',
+      'common/chrome_icon_resources_win.cc',
+      'common/chrome_icon_resources_win.h',
       'common/chrome_paths.cc',
       'common/chrome_paths.h',
       'common/chrome_paths_android.cc',
@@ -70,7 +72,8 @@
       ],
       'dependencies': [
         '../base/base.gyp:base',
-        '../components/nacl_common.gyp:nacl_switches',
+        '../base/third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations',
+        '../components/nacl.gyp:nacl_switches',
         '../third_party/widevine/cdm/widevine_cdm.gyp:widevine_cdm_version_h',
       ],
       'target_conditions': [
@@ -99,8 +102,9 @@
             '<(SHARED_INTERMEDIATE_DIR)',  # Needed by chrome_paths.cc.
           ],
           'dependencies': [
-            '../base/base.gyp:base_nacl_win64',
-            '../components/nacl_common.gyp:nacl_switches_win64',
+            '../base/base.gyp:base_win64',
+            '../base/third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations_win64',
+            '../components/nacl.gyp:nacl_switches_win64',
             '../third_party/widevine/cdm/widevine_cdm.gyp:widevine_cdm_version_h',
           ],
           'defines': [

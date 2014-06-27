@@ -12,7 +12,7 @@
 #include "ui/views/widget/widget_observer.h"
 
 #if defined(OS_CHROMEOS)
-#include "chromeos/display/output_configurator.h"
+#include "ui/display/chromeos/output_configurator.h"
 #endif  // defined(OS_CHROMEOS)
 
 namespace views {
@@ -24,14 +24,13 @@ namespace internal {
 
 // An event filter which handles system level gesture events. Objects of this
 // class manage their own lifetime.
-class ASH_EXPORT TouchObserverHUD
-    : public ui::EventHandler,
-      public views::WidgetObserver,
-      public gfx::DisplayObserver,
+class ASH_EXPORT TouchObserverHUD : public ui::EventHandler,
+                                    public views::WidgetObserver,
+                                    public gfx::DisplayObserver,
 #if defined(OS_CHROMEOS)
-      public chromeos::OutputConfigurator::Observer,
+                                    public ui::OutputConfigurator::Observer,
 #endif  // defined(OS_CHROMEOS)
-      public DisplayController::Observer {
+                                    public DisplayController::Observer {
  public:
   // Called to clear touch points and traces from the screen. Default
   // implementation does nothing. Sub-classes should implement appropriately.
@@ -43,7 +42,7 @@ class ASH_EXPORT TouchObserverHUD
   int64 display_id() const { return display_id_; }
 
  protected:
-  explicit TouchObserverHUD(aura::RootWindow* initial_root);
+  explicit TouchObserverHUD(aura::Window* initial_root);
 
   virtual ~TouchObserverHUD();
 
@@ -66,13 +65,13 @@ class ASH_EXPORT TouchObserverHUD
   virtual void OnDisplayRemoved(const gfx::Display& old_display) OVERRIDE;
 
 #if defined(OS_CHROMEOS)
-  // Overriden from chromeos::OutputConfigurator::Observer.
+  // Overriden from ui::OutputConfigurator::Observer.
   virtual void OnDisplayModeChanged(
-      const std::vector<chromeos::OutputConfigurator::OutputSnapshot>& outputs)
-      OVERRIDE;
+      const ui::OutputConfigurator::DisplayStateList& outputs) OVERRIDE;
 #endif  // defined(OS_CHROMEOS)
 
   // Overriden form DisplayController::Observer.
+  virtual void OnDisplaysInitialized() OVERRIDE;
   virtual void OnDisplayConfigurationChanging() OVERRIDE;
   virtual void OnDisplayConfigurationChanged() OVERRIDE;
 

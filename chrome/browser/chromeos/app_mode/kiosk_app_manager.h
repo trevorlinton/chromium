@@ -20,9 +20,14 @@
 #include "ui/gfx/image/image_skia.h"
 
 class PrefRegistrySimple;
+class Profile;
 
 namespace base {
 class RefCountedString;
+}
+
+namespace extensions {
+class Extension;
 }
 
 namespace chromeos {
@@ -33,19 +38,19 @@ class KioskAppManagerObserver;
 // KioskAppManager manages cached app data.
 class KioskAppManager : public KioskAppDataDelegate {
  public:
-  enum ConsumerKioskModeStatus {
-    // Consumer kiosk mode can be enabled on this machine.
-    CONSUMER_KIOSK_MODE_CONFIGURABLE,
-    // Consumer kiosk is enabled on this machine.
-    CONSUMER_KIOSK_MODE_ENABLED,
-    // Consumer kiosk mode is disabled ans cannot any longer be enabled on
-    // this machine.
-    CONSUMER_KIOSK_MODE_DISABLED,
+  enum ConsumerKioskAutoLaunchStatus {
+    // Consumer kiosk mode auto-launch feature can be enabled on this machine.
+    CONSUMER_KIOSK_AUTO_LAUNCH_CONFIGURABLE,
+    // Consumer kiosk auto-launch feature is enabled on this machine.
+    CONSUMER_KIOSK_AUTO_LAUNCH_ENABLED,
+    // Consumer kiosk mode auto-launch feature is disabled and cannot any longer
+    // be enabled on this machine.
+    CONSUMER_KIOSK_AUTO_LAUNCH_DISABLED,
   };
 
-  typedef base::Callback<void(bool success)> EnableKioskModeCallback;
-  typedef base::Callback<void(ConsumerKioskModeStatus status)>
-      GetConsumerKioskModeStatusCallback;
+  typedef base::Callback<void(bool success)> EnableKioskAutoLaunchCallback;
+  typedef base::Callback<void(ConsumerKioskAutoLaunchStatus status)>
+      GetConsumerKioskAutoLaunchStatusCallback;
 
   // Struct to hold app info returned from GetApps() call.
   struct App {
@@ -82,13 +87,17 @@ class KioskAppManager : public KioskAppDataDelegate {
   // Registers kiosk app entries in local state.
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
-  // Initiates reading of consumer kiosk mode status.
-  void GetConsumerKioskModeStatus(
-      const GetConsumerKioskModeStatusCallback& callback);
+  // Initiates reading of consumer kiosk mode auto-launch status.
+  void GetConsumerKioskAutoLaunchStatus(
+      const GetConsumerKioskAutoLaunchStatusCallback& callback);
 
-  // Enables consumer kiosk mode feature. Upon completion, |callback| will be
-  // invoked with outcome of this operation.
-  void EnableConsumerModeKiosk(const EnableKioskModeCallback& callback);
+  // Enables consumer kiosk mode app auto-launch feature. Upon completion,
+  // |callback| will be invoked with outcome of this operation.
+  void EnableConsumerKioskAutoLaunch(
+      const EnableKioskAutoLaunchCallback& callback);
+
+  // Returns true if this device is consumer kiosk auto launch enabled.
+  bool IsConsumerKioskDeviceWithAutoLaunch();
 
   // Returns auto launcher app id or an empty string if there is none.
   std::string GetAutoLaunchApp() const;
@@ -110,7 +119,7 @@ class KioskAppManager : public KioskAppDataDelegate {
   void AddApp(const std::string& app_id);
   void RemoveApp(const std::string& app_id);
 
-  // Gets info of all apps.
+  // Gets info of all apps that have no meta data load error.
   void GetApps(Apps* apps) const;
 
   // Gets app data for the given app id. Returns true if |app_id| is known and
@@ -123,6 +132,18 @@ class KioskAppManager : public KioskAppDataDelegate {
 
   // Gets whether the bailout shortcut is disabled.
   bool GetDisableBailoutShortcut() const;
+
+  // Clears locally cached app data.
+  void ClearAppData(const std::string& app_id);
+
+  // Updates app data from the |app| in |profile|. |app| is provided to cover
+  // the case of app update case where |app| is the new version and is not
+  // finished installing (e.g. because old version is still running). Otherwise,
+  // |app| could be NULL and the current installed app in |profile| will be
+  // used.
+  void UpdateAppDataFromProfile(const std::string& app_id,
+                                Profile* profile,
+                                const extensions::Extension* app);
 
   void AddObserver(KioskAppManagerObserver* observer);
   void RemoveObserver(KioskAppManagerObserver* observer);
@@ -148,6 +169,7 @@ class KioskAppManager : public KioskAppDataDelegate {
 
   // Gets KioskAppData for the given app id.
   const KioskAppData* GetAppData(const std::string& app_id) const;
+  KioskAppData* GetAppDataMutable(const std::string& app_id);
 
   // Update app data |apps_| based on CrosSettings.
   void UpdateAppData();
@@ -160,18 +182,18 @@ class KioskAppManager : public KioskAppDataDelegate {
   // Callback for EnterpriseInstallAttributes::LockDevice() during
   // EnableConsumerModeKiosk() call.
   void OnLockDevice(
-      const EnableKioskModeCallback& callback,
+      const EnableKioskAutoLaunchCallback& callback,
       policy::EnterpriseInstallAttributes::LockResult result);
 
   // Callback for EnterpriseInstallAttributes::ReadImmutableAttributes() during
   // GetConsumerKioskModeStatus() call.
   void OnReadImmutableAttributes(
-      const GetConsumerKioskModeStatusCallback& callback);
+      const GetConsumerKioskAutoLaunchStatusCallback& callback);
 
   // Callback for reading handling checks of the owner public.
   void OnOwnerFileChecked(
-      const GetConsumerKioskModeStatusCallback& callback,
-      bool *owner_present);
+      const GetConsumerKioskAutoLaunchStatusCallback& callback,
+      bool* owner_present);
 
   // Reads/writes auto login state from/to local state.
   AutoLoginState GetAutoLoginState() const;

@@ -11,17 +11,13 @@
 #include "third_party/WebKit/public/platform/WebURL.h"
 #include "third_party/WebKit/public/platform/WebURLRequest.h"
 #include "third_party/WebKit/public/platform/WebURLResponse.h"
-#include "third_party/WebKit/public/web/WebDataSource.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
 
-using WebKit::WebApplicationCacheHost;
-using WebKit::WebApplicationCacheHostClient;
-using WebKit::WebDataSource;
-using WebKit::WebFrame;
-using WebKit::WebURLRequest;
-using WebKit::WebURL;
-using WebKit::WebURLResponse;
-using WebKit::WebVector;
+using blink::WebApplicationCacheHost;
+using blink::WebApplicationCacheHostClient;
+using blink::WebURLRequest;
+using blink::WebURL;
+using blink::WebURLResponse;
+using blink::WebVector;
 using appcache::AppCacheBackend;
 using appcache::AppCacheResourceInfo;
 
@@ -55,17 +51,6 @@ GURL ClearUrlRef(const GURL& url) {
 
 WebApplicationCacheHostImpl* WebApplicationCacheHostImpl::FromId(int id) {
   return all_hosts()->Lookup(id);
-}
-
-WebApplicationCacheHostImpl* WebApplicationCacheHostImpl::FromFrame(
-    const WebFrame* frame) {
-  if (!frame)
-    return NULL;
-  WebDataSource* data_source = frame->dataSource();
-  if (!data_source)
-    return NULL;
-  return static_cast<WebApplicationCacheHostImpl*>
-      (data_source->applicationCacheHost());
 }
 
 WebApplicationCacheHostImpl::WebApplicationCacheHostImpl(
@@ -161,7 +146,7 @@ void WebApplicationCacheHostImpl::OnErrorEventRaised(
 }
 
 void WebApplicationCacheHostImpl::willStartMainResourceRequest(
-    WebURLRequest& request, const WebFrame* frame) {
+    WebURLRequest& request, const WebApplicationCacheHost* spawning_host) {
   request.setAppCacheHostID(host_id_);
 
   original_main_resource_url_ = ClearUrlRef(request.url());
@@ -170,18 +155,11 @@ void WebApplicationCacheHostImpl::willStartMainResourceRequest(
   is_get_method_ = (method == appcache::kHttpGETMethod);
   DCHECK(method == StringToUpperASCII(method));
 
-  if (frame) {
-    const WebFrame* spawning_frame = frame->parent();
-    if (!spawning_frame)
-      spawning_frame = frame->opener();
-    if (!spawning_frame)
-      spawning_frame = frame;
-
-    WebApplicationCacheHostImpl* spawning_host = FromFrame(spawning_frame);
-    if (spawning_host && (spawning_host != this) &&
-        (spawning_host->status_ != appcache::UNCACHED)) {
-      backend_->SetSpawningHostId(host_id_, spawning_host->host_id());
-    }
+  const WebApplicationCacheHostImpl* spawning_host_impl =
+      static_cast<const WebApplicationCacheHostImpl*>(spawning_host);
+  if (spawning_host_impl && (spawning_host_impl != this) &&
+      (spawning_host_impl->status_ != appcache::UNCACHED)) {
+    backend_->SetSpawningHostId(host_id_, spawning_host_impl->host_id());
   }
 }
 

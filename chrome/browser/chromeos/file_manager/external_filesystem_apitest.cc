@@ -6,17 +6,22 @@
 #include "base/file_util.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/drive/drive_integration_service.h"
+#include "chrome/browser/chromeos/drive/test_util.h"
 #include "chrome/browser/chromeos/file_manager/drive_test_util.h"
+#include "chrome/browser/chromeos/file_manager/volume_manager.h"
 #include "chrome/browser/drive/fake_drive_service.h"
 #include "chrome/browser/extensions/extension_apitest.h"
-#include "chrome/browser/google_apis/test_util.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/common/chrome_constants.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/test_utils.h"
+#include "google_apis/drive/test_util.h"
 #include "webkit/browser/fileapi/external_mount_points.h"
 
 // Tests for access to external file systems (as defined in
@@ -43,6 +48,7 @@
 // - Doing searches on drive file system from file browser extension (using
 //   fileBrowserPrivate API).
 
+using drive::DriveIntegrationServiceFactory;
 using extensions::Extension;
 
 namespace file_manager {
@@ -81,26 +87,28 @@ const char kTestRootFeed[] =
 
 // Sets up the initial file system state for native local and restricted native
 // local file systems. The hierarchy is the same as for the drive file system.
-bool InitializeLocalFileSystem(base::ScopedTempDir* tmp_dir,
+// The directory is created at unique_temp_dir/|mount_point_name| path.
+bool InitializeLocalFileSystem(std::string mount_point_name,
+                               base::ScopedTempDir* tmp_dir,
                                base::FilePath* mount_point_dir) {
   if (!tmp_dir->CreateUniqueTempDir())
     return false;
 
-  *mount_point_dir = tmp_dir->path().AppendASCII("mount");
+  *mount_point_dir = tmp_dir->path().AppendASCII(mount_point_name);
   // Create the mount point.
-  if (!file_util::CreateDirectory(*mount_point_dir))
+  if (!base::CreateDirectory(*mount_point_dir))
     return false;
 
   base::FilePath test_dir = mount_point_dir->AppendASCII("test_dir");
-  if (!file_util::CreateDirectory(test_dir))
+  if (!base::CreateDirectory(test_dir))
     return false;
 
   base::FilePath test_subdir = test_dir.AppendASCII("empty_test_dir");
-  if (!file_util::CreateDirectory(test_subdir))
+  if (!base::CreateDirectory(test_subdir))
     return false;
 
   test_subdir = test_dir.AppendASCII("subdir");
-  if (!file_util::CreateDirectory(test_subdir))
+  if (!base::CreateDirectory(test_subdir))
     return false;
 
   base::FilePath test_file = test_dir.AppendASCII("test_file.xul");
@@ -240,7 +248,8 @@ class LocalFileSystemExtensionApiTest : public FileSystemExtensionApiTestBase {
 
   // FileSystemExtensionApiTestBase OVERRIDE.
   virtual void InitTestFileSystem() OVERRIDE {
-    ASSERT_TRUE(InitializeLocalFileSystem(&tmp_dir_, &mount_point_dir_))
+    ASSERT_TRUE(InitializeLocalFileSystem(
+        kLocalMountPointName, &tmp_dir_, &mount_point_dir_))
         << "Failed to initialize file system.";
   }
 
@@ -249,7 +258,10 @@ class LocalFileSystemExtensionApiTest : public FileSystemExtensionApiTestBase {
     EXPECT_TRUE(content::BrowserContext::GetMountPoints(browser()->profile())->
         RegisterFileSystem(kLocalMountPointName,
                            fileapi::kFileSystemTypeNativeLocal,
+                           fileapi::FileSystemMountOption(),
                            mount_point_dir_));
+    VolumeManager::Get(browser()->profile())->AddVolumeInfoForTesting(
+        mount_point_dir_, VOLUME_TYPE_TESTING, chromeos::DEVICE_TYPE_UNKNOWN);
   }
 
  private:
@@ -266,7 +278,8 @@ class RestrictedFileSystemExtensionApiTest
 
   // FileSystemExtensionApiTestBase OVERRIDE.
   virtual void InitTestFileSystem() OVERRIDE {
-    ASSERT_TRUE(InitializeLocalFileSystem(&tmp_dir_, &mount_point_dir_))
+    ASSERT_TRUE(InitializeLocalFileSystem(
+        kRestrictedMountPointName, &tmp_dir_, &mount_point_dir_))
         << "Failed to initialize file system.";
   }
 
@@ -275,7 +288,10 @@ class RestrictedFileSystemExtensionApiTest
     EXPECT_TRUE(content::BrowserContext::GetMountPoints(browser()->profile())->
         RegisterFileSystem(kRestrictedMountPointName,
                            fileapi::kFileSystemTypeRestrictedNativeLocal,
+                           fileapi::FileSystemMountOption(),
                            mount_point_dir_));
+    VolumeManager::Get(browser()->profile())->AddVolumeInfoForTesting(
+        mount_point_dir_, VOLUME_TYPE_TESTING, chromeos::DEVICE_TYPE_UNKNOWN);
   }
 
  private:
@@ -296,10 +312,13 @@ class DriveFileSystemExtensionApiTest : public FileSystemExtensionApiTestBase {
     // initialized by EventRouter.
     ASSERT_TRUE(test_cache_root_.CreateUniqueTempDir());
 
-    drive::DriveIntegrationServiceFactory::SetFactoryForTest(
-        base::Bind(
-            &DriveFileSystemExtensionApiTest::CreateDriveIntegrationService,
-            base::Unretained(this)));
+    // This callback will get called during Profile creation.
+    create_drive_integration_service_ = base::Bind(
+        &DriveFileSystemExtensionApiTest::CreateDriveIntegrationService,
+        base::Unretained(this));
+    service_factory_for_test_.reset(
+        new DriveIntegrationServiceFactory::ScopedFactoryForTest(
+            &create_drive_integration_service_));
   }
 
   // FileSystemExtensionApiTestBase OVERRIDE.
@@ -319,11 +338,107 @@ class DriveFileSystemExtensionApiTest : public FileSystemExtensionApiTestBase {
 
     return new drive::DriveIntegrationService(
         profile, NULL,
-        fake_drive_service_, test_cache_root_.path(), NULL);
+        fake_drive_service_, "drive", test_cache_root_.path(), NULL);
   }
 
   base::ScopedTempDir test_cache_root_;
   drive::FakeDriveService* fake_drive_service_;
+  DriveIntegrationServiceFactory::FactoryCallback
+      create_drive_integration_service_;
+  scoped_ptr<DriveIntegrationServiceFactory::ScopedFactoryForTest>
+      service_factory_for_test_;
+};
+
+// Tests for Drive file systems in multi-profile setting.
+class MultiProfileDriveFileSystemExtensionApiTest :
+    public FileSystemExtensionApiTestBase {
+ public:
+  MultiProfileDriveFileSystemExtensionApiTest() : second_profile(NULL) {}
+
+  virtual void SetUpOnMainThread() OVERRIDE {
+    // Set up the secondary profile.
+    base::FilePath profile_dir;
+    base::CreateNewTempDirectory(base::FilePath::StringType(), &profile_dir);
+    profile_dir = profile_dir.AppendASCII(
+        std::string(chrome::kProfileDirPrefix) + "fileBrowserApiTestProfile2");
+    second_profile =
+        g_browser_process->profile_manager()->GetProfile(profile_dir);
+
+    FileSystemExtensionApiTestBase::SetUpOnMainThread();
+  }
+
+  virtual void InitTestFileSystem() OVERRIDE {
+    // This callback will get called during Profile creation.
+    create_drive_integration_service_ = base::Bind(
+        &MultiProfileDriveFileSystemExtensionApiTest::
+            CreateDriveIntegrationService,
+        base::Unretained(this));
+    service_factory_for_test_.reset(
+        new DriveIntegrationServiceFactory::ScopedFactoryForTest(
+            &create_drive_integration_service_));
+  }
+
+  virtual void AddTestMountPoint() OVERRIDE {
+    test_util::WaitUntilDriveMountPointIsAdded(browser()->profile());
+    test_util::WaitUntilDriveMountPointIsAdded(second_profile);
+  }
+
+ protected:
+  // DriveIntegrationService factory function for this test.
+  drive::DriveIntegrationService* CreateDriveIntegrationService(
+      Profile* profile) {
+    base::FilePath cache_dir;
+    base::CreateNewTempDirectory(base::FilePath::StringType(), &cache_dir);
+
+    drive::FakeDriveService* const fake_drive_service =
+        new drive::FakeDriveService;
+    fake_drive_service->LoadResourceListForWapi(kTestRootFeed);
+    fake_drive_service->LoadAccountMetadataForWapi(
+        "gdata/account_metadata.json");
+    fake_drive_service->LoadAppListForDriveApi("drive/applist.json");
+
+    return new drive::DriveIntegrationService(
+        profile, NULL, fake_drive_service, std::string(), cache_dir, NULL);
+  }
+
+  bool AddTestHostedDocuments() {
+    const char kResourceId[] = "document:unique-id-for-multiprofile-copy-test";
+    drive::FakeDriveService* const main_service =
+        static_cast<drive::FakeDriveService*>(
+            drive::util::GetDriveServiceByProfile(browser()->profile()));
+    drive::FakeDriveService* const sub_service =
+        static_cast<drive::FakeDriveService*>(
+            drive::util::GetDriveServiceByProfile(second_profile));
+
+    google_apis::GDataErrorCode error = google_apis::GDATA_OTHER_ERROR;
+    scoped_ptr<google_apis::ResourceEntry> entry;
+
+    // Place a hosted document under root/test_dir of the sub profile.
+    sub_service->AddNewFileWithResourceId(
+        kResourceId,
+        "application/vnd.google-apps.document", "",
+        "folder:1_folder_resource_id", "hosted_doc", true,
+        google_apis::test_util::CreateCopyResultCallback(&error, &entry));
+    drive::test_util::RunBlockingPoolTask();
+    if (error != google_apis::HTTP_CREATED)
+      return false;
+
+    // Place the hosted document with no parent in the main profile, for
+    // simulating the situation that the document is shared to the main profile.
+    error = google_apis::GDATA_OTHER_ERROR;
+    main_service->AddNewFileWithResourceId(
+        kResourceId,
+        "application/vnd.google-apps.document", "", "", "hosted_doc", true,
+        google_apis::test_util::CreateCopyResultCallback(&error, &entry));
+    drive::test_util::RunBlockingPoolTask();
+    return (error == google_apis::HTTP_CREATED);
+  }
+
+  DriveIntegrationServiceFactory::FactoryCallback
+      create_drive_integration_service_;
+  scoped_ptr<DriveIntegrationServiceFactory::ScopedFactoryForTest>
+      service_factory_for_test_;
+  Profile* second_profile;
 };
 
 //
@@ -428,6 +543,16 @@ IN_PROC_BROWSER_TEST_F(DriveFileSystemExtensionApiTest, AppFileHandler) {
       FILE_PATH_LITERAL("manifest.json"),
       "file_browser/app_file_handler",
       FLAGS_USE_FILE_HANDLER)) << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(MultiProfileDriveFileSystemExtensionApiTest,
+                       CrossProfileCopy) {
+  ASSERT_TRUE(AddTestHostedDocuments());
+  EXPECT_TRUE(RunFileSystemExtensionApiTest(
+      "file_browser/multi_profile_copy",
+      FILE_PATH_LITERAL("manifest.json"),
+      "",
+      FLAGS_NONE)) << message_;
 }
 
 }  // namespace

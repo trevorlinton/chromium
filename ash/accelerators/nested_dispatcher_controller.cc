@@ -6,6 +6,7 @@
 
 #include "ash/accelerators/accelerator_dispatcher.h"
 #include "ash/shell.h"
+#include "base/auto_reset.h"
 #include "base/run_loop.h"
 
 namespace ash {
@@ -17,20 +18,23 @@ NestedDispatcherController::~NestedDispatcherController() {
 }
 
 void NestedDispatcherController::RunWithDispatcher(
-    base::MessageLoop::Dispatcher* nested_dispatcher,
-    aura::Window* associated_window,
-    bool nestable_tasks_allowed) {
+    base::MessagePumpDispatcher* nested_dispatcher) {
   base::MessageLoopForUI* loop = base::MessageLoopForUI::current();
-  bool did_allow_task_nesting = loop->NestableTasksAllowed();
-  loop->SetNestableTasksAllowed(nestable_tasks_allowed);
+  base::MessageLoopForUI::ScopedNestableTaskAllower allow_nested(loop);
 
-  AcceleratorDispatcher dispatcher(nested_dispatcher, associated_window);
+  AcceleratorDispatcher dispatcher(nested_dispatcher);
 
   // TODO(jbates) crbug.com/134753 Find quitters of this RunLoop and have them
   //              use run_loop.QuitClosure().
   base::RunLoop run_loop(&dispatcher);
+  base::AutoReset<base::Closure> reset_closure(&quit_closure_,
+                                               run_loop.QuitClosure());
   run_loop.Run();
-  loop->SetNestableTasksAllowed(did_allow_task_nesting);
+}
+
+void NestedDispatcherController::QuitNestedMessageLoop() {
+  CHECK(!quit_closure_.is_null());
+  quit_closure_.Run();
 }
 
 }  // namespace ash

@@ -5,6 +5,13 @@
 #ifndef UI_EVENTS_X_DEVICE_DATA_MANAGER_H_
 #define UI_EVENTS_X_DEVICE_DATA_MANAGER_H_
 
+// Generically-named #defines from Xlib is conflicting with symbols in GTest.
+// So many tests .cc file #undef Bool before including device_data_manager.h,
+// which makes Bool unrecognized in XInput2.h.
+#ifndef Bool
+#define Bool int
+#endif
+
 #include <X11/extensions/XInput2.h>
 
 #include <bitset>
@@ -14,7 +21,7 @@
 #include "base/basictypes.h"
 #include "base/event_types.h"
 #include "ui/events/event_constants.h"
-#include "ui/events/events_export.h"
+#include "ui/events/events_base_export.h"
 #include "ui/gfx/x/x11_atom_cache.h"
 
 template <typename T> struct DefaultSingletonTraits;
@@ -31,7 +38,7 @@ enum GestureMetricsType {
 
 // A class that extracts and tracks the input events data. It currently handles
 // mouse, touchpad and touchscreen devices.
-class EVENTS_EXPORT DeviceDataManager {
+class EVENTS_BASE_EXPORT DeviceDataManager {
  public:
   // Enumerate additional data that one might be interested on an input event,
   // which are usually wrapped in X valuators. If you modify any of this,
@@ -102,6 +109,9 @@ class EVENTS_EXPORT DeviceDataManager {
   void set_natural_scroll_enabled(bool enabled) {
     natural_scroll_enabled_ = enabled;
   }
+
+  // Returns if XInput2 is available on the system.
+  bool IsXInput2Available() const;
 
   // Get the natural scroll direction multiplier (1.0f or -1.0f).
   float GetNaturalScrollFactor(int sourceid) const;
@@ -205,20 +215,17 @@ class EVENTS_EXPORT DeviceDataManager {
                     double* min,
                     double* max);
 
-  // Setups relevant valuator informations for device ids in the list |devices|.
+  // Sets up relevant valuator informations for device ids in the device lists.
   // This function is only for test purpose. It does not query the X server for
   // the actual device info, but rather inits the relevant valuator structures
   // to have safe default values for testing.
-  void SetDeviceListForTest(const std::vector<unsigned int>& devices);
+  void SetDeviceListForTest(const std::vector<unsigned int>& touchscreen,
+                            const std::vector<unsigned int>& cmt_devices);
 
-  // Setups device with |deviceid| to have valuator with type |data_type|,
-  // at index |val_index|, and with |min|/|max| values. This is only for test
-  // purpose.
-  void SetDeviceValuatorForTest(int deviceid,
-                                int val_index,
-                                DataType data_type,
-                                double min,
-                                double max);
+  void SetValuatorDataForTest(XIDeviceEvent* xievent,
+                              DataType type,
+                              double value);
+
  private:
   // Requirement for Singleton.
   friend struct DefaultSingletonTraits<DeviceDataManager>;
@@ -231,6 +238,12 @@ class EVENTS_EXPORT DeviceDataManager {
 
   // Check if an XI event contains data of the specified type.
   bool HasEventData(const XIDeviceEvent* xiev, const DataType type) const;
+
+  void InitializeValuatorsForTest(int deviceid,
+                                  int start_valuator,
+                                  int end_valuator,
+                                  double min_value,
+                                  double max_value);
 
   static const int kMaxDeviceNum = 128;
   static const int kMaxXIEventType = XI_LASTEVENT + 1;

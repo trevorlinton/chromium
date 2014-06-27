@@ -97,13 +97,12 @@ class HttpServerPropertiesManager
                                bool support_spdy) OVERRIDE;
 
   // Returns true if |server| has an Alternate-Protocol header.
-  virtual bool HasAlternateProtocol(
-      const net::HostPortPair& server) const OVERRIDE;
+  virtual bool HasAlternateProtocol(const net::HostPortPair& server) OVERRIDE;
 
   // Returns the Alternate-Protocol and port for |server|.
   // HasAlternateProtocol(server) must be true.
   virtual net::PortAlternateProtocolPair GetAlternateProtocol(
-      const net::HostPortPair& server) const OVERRIDE;
+      const net::HostPortPair& server) OVERRIDE;
 
   // Sets the Alternate-Protocol for |server|.
   virtual void SetAlternateProtocol(
@@ -115,6 +114,9 @@ class HttpServerPropertiesManager
   virtual void SetBrokenAlternateProtocol(
       const net::HostPortPair& server) OVERRIDE;
 
+  // Clears the Alternate-Protocol for |server|.
+  virtual void ClearAlternateProtocol(const net::HostPortPair& server) OVERRIDE;
+
   // Returns all Alternate-Protocol mappings.
   virtual const net::AlternateProtocolMap&
       alternate_protocol_map() const OVERRIDE;
@@ -122,7 +124,7 @@ class HttpServerPropertiesManager
   // Gets a reference to the SettingsMap stored for a host.
   // If no settings are stored, returns an empty SettingsMap.
   virtual const net::SettingsMap& GetSpdySettings(
-      const net::HostPortPair& host_port_pair) const OVERRIDE;
+      const net::HostPortPair& host_port_pair) OVERRIDE;
 
   // Saves an individual SPDY setting for a host. Returns true if SPDY setting
   // is to be persisted.
@@ -140,6 +142,12 @@ class HttpServerPropertiesManager
 
   // Returns all SPDY persistent settings.
   virtual const net::SpdySettingsMap& spdy_settings_map() const OVERRIDE;
+
+  virtual void SetServerNetworkStats(const net::HostPortPair& host_port_pair,
+                                     NetworkStats stats) OVERRIDE;
+
+  virtual const NetworkStats* GetServerNetworkStats(
+      const net::HostPortPair& host_port_pair) const OVERRIDE;
 
   virtual net::HttpPipelinedHostCapability GetPipelineCapability(
       const net::HostPortPair& origin) OVERRIDE;

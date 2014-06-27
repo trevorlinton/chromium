@@ -6,14 +6,14 @@
 #import "base/mac/scoped_nsobject.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "content/browser/renderer_host/test_render_view_host.h"
 #import "content/browser/web_contents/web_drag_dest_mac.h"
 #include "content/public/common/drop_data.h"
+#include "content/test/test_render_view_host.h"
 #include "content/test/test_web_contents.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #import "third_party/mozilla/NSPasteboard+Utils.h"
 #import "ui/base/dragdrop/cocoa_dnd_util.h"
-#import "ui/base/test/ui_cocoa_test_helper.h"
+#import "ui/gfx/test/ui_cocoa_test_helper.h"
 
 using content::DropData;
 using content::RenderViewHostImplTestHarness;
@@ -85,7 +85,7 @@ TEST_F(WebDragDestTest, URL) {
   NSString* url = nil;
   NSString* title = nil;
   GURL result_url;
-  string16 result_title;
+  base::string16 result_title;
 
   // Put a URL on the pasteboard and check it.
   pboard = [NSPasteboard pasteboardWithUniqueName];
@@ -140,7 +140,7 @@ TEST_F(WebDragDestTest, URL) {
   EXPECT_TRUE(ui::PopulateURLAndTitleFromPasteboard(
       &result_url, &result_title, pboard, YES));
   EXPECT_EQ("file://localhost/bin/sh", result_url.spec());
-  EXPECT_EQ("sh", UTF16ToUTF8(result_title));
+  EXPECT_EQ("sh", base::UTF16ToUTF8(result_title));
   [pboard releaseGlobally];
 }
 

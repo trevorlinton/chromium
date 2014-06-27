@@ -7,6 +7,8 @@
 
 #include "cc/resources/raster_worker_pool.h"
 
+#include "base/values.h"
+
 namespace cc {
 
 class CC_EXPORT ImageRasterWorkerPool : public RasterWorkerPool {
@@ -14,39 +16,44 @@ class CC_EXPORT ImageRasterWorkerPool : public RasterWorkerPool {
   virtual ~ImageRasterWorkerPool();
 
   static scoped_ptr<RasterWorkerPool> Create(
-      ResourceProvider* resource_provider, size_t num_threads) {
-    return make_scoped_ptr<RasterWorkerPool>(
-        new ImageRasterWorkerPool(resource_provider, num_threads));
-  }
+      base::SequencedTaskRunner* task_runner,
+      ResourceProvider* resource_provider,
+      unsigned texture_target);
 
   // Overridden from RasterWorkerPool:
-  virtual void ScheduleTasks(RasterTask::Queue* queue) OVERRIDE;
+  virtual void ScheduleTasks(RasterTaskQueue* queue) OVERRIDE;
+  virtual unsigned GetResourceTarget() const OVERRIDE;
   virtual ResourceFormat GetResourceFormat() const OVERRIDE;
+  virtual void CheckForCompletedTasks() OVERRIDE;
+
+  // Overridden from internal::WorkerPoolTaskClient:
+  virtual SkCanvas* AcquireCanvasForRaster(internal::WorkerPoolTask* task,
+                                           const Resource* resource) OVERRIDE;
+  virtual void ReleaseCanvasForRaster(internal::WorkerPoolTask* task,
+                                      const Resource* resource) OVERRIDE;
+
+ protected:
+  ImageRasterWorkerPool(base::SequencedTaskRunner* task_runner,
+                        internal::TaskGraphRunner* task_graph_runner,
+                        ResourceProvider* resource_provider,
+                        unsigned texture_target);
+
+ private:
+  // Overridden from RasterWorkerPool:
   virtual void OnRasterTasksFinished() OVERRIDE;
   virtual void OnRasterTasksRequiredForActivationFinished() OVERRIDE;
 
- private:
-  ImageRasterWorkerPool(ResourceProvider* resource_provider,
-                        size_t num_threads);
-
-  void OnRasterTaskCompleted(
-      scoped_refptr<internal::RasterWorkerPoolTask> task, bool was_canceled);
-
   scoped_ptr<base::Value> StateAsValue() const;
 
-  static void CreateGraphNodeForImageTask(
-      internal::WorkerPoolTask* image_task,
-      const TaskVector& decode_tasks,
-      unsigned priority,
-      bool is_required_for_activation,
-      internal::GraphNode* raster_required_for_activation_finished_node,
-      internal::GraphNode* raster_finished_node,
-      TaskGraph* graph);
-
-  TaskMap image_tasks_;
+  const unsigned texture_target_;
 
   bool raster_tasks_pending_;
   bool raster_tasks_required_for_activation_pending_;
+
+  // Task graph used when scheduling tasks and vector used to gather
+  // completed tasks.
+  internal::TaskGraph graph_;
+  internal::Task::Vector completed_tasks_;
 
   DISALLOW_COPY_AND_ASSIGN(ImageRasterWorkerPool);
 };

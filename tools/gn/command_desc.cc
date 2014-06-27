@@ -10,8 +10,8 @@
 #include "tools/gn/commands.h"
 #include "tools/gn/config.h"
 #include "tools/gn/config_values_extractors.h"
+#include "tools/gn/filesystem_utils.h"
 #include "tools/gn/item.h"
-#include "tools/gn/item_node.h"
 #include "tools/gn/label.h"
 #include "tools/gn/setup.h"
 #include "tools/gn/standard_out.h"
@@ -20,6 +20,23 @@
 namespace commands {
 
 namespace {
+
+// Prints the given directory in a nice way for the user to view.
+std::string FormatSourceDir(const SourceDir& dir) {
+#if defined(OS_WIN)
+  // On Windows we fix up system absolute paths to look like native ones.
+  // Internally, they'll look like "/C:\foo\bar/"
+  if (dir.is_system_absolute()) {
+    std::string buf = dir.value();
+    if (buf.size() > 3 && buf[2] == ':') {
+      buf.erase(buf.begin());  // Erase beginning slash.
+      ConvertPathToSystem(&buf);  // Convert to backslashes.
+      return buf;
+    }
+  }
+#endif
+  return dir.value();
+}
 
 void RecursiveCollectChildDeps(const Target* target, std::set<Label>* result);
 
@@ -114,7 +131,7 @@ void PrintLibDirs(const Target* target, bool display_header) {
     OutputString("\nlib_dirs\n");
 
   for (size_t i = 0; i < lib_dirs.size(); i++)
-    OutputString("    " + lib_dirs[i].value() + "\n");
+    OutputString("    " + FormatSourceDir(lib_dirs[i]) + "\n");
 }
 
 void PrintLibs(const Target* target, bool display_header) {
@@ -169,14 +186,9 @@ template<> struct DescValueWriter<std::string> {
     out << "    " << str << "\n";
   }
 };
-template<> struct DescValueWriter<SourceFile> {
-  void operator()(const SourceFile& file, std::ostream& out) const {
-    out << "    " << file.value() << "\n";
-  }
-};
 template<> struct DescValueWriter<SourceDir> {
   void operator()(const SourceDir& dir, std::ostream& out) const {
-    out << "    " << dir.value() << "\n";
+    out << "    " << FormatSourceDir(dir) << "\n";
   }
 };
 
@@ -271,7 +283,7 @@ const char kDesc_Help[] =
     "  but when directories and source paths are written to the build file,\n"
     "  they will be adjusted to be relative to the build directory. So the\n"
     "  values for paths displayed by this command won't match (but should\n"
-    "  mean the same thing.\n"
+    "  mean the same thing).\n"
     "\n"
     "Examples:\n"
     "  gn desc //base:base\n"

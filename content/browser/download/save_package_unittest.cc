@@ -10,8 +10,8 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/browser/download/save_package.h"
-#include "content/browser/renderer_host/test_render_view_host.h"
 #include "content/test/net/url_request_mock_http_job.h"
+#include "content/test/test_render_view_host.h"
 #include "content/test/test_web_contents.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -244,7 +244,7 @@ TEST_F(SavePackageTest, MAYBE_TestLongSafePureFilename) {
   const base::FilePath::StringType ext(FPL_HTML_EXTENSION);
   base::FilePath::StringType filename =
 #if defined(OS_WIN)
-      ASCIIToWide(long_file_name);
+      base::ASCIIToWide(long_file_name);
 #else
       long_file_name;
 #endif
@@ -346,44 +346,44 @@ TEST_F(SavePackageTest, MAYBE_TestEnsureMimeExtension) {
 
 static const struct SuggestedSaveNameTestCase {
   const char* page_url;
-  const string16 page_title;
+  const base::string16 page_title;
   const base::FilePath::CharType* expected_name;
   bool ensure_html_extension;
 } kSuggestedSaveNames[] = {
   // Title overrides the URL.
   { "http://foo.com",
-    ASCIIToUTF16("A page title"),
+    base::ASCIIToUTF16("A page title"),
     FPL("A page title") FPL_HTML_EXTENSION,
     true
   },
   // Extension is preserved.
   { "http://foo.com",
-    ASCIIToUTF16("A page title with.ext"),
+    base::ASCIIToUTF16("A page title with.ext"),
     FPL("A page title with.ext"),
     false
   },
   // If the title matches the URL, use the last component of the URL.
   { "http://foo.com/bar",
-    ASCIIToUTF16("foo.com/bar"),
+    base::ASCIIToUTF16("foo.com/bar"),
     FPL("bar"),
     false
   },
   // If the title matches the URL, but there is no "filename" component,
   // use the domain.
   { "http://foo.com",
-    ASCIIToUTF16("foo.com"),
+    base::ASCIIToUTF16("foo.com"),
     FPL("foo.com"),
     false
   },
   // Make sure fuzzy matching works.
   { "http://foo.com/bar",
-    ASCIIToUTF16("foo.com/bar"),
+    base::ASCIIToUTF16("foo.com/bar"),
     FPL("bar"),
     false
   },
   // A URL-like title that does not match the title is respected in full.
   { "http://foo.com",
-    ASCIIToUTF16("http://www.foo.com/path/title.txt"),
+    base::ASCIIToUTF16("http://www.foo.com/path/title.txt"),
     FPL("http   www.foo.com path title.txt"),
     false
   },

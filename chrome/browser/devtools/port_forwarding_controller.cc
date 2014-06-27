@@ -11,7 +11,6 @@
 #include "base/compiler_specific.h"
 #include "base/memory/singleton.h"
 #include "base/message_loop/message_loop.h"
-#include "base/prefs/pref_change_registrar.h"
 #include "base/prefs/pref_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -21,7 +20,7 @@
 #include "chrome/browser/devtools/devtools_protocol.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
-#include "components/browser_context_keyed_service/browser_context_dependency_manager.h"
+#include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/address_list.h"
 #include "net/base/net_errors.h"
@@ -355,18 +354,15 @@ void PortForwardingController::Connection::OnPrefsChange() {
   ForwardingMap new_forwarding_map;
 
   PrefService* pref_service = pref_change_registrar_.prefs();
-  bool enabled =
-      pref_service->GetBoolean(prefs::kDevToolsPortForwardingEnabled);
-  if (enabled) {
-    const DictionaryValue* dict =
-        pref_service->GetDictionary(prefs::kDevToolsPortForwardingConfig);
-    for (DictionaryValue::Iterator it(*dict); !it.IsAtEnd(); it.Advance()) {
-      int port_num;
-      std::string location;
-      if (base::StringToInt(it.key(), &port_num) &&
-          dict->GetString(it.key(), &location))
-        new_forwarding_map[port_num] = location;
-    }
+  const base::DictionaryValue* dict =
+      pref_service->GetDictionary(prefs::kDevToolsPortForwardingConfig);
+  for (base::DictionaryValue::Iterator it(*dict);
+       !it.IsAtEnd(); it.Advance()) {
+    int port_num;
+    std::string location;
+    if (base::StringToInt(it.key(), &port_num) &&
+        dict->GetString(it.key(), &location))
+      new_forwarding_map[port_num] = location;
   }
 
   adb_thread_->message_loop()->PostTask(
@@ -509,12 +505,9 @@ void PortForwardingController::Connection::OnSocketOpened() {
     return;
   }
   OnPrefsChange();
-  base::Closure pref_callback = base::Bind(
-      &Connection::OnPrefsChange, base::Unretained(this));
   pref_change_registrar_.Add(
-      prefs::kDevToolsPortForwardingEnabled, pref_callback);
-  pref_change_registrar_.Add(
-      prefs::kDevToolsPortForwardingConfig, pref_callback);
+      prefs::kDevToolsPortForwardingConfig,
+          base::Bind(&Connection::OnPrefsChange, base::Unretained(this)));
 }
 
 void PortForwardingController::Connection::OnFrameRead(
@@ -541,7 +534,7 @@ bool PortForwardingController::Connection::ProcessIncomingMessage(
   if (notification->method() != kTetheringAccepted)
     return false;
 
-  DictionaryValue* params = notification->params();
+  base::DictionaryValue* params = notification->params();
   if (!params)
     return false;
 
@@ -568,17 +561,24 @@ bool PortForwardingController::Connection::ProcessIncomingMessage(
 PortForwardingController::PortForwardingController(PrefService* pref_service)
     : adb_thread_(RefCountedAdbThread::GetInstance()),
       pref_service_(pref_service) {
+  pref_change_registrar_.Init(pref_service);
+  base::Closure callback = base::Bind(
+      &PortForwardingController::OnPrefsChange, base::Unretained(this));
+  pref_change_registrar_.Add(prefs::kDevToolsPortForwardingEnabled, callback);
+  pref_change_registrar_.Add(prefs::kDevToolsPortForwardingConfig, callback);
 }
 
 PortForwardingController::~PortForwardingController() {
-  for (Registry::iterator it = registry_.begin(); it != registry_.end(); ++it)
-    it->second->Shutdown();
+  ShutdownConnections();
 }
 
 PortForwardingController::DevicesStatus
 PortForwardingController::UpdateDeviceList(
     const DevToolsAdbBridge::RemoteDevices& devices) {
   DevicesStatus status;
+  if (!ShouldCreateConnections())
+    return status;
+
   for (DevToolsAdbBridge::RemoteDevices::const_iterator it = devices.begin();
        it != devices.end(); ++it) {
     scoped_refptr<DevToolsAdbBridge::RemoteDevice> device = *it;
@@ -587,8 +587,7 @@ PortForwardingController::UpdateDeviceList(
     Registry::iterator rit = registry_.find(device->GetSerial());
     if (rit == registry_.end()) {
       std::string socket = FindBestSocketForTethering(device->browsers());
-      if (!socket.empty() || device->GetSerial().empty()) {
-        // Will delete itself when disconnected.
+      if (!socket.empty()) {
         new Connection(
           &registry_, device->device(), socket, adb_thread_, pref_service_);
       }
@@ -597,6 +596,26 @@ PortForwardingController::UpdateDeviceList(
     }
   }
   return status;
+}
+
+void PortForwardingController::OnPrefsChange() {
+  if (!ShouldCreateConnections())
+    ShutdownConnections();
+}
+
+bool PortForwardingController::ShouldCreateConnections() {
+  if (!pref_service_->GetBoolean(prefs::kDevToolsPortForwardingEnabled))
+    return false;
+
+  const base::DictionaryValue* dict =
+      pref_service_->GetDictionary(prefs::kDevToolsPortForwardingConfig);
+  return !base::DictionaryValue::Iterator(*dict).IsAtEnd();
+}
+
+void PortForwardingController::ShutdownConnections() {
+  for (Registry::iterator it = registry_.begin(); it != registry_.end(); ++it)
+    it->second->Shutdown();
+  registry_.clear();
 }
 
 // static
@@ -619,8 +638,7 @@ PortForwardingController::Factory::Factory()
 
 PortForwardingController::Factory::~Factory() {}
 
-BrowserContextKeyedService*
-PortForwardingController::Factory::BuildServiceInstanceFor(
+KeyedService* PortForwardingController::Factory::BuildServiceInstanceFor(
     content::BrowserContext* context) const {
   Profile* profile = Profile::FromBrowserContext(context);
   return new PortForwardingController(profile->GetPrefs());

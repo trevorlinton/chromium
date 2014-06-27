@@ -6,21 +6,21 @@
 
 #include "base/callback.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/extensions/extension_host.h"
-#include "chrome/browser/extensions/extension_process_manager.h"
-#include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_system.h"
-#include "chrome/browser/extensions/process_map.h"
-#include "chrome/common/extensions/background_info.h"
-#include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/extension_messages.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/extension_host.h"
+#include "extensions/browser/extension_registry.h"
+#include "extensions/browser/extension_system.h"
 #include "extensions/browser/extensions_browser_client.h"
+#include "extensions/browser/process_manager.h"
+#include "extensions/browser/process_map.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/extension_messages.h"
+#include "extensions/common/manifest_handlers/background_info.h"
 #include "extensions/common/view_type.h"
 
 namespace extensions {
@@ -32,7 +32,7 @@ LazyBackgroundTaskQueue::LazyBackgroundTaskQueue(
                  content::NotificationService::AllBrowserContextsAndSources());
   registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_HOST_DESTROYED,
                  content::NotificationService::AllBrowserContextsAndSources());
-  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED,
+  registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED,
                  content::Source<content::BrowserContext>(browser_context));
 }
 
@@ -44,7 +44,7 @@ bool LazyBackgroundTaskQueue::ShouldEnqueueTask(
     const Extension* extension) {
   DCHECK(extension);
   if (BackgroundInfo::HasBackgroundPage(extension)) {
-    ExtensionProcessManager* pm = ExtensionSystem::GetForBrowserContext(
+    ProcessManager* pm = ExtensionSystem::Get(
         browser_context)->process_manager();
     DCHECK(pm);
     ExtensionHost* background_host =
@@ -73,15 +73,13 @@ void LazyBackgroundTaskQueue::AddPendingTask(
     tasks_list = new PendingTasksList();
     pending_tasks_[key] = linked_ptr<PendingTasksList>(tasks_list);
 
-    ExtensionService* extension_service = ExtensionSystem::GetForBrowserContext(
-        browser_context)->extension_service();
-    DCHECK(extension_service);
     const Extension* extension =
-        extension_service->extensions()->GetByID(extension_id);
+        ExtensionRegistry::Get(browser_context)->enabled_extensions().GetByID(
+            extension_id);
     if (extension && BackgroundInfo::HasLazyBackgroundPage(extension)) {
       // If this is the first enqueued task, and we're not waiting for the
       // background page to unload, ensure the background page is loaded.
-      ExtensionProcessManager* pm = ExtensionSystem::GetForBrowserContext(
+      ProcessManager* pm = ExtensionSystem::Get(
           browser_context)->process_manager();
       pm->IncrementLazyKeepaliveCount(extension);
       // Creating the background host may fail, e.g. if |profile| is incognito
@@ -129,7 +127,7 @@ void LazyBackgroundTaskQueue::ProcessPendingTasks(
   // Balance the keepalive in AddPendingTask. Note we don't do this on a
   // failure to load, because the keepalive count is reset in that case.
   if (host && BackgroundInfo::HasLazyBackgroundPage(extension)) {
-    ExtensionSystem::GetForBrowserContext(browser_context)->process_manager()->
+    ExtensionSystem::Get(browser_context)->process_manager()->
         DecrementLazyKeepaliveCount(extension);
   }
 }
@@ -164,7 +162,7 @@ void LazyBackgroundTaskQueue::Observe(
       }
       break;
     }
-    case chrome::NOTIFICATION_EXTENSION_UNLOADED: {
+    case chrome::NOTIFICATION_EXTENSION_UNLOADED_DEPRECATED: {
       // Notify consumers that the page failed to load.
       content::BrowserContext* browser_context =
           content::Source<content::BrowserContext>(source).ptr();

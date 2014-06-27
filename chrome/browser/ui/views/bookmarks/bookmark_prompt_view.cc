@@ -53,8 +53,7 @@ void BookmarkPromptView::Init() {
   views::Label* label = new views::Label(l10n_util::GetStringUTF16(
       IDS_BOOKMARK_PROMPT_MESSAGE));
   ui::ResourceBundle* rb = &ui::ResourceBundle::GetSharedInstance();
-  label->SetFont(rb->GetFont(ui::ResourceBundle::MediumFont)
-                   .DeriveFont(0, gfx::Font::BOLD));
+  label->SetFontList(rb->GetFontList(ui::ResourceBundle::MediumBoldFont));
   AddChildView(label);
 
   dismiss_link_ = new views::Link(l10n_util::GetStringUTF16(
@@ -67,7 +66,7 @@ void BookmarkPromptView::Init() {
 void BookmarkPromptView::LinkClicked(views::Link* source, int event_flags) {
   DCHECK_EQ(source, dismiss_link_);
   BookmarkPromptController::DisableBookmarkPrompt(prefs_);
-  StartFade(false);
+  GetWidget()->Close();
 }
 
 void BookmarkPromptView::WindowClosing() {

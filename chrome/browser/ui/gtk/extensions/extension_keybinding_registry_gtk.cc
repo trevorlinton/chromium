@@ -9,7 +9,7 @@
 #include "chrome/browser/extensions/api/commands/command_service.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/extensions/extension.h"
+#include "extensions/common/extension.h"
 #include "ui/base/accelerators/platform_accelerator_gtk.h"
 
 // static
@@ -36,7 +36,6 @@ ExtensionKeybindingRegistryGtk::~ExtensionKeybindingRegistryGtk() {
   if (accel_group_) {
     gtk_accel_group_disconnect(accel_group_,
                                NULL);  // Remove all closures.
-    event_targets_.clear();
 
     gtk_window_remove_accel_group(window_, accel_group_);
     g_object_unref(accel_group_);
@@ -52,7 +51,7 @@ gboolean ExtensionKeybindingRegistryGtk::HasPriorityHandler(
   ui::Accelerator accelerator = ui::AcceleratorForGdkKeyCodeAndModifier(
       event->keyval, static_cast<GdkModifierType>(event->state));
 
-  return event_targets_.find(accelerator) != event_targets_.end();
+  return IsAcceleratorRegistered(accelerator);
 }
 
 void ExtensionKeybindingRegistryGtk::AddExtensionKeybinding(
@@ -73,8 +72,7 @@ void ExtensionKeybindingRegistryGtk::AddExtensionKeybinding(
       continue;
 
     ui::Accelerator accelerator(iter->second.accelerator());
-    event_targets_[accelerator] =
-        std::make_pair(extension->id(), iter->second.command_name());
+    AddEventTarget(accelerator, extension->id(), iter->second.command_name());
 
     if (!accel_group_) {
       accel_group_ = gtk_accel_group_new();
@@ -98,9 +96,9 @@ void ExtensionKeybindingRegistryGtk::AddExtensionKeybinding(
           extensions::CommandService::ACTIVE_ONLY,
           &browser_action,
           NULL)) {
-    ui::Accelerator accelerator(browser_action.accelerator());
-    event_targets_[accelerator] =
-      std::make_pair(extension->id(), browser_action.command_name());
+    AddEventTarget(browser_action.accelerator(),
+                   extension->id(),
+                   browser_action.command_name());
   }
 
   // Add the Page Action (if any).
@@ -110,21 +108,8 @@ void ExtensionKeybindingRegistryGtk::AddExtensionKeybinding(
           extensions::CommandService::ACTIVE_ONLY,
           &page_action,
           NULL)) {
-    ui::Accelerator accelerator(page_action.accelerator());
-    event_targets_[accelerator] =
-        std::make_pair(extension->id(), page_action.command_name());
-  }
-
-  // Add the Script Badge (if any).
-  extensions::Command script_badge;
-  if (command_service->GetScriptBadgeCommand(
-          extension->id(),
-          extensions::CommandService::ACTIVE_ONLY,
-          &script_badge,
-          NULL)) {
-    ui::Accelerator accelerator(script_badge.accelerator());
-    event_targets_[accelerator] =
-        std::make_pair(extension->id(), script_badge.command_name());
+    AddEventTarget(
+        page_action.accelerator(), extension->id(), page_action.command_name());
   }
 }
 
@@ -149,12 +134,5 @@ gboolean ExtensionKeybindingRegistryGtk::OnGtkAccelerator(
   ui::Accelerator accelerator = ui::AcceleratorForGdkKeyCodeAndModifier(
       keyval, modifier);
 
-  EventTargets::iterator it = event_targets_.find(accelerator);
-  if (it == event_targets_.end()) {
-    NOTREACHED();  // Shouldn't get this event for something not registered.
-    return FALSE;
-  }
-
-  CommandExecuted(it->second.first, it->second.second);
-  return TRUE;
+  return ExtensionKeybindingRegistry::NotifyEventTargets(accelerator);
 }
