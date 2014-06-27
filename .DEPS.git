@@ -142,9 +142,9 @@ deps = {
     'src/tools/swarming_client':
         Var('git_url') + '/external/swarming.client.git@141ef86f4abf255e578320bfe6e42006c251bc39',
     'src/v8':
-        'https://github.com/trevorlinton/v8.git@origin/rb32',
+        'https://github.com/trevorlinton/v8.git@origin/nw',
     'src/third_party/node':
-        'https://github.com/rogerwang/node.git@origin/master',
+        'https://github.com/rogerwang/node.git@origin/nw',
 	#'https://github.com/trevorlinton/node-rw.git@origin/master',
     'src/content/nw':
         'https://github.com/trevorlinton/node-webkit.git@origin/master',
