@@ -440,7 +440,7 @@ RenderWidgetHostViewMac::RenderWidgetHostViewMac(RenderWidgetHost* widget)
     use_core_animation_ = true;
     background_layer_.reset([[CALayer alloc] init]);
     [background_layer_
-        setBackgroundColor:CGColorGetConstantColor(kCGColorWhite)];
+        setBackgroundColor:CGColorGetConstantColor(kCGColorClear)];
     [cocoa_view_ setLayer:background_layer_];
     [cocoa_view_ setWantsLayer:YES];
   }
@@ -3110,7 +3110,7 @@ SkBitmap::Config RenderWidgetHostViewMac::PreferredReadbackFormat() {
 
     NSRect r = [self flipRectToNSRect:gfx::Rect(x, y, width, height)];
     CGContextSetFillColorWithColor(context,
-                                   CGColorGetConstantColor(kCGColorWhite));
+                                   CGColorGetConstantColor(kCGColorClear));
     CGContextFillRect(context, NSRectToCGRect(r));
   }
   if (damagedRect.bottom() > rect.bottom()) {
@@ -3132,7 +3132,7 @@ SkBitmap::Config RenderWidgetHostViewMac::PreferredReadbackFormat() {
 
     NSRect r = [self flipRectToNSRect:gfx::Rect(x, y, width, height)];
     CGContextSetFillColorWithColor(context,
-                                   CGColorGetConstantColor(kCGColorWhite));
+                                   CGColorGetConstantColor(kCGColorClear));
     CGContextFillRect(context, NSRectToCGRect(r));
   }
 }
@@ -3145,7 +3145,7 @@ SkBitmap::Config RenderWidgetHostViewMac::PreferredReadbackFormat() {
     // When using CoreAnimation, this path is used to paint the contents area
     // white before any frames come in. When layers to draw frames exist, this
     // is not hit.
-    [[NSColor whiteColor] set];
+    [[NSColor clearColor] set];
     NSRectFill(dirtyRect);
     return;
   }
@@ -3282,7 +3282,7 @@ SkBitmap::Config RenderWidgetHostViewMac::PreferredReadbackFormat() {
     }
   } else {
     CGContextSetFillColorWithColor(context,
-                                   CGColorGetConstantColor(kCGColorWhite));
+                                   CGColorGetConstantColor(kCGColorClear));
     CGContextFillRect(context, dirtyRect);
     if (renderWidgetHostView_->whiteout_start_time_.is_null())
       renderWidgetHostView_->whiteout_start_time_ = base::TimeTicks::Now();
@@ -4305,7 +4305,7 @@ extern NSString *NSTextInputReplacementRangeAttributeName;
   if (self = [super init]) {
     renderWidgetHostView_ = r;
 
-    [self setBackgroundColor:CGColorGetConstantColor(kCGColorWhite)];
+    [self setBackgroundColor:CGColorGetConstantColor(kCGColorClear)];
     [self setAnchorPoint:CGPointMake(0, 0)];
     // Setting contents gravity is necessary to prevent the layer from being
     // scaled during dyanmic resizes (especially with devtools open).
@@ -4334,7 +4334,7 @@ extern NSString *NSTextInputReplacementRangeAttributeName;
                                                 inContext:context];
   } else {
     CGContextSetFillColorWithColor(context,
-                                   CGColorGetConstantColor(kCGColorWhite));
+                                   CGColorGetConstantColor(kCGColorClear));
     CGContextFillRect(context, clipRect);
   }
 }

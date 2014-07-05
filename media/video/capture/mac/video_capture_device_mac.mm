@@ -81,7 +81,7 @@ void VideoCaptureDevice::GetDeviceNames(Names* device_names) {
               [key UTF8String]);
     device_names->push_back(name);
   }
-*.
+*/
 }
 
 // static

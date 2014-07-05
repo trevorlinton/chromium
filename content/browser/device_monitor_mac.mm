@@ -166,7 +166,7 @@ QTKitMonitorImpl::QTKitMonitorImpl(content::DeviceMonitorMac* monitor)
 */
 }
 
-void DeviceMonitorMac::QTMonitorImpl::Stop() {
+// void DeviceMonitorMac::QTMonitorImpl::Stop() {
 /*  if (!monitor_)
     return;
 
@@ -174,20 +174,18 @@ void DeviceMonitorMac::QTMonitorImpl::Stop() {
   [nc removeObserver:device_arrival_];
   [nc removeObserver:device_removal_];
 */
-}
-/*
-void DeviceMonitorMac::QTMonitorImpl::OnDeviceChanged() {
-  [nc removeObserver:device_change_];
-}
-*/
-void DeviceMonitorMac::QTMonitorImpl::OnAttributeChanged(
-    NSNotification* notification) {
+// }
+// void DeviceMonitorMac::QTMonitorImpl::OnDeviceChanged() {
+ // [nc removeObserver:device_change_];
+// }
+// void DeviceMonitorMac::QTMonitorImpl::OnAttributeChanged(
+//    NSNotification* notification) {
  /* if ([[[notification userInfo] objectForKey:QTCaptureDeviceChangedAttributeKey]
           isEqualToString:QTCaptureDeviceSuspendedAttribute])
     OnDeviceChanged(); */
-}
+// }
 
-void DeviceMonitorMac::QTMonitorImpl::CountDevices() {
+// void DeviceMonitorMac::QTMonitorImpl::CountDevices() {
 /*
 
   NSArray* devices = [QTCaptureDevice inputDevices];
@@ -212,7 +210,7 @@ void DeviceMonitorMac::QTMonitorImpl::CountDevices() {
         DeviceInfo([[device uniqueID] UTF8String], device_type));
   }
 */
-}
+// }
 
 // Forward declaration for use by CrAVFoundationDeviceObserver.
 class AVFoundationMonitorImpl;
@@ -251,7 +249,7 @@ class AVFoundationMonitorImpl : public DeviceMonitorMacImpl {
 AVFoundationMonitorImpl::AVFoundationMonitorImpl(
     content::DeviceMonitorMac* monitor)
     : DeviceMonitorMacImpl(monitor) {
-  NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
+/*  NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
   device_arrival_ =
       [nc addObserverForName:AVFoundationGlue::
           AVCaptureDeviceWasConnectedNotification()
@@ -269,18 +267,20 @@ AVFoundationMonitorImpl::AVFoundationMonitorImpl(
   suspend_observer_.reset(
       [[CrAVFoundationDeviceObserver alloc] initWithChangeReceiver:this]);
   for (CrAVCaptureDevice* device in [AVCaptureDeviceGlue devices])
-    [suspend_observer_ startObserving:device];
+    [suspend_observer_ startObserving:device]; */
 }
 
 AVFoundationMonitorImpl::~AVFoundationMonitorImpl() {
-  NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
+/*  NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
   [nc removeObserver:device_arrival_];
   [nc removeObserver:device_removal_];
   for (CrAVCaptureDevice* device in [AVCaptureDeviceGlue devices])
     [suspend_observer_ stopObserving:device];
+*/
 }
 
 void AVFoundationMonitorImpl::OnDeviceChanged() {
+/*
   std::vector<DeviceInfo> snapshot_devices;
   for (CrAVCaptureDevice* device in [AVCaptureDeviceGlue devices]) {
     [suspend_observer_ startObserving:device];
@@ -300,6 +300,7 @@ void AVFoundationMonitorImpl::OnDeviceChanged() {
                                           device_type));
   }
   ConsolidateDevicesListAndNotify(snapshot_devices);
+*/
 }
 
 }  // namespace
@@ -317,7 +318,7 @@ void AVFoundationMonitorImpl::OnDeviceChanged() {
 - (void)startObserving:(CrAVCaptureDevice*)device {
   DCHECK(device != nil);
   // Skip this device if there are already observers connected to it.
-  if (std::find(monitoredDevices_.begin(), monitoredDevices_.end(), device) !=
+ /* if (std::find(monitoredDevices_.begin(), monitoredDevices_.end(), device) !=
           monitoredDevices_.end()) {
     return;
   }
@@ -329,11 +330,11 @@ void AVFoundationMonitorImpl::OnDeviceChanged() {
            forKeyPath:@"connected"
               options:0
               context:device];
-  monitoredDevices_.insert(device);
+  monitoredDevices_.insert(device); */
 }
 
 - (void)stopObserving:(CrAVCaptureDevice*)device {
-  DCHECK(device != nil);
+ /* DCHECK(device != nil);
   std::set<CrAVCaptureDevice*>::iterator found =
       std::find(monitoredDevices_.begin(), monitoredDevices_.end(), device);
   DCHECK(found != monitoredDevices_.end());
@@ -341,17 +342,17 @@ void AVFoundationMonitorImpl::OnDeviceChanged() {
               forKeyPath:@"suspended"];
   [device removeObserver:self
               forKeyPath:@"connected"];
-  monitoredDevices_.erase(found);
+  monitoredDevices_.erase(found); */
 }
 
 - (void)observeValueForKeyPath:(NSString*)keyPath
                       ofObject:(id)object
                         change:(NSDictionary*)change
                        context:(void*)context {
-  if ([keyPath isEqual:@"suspended"])
-    receiver_->OnDeviceChanged();
-  if ([keyPath isEqual:@"connected"])
-    [self stopObserving:static_cast<CrAVCaptureDevice*>(context)];
+//  if ([keyPath isEqual:@"suspended"])
+//    receiver_->OnDeviceChanged();
+//  if ([keyPath isEqual:@"connected"])
+//    [self stopObserving:static_cast<CrAVCaptureDevice*>(context)];
 }
 
 @end  // @implementation CrAVFoundationDeviceObserver
@@ -371,7 +372,7 @@ DeviceMonitorMac::~DeviceMonitorMac() {
   // so it is triggered explicitly from MediaStreamManager::StartMonitoring().
 }
 
-DeviceMonitorMac::~DeviceMonitorMac() {}
+//DeviceMonitorMac::~DeviceMonitorMac() {}
 
 void DeviceMonitorMac::StartMonitoring() {
   /*DCHECK(thread_checker_.CalledOnValidThread());

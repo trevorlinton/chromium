@@ -66,6 +66,7 @@ CompositingIOSurfaceContext::Get(int window_number) {
     NSOpenGLContext* share_context = nil;
     if (!window_map()->empty())
       share_context = window_map()->begin()->second->nsgl_context();
+
     nsgl_context.reset(
         [[NSOpenGLContext alloc] initWithFormat:glPixelFormat
                                    shareContext:share_context]);
@@ -125,31 +126,9 @@ CompositingIOSurfaceContext::Get(int window_number) {
     // rate limit draws.
   }
 
-  // Prepare the shader program cache. Precompile the shader programs
-  // needed to draw the IO Surface for non-offscreen contexts.
-  bool prepared = false;
-  scoped_ptr<CompositingIOSurfaceShaderPrograms> shader_program_cache;
-  {
-    gfx::ScopedCGLSetCurrentContext scoped_set_current_context(cgl_context);
-    shader_program_cache.reset(new CompositingIOSurfaceShaderPrograms());
-    if (window_number == kOffscreenContextWindowNumber) {
-      prepared = true;
-    } else {
-      prepared = (
-          shader_program_cache->UseBlitProgram() &&
-          shader_program_cache->UseSolidWhiteProgram());
-    }
-    glUseProgram(0u);
-  }
-  
   GLint clear = 0;
-  //[nsgl_context setValues:&clear forParameter:NSOpenGLCPSurfaceOpacity];
+  [nsgl_context setValues:&clear, NSOpenGLCPSurfaceOpacity];
   CGLSetParameter(cgl_context, kCGLCPSurfaceOpacity, &clear);
-  // Draw at beam vsync.
-  bool is_vsync_disabled =
-      CommandLine::ForCurrentProcess()->HasSwitch(switches::kDisableGpuVsync);
-  GLint swapInterval = is_vsync_disabled ? 0 : 1;
-  [nsgl_context setValues:&swapInterval forParameter:NSOpenGLCPSwapInterval];
 
   // Prepare the shader program cache.  Precompile only the shader programs
   // needed to draw the IO Surface.

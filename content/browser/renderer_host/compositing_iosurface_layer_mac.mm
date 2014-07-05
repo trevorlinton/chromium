@@ -113,18 +113,12 @@
              displayTime:(const CVTimeStamp*)timeStamp {
   TRACE_EVENT0("browser", "CompositingIOSurfaceLayer::drawInCGLContext");
 
-<<<<<<< HEAD
-  if (!context_.get() || !renderWidgetHostView_ ||
-      !renderWidgetHostView_->compositing_iosurface_) {
-    glClearColor(0, 0, 0, 0);
-=======
   if (!context_ ||
       (context_ && context_->cgl_context() != glContext) ||
       !renderWidgetHostView_ ||
       !renderWidgetHostView_->compositing_iosurface_ ||
       !renderWidgetHostView_->compositing_iosurface_->HasIOSurface()) {
-    glClearColor(1, 1, 1, 1);
->>>>>>> upstream/nw
+    glClearColor(0, 0, 0, 0);
     glClear(GL_COLOR_BUFFER_BIT);
     return;
   }
