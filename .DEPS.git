@@ -18,8 +18,8 @@ vars = {
 }
 
 deps = {
-    'src/tint':
-	'https://github.com/trueinteractions/ti-sdk.git',
+    #'src/tint':
+	#'https://github.com/trueinteractions/ti-sdk.git',
     #'src/third_party/node-ffi':
 	#'https://github.com/rbranson/node-ffi.git',
     'src/breakpad/src':

@@ -113,11 +113,6 @@
               'desktop_linux%': 0,
             }],
 
-            # Compute the architecture that we're building on.
-            ['OS=="win" or OS=="mac" or OS=="ios"', {
-	      #'host_arch%': 'x64',
-              'host_arch%': 'ia32',
-              'use_openssl%': '0',
             # Embedded implies ozone.
             ['embedded==1', {
               'use_ozone%': 1,
