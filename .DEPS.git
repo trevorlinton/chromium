@@ -165,7 +165,7 @@ deps = {
     'src/third_party/node':
         'https://github.com/rogerwang/node.git@origin/nw',
     'src/content/nw':
-        'https://github.com/rogerwang/node-webkit.git@origin/master',
+        'https://github.com/trevorlinton/tint.git@origin/node-webkit-upstream',
 
 }
 
