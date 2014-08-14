@@ -192,11 +192,7 @@ const base::FilePath::CharType kSingletonCookieFilename[] =
     FPL("SingletonCookie");
 const base::FilePath::CharType kSingletonLockFilename[] = FPL("SingletonLock");
 const base::FilePath::CharType kSingletonSocketFilename[] =
-#if !defined(SUPPORT_MACOSX_APPSTORE)
     FPL("SingletonSocket");
-#else
-    FPL("S");
-#endif
 const base::FilePath::CharType kSyncCredentialsFilename[] =
     FPL("Sync Credentials");
 const base::FilePath::CharType kThemePackFilename[] = FPL("Cached Theme.pak");

@@ -533,15 +533,6 @@
             'USE_NEON'
           ],
         }],
-        ['support_macosx_appstore==1', {
-          'defines': [
-            'SUPPORT_MACOSX_APPSTORE',
-          ],
-          'sources!': [
-            'video/capture/mac/video_capture_device_qtkit_mac.h',
-            'video/capture/mac/video_capture_device_qtkit_mac.mm',
-          ],
-        }],
         ['media_use_ffmpeg==1', {
           'dependencies': [
             '../third_party/ffmpeg/ffmpeg.gyp:ffmpeg',
@@ -797,14 +788,8 @@
               '$(SDKROOT)/System/Library/Frameworks/CoreMIDI.framework',
               '$(SDKROOT)/System/Library/Frameworks/CoreVideo.framework',
               '$(SDKROOT)/System/Library/Frameworks/OpenGL.framework',
-            ],
-          },
-        }],
-        ['OS=="mac" and support_macosx_appstore==0', {
-          'link_settings': {
-            'libraries':[
               '$(SDKROOT)/System/Library/Frameworks/QTKit.framework',
-            ]
+            ],
           },
         }],
         ['OS=="win"', {

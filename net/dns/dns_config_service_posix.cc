@@ -97,14 +97,10 @@ class DnsConfigWatcher {
   typedef base::Callback<void(bool succeeded)> CallbackType;
 
   bool Watch(const CallbackType& callback) {
-#if !defined(SUPPORT_MACOSX_APPSTORE)
     callback_ = callback;
     return watcher_.Watch(base::FilePath(kFilePathConfig), false,
                           base::Bind(&DnsConfigWatcher::OnCallback,
                                      base::Unretained(this)));
-#else
-    return false;
-#endif
   }
 
  private:
@@ -220,7 +216,6 @@ class DnsConfigServicePosix::Watcher {
                                 DNS_CONFIG_WATCH_FAILED_TO_START_CONFIG,
                                 DNS_CONFIG_WATCH_MAX);
     }
-#if !defined(SUPPORT_MACOSX_APPSTORE)
     if (!hosts_watcher_.Watch(base::FilePath(kFilePathHosts), false,
                               base::Bind(&Watcher::OnHostsChanged,
                                          base::Unretained(this)))) {
@@ -230,9 +225,6 @@ class DnsConfigServicePosix::Watcher {
                                 DNS_CONFIG_WATCH_FAILED_TO_START_HOSTS,
                                 DNS_CONFIG_WATCH_MAX);
     }
-#else
-    return false;
-#endif
     return success;
   }
 

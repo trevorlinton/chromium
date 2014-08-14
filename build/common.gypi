@@ -484,7 +484,6 @@
       # Enable FTP support by default.
       'disable_ftp_support%': 0,
 
-
       # XInput2 multitouch support is enabled by default (use_xi2_mt=2).
       # Setting to zero value disables XI2 MT. When XI2 MT is enabled,
       # the input value also defines the required XI2 minor minimum version.
@@ -513,9 +512,6 @@
       # TODO(nileshagrawal): Make this flag enable/disable NPAPI as well
       # as PPAPI; see crbug.com/162667.
       'enable_plugins%': 1,
-
-      # Whether to support submission to Mac App Store
-      'support_macosx_appstore%': 1,
 
       # Specifies whether to use canvas_skia.cc in place of platform
       # specific implementations of gfx::Canvas. Affects text drawing in the

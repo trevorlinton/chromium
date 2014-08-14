@@ -3796,11 +3796,10 @@ static const NSTrackingRectTag kTrackingRectTag = 0xBADFACE;
 // Since this implementation doesn't have to wait any IPC calls, this doesn't
 // make any key-typing jank. --hbono 7/23/09
 //
-#if !defined(SUPPORT_MACOSX_APPSTORE)
 extern "C" {
 extern NSString *NSTextInputReplacementRangeAttributeName;
 }
-#endif
+
 - (NSArray *)validAttributesForMarkedText {
   // This code is just copied from WebKit except renaming variables.
   if (!validAttributesForMarkedText_) {
@@ -3808,9 +3807,7 @@ extern NSString *NSTextInputReplacementRangeAttributeName;
         NSUnderlineStyleAttributeName,
         NSUnderlineColorAttributeName,
         NSMarkedClauseSegmentAttributeName,
-#if !defined(SUPPORT_MACOSX_APPSTORE)
         NSTextInputReplacementRangeAttributeName,
-#endif
         nil]);
   }
   return validAttributesForMarkedText_.get();

@@ -3,9 +3,9 @@
 // found in the LICENSE file.
 
 #include "content/browser/device_monitor_mac.h"
-#if !defined(SUPPORT_MACOSX_APPSTORE)
+
 #import <QTKit/QTKit.h>
-#endif
+
 #include <set>
 
 #include "base/logging.h"
@@ -142,7 +142,6 @@ class QTKitMonitorImpl : public DeviceMonitorMacImpl {
 
 QTKitMonitorImpl::QTKitMonitorImpl(content::DeviceMonitorMac* monitor)
     : DeviceMonitorMacImpl(monitor) {
-#if !defined(SUPPORT_MACOSX_APPSTORE)
   NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
   device_arrival_ =
       [nc addObserverForName:QTCaptureDeviceWasConnectedNotification
@@ -162,31 +161,25 @@ QTKitMonitorImpl::QTKitMonitorImpl(content::DeviceMonitorMac* monitor)
                        queue:nil
                   usingBlock:^(NSNotification* notification) {
                       OnAttributeChanged(notification);}];
-#endif
 }
 
 QTKitMonitorImpl::~QTKitMonitorImpl() {
-#if !defined(SUPPORT_MACOSX_APPSTORE)
   NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
   [nc removeObserver:device_arrival_];
   [nc removeObserver:device_removal_];
   [nc removeObserver:device_change_];
-#endif
 }
 
 void QTKitMonitorImpl::OnAttributeChanged(
     NSNotification* notification) {
-#if !defined(SUPPORT_MACOSX_APPSTORE)
   if ([[[notification userInfo]
          objectForKey:QTCaptureDeviceChangedAttributeKey]
       isEqualToString:QTCaptureDeviceSuspendedAttribute]) {
     OnDeviceChanged();
   }
-#endif
 }
 
 void QTKitMonitorImpl::OnDeviceChanged() {
-#if !defined(SUPPORT_MACOSX_APPSTORE)
   std::vector<DeviceInfo> snapshot_devices;
 
   NSArray* devices = [QTCaptureDevice inputDevices];
@@ -211,7 +204,6 @@ void QTKitMonitorImpl::OnDeviceChanged() {
         DeviceInfo([[device uniqueID] UTF8String], device_type));
   }
   ConsolidateDevicesListAndNotify(snapshot_devices);
-#endif
 }
 
 // Forward declaration for use by CrAVFoundationDeviceObserver.
@@ -372,13 +364,10 @@ void DeviceMonitorMac::StartMonitoring() {
   if (AVFoundationGlue::IsAVFoundationSupported()) {
     DVLOG(1) << "Monitoring via AVFoundation";
     device_monitor_impl_.reset(new AVFoundationMonitorImpl(this));
-  }
-#if !defined(SUPPORT_MACOSX_APPSTORE) 
-  else {
+  } else {
     DVLOG(1) << "Monitoring via QTKit";
     device_monitor_impl_.reset(new QTKitMonitorImpl(this));
   }
-#endif
 }
 
 void DeviceMonitorMac::NotifyDeviceChanged(

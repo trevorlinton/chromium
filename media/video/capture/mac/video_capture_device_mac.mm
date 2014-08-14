@@ -12,9 +12,8 @@
 #import "media/video/capture/mac/avfoundation_glue.h"
 #import "media/video/capture/mac/platform_video_capturing_mac.h"
 #import "media/video/capture/mac/video_capture_device_avfoundation_mac.h"
-#if !defined(SUPPORT_MACOSX_APPSTORE)
 #import "media/video/capture/mac/video_capture_device_qtkit_mac.h"
-#endif
+
 namespace media {
 
 const int kMinFrameRate = 1;
@@ -72,13 +71,10 @@ void VideoCaptureDevice::GetDeviceNames(Names* device_names) {
   if (AVFoundationGlue::IsAVFoundationSupported()) {
     DVLOG(1) << "Enumerating video capture devices using AVFoundation";
     capture_devices = [VideoCaptureDeviceAVFoundation deviceNames];
-  }
-#if !defined(SUPPORT_MACOSX_APPSTORE) 
-  else {
+  } else {
     DVLOG(1) << "Enumerating video capture devices using QTKit";
     capture_devices = [VideoCaptureDeviceQTKit deviceNames];
   }
-#endif
   for (NSString* key in capture_devices) {
     Name name([[capture_devices valueForKey:key] UTF8String],
               [key UTF8String]);
@@ -114,7 +110,6 @@ const std::string VideoCaptureDevice::Name::GetModel() const {
 }
 
 VideoCaptureDevice* VideoCaptureDevice::Create(const Name& device_name) {
-#if !defined(SUPPORT_MACOSX_APPSTORE)
   VideoCaptureDeviceMac* capture_device =
       new VideoCaptureDeviceMac(device_name);
   if (!capture_device->Init()) {
@@ -123,9 +118,6 @@ VideoCaptureDevice* VideoCaptureDevice::Create(const Name& device_name) {
     capture_device = NULL;
   }
   return capture_device;
-#else
-  return NULL;
-#endif
 }
 
 VideoCaptureDeviceMac::VideoCaptureDeviceMac(const Name& device_name)
@@ -135,22 +127,17 @@ VideoCaptureDeviceMac::VideoCaptureDeviceMac(const Name& device_name)
       state_(kNotInitialized),
       capture_device_(nil),
       weak_factory_(this) {
-#if !defined(SUPPORT_MACOSX_APPSTORE)
   final_resolution_selected_ = AVFoundationGlue::IsAVFoundationSupported();
-#endif
 }
 
 VideoCaptureDeviceMac::~VideoCaptureDeviceMac() {
-#if !defined(SUPPORT_MACOSX_APPSTORE)
   DCHECK(task_runner_->BelongsToCurrentThread());
   [capture_device_ release];
-#endif
 }
 
 void VideoCaptureDeviceMac::AllocateAndStart(
     const VideoCaptureParams& params,
     scoped_ptr<VideoCaptureDevice::Client> client) {
-#if !defined(SUPPORT_MACOSX_APPSTORE)
   DCHECK(task_runner_->BelongsToCurrentThread());
   if (state_ != kIdle) {
     return;
@@ -201,7 +188,6 @@ void VideoCaptureDeviceMac::AllocateAndStart(
   }
 
   state_ = kCapturing;
-#endif
 }
 
 void VideoCaptureDeviceMac::StopAndDeAllocate() {
@@ -236,13 +222,11 @@ bool VideoCaptureDeviceMac::Init() {
   if (AVFoundationGlue::IsAVFoundationSupported()) {
     capture_device_ =
         [[VideoCaptureDeviceAVFoundation alloc] initWithFrameReceiver:this];
-  }
- #if !defined(SUPPORT_MACOSX_APPSTORE)
-  else {
+  } else {
     capture_device_ =
         [[VideoCaptureDeviceQTKit alloc] initWithFrameReceiver:this];
   }
-#endif
+
   if (!capture_device_)
     return false;
 
