@@ -907,14 +907,19 @@ bool ProcessSingleton::Create() {
     return false;
   }
   // Setup the socket symlink and the two cookies.
+#ifndef !defined(SUPPORT_MACOSX_APPSTORE)
   base::FilePath socket_target_path =
       socket_dir_.path().Append(chrome::kSingletonSocketFilename);
+#endif
   base::FilePath cookie(GenerateCookie());
   base::FilePath remote_cookie_path =
       socket_dir_.path().Append(chrome::kSingletonCookieFilename);
   UnlinkPath(socket_path_);
   UnlinkPath(cookie_path_);
-  if (!SymlinkPath(socket_target_path, socket_path_) ||
+  if (
+#ifndef !defined(SUPPORT_MACOSX_APPSTORE)
+      !SymlinkPath(socket_target_path, socket_path_) ||
+#endif
       !SymlinkPath(cookie, cookie_path_) ||
       !SymlinkPath(cookie, remote_cookie_path)) {
     // We've already locked things, so we can't have lost the startup race,
@@ -924,11 +929,17 @@ bool ProcessSingleton::Create() {
       LOG(ERROR) << "Encountered a problem when deleting socket directory.";
     return false;
   }
-
+#ifndef !defined(SUPPORT_MACOSX_APPSTORE)
   SetupSocket(socket_target_path.value(), &sock, &addr);
-
+#else
+  SetupSocket(socket_path_.value(), &sock, &addr);
+#endif
   if (bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+#ifndef !defined(SUPPORT_MACOSX_APPSTORE)
     PLOG(ERROR) << "Failed to bind() " << socket_target_path.value();
+#else
+    PLOG(ERROR) << "Failed to bind() " << socket_path_.value();
+#endif
     CloseSocket(sock);
     return false;
   }

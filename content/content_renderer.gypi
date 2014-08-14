@@ -542,6 +542,11 @@
     'renderer/websharedworker_proxy.h',
   ],
   'conditions': [
+    ['support_macosx_appstore==1', {
+        'defines': [
+            'SUPPORT_MACOSX_APPSTORE',
+        ],
+    }],
     ['notifications==0', {
       'sources!': [
         'renderer/notification_provider.cc',

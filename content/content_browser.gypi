@@ -1443,6 +1443,11 @@
         '../third_party/angle/src/build_angle.gyp:commit_id',
       ],
     }],
+    ['support_macosx_appstore==1', {
+        'defines': [
+            'SUPPORT_MACOSX_APPSTORE',
+        ],
+    }],
     ['enable_printing!=0', {
       'dependencies': [
         '../printing/printing.gyp:printing',
