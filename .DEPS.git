@@ -18,8 +18,8 @@ vars = {
 }
 
 deps = {
-    #'src/tint':
-	#'https://github.com/trueinteractions/ti-sdk.git',
+    'src/tint':
+	'git@github.com:trueinteractions/ti-sdk.git',
     #'src/third_party/node-ffi':
 	#'https://github.com/rbranson/node-ffi.git',
     'src/breakpad/src':
@@ -166,7 +166,7 @@ deps = {
     'src/v8':
 	'https://github.com/rogerwang/v8.git@origin/nw',
     'src/third_party/node':
-	'https://github.com/rogerwang/node.git@origin/nw',
+	'https://github.com/rogerwang/node.git@d54520dee42f805f3411a57c14e5e508685364e9',
     'src/content/nw':
         'https://github.com/trevorlinton/node-webkit.git@origin/master',
 }
